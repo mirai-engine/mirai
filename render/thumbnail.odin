@@ -169,6 +169,8 @@ renderer_thumbnail :: proc(r:^Renderer,state:^Thumbnail_GPU,vertices:[]Thumbnail
     for vertex,index in vertices {gpu_vertices[index]=thumbnail_vertex(vertex)}
     gpu_materials:=make([]Gpu_Material_Row,len(materials),context.temp_allocator)
     for material,index in materials {gpu_materials[index]=gpu_material(r,material)}
+    // Without the stage of a program it would show its row: the editor compiles it first.
+    if !rows_programs_staged(r,&r.pipelines[.Thumbnail],gpu_materials) {return false}
     device:=r.device
     good,_:=ensure_buffer(r,&state.vertices,u64(len(gpu_vertices)*size_of(Gpu_Thumbnail_Vertex)),{.Storage,.Transfer_Dst},"thumbnail vertices")
     if !good {return false}
@@ -227,6 +229,7 @@ renderer_thumbnail_values :: proc(r:^Renderer,state:^Thumbnail_Values_GPU,vertic
     for vertex,index in vertices {gpu_vertices[index]=thumbnail_vertex(vertex)}
     gpu_materials:=make([]Gpu_Material_Row,len(materials),context.temp_allocator)
     for material,index in materials {gpu_materials[index]=gpu_material(r,material)}
+    if !rows_programs_staged(r,&r.pipelines[.Thumbnail_Values],gpu_materials) {return false}
     device:=r.device
     for target in ([]struct{buffer:^rhi.Buffer,size:u64,usage:rhi.Buffer_Usage,name:string}{
         {&state.vertices,u64(len(gpu_vertices)*size_of(Gpu_Thumbnail_Vertex)),{.Storage,.Transfer_Dst},"thumbnail vertices"},

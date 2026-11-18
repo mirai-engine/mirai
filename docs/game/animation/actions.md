@@ -15,9 +15,11 @@ of any set (its `layers` and `actions` rows say every field), and `animation.ins
 - `anim.set(requests,e,"<layer name>",w)` is its weight; `anim.set(requests,e,"<axis name>",v)`
   moves the place its space is sampled at. Two clips mixed by a value are a layer whose weight
   is that value.
-- An action plays its clip once in its `layer`, crossfading over what the layer plays, or over
-  the whole body when it names none. It ends at `exit` (a share of its clip), at `exit_marker`,
-  or with its last section; `entry` says where it starts.
+- An action plays its clip once in its `layer`, or over the whole body when it names none. It
+  shows its pose at once: the difference from the pose shown decays over its `fade_in`, and
+  when it ends, from its pose to what the layer plays over its `fade_out` (0 cuts). It ends at
+  `exit` (a share of its clip), at `exit_marker`, or with its last section; `entry` says where
+  it starts.
 
 ```odin
 anim.play(requests,e,"Combo")              // from its first section

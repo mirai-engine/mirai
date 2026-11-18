@@ -26,7 +26,14 @@
   SDK; on macOS, `brew install --force-bottle spirv-tools spirv-cross`), which are looked for in
   `.deps/` and then in `PATH`.
 - `mirai shaders --project <path>` adds the `shaders/` of the active plugins that declare them,
-  the same ones the build passes (`build.shader_sources`).
+  the same ones the build passes (`build.shader_sources`), and compiles their Surface programs for
+  what the assets of the project draw them as (`build.shaders_uses`).
+- **Compilers.** A generation compiles Slang in compilers of its own, processes of
+  `mirai shaders compiler <slangc>` that the tool of the engine that runs starts as compilations
+  need them and that end with the generation (`runner_close`). Each loads the library next to
+  slangc once and takes one slangc command line after another on its input, making the compile
+  request slangc makes from them: the code and the reflection are those of slangc, byte for byte.
+  What brings Slang down ends that compiler alone, and the compilation fails.
 
 ## Compilation
 
@@ -57,8 +64,8 @@
   `render` uses under the same names; those of a format or of the RHI, in `asset` and `rhi`. No
   `.slang` source defines one (`no_shader_source_defines_a_constant_the_generation_writes`). A
   plugin's shaders take them from the engine includes.
-- Both includes are part of every fingerprint and of the stamp of a generation: changing one of
-  those constants compiles the stages again.
+- Both includes are part of the stamp of a generation; a stage's fingerprint takes of them the
+  constants it names (below): changing one compiles again only the stages that name it.
 - **Constants of a plugin.** A constant between the Odin code of a plugin, or of the project, and
   its own shaders is also declared once, in that Odin code, with its number (`NAME :: 8`). A
   `//! mirai constant <NAME> <int|uint|float> <file.odin>` line in a source of its `shaders/`
@@ -253,17 +260,32 @@
   - `include/ui_programs.slang`: UI sources, their loaders and `mirai_evaluate_ui`, which returns
     `ctx.color` for an id it does not know. `ui.frag` includes it.
 - `scene.slang` includes `<surface_programs.slang>`: the stage itself evaluates no programs. A
-  source marked `//! per surface program` is also compiled once per Surface program,
-  `<root>__<Program>[_<variant>]<suffix>` (`vis_resolve__Water_Surface_layers.frag`), with the
-  include of that program in front; `//! per surface program only` compiles only those. They are the
-  raster stages that draw materials (the resolve of the G-buffer and the `Gbuffer` stage of
-  extensions, glass layers and filter, translucents, overlays, highlight, thumbnails, UI and the
-  `vfx` sprites) and `surface_points.comp`, that of the ray material points ([programs in rays and
+  source marked `//! per surface program <uses>` is also compiled for each Surface program built
+  for one of those uses (`abi.Program_Use`), `<root>__<Program>[_<variant>]<suffix>`
+  (`vis_resolve__Water_Surface_layers.frag`), with the include of that program in front; a word
+  `<variant>=<use>` gives one variant its own uses, and `only` compiles only those. They are the
+  raster stages that draw materials: the resolve of the G-buffer (`opaque`), glass layers and
+  filter, translucents and the highlight (`blend`), overlays (`overlay`), the `Gbuffer` stage of
+  extensions (`particle_mesh`), the `vfx` sprites (`particle_sprite`), thumbnails and the UI
+  (`preview`) and impostors (`impostor`); and `surface_points.comp`, that of the ray material
+  points (`opaque`, `blend`) ([programs in rays and
   raster](materials.md#surface-programs-in-rays-and-raster)). A source marked `//! per vertex
   program` is compiled only for the Surface programs with `vertex`, with the same include, and has
   no stage of its own: `surface_vertices.comp`, which calls `mirai_vertex_program` (the include of
   the generation and that of a program without `vertex` define it as moving nothing). No other
   engine stage evaluates a Surface program.
+- **Program uses.** What a program is built for is what the assets of the project draw it as
+  (`build.program_uses`): a material that names it draws it by its alpha mode (`opaque` for opaque
+  and masked, `blend` for blended), the material of an overlay of another as `overlay`, and an
+  asset of a kind whose plugin declares `program_uses` (`.particle`: `particle_sprite`,
+  `particle_mesh`; `.foliage`: `impostor`) draws so the programs of the materials it depends on and
+  of those its meshes name; then what its source declares with `//! use <uses>` (a material made
+  by code, or one a game switches) and, for the tests of a package, every use. The editor adds
+  `preview` for the programs its previews draw, on demand. The catalog gives each program's `uses`
+  and the uses each of those stages serves (`surface_stages`); a draw that needs a stage the
+  program was not built for takes the stage without it, as before its pipeline is made, and
+  `Stats.problem` names the program, the use and the `//! use` line to add
+  (`renderer_programs_missing`).
 - A Surface program thus reaches only its stages; a PostProcess one, only `postprocess.frag`; a
   Vfx one, the stages of the `vfx` plugin that include it (emit, simulate and the vertices of
   sprites and meshes); a UI one, `ui.frag` and its `world` variant. Editing a program compiles its
@@ -325,9 +347,17 @@
 - `Options.cache` / `--cache` (by default `<project>/.mirai/shader-cache`, or
   `<root>/.mirai/shader-cache` without a project) stores only the `generation.json` stamp of the
   output. Generations with the same stamp take turns with `<cache>.lock`, next to it.
-- Fingerprint of a stage: its source and its transitive includes/imports, versions of Slang,
-  spirv-opt and SPIRV-Cross, flags of each tool, binding ABI limits and `GENERATOR_CONTRACT`. It
-  does not depend on the requested backends or on the checkout.
+- Fingerprint of a stage: versions of Slang, spirv-opt and SPIRV-Cross, flags of each tool,
+  binding ABI limits and `GENERATOR_CONTRACT`, the names of its source and transitive
+  includes/imports, and of those what the stage reaches (`cook/shaders/declarations.odin`): its
+  own source whole; of an include, a function or a type with a body and a macro (a shared
+  constant is one) are taken when a name the stage already takes names them, and then what they
+  name; the rest (globals, resources, directives, operators, extensions, a macro expanded at the
+  top level) always. It is read from the text, without the compiler. An edit to a declaration no
+  stage names recompiles nothing; one to a declaration recompiles the stages that reach it. A
+  source with `__LINE__`, `__COUNTER__` or a raw string is taken whole, and so is a binary module;
+  a name made by pasting tokens (`##`) is not followed. It does not depend on the requested
+  backends or on the checkout.
 - **`extensions.slang` per stage.** A stage is compiled against an `extensions.slang` that defines
   only the generation macros (`MIRAI_NESTED_VIEWS`, `MIRAI_INSTANCE_IDS`, `MIRAI_HOOK_RAY`,
   `MIRAI_HOOK_LIGHTS`, `MIRAI_HOOK_PROBES`, `MIRAI_HOOK_VERTEX`) that its dependencies name, and

@@ -237,9 +237,10 @@ It is a rewrite in Odin of Recast and of the tile closing of Detour
 - **Statuses.** `Empty`: nothing walkable in the tile. `Invalid`: non-positive or non-finite sizes,
   slope outside [0, π/2), negative region areas, a tile that with its borders exceeds
   `NAV_BUILD_MAX_CELLS` or is outside the `i32` range, indices out of range or not a multiple of
-  three, `triangle_areas` of another length, areas or volumes of more than `NAV_AREA_MAX` or eight
-  points, and an uninitialized scratch. `Too_Large`: more vertices, polygons or regions than 16-bit
-  indices. `Out_Of_Memory`: an allocation failed; the scratch stays usable.
+  three, `triangle_areas` of another length, areas of more than `NAV_AREA_MAX`, volumes of more
+  than `NAV_AREA_POINTS` points, and an uninitialized scratch. `Too_Large`: more vertices,
+  polygons or regions than 16-bit indices. `Out_Of_Memory`: an allocation failed; the scratch
+  stays usable.
 - **Degenerate input.** A triangle with a non-finite coordinate is skipped. A volume with fewer than
   three points or with a non-finite value marks nothing. The heights of a tile count in 16-bit cells
   from the lowest geometry that touches it: what is higher is clipped.

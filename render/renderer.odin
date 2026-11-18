@@ -577,6 +577,11 @@ Renderer :: struct {
 	pipeline_waiting: string, // the stage whose pass the frame skipped while its pipeline is made (Stats.problem)
 	pipeline_problem: string, // the variants the device refused, in pipeline_problem_buffer
 	pipeline_problem_buffer: [256]u8,
+	program_misses:  [PROGRAM_MISSES]Program_Miss, // renderer_programs_missing
+	program_miss_count: int,
+	program_problem: string, // the last program drawn as what its stages were not compiled for, in program_problem_buffer
+	program_problem_buffer: [512]u8,
+	program_problem_names: [96]u8,
 	shader_codes:    [Shader_Id]rhi.Shader_Code,
 	shader_assets:   Shader_Assets,
 	embedded:        []u8, // the code of the shaders the executable embeds, decoded when it runs them
@@ -626,9 +631,9 @@ Renderer :: struct {
 	probe_hits:           Probe_Hits, // what the probes of ddgi keep of their rays, and the changes they check it against
 	frame_changes:        Light_Changes, // those of this frame, for the views after the first
 	frame_occluders:      Occluder_Changes, // Scene_State.occluders of this frame, for every view
-	gi_warm_spread:       u32, // frames left of the warm updates of a blackout (blackout.odin)
-	light_frame:          u64,  // counts the updates of the probes: several in the frame of gi_warm
-	gi_warm:              bool, // the next frame gathers the light of the world shown from nothing, GI_WARM_UPDATES times
+	gi_warm_spread:       u32, // frames left of warm updates: of a world shown anew or a blackout (blackout.odin)
+	light_frame:          u64,  // counts the updates of the probes, one a frame
+	gi_warm:              bool, // the frames from the next gather the light of the world shown from nothing (ddgi_warm_frames)
 	light_rescale:        f32,  // what the histories of the views and the probes hold, by it, is in the light scale of the scene (0: they are)
 	world_key:            u64,  // the world the light of ddgi is of (scene_world)
 	origin:               Vec3, // what every place the renderer keeps is relative to (origin.odin), a multiple of ORIGIN_STEP
@@ -1537,7 +1542,7 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 		r.hardware_rt = hardware
 		// The poses refit only the structures the rays use: those of the others are as old as the switch.
 		// The tables of the batches list the instances of a native TLAS only while rays are traced by hardware.
-		for handle in r.scene.skinned {if skin := r.scene.meshes[handle].skin; skin != nil {skin.dirty = true}}
+		for handle in r.scene.skinned {if skin := r.scene.meshes[handle].skin; skin != nil {skin.dirty, skin.retrace = true, true}}
 		r.scene.batch.built = false
 		r.scene.tlas_off, r.scene.tlas_stale = r.hardware_rt, true
 		r.scene.instances_dirty = true

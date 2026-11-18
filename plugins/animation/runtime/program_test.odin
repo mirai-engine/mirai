@@ -70,7 +70,7 @@ a_program_blends_its_clips_with_curves_and_root_motion_under_the_layers_without_
     pose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,output:^Program_Output,events:^Animation_Events,dt:f32,problems:^core.Problems) -> bool {
         if !program_buffers(state,content) || !program_players(state,output,content,animation,events,playback,dt,-1,problems) || !program_pose(playback,state,content,animation,output) {return false}
         layers_advance(playback,state,content,animation,events,0,problems)
-        pose_layers(playback,state,content,animation)
+        pose_layers(playback,state,content,animation,state.local[:])
         return true
     }
     if !testing.expect(t,pose(&playback,state,&content,animation,output,&events,.5,&problems)) {return}
@@ -267,7 +267,7 @@ a_layer_over_a_program_keeps_its_scalar_curves :: proc(t:^testing.T) {
     testing.expect(t,program_buffers(state,&content) && program_players(state,output,&content,animation,&events,&playback,0,-1,nil))
     testing.expect(t,program_pose(&playback,state,&content,animation,output))
     layers_advance(&playback,state,&content,animation,&events,0,nil)
-    pose_layers(&playback,state,&content,animation)
+    pose_layers(&playback,state,&content,animation,state.local[:])
     sample_layer_curves(state,&content,animation)
     got:=animation_curve(&playback,state.entity,"pulse",default_value=2)
     testing.expect_value(t,state.local[2].position.y,f32(1))

@@ -846,6 +846,7 @@ material_program_shows_in_what_a_reflection_finds :: proc(t: ^testing.T) {
 	mirror, wall, other := DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL
 	other.program_id = pieces.id
 	other.custom_params = program_defaults(pieces)
+	other.alpha_mode = .Blend
 	mirror.base_color = {0.9, 0.9, 0.9}
 	mirror.metallic = 1
 	mirror.roughness = 0.05
@@ -871,6 +872,9 @@ material_program_shows_in_what_a_reflection_finds :: proc(t: ^testing.T) {
 		materials_set(r, {mirror, wall, other if binned else DEFAULT_MATERIAL})
 		scene_given(r, instances, nil, sun, {sky = {0, 0, 0.05}})
 		testing.expect_value(t, r.scene.programs_used, u32(2 if binned else 1))
+		// The resolve of the visibility target draws the opaque program alone: the other one is blended.
+		testing.expect_value(t, r.scene.program_opaque_rows[grid.id], 1)
+		testing.expect_value(t, r.scene.program_opaque_rows[pieces.id], 0)
 		mirrored := screen_color(t, &f, camera, {0, 0, 0})
 		testing.expectf(t, mirrored.r > 100 && mirrored.r > 3 * mirrored.b, "binned %v: the mirror shows the wall as its program paints it: %v", binned, mirrored)
 	}

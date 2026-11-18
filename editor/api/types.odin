@@ -52,6 +52,7 @@ Port_File :: struct {
     stamp:string,  // the stamp of the binaries it runs, as they were built (build.engine_stamp_of)
     library:string, // the stamp of the library of the project it loaded last
     manual:bool,   // headless, driven by the API frame by frame; false for an editor with a window
+    device:string, // the adapter of its GPU device; "" without one
 }
 
 // A manual editor that holds a device and gets no call for this long closes

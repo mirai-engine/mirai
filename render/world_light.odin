@@ -5,8 +5,8 @@ import "mirai:rhi"
 // The light of each world the renderer shows: its probe volume, in the light scale they were gathered in. Renderer_Desc.worlds of
 // them, the one shown included, so that showing a world again (another tab,
 // the end of Play) finds its light settled. A world shown anew, or past the
-// capacity the least recently shown, starts without light, which the frame
-// that shows it gathers at once (gi_warm).
+// capacity the least recently shown, starts without light, which the frames
+// that show it gather (gi_warm).
 
 // Renderer_Desc.worlds when unset: editing and playing.
 WORLDS_DEFAULT :: 2

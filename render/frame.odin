@@ -272,7 +272,8 @@ resolve_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rhi
 	rhi.cmd_draw_indirect(cmd, s.program_draws, 0, 1, size_of(Gpu_Program_Draw))
 	if s.programmed_rows == 0 {return}
 	for program in renderer_programs(r) {
-		if program.domain != .Surface || program.id == 0 || program.id >= r.points.programs || s.program_rows[program.id] == 0 {continue}
+		// A program only blended rows show has no pixel there.
+		if program.domain != .Surface || program.id == 0 || program.id >= r.points.programs || s.program_opaque_rows[program.id] == 0 && !s.program_shown_opaque[program.id] {continue}
 		rhi.cmd_bind_pipeline(cmd, program_graphics(r, target, program.id))
 		rhi.cmd_draw_indirect(cmd, s.program_draws, u64(program.id) * size_of(Gpu_Program_Draw), 1, size_of(Gpu_Program_Draw))
 	}
@@ -310,7 +311,7 @@ highlight_pass :: proc(p: ^Pass) {
 	rhi.cmd_begin_render_pass(cmd, &pass)
 	for inst, index in s.instances {
 		if !highlight_drawn(inst.meta.w) {continue}
-		instance_programs_draw(r, cmd, &r.pipelines[.Highlight], u32(index), true)
+		instance_programs_draw(r, cmd, &r.pipelines[.Highlight], u32(index), true, blended = true)
 	}
 	rhi.cmd_end_render_pass(cmd)
 }
@@ -588,7 +589,8 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     if recorded_ok && !frame.ui_only {
         geometry:=Pass{r=r,cmd=cmd,slot=slot}
         stage_run(&geometry,.Geometry)
-        recorded_ok=deformables_record(r,cmd)
+        eyes:[VIEW_CAPACITY+TEXTURE_VIEW_CAPACITY+2]Vec3
+        recorded_ok=deformables_record(r,cmd,frame_eyes(frame,&eyes))
     }
     // The views drawn into a texture come first: those of the window may show
     // them. What runs once a frame goes with the first view of the window, or
@@ -1486,14 +1488,16 @@ pass_reflections :: proc(p: ^Pass) -> bool {
 	return true
 }
 
-// Updates of the probe volume in the frame that shows a world anew
-// (Renderer.gi_warm), each a bounce more: the light it shows from its first
-// frame instead of over seconds.
+// Updates over PROBE_WARM_BUDGET probes that gather the light of a world shown
+// anew (Renderer.gi_warm), each a bounce more, taken over the frames after
+// within the budget of each (ddgi_warm_frames).
 GI_WARM_UPDATES :: 64
 
-// What lights the world whatever the view: the probe volume. Once a frame,
-// with its first view; several times in the frame of a world shown anew, and
-// over GI_BLACKOUT_FRAMES after a blackout.
+// What lights the world whatever the view: the probe volume, updated once a
+// frame with its first view, within the budget of a frame: no frame, the
+// first of a world either, traces more than another may, whatever else the
+// GPU runs. A world shown anew and a blackout gather their light over the
+// frames after, each update taking every probe in turn (whole).
 @(private)
 pass_world_lighting :: proc(p: ^Pass) -> bool {
 	r, cmd := p.r, p.cmd
@@ -1501,24 +1505,15 @@ pass_world_lighting :: proc(p: ^Pass) -> bool {
 	changes := &r.scene.changes
 	if p.first && !p.offscreen && p.use_gi {
 		if changes.count > 0 && !changes.all && !upload_transient(r, cmd, changes.spheres[:changes.count], r.light_changes) {return false}
-		updates := 1
-		if r.gi_warm {updates = GI_WARM_UPDATES}
+		if r.gi_warm {r.gi_warm_spread = max(r.gi_warm_spread, ddgi_warm_frames(g, GI_WARM_UPDATES))}
 		r.gi_warm = false
-		// A blackout spreads the warm updates over its frames; only the last
-		// update of the last frame keeps its history.
-		spread := r.gi_warm_spread
-		if spread > 0 && updates == 1 {
-			updates = int((GI_BLACKOUT_UPDATES + GI_BLACKOUT_FRAMES - 1) / GI_BLACKOUT_FRAMES)
-			r.gi_warm_spread -= 1
+		warm := r.gi_warm_spread > 0
+		if warm {r.gi_warm_spread -= 1}
+		if p.use_probes && g.valid {
+			rhi.cmd_timestamp(cmd, "ddgi")
+			if !ddgi_update(p, warm) {return false}
 		}
-		for update in 0 ..< updates {
-			warm := update < updates - 1 || (spread > 1 && updates > 1)
-			if p.use_probes && g.valid {
-				rhi.cmd_timestamp(cmd, "ddgi")
-				if !ddgi_update(p, warm, update == 0) {return false}
-			}
-			r.light_frame += 1
-		}
+		r.light_frame += 1
 	}
 	if p.use_probes && p.first && !p.offscreen {
 		// Later passes sample the updated atlases through the scene table.
@@ -1853,7 +1848,7 @@ update_stats :: proc(r: ^Renderer) {
 		memory = fmt.tprintf("%d resources of GPU memory went to system memory because the device memory was full, which slows the frames: a lower resolution or texture quality frees device memory", host)
 	}
 	waiting := fmt.tprintf("the pass of the stage %s is skipped while its pipeline is made", r.pipeline_waiting) if r.pipeline_waiting != "" else ""
-	for other in ([]string{r.tlas_problem, pages_problem(r), memory, r.pipeline_problem, waiting}) {
+	for other in ([]string{r.tlas_problem, pages_problem(r), memory, r.pipeline_problem, r.program_problem, waiting}) {
 		if other == "" {continue}
 		if s.problem == "" {s.problem = string(r.problem_buffer[:copy(r.problem_buffer[:], other)]); continue}
 		// The problems before are at the start of problem_buffer: this one follows them.

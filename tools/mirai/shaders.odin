@@ -54,9 +54,9 @@ cmd_shaders :: proc(root:string,args:[]string) -> int {
         return 1
     }
     if options.project!="" {
-        opened,sources,ok:=project_shader_sources(options.project,root,"mirai shaders")
+        opened,sources,uses,ok:=project_shader_sources(options.project,root,"mirai shaders")
         if !ok {return 1}
-        options.project,options.sources=opened,sources
+        options.project,options.sources,options.uses=opened,sources,uses
         if !whole && options.output=="" && options.cache=="" && options.backends=={} {
             if file,alive:=session_find(opened);alive {return shaders_publish_editor(opened,file.port)}
         }
@@ -70,8 +70,9 @@ cmd_shaders :: proc(root:string,args:[]string) -> int {
     } else {
         fmt.printfln("shaders: %d Slang programs, %d tests, %d material programs (%d compiled, %d reused)",result.shaders,result.tests,result.programs,result.compiled,result.reused)
         fmt.printfln("shaders: programs reflected in %.1f s, stages compiled in %.1f s added up, at most %d at once",result.reflection,result.compiling,result.at_once)
+        fmt.printfln("shaders: %.1f s of processor time in the compilers and tools, %.1f s of it Slang compiling the stages",result.cpu,result.stages_cpu)
         for each in result.slowest {
-            if each.seconds>0 {fmt.printfln("  %.1f s  %s",each.seconds,each.name)}
+            if each.seconds>0 {fmt.printfln("  %.1f s  %.1f s of processor  %s",each.seconds,each.cpu,each.name)}
         }
     }
     return 0
@@ -93,14 +94,17 @@ shaders_publish_editor :: proc(folder:string,port:int) -> int {
     return 0
 }
 
-// The root of the project in folder and the folders of programs its build passes besides its own
-// shaders/ (build.shader_sources); ok is false, after saying why, when it does not open.
+// The root of the project in folder, the folders of programs its build passes besides its own
+// shaders/ (build.shader_sources) and what its assets draw its programs as (build.shaders_uses);
+// ok is false, after saying why, when it does not open.
 @(private="file")
-project_shader_sources :: proc(folder,root,who:string) -> (project_root:string,sources:[]shaders.Source,ok:bool) {
+project_shader_sources :: proc(folder,root,who:string) -> (project_root:string,sources:[]shaders.Source,uses:[]shaders.Program_Uses_Of,ok:bool) {
     p,error:=project.open(folder,root,context.temp_allocator)
     if error.code!=.None {fmt.eprintfln("%s: could not open the project %s",who,folder);return}
     sources,_=build.shader_sources(&p,context.temp_allocator)
-    return p.root,sources,true
+    problem:string
+    if uses,problem=build.shaders_uses(&p,nil,context.temp_allocator);problem!="" {fmt.eprintfln("%s: %s",who,problem);return}
+    return p.root,sources,uses,true
 }
 
 // Checks a program as material.program.check does: the rules of the check and
@@ -121,7 +125,7 @@ shaders_check :: proc(root:string,args:[]string) -> int {
     options:=shaders.Check_Options{root=root,path=path}
     if folder!="" {
         ok:bool
-        options.project,options.sources,ok=project_shader_sources(folder,root,"mirai shaders check")
+        options.project,options.sources,_,ok=project_shader_sources(folder,root,"mirai shaders check")
         if !ok {return 1}
     }
     result:=shaders.program_check(options)
@@ -233,7 +237,8 @@ package_test_shaders :: proc(root,folder:string) -> bool {
     output:=join(root,".mirai","tmp",fmt.tprintf("%s-test-shaders",name))
     lock:=shaders_lock(root)
     defer workspace.lock_release(&lock)
-    result:=shaders.generate({root=root,sources=sources[:],output=output,cache=fmt.tprintf("%s-stamp",output)})
+    // The tests draw their programs every way.
+    result:=shaders.generate({root=root,sources=sources[:],output=output,cache=fmt.tprintf("%s-stamp",output),every={.Opaque,.Blend,.Overlay,.Particle_Sprite,.Particle_Mesh,.Preview,.Impostor}})
     defer shaders.result_destroy(&result)
     if result.warnings!="" {fmt.eprint(result.warnings)}
     if result.error!="" {fmt.eprintfln("mirai test: the shaders of the tests of %s could not be generated: %s",name,result.error);return false}

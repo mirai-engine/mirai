@@ -203,7 +203,7 @@ displaced_prepare :: proc(r: ^Renderer) {
 			if v.timed {v.inputs = base.hash_mix(v.inputs, u64(transmute(u32)r.time) << 32 | u64(transmute(u32)r.previous_time))}
 		}
 		// A skin that starts or stops being moved is posed again.
-		if !skin.displaced && v.moves != skin.moves {skin.moves = v.moves; skin.dirty = true}
+		if !skin.displaced && v.moves != skin.moves {skin.moves = v.moves; skin.dirty, skin.retrace = true, true}
 		// The skin grows the boxes of its clusters by it.
 		if v.reach != skin.reach {skin.reach = v.reach; skin.bounds_dirty = true; skin.dirty ||= !skin.displaced}
 		if !v.moves || v.inputs == skin.inputs {continue}

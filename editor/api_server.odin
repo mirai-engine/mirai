@@ -14,6 +14,7 @@ import "mirai:editor/history"
 import "mirai:host"
 import "mirai:platform"
 import "mirai:project"
+import "mirai:rhi"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -188,7 +189,7 @@ api_port_file_path :: proc(s:^Session) -> string {
 api_port_file_write :: proc(s:^Session,port:int) {
     if !s.has_project {return}
     engine:=engine_folder_here(s)
-    file:=api.Port_File{port,os.get_pid(),s.project_root,engine,s.engine_stamp,s.library_stamp,s.headless}
+    file:=api.Port_File{port,os.get_pid(),s.project_root,engine,s.engine_stamp,s.library_stamp,s.headless,s.app!=nil && s.app.device!=nil?rhi.device_info(s.app.device).name:""}
     data,encoded:=serial.text_encode(file,.Pretty,context.temp_allocator)
     if !encoded {return}
     path:=api_port_file_path(s)
