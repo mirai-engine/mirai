@@ -16,8 +16,7 @@ test_bytes :: proc(size:int,seed:u64) -> []u8 {
 
 @(private)
 test_address :: proc(data:[]u8) -> Hash {
-    hash,_:=address_of_bytes(data,context.temp_allocator)
-    return hash
+    return address_of_bytes(data)
 }
 
 @(private)
