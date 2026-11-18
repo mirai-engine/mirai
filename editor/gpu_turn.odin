@@ -16,6 +16,8 @@ Gpu_Turn :: struct {
     checked:time.Tick,  // when the memory of the device was looked at last
     peak:i64,           // the most memory of the device this editor held
     kept:i64,           // the peak in the cache, which only grows while it runs
+    pressed:bool,       // the device held close to what the driver let it (workspace.gpu_pressed)
+    turn:int,           // the number of the turn that names this editor its holder; -1 before it is found
 }
 
 GPU_WATCH_INTERVAL :: time.Second
@@ -24,6 +26,7 @@ GPU_WATCH_INTERVAL :: time.Second
 // starts but the editor it starts again as (gpu_turn_pass).
 @(private)
 gpu_turn_take :: proc(s:^Session,handle:uintptr) {
+    s.gpu.turn=-1
     if handle!=0 && subprocess.handle_keep(handle) {s.gpu.handle=handle}
 }
 
@@ -46,19 +49,23 @@ gpu_turn_handed :: proc(s:^Session,pid:int) {
 }
 
 // Keeps the memory of the card and a peak of the session above the one kept
-// at once, so that one that ends badly still leaves it.
+// at once, so that one that ends badly still leaves it, and raises the charge
+// of its turn to what it held.
 @(private)
 gpu_watch :: proc(s:^Session) {
     device:=s.app.device
     if device==nil || !s.has_project {return}
     if s.gpu.checked!={} && time.tick_since(s.gpu.checked)<GPU_WATCH_INTERVAL {return}
     if s.gpu.checked=={} {
-        workspace.gpu_memory_write(s.engine_root,i64(rhi.device_info(device).memory))
+        info:=rhi.device_info(device)
+        if refused:=workspace.gpu_card_write(s.engine_root,{i64(info.memory),info.type==.Discrete,info.name});refused!="" {fmt.eprintfln("mirai: %s",refused)}
         s.gpu.kept,_=workspace.gpu_peak(s.engine_root,s.project_root)
     }
     s.gpu.checked=time.tick_now()
-    used,_:=rhi.device_memory(device)
+    used,budget:=rhi.device_memory(device)
     s.gpu.peak=max(s.gpu.peak,i64(used))
+    s.gpu.pressed||=workspace.gpu_pressed(i64(used),i64(budget))
+    if s.gpu.handle!=0 {s.gpu.turn=workspace.gpu_turn_raise(s.engine_root,os.get_pid(),s.gpu.peak,s.gpu.turn)}
     if s.gpu.peak>s.gpu.kept {
         workspace.gpu_peak_write(s.engine_root,s.project_root,s.gpu.peak)
         s.gpu.kept=s.gpu.peak
@@ -66,8 +73,8 @@ gpu_watch :: proc(s:^Session) {
 }
 
 // The peak of the session that ends is the one the next is charged, also
-// when lower than the one kept.
+// when lower than the one kept unless the card pressed it (gpu_peak_end).
 @(private)
 gpu_watch_end :: proc(s:^Session) {
-    if s.has_project && s.gpu.peak>0 {workspace.gpu_peak_write(s.engine_root,s.project_root,s.gpu.peak)}
+    if s.has_project {workspace.gpu_peak_end(s.engine_root,s.project_root,s.gpu.peak,s.gpu.pressed)}
 }

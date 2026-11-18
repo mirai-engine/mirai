@@ -75,10 +75,10 @@ person_at_terminal :: proc() -> bool {
 // they are charged of the card, and who holds each one since when.
 gpu_turns_print :: proc(root:string) {
     holders:=workspace.gpu_holders(root,context.temp_allocator)
-    memory,known:=workspace.gpu_memory(root)
+    said,known:=workspace.gpu_card(root)
     charged:i64
     for holder in holders {charged+=holder.charge}
-    card:=known?fmt.tprintf("%.1f GiB",f64(memory)/(1<<30)):"not said yet by any editor"
+    card:=known?fmt.tprintf("%.1f GiB, %s",f64(said.bytes)/(1<<30),said.name):"not said yet by any editor"
     fmt.printfln("  %-14s %d of %d turns, %.1f GiB charged; the card: %s",
         "gpu",len(holders),workspace.GPU_TURNS,f64(charged)/(1<<30),card)
     now:=time.now()
@@ -86,5 +86,9 @@ gpu_turns_print :: proc(root:string) {
         fmt.printf("  %-14s %s","",holder.holder)
         if holder.since!={} {fmt.printf(", for %s",duration_text(time.diff(holder.since,now)))}
         fmt.println()
+    }
+    memory,_:=workspace.gpu_memory(root)
+    if over:=workspace.gpu_held_over(memory,holders);over>0 {
+        fmt.printfln("  %-14s the holders held %.1f GiB more than the card has for the turns beside the part left to the desktop: it may be paging memory out and its frames slow","",f64(over)/(1<<30))
     }
 }
