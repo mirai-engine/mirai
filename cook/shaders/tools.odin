@@ -92,6 +92,7 @@ Memory :: struct {
     record:string, // where its peak is kept once it succeeds (CACHE_PEAKS); "" keeps none
     turn:  int,    // of those of the runner that wait for room, the lowest goes first; the same turn, the first that asked
     waited:^time.Duration, // nil or what is added the time it waited for room
+    cpu:   ^time.Duration, // nil or what is added the processor time it used
 }
 
 // A compilation that runs: what it was charged and what it holds now.
@@ -135,6 +136,7 @@ Runner :: struct {
     running:  [RUNNER_CAPACITY]Running, // the tools started and not yet waited for (guarded by lock)
     running_count:int,
     most:     int, // the most compilations with a charge that ran at once (guarded by lock)
+    cpu:      time.Duration, // the processor time of every tool and compilation it ran (guarded by lock)
     tool:     string, // the mirai tool that runs the compilers (runner_compiler)
     compilers:[RUNNER_CAPACITY]^Compiler, // started, idle or compiling (guarded by lock)
     compiler_count:int,
@@ -181,6 +183,7 @@ tool_run :: proc(runner:^Runner,command:[]string,allocator:=context.allocator,me
     run_unlist(runner,process.pid)
     state,wait_error:=subprocess.wait(&process)
     ok=wait_error==nil && state.exited && state.exit_code==0
+    run_cpu(runner,memory,state.user_time+state.system_time)
     run_end(process.pid,memory,ok,process.peak)
     subprocess.release(&process)
     return string(lf_bytes(collected[:])),ok
@@ -197,6 +200,14 @@ run_unlist :: proc(runner:^Runner,pid:int) {
         break
     }
     sync.cond_broadcast(&runner.turned)
+}
+
+// The processor time a run used, added to the runner and to the run.
+@(private)
+run_cpu :: proc(runner:^Runner,memory:Memory,used:time.Duration) {
+    if memory.cpu!=nil {memory.cpu^+=used}
+    sync.guard(&runner.lock)
+    runner.cpu+=used
 }
 
 // Out of the ledger, and the peak of one that succeeded kept.
@@ -308,13 +319,15 @@ slang_run :: proc(runner:^Runner,command:[]string,allocator:=context.allocator,m
         }
     }
     words,alive=answer(compiler,&said)
-    if !alive || len(data)>0 || len(words)!=4 || words[0]!="done" {
+    if !alive || len(data)>0 || len(words)!=5 || words[0]!="done" {
         alive=false
         append(&said,..transmute([]u8)string("the Slang compiler ended during the compilation\n"))
         return string(said[:]),false
     }
     peak,_=strconv.parse_i64(words[2])
-    length,_:=strconv.parse_int(words[3])
+    used,_:=strconv.parse_i64(words[3])
+    run_cpu(runner,memory,time.Duration(used))
+    length,_:=strconv.parse_int(words[4])
     diagnostics,complete:=bytes_read(&compiler.reader,length,context.temp_allocator)
     if !complete {alive=false}
     append(&said,..diagnostics)

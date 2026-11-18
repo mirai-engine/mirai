@@ -163,11 +163,13 @@ Result :: struct {
     slowest:[SLOWEST]Stage_Time, // the stages that took longest to compile, longest first; seconds 0 past the last
     reflection:f64,      // seconds the reflection of the programs took
     compiling:f64,       // seconds the stages compiled took, added up
+    cpu:     f64,        // seconds of processor time of every compiler and tool the generation ran
+    stages_cpu:f64,      // of that, of Slang compiling the stages
     at_once: int,        // the most compilations that ran at once
 }
 
 // What a stage took to compile, in seconds.
-Stage_Time :: struct {name:string,seconds:f64}
+Stage_Time :: struct {name:string,seconds,cpu:f64} // cpu: of Slang compiling it
 SLOWEST :: 8
 
 result_destroy :: proc(result:^Result,allocator:=context.allocator) {
@@ -245,6 +247,7 @@ Job :: struct {
     seconds:  f64, // what compiling it took, without waiting for memory
     turn:     int, // its place in order, from 1: of the compilations that wait for memory, the earliest goes first
     waited:   time.Duration, // what it waited for memory
+    cpu:      time.Duration, // the processor time Slang took to compile it
     error:    string,
     diagnostics:[]Diagnostic,
 }
@@ -493,7 +496,7 @@ PROGRAMS_KEY :: "programs"
 @(private)
 compilation_memory :: proc(g:^Generation,key:string,allocator:=context.temp_allocator,job:^Job=nil) -> Memory {
     memory:=Memory{charge=charge_of(g.peaks,key),ledger=g.ledger,record=peak_path(g.shared,key,allocator)}
-    if job!=nil {memory.turn,memory.waited=job.turn,&job.waited}
+    if job!=nil {memory.turn,memory.waited,memory.cpu=job.turn,&job.waited,&job.cpu}
     return memory
 }
 
@@ -1367,6 +1370,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     {
         sync.guard(&g.runner.lock)
         result.at_once=g.runner.most
+        result.cpu=time.duration_seconds(g.runner.cpu)
     }
     if runner_cancelled(g.runner) {fail(&result,allocator,"the generation was cancelled");return}
     for job in g.jobs {
@@ -1375,12 +1379,13 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
         if job.reused {result.reused+=1;continue}
         result.compiled+=1
         result.compiling+=job.seconds
+        result.stages_cpu+=time.duration_seconds(job.cpu)
         // Kept longest first.
         at:=SLOWEST
         for at>0 && result.slowest[at-1].seconds<job.seconds {at-=1}
         if at==SLOWEST {continue}
         copy(result.slowest[at+1:],result.slowest[at:SLOWEST-1])
-        result.slowest[at]={job.name,job.seconds}
+        result.slowest[at]={job.name,job.seconds,time.duration_seconds(job.cpu)}
     }
 
     for job,i in extension_jobs {

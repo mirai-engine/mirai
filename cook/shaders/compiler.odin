@@ -20,7 +20,7 @@ import "mirai:std/subprocess"
 
 // What a compiler and the generation say to each other; raise it when either changes.
 @(private)
-COMPILER_PROTOCOL :: "mirai-slang/1"
+COMPILER_PROTOCOL :: "mirai-slang/2"
 
 // What starts the lines of the compiler that the generation reads: Slang may
 // write to the same stream.
@@ -117,6 +117,7 @@ compiler_serve :: proc(slangc:string) -> int {
             if i>0 && arguments[i-1]=="-o" {output=text}
             argument=strings.clone_to_cstring(text,context.temp_allocator)
         }
+        started:=subprocess.cpu_used()
         start,_,_:=subprocess.memory_held(os.get_pid())
         sync.atomic_store(&sampler.peak,start)
         sync.atomic_store(&sampler.running,true)
@@ -137,7 +138,7 @@ compiler_serve :: proc(slangc:string) -> int {
         sync.atomic_store(&sampler.running,false)
         now,_,_:=subprocess.memory_held(os.get_pid())
         peak:=max(sync.atomic_load(&sampler.peak),now)
-        fmt.fprintf(out,"%sdone %d %d %d\n%s",COMPILER_MARK,0 if ok else 1,peak,len(said),said)
+        fmt.fprintf(out,"%sdone %d %d %d %d\n%s",COMPILER_MARK,0 if ok else 1,peak,i64(subprocess.cpu_used()-started),len(said),said)
     }
 }
 
