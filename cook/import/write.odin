@@ -136,7 +136,6 @@ Writer :: struct {
     stored:bool,                 // the source has a sidecar
     whole:bool,                  // writes a model for Outputs: its prefab and clips are parts by their names
     given:int,                   // of outputs, those a part of the same kind and name is (parts_plan)
-    keeping:map[base.Asset_Id]string, // the documents changed since the import wrote them that it leaves as they are (Changed.Keep), with the file that takes what is written of each
     rng:base.Rng,
     allocator:mem.Allocator,
     keep:mem.Allocator,          // what lives as long as the writer: the temp allocator it began in
@@ -165,19 +164,8 @@ writer_warn :: proc(w:^Writer,format:string,args:..any) {
     append(&w.report.warnings,fmt.aprintf(format,..args,allocator=w.allocator))
 }
 
-// A document the writer follows (follows: what a person changed in it stays)
-// records nothing of what it wrote: importing again never writes over a change.
 @(private)
-record :: proc(w:^Writer,id:base.Asset_Id,kind:asset.Fourcc,name,path,source:string,existed:bool,detail:="",kept:=false,follows:=false) {
-    if _,keeping:=w.keeping[id];keeping {
-        progress_written(w.options.progress,len(w.sidecar.outputs))
-        return
-    }
-    if !asset.import_cached(kind) {
-        for at:=len(w.outputs)-1;at>=0;at-=1 {
-            if w.outputs[at].id==id {w.outputs[at].written=0 if follows else written_hash(path);break}
-        }
-    }
+record :: proc(w:^Writer,id:base.Asset_Id,kind:asset.Fourcc,name,path,source:string,existed:bool,detail:="",kept:=false) {
     size:int
     if info,error:=os.stat(path,context.temp_allocator);error==nil {size=int(info.size)}
     clone,_:=strings.clone(path,w.allocator)
@@ -352,7 +340,6 @@ Texture_Job :: struct {
     hash:u64,
     srgb,normal_map,green_down,keep_precision:bool,
     alpha_cutoff:f32,
-    alpha_fill:f32,
     channels:textures.Channels,
     index:int,
     version:u32,
@@ -361,7 +348,7 @@ Texture_Job :: struct {
 
 @(private)
 texture_options :: proc(w:^Writer,job:Texture_Job) -> textures.Build_Options {
-    return image_build_options({srgb=job.srgb,normal_map=job.normal_map,green_down=job.green_down,alpha_cutoff=job.alpha_cutoff,alpha_fill=job.alpha_fill,keep_precision=job.keep_precision,channels=job.channels},w.options.settings)
+    return image_build_options({srgb=job.srgb,normal_map=job.normal_map,green_down=job.green_down,alpha_cutoff=job.alpha_cutoff,keep_precision=job.keep_precision,channels=job.channels},w.options.settings)
 }
 
 // Builds and writes one texture of source as the asset id at path; false when
@@ -482,7 +469,7 @@ writer_init :: proc(w:^Writer,path,folder:string,options:Import_Options,report:^
     asset.types_init(&w.types)
     w.types.codecs=asset.project_codecs(options.root,project.engine_root_find("",context.temp_allocator))
     zone(options,"import.scan")
-    return writer_source(w,path,folder) && writer_changed(w)
+    return writer_source(w,path,folder)
 }
 
 // Whether every output of the cache the sidecar lists has its file under the
@@ -503,7 +490,6 @@ writer_current :: proc(w:^Writer) -> bool {
 @(private)
 writer_rollback :: proc(w:^Writer) {
     for path in w.created {os.remove(path)}
-    for _,kept in w.keeping {os.remove(kept)}
 }
 
 // Writes the meshes, materials, textures, skeletons and clips of a model as
@@ -550,7 +536,7 @@ import_write :: proc(model:^Imported_Model,options:Import_Options={},allocator:=
 // written again. When the model has nodes, its prefab is the scene of its
 // name, the owner of its meshes and skeletons: the caller writes it
 // (cook/prefab.model_prefab) and records it (output_written), unless
-// prefab_path is "" (o gave it already, or the import keeps it as it is). The report gives, in allocator, the
+// prefab_path is "" (o gave it already). The report gives, in allocator, the
 // ids by row as that of import_write and the prefab; what is written, the
 // warnings and the programs of the model go to the report of o. The files the
 // model was read from are inputs of the import (output_input). Its assets name
@@ -642,14 +628,13 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
         prefab:=[1]Part{{kind=asset.KIND_SCENE,name=name,extension=".scene",only=!w.whole}}
         parts_plan(w,prefab[:])
         w.owner=prefab[0].id
-        _,keeping:=w.keeping[w.owner]
-        w.report.prefab,w.report.prefab_path=w.owner,strings.clone("" if keeping else prefab[0].path,w.allocator)
+        w.report.prefab,w.report.prefab_path=w.owner,strings.clone(prefab[0].path,w.allocator)
         w.report.prefab_info=import_info(source,name,0,model.source_size,model.source_hash,0,model.version)
     }
 
     jobs:=make([dynamic]Texture_Job,context.temp_allocator)
     for image,i in model.images {
-        job:=Texture_Job{name=image.name,srgb=image.srgb,normal_map=image.normal_map,green_down=image.green_down,keep_precision=image.keep_precision,alpha_cutoff=image.alpha_cutoff,alpha_fill=image.alpha_fill,channels=image.channels,index=i,version=model.version,cooked=image.cooked}
+        job:=Texture_Job{name=image.name,srgb=image.srgb,normal_map=image.normal_map,green_down=image.green_down,keep_precision=image.keep_precision,alpha_cutoff=image.alpha_cutoff,channels=image.channels,index=i,version=model.version,cooked=image.cooked}
         if image.path!="" {
             data,read_error:=read_whole(image.path)
             if read_error!=.None {
@@ -728,7 +713,7 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
         parameters:=material_given_parameters(&material,image_ids)
         material_zone:=zone_begin(w.options,"material.save")
         if error:=material_write(w,part.path,existed,{id=part.id,owner=part.owner,info=info,imported=&info,parameters=parameters,imported_parameters=parameters,source=&import_data});error!=.None {return save_failed(w,error,part.path)}
-        record(w,part.id,asset.KIND_MATERIAL,material.name,part.path,source,existed,fmt.tprintf("%s: %s",part.owner!={}?fmt.tprintf("part of %s",name):"of its own",reasons[i]),follows=true)
+        record(w,part.id,asset.KIND_MATERIAL,material.name,part.path,source,existed,fmt.tprintf("%s: %s",part.owner!={}?fmt.tprintf("part of %s",name):"of its own",reasons[i]))
         base.profile_end(material_zone)
     }
 

@@ -47,12 +47,6 @@
   the game's 15 styles. `Highlight_Style` gives color, fill and what is seen behind for each level,
   and the width of its side. The renderer does not know the selection or the editor tools
   ([outlines](frame-graph.md#outlines)).
-- **Without shadows.** An instance with `Instance_Desc.shadowless` (`Mesh_Renderer.shadows` off)
-  is drawn, takes shadows and is seen by every ray that sees surfaces (reflections, probes,
-  contact occlusion), but no shadow ray meets it and no map of the shadows draws it: it is of the
-  class of a batch without `Casts_Shadow` ([BVH](gi.md#bvh-and-acceleration-structures)), and,
-  all glass, a ray that carries light leaves out its filter. Changing it changes its occluder and
-  the light around it, as a move does.
 - **Pools.** Geometry lives in two pools of u32 words: the vertex one (the block of each page of
   each mesh, with the layout of `asset.mesh_page_layout`: vertices, UV1, colors, surface and
   triangles of the page; and the posed vertices of skins and deformables, by mesh vertex index) and
@@ -111,26 +105,18 @@
   clusters that share a vertex place it at the same spot. The shaders read vertices, triangles and
   posed vertices only in `geometry.slang` and `posed.slang`; the CPU, with the `asset` decoders
   (`cluster_vertex`, `mesh_level_decode`) over each page.
-- **Levels.** A static mesh is a DAG of clusters, its foliage pruned group by group; one with
-  skin, whole levels whose clusters share the mesh sphere. Both are drawn with the same cut
-  (`cut.slang`, `cluster_in_cut` on the CPU): a cluster enters when its projected error is within
+- **Levels.** A static mesh is a DAG of clusters; one with skin or pruned foliage, whole levels
+  whose clusters share the mesh sphere. Both are drawn with the same cut (`cut.slang`,
+  `cluster_in_cut` on the CPU): a cluster enters when its projected error is within
   `lod_error_pixels` and that of what replaces it is not.
-- **Foliage changes level without a pop.** A mesh with islands (`MESH_FLAG_ISLANDS`) carries in
-  each vertex where its island goes as the cut moves from the error of its cluster to that of its
-  group (`asset.Island_Vertex`): the G-buffer and the shadow maps move it by how far their own cut
-  has gone (`cluster_along`, `island_offset` of `geometry.slang`), survivors growing and the islands
-  the group drops shrinking one after another, so at the switch the cluster draws what its group
-  does. The same vertex of every draw of a view moves alike; rays meet level 0 at rest. Its boxes
-  hold the islands grown.
 - **Detail of another camera.** The error is projected from `Gpu_Frame.detail_eye`, the eye of
   the view unless `Frame_Desc.detail` holds a camera: then the views of the window take from it
   the levels of the meshes, the cuts rays trace and the levels of the textures, while visibility
   and the image stay those of their own camera. It is what a paused game saw, kept while the
   editor looks closer.
-- The visibility target is drawn with one non-indexed indirect draw per phase and raster bin,
-  whose instance count is written by the culling: one instance per visible cluster, which the
-  vertex shader reads from the visible list; the G-buffer is resolved from it once per pixel
-  ([culling](frame-graph.md#passes)). No binds per material or per object.
+- The G-buffer is drawn with one non-indexed indirect draw per phase, whose instance count is
+  written by the culling: one instance per visible cluster, which the vertex shader reads from the
+  visible list ([culling](frame-graph.md#passes)). No binds per material or per object.
 - `mesh_add` encodes vertices and indices with `asset.mesh_build` at one level and registers them
   with `mesh_add_geometry`, which takes the geometry from a file or that made earlier in a job
   (`host.assets_render_geometry_make`) with its ray cuts. The meshes made at runtime

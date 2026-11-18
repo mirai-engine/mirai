@@ -103,16 +103,13 @@ morph_levels_move_each_vertex_with_the_vertices_it_took_its_attributes_from :: p
     sphere:geom.Mesh_Buffer;geom.mesh_buffer_init(&sphere,context.temp_allocator);geom.sphere_build(&sphere,1,32,16)
     vertices:=make([]asset.Vertex,len(sphere.positions),context.temp_allocator)
     deltas:=make([]asset.Morph_Delta,len(sphere.positions),context.temp_allocator)
-    // Skinned, so it keeps whole levels with vertices of their own.
-    skin:=make([]asset.Skin_Vertex,len(sphere.positions),context.temp_allocator)
-    for &s in skin {s.weights[0]=255}
     for point,i in sphere.positions {
         vertices[i]=test_vertex(point,sphere.normals[i],{})
         deltas[i]={vertex=u32(i),position={point.x*.2,point.y*.3,0},normal={point.x*.1,0,0},tangent={0,point.z,0}}
     }
     targets:=[1]asset.Morph_Target{{count=u32(len(deltas))}}
     asset.text_set(targets[0].name[:],"Inflate")
-    levels:=mesh_levels(vertices,sphere.indices[:],skin,nil,allocator=context.temp_allocator,morphs=targets[:],morph_deltas=deltas)
+    levels:=mesh_levels(vertices,sphere.indices[:],nil,nil,allocator=context.temp_allocator,morphs=targets[:],morph_deltas=deltas)
     if !testing.expect(t,len(levels.lods)>1) {return}
     geometry:asset.Mesh_Geometry
     testing.expect(t,levels_geometry(levels,{},&geometry,context.temp_allocator),"the deltas of every level name their vertices")

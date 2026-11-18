@@ -79,7 +79,7 @@ ENGINE_PACKAGES :: [?]Engine_Package{
     {.Base,"std/spatial","std"},{.Base,"std/jobs","std"},{.Base,"std/anim","std"},{.Base,"std/ai","std"},{.Base,"std/input","std"},
     {.Base,"std/ui_format","std"},
     {.Base,"audio","system"},{.Base,"platform","system"},{.Base,"rhi","system"},
-    {.Base,"project","system"},{.Base,"core",""},
+    {.Base,"project","system"},{.Base,"store","system"},{.Base,"core",""},
 
     {.Engine,"asset",""},{.Engine,"net",""},{.Engine,"render/abi","render"},{.Engine,"render","render"},{.Engine,"third_party/freetype","freetype"},
     {.Engine,"ui","ui"},{.Engine,"host",""},{.Engine,"engine/input","engine"},{.Engine,"engine/scene","engine"},{.Engine,"engine/volume","engine"},

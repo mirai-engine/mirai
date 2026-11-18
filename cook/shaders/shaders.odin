@@ -78,8 +78,7 @@ SLANG_OPTIMIZATION :: []string{
     "-X.",
 }
 @(private)
-// Demote to helper: a fragment stage asks whether it is a helper of its quad (IsHelperLane).
-SPIRV_FLAGS :: []string{"-target","spirv","-profile","sm_6_5","-fvk-use-scalar-layout","-capability","spirv_1_5+spvDemoteToHelperInvocationEXT"}
+SPIRV_FLAGS :: []string{"-target","spirv","-profile","sm_6_5","-fvk-use-scalar-layout","-capability","spirv_1_5"}
 @(private)
 VALIDATE_FLAGS :: []string{"--target-env","vulkan1.2","--scalar-block-layout"}
 // Numeric names avoid Metal keywords such as the DDGI resource ray_data.

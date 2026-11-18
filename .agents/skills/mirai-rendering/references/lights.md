@@ -13,21 +13,8 @@
 - Their shadows open with their size ([shadows](#shadows)). A soft window turns it off at `range`.
 - A spot lights the cone of half angle `angle` around its -Z, with a soft edge.
 - The color of a light is that of its component, independent of the tint of its entity's mesh.
-- **Shares** (`Light_Desc.indirect` and `scattering`, the sun's in `Sun_Desc`): what of its light
-  the probes gather and what media scatter, 0 to the largest half; the direct light of a view does
-  not read them. They travel as two halves in `Gpu_Light.axis.w` (`light_shares`), and a group
-  of the tree keeps the mean of each share of its lights weighed by their light
-  (`Light_Node.indirect` and `scattering`), zero only when all of them are. Zero in a
-  `Light_Desc` is a light that neither bounces nor lights a fog, and costs nothing there: the
-  walks and the cut of a probe hit pass it by, and media never pick it.
 - **Lamps.** Shadow rays stop before the box of their light's sphere: a light inside its lamp
   casts no shadow with it.
-- **Without shadows** (`Light_Desc.shadowless`, the `shadows` of its component off): nothing
-  stops its light, and it costs no shadow work: no map, no cell of the grid, no node of a cut, no
-  ray. It goes to the tree of the scene's lights without shadows
-  ([light tree](#light-tree)), which every pass adds as it adds those a pass writes
-  ([GPU lights](#gpu-lights)): the direct light, the probes and the media take it alike. A sun
-  without them (`Sun_Desc.shadowless`) is `SUN_UNSHADOWED`, as with `Settings.sun_shadows` off.
 - For the rays that gather light (probes and the reference), an emissive instance that contains
   the center of a light and whose box is not much larger than its sphere is that light
   (`hit_on_light`): the hit brings nothing. Its emission would count the light twice, and also
@@ -53,10 +40,8 @@
 
 `render/light_tree.odin`:
 
-- `light_tree_build` sorts the lights along a Z curve, point ones before spots and each by its
-  reach class (`light_reach_class`, four times apart), and builds a binary tree split where the
-  curve passes from one half of the space to the other: no group under the splits of the classes
-  mixes them. It travels in
+- `light_tree_build` sorts the lights along a Z curve, point ones before spots, and builds a
+  binary tree split where the curve passes from one half of the space to the other. It travels in
   a buffer (`SLOT_LIGHT_TREE`) in depth order: the two children of a group go after it, and no
   traversal opens a group that does not satisfy this (`light_node_opens`), so none goes back even
   if it reads a malformed tree.
@@ -66,18 +51,13 @@
   the group: without the cone, a group of downlights that the cut could not open lit the ceiling.
 - A group that contains a spot opens before the others; when the budget is not enough, it
   represents its spots with their cone.
-- **Without shadows.** Those lights form a tree of their own after that of the others
-  (`light_tree_shadowless`), which no traversal from node 0 meets; while every light casts none,
-  the root of those that do is a group of none (`LIGHT_NODE_NONE`), which reaches nothing.
-- **Changes.** While the lights keep their number and each its class (with shadows or without,
-  directed or not, and its reach class), `scene_light_update` refits
+- **Changes.** While the lights keep their number and each its class, `scene_light_update` refits
   the leaf that changed and the groups above it (`light_tree_refit`), past `LIGHT_REFITS_MAX` in a
   frame the whole tree once, and only the changed ranges go; `scene_lights_settle` rebuilds the
   tree once a frame when it inflates beyond `LIGHT_TREE_REFIT_SLACK`. Another number or another
   class is another set (`light_revision`): it is rebuilt and uploaded whole.
-- A group keeps its shortest and longest range. It reaches as far as its longest-reach light,
-  windows its light halfway between both ranges and counts their difference in its error, so it
-  neither loses a light that reaches far among short ones nor lends the short ones its reach.
+- A group that mixes very different reaches reaches as far as its longest-reach light, and the
+  points it reaches traverse more nodes.
 
 ### GPU lights
 
@@ -96,11 +76,10 @@ the grid of the lights holds what of the scene they light.
   each part, its empty leaf: a group written over unwritten children leads to a leaf. A CPU refit
   rebuilds the root with the scene.
 - The lights without shadows do not enter the cut of a point or trace rays: the frame constants
-  give the root of their tree and that of the scene's (`shadowless_lights`, `.xy` and `.zw`) and
-  `shadowless_lighting` adds what both give,
+  give the root of their tree (`shadowless_lights`) and `shadowless_lighting` adds what they give,
   like the [unshadowed light](#unshadowed-light-of-a-pixel) of the others. The direct filter adds
   it to the pixel as it is, without a shadow; `direct_lighting` (hits, probes, glass, overlays and
-  the points that trace their own rays), without rays; the media choose among the trees by
+  the points that trace their own rays), without rays; the media choose between the two trees by
   what each root gives and do not trace the ray of a light without shadow, nor does the
   reference.
 - `pass_lights` in `Simulate` links lights and nodes to write them and says where each part is
@@ -113,28 +92,22 @@ the grid of the lights holds what of the scene they light.
   (`ensure_scene_capacity`): a new or larger region enlarges them before the tree is uploaded.
   The other way around, the copy went past the end of the buffer and the nodes there did not
   exist: a traversal read zeros, groups whose second child is the root.
-- A pass that writes a light gives its shares (`light_shares_bits` of `common.slang`): the
-  particle lights of `vfx` give 1 and 1.
 - What the GI stores of them is not marked as a light change: the probes take them when traced
   ([particles](../../mirai-world/references/vfx.md#particle-lights)).
 
 ### Unshadowed light of a pixel
 
-`local_lighting` and `lights_estimate` walk the tree from the root without entering the groups
-that do not reach it. The pixels of a view's direct light take the lights with shadows from the
-[grid](#direct-light-of-a-view) and those without from it; hits, probes, glass, overlays and the
-points that trace their own rays take both kinds from it:
+`local_lighting` traverses the tree from the root without entering the groups that do not reach
+it. The pixels of a view's direct light do not use it (they take the
+[grid](#direct-light-of-a-view)); hits, probes, glass, overlays and the points that trace their own
+rays do:
 
 - A group represents its lights as a sphere while its bounded error is small compared with the
   light that reaches the point: by the curvature of the falloff and of the cosine across its
   lights, by all its light where they are on both sides of the horizon, and by the variation of
   the reach window. Between the represent threshold and the open threshold, group and children add
   in gradual proportions. A group that is near relative to its size always opens.
-- The light it errs against includes what the point already has: the sun and the lights with
-  shadows of the pixel (`direct_filter`) or of the hit (`direct_lighting`).
-- A walk visits at most `LIGHT_WALK_MAX` nodes, opening first the group whose light is most at
-  stake; past them, the groups it holds stand for their lights. Its cost does not grow with the
-  lights that reach a point, and it is the same every frame.
+- Deterministic: it is the same every frame.
 
 ### Cutoff of a point that traces its own rays
 
@@ -213,11 +186,9 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   of the cube takes one map along its cone; the cascades of the sun end where the scene ends. They
   draw the clusters of the instances of the scene and of the batches that cast shadows at the detail
   a texel of the map asks for where they lie (`shadow_map_detail`), not the eye, and leave out an
-  instance smaller than a texel of the map (`shadow_map_unseen`). Those of masked materials are
-  drawn apart, with their coverage as a shadow ray asks it: a masked material without
-  a program samples its alpha with the derivatives of its uvs, a texel of the map wide, and the
-  others ask `hit_covers`; glass only in the tint. They are culled as the view culls its own: by
-  instance and map, which hands the
+  instance smaller than a texel of the map (`shadow_map_unseen`). Those of an instance with masked
+  materials are drawn apart, with their coverage as a shadow ray asks it (`hit_covers`); glass only
+  in the tint. They are culled as the view culls its own: by instance and map, which hands the
   clusters of the levels the cut of the map can take (`instance_clusters`) to a pass by cluster in
   chunks, into lists that count what does not fit and grow, like those of the view.
 - **Cache of the maps.** The cost follows what changed. A map the plan wants the same as the frame
@@ -226,10 +197,7 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   by whole texels across the light keeps its square too: what it held moves with it, and it draws
   only the strips that came in (a job draws a window of a map). It draws a map again, in the same
   frame, only where it is new or what stays changed in its frustum: an instance that came, went or
-  changed its box or pose, a page of its mesh, a masked material. Of the cascades of the sun that
-  want another projection (the sun turned, the eye jumped), only the one whose projection is the
-  oldest takes it and is drawn whole each frame; the others keep theirs, with what the cache holds,
-  until their turn, so a turning sun costs one cascade a frame. An instance that changes again
+  changed its box or pose, a page of its mesh, a masked material. An instance that changes again
   within `SHADOW_MOVER_FRAMES` moves
   (`Shadow_Movers`): the cache leaves it out once, and every frame draws what moves over a copy of
   the cache until it stays that long and joins it again, so a moving body does not throw the cache
@@ -295,10 +263,8 @@ Tests: the shadow ones of `render/render_test.odin` (`render_sun_shadow_is_ray_t
 `render_a_wider_light_casts_a_softer_shadow`,
 `render_an_edge_takes_no_light_from_the_face_beyond_it` and, for the cache of the maps,
 `render_moved_cascades_give_what_whole_ones_give` and
-`render_shadow_maps_follow_what_moves_in_its_frame`, and for the lights and the sun without
-shadows `render_a_light_without_shadows_lights_through_what_holds_it`, and for a mesh without
-them `render_a_mesh_without_shadows_lets_the_sun_through`) and, for the grid and
-the groups of lights, `render_many_lights_match_their_reference`,
+`render_shadow_maps_follow_what_moves_in_its_frame`) and, for the grid and the groups of
+lights, `render_many_lights_match_their_reference`,
 `render_lights_that_few_reach_at_a_time_are_each_lit` and
 `render_groups_of_lights_give_what_their_lights_give`.
 

@@ -57,18 +57,18 @@ lights_reach_a_white_surface_with_the_luminance_their_units_give :: proc(t: ^tes
 	if !units_fixture(t, &f) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	scene_given(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true, indirect = 1, scattering = 1}, {})
+	scene_given(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {})
 	testing.expect(t, renderer_frame(r, {camera = DOWN}), r.error)
 	testing.expectf(t, r.scene.light_scale == math.pow(f32(2), -15), "a sunlit scene takes a light scale near its sun: %v", r.scene.light_scale)
 	sunlit := nits_at_center(t, &f, r.targets.direct)
 	testing.expectf(t, near(sunlit, 100000 / math.PI, 0.01), "100000 lux give a white Lambert surface %v nits, not 100000 / pi", sunlit)
 	// 1000 cd two metres above: 250 lux.
-	scene_given(r, {f.floor}, {{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 1000, range = 100, indirect = 1, scattering = 1}}, {}, {})
+	scene_given(r, {f.floor}, {{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 1000, range = 100}}, {}, {})
 	testing.expect(t, renderer_frame(r, {camera = DOWN}), r.error)
 	lamp := nits_at_center(t, &f, r.targets.direct)
 	testing.expectf(t, near(lamp, 250 / math.PI, 0.02), "1000 candela at 2 m give %v nits, not 250 / pi", lamp)
 	// A square of 10 cm glowing at 20000 nits two metres above: 200 cd towards the floor.
-	scene_given(r, {f.floor}, {{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 20000, range = 100, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {0.1, 0.1}, indirect = 1, scattering = 1}}, {}, {})
+	scene_given(r, {f.floor}, {{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 20000, range = 100, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {0.1, 0.1}}}, {}, {})
 	testing.expect(t, renderer_frame(r, {camera = DOWN}), r.error)
 	panel := nits_at_center(t, &f, r.targets.direct)
 	testing.expectf(t, near(panel, 50 / math.PI, 0.02), "20000 nits over 0.01 m^2 at 2 m give %v nits, not 50 / pi", panel)
@@ -128,7 +128,7 @@ the_exposure_meters_the_image_or_follows_the_camera :: proc(t: ^testing.T) {
 	defer fixture_destroy(&f)
 	r := f.renderer
 	renderer_set_display_transform(r, .ACES_2)
-	scene_given(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true, indirect = 1, scattering = 1}, {})
+	scene_given(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {})
 	metered := DOWN
 	metered.exposure = {}
 	testing.expect(t, renderer_frame(r, {camera = metered, time = 0}), r.error)
@@ -153,7 +153,7 @@ the_exposure_meters_the_image_or_follows_the_camera :: proc(t: ^testing.T) {
 	adapting.exposure.range = {-6, 24}
 	adapting.exposure.adaptation, adapting.exposure.own = 1, true
 	time := f32(0)
-	strong := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1600000, enabled = true, indirect = 1, scattering = 1}
+	strong := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1600000, enabled = true}
 	weak := strong
 	weak.illuminance = 100000
 	scene_given(r, {f.floor}, nil, strong, {})
@@ -204,7 +204,7 @@ a_parallel_view_meters_its_surfaces_and_not_its_sky :: proc(t: ^testing.T) {
 	if !units_fixture(t, &f) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	scene_given(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true, indirect = 1, scattering = 1}, {sky = {20, 20, 20}})
+	scene_given(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {sky = {20, 20, 20}})
 	time := f32(0)
 	close := DOWN
 	close.exposure = {}
@@ -254,7 +254,7 @@ a_relative_emission_shows_its_value_at_any_exposure_and_is_not_metered :: proc(t
 	glow.unlit, glow.emission, glow.emission_mode = true, {0.5, 0.25, 0.1}, .Relative
 	materials_set(r, {lambert, glow})
 	// A sun a meter does not clamp: the floor shows 1000 / pi nits.
-	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1000, enabled = true, indirect = 1, scattering = 1}
+	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1000, enabled = true}
 	scene_given(r, {f.floor, glow_over_the_left(&f)}, nil, sun, {})
 	for ev in ([2]f32{11, 3}) {
 		camera := DOWN
@@ -297,7 +297,7 @@ a_relative_emission_follows_an_adapting_exposure_a_frame_behind :: proc(t: ^test
 	materials_set(r, {lambert, glow})
 	camera := DOWN
 	camera.exposure = {range = {-6, 24}, adaptation = 1, own = true}
-	strong := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1600000, enabled = true, indirect = 1, scattering = 1}
+	strong := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1600000, enabled = true}
 	weak := strong
 	weak.illuminance = 100000
 	scene_given(r, {f.floor, glow_over_the_left(&f)}, nil, strong, {})
@@ -369,7 +369,7 @@ with_nothing_to_meter_the_exposure_begins_at_the_strongest_light :: proc(t: ^tes
 	materials_set(r, {glow})
 	covering := f.floor
 	covering.material = 1
-	scene_given(r, {covering}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true, indirect = 1, scattering = 1}, {background = {0, 0, 0}, use_background = true})
+	scene_given(r, {covering}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {background = {0, 0, 0}, use_background = true})
 	camera := DOWN
 	camera.exposure = {}
 	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera, time = 0}), r.error)}
@@ -387,7 +387,7 @@ the_scene_exposes_the_views_whose_camera_has_no_exposure :: proc(t: ^testing.T) 
 	defer fixture_destroy(&f)
 	r := f.renderer
 	renderer_set_display_transform(r, .ACES_2)
-	scene_given(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true, indirect = 1, scattering = 1}, {})
+	scene_given(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {})
 	metered := DOWN
 	metered.exposure = {}
 	testing.expect(t, renderer_frame(r, {camera = metered, time = 0}), r.error)

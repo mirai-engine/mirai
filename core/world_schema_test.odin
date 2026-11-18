@@ -78,16 +78,4 @@ an_indexed_world_info_finds_what_its_lists_hold_and_describes_its_values_once ::
     testing.expect(t,world.type!=serial.TYPE_NONE && len(world.layout.runs)==0,"a world transform is transient: nothing of it is saved")
     testing.expect(t,schema.storages[0].type==serial.TYPE_NONE,"only the storages of the scene are described")
     testing.expect(t,schema.storages[2].type!=serial.TYPE_NONE && schema.storages[2].layout.dense)
-    testing.expect(t,schema.schema.types[schema.storages[2].type].default==nil,"a type without a default starts at zeros")
-
-    // A type with a default carries it, saved as a value is, into the files written with it.
-    started:=listed
-    started.storages=slice.clone(listed.storages,context.temp_allocator)
-    started.storages[2].default=proc(dst:rawptr) {(^Progress)(dst)^=Progress{level=1}}
-    started.schema=world_schema_make(&started)
-    defer world_schema_destroy(started.schema)
-    if testing.expect(t,started.schema!=nil) {
-        want:=Progress{level=1}
-        testing.expect(t,slice.equal(started.schema.schema.types[started.schema.storages[2].type].default,([^]u8)(&want)[:size_of(Progress)]))
-    }
 }

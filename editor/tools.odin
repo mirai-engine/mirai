@@ -47,7 +47,6 @@ Import_Params :: struct {
     rig_neck:f32 `mirai:"optional,min=0,unit=m,label=With rig humanoid: the height of the neck in the model; 0 is where the fit finds it"`,
     skeleton:[API_PATH_BYTES]u8 `mirai:"text,optional,label=Of a model: the id of a .skeleton of the project (with the same bones) its clips play on; the import writes only its clips, as an .anim bound to it, and no meshes, materials, skeleton or prefab. Of a source in the project the choice stays in its settings. Empty: what they say"`,
     front:[16]u8 `mirai:"text,optional,label=Of a model: where it stands facing once imported, when that is not the -Z every model faces: z, x or negative_x turn it about +Y to -Z with all its file holds; negative_z keeps it as read; auto turns a file that is a rig (all it draws is skinned) from where the body of its skeleton is found facing, and keeps any other as read. Of a source in the project the choice stays in its settings. Empty: what they say"`,
-    discard_changes:bool `mirai:"optional,label=Writes over the assets of the source that changed since it was last imported (the entities added to the scene it wrote); without it, importing over a change fails naming what changed"`,
     image:[24]u8 `mirai:"text,optional,label=Of an image: what it holds; color (sRGB) or data (linear: a packed metallic-roughness or occlusion or a mask) or normal or normal_green_down (DirectX). Of a source in the project the choice stays in its settings. Empty: what they say or else what its name says"`,
 }
 
@@ -84,7 +83,7 @@ Graphics_Status :: struct {
     vsync:bool,
     frame_generation:bool `mirai:"label=Asked for: only a technique that offers it (FSR 3.1) generates frames"`,
     generated:bool `mirai:"label=The last frame drew an image shown before its own"`,
-    resolution:u32 `mirai:"label=The lines the views of the window aim for, never above one pixel per point; 0, Native: those they span"`,
+    resolution:u32 `mirai:"label=The lines the views of the window aim for, never above one pixel per point"`,
     antialiasing:[24]u8 `mirai:"text,label=The technique of the setting: off or taa or one a plugin offers"`,
     options:[GRAPHICS_ROWS_CAPACITY]Api_Graphics_Option `mirai:"trim,label=Every option of the popup with its choices"`,
     fps,gpu_ms:f32,
@@ -180,7 +179,7 @@ api_asset_import :: proc(s:^Session,call:^api.Call) {
         }
         front=stated
     }
-    if !import_file(s,path,folder,params.profile,rig,image,skeleton,front,params.discard_changes) {
+    if !import_file(s,path,folder,params.profile,rig,image,skeleton,front) {
         api.call_fail(call,api.SERVER_ERROR,string(s.importer.message[:s.importer.message_length]))
         return
     }

@@ -568,7 +568,6 @@ app_worlds_migrate :: proc(app:^App,m:^core.World_Migration,editor:rawptr) -> bo
     if .Shared in m.places && !fits(app,app.shared,to.sizes[.Shared]) {return false}
     if .Editor in m.places && !fits(app,editor,to.sizes[.Editor]) {return false}
     app.info=to
-    if app.assets!=nil {app.assets.types.defaults=&to.schema.schema if to.schema!=nil else nil}
     if .Shared in m.places && app.shared!=nil {place_replace(app,m,.Shared,app.shared)}
     if .Editor in m.places && editor!=nil {place_replace(app,m,.Editor,editor)}
     if .World in m.places {

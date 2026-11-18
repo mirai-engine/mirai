@@ -58,11 +58,8 @@ are kept here and, where the license asks for it, in the header of the file.
   `std/geom/delaunay.odin`. Game.
 - **meshoptimizer 1.3** (MIT; © 2016-2026 Arseny Kapoulkine),
   <https://github.com/zeux/meshoptimizer>.
-  `std/geom/simplify.odin`, `cluster.odin`, `partition.odin` and `cluster_dag.odin` (the builder
-  of `demo/clusterlod.h` with the retry of its stuck groups), and its rules for groups (error the
-  largest of the children's and its own, sphere around theirs, a stuck group a root) in the groups
-  of islands of `cluster_islands.odin`. Game. That retry where whole levels
-  stop in `cook/import/levels.odin`, the vertex codec and the quaternion and exponential filters of
+  `std/geom/simplify.odin`, `cluster.odin`, `partition.odin` and `cluster_dag.odin`. Game.
+  The vertex codec and the quaternion and exponential filters of
   `cook/import/gltf/meshopt.odin`. Editor.
 - **Mesh2Motion** (MIT; © 2025 Scott Petrovic), <https://github.com/Mesh2Motion/mesh2motion-app>.
   The skinning solvers of `cook/rig/weights.odin`, altered. Editor.

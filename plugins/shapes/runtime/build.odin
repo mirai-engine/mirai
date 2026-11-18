@@ -44,8 +44,6 @@ Shape_Geometry :: struct {
     indices,sizes:[dynamic]u32,
     ribbon:[dynamic][3]f32,     // of a spline, rows of columns points: what the build makes its mesh from
     columns:int,
-    uv1s:[dynamic]geom.Vec2,    // of a bent mesh whose asset has a second set: one per vertex of mesh
-    mirrored:[dynamic]bool,     // of a bent mesh, per vertex: the bend mirrors it there
 }
 
 shape_geometry_init :: proc(g:^Shape_Geometry,allocator:=context.allocator) {
@@ -59,22 +57,19 @@ shape_geometry_init :: proc(g:^Shape_Geometry,allocator:=context.allocator) {
     g.indices=make([dynamic]u32,allocator)
     g.sizes=make([dynamic]u32,allocator)
     g.ribbon=make([dynamic][3]f32,allocator)
-    g.uv1s=make([dynamic]geom.Vec2,allocator)
-    g.mirrored=make([dynamic]bool,allocator)
 }
 
 shape_geometry_destroy :: proc(g:^Shape_Geometry) {
     geom.mesh_buffer_destroy(&g.mesh);geom.mesh_buffer_destroy(&g.collision)
     geom.mesh_buffer_destroy(&g.brush);geom.mesh_buffer_destroy(&g.work)
     delete(g.disabled_edges);delete(g.pieces.points);delete(g.pieces.sizes);delete(g.indices);delete(g.sizes);delete(g.ribbon)
-    delete(g.uv1s);delete(g.mirrored)
     g^={}
 }
 
 @(private)
 shape_geometry_clear :: proc(g:^Shape_Geometry) {
     geom.mesh_buffer_clear(&g.mesh);geom.mesh_buffer_clear(&g.collision)
-    clear(&g.disabled_edges);clear(&g.pieces.points);clear(&g.pieces.sizes);clear(&g.uv1s)
+    clear(&g.disabled_edges);clear(&g.pieces.points);clear(&g.pieces.sizes)
 }
 
 // Builds the mesh of a shape and what collides: for a body its convex

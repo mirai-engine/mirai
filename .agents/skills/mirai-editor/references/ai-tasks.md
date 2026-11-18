@@ -370,10 +370,8 @@ The chat outlives any native context of its agent.
   changes wait for review.
 - **Reopening the editor** continues the same visible chat with a clean context: a new native
   session with a handoff, after a divider (`AI_REOPENED_NOTE`). The restart that a Build causes
-  resumes the same native sessions, once (`ai_resume_native_mark`): the subagents that were working,
-  and the main chat if it was, each take `AI_BUILD_RESUME` as their next turn, a delivery that
-  starts once nothing holds it. After any other closing the subagents that were working come back
-  `interrupted`: nothing starts them but a message to them, and the handoff lists them.
+  resumes the same native session, once (`ai_resume_native_mark`). The subagents that were working
+  come back `interrupted`: nothing starts them but a message to them, and the handoff lists them.
   Closing the editor with agents working still asks
   ([exiting](document.md#quitting-new-and-open-with-agents-working)).
 

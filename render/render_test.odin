@@ -4,7 +4,6 @@ import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
-import "core:slice"
 import "core:testing"
 import "core:time"
 import "mirai:rhi"
@@ -98,7 +97,7 @@ render_sun_shadow_is_ray_traced :: proc(t: ^testing.T) {
 		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {0.8, 0.8, 0.8}},
 		{object_id = 2, mesh = f.cube, transform = trs({0, 1.5, 0}, {2, 0.2, 2}), tint = {0.5, 0.5, 0.5}},
 	}
-	scene_given(r, instances, nil, {direction = {0.05, 1, 0.02}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0.3, 0.4, 0.6}})
+	scene_given(r, instances, nil, {direction = {0.05, 1, 0.02}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}, {sky = {0.3, 0.4, 0.6}})
 	camera := Camera{position = {0, 8, 7}, forward = {0, -8, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 12 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	rhi.device_wait_idle(f.device)
@@ -113,51 +112,6 @@ render_sun_shadow_is_ray_traced :: proc(t: ^testing.T) {
 	lit := pixel(pixels, w, project(r, camera, {3.5, 0.001, 2.5}))
 	testing.expectf(t, lit[0] > shadow[0] + 40, "lit floor %v must be brighter than the shadowed floor %v", lit, shadow)
 	testing.expect(t, r.stats.instances == 2)
-	expect_clean(t, f.device)
-}
-
-// A slab without shadows is drawn and lets the sun through: the floor under
-// it is lit as without it, by each tracer. It stops casting in a change of
-// the scene, which takes it out of the maps the frames before drew.
-@(test)
-render_a_mesh_without_shadows_lets_the_sun_through :: proc(t: ^testing.T) {
-	f: Cube_Fixture
-	if !cube_fixture_init(t, &f, 192, 128, test_settings()) {return}
-	defer fixture_destroy(&f)
-	r := f.renderer
-	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {0.8, 0.8, 0.8}}
-	slab := Instance_Desc{object_id = 2, mesh = f.cube, transform = trs({0, 1.5, 0}, {2, 0.2, 2}), tint = {0.5, 0.5, 0.5}}
-	sun := Sun_Desc{direction = {0.05, 1, 0.02}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true, indirect = 1, scattering = 1}
-	sky := Environment{sky = {0.3, 0.4, 0.6}}
-	camera := Camera{position = {0, 8, 7}, forward = {0, -8, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	under, top := project(r, camera, {0, 0.001, 0.8}), project(r, camera, {0, 1.6, 0})
-	for mode in ([]Trace_Mode{.Software, .Hardware}) {
-		if mode == .Hardware && !r.hardware_rt_verified {continue}
-		applied := r.settings
-		applied.trace_mode = mode
-		testing.expect(t, renderer_apply_settings(r, applied))
-		// Without the slab, with it, and with it given again without shadows.
-		lit, seen: [3]Vec3
-		for k in 0 ..< 3 {
-			switch k {
-			case 0: testing.expect(t, scene_given(r, {floor}, nil, sun, sky), r.error)
-			case 1: testing.expect(t, scene_given(r, {floor, slab}, nil, sun, sky), r.error)
-			case 2:
-				shadowless := slab
-				shadowless.shadowless = true
-				testing.expect(t, scene_update(r, 1, {shadowless}), r.error)
-			}
-			for _ in 0 ..< 12 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
-			rhi.device_wait_idle(f.device)
-			pixels, w, _, ok := golden_capture(r)
-			if !testing.expect(t, ok, r.error) {return}
-			lit[k], seen[k] = pixel(pixels, w, under), pixel(pixels, w, top)
-			delete(pixels)
-		}
-		testing.expectf(t, lit[1].x + 40 < lit[0].x, "%v: the slab shades the floor: %v under it, %v without it", mode, lit[1], lit[0])
-		testing.expectf(t, abs(lit[2].x - lit[0].x) < 12, "%v: the slab without shadows lets the sun through: %v under it, %v without it", mode, lit[2], lit[0])
-		testing.expectf(t, abs(seen[2].x - seen[1].x) < 4 && abs(seen[2].x - seen[0].x) > 20, "%v: the slab without shadows is drawn: %v, %v with them, %v without the slab", mode, seen[2], seen[1], seen[0])
-	}
 	expect_clean(t, f.device)
 }
 
@@ -178,7 +132,7 @@ render_soft_shadow_blurs_with_the_distance_to_its_caster :: proc(t: ^testing.T) 
 		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {14, 0.2, 14}), tint = {0.8, 0.8, 0.8}},
 		{object_id = 2, mesh = f.cube, transform = trs({0, 2, 0}, {0.2, 4, 6}), tint = {0.5, 0.5, 0.5}},
 	}
-	scene_given(r, instances, nil, {direction = {1, 1, 0}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0, 0, 0}})
+	scene_given(r, instances, nil, {direction = {1, 1, 0}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}, {sky = {0, 0, 0}})
 	camera := Camera{position = {-2, 7, 0.001}, forward = {0, -7, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 12 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	rhi.device_wait_idle(f.device)
@@ -217,7 +171,7 @@ render_soft_shadow_leaves_with_its_caster :: proc(t: ^testing.T) {
 		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {0.8, 0.8, 0.8}},
 		{object_id = 2, mesh = f.cube, transform = trs({0, 1.5, 0}, {2, 0.2, 2}), tint = {0.5, 0.5, 0.5}},
 	}
-	sun := Sun_Desc{direction = {0.05, 1, 0.02}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	sun := Sun_Desc{direction = {0.05, 1, 0.02}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
 	scene_given(r, instances, nil, sun, {sky = {0, 0, 0}})
 	camera := Camera{position = {0, 8, 7}, forward = {0, -8, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	under, beside := Vec3{0, 0.001, 0.8}, Vec3{3.5, 0.001, 2.5}
@@ -258,7 +212,7 @@ render_shadow_maps_follow_what_moves_in_its_frame :: proc(t: ^testing.T) {
 		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {16, 0.2, 16}), tint = {0.8, 0.8, 0.8}},
 		{object_id = 2, mesh = f.cube, transform = slab(-1), tint = {0.5, 0.5, 0.5}},
 	}
-	light := Light_Desc{position = {0, 3, 0}, color = {1, 1, 1}, intensity = 30 * math.PI, range = 14, indirect = 1, scattering = 1}
+	light := Light_Desc{position = {0, 3, 0}, color = {1, 1, 1}, intensity = 30 * math.PI, range = 14}
 	testing.expect(t, scene_given(r, instances, []Light_Desc{light}, {}, {}))
 	camera := Camera{position = {0, 9, 0.001}, forward = {0, -9, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	// After one frame, the floor at `dark` is in shadow and the one as far from the light at `lit` is not.
@@ -310,7 +264,7 @@ render_moved_cascades_give_what_whole_ones_give :: proc(t: ^testing.T) {
 	for k in 1 ..< len(instances) {
 		instances[k] = {object_id = u64(k + 1), mesh = f.cube, transform = trs({f32(k % 3) * 2.3 - 2.3, 0.8, f32(k / 3) * 2.1 - 3}, {0.3, 1.6, 0.3}), tint = {0.5, 0.5, 0.5}}
 	}
-	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
 	testing.expect(t, scene_given(r, instances[:], nil, sun, {sky = {0, 0, 0}}))
 	camera := Camera{position = {0, 5, 7}, forward = {0, -5, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	read :: proc(t: ^testing.T, f: ^Cube_Fixture) -> []u8 {
@@ -333,69 +287,6 @@ render_moved_cascades_give_what_whole_ones_give :: proc(t: ^testing.T) {
 	differ := 0
 	for v, k in moved {if abs(int(v) - int(whole[k])) > 2 {differ += 1}}
 	testing.expectf(t, differ * 1000 <= len(moved), "%d of %d values differ from the maps drawn whole", differ, len(moved))
-	expect_clean(t, f.device)
-}
-
-// A turning sun takes a new projection for one cascade a frame, the one that
-// took its own longest ago; once it stops, the cascades it caught up with
-// give what maps drawn whole give.
-@(test)
-render_a_turning_sun_redraws_one_cascade_a_frame :: proc(t: ^testing.T) {
-	f: Cube_Fixture
-	settings := test_settings()
-	settings.gi_enabled = false
-	settings.taa = false
-	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
-	defer fixture_destroy(&f)
-	r := f.renderer
-	instances: [10]Instance_Desc
-	instances[0] = {object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {40, 0.2, 40}), tint = {0.8, 0.8, 0.8}}
-	for k in 1 ..< len(instances) {
-		instances[k] = {object_id = u64(k + 1), mesh = f.cube, transform = trs({f32(k % 3) * 2.3 - 2.3, 0.8, f32(k / 3) * 2.1 - 3}, {0.3, 1.6, 0.3}), tint = {0.5, 0.5, 0.5}}
-	}
-	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
-	environment := Environment{sky = {0, 0, 0}}
-	testing.expect(t, scene_given(r, instances[:], nil, sun, environment))
-	camera := Camera{position = {0, 5, 7}, forward = {0, -5, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-	b := &r.main.targets.shadow_raster
-	planned :: proc(b: ^Shadow_Raster) -> (cascades: [SHADOW_MAPS_MAX]u64, count: int) {
-		for h in b.held[:b.held_count] {
-			if h.light >= 0 {continue}
-			cascades[h.face] = h.planned
-			count = max(count, int(h.face) + 1)
-		}
-		return
-	}
-	_, cascades := planned(b)
-	testing.expectf(t, cascades > 1, "the sun takes %d cascades", cascades)
-	for k in 0 ..< 2 * cascades {
-		before, _ := planned(b)
-		sun.direction.x = 0.4 + 0.02 * f32(k + 1)
-		scene_set_environment(r, sun, environment)
-		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-		after, _ := planned(b)
-		taken := 0
-		for i in 0 ..< cascades {if after[i] != before[i] {taken += 1}}
-		testing.expectf(t, taken == 1, "frame %d of a turning sun took %d new cascades", k, taken)
-	}
-	for _ in 0 ..< cascades {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
-	read :: proc(t: ^testing.T, f: ^Cube_Fixture) -> []u8 {
-		rhi.device_wait_idle(f.device)
-		pixels, _, _, ok := golden_capture(f.renderer)
-		testing.expect(t, ok, f.renderer.error)
-		return pixels
-	}
-	caught := read(t, &f)
-	defer delete(caught)
-	b.held_count = 0
-	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-	whole := read(t, &f)
-	defer delete(whole)
-	if len(caught) != len(whole) || len(caught) == 0 {return}
-	differ := 0
-	for v, k in caught {if abs(int(v) - int(whole[k])) > 2 {differ += 1}}
-	testing.expectf(t, differ * 1000 <= len(caught), "%d of %d values differ from the maps drawn whole", differ, len(caught))
 	expect_clean(t, f.device)
 }
 
@@ -484,8 +375,8 @@ render_culls_and_keeps_steady_frames_allocation_free :: proc(t: ^testing.T) {
 		{object_id = 1, mesh = f.cube, transform = trs({0, 0, 0}, {1, 1, 1}), tint = {0.8, 0.2, 0.2}},
 		{object_id = 2, mesh = f.cube, transform = trs({0, 0, 30}, {1, 1, 1}), tint = {0.2, 0.8, 0.2}}, // behind the camera
 	}
-	lights := []Light_Desc{{position = {1, 2, 1}, color = {1, 0.9, 0.8}, intensity = 10 * math.PI, range = 10, indirect = 1, scattering = 1}}
-	scene_given(r, instances, lights, {direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0.2, 0.3, 0.5}})
+	lights := []Light_Desc{{position = {1, 2, 1}, color = {1, 0.9, 0.8}, intensity = 10 * math.PI, range = 10}}
+	scene_given(r, instances, lights, {direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}, {sky = {0.2, 0.3, 0.5}})
 	camera := Camera{position = {0, 1, 5}, forward = {0, -1, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	testing.expect_value(t, r.stats.culled_instances, u32(1))
@@ -513,7 +404,7 @@ render_two_phase_occlusion_culls_without_popping :: proc(t: ^testing.T) {
 	camera := Camera{position = {0, 1, 6}, forward = {0, 0, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	hidden_cube := Instance_Desc{object_id = 2, mesh = f.cube, transform = trs({0, 1, -2}, {0.5, 0.5, 0.5}), tint = {0, 0.9, 0}, emission = {0, 2, 0}}
 	wall := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, 1, 2}, {6, 4, 0.2}), tint = {0.5, 0.5, 0.5}}
-	sun := Sun_Desc{direction = {0.2, 1, 0.3}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	sun := Sun_Desc{direction = {0.2, 1, 0.3}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}
 	scene_given(r, []Instance_Desc{wall, hidden_cube}, nil, sun, {sky = {0.2, 0.2, 0.2}})
 	for _ in 0 ..< 5 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	testing.expectf(t, r.stats.occluded_instances == 1 && r.stats.visible_instances == 1, "wall hides the cube: occluded %d visible %d", r.stats.occluded_instances, r.stats.visible_instances)
@@ -556,7 +447,7 @@ lights_field :: proc(f: ^Cube_Fixture, count: int, range: f32, height: f32 = 3.5
 			x |= ((u32(i) >> (2 * bit)) & 1) << (4 - bit)
 			z |= ((u32(i) >> (2 * bit + 1)) & 1) << (4 - bit)
 		}
-		l = {position = {-9 + 18 * (f32(x) + 0.5) / 32, height, -8 + 16 * (f32(z) + 0.5) / 32}, color = {1, 0.7, 0.4}, intensity = (2 * 256 / f32(count)) * math.PI, range = range, radius = radius, indirect = 1, scattering = 1}
+		l = {position = {-9 + 18 * (f32(x) + 0.5) / 32, height, -8 + 16 * (f32(z) + 0.5) / 32}, color = {1, 0.7, 0.4}, intensity = (2 * 256 / f32(count)) * math.PI, range = range, radius = radius}
 	}
 	scene_given(f.renderer, instances[:], lights, {}, {})
 }
@@ -684,11 +575,7 @@ render_lights_that_few_reach_at_a_time_are_each_lit :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
-// Lights that the tree adds up by groups give what they give one by one, the
-// same from one frame to the next: a ring of lights with shadows; lights
-// without them, one dim that reaches far among bright ones that reach a
-// little, which a group of them lost beyond the mean of their ranges; and a
-// crowd of lights without them, more than a walk visits, under the sun.
+// Lights that the tree adds up by groups give what they give one by one.
 @(test)
 render_groups_of_lights_give_what_their_lights_give :: proc(t: ^testing.T) {
 	f: Cube_Fixture
@@ -698,70 +585,32 @@ render_groups_of_lights_give_what_their_lights_give :: proc(t: ^testing.T) {
 	if !cube_fixture_init(t, &f, 64, 48, settings, programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	Case :: enum {Ring, Reaches, Crowd}
-	for c in Case {
-		lights := make([dynamic]Light_Desc, context.temp_allocator)
-		sun: Sun_Desc
-		camera := Camera{position = {0, 6, 0.01}, forward = {0, -6, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-		// The part of the floor compared, from a corner to the other.
-		low, high := Vec3{-2, 0, -1.5}, Vec3{2, 0, 1.5}
-		switch c {
-		case .Ring:
-			for i in 0 ..< 24 {
-				angle := f32(i) / 24 * 2 * math.PI
-				radius := f32(1 + i % 3)
-				append(&lights, Light_Desc{position = {math.cos(angle) * radius, 1.2, math.sin(angle) * radius}, color = {0.4 + 0.6 * f32(i % 2), 0.5, 0.4 + 0.6 * f32(i % 3) / 2}, intensity = 0.25 * math.PI, range = 6, indirect = 1, scattering = 1})
-			}
-		case .Reaches:
-			for i in 0 ..< 12 {
-				angle := f32(i) / 12 * 2 * math.PI
-				append(&lights, Light_Desc{position = {-4.5 + 0.4 * math.cos(angle), 0.6, -4.5 + 0.4 * math.sin(angle)}, color = {1, 0.8, 0.6}, intensity = 2000, range = 1.5, indirect = 1, scattering = 1, shadowless = true})
-			}
-			append(&lights, Light_Desc{position = {-4.5, 0.6, -4.5}, color = {1, 0.9, 0.8}, intensity = 150, range = 350, indirect = 1, scattering = 1, shadowless = true})
-			camera = {position = {0, 14, 0.01}, forward = {0, -14, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-			low, high = {-1, 0, -1}, {5, 0, 5}
-		case .Crowd:
-			for i in 0 ..< 256 {
-				// Spread through a ball of 1 m by the golden angle.
-				height := 1 - 2 * (f32(i) + 0.5) / 256
-				inside := math.pow((f32(i % 16) + 0.5) / 16, f32(1) / 3)
-				across := math.sqrt(1 - height * height) * inside
-				angle := f32(i) * 2.3999632
-				append(&lights, Light_Desc{position = {across * math.cos(angle), 1.8 + height * inside, across * math.sin(angle)}, color = {0.5 + 0.5 * f32(i % 2), 0.7, 0.5 + 0.5 * f32(i % 3) / 2}, intensity = 0.015 * math.PI, range = 8, radius = 0.02, indirect = 1, scattering = 1, shadowless = true})
-			}
-			sun = {direction = linalg.normalize(Vec3{0.3, 1, 0.2}), color = {1, 0.95, 0.9}, illuminance = 0.5 * math.PI, enabled = true, indirect = 1, scattering = 1}
-		}
-		floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {1, 1, 1}}
-		scene_given(r, []Instance_Desc{floor}, lights[:], sun, {})
-		exact, ok := reference_image(t, &f, camera, 1, .Direct)
-		if !ok {return}
-		defer delete(exact)
-		renderer_camera_cut(r)
-		for _ in 0 ..< 6 {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Direct}}), r.error)}
-		rhi.device_wait_idle(f.device)
-		grouped, w, _, ok2 := golden_capture(r)
-		testing.expect(t, ok2, r.error)
-		if !ok2 {return}
-		defer delete(grouped)
-		testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Direct}}), r.error)
-		rhi.device_wait_idle(f.device)
-		next, _, _, ok3 := golden_capture(r)
-		testing.expect(t, ok3, r.error)
-		if !ok3 {return}
-		defer delete(next)
-		a, b := project(r, camera, low), project(r, camera, high)
-		x0, y0, x1, y1 := min(a.x, b.x), min(a.y, b.y), max(a.x, b.x), max(a.y, b.y)
-		reference := region_mean(exact, w, x0, y0, x1, y1)
-		estimate := region_mean(grouped, w, x0, y0, x1, y1)
-		testing.expectf(t, reference[0] > 40, "%v: direct light is visible: %v", c, reference)
-		for k in 0 ..< 3 {
-			testing.expectf(t, abs(estimate[k] - reference[k]) <= 0.04 * reference[k] + 2, "%v: channel %d: by groups %v, one by one %v", c, k, estimate, reference)
-		}
-		_, rms := image_error(grouped, exact)
-		testing.expectf(t, rms < 4, "%v: %v of 255 apart", c, rms)
-		testing.expectf(t, slice.equal(next, grouped), "%v: the next frame is the same", c)
-		free_all(context.temp_allocator)
+	lights: [24]Light_Desc
+	for &l, i in lights {
+		angle := f32(i) / 24 * 2 * math.PI
+		radius := f32(1 + i % 3)
+		l = {position = {math.cos(angle) * radius, 1.2, math.sin(angle) * radius}, color = {0.4 + 0.6 * f32(i % 2), 0.5, 0.4 + 0.6 * f32(i % 3) / 2}, intensity = 0.25 * math.PI, range = 6}
 	}
+	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {1, 1, 1}}
+	scene_given(r, []Instance_Desc{floor}, lights[:], {}, {})
+	camera := Camera{position = {0, 6, 0.01}, forward = {0, -6, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	exact, ok := reference_image(t, &f, camera, 1, .Direct)
+	if !ok {return}
+	defer delete(exact)
+	for _ in 0 ..< 6 {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Direct}}), r.error)}
+	rhi.device_wait_idle(f.device)
+	grouped, w, _, ok2 := golden_capture(r)
+	testing.expect(t, ok2, r.error)
+	if !ok2 {return}
+	defer delete(grouped)
+	reference := region_mean(exact, w, 16, 12, 48, 36)
+	estimate := region_mean(grouped, w, 16, 12, 48, 36)
+	testing.expectf(t, reference[0] > 40, "direct light is visible: %v", reference)
+	for c in 0 ..< 3 {
+		testing.expectf(t, abs(estimate[c] - reference[c]) <= 0.04 * reference[c] + 2, "channel %d: by groups %v, one by one %v", c, estimate, reference)
+	}
+	_, rms := image_error(grouped, exact)
+	testing.expectf(t, rms < 4, "%v of 255 apart", rms)
 	expect_clean(t, f.device)
 }
 
@@ -786,7 +635,7 @@ render_a_low_sun_draws_out_the_end_of_a_shadow :: proc(t: ^testing.T) {
 		{object_id = 4, mesh = f.cube, transform = trs({0, 1.3, -8}, {0.45, 0.8, 0.25}), tint = {0.3, 0.3, 0.3}},
 	}
 	elevation := f32(12) * math.RAD_PER_DEG
-	sun := Sun_Desc{direction = {0, math.sin(elevation), -math.cos(elevation)}, color = {1, 0.85, 0.6}, illuminance = 3 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	sun := Sun_Desc{direction = {0, math.sin(elevation), -math.cos(elevation)}, color = {1, 0.85, 0.6}, illuminance = 3 * math.PI, enabled = true}
 	scene_given(r, instances, nil, sun, {sky = {0.05, 0.05, 0.06}})
 	camera := Camera{position = {0.6, 1.7, 3}, forward = {-0.6, -1.7, -6}, up = {0, 1, 0}, fov_y = 55, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	reference, ok := reference_image(t, &f, camera, 16)
@@ -836,7 +685,7 @@ render_a_narrow_shadow_stays_dark_under_a_tall_scene :: proc(t: ^testing.T) {
 		// High towards the sun, its shadow far off the floor.
 		{object_id = 3, mesh = f.cube, transform = trs({0, 150, -60}, {1, 1, 1}), tint = {0.5, 0.5, 0.5}},
 	}
-	sun := Sun_Desc{direction = {0, math.sin(elevation), -math.cos(elevation)}, color = {1, 1, 1}, illuminance = 3 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	sun := Sun_Desc{direction = {0, math.sin(elevation), -math.cos(elevation)}, color = {1, 1, 1}, illuminance = 3 * math.PI, enabled = true}
 	scene_given(r, instances, nil, sun, {sky = {0.2, 0.25, 0.35}})
 	camera := Camera{position = {0, 3, 9}, forward = {0, -3, -8}, up = {0, 1, 0}, fov_y = 55, near = 0.05, far = 300, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
@@ -874,7 +723,7 @@ render_a_wider_light_casts_a_softer_shadow :: proc(t: ^testing.T) {
 	camera := Camera{position = {2.75, 6, 0.001}, forward = {0, -6, -0.001}, up = {0, 0, -1}, fov_y = 50, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	widths: [2]f32
 	for radius, i in ([2]f32{0, 0.3}) {
-		scene_given(r, instances, []Light_Desc{{position = {0, 2.5, 0}, color = {1, 1, 1}, intensity = 30 * math.PI, range = 12, radius = radius, indirect = 1, scattering = 1}}, {}, {})
+		scene_given(r, instances, []Light_Desc{{position = {0, 2.5, 0}, color = {1, 1, 1}, intensity = 30 * math.PI, range = 12, radius = radius}}, {}, {})
 		renderer_camera_cut(r)
 		for _ in 0 ..< 12 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 		rhi.device_wait_idle(f.device)
@@ -921,7 +770,7 @@ render_an_edge_takes_no_light_from_the_face_beyond_it :: proc(t: ^testing.T) {
 		{object_id = 2, mesh = f.cube, transform = trs({0, 0.5, 0}, {6, 1, 1}), tint = {0.8, 0.8, 0.8}},
 		{object_id = 3, mesh = f.cube, transform = trs({0, 3, -0.7}, {8, 0.2, 2.6}), tint = {0.5, 0.5, 0.5}},
 	}
-	sun := Sun_Desc{direction = {0, 1, -0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	sun := Sun_Desc{direction = {0, 1, -0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
 	scene_given(r, instances, nil, sun, {sky = {0, 0, 0}})
 	// Tilted, the edge crosses the rows of pixels.
 	camera := Camera{position = {0, 1.6, 5}, forward = {0, -0.7, -5}, up = {0.08, 1, 0}, fov_y = 50, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
@@ -959,7 +808,7 @@ render_spot_light_lights_only_its_cone :: proc(t: ^testing.T) {
 	defer fixture_destroy(&f)
 	r := f.renderer
 	// 2 m above the floor, a 20 degree cone lights a disc of radius ~0.73 m.
-	spot := Light_Desc{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 8 * math.PI, range = 10, direction = {0, -1, 0}, cone = 20 * math.RAD_PER_DEG, indirect = 1, scattering = 1}
+	spot := Light_Desc{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 8 * math.PI, range = 10, direction = {0, -1, 0}, cone = 20 * math.RAD_PER_DEG}
 	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {1, 1, 1}}
 	scene_given(r, []Instance_Desc{floor}, []Light_Desc{spot}, {}, {})
 	camera := Camera{position = {0, 6, 0.01}, forward = {0, -6, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
@@ -985,7 +834,7 @@ render_a_light_with_no_place_takes_no_shadow_map :: proc(t: ^testing.T) {
 	if !cube_fixture_init(t, &f, 64, 48, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	lamp := Light_Desc{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 8 * math.PI, range = 10, indirect = 1, scattering = 1}
+	lamp := Light_Desc{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 8 * math.PI, range = 10}
 	lost := lamp
 	lost.position.x = math.nan_f32()
 	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {1, 1, 1}}
@@ -997,63 +846,13 @@ render_a_light_with_no_place_takes_no_shadow_map :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
-// A light without shadows lights through the box that holds it, directly and
-// by what the room around bounces, and a sun without them through the box in
-// its way; neither takes a shadow map. With shadows the box keeps the light.
-@(test)
-render_a_light_without_shadows_lights_through_what_holds_it :: proc(t: ^testing.T) {
-	f: Cube_Fixture
-	if !cube_fixture_init(t, &f, 96, 64, test_settings()) {return}
-	defer fixture_destroy(&f)
-	r := f.renderer
-	// A floor and the box, then the ceiling and walls of a room around them. The box is
-	// larger than SMALL_INSTANCE_REACH: the rays of the probes see it.
-	instances := []Instance_Desc{
-		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {1, 1, 1}},
-		{object_id = 2, mesh = f.cube, transform = trs({0, 1, 0}, {1.6, 1.6, 1.6}), tint = {0.5, 0.5, 0.5}},
-		{object_id = 3, mesh = f.cube, transform = trs({0, 3.1, 0}, {6, 0.2, 6}), tint = {1, 1, 1}},
-		{object_id = 4, mesh = f.cube, transform = trs({-3.1, 1.5, 0}, {0.2, 3.4, 6}), tint = {1, 1, 1}},
-		{object_id = 5, mesh = f.cube, transform = trs({3.1, 1.5, 0}, {0.2, 3.4, 6}), tint = {1, 1, 1}},
-		{object_id = 6, mesh = f.cube, transform = trs({0, 1.5, -3.1}, {6, 3.4, 0.2}), tint = {1, 1, 1}},
-		{object_id = 7, mesh = f.cube, transform = trs({0, 1.5, 3.1}, {6, 3.4, 0.2}), tint = {1, 1, 1}},
-	}
-	lamp := Light_Desc{position = {0, 1, 0}, color = {1, 1, 1}, intensity = 20 * math.PI, range = 10, indirect = 1, scattering = 1}
-	sun := Sun_Desc{direction = {1, 1, 0}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true, indirect = 1, scattering = 1}
-	inside := Camera{position = {0, 2.5, 2.5}, forward = {0, -2.5, -2.5}, up = {0, 1, 0}, fov_y = 70, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	above := Camera{position = {0, 6, 0.01}, forward = {0, -6, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	Case :: struct {sun: bool, instances: []Instance_Desc, camera: Camera, at: Vec3}
-	// Beside the box in the room, and in the shadow the box casts away from the sun.
-	for c in ([]Case{{false, instances, inside, {2.4, 0.001, -2.2}}, {true, instances[:2], above, {-1.2, 0.001, 0}}}) {
-		light: [2][2]f32 // with shadows and without: the direct light and the indirect one there
-		maps: [2]int
-		for shadowless, i in ([2]bool{false, true}) {
-			lamp.shadowless, sun.shadowless = shadowless, shadowless
-			testing.expect(t, scene_given(r, c.instances, nil if c.sun else []Light_Desc{lamp}, sun if c.sun else {}, {}), r.error)
-			for mode, k in ([2]Debug_View{.Direct, .Indirect}) {
-				for _ in 0 ..< 16 {testing.expect(t, renderer_frame(r, {camera = c.camera, inspection = {mode = mode}}), r.error)}
-				rhi.device_wait_idle(f.device)
-				pixels, w, _, ok := golden_capture(r)
-				if !testing.expect(t, ok, r.error) {return}
-				light[i][k] = pixel(pixels, w, project(r, c.camera, c.at))[0]
-				delete(pixels)
-			}
-			maps[i] = r.targets.shadow_raster.held_count
-		}
-		testing.expectf(t, light[0][0] < 4 && light[1][0] > 30, "sun %v: the direct light there, with shadows and without: %v", c.sun, light)
-		// The sun lights the floor around both ways: what it bounces is near alike.
-		if !c.sun {testing.expectf(t, light[0][1] < 4 && light[1][1] > 20, "the indirect light of the lamp there, with shadows and without: %v", light)}
-		testing.expectf(t, maps[0] > 0 && maps[1] == 0, "sun %v: the maps with shadows and without: %v", c.sun, maps)
-	}
-	expect_clean(t, f.device)
-}
-
 @(test)
 render_resize_and_settings_changes_stay_valid :: proc(t: ^testing.T) {
 	f: Cube_Fixture
 	if !cube_fixture_init(t, &f, 64, 48, test_settings()) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	lights := []Light_Desc{{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 5 * math.PI, range = 8, indirect = 1, scattering = 1}, {position = {1, 2, 1}, color = {1, 0.5, 0.2}, intensity = 5 * math.PI, range = 8, indirect = 1, scattering = 1}}
+	lights := []Light_Desc{{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 5 * math.PI, range = 8}, {position = {1, 2, 1}, color = {1, 0.5, 0.2}, intensity = 5 * math.PI, range = 8}}
 	scene_given(r, []Instance_Desc{{object_id = 1, mesh = f.cube, transform = trs({0, 0, 0}, {4, 0.2, 4}), tint = {0.8, 0.8, 0.8}}}, lights, {}, {sky = {0.2, 0.3, 0.4}})
 	camera := Camera{position = {0, 3, 4}, forward = {0, -3, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
@@ -1125,13 +924,8 @@ a_target_of_lines_scales_the_views_of_the_window_together :: proc(t:^testing.T) 
     renderer_resize(r,200,100,2,2)
     testing.expect(t,renderer_frame(r,{camera=camera}),r.error)
     testing.expect(t,r.targets.width==100 && r.targets.height==50)
-    // Native, 0 lines: those the views span, a pixel per point.
-    target(t,r,&settings,20)
-    testing.expect(t,renderer_frame(r,{camera=camera}),r.error)
-    testing.expect(t,r.targets.height==20)
-    target(t,r,&settings,0)
-    testing.expect(t,renderer_frame(r,{camera=camera}),r.error)
-    testing.expect(t,r.targets.width==100 && r.targets.height==50)
+    settings.resolution=0
+    testing.expect(t,!renderer_apply_settings(r,settings),"no lines is refused")
 }
 
 // A settings change starts again only what was made with the fields that
@@ -1142,7 +936,7 @@ a_settings_change_starts_again_only_what_depends_on_it :: proc(t:^testing.T) {
     if !cube_fixture_init(t,&f,128,64,test_settings()) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
-    sun:=Sun_Desc{direction={0.2,1,0.1},color={1,1,1},illuminance=math.PI,enabled=true,indirect=1,scattering=1}
+    sun:=Sun_Desc{direction={0.2,1,0.1},color={1,1,1},illuminance=math.PI,enabled=true}
     scene_given(r,{{object_id=1,mesh=f.cube,transform=trs({0,0.5,0},{1,1,1}),tint={1,1,1}}},nil,sun,{})
     camera:=Camera{position={0,3,5},forward={0,-3,-5},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE}
     views:=[2]Frame_View{{camera=camera,rect={0,0,64,64}},{camera=camera,rect={64,0,64,64}}}
@@ -1185,7 +979,7 @@ views_of_one_size_share_the_targets_of_a_frame :: proc(t:^testing.T) {
     scene_given(r,{
         {object_id=1,mesh=f.cube,transform=trs({-3,0,0},{2,2,2}),tint={1,0,0},emission={2,0,0}},
         {object_id=2,mesh=f.cube,transform=trs({3,0,0},{2,2,2}),tint={0,1,0},emission={0,2,0}},
-    },nil,{direction={0.2,1,0.1},color={1,1,1},illuminance=math.PI,enabled=true,indirect=1,scattering=1},{use_background=true})
+    },nil,{direction={0.2,1,0.1},color={1,1,1},illuminance=math.PI,enabled=true},{use_background=true})
     cameras:=[2]Camera{
         {position={-3,0,4},forward={0,0,-4},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE},
         {position={3,0,4},forward={0,0,-4},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE},
@@ -1340,7 +1134,7 @@ render_many_overlapping_instances_stay_valid :: proc(t: ^testing.T) {
 	for &inst, i in instances {
 		inst = {object_id = u64(i + 1), mesh = f.cube, transform = trs({f32(i % 3) * 0.05, f32(i / 3) * 0.01, 0}, {1, 1, 1}), tint = {0.5, 0.5, 0.5}}
 	}
-	scene_given(r, instances, nil, {direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1}, {})
+	scene_given(r, instances, nil, {direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}, {})
 	camera := Camera{position = {0, 2, 5}, forward = {0, -1.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	testing.expect(t, len(r.scene.tlas_refs) == 300 && r.scene.tlas_ref_capacity >= 300)
@@ -1391,7 +1185,7 @@ render_taa_is_stable_on_static_scenes :: proc(t: ^testing.T) {
 		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {8, 0.2, 8}), tint = {0.8, 0.8, 0.8}},
 		{object_id = 2, mesh = f.cube, transform = trs({0, 0.6, 0}, {1.2, 1.2, 1.2}), tint = {0.9, 0.2, 0.1}},
 	}
-	scene_given(r, instances, nil, {direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.5 * math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0.2, 0.3, 0.4}})
+	scene_given(r, instances, nil, {direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.5 * math.PI, enabled = true}, {sky = {0.2, 0.3, 0.4}})
 	camera := Camera{position = {2.5, 2.5, 3.5}, forward = {-2.5, -2, -3.5}, up = {0, 1, 0}, fov_y = 50, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 24 {renderer_frame(r, {camera = camera})}
 	lo := make([]u8, 96 * 64 * 4)
@@ -1437,7 +1231,7 @@ render_gathered_light_leaves_a_lamp_to_its_light :: proc(t: ^testing.T) {
 			{object_id = 2, mesh = f.cube, transform = trs({0, 2, -2}, {12, 4, 0.2}), tint = {0.8, 0.8, 0.8}},
 			{object_id = 3, mesh = f.cube, transform = trs({0, 1, 0}, {0.4, 0.4, 0.4} if c.light else {1.6, 0.4, 1.6}), tint = {1, 1, 1}, emission = {20, 20, 20} if c.glowing else {}},
 		}
-		lights := []Light_Desc{{position = {0, 1, 0}, color = {1, 1, 1}, intensity = 4 * math.PI, range = 8, radius = 0.2, indirect = 1, scattering = 1}}
+		lights := []Light_Desc{{position = {0, 1, 0}, color = {1, 1, 1}, intensity = 4 * math.PI, range = 8, radius = 0.2}}
 		scene_given(r, instances if c.body else instances[:2], lights if c.light else nil, {}, {sky = {0, 0, 0}})
 		for _ in 0 ..< 120 {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Indirect}}), r.error)}
 		rhi.device_wait_idle(f.device)
@@ -1732,7 +1526,7 @@ render_mesh_added_under_software_tracing_gets_its_native_structure_when_hardware
 	// Only a device with ray queries has native structures to build.
 	if !r.hardware_rt_verified || !SOFTWARE_TRACER {return}
 	camera := Camera{position = {0, 4, 6}, forward = {0, -4, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	sun := Sun_Desc{direction = {0.2, 1, 0.1}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	sun := Sun_Desc{direction = {0.2, 1, 0.1}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}
 	scene_given(r, {{object_id = 1, mesh = f.cube, transform = trs({0, 0.5, 0}, {1, 1, 1}), tint = {1, 1, 1}}}, nil, sun, {})
 	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	testing.expect(t, r.scene.meshes[f.cube].rays[0].blas != 0)
@@ -1766,7 +1560,7 @@ render_mesh_added_under_hardware_tracing_gets_its_software_tree_when_software_re
 	r := f.renderer
 	if !r.hardware_rt || !SOFTWARE_TRACER {return}
 	camera := Camera{position = {0, 4, 6}, forward = {0, -4, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	sun := Sun_Desc{direction = {0.2, 1, 0.1}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	sun := Sun_Desc{direction = {0.2, 1, 0.1}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}
 	vertices, indices := cube_mesh()
 	late, added := mesh_add(r, vertices[:], indices[:])
 	testing.expect(t, added)
@@ -1827,7 +1621,7 @@ tracer_frame_shadows :: proc(t: ^testing.T, r: ^Renderer, cube: Mesh_Handle, loc
 		{object_id = 1, mesh = cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {0.8, 0.8, 0.8}},
 		{object_id = 2, mesh = cube, transform = trs({0, 1.5, 0}, {2, 0.2, 2}), tint = {0.5, 0.5, 0.5}},
 	}
-	scene_given(r, instances, nil, {direction = {0.05, 1, 0.02}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0.3, 0.4, 0.6}})
+	scene_given(r, instances, nil, {direction = {0.05, 1, 0.02}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}, {sky = {0.3, 0.4, 0.6}})
 	camera := Camera{position = {0, 8, 7}, forward = {0, -8, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error, loc = loc)}
 	rhi.device_wait_idle(r.device)
@@ -1906,7 +1700,7 @@ move_settings :: proc() -> Settings {
 	return s
 }
 
-MOVE_TEST_SUN :: Sun_Desc{direction = {0.05, 1, 0.02}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true, indirect = 1, scattering = 1}
+MOVE_TEST_SUN :: Sun_Desc{direction = {0.05, 1, 0.02}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
 MOVE_TEST_ENVIRONMENT :: Environment{sky = {0.3, 0.4, 0.6}}
 MOVE_TEST_CAMERA :: Camera{position = {0, 8, 7}, forward = {0, -8, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 
@@ -1942,7 +1736,7 @@ scene_move_leaves_the_scene_that_setting_it_again_would :: proc(t: ^testing.T) {
 	defer fixture_destroy(&set)
 	instances: [5]Instance_Desc
 	move_scene(moved.cube, &instances)
-	lights := []Light_Desc{{position = {2, 3, 2}, color = {1, 0.9, 0.8}, intensity = 20 * math.PI, range = 9, indirect = 1, scattering = 1}}
+	lights := []Light_Desc{{position = {2, 3, 2}, color = {1, 0.9, 0.8}, intensity = 20 * math.PI, range = 9}}
 	for f in ([]^Cube_Fixture{&moved, &set}) {
 		scene_given(f.renderer, instances[:], lights, MOVE_TEST_SUN, MOVE_TEST_ENVIRONMENT)
 		move_frames(t, f.renderer, 4)
@@ -2022,7 +1816,7 @@ an_instance_scaled_to_zero_is_drawn_and_traced_as_a_hidden_one :: proc(t: ^testi
 	defer fixture_destroy(&hidden)
 	instances: [5]Instance_Desc
 	move_scene(zero.cube, &instances)
-	lights := []Light_Desc{{position = {2, 3, 2}, color = {1, 0.9, 0.8}, intensity = 20 * math.PI, range = 9, indirect = 1, scattering = 1}}
+	lights := []Light_Desc{{position = {2, 3, 2}, color = {1, 0.9, 0.8}, intensity = 20 * math.PI, range = 9}}
 	for f in ([]^Cube_Fixture{&zero, &hidden}) {
 		scene_given(f.renderer, instances[:], lights, MOVE_TEST_SUN, MOVE_TEST_ENVIRONMENT)
 		move_frames(t, f.renderer, 4)
@@ -2252,10 +2046,10 @@ the_lights_given_alone_change_nothing_else :: proc(t: ^testing.T) {
 	s := &r.scene
 	instances: [5]Instance_Desc
 	move_scene(f.cube, &instances)
-	scene_given(r, instances[:], {{position = {2, 3, 2}, color = {1, 1, 1}, intensity = 20 * math.PI, range = 9, indirect = 1, scattering = 1}}, MOVE_TEST_SUN, MOVE_TEST_ENVIRONMENT)
+	scene_given(r, instances[:], {{position = {2, 3, 2}, color = {1, 1, 1}, intensity = 20 * math.PI, range = 9}}, MOVE_TEST_SUN, MOVE_TEST_ENVIRONMENT)
 	move_frames(t, r, 3)
 	nodes := len(s.tlas_nodes)
-	scene_lights_given(r, {{position = {2, 3, 2}, color = {1, 1, 1}, intensity = 5 * math.PI, range = 9, indirect = 1, scattering = 1}, {position = {-2, 3, 2}, color = {1, 0, 0}, intensity = 15 * math.PI, range = 9, indirect = 1, scattering = 1}, {position = {0, 1, 0}, intensity = 0 * math.PI, range = 9, indirect = 1, scattering = 1}}, {}, MOVE_TEST_ENVIRONMENT)
+	scene_lights_given(r, {{position = {2, 3, 2}, color = {1, 1, 1}, intensity = 5 * math.PI, range = 9}, {position = {-2, 3, 2}, color = {1, 0, 0}, intensity = 15 * math.PI, range = 9}, {position = {0, 1, 0}, intensity = 0 * math.PI, range = 9}}, {}, MOVE_TEST_ENVIRONMENT)
 	testing.expect_value(t, len(s.lights), 2)
 	testing.expect_value(t, len(s.light_tree), 3)
 	testing.expect(t, s.lights_dirty && !s.instances_dirty && !s.tlas_nodes_dirty && !s.sun.enabled)
@@ -2277,7 +2071,7 @@ a_light_that_changes_goes_alone_and_the_gpu_holds_the_lights_of_the_scene :: pro
 	move_scene(f.cube, &instances)
 	lights := make([]Light_Desc, 300)
 	defer delete(lights)
-	for &light, i in lights {light = {position = {f32(i % 20) * 0.6 - 6, 1, f32(i / 20) * 0.6 - 4}, color = {1, 0.8, 0.6}, intensity = 10, range = 3, radius = 0.05, indirect = 1, scattering = 1}}
+	for &light, i in lights {light = {position = {f32(i % 20) * 0.6 - 6, 1, f32(i / 20) * 0.6 - 4}, color = {1, 0.8, 0.6}, intensity = 10, range = 3, radius = 0.05}}
 	scene_given(r, instances[:], lights, MOVE_TEST_SUN, MOVE_TEST_ENVIRONMENT)
 	move_frames(t, r, 2)
 	for i in 0 ..< 3 {
@@ -2349,7 +2143,6 @@ Stages_Seen :: struct {
 	written:       bool,    // rows went into it
 	sides:         [Glass_Side]int,
 	gbuffer:       bool,    // a pass over the G-buffer began and ended
-	pyramid:       bool,    // the Gbuffer pass built the depth pyramid and bound it, with no previous one in the first frame; no other stage binds it
 	counters:      bool,    // the counters of a name were bound
 	effect:        Texture_Handle, // the texture of the effect view the Effect pass drew
 	effect_size:   [2]u32,
@@ -2367,7 +2160,7 @@ render_stages_run_once_a_frame_and_for_its_view :: proc(t: ^testing.T) {
 	defer fixture_destroy(&f)
 	r := f.renderer
 	instances := []Instance_Desc{{object_id = 1, mesh = f.cube, transform = trs({0, 0, 0}, {1, 1, 1}), tint = {0.8, 0.8, 0.8}}}
-	scene_given(r, instances, nil, {direction = {0.05, 1, 0.02}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0.3, 0.4, 0.6}})
+	scene_given(r, instances, nil, {direction = {0.05, 1, 0.02}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}, {sky = {0.3, 0.4, 0.6}})
 	camera := Camera{position = {0, 2, 5}, forward = {0, -2, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	record :: proc(s: ^Stage_Pass, user: rawptr) {
 		seen := cast(^Stages_Seen)user
@@ -2396,8 +2189,6 @@ render_stages_run_once_a_frame_and_for_its_view :: proc(t: ^testing.T) {
 			refused, _ := pass_texture(s, 4, {name = "test depth", format = .D32_Float, width = 8, height = 2})
 			seen.textures = (at == 0 || seen.textures) && kept_ok && previous_ok && flat_ok
 			seen.refused = !refused
-			_, pyramid := pass_depth_pyramid(s, 5)
-			seen.pyramid &&= !pyramid && !pass_depth_pyramid_build(s)
 			if at < len(seen.kept) {seen.kept[at] = kept}
 		case .Simulate:
 			at := seen.runs[.Simulate] - 1
@@ -2413,10 +2204,6 @@ render_stages_run_once_a_frame_and_for_its_view :: proc(t: ^testing.T) {
 			pass_gbuffer_begin(s, "test gbuffer")
 			pass_end(s)
 			seen.gbuffer = true
-			_, before := pass_depth_pyramid(s, 1, previous = true)
-			built := pass_depth_pyramid_build(s)
-			levels, now := pass_depth_pyramid(s, 0)
-			seen.pyramid = !before && built && now && levels == s.pass.t.hiz_levels
 		case .Blend:
 			seen.sides[s.glass] += 1
 			pass_blend_begin(s, "test blend")
@@ -2463,7 +2250,7 @@ render_stages_run_once_a_frame_and_for_its_view :: proc(t: ^testing.T) {
 	// The buffer of a world is made once and kept for it.
 	testing.expect_value(t, seen.worlds, [2]u64{r.world_key, r.world_key})
 	testing.expect_value(t, seen.made, [2]bool{true, false})
-	testing.expect(t, seen.written && seen.gbuffer && seen.counters && seen.pyramid)
+	testing.expect(t, seen.written && seen.gbuffer && seen.counters)
 	testing.expect_value(t, seen.sides, [Glass_Side]int{.All = 1, .Behind = 0, .Front = 0})
 	values, counted := renderer_counters(r, "test counters")
 	testing.expect(t, counted && values == {})
@@ -2522,8 +2309,8 @@ render_far_from_the_centre_looks_as_at_it_and_a_jump_keeps_the_history :: proc(t
 			{object_id = 1, mesh = f.cube, transform = trs(at + {0, -0.1, 0}, {12, 0.2, 12}), tint = {0.8, 0.8, 0.8}},
 			{object_id = 2, mesh = f.cube, transform = trs(at + {0, 0.5, 0}, {1, 1, 1}), tint = {0.9, 0.3, 0.2}},
 		}
-		lights := []Light_Desc{{position = at + {1.5, 2, 1}, color = {1, 0.9, 0.8}, intensity = 20, range = 10, indirect = 1, scattering = 1}}
-		scene_given(r, instances, lights, {direction = {1, 1, 0}, color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}, {use_background = true})
+		lights := []Light_Desc{{position = at + {1.5, 2, 1}, color = {1, 0.9, 0.8}, intensity = 20, range = 10}}
+		scene_given(r, instances, lights, {direction = {1, 1, 0}, color = {1, 1, 1}, illuminance = math.PI, enabled = true}, {use_background = true})
 		camera := Camera{position = at + {0, 2, 5}, forward = {0, -2, -5}, up = {0, 1, 0}, fov_y = 50, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 		for _ in 0 ..< 16 {testing.expect(t, renderer_frame(r, {camera = camera, offscreen = offscreen}), r.error)}
 		testing.expect(t, golden_read_texture(f.device, r.targets.display, mem.slice_data_cast([]u8, image[:])), rhi.device_error(f.device))
@@ -2585,7 +2372,7 @@ taa_weighs_the_light_as_it_shows :: proc(t: ^testing.T) {
 		vertices, indices := cube_mesh()
 		mesh, _ := mesh_add(r, vertices[:], indices[:])
 		stripe := Instance_Desc{object_id = 1, mesh = mesh, transform = linalg.matrix4_translate_f32({0.01, 0, 0}) * linalg.matrix4_scale_f32({0.05, 2, 0.05}), tint = {0, 0, 0}, emission = {50, 50, 50}}
-		key := []Light_Desc{{position = {0, 0, -500}, color = {1, 1, 1}, intensity = 4096, range = 1, indirect = 1, scattering = 1}}
+		key := []Light_Desc{{position = {0, 0, -500}, color = {1, 1, 1}, intensity = 4096, range = 1}}
 		testing.expect(t, scene_given(r, {stripe}, key if dim else nil, {}, {}))
 		scale[c] = r.scene.light_scale
 		pixels := make([]f16, WIDTH * 48 * 4, context.temp_allocator)

@@ -169,21 +169,23 @@ portals_render :: proc(
             facing:=linalg.dot(mm.quat_rotate(exits[gate].rotation,[3]f32{0,0,1}),to_sun)
             if facing<=0.02 || state.gates[gate].mirror {continue}
             seen:=mm.quat_rotate(conj(throughs[gate].rotation),to_sun)
-            light_keep(state,&gates.weights,power*facing*1e3,{position_range={seen.x,seen.y,seen.z,0},color_intensity={sun.color.r,sun.color.g,sun.color.b,sun.illuminance},direction_cone={0,0,0,erender.LIGHT_POINT},axis={0,0,0,erender.light_shares(sun.indirect,sun.scattering)},extra={sun_radius,f32(gate),0,0}})
+            light_keep(state,&gates.weights,power*facing*1e3,{position_range={seen.x,seen.y,seen.z,0},color_intensity={sun.color.r,sun.color.g,sun.color.b,sun.illuminance},direction_cone={0,0,0,erender.LIGHT_POINT},extra={sun_radius,f32(gate),0,0}})
         }
     }
     for row in 0..<core.count(points) {
         e:=core.entity_at(points,row)
         point:=core.at(points,row)
         if world,placed:=core.get(worlds,e);placed && !erender.is_hidden(hidden,parents,e) {
-            gate_lights_add(&gates,erender.point_desc(world,point),.Point)
+            gate_lights_add(&gates,erender.sphere_desc(world,point.color,point.intensity,point.range,point.radius),.Point)
         }
     }
     for row in 0..<core.count(spots) {
         e:=core.entity_at(spots,row)
         spot:=core.at(spots,row)
         if world,placed:=core.get(worlds,e);placed && !erender.is_hidden(hidden,parents,e) {
-            gate_lights_add(&gates,erender.spot_desc(world,spot),.Spot)
+            desc:=erender.sphere_desc(world,spot.color,spot.intensity,spot.range,spot.radius)
+            desc.direction,desc.cone=mm.quat_forward(world.rotation),spot.angle
+            gate_lights_add(&gates,desc,.Spot)
         }
     }
     for row in 0..<core.count(rects) {
@@ -287,6 +289,6 @@ gate_lights_add :: proc(g:^Gate_Lights,light:erender.Light_Desc,kind:Gate_Light_
             size={0,0.5*light.size.x,0.5*light.size.y,0}
             extra.x=0.5*linalg.length(light.size)
         }
-        light_keep(g.state,&g.weights,power/(1+distance*distance),{position_range={seen.x,seen.y,seen.z,light.range},color_intensity={light.color.r,light.color.g,light.color.b,light.intensity},direction_cone=cone,size=size,axis={axis.x,axis.y,axis.z,erender.light_shares(light.indirect,light.scattering)},extra=extra})
+        light_keep(g.state,&g.weights,power/(1+distance*distance),{position_range={seen.x,seen.y,seen.z,light.range},color_intensity={light.color.r,light.color.g,light.color.b,light.intensity},direction_cone=cone,size=size,axis={axis.x,axis.y,axis.z,0},extra=extra})
     }
 }

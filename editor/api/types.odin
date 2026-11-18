@@ -146,7 +146,6 @@ Call :: struct {
     error:Error,
     failed:bool,
     image:string,                 // a PNG file the result shows: MCP gives it as image content after the text
-    retry:bool,                   // a later call of a request whose _wait_until waits: its first call was its step
 }
 
 Register_Error :: enum u8 {
@@ -193,9 +192,7 @@ Server_Stats :: struct {
     peak_scratch:int,
 }
 
-// Waiting: a request whose _wait_until does not hold yet, kept whole in its
-// buffer and called again by server_poll while the others are answered.
-Conn_State :: enum u8 {Free,Reading,Ready,Waiting,Draining}
+Conn_State :: enum u8 {Free,Reading,Ready,Draining}
 Route :: enum u8 {Rpc,Mcp}
 
 Conn :: struct {
@@ -214,16 +211,6 @@ Conn :: struct {
     client_name:[CLIENT_NAME_BYTES]u8,
     measure:[24]u8, // X-Mirai-Measure
     plugins:[512]u8, // X-Mirai-Plugins: the plugins whose tools tools/list adds to those of the editor
-    waited,next:time.Tick, // Waiting: its first call, and when it is called again
-    running:Running,       // Waiting: what its tools/call keeps between calls (progress, cancellation)
-}
-
-// The _wait_until of the request that runs.
-Wait :: struct {
-    allowed:bool,      // the request is alone in its body: it can wait on its connection
-    retry:bool,        // it is a later call of a request that waits
-    started:time.Tick, // its first call
-    parked:bool,       // its condition does not hold yet: it waits on its connection
 }
 
 Server :: struct {
@@ -257,9 +244,9 @@ Server :: struct {
     plugins:[]Plugin,
     guides:[]Guide,
     assets:serial.Text_Assets, // how params take a path where an Asset_Id goes
-    wait:Wait,             // of the request that runs
+    pause:proc(s:^Server,seconds:f64)->bool, // keeps what owns the server going between two calls of _wait_until; false: it is ending
     transaction:proc(s:^Server,call:^Call,open:bool)->bool, // opens the one step of undo the calls of a batch edit in, or closes it: a step when the call did not fail, nothing otherwise; false after failing the call
-    user:rawptr,                             // of transaction
+    user:rawptr,                             // of pause and transaction
 }
 
 // A plugin the project finds; active: the project uses it.
