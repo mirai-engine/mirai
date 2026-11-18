@@ -107,7 +107,8 @@ Bench_Report :: struct {
 
 cmd_bench :: proc(root:string,args:[]string) -> int {
     if len(args)>0 && args[0]=="compare" {return bench_compare(root,args[1:])}
-    fmt.eprintfln("Usage: mirai %s",BENCH_USAGE)
+    if len(args)>0 && args[0]=="flight" {return bench_flight(root,args[1:])}
+    fmt.eprintfln("Usage: mirai %s\n       mirai %s",BENCH_USAGE,BENCH_FLIGHT_USAGE)
     return 2
 }
 
@@ -441,7 +442,6 @@ bench_cell :: proc(s:Bench_Stat) -> string {
 }
 
 // text in lines of at most width characters, the ones after the first indented by indent.
-@(private="file")
 bench_wrap :: proc(b:^strings.Builder,text:string,width:int,indent:="") {
     column:=0
     for word in strings.fields(text,context.temp_allocator) {
