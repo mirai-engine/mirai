@@ -89,14 +89,23 @@ for Play/Simulation. `animation_sample` serves them.
   a layer changes its clip) plays its new clip and weight at once, and the pose of the stack blends
   from the one it showed by the
   [inertialization](../../mirai-std/references/anim-motion.md#inertialization) of `std/anim`
-  (`stack_inertia_apply`), over the longest time the changes of the tick ask:
-  `fade_in` of an action that starts or interrupts, `fade_out` of one that ends, `fade` of a layer.
-  Only the new clip is evaluated. The blend takes the velocity of the pose shown in its last two
-  ticks and that of the target from the stack a tick before (the base then, the layers where their
-  clips were); a blend that interrupts another starts from the pose shown, offset included. A slot
-  that asks no time cuts: it takes off the offsets of the bones it moves. A rig with no pose shown
-  yet shows the target. Markers and events of an action count at its weight from its first tick,
-  and its root motion is that of its clip from its first tick to its last.
+  (`stack_inertia_apply`): `fade_in` of an action that starts or interrupts, `fade_out` of one
+  that ends, `fade` of a layer. Each bone blends over the shortest time of the slots of the tick
+  that move it (a fast or cut change is never stretched by a slower one, and a layer over a branch
+  does not change the time of the bones it does not move), the others over what their blend had
+  left, the curves over the shortest of the tick. Only the new clip is evaluated. The blend takes
+  the velocity of the pose shown in its last two ticks and that of the target from the stack a
+  tick before (the base then, the layers where their clips were), so the bones a change does not
+  move keep their motion; one that interrupts another starts from the pose shown, offset included.
+  A slot that asks no time cuts: it takes off the offsets of the bones it moves. A rig blends only
+  from the pose of the tick before with the same bindings: one with no pose shown yet, not posed
+  in a tick, or bound again shows the target. Markers and events of an action count at its weight
+  from its first tick.
+- **Root motion of a blend.** The root motion is that of the clips of the target from the first
+  tick. When a slot over the whole pose changes and the root moved by clips in the tick before,
+  the difference of the velocity of the root decays over that slot's time (`stack_root_inertia`),
+  without its acceleration, and so does the share of it that moves the body; a slot that cuts ends
+  it. A body that moved by physics, without root motion, keeps the acceleration of its physics.
 - **Across the network** the end that decides the entity (`core.owned`) records each play, stop
   and section it accepts in `Animation_Played`, by slot, with the tick; an entity another end
   decides (`core.Remote`) plays a record it has not heard, forced, as far into its clip as the
@@ -178,7 +187,8 @@ Discovery and memory:
   `a_whole_body_action_goes_on_when_the_body_changes_mode_and_stop_ends_it`,
   `a_whole_body_action_blends_in_from_the_pose_and_stable_ticks_do_not_allocate`,
   `an_action_shows_its_pose_at_once_and_blends_from_the_pose_shown` (start, interruption while it
-  blends in and once it plays, cut; the clips of one source, a planted foot) and
+  blends in and once it plays, cut, a layer that asks less time, a rig not posed or bound again,
+  root motion; the clips of one source, a planted foot) and
   `the_root_motion_of_a_whole_body_action_moves_the_body`.
 - `runtime_test.odin`, `skeleton_test.odin`: layers by weight, branch,
   region, additive reference and space of the rig, on the owner thread and in jobs.
