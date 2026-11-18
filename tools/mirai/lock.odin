@@ -62,8 +62,8 @@ measure_lock :: proc(root,what:string) -> workspace.Lock {
 LOCKS_USAGE :: "locks"
 
 // mirai locks: who holds each lock the checkouts of the repository share,
-// those of compilations and measurements among them, and since when; and
-// which compilation took its turn last.
+// those of compilations and measurements among them, and since when; the
+// turns of the GPU together; and which compilation took its turn last.
 cmd_locks :: proc(root:string,args:[]string) -> int {
     if len(args)>0 {return argument_unknown("locks",args[0])}
     folder:=workspace.cache_folder(root,"locks",context.temp_allocator)
@@ -71,7 +71,9 @@ cmd_locks :: proc(root:string,args:[]string) -> int {
     append(&names,workspace.BUILD_LOCK,workspace.MEASURE_LOCK)
     if entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator);error==nil {
         for entry in entries {
-            if strings.has_suffix(entry.name,".lock") && !slice.contains(names[:],entry.name) {append(&names,entry.name)}
+            if !strings.has_suffix(entry.name,".lock") || slice.contains(names[:],entry.name) {continue}
+            if entry.name==workspace.GPU_ADMISSION_LOCK || strings.has_prefix(entry.name,"gpu-") {continue}
+            append(&names,entry.name)
         }
     }
     slice.sort(names[2:])
@@ -89,6 +91,7 @@ cmd_locks :: proc(root:string,args:[]string) -> int {
         if since!={} {fmt.printf(", for %s",duration_text(time.diff(since,now)))}
         fmt.println()
     }
+    gpu_turns_print(root)
     note:=workspace.lock_path(root,workspace.BUILD_NOTE,context.temp_allocator)
     if info,error:=os.stat(note,context.temp_allocator);error==nil {
         last,_:=os.read_entire_file(note,context.temp_allocator)

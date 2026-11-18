@@ -29,7 +29,7 @@ COMMANDS :: [?]Command{
     {"test",TEST_USAGE,"Builds if needed and runs the tests of one or more packages",cmd_test},
     {"test",TEST_LIST_USAGE,"Lists the tests of a package or of a file without building",cmd_test},
     {"check","check <package> [-flag...]","Checks the types of a package",cmd_check},
-    {"locks",LOCKS_USAGE,"Says who holds the build and measurement turns of all checkouts and since when, or that they are free",cmd_locks},
+    {"locks",LOCKS_USAGE,"Says who holds the build, measurement and GPU turns of all checkouts and since when, or that they are free",cmd_locks},
     {"measure",MEASURE_USAGE,"Runs a command that measures times alone: waits for other measurements and for builds; what builds or tests meanwhile runs at low priority",cmd_measure},
     {"deps","deps","Builds the C dependencies pinned in third_party/",cmd_deps},
     {"asset","asset <subcommand> [arguments]","Inspects and edits binary assets of any type",cmd_asset},

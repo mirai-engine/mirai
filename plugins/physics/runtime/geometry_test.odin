@@ -150,9 +150,10 @@ a_compound_heightfield_rotates_its_grid_origin_and_ignores_unrelated_asset_chang
 }
 
 // A tick reads no mesh file and builds no tree: a body whose Mesh or Hull
-// collider shows a mesh file that a job still reads or builds waits for a
-// later tick, and is made from what the job prepared. A change of another
-// asset leaves its shapes as they are.
+// collider shows a mesh file that a job still reads or builds, or a Mesh
+// collider of a generated mesh whose tree a job builds, waits for a later
+// tick, and is made from what the job prepared. A change of another asset
+// leaves its shapes as they are.
 @(test)
 a_collider_of_a_mesh_file_waits_for_its_job_and_keeps_its_shape_when_other_assets_change :: proc(t:^testing.T) {
     root:=base.test_folder(t,"physics-file-mesh")
@@ -166,7 +167,7 @@ a_collider_of_a_mesh_file_waits_for_its_job_and_keeps_its_shape_when_other_asset
     testing.expect_value(t,asset.mesh_save(fmt.tprintf("%s/floor.mesh",root),&types,{id=ID,geometry=floor}),asset.Error.None)
     g:Geometry_Test
     if !physics_test_init(t,&g.f) {return}
-    g.settings={bodies=8,shapes=8,contacts=32,joints=1,characters=1,hulls=2,meshes=2,heightfields=2}
+    g.settings={bodies=8,shapes=8,contacts=32,joints=1,characters=1,hulls=2,meshes=3,heightfields=2}
     g.whole=true
     g.app.assets=&g.assets
     defer host.assets_destroy(&g.assets)
@@ -181,18 +182,27 @@ a_collider_of_a_mesh_file_waits_for_its_job_and_keeps_its_shape_when_other_asset
     }
     core.add(&g.colliders,surface,collider_mesh())
     core.add(&g.colliders,hull,collider_hull())
+    made,made_ok:=geometry_test_mesh(&g,origin={-1,0,-1},cell={2,1,2})
+    if !testing.expect(t,made_ok) {return}
+    generated:=core.create(&g.entities)
+    core.add(&g.transforms,generated,core.Transform{position={20,0,0},rotation=1,scale={2,1,2}})
+    core.add(&g.statics,generated,render.Mesh_Renderer{mesh=made})
+    core.add(&g.colliders,generated,collider_mesh())
     geometry_test_step(&g)
     testing.expect_value(t,g.state.stats.bodies_created,u64(0))
     for jobs.pending(&g.meshes.counter) {jobs.wait(&g.app.jobs,jobs.OWNER,&g.meshes.counter)}
     // The tree of the Mesh collider at its scale is a job of its own, after the file.
-    for tick:=0;tick<4 && g.state.stats.bodies_created<2;tick+=1 {
+    for tick:=0;tick<4 && g.state.stats.bodies_created<3;tick+=1 {
         geometry_test_step(&g)
         for jobs.pending(&g.meshes.counter) {jobs.wait(&g.app.jobs,jobs.OWNER,&g.meshes.counter)}
     }
-    testing.expect_value(t,g.state.stats.bodies_created,u64(2))
+    testing.expect_value(t,g.state.stats.bodies_created,u64(3))
     testing.expect_value(t,g.problems.count,0)
-    hit,hit_ok:=raycast({&g.state},{1.5,5,0},{0,-1,0})
-    testing.expectf(t,hit_ok && hit.entity==surface && abs(hit.point.y)<1e-3,"a ray down meets the floor at its scale: %v",hit)
+    for floor in ([2]core.Entity{surface,generated}) {
+        x:=floor==surface?f32(1.5):21.5
+        hit,hit_ok:=raycast({&g.state},{x,5,0},{0,-1,0})
+        testing.expectf(t,hit_ok && hit.entity==floor && abs(hit.point.y)<1e-3,"a ray down meets the floor at its scale: %v",hit)
+    }
     l:=link_find(&g.state,hull)
     testing.expect(t,l!=nil && sim.shape_valid(&g.state.world,l.shape),"the Hull collider has its shape")
     shapes:=g.state.stats.shapes_created

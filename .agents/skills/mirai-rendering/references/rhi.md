@@ -93,11 +93,13 @@ compile time with build tags, without virtual dispatch. `render` does not see na
 
 ## GPU watchdog
 
-- **Off unless asked.** `MIRAI_GPU_WATCHDOG_MS=<limit>` (`WATCHDOG_VARIABLE`), read when a device
-  is made, arms it for every process that makes one: editor, player, tests and the sessions the
-  tools start, which inherit it. A value that is not a whole number above 0 refuses the device and
-  says so. Valid scenes wait long for the GPU (first frames that build acceleration structures, a
-  slow device), so there is no limit by default.
+- **On for what no person watches.** `MIRAI_GPU_WATCHDOG_MS=<limit>` (`WATCHDOG_VARIABLE`), read
+  when a device is made, arms it for every process that makes one: editor, player and tests. The
+  tools set it to `WATCHDOG_UNWATCHED_MS` for the programs they start that no person watches (the
+  sessions, the captures, the measurements, the GPU tests, an editor an agent opens), unless it is
+  set already; the editor or the game a person opens with a window from a terminal has no limit:
+  valid scenes wait long for the GPU (first frames that build acceleration structures, a slow
+  device). A value that is not a whole number above 0 refuses the device and says so.
 - **What it does.** Each frame and immediate list signals the timeline (Vulkan) or a shared event
   (Metal) when it ends (`watchdog_sent`). One thread waits for the GPU and records what ended;
   another fires on the CPU clock alone, so a driver call that hangs does not keep it from firing.
