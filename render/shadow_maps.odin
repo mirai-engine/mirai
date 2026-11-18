@@ -1,5 +1,6 @@
 package mirai_render
 
+import "base:intrinsics"
 import "core:hash"
 import "core:math"
 import "core:math/linalg"
@@ -953,12 +954,154 @@ shadow_batch_instances :: proc(s: ^Scene_State, k: int) -> (first, count: u32) {
 	return u32(len(s.instances)) + transmute(u32)row.z, transmute(u32)row.y
 }
 
-// A batch drawn that casts shadows, as the culls of the maps find it: its
-// box (shadow_batch_box) and its instances.
+// A batch drawn as the culls of the maps find it: its box
+// (shadow_batch_box), its instances and whether it casts shadows.
 @(private)
 Shadow_Caster :: struct {
 	low, high:    Vec3,
 	first, count: u32,
+	key:          f32, // twice the middle of its box along x
+	casts:        bool,
+}
+
+// A batch drawn by the key its caster is sorted by (Shadow_Caster.key).
+@(private)
+Shadow_Key :: struct {
+	key:    f32,
+	record: u32, // its batch drawn
+}
+
+// The casters of the tables of the batches built last (Scene_State.shadow_casters):
+// each batch drawn as a caster, those that cast in a box, by their record
+// in the order of the middle of their box along x, and all of them as the
+// ranges of a slot that holds them all. The order keeps that of the tables
+// before: the batches that stay are sorted again from it, those that came
+// alone anew, and both merged. False without memory.
+@(private)
+shadow_casters_update :: proc(s: ^Scene_State) -> bool {
+	batch := &s.batch
+	scene_count := u32(len(s.instances))
+	if resize(&s.shadow_casters, len(batch.drawn)) != nil || resize(&s.shadow_marks, (len(batch.drawn) + 63) / 64) != nil || resize(&s.shadow_merge, len(batch.drawn)) != nil {return false}
+	s.shadow_casters_low, s.shadow_casters_high = Vec3(max(f32)), Vec3(-max(f32))
+	s.shadow_casters_half = 0
+	for &c, k in s.shadow_casters {
+		c.low, c.high, c.casts = shadow_batch_box(s, k)
+		c.first, c.count = shadow_batch_instances(s, k)
+		c.key = c.low.x + c.high.x
+		if !c.casts {continue}
+		s.shadow_casters_low, s.shadow_casters_high = linalg.min(s.shadow_casters_low, c.low), linalg.max(s.shadow_casters_high, c.high)
+		s.shadow_casters_half = max(s.shadow_casters_half, 0.5 * (c.high.x - c.low.x))
+	}
+	for &word in s.shadow_marks {word = 0}
+	// The batches drawn of the records still drawn that cast, in the order
+	// they had, each once; then those that came.
+	band := &s.shadow_band
+	if resize(band, len(s.shadow_order)) != nil {return false}
+	kept := 0
+	for record in s.shadow_order {
+		if int(record) >= len(batch.records) || batch.records[record].drawn < 0 {continue}
+		k := batch.records[record].drawn
+		if !s.shadow_casters[k].casts || s.shadow_marks[k >> 6] & (1 << (u32(k) & 63)) != 0 {continue}
+		s.shadow_marks[k >> 6] |= 1 << (u32(k) & 63)
+		band[kept] = u32(k)
+		kept += 1
+	}
+	base.truncate(band, kept)
+	for c, k in s.shadow_casters {
+		if !c.casts || s.shadow_marks[k >> 6] & (1 << (u32(k) & 63)) != 0 {continue}
+		if _, err := append(band, u32(k)); err != nil {return false}
+	}
+	for &word in s.shadow_marks {word = 0}
+	// Those that stayed, nearly in order; those that came; both merged.
+	casters := s.shadow_casters[:]
+	for i in 1 ..< kept {
+		k := band[i]
+		j := i
+		for ; j > 0 && casters[band[j - 1]].key > casters[k].key; j -= 1 {band[j] = band[j - 1]}
+		band[j] = k
+	}
+	came := band[kept:]
+	if resize(&s.shadow_keys, len(came)) != nil {return false}
+	for k, i in came {s.shadow_keys[i] = {casters[k].key, k}}
+	slice.sort_by(s.shadow_keys[:], proc(a, b: Shadow_Key) -> bool {return a.key < b.key})
+	for key, i in s.shadow_keys {came[i] = key.record}
+	if kept > 0 && len(came) > 0 {
+		merged := s.shadow_merge[:len(band)]
+		i, j := 0, kept
+		for &out in merged {
+			if j >= len(band) || i < kept && casters[band[i]].key <= casters[band[j]].key {
+				out = band[i]
+				i += 1
+			} else {
+				out = band[j]
+				j += 1
+			}
+		}
+		copy(band[:], merged)
+	}
+	// Their keys, and their records, which the next tables start from.
+	if resize(&s.shadow_band_keys, len(band)) != nil || resize(&s.shadow_order, len(band)) != nil {return false}
+	for k, i in band {s.shadow_band_keys[i], s.shadow_order[i] = casters[k].key, batch.drawn[k]}
+	// Every caster as the ranges of a slot.
+	clear(&s.shadow_all)
+	list: Shadow_Reach_List
+	end: u32
+	if scene_count > 0 && !shadow_range_add(&s.shadow_all, &list, &end, 0, scene_count, scene_count) {return false}
+	for c in s.shadow_casters {
+		if c.casts && !shadow_range_add(&s.shadow_all, &list, &end, c.first, c.count, scene_count) {return false}
+	}
+	s.shadow_all_threads = list.threads
+	s.shadow_casters_tables = batch.tables
+	return true
+}
+
+// The boxes of the casters on the axes of the levels of the sun, those of
+// a map of a level (Scene_State.shadow_sun_boxes). False without memory.
+@(private)
+shadow_sun_boxes_update :: proc(s: ^Scene_State, m: Gpu_Shadow_Map) -> bool {
+	if resize(&s.shadow_sun_boxes, len(s.shadow_casters)) != nil {return false}
+	for c, k in s.shadow_casters {
+		center, half := 0.5 * (c.low + c.high), 0.5 * (c.high - c.low)
+		middle := Vec3{linalg.dot(center, m.right), linalg.dot(center, m.up), linalg.dot(center, m.forward)}
+		e := Vec3{linalg.dot(half, linalg.abs(m.right)), linalg.dot(half, linalg.abs(m.up)), linalg.dot(half, linalg.abs(m.forward))}
+		s.shadow_sun_boxes[k] = {middle - e, middle + e}
+	}
+	s.shadow_sun_tables, s.shadow_sun_axes = s.batch.tables, {m.right, m.up, m.forward}
+	return true
+}
+
+// The casters that cast whose box may overlap a span of x, by their batch
+// drawn: those whose middle lies within it grown by the widest half of
+// theirs (Scene_State.shadow_band).
+@(private)
+shadow_casters_band :: proc(s: ^Scene_State, low, high: f32) -> []u32 {
+	keys := s.shadow_band_keys[:]
+	from, past := 2 * (low - s.shadow_casters_half), 2 * (high + s.shadow_casters_half)
+	at, top := 0, len(keys)
+	for at < top {
+		middle := (at + top) / 2
+		if keys[middle] < from {at = middle + 1} else {top = middle}
+	}
+	first := at
+	top = len(keys)
+	for at < top {
+		middle := (at + top) / 2
+		if keys[middle] <= past {at = middle + 1} else {top = middle}
+	}
+	return s.shadow_band[first:at]
+}
+
+// Whether a box of the world lies whole within a map of a level of the sun;
+// false for a perspective one.
+@(private)
+shadow_map_holds :: proc "contextless" (m: Gpu_Shadow_Map, low, high: Vec3) -> bool {
+	if m.kind != SHADOW_MAP_ORTHOGRAPHIC || low.x > high.x {return false}
+	center := 0.5 * (low + high) - m.origin
+	half := 0.5 * (high - low)
+	c := Vec3{linalg.dot(center, m.right), linalg.dot(center, m.up), linalg.dot(center, m.forward)}
+	e := Vec3{linalg.dot(half, linalg.abs(m.right)), linalg.dot(half, linalg.abs(m.up)), linalg.dot(half, linalg.abs(m.forward))}
+	lo, hi := c - e, c + e
+	return lo.z >= m.near && hi.z <= m.far && lo.x >= m.span.x && hi.x <= m.span.z && lo.y >= m.span.y && hi.y <= m.span.w
 }
 
 // A batch drawn that moves in the maps this frame: where, how far it sways,
@@ -1051,28 +1194,14 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 	batch := &s.batch
 	scene_count := u32(len(s.instances))
 	clear(&s.shadow_ranges)
-	// The casters, by the middle of their box along x, once for each build of the tables.
-	if s.shadow_casters_tables != batch.tables || !batch.built {
-		clear(&s.shadow_casters)
-		s.shadow_casters_half = 0
-		for k in 0 ..< len(batch.drawn) {
-			low, high, casts := shadow_batch_box(s, k)
-			if !casts {continue}
-			first, count := shadow_batch_instances(s, k)
-			if _, err := append(&s.shadow_casters, Shadow_Caster{low, high, first, count}); err != nil {return false}
-			s.shadow_casters_half = max(s.shadow_casters_half, 0.5 * (high.x - low.x))
-		}
-		slice.sort_by(s.shadow_casters[:], proc(a, b: Shadow_Caster) -> bool {return a.low.x + a.high.x < b.low.x + b.high.x})
-		s.shadow_casters_tables = batch.tables
-	}
+	if (s.shadow_casters_tables != batch.tables || !batch.built) && !shadow_casters_update(s) {return false}
 	// The batches that move this frame.
 	clear(&s.shadow_movers)
 	for index, k in batch.drawn {
 		record := &batch.records[index]
-		if !record.shadow_moving {continue}
-		if _, _, casts := shadow_batch_box(s, k); !casts {continue}
-		first, count := shadow_batch_instances(s, k)
-		if _, err := append(&s.shadow_movers, Shadow_Mover{shadow_batch_change(s, k), first, count, record.shadow_swayed}); err != nil {return false}
+		if !record.shadow_moving || !s.shadow_casters[k].casts {continue}
+		c := &s.shadow_casters[k]
+		if _, err := append(&s.shadow_movers, Shadow_Mover{shadow_batch_change(s, k), c.first, c.count, record.shadow_swayed}); err != nil {return false}
 	}
 	if b.reach == 0 || int(b.reach) > len(s.shadow_views) {
 		b.reach = 0
@@ -1085,6 +1214,7 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 	}
 	view := &s.shadow_views[b.reach - 1]
 	casters := s.shadow_casters[:]
+	near_block := -1
 	for w, slot in wants {
 		m := w.m
 		kept := &view.slots[slot]
@@ -1095,24 +1225,58 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 		if kept.m != m || kept.tables != batch.tables {
 			if kept.ranges.allocator.procedure == nil {kept.ranges = make([dynamic][2]u32, r.allocator)}
 			clear(&kept.ranges)
-			clear(&s.shadow_found)
-			low, high := shadow_map_box(m)
-			// The first caster whose middle may lie within the box along x.
-			at, top := 0, len(casters)
-			for at < top {
-				middle := (at + top) / 2
-				if casters[middle].low.x + casters[middle].high.x < 2 * (low.x - s.shadow_casters_half) {at = middle + 1} else {top = middle}
-			}
-			for c in casters[at:] {
-				if c.low.x + c.high.x > 2 * (high.x + s.shadow_casters_half) {break}
-				if c.high.x < low.x || c.low.x > high.x || c.high.y < low.y || c.low.y > high.y || c.high.z < low.z || c.low.z > high.z || !shadow_map_reaches(m, c.low, c.high) {continue}
-				if _, err := append(&s.shadow_found, [2]u32{c.first, c.count}); err != nil {return false}
-			}
-			slice.sort_by(s.shadow_found[:], proc(a, b: [2]u32) -> bool {return a.x < b.x})
 			list: Shadow_Reach_List
 			end: u32
-			if scene_count > 0 && !shadow_range_add(&kept.ranges, &list, &end, 0, scene_count, scene_count) {return false}
-			for found in s.shadow_found {if !shadow_range_add(&kept.ranges, &list, &end, found.x, found.y, scene_count) {return false}}
+			if shadow_map_holds(m, s.shadow_casters_low, s.shadow_casters_high) {
+				// Every caster lies in the map.
+				if _, err := append(&kept.ranges, ..s.shadow_all[:]); err != nil {return false}
+				list.threads = s.shadow_all_threads
+			} else {
+				// Of the casters whose middle may lie within the box of the map
+				// along x, those that reach it, marked, then in the order of
+				// their instances.
+				// Of a face of a light, among the casters within the box of its
+				// range, found once for its faces.
+				near := slot >= SHADOW_SUN_LEVELS
+				if near && near_block != (slot - SHADOW_SUN_LEVELS) / abi.SHADOW_LIGHT_SLOTS {
+					near_block = (slot - SHADOW_SUN_LEVELS) / abi.SHADOW_LIGHT_SLOTS
+					clear(&s.shadow_near)
+					for k in shadow_casters_band(s, m.origin.x - m.far, m.origin.x + m.far) {
+						c := &casters[k]
+						if c.high.y < m.origin.y - m.far || c.low.y > m.origin.y + m.far || c.high.z < m.origin.z - m.far || c.low.z > m.origin.z + m.far {continue}
+						if _, err := append(&s.shadow_near, k); err != nil {return false}
+					}
+				}
+				low, high := shadow_map_box(m)
+				if near {
+					for k in s.shadow_near {
+						c := &casters[k]
+						if c.high.x < low.x || c.low.x > high.x || c.high.y < low.y || c.low.y > high.y || c.high.z < low.z || c.low.z > high.z || !shadow_map_reaches(m, c.low, c.high) {continue}
+						s.shadow_marks[k >> 6] |= 1 << (k & 63)
+					}
+				} else {
+					// A level of the sun: the boxes of the casters on the axes of the
+					// sun, which every level shares, against the square and the depths
+					// of the level from its origin, a little wide.
+					if (s.shadow_sun_tables != batch.tables || s.shadow_sun_axes != {m.right, m.up, m.forward}) && !shadow_sun_boxes_update(s, m) {return false}
+					at := Vec3{linalg.dot(m.origin, m.right), linalg.dot(m.origin, m.up), linalg.dot(m.origin, m.forward)}
+					margin := 1e-4 * (linalg.abs(at) + 1)
+					lo := Vec3{m.span.x, m.span.y, m.near} + at - margin
+					hi := Vec3{m.span.z, m.span.w, m.far} + at + margin
+					for k in shadow_casters_band(s, low.x, high.x) {
+						box := s.shadow_sun_boxes[k]
+						if box[1].x < lo.x || box[0].x > hi.x || box[1].y < lo.y || box[0].y > hi.y || box[1].z < lo.z || box[0].z > hi.z {continue}
+						s.shadow_marks[k >> 6] |= 1 << (k & 63)
+					}
+				}
+				if scene_count > 0 && !shadow_range_add(&kept.ranges, &list, &end, 0, scene_count, scene_count) {return false}
+				for &word, i in s.shadow_marks {
+					for ; word != 0; word &= word - 1 {
+						c := &casters[i * 64 + int(intrinsics.count_trailing_zeros(word))]
+						if !shadow_range_add(&kept.ranges, &list, &end, c.first, c.count, scene_count) {return false}
+					}
+				}
+			}
 			kept.m, kept.tables, kept.threads = m, batch.tables, list.threads
 		}
 		stays := &reach[slot][Shadow_Round.Stays]

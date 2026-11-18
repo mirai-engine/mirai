@@ -490,11 +490,24 @@ Scene_State :: struct {
 	// again with the tables of the batches, the widest half of their boxes;
 	// the batches that move in a frame, and those a slot reaches.
 	shadow_ranges:        [dynamic][2]u32,
-	shadow_casters:       [dynamic]Shadow_Caster,
+	shadow_casters:       [dynamic]Shadow_Caster, // of each batch drawn (shadow_casters_update)
 	shadow_casters_tables: u64,
 	shadow_casters_half:  f32,
+	shadow_casters_low:   Vec3,
+	shadow_casters_high:  Vec3,
+	shadow_order:         [dynamic]u32,
+	shadow_all:           [dynamic][2]u32,
+	shadow_all_threads:   u32,
+	shadow_merge:         [dynamic]u32,
+	shadow_keys:          [dynamic]Shadow_Key,
+	shadow_marks:         [dynamic]u64,
+	shadow_near:          [dynamic]u32,
+	shadow_band:          [dynamic]u32, // the batches drawn of shadow_order
+	shadow_band_keys:     [dynamic]f32, // and twice the middle of their box along x
+	shadow_sun_boxes:     [dynamic][2]Vec3, // of each caster on the axes of the levels of the sun, while the tables and the axes stay
+	shadow_sun_tables:    u64,
+	shadow_sun_axes:      [3]Vec3,
 	shadow_movers:        [dynamic]Shadow_Mover,
-	shadow_found:         [dynamic][2]u32,
 	shadow_views:         [dynamic]Shadow_View_Reach, // what the culls of what stays of the slots of each view go over, kept (Shadow_Raster.reach)
 	shadow_stale:         Occluder_Changes,
 	// The rows of masked materials that changed what their casters cover since
@@ -547,7 +560,15 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.shadow_ranges = make([dynamic][2]u32, a)
 	s.shadow_casters = make([dynamic]Shadow_Caster, a)
 	s.shadow_movers = make([dynamic]Shadow_Mover, a)
-	s.shadow_found = make([dynamic][2]u32, a)
+	s.shadow_order = make([dynamic]u32, a)
+	s.shadow_all = make([dynamic][2]u32, a)
+	s.shadow_merge = make([dynamic]u32, a)
+	s.shadow_keys = make([dynamic]Shadow_Key, a)
+	s.shadow_marks = make([dynamic]u64, a)
+	s.shadow_near = make([dynamic]u32, a)
+	s.shadow_band = make([dynamic]u32, a)
+	s.shadow_band_keys = make([dynamic]f32, a)
+	s.shadow_sun_boxes = make([dynamic][2]Vec3, a)
 	s.shadow_views = make([dynamic]Shadow_View_Reach, a)
 	s.overlays = make([dynamic]Instance_Overlays, a)
 	s.reflective = make([dynamic]Reflective_Instance, a)
@@ -2810,7 +2831,15 @@ scene_destroy :: proc(r: ^Renderer) {
 	delete(s.shadow_ranges)
 	delete(s.shadow_casters)
 	delete(s.shadow_movers)
-	delete(s.shadow_found)
+	delete(s.shadow_order)
+	delete(s.shadow_all)
+	delete(s.shadow_merge)
+	delete(s.shadow_keys)
+	delete(s.shadow_marks)
+	delete(s.shadow_near)
+	delete(s.shadow_band)
+	delete(s.shadow_band_keys)
+	delete(s.shadow_sun_boxes)
 	for &view in s.shadow_views {for &kept in view.slots {delete(kept.ranges)}}
 	delete(s.shadow_views)
 	delete(s.overlays)
