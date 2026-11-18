@@ -41,18 +41,19 @@ Claim :: struct {
 CLAIMED :: ".claimed"
 
 // Starts receiving a blob from its address and piece table; the table is
-// checked against the address before anything is kept. A blob already
-// complete or being received is left as it is; one being received whose
-// pieces are all here is completed.
-receive_begin :: proc(s:^Store,hash:Hash,size:i64,pieces:[]Hash) -> Error {
+// checked against the address before anything is kept.
+receive_begin :: proc(s:^Store,hash:Hash,size:i64,pieces:[]Hash,now:Maybe(time.Time)=nil) -> Error {
+    if s==nil || s.root=="" {return .Invalid_Argument}
     if size<0 || len(pieces)!=piece_count(size) {return .Invalid_Argument}
     if address_value(size,pieces)!=hash {return .Corrupt}
-    if has(s,hash) {
+    refreshed:=blob_refresh(s,hash,now.? or_else time.now())
+    if refreshed==.None {
         partial_discard(s,hash)
         return .None
     }
+    if refreshed!=.Missing {return refreshed}
     if size==0 {
-        _,error:=put_bytes(s,nil)
+        _,error:=put_bytes(s,nil,now)
         return error
     }
     existing,existing_error:=partial_open(s,hash,{.Data,.Have})
@@ -61,7 +62,7 @@ receive_begin :: proc(s:^Store,hash:Hash,size:i64,pieces:[]Hash) -> Error {
         partial_close(&existing)
         if full_error!=.None {return full_error}
         if !full {return .None}
-        if finished:=partial_finish(s,hash);finished!=.Corrupt {return finished}
+        if finished:=partial_finish(s,hash,now);finished!=.Corrupt {return finished}
     } else if existing_error==.Corrupt {
         partial_discard(s,hash)
     }
@@ -81,7 +82,8 @@ receive_begin :: proc(s:^Store,hash:Hash,size:i64,pieces:[]Hash) -> Error {
 // completes the blob. A last piece that matches its table entry at another
 // length is Wrong_Size: the blob was begun with a wrong size, and is removed
 // and begun again with the one the piece gives.
-receive_piece :: proc(s:^Store,hash:Hash,index:int,piece:[]u8) -> Error {
+receive_piece :: proc(s:^Store,hash:Hash,index:int,piece:[]u8,now:Maybe(time.Time)=nil) -> Error {
+    if s==nil || s.root=="" {return .Invalid_Argument}
     p,error:=partial_open(s,hash,{.Data,.Have})
     if error==.Missing {return complete_piece(s,hash,index,piece)}
     if error!=.None {return error}
@@ -102,12 +104,14 @@ receive_piece :: proc(s:^Store,hash:Hash,index:int,piece:[]u8) -> Error {
     full:=partial_full(&p) or_return
     partial_close(&p)
     if !full {return .None}
-    return partial_finish(s,hash)
+    return partial_finish(s,hash,now)
 }
 
 // The indices of the pieces a blob being received still lacks; none for a
 // complete blob. One with none missing is completed first.
-receive_missing :: proc(s:^Store,hash:Hash,allocator:=context.allocator) -> (missing:[]int,error:Error) {
+receive_missing :: proc(s:^Store,hash:Hash,allocator:=context.allocator,now:Maybe(time.Time)=nil) ->
+    (missing:[]int,error:Error) {
+    if s==nil || s.root=="" {return nil,.Invalid_Argument}
     for attempt in 0..<2 {
         if has(s,hash) {return nil,.None}
         p:Partial
@@ -118,7 +122,7 @@ receive_missing :: proc(s:^Store,hash:Hash,allocator:=context.allocator) -> (mis
         partial_close(&p)
         if error!=.None || len(missing)>0 || attempt==1 {return missing,error}
         delete(missing,allocator)
-        finished:=partial_finish(s,hash)
+        finished:=partial_finish(s,hash,now)
         if finished!=.None {return nil,finished}
     }
     return nil,.None
@@ -223,31 +227,31 @@ partial_full :: proc(p:^Partial) -> (full:bool,error:Error) {
 // claims it, checks it and publishes it, or gives it back. Nothing to claim
 // is no error: another receiver holds it or it is gone.
 @(private)
-partial_finish :: proc(s:^Store,hash:Hash) -> Error {
+partial_finish :: proc(s:^Store,hash:Hash,now:Maybe(time.Time)) -> Error {
     c:Claim
-    claimed:=partial_claim(s,hash,&c)
+    claimed:=partial_claim(s,hash,&c,now.? or_else time.now())
     if claimed==.Missing {return .None}
     if claimed!=.None {return claimed}
     defer claim_end(s,hash,&c)
     complete:=claim_verify(s,hash,&c) or_return
     if !complete {return .None}
-    return claim_publish(s,hash,&c)
+    return claim_publish(s,hash,&c,now)
 }
 
 // Renames the partial folder to its claimed name. A claim older than
 // TMP_STALE was left by a process that ended: it goes back first.
 @(private)
-partial_claim :: proc(s:^Store,hash:Hash,c:^Claim) -> Error {
+partial_claim :: proc(s:^Store,hash:Hash,c:^Claim,now:time.Time) -> Error {
     from_buffer:[PATH_BYTES]u8
     from:=partial_folder(s,hash,&from_buffer) or_return
     claimed:=claimed_folder(s,hash,&c.buffer) or_return
     if !os.is_directory(from) {
-        if at,time_error:=os.modification_time_by_path(claimed);time_error==nil && time.since(at)>TMP_STALE {
+        at,time_error:=os.modification_time_by_path(claimed)
+        if time_error==nil && older_than(at,now,TMP_STALE) {
             os.rename(claimed,from)
         }
         if !os.is_directory(from) {return .Missing}
     }
-    now:=time.now()
     os.change_times(from,now,now)
     if os.rename(from,claimed)!=nil {return .Missing}
     c.partial=claimed
@@ -288,10 +292,11 @@ claim_verify :: proc(s:^Store,hash:Hash,c:^Claim) -> (complete:bool,error:Error)
 
 // Moves the checked data into the blob's place, and its table to the kept tables.
 @(private)
-claim_publish :: proc(s:^Store,hash:Hash,c:^Claim) -> Error {
+claim_publish :: proc(s:^Store,hash:Hash,c:^Claim,now:Maybe(time.Time)=nil) -> Error {
     buffer,table_buffer,kept_buffer,folder_buffer:[PATH_BYTES]u8
-    blob_place(s,join(&buffer,c.partial,"data") or_return,hash) or_return
+    placed:=blob_place(s,join(&buffer,c.partial,"data") or_return,hash,now) or_return
     c.published=true
+    if !placed {return .None}
     name:[64]u8
     if folder_make(join(&folder_buffer,s.root,"tables",hex(hash,&name)[:2]) or_return)==.None {
         os.rename(join(&table_buffer,c.partial,"table") or_return,table_file(s,hash,&kept_buffer) or_return)
