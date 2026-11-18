@@ -33,9 +33,8 @@ mirai import assets/player/step.wav     # assets/player/step.sound
 - An image is color unless its name says otherwise (`normal`, `_n`, `rough`, `metal`, `orm`,
   `_ao`, `height`, `mask`); force it with `--srgb`, `--data`, `--normal`, `--normal-green-down`.
 - An import leaves the source where it is and adds its package to `packages.mirai`, with its
-  manifest in `packages/`: the flags, the folder of its assets and the id of each asset, so
-  importing again updates in place, keeping ids and material edits. Commit both. A part renamed in
-  the source is a new asset.
+  manifest in `packages/` (flags, folder, the id of each asset), so importing again updates in
+  place, keeping ids and material edits. Commit both. A part renamed in the source is a new asset.
 - Meshes, textures, sounds and fonts are built into the machine's store, never committed: `mirai
   build` makes them again on a fresh clone. Edit their source, not them.
 - A mesh keeps only the colliders its source brings; placed, it collides only with them. An `Auto`
