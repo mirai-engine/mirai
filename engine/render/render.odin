@@ -19,7 +19,7 @@ import mm "mirai:std/math"
 // and otherwise the instances and the lights of the rows written, added or
 // gone.
 
-MATERIAL_SLOTS :: 8
+MATERIAL_SLOTS :: abi.MATERIAL_SLOTS
 POST_PROCESS_CAPACITY :: 8
 MATERIAL_VALUES_CAPACITY :: gpu.INSTANCE_VALUES_MAX // values among all the slots
 MATERIAL_VALUES_TEXTURES :: 8
@@ -248,7 +248,7 @@ Post_Process_Layer :: struct {
 // color and its alpha fades the entity; emission is added to their light.
 // Each value and texture is of the slot beside it, by the base.name_hash of
 // its name: of the program of the material of that slot, or one of
-// MATERIAL_VALUE_FIELDS or MATERIAL_MAP_NAMES. With own_overlays its overlays
+// asset.MATERIAL_VALUE_FIELDS or MATERIAL_MAP_NAMES. With own_overlays its overlays
 // replace those of the material of the first slot. Several functions write
 // it, in loop order: each sets and drops only the names it gives. Its
 // instance holds its color, its light and its values (slot_row), given in
@@ -361,32 +361,6 @@ instance_outline :: proc(highlights:^core.Table(Highlight,$A),outlines:^core.Tab
 Draw_Offset :: struct {
     offset:[3]f32 `mirai:"transient"`,
     rotation:mm.Quat `mirai:"transient"`,
-}
-
-// The values of the standard model an entity gives by name, and where
-// asset.Material_Info holds each: a number, a color, a flag or, with modes,
-// an enum of a byte with that many members.
-Material_Value_Field :: struct {
-    name:string,
-    offset:uintptr,
-    kind:enum u8 {Number,Color,Flag,Mode},
-    modes:u8,
-}
-MATERIAL_VALUE_FIELDS :: [22]Material_Value_Field{
-    {"base_color",offset_of(asset.Material_Info,base_color),.Color,0},{"opacity",offset_of(asset.Material_Info,opacity),.Number,0},
-    {"metallic",offset_of(asset.Material_Info,metallic),.Number,0},{"roughness",offset_of(asset.Material_Info,roughness),.Number,0},
-    {"emission",offset_of(asset.Material_Info,emission),.Color,0},{"specular",offset_of(asset.Material_Info,specular_factor),.Number,0},
-    {"ior",offset_of(asset.Material_Info,ior),.Number,0},{"transmission",offset_of(asset.Material_Info,transmission),.Number,0},
-    {"alpha_mode",offset_of(asset.Material_Info,alpha_mode),.Mode,len(asset.Alpha_Mode)},
-    {"coat",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,weight),.Number,0},{"coat_roughness",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,roughness),.Number,0},
-    {"coat_color",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,color),.Color,0},{"coat_ior",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,ior),.Number,0},
-    {"fuzz",offset_of(asset.Material_Info,fuzz)+offset_of(asset.Material_Fuzz,weight),.Number,0},{"fuzz_color",offset_of(asset.Material_Info,fuzz)+offset_of(asset.Material_Fuzz,color),.Color,0},
-    {"fuzz_roughness",offset_of(asset.Material_Info,fuzz)+offset_of(asset.Material_Fuzz,roughness),.Number,0},
-    {"anisotropy",offset_of(asset.Material_Info,anisotropy)+offset_of(asset.Material_Anisotropy,amount),.Number,0},
-    {"anisotropy_rotation",offset_of(asset.Material_Info,anisotropy)+offset_of(asset.Material_Anisotropy,rotation),.Number,0},
-    {"unlit",offset_of(asset.Material_Info,unlit),.Flag,0},{"emission_mode",offset_of(asset.Material_Info,emission_mode),.Mode,len(asset.Emission_Mode)},
-    {"diffuse_transmission",offset_of(asset.Material_Info,diffuse_transmission)+offset_of(asset.Material_Diffuse_Transmission,weight),.Number,0},
-    {"diffuse_transmission_color",offset_of(asset.Material_Info,diffuse_transmission)+offset_of(asset.Material_Diffuse_Transmission,color),.Color,0},
 }
 
 // The maps of the standard model as Material_Values names them, the paths
@@ -1487,26 +1461,7 @@ material_value_apply :: proc(values:^gpu.Material_Desc,program:^gpu.Program,name
         }
     }
     value:=value
-    return material_standard_value(&values.info,name,&value,true)
-}
-
-// Puts a value of the standard model over the values of a material (put), or
-// reads it, by the name_hash of one of MATERIAL_VALUE_FIELDS. False for
-// another name.
-material_standard_value :: proc(info:^asset.Material_Info,name:u64,value:^[4]f32,put:bool) -> bool {
-    fields:=MATERIAL_VALUE_FIELDS
-    for field in fields {
-        if base.name_hash(field.name)!=name {continue}
-        at:=rawptr(uintptr(info)+field.offset)
-        switch field.kind {
-        case .Number: if put {(^f32)(at)^=value.x} else {value^={(^f32)(at)^,0,0,0}}
-        case .Color:  if put {(^[3]f32)(at)^=value.xyz} else {value.xyz,value.w=(^[3]f32)(at)^,0}
-        case .Flag:   if put {(^bool)(at)^=value.x>0.5} else {value^={f32(u8((^bool)(at)^)),0,0,0}}
-        case .Mode:   if put {(^u8)(at)^=u8(clamp(int(value.x+0.5),0,int(field.modes)-1))} else {value^={f32((^u8)(at)^),0,0,0}}
-        }
-        return true
-    }
-    return false
+    return asset.material_standard_value(&values.info,name,&value,true)
 }
 
 // The Surface program a material of the table names; nil for the standard model.
@@ -1647,7 +1602,7 @@ material_value_find :: proc "contextless" (o:^$T,slot:int,name:u64) -> int {
 
 // Gives a value to a name of the material of a slot of the entity, leaving
 // the other names as they are: a parameter of the program of that material,
-// or one of MATERIAL_VALUE_FIELDS, by its name or the base.name_hash of it.
+// or one of asset.MATERIAL_VALUE_FIELDS, by its name or the base.name_hash of it.
 // False when the entity holds MATERIAL_VALUES_CAPACITY values of other names,
 // for a slot that does not exist or for a value that is not finite.
 material_value :: proc{material_value_named,material_value_hashed}

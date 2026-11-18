@@ -4,7 +4,6 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
-import erender "mirai:engine/render"
 import "mirai:project"
 import "mirai:render/abi"
 import "mirai:std/base"
@@ -59,7 +58,20 @@ program_uses_are_what_the_assets_draw_each_program_as :: proc(t:^testing.T) {
     // One entity lays rune over a cube; another shows tile blended.
     scene:asset.Scene
     testing.expect_value(t,asset.scene_init(&scene,&types,{1,8},context.temp_allocator),asset.Error.None)
-    looks:=[2]struct{renderer:erender.Mesh_Renderer,values:erender.Material_Values}{{renderer=erender.MESH_RENDERER_DEFAULT,values=erender.MATERIAL_VALUES_DEFAULT},{renderer=erender.MESH_RENDERER_DEFAULT,values=erender.MATERIAL_VALUES_DEFAULT}}
+    // The components of engine/render, with fields the cook does not read.
+    Renderer :: struct {mesh:base.Asset_Id,shape:u8,materials:[abi.MATERIAL_SLOTS]base.Asset_Id,shadows:bool}
+    Values :: struct {
+        color:[4]f32,
+        emission:[3]f32,
+        count:u32,
+        slots:[abi.INSTANCE_VALUES_MAX]u8,
+        names:[abi.INSTANCE_VALUES_MAX]u64,
+        values:[abi.INSTANCE_VALUES_MAX][4]f32,
+        own_overlays:bool,
+        overlay_count:u32,
+        overlays:[asset.MATERIAL_MAX_OVERLAYS]asset.Material_Overlay,
+    }
+    looks:[2]struct{renderer:Renderer,values:Values}
     looks[0].values.own_overlays,looks[0].values.overlay_count=true,1
     looks[0].values.overlays[0]={id=1,material=RUNE,enabled=true}
     looks[1].renderer.materials[0]=TILE

@@ -550,6 +550,8 @@ RASTER_ENTRY_USED      :: 8
 // parameters of its program. A shader reads of them what it reads of a row.
 INSTANCE_VALUES_MAX    :: 16
 INSTANCE_VALUES_HEADER :: 2
+// The materials of an entity's mesh, one a slot, which the cook reads from a scene.
+MATERIAL_SLOTS         :: 8
 INSTANCE_ROW_WORDS     :: 1 + MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + PROGRAM_PARAMETER_BYTES / 4
 // The words of a row of the material table (render.Gpu_Material_Row): the
 // values shading holds, then the blocks of its layers, and from

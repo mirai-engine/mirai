@@ -235,7 +235,6 @@ diagnostics_parse :: proc(output:string,allocator:runtime.Allocator) -> (diagnos
 }
 
 // The sources a build read, as the compiler exported them.
-@(private)
 dependencies_read :: proc(file:string,allocator:runtime.Allocator) -> (sources:[]string,ok:bool) {
     Export :: struct {source_files,load_files:[]string}
     data,error:=os.read_entire_file(file,context.temp_allocator)
