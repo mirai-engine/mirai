@@ -244,7 +244,11 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   the view culls its own: by instance and slot, which hands the clusters of the levels the cut of
   the map can take (`instance_clusters`) to a pass by cluster in chunks, which hands each to every
   page of the round it covers, into lists that count what does not fit and grow, like those of the
-  view.
+  view. A round draws them through the lists of the raster of the view
+  ([`raster_lists.slang`](frame-graph.md#passes)), in one round of its own after the cull: each
+  vertex of a cluster placed once for its page, and only the triangles that cover a texel center of
+  the part of the page the round draws, both faces, one indexed draw for the opaque and one for the
+  masked; a cluster those lists have no room for leaves its page to wait.
 
 ## Pages of the shadow maps
 
@@ -290,10 +294,11 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   in units of raster work known before they draw, whatever the scene holds: of each cluster in a
   page, the area of its triangles in texels of the map (`mesh_cluster_areas`, summed once where the
   geometry of the mesh is walked before it is given, on a job), the share of it its box has in the
-  part of the page drawn, several times over for a masked material, and the vertices its draw into
-  the page runs (`shadow_units`, `SHADOW_UNIT_TEXELS`), so dense masked foliage, its cards over each
-  other in one box, draws no more in a frame than walls do; a cluster that begins within the bound
-  of its page and of its frame is drawn, the rest are not. The bound follows the GPU time the rounds
+  part of the page drawn, several times over for a masked material, and its vertices, placed once
+  for the page and drawn once at most (`shadow_units`, `SHADOW_UNIT_TEXELS`), so dense masked
+  foliage, its cards over each other in one box, draws no more in a frame than walls do; a cluster
+  that begins within the bound of its page and of its frame is drawn, the rest are not. The bound
+  follows the GPU time the rounds
   of the maps take (`SHADOW_MAPS_TIMING`, measured in every frame with `rhi.cmd_measure_begin`, not
   the steps of the pages, which cost the same whatever it is): from `SHADOW_FRAME_UNITS`, what the
   least GPU the engine runs on draws masked in a few milliseconds, it grows while the picture lacks

@@ -165,8 +165,10 @@ read_stats :: proc(r: ^Renderer, slot: int) {
 		// Those of the raster, which a view writes again in each of its rounds,
 		// ask for a third of what the view that needs most would hold: it is
 		// drawn in up to RASTER_ROUNDS of them.
+		// A round of the maps is the only one of its cull: they hold what it needs whole.
 		for list, k in ([2]Cull_List{.Raster_Vertices, .Raster_Triangles}) {
-			r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], min((stats.most_raster_need[k] + RASTER_LIST_SHARE - 1) / RASTER_LIST_SHARE, CULL_MARK_MAX))
+			view := (stats.most_raster_need[k] + RASTER_LIST_SHARE - 1) / RASTER_LIST_SHARE
+			r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], min(max(view, stats.shadow_need[k]), CULL_MARK_MAX))
 		}
 		r.stats.culled_instances = stats.culled_instances
 		r.stats.occluded_instances = stats.occluded_instances
@@ -1037,50 +1039,75 @@ raster_margin :: proc "contextless" (subpixel_bits: u32) -> f32 {
 	return 1 / f32(u32(1) << clamp(subpixel_bits, 4, 16)) + 1.0 / 512
 }
 
-// A round of the passes of raster_lists.slang: it takes the clusters of the
-// visible list no round listed yet, those cull_bins.comp placed since the
-// round before and those that found no room in it, and writes their
-// vertices, which of their triangles show, where the triangles of each
-// raster bin and depth bucket go, and the triangles themselves, which the
-// draws of the round read. last: no round follows, so what finds no room is
-// left out and counted. stats: what counts the vertices and the triangles
-// written, the clusters left to the next round and what was left out.
+// What a round of the passes of raster_lists.slang reads and writes: the
+// state of its cull, the list of its clusters and what each keeps between
+// the passes. shadow: of a round of the maps of the shadows, its parameters,
+// which raster_vertices.comp places the vertices with for the pages of the
+// pool (shadow_cull.slang); nil for the view.
 @(private)
-raster_round_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, round: u32, last: bool, stats: rhi.Buffer) {
+Raster_Round_Lists :: struct {
+	state, visible, entries: rhi.Buffer,
+	shadow:                  ^Shadow_Params,
+	pages, maps:             rhi.Buffer, // of the maps: the buffer of the pages of the view and the words of the maps
+}
+
+// A round of the passes of raster_lists.slang: it takes the clusters of the
+// list no round listed yet, those cull_bins.comp placed since the round
+// before (or the cull of the maps listed) and those that found no room in
+// it, and writes their vertices, which of their triangles show, where the
+// triangles of each raster bin and depth bucket go, and the triangles
+// themselves, which the draws of the round read. last: no round follows, so
+// what finds no room is left out and counted. stats: what counts the
+// vertices and the triangles written, the clusters left to the next round
+// and what was left out. lists: those of the view where nil.
+@(private)
+raster_round_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, round: u32, last: bool, stats: rhi.Buffer, lists: ^Raster_Round_Lists = nil) {
 	s := &r.scene
+	view := Raster_Round_Lists{state = s.cull_state_buffer, visible = s.visible_buffer, entries = s.raster_entries}
+	l := lists if lists != nil else &view
 	groups := u64(offset_of(Gpu_Cull_State, raster_dispatch))
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Round])
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.cull_state_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, l.state)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
 	rhi.cmd_dispatch(cmd, 1)
-	Vertices_Params :: struct {round, last, vertex_capacity, triangle_capacity: u32, margin: f32, pad: [3]u32}
-	vertices := Vertices_Params{round = round, last = u32(last), vertex_capacity = s.cull_capacity[.Raster_Vertices], triangle_capacity = s.cull_capacity[.Raster_Triangles]}
-	vertices.margin = raster_margin(rhi.device_info(r.device).subpixel_bits)
-	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Vertices])
-	set_params(cmd, &vertices)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.cull_state_buffer)
+	margin := raster_margin(rhi.device_info(r.device).subpixel_bits)
+	if l.shadow != nil {
+		params := l.shadow^
+		params.round, params.last, params.margin = round, u32(last), margin
+		params.vertex_capacity, params.triangle_capacity = s.cull_capacity[.Raster_Vertices], s.cull_capacity[.Raster_Triangles]
+		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Vertices_Shadow])
+		set_params(cmd, &params)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS6, l.pages)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS7, l.maps)
+	} else {
+		Vertices_Params :: struct {round, last, vertex_capacity, triangle_capacity: u32, margin: f32, pad: [3]u32}
+		vertices := Vertices_Params{round = round, last = u32(last), vertex_capacity = s.cull_capacity[.Raster_Vertices], triangle_capacity = s.cull_capacity[.Raster_Triangles], margin = margin}
+		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Vertices])
+		set_params(cmd, &vertices)
+	}
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, l.state)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, stats)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, s.visible_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, l.visible)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.raster_vertices)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS5, s.raster_entries)
-	rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, groups)
-	Params :: struct {round, pad0, pad1, pad2: u32}
-	params := Params{round = round}
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS5, l.entries)
+	rhi.cmd_dispatch_indirect(cmd, l.state, groups)
+	Params :: struct {round, ids, pad0, pad1: u32}
+	params := Params{round = round, ids = 0 if l.shadow != nil else 1}
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Starts])
 	set_params(cmd, &params)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.cull_state_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, l.state)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
 	rhi.cmd_dispatch(cmd, 1)
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Triangles])
 	set_params(cmd, &params)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.cull_state_buffer)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, s.visible_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, l.state)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, l.visible)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.raster_indices)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS5, s.raster_entries)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS5, l.entries)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, s.raster_ids)
-	rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, groups)
+	rhi.cmd_dispatch_indirect(cmd, l.state, groups)
 }
 
 @(private)

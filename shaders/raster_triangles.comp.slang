@@ -4,15 +4,15 @@
 // listed that show (raster_vertices.comp) take the next places of the range
 // of its raster bin, or of its depth bucket in a tested one
 // (raster_starts.comp), in the order the cluster has them. Each is the three
-// places its corners have among the vertices written, and the word the
-// visibility target names it by.
+// places its corners have among the vertices written, and, where params.ids
+// is 1 (the view, not the maps), the word the visibility target names it by.
 #include "visibility.slang"
 #include "raster_lists.slang"
 #define MIRAI_GROUP_X 64
 #define MIRAI_GROUP_Y 1
 #define MIRAI_GROUP_Z 1
 
-struct Params_Block { uint round; uint pad0; uint pad1; uint pad2; };
+struct Params_Block { uint round; uint ids; uint pad1; uint pad2; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] RWStructuredBuffer<uint> cull_state : register(MIRAI_REGISTER(u, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS2, 0)]] StructuredBuffer<Visible_Cluster> visible : register(MIRAI_REGISTER(t, SLOT_PASS2), space0);
@@ -74,6 +74,6 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
         raster_indices[place * 3u] = at.x;
         raster_indices[place * 3u + 1u] = at.y;
         raster_indices[place * 3u + 2u] = at.z;
-        raster_ids[place] = visibility_id(e, t);
+        if (params.ids != 0u) raster_ids[place] = visibility_id(e, t);
     }
 }

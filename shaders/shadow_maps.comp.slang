@@ -44,10 +44,10 @@ bool instance_moves(uint instance) {
 
 // What a round hands each page it draws that the texels of a box cover, in
 // units (shadow_units): the texels of the part of the page drawn the box
-// covers, and the draws of the share of its clusters whose texels lie there
-// (SHADOW_WORDS_COST); and the chunks the instance hands over
-// (SHADOW_WORDS_REACH).
-void shadow_foresee(Shadow_Map m, float4 texels, uint clusters, bool masked) {
+// covers, and the vertices of the share of its clusters whose texels lie
+// there, `vertices` each (SHADOW_WORDS_COST); and the chunks the instance
+// hands over (SHADOW_WORDS_REACH).
+void shadow_foresee(Shadow_Map m, float4 texels, uint clusters, float vertices, bool masked) {
     uint4 span, rect = shadow_texel_pages(m, texels);
     if (!shadow_pages_span(m, span)) return;
     rect = uint4(max(rect.xy, span.xy), min(rect.zw, span.zw));
@@ -60,7 +60,7 @@ void shadow_foresee(Shadow_Map m, float4 texels, uint clusters, bool masked) {
             float2 corner = float2(uint2(x, y) * SHADOW_PAGE);
             float2 within = min(texels.zw, corner + float2(part.zw)) - max(texels.xy, corner + float2(part.xy));
             float share = saturate(max(within.x, 1.0) * max(within.y, 1.0) / (size.x * size.y));
-            uint units = shadow_units(uint2(x, y), part, texels, CLUSTER_TRIANGLES, masked, 0.0, max(float(clusters) * share, 1.0));
+            uint units = shadow_units(uint2(x, y), part, texels, CLUSTER_TRIANGLES, masked, 0.0, max(float(clusters) * share, 1.0) * vertices);
             // Far past any bound it counts no more, below the flags of the word.
             uint word = shadow_cost_word(pool);
             if (shadow_pages[word] < SHADOW_COST_UNITS / 2u) InterlockedAdd(shadow_pages[word], min(units, SHADOW_COST_UNITS / 2u));
@@ -144,12 +144,14 @@ void main(uint3 id : SV_DispatchThreadID) {
         if (!whole && moves != (params.moving != 0u)) continue;
         uint2 clusters = instance_clusters(shadow_map_detail(m), inst, mesh);
         if (params.foresee != 0u) {
-            shadow_foresee(m, texels, clusters.y, inst.tested != 0u);
+            // The vertices of a cluster of its mesh on the average.
+            float vertices = clamp(ceil(float(mesh.vertex_count) / float(mesh.cluster_count)), 3.0, float(CLUSTER_VERTICES));
+            shadow_foresee(m, texels, clusters.y, vertices, inst.tested != 0u);
             continue;
         }
         uint count = (clusters.y + CULL_CHUNK - 1u) / CULL_CHUNK;
         uint base;
-        InterlockedAdd(shadow_state[SHADOW_CHUNK_COUNT], count, base);
+        InterlockedAdd(shadow_state[CULL_CHUNK_COUNT], count, base);
         uint kept = base >= params.chunk_capacity ? 0u : min(count, params.chunk_capacity - base);
         if (kept < count) {
             InterlockedAdd(stats[0].dropped[CULL_LIST_SHADOW_CHUNKS], count - kept);
@@ -162,8 +164,8 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
         if (kept > 0u) {
             uint total = base + kept;
-            InterlockedMax(shadow_state[SHADOW_CLUSTER_DISPATCH], min(total, CULL_DISPATCH_X));
-            InterlockedMax(shadow_state[SHADOW_CLUSTER_DISPATCH + 1u], (total + CULL_DISPATCH_X - 1u) / CULL_DISPATCH_X);
+            InterlockedMax(shadow_state[CULL_CHUNK_DISPATCH], min(total, CULL_DISPATCH_X));
+            InterlockedMax(shadow_state[CULL_CHUNK_DISPATCH + 1u], (total + CULL_DISPATCH_X - 1u) / CULL_DISPATCH_X);
         }
     }
 }
