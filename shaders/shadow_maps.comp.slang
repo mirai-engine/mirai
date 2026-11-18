@@ -31,6 +31,9 @@
 // A bit for each instance that moves, then the list of those a round of
 // what moves culls (Params_Block.listed).
 [[vk::binding(SLOT_PASS5, 0)]] StructuredBuffer<uint> movers : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);
+// The farthest depth the cache holds over the blocks of each page of the pool (shadow_hiz.comp).
+[[vk::binding(SLOT_PASS7, 0)]] Texture2D<float4> hiz : register(MIRAI_REGISTER(t, SLOT_PASS7), space0);
+#include "shadow_hidden.slang"
 
 bool instance_moves(uint instance) {
     uint bit = instance_batched(instance) ? frame.instance_count + batch_of(instance) : instance;
@@ -61,21 +64,40 @@ void shadow_foresee(Shadow_Map m, float4 texels, uint clusters) {
     }
 }
 
+// Marks the pages of map m that the box of an instance that swayed covers,
+// where what moves changed (SHADOW_WORDS_MOVED), but where the cache holds
+// the page and hides the box there.
+void shadow_sway_mark(Shadow_Map m, float4 texels, float3 low, float3 high) {
+    uint4 rect = shadow_texel_pages(m, texels);
+    for (uint y = rect.y; y <= rect.w; y++) {
+        for (uint x = rect.x; x <= rect.z; x++) {
+            uint entry = shadow_page_entry(m.rect, uint2(x, y)), slot = m.rect.x, pool;
+            if (!shadow_place_valid(slot, entry)) continue;
+            uint e = shadow_table_entry(slot, entry);
+            if ((e & SHADOW_PAGE_CACHED) != 0u && shadow_entry_pool(e, pool) && shadow_box_hidden(hiz, m, uint2(x, y), pool, low, high)) continue;
+            uint word = SHADOW_WORDS_MOVED + slot * SHADOW_MASK_WORDS + (entry >> 5u), bit = 1u << (entry & 31u);
+            if ((shadow_pages[word] & bit) == 0u) InterlockedOr(shadow_pages[word], bit);
+        }
+    }
+}
+
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 id : SV_DispatchThreadID) {
     uint instance = id.x, job = id.y;
     if (instance >= params.instances || job >= params.maps) return;
-    uint map = shadow_pages[params.list + job];
+    bool sway = params.foresee == SHADOW_CULL_SWAY;
+    uint map = sway ? shadow_word(shadow_data, params.list + job) : shadow_pages[params.list + job];
     if (map >= SHADOW_SLOTS) return;
     if (params.listed != 0u) {
         // The range of the thread: the last whose first thread is not past it.
         uint low = 0u, high = params.ranges;
+        uint ranges = params.movers + 2u * params.range_first;
         while (high - low > 1u) {
             uint middle = (low + high) / 2u;
-            if (movers[params.movers + 2u * middle + 1u] <= instance) low = middle; else high = middle;
+            if (movers[ranges + 2u * middle + 1u] <= instance) low = middle; else high = middle;
         }
-        instance = movers[params.movers + 2u * low] + instance - movers[params.movers + 2u * low + 1u];
+        instance = movers[ranges + 2u * low] + instance - movers[ranges + 2u * low + 1u];
     }
     float reach = 0.0;
     if (instance_batched(instance)) {
@@ -97,7 +119,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     for (uint mip = 0u; mip < shadow_slot_mips(map); mip++) {
         Shadow_Map m = shadow_map_mip(whole, mip);
         float4 texels;
-        if (shadow_map_unseen(m, low, high) || !shadow_box_texels(m, low, high, texels) || !shadow_pages_drawn(m, texels)) continue;
+        if (shadow_map_unseen(m, low, high) || !shadow_box_texels(m, low, high, texels) || (!sway && !shadow_pages_drawn(m, texels))) continue;
         // A batch of a deformable sways as far as its mesh says (render.batch_sway):
         // a map whose texel there is wider draws it at rest and keeps it, as what
         // stays; a finer one draws it as it is, and while it sways, as what moves.
@@ -107,6 +129,10 @@ void main(uint3 id : SV_DispatchThreadID) {
             float texel = shadow_map_texel(m, max(detail_span(shadow_map_detail(m), low, high).x, m.near));
             rest = !(mesh.sway * instance_scale(inst) > texel);
             moves = moves && !rest;
+        }
+        if (sway) {
+            if (!rest) shadow_sway_mark(m, texels, low, high);
+            continue;
         }
         // A slot that let go of every page draws what stays too into the atlas, in the round of what moves.
     bool whole = params.moving == 1u && (shadow_data[(params.plan >> 2u) + map].x & SHADOW_PLAN_RESET) != 0u;

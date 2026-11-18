@@ -134,8 +134,12 @@ mtl_sample_slot :: proc(c: ^Command_List) -> (buffer: ^MTL.CounterSampleBuffer, 
 	if c.immediate {return}
 	d := c.device
 	f := &d.frames[d.slot]
-	if !f.passes || f.recorded.count == 0 || f.encoder_count >= MAX_TIMESTAMPS {return}
-	f.encoder_marks[f.encoder_count] = u16(f.recorded.count - 1)
+	if f.queries == nil || f.encoder_count >= MAX_TIMESTAMPS {return}
+	switch {
+	case f.passes && f.recorded.count > 0: f.encoder_marks[f.encoder_count] = u16(f.recorded.count - 1)
+	case !f.passes && f.measuring: f.encoder_marks[f.encoder_count] = u16(f.measured.count - 1)
+	case: return
+	}
 	index = NS.UInteger(f.encoder_count) * 2
 	f.encoder_count += 1
 	return f.queries, index, true
@@ -714,6 +718,29 @@ cmd_pop_label :: proc(c: ^Command_List) {
 	c.label_count -= 1
 	mtl_release(c.labels[c.label_count])
 	c.labels[c.label_count] = nil
+}
+
+// Marks the start of an interval that frame_timings reports under this name
+// in every frame, also one that does not want timings, until cmd_measure_end:
+// what the renderer paces its own work by. Outside a render pass. In a frame
+// that wants timings it is a cmd_timestamp, which the next one ends; in one
+// that does not, its encoders are sampled.
+cmd_measure_begin :: proc(c: ^Command_List, name: string) {
+	if c.immediate || c.in_render_pass {return}
+	f := &c.device.frames[c.device.slot]
+	if f.passes {cmd_timestamp(c, name); return}
+	if f.queries == nil || f.measuring || !frame_passes_add(&f.measured, name) {return}
+	f.measuring = true
+	mtl_end_encoder(c)
+}
+
+// Ends the interval of the last cmd_measure_begin.
+cmd_measure_end :: proc(c: ^Command_List) {
+	if c.immediate || c.in_render_pass {return}
+	f := &c.device.frames[c.device.slot]
+	if f.passes || !f.measuring {return}
+	f.measuring = false
+	mtl_end_encoder(c)
 }
 
 // Marks the start of an interval that frame_timings reports under this name
