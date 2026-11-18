@@ -35,7 +35,7 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   [checks and tests](references/projects.md#checks-and-tests).
 - Dependencies, `.deps` and the cache between worktrees, `cook/workspace`:
   [dependencies and worktrees](references/build.md#dependencies-and-worktrees).
-- Turns between processes, build and measurement locks and implicit Vulkan layers:
+- Turns between processes, build, measurement and GPU locks and implicit Vulkan layers:
   [turns](references/build.md#turns-between-processes) and
   [layers](references/build.md#implicit-vulkan-layers).
 - `mirai` launcher, `mirai worktree` and `mirai doctor`:
@@ -143,7 +143,10 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   `core:testing`) and `mirai test tools/mirai` (ACP installer, C library cache, tests that declare
   the sources, known failures); `mirai check cook/build` and `mirai check
   tools/mirai` if they change. Turns: `mirai test cook/workspace` (annotation of builds, who holds a
-  lock) and `mirai test std/subprocess` (low priority of a child).
+  lock, GPU turns by the room of the card, a person and a measurement) and `mirai test
+  std/subprocess` (low priority of a child, handles it inherits). GPU turns with real editors:
+  two sessions at once on a heavy scene both run or the second waits naming the first, and
+  killing the editor of one frees its turn (`mirai locks`).
 - Generator or build: `mirai build editor` and `mirai build game --out <separate folder>` of the
   affected project, and the player with `--no-gpu --frames 3`.
 - User commands, by hand: `mirai new`, and `mirai build game` twice (the second says "unchanged").

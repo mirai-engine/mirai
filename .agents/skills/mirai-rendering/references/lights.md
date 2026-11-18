@@ -290,7 +290,7 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   what they draw costs in proportion to it: from `SHADOW_FRAME_CLUSTERS`, what the least GPU the
   engine runs on draws into a depth map, masked, in a few milliseconds, it grows while pages wait
   and the rounds take less than their share of the rest of the frame, a refresh of the display at
-  least (`SHADOW_MAPS_SHARE`, `SHADOW_LOADING_SHARE` on a loading screen, `Frame_Desc.loading`), so
+  least (`SHADOW_MAPS_SHARE`), so
   that filling a view slows its frames by that share at most, and shrinks when they take more, never
   past `SHADOW_FRAME_CLUSTERS_MOST`, far within the time a driver gives a draw before it resets the
   device. Before the cull by cluster, `Grant` gives the pages, those whose points read them drawn

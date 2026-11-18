@@ -424,8 +424,9 @@ projects_start :: proc(s:^Session) -> bool {
         if remote:=strings.trim_space(string(p.remote[:p.remote_length]));remote!="" {append(&command,"--git-remote",remote)}
     }
     for arg in s.args {append(&command,arg)}
+    turn:=gpu_turn_pass(s,&command)
     preferences_save(s)
-    started,error:=subprocess.start({command=command[:],stdin=os.stdin,stdout=os.stdout,stderr=os.stderr})
+    started,error:=subprocess.start({command=command[:],stdin=os.stdin,stdout=os.stdout,stderr=os.stderr},inherit=turn)
     if error!=nil {
         log.errorf("%s could not be started: %v",exe,error)
         notify(s,"The editor could not be started on the project")

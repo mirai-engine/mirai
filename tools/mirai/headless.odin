@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
+import "mirai:cook/workspace"
 import "mirai:editor/api"
 import "mirai:std/serial"
 import "mirai:std/subprocess"
@@ -22,9 +23,14 @@ Headless_Editor :: struct {
 // editor may still run: headless_close ends it.
 headless_open :: proc(e:^Headless_Editor,tool,label,editor,project,checkout,log:string,size:[2]int,port:^int) -> bool {
     for session_answers(port^) {port^+=1}
-    command:=[]string{editor,"--project",project,"--headless","--api-port",fmt.tprintf("%d",port^),"--width",fmt.tprintf("%d",size.x),"--height",fmt.tprintf("%d",size.y)}
-    process,error:=detached_logged(command,log,checkout)
+    turn,charge:=gpu_turn(checkout,project,fmt.tprintf("%s, %s in %s",tool,label,project))
+    defer workspace.lock_release(&turn)
+    command:=make([dynamic]string,context.temp_allocator)
+    append(&command,editor,"--project",project,"--headless","--api-port",fmt.tprintf("%d",port^),"--width",fmt.tprintf("%d",size.x),"--height",fmt.tprintf("%d",size.y))
+    append(&command,..gpu_turn_args(&turn))
+    process,error:=detached_logged(command[:],log,checkout,gpu_turn_inherit(&turn))
     if error!=nil {fmt.eprintfln("mirai %s: could not open %s: %v",tool,editor,error);return false}
+    gpu_turn_hand_over(&turn,process,fmt.tprintf("the editor of mirai %s, %s in %s",tool,label,project),charge)
     e^={port=port^,process=process,project=project,tool=tool,label=label}
     port^+=1
     fmt.eprintfln("mirai %s: %s at %dx%d (pid %d)",tool,label,size.x,size.y,process.pid)
