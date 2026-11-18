@@ -15,10 +15,12 @@ import "mirai:std/jobs"
 // builds when it gets to it. Either way they are the same bytes. An import
 // whose files of the cache are current builds nothing (writer_current).
 //
-// The meshes built are kept by what they are made from in the mesh cache of
-// the project (Import_Options.mesh_cache, cook/cache), as textures are in the
-// texture cache: building the same geometry with the same settings again
-// reads it.
+// The meshes built are kept by what they are made from in the cache
+// MESH_CACHE of the machine store (Import_Options.store, cook/cache), as
+// textures are in theirs: building the same geometry with the same settings
+// again reads it.
+
+MESH_CACHE :: "meshes"
 
 // The version of what builds a mesh: its file of the cache is built again
 // when the writer, the format of .mesh or the key of its settings change.
@@ -105,12 +107,12 @@ mesh_cook :: proc(mesh:^Imported_Mesh,settings:Import_Settings,options:Import_Op
     types:asset.Types
     asset.types_init(&types,context.temp_allocator)
     defer asset.types_destroy(&types)
-    folder:=options.mesh_cache
+    c:=import_cache(options)
     key:u64
-    if folder!="" {
+    if c.store!=nil {
         key=mesh_cache_key(cooked.content,settings)
         file:asset.Asset
-        if !options.rebuild && cache.load(folder,key,MESH_CACHE_VERSION,".mesh",&file,allocator) {
+        if !options.rebuild && cache.load(c,MESH_CACHE,key,MESH_CACHE_VERSION,&file,allocator) {
             if view,error:=asset.mesh_view(&file,&types);error==.None {
                 cooked.geometry=view.geometry
                 cooked.collision={view.colliders,view.collision_points,view.collision_indices}
@@ -126,7 +128,7 @@ mesh_cook :: proc(mesh:^Imported_Mesh,settings:Import_Settings,options:Import_Op
     clustered:=levels_geometry(levels,mesh.flags,&cooked.geometry,allocator)
     base.profile_end(clusters_zone)
     if !clustered {cooked.failure=.Clusters;return}
-    if folder!="" && cache.ready(folder) {
+    if c.store!=nil {
         // The slots of the file of the cache name no material: an import names its own.
         slots:=make([]asset.Material_Slot,len(mesh.slots),context.temp_allocator)
         for slot,at in mesh.slots {slots[at].id=slot.id}
@@ -134,8 +136,19 @@ mesh_cook :: proc(mesh:^Imported_Mesh,settings:Import_Settings,options:Import_Op
             id=cache.id(key,MESH_CACHE_VERSION),geometry=cooked.geometry,slots=slots,joints=mesh.joints,
             colliders=cooked.collision.colliders,collision_points=cooked.collision.points,collision_indices=cooked.collision.indices,
         }
-        if asset.mesh_save(cache.file_path(folder,key,".mesh"),&types,desc)==.None {cache.written(folder)}
+        doc:asset.Document
+        if asset.mesh_document(&doc,&types,desc,context.temp_allocator)!=.None {return}
+        defer asset.document_destroy(&doc)
+        if bytes,error:=asset.document_bytes(&doc);error==.None {
+            _=cache.put(c,MESH_CACHE,key,MESH_CACHE_VERSION,bytes)
+            mem.free_bytes(bytes)
+        }
     }
+}
+
+// The caches of the store an import reads and fills.
+import_cache :: proc(options:Import_Options) -> cache.Cache {
+    return {store=options.store,source=options.cache_source}
 }
 
 // Builds the levels of a texture, or reads them from the texture cache, into
@@ -153,21 +166,21 @@ texture_cook :: proc(bytes:[]u8,made:textures.Source,decoded:textures.Image,buil
     asset.types_init(&types,context.temp_allocator)
     defer asset.types_destroy(&types)
     // The same image with the same settings, built before by any import, is read from the cache.
-    folder:=options.texture_cache
+    c:=import_cache(options)
     key:u64
-    if folder!="" {
+    if c.store!=nil {
         key=textures.cache_key_build(bytes,made,build)
         if !options.rebuild {
-            if built,cached:=textures.cache_read(folder,key,&types,allocator);cached {cooked.built=built;return}
+            if built,cached:=textures.cache_read(c,key,&types,allocator);cached {cooked.built=built;return}
         }
     }
     if options.fast_textures {
         build.speed=.Fast
         cooked.settings=textures.settings_hash(build)
-        if folder!="" {
+        if c.store!=nil {
             key=textures.cache_key_build(bytes,made,build)
             if !options.rebuild {
-                if built,cached:=textures.cache_read(folder,key,&types,allocator);cached {cooked.built=built;return}
+                if built,cached:=textures.cache_read(c,key,&types,allocator);cached {cooked.built=built;return}
             }
         }
     }
@@ -186,7 +199,7 @@ texture_cook :: proc(bytes:[]u8,made:textures.Source,decoded:textures.Image,buil
     case:
         cooked.built,cooked.error=textures.from_bytes(bytes,build,allocator,options.worker)
     }
-    if cooked.error==.None {textures.cache_write(folder,key,&types,&cooked.built)}
+    if cooked.error==.None {textures.cache_write(c,key,&types,&cooked.built)}
 }
 
 // The settings hash of a texture of build built Fast.

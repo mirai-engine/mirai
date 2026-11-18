@@ -5,16 +5,19 @@ import "core:math/linalg"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
+import "core:strconv"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:cook/cache"
 import importer "mirai:cook/import"
 import "mirai:cook/import/gltf"
 import "mirai:cook/import/obj"
 import "mirai:cook/import/usd"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "mirai:store"
 
 FIXTURES :: #directory+"/../../../assets/fixtures/"
 DEMO :: #directory+"/../../../demo/assets/"
@@ -101,6 +104,42 @@ copy_in :: proc(root,from:string,files:..string) -> string {
 
 // A folder of a test as the root of a project, with its assets folder, where
 // the sources of its imports are. "" when there is none.
+// A store at folder, in the temp allocator; nil when it cannot be opened.
+test_store :: proc(t:^testing.T,folder:string,loc:=#caller_location) -> ^store.Store {
+    s,error:=store.open(folder,context.temp_allocator)
+    if !testing.expect_value(t,error,store.Error.None,loc=loc) {return nil}
+    kept:=new(store.Store,context.temp_allocator)
+    kept^=s
+    return kept
+}
+
+// The results a cache of s keeps (cook/cache), in the temp allocator.
+cached_refs :: proc(s:^store.Store,name:string) -> []store.Ref {
+    buffer:[store.NAME_MAX]u8
+    refs,_:=store.ref_list(s,asset.cache_namespace(name,&buffer),context.temp_allocator)
+    return refs
+}
+
+// The key of a result of a cache by the name of its ref, <key>-<version>.
+cached_key :: proc(ref:store.Ref) -> u64 {
+    key,_:=strconv.parse_u64_of_base(ref.name[:min(16,len(ref.name))],16)
+    return key
+}
+
+// A source that copies what the store at user keeps, as a peer would give it.
+copy_source :: proc(from:^store.Store) -> cache.Source {
+    fetch :: proc(user:rawptr,into:^store.Store,namespace,name:string) -> bool {
+        from:=(^store.Store)(user)
+        hash,error:=store.ref_get(from,namespace,name)
+        if error!=.None {return false}
+        path,path_error:=store.blob_path(from,hash,context.temp_allocator)
+        if path_error!=.None {return false}
+        if put,put_error:=store.put_file(into,path);put_error!=.None || put!=hash {return false}
+        return store.ref_set(into,namespace,name,hash)==.None
+    }
+    return {fetch=fetch,user=from}
+}
+
 test_project :: proc(t:^testing.T,name:string) -> (root,assets:string) {
     root=base.test_folder(t,name)
     if root=="" {return}

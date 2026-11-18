@@ -57,7 +57,7 @@ a_cook_ships_a_fast_texture_final_from_its_source :: proc(t:^testing.T) {
     report:=build.cook_assets({assets=assets,output=fmt.tprintf("%s/program",folder),manifest=manifest,root=folder,allocator=context.temp_allocator})
     testing.expectf(t,report.error==.Source_Failed && strings.contains(report.detail,"assets/noise.tga") && strings.contains(report.detail,"mirai build game"),"%v %s",report.error,report.detail)
 
-    caches:=Sync_Options{texture_cache=fmt.tprintf("%s/cache/textures",folder),mesh_cache=fmt.tprintf("%s/cache/meshes",folder)}
+    caches:=Sync_Options{store=test_store(t,fmt.tprintf("%s/store",folder))}
     fast:=caches
     fast.fast_textures=true
     kept:=sync(folder,fast,context.temp_allocator)

@@ -106,6 +106,10 @@ the assets.
 - **An import never touches another.** Two models that embed the same image get a texture each,
   encoded once in the content cache; no import edits the files or the sidecar of another source.
   Decided by the owner.
+- **What imports and cooks build is kept as refs into the machine store** (`cook/cache`): a blob
+  named by `(cache-<name>, <key>-<version>)`, found by any program or machine that shares blobs;
+  a miss asks the caller's `cache.Source` before building, and `cook/cache` removes nothing: the
+  store owns space ([texture cache](references/imports.md#texture-cache)).
 - **What nobody edits is a cache of the source, never versioned, whatever reads it.** The meshes,
   textures, sounds and fonts of every import, of an engine format or of a plugin's, are files of
   the imported folder of its root (`.mirai/imported/`), named by their ids and listed by where
@@ -192,9 +196,11 @@ the assets.
   inverted green, round trip through `.tex`, cache by content; HDR, every BC6H mode, 16-bit and
   layers in `layers_test.odin`). The fixtures of `assets/fixtures/` and the models of
   `demo/assets` import (without warnings) and what is written reads back with `asset`.
-- Caches: `cook/textures/cache_test.odin` and `cook/import/sources/cache_test.odin` (a texture or
-  a mesh that another import built is taken from the cache; one whose file under another key
-  records what it is built from now is taken without writing it, and one that records other
+- Caches: `cook/cache/cache_test.odin` (a result kept through one store is found through another
+  of its root or through a source on a miss; a missing or damaged blob is a miss; hostile names),
+  `cook/textures/cache_test.odin` and `cook/import/sources/cache_test.odin` (a texture or a mesh
+  that another import built is taken from the cache or from a source; one whose file under another
+  key records what it is built from now is taken without writing it, and one that records other
   encoders or another builder is built again);
   `cook/build/cook_cache_test.odin` (a cook takes the blocks of a texture from the cache of its
   content) and `cook/import/sources/cook_test.odin` (the sync of a cook builds a fast texture

@@ -17,6 +17,7 @@ import "mirai:core"
 import importer "mirai:cook/import"
 import "mirai:cook/prefab"
 import "mirai:cook/import/gltf"
+import "mirai:cook/textures"
 import "mirai:project"
 import "mirai:std/base"
 
@@ -300,9 +301,10 @@ two_models_with_the_same_image_get_a_texture_each_and_neither_touches_the_other 
     if root=="" {return}
     atlas_images(fmt.tprintf("%s/first",assets))
     atlas_images(fmt.tprintf("%s/second",assets))
-    cache:=fmt.tprintf("%s/cache/textures",root)
+    cache:=test_store(t,fmt.tprintf("%s/store",root))
+    if cache==nil {return}
     first_source:=atlas_source(fmt.tprintf("%s/first",assets),"crate.gltf",{"atlas","waves","across","shared"})
-    first,error:=import_source(first_source,{world=prefab.import_world(t),root=root,texture_cache=cache})
+    first,error:=import_source(first_source,{world=prefab.import_world(t),root=root,store=cache})
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return};defer importer.report_destroy(&first)
     atlas,_:=written_of(&first,asset.KIND_MATERIAL,"Atlas")
     texture,_:=written_of(&first,asset.KIND_TEXTURE,"atlas")
@@ -316,10 +318,10 @@ two_models_with_the_same_image_get_a_texture_each_and_neither_touches_the_other 
         bytes,_:=os.read_entire_file(written.path,context.temp_allocator)
         append(&kept,Kept{written.path,bytes})
     }
-    cached,_:=os.read_all_directory_by_path(cache,context.temp_allocator)
+    cached:=cached_refs(cache,textures.CACHE)
 
     second_source:=atlas_source(fmt.tprintf("%s/second",assets),"barrel.gltf",{"atlas","waves","across","shared"})
-    second,second_error:=import_source(second_source,{world=prefab.import_world(t),root=root,texture_cache=cache})
+    second,second_error:=import_source(second_source,{world=prefab.import_world(t),root=root,store=cache})
     if !testing.expectf(t,second_error.code==.None,"%s",second_error.message) {return};defer importer.report_destroy(&second)
     second_atlas,wrote_material:=written_of(&second,asset.KIND_MATERIAL,"Atlas")
     second_texture,wrote_texture:=written_of(&second,asset.KIND_TEXTURE,"atlas")
@@ -329,7 +331,7 @@ two_models_with_the_same_image_get_a_texture_each_and_neither_touches_the_other 
         bytes,_:=os.read_entire_file(file.path,context.temp_allocator)
         testing.expectf(t,slice.equal(bytes,file.bytes),"%s is as the first import left it",file.path)
     }
-    again,_:=os.read_all_directory_by_path(cache,context.temp_allocator)
+    again:=cached_refs(cache,textures.CACHE)
     testing.expectf(t,len(again)==len(cached),"the images are encoded once: %d entries of the cache, then %d",len(cached),len(again))
 }
 
@@ -348,10 +350,10 @@ a_checkout_without_its_imported_folder_gets_the_same_assets_from_its_sources :: 
     sources:=[3]string{crate,barrel,fmt.tprintf("%s/sign.png",assets)}
     Built :: struct {path:string,id:base.Asset_Id,bytes:[]u8}
     built:=make([dynamic]Built,context.temp_allocator)
-    caches:=Sync_Options{texture_cache=fmt.tprintf("%s/cache/textures",root),mesh_cache=fmt.tprintf("%s/cache/meshes",root),library=test_library}
+    caches:=Sync_Options{store=test_store(t,fmt.tprintf("%s/store",root)),library=test_library}
     context.user_ptr=prefab.import_world(t)
     for source in sources {
-        report,error:=import_source(source,{world=prefab.import_world(t),root=root,textures=.Uncompressed,texture_cache=caches.texture_cache,mesh_cache=caches.mesh_cache})
+        report,error:=import_source(source,{world=prefab.import_world(t),root=root,textures=.Uncompressed,store=caches.store})
         if !testing.expectf(t,error.code==.None,"%s: %s",source,error.message) {return}
         for written in report.assets {append(&built,Built{path=strings.clone(written.path,context.temp_allocator),id=written.id})}
         importer.report_destroy(&report)
@@ -511,7 +513,7 @@ the_sources_of_a_plugin_format_build_in_the_cache_and_a_source_outside_the_asset
     mesh,has_mesh:=written_of(&first,asset.KIND_MESH,"Box")
     testing.expect(t,has_mesh && strings.contains(mesh.path,"/.mirai/imported/"),"what a plugin format gives that nobody edits is of the cache")
     // A clone: sync builds it again with the formats of the plugins, and says so without them.
-    caches:=Sync_Options{texture_cache=fmt.tprintf("%s/cache/textures",root),mesh_cache=fmt.tprintf("%s/cache/meshes",root)}
+    caches:=Sync_Options{store=test_store(t,fmt.tprintf("%s/store",root))}
     testing.expect(t,base.remove_all(fmt.tprintf("%s/.mirai",project))==nil)
     lacking:=sync(project,caches,context.temp_allocator)
     testing.expectf(t,len(lacking.failures)==1 && strings.contains(lacking.failures[0],"no format"),"%v",lacking)
@@ -574,8 +576,8 @@ sync_imports_again_a_whole_source_when_what_it_is_built_from_changes :: proc(t:^
     level:=write_text(assets,"hall.level","LEVEL props/crate.gltf")
     state:=Level_Importer{kit=2}
     wholes:=[1]Whole_Source{{claims=level_claims,run=level_run,state=&state}}
-    caches:=Sync_Options{texture_cache=fmt.tprintf("%s/cache/textures",root),mesh_cache=fmt.tprintf("%s/cache/meshes",root)}
-    first,error:=import_source(level,{root=root,textures=.Uncompressed,texture_cache=caches.texture_cache,mesh_cache=caches.mesh_cache},wholes=wholes[:])
+    caches:=Sync_Options{store=test_store(t,fmt.tprintf("%s/store",root))}
+    first,error:=import_source(level,{root=root,textures=.Uncompressed,store=caches.store},wholes=wholes[:])
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
     defer importer.report_destroy(&first)
     mesh,has_mesh:=written_of(&first,asset.KIND_MESH,"Box")

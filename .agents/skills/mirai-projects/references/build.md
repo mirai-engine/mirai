@@ -249,7 +249,8 @@ sources and their sidecars ([sync](../../mirai-imports/references/imports.md#syn
 
 `cook_assets` (`cook/build/cook.odin`) leaves in a folder the assets the game can reach. The `Game`
 job calls it with the project assets, `cook.mirai`, the asset folders of the active plugins and the
-texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error` and `detail`.
+machine store, whose texture cache it reads and fills; a failure is `Cook_Failed` with
+`Result.cook.error` and `detail`.
 
 - **Roots.** Every `.scene` (code reaches a prefab only by instantiating it) and `.records`
   of the folder and what `cook.mirai` (`COOK_FILE`) names: the other assets only code refers to (a
