@@ -190,19 +190,6 @@ output_read :: proc(r:^serial.Text_Reader,allocator:=context.allocator) -> (outp
     return output,true
 }
 
-// A folder under the folder of a source: relative, with forward slashes,
-// and never out of it.
-@(private="file")
-folder_valid :: proc(folder:string) -> bool {
-    if folder=="" {return true}
-    if folder[0]=='/' || strings.contains_any(folder,"\\:") {return false}
-    rest:=folder
-    for part in strings.split_iterator(&rest,"/") {
-        if part=="" || part=="." || part==".." {return false}
-    }
-    return true
-}
-
 // The paths the registry lists the cache outputs of a sidecar at, under
 // listed (the path of the sidecar's folder in the registry, "" or ending
 // with '/'): <folder>/<name><extension> with the name as safe_path gives it,
@@ -215,10 +202,9 @@ sidecar_paths :: proc(sidecar:Sidecar,listed:string) -> []string {
     for output,at in sidecar.outputs {
         info,known:=kind_info(output.kind)
         if !known || !import_cached(output.kind) {continue}
-        name:=safe_path(output.name)
         repeated:=false
         for other in sidecar.outputs {repeated||=other.kind==output.kind && other.name==output.name && other.index<output.index}
-        paths[at]=fmt.tprintf("%s%s (%d)%s",folder,name,output.index,info.extension) if repeated else fmt.tprintf("%s%s%s",folder,name,info.extension)
+        paths[at]=listed_path(folder,output.name,output.index,repeated,info.extension)
     }
     return paths
 }

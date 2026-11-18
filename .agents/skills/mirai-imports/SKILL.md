@@ -23,6 +23,8 @@ the assets.
 - Where a source lives (in the assets, beside what it makes), its sidecar (settings, folder, ids),
   what an import keeps in the imported folder and what in the assets, reimporting, a moved or
   renamed source and parts with `owner`: [Identity](references/imports.md#identity-and-reimport).
+- The records that take the place of the sidecar in the machine store (package and build
+  manifests, `packages.mirai`): [packages](../mirai-assets/references/formats.md#packages).
 - A checkout without its imported folder, what a build imports and when a source is imported
   again: [Sync](references/imports.md#sync).
 - Adding or changing a format (`Format`, `Reader`, `Source_Space`, version):
