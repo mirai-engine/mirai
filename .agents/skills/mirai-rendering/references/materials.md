@@ -40,7 +40,16 @@ mode.
   `MIRAI_NO_INSTANCES`) reads none and does not bind the pool. A row holds its layer blocks
   also with their weight at zero, so a weight an instance gives takes the rest from them.
   Textures are of the row. The fade of an instance (`Instance_Material_Values.fade`) scales the
-  opacity of every row it shows and blends the opaque ones. What an instance gives counts, like
+  opacity of its blended rows; the rest of it stays opaque or masked, in the visibility target,
+  and the raster leaves out that share of its pixels with the pattern of the own body
+  (`fade_pixel_left`), whose thresholds move each frame by the reversed bits of the view's turn,
+  so that any 2, 4, 8 or 16 frames from a cut hold the fade evenly at every pixel and TAA blends
+  them into transparency: it never enters the blend passes. The maps of the shadows leave out
+  the texels below the fixed thresholds of the same pattern, which their filter softens into a
+  shadow that thins with the fade, and a ray goes through it in that share of the directions, by
+  a fixed hash of its direction (`ray_fade_left`): nothing of either changes while the fade
+  stays. Its slots are tested like masked ones; a fade of 1 the cull discards. What an instance
+  gives counts, like
   the row's, for how it is traced and drawn (`instance_alpha` reads the row as the instance
   shows it, `instance_material`): a value that changes that classes every instance again.
 
@@ -303,10 +312,10 @@ A texture of an asset resides with the levels the GPU samples of it
   the program reads no map, and a program that sets alpha on a masked material is an error of the
   material (`Coverage`, with what to do in `engine.diagnostics`). An instance gives the texture of
   its mask by `maps.mask` in its `Material_Values`, as the terrain gives its holes. Only the
-  triangles of the slots an instance shows with a mask or blend material pay for that read
-  (`Gpu_Instance.tested`), in the traversal and in the maps of the shadows. The native BLAS of a cut
-  holds the triangles of the slots the mesh's own rows test as a geometry apart; an instance that
-  tests other slots makes every triangle a candidate.
+  triangles of the slots an instance shows with a mask or blend material, and all of one that
+  fades, pay for that read (`Gpu_Instance.tested`), in the traversal and in the maps of the
+  shadows. The native BLAS of a cut holds the triangles of the slots the mesh's own rows test as
+  a geometry apart; an instance that tests other slots makes every triangle a candidate.
 - The mips of a masked texture keep the proportion of texels that pass the threshold.
 - **Blend (`blend`).** It is drawn over the lit scene. Without transmission it is a layer that
   covers `alpha` of what is behind it: the transparency attenuates its diffuse part, not its

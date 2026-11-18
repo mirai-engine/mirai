@@ -902,7 +902,10 @@ instances_classify :: proc(s: ^Scene_State) {
 		if a.reflectance && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.reflective, Reflective_Instance{u32(i), a.layered})}
 		mask_flags := tlas_mask_flags(ray_class(inst.meta.x, flags), a.tested, mesh.tested)
 		if flags != inst.meta.w || a.tested != inst.tested || mask_flags != s.hw_instances[i].mask_flags {
+			before := inst
 			inst.meta.w, inst.tested = flags, a.tested
+			// What its values made glass, or fade, the maps draw again where it is.
+			if !instance_shades_same(before, inst) {occluder_moved(s, u32(i), before, inst)}
 			s.hw_instances[i].mask_flags = mask_flags
 			s.instances_dirty = true
 			s.tlas_dirty = true
@@ -956,6 +959,8 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
     palette:=slots
     defaults:=asset.MATERIAL_DEFAULTS
     a.glass = mesh.slot_count > 0
+    // A fade leaves out, by a pattern, what rays and the maps of the shadows meet of every row.
+    faded:=instance_values_fade(s,given)>0
     for packed, k in s.indices[mesh.slot_word:][:mesh.slot_count] {
         row:=instance_row(packed,material,&palette)
         m:=asset.Alpha_Mode.Opaque
@@ -970,7 +975,7 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
             }
             if m == .Blend {a.solid ||= values.transmission > 0 && values.thickness > 0}
         }
-        if m != .Opaque {a.tested |= 1 << u32(k)}
+        if m != .Opaque || faded {a.tested |= 1 << u32(k)}
         a.blended ||= m == .Blend
         a.glass &&= m == .Blend
     }
@@ -1644,8 +1649,11 @@ scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3, values:
 			given := values[at]
 			mesh := s.meshes[inst.meta.x & INSTANCE_MESH_MASK]
 			was := instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
+			fade := instance_values_fade(s, inst.material_values)
 			changed ||= instance_material_values_give(r, inst, &given)
 			classify ||= instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values) != was
+			// The pattern of its fade is in the maps of the shadows that hold it.
+			if fade != instance_values_fade(s, inst.material_values) {occluder_moved(s, u32(index), inst^, inst^)}
 		}
 		if !changed {continue}
 		instance_changed_near(s, inst, glowed || instance_material_values_glow(s, inst.material_values))
@@ -1679,17 +1687,21 @@ instance_row_words :: proc "contextless" (s: ^Scene_State, values, row: u32) -> 
 }
 
 // The values of a row shading holds as an instance shows them, as the
-// shaders read them (material_row(row, block)): its own of the row, and its
-// fade.
+// shaders read them (material_row(row, block)): its own of the row, and the
+// fade of a blended one.
 @(private)
 instance_material :: proc "contextless" (s: ^Scene_State, values, row: u32) -> (m: Gpu_Material) {
 	m = s.materials[row].shared
 	if shown := instance_row_words(s, values, row); shown != nil {m = (cast(^Gpu_Material)raw_data(shown))^}
-	if block := instance_material_values_block(s, values); len(block) > 0 && transmute(f32)block[1] > 0 {
-		m.opacity *= 1 - transmute(f32)block[1]
-		if m.alpha_mode == u32(asset.Alpha_Mode.Opaque) {m.alpha_mode = u32(asset.Alpha_Mode.Blend)}
-	}
+	if m.alpha_mode == u32(asset.Alpha_Mode.Blend) {m.opacity *= 1 - instance_values_fade(s, values)}
 	return
+}
+
+// How much an instance fades out by its values (Instance_Material_Values.fade).
+@(private)
+instance_values_fade :: proc "contextless" (s: ^Scene_State, values: u32) -> f32 {
+	block := instance_material_values_block(s, values)
+	return transmute(f32)block[1] if len(block) > 0 else 0
 }
 
 // Whether what an instance gives changes the emission of a row it shows: its glow reaches as far as that of a tint.
