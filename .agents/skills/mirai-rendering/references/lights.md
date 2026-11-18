@@ -288,17 +288,17 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
 - **What a frame draws at most.** The draws of the cache and those of the atlas each take at most
   the bound of the renderer in a frame of any view, still, moving or first (`Shadow_Bound`), counted
   in units of raster work known before they draw, whatever the scene holds: of each cluster in a
-  page, the area of its triangles in texels of the map (`mesh_areas_write`, summed once when the
-  mesh is given), the share of it its box has in the part of the page drawn, several times over for
-  a masked material, and the vertices its draw into the page runs (`shadow_units`,
-  `SHADOW_UNIT_TEXELS`), so dense masked foliage, its cards over each other in one box, draws no
-  more in a frame than walls do; a cluster that begins within the bound of its page and of its frame
-  is drawn, the rest are not. The bound follows the GPU time the rounds of the maps take
-  (`SHADOW_MAPS_TIMING`, measured in every frame with `rhi.cmd_measure_begin`, not the steps of the
-  pages, which cost the same whatever it is): from `SHADOW_FRAME_UNITS`, what the least GPU the
-  engine runs on draws masked in a few milliseconds, it grows while the picture lacks pages
-  (`SHADOW_COUNT_SHORT`: points no page drawn holds, or pages a still view waits for) and the rounds
-  take less than their share of the rest of the frame, a refresh of the display at least
+  page, the area of its triangles in texels of the map (`mesh_cluster_areas`, summed once where the
+  geometry of the mesh is walked before it is given, on a job), the share of it its box has in the
+  part of the page drawn, several times over for a masked material, and the vertices its draw into
+  the page runs (`shadow_units`, `SHADOW_UNIT_TEXELS`), so dense masked foliage, its cards over each
+  other in one box, draws no more in a frame than walls do; a cluster that begins within the bound
+  of its page and of its frame is drawn, the rest are not. The bound follows the GPU time the rounds
+  of the maps take (`SHADOW_MAPS_TIMING`, measured in every frame with `rhi.cmd_measure_begin`, not
+  the steps of the pages, which cost the same whatever it is): from `SHADOW_FRAME_UNITS`, what the
+  least GPU the engine runs on draws masked in a few milliseconds, it grows while the picture lacks
+  pages (`SHADOW_COUNT_SHORT`: points no page drawn holds, or pages a still view waits for) and the
+  rounds take less than their share of the rest of the frame, a refresh of the display at least
   (`SHADOW_MAPS_SHARE`), up to `SHADOW_FRAME_UNITS_MOST`; it shrinks when they take more, and at
   once to what keeps them within `SHADOW_MAPS_MOST_MS`, far within the time a driver gives a
   submission before it resets the device; pages whose points read a coarser page drawn, as those a

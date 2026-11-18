@@ -720,16 +720,19 @@ shadow_maps_ms :: proc(r: ^Renderer) -> (ms: f32, frame: u64) {
 @(test)
 render_a_round_of_stacked_masked_cards_keeps_within_its_time :: proc(t: ^testing.T) {
 	// The side of a card, metres, the layers of its one cluster, how many; of
-	// specks, the side of each of the layers, scattered over the card.
-	Cards :: struct {size: f32, layers, count: int, speck: f32}
+	// specks, the side of each of the layers, scattered over the card, and
+	// how far apart the specks are laid out in rows (0: over each other).
+	Cards :: struct {size: f32, layers, count: int, speck, apart: f32}
 	cases := [?]struct {
 		name:  string,
 		cards: [2]Cards,
 	}{
-		{"cards over the pages around", {{4, 1, 24000, 0}, {}}},
-		{"layers in the box of a cluster", {{1, 128, 400, 0}, {}}},
-		{"both", {{4, 1, 12000, 0}, {1, 128, 200, 0}}},
-		{"specks over the pages around", {{4, 64, 6000, 0.01}, {}}},
+		{"cards over the pages around", {{4, 1, 24000, 0, 0.04}, {}}},
+		{"layers in the box of a cluster", {{1, 128, 800, 0, 0}, {}}},
+		{"both", {{4, 1, 12000, 0, 0}, {1, 128, 400, 0, 0}}},
+		// Vertex-bound: many clusters of small triangles, each over several pages,
+		// laid out apart so that what a ray of the sun meets stays small.
+		{"specks over the pages around", {{2, 64, 9000, 0.01, 0.1}, {}}},
 	}
 	for c in cases {
 		f: Cube_Fixture
@@ -763,7 +766,7 @@ render_a_round_of_stacked_masked_cards_keeps_within_its_time :: proc(t: ^testing
 			testing.expect(t, added)
 			for k in 0 ..< kind.count {
 				// Turned a little each, so that none lies in another's plane.
-				at := trs({f32(k % 7) * 0.01, 0.5 + f32(k) * 1e-5, f32(k % 5) * 0.01}, {1, 1, 1})
+				at := trs({f32(k % 7) * 0.01 + f32(k % 80) * kind.apart - 20 * kind.apart, 0.5 + f32(k) * 1e-5, f32(k % 5) * 0.01 + f32(k / 80) * kind.apart - 20 * kind.apart}, {1, 1, 1})
 				append(&instances, Instance_Desc{object_id = u64(len(instances) + 1), mesh = mesh, transform = at, material = 1, tint = {0.5, 0.5, 0.5}})
 			}
 		}
@@ -780,7 +783,7 @@ render_a_round_of_stacked_masked_cards_keeps_within_its_time :: proc(t: ^testing
 		b := &r.main.targets.shadow_raster
 		// Until the pages are no longer given, the most the rounds of a frame took.
 		// Of the frames from the first, the first included, what comes back.
-		settle :: proc(t: ^testing.T, r: ^Renderer, camera: Camera) -> (frames: int, most: f32, units: u32, total: u64, clusters: u32) {
+		settle :: proc(t: ^testing.T, r: ^Renderer, camera: Camera) -> (frames: int, most: f32, units: u32, total: u64, clusters: u32, frame: f32) {
 			runs, still := u32(0), 0
 			first := rhi.frame_number(r.device)
 			for frames < 600 && still < 8 {
@@ -792,6 +795,7 @@ render_a_round_of_stacked_masked_cards_keeps_within_its_time :: proc(t: ^testing
 				units = max(units, r.stats.shadow.units)
 				total += u64(r.stats.shadow.units)
 				clusters = max(clusters, r.stats.shadow.clusters + r.stats.shadow.clusters_masked)
+				frame = max(frame, r.stats.gpu_ms)
 				now := shadow_page_runs(r)
 				still = still + 1 if now == runs else 0
 				runs = now
@@ -799,16 +803,18 @@ render_a_round_of_stacked_masked_cards_keeps_within_its_time :: proc(t: ^testing
 			return
 		}
 		b.budget = abi.SHADOW_COST_UNITS
-		whole_frames, whole_ms, whole_units, whole_total, clusters_most := settle(t, r, camera)
+		whole_frames, whole_ms, whole_units, whole_total, clusters_most, whole_frame := settle(t, r, camera)
 		whole := read(t, &f)
 		rhi.device_wait_idle(f.device)
 		destroy_shadow_maps(r, &r.main.targets)
 		b.budget = 0
 		r.shadow_bound = {}
-		frames, most, units, total, _ := settle(t, r, camera)
+		frames, most, units, total, _, frame := settle(t, r, camera)
 		settled := read(t, &f)
 		log.infof("%s: under a bound that holds all %d frames, %.2f ms, %d units a frame at most, %d in all; under that of the renderer %d frames, %.2f ms, %d units a frame at most, %d in all", c.name, whole_frames, whole_ms, whole_units, whole_total, frames, most, units, total)
-		log.infof("%s: clusters-pages a frame at most %d", c.name, clusters_most)
+		log.infof("%s: %d clusters drawn into pages a frame at most; the GPU frame took %.2f ms at most, %.2f under the bound", c.name, clusters_most, whole_frame, frame)
+		// What no fixture of the table passes: the frame stays far from the watchdog.
+		testing.expectf(t, max(whole_frame, frame) < 100, "%s: a frame took %.2f ms", c.name, max(whole_frame, frame))
 		testing.expectf(t, most <= 3 * SHADOW_MAPS_MOST_MS && units <= SHADOW_FRAME_UNITS_MOST + PAGE_UNITS, "%s: under the bound the rounds of a frame took %.2f ms and %d units", c.name, most, units)
 		testing.expectf(t, frames < 600 && total > 4 * u64(units), "%s: the cards cost %d units in %d frames, no more than 4 frames of the bound", c.name, total, frames)
 		differ := 0

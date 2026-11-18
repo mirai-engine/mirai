@@ -64,9 +64,10 @@ SHADOW_MAP_ORTHOGRAPHIC :: abi.SHADOW_MAP_ORTHOGRAPHIC
 // within them keeps moving (shadow_movers_update).
 SHADOW_MOVER_FRAMES :: u64(30)
 // The units of raster work (abi.SHADOW_UNIT_TEXELS) the draws of the cache
-// of a view take in a frame, and those of its atlas, at least: some sixteen
-// million texels of a depth map with the triangles of what covers them, what
-// the least GPU the engine runs on draws, masked, in a few milliseconds. What
+// of a view take in a frame, and those of its atlas, at least: what the least
+// GPU the engine runs on draws, masked, in a few milliseconds, a unit taking
+// at most some 1.3 ns on an RTX 3070 in the fixtures that cost the most for
+// their units, four times that on a GTX 1070. What
 // a cluster costs is known before it is drawn, whatever it is, so a frame of
 // dense masked foliage draws no more than one of walls. While the picture
 // lacks pages the bound grows (shadow_bound_update), up to
@@ -74,7 +75,7 @@ SHADOW_MOVER_FRAMES :: u64(30)
 // the frame and SHADOW_MAPS_MOST_MS. The pages past it wait for the frames
 // after, the coarsest first, and their points read a coarser page drawn or
 // trace until then.
-SHADOW_FRAME_UNITS :: u32(1 << 18)
+SHADOW_FRAME_UNITS :: u32(1 << 20)
 SHADOW_FRAME_UNITS_MOST :: abi.SHADOW_COST_UNITS / 2
 // The most GPU time the rounds of the maps of a frame take, milliseconds:
 // past it the bound shrinks at once by as much as they passed it, so that no
