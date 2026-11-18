@@ -225,6 +225,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"SHADOW_PLAN_RESET",abi.SHADOW_PLAN_RESET)
     u(&b,"SHADOW_PLAN_STALE",abi.SHADOW_PLAN_STALE)
     u(&b,"SHADOW_PLAN_NET",abi.SHADOW_PLAN_NET)
+    u(&b,"SHADOW_CULL_SWAY",abi.SHADOW_CULL_SWAY)
     u(&b,"SHADOW_BOX_ROWS",abi.SHADOW_BOX_ROWS)
     u(&b,"SHADOW_POOL_PAGES",abi.SHADOW_POOL_PAGES)
     u(&b,"SHADOW_MASK_WORDS",abi.SHADOW_MASK_WORDS)

@@ -2,6 +2,7 @@ package editor
 
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -251,29 +252,49 @@ a_document_reads_its_file_again_when_it_changed_outside :: proc(t:^testing.T) {
     testing.expect(t,documents_test_has(f,file,"Boulder"))
 }
 
-// A scene asked to open shows its tab loading on the frame after the request,
-// before it is read, and until a frame drew it resident.
+// A scene asked to open, by a person or by the start of a window, shows its
+// tab and the line of the load from the frame of the request, before it is
+// read, and until a frame drew it resident; meanwhile a frame without a run
+// or input held is a loading screen for what arrives. The selection the start
+// asked for comes once the scene is open.
 @(test)
 the_tab_of_a_scene_that_opens_loads_from_the_first_frame_until_it_is_resident :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
     if !testing.expect(t,prefab_fixture_init(t,f,"document-loading")) {return}
     defer prefab_fixture_destroy(f)
     s:=&f.s
-    entity_create(s,{name="Rock",named=true})
+    rock:=entity_create(s,{name="Rock",named=true})
     core.world_settle(edited_world(s))
     prefab_fixture_step(f)
     if !testing.expect_value(t,test_document_write(s,"level.scene"),Document_Error.None) {return}
+    history.selection_add(s.selection,rock)
+    selected:=selected_ids(s)
     file:=document_file(s.document)
     scene_new(s)
     testing.expect_value(t,document_loading_tab(s),-1)
+    testing.expect(t,!loading_screen(s,{}))
+    s.start_select=strings.clone(selected)
     file_open_path(s,"level.scene")
-    requests_run(s)
     defer documents_free(s)
-    testing.expect(t,document_file(s.document)!=file && .Open in s.requests,"the scene is read at the end of the next frame")
-    testing.expect_value(t,document_loading_tab(s),s.active_document)
-    requests_run(s)
+    buffer:[SCENE_LOAD_TEXT]u8
+    for frame in 0..<2 {
+        testing.expectf(t,document_file(s.document)!=file && .Open in s.requests,"frame %d: the scene is read at the end of the second frame",frame)
+        testing.expect_value(t,document_loading_tab(s),s.active_document)
+        name,waits,loading:=scene_load_status(s,buffer[:])
+        testing.expect(t,loading && strings.contains(name,"level") && waits!="",name)
+        testing.expect(t,loading_screen(s,{}) && !loading_screen(s,{down={.Left}}) && !loading_screen(s,{wheel={0,1}}))
+        testing.expect_value(t,len(s.selection.entities),0)
+        requests_run(s)
+    }
     testing.expect(t,document_file(s.document)==file && .Open not_in s.requests)
+    testing.expect(t,len(s.selection.entities)==1 && s.start_select=="","the selection of the start comes with the scene")
     testing.expect_value(t,document_loading_tab(s),s.active_document)
+    // Once it is the document, the line says what it waits for.
+    waits:=scene_load_waits(buffer[:],{.Uploads,.Pipelines},{programs=1,pipelines=2,assets=3},false)
+    testing.expect(t,strings.contains(waits,"3 ") && strings.contains(waits,"3 shaders"),waits)
     host.load_profile_frame(&f.app,true)
     testing.expect_value(t,document_loading_tab(s),-1)
+    _,_,loading:=scene_load_status(s,buffer[:])
+    testing.expect(t,!loading && !loading_screen(s,{}))
+    testing.expect(t,start_deferred({}) && !start_deferred({headless=true}) && !start_deferred({hidden=true}) && !start_deferred({frames=3}),"a window a person looks at draws before the scene is read")
 }

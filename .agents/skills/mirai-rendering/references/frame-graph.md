@@ -248,14 +248,15 @@ or interleave its own passes.
 `renderer_stats` reports:
 
 - GPU time of each interval between `cmd_timestamp` while someone asks for it
-  (`host.profile_request` or a recording; `rhi.timestamps_want`), and otherwise a `frame`
-  interval. Metal samples at the start and end of each encoder (the only thing Apple Silicon
-  supports): an interval goes from the first start to the last end of its encoders. The intervals
-  are on the `time.tick_now` clock, converted with a CPU and GPU clock pair sampled when they are
-  collected: Metal always, Vulkan with `VK_KHR_calibrated_timestamps` (or the EXT) in the domain
-  of `tick_now` (QPC on Windows, `CLOCK_MONOTONIC_RAW` on Linux). Without the extension, Vulkan
-  places the last timestamp of the frame at the moment it collects it: it keeps the durations but
-  arrives late;
+  (`host.profile_request` or a recording; `rhi.timestamps_want`), and otherwise a `frame` interval
+  but for those `cmd_measure_begin` and `cmd_measure_end` bound, which every frame measures (the
+  maps of the shadows, which pace their bound by them). Metal samples at the start and end of each
+  encoder (the only thing Apple Silicon supports): an interval goes from the first start to the last
+  end of its encoders. The intervals are on the `time.tick_now` clock, converted with a CPU and GPU
+  clock pair sampled when they are collected: Metal always, Vulkan with
+  `VK_KHR_calibrated_timestamps` (or the EXT) in the domain of `tick_now` (QPC on Windows,
+  `CLOCK_MONOTONIC_RAW` on Linux). Without the extension, Vulkan places the last timestamp of the
+  frame at the moment it collects it: it keeps the durations but arrives late;
 - `renderer_gpu_submissions`: a copy of the timings of each submission since
   `renderer_gpu_clear`, with the `rhi` frame it was (`rhi.frame_timings`), for whoever accounts for
   every submission of a host frame; `Stats.timings` is only the last one the GPU finished;

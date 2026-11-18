@@ -484,6 +484,12 @@ Frame_Desc :: struct {
 	// Only the screen UI over black: what covers the scene (the editor while
 	// its viewport shows the players of a game on the network) saves drawing it.
 	ui_only: bool,
+	// A loading screen: no one needs the frame steady, and what waits to be
+	// drawn (the pages of the maps of the shadows) may take it.
+	loading: bool,
+	// The refresh of the display the frame is shown on, Hz: the time a frame
+	// paces the work that waits by; 0: 60.
+	refresh_hz: f32,
 }
 
 VIEW_CAPACITY :: abi.VIEW_CAPACITY
@@ -650,6 +656,7 @@ Renderer :: struct {
 	texture_view_bytes: u64, // what their targets held of the GPU when the last frame ended (texture_views_count)
 	shared_targets:  [SHARED_TARGET_CAPACITY]Shared_Target, // the targets of a frame of the views (targets_frame)
 	shadow_buffers:  Shadow_Buffers,
+	shadow_bound:    Shadow_Bound, // the clusters the rounds of the maps draw in a frame (shadow_bound_update)
 	passes:          [FRAME_PASS_CAPACITY]Frame_Pass, // what extensions record in the next frame
 	pass_count:      int,
 	plans:           [RENDER_PIPELINE_CAPACITY]Render_Plan, // of the pipelines asked for

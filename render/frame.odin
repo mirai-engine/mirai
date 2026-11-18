@@ -558,6 +558,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     points_read(r,slot)
     pages_update(r,slot)
     if !frame.ui_only {shadow_movers_update(r)}
+    shadow_bound_update(r,slot,frame.loading,frame.refresh_hz)
     textures_feedback_read(r,slot)
     extension_counters_begin(r,cmd,slot)
     // A frame none of whose views culls reports no counts, not those of the last one that did.
