@@ -79,12 +79,33 @@ for Play/Simulation. `animation_sample` serves them.
   start whatever its `entry`, so playing to a time and seeking it show the same pose; a seek past
   its end leaves nothing of it. A driven play is not recorded in `Animation_Played`: every end
   drives it by its own timeline.
-- **In a layer** an action crossfades over what the layer plays (`fade_in`), at its weight, and
-  when it ends the layer goes back to what it plays by itself over `fade_out`.
+- **In a layer** an action takes what the layer plays at its weight, and when it ends the layer
+  goes back at once to what it plays by itself.
 - **Over the whole body** it is slot 0, a layer under the others over the whole pose, over a
   matched base as over a clip: the search goes on under it in the mode the body is in, and the
-  action does not depend on that mode. One that ends plays its last part at its weight and fades
-  out from the next tick.
+  action does not depend on that mode. One that ends plays its last part at its weight and hands
+  its slot back in the next tick.
+- **Inertial blends.** A slot that changes in a tick (an action starts, ends or is interrupted, or
+  a layer changes its clip) plays its new clip and weight at once, and the pose of the stack blends
+  from the one it showed by the
+  [inertialization](../../mirai-std/references/anim-motion.md#inertialization) of `std/anim`
+  (`stack_inertia_apply`): `fade_in` of an action that starts or interrupts, `fade_out` of one
+  that ends, `fade` of a layer. Each bone blends over the shortest time of the slots of the tick
+  that move it (a fast or cut change is never stretched by a slower one, and a layer over a branch
+  does not change the time of the bones it does not move), the others over what their blend had
+  left, the curves over the shortest of the tick. Only the new clip is evaluated. The blend takes
+  the velocity of the pose shown in its last two ticks and that of the target from the stack a
+  tick before (the base then, the layers where their clips were), so the bones a change does not
+  move keep their motion; one that interrupts another starts from the pose shown, offset included.
+  A slot that asks no time cuts: it takes off the offsets of the bones it moves. A rig blends only
+  from the pose of the tick before with the same bindings: one with no pose shown yet, not posed
+  in a tick, or bound again shows the target. Markers and events of an action count at its weight
+  from its first tick.
+- **Root motion of a blend.** The root motion is that of the clips of the target from the first
+  tick. When a slot over the whole pose changes and the root moved by clips in the tick before,
+  the difference of the velocity of the root decays over that slot's time (`stack_root_inertia`),
+  without its acceleration, and so does the share of it that moves the body; a slot that cuts ends
+  it. A body that moved by physics, without root motion, keeps the acceleration of its physics.
 - **Across the network** the end that decides the entity (`core.owned`) records each play, stop
   and section it accepts in `Animation_Played`, by slot, with the tick; an entity another end
   decides (`core.Remote`) plays a record it has not heard, forced, as far into its clip as the
@@ -98,20 +119,20 @@ happened, Marker (of any clip; `action` says which action played it), Started, E
 Interrupted, Section, Span_Begin and Span_End (the windows), with hashes that the API returns as
 names. To ask what an action is doing instead of following its events, `action_playing(runtime,
 entity, name)` (with a read-only `core.Ref(Action_Runtime)`) gives its time and section hash while
-it plays, from `play` until it ends or is interrupted (not while it fades out).
+it plays, from `play` until it ends or is interrupted.
 
 - An advance that crosses a whole window emits Begin and End; an exit or interruption closes the
   open ones. Jumps only process played intervals.
 - Sections advance by segments; the player advances only once through those intervals and
-  `layers_advance` carries fades and outgoing clips. Markers use the player's filters.
+  `layers_advance` carries the weights of the layers. Markers use the player's filters.
 - Removing or changing the set, or a new revision of it, interrupts the active actions
-  (Interrupted) and their layers fade in the `fade_out` of each, like any other interruption: the
-  slot keeps the speed, fade and body policy it was played with while it fades out.
+  (Interrupted) and their layers blend back over the `fade_out` each was played with, like any
+  other interruption.
 
 Discovery and memory:
 
 - It is discovered from the `core.changes` of `Animation`: it looks only at the rows written since.
-  The ticks prepare only the states with a set or a pending fade; an index per entity and
+  The ticks prepare only the states with a set or an action left to end; an index per entity and
   generation resolves requests and sampling in constant time and is updated when compacting.
 - Plans and states are copied with the world without pointers to the host cache, whose indices check
   the full id. A plan resolves once the slot of each action and what each layer asks for by itself.
@@ -128,11 +149,11 @@ Discovery and memory:
 - A rig that takes the sampled pose of another (`Pose_Source` of stage `Sampled`) shows what its
   source plays: its actions are asked of the source rig.
 - **One channel:** each layer whose action has a root policy gives the root motion its clips moved
-  in the tick (from `Layer_Playing.from`, plus what it moved before a jump of section), by the
-  weights of its fader, and `stack_root` blends it over the delta of the base by the weight of the
-  layer and of the component, as the pose. A layer keeps the policy of its action while it fades
-  out. In_Place blends the reference of the root bone instead of where the clip takes it, so a
-  partial weight leaves the movement of what is under it.
+  in the tick (from `Layer_Playing.from`, plus what it moved before a jump of section), and
+  `stack_root` blends it over the delta of the base by the weight of the layer and of the
+  component, as the pose. A layer handed back moves the root no more. In_Place blends the
+  reference of the root bone instead of where the clip takes it, so a partial weight leaves the
+  movement of what is under it.
 - **Any action moves its body by its root motion with `body_move`** (Additive or Override, with
   `root_motion`; In_Place keeps the pose on a moving body), in a layer or over the whole body.
   `animation_body_motion` gives the share of the root delta of the tick that those layers have,
@@ -164,7 +185,10 @@ Discovery and memory:
   `a_play_gives_way_by_priority_and_cancel_policy_and_tells_each_change_once`,
   `a_whole_body_action_enters_at_its_start_time_or_phase_and_ends_at_its_exit_or_marker`,
   `a_whole_body_action_goes_on_when_the_body_changes_mode_and_stop_ends_it`,
-  `a_whole_body_action_fades_in_over_the_pose_and_stable_ticks_do_not_allocate` and
+  `a_whole_body_action_blends_in_from_the_pose_and_stable_ticks_do_not_allocate`,
+  `an_action_shows_its_pose_at_once_and_blends_from_the_pose_shown` (start, interruption while it
+  blends in and once it plays, cut, a layer that asks less time, a rig not posed or bound again,
+  root motion; the clips of one source, a planted foot) and
   `the_root_motion_of_a_whole_body_action_moves_the_body`.
 - `runtime_test.odin`, `skeleton_test.odin`: layers by weight, branch,
   region, additive reference and space of the rig, on the owner thread and in jobs.
