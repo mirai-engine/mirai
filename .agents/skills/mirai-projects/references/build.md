@@ -125,9 +125,13 @@ and `tools/mirai`. The main checkout of a worktree is `project.shared_root(root)
   `gpu/peaks/`, which a copy of the project shares: one above the kept peak is written at once and
   the end writes its own, which lowers it only if the driver never pressed the session against
   its budget), a charge larger than any card before; a test run or the probe, without a project,
-  a fixed charge.
+  a fixed charge. While it runs an editor raises the charge of its turn to the most it held, and
+  never lowers it; `mirai locks` says when what the holders held passes the card beside its part.
   The owner of a turn ends with its charge; the one waiting names the holders and since when,
   like `mirai locks`.
+  - A session opens on the adapter `session start` prints; one that opens on another adapter than
+    the card the turns account for, and that `MIRAI_GPU` does not name, is closed with why: its
+    frames and measures would mean nothing. A person's own editor opens on whatever there is.
   - Every program of the engine a command starts takes it: `session start|restart` (also the one
     `rpc`, `capture`, `record` and `play test` open), `edit`, `play` (but `--no-gpu`), the editors
     of `render check` and `bench compare`, `mirai test` of a package whose tests run reach the

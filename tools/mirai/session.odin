@@ -209,7 +209,7 @@ session_port_remove :: proc(folder:string,pid:int) {
 
 @(private="file")
 session_print :: proc(folder:string,file:api.Port_File) {
-    fmt.printfln(`{{"project": %q, "port": %d, "pid": %d, "log": %q}}`,folder,file.port,file.pid,session_log_path(folder))
+    fmt.printfln(`{{"project": %q, "port": %d, "pid": %d, "device": %q, "log": %q}}`,folder,file.port,file.pid,file.device,session_log_path(folder))
 }
 
 @(private="file")
@@ -310,7 +310,16 @@ session_open :: proc(root,folder:string,mode:Build_Mode,no_build:bool,timeout:in
     session_record_write(folder,{process.pid,editor_args})
     deadline:=time.tick_now()
     for time.duration_seconds(time.tick_since(deadline))<f64(timeout) {
-        if found,alive:=session_find(folder);alive && session_answers(found.port) {return found,0}
+        if found,alive:=session_find(folder);alive && session_answers(found.port) {
+            card,known:=workspace.gpu_card(root)
+            preferred,_:=os.lookup_env("MIRAI_GPU",context.temp_allocator)
+            if problem:=workspace.gpu_off_card(card,known,found.device,preferred);problem!="" {
+                session_close(folder,found,true)
+                fmt.eprintfln("mirai session: the editor was closed: %s",problem)
+                return {},1
+            }
+            return found,0
+        }
         if state,_:=subprocess.wait(&process,0);state.exited {
             fmt.eprintfln("mirai session: the editor exited before opening the API (exit code %d); its log:",state.exit_code)
             session_log_tail(log)
