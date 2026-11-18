@@ -298,25 +298,32 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   for the page and drawn once at most (`shadow_units`, `SHADOW_UNIT_TEXELS`), so dense masked
   foliage, its cards over each other in one box, draws no more in a frame than walls do; a cluster
   that begins within the bound of its page and of its frame is drawn, the rest are not. The bound
-  follows the GPU time the rounds
-  of the maps take (`SHADOW_MAPS_TIMING`, measured in every frame with `rhi.cmd_measure_begin`, not
-  the steps of the pages, which cost the same whatever it is): from `SHADOW_FRAME_UNITS`, what the
-  least GPU the engine runs on draws masked in a few milliseconds, it grows while the picture lacks
-  pages (`SHADOW_COUNT_SHORT`: points no page drawn holds, or pages a still view waits for) and the
-  rounds take less than their share of the rest of the frame, a refresh of the display at least
-  (`SHADOW_MAPS_SHARE`), up to `SHADOW_FRAME_UNITS_MOST`; it shrinks when they take more, and at
-  once to what keeps them within `SHADOW_MAPS_MOST_MS`, far within the time a driver gives a
-  submission before it resets the device; pages whose points read a coarser page drawn, as those a
-  moving view refines, are drawn at the least. The first frame of a view draws at the least,
-  whatever another drew at. The lists of the chunks the cull by instance hands to the cull by
-  cluster and of the clusters it hands to the draws hold what the bound draws; the grant fits the
-  chunks its pages are foreseen to hand over (`SHADOW_WORDS_REACH`), and where they find no room no
-  page of the round is drawn whole and they wait. Before the cull by cluster, `Grant` gives the
-  pages, those whose points read them drawn the frame before first (`SHADOW_JOB_KEPT`), then in the
-  order they are given, while what they take fits half the bound: what a page took when the round
-  last drew it, else what the cull by instance foresees, scaled by what the draws took of that
-  before (`SHADOW_WORDS_SCALE`), and for a page not drawn yet a part of the share at most, as what
-  is foreseen strays most where a page holds the most. A page may take twice that, so one that takes
+  follows the GPU time the rounds of the maps take (`SHADOW_MAPS_TIMING`, measured in every frame
+  with `rhi.cmd_measure_begin`, not the steps of the pages, which cost the same whatever it is):
+  from `SHADOW_FRAME_UNITS`, what the least GPU the engine runs on draws masked in a few
+  milliseconds, it grows while the picture lacks pages (`SHADOW_COUNT_SHORT`: points no page drawn
+  holds, or pages a still view waits for) and the rounds take less than their share of the rest of
+  the frame, a refresh of the display at least (`SHADOW_MAPS_SHARE`), up to
+  `SHADOW_FRAME_UNITS_MOST`; it shrinks when they take more, and at once to what keeps them within
+  `SHADOW_MAPS_MOST_MS`, far within the time a driver gives a submission before it resets the
+  device; pages whose points read a coarser page drawn, as those a moving view refines, are drawn at
+  the least. The first frame of a view draws at the least, whatever another drew at. The culls are
+  bounded too, whatever the view and the scene: the cull by instance of a slot goes over the
+  instances of the scene and the batches whose box reaches its map (`shadow_reach`), so a batch
+  outside a map costs nothing there; that of what moves over the movers that reach it, all of what
+  reaches it only where the slot let go of its pages; each cull by instance of a frame (the
+  foresight before `Grant` included, and the marks of what swayed) goes over the slots with pages
+  listed, the coarsest first, while their threads fit as many as the bound has units, one slot at
+  least (`Finish`, `SHADOW_WORDS_SLOTS`), and the pages of the slots past it wait. A round hands the
+  cull by cluster a chunk for each `SHADOW_CHUNK_UNITS` units of the bound at most, and the lists of
+  the clusters it hands to the draws hold what the bound draws; the grant fits the chunks its pages
+  are foreseen to hand over (`SHADOW_WORDS_REACH`), and where they find no room no page of the round
+  is drawn whole and they wait. Before the cull by cluster, `Grant` gives the pages, those whose
+  points read them drawn the frame before first (`SHADOW_JOB_KEPT`), then in the order they are
+  given, while what they take fits half the bound: what a page took when the round last drew it,
+  else what the cull by instance foresees, scaled by what the draws took of that before
+  (`SHADOW_WORDS_SCALE`), and for a page not drawn yet a part of the share at most, as what is
+  foreseen strays most where a page holds the most. A page may take twice that, so one that takes
   more is the only one left over; a page of the cache that takes more than half the bound is drawn
   in bands of its rows over frames (`SHADOW_WORDS_BAND`), which grow back as the bound grows; a page
   of the atlas that came is granted only where its quota leaves the pages kept room to take more the
@@ -394,7 +401,7 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
     validation of the history reaches it.
 - The debug view Shadows shows the part of the light that got there. `Stats.shadow` counts what
   the maps of the views of a frame drew, summed: clusters, triangles and pages, those left out,
-  those that wait and those the bound grows for.
+  those that wait and those the bound grows for, and the threads their culls by instance ran.
 - **Reference.** What the tests compare with, outside the renderer games run: a custom pass of the
   tests in place of the `Direct` stage (`render/reference_test.odin`) traces from each pixel to
   the whole set of points of the sun and of each light, randomly rotated per frame, without grid,
