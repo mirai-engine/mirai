@@ -1,5 +1,5 @@
 #include "native.slang"
-//! per surface program
+//! per surface program blend
 #include "raster.slang"
 
 // Editor selection mask: only highlighted instances are drawn, with a depth

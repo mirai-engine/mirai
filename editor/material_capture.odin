@@ -155,7 +155,8 @@ api_material_capture :: proc(s:^Session,call:^api.Call) {
     t:=s.thumbnails
     t.capture_renderer=s.app.renderer
     if !gpu.renderer_thumbnail_values(s.app.renderer,&t.capture,vertices[:],materials[:],side,side,display,values) {
-        api.call_fail(call,api.SERVER_ERROR,"The material could not be drawn")
+        // A program not yet compiled for previews is compiled now (programs_missing).
+        api.call_fail(call,api.SERVER_ERROR,"The material could not be drawn; if its program is being compiled for previews, call again once engine.status has no programs pending")
         return
     }
     // The stats of each view over the covered pixels.

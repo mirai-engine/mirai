@@ -580,6 +580,11 @@ Renderer :: struct {
 	pipeline_waiting: string, // the stage whose pass the frame skipped while its pipeline is made (Stats.problem)
 	pipeline_problem: string, // the variants the device refused, in pipeline_problem_buffer
 	pipeline_problem_buffer: [256]u8,
+	program_misses:  [PROGRAM_MISSES]Program_Miss, // renderer_programs_missing
+	program_miss_count: int,
+	program_problem: string, // the last program drawn as what its stages were not compiled for, in program_problem_buffer
+	program_problem_buffer: [512]u8,
+	program_problem_names: [96]u8,
 	shader_codes:    [Shader_Id]rhi.Shader_Code,
 	shader_assets:   Shader_Assets,
 	embedded:        []u8, // the code of the shaders the executable embeds, decoded when it runs them

@@ -1,5 +1,5 @@
 #include "native.slang"
-//! per surface program
+//! per surface program opaque
 // The material of each pixel of the visibility target (visibility.slang),
 // once: a draw of each Surface program covers the view at the depth its
 // pixels were classified at (vis_resolve.vert, vis_classify.frag), so only

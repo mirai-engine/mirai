@@ -26,7 +26,14 @@
   SDK; on macOS, `brew install --force-bottle spirv-tools spirv-cross`), which are looked for in
   `.deps/` and then in `PATH`.
 - `mirai shaders --project <path>` adds the `shaders/` of the active plugins that declare them,
-  the same ones the build passes (`build.shader_sources`).
+  the same ones the build passes (`build.shader_sources`), and compiles their Surface programs for
+  what the assets of the project draw them as (`build.shaders_uses`).
+- **Compilers.** A generation compiles Slang in compilers of its own, processes of
+  `mirai shaders compiler <slangc>` that the tool of the engine that runs starts as compilations
+  need them and that end with the generation (`runner_close`). Each loads the library next to
+  slangc once and takes one slangc command line after another on its input, making the compile
+  request slangc makes from them: the code and the reflection are those of slangc, byte for byte.
+  What brings Slang down ends that compiler alone, and the compilation fails.
 
 ## Compilation
 
@@ -253,17 +260,32 @@
   - `include/ui_programs.slang`: UI sources, their loaders and `mirai_evaluate_ui`, which returns
     `ctx.color` for an id it does not know. `ui.frag` includes it.
 - `scene.slang` includes `<surface_programs.slang>`: the stage itself evaluates no programs. A
-  source marked `//! per surface program` is also compiled once per Surface program,
-  `<root>__<Program>[_<variant>]<suffix>` (`vis_resolve__Water_Surface_layers.frag`), with the
-  include of that program in front; `//! per surface program only` compiles only those. They are the
-  raster stages that draw materials (the resolve of the G-buffer and the `Gbuffer` stage of
-  extensions, glass layers and filter, translucents, overlays, highlight, thumbnails, UI and the
-  `vfx` sprites) and `surface_points.comp`, that of the ray material points ([programs in rays and
+  source marked `//! per surface program <uses>` is also compiled for each Surface program built
+  for one of those uses (`abi.Program_Use`), `<root>__<Program>[_<variant>]<suffix>`
+  (`vis_resolve__Water_Surface_layers.frag`), with the include of that program in front; a word
+  `<variant>=<use>` gives one variant its own uses, and `only` compiles only those. They are the
+  raster stages that draw materials: the resolve of the G-buffer (`opaque`), glass layers and
+  filter, translucents and the highlight (`blend`), overlays (`overlay`), the `Gbuffer` stage of
+  extensions (`particle_mesh`), the `vfx` sprites (`particle_sprite`), thumbnails and the UI
+  (`preview`) and impostors (`impostor`); and `surface_points.comp`, that of the ray material
+  points (`opaque`, `blend`) ([programs in rays and
   raster](materials.md#surface-programs-in-rays-and-raster)). A source marked `//! per vertex
   program` is compiled only for the Surface programs with `vertex`, with the same include, and has
   no stage of its own: `surface_vertices.comp`, which calls `mirai_vertex_program` (the include of
   the generation and that of a program without `vertex` define it as moving nothing). No other
   engine stage evaluates a Surface program.
+- **Program uses.** What a program is built for is what the assets of the project draw it as
+  (`build.program_uses`): a material that names it draws it by its alpha mode (`opaque` for opaque
+  and masked, `blend` for blended), the material of an overlay of another as `overlay`, and an
+  asset of a kind whose plugin declares `program_uses` (`.particle`: `particle_sprite`,
+  `particle_mesh`; `.foliage`: `impostor`) draws so the programs of the materials it depends on and
+  of those its meshes name; then what its source declares with `//! use <uses>` (a material made
+  by code, or one a game switches) and, for the tests of a package, every use. The editor adds
+  `preview` for the programs its previews draw, on demand. The catalog gives each program's `uses`
+  and the uses each of those stages serves (`surface_stages`); a draw that needs a stage the
+  program was not built for takes the stage without it, as before its pipeline is made, and
+  `Stats.problem` names the program, the use and the `//! use` line to add
+  (`renderer_programs_missing`).
 - A Surface program thus reaches only its stages; a PostProcess one, only `postprocess.frag`; a
   Vfx one, the stages of the `vfx` plugin that include it (emit, simulate and the vertices of
   sprites and meshes); a UI one, `ui.frag` and its `world` variant. Editing a program compiles its
