@@ -97,7 +97,7 @@ scene_instances_clear :: proc(s: ^Scene_State) {
 	s.hidden_count = 0
 	clear(&s.tlas_refs)
 	clear(&s.tlas_nodes)
-	append(&s.tlas_nodes, Gpu_Bvh_Node{bounds_min = {1, 1, 1}, bounds_max = {-1, -1, -1}})
+	append(&s.tlas_nodes, TLAS_EMPTY)
 	append(&s.tlas_refs, 0)
 	s.tlas_node_count, s.glass_node_count = 1, 0
 	// What the maps of the shadows held of them is stale.
