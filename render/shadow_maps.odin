@@ -834,7 +834,10 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 		plan.bits = data
 	}
 	reach: [SHADOW_SLOTS]Shadow_Reach
-	if !shadow_reach(r, b, wants[:], plans[:], reach[:]) {set_error(r, "out of memory for the instances the culls of the shadow maps go over"); return plan, false}
+	zone := render_zone_begin(r, "shadow reach")
+	reached := shadow_reach(r, b, wants[:], plans[:], reach[:])
+	base.profile_end(zone)
+	if !reached {set_error(r, "out of memory for the instances the culls of the shadow maps go over"); return plan, false}
 	// The marks of what swayed go over the slots whose batches swayed since
 	// their marks last ran, those that waited the longest first, then the
 	// coarsest, while their threads fit those of a cull by instance of a
@@ -1523,7 +1526,9 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	b, d := &t.shadow_raster, &r.shadow_buffers
 	// The cache holds nothing it can keep when it is new or the cut changed.
 	fresh := b.cache == 0 || b.cut != r.settings.lod_error_pixels
+	zone := render_zone_begin(r, "shadow plan")
 	plan, ok := shadow_maps_plan(p, fresh)
+	base.profile_end(zone)
 	if !ok || plan.on == 0 {return}
 	made := b.pages == 0 || b.table == 0 || b.hiz == 0
 	if b.hiz == 0 {

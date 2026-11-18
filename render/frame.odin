@@ -7,6 +7,7 @@ import "core:mem"
 import "core:time"
 import "mirai:rhi"
 import "mirai:render/abi"
+import "mirai:std/base"
 
 // Binding slots.
 SLOT_FRAME          :: abi.SLOT_FRAME
@@ -232,6 +233,7 @@ visibility_pass :: proc(p: ^Pass, round: u32, ids, depth: rhi.Load_Op, depth_tar
 @(private)
 resolve_pass :: proc(p: ^Pass, nested: bool) {
 	r, cmd, t := p.r, p.cmd, p.t
+	render_zone(r, "material resolve")
 	s := &r.scene
 	classify := rhi.Render_Pass_Desc{name = "program depth"}
 	classify.depth = {texture = t.program_depth, load = .Clear, store = .Store, clear = 0}
@@ -487,11 +489,15 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     r.error=""
     r.pipeline_waiting=""
     started:=time.tick_now()
+    zone:=render_zone_begin(r,"uploads arrived")
     texture_uploads_install(r)
     geometry_uploads_install(r)
+    base.profile_end(zone)
+    zone=render_zone_begin(r,"programs")
     pipelines_install(r)
     if r.variants_wanted {pipeline_variants_ask(r)}
     if r.scene.programs_arrived {programs_ask(r)}
+    base.profile_end(zone)
     // What the extensions asked of this frame lasts for it alone.
     defer {
         r.pass_count=0;r.main_pipeline=0;r.gbuffer_asked={}
@@ -513,45 +519,65 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         for view in frame.views {if view.texture==0 && !view.disabled {eye=view.camera.position;break}}
         renderer_origin_follow(r,eye)
     }
+    zone=render_zone_begin(r,"poses")
     frame,framed:=origin_frame(r,frame)
+    if framed {
+        displaced_prepare(r)
+        skins_bounds(r)
+    }
+    base.profile_end(zone)
     if !framed {return false}
-    displaced_prepare(r)
-    skins_bounds(r)
     // What changed for the shadows reaches the views of a frame that draws the scene.
     if !frame.ui_only {r.frame_occluders,r.scene.occluders=r.scene.occluders,{}}
+    zone=render_zone_begin(r,"batches")
     batches_build(r)
-    if !scene_lights_settle(r) || !ensure_scene_capacity(r) {return false}
+    base.profile_end(zone)
+    zone=render_zone_begin(r,"light tree")
+    settled:=scene_lights_settle(r)
+    base.profile_end(zone)
+    zone=render_zone_begin(r,"scene capacity")
+    settled=settled && ensure_scene_capacity(r)
+    base.profile_end(zone)
+    if !settled {return false}
     if !frame.offscreen && !frame.ui_only {
         // The cuts rays trace follow the eye of the first view of the window, as the probes.
         eye:=frame.camera.position
         for view in frame.views {if view.texture==0 && !view.disabled {eye=view.camera.position;break}}
         if frame.detail.on {eye=frame.detail.camera.position}
+        zone=render_zone_begin(r,"ray cuts")
         ray_cuts_update(r,eye)
+        base.profile_end(zone)
     }
     if r.settings.gi_enabled && !frame.offscreen && !frame.ui_only {
         // The probes follow the focus of the first view of the window.
         focus:=camera_focus(frame.camera)
         for view in frame.views {if view.texture==0 && !view.disabled {focus=camera_focus(view.camera);break}}
+        zone=render_zone_begin(r,"probes placed")
         if ddgi_ensure(r) {ddgi_place(r,focus)}
+        base.profile_end(zone)
     } else if !r.settings.gi_enabled && r.ddgi.valid {
         ddgi_release(r)
         probe_hits_release(r)
     }
-    if r.main.targets.ldr==0 && !create_targets(r,&r.main,r.window_width,r.window_height,window_render_scale(r,f32(r.window_height)),true) {return false}
+    zone=render_zone_begin(r,"views prepared")
     // A frame no window shows that draws only into textures leaves the views
     // of the window as they are: it records those alone.
     alone:=frame.offscreen && len(frame.views)>0
     for view in frame.views {if view.texture==0 {alone=false}}
-    if !prepare_views(r,frame.views,alone) {return false}
-    if r.view_count==0 && !ensure_glass_targets(r,&r.main.targets) {return false}
-    if !frame.ui_only && (!air_tables_ensure(r) || !points_prepare(r)) {return false}
+    prepared_ok:=(r.main.targets.ldr!=0 || create_targets(r,&r.main,r.window_width,r.window_height,window_render_scale(r,f32(r.window_height)),true)) &&
+                 prepare_views(r,frame.views,alone) && (r.view_count>0 || ensure_glass_targets(r,&r.main.targets)) &&
+                 (frame.ui_only || air_tables_ensure(r) && points_prepare(r))
     // A window whose pipeline generates frames shows them through the presenter of the device.
-    if !frame.offscreen {
+    if prepared_ok && !frame.offscreen {
         _,main_plan:=view_plan(r,0,true)
         rhi.swapchain_set_paced(d,main_plan.generates)
     }
+    base.profile_end(zone)
+    if !prepared_ok {return false}
     prepared:=time.tick_now()
+    zone=render_zone_begin(r,"gpu slot")
     cmd,began:=rhi.frame_begin(d,!frame.offscreen)
+    base.profile_end(zone)
     gpu_submission_keep(r)
     if !began {
         set_error(r,"the device gave no frame to draw: %s",rhi.device_error(d)!=""?rhi.device_error(d):"the window is being resized or its image is not ready")
@@ -559,11 +585,16 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     }
     begun:=time.tick_now()
     slot:=int(rhi.frame_number(d)%rhi.MAX_FRAMES_IN_FLIGHT)
+    zone=render_zone_begin(r,"readbacks")
     read_stats(r,slot)
     points_read(r,slot)
     pages_update(r,slot)
+    base.profile_end(zone)
+    zone=render_zone_begin(r,"shadow movers")
     if !frame.ui_only {shadow_movers_update(r)}
     shadow_bound_update(r,slot,frame.refresh_hz)
+    base.profile_end(zone)
+    zone=render_zone_begin(r,"readbacks")
     textures_feedback_read(r,slot)
     extension_counters_begin(r,cmd,slot)
     // A frame none of whose views culls reports no counts, not those of the last one that did.
@@ -579,21 +610,40 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     ui_written:=0
     s:=&r.scene
     s.lights_changed=false
+    base.profile_end(zone)
+    zone=render_zone_begin(r,"uploads")
     texture_uploads_record(r,cmd)
-    recorded_ok:=renderer_commit_geometry(r,cmd,slot) && font_record(r,cmd,slot) && upload_scene(r,cmd) && mesh_draws_record(r,cmd) && (frame.ui_only || air_frame(r,cmd))
+    recorded_ok:=renderer_commit_geometry(r,cmd,slot) && font_record(r,cmd,slot)
+    base.profile_end(zone)
+    zone=render_zone_begin(r,"scene tables")
+    recorded_ok=recorded_ok && upload_scene(r,cmd)
+    base.profile_end(zone)
+    zone=render_zone_begin(r,"mesh draws")
+    recorded_ok=recorded_ok && mesh_draws_record(r,cmd) && (frame.ui_only || air_frame(r,cmd))
     if recorded_ok {pages_record_begin(r,cmd)}
     recorded_ok=recorded_ok && textures_feedback_begin(r,cmd,frame)
+    base.profile_end(zone)
     // The BLASes built frames ago become their compacted copies; the TLAS of this frame names those.
     if recorded_ok && r.hardware_rt {
+        zone=render_zone_begin(r,"ray structures")
         if replaced,freed:=rhi.cmd_compact_blases(cmd);replaced>0 {s.tlas_dirty=true;geometry_released(s,freed)}
+        base.profile_end(zone)
     }
     histories_rescale(r,cmd)
-    if recorded_ok {ui_textures_record(r,cmd,slot,&ui_written,frame.ui_textures)}
+    if recorded_ok {
+        zone=render_zone_begin(r,"ui textures")
+        ui_textures_record(r,cmd,slot,&ui_written,frame.ui_textures)
+        base.profile_end(zone)
+    }
     if recorded_ok && !frame.ui_only {
+        zone=render_zone_begin(r,"extensions")
         geometry:=Pass{r=r,cmd=cmd,slot=slot}
         stage_run(&geometry,.Geometry)
+        base.profile_end(zone)
+        zone=render_zone_begin(r,"ray structures")
         eyes:[VIEW_CAPACITY+TEXTURE_VIEW_CAPACITY+2]Vec3
         recorded_ok=deformables_record(r,cmd,frame_eyes(frame,&eyes))
+        base.profile_end(zone)
     }
     // The views drawn into a texture come first: those of the window may show
     // them. What runs once a frame goes with the first view of the window, or
@@ -612,12 +662,14 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     r.main.generated=false
     for &view in r.views {view.generated=false}
     if recorded_ok && !alone && frame.ui_only {
+        zone=render_zone_begin(r,"compose")
         // What covers the scene may show images of previews: they are drawn without it.
         if r.preview_count>0 {
             rhi.cmd_timestamp(cmd,"previews")
             previews_pass(r,cmd,slot)
         }
         compose_views(r,cmd,{ui=frame.ui},slot,&ui_written)
+        base.profile_end(zone)
     } else if recorded_ok && !alone && r.view_count==0 {
         single:=Frame_View{camera=frame.camera,camera_cut=frame.camera_cut,carried=frame.carried,inspection=frame.inspection}
         for view in frame.views {
@@ -637,14 +689,17 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
             recorded_ok &&=ok
             if !ok {break}
         }
+        zone=render_zone_begin(r,"compose")
         if recorded_ok {compose_views(r,cmd,frame,slot,&ui_written)}
         for &view in r.views[:r.view_count] {generated||=view.generated}
         if recorded_ok && generated {
             recorded_ok=ensure_generated_target(r,&r.main.targets)
             if recorded_ok {compose_views(r,cmd,frame,slot,&ui_written,true)}
         }
+        base.profile_end(zone)
     }
 	// ---------------------------------------------------------- present
+	zone = render_zone_begin(r, "present")
 	if swap := rhi.swapchain_texture(d); recorded_ok && swap != 0 {present_blit(r, cmd, swap, rhi.swapchain_format(d), r.main.targets.ldr)}
 	shown_generated := false
 	if before := rhi.swapchain_generated_texture(d); recorded_ok && generated && before != 0 {
@@ -673,9 +728,12 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         extension_counters_end(r,cmd,slot)
         depth_probes_end(r,cmd,slot)
     }
+	base.profile_end(zone)
 	rhi.cmd_timestamp(cmd, "end")
 	recorded := time.tick_now()
+	zone = render_zone_begin(r, "submit")
 	ok := rhi.frame_end(d, cmd, shown_generated)
+	base.profile_end(zone)
 	ended := time.tick_now()
 	r.stats.cpu_prepare_ms = f32(time.duration_milliseconds(time.tick_diff(started, prepared)))
 	r.stats.cpu_begin_ms = f32(time.duration_milliseconds(time.tick_diff(prepared, begun)))
@@ -723,6 +781,7 @@ histories_rescale :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
 // is drawn over the image of a view of the window.
 @(private)
 record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Frame_View,frame:Frame_Desc,slot:int,ui_written:^int,first:bool,index:=0) -> bool {
+    render_zone(r,"view")
     if view.camera_cut || !state.has_previous {view_camera_cut(state)}
     // A camera carried with what it sees keeps its histories: its last frame
     // is taken as seen from where the camera would have been.
@@ -732,8 +791,11 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
         state.prev_eye=point_carried(view.carried,state.prev_eye)
         state.prev_depth_plane=plane_carried(state.prev_depth_plane,back)
     }
+    zone:=render_zone_begin(r,"view plan")
     handle,plan:=view_plan(r,view.pipeline,view.texture==0)
-    if !view_pipeline_prepare(r,state,handle,plan) {return false}
+    planned:=view_pipeline_prepare(r,state,handle,plan)
+    base.profile_end(zone)
+    if !planned {return false}
     // The passes after the Output stage generate the image shown before this
     // one, for a view of a window whose device presents it; with a history, it
     // is shown. Without a window nobody would see it: they do not run.
@@ -744,11 +806,16 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
     p:=Pass{r=r,cmd=cmd,view=state,t=&state.targets,camera=view.camera,slot=slot,first=first,index=index,plan=plan,texture=view.texture!=0,offscreen=frame.offscreen,inspection=view.inspection,wide=view.texture!=0?view.wide:.None}
     p.current=int(state.frames%2)
     p.previous=1-p.current
-    if !view_begin(&p) {return false}
+    zone=render_zone_begin(r,"view constants")
+    begun:=view_begin(&p)
+    base.profile_end(zone)
+    if !begun {return false}
     output:=false
+    stages:=STAGE_ZONES
     for index in plan.order[:plan.order_count] {
         pass:=&plan.passes[index]
         ok:=true
+        render_zone(r,stages[pass.stage])
         switch pass.stage {
         case .Custom:      if !output || generate {custom_pass_record(&p,pass)}
         case .Geometry:    ok=pass_gbuffer(&p)
@@ -1063,6 +1130,7 @@ Raster_Round_Lists :: struct {
 // and what was left out. lists: those of the view where nil.
 @(private)
 raster_round_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, round: u32, last: bool, stats: rhi.Buffer, lists: ^Raster_Round_Lists = nil) {
+	render_zone(r, "raster round")
 	s := &r.scene
 	view := Raster_Round_Lists{state = s.cull_state_buffer, visible = s.visible_buffer, entries = s.raster_entries}
 	l := lists if lists != nil else &view
@@ -1140,6 +1208,7 @@ cull_bind :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glass:
 @(private)
 cull_record :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glass: rhi.Buffer) {
 	r, cmd := p.r, p.cmd
+	render_zone(r, "cull")
 	s := &r.scene
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull])
 	cull_bind(p, params, hiz, stats, glass)
@@ -1395,6 +1464,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	if !ensure_direct_targets(r, cmd, t, scale) {return false}
 	if s.light_grid_dirty {
 		rhi.cmd_timestamp(cmd, "light grid")
+		render_zone(r, "light grid")
 		light_grid_record(r, cmd)
 		s.light_grid_dirty = false
 	}
@@ -1412,7 +1482,9 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	}
 	points := [2]u32{(t.width + scale - 1) / scale, (t.height + scale - 1) / scale}
 	grid := or_dummy(r, s.light_grid_buffer)
+	zone := render_zone_begin(r, "shadow maps")
 	params.shadow = shadow_maps_pass(p, &params, scale, grid)
+	base.profile_end(zone)
 	atlas := t.shadow_raster.atlas if params.shadow.on != 0 else r.dummy_texture
 	table := r.shadow_buffers.table if params.shadow.on != 0 else r.dummy_buffer
 	unlayered := rhi.Shader_Constants{} if p.layered else {DIRECT_MAPS_COMP_UNLAYERED}
@@ -1492,7 +1564,10 @@ pass_direct :: proc(p: ^Pass) -> bool {
 			rhi.cmd_dispatch(cmd, points.x, groups(points.y, 64))
 		}
 	}
-	lists := light_lists_record(p) or_return
+	zone = render_zone_begin(r, "light lists")
+	lists, listed := light_lists_record(p)
+	base.profile_end(zone)
+	if !listed {return false}
 	rhi.cmd_timestamp(cmd, "direct pixels")
 	filter := unlayered + ({DIRECT_FILTER_COMP_UNLISTED} if p.frame.shadowless_lights == 0 else {})
 	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Filter, filter, {DIRECT_FILTER_COMP_UNLAYERED, DIRECT_FILTER_COMP_UNLISTED})^)

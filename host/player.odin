@@ -34,6 +34,9 @@ PLAYER_GPU_LOST :: 7   // the GPU device stopped working (app_gpu_failure)
 // 5 is left to a library that ends the player (app_exit) for a reason of its own.
 
 PLAYER_ASSETS :: "assets"
+// The record of a late GPU submission of the player (App_Desc.gpu_late_record),
+// in its user folder: the next run prints what one left.
+PLAYER_GPU_LATE_RECORD :: "gpu_late.txt"
 PLAYER_LOAD_TOP :: 5 // slowest assets and loop functions of each load the player prints
 
 @(private)
@@ -361,8 +364,10 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
     gpu:=!options.no_gpu && !options.dedicated
     windowed:=!options.headless && gpu
     started:=time.tick_now()
+    user:=app_user_folder(root,context.temp_allocator)
     app,error:=app_create({
-        info=info,root=root,engine_root=engine_root,options=app_user_folder(root,context.temp_allocator),threads=jobs.THREADS_AUTO,
+        info=info,root=root,engine_root=engine_root,options=user,threads=jobs.THREADS_AUTO,
+        gpu_late_record=project.path(user,PLAYER_GPU_LATE_RECORD,allocator=context.temp_allocator) if user!="" else "",
         window=windowed,shown=surfaced,gpu=gpu,gpu_validation=options.validation,
         window_desc=window,vsync=windowed,game_window=options.window.z<=0, // a window an editor places (--window) keeps its place
         fixed_dt=windowed || options.dedicated?0:1.0/60,
@@ -380,6 +385,7 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
         return PLAYER_FAILED
     }
     defer app_destroy(app)
+    if late:=app_gpu_late_before(app);late!="" {fmt.eprintfln("mirai: the last run of this game stopped on the GPU and never saw it finish: %s",late)}
     if icon!="" && windowed && !player_icon_set(app,icon) {fmt.eprintfln("mirai: %s is not a PNG the window can show; the game runs without its icon",icon)}
     if app.world=app_world_create(app);app.world==nil {
         fmt.eprintln("mirai: could not create the world")

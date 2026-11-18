@@ -433,6 +433,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
         animation_cache=project.cache_path(root,project.ANIMATION_CACHE,allocator=context.temp_allocator),
         collision_cache=project.content_cache_path(root,project.COLLISION_CACHE,allocator=context.temp_allocator),
         asset_mounts=mounts[:],shaders_root=root,
+        gpu_late_record=project.path(root,".mirai",GPU_LATE_RECORD,allocator=context.temp_allocator) if has_project else "",
     })
     if app==nil {
         fmt.eprintfln("mirai: the editor could not start: %v",app_error)
