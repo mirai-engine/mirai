@@ -309,29 +309,30 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   device; pages whose points read a coarser page drawn, as those a moving view refines, are drawn at
   the least. The first frame of a view draws at the least, whatever another drew at. The culls are
   bounded too, whatever the view and the scene: the cull by instance of a slot goes over the
-  instances of the scene and the batches whose box reaches its map (`shadow_reach`), so a batch
-  outside a map costs nothing there; that of what moves over the movers that reach it, all of what
-  reaches it only where the slot let go of its pages; each cull by instance of a frame (the
-  foresight before `Grant` included, and the marks of what swayed) goes over the slots with pages
-  listed, the coarsest first, while their threads fit as many as the bound has units, one slot at
-  least (`Finish`, `SHADOW_WORDS_SLOTS`), and the pages of the slots past it wait. A round hands the
-  cull by cluster a chunk for each `SHADOW_CHUNK_UNITS` units of the bound at most, and the lists of
-  the clusters it hands to the draws hold what the bound draws; the grant fits the chunks its pages
-  are foreseen to hand over (`SHADOW_WORDS_REACH`), and where they find no room no page of the round
-  is drawn whole and they wait. Before the cull by cluster, `Grant` gives the pages, those whose
-  points read them drawn the frame before first (`SHADOW_JOB_KEPT`), then in the order they are
-  given, while what they take fits half the bound: what a page took when the round last drew it,
-  else what the cull by instance foresees, scaled by what the draws took of that before
-  (`SHADOW_WORDS_SCALE`), and for a page not drawn yet a part of the share at most, as what is
-  foreseen strays most where a page holds the most. A page may take twice that, so one that takes
-  more is the only one left over; a page of the cache that takes more than half the bound is drawn
-  in bands of its rows over frames (`SHADOW_WORDS_BAND`), which grow back as the bound grows; a page
-  of the atlas that came is granted only where its quota leaves the pages kept room to take more the
-  frame after, so a page composed while what moves in it moves is composed every frame. A page is
-  foreseen once and keeps it until drawn, and the culls after the grant go over the slots and spans
-  of the pages granted alone: a page that waits costs no instance. A page left over, one that waits
-  and one whose band is not its last are not ready that frame (`Settle`): their points read the
-  nearest coarser page drawn, or trace, and the steps run again the next frame.
+  instances of the scene and the batches whose box reaches its map (`shadow_reach`), found again on
+  the CPU only where the map or the batches changed, so a batch outside a map costs nothing there;
+  that of what moves over the movers that reach it, all of what reaches it only where the slot let
+  go of its pages; each cull by instance of a frame (the foresight before `Grant` included, and the
+  marks of what swayed) goes over the slots with pages listed, the coarsest first, while their
+  threads fit as many as the bound has units, one slot at least (`Finish`, `SHADOW_WORDS_SLOTS`),
+  and the pages of the slots past it wait. A round hands the cull by cluster a chunk for each
+  `SHADOW_CHUNK_UNITS` units of the bound at most, and the lists of the clusters it hands to the
+  draws hold what the bound draws; the grant fits the chunks its pages are foreseen to hand over
+  (`SHADOW_WORDS_REACH`), and where they find no room no page of the round is drawn whole and they
+  wait. Before the cull by cluster, `Grant` gives the pages, those whose points read them drawn the
+  frame before first (`SHADOW_JOB_KEPT`), then in the order they are given, while what they take
+  fits half the bound: what a page took when the round last drew it, else what the cull by instance
+  foresees, scaled by what the draws took of that before (`SHADOW_WORDS_SCALE`), and for a page not
+  drawn yet a part of the share at most, as what is foreseen strays most where a page holds the
+  most. A page may take twice that, so one that takes more is the only one left over; a page of the
+  cache that takes more than half the bound is drawn in bands of its rows over frames
+  (`SHADOW_WORDS_BAND`), which grow back as the bound grows; a page of the atlas that came is
+  granted only where its quota leaves the pages kept room to take more the frame after, so a page
+  composed while what moves in it moves is composed every frame. A page is foreseen once and keeps
+  it until drawn, and the culls after the grant go over the slots and spans of the pages granted
+  alone: a page that waits costs no instance. A page left over, one that waits and one whose band is
+  not its last are not ready that frame (`Settle`): their points read the nearest coarser page
+  drawn, or trace, and the steps run again the next frame.
 - **A still view.** While its camera, size, parameters and lights stay and no caster changes
   (`Shadow_Seen`), a view keeps the marks and the table of the frames before: its points mark the
   pages they read only for a cycle of its jitter after a change, the marks add up, and the steps
