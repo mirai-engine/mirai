@@ -606,7 +606,7 @@ MATERIAL_RANGES_MAX :: 64 // rows that go to the GPU in ranges; past them the wh
 gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
 	mode, opacity := m.alpha_mode, clamp(m.opacity, 0, 1)
 	transmission := clamp(m.transmission, 0, 1) if mode != .Mask else 0
-	// The opacity of an opaque material is not a filter: its glass passes its base color.
+	// The opacity of an opaque material is not its coverage: its glass covers whole.
 	if transmission > 0 && mode == .Opaque {mode, opacity = .Blend, 1}
 	result := Gpu_Material_Row{
 		shared = {

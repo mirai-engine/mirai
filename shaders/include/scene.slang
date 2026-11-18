@@ -1152,12 +1152,13 @@ bool material_covers(Material m, float alpha) {
 
 bool material_solid(Material m) { return m.transmission > 0.0 && m.thickness > 0.0; }
 
-// What a blended surface leaves of the light that reaches it from behind.
-// Without transmission it is a coat that covers alpha of it; with it, a filter
-// of the base color at strength alpha, less what the surface reflects, under
-// what the layers of its material leave (shading_through).
-float3 surface_filter(Material m, float3 base_color, float alpha, float3 reflectance, float3 layers = float3(1.0)) {
-    return lerp(float3(1.0 - alpha), (1.0 - reflectance) * layers * lerp(float3(1.0), base_color, alpha), m.transmission);
+// What a blended surface lets through of the light that reaches it from
+// behind where it covers: its transmission of what it does not reflect, by
+// its base color, under what the layers of its material leave
+// (shading_through). Without transmission it is a coat that hides it. Where
+// it does not cover (alpha) there is no surface and the light goes on whole.
+float3 surface_through(Material m, float3 base_color, float3 reflectance, float3 layers = float3(1.0)) {
+    return m.transmission * (1.0 - reflectance) * layers * base_color;
 }
 
 // What a solid leaves of the light that crosses `path` of it.
@@ -1289,11 +1290,12 @@ float3 hit_normal(uint instance_index, uint primitive, float2 bary, float3 direc
 // The filter of a blended surface from the values of its material at a
 // point, for light that crosses it: the color it filters with (its tint) and
 // what each of its faces lets through of what it does not reflect (through,
-// white without transmission). Opacity is the strength of the tint: zero
-// passes white, one passes the linear base color (black blocks).
+// white without transmission). Both hold where it covers (alpha): zero passes
+// white, one the linear base color (black blocks) less what it reflects.
 float3 blend_filter_of(Material m, Material_Sample values, out float3 through) {
-    through = m.transmission > 0.0 ? 1.0 - values.f0 * m.transmission : float3(1.0);
-    return lerp(float3(1.0), saturate(values.base_color), saturate(values.alpha));
+    float covered = saturate(values.alpha);
+    through = 1.0 - values.f0 * (m.transmission * covered);
+    return lerp(float3(1.0), saturate(values.base_color), covered);
 }
 // The same at the point of a triangle with barycentric weights w, as a ray
 // that stands for `footprint` meters of it sees it, for a material without a

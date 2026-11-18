@@ -104,18 +104,21 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint local : SV_GroupIndex) {
         bool out_way;
         float3 reflectance = leaving_reflectance(m, g, out_way);
         float3 near_absorbed = material_absorption(m, near);
-        float3 seen = g.emission * near_absorbed + solid_scatter(m, ids.y, frame.camera_position.xyz, view_direction(uv), near, medium_top);
-        if (out_way) {
+        // Where the face does not cover, the view goes on to what lies behind it as it is.
+        float covered = saturate(g.alpha);
+        float3 face = (1.0 - covered) * scene.Load(int3(p, 0)).rgb + covered * g.emission;
+        if (out_way && covered > 0.0) {
             float3 out_direction = refract(-g.view, g.normal, m.ior);
             Glass_Walk w = walk_start(g.position + out_direction * bias, out_direction, 0u);
             walk_show(w, depth, g.roughness, uv);
-            seen += w.radiance * surface_filter(m, g.base_color, g.alpha, reflectance) * near_absorbed;
+            face += covered * w.radiance * surface_through(m, g.base_color, reflectance);
         }
         // Back in, its reflection, traced with the layer (reflect.comp), which takes what the solid
         // absorbs and scatters on the way; without it, what so much of the solid scatters.
         float3 back = reflect(-g.view, g.normal);
         float3 inside = params.traced != 0u ? reflection.Load(int3(p, 0)).rgb : solid_scatter(m, ids.y, g.position + back * bias, back, params.max_distance, medium_top);
-        seen += inside * reflectance * near_absorbed;
+        face += covered * inside * reflectance;
+        float3 seen = face * near_absorbed + solid_scatter(m, ids.y, frame.camera_position.xyz, view_direction(uv), near, medium_top);
         out_color[p] = float4(finite_or_zero(seen), 1.0);
         return;
     }

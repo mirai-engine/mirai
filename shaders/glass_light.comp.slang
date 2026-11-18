@@ -29,5 +29,5 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     Glass g = glass_of(p, uv, depth, layer_albedo.Load(int3(p, 0)), normal, layer_emission.Load(int3(p, 0)));
     float traced = params.traced != 0u ? reflection_weight(g.roughness) : 0.0;
     float3 reflected = traced > 0.0 ? reflection.Load(int3(p, 0)).rgb : float3(0.0);
-    out_color[p] = float4(finite_or_zero(glass_light(m, g, glass_shading(m, g), reflected, traced, 0.0, params.light_budget)), 1.0);
+    out_color[p] = float4(finite_or_zero(glass_light(g, glass_shading(m, g), reflected, traced, 0.0, params.light_budget)), 1.0);
 }
