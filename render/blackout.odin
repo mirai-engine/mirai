@@ -6,15 +6,14 @@ import "core:math/linalg"
 // A blackout: a change of most of the light the probe volume holds at once
 // (the lights of a house turned off, the sun put out). A light whose range
 // reaches no probe changes none of it. It is a change everywhere, and the
-// probe volume is warmed as for a world shown anew, with GI_BLACKOUT_UPDATES
-// over GI_BLACKOUT_FRAMES, so that the light of the scene after it shows from
-// the frames it happens in.
+// probe volume is warmed as for a world shown anew, over GI_BLACKOUT_UPDATES
+// frames, so that the light of the scene after it shows from the frames it
+// happens in.
 
 // The share of the light of the scene whose change is a blackout.
 GI_BLACKOUT_SHARE :: f32(0.5)
-// The warm updates of a blackout and the frames they are spread over.
+// The frames of warm updates of a blackout.
 GI_BLACKOUT_UPDATES :: 16
-GI_BLACKOUT_FRAMES :: 4
 // The area around the eye the sun and the sky are weighed over against the local lights, square metres.
 GI_BLACKOUT_AREA :: f32(200)
 

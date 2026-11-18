@@ -2300,7 +2300,7 @@ scene_lights_settle :: proc(r: ^Renderer) -> bool {
 	flux := sky_flux(s.sun, s.environment, s.lights_scale) + s.light_flux
 	if abs(flux - s.flux_seen) > GI_BLACKOUT_SHARE * max(flux, s.flux_seen) {
 		scene_relit(s)
-		r.gi_warm_spread = GI_BLACKOUT_FRAMES
+		r.gi_warm_spread = max(r.gi_warm_spread, GI_BLACKOUT_UPDATES)
 	}
 	s.flux_seen = flux
 	if s.light_refits > LIGHT_REFITS_MAX && !s.lights_stale {s.light_tree_cost = light_tree_refit_all(s.light_tree[:], s.lights[:])}
