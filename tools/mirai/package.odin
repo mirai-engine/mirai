@@ -21,7 +21,7 @@ PACKAGE_USAGE :: "package engine --out <folder>"
 // in its binaries; their sources stay behind, as do the tests.
 @(private="file")
 PACKAGE_TRACKED :: [?]string{
-    "asset","audio","core","editor","engine","host","net","platform","plugins","project","render","rhi","std","store","ui",
+    "asset","audio","core","editor","engine","exchange","host","net","platform","plugins","project","render","rhi","std","store","ui",
     "shaders","templates","recipes","assets/fonts",".agents/skills","docs/game","LICENSE-MIT","LICENSE-APACHE","THIRD_PARTY_NOTICES.md",
 }
 // Generated from those sources, and kept by git in no checkout.

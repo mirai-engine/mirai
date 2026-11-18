@@ -41,6 +41,8 @@ neither the data world nor physics. A replicated object is an opaque game id plu
   [clock and inputs](references/networking.md#time-and-inputs),
   [interpolation](references/networking.md#smoothing-and-interpolation-interpolationodin) and
   [known limits](references/networking.md#known-limits)
+- Blobs and refs of the store between peers on a host's connections →
+  [exchange](../mirai-store/references/exchange.md#what-the-owner-calls)
 - Opening a host's UDP port (`mapping_start`, `mapping_poll`, `mapping_stop`, `mapping_close`;
   PCP, NAT-PMP, UPnP) → [API and lifecycle](references/port-mapping.md#api-and-lifecycle),
   [protocols](references/port-mapping.md#protocols) and
