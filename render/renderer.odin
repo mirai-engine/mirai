@@ -305,6 +305,7 @@ Stats :: struct {
 Pipeline_Id :: enum {
 	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Bins, Cull_Stats_Fold, Mesh_Draws, Tlas_Batches,
 	Raster_Round, Raster_Vertices, Raster_Vertices_Shadow, Raster_Starts, Raster_Triangles, // what the raster of the visibility target draws of the visible clusters, and the maps of the shadows of theirs, a round at a time (raster_lists.slang)
+	Cull_Cost, Raster_Vertices_Cost, Raster_Vertices_Shadow_Cost, Shadow_Clusters_Cost, Cost_Pixels, // the same counting by mesh and material, and the pixels each owns, in the frame of a request alone (cost.odin)
 	Light_Grid_Count, Light_Grid_Scan, Light_Grid_Fill, Light_Grid_Weights, // the passes of the grid of the lights (light_grid.comp)
 	Light_Lists, // the lists of the lights without shadows of the tiles of a view (light_lists.comp)
 	Direct_Maps, Direct_Rays, Direct_Samples, Direct_Points, Direct_Spread, Direct_Filter,
@@ -653,6 +654,7 @@ Renderer :: struct {
 	pipeline_thread:      ^Pipeline_Thread, // makes the variants of the stages, and the pipelines of programs with pipelines_async; nil: where they are asked for
 	pipelines_async:      bool, // Renderer_Desc.pipeline_thread
 	stats_readback:  [rhi.MAX_FRAMES_IN_FLIGHT]rhi.Buffer,
+	cost:            Cost_State, // the count of a frame by mesh and material a request asked for (cost.odin)
 	ui_offscreen:    Ui_Offscreen_State,
 	using main:      View_State, // the view of a frame that has one
 	views:           [VIEW_CAPACITY]View_State, // those of a frame that has several
@@ -830,6 +832,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 	for b in r.debug_buffers {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.font_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.stats_readback {if b != 0 {rhi.buffer_destroy(d, b)}}
+	cost_destroy(r)
 	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.glass_dispatch, r.dispatch_start, r.dummy_buffer, r.shadow_buffers.state, r.shadow_buffers.table}) {if b != 0 {rhi.buffer_destroy(d, b)}}
 	if r.light_changes != 0 {rhi.buffer_destroy(d, r.light_changes)}
 	for t in ([]rhi.Texture{r.dummy_texture, r.dummy_layers, r.dummy_uint, r.dfg, r.display_lut, r.font, r.thumbnails}) {if t != 0 {rhi.texture_destroy(d, t)}}
@@ -935,6 +938,11 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Raster_Vertices_Shadow, .Raster_Vertices_Shadow_Comp)
 	compute(list, r, .Raster_Starts, .Raster_Starts_Comp)
 	compute(list, r, .Raster_Triangles, .Raster_Triangles_Comp)
+	compute(list, r, .Cull_Cost, .Cull_Cost_Comp, required = false)
+	compute(list, r, .Raster_Vertices_Cost, .Raster_Vertices_Cost_Comp, required = false)
+	compute(list, r, .Raster_Vertices_Shadow_Cost, .Raster_Vertices_Shadow_Cost_Comp, required = false)
+	compute(list, r, .Shadow_Clusters_Cost, .Shadow_Clusters_Cost_Comp, required = false)
+	compute(list, r, .Cost_Pixels, .Cost_Pixels_Comp, required = false)
 	compute(list, r, .Tlas_Batches, .Tlas_Batches_Comp, .Hardware)
 	compute(list, r, .Light_Grid_Count, .Light_Grid_Comp)
 	compute(list, r, .Light_Grid_Scan, .Light_Grid_Scan_Comp)
