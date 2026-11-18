@@ -1518,7 +1518,7 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 		r.hardware_rt = hardware
 		// The poses refit only the structures the rays use: those of the others are as old as the switch.
 		// The tables of the batches list the instances of a native TLAS only while rays are traced by hardware.
-		for handle in r.scene.skinned {if skin := r.scene.meshes[handle].skin; skin != nil {skin.dirty = true}}
+		for handle in r.scene.skinned {if skin := r.scene.meshes[handle].skin; skin != nil {skin.dirty, skin.retrace = true, true}}
 		r.scene.batch.built = false
 		r.scene.tlas_off, r.scene.tlas_stale = r.hardware_rt, true
 		r.scene.instances_dirty = true
