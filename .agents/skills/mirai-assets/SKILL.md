@@ -27,8 +27,9 @@ types, scenes and their prefab instances, registry).
   [container](references/formats.md#container), [typed tables](references/formats.md#typed-tables),
   [asset types](references/formats.md#asset-types), [versions](references/formats.md#versions),
   [registry](references/formats.md#registry) and [text](references/formats.md#text).
-- The records of imports in the machine store (package and build manifests, `packages.mirai`),
-  their refs and `packages_resolve`: [packages](references/formats.md#packages).
+- The records of imports in the machine store (package and build manifests, `packages.mirai`
+  and the manifest files a root carries), their refs and `packages_resolve`:
+  [packages](references/formats.md#packages).
 - The collection `compressor`, profiles, codecs, streams and decoders:
   [compression](references/formats.md#compression).
 - Streams, schemas, migration, paths, text: [serial](references/serial.md#stdserial).
@@ -133,9 +134,9 @@ types, scenes and their prefab instances, registry).
 - **The header says Scene or Prefab.** One `.scene` extension and kind; `Header_Flag.Prefab` is
   what whoever made the file chose, never guessed from its roots, and a prefab has exactly one root
   ([prefab](references/scenes.md#prefab)).
-- **A project pins the manifest of each package it uses, never a build**; builds are found by
-  key through refs, and resolving a list never removes nor rebuilds
-  ([packages](references/formats.md#packages)).
+- **A project pins the manifest of each package it uses, never a build**, and carries the text
+  of each manifest it pins; builds are found by key through refs, and resolving a list never
+  removes nor rebuilds ([packages](references/formats.md#packages)).
 - **A guest mount never takes an id the registry has**: what the program shipped wins over what a
   player adds ([guest mounts](references/formats.md#registry)).
 
@@ -163,8 +164,9 @@ types, scenes and their prefab instances, registry).
   - the document of a scene or a `.ui` from a file outside the assets (what `dump` and git
     show): `the_commands_read_write_and_check_the_document_of_an_asset` of `cook/author`;
   - records of packages: `package_records_read_back_what_they_write`,
-    `packages_resolve_lists_the_blobs_of_what_a_project_uses` and
-    `package_records_refuse_hostile_text` of `asset/packages_test.odin`;
+    `packages_resolve_lists_the_blobs_of_what_a_project_uses`,
+    `package_records_refuse_hostile_text` and `a_root_carries_the_manifests_it_pins` of
+    `asset/packages_test.odin`;
   - registry: `asset/registry_test.odin` and, in the editor, `editor/content_test.odin`;
   - layers of an imported material: `asset/kinds_test.odin`, and the overrides shared with prefabs
     in the editor, `editor/prefabs_test.odin`;

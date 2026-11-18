@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "65805c17b2454730221e3d63066ce7f5",
+  "name": "grate_normal",
+  "origin": {"path": "assets/surfaces/metal/grate_normal.png", "folder": false, "importer": "image"},
+  "identity": "84317f85bc995fe3ab6ae9962f1cd05bfd423bd05d87a2183232ecbececa02ca",
+  "settings": {
+    "image": "Normal"
+  },
+  "inputs": [],
+  "assets": [
+    {"kind": "TEX", "name": "grate_normal", "index": 0, "id": "c9d9c9f0f1dea3ec0ceec0f9671187eb"}
+  ]
+}

@@ -26,14 +26,16 @@ import "mirai:store"
 //   identity and build are current is not imported again. Two processes that
 //   ingest one origin at once take turns (a lock per origin), and the second
 //   finds the work done.
-// - project_add: pins a package in the project's packages.mirai
-//   (project_pin, its only writer) and follows it into the project.
+// - project_add: pins a package in the project's packages.mirai, with the
+//   text of its manifest beside it (project_pin and project_unpin, their only
+//   writers), and follows it into the project.
 // - project_refresh: for each package a project pins, the build this engine
 //   reads, from the local refs, else from the caller's source, else by
 //   ingesting its origin when it is on this machine (also when the source
 //   changed); else the report says, by package name, that a machine with its
-//   source must ingest it. It never removes a blob, a ref or a file, and never
-//   builds without the source.
+//   source must ingest it. A manifest the store lacks comes from the
+//   project's file of it, else from the caller's source. It never removes a
+//   blob, a ref or a file, and never builds without the source.
 //
 // Following a package writes or follows its documents in the project's folder
 // of it: from the build's baselines (importer.documents_follow), and for a
@@ -134,7 +136,7 @@ project_add :: proc(root:string,manifest:store.Hash,folder:string,assets:[]base.
         }
         append(&entry.assets,id)
     }
-    if pin_error:=project_pin(top,entry);pin_error!=.None {
+    if pin_error:=project_pin(top,options.store,entry);pin_error!=.None {
         report_line(&report.failures,"%s: %s could not be written (%v): a folder is relative to the assets, with forward slashes, and never leaves them",top,asset.PACKAGES_FILE,pin_error)
         return
     }
@@ -171,7 +173,7 @@ project_ingest :: proc(root,origin,folder:string,options:Library_Options,setting
     for &other in list.packages {
         if other.id==entry.id {entry.assets=other.assets}
     }
-    if pin_error:=project_pin(top,entry);pin_error!=.None {
+    if pin_error:=project_pin(top,options.store,entry);pin_error!=.None {
         report_line(&added.failures,"%s: %s could not be written (%v): a folder is relative to the assets, with forward slashes, and never leaves them",top,asset.PACKAGES_FILE,pin_error)
         return
     }
@@ -206,10 +208,14 @@ project_refresh :: proc(root:string,options:Library_Options,allocator:=context.a
 }
 
 // Pins entry in the packages.mirai of the project at root, in place of the
-// entry of the same package: the only writer of that file.
-project_pin :: proc(root:string,entry:asset.Project_Package) -> asset.Error {
+// entry of the same package, and writes beside it the text of the manifest
+// that s keeps under entry.manifest (asset.package_file). It and
+// project_unpin are the only writers of those files.
+project_pin :: proc(root:string,s:^store.Store,entry:asset.Project_Package) -> asset.Error {
+    entry:=entry
     list,_,error:=asset.packages_load(root,context.temp_allocator)
     if error!=.None {return error}
+    asset.package_file_save(s,root,&entry) or_return
     for &other in list.packages {
         if other.id==entry.id {
             other=entry
@@ -218,6 +224,20 @@ project_pin :: proc(root:string,entry:asset.Project_Package) -> asset.Error {
     }
     if _,no_room:=append(&list.packages,entry);no_room!=nil {return .Out_Of_Memory}
     return asset.packages_save(root,&list)
+}
+
+// Removes the package id from the packages.mirai of the project at root, and
+// the file of its manifest; .None also when it does not pin it.
+project_unpin :: proc(root:string,id:base.Asset_Id) -> asset.Error {
+    list,_,error:=asset.packages_load(root,context.temp_allocator)
+    if error!=.None {return error}
+    for &other,at in list.packages {
+        if other.id!=id {continue}
+        ordered_remove(&list.packages,at)
+        asset.packages_save(root,&list) or_return
+        break
+    }
+    return asset.package_file_remove(root,id)
 }
 
 // What ingest, project_add and project_refresh share for one call.
@@ -421,7 +441,7 @@ library_ingest :: proc(l:^Library_State,path:string,manifest:store.Hash,settings
         rebuild=l.options.rebuild,fast_textures=l.options.fast_textures,worker=l.options.worker,hashes=&hashes,
     }
     if documents!="" {options.registry,options.world=l.registry,l.plugins.world}
-    if options.root=="" {options.root,_=source_root(origin,l.temp)}
+    if options.root=="" {options.root,_=importer.source_root(origin,l.temp)}
     if settings!=nil {options.settings,options.ignore_stored=settings^,true}
     progress:importer.Progress
     if l.options.progress.procedure!=nil {
@@ -443,24 +463,27 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     entry:=entry
     digits,id_text:[64]u8
     id_name:=base.asset_id_format(entry.id,id_text[:32])
-    p,error:=asset.package_get(s,entry.manifest,l.temp)
-    if error==.Not_Found && fetch(l,asset.REF_PACKAGES,id_name) {p,error=asset.package_get(s,entry.manifest,l.temp)}
-    if error==.None && p.id!=entry.id {error=.Corrupt}
+    p,error:=asset.package_load(s,top,&entry,l.temp)
+    if error==.Not_Found && fetch(l,asset.REF_PACKAGES,id_name) {p,error=asset.package_load(s,top,&entry,l.temp)}
     #partial switch error {
     case .None:
     case .Not_Found:
-        report_line(&report.missing,"package %s: the store at %s has not its manifest %s, and no peer gave it: fetch it from a machine that ingested it",id_name,s.root,store.hex(entry.manifest,&digits))
+        report_line(&report.missing,"package %s: neither the store at %s nor %s has its manifest %s, and no peer gave it: restore that file from version control",id_name,s.root,asset.package_file(top,entry.id),store.hex(entry.manifest,&digits))
+        return
+    case .Hash:
+        report_line(&report.failures,"package %s: %s is not the manifest %s/%s pins: restore both from version control, or ingest its source again",id_name,asset.package_file(top,entry.id),top,asset.PACKAGES_FILE)
         return
     case:
         report_line(&report.failures,"package %s: its manifest %s in the store at %s is not a package of this version (%v): ingest its source again",id_name,store.hex(entry.manifest,&digits),s.root,error)
         return
     }
-    origin_here:=p.origin.path!="" && !importer.unsafe_path(p.origin.path) && os.exists(p.origin.path)
+    source:=importer.origin_path(p.origin.path,top)
+    origin_here:=source!="" && !importer.unsafe_path(source) && os.exists(source)
     documents:=l.assets if entry.folder=="" else fmt.tprintf("%s/%s",l.assets,entry.folder)
     prefab:=model_prefab_of(l,&p)
     // A source here that changed is ingested again, keeping its ids, and the project follows it.
-    if origin_here && source_changed(l,&p) {
-        reingest(l,top,&entry,&p,documents,prefab,"its source changed",report)
+    if origin_here && source_changed(l,&p,source) {
+        reingest(l,top,&entry,&p,source,documents,prefab,"its source changed",report)
         return
     }
     key,keyed:=package_key(l,&p)
@@ -472,7 +495,7 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     }
     if !found {
         if origin_here {
-            reingest(l,top,&entry,&p,documents,prefab,"this engine reads no build of it here",report)
+            reingest(l,top,&entry,&p,source,documents,prefab,"this engine reads no build of it here",report)
             return
         }
         switch {
@@ -496,7 +519,7 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     if !follow && previous==f.hash {return}
     // A model's prefab is written from its source in the game's types: the import does it, with the documents.
     if prefab && origin_here && plugins_world(l)!=nil {
-        reingest(l,top,&entry,&p,documents,prefab,"it is followed into the project",report)
+        reingest(l,top,&entry,&p,source,documents,prefab,"it is followed into the project",report)
         return
     }
     documents_write(l,&p,&f.build,documents,report)
@@ -526,29 +549,29 @@ documents_write :: proc(l:^Library_State,p:^asset.Package,b:^asset.Build,documen
     }
 }
 
-// Whether what the source of p is made from now is not what p was ingested
-// from: its bytes, those of its inputs, or the code of the plugin that
-// imports it whole.
+// Whether what the source of p, here at source, is made from now is not what
+// p was ingested from: its bytes, those of its inputs, or the code of the
+// plugin that imports it whole.
 @(private="file")
-source_changed :: proc(l:^Library_State,p:^asset.Package) -> bool {
+source_changed :: proc(l:^Library_State,p:^asset.Package,source:string) -> bool {
     settings,valid:=importer.settings_parse(p.settings)
     if !valid {return false}
     code:u64
-    if r,known:=reader_of(l,p.origin.path);known && r.claimed {code=r.whole.code}
-    hashes:=importer.source_hashes_load(l.options.store,p.origin.path,l.temp)
-    defer importer.source_hashes_save(l.options.store,p.origin.path,&hashes)
-    return importer.identity_of(p.id,p.origin.path,p.inputs[:],settings,code,&hashes)!=p.identity
+    if r,known:=reader_of(l,source);known && r.claimed {code=r.whole.code}
+    hashes:=importer.source_hashes_load(l.options.store,source,l.temp)
+    defer importer.source_hashes_save(l.options.store,source,&hashes)
+    return importer.identity_of(p.id,source,p.inputs[:],settings,code,&hashes)!=p.identity
 }
 
-// Ingests the source of p again, keeping its ids, and pins the manifest it
-// gives; a model is imported with the project's folder, which follows its
+// Ingests the source of p again, here at source, keeping its ids, and pins
+// the manifest it gives; a model is imported with the project's folder, which follows its
 // documents and writes its prefab, and any other follows from its build.
 @(private="file")
-reingest :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,p:^asset.Package,documents:string,prefab:bool,why:string,report:^Library_Report) {
-    if l.options.progress.procedure!=nil {fmt.wprintfln(l.options.progress,"importing %s: %s",p.origin.path,why)}
+reingest :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,p:^asset.Package,source,documents:string,prefab:bool,why:string,report:^Library_Report) {
+    if l.options.progress.procedure!=nil {fmt.wprintfln(l.options.progress,"importing %s: %s",source,why)}
     started:=time.tick_now()
     model:=prefab && plugins_world(l)!=nil
-    written,error:=library_ingest(l,p.origin.path,entry.manifest,nil,documents if model else "",l.temp)
+    written,error:=library_ingest(l,source,entry.manifest,nil,documents if model else "",l.temp)
     if error.code!=.None {
         report_line(&report.failures,"package %s: %s",p.name,error.message)
         return
@@ -559,7 +582,7 @@ reingest :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,p:^ass
     if l.options.progress.procedure!=nil {fmt.wprintfln(l.options.progress,"  %s: %d assets, %.1f s",p.name,len(written.assets),time.duration_seconds(time.tick_since(started)))}
     if written.manifest!=entry.manifest {
         entry.manifest=written.manifest
-        if pin_error:=project_pin(top,entry^);pin_error!=.None {
+        if pin_error:=project_pin(top,l.options.store,entry^);pin_error!=.None {
             report_line(&report.failures,"package %s: %s/%s could not be written: %v",p.name,top,asset.PACKAGES_FILE,pin_error)
             return
         }

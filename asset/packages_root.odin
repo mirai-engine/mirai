@@ -14,7 +14,8 @@ Root_Packages :: struct {
 }
 
 // packages_resolve of the list at root (PACKAGES_FILE) against the store at
-// store_root, the machine's (store.default_root) when "". A root without the
+// store_root, the machine's (store.default_root) when "", which takes the
+// manifests it lacks from the files of the root. A root without the
 // list lists nothing and opens no store. A list or a store that does not read
 // is a problem, as is a package that is not here or not built here: none is an
 // error, which is only that memory ran out. In allocator, an arena.
@@ -43,15 +44,17 @@ root_packages :: proc(root,store_root:string,allocator:=context.allocator) -> (r
         return {problems=problems[:]},.None
     }
     defer store.close(&s)
-    packages:=packages_resolve(&s,&list,allocator) or_return
+    packages:=packages_resolve(&s,root,&list,allocator) or_return
     unreadable:=make(map[base.Asset_Id]bool,context.temp_allocator)
     for problem in packages.problems {
         named:=package_named(&s,&list,problem.package_id)
         switch problem.code {
         case .Manifest_Missing:
-            problem_line(&problems,"%s is not in the store at %s: ingest its source on this machine, or fetch it from a peer that has it",named,folder) or_return
+            problem_line(&problems,"%s is neither in the store at %s nor in %s: restore that file from version control, or fetch the manifest from a peer that has it",named,folder,package_file(root,problem.package_id)) or_return
         case .Manifest_Unreadable:
-            problem_line(&problems,"the manifest of %s in the store at %s is not one this engine reads: ingest its source again",named,folder) or_return
+            problem_line(&problems,"the manifest of %s is not one this engine reads: ingest its source again",named) or_return
+        case .Manifest_Mismatch:
+            problem_line(&problems,"%s is not the manifest %s/%s pins for %s: restore both from version control, or ingest its source again",package_file(root,problem.package_id),root,PACKAGES_FILE,named) or_return
         case .Build_Unreadable:
             unreadable[problem.package_id]=true
             problem_line(&problems,"the build of %s on this machine does not read, so its assets are not built: refresh it on a machine with its source",named) or_return

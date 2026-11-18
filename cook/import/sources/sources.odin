@@ -104,20 +104,6 @@ source_kind :: proc(path:string,formats:[]importer.Format=nil) -> Source_Kind {
     return .None
 }
 
-// The project or the plugin whose assets folder has the file at path: the
-// folder that holds the nearest assets folder above it. False for a file in
-// no assets folder.
-source_root :: proc(path:string,allocator:=context.allocator) -> (root:string,ok:bool) {
-    names:=project.FOLDER_NAMES
-    folder:=project.path_absolute(path,context.temp_allocator)
-    for {
-        parent:=filepath.dir(folder)
-        if parent==folder {return}
-        if filepath.base(parent)==names[.Assets] {return strings.clone(filepath.dir(parent),allocator),true}
-        folder=parent
-    }
-}
-
 // A source a plugin imports whole (editor.Source_Importer), prepared for the
 // assets of a root: claims says whether it is one, by its path and up to
 // importer.SNIFF_BYTES of its head, and run imports it as import_source does,
@@ -168,7 +154,7 @@ whole_find :: proc(wholes:[]Whole_Source,path:string) -> (whole:Whole_Source,cla
 }
 
 // Imports a source file in the assets folder of a project or a plugin
-// (options.root; "": source_root): one of wholes claims is imported whole by
+// (options.root; "": importer.source_root): one of wholes claims is imported whole by
 // it, before the formats; a model writes its assets and, when it
 // has nodes, the prefab of its hierarchy, which the report lists last; an
 // image or a sound writes one asset. The sidecar of the source
@@ -180,7 +166,7 @@ whole_find :: proc(wholes:[]Whole_Source,path:string) -> (whole:Whole_Source,cla
 import_source :: proc(path:string,options:importer.Import_Options={},formats:[]importer.Format=nil,wholes:[]Whole_Source=nil,allocator:=context.allocator) -> (report:importer.Import_Report,error:importer.Error) {
     formats:=formats if formats!=nil else FORMATS[:]
     options:=options
-    if options.root=="" {options.root,_=source_root(path,context.temp_allocator)}
+    if options.root=="" {options.root,_=importer.source_root(path,context.temp_allocator)}
     if whole,claimed:=whole_find(wholes,path);claimed {
         options.importer_code=whole.code
         scene:string

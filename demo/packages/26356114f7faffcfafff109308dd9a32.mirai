@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "id": "26356114f7faffcfafff109308dd9a32",
+  "name": "bricks_orm",
+  "origin": {"path": "assets/surfaces/bricks/bricks_orm.png", "folder": false, "importer": "image"},
+  "identity": "b5b53e22299c99493478359f1e2936970ca5191915b380c995ea296bd95458fe",
+  "inputs": [],
+  "assets": [
+    {"kind": "TEX", "name": "bricks_orm", "index": 0, "id": "d526fc286cf3d0bb3c956200037149d5"}
+  ]
+}

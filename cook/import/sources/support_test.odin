@@ -109,7 +109,7 @@ copy_in :: proc(root,from:string,files:..string) -> string {
 test_options :: proc(t:^testing.T,path:string,options:importer.Import_Options={},loc:=#caller_location) -> importer.Import_Options {
     options:=options
     root:=options.root
-    if root=="" {root,_=source_root(path,context.temp_allocator)}
+    if root=="" {root,_=importer.source_root(path,context.temp_allocator)}
     if root=="" {root=filepath.dir(path)}
     os.make_directory_all(root)
     // A root that cannot hold a store leaves none: the import says so.
@@ -146,7 +146,7 @@ registry_with :: proc(t:^testing.T,root:string,report:^importer.Import_Report,r:
     list:asset.Packages
     list.packages=make([dynamic]asset.Project_Package,context.temp_allocator)
     append(&list.packages,asset.Project_Package{id=report.package_id,manifest=report.manifest})
-    resolved,error:=asset.packages_resolve(s,&list,context.temp_allocator)
+    resolved,error:=asset.packages_resolve(s,"",&list,context.temp_allocator)
     if !testing.expect_value(t,error,asset.Error.None,loc=loc) {return false}
     asset.registry_init(r,fmt.tprintf("%s/assets",root),"",context.allocator,resolved.listed[:])
     return testing.expect_value(t,asset.registry_scan(r),asset.Error.None,loc=loc)

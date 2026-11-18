@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "id": "ae40765be8d60ddad02e47bb21203f8f",
+  "name": "cobblestone_orm",
+  "origin": {"path": "assets/surfaces/cobblestone/cobblestone_orm.png", "folder": false, "importer": "image"},
+  "identity": "2a95d7c8e5402ec5bdc2f7e01aed3c0ed96d37d9ed066c08c7c1e944ac88a630",
+  "inputs": [],
+  "assets": [
+    {"kind": "TEX", "name": "cobblestone_orm", "index": 0, "id": "94cef7c053d5afed918f83a3d6242853"}
+  ]
+}

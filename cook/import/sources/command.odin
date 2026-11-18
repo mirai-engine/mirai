@@ -195,7 +195,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     origin:=importer.path_key(file)
     // The project it is added to, and where under its assets.
     if root=="" {
-        if inside,in_assets:=source_root(origin,context.temp_allocator);in_assets {
+        if inside,in_assets:=importer.source_root(origin,context.temp_allocator);in_assets {
             root=inside
             if !foldered {
                 assets:=project.folder_path(root,.Assets,context.temp_allocator)

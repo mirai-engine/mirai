@@ -193,7 +193,7 @@ package_previous :: proc(s:^store.Store,manifest:store.Hash,origin:string,alloca
     named,ref_error:=store.ref_get(s,asset.REF_ORIGINS,asset.origin_name(origin,&name))
     if ref_error!=.None {return}
     read_error:asset.Error
-    if p,read_error=asset.package_get(s,named,allocator);read_error!=.None || p.origin.path!=origin {return {},{},false,{}}
+    if p,read_error=asset.package_get(s,named,allocator);read_error!=.None || p.origin.path!=origin_of(origin) {return {},{},false,{}}
     return p,named,true,{}
 }
 
@@ -232,7 +232,7 @@ writer_publish :: proc(w:^Writer,name,importer:string) -> bool {
     s:=w.options.store
     writer_identity(w)
     p:=asset.Package{id=w.package_id,name=name,identity=w.identity,inputs=w.inputs,assets=w.outputs}
-    p.origin={path=w.origin,folder=os.is_dir(w.path),importer=importer}
+    p.origin={path=origin_of(w.origin),folder=os.is_dir(w.path),importer=importer}
     if settings:=settings_text(w.report.settings,context.temp_allocator);settings!="{}" {p.settings=settings}
     slice.sort(p.inputs[:])
     b:=asset.Build{package_id=w.package_id,key=w.key,final=!w.fast,encoders=textures.encoders_id()}

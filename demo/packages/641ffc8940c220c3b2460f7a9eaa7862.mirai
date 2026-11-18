@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "641ffc8940c220c3b2460f7a9eaa7862",
+  "name": "brushed_normal",
+  "origin": {"path": "assets/surfaces/metal/brushed_normal.png", "folder": false, "importer": "image"},
+  "identity": "ccde0d801f6b101dc0a1ee36b07dad836fe33412f22d3ac32723076196627c90",
+  "settings": {
+    "image": "Normal"
+  },
+  "inputs": [],
+  "assets": [
+    {"kind": "TEX", "name": "brushed_normal", "index": 0, "id": "b9466f1cd86f5f900d74e12980fdc702"}
+  ]
+}

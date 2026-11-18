@@ -280,8 +280,9 @@ what surely belongs to that model is a part; what is doubtful stays independent 
 
 The library of the machine is what its store keeps of imports and what a project does with it
 (`cook/import/sources/library.odin`). A project names the packages it uses in its
-`packages.mirai` ([packages](../../mirai-assets/references/formats.md#packages)); the store,
-shared by every checkout, worktree and project of the machine, keeps their manifests and builds.
+`packages.mirai` and carries the text of their manifests beside it
+([packages](../../mirai-assets/references/formats.md#packages)); the store, shared by every
+checkout, worktree and project of the machine, keeps manifests and builds.
 
 - **`ingest(origin, options, settings)`** imports a file or a folder from wherever it is: in the
   assets of a project or a plugin, or in no project. Nothing is copied: the package goes to the
@@ -292,15 +293,19 @@ shared by every checkout, worktree and project of the machine, keeps their manif
   or worktrees that ingest one origin take turns with a lock per origin (`cook/workspace`, under
   `<store>/locks/`), and the second finds the work done.
 - **`project_add(root, manifest, folder, assets, options)`** pins a package in the project
-  (`project_pin`, the only writer of `packages.mirai`) and follows it there. **Following** writes
+  (`project_pin`, which with `project_unpin` is the only writer of `packages.mirai` and of the
+  manifest files beside it) and follows it there. **Following** writes
   or follows its documents under `folder` of the assets: from the baselines of its build
   (`documents_follow`), and for a model whose source is here and whose game types the library
   of the project's editor gives, by importing it with that folder, which also writes its prefab
   (`prefab.model_prefab`). Without the source or those types a model's prefab cannot be written,
   and the report says so.
 - **`project_refresh(root, options)`** takes each package the project pins to a build this
-  engine reads: the key (`asset.import_key` of the identity and the versions of what reads its
-  origin, an engine importer or a format of the engine or of the plugins) is looked up in
+  engine reads. A manifest the store lacks comes from the root's file of it, else from the
+  caller's source; so a clone with its sources and an empty store ingests every package again
+  with the same ids, manifest and key, and one without them reports each package. The key
+  (`asset.import_key` of the identity and the versions of what reads its origin, an engine
+  importer or a format of the engine or of the plugins) is looked up in
   `imports` (and `imports-fast` with `fast_textures`), then asked of the caller's source
   (`cache.Source`, the same procedure value the caches of `cook/cache` take: given
   `(imports, <key>)` it makes the build and every blob it lists present, given

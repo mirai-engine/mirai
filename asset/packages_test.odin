@@ -156,7 +156,7 @@ packages_resolve_lists_the_blobs_of_what_a_project_uses :: proc(t:^testing.T) {
         Project_Package{id={40,40},manifest=hash_of("absent")},
         Project_Package{id=broken.id,manifest=broken_manifest},
     )
-    resolved,error:=packages_resolve(&s,&list,context.temp_allocator)
+    resolved,error:=packages_resolve(&s,"",&list,context.temp_allocator)
     if !testing.expect_value(t,error,Error.None) {return}
     mesh_path,_:=store.blob_path(&s,mesh,context.temp_allocator)
     texture_path,_:=store.blob_path(&s,texture,context.temp_allocator)
@@ -293,4 +293,64 @@ package_records_refuse_hostile_text :: proc(t:^testing.T) {
     testing.expect(t,os.write_entire_file(fmt.tprintf("%s/%s",folder,PACKAGES_FILE),transmute([]u8)string("{\"version\""))==nil)
     _,found,load_error:=packages_load(folder,context.temp_allocator)
     testing.expect(t,!found && load_error==.Corrupt,"a damaged list is an error, never an empty one")
+}
+
+// A root carries the text of each manifest it pins: a store without one takes
+// it from the root's file and lists its assets not built, and root_packages
+// says so by package. A file that is not the manifest its pin names, or that
+// does not read, is reported by package, never listed; with neither a file
+// nor the manifest in the store, the package is missing.
+@(test)
+a_root_carries_the_manifests_it_pins :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"packages-files");if folder=="" {return}
+    ingested,open_error:=store.open(fmt.tprintf("%s/ingested",folder),context.temp_allocator)
+    if !testing.expect_value(t,open_error,store.Error.None) {return}
+    fresh,fresh_error:=store.open(fmt.tprintf("%s/fresh",folder),context.temp_allocator)
+    if !testing.expect_value(t,fresh_error,store.Error.None) {return}
+    root:=fmt.tprintf("%s/game",folder)
+    p:=sample_package()
+    manifest,_:=package_put(&ingested,&p)
+    list:Packages
+    list.packages=make([dynamic]Project_Package,context.temp_allocator)
+    append(&list.packages,Project_Package{id=p.id,manifest=manifest,folder="kit"})
+    testing.expect_value(t,package_file_save(&ingested,root,&list.packages[0]),Error.None)
+    testing.expect_value(t,packages_save(root,&list),Error.None)
+    wrong:=Project_Package{id={8,8},manifest=manifest}
+    testing.expect_value(t,package_file_save(&ingested,root,&wrong),Error.Corrupt)
+    testing.expect(t,!os.exists(package_file(root,wrong.id)),"a manifest of another package is not written as this one's")
+
+    resolved,error:=packages_resolve(&fresh,root,&list,context.temp_allocator)
+    if !testing.expect_value(t,error,Error.None) {return}
+    testing.expectf(t,len(resolved.problems)==0 && len(resolved.listed)==4,"%v %v",resolved.problems,resolved.listed)
+    for l in resolved.listed {testing.expectf(t,l.state==.Not_Built,"%s is not built without a build",l.path)}
+    testing.expect(t,store.has(&fresh,manifest),"the manifest of the root goes into the store, at the address it pins")
+    lines,_:=root_packages(root,fresh.root,context.temp_allocator)
+    testing.expectf(t,len(lines.listed)==4 && len(lines.problems)==1 && strings.contains(lines.problems[0],"crate"),"not built, said by package: %v",lines.problems)
+    testing.expect_value(t,store.remove(&fresh,manifest),store.Error.None)
+
+    file:=package_file(root,p.id)
+    text,_:=package_text(&p,context.temp_allocator)
+    hostile,_:=strings.replace(text,"crate","crane",1,context.temp_allocator)
+    garbage:="{\"version\": 1, \"id\": 7}"
+    Case :: struct {bytes:string,pin:store.Hash,want:Package_Problem_Code}
+    cases:=[]Case{
+        {hostile,manifest,.Manifest_Mismatch},
+        {garbage,hash_of(garbage),.Manifest_Unreadable},
+        {strings.repeat(" ",RECORD_BYTES+1,context.temp_allocator),manifest,.Manifest_Unreadable},
+        {"",manifest,.Manifest_Missing},
+    }
+    for c,at in cases {
+        if c.bytes=="" {os.remove(file)} else {testing.expect(t,os.write_entire_file(file,transmute([]u8)c.bytes)==nil)}
+        list.packages[0].manifest=c.pin
+        got,got_error:=packages_resolve(&fresh,root,&list,context.temp_allocator)
+        if !testing.expect_value(t,got_error,Error.None) {continue}
+        testing.expectf(t,len(got.listed)==0 && len(got.problems)==1 && got.problems[0].package_id==p.id && got.problems[0].code==c.want,"case %d: %v",at,got.problems)
+        testing.expect_value(t,packages_save(root,&list),Error.None)
+        said,_:=root_packages(root,fresh.root,context.temp_allocator)
+        id:[base.ASSET_ID_TEXT]u8
+        testing.expectf(t,len(said.problems)==1 && strings.contains(said.problems[0],base.asset_id_format(p.id,id[:])),"case %d is said by package: %v",at,said.problems)
+    }
+    testing.expect(t,!store.has(&fresh,manifest),"a file that is not its pin goes into no store")
+    testing.expect_value(t,package_file_remove(root,p.id),Error.None)
+    testing.expect_value(t,package_file_remove(root,p.id),Error.None)
 }

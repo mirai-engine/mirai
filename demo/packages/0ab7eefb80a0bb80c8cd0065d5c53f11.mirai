@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "0ab7eefb80a0bb80c8cd0065d5c53f11",
+  "name": "bricks_normal",
+  "origin": {"path": "assets/surfaces/bricks/bricks_normal.png", "folder": false, "importer": "image"},
+  "identity": "368a6ec83712603a49d698bec592fc764a4c289b9ffacc76273700cb4eaca77b",
+  "settings": {
+    "image": "Normal"
+  },
+  "inputs": [],
+  "assets": [
+    {"kind": "TEX", "name": "bricks_normal", "index": 0, "id": "0873ef8dc2c7deca1ed9eb84f5a8d6b9"}
+  ]
+}

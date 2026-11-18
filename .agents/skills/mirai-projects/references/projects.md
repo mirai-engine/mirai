@@ -12,9 +12,10 @@ Targets, jobs, fingerprint, project shaders, cooking and shipped game (`cook/bui
   cook.mirai        cooking roots that no scene names (optional)
   packages.mirai    the packages of the machine store the project uses, by the hash of their
                     manifest, and the folder each is listed in (optional; a plugin may have one)
+  packages/         <package id>.mirai: the text of each manifest packages.mirai pins (settings,
+                    origin and asset ids), so a clone has them without the store
   assets/           assets, by theme: what is authored, the art sources beside what they make,
-                    each with its sidecar (<source>.import: settings, folder and asset ids), and
-                    the documents their imports write
+                    and the documents their imports write
   game/             game library of the project
   editor/           editor package of the project (engine-time)
   plugins/<name>/   plugin.mirai, runtime/, editor/, shaders/, assets/

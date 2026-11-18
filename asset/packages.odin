@@ -22,14 +22,17 @@ import "mirai:store"
 //   importer finds.
 // - Packages: the list of a project (PACKAGES_FILE, beside its manifest),
 //   versioned: the packages it uses by the hash of their manifest, the folder
-//   of its assets each is listed in and the assets it uses. The editor and
-//   the commands that add or remove a package write it.
+//   of its assets each is listed in and the assets it uses. Beside it, in
+//   PACKAGE_FILES, the text of each manifest it pins (package_file), so the
+//   root carries what its pins name: a store without a manifest takes it from
+//   there. The library of cook/import/sources writes both.
 //
 // What a parse gives lives in its allocator, an arena: nothing frees it piece
 // by piece. A text that is not a record of its version is an error, never a
 // default.
 
 PACKAGES_FILE :: "packages.mirai"
+PACKAGE_FILES :: "packages" // the folder of a root, beside PACKAGES_FILE, with <package id>.mirai of each manifest it pins
 PACKAGES_VERSION :: 1
 PACKAGE_MANIFEST_VERSION :: 1
 BUILD_MANIFEST_VERSION :: 1
@@ -45,10 +48,10 @@ REF_ORIGINS :: "origins"           // <origin_name>: the manifest of the package
 REF_SOURCES :: "sources"           // <origin_name>: what the files of that source were when last read, never shared
 IMPORT_KEY_VERSIONS :: 32          // the most versions an import key combines
 
-// Where the source of a package was on the machine that ingested it: a hint
-// to ingest it again there, not part of what it is.
+// Where the source of a package was when it was ingested: a hint to ingest it
+// again, not part of what it is.
 Package_Origin :: struct {
-    path:string,
+    path:string,     // relative to the root whose assets hold it, alike in every copy of it; else absolute
     folder:bool,     // the source is a folder (an Unreal package), not a file
     importer:string, // the format or the importer of a plugin that reads it
 }
@@ -431,15 +434,11 @@ packages_parse :: proc(text:string,allocator:=context.allocator) -> (list:Packag
 packages_load :: proc(root:string,allocator:=context.allocator) -> (list:Packages,found:bool,error:Error) {
     path:=fmt.tprintf("%s/%s",root,PACKAGES_FILE)
     data,read_error:=serial.file_read(path,context.temp_allocator,limit=RECORD_BYTES)
-    switch read_error {
-    case .None:
-    case .Not_Found:
+    if read_error==.Not_Found {
         list.packages=make([dynamic]Project_Package,allocator)
         return list,false,.None
-    case .Too_Large: return {},false,.Too_Large
-    case .Out_Of_Memory: return {},false,.Out_Of_Memory
-    case .Open,.Read,.Write,.Rename,.Invalid_Alignment: return {},false,.IO
     }
+    if read_error!=.None {return {},false,file_error(read_error)}
     list,error=packages_parse(string(data),allocator)
     return list,error==.None,error
 }
@@ -449,12 +448,63 @@ packages_save :: proc(root:string,list:^Packages) -> Error {
     text:=packages_text(list,context.temp_allocator) or_return
     path:=fmt.tprintf("%s/%s",root,PACKAGES_FILE)
     if data,read_error:=os.read_entire_file(path,context.temp_allocator);read_error==nil && string(data)==text {return .None}
-    switch serial.file_write_atomic(path,transmute([]u8)text) {
-    case .None: return .None
-    case .Out_Of_Memory: return .Out_Of_Memory
-    case .Not_Found,.Open,.Read,.Write,.Rename,.Too_Large,.Invalid_Alignment: return .IO
+    return file_error(serial.file_write_atomic(path,transmute([]u8)text))
+}
+
+// The file of root that holds the text of the manifest of the package id it
+// pins, in the temp allocator.
+package_file :: proc(root:string,id:base.Asset_Id) -> string {
+    buffer:[base.ASSET_ID_TEXT]u8
+    return fmt.tprintf("%s/%s/%s.mirai",root,PACKAGE_FILES,base.asset_id_format(id,buffer[:]))
+}
+
+// Writes the manifest the store keeps under entry.manifest to the file of
+// root for its package, unless the file already holds it. .Corrupt when that
+// blob is not a manifest of the package entry names.
+package_file_save :: proc(s:^store.Store,root:string,entry:^Project_Package) -> Error {
+    text:=record_get(s,entry.manifest) or_return
+    p:=package_parse(text,context.temp_allocator) or_return
+    if p.id!=entry.id {return .Corrupt}
+    path:=package_file(root,entry.id)
+    if data,read_error:=os.read_entire_file(path,context.temp_allocator);read_error==nil && string(data)==text {return .None}
+    if folder:=fmt.tprintf("%s/%s",root,PACKAGE_FILES);!os.is_dir(folder) && os.make_directory_all(folder)!=nil {return .IO}
+    return file_error(serial.file_write_atomic(path,transmute([]u8)text))
+}
+
+// Removes the file of root for the package id; .None also when it has none.
+package_file_remove :: proc(root:string,id:base.Asset_Id) -> Error {
+    path:=package_file(root,id)
+    if !os.exists(path) {return .None}
+    return .None if os.remove(path)==nil else .IO
+}
+
+// The manifest a root pins with entry: the one the store keeps, else the file
+// of root for it (package_file), which then goes into the store. A file that
+// is there must hold the bytes of the address entry pins: .Hash when it does
+// not, also when the store has the manifest. .Not_Found when neither has it.
+// root "": the store alone. In allocator, an arena.
+package_load :: proc(s:^store.Store,root:string,entry:^Project_Package,allocator:=context.allocator) -> (p:Package,error:Error) {
+    file:[]u8
+    kept:=false
+    if root!="" {
+        read_error:serial.File_Error
+        file,read_error=serial.file_read(package_file(root,entry.id),context.temp_allocator,limit=RECORD_BYTES)
+        #partial switch read_error {
+        case .None:
+            if store.address_of_bytes(file)!=entry.manifest {return {},.Hash}
+            kept=true
+        case .Not_Found:
+        case: return {},file_error(read_error)
+        }
     }
-    return .IO
+    p,error=package_get(s,entry.manifest,allocator)
+    if error==.Not_Found && kept {
+        p,error=package_parse(string(file),allocator)
+        if error!=.None {return {},error}
+        if _,put_error:=store.put_bytes(s,file);put_error!=.None {return {},store_error(put_error)}
+    }
+    if error==.None && p.id!=entry.id {return {},.Corrupt}
+    return
 }
 
 // Keeps a manifest in the store, by the hash of its text.
@@ -499,8 +549,9 @@ Package_Listed :: struct {
 }
 
 Package_Problem_Code :: enum u8 {
-    Manifest_Missing,    // the store has no blob of the manifest the project names
-    Manifest_Unreadable, // it has one that is not a manifest of this version, or of another package
+    Manifest_Missing,    // neither the store nor the root has the manifest the project names
+    Manifest_Unreadable, // the one there is not a manifest of this version, or of another package
+    Manifest_Mismatch,   // the file of the root for it (package_file) is not the manifest it pins
     Build_Unreadable,    // the build its ref names is missing or does not read: its assets are not built
     Asset_Unknown,       // the project uses an asset its manifest does not have
 }
@@ -519,23 +570,26 @@ Packages_Resolved :: struct {
 // What a project lists from the packages it uses: each asset of the cache it
 // uses, with what they depend on, at its path, and the blob of the build
 // REF_BUILDS names for its manifest, or Not_Built. Documents are files of the
-// project and are not listed. A manifest or a build the store does not have
-// or does not read is a problem of the result, never an error; nothing is
-// removed, built or fetched. Two packages that list one path take the name of
+// project and are not listed. The manifests come from the store or from the
+// files of root (package_load; "": the store alone). A manifest or a build
+// that is not there or does not read is a problem of the result, never an
+// error; nothing is removed, built or fetched. Two packages that list one path take the name of
 // their package after it, "<name> (<package>)". In allocator, an arena; error
 // only when memory runs out.
-packages_resolve :: proc(s:^store.Store,list:^Packages,allocator:=context.allocator) -> (resolved:Packages_Resolved,error:Error) {
+packages_resolve :: proc(s:^store.Store,root:string,list:^Packages,allocator:=context.allocator) -> (resolved:Packages_Resolved,error:Error) {
     resolved.listed=make([dynamic]Package_Listed,allocator)
     resolved.problems=make([dynamic]Package_Problem,allocator)
     names:=make([dynamic]string,context.temp_allocator)
     for &entry in list.packages {
-        p,manifest_error:=package_get(s,entry.manifest,context.temp_allocator)
-        if manifest_error==.Out_Of_Memory {return {},.Out_Of_Memory}
-        if manifest_error==.None && p.id!=entry.id {manifest_error=.Corrupt}
-        if manifest_error!=.None {
-            problem_add(&resolved,{entry.id,{},manifest_error==.Not_Found?.Manifest_Missing:.Manifest_Unreadable}) or_return
-            continue
+        p,manifest_error:=package_load(s,root,&entry,context.temp_allocator)
+        #partial switch manifest_error {
+        case .None:
+        case .Out_Of_Memory: return {},.Out_Of_Memory
+        case .Not_Found: problem_add(&resolved,{entry.id,{},.Manifest_Missing}) or_return
+        case .Hash: problem_add(&resolved,{entry.id,{},.Manifest_Mismatch}) or_return
+        case: problem_add(&resolved,{entry.id,{},.Manifest_Unreadable}) or_return
         }
+        if manifest_error!=.None {continue}
         used,no_used:=make([]bool,len(p.assets),context.temp_allocator)
         by_id:=make(map[base.Asset_Id]int,context.temp_allocator)
         if no_used!=nil || reserve(&by_id,len(p.assets))!=nil {return {},.Out_Of_Memory}
@@ -946,6 +1000,18 @@ record_get :: proc(s:^store.Store,hash:store.Hash) -> (text:string,error:Error) 
     if no_room!=nil {return "",.Out_Of_Memory}
     if read_error:=store.read(s,hash,0,bytes);read_error!=.None {return "",store_error(read_error)}
     return string(bytes),.None
+}
+
+@(private="file")
+file_error :: proc(error:serial.File_Error) -> Error {
+    switch error {
+    case .None: return .None
+    case .Too_Large: return .Too_Large
+    case .Out_Of_Memory: return .Out_Of_Memory
+    case .Not_Found: return .Not_Found
+    case .Open,.Read,.Write,.Rename,.Invalid_Alignment: return .IO
+    }
+    return .IO
 }
 
 @(private="file")

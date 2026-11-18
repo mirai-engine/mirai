@@ -46,7 +46,7 @@ listed_of :: proc(t:^testing.T,s:^store.Store,root:string,loc:=#caller_location)
     listed=make(map[string]asset.Package_Listed,context.temp_allocator)
     list,_,error:=asset.packages_load(root,context.temp_allocator)
     if !testing.expect_value(t,error,asset.Error.None,loc=loc) {return}
-    resolved,resolve_error:=asset.packages_resolve(s,&list,context.temp_allocator)
+    resolved,resolve_error:=asset.packages_resolve(s,root,&list,context.temp_allocator)
     if !testing.expect_value(t,resolve_error,asset.Error.None,loc=loc) {return}
     testing.expectf(t,len(resolved.problems)==0,"%v",resolved.problems[:],loc=loc)
     for l in resolved.listed {listed[l.path]=l}
@@ -117,11 +117,12 @@ a_peer_without_sources_lists_and_loads_and_nothing_is_removed_or_built :: proc(t
     lacking:=project_refresh(peer,alone,context.temp_allocator)
     testing.expectf(t,len(lacking.missing)==2 && len(lacking.failures)==0 && lacking.ingested==0 && lacking.fetched==0,"%v",lacking)
     list,_,_:=asset.packages_load(peer,context.temp_allocator)
-    for entry in list.packages {
-        id:[base.ASSET_ID_TEXT]u8
+    for &entry in list.packages {
+        // The project carries its manifests: each package is named by its name.
+        p,_:=asset.package_get(here,entry.manifest,context.temp_allocator)
         named:=false
-        for line in lacking.missing {named||=strings.contains(line,base.asset_id_format(entry.id,id[:]))}
-        testing.expectf(t,named,"the package %v is named: %v",entry.id,lacking.missing[:])
+        for line in lacking.missing {named||=strings.contains(line,fmt.tprintf("package %s:",p.name))}
+        testing.expectf(t,named,"the package %s is named: %v",p.name,lacking.missing[:])
     }
     builds,_:=store.ref_list(there,asset.REF_BUILDS,context.temp_allocator)
     testing.expect(t,len(builds)==0,"nothing is built")
@@ -264,6 +265,98 @@ an_engine_change_builds_again_where_the_source_is_and_is_reported_by_name_elsewh
     testing.expectf(t,len(project_refresh(game,fast,context.temp_allocator).missing)==1,"with Fast taken only the billboard, whose source is gone, is missing")
 }
 
+// A root carries the manifests it pins: a copy of it elsewhere with its
+// sources and an empty store refreshes into the same ids, manifests, build
+// keys and blobs; a copy without its sources lists them not built and says so
+// by package. Unpinning removes the manifest's file.
+@(test)
+a_copy_of_a_root_with_its_sources_and_an_empty_store_builds_the_same :: proc(t:^testing.T) {
+    top:=base.test_folder(t,"library-clone")
+    if top=="" {return}
+    context.user_ptr=prefab.import_world(t)
+    game:=fmt.tprintf("%s/game",top)
+    props:=fmt.tprintf("%s/assets/props",game)
+    os.make_directory_all(props)
+    box:=box_source(props,"box.gltf","Wood","Paint")
+    sign:=fmt.tprintf("%s/sign.png",props)
+    _=os.write_entire_file(sign,png_bytes(8,8,{200,40,40}))
+    here:=test_store(t,fmt.tprintf("%s/here",top))
+    if here==nil {return}
+    options:=Library_Options{store=here,root=game,plugins=test_library}
+    keys:=make([dynamic]store.Hash,context.temp_allocator)
+    for source in ([2]string{box,sign}) {
+        report,added,error:=project_ingest(game,source,"props",options,allocator=context.temp_allocator)
+        if !testing.expectf(t,error.code==.None,"%s",error.message) || !report_clean(t,added) {return}
+        append(&keys,report.key)
+    }
+    pinned,_,_:=asset.packages_load(game,context.temp_allocator)
+    testing.expect_value(t,len(pinned.packages),2)
+    for &entry in pinned.packages {
+        text,read_error:=os.read_entire_file(asset.package_file(game,entry.id),context.temp_allocator)
+        testing.expectf(t,read_error==nil && store.address_of_bytes(text)==entry.manifest,"the root keeps the manifest it pins of %v",entry.id)
+        p,_:=asset.package_get(here,entry.manifest,context.temp_allocator)
+        testing.expectf(t,!strings.has_prefix(p.origin.path,"/") && strings.has_prefix(p.origin.path,"assets/props/"),"a source of the root is named from it: %s",p.origin.path)
+    }
+    blobs_of :: proc(t:^testing.T,s:^store.Store,root:string) -> map[string]store.Hash {
+        out:=make(map[string]store.Hash,context.temp_allocator)
+        for path,l in listed_of(t,s,root) {
+            hash,_,_:=store.address_of_file(l.file)
+            out[path]=hash
+        }
+        return out
+    }
+    before:=blobs_of(t,here,game)
+
+    clone:=fmt.tprintf("%s/clone",top)
+    folder_copy(game,clone)
+    fresh:=test_store(t,fmt.tprintf("%s/fresh",top))
+    if fresh==nil {return}
+    again:=options
+    again.store,again.root=fresh,clone
+    refreshed:=project_refresh(clone,again,context.temp_allocator)
+    testing.expectf(t,refreshed.ingested==2,"%v",refreshed)
+    if !report_clean(t,refreshed) {return}
+    cloned,_,_:=asset.packages_load(clone,context.temp_allocator)
+    testing.expect_value(t,len(cloned.packages),len(pinned.packages))
+    for entry,at in cloned.packages {
+        testing.expectf(t,entry.id==pinned.packages[at].id && entry.manifest==pinned.packages[at].manifest,"the same package and manifest: %v",entry)
+    }
+    for key in keys {
+        digits:[64]u8
+        _,ref_error:=store.ref_get(fresh,asset.REF_IMPORTS,store.hex(key,&digits))
+        testing.expectf(t,ref_error==.None,"the build has the key it had where it was ingested")
+    }
+    after:=blobs_of(t,fresh,clone)
+    testing.expect_value(t,len(after),len(before))
+    for path,hash in before {testing.expectf(t,after[path]==hash,"%s is the same blob",path)}
+
+    // Without its sources nor a store that has them: listed, not built, said by package.
+    bare:=fmt.tprintf("%s/bare",top)
+    folder_copy(game,bare)
+    for file in ([]string{"box.gltf","sign.png","wood.png"}) {os.remove(fmt.tprintf("%s/assets/props/%s",bare,file))}
+    empty:=test_store(t,fmt.tprintf("%s/empty",top))
+    if empty==nil {return}
+    alone:=options
+    alone.store,alone.root=empty,bare
+    lacking:=project_refresh(bare,alone,context.temp_allocator)
+    testing.expectf(t,len(lacking.missing)==2 && len(lacking.failures)==0 && lacking.ingested==0,"%v",lacking)
+    resolved,_:=asset.root_packages(bare,empty.root,context.temp_allocator)
+    testing.expectf(t,len(resolved.listed)==len(before) && len(resolved.problems)==2,"%v",resolved.problems)
+    for l in resolved.listed {testing.expectf(t,l.state==.Not_Built,"%s is not built",l.path)}
+    for entry in pinned.packages {
+        id:[base.ASSET_ID_TEXT]u8
+        named:=false
+        for line in resolved.problems {named||=strings.contains(line,base.asset_id_format(entry.id,id[:]))}
+        testing.expectf(t,named,"%v is named: %v",entry.id,resolved.problems)
+    }
+
+    testing.expect_value(t,project_unpin(bare,pinned.packages[0].id),asset.Error.None)
+    left,_,_:=asset.packages_load(bare,context.temp_allocator)
+    testing.expect(t,len(left.packages)==1 && left.packages[0].id==pinned.packages[1].id,"the other stays pinned")
+    testing.expect(t,!os.exists(asset.package_file(bare,pinned.packages[0].id)),"unpinning removes its manifest")
+    testing.expect(t,os.exists(asset.package_file(bare,pinned.packages[1].id)))
+}
+
 // What a project's packages.mirai or the store says that is not a record of
 // this version is reported, never a crash nor a default.
 @(test)
@@ -286,6 +379,12 @@ hostile_packages_and_manifests_are_reported_without_a_crash :: proc(t:^testing.T
     testing.expect_value(t,asset.packages_save(game,&list),asset.Error.None)
     report:=project_refresh(game,options,context.temp_allocator)
     testing.expectf(t,report.packages==3 && len(report.failures)==2 && len(report.missing)==1 && strings.contains(report.missing[0],"package lost"),"%v",report)
+    // A file of the root that is not the manifest its pin names.
+    os.make_directory_all(fmt.tprintf("%s/%s",game,asset.PACKAGE_FILES))
+    _=os.write_entire_file(asset.package_file(game,{1,1}),transmute([]u8)string("not the pinned manifest"))
+    mismatched:=project_refresh(game,options,context.temp_allocator)
+    testing.expectf(t,len(mismatched.failures)==2 && strings.contains(strings.join(mismatched.failures[:],"\n",context.temp_allocator),"is not the manifest"),"%v",mismatched.failures[:])
+    os.remove(asset.package_file(game,{1,1}))
 
     text,_:=os.read_entire_file(fmt.tprintf("%s/%s",game,asset.PACKAGES_FILE),context.temp_allocator)
     work:=make([]u8,len(text),context.temp_allocator)
