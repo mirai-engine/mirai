@@ -438,17 +438,19 @@ bool shadow_texel_near(Shadow_Map m, Shadow_Near n, int2 texel, out int2 at, out
     return shadow_texel(m, texel, at, held, coarser);
 }
 
-// The map that holds a point at its texel: m where its page is drawn this
-// frame, else the coarser one the table names; false where none is, and the
-// light of the point is then traced.
+// The map that holds a point at its texel, as the table names it
+// (SHADOW_ENTRY_HELD): m where its page is drawn this frame with the pages
+// around it each drawn or held by a coarser one, so that every tap of the
+// point reads a blocker, else the nearest coarser one so drawn; false where
+// none is, and the light of the point is then traced.
 bool shadow_map_held(inout Shadow_Map m, float3 position) {
     float2 unit = clamp(shadow_map_unit(m, shadow_map_local(m, position)), -0.9999, 0.9999);
     int2 texel = int2(floor(float2(unit.x * 0.5 + 0.5, 0.5 - unit.y * 0.5) * float(m.rect.z)));
-    int2 at;
-    Shadow_Map held;
-    uint coarser;
-    if (!shadow_texel(m, texel, at, held, coarser)) return false;
-    m = held;
+    uint e;
+    if (!shadow_texel_entry(m, texel, e)) return false;
+    uint held = (e >> SHADOW_ENTRY_HELD) & 0xFu;
+    if (held == 0u) return false;
+    if (held > 1u) m = shadow_map_coarser(m, held - 1u, texel);
     return true;
 }
 

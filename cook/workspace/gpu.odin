@@ -217,6 +217,19 @@ gpu_turn_rename :: proc(lock:^Lock,what:string,charge:i64) {
     _=os.write_entire_file(lock.owner,transmute([]u8)gpu_holder_text(what,charge,measurement(context.temp_allocator)))
 }
 
+// Names the process `to` the holder of the turns held by process `from`,
+// which hands them to it: an editor that starts again as another.
+gpu_turn_follow :: proc(root:string,from,to:int) {
+    prefix:=fmt.tprintf("pid %d, ",from)
+    for turn in 0..<GPU_TURNS {
+        path:=gpu_turn_path(root,turn,context.temp_allocator)
+        held,holder,_:=lock_holder(path,context.temp_allocator)
+        if !held || !strings.has_prefix(holder,prefix) {continue}
+        text:=fmt.tprintf("pid %d, %s",to,holder[len(prefix):])
+        _=os.write_entire_file(strings.concatenate({path,".owner"},context.temp_allocator),transmute([]u8)text)
+    }
+}
+
 @(private)
 number_read :: proc(path:string) -> (value:i64,known:bool) {
     data,error:=os.read_entire_file(path,context.temp_allocator)
