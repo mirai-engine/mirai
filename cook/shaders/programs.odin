@@ -406,7 +406,7 @@ layout_reflect :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_
         "-reflection-json",reflected,"-o",path_join(temporary,fmt.tprintf("%s.spv",name),allocator=context.temp_allocator),SLANG_DIAGNOSTICS_FLAG,
     )
     for folder in plugins {append(&command,"-I",folder)}
-    output,ran:=tool_run(runner,command[:],context.temp_allocator,memory)
+    output,ran:=slang_run(runner,command[:],context.temp_allocator,memory)
     if !ran {
         diagnostics:=slang_diagnostics(output,allocator)
         if said!=nil {said^=diagnostics}
@@ -726,7 +726,7 @@ alpha_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_pat
     append(&command,"-entry","probe_main","-o",compiled,"-warnings-disable","40100,41035")
     append(&command,..SPIRV_FLAGS)
     append(&command,..SLANG_OPTIMIZATION)
-    if _,ran:=tool_run(runner,command[:],context.temp_allocator,memory);!ran {return}
+    if _,ran:=slang_run(runner,command[:],context.temp_allocator,memory);!ran {return}
     spirv,read_error:=os.read_entire_file(compiled,context.temp_allocator)
     if read_error!=nil {return}
     return !probe_stores_constant(spirv,transmute(u32)PROBE_ALPHA),true
@@ -813,7 +813,7 @@ surface_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_p
     append(&command,"-entry","probe_main","-o",compiled,"-warnings-disable","40100,41035")
     append(&command,..SPIRV_FLAGS)
     append(&command,..SLANG_OPTIMIZATION)
-    if _,ran:=tool_run(runner,command[:],context.temp_allocator,memory);!ran {return}
+    if _,ran:=slang_run(runner,command[:],context.temp_allocator,memory);!ran {return}
     spirv,read_error:=os.read_entire_file(compiled,context.temp_allocator)
     if read_error!=nil {return}
     return spirv_takes_derivatives(spirv),spirv_reads(spirv,PROBE_READS),spirv_reads(spirv,PROBE_READS+PROBE_READ_CLASSES),true

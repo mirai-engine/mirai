@@ -586,7 +586,7 @@ job_run :: proc(g:^Generation,job:^Job,allocator:runtime.Allocator) {
         for define in job.defines {append(&command,strings.concatenate({"-D",define},context.temp_allocator))}
         append(&command,..SPIRV_FLAGS)
         append(&command,"-o",output,"-reflection-json",reflection)
-        said,compiled:=tool_run(g.runner,command[:],context.temp_allocator,compilation_memory(g,job_key(job),job=job))
+        said,compiled:=slang_run(g.runner,command[:],context.temp_allocator,compilation_memory(g,job_key(job),job=job))
         diagnostics:=slang_diagnostics(said,context.temp_allocator)
         diagnostics_place(diagnostics,g.copies,{g.project,g.root},context.temp_allocator)
         if !compiled {
@@ -1132,6 +1132,8 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     } else {
         g.tools[.Slangc],g.version=compiler,compiler_version
     }
+    runner_compiler(g.runner,scratch)
+    defer runner_close(g.runner)
     workers:=min(options.workers if options.workers>0 else max(os.get_processor_core_count(),1),RUNNER_CAPACITY)
     // A generation asked to ship goes on when the code it embeds was not encoded so.
     if stamp,is_current:=stamp_current(g,request,scratch);is_current && (stamp.shipped || !options.ship || !odin) {
@@ -1263,7 +1265,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
         for directory in g.includes {append(&command,"-I",directory)}
         append(&command,..SPIRV_FLAGS)
         append(&command,"-o",path_join(staging,"layouts_probe.spv",allocator=scratch),"-reflection-json",reflection)
-        output,ran:=tool_run(g.runner,command[:],scratch)
+        output,ran:=slang_run(g.runner,command[:],scratch)
         data,readable:=read_json(reflection,scratch)
         if !ran || !readable {fail(&result,allocator,"could not compile the probe of the shared structs: %s",output);return}
         g.layouts=layouts_reflected(data,scratch)
