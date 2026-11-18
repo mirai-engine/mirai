@@ -89,6 +89,23 @@ float3 hit_transmission(Instance inst, Material m, Mesh_Triangle tri, float2 bar
 #define BLEND_PASSES  0u // it goes through them
 #define BLEND_STOPS   1u // they are surfaces like any other
 #define BLEND_FILTERS 2u // each one multiplies ray_filter and lets the ray on
+// With either: each thin surface that lets light through (diffuse
+// transmission) multiplies ray_through by ray_through_each and lets the ray
+// on, until nothing is left of it (trace_through).
+#define BLEND_THIN 4u
+static float3 ray_through = float3(1.0);
+static float3 ray_through_each = float3(1.0);
+static uint ray_through_crossed = 0u;
+
+// Whether a ray of trace_through goes on through a covered surface of
+// material m: a thin surface that lets light through leaves it
+// ray_through_each of what reaches it.
+bool thin_passes(Material m) {
+    if ((m.layers & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) == 0u || (m.layers & MATERIAL_LAYER_UNLIT) != 0u) return false;
+    ray_through *= ray_through_each;
+    ray_through_crossed++;
+    return max(ray_through.r, max(ray_through.g, ray_through.b)) >= 1e-3;
+}
 
 // Whether a ray along `direction`, in the space of an instance that fades out
 // by `fade`, goes through it: a share of the directions as large as the fade,
@@ -101,9 +118,12 @@ bool ray_fade_left(uint instance_index, float3 direction, float fade) {
 
 // What a ray that finds this triangle at distance t, along `direction` in
 // the space of the instance, does: stop, or go through a hole of a masked
-// material, a blended one or what its fade leaves out (ray_fade_left). Only
+// material, a blended one or what its fade leaves out (ray_fade_left), or
+// with BLEND_THIN a thin surface that lets light through (thin_passes). Only
 // the triangles of the slots an instance tests ask (Instance.tested).
 bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, float3 direction, uint blend) {
+    bool thin = (blend & BLEND_THIN) != 0u;
+    blend &= ~BLEND_THIN;
     Instance inst = scene_instance(instance_index);
     Mesh mesh = meshes[instance_mesh(inst)];
     Material m = material_row(material_of(inst, mesh_primitive_material(mesh, primitive)), inst.material_values);
@@ -126,15 +146,17 @@ bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, float
     }
     float fade = material_values_fade(inst.material_values);
     if (fade > 0.0 && ray_fade_left(instance_index, direction, fade)) return false;
-    if (m.alpha_mode == ALPHA_OPAQUE) return true;
-    Mesh_Triangle tri = mesh_triangle(inst, mesh, primitive);
-    float3 weights = float3(1.0 - bary.x - bary.y, bary.x, bary.y);
-    float3 edge1 = transform_vector(inst.world, tri.b.position - tri.a.position);
-    float3 edge2 = transform_vector(inst.world, tri.c.position - tri.a.position);
-    float2 lod = float2(hit_lod(edge1, edge2, tri.b.uv - tri.a.uv, tri.c.uv - tri.a.uv, t * 0.004), hit_lod(edge1, edge2, tri.b.uv1 - tri.a.uv1, tri.c.uv1 - tri.a.uv1, t * 0.004));
-    float2 uv = tri.a.uv * weights.x + tri.b.uv * weights.y + tri.c.uv * weights.z;
-    float2 uv1 = tri.a.uv1 * weights.x + tri.b.uv1 * weights.y + tri.c.uv1 * weights.z;
-    return material_covers(m, material_mask(m, uv, uv1, lod, true));
+    if (m.alpha_mode != ALPHA_OPAQUE) {
+        Mesh_Triangle tri = mesh_triangle(inst, mesh, primitive);
+        float3 weights = float3(1.0 - bary.x - bary.y, bary.x, bary.y);
+        float3 edge1 = transform_vector(inst.world, tri.b.position - tri.a.position);
+        float3 edge2 = transform_vector(inst.world, tri.c.position - tri.a.position);
+        float2 lod = float2(hit_lod(edge1, edge2, tri.b.uv - tri.a.uv, tri.c.uv - tri.a.uv, t * 0.004), hit_lod(edge1, edge2, tri.b.uv1 - tri.a.uv1, tri.c.uv1 - tri.a.uv1, t * 0.004));
+        float2 uv = tri.a.uv * weights.x + tri.b.uv * weights.y + tri.c.uv * weights.z;
+        float2 uv1 = tri.a.uv1 * weights.x + tri.b.uv1 * weights.y + tri.c.uv1 * weights.z;
+        if (!material_covers(m, material_mask(m, uv, uv1, lod, true))) return false;
+    }
+    return !thin || !thin_passes(m);
 }
 
 
@@ -492,7 +514,7 @@ struct Ray_Path {
 // it meets first: hit.t is the whole way. Glass it goes through. The segments
 // share one traversal in the source, since a second call would be a second
 // copy of it in every stage.
-Hit trace_ray(float3 origin, float3 direction, float t_min, float t_max, bool any_hit, out Ray_Path path) {
+Hit trace_ray(float3 origin, float3 direction, float t_min, float t_max, bool any_hit, out Ray_Path path, uint blend = BLEND_PASSES) {
     path.origin = origin;
     path.direction = direction;
     path.gate = -1.0;
@@ -501,7 +523,7 @@ Hit trace_ray(float3 origin, float3 direction, float t_min, float t_max, bool an
     float3 from = origin;
     float travelled = 0.0;
     for (uint segment = 0u; segment < 2u; segment++) {
-        hit = trace_ray_impl(from, path.direction, t_min, t_max - travelled, any_hit, BLEND_PASSES, RAY_SEEN);
+        hit = trace_ray_impl(from, path.direction, t_min, t_max - travelled, any_hit, blend, RAY_SEEN);
         if (segment != 0u) break;
         float t;
         float3 next_origin, next_direction;
@@ -516,12 +538,20 @@ Hit trace_ray(float3 origin, float3 direction, float t_min, float t_max, bool an
     if (hit.instance != INVALID) hit.t += travelled;
     return hit;
 #else
-    return trace_ray_impl(origin, direction, t_min, t_max, any_hit, BLEND_PASSES, RAY_SEEN);
+    return trace_ray_impl(origin, direction, t_min, t_max, any_hit, blend, RAY_SEEN);
 #endif
 }
 Hit trace_ray(float3 origin, float3 direction, float t_min, float t_max, bool any_hit) {
     Ray_Path path;
     return trace_ray(origin, direction, t_min, t_max, any_hit, path);
+}
+
+// A surface along a ray that is not a thin surface that lets light through,
+// which it goes past as trace_through does, losing nothing.
+Hit trace_past_thin(float3 origin, float3 direction, float t_max, out Ray_Path path) {
+    ray_through = float3(1.0);
+    ray_through_each = float3(1.0);
+    return trace_ray(origin, direction, 0.0, t_max, true, path, BLEND_PASSES | BLEND_THIN);
 }
 
 // Whether light gets from origin to t_max along direction: the shadow ray of
@@ -535,6 +565,28 @@ bool trace_visible(float3 origin, float3 direction, float t_max, bool gated = tr
     if (gated && ray_gated(origin, direction, t_max, gate)) return false;
 #endif
     return trace_ray_impl(origin, direction, 0.0, t_max, true, BLEND_PASSES, RAY_SHADOWS).instance == INVALID;
+}
+
+// What of the light along the shadow ray of trace_visible gets to origin when
+// each thin surface that lets light through (diffuse transmission) leaves
+// `each` of what reaches it: 1 where nothing is in the way, 0 where anything
+// else is, and how many of them it crossed. Light that went through a leaf
+// leaves it diffuse; under a canopy the leaves above cover the sky of a point
+// and send it about that share. Only the slots an instance tests (masked,
+// fading) are crossed: the others stop the ray.
+float3 trace_through(float3 origin, float3 direction, float t_max, float3 each, out uint crossed) {
+    crossed = 0u;
+    if (t_max <= 0.0) return float3(1.0);
+#ifdef MIRAI_HOOK_RAY
+    float gate;
+    if (ray_gated(origin, direction, t_max, gate)) return float3(0.0);
+#endif
+    ray_through = float3(1.0);
+    ray_through_each = each;
+    ray_through_crossed = 0u;
+    bool stopped = trace_ray_impl(origin, direction, 0.0, t_max, true, BLEND_PASSES | BLEND_THIN, RAY_SHADOWS).instance != INVALID;
+    crossed = ray_through_crossed;
+    return stopped ? float3(0.0) : ray_through;
 }
 
 #ifdef MIRAI_RAY_FILTERS

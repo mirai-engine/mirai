@@ -2242,6 +2242,78 @@ diffuse_transmission_lets_the_light_of_the_other_side_through :: proc(t:^testing
     testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))
 }
 
+// A thin card that lets light through, with others of its kind between it and
+// the sun, gets through each the share it lets through itself: its own light
+// from behind times that share once more for each card, so it grows with the
+// weight and falls with the cards stacked. Under a card that lets nothing
+// through, masked as they are, it gets none, and that card lights the card
+// and the probes alike whether it is two-sided or not: being two-sided opens
+// only what lets light through.
+@(test)
+diffuse_transmission_lets_the_sun_through_the_leaves_in_its_way :: proc(t:^testing.T) {
+    f:Fixture
+    settings:=layer_settings()
+    settings.gi_enabled=true
+    if !fixture_init(t,&f,32,32,settings) {return}
+    defer fixture_destroy(&f)
+    r:=f.renderer
+    card :: proc(weight:f32,two_sided:=true) -> Material_Desc {
+        m:=DEFAULT_MATERIAL
+        m.base_color={1,1,1}
+        m.roughness=0.5
+        m.alpha_mode=.Mask
+        m.two_sided=two_sided
+        m.diffuse_transmission={weight=weight,color={1,1,1}}
+        return m
+    }
+    materials_set(r,{card(0.5),card(0.8),card(0),card(0,false)})
+    quad:=ground_quad(r)
+    table:=dfg_table(t,&f)
+    left:=1-dielectric_albedo(table,1,0.5,0.04)
+    // blocker: the material of the cards below; 0, the card's own.
+    Case :: struct {material:Material_Handle,weight:f32,stacked:int,blocker:Material_Handle}
+    cases:=[?]Case{{1,0.5,1,0},{2,0.8,1,0},{1,0.5,2,0},{1,0.5,1,4},{1,0.5,1,3}}
+    seen:[len(cases)]f32
+    lit:[2][3]u8
+    for c,i in cases {
+        instances:[3]Instance_Desc
+        instances[0]={object_id=1,mesh=quad,transform=scale_matrix(12),material=c.material,tint={1,1,1}}
+        for k in 1..=c.stacked {
+            below:=scale_matrix(12)
+            below[1,3]=-0.3*f32(k)
+            if c.blocker!=0 {
+                // Facing the sun, 1.5 m below, with probes between: they meet its back.
+                below[1,1],below[2,2],below[1,3]=-12,-12,-1.5
+            }
+            instances[k]={object_id=u64(k+1),mesh=quad,transform=below,material=c.blocker if c.blocker!=0 else c.material,tint={1,1,1}}
+        }
+        // Each case a world of its own: its probes keep nothing of the one before.
+        scene_world(r,u64(i+1),true)
+        // A sky above, whose light the card lets through to what is under it.
+        scene_given(r,instances[:1+c.stacked],nil,{direction={0,-1,0},color={1,1,1},illuminance=math.PI,enabled=true,indirect=1,scattering=1},{sky={1,1,1}})
+        frames(t,&f,OVERHEAD,4)
+        seen[i]=target_at(t,&f,r.targets.direct,OVERHEAD,{}).y
+        // What the point lets through: its weight as the G-buffer holds it, in 6
+        // bits, under its specular lobe. Each card above, the sun and the view
+        // along its normal as along the point's, lets through as much.
+        through:=math.round(c.weight*63)/63*left
+        expected:=0 if c.blocker!=0 else math.pow(through,f32(c.stacked+1))
+        testing.expectf(t,abs(seen[i]-expected)<0.02,"%v: the sun through the cards %v, expected %v",c,seen[i],expected)
+        if c.blocker==0 {continue}
+        frames(t,&f,OVERHEAD,64,.Lighting)
+        rhi.device_wait_idle(f.device)
+        pixels,width,_,ok:=golden_capture(r)
+        if !testing.expect(t,ok,r.error) {return}
+        p:=target_pixel(r,OVERHEAD,{})
+        at:=(p.y*width+p.x)*4
+        lit[c.blocker-3]={pixels[at],pixels[at+1],pixels[at+2]}
+        delete(pixels)
+    }
+    testing.expectf(t,seen[1]>seen[0] && seen[0]>seen[2] && seen[2]>0.01 && seen[3]<1e-3 && seen[4]<1e-3,"more weight lets more through, more cards less, an opaque one none: %v",seen)
+    testing.expectf(t,lit[0]==lit[1],"the light of the card under an opaque one, two-sided or not: %v and %v",lit[0],lit[1])
+    testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))
+}
+
 // Lights and the sky go through the same layers: a coat darkens and tints
 // what is under it, a fuzz takes what it scatters, by the same amounts.
 @(test)

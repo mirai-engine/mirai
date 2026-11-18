@@ -74,7 +74,7 @@ Glass fragment_glass(Fragment f, float3 position) {
 float3 glass_light(Material m, Glass g, Shading s, float3 reflection, float traced, float faint, uint light_budget) {
     float bias = view_bias(eye_distance(g.position));
     float3 color = direct_lighting(s, bias, light_budget);
-    if (shading_transmits(s)) color += direct_lighting(shading_back(s), bias, light_budget);
+    if (shading_transmits(s)) color += direct_lighting(shading_back(s), bias, light_budget, LIGHTS_ALL | LIGHTS_THROUGH);
     float3 specular = specular_albedo(s);
     float shown = faint > 0.0 ? smoothstep(faint, 2.0 * faint, max(specular.r, max(specular.g, specular.b))) : 1.0;
     bool diffuse = max(s.diffuse.r, max(s.diffuse.g, s.diffuse.b)) > 0.0 || s.fuzz > 0.0;
