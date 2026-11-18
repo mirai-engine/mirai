@@ -439,6 +439,12 @@ rejecting another type or out of range. The result goes in `Material_Desc.custom
   the weights at zero), blends matrices, deforms and writes the previous positions. Afterwards
   the ray structure is refit: the BVH keeps the bind topology, and the native BLAS is rebuilt
   every `SKIN_REBUILD_INTERVAL` refits, staggered per mesh.
+- **Refit by what rays tell** (`pose_traced`). A pose none of whose instances is traced is not
+  refit; a skinned one is not refit either while its joints moved it from the pose its structure
+  holds by less than the error a coarser ray cut may have at the distance of its nearest instance
+  to the eye of any view of the frame (`ray_cut_distance`). The first frame that tells, the
+  structure takes the vertices before any ray reads it. Extensions' meshes, moved vertices,
+  changed morph weights and a structure made again (pools, tracer, tree) are refit whenever traced.
 - Raster, shadows, reflections and rays read the same geometry. A still pose makes one last write
   to equalize current and previous and stops dispatching. `mesh_remove` frees it.
 - **Preview** (`skin_preview_*`): the same compute, with the deformed vertices returned between

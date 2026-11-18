@@ -77,6 +77,10 @@ POSED_BOUNDS_WORDS :: abi.POSED_BOUNDS_WORDS
     morph_weights:[]Vec2, // current and previous, by target
     bounds:[]Skin_Bounds, // of each joint with its morph targets at their weights
     refits:u32, // of its native BLAS since it was last built
+    traced:[][3]Vec4, // of a skinned one, the palette its ray structure was last refit to
+    trace:bool,   // its ray structure is refit in this frame (pose_traced)
+    behind:bool,  // its ray structure holds an older pose than its vertices
+    retrace:bool, // its ray structure takes its vertices before a ray meets it again, however far
     dirty,bounds_dirty,settle:bool,
     external:bool,
     vertices:u32, // that an extension writes in an external one: of its first level, or of each of its levels
@@ -139,7 +143,7 @@ skin_dispatch :: proc(r:^Renderer,cmd:^rhi.Command_List,source,palette:rhi.Buffe
 skin_free :: proc(r:^Renderer,skin:^Skin_State) {
     if skin==nil {return}
     skin_binding_release(r,skin.binding)
-    delete(skin.joints,skin.allocator);delete(skin.part_joints,skin.allocator)
+    delete(skin.joints,skin.allocator);delete(skin.part_joints,skin.allocator);delete(skin.traced,skin.allocator)
     delete(skin.morph_weights,skin.allocator);delete(skin.bounds,skin.allocator)
     free(skin,skin.allocator)
 }
@@ -312,7 +316,7 @@ pose_tree_breadth_first :: proc(r:^Renderer,m:^Mesh_Record)->bool {
     defer delete(depth_first,r.allocator)
     copy(depth_first,nodes)
     if !bvh_breadth_first(depth_first,nodes,&m.skin.binding.levels) {return false}
-    m.skin.dirty=true
+    m.skin.dirty,m.skin.retrace=true,true
     return true
 }
 
@@ -542,6 +546,10 @@ skin_create :: proc(r:^Renderer,source:Mesh_Handle,influences:[]Skin_Influence,j
     skin.joints,error=make([]Skin_Joint,int(joint_count),r.allocator)
     if error!=nil {return 0,false}
     for &joint in skin.joints {joint.current=rows_3x4(Mat4(1));joint.previous=joint.current}
+    // Its ray structure starts at rest.
+    skin.traced,error=make([][3]Vec4,int(joint_count),r.allocator)
+    if error!=nil {return 0,false}
+    for &rows in skin.traced {rows=rows_3x4(Mat4(1))}
     if part {
         skin.part_joints,error=make([]Skin_Joint,int(joint_count),r.allocator)
         if error!=nil {return 0,false}
@@ -614,6 +622,8 @@ skin_update :: proc(r:^Renderer,handle:Mesh_Handle,palette:[]Mat4,reset_motion:b
     }
     if skin.part_joints!=nil && part.layers!=skin.part_layers {skin.part_layers=part.layers;changed=true}
     for weight,i in morph_weights {
+        // What its targets move is not measured: rays meet it once refit.
+        skin.retrace ||= weight!=skin.morph_weights[i].x
         changed ||= weight!=skin.morph_weights[i].x
         skin.morph_weights[i].x=weight
     }
@@ -751,25 +761,86 @@ poses_record :: proc(r:^Renderer,cmd:^rhi.Command_List)->bool {
     return true
 }
 
-// The trees or the native BLAS of the poses that changed, those the rays use,
-// up to the vertices they have after the Geometry stage, and the instances of
-// the native TLAS.
+// The eyes of the views a frame traces from: those it draws, and the camera
+// of the frame when none is a view of the window, or of its detail.
 @(private)
-poses_refit :: proc(r:^Renderer,cmd:^rhi.Command_List)->bool {
+frame_eyes :: proc(frame:Frame_Desc,eyes:^[VIEW_CAPACITY+TEXTURE_VIEW_CAPACITY+2]Vec3)->[]Vec3 {
+    count:=0
+    window:=false
+    for view in frame.views {
+        if view.disabled || count>=len(eyes)-2 {continue}
+        eyes[count]=view.camera.position;count+=1
+        window||=view.texture==0
+    }
+    if !window {eyes[count]=frame.camera.position;count+=1}
+    if frame.detail.on {eyes[count]=frame.detail.camera.position;count+=1}
+    return eyes[:count]
+}
+
+// Whether the ray structure of a pose takes its vertices in this frame. Not
+// while no ray can meet it (none of its instances is traced); a skinned one,
+// also not while no joint has carried a point of it farther from where the
+// structure holds it than rays tell apart at the distance of its nearest
+// instance to an eye: the error a coarser cut may have there
+// (ray_cut_distance). A structure behind is refit the first frame that tells.
+@(private)
+pose_traced :: proc(r:^Renderer,handle:Mesh_Handle,eyes:[]Vec3)->bool {
+    s:=&r.scene
+    mesh:=s.meshes[handle]
+    skin:=mesh.skin
+    if skin==nil || !(skin.dirty || skin.behind) || mesh_pending(s,u32(handle)) {return false}
+    distance,scale:=max(f32),f32(0)
+    met:=false
+    for index:=mesh.first_instance;index>=0;index=s.instance_next[index] {
+        inst:=s.instances[index]
+        // Rays meet no hidden instance.
+        if inst.meta.w&(INSTANCE_FLAG_HIDDEN|INSTANCE_FLAG_COLLAPSED)!=0 {continue}
+        met=true
+        low,high:=inst.bounds_min.xyz,inst.bounds_max.xyz
+        for eye in eyes {distance=min(distance,linalg.length(eye-linalg.clamp(eye,low,high)))}
+        for k in 0..<3 {scale=max(scale,linalg.length(Vec3{inst.world[0][k],inst.world[1][k],inst.world[2][k]}))}
+    }
+    if !met {return false}
+    if skin.retrace || skin.external || skin.displaced || skin.moves || len(skin.traced)!=len(skin.joints) {return true}
+    boxes:=skin.bounds if len(skin.morph_weights)>0 else skin.binding.bounds
+    moved:f32
+    for joint,i in skin.joints {
+        box:=boxes[i]
+        if box.lo.x>box.hi.x {continue}
+        // Over the box of the joint, the most the difference of its two
+        // matrices moves a point: at its center, and along each half side.
+        d:=[3]Vec4{joint.current[0]-skin.traced[i][0],joint.current[1]-skin.traced[i][1],joint.current[2]-skin.traced[i][2]}
+        center,half:=(box.lo+box.hi)*0.5,(box.hi-box.lo)*0.5
+        at:=Vec3{linalg.dot(d[0].xyz,center)+d[0].w,linalg.dot(d[1].xyz,center)+d[1].w,linalg.dot(d[2].xyz,center)+d[2].w}
+        reach:=linalg.length(at)
+        for k in 0..<3 {reach+=linalg.length(Vec3{d[0][k],d[1][k],d[2][k]})*half[k]}
+        moved=max(moved,reach)
+    }
+    return ray_cut_distance(r.settings,moved*scale)>distance
+}
+
+// The trees or the native BLAS of the poses rays can meet, as pose_traced
+// tells, up to the vertices they have after the Geometry stage, and the
+// instances of the native TLAS.
+@(private)
+poses_refit :: proc(r:^Renderer,cmd:^rhi.Command_List,eyes:[]Vec3)->bool {
     s:=&r.scene
     // A pose whose geometry still goes to the GPU waits for it, dirty.
     posing :: proc(s:^Scene_State,handle:Mesh_Handle)->bool {skin:=s.meshes[handle].skin;return skin!=nil && (skin.dirty || skin.settle) && !mesh_pending(s,u32(handle))}
-    tree_refit :: proc(r:^Renderer,handle:Mesh_Handle)->bool {mesh:=r.scene.meshes[handle];return posing(&r.scene,handle) && mesh.skin.dirty && !r.hardware_rt && mesh.rays[0].bvh_node_count>0}
+    tree_refit :: proc(r:^Renderer,handle:Mesh_Handle)->bool {mesh:=r.scene.meshes[handle];return mesh.skin!=nil && mesh.skin.trace && !r.hardware_rt && mesh.rays[0].bvh_node_count>0}
     posed,refit,level_jobs,deepest:int
     for handle in s.skinned {
-        if !posing(s,handle) {continue}
         skin:=s.meshes[handle].skin
+        if skin==nil {continue}
+        skin.trace=pose_traced(r,handle,eyes)
+        if !skin.trace && !posing(s,handle) {continue}
         posed+=1
         if !tree_refit(r,handle) {continue}
         refit+=1
         for level,depth in skin.binding.levels {if level.count>0 {level_jobs+=1;deepest=max(deepest,depth)}}
     }
     if posed==0 {return true}
+    rhi.cmd_timestamp(cmd,"ray refit")
     if refit>0 {
         size:=u64(refit+level_jobs)*size_of(Skin_Job)
         bytes:=rhi.frame_alloc(r.device,size,16)
@@ -818,7 +889,7 @@ poses_refit :: proc(r:^Renderer,cmd:^rhi.Command_List)->bool {
         for handle in s.skinned {
             mesh:=s.meshes[handle]
             skin:=mesh.skin
-            if !posing(s,handle) || !skin.dirty || mesh.rays[0].blas==0 {continue}
+            if skin==nil || !skin.trace || mesh.rays[0].blas==0 {continue}
             rebuild:=skin.refits>=SKIN_REBUILD_INTERVAL
             rhi.cmd_build_blas(cmd,mesh.rays[0].blas,rebuild)
             skin.refits=0 if rebuild else skin.refits+1
@@ -826,7 +897,14 @@ poses_refit :: proc(r:^Renderer,cmd:^rhi.Command_List)->bool {
         }
     }
     for handle in s.skinned {
-        skin:=s.meshes[handle].skin
+        mesh:=s.meshes[handle]
+        skin:=mesh.skin
+        if skin==nil {continue}
+        if skin.trace && (mesh.rays[0].blas!=0 if r.hardware_rt else mesh.rays[0].bvh_node_count>0) {
+            skin.behind,skin.retrace=false,false
+            for joint,i in skin.joints {if i<len(skin.traced) {skin.traced[i]=joint.current}}
+        } else if posing(s,handle) && skin.dirty {skin.behind=true}
+        skin.trace=false
         if !posing(s,handle) {continue}
         // What moved is drawn once more at rest: its previous vertices take the current ones.
         moving:=(skin.external || skin.displaced) && skin.dirty
