@@ -165,10 +165,11 @@ read_stats :: proc(r: ^Renderer, slot: int) {
 		// Those of the raster, which a view writes again in each of its rounds,
 		// ask for a third of what the view that needs most would hold: it is
 		// drawn in up to RASTER_ROUNDS of them.
-		// A round of the maps is the only one of its cull: they hold what it needs whole.
+		// A round of the maps is the only one of its cull: they hold what it needs
+		// whole, of which a round of a view takes its share alone (raster_share).
 		for list, k in ([2]Cull_List{.Raster_Vertices, .Raster_Triangles}) {
-			view := (stats.most_raster_need[k] + RASTER_LIST_SHARE - 1) / RASTER_LIST_SHARE
-			r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], min(max(view, stats.shadow_need[k]), CULL_MARK_MAX))
+			r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], min((stats.most_raster_need[k] + RASTER_LIST_SHARE - 1) / RASTER_LIST_SHARE, CULL_MARK_MAX))
+			r.scene.raster_shadow_wanted[k] = max(r.scene.raster_shadow_wanted[k], min(stats.shadow_need[k], CULL_MARK_MAX))
 		}
 		r.stats.culled_instances = stats.culled_instances
 		r.stats.occluded_instances = stats.occluded_instances
@@ -1081,7 +1082,12 @@ raster_round_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, round: u32, la
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS7, l.maps)
 	} else {
 		Vertices_Params :: struct {round, last, vertex_capacity, triangle_capacity: u32, margin: f32, pad: [3]u32}
-		vertices := Vertices_Params{round = round, last = u32(last), vertex_capacity = s.cull_capacity[.Raster_Vertices], triangle_capacity = s.cull_capacity[.Raster_Triangles], margin = margin}
+		// A round of a view takes its share of the lists, whatever a round of the
+		// maps grew them to: what finds no room is drawn by the round after, over
+		// the depth of those before.
+		vertices := Vertices_Params{round = round, last = u32(last), margin = margin}
+		vertices.vertex_capacity = min(s.raster_share[0], s.cull_capacity[.Raster_Vertices])
+		vertices.triangle_capacity = min(s.raster_share[1], s.cull_capacity[.Raster_Triangles])
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Vertices])
 		set_params(cmd, &vertices)
 	}

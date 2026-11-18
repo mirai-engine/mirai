@@ -432,6 +432,8 @@ Scene_State :: struct {
 	shadow_entries:       rhi.Buffer, // the clusters the maps of the shadows draw into each page (shadow_cull.slang)
 	shadow_raster_entries: rhi.Buffer, // what each keeps between the passes that list its triangles for the raster (abi.RASTER_ENTRY_WORDS)
 	cull_capacity:        [Cull_List]u32, // of those lists, in entries
+	raster_share:         [2]u32, // of the vertices and the triangles of the raster, what a round of a view takes: the share of its own need, whatever a round of the maps grew them to
+	raster_shadow_wanted: [2]u32, // the most a round of the maps asked them for (Gpu_Cull_Stats.shadow_need)
 	mesh_draws:           rhi.Buffer, // the indices of the meshes drawn whole this frame (mesh_draws_plan), which gbuffer.vert and extensions draw them by
 	mesh_draws_capacity:  u32, // of it, in indices
 	mesh_draws_wanted:    u32, // the most a frame asked for since the marks were set: it grows to it
@@ -2499,8 +2501,15 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 	for list in Cull_List {
 		buffer := [Cull_List]^rhi.Buffer{.Chunks = &s.chunk_buffer, .Visible = &s.visible_buffer, .Candidates = &s.cluster_candidate_buffer, .Shadow_Chunks = &s.shadow_chunks, .Shadow_Entries = &s.shadow_entries, .Raster_Vertices = &s.raster_vertices, .Raster_Triangles = &s.raster_indices}[list]
 		wanted := s.cull_wanted[list]
+		// The raster holds the share of a view and, at once, a round of the maps.
+		if list >= .Raster_Vertices {
+			k := int(list) - int(Cull_List.Raster_Vertices)
+			if s.raster_share[k] == 0 || wanted > s.raster_share[k] {s.raster_share[k] = max(wanted + wanted / RASTER_LIST_SLACK, start[list], s.raster_share[k])}
+			shadow := s.raster_shadow_wanted[k]
+			wanted = max(s.raster_share[k], shadow + shadow / RASTER_LIST_SLACK)
+		}
 		if buffer^ != 0 && wanted <= s.cull_capacity[list] {continue}
-		capacity := max(wanted + wanted / (RASTER_LIST_SLACK if list >= .Raster_Vertices else 2), start[list], s.cull_capacity[list])
+		capacity := max(wanted + wanted / 2 if list < .Raster_Vertices else wanted, start[list], s.cull_capacity[list])
 		if buffer^ != 0 {rhi.buffer_destroy(d, buffer^)}
 		names := [Cull_List]string{.Chunks = "cull chunks", .Visible = "visible clusters", .Candidates = "cluster occlusion candidates", .Shadow_Chunks = "shadow map chunks", .Shadow_Entries = "shadow map clusters", .Raster_Vertices = "vertices of the raster", .Raster_Triangles = "triangles of the raster"}
 		entries := [Cull_List]u64{.Chunks = size_of([2]u32), .Visible = size_of(Gpu_Visible_Cluster), .Candidates = size_of([2]u32), .Shadow_Chunks = size_of([4]u32), .Shadow_Entries = size_of(Gpu_Visible_Cluster), .Raster_Vertices = abi.RASTER_VERTEX_WORDS * size_of(u32), .Raster_Triangles = size_of([3]u32)}

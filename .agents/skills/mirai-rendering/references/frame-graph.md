@@ -39,10 +39,9 @@ or interleave its own passes.
      places it with, and the triangles of it the raster may give a pixel: not those past a side
      of the view, with no pixel center in their box, or seen from behind where the material is
      not two-sided, by the margin of the grid of the device (`Device_Info.subpixel_bits`).
-   - Those lists (`Cull_List.Raster_Vertices`, `Raster_Triangles`) hold a round, not a frame: a
-     cluster that finds no room is listed and drawn in the round after, up to `RASTER_ROUNDS`
-     in a view; the lists then ask for [a share](scene.md#scene-and-instances) of what the view
-     needs, by what of each cluster shows, also of those its last round left out.
+   - A round takes [a share](scene.md#scene-and-instances) of the lists (`Cull_List.Raster_*`) of
+     what the view needs, also where a round of the shadow maps grew them more: a cluster with no
+     room is drawn in the round after (up to `RASTER_ROUNDS`), over the depth of those before.
    - Each round rasters its triangles into the visibility target (`visibility.slang`: the entry of
      the visible list and the triangle, one word a pixel) with the hardware depth: one indexed
      indirect draw per raster bin, whose fragment reads the word of its primitive. The untested bins
