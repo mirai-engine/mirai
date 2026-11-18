@@ -182,7 +182,13 @@ chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source
     s:=&entry.source
     mesh,ok:=chunk_publish(resident.assets,&slot.mesh,slot.key.collision,resident.picking,piece_levels(s,&source.quad,index))
     maps:Piece_Maps
-    if ok && mesh!={} {
+    // The maps of a piece hold every sample at any level: one built again
+    // only for its level keeps those it shows.
+    shape:=piece_shape(s,&slot.mesh.maps)
+    shared:=ok && mesh!={} && chunk.shown && chunk.mesh!={} && chunk.revision==slot.version && chunk.built.join==slot.key.join && chunk.shape==shape
+    if shared {
+        maps=chunk.maps
+    } else if ok && mesh!={} {
         maps,ok=piece_maps_publish(resident.assets,&slot.mesh.maps)
         if !ok {host.assets_mesh_release(resident.assets,mesh)}
     }
@@ -193,7 +199,7 @@ chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source
         return false
     }
     staged_release(resident.assets,chunk)
-    chunk.next={mesh,maps,piece_shape(s,&slot.mesh.maps),slot.version,slot.key,true}
+    chunk.next={mesh,maps,shape,slot.version,slot.key,true,shared}
     if !chunk.listed {chunk.listed=true;append(&source.staged,u32(index))}
     return true
 }
@@ -209,7 +215,10 @@ piece_show :: proc(resident:^Terrain_Resident,entry:^Data_Source,source:^Residen
     if !chunk.shown {resident.cut=true}
     // A chunk that turns empty or stops being so gives or wants a collider (resident_colliders).
     if !chunk.shown || (chunk.mesh=={})!=(next.mesh=={}) {resident.marks+=1}
-    piece_release(resident.assets,chunk)
+    if next.shared {
+        if chunk.mesh!={} {host.assets_mesh_release(resident.assets,chunk.mesh)}
+        chunk.mesh,chunk.maps={},{}
+    } else {piece_release(resident.assets,chunk)}
     chunk.mesh,chunk.revision,chunk.built,chunk.shown=next.mesh,next.revision,next.built,true
     chunk.maps,chunk.shape=next.maps,next.shape
     // The blocks a node of a Volume read may leave now.
@@ -224,7 +233,7 @@ piece_show :: proc(resident:^Terrain_Resident,entry:^Data_Source,source:^Residen
 staged_release :: proc(a:^host.Assets,chunk:^Resident_Chunk) {
     if !chunk.next.ready {return}
     if chunk.next.mesh!={} {host.assets_mesh_release(a,chunk.next.mesh)}
-    piece_maps_release(a,&chunk.next.maps)
+    if !chunk.next.shared {piece_maps_release(a,&chunk.next.maps)}
     chunk.next={}
 }
 
@@ -650,7 +659,7 @@ resident_layers_override :: proc(resident:^Terrain_Resident,source:^Resident_Sou
         layers_table(a,s,pixels[:4*LAYERS_TEXELS*int(s.layer_count)])
         if source.table!={} && pixels==source.table_pixels {return source.override}
         if source.table!={} {host.assets_texture_release(a,source.table);source.table={}}
-        source.table,_=host.assets_texture_generate(a,pixels[:4*LAYERS_TEXELS*int(s.layer_count)],LAYERS_TEXELS,int(s.layer_count),false,"terrain layers")
+        source.table,_=host.assets_texture_generate(a,pixels[:4*LAYERS_TEXELS*int(s.layer_count)],LAYERS_TEXELS,int(s.layer_count),false,"terrain layers",texels=true)
         source.table_pixels=pixels
         source.override=render.MATERIAL_VALUES_DEFAULT
         render.material_texture(&source.override,base.name_hash("layers"),0,source.table)
