@@ -42,6 +42,10 @@ folders, which include the notices of the work they carry.
 Parts of Mirai are rewrites in Odin or Slang of the algorithms of these projects. Their notices
 are kept here and, where the license asks for it, in the header of the file.
 
+- **BLAKE3** (CC0 1.0, Apache-2.0, or Apache-2.0 with LLVM exceptions;
+  © 2019 Jack O'Connor and Samuel Neves), <https://github.com/BLAKE3-team/BLAKE3>.
+  `std/blake3`, translated from the reference implementation under CC0 1.0, with test vectors.
+  Game.
 - **Clay v0.14** (zlib; © 2024 Nic Barker), <https://github.com/nicbarker/clay>.
   `ui/layout_tree.odin`, altered. Game.
 - **MikkTSpace** (zlib; © 2011 Morten S. Mikkelsen), <https://github.com/mmikk/MikkTSpace>.
