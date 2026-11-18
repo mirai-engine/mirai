@@ -60,7 +60,14 @@ derived data cache that use it decide what a ref means and what is live.
   path or hold it open with a `Reader`.
 - The root carries its layout version; a root of another layout is refused, never read.
 - The store never decides what is live: sweep removes the complete blobs outside the set it is
-  given, and partial blobs only go through remove.
+  given plus the addresses of every fresh lease, and partial blobs only go through remove.
+- A sweep is safe beside writers of other processes: it never removes a blob younger than the
+  grace age, a put of a blob already here refreshes its time, and the sweep claims an old blob by
+  renaming it away before it judges its age again, giving it back if a put refreshed it. A put that
+  succeeds is never lost to a sweep; a reader may find a blob missing for the instant of a claim,
+  which is a miss like any other. A blob that will not delete is skipped and counted.
+- A process that uses blobs holds a lease, a file it refreshes while it runs; a lease that stops
+  being refreshed stops protecting.
 - Ref namespaces and names are lowercase ASCII, digits, `.`, `_` and `-`, so a ref is the same
   file on every system.
 - No input terminates the process: damaged or truncated files of the root, random tables and
