@@ -5,14 +5,20 @@ import "core:os"
 import "core:time"
 import "mirai:cook/workspace"
 import "mirai:editor/api"
+import "mirai:rhi"
 import "mirai:std/subprocess"
 
 // The GPU turn of a program of the engine a command starts, of the project at
 // folder ("" for one without a project): it waits, saying for what, until the
 // card has room for it (workspace.gpu_acquire). A person waits for nothing.
 // Not held when the lock cannot be made or, for a person, when every turn is
-// held: the program runs without one.
+// held: the program runs without one. A program no person watches runs under
+// the GPU watchdog, with the limit of the tools unless one is set: nobody is
+// there to see a submission hang before the driver resets the card.
 gpu_turn :: proc(root,folder,what:string,person:=false) -> (lock:workspace.Lock,charge:i64) {
+    if _,limited:=os.lookup_env(rhi.WATCHDOG_VARIABLE,context.temp_allocator);!person && !limited {
+        _=os.set_env(rhi.WATCHDOG_VARIABLE,fmt.tprintf("%d",rhi.WATCHDOG_UNWATCHED_MS))
+    }
     charge=workspace.gpu_charge(root,folder)
     held:bool
     lock,held=workspace.gpu_acquire(root,fmt.tprintf("pid %d, mirai %s",os.get_pid(),what),charge,person,gpu_wait_notice)
