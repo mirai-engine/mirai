@@ -150,8 +150,6 @@ encode_piece_head :: proc(buffer:[]u8,address:store.Hash,index:u32) {
 message :: proc(x:^Exchange,i:int,lane:int,data:[]u8) {
     if len(data)==0 {peer_bad(x,i);return}
     if lane==LANE_DATA {
-        x.peers[i].last_heard=x.now
-        x.peers[i].stalled=false
         switch data[0] {
         case MSG_TABLE: on_table(x,i,data)
         case MSG_PIECE: on_piece(x,i,data)
@@ -171,18 +169,16 @@ message :: proc(x:^Exchange,i:int,lane:int,data:[]u8) {
     }
 }
 
-// A message larger than this end holds: a table of a blob larger than
-// max_blob_bytes fails the want; anything else is from a bad peer.
+// A message larger than this end holds: a table asked of that peer fails the
+// peer for that blob, never the want; one nobody asked for counts against the
+// peer; anything else is from a bad peer.
 @(private)
 oversized :: proc(x:^Exchange,i:int,lane:int,head:[]u8) {
     if lane==LANE_DATA && len(head)>=MSG_TABLE_HEAD && head[0]==MSG_TABLE {
         r:=Reader{data=head[1:],ok=true}
         address:=read_hash(&r)
-        size:=i64(read_u64(&r))
-        if size>x.desc.max_blob_bytes {
-            if w:=want_find(x,address);w>=0 && x.wants[w].state!=.Complete {want_fail(x,w,.Too_Large,.None)}
-            return
-        }
+        if w:=want_find(x,address);w>=0 && flight_of(x,i,w,FLIGHT_TABLE) {lie(x,w,i)} else {x.peers[i].refused+=1}
+        return
     }
     peer_bad(x,i)
 }

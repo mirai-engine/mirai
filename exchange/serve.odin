@@ -19,7 +19,7 @@ on_request :: proc(x:^Exchange,i:int,data:[]u8) {
         read_hash(&r)
         first:=read_u32(&r)
         n:=read_u32(&r)
-        if kind>1 || kind==1 && n==0 || u64(first)+u64(n)>u64(x.table_max) || n>REQUEST_PIECES {peer_bad(x,i);return}
+        if kind>1 || kind==1 && n==0 || u64(first)+u64(n)>MAX_PIECES || n>REQUEST_PIECES {peer_bad(x,i);return}
         pieces+=int(n)
     }
     if pieces>REQUEST_PIECES {peer_bad(x,i);return}
