@@ -357,6 +357,28 @@ Reading a capture:
   report of the task with the median and the spread of each build and the difference per pair with
   its range, warns if another engine program was open or the GPU had another load, and leaves the
   JSON in `--out`.
+- **Hitches and freezes while flying.** `mirai bench flight [project] <flight> [--limit MS]`,
+  without scripts of held keys and chunked captures. A flight is a file of the project's
+  `tests/flights/` (named without `.mirai`, or a path; `demo/tests/flights/raft.mirai` is the
+  example): its `scene` and `segments`, each an optional jump (`camera`, a
+  [named camera](api.md#mirai-capture), or `position`, `target` and `fov`) and then `frames`
+  (still, or flying with the right button and `keys` held and a `turn` of mouse per frame) or
+  `settle` (the most frames it waits still until nothing is pending and no shadow page waits).
+  The first segment places the camera. The window is the size of `captures.mirai`.
+  1. It checks the whole file before building and says what to fix, then builds a copy of the
+     project and opens it with the GPU turn and the watchdog every unwatched editor gets, alone
+     among the checkouts (`measure.lock`).
+  2. Every frame runs through `editor.input` and is recorded with `profile.capture`
+     (`advance:false`), in chunks read back with `profile.frames`, with `engine.status` at the end
+     of each segment.
+  3. It prints the table: per segment the frame, p95, worst, GPU and CPU, the frames over each
+     threshold, the frames a settle took and the shadows and what is pending at its end; the
+     frames over each threshold by frames after the last jump; the slowest frames with their
+     passes and parts; and the GPU passes. The frames, the table and the editor's log go to
+     `--out` (`bin/flight/<time>`).
+  4. A frame of a segment that does not settle past `--limit` stops it with exit 1, naming its
+     costliest GPU pass and CPU part; the watchdog ending the editor exits with
+     `rhi.WATCHDOG_EXIT_CODE` and the pass the GPU stopped in. What flew is printed either way.
 
 ## History
 

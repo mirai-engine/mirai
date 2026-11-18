@@ -128,6 +128,12 @@ and, below `REPEAT_SSIM`, it warns that a higher threshold compares noise. `--vi
 because the capture carries no lines. `--frames 0` waits for the textures to stream in as
 `capture` does; the frames it draws by default are exact, so two runs draw the same.
 
+The views of `captures.mirai` are the project's **named cameras**, the one home of the views that
+captures, [flights](methods.md#profiling) and people share: `--camera NAME` captures one with
+its scene, its camera and the plan's size and frames (unless `--size` or `--frames` say others).
+A new camera needed by a capture or a flight is added there, with its threshold, never kept in a
+script.
+
 `mirai capture [project] --plan` captures each view of the project's `captures.mirai` (size,
 frames and, per view, scene, camera and `threshold`) from its scene loaded again and compares it
 with its reference from `--references` (the project's `bin/references`: images depend on the GPU
