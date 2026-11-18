@@ -74,20 +74,20 @@ SHADOW_MOVER_FRAMES :: u64(30)
 // coarser page drawn or trace until then.
 SHADOW_FRAME_CLUSTERS :: u32(32768)
 SHADOW_FRAME_CLUSTERS_MOST :: 16 * SHADOW_FRAME_CLUSTERS
-// What the maps of the frame take of the GPU time a refresh of the display
-// lasts, while their pages wait: a part, so that a frame that already fills
-// it slows little; on a loading screen (Frame_Desc.loading) many, which the
-// maps may take. And how far past a refresh the frame may go while the bound
-// grows: over it, the maps give back what the frame took past it.
+// What the rounds of the maps take while their pages wait, of the GPU time of
+// the rest of the frame, a refresh of the display at least: a part, so that
+// the frame slows by that part at most; on a loading screen
+// (Frame_Desc.loading) several times it, which the maps may take.
 SHADOW_MAPS_SHARE :: f32(0.25)
 SHADOW_LOADING_SHARE :: f32(3)
-SHADOW_FRAME_OVER :: f32(1.25)
 // How much the bound changes from that of a frame measured, at most.
 SHADOW_BOUND_STEP :: f32(1.5)
-// The interval the maps of each view measure (rhi.cmd_measure_begin); in a
-// frame that wants timings, its intervals are those of each step, named
-// alike.
+// The interval the maps of each view measure (rhi.cmd_measure_begin): their
+// rounds, what the bound draws, after the steps of the pages, which cost the
+// same whatever it is (SHADOW_PAGES_TIMING); in a frame that wants timings,
+// the intervals of each of their steps, named alike.
 SHADOW_MAPS_TIMING :: "shadow maps"
+SHADOW_PAGES_TIMING :: "shadow pages"
 
 // The clusters each round of the maps of every view draws in a frame: now,
 // and in each frame in flight, which the GPU time of that frame measures once
@@ -100,15 +100,13 @@ Shadow_Bound :: struct {
 }
 
 // The bound of this frame, from the frame that last used its slot, which has
-// come back: the bound is what the maps draw in proportion to the time they
-// take, so it follows the GPU time the maps of that frame took against their
-// share of a refresh, growing while their pages waited and the frame did not
-// pass the refresh by much, shrinking when the maps took more than their
-// share or the frame went past that, by what it went past, by
-// SHADOW_BOUND_STEP at most each way and within its least and most. Without
-// the time of the maps (a device without timestamps), the frame against a
-// refresh. The lists of the cull of the maps grow to hold it in the draws of
-// one kind alone.
+// come back: the rounds of the maps take time in proportion to the bound, so
+// it follows the GPU time the rounds of that frame took against their share
+// of the rest of that frame, growing while their pages waited and shrinking
+// when they took more, by SHADOW_BOUND_STEP at most each way and within its
+// least and most. Without the time of the rounds (a device without
+// timestamps), the frame against a refresh. The lists of the cull of the maps
+// grow to hold it in the draws of one kind alone.
 @(private)
 shadow_bound_update :: proc(r: ^Renderer, slot: int, loading: bool, refresh_hz: f32) {
 	b := &r.shadow_bound
@@ -119,17 +117,15 @@ shadow_bound_update :: proc(r: ^Renderer, slot: int, loading: bool, refresh_hz: 
 	timings, _, measured := rhi.frame_timings(r.device)
 	maps, timed := f32(0), false
 	for t in timings {
-		if !strings.has_prefix(t.name, "shadow ") {continue}
+		if !strings.has_prefix(t.name, "shadow ") || t.name == SHADOW_PAGES_TIMING {continue}
 		maps += t.ms
 		timed = true
 	}
 	period := 1000 / (refresh_hz if refresh_hz > 0 else 60)
-	share := period * (SHADOW_LOADING_SHARE if loading else SHADOW_MAPS_SHARE)
-	frame, over := r.stats.gpu_ms, period * SHADOW_FRAME_OVER
+	frame := r.stats.gpu_ms
 	if measured && frame > 0 {
-		used := maps if timed else frame
+		share := max(frame - maps, period) * (SHADOW_LOADING_SHARE if loading else SHADOW_MAPS_SHARE)
 		ratio := clamp(share / max(maps, 1e-3) if timed else period / frame, 1 / SHADOW_BOUND_STEP, SHADOW_BOUND_STEP)
-		if !loading && frame > over {ratio = max(min(ratio, max(used - (frame - over), 0) / max(used, 1e-3)), 1 / SHADOW_BOUND_STEP)}
 		if ratio < 1 || r.stats.shadow.pages_waiting > 0 {bound = u32(clamp(f32(then) * ratio, f32(least), f32(most)))}
 	}
 	b.now, b.frames[slot] = bound, bound
@@ -1114,8 +1110,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	if full {b.settle = max(p.jitter_phases, 1)}
 	marking := b.settle > 0
 	if marking {b.settle -= 1}
-	rhi.cmd_measure_begin(cmd, SHADOW_MAPS_TIMING)
-	rhi.cmd_timestamp(cmd, "shadow pages")
+	rhi.cmd_timestamp(cmd, SHADOW_PAGES_TIMING)
 	if made {rhi.cmd_fill_buffer(cmd, b.pages, 0, u64(abi.SHADOW_WORDS) * 4, 0)}
 	if full {rhi.cmd_fill_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_NEEDED) * 4, u64(abi.SHADOW_WORDS_SLOTS - abi.SHADOW_WORDS_NEEDED) * 4, 0)}
 	if marking {
@@ -1150,6 +1145,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	}
 	r.stats.shadow_movers += plan.moving_threads
 	// What stays, into the pages of the cache it draws.
+	rhi.cmd_measure_begin(cmd, SHADOW_MAPS_TIMING)
 	rhi.cmd_timestamp(cmd, "shadow cull")
 	params := shadow_params(p, plan, .Stays)
 	shadow_cull(p, plan, params, .Stays, &steps)
