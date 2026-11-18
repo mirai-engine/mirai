@@ -84,6 +84,16 @@ lock_release :: proc(lock:^Lock) {
     lock^={}
 }
 
+// Lets go of the lock in this process without freeing it: a child that
+// inherited its handle (subprocess.start, detached) holds it until it ends,
+// and its owner file stays.
+lock_hand_over :: proc(lock:^Lock) {
+    if !lock.held {return}
+    lock_close(lock.handle)
+    delete(lock.owner)
+    lock^={}
+}
+
 // Takes the lock of path when it is free. When it is busy, holder is what
 // its holder wrote; failed when the lock cannot be made at all.
 lock_take :: proc(path,what:string) -> (lock:Lock,taken:bool,holder:string,failed:bool) {

@@ -157,9 +157,13 @@ to the overrides).
   again, are read again.
 - It reads again only the cells under the boxes the ground announced since it last ran
   (`Ground_Queries.changed`), or all those of a `Foliage` that moves or arrives. The cells to read
-  wait in a queue, each once, and are read `GROUND_TILES` per call, in jobs, those the editor asks
-  for first and then the nearest a source (`queue_order`, again when the sources move): a world
-  that loads much ground and many `Foliage` at once keeps responding and fills in around the
+  wait in a queue, each once, and a frame reads `GROUND_SAMPLES` samples of them over its ticks
+  and itself, in jobs that end within the call (so the ground does not change under them), those
+  the editor asks for first and then the nearest a source (`queue_order`, again when the sources
+  move); the rest wait for the next frames. While some wait, a cell that has no tile yet takes a
+  coarse one (`SAMPLES_MIN` a side) from the share `GROUND_COARSE` keeps, nearest first, so its
+  foliage shows at once and corrects when its tile is read: a world that loads much ground and
+  many `Foliage` at once keeps responding and fills in around the
   sources. When only the sources move, only the whole tiles and the sparse ones near a source are
   looked at. A grid (heights and weights) equal to the previous one
   does not raise its revision, and a frame without changes reads nothing.
