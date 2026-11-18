@@ -154,6 +154,7 @@ Batch_State :: struct {
 	upload:          bool,                       // the rows go to the GPU with the next frame
 	epoch:           u64,                        // what meshes_clear raises: every batch is gone
 	revision:        u64,                        // raised when a batch comes, goes or is set again: what extensions that give batches values compare
+	tables:          u64,                        // counts the builds of the tables of the batches drawn
 	dropped:         int,                        // batches left out of the tables: more instance indices than BATCH_INDICES_MAX
 }
 
@@ -539,6 +540,7 @@ batches_build :: proc(r: ^Renderer) {
 	if count > 0 {b.groups = {pool_store(&s.indices, &s.pool_free[.Index], &s.pool_dirty[.Index], group_first), count}}
 	s.geometry_dirty = true
 	b.built, b.built_instances, b.built_world = true, len(s.instances), r.world_key
+	b.tables += 1
 	b.upload = true
 	tlas_build(s)
 	s.tlas_nodes_dirty, s.tlas_refs_dirty, s.tlas_dirty = true, true, true
