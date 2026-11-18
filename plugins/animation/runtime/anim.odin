@@ -165,8 +165,9 @@ Layer_Playing :: struct {
 Stack_Parameter :: struct {name:u64,value:f32,used:bool} // used: a layer or an axis read it in this tick
 // What the slots of the stack changed in a tick: an action started, ended or was interrupted, or a
 // layer changed what it plays. Those slots show their new pose at once and the pose blends from
-// the one shown by inertia over the longest time asked; a slot that asks no time cuts.
-Stack_Blend :: struct {slots,cuts:u16,duration:f32}
+// the one shown by inertia, each bone over the shortest time the slots that move it ask; a slot
+// that asks no time cuts. durations: by slot, that time; 0: none.
+Stack_Blend :: struct {slots,cuts:u16,durations:[STACK_SLOTS]f32}
 // The inertia of the pose of a stack: the pose and curves it showed in its last tick and in the
 // one before, and the offsets from them that decay over a blend.
 Stack_Inertia :: struct {
@@ -174,12 +175,18 @@ Stack_Inertia :: struct {
     shown_curves,shown_curves_before:[dynamic]Curve_Output,
     dt:f32,     // seconds between shown_before and shown
     kept:u8,    // ticks shown holds, up to 2
+    frame,bound:u64, // Playback.frame of shown, and the bindings it was shown with
     before,older:[dynamic]mm.Transform, // the pose the slots changed to a tick before, and one before it along its velocity
     values:[dynamic]f32,          // 5 a curve (its value and weight) for the shown curves, those before them and the target
+    durations:[dynamic]f32,       // by bone, the seconds of its blend (lib.Inertial_Input)
     state:lib.Inertial_State,
     bones:[dynamic]lib.Inertial_Bone,
     curves:[dynamic]lib.Inertial_Curve,
+    root:Root_Inertia,
 }
+// The root motion a stack showed in its last tick, as velocities (translation and the logarithm of
+// the rotation, per second), and the difference from it that decays over a blend.
+Root_Inertia :: struct {velocity,offset:[2]mm.Vec3,frame:u64,shown:bool,duration,elapsed:f32}
 
 Playing :: struct {
     entity:core.Entity,
@@ -480,7 +487,7 @@ animation_tick :: proc(
             state.motion=motion;state.root_enabled=true
         }
         leading,share:=-1,f32(0)
-        if content!=nil {leading,share=stack_root(state,content,animation^)}
+        if content!=nil {leading,share=stack_root(state,content,animation^);stack_root_inertia(state,playback.frame,dt if animation.playing else 0)}
         if animation.mirror && len(state.mirror_pairs)>0 {
             state.motion=root_delta_mirror(state.mirror_plane,state.motion)
             state.body_motion.translation=lib.mirror_vector(state.mirror_plane,state.body_motion.translation)
@@ -784,7 +791,8 @@ layer_players :: proc "contextless" (layer:^Layer_Playing,out:^[LAYER_PLAYERS]li
 stack_blend :: proc "contextless" (state:^Playing,slot:int,duration:f32) {
     bit:=u16(1)<<u16(slot)
     state.blend.slots|=bit
-    if duration>0 {state.blend.duration=max(state.blend.duration,duration)} else {state.blend.cuts|=bit}
+    asked:=&state.blend.durations[slot]
+    if duration>0 {asked^=duration if asked^==0 else min(asked^,duration)} else {state.blend.cuts|=bit}
 }
 
 // The clips of the space of a layer at the place its axes are set to (set), and its weight on the
@@ -1299,7 +1307,7 @@ playback_free :: proc(playback:^Playback) {
 playing_free :: proc(state:^Playing) {
     program_free(&state.program)
     inertia:=&state.inertia
-    delete(inertia.shown);delete(inertia.shown_before);delete(inertia.shown_curves);delete(inertia.shown_curves_before);delete(inertia.before);delete(inertia.older);delete(inertia.values);delete(inertia.bones);delete(inertia.curves)
+    delete(inertia.shown);delete(inertia.shown_before);delete(inertia.shown_curves);delete(inertia.shown_curves_before);delete(inertia.before);delete(inertia.older);delete(inertia.values);delete(inertia.durations);delete(inertia.bones);delete(inertia.curves)
     delete(state.curves);delete(state.bindings);delete(state.parents);delete(state.targets);delete(state.aliases);delete(state.previous)
     delete(state.mirror_pairs);delete(state.mirror_corrections);delete(state.mirror_scratch);delete(state.regions);delete(state.masks)
     delete(state.rest);delete(state.local);delete(state.world);delete(state.sampled)
