@@ -1,6 +1,7 @@
 package store
 
 import "base:runtime"
+import "core:crypto"
 import "core:os"
 
 // A content-addressed store of the machine: blobs named by their address and
@@ -41,7 +42,7 @@ open :: proc(root:string,allocator:=context.allocator) -> (s:Store,error:Error) 
     }
     buffer:[PATH_BYTES]u8
     folder_make(trimmed) or_return
-    for folder in ([4]string{"blobs","partial","refs","tmp"}) {
+    for folder in ([5]string{"blobs","tables","partial","refs","tmp"}) {
         folder_make(join(&buffer,trimmed,folder) or_return) or_return
     }
     layout_check(trimmed) or_return
@@ -127,13 +128,16 @@ os_error :: proc(error:os.Error) -> Error {
     return .Io
 }
 
-// Writes data to a file of the root's tmp folder and renames it to path,
+// Writes chunks to a file of the root's tmp folder and renames it to path,
 // which then holds all of it or what it held before.
 @(private)
-file_write :: proc(root:string,path:string,data:[]u8) -> Error {
+file_write :: proc(root:string,path:string,chunks:..[]u8) -> Error {
     temp_buffer:[PATH_BYTES]u8
     temp,file:=temp_create(root,&temp_buffer) or_return
-    _,write_error:=os.write(file,data)
+    write_error:os.Error
+    for chunk in chunks {
+        if write_error==nil {_,write_error=os.write(file,chunk)}
+    }
     sync_error:=os.sync(file)
     os.close(file)
     if write_error!=nil || sync_error!=nil {
@@ -150,16 +154,40 @@ file_write :: proc(root:string,path:string,data:[]u8) -> Error {
 // A new file of the root's tmp folder, open to write; its path is in buffer.
 @(private)
 temp_create :: proc(root:string,buffer:^[PATH_BYTES]u8) -> (path:string,file:^os.File,error:Error) {
-    folder_buffer:[PATH_BYTES]u8
-    folder:=join(&folder_buffer,root,"tmp") or_return
-    created,create_error:=os.create_temp_file(folder,"write-*")
-    if create_error!=nil {return "",nil,os_error(create_error)}
-    name:=os.name(created)
-    if len(name)>len(buffer) {
-        os.close(created)
-        os.remove(name)
-        return "",nil,.Invalid_Argument
+    for _ in 0..<TEMP_ATTEMPTS {
+        path=temp_name(root,"write-",buffer) or_return
+        created,create_error:=os.open(path,{.Read,.Write,.Create,.Excl})
+        if create_error==nil {return path,created,.None}
+        if create_error!=.Exist {return "",nil,os_error(create_error)}
     }
-    copy(buffer[:],name)
-    return string(buffer[:len(name)]),created,.None
+    return "",nil,.Io
+}
+
+// A new folder of the root's tmp folder; its path is in buffer.
+@(private)
+temp_folder :: proc(root,prefix:string,buffer:^[PATH_BYTES]u8) -> (path:string,error:Error) {
+    for _ in 0..<TEMP_ATTEMPTS {
+        path=temp_name(root,prefix,buffer) or_return
+        made:=os.make_directory(path)
+        if made==nil {return path,.None}
+        if made!=.Exist {return "",os_error(made)}
+    }
+    return "",.Io
+}
+
+@(private)
+TEMP_ATTEMPTS :: 8
+
+// tmp/<prefix><random hex>, random from the system so that processes sharing
+// the root do not collide.
+@(private)
+temp_name :: proc(root,prefix:string,buffer:^[PATH_BYTES]u8) -> (string,Error) {
+    random:Hash
+    crypto.rand_bytes(random[:16])
+    text:[64]u8
+    name:[96]u8
+    if len(prefix)>len(name)-32 {return "",.Invalid_Argument}
+    copy(name[:],prefix)
+    copy(name[len(prefix):],hex(random,&text)[:32])
+    return join(buffer,root,"tmp",string(name[:len(prefix)+32]))
 }

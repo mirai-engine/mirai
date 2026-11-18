@@ -88,6 +88,16 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     _,missing_error=receive_missing(&s,hash,context.temp_allocator)
     testing.expect_value(t,missing_error,Error.None)
 
+    // A marked piece whose bytes on disk do not match its table entry.
+    testing.expect_value(t,receive_piece(&s,hash,1,test_piece(data,1)),Error.None)
+    partial_data:=path_in(folder,"partial",hex_of(hash),"data")
+    on_disk,_:=os.read_entire_file(partial_data,context.temp_allocator)
+    on_disk[PIECE_BYTES+7]~=1
+    testing.expect(t,os.write_entire_file(partial_data,on_disk)==nil)
+    testing.expect_value(t,read(&s,hash,PIECE_BYTES,random[:10]),Error.Not_Here_Yet)
+    missing_list,_:=receive_missing(&s,hash,context.temp_allocator)
+    testing.expect(t,len(missing_list)==len(pieces) && missing_list[1]==1,"a piece that does not match is missing again")
+
     // Refs.
     for name in ([]string{"","."," ..","..","a/b","a\\b","A","con","com1.txt","x.","a b",strings.repeat("x",NAME_MAX+1,context.temp_allocator)}) {
         testing.expectf(t,ref_set(&s,"ns",name,hash)==.Invalid_Argument,"name %q",name)
@@ -119,7 +129,7 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     _,sweep_error:=sweep(&out,{good})
     testing.expect_value(t,sweep_error,Error.Out_Of_Memory)
     other,_:=put_bytes(&s,data[:20])
-    testing.expect_value(t,receive_begin(&out,address_of_bytes(data[:PIECE_BYTES+1]),PIECE_BYTES+1,test_table(data[:PIECE_BYTES+1])),Error.Out_Of_Memory)
+    testing.expect_value(t,receive_begin(&out,address_of_bytes(data[:PIECE_BYTES+1]),PIECE_BYTES+1,test_table(data[:PIECE_BYTES+1])),Error.None)
     testing.expect(t,has(&s,other))
     _,open_error:=open(path_in(folder,"other"),failing_allocator())
     testing.expect_value(t,open_error,Error.Out_Of_Memory)
