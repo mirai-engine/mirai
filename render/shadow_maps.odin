@@ -73,7 +73,10 @@ SHADOW_MOVER_FRAMES :: u64(30)
 // the frames after, the coarsest first, and their points read the nearest
 // coarser page drawn or trace until then.
 SHADOW_FRAME_CLUSTERS :: u32(32768)
-SHADOW_FRAME_CLUSTERS_MOST :: 16 * SHADOW_FRAME_CLUSTERS
+// The bound counts clusters, not what they cost to raster: a round of dense
+// masked foliage at a coarse level takes far longer than its count says, so
+// until the bound counts that cost it does not grow.
+SHADOW_FRAME_CLUSTERS_MOST :: SHADOW_FRAME_CLUSTERS
 // What the rounds of the maps take while their pages wait, of the GPU time of
 // the rest of the frame, a refresh of the display at least: a part, so that
 // the frame slows by that part at most.
