@@ -74,6 +74,12 @@ SHADOW_MOVER_FRAMES :: u64(30)
 // coarser page drawn or trace until then.
 SHADOW_FRAME_CLUSTERS :: u32(32768)
 SHADOW_FRAME_CLUSTERS_MOST :: 16 * SHADOW_FRAME_CLUSTERS
+// The most chunks the pass by instance of a round hands to its pass by
+// cluster (Cull_List.Shadow_Chunks): those of the clusters the bound draws at
+// most, twice, so that the chunks of a page granted alone fit. The pages
+// whose chunks find no room wait (shadow_maps.comp), and no frame culls more
+// clusters of the maps than these hold.
+SHADOW_CHUNKS_MOST :: 2 * SHADOW_FRAME_CLUSTERS_MOST
 // What the rounds of the maps take while their pages wait, of the GPU time of
 // the rest of the frame, a refresh of the display at least: a part, so that
 // the frame slows by that part at most.
@@ -100,11 +106,14 @@ Shadow_Bound :: struct {
 // The bound of this frame, from the frame that last used its slot, which has
 // come back: the rounds of the maps take time in proportion to the bound, so
 // it follows the GPU time the rounds of that frame took against their share
-// of the rest of that frame, growing while their pages waited and shrinking
-// when they took more, by SHADOW_BOUND_STEP at most each way and within its
-// least and most. Without the time of the rounds (a device without
-// timestamps), the frame against a refresh. The lists of the cull of the maps
-// grow to hold it in the draws of one kind alone.
+// of the rest of that frame, by SHADOW_BOUND_STEP at most each way and
+// within its least and most: growing while the picture lacks pages, points
+// read where no page drawn holds them or a still view waits for pages
+// (Shadow_Stats.pages_short), and shrinking when they took more; pages whose
+// points read a coarser page drawn refine at the least. Without the time of
+// the rounds (a device without timestamps), the frame against a refresh. The
+// lists of the cull of the maps grow to hold it in the draws of one kind
+// alone.
 @(private)
 shadow_bound_update :: proc(r: ^Renderer, slot: int, refresh_hz: f32) {
 	b := &r.shadow_bound
@@ -124,7 +133,7 @@ shadow_bound_update :: proc(r: ^Renderer, slot: int, refresh_hz: f32) {
 	if measured && frame > 0 {
 		share := max(frame - maps, period) * SHADOW_MAPS_SHARE
 		ratio := clamp(share / max(maps, 1e-3) if timed else period / frame, 1 / SHADOW_BOUND_STEP, SHADOW_BOUND_STEP)
-		if ratio < 1 || r.stats.shadow.pages_waiting > 0 {bound = u32(clamp(f32(then) * ratio, f32(least), f32(most)))}
+		bound = u32(clamp(f32(then) * ratio, f32(least), f32(most))) if ratio < 1 || r.stats.shadow.pages_short > 0 else least
 	}
 	b.now, b.frames[slot] = bound, bound
 	r.scene.cull_wanted[.Shadow_Entries] = max(r.scene.cull_wanted[.Shadow_Entries], min(2 * bound, CULL_MARK_MAX))
@@ -1039,7 +1048,7 @@ shadow_draw :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, atlas: r
 
 // The steps of shadow_pages.comp, and what each dispatches over.
 @(private)
-Shadow_Pages_Step :: enum u32 {Gate, Clear, Invalidate, Entries, Rank, Sums, Pool, Allocate, Propagate, Finish, Grant, Settle}
+Shadow_Pages_Step :: enum u32 {Gate, Clear, Invalidate, Ancestors, Entries, Rank, Sums, Pool, Allocate, Propagate, Finish, Grant, Settle}
 #assert(len(Shadow_Pages_Step) == abi.SHADOW_STEPS)
 
 // shadow_pages.comp Params_Block.
@@ -1136,8 +1145,6 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	}
 	for step in Shadow_Pages_Step {
 		if step == .Propagate || step >= .Grant {continue}
-		// What the passes after the maps marked the frame before is read; after a change this frame's marks start anew.
-		if step == .Rank && full {rhi.cmd_fill_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_LATE) * 4, u64(abi.SHADOW_MASKS) * 4, 0)}
 		if step == .Entries && !made {shadow_sway_marks(p, plan)}
 		shadow_pages_step(p, &steps, step)
 	}
@@ -1165,9 +1172,13 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	shadow_draw(p, plan, params, b.atlas, "shadow atlas", held = b.cache)
 	shadow_pages_step(p, &steps, .Propagate)
 	rhi.cmd_measure_end(cmd)
+	// What the passes after the maps marked the frame before has been read;
+	// after a change their marks of this frame start anew.
+	if full {rhi.cmd_fill_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_LATE) * 4, u64(abi.SHADOW_MASKS) * 4, 0)}
 	rhi.cmd_copy_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_DRAWN) * 4, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow) + offset_of(Shadow_Stats, pages_drawn)), 12)
 	rhi.cmd_copy_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_LEFT) * 4, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow) + offset_of(Shadow_Stats, pages_left)), 4)
 	rhi.cmd_copy_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_WAITING) * 4, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow) + offset_of(Shadow_Stats, pages_waiting)), 4)
+	rhi.cmd_copy_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_SHORT) * 4, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow) + offset_of(Shadow_Stats, pages_short)), 4)
 	return plan.shadow
 }
 

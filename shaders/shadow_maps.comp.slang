@@ -10,7 +10,8 @@
 // hands those the view draws to cull_clusters.comp, at the detail of each
 // mip, and foresees what each page it covers takes of them, which the steps of
 // the pages bound before the cluster pass (shadow_pages.comp). Chunks past the
-// capacity of their list are counted, and it grows for the frames after.
+// capacity of their list are counted, and it grows for the frames after; the
+// pages they would draw into are not drawn whole, and wait for those frames.
 #include "trace.slang"
 #include "cut.slang"
 #include "shadow_maps.slang"
@@ -60,6 +61,23 @@ void shadow_foresee(Shadow_Map m, float4 texels, uint clusters) {
             // Far past any bound it counts no more, below the flags of the word.
             uint word = shadow_cost_word(pool);
             if (shadow_pages[word] < SHADOW_COST_CLUSTERS / 2u) InterlockedAdd(shadow_pages[word], min(max(uint(ceil(float(clusters) * share)), 1u), SHADOW_COST_CLUSTERS / 2u));
+        }
+    }
+}
+
+// The pages of the round that the texels of a box cover are not drawn whole
+// this frame (SHADOW_COST_OVER): a chunk of the clusters of the box found no
+// room in its list.
+void shadow_left_over(Shadow_Map m, float4 texels) {
+    uint4 span, rect = shadow_texel_pages(m, texels);
+    if (!shadow_pages_span(m, span)) return;
+    rect = uint4(max(rect.xy, span.xy), min(rect.zw, span.zw));
+    for (uint y = rect.y; y <= rect.w; y++) {
+        for (uint x = rect.x; x <= rect.z; x++) {
+            uint pool;
+            if (!shadow_page_drawn(m, uint2(x, y), texels) || !shadow_page_pool(m, uint2(x, y), pool)) continue;
+            uint word = shadow_cost_word(pool);
+            if ((shadow_pages[word] & SHADOW_COST_OVER) == 0u) InterlockedOr(shadow_pages[word], SHADOW_COST_OVER);
         }
     }
 }
@@ -146,7 +164,10 @@ void main(uint3 id : SV_DispatchThreadID) {
         uint base;
         InterlockedAdd(shadow_state[SHADOW_CHUNK_COUNT], count, base);
         uint kept = base >= params.chunk_capacity ? 0u : min(count, params.chunk_capacity - base);
-        if (kept < count) InterlockedAdd(stats[0].dropped[CULL_LIST_SHADOW_CHUNKS], count - kept);
+        if (kept < count) {
+            InterlockedAdd(stats[0].dropped[CULL_LIST_SHADOW_CHUNKS], count - kept);
+            shadow_left_over(m, texels);
+        }
         uint what = map | mip << SHADOW_CHUNK_MIP | (rest ? SHADOW_CHUNK_REST : 0u);
         for (uint k = 0u; k < kept; k++) {
             uint first = k * CULL_CHUNK;

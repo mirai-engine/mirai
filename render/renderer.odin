@@ -287,7 +287,7 @@ Stats :: struct {
 	generated:         bool, // the frame drew an image the window shows before its own (frame generation)
 	shadow_movers:          u32, // of the last frame: the movers the maps drew, which their caches leave out
 	shadow_marked:          u32, // of the last frame: the views whose points marked the pages of the maps they read
-	shadow:                 Shadow_Stats, // of the frame two frames ago: what the maps of its last view drew
+	shadow:                 Shadow_Stats, // of the frame two frames ago: what the maps of its views drew
 	light_lists:            Light_List_Stats, // of the frame two frames ago: the lists of the lights without shadows of its last view
 	ui_vertices_dropped:    u32, // of the last frame: UI vertices beyond the capacity
 	ui_shapes_dropped:      u32,
