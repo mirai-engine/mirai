@@ -3,6 +3,7 @@ package editor
 import "core:fmt"
 import "core:math"
 import "core:strings"
+import "core:time"
 import "mirai:asset"
 import "mirai:editor/api"
 import "mirai:host"
@@ -139,6 +140,7 @@ api_material_capture :: proc(s:^Session,call:^api.Call) {
     if record,known:=asset.registry_find(&a.registry,id);known {name=asset_name(record.path)}
     path,writable:=api_capture_file(s,call,base.text_get(p.path[:]),fmt.tprintf("material-%s.png",name),call.allocator)
     if !writable {return}
+    started:=time.tick_now()
     if ok,message:=programs_wait(s,f64(p.wait));!ok {api.call_fail(call,api.SERVER_ERROR,message);return}
     views:=p.views
     if views=={} {views={.Lit,.Albedo,.Roughness,.Metallic,.Normal,.Emission}}
@@ -154,11 +156,14 @@ api_material_capture :: proc(s:^Session,call:^api.Call) {
     for &target in values {target=make([][4]f32,pixels_count,context.temp_allocator)}
     t:=s.thumbnails
     t.capture_renderer=s.app.renderer
-    if !gpu.renderer_thumbnail_values(s.app.renderer,&t.capture,vertices[:],materials[:],side,side,display,values) {
-        // A program not yet compiled for previews is compiled now (programs_missing).
-        api.call_fail(call,api.SERVER_ERROR,"The material could not be drawn; if its program is being compiled for previews, call again once engine.status has no programs pending")
-        return
+    drawn:=gpu.renderer_thumbnail_values(s.app.renderer,&t.capture,vertices[:],materials[:],side,side,display,values)
+    if !drawn {
+        // A program not compiled for previews yet is compiled now (programs_missing): drawn once the previews have it.
+        if ok,message:=programs_wait(s,max(f64(p.wait)-time.duration_seconds(time.tick_since(started)),0));!ok {api.call_fail(call,api.SERVER_ERROR,message);return}
+        materials[0]=host.assets_material_values(a,host.assets_material_row(a,id))
+        drawn=gpu.renderer_thumbnail_values(s.app.renderer,&t.capture,vertices[:],materials[:],side,side,display,values)
     }
+    if !drawn {api.call_fail(call,api.SERVER_ERROR,"The material could not be drawn");return}
     // The stats of each view over the covered pixels.
     shown:=make([dynamic]Material_View,call.allocator)
     stats:[Material_View]View_Stats
