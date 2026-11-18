@@ -192,8 +192,8 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     if problem!="" {cook_fail(&report,.Manifest_Invalid,problem,allocator);return}
 
     registry:asset.Registry
-    asset.registry_init(&registry,desc.assets,"",temp,desc.root!=""?project.imported_path(desc.root,temp):"")
-    for folder in desc.plugins {asset.registry_mount(&registry,folder.path,folder.prefix,folder.imported)}
+    asset.registry_init(&registry,desc.assets,"",temp)
+    for folder in desc.plugins {asset.registry_mount(&registry,folder.path,folder.prefix)}
     defer asset.registry_destroy(&registry)
     if asset.registry_scan(&registry)!=.None {cook_fail(&report,.Assets_Missing,desc.assets,allocator);return}
     files:=registry.files[:]

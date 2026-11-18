@@ -105,8 +105,8 @@ project_open :: proc(p:^Project,root,engine:string,library:=true) -> (problem:st
     p.root=strings.clone(opened.root)
     p.name=strings.clone(base.text_get(opened.manifest.name[:]))
     p.assets_root=project.folder_path(p.root,.Assets)
-    asset.registry_init(&p.registry,p.assets_root,imported=project.imported_path(p.root,context.temp_allocator))
-    for mount in host.project_asset_mounts(&opened,context.temp_allocator) {asset.registry_mount(&p.registry,mount.folder,mount.prefix,mount.imported)}
+    asset.registry_init(&p.registry,p.assets_root)
+    for mount in host.project_asset_mounts(&opened,context.temp_allocator) {asset.registry_mount(&p.registry,mount.folder,mount.prefix,mount.listed)}
     asset.types_init(&p.types)
     p.types.codecs=asset.project_codecs(root,engine)
     p.assets={&p.registry,&p.types}
