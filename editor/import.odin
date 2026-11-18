@@ -24,31 +24,26 @@ import "mirai:std/serial"
 import "mirai:store"
 import "mirai:ui"
 
-// Import from the content browser: a source file in the assets becomes
-// assets of the project with sources.import_source, as mirai import does,
-// with the formats of models of plugins too (Import_Format_Provider); one
-// from outside the project is copied into the folder of the browser first,
-// where it stays beside what it makes. A model writes its meshes, materials
-// and textures into a folder named after it (or what its format says,
-// Format.folder) beside it, with a prefab of its hierarchy; an image becomes
-// a texture beside it (sRGB unless its name says it holds data or a normal
-// map); a sound file (WAV, Ogg) becomes a sound beside it; a source a plugin
-// imports whole (Import_Source_Provider) writes where its importer says. The
-// sidecar of a source (<source>.import) keeps its settings and the id of each
-// asset, and importing it again gives the same assets; what an import builds
-// that nobody edits is not a file of the asset folder but of the imported
-// folder of the project, which mirai build brings up to date with the
-// sources (sources.sync). The Import button of the Assets tab and File >
-// Import ask for the file; a file dropped on the window is imported the same
-// way.
+// Import from the content browser: a source file or folder anywhere on disk
+// is ingested into the library of the machine where it is, nothing copied,
+// and its package is pinned in the project (sources.project_ingest), as mirai
+// import does, with the formats and whole sources of plugins too
+// (Import_Format_Provider, Import_Source_Provider). Its package is listed in
+// the folder of the browser, or for a source in the assets, in its own
+// folder: its meshes, textures, sounds and fonts are blobs of the store the
+// registry lists there, and its documents (materials, skeletons, clips, the
+// prefab of a model) are files of that folder. Importing it again gives the
+// same assets. The Import button of the Assets tab and File > Import ask for
+// the file; a file dropped on the window is imported the same way, and Add
+// from library pins a package the library has (library.odin).
 //
 // The import runs in a thread of its own, with its own job system, while the
 // editor goes on; the content browser shows the dot of what works. When it
-// ends, between frames, the registry looks again at what it wrote, what was
-// loaded from the files it replaced is read again and, when it wrote Surface
-// programs, the programs of the project are published, so its materials
-// show. One import runs at a time, and while it does nothing else writes
-// assets (import_busy).
+// ends, between frames, the registry lists the packages again and looks at
+// what it wrote, what was loaded of it is read again and, when it wrote
+// Surface programs, the programs of the project are published, so its
+// materials show. One import runs at a time, and while it does nothing else
+// writes assets (import_busy). It is no edit: undo does not take it back.
 
 DIALOG_IMPORT :: u32(0x4d494d50)
 DIALOG_AI_REFERENCE :: u32(0x4d414952)
@@ -65,27 +60,34 @@ Importer :: struct {
     zones:[dynamic]importer.Zone_Total, // of the last one that ended, when it was profiled
     publishing:time.Tick, // since the last one asked for its programs to be published, while they are; zero otherwise
     profiled:bool,        // the last one was profiled: the publication it asked for is a zone too
+    library:[dynamic]Library_Shown, // what Add from library shows, read when it opens
+    library_frame:u64,              // the frame it was last shown in
 }
 
-// An import in a thread of its own. Its memory is that of allocator, which
+// An import in a thread of its own: of a source (source), or the add of a
+// package of the library (manifest). Its memory is that of allocator, which
 // any thread can call.
 Import_Job :: struct {
     thread:^thread.Thread,
-    source:string,
-    kind:sources.Source_Kind,
-    formats:[]importer.Format,                // of a model: the engine's, then plugin_formats'
+    source:string,        // the source, or the name of the package added
+    root,folder:string,   // the project or plugin it is pinned in, and the folder of its assets it is listed in
+    prefix:string,        // of that root in the registry: "" for the project
+    manifest:store.Hash,  // of the package added; zero for a source
+    assets:[]base.Asset_Id, // of the package added, those it uses; none: all
+    settings:importer.Import_Settings,
+    settled:bool,         // settings replace those its package keeps
+    claimed:bool,         // a plugin imports the source whole
+    imports:sources.Library_Imports, // what the plugins give, prepared on the thread of the editor
     plugin_formats:[]Import_Format_Provider, // with the format.data their prepare gave
-    whole:Source_Importer, // of a source a plugin imports whole; run is nil otherwise
-    state:rawptr,          // what whole.prepare gave
-    options:importer.Import_Options,
-    store:store.Store, // the machine store, whose caches options.store names; unopened: none
+    wholes:[]Source_Importer,                // with the state their prepare gave, in imports.wholes
+    store:store.Store,    // the session's
+    options:sources.Library_Options,
     allocator:mem.Allocator,
     started:time.Tick,
     profiled:bool,
     profile:base.Profile, // its zones, when profiled
     // What the thread leaves once done is set.
     report:importer.Import_Report,
-    scene:string,
     error:importer.Error,
     seconds:f64,
     done:bool,
@@ -130,19 +132,30 @@ import_place :: proc(s:^Session) -> string {
     return s.content!=nil?string(s.content.place[:s.content.place_length]):""
 }
 
-// Starts importing a source file; false, with the reason shown, when it
-// cannot. A source in the assets of the project or of a plugin imports where
-// it is; one from outside the project is brought first into folder, a folder
-// of the assets (asset_folder_clean; none is the root), and imports there:
-// it is versioned with its sidecar beside what it makes, and its meshes,
-// textures, sounds and fonts go to the imported folder. A source a plugin
-// imports whole is brought by its importer with the files it reads
-// (Source_Importer.bring), any other is copied alone. A source imported
-// before writes the assets its sidecar lists, wherever they are. profiled
-// records the zones of the import (importer.profile_totals) for
-// asset.import_status.
+// The root of the registry folder is of, the project or a plugin, and
+// where the folder is under its assets; false for a folder of the editor or
+// of the engine, which pins nothing.
+@(private)
+import_root_of :: proc(s:^Session,r:^asset.Registry,folder:string) -> (root:Library_Root,rest:string,ok:bool) {
+    for mount in r.mounts {
+        if folder!=mount.prefix && !asset_path_inside(folder,mount.prefix) {continue}
+        if strings.has_prefix(mount.prefix,".") || filepath.base(mount.folder)!=project.FOLDER_NAMES[.Assets] {return}
+        rest=folder[min(len(mount.prefix)+1,len(folder)):]
+        return {filepath.dir(mount.folder),mount.prefix},rest,true
+    }
+    if s.project_root=="" {return}
+    return {s.project_root,""},folder,true
+}
+
+// Starts importing a source file or folder from anywhere on disk; false,
+// with the reason shown, when it cannot. It is ingested into the library
+// where it is and its package is pinned in the project, or the plugin whose
+// folder folder is, listed in folder, a folder of the assets
+// (asset_folder_clean; none is the root, or for a source in the assets, its
+// own folder). profiled records the zones of the import
+// (importer.profile_totals) for asset.import_status.
 // rig, when given, has the rig, rig_crotch and rig_neck that replace the
-// source's settings, which a model inside the project keeps for its next import.
+// settings its package keeps for its next import.
 // image, when given, is the use of an image that replaces its settings the same
 // way; without it, its settings say, else its name (sources.image_use).
 // skeleton, when not zero, is the skeleton of the project the clips of a model
@@ -158,130 +171,117 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
         import_say(s,"%s",busy)
         return false
     }
-    name:=filepath.base(source)
-    source:=source
+    if s.store.root=="" {
+        import_say(s,"The editor has no store to keep imports in: start it with --store <folder>")
+        return false
+    }
+    if importer.unsafe_path(source) || !os.exists(source) {
+        import_say(s,"%s does not exist: give the path of a file or a folder on disk",source)
+        return false
+    }
+    origin:=importer.path_key(source)
+    name:=filepath.base(origin)
+    place:=folder
+    if place=="" {
+        if relative,inside:=asset.registry_relative(&a.registry,origin);inside {place=content_folder_of(relative)}
+    }
+    root,rest,rooted:=import_root_of(s,&a.registry,place)
+    if !rooted {
+        import_say(s,"%s is a folder of the editor or the engine: import into a folder of the project or of a plugin",place)
+        return false
+    }
     // A source a plugin imports whole goes before the formats, which may read its bytes too.
-    whole,code,claimed:=import_whole(s,source)
-    if _,in_assets:=importer.source_root(source,context.temp_allocator);!in_assets {
-        for at:=filepath.dir(project.path_absolute(source,context.temp_allocator));filepath.dir(at)!=at;at=filepath.dir(at) {
-            if !project.path_same(at,s.project_root) {continue}
-            import_say(s,"%s is in the project but in no assets folder: move it under assets/, beside what it makes, and import it there",name)
-            return false
-        }
-        into:=asset.registry_file_path(&a.registry,folder,context.temp_allocator)
-        if claimed && whole.bring!=nil {
-            brought,bring_error:=whole.bring(source,into,context.temp_allocator)
-            if bring_error.code!=.None {
-                import_say(s,"%s: %s",name,bring_error.message)
-                return false
-            }
-            if _,inside:=importer.source_root(brought,context.temp_allocator);!inside {
-                import_say(s,"%s: %s brought it to %s, which is in no assets folder",name,whole.name,brought)
-                return false
-            }
-            source=brought
-        } else {
-            copied:=fmt.tprintf("%s/%s",into,name)
-            if os.exists(copied) {
-                import_say(s,"%s is already in %s: import that one, or rename the file to import",name,folder==""?"the assets":folder)
-                return false
-            }
-            if os.copy_file(copied,source)!=nil {
-                import_say(s,"%s could not be copied into %s",name,folder==""?"the assets":folder)
-                return false
-            }
-            source=copied
-        }
-    }
-    root,_:=importer.source_root(source,context.temp_allocator)
-    allocator:=runtime.heap_allocator()
-    options:=importer.Import_Options{
-        root=strings.clone(root,allocator),
-        world=s.info,
-        fast_textures=true,
-    }
-    formats:=import_formats(s)
-    kind:=sources.Source_Kind.None if claimed else sources.source_kind(source,formats)
-    switch kind {
-    case .None:
-    case .Model:
-        _,rigged:=rig.?
-        _,faced:=front.?
-        if rigged || faced || skeleton!={} {
-            stored,_,settings_error:=importer.settings_load(options,source)
-            if settings_error.code!=.None {
-                import_say(s,"%s: %s",name,settings_error.message)
-                return false
-            }
-            options.settings,options.ignore_stored=stored,true
-            if wanted,rigged:=rig.?;rigged {options.rig,options.rig_crotch,options.rig_neck=wanted.rig,wanted.rig_crotch,wanted.rig_neck}
-            if skeleton!={} {options.skeleton=skeleton}
-            if stated,given:=front.?;given {options.front=stated}
-        }
-    case .Image:
-        options.image=sources.image_use(source)
-        if use,given:=image.?;given {
-            stored,_,settings_error:=importer.settings_load(options,source)
-            if settings_error.code!=.None {
-                import_say(s,"%s: %s",name,settings_error.message)
-                return false
-            }
-            options.settings,options.ignore_stored=stored,true
-            options.image=use
-        }
-    case .Sound,.Font,.Prompts:
-    }
-    job:=new(Import_Job,allocator)
-    job^={kind=kind,options=options,allocator=allocator,started=time.tick_now(),profiled=profiled}
-    if store_root:=store.default_root(context.temp_allocator);store_root!="" {
-        if opened,error:=store.open(store_root,allocator);error==.None {
-            job.store=opened
-            job.options.store=&job.store
-        }
-    }
-    job.source=strings.clone(source,allocator)
-    if kind==.Model {import_formats_prepare(s,job)}
-    if kind==.None && !claimed {
-        import_job_free(job)
+    whole,code,claimed:=import_whole(s,origin)
+    kind:=sources.Source_Kind.None if claimed else sources.source_kind(origin,import_formats(s))
+    switch {
+    case kind==.None && !claimed:
         import_say(s,"%s is not a file the editor imports",name)
         return false
-    }
-    if _,given:=rig.?;given && kind!=.Model {
-        import_job_free(job)
+    case rig!=nil && kind!=.Model:
         import_say(s,"%s is not a model: only a model takes a rig",name)
         return false
-    }
-    if skeleton!={} && kind!=.Model {
-        import_job_free(job)
+    case skeleton!={} && kind!=.Model:
         import_say(s,"%s is not a model: only the clips of a model go on a skeleton",name)
         return false
-    }
-    if _,given:=front.?;given && kind!=.Model {
-        import_job_free(job)
+    case front!=nil && kind!=.Model:
         import_say(s,"%s is not a model: only a model has a front",name)
         return false
-    }
-    if _,given:=image.?;given && kind!=.Image {
-        import_job_free(job)
+    case image!=nil && kind!=.Image:
         import_say(s,"%s is not an image: only an image imported on its own takes a use; the textures of a model take theirs from its materials",name)
         return false
     }
-    if claimed {
-        job.whole=whole
-        job.options.importer_code=code
-        if whole.prepare!=nil {job.state=whole.prepare(&a.registry,s.info,allocator)}
+    allocator:=runtime.heap_allocator()
+    job:=new(Import_Job,allocator)
+    job^={allocator=allocator,started=time.tick_now(),profiled=profiled,claimed=claimed}
+    job.store=s.store
+    job.source=strings.clone(origin,allocator)
+    job.root,job.prefix,job.folder=strings.clone(root.root,allocator),strings.clone(root.prefix,allocator),strings.clone(rest,allocator)
+    // The settings its package keeps, changed by what was asked: given only when they change it.
+    if kind==.Model || kind==.Image {
+        stored,found,settings_error:=importer.settings_load({store=&job.store},origin)
+        if settings_error.code!=.None {
+            import_job_free(job)
+            import_say(s,"%s: %s",name,settings_error.message)
+            return false
+        }
+        chosen:=stored
+        // An image with no settings yet holds what its name says.
+        if kind==.Image && !found {chosen.image=sources.image_use(origin)}
+        if use,given:=image.?;given {chosen.image=use}
+        if wanted,given:=rig.?;given {chosen.rig,chosen.rig_crotch,chosen.rig_neck=wanted.rig,wanted.rig_crotch,wanted.rig_neck}
+        if skeleton!={} {chosen.skeleton=skeleton}
+        if stated,given:=front.?;given {chosen.front=stated}
+        job.settings=chosen
+        job.settled=chosen!=stored || !found
     }
+    import_plugins_prepare(s,job,kind==.Model,whole if claimed else {},code)
+    import_job_start(s,job,"Importing %s",name)
+    return job.thread!=nil
+}
+
+// The formats and the whole importers of the plugins job imports with, with
+// what their prepare gives from the library: models takes the formats,
+// whole the one importer that claims its source, with the identity of the
+// code of its plugin.
+@(private)
+import_plugins_prepare :: proc(s:^Session,job:^Import_Job,models:bool,whole:Source_Importer,code:u64) {
+    job.imports.world=s.info
+    if models {
+        found:[PROVIDER_CAPACITY]Import_Format_Provider
+        plugins:=found[:provided_all(s,found[:])]
+        job.plugin_formats=slice.clone(plugins,job.allocator)
+        formats:=make([]importer.Format,len(plugins),job.allocator)
+        for &provider,i in job.plugin_formats {
+            if provider.prepare!=nil {provider.format.data=provider.prepare(&job.store,job.root,s.info,job.allocator)}
+            formats[i]=provider.format
+        }
+        job.imports.formats=formats
+    }
+    if whole.run!=nil {
+        job.wholes=make([]Source_Importer,1,job.allocator)
+        job.wholes[0]=whole
+        wholes:=make([]sources.Whole_Source,1,job.allocator)
+        wholes[0]={claims=whole.claims,run=whole.run,code=code}
+        if whole.prepare!=nil {wholes[0].state=whole.prepare(&job.store,job.root,s.info,job.allocator)}
+        job.imports.wholes=wholes
+    }
+    job.options=sources.Library_Options{store=&job.store,fast_textures=true,root=job.root,imports=&job.imports}
+}
+
+// Starts the thread of job, which is the import that runs once started; it
+// is freed when it cannot start, with the reason shown.
+@(private)
+import_job_start :: proc(s:^Session,job:^Import_Job,format:string,args:..any) {
     job.thread=thread.create_and_start_with_poly_data(job,import_run)
     if job.thread==nil {
+        import_say(s,"%s: no thread could be started to import it",filepath.base(job.source))
         import_job_free(job)
-        import_say(s,"%s: no thread could be started to import it",name)
-        return false
+        return
     }
     s.importer.running=job
     s.importer.status={importing=true}
-    base.text_set(s.importer.status.path[:],source)
-    import_say(s,"Importing %s",name)
-    return true
+    base.text_set(s.importer.status.path[:],job.source)
+    import_say(s,format,..args)
 }
 
 // The import of job, in its thread: a job system of its own cooks on the
@@ -296,21 +296,40 @@ import_run :: proc(job:^Import_Job) {
     defer if threaded {jobs.system_destroy(&js)}
     if threaded {job.options.worker={system=&js,worker=jobs.OWNER}}
     defer job.options.worker={}
-    if job.profiled && !importer.profile_begin(&job.profile,&job.options,job.allocator) {job.profiled=false}
-    error:importer.Error
-    if job.whole.run!=nil {
-        // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-        report,scene,run_error:=job.whole.run(job.state,job.source,job.options,job.allocator)
-        job.report=report
-        job.scene,error=scene,run_error
-    } else {
-        report,import_error:=sources.import_source(job.source,job.options,job.formats,allocator=job.allocator)
-        job.report=report
-        error=import_error
+    if job.profiled {
+        timed:=importer.Import_Options{worker=job.options.worker}
+        if importer.profile_begin(&job.profile,&timed,job.allocator) {job.options.worker=timed.worker} else {job.profiled=false}
     }
+    added:sources.Library_Report
+    error:importer.Error
+    if job.manifest!={} {
+        added=sources.project_add(job.root,job.manifest,job.folder,job.assets,job.options,job.allocator)
+        import_added_report(job)
+    } else {
+        settings:=&job.settings if job.settled else nil
+        job.report,added,error=sources.project_ingest(job.root,job.source,job.folder,job.options,settings,job.allocator)
+    }
+    defer sources.library_report_destroy(&added)
+    if error.code==.None && len(added.failures)+len(added.missing)>0 {
+        error={.Write,strings.join(len(added.failures)>0?added.failures[:]:added.missing[:],"; ",context.temp_allocator)}
+    }
+    for warning in added.warnings {append(&job.report.warnings,strings.clone(warning,job.allocator))}
     if error.code!=.None {job.error={error.code,strings.clone(error.message,job.allocator)}}
     job.seconds=time.duration_seconds(time.tick_since(job.started))
     intrinsics.atomic_store(&job.done,true)
+}
+
+// What the add of a package gives: its assets the project uses.
+@(private)
+import_added_report :: proc(job:^Import_Job) {
+    importer.report_init(&job.report,job.allocator)
+    p,error:=asset.package_get(&job.store,job.manifest,context.temp_allocator)
+    if error!=.None {return}
+    job.report.package_id,job.report.manifest=p.id,job.manifest
+    for &a in p.assets {
+        if len(job.assets)>0 && !slice.contains(job.assets,a.id) {continue}
+        append(&job.report.assets,importer.Written{id=a.id,kind=a.kind})
+    }
 }
 
 @(private)
@@ -318,15 +337,19 @@ import_job_free :: proc(job:^Import_Job) {
     allocator:=job.allocator
     if job.thread!=nil {thread.destroy(job.thread)}
     importer.report_destroy(&job.report)
-    delete(job.source,allocator);delete(job.scene,allocator)
-    delete(job.options.root,allocator)
-    if job.store.root!="" {store.close(&job.store)}
+    delete(job.source,allocator)
+    delete(job.root,allocator);delete(job.prefix,allocator);delete(job.folder,allocator)
+    delete(job.assets,allocator)
     for provider in job.plugin_formats {
         if provider.prepare!=nil && provider.release!=nil {provider.release(provider.format.data,allocator)}
     }
     delete(job.plugin_formats,allocator)
-    delete(job.formats,allocator)
-    if job.whole.release!=nil {job.whole.release(job.state,allocator)}
+    delete(job.imports.formats,allocator)
+    for source,i in job.wholes {
+        if source.prepare!=nil && source.release!=nil {source.release(job.imports.wholes[i].state,allocator)}
+    }
+    delete(job.wholes,allocator)
+    delete(job.imports.wholes,allocator)
     delete(job.error.message,allocator)
     if job.profiled {base.profile_destroy(&job.profile)}
     free(job,allocator)
@@ -351,25 +374,20 @@ import_poll :: proc(s:^Session) {
         status.seconds=time.duration_seconds(time.tick_since(job.started))
         if job.profiled {import_zones_take(s,profile)}
     }
+    a:=s.app.assets
+    // What its package lists is listed again, also after a failure that pinned it.
+    if a!=nil {
+        registry_zone:=base.profile_begin(profile,jobs.OWNER,"editor.registry")
+        library_relist(s,{job.root,job.prefix})
+        base.profile_end(registry_zone)
+    }
     if job.error.code!=.None {
         import_say(s,"%s: %s",name,job.error.message)
         base.text_set(status.message[:],string(s.importer.message[:s.importer.message_length]))
         return
     }
-    a:=s.app.assets
     report:=&job.report
     if a!=nil {
-        registry_zone:=base.profile_begin(profile,jobs.OWNER,"editor.registry")
-        // The registry looks again at the files it wrote, and what was loaded from the ones it replaced is read again.
-        paths:=make([dynamic]string,0,len(report.assets)+1,context.temp_allocator)
-        written:=true
-        for entry in report.assets {
-            path,inside:=asset.registry_relative(&a.registry,entry.path)
-            if !inside {written=false;break}
-            append(&paths,path)
-        }
-        if written {host.assets_refresh(a,paths[:])} else {host.assets_scan(a)}
-        base.profile_end(registry_zone)
         materials_zone:=base.profile_begin(profile,jobs.OWNER,"editor.materials")
         for entry in report.assets {
             if entry.kind==asset.KIND_MATERIAL {material_rebase(s,entry.id)}
@@ -385,62 +403,30 @@ import_poll :: proc(s:^Session) {
         base.profile_end(programs_zone)
         s.importer.publishing=time.tick_now()
     }
-    s.content.revision+=1
+    if s.content!=nil {s.content.revision+=1}
     s.importer.imports+=1
     status.ok=true
     for warning in report.warnings {append(&s.importer.warnings,strings.clone(warning))}
+    scene:=""
     for entry in report.assets {
         path:=entry.path
         if a!=nil {
-            if relative,inside:=asset.registry_relative(&a.registry,entry.path);inside {path=relative}
+            if file,found:=asset.registry_find(&a.registry,entry.id);found {path=file.path}
         }
+        if job.claimed && entry.kind==asset.KIND_SCENE && scene=="" {scene=path}
         append(&s.importer.written,Import_Written{id=entry.id,kind=entry.kind,kept=entry.kept,path=strings.clone(path)})
     }
     switch {
-    case job.scene!="":
-        scene:=job.scene
-        if a!=nil {scene,_=asset.registry_relative(&a.registry,job.scene)}
+    case scene!="":
         base.text_set(status.scene[:],scene)
         import_say(s,"Imported %s: the scene %s and %d assets, %d warnings, in %.1f s",name,scene,len(report.assets)-1,len(report.warnings),job.seconds)
+    case job.manifest!={}:
+        import_say(s,"Added %s: %d assets",name,len(report.assets))
     case:
         import_say(s,"Imported %s: %d assets",name,len(report.assets))
     }
     base.text_set(status.message[:],string(s.importer.message[:s.importer.message_length]))
     for warning in report.warnings {log.warn(warning)}
-}
-
-// The sidecar of the import an asset is the root of (the prefab of a model,
-// the texture of an image, the sound of a sound file), and the registry files
-// of what that import keeps in the imported folder; "" for any other asset.
-// Deleting the root gives the import up: its sidecar goes with it, and with
-// the sidecar what only the import can build.
-@(private)
-import_root :: proc(s:^Session,r:^asset.Registry,id:base.Asset_Id) -> (sidecar:string,cached:[]u32) {
-    file,found:=asset.registry_find(r,id)
-    if !found || s.project_root=="" {return}
-    types:asset.Types
-    asset.types_init(&types,context.temp_allocator)
-    defer asset.types_destroy(&types)
-    // Every imported asset names the source it was imported from, relative to the root it is of.
-    full:=asset.registry_file_path(r,file.path,context.temp_allocator)
-    _,info,imported,error:=asset.import_peek(full,&types)
-    if error!=.None || !imported {return}
-    source:=base.text_get(info.source[:])
-    root,in_assets:=importer.source_root(full,context.temp_allocator)
-    if file.listed || !in_assets {root=s.project_root}
-    for mount in r.mounts {
-        if file.listed && strings.has_prefix(file.path,mount.prefix) {root=filepath.dir(mount.folder)}
-    }
-    source=project.path(root,source,allocator=context.temp_allocator)
-    text,read_error:=os.read_entire_file(strings.concatenate({source,asset.SIDECAR_EXTENSION},context.temp_allocator),context.temp_allocator)
-    if read_error!=nil {return}
-    listed,valid:=asset.sidecar_parse(string(text),context.temp_allocator)
-    if !valid || len(listed.outputs)==0 || listed.outputs[0].id!=id {return}
-    files:=make([dynamic]u32,context.temp_allocator)
-    for output in listed.outputs {
-        if at,known:=r.by_id[output.id];known && r.files[at].listed {append(&files,at)}
-    }
-    return strings.concatenate({source,asset.SIDECAR_EXTENSION},context.temp_allocator),files[:]
 }
 
 // Waits for an import that runs and lets go of what the last one wrote:
@@ -455,7 +441,8 @@ import_end :: proc(s:^Session) {
     delete(s.importer.written)
     delete(s.importer.warnings)
     delete(s.importer.zones)
-    s.importer.written,s.importer.warnings,s.importer.zones=nil,nil,nil
+    delete(s.importer.library)
+    s.importer.written,s.importer.warnings,s.importer.zones,s.importer.library=nil,nil,nil,nil
 }
 
 @(private)
@@ -505,35 +492,32 @@ import_working :: proc(s:^Session) -> bool {
 }
 
 // A format of models a plugin adds: its files import as those of the engine,
-// in the editor and in the sync of every build (import_library).
+// in the editor and in the refresh of every build (import_library).
 Import_Format_Provider :: struct {
     format:importer.Format,
     // Before a model is imported: the options of the format for it
-    // (Format.data) from the assets of the project and the library of its
-    // plugins, in allocator; nil keeps format.data.
-    prepare:proc(assets:^asset.Registry,info:^core.World_Info,allocator:mem.Allocator) -> rawptr,
+    // (Format.data), in allocator; nil keeps format.data. library: the store
+    // the packages of the root the import is for are in (asset.root_packages
+    // of root lists them), info: the types of its game.
+    prepare:proc(library:^store.Store,root:string,info:^core.World_Info,allocator:mem.Allocator) -> rawptr,
     release:proc(data:rawptr,allocator:mem.Allocator), // of what prepare gave, once the import ended
 }
 
 // A source a plugin imports whole with importer.Outputs, the one source of
 // every asset it makes (an Unreal map: a scene and the meshes, materials and
 // textures it names, the packages it reads being its inputs), in the editor
-// and in the sync of every build (import_library).
+// and in the refresh of every build (import_library). It is read where it is.
 Source_Importer :: struct {
     name:string, // "Unreal maps": its filter in the file dialog and in messages
     extensions:[importer.FORMAT_EXTENSIONS]string, // lower case, with the dot, "" after the last
     claims:proc(path:string,head:[]u8) -> bool,    // head: up to importer.SNIFF_BYTES from the start of the file
-    // Before the import starts: what run needs, from the assets of the
-    // project and the library of its plugins, in allocator; nil for nothing.
-    prepare:proc(assets:^asset.Registry,info:^core.World_Info,allocator:mem.Allocator) -> rawptr,
+    // Before the import starts: what run needs, in allocator; nil for
+    // nothing. library, root and info as Import_Format_Provider.prepare has them.
+    prepare:proc(library:^store.Store,root:string,info:^core.World_Info,allocator:mem.Allocator) -> rawptr,
     // In the thread of the import, with a job system of its own in
     // options.worker. scene: the scene it wrote, in allocator, "" for none.
     run:proc(state:rawptr,source:string,options:importer.Import_Options,allocator:mem.Allocator) -> (report:importer.Import_Report,scene:string,error:importer.Error),
     release:proc(state:rawptr,allocator:mem.Allocator), // of what prepare gave, once the import ended
-    // A source outside the assets: copies it with the files it reads into
-    // folder (absolute, in the assets) and gives where the source is now, in
-    // allocator. nil: the source is copied alone.
-    bring:proc(source,folder:string,allocator:mem.Allocator) -> (brought:string,error:importer.Error),
 }
 Import_Source_Provider :: struct {source:Source_Importer}
 
@@ -548,27 +532,10 @@ import_formats :: proc(s:^Session) -> []importer.Format {
     return out[:]
 }
 
-// The formats of the import of a model by job, with the options the plugins
-// prepare for it.
-@(private)
-import_formats_prepare :: proc(s:^Session,job:^Import_Job) {
-    found:[PROVIDER_CAPACITY]Import_Format_Provider
-    plugins:=found[:provided_all(s,found[:])]
-    for &provider in plugins {
-        if provider.prepare!=nil {provider.format.data=provider.prepare(&s.app.assets.registry,s.info,job.allocator)}
-    }
-    formats:=make([dynamic]importer.Format,0,len(sources.FORMATS)+len(plugins),job.allocator)
-    append(&formats,..sources.FORMATS[:])
-    for provider in plugins {append(&formats,provider.format)}
-    job.formats=formats[:]
-    job.plugin_formats=slice.clone(plugins,job.allocator)
-}
-
 // What import_library holds until its release.
 @(private="file")
 Import_Library_Held :: struct {
     library:host.Project_Library,
-    registry:asset.Registry,
     providers:[]Import_Format_Provider,
     formats:[]importer.Format,
     importers:[]Source_Importer,
@@ -577,10 +544,10 @@ Import_Library_Held :: struct {
 }
 
 // The formats of models and the importers of whole sources the plugins of
-// the project at root add, prepared for its assets, and the types of its
+// the project at root add, prepared with the store s, and the types of its
 // game, from the library of its editor (sources.Library): what the import
-// program of the engine syncs and imports its sources with.
-import_library :: proc(root:string,allocator:mem.Allocator) -> sources.Library_Imports {
+// program of the engine refreshes and imports its sources with.
+import_library :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> sources.Library_Imports {
     path:=project.project_library(root,"editor",context.temp_allocator)
     if !os.is_file(path) {return {problem="the project has no built editor library, where the importers of its plugins and the types of its game are: mirai build editor builds it"}}
     held:=new(Import_Library_Held,allocator)
@@ -589,16 +556,12 @@ import_library :: proc(root:string,allocator:mem.Allocator) -> sources.Library_I
     library,error:=host.project_library_load(path,0)
     if error!=.None {return {problem=host.library_error_text(error,path)}}
     held.library=library
-    // The type of sources.Library names no store: the packages are the machine's.
-    packages,_:=asset.root_packages(root,"",context.temp_allocator)
-    asset.registry_init(&held.registry,project.folder_path(root,.Assets,context.temp_allocator),"",allocator,packages.listed)
-    asset.registry_scan(&held.registry)
     found:[PROVIDER_CAPACITY]Import_Format_Provider
     held.providers=slice.clone(found[:provided_in(&held.library.info,found[:])],allocator)
     held.formats=make([]importer.Format,len(held.providers),allocator)
     for provider,i in held.providers {
         held.formats[i]=provider.format
-        if provider.prepare!=nil {held.formats[i].data=provider.prepare(&held.registry,&held.library.info,allocator)}
+        if provider.prepare!=nil {held.formats[i].data=provider.prepare(s,root,&held.library.info,allocator)}
     }
     claimed:[PROVIDER_CAPACITY]Import_Source_Provider
     plugins:[PROVIDER_CAPACITY]string
@@ -609,7 +572,7 @@ import_library :: proc(root:string,allocator:mem.Allocator) -> sources.Library_I
     for provider,i in claimed[:count] {
         held.importers[i]=provider.source
         held.wholes[i]={claims=provider.source.claims,run=provider.source.run,code=plugin_code(root,engine,plugins[i])}
-        if provider.source.prepare!=nil {held.wholes[i].state=provider.source.prepare(&held.registry,&held.library.info,allocator)}
+        if provider.source.prepare!=nil {held.wholes[i].state=provider.source.prepare(s,root,&held.library.info,allocator)}
     }
     return {formats=held.formats,wholes=held.wholes,world=&held.library.info,state=held,release=proc(state:rawptr) {
         held:=(^Import_Library_Held)(state)
@@ -619,7 +582,6 @@ import_library :: proc(root:string,allocator:mem.Allocator) -> sources.Library_I
         for source,i in held.importers {
             if source.prepare!=nil && source.release!=nil {source.release(held.wholes[i].state,held.allocator)}
         }
-        asset.registry_destroy(&held.registry)
         host.project_library_unload(&held.library)
     }}
 }

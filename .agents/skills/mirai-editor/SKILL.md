@@ -159,6 +159,10 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   are off, and the project library does not swap while a plugin's handler is on the stack.
 - Asset folders are thematic, never by type (the browser filters by type): what the editor
   imports or creates goes where the user is, and it creates no folder named after a type.
+- The editor imports through the library and the store of its session
+  ([import](references/panels.md#import)): a source is read where it is and never copied into a
+  project, and importing, deleting or moving the root of a package changes only the project's
+  `packages.mirai` and its documents, never a blob of the store nor a source outside the project.
 - State located according to [the session](references/editor.md#the-session). `Api` keeps only a
   pointer because the server must stay where it was born.
 - A procedure takes the storage it reads and writes (`^Ai`, the chat store, `^Git`, `^Edits`),

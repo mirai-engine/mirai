@@ -45,10 +45,10 @@ import "mirai:store"
 // What the library of the editor of the project at root gives its imports:
 // the formats of models and the importers of whole sources its plugins add,
 // with what they read prepared for its assets, and the types of its game,
-// which the prefab of a model is written in; release(state) lets them go.
-// problem: why there are none. Only a program that links the editor reads it
-// (editor.import_library).
-Library :: #type proc(root:string,allocator:mem.Allocator) -> Library_Imports
+// which the prefab of a model is written in, with the packages of root listed
+// from the store s; release(state) lets them go. problem: why there are none.
+// Only a program that links the editor reads it (editor.import_library).
+Library :: #type proc(root:string,s:^store.Store,allocator:mem.Allocator) -> Library_Imports
 Library_Imports :: struct {
     formats:[]importer.Format,
     wholes:[]Whole_Source,
@@ -73,6 +73,9 @@ Library_Options :: struct {
     // (plugins) and its game's types hold prefabs. "": the formats of the engine alone.
     root:string,
     plugins:Library, // nil: no formats of plugins, and no prefabs of models
+    // What the plugins give, already prepared by the caller, which releases
+    // it (the editor, from its session): taken in place of plugins.
+    imports:^Library_Imports,
     worker:jobs.Worker_Ref,
     progress:io.Writer, // where each source imported is said as it goes; nil: nowhere
 }
@@ -227,17 +230,18 @@ project_pin :: proc(root:string,s:^store.Store,entry:asset.Project_Package) -> a
 }
 
 // Removes the package id from the packages.mirai of the project at root, and
-// the file of its manifest; .None also when it does not pin it.
-project_unpin :: proc(root:string,id:base.Asset_Id) -> asset.Error {
-    list,_,error:=asset.packages_load(root,context.temp_allocator)
-    if error!=.None {return error}
+// the file of its manifest; what the store keeps of it stays. False with
+// nothing to remove.
+project_unpin :: proc(root:string,id:base.Asset_Id) -> (removed:bool,error:asset.Error) {
+    list,_:=asset.packages_load(root,context.temp_allocator) or_return
     for &other,at in list.packages {
         if other.id!=id {continue}
         ordered_remove(&list.packages,at)
         asset.packages_save(root,&list) or_return
+        removed=true
         break
     }
-    return asset.package_file_remove(root,id)
+    return removed,asset.package_file_remove(root,id)
 }
 
 // What ingest, project_add and project_refresh share for one call.
@@ -273,8 +277,13 @@ library_end :: proc(l:^Library_State) {
 plugins_read :: proc(l:^Library_State) {
     if l.plugins_read {return}
     l.plugins_read=true
-    if l.options.plugins==nil || l.options.root=="" {return}
-    l.plugins=l.options.plugins(l.options.root,l.temp)
+    switch {
+    case l.options.imports!=nil:
+        l.plugins=l.options.imports^
+        l.plugins.release=nil
+    case l.options.plugins==nil || l.options.root=="": return
+    case: l.plugins=l.options.plugins(l.options.root,l.options.store,l.temp)
+    }
     all:=make([dynamic]importer.Format,0,len(FORMATS)+len(l.plugins.formats),l.temp)
     append(&all,..FORMATS[:])
     append(&all,..l.plugins.formats)
