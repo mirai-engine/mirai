@@ -36,10 +36,7 @@ Mesh_Renderer :: struct {
     mesh:base.Asset_Id,
     shape:Shape,
     materials:[MATERIAL_SLOTS]base.Asset_Id,
-    shadows:bool, // it casts shadows; off, light goes through it and it is still seen, by the eye and by rays
 }
-
-MESH_RENDERER_DEFAULT :: Mesh_Renderer{shape=.Cube,shadows=true}
 
 // Not drawn, nor what hangs from it.
 @(component,description="Hides this entity and its descendants from rendering.")
@@ -1701,7 +1698,7 @@ mesh_instance :: proc(a:^host.Assets,static:Mesh_Renderer,transform:mm.Mat4,valu
     values:=values
     mesh:=static.mesh!={}?host.assets_mesh(a,static.mesh):host.assets_shape(a,static.shape)
     if mesh==nil || mesh.handle==host.ASSETS_MESH_NONE {return {},false}
-    instance=gpu.Instance_Desc{mesh=mesh.handle,transform=transform,tint=values.color.rgb,emission=values.emission,shadowless=!static.shadows}
+    instance=gpu.Instance_Desc{mesh=mesh.handle,transform=transform,tint=values.color.rgb,emission=values.emission}
     instance.material_values.fade=1-clamp(values.color.a,0,1)
     shown:=static.materials[0]
     if mesh.slot_count==0 {

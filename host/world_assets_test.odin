@@ -12,8 +12,8 @@ import mm "mirai:std/math"
 @(test_world) @(private) Marks_World :: struct {using world:Test_World,models:core.Table(Marks_Model),held:Marks_Held}
 
 // What a World names stays loaded and what it stops naming unloads at the
-// next mark, named in the changes of structure: a component, a dynamic array
-// of a storage; once the World goes, all of it.
+// next mark: a component, a dynamic array of a storage; once the World goes,
+// all of it.
 @(test)
 what_no_world_names_unloads_at_the_next_mark :: proc(t:^testing.T) {
     root:=base.test_folder(t,"marks")
@@ -45,12 +45,9 @@ what_no_world_names_unloads_at_the_next_mark :: proc(t:^testing.T) {
     core.table_settle(&w.models,&w.entities)
     append(&w.held.list,meshes[1])
 
-    before:=assets.structure
     app.seconds=1
     testing.expect_value(t,app_assets_mark(&app),1)
     testing.expect(t,assets_loaded(&assets,meshes[0]) && assets_loaded(&assets,meshes[1]) && !assets_loaded(&assets,meshes[2]))
-    changes,local:=assets_structure_changes(&assets,before)
-    testing.expect(t,local && len(changes)==1 && changes[0].id==meshes[2],"the unload names what it unloaded, which a consumer holding other assets passes over")
     // Too soon, and nothing changed: it does not mark again.
     app.seconds+=0.1
     testing.expect_value(t,app_assets_mark(&app),0)

@@ -36,11 +36,6 @@ struct Shadow_Vertex {
     [[vk::location(2)]] nointerpolation float reach : REACH;
     // From the point towards the light, as a shadow ray goes.
     [[vk::location(3)]] float3 toward : TOWARD;
-    // What a masked material without a program reads where it is: its uvs,
-    // and its row and the values of the instance (shadow_map.frag).
-    [[vk::location(4)]] float2 uv : UV0;
-    [[vk::location(5)]] float2 uv1 : UV1;
-    [[vk::location(6)]] nointerpolation uint2 material : MATERIAL;
 #endif
 };
 
@@ -69,9 +64,6 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     output.bary = float2(0.0);
     output.reach = 0.0;
     output.toward = float3(0.0, 0.0, 1.0);
-    output.uv = float2(0.0);
-    output.uv1 = float2(0.0);
-    output.material = uint2(0u);
     uint draw = params.glass != 0u ? SHADOW_DRAW_GLASS : SHADOW_DRAW_TESTED;
 #else
     uint draw = SHADOW_DRAW_OPAQUE;
@@ -82,12 +74,9 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     Mesh mesh = meshes[instance_mesh(inst)];
     Cluster c = mesh_cluster(mesh, entry.y);
     if (vertex_id >= cluster_triangle_count(c) * 3u) return output;
-    uint vertex = cluster_corner(mesh, c, vertex_id);
-    Mesh_Point v = cluster_point_at(mesh, c, vertex, mesh.posed_word);
+    Mesh_Point v = cluster_point_at(mesh, c, cluster_corner(mesh, c, vertex_id), mesh.posed_word);
     Shadow_Job job = shadow_job(shadow_data, entry.z);
     Shadow_Map m = shadow_map_at(shadow_data, params.rows, job.map);
-    // Its islands on their way to the next level as the map's own cut sees them.
-    v.position += island_offset(mesh, c, vertex, cluster_along(shadow_map_detail(m), inst, instance_scale(inst), mesh, c, frame.cut.x));
     float3 world = transform_point(inst.world, v.position);
     float3 local = shadow_map_local(m, world);
     float4 clip = shadow_map_clip(m, local);
@@ -109,9 +98,6 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     output.bary = float2(at == 1u ? 1.0 : 0.0, at == 2u ? 1.0 : 0.0);
     output.reach = shadow_map_texel(m, local.z) / SHADOW_TESTED_FOOTPRINT;
     output.toward = shadow_map_orthographic(m) ? -m.forward : m.origin - world;
-    output.uv = v.uv;
-    output.uv1 = v.uv1;
-    output.material = uint2(material_of(inst, mesh_primitive_material(mesh, output.place.y)), inst.material_values);
 #endif
     return output;
 #endif

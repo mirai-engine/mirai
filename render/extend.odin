@@ -140,9 +140,9 @@ frame_gbuffer_mesh :: proc(r: ^Renderer, mesh: Mesh_Handle, material: Material_H
 	s := &r.scene
 	if int(mesh) >= len(s.meshes) || r.gbuffer_asked == {.Reflectance, .Layers} {return}
 	row := u32(material) if material != 0 && int(material) < len(s.materials) else GPU_NONE
-	a := instance_alpha(s, s.meshes[mesh], row, {})
-	if a.reflectance {r.gbuffer_asked += {.Reflectance}}
-	if a.layered {r.gbuffer_asked += {.Layers}}
+	_, _, _, reflectance, layered, _, _ := instance_alpha(s, s.meshes[mesh], row, {})
+	if reflectance {r.gbuffer_asked += {.Reflectance}}
+	if layered {r.gbuffer_asked += {.Layers}}
 }
 
 // Tells the frame that an extension draws every cluster of level 0 of a mesh
@@ -387,7 +387,7 @@ stage_pipelines_destroy :: proc(r: ^Renderer) {
 // do not know nested views.
 pass_nested_add :: proc(s: ^Stage_Pass, nested: Nested_View) -> u32 {
 	p := s.pass
-	if p.view == nil || !p.r.frame_layout.nested || p.nested_count >= NESTED_VIEW_CAPACITY || p.r.pipelines[.Resolve_Nested] == 0 {return 0}
+	if p.view == nil || !p.r.frame_layout.nested || p.nested_count >= NESTED_VIEW_CAPACITY || p.r.pipelines[.Gbuffer_Nested] == 0 {return 0}
 	nested := nested
 	nested.to_world = origin_transform(nested.to_world, p.r.origin)
 	nested.previous = origin_transform(nested.previous, p.r.origin)
@@ -469,34 +469,6 @@ pass_gbuffer_begin :: proc(s: ^Stage_Pass, name := "extension surfaces") {
 	rhi.cmd_begin_render_pass(p.cmd, &pass)
 	// The fragment of the engine reports the levels it samples, also with no scene drawn before.
 	textures_feedback_bind(p.r, p.cmd)
-}
-
-// In the Gbuffer stage, binds at SLOT_PASS0 + slot, to read with all its
-// levels, a depth pyramid of the view (include/pyramid.slang tests a box
-// against it): of each texel, the farthest linear depth drawn over it. That of
-// this frame holds what the scene drew and what pass_depth_pyramid_build took
-// since; previous, that of the frame before, what the view drew then. levels:
-// of the pyramid. False, with an empty texture bound there, in another stage
-// and while the view has none: it drew nothing, or was cut or resized.
-pass_depth_pyramid :: proc(s: ^Stage_Pass, slot: u32, previous := false) -> (levels: u32, ok: bool) {
-	if slot > SLOT_PASS9 - SLOT_PASS0 {return}
-	p := s.pass
-	ok = s.stage == .Gbuffer && (p.pyramid_previous if previous else p.t.hiz_valid)
-	rhi.cmd_bind_texture(p.cmd, SLOT_PASS0 + slot, p.t.hiz[p.previous if previous else p.current] if ok else p.r.dummy_texture)
-	return p.t.hiz_levels if ok else 0, ok
-}
-
-// In the Gbuffer stage, outside a pass of surfaces, builds the depth pyramid
-// of this frame again from the depth of the view: it then holds what the
-// passes drew since, for those after it and the frame after. False in
-// another stage, and in a view that does not draw the scene.
-pass_depth_pyramid_build :: proc(s: ^Stage_Pass) -> bool {
-	p := s.pass
-	if s.stage != .Gbuffer || !p.draw {return false}
-	rhi.cmd_timestamp(p.cmd, "depth pyramid")
-	build_depth_pyramid(p, p.t.hiz[p.current])
-	p.t.hiz_valid = true
-	return true
 }
 
 // The pipeline of the Gbuffer stage that draws with <shader>.vert of the

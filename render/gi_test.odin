@@ -166,9 +166,7 @@ a_new_light_scale_keeps_the_indirect_light :: proc(t: ^testing.T) {
 // The share of the light of the sun and of each light the probes gather
 // multiplies what they add to the indirect light, bounces and all, and leaves
 // what the sky and the glow of the lamp add; the indirect light of the world
-// (scene_set_indirect) multiplies all of it from the frame it changes. Lights
-// of no share, with shadows and without, take nothing from those that bounce:
-// no room in the few the probes trace rays to, and no light.
+// (scene_set_indirect) multiplies all of it from the frame it changes.
 @(test)
 the_shares_of_the_lights_and_the_world_scale_the_indirect_light :: proc(t: ^testing.T) {
 	f: Gi_Fixture
@@ -176,18 +174,11 @@ the_shares_of_the_lights_and_the_world_scale_the_indirect_light :: proc(t: ^test
 	if !gi_indirect_fixture(t, &f) {return}
 	r := f.r
 	// Each share in a world shown anew, which gathers its light at once.
-	settled :: proc(t: ^testing.T, f: ^Gi_Fixture, share: f32, sun_share: Maybe(f32) = nil, unbounced := false) -> f64 {
+	settled :: proc(t: ^testing.T, f: ^Gi_Fixture, share: f32) -> f64 {
 		gi_restart(f.r)
 		gi_setup(f, .Lamp)
 		for &light in f.lights {light.indirect = share}
-		f.sun.indirect = sun_share.? or_else share
-		// Around the lamp, as bright: half with shadows, half without.
-		if unbounced {
-			for i in 0 ..< 24 {
-				angle := f32(i) / 12 * math.PI
-				append(&f.lights, Light_Desc{position = {2.2 + 0.6 * math.cos(angle), 1.6 if i < 12 else 1.1, -2.2 + 0.6 * math.sin(angle)}, color = {0.6, 0.8, 1}, intensity = 9000, range = 12, radius = 0.05, scattering = 1, shadowless = i >= 12})
-			}
-		}
+		f.sun.indirect = share
 		scene_lights_given(f.r, f.lights[:], f.sun, f.environment)
 		return gi_mean_after(t, f, 120)
 	}
@@ -197,9 +188,6 @@ the_shares_of_the_lights_and_the_world_scale_the_indirect_light :: proc(t: ^test
 	scene_set_indirect(r, 0.5)
 	half := gi_mean_after(t, &f, 1)
 	testing.expectf(t, abs(half - 0.5 * twice) < 0.02 * twice, "half the indirect light of the world shows %.4g nits in its first frame, not half of %.4g", half, twice)
-	scene_set_indirect(r, 1)
-	lamp, beside := settled(t, &f, 1, 0), settled(t, &f, 1, 0, true)
-	testing.expectf(t, abs(beside - lamp) < 0.01 * (lamp - none), "lights of no share around the lamp take what it adds to the indirect light from %.4g to %.4g nits", lamp - none, beside - none)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 

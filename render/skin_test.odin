@@ -154,36 +154,57 @@ gpu_skin_benchmark_reports_skinning_and_refit_time :: proc(t:^testing.T) {
         settings:=DEFAULT_SETTINGS;settings.gi_enabled,settings.taa=false,false
         if !testing.expect(t,renderer_init(&r,{device=device,width=640,height=360,settings=settings}),r.error) {return}
         defer renderer_destroy(&r)
-        vertices,indices,influences:=skin_test_grid(128)
+        rhi.timestamps_want(device,true)
+        vertices,indices,influences:=skin_test_grid(48)
         defer delete(vertices);defer delete(indices);defer delete(influences)
         source,origins,_:=test_mesh_add(&r,vertices,indices)
-        skins:[8]Mesh_Handle
-        instances:[8]Instance_Desc
-        for &skin,i in skins {
+        // A crowd around the eye: near ones in view, the others from 40 to
+        // 300 metres, or hidden; and one alone in view.
+        COUNT :: 64
+        skins:[COUNT]Mesh_Handle
+        for &skin in skins {
             created:bool;skin,created=skin_create(&r,source,test_by_cluster(origins,influences),2)
             if !testing.expect(t,created,r.error) {return}
-            transform:=Mat4(1);transform[0,3]=f32(i%4)*2.5-4;transform[2,3]=f32(i/4)*2.5
-            instances[i]={object_id=u64(i+1),mesh=skin,transform=transform,tint={1,1,1}}
         }
-        scene_given(&r,instances[:],nil,{direction={0.5,1,0.5},color={1,1,1},illuminance=1 * math.PI,enabled=true,indirect=1,scattering=1},{})
-        camera:=Camera{position={0,6,10},forward={0,-6,-10},up={0,1,0},fov_y=50,near=0.1,far=100,exposure=UNIT_EXPOSURE}
-        for hardware in ([2]bool{false,true}) {
-            settings.trace_mode=.Hardware if hardware else .Software
-            if !renderer_apply_settings(&r,settings) {continue}
-            if hardware && !r.hardware_rt {continue}
-            elapsed,gpu_time:f64
-            for frame in 0..<220 {
-                start:=time.tick_now()
-                palette:=[2]Mat4{Mat4(1),Mat4(1)}
-                palette[1][1,3]=0.5*math.sin(f32(frame)*0.02)
-                for skin in skins {skin_update(&r,skin,palette[:])}
-                if !testing.expect(t,renderer_frame(&r,{camera=camera}),r.error) {return}
-                if frame>=100 {
-                    elapsed+=time.duration_milliseconds(time.tick_since(start))
-                    for timing in r.stats.timings {if timing.name=="skinning" {gpu_time+=f64(timing.ms)}}
+        Case :: struct {name:string,count,near:int,hidden:bool}
+        cases:=[]Case{{"one in view",1,1,false},{"crowd, 60 far",COUNT,4,false},{"crowd, 60 hidden",COUNT,4,true}}
+        sun:=Sun_Desc{direction={0.5,1,0.5},color={1,1,1},illuminance=1 * math.PI,enabled=true,indirect=1,scattering=1}
+        camera:=Camera{position={0,6,10},forward={0,-6,-10},up={0,1,0},fov_y=50,near=0.1,far=1000,exposure=UNIT_EXPOSURE}
+        for c in cases {
+            instances:[COUNT]Instance_Desc
+            for i in 0..<c.count {
+                transform:=Mat4(1)
+                if i<c.near {transform[0,3]=f32(i%2)*2.5-1.25;transform[2,3]=f32(i/2)*2.5} else {
+                    angle,distance:=f32(i)*2.4,40+f32(i-c.near)*260/f32(COUNT-c.near)
+                    transform[0,3]=distance*math.cos(angle);transform[2,3]=distance*math.sin(angle)
                 }
+                instances[i]={object_id=u64(i+1),mesh=skins[i],transform=transform,tint={1,1,1},hidden=c.hidden && i>=c.near}
             }
-            fmt.printfln("skin benchmark %s native=%v: %d vertices, %d triangles, 8 instances: GPU skin+BLAS %.3f ms; CPU wall frame %.3f ms",rhi.device_info(device).name,hardware,len(vertices)*8,len(indices)/3*8,gpu_time/120,elapsed/120)
+            scene_given(&r,instances[:c.count],nil,sun,{})
+            for hardware in ([2]bool{false,true}) {
+                settings.trace_mode=.Hardware if hardware else .Software
+                if !renderer_apply_settings(&r,settings) {continue}
+                if hardware && !r.hardware_rt {continue}
+                elapsed,skinning,refit:f64
+                for frame in 0..<220 {
+                    start:=time.tick_now()
+                    for skin,i in skins[:c.count] {
+                        // A step a second, as a walk swings a limb: 3 cm a frame at most.
+                        palette:=[2]Mat4{Mat4(1),Mat4(1)}
+                        palette[1][1,3]=0.3*math.sin((f32(frame)/60+f32(i)*0.37)*2*math.PI)
+                        skin_update(&r,skin,palette[:])
+                    }
+                    if !testing.expect(t,renderer_frame(&r,{camera=camera}),r.error) {return}
+                    if frame>=100 {
+                        elapsed+=time.duration_milliseconds(time.tick_since(start))
+                        for timing in r.stats.timings {
+                            if timing.name=="skinning" {skinning+=f64(timing.ms)}
+                            if timing.name=="ray refit" {refit+=f64(timing.ms)}
+                        }
+                    }
+                }
+                fmt.printfln("skin benchmark %s native=%v %s: %d triangles each: GPU skinning %.3f ms, ray refit %.3f ms; CPU wall frame %.3f ms",rhi.device_info(device).name,hardware,c.name,len(indices)/3,skinning/120,refit/120,elapsed/120)
+            }
         }
     }
 }
@@ -517,4 +538,92 @@ gpu_a_program_moves_a_skin_after_its_skin_now_and_before :: proc(t:^testing.T) {
         testing.expectf(t,linalg.length(before[i].position-now[i].position)<1e-5,"vertex %d at rest draws no motion",i)
     }
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
+}
+
+// A pose no ray can meet takes no refit, nor one whose joints moved it less
+// than rays tell apart from every eye; the first frame that can tell traces
+// its pose as a mesh with that shape. One near an eye is refit every frame.
+@(test)
+gpu_skin_refits_only_what_rays_can_tell :: proc(t:^testing.T) {
+    Case :: struct {name:string,hidden,far,both:bool,refits:bool}
+    cases:=[]Case{
+        {"in view",false,false,false,true},
+        {"hidden from its first pose, growing",true,false,false,false},
+        {"a small step far from every view",false,true,false,false},
+        {"a small step far from one view and near another",false,true,true,true},
+    }
+    for hardware in ([2]bool{false,true}) {
+        if !hardware && !SOFTWARE_TRACER {continue}
+        f:Fixture
+        if !skin_fixture(t,&f,hardware) {return}
+        defer fixture_destroy(&f)
+        r,device:=f.renderer,f.device
+        if hardware && !r.hardware_rt {fmt.println("skin native RT skipped: device has no ray queries");continue}
+        vertices,indices,given:=skin_test_geometry()
+        source,origins,added:=test_mesh_add(r,vertices[:],indices[:])
+        if !testing.expect(t,added) {return}
+        rest:=test_rest(r,source)
+        influences:=test_by_cluster(origins,given[:])
+        ground:=[4]Mesh_Vertex{
+            {position={-5,0,-5},normal={0,1,0},color={1,1,1}},
+            {position={5,0,-5},normal={0,1,0},color={1,1,1}},
+            {position={-5,0,5},normal={0,1,0},color={1,1,1}},
+            {position={5,0,5},normal={0,1,0},color={1,1,1}},
+        }
+        floor,_:=mesh_add(r,ground[:],indices[:])
+        sun:=Sun_Desc{direction={-0.5,1,0.2},color={1,1,1},illuminance=2 * math.PI,enabled=true,indirect=1,scattering=1}
+        near:=Camera{position={3,4,6},forward={-3,-3.2,-6},up={0,1,0},fov_y=50,near=0.05,far=1000,exposure=UNIT_EXPOSURE}
+        far:=near
+        far.position-=linalg.normalize(near.forward)*150
+        for c in cases {
+            skin,created:=skin_create(r,source,influences,2)
+            if !testing.expect(t,created,r.error) {return}
+            descs:=[2]Instance_Desc{
+                {object_id=1,mesh=floor,transform=Mat4(1),tint={0.7,0.7,0.7}},
+                {object_id=2,mesh=skin,transform=Mat4(1),tint={0.8,0.2,0.1},hidden=c.hidden},
+            }
+            scene_given(r,descs[:],nil,sun,Environment{})
+            frame:=Frame_Desc{camera=far if c.far else near}
+            views:=[2]Frame_View{{camera=far,rect={0,0,80,120}},{camera=near,rect={80,0,80,120}}}
+            if c.both {frame.views=views[:]}
+            palette:=[2]Mat4{Mat4(1),Mat4(1)}
+            for step in 1..=3 {
+                // 20 cm up or down from rest, less than rays tell 150 metres
+                // away; hidden, it grows too.
+                palette[1][1,3]=0.2 if step%2==1 else -0.2
+                if c.hidden {palette[1][0,3]=0.3*f32(step);palette[1][0,0]=1+0.3*f32(step)}
+                testing.expect(t,skin_update(r,skin,palette[:]))
+                refits:=r.scene.meshes[skin].skin.refits
+                if !testing.expect(t,fixture_frame(&f,frame),r.error) {return}
+                refit:bool
+                if hardware {refit=r.scene.meshes[skin].skin.refits!=refits} else {
+                    rhi.device_wait_idle(device)
+                    nodes,triangles,read:=test_tree(device,r,skin)
+                    testing.expect(t,read)
+                    distance,primitive:=bvh_ray_triangles(nodes,triangles,test_centroid(rest,origins,influences,palette[:])+Vec3{0,5,0},{0,-1,0},10)
+                    refit=primitive>=0 && abs(distance-5)<1e-4
+                }
+                testing.expectf(t,refit==c.refits,"%s, hardware %v, step %d: refit %v",c.name,hardware,step,refit)
+            }
+            if c.refits {continue}
+            // Back where rays tell it: shown, or near the eye.
+            descs[1].hidden=false
+            testing.expect(t,scene_update(r,1,descs[1:]))
+            if !testing.expect(t,fixture_frame(&f,{camera=near}),r.error) {return}
+            image,_,_,captured:=golden_capture(r);defer delete(image)
+            if !testing.expect(t,captured,r.error) {return}
+            posed:[4]Mesh_Vertex
+            for v,i in rest {posed[origins[i]]=skin_test_sample(v,influences[i],palette[:])}
+            mesh,_:=mesh_add(r,posed[:],indices[:])
+            descs[1].mesh=mesh
+            testing.expect(t,scene_update(r,1,descs[1:]))
+            for _ in 0..<3 {testing.expect(t,fixture_frame(&f,{camera=near}),r.error)}
+            expected,_,_,captured_expected:=golden_capture(r);defer delete(expected)
+            if !testing.expect(t,captured_expected,r.error) {return}
+            difference:=0
+            for value,i in image {if abs(int(value)-int(expected[i]))>2 {difference+=1}}
+            testing.expectf(t,difference<12,"%s, hardware %v: the first frame back differs from the pose in %d channels",c.name,hardware,difference)
+        }
+        testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
+    }
 }

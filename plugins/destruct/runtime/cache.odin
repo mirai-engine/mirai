@@ -96,7 +96,6 @@ Entry :: struct {
     prepared:^Prepared,
     visuals:[dynamic]Visual,
     materials:[render.MATERIAL_SLOTS]base.Asset_Id, // of the Mesh_Renderer of the groups
-    shadows:bool,                                   // of the Mesh_Renderer of the groups
     generated:[asset.MESH_MAX_SLOTS]base.Asset_Id,  // of the meshes generated for them
     slots:u32,                                      // material slots of those meshes; the last is the interior
     event:physics.Break_Event,                       // the strongest applied in event_tick: what Fracture tells

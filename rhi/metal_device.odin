@@ -250,7 +250,6 @@ Device :: struct {
 	failure_text:   string,
 	failure_buffer: [FAILURE_TEXT_BYTES]u8,
 	lose_asked:     bool, // device_lose
-	lose_unreported: bool, // device_lose without reported: reported as any loss
 	lose_provoked:  bool,
 	refuse:         Pipeline_Refusal,
 	presenter:      Presenter,

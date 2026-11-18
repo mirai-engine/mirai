@@ -83,7 +83,6 @@ groupshared uint list_table[DIRECT_TABLE];
 groupshared uint list_count;
 groupshared uint list_ids[DIRECT_LIST_MAX];
 groupshared uint list_mesh[DIRECT_LIST_MAX];
-groupshared uint list_tested[DIRECT_LIST_MAX];
 groupshared float4 list_spheres[DIRECT_LIST_MAX];
 groupshared float4 list_lo[DIRECT_LIST_MAX];
 groupshared float4 list_hi[DIRECT_LIST_MAX];
@@ -104,8 +103,7 @@ void list_add(uint id) {
         Instance inst = scene_instance(id);
         float3 lo = inst.bounds_min.xyz, hi = inst.bounds_max.xyz;
         list_ids[entry] = id;
-        list_mesh[entry] = inst.meta.x;
-        list_tested[entry] = inst.tested;
+        list_mesh[entry] = inst.meta.x | ((inst.meta.w & INSTANCE_FLAG_ALPHA_TESTED) != 0u ? 0x80000000u : 0u);
         list_lo[entry] = float4(lo, 0.0);
         list_hi[entry] = float4(hi, 0.0);
         list_spheres[entry] = float4(0.5 * (lo + hi), 0.5 * length(hi - lo));
@@ -162,7 +160,8 @@ float direct_hit(float3 o, float3 w, float reach, uint2 mask) {
             hit.instance = INVALID;
             hit.primitive = INVALID;
             hit.bary = float2(0.0);
-            if (trace_blas(list_mesh[i], transform_point(inverse, o), transform_vector(inverse, w), 0.0, hit, list_ids[i], true, list_tested[i], BLEND_PASSES)) return hit.t;
+            uint mesh = list_mesh[i];
+            if (trace_blas(mesh & 0x7FFFFFFFu, transform_point(inverse, o), transform_vector(inverse, w), 0.0, hit, list_ids[i], true, (mesh & 0x80000000u) != 0u, BLEND_PASSES)) return hit.t;
         }
     }
     return -1.0;
@@ -179,7 +178,7 @@ float direct_hit(float3 o, float3 w, float reach, uint2 mask) {
 float3 direct_glass(float3 o, float3 w, float reach, float3 plain) {
     if (MIRAI_DIRECT_GLASS) {
         filters_begin();
-        float3 through = trace_glass_filter(o, w, reach, true);
+        float3 through = trace_glass_filter(o, w, reach);
         filters_weigh(plain);
         return through;
     }
@@ -235,10 +234,7 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     GroupMemoryBarrierWithGroupSync();
     if (index < frame.moved.x) {
         uint moved = asuint(frame.moved_boxes[2u * index].w);
-        if (moved < frame.instance_count) {
-            Instance mover = scene_instance(moved);
-            if ((mover.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED)) == 0u && (mover.meta.x & INSTANCE_UNSHADOWED) == 0u) list_add(moved);
-        }
+        if (moved < frame.instance_count && (scene_instance(moved).meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED)) == 0u) list_add(moved);
     }
     GroupMemoryBarrierWithGroupSync();
 #endif

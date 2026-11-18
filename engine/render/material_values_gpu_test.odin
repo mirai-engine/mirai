@@ -33,7 +33,7 @@ values_of_an_entity_show_from_its_instance_without_a_row_of_their_own :: proc(t:
         // Two cubes before the camera, the others behind it.
         pose.position=i<2?[3]f32{f32(i)*2-1,0,0}:{f32(i%8)*2-8,f32(i/8)*2-8,20}
         core.add(&w.worlds,e,core.World_Transform{pose,pose})
-        core.add(&w.meshes,e,MESH_RENDERER_DEFAULT)
+        core.add(&w.meshes,e,Mesh_Renderer{shape=.Cube})
         values:=MATERIAL_VALUES_DEFAULT
         color:=i==0?[3]f32{1,0,0}:i==1?[3]f32{0,1,0}:[3]f32{f32(i)/COUNT,0.5,0.5}
         testing.expect(t,material_value(&values,"base_color",{color.r,color.g,color.b,0}) && material_value(&values,"emission",{color.r*3,color.g*3,color.b*3,0}) && material_value(&values,"roughness",f32(i+1)/COUNT))

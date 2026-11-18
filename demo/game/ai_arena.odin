@@ -665,7 +665,7 @@ arena_piece_add :: proc(c:core.Commands,piece:Arena_Piece) {
     case .Solid,.Cart:
         core.commands_add(c,e,core.Transform{piece.position,1,piece.half*2})
         core.commands_add(c,e,phys.collider_box({0.5,0.5,0.5}))
-        core.commands_add(c,e,render.Mesh_Renderer{shape=.Cube,shadows=true})
+        core.commands_add(c,e,render.Mesh_Renderer{shape=.Cube})
         core.commands_add(c,e,render.Material_Values{color=piece.color})
         if piece.kind==.Cart {
             core.commands_add(c,e,phys.RIGID_BODY_KINEMATIC)
@@ -680,7 +680,7 @@ arena_piece_add :: proc(c:core.Commands,piece:Arena_Piece) {
         slab:=core.commands_create(c)
         core.commands_add(c,slab,core.Transform{{0,0.01,0},1,piece.half*2})
         core.commands_add(c,slab,core.Parent{entity=e})
-        core.commands_add(c,slab,render.Mesh_Renderer{shape=.Cube,shadows=true})
+        core.commands_add(c,slab,render.Mesh_Renderer{shape=.Cube})
         core.commands_add(c,slab,render.Material_Values{color=piece.color})
     case .Link:
         core.commands_add(c,e,core.Transform{piece.position,1,{1,1,1}})
@@ -741,7 +741,7 @@ arena_shown :: proc(c:core.Commands,e:core.Entity,transform:core.Transform,color
     core.commands_add(c,look,transform)
     core.commands_add(c,look,name)
     core.commands_add(c,look,core.Parent{entity=e})
-    core.commands_add(c,look,render.Mesh_Renderer{shape=.Capsule,shadows=true})
+    core.commands_add(c,look,render.Mesh_Renderer{shape=.Capsule})
     core.commands_add(c,look,render.Material_Values{color=color})
 }
 
@@ -879,7 +879,7 @@ arena_agents :: proc(c:core.Commands,arena:core.Entity,kind:Arena_Kind,origin:mm
             bell:=core.commands_create(c)
             core.commands_add(c,bell,core.Transform{origin+corner,1,{1,1,1}})
             core.commands_add(c,bell,Arena_Bell{turn=i32(i),count=4,period=6,loudness=12})
-            core.commands_add(c,bell,render.Mesh_Renderer{shape=.Sphere,shadows=true})
+            core.commands_add(c,bell,render.Mesh_Renderer{shape=.Sphere})
             core.commands_add(c,bell,render.Material_Values{color={1,0.85,0.2,1}})
         }
         for i in 0..<max(count,1) {

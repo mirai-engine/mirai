@@ -17,7 +17,8 @@ The template's `assets/menu/theme.ui` is the example of tokens and styles, and i
       "program_values": [0.32, 0, 0, 0], "transition": 0.08, "width": 360, "height": 56,
       "text_x": "center", "text_y": "center",
       "hover": {"fill": "accent"},
-      "focus": {"extends": "hover", "move_x": 4}, "pressed": {"scale": 0.97},
+      "focus": {"extends": "hover", "move_x": 4},
+      "pressed": {"scale": 0.97},
       "disabled": {"fill": "#ffffff0d", "color": "#ffffff59"}},
     "dim": {"fill": "#0e0e10e6", "fill2": "#0e0e1040", "gradient": "right", "blur": 4}
   }

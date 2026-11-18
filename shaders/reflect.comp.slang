@@ -188,7 +188,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         bool filtered = detailed && !inside && (frame.flags & FRAME_FLAG_GLASS) != 0u;
         if (filtered) {
             filters_begin();
-            through = trace_glass_filter(origin, dir, path.gate >= 0.0 ? path.gate : distance, false);
+            through = trace_glass_filter(origin, dir, path.gate >= 0.0 ? path.gate : distance);
         } else {
             through = path.glass;
         }

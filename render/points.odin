@@ -16,7 +16,7 @@ import "mirai:render/abi"
 
 POINTS_START :: 1 << 16 // points the buffer holds at first; it grows to what a frame asked for
 POINTS_MAX :: 1 << 21 // the most points it holds: past them a pass does without the programs
-POINTS_PROGRAM_CAPACITY :: 1024 // bins the groups of points.comp aggregate (BINS_MAX of bins.slang), and draws of the resolve of programs
+POINTS_PROGRAM_CAPACITY :: 1024 // bins the groups of points.comp and cull_programs.comp aggregate (BINS_MAX of bins.slang)
 @(private) POINTS_HEADER :: abi.POINTS_HEADER
 @(private) POINT_WORDS :: abi.POINT_WORDS
 @(private) RECORD_WORDS :: abi.RECORD_WORDS

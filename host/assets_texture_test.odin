@@ -407,7 +407,6 @@ a_cube_loads_whole_and_a_material_does_not_sample_it :: proc(t:^testing.T) {
 // A texture a material names arrives: the material loads without reading it,
 // its row leaves it out, and once a job read its levels of side
 // render.TEXTURE_TAIL and the assets took them, the row takes the texture.
-// The material is settled once none arrives and its row went to the renderer.
 // A mesh what draws an entity asks for arrives the same way. Asked for
 // directly while it arrives, an asset loads whole in the call.
 @(test)
@@ -445,8 +444,6 @@ textures_materials_name_and_meshes_drawn_arrive_from_jobs :: proc(t:^testing.T) 
     testing.expect(t,row!=0 && assets_arriving(&a,stone) && assets_arriving(&a,bark),"the material loads, its textures arrive")
     testing.expect(t,!assets_loaded(&a,stone) && len(a.arrivals)==2)
     testing.expect_value(t,assets_material_values(&a,row).textures[.Base_Color],render.Texture_Handle(0))
-    assets_commit(&a)
-    testing.expect(t,!assets_material_settled(&a,material),"its textures arrive")
 
     // What a job of app_textures_stream reads, and the frame takes.
     prepared:Assets_Prepared
@@ -470,9 +467,6 @@ textures_materials_name_and_meshes_drawn_arrive_from_jobs :: proc(t:^testing.T) 
     testing.expect(t,assets_arrivals_settle(&a))
     testing.expect_value(t,assets_material_values(&a,row).textures[.Normal],whole.handle)
     testing.expect(t,!assets_material(&a,material).waiting)
-    testing.expect(t,!assets_material_settled(&a,material),"its row has not gone to the renderer")
-    assets_commit(&a)
-    testing.expect(t,assets_material_settled(&a,material))
 
     vertices:=[3]asset.Vertex{{position={0,0,0},normal=mm.normal_pack({0,1,0})},{position={1,0,0},normal=mm.normal_pack({0,1,0})},{position={0,0,1},normal=mm.normal_pack({0,1,0})}}
     rock,pebble:=base.Asset_Id{6,6},base.Asset_Id{5,5}

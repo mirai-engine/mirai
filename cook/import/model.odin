@@ -17,7 +17,7 @@ import mm "mirai:std/math"
 
 IMPORTER_NAME :: "mirai-import"
 // Of the writer: raise it when import_write gives other bytes for the same model.
-IMPORTER_VERSION :: 14
+IMPORTER_VERSION :: 11
 
 // What Import_Info.importer_version holds: the version of the writer in the
 // low 16 bits and the one of the format the source was read with in the high
@@ -114,7 +114,6 @@ Imported_Image :: struct {
     normal_map:bool,
     green_down:bool,     // a normal map whose green points down the image: it is turned to +Y up
     alpha_cutoff:f32,    // above 0: the base color of a masked material
-    alpha_fill:f32,      // above 0: the base color of outlines cut from a mask with this cutoff (cutout.odin)
     keep_precision:bool, // its source asks for the precision of its 16 bits or floats (textures.Build_Options)
     channels:textures.Channels, // what each channel of its texture is made of (a gloss map turned into roughness); the zero value keeps them
     cooked:^Cooked_Texture, // built ahead by model_cook; nil when not
@@ -132,17 +131,6 @@ Imported_Material :: struct {
     // the texture of one of kind Texture is the image parameter_images names.
     parameters:[]asset.Material_Parameter,
     parameter_images:[]int,         // by parameter: row of the model's images, -1 for none
-    // Of a masked material with a program, what its mask keeps, which its
-    // cards are cut to (cutout.odin); without, they keep their mask.
-    mask:Maybe(Imported_Mask),
-}
-
-// The mask of a material whose program decides its alpha: the texels of an
-// image whose alpha reaches cutoff, read through mapping (its texture unused).
-Imported_Mask :: struct {
-    image:int, // row of the model's images
-    mapping:asset.Material_Map,
-    cutoff:f32,
 }
 
 Imported_Slot :: struct {
@@ -167,7 +155,6 @@ Imported_Mesh :: struct {
     bounds_min,bounds_max:[3]f32,
     // The colliders the source gives, in the space of the mesh: its collision.
     collision:Mesh_Collision,
-    outlines:Mesh_Outlines, // the coarser outlines of the cards cut from a mask
     cooked:^Cooked_Mesh, // built ahead by model_cook; nil when not
 }
 
