@@ -54,7 +54,7 @@ bool shadow_add(uint draw, uint4 entry, uint pool, uint units) {
 }
 
 // The texels of map m the area of the triangles of a cluster spans, by its
-// instance (render.mesh_areas_write), at the depth of the middle of its box;
+// instance (render.mesh_cluster_areas), at the depth of the middle of its box;
 // 0 where its mesh does not say it.
 float cluster_surface(Shadow_Map m, Instance inst, Mesh mesh, uint ordinal, float3 low, float3 high) {
     if (mesh.area_word == INVALID) return 0.0;

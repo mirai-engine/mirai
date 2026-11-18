@@ -220,7 +220,7 @@ struct Mesh {
     float4 bounds_max;
     Mesh_Ray rays[MESH_RAY_LEVELS];
     uint draw_first;     // where its clusters start in the indices of the meshes drawn whole this frame (render/mesh_draws.odin), CLUSTER_DRAW_VERTICES each; INVALID: not there
-    uint area_word;      // the area of the triangles of each of its clusters in the index pool, square metres of its space (render.mesh_areas_write); INVALID: not known
+    uint area_word;      // the area of the triangles of each of its clusters in the index pool, square metres of its space (render.mesh_cluster_areas); INVALID: not known
     uint pad1; uint pad2;
 };
 
