@@ -10,8 +10,8 @@
 // and one whose kept rays a change everywhere left behind. A probe whose light
 // moves wakes the ones beside it (ddgi_irradiance.comp), so that a change
 // spreads with its bounces; any other gives back the same. The updates that
-// gather the light of a world shown anew take the whole budget (params.whole),
-// over every probe: each is a bounce more for every probe it reaches.
+// gather the light of a world shown anew, one a frame, take the whole budget
+// (params.whole), over every probe: each is a bounce more for every probe it reaches.
 // A probe that is chosen takes a slot for what it keeps of its rays
 // (probe_slots.slang) where it holds none and one of its two is free or left:
 // its probe was not chosen for PROBE_SLOT_KEEP updates, or for
