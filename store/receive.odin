@@ -41,10 +41,12 @@ Claim :: struct {
 CLAIMED :: ".claimed"
 
 // Starts receiving a blob from its address and piece table; the table is
-// checked against the address before anything is kept.
+// checked against the address before anything is kept. A table of one piece
+// is its own address and proves nothing: such a blob is put whole, once its
+// bytes are at hand, and receive_begin refuses it.
 receive_begin :: proc(s:^Store,hash:Hash,size:i64,pieces:[]Hash,now:Maybe(time.Time)=nil) -> Error {
     if s==nil || s.root=="" {return .Invalid_Argument}
-    if size<0 || len(pieces)!=piece_count(size) {return .Invalid_Argument}
+    if size<0 || len(pieces)!=piece_count(size) || len(pieces)==1 {return .Invalid_Argument}
     if address_value(size,pieces)!=hash {return .Corrupt}
     refreshed:=blob_refresh(s,hash,now.? or_else time.now())
     if refreshed==.None {
@@ -79,16 +81,28 @@ receive_begin :: proc(s:^Store,hash:Hash,size:i64,pieces:[]Hash,now:Maybe(time.T
 
 // Keeps one received piece: checked against the table and written at its
 // offset; a duplicate is harmless. The piece that leaves none missing
-// completes the blob.
+// completes the blob. A last piece that matches its table entry at another
+// length is Wrong_Size: the blob was begun with a wrong size, and its partial
+// folder is discarded (never a complete blob) to begin again with the size
+// the piece gives.
 receive_piece :: proc(s:^Store,hash:Hash,index:int,piece:[]u8,now:Maybe(time.Time)=nil) -> Error {
     if s==nil || s.root=="" {return .Invalid_Argument}
     p,error:=partial_open(s,hash,{.Data,.Have})
     if error==.Missing {return complete_piece(s,hash,index,piece)}
     if error!=.None {return error}
     defer partial_close(&p)
-    if index<0 || index>=p.count || len(piece)!=piece_size(p.size,index) {return .Invalid_Argument}
+    if index<0 || index>=p.count || len(piece)==0 || len(piece)>PIECE_BYTES {return .Invalid_Argument}
     expected:Hash
     read_exact(p.table,expected[:],TABLE_HEADER+i64(index)*size_of(Hash)) or_return
+    if len(piece)!=piece_size(p.size,index) {
+        if index<p.count-1 {return .Invalid_Argument}
+        // The table does not bind the length of the last piece; the piece does.
+        proven:=i64(index)*PIECE_BYTES+i64(len(piece))
+        if piece_value(piece,index,proven)!=expected {return .Invalid_Argument}
+        partial_close(&p)
+        partial_discard(s,hash)
+        return .Wrong_Size
+    }
     if piece_value(piece,index,p.size)!=expected {return .Corrupt}
     if _,write_error:=os.write_at(p.data,piece,i64(index)*PIECE_BYTES);write_error!=nil {return os_error(write_error)}
     mark:=[1]u8{1}

@@ -22,6 +22,7 @@ Error :: enum u8 {
     Missing,            // no blob, partial blob or ref with that name
     Not_Here_Yet,       // a range of a partial blob whose pieces have not arrived
     Corrupt,            // bytes that do not match their address or table, or a damaged file of the root
+    Wrong_Size,         // the last piece of a blob being received matches its table at another length than the size it began with: that size was wrong
     Invalid_Argument,
     Out_Of_Memory,
     Io,

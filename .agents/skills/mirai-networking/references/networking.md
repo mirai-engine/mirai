@@ -130,19 +130,29 @@ like `replication.hysteresis`) and the values it admits.
   Elias gamma code: a stream with few losses acks thousands of datagrams in a few bytes. Everything
   the sender has in flight arrives this way with its real fate, also after a receiver stall. The
   ack takes only what the clock or the inputs leave of the datagram: runs that do not fit are left
-  out, and the sender takes those datagrams as lost.
+  out, and the sender takes those datagrams as lost. It also names the datagram that arrived last
+  and how long ago, which the RTT is taken from: on a path that reorders, the newest one received
+  is the one that came fastest.
   - A receiver acks within `ACK_DELAY`, or with what it sends anyway, and at once after
-    `ACK_EVERY` datagrams that carried reliable chunks: a stream is acked as it arrives, and a
-    connection without one sends no datagram more for it.
-  - A datagram older than the last accepted is not acked: when a later one is acked, the fate of
-    the earlier ones is final and what was in a lost one is resent.
-  - If it arrives late (at most `LATE_WINDOW` behind) and had not been received, only what is safe
-    out of order is taken (`packets_late`): the chunks of the game's reliable channels, which
-    assemble only once, and on the server the inputs of ticks after the last received.
-  - Skipped are unreliable and sequenced messages, the server time and the objects, because what
-    arrived later is newer; and the library channels (reliable events and replication messages),
-    because they talk about objects whose state in that datagram is discarded and delivering them
-    earlier would change the order in which the game applies them.
+    `ACK_EVERY` datagrams that carried reliable chunks or one that came late: a stream is acked as
+    it arrives, and a connection without one sends no datagram more for it.
+  - **Loss.** A datagram missing from an ack is lost only when reordering can no longer explain
+    it, as RACK and QUIC judge it: `REORDER_COUNT` datagrams sent after it were acked, and it has
+    been out longer than the RTT and a window from its variation (`loss_delay`). Its records are
+    resolved then; acked ones are resolved as they are acked, in any order. A lost datagram that
+    an ack later reports as arrived takes its loss back, so it does not count for the rate, widens
+    the window to what it needed (fading over seconds), and what was resent for it is a duplicate.
+  - A datagram older than the last accepted came late. If it had not been received and lies within
+    `ACK_WINDOW`, its ack is read and what is safe out of order is taken (`packets_late`): the
+    chunks of the game's reliable channels, which assemble only once, the messages of a game
+    channel that delivered none from a later datagram (each channel keeps its order), and on the
+    server the inputs of ticks after the last received. If that was all it carried it is acked,
+    and the receiver keeps it in its acks until the other end read one that has it.
+  - Skipped are the server time and the objects, because what arrived later is newer; and the
+    library channels (reliable events and replication messages), because they talk about objects
+    whose state in that datagram is discarded and delivering them earlier would change the order
+    in which the game applies them. A late datagram with something skipped is not acked: what was
+    in it is resent.
   - With nothing to say it is sent anyway to ack, keep the connection alive or probe a queue with
     no ack.
 - **Send limit**: a token bucket with the connection's rate that stores at most one tick of rate
@@ -155,13 +165,14 @@ like `replication.hysteresis`) and the values it admits.
   replication follows the rate.
 - **Congestion**: the connection finds the rate of its path; nothing in `Host_Desc` sets it. It
   starts at `CC_START_RATE` and doubles each interval that wanted more, until the queue appears
-  (the mean RTT of the interval above the lowest of the recent window, beyond `CC_QUEUE_DELAY` and
-  two datagrams at the rate). Then it drops below what the path delivered and grows by the same
-  bytes per second for every connection (at most a quarter each interval), so connections on one
-  path converge to equal shares and the queue stays short for the game traffic on it. Losses cut it
-  only with a queue or past `CC_OVERRUN_SHARE`; a link that loses at random keeps its rate, which
-  never drops below `CC_MIN_RATE`. An interval that delivered next to nothing, as after an outage,
-  starts again from `CC_START_RATE`.
+  (the mean RTT of the interval above the lowest mean of an interval in the recent window, beyond
+  `CC_QUEUE_DELAY` and two datagrams at the rate; each mean counts with the uncertainty its spread
+  and its number of samples leave, so jitter does not read as a queue). Then it drops below what
+  the path delivered and grows by the same bytes per second for every connection (at most a
+  quarter each interval), so connections on one path converge to equal shares and the queue stays
+  short for the game traffic on it. Losses cut it only with a queue or past `CC_OVERRUN_SHARE`; a
+  link that loses at random keeps its rate, which never drops below `CC_MIN_RATE`. An interval
+  that delivered next to nothing, as after an outage, starts again from `CC_START_RATE`.
 - **Close**: `host_disconnect` tells the other end with its reason; silence closes with `Timeout`,
   and an authentic datagram that cannot be interpreted, with `Protocol_Error`. The reasons for
   rejection and closing are `Disconnect_Reason` (`host.odin`).
@@ -186,12 +197,12 @@ others their share.
   receiver joins; the library's own reliable channel takes only whole messages.
 - **Window.** The chunks a reliable channel keeps in flight grow by what the path acknowledges
   (`channel_window`, each congestion interval), so they double each round trip while they hold the
-  channel back. Twice what the connection's rate sends in a round trip, in chunks of the size the
-  channel's acknowledged ones had, bounds them, so congestion
+  channel back. What the connection's rate sends in a round trip and the time a loss takes to be
+  found, in chunks of the size the channel's acknowledged ones had, bounds them, so congestion
   control decides what a stream takes, and the channel's `queue_bytes` sets the most it holds in
-  flight and receives ahead (`channel_chunks`, a power of two up to `MAX_WINDOW`): a stream that
-  fills a path holds twice what the path carries in a round trip. A loss does not shrink the
-  window: its resend waits a round trip with the chunks after it acknowledged, ahead of new ones.
+  flight and receives ahead (`channel_chunks`, a power of two up to `MAX_WINDOW`). A loss does not
+  shrink the window: its resend waits with the chunks after it acknowledged until the loss is
+  found, ahead of new ones.
 - While objects wait for the update, the reliable game channels leave half of each datagram to
   them: a part that streams does not starve the state.
 - **Receiving.** A reliable channel delivers what follows what it delivered only while the command

@@ -1,5 +1,6 @@
 package store
 
+import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -65,9 +66,17 @@ address_is_the_same_through_put_bytes_put_file_and_receiving :: proc(t:^testing.
         testing.expect(t,filed_error==.None && filed==put,"put file gives the same address")
         pieces,table_error:=blob_table(&a,put,context.temp_allocator)
         testing.expect_value(t,table_error,Error.None)
-        testing.expect_value(t,receive_begin(&r,put,i64(c.size),pieces),Error.None)
-        for index:=len(pieces)-1;index>=0;index-=1 {
-            testing.expect_value(t,receive_piece(&r,put,index,test_piece(data,index)),Error.None)
+        if len(pieces)==1 {
+            // A table of one piece proves nothing: the blob is put whole once its bytes are here.
+            testing.expect_value(t,receive_begin(&r,put,i64(c.size),pieces),Error.Invalid_Argument)
+            testing.expect_value(t,receive_begin(&r,put,i64(c.size)/2+1,pieces),Error.Invalid_Argument)
+            whole,whole_error:=put_bytes(&r,data)
+            testing.expect(t,whole_error==.None && whole==put)
+        } else {
+            testing.expect_value(t,receive_begin(&r,put,i64(c.size),pieces),Error.None)
+            for index:=len(pieces)-1;index>=0;index-=1 {
+                testing.expect_value(t,receive_piece(&r,put,index,test_piece(data,index)),Error.None)
+            }
         }
         for s in ([]^Store{&a,&b,&r}) {
             testing.expect(t,has(s,put),"every path ends with the blob")
@@ -132,12 +141,31 @@ a_wrong_table_or_piece_is_refused_and_leaves_no_blob :: proc(t:^testing.T) {
     testing.expect(t,!has(&s,hash),"refused pieces complete nothing")
     total,_:=usage(&s)
     testing.expect_value(t,total.blobs,0)
+    partial,partial_error:=blob_table(&s,hash,context.temp_allocator)
+    testing.expect(t,partial_error==.None && string(mem.slice_to_bytes(partial))==string(mem.slice_to_bytes(pieces)),"a blob being received serves the table it began with")
     // The table does not hold the length of the last piece: a size that keeps
-    // the piece count is taken, and then no last piece of the true length fits it.
+    // the piece count is taken, and then the true last piece proves it wrong.
+    testing.expect_value(t,remove(&s,hash),Error.None)
+    _,gone_error:=blob_table(&s,hash,context.temp_allocator)
+    testing.expect_value(t,gone_error,Error.Missing)
+    testing.expect_value(t,receive_begin(&s,hash,i64(len(data))-1,pieces),Error.None)
+    last:=len(pieces)-1
+    for index in 0..<last {testing.expect_value(t,receive_piece(&s,hash,index,test_piece(data,index)),Error.None)}
+    testing.expect_value(t,receive_piece(&s,hash,last,test_piece(data,last)[2:]),Error.Invalid_Argument)
+    testing.expect_value(t,receive_piece(&s,hash,last,test_piece(data,last)),Error.Wrong_Size)
+    testing.expect(t,!has(&s,hash),"a wrong size publishes nothing")
+    _,discarded_error:=blob_table(&s,hash,context.temp_allocator)
+    testing.expect_value(t,discarded_error,Error.Missing)
+    testing.expect_value(t,receive_begin(&s,hash,i64(len(data)),pieces),Error.None)
+    testing.expect_value(t,receive_piece(&s,hash,last,test_piece(data,last)),Error.None)
+    // A wrong size found once another store value published the blob discards only the partial.
     testing.expect_value(t,remove(&s,hash),Error.None)
     testing.expect_value(t,receive_begin(&s,hash,i64(len(data))-1,pieces),Error.None)
-    for index in 0..<len(pieces) {receive_piece(&s,hash,index,test_piece(data,index))}
-    testing.expect(t,!has(&s,hash),"a wrong size publishes nothing")
+    other,_:=test_store(t,folder)
+    defer close(&other)
+    put_bytes(&other,data)
+    testing.expect_value(t,receive_piece(&s,hash,last,test_piece(data,last)),Error.Wrong_Size)
+    testing.expect(t,has(&s,hash) && verify(&s,hash)==.None,"the complete blob stays")
 }
 
 @(test)

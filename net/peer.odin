@@ -4,6 +4,7 @@ import "core:crypto"
 import "core:crypto/siphash"
 import "base:intrinsics"
 import "core:hash/xxhash"
+import "core:math"
 import "core:mem"
 import "core:slice"
 import "mirai:std/base"
@@ -46,7 +47,9 @@ MAX_CONNECTIONS :: 1024
 @(private) ACK_WINDOW :: SENT_WINDOW-1 // datagrams before the last received an acknowledgement covers at most
 @(private) RECORD_WINDOW :: SENT_WINDOW-1-64 // datagrams in flight past which only one a keepalive goes
 @(private) ACK_COUNT_BITS :: 12        // of how many datagrams an acknowledgement covers: up to ACK_WINDOW
-@(private) LATE_WINDOW :: 32           // datagrams behind the last received that are still taken late
+@(private) LATE_WINDOW :: 32           // behind the last received, taken late with something skipped
+@(private) NO_REACK :: max(u64)
+@(private) REORDER_COUNT :: 3          // datagrams acknowledged after one before it is taken as lost
 @(private) HANDSHAKE_BYTES :: 256
 @(private) HANDSHAKE_INTERVAL :: 0.2
 @(private) COOKIE_SECONDS :: 10
@@ -57,7 +60,7 @@ MAX_CONNECTIONS :: 1024
 @(private) CHECKSUM_BYTES :: 4
 @(private) ACCEPT_BYTES :: 18   // server salt, object capacity, ticks of history and the slot of the connection, sealed
 @(private) CANDIDATES :: 2      // addresses a client asks at once: those of an invitation
-@(private) TRANSPORT_VERSION :: 9 // of the layout of the handshake and of the datagrams after it: raised when it changes
+@(private) TRANSPORT_VERSION :: 10 // of the layout of the handshake and of the datagrams after it: raised when it changes
 
 Connection_Stats :: struct {
     rtt,rtt_variance,jitter:f32, // seconds
@@ -126,19 +129,31 @@ Peer :: struct {
     recv_bits:Ack_Bits,
     late_bits:u32,  // received late and taken, the first LATE_WINDOW of recv_bits; never acknowledged
     ack_known:u64,  // the oldest datagram received that the other end may not have resolved yet
+    // Datagrams that came late and that the acknowledgement must cover until the other end read one that
+    // does: the oldest that one of this end's datagrams from reack_seq on carries, and the oldest of
+    // those that came after, which the datagrams from reack_next_seq on carry. NO_REACK when none.
+    reack,reack_next:u64,
+    reack_seq,reack_next_seq:u16,
     recv_any,ack_pending,has_rtt:bool,
     ack_chunks:int, // datagrams with reliable chunks received since this end last sent
-    recv_time:f64,
+    recv_time:f64,     // when the newest datagram received arrived
+    last_arrival:u64,  // the datagram acknowledged that arrived last, which the other end takes its RTT from
+    last_time:f64,     // and when
     sent:[SENT_WINDOW]Sent,
+    sent_acked,sent_lost:[SENT_WINDOW/64]u64, // per slot of sent: its datagram was acknowledged, or taken as lost
+    largest_acked:u16,                        // the newest datagram acknowledged, once acked_any
+    acked_any:bool,
     records:[]Record,
     record_head,record_tail:u32,
     rtt,rtt_variance,jitter:f64,
+    latest_rtt:f64, // the last sample
+    reorder:f64,    // s past the round trip that the latest arrival of a datagram taken as lost showed, fading
     tokens,token_time:f64,
     // Congestion control: the rate the connection may send at, judged over intervals of two round trips.
     rate:f64,
     starting:bool,                      // doubling the rate each interval until the path shows a queue
-    min_rtt,window_min,window_time:f64, // smallest RTT of the last window, and of the current one
-    cc_time,cc_rtt:f64,                 // start of the interval and the sum of its RTT samples
+    min_rtt,window_min,window_time:f64, // lowest mean RTT of an interval in the last window, and in the current one
+    cc_time,cc_rtt,cc_rtt2:f64,         // start of the interval, the sum of its RTT samples and of their squares
     cc_samples:int,
     cc_acked,cc_lost:u64,               // acked and lost datagrams at its start
     delivered,cc_delivered:u64,         // bytes of datagrams acknowledged, and at the interval's start
@@ -174,10 +189,10 @@ ack_bits_advance :: proc "contextless" (bits:^Ack_Bits,shift:u64) {
 // lengths of the runs of arrived and missing ones in turn, each in Elias gamma code. Within budget bits:
 // the runs that do not fit are left out, and the other end takes those datagrams as lost.
 @(private)
-ack_bits_write :: proc(w:^serial.Bit_Writer,bits:^Ack_Bits,count,budget:int) {
+ack_bits_write :: proc(w:^serial.Bit_Writer,bits:^Ack_Bits,count,budget:int) -> int {
     count:=ack_fit(bits,count,budget)
     serial.bit_write(w,u64(count),ACK_COUNT_BITS)
-    if count==0 {return}
+    if count==0 {return 0}
     set:=ack_bit(bits,1)
     serial.bit_write_bool(w,set)
     for at:=0;at<count;set=!set {
@@ -188,6 +203,7 @@ ack_bits_write :: proc(w:^serial.Bit_Writer,bits:^Ack_Bits,count,budget:int) {
         serial.bit_write(w,u64(run)&(1<<width-1),int(width))
         at+=run
     }
+    return count
 }
 // The most of count datagrams whose runs fit in budget bits, at the end of a run.
 @(private)
@@ -321,11 +337,14 @@ peer_reset :: proc(h:^Host,p:^Peer,address:Address) {
     p.send_counter,p.recv_counter,p.send_seq,p.sent_tail,p.recv_bits,p.late_bits,p.ack_known=0,0,0,0,{},0,0
     p.recv_any,p.ack_pending,p.has_rtt,p.ack_chunks=false,false,false,0
     p.record_head,p.record_tail=0,0
-    p.rtt,p.rtt_variance,p.jitter=0,0,0
+    p.rtt,p.rtt_variance,p.jitter,p.latest_rtt,p.reorder=0,0,0,0,0
+    p.sent_acked,p.sent_lost,p.largest_acked,p.acked_any={},{},0,false
+    p.last_arrival,p.last_time=0,0
+    p.reack,p.reack_next,p.reack_seq,p.reack_next_seq=NO_REACK,NO_REACK,0,0
     p.rate,p.starting=CC_START_RATE,true
     p.tokens,p.token_time=send_burst(h,p.rate),now
     p.min_rtt,p.window_min,p.window_time=0,0,now
-    p.cc_time,p.cc_rtt,p.cc_samples,p.cc_acked,p.cc_lost,p.cc_limited=now,0,0,0,0,false
+    p.cc_time,p.cc_rtt,p.cc_rtt2,p.cc_samples,p.cc_acked,p.cc_lost,p.cc_limited=now,0,0,0,0,0,false
     p.delivered,p.cc_delivered,p.channel_turn=0,0,0
     p.rate_time,p.rate_sent,p.rate_received=now,0,0
     p.stats={}
@@ -421,6 +440,8 @@ peer_service :: proc(h:^Host,p:^Peer) {
             p.stats.receive_rate+=(received-p.stats.receive_rate)*0.5
             p.rate_time,p.rate_sent,p.rate_received=now,p.stats.bytes_sent,p.stats.bytes_received
         }
+        peer_settle(h,p)
+        if p.state!=.Connected {return}
         congestion_update(h,p)
     }
 }
@@ -448,10 +469,21 @@ congestion_update :: proc(h:^Host,p:^Peer) {
     elapsed:=now-p.cc_time
     // Long enough to see the effect of the last change, and a few datagrams at the rate.
     if elapsed<(p.has_rtt?max(2*p.rtt,0.02,4*PACKET_BYTES/p.rate):0.1) {return}
-    acked,lost:=p.stats.packets_acked-p.cc_acked,p.stats.packets_lost-p.cc_lost
+    // A loss taken back in this interval may have been counted in an earlier one.
+    acked,lost:=p.stats.packets_acked-p.cc_acked,u64(max(i64(p.stats.packets_lost)-i64(p.cc_lost),0))
     delivered:=f64(p.delivered-p.cc_delivered)/elapsed
     // Two datagrams at the rate are not a queue: a slow link takes that long to carry them.
-    queued:=p.cc_samples>0 && p.cc_rtt/f64(p.cc_samples)-p.min_rtt>CC_QUEUE_DELAY+2*PACKET_BYTES/p.rate
+    // Jitter spreads the samples around their mean, and the far end of that spread is not a queue: the
+    // floor is the lowest mean of an interval, and a mean counts with the uncertainty that its spread
+    // and its number of samples leave, above when it sets the floor and below when it is judged.
+    n:=f64(p.cc_samples)
+    mean:=n>0?p.cc_rtt/n:0
+    spread:=n>1?math.sqrt(max(p.cc_rtt2-n*mean*mean,0)/(n-1)/n):p.rtt_variance
+    if n>0 {
+        if p.min_rtt==0 || mean+spread<p.min_rtt {p.min_rtt=mean+spread}
+        if p.window_min==0 || mean+spread<p.window_min {p.window_min=mean+spread}
+    }
+    queued:=n>0 && mean-spread-p.min_rtt>CC_QUEUE_DELAY+2*PACKET_BYTES/p.rate
     overrun:=acked+lost>=16 && f64(lost)>CC_OVERRUN_SHARE*f64(acked+lost)
     if queued || overrun {
         congested:=overrun || lost>0 && f64(lost)>CC_LOSS_SHARE*f64(acked+lost)
@@ -467,11 +499,12 @@ congestion_update :: proc(h:^Host,p:^Peer) {
         if p.window_min>0 {p.min_rtt=p.window_min}
         p.window_min,p.window_time=0,now
     }
+    p.reorder-=p.reorder*min(elapsed/8,1)
     for &c in p.channels {
-        if c.active && c.kind==.Reliable {channel_window(&c,p.rtt,p.rate)}
+        if c.active && c.kind==.Reliable {channel_window(&c,p.rtt+loss_delay(p),p.rate)}
     }
     p.stats.send_limit=f32(p.rate)
-    p.cc_time,p.cc_rtt,p.cc_samples,p.cc_limited=now,0,0,false
+    p.cc_time,p.cc_rtt,p.cc_rtt2,p.cc_samples,p.cc_limited=now,0,0,0,false
     p.cc_acked,p.cc_lost,p.cc_delivered=p.stats.packets_acked,p.stats.packets_lost,p.delivered
 }
 
@@ -817,7 +850,91 @@ peer_resolve :: proc(h:^Host,p:^Peer,seq:u16,received:bool) {
         record:=p.records[i%u32(len(p.records))]
         if record.kind==.Chunk {channel_resolve(p,record,received)} else {repl_resolve(h,p,record,seq,received)}
     }
-    p.record_head=sent.first+u32(sent.count)
+}
+
+@(private) sent_flag :: #force_inline proc "contextless" (bits:^[SENT_WINDOW/64]u64,seq:u16) -> bool {
+    slot:=int(seq)%SENT_WINDOW
+    return bits[slot/64]&(1<<uint(slot%64))!=0
+}
+@(private) sent_mark :: #force_inline proc "contextless" (bits:^[SENT_WINDOW/64]u64,seq:u16,set:bool) {
+    slot:=int(seq)%SENT_WINDOW
+    if set {bits[slot/64]|=1<<uint(slot%64)} else {bits[slot/64]&~=1<<uint(slot%64)}
+}
+
+// How long a datagram may be out before it is lost, once datagrams sent after it were acknowledged.
+@(private)
+loss_delay :: proc "contextless" (p:^Peer) -> f64 {
+    return max(p.rtt,p.latest_rtt)+max(4*p.rtt_variance,p.rtt/8,p.reorder,0.001)
+}
+
+// A datagram is taken as lost only once reordering cannot explain its absence: REORDER_COUNT datagrams
+// sent after it were acknowledged, and it has been out longer than a round trip and the window that
+// the variation of the round trip gives, as RACK and QUIC judge it. The tail of what is in flight
+// moves past what is settled; the records stay until the oldest datagram that holds them is.
+@(private)
+peer_settle :: proc(h:^Host,p:^Peer) {
+    now:=h.back.now
+    window:=loss_delay(p)
+    for p.sent_tail!=p.send_seq {
+        seq:=p.sent_tail
+        if !sent_flag(&p.sent_acked,seq) && !sent_flag(&p.sent_lost,seq) {
+            if !p.acked_any || i16(p.largest_acked-seq)<REORDER_COUNT || now-p.sent[seq%SENT_WINDOW].time<window {break}
+            sent_mark(&p.sent_lost,seq,true)
+            peer_resolve(h,p,seq,false)
+            if p.state!=.Connected {return}
+        }
+        p.sent_tail+=1
+    }
+    p.record_head=p.sent_tail==p.send_seq?p.record_tail:p.sent[p.sent_tail%SENT_WINDOW].first
+}
+
+// Every datagram the acknowledgement says arrived, from the newest back while its slot still holds it:
+// one in flight is resolved as received, and one already taken as lost came late, which takes back its
+// loss; what was resent for it is a duplicate the receiver drops. An acknowledgement that came late
+// still says what arrived. False when the connection closed.
+@(private)
+acks_take :: proc(h:^Host,p:^Peer,ack:u16,ack_bits:^Ack_Bits,ack_count,arrival:u64,delay:f64) -> bool {
+    now:=h.back.now
+    in_flight:=u16(p.send_seq-p.sent_tail)
+    for behind:u64=0;behind<=ack_count;behind+=1 {
+        seq:=ack-u16(behind)
+        if u16(p.send_seq-seq)>SENT_WINDOW {break}
+        if behind>0 && !ack_bit(ack_bits,behind) || sent_flag(&p.sent_acked,seq) {continue}
+        sent_mark(&p.sent_acked,seq,true)
+        if behind==arrival {
+            sample:=max(now-p.sent[seq%SENT_WINDOW].time-delay,0)
+            if !p.has_rtt {
+                p.rtt,p.rtt_variance,p.has_rtt=sample,sample*0.5,true
+            } else {
+                deviation:=abs(sample-p.rtt)
+                p.rtt_variance+=(deviation-p.rtt_variance)*0.25
+                p.jitter+=(deviation-p.jitter)*0.0625
+                p.rtt+=(sample-p.rtt)*0.125
+            }
+            p.latest_rtt=sample
+            p.stats.rtt,p.stats.rtt_variance,p.stats.jitter=f32(p.rtt),f32(p.rtt_variance),f32(p.jitter)
+            p.cc_rtt+=sample
+            p.cc_rtt2+=sample*sample
+            p.cc_samples+=1
+        }
+        if sent_flag(&p.sent_lost,seq) {
+            // The window grows to what this one needed, with a margin, so the next does not repeat it.
+            sent_mark(&p.sent_lost,seq,false)
+            p.stats.packets_lost-=1
+            p.reorder=min(max(p.reorder,1.25*(now-p.sent[seq%SENT_WINDOW].time-max(p.rtt,p.latest_rtt))),1)
+            continue
+        }
+        if u16(seq-p.sent_tail)>=in_flight {continue}
+        if !p.acked_any || seq_newer(seq,p.largest_acked) {p.largest_acked,p.acked_any=seq,true}
+        p.ack_known=max(p.ack_known,p.sent[seq%SENT_WINDOW].known)
+        for p.reack!=NO_REACK && !seq_newer(p.reack_seq,seq) {
+            p.reack,p.reack_seq,p.reack_next=p.reack_next,p.reack_next_seq,NO_REACK
+        }
+        peer_resolve(h,p,seq,true)
+        if p.state!=.Connected {return false}
+    }
+    peer_settle(h,p)
+    return p.state==.Connected
 }
 
 // False when the datagram is malformed: the caller closes the connection.
@@ -827,18 +944,35 @@ peer_receive :: proc(h:^Host,p:^Peer,r:^serial.Bit_Reader,counter:u64) -> bool {
     has_ack:=serial.bit_read_bool(r)
     ack:=u16(serial.bit_read(r,16))
     ack_bits,ack_count,acks_ok:=ack_bits_read(r)
+    arrival:=serial.bit_read_bool(r)?serial.bit_read(r,ACK_COUNT_BITS):0
     delay:=f64(serial.bit_read(r,8))*0.001
-    if !acks_ok || r.error {return false}
+    if !acks_ok || r.error || arrival>ack_count || arrival>0 && !ack_bit(&ack_bits,arrival) {return false}
     if p.recv_any && counter<=p.recv_counter {
-        // Within the window of acknowledgements and not received before: it came late. What in it is safe
-        // out of order is taken; it is not acknowledged, so the sender resends the rest as if it were lost.
+        // Within the window of acknowledgements and not received before: it came late. Its
+        // acknowledgement and what in it is safe out of order are taken.
         behind:=p.recv_counter-counter
-        if behind==0 || behind>LATE_WINDOW || ack_bit(&p.recv_bits,behind) || p.late_bits&(1<<(behind-1))!=0 {p.stats.packets_out_of_order+=1;return true}
-        p.late_bits|=1<<(behind-1)
+        if behind==0 || behind>ACK_WINDOW || ack_bit(&p.recv_bits,behind) || behind<=LATE_WINDOW && p.late_bits&(1<<(behind-1))!=0 {p.stats.packets_out_of_order+=1;return true}
+        if has_ack && !seq_newer(p.send_seq,ack) {return false}
         p.stats.packets_late+=1
         p.last_receive=now
+        if has_ack && !acks_take(h,p,ack,&ack_bits,ack_count,arrival,delay) {return true}
         if !time_read(h,p,r,late=true) || p.state!=.Connected {return p.state!=.Connected}
-        if !channels_read(h,p,r,late=true) || p.state!=.Connected {return p.state!=.Connected}
+        skipped:bool
+        if !channels_read(h,p,r,counter,late=true,skipped=&skipped) || p.state!=.Connected {return p.state!=.Connected}
+        // Everything in it that a resend would bring again was taken: it is acknowledged, from as far
+        // back as it lies, so that the sender knows it arrived even if it already took it as lost.
+        if !skipped && (h.back.repl.protocol==nil || !serial.bit_read_bool(r)) && !r.error {
+            p.recv_bits[(behind-1)/64]|=1<<((behind-1)%64)
+            if p.reack==NO_REACK {
+                p.reack,p.reack_seq=counter,p.send_seq
+            } else {
+                p.reack_next,p.reack_next_seq=min(p.reack_next,counter),p.send_seq
+            }
+            // At once, as a receiver acks a segment that fills a gap: the sender waits for it.
+            p.ack_pending,p.ack_chunks,p.last_arrival,p.last_time=true,ACK_EVERY,counter,now
+        } else if behind<=LATE_WINDOW {
+            p.late_bits|=1<<(behind-1)
+        }
         return true
     }
     if has_ack && !seq_newer(p.send_seq,ack) {return false}
@@ -849,35 +983,12 @@ peer_receive :: proc(h:^Host,p:^Peer,r:^serial.Bit_Reader,counter:u64) -> bool {
         p.stats.packets_missed+=shift-1
     }
     p.recv_counter,p.recv_any,p.ack_pending=counter,true,true
-    p.last_receive,p.recv_time=now,now
+    p.last_receive,p.recv_time,p.last_arrival,p.last_time=now,now,counter,now
     if has_ack {
-        for p.sent_tail!=p.send_seq && !seq_newer(p.sent_tail,ack) {
-            behind:=u16(ack-p.sent_tail)
-            received:=behind==0 || (u64(behind)<=ack_count && ack_bit(&ack_bits,u64(behind)))
-            if behind==0 {
-                sample:=max(now-p.sent[ack%SENT_WINDOW].time-delay,0)
-                if !p.has_rtt {
-                    p.rtt,p.rtt_variance,p.has_rtt=sample,sample*0.5,true
-                } else {
-                    deviation:=abs(sample-p.rtt)
-                    p.rtt_variance+=(deviation-p.rtt_variance)*0.25
-                    p.jitter+=(deviation-p.jitter)*0.0625
-                    p.rtt+=(sample-p.rtt)*0.125
-                }
-                p.stats.rtt,p.stats.rtt_variance,p.stats.jitter=f32(p.rtt),f32(p.rtt_variance),f32(p.jitter)
-                if p.min_rtt==0 || sample<p.min_rtt {p.min_rtt=sample}
-                if p.window_min==0 || sample<p.window_min {p.window_min=sample}
-                p.cc_rtt+=sample
-                p.cc_samples+=1
-            }
-            if received {p.ack_known=max(p.ack_known,p.sent[p.sent_tail%SENT_WINDOW].known)}
-            peer_resolve(h,p,p.sent_tail,received)
-            if p.state!=.Connected {return true}
-            p.sent_tail+=1
-        }
+        if !acks_take(h,p,ack,&ack_bits,ack_count,arrival,delay) {return true}
     }
     if !time_read(h,p,r) || p.state!=.Connected {return p.state!=.Connected}
-    if !channels_read(h,p,r) || p.state!=.Connected {return p.state!=.Connected}
+    if !channels_read(h,p,r,counter) || p.state!=.Connected {return p.state!=.Connected}
     if !objects_read(h,p,r) || p.state!=.Connected {return p.state!=.Connected}
     return !r.error
 }
@@ -917,9 +1028,16 @@ peer_send :: proc(h:^Host,p:^Peer) {
         serial.bit_write(&w,u64(u16(p.recv_counter)),16)
         // What must go after it bounds the acknowledgement: its delay, the clock or the inputs, and the
         // ends of the sections.
-        ack_budget:=serial.bit_writer_remaining(&w)-8-time_max_bits(h)-SECTION_RESERVE
-        ack_bits_write(&w,&p.recv_bits,p.recv_any && p.recv_counter>p.ack_known?int(min(p.recv_counter-p.ack_known,ACK_WINDOW)):0,ack_budget)
-        serial.bit_write(&w,u64(clamp((b.now-p.recv_time)*1000,0,255)),8)
+        ack_budget:=serial.bit_writer_remaining(&w)-1-ACK_COUNT_BITS-8-time_max_bits(h)-SECTION_RESERVE
+        from:=min(p.ack_known,p.reack,p.reack_next)
+        covered:=ack_bits_write(&w,&p.recv_bits,p.recv_any && p.recv_counter>from?int(min(p.recv_counter-from,ACK_WINDOW)):0,ack_budget)
+        // The datagram that arrived last, and how long ago: on a path that reorders, the newest one
+        // received is the one that came fastest, and an RTT taken only from it reads short.
+        arrival,arrived:=u64(0),p.recv_time
+        if p.recv_counter-p.last_arrival<=u64(covered) {arrival,arrived=p.recv_counter-p.last_arrival,p.last_time}
+        serial.bit_write_bool(&w,arrival>0)
+        if arrival>0 {serial.bit_write(&w,arrival,ACK_COUNT_BITS)}
+        serial.bit_write(&w,u64(clamp((b.now-arrived)*1000,0,255)),8)
         wrote:=time_write(h,p,&w,seq)
         yield:=b.repl.key_cursor<b.repl.key_count && budget>0?min(budget,PACKET_BYTES*4):0
         if channels_write(h,p,&w,SECTION_RESERVE,yield) {wrote=true}
@@ -931,6 +1049,8 @@ peer_send :: proc(h:^Host,p:^Peer) {
             break
         }
         bytes:=data_seal(h,p,&w)
+        sent_mark(&p.sent_acked,seq,false)
+        sent_mark(&p.sent_lost,seq,false)
         p.sent[seq%SENT_WINDOW]={time=b.now,known=p.recv_any?p.recv_counter+1:0,first=first_record,count=u16(p.record_tail-first_record),bytes=u16(len(bytes))}
         p.send_seq+=1
         p.send_counter+=1
