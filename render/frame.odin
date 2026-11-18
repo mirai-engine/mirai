@@ -197,6 +197,68 @@ gbuffer_pass :: proc(p: ^Pass, phase: u32, clear, keep_depth: bool) {
 	rhi.cmd_end_render_pass(cmd)
 }
 
+// The visibility of a view, a phase of it: of each pixel, the nearest triangle
+// of the clusters of the visible list (visibility.frag) into Frame_Targets.visibility.
+// A vertex hands the fragment its ids alone, so the attributes of the surface
+// are read once a pixel and not for each triangle, which small triangles make
+// many times more. The clusters of the program list (those of Surface
+// programs, whose stages read what the rasterizer interpolates, and those
+// whose triangles are not small) leave their depth alone first, and no
+// triangle where they are in front; gbuffer_visible_pass draws both.
+@(private)
+visibility_pass :: proc(p: ^Pass, phase: u32) -> bool {
+	r, cmd, t := p.r, p.cmd, p.t
+	s := &r.scene
+	if !target(r, cmd, &t.visibility, t.width, t.height, .RG32_Uint, {.Color_Target, .Sampled}, "visibility", shared = true) {return false}
+	load: rhi.Load_Op = .Clear if phase == 0 else .Load
+	pass := rhi.Render_Pass_Desc{color_count = 2, name = "visibility" if phase == 0 else "visibility late"}
+	pass.colors[0] = {texture = t.visibility, load = load, store = .Store, clear_uint = {GPU_NONE, 0, 0, 0}}
+	// The linear depth too, which the depth pyramid between the phases reads.
+	pass.colors[1] = {texture = t.linear_depth, load = load, store = .Store}
+	pass.depth = {texture = t.depth, load = load, store = .Store, clear = 0}
+	rhi.cmd_begin_render_pass(cmd, &pass)
+	if p.draw {
+		if program_clusters(r) {
+			rhi.cmd_bind_pipeline(cmd, r.pipelines[.Visibility_Hidden])
+			rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.program_visible)
+			rhi.cmd_draw_indirect(cmd, s.program_bins, program_draw_offset(phase, 0, program_bins_count(r)), 1, size_of(Gpu_Draw))
+			for program in renderer_programs(r) {
+				if program.domain != .Surface || program.id >= program_bins_count(r) || s.program_rows[program.id] == 0 {continue}
+				rhi.cmd_draw_indirect(cmd, s.program_bins, program_draw_offset(phase, program.id, program_bins_count(r)), 1, size_of(Gpu_Draw))
+			}
+		}
+		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Visibility])
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
+		rhi.cmd_draw_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, draws)) + u64(phase) * size_of(Gpu_Draw), 1, size_of(Gpu_Draw))
+	}
+	rhi.cmd_end_render_pass(cmd)
+	return true
+}
+
+// The G-buffer of a view after its visibility (visibility_pass): the clusters
+// of the program list of the first `phases`, only where the depth they left
+// stayed in front, the test before their stage; then the triangle each other
+// pixel kept, as gbuffer.frag would have drawn it (gbuffer_visible.frag).
+@(private)
+gbuffer_visible_pass :: proc(p: ^Pass, phases: u32) {
+	r, cmd, t := p.r, p.cmd, p.t
+	targets, count := gbuffer_targets(p)
+	pass := rhi.Render_Pass_Desc{color_count = count, name = "gbuffer"}
+	// The linear depth is the visibility's.
+	for target, i in targets[:count] {pass.colors[i] = {texture = target, load = .Load if target == t.linear_depth else .Clear, store = .Store}}
+	pass.depth = {texture = t.depth, load = .Load, store = .Store}
+	rhi.cmd_begin_render_pass(cmd, &pass)
+	if p.draw {
+		textures_feedback_bind(r, cmd)
+		after := &r.pipelines[.Gbuffer_Layers_After if p.layered else .Gbuffer_After if p.reflectance else .Gbuffer_Plain_After]
+		for phase in 0 ..< phases {gbuffer_programs_draw(p, after, phase)}
+		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Gbuffer_Visible_Layers if p.layered else .Gbuffer_Visible if p.reflectance else .Gbuffer_Visible_Plain])
+		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.visibility)
+		rhi.cmd_draw(cmd, 3, 1, 0, 0)
+	}
+	rhi.cmd_end_render_pass(cmd)
+}
+
 // Draws the clusters of an instance whose mesh is in the pools, for a pass of
 // its own (gbuffer.vert without the visible list): those of level 0, or all
 // of them, the vertices of those out of the cut of the view collapsed, and
@@ -906,11 +968,18 @@ cull_reset :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 	return upload_transient(r, cmd, start[:], r.scene.cull_state_buffer)
 }
 
-// Whether the cull lists the clusters of Surface programs apart: a material
-// of the scene has a program.
+// Whether the cull lists clusters apart, by program: those of Surface
+// programs, and in bin 0 those of no program whose triangles are not small
+// (cull_clusters.comp), which the rasterizer draws after the visibility.
 @(private)
 program_clusters :: proc(r: ^Renderer) -> bool {
-	return r.points.programs > 0 && r.scene.programmed_rows > 0 && r.scene.program_bins != 0
+	return r.scene.program_bins != 0
+}
+
+// The bins of the program list: one per Surface program id, bin 0 for the clusters of none.
+@(private)
+program_bins_count :: proc(r: ^Renderer) -> u32 {
+	return max(r.points.programs, 1)
 }
 
 // A pass of cull_programs.comp over the clusters of Surface programs of a phase.
@@ -918,14 +987,14 @@ program_clusters :: proc(r: ^Renderer) -> bool {
 cull_programs_dispatch :: proc(r: ^Renderer, cmd: ^rhi.Command_List, mode, phase: u32) {
 	s := &r.scene
 	Params :: struct {mode, phase, programs, capacity: u32}
-	params := Params{mode = mode, phase = phase, programs = r.points.programs, capacity = s.cull_capacity[.Programs]}
+	params := Params{mode = mode, phase = phase, programs = program_bins_count(r), capacity = s.cull_capacity[.Programs]}
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull_Programs])
 	set_params(cmd, &params)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.program_bins)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.program_visible)
 	switch mode {
 	case 0:
-		rhi.cmd_dispatch(cmd, groups(r.points.programs, 64))
+		rhi.cmd_dispatch(cmd, groups(program_bins_count(r), 64))
 	case 2:
 		rhi.cmd_dispatch(cmd, 1)
 	case:
@@ -951,19 +1020,22 @@ program_draw_offset :: proc "contextless" (phase, program, programs: u32) -> u64
 	return u64(PROGRAMS_HEADER + 6 * programs + (phase * programs + program) * 4) * size_of(u32)
 }
 
-// The clusters of each Surface program of the scene that the cull of the view
-// listed in a phase, each with the stage of its program, or with the one of
-// `target` while the shaders in use have none.
+// The clusters of the program list the cull of the view listed in a phase:
+// those of no program (bin 0) with `target`, and those of each Surface program
+// with the stage of its program, or with that of `target` while the shaders
+// in use have none.
 @(private)
 gbuffer_programs_draw :: proc(p: ^Pass, target: ^rhi.Pipeline, phase: u32) {
 	r, cmd := p.r, p.cmd
 	s := &r.scene
 	if !program_clusters(r) {return}
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.program_visible)
+	rhi.cmd_bind_pipeline(cmd, target^)
+	rhi.cmd_draw_indirect(cmd, s.program_bins, program_draw_offset(phase, 0, program_bins_count(r)), 1, size_of(Gpu_Draw))
 	for program in renderer_programs(r) {
-		if program.domain != .Surface || program.id >= r.points.programs || s.program_rows[program.id] == 0 {continue}
+		if program.domain != .Surface || program.id >= program_bins_count(r) || s.program_rows[program.id] == 0 {continue}
 		rhi.cmd_bind_pipeline(cmd, program_graphics(r, target, program.id))
-		rhi.cmd_draw_indirect(cmd, s.program_bins, program_draw_offset(phase, program.id, r.points.programs), 1, size_of(Gpu_Draw))
+		rhi.cmd_draw_indirect(cmd, s.program_bins, program_draw_offset(phase, program.id, program_bins_count(r)), 1, size_of(Gpu_Draw))
 	}
 }
 
@@ -973,7 +1045,7 @@ cull_bind :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glass:
 	s := &r.scene
 	params := params
 	params.chunk_capacity, params.visible_capacity, params.candidate_capacity = s.cull_capacity[.Chunks], s.cull_capacity[.Visible], s.cull_capacity[.Candidates]
-	if program_clusters(r) {params.programs, params.program_capacity = r.points.programs, s.cull_capacity[.Programs]}
+	if program_clusters(r) {params.programs, params.program_capacity = program_bins_count(r), s.cull_capacity[.Programs]}
 	params.pages = pages_cull_params(r)
 	set_params(cmd, &params)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.cull_state_buffer)
@@ -1017,6 +1089,8 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	occlusion := threads > 0
 	keep_depth := p.draw_translucent || p.draw_overlays || p.blend || stage_asked(r, .Gbuffer) || r.pass_count > 0 && .Nested in p.plan.stages
 	glass_groups := [4]u32{groups(t.width, 8), groups(t.height, 8), groups(t.half_width, 8), groups(t.half_height, 8)}
+	// Behind a clip plane the rasterizer draws the G-buffer itself (gbuffer_pass).
+	visibility := p.camera.clip_plane == {}
 	rhi.cmd_timestamp(cmd, "cull")
 	rhi.cmd_fill_buffer(cmd, r.stats_buffer, 0, size_of(Gpu_Cull_Stats), 0)
 	rhi.cmd_fill_buffer(cmd, p.view.glass_dispatch, 0, size_of(Gpu_Glass_Dispatch), 0)
@@ -1025,8 +1099,13 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 		cull_record(p, {phase = 0, occlusion = 1 if occlusion && t.hiz_valid else 0, hiz_levels = t.hiz_levels, glass_groups = glass_groups}, t.hiz[p.previous], r.stats_buffer, p.view.glass_dispatch)
 	}
 	cull_programs_bin(p, 0)
-	rhi.cmd_timestamp(cmd, "gbuffer")
-	gbuffer_pass(p, 0, true, occlusion || keep_depth)
+	if visibility {
+		rhi.cmd_timestamp(cmd, "visibility")
+		if !visibility_pass(p, 0) {return false}
+	} else {
+		rhi.cmd_timestamp(cmd, "gbuffer")
+		gbuffer_pass(p, 0, true, occlusion || keep_depth)
+	}
 	if occlusion && p.draw {
 		rhi.cmd_timestamp(cmd, "occlusion")
 		build_depth_pyramid(p, t.hiz[p.current])
@@ -1043,16 +1122,26 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 			rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, candidate_dispatch)))
 		}
 		cull_programs_bin(p, 1)
-		rhi.cmd_timestamp(cmd, "gbuffer late")
+		rhi.cmd_timestamp(cmd, "visibility late" if visibility else "gbuffer late")
 		draw1 := u64(offset_of(Gpu_Cull_State, draws)) + size_of(Gpu_Draw)
 		rhi.cmd_copy_buffer(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, draws)) + u64(offset_of(Gpu_Draw, instance_count)), s.cull_state_buffer, draw1 + u64(offset_of(Gpu_Draw, first_instance)), size_of(u32))
-		gbuffer_pass(p, 1, false, keep_depth)
+		if visibility {
+			if !visibility_pass(p, 1) {return false}
+			rhi.cmd_timestamp(cmd, "gbuffer")
+			gbuffer_visible_pass(p, 2)
+		} else {
+			gbuffer_pass(p, 1, false, keep_depth)
+		}
 		// The pyramid the next frame tests against holds what both phases drew:
 		// what phase 1 rescued hides what is behind it from the next phase 0.
 		rhi.cmd_timestamp(cmd, "depth pyramid")
 		build_depth_pyramid(p, t.hiz[p.current])
 		t.hiz_valid = true
 	} else {
+		if visibility {
+			rhi.cmd_timestamp(cmd, "gbuffer")
+			gbuffer_visible_pass(p, 1)
+		}
 		t.hiz_valid = false
 	}
 	if p.first && stage_asked(r, .Simulate) {stage_run(p, .Simulate)}

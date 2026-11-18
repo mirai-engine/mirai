@@ -1,6 +1,7 @@
 #include "native.slang"
-// The visible clusters of materials with a Surface program (PROGRAMS_* of
-// cull_programs.slang), by mode: 0 starts the cull of a view, with no cluster
+// The visible clusters of the program list (PROGRAMS_* of cull_programs.slang):
+// those of materials with a Surface program, and in bin 0 those of none the
+// rasterizer draws (cull_clusters.comp), by mode: 0 starts the cull of a view, with no cluster
 // in either phase and the draws of every program empty; then, after the cull
 // of a phase, 1 counts its clusters by program, 2 gives each program its
 // range of the list of the phase and its draw, an instance a cluster, and 3
@@ -17,8 +18,8 @@
 struct Params_Block { uint mode; uint phase; uint programs; uint capacity; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] RWStructuredBuffer<uint> program_bins : register(MIRAI_REGISTER(u, SLOT_PASS0), space0);
-// The clusters of each program, in its range: the instance and the cluster as a word of the index pool.
-[[vk::binding(SLOT_PASS1, 0)]] RWStructuredBuffer<uint2> program_visible : register(MIRAI_REGISTER(u, SLOT_PASS1), space0);
+// The clusters of each program, in its range, each as scene.visible_entry gives it.
+[[vk::binding(SLOT_PASS1, 0)]] RWStructuredBuffer<uint4> program_visible : register(MIRAI_REGISTER(u, SLOT_PASS1), space0);
 
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
@@ -76,5 +77,5 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint local : SV_GroupIndex) {
     }
     uint place = bins_place(program_bins, programs_cursor(phase, programs), program, rank, programs, local, PROGRAMS_GROUP);
     if (!valid) return;
-    program_visible[program_bins[programs_offset(phase, programs) + program] + place] = uint2(program_bins[at], program_bins[at + 1u]);
+    program_visible[program_bins[programs_offset(phase, programs) + program] + place] = visible_entry(program_bins[at], program_bins[at + 1u]);
 }

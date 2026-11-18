@@ -297,6 +297,9 @@ Pipeline_Id :: enum {
 	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Mean, Glass_Inside,
 	Gbuffer_Plain, // without the reflectance target: no reflective instance in the frustum
 	Gbuffer_Layers, Gbuffer_Layers_Clip, Gbuffer_Nested_Layers, // with the layers target: an instance with layers in the frustum
+	// The visibility of a view (visibility_pass), the G-buffer of the clusters of Surface programs
+	// after it and that of what it kept (gbuffer_visible_pass).
+	Visibility, Visibility_Hidden, Gbuffer_After, Gbuffer_Plain_After, Gbuffer_Layers_After, Gbuffer_Visible, Gbuffer_Visible_Plain, Gbuffer_Visible_Layers,
 	Ui_World, Ui_Composite, Ui_Blur, Debug_Lines,
 	Skin, Skin_Triangles, Skin_Refit,
 	Gbuffer_Clip, Gbuffer_Plain_Clip, // of a view with a clip plane
@@ -339,6 +342,7 @@ Frame_Targets :: struct {
 	surface:                 rhi.Texture, // evaluated F0 as sRGB, encoded F90 in alpha; made when the scene first needs it
 	layers:                  rhi.Texture, // the layers of the materials (gbuffer.slang); made when the scene first needs it
 	instance:                rhi.Texture, // R32 uint: the instance that drew each pixel + 1, while the shaders ask for it (Frame_Layout.instance_ids)
+	visibility:              rhi.Texture, // RG32 uint: the instance and the primitive each pixel kept (visibility_pass); made when a view first needs it
 	post_hdr,post_ldr:        [2]rhi.Texture, // made when the PostProcess stack first uses them
 	normal:                  rhi.Texture,
 	emission:                rhi.Texture,
@@ -976,6 +980,30 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	clipped_layered.fragment_constants = {GBUFFER_FRAG_NESTED}
 	clipped_layered.name = "gbuffer of a nested view, with layers"
 	graphics(list, r, .Gbuffer_Nested_Layers, gbuffer_ids(clipped_layered, ids))
+	visibility := rhi.Graphics_Pipeline_Desc{
+		vertex = &r.shader_codes[.Visibility_Vert], fragment = &r.shader_codes[.Visibility_Frag],
+		color_formats = {0 = .RG32_Uint, 1 = .R32_Float}, color_count = 2,
+		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None,
+		name = "visibility",
+	}
+	graphics(list, r, .Visibility, visibility)
+	visibility.fragment_constants, visibility.name = {VISIBILITY_FRAG_HIDDEN}, "visibility of the clusters of Surface programs"
+	graphics(list, r, .Visibility_Hidden, visibility)
+	// After the visibility the depth is final: the clusters of programs draw where theirs stayed.
+	after, after_plain, after_layered := gbuffer, plain, layered
+	after.fragment, after_plain.fragment, after_layered.fragment = &r.shader_codes[.Gbuffer_After_Frag], &r.shader_codes[.Gbuffer_After_Plain_Frag], &r.shader_codes[.Gbuffer_After_Layers_Frag]
+	after.name, after_plain.name, after_layered.name = "gbuffer after the visibility", "gbuffer after the visibility, without reflectance", "gbuffer after the visibility, with layers"
+	for desc in ([]^rhi.Graphics_Pipeline_Desc{&after, &after_plain, &after_layered}) {desc.depth_compare, desc.depth_write = .Greater_Equal, false}
+	graphics(list, r, .Gbuffer_After, gbuffer_ids(after, ids))
+	graphics(list, r, .Gbuffer_Plain_After, gbuffer_ids(after_plain, ids))
+	graphics(list, r, .Gbuffer_Layers_After, gbuffer_ids(after_layered, ids))
+	visible, visible_plain, visible_layered := gbuffer, plain, layered
+	visible.fragment, visible_plain.fragment, visible_layered.fragment = &r.shader_codes[.Gbuffer_Visible_Frag], &r.shader_codes[.Gbuffer_Visible_Plain_Frag], &r.shader_codes[.Gbuffer_Visible_Layers_Frag]
+	visible.name, visible_plain.name, visible_layered.name = "gbuffer of the visibility", "gbuffer of the visibility, without reflectance", "gbuffer of the visibility, with layers"
+	for desc in ([]^rhi.Graphics_Pipeline_Desc{&visible, &visible_plain, &visible_layered}) {desc.vertex, desc.depth_test, desc.depth_write = &r.shader_codes[.Fullscreen_Vert], false, false}
+	graphics(list, r, .Gbuffer_Visible, gbuffer_ids(visible, ids))
+	graphics(list, r, .Gbuffer_Visible_Plain, gbuffer_ids(visible_plain, ids))
+	graphics(list, r, .Gbuffer_Visible_Layers, gbuffer_ids(visible_layered, ids))
 	graphics(list, r, .Nested_Prime, {
 		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Nested_Prime_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, name = "nested view pixels",

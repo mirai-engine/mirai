@@ -1,7 +1,7 @@
 #ifndef MIRAI_CULL_PROGRAMS_SLANG
 #define MIRAI_CULL_PROGRAMS_SLANG
-// The visible clusters of materials with a Surface program
-// (render.Program_Clusters), in words: of each phase how many the cull listed
+// The visible clusters of the program list, those of materials with a Surface
+// program and in bin 0 those of none the rasterizer draws, in words: of each phase how many the cull listed
 // (past the capacity too) and the groups of a pass over them, then, by
 // program, the count, cursor and offset of each phase, the draws of each phase
 // and program, and the clusters as the cull listed them: the instance, the
