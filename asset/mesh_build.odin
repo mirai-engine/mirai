@@ -16,19 +16,10 @@ Mesh_Source :: struct {
     vertices:[]Vertex,     // material: the row of slots
     skin:[]Skin_Vertex,    // empty, or one per vertex
     surfaces:[]Surface_Vertex, // empty, or one per vertex: a far mesh (Has_Surface)
-    islands:[]Vertex_Island,   // empty, or one per vertex: foliage pruned in its DAG (Has_Islands)
     morphs:[]Morph_Target, // their deltas name vertices
     morph_deltas:[]Morph_Delta,
     flags:Mesh_Flags,      // Has_Colors and Has_Uv1: the streams kept
     locked:[]bool,         // empty, or one per vertex: the levels of mesh_build_dag keep it where it is, as on a border another mesh shares
-}
-
-// Where a vertex of an island goes as its cluster gives way to its group
-// (geom.Cluster_Made, Island_Vertex).
-Vertex_Island :: struct {
-    center:[3]f32,
-    scale:f32, // 0: its island is dropped
-    rank:f32,
 }
 
 // A cluster before it is encoded: triangles of one slot, as indices of the
@@ -118,7 +109,7 @@ dag_sources :: proc(dag:^geom.Cluster_Dag,clusters:^[dynamic]Cluster_Source,indi
 }
 
 // The geometry of a mesh of whole levels (geom.cluster_levels_build): level
-// 0 alone, or several (Levels: a skinned mesh)
+// 0 alone, or several (Levels: a skinned mesh, foliage pruned by islands)
 // whose clusters share the sphere of the mesh, so a view picks one of them.
 // Every triangle is of the slot its first vertex names. What it returns is in
 // allocator; false for indices outside the vertices or without memory.
@@ -154,27 +145,15 @@ mesh_build :: proc(source:Mesh_Source,indices:[]u32,levels:[]Level_Source,out:^M
     return mesh_encode(flagged,clusters[:],cluster_indices[:],out,allocator)
 }
 
-// The islands of a mesh its DAG prunes instead of simplifying
-// (geom.Cluster_Island): leaves, cards, clumps of grass.
-Mesh_Islands :: struct {
-    islands:[]geom.Cluster_Island, // their submesh is set to the slot of their first vertex
-    rungs:[]geom.Cluster_Island_Rung,
-    indices:[]u32, // of the rungs, into Mesh_Source.vertices
-}
-
 // The geometry of a static mesh as a DAG of clusters (geom.cluster_dag_build):
 // level 0 in clusters, groups of them simplified with their borders locked
 // and split again, up to the roots, and the cuts its rays trace far away
-// (mesh_ray_errors). indices are the triangles simplified; those of islands
-// are their first outlines, and their levels prune them. A mesh with islands
-// is whole, without pages out of its root, and rays meet its level 0. Every
-// triangle is of the slot its first vertex names, and a vertex is of one
-// slot. What it returns is in allocator; false for indices outside the
-// vertices, a vertex of two slots or without memory.
-mesh_build_dag :: proc(source:Mesh_Source,indices:[]u32,out:^Mesh_Geometry,allocator:=context.allocator,islands:=Mesh_Islands{}) -> bool {
-    if len(indices)==0 && len(islands.islands)==0 || len(indices)%3!=0 {return false}
+// (mesh_ray_errors). Every triangle is of the slot its first vertex names,
+// and a vertex is of one slot. What it returns is in allocator; false for
+// indices outside the vertices, a vertex of two slots or without memory.
+mesh_build_dag :: proc(source:Mesh_Source,indices:[]u32,out:^Mesh_Geometry,allocator:=context.allocator) -> bool {
+    if len(indices)==0 || len(indices)%3!=0 {return false}
     for index in indices {if int(index)>=len(source.vertices) {return false}}
-    for index in islands.indices {if int(index)>=len(source.vertices) {return false}}
     for v in source.vertices {if v.material>=MESH_MAX_SLOTS {return false}}
     if !vertices_finite(source) {return false}
     scratch:=context.temp_allocator
@@ -186,98 +165,17 @@ mesh_build_dag :: proc(source:Mesh_Source,indices:[]u32,out:^Mesh_Geometry,alloc
         for locked,at in source.locked {if locked {protect[at]+={.Lock}}}
     }
     weights:=MESH_SIMPLIFY_WEIGHTS
-    given:=make([]geom.Cluster_Island,len(islands.islands),scratch)
-    for island,at in islands.islands {
-        given[at]=island
-        if int(island.first_rung)>=len(islands.rungs) || int(islands.rungs[island.first_rung].first_index)>=len(islands.indices) {return false}
-        given[at].submesh=source.vertices[islands.indices[islands.rungs[island.first_rung].first_index]].material
-    }
     dag:geom.Cluster_Dag
     defer geom.cluster_dag_destroy(&dag)
-    built:=geom.cluster_dag_build(&dag,{
-        positions=positions,indices=ordered[:],ranges=ranges[:],attributes=attributes,attribute_weights=weights[:],vertex_lock=protect,
-        islands=given,island_rungs=islands.rungs,island_indices=islands.indices,
-    },scratch)
+    built:=geom.cluster_dag_build(&dag,{positions=positions,indices=ordered[:],ranges=ranges[:],attributes=attributes,attribute_weights=weights[:],vertex_lock=protect},scratch)
     if built!=.None || dag.levels>MESH_MAX_LEVELS {return false}
     clusters:=make([dynamic]Cluster_Source,scratch)
     cluster_indices:=make([dynamic]u32,scratch)
     dag_sources(&dag,&clusters,&cluster_indices)
     flagged:=source
     flagged.flags-={.Levels}
-    if len(dag.made)>0 && !mesh_made_append(&flagged,dag.made[:]) {return false}
-    whole:=len(islands.islands)>0
-    if !mesh_encode(flagged,clusters[:],cluster_indices[:],out,allocator,whole) {return false}
-    if !whole {mesh_ray_errors(out)}
-    return true
-}
-
-// The vertices a DAG made past those of source, appended to them in the
-// scratch allocator, each a copy of the one it was made from at its place,
-// with its skin, surface and the deltas of its targets.
-@(private="file")
-mesh_made_append :: proc(source:^Mesh_Source,made:[]geom.Cluster_Made) -> bool {
-    scratch:=context.temp_allocator
-    count:=len(source.vertices)
-    vertices,no_vertices:=make([]Vertex,count+len(made),scratch)
-    if no_vertices!=nil {return false}
-    copy(vertices,source.vertices)
-    for m,at in made {
-        vertices[count+at]=source.vertices[m.vertex]
-        vertices[count+at].position=m.position
-    }
-    if len(source.skin)==count {
-        skin,error:=make([]Skin_Vertex,len(vertices),scratch)
-        if error!=nil {return false}
-        copy(skin,source.skin)
-        for m,at in made {skin[count+at]=source.skin[m.vertex]}
-        source.skin=skin
-    }
-    if len(source.surfaces)==count {
-        surfaces,error:=make([]Surface_Vertex,len(vertices),scratch)
-        if error!=nil {return false}
-        copy(surfaces,source.surfaces)
-        for m,at in made {surfaces[count+at]=source.surfaces[m.vertex]}
-        source.surfaces=surfaces
-    }
-    if len(source.morphs)>0 {
-        // Of each vertex, the made ones that copy it: order[firsts[v]:firsts[v+1]].
-        firsts,no_firsts:=make([]u32,count+1,scratch)
-        fill,no_fill:=make([]u32,count+1,scratch)
-        order,no_order:=make([]u32,len(made),scratch)
-        targets,no_targets:=make([]Morph_Target,len(source.morphs),scratch)
-        deltas,no_deltas:=make([dynamic]Morph_Delta,0,len(source.morph_deltas),scratch)
-        if no_firsts!=nil || no_fill!=nil || no_order!=nil || no_targets!=nil || no_deltas!=nil {return false}
-        for m in made {firsts[m.vertex+1]+=1}
-        for v in 0..<count {firsts[v+1]+=firsts[v]}
-        for m,at in made {
-            order[firsts[m.vertex]+fill[m.vertex]]=u32(at)
-            fill[m.vertex]+=1
-        }
-        for target,t in source.morphs {
-            if u64(target.first)+u64(target.count)>u64(len(source.morph_deltas)) {return false}
-            given:=source.morph_deltas[target.first:][:target.count]
-            targets[t]=target
-            targets[t].first=u32(len(deltas))
-            if _,error:=append(&deltas,..given);error!=nil {return false}
-            for delta in given {
-                if int(delta.vertex)>=count {return false}
-                for at in order[firsts[delta.vertex]:firsts[delta.vertex+1]] {
-                    moved:=delta
-                    moved.vertex=u32(count)+at
-                    if _,error:=append(&deltas,moved);error!=nil {return false}
-                }
-            }
-            targets[t].count=u32(len(deltas))-targets[t].first
-        }
-        source.morphs,source.morph_deltas=targets,deltas[:]
-    }
-    islands,no_islands:=make([]Vertex_Island,len(vertices),scratch)
-    if no_islands!=nil {return false}
-    for &island in islands[:count] {island.scale=1}
-    for m,at in made {islands[count+at]={m.center,m.scale,m.rank}}
-    source.islands=islands
-    source.vertices=vertices
-    source.locked=nil
+    if !mesh_encode(flagged,clusters[:],cluster_indices[:],out,allocator) {return false}
+    mesh_ray_errors(out)
     return true
 }
 
@@ -289,14 +187,6 @@ vertices_finite :: proc(source:Mesh_Source) -> bool {
         if !finite(v.position.x,v.position.y,v.position.z,v.uv.x,v.uv.y) || uv1 && !finite(v.uv1.x,v.uv1.y) {return false}
     }
     return true
-}
-
-// Where a vertex of an island is once its island grew as far as its group
-// takes it: its place where it shrinks.
-@(private="file")
-island_grown :: proc "contextless" (island:Vertex_Island,position:[3]f32) -> [3]f32 {
-    if island.scale<=1 {return position}
-    return island.center+(position-island.center)*island.scale
 }
 
 // The finest power of two whose CLUSTER_GRID steps cover extent, coarse
@@ -319,16 +209,12 @@ on_grid :: proc "contextless" (value,step:f32) -> i32 {
 // and CLUSTER_VERTICES vertices, the clusters of a group contiguous. Their
 // vertices are copied into each cluster that names them, on grids of the
 // whole mesh; their skin and the deltas of their targets go with them. The
-// clusters go in pages (mesh_pages_assign), all in the root when whole. What
-// it returns is in allocator; false for clusters out of those bounds or
-// without memory.
-mesh_encode :: proc(source:Mesh_Source,clusters:[]Cluster_Source,indices:[]u32,out:^Mesh_Geometry,allocator:=context.allocator,whole:=false) -> bool {
+// clusters go in pages (mesh_pages_assign). What it returns is in allocator;
+// false for clusters out of those bounds or without memory.
+mesh_encode :: proc(source:Mesh_Source,clusters:[]Cluster_Source,indices:[]u32,out:^Mesh_Geometry,allocator:=context.allocator) -> bool {
     scratch:=context.temp_allocator
     count:=len(source.vertices)
-    if len(clusters)==0 || len(source.skin)!=0 && len(source.skin)!=count || len(source.surfaces)!=0 && len(source.surfaces)!=count || len(source.islands)!=0 && len(source.islands)!=count {return false}
-    for island in source.islands {
-        if !finite(island.center.x,island.center.y,island.center.z,island.scale,island.rank) || island.scale<0 || island.rank<0 || island.rank>=1 {return false}
-    }
+    if len(clusters)==0 || len(source.skin)!=0 && len(source.skin)!=count || len(source.surfaces)!=0 && len(source.surfaces)!=count {return false}
     if !vertices_finite(source) {return false}
     for c,at in clusters {
         if c.index_count==0 || c.index_count%3!=0 || c.index_count/3>CLUSTER_TRIANGLES || c.slot>=MESH_MAX_SLOTS || c.level>=MESH_MAX_LEVELS {return false}
@@ -371,10 +257,6 @@ mesh_encode :: proc(source:Mesh_Source,clusters:[]Cluster_Source,indices:[]u32,o
         for origin in origins[firsts[at]:firsts[at+1]] {
             v:=source.vertices[origin]
             low,high=linalg.min(low,v.position),linalg.max(high,v.position)
-            if len(source.islands)>0 {
-                grown:=island_grown(source.islands[origin],v.position)
-                low,high=linalg.min(low,grown),linalg.max(high,grown)
-            }
             uv_low,uv_high=linalg.min(uv_low,v.uv),linalg.max(uv_high,v.uv)
             uv1_low,uv1_high=linalg.min(uv1_low,v.uv1),linalg.max(uv1_high,v.uv1)
         }
@@ -391,7 +273,6 @@ mesh_encode :: proc(source:Mesh_Source,clusters:[]Cluster_Source,indices:[]u32,o
     g:Mesh_Geometry
     g.flags=source.flags&{.Has_Colors,.Has_Uv1,.Levels}
     if len(source.surfaces)>0 {g.flags+={.Has_Colors,.Has_Surface}}
-    if len(source.islands)>0 {g.flags+={.Has_Islands}}
     g.position_step,g.uv_step,g.uv1_step=grid_step(extent,reach),grid_step(uv_extent,uv_reach),grid_step(uv1_extent,uv1_reach)
 
     vertex_total:=len(origins)
@@ -403,7 +284,6 @@ mesh_encode :: proc(source:Mesh_Source,clusters:[]Cluster_Source,indices:[]u32,o
     if .Has_Uv1 in g.flags {g.uv1s,error=make([]u32,vertex_total,allocator);if error!=nil {return false}}
     if .Has_Colors in g.flags {g.colors,error=make([]u32,vertex_total,allocator);if error!=nil {return false}}
     if .Has_Surface in g.flags {g.surfaces,error=make([]Surface_Vertex,vertex_total,allocator);if error!=nil {return false}}
-    if .Has_Islands in g.flags {g.islands,error=make([]Island_Vertex,vertex_total,allocator);if error!=nil {return false}}
     if len(source.skin)>0 {g.skin,error=make([]Skin_Vertex,vertex_total,allocator);if error!=nil {return false}}
     words:u32
     for c in clusters {words+=(c.index_count+3)/4}
@@ -422,14 +302,6 @@ mesh_encode :: proc(source:Mesh_Source,clusters:[]Cluster_Source,indices:[]u32,o
             for axis in 0..<3 {
                 q:=on_grid(v.position[axis],g.position_step)
                 lo[axis],hi[axis]=min(lo[axis],q),max(hi[axis],q)
-            }
-            // Its box holds the islands grown as far as their group takes them.
-            if len(source.islands)>0 {
-                grown:=island_grown(source.islands[origin],v.position)
-                for axis in 0..<3 {
-                    q:=on_grid(grown[axis],g.position_step)
-                    lo[axis],hi[axis]=min(lo[axis],q),max(hi[axis],q)
-                }
             }
             for axis in 0..<2 {
                 uv_lo[axis]=min(uv_lo[axis],on_grid(v.uv[axis],g.uv_step))
@@ -460,13 +332,6 @@ mesh_encode :: proc(source:Mesh_Source,clusters:[]Cluster_Source,indices:[]u32,o
             }
             if .Has_Colors in g.flags {g.colors[first+u32(i)]=v.color}
             if .Has_Surface in g.flags {g.surfaces[first+u32(i)]=source.surfaces[origin]}
-            if .Has_Islands in g.flags {
-                island:=source.islands[origin]
-                c:[3]u32
-                for axis in 0..<3 {c[axis]=u32(clamp(on_grid(island.center[axis],g.position_step)-lo[axis],0,i32(size[axis])))}
-                fate:=ISLAND_DROPPED|u32(island.rank*32768) if island.scale==0 else u32(min(math.round(island.scale*ISLAND_SCALE_ONE),f32(ISLAND_DROPPED-1)))
-                g.islands[first+u32(i)]={c.x|c.y<<16,c.z|fate<<16}
-            }
             if len(source.skin)>0 {g.skin[first+u32(i)]=source.skin[origin]}
         }
         triangles:=c.index_count/3
@@ -487,7 +352,7 @@ mesh_encode :: proc(source:Mesh_Source,clusters:[]Cluster_Source,indices:[]u32,o
         g.bounds_min,g.bounds_max=linalg.min(g.bounds_min,low),linalg.max(g.bounds_max,high)
     }
     if !mesh_levels_count(&g,clusters,allocator) || !mesh_morphs_follow(&g,source,origins[:],allocator) {return false}
-    whole:=whole || len(source.skin)>0 || len(source.morphs)>0 || .Levels in g.flags
+    whole:=len(source.skin)>0 || len(source.morphs)>0 || .Levels in g.flags
     if !mesh_pages_assign(&g,clusters,whole,allocator) {return false}
     if mesh_closed(g) {g.flags+={.Closed}}
     out^=g
@@ -756,7 +621,7 @@ mesh_ray_errors :: proc(g:^Mesh_Geometry) {
 // they were given.
 mesh_geometry_delete :: proc(g:^Mesh_Geometry,allocator:=context.allocator) {
     delete(g.clusters,allocator);delete(g.levels,allocator);delete(g.vertices,allocator)
-    delete(g.uv1s,allocator);delete(g.colors,allocator);delete(g.surfaces,allocator);delete(g.islands,allocator);delete(g.skin,allocator)
+    delete(g.uv1s,allocator);delete(g.colors,allocator);delete(g.surfaces,allocator);delete(g.skin,allocator)
     delete(g.triangles,allocator);delete(g.pages,allocator);delete(g.page_data,allocator);delete(g.morphs,allocator);delete(g.morph_deltas,allocator)
     g^={}
 }

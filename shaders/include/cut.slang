@@ -14,15 +14,6 @@ float instance_scale(Instance inst) {
     return max(length(c0), max(length(c1), length(c2)));
 }
 
-// How much of an instance the raster fades out of the view, which it leaves
-// out by pixels (fade_pixel_left): the body of the player of the view, or an
-// instance of a batch near its cull distance.
-float instance_fade(uint index, Instance inst) {
-    float fade = view_body_fade(inst.meta.w);
-    if (instance_batched(index)) fade = max(fade, batch_faded(batch_row(batch_of(index)), inst.bounds_min.xyz, inst.bounds_max.xyz));
-    return fade;
-}
-
 // Where the detail of a cut is chosen from: the eye and the nearest it looks
 // (w), how wide a pixel is there and per metre farther, and the axis distance
 // runs along (zero: from the eye whichever way). A view chooses from its eye
@@ -104,16 +95,6 @@ Cluster_Cut cluster_cut(Detail d, Instance inst, float scale, Mesh mesh, Cluster
 bool cluster_in_cut(Detail d, Instance inst, float scale, Mesh mesh, Cluster c, float threshold) {
     return cluster_cut(d, inst, scale, mesh, c, threshold).drawn;
 }
-// How far a cut has gone from the error of a cluster it draws to that of its
-// parent, 0 to 1: at 1 the cut takes the parent, whose clusters the islands
-// of this one have grown and shrunk into (island_offset). 0 for a mesh
-// without islands and a pose that stays at level 0.
-float cluster_along(Detail d, Instance inst, float scale, Mesh mesh, Cluster c, float threshold) {
-    if ((mesh.flags & MESH_FLAG_ISLANDS) == 0u || (mesh.flags & MESH_FLAG_LEVEL0) != 0u || c.parent_error >= FLT_MAX) return 0.0;
-    float own = lod_pixels(d, transform_point(inst.world, c.lod.xyz), c.lod.w * scale, c.error * scale);
-    float parent = lod_pixels(d, transform_point(inst.world, c.parent.xyz), c.parent.w * scale, c.parent_error * scale);
-    return parent > own ? saturate((threshold - own) / (parent - own)) : 0.0;
-}
 // The instance passes of a cull (cull.comp, shadow_maps.comp) hand the
 // clusters of an instance to their cluster passes in chunks of up to
 // CULL_CHUNK, a group each, in rows of CULL_DISPATCH_X groups.
@@ -174,7 +155,8 @@ void cluster_world_box(Instance inst, Mesh mesh, Cluster c, out float3 low, out 
 
 // As cluster_backfacing (below), for a cone of the normals in the space of the mesh
 // (axis) whose normals spread from it by the sine `cutoff`.
-bool cone_backfacing(Instance inst, float scale, float3 cone_axis, float cutoff, float3 low, float3 high) {
+bool cone_backfacing(Instance inst, float scale, Mesh mesh, float3 cone_axis, float cutoff, float3 low, float3 high) {
+    if ((mesh.flags & MESH_FLAG_CLOSED) == 0u) return false;
     float3 c0 = float3(inst.world[0].x, inst.world[1].x, inst.world[2].x);
     float3 c1 = float3(inst.world[0].y, inst.world[1].y, inst.world[2].y);
     float3 c2 = float3(inst.world[0].z, inst.world[1].z, inst.world[2].z);
@@ -187,14 +169,13 @@ bool cone_backfacing(Instance inst, float scale, float3 cone_axis, float cutoff,
     return dot(to, axis) >= cutoff * length(to) + radius;
 }
 
-// Whether the eye sees a cluster only from behind its normals: every
-// direction from the eye to its box is within the cutoff of the cone around
-// its axis. Its caller asks only of a cluster whose material is not seen from
-// behind (Material.two_sided). An instance that stretches its mesh unevenly
+// Whether the eye sees a cluster of a closed mesh only from behind its
+// normals: every direction from the eye to its box is within the cutoff of
+// the cone around its axis. An instance that stretches its mesh unevenly
 // turns normals the cone does not hold: it is never left out.
-bool cluster_backfacing(Instance inst, float scale, Cluster c, float3 low, float3 high) {
+bool cluster_backfacing(Instance inst, float scale, Mesh mesh, Cluster c, float3 low, float3 high) {
     if ((c.counts & CLUSTER_CONE) == 0u) return false;
     float2 packed = float2(float(int(c.size_z_cone << 8u) >> 24), float(int(c.size_z_cone) >> 24)) / 127.0;
-    return cone_backfacing(inst, scale, oct_decode(max(packed, float2(-1.0))), float(int(c.counts) >> 24) / 127.0, low, high);
+    return cone_backfacing(inst, scale, mesh, oct_decode(max(packed, float2(-1.0))), float(int(c.counts) >> 24) / 127.0, low, high);
 }
 #endif

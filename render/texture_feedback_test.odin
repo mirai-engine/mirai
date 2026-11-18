@@ -170,12 +170,11 @@ texture_feedback_keeps_every_level_the_image_reads :: proc(t: ^testing.T) {
 
 // A texture only a traced reflection shows asks for its levels by the cone
 // of the ray at its hit, and gets them; one nothing shows asks for nothing
-// and keeps its levels, as does one of a surface that a surface of a program
-// in front of it hides whole: a material runs for what the camera sees.
+// and keeps its levels.
 @(test)
 texture_feedback_takes_what_reflections_see_and_nothing_unseen :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 512, 512, feedback_settings(), programs = true) {return}
+	if !fixture_init(t, &f, 512, 512, feedback_settings()) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	SIDE :: 1024
@@ -185,17 +184,11 @@ texture_feedback_takes_what_reflections_see_and_nothing_unseen :: proc(t: ^testi
 	defer texture_data_destroy(&reflected_whole)
 	unseen, unseen_whole := noise_texture(t, r, SIDE, SIDE, tail)
 	defer texture_data_destroy(&unseen_whole)
-	covered, covered_whole := noise_texture(t, r, SIDE, SIDE, tail)
-	defer texture_data_destroy(&covered_whole)
-	sampled := program_find(r, "Sampled", .Surface)
-	if !testing.expect(t, sampled != nil, "the tests have the Sampled program") {return}
-	mirror, shown, hidden, under, cover := DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL
+	mirror, shown, hidden := DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL
 	mirror.base_color, mirror.metallic, mirror.roughness = {0.9, 0.9, 0.9}, 1, 0.02
 	shown.textures[.Base_Color], shown.emission = reflected, {2, 2, 2}
 	hidden.textures[.Base_Color] = unseen
-	under.textures[.Base_Color] = covered
-	cover.program_id, cover.custom_params = sampled.id, program_defaults(sampled)
-	materials_set(r, {mirror, shown, hidden, under, cover})
+	materials_set(r, {mirror, shown, hidden})
 	quad := feedback_quad(r)
 	// A narrow camera looks down at a mirror floor; the quad it mirrors faces
 	// the floor out of its view, and the other is behind it.
@@ -203,25 +196,17 @@ texture_feedback_takes_what_reflections_see_and_nothing_unseen :: proc(t: ^testi
 	facing[1, 1], facing[1, 3], facing[2, 3] = -1, 0.5, -0.5
 	behind := Mat4(1)
 	behind[1, 3], behind[2, 3] = 2, 6
-	// Near the eye, in the middle of the view, a small quad of a program and
-	// a smaller one just under it, which it hides whole.
-	covering, under_it := scaled(0.06), scaled(0.04)
-	covering[1, 3], covering[2, 3] = 0.79, 0.79
-	under_it[1, 3], under_it[2, 3] = 0.785, 0.79
 	testing.expect(t, scene_update(r, 0, {
 		{object_id = 1, mesh = quad, transform = scaled(20), material = 1, tint = {1, 1, 1}},
 		{object_id = 2, mesh = quad, transform = facing, material = 2, tint = {1, 1, 1}},
 		{object_id = 3, mesh = quad, transform = behind, material = 3, tint = {1, 1, 1}},
-		{object_id = 4, mesh = quad, transform = under_it, material = 4, tint = {1, 1, 1}},
-		{object_id = 5, mesh = quad, transform = covering, material = 5, tint = {1, 1, 1}},
 	}, true))
 	scene_set_environment(r, {}, {sky = {0, 0, 0.2}})
 	camera := Camera{position = {0, 1, 1}, forward = {0, -1, -1}, up = {0, 1, 0}, fov_y = 30, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	feedback_settle(t, r, camera, {reflected_whole, unseen_whole, covered_whole})
+	feedback_settle(t, r, camera, {reflected_whole, unseen_whole})
 	streams := r.textures.residency.streams[:]
 	testing.expectf(t, streams[reflected - 1].shown && int(streams[reflected - 1].top) < tail, "the reflected texture is sampled and gets levels past its tail: from %d (shown %v, asked %v)", streams[reflected - 1].top, streams[reflected - 1].shown, streams[reflected - 1].lod)
 	testing.expectf(t, !streams[unseen - 1].shown && int(streams[unseen - 1].top) == tail, "the unseen texture asks for nothing: from %d", streams[unseen - 1].top)
-	testing.expectf(t, !streams[covered - 1].shown && int(streams[covered - 1].top) == tail, "the texture of a surface hidden whole asks for nothing: from %d", streams[covered - 1].top)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 

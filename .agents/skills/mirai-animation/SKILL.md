@@ -150,8 +150,8 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
    livelier turn or start asks for turn or start clips, not transitions.
 4. **Gameplay actions:** one request, `play`, by the name of an action of the set. What is added
    to the locomotion (waving, reloading, hitting with the torso) names a layer of the set; what
-   takes the whole body (vault, hit received, death, emote) names none and fades in over the base
-   while the matching goes on under it. Each has its priority, cancellation, entry
+   takes the whole body (vault, hit received, death, emote) names none and takes the pose from
+   the base while the matching goes on under it. Each has its priority, cancellation, entry
    and exit; its sections and windows are spans of its clip. The game reacts to
    `Animation_Events`, not to a state.
 5. **On top of the pose:** the layers of the set, over the matched pose: an aim offset is an
@@ -209,8 +209,10 @@ Adapt the source's data to these features instead of rebuilding its runtime:
   skeleton, within its memory cap.
 - Physics is the only writer of the mode and the velocity of a character; animation reads them
   through `match_goal` on each tick and keeps no copy.
-- The jumps of the matching are inertial; the layers and every action, also over the whole body,
-  crossfade over what is under them, the same over a matched base as over a clip.
+- The jumps of the matching and every change of what a slot of the stack plays (an action that
+  starts, ends or is interrupted, also over the whole body) are inertial: the new pose shows at
+  once, only its clips are evaluated, and its difference from the pose shown decays. Only the
+  weight a parameter gives a layer moves over its `fade`.
 - The API and its preview evaluate the same runtime as the game. The `previews` panel samples clips
   on its own.
 - The API expresses intent with names and defaults: it resolves handles and indices inside the

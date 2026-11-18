@@ -12,8 +12,8 @@
 #include <shared_constants.slang>
 
 // Header: count, layout, stride (words of a native instance), first (of the
-// source), ids, the flags of an opaque instance, of a tested one and of one
-// whose geometries decide; then two words by BLAS id.
+// source), ids, the flags of an opaque instance and of a tested one; then
+// two words by BLAS id.
 [[vk::binding(0, 0)]] StructuredBuffer<uint> table : register(t0, space0);
 [[vk::binding(1, 0)]] StructuredBuffer<uint> source : register(t1, space0);
 [[vk::binding(2, 0)]] RWStructuredBuffer<uint> native : register(u2, space0);
@@ -30,7 +30,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     bool met = blas != 0u && (value.x | value.y) != 0u;
     uint mask_flags = source[from + 14u];
     uint mask = met ? (mask_flags & 255u) : 0u;
-    uint flags = (mask_flags & TLAS_ALPHA_TESTED) != 0u ? table[6] : ((mask_flags & TLAS_ALPHA_GEOMETRY) != 0u ? table[7] : table[5]);
+    uint flags = (mask_flags & TLAS_ALPHA_TESTED) != 0u ? table[6] : table[5];
     uint custom = source[from + 12u] & 0xFFFFFFu;
     if (layout == TLAS_LAYOUT_ROWS) {
         for (uint k = 0u; k < 12u; k++) native[to + k] = source[from + k];

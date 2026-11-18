@@ -21,8 +21,8 @@ float media_phase(float cosine, float g) {
     return 0.25 * (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * cosine, 1e-4), 1.5);
 }
 
-// One local light, picked for what of it media scatter at the point, over
-// the chance of picking it: over frames, what all of them give, with its shadow ray if it
+// One local light, picked for what it gives the point, over the chance of
+// picking it: over frames, what all of them give, with its shadow ray if it
 // casts shadows. Each tree of the lights without shadows takes its share of
 // the picks by what its root gives. changed: also whether the light moved or
 // its ray crossed what casts shadows and changed since the frame before
@@ -38,7 +38,7 @@ float3 media_local_light(float3 position, float3 eye_ray, float g, float pick, i
         uint trees = 0u;
         for (uint k = 0u; k < 3u; k++) {
             bool held = k == 0u || roots[k] != 0u;
-            weights[k] = held ? node_weight(light_nodes[roots[k]], position, float3(0.0), LIGHT_SHARE_SCATTERED) : -1.0;
+            weights[k] = held ? node_weight(light_nodes[roots[k]], position, float3(0.0)) : -1.0;
             sum += max(weights[k], 0.0);
             trees += held ? 1u : 0u;
         }
@@ -56,8 +56,8 @@ float3 media_local_light(float3 position, float3 eye_ray, float g, float pick, i
         pick = saturate((pick - start) / max(share, 1e-6));
     }
     float chance;
-    Light_Node leaf = light_nodes[node_light(root, pick, position, float3(0.0), chance, LIGHT_SHARE_SCATTERED)];
-    if ((leaf.flags & LIGHT_NODE_LEAF) == 0u || !(leaf.scattering > 0.0)) return float3(0.0);
+    Light_Node leaf = light_nodes[node_light(root, pick, position, float3(0.0), chance)];
+    if ((leaf.flags & LIGHT_NODE_LEAF) == 0u) return float3(0.0);
     uint index = leaf.child;
     Light light = lights[index];
     chance *= share;
@@ -65,7 +65,7 @@ float3 media_local_light(float3 position, float3 eye_ray, float g, float pick, i
     float3 towards = normalize(light.position_range.xyz - position);
     float3 direction;
     float distance;
-    float3 incident = light_contribution(light, position, towards, direction, distance) * leaf.scattering;
+    float3 incident = light_contribution(light, position, towards, direction, distance) * light_shares(light).y;
     if (!(luminance(incident) > light_cutoff())) return float3(0.0);
     float reach = light_reach(light, distance);
     float3 through = float3(1.0);
@@ -130,7 +130,7 @@ float3 media_sun_through(float3 position, inout bool changed) {
 // (media_sun_through), times sun_kept, what the medium itself lets through,
 // and the phase towards the eye; none without a sun.
 float3 media_sun(float3 position, float3 eye_ray, float g, float3 sun_kept, inout bool changed) {
-    if (frame.sun_direction.w < 0.5 || !(frame.sun_shares.y > 0.0)) return float3(0.0);
+    if (frame.sun_direction.w < 0.5) return float3(0.0);
     float3 through = media_sun_through(position, changed);
     return media_sun_light(position) * through * sun_kept * media_phase(dot(eye_ray, frame.sun_direction.xyz), g);
 }

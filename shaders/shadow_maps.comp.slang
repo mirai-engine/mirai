@@ -53,7 +53,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         reach = batch_reach(row);
     }
     Instance inst = scene_instance(instance);
-    if ((inst.meta.w & INSTANCE_FLAG_HIDDEN) != 0u || (inst.meta.x & INSTANCE_UNSHADOWED) != 0u) return;
+    if ((inst.meta.w & INSTANCE_FLAG_HIDDEN) != 0u) return;
     // Glass casts no shadow: it takes its place only in the tint of the maps,
     // and not a glass sheet.
     bool all_glass = (inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u;

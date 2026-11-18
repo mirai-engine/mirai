@@ -176,8 +176,7 @@ struct Instance {
     float4 world_inv[3];  // rows of the world-to-object 3x4 matrix
     float4 prev_world[3];
     uint4 meta;         // x mesh (bits 0-23) and the cut rays trace it with (24-25), y material in place of the slots' (INVALID: theirs), z object id, w flags
-    float3 bounds_min;    // world space AABB
-    uint tested;          // the slots of its mesh whose materials rays and the maps of the shadows ask, a bit each (render.instance_alpha)
+    float4 bounds_min;    // world space AABB
     float4 bounds_max;
     float4 tint;          // rgb multiplies the base color
     float4 emission;      // rgb radiance added to the material's
@@ -192,9 +191,9 @@ uint instance_mesh(Instance inst) { return inst.meta.x & INSTANCE_MESH_MASK; }
 uint instance_ray_cut(Instance inst) { return (inst.meta.x >> INSTANCE_RAY_SHIFT) & 3u; }
 
 // A cut of a mesh rays trace (render.Gpu_Mesh_Ray): the root of its tree and
-// its first triangle by software; with hardware, the table of the primitives
-// of its BLAS and how many of them lead, the opaque geometry of the BLAS.
-struct Mesh_Ray { uint bvh_root; uint triangle_offset; uint table_word; uint table_opaque; };
+// its first triangle by software, the table of the primitives of its BLAS
+// with hardware, and its error.
+struct Mesh_Ray { uint bvh_root; uint triangle_offset; uint table_word; float error; };
 struct Mesh {
     uint cluster_word;   // its first cluster in the index pool
     uint cluster_count;
@@ -261,7 +260,6 @@ struct Material {
     uint emission_mode;         // EMISSION_*
     uint program_id;            // Surface program that replaces the values above; 0 for none
     uint textures[MATERIAL_MAPS];
-    uint two_sided;             // 1: seen from behind too (asset.Material_Info.two_sided); 0: its back faces are not drawn
     uint row;                   // of the material table, where the rest of it follows
 };
 // A row of the material table. Shading code holds its Material by value; where
@@ -289,7 +287,7 @@ struct Material_Row {
 
 // What the vertex shader tells the fragment shaders of an instance.
 #define RASTER_HIGHLIGHT_MASK 31u // outline level
-#define RASTER_FLAG_BACK 32u      // the fragment shows the back of its triangle: its stage sets it from its facing (raster_facing)
+#define RASTER_FLAG_MIRRORED 32u  // its transform turns the winding of its triangles around
 #define RASTER_FLAG_FADING 64u    // what fades out by the unorm16 of bits 16-31: the body the view fades out (view_body_fade), or an instance of a batch near its cull distance
 #define RASTER_FADE_SHIFT 16u
 
@@ -309,13 +307,11 @@ struct Light_Node {
     float4 power_reach;   // rgb the sum of their colors times their intensities; w how far from the center the farthest of them reaches
     float4 cone;          // xyz the axis of the directions they face; w the half-angle around it that holds those directions, radians; PI: any
     float emission;       // the half-angle beyond the directions they face that their light goes, radians: a spot its cone, a rectangle a quarter turn
-    float range_low;      // the shortest of their ranges
-    float range_high;     // the longest of their ranges
+    float range;          // of a group, the mean of their ranges weighed by how bright each is
     float spread;         // root of the mean square of how far their light lies from the center, their sizes included
     uint child;           // a leaf: its light; a group: its second child
     uint flags;           // LIGHT_NODE_*, and the number of its lights
-    float indirect;       // what of their light the probes gather, the mean of their shares weighed by how bright each is; 0 only if none of it
-    float scattering;     // what of their light media scatter, the same way
+    float indirect;       // what of their light the probes gather, the mean of their shares weighed by how bright each is
 };
 
 struct Bvh_Node {
@@ -328,9 +324,8 @@ struct Bvh_Node {
 struct Bvh_Triangle {
     float3 v0;
     uint primitive; // index within the mesh (integer, never float bits)
-    float3 v1;
-    uint slot;      // of its cluster among those of the mesh
-    float4 v2;      // w unused
+    float4 v1;      // w unused
+    float4 v2;
 };
 
 // Probe.cell.w flags: traced for its cell and seeing out of geometry; inside

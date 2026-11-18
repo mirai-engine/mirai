@@ -149,20 +149,37 @@ Binding :: struct {
 SPACE_LEAVES :: 3 // clips a place of a space blends
 Space_Leaf :: struct {clip:lib.Clip,weight,speed:f32}
 Layer_Playing :: struct {
-    fader:lib.Fader,
+    player:lib.Player,
     clip:u64,   // the one it plays; 0: none
     weight:f32, // on its way to the one asked
     space:u8,                        // 1 + the space of the set it samples instead of a clip
     leaves:[SPACE_LEAVES]Space_Leaf, // the clips of the space at the place its parameters give, by their weight
     leaf_count:u8,
     time:f32,   // of the clock the clips of its space play by
-    from:f32,   // where its current clip was when the tick began, or where it was put since
+    from:f32,   // where its clip, or the clock of its space, was when the tick began, or where it was put since
     carried:Root_Delta,             // the root motion its current clip moved in this tick before a jump to from
-    root_motion:Root_Motion_Policy, // of the action it plays, kept while it fades out
+    root_motion:Root_Motion_Policy, // of the action it plays
     body:Action_Body_Move,          // as root_motion
     body_vertical:bool,
 }
 Stack_Parameter :: struct {name:u64,value:f32,used:bool} // used: a layer or an axis read it in this tick
+// What the slots of the stack changed in a tick: an action started, ended or was interrupted, or a
+// layer changed what it plays. Those slots show their new pose at once and the pose blends from
+// the one shown by inertia over the longest time asked; a slot that asks no time cuts.
+Stack_Blend :: struct {slots,cuts:u16,duration:f32}
+// The inertia of the pose of a stack: the pose and curves it showed in its last tick and in the
+// one before, and the offsets from them that decay over a blend.
+Stack_Inertia :: struct {
+    shown,shown_before:[dynamic]mm.Transform,
+    shown_curves,shown_curves_before:[dynamic]Curve_Output,
+    dt:f32,     // seconds between shown_before and shown
+    kept:u8,    // ticks shown holds, up to 2
+    before,older:[dynamic]mm.Transform, // the pose the slots changed to a tick before, and one before it along its velocity
+    values:[dynamic]f32,          // 5 a curve (its value and weight) for the shown curves, those before them and the target
+    state:lib.Inertial_State,
+    bones:[dynamic]lib.Inertial_Bone,
+    curves:[dynamic]lib.Inertial_Curve,
+}
 
 Playing :: struct {
     entity:core.Entity,
@@ -184,6 +201,8 @@ Playing :: struct {
     layers:[STACK_SLOTS]Layer_Playing,
     asked:[STACK_SLOTS]Layer_Ask,           // what each slot plays in this tick
     stack:u8,                               // slots its .character gives it; 0: none
+    blend:Stack_Blend,                      // what its slots changed in this tick
+    inertia:Stack_Inertia,
     parameters:[STACK_PARAMETERS]Stack_Parameter, // what set gave it; name 0: free
     masks:[dynamic]f32,                // by slot of the stack and binding: the share of its layer each bone takes (layer_mask)
     masks_over:[STACK_SLOTS]Layer_Over, // the branches each row of masks was made for
@@ -419,7 +438,9 @@ animation_tick :: proc(
             layers_advance(playback,state,content,animation,events,dt,problems,characters,app,actions)
             actions_layer_finish(actions,state)
             for &layer in state.layers[:state.stack] {if layer.weight>0 {state.held=false}}
+            if state.blend.slots!=0 || state.inertia.state.active {state.held=false}
             stack_parameters_check(state,problems)
+            if !stack_inertia_prepare(state) {memory_problem(problems,e,"the blends of its actions")}
         } else {clear(&state.curves);state.curves_ready=false}
         played:=work_content(playback,content)
         if played<0 {memory_problem(problems,e,"its animation");continue}
@@ -459,7 +480,7 @@ animation_tick :: proc(
             state.motion=motion;state.root_enabled=true
         }
         leading,share:=-1,f32(0)
-        if content!=nil {leading,share=stack_root(state,content,animation^,dt)}
+        if content!=nil {leading,share=stack_root(state,content,animation^)}
         if animation.mirror && len(state.mirror_pairs)>0 {
             state.motion=root_delta_mirror(state.mirror_plane,state.motion)
             state.body_motion.translation=lib.mirror_vector(state.mirror_plane,state.body_motion.translation)
@@ -740,29 +761,36 @@ stack_parameters_check :: proc(state:^Playing,problems:^core.Problems) {
     }
 }
 
-// The clips a layer blends in this tick, each with its weight: those of its fader, or those of
-// its space at the place its parameters give.
-LAYER_PLAYERS :: lib.FADER_OUTGOING+1
-layer_players :: proc "contextless" (layer:^Layer_Playing,out:^[LAYER_PLAYERS]lib.Player) -> (count:int) {
+// The clips a layer blends in this tick, each with its weight: its clip, or those of its space at
+// the place its parameters give. previous: each where it was when the tick began.
+LAYER_PLAYERS :: SPACE_LEAVES
+layer_players :: proc "contextless" (layer:^Layer_Playing,out:^[LAYER_PLAYERS]lib.Player,previous:=false) -> (count:int) {
     if layer.leaf_count>0 {
+        time:=layer.from if previous else layer.time
         for leaf in layer.leaves[:min(int(layer.leaf_count),SPACE_LEAVES)] {
-            player:=lib.Player{clip=leaf.clip,time=layer.time*leaf.speed,speed=leaf.speed,weight=leaf.weight}
-            out[count]=player;count+=1
+            out[count]=lib.Player{clip=leaf.clip,time=time*leaf.speed,speed=leaf.speed,weight=leaf.weight};count+=1
         }
         return
     }
     if layer.clip==0 {return}
-    out[0]=layer.fader.current;out[0].weight=lib.fader_current_weight(layer.fader);count=1
-    for outgoing in layer.fader.outgoing[:clamp(layer.fader.outgoing_count,0,lib.FADER_OUTGOING)] {
-        out[count]=outgoing.player;out[count].weight=lib.fade_out_weight(outgoing);count+=1
-    }
-    return
+    out[0]=layer.player;out[0].weight=1
+    if previous {out[0].time=layer.from}
+    return 1
+}
+
+// Asks that slot of the stack of state shows what it changed to at once and blends from the pose
+// shown over duration seconds; zero cuts.
+@(private)
+stack_blend :: proc "contextless" (state:^Playing,slot:int,duration:f32) {
+    bit:=u16(1)<<u16(slot)
+    state.blend.slots|=bit
+    if duration>0 {state.blend.duration=max(state.blend.duration,duration)} else {state.blend.cuts|=bit}
 }
 
 // The clips of the space of a layer at the place its axes are set to (set), and its weight on the
 // way to the one asked. False when the space or a clip of it cannot be played.
 @(private)
-layer_space_advance :: proc(state:^Playing,layer:^Layer_Playing,asked:Layer_Ask,content:^host.Content_Animation,animation:Animation,characters:^Character_Assets,app:^host.App,dt:f32) -> bool {
+layer_space_advance :: proc(state:^Playing,layer:^Layer_Playing,asked:Layer_Ask,content:^host.Content_Animation,animation:Animation,characters:^Character_Assets,app:^host.App,dt:f32,blend:bool) -> bool {
     set:=character_content(characters,app.assets,app.allocator,animation.asset)
     index:=int(asked.space)-1
     if set==nil || index<0 || index>=len(set.spaces) {layer^={};return false}
@@ -784,13 +812,14 @@ layer_space_advance :: proc(state:^Playing,layer:^Layer_Playing,asked:Layer_Ask,
     }
     target:=mm.saturate(asked.weight)
     step:=dt/asked.fade if asked.fade>0 else 1
-    layer.weight=target if abs(target-layer.weight)<=step else layer.weight+(step if target>layer.weight else -step)
+    layer.weight=target if blend || abs(target-layer.weight)<=step else layer.weight+(step if target>layer.weight else -step)
     if animation.playing && finite(layer.time+dt*asked.speed) {layer.time+=dt*asked.speed}
     return true
 }
 
-// The slots of the stack follow what they are asked: a new clip cross-fades in, the weight moves to
-// the one asked over fade, and a slot without clip fades out.
+// The slots of the stack follow what they are asked: a slot that changes what it plays shows it at
+// once from its start, and so does the weight of one that changed in this tick (stack_blend); the
+// weight of another moves to the one asked over fade, and a slot without clip fades out.
 @(private)
 layers_advance :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,events:^Animation_Events,dt:f32,problems:^core.Problems,characters:^Character_Assets=nil,app:^host.App=nil,actions:^Action_Runtime=nil) {
     library:=&content.lib
@@ -799,7 +828,8 @@ layers_advance :: proc(playback:^Playback,state:^Playing,content:^host.Content_A
     for &layer,i in state.layers[:state.stack] {
         asked:=state.asked[i]
         // The share each bone takes, made again only when the branches or the bindings change.
-        if bit:=u16(1)<<u16(i);asked.over!={} && (state.masks_made&bit==0 || state.masks_over[i]!=asked.over) {
+        bit:=u16(1)<<u16(i)
+        if asked.over!={} && (state.masks_made&bit==0 || state.masks_over[i]!=asked.over) {
             if len(state.masks)<STACK_SLOTS*n && resize(&state.masks,STACK_SLOTS*n)!=nil {memory_problem(problems,state.entity,"the masks of its layers");continue}
             state.masks_over[i]=asked.over;state.masks_made|=bit
             if !layer_mask(state,asked.over,state.masks[i*n:][:n]) {
@@ -807,7 +837,7 @@ layers_advance :: proc(playback:^Playback,state:^Playing,content:^host.Content_A
             }
         }
         if asked.space!=0 {
-            if app==nil || !layer_space_advance(state,&layer,asked,content,animation,characters,app,dt) {
+            if app==nil || !layer_space_advance(state,&layer,asked,content,animation,characters,app,dt,state.blend.slots&bit!=0) {
                 core.report(problems,state.entity,"animation.layer_space","layer '%s' of the .character of this entity samples a space that names a clip its animation does not have; check it with animation.asset.inspect, and fix it with animation.space.set",stack_slot_name(actions,state.entity,i))
             }
             continue
@@ -818,23 +848,28 @@ layers_advance :: proc(playback:^Playback,state:^Playing,content:^host.Content_A
         if asked.clip!=0 && !known {core.report(problems,state.entity,"animation.layer_clip","layer '%s' of the .character of this entity plays a clip its animation does not have, so it plays nothing; name one of its clips in the layer (animation.asset.inspect lists them)",stack_slot_name(actions,state.entity,i))}
         handle:=lib.Clip(index+1+(asked.loop?content.clip_count:0)) if known else 0
         if known && asked.clip!=layer.clip && (layer.clip!=0 || asked.weight>0) {
-            lib.fader_play(&layer.fader,handle,asked.speed,asked.fade if layer.clip!=0 else 0)
-            layer.clip,layer.from=asked.clip,layer.fader.current.time
+            if layer.clip!=0 {stack_blend(state,i,asked.fade)}
+            layer.player=lib.player_make(handle,asked.speed)
+            layer.clip,layer.from=asked.clip,0
         }
         if layer.clip==0 || !animation.playing {continue}
         target:f32=0
         if known && asked.clip==layer.clip {
             target=mm.saturate(asked.weight)
-            if layer.fader.current.clip!=handle {layer.fader.current.clip,layer.fader.current.done=handle,false}
-            layer.fader.current.speed=asked.speed
+            if layer.player.clip!=handle {layer.player.clip,layer.player.done=handle,false}
+            layer.player.speed=asked.speed
         }
         step:=dt/asked.fade if asked.fade>0 else 1
-        layer.weight=target if abs(target-layer.weight)<=step else layer.weight+(step if target>layer.weight else -step)
+        layer.weight=target if state.blend.slots&bit!=0 || abs(target-layer.weight)<=step else layer.weight+(step if target>layer.weight else -step)
         if layer.weight<=0 && target<=0 {layer={};continue}
         batch:[EVENT_BATCH]lib.Event
-        written,dropped:=lib.fader_advance(library,&layer.fader,dt,batch[:])
-        if !asked.sync {fader_emit(playback,events,state.entity,content,batch[:written],dropped,layer.fader,layer.weight*mm.saturate(animation.weight),u16(i+1),animation,problems);continue}
-        if phase,ok:=lib.sync_phase(library,state.fader.current);ok && state.clip>=0 {lib.player_synchronize(library,&layer.fader.current,phase)}
+        written,dropped:=lib.player_advance(library,&layer.player,dt,batch[:])
+        if !asked.sync {
+            emit_events(playback,events,state.entity,content,batch[:written],0,problems,layer.weight*mm.saturate(animation.weight),u32(layer.player.clip),u16(i+1),animation)
+            markers_lost(problems,state.entity,dropped,MARKERS_PAST_BATCH)
+            continue
+        }
+        if phase,ok:=lib.sync_phase(library,state.fader.current);ok && state.clip>=0 {lib.player_synchronize(library,&layer.player,phase)}
     }
 }
 
@@ -872,24 +907,17 @@ clip_root_lock :: proc(state:^Playing,content:^host.Content_Animation,clip:lib.C
 // pose, and the share of it of the actions that move the body. leading: the layer with the most
 // of the root, at least half of it; -1 for none.
 @(private)
-stack_root :: proc(state:^Playing,content:^host.Content_Animation,animation:Animation,dt:f32) -> (leading:int,share:f32) {
+stack_root :: proc(state:^Playing,content:^host.Content_Animation,animation:Animation) -> (leading:int,share:f32) {
     leading=-1
     moving,strongest:f32
     for &layer,i in state.layers[:state.stack] {
-        root:=clip_root(content,layer.fader.current.clip)
-        if layer.root_motion==.None || layer.weight<=0 || layer.leaf_count>0 || !(root.translation || root.rotation) {continue}
+        root:=clip_root(content,layer.player.clip)
+        if layer.root_motion==.None || layer.weight<=0 || layer.leaf_count>0 || layer.clip==0 || !(root.translation || root.rotation) {continue}
         if state.root.translation || state.root.rotation {root.bone=state.root.bone} else {state.root=root;state.root.in_place=layer.root_motion==.In_Place}
         target:=bone_target(state,root.bone)
         delta:=ROOT_DELTA_DEFAULT
-        players:[LAYER_PLAYERS]lib.Player
-        for player,p in players[:layer_players(&layer,&players)] {
-            from:=layer.from if p==0 else player.time-dt*player.speed
-            if p>0 && player.done {continue}
-            moved,turned:=lib.clip_root_motion(&content.lib,player.clip,target,from,player.time)
-            if p==0 {moved,turned=layer.carried.translation+mm.quat_rotate(layer.carried.rotation,moved),layer.carried.rotation*turned}
-            delta.translation+=moved*player.weight;delta.rotation*=mm.quat_slerp(1,turned,player.weight)
-        }
-        delta.translation,delta.rotation=root_motion_to_rig(state,target,delta.translation,delta.rotation)
+        moved,turned:=lib.clip_root_motion(&content.lib,layer.player.clip,target,layer.from,layer.player.time)
+        delta.translation,delta.rotation=root_motion_to_rig(state,target,layer.carried.translation+mm.quat_rotate(layer.carried.rotation,moved),layer.carried.rotation*turned)
         if !root.translation {delta.translation={}}
         if !root.rotation {delta.rotation=1}
         weight:=layer.weight*mm.saturate(animation.weight)
@@ -911,20 +939,29 @@ stack_root :: proc(state:^Playing,content:^host.Content_Animation,animation:Anim
 @(private)
 pose_sample :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,transforms:^core.Table(core.Transform,.Read),worker:=0) -> (faults:Pose_Faults) {
     if len(state.bindings)==0 {return}
+    if !pose_base(playback,state,content,animation,transforms,state.fader,state.local[:],worker) {faults.memory=true;return}
+    return pose_layers(playback,state,content,animation,state.local[:],transforms,worker)
+}
+
+// The pose of the clip of the component that fader plays into local, which holds what each binding
+// starts from. False without room to blend.
+@(private)
+pose_base :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,transforms:^core.Table(core.Transform,.Read),fader:lib.Fader,local:[]mm.Transform,worker:int) -> bool {
     library:=&content.lib
     _,bones,shared,ready:=pose_room(playback,state,worker)
-    if !ready {faults.memory=true;return}
+    if !ready || len(local)!=len(state.bindings) {return false}
     // Without a clip the base is the rest of what the animation drives, which the stack blends
     // over and fades back to, as a clip at no weight.
     if state.clip>=0 {
+        fader:=fader
         tracks:=shared.bones[:]
-        lib.bones_blend(bones,tracks,library,state.fader.current,lib.fader_current_weight(state.fader),clip_root_lock(state,content,state.fader.current.clip,animation,transforms))
-        for o in state.fader.outgoing[:state.fader.outgoing_count] {lib.bones_blend(bones,tracks,library,o.player,lib.fade_out_weight(o),clip_root_lock(state,content,o.player.clip,animation,transforms))}
+        lib.bones_blend(bones,tracks,library,fader.current,lib.fader_current_weight(fader),clip_root_lock(state,content,fader.current.clip,animation,transforms))
+        for o in fader.outgoing[:fader.outgoing_count] {lib.bones_blend(bones,tracks,library,o.player,lib.fade_out_weight(o),clip_root_lock(state,content,o.player.clip,animation,transforms))}
         tracks_twins(shared,bones)
     }
     share:=mm.saturate(animation.weight)
     for &binding,i in state.bindings {
-        out:=state.local[i]
+        out:=local[i]
         if binding.entity!=core.NONE {
             row,ok:=core.get(transforms,binding.entity)
             if !ok {continue}
@@ -946,9 +983,9 @@ pose_sample :: proc(playback:^Playback,state:^Playing,content:^host.Content_Anim
             alpha:=mm.saturate(w)*share
             out.scale=rest.scale if !ok || alpha==0 else value if alpha==1 else rest.scale+(value-rest.scale)*alpha
         }
-        state.local[i]=out
+        local[i]=out
     }
-    return pose_layers(playback,state,content,animation,transforms,worker)
+    return true
 }
 
 // What a layer blended for a bone over the transform below it, by its share: an additive one
@@ -975,18 +1012,18 @@ pose_layer_transform :: proc(blend:lib.Bone_Blend,out:mm.Transform,share:f32,add
 // space (the bone under none is its origin). A bone the layer leaves out follows its parent as in
 // the base. False when its parent comes after it.
 @(private)
-pose_layer_mesh_rotation :: proc(rotations:[]mm.Quat,state:^Playing,blend:lib.Bone_Blend,b:int,share:f32) -> bool {
+pose_layer_mesh_rotation :: proc(rotations:[]mm.Quat,state:^Playing,local:[]mm.Transform,blend:lib.Bone_Blend,b:int,share:f32) -> bool {
     n:=len(state.bindings)
     base,layered,blended:=rotations[:n],rotations[n:2*n],rotations[2*n:3*n]
     parent:=int(state.parents[b])
     if parent<0 {base[b],layered[b],blended[b]=1,1,1;return true}
     if parent>=b {return false}
-    own:=state.local[b].rotation;theirs:=own
+    own:=local[b].rotation;theirs:=own
     if value,w,ok:=lib.bone_rotation(blend);ok {theirs=mm.quat_slerp(own,value,mm.saturate(w))}
     base[b]=base[parent]*own;layered[b]=layered[parent]*theirs
     if share<=0 {blended[b]=blended[parent]*own;return true}
     blended[b]=mm.quat_slerp(base[b],layered[b],mm.saturate(share))
-    state.local[b].rotation=linalg.normalize0(mm.quat_inverse(blended[parent])*blended[b])
+    local[b].rotation=linalg.normalize0(mm.quat_inverse(blended[parent])*blended[b])
     return true
 }
 
@@ -997,35 +1034,36 @@ pose_layer_mesh_rotation :: proc(rotations:[]mm.Quat,state:^Playing,blend:lib.Bo
 // into the base as each bone is done, the turns added up to each bone, and the result. A bone the
 // layer leaves out follows its parent as in the base. False when its parent comes after it.
 @(private)
-pose_layer_mesh_additive :: proc(rotations:[]mm.Quat,state:^Playing,added:lib.Bone_Blend,b:int,share:f32) -> bool {
+pose_layer_mesh_additive :: proc(rotations:[]mm.Quat,state:^Playing,local:[]mm.Transform,added:lib.Bone_Blend,b:int,share:f32) -> bool {
     n:=len(state.bindings)
     reference,turns,result:=rotations[:n],rotations[n:2*n],rotations[2*n:3*n]
     parent:=int(state.parents[b])
     if parent<0 {reference[b],turns[b],result[b]=1,1,1;return true}
     if parent>=b {return false}
-    own:=state.local[b].rotation
+    own:=local[b].rotation
     turn:=turns[parent]
     if value,ok:=lib.bone_added_rotation(added);ok && share>0 {turn*=reference[b]*value*mm.quat_inverse(reference[b])}
     turns[b],reference[b]=turn,reference[parent]*own
     if share<=0 {result[b]=result[parent]*own;return true}
     result[b]=mm.quat_slerp(1,turn,share)*reference[b]
-    state.local[b].rotation=linalg.normalize0(mm.quat_inverse(result[parent])*result[b])
+    local[b].rotation=linalg.normalize0(mm.quat_inverse(result[parent])*result[b])
     return true
 }
 
-// The slots of the stack of state over its local pose, in order: each moves only what its clips
+// The slots of the stack of state over the pose local, in order: each moves only what its clips
 // animate, by the share of its weight each bone of its branches takes, replacing by it or adding its
-// change from its reference.
+// change from its reference. previous: each clip where it was when the tick began.
 @(private)
-pose_layers :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,transforms:^core.Table(core.Transform,.Read)=nil,worker:=0) -> (faults:Pose_Faults) {
+pose_layers :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,local:[]mm.Transform,transforms:^core.Table(core.Transform,.Read)=nil,worker:=0,previous:=false) -> (faults:Pose_Faults) {
     if state.stack==0 {return}
     library:=&content.lib
     n:=len(state.bindings)
+    if len(local)!=n {faults.memory=true;return}
     for &layer,i in state.layers[:state.stack] {
         asked:=state.asked[i]
         if layer.weight<=0 {continue}
         players:[LAYER_PLAYERS]lib.Player
-        count:=layer_players(&layer,&players)
+        count:=layer_players(&layer,&players,previous)
         if count==0 {continue}
         mask:[]f32
         if asked.over!={} {
@@ -1059,16 +1097,16 @@ pose_layers :: proc(playback:^Playback,state:^Playing,content:^host.Content_Anim
         }
         tracks_twins(shared,bones)
         // An action kept in place blends the reference of its root bone instead of where its clip takes it.
-        root:=clip_root(content,layer.fader.current.clip);root.in_place=layer.root_motion==.In_Place
+        root:=clip_root(content,layer.player.clip);root.in_place=layer.root_motion==.In_Place
         root_bone:=bone_resolve(state,root.bone) if root.in_place else -1
         reference:=root_reference(state,root_bone,transforms) if root_bone>=0 else mm.TRANSFORM_IDENTITY
         for b in 0..<n {
             share:=layer.weight*mm.saturate(animation.weight)*(mask[b] if mask!=nil else 1)
-            if mesh && !(pose_layer_mesh_additive(rotations,state,bones[b],b,share) if additive else pose_layer_mesh_rotation(rotations,state,bones[b],b,share)) {continue}
+            if mesh && !(pose_layer_mesh_additive(rotations,state,local,bones[b],b,share) if additive else pose_layer_mesh_rotation(rotations,state,local,bones[b],b,share)) {continue}
             if share<=0 {continue}
-            turned:=state.local[b].rotation
-            state.local[b]=pose_layer_transform(bones[b],state.local[b],share,additive,&root if b==root_bone else nil,reference)
-            if mesh && state.parents[b]>=0 {state.local[b].rotation=turned}
+            turned:=local[b].rotation
+            local[b]=pose_layer_transform(bones[b],local[b],share,additive,&root if b==root_bone else nil,reference)
+            if mesh && state.parents[b]>=0 {local[b].rotation=turned}
         }
     }
     return
@@ -1260,6 +1298,8 @@ playback_free :: proc(playback:^Playback) {
 
 playing_free :: proc(state:^Playing) {
     program_free(&state.program)
+    inertia:=&state.inertia
+    delete(inertia.shown);delete(inertia.shown_before);delete(inertia.shown_curves);delete(inertia.shown_curves_before);delete(inertia.before);delete(inertia.older);delete(inertia.values);delete(inertia.bones);delete(inertia.curves)
     delete(state.curves);delete(state.bindings);delete(state.parents);delete(state.targets);delete(state.aliases);delete(state.previous)
     delete(state.mirror_pairs);delete(state.mirror_corrections);delete(state.mirror_scratch);delete(state.regions);delete(state.masks)
     delete(state.rest);delete(state.local);delete(state.world);delete(state.sampled)

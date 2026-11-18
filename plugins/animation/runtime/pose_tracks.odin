@@ -170,16 +170,126 @@ pose_row :: proc(playback:^Playback,row:^Pose_Row,transforms:^core.Table(core.Tr
     if row.content==0 {return}
     state:=&playback.states[row.state]
     content:=&playback.work_contents[row.content-1]
-    if row.programmed {
-        if !program_pose(playback,state,content,row.animation,&state.program.output,worker) {row.faults.program=true;return}
-        if root:=state.program.root;state.program.has_root && root.in_place {if bone,reference,ok:=animation_root_reference(state,root,state.local[:],transforms);ok {state.local[bone]=reference}}
-        row.faults=pose_layers(playback,state,content,row.animation,transforms,worker)
-        sample_layer_curves(state,content,row.animation)
-    } else {
-        row.faults=pose_sample(playback,state,content,row.animation,transforms,worker)
-        sample_curves(state,content,row.animation.weight,row.animation)
-    }
+    row.faults=pose_compose(playback,state,content,row.animation,row.programmed,row.dt,core.read(transforms),worker)
     if row.animation.mirror && !playing_mirror(state,state.local[:]) {row.faults.mirror=true}
+}
+
+// The pose and curves of the base and the stack of state, through the inertia of what its slots
+// changed in the tick; dt: seconds since the tick before.
+@(private)
+pose_compose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,programmed:bool,dt:f32,transforms:^core.Table(core.Transform,.Read),worker:int) -> (faults:Pose_Faults) {
+    dt:=dt if animation.playing else 0
+    // A blend measures how the pose its slots changed to moves: that pose a tick before is the base
+    // then under the layers where their clips were.
+    inertia:=&state.inertia
+    capture:=state.stack>0 && state.blend.duration>0 && inertia.kept>0 && dt>0 && len(inertia.before)==len(state.local)
+    if programmed {
+        runtime:=&state.program
+        if !program_pose(playback,state,content,animation,&runtime.output,worker) {faults.program=true;return}
+        capture &&=runtime.history_dt>0 && len(runtime.history)==len(state.local)
+        if capture {copy(inertia.before[:],runtime.history[:])}
+        if root:=runtime.root;runtime.has_root && root.in_place {
+            if bone,reference,ok:=animation_root_reference(state,root,state.local[:],transforms);ok {state.local[bone]=reference}
+            if capture {if bone,reference,ok:=animation_root_reference(state,root,inertia.before[:],transforms);ok {inertia.before[bone]=reference}}
+        }
+        if capture {pose_layers(playback,state,content,animation,inertia.before[:],transforms,worker,previous=true)}
+        faults=pose_layers(playback,state,content,animation,state.local[:],transforms,worker)
+        sample_layer_curves(state,content,animation)
+    } else {
+        if capture {
+            copy(inertia.before[:],state.local[:])
+            capture=pose_base(playback,state,content,animation,transforms,state.prev_fader,inertia.before[:],worker)
+            if capture {pose_layers(playback,state,content,animation,inertia.before[:],transforms,worker,previous=true)}
+        }
+        faults=pose_sample(playback,state,content,animation,transforms,worker)
+        sample_curves(state,content,animation.weight,animation)
+    }
+    stack_inertia_apply(state,dt,capture)
+    return
+}
+
+// Room for the inertia of the stack of state, made on the owner thread before its pose: what it
+// showed is forgotten when its bones or its curves change. False when memory ran out.
+@(private)
+stack_inertia_prepare :: proc(state:^Playing) -> bool {
+    inertia:=&state.inertia
+    if state.stack==0 {inertia.kept,inertia.state=0,{};return true}
+    n:=len(state.bindings);c:=len(state.curves)
+    same:=len(inertia.shown)==n && len(inertia.shown_curves)==c
+    for curve,k in inertia.shown_curves[:min(c,len(inertia.shown_curves))] {same &&=curve.target==state.curves[k].target && curve.property==state.curves[k].property && curve.slot==state.curves[k].slot}
+    if !same {inertia.kept,inertia.state=0,{}}
+    return program_array_resize(&inertia.shown,n) && program_array_resize(&inertia.shown_before,n) && program_array_resize(&inertia.before,n) && program_array_resize(&inertia.older,n) && program_array_resize(&inertia.bones,n) &&
+        program_array_resize(&inertia.shown_curves,c) && program_array_resize(&inertia.shown_curves_before,c) && program_array_resize(&inertia.curves,c*5) && program_array_resize(&inertia.values,c*15)
+}
+
+// The pose and curves of the stack of state through its inertia, dt seconds after the tick it
+// showed last: what its slots changed in this tick blends from that pose, with the velocity of the
+// target from before (its pose a tick before) when there is one, and a slot that cuts takes off the
+// offsets of what it moves. What it shows is kept for the next tick. A pose or curve that is not
+// finite ends the blend.
+@(private)
+stack_inertia_apply :: proc(state:^Playing,dt:f32,before:bool) {
+    inertia:=&state.inertia;n:=len(state.local);c:=len(state.curves)
+    if state.stack==0 || len(inertia.shown)!=n || len(inertia.bones)!=n || len(inertia.shown_curves)!=c || len(inertia.values)!=c*15 {return}
+    blend:=state.blend
+    values:=inertia.values[:];old,now,target:=values[:c*5],values[c*5:c*10],values[c*10:]
+    if blend.slots!=0 && inertia.kept>0 {
+        if blend.duration>0 {
+            history:=inertia.kept>1
+            curves_flatten(inertia.shown_curves[:],now);curves_flatten(inertia.shown_curves_before[:] if history else inertia.shown_curves[:],old);curves_flatten(state.curves[:],target)
+            input:=lib.Inertial_Input{previous=inertia.shown_before[:] if history else inertia.shown[:],current=inertia.shown[:],target=state.local[:],previous_curves=old,current_curves=now,target_curves=target,dt=inertia.dt if history else 0,duration=blend.duration}
+            if before {
+                pose_extrapolate_back(inertia.before[:],state.local[:],inertia.older[:],input.dt/dt)
+                input.target,input.target_previous=inertia.before[:],inertia.older[:]
+            }
+            if !lib.inertial_capture(&inertia.state,inertia.bones[:],inertia.curves[:],input) {inertia.state={}}
+            // A bone no clip moves, or a channel of it, stays where the pose puts it.
+            for binding,b in state.bindings {
+                bone:=&inertia.bones[b]
+                if binding.target==0 {bone^={};continue}
+                if .Position not_in binding.driven {bone.position,bone.speed.x={},0}
+                if .Rotation not_in binding.driven {bone.rotation,bone.speed.y={},0}
+                if .Scale not_in binding.driven {bone.scale,bone.speed.z={},0}
+            }
+        }
+        for i in 0..<int(state.stack) {
+            if blend.cuts&(u16(1)<<u16(i))==0 {continue}
+            if state.asked[i].over=={} {mem.zero_slice(inertia.bones[:]);mem.zero_slice(inertia.curves[:]);break}
+            if len(state.masks)<(i+1)*n {continue}
+            for share,b in state.masks[i*n:][:n] {if share>0 {inertia.bones[b]={}}}
+        }
+    }
+    if inertia.state.active {
+        curves_flatten(state.curves[:],target)
+        if !lib.inertial_advance(&inertia.state,dt) || !lib.inertial_pose_apply(inertia.state,inertia.bones[:],state.local[:],state.local[:]) || !lib.inertial_curves_apply(inertia.state,inertia.curves[:],target,target) {inertia.state={}} else {
+            for &curve,k in state.curves {for &v,j in curve.value {v=target[k*5+j]};curve.weight=mm.saturate(target[k*5+4])}
+        }
+    }
+    if dt>0 && inertia.kept>0 {
+        inertia.shown,inertia.shown_before=inertia.shown_before,inertia.shown
+        inertia.shown_curves,inertia.shown_curves_before=inertia.shown_curves_before,inertia.shown_curves
+        inertia.dt,inertia.kept=dt,2
+    }
+    copy(inertia.shown[:],state.local[:]);copy(inertia.shown_curves[:],state.curves[:])
+    inertia.kept=max(inertia.kept,1)
+}
+
+// The values and weight of each curve, 5 a curve.
+@(private)
+curves_flatten :: proc "contextless" (curves:[]Curve_Output,out:[]f32) {
+    for curve,k in curves {for v,j in curve.value {out[k*5+j]=v};out[k*5+4]=curve.weight}
+}
+
+// The pose a tick before the pose before, along the velocity from it to now; ratio: that tick over
+// the one from before to now.
+@(private)
+pose_extrapolate_back :: proc "contextless" (before,now,out:[]mm.Transform,ratio:f32) {
+    for value,b in before {
+        old:=value
+        old.position-=(now[b].position-value.position)*ratio;old.scale-=(now[b].scale-value.scale)*ratio
+        delta:=mm.quat_inverse(value.rotation)*now[b].rotation;old.rotation=value.rotation*mm.quat_slerp(1,mm.quat_inverse(delta),ratio)
+        out[b]=old
+    }
 }
 
 @(private)

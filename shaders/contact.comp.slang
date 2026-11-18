@@ -7,8 +7,6 @@
 // hemisphere in the world, so what shadows it counts also off the screen or
 // behind something nearer the eye. The rays of a point turn by a fixed pattern
 // of 4x4 points, all of which contact_pixels.comp averages.
-// Beyond the probe volume the light of a point is the sky's, and its rays go as
-// far as rays go: they leave it as much of that light as it sees of the sky.
 #include "lighting.slang"
 #include <extension_hooks.slang>
 #define MIRAI_GROUP_X 8
@@ -16,8 +14,6 @@
 #define MIRAI_GROUP_Z 1
 // Metres: how far from a pixel what shadows it can stand.
 #define CONTACT_RADIUS 0.6
-// Metres: how far what hides the sky from a point beyond the probe volume can stand.
-#define SKY_REACH 1e4
 
 // scale: the pixels across a point, 1 or 2.
 struct Params_Block { uint scale; uint pad0; uint pad1; uint pad2; };
@@ -37,8 +33,7 @@ struct Params_Block { uint scale; uint pad0; uint pad1; uint pad2; };
 // near it, and nothing shadows it.
 float contact_occlusion(int2 q, float3 position, float3 n, float distance) {
     float bias = view_bias(distance);
-    float beyond = probe_volume_beyond(position);
-    if (beyond <= 0.0 && bias >= CONTACT_RADIUS) return 1.0;
+    if (bias >= CONTACT_RADIUS) return 1.0;
     float3 t = normalize(abs(n.y) < 0.99 ? cross(n, float3(0.0, 1.0, 0.0)) : cross(n, float3(1.0, 0.0, 0.0)));
     float3 b = cross(n, t);
     // The 4x4 pattern a point's rays turn by, in sixteenths of a turn: by the point, not by
@@ -46,24 +41,19 @@ float contact_occlusion(int2 q, float3 position, float3 n, float distance) {
     const uint turns[16] = {0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u};
     float turn = float(turns[(uint(q.x) & 3u) + 4u * (uint(q.y) & 3u)]) / 16.0 * 6.2831853;
     float3 origin = offset_origin(position, n, bias);
-    bool near = beyond < 1.0 && bias < CONTACT_RADIUS;
-    float hidden = 0.0, covered = 0.0;
+    float hidden = 0.0;
     [loop]
     for (uint i = 0u; i < CONTACT_RAYS; i++) {
         float u = (float(i) + 0.5) / float(CONTACT_RAYS);
         float phi = float(i) * 2.3999632 + turn;
         float r = sqrt(u);
         float3 dir = t * (r * cos(phi)) + b * (r * sin(phi)) + n * sqrt(1.0 - u);
-        if (near) {
-            Ray_Path path;
-            Hit hit = trace_ray(origin, dir, 0.0, CONTACT_RADIUS, true, path);
-            // What stands nearer shadows more, so that the edge of the occlusion fades.
-            if (hit.instance != INVALID) hidden += 1.0 - hit.t / CONTACT_RADIUS;
-        }
-        // The sky is hidden by what casts shadows, as the sun is.
-        if (beyond > 0.0 && !trace_visible(origin, dir, SKY_REACH)) covered += 1.0;
+        Ray_Path path;
+        Hit hit = trace_ray(origin, dir, 0.0, CONTACT_RADIUS, true, path);
+        // What stands nearer shadows more, so that the edge of the occlusion fades.
+        if (hit.instance != INVALID) hidden += 1.0 - hit.t / CONTACT_RADIUS;
     }
-    return lerp(saturate(1.0 - hidden / float(CONTACT_RAYS) * 1.5), 1.0 - covered / float(CONTACT_RAYS), beyond);
+    return saturate(1.0 - hidden / float(CONTACT_RAYS) * 1.5);
 }
 
 [shader("compute")]

@@ -234,7 +234,6 @@ normals_texture_coordinates_and_materials_of_usd_meshes :: proc(t:^testing.T) {
     cutout:=&model.materials[leaf.slots[0].material]
     testing.expect_value(t,cutout.name,"Leaf")
     testing.expect(t,cutout.info.alpha_mode==.Mask && abs(cutout.info.alpha_cutoff-0.3)<1e-5 && cutout.info.opacity==1,"opacityThreshold cuts by the alpha of the diffuse image")
-    testing.expect(t,cutout.info.two_sided && !paint.info.two_sided,"doubleSided of a mesh makes its material two-sided; a mesh that says nothing leaves it one-sided")
     leaf_color,packed:=cutout.images[.Base_Color],cutout.images[.Metallic_Roughness]
     testing.expect(t,leaf_color>=0 && packed>=0 && cutout.images[.Occlusion]==packed && cutout.info.roughness==1 && cutout.info.metallic==1,"roughness in green and metallic in blue of one image are the packed map; occlusion in its red shares it")
     if leaf_color>=0 && packed>=0 {
