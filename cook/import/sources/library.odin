@@ -27,7 +27,8 @@ import "mirai:store"
 //   ingest one origin at once take turns (a lock per origin), and the second
 //   finds the work done.
 // - project_add: pins a package in the project's packages.mirai
-//   (project_pin, its only writer) and follows it into the project.
+//   (project_pin and project_unpin, its only writers) and follows it into
+//   the project.
 // - project_refresh: for each package a project pins, the build this engine
 //   reads, from the local refs, else from the caller's source, else by
 //   ingesting its origin when it is on this machine (also when the source
@@ -43,10 +44,10 @@ import "mirai:store"
 // What the library of the editor of the project at root gives its imports:
 // the formats of models and the importers of whole sources its plugins add,
 // with what they read prepared for its assets, and the types of its game,
-// which the prefab of a model is written in; release(state) lets them go.
-// problem: why there are none. Only a program that links the editor reads it
-// (editor.import_library).
-Library :: #type proc(root:string,allocator:mem.Allocator) -> Library_Imports
+// which the prefab of a model is written in, with the packages of root listed
+// from the store s; release(state) lets them go. problem: why there are none.
+// Only a program that links the editor reads it (editor.import_library).
+Library :: #type proc(root:string,s:^store.Store,allocator:mem.Allocator) -> Library_Imports
 Library_Imports :: struct {
     formats:[]importer.Format,
     wholes:[]Whole_Source,
@@ -71,6 +72,9 @@ Library_Options :: struct {
     // (plugins) and its game's types hold prefabs. "": the formats of the engine alone.
     root:string,
     plugins:Library, // nil: no formats of plugins, and no prefabs of models
+    // What the plugins give, already prepared by the caller, which releases
+    // it (the editor, from its session): taken in place of plugins.
+    imports:^Library_Imports,
     worker:jobs.Worker_Ref,
     progress:io.Writer, // where each source imported is said as it goes; nil: nowhere
 }
@@ -206,7 +210,7 @@ project_refresh :: proc(root:string,options:Library_Options,allocator:=context.a
 }
 
 // Pins entry in the packages.mirai of the project at root, in place of the
-// entry of the same package: the only writer of that file.
+// entry of the same package: with project_unpin, the only writer of that file.
 project_pin :: proc(root:string,entry:asset.Project_Package) -> asset.Error {
     list,_,error:=asset.packages_load(root,context.temp_allocator)
     if error!=.None {return error}
@@ -218,6 +222,18 @@ project_pin :: proc(root:string,entry:asset.Project_Package) -> asset.Error {
     }
     if _,no_room:=append(&list.packages,entry);no_room!=nil {return .Out_Of_Memory}
     return asset.packages_save(root,&list)
+}
+
+// Removes the package id from the packages.mirai of the project at root;
+// what the store keeps of it stays. False with nothing to remove.
+project_unpin :: proc(root:string,id:base.Asset_Id) -> (removed:bool,error:asset.Error) {
+    list,_:=asset.packages_load(root,context.temp_allocator) or_return
+    for &other,at in list.packages {
+        if other.id!=id {continue}
+        ordered_remove(&list.packages,at)
+        return true,asset.packages_save(root,&list)
+    }
+    return false,.None
 }
 
 // What ingest, project_add and project_refresh share for one call.
@@ -253,8 +269,13 @@ library_end :: proc(l:^Library_State) {
 plugins_read :: proc(l:^Library_State) {
     if l.plugins_read {return}
     l.plugins_read=true
-    if l.options.plugins==nil || l.options.root=="" {return}
-    l.plugins=l.options.plugins(l.options.root,l.temp)
+    switch {
+    case l.options.imports!=nil:
+        l.plugins=l.options.imports^
+        l.plugins.release=nil
+    case l.options.plugins==nil || l.options.root=="": return
+    case: l.plugins=l.options.plugins(l.options.root,l.options.store,l.temp)
+    }
     all:=make([dynamic]importer.Format,0,len(FORMATS)+len(l.plugins.formats),l.temp)
     append(&all,..FORMATS[:])
     append(&all,..l.plugins.formats)
