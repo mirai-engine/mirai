@@ -350,7 +350,8 @@ a_copy_of_a_root_with_its_sources_and_an_empty_store_builds_the_same :: proc(t:^
         testing.expectf(t,named,"%v is named: %v",entry.id,resolved.problems)
     }
 
-    testing.expect_value(t,project_unpin(bare,pinned.packages[0].id),asset.Error.None)
+    unpinned,unpin_error:=project_unpin(bare,pinned.packages[0].id)
+    testing.expect(t,unpinned && unpin_error==.None,"unpinning removes the entry")
     left,_,_:=asset.packages_load(bare,context.temp_allocator)
     testing.expect(t,len(left.packages)==1 && left.packages[0].id==pinned.packages[1].id,"the other stays pinned")
     testing.expect(t,!os.exists(asset.package_file(bare,pinned.packages[0].id)),"unpinning removes its manifest")

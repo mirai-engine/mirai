@@ -369,7 +369,7 @@ a_refresh_reads_a_source_again_with_the_formats_of_the_plugins :: proc(t:^testin
     s:=test_store(t,fmt.tprintf("%s/store",root))
     if s==nil {return}
     context.user_ptr=prefab.import_world(t)
-    probing :: proc(root:string,allocator:mem.Allocator) -> Library_Imports {
+    probing :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> Library_Imports {
         listed:=make([]importer.Format,1,allocator)
         listed[0]=probe_format()
         return {formats=listed,world=(^core.World_Info)(context.user_ptr)}
@@ -449,7 +449,7 @@ a_refresh_ingests_again_a_whole_source_when_what_it_is_built_from_changes :: pro
     s:=test_store(t,fmt.tprintf("%s/store",root))
     if s==nil {return}
     context.user_ptr=&state
-    leveling :: proc(root:string,allocator:mem.Allocator) -> Library_Imports {
+    leveling :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> Library_Imports {
         wholes:=make([]Whole_Source,1,allocator)
         wholes[0]={claims=level_claims,run=level_run,state=context.user_ptr,code=(^Level_Importer)(context.user_ptr).code}
         return {wholes=wholes}

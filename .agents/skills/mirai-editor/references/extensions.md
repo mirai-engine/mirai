@@ -393,29 +393,28 @@ and joins them with the engine's.
   those of `sources.FORMATS`, with the same reading, writing, cache and identity
   ([plugin formats](../../mirai-imports/references/imports.md#plugin-formats)); its
   `Format.folder` chooses the folder of the import. Its extensions enter the dialog's Models
-  filter and what the editor recognizes on dropping a file. With `prepare(assets, info,
+  filter and what the editor recognizes on dropping a file. With `prepare(library, root, info,
   allocator)` it gives, before a model is imported, the format's options for that import
-  (`Format.data`) from the registry of the project and the library of its plugins (for example
-  what other providers give), with no session: the import program of the engine prepares it the
-  same way when a build syncs the project (`import_library`). `release(data, allocator)`
-  releases them on finishing.
+  (`Format.data`), with no session: `library` is the store the packages are in (the session's in
+  the editor, the one of the command in the import program), `root` the project or plugin the
+  import is for (`asset.root_packages(root, library.root)` lists its packages) and `info` the
+  types of its game, with what other providers give. The import program of the engine prepares
+  it the same way when a build refreshes the project (`import_library`). `release(data,
+  allocator)` releases them on finishing.
 - `editor.Import_Source_Provider{source}` gives a `Source_Importer`, a source the plugin imports
   whole with `importer.Outputs`, the single source of every asset it makes
   ([plugin formats](../../mirai-imports/references/imports.md#plugin-formats)). Its fields are
   `name` (the dialog's filter and the messages), `extensions`, `claims(path, head)` (claims the
   file by its extension and its first `importer.SNIFF_BYTES`; it is tried before the formats),
-  `prepare(assets, info, allocator)`, `run(state, source, options, allocator)`,
-  `release(state, allocator)` and `bring(source, folder, allocator)`.
+  `prepare(library, root, info, allocator)`, `run(state, source, options, allocator)` and
+  `release(state, allocator)`. The source is read where it is: nothing is copied into a project.
   - `prepare` runs before starting, like that of a format, with no session: what `run` needs from
-    the registry of the project and the library of its plugins (for example, what other providers
-    give) is gathered there, in the received allocator, and is the `state`. `run` runs in the
+    the library, the root and the types of its game (for example, what other providers give) is
+    gathered there, in the received allocator, and is the `state`. `run` runs in the
     import's thread with a job system of its own in `options.worker` and returns the report, the
     scene it wrote (`""` if none) and the error. `release` releases `state` on finishing. The
-    import program prepares and runs it the same way when a build syncs the project
+    import program prepares and runs it the same way when a build refreshes the project
     (`import_library`).
-  - `bring`, when given, takes a source from outside the assets: it copies it with the files it
-    reads into `folder` (absolute, in the assets) and returns where the source is now. Without it
-    the editor copies the source alone.
   - A plugin can define its own providers so that other plugins join it: the one that gives the
     source gathers them in `prepare` and passes them to `run` through the `state`. This way an
     import plugin delegates to automatic bridge plugins the actors of optional domains, without

@@ -9,9 +9,10 @@ Packages, all *engine-time*:
 - `cook/import/obj`, `cook/import/gltf`, `cook/import/usd` and `cook/import/fbx` (on top of ufbx):
   one format each, with its `FORMAT`. They import the core and nothing from the other formats.
 - `cook/import/sources`: the `FORMATS` table (the engine's formats), `source_kind` and
-  `import_source`, used by the editor (`editor/import.odin`), `mirai import` (`command.odin`, in the
-  engine's `mirai-import` program) and the [library](#library) (`ingest`, `project_add`,
-  `project_refresh`). The editor adds the formats of plugins ([plugin formats](#plugin-formats)).
+  `import_source`, used by the [library](#library) (`ingest`, `project_ingest`, `project_add`,
+  `project_refresh`), through which the editor (`editor/import.odin`) and `mirai import`
+  (`command.odin`, in the engine's `mirai-import` program) import. The editor adds the formats of
+  plugins ([plugin formats](#plugin-formats)).
 - `cook/textures`: images to `.tex` levels.
 
 ## API
@@ -153,11 +154,13 @@ part ([extension](../../mirai-editor/references/extensions.md#importers-of-a-plu
 - `Import_Format_Provider{format}` is one more `importer.Format`: it is imported like the engine's,
   with the same storage (the cache and the documents, [identity](#identity-and-reimport)).
   `Format.folder` says the folder of its assets. Its extensions are in the Models filter of the
-  dialog. Its `prepare` gives the format's options for an import (`Format.data`) from the assets
-  of the project and the library of its plugins, and `release` frees them when it ends.
-- The editor imports with the providers of its library; the import program of the engine
-  (`mirai import`, the [refresh](#library) of every build) loads the editor library of the project
-  and takes the same providers from it (`editor.import_library`, `sources.Library`), only when a
+  dialog. Its `prepare` gives the format's options for an import (`Format.data`) from the store of
+  the library, the root the import is for and the types of its game, and `release` frees them
+  when it ends.
+- The editor imports with the providers of its session, which it prepares and gives the library
+  (`Library_Options.imports`); the import program of the engine (`mirai import`, the
+  [refresh](#library) of every build) loads the editor library of the project and takes the same
+  providers from it with its store (`editor.import_library`, `sources.Library`), only when a
   source is read by no format of the engine or a model imports, whose prefab is written in the
   types of the game the library has. A clone without that library built fails those sources and
   says to build the editor.
@@ -294,7 +297,8 @@ checkout, worktree and project of the machine, keeps manifests and builds.
   `<store>/locks/`), and the second finds the work done.
 - **`project_add(root, manifest, folder, assets, options)`** pins a package in the project
   (`project_pin`, which with `project_unpin` is the only writer of `packages.mirai` and of the
-  manifest files beside it) and follows it there. **Following** writes
+  manifest files beside it) and follows it there; `project_ingest` ingests a source and pins its
+  package in one import. **Following** writes
   or follows its documents under `folder` of the assets: from the baselines of its build
   (`documents_follow`), and for a model whose source is here and whose game types the library
   of the project's editor gives, by importing it with that folder, which also writes its prefab
@@ -369,9 +373,10 @@ machine that shares blobs with another finds what that one built.
 
 - `cook/cache` keeps each result as a blob of `mirai:store` named by the ref
   (`cache-<name>`, `<key>-<version>`) (`asset.cache_namespace`). The store reaches it as a value
-  (`Import_Options.store`, `Sync_Options.store`, `Cook_Desc.store`; nil, none): the editor's
-  imports, `mirai import` (the machine's store, or `--store`) and the cook of a build open the
-  machine's (`store.default_root`). Tests make one in a temporary folder.
+  (`Import_Options.store`, `Cook_Desc.store`; nil, none): the editor's
+  imports (the session's: `--store`, else the machine's), `mirai import` (the machine's store, or
+  `--store`) and the cook of a build (the machine's, `store.default_root`). Tests make one in a
+  temporary folder.
 - A miss asks `Import_Options.cache_source` (a `cache.Source`) once before building: it makes the
   blob present in the store and sets the ref, or says it has none.
 - A texture that is not kept looks for its `textures.cache_key_build` (the bytes of the image, or
