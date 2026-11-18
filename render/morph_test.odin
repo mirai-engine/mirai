@@ -202,7 +202,7 @@ gpu_skins_with_influences_of_every_level_pose_each_level_and_keep_its_history_an
             for axis in 0..<3 {testing.expect(t,expected.position[axis]>=bounds.bounds_min[axis]-1e-5 && expected.position[axis]<=bounds.bounds_max[axis]+1e-5)}
         }
         state:[1]Gpu_Cull_State
-        visible:[1][2]u32
+        visible:[1][4]u32
         testing.expect(t,rhi.buffer_read_slice(device,r.scene.cull_state_buffer,0,state[:]) && rhi.buffer_read_slice(device,r.scene.visible_buffer,0,visible[:]))
         testing.expectf(t,state[0].draws[0].instance_count+state[0].draws[1].instance_count==1,"one cluster of one level at frame %d",frame)
         testing.expectf(t,visible[0][1]==record.cluster_word+(0 if frame==0 else coarse)*CLUSTER_WORDS,"the GPU chooses among the posed levels at frame %d",frame)

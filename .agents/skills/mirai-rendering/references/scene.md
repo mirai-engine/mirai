@@ -114,9 +114,9 @@
   the levels of the meshes, the cuts rays trace and the levels of the textures, while visibility
   and the image stay those of their own camera. It is what a paused game saw, kept while the
   editor looks closer.
-- The G-buffer is drawn with one non-indexed indirect draw per phase, whose instance count is
-  written by the culling: one instance per visible cluster, which the vertex shader reads from the
-  visible list ([culling](frame-graph.md#passes)). No binds per material or per object.
+- The visibility of a view is drawn with one non-indexed indirect draw per phase, whose instance
+  count is written by the culling: one instance per visible cluster, which the vertex shader reads
+  from the visible list ([culling](frame-graph.md#passes)). No binds per material or per object.
 - `mesh_add` encodes vertices and indices with `asset.mesh_build` at one level and registers them
   with `mesh_add_geometry`, which takes the geometry from a file or that made earlier in a job
   (`host.assets_render_geometry_make`) with its ray cuts. The meshes made at runtime

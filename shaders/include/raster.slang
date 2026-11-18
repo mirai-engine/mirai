@@ -49,7 +49,11 @@ float3 fragment_surface_normal(Raster_Input input, Material material, float3 to_
 // The footprint of a fragment in the world. A quad is of one primitive, so a
 // branch on its material keeps the derivatives.
 Mirai_Surface_Context fragment_footprint(Mirai_Surface_Context ctx, Raster_Input input) {
+#ifdef MATERIAL_GRADIENTS
+    ctx.position_dx = material_gradients_position_dx; ctx.position_dy = material_gradients_position_dy;
+#else
     ctx.position_dx = ddx(input.in_world); ctx.position_dy = ddy(input.in_world);
+#endif
     return ctx;
 }
 

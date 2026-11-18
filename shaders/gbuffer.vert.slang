@@ -18,9 +18,8 @@
 #include "cut.slang"
 #ifdef MIRAI_BATCHES
 // The visible clusters of both phases (cull_clusters.comp), or those of a
-// Surface program (cull_programs.comp): the instance, and the cluster as a
-// word of the index pool.
-[[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint2> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
+// Surface program (cull_programs.comp), each as scene.visible_entry gives it.
+[[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 #include <extension_vertex.slang>
 #else
 // The Surface program whose clusters a draw of an instance draws
@@ -32,7 +31,7 @@ struct Draw_Block { uint program; uint pad0; uint pad1; uint pad2; };
 Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_VulkanInstanceID) {
     Gbuffer_Vertex output = (Gbuffer_Vertex)0;
 #ifdef MIRAI_BATCHES
-    uint2 entry = visible[instance_id];
+    uint4 entry = visible[instance_id];
     uint index = entry.x;
     Instance inst = scene_instance(index);
     Mesh mesh = meshes[instance_mesh(inst)];

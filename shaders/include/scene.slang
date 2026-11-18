@@ -56,6 +56,19 @@ bool fade_pixel_left(uint2 pixel, float fade) {
 #endif
 [[vk::binding(SLOT_INDICES, 0)]] StructuredBuffer<uint> indices : register(MIRAI_REGISTER(t, SLOT_INDICES), space0);
 #include "geometry.slang"
+// The entry of a visible list (cull_clusters.comp, cull_programs.comp) of a
+// cluster of an instance: the instance, the cluster as a word of the index
+// pool, the word of its triangles in the vertex pool, and that of its first
+// vertex as posed now for the view (INVALID at rest), so that what draws it
+// reads its corners without going through the mesh and its pages.
+uint4 visible_entry(uint index, uint cluster_word) {
+    Instance inst = scene_instance(index);
+    Mesh mesh = meshes[instance_mesh(inst)];
+    Cluster c = cluster_at(cluster_word);
+    uint posed = mesh.posed_word;
+    if (mesh.part_word != INVALID && !view_draws_layers(mesh.part_layers, inst.meta.w)) posed = mesh.part_word;
+    return uint4(index, cluster_word, cluster_block(mesh, c).triangles, posed != INVALID ? posed + c.vertex_first * POSED_WORDS : INVALID);
+}
 [[vk::binding(SLOT_MATERIALS, 0)]] StructuredBuffer<Material_Row> materials : register(MIRAI_REGISTER(t, SLOT_MATERIALS), space0);
 [[vk::binding(SLOT_LIGHTS, 0)]] StructuredBuffer<Light> lights : register(MIRAI_REGISTER(t, SLOT_LIGHTS), space0);
 [[vk::binding(SLOT_LIGHT_TREE, 0)]] StructuredBuffer<Light_Node> light_nodes : register(MIRAI_REGISTER(t, SLOT_LIGHT_TREE), space0);
@@ -537,10 +550,25 @@ float4 material_texel_at(uint texture_index, float2 uv, float lod) {
     texture_feedback(texture_index, lod + 0.5 * log2(size.y / size.x));
     return material_textures[mirai_nonuniform(texture_index)].SampleLevel(material_sampler, uv, lod + 0.5 * log2(size.x * size.y));
 }
+#ifdef MATERIAL_GRADIENTS
+// A stage that draws a fragment it reconstructs (gbuffer_visible.frag) has no
+// derivatives of its quad: it sets here, from the triangle of the pixel, how
+// the uv of each set (xy along x, zw along y), the point and the normal of
+// the surface change to the next pixel, which the rasterizer would have given.
+static float4 material_gradients_uv0;
+static float4 material_gradients_uv1;
+static float3 material_gradients_position_dx;
+static float3 material_gradients_position_dy;
+static float3 material_gradients_normal_dx;
+static float3 material_gradients_normal_dy;
+#endif
 // Rasterized surfaces (MATERIAL_RASTER, fragment shaders only) filter with the
 // screen-space derivatives of uv, and `lod` is a bias.
 float4 material_texel(uint texture_index, float2 uv, float lod) {
-#ifdef MATERIAL_RASTER
+#if defined(MATERIAL_RASTER) && defined(MATERIAL_GRADIENTS)
+    float4 g = material_gradients_uv0 * exp2(lod);
+    return mirai_sample_texture_grad(texture_index, uv, g.xy, g.zw);
+#elif defined(MATERIAL_RASTER)
 #ifdef MIRAI_TEXTURE_FEEDBACK
     // The level anisotropic filtering reads: over the shorter axis of the
     // footprint, or the longer one over its samples, each axis the shortest
@@ -571,6 +599,16 @@ float material_map_lod(Material m, uint map, float2 lod, bool ray) {
 float4 material_map_texel(Material m, uint map, uint texture_index, float2 uv0, float2 uv1, float2 lod, bool ray) {
     float2 uv = material_map_uv(m, map, uv0, uv1);
     float level = material_map_lod(m, map, lod, ray);
+#ifdef MATERIAL_GRADIENTS
+    if (!ray) {
+        // The gradients of its uv set, through the transform of the map, the level a bias.
+        Material_Map_Transform transform = materials[m.row].map_transforms[map];
+        float4 g = (transform.uv_set == 1u ? material_gradients_uv1 : material_gradients_uv0) * exp2(level);
+        float2 dx = float2(dot(transform.linear.xy, g.xy), dot(transform.linear.zw, g.xy));
+        float2 dy = float2(dot(transform.linear.xy, g.zw), dot(transform.linear.zw, g.zw));
+        return mirai_sample_texture_grad(texture_index, uv, dx, dy);
+    }
+#endif
     return ray ? material_texel_at(texture_index, uv, level) : material_texel(texture_index, uv, level);
 }
 // A direction of the tangent space of a map (xy, along its texture), in the
