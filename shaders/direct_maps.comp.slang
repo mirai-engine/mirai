@@ -122,7 +122,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float2 uv = (float2(source) + 0.5) * frame.inv_resolution;
     Pixel pixel = pixel_at(source, uv, depth);
     float3 normal = gbuffer_normal(source);
-    Shading s = gbuffer_shading(gbuffer_read(source), pixel);
+    Shading s = gbuffer_shading(direct_point_gbuffer(source, scale), pixel);
     float3 reflectance = max(s.diffuse + specular_albedo(s), float3(0.02));
     float3 origin = offset_origin(pixel.position, normal, view_bias(pixel.distance));
     uint4 row = direct_cell(pixel.position);

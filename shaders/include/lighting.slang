@@ -20,17 +20,13 @@
 #include "shadow_maps.slang"
 #endif
 
-// No light is smaller than this, metres: closer to its center a point gets
-// the light of its surface.
-static const float LIGHT_RADIUS_MIN = 0.01;
-
 // The irradiance a sphere of light of unit intensity gives a surface, with
 // its center `distance` away towards a direction at `cosine` of the normal:
 // the cosine over the square of the distance while all of it is above the
 // horizon, and what of it is as it sets (Snyder 1996, in the form of Lagarde
-// and de Rousiers 2014). Inside the sphere, the light of its surface.
-float sphere_irradiance(float cosine, float distance, float radius) {
-    float r = max(radius, LIGHT_RADIUS_MIN);
+// and de Rousiers 2014). Inside the sphere, the light of its surface. No
+// light or group of them is narrower than LIGHT_RADIUS_MIN.
+float sphere_irradiance(float cosine, float distance, float r) {
     float d2 = max(distance * distance, r * r);
     float sin2 = r * r / d2;
     if (cosine * cosine > sin2) return max(cosine, 0.0) / d2;
@@ -60,7 +56,7 @@ bool light_is_capsule(Light light) { return !light_is_rect(light) && light.size.
 // The radius of the sphere around its center that holds a light.
 float light_extent(Light light) {
     if (light_is_rect(light)) return length(light.size.yz);
-    return max(light.size.x, LIGHT_RADIUS_MIN) + light.size.y;
+    return light.size.x + light.size.y;
 }
 
 // The irradiance of a rectangle of unit intensity: what of its area the
@@ -86,7 +82,7 @@ float rect_irradiance(Light light, float3 position, float3 normal) {
 // where it goes under the horizon (Picott 1992), with the falloff of a point
 // no closer than its radius. A normal of zero, from every side alike.
 float capsule_irradiance(Light light, float3 position, float3 normal) {
-    float radius = max(light.size.x, LIGHT_RADIUS_MIN);
+    float radius = light.size.x;
     float3 center = light.position_range.xyz - position;
     float3 half_segment = light.axis.xyz * light.size.y;
     float3 l0 = center - half_segment;
@@ -235,7 +231,7 @@ void light_lobes_of(Light light, Shading s, float3 irradiance, float3 direction,
     if (light_is_rect(light) || light_is_capsule(light)) {
         base = light_highlight(light, s.position, s.mirror, s.alpha, distance);
         if (s.coat > 0.0) coat = light_highlight(light, s.position, s.coat_mirror, s.coat_alpha, distance);
-    } else if (light.size.x > 0.0 && distance > 0.0) {
+    } else if (distance > 0.0) {
         sphere_highlights(s, direction * distance, light.size.x, base, coat);
     }
     float3 d, sp;
@@ -280,7 +276,7 @@ Highlight light_highlight(Light light, float3 position, float3 mirror, float alp
     float t = saturate((dot(mirror, l0) * along - dot(l0, segment)) / max(dot(segment, segment) - along * along, 1e-8));
     float3 nearest = l0 + segment * t;
     float far = length(nearest);
-    h.towards = radius > 0.0 ? sphere_highlight(mirror, nearest, radius) : nearest / max(far, 1e-6);
+    h.towards = sphere_highlight(mirror, nearest, radius);
     h.keep = highlight_keep(alpha, radius, far) * sqrt(highlight_keep(alpha, 2.0 * light.size.y, far));
     return h;
 }

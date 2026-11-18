@@ -1857,6 +1857,51 @@ render_a_wider_light_casts_a_softer_shadow :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// A mirror ball under a light with no size, its highlight about a pixel wide,
+// the direct light taken at one pixel of each 2x2: each turn of the jitter of
+// the TAA moves what the points see of it. The highlight gives the same light
+// at every turn, of a light with shadows (the points take it) and of one
+// without (the pixels do): none misses it, none counts it twice.
+@(test)
+render_a_highlight_gives_its_light_at_every_turn_of_the_jitter :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.direct_half_resolution = true
+	if !cube_fixture_init(t, &f, 128, 96, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	mirror := DEFAULT_MATERIAL
+	mirror.base_color, mirror.metallic, mirror.roughness = {1, 1, 1}, 1, 0
+	materials_set(r, {mirror})
+	ball := ball_mesh(r)
+	camera := Camera{position = {0, 0.4, 3}, forward = {0, -0.4, -3}, up = {0, 1, 0}, fov_y = 40, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	texels: []f16
+	defer delete(texels)
+	for shadowless in ([2]bool{false, true}) {
+		light := Light_Desc{position = {1.5, 2, 2}, color = {1, 1, 1}, intensity = 10 * math.PI, range = 20, indirect = 1, scattering = 1, shadowless = shadowless}
+		scene_given(r, {{object_id = 1, mesh = ball, transform = linalg.MATRIX4F32_IDENTITY, material = 1, tint = {1, 1, 1}}}, {light}, {}, {sky = {0, 0, 0}})
+		for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+		if texels == nil {texels = make([]f16, int(r.main.targets.width * r.main.targets.height) * 4)}
+		lights: [TAA_JITTER_PHASES]f32
+		for &sum, turn in lights {
+			r.main.turn = u64(turn)
+			testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+			rhi.device_wait_idle(f.device)
+			if !rhi.texture_read(f.device, r.main.targets.direct, slice.to_bytes(texels)) {
+				testing.fail_now(t, "the direct light reads back")
+			}
+			for i := 0; i < len(texels); i += 4 {sum += 0.2126 * f32(texels[i]) + 0.7152 * f32(texels[i + 1]) + 0.0722 * f32(texels[i + 2])}
+		}
+		low, high, mean := lights[0], lights[0], f32(0)
+		for sum in lights {low, high, mean = min(low, sum), max(high, sum), mean + sum / f32(len(lights))}
+		testing.expectf(t, low > 0, "without shadows %v: the highlight shows: %v", shadowless, lights)
+		// A tenth: a highlight a point misses or counts twice moves it by more.
+		testing.expectf(t, high - low < 0.1 * mean, "without shadows %v: the highlight gives %v to %v over the turns of the jitter: %v", shadowless, low, high, lights)
+	}
+	expect_clean(t, f.device)
+}
+
 // The top of a box lies in the shadow of a roof, and no light faces its
 // front. Seen low over the edge between them, the jitter of the TAA moves
 // the pixels of the blocks of shadows from one face to the other: the top
