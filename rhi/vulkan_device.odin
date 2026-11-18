@@ -389,7 +389,7 @@ device_create :: proc(desc: Device_Desc) -> (device: ^Device, error: string) {
 	d.allocator = allocator
 	d.capacities = device_capacities(desc.capacities)
 	d.on_message, d.message_user = desc.on_message, desc.message_user
-	ok := vk_create_pools(d) && vk_create_device(d, desc) && watchdog_start(d)
+	ok := vk_create_pools(d) && vk_create_device(d, desc) && watchdog_start(d, desc)
 	if !ok {
 		error = strings.clone(d.error, context.temp_allocator)
 		device_destroy(d)

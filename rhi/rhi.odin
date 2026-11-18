@@ -655,6 +655,10 @@ Device_Desc :: struct {
 	// presents to it is chosen. Zero: no window, frames draw only into textures.
 	surface:                    Surface_Desc,
 	pipeline_cache_path:        string,   // Vulkan: compiled pipelines persisted across runs ("" = memory only)
+	// The file a submission the GPU has not finished late_ms after it went is
+	// written to, flushed to disk, until it finishes (watchdog.odin); "": none.
+	late_record:                string,
+	late_ms:                    int,      // 0: WATCHDOG_LATE_MS
 	capacities:                 Device_Capacities,
 	allocator:                  runtime.Allocator, // of the device and its tables; context.allocator when unset
 	on_message:                 Message_Proc,      // presents errors and validation reports; nil keeps them silent

@@ -51,6 +51,10 @@ App_Desc :: struct {
     gpu_message:rhi.Message_Proc,
     gpu_loader_lock:^sync.Mutex,
     render_settings:Maybe(render.Settings),
+    // The file where the device records a GPU submission that is late
+    // (rhi.Device_Desc.late_record); what a run before left in it is read and
+    // removed at start (app_gpu_late_before). "": none.
+    gpu_late_record:string,
     ui_font_sizes:[]i32,         // point sizes of every UI context of the application; those of the editor when empty
 
     audio:Audio_Output,
@@ -175,6 +179,8 @@ App :: struct {
     device:^rhi.Device,
     gpu_failure:[GPU_FAILURE_TEXT]u8, // what app_gpu_failure says once the device failed
     gpu_failure_length:int,
+    gpu_late_before:[rhi.WATCHDOG_REPORT_BYTES]u8, // what the record of App_Desc.gpu_late_record held at start (app_gpu_late_before)
+    gpu_late_before_length:int,
     renderer:^render.Renderer, // nil without gpu
     drawable:[2]i32,           // device pixels
     density:f32,               // device pixels per window point

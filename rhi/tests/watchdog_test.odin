@@ -19,17 +19,22 @@ WATCHDOG_PROBE :: "mirai-rhi-watchdog-probe"
 WATCHDOG_WORK_MS :: 250
 WATCHDOG_DISPATCH_MS :: 8
 WATCHDOG_PROBE_NO_DEVICE :: 3
+WATCHDOG_PROBE_UNRECORDED :: 4 // the late frame left no record while it ran
+WATCHDOG_PROBE_UNCLEARED :: 5  // its record stayed after it finished
+// When the frame of the probe is late for its record: well under its work.
+WATCHDOG_LATE_PROBE_MS :: 60
 
 @(init)
 watchdog_probe :: proc "contextless" () {
 	if len(os.args) < 2 || os.args[1] != WATCHDOG_PROBE {return}
 	context = runtime.default_context()
-	os.exit(watchdog_probe_run())
+	os.exit(watchdog_probe_run(os.args[2] if len(os.args) > 2 else ""))
 }
 
+// record: the file of the record of a late submission; "": none.
 @(private = "file")
-watchdog_probe_run :: proc() -> int {
-	d, message := rhi.device_create({app_name = "mirai watchdog probe", on_message = rhi.message_print, upload_bytes_per_frame = 1 << 16})
+watchdog_probe_run :: proc(record: string) -> int {
+	d, message := rhi.device_create({app_name = "mirai watchdog probe", on_message = rhi.message_print, upload_bytes_per_frame = 1 << 16, late_record = record, late_ms = WATCHDOG_LATE_PROBE_MS})
 	if d == nil {
 		fmt.eprintln("probe: no device:", message)
 		return WATCHDOG_PROBE_NO_DEVICE
@@ -73,12 +78,28 @@ watchdog_probe_run :: proc() -> int {
 		}
 		rounds *= 2
 	}
-	ok := spin(d, pipeline, buffer, rounds, WATCHDOG_WORK_MS / WATCHDOG_DISPATCH_MS) && rhi.device_wait_idle(d)
+	ok := spin(d, pipeline, buffer, rounds, WATCHDOG_WORK_MS / WATCHDOG_DISPATCH_MS)
+	// The record of the frame while it is late, as a session that froze would leave it.
+	recorded := false
+	for started := time.tick_now(); ok && record != "" && !recorded && time.tick_since(started) < WATCHDOG_WORK_MS * time.Millisecond; {
+		if data, error := os.read_entire_file(record, context.temp_allocator); error == nil && len(data) > 0 {
+			fmt.eprintf("probe: record: %s", string(data))
+			recorded = true
+		} else {
+			time.sleep(time.Millisecond)
+		}
+	}
+	ok = ok && rhi.device_wait_idle(d)
 	if !ok {fmt.eprintln("probe:", rhi.device_error(d))}
+	// The thread that saw the frame finish removes its record.
+	for started := time.tick_now(); recorded && os.exists(record) && time.tick_since(started) < time.Second; {time.sleep(time.Millisecond)}
+	cleared := !recorded || !os.exists(record)
 	rhi.buffer_destroy(d, buffer)
 	rhi.pipeline_destroy(d, pipeline)
 	rhi.device_destroy(d)
-	return 0 if ok else 1
+	if !ok {return 1}
+	if record != "" && !recorded {return WATCHDOG_PROBE_UNRECORDED}
+	return 0 if cleared else WATCHDOG_PROBE_UNCLEARED
 }
 
 // A submission that runs past MIRAI_GPU_WATCHDOG_MS ends its process with
@@ -95,22 +116,28 @@ rhi_the_watchdog_ends_a_process_whose_gpu_work_runs_past_its_limit :: proc(t: ^t
 	program, _ := os.get_executable_path(context.temp_allocator)
 	environment, _ := os.environ(context.temp_allocator)
 	cases := [?]struct {
-		limit: string, // "": unset
-		code:  int,
-		says:  []string,
+		limit:  string, // "": unset
+		record: bool,   // the probe records its late submissions
+		code:   int,
+		says:   []string,
 	}{
-		{"", 0, nil},
-		{"1500", 0, nil},
-		{"40", rhi.WATCHDOG_EXIT_CODE, {"rhi: GPU watchdog: frame ", "MIRAI_GPU_WATCHDOG_MS=40", fmt.tprintf("exit code %d", rhi.WATCHDOG_EXIT_CODE)}},
-		{"soon", WATCHDOG_PROBE_NO_DEVICE, {"MIRAI_GPU_WATCHDOG_MS=soon", "a whole number above 0"}},
+		{"", false, 0, nil},
+		{"1500", false, 0, nil},
+		{"40", false, rhi.WATCHDOG_EXIT_CODE, {"rhi: GPU watchdog: frame ", "MIRAI_GPU_WATCHDOG_MS=40", fmt.tprintf("exit code %d", rhi.WATCHDOG_EXIT_CODE)}},
+		{"soon", false, WATCHDOG_PROBE_NO_DEVICE, {"MIRAI_GPU_WATCHDOG_MS=soon", "a whole number above 0"}},
+		// Watched by a person: the late frame is recorded, the process goes on and the record goes once it finished.
+		{"", true, 0, {"probe: record: frame ", "had not finished on the GPU", "the frame recorded the passes spin"}},
+		{"40", true, rhi.WATCHDOG_EXIT_CODE, {"rhi: GPU watchdog: frame "}},
 	}
-	for c in cases {
+	for c, i in cases {
+		record := fmt.tprintf("%s.late-%d.txt", program, i) if c.record else ""
+		if record != "" {os.remove(record)}
 		env := make([dynamic]string, context.temp_allocator)
 		for entry in environment {
 			if !strings.has_prefix(entry, rhi.WATCHDOG_VARIABLE + "=") {append(&env, entry)}
 		}
 		if c.limit != "" {append(&env, fmt.tprintf("%s=%s", rhi.WATCHDOG_VARIABLE, c.limit))}
-		state, _, stderr, error := subprocess.exec({command = {program, WATCHDOG_PROBE}, env = env[:]}, context.temp_allocator)
+		state, _, stderr, error := subprocess.exec({command = {program, WATCHDOG_PROBE, record}, env = env[:]}, context.temp_allocator)
 		testing.expectf(t, error == nil, "limit %q: the probe did not run: %v", c.limit, error)
 		testing.expectf(t, state.exited && state.exit_code == c.code, "limit %q: exit code %d, not %d; stderr:\n%s", c.limit, state.exit_code, c.code, string(stderr))
 		for text in c.says {
@@ -121,5 +148,13 @@ rhi_the_watchdog_ends_a_process_whose_gpu_work_runs_past_its_limit :: proc(t: ^t
 			testing.expectf(t, strings.contains(string(stderr), "it stopped in spin") == marked, "limit %q: the report says where the GPU stopped only when the device marks it (stop_place %v):\n%s", c.limit, marked, string(stderr))
 		}
 		testing.expectf(t, c.code == rhi.WATCHDOG_EXIT_CODE || !strings.contains(string(stderr), "GPU watchdog: frame"), "limit %q: the watchdog fired:\n%s", c.limit, string(stderr))
+		if record == "" {continue}
+		// A process the watchdog ended leaves the record of what it ended on, for the next one.
+		left, unread := os.read_entire_file(record, context.temp_allocator)
+		testing.expectf(t, (unread == nil) == (c.code == rhi.WATCHDOG_EXIT_CODE), "limit %q: a record is left only by a process the watchdog ended", c.limit)
+		if c.code == rhi.WATCHDOG_EXIT_CODE {
+			testing.expectf(t, strings.has_prefix(string(left), "frame ") && strings.contains(string(left), "the frame recorded the passes spin") && strings.contains(string(left), fmt.tprintf("exit code %d", rhi.WATCHDOG_EXIT_CODE)), "limit %q: the record names the frame, its passes and the end:\n%s", c.limit, string(left))
+		}
+		os.remove(record)
 	}
 }

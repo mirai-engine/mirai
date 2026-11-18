@@ -2,6 +2,9 @@ package host
 
 import "core:fmt"
 import "core:log"
+import "core:os"
+import "core:path/filepath"
+import "core:strings"
 import "mirai:core"
 import "mirai:rhi"
 
@@ -24,6 +27,25 @@ app_gpu_failure :: proc(app:^App) -> (failure:rhi.Device_Failure,text:string) {
     if failure==.None {return}
     app_gpu_failure_check(app)
     return failure,string(app.gpu_failure[:app.gpu_failure_length])
+}
+
+// What the record of a late GPU submission (App_Desc.gpu_late_record) held
+// when the application started: a run before that never saw a submission of
+// its GPU finish, as a machine that froze or reset leaves it; "" when none.
+app_gpu_late_before :: proc(app:^App) -> string {
+    return string(app.gpu_late_before[:app.gpu_late_before_length])
+}
+
+// Keeps what a run before left in the record and removes it, before the
+// device that writes it again is made, whose folder it makes.
+@(private)
+app_gpu_late_take :: proc(app:^App,path:string) {
+    if path=="" {return}
+    if data,error:=os.read_entire_file(path,context.temp_allocator);error==nil {
+        app.gpu_late_before_length=copy(app.gpu_late_before[:],strings.trim_space(string(data)))
+        _=os.remove(path)
+    }
+    _=os.make_directory_all(filepath.dir(path))
 }
 
 // The first frame that sees the failure reports it: in the log, and as a
