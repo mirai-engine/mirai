@@ -158,7 +158,7 @@ the_gpu_turns_follow_the_card_and_a_person_never_waits :: proc(t:^testing.T) {
     root:=base.test_folder(t,"workspace")
     if root=="" {return}
     GB :: i64(1)<<30
-    gpu_memory_write(root,8*GB)
+    gpu_card_write(root,{8*GB,true,"card"})
     first,first_taken,_:=gpu_try(root,"pid 1, mirai session in a",3*GB)
     second,second_taken,_:=gpu_try(root,"pid 2, mirai session in b",3*GB)
     testing.expect(t,first_taken && second_taken)
@@ -227,9 +227,57 @@ a_gpu_charge_is_the_last_peak_of_the_project :: proc(t:^testing.T) {
     testing.expect_value(t,gpu_charge(root,game),i64(1500)<<20)
     gpu_peak_write(root,game,700<<20)
     testing.expect_value(t,gpu_charge(root,join(game,".mirai","tmp","session-copy-2")),i64(700)<<20)
+    // A session the card pressed does not lower the charge; it raises it.
+    gpu_peak_end(root,game,300<<20,pressed=true)
+    testing.expect_value(t,gpu_charge(root,game),i64(700)<<20)
+    gpu_peak_end(root,join(game,".mirai","tmp","session-copy-3"),900<<20,pressed=true)
+    testing.expect_value(t,gpu_charge(root,game),i64(900)<<20)
+    gpu_peak_end(root,game,400<<20,pressed=false)
+    testing.expect_value(t,gpu_charge(root,game),i64(400)<<20)
+    GB :: i64(1)<<30
+    testing.expect(t,gpu_pressed(4*GB+GB/2,5*GB),"held within the reserve of the budget")
+    testing.expect(t,gpu_pressed(6*GB,5*GB),"held beyond the budget")
+    testing.expect(t,!gpu_pressed(4*GB,6*GB),"room left")
+    testing.expect(t,!gpu_pressed(0,0),"a driver that says nothing")
     charge,charged:=gpu_holder_charge(gpu_holder_text("pid 1, mirai session in a, b",700<<20))
     testing.expect(t,charged)
     testing.expect_value(t,charge,i64(700)<<20)
+}
+
+// The card admission takes is the one the devices said, whatever said it
+// last: a card of its own over memory shared with the system, and the
+// smaller of two of the same kind; what is not kept is refused with why.
+@(test)
+the_card_is_the_smallest_of_its_own_whoever_said_it_last :: proc(t:^testing.T) {
+    GB :: i64(1)<<30
+    card:=Gpu_Card{7*GB+800<<20,true,"NVIDIA GeForce RTX 3070"}
+    shared:=Gpu_Card{10*GB+600<<20,false,"AMD Radeon(TM) Graphics"}
+    Case :: struct {name:string,kept:Gpu_Card,known:bool,said:Gpu_Card,card:Gpu_Card,refused:bool}
+    cases:=[]Case{
+        {name="the first one said",said=card,card=card},
+        {name="the same again",kept=card,known=true,said=card,card=card},
+        {name="memory shared with the system after the card",kept=card,known=true,said=shared,card=card,refused=true},
+        {name="the card after memory shared with the system",kept=shared,known=true,said=card,card=card},
+        {name="more than the card said",kept=card,known=true,said={11*GB,true,card.name},card=card,refused=true},
+        {name="less than was said",kept={11*GB,true,card.name},known=true,said=card,card=card,refused=true},
+        {name="a device that says no memory",kept=card,known=true,said={0,true,"lost"},card=card,refused=true},
+        {name="nothing said yet and no memory",said={0,true,"lost"},card={},refused=true},
+    }
+    for c in cases {
+        got,refused:=gpu_card_said(c.kept,c.known,c.said)
+        testing.expectf(t,got.bytes==c.card.bytes && got.own==c.card.own && got.name==c.card.name,"%s: kept %v",c.name,got)
+        testing.expectf(t,(refused!="")==c.refused,"%s: refused %q",c.name,refused)
+    }
+    root:=base.test_folder(t,"workspace")
+    if root=="" {return}
+    memory,known:=gpu_memory(root)
+    testing.expect(t,!known && memory==GPU_MEMORY_ASSUMED,"assumed before any device says it")
+    for order in ([2][3]Gpu_Card{{card,shared,{11*GB,true,card.name}},{shared,{11*GB,true,card.name},card}}) {
+        _=os.remove(join(cache_folder(root,GPU_FOLDER,context.temp_allocator),GPU_CARD_FILE))
+        for said in order {gpu_card_write(root,said)}
+        kept,_:=gpu_card(root)
+        testing.expectf(t,kept.bytes==card.bytes && kept.own && kept.name==card.name,"whatever the order: %v",kept)
+    }
 }
 
 // The turns of one measurement run at once beyond the card while no one else
@@ -239,7 +287,7 @@ the_turns_of_a_measurement_share_the_card_when_alone :: proc(t:^testing.T) {
     root:=base.test_folder(t,"workspace")
     if root=="" {return}
     GB :: i64(1)<<30
-    gpu_memory_write(root,4*GB)
+    gpu_card_write(root,{4*GB,true,"card"})
     head,head_taken,_:=gpu_try(root,"pid 1, the editor of mirai bench, head",3*GB,part_of="77")
     base_,base_taken,_:=gpu_try(root,"pid 2, the editor of mirai bench, base",3*GB,part_of="77")
     testing.expect(t,head_taken && base_taken,"what a measurement compares opens at once")
