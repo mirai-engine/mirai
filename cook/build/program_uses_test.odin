@@ -4,6 +4,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import erender "mirai:engine/render"
 import "mirai:project"
 import "mirai:render/abi"
 import "mirai:std/base"
@@ -17,7 +18,8 @@ uses_write :: proc(t:^testing.T,parts:..string,text:="") {
 }
 
 // A material draws its program by its alpha mode, the material of an overlay
-// of another as an overlay, and an asset of a kind whose plugin declares
+// of another as an overlay, an entity of a scene the materials it gives
+// overlays and those its values make blended or opaque, and an asset of a kind whose plugin declares
 // program_uses so the program of the material it depends on.
 @(test)
 program_uses_are_what_the_assets_draw_each_program_as :: proc(t:^testing.T) {
@@ -38,7 +40,7 @@ program_uses_are_what_the_assets_draw_each_program_as :: proc(t:^testing.T) {
 
     types:asset.Types
     asset.types_init(&types,context.temp_allocator)
-    GLASS,STONE,MOSS,EMBER,PLAIN :: base.Asset_Id{1,1},base.Asset_Id{1,2},base.Asset_Id{1,3},base.Asset_Id{1,4},base.Asset_Id{1,5}
+    GLASS,STONE,MOSS,EMBER,PLAIN,RUNE,TILE :: base.Asset_Id{1,1},base.Asset_Id{1,2},base.Asset_Id{1,3},base.Asset_Id{1,4},base.Asset_Id{1,5},base.Asset_Id{1,6},base.Asset_Id{1,7}
     material :: proc(t:^testing.T,types:^asset.Types,path:string,id:base.Asset_Id,program:string,alpha:asset.Alpha_Mode,overlays:[]asset.Material_Overlay={}) {
         info:=asset.MATERIAL_DEFAULTS
         info.alpha_mode=alpha
@@ -52,6 +54,27 @@ program_uses_are_what_the_assets_draw_each_program_as :: proc(t:^testing.T) {
     material(t,&types,project.path(assets,"moss.mat",allocator=context.temp_allocator),MOSS,"Moss",.Mask)
     material(t,&types,project.path(assets,"ember.mat",allocator=context.temp_allocator),EMBER,"Ember",.Opaque)
     material(t,&types,project.path(assets,"plain.mat",allocator=context.temp_allocator),PLAIN,"",.Blend)
+    material(t,&types,project.path(assets,"rune.mat",allocator=context.temp_allocator),RUNE,"Rune",.Opaque)
+    material(t,&types,project.path(assets,"tile.mat",allocator=context.temp_allocator),TILE,"Tile",.Opaque)
+    // One entity lays rune over a cube; another shows tile blended.
+    scene:asset.Scene
+    testing.expect_value(t,asset.scene_init(&scene,&types,{1,8},context.temp_allocator),asset.Error.None)
+    looks:=[2]struct{renderer:erender.Mesh_Renderer,values:erender.Material_Values}{{renderer=erender.MESH_RENDERER_DEFAULT,values=erender.MATERIAL_VALUES_DEFAULT},{renderer=erender.MESH_RENDERER_DEFAULT,values=erender.MATERIAL_VALUES_DEFAULT}}
+    looks[0].values.own_overlays,looks[0].values.overlay_count=true,1
+    looks[0].values.overlays[0]={id=1,material=RUNE,enabled=true}
+    looks[1].renderer.materials[0]=TILE
+    looks[1].values.count=1
+    looks[1].values.names[0]=base.name_hash("alpha_mode")
+    looks[1].values.values[0]={f32(asset.Alpha_Mode.Blend),0,0,0}
+    for &look,i in looks {
+        id:=base.Entity_Id(i+1)
+        asset.scene_entity_add(&scene,id,0,"look")
+        testing.expect_value(t,asset.scene_set(&scene,id,"Mesh_Renderer",&look.renderer),asset.Error.None)
+        testing.expect_value(t,asset.scene_set(&scene,id,"Material_Values",&look.values),asset.Error.None)
+    }
+    level:=project.path(assets,"level.scene",allocator=context.temp_allocator)
+    uses_write(t,level,text="")
+    testing.expect_value(t,asset.scene_save(&scene,level),asset.Error.None)
     Spark :: struct {material:base.Asset_Id}
     doc:asset.Document
     asset.document_init(&doc,asset.Fourcc(u32('S')|u32('P')<<8|u32('R')<<16|u32('K')<<24),{1,6},context.temp_allocator)
@@ -68,7 +91,7 @@ program_uses_are_what_the_assets_draw_each_program_as :: proc(t:^testing.T) {
     testing.expect_value(t,error.code,project.Error_Code.None)
     uses,problem:=program_uses(&p,context.temp_allocator)
     testing.expect_value(t,problem,"")
-    want:=[]struct{program:string,uses:abi.Program_Uses}{{"Ember",{.Opaque,.Particle_Sprite}},{"Glass",{.Blend}},{"Moss",{.Opaque,.Overlay}},{"Stone",{.Opaque}}}
+    want:=[]struct{program:string,uses:abi.Program_Uses}{{"Ember",{.Opaque,.Particle_Sprite}},{"Glass",{.Blend}},{"Moss",{.Opaque,.Overlay}},{"Rune",{.Opaque,.Overlay}},{"Stone",{.Opaque}},{"Tile",{.Opaque,.Blend}}}
     testing.expect_value(t,len(uses),len(want))
     for each,i in want {
         if i>=len(uses) {break}
