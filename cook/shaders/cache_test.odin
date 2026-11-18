@@ -51,6 +51,33 @@ change_invalidates_only_the_stages_that_depend_on_it :: proc(t:^testing.T) {
     stable:=fingerprint_of(root,"a.comp.slang")
     fixture_write(t,root,"b.comp.slang","void main() {int unrelated=2;}\n")
     testing.expect_value(t,fingerprint_of(root,"a.comp.slang"),stable)
+
+    // Of a source both include, each stage takes the functions and the macros it reaches alone.
+    LIB :: "#define FIRST_SCALE 2\n#define SECOND_SCALE 3\nfloat first(float x) {return x*FIRST_SCALE;}\nfloat second(float x) {return helper(x)*SECOND_SCALE;}\nfloat helper(float x) {return x;}\nfloat unused(float x) {return x;}\n"
+    fixture_write(t,root,"include/lib.slang",LIB)
+    fixture_write(t,root,"first.comp.slang","#include \"lib.slang\"\nvoid main() {first(1.0);}\n")
+    fixture_write(t,root,"second.comp.slang","#include \"lib.slang\"\nvoid main() {second(1.0);}\n")
+    keys :: proc(root:string) -> [2]string {return {fingerprint_of(root,"first.comp.slang"),fingerprint_of(root,"second.comp.slang")}}
+    edited :: proc(t:^testing.T,root,old,new:string) {
+        text,_:=os.read_entire_file(path_join(root,"include/lib.slang",allocator=context.temp_allocator),context.temp_allocator)
+        changed,_:=strings.replace(string(text),old,new,1,context.temp_allocator)
+        testing.expectf(t,changed!=string(text),"the fixture has %s",old)
+        fixture_write(t,root,"include/lib.slang",changed)
+    }
+    before:=keys(root)
+    edited(t,root,"float unused(float x) {return x;}","float unused(float x) {return x+1.0;}")
+    testing.expect_value(t,keys(root),before)
+    edited(t,root,"#define FIRST_SCALE 2","#define FIRST_SCALE 2\n#define LATER_SCALE 5")
+    testing.expect_value(t,keys(root),before)
+    edited(t,root,"return x;}\nfloat unused","return x*0.5;}\nfloat unused")
+    after:=keys(root)
+    testing.expect(t,after[0]==before[0] && after[1]!=before[1],"a function another reaches is part of the stage that reaches it alone")
+    edited(t,root,"#define FIRST_SCALE 2","#define FIRST_SCALE 4")
+    again:=keys(root)
+    testing.expect(t,again[0]!=after[0] && again[1]==after[1],"a macro is part of the stages that name it alone")
+    edited(t,root,"float second(","float first(int x) {return 0.0;}\nfloat second(")
+    overloaded:=keys(root)
+    testing.expect(t,overloaded[0]!=again[0] && overloaded[1]==again[1],"another function of a name a stage reaches is part of it")
 }
 
 @(test)

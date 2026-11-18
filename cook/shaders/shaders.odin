@@ -32,7 +32,7 @@ import "mirai:std/serial"
 // Names what the generator produces from a given source and compiler. It is
 // part of every fingerprint: raise it when the outputs change for a reason the
 // fingerprints do not see (another flag is already seen, as are the tools).
-GENERATOR_CONTRACT :: "mirai-shaders/7"
+GENERATOR_CONTRACT :: "mirai-shaders/8"
 
 // The folders of the engine every stage includes, under its root: the shaders
 // of the renderer and those engine/render gives the plugins that extend it.
@@ -1288,7 +1288,8 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     {
         hash:Sha256
         sha_begin(&hash)
-        for text in ([]string{GENERATOR_CONTRACT,g.version,g.metal_tools,abi_text(),material_schema(),shared_constants()}) {sha_text(&hash,text);sha_text(&hash,"\n")}
+        // The schema and the shared constants are includes of the stages, which take what they name of them.
+        for text in ([]string{GENERATOR_CONTRACT,g.version,g.metal_tools,abi_text()}) {sha_text(&hash,text);sha_text(&hash,"\n")}
         for flags in ([][]string{SLANG_FLAGS,SLANG_OPTIMIZATION,SPIRV_FLAGS,VALIDATE_FLAGS,OPTIMIZE_FLAGS,METAL_FLAGS}) {sha_text(&hash,strings.join(flags," ",context.temp_allocator));sha_text(&hash,"\n")}
         g.configuration=transmute([]u8)sha_hex(&hash,scratch)
     }
