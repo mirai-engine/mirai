@@ -1,9 +1,12 @@
 package editor
 
+import "core:fmt"
 import vmem "core:mem/virtual"
+import "core:os"
 import "core:strings"
 import "core:testing"
 import "core:time"
+import "mirai:core"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:std/base"
@@ -155,7 +158,7 @@ two_captures_compare_zone_by_zone_and_say_when_they_were_measured_apart :: proc(
     if !testing.expect(t,capture_fixture(&other,3,4,"Low")) {return}
     defer profile_capture_free(&other)
 
-    result:=profile_compare(&before,&after,8)
+    result:=compare_of(&before,&after)
     testing.expect(t,result.comparable,"same conditions")
     testing.expect_value(t,len(result.differences),0)
     testing.expect_value(t,result.zones[0].name,"a")
@@ -163,7 +166,7 @@ two_captures_compare_zone_by_zone_and_say_when_they_were_measured_apart :: proc(
     testing.expect_value(t,result.mean_ms.delta,-4.0)
     testing.expect(t,result.mean_ms.delta_pct<0)
 
-    result=profile_compare(&after,&other,8)
+    result=compare_of(&after,&other)
     testing.expect(t,!result.comparable,"another preset changes the times by itself")
     testing.expect_value(t,result.differences[0].field,"preset")
     testing.expect(t,len(result.notes)>0)
@@ -198,11 +201,11 @@ a_capture_measured_with_limits_is_not_comparable :: proc(t:^testing.T) {
 
     testing.expect(t,profile_summary(&free,4).comparable)
     testing.expect(t,!profile_summary(&limited,4).comparable)
-    result:=profile_compare(&limited,&other,8)
+    result:=compare_of(&limited,&other)
     testing.expect_value(t,len(result.differences),0)
     testing.expect(t,!result.comparable,"both waited for the display")
     testing.expect(t,strings.contains(strings.join(result.notes,"\n",context.temp_allocator),"allow_limited"))
-    testing.expect(t,profile_compare(&free,&free,8).comparable)
+    testing.expect(t,compare_of(&free,&free).comparable)
 }
 
 @(test)
@@ -334,4 +337,71 @@ the_answers_of_the_profile_methods_have_the_shape_they_declare :: proc(t:^testin
     host.load_profile_frame(&app,true)
     load.kind=.Play
     profile_answer_expect(t,&s,api_profile_load,&load,Api_Profile_Load_Params,Api_Profile_Loads)
+}
+
+@(private="file")
+compare_of :: proc(a,b:^Profile_Capture) -> Api_Profile_Compare {
+    x,y:=profile_digest(a),profile_digest(b)
+    return profile_compare(&x,&y,8)
+}
+
+// A zone of a loop function belongs to whoever declares it; any other zone
+// is the engine's. The summary says so of each zone.
+@(test)
+a_zone_belongs_to_whoever_declares_its_function :: proc(t:^testing.T) {
+    steps:=[]core.Step_Info{{name="a",game=true},{name="b",plugin="terrain"},{name="editor"}}
+    Case :: struct {zone:string,want:Profile_Zone_Owner}
+    for c in ([]Case{{"a",{owner=.Game}},{"b",{.Plugin,"terrain"}},{"editor",{}},{"job",{}}}) {
+        got:=profile_zone_owner(steps,c.zone)
+        testing.expectf(t,got==c.want,"%s: %v",c.zone,got)
+    }
+    capture:Profile_Capture
+    if !testing.expect(t,capture_fixture(&capture,1,12)) {return}
+    defer profile_capture_free(&capture)
+    for name,i in capture.names {capture.owners[i]=profile_zone_owner(steps,name)}
+    for zone in profile_summary(&capture,8).zones {
+        if zone.name=="b" {testing.expect(t,zone.owner==.Plugin && zone.plugin=="terrain",zone.plugin)}
+        if zone.name=="a" {testing.expect_value(t,zone.owner,Profile_Owner.Game)}
+    }
+}
+
+// A baseline keeps what compare reads of a capture: compared after it is
+// read again, nothing changed. A file that is not one, or of another format,
+// is refused with what to do.
+@(test)
+a_baseline_keeps_what_compare_reads_and_refuses_another_file :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"profile-baseline")
+    if root=="" {return}
+    c:Profile_Capture
+    if !testing.expect(t,capture_fixture(&c,1,12)) {return}
+    defer profile_capture_free(&c)
+    context.allocator=context.temp_allocator
+    digest:=profile_digest(&c)
+    path,error:=profile_baseline_save(root,"before",digest)
+    if !testing.expect_value(t,error,"") {return}
+    _,error=profile_baseline_save(root,"../out",digest)
+    testing.expect(t,error!="","a name that is not a file name is refused")
+    loaded,load_error:=profile_baseline_load(root,"before")
+    if !testing.expect_value(t,load_error,"") {return}
+    result:=profile_compare(&loaded,&digest,8)
+    testing.expect(t,result.comparable && result.baseline=="before")
+    testing.expect_value(t,result.mean_ms.delta,0)
+    testing.expect_value(t,len(result.only_in_base)+len(result.only_in_id),0)
+    names:=profile_baselines(root)
+    testing.expect(t,len(names)==1 && names[0]=="before")
+
+    Case :: struct {text,says:string}
+    cases:=[]Case{
+        {`{"version":1,"frames":`,"is not a baseline"},
+        {`{"version":1,"frames":0,"mean_ms":5}`,"is not a baseline"},
+        {`{"version":1,"frames":2,"mean_ms":-1}`,"is not a baseline"},
+        {`{"version":1,"frames":2,"mean_ms":5,"zones":[{"name":"","self_ms":1}]}`,"is not a baseline"},
+        {`{"frames":2,"mean_ms":5}`,"is not a baseline"},
+        {strings.concatenate({`{"version":`,fmt.tprint(PROFILE_BASELINE_VERSION+1),`,"frames":2,"mean_ms":5}`}),"format"},
+    }
+    for kase in cases {
+        testing.expect(t,os.write_entire_file(path,transmute([]u8)kase.text)==nil)
+        _,refused:=profile_baseline_load(root,"before")
+        testing.expectf(t,strings.contains(refused,kase.says) && strings.contains(refused,"profile.save"),"%s: %q",kase.text,refused)
+    }
 }
