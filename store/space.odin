@@ -18,7 +18,7 @@ Usage :: struct {
 
 // What the complete blobs take.
 usage :: proc(s:^Store) -> (total:Usage,error:Error) {
-    error=blobs_walk(s,proc(user:rawptr,path:string,hash:Hash,size:i64) -> Error {
+    error=blobs_walk(s,"blobs",proc(user:rawptr,path:string,hash:Hash,size:i64) -> Error {
         total:=(^Usage)(user)
         total.bytes+=size
         total.blobs+=1
@@ -27,10 +27,10 @@ usage :: proc(s:^Store) -> (total:Usage,error:Error) {
     return
 }
 
-// Removes every complete blob whose address is not in live, and the stale
-// files of tmp: what it freed. The caller decides what is live.
+// Removes every complete blob whose address is not in live, with its kept
+// table, and the stale files of tmp: what it freed. The caller decides what is live.
 sweep :: proc(s:^Store,live:[]Hash) -> (freed:Usage,error:Error) {
-    Sweep :: struct {live:[]Hash,freed:Usage}
+    Sweep :: struct {live:[]Hash,freed:Usage,tables:bool}
     sorted,make_error:=make([]Hash,len(live),s.allocator)
     if make_error!=nil {return {},.Out_Of_Memory}
     defer delete(sorted,s.allocator)
@@ -40,7 +40,7 @@ sweep :: proc(s:^Store,live:[]Hash) -> (freed:Usage,error:Error) {
         return mem.compare(a[:],b[:])<0
     })
     state:=Sweep{live=sorted}
-    error=blobs_walk(s,proc(user:rawptr,path:string,hash:Hash,size:i64) -> Error {
+    visit:=proc(user:rawptr,path:string,hash:Hash,size:i64) -> Error {
         state:=(^Sweep)(user)
         _,found:=slice.binary_search_by(state.live,hash,proc(a,b:Hash) -> slice.Ordering {
             a,b:=a,b
@@ -50,10 +50,16 @@ sweep :: proc(s:^Store,live:[]Hash) -> (freed:Usage,error:Error) {
         removed:=os.remove(path)
         if removed==.Not_Exist {return .None}
         if removed!=nil {return os_error(removed)}
-        state.freed.bytes+=size
-        state.freed.blobs+=1
+        if !state.tables {
+            state.freed.bytes+=size
+            state.freed.blobs+=1
+        }
         return .None
-    },&state)
+    }
+    error=blobs_walk(s,"blobs",visit,&state)
+    if error!=.None {return state.freed,error}
+    state.tables=true
+    error=blobs_walk(s,"tables",visit,&state)
     if error!=.None {return state.freed,error}
     buffer:[PATH_BYTES]u8
     tmp:=join(&buffer,s.root,"tmp") or_return
@@ -67,11 +73,12 @@ sweep :: proc(s:^Store,live:[]Hash) -> (freed:Usage,error:Error) {
     return state.freed,.None
 }
 
-// Visits every complete blob: a file of blobs/<first byte>/ named by its address.
+// Visits every file of <kind>/<first byte>/ named by an address: the complete
+// blobs, or the kept tables.
 @(private)
-blobs_walk :: proc(s:^Store,visit:proc(user:rawptr,path:string,hash:Hash,size:i64) -> Error,user:rawptr) -> Error {
+blobs_walk :: proc(s:^Store,kind:string,visit:proc(user:rawptr,path:string,hash:Hash,size:i64) -> Error,user:rawptr) -> Error {
     buffer:[PATH_BYTES]u8
-    blobs:=join(&buffer,s.root,"blobs") or_return
+    blobs:=join(&buffer,s.root,kind) or_return
     folders,folders_error:=os.read_all_directory_by_path(blobs,s.allocator)
     if folders_error!=nil {return os_error(folders_error)}
     defer os.file_info_slice_delete(folders,s.allocator)

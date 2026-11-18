@@ -1,6 +1,7 @@
 package store
 
 import "base:runtime"
+import "core:mem"
 import "core:os"
 
 // Complete blobs are plain files of their bytes at blobs/<first byte>/<address>,
@@ -18,7 +19,8 @@ put_bytes :: proc(s:^Store,data:[]u8) -> (hash:Hash,error:Error) {
         os.remove(temp)
         return {},os_error(write_error) if write_error!=nil else .Io
     }
-    return hash,blob_place(s,temp,hash)
+    if error=blob_place(s,temp,hash);error!=.None {os.remove(temp)}
+    return hash,error
 }
 
 // Puts the file at path, read once piece by piece.
@@ -39,7 +41,8 @@ put_file :: proc(s:^Store,path:string) -> (hash:Hash,error:Error) {
         os.remove(temp)
         return hash if error==.None else {},error
     }
-    return hash,blob_place(s,temp,hash)
+    if error=blob_place(s,temp,hash);error!=.None {os.remove(temp)}
+    return hash,error
 }
 
 // Whether the blob is complete here.
@@ -90,26 +93,57 @@ read :: proc(s:^Store,hash:Hash,offset:i64,buffer:[]u8) -> Error {
     return .Missing
 }
 
-// The piece hashes of a complete blob, checked against its address on the way.
+// The piece hashes of a complete blob: its kept table when that one matches
+// the address and the size, otherwise hashed from the file once and kept.
 blob_table :: proc(s:^Store,hash:Hash,allocator:=context.allocator) -> (pieces:[]Hash,error:Error) {
-    buffer:[PATH_BYTES]u8
-    path:=blob_file(s,hash,&buffer) or_return
-    file,open_error:=os.open(path)
-    if open_error!=nil {return nil,os_error(open_error)}
-    defer os.close(file)
-    size,size_error:=os.file_size(file)
-    if size_error!=nil {return nil,os_error(size_error)}
+    r:=reader_open(s,hash) or_return
+    defer reader_close(&r)
     make_error:runtime.Allocator_Error
-    pieces,make_error=make([]Hash,piece_count(size),allocator)
+    pieces,make_error=make([]Hash,piece_count(r.size),allocator)
     if make_error!=nil {return nil,.Out_Of_Memory}
+    if table_load(s,hash,r.size,pieces)==.None {return pieces,.None}
     address:Hash
-    address,error=file_hash(file,size,nil,pieces)
+    address,error=file_hash(r.file,r.size,nil,pieces)
     if error==.None && address!=hash {error=.Corrupt}
     if error!=.None {
         delete(pieces,allocator)
         return nil,error
     }
+    table_keep(s,hash,r.size,pieces)
     return pieces,.None
+}
+
+// A complete blob held open for many range reads; its owner closes it.
+Reader :: struct {
+    file:^os.File,
+    size:i64,
+}
+
+reader_open :: proc(s:^Store,hash:Hash) -> (r:Reader,error:Error) {
+    buffer:[PATH_BYTES]u8
+    path:=blob_file(s,hash,&buffer) or_return
+    open_error:os.Error
+    r.file,open_error=os.open(path)
+    if open_error!=nil {return {},os_error(open_error)}
+    size_error:os.Error
+    r.size,size_error=os.file_size(r.file)
+    if size_error!=nil {
+        reader_close(&r)
+        return {},os_error(size_error)
+    }
+    return r,.None
+}
+
+// Fills buffer with the bytes of the blob from offset.
+reader_read :: proc(r:^Reader,offset:i64,buffer:[]u8) -> Error {
+    if r.file==nil {return .Invalid_Argument}
+    if offset<0 || offset>r.size || i64(len(buffer))>r.size-offset {return .Invalid_Argument}
+    return read_exact(r.file,buffer,offset)
+}
+
+reader_close :: proc(r:^Reader) {
+    if r.file!=nil {os.close(r.file)}
+    r^={}
 }
 
 // Corrupt when the file of a complete blob no longer has the bytes of its address.
@@ -128,6 +162,7 @@ remove :: proc(s:^Store,hash:Hash) -> Error {
     path:=blob_file(s,hash,&buffer) or_return
     removed:=os.remove(path)
     if removed!=nil && removed!=.Not_Exist {return os_error(removed)}
+    table_drop(s,hash)
     discarded:=partial_discard(s,hash)
     if discarded!=.None && discarded!=.Missing {return discarded}
     return .Missing if removed!=nil && discarded==.Missing else .None
@@ -140,7 +175,8 @@ blob_file :: proc(s:^Store,hash:Hash,buffer:^[PATH_BYTES]u8) -> (string,Error) {
     return join(buffer,s.root,"blobs",text[:2],text)
 }
 
-// Renames a finished file of tmp into the blob's place; a blob already there stays.
+// Renames a finished file into the blob's place; a blob already there stays
+// and the file goes. A failed rename leaves the file where it was.
 @(private)
 blob_place :: proc(s:^Store,temp:string,hash:Hash) -> Error {
     buffer,folder_buffer:[PATH_BYTES]u8
@@ -149,21 +185,67 @@ blob_place :: proc(s:^Store,temp:string,hash:Hash) -> Error {
     text:=hex(hash,&name)
     folder_make(join(&folder_buffer,s.root,"blobs",text[:2]) or_return) or_return
     if os.is_file(path) || os.rename(temp,path)!=nil {
+        if !os.is_file(path) {return .Io}
         os.remove(temp)
-        return .None if os.is_file(path) else .Io
     }
     return .None
 }
 
 @(private)
 read_complete :: proc(s:^Store,hash:Hash,offset:i64,buffer:[]u8) -> Error {
-    path_buffer:[PATH_BYTES]u8
-    path:=blob_file(s,hash,&path_buffer) or_return
+    r:=reader_open(s,hash) or_return
+    defer reader_close(&r)
+    return reader_read(&r,offset,buffer)
+}
+
+// The kept table of a blob: tables/<first byte>/<address>, its size as u64
+// little endian and its piece hashes, as the table of a partial blob.
+@(private)
+table_file :: proc(s:^Store,hash:Hash,buffer:^[PATH_BYTES]u8) -> (string,Error) {
+    name:[64]u8
+    text:=hex(hash,&name)
+    return join(buffer,s.root,"tables",text[:2],text)
+}
+
+// Fills pieces from the kept table; Corrupt when it does not match size and address.
+@(private)
+table_load :: proc(s:^Store,hash:Hash,size:i64,pieces:[]Hash) -> Error {
+    buffer:[PATH_BYTES]u8
+    path:=table_file(s,hash,&buffer) or_return
     file,open_error:=os.open(path)
     if open_error!=nil {return os_error(open_error)}
     defer os.close(file)
-    size,size_error:=os.file_size(file)
+    table_size,size_error:=os.file_size(file)
     if size_error!=nil {return os_error(size_error)}
-    if offset>size || i64(len(buffer))>size-offset {return .Invalid_Argument}
-    return read_exact(file,buffer,offset)
+    if len(pieces)!=piece_count(size) || table_size!=TABLE_HEADER+i64(len(pieces))*size_of(Hash) {return .Corrupt}
+    header:[TABLE_HEADER]u8
+    read_exact(file,header[:],0) or_return
+    if header!=table_header(size) {return .Corrupt}
+    read_exact(file,mem.slice_to_bytes(pieces),TABLE_HEADER) or_return
+    return .None if table_address(size,pieces)==hash else .Corrupt
+}
+
+// Keeps the table of a complete blob; one that cannot be written is hashed again when asked for.
+@(private)
+table_keep :: proc(s:^Store,hash:Hash,size:i64,pieces:[]Hash) {
+    buffer,folder_buffer:[PATH_BYTES]u8
+    path,error:=table_file(s,hash,&buffer)
+    if error!=.None {return}
+    name:[64]u8
+    folder,folder_error:=join(&folder_buffer,s.root,"tables",hex(hash,&name)[:2])
+    if folder_error!=.None || folder_make(folder)!=.None {return}
+    header:=table_header(size)
+    file_write(s.root,path,header[:],mem.slice_to_bytes(pieces))
+}
+
+@(private)
+table_drop :: proc(s:^Store,hash:Hash) {
+    buffer:[PATH_BYTES]u8
+    if path,error:=table_file(s,hash,&buffer);error==.None {os.remove(path)}
+}
+
+@(private)
+table_header :: proc "contextless" (size:i64) -> (header:[TABLE_HEADER]u8) {
+    for i in 0..<TABLE_HEADER {header[i]=u8(u64(size)>>(8*uint(i)))}
+    return
 }
