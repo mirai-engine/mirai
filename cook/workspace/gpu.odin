@@ -16,8 +16,8 @@ import "core:time"
 // always given. The charge of an editor is the peak of the last session of
 // its project (gpu_peak, which the editor keeps), GPU_CHARGE_DEFAULT before
 // one; a process with a device and no project is charged GPU_CHARGE_DEVICE.
-// The memory of the card is what the last device opened said (gpu_memory,
-// which the editor keeps), GPU_MEMORY_ASSUMED before one.
+// The card is what the devices opened said of it (gpu_card, which the editor
+// keeps; gpu_card_said decides between them), GPU_MEMORY_ASSUMED before one.
 //
 // The turn of a person (person) is taken without waiting and counts for the
 // others; when every turn file is held it runs without one. Any other waits
@@ -36,9 +36,9 @@ GPU_CHARGE_DEFAULT :: i64(1)<<40
 GPU_CHARGE_DEVICE :: i64(1)<<30
 // The card is left this part of its memory for what holds no turn.
 GPU_RESERVE_PART :: 8
-// The cache of what the devices said: GPU_MEMORY_FILE and the peaks by project.
+// The cache of what the devices said: GPU_CARD_FILE and the peaks by project.
 GPU_FOLDER :: "gpu"
-GPU_MEMORY_FILE :: "memory"
+GPU_CARD_FILE :: "card"
 @(private)
 GPU_CHARGE_SUFFIX :: " MiB of the GPU"
 @(private)
@@ -95,15 +95,75 @@ gpu_holders :: proc(root:string,allocator:=context.allocator) -> []Gpu_Holder {
     return holders[:]
 }
 
-// Bytes of the memory of the card, as the last device opened said it.
-gpu_memory :: proc(root:string) -> (bytes:i64,known:bool) {
-    return number_read(join(cache_folder(root,GPU_FOLDER,context.temp_allocator),GPU_MEMORY_FILE))
+// What a device said of the card it runs on: the bytes of the memory it keeps
+// its resources in and whether that memory is its own (a discrete card) or
+// the system's.
+Gpu_Card :: struct {
+    bytes:i64,
+    own:bool,
+    name:string, // of the adapter
 }
 
-gpu_memory_write :: proc(root:string,bytes:i64) {
-    if bytes<=0 {return}
-    if said,_:=gpu_memory(root);said==bytes {return}
-    number_write(join(cache_folder(root,GPU_FOLDER,context.temp_allocator),GPU_MEMORY_FILE),bytes)
+@(private)
+GPU_CARD_OWN :: "own"
+@(private)
+GPU_CARD_SHARED :: "shared"
+
+// The card the turns divide, as gpu_card_write kept it.
+gpu_card :: proc(root:string,allocator:=context.temp_allocator) -> (card:Gpu_Card,known:bool) {
+    data,error:=os.read_entire_file(join(cache_folder(root,GPU_FOLDER,context.temp_allocator),GPU_CARD_FILE),context.temp_allocator)
+    if error!=nil {return}
+    bytes,_,rest:=strings.partition(strings.trim_space(string(data))," ")
+    kind,_,name:=strings.partition(rest," ")
+    card.bytes=strconv.parse_i64(bytes) or_return
+    if card.bytes<=0 || kind!=GPU_CARD_OWN && kind!=GPU_CARD_SHARED || name=="" {return}
+    return {card.bytes,kind==GPU_CARD_OWN,strings.clone(name,allocator)},true
+}
+
+// The memory of the card admission takes: the one kept, GPU_MEMORY_ASSUMED
+// before one.
+gpu_memory :: proc(root:string) -> (bytes:i64,known:bool) {
+    card:Gpu_Card
+    if card,known=gpu_card(root);!known {return GPU_MEMORY_ASSUMED,false}
+    return card.bytes,true
+}
+
+// The card that is kept when a device says said beside the one kept: a
+// card of its own over one that shares the memory of the system, and of two
+// of the same kind the smaller, so that admission never takes the card for
+// larger than a device said it is, whatever device said it last. refused
+// says which of the two is not kept and why.
+gpu_card_said :: proc(kept:Gpu_Card,known:bool,said:Gpu_Card) -> (card:Gpu_Card,refused:string) {
+    GIB :: f64(1<<30)
+    switch {
+    case said.bytes<=0:
+        return kept,fmt.tprintf("the device %s did not say the memory it keeps its resources in",said.name)
+    case !known || !kept.own && said.own:
+        return said,""
+    case kept.own && !said.own:
+        return kept,fmt.tprintf("the GPU turns divide the card %s (%.1f GiB), not %s, which shares the memory of the system: set MIRAI_GPU so that the editors run on the card",kept.name,f64(kept.bytes)/GIB,said.name)
+    case said.bytes>kept.bytes:
+        return kept,fmt.tprintf("%s said %.1f GiB, more than the %.1f GiB that %s said; the GPU turns keep the smaller",said.name,f64(said.bytes)/GIB,f64(kept.bytes)/GIB,kept.name)
+    case said.bytes<kept.bytes:
+        return said,fmt.tprintf("%s said %.1f GiB before, more than the %.1f GiB that %s says; the GPU turns keep the smaller",kept.name,f64(kept.bytes)/GIB,f64(said.bytes)/GIB,said.name)
+    }
+    return kept,""
+}
+
+// Keeps what a device said of the card by gpu_card_said, under
+// GPU_ADMISSION_LOCK so that two that say it at once both count; refused is
+// what gpu_card_said refused.
+gpu_card_write :: proc(root:string,said:Gpu_Card) -> (refused:string) {
+    admission,admitted:=lock_acquire(lock_path(root,GPU_ADMISSION_LOCK,context.temp_allocator),fmt.tprintf("pid %d, the card %s",os.get_pid(),said.name))
+    if !admitted {return}
+    defer lock_release(&admission)
+    kept,known:=gpu_card(root)
+    card:Gpu_Card
+    card,refused=gpu_card_said(kept,known,said)
+    if card.bytes<=0 || known && card.bytes==kept.bytes && card.own==kept.own && card.name==kept.name {return}
+    text:=fmt.tprintf("%d %s %s\n",card.bytes,card.own?GPU_CARD_OWN:GPU_CARD_SHARED,card.name)
+    text_write(join(cache_folder(root,GPU_FOLDER,context.temp_allocator),GPU_CARD_FILE),text)
+    return
 }
 
 // The file of the peak of the sessions of a project: by the project, which a
@@ -123,7 +183,22 @@ gpu_peak :: proc(root,folder:string) -> (bytes:i64,known:bool) {
 }
 
 gpu_peak_write :: proc(root,folder:string,bytes:i64) {
-    if bytes>0 {number_write(gpu_peak_path(root,folder,context.temp_allocator),bytes)}
+    if bytes>0 {text_write(gpu_peak_path(root,folder,context.temp_allocator),fmt.tprintf("%d\n",bytes))}
+}
+
+// Whether a device holds so close to what the driver lets it hold (budget)
+// that the driver may be keeping some of what it wants out of the card: what
+// it holds then is less than what it needs.
+gpu_pressed :: proc(used,budget:i64) -> bool {
+    return budget>0 && budget-used<budget/GPU_RESERVE_PART
+}
+
+// What the end of a session keeps of its peak: what it held, also below the
+// peak kept, unless the card pressed it at some point (gpu_pressed): then
+// what it held does not lower the charge.
+gpu_peak_end :: proc(root,folder:string,peak:i64,pressed:bool) {
+    if kept,known:=gpu_peak(root,folder);pressed && known && kept>=peak {return}
+    gpu_peak_write(root,folder,peak)
 }
 
 // What a process with a device of the project at folder is charged; "" is
@@ -168,8 +243,7 @@ gpu_try :: proc(root,what:string,charge:i64,person:=false,part_of:="") -> (lock:
     if !admitted {return}
     defer lock_release(&admission)
     waiting.holders=gpu_holders(root,context.temp_allocator)
-    memory,known:=gpu_memory(root)
-    waiting.memory,waiting.memory_known=known?memory:GPU_MEMORY_ASSUMED,known
+    waiting.memory,waiting.memory_known=gpu_memory(root)
     charges:=make([]i64,len(waiting.holders),context.temp_allocator)
     alone:=part_of!=""
     for holder,i in waiting.holders {
@@ -240,9 +314,9 @@ number_read :: proc(path:string) -> (value:i64,known:bool) {
 
 // Written whole and renamed into place: a reader never sees half of it.
 @(private)
-number_write :: proc(path:string,value:i64) {
+text_write :: proc(path,text:string) {
     if os.make_directory_all(os.dir(path))!=nil && !os.is_dir(os.dir(path)) {return}
     staged:=fmt.tprintf("%s.%d.tmp",path,os.get_pid())
-    if os.write_entire_file(staged,transmute([]u8)fmt.tprintf("%d\n",value))!=nil {return}
+    if os.write_entire_file(staged,transmute([]u8)text)!=nil {return}
     if os.rename(staged,path)!=nil {_=os.remove(staged)}
 }
