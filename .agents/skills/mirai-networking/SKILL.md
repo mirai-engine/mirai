@@ -153,6 +153,9 @@ In `plugins/multiplayer/runtime`:
   buffer; every index, type, mask and length is validated before use. A datagram that cannot be
   interpreted closes the connection with `Protocol_Error`; it is never half-applied over another
   connection.
+- **A connection finds its rate by itself.** Nothing in `Host_Desc` starts or caps it; a reliable
+  channel holds in flight what its `queue_bytes` holds, and the game channels of a connection stay
+  on time next to a stream on it.
 - **Datagram acks and losses are final.** Late datagrams are not acked and only allow
   [the partial delivery described in connections](references/networking.md#connections). Do not
   extend that exception without reviewing channels, links and baselines.
@@ -251,7 +254,8 @@ In `plugins/multiplayer/runtime`:
 
 - `mirai test net [test...]`, `mirai test std/serial` (bitstream) and
   `mirai test plugins/multiplayer/runtime`. Run the `*_test.odin` of the touched area: `address`,
-  `connection`, `secure`, `invite`, `congestion`, `flow` (reliable window, a streamed part),
+  `connection`, `secure`, `invite`, `congestion`, `flow` (reliable window, a streamed part, a bulk
+  stream on a 100 Mbit/s link, a shared link, ack runs),
   `conditioner`, `replication`,
   `descriptor_boundary`, `large_state`, `collection`, `references`, `convergence`, `grid`, `scope`,
   `authority`, `interpolation`, `clock`, `worker`, `baseline` (pools and shared baselines),

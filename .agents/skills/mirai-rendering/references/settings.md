@@ -19,7 +19,7 @@
     texture views draw at the size of their texture); the glass targets with `glass_layers`. Only
     these wait for the device;
   - the probe volume with its shape, `colored_shadows` or `sun_shadows`; its probes gather again
-    everywhere, keeping the volume, with `light_budget` or `sun_radius`. With
+    everywhere, keeping the volume, with `gi_strength`, `light_budget` or `sun_radius`. With
     either, the worlds not shown lose the light they kept;
   - the histories that hold what the change alters: glass and TAA with `colored_shadows`,
     `sun_shadows`, `reflection_light_budget` and `reflections`. The direct light and the
@@ -37,18 +37,19 @@
 
 - `Settings.resolution` is a target of lines: the window views draw that fraction of the lines
   they span together, never above one pixel per point (on Retina, half the pixels of the drawable
-  per axis) nor below `RENDER_SCALE_MIN`; 0, native, draws the lines they span. The cost per
-  pixel does not grow with the output, and in split screen all take the same scale. TAA brings
-  the image to the drawable resolution. A texture view draws it at the size of the texture.
+  per axis) nor below `RENDER_SCALE_MIN`. The cost per pixel does not grow with the output, and in
+  split screen all take the same scale. TAA brings the image to the drawable resolution. A
+  texture view draws it at the size of the texture.
 - The UI, panels, lines and outline are drawn after TAA at the drawable resolution: a budget does
   not blur them. Textures are read with a mip bias of `log2` of the scale, which keeps their
   detail.
 - Changing the size, the number of views or the target recreates their targets.
-- `Graphics_Settings.resolution` is that target, Native (0) unless chosen, and no preset writes
-  it: the quality of a preset does not change the pixels of the window. No setting stores the
-  preset: what names one (a control, `graphics_preset` of `settings.set`, the code of a game)
+- `Graphics_Settings.resolution` is that target; each preset writes its own. No setting stores
+  the preset: what names one (a control, `graphics_preset` of `settings.set`, the code of a game)
   writes its fields with `graphics_preset_apply`, before the fields that go on top;
-  `graphics_quality_of` computes the one the fields are at, and `graphics_apply` only reads.
+  `graphics_quality_of` computes the one the fields are at, and `graphics_apply` only reads. At
+  the window of the render check, presets from Medium up stay at one pixel per point, so a check
+  compares the same image with the same cost.
 
 ## Inspection modes
 
@@ -58,9 +59,8 @@ Each view chooses what it shows instead of its lit image with `Frame_View.inspec
 
 - `mode` is a `Debug_View`: the G-buffer and light channel ones are resolved in composite; the
   shadow, reflection and local light ones, in the `debug view` pass after composite.
-- An inspected view is shown without display transform, glass, overlays or sprites. The modes of
-  light take the exposure of the view, so they show under any light scale; a buffer is shown as it
-  is. Changing mode does not recreate targets or cut histories.
+- An inspected view is shown without exposure or display transform, without glass, overlays or
+  sprites. Changing mode does not recreate targets or cut histories.
 - `record` and `user`: an extension's mode, which the renderer records only in that view in the
   [`Inspect`](views.md#extension-stages) stage, over the `mode` image.
 - `renderer_debug_view_status` says whether the window views can show a mode with their last

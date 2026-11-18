@@ -61,7 +61,7 @@ an_edit_of_another_end_makes_entities_that_its_other_rows_name_by_id :: proc(t:^
 
 // The scene of the host replaces the World only when all of it got there: one
 // that fails halfway, after its entities were made, leaves the World as it
-// was, and one that loads replaces it, as does the one a host sends.
+// was, and one that loads replaces it.
 @(test)
 a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^testing.T) {
     f:=new(Play_Test);defer free(f)
@@ -114,15 +114,6 @@ a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^tes
     box:=core.entity_of(&world.entities,base.Entity_Id(101))
     local,found:=core.get(&world.transforms,box)
     testing.expect(t,found && local.position==[3]f32{0,3,0})
-
-    // What a host sends of its scene is that scene: the guest loads the same entities.
-    peer:Collab_Peer
-    defer collab_peer_free(&peer)
-    if !testing.expect(t,collab_snapshot_send(&f.s,st,&peer)) || !testing.expect_value(t,len(peer.out),1) {return}
-    sent:=peer.out[0]
-    testing.expect_value(t,Collab_Message(sent[0]),Collab_Message.Snapshot)
-    testing.expect(t,collab_snapshot_load(&f.s,st,sent[1:]))
-    testing.expect_value(t,world.entities.alive,64)
 }
 
 // Selecting holds nothing: what another editor of the session has selected
@@ -287,7 +278,7 @@ a_file_as_large_as_a_session_carries_crosses_as_one_message :: proc(t:^testing.T
     defer free(host);defer free(guest)
     host.role,guest.role=.Host,.Guest
     for st,i in ([2]^Collab_State{host,guest}) {
-        desc:=wire.Host_Desc{mode=i==0?.Server:.Client,transport=wire.sim_endpoint_transport(&network,i),protocol_id=0x4d495241,seed=u64(7+i),channels=COLLAB_CHANNELS,send_rate=1<<30,packets_per_update=64}
+        desc:=wire.Host_Desc{mode=i==0?.Server:.Client,transport=wire.sim_endpoint_transport(&network,i),protocol_id=0x4d495241,seed=u64(7+i),channels=COLLAB_CHANNELS}
         testing.expect_value(t,wire.host_init(&st.host,desc),wire.Error.None)
     }
     defer {wire.host_destroy(&host.host);wire.host_destroy(&guest.host)}

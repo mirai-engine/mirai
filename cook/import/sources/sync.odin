@@ -30,8 +30,7 @@ import "mirai:std/serial"
 // imported, with the formats of the engine or, for one none of them reads,
 // the importer of a plugin of the project that claims it whole or else the
 // formats the plugins add; a file of the folder that no sidecar with its
-// source lists is removed. A document an import writes over that changed
-// since it last wrote it is left as it is, with a warning (Changed.Keep).
+// source lists is removed.
 
 // What the library of the editor of the project at root gives its imports:
 // the formats of models and the importers of whole sources its plugins add,
@@ -99,7 +98,7 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
     asset.registry_init(&registry,assets,"",context.temp_allocator,imported)
     asset.registry_scan(&registry)
     import_options:=importer.Import_Options{
-        root=top,registry=&registry,rebuild=options.rebuild,changed=.Keep,worker=options.worker,fast_textures=options.fast_textures,
+        root=top,registry=&registry,rebuild=options.rebuild,worker=options.worker,fast_textures=options.fast_textures,
         texture_cache=options.texture_cache if options.texture_cache!="" else project.content_cache_path(top,project.TEXTURE_CACHE,context.temp_allocator),
         mesh_cache=options.mesh_cache if options.mesh_cache!="" else project.content_cache_path(top,project.MESH_CACHE,context.temp_allocator),
     }

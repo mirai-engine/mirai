@@ -205,7 +205,7 @@ server_benchmark :: proc(t:^testing.T,everywhere,latency:bool) {
     tp:Test_Protocol;test_protocol_init(&tp);defer test_protocol_destroy(&tp)
     w:=new(Test_World);defer free(w)
     test_world_init(w,CLIENTS+1,seed=3,packets=16384);defer test_world_destroy(w)
-    server:=test_host(w,{mode=.Server,protocol=&tp.protocol,max_connections=CLIENTS,send_rate=1<<20,
+    server:=test_host(w,{mode=.Server,protocol=&tp.protocol,max_connections=CLIENTS,
         replication={max_objects=2048,budget_bytes=1200,cell_size=40,filter_interval=4,object_stats=true}})
     clients:[CLIENTS]^Host
     on_server:[CLIENTS]Connection

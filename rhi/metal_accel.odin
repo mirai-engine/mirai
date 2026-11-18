@@ -81,35 +81,22 @@ blas_create :: proc(d: ^Device, desc: Blas_Desc) -> Accel {
 		set_error(d, "BLAS %s needs vertex and index buffers and triangles", desc.name)
 		return 0
 	}
-	if desc.masked_count > desc.triangle_count {
-		set_error(d, "BLAS %s has %d masked triangles of %d: give at most triangle_count", desc.name, desc.masked_count, desc.triangle_count)
-		return 0
-	}
-	// The opaque triangles and then the masked ones, either left out when it has none.
-	opaque := desc.triangle_count - desc.masked_count
-	parts := [2]u32{opaque, desc.masked_count}
-	objects: [2]^NS.Object
-	count := 0
-	for part, k in parts {
-		if part == 0 {continue}
-		geometry := MTL.AccelerationStructureTriangleGeometryDescriptor.alloc()->init()
-		MTL.AccelerationStructureTriangleGeometryDescriptor_setVertexBuffer(geometry, vb.handle)
-		MTL.AccelerationStructureTriangleGeometryDescriptor_setVertexBufferOffset(geometry, NS.UInteger(desc.vertex_offset))
-		// The default vertex format is MTLAttributeFormatFloat3 (three packed f32).
-		MTL.AccelerationStructureTriangleGeometryDescriptor_setVertexStride(geometry, NS.UInteger(desc.vertex_stride if desc.vertex_stride > 0 else 12))
-		MTL.AccelerationStructureTriangleGeometryDescriptor_setIndexBuffer(geometry, ib.handle)
-		MTL.AccelerationStructureTriangleGeometryDescriptor_setIndexBufferOffset(geometry, NS.UInteger(desc.index_offset + (u64(opaque) * 12 if k == 1 else 0)))
-		MTL.AccelerationStructureTriangleGeometryDescriptor_setIndexType(geometry, .UInt32)
-		MTL.AccelerationStructureTriangleGeometryDescriptor_setTriangleCount(geometry, NS.UInteger(part))
-		MTL.AccelerationStructureGeometryDescriptor_setOpaque(geometry, k == 0)
-		// A ray query that collects the filters of blended triangles needs each
-		// candidate reported once.
-		MTL.AccelerationStructureGeometryDescriptor_setAllowDuplicateIntersectionFunctionInvocation(geometry, false)
-		objects[count] = cast(^NS.Object)geometry
-		count += 1
-	}
-	defer for object in objects[:count] {mtl_release(object)}
-	geometries := NS.Array.alloc()->initWithObjects(cast(^NS.id)&objects[0], NS.UInteger(count))
+	geometry := MTL.AccelerationStructureTriangleGeometryDescriptor.alloc()->init()
+	defer mtl_release(geometry)
+	MTL.AccelerationStructureTriangleGeometryDescriptor_setVertexBuffer(geometry, vb.handle)
+	MTL.AccelerationStructureTriangleGeometryDescriptor_setVertexBufferOffset(geometry, NS.UInteger(desc.vertex_offset))
+	// The default vertex format is MTLAttributeFormatFloat3 (three packed f32).
+	MTL.AccelerationStructureTriangleGeometryDescriptor_setVertexStride(geometry, NS.UInteger(desc.vertex_stride if desc.vertex_stride > 0 else 12))
+	MTL.AccelerationStructureTriangleGeometryDescriptor_setIndexBuffer(geometry, ib.handle)
+	MTL.AccelerationStructureTriangleGeometryDescriptor_setIndexBufferOffset(geometry, NS.UInteger(desc.index_offset))
+	MTL.AccelerationStructureTriangleGeometryDescriptor_setIndexType(geometry, .UInt32)
+	MTL.AccelerationStructureTriangleGeometryDescriptor_setTriangleCount(geometry, NS.UInteger(desc.triangle_count))
+	MTL.AccelerationStructureGeometryDescriptor_setOpaque(geometry, true)
+	// A ray query that collects the filters of blended triangles needs each
+	// candidate reported once.
+	MTL.AccelerationStructureGeometryDescriptor_setAllowDuplicateIntersectionFunctionInvocation(geometry, false)
+	objects := [1]^NS.Object{cast(^NS.Object)geometry}
+	geometries := NS.Array.alloc()->initWithObjects(cast(^NS.id)&objects[0], 1)
 	defer mtl_release(geometries)
 	primitive := MTL.PrimitiveAccelerationStructureDescriptor.alloc()->init()
 	MTL.PrimitiveAccelerationStructureDescriptor_setGeometryDescriptors(primitive, geometries)
@@ -339,7 +326,6 @@ cmd_build_tlas :: proc(c: ^Command_List, accel: Accel, instances: Buffer, offset
 		count = built, layout = TLAS_LAYOUT_COLUMNS, stride = size_of(Mtl_Instance) / 4, first = u32(offset / size_of(Tlas_Instance)), ids = u32(ids),
 		opaque = transmute(u32)MTL.AccelerationStructureInstanceOptions{.Opaque, .DisableTriangleCulling},
 		tested = transmute(u32)MTL.AccelerationStructureInstanceOptions{.NonOpaque, .DisableTriangleCulling},
-		geometry = transmute(u32)MTL.AccelerationStructureInstanceOptions{.DisableTriangleCulling},
 	}
 	if built > 0 {
 		// The translation binds what it needs and gives the list back as it was.

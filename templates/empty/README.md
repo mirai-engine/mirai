@@ -1,11 +1,7 @@
-# Minimal project: a scene, a spinning component, a sample plugin and a Surface program
+# Minimal project: a spinning component, a sample plugin and a Surface program
 
 - `project.mirai`: name, version, identifier, icon, start scene, active plugins, window and build
-  options. Besides the sample plugin, the ones a first game needs are on: bodies and colliders
-  (`physics`), walking characters (`locomotion`), spawn points (`spawn`), editable solids
-  (`shapes`) and writing interfaces (`ui_inspector`).
-- `assets/main.scene`: the start scene, with a sky and a sun: what the editor opens, so that its
-  agents build in a scene of the project from the first message.
+  options.
 - `game/game.odin`: the game library: the `Spinner` component and the `game_spin` function, which
   runs in the `fixed` phase and spins the entities that have it (backwards while the `reverse`
   action is held, R or East by default in `action_defaults`). Project Settings > Input writes what

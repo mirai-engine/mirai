@@ -24,9 +24,9 @@ a_large_reliable_part_streams_at_what_the_path_carries_and_the_state_keeps_its_r
     for c in cases {
         tp:Test_Protocol;test_protocol_init(&tp);defer test_protocol_destroy(&tp)
         w:Test_World;test_world_init(&w,2,seed=21,packets=16384);defer test_world_destroy(&w)
-        channels:=[]Channel_Desc{{kind=.Reliable,queue_bytes=1<<20,window=1024}}
+        channels:=[]Channel_Desc{{kind=.Reliable,queue_bytes=1<<20}}
         replication:=Replication_Desc{max_objects=128,baseline_interval=-1}
-        server:=test_host(&w,{mode=.Server,protocol=&tp.protocol,channels=channels,replication=replication,send_rate=FLOW_CAPACITY,packets_per_update=64})
+        server:=test_host(&w,{mode=.Server,protocol=&tp.protocol,channels=channels,replication=replication})
         client:=test_host(&w,{mode=.Client,protocol=&tp.protocol,channels=channels,replication=replication})
         on_server,on_client:=test_connect(&w,server,client)
         if !testing.expect(t,on_server!=0 && on_client!=0) {return}
@@ -88,7 +88,7 @@ a_large_reliable_part_streams_at_what_the_path_carries_and_the_state_keeps_its_r
 @(test)
 hostile_acknowledgements_are_refused_and_never_push_a_window_past_its_bounds :: proc(t:^testing.T) {
     w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
-    channels:=[]Channel_Desc{{kind=.Reliable,window=1024}}
+    channels:=[]Channel_Desc{{kind=.Reliable,queue_bytes=256<<10}}
     server:=test_host(&w,{mode=.Server,channels=channels})
     client:=test_host(&w,{mode=.Client,channels=channels})
     on_server,_:=test_connect(&w,server,client)
@@ -133,9 +133,196 @@ hostile_acknowledgements_are_refused_and_never_push_a_window_past_its_bounds :: 
     serial.bit_writer_init(&wr,buffer[:])
     serial.bit_write_bool(&wr,true)
     serial.bit_write(&wr,u64(p.send_seq+10),16)
-    serial.bit_write(&wr,0,8)
+    serial.bit_write(&wr,0,ACK_COUNT_BITS)
     serial.bit_write(&wr,0,8)
     rd:serial.Bit_Reader
     serial.bit_reader_init(&rd,serial.bit_writer_flush(&wr))
     testing.expect(t,!peer_receive(server,p,&rd,p.recv_counter+1),"an acknowledgement of what was never sent is malformed")
+}
+
+// Which datagrams arrived reads back as written, whatever the pattern, and a record whose runs are
+// empty, too long, past the count or cut short is refused; random bits never read past what they say.
+@(test)
+acknowledgement_runs_read_back_and_refuse_what_does_not_add_up :: proc(t:^testing.T) {
+    state:=u64(17)
+    Pattern :: enum {All,None,Alternate,Sparse_Loss,Random}
+    for pattern in Pattern {
+        for count in ([]int{0,1,63,64,65,700,ACK_WINDOW}) {
+            bits:Ack_Bits
+            for i in 0..<ACK_WINDOW {
+                set:bool
+                switch pattern {
+                case .All:         set=true
+                case .None:        set=false
+                case .Alternate:   set=i%2==0
+                case .Sparse_Loss: set=base.splitmix_next(&state)%50!=0
+                case .Random:      set=base.splitmix_next(&state)&1==0
+                }
+                if set {bits[i/64]|=1<<uint(i%64)}
+            }
+            buffer:[PACKET_BYTES]u8
+            w:serial.Bit_Writer
+            serial.bit_writer_init(&w,buffer[:])
+            ack_bits_write(&w,&bits,count)
+            r:serial.Bit_Reader
+            serial.bit_reader_init(&r,serial.bit_writer_flush(&w))
+            got,got_count,ok:=ack_bits_read(&r)
+            same:=ok && int(got_count)==count
+            for behind in 1..=ACK_WINDOW {same&&=ack_bit(&got,u64(behind))==(behind<=count && ack_bit(&bits,u64(behind)))}
+            testing.expectf(t,same && !w.overflow,"%v over %d datagrams reads back",pattern,count)
+            if pattern==.Sparse_Loss && count==ACK_WINDOW {testing.expectf(t,len(serial.bit_writer_flush(&w))<ACK_WINDOW/16,"a stream with few losses takes %d bytes",len(serial.bit_writer_flush(&w)))}
+        }
+    }
+
+    // Each case: the count, the first run's kind, then raw gamma codes as (zeros, value bits).
+    Code :: struct {zeros:int,low:u64}
+    Case :: struct {name:string,count:u64,codes:[]Code}
+    for c in ([]Case{
+        {name="a run past the count",count=10,codes={{3,3}}},
+        {name="runs past the count",count=10,codes={{2,1},{2,3}}},
+        {name="a run that never ends its zeros",count=10,codes={{ACK_COUNT_BITS,0}}},
+        {name="runs that stop short",count=10,codes={{1,1}}},
+        {name="a code cut short",count=4095,codes={{11,0}}},
+    }) {
+        buffer:[64]u8
+        w:serial.Bit_Writer
+        serial.bit_writer_init(&w,buffer[:])
+        serial.bit_write(&w,c.count,ACK_COUNT_BITS)
+        serial.bit_write_bool(&w,true)
+        for code in c.codes {
+            serial.bit_write(&w,0,code.zeros)
+            if code.zeros<ACK_COUNT_BITS {
+                serial.bit_write(&w,1,1)
+                serial.bit_write(&w,code.low,code.zeros)
+            }
+        }
+        bytes:=serial.bit_writer_flush(&w)
+        r:serial.Bit_Reader
+        serial.bit_reader_init(&r,bytes,w.bits)
+        _,_,ok:=ack_bits_read(&r)
+        testing.expectf(t,!ok,"%s is refused",c.name)
+    }
+
+    for _ in 0..<20000 {
+        buffer:[96]u8
+        for &b in buffer {b=u8(base.splitmix_next(&state))}
+        r:serial.Bit_Reader
+        serial.bit_reader_init(&r,buffer[:int(base.splitmix_next(&state)%len(buffer))])
+        bits,count,ok:=ack_bits_read(&r)
+        if !ok {continue}
+        clean:=count<=ACK_WINDOW && !r.error
+        for behind in count+1..=ACK_WINDOW {clean&&=!ack_bit(&bits,behind)}
+        if !testing.expectf(t,clean,"random bits read as %d datagrams with marks past them",count) {return}
+    }
+}
+
+@(private="file") BULK_CHANNELS :: []Channel_Desc{{kind=.Reliable,queue_bytes=4<<20},{kind=.Unreliable}}
+@(private="file") BULK_LINK :: 12.5e6 // bytes per second: 100 Mbit/s
+@(private="file") BULK_PART :: 4<<20
+@(private="file") BULK_WARM :: 4.0    // s before measuring: the rate has found the path
+
+@(private="file")
+Bulk_Result :: struct {
+    delivered:[2]f64, // bytes per second each client received once warm
+    game_mean,game_worst:f64, // s a 60 Hz unreliable message took above the latency, once warm
+    game_sent,game_got:int,
+    drop_share:f64,   // of the datagrams the server sent, those its link dropped for lack of queue
+}
+
+// A server streams reliable parts to each client over its 100 Mbit/s link with every setting at its
+// default, the worker's cadence of 1 ms, and a 60 Hz unreliable message to each on the same connection.
+@(private="file")
+bulk_stream :: proc(t:^testing.T,rtt:f64,loss:f32,clients:int,seconds:f64) -> (result:Bulk_Result,ok:bool) {
+    blob:=make([]u8,BULK_PART);defer delete(blob)
+    w:Test_World;test_world_init(&w,1+clients,seed=31,packets=1<<16);defer test_world_destroy(&w)
+    server:=test_host(&w,{mode=.Server,channels=BULK_CHANNELS})
+    hosts:[2]^Host
+    on_server:[2]Connection
+    for i in 0..<clients {
+        hosts[i]=test_host(&w,{mode=.Client,channels=BULK_CHANNELS})
+        on_server[i],_=test_connect(&w,server,hosts[i])
+        if !testing.expect(t,on_server[i]!=0,"the client connects") {return}
+    }
+    sim_endpoint_conditions(&w.sim,0,{latency=rtt/2,loss=loss,bandwidth=BULK_LINK})
+    for i in 1..=clients {sim_endpoint_conditions(&w.sim,i,{latency=rtt/2,loss=loss})}
+    sent:[2]int
+    got:[2]f64
+    start:=w.now
+    next_game:=start
+    game_total:f64
+    sim_before:=w.sim.stats
+    for w.now-start<seconds {
+        w.now+=0.001
+        sim_network_advance(&w.sim,w.now)
+        host_update(server,w.now)
+        for command in host_poll(server) {
+            if command.kind==.Disconnected {testing.expect(t,false,"the connection holds");return}
+        }
+        warm:=w.now-start>=BULK_WARM
+        for i in 0..<clients {
+            if sent[i]==len(blob) {sent[i]=0}
+            message_send(server,on_server[i],0,blob,&sent[i])
+        }
+        if w.now>=next_game {
+            next_game+=1.0/60
+            for i in 0..<clients {
+                stamp:=w.now
+                message_send(server,on_server[i],1,([^]u8)(&stamp)[:8])
+                if warm {result.game_sent+=1}
+            }
+        }
+        for i in 0..<clients {
+            host_update(hosts[i],w.now)
+            for command in host_poll(hosts[i]) {
+                #partial switch command.kind {
+                case .Disconnected: testing.expect(t,false,"the connection holds");return
+                case .Message:
+                    if command.channel==0 {
+                        if warm {got[i]+=f64(len(command.data))}
+                        continue
+                    }
+                    stamp:f64
+                    copy(([^]u8)(&stamp)[:8],command.data)
+                    if stamp-start<BULK_WARM {continue}
+                    late:=w.now-stamp-rtt/2
+                    result.game_got+=1
+                    game_total+=late
+                    result.game_worst=max(result.game_worst,late)
+                }
+            }
+        }
+    }
+    for i in 0..<clients {result.delivered[i]=got[i]/(seconds-BULK_WARM)}
+    result.game_mean=game_total/f64(max(result.game_got,1))
+    sent_datagrams:=w.sim.stats.sent-sim_before.sent
+    result.drop_share=f64(w.sim.stats.dropped_queue-sim_before.dropped_queue)/f64(max(sent_datagrams,1))
+    return result,true
+}
+
+// With every setting at its default, a reliable stream takes most of a 100 Mbit/s link at 40 ms of round
+// trip and at 120 ms with 2% loss, overruns the link's queue for few of its datagrams, and a 60 Hz
+// unreliable message on the same connection arrives with little more than the path's latency.
+@(test)
+a_bulk_stream_finds_the_rate_of_the_path_and_leaves_the_game_channel_on_time :: proc(t:^testing.T) {
+    Case :: struct {rtt:f64,loss:f32}
+    for c in ([]Case{{0.04,0},{0.04,0.01},{0.12,0.02}}) {
+        r,ok:=bulk_stream(t,c.rtt,c.loss,1,12)
+        if !ok {return}
+        fmt.printfln("bulk %.0f ms %.0f%%: %.2f MB/s, game %.1f ms mean, %.1f ms worst, %d/%d, %.2f%% dropped",c.rtt*1000,c.loss*100,r.delivered[0]/1e6,r.game_mean*1000,r.game_worst*1000,r.game_got,r.game_sent,r.drop_share*100)
+        testing.expectf(t,r.delivered[0]>0.6*BULK_LINK,"%v: %.0f B/s arrive over a link of %.0f",c,r.delivered[0],BULK_LINK)
+        testing.expectf(t,r.drop_share<0.03,"%v: the link's queue drops %.1f%% of the datagrams",c,r.drop_share*100)
+        testing.expectf(t,r.game_got>=int(0.95*(1-f64(c.loss))*f64(r.game_sent)),"%v: %d of %d game messages arrive",c,r.game_got,r.game_sent)
+        testing.expectf(t,r.game_mean<0.03 && r.game_worst<0.08,"%v: game messages take %.0f ms more than the latency on average, %.0f at worst",c,r.game_mean*1000,r.game_worst*1000)
+    }
+}
+
+// Two connections that stream over the same link each get a fair share of it.
+@(test)
+two_bulk_streams_on_one_link_share_it :: proc(t:^testing.T) {
+    r,ok:=bulk_stream(t,0.04,0,2,16)
+    if !ok {return}
+    fmt.printfln("shared: %.2f and %.2f MB/s",r.delivered[0]/1e6,r.delivered[1]/1e6)
+    total:=r.delivered[0]+r.delivered[1]
+    testing.expectf(t,total>0.6*BULK_LINK,"together %.0f B/s over a link of %.0f",total,BULK_LINK)
+    testing.expectf(t,min(r.delivered[0],r.delivered[1])>0.3*total,"shares of %.0f and %.0f B/s",r.delivered[0],r.delivered[1])
 }

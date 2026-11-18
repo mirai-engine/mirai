@@ -221,15 +221,11 @@ haze of the whole world is the air of the sky, not a fog: one without a bounded 
 
 - `density` (per meter): of the light that crosses a meter, more or less the part it stops.
 - `color`: of what it stops, the part it scatters in each channel; it absorbs the rest.
-- `glow` (nits): the light it gives off on its own, for each meter of what it stops: where it is
-  thick it shows this luminance over its scattered light, whatever its `color` and with no light in
-  the scene. It is a luminance and enters the frame by its light scale (`render_units`).
 - `anisotropy`: greater than 0 scatters forward, and a shaft shines more looked at toward its
   light; less than 0, backward (Henyey-Greenstein, up to ±0.95).
 - `falloff` (per meter): it thins with the height above its base (the lowest point of its
-  `Volume`, or the entity's height without limits, raised by `base` meters), by e every
-  `1/falloff` meters; below it does not grow. A fog whose density is given at some height, as
-  Unreal's height fog at its actor, has its base there and its `Volume` reaching below it.
+  `Volume`, or the entity's height without limits), by e every `1/falloff` meters; below it does
+  not grow.
 - `variable`: its density varies from place to place in wisps and banks of some `wisp_size` meters
   that move by themselves, without depending on the engine wind. They are layers of value noise
   (`WISP_OCTAVES`), each smaller than the previous, that travel with `drift` by a part of their own
@@ -278,22 +274,18 @@ boxes.
   `SLICE_SCALE · ((1 + DISTANCE / SLICE_SCALE)^(s/64) − 1)`: about 13 cm long near the eye, 80 cm
   at 10 m, 8.5 m at the end.
 - `fog_far.comp` stores the farthest depth that each column sees (one group per column over its
-  pixels; what has no surface is seen without end) and `fog_reach.comp`, that of that
+  pixels; what has no surface counts as the end of the grid) and `fog_reach.comp`, that of that
   column and the two on each side: up to there the integration filter and the interpolation of
   `fog_apply` read the grid. A cell whose previous slice starts farther is hidden. With
   `Every_Frame` they do not run.
 - `fog_light.comp` takes at each froxel a fixed point of the cell and writes two textures: the
   medium of the volumes there, with the wisps of the variable ones as they are now, and the light
-  that point sends for each unit of `fog_amount` of its medium, a measure of what it scatters and
-  stops that grows with its density, so that a medium that only glows, black, also has its light
-  (except a hidden cell out of its turn,
+  that point receives for each meter of what it scatters (except a hidden cell out of its turn,
   which copies its reprojected light and leaves the medium empty; one without history is lit at
   once). The light is weighted with the mean medium of each
   volume, not that of this frame: it does not depend on where the wisps are. Where there is a medium
   that scatters, it lights it with the light of the engine's media (`shaders/include/media.slang`,
-  the same as the volumes of [`vfx`](../../mirai-world/references/vfx.md#volumes)), each light by
-  its `scattering` share ([shares](../../mirai-rendering/references/lights.md#local-lights)) and
-  the ambient by the indirect scale of the world:
+  the same as the volumes of [`vfx`](../../mirai-world/references/vfx.md#volumes)):
   - the sun, `sun_light` of the place, at four places of the cell, each by the
     [maps of the sun](../../mirai-rendering/references/lights.md#direct-light-of-a-view) of the
     view where one holds it (the glass on the way still colors it) and with a shadow ray
@@ -302,12 +294,6 @@ boxes.
     probability of choosing it, with another ray: two rays per froxel with any number of lights;
   - the ambient: the mean of what the probe volume gives to an upward-facing surface and a
     downward-facing one (without GI, the sky).
-
-  Past the grid the same texture has one more cell along each column for each far slice, which
-  keeps what of the sun reaches the media of that slice through the scene: the mean of four
-  places of the cell, each on the part of its ray in the slice that the volumes with a medium
-  hold, by the same maps, rays, history, turns of hidden cells and marks of what changed as the
-  sun of the grid (`media_sun_through`).
 - The rays are those of the direct light's shadows: with `colored_shadows` and glass in the scene,
   a shaft that crosses a stained glass window takes its color.
 - Only the froxel's light is blended with that of the previous frame where its center was, if the
@@ -320,8 +306,7 @@ boxes.
   ([mark](../../mirai-rendering/references/lights.md#shadows)): the shaft that cuts something that
   moves appears at once. The history stores the unfiltered light.
 - `fog_integrate.comp` integrates each column from the eye over the length of each froxel
-  (Hillaire 2015): the `fog_amount` of the cell's medium times the light of the cells of its slice
-  around it, with a
+  (Hillaire 2015): the cell's medium times the light of the cells of its slice around it, with a
   tent filter that spreads what the rays see of the sun. After the grid it continues along the
   column in `FAR_SLICES` more slices, each farther than the previous one by the same ratio up to
   `FAR_REACH` and the last one unbounded, each in closed form, with a fixed cost per column
@@ -331,11 +316,9 @@ boxes.
     without its soft edge; the one that replaces what is below keeps the part of the slice that it
     occupies;
   - what it scatters is its albedo times the sunlight at the middle of the slice (`sun_light`,
-    times what of it reaches the slice through the scene, from its far cell by the same tent as
-    the grid, with the phase of its anisotropy and what the media with `shade` take from it) and
-    times the ambient where the grid ends (`media_ambient`), plus its glow for each of what it
-    stops: the same terms as the last slice of the grid, so the fog continues seamlessly at
-    `DISTANCE`, and what hides the sun from the grid hides it past it. Dry boxes do not enter.
+    without shadow ray, with the phase of its anisotropy and what the media with `shade` take from
+    it) and times the ambient where the grid ends (`media_ambient`): the same terms as the last
+    slice of the grid, so the fog continues seamlessly at `DISTANCE`. Dry boxes do not enter.
 
   The cost is fixed per column (slices times volumes), not per pixel.
 - `fog_apply.comp` reads the grid and the far slices at each pixel's depth (what has no surface,
@@ -356,12 +339,12 @@ boxes.
 
 **Limits.** Particles and panels are drawn afterward, without fog. Only the nearest glass layer
 cuts the fog: the one between two layers goes through the one behind, and what the glass refracts
-from a pixel without glass brings its whole fog. Beyond `DISTANCE` there are no local lights or
-wisps: the medium continues with its mean density, lit by the ambient at the end of the grid and
-by the sun of each far slice as a whole (a shaft narrower than the slice spreads over it), and the
-soft edge of a volume is hard. The shaft has the
+from a pixel without glass brings its whole fog. Beyond `DISTANCE` there are no shafts or shadows,
+local lights or wisps: the medium continues with its mean density, lit by the sun without shadows
+and by the ambient at the end of the grid, and the soft edge of a volume is hard. The shaft has the
 size of the froxel, a light that moves leaves a short trail and the sun is traced as a point,
-without penumbra. Extension lights (those of the portals) do not light the medium.
+without penumbra. Extension lights (those of the portals) do not light the medium, and a light does
+not have a scattering factor of its own.
 
 ## FSR
 

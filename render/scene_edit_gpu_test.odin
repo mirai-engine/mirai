@@ -116,7 +116,7 @@ shared_grid_instances_keep_all_quadrants_after_scene_rebuild_and_preview_retirem
 @(test)
 removed_meshes_and_textures_leave_the_image_of_a_scene_without_them :: proc(t: ^testing.T) {
 	camera := Camera{position = {3, 5, 6}, forward = {-3, -4.5, -6}, up = {0, 1, 0}, fov_y = 50, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	sun := Sun_Desc{direction = {0.4, 0.8, 0.3}, color = {1, 1, 1}, illuminance = 2 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	sun := Sun_Desc{direction = {0.4, 0.8, 0.3}, color = {1, 1, 1}, illuminance = 2 * math.PI, enabled = true}
 	environment := Environment{sky = {0.2, 0.25, 0.3}}
 	images: [2][]u8
 	defer for image in images {delete(image)}

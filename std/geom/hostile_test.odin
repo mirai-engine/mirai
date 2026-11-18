@@ -300,29 +300,6 @@ hostile_polygons_through_the_ear_clipping :: proc(t:^testing.T) {
 }
 
 @(test)
-hostile_grids_through_the_nearest_cell :: proc(t:^testing.T) {
-    h:=base.Hostile{11}
-    for _ in 0..<HOSTILE_ROUNDS {
-        width,height:=base.hostile_int(&h,12)-1,base.hostile_int(&h,12)-1
-        tile:=base.hostile_int(&h,8)-1
-        cells:=max(width,0)*max(height,0)
-        covered:=make([]bool,cells+(base.hostile_int(&h,5)==0?1:0),context.temp_allocator)
-        for &cover in covered {cover=base.hostile_int(&h,3)==0}
-        nearest:=make([]u32,cells+(base.hostile_int(&h,5)==0?1:0),context.temp_allocator)
-        written:=grid_nearest(covered,width,height,tile,nearest)
-        valid:=width>0 && height>0 && tile>=0 && len(covered)==cells && len(nearest)==cells
-        testing.expect_value(t,written,valid)
-        if !written {
-            for n in nearest {testing.expect_value(t,n,0)}
-            continue
-        }
-        for n in nearest {testing.expect(t,n==max(u32) || int(n)<cells && covered[n])}
-    }
-    huge:=[]bool{true}
-    testing.expect(t,!grid_nearest(huge,max(int),2,0,[]u32{0}))
-}
-
-@(test)
 hostile_points_through_delaunay :: proc(t:^testing.T) {
     h:=base.Hostile{7}
     points:[dynamic]Vec2

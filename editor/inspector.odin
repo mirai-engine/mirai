@@ -856,7 +856,7 @@ component_section :: proc(c:^Inspect,width:f32) {
     if live && inspector_extension(c,nil) {return}
     if c.size>INSPECTOR_COMPONENT_BYTES {return}
     switch c.t.type {
-    case erender.Mesh_Renderer: geometry_row(c);skeleton_row(c);material_rows(c);fields_rows(c,c.of,0,0,"")
+    case erender.Mesh_Renderer: geometry_row(c);skeleton_row(c);material_rows(c)
     case erender.Camera:
         if live && len(c.entities)==1 {camera_preview_button(c,c.entities[0])}
         fields_rows(c,c.of,0,0,"")
@@ -978,8 +978,7 @@ fields_rows :: proc(c:^Inspect,type:serial.Type_Index,origin:uintptr,depth:int,p
         if !field_shown(field) {continue}
         if modes:=field.mode;modes!="" && !mode_shows(c,fields,origin,modes) {continue}
         if c.sections && depth==0 && current!=c.section {continue}
-        // Its mesh, shape and materials have rows of their own (geometry_row, material_rows).
-        if c.type==erender.Mesh_Renderer && depth==0 && (field.name=="mesh" || field.name=="shape" || field.name=="materials") {continue}
+        if c.type==erender.Mesh_Renderer && field.name=="materials" {continue}
         offset:=origin+uintptr(field.offset)
         if c.sections && depth==0 && (.Advanced in field.hints)!=c.advanced {continue}
         label:=field_label(field)

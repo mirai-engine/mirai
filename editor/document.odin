@@ -322,8 +322,6 @@ modal_close :: proc(g:^Editor_Ui) {
     g.modal=.None
     g.delete_asset={}
     g.discard_path={}
-    g.import_source={}
-    clear(&g.import_changed)
 }
 
 // The answer to a question: the agents still working stop and what waited goes on.

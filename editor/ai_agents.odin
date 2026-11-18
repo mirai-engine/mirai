@@ -34,11 +34,7 @@ Ai_Agent_Disk :: struct {
     // later is not known until it starts.
     adapter,version:string,
     capabilities:[]string,
-    // The models the last session of Claude offered, so that the composer
-    // lists them before a session of this editor starts.
-    models:[]Ai_Model_Disk,
 }
-Ai_Model_Disk :: struct {value,name:string}
 Ai_Agents_Disk :: struct {version:int, runtime:string, agents:[]Ai_Agent_Disk}
 
 ai_agents_home :: proc(m:^Ai) -> string {return base.text_get(m.agents_home[:])}
@@ -63,15 +59,6 @@ ai_agents_read :: proc(m:^Ai) {
         if !ok || m.connections[provider].agent==.Command {continue}
         c:=&m.connections[provider]
         c.configured=item.configured
-        if c.agent==.Claude {
-            m.model_counts[provider]=0
-            for model in item.models {
-                target:=&m.models[provider][m.model_counts[provider]]
-                if m.model_counts[provider]==len(m.models[provider]) || model.value=="" || len(model.value)>=len(target.value) || len(model.name)>=len(target.name) {continue}
-                base.text_set(target.value[:],model.value);base.text_set(target.name[:],model.name)
-                m.model_counts[provider]+=1
-            }
-        }
         if len(item.adapter)>=len(c.known_adapter) || len(item.version)>=len(c.known_version) {continue}
         base.text_set(c.known_adapter[:],item.adapter);base.text_set(c.known_version[:],item.version)
         c.known_capabilities={}
@@ -86,17 +73,12 @@ ai_agents_write :: proc(m:^Ai) -> bool {
     if home=="" || os.make_directory_all(home)!=nil && !os.is_dir(home) {return false}
     entries:[2]Ai_Agent_Disk
     capabilities:[2][len(Ai_Capability)]string
-    models:[len(m.models[0])]Ai_Model_Disk
     names:=AI_CAPABILITY_NAMES
     for agent,index in ([2]Ai_Provider{AI_CODEX,AI_CLAUDE}) {
         c:=&m.connections[agent]
         count:=0
         for kind in Ai_Capability {if kind in c.known_capabilities {capabilities[index][count]=names[kind];count+=1}}
         entries[index]={provider=base.text_get(c.id[:]),configured=c.configured,adapter=base.text_get(c.known_adapter[:]),version=base.text_get(c.known_version[:]),capabilities=capabilities[index][:count]}
-        if c.agent==.Claude {
-            for &choice,at in m.models[agent][:m.model_counts[agent]] {models[at]={value=base.text_get(choice.value[:]),name=base.text_get(choice.name[:])}}
-            entries[index].models=models[:m.model_counts[agent]]
-        }
     }
     runtimes:=AI_RUNTIME_NAMES
     disk:=Ai_Agents_Disk{version=1,runtime=runtimes[m.default_runtime],agents=entries[:]}

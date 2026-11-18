@@ -152,7 +152,7 @@ a_new_light_scale_keeps_the_indirect_light :: proc(t: ^testing.T) {
 		gi_setup(&f, .Lamp)
 		before := gi_mean_after(t, &f, 240)
 		scale := r.scene.light_scale
-		append(&f.lights, Light_Desc{position = {1000, 1000, 1000}, color = {1, 1, 1}, intensity = 9425 * times, range = 0.5, radius = 0.05, indirect = 1, scattering = 1})
+		append(&f.lights, Light_Desc{position = {1000, 1000, 1000}, color = {1, 1, 1}, intensity = 9425 * times, range = 0.5, radius = 0.05})
 		scene_lights_given(r, f.lights[:], f.sun, f.environment)
 		after := gi_mean_after(t, &f, 1)
 		later := gi_mean_after(t, &f, 120)
@@ -160,46 +160,6 @@ a_new_light_scale_keeps_the_indirect_light :: proc(t: ^testing.T) {
 		testing.expectf(t, abs(after - before) < 0.03 * before, "a light %v times the strongest takes the indirect light from %.4g to %.4g nits", times, before, after)
 		testing.expectf(t, abs(later - before) < 0.03 * before, "a light %v times the strongest takes the indirect light from %.4g to %.4g nits in 2 s", times, before, later)
 	}
-	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
-}
-
-// The share of the light of the sun and of each light the probes gather
-// multiplies what they add to the indirect light, bounces and all, and leaves
-// what the sky and the glow of the lamp add; the indirect light of the world
-// (scene_set_indirect) multiplies all of it from the frame it changes. Lights
-// of no share, with shadows and without, take nothing from those that bounce:
-// no room in the few the probes trace rays to, and no light.
-@(test)
-the_shares_of_the_lights_and_the_world_scale_the_indirect_light :: proc(t: ^testing.T) {
-	f: Gi_Fixture
-	defer gi_fixture_destroy(&f)
-	if !gi_indirect_fixture(t, &f) {return}
-	r := f.r
-	// Each share in a world shown anew, which gathers its light at once.
-	settled :: proc(t: ^testing.T, f: ^Gi_Fixture, share: f32, sun_share: Maybe(f32) = nil, unbounced := false) -> f64 {
-		gi_restart(f.r)
-		gi_setup(f, .Lamp)
-		for &light in f.lights {light.indirect = share}
-		f.sun.indirect = sun_share.? or_else share
-		// Around the lamp, as bright: half with shadows, half without.
-		if unbounced {
-			for i in 0 ..< 24 {
-				angle := f32(i) / 12 * math.PI
-				append(&f.lights, Light_Desc{position = {2.2 + 0.6 * math.cos(angle), 1.6 if i < 12 else 1.1, -2.2 + 0.6 * math.sin(angle)}, color = {0.6, 0.8, 1}, intensity = 9000, range = 12, radius = 0.05, scattering = 1, shadowless = i >= 12})
-			}
-		}
-		scene_lights_given(f.r, f.lights[:], f.sun, f.environment)
-		return gi_mean_after(t, f, 120)
-	}
-	whole, none, twice := settled(t, &f, 1), settled(t, &f, 0), settled(t, &f, 2)
-	testing.expectf(t, none < 0.5 * whole, "without the lights the probes gather, the indirect light of the sky and the glow (%.4g nits) is most of it (%.4g)", none, whole)
-	testing.expectf(t, abs((twice - none) - 2 * (whole - none)) < 0.05 * (whole - none), "lights that bounce twice add %.4g nits, not twice %.4g", twice - none, whole - none)
-	scene_set_indirect(r, 0.5)
-	half := gi_mean_after(t, &f, 1)
-	testing.expectf(t, abs(half - 0.5 * twice) < 0.02 * twice, "half the indirect light of the world shows %.4g nits in its first frame, not half of %.4g", half, twice)
-	scene_set_indirect(r, 1)
-	lamp, beside := settled(t, &f, 1, 0), settled(t, &f, 1, 0, true)
-	testing.expectf(t, abs(beside - lamp) < 0.01 * (lamp - none), "lights of no share around the lamp take what it adds to the indirect light from %.4g to %.4g nits", lamp - none, beside - none)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
@@ -428,7 +388,7 @@ GI_CASES :: [?]Gi_Case{
 @(private = "file") HORROR_CEILING :: 1
 @(private = "file")
 horror_flashlight :: proc(yaw: f32) -> Light_Desc {
-	return {position = {0.25, 1.45, 2.2}, color = {1, 0.97, 0.9}, intensity = 9425, range = 14, direction = {math.sin(yaw), -0.12, -math.cos(yaw)}, cone = 0.3, radius = 0.03, indirect = 1, scattering = 1}
+	return {position = {0.25, 1.45, 2.2}, color = {1, 0.97, 0.9}, intensity = 9425, range = 14, direction = {math.sin(yaw), -0.12, -math.cos(yaw)}, cone = 0.3, radius = 0.03}
 }
 
 // Radians a second a view of GI_PAN_SIZE turns at `pixels` a frame.
@@ -580,8 +540,8 @@ gi_setup :: proc(f: ^Gi_Fixture, kind: Gi_Kind) {
 		gi_room(f, {-2, 0, -2}, {2, 3, 2}, {white, white, {0.75, 0.08, 0.06}, {0.1, 0.6, 0.12}, white, white})
 		gi_block(f, {-1.2, 0, -1.2}, {-0.2, 1.8, -0.2}, white, yaw = 0.3)
 		gi_block(f, {0.35, 0, 0.05}, {1.25, 0.9, 0.95}, white, yaw = -0.3)
-		append(&f.base_lights, Light_Desc{position = {0, 2.98, 0}, color = {1, 0.92, 0.8}, intensity = 314159, range = 12, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {1, 1}, indirect = 1, scattering = 1})
-		f.sun = {direction = {0.4, 0.8, 0.3}, color = {1, 0.95, 0.85}, illuminance = 94248, enabled = true, indirect = 1, scattering = 1}
+		append(&f.base_lights, Light_Desc{position = {0, 2.98, 0}, color = {1, 0.92, 0.8}, intensity = 314159, range = 12, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {1, 1}})
+		f.sun = {direction = {0.4, 0.8, 0.3}, color = {1, 0.95, 0.85}, illuminance = 94248, enabled = true}
 		if kind == .Interior_Day {
 			// As light really is: a room of some 450 lux next to a yard at noon.
 			f.base_lights[0].intensity = 4000
@@ -606,8 +566,8 @@ gi_setup :: proc(f: ^Gi_Fixture, kind: Gi_Kind) {
 		gi_block(f, {-3.2, 0.9, 0.75}, {-3.0, 2.1, 3.2}, {0.7, 0.68, 0.6})
 		gi_block(f, {-1.0, 0, -2.9}, {1.4, 0.8, -1.9}, {0.25, 0.3, 0.55})
 		gi_block(f, {-0.6, 0, -0.4}, {0.6, 0.5, 0.6}, {0.5, 0.35, 0.2})
-		append(&f.base_lights, Light_Desc{position = {2.2, 1.6, -2.2}, color = {1, 0.8, 0.55}, intensity = 9425, range = 12, radius = 0.08, indirect = 1, scattering = 1})
-		f.sun = {direction = {-0.75, 0.45, 0.2}, color = {1, 0.95, 0.85}, illuminance = 9425, enabled = true, indirect = 1, scattering = 1}
+		append(&f.base_lights, Light_Desc{position = {2.2, 1.6, -2.2}, color = {1, 0.8, 0.55}, intensity = 9425, range = 12, radius = 0.08})
+		f.sun = {direction = {-0.75, 0.45, 0.2}, color = {1, 0.95, 0.85}, illuminance = 9425, enabled = true}
 		f.environment = {sky = {250, 350, 550}}
 		f.camera = {position = {-2.4, 1.6, 2.6}, forward = {3.4, -0.6, -4.1}, up = {0, 1, 0}, fov_y = 70, near = 0.05, far = 100}
 	case .Flashlight:
@@ -619,15 +579,15 @@ gi_setup :: proc(f: ^Gi_Fixture, kind: Gi_Kind) {
 			x: f32 = -1 if i % 2 == 0 else 0.7
 			gi_block(f, {x, 0, z}, {x + 0.3, 2.5, z + 0.4}, {0.6, 0.6, 0.6})
 		}
-		append(&f.base_lights, Light_Desc{position = {0.3, 1.4, 1}, color = {1, 0.97, 0.9}, intensity = 9425, range = 30, direction = {0, -0.15, 1}, cone = 0.35, radius = 0.03, indirect = 1, scattering = 1})
-		append(&f.base_lights, Light_Desc{position = {0, 2.3, 0.5}, color = {1, 0.9, 0.8}, intensity = 157, range = 6, radius = 0.05, indirect = 1, scattering = 1})
+		append(&f.base_lights, Light_Desc{position = {0.3, 1.4, 1}, color = {1, 0.97, 0.9}, intensity = 9425, range = 30, direction = {0, -0.15, 1}, cone = 0.35, radius = 0.03})
+		append(&f.base_lights, Light_Desc{position = {0, 2.3, 0.5}, color = {1, 0.9, 0.8}, intensity = 157, range = 6, radius = 0.05})
 		f.camera = {position = {0, 1.6, -0.5}, forward = {0, -0.4, 20.5}, up = {0, 1, 0}, fov_y = 70, near = 0.05, far = 100}
 	case .Box_Push:
 		// A red box pushed 4 m along a white wall in the sun.
 		gi_block(f, {-2.5, 0, -1.7}, {-1.5, 1, -0.7}, {0.8, 0.12, 0.08})
 		gi_block(f, {-10, -0.2, -10}, {10, 0, 10}, {0.45, 0.45, 0.42})
 		gi_block(f, {-5, 0, -2.2}, {5, 3, -1.9}, {0.8, 0.8, 0.78})
-		f.sun = {direction = {0.35, 0.7, 0.62}, color = {1, 0.95, 0.85}, illuminance = 94248, enabled = true, indirect = 1, scattering = 1}
+		f.sun = {direction = {0.35, 0.7, 0.62}, color = {1, 0.95, 0.85}, illuminance = 94248, enabled = true}
 		f.environment = {sky = {2500, 3500, 5500}}
 		f.camera = {position = {0, 1.5, 4}, forward = {0, -0.7, -5.5}, up = {0, 1, 0}, fov_y = 65, near = 0.05, far = 100}
 	case .Character:
@@ -636,7 +596,7 @@ gi_setup :: proc(f: ^Gi_Fixture, kind: Gi_Kind) {
 		gi_add(f, f.body, linalg.matrix4_translate(Vec3{-2.5, 0, 0}), {0.2, 0.3, 0.75})
 		gi_room(f, {-3, 0, -3}, {3, 3, 3}, {{0.5, 0.45, 0.4}, white, white, white, {0.7, 0.6, 0.45}, white})
 		gi_block(f, {1.5, 0, -2.9}, {2.9, 0.9, -2.2}, {0.6, 0.6, 0.6})
-		append(&f.base_lights, Light_Desc{position = {0, 2.98, 0}, color = {1, 0.95, 0.9}, intensity = 11170, range = 12, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {1.5, 1.5}, indirect = 1, scattering = 1})
+		append(&f.base_lights, Light_Desc{position = {0, 2.98, 0}, color = {1, 0.95, 0.9}, intensity = 11170, range = 12, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {1.5, 1.5}})
 		f.camera = {position = {0, 1.6, 2.8}, forward = {0, -0.6, -3.8}, up = {0, 1, 0}, fov_y = 70, near = 0.05, far = 100}
 	case .Exterior:
 		// 200 m of streets between blocks, in the sun.
@@ -652,7 +612,7 @@ gi_setup :: proc(f: ^Gi_Fixture, kind: Gi_Kind) {
 				gi_block(f, {x - size / 2, 0, z - size / 2}, {x + size / 2, height, z + size / 2}, {0.55 + f32((seed >> 8) & 0x3f) / 255, 0.5, 0.45})
 			}
 		}
-		f.sun = {direction = {0.5, 0.6, 0.3}, color = {1, 0.95, 0.85}, illuminance = 94248, enabled = true, indirect = 1, scattering = 1}
+		f.sun = {direction = {0.5, 0.6, 0.3}, color = {1, 0.95, 0.85}, illuminance = 94248, enabled = true}
 		f.environment = {sky = {3000, 4500, 7500}}
 		f.camera = {position = {0, 1.7, 90}, forward = {2, 2.3, -90}, up = {0, 1, 0}, fov_y = 65, near = 0.1, far = 500}
 	case .Many_Lights:
@@ -665,7 +625,7 @@ gi_setup :: proc(f: ^Gi_Fixture, kind: Gi_Kind) {
 		for i in 0 ..< LIGHTS_MOVING {
 			hue := f32(i) / LIGHTS_MOVING * 6
 			color := Vec3{clamp(abs(hue - 3) - 1, 0, 1), clamp(2 - abs(hue - 2), 0, 1), clamp(2 - abs(hue - 4), 0, 1)}
-			append(&f.base_lights, Light_Desc{color = color, intensity = 471, range = 6, radius = 0.05, indirect = 1, scattering = 1})
+			append(&f.base_lights, Light_Desc{color = color, intensity = 471, range = 6, radius = 0.05})
 		}
 		f.environment = {sky = {2, 2, 3}}
 		f.camera = {position = {0, 9, 16}, forward = {0, -9, -16}, up = {0, 1, 0}, fov_y = 65, near = 0.1, far = 100}
@@ -678,8 +638,8 @@ gi_setup :: proc(f: ^Gi_Fixture, kind: Gi_Kind) {
 		for wall in gi_room_walls({-3, 0, 0}, {3, 4, 30}, 0.1) {gi_add(f, f.cube, wall, white)}
 		gi_block(f, {-2.6, 0, 12}, {-1.8, 4, 12.8}, white)
 		gi_block(f, {1.8, 0, 20}, {2.6, 4, 20.8}, white)
-		append(&f.base_lights, Light_Desc{position = {0, 3.98, 2}, color = {1, 0.92, 0.8}, intensity = 4000, range = 12, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {1, 1}, indirect = 1, scattering = 1})
-		f.sun = {direction = {0.4, 0.8, 0.3}, color = {1, 0.95, 0.85}, illuminance = 100000, enabled = true, indirect = 1, scattering = 1}
+		append(&f.base_lights, Light_Desc{position = {0, 3.98, 2}, color = {1, 0.92, 0.8}, intensity = 4000, range = 12, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {1, 1}})
+		f.sun = {direction = {0.4, 0.8, 0.3}, color = {1, 0.95, 0.85}, illuminance = 100000, enabled = true}
 		f.environment = {sky = {2500, 3500, 5500}}
 		f.camera = {position = {0, 1.6, 1}, forward = {0, -0.2, 29}, up = {0, 1, 0}, fov_y = 65, near = 0.05, far = 100}
 	case .Shadow_Push, .Shadow_Drop:
@@ -689,8 +649,8 @@ gi_setup :: proc(f: ^Gi_Fixture, kind: Gi_Kind) {
 		gi_block(f, {-0.4, 0, -0.4}, {0.4, 0.8, 0.4}, {0.75, 0.15, 0.1})
 		gi_block(f, {-8, -0.2, -6}, {8, 0, 6}, {0.6, 0.6, 0.58})
 		gi_block(f, {-8, 0, -2.4}, {8, 3, -2.2}, {0.75, 0.75, 0.72})
-		append(&f.base_lights, Light_Desc{position = {1.6, 1.4, 0.9}, color = {1, 0.85, 0.65}, intensity = 2000, range = 10, radius = 0.1, indirect = 1, scattering = 1})
-		f.sun = {direction = {0.45, 0.7, 0.55}, color = {1, 0.95, 0.85}, illuminance = 50000, enabled = true, indirect = 1, scattering = 1}
+		append(&f.base_lights, Light_Desc{position = {1.6, 1.4, 0.9}, color = {1, 0.85, 0.65}, intensity = 2000, range = 10, radius = 0.1})
+		f.sun = {direction = {0.45, 0.7, 0.55}, color = {1, 0.95, 0.85}, illuminance = 50000, enabled = true}
 		f.environment = {sky = {1500, 2000, 3000}}
 		f.camera = {position = {0, 2.4, 4.6}, forward = {0, -1.9, -5.4}, up = {0, 1, 0}, fov_y = 65, near = 0.05, far = 100}
 	case .Emissive:
@@ -716,10 +676,10 @@ gi_setup :: proc(f: ^Gi_Fixture, kind: Gi_Kind) {
 		gi_block(f, {2.6, 0, -2.9}, {3.8, 2.1, -2.2}, {0.3, 0.2, 0.12})
 		gi_block(f, {-3.8, 0, 1.6}, {-2.9, 0.5, 2.8}, {0.6, 0.6, 0.62})
 		append(&f.base_lights, horror_flashlight(-0.87))
-		append(&f.base_lights, Light_Desc{position = {-1.5, 2.6, 0}, color = {1, 0.85, 0.65}, intensity = 800, range = 10, radius = 0.05, indirect = 1, scattering = 1})
-		append(&f.base_lights, Light_Desc{position = {2.0, 2.6, -1}, color = {1, 0.85, 0.65}, intensity = 800, range = 10, radius = 0.05, indirect = 1, scattering = 1})
+		append(&f.base_lights, Light_Desc{position = {-1.5, 2.6, 0}, color = {1, 0.85, 0.65}, intensity = 800, range = 10, radius = 0.05})
+		append(&f.base_lights, Light_Desc{position = {2.0, 2.6, -1}, color = {1, 0.85, 0.65}, intensity = 800, range = 10, radius = 0.05})
 		// The moon, low through the window, and a night sky.
-		f.sun = {direction = {-0.8, 0.45, 0.2}, color = {0.75, 0.85, 1}, illuminance = 0.4, enabled = true, indirect = 1, scattering = 1}
+		f.sun = {direction = {-0.8, 0.45, 0.2}, color = {0.75, 0.85, 1}, illuminance = 0.4, enabled = true}
 		f.environment = {sky = {0.01, 0.014, 0.03}}
 		f.camera = {position = {0, 1.6, 2.6}, forward = {0, -0.4, -3.6}, up = {0, 1, 0}, fov_y = 75, near = 0.05, far = 100}
 	case .Shade, .Shade_Night, .Pan:
@@ -739,9 +699,9 @@ gi_setup :: proc(f: ^Gi_Fixture, kind: Gi_Kind) {
 		gi_block(f, {0.5, 2.3, -0.5}, {1.5, 3.3, 0.5}, {0.08, 0.65, 0.5})
 		gi_block(f, {-0.64, 1.51, -4.86}, {-0.46, 1.69, -4.74}, {0.9, 0.9, 0.9}, {47.7, 4, 2.4})
 		gi_block(f, {-0.9, 3.83, -2.6}, {0.9, 3.97, -1.4}, {0.8, 0.8, 0.8}, {111.4, 92.3, 55.7})
-		append(&f.base_lights, Light_Desc{position = {0, 3.7, -2}, color = {1, 0.82, 0.62}, intensity = 1500, range = 9, radius = 0.15, indirect = 1, scattering = 1})
+		append(&f.base_lights, Light_Desc{position = {0, 3.7, -2}, color = {1, 0.82, 0.62}, intensity = 1500, range = 9, radius = 0.15})
 		if kind != .Shade_Night {
-			f.sun = {direction = {0.13, 0.99, -0.09}, color = {1, 0.95, 0.85}, illuminance = 50, enabled = true, indirect = 1, scattering = 1}
+			f.sun = {direction = {0.13, 0.99, -0.09}, color = {1, 0.95, 0.85}, illuminance = 50, enabled = true}
 			f.environment = {sky = {8.75, 8.75, 8.75}}
 		}
 		f.camera = {position = {0, 3, 9}, forward = {0, -2, -9}, up = {0, 1, 0}, fov_y = 55, near = 0.05, far = 100}
@@ -1764,7 +1724,7 @@ gi_benchmark_reports_noise_error_settling_and_cost :: proc(t: ^testing.T) {
 		for count in ([3]int{64, 1024, 4096}) {
 			lights := make([]Light_Desc, count)
 			defer delete(lights)
-			for &light, i in lights {light = {position = {f32(i % 64) - 32, 1, f32(i / 64) - 32}, color = {1, 1, 1}, intensity = 100, range = 4, radius = 0.05, indirect = 1, scattering = 1}}
+			for &light, i in lights {light = {position = {f32(i % 64) - 32, 1, f32(i / 64) - 32}, color = {1, 1, 1}, intensity = 100, range = 4, radius = 0.05}}
 			scene_lights_given(f.r, lights, {}, {})
 			started := time.tick_now()
 			for _ in 0 ..< 20 {

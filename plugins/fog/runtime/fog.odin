@@ -19,9 +19,8 @@ import mm "mirai:std/math"
 // light over frames and lays it over the lit opaque scene; with glass in
 // view, what lies behind its nearest layer before the glass and what lies in
 // front over it. Past the grid the same media go on to the depth of each
-// pixel and to the sky, in closed form, lit by the light around and by the
-// sun that reaches them through the scene, which cells past the grid keep as
-// the grid keeps its light. What it integrates is the media of the view
+// pixel and to the sky, in closed form, lit by the sun without shadows and by
+// the light around. What it integrates is the media of the view
 // (render.MEDIA_TEXTURE): what is blended later, as particles, goes behind
 // the same fog. Its cost depends neither on the resolution of the view nor on
 // how many lights there are.
@@ -36,10 +35,8 @@ HISTORY :: f32(0.9)   // the weight of what the frames before found
 Fog_Volume :: struct {
     density:f32 `mirai:"min=0,unit=1/m"`,        // of the light that crosses a metre of it, about the share it stops
     color:[3]f32 `mirai:"color"`,                // of what it stops, the share it scatters; it absorbs the rest
-    glow:[3]f32 `mirai:"min=0,unit=nit"`,        // the light it gives off on its own: where it is thick it shows this luminance, besides the light it scatters
     anisotropy:f32 `mirai:"min=-0.95,max=0.95"`, // above 0 it scatters forward, and a shaft glows more seen towards its light; below 0, back
-    falloff:f32 `mirai:"min=0,unit=1/m"`,        // it thins with the height over its base: by e every 1/falloff metres
-    base:f32 `mirai:"unit=m"`,                   // its base, where it has its density, over the bottom of its Volume or its entity: under it, it holds that density
+    falloff:f32 `mirai:"min=0,unit=1/m"`,        // it thins with the height over its base, the bottom of its Volume or its entity: by e every 1/falloff metres
     variable:bool,                               // its density varies from place to place, in wisps and banks that drift and change by themselves; density is their mean
     wisp_size:f32 `mirai:"min=0.1,unit=m"`,      // about how big its largest wisps are
     drift:[3]f32 `mirai:"unit=m/s"`,             // how fast its wisps move, and where to
@@ -79,7 +76,6 @@ Gpu_Volume :: struct {
     medium:[4]f32, // rgb what it scatters in a metre, a what it stops; of a variable one, the mean
     params:[4]f32, // x 1 over its wisp size (0: it does not vary), y anisotropy, z falloff, w the height of its base
     carve:[4]f32,  // x priority, y CARVE_* bits, z 1/m it takes of the light of the sun that crosses it
-    glow:[4]f32,   // rgb the luminance it gives off where it is thick, nits: for each metre of what it stops
     cells:[WISP_OCTAVES][4]i32,  // xyz the cell of each layer of its wisps at the origin of the render now
     within:[WISP_OCTAVES][4]f32, // xyz where in that cell, 0 to 1
 }
@@ -107,7 +103,7 @@ volumes_relative :: proc "contextless" (state:^Fog_Gpu,origin:[3]f32) -> (volume
     }
     return
 }
-#assert(size_of(Gpu_Volume)==240)
+#assert(size_of(Gpu_Volume)==224)
 
 // Where layer k of the wisps of a volume is at the origin of the render at a
 // time, in cells of the layer: a place of the world p is in the layer at
@@ -223,11 +219,9 @@ volume_gpu :: proc(state:^Fog_Gpu,fog:Fog_Volume,place:volume.Volume,at:mm.Trans
         volume=volume.gpu_volume(place,at,fog.zone,outline,&state.outlines),
         medium={color.r*fog.density,color.g*fog.density,color.b*fog.density,fog.density},
         params={fog.variable?1/max(fog.wisp_size,0.1):0,clamp(fog.anisotropy,-0.95,0.95),max(fog.falloff,0),at.position.y},
-        glow={max(fog.glow.r,0),max(fog.glow.g,0),max(fog.glow.b,0),0},
     }
-    // The base is over the lowest point of a box, a sphere or an outline.
+    // The base is the lowest point of a box, a sphere or an outline.
     if place.shape==.Box || place.shape==.Sphere || place.shape==.Outline {entry.params.w=volume.bounds(place,at,outline).min.y}
-    entry.params.w+=fog.base
     state.volumes[state.count]=entry
     state.drift[state.count]=fog.drift
     state.count+=1
@@ -282,8 +276,7 @@ fog_record :: proc(pass:^render.Pass,user:rawptr) {
     media:=render.media_grid(pass.width,pass.height)
     grid:=media.cells.xyz
     if grid.x==0 {return}
-    // Past the grid, its cells keep what of the sun reaches each slice beyond it.
-    light:=render.Pass_Texture_Desc{name="fog light",format=.RGBA16_Float,width=grid.x,height=grid.y,depth=grid.z+media.cells.w,history=true}
+    light:=render.Pass_Texture_Desc{name="fog light",format=.RGBA16_Float,width=grid.x,height=grid.y,depth=grid.z,history=true}
     medium:=render.Pass_Texture_Desc{name="fog medium",format=.RGBA16_Float,width=grid.x,height=grid.y,depth=grid.z}
     seen:=render.Pass_Texture_Desc{name=render.MEDIA_TEXTURE,format=.RGBA16_Float,width=grid.x,height=grid.y,depth=grid.z+media.cells.w}
     far:=render.Pass_Texture_Desc{name="fog far",format=.R32_Float,width=grid.x,height=grid.y}
@@ -327,7 +320,7 @@ fog_record :: proc(pass:^render.Pass,user:rawptr) {
     render.pass_pipeline(pass,state.pipelines[2])
     volumes:=volumes_relative(state,pass.origin)
     if !render.pass_params(pass,&params,size_of(params)) || !render.pass_upload(pass,2,&volumes,state.count*size_of(Gpu_Volume)) {return}
-    render.pass_dispatch(pass,(grid.x+3)/4,(grid.y+3)/4,(grid.z+media.cells.w+3)/4)
+    render.pass_dispatch(pass,(grid.x+3)/4,(grid.y+3)/4,(grid.z+3)/4)
     // From the eye along each column, through the grid and past it: the light that reaches it and what is let through.
     render.pass_texture(pass,0,light)
     if ok,_:=render.pass_texture(pass,1,seen);!ok {return}

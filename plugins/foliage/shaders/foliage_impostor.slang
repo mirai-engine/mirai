@@ -38,7 +38,7 @@ struct Impostor_Instance {
 
 struct Impostor_Params {
     float4 anchor; // xyz: where the positions of the instances are from, relative to the origin
-    uint4 count;   // x: the instances of the buffer; of the cull, y: its phase, z: the levels of the depth pyramids, w: 1 the pyramid of this frame is there, 2 that of the frame before
+    uint4 count;   // x: the instances of the buffer
 };
 
 // What the vertices of an instance give its fragments, in the space of its type.

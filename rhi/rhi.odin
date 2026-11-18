@@ -534,7 +534,6 @@ Blas_Desc :: struct {
 	index_buffer:   Buffer,
 	index_offset:   u64,
 	triangle_count: u32,
-	masked_count:   u32,  // the last triangles, a geometry of their own that ray queries report as candidates; the others are opaque
 	deformable:     bool, // fixed topology, positions can be refitted
 	compact:        bool, // made smaller once built (cmd_compact_blases); not with deformable
 	name:           string,
@@ -547,15 +546,13 @@ Tlas_Instance :: struct {
 	transform:    [3][4]f32, // row-major 3x4 object-to-world
 	custom_index: u32,       // 24 bits, returned by ray queries as the instance custom index
 	blas:         u32,       // accel_id of its BLAS; 0, or a BLAS gone or not built: no ray meets it
-	mask_flags:   u32,       // the mask rays test (bits 0-7), and TLAS_ALPHA_TESTED or TLAS_ALPHA_GEOMETRY
+	mask_flags:   u32,       // the mask rays test (bits 0-7), and TLAS_ALPHA_TESTED
 	pad:          u32,
 }
 #assert(size_of(Tlas_Instance) == 64)
-// Ray queries report every triangle of the instance as a candidate for the
-// shader to confirm. With TLAS_ALPHA_GEOMETRY, those of the masked geometry
-// of its BLAS (Blas_Desc.masked_count). With neither, every hit is committed.
+// Ray queries report the triangles of the instance as candidates for the
+// shader to confirm; without it every hit is committed.
 TLAS_ALPHA_TESTED :: u32(1) << 8
-TLAS_ALPHA_GEOMETRY :: u32(1) << 9
 
 // The translation of instances (tlas_instances.comp.slang): its bindings, the
 // words of its table before the native value of each BLAS, and its dispatch,
@@ -572,12 +569,11 @@ TLAS_LAYOUT_COLUMNS :: 1
 
 // The words of the table of a translation: how many instances from which of
 // the buffer, how the backend lays one out, and the word of its flags for an
-// opaque instance, for one alpha tested and for one whose geometries decide.
-// After it, a pair of words by BLAS
+// opaque instance and for one alpha tested. After it, a pair of words by BLAS
 // id: the native value its instances take (Vulkan: its address; Metal: its
 // place among the structures of the build + 1), 0 for none.
 @(private)
-Tlas_Table_Header :: struct {count, layout, stride, first, ids, opaque, tested, geometry: u32}
+Tlas_Table_Header :: struct {count, layout, stride, first, ids, opaque, tested, pad: u32}
 #assert(size_of(Tlas_Table_Header) == TLAS_TABLE_HEADER * 4)
 
 // The id of a BLAS in Tlas_Instance.blas, while it lives; 0 for anything else.

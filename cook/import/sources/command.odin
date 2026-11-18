@@ -26,11 +26,9 @@ import "mirai:std/jobs"
 // of each asset, so importing again without options gives the same assets.
 // --rdo-lambda 0 encodes the blocks of textures for the least error and a
 // higher lambda for smaller files. An asset whose file already is the one the
-// import gives is kept as it is, unless --rebuild. A document the import
-// writes over that changed since it last wrote it stops the import, which
-// names it, unless --discard-changes; a sync leaves it as it is and warns. An
-// image imported for the first time without --srgb, --data or --normal holds
-// what its name says (image_use). Only models and images have settings.
+// import gives is kept as it is, unless --rebuild. An image imported for the
+// first time without --srgb, --data or --normal holds what its name says
+// (image_use). Only models and images have settings.
 // --sync <root>, once per project or plugin, imports instead every source
 // under it whose outputs in its imported folder are missing or stale (sync):
 // what a checkout needs before it runs. --fast builds the textures of a sync
@@ -48,7 +46,7 @@ import "mirai:std/jobs"
 // Exit codes: 0 done, 1 failed, 2 misuse.
 
 @(private="file")
-IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--rebuild] [--discard-changes] [--fast] [--texture-cache <folder>] [--mesh-cache <folder>] [--profile] [--release]"
+IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--rebuild] [--fast] [--texture-cache <folder>] [--mesh-cache <folder>] [--profile] [--release]"
 
 // library reads the formats and the importers of whole sources the plugins of
 // a project add and the types of its game (in the import program of the
@@ -103,7 +101,6 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
         case "--mesh-cache": options.mesh_cache,ok=value(args,&at)
         case "--profile": profiled=true
         case "--rebuild": options.rebuild=true
-        case "--discard-changes": options.changed=.Discard
         case "--fast": options.fast_textures=true
         case "--uncompressed": given.textures=.Uncompressed;changed+={.Textures}
         case "--blocks": given.textures=.Blocks;changed+={.Textures}

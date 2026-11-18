@@ -1,10 +1,8 @@
 package serial
 
 import "base:intrinsics"
-import "base:runtime"
 import "core:math"
 import "core:mem"
-import "core:slice"
 import "core:strings"
 import "mirai:std/base"
 
@@ -164,7 +162,6 @@ Migration :: struct {
     // another. Fields the destination has under no name (transient ones aside):
     removed:[dynamic]string,
     incompatible:[dynamic]string, // fields of both whose types cannot be converted: the destination keeps its default
-    default:[]u8, // what the destination type starts as (Type.default), when it says
 }
 
 // With a type that is not of its schema, or without memory, the migration
@@ -197,13 +194,6 @@ migration_init :: proc(m:^Migration,src:^Schema,src_type:Type_Index,dst:^Schema,
         }
     }
     m.src_size,m.dst_size=int(src.types[src_type].size),int(dst.types[dst_type].size)
-    if image:=dst.types[dst_type].default;image!=nil {
-        no_default:runtime.Allocator_Error
-        if m.default,no_default=slice.clone(image,allocator);no_default!=nil {
-            migration_destroy(m)
-            return .Out_Of_Memory
-        }
-    }
     migration_build(&build,src_type,dst_type,0,0,"")
     if build.refused {
         migration_destroy(m)
@@ -213,21 +203,18 @@ migration_init :: proc(m:^Migration,src:^Schema,src_type:Type_Index,dst:^Schema,
     return .None
 }
 migration_destroy :: proc(m:^Migration) {
-    delete(m.default,m.ops.allocator)
     delete(m.ops);delete(m.pairs);delete(m.removed);delete(m.incompatible)
     m^={}
 }
 
 // Converts count values. dst starts as copies of default when it is given
-// (one value of the destination type), else of what the destination type
-// starts as (Type.default), and as zeros without either. Without room
+// (one value of the destination type), and as zeros otherwise. Without room
 // for count values in dst or src, or with a shorter default, it converts
 // nothing.
 migration_apply :: proc(m:^Migration,dst:[]u8,src:[]u8,count:int,default:[]u8=nil) {
     if count<=0 || m.dst_size==0 || count>len(dst)/m.dst_size {return}
     if m.src_size>0 && count>len(src)/m.src_size {return}
-    start:=default if default!=nil else m.default
-    if start!=nil && len(start)<m.dst_size {return}
+    if default!=nil && len(default)<m.dst_size {return}
     if m.identical {
         intrinsics.mem_copy_non_overlapping(raw_data(dst),raw_data(src),count*m.dst_size)
         return
@@ -235,7 +222,7 @@ migration_apply :: proc(m:^Migration,dst:[]u8,src:[]u8,count:int,default:[]u8=ni
     from,to:=raw_data(src),raw_data(dst)
     for i in 0..<count {
         target:=to[i*m.dst_size:]
-        if start!=nil {intrinsics.mem_copy_non_overlapping(target,raw_data(start),m.dst_size)}
+        if default!=nil {intrinsics.mem_copy_non_overlapping(target,raw_data(default),m.dst_size)}
         else {mem.zero(target,m.dst_size)}
         migration_run(m,m.ops[:],from[i*m.src_size:],target)
     }

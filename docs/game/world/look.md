@@ -39,9 +39,5 @@ bytes the entity holds: change them every frame on a thousand entities. A textur
 the material that the entities giving the same share: set it once, do not animate it on many
 entities. To show another material, change `Mesh_Renderer.materials`.
 
-A mesh that must be seen and not stop light (a sky dome, a card of glow, a shell around a lamp)
-turns off `Mesh_Renderer.shadows`. A `Mesh_Renderer` starts from `render.MESH_RENDERER_DEFAULT`,
-a cube that casts shadows, or a literal names its `shape` and `shadows`.
-
 In the editor and through the API the same values are the entity's own in the material box of the
 inspector, `material.instance.set`; `material.instance.apply` writes them into the material.

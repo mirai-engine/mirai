@@ -159,74 +159,6 @@ a_source_keeps_the_ids_of_its_import_with_its_sidecar_and_a_copy_without_it_is_a
     }
 }
 
-// A document an import writes over that changed since it wrote it (the
-// prefab of a model with an entity added) stops an import that was not told
-// what to do with it, which names it and writes nothing; a sync leaves it as
-// it is, builds the rest and warns; discard_changes writes over it. A change
-// of its owner alone is none (a material, which follows its source, records
-// nothing: see the tests of write_test.odin).
-@(test)
-an_import_does_not_write_over_a_document_changed_since_it_wrote_it :: proc(t:^testing.T) {
-    root,assets:=test_project(t,"reimport-changed")
-    if root=="" {return}
-    source:=box_source(assets,"box.gltf","Wood","Paint")
-    first,ok:=box_import(t,source,root);if !ok {return};defer importer.report_destroy(&first)
-    scene,_:=written_of(&first,asset.KIND_SCENE,"box")
-    wood,_:=written_of(&first,asset.KIND_MATERIAL,"Wood")
-    data,_:=os.read_entire_file(scene.path,context.temp_allocator)
-    testing.expect_value(t,asset.header_owner_set(data,wood.id),asset.Error.None)
-    _=os.write_entire_file(scene.path,data)
-    again,again_ok:=box_import(t,source,root);if !again_ok {return};importer.report_destroy(&again)
-
-    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    edited:asset.Scene
-    if !testing.expect_value(t,asset.scene_load(&edited,&types,scene.path,context.temp_allocator),asset.Error.None) {return}
-    _,_=asset.scene_entity_add(&edited,asset.scene_new_id(&edited),{},"Added")
-    testing.expect_value(t,asset.scene_save(&edited,scene.path),asset.Error.None)
-    asset.scene_destroy(&edited)
-    changed,_:=os.read_entire_file(scene.path,context.temp_allocator)
-    sidecar,_:=os.read_entire_file(fmt.tprintf("%s.import",source),context.temp_allocator)
-    held :: proc(t:^testing.T,path:string,bytes:[]u8,why:string) {
-        now,_:=os.read_entire_file(path,context.temp_allocator)
-        testing.expectf(t,string(now)==string(bytes),"%s: %s",path,why)
-    }
-
-    refused,error:=import_source(source,{world=prefab.import_world(t),root=root,textures=.Uncompressed})
-    importer.report_destroy(&refused)
-    testing.expectf(t,error.code==.Changed && contains(error.message,"assets/box/box.scene") && contains(error.message,"discard_changes"),"the import names what changed and how to go on: %v %s",error.code,error.message)
-    held(t,scene.path,changed,"the import wrote nothing")
-    held(t,fmt.tprintf("%s.import",source),sidecar,"nor its sidecar")
-
-    testing.expect(t,base.remove_all(fmt.tprintf("%s/.mirai",root))==nil)
-    context.user_ptr=prefab.import_world(t)
-    synced:=sync(root,{library=test_library},context.temp_allocator)
-    testing.expectf(t,synced.imported==1 && len(synced.failures)==0 && len(synced.warnings)==1 && contains(synced.warnings[0],"assets/box/box.scene"),"sync builds the rest and says what it left: %v",synced)
-    held(t,scene.path,changed,"sync leaves it as it is")
-    mesh,_:=written_of(&first,asset.KIND_MESH,"Box")
-    testing.expect(t,os.exists(mesh.path),"and builds the cache")
-    entries,_:=os.read_all_directory_by_path(fmt.tprintf("%s/.mirai/imported",root),context.temp_allocator)
-    for entry in entries {testing.expectf(t,!strings.contains(entry.name,".kept"),"%s: what was written of it goes",entry.name)}
-
-    discarded,discard_error:=import_source(source,{world=prefab.import_world(t),root=root,textures=.Uncompressed,changed=.Discard})
-    if !testing.expectf(t,discard_error.code==.None,"%s",discard_error.message) {return}
-    importer.report_destroy(&discarded)
-    testing.expect(t,!scene_named(t,&types,scene.path,"Added"),"discard_changes writes over it")
-    last,last_ok:=box_import(t,source,root);if last_ok {importer.report_destroy(&last)}
-    testing.expect(t,last_ok,"then importing again asks nothing")
-}
-
-// Whether the scene at path has an entity named name.
-@(private="file")
-scene_named :: proc(t:^testing.T,types:^asset.Types,path,name:string) -> bool {
-    loaded:asset.Scene
-    if !testing.expect_value(t,asset.scene_load(&loaded,types,path,context.temp_allocator),asset.Error.None) {return false}
-    defer asset.scene_destroy(&loaded)
-    for &held in asset.scene_names(&loaded) {
-        if base.text_get(held[:])==name {return true}
-    }
-    return false
-}
-
 // A part is found by its kind and name alone: one renamed in the source is
 // a new asset, and the one that left stays as it is, with a warning.
 @(test)
@@ -627,8 +559,7 @@ level_run :: proc(state:rawptr,source:string,options:importer.Import_Options,all
 // Sync runs the importer of a plugin that claims a whole source when what it
 // is built from changes: its bytes or those of a file it reads, the code of
 // the plugin, or the version of a kind of document it wrote, of the engine or
-// of a plugin; it leaves a current one alone, and a document it wrote that
-// was changed since as it is.
+// of a plugin; it leaves a current one alone.
 @(test)
 sync_imports_again_a_whole_source_when_what_it_is_built_from_changes :: proc(t:^testing.T) {
     root,assets:=test_project(t,"sync-whole")
@@ -662,7 +593,7 @@ sync_imports_again_a_whole_source_when_what_it_is_built_from_changes :: proc(t:^
     }
     current:=sync(root,caches,context.temp_allocator)
     testing.expectf(t,current.sources==1 && current.imported==0 && len(current.failures)==0 && state.runs==1,"a current source is left alone: %v",current)
-    Change :: enum {Input,Code,Engine_Kind,Plugin_Kind,Clone,Edited}
+    Change :: enum {Input,Code,Engine_Kind,Plugin_Kind,Clone}
     material,has_material:=written_of(&first,asset.KIND_MATERIAL,"Wood")
     kit,has_kit:=written_of(&first,KIT,"hall")
     if !testing.expect(t,has_material && has_kit,"the level wrote documents") {return}
@@ -679,21 +610,10 @@ sync_imports_again_a_whole_source_when_what_it_is_built_from_changes :: proc(t:^
             kit_manifest(root,3)
             state.kit=3
         case .Clone: testing.expect(t,base.remove_all(fmt.tprintf("%s/.mirai",root))==nil)
-        case .Edited:
-            doc:asset.Document
-            testing.expect_value(t,asset.document_load(&doc,kit.path,context.temp_allocator),asset.Error.None)
-            _,_=asset.document_table_add(&doc,"notes")
-            testing.expect_value(t,asset.document_save(&doc,kit.path),asset.Error.None)
-            state.code=9
         }
-        edited,_:=os.read_entire_file(kit.path,context.temp_allocator)
         runs:=state.runs
         changed:=sync(root,caches,context.temp_allocator)
         testing.expectf(t,changed.imported==1 && len(changed.failures)==0 && state.runs==runs+1,"%v: %v",change,changed)
-        if change==.Edited {
-            now,_:=os.read_entire_file(kit.path,context.temp_allocator)
-            testing.expectf(t,string(now)==string(edited) && len(changed.warnings)==1 && contains(changed.warnings[0],"hall.kit"),"what was changed of it stays, and sync says so: %v",changed.warnings)
-        }
         testing.expectf(t,sync(root,caches,context.temp_allocator).imported==0,"%v: then nothing",change)
     }
     testing.expect(t,header_of(material.path).kind_version==asset.MATERIAL_VERSION && header_of(material.path).id==material.id,"the material is of this version again, with its id")

@@ -56,7 +56,7 @@ gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> bool {
 	if !testing.expect(t, cube != nil) {return false}
 	f.cube = cube.handle
 	gpu.scene_world(&f.renderer, 1)
-	gpu.scene_set_environment(&f.renderer, {direction = {0.2, 0.3, 1}, color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0.05, 0.05, 0.05}})
+	gpu.scene_set_environment(&f.renderer, {direction = {0.2, 0.3, 1}, color = {1, 1, 1}, illuminance = math.PI, enabled = true}, {sky = {0.05, 0.05, 0.05}})
 	return true
 }
 

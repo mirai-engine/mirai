@@ -4,11 +4,10 @@
 //! constant color MIRAI_GLASS_MEANS
 // The rays of the probes chosen this frame (ddgi_select.comp): each probe
 // traces the spherical Fibonacci set turned by the rotation of its cell, the
-// same every update. Hits trace their direct light, each light by the share
-// of it the probes gather, and read the bounces of the volume itself, as
-// DDGI: nothing they read goes away while the scene stays still; a backface
-// marks the probe as seeing the inside of geometry with a negative distance.
-// The radiance of a ray is stored encoded (probe_light_encode).
+// same every update. Hits trace their direct light and read the bounces of
+// the volume itself, as DDGI: nothing they read goes away while the scene
+// stays still; a backface marks the probe as seeing the inside of geometry with a
+// negative distance. The radiance of a ray is stored encoded (probe_light_encode).
 // A hit on a material with a program waits for it (points.slang) and is
 // shaded by the resume (params.resume) from what the program gave there.
 #define MIRAI_DIFFUSE_HITS
@@ -92,6 +91,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
     }
     // Its own direct light, so that a light that moves or turns off reaches the probes in the
     // frame it does, and the bounces of the volume itself where it hits: each trace adds one.
-    float3 radiance = hit_on_light(s, instance) ? float3(0.0) : shade_hit(s, direction, t, params.light_budget, true);
+    float3 radiance = hit_on_light(s, instance) ? float3(0.0) : shade_hit(s, direction, t, params.light_budget);
     ray_data[int2(ray, slot)] = float4(probe_light_encode(radiance * glass), gated ? gate : t);
 }

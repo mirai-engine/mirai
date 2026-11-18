@@ -7,14 +7,7 @@
   queries answer. Both return instance, primitive, distance and barycentrics; the surface
   attributes are rebuilt from the same geometry pool.
 - Diffuse indirect comes from the [probe volume](#probe-volume), with all the bounces, darkened at
-  contact by the [contact occlusion](#contact-occlusion).
-- **Scale of the indirect light.** The hits of the probes take each light by its `indirect` share
-  (`LIGHTS_BOUNCED` of `direct_lighting`, [shares](lights.md#local-lights)), so that a share
-  scales all the bounces of that light. `scene_set_indirect` (the `Bounce_Light` of the world)
-  multiplies what the probe volume gives, or the sky that stands for it without GI, where a view
-  takes it (diffuse and specular, the probes read by reflection hits) and where media take it;
-  the probes gather without it, so it shows in the frame it changes. It is of the world: the
-  light of a `View_Volume` would change as the camera moves. Nothing in the indirect samples
+  contact by the [contact occlusion](#contact-occlusion). Nothing in the indirect samples
   directions or lights per frame: what the scene does not change gives the same every frame, and
   there is no boiling for a filter to hide.
 
@@ -47,10 +40,8 @@ Each technique states its status; what is listed as prepared is not implemented.
   - Blend-only instances are a separate ray class that the other rays do not visit.
   - [Batches](scene.md#instance-batches) that only cast shadow or are only seen have their own
     classes (`RAY_SHADOW_ONLY`, `RAY_UNSHADOWED`), requested by the shadow rays (`RAY_SHADOWS`) and
-    those that see surfaces (`RAY_SEEN`). An instance
-    [without shadows](scene.md#scene-and-instances) that is not all glass is `RAY_UNSHADOWED`. In
-    software, a TLAS reference after the instances is a batch, whose instance tree leads to the
-    BLAS of its mesh.
+    those that see surfaces (`RAY_SEEN`). In software, a TLAS reference after the instances is a
+    batch, whose instance tree leads to the BLAS of its mesh.
 - **Only the structure of the tracer in use.** With hardware RT a mesh has its native BLAS and no
   software BVH (`rays[k].bvh_node_count` 0). When switching to software,
   `renderer_apply_settings` builds the one of each mesh that lacks it (one pose, from its bind
@@ -128,10 +119,6 @@ other and do not see the corner of a table or the floor under a wardrobe.
   side.
 - The irradiance of the volume is multiplied by it: the indirect shadow is sharp at contact
   and opens with distance, which is what the volume gives far away.
-- **Beyond the volume.** The rays of a point beyond the cascades go as far as rays go and each
-  one that meets something counts whole: they leave of the sky's light what the point sees of
-  the sky. A cave past the volume does not take the light of an open sky; what bounces there is
-  not gathered.
 - **Small things.** An instance smaller than `SMALL_INSTANCE_REACH` is of the ray class
   `RAY_SMALL`: contact occlusion, reflections and direct light see it, and the volume rays
   (`MIRAI_TRACE_NO_SMALL`) do not. What moves at that size does not change the volume light: its
@@ -188,21 +175,15 @@ other and do not see the corner of a table or the floor under a wardrobe.
   (`volume_center`), which moves little by little, and not from the cascade, which jumps one cell
   at a time: measured from the cascade, the light of a bench changed abruptly when advancing.
   Every view (nested, texture, split screen) measures from that center, not from its eye. Where
-  the fine one stores nothing, the next one. The last one blends into the light of the sky the
-  same way (`probe_volume_beyond`), and beyond the cascades the light around a point is the
-  sky's, as much of it as the point sees ([contact occlusion](#contact-occlusion)). With a small
-  `probe_grid` the floor already reads a cascade whose probes see through thin walls.
+  the fine one stores nothing, the next one; beyond, the sky. With a small `probe_grid` the floor
+  already reads a cascade whose probes see through thin walls.
 - `sample_probes_around` gives the light around several directions of a point (normal, specular
   lobe and coat) with a single choice of probes and weights; `sample_probes` reads one.
-- **Specular from the probes.** Under the tiles of the irradiance the atlas keeps of each probe
-  a finer tile (`PROBE_GLOSS_TILE`) of the light around a narrow lobe of each direction
-  (`PROBE_GLOSS_POWER`), with about a texel a ray: what its rays tell apart. The lobes of the
-  specular and of the coat read it, going to the irradiance as they get rougher than it, so with
-  reflections `Off` a smooth metal shows what is around it blurred, not the mean of a
-  hemisphere, at no ray of its own. Each texel of both tiles also keeps the share
-  of its light that comes from the sky (its rays that meet nothing; beyond the cascades, all of
-  it), which a lobe takes as the sky itself as sharp as its roughness (`probe_specular`): a
-  mirror under an open sky shows the sky as without GI, and under a roof it does not.
+- **Specular from the probes.** Each texel of the irradiance atlas also keeps the share of its
+  light that comes from the sky (its rays that meet nothing; beyond the cascades, all of it). A
+  specular lobe takes that share as the sky itself as sharp as its roughness (`probe_specular`),
+  not as the blur of a hemisphere, and a rough lobe keeps what the probes hold: with reflections
+  `Off` a mirror under an open sky shows the sky as without GI, and under a roof it does not.
 
 ## Glass in the indirect
 

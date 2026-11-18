@@ -35,8 +35,6 @@ light_tree_faults :: proc(nodes: []Gpu_Light_Node, seen: []int) -> (outside, spo
 		}
 		power := nodes[at.node + 1].power_reach.xyz + nodes[n.child].power_reach.xyz
 		if linalg.length(power - n.power_reach.xyz) > 1e-3 * linalg.length(power) {outside += 1}
-		a, b := nodes[at.node + 1], nodes[n.child]
-		if n.range_low != min(a.range_low, b.range_low) || n.range_high != max(a.range_high, b.range_high) {outside += 1}
 	}
 	return
 }
@@ -89,22 +87,6 @@ the_light_tree_holds_every_light_inside_the_bounds_of_its_nodes :: proc(t: ^test
 	testing.expect_value(t, spots_split, 0)
 	testing.expect_value(t, light_tree_unordered(nodes[:]), 0)
 	testing.expectf(t, depth_max <= LIGHT_TREE_DEPTH, "%d levels", depth_max)
-	// The lights of a reach class and a kind are one subtree: the nodes of one
-	// class whose group holds more are one per class and kind at most.
-	pairs: map[[2]u64]bool
-	defer delete(pairs)
-	for l, i in lights {if i != 11 {pairs[{u64(light_directed(l)), light_reach_class(l)}] = true}}
-	mixed :: proc(n: Gpu_Light_Node) -> bool {
-		return light_reach_class({position_range = {0, 0, 0, n.range_low}}) != light_reach_class({position_range = {0, 0, 0, n.range_high}})
-	}
-	parent := make([]int, len(nodes))
-	defer delete(parent)
-	for n, at in nodes {
-		if n.flags & GPU_LIGHT_NODE_LEAF == 0 {parent[at + 1], parent[n.child] = at, at}
-	}
-	alone := 0
-	for n, at in nodes {alone += int(!mixed(n) && (at == 0 || mixed(nodes[parent[at]])))}
-	testing.expectf(t, alone <= len(pairs), "%d subtrees of one reach class for %d classes and kinds", alone, len(pairs))
 	light_tree_build(&nodes, &keys, &leaves, nil)
 	testing.expect(t, len(nodes) == 0 && len(leaves) == 0)
 }
@@ -119,13 +101,10 @@ a_refit_light_tree_keeps_its_bounds_and_is_the_built_one_where_the_lights_stay :
 	dirty: [dynamic]Pool_Range
 	defer {delete(nodes); delete(built); delete(keys); delete(leaves); delete(built_leaves); delete(dirty)}
 	cost, _ := light_tree_build(&nodes, &keys, &leaves, lights[:])
-	// Other colors, intensities, ranges of their reach class and sizes in the
-	// same places: the tree a build gives.
+	// Other colors, intensities, ranges and sizes in the same places: the tree a build gives.
 	for i := 0; i < len(lights); i += 7 {
 		lights[i].color_intensity = {rand.float32_range(0.1, 1), 0.5, 0.2, rand.float32_range(0.5, 40)}
-		class := light_reach_class(lights[i])
-		low := f32(0.1) if class == 0 else math.pow(f32(4), f32(class) - 1)
-		lights[i].position_range.w = rand.float32_range(low, 0.99 if class == 0 else 3.9 * low)
+		lights[i].position_range.w = rand.float32_range(0.5, 20)
 		lights[i].size.x = rand.float32_range(0, 0.6)
 		clear(&dirty)
 		cost += light_tree_refit(nodes[:], lights[:], leaves[i], &dirty)
@@ -285,7 +264,7 @@ the_light_tree_is_refit_while_each_light_keeps_its_kind :: proc(t: ^testing.T) {
 	defer scene_destroy(r)
 	s := &r.scene
 	lights: [100]Light_Desc
-	for &light, i in lights {light = {position = {f32(i % 10) * 2, 1, f32(i / 10) * 2}, color = {1, 1, 1}, intensity = 10, range = 4, radius = 0.05, indirect = 1, scattering = 1}}
+	for &light, i in lights {light = {position = {f32(i % 10) * 2, 1, f32(i / 10) * 2}, color = {1, 1, 1}, intensity = 10, range = 4, radius = 0.05}}
 	uploaded :: proc(s: ^Scene_State) {
 		s.lights_dirty = false
 		clear(&s.light_ranges)
@@ -327,51 +306,13 @@ the_light_tree_is_refit_while_each_light_keeps_its_kind :: proc(t: ^testing.T) {
 	testing.expect(t, slice.equal(nodes[:], s.light_tree[:]))
 	uploaded(s)
 
-	// Another kind, another reach class or another number of lights: another set.
+	// Another kind, or another number of lights: another set.
 	lights[5].cone, lights[5].direction = 0.5, {0, -1, 0}
 	scene_lights_given(r, lights[:], {}, {})
 	testing.expect(t, s.light_revision == revision + 1 && s.lights_dirty)
 	uploaded(s)
-	lights[6].range = 5
-	scene_lights_given(r, lights[:], {}, {})
-	testing.expect(t, s.light_revision == revision + 1 && !s.lights_dirty, "a range within its class refits")
-	uploaded(s)
-	lights[6].range = 40
-	scene_lights_given(r, lights[:], {}, {})
-	testing.expect(t, s.light_revision == revision + 2 && s.lights_dirty)
-	uploaded(s)
 	scene_lights_given(r, lights[:99], {}, {})
-	testing.expect(t, s.light_revision == revision + 3 && s.lights_dirty && len(s.lights) == 99)
-	uploaded(s)
-
-	// A light that stops casting shadows is another set: it goes to the tree of
-	// those without, which no traversal from node 0 meets, and refits there.
-	lights[7].shadowless = true
-	scene_lights_given(r, lights[:99], {}, {})
-	testing.expect(t, s.light_revision == revision + 4 && s.lights_dirty)
-	uploaded(s)
-	root := light_tree_shadowless(s.light_tree[:], {})
-	testing.expect_value(t, light_shadowless_frame(s.light_tree[:], {}), [4]u32{0, 0, root, u32(len(s.light_tree))})
-	testing.expect(t, root > 0 && s.light_leaves[7] == root && s.light_tree[root].child == 7, "the one light without shadows is the leaf of its tree")
-	reached := false
-	pending: [dynamic]u32
-	defer delete(pending)
-	append(&pending, 0)
-	for len(pending) > 0 {
-		at := pop(&pending)
-		reached ||= at >= root
-		if s.light_tree[at].flags & GPU_LIGHT_NODE_LEAF == 0 {append(&pending, at + 1, s.light_tree[at].child)}
-	}
-	testing.expect(t, !reached, "the traversals of shadows do not meet it")
-	lights[7].intensity = 20
-	scene_lights_given(r, lights[:99], {}, {})
-	testing.expect(t, s.light_revision == revision + 4 && !s.lights_dirty && len(s.light_node_ranges) == 1 && s.light_node_ranges[0] == Pool_Range{root, 1}, "it refits alone")
-	uploaded(s)
-	// While every light casts none, the root of those that do stands for none.
-	for &light in lights[:3] {light.shadowless = true}
-	scene_lights_given(r, lights[:3], {}, {})
-	testing.expect(t, s.light_tree[0] == LIGHT_NODE_NONE && light_tree_shadowless(s.light_tree[:], {}) == 1 && len(s.light_tree) == 6)
-	testing.expect(t, light_tree_refit_all(s.light_tree[:], s.lights[:]) == s.light_tree_built && s.light_tree[0] == LIGHT_NODE_NONE, "a refit leaves it")
+	testing.expect(t, s.light_revision == revision + 2 && s.lights_dirty && len(s.lights) == 99)
 }
 
 // -define:RENDER_BENCHMARK=true, with --release: the time to build the tree of
@@ -408,7 +349,7 @@ light_update_benchmark_reports_the_time_of_moving_one_light :: proc(t: ^testing.
 			defer scene_destroy(&r)
 			lights := make([]Light_Desc, count)
 			defer delete(lights)
-			for &light, i in lights {light = {position = {f32(i % 64) - 32, 1, f32(i / 64) - 32}, color = {1, 1, 1}, intensity = 100, range = 4, radius = 0.05, indirect = 1, scattering = 1}}
+			for &light, i in lights {light = {position = {f32(i % 64) - 32, 1, f32(i / 64) - 32}, color = {1, 1, 1}, intensity = 100, range = 4, radius = 0.05}}
 			scene_lights_given(&r, lights, {}, {})
 			started := time.tick_now()
 			for _ in 0 ..< 200 {

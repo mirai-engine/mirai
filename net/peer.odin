@@ -2,6 +2,7 @@ package mirai_net
 
 import "core:crypto"
 import "core:crypto/siphash"
+import "base:intrinsics"
 import "core:hash/xxhash"
 import "core:mem"
 import "core:slice"
@@ -29,27 +30,33 @@ import "mirai:std/serial"
 // from there that opens under its key and is newer than any it accepted, as
 // WireGuard roams: a router that changed the port loses nothing, and a
 // datagram replayed from elsewhere moves nothing. Their body starts
-// with the last sequence received and a bitfield of the ones before it, back
-// to the oldest the other end may still wait for: what it had not resolved
-// when it read the last acknowledgement it received, or SENT_WINDOW at most,
-// more than it keeps in flight. A datagram older than the last one accepted
+// with the last sequence received and which of the ones before it arrived,
+// back to the oldest the other end may still wait for: what it had not
+// resolved when it read the last acknowledgement it received, or SENT_WINDOW
+// at most, more than it keeps in flight. That record goes as runs of arrived
+// and missing datagrams, so a long stream with few losses costs a few bytes.
+// A receiver acknowledges at once every ACK_EVERY datagrams that carried
+// reliable chunks, and otherwise within ACK_DELAY or with what it sends anyway.
+// A datagram older than the last one accepted
 // is discarded, so "acknowledged" and "lost" are both final as soon as a
 // later datagram is acknowledged: whatever was in a lost one is resent then.
 
 MAX_CONNECTIONS :: 1024
-@(private) SENT_WINDOW :: 256
+@(private) SENT_WINDOW :: 4096         // datagrams in flight: twice what 100 Mbit/s holds over 120 ms, and more
 @(private) ACK_WINDOW :: SENT_WINDOW-1 // datagrams before the last received an acknowledgement covers at most
+@(private) ACK_COUNT_BITS :: 12        // of how many datagrams an acknowledgement covers: up to ACK_WINDOW
 @(private) LATE_WINDOW :: 32           // datagrams behind the last received that are still taken late
 @(private) HANDSHAKE_BYTES :: 256
 @(private) HANDSHAKE_INTERVAL :: 0.2
 @(private) COOKIE_SECONDS :: 10
 @(private) ACK_DELAY :: 0.03
+@(private) ACK_EVERY :: 4 // datagrams with reliable chunks after which a receiver acknowledges without waiting
 @(private) SECTION_RESERVE :: 4 // bits kept free for the terminators of the sections still to come
 @(private) DATA_HEADER :: 5     // bytes: type, sequence and the slot of the connection at the receiver
 @(private) CHECKSUM_BYTES :: 4
 @(private) ACCEPT_BYTES :: 18   // server salt, object capacity, ticks of history and the slot of the connection, sealed
 @(private) CANDIDATES :: 2      // addresses a client asks at once: those of an invitation
-@(private) TRANSPORT_VERSION :: 8 // of the layout of the handshake and of the datagrams after it: raised when it changes
+@(private) TRANSPORT_VERSION :: 9 // of the layout of the handshake and of the datagrams after it: raised when it changes
 
 Connection_Stats :: struct {
     rtt,rtt_variance,jitter:f32, // seconds
@@ -119,6 +126,7 @@ Peer :: struct {
     late_bits:u32,  // received late and taken, the first LATE_WINDOW of recv_bits; never acknowledged
     ack_known:u64,  // the oldest datagram received that the other end may not have resolved yet
     recv_any,ack_pending,has_rtt:bool,
+    ack_chunks:int, // datagrams with reliable chunks received since this end last sent
     recv_time:f64,
     sent:[SENT_WINDOW]Sent,
     records:[]Record,
@@ -127,14 +135,17 @@ Peer :: struct {
     tokens,token_time:f64,
     // Congestion control: the rate the connection may send at, judged over intervals of two round trips.
     rate:f64,
+    starting:bool,                      // doubling the rate each interval until the path shows a queue
     min_rtt,window_min,window_time:f64, // smallest RTT of the last window, and of the current one
     cc_time,cc_rtt:f64,                 // start of the interval and the sum of its RTT samples
-    cc_acked,cc_lost:u64,               // acked and lost datagrams at its start
     cc_samples:int,
+    cc_acked,cc_lost:u64,               // acked and lost datagrams at its start
+    delivered,cc_delivered:u64,         // bytes of datagrams acknowledged, and at the interval's start
     cc_limited:bool,                    // the connection ran out of rate in it
     rate_time:f64,
     rate_sent,rate_received:u64,
     channels:[MAX_CHANNELS]Channel,
+    channel_turn:int, // the reliable game channel that takes the first chunk of the next datagram
     stats:Connection_Stats,
     secure:Peer_Secure,
     repl:Peer_Repl,
@@ -158,16 +169,63 @@ ack_bits_advance :: proc "contextless" (bits:^Ack_Bits,shift:u64) {
     }
     bits[(shift-1)/64]|=1<<((shift-1)%64)
 }
+// Which of the count datagrams before the acknowledged one arrived: whether the first did, then the
+// lengths of the runs of arrived and missing ones in turn, each in Elias gamma code.
 @(private)
 ack_bits_write :: proc(w:^serial.Bit_Writer,bits:^Ack_Bits,count:int) {
-    serial.bit_write(w,u64(count),8)
-    for i:=0;i<count;i+=64 {serial.bit_write(w,bits[i/64],min(count-i,64))}
+    serial.bit_write(w,u64(count),ACK_COUNT_BITS)
+    if count==0 {return}
+    set:=ack_bit(bits,1)
+    serial.bit_write_bool(w,set)
+    for at:=0;at<count;set=!set {
+        run:=ack_run(bits,at,count,set)
+        width:=uint(63-intrinsics.count_leading_zeros(u64(run)))
+        serial.bit_write(w,0,int(width))
+        serial.bit_write(w,1,1)
+        serial.bit_write(w,u64(run)&(1<<width-1),int(width))
+        at+=run
+    }
 }
+// How many bits from bit at on, below count, equal set.
 @(private)
-ack_bits_read :: proc(r:^serial.Bit_Reader) -> (bits:Ack_Bits,count:u64) {
-    count=serial.bit_read(r,8)
-    for i:=u64(0);i<count;i+=64 {bits[i/64]=serial.bit_read(r,int(min(count-i,64)))}
-    return
+ack_run :: proc "contextless" (bits:^Ack_Bits,at,count:int,set:bool) -> int {
+    i:=at
+    for i<count {
+        offset:=uint(i%64)
+        word:=bits[i/64]
+        if !set {word=~word}
+        run:=int(intrinsics.count_trailing_zeros(~(word>>offset)))
+        i+=run
+        if run<64-int(offset) {break}
+    }
+    return min(i,count)-at
+}
+// Not ok: a count past ACK_WINDOW, or runs that are empty, too long or do not add up to the count.
+@(private)
+ack_bits_read :: proc(r:^serial.Bit_Reader) -> (bits:Ack_Bits,count:u64,ok:bool) {
+    count=serial.bit_read(r,ACK_COUNT_BITS)
+    if r.error || count>ACK_WINDOW {return}
+    if count==0 {return bits,0,true}
+    set:=serial.bit_read_bool(r)
+    for at:=u64(0);at<count;set=!set {
+        width:=0
+        for !serial.bit_read_bool(r) {
+            width+=1
+            if r.error || width>=ACK_COUNT_BITS {return}
+        }
+        run:=u64(1)<<uint(width)|serial.bit_read(r,width)
+        if r.error || run>count-at {return}
+        if set {
+            for i:=at;i<at+run; {
+                offset:=i%64
+                take:=min(64-offset,at+run-i)
+                bits[i/64]|=(take==64?max(u64):(u64(1)<<take-1))<<offset
+                i+=take
+            }
+        }
+        at+=run
+    }
+    return bits,count,true
 }
 
 // The sequence number nearest to reference whose low 16 bits are seq.
@@ -181,7 +239,7 @@ counter_expand :: proc "contextless" (reference:u64,seq:u16) -> (counter:u64,ok:
 @(private)
 peer_allocate :: proc(h:^Host,p:^Peer) {
     p.index=u32(mem.ptr_sub(p,&h.back.peers[0]))
-    p.records=host_make(h,Record,h.desc.replication.records)
+    p.records=host_make(h,Record,h.records)
     for desc,i in h.channels {
         if i<h.channel_count || (i>=USER_CHANNELS && h.desc.protocol!=nil) {channel_allocate(h,&p.channels[i],desc)}
     }
@@ -245,13 +303,14 @@ peer_reset :: proc(h:^Host,p:^Peer,address:Address) {
     p.client_salt,p.server_salt,p.cookie,p.stamp=0,0,0,0
     p.started,p.last_send,p.last_receive,p.next_handshake=now,now,now,now
     p.send_counter,p.recv_counter,p.send_seq,p.sent_tail,p.recv_bits,p.late_bits,p.ack_known=0,0,0,0,{},0,0
-    p.recv_any,p.ack_pending,p.has_rtt=false,false,false
+    p.recv_any,p.ack_pending,p.has_rtt,p.ack_chunks=false,false,false,0
     p.record_head,p.record_tail=0,0
     p.rtt,p.rtt_variance,p.jitter=0,0,0
-    p.rate=f64(h.desc.send_rate)
+    p.rate,p.starting=CC_START_RATE,true
     p.tokens,p.token_time=send_burst(h,p.rate),now
     p.min_rtt,p.window_min,p.window_time=0,0,now
-    p.cc_time,p.cc_rtt,p.cc_acked,p.cc_lost,p.cc_samples,p.cc_limited=now,0,0,0,0,false
+    p.cc_time,p.cc_rtt,p.cc_samples,p.cc_acked,p.cc_lost,p.cc_limited=now,0,0,0,0,false
+    p.delivered,p.cc_delivered,p.channel_turn=0,0,0
     p.rate_time,p.rate_sent,p.rate_received=now,0,0
     p.stats={}
     p.secure={}
@@ -350,29 +409,40 @@ peer_service :: proc(h:^Host,p:^Peer) {
     }
 }
 
-@(private) CC_QUEUE_DELAY :: 0.06 // s of RTT above the smallest that mean a queue is building on the path
-@(private) CC_LOSS_SHARE :: 0.02  // share of an interval's datagrams lost that, with that queue, is congestion
-@(private) CC_WINDOW :: 60.0      // s over which the smallest RTT is remembered: longer than any queue lasts
+@(private) CC_START_RATE :: 256<<10 // bytes per second a connection starts at
+@(private) CC_MIN_RATE :: 16<<10    // bytes per second congestion control does not go below
+@(private) CC_MAX_RATE :: 1<<30
+@(private) CC_GROWTH :: 2<<20       // bytes per second gained each second that wants more and finds no queue
+@(private) CC_QUEUE_DELAY :: 0.02   // s of RTT above the smallest, besides two datagrams at the rate, that is a queue
+@(private) CC_LOSS_SHARE :: 0.02    // share of an interval's datagrams lost that, with that queue, is congestion
+@(private) CC_OVERRUN_SHARE :: 0.2  // share lost that is congestion with or without a queue: a buffer overflows
+@(private) CC_WINDOW :: 60.0        // s over which the smallest RTT is remembered: longer than any queue lasts
 
-// Additive increase, multiplicative decrease of the byte rate, steered by the queue the connection builds
-// on its path: the RTT of an interval above the smallest one of the last CC_WINDOW seconds. Losses alone do
-// not cut the rate, so a link that drops datagrams at random keeps it. A queue cuts it by a tenth, before
-// the buffer overflows; a queue with losses, by a quarter. An interval without a queue that wanted to send
-// more than the rate allowed adds send_rate/128.
+// The rate starts low and doubles each interval that wanted more than it allowed, until the path shows a
+// queue: the mean RTT of an interval above the smallest of the last CC_WINDOW seconds. Then the rate
+// drops below what the path delivered in that interval, by a fifth, or by more with the losses of a
+// buffer that overflows, and from there grows by the same CC_GROWTH a second while it wants more and
+// finds no queue: connections that share a path converge to equal shares, and the queue stays short for
+// what else travels on it. A slow path grows by at most a quarter of its rate each interval. Losses
+// without a queue do not cut the rate, so a link that drops datagrams at random keeps it.
 @(private)
 congestion_update :: proc(h:^Host,p:^Peer) {
     now:=h.back.now
-    if now-p.cc_time<max(2*p.rtt,0.1) {return}
-    ceiling:=f64(h.desc.send_rate)
-    floor:=min(f64(h.desc.min_send_rate),ceiling)
+    elapsed:=now-p.cc_time
+    // Long enough to see the effect of the last change, and a few datagrams at the rate.
+    if elapsed<(p.has_rtt?max(2*p.rtt,0.02,4*PACKET_BYTES/p.rate):0.1) {return}
     acked,lost:=p.stats.packets_acked-p.cc_acked,p.stats.packets_lost-p.cc_lost
-    queued:=p.cc_samples>0 && p.cc_rtt/f64(p.cc_samples)-p.min_rtt>CC_QUEUE_DELAY
-    if queued {
-        congested:=lost>0 && f64(lost)>CC_LOSS_SHARE*f64(acked+lost)
-        p.rate=max(p.rate*(congested?0.75:0.9),floor)
+    delivered:=f64(p.delivered-p.cc_delivered)/elapsed
+    // Two datagrams at the rate are not a queue: a slow link takes that long to carry them.
+    queued:=p.cc_samples>0 && p.cc_rtt/f64(p.cc_samples)-p.min_rtt>CC_QUEUE_DELAY+2*PACKET_BYTES/p.rate
+    overrun:=acked+lost>=16 && f64(lost)>CC_OVERRUN_SHARE*f64(acked+lost)
+    if queued || overrun {
+        congested:=overrun || lost>0 && f64(lost)>CC_LOSS_SHARE*f64(acked+lost)
+        p.rate=clamp(min(p.rate,delivered)*(congested?0.7:0.8),CC_MIN_RATE,CC_MAX_RATE)
+        p.starting=false
         p.stats.send_limit_cuts+=1
     } else if p.cc_limited {
-        p.rate=min(p.rate+ceiling/128,ceiling)
+        p.rate=min(p.starting?p.rate*2:p.rate+min(CC_GROWTH*min(elapsed,1),p.rate/4),CC_MAX_RATE)
     }
     if now-p.window_time>CC_WINDOW {
         if p.window_min>0 {p.min_rtt=p.window_min}
@@ -383,7 +453,7 @@ congestion_update :: proc(h:^Host,p:^Peer) {
     }
     p.stats.send_limit=f32(p.rate)
     p.cc_time,p.cc_rtt,p.cc_samples,p.cc_limited=now,0,0,false
-    p.cc_acked,p.cc_lost=p.stats.packets_acked,p.stats.packets_lost
+    p.cc_acked,p.cc_lost,p.cc_delivered=p.stats.packets_acked,p.stats.packets_lost,p.delivered
 }
 
 // Tokens the bucket holds at most: one tick of the rate, so that a connection paces its datagrams over
@@ -529,7 +599,7 @@ handshake_accept :: proc(h:^Host,p:^Peer) {
 host_protocol_hash :: proc(h:^Host) -> u64 {
     hash:=base.hash_combine(h.desc.protocol!=nil?h.desc.protocol.hash:0,TRANSPORT_VERSION)
     for c in h.channels[:USER_CHANNELS] {
-        hash=base.hash_combine(base.hash_combine(hash,u64(c.kind)<<32|u64(c.max_message_bytes)),u64(c.window))
+        hash=base.hash_combine(base.hash_combine(hash,u64(c.kind)<<32|u64(c.max_message_bytes)),u64(c.kind==.Reliable?channel_chunks(c.queue_bytes):0))
     }
     return hash
 }
@@ -717,7 +787,12 @@ record_push :: proc(p:^Peer,record:Record) -> bool {
 @(private)
 peer_resolve :: proc(h:^Host,p:^Peer,seq:u16,received:bool) {
     sent:=&p.sent[seq%SENT_WINDOW]
-    if received {p.stats.packets_acked+=1} else {p.stats.packets_lost+=1}
+    if received {
+        p.stats.packets_acked+=1
+        p.delivered+=u64(sent.bytes)
+    } else {
+        p.stats.packets_lost+=1
+    }
     p.stats.loss+=((received?0:1)-p.stats.loss)*0.02
     for i in sent.first..<sent.first+u32(sent.count) {
         record:=p.records[i%u32(len(p.records))]
@@ -732,9 +807,9 @@ peer_receive :: proc(h:^Host,p:^Peer,r:^serial.Bit_Reader,counter:u64) -> bool {
     now:=h.back.now
     has_ack:=serial.bit_read_bool(r)
     ack:=u16(serial.bit_read(r,16))
-    ack_bits,ack_count:=ack_bits_read(r)
+    ack_bits,ack_count,acks_ok:=ack_bits_read(r)
     delay:=f64(serial.bit_read(r,8))*0.001
-    if r.error {return false}
+    if !acks_ok || r.error {return false}
     if p.recv_any && counter<=p.recv_counter {
         // Within the window of acknowledgements and not received before: it came late. What in it is safe
         // out of order is taken; it is not acknowledged, so the sender resends the rest as if it were lost.
@@ -793,8 +868,9 @@ peer_wants_send :: proc(h:^Host,p:^Peer) -> bool {
     b:=&h.back
     idle:=b.now-p.last_send
     if b.send_pending || b.clock_due {return true}
-    if idle>=h.desc.keepalive || (p.ack_pending && idle>=ACK_DELAY) {return true}
+    if idle>=h.desc.keepalive || (p.ack_pending && (idle>=ACK_DELAY || p.ack_chunks>=ACK_EVERY)) {return true}
     if idle>=1/f64(h.desc.tick_rate) && channels_pending(p) {return true}
+    if u16(p.send_seq-p.sent_tail)<SENT_WINDOW-1 && min(p.tokens+(b.now-p.token_time)*p.rate,send_burst(h,p.rate))>=PACKET_BYTES && channels_streaming(p) {return true}
     return p.sent_tail!=p.send_seq && idle>=clamp(p.rtt*2+p.rtt_variance*4,0.1,1)
 }
 
@@ -809,7 +885,7 @@ peer_send :: proc(h:^Host,p:^Peer) {
     }
     for &c in p.channels {c.spent=0}
     budget:=repl_budget(h,p)
-    for packet in 0..<h.desc.packets_per_update {
+    for packet:=0;;packet+=1 {
         if u16(p.send_seq-p.sent_tail)>=SENT_WINDOW-1 {break}
         if packet>0 && p.tokens<=0 {break}
         first_record:=p.record_tail
@@ -824,7 +900,7 @@ peer_send :: proc(h:^Host,p:^Peer) {
         yield:=b.repl.key_cursor<b.repl.key_count && budget>0?min(budget,PACKET_BYTES*4):0
         if channels_write(h,p,&w,SECTION_RESERVE,yield) {wrote=true}
         more:=false
-        last:=packet+1>=h.desc.packets_per_update || u16(p.send_seq+1-p.sent_tail)>=SENT_WINDOW-1 || p.tokens<=PACKET_BYTES
+        last:=u16(p.send_seq+1-p.sent_tail)>=SENT_WINDOW-1 || p.tokens<=PACKET_BYTES
         if objects_write(h,p,&w,seq,&budget,&more,last) {wrote=true}
         if packet>0 && !wrote {
             p.record_tail=first_record
@@ -836,7 +912,7 @@ peer_send :: proc(h:^Host,p:^Peer) {
         p.send_counter+=1
         p.tokens-=f64(len(bytes))
         p.last_send=b.now
-        p.ack_pending=false
+        p.ack_pending,p.ack_chunks=false,0
         p.stats.packets_sent+=1
         p.stats.bytes_sent+=u64(len(bytes))
         transport_send(h,p.address,bytes)

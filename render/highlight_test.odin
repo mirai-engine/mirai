@@ -5,9 +5,9 @@ import "core:testing"
 @(test)
 highlight_filter_bounds_cover_silhouette_glow_and_eye_plane :: proc(t: ^testing.T) {
 	instances := [3]Gpu_Instance{
-		{bounds_min = {-0.5, -0.5, -0.5}, bounds_max = {0.5, 0.5, 0.5, 0}, meta = {0, 0, 0, 1 << INSTANCE_HIGHLIGHT_SHIFT}},
-		{bounds_min = {-100, -100, -100}, bounds_max = {100, 100, 100, 0}},
-		{bounds_min = {-100, -100, -100}, bounds_max = {100, 100, 100, 0}, meta = {0, 0, 0, (1 << INSTANCE_HIGHLIGHT_SHIFT) | INSTANCE_FLAG_HIDDEN}},
+		{bounds_min = {-0.5, -0.5, -0.5, 0}, bounds_max = {0.5, 0.5, 0.5, 0}, meta = {0, 0, 0, 1 << INSTANCE_HIGHLIGHT_SHIFT}},
+		{bounds_min = {-100, -100, -100, 0}, bounds_max = {100, 100, 100, 0}},
+		{bounds_min = {-100, -100, -100, 0}, bounds_max = {100, 100, 100, 0}, meta = {0, 0, 0, (1 << INSTANCE_HIGHLIGHT_SHIFT) | INSTANCE_FLAG_HIDDEN}},
 	}
 	camera := Camera{position = {0, 0, 5}, forward = {0, 0, -5}, up = {0, 1, 0}, fov_y = 50, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	view, proj, _ := camera_matrices(camera, 1.6)
@@ -22,10 +22,10 @@ highlight_filter_bounds_cover_silhouette_glow_and_eye_plane :: proc(t: ^testing.
 	instances[0].bounds_min.x += 100; instances[0].bounds_max.x += 100
 	offscreen := highlight_screen_bounds(instances[:], proj * view, {}, {800, 500}, {400, 250}, 3)
 	testing.expect(t, offscreen.x > offscreen.z || offscreen.y > offscreen.w, "Offscreen selections perform no outline filtering on drawable pixels")
-	instances[0].bounds_min = {-0.5, -0.5, 4.5}; instances[0].bounds_max = {0.5, 0.5, 5.5, 0}
+	instances[0].bounds_min = {-0.5, -0.5, 4.5, 0}; instances[0].bounds_max = {0.5, 0.5, 5.5, 0}
 	testing.expect_value(t, highlight_screen_bounds(instances[:], proj * view, {}, {800, 500}, {400, 250}, 3), Vec4{0, 0, 1, 1})
 	// What is drawn only as its outline is outlined although it is hidden.
-	ghost := [1]Gpu_Instance{{bounds_min = {-0.5, -0.5, -0.5}, bounds_max = {0.5, 0.5, 0.5, 0}, meta = {0, 0, 0, (1 << INSTANCE_HIGHLIGHT_SHIFT) | INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_OUTLINE_ONLY}}}
+	ghost := [1]Gpu_Instance{{bounds_min = {-0.5, -0.5, -0.5, 0}, bounds_max = {0.5, 0.5, 0.5, 0}, meta = {0, 0, 0, (1 << INSTANCE_HIGHLIGHT_SHIFT) | INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_OUTLINE_ONLY}}}
 	outlined := highlight_screen_bounds(ghost[:], proj * view, {}, {800, 500}, {400, 250}, 3)
 	testing.expect(t, outlined.x < 0.5 && outlined.z > 0.5 && outlined.y < 0.5 && outlined.w > 0.5, "An outline-only instance has the region of its silhouette")
 }
