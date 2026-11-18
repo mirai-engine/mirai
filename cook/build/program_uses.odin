@@ -13,14 +13,14 @@ import "mirai:std/base"
 // What the assets of a project draw its Surface programs as, which the
 // generation compiles their stages for (shaders.Options.uses): a material
 // that names a program draws it by its alpha mode (Opaque for opaque and
-// masked, Blend for blended), and one an overlay of another material names
+// masked, Blend for blended and transmissive), and one an overlay of another material names
 // as an overlay. An asset of a kind whose plugin declares program_uses
 // (project.Asset_Kind) draws so the programs of the materials it depends on,
 // and of those the meshes it depends on name. What a program says of itself
 // (`//! use`) the generation adds. Sorted by program; problem: a plugin
 // names a use that does not exist.
 program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[]shaders.Program_Uses_Of,problem:string) {
-    Material :: struct {program:string,alpha:asset.Alpha_Mode,overlays:[]base.Asset_Id}
+    Material :: struct {program:string,blended:bool,overlays:[]base.Asset_Id}
     Drawing :: struct {dependencies:[]base.Asset_Id,uses:abi.Program_Uses}
     materials:=make(map[base.Asset_Id]Material,context.temp_allocator)
     meshes:=make(map[base.Asset_Id][]base.Asset_Id,context.temp_allocator)
@@ -59,7 +59,9 @@ program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[
             if error!=.None {return}
             overlays:=make([]base.Asset_Id,len(view.overlays),context.temp_allocator)
             for overlay,i in view.overlays {overlays[i]=overlay.material}
-            materials[file.blob.header.id]={strings.clone(base.text_get(view.info.program[:]),context.temp_allocator),view.info.alpha_mode,overlays}
+            // A transmissive material is drawn blended unless it is masked.
+            blended:=view.info.alpha_mode==.Blend || view.info.transmission>0 && view.info.alpha_mode!=.Mask
+            materials[file.blob.header.id]={strings.clone(base.text_get(view.info.program[:]),context.temp_allocator),blended,overlays}
         case ".mesh":
             dependencies:=make([dynamic]base.Asset_Id,context.temp_allocator)
             if header,_,_,error:=asset.import_peek(path,types,&dependencies);error==.None {meshes[header.id]=dependencies[:]}
@@ -85,7 +87,7 @@ program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[
         if m,known:=materials[id];known && m.program!="" {found[m.program]=found[m.program]+uses}
     }
     for id,m in materials {
-        add(&found,materials,id,{.Blend} if m.alpha==.Blend else {.Opaque})
+        add(&found,materials,id,{.Blend} if m.blended else {.Opaque})
         for overlay in m.overlays {add(&found,materials,overlay,{.Overlay})}
     }
     for drawing in drawings {
