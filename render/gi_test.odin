@@ -204,11 +204,13 @@ the_shares_of_the_lights_and_the_world_scale_the_indirect_light :: proc(t: ^test
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
-// The frame that shows a world anew gathers its light at once (gi_warm): the
-// indirect light it shows is near the one it settles at. A world shown again
+// The frames that show a world anew gather its light (gi_warm), each within
+// the budget of any frame: its first frame updates the probes once and traces
+// no more of them than a steady frame may, and the indirect light comes near
+// the one it settles at within GI_WARM_UPDATES frames. A world shown again
 // (scene_world) takes back the light it had: its first frame shows it.
 @(test)
-a_world_shows_its_light_from_its_first_frame :: proc(t: ^testing.T) {
+a_world_gathers_its_light_in_its_first_frames_within_a_frame_budget :: proc(t: ^testing.T) {
 	f: Gi_Fixture
 	defer gi_fixture_destroy(&f)
 	if !gi_indirect_fixture(t, &f) {return}
@@ -216,9 +218,18 @@ a_world_shows_its_light_from_its_first_frame :: proc(t: ^testing.T) {
 	gi_restart(r)
 	gi_setup(&f, .Interior)
 	lamp_world := r.world_key
-	first := gi_mean_after(t, &f, 1)
+	most: u32
+	for frame in 0 ..< 4 {
+		updates := r.light_frame
+		testing.expect(t, renderer_frame(r, {camera = f.camera, time = r.time + 1.0 / 60, inspection = {mode = .Indirect}}), r.error)
+		rhi.device_wait_idle(f.device)
+		testing.expectf(t, r.light_frame - updates == 1, "frame %d of a world shown anew updates the probes %d times", frame, r.light_frame - updates)
+		most = max(most, r.stats.probes_traced)
+	}
+	testing.expectf(t, most > 0 && most <= r.ddgi.budget, "the first frames of a world shown anew trace %d probes, past the %d of a frame", most, r.ddgi.budget)
+	first := gi_mean_after(t, &f, GI_WARM_UPDATES - 4)
 	settled := gi_mean_after(t, &f, 600)
-	testing.expectf(t, abs(first - settled) < 0.03 * settled, "a world shown anew shows %.4g nits of indirect light in its first frame, %.4g once settled", first, settled)
+	testing.expectf(t, abs(first - settled) < 0.03 * settled, "a world shown anew shows %.4g nits of indirect light after %d frames, %.4g once settled", first, GI_WARM_UPDATES, settled)
 	scene_world(r, lamp_world + 1)
 	gi_setup(&f, .Emissive)
 	_ = gi_mean_after(t, &f, 60)

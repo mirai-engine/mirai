@@ -34,9 +34,6 @@ PROBE_HISTOGRAM_WORDS :: PROBE_BUCKETS + 4
 // The indirect dispatches of the update passes, in words: the trace, the
 // passes per probe and the passes per 32 probes.
 PROBE_DISPATCH_WORDS :: 12
-// Probes an update traces at most while it gathers the light of a world
-// shown anew (gi_warm), several updates in one frame.
-PROBE_WARM_BUDGET :: 2048
 // Seconds a change keeps the probes it reaches traced.
 PROBE_AWAKE :: f32(1)
 
@@ -134,7 +131,7 @@ ddgi_ensure :: proc(r: ^Renderer) -> bool {
 	rows := (g.total + g.per_row - 1) / g.per_row
 	g.rays_per_probe = clamp(settings.probe_rays / 32 * 32, 32, 256)
 	g.budget = clamp(settings.probe_budget, 1, g.total)
-	room := max(g.budget, min(PROBE_WARM_BUDGET, g.total))
+	room := g.budget
 	d := r.device
 	g.probes = rhi.buffer_create(d, {size = u64(g.total) * size_of(Gpu_Probe), usage = {.Storage}, name = "probes"})
 	g.buckets = rhi.buffer_create(d, {size = u64(g.total) * 4, usage = {.Storage}, name = "probe buckets"})
@@ -161,9 +158,9 @@ ddgi_ensure :: proc(r: ^Renderer) -> bool {
 	return true
 }
 
-// Probes the list of the chosen has room for.
+// Probes the list of the chosen has room for: those of an update.
 @(private)
-ddgi_room :: proc "contextless" (g: ^Ddgi_State) -> u32 {return max(g.budget, min(PROBE_WARM_BUDGET, g.total))}
+ddgi_room :: proc "contextless" (g: ^Ddgi_State) -> u32 {return g.budget}
 
 // Where the list of the chosen counts the rays an update traced and the hits it lit, in bytes.
 @(private)
@@ -298,12 +295,11 @@ ddgi_frame_constants :: proc(r: ^Renderer, f: ^Gpu_Frame) {
 
 // The probes of the frame: marked by the changes the scene lists and the
 // pixels of the view, chosen by priority, traced, and their atlases and
-// places updated. `warm`: one of the updates that gather the light of a world
-// shown anew in one frame, with a larger budget, as after a change everywhere.
-// `first`: the first update of the frame, which takes what changed since the
-// last one.
+// places updated, with what changed since the last update. `warm`: one of
+// the updates that gather the light of a world shown anew, which take every
+// probe in turn, as after a change everywhere.
 @(private)
-ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
+ddgi_update :: proc(p: ^Pass, warm := false) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
 	g := &r.ddgi
 	h := &r.probe_hits
@@ -317,13 +313,13 @@ ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 	// their rays read from the volume around have settled.
 	awake := u32(math.ceil(PROBE_AWAKE / max(r.delta_time, 1.0 / 240)))
 	changes := &r.scene.changes
-	budget := min(PROBE_WARM_BUDGET, g.total) if warm else g.budget
+	budget := g.budget
 	room := ddgi_room(g)
 	if h.clear {
 		rhi.cmd_fill_buffer(cmd, h.slots, 0, u64(h.count) * size_of(Probe_Slot), 0)
 		h.clear = false
 	}
-	if first {
+	{
 		stamp := frame_number + 1
 		// The sun that turned gives every caster another shadow.
 		if changes.all || r.frame_occluders.sun {g.lit_everywhere = stamp}
@@ -358,9 +354,7 @@ ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 		rhi.cmd_dispatch(cmd, groups(groups(t.width, 8), 8), groups(groups(t.height, 8), 8))
 	}
-	// The passes of the first update are timed apart; the warm updates of a frame would pass the timestamps it has.
-	stamp :: proc(cmd: ^rhi.Command_List, first: bool, name: string) {if first {rhi.cmd_timestamp(cmd, name)}}
-	stamp(cmd, first, "ddgi select")
+	rhi.cmd_timestamp(cmd, "ddgi select")
 	rhi.cmd_fill_buffer(cmd, g.histogram, 0, PROBE_HISTOGRAM_WORDS * 4, 0)
 	Select :: struct {mode, budget, frame_number, rays_per_probe, total, awake, whole, room, slots, seen_everywhere, lit_everywhere, pad0: u32}
 	select := Select{budget = budget, frame_number = frame_number, rays_per_probe = g.rays_per_probe, total = g.total, awake = awake, whole = 1 if warm else 0, room = room, slots = h.count, seen_everywhere = g.seen_everywhere, lit_everywhere = g.lit_everywhere}
@@ -382,7 +376,7 @@ ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 		room = room, changes = u32(h.listed_count), changes_lost = h.lost, seen_everywhere = g.seen_everywhere, lit_everywhere = g.lit_everywhere, slots = h.count,
 	}
 	// The rays, then what waits for the programs of what they hit.
-	stamp(cmd, first, "ddgi trace")
+	rhi.cmd_timestamp(cmd, "ddgi trace")
 	batch := points_begin(p)
 	trace := pipeline_of(r, .Ddgi_Trace)^
 	rhi.cmd_bind_pipeline(cmd, trace)
@@ -396,10 +390,10 @@ ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 	points_bind(p)
 	textures_feedback_bind(r, cmd)
 	rhi.cmd_dispatch_indirect(cmd, g.dispatch, 0)
-	if batch {stamp(cmd, first, "ddgi programs")}
+	if batch {rhi.cmd_timestamp(cmd, "ddgi programs")}
 	points_rounds(p, batch, trace, &update, 1)
 	for pipeline, i in ([2]Pipeline_Id{.Ddgi_Irradiance, .Ddgi_Distance}) {
-		stamp(cmd, first, "ddgi irradiance" if i == 0 else "ddgi distance")
+		rhi.cmd_timestamp(cmd, "ddgi irradiance" if i == 0 else "ddgi distance")
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[pipeline])
 		set_params(cmd, &update)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, g.rays)
@@ -409,14 +403,14 @@ ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 		rhi.cmd_bind_buffer(cmd, SLOT_PROBES, g.probes)
 		rhi.cmd_dispatch_indirect(cmd, g.dispatch, 12)
 	}
-	stamp(cmd, first, "ddgi keep")
+	rhi.cmd_timestamp(cmd, "ddgi keep")
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Ddgi_Keep])
 	set_params(cmd, &update)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, g.irradiance)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, g.chosen)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, g.kept)
 	rhi.cmd_dispatch_indirect(cmd, g.dispatch, 12)
-	stamp(cmd, first, "ddgi relocate")
+	rhi.cmd_timestamp(cmd, "ddgi relocate")
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Ddgi_Relocate])
 	set_params(cmd, &update)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, g.rays)

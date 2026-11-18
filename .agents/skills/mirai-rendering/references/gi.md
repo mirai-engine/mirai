@@ -101,8 +101,8 @@ Each technique states its status; what is listed as prepared is not implemented.
   the light sees; everything on a general change). The probes it reaches are traced at once and
   stay awake `PROBE_AWAKE` while the light travels through the bounces.
 - **Blackout.** A change of more than half of the light that reaches the volume is a general
-  change that warms the volume over `GI_BLACKOUT_FRAMES`: the later light is seen in the frames
-  in which it passes (`render/blackout.odin`).
+  change that warms the volume over `GI_BLACKOUT_UPDATES` frames: the later light is seen in the
+  frames in which it passes (`render/blackout.odin`).
 
 ## Contact occlusion
 
@@ -259,13 +259,15 @@ keeps `Renderer_Desc.worlds` (edit and play).
   kept of it with `world_light_forget`: when it returns it starts without light and warms up.
 - Each view starts another history and takes its exposure at once
   ([exposure](display.md#exposure)); the next frame keeps the `delta_time` of the previous one.
-- **Warm-up.** The frame that shows a world without light (and the one that follows
-  `renderer_reset_history`) updates the volume `GI_WARM_UPDATES` times, like Lumen's
-  `ForceFullUpdate`, each with up to `PROBE_WARM_BUDGET` probes and one more bounce: the light of
-  its first frame ends up close to the settled one. A blackout spreads it over a few frames, so as
-  not to stall the game. A change of the layout of the probes (`renderer_apply_settings`) leaves
-  every world without light: probes that start from nothing and are traced a few a frame settle
-  dark where their rays met what had no light yet, and nothing wakes them.
+- **Warm-up.** The frames that show a world without light (and those after
+  `renderer_reset_history`) gather it over `GI_WARM_UPDATES` frames, each one update over every
+  probe in turn and one more bounce; a blackout does the same over `GI_BLACKOUT_UPDATES`. No frame,
+  the first of a world either, updates the volume more than once or traces more than the budget of
+  a frame: a first frame that traced many updates at once outlasted the time a driver gives a
+  submission while the GPU was shared. A change of the layout of the probes
+  (`renderer_apply_settings`) leaves every world without light: probes that start from nothing and
+  are traced a few a frame settle dark where their rays met what had no light yet, and nothing
+  wakes them.
 - **New scale.** A change of light scale carries the histories and the irradiance atlases to it in
   the next frame (`history_scale.comp`); nothing starts over. A light thousands of times stronger
   than the others, even if it reaches nothing, leaves that of the room intact: the atlases and
