@@ -23,20 +23,38 @@ or interleave its own passes.
      a candidate for phase 1.
    - One thread per cluster of the chunks: the level cut (`cut.slang`, projected error against
      `lod_error_pixels`), frustum, normal cone (closed meshes only) and the pyramid. A visible one
-     enters the visible list (instance, cluster) and counts in the instance count of the phase's
-     draw; one that the pyramid hides stays a candidate for phase 1. One of a material with a
-     Surface program goes to the program list, which `cull_programs.comp` distributes per program
-     with one indirect draw per program and phase.
+     enters the visible list (instance, cluster, and where its triangles and posed vertices are:
+     `visible_entry`) and counts in the instance count of the phase's draw; one that the pyramid
+     hides stays a candidate for phase 1. One of a material with a Surface program goes to the
+     program list, which `cull_programs.comp` distributes per program with one indirect draw per
+     program and phase; so does, in its bin 0, one of no program whose triangles are not small
+     (`VISIBILITY_TRIANGLE_PIXELS` over the pixels across its box at rest): for large triangles
+     the vertices of the rasterizer cost less than the pixels of the visibility.
    - An instance with all its blend materials is not drawn here; one with blend triangles that
      passes the tests (in any phase) turns on the glass passes with their dispatch sizes.
-3. **gbuffer**
-   - One non-indexed indirect draw per phase, 384 vertices per instance and one instance per
-     visible cluster: the vertex shader reads the cluster from the list and its triangle per
-     vertex (the triangles that do not pass collapse). Then, one per Surface program in use, with
-     its pipeline ([programs](materials.md#surface-programs-in-rays-and-raster)). The fragment
-     shader reads the material row of the cluster's slot and its textures from the table, without
-     binds per material or per object. Mask: discards below the threshold; blend: not drawn here.
-     The same on Vulkan and Metal, without mesh shaders or 64-bit atomics.
+3. **visibility** and **gbuffer**
+   - Each phase draws the visibility of the view (`visibility_pass`): one non-indexed indirect
+     draw, 384 vertices per instance and one instance per visible cluster, whose vertices hand the
+     fragment only the instance, the cluster and the triangle (the triangles that do not pass
+     collapse); each pixel keeps the nearest triangle as its instance and primitive, and its
+     linear depth, which the depth pyramid between the phases reads. The fade of the instance and
+     the mask of the material are decided there, the mask sampled as the rasterizer would from
+     the triangle at the pixel (`visible_input.slang`; that of a program as a ray reads it).
+     Before it, the clusters of the program list leave their depth with the vertices of their
+     G-buffer and its fade and mask (`gbuffer_depth.frag`), and no triangle where they are in front.
+     Why: a forest of triangles smaller than a pixel drew every attribute of each vertex (three
+     a triangle) and its material per fragment; the rasterizer itself costs little.
+   - After both phases, the G-buffer: the clusters of the program list, one draw per program
+     with its pipeline ([programs](materials.md#surface-programs-in-rays-and-raster)) and bin 0
+     with `gbuffer.frag`, where their depth stayed (the test of the depth before the stage, which
+     writes texture feedback), so each pixel is shaded once;
+     then `gbuffer_visible.frag` draws each other pixel as `gbuffer.frag` would: the attributes of
+     its triangle interpolated where the ray of the pixel crosses it, and their derivatives from
+     the triangle at the next pixels (`MATERIAL_GRADIENTS`), so textures filter as rasterized.
+     The material row of the cluster's slot and its textures come from the table, without binds
+     per material or per object; blend is not drawn here. A view with a clip plane draws the
+     G-buffer with the rasterizer alone (`gbuffer_pass`). The same on Vulkan and Metal, without
+     mesh shaders or 64-bit atomics.
    - The targets are encoded by `gbuffer.frag` and the passes read them only with
      `include/gbuffer.slang` (`gbuffer_read`, `gbuffer_normal`, `gbuffer_shading`).
    - A reflectance target exists only while a visible instance has an opaque material that does

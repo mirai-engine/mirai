@@ -9,8 +9,9 @@
 // cluster. Phase 0 tests against last frame's pyramid and lists the clusters
 // it hides as candidates of phase 1; phase 1 against this frame's. A posed
 // mesh has no boxes of its clusters: the instance stands for them. Blended
-// clusters are the glass passes'. Those of materials with a Surface program
-// go to a list of their own, which cull_programs.comp sorts by program.
+// clusters are the glass passes'. Those of materials with a Surface program,
+// and those whose triangles are not small (bin 0), go to a list of their
+// own, which cull_programs.comp sorts by program.
 #include "cut.slang"
 #include "cull_common.slang"
 #include "cull_programs.slang"
@@ -20,8 +21,8 @@
 
 // The clusters phase 0 found hidden: the instance and the cluster among those of its mesh.
 [[vk::binding(SLOT_PASS3, 0)]] RWStructuredBuffer<uint2> cluster_candidates : register(MIRAI_REGISTER(u, SLOT_PASS3), space0);
-// The visible clusters of both phases: the instance, and the cluster as a word of the index pool.
-[[vk::binding(SLOT_PASS6, 0)]] RWStructuredBuffer<uint2> visible : register(MIRAI_REGISTER(u, SLOT_PASS6), space0);
+// The visible clusters of both phases, each as scene.visible_entry gives it.
+[[vk::binding(SLOT_PASS6, 0)]] RWStructuredBuffer<uint4> visible : register(MIRAI_REGISTER(u, SLOT_PASS6), space0);
 // The pages of streamed meshes the cut asks for: the first word counts them,
 // the second the requests that found no entry, and from PAGE_REQUEST_FIRST a
 // table of params.pages.w entries (a power of two), each the mesh, the page,
@@ -87,12 +88,21 @@ bool cluster_programmed(uint index, Mesh mesh, uint ordinal, uint phase, uint pr
     return true;
 }
 
+// A cluster with more triangles than the square of the pixels across its box
+// over this goes to the visible list, whose visibility costs a pixel, not a
+// vertex (render.visibility_pass); one of larger triangles to bin 0 of the
+// program list, which the rasterizer draws after it. The box of sparse ones,
+// as the twigs and leaves of a tree, spans far more than they cover.
+#define VISIBILITY_TRIANGLE_PIXELS 64.0
+
 // Lists a visible cluster in the draw of the phase, which counts as many as
-// fit, or in the list of the clusters of Surface programs.
-void cluster_visible(uint index, Mesh mesh, uint ordinal, Cluster c) {
+// fit, or in the program list: by its Surface program, or in bin 0 when its
+// triangles are not small.
+void cluster_visible(uint index, Mesh mesh, uint ordinal, Cluster c, bool small) {
     uint phase = min(params.phase, 1u);
     uint program = materials[material_of(scene_instance(index), cluster_material(mesh, c))].shared.program_id;
-    if (program != 0u && program < params.programs) {
+    if (program >= params.programs) program = 0u;
+    if (params.programs > 0u && (program != 0u || !small)) {
         if (!cluster_programmed(index, mesh, ordinal, phase, program)) return;
     } else {
         uint base = phase == 0u ? 0u : cull_state[CULL_DRAW0 + 1u];
@@ -104,7 +114,7 @@ void cluster_visible(uint index, Mesh mesh, uint ordinal, Cluster c) {
             InterlockedAdd(stats[0].dropped[1], 1u);
             return;
         }
-        visible[base + slot] = uint2(index, mesh_cluster_word(mesh, ordinal));
+        visible[base + slot] = visible_entry(index, mesh_cluster_word(mesh, ordinal));
         InterlockedMax(cull_state[(phase == 0u ? CULL_DRAW0 : CULL_DRAW1) + 1u], slot + 1u);
     }
     page_stamp(mesh, c);
@@ -146,6 +156,13 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
     bool boxed = !posed || posed_bounds(mesh, ordinal, pose);
     if (!posed) cluster_world_box(inst, mesh, c, low, high);
     else if (boxed) instance_world_box(inst, pose.low, pose.high, low, high);
+    // Whether its triangles are small: by the pixels across its box at rest
+    // from its nearest point (a pose has no boxes of its clusters).
+    float3 rest_low, rest_high;
+    cluster_world_box(inst, mesh, c, rest_low, rest_high);
+    Detail detail = view_detail();
+    float across = length(rest_high - rest_low) / detail_width(detail, detail_span(detail, rest_low, rest_high).x);
+    bool small = float(cluster_triangle_count(c)) * VISIBILITY_TRIANGLE_PIXELS > across * across;
     // What the vertex hook moves of an instance of a batch stays in its box grown by its reach.
     if (!posed && instance_batched(index)) {
         float reach = batch_reach(batch_row(batch_of(index)));
@@ -184,5 +201,5 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
             }
         }
     }
-    cluster_visible(index, mesh, ordinal, c);
+    cluster_visible(index, mesh, ordinal, c, small);
 }
