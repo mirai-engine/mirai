@@ -26,7 +26,7 @@ ref_set :: proc(s:^Store,namespace,name:string,hash:Hash) -> Error {
     path:=ref_file(s,namespace,name,&buffer) or_return
     folder_make(join(&folder_buffer,s.root,"refs",namespace) or_return) or_return
     text:[64]u8
-    return file_write(s.root,path,transmute([]u8)hex(hash,&text))
+    return file_write(s.root,path,{transmute([]u8)hex(hash,&text)})
 }
 
 ref_remove :: proc(s:^Store,namespace,name:string) -> Error {

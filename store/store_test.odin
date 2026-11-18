@@ -3,6 +3,7 @@ package store
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "core:time"
 import "mirai:std/base"
 import "mirai:std/blake3"
 
@@ -185,34 +186,58 @@ receiving_resumes_after_reopening_and_reads_the_pieces_it_has :: proc(t:^testing
 }
 
 @(test)
-sweep_keeps_exactly_the_live_blobs :: proc(t:^testing.T) {
+sweep_keeps_live_young_and_undeletable_blobs :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"store-sweep");if folder=="" {return}
     s,ok:=test_store(t,folder);if !ok {return}
     defer close(&s)
-    hashes:[5]Hash
+    hashes:[7]Hash
+    now:=time.now()
+    old:=time.time_add(now,-2*BLOB_GRACE_AGE)
+    young:=time.time_add(now,-BLOB_GRACE_AGE/2)
     bytes:i64
     for &hash,i in hashes {
         data:=test_bytes(1000*(i+1),u64(i)+20)
         hash,_=put_bytes(&s,data)
         bytes+=i64(len(data))
+        test_blob_time(t,&s,hash,young if i==0 else old)
+        test_table_time(t,&s,hash,young if i==6 else old)
     }
     partial:=test_bytes(PIECE_BYTES+1,30)
     partial_hash:=test_address(partial)
     testing.expect_value(t,receive_begin(&s,partial_hash,i64(len(partial)),test_table(partial)),Error.None)
     total,_:=usage(&s)
-    testing.expect_value(t,total,Usage{bytes=bytes,blobs=5})
+    testing.expect_value(t,total,Usage{bytes=bytes,blobs=len(hashes)})
+    testing.expect_value(t,remove(&s,hashes[5]),Error.None)
+    table_keep(&s,hashes[5],6000,test_table(test_bytes(6000,25)))
+    test_table_time(t,&s,hashes[5],old)
     stale,fresh:=join_test(folder,"tmp/stale",0),join_test(folder,"tmp/fresh",0)
     testing.expect(t,os.write_entire_file(stale,[]u8{1})==nil && os.write_entire_file(fresh,[]u8{1})==nil)
-    old:=os.modification_time_by_path(stale) or_else {}
-    testing.expect(t,os.change_times(stale,old,{_nsec=old._nsec-2*i64(TMP_STALE)})==nil)
+    test_set_time(t,stale,time.time_add(now,-2*TMP_STALE))
     unknown:Hash
     unknown[0]=0xee
-    freed,error:=sweep(&s,{hashes[3],unknown,hashes[1]})
+    path,path_error:=blob_path(&s,hashes[2],context.temp_allocator)
+    if !testing.expect_value(t,path_error,Error.None) {return}
+    when ODIN_OS==.Windows {
+        reader,reader_error:=reader_open(&s,hashes[2])
+        if !testing.expect_value(t,reader_error,Error.None) {return}
+        defer reader_close(&reader)
+    } else {
+        shard:=os.dir(path)
+        if !testing.expect(t,os.change_mode(shard,os.perm_number(0o555))==nil) {return}
+        defer os.change_mode(shard,os.perm_number(0o755))
+    }
+    swept,error:=sweep(&s,{hashes[3],unknown,hashes[1]},now)
     testing.expect_value(t,error,Error.None)
-    testing.expect_value(t,freed,Usage{bytes=1000+3000+5000,blobs=3})
-    for hash,i in hashes {testing.expectf(t,has(&s,hash)==(i==1 || i==3),"blob %d",i)}
+    testing.expect_value(t,swept.freed,Usage{bytes=5000+7000,blobs=2})
+    testing.expect_value(t,swept.skipped,1)
+    for hash,i in hashes {
+        testing.expectf(t,has(&s,hash)==(i<4),"blob %d",i)
+        buffer:[PATH_BYTES]u8
+        table,_:=table_file(&s,hash,&buffer)
+        testing.expectf(t,os.is_file(table)==(i<4 || i==6),"table %d",i)
+    }
     total,_=usage(&s)
-    testing.expect_value(t,total,Usage{bytes=2000+4000,blobs=2})
+    testing.expect_value(t,total,Usage{bytes=1000+2000+3000+4000,blobs=4})
     _,missing_error:=receive_missing(&s,partial_hash,context.temp_allocator)
     testing.expect_value(t,missing_error,Error.None)
     testing.expect(t,!os.exists(stale) && os.exists(fresh),"sweep removes only stale temporary files")
@@ -221,6 +246,25 @@ sweep_keeps_exactly_the_live_blobs :: proc(t:^testing.T) {
     testing.expect_value(t,remove(&s,partial_hash),Error.None)
     _,missing_error=receive_missing(&s,partial_hash,context.temp_allocator)
     testing.expect_value(t,missing_error,Error.Missing)
+}
+
+@(private)
+test_set_time :: proc(t:^testing.T,path:string,at:time.Time,loc:=#caller_location) {
+    testing.expect(t,os.change_times(path,at,at)==nil,loc=loc)
+}
+
+@(private)
+test_blob_time :: proc(t:^testing.T,s:^Store,hash:Hash,at:time.Time,loc:=#caller_location) {
+    buffer:[PATH_BYTES]u8
+    path,_:=blob_file(s,hash,&buffer)
+    test_set_time(t,path,at,loc)
+}
+
+@(private="file")
+test_table_time :: proc(t:^testing.T,s:^Store,hash:Hash,at:time.Time) {
+    buffer:[PATH_BYTES]u8
+    path,_:=table_file(s,hash,&buffer)
+    test_set_time(t,path,at)
 }
 
 // Receives every piece but piece 0, whose bytes and mark are then written as
@@ -272,13 +316,15 @@ completion_publishes_only_the_bytes_it_checked :: proc(t:^testing.T) {
     data:=test_bytes(3*PIECE_BYTES+3,60)
     hash:=test_full_unfinished(t,&s,data)
     c:Claim
-    testing.expect_value(t,partial_claim(&s,hash,&c),Error.None)
+    now:=time.now()
+    testing.expect_value(t,partial_claim(&s,hash,&c,now),Error.None)
     complete,error:=claim_verify(&s,hash,&c)
     testing.expect(t,error==.None && complete)
     // Meanwhile another receiver completes it, a sweep removes it and a third begins again.
     _,put_error:=put_bytes(&s,data)
     testing.expect_value(t,put_error,Error.None)
-    _,sweep_error:=sweep(&s,nil)
+    test_blob_time(t,&s,hash,time.time_add(now,-2*BLOB_GRACE_AGE))
+    _,sweep_error:=sweep(&s,nil,now)
     testing.expect_value(t,sweep_error,Error.None)
     testing.expect_value(t,receive_begin(&s,hash,i64(len(data)),test_table(data)),Error.None)
     testing.expect_value(t,receive_piece(&s,hash,2,test_piece(data,2)),Error.None)

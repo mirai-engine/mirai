@@ -3,6 +3,7 @@ package store
 import "base:runtime"
 import "core:crypto"
 import "core:os"
+import "core:time"
 
 // A content-addressed store of the machine: blobs named by their address and
 // refs, mutable names of an address. Several Store values and processes share
@@ -42,7 +43,7 @@ open :: proc(root:string,allocator:=context.allocator) -> (s:Store,error:Error) 
     }
     buffer:[PATH_BYTES]u8
     folder_make(trimmed) or_return
-    for folder in ([5]string{"blobs","tables","partial","refs","tmp"}) {
+    for folder in ([6]string{"blobs","tables","partial","refs","leases","tmp"}) {
         folder_make(join(&buffer,trimmed,folder) or_return) or_return
     }
     layout_check(trimmed) or_return
@@ -88,7 +89,7 @@ layout_check :: proc(root:string) -> Error {
         return .None
     }
     if open_error!=.Not_Exist {return .Io}
-    return file_write(root,path,transmute([]u8)string(LAYOUT))
+    return file_write(root,path,{transmute([]u8)string(LAYOUT)})
 }
 
 // Copies parts joined by '/' into buffer.
@@ -131,18 +132,28 @@ os_error :: proc(error:os.Error) -> Error {
 // Writes chunks to a file of the root's tmp folder and renames it to path,
 // which then holds all of it or what it held before.
 @(private)
-file_write :: proc(root:string,path:string,chunks:..[]u8) -> Error {
+file_write :: proc(root,path:string,chunks:[][]u8,modified:Maybe(time.Time)=nil) -> Error {
     temp_buffer:[PATH_BYTES]u8
     temp,file:=temp_create(root,&temp_buffer) or_return
-    write_error:os.Error
+    write_error:Error
     for chunk in chunks {
-        if write_error==nil {_,write_error=os.write(file,chunk)}
+        if write_error==.None {
+            n,error:=os.write(file,chunk)
+            write_error=os_error(error)
+            if error==nil && n!=len(chunk) {write_error=.Io}
+        }
     }
     sync_error:=os.sync(file)
     os.close(file)
-    if write_error!=nil || sync_error!=nil {
+    if write_error!=.None || sync_error!=nil {
         os.remove(temp)
-        return os_error(write_error) if write_error!=nil else .Io
+        return write_error if write_error!=.None else .Io
+    }
+    if at,ok:=modified.?;ok {
+        if time_error:=os.change_times(temp,at,at);time_error!=nil {
+            os.remove(temp)
+            return os_error(time_error)
+        }
     }
     if os.rename(temp,path)!=nil {
         os.remove(temp)
