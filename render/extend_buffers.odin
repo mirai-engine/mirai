@@ -135,8 +135,7 @@ Pass_Light_Part :: struct {
 // 0, the root of them and of the scene, which takes what its two children
 // give, as light_tree_group does; and those that do not, in a tree no
 // traversal of shadows meets. scene_root: the root of the lights of the
-// scene that cast shadows, or the leaf of none of the part with shadows
-// without them.
+// scene, or the leaf of none of the part with shadows without them.
 Pass_Lights :: struct {
 	shadows, shadowless: Pass_Light_Part,
 	scene_root:          u32,
@@ -184,7 +183,7 @@ pass_lights :: proc(s: ^Stage_Pass, lights, nodes: u32) -> (room: Pass_Lights, o
 	scene_lights := u32(len(scene.lights))
 	room.shadows = {first_light = scene_lights, capacity = region.lights, root = 1}
 	if region.shadowless > 0 {room.shadowless = {first_light = scene_lights + region.lights + 1, capacity = region.shadowless, root = light_region_shadowless(region)}}
-	room.scene_root = first if int(first) < len(scene.light_tree) && light_node_holds(scene.light_tree[first]) else 2 * region.lights
+	room.scene_root = first if int(first) < len(scene.light_tree) else 2 * region.lights
 	return room, true
 }
 

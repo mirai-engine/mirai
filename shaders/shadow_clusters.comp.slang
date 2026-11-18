@@ -3,9 +3,9 @@
 // a group for each chunk shadow_maps.comp handed over, a thread for each of
 // its clusters. A cluster in the cut of the map that reaches into the
 // window of its job, where its box is known (at rest, or posed by the skin this
-// frame), goes to the list shadow_map.vert draws: those of masked or blended
-// materials to the draw that takes their coverage, and those of glass also to
-// the draw of the tint. Clusters past the room of
+// frame), goes to the list shadow_map.vert draws: those of instances with
+// masked or blended materials to the draw that takes their coverage, and
+// those of glass also to the draw of the tint. Clusters past the room of
 // their draw are counted, and the list grows for the frames after.
 #include "trace.slang"
 #include "cut.slang"
@@ -59,7 +59,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
             if (!shadow_map_reaches(m, low, high)) return;
         }
     }
-    bool tested = ((inst.tested >> cluster_slot(c)) & 1u) != 0u;
+    bool tested = (inst.meta.w & INSTANCE_FLAG_ALPHA_TESTED) != 0u;
     if ((work.y & SHADOW_CHUNK_DEPTH) != 0u) shadow_add(tested ? SHADOW_DRAW_TESTED : SHADOW_DRAW_OPAQUE, uint4(instance, k, job, 0u));
     if ((work.y & SHADOW_CHUNK_GLASS) != 0u) shadow_add(SHADOW_DRAW_GLASS, uint4(instance, k, job, 0u));
 }

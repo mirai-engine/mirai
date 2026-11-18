@@ -120,7 +120,7 @@ displaced_swap :: proc(r: ^Renderer, index: u32, mesh: Mesh_Handle) {
 	s.instance_next[index], s.instance_prev[index] = head, -1
 	if head >= 0 {s.instance_prev[head] = i32(index)}
 	m.first_instance = i32(index)
-	inst.meta.x = u32(mesh) | u32(ray_cut_always(m^)) << INSTANCE_RAY_SHIFT | inst.meta.x & INSTANCE_UNSHADOWED
+	inst.meta.x = u32(mesh) | u32(ray_cut_always(m^)) << INSTANCE_RAY_SHIFT
 	s.ray_cuts_stale = true
 	if !pose_instance_box(s, index) {
 		instance_touch(s, index)

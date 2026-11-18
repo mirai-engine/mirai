@@ -91,7 +91,7 @@ a_batch_casts_the_shadows_and_shows_in_the_reflections_of_its_instances :: proc(
 		batched[i] = batch_instance(p, 1, {0.4, 2, 0.6})
 		colors[i] = batch_color(color, 0)
 	}
-	sun := Sun_Desc{direction = {0.70710678, 0.70710678, 0}, color = {1, 1, 1}, illuminance = 1.5 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	sun := Sun_Desc{direction = {0.70710678, 0.70710678, 0}, color = {1, 1, 1}, illuminance = 1.5 * math.PI, enabled = true}
 	sky := Environment{sky = {0.3, 0.4, 0.6}}
 	camera := Camera{position = {0, 7, 4}, forward = {0, -7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	// The shadow of the middle post falls away from the sun; the mirror 0.75 m in front of it reflects it.
@@ -163,7 +163,7 @@ a_native_tlas_larger_than_the_upload_ring_is_built_and_met :: proc(t: ^testing.T
 	defer delete(batched)
 	batched[0] = batch_instance({0, 1, 0}, 1, {0.4, 2, 0.4})
 	for &b, i in batched[1:] {b = batch_instance({f32(i % 300) * 2 - 300, -200, f32(i / 300) * 2 - 300}, 1, {0.4, 0.4, 0.4})}
-	sun := Sun_Desc{direction = {0.70710678, 0.70710678, 0}, color = {1, 1, 1}, illuminance = 1.5 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	sun := Sun_Desc{direction = {0.70710678, 0.70710678, 0}, color = {1, 1, 1}, illuminance = 1.5 * math.PI, enabled = true}
 	camera := Camera{position = {0, 7, 4}, forward = {0, -7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 500, exposure = UNIT_EXPOSURE}
 	shadow := trace_pixel(r, camera, {-1, 0, 0})
 	scene_given(r, {floor}, nil, sun, {sky = {0.3, 0.4, 0.6}})

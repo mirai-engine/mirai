@@ -1184,38 +1184,3 @@ an_override_of_a_renamed_field_or_component_survives_an_update_of_its_stale_inst
     _,old_name:=scene_component(&scene,"Glow")
     testing.expect(t,!old_name)
 }
-
-@(private="file") Lamp_Saved :: struct {intensity:f32}
-@(private="file") Lamp_Now :: struct {intensity:f32,share:f32}
-
-// A document written with plain types, given the schema of a world whose
-// type says what a value starts as, carries that default: a value stored
-// before a field existed reads it as the default, not as zero.
-@(test)
-a_document_of_plain_types_carries_the_defaults_of_the_world :: proc(t:^testing.T) {
-    world:serial.Schema;serial.schema_init(&world);defer serial.schema_destroy(&world)
-    lamp,_:=serial.schema_add(&world,Lamp_Now)
-    start:=Lamp_Now{share=1}
-    testing.expect(t,serial.schema_default_set(&world,lamp,mem.ptr_to_bytes(&start)))
-    types:Types;types_init(&types);defer types_destroy(&types)
-    types.defaults=&world
-    scene:Scene
-    if !testing.expect_value(t,scene_init(&scene,&types,{1,1}),Error.None) {return}
-    defer scene_destroy(&scene)
-    _,added:=scene_entity_add(&scene,1,0,"lamp")
-    testing.expect_value(t,added,Error.None)
-    now:=Lamp_Now{intensity=3,share=2}
-    testing.expect_value(t,scene_set(&scene,1,"Lamp",&now),Error.None)
-    table,found:=scene_component(&scene,"Lamp")
-    if !testing.expect(t,found) {return}
-
-    saved:serial.Schema;serial.schema_init(&saved);defer serial.schema_destroy(&saved)
-    old_type,_:=serial.schema_add(&saved,Lamp_Saved)
-    m:serial.Migration
-    testing.expect_value(t,serial.migration_init(&m,&saved,old_type,&scene.doc.schema,scene.doc.tables[table].columns[1].type),serial.Schema_Error.None)
-    defer serial.migration_destroy(&m)
-    old:=Lamp_Saved{intensity=7}
-    read:Lamp_Now
-    serial.migration_apply(&m,mem.ptr_to_bytes(&read),mem.ptr_to_bytes(&old),1)
-    testing.expect_value(t,read,Lamp_Now{intensity=7,share=1})
-}

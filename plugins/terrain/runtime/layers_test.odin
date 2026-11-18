@@ -263,13 +263,10 @@ the_table_of_the_layers_holds_each_layer_where_the_program_reads_it :: proc(t:^t
         at:=4*(texel+LAYERS_TEXELS*layer)
         return u32(pixels[at])|u32(pixels[at+1])<<8|u32(pixels[at+2])<<16|u32(pixels[at+3])<<24
     }
-    // Its tiling as the program reads it: repeats a metre, near and far, and
-    // where far takes over.
     for i in 0..<6 {
         testing.expect_value(t,word(pixels,i,0),max(u32))
-        testing.expect_value(t,transmute(f32)word(pixels,i,4),1/f32(i+1))
-        testing.expect_value(t,transmute(f32)word(pixels,i,5),i==0?0:1/f32(10*i))
-        testing.expect(t,abs(transmute(f32)word(pixels,i,7)-(math.log2(f32(FAR_PIXELS)/f32(i+1))+1))<1e-5)
+        testing.expect_value(t,transmute(f32)word(pixels,i,4),f32(i+1))
+        testing.expect_value(t,transmute(f32)word(pixels,i,5),f32(10*i))
         testing.expect_value(t,pixels[4*(3+LAYERS_TEXELS*i)+2],u8(128))
     }
 }

@@ -56,7 +56,7 @@ renderer_calls_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^tes
 		light.direction_cone = {0, 0, 0, GPU_LIGHT_POINT}
 	}
 	light_descs: [3]Light_Desc
-	for &light, i in light_descs {light = {position = {f32(i) * 3, 1, 0}, color = {1, 1, 1}, intensity = 10, range = 5, indirect = 1, scattering = 1}}
+	for &light, i in light_descs {light = {position = {f32(i) * 3, 1, 0}, color = {1, 1, 1}, intensity = 10, range = 5}}
 	pixels: [8 * 8 * 4]u8
 	for &value, i in pixels {value = u8(i * 7)}
 	materials := [3]Material_Desc{DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL}

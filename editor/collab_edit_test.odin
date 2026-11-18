@@ -61,7 +61,7 @@ an_edit_of_another_end_makes_entities_that_its_other_rows_name_by_id :: proc(t:^
 
 // The scene of the host replaces the World only when all of it got there: one
 // that fails halfway, after its entities were made, leaves the World as it
-// was, and one that loads replaces it, as does the one a host sends.
+// was, and one that loads replaces it.
 @(test)
 a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^testing.T) {
     f:=new(Play_Test);defer free(f)
@@ -114,15 +114,6 @@ a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^tes
     box:=core.entity_of(&world.entities,base.Entity_Id(101))
     local,found:=core.get(&world.transforms,box)
     testing.expect(t,found && local.position==[3]f32{0,3,0})
-
-    // What a host sends of its scene is that scene: the guest loads the same entities.
-    peer:Collab_Peer
-    defer collab_peer_free(&peer)
-    if !testing.expect(t,collab_snapshot_send(&f.s,st,&peer)) || !testing.expect_value(t,len(peer.out),1) {return}
-    sent:=peer.out[0]
-    testing.expect_value(t,Collab_Message(sent[0]),Collab_Message.Snapshot)
-    testing.expect(t,collab_snapshot_load(&f.s,st,sent[1:]))
-    testing.expect_value(t,world.entities.alive,64)
 }
 
 // Selecting holds nothing: what another editor of the session has selected

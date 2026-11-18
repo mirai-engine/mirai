@@ -17,7 +17,7 @@ import mm "mirai:std/math"
 
 IMPORTER_NAME :: "mirai-import"
 // Of the writer: raise it when import_write gives other bytes for the same model.
-IMPORTER_VERSION :: 14
+IMPORTER_VERSION :: 11
 
 // What Import_Info.importer_version holds: the version of the writer in the
 // low 16 bits and the one of the format the source was read with in the high
@@ -38,7 +38,6 @@ Error_Code :: enum u8 {
     Limit,       // more than an asset can hold
     Tool,        // an external tool failed or is missing
     Write,       // an asset could not be written
-    Changed,     // a document it writes over was changed since it last wrote it (Import_Options.changed)
 }
 
 // message lives in context.temp_allocator of the caller.
@@ -60,7 +59,6 @@ Import_Options :: struct {
     registry:^asset.Registry, // the scanned assets of root, which the import does not change; nil: it scans them
     world:^core.World_Info,   // the types of the game of root, which the prefab of a model is written in
     rebuild:bool,        // writes every asset, also one whose file already is the one the import would write
-    changed:Changed,     // what becomes of a document it writes over that was changed since it last wrote it
     texture_cache:string, // folder of textures built before, kept by image and settings (textures.cache_read); "": none
     // A texture is built Fast unless the texture cache keeps it as Final
     // (textures.Encode_Speed): the imports of the editor, which a cook
@@ -78,13 +76,6 @@ Import_Options :: struct {
     worker:jobs.Worker_Ref,
     progress:^Progress, // where it says how far it is as it writes; nil: nowhere
 }
-
-// What an import does with the documents it writes over that were changed
-// since it last wrote them (outputs_changed). Refuse: it writes nothing and
-// fails with Error_Code.Changed, naming them, so whoever imports decides.
-// Discard: it writes over them. Keep: it leaves them as they are, imports the
-// rest and warns of each: what an import nobody asked for (sync) does.
-Changed :: enum u8 {Refuse,Discard,Keep}
 
 // A zone of the import that base.profile_end ends.
 zone_begin :: #force_inline proc "contextless" (options:Import_Options,name:string) -> base.Profile_Scope {
@@ -114,7 +105,6 @@ Imported_Image :: struct {
     normal_map:bool,
     green_down:bool,     // a normal map whose green points down the image: it is turned to +Y up
     alpha_cutoff:f32,    // above 0: the base color of a masked material
-    alpha_fill:f32,      // above 0: the base color of outlines cut from a mask with this cutoff (cutout.odin)
     keep_precision:bool, // its source asks for the precision of its 16 bits or floats (textures.Build_Options)
     channels:textures.Channels, // what each channel of its texture is made of (a gloss map turned into roughness); the zero value keeps them
     cooked:^Cooked_Texture, // built ahead by model_cook; nil when not
@@ -132,17 +122,6 @@ Imported_Material :: struct {
     // the texture of one of kind Texture is the image parameter_images names.
     parameters:[]asset.Material_Parameter,
     parameter_images:[]int,         // by parameter: row of the model's images, -1 for none
-    // Of a masked material with a program, what its mask keeps, which its
-    // cards are cut to (cutout.odin); without, they keep their mask.
-    mask:Maybe(Imported_Mask),
-}
-
-// The mask of a material whose program decides its alpha: the texels of an
-// image whose alpha reaches cutoff, read through mapping (its texture unused).
-Imported_Mask :: struct {
-    image:int, // row of the model's images
-    mapping:asset.Material_Map,
-    cutoff:f32,
 }
 
 Imported_Slot :: struct {
@@ -167,7 +146,6 @@ Imported_Mesh :: struct {
     bounds_min,bounds_max:[3]f32,
     // The colliders the source gives, in the space of the mesh: its collision.
     collision:Mesh_Collision,
-    outlines:Mesh_Outlines, // the coarser outlines of the cards cut from a mask
     cooked:^Cooked_Mesh, // built ahead by model_cook; nil when not
 }
 

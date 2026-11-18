@@ -220,46 +220,6 @@ schema_import_copies_each_type_once :: proc(t:^testing.T) {
     testing.expect_value(t,schema_validate(&dst),Schema_Error.None)
 }
 
-@(private="file") Lamp_V1 :: struct {intensity:f32}
-@(private="file") Lamp_V2 :: struct {intensity:f32,share:f32,tint:[3]f32}
-
-// A value saved before a field existed reads it as what its type starts as:
-// the default a schema gives the type goes with it through its binary form
-// and an import, and a migration into it starts from it, not from zeros.
-@(test)
-a_field_a_stored_value_lacks_takes_the_default_of_its_type :: proc(t:^testing.T) {
-    old_schema:Schema;schema_init(&old_schema);defer schema_destroy(&old_schema)
-    old_type,_:=schema_add(&old_schema,Lamp_V1)
-    world:Schema;schema_init(&world);defer schema_destroy(&world)
-    new_type,_:=schema_add(&world,Lamp_V2)
-    start:=Lamp_V2{intensity=5,share=1,tint={1,1,1}}
-    testing.expect(t,schema_default_set(&world,new_type,bytes_of(&start)))
-    testing.expect(t,!schema_default_set(&world,new_type,bytes_of(&start)[:4]),"an image of another size is refused")
-
-    // The document that holds the new layout carries the default, through an import and its binary form.
-    document:Schema;schema_init(&document);defer schema_destroy(&document)
-    hashes:[dynamic]u64;defer delete(hashes)
-    link:Schema_Import;schema_import_init(&link,&document,&hashes,&world);defer schema_import_destroy(&link)
-    imported:=schema_import(&link,new_type)
-    w:Writer;writer_init(&w);defer writer_destroy(&w)
-    schema_write(&w,&document)
-    r:=reader_init(writer_bytes(&w))
-    stored:Schema
-    testing.expect_value(t,schema_read(&r,&stored),Schema_Error.None)
-    defer schema_destroy(&stored)
-    testing.expect(t,slice.equal(stored.types[imported].default,bytes_of(&start)),"the binary schema keeps the default")
-
-    old:=Lamp_V1{intensity=7}
-    m:Migration;migration_init(&m,&old_schema,old_type,&stored,imported);defer migration_destroy(&m)
-    read:Lamp_V2
-    migration_apply(&m,bytes_of(&read),bytes_of(&old),1)
-    testing.expect_value(t,read,Lamp_V2{intensity=7,share=1,tint={1,1,1}})
-    // What whoever reads gives wins over the type's own.
-    given:=Lamp_V2{share=2}
-    migration_apply(&m,bytes_of(&read),bytes_of(&old),1,bytes_of(&given))
-    testing.expect_value(t,read,Lamp_V2{intensity=7,share=2})
-}
-
 @(test)
 value_write_zeroes_padding_transient_fields_and_text_tails :: proc(t:^testing.T) {
     Padded :: struct {a:u8,b:u32,name:[8]u8 `mirai:"text"`,cache:u16 `mirai:"transient"`,c:u8}

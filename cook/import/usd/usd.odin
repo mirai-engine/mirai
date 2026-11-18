@@ -88,7 +88,6 @@ Usd_Import :: struct {
     prims:[]Usd_Prim,
     paths:map[string]int,          // path of a prim to its position in prims
     materials:map[int]int,         // Material prim to its row in the model, -1 when it is not imported
-    two_sided:int,                 // the row of the default material of the doubleSided meshes without one; -1 before the first
     composed:bool,
 }
 
@@ -221,7 +220,7 @@ usd_import :: proc(r:^importer.Reader,source:string,composed:bool) -> bool {
         if axis=="Z" {space.axes={.Negative_X,.Z,.Y}} else if axis!="Y" {return importer.fail(r,.Malformed,"upAxis of the USD file must be Y or Z")}
     }
     importer.source_space(r,space) or_return
-    u:=Usd_Import{r=r,prims=parser.prims[:],two_sided=-1,composed=composed}
+    u:=Usd_Import{r=r,prims=parser.prims[:],composed=composed}
     u.paths.allocator=context.temp_allocator;u.materials.allocator=context.temp_allocator
     for prim,i in parser.prims {u.paths[prim.path]=i}
     prim_nodes:=make([]int,len(parser.prims),context.temp_allocator)
@@ -259,16 +258,6 @@ usd_import :: proc(r:^importer.Reader,source:string,composed:bool) -> bool {
         case "Mesh":
             material:=usd_material(&u,usd_binding(&u,i))
             if importer.failed(r) {return importer.fail_prefix(r,prim.path)}
-            // doubleSided is of the mesh: the material it shows is seen from both sides.
-            if sides,found:=prim.properties["doubleSided"];found && (usd_string(sides)=="1" || usd_string(sides)=="true") {
-                if material<0 && u.two_sided<0 {
-                    images:[asset.Material_Map_Kind]int
-                    for &image in images {image=-1}
-                    u.two_sided=importer.material_add(r,"two-sided",len(r.materials),asset.MATERIAL_DEFAULTS,images)
-                }
-                if material<0 {material=u.two_sided}
-                r.materials[material].info.two_sided=true
-            }
             if material>=0 {
                 for image,slot in r.materials[material].images {
                     if image>=0 && importer.material_map(&r.materials[material].info,slot).uv_set==1 {

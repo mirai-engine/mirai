@@ -53,8 +53,9 @@ Reflections :: enum u8 {
 // size alone.
 Settings :: struct {
 	gi_enabled:           bool,
+	gi_strength:          f32,
 	trace_mode:           Trace_Mode,
-	resolution:           u32,    // the lines the views of the window aim for together, as a fraction of the lines they span, never above one pixel per point nor under RENDER_SCALE_MIN of one: the cost per pixel does not grow with the output; 0, native: the lines they span
+	resolution:           u32,    // the lines the views of the window aim for together, as a fraction of the lines they span, never above one pixel per point nor under RENDER_SCALE_MIN of one: the cost per pixel does not grow with the output
 	taa:                  bool,   // temporal anti-aliasing / upscaling to the window resolution
 	lod_error_pixels:     f32,    // raster LOD switch threshold (0 = always full detail)
 	batch_min_pixels:     f32,    // an instance of a batch whose box is fewer pixels across is not rasterized, and fades out from twice that; rays still meet it. 0: every one is drawn
@@ -102,8 +103,8 @@ DEFAULT_HIGHLIGHT_STYLE :: Highlight_Style{
 }
 
 DEFAULT_SETTINGS :: Settings{
-	gi_enabled = true, trace_mode = .Auto, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
-	probe_spacing = 1.0, probe_grid = 16, probe_cascades = 6, probe_rays = 128, probe_budget = 640,
+	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, resolution = 1080, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
+	probe_spacing = 1.0, probe_grid = 16, probe_cascades = 5, probe_rays = 128, probe_budget = 512,
 	gi_max_distance = 1e4, sun_shadows = true, light_budget = 8, direct_samples = 15,
 	firefly_clamp = 20, texture_max_size = 2048,
 	texture_pool_megabytes = 1024, page_pool_bytes = 256 << 20,
@@ -121,7 +122,7 @@ REFLECTION_SHARED_ROUGHNESS :: abi.REFLECTION_SHARED_ROUGHNESS
 
 // Conservative budgets for software rasterizers (lavapipe, SwiftShader).
 CPU_DEVICE_SETTINGS :: Settings{
-	gi_enabled = true, trace_mode = .Auto, resolution = 360, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
+	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, resolution = 360, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.5, probe_grid = 12, probe_cascades = 3, probe_rays = 64, probe_budget = 64,
 	gi_max_distance = 1e4, sun_shadows = true, light_budget = 4, direct_samples = 7,
 	firefly_clamp = 20, texture_max_size = 1024,
@@ -241,13 +242,6 @@ Stats :: struct {
 	visible_kinds:     [Visible_Kind_Id]Visible_Kind, // of the frame two frames ago, by kind of instance
 	visible_late:      Visible_Kind, // of those, what phase 1 of the occlusion drew
 	cull_dropped:      [Cull_List]u32, // what passed the capacities of the lists of the cull, which then grow
-	// What the resolve of the G-buffer of the last view culled shaded: each
-	// pixel of a triangle once, the lanes of their quads that ran only for
-	// derivatives, and the quads whose triangles do not continue one another
-	// that a program evaluated again, once per triangle.
-	resolved_pixels:   u32,
-	resolve_helpers:   u32,
-	resolve_quads_again: u32,
 	meshes:            u32,
 	triangles:         u64,
 	materials:         u32,
@@ -294,7 +288,7 @@ Stats :: struct {
 // One per stage: the tracer of its rays and the constants of its shaders
 // (`//! constant`) make the pipelines a frame asks for (pipeline_of).
 Pipeline_Id :: enum {
-	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Bins, Tlas_Batches,
+	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Programs, Tlas_Batches, Gbuffer,
 	Light_Grid_Count, Light_Grid_Scan, Light_Grid_Fill, Light_Grid_Weights, // the passes of the grid of the lights (light_grid.comp)
 	Direct_Maps, Direct_Rays, Direct_Samples, Direct_Points, Direct_Spread, Direct_Filter,
 	Ddgi_Trace, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
@@ -302,15 +296,12 @@ Pipeline_Id :: enum {
 	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Reflect, Translucent, Reflect_Resolve,
 	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Tint, Shadow_Map_Glass, Shadow_Map_Clear, Shadow_Map_Moved, // the cull of the maps of the shadows by instance and by cluster, their draws by what each writes, and the squares of the cache they clear or move
 	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Mean, Glass_Inside,
-	// The raster of the visibility target by raster bin (RASTER_BIN_*), then the same of a view with a clip plane.
-	Visibility, Visibility_Two_Sided, Visibility_Tested, Visibility_Tested_Two_Sided,
-	Visibility_Clip, Visibility_Two_Sided_Clip, Visibility_Tested_Clip, Visibility_Tested_Two_Sided_Clip,
-	Program_Depth, // the depth of the Surface program of each pixel, which its resolve tests
-	Resolve, Resolve_Plain, Resolve_Layers, // the G-buffer from the visibility target: with the reflectance target, without it, with the layers target
-	Resolve_Nested, Resolve_Nested_Plain, Resolve_Nested_Layers, // the same of the nested views of a view
+	Gbuffer_Plain, // without the reflectance target: no reflective instance in the frustum
+	Gbuffer_Layers, Gbuffer_Layers_Clip, Gbuffer_Nested_Layers, // with the layers target: an instance with layers in the frustum
 	Ui_World, Ui_Composite, Ui_Blur, Debug_Lines,
 	Skin, Skin_Triangles, Skin_Refit,
-	Nested_Prime, Nested_Reflectance, // of the nested views of a view
+	Gbuffer_Clip, Gbuffer_Plain_Clip, // of a view with a clip plane
+	Gbuffer_Nested, Gbuffer_Nested_Plain, Nested_Prime, Nested_Reflectance, // of the nested views of a view
 	Debug_Views,
 	History_Scale,
 	Air_Transmittance, Air_Scattering, Air_Sky, Air_Aerial,
@@ -345,8 +336,6 @@ PIPELINE_VARIANTS :: 64
 // in use at once share memory. Only textures: targets_frame reads a group as a list.
 Frame_Targets :: struct {
 	depth:                   rhi.Texture,
-	visibility:              rhi.Texture, // R32 uint: the triangle nearest at each pixel (visibility.slang)
-	program_depth:           rhi.Texture, // the depth of the Surface program of each pixel, which its resolve tests (vis_classify.frag)
 	albedo:                  rhi.Texture,
 	surface:                 rhi.Texture, // evaluated F0 as sRGB, encoded F90 in alpha; made when the scene first needs it
 	layers:                  rhi.Texture, // the layers of the materials (gbuffer.slang); made when the scene first needs it
@@ -911,7 +900,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	}
 	compute(list, r, .Cull, .Cull_Comp)
 	compute(list, r, .Cull_Clusters, .Cull_Clusters_Comp)
-	compute(list, r, .Cull_Bins, .Cull_Bins_Comp)
+	compute(list, r, .Cull_Programs, .Cull_Programs_Comp)
 	compute(list, r, .Tlas_Batches, .Tlas_Batches_Comp, .Hardware)
 	compute(list, r, .Light_Grid_Count, .Light_Grid_Comp)
 	compute(list, r, .Light_Grid_Scan, .Light_Grid_Scan_Comp)
@@ -955,45 +944,39 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Skin_Refit, .Skin_Refit_Comp, .Software)
 	compute(list, r, .Debug_Views, .Debug_Views_Comp, required = false)
 	ids := r.frame_layout.instance_ids
-	// The raster of the visibility target: the id of the nearest triangle, by
-	// the depth test; the back faces of what is not two-sided are left out.
-	for id in Pipeline_Id.Visibility ..= Pipeline_Id.Visibility_Tested_Two_Sided_Clip {
-		at := int(id) - int(Pipeline_Id.Visibility)
-		bin, clip := at % RASTER_BINS, at >= RASTER_BINS
-		tested := bin & RASTER_BIN_TESTED != 0
-		vertices := [2][2]Shader_Id{{.Gbuffer_Visibility_Vert, .Gbuffer_Visibility_Clip_Vert}, {.Gbuffer_Tested_Vert, .Gbuffer_Tested_Clip_Vert}}
-		vertex := vertices[1 if tested else 0][1 if clip else 0]
-		graphics(list, r, id, {
-			vertex = &r.shader_codes[vertex], fragment = &r.shader_codes[.Vis_Raster_Tested_Frag if tested else .Vis_Raster_Frag],
-			color_formats = {0 = .R32_Uint}, color_count = 1,
-			depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater,
-			cull = .None if bin & RASTER_BIN_TWO_SIDED != 0 else .Back, name = "visibility",
-		})
-	}
-	graphics(list, r, .Program_Depth, {
-		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Vis_Classify_Frag],
-		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, name = "program depth",
-	})
-	// The G-buffer each program resolves where the program depth is its own.
 	gbuffer := rhi.Graphics_Pipeline_Desc{
-		vertex = &r.shader_codes[.Vis_Resolve_Vert], fragment = &r.shader_codes[.Vis_Resolve_Frag],
+		vertex = &r.shader_codes[.Gbuffer_Batches_Vert], fragment = &r.shader_codes[.Gbuffer_Frag],
 		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RGBA16_Float, 4 = .R32_Float, 5 = .RGBA8_Srgb}, color_count = 6,
-		depth_format = .D32_Float, depth_test = true, depth_write = false, depth_compare = .Equal,
-		name = "resolve",
+		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None,
+		name = "gbuffer",
 	}
+	graphics(list, r, .Gbuffer, gbuffer_ids(gbuffer, ids))
 	plain := gbuffer
-	plain.fragment, plain.color_count, plain.name = &r.shader_codes[.Vis_Resolve_Plain_Frag], 5, "resolve without reflectance"
+	plain.fragment = &r.shader_codes[.Gbuffer_Plain_Frag]
+	plain.color_count = 5
+	plain.name = "gbuffer without reflectance"
+	graphics(list, r, .Gbuffer_Plain, gbuffer_ids(plain, ids))
 	layered := gbuffer
-	layered.fragment, layered.name = &r.shader_codes[.Vis_Resolve_Layers_Frag], "resolve with layers"
+	layered.fragment = &r.shader_codes[.Gbuffer_Layers_Frag]
 	layered.color_formats[6], layered.color_count = .RGBA32_Uint, 7
-	graphics(list, r, .Resolve, gbuffer_ids(gbuffer, ids))
-	graphics(list, r, .Resolve_Plain, gbuffer_ids(plain, ids))
-	graphics(list, r, .Resolve_Layers, gbuffer_ids(layered, ids))
-	for &desc in ([]^rhi.Graphics_Pipeline_Desc{&gbuffer, &plain, &layered}) {desc.fragment_constants = {VIS_RESOLVE_FRAG_NESTED}}
-	gbuffer.name, plain.name, layered.name = "resolve of a nested view", "resolve of a nested view, without reflectance", "resolve of a nested view, with layers"
-	graphics(list, r, .Resolve_Nested, gbuffer_ids(gbuffer, ids))
-	graphics(list, r, .Resolve_Nested_Plain, gbuffer_ids(plain, ids))
-	graphics(list, r, .Resolve_Nested_Layers, gbuffer_ids(layered, ids))
+	layered.name = "gbuffer with layers"
+	graphics(list, r, .Gbuffer_Layers, gbuffer_ids(layered, ids))
+	clipped, clipped_plain := gbuffer, plain
+	clipped.vertex, clipped_plain.vertex = &r.shader_codes[.Gbuffer_Clip_Vert], &r.shader_codes[.Gbuffer_Clip_Vert]
+	clipped.name, clipped_plain.name = "gbuffer with a clip plane", "gbuffer with a clip plane, without reflectance"
+	graphics(list, r, .Gbuffer_Clip, gbuffer_ids(clipped, ids))
+	graphics(list, r, .Gbuffer_Plain_Clip, gbuffer_ids(clipped_plain, ids))
+	clipped.fragment_constants, clipped_plain.fragment_constants = {GBUFFER_FRAG_NESTED}, {GBUFFER_FRAG_NESTED}
+	clipped.name, clipped_plain.name = "gbuffer of a nested view", "gbuffer of a nested view, without reflectance"
+	graphics(list, r, .Gbuffer_Nested, gbuffer_ids(clipped, ids))
+	graphics(list, r, .Gbuffer_Nested_Plain, gbuffer_ids(clipped_plain, ids))
+	clipped_layered := layered
+	clipped_layered.vertex = &r.shader_codes[.Gbuffer_Clip_Vert]
+	clipped_layered.name = "gbuffer with a clip plane, with layers"
+	graphics(list, r, .Gbuffer_Layers_Clip, gbuffer_ids(clipped_layered, ids))
+	clipped_layered.fragment_constants = {GBUFFER_FRAG_NESTED}
+	clipped_layered.name = "gbuffer of a nested view, with layers"
+	graphics(list, r, .Gbuffer_Nested_Layers, gbuffer_ids(clipped_layered, ids))
 	graphics(list, r, .Nested_Prime, {
 		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Nested_Prime_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, name = "nested view pixels",
@@ -1029,12 +1012,13 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	graphics(list, r, .Translucent, translucent, .Software)
 	translucent.fragment = &r.shader_codes[.Translucent_Hw_Frag]
 	graphics(list, r, .Translucent, translucent, .Hardware)
-	graphics(list, r, .Highlight, {
-		vertex = &r.shader_codes[.Gbuffer_Vert], vertex_constants = {GBUFFER_VERT_HIGHLIGHT}, fragment = &r.shader_codes[.Highlight_Frag],
-		color_formats = {0 = .RG32_Float}, color_count = 1,
-		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None,
-		name = "highlight mask",
-	})
+	highlight := gbuffer
+	highlight.vertex, highlight.vertex_constants = &r.shader_codes[.Gbuffer_Vert], {GBUFFER_VERT_HIGHLIGHT}
+	highlight.fragment = &r.shader_codes[.Highlight_Frag]
+	highlight.color_formats = {0 = .RG32_Float}
+	highlight.color_count = 1
+	highlight.name = "highlight mask"
+	graphics(list, r, .Highlight, highlight)
 	compute(list, r, .Highlight_Filter, .Highlight_Filter_Comp)
 	graphics(list, r, .Shadow_Map, {
 		vertex = &r.shader_codes[.Shadow_Map_Vert], fragment = &r.shader_codes[.Shadow_Map_Frag],
@@ -1412,7 +1396,7 @@ renderer_shaders_idle :: proc(r: ^Renderer) -> (idle: [Shader_Id]bool) {
 @(private)
 pipeline_uses_clip_distance :: proc(id:Pipeline_Id)->bool {
     #partial switch id {
-    case .Visibility_Clip,.Visibility_Two_Sided_Clip,.Visibility_Tested_Clip,.Visibility_Tested_Two_Sided_Clip,.Resolve_Nested,.Resolve_Nested_Plain,.Resolve_Nested_Layers,.Nested_Prime,.Nested_Reflectance: return true
+    case .Gbuffer_Clip,.Gbuffer_Plain_Clip,.Gbuffer_Layers_Clip,.Gbuffer_Nested,.Gbuffer_Nested_Plain,.Gbuffer_Nested_Layers,.Nested_Prime,.Nested_Reflectance: return true
     }
     return false
 }
@@ -1504,7 +1488,7 @@ renderer_set_thumbnails :: proc(r: ^Renderer, pixels: []u8, width, height: int, 
 // what was made with the fields that changed: histories, probes and targets
 // that do not depend on them stay.
 renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
-	if settings.probe_spacing <= 0 {return false}
+	if settings.resolution == 0 || settings.gi_strength < 0 || settings.probe_spacing <= 0 {return false}
 	if settings.probe_grid < 4 || settings.probe_grid > PROBE_GRID_MAX || settings.probe_grid % 2 != 0 || settings.probe_cascades < 1 || settings.probe_cascades > VOLUME_CASCADES_MAX {return false}
 	if !(settings.reflection_roughness >= 0 && settings.reflection_roughness <= 1) {return false}
 	if settings.light_budget > LIGHT_CUT_MAX || settings.reflection_light_budget > LIGHT_CUT_MAX || settings.glass_layers < 1 || settings.glass_layers > GLASS_LAYERS_MAX {return false}
@@ -1517,7 +1501,7 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	volume := old.probe_spacing != settings.probe_spacing || old.probe_grid != settings.probe_grid || old.probe_cascades != settings.probe_cascades || old.probe_rays != settings.probe_rays || old.probe_budget != settings.probe_budget
 	volume ||= old.colored_shadows != settings.colored_shadows || old.sun_shadows != settings.sun_shadows
 	// The light the probes gather, in the volume they have.
-	gathered := old.light_budget != settings.light_budget || old.sun_radius != settings.sun_radius
+	gathered := old.gi_strength != settings.gi_strength || old.light_budget != settings.light_budget || old.sun_radius != settings.sun_radius
 	if volume {ddgi_release(r)} else if gathered {scene_changed(&r.scene)}
 	// The worlds not shown kept light gathered with the settings before.
 	if volume || gathered {world_light_destroy(r)}
@@ -1834,9 +1818,9 @@ window_render_scale :: proc(r: ^Renderer, height: f32) -> f32 {
 }
 
 // Of the device pixels of views that span `height` of them, what a target of
-// lines draws the scene at; 0 lines, native: a pixel per point.
+// lines draws the scene at.
 views_render_scale :: proc "contextless" (lines: u32, height, density: f32) -> f32 {
-	if height <= 0 || lines == 0 {return 1 / density}
+	if height <= 0 {return 1 / density}
 	return min(max(f32(lines) / height, RENDER_SCALE_MIN / density), 1 / density)
 }
 
@@ -1867,8 +1851,6 @@ create_targets :: proc(r: ^Renderer, v: ^View_State, width, height: u32, scale: 
 	attachment := rhi.Texture_Usage{.Color_Target, .Sampled}
 	ok := full(r, t, &t.depth, .D32_Float, {.Depth_Target, .Sampled}, "depth") // sampled: a custom pass of a pipeline reads it
 	// sRGB keeps dark base colors free of banding in 8 bits; its alpha (metallic) stays linear.
-	ok &&= full(r, t, &t.visibility, .R32_Uint, attachment, "visibility")
-	ok &&= full(r, t, &t.program_depth, .D32_Float, {.Depth_Target}, "program depth")
 	ok &&= full(r, t, &t.albedo, .RGBA8_Srgb, attachment, "gbuffer albedo")
 	ok &&= full(r, t, &t.normal, .RGBA16_Float, attachment, "gbuffer normal")
 	ok &&= full(r, t, &t.emission, .RGBA16_Float, attachment, "gbuffer emission")

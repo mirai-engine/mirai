@@ -21,26 +21,6 @@ fog_volumes_go_to_the_shaders_relative_to_the_origin :: proc(t:^testing.T) {
     testing.expect_value(t,far.params.w,f32(245-1024))
 }
 
-// The base of a fog, where it has its density, is the bottom of its box, a
-// sphere or an outline raised by its base, and that of a plane its entity.
-@(test)
-the_base_of_a_fog_is_over_the_bottom_of_its_volume :: proc(t:^testing.T) {
-    pose:=mm.Transform{position={4,20,-3},rotation=1,scale={1,2,1}}
-    cases:=[]struct{place:volume.Volume,base,expected:f32}{
-        {volume.box({10,5,10}),0,10},
-        {volume.box({10,5,10}),7.5,17.5},
-        {volume.sphere(3),-1,13},
-        {volume.plane(),2,22},
-    }
-    for c in cases {
-        state:Fog_Gpu
-        fog:=FOG_VOLUME_DEFAULT
-        fog.base=c.base
-        volume_gpu(&state,fog,c.place,pose,nil)
-        testing.expectf(t,state.volumes[0].params.w==c.expected,"%v with base %v: %v, not %v",c.place.shape,c.base,state.volumes[0].params.w,c.expected)
-    }
-}
-
 // A medium another plugin adds is a box whose sides are the scale of its
 // transform, added to what is there; a dry one holds nothing and takes out
 // what carves.

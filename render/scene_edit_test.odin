@@ -604,8 +604,8 @@ occluders_list_what_moved_came_or_went_and_the_lights_that_moved :: proc(t: ^tes
 	testing.expect(t, mesh_remove(r, mesh))
 	testing.expect(t, s.occluders.count > 0, "the instances of a mesh that goes")
 
-	lights := [2]Light_Desc{{position = {0, 2, 0}, color = 1, intensity = 10, range = 5, indirect = 1, scattering = 1}, {position = {4, 2, 0}, color = 1, intensity = 10, range = 5, indirect = 1, scattering = 1}}
-	sun := Sun_Desc{direction = {0, 1, 0}, color = 1, illuminance = 1000, enabled = true, indirect = 1, scattering = 1}
+	lights := [2]Light_Desc{{position = {0, 2, 0}, color = 1, intensity = 10, range = 5}, {position = {4, 2, 0}, color = 1, intensity = 10, range = 5}}
+	sun := Sun_Desc{direction = {0, 1, 0}, color = 1, illuminance = 1000, enabled = true}
 	scene_lights_given(r, lights[:], sun, {})
 	s.occluders = {}
 	lights[0].intensity = 20

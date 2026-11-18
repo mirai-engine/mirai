@@ -18,7 +18,7 @@ GI_BLACKOUT_FRAMES :: 4
 // The area around the eye the sun and the sky are weighed over against the local lights, square metres.
 GI_BLACKOUT_AREA :: f32(200)
 
-// The light a local light gives the probes, in lumens of render units: the same measure for every kind.
+// The light a local light gives, in lumens of render units: the same measure for every kind.
 @(private)
 light_flux :: proc "contextless" (l: Gpu_Light) -> f32 {
 	solid: f32 = 4 * math.PI
@@ -26,7 +26,7 @@ light_flux :: proc "contextless" (l: Gpu_Light) -> f32 {
 	case l.direction_cone.w == GPU_LIGHT_RECT: solid = math.PI
 	case l.direction_cone.w > -1: solid = 2 * math.PI * (1 - l.direction_cone.w)
 	}
-	return luminance_of(l.color_intensity.xyz) * l.color_intensity.w * math.PI * solid * light_shares_of(l).x
+	return luminance_of(l.color_intensity.xyz) * l.color_intensity.w * math.PI * solid
 }
 
 // Whether the range of a light reaches the cascades of the last frame; every
@@ -41,10 +41,10 @@ light_in_volume :: proc "contextless" (g: ^Ddgi_State, l: Gpu_Light) -> bool {
 	return linalg.dot(away, away) <= l.position_range.w * l.position_range.w
 }
 
-// The light of the sun and the sky the probes gather over GI_BLACKOUT_AREA, at `scale`.
+// The light of the sun and the sky over GI_BLACKOUT_AREA, at `scale`.
 @(private)
 sky_flux :: proc "contextless" (sun: Sun_Desc, environment: Environment, scale: f32) -> f32 {
 	flux := luminance_of(environment.sky) * math.PI * GI_BLACKOUT_AREA
-	if sun.enabled {flux += sun.illuminance * luminance_of(sun.color) * sun.indirect * GI_BLACKOUT_AREA}
+	if sun.enabled {flux += sun.illuminance * luminance_of(sun.color) * GI_BLACKOUT_AREA}
 	return flux * scale
 }

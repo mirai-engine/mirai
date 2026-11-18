@@ -101,12 +101,11 @@ Shadow_Raster :: struct {
 // A map the cache holds, as it was drawn.
 @(private)
 Shadow_Held :: struct {
-	m:       Gpu_Shadow_Map,
-	light:   int,
-	face:    u32,
-	grid:    [3]i32,
-	end:     f32,
-	planned: u64, // the frame that took its projection
+	m:     Gpu_Shadow_Map,
+	light: int,
+	face:  u32,
+	grid:  [3]i32,
+	end:   f32,
 }
 
 // The instances whose shadows changed lately (Occluder_Changes): one that
@@ -416,7 +415,7 @@ shadow_movers_update :: proc(r: ^Renderer) {
 		if r.frame - mover.frame < SHADOW_MOVER_FRAMES {k += 1;continue}
 		if mover.moving && int(mover.instance) < len(s.instances) {
 			inst := s.instances[mover.instance]
-			if instance_casts(inst) {occluder_add(&stale, mover.instance, inst.bounds_min.xyz, inst.bounds_max.xyz)}
+			if inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED) == 0 {occluder_add(&stale, mover.instance, inst.bounds_min.xyz, inst.bounds_max.xyz)}
 		}
 		m.tracked[k] = m.tracked[m.count - 1]
 		m.count -= 1
@@ -477,8 +476,8 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	}
 	for light, i in s.lights {
 		if orthographic {break}
-		// A light turned off, with no place or without shadows casts none and takes no room of the atlas.
-		if s.light_shadowless[i] || !light_placed(light) || !(light.color_intensity.w > 0) || !(max(light.color_intensity.x, light.color_intensity.y, light.color_intensity.z) > 0) {continue}
+		// A light turned off or with no place casts no shadow and takes no room of the atlas.
+		if !light_placed(light) || !(light.color_intensity.w > 0) || !(max(light.color_intensity.x, light.color_intensity.y, light.color_intensity.z) > 0) {continue}
 		share := shadow_light_share(light, eye, forward, tan_y, aspect, p.frame.frustum)
 		keep := SHADOW_RASTER_KEEP if was(b, i) else SHADOW_RASTER_SHARE
 		if share < keep {continue}
@@ -493,7 +492,7 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	wants: [SHADOW_MAPS_MAX]Shadow_Want
 	count := 0
 	sun := s.sun
-	if sun.enabled && r.settings.sun_shadows && !sun.shadowless && !orthographic {
+	if sun.enabled && r.settings.sun_shadows && !orthographic {
 		shadow_sun_cascades(&wants, &count, sun.direction, eye, forward, right, up, tan_x, tan_y, near, camera.far, s.bounds_min, s.bounds_max, s.has_bounds, nil if fresh else b.held[:b.held_count])
 	}
 	suns := count
@@ -549,48 +548,25 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	taken: [BLOCKS]bool
 	same: [SHADOW_MAPS_MAX]bool
 	moved: [SHADOW_MAPS_MAX][2]i32
-	planned: [SHADOW_MAPS_MAX]u64
-	for i in 0 ..< count {planned[i] = r.frame}
 	blocks :: proc(side: u32) -> u32 {return (side / SHADOW_MAP_SMALLEST) * (side / SHADOW_MAP_SMALLEST)}
-	take :: proc(taken: ^[BLOCKS]bool, rect: [4]u32) {
-		at: u32
-		for bit in u32(0) ..< 16 {at |= ((rect.x / SHADOW_MAP_SMALLEST >> bit) & 1) << (2 * bit) | ((rect.y / SHADOW_MAP_SMALLEST >> bit) & 1) << (2 * bit + 1)}
-		for k in at ..< at + blocks(rect.z) {taken[k] = true}
-	}
 	if !fresh {
-		// Of the cascades of the sun the cache holds with another projection
-		// than the one wanted (the sun turned, the eye jumped), the one whose
-		// projection was taken longest ago, the nearest of equals, takes the
-		// new one and is drawn whole; the others keep theirs until their turn,
-		// so a turning sun draws one cascade a frame and not all of them.
-		turn := -1
 		for &w, i in wants[:count] {
 			h := held_of(b, w)
 			if h == nil {continue}
 			wanted := w.m
 			wanted.rect.xy = h.m.rect.xy
 			shift := [2]i32{w.grid.x - h.grid.x, w.grid.y - h.grid.y}
-			kept := true
 			if w.light < 0 {
 				reach := i32(w.side / 2)
-				if w.grid.z != h.grid.z || abs(shift.x) >= reach || abs(shift.y) >= reach {kept = false}
+				if w.grid.z != h.grid.z || abs(shift.x) >= reach || abs(shift.y) >= reach {continue}
 				wanted.origin = h.m.origin
 			}
-			if !kept || wanted != h.m {
-				if w.light < 0 && (turn < 0 || h.planned < planned[turn]) {turn, planned[i] = i, h.planned}
-				continue
-			}
+			if wanted != h.m {continue}
 			w.m.rect.xy = h.m.rect.xy
-			w.placed, same[i], moved[i], planned[i] = true, true, shift, h.planned
-			take(&taken, h.m.rect)
-		}
-		if turn >= 0 {planned[turn] = r.frame}
-		for &w, i in wants[:suns] {
-			h := held_of(b, w)
-			if same[i] || i == turn || h == nil {continue}
-			w.m, w.side, w.grid, w.end = h.m, h.m.rect.z, h.grid, h.end
-			w.placed, same[i], planned[i] = true, true, h.planned
-			take(&taken, h.m.rect)
+			w.placed, same[i], moved[i] = true, true, shift
+			at: u32
+			for bit in u32(0) ..< 16 {at |= ((h.m.rect.x / SHADOW_MAP_SMALLEST >> bit) & 1) << (2 * bit) | ((h.m.rect.y / SHADOW_MAP_SMALLEST >> bit) & 1) << (2 * bit + 1)}
+			for k in at ..< at + blocks(w.side) {taken[k] = true}
 		}
 	}
 	order: [SHADOW_MAPS_MAX]int
@@ -649,7 +625,7 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 			bits[mover.instance / 32] |= 1 << (mover.instance % 32)
 			if plan.moving || int(mover.instance) >= len(s.instances) {continue}
 			inst := s.instances[mover.instance]
-			if !instance_casts(inst) {continue}
+			if inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED) != 0 {continue}
 			for w in wants[:count] {
 				if w.placed && shadow_map_reaches(w.m, inst.bounds_min.xyz, inst.bounds_max.xyz) {plan.moving = true;break}
 			}
@@ -714,7 +690,7 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 		all := plan.all_list
 		n := at
 		job(words, all, &n, at, 0, 0, side, side)
-		b.held[b.held_count] = {m = w.m, light = w.light, face = w.face, grid = w.grid, end = w.end, planned = planned[i]}
+		b.held[b.held_count] = {m = w.m, light = w.light, face = w.face, grid = w.grid, end = w.end}
 		b.held_count += 1
 		at += 1
 	}

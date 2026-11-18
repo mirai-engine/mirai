@@ -5,22 +5,19 @@ import "core:testing"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
-// A closed torus welded by position, in two parts its outer half of submesh 1
-// with vertices of its own on the outline between the halves, and a uv per
-// vertex: attributes are the normal and the uv. Faceted, as a crystal: each
-// triangle has vertices of its own with its flat normal and a uv chart of
-// its own, so a protected seam runs along every edge.
+// A closed torus welded by position, its outer half of submesh 1 with
+// vertices of its own on the outline between the halves, and a uv per
+// vertex: attributes are the normal and the uv.
 @(private="file")
 Two_Part_Torus :: struct {
     positions:[dynamic]Vec3,
     indices:[dynamic]u32,
     attributes:[dynamic]f32,
     ranges:[2]Cluster_Range,
-    protect:[dynamic]Simplify_Vertex, // Protect on every vertex of a faceted one
 }
 
 @(private="file")
-two_part_torus :: proc(out:^Two_Part_Torus,segments,sides:int,faceted:=false,parts:=2) {
+two_part_torus :: proc(out:^Two_Part_Torus,segments,sides:int) {
     raw:Mesh_Buffer
     mesh_buffer_init(&raw,context.temp_allocator)
     torus_build(&raw,1,0.35,segments,sides)
@@ -30,29 +27,6 @@ two_part_torus :: proc(out:^Two_Part_Torus,segments,sides:int,faceted:=false,par
     out.positions=make([dynamic]Vec3,context.temp_allocator)
     out.indices=make([dynamic]u32,context.temp_allocator)
     out.attributes=make([dynamic]f32,context.temp_allocator)
-    out.protect=make([dynamic]Simplify_Vertex,context.temp_allocator)
-    if faceted {
-        for part in 0..<2 {
-            out.ranges[part]={u32(len(out.indices)),0,u32(part)}
-            for t:=0;t<len(welded.indices);t+=3 {
-                p0,p1,p2:=welded.positions[welded.indices[t]],welded.positions[welded.indices[t+1]],welded.positions[welded.indices[t+2]]
-                c:=(p0+p1+p2)/3
-                if (parts==2 && c.x*c.x+c.z*c.z>1)!=(part==1) {continue}
-                e1,e2:=p1-p0,p2-p0
-                n:=Vec3{e1.y*e2.z-e1.z*e2.y,e1.z*e2.x-e1.x*e2.z,e1.x*e2.y-e1.y*e2.x}
-                n*=1/math.sqrt(n.x*n.x+n.y*n.y+n.z*n.z)
-                chart:=f32(t/3%61)
-                for p in ([]Vec3{p0,p1,p2}) {
-                    append(&out.indices,u32(len(out.positions)))
-                    append(&out.positions,p)
-                    append(&out.attributes,n.x,n.y,n.z,p.x*0.25+chart,p.z*0.25)
-                    append(&out.protect,Simplify_Vertex{.Protect})
-                }
-            }
-            out.ranges[part].index_count=u32(len(out.indices))-out.ranges[part].first_index
-        }
-        return
-    }
     // The vertex of each welded one in each part.
     of:=make([][2]u32,len(welded.positions),context.temp_allocator)
     for &o in of {o={NONE,NONE}}
@@ -60,7 +34,7 @@ two_part_torus :: proc(out:^Two_Part_Torus,segments,sides:int,faceted:=false,par
         out.ranges[part]={u32(len(out.indices)),0,u32(part)}
         for t:=0;t<len(welded.indices);t+=3 {
             c:=(welded.positions[welded.indices[t]]+welded.positions[welded.indices[t+1]]+welded.positions[welded.indices[t+2]])/3
-            outer:=parts==2 && c.x*c.x+c.z*c.z>1
+            outer:=c.x*c.x+c.z*c.z>1
             if outer!=(part==1) {continue}
             for index in welded.indices[t:t+3] {
                 if of[index][part]==NONE {
@@ -340,44 +314,29 @@ edges_open_equal :: proc(positions:[]Vec3,a,b:[]u32,ends_only:=false) -> bool {
 
 @(test)
 cluster_dag_of_a_closed_mesh_cuts_without_cracks_and_is_deterministic :: proc(t:^testing.T) {
-    weights:=[]f32{0.5,0.5,0.5,1,1}
-    // Smooth, no group stops; faceted, the groups its seams stop cross them.
-    // Each ends in roots of a few clusters, those of two parts with every
-    // place of the outline between them, which stays.
-    cases:=[]struct{name:string,faceted:bool,parts:int,roots:int}{
-        {"smooth",false,2,CLUSTER_MAX_TRIANGLES},
-        {"faceted",true,1,CLUSTER_MAX_TRIANGLES},
-        {"faceted in two parts",true,2,5*CLUSTER_MAX_TRIANGLES},
-    }
     torus:Two_Part_Torus
-    source:Cluster_Source
-    for c in cases {
-        two_part_torus(&torus,128,64,c.faceted,c.parts)
-        source={positions=torus.positions[:],indices=torus.indices[:],ranges=torus.ranges[:],attributes=torus.attributes[:],attribute_weights=weights,vertex_lock=torus.protect[:]}
-        dag:Cluster_Dag
-        defer cluster_dag_destroy(&dag)
-        failed:=cluster_dag_build(&dag,source)
-        testing.expect_value(t,failed,Cluster_Error.None)
-        testing.expectf(t,dag.levels>=4,"%s: %d levels",c.name,dag.levels)
-        root_triangles,stopped:=0,0
-        for cluster in dag.clusters {
-            if cluster.parent.error==max(f32) {
-                root_triangles+=int(cluster.triangle_count)
-                if cluster.level+1<u32(dag.levels) {stopped+=int(cluster.triangle_count)}
-            }
-        }
-        testing.expectf(t,root_triangles<=c.roots,"%s: the roots have %d triangles of %d",c.name,root_triangles,len(torus.indices)/3)
-        testing.expectf(t,stopped==0,"%s: groups of %d triangles stop below the top level",c.name,stopped)
-        dag_check(t,&dag,torus.positions[:],torus.indices[:],torus.ranges[:],true)
-        again:Cluster_Dag
-        defer cluster_dag_destroy(&again)
-        cluster_dag_build(&again,source)
-        testing.expect(t,bytes_equal(again.clusters[:],dag.clusters[:]) && bytes_equal(again.vertices[:],dag.vertices[:]) && bytes_equal(again.triangles[:],dag.triangles[:]))
-    }
     two_part_torus(&torus,128,64)
-    source={positions=torus.positions[:],indices=torus.indices[:],ranges=torus.ranges[:],attributes=torus.attributes[:],attribute_weights=weights}
+    weights:=[]f32{0.5,0.5,0.5,1,1}
+    source:=Cluster_Source{positions=torus.positions[:],indices=torus.indices[:],ranges=torus.ranges[:],attributes=torus.attributes[:],attribute_weights=weights}
+    dag:Cluster_Dag
+    defer cluster_dag_destroy(&dag)
+    failed:=cluster_dag_build(&dag,source)
+    testing.expect_value(t,failed,Cluster_Error.None)
+    testing.expectf(t,dag.levels>=4,"%d levels",dag.levels)
+    roots:=0
+    root_triangles:=0
+    for c in dag.clusters {
+        if c.parent.error==max(f32) {
+            roots+=1
+            root_triangles+=int(c.triangle_count)
+        }
+    }
+    testing.expectf(t,root_triangles<len(torus.indices)/3/16,"the roots have %d triangles of %d",root_triangles,len(torus.indices)/3)
+    dag_check(t,&dag,torus.positions[:],torus.indices[:],torus.ranges[:],true)
     again:Cluster_Dag
     defer cluster_dag_destroy(&again)
+    cluster_dag_build(&again,source)
+    testing.expect(t,bytes_equal(again.clusters[:],dag.clusters[:]) && bytes_equal(again.vertices[:],dag.vertices[:]) && bytes_equal(again.triangles[:],dag.triangles[:]))
     // Locked vertices stop the groups around them, whose borders stay next to every level above.
     lock:=make([]Simplify_Vertex,len(torus.positions),context.temp_allocator)
     for p,v in torus.positions {if p.x>0.3 {lock[v]={.Lock}}}
@@ -435,111 +394,4 @@ cluster_levels_cut_one_whole_level :: proc(t:^testing.T) {
         testing.expect_value(t,whole,1)
     }
     testing.expect(t,picked[0] && picked[2],"near the first level, far the last")
-}
-
-// A cloud of cards of two triangles in two octaves of size, each an island
-// of one outline, and a camera next to it: the DAG prunes them by group. No
-// card is split between clusters, the errors grow to the roots in spheres
-// around the clusters, every group draws in the clusters it was reduced into
-// the area of its own within 2 %, and a camera at its edge draws fewer triangles
-// than with all of the cloud as near.
-@(test)
-cluster_dag_prunes_a_cloud_of_islands_by_group :: proc(t:^testing.T) {
-    CARDS :: 16384
-    positions:=make([dynamic]Vec3,context.temp_allocator)
-    indices:=make([dynamic]u32,context.temp_allocator)
-    islands:=make([dynamic]Cluster_Island,context.temp_allocator)
-    rungs:=make([dynamic]Cluster_Island_Rung,context.temp_allocator)
-    rng:=base.rng_make(3)
-    for card in 0..<CARDS {
-        center:=mm.random_in_sphere(&rng)*16
-        size:=f32(0.1) if card%4!=0 else 0.25
-        first:=u32(len(positions))
-        for corner in ([4][2]f32{{0,0},{1,0},{0,1},{1,1}}) {append(&positions,center+{(corner.x-0.5)*size,0,(corner.y-0.5)*size})}
-        append(&rungs,Cluster_Island_Rung{u32(len(indices)),6,0})
-        append(&indices,first,first+2,first+1,first+1,first+2,first+3)
-        append(&islands,Cluster_Island{first_rung=u32(card),rung_count=1,class=0 if size<0.2 else 1,center=center,radius=size*math.SQRT_TWO/2,order=u64(base.rng_u32(&rng))})
-    }
-    source:=Cluster_Source{positions=positions[:],islands=islands[:],island_rungs=rungs[:],island_indices=indices[:]}
-    dag:Cluster_Dag
-    defer cluster_dag_destroy(&dag)
-    if !testing.expect_value(t,cluster_dag_build(&dag,source),Cluster_Error.None) {return}
-    testing.expectf(t,dag.levels>=4,"%d levels",dag.levels)
-    // The place of a vertex of the DAG, and the card it is of.
-    place :: proc(dag:^Cluster_Dag,positions:[]Vec3,v:u32) -> (Vec3,u32) {
-        if int(v)<len(positions) {return positions[v],v/4}
-        made:=dag.made[int(v)-len(positions)]
-        return made.position,made.vertex/4
-    }
-    area :: proc(dag:^Cluster_Dag,positions:[]Vec3,c:Cluster) -> (sum:f32) {
-        for k:=u32(0);k<c.triangle_count*3;k+=3 {
-            p0,_:=place(dag,positions,dag.vertices[c.first_vertex+u32(dag.triangles[c.first_triangle*3+k])])
-            p1,_:=place(dag,positions,dag.vertices[c.first_vertex+u32(dag.triangles[c.first_triangle*3+k+1])])
-            p2,_:=place(dag,positions,dag.vertices[c.first_vertex+u32(dag.triangles[c.first_triangle*3+k+2])])
-            a,b:=p1-p0,p2-p0
-            n:=Vec3{a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x}
-            sum+=0.5*math.sqrt(n.x*n.x+n.y*n.y+n.z*n.z)
-        }
-        return
-    }
-    for c in dag.clusters {
-        if c.triangle_count>CLUSTER_MAX_TRIANGLES || c.vertex_count>CLUSTER_MAX_VERTICES || c.triangle_count==0 {testing.expectf(t,false,"a cluster of %d triangles",c.triangle_count);return}
-        corners:=make(map[u32]int,context.temp_allocator)
-        for k in 0..<c.triangle_count*3 {
-            _,card:=place(&dag,positions[:],dag.vertices[c.first_vertex+u32(dag.triangles[c.first_triangle*3+k])])
-            corners[card]+=1
-        }
-        for _,n in corners {if n!=6 {testing.expect(t,false,"a card is split between clusters");return}}
-        d:=c.parent.center-c.own.center
-        if !(c.own.error<=c.parent.error) || math.sqrt(d.x*d.x+d.y*d.y+d.z*d.z)+c.own.radius>c.parent.radius*1.0001+1e-6 {testing.expectf(t,false,"cluster of level %d: own %v, parent %v",c.level,c.own,c.parent);return}
-    }
-    // Each group against what it was reduced into.
-    done:=make(map[Cluster_Lod]bool,context.temp_allocator)
-    for g in dag.clusters {
-        if g.parent.error==max(f32) || g.parent in done {continue}
-        done[g.parent]=true
-        before,after:f32
-        for c in dag.clusters {
-            if c.level==g.level && c.parent==g.parent {before+=area(&dag,positions[:],c)}
-            if c.level==g.level+1 && c.own==g.parent {after+=area(&dag,positions[:],c)}
-        }
-        if abs(after-before)>0.02*before {testing.expectf(t,false,"a group of level %d draws %f, reduced %f",g.level,before,after);return}
-    }
-    // A camera at the edge of the cloud against the cut with all of it as near.
-    camera:=Vec3{16.5,0,0}
-    near,all:u32
-    for c in dag.clusters {
-        if projected(c.own,camera)<=0.004 && projected(c.parent,camera)>0.004 {near+=c.triangle_count}
-        allowed:=f32(0.004*0.5)
-        if c.own.error<=allowed && !(c.parent.error<=allowed) {all+=c.triangle_count}
-    }
-    testing.expectf(t,f32(near)<0.75*f32(all),"from the edge the cloud draws %d triangles, all of it as near %d",near,all)
-    again:Cluster_Dag
-    defer cluster_dag_destroy(&again)
-    cluster_dag_build(&again,source)
-    testing.expect(t,bytes_equal(again.clusters[:],dag.clusters[:]) && bytes_equal(again.vertices[:],dag.vertices[:]) && bytes_equal(again.made[:],dag.made[:]),"the same cloud gives the same DAG")
-}
-
-// A group of tiny disjoint triangles that would lose every one keeps the
-// largest, and its error covers the area the others had.
-@(test)
-a_group_that_loses_every_triangle_keeps_its_largest :: proc(t:^testing.T) {
-    Case :: struct {sides:[]f32,largest:int}
-    cases:=[]Case{{{0.01,0.03,0.02},1},{{0.05},0},{{0.001,0.001,0.004,0.002},2}}
-    for c in cases {
-        positions:=make([dynamic]Vec3,context.temp_allocator)
-        indices:=make([dynamic]u32,context.temp_allocator)
-        total:f32
-        for side,k in c.sides {
-            first:=u32(len(positions))
-            at:=Vec3{f32(k),0,0}
-            append(&positions,at,at+{side,0,0},at+{0,side,0})
-            append(&indices,first,first+1,first+2)
-            total+=0.5*side*side
-        }
-        kept,lost:=group_largest(indices[:],positions[:])
-        side:=c.sides[c.largest]
-        testing.expectf(t,kept==[3]u32{u32(c.largest)*3,u32(c.largest)*3+1,u32(c.largest)*3+2},"%v keeps %v",c.sides,kept)
-        testing.expectf(t,abs(lost-math.sqrt(total-0.5*side*side))<1e-6,"%v loses %f",c.sides,lost)
-    }
 }

@@ -14,7 +14,6 @@ app_assets_create :: proc(app:^App,root,cache:string,mounts:[]asset.Registry_Mou
         return .Assets_Failed
     }
     app.assets=assets
-    if app.info!=nil && app.info.schema!=nil {assets.types.defaults=&app.info.schema.schema}
     // What a program that edits a project saves its assets with; a shipped game saves with the open
     // compressor.
     if app.engine_root!="" {assets.types.codecs=asset.project_codecs(app.root,app.engine_root)}

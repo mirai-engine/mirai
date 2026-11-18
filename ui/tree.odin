@@ -901,15 +901,12 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
         return next
     }
     content:=tree_node_text(ctx,b,node,index,slot,values)
-    // A node that holds none floats in a box of its size that hangs as its float says, from the
-    // area of the tree as a container does.
+    // A node that holds none floats in a box of its size that hangs as its float says.
     holder:Box
     if node.float.to!=.None {
         holder={id=id(ctx,"floating",int(u32(node_id))),float=node.float}
         holder.float.layer=i16(clamp(b.floor+int(node.float.layer),int(min(i16)),int(max(i16))))
-        if b.desc.area!=0 {ctx.area,ctx.area_rect=b.desc.area,b.desc.area_rect}
         box_begin(ctx,holder)
-        ctx.area=0
     }
     tree_build_leaf(ctx,b,node,index,next,slot,node_id,values,copy,item,&base_style,style,variant,image_ref,content,selected,disabled,&value if playing else nil)
     if node.float.to!=.None {box_end(ctx,holder)}

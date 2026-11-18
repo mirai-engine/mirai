@@ -69,7 +69,7 @@ Stage_Output main(float4 pixel_position : SV_Position) {
             // Where the cells around are empty the next one is passed over.
             if (!(density > 0.0) && !(glow > 0.0)) { s++; continue; }
             float4 light = particle_volume_light(v, corners);
-            float3 sun = frame.sun_direction.w >= 0.5 ? media_sun_light(at) * light.a * sun_phase : float3(0.0);
+            float3 sun = frame.sun_direction.w >= 0.5 ? sun_light(at) * light.a * sun_phase : float3(0.0);
             float3 source = v.albedo * density * (light.rgb + sun) + emission_render_units(v.emission * glow, false);
             if (first < 0.0) first = t0 + (float(s) + jitter) * step;
             float kept = exp(-density * ds);

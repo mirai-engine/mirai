@@ -18,9 +18,6 @@ AI_COMPACT_NOTES_AT :: f64(0.75)  // of the context window: the delta asks to sa
 AI_COMPACTED_NOTE :: "Context compacted"
 AI_REOPENED_NOTE :: "Editor reopened"
 AI_INTERRUPTED_NOTE :: "Interrupted: the editor closed while this agent worked"
-AI_BUILD_RESUMED_NOTE :: "The editor restarted to load a build"
-// What a chat that worked when a Build restarted the editor gets as its next turn.
-AI_BUILD_RESUME :: "The editor restarted to load a build while you worked; nothing you did is lost. Go on with your task from where you were: a call that was running then may not have answered."
 AI_HANDOFF_HEADER :: "Handoff:"
 AI_HANDOFF_NOTES_BYTES :: 8<<10
 AI_HANDOFF_MESSAGE_BYTES :: 16<<10
@@ -28,7 +25,7 @@ AI_HANDOFF_LINES :: 256  // of the chat that are looked at, before the bytes cut
 AI_HANDOFF_AGENTS :: 16
 AI_COMPACT_COMMAND :: "/compact"
 
-AI_META_RESUME_NATIVE :: "resume_native"           // a Build restarts the editor: the main chat keeps its native session, once; "running" when it worked
+AI_META_RESUME_NATIVE :: "resume_native"           // a Build restarts the editor: the main chat keeps its native session, once
 AI_META_WORKING_AGENTS :: "working_agents"         // ids of the subagents that have not ended
 AI_META_INTERRUPTED_AGENTS :: "interrupted_agents" // ids of those the editor closed on, until a handoff says it
 AI_META_CONTEXT_SINCE :: "context_since_%d"        // of a conversation: when its context last took a turn, in milliseconds
@@ -201,22 +198,13 @@ ai_working_agents_save :: proc(s:^Session,m:^Ai) {
     if message:=ai_store.meta_set(&m.store,AI_META_WORKING_AGENTS,strings.to_string(b));message!="" {notify(s,message)}
 }
 
-// Whether a Build restarted the editor, read once: "running" when the main chat worked then.
+// The main chat comes back with a clean context, unless a Build restarted the editor.
 @(private)
-ai_build_restart_take :: proc(s:^Session,m:^Ai) -> string {
+ai_main_reopen :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
     resume,problem:=ai_store.meta_get(&m.store,AI_META_RESUME_NATIVE)
     if problem!="" {notify(s,problem)}
-    if resume=="" {return ""}
-    if message:=ai_store.meta_set(&m.store,AI_META_RESUME_NATIVE,"");message!="" {notify(s,message)}
-    return strings.clone(resume,context.temp_allocator)
-}
-
-// The main chat comes back with a clean context, unless a Build restarted the
-// editor: then it keeps its native session and, if it worked, goes on.
-@(private)
-ai_main_reopen :: proc(s:^Session,m:^Ai,task:^Ai_Task,resume:string) {
     if resume!="" {
-        if resume=="running" {ai_build_resume(s,m,task)}
+        if message:=ai_store.meta_set(&m.store,AI_META_RESUME_NATIVE,"");message!="" {notify(s,message)}
         return
     }
     if task.conversation.native_session_len==0 {return}
@@ -226,9 +214,9 @@ ai_main_reopen :: proc(s:^Session,m:^Ai,task:^Ai_Task,resume:string) {
 }
 
 // The subagents the editor closed on stay interrupted until someone writes to
-// them, unless a Build restarted it: then each goes on in its native session.
+// them: nothing starts them by itself.
 @(private)
-ai_agents_interrupted_restore :: proc(s:^Session,m:^Ai,built:bool) {
+ai_agents_interrupted_restore :: proc(s:^Session,m:^Ai) {
     working,_:=ai_store.meta_get(&m.store,AI_META_WORKING_AGENTS)
     earlier,_:=ai_store.meta_get(&m.store,AI_META_INTERRUPTED_AGENTS)
     if working=="" && earlier=="" {return}
@@ -245,31 +233,15 @@ ai_agents_interrupted_restore :: proc(s:^Session,m:^Ai,built:bool) {
         }
     }
     for id in ai_ids_parse(earlier) {mark(s,m,id,false)}
-    for id in ai_ids_parse(working) {
-        if !built {mark(s,m,id,true);continue}
-        mark(s,m,id,false)
-        if task:=ai_task_find(m,id);task!=nil {ai_build_resume(s,m,task)}
-    }
+    for id in ai_ids_parse(working) {mark(s,m,id,true)}
     if message:=ai_store.meta_set(&m.store,AI_META_INTERRUPTED_AGENTS,strings.concatenate({earlier,working},context.temp_allocator));message!="" {notify(s,message)}
     if message:=ai_store.meta_set(&m.store,AI_META_WORKING_AGENTS,"");message!="" {notify(s,message)}
 }
 
-// A Build is about to restart the editor: the chats go on where they were.
+// A Build is about to restart the editor: the main chat goes on where it was.
 ai_resume_native_mark :: proc(s:^Session) {
     if s.ai==nil || s.ai.store.db==nil || s.ai.main==0 {return}
-    main:=ai_task_find(s.ai,s.ai.main)
-    working:=main!=nil && !ai_task_finished(main)
-    if message:=ai_store.meta_set(&s.ai.store,AI_META_RESUME_NATIVE,working?"running":"1");message!="" {notify(s,message)}
-}
-
-// A chat that worked when a Build restarted the editor takes, as its next turn,
-// that it can go on: the turn starts once nothing holds it, as a delivery.
-@(private)
-ai_build_resume :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
-    ai_task_note(s,task,AI_BUILD_RESUMED_NOTE)
-    ai_task_persist(s,task)
-    if message:=ai_steer_hold(s,m,task,AI_BUILD_RESUME);message!="" {notify(s,message);return}
-    m.deliveries_due=true
+    if message:=ai_store.meta_set(&s.ai.store,AI_META_RESUME_NATIVE,"1");message!="" {notify(s,message)}
 }
 
 // The stable block has to be sent again: the context lost it, or it changed.

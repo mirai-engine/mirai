@@ -50,7 +50,7 @@ Light light_none() {
     l.color_intensity = float4(0.0);
     l.direction_cone = float4(0.0, 0.0, 0.0, LIGHT_POINT);
     l.size = float4(0.0);
-    l.axis = float4(0.0, 0.0, 0.0, light_shares_bits(1.0, 1.0));
+    l.axis = float4(0.0);
     return l;
 }
 
@@ -107,14 +107,10 @@ Light_Node node_leaf(Light l, uint light) {
     n.power_reach = float4(l.color_intensity.rgb * l.color_intensity.w, l.position_range.w);
     n.cone = float4(0.0, 1.0, 0.0, PI);
     n.emission = 0.5 * PI;
-    n.range_low = l.position_range.w;
-    n.range_high = l.position_range.w;
+    n.range = l.position_range.w;
     n.spread = n.center_radius.w;
     n.child = light;
     n.flags = LIGHT_NODE_LEAF | ((lit ? 1u : 0u) << LIGHT_NODE_COUNT_SHIFT);
-    float2 shares = light_shares(l);
-    n.indirect = shares.x;
-    n.scattering = shares.y;
     return n;
 }
 
@@ -138,13 +134,10 @@ Light_Node node_group(Light_Node a, Light_Node b, uint second) {
     // The lights of particles face every way: so does a group that holds one.
     n.cone = float4(0.0, 1.0, 0.0, PI);
     n.emission = max(a.emission, b.emission);
-    n.range_low = min(a.range_low, b.range_low);
-    n.range_high = max(a.range_high, b.range_high);
+    n.range = share * a.range + (1.0 - share) * b.range;
     n.spread = sqrt(share * (da * da + a.spread * a.spread) + (1.0 - share) * (db * db + b.spread * b.spread));
     n.child = second;
     n.flags = spot | ((node_count(a) + node_count(b)) << LIGHT_NODE_COUNT_SHIFT);
-    n.indirect = share * a.indirect + (1.0 - share) * b.indirect;
-    n.scattering = share * a.scattering + (1.0 - share) * b.scattering;
     return n;
 }
 

@@ -84,7 +84,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         float3 normal = gbuffer_normal(p);
         uint count = lights_reaching(pixel.position, normal, 0u, params.lights_scale);
         if (frame.shadowless_lights.x != 0u && count < params.lights_scale) count += lights_reaching(pixel.position, normal, frame.shadowless_lights.x, params.lights_scale - count);
-        if (frame.shadowless_lights.z != 0u && count < params.lights_scale) count += lights_reaching(pixel.position, normal, frame.shadowless_lights.z, params.lights_scale - count);
         color = count == 0u ? float3(0.03) : heat(float(count) / float(params.lights_scale));
         break;
     }

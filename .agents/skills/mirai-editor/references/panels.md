@@ -872,10 +872,6 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   which `mirai import` applies too); `asset.import {image}` chooses it.
 - The sidecar of a source (`<source>.import`) keeps its settings and the id of each asset;
   reimporting writes the same assets with their ids where they are and keeps what did not change.
-  Over a document changed since its import wrote it, the dialog and a file dropped ask first
-  (`Modal.Import_Changes`, with what changed: discard and import, or cancel), and `asset.import`
-  fails naming it
-  ([changed documents](../../mirai-imports/references/imports.md#changed-documents)).
   Textures with
   the same image and settings and meshes with the same geometry and settings come from their caches
   ([textures](../../mirai-imports/references/imports.md#texture-cache),
@@ -904,10 +900,9 @@ The Graphics popup edits `Graphics_Settings`, the machine setting with which gam
 sections that fold like those of the settings dialog: Quality and Frame rate.
 
 - A **preset** (`GRAPHICS_PRESETS` of `engine/render`) fixes a choice per quality option; what
-  matches none is Custom. The default depends on the GPU (`graphics_settings_for_device`) and each
-  option returns to it.
-- Resolution is not part of the presets: Native, the default, or a target of lines
-  ([resolution](../../mirai-rendering/references/settings.md#scene-resolution)).
+  matches none is Custom
+  ([resolution](../../mirai-rendering/references/settings.md#scene-resolution)). The default
+  depends on the GPU (`graphics_settings_for_device`) and each option returns to it.
 - Antialiasing is not part of the presets: Off, TAA and the
   [techniques](../../mirai-rendering/references/views.md#antialiasing-techniques) of the active
   plugins; one that no plugin offers is shown as TAA, which is what is drawn.

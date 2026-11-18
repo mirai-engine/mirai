@@ -134,9 +134,6 @@ float3 hit_transmission(Instance inst, Material m, Mesh_Triangle tri, float2 bar
 #define BLEND_STOPS   1u // they are surfaces like any other
 #define BLEND_FILTERS 2u // each one multiplies ray_filter and lets the ray on
 #define BLEND_MEANS   3u // each one multiplies ray_filter by the mean of its instance (Instance.glass) and lets the ray on
-// Added to one of those: the ray carries light to a point, and the glass of
-// an instance that casts no shadow (INSTANCE_UNSHADOWED) lets it by.
-#define BLEND_LIGHT   4u
 
 #ifdef MIRAI_GLASS_MEANS
 // A blended surface met at t by a ray that takes the mean of its instance.
@@ -173,12 +170,10 @@ float hit_alpha(Instance inst, Material m, Mesh_Triangle tri, float3 weights, fl
 }
 
 // What a ray that finds this triangle at distance t does: stop, or go through
-// a hole of a masked material or a blended one. Only the triangles of the
-// slots an instance tests ask (Instance.tested).
-bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, uint ray_blend) {
+// a hole of a masked material or a blended one. Only instances flagged as
+// alpha tested ask.
+bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, uint blend) {
     Instance inst = scene_instance(instance_index);
-    if ((ray_blend & BLEND_LIGHT) != 0u && (inst.meta.x & INSTANCE_UNSHADOWED) != 0u) return false;
-    uint blend = ray_blend & ~BLEND_LIGHT;
 #ifdef MIRAI_GLASS_MEANS
     // All glass: its mean, without reading the triangle.
     if (blend == BLEND_MEANS && (inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u) return hit_mean(inst, t);
@@ -255,27 +250,24 @@ struct Hit {
 #ifdef MIRAI_HW_RT
 [[vk::binding(SLOT_TLAS, 0)]] RaytracingAccelerationStructure scene_tlas : register(MIRAI_REGISTER(t, SLOT_TLAS), space0);
 
-// The cluster and the triangle of a primitive of a geometry of the BLAS of
-// the cut an instance is traced with: the BLAS lists the triangles of the
-// cut, the opaque ones and then the masked ones, and its table in the index
-// pool names where each comes from.
-uint hw_primitive(uint instance_index, uint geometry, uint primitive) {
+// The cluster and the triangle of a primitive of the BLAS of the cut an
+// instance is traced with: the BLAS lists the triangles of the cut, and its
+// table in the index pool names where each comes from.
+uint hw_primitive(uint instance_index, uint primitive) {
     uint mesh_word = scene_mesh_word(instance_index);
-    Mesh_Ray ray = meshes[mesh_word & INSTANCE_MESH_MASK].rays[(mesh_word >> INSTANCE_RAY_SHIFT) & 3u];
-    return indices[ray.table_word + (geometry != 0u ? ray.table_opaque : 0u) + primitive];
+    return indices[meshes[mesh_word & INSTANCE_MESH_MASK].rays[(mesh_word >> INSTANCE_RAY_SHIFT) & 3u].table_word + primitive];
 }
 
 Hit trace_ray_impl(float3 origin, float3 direction, float t_min, float t_max, bool any_hit, uint blend, uint classes) {
     RayQuery<RAY_FLAG_NONE> query;
     uint flags = any_hit ? RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH : 0u;
     RayDesc ray_desc; ray_desc.Origin = origin; ray_desc.TMin = t_min; ray_desc.Direction = direction; ray_desc.TMax = t_max; query.TraceRayInline(scene_tlas, flags, classes, ray_desc);
-    // Opaque triangles commit their hits by themselves; the masked ones of
-    // an instance that tests the slots of its mesh, and all those of one that
-    // tests others, come here as candidates.
+    // Opaque instances commit their hits by themselves; the triangles of an
+    // alpha tested one come here as candidates.
     while (query.Proceed()) {
         if (query.CandidateType() != CANDIDATE_NON_OPAQUE_TRIANGLE) continue;
         uint instance = uint(query.CandidateInstanceID());
-        if (hit_covers(instance, hw_primitive(instance, uint(query.CandidateGeometryIndex()), uint(query.CandidatePrimitiveIndex())),
+        if (hit_covers(instance, hw_primitive(instance, uint(query.CandidatePrimitiveIndex())),
                 query.CandidateTriangleBarycentrics(), query.CandidateTriangleRayT(), blend)) {
             query.CommitNonOpaqueTriangleHit();
         }
@@ -288,7 +280,7 @@ Hit trace_ray_impl(float3 origin, float3 direction, float t_min, float t_max, bo
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
         hit.t = query.CommittedRayT();
         hit.instance = uint(query.CommittedInstanceID());
-        hit.primitive = hw_primitive(hit.instance, uint(query.CommittedGeometryIndex()), uint(query.CommittedPrimitiveIndex()));
+        hit.primitive = hw_primitive(hit.instance, uint(query.CommittedPrimitiveIndex()));
         hit.bary = query.CommittedTriangleBarycentrics();
     }
     return hit;
@@ -357,9 +349,8 @@ bool ray_triangle(float3 origin, float3 dir, Bvh_Triangle tri, float t_min, floa
 // Walks the BVH of the cut of a mesh an instance is traced with in object
 // space: mesh_word is the meta.x of the instance, its mesh and its cut. hit.t
 // is groupshared with the caller, so the world-space closest hit shrinks every
-// subsequent box test. A primitive is its cluster and its triangle. tested:
-// the slots whose triangles ask their material (Instance.tested).
-bool trace_blas(uint mesh_word, float3 origin, float3 dir, float t_min, inout Hit hit, uint instance_index, bool any_hit, uint tested, uint blend) {
+// subsequent box test. A primitive is its cluster and its triangle.
+bool trace_blas(uint mesh_word, float3 origin, float3 dir, float t_min, inout Hit hit, uint instance_index, bool any_hit, bool alpha_tested, uint blend) {
     Mesh_Ray ray = meshes[mesh_word & INSTANCE_MESH_MASK].rays[(mesh_word >> INSTANCE_RAY_SHIFT) & 3u];
     float3 inv_dir = safe_inverse(dir);
     uint stack[TRACE_STACK];
@@ -374,7 +365,7 @@ bool trace_blas(uint mesh_word, float3 origin, float3 dir, float t_min, inout Hi
                 float t;
                 float2 bary;
                 if (ray_triangle(origin, dir, tri, t_min, hit.t, t, bary)) {
-                    if (((tested >> tri.slot) & 1u) != 0u && !hit_covers(instance_index, tri.primitive, bary, t, blend)) continue;
+                    if (alpha_tested && !hit_covers(instance_index, tri.primitive, bary, t, blend)) continue;
                     hit.t = t;
                     hit.bary = bary;
                     hit.primitive = tri.primitive;
@@ -421,6 +412,7 @@ bool trace_batch(uint batch, float3 origin, float3 direction, float t_min, inout
     uint words = batch_records(row);
     uint order = batch_order(row);
     uint first = frame.instance_count + batch_first(row);
+    bool tested = (row.meta.w & INSTANCE_FLAG_ALPHA_TESTED) != 0u;
     float3 inv_dir = safe_inverse(direction);
     uint stack[TRACE_STACK];
     uint top = 0u;
@@ -435,7 +427,7 @@ bool trace_batch(uint batch, float3 origin, float3 direction, float t_min, inout
                 uint local = indices[order + node.left_first + i];
                 float4 world[3], inverse[3];
                 batch_placement(words + local * BATCH_WORDS, float3(0.0), world, inverse);
-                if (trace_blas(row.meta.x, transform_point(inverse, origin), transform_vector(inverse, direction), t_min, hit, first + local, any_hit, row.tested, blend)) {
+                if (trace_blas(row.meta.x, transform_point(inverse, origin), transform_vector(inverse, direction), t_min, hit, first + local, any_hit, tested, blend)) {
                     found = true;
                     if (any_hit) return true;
                 }
@@ -496,14 +488,12 @@ Hit trace_ray_impl(float3 origin, float3 direction, float t_min, float t_max, bo
                 }
                 Instance inst = instances[instance_index];
                 if ((inst.meta.w & INSTANCE_FLAG_HIDDEN) != 0u) continue;
-                // Its class, as render.ray_class gives it: one of glass the reference let in.
-                bool unshadowed = (inst.meta.x & INSTANCE_UNSHADOWED) != 0u && (ref & TLAS_REF_GLASS) == 0u;
-                if (unshadowed ? (classes & RAY_UNSHADOWED) == 0u : ((inst.meta.w & INSTANCE_FLAG_SMALL) != 0u && (classes & RAY_SMALL) == 0u)) continue;
+                if ((inst.meta.w & INSTANCE_FLAG_SMALL) != 0u && (classes & RAY_SMALL) == 0u) continue;
                 // The object-space direction is not renormalized, so t stays in
                 // world units across instances.
                 float3 o = transform_point(inst.world_inv, origin);
                 float3 d = transform_vector(inst.world_inv, direction);
-                if (trace_blas(inst.meta.x, o, d, t_min, hit, instance_index, any_hit, inst.tested, blend) && any_hit) return hit;
+                if (trace_blas(inst.meta.x, o, d, t_min, hit, instance_index, any_hit, (inst.meta.w & INSTANCE_FLAG_ALPHA_TESTED) != 0u, blend) && any_hit) return hit;
             }
             if (top == 0u) break;
             node_index = stack[--top];
@@ -550,7 +540,7 @@ Hit trace_instance(uint instance_index, float3 origin, float3 direction) {
     hit.instance = INVALID;
     hit.primitive = INVALID;
     hit.bary = float2(0.0);
-    trace_blas(inst.meta.x, o, d, 0.0, hit, instance_index, false, 0u, BLEND_STOPS);
+    trace_blas(inst.meta.x, o, d, 0.0, hit, instance_index, false, false, BLEND_STOPS);
     if (hit.instance == INVALID) hit.t = -1.0;
     return hit;
 #endif
@@ -668,8 +658,7 @@ bool trace_visible(float3 origin, float3 direction, float t_max) {
 // the glass is, so while there are few of those instances the ray tests their
 // boxes one by one.
 #define GLASS_LIST_MAX 16u
-float3 trace_glass_filter(float3 origin, float3 direction, float t_max, bool light) {
-    uint blend = light ? BLEND_FILTERS | BLEND_LIGHT : BLEND_FILTERS;
+float3 trace_glass_filter(float3 origin, float3 direction, float t_max) {
     ray_filter = float3(1.0);
     ray_filter_direction = direction;
 #ifndef MIRAI_HW_RT
@@ -684,12 +673,12 @@ float3 trace_glass_filter(float3 origin, float3 direction, float t_max, bool lig
             Bvh_Node box = tlas_nodes[first + i];
             if (ray_box(origin, inv_dir, box.bounds_min, box.bounds_max, 0.0, t_max) == FLT_MAX) continue;
             Instance inst = instances[box.left_first];
-            if (trace_blas(inst.meta.x, transform_point(inst.world_inv, origin), transform_vector(inst.world_inv, direction), 0.0, hit, box.left_first, true, inst.tested, blend)) break;
+            if (trace_blas(inst.meta.x, transform_point(inst.world_inv, origin), transform_vector(inst.world_inv, direction), 0.0, hit, box.left_first, true, true, BLEND_FILTERS)) break;
         }
         return ray_filter;
     }
 #endif
-    trace_ray_impl(origin, direction, 0.0, t_max, true, blend, RAY_GLASS);
+    trace_ray_impl(origin, direction, 0.0, t_max, true, BLEND_FILTERS, RAY_GLASS);
     return ray_filter;
 }
 #endif
@@ -727,7 +716,7 @@ float3 trace_transmission(float3 origin, float3 direction, float t_max, bool gat
     }
 #endif
     ray_filter = float3(1.0);
-    bool blocked = trace_ray_impl(origin, direction, 0.0, t_max, true, blend | BLEND_LIGHT, classes).instance != INVALID;
+    bool blocked = trace_ray_impl(origin, direction, 0.0, t_max, true, blend, classes).instance != INVALID;
 #if defined(MIRAI_COLORED_SHADOWS) && defined(MIRAI_FILTER_POINTS)
     if (MIRAI_COLORED_SHADOWS && blocked) filters_blocked();
 #endif
@@ -761,7 +750,7 @@ float3 trace_transmission_blocker(float3 origin, float3 direction, float t_max, 
     ray_filter = float3(1.0);
     ray_filter_direction = direction;
     ray_filter_distance = FLT_MAX;
-    Hit hit = trace_ray_impl(origin, direction, 0.0, t_max, true, MIRAI_COLORED_SHADOWS ? BLEND_FILTERS | BLEND_LIGHT : BLEND_PASSES, MIRAI_COLORED_SHADOWS ? (RAY_SHADOWS | RAY_GLASS) : RAY_SHADOWS);
+    Hit hit = trace_ray_impl(origin, direction, 0.0, t_max, true, MIRAI_COLORED_SHADOWS ? BLEND_FILTERS : BLEND_PASSES, MIRAI_COLORED_SHADOWS ? (RAY_SHADOWS | RAY_GLASS) : RAY_SHADOWS);
     blocker = ray_filter_distance;
     if (hit.instance == INVALID) return ray_filter;
     blocker = min(blocker, hit.t);

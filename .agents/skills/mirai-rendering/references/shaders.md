@@ -156,8 +156,6 @@
   - Surface with `ctx.ray` (also hits rebuilt in fragment shaders): LOD of the ray footprint.
   - PostProcess: derivatives and bias.
 - `mirai_sample_texture_level` receives an explicit mip; `mirai_sample_texture_grad`, gradients.
-  `mirai_load_texture(index,texel)` loads a texel of the level 0 of a texture that does not stream
-  (the data a plugin writes: a map of weights, a table) without filtering or reporting it.
 - `ctx.position_dx` and `ctx.position_dy` are the footprint of the point in the world: how much
   the position moves to the next pixel in x and in y (derivatives in raster) or, in a ray, the
   width of its cone along the surface. `mirai_sample_texture_projected(ctx,index,u,v,meters)` reads
@@ -193,10 +191,6 @@
   (`Mirai_Outline`), the style of the [game outline](frame-graph.md#outlines) and whether another
   surface covers it. `Blur` (`shaders/materials/screen_blur.slang`) is the engine one that reads
   around its pixel.
-- `ColorGrade` (`shaders/materials/color_grade.slang`) grades the exposed image before the
-  tonemap: saturation around the luminance and contrast as a power around middle gray (0.18), for
-  the whole image times its shadows, midtones and highlights, weighted by luminance. Its defaults
-  leave the image as it is.
 - A UI program colors the fill of a UI node: `evaluate(Mirai_Ui_Context ctx, Parameters p)` returns
   a display color with straight alpha, which the UI clips to the node's corners and tints with its
   scope. It receives only the node's four values: they fill the first 16 bytes of the parameters as
@@ -234,22 +228,21 @@
     `ctx.color` for an id it does not know. `ui.frag` includes it.
 - `scene.slang` includes `<surface_programs.slang>`: the stage itself evaluates no programs. A
   source marked `//! per surface program` is also compiled once per Surface program,
-  `<root>__<Program>[_<variant>]<suffix>` (`vis_resolve__Water_Surface_layers.frag`), with the
-  include of that program in front; `//! per surface program only` compiles only those. They are the
-  raster stages that draw materials (the resolve of the G-buffer and the `Gbuffer` stage of
-  extensions, glass layers and filter, translucents, overlays, highlight, thumbnails, UI and the
-  `vfx` sprites) and `surface_points.comp`, that of the ray material points ([programs in rays and
-  raster](materials.md#surface-programs-in-rays-and-raster)). A source marked `//! per vertex
-  program` is compiled only for the Surface programs with `vertex`, with the same include, and has
-  no stage of its own: `surface_vertices.comp`, which calls `mirai_vertex_program` (the include of
-  the generation and that of a program without `vertex` define it as moving nothing). No other
-  engine stage evaluates a Surface program.
+  `<root>__<Program>[_<variant>]<suffix>` (`gbuffer__Water_Surface_layers.frag`), with the include
+  of that program in front; `//! per surface program only` compiles only those. They are the
+  raster stages that draw materials (G-buffer, glass layers and filter, translucents, overlays,
+  highlight, thumbnails, UI and the `vfx` sprites) and `surface_points.comp`, that of the ray
+  material points
+  ([programs in rays and raster](materials.md#surface-programs-in-rays-and-raster)). A source
+  marked `//! per vertex program` is compiled only for the Surface programs with `vertex`, with
+  the same include, and has no stage of its own: `surface_vertices.comp`, which calls
+  `mirai_vertex_program` (the include of the generation and that of a program without `vertex`
+  define it as moving nothing). No other engine stage evaluates a Surface program.
 - A Surface program thus reaches only its stages, and its alpha those of rays if it has coverage;
   a PostProcess one, only `postprocess.frag`; a Vfx one, the stages of the `vfx` plugin that
   include it (emit, simulate and the vertices of sprites and meshes); a UI one, `ui.frag` and its
   `world` variant. Editing a program compiles its stages and, if the edit changes its alpha with
-  coverage, also those that trace (the ray ones, the overlays and those of the Vfx programs) and
-  the tested raster of the visibility target.
+  coverage, also those that trace (the ray ones, the overlays and those of the Vfx programs).
 - In a project generation, the stages that do not depend on the catalog have the fingerprint they
   have in the engine one and are taken from the shared cache.
 - Program ids are consecutive across the domains, in file order (engine, project, plugins): adding

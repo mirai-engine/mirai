@@ -103,6 +103,8 @@ description: Mirai standard library for games, with the packages `std/base`, `st
   [octree](references/spatial.md#octree-loose-octree) and
   [which to use](references/spatial.md#which-to-use). The AABB tree and the
   BVH are in [physics](../mirai-physics/references/physics.md#stdspatial).
+- BLAKE3 of bytes, and the values of its 64 KiB groups a blob is checked by piece by piece
+  (`std/blake3`): the code; the official vectors are its test.
 - Streams, schemas, hashes, import and migration of values (`std/serial`):
   [std/serial](../mirai-assets/references/serial.md#stdserial).
 - What the structure of a `.ui` is judged by (`std/ui_format`):

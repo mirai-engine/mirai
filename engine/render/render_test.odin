@@ -61,7 +61,7 @@ shared_generated_chunks_survive_world_layout_changes_and_local_preview_retiremen
                 transform.position.x=f32(owner)*72
                 core.add(&w.worlds,e,core.World_Transform{transform,transform})
                 core.add(&w.parents,e,core.Parent{entity=owners[owner]})
-                core.add(&w.meshes,e,Mesh_Renderer{mesh=source[i],shadows=true})
+                core.add(&w.meshes,e,Mesh_Renderer{mesh=source[i]})
                 core.add(&w.values,e,Material_Values{color=owner==0?[4]f32{1,1,1,1}:{0,1,0,1},emission={3,3,3}})
             }
             test_world_settle(&w)
@@ -133,7 +133,7 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
     }
     w.view.position,w.view.rotation,w.view.size={0,0,5},1,{160,120}
     e:=core.create(&w.entities)
-    core.add(&w.meshes,e,MESH_RENDERER_DEFAULT)
+    core.add(&w.meshes,e,Mesh_Renderer{shape=.Cube})
     core.add(&w.values,e,Material_Values{color={1,0,0,1},emission={3,0,0}})
     test_world_settle(&w)
     for pass in 0..<5 {
@@ -294,7 +294,7 @@ hiding_and_showing_update_what_hangs_from_it_without_a_new_scene :: proc(t:^test
         place:=mm.TRANSFORM_IDENTITY
         place.position.x=i==0?-1.5:1.5
         core.add(&w.worlds,e,core.World_Transform{place,place})
-        core.add(&w.meshes,e,MESH_RENDERER_DEFAULT)
+        core.add(&w.meshes,e,Mesh_Renderer{shape=.Cube})
         core.add(&w.values,e,Material_Values{color={1,0,0,1},emission={3,0,0}})
     }
     core.add(&w.parents,child,core.Parent{parent,0})
@@ -351,7 +351,7 @@ meshes_that_come_and_go_change_only_their_instances :: proc(t:^testing.T) {
         place:=mm.TRANSFORM_IDENTITY
         place.position.x=x
         core.add(&w.worlds,e,core.World_Transform{place,place})
-        core.add(&w.meshes,e,MESH_RENDERER_DEFAULT)
+        core.add(&w.meshes,e,Mesh_Renderer{shape=.Cube})
         core.add(&w.values,e,Material_Values{color={1,0,0,1},emission={3,0,0}})
         return e
     }
@@ -464,7 +464,7 @@ a_scene_without_memory_is_empty_until_a_frame_makes_it :: proc(t:^testing.T) {
         place:=mm.TRANSFORM_IDENTITY
         place.position.x=x
         core.add(&w.worlds,e,core.World_Transform{place,place})
-        core.add(&w.meshes,e,MESH_RENDERER_DEFAULT)
+        core.add(&w.meshes,e,Mesh_Renderer{shape=.Cube})
         core.add(&w.values,e,Material_Values{color={1,0,0,1},emission={3,0,0}})
         return e
     }

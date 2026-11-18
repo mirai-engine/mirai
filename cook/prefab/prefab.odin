@@ -68,7 +68,7 @@ model_prefab :: proc(model:^importer.Imported_Model,assets:^importer.Import_Repo
         s:=model.meshes[node.mesh].skeleton
         if s<0 || s>=len(rig_ids) || rig_shows[s] {continue}
         rig_shows[s],shown_by_rig[i]=true,true
-        shown:=render.Mesh_Renderer{mesh=assets.mesh_ids[node.mesh],shape=.None,shadows=true}
+        shown:=render.Mesh_Renderer{mesh=assets.mesh_ids[node.mesh]}
         if put(&scene,info,rig_ids[s],"Mesh_Renderer",&shown)!=.None {return report,.Write}
         if !model_collider(&scene,info,rig_ids[s],model.meshes[node.mesh]) {return report,.Write}
         if !model_morphs(&scene,info,rig_ids[s],node,model.meshes[node.mesh],true) {return report,.Write}
@@ -108,7 +108,7 @@ model_prefab :: proc(model:^importer.Imported_Model,assets:^importer.Import_Repo
         }
         skinned:=node.mesh>=0 && len(model.meshes[node.mesh].skin)>0
         if node.mesh>=0 && node.mesh<len(assets.mesh_ids) {
-            shown:=render.Mesh_Renderer{mesh=assets.mesh_ids[node.mesh],shape=.None,shadows=true}
+            shown:=render.Mesh_Renderer{mesh=assets.mesh_ids[node.mesh]}
             if put(&scene,info,own,"Mesh_Renderer",&shown)!=.None {return report,.Write}
             if !model_collider(&scene,info,own,model.meshes[node.mesh]) {return report,.Write}
             if !model_morphs(&scene,info,own,node,model.meshes[node.mesh],bone_rig[i]>=0) {return report,.Write}
@@ -207,20 +207,20 @@ Morph_Weights :: struct {
 model_light :: proc(scene:^asset.Scene,info:^core.World_Info,entity:base.Entity_Id,light:importer.Imported_Light,name:string,assets:^importer.Import_Report) -> bool {
     switch light.kind {
     case .Directional:
-        sun:=render.Sun{color=light.color,illuminance=light.intensity,disc=true,shadows=true,indirect=1,scattering=1}
+        sun:=render.Sun{color=light.color,illuminance=light.intensity,disc=true}
         return put(scene,info,entity,"Sun",&sun)==.None
     case .Point:
-        point:=render.Point_Light{color=light.color,intensity=light.intensity,range=light_range(light),radius=light.radius.? or_else render.POINT_LIGHT_DEFAULT.radius,shadows=true,indirect=1,scattering=1}
+        point:=render.Point_Light{color=light.color,intensity=light.intensity,range=light_range(light),radius=light.radius.? or_else render.POINT_LIGHT_DEFAULT.radius}
         return put(scene,info,entity,"Point_Light",&point)==.None
     case .Spot:
         angle:=clamp(light.outer_cone,render.SPOT_MIN,render.SPOT_MAX)
         if angle!=light.outer_cone {
             append(&assets.warnings,fmt.aprintf("the spot of %s has an outer cone of %.1f°, out of 1° to 89°: it was given %.1f°",name,light.outer_cone*mm.DEG_PER_RAD,angle*mm.DEG_PER_RAD,allocator=assets.allocator))
         }
-        spot:=render.Spot_Light{color=light.color,intensity=light.intensity,range=light_range(light),radius=light.radius.? or_else render.SPOT_LIGHT_DEFAULT.radius,angle=angle,shadows=true,indirect=1,scattering=1}
+        spot:=render.Spot_Light{color=light.color,intensity=light.intensity,range=light_range(light),radius=light.radius.? or_else render.SPOT_LIGHT_DEFAULT.radius,angle=angle}
         return put(scene,info,entity,"Spot_Light",&spot)==.None
     case .Rect:
-        rect:=render.Rect_Light{color=light.color,luminance=light.intensity,range=light_range(light),shadows=true,indirect=1,scattering=1}
+        rect:=render.Rect_Light{color=light.color,luminance=light.intensity,range=light_range(light)}
         return put(scene,info,entity,"Rect_Light",&rect)==.None
     }
     return true
@@ -286,8 +286,6 @@ model_write :: proc(model:^importer.Imported_Model,path:string,options:importer.
     name:=filepath.stem(path)
     source:=importer.source_path(options,path)
     id,target:=report.prefab,report.prefab_path
-    // A prefab changed since the import wrote it, which the import keeps (Changed.Keep).
-    if target=="" {return report,{}}
     if options.world==nil {
         importer.report_destroy(&report)
         return {},importer.error_make(.Write,"the prefab %s is written in the types of the game, which the library of the project's editor has: %s",target,author.BUILD_FIX)
@@ -295,17 +293,12 @@ model_write :: proc(model:^importer.Imported_Model,path:string,options:importer.
     types:asset.Types
     asset.types_init(&types)
     defer asset.types_destroy(&types)
-    if options.world.schema!=nil {types.defaults=&options.world.schema.schema}
     prefab_zone:=importer.zone_begin(options,"prefab.save")
     built,prefab_error:=model_prefab(model,&report,&types,options.world,id,name,target,&report.prefab_info,allocator)
     base.profile_end(prefab_zone)
     if prefab_error!=.None {
         importer.report_destroy(&report)
         return {},importer.error_make(.Write,"the prefab %s could not be written: %v",target,prefab_error)
-    }
-    if !importer.output_recorded(path,id,target) {
-        importer.report_destroy(&report)
-        return {},importer.error_make(.Write,"%s%s, which records what the import wrote, could not be written",path,importer.SIDECAR_EXTENSION)
     }
     size:int
     if info,stat_error:=os.stat(target,context.temp_allocator);stat_error==nil {size=int(info.size)}

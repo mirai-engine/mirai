@@ -98,7 +98,7 @@ Rules:
   current and the previous camera (`view_depth`, `previous_depth`).
 - `frame.footprint`: width of a pixel at depth 0 and its growth per unit of depth; texture LOD,
   ray cones and bias come from it.
-- **Clip plane.** A view with `clip_plane` uses the `clip` variants of the raster vertex stage
+- **Clip plane.** A view with `clip_plane` uses the `clip` variant of the G-buffer vertex stage
   (`SV_ClipDistance`), which exist with `Features.clip_distance`; the cull uses it as the sixth
   frustum plane.
 - **Layers.** `Instance_Desc.layers` (16 bits; 0: only the first) says in which layers an instance
@@ -107,7 +107,7 @@ Rules:
 - **The own body.** `Instance_Desc.owner` (1 + the local slot whose body it is; 0: none) sets
   `INSTANCE_FLAG_OWNED` and the slot in bits 13 to 15 of the flags. A view of a slot
   (`core.View.own`) does not draw from its body the `own_hidden` layers, and fades it in `fade`:
-  with 1 the cull discards it; below that, the raster discards that part of its pixels with a
+  with 1 the cull discards it; below that, the G-buffer discards that part of its pixels with a
   4x4 Bayer pattern fixed on screen, which TAA blends into transparency without passing the body
   to the blend pass. `Gpu_Frame.own` carries the slot and the `fade`; bits 16 to 31 of
   `Gpu_Frame.layers`, `own_hidden`. The renderer does not know what a head is: it decides by
@@ -180,8 +180,8 @@ discarding them. Zero: there was none.
   2. The `Mask` stage of an extension writes which pixels belong to each nested view and seals the
      hardware depth with that of the opening.
   3. For each nested view: cull with its camera; a second depth buffer (the farthest where the mask
-     named it, the nearest elsewhere, scissor in `Nested_View.rect`); its visibility target,
-     cleared, and its resolve with the `nested` constant, which writes negated depth and index.
+     named it, the nearest elsewhere, scissor in `Nested_View.rect`); G-buffer with the `nested`
+     constant, which writes negated depth and index.
 - **Opening.** `Nested_View.opening` is the plane of the face through which the nested view is seen.
   What is drawn without history (lines, panels) stays in front of a nested pixel only if it is in
   front of that plane; without a plane it is compared with the distance of what the pixel shows.
@@ -331,11 +331,7 @@ frame and the current one:
   with `material_vertex_tint`: a program reads the color as data and does not multiply it. With
   `fragment`, `<fragment>.frag` writes the targets instead of the engine, with the `plain` and
   `layers` variants and the packing of `gbuffer.slang`, like the
-  [foliage](../../mirai-world/references/foliage.md#far-impostor-and-crown) impostor. A cull
-  binds the view's depth pyramids with `pass_depth_pyramid` (this frame's, or the previous one's
-  with `previous`) and tests a box with `pyramid_hides` (`include/pyramid.slang`);
-  `pass_depth_pyramid_build`, between its draws, rebuilds this frame's pyramid with what it drew,
-  which its next cull and the next frame see. Materials
+  [foliage](../../mirai-world/references/foliage.md#far-impostor-and-crown) impostor. Materials
   with a Surface program are drawn with their program's fragment: `program` in
   `pass_gbuffer_pipeline` gives that pipeline, `pass_material_program` says the program of a
   material and `pass_mesh_programs` those of what a mesh shows, for a draw per program in which the

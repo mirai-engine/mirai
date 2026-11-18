@@ -270,8 +270,7 @@ ai_deliveries_advance :: proc(s:^Session,m:^Ai) {
     if !m.deliveries_due {return}
     m.deliveries_due=false
     for &task in m.tasks[:m.task_count] {
-        // An interrupted one has something held only when a Build restarted the editor on it.
-        if task.conversation.kind==.Agent && task.held>0 && task.steer_count==0 && (task.state==.Done || task.state==.Interrupted) && ai_task_current(s,&task) {ai_delivery_turn(s,m,&task)}
+        if task.conversation.kind==.Agent && task.held>0 && task.steer_count==0 && task.state==.Done && ai_task_current(s,&task) {ai_delivery_turn(s,m,&task)}
     }
     main:=ai_task_find(m,m.main)
     if main==nil || main.state!=.Done || main.steer_count>0 {return}
