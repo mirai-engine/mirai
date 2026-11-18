@@ -15,7 +15,8 @@ import mm "mirai:std/math"
 // where it is seen a tile keeps only the samples around the instances that
 // may show there (sparse), which stand and pass their rules as they do on a
 // whole tile: where an instance is does not depend on how far it is seen
-// from. A cell without a tile (not read yet, or no ground
+// from. A cell waiting for its first read has a coarse tile, of
+// SAMPLES_MIN a side, until it is read. A cell without a tile (no ground
 // covers it) has no ground: its generated instances are not there. Without a
 // ground in the world there are no owners, and the plane y = 0 of each entity
 // is its ground.
@@ -27,6 +28,7 @@ Foliage_Ground :: struct {
     streamed:u64,      // the revision of the streaming sources
     queue:[dynamic]Ground_Task, // tiles to read, the next one last (queue_order)
     unordered:bool,             // some were asked since the queue was ordered
+    spent:int,                  // samples read in the frame so far (GROUND_SAMPLES)
     keep_outs:[dynamic]Keep_Out_Seen, // where they were when the tiles under them were last asked for
     keep_seen:[4]core.Seen,           // the tables of Foliage_Keep_Out, Volume, Spline and Collider
 }
