@@ -1,5 +1,5 @@
 #include "native.slang"
-//! per surface program
+//! per surface program particle_sprite
 // The color of a sprite, and of a mesh particle whose material blends
 // (particle_mesh_blend.vert): its material, the color of the particle and the
 // light it receives, faded where it meets the scene behind it or the camera.

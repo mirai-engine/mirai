@@ -55,7 +55,7 @@ file_state :: proc(path:string) -> (state:Stamp_File) {
 
 // Identity of what a generation was asked for.
 @(private)
-request_digest :: proc(g:^Generation,sources:[]Source,odin:bool,allocator:=context.allocator) -> string {
+request_digest :: proc(g:^Generation,sources:[]Source,odin:bool,uses:[]Program_Uses_Of,every:abi.Program_Uses,allocator:=context.allocator) -> string {
     hash:Sha256
     sha_begin(&hash)
     zero:=[1]u8{0}
@@ -71,6 +71,12 @@ request_digest :: proc(g:^Generation,sources:[]Source,odin:bool,allocator:=conte
         sha_text(&hash,source.name)
         sha_bytes(&hash,zero[:])
         sha_text(&hash,path_clean(source.folder,context.temp_allocator))
+        sha_bytes(&hash,zero[:])
+    }
+    sha_text(&hash,fmt.tprint(transmute(u8)every))
+    sha_bytes(&hash,zero[:])
+    for each in uses {
+        sha_text(&hash,fmt.tprintf("%s %d",each.program,transmute(u8)each.uses))
         sha_bytes(&hash,zero[:])
     }
     return sha_hex(&hash,allocator)

@@ -11,6 +11,8 @@
 #include "gbuffer_vertex.slang"
 // The Surface program whose clusters a draw of an instance draws
 // (render.instance_clusters_draw): 0 those without one, INVALID all of them.
+// The highlight takes only the program of a blended material: the coverage of
+// another is its mask map, which the stage without a program reads.
 struct Draw_Block { uint program; uint pad0; uint pad1; uint pad2; };
 [[vk::binding(SLOT_DRAW, 0)]] ConstantBuffer<Draw_Block> draw : register(MIRAI_REGISTER(b, SLOT_DRAW), space0);
 #include "gbuffer_build.slang"
@@ -22,7 +24,9 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
     Mesh mesh = meshes[instance_mesh(inst)];
     Cluster c = mesh_cluster(mesh, vertex_id >> DRAW_VERTEX_BITS);
     bool drawn = MIRAI_EDITOR_HIGHLIGHT ? cluster_finest_resident(mesh, c) : cluster_in_cut(view_detail(), inst, instance_scale(inst), mesh, c, frame.cut.x);
-    drawn = drawn && (draw.program == INVALID || materials[material_of(inst, cluster_material(mesh, c))].shared.program_id == draw.program);
+    Material m = materials[material_of(inst, cluster_material(mesh, c))].shared;
+    uint program = MIRAI_EDITOR_HIGHLIGHT && m.alpha_mode != ALPHA_BLEND ? 0u : m.program_id;
+    drawn = drawn && (draw.program == INVALID || program == draw.program);
     if (!drawn) {
         // Outside the volume of the view: the triangle has no area to raster.
         output.position = float4(2.0, 2.0, 2.0, 1.0);

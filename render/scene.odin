@@ -376,6 +376,8 @@ Scene_State :: struct {
 	reflective:           [dynamic]Reflective_Instance,
 	materials:            [dynamic]Gpu_Material_Row, // the material table; row 0 is the default
 	program_rows:         [POINTS_PROGRAM_CAPACITY]u32, // rows of the table of each Surface program, by id
+	program_opaque_rows:  [POINTS_PROGRAM_CAPACITY]u32, // of them, those not blended: the visibility target may hold the program
+	program_shown_opaque: [POINTS_PROGRAM_CAPACITY]bool, // programs of blended rows an instance shows otherwise by its values
 	programs_used:        u32, // ids with rows there
 	programs_arrived:     bool, // a program got its first row: the next frame asks for its pipelines (programs_ask)
 	programmed_rows:      u32, // rows with a Surface program
@@ -738,6 +740,9 @@ program_rows_count :: proc(s: ^Scene_State, row: Gpu_Material_Row, added: bool) 
 	if added {s.programmed_rows += 1} else {s.programmed_rows -= 1}
 	if program >= POINTS_PROGRAM_CAPACITY {return}
 	if added {s.program_rows[program] += 1} else {s.program_rows[program] -= 1}
+	if row.alpha_mode != u32(asset.Alpha_Mode.Blend) {
+		if added {s.program_opaque_rows[program] += 1} else {s.program_opaque_rows[program] -= 1}
+	}
 	if s.program_rows[program] == (1 if added else 0) {
 		if added {s.programs_used += 1} else {s.programs_used -= 1}
 		s.programs_arrived ||= added
@@ -894,10 +899,19 @@ materials_texture_gone :: proc(r: ^Renderer, entry: u32) {
 instances_classify :: proc(s: ^Scene_State) {
 	clear(&s.translucent)
 	clear(&s.reflective)
+	s.program_shown_opaque = {}
 	for &inst, i in s.instances {
 		if int(inst.meta.x & INSTANCE_MESH_MASK) >= len(s.meshes) {continue}
 		mesh := s.meshes[inst.meta.x & INSTANCE_MESH_MASK]
 		a := instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
+		if a.shown_opaque != 0 {
+			palette := inst.slot_materials
+			for packed, k in s.indices[mesh.slot_word:][:mesh.slot_count] {
+				row := instance_row(packed, inst.meta.y, &palette)
+				if a.shown_opaque & (1 << u32(k)) == 0 || int(row) >= len(s.materials) {continue}
+				if program := s.materials[row].program_id; program < POINTS_PROGRAM_CAPACITY {s.program_shown_opaque[program] = true}
+			}
+		}
 		flags := (inst.meta.w &~ (INSTANCE_FLAG_ALPHA_TESTED | INSTANCE_FLAG_BLENDED | INSTANCE_FLAG_TRANSLUCENT)) | alpha_flags(a)
 		if a.reflectance && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.reflective, Reflective_Instance{u32(i), a.layered})}
 		mask_flags := tlas_mask_flags(ray_class(inst.meta.x, flags), a.tested, mesh.tested)
@@ -945,10 +959,11 @@ tlas_refs_classify :: proc(s: ^Scene_State) {
 // reflects other than the default dielectric, which the albedo and metallic
 // of the G-buffer give by themselves; layered: one of its opaque materials
 // has layers; solid: one of its blended ones has a thickness; glass_layered:
-// one of its blended ones has layers.
+// one of its blended ones has layers. shown_opaque: a bit for each slot
+// whose row is a blended one with a program that its values show otherwise.
 @(private)
 Instance_Alpha :: struct {
-	tested: u32,
+	tested, shown_opaque: u32,
 	blended, glass, reflectance, layered, solid, glass_layered: bool,
 }
 
@@ -967,6 +982,7 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
         if int(row)<len(s.materials) {
             values:=instance_material(s,given,row)
             m=asset.Alpha_Mode(values.alpha_mode)
+            if given!=0 && m!=.Blend && values.program_id!=0 && s.materials[row].alpha_mode==u32(asset.Alpha_Mode.Blend) {a.shown_opaque|=1<<u32(k)}
             departs:=values.program_id!=0 || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior
             if m != .Blend && (departs || values.textures[.Specular]!=GPU_NONE || values.textures[.Specular_Color]!=GPU_NONE) {a.reflectance=true}
             lit:=transmute(asset.Material_Layers)values.layers-{.Unlit}

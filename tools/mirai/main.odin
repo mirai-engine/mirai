@@ -7,6 +7,7 @@ import "core:strings"
 import "core:time"
 import "core:path/filepath"
 import "mirai:cook/build"
+import "mirai:cook/shaders"
 import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/subprocess"
@@ -53,6 +54,9 @@ COMMANDS :: [?]Command{
 }
 
 main :: proc() {
+    // A compiler of a shader generation speaks only to it, on its streams: it
+    // neither refreshes this tool nor says anything else.
+    if len(os.args)==4 && os.args[1]=="shaders" && os.args[2]=="compiler" {os.exit(shaders.compiler_serve(os.args[3]))}
     root:=project.engine_root_find("")
     if root=="" {fmt.eprintfln("mirai: cannot find the root of the engine: a checkout (AGENTS.md and tools/mirai) or an installed engine (%s)",project.ENGINE_FILE);os.exit(2)}
     // The editor and the player it starts look for the engine there first.

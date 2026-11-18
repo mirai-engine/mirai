@@ -517,7 +517,7 @@ Check_Compile :: struct {
 // On a job of its own: its output is in the heap and the caller frees it.
 @(private="file")
 check_compile_run :: proc(job:^Check_Compile) {
-    job.output,job.ok=tool_run(job.runner,job.command,runtime.heap_allocator())
+    job.output,job.ok=slang_run(job.runner,job.command,runtime.heap_allocator())
 }
 
 // Where the program is copied for the compilations: under the label of the
@@ -573,6 +573,8 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
         }
     }
     runner:Runner
+    runner_compiler(&runner,context.temp_allocator)
+    defer runner_close(&runner)
     if accepted,_,problem:=slang_ensure(options.root,slangc,options.tools,&runner,context.temp_allocator);problem!="" {
         result.error=strings.clone(problem,allocator)
         return

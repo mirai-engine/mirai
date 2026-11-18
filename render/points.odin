@@ -131,6 +131,8 @@ program_compute :: proc(r: ^Renderer, table: ^Program_Computes, program: Program
 		if code := program_shader(r, fmt.bprintf(name[:], "%s__%s.comp", stem, program.name)); code != nil {
 			table.codes[program.id] = code
 			table.asked[program.id] = pipeline_make(r, &table.pipelines[program.id], compute = {shader = code, name = code.name}, early = early)
+		} else {
+			program_missing(r, fmt.bprintf(name[:], "%s.comp", stem), program.id)
 		}
 	} else if table.pipelines[program.id] == 0 && table.codes[program.id] != nil && !early {
 		pipeline_urgent(r, &table.pipelines[program.id])

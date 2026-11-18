@@ -124,8 +124,12 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   `rhi`; a plugin's, in its own code), and the shaders get it generated
   ([shared constants](references/shaders.md#compilation)): no `.slang` source writes its value.
 - The graphics API is the own `rhi` over Vulkan and Metal; wgpu is not used.
-- Each shader stage compiles in its own `slangc` process, even if other stages have the same
-  defines.
+- Each shader stage compiles in a compile request of its own, from the command line of slangc,
+  in compilers that load Slang once and outlive it (`mirai shaders compiler`), even if other
+  stages have the same defines.
+- A Surface program is compiled only for what it is drawn as (`abi.Program_Use`): what the assets
+  of the project draw it as, what its source declares and, in the editor, the previews it shows.
+  A draw it was not compiled for is a problem of the frame that says how to declare it.
 - What a pass chooses of a stage is a constant of its pipelines, not another compilation; a
   variant is only for what the stage declares to the device
   ([constants and variants](references/shaders.md#compilation)).

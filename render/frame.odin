@@ -272,7 +272,8 @@ resolve_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rhi
 	rhi.cmd_draw_indirect(cmd, s.program_draws, 0, 1, size_of(Gpu_Program_Draw))
 	if s.programmed_rows == 0 {return}
 	for program in renderer_programs(r) {
-		if program.domain != .Surface || program.id == 0 || program.id >= r.points.programs || s.program_rows[program.id] == 0 {continue}
+		// A program only blended rows show has no pixel there.
+		if program.domain != .Surface || program.id == 0 || program.id >= r.points.programs || s.program_opaque_rows[program.id] == 0 && !s.program_shown_opaque[program.id] {continue}
 		rhi.cmd_bind_pipeline(cmd, program_graphics(r, target, program.id))
 		rhi.cmd_draw_indirect(cmd, s.program_draws, u64(program.id) * size_of(Gpu_Program_Draw), 1, size_of(Gpu_Program_Draw))
 	}
@@ -310,7 +311,7 @@ highlight_pass :: proc(p: ^Pass) {
 	rhi.cmd_begin_render_pass(cmd, &pass)
 	for inst, index in s.instances {
 		if !highlight_drawn(inst.meta.w) {continue}
-		instance_programs_draw(r, cmd, &r.pipelines[.Highlight], u32(index), true)
+		instance_programs_draw(r, cmd, &r.pipelines[.Highlight], u32(index), true, blended = true)
 	}
 	rhi.cmd_end_render_pass(cmd)
 }
@@ -1846,7 +1847,7 @@ update_stats :: proc(r: ^Renderer) {
 		memory = fmt.tprintf("%d resources of GPU memory went to system memory because the device memory was full, which slows the frames: a lower resolution or texture quality frees device memory", host)
 	}
 	waiting := fmt.tprintf("the pass of the stage %s is skipped while its pipeline is made", r.pipeline_waiting) if r.pipeline_waiting != "" else ""
-	for other in ([]string{r.tlas_problem, pages_problem(r), memory, r.pipeline_problem, waiting}) {
+	for other in ([]string{r.tlas_problem, pages_problem(r), memory, r.pipeline_problem, r.program_problem, waiting}) {
 		if other == "" {continue}
 		if s.problem == "" {s.problem = string(r.problem_buffer[:copy(r.problem_buffer[:], other)]); continue}
 		// The problems before are at the start of problem_buffer: this one follows them.

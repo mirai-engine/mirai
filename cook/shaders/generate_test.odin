@@ -126,7 +126,8 @@ mini_make :: proc(t:^testing.T,mini:^Mini) -> bool {
     os.make_directory_all(path_join(mini.root,"render",allocator=context.temp_allocator))
     os.make_directory_all(path_join(mini.root,"rhi",allocator=context.temp_allocator))
     mini.output=path_join(mini.root,"shaders/build",allocator=context.temp_allocator)
-    options.root,options.odin,options.workers=mini.root,true,2
+    // Each Surface program is drawn as an opaque material: compiled for the stages of that use.
+    options.root,options.odin,options.workers,options.every=mini.root,true,2,{.Opaque}
     mini.options=options
     return true
 }
@@ -521,7 +522,9 @@ void main(uint3 id : SV_DispatchThreadID) {
 `
 
 @(private="file")
-SHADE_EACH :: "//! per surface program\n" + SHADE
+SHADE_EACH :: "//! per surface program opaque\n" + SHADE
+@(private="file")
+SHADE_USES :: "//! per surface program opaque glow=preview\n//! variant glow MIRAI_GLOW\n" + SHADE
 
 @(private="file")
 MOVE_EACH :: `#include "native.slang"
@@ -577,19 +580,27 @@ stage_per_vertex_program_is_compiled_only_for_the_programs_that_move_vertices ::
 }
 
 // A stage marked per Surface program: the stage of the materials without one,
-// then one for each program, which the renderer finds by name outside
-// Shader_Id. A program reaches only its own stage.
+// then one for each program built for a use it serves, which the renderer
+// finds by name outside Shader_Id. A program reaches only its own stage, and
+// only those of what it is drawn as: by the assets or by its own `//! use`.
 @(test)
 stage_per_surface_program_is_compiled_for_each_program_and_only_that_program_reaches_it :: proc(t:^testing.T) {
     mini:Mini
     if !mini_make(t,&mini) {return}
-    fixture_write(t,mini.root,"shaders/shade.frag.slang",SHADE_EACH)
-    engine:=mini_generate(t,&mini,mini.options)
+    fixture_write(t,mini.root,"shaders/shade.frag.slang",SHADE_USES)
+    drawn:=mini.options
+    drawn.every={}
+    drawn.uses={{"Grid",{.Opaque}},{"Ocean",{.Opaque,.Preview}}}
+    engine:=mini_generate(t,&mini,drawn)
     testing.expect_value(t,engine.error,"")
     if engine.error!="" {return}
     host:=HOST_CODE
-    for stage in ([]string{"shade.frag","shade__Grid.frag","shade__Ocean.frag"}) {
-        testing.expectf(t,os.is_file(path_join(mini.output,strings.concatenate({stage,host},context.temp_allocator),allocator=context.temp_allocator)),"%s%s is published",stage,host)
+    published :: proc(folder,stage,host:string) -> bool {return os.is_file(path_join(folder,strings.concatenate({stage,host},context.temp_allocator),allocator=context.temp_allocator))}
+    for stage in ([]string{"shade.frag","shade_glow.frag","shade__Grid.frag","shade__Ocean.frag","shade__Ocean_glow.frag"}) {
+        testing.expectf(t,published(mini.output,stage,host),"%s%s is published",stage,host)
+    }
+    for stage in ([]string{"shade__Grid_glow.frag","shade__Pieces.frag","shade__Pieces_glow.frag"}) {
+        testing.expectf(t,!published(mini.output,stage,host),"%s%s is not compiled: nothing draws its program so",stage,host)
     }
     table:=mini_read(&mini,"render/shaders_gen.odin")
     enum_end:=strings.index(table,"}")
@@ -599,17 +610,17 @@ stage_per_surface_program_is_compiled_for_each_program_and_only_that_program_rea
 
     project:=path_join(mini.root,"game",allocator=context.temp_allocator)
     output:=path_join(project,PROJECT_OUTPUT,allocator=context.temp_allocator)
-    fixture_write(t,project,"shaders/tint.slang",tint_program("1.0"))
-    options:=mini.options
+    fixture_write(t,project,"shaders/tint.slang",strings.concatenate({"//! use preview\n",tint_program("1.0")},context.temp_allocator))
+    options:=drawn
     options.odin=false
     options.project=project
     first:=mini_generate(t,&mini,options)
     testing.expect_value(t,first.error,"")
     testing.expect_value(t,first.compiled,1)
-    testing.expect(t,os.is_file(path_join(output,strings.concatenate({"shade__Tint.frag",host},context.temp_allocator),allocator=context.temp_allocator)),"the program of the project has its stage")
+    testing.expect(t,published(output,"shade__Tint_glow.frag",host) && !published(output,"shade__Tint.frag",host),"the program of the project has the stage of what its source declares alone")
     testing.expect(t,mini_read(&mini,strings.concatenate({"game/",PROJECT_OUTPUT,"/shade.frag",host},context.temp_allocator))==mini_read(&mini,strings.concatenate({"shaders/build/shade.frag",host},context.temp_allocator)),"the stage without a program is the engine's")
 
-    fixture_write(t,project,"shaders/tint.slang",tint_program("0.5"))
+    fixture_write(t,project,"shaders/tint.slang",strings.concatenate({"//! use preview\n",tint_program("0.5")},context.temp_allocator))
     edited:=mini_generate(t,&mini,options)
     testing.expect_value(t,edited.error,"")
     testing.expect_value(t,edited.compiled,1)
