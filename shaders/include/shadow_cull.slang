@@ -101,6 +101,26 @@ bool shadow_page_drawn(Shadow_Map m, uint2 page, float4 texels) {
     return at.x < float(part.z) && at.y < float(part.w) && at.z >= float(part.x) && at.w >= float(part.y);
 }
 
+// What drawing what covers some texels of a map (its box) costs in a page of
+// it, in units (SHADOW_UNIT_TEXELS): the texels its triangles cover there,
+// SHADOW_MASKED_COST times as many for a masked material, and the vertices
+// of its draws into the page, CLUSTER_DRAW_VERTICES each. surface: the
+// texels of the map the area of its triangles spans in all, of which a page
+// charges the share its box has in the part of the page the round draws
+// (part, from its corner), at most its triangles over each of those texels;
+// 0 where it is not known, when it is taken as its box over them once.
+uint shadow_units(uint2 page, uint4 part, float4 texels, uint triangles, bool masked, float surface, float draws) {
+    float4 at = texels - float4(page * SHADOW_PAGE, page * SHADOW_PAGE);
+    float2 covered = max(min(at.zw, float2(part.zw)) - max(at.xy, float2(part.xy)), float2(1.0, 1.0));
+    float2 box = max(texels.zw - texels.xy, float2(1.0, 1.0));
+    float within = covered.x * covered.y;
+    float area = surface > 0.0 ? min(surface * saturate(within / (box.x * box.y)), within * float(max(triangles, 1u))) : within;
+    area = max(area, 1.0) * float(masked ? SHADOW_MASKED_COST : 1u);
+    float vertices = ceil(draws * float(CLUSTER_DRAW_VERTICES / SHADOW_UNIT_VERTICES));
+    return uint(min(ceil(area / float(SHADOW_UNIT_TEXELS)) + vertices, float(SHADOW_COST_UNITS / 4u)));
+}
+
+
 // A page of a map as a word: the map, its column, its row and its mip (render.shadow_page_word).
 uint shadow_page_word(uint map, uint mip, uint2 page) { return map | page.x << 8u | page.y << 15u | mip << 22u; }
 uint shadow_page_map(uint word) { return word & 0xFFu; }

@@ -1119,6 +1119,7 @@ restart :: proc(s:^Session,extra:[]string=nil) -> bool {
         return false
     }
     session_record_follow(s,process.pid)
+    gpu_turn_handed(s,process.pid)
     log.infof("restarting with %s",exe)
     s.quit=true
     return true

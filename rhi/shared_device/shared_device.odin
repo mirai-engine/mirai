@@ -2,6 +2,7 @@ package shared_device
 
 import "base:runtime"
 import "core:fmt"
+import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:testing"
@@ -103,7 +104,12 @@ keep_one :: proc() {
 make_shared :: proc(i: int) {
 	if shared.devices[i] != nil || shared.refused[i] != "" {return}
 	context.allocator = runtime.heap_allocator()
-	d, refusal := rhi.device_create({app_name = "mirai GPU tests", validation = true, allow_hardware_ray_tracing = i == 1, on_message = count_message, message_user = &shared.errors, allocator = context.allocator})
+	// The pipelines compiled are kept beside the executable of the tests, as an
+	// editor keeps its own: a run compiles only what changed, whatever the
+	// cache of the driver still holds.
+	store := ""
+	if len(os.args) > 0 {store = fmt.tprintf("%s/gpu-test-pipelines-%d.bin", os.dir(os.args[0]), i)}
+	d, refusal := rhi.device_create({app_name = "mirai GPU tests", validation = true, allow_hardware_ray_tracing = i == 1, on_message = count_message, message_user = &shared.errors, allocator = context.allocator, pipeline_cache_path = store})
 	shared.devices[i] = d
 	if d == nil {shared.refused[i] = strings.clone(refusal != "" ? refusal : "no device")}
 }
