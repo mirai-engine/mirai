@@ -358,7 +358,9 @@ stages.
   Which one a program is, the generation decides (`mirai_program_derivatives` of its include,
   [programs](shaders.md#programs)). A draw of the clusters of an instance (glass layers and filter,
   translucents, overlays, highlight) is made once per program of its materials, which it names to
-  `gbuffer.vert` (`SLOT_DRAW`): the vertex shader collapses the clusters of the others. Thumbnails
+  `gbuffer.vert` (`SLOT_DRAW`): the vertex shader collapses the clusters of the others. The
+  highlight draws with a program's stage only its blended materials: the coverage of the others is
+  their mask map, which the stage without a program reads. Thumbnails
   and impostors name the program as the first instance of the draw; the UI splits its triangles
   into ranges by the program of the previews they show, without changing their order.
 - **Rays: material points** (`points.odin`, `include/points.slang`). A thread that finds a material
@@ -433,7 +435,9 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
   and their points are read as the row (the record unwritten, `point_record_given`).
 - Without either of the two (headless sessions, tests, captures) the pipeline is made where it is
   requested: what a frame draws does not depend on driver time.
-- A thumbnail, a material capture or an impostor, which are read right away, wait for the pipeline.
+- A thumbnail, a material capture or an impostor, which are read right away, wait for the pipeline;
+  a thumbnail or a capture of a program not yet compiled for previews is not drawn until the editor
+  has compiled it ([program uses](shaders.md#programs-and-stages)).
   `app_capture_world` draws one more frame if the last one drew a program as its row
   (`renderer_pipelines_pending` counts them, `renderer_pipelines_wait`); `capture` and
   `profile.capture` wait for all that `host.app_pending` counts

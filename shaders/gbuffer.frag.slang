@@ -1,5 +1,5 @@
 #include "native.slang"
-//! per surface program
+//! per surface program particle_mesh
 // What the Gbuffer stage of an extension draws into the G-buffer with its own
 // vertices (render.pass_gbuffer_pipeline), a fragment each: the scene is
 // resolved once per pixel from the visibility target (vis_resolve.frag).

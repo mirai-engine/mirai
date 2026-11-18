@@ -123,7 +123,12 @@ Options :: struct {
     idle:    []string, // stages compiled after the others, by their names in the manifest: those whose code the one who loads the generation does not run now
     active_output:string, // "": none. Once every stage but the idle ones compiles, a generation that loads alone is written there: the catalog and those stages of this one, the idle ones as the output has them. Not without an idle stage
     progress:^Progress, // nil: none. One for each generation
+    uses:    []Program_Uses_Of, // what the assets draw Surface programs as (build.program_uses), besides what their sources declare
+    every:   abi.Program_Uses,  // uses of every Surface program: the tests of a package draw theirs every way
 }
+
+// What a Surface program is drawn as by the assets of a project.
+Program_Uses_Of :: struct {program:string,uses:abi.Program_Uses}
 
 // What the thread that started a generation follows of it, and how it stops it.
 Progress :: struct {
@@ -204,7 +209,8 @@ Generation :: struct {
     identity:     string, // of what its engine stages share with the engine (engine_interface), as the manifest names it
     catalog:      string, // its fingerprint
     vfx:          []string, // the Vfx programs: a stage marked `//! per vfx program` is compiled once for each
-    surface:      []string, // the Surface programs: a stage marked `//! per surface program` is compiled once for each
+    surface:      []string, // the Surface programs: a stage marked `//! per surface program <uses>` is compiled for each built for one of those uses
+    surface_uses: []abi.Program_Uses, // by surface: what each is built for
     vertex:       []string, // those of them with a function vertex: a stage marked `//! per vertex program` is compiled once for each
     staging:      string,
     warnings:     strings.Builder,
@@ -761,16 +767,17 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
         // generation): it is that of the materials without a program, unless the source
         // says it has none (`//! per surface program only`). One per vertex program is compiled
         // only for the Surface programs with a function vertex, with their include.
-        Of :: struct {name,folder:string}
-        per_surface:=strings.contains(text,"//! per surface program")
+        // A stage of a Surface program is compiled for those built for one of the uses its variant serves.
+        Of :: struct {name,folder:string,uses:abi.Program_Uses}
+        per_surface,surface_only,surface_problem:=surface_stage_marked(text)
         per_vertex:=strings.contains(text,"//! per vertex program")
-        only:=per_vertex || strings.contains(text,"//! per surface program only")
+        only:=per_vertex || surface_only
         programs:=make([dynamic]Of,context.temp_allocator)
-        if collected!=.Programs && !only {append(&programs,Of{"",""})}
+        if collected!=.Programs && !only {append(&programs,Of{"","",{}})}
         if collected!=.Plain {
-            if strings.contains(text,"//! per vfx program") {for name in g.vfx {append(&programs,Of{name,VFX_FOLDER})}}
-            if per_surface {for name in g.surface {append(&programs,Of{name,SURFACE_FOLDER})}}
-            if per_vertex {for name in g.vertex {append(&programs,Of{name,SURFACE_FOLDER})}}
+            if strings.contains(text,"//! per vfx program") {for name in g.vfx {append(&programs,Of{name,VFX_FOLDER,{}})}}
+            if per_surface {for name,i in g.surface {append(&programs,Of{name,SURFACE_FOLDER,g.surface_uses[i]})}}
+            if per_vertex {for name in g.vertex {append(&programs,Of{name,SURFACE_FOLDER,{}})}}
         }
         declared:=constants(text,allocator)
         problem:=constants_problem(declared,allocator)
@@ -781,6 +788,7 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
             constant_defines[id]=fmt.aprintf("%s="+CONSTANT_SYMBOL,constant.define,id,allocator=allocator)
         }
         for program in programs do for variant in variants(text,allocator) {
+            if per_surface && program.folder==SURFACE_FOLDER && surface_problem=="" && surface_variant_uses(text,variant.name)&program.uses=={} {continue}
             named:=stem if program.name=="" else fmt.tprintf("%s__%s",stem,program.name)
             name:=fmt.aprintf("%s%s%s%s",named,"_" if variant.name!="" else "",variant.name,suffixes[stage],allocator=allocator)
             itself:=name if program.name=="" else fmt.aprintf("%s%s%s%s",stem,"_" if variant.name!="" else "",variant.name,suffixes[stage],allocator=allocator)
@@ -797,6 +805,7 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
             job:=Job{source=source,name=name,stage=itself,defines=defines[:],constants=constant_names,includes=includes,bases=g.bases,out=out,staging=staging,reduced=shader_reduced(name),backends=g.backends}
             if software_rays(text,variant) {job.backends-={.Metal}}
             if problem!="" {job.error=fmt.aprintf("%s: %s",name,problem,allocator=allocator)}
+            if surface_problem!="" {job.error=fmt.aprintf("%s: %s",name,surface_problem,allocator=allocator)}
             for &built in engine {
                 if built.name!=name {continue}
                 // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
@@ -813,6 +822,75 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
         }
     }
     return first,len(jobs)-first
+}
+
+// The words of the `//! per surface program` line of a source, after it.
+@(private)
+surface_stage_words :: proc(text:string) -> (words:[]string,marked:bool) {
+    MARK :: "//! per surface program"
+    rest:=text
+    for line in strings.split_lines_iterator(&rest) {
+        if !strings.has_prefix(line,MARK) {continue}
+        return strings.fields(line[len(MARK):],context.temp_allocator),true
+    }
+    return
+}
+
+// Whether a source is compiled for each Surface program built for one of its
+// uses (`//! per surface program [only] <use|variant=use>...`); only: it has
+// no stage of its own. problem: why the line cannot be compiled.
+@(private)
+surface_stage_marked :: proc(text:string) -> (marked,only:bool,problem:string) {
+    words:[]string
+    if words,marked=surface_stage_words(text);!marked {return}
+    names:=abi.PROGRAM_USE_NAMES
+    named:=false
+    for word in words {
+        if word=="only" {only=true;continue}
+        use:=word[strings.index_byte(word,'=')+1:]
+        if _,known:=abi.program_use_named(use);!known {
+            return marked,only,fmt.tprintf("`//! per surface program` names %s, which is no use: the uses are %s",use,strings.join(slice.enumerated_array(&names),", ",context.temp_allocator))
+        }
+        named=true
+    }
+    if !named {problem=fmt.tprintf("`//! per surface program` names none of the uses it serves (%s): a program is compiled only for those",strings.join(slice.enumerated_array(&names),", ",context.temp_allocator))}
+    return
+}
+
+// The uses a variant of a source marked `//! per surface program` serves:
+// those its line names as <variant>=<use>, or else those it names alone.
+@(private)
+surface_variant_uses :: proc(text,variant:string) -> abi.Program_Uses {
+    words,_:=surface_stage_words(text)
+    plain,own:abi.Program_Uses
+    for word in words {
+        equals:=strings.index_byte(word,'=')
+        use,known:=abi.program_use_named(word[equals+1:])
+        if !known {continue}
+        if equals<0 {plain+={use}} else if word[:equals]==variant {own+={use}}
+    }
+    return own if own!={} else plain
+}
+
+// The stages of these folders compiled for each Surface program built for
+// one of their uses, by name without a program, with the uses each serves.
+@(private)
+surface_stages :: proc(files:^Sources,folders:[]string,allocator:runtime.Allocator) -> []abi.Surface_Stage {
+    found:=make([dynamic]abi.Surface_Stage,allocator)
+    suffixes:=STAGE_SUFFIXES
+    for folder in folders {
+        for source in sources_in(files,folder,".slang",context.temp_allocator) {
+            stem,stage,is_stage:=stage_of(path_name(source))
+            if !is_stage {continue}
+            text:=string(sources_file(files,source).data)
+            if marked,_,problem:=surface_stage_marked(text);!marked || problem!="" {continue}
+            for variant in variants(text,context.temp_allocator) {
+                name:=fmt.aprintf("%s%s%s%s",stem,"_" if variant.name!="" else "",variant.name,suffixes[stage],allocator=allocator)
+                append(&found,abi.Surface_Stage{name,surface_variant_uses(text,variant.name)})
+            }
+        }
+    }
+    return found[:]
 }
 
 // Each stage is compiled against an extensions.slang with only the features
@@ -1094,7 +1172,7 @@ generation_setup :: proc(g:^Generation,options:Options,scratch:runtime.Allocator
             return odin,"",fmt.aprintf("%s not found: %s",names[tool],hint,allocator=scratch)
         }
     }
-    return odin,request_digest(g,options.sources,odin,scratch),""
+    return odin,request_digest(g,options.sources,odin,options.uses,options.every,scratch),""
 }
 
 // The strings of the result are in `scratch`, as is everything the generation holds.
@@ -1171,7 +1249,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     for source in options.sources {append(&copies,Base{path_clean(source.folder,scratch),path_join(programs_folder,"plugins",source.name,allocator=scratch)})}
     g.copies=copies[:]
     reflection_started:=time.tick_now()
-    catalog,catalog_error:=programs_generate(g.runner,g.root,g.project,staging,g.tools[.Slangc],g.version,path_join(g.shared,CACHE_REFLECTION,allocator=scratch),options.sources,scratch,&g.sources,workers,compilation_memory(g,PROGRAMS_KEY,scratch))
+    catalog,catalog_error:=programs_generate(g.runner,g.root,g.project,staging,g.tools[.Slangc],g.version,path_join(g.shared,CACHE_REFLECTION,allocator=scratch),options.sources,scratch,&g.sources,workers,compilation_memory(g,PROGRAMS_KEY,scratch),options.uses,options.every)
     if catalog_error!="" {
         diagnostics_place(result.diagnostics,g.copies,{g.project,g.root},scratch)
         fail(&result,allocator,"%s",len(result.diagnostics)>0?diagnostics_text(result.diagnostics,scratch):catalog_error)
@@ -1201,7 +1279,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     }
     append(&bases,Base{"engine",g.root})
     g.includes,g.bases=includes[:],bases[:]
-    g.catalog,g.vfx,g.surface,g.vertex=catalog.fingerprint,catalog.vfx,catalog.surface,catalog.vertex
+    g.catalog,g.vfx,g.surface,g.surface_uses,g.vertex=catalog.fingerprint,catalog.vfx,catalog.surface,catalog.surface_uses,catalog.vertex
     // The tools after Slang shape the Metal output of a shader, not what a
     // generation shares with the engine: they are of each shader's digest.
     {

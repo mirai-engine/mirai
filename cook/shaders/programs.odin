@@ -7,6 +7,7 @@ import "core:fmt"
 import "core:math"
 import "core:mem/virtual"
 import "core:os"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:sync"
@@ -64,6 +65,8 @@ Catalog :: struct {
     vfx:        []string,   // the Vfx programs, each with an include of its own (VFX_FOLDER/<name>/VFX_INCLUDE)
     surface:    []string,   // the Surface programs, each with an include of its own (SURFACE_FOLDER/<name>/SURFACE_INCLUDE)
     vertex:     []string,   // of them, those with a function vertex: a stage marked `//! per vertex program` is compiled for each
+    surface_uses:[]abi.Program_Uses, // by surface: what each is drawn as
+    surface_stages:[]abi.Surface_Stage, // the stages compiled for each Surface program built for one of their uses (surface_stages)
 }
 
 @(private)
@@ -99,12 +102,14 @@ Program_Directives :: struct {
     resources,stages:[dynamic][]string,
     moves,births,prepare:bool,
     vertex:[]string,
+    uses:[dynamic]string, // the words of its `//! use` lines
 }
 
 program_directives :: proc(text:string,allocator:=context.temp_allocator) -> (d:Program_Directives) {
     d.metadata=make([dynamic][2]string,allocator)
     d.resources=make([dynamic][]string,allocator)
     d.stages=make([dynamic][]string,allocator)
+    d.uses=make([dynamic]string,allocator)
     rest:=text
     number:=0
     for line in strings.split_lines_iterator(&rest) {
@@ -127,6 +132,7 @@ program_directives :: proc(text:string,allocator:=context.temp_allocator) -> (d:
         case "resource": append(&d.resources,words)
         case "stage": append(&d.stages,words)
         case "vertex": if d.vertex==nil {d.vertex=words}
+        case "use": append(&d.uses,..words[2:])
         case "mirai":
             if d.name!="" || len(words)!=4 || !identifier_valid(words[3]) {continue}
             if _,known:=program_domain(words[2]);known {d.domain,d.name,d.line=words[2],words[3],number}
@@ -207,6 +213,21 @@ program_stages :: proc(program:string,lines:[][]string,resources:[]abi.Program_R
         append(&list,stage)
     }
     return list[:],""
+}
+
+// What a Surface program says it is drawn as besides what the assets draw it
+// as, from the words of its `//! use` lines, or what is wrong with one.
+@(private)
+program_uses_declared :: proc(program:string,words:[]string,allocator:=context.allocator) -> (uses:abi.Program_Uses,problem:string) {
+    for word in words {
+        use,known:=abi.program_use_named(word)
+        if !known {
+            names:=abi.PROGRAM_USE_NAMES
+            return {},fmt.aprintf("%s: `//! use %s` names no use: a Surface program is drawn as %s",program,word,strings.join(slice.enumerated_array(&names),", ",context.temp_allocator),allocator=allocator)
+        }
+        uses+={use}
+    }
+    return
 }
 
 // The function vertex of a Surface program, from the words of its `//! vertex
@@ -1070,7 +1091,7 @@ programs_reflect :: proc(r:^Program_Reflection,workers:int) {
 // generation has read already; nil reads everything here. A program of a
 // project or of a plugin that fails is left out and named in the catalog; one
 // of the engine that fails is an error. All results are in `allocator`.
-programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cache:string,sources:[]Source={},allocator:=context.allocator,files:^Sources=nil,workers:=1,memory:=Memory{}) -> (catalog:Catalog,error:string) {
+programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cache:string,sources:[]Source={},allocator:=context.allocator,files:^Sources=nil,workers:=1,memory:=Memory{},uses:[]Program_Uses_Of=nil,every:=abi.Program_Uses{}) -> (catalog:Catalog,error:string) {
     local:Sources
     files:=files
     if files==nil {
@@ -1136,6 +1157,7 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
     vfx_names:=make([dynamic]string,allocator)
     surface_names:=make([dynamic]string,allocator)
     vertex_names:=make([dynamic]string,allocator)
+    surface_uses:=make([dynamic]abi.Program_Uses,allocator)
     refused:=make([dynamic]string,allocator)
     // What each program declares, then the layouts the cache lacks, reflected at once, then the
     // catalog in the order of the sources.
@@ -1267,12 +1289,19 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
         attributes:int
         attribute_fields:[]abi.Program_Attribute
         vertex:abi.Program_Vertex
+        drawn:abi.Program_Uses
         if of==.Surface {
             problem:string
             if vertex,problem=program_vertex(name,e.said.vertex,layout,allocator);problem!="" {append(&refused,problem);continue}
             if vertex.declared {vertex.reads=e.vertex_reads}
+            if drawn,problem=program_uses_declared(name,e.said.uses[:],allocator);problem!="" {append(&refused,problem);continue}
+            drawn+=every
+            for each in uses {if each.program==name {drawn+=each.uses}}
         } else if e.said.vertex!=nil {
             append(&refused,fmt.aprintf("%s: only a Surface program moves vertices (`//! vertex`)",name,allocator=allocator))
+            continue
+        } else if len(e.said.uses)>0 {
+            append(&refused,fmt.aprintf("%s: only a Surface program says what it is drawn as (`//! use`)",name,allocator=allocator))
             continue
         }
         if of==.Vfx {
@@ -1307,19 +1336,23 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
                     continue
                 }
                 append(&surface_names,strings.clone(name,allocator))
+                append(&surface_uses,drawn)
                 if vertex.declared {append(&vertex_names,strings.clone(name,allocator))}
             }
             dispatchers_add(&dispatchers,of,id,name,relative,layout)
         }
         moves,births,prepare:=of==.Vfx && e.said.moves,of==.Vfx && e.said.births,of==.Vfx && e.said.prepare
-        append(&programs,abi.Program{id=u32(id),name=strings.clone(name,allocator),domain=of,source=relative,size=layout.size,parameters=parameters,layers=layers,attributes=attributes,attribute_fields=attribute_fields,resources=resources,stages=stages,moves=moves,births=births,prepare=prepare,coverage=e.coverage,standard=of==.Surface && word_in(e.text,"mirai_surface_standard"),reads=e.reads,vertex=vertex})
+        append(&programs,abi.Program{id=u32(id),name=strings.clone(name,allocator),domain=of,source=relative,size=layout.size,parameters=parameters,layers=layers,attributes=attributes,attribute_fields=attribute_fields,resources=resources,stages=stages,moves=moves,births=births,prepare=prepare,coverage=e.coverage,standard=of==.Surface && word_in(e.text,"mirai_surface_standard"),reads=e.reads,vertex=vertex,uses=drawn})
     }
     // A project does without a program of its own that fails; nothing does without one of the engine.
     if len(broken)>0 {
         return {},fmt.aprintf("the programs of the engine in shaders/materials must all compile, and these do not:\n%s\nFix the source each one names, or the include of the engine it takes, and generate the shaders again (`mirai shaders`)",strings.join(broken[:],"\n",context.temp_allocator),allocator=allocator)
     }
     if failed:=dispatchers_write(&dispatchers,include);failed!="" {return {},fmt.aprintf("could not write %s",failed,allocator=allocator)}
-    catalog={fingerprint=sha_hex(&hash,allocator),compiler=strings.clone(version,allocator),programs=programs[:],refused=refused[:],vfx=vfx_names[:],surface=surface_names[:],vertex=vertex_names[:]}
+    stage_folders:=make([dynamic]string,context.temp_allocator)
+    append(&stage_folders,path_join(root,"shaders",allocator=context.temp_allocator))
+    for entry in extension_folders(files,project,sources,context.temp_allocator) {append(&stage_folders,entry.folder)}
+    catalog={fingerprint=sha_hex(&hash,allocator),compiler=strings.clone(version,allocator),programs=programs[:],refused=refused[:],vfx=vfx_names[:],surface=surface_names[:],vertex=vertex_names[:],surface_uses=surface_uses[:],surface_stages=surface_stages(files,stage_folders[:],allocator)}
     if !write_file(path_join(output,abi.SHADER_CATALOG,allocator=context.temp_allocator),catalog_text(catalog)) {return {},fmt.aprintf("could not write %s",abi.SHADER_CATALOG,allocator=allocator)}
     return catalog,""
 }
@@ -1330,7 +1363,7 @@ catalog_text :: proc(catalog:Catalog) -> []u8 {
     e:=catalog.extensions
     frame:=abi.Frame_Catalog{size=e.frame_size,nested=e.nested,instance_ids=e.instance_ids,extensions=make([]abi.Frame_Extension,len(e.fields),context.temp_allocator)}
     for field,i in e.fields {frame.extensions[i]={field.name,field.offset,field.size}}
-    text,_:=serial.text_encode(abi.Shader_Catalog{abi.SHADER_CATALOG_VERSION,catalog.fingerprint,catalog.compiler,catalog.programs,frame},.Pretty,context.temp_allocator)
+    text,_:=serial.text_encode(abi.Shader_Catalog{abi.SHADER_CATALOG_VERSION,catalog.fingerprint,catalog.compiler,catalog.programs,frame,catalog.surface_stages},.Pretty,context.temp_allocator)
     return text
 }
 
