@@ -30,6 +30,7 @@ import "core:os"
 import "core:reflect"
 import "core:sync"
 import "mirai:asset"
+import "mirai:std/base"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
 import "mirai:rhi"
@@ -444,6 +445,7 @@ Renderer_Desc :: struct {
 	// rows until its pipelines are made (pipeline_thread.odin). False: they
 	// are made in the frame that first asks for them.
 	pipeline_thread:       bool,
+	profile:               ^base.Profile, // the zones of the stages of a frame go to its ring jobs.OWNER while it records; nil: none
 }
 
 // What one frame draws besides the scene.
@@ -567,6 +569,7 @@ view_camera_cut :: proc(v:^View_State) {
 Renderer :: struct {
 	device:          ^rhi.Device,
 	allocator:       runtime.Allocator,
+	profile:         ^base.Profile, // Renderer_Desc.profile
 	settings:        Settings,
 	highlight:       Highlight_Style, // the editor's outline levels
 	outlines:        Highlight_Style, // the game's outline styles: none drawn until it sets them
@@ -716,6 +719,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	r.allocator = desc.allocator if desc.allocator.procedure != nil else context.allocator
 	scene_ready := scene_init(r)
 	r.scene.pages.jobs = desc.jobs
+	r.profile = desc.profile
 	pipeline_thread_start(r)
 	r.pipelines_async = desc.pipeline_thread
 	textures_init(r)
