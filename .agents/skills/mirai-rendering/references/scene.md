@@ -322,7 +322,9 @@ instances.
   distance and the cull one it fades with the dither pattern of its own body, which TAA blends. An
   instance whose box covers fewer than `Settings.batch_min_pixels` pixels is not rasterized, and
   fades the same from twice that: far away, foliage leaves the raster without jumps. The rays keep
-  seeing it (the distant shadow remains, with the canopy and the coarse cuts).
+  seeing it (the distant shadow remains, with the canopy and the coarse cuts); the maps of the
+  shadows draw it up to its cull distance from the eye, as the view does
+  ([pages](lights.md#pages-of-the-shadow-maps)).
 - **Glass.** A batch draws no blend triangles; one made entirely of blend is neither drawn nor
   traced.
 - **Rays only.** `Rays_Only` leaves the batch in no layer: no view draws it, the picker

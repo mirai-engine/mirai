@@ -131,8 +131,8 @@ a_jump_of_the_origin_costs_what_the_batches_are_not_what_they_hold :: proc(t: ^t
 
 // What the instances the culls of the shadow maps of a view go over cost the
 // CPU of a frame (shadow_reach) with batches of a large world: 10000 batches
-// of 91 instances over two kilometres, 18 levels of the sun and 32 lights of
-// six faces near the eye; a still frame, frames whose eye moves a metre, and
+// of 91 instances over two kilometres, half of them gone past 150 m, 18 levels
+// of the sun and 32 lights of six faces near the eye; a still frame, frames whose eye moves a metre, and
 // the frames after a jump of the eye, while batches are set again each frame.
 @(test)
 the_reach_of_the_shadow_maps_costs_what_changed :: proc(t: ^testing.T) {
@@ -161,7 +161,7 @@ the_reach_of_the_shadow_maps_costs_what_changed :: proc(t: ^testing.T) {
 	}
 	for b in 0 ..< BATCHES {
 		cell(instances, b, 0)
-		handles[b], _ = batch_set(r, 0, 0, {mesh = mesh, flags = {.Casts_Shadow, .Ray_Visible}}, instances)
+		handles[b], _ = batch_set(r, 0, 0, {mesh = mesh, flags = {.Casts_Shadow, .Ray_Visible}, cull_distance = 150 if b % 2 == 0 else 0}, instances)
 	}
 	batches_build(r)
 	s := &r.scene
@@ -171,6 +171,7 @@ the_reach_of_the_shadow_maps_costs_what_changed :: proc(t: ^testing.T) {
 	// The maps of a view whose eye is at `eye`: the levels of the sun, then the faces of the lights.
 	plan :: proc(r: ^Renderer, b: ^Shadow_Raster, eye, low, high: Vec3, wants: ^[SHADOW_SLOTS]Shadow_Want) {
 		wants^ = {}
+		b.cull = shadow_cull_cell(eye, {})
 		levels := shadow_sun_levels(wants, {-0.3, -1, -0.2}, eye, {}, 3000, low, high, true, b.held[:SHADOW_SUN_LEVELS])
 		for &h, k in b.held[:levels] {h = {m = wants[k].m, grid = wants[k].grid}}
 		forward := linalg.normalize(Vec3{0, -0.3, -1})
@@ -219,7 +220,7 @@ the_reach_of_the_shadow_maps_costs_what_changed :: proc(t: ^testing.T) {
 			for k in 0 ..< 8 {
 				at := (n * 97 + frame * 8 + k) * 31 % BATCHES
 				cell(instances, at, f32(frame % 2) * 0.1)
-				handles[at], _ = batch_set(r, handles[at], 0, {mesh = mesh, flags = {.Casts_Shadow, .Ray_Visible}}, instances)
+				handles[at], _ = batch_set(r, handles[at], 0, {mesh = mesh, flags = {.Casts_Shadow, .Ray_Visible}, cull_distance = 150 if at % 2 == 0 else 0}, instances)
 			}
 			start := time.tick_now()
 			batches_build(r)

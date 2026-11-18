@@ -493,6 +493,7 @@ Scene_State :: struct {
 	shadow_casters:       [dynamic]Shadow_Caster, // of each batch drawn (shadow_casters_update)
 	shadow_casters_tables: u64,
 	shadow_casters_half:  f32,
+	shadow_casters_cull:  bool, // a caster has a cull distance
 	shadow_casters_low:   Vec3,
 	shadow_casters_high:  Vec3,
 	shadow_order:         [dynamic]u32,
