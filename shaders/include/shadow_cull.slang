@@ -101,6 +101,17 @@ bool shadow_page_drawn(Shadow_Map m, uint2 page, float4 texels) {
     return at.x < float(part.z) && at.y < float(part.w) && at.z >= float(part.x) && at.w >= float(part.y);
 }
 
+// What drawing what covers some texels of a map costs in a page of it, in
+// units (SHADOW_UNIT_TEXELS): the texels of the part of the page the round
+// draws (part, from its corner) it covers, SHADOW_MASKED_COST times as many
+// for a masked material, and its triangles.
+uint shadow_units(uint2 page, uint4 part, float4 texels, uint triangles, bool masked) {
+    float4 at = texels - float4(page * SHADOW_PAGE, page * SHADOW_PAGE);
+    float2 covered = max(min(at.zw, float2(part.zw)) - max(at.xy, float2(part.xy)), float2(1.0, 1.0));
+    float area = covered.x * covered.y * float(masked ? SHADOW_MASKED_COST : 1u);
+    return uint(ceil(area / float(SHADOW_UNIT_TEXELS))) + (triangles + SHADOW_UNIT_TRIANGLES - 1u) / SHADOW_UNIT_TRIANGLES;
+}
+
 // A page of a map as a word: the map, its column, its row and its mip (render.shadow_page_word).
 uint shadow_page_word(uint map, uint mip, uint2 page) { return map | page.x << 8u | page.y << 15u | mip << 22u; }
 uint shadow_page_map(uint word) { return word & 0xFFu; }

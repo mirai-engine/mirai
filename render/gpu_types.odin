@@ -490,8 +490,8 @@ RASTER_BIN_TESTED :: abi.RASTER_BIN_TESTED
 // What the cull of the clusters the maps of the shadows draw counts
 // (shadow_cull.slang): the draws of those that hide whole and of those of
 // masked materials, the groups of its cluster pass over the chunks, how many
-// chunks its instance pass handed over, and how many clusters its draws took,
-// which SHADOW_FRAME_CLUSTERS bounds.
+// chunks its instance pass handed over, and how many units its draws took,
+// which SHADOW_FRAME_UNITS bounds.
 Gpu_Shadow_State :: struct {
 	draws:            [SHADOW_DRAWS]Gpu_Draw,
 	cluster_dispatch: [3]u32,
@@ -528,10 +528,11 @@ Gpu_Cull_Stats :: struct {
 // pages the cache drew and the atlas composed, those newly asked for, those
 // of them the pool left out and those not drawn whole this frame, which wait
 // for the frames after; the clusters the draws had no room for in the frame
-// (SHADOW_FRAME_CLUSTERS), whose pages wait too; and the pages the bound of
-// the frame grows for (abi.SHADOW_COUNT_SHORT).
+// (SHADOW_FRAME_UNITS), whose pages wait too; the pages the bound of the
+// frame grows for (abi.SHADOW_COUNT_SHORT); and the units of raster work the
+// cache and the atlas drew (abi.SHADOW_UNIT_TEXELS).
 Shadow_Stats :: struct {
-	clusters, clusters_masked, triangles, clusters_moving, pages_drawn, pages_composed, pages_asked, pages_left, pages_waiting, clusters_over, pages_short: u32,
+	clusters, clusters_masked, triangles, clusters_moving, pages_drawn, pages_composed, pages_asked, pages_left, pages_waiting, clusters_over, pages_short, units, units_moving: u32,
 }
 // Instances, clusters and triangles that passed the cull of a frame, of one kind.
 Visible_Kind :: struct {instances, clusters, triangles: u32}

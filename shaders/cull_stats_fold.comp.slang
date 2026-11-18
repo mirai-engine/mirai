@@ -17,5 +17,5 @@ void main(uint3 lane : SV_GroupThreadID) {
     uint t = lane.x;
     if (t < CULL_LISTS) InterlockedMax(stats[0].most_dropped[t], stats[0].dropped[t]);
     else if (t < CULL_LISTS + 2u) InterlockedMax(stats[0].most_raster_need[t - CULL_LISTS], stats[0].raster_need[t - CULL_LISTS]);
-    else if (t < CULL_LISTS + 13u) InterlockedAdd(stats[0].views_shadow[t - CULL_LISTS - 2u], stats[0].shadow[t - CULL_LISTS - 2u]);
+    else if (t < CULL_LISTS + 15u) InterlockedAdd(stats[0].views_shadow[t - CULL_LISTS - 2u], stats[0].shadow[t - CULL_LISTS - 2u]);
 }
