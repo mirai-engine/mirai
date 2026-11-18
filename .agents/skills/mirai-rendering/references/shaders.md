@@ -64,8 +64,8 @@
   `render` uses under the same names; those of a format or of the RHI, in `asset` and `rhi`. No
   `.slang` source defines one (`no_shader_source_defines_a_constant_the_generation_writes`). A
   plugin's shaders take them from the engine includes.
-- Both includes are part of every fingerprint and of the stamp of a generation: changing one of
-  those constants compiles the stages again.
+- Both includes are part of the stamp of a generation; a stage's fingerprint takes of them the
+  constants it names (below): changing one compiles again only the stages that name it.
 - **Constants of a plugin.** A constant between the Odin code of a plugin, or of the project, and
   its own shaders is also declared once, in that Odin code, with its number (`NAME :: 8`). A
   `//! mirai constant <NAME> <int|uint|float> <file.odin>` line in a source of its `shaders/`
@@ -347,9 +347,17 @@
 - `Options.cache` / `--cache` (by default `<project>/.mirai/shader-cache`, or
   `<root>/.mirai/shader-cache` without a project) stores only the `generation.json` stamp of the
   output. Generations with the same stamp take turns with `<cache>.lock`, next to it.
-- Fingerprint of a stage: its source and its transitive includes/imports, versions of Slang,
-  spirv-opt and SPIRV-Cross, flags of each tool, binding ABI limits and `GENERATOR_CONTRACT`. It
-  does not depend on the requested backends or on the checkout.
+- Fingerprint of a stage: versions of Slang, spirv-opt and SPIRV-Cross, flags of each tool,
+  binding ABI limits and `GENERATOR_CONTRACT`, the names of its source and transitive
+  includes/imports, and of those what the stage reaches (`cook/shaders/declarations.odin`): its
+  own source whole; of an include, a function or a type with a body and a macro (a shared
+  constant is one) are taken when a name the stage already takes names them, and then what they
+  name; the rest (globals, resources, directives, operators, extensions, a macro expanded at the
+  top level) always. It is read from the text, without the compiler. An edit to a declaration no
+  stage names recompiles nothing; one to a declaration recompiles the stages that reach it. A
+  source with `__LINE__`, `__COUNTER__` or a raw string is taken whole, and so is a binary module;
+  a name made by pasting tokens (`##`) is not followed. It does not depend on the requested
+  backends or on the checkout.
 - **`extensions.slang` per stage.** A stage is compiled against an `extensions.slang` that defines
   only the generation macros (`MIRAI_NESTED_VIEWS`, `MIRAI_INSTANCE_IDS`, `MIRAI_HOOK_RAY`,
   `MIRAI_HOOK_LIGHTS`, `MIRAI_HOOK_PROBES`, `MIRAI_HOOK_VERTEX`) that its dependencies name, and

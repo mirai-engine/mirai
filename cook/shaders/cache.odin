@@ -30,6 +30,7 @@ Source_File :: struct {
     hash: string, // of data; "" for a path that is not a file
     compilation_hash:string, // parameter metadata does not change code or reflected layout
     macros:Extension_Features, // the macros of extensions.slang its text names
+    declarations:[]Declaration, // of the text the compilation hash is of (declarations.odin)
     found:bool,
 }
 
@@ -56,6 +57,9 @@ sources_file :: proc(s:^Sources,path:string) -> Source_File {
         file.hash=sha_of(file.data,s.allocator)
         file.compilation_hash=sha_of(compilation_source_bytes(path,file.data,context.temp_allocator),s.allocator)
         file.macros=extension_macros(string(file.data))
+        if code:=compilation_source_bytes(path,file.data,context.temp_allocator);!strings.has_suffix(path,".slang-module") && utf8.valid_string(string(code)) {
+            file.declarations=declarations_of(string(code),s.allocator)
+        }
     }
     s.files[strings.clone(path,s.allocator)]=file
     return file
@@ -290,28 +294,73 @@ dependencies :: proc(source:string,include_dirs:[]string,allocator:=context.allo
 }
 
 // Identity of what a shader is compiled from: the configuration (compiler,
-// flags, generator contract) and the name and bytes of every dependency.
+// flags, generator contract), the name of every dependency and of each the
+// declarations the shader reaches (declarations.odin): its own source whole.
+// A dependency the scan cannot read in declarations (a binary module) is
+// taken whole.
 fingerprint :: proc(source:string,include_dirs:[]string,bases:[]Base,configuration:[]u8,allocator:=context.allocator,sources:^Sources=nil) -> string {
-    Named :: struct {name,path:string}
+    Named :: struct {name,path:string,file:Source_File}
     local:Sources
     s:=sources
     if s==nil {
         sources_init(&local,context.temp_allocator)
         s=&local
     }
+    root:=path_clean(source,context.temp_allocator)
     paths:=dependencies(source,include_dirs,context.temp_allocator,s)
     named:=make([]Named,len(paths),context.temp_allocator)
-    for path,i in paths {named[i]={stable_name(path,bases,context.temp_allocator),path}}
+    for path,i in paths {named[i]={stable_name(path,bases,context.temp_allocator),path,sources_file(s,path)}}
     slice.sort_by(named,proc(a,b:Named) -> bool {return a.name<b.name if a.name!=b.name else a.path<b.path})
+    // What the shader takes: the unnamed declarations and its own source, then
+    // each named one a name it takes names, until no name is new.
+    taken:=make([][]bool,len(named),context.temp_allocator)
+    by_name:=make(map[string][dynamic][2]int,context.temp_allocator)
+    reached:=make(map[string]bool,context.temp_allocator)
+    pending:=make([dynamic]string,context.temp_allocator)
+    take :: proc(taken:[][]bool,declaration:Declaration,at:[2]int,reached:^map[string]bool,pending:^[dynamic]string) {
+        if taken[at[0]][at[1]] {return}
+        taken[at[0]][at[1]]=true
+        for name in declaration.names {
+            if reached[name] {continue}
+            reached[name]=true
+            append(pending,name)
+        }
+    }
+    for entry,f in named {
+        taken[f]=make([]bool,len(entry.file.declarations),context.temp_allocator)
+        for declaration,d in entry.file.declarations {
+            if declaration.name=="" || entry.path==root {continue}
+            list:=by_name[declaration.name] or_else make([dynamic][2]int,context.temp_allocator)
+            append(&list,[2]int{f,d})
+            by_name[declaration.name]=list
+        }
+    }
+    for entry,f in named {
+        for declaration,d in entry.file.declarations {
+            if declaration.name=="" || entry.path==root {take(taken,declaration,{f,d},&reached,&pending)}
+        }
+    }
+    for len(pending)>0 {
+        name:=pop(&pending)
+        for at in by_name[name] {take(taken,named[at[0]].file.declarations[at[1]],at,&reached,&pending)}
+    }
     hash:Sha256
     sha_begin(&hash)
     sha_bytes(&hash,configuration)
     zero:=[1]u8{0}
-    for entry in named {
+    for entry,f in named {
         sha_text(&hash,entry.name)
         sha_bytes(&hash,zero[:])
-        sha_text(&hash,sources_file(s,entry.path).compilation_hash)
-        sha_bytes(&hash,zero[:])
+        if entry.file.declarations==nil {
+            sha_text(&hash,entry.file.compilation_hash)
+            sha_bytes(&hash,zero[:])
+            continue
+        }
+        for declaration,d in entry.file.declarations {
+            if !taken[f][d] {continue}
+            sha_text(&hash,declaration.hash)
+            sha_bytes(&hash,zero[:])
+        }
     }
     return sha_hex(&hash,allocator)
 }
