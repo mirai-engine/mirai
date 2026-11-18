@@ -83,7 +83,7 @@ a_large_reliable_part_streams_at_what_the_path_carries_and_the_state_keeps_its_r
 }
 
 // An acknowledgement of a datagram never sent closes the connection, one that comes again for a chunk
-// counts it once, and no measure grows a window past twice what the rate sends in a round trip nor past
+// counts it once, and no measure grows a window past what the rate sends in its span nor past
 // what the channel holds, nor shrinks it below where it starts.
 @(test)
 hostile_acknowledgements_are_refused_and_never_push_a_window_past_its_bounds :: proc(t:^testing.T) {
@@ -110,22 +110,22 @@ hostile_acknowledgements_are_refused_and_never_push_a_window_past_its_bounds :: 
     channel_resolve(p,record,true)
     testing.expect_value(t,c.acked,1)
 
-    Case :: struct {start,acked,bytes:int,rtt,rate:f64,low,high:int}
+    Case :: struct {start,acked,bytes:int,span,rate:f64,low,high:int}
     nan:=math.nan_f64()
     cases:=[]Case{
-        {start=64,acked=max(int)/2,rtt=1e9,rate=1e30,low=1024,high=1024},
-        {start=64,acked=1<<20,bytes=(1<<20)*CHUNK_BYTES,rtt=0.05,rate=1<<20,low=1,high=409},
-        {start=64,acked=max(int)/2,bytes=max(int)/2,rtt=0.05,rate=1<<20,low=1,high=1024},
-        {start=512,acked=0,rtt=0.05,rate=16<<20,low=512,high=512},
-        {start=512,acked=1<<20,rtt=nan,rate=1<<20,low=512,high=512},
-        {start=512,acked=1<<20,rtt=0.05,rate=nan,low=512,high=512},
-        {start=512,acked=1<<20,rtt=-1,rate=1<<20,low=512,high=512},
-        {start=512,acked=1<<20,rtt=1e-9,rate=0,low=512,high=512},
-        {start=512,acked=1<<20,rtt=1e-9,rate=1,low=CHUNK_WINDOW,high=CHUNK_WINDOW},
+        {start=64,acked=max(int)/2,span=1e9,rate=1e30,low=1024,high=1024},
+        {start=64,acked=1<<20,bytes=(1<<20)*CHUNK_BYTES,span=0.1,rate=1<<20,low=1,high=409},
+        {start=64,acked=max(int)/2,bytes=max(int)/2,span=0.1,rate=1<<20,low=1,high=1024},
+        {start=512,acked=0,span=0.1,rate=16<<20,low=512,high=512},
+        {start=512,acked=1<<20,span=nan,rate=1<<20,low=512,high=512},
+        {start=512,acked=1<<20,span=0.1,rate=nan,low=512,high=512},
+        {start=512,acked=1<<20,span=-1,rate=1<<20,low=512,high=512},
+        {start=512,acked=1<<20,span=1e-9,rate=0,low=512,high=512},
+        {start=512,acked=1<<20,span=1e-9,rate=1,low=CHUNK_WINDOW,high=CHUNK_WINDOW},
     }
     for k in cases {
         c.window,c.acked,c.acked_bytes=k.start,k.acked,k.bytes
-        channel_window(c,k.rtt,k.rate)
+        channel_window(c,k.span,k.rate)
         testing.expectf(t,c.window>=k.low && c.window<=k.high && c.acked==0 && c.acked_bytes==0,"%v gives a window of %d",k,c.window)
     }
 
@@ -135,6 +135,7 @@ hostile_acknowledgements_are_refused_and_never_push_a_window_past_its_bounds :: 
     serial.bit_write_bool(&wr,true)
     serial.bit_write(&wr,u64(p.send_seq+10),16)
     serial.bit_write(&wr,0,ACK_COUNT_BITS)
+    serial.bit_write_bool(&wr,false)
     serial.bit_write(&wr,0,8)
     rd:serial.Bit_Reader
     serial.bit_reader_init(&rd,serial.bit_writer_flush(&wr))
@@ -240,12 +241,13 @@ Bulk_Result :: struct {
     game_mean,game_worst:f64, // s a 60 Hz unreliable message took above the latency, once warm
     game_sent,game_got:int,
     drop_share:f64,   // of the datagrams the server sent, those its link dropped for lack of queue
+    resent_share:f64, // of the bytes the first client received once warm, those its server sent again
 }
 
 // A server streams reliable parts to each client over its 100 Mbit/s link with every setting at its
 // default, the worker's cadence of 1 ms, and a 60 Hz unreliable message to each on the same connection.
 @(private="file")
-bulk_stream :: proc(t:^testing.T,rtt:f64,loss:f32,clients:int,seconds:f64) -> (result:Bulk_Result,ok:bool) {
+bulk_stream :: proc(t:^testing.T,rtt:f64,loss:f32,clients:int,seconds:f64,jitter:=0.0) -> (result:Bulk_Result,ok:bool) {
     blob:=make([]u8,BULK_PART);defer delete(blob)
     w:Test_World;test_world_init(&w,1+clients,seed=31,packets=1<<16);defer test_world_destroy(&w)
     server:=test_host(&w,{mode=.Server,channels=BULK_CHANNELS})
@@ -256,14 +258,15 @@ bulk_stream :: proc(t:^testing.T,rtt:f64,loss:f32,clients:int,seconds:f64) -> (r
         on_server[i],_=test_connect(&w,server,hosts[i])
         if !testing.expect(t,on_server[i]!=0,"the client connects") {return}
     }
-    sim_endpoint_conditions(&w.sim,0,{latency=rtt/2,loss=loss,bandwidth=BULK_LINK})
-    for i in 1..=clients {sim_endpoint_conditions(&w.sim,i,{latency=rtt/2,loss=loss})}
+    sim_endpoint_conditions(&w.sim,0,{latency=rtt/2,jitter=jitter,loss=loss,bandwidth=BULK_LINK})
+    for i in 1..=clients {sim_endpoint_conditions(&w.sim,i,{latency=rtt/2,jitter=jitter,loss=loss})}
     sent:[2]int
     got:[2]f64
     start:=w.now
     next_game:=start
     game_total:f64
     sim_before:=w.sim.stats
+    resent_before:u64
     for w.now-start<seconds {
         w.now+=0.001
         sim_network_advance(&w.sim,w.now)
@@ -272,6 +275,10 @@ bulk_stream :: proc(t:^testing.T,rtt:f64,loss:f32,clients:int,seconds:f64) -> (r
             if command.kind==.Disconnected {testing.expect(t,false,"the connection holds");return}
         }
         warm:=w.now-start>=BULK_WARM
+        if !warm {
+            stats,_:=connection_stats(server,on_server[0])
+            resent_before=stats.chunks_resent
+        }
         for i in 0..<clients {
             if sent[i]==len(blob) {sent[i]=0}
             message_send(server,on_server[i],0,blob,&sent[i])
@@ -309,6 +316,8 @@ bulk_stream :: proc(t:^testing.T,rtt:f64,loss:f32,clients:int,seconds:f64) -> (r
     result.game_mean=game_total/f64(max(result.game_got,1))
     sent_datagrams:=w.sim.stats.sent-sim_before.sent
     result.drop_share=f64(w.sim.stats.dropped_queue-sim_before.dropped_queue)/f64(max(sent_datagrams,1))
+    stats,_:=connection_stats(server,on_server[0])
+    result.resent_share=f64(stats.chunks_resent-resent_before)*CHUNK_BYTES/max(got[0],1)
     return result,true
 }
 
@@ -326,6 +335,35 @@ a_bulk_stream_finds_the_rate_of_the_path_and_leaves_the_game_channel_on_time :: 
         testing.expectf(t,r.drop_share<0.03,"%v: the link's queue drops %.1f%% of the datagrams",c,r.drop_share*100)
         testing.expectf(t,r.game_got>=int(0.95*(1-f64(c.loss))*f64(r.game_sent)),"%v: %d of %d game messages arrive",c,r.game_got,r.game_sent)
         testing.expectf(t,r.game_mean<0.03 && r.game_worst<0.08,"%v: game messages take %.0f ms more than the latency on average, %.0f at worst",c,r.game_mean*1000,r.game_worst*1000)
+    }
+}
+
+// A path that reorders its datagrams by jitter, as internet paths do, neither slows a reliable stream
+// nor makes it resend what arrived: with jitter alone it takes most of the link, with jitter and loss
+// it keeps near what the same loss without jitter gives, and the 60 Hz unreliable game channel on the
+// same connection stays on time and loses only what a later message of its own overtook.
+@(test)
+a_bulk_stream_keeps_its_rate_on_a_path_that_reorders :: proc(t:^testing.T) {
+    Case :: struct {jitter:f64,loss:f32}
+    steady:f64
+    for c in ([]Case{{0.005,0},{0.02,0},{0,0.01},{0.005,0.01},{0.02,0.01}}) {
+        r,ok:=bulk_stream(t,0.04,c.loss,1,12,c.jitter)
+        if !ok {return}
+        fmt.printfln("bulk 40 ms, %.0f ms jitter, %.0f%%: %.2f MB/s, %.2f%% resent, game %.1f ms mean, %.1f ms worst, %d/%d, %.2f%% dropped",c.jitter*1000,c.loss*100,r.delivered[0]/1e6,r.resent_share*100,r.game_mean*1000,r.game_worst*1000,r.game_got,r.game_sent,r.drop_share*100)
+        if c.jitter==0 {steady=r.delivered[0];continue}
+        if c.loss==0 {
+            testing.expectf(t,r.delivered[0]>0.6*BULK_LINK,"%v: %.0f B/s arrive over a link of %.0f",c,r.delivered[0],BULK_LINK)
+            testing.expectf(t,r.resent_share<0.02,"%v: %.1f%% of what arrived was sent again",c,r.resent_share*100)
+        } else {
+            testing.expectf(t,r.delivered[0]>0.8*steady,"%v: %.0f B/s arrive, %.0f with the same loss and no jitter",c,r.delivered[0],steady)
+            testing.expectf(t,r.resent_share<4*f64(c.loss),"%v: %.1f%% of what arrived was sent again",c,r.resent_share*100)
+        }
+        // The channel keeps its order: a message that a later one overtook by jitter is dropped, which
+        // happens to two consecutive ones when their spread of 2 jitter exceeds the 1/60 s between them.
+        overtaken:=max(1-1.0/60/(2*c.jitter),0)
+        overtaken=overtaken*overtaken/2
+        testing.expectf(t,r.game_got>=int(0.9*(1-f64(c.loss))*(1-overtaken)*f64(r.game_sent)),"%v: %d of %d game messages arrive",c,r.game_got,r.game_sent)
+        testing.expectf(t,r.game_mean<0.03 && r.game_worst<0.08+c.jitter,"%v: game messages take %.0f ms more than the latency on average, %.0f at worst",c,r.game_mean*1000,r.game_worst*1000)
     }
 }
 

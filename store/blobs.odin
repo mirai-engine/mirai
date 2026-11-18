@@ -113,9 +113,12 @@ read :: proc(s:^Store,hash:Hash,offset:i64,buffer:[]u8) -> Error {
 }
 
 // The piece hashes of a complete blob: its kept table when that one matches
-// the address and the size, otherwise hashed from the file once and kept.
+// the address and the size, otherwise hashed from the file once and kept. Of
+// a blob being received, the table it began with, checked against the address.
 blob_table :: proc(s:^Store,hash:Hash,allocator:=context.allocator) -> (pieces:[]Hash,error:Error) {
-    r:=reader_open(s,hash) or_return
+    r,open_error:=reader_open(s,hash)
+    if open_error==.Missing {return partial_table(s,hash,allocator)}
+    if open_error!=.None {return nil,open_error}
     defer reader_close(&r)
     make_error:runtime.Allocator_Error
     pieces,make_error=make([]Hash,piece_count(r.size),allocator)
@@ -129,6 +132,22 @@ blob_table :: proc(s:^Store,hash:Hash,allocator:=context.allocator) -> (pieces:[
         return nil,error
     }
     table_keep(s,hash,r.size,pieces)
+    return pieces,.None
+}
+
+@(private)
+partial_table :: proc(s:^Store,hash:Hash,allocator:runtime.Allocator) -> (pieces:[]Hash,error:Error) {
+    p:=partial_open(s,hash,{}) or_return
+    defer partial_close(&p)
+    make_error:runtime.Allocator_Error
+    pieces,make_error=make([]Hash,p.count,allocator)
+    if make_error!=nil {return nil,.Out_Of_Memory}
+    error=read_exact(p.table,mem.slice_to_bytes(pieces),TABLE_HEADER)
+    if error==.None && address_value(p.size,pieces)!=hash {error=.Corrupt}
+    if error!=.None {
+        delete(pieces,allocator)
+        return nil,error
+    }
     return pieces,.None
 }
 
