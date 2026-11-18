@@ -50,14 +50,6 @@ assets_load_close :: proc(a:^Assets,load:u64) {
 // The load has the frames to itself until it closes.
 assets_load_whole :: proc(a:^Assets,load:u64) {a.loads.whole=load}
 
-// A load that a loading screen waits for has the frames while screen is on,
-// unless another load has them; off, it shares them again.
-assets_load_screen :: proc(a:^Assets,load:u64,screen:bool) {
-    b:=&a.loads
-    if screen && b.whole==0 {b.whole=load}
-    if !screen && b.whole==load {b.whole=0}
-}
-
 // The part of the frame a load may take now: what the loads that took theirs
 // in the frame left, shared with those that did not yet.
 assets_load_share :: proc(a:^Assets,frame:u64,load:u64) -> (share:Load_Share) {

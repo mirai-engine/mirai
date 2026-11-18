@@ -254,9 +254,8 @@ a_document_reads_its_file_again_when_it_changed_outside :: proc(t:^testing.T) {
 
 // A scene asked to open, by a person or by the start of a window, shows its
 // tab and the line of the load from the frame of the request, before it is
-// read, and until a frame drew it resident; meanwhile a frame without a run
-// or input held is a loading screen for what arrives. The selection the start
-// asked for comes once the scene is open.
+// read, and until a frame drew it resident. The selection the start asked for
+// comes once the scene is open.
 @(test)
 the_tab_of_a_scene_that_opens_loads_from_the_first_frame_until_it_is_resident :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
@@ -272,9 +271,12 @@ the_tab_of_a_scene_that_opens_loads_from_the_first_frame_until_it_is_resident ::
     file:=document_file(s.document)
     scene_new(s)
     testing.expect_value(t,document_loading_tab(s),-1)
-    testing.expect(t,!loading_screen(s,{}))
     s.start_select=strings.clone(selected)
-    file_open_path(s,"level.scene")
+    // An agent that already drives the editor does not make the start ask first.
+    working:=&f.ai.tasks[0];working.id=1;working.world=s.edit_world;working.state=.Running
+    f.ai.task_count=1
+    testing.expect_value(t,ai_working_count(s),1)
+    start_open(s,"level.scene")
     defer documents_free(s)
     buffer:[SCENE_LOAD_TEXT]u8
     for frame in 0..<2 {
@@ -282,7 +284,6 @@ the_tab_of_a_scene_that_opens_loads_from_the_first_frame_until_it_is_resident ::
         testing.expect_value(t,document_loading_tab(s),s.active_document)
         name,waits,loading:=scene_load_status(s,buffer[:])
         testing.expect(t,loading && strings.contains(name,"level") && waits!="",name)
-        testing.expect(t,loading_screen(s,{}) && !loading_screen(s,{down={.Left}}) && !loading_screen(s,{wheel={0,1}}))
         testing.expect_value(t,len(s.selection.entities),0)
         requests_run(s)
     }
@@ -295,6 +296,6 @@ the_tab_of_a_scene_that_opens_loads_from_the_first_frame_until_it_is_resident ::
     host.load_profile_frame(&f.app,true)
     testing.expect_value(t,document_loading_tab(s),-1)
     _,_,loading:=scene_load_status(s,buffer[:])
-    testing.expect(t,!loading && !loading_screen(s,{}))
+    testing.expect(t,!loading)
     testing.expect(t,start_deferred({}) && !start_deferred({headless=true}) && !start_deferred({hidden=true}) && !start_deferred({frames=3}),"a window a person looks at draws before the scene is read")
 }

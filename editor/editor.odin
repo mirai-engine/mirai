@@ -481,7 +481,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     case options.documents!="":
         if why:=documents_restore(s,options.documents);why!="" {log.errorf("The document tabs could not all be opened again: %s",why)}
     case scene!="" && deferred:
-        file_open_path(s,scene)
+        start_open(s,scene)
     case scene!="":
         if error:=scene_open(s,scene);error!=.None {
             fmt.eprintfln("mirai: could not open the scene %s: %s",scene,document_error_text(error))
@@ -510,6 +510,14 @@ start_deferred :: proc(options:Options) -> bool {
     return !options.headless && !options.hidden && options.frames==0
 }
 
+// The scene of the start opens after the first frame. Nobody can lose
+// anything in the document it replaces: it never asks first, though an agent
+// already drives the editor.
+start_open :: proc(s:^Session,path:string) {
+    file_open_path(s,path)
+    s.open_confirmed=true
+}
+
 // What the start left for after the first frame: the tabs of a restart, and
 // the selection of --select once the scene is open.
 @(private)
@@ -526,16 +534,6 @@ start_run :: proc(s:^Session) {
     }
 }
 
-// Whether the next frame is a loading screen for what arrives: the scene in
-// front loads and no one needs a steady frame (no run on screen, nothing held
-// or scrolled since the last frame). Then what arrives takes the frames, as a
-// player's first scene does, instead of the small part that keeps a frame
-// someone works in smooth: until it arrives there is nothing to work on.
-loading_screen :: proc(s:^Session,input:ui.Input) -> bool {
-    if playing(s) || input.down!={} || input.keys_down!={} || input.wheel!={} {return false}
-    return document_loading_tab(s)>=0
-}
-
 // One frame: the game loop of a Play, the loop of the editor over the World
 // shown, the draw, and what has to happen between frames. False once the
 // editor ends.
@@ -545,7 +543,6 @@ advance :: proc(s:^Session) -> bool {
     // Behind other windows, out of Play and without an agent driving it, the editor runs slow.
     background:=u32(0) if playing(s) || api_active(s) else EDITOR_BACKGROUND_FPS
     if app.platform.background!=background {platform.set_background(app.platform,background)}
-    app.loading_screen=loading_screen(s,app.ui_input)
     if !host.app_frame_begin(app) {
         app.quit=false
         quit_request(s)
