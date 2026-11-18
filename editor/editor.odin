@@ -20,6 +20,7 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
 import "mirai:std/subprocess"
+import "mirai:store"
 import "mirai:ui"
 
 // The editor of a project: the application with its window, the World that
@@ -95,7 +96,7 @@ Run :: struct {
 @(private)
 USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] [--hidden] [--no-gpu] [--frames <n>] [--capture <png>] [--validation]
      [--width <points>] [--height <points>] [--density <x>] [--engine <folder>] [--api-port <port>] [--no-api]
-     [--share [port]] [--join <invitation>] [--name <name>] [--preferences]
+     [--share [port]] [--join <invitation>] [--name <name>] [--preferences] [--store <folder>]
   --api-port    port of the agent API (JSON-RPC and MCP); 7940 if missing, or a free one when it is taken; 0: a free one, never 7940
   --no-api      without the agent API
   --share       shares the scene with other editors; port 7950 if missing. Prints the invitation code
@@ -110,11 +111,13 @@ USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] [--hidd
   --frames      ends after n frames
   --capture     writes the last frame as a PNG at the end
   --validation  turns on the validation of the graphics API
-  --engine      engine root for Build; if missing, MIRAI_ROOT or the engine above the executable or the working folder`
+  --engine      engine root for Build; if missing, MIRAI_ROOT or the engine above the executable or the working folder
+  --store       the store of the packages it imports and lists; the machine's if missing`
 
 // The arguments the editor was started with.
 Options :: struct {
     project,scene,engine,capture:string,
+    store:string,    // the store of the library; "": the machine's
     documents:string, // the tabs a restart left (documents_restore)
     gpu_lost:string, // what stopped the GPU of the editor whose restart this is
     built:bool,      // a Build of the editor whose restart this is succeeded: its library is the one loaded
@@ -178,6 +181,9 @@ Session :: struct {
     engine_stamp:string, // of the binaries of the engine it runs (build.engine_stamp_of): a build of the engine afterwards changes the one beside them
     library_stamp:string, // of the library of the project it loaded last (build.target_stamp_of)
     assets_root:string,
+    // The machine store the library keeps the packages of imports in (--store,
+    // else the machine's); its root is "" when the machine has none.
+    store:store.Store,
     has_project:bool,    // the folder has a project.mirai
     settings_unsaved:bool, // a setting changed that the file of its layer does not have yet
     settings_layer:project.Settings_Layer, // the one the settings dialog edits
@@ -414,6 +420,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
         if title:=project.window_title(&p.manifest);title!="" {window.title=strings.clone(title,context.temp_allocator)}
     }
     mounts:=[1]asset.Registry_Mount{{folder=project.path(engine,EDITOR_ASSETS,allocator=context.temp_allocator),prefix=EDITOR_ASSETS_PREFIX}}
+    store_root:=options.store!=""?project.path_absolute(options.store,context.temp_allocator):store.default_root(context.temp_allocator)
     windowed:=!options.headless
     app,app_error:=host.app_create({
         info=info,root=root,engine_root=engine,threads=jobs.THREADS_AUTO,
@@ -424,7 +431,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
         assets_root=os.is_dir(assets)?assets:"",assets_cache=project.cache_path(root,project.REGISTRY_CACHE,allocator=context.temp_allocator),
         animation_cache=project.cache_path(root,project.ANIMATION_CACHE,allocator=context.temp_allocator),
         collision_cache=project.content_cache_path(root,project.COLLISION_CACHE,allocator=context.temp_allocator),
-        asset_mounts=mounts[:],shaders_root=root,
+        asset_mounts=mounts[:],shaders_root=root,store_root=store_root,
     })
     if app==nil {
         fmt.eprintfln("mirai: the editor could not start: %v",app_error)
@@ -449,6 +456,9 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     s.engine_stamp=engine_stamp_here(s)
     s.library_stamp=library_stamp_here(s)
     s.assets_root=strings.clone(assets)
+    if store_root!="" {
+        if opened,error:=store.open(store_root);error==.None {s.store=opened} else {log.warnf("the store at %s does not open (%v): nothing imports until the editor starts with --store <folder>",store_root,error)}
+    }
     s.has_project=has_project
     if has_project {s.build.sources=code_fingerprint(root)}
     s.headless=options.headless
@@ -1169,6 +1179,8 @@ session_destroy :: proc(s:^Session) {
     s.recipes=nil
     console_destroy(s.console)
     settings_engine_free(s)
+    if s.store.root!="" {store.close(&s.store)}
+    s.store={}
     delete(s.project_root);delete(s.engine_root);delete(s.program);delete(s.engine_stamp);delete(s.library_stamp);delete(s.assets_root);delete(s.capture);delete(s.gpu_lost_before)
     for arg in s.args {delete(arg)}
     delete(s.args)
@@ -1192,6 +1204,7 @@ options_read :: proc(args:[]string) -> (o:Options,ok:bool) {
         case "--project":    o.project=value(args,&i) or_return
         case "--scene":      o.scene=value(args,&i) or_return
         case "--engine":     o.engine=value(args,&i) or_return
+        case "--store":      o.store=value(args,&i) or_return
         case "--capture":    o.capture=value(args,&i) or_return
         case "--documents":  o.documents=value(args,&i) or_return
         case "--gpu-lost":   o.gpu_lost=value(args,&i) or_return
@@ -1246,7 +1259,7 @@ options_passed :: proc(args:[]string) -> []string {
     for i:=0;i<len(args);i+=1 {
         switch args[i] {
         case "--validation","--no-api","--headless","--no-gpu","--hidden","--preferences": append(&kept,args[i])
-        case "--engine","--width","--height","--density","--api-port","--name":
+        case "--engine","--width","--height","--density","--api-port","--name","--store":
             if i+1<len(args) {append(&kept,args[i],args[i+1])}
             i+=1
         case "--project","--scene","--documents","--gpu-lost","--view","--select","--frames","--capture","--join":

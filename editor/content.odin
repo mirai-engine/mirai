@@ -1687,6 +1687,7 @@ content_settings_build :: proc(s:^Session,content_view:bool) {
             if asset.registry_scan(&s.app.assets.registry)!=.None {notify(s,"The asset folder could not be read")}
         }
         command_menu_item(s,ui.id(ctx,"import"),"import","Import")
+        if ui.submenu(ctx,ui.id(ctx,"library"),"Add from library",{icon=.Import,disabled=s.store.root=="" || s.mode!=.Edit}) {content_library_items(s)}
         ui.id_pop(ctx)
     }
 }

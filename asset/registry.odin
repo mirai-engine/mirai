@@ -184,6 +184,27 @@ registry_mount :: proc(r:^Registry,folder,prefix:string,listed:[]Package_Listed=
     return registry_mount_add(r,folder,prefix,false,listed)
 }
 
+// Replaces the outputs of packages the next scan lists: those of the root
+// ("") or of the mount of prefix. False without memory for them, or with no
+// mount of prefix, which keep what they had.
+registry_listed_set :: proc(r:^Registry,prefix:string,listed:[]Package_Listed) -> bool {
+    kept,ok:=registry_listed_clone(listed,r.allocator)
+    if !ok {return false}
+    if prefix=="" {
+        registry_listed_free(r.listed,r.allocator)
+        r.listed=kept
+        return true
+    }
+    for &mount in r.mounts {
+        if mount.prefix!=prefix {continue}
+        registry_listed_free(mount.listed,r.allocator)
+        mount.listed=kept
+        return true
+    }
+    registry_listed_free(kept,r.allocator)
+    return false
+}
+
 // A copy of entries whose strings live in allocator. False without memory for it.
 @(private="file")
 registry_listed_clone :: proc(entries:[]Package_Listed,allocator:runtime.Allocator) -> (kept:[]Package_Listed,ok:bool) {

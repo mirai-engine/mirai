@@ -216,7 +216,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     plugins:Library_Imports
     defer if plugins.release!=nil {plugins.release(plugins.state)}
     if (kind==.None || kind==.Model) && library!=nil && root!="" {
-        plugins=library(root,context.temp_allocator)
+        plugins=library(root,options.store,context.temp_allocator)
         all:=make([dynamic]importer.Format,0,len(FORMATS)+len(plugins.formats),context.temp_allocator)
         append(&all,..FORMATS[:])
         append(&all,..plugins.formats)
