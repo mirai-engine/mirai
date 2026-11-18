@@ -158,9 +158,12 @@ In `plugins/multiplayer/runtime`:
 - **A connection finds its rate by itself.** Nothing in `Host_Desc` starts or caps it; a reliable
   channel holds in flight what its `queue_bytes` holds, and the game channels of a connection stay
   on time next to a stream on it.
-- **Datagram acks and losses are final.** Late datagrams are not acked and only allow
-  [the partial delivery described in connections](references/networking.md#connections). Do not
-  extend that exception without reviewing channels, links and baselines.
+- **A datagram is lost only when reordering cannot explain its absence**, and an ack is final. A
+  late datagram is acked only if everything in it that a resend would bring was taken
+  ([connections](references/networking.md#connections)); objects, the server time and the library
+  channels are never taken late. Do not extend what is taken late without reviewing channels,
+  links and baselines. A loss taken back by a late ack does not count for the rate; what was
+  resent for it stays resent.
 - **Nothing changes until it is known that the entry fits.** `entry_write` writes, checks and only
   then modifies the link; if it does not fit, it restores the writer.
 - **A baseline is used only after its ack**, and the receiver stores it from the state that results
