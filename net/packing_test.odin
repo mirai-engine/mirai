@@ -3,7 +3,8 @@ package mirai_net
 import "core:testing"
 
 // When an object does not fit what is left of an update, the smaller ones behind it fill the rest instead of
-// waiting: when the budget of the tick ends, and when the last datagram of the update is full.
+// waiting: when the budget of the tick ends, and when the last datagram the rate allows in the update is
+// full, over a link that carries about one datagram a tick.
 @(test)
 small_objects_fill_what_an_object_that_does_not_fit_leaves_of_an_update :: proc(t:^testing.T) {
     for full_datagram in ([2]bool{false,true}) {
@@ -11,9 +12,10 @@ small_objects_fill_what_an_object_that_does_not_fit_leaves_of_an_update :: proc(
         w:Test_World;test_world_init(&w,2,seed=6);defer test_world_destroy(&w)
         // Whole states, so every update of an actor weighs about the same.
         replication:=Replication_Desc{max_objects=64,baseline_interval=-1,budget_bytes=full_datagram?4096:100}
-        server:=test_host(&w,{mode=.Server,protocol=&tp.protocol,packets_per_update=1,replication=replication})
+        server:=test_host(&w,{mode=.Server,protocol=&tp.protocol,replication=replication})
         client:=test_host(&w,{mode=.Client,protocol=&tp.protocol,replication=replication})
         on_server,on_client:=test_connect(&w,server,client)
+        if full_datagram {sim_endpoint_conditions(&w.sim,0,{latency=0.02,bandwidth=PACKET_BYTES*60})}
         testing.expect(t,on_server!=0 && on_client!=0)
         HEAVY :: 30
         LIGHT :: 10

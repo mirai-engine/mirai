@@ -278,7 +278,7 @@ a_file_as_large_as_a_session_carries_crosses_as_one_message :: proc(t:^testing.T
     defer free(host);defer free(guest)
     host.role,guest.role=.Host,.Guest
     for st,i in ([2]^Collab_State{host,guest}) {
-        desc:=wire.Host_Desc{mode=i==0?.Server:.Client,transport=wire.sim_endpoint_transport(&network,i),protocol_id=0x4d495241,seed=u64(7+i),channels=COLLAB_CHANNELS,send_rate=1<<30,packets_per_update=64}
+        desc:=wire.Host_Desc{mode=i==0?.Server:.Client,transport=wire.sim_endpoint_transport(&network,i),protocol_id=0x4d495241,seed=u64(7+i),channels=COLLAB_CHANNELS}
         testing.expect_value(t,wire.host_init(&st.host,desc),wire.Error.None)
     }
     defer {wire.host_destroy(&host.host);wire.host_destroy(&guest.host)}

@@ -1,14 +1,16 @@
 package store
 
 import "base:runtime"
+import "core:crypto"
 import "core:os"
+import "core:time"
 
 // A content-addressed store of the machine: blobs named by their address and
 // refs, mutable names of an address. Several Store values and processes share
 // one root without locks: every file appears whole through a rename.
 
 // The first line of the root's layout file; another one is refused.
-LAYOUT :: "mirai store 1\n"
+LAYOUT :: "mirai store 2\n"
 ROOT_MAX :: 1024 // bytes of a root path
 NAME_MAX :: 128  // bytes of a ref namespace or name
 
@@ -41,7 +43,7 @@ open :: proc(root:string,allocator:=context.allocator) -> (s:Store,error:Error) 
     }
     buffer:[PATH_BYTES]u8
     folder_make(trimmed) or_return
-    for folder in ([4]string{"blobs","partial","refs","tmp"}) {
+    for folder in ([6]string{"blobs","tables","partial","refs","leases","tmp"}) {
         folder_make(join(&buffer,trimmed,folder) or_return) or_return
     }
     layout_check(trimmed) or_return
@@ -87,7 +89,7 @@ layout_check :: proc(root:string) -> Error {
         return .None
     }
     if open_error!=.Not_Exist {return .Io}
-    return file_write(root,path,transmute([]u8)string(LAYOUT))
+    return file_write(root,path,{transmute([]u8)string(LAYOUT)})
 }
 
 // Copies parts joined by '/' into buffer.
@@ -127,18 +129,31 @@ os_error :: proc(error:os.Error) -> Error {
     return .Io
 }
 
-// Writes data to a file of the root's tmp folder and renames it to path,
+// Writes chunks to a file of the root's tmp folder and renames it to path,
 // which then holds all of it or what it held before.
 @(private)
-file_write :: proc(root:string,path:string,data:[]u8) -> Error {
+file_write :: proc(root,path:string,chunks:[][]u8,modified:Maybe(time.Time)=nil) -> Error {
     temp_buffer:[PATH_BYTES]u8
     temp,file:=temp_create(root,&temp_buffer) or_return
-    _,write_error:=os.write(file,data)
+    write_error:Error
+    for chunk in chunks {
+        if write_error==.None {
+            n,error:=os.write(file,chunk)
+            write_error=os_error(error)
+            if error==nil && n!=len(chunk) {write_error=.Io}
+        }
+    }
     sync_error:=os.sync(file)
     os.close(file)
-    if write_error!=nil || sync_error!=nil {
+    if write_error!=.None || sync_error!=nil {
         os.remove(temp)
-        return os_error(write_error) if write_error!=nil else .Io
+        return write_error if write_error!=.None else .Io
+    }
+    if at,ok:=modified.?;ok {
+        if time_error:=os.change_times(temp,at,at);time_error!=nil {
+            os.remove(temp)
+            return os_error(time_error)
+        }
     }
     if os.rename(temp,path)!=nil {
         os.remove(temp)
@@ -150,16 +165,40 @@ file_write :: proc(root:string,path:string,data:[]u8) -> Error {
 // A new file of the root's tmp folder, open to write; its path is in buffer.
 @(private)
 temp_create :: proc(root:string,buffer:^[PATH_BYTES]u8) -> (path:string,file:^os.File,error:Error) {
-    folder_buffer:[PATH_BYTES]u8
-    folder:=join(&folder_buffer,root,"tmp") or_return
-    created,create_error:=os.create_temp_file(folder,"write-*")
-    if create_error!=nil {return "",nil,os_error(create_error)}
-    name:=os.name(created)
-    if len(name)>len(buffer) {
-        os.close(created)
-        os.remove(name)
-        return "",nil,.Invalid_Argument
+    for _ in 0..<TEMP_ATTEMPTS {
+        path=temp_name(root,"write-",buffer) or_return
+        created,create_error:=os.open(path,{.Read,.Write,.Create,.Excl})
+        if create_error==nil {return path,created,.None}
+        if create_error!=.Exist {return "",nil,os_error(create_error)}
     }
-    copy(buffer[:],name)
-    return string(buffer[:len(name)]),created,.None
+    return "",nil,.Io
+}
+
+// A new folder of the root's tmp folder; its path is in buffer.
+@(private)
+temp_folder :: proc(root,prefix:string,buffer:^[PATH_BYTES]u8) -> (path:string,error:Error) {
+    for _ in 0..<TEMP_ATTEMPTS {
+        path=temp_name(root,prefix,buffer) or_return
+        made:=os.make_directory(path)
+        if made==nil {return path,.None}
+        if made!=.Exist {return "",os_error(made)}
+    }
+    return "",.Io
+}
+
+@(private)
+TEMP_ATTEMPTS :: 8
+
+// tmp/<prefix><random hex>, random from the system so that processes sharing
+// the root do not collide.
+@(private)
+temp_name :: proc(root,prefix:string,buffer:^[PATH_BYTES]u8) -> (string,Error) {
+    random:Hash
+    crypto.rand_bytes(random[:16])
+    text:[64]u8
+    name:[96]u8
+    if len(prefix)>len(name)-32 {return "",.Invalid_Argument}
+    copy(name[:],prefix)
+    copy(name[len(prefix):],hex(random,&text)[:32])
+    return join(buffer,root,"tmp",string(name[:len(prefix)+32]))
 }

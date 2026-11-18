@@ -73,9 +73,6 @@ Host_Desc :: struct {
     max_connections:int,      // server; default 32. A client has one
     channels:[]Channel_Desc,  // at most USER_CHANNELS
     tick_rate:int,            // Hz, default 60
-    send_rate:int,            // bytes per second and connection at most, default 256 KiB
-    min_send_rate:int,        // bytes per second below which congestion control does not go, default send_rate/16
-    packets_per_update:int,   // datagrams per connection in one update, default 4
     timeout:f64,              // seconds of silence that close a connection, default 10
     connect_timeout:f64,      // default 5
     keepalive:f64,            // seconds, default 0.5
@@ -201,6 +198,7 @@ Host :: struct {
     failed:bool,
     refused:Refusal, // why host_init returned Invalid
     history:int,     // ticks of Replication_Desc.history_seconds at tick_rate
+    records:int,     // of a connection: those of Replication_Desc.records and one per chunk its reliable channels hold
 
     // Simulation half.
     staging:^Frame,
@@ -246,6 +244,7 @@ Host :: struct {
 
 @(private)
 Back :: struct {
+    held:bool, // a reliable channel holds chunks the command buffer had no room for: no datagram is read
     now:f64,
     outbox:^Command_Buffer,
     peers:[]Peer,
@@ -294,9 +293,6 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
     if !(d.replication.history_seconds<=HISTORY_MAX_SECONDS) {return refuse(h,"replication.history_seconds","at most 2 seconds; 0 or less takes 0.5")}
     if d.replication.history_seconds<=0 {d.replication.history_seconds=HISTORY_SECONDS}
     h.history=history_ticks(d.replication.history_seconds,d.tick_rate)
-    if d.send_rate<=0 {d.send_rate=256<<10}
-    if d.min_send_rate<=0 {d.min_send_rate=max(d.send_rate/16,PACKET_BYTES*4)}
-    if d.packets_per_update<=0 {d.packets_per_update=4}
     if d.timeout<=0 {d.timeout=10}
     if d.connect_timeout<=0 {d.connect_timeout=5}
     if d.keepalive<=0 {d.keepalive=0.5}
@@ -307,11 +303,8 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
         if c.queue_bytes<=0 {c.queue_bytes=32<<10}
         if c.kind==.Reliable {
             c.max_message_bytes=max(int)
-            if c.window<=0 {c.window=CHUNK_WINDOW}
-            if c.window>MAX_WINDOW || c.window&(c.window-1)!=0 {return refuse(h,"channels.window","a power of two up to 4096; 0 takes 64")}
         } else {
             c.max_message_bytes=c.max_message_bytes<=0?MAX_UNRELIABLE_BYTES:min(c.max_message_bytes,MAX_UNRELIABLE_BYTES)
-            c.window=0
         }
         h.channels[i]=c
     }
@@ -319,7 +312,7 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
     d.channels=nil
     if d.protocol!=nil {
         if !d.protocol.sealed {return refuse(h,"protocol","sealed by protocol_seal")}
-        h.channels[CHANNEL_SYSTEM]={kind=.Reliable,queue_bytes=64<<10,max_message_bytes=RELIABLE_EVENT_MAX_BYTES+16,window=CHUNK_WINDOW}
+        h.channels[CHANNEL_SYSTEM]={kind=.Reliable,queue_bytes=64<<10,max_message_bytes=RELIABLE_EVENT_MAX_BYTES+16}
         h.channels[CHANNEL_EVENTS]={kind=.Unreliable,queue_bytes=16<<10,max_message_bytes=EVENT_MAX_BYTES+16}
     }
     h.start=time.tick_now()
@@ -354,10 +347,14 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
     // What one datagram can turn into, so a full command buffer stops the reading before it and not halfway.
     b.reserve_bytes=PACKET_BYTES*2
     b.reserve_count=PACKET_BYTES*8/15
+    if d.replication.records<=0 {d.replication.records=d.protocol!=nil?4096:0}
+    // Every chunk in flight takes a record: the reliable channels bring room of their own.
+    h.records=d.replication.records
     for i in 0..<MAX_CHANNELS {
-        if h.channels[i].kind==.Reliable {b.reserve_bytes+=h.channels[i].window*CHUNK_BYTES+PIECE_BYTES}
+        if h.channels[i].kind!=.Reliable || h.channels[i].queue_bytes<=0 {continue}
+        b.reserve_bytes+=PIECE_BYTES
+        h.records+=channel_chunks(h.channels[i].queue_bytes)
     }
-    if d.replication.records<=0 {d.replication.records=d.protocol!=nil?4096:1024}
     if d.protocol!=nil && !h.failed {
         if error:=repl_init(h);error!=.None {
             refused:=h.refused
@@ -617,9 +614,9 @@ back_update :: proc(h:^Host,now:f64) {
     applied:=time.tick_now()
 
     b.secure.handshakes=h.desc.handshakes_per_update
+    channels_held(h)
     for {
-        out:=b.outbox
-        if len(out.bytes)-out.used<b.reserve_bytes || len(out.commands)-out.count<b.reserve_count {b.stats.receive_stalls+=1;break}
+        if b.held || !command_room(h,0) {b.stats.receive_stalls+=1;break}
         size,from,ok:=h.desc.transport.receive(h.desc.transport.data,b.incoming[:])
         if !ok {break}
         b.stats.packets_received+=1
@@ -704,6 +701,14 @@ op_apply :: proc(h:^Host,frame:^Frame,op:^Op) {
     case:
         repl_op(h,frame,op)
     }
+}
+
+// The command buffer has room for what one datagram can turn into and extra commands of a piece each.
+@(private)
+command_room :: proc(h:^Host,extra:int) -> bool {
+    b:=&h.back
+    out:=b.outbox
+    return len(out.bytes)-out.used>=b.reserve_bytes+extra*(PIECE_BYTES+8) && len(out.commands)-out.count>=b.reserve_count+extra
 }
 
 @(private)

@@ -51,7 +51,7 @@ Replication_Desc :: struct {
                            // object_create refuses with Full an object whose state does not fit
     baseline_words:int,    // baselines, likewise. A server shares each one among the connections that take it in the same state;
                            // default: eight per object (two per connection below four), and on a client two per replica
-    records:int,           // per connection: objects and chunks in datagrams not yet acknowledged, default 4096
+    records:int,           // per connection: objects and inputs in datagrams not yet acknowledged, default 4096; chunks have room of their own
     budget_bytes:int,      // object data per connection and tick, default 4096
     max_updates:int,       // objects considered per connection and tick, default 256
     send_every:int,        // ticks between sends, default 1

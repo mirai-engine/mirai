@@ -1,25 +1,16 @@
 package store
 
-import "core:crypto/blake2b"
 import "core:os"
+import "mirai:std/blake3"
 
-// An address is a pure function of a blob's bytes. Only piece_value and
-// address_value know the hash primitive, so it can be replaced in one place.
+// An address is the standard BLAKE3 hash of a blob's bytes. Only piece_value
+// and address_value know the hash primitive, so it can be replaced in one place.
 Hash :: distinct [32]u8
 
-// A blob is cut in pieces of PIECE_BYTES, the last one shorter; an empty blob has none.
+// A blob is cut in pieces of PIECE_BYTES, the last one shorter; an empty blob
+// has none. A piece is a BLAKE3 group, so the address is the root of the table.
 PIECE_BYTES :: 64<<10
-
-// BLAKE2b-256 keyed apart for pieces and addresses, so a piece hash, a piece
-// table and an address can never be taken for one another.
-@(private)
-KEY_PIECE :: "mirai store piece"
-@(private)
-KEY_ADDRESS :: "mirai store address"
-
-// Gives the piece hash at index of a table, called for every index in order.
-@(private)
-Piece_Source :: proc(user:rawptr,index:int) -> (Hash,Error)
+#assert(PIECE_BYTES==blake3.GROUP_BYTES)
 
 piece_count :: proc "contextless" (size:i64) -> int {
     if size<=0 {return 0}
@@ -32,23 +23,23 @@ piece_size :: proc "contextless" (size:i64,index:int) -> int {
     return int(min(size-i64(index)*PIECE_BYTES,PIECE_BYTES))
 }
 
-address_of_bytes :: proc(data:[]u8) -> Hash {
-    data:=data
-    hash,_:=address_value(i64(len(data)),proc(user:rawptr,index:int) -> (Hash,Error) {
-        data:=(^[]u8)(user)^
-        return piece_value(data[index*PIECE_BYTES:][:piece_size(i64(len(data)),index)],index),.None
-    },&data)
-    return hash
+// The address of bytes in memory.
+address_of_bytes :: proc "contextless" (data:[]u8) -> Hash {
+    return Hash(blake3.hash(data))
 }
 
-// The address of the file at path, read piece by piece.
-address_of_file :: proc(path:string) -> (hash:Hash,size:i64,error:Error) {
+// The address of the file at path, read once piece by piece; its piece table
+// is held with allocator.
+address_of_file :: proc(path:string,allocator:=context.allocator) -> (hash:Hash,size:i64,error:Error) {
     file,open_error:=os.open(path)
     if open_error!=nil {return {},0,os_error(open_error)}
     defer os.close(file)
     file_size,size_error:=os.file_size(file)
     if size_error!=nil {return {},0,os_error(size_error)}
-    hash,error=file_hash(file,file_size,nil,nil)
+    pieces,make_error:=make([]Hash,piece_count(file_size),allocator)
+    if make_error!=nil {return {},0,.Out_Of_Memory}
+    defer delete(pieces,allocator)
+    hash,error=file_hash(file,file_size,nil,pieces)
     if error==.Corrupt {error=.Io}
     return hash,file_size,error
 }
@@ -84,80 +75,58 @@ hex_digit :: proc "contextless" (c:u8) -> (u8,bool) {
     return 0,false
 }
 
-// The hash of the piece at index of a blob, from its bytes.
+// The value of piece index of a blob of size, from its bytes: the BLAKE3
+// hash of a blob of one piece, otherwise its BLAKE3 group value. Out-of-range
+// input gives a value no table holds.
 @(private)
-piece_value :: proc(piece:[]u8,index:int) -> Hash {
-    ctx:blake2b.Context
-    key:=KEY_PIECE
-    blake2b.init_mac(&ctx,transmute([]u8)key,size_of(Hash))
-    blake2b.update(&ctx,piece)
-    hash:Hash
-    blake2b.final(&ctx,hash[:])
-    return hash
+piece_value :: proc(piece:[]u8,index:int,size:i64) -> Hash {
+    if size<=PIECE_BYTES {return Hash(blake3.hash(piece))}
+    value,_:=blake3.group_value(piece,u64(max(index,0)))
+    return Hash(value)
 }
 
-// The address of a blob of size bytes, from its piece table, which pieces
-// gives one entry at a time so a table is never held whole.
+// The address of a blob of size, from its piece table: the BLAKE3 hash of
+// nothing for an empty blob, the single value of a blob of one piece,
+// otherwise the BLAKE3 root of the table. A table that does not fit size
+// gives a value no blob has.
 @(private)
-address_value :: proc(size:i64,pieces:Piece_Source,user:rawptr) -> (Hash,Error) {
-    ctx:blake2b.Context
-    key:=KEY_ADDRESS
-    blake2b.init_mac(&ctx,transmute([]u8)key,size_of(Hash))
-    length:[8]u8
-    for i in 0..<8 {length[i]=u8(u64(size)>>(8*uint(i)))}
-    blake2b.update(&ctx,length[:])
-    for index in 0..<piece_count(size) {
-        piece,error:=pieces(user,index)
-        if error!=.None {
-            hash:Hash
-            blake2b.final(&ctx,hash[:])
-            return {},error
-        }
-        blake2b.update(&ctx,piece[:])
-    }
-    hash:Hash
-    blake2b.final(&ctx,hash[:])
-    return hash,.None
+address_value :: proc(size:i64,pieces:[]Hash) -> Hash {
+    if size<0 || len(pieces)!=piece_count(size) {return {}}
+    if size==0 {return Hash(blake3.hash(nil))}
+    if len(pieces)==1 {return pieces[0]}
+    root,_:=blake3.root(transmute([]blake3.Hash)pieces,u64(size))
+    return Hash(root)
 }
 
-// The address of a table held in memory.
+// The piece table of bytes in memory.
 @(private)
-table_address :: proc(size:i64,pieces:[]Hash) -> Hash {
-    pieces:=pieces
-    hash,_:=address_value(size,proc(user:rawptr,index:int) -> (Hash,Error) {
-        return (^[]Hash)(user)[index],.None
-    },&pieces)
-    return hash
+bytes_table :: proc(data:[]u8,allocator:=context.allocator) -> ([]Hash,Error) {
+    size:=i64(len(data))
+    pieces,make_error:=make([]Hash,piece_count(size),allocator)
+    if make_error!=nil {return nil,.Out_Of_Memory}
+    for &piece,index in pieces {piece=piece_value(data[index*PIECE_BYTES:][:piece_size(size,index)],index,size)}
+    return pieces,.None
 }
 
-// Reads size bytes of file piece by piece: their address. Each piece is also
-// written to copy_to and its hash to table, when given. A file shorter than
-// size, or longer, is Corrupt.
+// Reads size bytes of file piece by piece into table: their address. Each
+// piece is also written to copy_to, when given. A file shorter than size, or
+// longer, is Corrupt.
 @(private)
 file_hash :: proc(file:^os.File,size:i64,copy_to:^os.File,table:[]Hash) -> (hash:Hash,error:Error) {
-    if table!=nil && len(table)!=piece_count(size) {return {},.Invalid_Argument}
-    Reading :: struct {
-        buffer:[PIECE_BYTES]u8,
-        file,copy_to:^os.File,
-        size:i64,
-        table:[]Hash,
-    }
-    reading:=Reading{file=file,copy_to=copy_to,size=size,table=table}
-    hash=address_value(size,proc(user:rawptr,index:int) -> (Hash,Error) {
-        r:=(^Reading)(user)
+    if len(table)!=piece_count(size) {return {},.Invalid_Argument}
+    buffer:[PIECE_BYTES]u8=---
+    for index in 0..<len(table) {
         offset:=i64(index)*PIECE_BYTES
-        piece:=r.buffer[:piece_size(r.size,index)]
-        if error:=read_exact(r.file,piece,offset);error!=.None {return {},error}
-        if r.copy_to!=nil {
-            if _,write_error:=os.write_at(r.copy_to,piece,offset);write_error!=nil {return {},os_error(write_error)}
+        piece:=buffer[:piece_size(size,index)]
+        read_exact(file,piece,offset) or_return
+        if copy_to!=nil {
+            if _,write_error:=os.write_at(copy_to,piece,offset);write_error!=nil {return {},os_error(write_error)}
         }
-        hash:=piece_value(piece,index)
-        if r.table!=nil {r.table[index]=hash}
-        return hash,.None
-    },&reading) or_return
+        table[index]=piece_value(piece,index,size)
+    }
     after:[1]u8
     if n,_:=os.read_at(file,after[:],size);n>0 {return {},.Corrupt}
-    return hash,.None
+    return address_value(size,table),.None
 }
 
 // Fills buffer from file at offset; Corrupt when the file ends first.
