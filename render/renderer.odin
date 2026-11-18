@@ -303,14 +303,14 @@ Stats :: struct {
 // (`//! constant`) make the pipelines a frame asks for (pipeline_of).
 Pipeline_Id :: enum {
 	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Bins, Cull_Stats_Fold, Mesh_Draws, Tlas_Batches,
-	Raster_Round, Raster_Vertices, Raster_Starts, Raster_Triangles, // what the raster of the visibility target draws of the visible clusters, a round at a time (raster_lists.slang)
+	Raster_Round, Raster_Vertices, Raster_Vertices_Shadow, Raster_Starts, Raster_Triangles, // what the raster of the visibility target draws of the visible clusters, and the maps of the shadows of theirs, a round at a time (raster_lists.slang)
 	Light_Grid_Count, Light_Grid_Scan, Light_Grid_Fill, Light_Grid_Weights, // the passes of the grid of the lights (light_grid.comp)
 	Light_Lists, // the lists of the lights without shadows of the tiles of a view (light_lists.comp)
 	Direct_Maps, Direct_Rays, Direct_Samples, Direct_Points, Direct_Spread, Direct_Filter,
 	Ddgi_Trace, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
 	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
 	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Reflect, Translucent, Reflect_Resolve,
-	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Clear, Shadow_Map_Copy, Shadow_Mark, Shadow_Pages, Shadow_Hiz, // the cull of the maps of the shadows by instance and by cluster, their draws by what each writes, the pages of the cache they clear and the atlas copies, the marks of the points, the table of the pages and the farthest depth of the cache
+	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Clear, Shadow_Map_Copy, Shadow_Mark, Shadow_Pages, Shadow_Hiz, // the cull of the maps of the shadows by instance and by cluster, the draws of the triangles their lists hold by what each writes, the pages of the cache they clear and the atlas copies, the marks of the points, the table of the pages and the farthest depth of the cache
 	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Inside,
 	// The raster of the visibility target by raster bin (RASTER_BIN_*), then the same of a view with a clip plane.
 	Visibility, Visibility_Two_Sided, Visibility_Tested, Visibility_Tested_Two_Sided,
@@ -928,6 +928,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Mesh_Draws, .Mesh_Draws_Comp)
 	compute(list, r, .Raster_Round, .Raster_Round_Comp)
 	compute(list, r, .Raster_Vertices, .Raster_Vertices_Comp)
+	compute(list, r, .Raster_Vertices_Shadow, .Raster_Vertices_Shadow_Comp)
 	compute(list, r, .Raster_Starts, .Raster_Starts_Comp)
 	compute(list, r, .Raster_Triangles, .Raster_Triangles_Comp)
 	compute(list, r, .Tlas_Batches, .Tlas_Batches_Comp, .Hardware)
@@ -1054,20 +1055,22 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		name = "highlight mask",
 	})
 	compute(list, r, .Highlight_Filter, .Highlight_Filter_Comp)
+	// The triangles the lists of the raster hold of the clusters of each page,
+	// both faces, as a shadow ray meets them.
 	graphics(list, r, .Shadow_Map, {
-		vertex = &r.shader_codes[.Shadow_Map_Vert], fragment = &r.shader_codes[.Shadow_Map_Frag],
+		vertex = &r.shader_codes[.Vis_Raster_Shadow_Vert], fragment = &r.shader_codes[.Shadow_Map_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None, name = "shadow maps",
 	})
 	graphics(list, r, .Shadow_Map_Tested, {
-		vertex = &r.shader_codes[.Shadow_Map_Tested_Vert], fragment = &r.shader_codes[.Shadow_Map_Tested_Frag],
+		vertex = &r.shader_codes[.Vis_Raster_Shadow_Tested_Vert], fragment = &r.shader_codes[.Shadow_Map_Tested_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None, name = "shadow maps of masked materials",
 	})
 	graphics(list, r, .Shadow_Map_Clear, {
-		vertex = &r.shader_codes[.Shadow_Map_Square_Vert], fragment = &r.shader_codes[.Shadow_Map_Frag],
+		vertex = &r.shader_codes[.Shadow_Map_Vert], fragment = &r.shader_codes[.Shadow_Map_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, cull = .None, name = "shadow map squares",
 	})
 	graphics(list, r, .Shadow_Map_Copy, {
-		vertex = &r.shader_codes[.Shadow_Map_Square_Vert], fragment = &r.shader_codes[.Shadow_Map_Copy_Frag],
+		vertex = &r.shader_codes[.Shadow_Map_Vert], fragment = &r.shader_codes[.Shadow_Map_Copy_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, cull = .None, name = "shadow map pages copied",
 	})
 	compute(list, r, .Shadow_Mark, .Shadow_Mark_Comp)

@@ -64,9 +64,9 @@ shadow_counts :: proc(r: ^Renderer) -> (drawn, composed, left: u32) {
 }
 
 // The most units a cluster costs in a page (render.shadow_units): its
-// triangles over all of its texels, masked, and the vertices of its draw.
+// triangles over all of its texels, masked, and its vertices, placed and drawn.
 @(private = "file")
-PAGE_UNITS :: asset.CLUSTER_TRIANGLES * SHADOW_PAGE * SHADOW_PAGE * abi.SHADOW_MASKED_COST / abi.SHADOW_UNIT_TEXELS + abi.CLUSTER_DRAW_VERTICES / abi.SHADOW_UNIT_VERTICES
+PAGE_UNITS :: asset.CLUSTER_TRIANGLES * SHADOW_PAGE * SHADOW_PAGE * abi.SHADOW_MASKED_COST / abi.SHADOW_UNIT_TEXELS + 2 * asset.CLUSTER_VERTICES / abi.SHADOW_UNIT_VERTICES
 
 // The clusters the cache of the maps of the last view drew in the last frame,
 // once for each page they cover (Shadow_Stats).
@@ -382,9 +382,9 @@ render_shadow_maps_follow_what_moves_in_its_frame :: proc(t: ^testing.T) {
 		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	}
 	rhi.device_wait_idle(f.device)
-	state: [1]Gpu_Shadow_State
+	state: [1]Gpu_Cull_State
 	testing.expect(t, rhi.buffer_read_slice(f.device, r.shadow_buffers.state, 0, state[:]))
-	entries := state[0].draws[0].instance_count + state[0].draws[1].instance_count
+	entries := state[0].listed[0]
 	testing.expectf(t, r.stats.shadow_movers == 1 && entries == 0, "a cube moving under a roof: %d movers, %d clusters drawn as what moves", r.stats.shadow_movers, entries)
 	hidden := read(t, &f)
 	defer delete(hidden)
@@ -710,13 +710,133 @@ shadow_maps_ms :: proc(r: ^Renderer) -> (ms: f32, frame: u64) {
 	return ms, at
 }
 
+// Casters as the reference of the pages takes them: three corners in the
+// world a triangle, and the grid the vertices of their mesh lie on, metres.
+@(private = "file")
+Page_Casters :: struct {
+	triangles: [dynamic]Vec3,
+	step:      f32,
+}
+
+// The pages of the levels of the sun the atlas of the main view holds,
+// against the triangles of the casters: a texel whose center a triangle
+// covers holds the nearest such triangle along the light, and one whose
+// center none covers holds nothing. Where the edge of a triangle nearer than
+// those that cover a center passes within a twentieth of a texel of it, or
+// within twice the grid of its vertices, or a triangle lies there at the near
+// or the far plane of the map, a device may place it either side, and the
+// texel is left out; so are the levels whose texel is wider than the smallest
+// caster (smallest, metres), which the maps leave out. Returns the texels
+// compared and those that differ.
+@(private = "file")
+shadow_pages_against :: proc(r: ^Renderer, casters: []Page_Casters, smallest: f32) -> (compared, differ: int) {
+	ALONG :: f32(2e-3) // metres along the light a texel may lie off the triangle
+	PAGE :: int(SHADOW_PAGE)
+	ROW :: int(SHADOW_POOL) / PAGE
+	b := &r.main.targets.shadow_raster
+	rhi.device_wait_idle(r.device)
+	table := make([]u32, abi.SHADOW_SLOT_ENTRIES * SHADOW_SLOTS)
+	atlas := make([]f32, SHADOW_POOL * SHADOW_POOL)
+	// Of each texel of the atlas, the nearest along the light a triangle that
+	// covers its center lies, and a triangle that may cover it.
+	sure := make([]f32, len(atlas))
+	maybe := make([]f32, len(atlas))
+	defer {delete(table);delete(atlas);delete(sure);delete(maybe)}
+	if !rhi.texture_read(r.device, b.table, mem.slice_to_bytes(table)) || !rhi.texture_read(r.device, b.atlas, mem.slice_to_bytes(atlas)) {return 0, -1}
+	slice.fill(sure, max(f32))
+	slice.fill(maybe, max(f32))
+	for level in 0 ..< SHADOW_SUN_LEVELS {
+		m := b.held[level].m
+		texel := (m.span.z - m.span.x) / f32(max(m.rect.z, 1))
+		if m.rect.z == 0 || texel > smallest {continue}
+		side := int(m.rect.z)
+		// The page of the pool of each page of the map drawn; -1: none.
+		pages: [SHADOW_MAP_PAGES * SHADOW_MAP_PAGES]int
+		slice.fill(pages[:], -1)
+		n, ox, oy := u32(SHADOW_MAP_PAGES), m.rect.y & 0xFF, (m.rect.y >> 8) & 0xFF
+		for at in 0 ..< n * n {
+			e := table[u32(level) * abi.SHADOW_SLOT_ENTRIES + abi.SHADOW_FINEST_ENTRY + at]
+			if e & abi.SHADOW_PAGE_COMPOSED == 0 || e & 0xFFFF == 0 || (e >> abi.SHADOW_ENTRY_COARSER) & 0xF != 0 {continue}
+			x, y := (at % n + n - ox % n) % n, (at / n + n - oy % n) % n
+			pages[y * n + x] = int(e & 0xFFFF) - 1
+		}
+		for caster in casters {
+			margin := max(0.05, 2 * caster.step / texel)
+			for k := 0; k + 2 < len(caster.triangles); k += 3 {
+				// The corners in texels of the map, rows down, and along the light.
+				p: [3]Vec3
+				for j in 0 ..< 3 {
+					v := caster.triangles[k + j] - m.origin
+					l := Vec3{linalg.dot(v, m.right), linalg.dot(v, m.up), linalg.dot(v, m.forward)}
+					p[j] = {(l.x - m.span.x) / texel, (m.span.w - l.y) / texel, l.z}
+				}
+				e1, e2 := p[1].xy - p[0].xy, p[2].xy - p[0].xy
+				area := e1.x * e2.y - e1.y * e2.x
+				if abs(area) < 1e-12 {continue}
+				lo := linalg.min(p[0].xy, linalg.min(p[1].xy, p[2].xy)) - margin
+				hi := linalg.max(p[0].xy, linalg.max(p[1].xy, p[2].xy)) + margin
+				x0, y0 := max(int(math.ceil(lo.x - 0.5)), 0), max(int(math.ceil(lo.y - 0.5)), 0)
+				x1, y1 := min(int(math.floor(hi.x - 0.5)), side - 1), min(int(math.floor(hi.y - 0.5)), side - 1)
+				if x1 < x0 || y1 < y0 {continue}
+				// Each edge as a line whose distance, in texels, is positive inside.
+				edges: [3]Vec3
+				for j in 0 ..< 3 {
+					a, d := p[j].xy, p[(j + 1) % 3].xy - p[j].xy
+					normal := Vec2{-d.y, d.x} * math.sign(area) / linalg.length(d)
+					edges[j] = {normal.x, normal.y, -linalg.dot(normal, a)}
+				}
+				for py in y0 / PAGE ..= y1 / PAGE {
+					for px in x0 / PAGE ..= x1 / PAGE {
+						pool := pages[py * SHADOW_MAP_PAGES + px]
+						if pool < 0 {continue}
+						cx, cy := pool % ROW * PAGE - px * PAGE, pool / ROW * PAGE - py * PAGE
+						for ty in max(y0, py * PAGE) ..= min(y1, py * PAGE + PAGE - 1) {
+							for tx in max(x0, px * PAGE) ..= min(x1, px * PAGE + PAGE - 1) {
+								c := Vec2{f32(tx) + 0.5, f32(ty) + 0.5}
+								inside := max(f32)
+								for e in edges {inside = min(inside, e.x * c.x + e.y * c.y + e.z)}
+								if inside < -margin {continue}
+								q := c - p[0].xy
+								u, v := (q.x * e2.y - q.y * e2.x) / area, (e1.x * q.y - e1.y * q.x) / area
+								z := p[0].z + u * (p[1].z - p[0].z) + v * (p[2].z - p[0].z)
+								// The map holds what lies between its near and far planes alone.
+								if z < m.near - ALONG || z > m.far + ALONG {continue}
+								at := (cy + ty) * int(SHADOW_POOL) + cx + tx
+								if inside > margin && z >= m.near + ALONG && z <= m.far - ALONG {sure[at] = min(sure[at], z)}
+								maybe[at] = min(maybe[at], z)
+							}
+						}
+					}
+				}
+			}
+		}
+		for pool in pages {
+			if pool < 0 {continue}
+			for j in 0 ..< PAGE {
+				for i in 0 ..< PAGE {
+					at := (pool / ROW * PAGE + j) * int(SHADOW_POOL) + pool % ROW * PAGE + i
+					if maybe[at] < sure[at] - ALONG {continue}
+					compared += 1
+					if sure[at] == max(f32) {
+						if atlas[at] != 0 {differ += 1}
+					} else if abs(m.far - atlas[at] * (m.far - m.near) - sure[at]) > ALONG {differ += 1}
+				}
+			}
+		}
+	}
+	return
+}
+
 // Masked cards stacked over the same texels of a map cost the raster what
 // the area of their triangles over those texels costs, which neither their
 // count nor their boxes say: cards of one layer that each cover pages
 // around, cards of many layers inside the box of one cluster, which a tree
 // is, and the two together. Under the bound of the renderer each frame's
 // rounds take within the time they may, the rest comes in the frames after,
-// and the picture ends that of a bound that holds all of them.
+// and the picture ends that of a bound that holds all of them. Of dense
+// small triangles the rounds raster only the few that cover a texel center
+// of their page, and the pages hold what every triangle gives at those
+// centers, none else.
 @(test)
 render_a_round_of_stacked_masked_cards_keeps_within_its_time :: proc(t: ^testing.T) {
 	// The side of a card, metres, the layers of its one cluster, how many; of
@@ -724,15 +844,20 @@ render_a_round_of_stacked_masked_cards_keeps_within_its_time :: proc(t: ^testing
 	// how far apart the specks are laid out in rows (0: over each other).
 	Cards :: struct {size: f32, layers, count: int, speck, apart: f32}
 	cases := [?]struct {
-		name:  string,
-		cards: [2]Cards,
+		name:      string,
+		cards:     [2]Cards,
+		frames:    u64,  // the cards cost more than this many frames of the most the bound draws
+		rastered:  f64,  // the most share of the triangles listed into pages the rounds raster; 0: any
+		reference: bool, // the pages are compared with what the triangles give at each texel
 	}{
-		{"cards over the pages around", {{4, 1, 24000, 0, 0.04}, {}}},
-		{"layers in the box of a cluster", {{1, 128, 800, 0, 0}, {}}},
-		{"both", {{4, 1, 12000, 0, 0}, {1, 128, 400, 0, 0}}},
+		{"cards over the pages around", {{4, 1, 24000, 0, 0.04}, {}}, 4, 0, false},
+		{"layers in the box of a cluster", {{1, 128, 800, 0, 0}, {}}, 4, 0, false},
+		{"both", {{4, 1, 12000, 0, 0}, {1, 128, 400, 0, 0}}, 4, 0, false},
 		// Vertex-bound: many clusters of small triangles, each over several pages,
-		// laid out apart so that what a ray of the sun meets stays small.
-		{"specks over the pages around", {{2, 64, 9000, 0.01, 0.1}, {}}},
+		// laid out apart so that what a ray of the sun meets stays small. Each
+		// vertex placed once and few triangles drawn, the bound grows with the
+		// room the rounds leave: the specks take a few frames of it.
+		{"specks over the pages around", {{2, 64, 9000, 0.01, 0.1}, {}}, 2, 0.25, true},
 	}
 	for c in cases {
 		f: Cube_Fixture
@@ -746,7 +871,15 @@ render_a_round_of_stacked_masked_cards_keeps_within_its_time :: proc(t: ^testing
 		testing.expect(t, materials_set(r, {masked}))
 		instances := make([dynamic]Instance_Desc)
 		append(&instances, Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {40, 0.2, 40}), tint = {0.8, 0.8, 0.8}})
-		for kind in c.cards {
+		// What the reference of the pages draws: the floor and the cards.
+		casters: [3]Page_Casters
+		smallest := max(f32)
+		if c.reference {
+			vertices, indices := cube_mesh()
+			for index in indices {append(&casters[0].triangles, (instances[0].transform * Vec4{vertices[index].position.x, vertices[index].position.y, vertices[index].position.z, 1}).xyz)}
+			casters[0].step = r.scene.meshes[f.cube].position_step * 40
+		}
+		for kind, n in c.cards {
 			if kind.count == 0 {continue}
 			vertices := make([]Mesh_Vertex, 4 * kind.layers)
 			indices := make([]u32, 6 * kind.layers)
@@ -761,15 +894,23 @@ render_a_round_of_stacked_masked_cards_keeps_within_its_time :: proc(t: ^testing
 				for corner, j in ([6]u32{0, 2, 1, 1, 2, 3}) {indices[6 * l + j] = u32(4 * l) + corner}
 			}
 			mesh, added := mesh_add(r, vertices, indices)
-			delete(vertices)
-			delete(indices)
 			testing.expect(t, added)
+			low, high := Vec3(max(f32)), Vec3(min(f32))
+			for v in vertices {low, high = linalg.min(low, v.position), linalg.max(high, v.position)}
+			smallest = min(smallest, linalg.length(high - low))
+			if c.reference && added {casters[1 + n].step = r.scene.meshes[mesh].position_step}
 			for k in 0 ..< kind.count {
 				// Turned a little each, so that none lies in another's plane.
 				at := trs({f32(k % 7) * 0.01 + f32(k % 80) * kind.apart - 20 * kind.apart, 0.5 + f32(k) * 1e-5, f32(k % 5) * 0.01 + f32(k / 80) * kind.apart - 20 * kind.apart}, {1, 1, 1})
 				append(&instances, Instance_Desc{object_id = u64(len(instances) + 1), mesh = mesh, transform = at, material = 1, tint = {0.5, 0.5, 0.5}})
+				if c.reference {
+					for index in indices {append(&casters[1 + n].triangles, (at * Vec4{vertices[index].position.x, vertices[index].position.y, vertices[index].position.z, 1}).xyz)}
+				}
 			}
+			delete(vertices)
+			delete(indices)
 		}
+		defer for caster in casters {delete(caster.triangles)}
 		sun := Sun_Desc{direction = {0.1, 1, 0.05}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
 		testing.expect(t, scene_given(r, instances[:], nil, sun, {sky = {0, 0, 0}}))
 		delete(instances)
@@ -782,8 +923,9 @@ render_a_round_of_stacked_masked_cards_keeps_within_its_time :: proc(t: ^testing
 		}
 		b := &r.main.targets.shadow_raster
 		// Until the pages are no longer given, the most the rounds of a frame took.
-		// Of the frames from the first, the first included, what comes back.
-		settle :: proc(t: ^testing.T, r: ^Renderer, camera: Camera) -> (frames: int, most: f32, units: u32, total: u64, clusters: u32, frame: f32) {
+		// Of the frames from the first, the first included, what comes back,
+		// and the triangles the rounds listed into pages and rastered.
+		settle :: proc(t: ^testing.T, r: ^Renderer, camera: Camera) -> (frames: int, most: f32, units: u32, total: u64, clusters: u32, frame: f32, listed, rastered: u64) {
 			runs, still := u32(0), 0
 			first := rhi.frame_number(r.device)
 			for frames < 600 && still < 8 {
@@ -796,6 +938,8 @@ render_a_round_of_stacked_masked_cards_keeps_within_its_time :: proc(t: ^testing
 				total += u64(r.stats.shadow.units)
 				clusters = max(clusters, r.stats.shadow.clusters + r.stats.shadow.clusters_masked)
 				frame = max(frame, r.stats.gpu_ms)
+				listed += u64(r.stats.shadow.triangles)
+				rastered += u64(r.stats.shadow.raster_triangles)
 				now := shadow_page_runs(r)
 				still = still + 1 if now == runs else 0
 				runs = now
@@ -803,20 +947,27 @@ render_a_round_of_stacked_masked_cards_keeps_within_its_time :: proc(t: ^testing
 			return
 		}
 		b.budget = abi.SHADOW_COST_UNITS
-		whole_frames, whole_ms, whole_units, whole_total, clusters_most, whole_frame := settle(t, r, camera)
+		whole_frames, whole_ms, whole_units, whole_total, clusters_most, whole_frame, listed, rastered := settle(t, r, camera)
 		whole := read(t, &f)
+		log.infof("%s: the rounds listed %d triangles into pages and rastered %d", c.name, listed, rastered)
+		testing.expectf(t, rastered > 0 && (c.rastered == 0 || f64(rastered) <= c.rastered * f64(listed)), "%s: the rounds rastered %d of the %d triangles they listed into pages", c.name, rastered, listed)
+		if c.reference {
+			compared, differ := shadow_pages_against(r, casters[:], smallest)
+			log.infof("%s: %d texels of the pages compared with what the triangles give there, %d differ", c.name, compared, differ)
+			testing.expectf(t, compared > 0 && differ == 0, "%s: %d of %d texels of the pages differ from what the triangles give there", c.name, differ, compared)
+		}
 		rhi.device_wait_idle(f.device)
 		destroy_shadow_maps(r, &r.main.targets)
 		b.budget = 0
 		r.shadow_bound = {}
-		frames, most, units, total, _, frame := settle(t, r, camera)
+		frames, most, units, total, _, frame, _, _ := settle(t, r, camera)
 		settled := read(t, &f)
 		log.infof("%s: under a bound that holds all %d frames, %.2f ms, %d units a frame at most, %d in all; under that of the renderer %d frames, %.2f ms, %d units a frame at most, %d in all", c.name, whole_frames, whole_ms, whole_units, whole_total, frames, most, units, total)
 		log.infof("%s: %d clusters drawn into pages a frame at most; the GPU frame took %.2f ms at most, %.2f under the bound", c.name, clusters_most, whole_frame, frame)
 		// What no fixture of the table passes: the frame stays far from the watchdog.
 		testing.expectf(t, max(whole_frame, frame) < 100, "%s: a frame took %.2f ms", c.name, max(whole_frame, frame))
 		testing.expectf(t, most <= 3 * SHADOW_MAPS_MOST_MS && units <= SHADOW_FRAME_UNITS_MOST + PAGE_UNITS, "%s: under the bound the rounds of a frame took %.2f ms and %d units", c.name, most, units)
-		testing.expectf(t, frames < 600 && total > 4 * u64(units), "%s: the cards cost %d units in %d frames, no more than 4 frames of the bound", c.name, total, frames)
+		testing.expectf(t, frames < 600 && total > c.frames * u64(units), "%s: the cards cost %d units in %d frames, no more than %d frames of the bound", c.name, total, frames, c.frames)
 		differ := 0
 		for v, k in settled {if k < len(whole) && abs(int(v) - int(whole[k])) > 2 {differ += 1}}
 		testing.expectf(t, len(settled) == len(whole) && differ * 300 <= len(settled), "%s: %d of %d values differ from the cards under a bound that holds all", c.name, differ, len(settled))
