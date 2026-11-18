@@ -1053,7 +1053,7 @@ Shadow_Pages_Step :: enum u32 {Gate, Clear, Invalidate, Ancestors, Entries, Rank
 
 // shadow_pages.comp Params_Block.
 @(private)
-Shadow_Pages_Params :: struct {step, frame, rows, plan, boxes, box_count, sun, pool, groups_stays, groups_moves, fresh, full, slots, slot_count, keep, budget, round, pad0, pad1, pad2: u32}
+Shadow_Pages_Params :: struct {step, frame, rows, plan, boxes, box_count, sun, pool, groups_stays, groups_moves, fresh, full, slots, slot_count, keep, budget, round, chunks, pad1, pad2: u32}
 
 // The clusters each round of the maps of a view draws in a frame.
 @(private)
@@ -1142,6 +1142,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 		groups_stays = groups(p.instance_count + p.batch_slots, SHADOW_GROUP), groups_moves = groups(p.instance_count + p.batch_slots if plan.whole else plan.moving_threads, SHADOW_GROUP),
 		keep = max(p.jitter_phases, 1),
 		budget = shadow_frame_clusters(r, b),
+		chunks = s.cull_capacity[.Shadow_Chunks],
 	}
 	for step in Shadow_Pages_Step {
 		if step == .Propagate || step >= .Grant {continue}

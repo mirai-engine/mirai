@@ -89,8 +89,9 @@ void table_set(uint slot, uint entry, uint e) { if (shadow_place_valid(slot, ent
 // a cycle of the jitter of the view, which a page no point read keeps its
 // place for from the pages that rank no sooner; budget: the clusters the
 // draws of the cache, and those of the atlas, take in a frame; round: 0 the
-// cache, 1 the atlas, for Grant and Settle.
-struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; uint box_count; uint sun; uint pool; uint groups_stays; uint groups_moves; uint fresh; uint full; uint slots; uint slot_count; uint keep; uint budget; uint round; uint pad0; uint pad1; uint pad2; };
+// cache, 1 the atlas, for Grant and Settle; chunks: what the list of the
+// chunks of the cull holds (render.Cull_List.Shadow_Chunks).
+struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; uint box_count; uint sun; uint pool; uint groups_stays; uint groups_moves; uint fresh; uint full; uint slots; uint slot_count; uint keep; uint budget; uint round; uint chunks; uint pad1; uint pad2; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> shadow_data : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<uint> pages : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
@@ -142,6 +143,8 @@ struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; u
 groupshared uint shared_words[POOL_GROUP];
 groupshared uint shared_costs[POOL_GROUP];
 groupshared uint shared_sums[ROUND_GROUP];
+groupshared uint shared_reach[POOL_GROUP];
+groupshared uint shared_reach_sums[ROUND_GROUP];
 groupshared uint shared_slots[ROUND_GROUP];
 
 // The arguments of the dispatch of a step over a number of threads.
@@ -282,6 +285,10 @@ bool entry_read(uint slot, uint entry) { return mask_bit(SHADOW_WORDS_NEEDED, sl
 // How many levels or mips coarser a page stands for another at most: the
 // four bits of SHADOW_ENTRY_COARSER and SHADOW_ENTRY_HELD.
 #define SHADOW_COARSER_MOST 15u
+// How many levels or mips coarser than its own a page holds a point at most,
+// and the coarser pages a page read asks for: one with texels wider than
+// that tells too little of what hides the point, which then traces.
+#define SHADOW_HELD_COARSER 2u
 
 // The page of the level of the sun or the mip j coarser than a page of a slot
 // at a mip that holds it, the levels by the grid of the world: its slot, its
@@ -414,7 +421,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         uint at_slot;
         Shadow_Map c;
         int2 p;
-        for (uint j = 1u; j < SHADOW_COARSER_MOST && page_coarser(slot, mip, page, j, at_slot, c, p); j++) {
+        for (uint j = 1u; j <= SHADOW_HELD_COARSER && page_coarser(slot, mip, page, j, at_slot, c, p); j++) {
             int n = int(shadow_mip_pages(shadow_rect_mip(c.rect)));
             for (int y = max(p.y - 1, 0); y <= min(p.y + 1, n - 1); y++) {
                 for (int x = max(p.x - 1, 0); x <= min(p.x + 1, n - 1); x++) mask_set(SHADOW_WORDS_ANCESTORS, at_slot, shadow_page_entry(c.rect, uint2(x, y)));
@@ -625,7 +632,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         uint scale = pages[SHADOW_WORDS_SCALE + params.round], share = max(params.budget / GRANT_SHARE, 1u);
         if (scale == 0u) scale = SHADOW_SCALE_ONE;
         for (uint k = lane; k < POOL_GROUP; k += ROUND_GROUP) {
-            uint key = shared_words[k], cost = 0u;
+            uint key = shared_words[k], cost = 0u, reach = 0u;
             if (key != 0xFFFFFFFFu && !round_idle(key & 0x3FFu)) {
                 uint pool = key & 0x3FFu, foreseen = pages[round_cost(pool)] & SHADOW_COST_CLUSTERS;
                 uint known = pages[round_known(pool)];
@@ -641,6 +648,10 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
                 // not known yet takes at most a part of the share, and once drawn
                 // the frames after know what it takes.
                 cost = known != 0u ? known : uint(min(ceil(float(foreseen) * float(scale) / float(SHADOW_SCALE_ONE)), float(max(share / GRANT_GUESS, 1u))));
+                // The chunks the cull hands over for it, at most: one for each
+                // cluster of what covers it, foreseen or taken, beyond the part of
+                // the share a page not drawn yet is granted for.
+                reach = max(known != 0u ? known : foreseen, 1u);
                 if (params.round == 1u && cost != 0u) cost = max(cost, GRANT_LEAST);
                 if (params.round == 0u && known != 0u && cost > share) {
                     uint band = pages[SHADOW_WORDS_BAND + pool], shift = (band >> SHADOW_BAND_SHIFT) & 0xFFu;
@@ -654,35 +665,45 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
                 if (known == 0u) pages[round_cost(pool)] = foreseen | SHADOW_COST_GUESS;
             }
             shared_costs[k] = cost;
+            shared_reach[k] = cost != 0u ? reach : 0u;
         }
         GroupMemoryBarrierWithGroupSync();
         // The sums of what those before each take, each lane over four in turn.
-        uint four = 0u;
-        for (uint j = 0u; j < 4u; j++) four += shared_costs[lane * 4u + j];
+        uint four = 0u, four_reach = 0u;
+        for (uint j = 0u; j < 4u; j++) {
+            four += shared_costs[lane * 4u + j];
+            four_reach = min(four_reach + shared_reach[lane * 4u + j], SHADOW_COST_CLUSTERS);
+        }
         shared_sums[lane] = four;
+        shared_reach_sums[lane] = four_reach;
         GroupMemoryBarrierWithGroupSync();
         for (uint offset = 1u; offset < ROUND_GROUP; offset <<= 1u) {
             uint before = lane >= offset ? shared_sums[lane - offset] : 0u;
+            uint reach_before = lane >= offset ? shared_reach_sums[lane - offset] : 0u;
             GroupMemoryBarrierWithGroupSync();
             shared_sums[lane] += before;
+            shared_reach_sums[lane] = min(shared_reach_sums[lane] + reach_before, SHADOW_COST_CLUSTERS);
             GroupMemoryBarrierWithGroupSync();
         }
         // A page is granted where nothing is before it, or where it fits with
-        // those before in a share of the bound, and may take twice what it was
-        // granted for, at most the bound (its quota): the quotas of a frame fit
-        // the bound, and a page that takes more than its own is the one left over.
+        // those before in a share of the bound and the chunks it may hand over
+        // fit the list, and may take twice what it was granted for, at most the
+        // bound (its quota): the quotas of a frame fit the bound, a page that
+        // takes more than its own is the one left over, and only a page alone
+        // may find the list full.
         // The slots and the spans of the round become those of the pages it
         // grants: the culls after this go over them alone.
         uint bounds = SHADOW_WORDS_BOUNDS + params.round * SHADOW_SLOTS * SHADOW_MIPS * 4u;
         for (uint w = lane; w < SHADOW_SLOTS * SHADOW_MIPS * 4u; w += ROUND_GROUP) pages[bounds + w] = 0u;
         shared_slots[lane] = 0u;
         AllMemoryBarrierWithGroupSync();
-        uint spent = shared_sums[lane] - four;
+        uint spent = shared_sums[lane] - four, reached = shared_reach_sums[lane] - four_reach;
         for (uint j = 0u; j < 4u; j++) {
-            uint k = lane * 4u + j, key = shared_words[k], cost = shared_costs[k];
+            uint k = lane * 4u + j, key = shared_words[k], cost = shared_costs[k], reach = shared_reach[k];
             bool kept = key < KEY_NEW || params.round == 0u;
-            bool granted = spent == 0u || (kept ? spent + cost <= share : spent + 2u * cost <= share - share / GRANT_NEW);
+            bool granted = spent == 0u || ((kept ? spent + cost <= share : spent + 2u * cost <= share - share / GRANT_NEW) && reached + reach <= params.chunks);
             spent += cost;
+            reached = min(reached + reach, SHADOW_COST_CLUSTERS);
             if (key == 0xFFFFFFFFu || cost == 0u) continue;
             uint pool = key & 0x3FFu, word = pages[round_cost(pool)];
             if (granted) {
@@ -779,7 +800,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             uint at_slot;
             Shadow_Map c;
             int2 p;
-            for (uint j = 1u; j < SHADOW_COARSER_MOST && held == 0u && page_coarser(slot, mip, page, j, at_slot, c, p); j++) {
+            for (uint j = 1u; j <= SHADOW_HELD_COARSER && held == 0u && page_coarser(slot, mip, page, j, at_slot, c, p); j++) {
                 if (shadow_entry_ready(shadow_table_entry(at_slot, shadow_page_entry(c.rect, uint2(p)))) && around_read(at_slot, c, p)) held = j + 1u;
             }
             if (held == 0u) InterlockedAdd(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_SHORT], 1u);
