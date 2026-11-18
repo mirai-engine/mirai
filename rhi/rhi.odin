@@ -717,13 +717,17 @@ device_failure :: proc(d: ^Device) -> (failure: Device_Failure, text: string) {
 // Makes the next submission report the device lost, as the API does after a
 // reset of the GPU, once its work went and completed: what a test of the
 // reaction to a loss provokes without resetting the GPU of the machine.
-device_lose :: proc(d: ^Device) {d.lose_asked = true}
+// reported false: the next frame goes as after a reset no call reports (amdvlk
+// on Windows after a timeout detection and recovery): its submission and its
+// timeline pass, its work never runs. Metal, whose command buffers report
+// every reset, and an immediate list report it as without it.
+device_lose :: proc(d: ^Device, reported := true) {d.lose_asked, d.lose_unreported = true, !reported}
 
 // Whether device_lose asked the submission that just went to report a loss.
 @(private)
 device_lose_take :: proc(d: ^Device) -> bool {
 	asked := d.lose_asked
-	d.lose_asked = false
+	d.lose_asked, d.lose_unreported = false, false
 	d.lose_provoked ||= asked
 	return asked
 }
