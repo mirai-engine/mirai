@@ -113,6 +113,9 @@ other and do not see the corner of a table or the floor under a wardrobe.
   hemisphere of their normal in the world, which also see what is off screen or behind something
   nearer to the eye; the nearest occludes more, so that the edge fades. Every frame traces every
   point.
+- The rays go past the thin surfaces that transmit (`trace_past_thin`): such a surface sends
+  on what reaches its other side, and the probes, which see it from both sides, already hold the
+  light under a canopy of them. A two-sided one has no inside for the probes either.
 - The rays leave the surface by the bias of its distance (`view_bias`), as far as its place is
   known from the eye; where that bias takes the whole reach of the rays nothing occludes the
   point, which is wider than what could stand that near it.

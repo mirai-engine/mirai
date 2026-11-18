@@ -55,8 +55,12 @@ float contact_occlusion(int2 q, float3 position, float3 n, float distance) {
         float r = sqrt(u);
         float3 dir = t * (r * cos(phi)) + b * (r * sin(phi)) + n * sqrt(1.0 - u);
         if (near) {
+            // A thin surface that lets light through hides little of the light
+            // around: it sends on what reaches its other side and reflects the
+            // rest, and the probes, which see it from both sides, hold the
+            // light under a canopy of them already.
             Ray_Path path;
-            Hit hit = trace_ray(origin, dir, 0.0, CONTACT_RADIUS, true, path);
+            Hit hit = trace_past_thin(origin, dir, CONTACT_RADIUS, path);
             // What stands nearer shadows more, so that the edge of the occlusion fades.
             if (hit.instance != INVALID) hidden += 1.0 - hit.t / CONTACT_RADIUS;
         }
