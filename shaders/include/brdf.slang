@@ -16,6 +16,15 @@
 #define MIN_DIRECT_ROUGHNESS 0.08
 // Below this a traced reflection follows the mirror direction alone.
 #define MIRROR_ROUGHNESS 0.06
+
+// A lobe narrower than the spread of the normal over what one value of the
+// light stands for (a pixel, or a point of the direct light) flickers as the
+// jitter moves it: that spread, the variance of the normal over it, widens the
+// lobe (Tokuyoshi and Kaplanyan 2019).
+float roughness_widened(float roughness, float variance) {
+    float alpha = roughness * roughness;
+    return sqrt(sqrt(clamp(alpha * alpha + min(2.0 * variance, 0.18), 0.0, 1.0)));
+}
 // From this roughness a block of 2x2 pixels can share one reflection ray: the
 // lobe is wide enough for the filter to hide it: SHARED_RAY_ROUGHNESS
 // (render.REFLECTION_SHARED_ROUGHNESS).

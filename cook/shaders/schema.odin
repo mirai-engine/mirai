@@ -196,6 +196,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
 
     f(&b,"LIGHT_POINT",abi.GPU_LIGHT_POINT)
     f(&b,"LIGHT_RECT",abi.GPU_LIGHT_RECT)
+    f(&b,"LIGHT_RADIUS_MIN",abi.LIGHT_RADIUS_MIN)
     f(&b,"LIGHT_SPOT_FULL",abi.GPU_LIGHT_SPOT_FULL)
     u(&b,"LIGHT_TEXTURE",abi.GPU_LIGHT_TEXTURE)
     u(&b,"LIGHT_NODE_LEAF",abi.GPU_LIGHT_NODE_LEAF)

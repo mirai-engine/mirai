@@ -168,6 +168,9 @@ TLAS_REF_GLASS  :: u32(1) << 31
 // Local lights and their tree.
 GPU_LIGHT_POINT            :: -2.0
 GPU_LIGHT_RECT             :: -3.0
+// No sphere or capsule of light is narrower than this radius, metres: a light
+// of radius 0 is one of this, in its light, its highlight and its shadow.
+LIGHT_RADIUS_MIN           :: f32(0.01)
 // The bit of the image word of a light (Gpu_Light.size.w) whose other bits
 // are the entry of the texture table it projects; without it, those of a
 // rectangle are the material row whose emission it shows.
