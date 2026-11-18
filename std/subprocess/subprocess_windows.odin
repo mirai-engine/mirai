@@ -62,7 +62,7 @@ STARTUPINFOEXW :: struct {
     lpAttributeList:Attribute_List,
 }
 
-_start :: proc(desc:os.Process_Desc,limits:Limits) -> (process:Process,error:os.Error) {
+_start :: proc(desc:os.Process_Desc,limits:Limits,inherit:[]uintptr) -> (process:Process,error:os.Error) {
     flags:win.DWORD=0 if has_console() else win.CREATE_NO_WINDOW
     if limits.priority==.Low {flags|=win.BELOW_NORMAL_PRIORITY_CLASS}
     job:=CreateJobObjectW(nil,nil)
@@ -79,19 +79,24 @@ _start :: proc(desc:os.Process_Desc,limits:Limits) -> (process:Process,error:os.
         win.CloseHandle(job)
         return
     }
-    process,error=create(desc.command,desc.env,desc.working_dir,{file_handle(desc.stdin),file_handle(desc.stdout),file_handle(desc.stderr)},flags,job)
+    process,error=create(desc.command,desc.env,desc.working_dir,{file_handle(desc.stdin),file_handle(desc.stdout),file_handle(desc.stderr)},flags,job,inherit)
     if error!=nil {win.CloseHandle(job);return}
     process.tree=uintptr(job)
     return
 }
 
-_detached :: proc(desc:os.Process_Desc) -> (process:Process,error:os.Error) {
+_detached :: proc(desc:os.Process_Desc,inherit:[]uintptr) -> (process:Process,error:os.Error) {
     // A console of its own: closing the one of the caller, or Ctrl+C in it, does not end it.
     flags:win.DWORD=win.CREATE_NO_WINDOW
     streams:=[3]win.HANDLE{file_handle(desc.stdin),file_handle(desc.stdout),file_handle(desc.stderr)}
-    process,error=create(desc.command,desc.env,desc.working_dir,streams,flags|win.CREATE_BREAKAWAY_FROM_JOB)
-    if error!=nil {process,error=create(desc.command,desc.env,desc.working_dir,streams,flags)}
+    process,error=create(desc.command,desc.env,desc.working_dir,streams,flags|win.CREATE_BREAKAWAY_FROM_JOB,nil,inherit)
+    if error!=nil {process,error=create(desc.command,desc.env,desc.working_dir,streams,flags,nil,inherit)}
     return
+}
+
+// Only a child that names it in the list of create inherits it.
+_handle_keep :: proc(handle:uintptr) -> bool {
+    return bool(win.SetHandleInformation(win.HANDLE(handle),win.HANDLE_FLAG_INHERIT,0))
 }
 
 _terminate :: proc(process:^Process,force:bool) -> os.Error {
@@ -154,9 +159,10 @@ file_handle :: proc(file:^os.File) -> win.HANDLE {
 }
 
 // Starts command with streams (stdin, stdout, stderr; nil is the null
-// device) as the only handles it inherits. env nil is the environment of this
-// process. With a job, the child joins it before it runs.
-create :: proc(command,env:[]string,working_dir:string,streams:[3]win.HANDLE,flags:win.DWORD,job:win.HANDLE=nil) -> (process:Process,error:os.Error) {
+// device) and the handles of inherit, with their values, as the only handles
+// it inherits. env nil is the environment of this process. With a job, the
+// child joins it before it runs.
+create :: proc(command,env:[]string,working_dir:string,streams:[3]win.HANDLE,flags:win.DWORD,job:win.HANDLE=nil,inherit:[]uintptr={}) -> (process:Process,error:os.Error) {
     scratch:=context.temp_allocator
     line:=win.utf8_to_wstring(command_line(command,scratch),scratch)
     folder:=win.utf8_to_wstring(working_dir,scratch) if working_dir!="" else nil
@@ -187,6 +193,14 @@ create :: proc(command,env:[]string,working_dir:string,streams:[3]win.HANDLE,fla
             return {},last_error()
         }
     }
+    listed:=make([dynamic]win.HANDLE,0,len(inherited)+len(inherit),scratch)
+    append(&listed,..inherited[:])
+    // A handle of the list has to be inheritable; it stops being so once the child has it.
+    defer for handle in inherit {_=win.SetHandleInformation(win.HANDLE(handle),win.HANDLE_FLAG_INHERIT,0)}
+    for handle in inherit {
+        if !win.SetHandleInformation(win.HANDLE(handle),win.HANDLE_FLAG_INHERIT,win.HANDLE_FLAG_INHERIT) {return {},last_error()}
+        append(&listed,win.HANDLE(handle))
+    }
     size:win.SIZE_T
     InitializeProcThreadAttributeList(nil,1,0,&size)
     memory,memory_error:=make_aligned([]u8,int(size),align_of(rawptr),scratch)
@@ -194,7 +208,7 @@ create :: proc(command,env:[]string,working_dir:string,streams:[3]win.HANDLE,fla
     list:=Attribute_List(raw_data(memory))
     if !InitializeProcThreadAttributeList(list,1,0,&size) {return {},last_error()}
     defer DeleteProcThreadAttributeList(list)
-    if !UpdateProcThreadAttribute(list,0,PROC_THREAD_ATTRIBUTE_HANDLE_LIST,&inherited[0],size_of(inherited),nil,nil) {return {},last_error()}
+    if !UpdateProcThreadAttribute(list,0,PROC_THREAD_ATTRIBUTE_HANDLE_LIST,raw_data(listed),win.SIZE_T(len(listed)*size_of(win.HANDLE)),nil,nil) {return {},last_error()}
     startup:STARTUPINFOEXW
     startup.StartupInfo={
         cb=size_of(STARTUPINFOEXW),

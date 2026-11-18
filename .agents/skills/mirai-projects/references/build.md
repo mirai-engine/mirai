@@ -113,6 +113,39 @@ and `tools/mirai`. The main checkout of a worktree is `project.shared_root(root)
     inherits it. The editor of a session is no child of the command that calls it: `mirai rpc`
     sends its `MIRAI_MEASURE` with the call, and `profile.capture` runs in that turn while the
     lock names the same measurement.
+- What opens a device of the GPU holds one of the GPU turns of the machine (`gpu-<n>.lock`, at
+  most `workspace.GPU_TURNS`) for as long as the device lives, so that what runs at once fits the
+  card. A turn is given, under `gpu.lock`, while the charges of those that hold one and its own
+  fit the card minus a part left to the desktop and to what holds no turn (`gpu_admits`); the
+  first one always. The memory of the card is what the last device opened said (the editor and
+  `mirai doctor --probe-gpu` keep it in the cache, `gpu/memory`), assumed before; an editor is
+  charged the peak the last session of its project held (the editor keeps it in `gpu/peaks/`,
+  which a copy of the project shares: one above the kept peak is written at once and the end
+  writes its own), a default before; a test run or the probe, without a project, a fixed charge.
+  The owner of a turn ends with its charge; the one waiting names the holders and since when,
+  like `mirai locks`.
+  - Every program of the engine a command starts takes it: `session start|restart` (also the one
+    `rpc`, `capture`, `record` and `play test` open), `edit`, `play` (but `--no-gpu`), the editors
+    of `render check` and `bench compare`, `mirai test` of a package whose tests run reach the
+    device of the GPU tests, and the probe. An editor gets its turn handed over: it inherits the
+    handle of the lock (`subprocess.start`/`detached` with `inherit`, `--gpu-turn`) and gives it to
+    the editor it starts again as, after a Build or a lost GPU, or from the launcher; the command
+    then lets go of it (`lock_hand_over`). A player and a test run hold it through the command.
+    An editor that `build editor` restarts keeps the one it has.
+  - A holder that ends frees its turn: the system closes its handle, whatever its owner file says.
+    A manual editor that holds a device and gets no call for `api.SESSION_IDLE` closes itself as
+    `engine.shutdown` closes it, so a session an agent forgot does not hold the card; the next
+    `rpc` or `capture` opens it again.
+  - A person (`edit` or `play` with a window, run from a terminal) takes a turn without waiting,
+    neither for room nor for a measurement, and counts for the others; with every turn held it
+    runs without one.
+  - While a measurement runs, no GPU turn starts but those of a person and of the measurement
+    (its process and those with `MIRAI_MEASURE`). What measures takes `measure.lock` first and its
+    GPU turns after it, and no holder of a GPU turn waits for `measure.lock` without a limit
+    (`profile.capture` waits at most its `wait`), so the two never wait for each other. The owner
+    of a turn of a measurement names it, and one is given beside the others of the same
+    measurement while no one else holds a turn, also beyond the card: the two editors of `bench
+    compare` run at once.
 - The self-refresh of `bin/mirai` uses one lock per checkout (`bin/.refresh.lock`): if another
   process already rebuilt it, it uses that one.
 

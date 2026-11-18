@@ -77,6 +77,7 @@ Api_State :: struct {
     in_call:int,
     provided_calls:int, // handlers of plugins on the stack, which a swap of their library would strand
     last_call:time.Tick, // when a call arrived last: an agent that drives the editor keeps it at its rate
+    opened:time.Tick,    // when the API opened: the idle time of a manual editor before its first call
     stepping:bool,
     waiting:int,    // handlers inside api_wait: what runs meanwhile holds no world of theirs
     restart:bool,   // a Build asked to start the editor again while a call waits for it
@@ -147,6 +148,7 @@ api_open :: proc(s:^Session,port:int,manual:bool,listen:=true) -> (error:Api_Ope
     st:=new(Api_State)
     st.allocator=context.allocator
     st.manual=manual
+    st.opened=time.tick_now()
     if error:=api.server_init(&st.server,{port=port,local=!listen,name="mirai",version=API_VERSION,instructions=API_INSTRUCTIONS,docs_root=s.engine_root,max_methods=API_METHOD_CAPACITY+1,max_response=4<<20,allocator=context.allocator});error!=.None {
         free(st)
         return .Server,fmt.tprintf("the server could not start on port %d: %v",port,error)
@@ -325,6 +327,23 @@ api_jobs :: proc(s:^Session) {
     if s.ai!=nil && s.has_project {ai_poll(s,s.ai)}
     events_steps(s)
     files_flush(s)
+    gpu_watch(s)
+    api_idle_close(s)
+}
+
+// A manual editor that holds a device and gets no call for api.SESSION_IDLE,
+// as one an agent forgot, closes as engine.shutdown closes it: the card does
+// not stay taken for no one, and the next command opens it again.
+@(private)
+api_idle_close :: proc(s:^Session) {
+    st:=api_state(s)
+    if st==nil || !st.manual || s.app.device==nil || s.quit {return}
+    if st.in_call>0 || st.stepping || st.waiting>0 {return}
+    since:=st.last_call if st.last_call!={} else st.opened
+    if time.tick_since(since)<api.SESSION_IDLE {return}
+    log.infof("no call for %.0f min: the editor closes and gives back its turn of the GPU; the next command that needs it opens it again",time.duration_minutes(api.SESSION_IDLE))
+    runs_stop(s)
+    s.quit=true
 }
 
 // Keeps the editor going from inside a handler until pending says false:

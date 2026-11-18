@@ -133,3 +133,122 @@ a_held_lock_says_who_holds_it_and_since_when :: proc(t:^testing.T) {
     held,_,_=lock_holder(path,context.temp_allocator)
     testing.expect(t,!held)
 }
+
+// A GPU turn is given while the charges fit the card with its reserve; the
+// first one always.
+@(test)
+a_gpu_turn_is_given_while_the_charges_fit_the_card :: proc(t:^testing.T) {
+    GB :: i64(1)<<30
+    Case :: struct {name:string,memory:i64,held:[]i64,charge:i64,admits:bool}
+    cases:=[]Case{
+        {name="the first one, larger than the card",memory=4*GB,charge=6*GB,admits=true},
+        {name="two that fit beside the reserve",memory=8*GB,held={3*GB},charge=3*GB,admits=true},
+        {name="the reserve is not given",memory=8*GB,held={3*GB,3*GB},charge=2*GB,admits=false},
+        {name="what is left of the card exactly",memory=8*GB,held={3*GB,3*GB},charge=1*GB,admits=true},
+    }
+    for c in cases {testing.expectf(t,gpu_admits(c.memory,c.held,c.charge)==c.admits,"%s",c.name)}
+}
+
+// The turns follow the memory the card said: one that does not fit waits and
+// names who holds them, a person takes one anyway and counts for the others,
+// and a turn whose holder ended is free, whatever its owner file says.
+@(test)
+the_gpu_turns_follow_the_card_and_a_person_never_waits :: proc(t:^testing.T) {
+    if measuring() {return}
+    root:=base.test_folder(t,"workspace")
+    if root=="" {return}
+    GB :: i64(1)<<30
+    gpu_memory_write(root,8*GB)
+    first,first_taken,_:=gpu_try(root,"pid 1, mirai session in a",3*GB)
+    second,second_taken,_:=gpu_try(root,"pid 2, mirai session in b",3*GB)
+    testing.expect(t,first_taken && second_taken)
+    _,third_taken,waiting:=gpu_try(root,"pid 3, mirai capture in c",3*GB)
+    testing.expect(t,!third_taken,"a third one does not fit")
+    testing.expect_value(t,len(waiting.holders),2)
+    testing.expect_value(t,waiting.memory,8*GB)
+    if len(waiting.holders)==2 {
+        testing.expect_value(t,waiting.holders[0].holder,gpu_holder_text("pid 1, mirai session in a",3*GB))
+        testing.expect_value(t,waiting.holders[0].charge,3*GB)
+    }
+    person,person_taken,_:=gpu_try(root,"pid 4, mirai edit in d",3*GB,person=true)
+    testing.expect(t,person_taken,"a person takes a turn without the room for it")
+    lock_release(&first)
+    _,fits_taken,_:=gpu_try(root,"pid 5, mirai test rhi",2*GB)
+    testing.expect(t,!fits_taken,"the turn of a person counts for the others")
+    small,small_taken,_:=gpu_try(root,"pid 5, mirai test rhi",1*GB)
+    testing.expect(t,small_taken,"the turn of one that ended is free")
+    lock_release(&small)
+    lock_release(&second)
+    lock_release(&person)
+    stale:=gpu_turn_path(root,3,context.temp_allocator)
+    testing.expect(t,os.write_entire_file(fmt.tprintf("%s.owner",stale),transmute([]u8)gpu_holder_text("pid 6, ended",6*GB))==nil)
+    testing.expect_value(t,len(gpu_holders(root,context.temp_allocator)),0)
+}
+
+// While another process measures, no GPU turn starts but those of a person
+// and of the measurement itself.
+@(test)
+a_measurement_holds_the_new_gpu_turns_but_its_own :: proc(t:^testing.T) {
+    if measuring() {return}
+    root:=base.test_folder(t,"workspace")
+    if root=="" {return}
+    path:=lock_path(root,MEASURE_LOCK,context.temp_allocator)
+    other:=fmt.tprintf("pid %d, mirai bench compare",os.get_pid()+1)
+    measure,ok:=lock_acquire(path,other)
+    testing.expect(t,ok)
+    _,taken,waiting:=gpu_try(root,"pid 1, mirai session in a",GPU_CHARGE_DEFAULT)
+    testing.expect(t,!taken)
+    testing.expect_value(t,waiting.measurement,other)
+    person,person_taken,_:=gpu_try(root,"pid 2, mirai edit in b",GPU_CHARGE_DEFAULT,person=true)
+    testing.expect(t,person_taken,"a person does not wait for a measurement")
+    lock_release(&person)
+    lock_release(&measure)
+    own,own_ok:=lock_acquire(path,measure_holder("mirai bench compare"))
+    testing.expect(t,own_ok)
+    editor,editor_taken,_:=gpu_try(root,"pid 3, mirai bench compare in c",GPU_CHARGE_DEFAULT)
+    testing.expect(t,editor_taken,"the measurement opens its own editors")
+    lock_release(&editor)
+    lock_release(&own)
+}
+
+// An editor of a project is charged the peak of its last session, which a
+// copy of the project shares; one never measured and one without a project
+// are charged what is assumed of each.
+@(test)
+a_gpu_charge_is_the_last_peak_of_the_project :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"workspace")
+    if root=="" {return}
+    game:=join(root,"game")
+    testing.expect_value(t,gpu_charge(root,game),GPU_CHARGE_DEFAULT)
+    testing.expect_value(t,gpu_charge(root,""),GPU_CHARGE_DEVICE)
+    gpu_peak_write(root,join(game,".mirai","tmp","session-copy-1"),1500<<20)
+    testing.expect_value(t,gpu_charge(root,game),i64(1500)<<20)
+    gpu_peak_write(root,game,700<<20)
+    testing.expect_value(t,gpu_charge(root,join(game,".mirai","tmp","session-copy-2")),i64(700)<<20)
+    charge,charged:=gpu_holder_charge(gpu_holder_text("pid 1, mirai session in a, b",700<<20))
+    testing.expect(t,charged)
+    testing.expect_value(t,charge,i64(700)<<20)
+}
+
+// The turns of one measurement run at once beyond the card while no one else
+// holds a turn; beside another holder they need the room.
+@(test)
+the_turns_of_a_measurement_share_the_card_when_alone :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"workspace")
+    if root=="" {return}
+    GB :: i64(1)<<30
+    gpu_memory_write(root,4*GB)
+    head,head_taken,_:=gpu_try(root,"pid 1, the editor of mirai bench, head",3*GB,part_of="77")
+    base_,base_taken,_:=gpu_try(root,"pid 2, the editor of mirai bench, base",3*GB,part_of="77")
+    testing.expect(t,head_taken && base_taken,"what a measurement compares opens at once")
+    holders:=gpu_holders(root,context.temp_allocator)
+    testing.expect_value(t,len(holders),2)
+    if len(holders)>0 {testing.expect_value(t,gpu_holder_measurement(holders[0].holder),"77")}
+    lock_release(&head)
+    lock_release(&base_)
+    other,other_taken,_:=gpu_try(root,"pid 3, mirai session in a",3*GB)
+    testing.expect(t,other_taken)
+    _,refused,_:=gpu_try(root,"pid 1, the editor of mirai bench, head",3*GB,part_of="77")
+    testing.expect(t,!refused,"beside another holder a measurement needs the room")
+    lock_release(&other)
+}
