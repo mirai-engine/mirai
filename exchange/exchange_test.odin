@@ -24,7 +24,7 @@ test_put :: proc(t:^testing.T,s:^store.Store,size:int,seed:u64) -> store.Hash {
 }
 
 @(test)
-blobs_around_the_piece_boundaries_and_a_large_one_arrive_verified_under_loss :: proc(t:^testing.T) {
+blobs_around_the_piece_boundaries_and_a_large_one_arrive_verified_under_loss_and_jitter :: proc(t:^testing.T) {
     w:Test_World
     defer test_world_destroy(&w)
     if !test_pair(t,&w,"exchange-loss") {return}
@@ -32,8 +32,8 @@ blobs_around_the_piece_boundaries_and_a_large_one_arrive_verified_under_loss :: 
     sizes:=[]int{0,1,P-1,P,P+1,2*P,3*P+17,6<<20}
     addresses:=make([]store.Hash,len(sizes),context.temp_allocator)
     for size,k in sizes {addresses[k]=test_put(t,&w.nodes[0].s,size,u64(k)+1)}
-    for e in w.nodes[0].endpoints[:1] {wire.sim_endpoint_conditions(&w.sim,e,{latency=0.02,loss=0.05})}
-    wire.sim_endpoint_conditions(&w.sim,w.nodes[1].endpoints[0],{latency=0.02,loss=0.05})
+    for e in w.nodes[0].endpoints[:1] {wire.sim_endpoint_conditions(&w.sim,e,{latency=0.02,jitter=0.005,loss=0.05})}
+    wire.sim_endpoint_conditions(&w.sim,w.nodes[1].endpoints[0],{latency=0.02,jitter=0.005,loss=0.05})
     for a in addresses {testing.expect_value(t,want(&w.nodes[1].x,a),Error.None)}
     testing.expect(t,test_until_complete(&w,1,addresses,60),"every blob arrives")
     for a,k in addresses {

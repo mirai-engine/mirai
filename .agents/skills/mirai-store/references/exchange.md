@@ -53,7 +53,8 @@ headless peer and the editor link the same code. Its messages are in `exchange/w
 
 - `mirai check exchange` and `mirai test exchange` (no GPU): every test runs peers on `net`'s
   `Sim_Network` in virtual time with temporary stores.
-- Focal tests: `blobs_around_the_piece_boundaries_and_a_large_one_arrive_verified_under_loss`,
+- Focal tests:
+  `blobs_around_the_piece_boundaries_and_a_large_one_arrive_verified_under_loss_and_jitter`,
   `a_high_priority_want_asked_later_completes_before_a_large_low_one`,
   `a_transfer_resumes_after_the_connection_drops_and_after_the_store_reopens`,
   `a_liar_in_the_table_a_piece_or_the_size_is_marked_and_the_blob_still_arrives`,
