@@ -2,6 +2,10 @@
 // shadow: of a round of the maps of the shadows, whose list holds the
 // clusters their cull hands each page (shadow_clusters.comp).
 //! variant shadow MIRAI_RASTER_SHADOW=1
+// cost: counts by mesh and material too (cost.slang), in the frame of a
+// request alone, of the view and of the maps.
+//! variant cost MIRAI_COST=1
+//! variant shadow_cost MIRAI_RASTER_SHADOW=1 MIRAI_COST=1
 // The vertices a round of the raster of the visibility target draws
 // (raster_lists.slang), a group a cluster of those the round takes that no
 // round listed yet: each of its vertices is placed once, where
@@ -27,6 +31,9 @@
 #include "visibility.slang"
 #include "raster_lists.slang"
 #include "cull_stats.slang"
+#ifdef MIRAI_COST
+#include "cost.slang"
+#endif
 #ifdef MIRAI_RASTER_SHADOW
 #define SHADOW_PAGES_SLOT SLOT_PASS6
 #define SHADOW_PAGES_WRITTEN
@@ -114,6 +121,24 @@ void cluster_left(uint e, uint vertices, uint triangles, uint pool) {
     }
 #endif
 }
+
+#ifdef MIRAI_COST
+// What the count of a request adds of a cluster as its round decides it: of
+// the view, the cluster and its triangles once it is drawn or left out for
+// good, and the triangles that show of one drawn; of the maps, the triangles
+// of one drawn into its page, or one left out.
+void raster_cost(Visible_Cluster entry, uint mesh, bool listed, uint shown, uint triangles) {
+#ifdef MIRAI_RASTER_SHADOW
+    if (listed) cost_add(mesh, entry.material, COST_SHADOW_TRIANGLES, shown);
+    else cost_add(mesh, entry.material, COST_SHADOW_OVER, 1u);
+#else
+    if (!listed && params.last == 0u) return;
+    cost_add(mesh, entry.material, COST_CLUSTERS, 1u);
+    cost_add(mesh, entry.material, COST_TRIANGLES, triangles);
+    if (listed) cost_add(mesh, entry.material, COST_RASTER_TRIANGLES, shown);
+#endif
+}
+#endif
 
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
@@ -220,6 +245,9 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
                 cluster_left(e, room ? 0u : vertices, room_triangles ? 0u : triangles, pool);
             }
         }
+#ifdef MIRAI_COST
+        raster_cost(entry, instance_mesh(inst), listed, triangles, triangle_count);
+#endif
         first_vertex = listed && triangles != 0u ? first : INVALID;
         if (listed) {
             raster_entries[record + RASTER_ENTRY_VERTICES] = first;

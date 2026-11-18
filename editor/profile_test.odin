@@ -6,6 +6,7 @@ import "core:testing"
 import "core:time"
 import "mirai:editor/api"
 import "mirai:host"
+import gpu "mirai:render"
 import "mirai:std/base"
 
 @(private="file")
@@ -346,4 +347,23 @@ the_answers_of_the_profile_methods_have_the_shape_they_declare :: proc(t:^testin
     host.load_profile_frame(&app,true)
     load.kind=.Play
     profile_answer_expect(t,&s,api_profile_load,&load,Api_Profile_Load_Params,Api_Profile_Loads)
+}
+
+// A count of a frame answers the meshes and materials that cost something,
+// the costliest first and no more than asked for, with a total of every mesh.
+@(test)
+profile_cost_answers_the_costliest_first :: proc(t:^testing.T) {
+    meshes:=[]gpu.Cost_Row{{},{instances=1,triangles=10,pixels=5},{instances=2,triangles=4,shadow_triangles=30},{instances=1,triangles=2}}
+    materials:=[]gpu.Cost_Row{{triangles=10,pixels=5},{},{triangles=1,pixels=9},{triangles=30,pixels=5}}
+    out:=profile_cost_answer(nil,{frame=7,meshes=meshes,materials=materials},2,context.temp_allocator)
+    testing.expect_value(t,out.frame,7)
+    testing.expect(t,out.total.instances==4 && out.total.triangles==16 && out.total.shadow_triangles==30 && out.total.pixels==5)
+    if testing.expect_value(t,len(out.meshes),2) {
+        testing.expect(t,out.meshes[0].asset=="mesh 2" && out.meshes[1].asset=="mesh 1")
+    }
+    if testing.expect_value(t,len(out.materials),2) {
+        testing.expect(t,out.materials[0].asset=="material row 2" && out.materials[1].asset=="material row 3")
+    }
+    all:=profile_cost_answer(nil,{meshes=meshes,materials=materials},64,context.temp_allocator)
+    testing.expect(t,len(all.meshes)==3 && len(all.materials)==3 && all.materials[2].asset=="the default material")
 }

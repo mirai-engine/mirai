@@ -1,4 +1,7 @@
 #include "native.slang"
+// cost: counts by mesh and material too (cost.slang), in the frame of a
+// request alone.
+//! variant cost MIRAI_COST=1
 // The second pass of the cull of the maps of the shadows (shadow_cull.slang):
 // a group for each chunk shadow_maps.comp handed over, a thread for each of
 // its clusters. A cluster in the cut of the map goes, once for each page the
@@ -22,6 +25,9 @@
 #define SHADOW_PAGES_WRITTEN
 #include "shadow_cull.slang"
 #include "cull_stats.slang"
+#ifdef MIRAI_COST
+#include "cost.slang"
+#endif
 #define MIRAI_GROUP_X 64
 #define MIRAI_GROUP_Y 1
 #define MIRAI_GROUP_Z 1
@@ -61,6 +67,9 @@ bool shadow_add(uint bin, Visible_Cluster entry, uint pool, uint units) {
     }
     if (room) InterlockedAdd(stats[0].dropped[CULL_LIST_SHADOW_ENTRIES], 1u);
     InterlockedAdd(stats[0].shadow[9], 1u);
+#ifdef MIRAI_COST
+    cost_add(cost_instance_mesh(entry.instance), entry.material, COST_SHADOW_OVER, 1u);
+#endif
     if ((shadow_pages[shadow_cost_word(pool)] & SHADOW_COST_OVER) == 0u) InterlockedOr(shadow_pages[shadow_cost_word(pool)], SHADOW_COST_OVER);
     return false;
 }
@@ -135,6 +144,10 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
                 }
                 InterlockedAdd(stats[0].shadow[2], triangles);
                 InterlockedAdd(stats[0].shadow[11u + params.moving], units);
+#ifdef MIRAI_COST
+                cost_add(instance_mesh(inst), entry.material, COST_SHADOW_CLUSTERS, 1u);
+                cost_add(instance_mesh(inst), entry.material, COST_SHADOW_UNITS, units);
+#endif
             }
         }
     }
