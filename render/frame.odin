@@ -494,7 +494,8 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     if recorded_ok && !frame.ui_only {
         geometry:=Pass{r=r,cmd=cmd,slot=slot}
         stage_run(&geometry,.Geometry)
-        recorded_ok=deformables_record(r,cmd)
+        eyes:[VIEW_CAPACITY+TEXTURE_VIEW_CAPACITY+2]Vec3
+        recorded_ok=deformables_record(r,cmd,frame_eyes(frame,&eyes))
     }
     // The views drawn into a texture come first: those of the window may show
     // them. What runs once a frame goes with the first view of the window, or

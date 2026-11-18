@@ -862,7 +862,7 @@ instance_resized :: proc(s: ^Scene_State, index: int, low, high: Vec3) {
 	hw.mask_flags = tlas_mask_flags(ray_class(inst.meta.w), hw.mask_flags & rhi.TLAS_ALPHA_TESTED != 0)
 }
 
-@(private = "file")
+@(private)
 ray_class :: proc "contextless" (flags: u32) -> u8 {
 	if flags & INSTANCE_FLAG_HIDDEN != 0 {return 0}
 	if flags & INSTANCE_FLAG_BLENDED != 0 {return RAY_GLASS}
@@ -1108,7 +1108,7 @@ renderer_commit_geometry :: proc(r: ^Renderer, cmd: ^rhi.Command_List = nil, slo
 	s.pools_grown = {}
 	// A BLAS a pose refits reads the pools it was made over: new ones make it again.
 	for &m,index in s.meshes {
-		if m.skin!=nil && grown & {.Vertex,.Node,.Triangle} != {} {m.skin.dirty=true}
+		if m.skin!=nil && grown & {.Vertex,.Node,.Triangle} != {} {m.skin.dirty,m.skin.retrace=true,true}
 		if m.skin!=nil && m.rays[0].blas!=0 && grown & {.Vertex,.Index} != {} {
 			rhi.accel_destroy(d,m.rays[0].blas);m.rays[0].blas=0;range_add(&s.mesh_dirty,{u32(index),1})
 		}
@@ -2513,9 +2513,9 @@ upload_scene :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 // The trees of the poses that changed, once the extensions wrote their
 // vertices, and the native TLAS over them.
 @(private)
-deformables_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
+deformables_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, eyes: []Vec3) -> bool {
 	s := &r.scene
-	if !poses_refit(r, cmd) {return false}
+	if !poses_refit(r, cmd, eyes) {return false}
 	if r.hardware_rt && s.tlas_dirty && s.tlas != 0 {
 		instances := tlas_instances_record(r, cmd)
 		if instances >= 0 && rhi.cmd_build_tlas(cmd, s.tlas, s.tlas_instance_buffer, 0, u32(instances)) {
