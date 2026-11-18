@@ -10,9 +10,9 @@ import "core:time"
 import "mirai:asset"
 import importer "mirai:cook/import"
 import "mirai:cook/textures"
-import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
+import "mirai:store"
 
 // The command mirai import, which the import program of the engine runs: it
 // turns a model (OBJ, glTF, GLB, USD, FBX, or a format a plugin of the
@@ -33,7 +33,9 @@ import "mirai:std/jobs"
 // under it whose outputs in its imported folder are missing or stale (sync):
 // what a checkout needs before it runs. --fast builds the textures of a sync
 // or of an import Fast, as the editor imports them, unless the texture cache
-// keeps them Final: what a build that does not cook takes.
+// keeps them Final: what a build that does not cook takes. What imports build
+// is kept in the caches of the machine store (cook/cache), or of the store at
+// --store.
 // The report goes to output, one asset per line: id, kind, bytes and path, and
 // under it, indented, what the asset holds; then the settings file and the
 // warnings. How far a long import is goes to errors while it runs, and a
@@ -46,7 +48,7 @@ import "mirai:std/jobs"
 // Exit codes: 0 done, 1 failed, 2 misuse.
 
 @(private="file")
-IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--rebuild] [--fast] [--texture-cache <folder>] [--mesh-cache <folder>] [--profile] [--release]"
+IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--rebuild] [--fast] [--store <folder>] [--profile] [--release]"
 
 // library reads the formats and the importers of whole sources the plugins of
 // a project add and the types of its game (in the import program of the
@@ -56,6 +58,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     options:importer.Import_Options
     roots:=make([dynamic]string,context.temp_allocator) // of --sync
     profiled:bool
+    store_root:string // of the store whose caches keep what imports build; "": that of the machine
     // What the options change of the settings the source has.
     Change :: enum {Textures,Rdo_Lambda,Image,Alpha_Coverage,Lods,Parts,Front,Rig,Rig_Crotch,Rig_Neck,Skeleton}
     given:importer.Import_Settings
@@ -97,8 +100,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
                 given.alpha_coverage=f32(cutoff)
                 changed+={.Alpha_Coverage}
             }
-        case "--texture-cache": options.texture_cache,ok=value(args,&at)
-        case "--mesh-cache": options.mesh_cache,ok=value(args,&at)
+        case "--store": store_root,ok=value(args,&at)
         case "--profile": profiled=true
         case "--rebuild": options.rebuild=true
         case "--fast": options.fast_textures=true
@@ -165,6 +167,16 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     }
     defer jobs.system_destroy(&js)
     options.worker={system=&js,worker=jobs.OWNER}
+    if store_root=="" {store_root=store.default_root(context.temp_allocator)}
+    kept:store.Store
+    if store_root!="" {
+        opened:store.Error
+        if kept,opened=store.open(store_root,context.temp_allocator);opened!=.None {
+            fmt.wprintfln(errors,"mirai import: the store at %s could not be opened (%v): pass another with --store",store_root,opened)
+            return 1
+        }
+        options.store=&kept
+    }
     if len(roots)>0 {
         return sync_command(roots[:],options,library,output,errors)
     }
@@ -172,8 +184,6 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     root,in_assets:=source_root(file,context.temp_allocator)
     if !in_assets {fmt.wprintfln(errors,"mirai import: %s is in no assets folder of a project or a plugin: move it beside what it makes, under assets/",file);return 1}
     options.root=root
-    if options.texture_cache=="" {options.texture_cache=project.content_cache_path(root,project.TEXTURE_CACHE,context.temp_allocator)}
-    if options.mesh_cache=="" {options.mesh_cache=project.content_cache_path(root,project.MESH_CACHE,context.temp_allocator)}
     formats:=FORMATS[:]
     kind:=source_kind(file)
     plugins:Library_Imports
@@ -241,7 +251,7 @@ sync_command :: proc(roots:[]string,options:importer.Import_Options,library:Libr
     code:=0
     for root in roots {
         started:=time.tick_now()
-        report:=sync(root,{texture_cache=options.texture_cache,mesh_cache=options.mesh_cache,rebuild=options.rebuild,fast_textures=options.fast_textures,worker=options.worker,library=library,progress=output})
+        report:=sync(root,{store=options.store,rebuild=options.rebuild,fast_textures=options.fast_textures,worker=options.worker,library=library,progress=output})
         defer sync_report_destroy(&report)
         for warning in report.warnings {fmt.wprintfln(output,"warning: %s",warning)}
         for failure in report.failures {fmt.wprintfln(errors,"mirai import: %s",failure)}

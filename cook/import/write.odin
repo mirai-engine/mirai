@@ -257,7 +257,7 @@ texture_reuse :: proc(w:^Writer,types:^asset.Types,job:Texture_Job,id,owner:base
     options:=texture_options(w,job)
     final:=import_info(source,job.name,job.index,job.size,job.hash,textures.settings_hash(options),job.version)
     quick:=final
-    if w.options.fast_textures && !textures.cache_has(w.options.texture_cache,textures.cache_key_build(job.bytes,job.made,options)) {quick.settings_hash=fast_settings(options)}
+    if w.options.fast_textures && !textures.cache_has(import_cache(w.options),textures.cache_key_build(job.bytes,job.made,options)) {quick.settings_hash=fast_settings(options)}
     info:asset.Import_Info
     hash,info,found=writer_reuse(w,types,id,asset.KIND_TEXTURE,owner,final,quick)
     return hash,found && info.settings_hash!=final.settings_hash,found

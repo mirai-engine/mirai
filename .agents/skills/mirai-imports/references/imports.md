@@ -353,13 +353,17 @@ single thread and in the usual order: with or without a job system the same byte
 ### Texture cache
 
 What matters about a built texture does not depend on its id or its path: `cook/textures/cache.odin`
-stores it by content in `.mirai/cache/textures` of the main checkout of the repository the project
-is in (`project.content_cache_path(root, project.TEXTURE_CACHE)`; of the project itself outside a
-repository), one `.tex` per key whose id is the key. Every project and worktree of the repository
-shares it.
+keeps it by content in the cache `textures` of the machine store (`cook/cache`), one texture per
+key whose id is the key. Every project, worktree and program of the machine shares it, and a
+machine that shares blobs with another finds what that one built.
 
-- `Import_Options.texture_cache` is that folder (`""`, none); the editor, cooking and
-  `mirai import` of a map pass it, taking it from its project.
+- `cook/cache` keeps each result as a blob of `mirai:store` named by the ref
+  (`cache-<name>`, `<key>-<version>`) (`asset.cache_namespace`). The store reaches it as a value
+  (`Import_Options.store`, `Sync_Options.store`, `Cook_Desc.store`; nil, none): the editor's
+  imports, `mirai import` (the machine's store, or `--store`) and the cook of a build open the
+  machine's (`store.default_root`). Tests make one in a temporary folder.
+- A miss asks `Import_Options.cache_source` (a `cache.Source`) once before building: it makes the
+  blob present in the store and sets the ref, or says it has none.
 - A texture that is not kept looks for its `textures.cache_key_build` (the bytes of the image, or
   the texels the format made with their size, layers and format, and the `settings_hash`): if it is
   there, its levels are written with the id and the `Import_Info` of this import; if not, it is
@@ -372,15 +376,13 @@ shares it.
   holds.
 - [Cooking](../../mirai-projects/references/build.md#asset-cooking) stores there the blocks of
   an RGBA8 texture by `textures.cache_key_blocks`.
-- A key names what made the blocks (`textures.encoders_id`), so checkouts with other encoders
-  share the folder without sharing entries.
-- `cache_read` checks hash and key: a damaged file or one of another `TEXTURE_VERSION` is a miss and
-  is built again. Reading an entry marks it used.
-- An entry belongs to no asset (an old one serves again when switching branch or setting): an
-  entry no build used for `cache.UNUSED_AGE` is deleted (`cache.trim`, at most once per
-  `cache.TRIM_EVERY` after a write), never one by size, so a project larger than any budget keeps
-  what its next import reads. Deleting the folder only costs time. The mechanism (file per key,
-  key id and version, read that marks use, age) is `cook/cache`, the same as the mesh cache.
+- A key names what made the blocks (`textures.encoders_id`), so machines with other encoders
+  share the store without sharing results.
+- A read checks the id (key and version) and the hash of the asset: a ref whose blob is missing,
+  damaged or of another version is a miss and is built again; a blob that no longer has the bytes
+  of its address is removed so that the build replaces it.
+- A result belongs to no asset and `cook/cache` removes none: the store owns space, and what goes
+  is decided by the live set given to `store.sweep`.
 - An image only its format decodes (`Imported_Image.make`, added with `importer.image_made`) is
   keyed by its `data`, what the format makes the texels of: a texture the cache keeps for it is
   written without decoding it, and the format raises a version inside its data when the same data
@@ -388,10 +390,10 @@ shares it.
 
 ### Mesh cache
 
-A built mesh is worth by its geometry as read and its settings, not by its id: `mesh_cook` stores
-it in `.mirai/cache/meshes` (`project.content_cache_path(root, project.MESH_CACHE)`, shared like
-the texture cache; `Import_Options.mesh_cache`, which the editor, sync and `mirai import` of a map
-pass), one `.mesh` per key with its levels, clusters and colliders, without materials.
+A built mesh is worth by its geometry as read and its settings, not by its id: `mesh_cook` keeps
+it in the cache `meshes` of the machine store (`importer.MESH_CACHE`, the same `cook/cache` and
+`Import_Options.store` as the texture cache), one mesh per key with its levels, clusters and
+colliders, without materials.
 
 - The key (`mesh_cache_key`) is the content of the mesh as the reader gives it (vertices, indices,
   skin, submeshes, morph targets and flags: `mesh_content_hash`) with `mesh_build_hash`; the
@@ -401,8 +403,7 @@ pass), one `.mesh` per key with its levels, clusters and colliders, without mate
 - A mesh that is not kept looks for its key; if it is there, it is written with the id, the slots,
   the skeleton and the `Import_Info` of this import, the same bytes as building it. `rebuild` does
   not read the cache and rewrites it.
-- It saves simplifying, the cluster DAG and the pages; reading the source, no. Its entries go by
-  age, as those of the texture cache.
+- It saves simplifying, the cluster DAG and the pages; reading the source, no.
 
 ## Settings of a source
 

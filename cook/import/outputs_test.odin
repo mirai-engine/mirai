@@ -219,18 +219,20 @@ the_models_of_an_import_share_their_parts_by_name :: proc(t:^testing.T) {
 an_image_only_its_format_decodes_is_taken_from_the_cache_without_decoding :: proc(t:^testing.T) {
     root,assets,s:=test_assets(t,"outputs-made")
     if root=="" {return}
-    cache:=fmt.tprintf("%s/cache",root)
+    // A store of its own holds no texture of the data.
+    empty:=test_store(t,fmt.tprintf("%s/empty",root))
+    if empty==nil {return}
     texels_of :: proc(data:[]u8,allocator:mem.Allocator) -> (made:textures.Source,ok:bool) {
         texels:=make([]u8,4*4*4,allocator)
         for &texel,at in texels {texel=u8(at*7)+data[0]}
         return {texels=texels,width=4,height=4,format=.RGBA8},true
     }
     refused :: proc(data:[]u8,allocator:mem.Allocator) -> (made:textures.Source,ok:bool) {return}
-    written :: proc(t:^testing.T,s:^store.Store,root,assets,name:string,make:Image_Make,cache:string) -> (texels:string,report:Import_Report) {
+    written :: proc(t:^testing.T,s:^store.Store,root,assets,name:string,make:Image_Make) -> (texels:string,report:Import_Report) {
         source:=fmt.tprintf("%s/%s.map",assets,name)
         testing.expect(t,os.write_entire_file(source,name)==nil)
         o:Outputs
-        error:=outputs_begin(&o,source,name,u64(len(name)),base.hash64(transmute([]u8)name),import_version(0),{store=s,root=root,textures=.Uncompressed,texture_cache=cache},allocator=context.temp_allocator)
+        error:=outputs_begin(&o,source,name,u64(len(name)),base.hash64(transmute([]u8)name),import_version(0),{store=s,root=root,textures=.Uncompressed},allocator=context.temp_allocator)
         if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
         model:=model_of("Crate","SM_Crate","T_Wood","M_Wood")
         model.images[0]={name="T_Wood",data=transmute([]u8)string("packed"),make=make,srgb=true}
@@ -247,11 +249,11 @@ an_image_only_its_format_decodes_is_taken_from_the_cache_without_decoding :: pro
         }
         return
     }
-    first,report:=written(t,s,root,assets,"first",texels_of,cache)
+    first,report:=written(t,s,root,assets,"first",texels_of)
     testing.expect(t,len(first)==4*4*4,"its format makes the texels")
-    second,_:=written(t,s,root,assets,"second",refused,cache)
+    second,_:=written(t,s,root,assets,"second",refused)
     testing.expect(t,second==first,"the cache gives the texture of the same data")
-    third,_:=written(t,s,root,assets,"third",refused,"")
+    third,_:=written(t,empty,root,assets,"third",refused)
     testing.expect(t,third=="","without the cache the texels are made, and here they cannot be")
 
     // Imported again unchanged, its outputs are current: a model read ahead for it cooks nothing.
