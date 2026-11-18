@@ -55,9 +55,9 @@ hum:=report.assets[0].id // random the first time, kept after
 
 - Write the WAV only when its bytes differ from the file on disk, so an unchanged source is
   imported as the same file.
-- The id an import returns is random the first time and the one `<file>.import` keeps from then
-  on: read it with `asset.list`; never in a constant. Commit the WAV and its `.import`; the
-  `.sound` is built again from them.
+- The id an import returns is random the first time and the one the package of the source keeps
+  from then on: read it with `asset.list`; never in a constant. Commit the WAV, `packages.mirai`
+  and `packages/`; the `.sound` is built again from them.
 
 ## Sound set
 
@@ -79,8 +79,8 @@ A tool can import art too, with the function `mirai import` calls:
 report,error:=sources.import_source("assets/arena/crate.glb")
 ```
 
-`sources` is `mirai:cook/import/sources`. It keeps the settings and the ids in `<file>.import`
-beside the source, so a tool and `mirai import` give the same assets.
+`sources` is `mirai:cook/import/sources`. It keeps the settings and the ids in the package of the
+source, so a tool and `mirai import` give the same assets.
 
 ## Pitfalls that fail silently
 

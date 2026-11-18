@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "ca27d206e666815335b68ee9c8900ab7",
+  "name": "vase_color",
+  "origin": {"path": "assets/gallery/vase_color.png", "folder": false, "importer": "image"},
+  "identity": "f2fb83e9ce3a4a2aeba751a76a796edb4ee13ec9450b9011befd02e0348d1c30",
+  "settings": {
+    "image": "Color"
+  },
+  "inputs": [],
+  "assets": [
+    {"kind": "TEX", "name": "vase_color", "index": 0, "id": "c94299d672a2e4371f7a5374961b418c"}
+  ]
+}

@@ -240,7 +240,9 @@ the assets.
   removes nor builds; a source outside any project ingests once and two projects list the same
   blobs; an engine change ingests again where the source is and is reported by name elsewhere,
   also when only Fast is here and Final is required; hostile `packages.mirai` and manifests are
-  reported; two ingests of one source at once import it once) and
+  reported; two ingests of one source at once import it once; a copy of a root with its sources
+  and an empty store builds the same ids, manifests and blobs, and without them reports each
+  package) and
   `cook/import/sources/reimport_test.odin` (a refresh reads a source again with the formats of
   the plugins, and ingests a whole source again when what it is built from changes).
 - `cook/import/sources/cli_test.odin` needs `MIRAI_ROOT` (defined by `mirai test`); run it when

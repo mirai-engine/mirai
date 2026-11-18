@@ -211,7 +211,7 @@ the published generation (no Slang sources; `mirai build game` generates the sha
 SDL3 if the system does not provide it.
 
 The copy replaces files and merges folders without deleting anything from the destination, except
-`assets/`, which ends up exactly with what was cooked, without the sources and sidecars among the
+`assets/`, which ends up exactly with what was cooked, without the sources among the
 assets. The code, `cook.mirai` and the `plugin.mirai` are not copied. `mirai play` copies nothing:
 `mirai-player` runs with `--project <project>` and reads assets and shaders from the project.
 
@@ -227,9 +227,9 @@ Settings > Input changed, and SDL3, which the executable links.
 
 ## Imported sources
 
-The meshes, textures, sounds and fonts an import builds are not versioned: they are in
-`.mirai/imported/` of the project and of each plugin with assets, and are built again from the
-sources and their sidecars ([library](../../mirai-imports/references/imports.md#library)).
+The meshes, textures, sounds and fonts an import builds are not versioned: they are blobs of the
+machine store, built again from the sources and the package manifests a project or plugin pins
+([library](../../mirai-imports/references/imports.md#library)).
 
 - **A build imports, and says so.** Every build of a project runs the refresh of the project and of
   its active plugins once its target stands (`job_imports`, `build.imports_refresh`): the editor,

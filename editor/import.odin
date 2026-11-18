@@ -162,7 +162,7 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
     source:=source
     // A source a plugin imports whole goes before the formats, which may read its bytes too.
     whole,code,claimed:=import_whole(s,source)
-    if _,in_assets:=sources.source_root(source,context.temp_allocator);!in_assets {
+    if _,in_assets:=importer.source_root(source,context.temp_allocator);!in_assets {
         for at:=filepath.dir(project.path_absolute(source,context.temp_allocator));filepath.dir(at)!=at;at=filepath.dir(at) {
             if !project.path_same(at,s.project_root) {continue}
             import_say(s,"%s is in the project but in no assets folder: move it under assets/, beside what it makes, and import it there",name)
@@ -175,7 +175,7 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
                 import_say(s,"%s: %s",name,bring_error.message)
                 return false
             }
-            if _,inside:=sources.source_root(brought,context.temp_allocator);!inside {
+            if _,inside:=importer.source_root(brought,context.temp_allocator);!inside {
                 import_say(s,"%s: %s brought it to %s, which is in no assets folder",name,whole.name,brought)
                 return false
             }
@@ -193,7 +193,7 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
             source=copied
         }
     }
-    root,_:=sources.source_root(source,context.temp_allocator)
+    root,_:=importer.source_root(source,context.temp_allocator)
     allocator:=runtime.heap_allocator()
     options:=importer.Import_Options{
         root=strings.clone(root,allocator),
@@ -426,7 +426,7 @@ import_root :: proc(s:^Session,r:^asset.Registry,id:base.Asset_Id) -> (sidecar:s
     _,info,imported,error:=asset.import_peek(full,&types)
     if error!=.None || !imported {return}
     source:=base.text_get(info.source[:])
-    root,in_assets:=sources.source_root(full,context.temp_allocator)
+    root,in_assets:=importer.source_root(full,context.temp_allocator)
     if file.listed || !in_assets {root=s.project_root}
     for mount in r.mounts {
         if file.listed && strings.has_prefix(file.path,mount.prefix) {root=filepath.dir(mount.folder)}

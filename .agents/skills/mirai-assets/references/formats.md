@@ -279,30 +279,39 @@ scan opens every file and writes it again.
 ## Packages
 
 The records of the imports kept in the [machine store](../../mirai-store/SKILL.md)
-(`asset/packages.odin`), three texts with a version each. They are written beside the
-sidecars; the importers, the registry and the build do not use them yet.
+(`asset/packages.odin`), three texts with a version each.
 
 - **Package manifest** (`Package`): a blob, named by `packages/<package id>` on the machine
-  that ingested it. The import that ingests a source writes it.
+  that ingested it. The import that ingests a source writes it. A root that pins it also keeps
+  its text, versioned, in `packages/<package id>.mirai` beside `packages.mirai`
+  (`package_file`).
 - **Build manifest** (`Build`): a blob, named by `imports/<import_key>` (Final, which peers
   share) or `imports-fast/<import_key>` (never shared) by the import that builds it, and by
   `builds/<build_select>` by the refresh of a project that chose it.
-- **Project list** (`Packages`): `packages.mirai` beside `project.mirai`, versioned. The editor
-  and the commands that add or remove a package write it.
+- **Project list** (`Packages`): `packages.mirai` beside `project.mirai`, versioned. The library
+  (`project_pin`, `project_unpin`) writes it and the manifest files, and nothing else does.
 
 - **A project pins the manifest, never a build.** The manifest holds what the source is (its
   `identity`), where it was (`origin`, a hint) and each asset with its id, and nothing that
   depends on the engine version: an engine that changes a version leaves the list as it is.
+- **A root carries the manifests it pins.** The address a pin names is that of its manifest
+  file's bytes, so a clone or a copy of the root, with an empty store, has every id and setting;
+  only builds need the store, a source or a peer. `package_load` takes a manifest the store
+  lacks from that file and puts it in the store; a file that is not its pin's bytes is a problem
+  of that package, also when the store has the manifest.
+- **The origin of a source in a root is relative to it** (`assets/...`, from the root whose
+  assets folder holds it), so every copy of the root writes the same manifest and finds the
+  source; a source in no root keeps its absolute path.
 - **Builds are found by name.** `import_key` combines the identity with the versions of what
   imports; any machine with the manifest computes it, without the source, and a peer that built
   that key gives it. `build_select` combines the manifest with the version of each kind of the
   cache it holds, so a program without importers (the dev player) finds the build the refresh
   chose. The caches of `cook/cache` name theirs in `cache-<name>`.
 - `packages_resolve` lists, for each package of the list, its assets of the cache the project
-  uses with what they depend on, at `<folder>/<name><extension>` as the sidecar lists them, with
-  the path of their blob. A missing build lists them not built; a manifest or a build the store
-  lacks or does not read, and an asset the manifest lacks, are problems of the result. It
-  removes, builds and fetches nothing.
+  uses with what they depend on, at `<folder>/<name><extension>`, with the path of their blob. A
+  missing build lists them not built; a manifest that neither the store nor the root has, that
+  does not read or whose file is not its pin, a build that does not read and an asset the
+  manifest lacks are problems of the result. It removes, builds and fetches nothing.
 - An asset id is random at the first ingest and the manifest keeps it; an ingest again takes
   each id from the manifest before it.
 

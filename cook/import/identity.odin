@@ -260,6 +260,40 @@ path_key :: proc(path:string) -> string {
     return strings.clone(slashed,context.temp_allocator)
 }
 
+// The project or the plugin whose assets folder has the file at path: the
+// folder that holds the nearest assets folder above it. False for a file in
+// no assets folder.
+source_root :: proc(path:string,allocator:=context.allocator) -> (root:string,ok:bool) {
+    names:=project.FOLDER_NAMES
+    folder:=project.path_absolute(path,context.temp_allocator)
+    for {
+        parent:=filepath.dir(folder)
+        if parent==folder {return}
+        if filepath.base(parent)==names[.Assets] {return strings.clone(filepath.dir(parent),allocator),true}
+        folder=parent
+    }
+}
+
+// Where a manifest says its source is (asset.Package_Origin.path), for the
+// source at origin (path_key): relative to the root whose assets hold it
+// (source_root), so every copy of that root names it alike; else origin. In
+// the temp allocator.
+origin_of :: proc(origin:string) -> string {
+    root,inside:=source_root(origin,context.temp_allocator)
+    under:=fmt.tprintf("%s/",path_key(root))
+    if !inside || !strings.has_prefix(origin,under) {return origin}
+    return origin[len(under):]
+}
+
+// The source the origin of a manifest names, as path_key gives it: a relative
+// one under root, the project or plugin that pins its package. "" for a
+// relative one without a root. In the temp allocator.
+origin_path :: proc(origin,root:string) -> string {
+    if origin=="" || filepath.is_abs(origin) || strings.has_prefix(origin,"/") {return origin}
+    if root=="" {return ""}
+    return path_key(fmt.tprintf("%s/%s",root,origin))
+}
+
 @(private)
 kind_name :: proc(kind:asset.Fourcc) -> string {
     // The scene an import writes has one root: the prefab of its model.

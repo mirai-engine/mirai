@@ -374,7 +374,7 @@ a_fast_build_is_not_published_where_peers_find_builds :: proc(t:^testing.T) {
     testing.expect(t,chosen==report.build,"the build this machine chose")
     list:=asset.Packages{packages=make([dynamic]asset.Project_Package,context.temp_allocator)}
     append(&list.packages,asset.Project_Package{id=p.id,manifest=report.manifest})
-    resolved,resolve_error:=asset.packages_resolve(s,&list,context.temp_allocator)
+    resolved,resolve_error:=asset.packages_resolve(s,"",&list,context.temp_allocator)
     testing.expect(t,resolve_error==.None && len(resolved.problems)==0 && len(resolved.listed)==2,"a project lists the mesh and the texture of the package")
     for l in resolved.listed {testing.expectf(t,l.state==.Built && os.exists(l.file),"%s is built",l.path)}
 }

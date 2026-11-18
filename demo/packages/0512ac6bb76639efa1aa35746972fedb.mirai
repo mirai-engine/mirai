@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "id": "0512ac6bb76639efa1aa35746972fedb",
+  "name": "mirai",
+  "origin": {"path": "assets/characters/mirai/mirai.glb", "folder": false, "importer": "glTF"},
+  "identity": "339c12d886baefcd14f96e1c9cb6501e6b85183d0b5edbba6b290d3853c2937c",
+  "inputs": [],
+  "assets": [
+    {"kind": "SCEN", "name": "mirai", "index": 0, "id": "94f640750cf5246f1c0728cc4cd2a07c"},
+    {"kind": "TEX", "name": "texture_0", "index": 0, "id": "a3d324f2a5454495463d13c1ebad2c84", "part": true, "owner": "94f640750cf5246f1c0728cc4cd2a07c"},
+    {"kind": "TEX", "name": "texture_0_metallic_roughness", "index": 1, "id": "08abe809e118473bb530ac037696309e", "part": true, "owner": "94f640750cf5246f1c0728cc4cd2a07c"},
+    {"kind": "MAT", "name": "BakedMaterial", "index": 0, "id": "f1d4dfad902a16a7afc56bb3202b1d94", "owner": "94f640750cf5246f1c0728cc4cd2a07c", "dependencies": ["08abe809e118473bb530ac037696309e", "a3d324f2a5454495463d13c1ebad2c84"]},
+    {"kind": "MAT", "name": "Mirai holograma violeta", "index": 1, "id": "dbb521d6ca206ef049b42c4fad14b7d5"},
+    {"kind": "MAT", "name": "Mirai borde luminoso", "index": 2, "id": "bbfe2f2406e2d1a5aaf297d5d2c8a990"},
+    {"kind": "SKEL", "name": "Armature", "index": 0, "id": "0208471f893327bdcf8bbaa108a26121", "owner": "94f640750cf5246f1c0728cc4cd2a07c"},
+    {"kind": "MESH", "name": "output_unwrapped", "index": 0, "id": "f0c947702bb8141dc1d27444a341d52c", "part": true, "owner": "94f640750cf5246f1c0728cc4cd2a07c", "dependencies": ["0208471f893327bdcf8bbaa108a26121", "f1d4dfad902a16a7afc56bb3202b1d94"]},
+    {"kind": "MESH", "name": "Cinta orbital Left", "index": 1, "id": "8d6c8aa43c816332bca9f38c1dd0d17f", "part": true, "owner": "94f640750cf5246f1c0728cc4cd2a07c", "dependencies": ["0208471f893327bdcf8bbaa108a26121", "bbfe2f2406e2d1a5aaf297d5d2c8a990", "dbb521d6ca206ef049b42c4fad14b7d5"]},
+    {"kind": "MESH", "name": "Cinta orbital Right", "index": 2, "id": "78744c9faee4ebd82e0f9ca443b72656", "part": true, "owner": "94f640750cf5246f1c0728cc4cd2a07c", "dependencies": ["0208471f893327bdcf8bbaa108a26121", "bbfe2f2406e2d1a5aaf297d5d2c8a990", "dbb521d6ca206ef049b42c4fad14b7d5"]},
+    {"kind": "ANIM", "name": "mirai", "index": 0, "id": "f3016e0fca41fca429b049307bde6f9f", "dependencies": ["0208471f893327bdcf8bbaa108a26121"]}
+  ]
+}
