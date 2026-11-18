@@ -98,7 +98,7 @@ Api_Status :: struct {
     probe_rays_traced:int `mirai:"label=Rays those probes traced: of the ones that keep nothing of their rays or that a change crossed"`,
     probe_hits_lit:int `mirai:"label=Hits they took the direct light of"`,
     light_lists:Api_Light_Lists `mirai:"label=The lists of the lights without shadows of the tiles of the last view two frames ago"`,
-    shadow_maps:Api_Shadow_Maps `mirai:"label=What the shadow maps of the last view drew two frames ago"`,
+    shadow_maps:Api_Shadow_Maps `mirai:"label=What the shadow maps of the views of a frame drew, two frames ago"`,
     gpu_timings:[API_TIMINGS]Api_Timing `mirai:"trim,label=By pass in the order of the frame"`,
     counters:[API_COUNTERS]Api_Counter `mirai:"trim,label=What the passes of extensions counted two frames ago by name"`,
     functions:[API_FUNCTIONS]Api_Timing `mirai:"trim,label=The costliest functions of the loops per frame since the last status; settle included"`,
@@ -153,6 +153,7 @@ Api_Shadow_Maps :: struct {
     pages_asked:int `mirai:"label=Pages newly asked for"`,
     pages_left:int `mirai:"label=Of them, left out of the pool"`,
     pages_waiting:int `mirai:"label=Pages not drawn whole this frame, which wait for the frames after"`,
+    pages_short:int `mirai:"label=Pages the clusters of a frame grow for: read with no page drawn to hold their points, or waiting in a still view"`,
 }
 
 Api_Textures :: struct {
@@ -566,7 +567,7 @@ api_status :: proc(s:^Session,call:^api.Call) {
         r.probe_rays_traced,r.probe_hits_lit=int(stats.probe_rays_traced),int(stats.probe_hits_lit)
         r.light_lists={int(stats.light_lists.cells),int(stats.light_lists.entries),int(stats.light_lists.longest),int(stats.light_lists.walked)}
         sh:=stats.shadow
-        r.shadow_maps={int(sh.clusters),int(sh.clusters_masked),int(sh.clusters_moving),int(sh.clusters_over),int(sh.pages_drawn),int(sh.pages_composed),int(sh.pages_asked),int(sh.pages_left),int(sh.pages_waiting)}
+        r.shadow_maps={int(sh.clusters),int(sh.clusters_masked),int(sh.clusters_moving),int(sh.clusters_over),int(sh.pages_drawn),int(sh.pages_composed),int(sh.pages_asked),int(sh.pages_left),int(sh.pages_waiting),int(sh.pages_short)}
         r.textures.bytes,r.textures.view_bytes=stats.texture_bytes,stats.view_target_bytes
         r.textures.pending,r.textures.reduced=int(stats.textures_pending),int(stats.textures_reduced)
         r.geometry={

@@ -14,6 +14,11 @@
 //   changed (render.Shadow_Plan boxes), and of each page the cache holds
 //   where what stays changed, the texels the box covers, which are all the
 //   cache draws of it again (SHADOW_WORDS_PART);
+// - Ancestors, a thread for each entry of each slot in use: of a page a point
+//   or a pass after the maps reads, the page of each level of the sun or mip
+//   coarser that holds it and the eight around that one are asked for too,
+//   so that they rank sooner and a page the pool leaves out or that waits has
+//   a coarser one drawn, with the pages around it, to stand for it;
 // - Entries, a thread for each entry of each slot in use: lets go of the page of
 //   the pool of what the plan says (render.Shadow_Slot_Plan), forgets what
 //   stays or what moves where they changed, and of a page a point reads, the
@@ -55,7 +60,10 @@
 //   again the next frame;
 // - Propagate, a thread for each entry of each slot in use, after the rounds:
 //   where its page is not drawn, how many levels of the sun or mips coarser
-//   the nearest one drawn lies; and the scale of what is foreseen.
+//   the nearest one drawn lies, which its taps read; of a page a point reads,
+//   the nearest drawn, its own or coarser, whose eight pages around all hold
+//   something a tap reads, which holds the point (SHADOW_ENTRY_HELD), or none,
+//   where the point traces; and the scale of what is foreseen.
 // The pages listed take their bits in the masks of each round, by their
 // entry, and each slot with one is listed once.
 #include "scene.slang"
@@ -94,15 +102,16 @@ struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; u
 #define STEP_GATE 0u
 #define STEP_CLEAR 1u
 #define STEP_INVALIDATE 2u
-#define STEP_ENTRIES 3u
-#define STEP_RANK 4u
-#define STEP_SUMS 5u
-#define STEP_POOL 6u
-#define STEP_ALLOCATE 7u
-#define STEP_PROPAGATE 8u
-#define STEP_FINISH 9u
-#define STEP_GRANT 10u
-#define STEP_SETTLE 11u
+#define STEP_ANCESTORS 3u
+#define STEP_ENTRIES 4u
+#define STEP_RANK 5u
+#define STEP_SUMS 6u
+#define STEP_POOL 7u
+#define STEP_ALLOCATE 8u
+#define STEP_PROPAGATE 9u
+#define STEP_FINISH 10u
+#define STEP_GRANT 11u
+#define STEP_SETTLE 12u
 // What the steps write again each time they run without a change, the masks of the marks kept.
 #define CLEAR_WORDS (SHADOW_WORDS_SLOTS - SHADOW_WORDS_STALE)
 #define ROUND_STAYS 0u
@@ -264,6 +273,65 @@ int2 sun_first_page(Shadow_Map m) {
     return int2(round(m.span.xy / page));
 }
 
+// The mips of a slot: a level of the sun has its finest alone.
+uint slot_mips(uint slot) { return slot < SHADOW_SUN_MAPS ? 1u : SHADOW_MIPS; }
+
+// Whether a point or a pass after the maps reads an entry.
+bool entry_read(uint slot, uint entry) { return mask_bit(SHADOW_WORDS_NEEDED, slot, entry) || mask_bit(SHADOW_WORDS_LATE, slot, entry); }
+
+// How many levels or mips coarser a page stands for another at most: the
+// four bits of SHADOW_ENTRY_COARSER and SHADOW_ENTRY_HELD.
+#define SHADOW_COARSER_MOST 15u
+
+// The page of the level of the sun or the mip j coarser than a page of a slot
+// at a mip that holds it, the levels by the grid of the world: its slot, its
+// map at that mip and its page; false past the levels or the mips, or past
+// its square.
+bool page_coarser(uint slot, uint mip, uint2 page, uint j, out uint at_slot, out Shadow_Map c, out int2 p) {
+    at_slot = slot;
+    p = int2(page >> j);
+    if (slot < SHADOW_SUN_MAPS) {
+        at_slot = min(slot + j, SHADOW_SUN_MAPS - 1u);
+        c = shadow_map_at(shadow_data, params.rows, at_slot);
+        if (slot + j >= params.sun) return false;
+        int2 first = sun_first_page(shadow_map_at(shadow_data, params.rows, slot)), held = sun_first_page(c);
+        int2 world = int2(first.x + int(page.x), first.y + int(SHADOW_MAP_PAGES) - 1 - int(page.y)) >> int(j);
+        p = int2(world.x - held.x, held.y + int(SHADOW_MAP_PAGES) - 1 - world.y);
+    } else {
+        c = shadow_map_mip(shadow_map_at(shadow_data, params.rows, slot), min(mip + j, SHADOW_MIPS - 1u));
+        if (mip + j >= SHADOW_MIPS) return false;
+    }
+    return c.rect.z != 0u && all(p >= 0) && all(p < int(shadow_mip_pages(shadow_rect_mip(c.rect))));
+}
+
+// How many levels of the sun or mips coarser the nearest page drawn that
+// holds a page lies; 0: none.
+uint coarser_drawn(uint slot, uint mip, uint2 page) {
+    uint at_slot;
+    Shadow_Map c;
+    int2 p;
+    for (uint j = 1u; j < SHADOW_COARSER_MOST && page_coarser(slot, mip, page, j, at_slot, c, p); j++) {
+        if (shadow_entry_ready(shadow_table_entry(at_slot, shadow_page_entry(c.rect, uint2(p))))) return j;
+    }
+    return 0u;
+}
+
+// Whether each page of map m around a page of it, at its mip, is drawn or
+// held by a coarser one drawn, so that every tap of a point the page holds
+// reads a blocker; past the square of the map a tap reads the face beside,
+// or nothing.
+bool around_read(uint slot, Shadow_Map m, int2 page) {
+    uint mip = shadow_rect_mip(m.rect);
+    int n = int(shadow_mip_pages(mip));
+    for (int y = max(page.y - 1, 0); y <= min(page.y + 1, n - 1); y++) {
+        for (int x = max(page.x - 1, 0); x <= min(page.x + 1, n - 1); x++) {
+            if (all(int2(x, y) == page) || shadow_entry_ready(shadow_table_entry(slot, shadow_page_entry(m.rect, uint2(x, y))))) continue;
+            if (coarser_drawn(slot, mip, uint2(x, y)) == 0u) return false;
+        }
+    }
+    return true;
+}
+
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 group : SV_GroupID) {
@@ -276,6 +344,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         uint all = run ? slots_in_use() * SHADOW_SLOT_ENTRIES : 0u;
         step_args(STEP_CLEAR, run && params.full == 0u ? CLEAR_WORDS : 0u);
         step_args(STEP_INVALIDATE, run ? params.box_count * SHADOW_SLOTS : 0u);
+        step_args(STEP_ANCESTORS, all);
         step_args(STEP_ENTRIES, all);
         step_args(STEP_RANK, run ? SHADOW_RANK_WORDS : 0u);
         step_args(STEP_SUMS, run ? 1u : 0u);
@@ -287,8 +356,8 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         step_args(STEP_SETTLE, run ? SHADOW_POOL_PAGES : 0u);
         if (run) return;
         // A still view: the rounds of what stays and of what moves draw nothing.
-        uint counts[5] = {SHADOW_COUNT_DRAWN, SHADOW_COUNT_COMPOSED, SHADOW_COUNT_REQUESTS, SHADOW_COUNT_LEFT, SHADOW_COUNT_WAITING};
-        for (uint k = 0u; k < 5u; k++) pages[SHADOW_WORDS_COUNTS + counts[k]] = 0u;
+        uint counts[6] = {SHADOW_COUNT_DRAWN, SHADOW_COUNT_COMPOSED, SHADOW_COUNT_REQUESTS, SHADOW_COUNT_LEFT, SHADOW_COUNT_WAITING, SHADOW_COUNT_SHORT};
+        for (uint k = 0u; k < 6u; k++) pages[SHADOW_WORDS_COUNTS + counts[k]] = 0u;
         for (uint round = 0u; round < 3u; round++) pages[SHADOW_WORDS_ARGS + SHADOW_ARGS_DISPATCH + 3u * round] = 0u;
         for (uint round = 0u; round < 2u; round++) {
             pages[SHADOW_WORDS_ARGS + SHADOW_ARGS_DRAW + 4u * round + 1u] = 0u;
@@ -334,6 +403,23 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
                 }
             }
         }
+    } else if (params.step == STEP_ANCESTORS) {
+        if (i >= slots_in_use() * SHADOW_SLOT_ENTRIES) return;
+        uint slot = slot_in_use(i / SHADOW_SLOT_ENTRIES), entry = i % SHADOW_SLOT_ENTRIES;
+        if (slot >= SHADOW_SLOTS || !entry_read(slot, entry)) return;
+        Shadow_Map m = shadow_map_at(shadow_data, params.rows, slot);
+        uint mip = shadow_entry_mip(entry);
+        if (m.rect.z == 0u || mip >= slot_mips(slot)) return;
+        uint2 page = shadow_entry_page(m.rect, entry);
+        uint at_slot;
+        Shadow_Map c;
+        int2 p;
+        for (uint j = 1u; j < SHADOW_COARSER_MOST && page_coarser(slot, mip, page, j, at_slot, c, p); j++) {
+            int n = int(shadow_mip_pages(shadow_rect_mip(c.rect)));
+            for (int y = max(p.y - 1, 0); y <= min(p.y + 1, n - 1); y++) {
+                for (int x = max(p.x - 1, 0); x <= min(p.x + 1, n - 1); x++) mask_set(SHADOW_WORDS_ANCESTORS, at_slot, shadow_page_entry(c.rect, uint2(x, y)));
+            }
+        }
     } else if (params.step == STEP_ENTRIES) {
         if (i >= slots_in_use() * SHADOW_SLOT_ENTRIES) return;
         uint slot = slot_in_use(i / SHADOW_SLOT_ENTRIES), entry = i % SHADOW_SLOT_ENTRIES;
@@ -342,7 +428,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         uint4 plan = slot_plan(slot);
         // What the table held of the frame before, without where it pointed
         // coarser; an entry that names no page of the pool holds none.
-        uint e = params.fresh != 0u ? 0u : shadow_table_entry(slot, entry) & ~((0xFu << SHADOW_ENTRY_COARSER) | SHADOW_PAGE_LEFT), held;
+        uint e = params.fresh != 0u ? 0u : shadow_table_entry(slot, entry) & ~((0xFu << SHADOW_ENTRY_COARSER) | (0xFu << SHADOW_ENTRY_HELD) | SHADOW_PAGE_LEFT), held;
         if (!shadow_entry_pool(e, held)) e = 0u;
         uint mip = shadow_entry_mip(entry), n = shadow_mip_pages(mip);
         bool inside = m.rect.z != 0u && mip < (slot < SHADOW_SUN_MAPS ? 1u : SHADOW_MIPS);
@@ -374,7 +460,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         } else if (net) {
             net = mip == SHADOW_MIPS - 1u;
         }
-        bool needed = inside && (net || mask_bit(SHADOW_WORDS_NEEDED, slot, entry) || mask_bit(SHADOW_WORDS_LATE, slot, entry));
+        bool needed = inside && (net || entry_read(slot, entry) || mask_bit(SHADOW_WORDS_ANCESTORS, slot, entry));
         if (needed && e == 0u) {
             mask_set(net ? SHADOW_WORDS_FIRST : SHADOW_WORDS_ASKED, slot, entry);
         } else if (needed) {
@@ -673,33 +759,30 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             uint now = uint(float(measured) * float(SHADOW_SCALE_ONE) / max(float(foreseen), 1.0));
             if (foreseen > 0u) pages[SHADOW_WORDS_SCALE + i] = clamp(((before == 0u ? SHADOW_SCALE_ONE : before) + now) / 2u, SHADOW_SCALE_ONE / 16u, SHADOW_SCALE_ONE * 4u);
         }
+        // In a still view the pages that wait make the bound grow too: no view
+        // that moves waits on them.
+        if (i == 0u && params.full == 0u) InterlockedAdd(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_SHORT], pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_WAITING]);
         if (i >= slots_in_use() * SHADOW_SLOT_ENTRIES) return;
         uint slot = slot_in_use(i / SHADOW_SLOT_ENTRIES), entry = i % SHADOW_SLOT_ENTRIES;
         if (slot >= SHADOW_SLOTS) return;
-        uint e = shadow_table_entry(slot, entry);
-        if (shadow_entry_ready(e)) return;
         Shadow_Map m = shadow_map_at(shadow_data, params.rows, slot);
         uint mip = shadow_entry_mip(entry);
-        if (m.rect.z == 0u || mip >= (slot < SHADOW_SUN_MAPS ? 1u : SHADOW_MIPS)) return;
+        if (m.rect.z == 0u || mip >= slot_mips(slot)) return;
+        uint e = shadow_table_entry(slot, entry);
         uint2 page = shadow_entry_page(m.rect, entry);
-        uint coarser = 0u;
-        if (slot < SHADOW_SUN_MAPS) {
-            // The page of each coarser level that holds this one, by the grid of the world.
-            int2 first = sun_first_page(m);
-            int2 world = int2(first.x + int(page.x), first.y + int(SHADOW_MAP_PAGES) - 1 - int(page.y));
-            for (uint j = 1u; slot + j < params.sun && coarser == 0u; j++) {
-                Shadow_Map c = shadow_map_at(shadow_data, params.rows, slot + j);
-                int2 held = sun_first_page(c), at = world >> int(j);
-                int2 p = int2(at.x - held.x, held.y + int(SHADOW_MAP_PAGES) - 1 - at.y);
-                if (any(p < 0) || any(p >= int(SHADOW_MAP_PAGES))) continue;
-                if (shadow_entry_ready(shadow_table_entry(slot + j, shadow_page_entry(c.rect, uint2(p))))) coarser = j;
+        uint coarser = shadow_entry_ready(e) ? 0u : coarser_drawn(slot, mip, page);
+        uint held = 0u;
+        if (entry_read(slot, entry)) {
+            if (shadow_entry_ready(e) && around_read(slot, shadow_map_mip(m, mip), int2(page))) held = 1u;
+            uint at_slot;
+            Shadow_Map c;
+            int2 p;
+            for (uint j = 1u; j < SHADOW_COARSER_MOST && held == 0u && page_coarser(slot, mip, page, j, at_slot, c, p); j++) {
+                if (shadow_entry_ready(shadow_table_entry(at_slot, shadow_page_entry(c.rect, uint2(p)))) && around_read(at_slot, c, p)) held = j + 1u;
             }
-        } else {
-            for (uint j = 1u; mip + j < SHADOW_MIPS && coarser == 0u; j++) {
-                if (shadow_entry_ready(shadow_table_entry(slot, shadow_page_entry(shadow_map_mip(m, mip + j).rect, page >> j)))) coarser = j;
-            }
+            if (held == 0u) InterlockedAdd(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_SHORT], 1u);
         }
-        if (coarser != 0u) table_set(slot, entry, e | (coarser << SHADOW_ENTRY_COARSER));
+        if (coarser != 0u || held != 0u) table_set(slot, entry, e | (coarser << SHADOW_ENTRY_COARSER) | (held << SHADOW_ENTRY_HELD));
     } else if (i == 0u) {
         uint groups[3] = {params.groups_stays, params.groups_moves, params.groups_stays};
         for (uint round = 0u; round < 3u; round++) {

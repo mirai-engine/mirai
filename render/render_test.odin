@@ -692,6 +692,81 @@ render_a_full_pool_keeps_the_pages_of_a_jitter_cycle :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// A still view whose pages the maps cannot hold at once: a pool smaller than
+// what its points read, and a list of the chunks of the cull with no room in
+// the first frame after the maps are made anew. No point reads lit where a
+// post shades it: a page the pool leaves out or that waits stands in a
+// coarser one drawn with the pages around it, or its points trace, so the
+// image is that of a pool and lists that hold everything within what the
+// coarser pages tell; and the view settles: the frames after it are alike,
+// and no page is given again.
+@(test)
+render_a_view_the_maps_cannot_hold_shows_no_lit_hole :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	instances: [65]Instance_Desc
+	instances[0] = {object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {160, 0.2, 160}), tint = {0.8, 0.8, 0.8}}
+	for k in 1 ..< len(instances) {
+		instances[k] = {object_id = u64(k + 1), mesh = f.cube, transform = trs({f32((k - 1) % 8) * 0.9 + 0.8, 0.8, f32((k - 1) / 8) * 0.9 + 0.8}, {0.2, 1.6, 0.2}), tint = {0.5, 0.5, 0.5}}
+	}
+	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+	testing.expect(t, scene_given(r, instances[:], nil, sun, {sky = {0, 0, 0}}))
+	camera := Camera{position = {4, 5, 11}, forward = {0, -5, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	read :: proc(t: ^testing.T, f: ^Cube_Fixture) -> []u8 {
+		rhi.device_wait_idle(f.device)
+		pixels, _, _, ok := golden_capture(f.renderer)
+		testing.expect(t, ok, f.renderer.error)
+		return pixels
+	}
+	b := &r.main.targets.shadow_raster
+	for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	whole := read(t, &f)
+	defer delete(whole)
+	levels := 0
+	for h in b.held[:SHADOW_SUN_LEVELS] {if h.m.rect.z != 0 {levels += 1}}
+	cases := [?]struct {
+		name:   string,
+		pool:   u32, // the pages of the pool it gives; 0: all
+		chunks: u32, // the chunks the first frame of maps made anew has room for; 0: as they grow
+	}{{"a pool smaller than what the points read", u32(4 * levels + 8), 0}, {"a list of chunks without room", 0, 2}}
+	for c in cases {
+		rhi.device_wait_idle(f.device)
+		destroy_shadow_maps(r, &r.main.targets)
+		b.pool = c.pool
+		if c.chunks != 0 {r.scene.cull_capacity[.Shadow_Chunks] = c.chunks}
+		frames, still := 0, 0
+		runs := u32(0)
+		for frames < 400 && still < 8 {
+			testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+			frames += 1
+			now := shadow_page_runs(r)
+			still = still + 1 if now == runs else 0
+			runs = now
+		}
+		testing.expectf(t, still >= 8, "%s: the pages were still given after %d frames", c.name, frames)
+		before := read(t, &f)
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		after := read(t, &f)
+		testing.expectf(t, slice.equal(before, after) && shadow_page_runs(r) == runs, "%s: a settled view changes from a frame to the next (pages given %d times more)", c.name, shadow_page_runs(r) - runs)
+		// Lit where the maps of a pool that holds all shade it: brighter by far
+		// than a coarser page blurs the border of a shadow.
+		holes := 0
+		for k := 0; k + 2 < len(after) && k + 2 < len(whole); k += 4 {
+			if int(after[k + 1]) > int(whole[k + 1]) + 48 {holes += 1}
+		}
+		testing.expectf(t, holes * 200 <= len(after) / 4, "%s: %d of %d pixels lit where the post shades them", c.name, holes, len(after) / 4)
+		delete(before)
+		delete(after)
+		b.pool = 0
+	}
+	expect_clean(t, f.device)
+}
+
 // What the table of the pages holds addresses only words of its own region:
 // a table made anew holds what the memory of the texture held before it and
 // no page until its first entries are written, and an entry past the pool
