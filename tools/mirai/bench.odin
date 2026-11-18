@@ -28,7 +28,9 @@ BENCH_USAGE :: "bench compare [project] [--base main|<ref>|<checkout>] [--scene 
 // of the pairs with their range. It warns when something else loads the GPU.
 // The table goes to stdout and to --out, with the summaries of every capture.
 
-BENCH_PAIRS :: 5
+// Enough to tell a change of a few percent from what two openings of one
+// build differ by; a smaller change takes more (--pairs).
+BENCH_PAIRS :: 3
 BENCH_FRAMES :: 240
 BENCH_WARMUP :: 600         // frames each editor runs before its first capture: shaders, streaming and the light settle
 BENCH_RESUME :: 60          // frames before every capture: the GPU comes back to speed after the other editor measured
