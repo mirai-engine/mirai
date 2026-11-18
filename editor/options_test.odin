@@ -33,3 +33,16 @@ api_port_zero_is_a_free_one_and_never_the_default :: proc(t:^testing.T) {
     _,ok=options_read({"--api-port","70000"})
     testing.expect(t,!ok)
 }
+
+// --gpu-turn names the handle of the turn of the GPU the tool gave; a restart
+// passes the one the editor holds (gpu_turn_pass), never the one it was given.
+@(test)
+the_turn_of_the_gpu_is_a_handle_and_a_restart_passes_its_own :: proc(t:^testing.T) {
+    o,ok:=options_read({"--headless","--gpu-turn","1234"})
+    testing.expect(t,ok && o.gpu_turn==1234)
+    _,ok=options_read({"--gpu-turn","0"})
+    testing.expect(t,!ok)
+    _,ok=options_read({"--gpu-turn","many"})
+    testing.expect(t,!ok)
+    testing.expect_value(t,len(options_passed({"--headless","--gpu-turn","1234"})),1)
+}

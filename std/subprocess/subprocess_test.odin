@@ -371,3 +371,36 @@ children_hold_no_pipe_of_this_process :: proc(t:^testing.T) {
         release(&process)
     }
 }
+
+// A handle named in inherit stays open in the child after this process
+// closes its own, as long as the child runs, and only there.
+@(test)
+a_child_holds_the_handles_it_inherits_while_it_runs :: proc(t:^testing.T) {
+    for kind in ([]string{"start","detached"}) {
+        reader,writer,pipe_error:=os.pipe()
+        testing.expect(t,pipe_error==nil)
+        if pipe_error!=nil {return}
+        child_in,child_in_writer,in_error:=os.pipe()
+        testing.expect(t,in_error==nil)
+        if in_error!=nil {os.close(reader);os.close(writer);return}
+        inherit:=[]uintptr{os.fd(writer)}
+        process:Process
+        error:os.Error
+        if kind=="start" {process,error=start({command=probe_command("stdin"),stdin=child_in},inherit=inherit)} else {process,error=detached({command=probe_command("stdin"),stdin=child_in},inherit)}
+        os.close(child_in)
+        os.close(writer)
+        testing.expectf(t,error==nil,"%s: %v",kind,error)
+        if error==nil {
+            _,poll_error:=pipe_has_data(reader)
+            testing.expectf(t,poll_error==nil,"%s: the child does not hold the write end (%v)",kind,poll_error)
+            os.close(child_in_writer)
+            child_in_writer=nil
+            _,_=wait(&process)
+            _,poll_error=pipe_has_data(reader)
+            testing.expectf(t,poll_error==.Broken_Pipe,"%s: the write end outlived the child (%v)",kind,poll_error)
+        }
+        os.close(reader)
+        if child_in_writer!=nil {os.close(child_in_writer)}
+        release(&process)
+    }
+}

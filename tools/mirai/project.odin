@@ -238,12 +238,25 @@ cmd_edit :: proc(root:string,args:[]string) -> int {
     }
     code,_,_:=build_project(root,.Editor,{folder},mode)
     if code!=0 {return code}
-    if slice.contains(rest,"--headless") {layers_isolate(root)}
+    headless:=slice.contains(rest,"--headless")
+    if headless {layers_isolate(root)}
+    absolute:=project.path_absolute(folder)
+    // A person at a terminal opening a window takes the GPU without waiting.
+    turn:workspace.Lock
+    charge:i64
+    if !slice.contains(rest,"--no-gpu") {turn,charge=gpu_turn(root,absolute,fmt.tprintf("edit %s",absolute),person=!headless && person_at_terminal())}
+    defer workspace.lock_release(&turn)
     command:=make([dynamic]string)
-    append(&command,project_engine_paths(root,folder,mode).editor_program,"--project",project.path_absolute(folder))
+    append(&command,project_engine_paths(root,folder,mode).editor_program,"--project",absolute)
     append(&command,..extra)
     append(&command,..rest)
-    return run(root,command[:])
+    append(&command,..gpu_turn_args(&turn))
+    process,error:=subprocess.start({working_dir=root,command=command[:],stdin=os.stdin,stdout=os.stdout,stderr=os.stderr},inherit=gpu_turn_inherit(&turn))
+    if error!=nil {fmt.eprintfln("mirai: could not run %s: %v",command[0],error);return 127}
+    gpu_turn_hand_over(&turn,process,fmt.tprintf("the editor of %s (mirai edit)",absolute),charge)
+    state,wait_error:=subprocess.wait(&process)
+    if wait_error!=nil {fmt.eprintfln("mirai: %s: %v",command[0],wait_error);return 127}
+    return state.exit_code
 }
 
 // What mirai edit opens without a project: the last one opened, when the
@@ -268,9 +281,15 @@ cmd_play :: proc(root:string,args:[]string) -> int {
     rest:=len(args)>0 && folder==args[0]?args[1:]:args
     code,_,_:=build_project(root,.Editor,{folder},mode)
     if code!=0 {return code}
-    if play_runs_headless(rest) {layers_isolate(root)}
+    headless:=play_runs_headless(rest)
+    if headless {layers_isolate(root)}
+    absolute:=project.path_absolute(folder)
+    // The player lives as long as this command, which holds its turn.
+    turn:workspace.Lock
+    if !slice.contains(rest,"--no-gpu") {turn,_=gpu_turn(root,absolute,fmt.tprintf("play %s",absolute),person=!headless && person_at_terminal())}
+    defer workspace.lock_release(&turn)
     command:=make([dynamic]string)
-    append(&command,project_engine_paths(root,folder,mode).player_program,"--project",project.path_absolute(folder))
+    append(&command,project_engine_paths(root,folder,mode).player_program,"--project",absolute)
     append(&command,..play_arguments(rest))
     return run(root,command[:])
 }

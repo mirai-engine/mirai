@@ -15,7 +15,7 @@ DOCTOR_USAGE :: "doctor [project]"
 
 // What is wrong on this machine or in a project, and what to do about it.
 cmd_doctor :: proc(root:string,args:[]string) -> int {
-    if len(args)>0 && args[0]=="--probe-gpu" {return gpu_probe()}
+    if len(args)>0 && args[0]=="--probe-gpu" {return gpu_probe(root)}
     if code:=positionals_only("doctor",args);code!=0 {return code}
     if len(args)>1 {return argument_unknown("doctor",args[1])}
     folder:=len(args)>0?args[0]:(os.is_file(project.PROJECT_FILE)?".":"")
@@ -167,13 +167,16 @@ cmd_doctor :: proc(root:string,args:[]string) -> int {
 
 // The device rhi would give a renderer, in a process of its own: a driver
 // that takes the process down is a finding, not the end of the report.
-gpu_probe :: proc() -> int {
+gpu_probe :: proc(root:string) -> int {
+    turn,_:=gpu_turn(root,"","doctor --probe-gpu")
+    defer workspace.lock_release(&turn)
     device,error:=rhi.device_create({app_name="mirai doctor",allow_hardware_ray_tracing=true,upload_bytes_per_frame=1<<20})
     if device==nil {
         fmt.printfln("error=%s",error)
         return 1
     }
     info:=rhi.device_info(device)
+    workspace.gpu_memory_write(root,i64(info.memory))
     fmt.printfln("device=%s (%v, %v, ray queries %v)",info.name,info.backend,info.type,info.features.ray_query)
     rhi.device_destroy(device)
     return 0
