@@ -1,78 +1,106 @@
 package cache
 
 import "core:fmt"
-import "core:os"
-import "core:time"
 import "mirai:asset"
 import "mirai:std/base"
+import "mirai:store"
 
-// What an import or a cook built, kept by what it was made from in a folder
-// of the caches of a project (project.cache_path), so that building it again
-// reads it instead. A file of the cache is an asset whose id is its key and
-// the version of what built it: a builder that gives other bytes misses every
-// earlier file. A file that does not read back whole is a miss too. A read
-// marks the file used, and a file no build used for UNUSED_AGE is removed:
-// whatever its size, the cache keeps what the builds of the last weeks read,
-// so a project larger than any fixed budget does not evict what its next
-// build reads. Deleting the folder costs only the time of building again.
+// What an import or a cook built, kept by what it was made from in the
+// machine store, so that building it again reads it instead, here or on
+// another machine that shares blobs with this one. A result is the file of an
+// asset, kept as a blob, whose id is its key and the version of what built
+// it; the ref (cache-<name>, <key>-<version>) names it (asset.cache_namespace),
+// so a builder that gives other bytes misses every earlier result. A ref
+// whose blob is missing or does not read back whole is a miss, and a blob that
+// no longer has the bytes of its address is removed so that building again
+// replaces it. The store owns space: the cache removes nothing it can read.
 
-// A file of the cache no build used for this long is removed.
-UNUSED_AGE :: 30*24*time.Hour
-// A folder is looked over for unused files at most this often, after a
-// write: one stat of its stamp otherwise.
-TRIM_EVERY :: 24*time.Hour
-// The file of a folder whose modification time is when it was last looked over.
-TRIM_STAMP :: ".trimmed"
+// Asked on a miss before building: makes the blob of the ref (namespace,
+// name) complete in into and sets the ref there, or says it has none.
+Fetch :: #type proc(user:rawptr,into:^store.Store,namespace,name:string) -> bool
+
+Source :: struct {
+    fetch:Fetch, // nil: none
+    user:rawptr,
+}
+
+Cache :: struct {
+    store:^store.Store, // nil: nothing is kept
+    source:Source,
+}
 
 // The id of the file of key, built by version.
 id :: proc "contextless" (key,version:u64) -> base.Asset_Id {return {key,version}}
 
-// Where the file of key goes, in the temp allocator.
-file_path :: proc(folder:string,key:u64,extension:string) -> string {
-    return fmt.tprintf("%s/%016x%s",folder,key,extension)
+// The file of key built by version in the cache name, open in file for the
+// caller to close. On a miss the source is asked once. False without one, or
+// with one that does not read back whole.
+load :: proc(c:Cache,name:string,key,version:u64,file:^asset.Asset,allocator:=context.allocator) -> bool {
+    namespace_buffer:[store.NAME_MAX]u8
+    ref_buffer:[REF_BYTES]u8
+    namespace,ref,ok:=names(c,name,key,version,&namespace_buffer,&ref_buffer)
+    if !ok {return false}
+    if load_here(c.store,namespace,ref,key,version,file,allocator) {return true}
+    return fetched(c,namespace,ref) && load_here(c.store,namespace,ref,key,version,file,allocator)
 }
 
-// The file of key built by version, open in file for the caller to close and
-// marked used. False without one, or with one that does not read back whole.
-load :: proc(folder:string,key,version:u64,extension:string,file:^asset.Asset,allocator:=context.allocator) -> bool {
-    if folder=="" {return false}
-    path:=file_path(folder,key,extension)
-    if asset.asset_load(file,path,allocator)!=.None {return false}
-    if file.blob.header.id!=id(key,version) || !asset.blob_verify_hash(&file.blob) {
+// Whether the cache name keeps a complete blob for key built by version,
+// without reading it; the source is asked on a miss.
+has :: proc(c:Cache,name:string,key,version:u64) -> bool {
+    namespace_buffer:[store.NAME_MAX]u8
+    ref_buffer:[REF_BYTES]u8
+    namespace,ref,ok:=names(c,name,key,version,&namespace_buffer,&ref_buffer)
+    if !ok {return false}
+    if has_here(c.store,namespace,ref) {return true}
+    return fetched(c,namespace,ref) && has_here(c.store,namespace,ref)
+}
+
+// Keeps bytes, the file of an asset whose id is id(key,version), as the
+// result of key in the cache name. False when it cannot be kept, which costs
+// only the time of building it the next time.
+put :: proc(c:Cache,name:string,key,version:u64,bytes:[]u8) -> bool {
+    namespace_buffer:[store.NAME_MAX]u8
+    ref_buffer:[REF_BYTES]u8
+    namespace,ref,ok:=names(c,name,key,version,&namespace_buffer,&ref_buffer)
+    if !ok {return false}
+    hash,error:=store.put_bytes(c.store,bytes)
+    return error==.None && store.ref_set(c.store,namespace,ref,hash)==.None
+}
+
+@(private)
+REF_BYTES :: 33 // <key>-<version>, each 16 hex digits
+
+// The namespace and the name of the ref of key built by version; not ok
+// without a store or for a name the store refuses.
+@(private)
+names :: proc(c:Cache,name:string,key,version:u64,namespace_buffer:^[store.NAME_MAX]u8,ref_buffer:^[REF_BYTES]u8) -> (namespace,ref:string,ok:bool) {
+    if c.store==nil || name=="" {return}
+    namespace=asset.cache_namespace(name,namespace_buffer)
+    if !store.name_valid(namespace) {return}
+    return namespace,fmt.bprintf(ref_buffer[:],"%016x-%016x",key,version),true
+}
+
+@(private)
+fetched :: proc(c:Cache,namespace,ref:string) -> bool {
+    return c.source.fetch!=nil && c.source.fetch(c.source.user,c.store,namespace,ref)
+}
+
+@(private)
+has_here :: proc(s:^store.Store,namespace,ref:string) -> bool {
+    hash,error:=store.ref_get(s,namespace,ref)
+    return error==.None && store.has(s,hash)
+}
+
+@(private)
+load_here :: proc(s:^store.Store,namespace,ref:string,key,version:u64,file:^asset.Asset,allocator:=context.allocator) -> bool {
+    hash,error:=store.ref_get(s,namespace,ref)
+    if error!=.None || !store.has(s,hash) {return false}
+    path,path_error:=store.blob_path(s,hash,context.temp_allocator)
+    if path_error!=.None {return false}
+    if asset.asset_load(file,path,allocator)==.None {
+        if file.blob.header.id==id(key,version) && asset.blob_verify_hash(&file.blob) {return true}
         asset.asset_close(file)
-        return false
     }
-    now:=time.now()
-    _=os.change_times(path,now,now)
-    return true
-}
-
-// Whether a file can be written into folder, which is made when missing.
-ready :: proc(folder:string) -> bool {
-    if folder=="" {return false}
-    return os.is_dir(folder) || os.make_directory_all(folder)==nil
-}
-
-// Removes the files of folder no build used for UNUSED_AGE, and marks the
-// folder looked over. How many went.
-trim :: proc(folder:string) -> (removed:int) {
-    now:=time.now()
-    entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
-    if error!=nil {return}
-    for entry in entries {
-        if entry.type!=.Regular || entry.name==TRIM_STAMP || time.diff(entry.modification_time,now)<=UNUSED_AGE {continue}
-        if os.remove(entry.fullpath)==nil {removed+=1}
-    }
-    stamp:=fmt.tprintf("%s/%s",folder,TRIM_STAMP)
-    if !os.exists(stamp) {_=os.write_entire_file(stamp,nil)}
-    _=os.change_times(stamp,now,now)
-    return
-}
-
-// Called after a file was written into folder: trims it when it was not
-// looked over for TRIM_EVERY.
-written :: proc(folder:string) {
-    stamp,error:=os.stat(fmt.tprintf("%s/%s",folder,TRIM_STAMP),context.temp_allocator)
-    if error==nil && time.diff(stamp.modification_time,time.now())<TRIM_EVERY {return}
-    trim(folder)
+    if store.verify(s,hash)==.Corrupt {_=store.remove(s,hash)}
+    return false
 }

@@ -21,6 +21,7 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
 import "mirai:std/serial"
+import "mirai:store"
 import "mirai:ui"
 
 // Import from the content browser: a source file in the assets becomes
@@ -77,6 +78,7 @@ Import_Job :: struct {
     whole:Source_Importer, // of a source a plugin imports whole; run is nil otherwise
     state:rawptr,          // what whole.prepare gave
     options:importer.Import_Options,
+    store:store.Store, // the machine store, whose caches options.store names; unopened: none
     allocator:mem.Allocator,
     started:time.Tick,
     profiled:bool,
@@ -196,8 +198,6 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
     options:=importer.Import_Options{
         root=strings.clone(root,allocator),
         world=s.info,
-        texture_cache=project.content_cache_path(s.project_root,project.TEXTURE_CACHE,allocator=allocator),
-        mesh_cache=project.content_cache_path(s.project_root,project.MESH_CACHE,allocator=allocator),
         fast_textures=true,
     }
     formats:=import_formats(s)
@@ -233,6 +233,12 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
     }
     job:=new(Import_Job,allocator)
     job^={kind=kind,options=options,allocator=allocator,started=time.tick_now(),profiled=profiled}
+    if store_root:=store.default_root(context.temp_allocator);store_root!="" {
+        if opened,error:=store.open(store_root,allocator);error==.None {
+            job.store=opened
+            job.options.store=&job.store
+        }
+    }
     job.source=strings.clone(source,allocator)
     if kind==.Model {import_formats_prepare(s,job)}
     if kind==.None && !claimed {
@@ -313,7 +319,8 @@ import_job_free :: proc(job:^Import_Job) {
     if job.thread!=nil {thread.destroy(job.thread)}
     importer.report_destroy(&job.report)
     delete(job.source,allocator);delete(job.scene,allocator)
-    delete(job.options.root,allocator);delete(job.options.texture_cache,allocator);delete(job.options.mesh_cache,allocator)
+    delete(job.options.root,allocator)
+    if job.store.root!="" {store.close(&job.store)}
     for provider in job.plugin_formats {
         if provider.prepare!=nil && provider.release!=nil {provider.release(provider.format.data,allocator)}
     }

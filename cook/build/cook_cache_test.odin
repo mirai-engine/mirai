@@ -5,15 +5,20 @@ import "core:os"
 import "core:slice"
 import "core:testing"
 import "mirai:asset"
+import "mirai:cook/cache"
 import "mirai:cook/textures"
 import "mirai:std/base"
+import "mirai:store"
 
 @(test)
 a_cook_takes_the_blocks_of_a_texture_from_the_cache_of_its_content :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     folder:=base.test_folder(t,"cook-texture-cache")
     if folder=="" {return}
-    assets,cache:=fmt.tprintf("%s/assets",folder),fmt.tprintf("%s/cache",folder)
+    assets:=fmt.tprintf("%s/assets",folder)
+    kept_store,opened:=store.open(fmt.tprintf("%s/store",folder),context.temp_allocator)
+    if !testing.expect_value(t,opened,store.Error.None) {return}
+    texture_cache:=cache.Cache{store=&kept_store}
     os.make_directory_all(fmt.tprintf("%s/textures",assets))
     source:=fmt.tprintf("%s/textures/wood.tex",assets)
     pixels:[8*8*4]u8
@@ -30,7 +35,7 @@ a_cook_takes_the_blocks_of_a_texture_from_the_cache_of_its_content :: proc(t:^te
     }
 
     // The first cook compresses the texture and keeps its blocks.
-    report:=cook_assets({assets=assets,output=fmt.tprintf("%s/first",folder),manifest=manifest,texture_cache=cache,allocator=context.temp_allocator})
+    report:=cook_assets({assets=assets,output=fmt.tprintf("%s/first",folder),manifest=manifest,store=&kept_store,allocator=context.temp_allocator})
     testing.expect(t,report.error==.None && report.textures_compressed==1)
     testing.expect(t,report.seconds>0,"the report says how long the cook took")
     format,blocks:=level(t,&types,fmt.tprintf("%s/first/textures/wood.tex",folder))
@@ -38,13 +43,13 @@ a_cook_takes_the_blocks_of_a_texture_from_the_cache_of_its_content :: proc(t:^te
     original:asset.Asset
     testing.expect_value(t,asset.asset_load(&original,source,context.temp_allocator),asset.Error.None)
     key:=textures.cache_key_blocks(original.blob.header.content_hash)
-    kept,found:=textures.cache_read(cache,key,&types,context.temp_allocator)
+    kept,found:=textures.cache_read(texture_cache,key,&types,context.temp_allocator)
     testing.expect(t,found && kept.format==.BC1 && slice.equal(kept.mips[0],blocks))
 
     // The next cook reads them: blocks the cache was given are the ones it ships.
     kept.mips[0][0]~=0xff
-    testing.expect(t,textures.cache_write(cache,key,&types,&kept))
-    report=cook_assets({assets=assets,output=fmt.tprintf("%s/second",folder),manifest=manifest,texture_cache=cache,allocator=context.temp_allocator})
+    testing.expect(t,textures.cache_write(texture_cache,key,&types,&kept))
+    report=cook_assets({assets=assets,output=fmt.tprintf("%s/second",folder),manifest=manifest,store=&kept_store,allocator=context.temp_allocator})
     testing.expect(t,report.error==.None && report.textures_compressed==1)
     _,cached:=level(t,&types,fmt.tprintf("%s/second/textures/wood.tex",folder))
     testing.expect(t,len(cached)==32 && cached[0]==blocks[0]~0xff && slice.equal(cached[1:],blocks[1:]))

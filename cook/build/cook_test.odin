@@ -12,6 +12,7 @@ import anim "mirai:std/anim"
 import mm "mirai:std/math"
 import "mirai:std/base"
 import "mirai:std/jobs"
+import "mirai:store"
 
 @(private="file") WOOD_COLOR :: base.Asset_Id{1,1}
 @(private="file") WOOD_NORMAL :: base.Asset_Id{1,2}
@@ -393,7 +394,9 @@ a_cook_on_many_workers_writes_what_a_cook_on_one_does :: proc(t:^testing.T) {
         js:jobs.Job_System
         if !jobs.system_init(&js,{threads=threads,allocator=runtime.heap_allocator()}) {return {error=.Write_Failed}}
         defer jobs.system_destroy(&js)
-        return cook_assets({assets=assets,output=fmt.tprintf("%s/%s",folder,name),manifest=manifest,texture_cache=fmt.tprintf("%s/%s_cache",folder,name),worker={system=&js},allocator=context.temp_allocator})
+        kept,opened:=store.open(fmt.tprintf("%s/%s_store",folder,name),context.temp_allocator)
+        if opened!=.None {return {error=.Write_Failed}}
+        return cook_assets({assets=assets,output=fmt.tprintf("%s/%s",folder,name),manifest=manifest,store=&kept,worker={system=&js},allocator=context.temp_allocator})
     }
     one:=cook(folder,assets,manifest,"one",0)
     many:=cook(folder,assets,manifest,"many",7)

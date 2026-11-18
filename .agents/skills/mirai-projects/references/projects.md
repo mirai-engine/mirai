@@ -192,7 +192,6 @@ the `Project` owns everything it points to.
   and, apart from that, in the project's order. A cycle between inactive plugins is not an error.
 - The caches of `.mirai/cache` (`cache_path`) and `.mirai/thumbs` cost only time if deleted: the
   [registry](../../mirai-assets/references/formats.md#registry), the
-  [textures](../../mirai-imports/references/imports.md#texture-cache), the
   [compressed animations](../../mirai-core/references/host.md#content) and the
   [previews](../../mirai-editor/references/panels.md#previews) are made again.
 - **A cache never makes a valid asset fail.** An entry is keyed on everything it depends on (the

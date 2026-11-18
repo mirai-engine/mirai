@@ -8,6 +8,7 @@ import "core:testing"
 import "mirai:asset"
 import "mirai:cook/textures"
 import "mirai:std/base"
+import "mirai:store"
 import mm "mirai:std/math"
 
 // What a plugin that imports a source whole writes with Outputs: the root and
@@ -187,18 +188,20 @@ the_models_of_an_import_share_their_parts_by_name :: proc(t:^testing.T) {
 an_image_only_its_format_decodes_is_taken_from_the_cache_without_decoding :: proc(t:^testing.T) {
     root,assets:=test_assets(t,"outputs-made")
     if root=="" {return}
-    cache:=fmt.tprintf("%s/cache",root)
+    kept,opened:=store.open(fmt.tprintf("%s/store",root),context.temp_allocator)
+    if !testing.expect_value(t,opened,store.Error.None) {return}
+    cache:=&kept
     texels_of :: proc(data:[]u8,allocator:mem.Allocator) -> (made:textures.Source,ok:bool) {
         texels:=make([]u8,4*4*4,allocator)
         for &texel,at in texels {texel=u8(at*7)+data[0]}
         return {texels=texels,width=4,height=4,format=.RGBA8},true
     }
     refused :: proc(data:[]u8,allocator:mem.Allocator) -> (made:textures.Source,ok:bool) {return}
-    written :: proc(t:^testing.T,root,assets,name:string,make:Image_Make,cache:string) -> (texels:string) {
+    written :: proc(t:^testing.T,root,assets,name:string,make:Image_Make,cache:^store.Store) -> (texels:string) {
         source:=fmt.tprintf("%s/%s.map",assets,name)
         testing.expect(t,os.write_entire_file(source,name)==nil)
         o:Outputs
-        error:=outputs_begin(&o,source,name,u64(len(name)),base.hash64(transmute([]u8)name),import_version(0),{root=root,textures=.Uncompressed,texture_cache=cache})
+        error:=outputs_begin(&o,source,name,u64(len(name)),base.hash64(transmute([]u8)name),import_version(0),{root=root,textures=.Uncompressed,store=cache})
         if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
         model:=model_of("Crate","SM_Crate","T_Wood","M_Wood")
         model.images[0]={name="T_Wood",data=transmute([]u8)string("packed"),make=make,srgb=true}
@@ -219,7 +222,7 @@ an_image_only_its_format_decodes_is_taken_from_the_cache_without_decoding :: pro
     first:=written(t,root,assets,"first",texels_of,cache)
     testing.expect(t,len(first)==4*4*4,"its format makes the texels")
     testing.expect(t,written(t,root,assets,"second",refused,cache)==first,"the cache gives the texture of the same data")
-    testing.expect(t,written(t,root,assets,"third",refused,"")=="","without the cache the texels are made, and here they cannot be")
+    testing.expect(t,written(t,root,assets,"third",refused,nil)=="","without the cache the texels are made, and here they cannot be")
 
     // Imported again unchanged, its outputs are current: a model read ahead for it cooks nothing.
     current :: proc(root,assets:string) -> bool {
