@@ -542,6 +542,23 @@ RASTER_ENTRY_ROUND     :: 3
 RASTER_ENTRY_SHOWN     :: 4
 RASTER_ENTRY_USED      :: 8
 
+// The words of the count of a frame of a view by mesh and by material
+// (render/cost.odin, cost.slang): COST_FIRST_ROW words, the first the rows
+// of the meshes and the second those of the materials, then a row of
+// COST_ROW_WORDS for each mesh and after them one for each material, a word
+// for each count (render.Cost_Row).
+COST_FIRST_ROW        :: 4
+COST_ROW_WORDS        :: 9
+COST_INSTANCES        :: 0
+COST_CLUSTERS         :: 1
+COST_TRIANGLES        :: 2
+COST_RASTER_TRIANGLES :: 3
+COST_PIXELS           :: 4
+COST_SHADOW_CLUSTERS  :: 5
+COST_SHADOW_TRIANGLES :: 6
+COST_SHADOW_UNITS     :: 7
+COST_SHADOW_OVER      :: 8
+
 // What an instance gives over the rows of its materials, in the index pool:
 // how many rows it shows otherwise than the table holds them, how much it
 // fades every row out, then INSTANCE_ROW_WORDS each: the row and its words

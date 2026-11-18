@@ -91,6 +91,7 @@ Pass :: struct {
 	shown: rhi.Texture, // the image so far: the Display or the Taa a pass last wrote, which the Output stage finishes
 	nested:       [NESTED_VIEW_CAPACITY]Nested_View,
 	nested_count: int,
+	cost:         rhi.Buffer, // the count of a request the view adds to (cost.odin); 0: none
 }
 
 @(private)
@@ -599,6 +600,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     extension_counters_begin(r,cmd,slot)
     // A frame none of whose views culls reports no counts, not those of the last one that did.
     rhi.cmd_fill_buffer(cmd,r.stats_buffer,0,size_of(Gpu_Cull_Stats),0)
+    cost_begin(r,cmd)
     depth_probes_begin(r,cmd,slot,frame.probes)
     extension_readbacks_take(r,slot)
     r.stats.counters=r.counters.counters[:r.counters.count]
@@ -727,7 +729,9 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         points_end(r,cmd,slot)
         extension_counters_end(r,cmd,slot)
         depth_probes_end(r,cmd,slot)
+        cost_end(r,cmd)
     }
+    r.cost.counting,r.cost.taken=false,false
 	base.profile_end(zone)
 	rhi.cmd_timestamp(cmd, "end")
 	recorded := time.tick_now()
@@ -804,6 +808,7 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
     if generate && !ensure_generated_target(r,&state.targets) {return false}
     extension_textures_release(r,state)
     p:=Pass{r=r,cmd=cmd,view=state,t=&state.targets,camera=view.camera,slot=slot,first=first,index=index,plan=plan,texture=view.texture!=0,offscreen=frame.offscreen,inspection=view.inspection,wide=view.texture!=0?view.wide:.None}
+    p.cost=cost_take(r,first,view.texture!=0)
     p.current=int(state.frames%2)
     p.previous=1-p.current
     zone=render_zone_begin(r,"view constants")
@@ -1129,7 +1134,7 @@ Raster_Round_Lists :: struct {
 // vertices and the triangles written, the clusters left to the next round
 // and what was left out. lists: those of the view where nil.
 @(private)
-raster_round_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, round: u32, last: bool, stats: rhi.Buffer, lists: ^Raster_Round_Lists = nil) {
+raster_round_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, round: u32, last: bool, stats: rhi.Buffer, lists: ^Raster_Round_Lists = nil, cost: rhi.Buffer = 0) {
 	render_zone(r, "raster round")
 	s := &r.scene
 	view := Raster_Round_Lists{state = s.cull_state_buffer, visible = s.visible_buffer, entries = s.raster_entries}
@@ -1144,7 +1149,7 @@ raster_round_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, round: u32, la
 		params := l.shadow^
 		params.round, params.last, params.margin = round, u32(last), margin
 		params.vertex_capacity, params.triangle_capacity = s.cull_capacity[.Raster_Vertices], s.cull_capacity[.Raster_Triangles]
-		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Vertices_Shadow])
+		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Vertices_Shadow_Cost if cost != 0 else .Raster_Vertices_Shadow])
 		set_params(cmd, &params)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS6, l.pages)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS7, l.maps)
@@ -1156,7 +1161,7 @@ raster_round_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, round: u32, la
 		vertices := Vertices_Params{round = round, last = u32(last), margin = margin}
 		vertices.vertex_capacity = min(s.raster_share[0], s.cull_capacity[.Raster_Vertices])
 		vertices.triangle_capacity = min(s.raster_share[1], s.cull_capacity[.Raster_Triangles])
-		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Vertices])
+		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Vertices_Cost if cost != 0 else .Raster_Vertices])
 		set_params(cmd, &vertices)
 	}
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, l.state)
@@ -1165,6 +1170,7 @@ raster_round_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, round: u32, la
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.raster_vertices)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS5, l.entries)
+	if cost != 0 {rhi.cmd_bind_buffer(cmd, SLOT_PASS8, cost)}
 	rhi.cmd_dispatch_indirect(cmd, l.state, groups)
 	Params :: struct {round, ids, pad0, pad1: u32}
 	params := Params{round = round, ids = 0 if l.shadow != nil else 1}
@@ -1206,15 +1212,16 @@ cull_bind :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glass:
 // The two passes of a phase of the cull: by instance, which hands the
 // clusters of their cuts over in chunks, and by cluster over the chunks.
 @(private)
-cull_record :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glass: rhi.Buffer) {
+cull_record :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glass: rhi.Buffer, cost: rhi.Buffer = 0) {
 	r, cmd := p.r, p.cmd
 	render_zone(r, "cull")
 	s := &r.scene
-	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull])
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull_Cost if cost != 0 else .Cull])
 	cull_bind(p, params, hiz, stats, glass)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.candidate_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, glass)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, s.depth_buckets)
+	if cost != 0 {rhi.cmd_bind_buffer(cmd, SLOT_PASS8, cost)}
 	rhi.cmd_dispatch(cmd, groups(p.instance_count + p.batch_slots, 64))
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull_Clusters])
 	cull_bind(p, params, hiz, stats, glass)
@@ -1247,11 +1254,11 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	rhi.cmd_fill_buffer(cmd, p.view.glass_dispatch, 0, size_of(Gpu_Glass_Dispatch), 0)
 	if !cull_reset(r, cmd) {return false}
 	if threads > 0 {
-		cull_record(p, {phase = 0, occlusion = 1 if occlusion && t.hiz_valid else 0, hiz_levels = t.hiz_levels, glass_groups = glass_groups}, t.hiz[p.previous], r.stats_buffer, p.view.glass_dispatch)
+		cull_record(p, {phase = 0, occlusion = 1 if occlusion && t.hiz_valid else 0, hiz_levels = t.hiz_levels, glass_groups = glass_groups}, t.hiz[p.previous], r.stats_buffer, p.view.glass_dispatch, p.cost)
 	}
 	cull_bins_dispatch(r, cmd, 0)
 	rhi.cmd_timestamp(cmd, "visible triangles")
-	if p.draw {raster_round_record(r, cmd, 0, false, r.stats_buffer)}
+	if p.draw {raster_round_record(r, cmd, 0, false, r.stats_buffer, cost = p.cost)}
 	rhi.cmd_timestamp(cmd, "visibility")
 	visibility_pass(p, 0, .Clear, .Clear, t.depth, keep_depth, clip)
 	if occlusion && p.draw {
@@ -1263,7 +1270,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 		restart := [4]u32{0, 0, 1, 0}
 		if !upload_transient(r, cmd, restart[:], s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, chunk_dispatch))) {return false}
 		params := Cull_Params{phase = 1, occlusion = 1, hiz_levels = t.hiz_levels, glass_groups = glass_groups}
-		cull_record(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch)
+		cull_record(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch, p.cost)
 		if candidates := pipeline_of(r, .Cull_Clusters, {CULL_CLUSTERS_COMP_CANDIDATES})^; candidates != 0 {
 			rhi.cmd_bind_pipeline(cmd, candidates)
 			cull_bind(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch)
@@ -1271,13 +1278,13 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 		}
 		cull_bins_dispatch(r, cmd, 1)
 		rhi.cmd_timestamp(cmd, "visible triangles late")
-		raster_round_record(r, cmd, 1, false, r.stats_buffer)
+		raster_round_record(r, cmd, 1, false, r.stats_buffer, cost = p.cost)
 		rhi.cmd_timestamp(cmd, "visibility late")
 		visibility_pass(p, 1, .Load, .Load, t.depth, keep_depth, clip)
 		// What found no room in the lists of the rounds of both phases.
 		rhi.cmd_timestamp(cmd, "visibility rest")
 		for round in u32(2) ..< abi.RASTER_ROUNDS {
-			raster_round_record(r, cmd, round, round == abi.RASTER_ROUNDS - 1, r.stats_buffer)
+			raster_round_record(r, cmd, round, round == abi.RASTER_ROUNDS - 1, r.stats_buffer, cost = p.cost)
 			visibility_pass(p, round, .Load, .Load, t.depth, keep_depth, clip)
 		}
 		// The pyramid the next frame tests against holds what both phases drew:
@@ -1288,6 +1295,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	} else {
 		t.hiz_valid = false
 	}
+	if p.cost != 0 && p.draw {cost_pixels(p)}
 	rhi.cmd_timestamp(cmd, "resolve")
 	resolve_pass(p, false)
 	if p.first && stage_asked(r, .Simulate) {stage_run(p, .Simulate)}

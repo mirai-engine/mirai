@@ -1485,7 +1485,7 @@ shadow_cull :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, round: S
 			dispatch = 2
 			params.masks, params.list = abi.SHADOW_WORDS_FORESEE, abi.SHADOW_WORDS_SLOTS + 2 * (SHADOW_SLOTS + 1)
 		}
-		rhi.cmd_bind_pipeline(cmd, r.pipelines[pipeline])
+		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Clusters_Cost if pipeline == .Shadow_Clusters && p.cost != 0 else pipeline])
 		set_params(cmd, &params)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, d.table)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.shadow_chunks)
@@ -1499,12 +1499,13 @@ shadow_cull :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, round: S
 			rhi.cmd_dispatch_indirect(cmd, t.shadow_raster.pages, u64(abi.SHADOW_WORDS_ARGS + abi.SHADOW_ARGS_DISPATCH + 3 * dispatch) * 4)
 		} else {
 			rhi.cmd_bind_buffer(cmd, SLOT_PASS5, s.shadow_raster_entries)
+			if p.cost != 0 {rhi.cmd_bind_buffer(cmd, SLOT_PASS8, p.cost)}
 			rhi.cmd_dispatch_indirect(cmd, d.state, u64(offset_of(Gpu_Cull_State, chunk_dispatch)))
 		}
 	}
 	// The only round of the raster of the cull: what finds no room waits with its page.
 	lists := Raster_Round_Lists{state = d.state, visible = s.shadow_entries, entries = s.shadow_raster_entries, shadow = &params, pages = t.shadow_raster.pages, maps = d.table}
-	raster_round_record(r, cmd, 0, true, r.stats_buffer, &lists)
+	raster_round_record(r, cmd, 0, true, r.stats_buffer, &lists, p.cost)
 	shadow_pages_step(p, steps, .Settle, u32(round))
 }
 
