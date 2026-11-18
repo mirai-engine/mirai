@@ -201,11 +201,16 @@ gpu_skins_with_influences_of_every_level_pose_each_level_and_keep_its_history_an
             testing.expectf(t,linalg.length(before[i].position-previous.position)<1e-5,"previous vertex %d at frame %d",i,frame)
             for axis in 0..<3 {testing.expect(t,expected.position[axis]>=bounds.bounds_min[axis]-1e-5 && expected.position[axis]<=bounds.bounds_max[axis]+1e-5)}
         }
+        // A cluster of small triangles is in the visible list, one of large ones in bin 0 of the program list.
         state:[1]Gpu_Cull_State
-        visible:[1][4]u32
+        visible,programmed:[1][4]u32
+        counts:[2]u32
         testing.expect(t,rhi.buffer_read_slice(device,r.scene.cull_state_buffer,0,state[:]) && rhi.buffer_read_slice(device,r.scene.visible_buffer,0,visible[:]))
-        testing.expectf(t,state[0].draws[0].instance_count+state[0].draws[1].instance_count==1,"one cluster of one level at frame %d",frame)
-        testing.expectf(t,visible[0][1]==record.cluster_word+(0 if frame==0 else coarse)*CLUSTER_WORDS,"the GPU chooses among the posed levels at frame %d",frame)
+        testing.expect(t,rhi.buffer_read_slice(device,r.scene.program_bins,0,counts[:]) && rhi.buffer_read_slice(device,r.scene.program_visible,0,programmed[:]))
+        listed:=state[0].draws[0].instance_count+state[0].draws[1].instance_count
+        testing.expectf(t,listed+counts[0]+counts[1]==1,"one cluster of one level at frame %d",frame)
+        word:=visible[0][1] if listed==1 else programmed[0][1]
+        testing.expectf(t,word==record.cluster_word+(0 if frame==0 else coarse)*CLUSTER_WORDS,"the GPU chooses among the posed levels at frame %d",frame)
         previous_palette,previous_weight=palette,weight
     }
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
