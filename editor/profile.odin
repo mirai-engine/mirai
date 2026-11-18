@@ -104,6 +104,7 @@ Profile_Capture :: struct {
     lost:u64,
     warmup:int,      // frames run before recording until they stopped getting faster
     unsettled:bool,  // they were still getting faster after PROFILE_SETTLE_MAX
+    loaded:[]string, // what else loaded the GPU when the frames began (workspace.gpu_load)
 }
 
 Profile_Sample :: struct {end:time.Tick,ms,gpu_ms:f32} // a frame the API ran
@@ -125,6 +126,13 @@ profiles_destroy :: proc(s:^Session) {
 profile_capture_free :: proc(c:^Profile_Capture) {
     if c.id!=0 {vmem.arena_destroy(&c.arena)}
     c^={}
+}
+
+// Keeps with the capture what else loaded the GPU when its frames began.
+profile_loaded_set :: proc(c:^Profile_Capture,warnings:[]string) {
+    if len(warnings)==0 {return}
+    c.loaded=make([]string,len(warnings),vmem.arena_allocator(&c.arena))
+    for warning,i in warnings {c.loaded[i]=strings.clone(warning,vmem.arena_allocator(&c.arena))}
 }
 
 profile_find :: proc(s:^Session,id:int) -> ^Profile_Capture {

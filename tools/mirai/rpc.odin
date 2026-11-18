@@ -183,6 +183,9 @@ rpc_call_waiting :: proc(connection:Connection,method,params:string,id:int) -> (
     editor,err=connection_ready(connection,method)
     if err.code!=0 {return}
     watch:=connection_watch(connection,editor,fmt.tprintf("mirai rpc %s",method))
+    if measured,holder:=workspace.measured(connection.root,true,allocator=context.temp_allocator);measured==.Wait {
+        fmt.eprintfln("mirai rpc: a measurement is running (%s); a call that draws waits in the session until it ends",holder)
+    }
     result,err,called=api.rpc_call(editor.port,method,params,id,connection.timeout_ms,context.allocator,connection_task(connection,editor.port),connection.client,watch,workspace.measurement(context.temp_allocator))
     if !called && err.code==api.UNREACHABLE {
         if ended:=session_ended(connection.project!=""?connection.project:connection.near);ended!="" {err.message=ended}

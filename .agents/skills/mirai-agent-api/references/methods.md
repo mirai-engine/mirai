@@ -351,9 +351,9 @@ Reading a capture:
   without pair scripts or a hand-built base. It builds head and the base (`--base`: `main`, a ref
   or a checkout with its editor already built) alike, dev unless `--release`, since two
   builds of the same mode compare; the base goes in the worktree of
-  [`render check`](../../mirai-rendering/references/verification.md#render-check). With
-  `measure.lock` taken it opens the two headless editors (no pacing, VSync or validation) and
-  alternates `--pairs` captures: head, base, base, head… It prints a Markdown table for the final
+  [`render check`](../../mirai-rendering/references/verification.md#render-check). It opens the
+  two headless editors (no pacing, VSync or validation), takes `measure.lock` and alternates
+  `--pairs` captures: head, base, base, head… It prints a Markdown table for the final
   report of the task with the median and the spread of each build and the difference per pair with
   its range, warns if another engine program was open or the GPU had another load, and leaves the
   JSON in `--out`.
@@ -366,8 +366,8 @@ Reading a capture:
   `settle` (the most frames it waits still until nothing is pending and no shadow page waits).
   The first segment places the camera. The window is the size of `captures.mirai`.
   1. It checks the whole file before building and says what to fix, then builds a copy of the
-     project and opens it with the GPU turn and the watchdog every unwatched editor gets, alone
-     among the checkouts (`measure.lock`).
+     project and opens it with the GPU turn and the watchdog every unwatched editor gets, and
+     flies alone among the checkouts (`measure.lock`).
   2. Every frame runs through `editor.input` and is recorded with `profile.capture`
      (`advance:false`), in chunks read back with `profile.frames`, with `engine.status` at the end
      of each segment.

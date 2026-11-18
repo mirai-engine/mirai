@@ -17,7 +17,7 @@ import "mirai:project"
 import "mirai:std/serial"
 import "mirai:std/subprocess"
 
-RENDER_USAGE :: "render check [project] [--base main|<ref>|<checkout>|<report.json>|none] [--checkout C] [--views a,b] [--sizes WxH,...] [--rerun <report.json>] [--quality] [--release] [--fresh-base] [--wait S] [--allow-load] [--out folder] | render compare <base.json> <report.json>"
+RENDER_USAGE :: "render check [project] [--base main|<ref>|<checkout>|<report.json>|none] [--checkout C] [--views a,b] [--sizes WxH,...] [--rerun <report.json>] [--quality] [--release] [--fresh-base] [--out folder] | render compare <base.json> <report.json>"
 
 // mirai render check: the views of render_check.mirai of a project as its
 // editor shows them, built dev (--release for the figures of the CPU, which
@@ -35,13 +35,12 @@ RENDER_USAGE :: "render check [project] [--base main|<ref>|<checkout>|<report.js
 // same way. A view that pushes an entity while its camera stays (Render_Push)
 // measures how far the image is from the same pose settled midway through the
 // push, judged as the change between captures, and how many frames after it
-// stops the image takes to come within 10 % and 1 % of settled. It waits for
-// the other programs of the engine to close and warns
-// when something else loads the GPU. A cost past the limit is measured again
+// stops the image takes to come within 10 % and 1 % of settled. It warns
+// when another program of the engine is open, and does not assert a cost
+// measured while something else loaded the GPU. A cost past the limit is measured again
 // alone, both builds alternating, before the verdict. The measures of a base
 // built from a commit are saved for the next checks against it (Render_Saved).
-// --quality measures all but the cost, which needs neither the machine alone
-// nor the measurement lock: the headless editor draws every frame with the
+// --quality measures all but the cost, which needs no measurement lock: the headless editor draws every frame with the
 // same dt, so the images do not depend on the load. The report and the
 // captures go to --out.
 // mirai render compare: the same verdicts between two reports.
@@ -53,13 +52,10 @@ RENDER_STABILITY_FLOOR :: 0.05 // luma MAE, over 0..255 of linear light, below w
 RENDER_MOTTLE_FLOOR :: 0.1     // percent of the light below which no blotch shows
 RENDER_MOTTLE_AFTER :: 10      // frames after a flight when the blotches are measured again
 RENDER_LUMA_LIMIT :: 0.5      // stops
-RENDER_GPU_BUSY :: 25         // percent of the GPU in use while the editor measured draws nothing; a desktop on a 4K display alone keeps it at 10-15
 RENDER_TILES :: 4             // the region is split in RENDER_TILES² for the worst local change
 RENDER_PORT :: 7970           // the first port tried for the editors measured
 RENDER_TIMEOUT_MS :: 600000
 RENDER_FLY_EVENTS :: 200      // editor.input events per call, within the API_INPUT_EVENTS of the editor
-RENDER_WAIT :: 300            // seconds the check waits by default for the other programs of the engine to close
-RENDER_KILL :: "taskkill /PID <pid> /F" when ODIN_OS==.Windows else "kill <pid>"
 RENDER_SAVED :: "render-base" // the folder of the shared cache with the measures of the bases, a file per commit
 RENDER_SAVED_VERSION :: 2     // of how a measure is taken and what it holds: a saved one of another version is not read
 RENDER_SAVED_COST_HOURS :: 24 // a saved base gives the cost only this long after it was measured
@@ -176,8 +172,7 @@ Render_Key :: struct {view:string,size:[2]int}
 
 Render_Options :: struct {
     folder,base,checkout,views,sizes,out,rerun:string,
-    wait:int, // seconds
-    quality,fresh_base,allow_load,release:bool,
+    quality,fresh_base,release:bool,
 }
 
 // A measure of a base saved in the shared cache, valid for the checks that
@@ -188,8 +183,6 @@ Render_Saved :: struct {
     quality:bool, // without the cost
     measure:Render_Measure,
 }
-
-Render_Program :: struct {pid:int,path,command:string}
 
 Render_Report :: struct {
     project,date,device:string,
@@ -205,13 +198,6 @@ Render_Target :: struct {name,checkout,project,editor:string}
 Render_Editor :: struct {
     using headless:Headless_Editor,
     run:^Render_Run,
-}
-
-// The measurement lock, held while the cost is measured; owned: this process
-// set MEASURE_ENV, and clears it when it lets the lock go.
-Render_Alone :: struct {
-    lock:workspace.Lock,
-    owned:bool,
 }
 
 cmd_render :: proc(root:string,args:[]string) -> int {
@@ -269,7 +255,6 @@ render_check :: proc(root:string,args:[]string) -> int {
             return 1
         }
     }
-    if !o.quality && !o.allow_load && !render_wait_alone(o.wait) {return 1}
 
     report:Render_Report
     report.project=relative
@@ -343,9 +328,9 @@ render_check :: proc(root:string,args:[]string) -> int {
         }
     }
 
-    alone:Render_Alone
-    if !o.quality {alone=render_alone_begin(root)}
-    defer render_alone_end(&alone)
+    // The editors are part of the measurement (MEASURE_ENV), which each
+    // session takes once its editor is open (render_session).
+    if !o.quality {measure_env_set()}
     layers_isolate(root)
 
     has_base:=base_target.editor!="" || base_ref!=""
@@ -363,7 +348,7 @@ render_check :: proc(root:string,args:[]string) -> int {
             if targets[i].editor=="" {continue}
             sub:=i==1 && base_ref!=""?render_plan_only(plan,missing[:],size):plan
             if len(sub.views)==0 {continue}
-            if !render_session(&report,&report.runs[i],targets[i],sub,size,out,false) {
+            if !render_session(root,&report,&report.runs[i],targets[i],sub,size,out,false) {
                 fmt.eprintfln("mirai render: could not measure %s at %dx%d; see %s",targets[i].name,size.x,size.y,render_log(out,targets[i].name,size))
                 return 1
             }
@@ -388,14 +373,12 @@ render_check :: proc(root:string,args:[]string) -> int {
             append(&report.warnings,fmt.aprintf("the base is the report %s: the flagged cost was not measured again",o.base))
         } else {
             if targets[1].editor=="" {
-                // The base was saved: built now, without holding the measurement while it compiles.
-                render_alone_end(&alone)
+                // The base was saved: built now.
                 target,ok,_:=render_base_prepare(root,base_ref,relative,o.release)
                 if !ok {return 1}
                 targets[1]=target
                 base:=&report.runs[1]
                 base.checkout,base.project,base.editor=target.checkout,target.project,target.editor
-                alone=render_alone_begin(root)
             }
             names:=make([dynamic]string,context.temp_allocator)
             for key in repeat {append(&names,fmt.tprintf("%s %dx%d",key.view,key.size.x,key.size.y))}
@@ -406,7 +389,7 @@ render_check :: proc(root:string,args:[]string) -> int {
                 // The other build first this time.
                 order:=s%2==0?[2]int{0,1}:[2]int{1,0}
                 for i in order {
-                    if !render_session(&report,&report.runs[i],targets[i],sub,size,out,true) {
+                    if !render_session(root,&report,&report.runs[i],targets[i],sub,size,out,true) {
                         fmt.eprintfln("mirai render: could not measure %s again at %dx%d; see %s",targets[i].name,size.x,size.y,render_log(out,fmt.tprintf("%s-repeat",targets[i].name),size))
                         return 1
                     }
@@ -415,7 +398,6 @@ render_check :: proc(root:string,args:[]string) -> int {
             render_judge(&report)
         }
     }
-    render_alone_end(&alone)
     if base_ref!="" && device!="" {render_base_save(root,report,base_commit,device,plan,fresh)}
     if report.device=="" {report.device=device}
     render_montages(&report,out)
@@ -424,8 +406,7 @@ render_check :: proc(root:string,args:[]string) -> int {
 
 // The options of mirai render check; problem says what is wrong with them.
 render_options_parse :: proc(args:[]string) -> (o:Render_Options,problem:string) {
-    o.folder,o.base,o.wait=".","main",RENDER_WAIT
-    wait:=""
+    o.folder,o.base=".","main"
     for i:=0;i<len(args);i+=1 {
         option:^string
         switch args[i] {
@@ -435,11 +416,9 @@ render_options_parse :: proc(args:[]string) -> (o:Render_Options,problem:string)
         case "--sizes":      option=&o.sizes
         case "--out":        option=&o.out
         case "--rerun":      option=&o.rerun
-        case "--wait":       option=&wait
         case "--quality":    o.quality=true;continue
         case "--release":    o.release=true;continue
         case "--fresh-base": o.fresh_base=true;continue
-        case "--allow-load": o.allow_load=true;continue
         }
         if option!=nil {
             if i+1>=len(args) || args[i+1]=="" {return o,fmt.tprintf("%s needs a value",args[i])}
@@ -451,30 +430,8 @@ render_options_parse :: proc(args:[]string) -> (o:Render_Options,problem:string)
         if o.folder!="." {return o,fmt.tprintf("one project only, not %s and %s",o.folder,args[i])}
         o.folder=args[i]
     }
-    if wait!="" {
-        seconds,valid:=strconv.parse_int(wait,10)
-        if !valid || seconds<0 {return o,fmt.tprintf("--wait is seconds, 0 or more, not '%s'",wait)}
-        o.wait=seconds
-    }
     if o.rerun!="" && (o.views!="" || o.sizes!="") {return o,"--rerun picks the views and the sizes: leave out --views and --sizes"}
     return o,""
-}
-
-// Takes the measurement lock: other measurements and compilations wait, and
-// the editors launched are part of this measurement (MEASURE_ENV).
-@(private="file")
-render_alone_begin :: proc(root:string) -> (alone:Render_Alone) {
-    if workspace.measuring() {return}
-    alone.lock=measure_lock(root,"render check")
-    alone.owned=os.set_env(workspace.MEASURE_ENV,fmt.tprintf("%d",os.get_pid()))==nil
-    return
-}
-
-@(private="file")
-render_alone_end :: proc(alone:^Render_Alone) {
-    workspace.lock_release(&alone.lock)
-    if alone.owned {_=os.unset_env(workspace.MEASURE_ENV)}
-    alone^={}
 }
 
 // The plan with only the views keys names at size.
@@ -615,52 +572,6 @@ render_base_save :: proc(root:string,report:Render_Report,commit,device:string,p
     folder:=filepath.dir(path)
     if os.make_directory_all(folder)!=nil && !os.is_dir(folder) || os.write_entire_file(path,text)!=nil {
         fmt.eprintfln("mirai render: could not save the base in %s",path)
-    }
-}
-
-// The other programs of the engine open on the machine, but own: an editor
-// or a player that draws loads the GPU and holds its memory.
-@(private="file")
-render_programs :: proc(own:int) -> []Render_Program {
-    list:=make([dynamic]Render_Program,context.temp_allocator)
-    pids,error:=os.process_list(context.temp_allocator)
-    if error!=nil {return nil}
-    for pid in pids {
-        if pid==own || pid==os.get_pid() {continue}
-        info,info_error:=os.process_info_by_pid(pid,{.Executable_Path},context.temp_allocator)
-        if info_error!=nil || info.executable_path=="" {continue}
-        name:=strings.to_lower(filepath.stem(filepath.base(info.executable_path)))
-        if name!="mirai-editor" && name!="mirai-player" {continue}
-        program:=Render_Program{pid=pid,path=info.executable_path,command=info.executable_path}
-        if full,full_error:=os.process_info_by_pid(pid,{.Command_Line},context.temp_allocator);full_error==nil && full.command_line!="" {program.command=full.command_line}
-        append(&list,program)
-    }
-    return list[:]
-}
-
-// Waits, at most limit seconds, until no other program of the engine is
-// open: what one draws would be measured as the cost of this build. false
-// when they are still open, with what to do about them.
-@(private="file")
-render_wait_alone :: proc(limit:int) -> bool {
-    start:=time.tick_now()
-    shown:=""
-    for {
-        programs:=render_programs(-1)
-        if len(programs)==0 {return true}
-        b:=strings.builder_make(context.temp_allocator)
-        for program in programs {fmt.sbprintf(&b,"  pid %d: %s\n",program.pid,program.command)}
-        list:=strings.to_string(b)
-        if time.duration_seconds(time.tick_since(start))>=f64(limit) {
-            fmt.eprintf("mirai render: other programs of the engine are still open, and they load the GPU being measured:\n%s",list)
-            fmt.eprintfln("Close them (a session with mirai session stop <project>; another editor or player from its window or with %s) and run the check again. --allow-load measures anyway, with warnings and a cost that does not count; --quality does not depend on the load.",RENDER_KILL)
-            return false
-        }
-        if list!=shown {
-            fmt.eprintf("mirai render: waiting up to %d s for the other programs of the engine to close:\n%s",limit,list)
-            shown=list
-        }
-        time.sleep(2*time.Second)
     }
 }
 
@@ -838,17 +749,24 @@ render_log :: proc(out,name:string,size:[2]int) -> string {
 }
 
 // Opens the editor of target at size, measures every view and closes it. A
-// repeat goes to r.repeats, beside the first measures.
+// repeat goes to r.repeats, beside the first measures. The cost is measured
+// alone among the checkouts of root: the measurement is taken once the editor
+// is open and held until it closes.
 @(private="file")
-render_session :: proc(report:^Render_Report,r:^Render_Run,target:Render_Target,plan:Render_Plan,size:[2]int,out:string,repeat:bool) -> bool {
+render_session :: proc(root:string,report:^Render_Report,r:^Render_Run,target:Render_Target,plan:Render_Plan,size:[2]int,out:string,repeat:bool) -> bool {
     label:=repeat?fmt.tprintf("%s-repeat",target.name):target.name
     port:=RENDER_PORT
     e:=Render_Editor{run=r}
+    measure:workspace.Lock
+    defer workspace.lock_release(&measure)
     defer headless_close(&e)
     if !headless_open(&e,"render",label,target.editor,target.project,target.checkout,render_log(out,label,size),size,&port) {return false}
     // The load matters only to the cost.
-    if !r.quality {r.loaded||=render_load(report,e.process.pid,fmt.tprintf("%s at %dx%d, at the start",label,size.x,size.y),true)}
-    defer if !r.quality {r.loaded||=render_load(report,e.process.pid,fmt.tprintf("%s at %dx%d, at the end",label,size.x,size.y),false)}
+    if !r.quality {
+        measure=measure_lock(root,"render check")
+        r.loaded||=workspace.gpu_load(&report.warnings,{e.process.pid},fmt.tprintf("%s at %dx%d, at the start",label,size.x,size.y),true)
+    }
+    defer if !r.quality {r.loaded||=workspace.gpu_load(&report.warnings,{e.process.pid},fmt.tprintf("%s at %dx%d, at the end",label,size.x,size.y),false)}
     measured:=time.now()
     defer if !r.quality && workspace.builds_since(target.checkout,measured) {
         append(&report.warnings,fmt.aprintf("%s at %dx%d: a build ran at low priority while it measured: the CPU cost may be noisy",label,size.x,size.y))
@@ -1174,40 +1092,6 @@ render_images :: proc(m:^Render_Measure,window:[2]f64,bar,left,right,bottom:[4]f
     m.stability/=f64(pairs)
     for tile in tiles {m.stability_worst=max(m.stability_worst,tile/f64(pairs))}
     return region,true
-}
-
-// What else uses the GPU while the editor measured, idle, draws nothing:
-// with programs, the other programs of the engine; with nvidia-smi, how busy
-// the GPU is. loaded: either one.
-render_load :: proc(report:^Render_Report,own:int,when_:string,programs:bool) -> (loaded:bool) {
-    if programs {
-        for program in render_programs(own) {
-            append(&report.warnings,fmt.aprintf("%s: another program of the engine is open (pid %d, %s): it loads the GPU when it draws and holds its memory",when_,program.pid,program.path))
-            loaded=true
-        }
-    }
-    total,samples:=0,0
-    for _ in 0..<10 {
-        state,stdout,_,error:=subprocess.exec({command={"nvidia-smi","--query-gpu=utilization.gpu","--format=csv,noheader,nounits"}},context.temp_allocator)
-        if error!=nil || state.exit_code!=0 {break}
-        line:=strings.trim_space(string(stdout))
-        if cut:=strings.index_byte(line,'\n');cut>=0 {line=strings.trim_space(line[:cut])}
-        busy,valid:=strconv.parse_int(line,10)
-        if !valid {break}
-        total+=busy
-        samples+=1
-        time.sleep(200*time.Millisecond)
-    }
-    switch {
-    case samples==0:
-        note:="no nvidia-smi: whether another program uses the GPU was not measured"
-        for w in report.warnings {if w==note {return}}
-        append(&report.warnings,note)
-    case total/samples>=RENDER_GPU_BUSY:
-        append(&report.warnings,fmt.aprintf("%s: the GPU was %d %% busy while the check drew nothing: another program uses it and the measurement does not count",when_,total/samples))
-        loaded=true
-    }
-    return
 }
 
 @(private="file")

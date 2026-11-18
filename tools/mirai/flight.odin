@@ -581,7 +581,6 @@ bench_flight :: proc(root:string,args:[]string) -> int {
     mode:=Build_Mode.Release if o.release else Build_Mode.Dev
 
     load:Render_Report
-    render_load(&load,0,"at the start",true)
     if swept,kept:=session_copies_sweep(folder);swept>0 || kept>0 {
         fmt.eprintfln("mirai bench: deleted %d copies of %s whose editor ended%s",swept,folder,kept>0?fmt.tprintf("; %d could not be deleted while a process holds their files",kept):"")
     }
@@ -592,25 +591,28 @@ bench_flight :: proc(root:string,args:[]string) -> int {
         session_copy_remove(copy,"bench flight")
         return code
     }
-    // Measured alone: other measurements and compilations wait, and the
-    // editor opened is part of this measurement (MEASURE_ENV).
-    measure:=measure_lock(root,"bench flight")
-    defer workspace.lock_release(&measure)
-    if !workspace.measuring() {_=os.set_env(workspace.MEASURE_ENV,fmt.tprintf("%d",os.get_pid()))}
+    // The editor opened is part of this measurement (MEASURE_ENV); it opens
+    // before the measurement takes its turn, which other measurements,
+    // compilations and the GPU work of others wait for, and which it holds
+    // from the scene the flight opens to the end of the flight.
+    measure_env_set()
     file,code:=session_open(root,copy,mode,true,180,{"--width",fmt.tprintf("%d",size.x),"--height",fmt.tprintf("%d",size.y)})
     workspace.lock_release(&copy_lock)
     if code!=0 {
         session_copy_remove(copy,"bench flight")
         return code
     }
+    measure:=measure_lock(root,"bench flight")
+    workspace.gpu_load(&load.warnings,{file.pid},"at the start",true)
     fmt.eprintfln("mirai bench: flying %s in a copy of %s at %dx%d (pid %d)",path,relative,size.x,size.y,file.pid)
     e:=Flight_Editor{port=file.port,pid=file.pid,log=session_log_path(copy)}
     _=flight_fly(&e,&run,flight)
+    workspace.gpu_load(&load.warnings,{file.pid},"at the end",true)
+    workspace.lock_release(&measure)
     session_close(copy,file,true,"bench flight")
     log:=join(out,"editor.log")
     if bytes,error:=os.read_entire_file(e.log,context.temp_allocator);error==nil {_=os.write_entire_file(log,bytes)}
     session_copy_remove(copy,"bench flight")
-    render_load(&load,0,"at the end",true)
     append(&run.warnings,..load.warnings[:])
 
     markdown:=flight_markdown(run)

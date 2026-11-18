@@ -301,31 +301,48 @@ api_profile_capture :: proc(s:^Session,call:^api.Call) {
         if p.advance {limits-={.Pending}}
         if refusal:=profile_refusal(limits);refusal!="" {api.call_fail(call,api.SERVER_ERROR,refusal);return}
     }
-    // Frames that run here run alone among the checkouts, or not at all: in
-    // the turn this takes, or in that of the measurement the caller is part of.
+    // The frames that settle draw as any call that draws: not while another
+    // measurement runs. The frames it times run alone among the checkouts, or
+    // not at all: in the turn this takes only for them, or in that of the
+    // measurement the caller is part of.
+    wait:=time.Duration(p.wait)*time.Second
     measure:workspace.Lock
     defer workspace.lock_release(&measure)
-    if p.advance && s.engine_root!="" {
-        ok,compiling:bool
-        holder:string
-        measure,ok,holder,compiling=workspace.measure_try(s.engine_root,workspace.measure_holder(fmt.tprintf("profile.capture in %s",s.project_root)),time.Duration(p.wait)*time.Second,call.measure)
-        if holder=="" {holder="another process"}
-        what:=compiling?"A compilation":"Another measurement"
-        if !ok {api.call_failf(call,api.SERVER_ERROR,"%s runs (%s) and did not end within wait (%d s); mirai locks says who holds its turn, and the call can be made again when it ends",what,holder,p.wait);return}
+    if st:=api_state(s);p.advance && st!=nil && st.manual && !st.person {
+        if ok,holder:=gpu_work_begin(s,call.measure,max(wait,time.Nanosecond));!ok {
+            api.call_failf(call,api.SERVER_ERROR,"Another measurement runs (%s) and did not end within wait (%d s); mirai locks says who holds its turn, and the call can be made again when it ends",holder,p.wait)
+            return
+        }
     }
     // While another capture records, profile_begin refuses: no frames run into it.
     profile_collect(s)
     warmup,settled:=0,true
     if p.advance && s.profiles.recording==0 {
-        wait:=time.Duration(p.wait)*time.Second
         if ok,_:=api_view_wait(s,call,p.dt,started,wait);!ok {return}
         warmup,settled=profile_settle(s,p.dt)
         // What the frames of the warmup found being made.
         if ok,_:=api_view_wait(s,call,p.dt,started,wait);!ok {return}
     }
+    loaded:=make([dynamic]string,context.temp_allocator)
+    if p.advance && s.engine_root!="" {
+        // Waiting for the turn it draws nothing: no measurement waits for it.
+        gpu_turn_use(s,true)
+        ok:bool
+        holder:string
+        why:workspace.Measure_Wait
+        measure,ok,holder,why=workspace.measure_try(s.engine_root,workspace.measure_holder(fmt.tprintf("profile.capture in %s",s.project_root)),max(wait-time.tick_since(started),0),call.measure)
+        if !ok {
+            what:=why==.Build?"A compilation":why==.Gpu?"GPU work of another process":"Another measurement"
+            api.call_failf(call,api.SERVER_ERROR,"%s runs (%s) and did not end within wait (%d s); mirai locks says who holds its turn, and the call can be made again when it ends",what,holder,p.wait)
+            return
+        }
+        // What else loads the GPU, said by the measurement that holds the turn.
+        if measure.held {workspace.gpu_load(&loaded,{os.get_pid()},"Before the frames",true)}
+    }
     c,error:=profile_begin(s,p.frames,base.text_get(p.label[:]),p.memory)
     if c==nil {api.call_fail(call,api.SERVER_ERROR,error);return}
     c.warmup,c.unsettled=warmup,!settled
+    profile_loaded_set(c,loaded[:])
     if !p.advance {
         api.call_result(call,Api_Profile_Summary)^={id=c.id,label=c.label,state=.Recording,frames_requested=p.frames}
         return
@@ -546,6 +563,7 @@ profile_notes :: proc(c:^Profile_Capture,out:Api_Profile_Summary) -> []string {
         append(&notes,fmt.tprintf("The engine is built with -o:%s: times are not those of a release; mirai build engine --release builds it at Speed before measuring",strings.to_lower(k.optimization)))
     }
     if k.write_checks {append(&notes,"MIRAI_CHECK_WRITES is on: every function of the loops checks what it writes")}
+    append(&notes,..c.loaded)
     if k.validation {append(&notes,"Graphics API validation is on: CPU and GPU times are inflated; measure without it")}
     if k.headless && !k.manual {append(&notes,"Headless: no display, so pacing and vsync do not apply")}
     if k.manual {append(&notes,"Manual editor: frames run on request, so the wait between them is left out and a frame time is the work of that frame")}
