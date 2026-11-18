@@ -519,9 +519,10 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Run tests | `mirai test [<package>] [test\|file.odin...] [--list\|--failed\|--no-gpu\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
 | Headless background editor | `mirai session start\|restart\|stop\|status [project] [--release] [--copy]` |
 | Call the editor API | `mirai rpc <method> [key=value...\|json] [--select c] [--wait-until c=v] [--project P]` |
-| Capture without UI | `mirai capture [project] --out x.png [--reference r.png] [--repeat]` |
+| Capture without UI | `mirai capture [project] --out x.png [--camera NAME] [--reference r.png]` |
 | Validate demo image and cost | `mirai render check [project] [--views a,b] [--quality] [--release]` |
 | Measure the cost against main | `mirai bench compare [project] --base main` |
+| Fly a scene and find its hitches | `mirai bench flight [project] <flight> [--limit MS]` |
 | Compare and crop images | `mirai image diff\|mottle\|stats\|montage\|crop\|zoom\|pick ...` |
 | Measure only between measurements | `mirai measure -- <command> [arguments...]` |
 | See who is building or measuring | `mirai locks` |
@@ -689,7 +690,8 @@ self-contained Python (PEP 723, with the header of the existing ones) run with `
 scripts/<script>.py`, without a `.venv` in the repo. A script uses `mirai` or the editor API like
 any user and nothing in the engine depends on them; bash remains only in the launcher.
 
-- The frame cost against the base is measured by `mirai bench compare`, without pair scripts;
+- Hitches while flying a scene are measured by `mirai bench flight`, without scripts of keys;
+  the frame cost against the base is measured by `mirai bench compare`, without pair scripts;
   `scripts/bench_compare.py` is for another measurement the user asks for, whose table goes in the
   task's final report.
 - A script that measures times runs with `mirai measure -- uv run scripts/<script>.py`

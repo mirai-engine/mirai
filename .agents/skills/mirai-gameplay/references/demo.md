@@ -34,6 +34,8 @@ badge and the hum); `mirai content <project>` runs it. It does not go into the g
 - `cook.mirai`: the prefabs and materials that only code picks by path.
 - `render_check.mirai`: the fixed views that `mirai render check` measures
   ([render check](../../mirai-rendering/references/verification.md#render-check)).
+- `captures.mirai`: the named cameras, and `tests/flights/`: the flights of
+  `mirai bench flight` ([profiling](../../mirai-agent-api/references/methods.md#profiling)).
 - `game/` and `assets/`, with the art sources beside what they make.
 
 Scenes:
