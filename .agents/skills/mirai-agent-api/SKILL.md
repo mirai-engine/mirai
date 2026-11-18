@@ -162,8 +162,9 @@ positions misses both.
 
 ### Checking an image
 
-1. `mirai capture [project] --out x.png` with the scene and the camera; without `--reference` it
-   measures the image (`stats`).
+1. `mirai capture [project] --out x.png` with the scene and the camera, or `--camera NAME`, a
+   [named camera](references/api.md#mirai-capture); without `--reference` it measures the image
+   (`stats`).
 2. If it exits with 1, read `validation_messages` and `console` of the JSON before repeating (or
    `engine.diagnostics`). If the image looks wrong, `textures_pending` above 0 is streaming that
    had not finished, and `instances_drawn` at 0 is a camera that sees nothing.
