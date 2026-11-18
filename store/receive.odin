@@ -46,7 +46,7 @@ CLAIMED :: ".claimed"
 // pieces are all here is completed.
 receive_begin :: proc(s:^Store,hash:Hash,size:i64,pieces:[]Hash) -> Error {
     if size<0 || len(pieces)!=piece_count(size) {return .Invalid_Argument}
-    if table_address(size,pieces)!=hash {return .Corrupt}
+    if address_value(size,pieces)!=hash {return .Corrupt}
     if has(s,hash) {
         partial_discard(s,hash)
         return .None
@@ -87,7 +87,7 @@ receive_piece :: proc(s:^Store,hash:Hash,index:int,piece:[]u8) -> Error {
     if index<0 || index>=p.count || len(piece)!=piece_size(p.size,index) {return .Invalid_Argument}
     expected:Hash
     read_exact(p.table,expected[:],TABLE_HEADER+i64(index)*size_of(Hash)) or_return
-    if piece_value(piece,index)!=expected {return .Corrupt}
+    if piece_value(piece,index,p.size)!=expected {return .Corrupt}
     if _,write_error:=os.write_at(p.data,piece,i64(index)*PIECE_BYTES);write_error!=nil {return os_error(write_error)}
     mark:=[1]u8{1}
     if _,write_error:=os.write_at(p.have,mark[:],i64(index));write_error!=nil {return os_error(write_error)}
@@ -221,7 +221,7 @@ partial_finish :: proc(s:^Store,hash:Hash) -> Error {
     if claimed==.Missing {return .None}
     if claimed!=.None {return claimed}
     defer claim_end(s,hash,&c)
-    complete:=claim_verify(hash,&c) or_return
+    complete:=claim_verify(s,hash,&c) or_return
     if !complete {return .None}
     return claim_publish(s,hash,&c)
 }
@@ -250,7 +250,7 @@ partial_claim :: proc(s:^Store,hash:Hash,c:^Claim) -> Error {
 // and the table the address. A piece that does not match is marked missing
 // again; a table that does not match is Corrupt and the folder is discarded.
 @(private)
-claim_verify :: proc(hash:Hash,c:^Claim) -> (complete:bool,error:Error) {
+claim_verify :: proc(s:^Store,hash:Hash,c:^Claim) -> (complete:bool,error:Error) {
     p:Partial
     p,error=partial_open_at(c.partial,{.Data,.Have})
     if error==.Corrupt {c.discard=true}
@@ -258,25 +258,24 @@ claim_verify :: proc(hash:Hash,c:^Claim) -> (complete:bool,error:Error) {
     defer partial_close(&p)
     full:=partial_full(&p) or_return
     if !full {return false,.None}
-    Checking :: struct {
-        buffer:[PIECE_BYTES]u8,
-        p:^Partial,
-        damaged:bool,
+    pieces,make_error:=make([]Hash,p.count,s.allocator)
+    if make_error!=nil {return false,.Out_Of_Memory}
+    defer delete(pieces,s.allocator)
+    read_exact(p.table,mem.slice_to_bytes(pieces),TABLE_HEADER) or_return
+    buffer:[PIECE_BYTES]u8=---
+    damaged:=false
+    for index in 0..<p.count {
+        _,_,good:=partial_piece(&p,index,&buffer) or_return
+        if !good {damaged=true}
     }
-    checking:=Checking{p=&p}
-    address:=address_value(p.size,proc(user:rawptr,index:int) -> (Hash,Error) {
-        c:=(^Checking)(user)
-        entry,_,good,error:=partial_piece(c.p,index,&c.buffer)
-        if !good {c.damaged=true}
-        return entry,error
-    },&checking) or_return
+    address:=address_value(p.size,pieces)
     data_size,size_error:=os.file_size(p.data)
     if size_error!=nil {return false,os_error(size_error)}
     if address!=hash || data_size>p.size {
         c.discard=true
         return false,.Corrupt
     }
-    return !checking.damaged,.None
+    return !damaged,.None
 }
 
 // Moves the checked data into the blob's place, and its table to the kept tables.
@@ -316,7 +315,7 @@ partial_piece :: proc(p:^Partial,index:int,buffer:^[PIECE_BYTES]u8) -> (entry:Ha
     piece=buffer[:piece_size(p.size,index)]
     got:=read_exact(p.data,piece,i64(index)*PIECE_BYTES)
     if got!=.None && got!=.Corrupt {return entry,nil,false,got}
-    if got==.None && piece_value(piece,index)==entry {return entry,piece,true,.None}
+    if got==.None && piece_value(piece,index,p.size)==entry {return entry,piece,true,.None}
     unmark:=[1]u8{0}
     if _,write_error:=os.write_at(p.have,unmark[:],i64(index));write_error!=nil {return entry,nil,false,os_error(write_error)}
     return entry,nil,false,.None

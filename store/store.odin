@@ -9,7 +9,7 @@ import "core:os"
 // one root without locks: every file appears whole through a rename.
 
 // The first line of the root's layout file; another one is refused.
-LAYOUT :: "mirai store 1\n"
+LAYOUT :: "mirai store 2\n"
 ROOT_MAX :: 1024 // bytes of a root path
 NAME_MAX :: 128  // bytes of a ref namespace or name
 

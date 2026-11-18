@@ -33,7 +33,7 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     if !testing.expect_value(t,error,Error.None) {return}
     h:=base.Hostile{state=42}
     data:=test_bytes(3*PIECE_BYTES+9,5)
-    hash:=address_of_bytes(data)
+    hash:=test_address(data)
     pieces:=test_table(data)
     random:=make([]u8,PIECE_BYTES+3,context.temp_allocator)
     for _ in 0..<64 {
@@ -76,6 +76,7 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     for d in ([]Damage{{damaged},{damaged[:PIECE_BYTES]},{nil},{data[:PIECE_BYTES+6]}}) {
         testing.expect(t,os.write_entire_file(path,d.bytes)==nil)
         testing.expect_value(t,verify(&s,stored),Error.Corrupt)
+        os.remove(path_in(folder,"tables",hex_of(stored)[:2],hex_of(stored)))
         _,table_error:=blob_table(&s,stored,context.temp_allocator)
         testing.expect_value(t,table_error,Error.Corrupt)
     }
@@ -115,13 +116,17 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     // Memory that runs out.
     out:=s
     out.allocator=failing_allocator()
-    _,table_error:=blob_table(&s,address_of_bytes(data[:PIECE_BYTES]),out.allocator)
+    _,table_error:=blob_table(&s,test_address(data[:PIECE_BYTES]),out.allocator)
     testing.expect_value(t,table_error,Error.Missing)
     good,_:=put_bytes(&s,data[:10])
     _,table_error=blob_table(&s,good,out.allocator)
     testing.expect_value(t,table_error,Error.Out_Of_Memory)
     _,missing_error=receive_missing(&s,hash,out.allocator)
     testing.expect_value(t,missing_error,Error.Out_Of_Memory)
+    _,bytes_error:=address_of_bytes(data,out.allocator)
+    testing.expect_value(t,bytes_error,Error.Out_Of_Memory)
+    _,file_error:=put_file(&out,path_in(folder,"layout"))
+    testing.expect_value(t,file_error,Error.Out_Of_Memory)
     _,path_error:=blob_path(&s,good,out.allocator)
     testing.expect_value(t,path_error,Error.Out_Of_Memory)
     _,list_error:=ref_list(&out,"ns",context.temp_allocator)
@@ -129,7 +134,7 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     _,sweep_error:=sweep(&out,{good})
     testing.expect_value(t,sweep_error,Error.Out_Of_Memory)
     other,_:=put_bytes(&s,data[:20])
-    testing.expect_value(t,receive_begin(&out,address_of_bytes(data[:PIECE_BYTES+1]),PIECE_BYTES+1,test_table(data[:PIECE_BYTES+1])),Error.None)
+    testing.expect_value(t,receive_begin(&out,test_address(data[:PIECE_BYTES+1]),PIECE_BYTES+1,test_table(data[:PIECE_BYTES+1])),Error.None)
     testing.expect(t,has(&s,other))
     _,open_error:=open(path_in(folder,"other"),failing_allocator())
     testing.expect_value(t,open_error,Error.Out_Of_Memory)
@@ -138,7 +143,7 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     testing.expect(t,leaked==0 && bad_frees==0,"the store keeps no memory past close")
 
     // Roots it refuses.
-    testing.expect(t,os.write_entire_file(path_in(folder,"layout"),transmute([]u8)string("mirai store 0\n"))==nil)
+    testing.expect(t,os.write_entire_file(path_in(folder,"layout"),transmute([]u8)string("mirai store 1\n"))==nil)
     _,layout_error:=open(folder)
     testing.expect_value(t,layout_error,Error.Unsupported_Layout)
     _,long_error:=open(strings.repeat("x",ROOT_MAX+1,context.temp_allocator))

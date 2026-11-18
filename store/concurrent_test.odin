@@ -19,7 +19,7 @@ Worker :: struct {
 
 @(private="file")
 worker_receive :: proc(w:^Worker,data:[]u8,pieces:[]Hash) {
-    hash:=address_of_bytes(data)
+    hash:=test_address(data)
     if error:=receive_begin(w.s,hash,i64(len(data)),pieces);error!=.None {w.error=error;return}
     for i in 0..<len(pieces) {
         index:=(i+w.seed)%len(pieces)
@@ -69,10 +69,10 @@ two_stores_on_one_root_put_and_receive_from_several_threads :: proc(t:^testing.T
     }
     for w,i in workers {
         testing.expectf(t,w.error==.None,"worker %d: %v",i,w.error)
-        testing.expect_value(t,verify(&a,address_of_bytes(w.own)),Error.None)
+        testing.expect_value(t,verify(&a,test_address(w.own)),Error.None)
     }
     for data in shared {
-        hash:=address_of_bytes(data)
+        hash:=test_address(data)
         testing.expect_value(t,verify(&a,hash),Error.None)
         testing.expect_value(t,verify(&b,hash),Error.None)
         missing,error:=receive_missing(&b,hash,context.temp_allocator)
