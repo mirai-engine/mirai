@@ -18,7 +18,8 @@ TEST_LIST_USAGE :: "test <package> [file.odin...] --list [--no-gpu]"
 // names and by the files that declare them; neither is all of it. nothing:
 // there is no test of it to run, so it is not built. owner: the project it
 // belongs to; empty for a package of the engine.
-Test_Package :: struct {path,folder,owner:string,names,files:[dynamic]string,nothing:bool}
+// gpu: a test it runs reaches the device of the GPU tests.
+Test_Package :: struct {path,folder,owner:string,names,files:[dynamic]string,nothing,gpu:bool}
 
 // What compiling and running the tests took. turn: waiting for other
 // compilations. built, current: test executables compiled, and found as their
@@ -126,6 +127,9 @@ cmd_test :: proc(root:string,args:[]string) -> int {
         if len(packages)>1 {fmt.printfln("== %s",p.path)}
         options:=build.Test_Options{names=p.names[:],timeout=timeout,quiet=quiet}
         lock,measuring:=test_measure_begin(root,p.path,benchmark,&options)
+        // After the measurement, which a turn of the GPU never waits for while it holds one.
+        turn:workspace.Lock
+        if p.gpu {turn,_=gpu_turn(root,"",fmt.tprintf("test %s",p.path))}
         ran:=time.tick_now()
         ok:bool
         names:[]string
@@ -134,11 +138,13 @@ cmd_test :: proc(root:string,args:[]string) -> int {
         } else if test_build_say(p.path,builds[i]) {
             ok,names=test_execute(root,p.path,&builds[i],options)
         } else {
+            workspace.lock_release(&turn)
             test_measure_end(&lock,measuring)
             append(&failed,p.path)
             continue
         }
         times.run+=time.tick_since(ran)
+        workspace.lock_release(&turn)
         test_measure_end(&lock,measuring)
         // A run that ended badly without naming a failed test leaves the list of before.
         if ok || len(names)>0 {test_failed_save(test_executable(root,p),p.names[:],names)}
@@ -423,7 +429,7 @@ test_list :: proc(packages:[]Test_Package,no_gpu:bool) -> int {
 test_names_check :: proc(root:string,packages:[]Test_Package,failed_only,no_gpu:bool) -> bool {
     ok:=true
     for &p in packages {
-        declared:=test_declared(p.folder,device=no_gpu)
+        declared:=test_declared(p.folder,device=true)
         names:=make([dynamic]string,context.temp_allocator)
         for test in declared {
             if test.here {append(&names,test.name)}
@@ -476,6 +482,10 @@ test_names_check :: proc(root:string,packages:[]Test_Package,failed_only,no_gpu:
         if len(device)==0 || p.nothing {continue}
         asked:=make(map[string]bool,context.temp_allocator)
         for name in p.names {asked[build.test_bare(name)]=true}
+        if !no_gpu {
+            for test in declared {p.gpu||=test.here && test.device && (len(asked)==0 || test.name in asked)}
+            continue
+        }
         kept:=make([dynamic]string)
         left:=0
         for test in declared {

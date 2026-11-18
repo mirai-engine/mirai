@@ -25,8 +25,8 @@ PRIO_PROCESS :: 0
 LOW_NICENESS :: 10
 NICENESS_MOST :: 19
 
-_start :: proc(desc:os.Process_Desc,limits:Limits) -> (process:Process,error:os.Error) {
-    process=spawn(desc,limits,false) or_return
+_start :: proc(desc:os.Process_Desc,limits:Limits,inherit:[]uintptr) -> (process:Process,error:os.Error) {
+    process=spawn(desc,limits,false,inherit) or_return
     // The watcher joins the group of the child and kills it once this process
     // is gone. Both set the group, so that it is in it whichever runs first.
     // The watcher is forked with every descriptor of this process; start
@@ -47,8 +47,13 @@ _start :: proc(desc:os.Process_Desc,limits:Limits) -> (process:Process,error:os.
     return
 }
 
-_detached :: proc(desc:os.Process_Desc) -> (process:Process,error:os.Error) {
-    return spawn(desc,{},true)
+_detached :: proc(desc:os.Process_Desc,inherit:[]uintptr) -> (process:Process,error:os.Error) {
+    return spawn(desc,{},true,inherit)
+}
+
+// Closed on exec: only a child that names it in inherit keeps it.
+_handle_keep :: proc(handle:uintptr) -> bool {
+    return handle<=uintptr(max(i32)) && posix.fcntl(posix.FD(handle),.SETFD,posix.FD_CLOEXEC)!=-1
 }
 
 // The whole group: the child, what it started and the watcher, which only
@@ -100,10 +105,11 @@ priority_rank :: proc() -> int {
 }
 
 // Forks and executes desc in a process group of its own, or a session of its
-// own when detached. Between fork and exec the child only makes system calls:
-// everything it needs is prepared before.
+// own when detached, keeping the descriptors of inherit open across exec.
+// Between fork and exec the child only makes system calls: everything it
+// needs is prepared before.
 @(private="file")
-spawn :: proc(desc:os.Process_Desc,limits:Limits,detached:bool) -> (process:Process,error:os.Error) {
+spawn :: proc(desc:os.Process_Desc,limits:Limits,detached:bool,inherit:[]uintptr) -> (process:Process,error:os.Error) {
     scratch:=context.temp_allocator
     program:=executable(desc.command[0],scratch) or_return
     arguments:=make([]cstring,len(desc.command)+1,scratch) or_return
@@ -136,6 +142,7 @@ spawn :: proc(desc:os.Process_Desc,limits:Limits,detached:bool) -> (process:Proc
         _=posix.sigprocmask(.SETMASK,&mask,nil)
         _=posix.signal(.SIGPIPE,transmute(proc "c" (posix.Signal))posix.SIG_DFL)
         for stream,i in streams {_=posix.dup2(stream,posix.FD(i))}
+        for fd in inherit {_=posix.fcntl(posix.FD(fd),.SETFD,c.int(0))}
         if limits.priority==.Low {_=setpriority(PRIO_PROCESS,0,priority)}
         when ODIN_OS==.Linux {
             if limits.memory>0 {

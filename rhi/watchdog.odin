@@ -21,6 +21,9 @@ import "core:time"
 // Off unless set: first frames that build acceleration structures and slow
 // devices wait for the GPU long and validly.
 WATCHDOG_VARIABLE :: "MIRAI_GPU_WATCHDOG_MS"
+// The limit the tools set for a program no person watches, ms: under the time
+// a display driver gives the GPU before it resets it.
+WATCHDOG_UNWATCHED_MS :: 1500
 // What a process the watchdog ended exits with: that of a command a timeout ended.
 WATCHDOG_EXIT_CODE :: 124
 // Submissions watched at once; past them the newest takes the place of the one before it.

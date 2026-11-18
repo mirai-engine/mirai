@@ -54,6 +54,11 @@ Port_File :: struct {
     manual:bool,   // headless, driven by the API frame by frame; false for an editor with a window
 }
 
+// A manual editor that holds a device and gets no call for this long closes
+// itself, as engine.shutdown closes it: it gives back its turn of the GPU, and
+// the next command that needs it opens it again.
+SESSION_IDLE :: 30*time.Minute
+
 // <project>/.mirai/session.json: the editor mirai session opened last in the
 // project, with the mode of its binaries and its arguments, which restart
 // repeats. An editor that it and the port file name was opened by mirai

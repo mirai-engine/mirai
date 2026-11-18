@@ -108,11 +108,11 @@ session_log_path :: proc(folder:string) -> string {
 }
 
 // Starts an editor that outlives this process, writing stdout and stderr to
-// log, which it truncates.
-detached_logged :: proc(command:[]string,log,working_dir:string) -> (process:subprocess.Process,error:os.Error) {
+// log, which it truncates; it holds the handles of inherit too.
+detached_logged :: proc(command:[]string,log,working_dir:string,inherit:=[]uintptr{}) -> (process:subprocess.Process,error:os.Error) {
     file:=os.open(log,{.Write,.Create,.Trunc}) or_return
     defer os.close(file)
-    return subprocess.detached({command=command,working_dir=working_dir,stdout=file,stderr=file})
+    return subprocess.detached({command=command,working_dir=working_dir,stdout=file,stderr=file},inherit)
 }
 
 // The port file of the editor of the project at folder, when its process is alive.
@@ -296,11 +296,17 @@ session_open :: proc(root,folder:string,mode:Build_Mode,no_build:bool,timeout:in
     log:=session_log_path(folder)
     engine:=build.engine_mode_resolve(root,mode)
     editor_args:=session_api_args(editor_args)
+    turn:workspace.Lock
+    charge:i64
+    if !slice.contains(editor_args,"--no-gpu") {turn,charge=gpu_turn(root,folder,fmt.tprintf("session start %s",folder))}
+    defer workspace.lock_release(&turn)
     command:=make([dynamic]string)
     append(&command,project_engine_paths(root,folder,engine).editor_program,"--project",folder,"--headless")
     append(&command,..editor_args)
-    process,error:=detached_logged(command[:],log,root)
+    append(&command,..gpu_turn_args(&turn))
+    process,error:=detached_logged(command[:],log,root,gpu_turn_inherit(&turn))
     if error!=nil {fmt.eprintfln("mirai session: could not open %s: %v",command[0],error);return {},1}
+    gpu_turn_hand_over(&turn,process,fmt.tprintf("the session of %s",folder),charge)
     session_record_write(folder,{process.pid,editor_args})
     deadline:=time.tick_now()
     for time.duration_seconds(time.tick_since(deadline))<f64(timeout) {

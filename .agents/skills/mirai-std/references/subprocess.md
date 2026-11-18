@@ -45,9 +45,11 @@ other package.
   terminal.
 - `detached` gives the child a windowless console of its own and takes it out of the caller's job if
   the job allows it: closing the terminal, Ctrl+C in it or ending the job does not terminate it.
-- The child inherits only stdin, stdout and stderr: the pipes of other children launched at the same
-  time do not stay open in it. The command line follows the rules of the C runtime, without
-  `cmd.exe`.
+- The child inherits only stdin, stdout and stderr, and the handles (descriptors on POSIX) the
+  caller names in `inherit`, with the same values: the pipes of other children launched at the same
+  time do not stay open in it, and what an inherited handle locks stays locked while it runs. A
+  process that got one keeps it from its own children with `handle_keep` until it names it again.
+  The command line follows the rules of the C runtime, without `cmd.exe`.
 - The stdin pipe does not block, and a write larger than the free space delivers nothing: `write`
   passes 4 KB at a time.
 - Why not `core:os`: [compiler workarounds](../../../../docs/ODIN_WORKAROUNDS.md).
