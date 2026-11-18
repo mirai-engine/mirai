@@ -23,12 +23,9 @@ piece_size :: proc "contextless" (size:i64,index:int) -> int {
     return int(min(size-i64(index)*PIECE_BYTES,PIECE_BYTES))
 }
 
-// The address of bytes in memory; its piece table, 32 bytes a piece, is held
-// with allocator while it is computed.
-address_of_bytes :: proc(data:[]u8,allocator:=context.allocator) -> (hash:Hash,error:Error) {
-    pieces:=bytes_table(data,allocator) or_return
-    defer delete(pieces,allocator)
-    return address_value(i64(len(data)),pieces),.None
+// The address of bytes in memory.
+address_of_bytes :: proc "contextless" (data:[]u8) -> Hash {
+    return Hash(blake3.hash(data))
 }
 
 // The address of the file at path, read once piece by piece; its piece table

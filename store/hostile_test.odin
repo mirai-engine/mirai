@@ -123,8 +123,6 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     testing.expect_value(t,table_error,Error.Out_Of_Memory)
     _,missing_error=receive_missing(&s,hash,out.allocator)
     testing.expect_value(t,missing_error,Error.Out_Of_Memory)
-    _,bytes_error:=address_of_bytes(data,out.allocator)
-    testing.expect_value(t,bytes_error,Error.Out_Of_Memory)
     _,file_error:=put_file(&out,path_in(folder,"layout"))
     testing.expect_value(t,file_error,Error.Out_Of_Memory)
     _,path_error:=blob_path(&s,good,out.allocator)
