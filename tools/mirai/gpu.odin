@@ -87,4 +87,8 @@ gpu_turns_print :: proc(root:string) {
         if holder.since!={} {fmt.printf(", for %s",duration_text(time.diff(holder.since,now)))}
         fmt.println()
     }
+    memory,_:=workspace.gpu_memory(root)
+    if over:=workspace.gpu_held_over(memory,holders);over>0 {
+        fmt.printfln("  %-14s the holders held %.1f GiB more than the card has for the turns beside the part left to the desktop: it may be paging memory out and its frames slow","",f64(over)/(1<<30))
+    }
 }

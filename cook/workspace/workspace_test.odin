@@ -2,6 +2,8 @@ package workspace
 
 import "core:fmt"
 import "core:os"
+import "core:strconv"
+import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:std/base"
@@ -285,6 +287,66 @@ the_card_is_the_smallest_of_its_own_whoever_said_it_last :: proc(t:^testing.T) {
     }
 }
 
+// A holder raises its charge to what it held while it runs and never lowers
+// it; what the holders held beyond the card is told.
+@(test)
+a_holder_raises_its_charge_to_what_it_held :: proc(t:^testing.T) {
+    if measuring() {return}
+    root:=base.test_folder(t,"workspace")
+    if root=="" {return}
+    MIB :: i64(1)<<20
+    Case :: struct {name:string,what:string,charge:i64,part_of:string,held:[]i64,charge_after:i64,held_after:i64}
+    cases:=[]Case{
+        {name="what it holds passes its charge",what="pid 41, the session of a",charge=1613*MIB,held={4096*MIB},charge_after=4096*MIB,held_after=4096*MIB},
+        {name="less than its charge leaves it",what="pid 42, the session of b",charge=3000*MIB,held={1000*MIB},charge_after=3000*MIB,held_after=1000*MIB},
+        {name="never lowered while it runs",what="pid 43, the session of c",charge=1000*MIB,held={2500*MIB,900*MIB},charge_after=2500*MIB,held_after=2500*MIB},
+        {name="an unknown project keeps its charge",what="pid 44, the session of d",charge=GPU_CHARGE_DEFAULT,held={2000*MIB},charge_after=GPU_CHARGE_DEFAULT,held_after=2000*MIB},
+        {name="the turn of a measurement stays one",what="pid 45, the editor of mirai bench, head",charge=500*MIB,part_of="77",held={800*MIB},charge_after=800*MIB,held_after=800*MIB},
+    }
+    for c in cases {
+        lock,taken,_:=gpu_try(root,c.what,c.charge,person=true,part_of=c.part_of)
+        if !testing.expectf(t,taken,"%s: a turn",c.name) {continue}
+        before:=gpu_holders(root,context.temp_allocator)
+        turn:=-1
+        for held in c.held {turn=gpu_turn_raise(root,pid_of(c.what),held,turn)}
+        testing.expectf(t,turn>=0,"%s: its turn is found by its pid",c.name)
+        holders:=gpu_holders(root,context.temp_allocator)
+        testing.expect_value(t,len(holders),1)
+        if len(holders)==1 {
+            testing.expectf(t,holders[0].charge==c.charge_after && holders[0].held==c.held_after,"%s: charged %d MiB holding %d",c.name,holders[0].charge>>20,holders[0].held>>20)
+            testing.expectf(t,strings.has_prefix(holders[0].holder,c.what) && gpu_holder_measurement(holders[0].holder)==c.part_of,"%s: %s",c.name,holders[0].holder)
+            testing.expectf(t,len(before)==1 && holders[0].since==before[0].since,"%s: held since when it was taken",c.name)
+        }
+        testing.expect_value(t,gpu_turn_raise(root,99999,c.charge,turn),-1)
+        lock_release(&lock)
+    }
+    GB :: i64(1)<<30
+    testing.expect_value(t,gpu_held_over(8*GB,{{held=3*GB},{held=3*GB}}),i64(0))
+    testing.expect_value(t,gpu_held_over(8*GB,{{held=4*GB},{held=4*GB}}),GB)
+}
+
+// An unattended program runs on the card the turns account for, or on the
+// adapter MIRAI_GPU names; before a card is known, on any.
+@(test)
+an_unattended_program_runs_on_the_card_of_the_turns :: proc(t:^testing.T) {
+    card:=Gpu_Card{8406433792,true,"NVIDIA GeForce RTX 3070"}
+    shared:=Gpu_Card{11343167488,false,"AMD Radeon(TM) Graphics"}
+    Case :: struct {name:string,card:Gpu_Card,known:bool,device:string,preferred:string,refused:bool}
+    cases:=[]Case{
+        {name="on the card",card=card,known=true,device=card.name},
+        {name="on the integrated adapter",card=card,known=true,device=shared.name,refused=true},
+        {name="on the one MIRAI_GPU names",card=card,known=true,device=shared.name,preferred="amd"},
+        {name="MIRAI_GPU names another",card=card,known=true,device=shared.name,preferred="nvidia",refused=true},
+        {name="no card known yet",device=shared.name},
+        {name="the turns know only shared memory",card=shared,known=true,device="Other"},
+        {name="without a device",card=card,known=true},
+    }
+    for c in cases {
+        problem:=gpu_off_card(c.card,c.known,c.device,c.preferred)
+        testing.expectf(t,(problem!="")==c.refused,"%s: %q",c.name,problem)
+    }
+}
+
 // The turns of one measurement run at once beyond the card while no one else
 // holds a turn; beside another holder they need the room.
 @(test)
@@ -306,4 +368,13 @@ the_turns_of_a_measurement_share_the_card_when_alone :: proc(t:^testing.T) {
     _,refused,_:=gpu_try(root,"pid 1, the editor of mirai bench, head",3*GB,part_of="77")
     testing.expect(t,!refused,"beside another holder a measurement needs the room")
     lock_release(&other)
+}
+
+// The pid a holder's text names first.
+@(private="file")
+pid_of :: proc(what:string) -> int {
+    rest:=strings.trim_prefix(what,"pid ")
+    end:=strings.index(rest,",")
+    pid,_:=strconv.parse_int(rest[:end] if end>=0 else rest,10)
+    return pid
 }

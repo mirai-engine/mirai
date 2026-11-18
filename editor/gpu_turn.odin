@@ -17,6 +17,7 @@ Gpu_Turn :: struct {
     peak:i64,           // the most memory of the device this editor held
     kept:i64,           // the peak in the cache, which only grows while it runs
     pressed:bool,       // the device held close to what the driver let it (workspace.gpu_pressed)
+    turn:int,           // the number of the turn that names this editor its holder; -1 before it is found
 }
 
 GPU_WATCH_INTERVAL :: time.Second
@@ -25,6 +26,7 @@ GPU_WATCH_INTERVAL :: time.Second
 // starts but the editor it starts again as (gpu_turn_pass).
 @(private)
 gpu_turn_take :: proc(s:^Session,handle:uintptr) {
+    s.gpu.turn=-1
     if handle!=0 && subprocess.handle_keep(handle) {s.gpu.handle=handle}
 }
 
@@ -47,7 +49,8 @@ gpu_turn_handed :: proc(s:^Session,pid:int) {
 }
 
 // Keeps the memory of the card and a peak of the session above the one kept
-// at once, so that one that ends badly still leaves it.
+// at once, so that one that ends badly still leaves it, and raises the charge
+// of its turn to what it held.
 @(private)
 gpu_watch :: proc(s:^Session) {
     device:=s.app.device
@@ -62,6 +65,7 @@ gpu_watch :: proc(s:^Session) {
     used,budget:=rhi.device_memory(device)
     s.gpu.peak=max(s.gpu.peak,i64(used))
     s.gpu.pressed||=workspace.gpu_pressed(i64(used),i64(budget))
+    if s.gpu.handle!=0 {s.gpu.turn=workspace.gpu_turn_raise(s.engine_root,os.get_pid(),s.gpu.peak,s.gpu.turn)}
     if s.gpu.peak>s.gpu.kept {
         workspace.gpu_peak_write(s.engine_root,s.project_root,s.gpu.peak)
         s.gpu.kept=s.gpu.peak

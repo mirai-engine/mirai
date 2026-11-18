@@ -43,6 +43,10 @@ GPU_CARD_FILE :: "card"
 GPU_CHARGE_SUFFIX :: " MiB of the GPU"
 @(private)
 GPU_MEASUREMENT_TAG :: ", measuring for pid "
+@(private)
+GPU_HELD_TAG :: ", held "
+@(private)
+GPU_HELD_SUFFIX :: " MiB at most"
 
 // The file of a turn.
 gpu_turn_path :: proc(root:string,turn:int,allocator:=context.allocator) -> string {
@@ -50,10 +54,31 @@ gpu_turn_path :: proc(root:string,turn:int,allocator:=context.allocator) -> stri
 }
 
 // What the holder of a turn writes: what, the measurement it is part of
-// (its MEASURE_ENV; "" for none) and what it is charged.
-gpu_holder_text :: proc(what:string,charge:i64,part_of:="",allocator:=context.temp_allocator) -> string {
+// (its MEASURE_ENV; "" for none), what it is charged and the most it held
+// (0 before it says).
+gpu_holder_text :: proc(what:string,charge:i64,part_of:="",held:=i64(0),allocator:=context.temp_allocator) -> string {
     tag:=part_of!=""?strings.concatenate({GPU_MEASUREMENT_TAG,part_of},context.temp_allocator):""
+    if held>0 {return fmt.aprintf("%s%s, %d%s%s%d%s",what,tag,max(charge,0)>>20,GPU_CHARGE_SUFFIX,GPU_HELD_TAG,held>>20,GPU_HELD_SUFFIX,allocator=allocator)}
     return fmt.aprintf("%s%s, %d%s",what,tag,max(charge,0)>>20,GPU_CHARGE_SUFFIX,allocator=allocator)
+}
+
+// What a holder wrote, in parts: what it is with its measurement, its charge
+// and the most it held; ok is false when it wrote no charge.
+gpu_holder_parse :: proc(holder:string) -> (what:string,charge,held:i64,ok:bool) {
+    text:=holder
+    if strings.has_suffix(text,GPU_HELD_SUFFIX) {
+        if at:=strings.last_index(text,GPU_HELD_TAG);at>=0 {
+            mib,parsed:=strconv.parse_i64(text[at+len(GPU_HELD_TAG):len(text)-len(GPU_HELD_SUFFIX)])
+            if !parsed || mib<0 {return}
+            text,held=text[:at],mib<<20
+        }
+    }
+    if !strings.has_suffix(text,GPU_CHARGE_SUFFIX) {return}
+    text=text[:len(text)-len(GPU_CHARGE_SUFFIX)]
+    at:=strings.last_index(text,", ")
+    if at<0 {return}
+    mib:=strconv.parse_i64(text[at+2:]) or_return
+    return text[:at],mib<<20,held,mib>=0
 }
 
 // The measurement a holder wrote it is part of; "" for none.
@@ -67,18 +92,16 @@ gpu_holder_measurement :: proc(holder:string) -> string {
 
 // The charge a holder wrote; false when it wrote none.
 gpu_holder_charge :: proc(holder:string) -> (charge:i64,ok:bool) {
-    if !strings.has_suffix(holder,GPU_CHARGE_SUFFIX) {return}
-    text:=holder[:len(holder)-len(GPU_CHARGE_SUFFIX)]
-    at:=strings.last_index(text,", ")
-    if at<0 {return}
-    mib:=strconv.parse_i64(text[at+2:]) or_return
-    return mib<<20,mib>=0
+    _,charge,_,ok=gpu_holder_parse(holder)
+    return
 }
 
-// A turn that is held: what its holder wrote, its charge and since when.
+// A turn that is held: what its holder wrote, its charge, the most it held
+// and since when.
 Gpu_Holder :: struct {
     holder:string,
     charge:i64,
+    held:i64,
     since:time.Time,
 }
 
@@ -87,12 +110,48 @@ Gpu_Holder :: struct {
 gpu_holders :: proc(root:string,allocator:=context.allocator) -> []Gpu_Holder {
     holders:=make([dynamic]Gpu_Holder,allocator)
     for turn in 0..<GPU_TURNS {
-        held,holder,since:=lock_holder(gpu_turn_path(root,turn,context.temp_allocator),allocator)
-        if !held {continue}
-        charge,charged:=gpu_holder_charge(holder)
-        append(&holders,Gpu_Holder{holder,charged?charge:GPU_CHARGE_DEFAULT,since})
+        taken,holder,since:=lock_holder(gpu_turn_path(root,turn,context.temp_allocator),allocator)
+        if !taken {continue}
+        _,charge,held,charged:=gpu_holder_parse(holder)
+        append(&holders,Gpu_Holder{holder,charged?charge:GPU_CHARGE_DEFAULT,held,since})
     }
     return holders[:]
+}
+
+// What the holder of a turn says while it runs: the most it held, which
+// raises its charge when it passes it and never lowers it, so that the next
+// admission counts what it really takes. The turn is the one process pid is
+// named the holder of, looked for first at turn (where it was before; -1
+// for none); found is where it is, -1 while none names pid.
+gpu_turn_raise :: proc(root:string,pid:int,held:i64,turn:=-1) -> (found:int) {
+    raise :: proc(root,prefix:string,at:int,held:i64) -> bool {
+        owner:=strings.concatenate({gpu_turn_path(root,at,context.temp_allocator),".owner"},context.temp_allocator)
+        data,error:=os.read_entire_file(owner,context.temp_allocator)
+        holder:=strings.trim_space(string(data))
+        if error!=nil || !strings.has_prefix(holder,prefix) {return false}
+        what,charge,said,ok:=gpu_holder_parse(holder)
+        if ok && held>>20>said>>20 {
+            info,stated:=os.stat(owner,context.temp_allocator)
+            text_write(owner,fmt.tprintf("%s, %d%s%s%d%s",what,max(charge,held)>>20,GPU_CHARGE_SUFFIX,GPU_HELD_TAG,held>>20,GPU_HELD_SUFFIX))
+            // The time of the owner file says since when the turn is held.
+            if stated==nil {_=os.change_times(owner,info.access_time,info.modification_time)}
+        }
+        return true
+    }
+    prefix:=fmt.tprintf("pid %d, ",pid)
+    if turn>=0 && turn<GPU_TURNS && raise(root,prefix,turn,held) {return turn}
+    for at in 0..<GPU_TURNS {
+        if at!=turn && raise(root,prefix,at,held) {return at}
+    }
+    return -1
+}
+
+// What the holders held at most beyond what the card has for the turns (its
+// memory less the part left to the rest); 0 when they fit.
+gpu_held_over :: proc(memory:i64,holders:[]Gpu_Holder) -> i64 {
+    held:i64
+    for holder in holders {held+=holder.held}
+    return max(held-(memory-memory/GPU_RESERVE_PART),0)
 }
 
 // What a device said of the card it runs on: the bytes of the memory it keeps
@@ -148,6 +207,15 @@ gpu_card_said :: proc(kept:Gpu_Card,known:bool,said:Gpu_Card) -> (card:Gpu_Card,
         return said,fmt.tprintf("%s said %.1f GiB before, more than the %.1f GiB that %s says; the GPU turns keep the smaller",kept.name,f64(kept.bytes)/GIB,f64(said.bytes)/GIB,said.name)
     }
     return kept,""
+}
+
+// Why a program no person watches must not run on the adapter device it
+// opened: the turns account for a card of its own memory and it opened on
+// another one that MIRAI_GPU (preferred) did not name. "" when it may.
+gpu_off_card :: proc(card:Gpu_Card,known:bool,device,preferred:string) -> (problem:string) {
+    if !known || !card.own || device=="" || device==card.name {return}
+    if preferred!="" && strings.contains(strings.to_lower(device,context.temp_allocator),strings.to_lower(preferred,context.temp_allocator)) {return}
+    return fmt.tprintf("it opened on %s, not on the card %s that the GPU turns account for: Vulkan does not offer that card now (lost, or its driver resetting), and on another adapter frames take seconds and what is measured means nothing. Restart the machine until mirai doctor --probe-gpu names %s, or set MIRAI_GPU to a part of the name %q to run there anyway",device,card.name,card.name,device)
 }
 
 // Keeps what a device said of the card by gpu_card_said, under
