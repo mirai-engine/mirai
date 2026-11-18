@@ -4,10 +4,7 @@
 // gbuffer_visible.frag draws, and its linear depth, which the depth pyramid
 // between the phases reads. The fade of its instance and the mask of its
 // material leave it where gbuffer.frag would: the mask as the rasterizer
-// samples it, from the triangle at the pixel (visible_input.slang). hidden:
-// of the clusters of the program list, which gbuffer.frag draws after the
-// visibility, their depth alone, and no triangle where they are in front.
-//! constant hidden MIRAI_VISIBILITY_HIDDEN
+// samples it, from the triangle at the pixel (visible_input.slang).
 #define MATERIAL_GRADIENTS
 #include "raster.slang"
 #include "visible_input.slang"
@@ -36,13 +33,14 @@ Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
     if ((inst.meta.w & INSTANCE_FLAG_ALPHA_TESTED) != 0u) {
         Material m = material_row(material_of(inst, mesh_primitive_material(mesh, primitive)), inst.material_values);
         if (m.alpha_mode != ALPHA_OPAQUE) {
-            // A program is evaluated by its own stages alone: its mask as a ray reads it.
+            // A program is evaluated by its own stages alone (it is here only
+            // before the program list is made): its mask as a ray reads it.
             bool covered = m.program_id != 0u ? hit_covers(index, primitive, input.in_bary_depth.xy, input.in_bary_depth.z, BLEND_PASSES) : fragment_mask_covers(visible_input(index, primitive, pixel_position.xy), frame.texturing.x);
             if (!covered) discard;
         }
     }
     Stage_Output output;
-    output.hit = MIRAI_VISIBILITY_HIDDEN ? uint2(INVALID, 0u) : uint2(index, primitive);
+    output.hit = uint2(index, primitive);
     output.depth = input.in_bary_depth.z;
     return output;
 }

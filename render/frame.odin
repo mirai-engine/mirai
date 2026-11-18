@@ -203,8 +203,9 @@ gbuffer_pass :: proc(p: ^Pass, phase: u32, clear, keep_depth: bool) {
 // are read once a pixel and not for each triangle, which small triangles make
 // many times more. The clusters of the program list (those of Surface
 // programs, whose stages read what the rasterizer interpolates, and those
-// whose triangles are not small) leave their depth alone first, and no
-// triangle where they are in front; gbuffer_visible_pass draws both.
+// whose triangles are not small) leave first their depth where their G-buffer
+// will be drawn (gbuffer_depth.frag), and no triangle where they are in front;
+// gbuffer_visible_pass draws both.
 @(private)
 visibility_pass :: proc(p: ^Pass, phase: u32) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
@@ -218,15 +219,7 @@ visibility_pass :: proc(p: ^Pass, phase: u32) -> bool {
 	pass.depth = {texture = t.depth, load = load, store = .Store, clear = 0}
 	rhi.cmd_begin_render_pass(cmd, &pass)
 	if p.draw {
-		if program_clusters(r) {
-			rhi.cmd_bind_pipeline(cmd, r.pipelines[.Visibility_Hidden])
-			rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.program_visible)
-			rhi.cmd_draw_indirect(cmd, s.program_bins, program_draw_offset(phase, 0, program_bins_count(r)), 1, size_of(Gpu_Draw))
-			for program in renderer_programs(r) {
-				if program.domain != .Surface || program.id >= program_bins_count(r) || s.program_rows[program.id] == 0 {continue}
-				rhi.cmd_draw_indirect(cmd, s.program_bins, program_draw_offset(phase, program.id, program_bins_count(r)), 1, size_of(Gpu_Draw))
-			}
-		}
+		gbuffer_programs_draw(p, &r.pipelines[.Gbuffer_Depth], phase)
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Visibility])
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
 		rhi.cmd_draw_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, draws)) + u64(phase) * size_of(Gpu_Draw), 1, size_of(Gpu_Draw))
