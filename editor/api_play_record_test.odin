@@ -38,7 +38,7 @@ a_recording_reads_its_frames_wide_before_and_after_the_tonemap :: proc(t:^testin
         if !testing.expect(t,host.app_recording_begin(app,&rec,size,wide,false)) {return}
         images[i]=make([]f32,int(size.x*size.y*4))
         for _ in 0..<3 {
-            if !testing.expect(t,host.app_recording_frame(app,&rec,&world,images[i]),app.renderer.error) {host.app_recording_end(app,&rec);return}
+            if !testing.expect(t,host.app_recording_frame(app,&rec,&world,images[i],0),app.renderer.error) {host.app_recording_end(app,&rec);return}
         }
         if wide==.Display {
             width,height:int

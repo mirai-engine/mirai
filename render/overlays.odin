@@ -17,11 +17,17 @@ overlay_pipelines_list :: proc(r:^Renderer,list:^Pipeline_List) {
             depth_format=.D32_Float,depth_test=true,depth_write=false,depth_compare=.Equal,cull=.None,
             name="surface overlay",
         }
-        pipeline_listed(list,{target=&r.overlay_pipelines[mode],shaders={.Gbuffer_Vert,.Overlay_Frag},rays=.Software,required=true,graphics=true,desc=descriptor})
+        id:=overlay_pipeline_id(mode)
+        pipeline_listed(list,{id=id,target=pipeline_slot(r,id,.Software),shaders={.Gbuffer_Vert,.Overlay_Frag},rays=.Software,required=true,graphics=true,desc=descriptor})
         descriptor.fragment=&r.shader_codes[.Overlay_Hw_Frag]
         descriptor.name="surface overlay hardware"
-        pipeline_listed(list,{target=&r.overlay_hw_pipelines[mode],shaders={.Gbuffer_Vert,.Overlay_Hw_Frag},rays=.Hardware,required=true,graphics=true,desc=descriptor})
+        pipeline_listed(list,{id=id,target=pipeline_slot(r,id,.Hardware),shaders={.Gbuffer_Vert,.Overlay_Hw_Frag},rays=.Hardware,required=true,graphics=true,desc=descriptor})
     }
+}
+@(private)
+overlay_pipeline_id :: proc "contextless" (mode:asset.Overlay_Blend) -> Pipeline_Id {
+    switch mode {case .Alpha:return .Overlay_Alpha;case .Additive:return .Overlay_Additive;case .Multiply:return .Overlay_Multiply}
+    return .Overlay_Alpha
 }
 overlay_pass :: proc(p:^Pass) {
     r,cmd,instance_count:=p.r,p.cmd,p.instance_count
@@ -43,7 +49,7 @@ overlay_pass :: proc(p:^Pass) {
             if !layer.enabled || int(layer.blend)>int(max(asset.Overlay_Blend)) {continue}
             params:=Params{material=u32(layer.material),blend=u32(layer.blend),light_budget=r.settings.light_budget}
             // The stage of the program of the material of the overlay, over every cluster.
-            target:=&r.overlay_hw_pipelines[layer.blend] if r.hardware_rt else &r.overlay_pipelines[layer.blend]
+            target:=pipeline_of(r,overlay_pipeline_id(layer.blend))
             program:=s.materials[layer.material].program_id if int(layer.material)<len(s.materials) else 0
             rhi.cmd_bind_pipeline(cmd,program_graphics(r,target,program));set_params(cmd,&params)
             // The clusters of the cut the G-buffer drew: the vertex shader takes the same as the cull.

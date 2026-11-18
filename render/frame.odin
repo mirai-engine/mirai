@@ -399,6 +399,10 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     pipelines_install(r)
     if r.variants_wanted {pipeline_variants_ask(r)}
     if r.scene.programs_arrived {programs_ask(r)}
+    // Without the stages of its tracer (Renderer_Desc.tracer_later) the frame draws no world.
+    frame:=frame
+    r.tracer_missed=tracer_later_missing(r)
+    if r.tracer_missed!="" {frame.ui_only=true}
     // What the extensions asked of this frame lasts for it alone.
     defer {
         r.pass_count=0;r.main_pipeline=0;r.gbuffer_asked={}
@@ -420,7 +424,8 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         for view in frame.views {if view.texture==0 && !view.disabled {eye=view.camera.position;break}}
         renderer_origin_follow(r,eye)
     }
-    frame,framed:=origin_frame(r,frame)
+    framed:bool
+    frame,framed=origin_frame(r,frame)
     if !framed {return false}
     displaced_prepare(r)
     skins_bounds(r)
@@ -1733,6 +1738,7 @@ update_stats :: proc(r: ^Renderer) {
 		memory = fmt.tprintf("%d resources of GPU memory went to system memory because the device memory was full, which slows the frames: a lower resolution or texture quality frees device memory", host)
 	}
 	waiting := fmt.tprintf("the pass of the stage %s is skipped while its pipeline is made", r.pipeline_waiting) if r.pipeline_waiting != "" else ""
+	if r.tracer_missed != "" && r.pipeline_problem == "" {waiting = fmt.tprintf("the world is not drawn while the pipeline %s of rays traced by software is made", r.tracer_missed)}
 	for other in ([]string{r.tlas_problem, pages_problem(r), memory, r.pipeline_problem, waiting}) {
 		if other == "" {continue}
 		if s.problem == "" {s.problem = string(r.problem_buffer[:copy(r.problem_buffer[:], other)]); continue}

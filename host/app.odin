@@ -51,6 +51,7 @@ App_Desc :: struct {
     gpu_message:rhi.Message_Proc,
     gpu_loader_lock:^sync.Mutex,
     render_settings:Maybe(render.Settings),
+    tracer_later:bool,           // the renderer opens before the driver made the stages of rays traced by software (render.Renderer_Desc.tracer_later): the editor's
     ui_font_sizes:[]i32,         // point sizes of every UI context of the application; those of the editor when empty
 
     audio:Audio_Output,

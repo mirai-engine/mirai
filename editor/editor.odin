@@ -17,6 +17,7 @@ import scene "mirai:engine/scene"
 import "mirai:host"
 import "mirai:platform"
 import "mirai:project"
+import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/jobs"
 import "mirai:std/subprocess"
@@ -426,7 +427,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
         assets_root=os.is_dir(assets)?assets:"",assets_imported=project.imported_path(root,context.temp_allocator),assets_cache=project.cache_path(root,project.REGISTRY_CACHE,allocator=context.temp_allocator),
         animation_cache=project.cache_path(root,project.ANIMATION_CACHE,allocator=context.temp_allocator),
         collision_cache=project.content_cache_path(root,project.COLLISION_CACHE,allocator=context.temp_allocator),
-        asset_mounts=mounts[:],shaders_root=root,
+        asset_mounts=mounts[:],shaders_root=root,tracer_later=true,
     })
     if app==nil {
         fmt.eprintfln("mirai: the editor could not start: %v",app_error)
@@ -543,8 +544,9 @@ advance :: proc(s:^Session) -> bool {
 // application. Returns the exit code.
 close :: proc(s:^Session) -> int {
     code:=EDITOR_OK
-    if s.capture!="" && !host.app_capture(s.app,s.capture) {
-        fmt.eprintfln("mirai: could not write %s",s.capture)
+    // A last frame drawn without a stage being made is not written either.
+    if s.capture!="" && (gpu.renderer_frame_partial(s.app.renderer) || !host.app_capture(s.app,s.capture)) {
+        fmt.eprintfln("mirai: could not write %s: %s",s.capture,host.app_draw_problem(s.app))
         code=EDITOR_CAPTURE
     }
     if s.gpu_failure==.Ended {code=EDITOR_GPU_LOST}

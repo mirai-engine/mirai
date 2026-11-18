@@ -5,6 +5,7 @@ import "core:mem"
 import "core:strings"
 import "core:testing"
 import "mirai:rhi"
+import "mirai:rhi/shared_device"
 
 @(private = "file", rodata)
 PASS_BINDINGS := [?]rhi.Binding_Info{
@@ -225,4 +226,56 @@ variants_are_made_as_the_settings_select_and_a_refused_one_once :: proc(t: ^test
 	testing.expectf(t, rhi.device_refused_pipelines(f.device) == 1, "the refused variant was asked for %d times in 100 frames", rhi.device_refused_pipelines(f.device))
 	testing.expectf(t, strings.contains(renderer_stats(r).problem, "refused the pipeline Composite"), "the frames say it: %s", renderer_stats(r).problem)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// With tracer_later the renderer starts without the stages of rays traced by
+// software, which the pipeline thread makes. No frame waits for them, not
+// even one no window shows: it draws no world, and renderer_frame_partial
+// says so to what reads it back, until every stage is in place.
+@(test)
+a_frame_drawn_while_the_tracer_is_made_does_not_wait_and_is_partial :: proc(t: ^testing.T) {
+	settings := DEFAULT_SETTINGS
+	settings.trace_mode = .Software
+	f: Fixture
+	if !fixture_init(t, &f, 64, 48, settings, desc = {pipeline_thread = true, tracer_later = true}) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	testing.expect(t, renderer_frame(r, {camera = camera, offscreen = true}), r.error)
+	testing.expectf(t, renderer_frame_partial(r) && r.tracer_missed != "", "the first frame did not wait for the tracer: %q", r.tracer_missed)
+	renderer_pipelines_wait(r, all = true)
+	testing.expect(t, renderer_frame(r, {camera = camera, offscreen = true}), r.error)
+	testing.expectf(t, !renderer_frame_partial(r), "with every stage in place it is whole: %q %q", r.tracer_missed, r.pipeline_waiting)
+}
+
+// A stage of that tracer the device refuses is asked for once and leaves the
+// frames partial with nothing being made, so what reads them back fails with
+// the reason the frames give, until the shaders change.
+@(test)
+a_refused_stage_of_the_tracer_made_later_leaves_the_frames_partial :: proc(t: ^testing.T) {
+	settings := DEFAULT_SETTINGS
+	settings.trace_mode = .Software
+	device := shared_device.take_or_skip(t)
+	if device == nil {return}
+	// Refused before the renderer starts: one that made it then would not start.
+	rhi.device_refuse_pipeline(device, "contact.comp", {})
+	defer rhi.device_refuse_pipeline(device, "", {})
+	f: Fixture
+	if !fixture_init(t, &f, 64, 48, settings, desc = {pipeline_thread = true, tracer_later = true}) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	renderer_pipelines_wait(r, all = true)
+	for _ in 0 ..< 20 {testing.expect(t, renderer_frame(r, {camera = camera, offscreen = true}), r.error)}
+	testing.expect(t, renderer_frame_partial(r) && !renderer_pipelines_pending(r), "partial, and nothing it lacks is being made")
+	testing.expectf(t, rhi.device_refused_pipelines(device) == 1, "the refused stage was asked for %d times", rhi.device_refused_pipelines(device))
+	testing.expectf(t, strings.contains(renderer_stats(r).problem, "refused the pipeline Contact"), "the frames say it: %s", renderer_stats(r).problem)
+	// Once the shaders change it is asked for again, and with it the frames draw the world.
+	rhi.device_refuse_pipeline(device, "", {})
+	pipelines_drop(r)
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	renderer_pipelines_wait(r, all = true)
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	testing.expectf(t, !renderer_frame_partial(r), "the world is drawn, not missing %q", r.tracer_missed)
+	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
 }

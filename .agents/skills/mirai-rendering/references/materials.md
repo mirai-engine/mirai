@@ -400,9 +400,10 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
 - Without either of the two (headless sessions, tests, captures) the pipeline is made where it is
   requested: what a frame draws does not depend on driver time.
 - A thumbnail, a material capture or an impostor, which are read right away, wait for the pipeline.
-  `capture` and `app_capture_world` draw one more frame if the last one drew a program as
-  its row (`renderer_pipelines_pending`, `renderer_pipelines_wait`); the editor images are drawn
-  again when pipelines arrive (`renderer_pipelines_made`).
+  `capture`, `app_capture_world`, a recording and the editor's `--capture` draw again, within
+  their wait, while a frame drew a program as its rows (`renderer_frame_partial`), then frames
+  to settle; none waits for the driver. The editor images are drawn again when pipelines arrive
+  (`renderer_pipelines_made`).
 - Extensions ask for a program's with `Stage_Pipeline_Desc.program` or
   `pass_gbuffer_pipeline(..., program)` and receive that of the stage without it until it is made
   ([extensions](views.md#extension-stages)).

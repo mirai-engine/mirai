@@ -308,11 +308,13 @@ scene_thumbnail_update :: proc(s:^Session,id:base.Asset_Id) {
 // Takes the view of the scene opened when its frame came: the World alone
 // through the camera of the viewport, without panels, gizmos, lines or the
 // grid, as capture draws it without the UI. Not when another scene,
-// a Play or a document of an asset is in front by then. Between frames.
+// a Play or a document of an asset is in front by then. Between frames;
+// while the window still draws without a stage being made, a later one, so
+// the frames of the capture never wait for the driver on the thread of the UI.
 @(private)
 thumbnail_scene_capture :: proc(s:^Session) {
     p:=s.thumbnails
-    if p==nil || p.opened=={} || s.frame<p.opened_frame {return}
+    if p==nil || p.opened=={} || s.frame<p.opened_frame || gpu.renderer_frame_partial(s.app.renderer) {return}
     id,announce:=p.opened,p.announce
     p.opened,p.announce={},false
     if s.app.renderer==nil || s.mode!=.Edit || s.document.id!=id || scene_covered(s) {return}
