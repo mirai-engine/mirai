@@ -149,6 +149,7 @@ brush_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,e:
             return
         }
     }
+    if !tool.over {stroke.over=false;return}
     hit:=editor.pick_point(s,world,input.mouse_position)
     stroke.over=hit.entity!=core.NONE && !hit.indicator
     if !stroke.over {return}
@@ -401,6 +402,7 @@ stroke_instances :: proc(tool:^Foliage_Tool,s:^foliage.Source,ground:^foliage.Gr
 // as one step.
 @(private)
 place_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,owner:mm.Transform,ground:^foliage.Ground_Owner,assets:^host.Assets,input:core.Input) {
+    if !tool.over {return}
     hit:=editor.pick_point(s,world,input.mouse_position)
     if hit.entity==core.NONE || hit.indicator {return}
     to_local,inverted:=mm.transform_inverse_matrix(owner)
@@ -530,6 +532,7 @@ select_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,e
     if stroke.active {
         if !core.mouse_down(input,.Left) {tool.stroke={};return}
     }
+    if !tool.over {return}
     hit:=editor.pick_point(s,world,input.mouse_position,batches=true)
     if stroke.active {
         // A drag: those under the ring join or leave.
