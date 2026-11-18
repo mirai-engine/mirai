@@ -98,6 +98,10 @@ named by `.mirai/session.json` (pid, mode and arguments) and `api.json`; its log
   step ended. `--force` ends an editor that does not answer. Of a copy, it deletes the copy. Every
   edit is written to its file, so what is only to be tried or verified is done on a copy
   (`start --copy`; [AGENTS.md](../../../../AGENTS.md#verification)).
+- Every editor a command opens holds a GPU turn while it runs
+  ([turns](../../mirai-projects/references/build.md#turns-between-processes)): `start` may wait,
+  naming who holds the card. A session without calls for `api.SESSION_IDLE` closes itself; the
+  next `rpc` or `capture` opens it again.
 - **Orphans**: editors that run from the checkout's `.mirai/engine/` and that the `api.json` of
   their project does not name. `status` (0 if the session responds) lists them and
   `stop --orphans [project]` closes the headless ones, never one with a window.

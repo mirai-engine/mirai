@@ -73,13 +73,14 @@ SHADOW_MOVER_FRAMES :: u64(30)
 // the frames after, the coarsest first, and their points read the nearest
 // coarser page drawn or trace until then.
 SHADOW_FRAME_CLUSTERS :: u32(32768)
-SHADOW_FRAME_CLUSTERS_MOST :: 16 * SHADOW_FRAME_CLUSTERS
+// The bound counts clusters, not what they cost to raster: a round of dense
+// masked foliage at a coarse level takes far longer than its count says, so
+// until the bound counts that cost it does not grow.
+SHADOW_FRAME_CLUSTERS_MOST :: SHADOW_FRAME_CLUSTERS
 // What the rounds of the maps take while their pages wait, of the GPU time of
 // the rest of the frame, a refresh of the display at least: a part, so that
-// the frame slows by that part at most; on a loading screen
-// (Frame_Desc.loading) several times it, which the maps may take.
+// the frame slows by that part at most.
 SHADOW_MAPS_SHARE :: f32(0.25)
-SHADOW_LOADING_SHARE :: f32(3)
 // How much the bound changes from that of a frame measured, at most.
 SHADOW_BOUND_STEP :: f32(1.5)
 // The interval the maps of each view measure (rhi.cmd_measure_begin): their
@@ -108,7 +109,7 @@ Shadow_Bound :: struct {
 // timestamps), the frame against a refresh. The lists of the cull of the maps
 // grow to hold it in the draws of one kind alone.
 @(private)
-shadow_bound_update :: proc(r: ^Renderer, slot: int, loading: bool, refresh_hz: f32) {
+shadow_bound_update :: proc(r: ^Renderer, slot: int, refresh_hz: f32) {
 	b := &r.shadow_bound
 	least := b.least if b.least != 0 else SHADOW_FRAME_CLUSTERS
 	most := max(b.most if b.most != 0 else SHADOW_FRAME_CLUSTERS_MOST, least)
@@ -124,7 +125,7 @@ shadow_bound_update :: proc(r: ^Renderer, slot: int, loading: bool, refresh_hz: 
 	period := 1000 / (refresh_hz if refresh_hz > 0 else 60)
 	frame := r.stats.gpu_ms
 	if measured && frame > 0 {
-		share := max(frame - maps, period) * (SHADOW_LOADING_SHARE if loading else SHADOW_MAPS_SHARE)
+		share := max(frame - maps, period) * SHADOW_MAPS_SHARE
 		ratio := clamp(share / max(maps, 1e-3) if timed else period / frame, 1 / SHADOW_BOUND_STEP, SHADOW_BOUND_STEP)
 		if ratio < 1 || r.stats.shadow.pages_waiting > 0 {bound = u32(clamp(f32(then) * ratio, f32(least), f32(most)))}
 	}

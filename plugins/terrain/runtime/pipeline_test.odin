@@ -36,13 +36,15 @@ pipeline_settle :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^ho
 }
 
 // Ticks, each once the jobs of the one before ended, until what the terrain
-// wants is built and shows.
+// wants is built and shows, and collides: a tick that asks for the tree of a
+// mesh makes its body in the next.
 @(private="file")
 pipeline_built :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,settings:Terrain_Settings,ticks:=64) {
     for _ in 0..<ticks {
         work_wait(&w.data,nil)
+        trees:=w.collision_meshes.built
         pipeline_tick(w,resident,app,settings)
-        idle:=!work_busy(&w.data,nil)
+        idle:=!work_busy(&w.data,nil) && w.collision_meshes.built==trees
         for &source in resident.sources {if len(source.pending)>0 || len(source.staged)>0 {idle=false}}
         if idle {break}
     }
@@ -498,7 +500,7 @@ a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps
         // Excavate near the viewer, once what it reads there came and is built.
         pipeline_built(&w,&resident,&app,settings)
         dig(&w.terrain_requests,{kind=.Carve,center=near,radius=2,amount=1},owner)
-        for _ in 0..<2 {pipeline_tick(&w,&resident,&app,settings)}
+        pipeline_built(&w,&resident,&app,settings)
         hit,ok=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
         testing.expectf(t,ok && hit.point.y< -1.5,"the excavation: %v",hit.point)
         excavated:=hit.point.y
