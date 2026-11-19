@@ -114,7 +114,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     uint thread = id.y * SHADOW_CULL_ROW * MIRAI_GROUP_X + id.x, slot, instance;
     if (!shadow_work_instance(thread, params.moving, slot, instance)) return;
     uint map = slot;
-    float cull = 0.0, sway = 0.0;
+    float cull = 0.0, sway = 0.0, near = 0.0;
     if (instance_batched(instance)) {
         Instance row = batch_row(batch_of(instance));
         // The slots after the last instance of a batch fill its last group.
@@ -122,22 +122,23 @@ void main(uint3 id : SV_DispatchThreadID) {
         if ((batch_classes(row) & RAY_SHADOWS) == 0u) return;
         cull = batch_cull(row);
         sway = batch_sway(row);
+        near = batch_near(row);
     }
     Instance inst = scene_instance(instance);
     if ((inst.meta.w & INSTANCE_FLAG_HIDDEN) != 0u || (inst.meta.x & INSTANCE_UNSHADOWED) != 0u) return;
     // Glass casts no shadow in the maps, nor colors their light.
     if ((inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u) return;
     Shadow_Map whole = shadow_map_at(shadow_data, params.rows, map);
+    Mesh mesh = meshes[instance_mesh(inst)];
+    if (mesh.vertex_count == 0u || mesh.cluster_count == 0u) return;
     // The maps leave the vertex hook out but where a batch sways: its box grows
-    // by as far as it sways in the wind that blows now, which its sway in the
-    // strongest (reach) bounds and which chooses the maps it sways in.
-    float reach = sway * instance_scale(inst), now = instance_batched(instance) ? min(reach, batch_near(batch_row(batch_of(instance)))) : 0.0;
+    // by as far as the hook sways it in the wind that blows now, which its sway
+    // in the strongest (reach) bounds and which chooses the maps it sways in.
+    float reach = sway * instance_scale(inst), now = mesh.posed_word == INVALID ? min(reach, near) : reach;
     float3 low = inst.bounds_min.xyz - now, high = inst.bounds_max.xyz + now;
     if (!shadow_map_reaches(whole, low, high)) return;
     // Past its cull distance, as the view leaves it out (render.shadow_culled).
     if (cull > 0.0 && length(params.cull.xyz - clamp(params.cull.xyz, low, high)) > cull + params.cull.w) return;
-    Mesh mesh = meshes[instance_mesh(inst)];
-    if (mesh.vertex_count == 0u || mesh.cluster_count == 0u) return;
     for (uint mip = 0u; mip < shadow_slot_mips(map); mip++) {
         Shadow_Map m = shadow_map_mip(whole, mip);
         float4 texels;
