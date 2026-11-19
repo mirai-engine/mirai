@@ -110,7 +110,7 @@ grid_page_read :: proc(g:^Grid($T),id:int,file:string,valid:proc "contextless" (
 @(private)
 page_load :: proc(block:Page_Block,file:string,read:^Page_Reader,out:[]u8) -> bool {
     bytes,ok:=page_block_read(block,file,read.block)
-    return ok && page_decode(bytes,block.hash,out,&read.decoder,read.coded)
+    return ok && page_decode(bytes,block.hash,out)
 }
 
 @(private)
@@ -200,9 +200,7 @@ grid_away_map :: proc(g:^Grid($T),file:string,valid:proc "contextless" (value:T)
     read:Page_Reader
     if !page_reader_init(&read,context.temp_allocator) {return false}
     defer page_reader_destroy(&read,context.temp_allocator)
-    writer:Page_Writer
-    if !page_writer_init(&writer,context.temp_allocator,.Open) {return false}
-    defer page_writer_destroy(&writer)
+    coded:[PAGE_BYTES_MAX]u8=---
     scratch,error:=make([]T,PAGE_VALUES,context.temp_allocator)
     if error!=nil {return false}
     for slot in 0..<len(g.pages) {
@@ -214,8 +212,7 @@ grid_away_map :: proc(g:^Grid($T),file:string,valid:proc "contextless" (value:T)
         for &value in values {value=change(user,value)}
         away:=Away_Page(T){slot=slot,fill=values[0]}
         if !page_uniform(values) {
-            encoded,ok:=page_encode(&writer,values,extent.x,false)
-            if !ok {return false}
+            encoded:=page_code(values,extent,false,coded[:])
             own,made:=shared_make(u8,len(encoded),allocator)
             if !made {return false}
             copy(own,encoded)
@@ -250,12 +247,9 @@ grid_page_leave :: proc(g:^Grid($T),slot:int,allocator:runtime.Allocator) -> boo
             shared_free(block.own)
             page.fill,block^=page.values[0],{}
         } else {
-            writer:Page_Writer
-            if !page_writer_init(&writer,context.temp_allocator,.Open) {return false}
-            defer page_writer_destroy(&writer)
+            coded:[PAGE_BYTES_MAX]u8=---
             extent,_:=grid_page_extent(g,grid_id(g,slot))
-            encoded,ok:=page_encode(&writer,page.values,extent.x,false)
-            if !ok {return false}
+            encoded:=page_code(page.values,extent,false,coded[:])
             own,made:=shared_make(u8,len(encoded),allocator)
             if !made {return false}
             copy(own,encoded)
@@ -313,10 +307,10 @@ region_pages_mark :: proc(s:^Source,low,high:[3]int) {
 
 // What differs between next, read again, and g of the same size: next takes
 // the values g holds in memory of each page whose block in next holds the
-// same, and g holds them no more. Nothing else of g changes. writer codes
-// the pages of g as the file does, quantize as grid_put_document.
+// same, and g holds them no more. Nothing else of g changes. The pages of g
+// are coded as the file does, quantize as grid_put_document.
 @(private)
-grid_take :: proc(next,g:^Grid($T),writer:^Page_Writer,quantize:bool) -> (low,high:[3]int,changed:bool) {
+grid_take :: proc(next,g:^Grid($T),quantize:bool) -> (low,high:[3]int,changed:bool) {
     whole :: proc(next,g:^Grid($T)) -> (low,high:[3]int,changed:bool) {
         for axis in 0..<3 {high[axis]=max(next.size[axis],g.size[axis])-1}
         return {},high,true
@@ -347,8 +341,8 @@ grid_take :: proc(next,g:^Grid($T),writer:^Page_Writer,quantize:bool) -> (low,hi
                     same=old_block.size>0 && old_block.hash==block.hash
                 } else {
                     extent,_:=grid_page_extent(g,id)
-                    encoded,ok:=page_encode(writer,old.values,extent.x,quantize)
-                    same=ok && base.hash64(encoded)==block.hash
+                    coded:[PAGE_BYTES_MAX]u8=---
+                    same=base.hash64(page_code(old.values,extent,quantize,coded[:]))==block.hash
                 }
                 if same {
                     next.pages[grid_slot(next,id)].values=old.values

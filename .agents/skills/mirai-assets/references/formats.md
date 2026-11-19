@@ -26,7 +26,7 @@ each at a multiple of its alignment.
 - **An asset of the store** (`asset/parts.odin`) is an object of the
   [store](../../mirai-store/SKILL.md): one group per container chunk in directory order, and the
   header and directory as the meta of its root. It holds its file as `Codecs.None` writes it:
-  `object_put` writes again a file a compressor touched (a stream chunk, a block or mesh page not
+  `object_put` writes again a file a compressor touched (a stream chunk, a mesh page not
   `STORED`, texture layouts, planes chosen otherwise), so the same asset is the same object for
   every compressor, and the store compresses each chunk in its frame. It cuts each chunk where the
   format reads alone: between the levels of `texels` (smallest first, so the first chunks are the
@@ -45,7 +45,7 @@ each at a multiple of its alignment.
 Every compressed byte is a stream (`asset/compress.odin`): a version byte, the format of its
 pieces (`data.Format`, `STORED` for the bytes as they are), its piece count and the size of each
 piece; a reader knows what decodes it from the stream. `pack`, `Stream_Encoder` and `unpack` are
-the entry points of what compresses outside a chunk (mesh pages, terrain blocks, the parts a
+the entry points of what compresses outside a chunk (mesh pages, the parts a
 journal sends over the network, editor thumbnails, the shaders the executables embed).
 
 - **The collection `compressor`** is what compresses: `data` (bytes by profile), `texture`
@@ -67,8 +67,8 @@ journal sends over the network, editor thumbnails, the shaders the executables e
   its coding and BC1, BC3 and BC5 their planes of fields. A stream of a format the build does not
   decode is `Codec_Missing`.
 - **Block tables.** A kind whose asset stores blocks it reads alone keeps them in `<name>_blocks`,
-  with the `Block_Record`s of its pages in `<name>_pages`; a cook compresses them again from what
-  the records say (`document_repack`).
+  with the `Block_Record`s of its pages in `<name>_pages`; the kind codes each block itself, and
+  neither a write, a cook nor the store's object compresses them.
 - **Pieces.** A chunk over `PACK_PIECE` is a run of pieces of that many raw bytes, each decoding
   without the others: a scene load decodes them at once on its workers (`Piece_Decoders`), and a
   write with a worker compresses them at once into the same bytes.

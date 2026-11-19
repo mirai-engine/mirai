@@ -47,7 +47,7 @@ Work_Slot :: struct {
     grid:Grid_Kind,   // Page
     block:Page_Block, // Page: the block it reads, its own borrowed
     file:string,      // Page: borrowed from the source
-    read:Page_Reader, // Page: room for a block and its decoder
+    read:Page_Reader, // Page: room for a block
     page:[]u8,        // Page: the values it decodes, until they go to the grid (shared_make)
     band:f32,         // Page of a Volume: how far its distances may reach
     allocator:runtime.Allocator,      // of the slot
