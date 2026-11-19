@@ -171,8 +171,15 @@ share_command :: proc(args:[]string,output,errors:io.Writer) -> int {
     if !opened {return 1}
     defer store.close(&s)
 
+    js:jobs.Job_System
+    if !jobs.system_init(&js,{threads=jobs.THREADS_AUTO,allocator=runtime.heap_allocator()}) {
+        fmt.wprintln(errors,"mirai share: the threads to read the files on could not be started")
+        return 1
+    }
     started:=time.tick_now()
-    snap,address,taken,take_error:=snapshot_take(&s,root,name,context.temp_allocator)
+    served:=make([dynamic]store.Hash,context.temp_allocator)
+    snap,address,taken,take_error:=snapshot_take(&s,root,name,&served,{system=&js,worker=jobs.OWNER},context.temp_allocator)
+    jobs.system_destroy(&js)
     for line in taken.skipped {fmt.wprintfln(errors,"left out: %s",line)}
     if take_error!="" {
         fmt.wprintfln(errors,"mirai share: %s",take_error)
@@ -197,8 +204,6 @@ share_command :: proc(args:[]string,output,errors:io.Writer) -> int {
     }
     defer host_close(h)
     node_host(n,&h.host)
-    served:=make([dynamic]store.Hash,context.temp_allocator)
-    append(&served,address)
     for e in snap.entries {append(&served,e.address)}
     library_served(&s,root,&served)
     node_serve(n,..served[:])

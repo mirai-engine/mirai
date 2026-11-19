@@ -590,12 +590,19 @@ files of the project travel as a snapshot, and its heavy content as the builds o
 by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
 
 - **Snapshot.** Every file under the root that `project.own_path` accepts: all but the generated
-  folder and the folders of version control. Each file is a blob of the store; the snapshot (path,
-  address, size, executable bit, sorted by path) is one more blob. The size of an entry is that of
-  the blob put, so a file saved while the snapshot is taken gives a consistent entry. The index in
-  `.mirai/share` keeps the address of each file by its size and time, so a file that did not
-  change is not read again; it learns a file only once it is settled (the rule of the source
-  hashes of the library), so an edit of the same size within the same time is read.
+  folder and the folders of version control. It is a tree of objects of the store: each file an
+  object of its bytes, cut on content, so a changed file shares the chunks the change did not
+  touch; each folder an object whose bytes list its entries sorted by name (a file with its
+  executable bit, or a folder, by the address and size of its object, a folder with the files and
+  bytes under it), whose meta carries the name of the project in the root only; a folder holds at
+  least one file. The same files give the same tree, so two snapshots that differ in one file
+  share every folder off its path, and a join after a change asks for those folders, the file's
+  new chunks and the nodes above them, a bound of the depth whatever the size of the project. No
+  limit is set on the size of a file. The size of an entry is that of what was put, so a file
+  saved while the snapshot is taken gives a consistent entry. The index in `.mirai/share` keeps
+  the address of each file by its size and time, so a file that did not change is not read again;
+  it learns a file only once it is settled (the rule of the source hashes of the library), so an
+  edit of the same size within the same time is read.
 - **What a file carries.** Its bytes and its executable bit. Not its time: a joined file gets the
   time it is written, which keeps build tools' staleness right. Not its other permissions: a
   read-only file of the host is shared as any other, and a read-only file or folder of the joiner
@@ -608,26 +615,33 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
   joiner finds it by the code and the names peers list reveal no token. Peers read the namespaces
   of snapshots, package manifests, shared builds and `cook/cache` results: the owner exposes the
   whole machine library to whoever holds the invitation, never the Fast builds, the choices or
-  the origins of the machine. A lease holds the snapshot, its files and the builds the project
-  pins.
-- **Join.** `mirai join` fetches the snapshot, refusing one that is too large or whose paths could
-  leave the folder, are absolute, name a device, repeat where case is folded or put a file inside
-  another; checks that the disks have room; fetches the files smallest first, many at once, and
-  writes each whole through a rename; then refreshes the packages with the peers as the
-  `cache.Source` of the library, so the builds arrive by key and no source is needed. A refresh
-  asks the source for every manifest and build it lacks in one batch before it goes package by
-  package, so it waits for the peers about once, not once per package. It prints
-  progress at a steady pace and, at the end, how to open the project. The store keeps what
-  arrived: a join stopped and run again fetches only the rest.
-- **Updating.** A folder joined before keeps its last snapshot in `.mirai/share`, the base of three
-  ways: a file the host changed or removed is replaced or removed when the joiner left it as it
-  was; a file both changed is kept and reported, never overwritten. Each file is checked again
-  just before it is written or removed, so an edit made while the join runs is kept too.
+  the origins of the machine. A lease holds the snapshot, its folders and files and the builds the
+  project pins.
+- **Join.** `mirai join` fetches the tree a depth of folders at a time, refusing one whose names
+  could leave the folder, are absolute, name a device, repeat or collide where case is folded,
+  whose folders nest beyond the bound, hold more entries or bytes than a folder can or declare
+  files and sizes they do not hold (so the files read never exceed the bound, also from a folder
+  repeated under many names); checks that the disks have room; fetches the files, the project's
+  manifest and its start scene first and then the smallest first, many at once, and writes each
+  chunk by chunk at its offset into a temporary file renamed into place, so memory does not grow
+  with a file; then refreshes the packages with the peers as the `cache.Source` of the library,
+  so the builds arrive by key and no source is needed. A refresh asks the source for every
+  manifest and build it lacks in one batch before it goes package by package, so it waits for the
+  peers about once, not once per package. It prints progress at a steady pace and, at the end,
+  how to open the project. The store keeps what arrived: a join stopped and run again fetches only
+  the rest. The lease of the node holds what a share serves and what a join fetches and wrote.
+- **Updating.** A folder joined before keeps its last snapshot in `.mirai/share`, by path, the base
+  of three ways: a file the host changed or removed is replaced or removed when the joiner left it
+  as it was; a file both changed is kept and reported, never overwritten. Each file is checked
+  again just before it is written or removed, so an edit made while the join runs is kept too.
+  The join puts the base's tree in the store before it asks, so what the host did not change since
+  is not asked, and a file to replace whose base the store lost is put from the folder first, cut
+  as the host's, so the chunks both versions share are not asked either.
 - **Case.** A join probes whether the folder's file system folds case (APFS, NTFS). There paths
   compare in lower case, so a host's rename that changes only case is the same file: it is
   renamed in place, folders first, and never removed. Elsewhere it is a removal and a new file.
 - **Incomplete.** A file that cannot be written or removed (read-only, a read-only folder, held
-  open, a blob no peer has) is listed by path with why and how to fix it, the rest is done, and
+  open, an object no peer has) is listed by path with why and how to fix it, the rest is done, and
   `mirai join` exits with 3. The base it keeps holds the last entry of each such file, so running
   the same join again does only those.
 - **Peers.** While a join runs it serves what it has, with an invitation of its own, so a third

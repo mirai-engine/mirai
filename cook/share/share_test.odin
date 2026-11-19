@@ -12,6 +12,7 @@ import "core:time"
 import "mirai:asset"
 import "mirai:cook/import/sources"
 import "mirai:exchange"
+import "mirai:platform"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:store"
@@ -185,6 +186,17 @@ read_text :: proc(root,path:string) -> string {
     return error==nil?string(data):"(none)"
 }
 
+// The address of the object of data, as a file of those bytes has.
+@(private="file")
+bytes_address :: proc(data:[]u8) -> store.Hash {
+    w:store.Object_Writer
+    store.object_writer_init(&w,{procedure=proc(data:rawptr,kind:store.Chunk_Kind,address:store.Hash,bytes:[]u8) -> store.Error {return .None}})
+    defer store.object_writer_destroy(&w)
+    store.object_write(&w,data)
+    root,_,_:=store.object_finish(&w)
+    return root
+}
+
 @(private="file")
 noise :: proc(size:int,seed:u64) -> []u8 {
     data:=make([]u8,size,context.temp_allocator)
@@ -264,11 +276,12 @@ host_project :: proc(t:^testing.T,w:^Test_Net) -> (root:string,ok:bool) {
 @(private="file")
 host_offer :: proc(t:^testing.T,w:^Test_Net,root:string) -> bool {
     s:=&w.peers[0].s
-    snap,address,_,error:=snapshot_take(s,root,"game",context.temp_allocator)
+    folders:=make([dynamic]store.Hash,context.temp_allocator)
+    snap,address,_,error:=snapshot_take(s,root,"game",&folders,allocator=context.temp_allocator)
     if !testing.expectf(t,error=="","%s",error) {return false}
     digits:[64]u8
     offer_set(s,root,offer_name(w.peers[0].token,&digits),address)
-    node_serve(&w.peers[0].n,address)
+    node_serve(&w.peers[0].n,..folders[:])
     for e in snap.entries {node_serve(&w.peers[0].n,e.address)}
     return true
 }
@@ -295,26 +308,39 @@ the_snapshot_leaves_out_what_the_layout_says_and_round_trips :: proc(t:^testing.
     s,open_error:=store.open(fmt.tprintf("%s/store",folder))
     if !testing.expect_value(t,open_error,store.Error.None) {return}
     defer store.close(&s)
-    snap,address,report,error:=snapshot_take(&s,root,"game",context.temp_allocator)
+    snap,address,report,error:=snapshot_take(&s,root,"game",nil,allocator=context.temp_allocator)
     if !testing.expectf(t,error=="","%s",error) {return}
     paths:=make([dynamic]string,context.temp_allocator)
     for e in snap.entries {append(&paths,e.path)}
     testing.expectf(t,fmt.tprint(paths[:])==`[".gitignore", "assets/b.txt", "assets/empty.txt", "project.mirai", "tools/run.sh"]`,"the files of its own, sorted: %v",paths[:])
     run,_:=snapshot_find(&snap,"tools/run.sh")
     b,_:=snapshot_find(&snap,"assets/b.txt")
-    testing.expect(t,run.executable && !b.executable && b.size==1 && store.has(&s,b.address))
+    empty,_:=snapshot_find(&snap,"assets/empty.txt")
+    testing.expect(t,run.executable && !b.executable && b.size==1 && store.chunk_has(&s,b.address) && b.address==bytes_address(transmute([]u8)string("b")))
+    testing.expect(t,empty.address==empty_address() && empty.address==bytes_address(nil))
     testing.expect_value(t,report.put,5)
 
-    bytes:=make([]u8,SNAPSHOT_MAX_BYTES,context.temp_allocator)
-    size,_:=store.blob_size(&s,address)
-    store.read(&s,address,0,bytes[:size])
-    again,decode_error:=snapshot_decode(bytes[:size],context.temp_allocator)
-    testing.expect_value(t,decode_error,Snapshot_Error.None)
+    // The tree reads back as the files, and the flat base a joiner keeps too.
+    again,read_error:=snapshot_read(&s,address,allocator=context.temp_allocator)
+    testing.expect_value(t,read_error,Snapshot_Error.None)
     testing.expect(t,again.name=="game" && len(again.entries)==len(snap.entries))
     for e,at in again.entries {testing.expectf(t,e==snap.entries[at],"%s round-trips",e.path)}
+    name,name_error:=snapshot_name(&s,address,context.temp_allocator)
+    testing.expect(t,name_error==.None && name=="game")
+    bytes,_:=snapshot_encode(snap,context.temp_allocator)
+    based,decode_error:=snapshot_decode(bytes,context.temp_allocator)
+    testing.expect_value(t,decode_error,Snapshot_Error.None)
+    for e,at in based.entries {testing.expectf(t,e==snap.entries[at],"%s round-trips in the base",e.path)}
+    for cut in 0..<len(bytes) {
+        _,cut_error:=snapshot_decode(bytes[:cut],context.temp_allocator)
+        testing.expectf(t,cut_error!=.None,"a base cut at %d is refused",cut)
+    }
+    // The same files put again give the same tree.
+    rebuilt,_,_:=snapshot_put(&s,&based)
+    testing.expect(t,rebuilt==address,"the tree is a function of the files")
 
-    // Taken again with nothing changed, nothing is read into the store and the blob is the same.
-    _,second,second_report,_:=snapshot_take(&s,root,"game",context.temp_allocator)
+    // Taken again with nothing changed, nothing is read into the store and the tree is the same.
+    _,second,second_report,_:=snapshot_take(&s,root,"game",nil,allocator=context.temp_allocator)
     testing.expect(t,second==address && second_report.put==0,"the index knows every file")
 
     // A file read just after it was written is not learned: a change of the same size within the same time is read.
@@ -322,12 +348,12 @@ the_snapshot_leaves_out_what_the_layout_says_and_round_trips :: proc(t:^testing.
     moment:=time.from_nanoseconds(time.to_unix_nanoseconds(time.now())/1e9*1e9)
     file_put(root,"assets/fresh.txt",transmute([]u8)string("one"))
     os.change_times(fmt.tprintf("%s/assets/fresh.txt",root),moment,moment)
-    snapshot_take(&s,root,"game",context.temp_allocator)
+    snapshot_take(&s,root,"game",nil,allocator=context.temp_allocator)
     file_put(root,"assets/fresh.txt",transmute([]u8)string("two"))
     os.change_times(fmt.tprintf("%s/assets/fresh.txt",root),moment,moment)
-    later,_,_,_:=snapshot_take(&s,root,"game",context.temp_allocator)
+    later,_,_,_:=snapshot_take(&s,root,"game",nil,allocator=context.temp_allocator)
     fresh,_:=snapshot_find(&later,"assets/fresh.txt")
-    testing.expect(t,fresh.address==store.address_of_bytes(transmute([]u8)string("two")),"the second bytes are shared")
+    testing.expect(t,fresh.address==bytes_address(transmute([]u8)string("two")),"the second bytes are shared")
 
     // A file that changed after it was listed: its entry has the size of what was put, which the joiner checks, and the index does not learn it.
     file_put(root,"assets/growing.txt",transmute([]u8)string("abc"))
@@ -335,71 +361,125 @@ the_snapshot_leaves_out_what_the_layout_says_and_round_trips :: proc(t:^testing.
     listed,_:=os.stat(fmt.tprintf("%s/assets/growing.txt",root),context.temp_allocator)
     file_put(root,"assets/growing.txt",transmute([]u8)string("abcdef"))
     index:=make(Index,context.temp_allocator)
-    e,put,put_error:=entry_take(&s,&index,root,"assets/growing.txt",listed,context.temp_allocator)
-    testing.expect(t,put_error==.None && put && e.size==6 && e.address==store.address_of_bytes(transmute([]u8)string("abcdef")))
+    e,put,put_error:=entry_take(&s,&index,root,"assets/growing.txt",listed,allocator=context.temp_allocator)
+    testing.expect(t,put_error==.None && put && e.size==6 && e.address==bytes_address(transmute([]u8)string("abcdef")))
     testing.expect(t,"assets/growing.txt" not_in index,"what changed while it was read is read again next time")
 }
 
+// An entry of a folder as a hostile peer writes it.
+@(private="file")
+Raw :: struct {kind:u8,name:string,address:store.Hash,size:u64,files:u32}
+
+// A folder object of records as given, with the meta of a snapshot and name.
+@(private="file")
+raw_folder :: proc(s:^store.Store,records:[]Raw,name:="",magic:=SNAPSHOT_MAGIC,cut:=0) -> store.Hash {
+    bytes:=make([dynamic]u8,context.temp_allocator)
+    for r in records {
+        r:=r
+        append(&bytes,r.kind,u8(len(r.name)))
+        append(&bytes,..transmute([]u8)r.name)
+        append(&bytes,..r.address[:])
+        for k in 0..<8 {append(&bytes,u8(r.size>>(8*uint(k))))}
+        if r.kind==KIND_FOLDER {for k in 0..<4 {append(&bytes,u8(r.files>>(8*uint(k))))}}
+    }
+    meta:=fmt.tprintf("%s%c%s",magic,rune(len(name)),name)
+    p,_:=store.put_begin(s)
+    store.put_write(&p,bytes[:len(bytes)-cut])
+    address,_,_:=store.put_finish(&p,transmute([]u8)meta)
+    store.commit(s)
+    return address
+}
+
 @(test)
-hostile_snapshots_are_refused_without_a_crash :: proc(t:^testing.T) {
-    empty:=store.address_of_bytes(nil)
-    some:=store.address_of_bytes(transmute([]u8)string("x"))
-    Case :: struct {entries:[]Entry,error:Snapshot_Error}
+hostile_trees_are_refused_without_a_crash :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"share-hostile")
+    if folder=="" {return}
+    s,open_error:=store.open(fmt.tprintf("%s/store",folder))
+    if !testing.expect_value(t,open_error,store.Error.None) {return}
+    defer store.close(&s)
+    put :: proc(s:^store.Store,text:string) -> store.Hash {
+        address,_:=store.put(s,transmute([]u8)text)
+        return address
+    }
+    x:=put(&s,"x")
+    empty:=empty_address()
+    inner:=raw_folder(&s,{{name="f",address=x,size=1}})
+    Case :: struct {records:[]Raw,error:Snapshot_Error}
     cases:=[?]Case{
-        {{{path="../x",address=some,size=1}},.Path},
-        {{{path="a/../b",address=some,size=1}},.Path},
-        {{{path="/etc/passwd",address=some,size=1}},.Path},
-        {{{path="C:/x",address=some,size=1}},.Path},
-        {{{path="a\\b",address=some,size=1}},.Path},
-        {{{path="a//b",address=some,size=1}},.Path},
-        {{{path="a/",address=some,size=1}},.Path},
-        {{{path="nul",address=some,size=1}},.Path},
-        {{{path="x/Com1.txt",address=some,size=1}},.Path},
-        {{{path="x/name.",address=some,size=1}},.Path},
-        {{{path=".mirai/share/snapshot",address=some,size=1}},.Path},
-        {{{path=".git/config",address=some,size=1}},.Path},
-        {{{path="",address=some,size=1}},.Path},
-        {{{path="a",address=some,size=1},{path="a",address=some,size=1}},.Duplicate},
-        {{{path="A.txt",address=some,size=1},{path="a.txt",address=some,size=1}},.Duplicate},
-        {{{path="a",address=some,size=1},{path="a/b",address=some,size=1}},.Duplicate},
-        {{{path="b",address=some,size=1},{path="a",address=some,size=1}},.Duplicate},
-        {{{path="a",address=some,size=FILE_MAX_BYTES+1}},.Size},
-        {{{path="a",address=some,size=-1}},.Size},
-        {{{path="a",address=some,size=0}},.Size},
-        {{{path="a",address=empty,size=0},{path="b",address=some,size=1}},.None},
+        {{{name="..",address=x,size=1}},.Path},
+        {{{name=".",address=x,size=1}},.Path},
+        {{{name="a/b",address=x,size=1}},.Path},
+        {{{name="a\\b",address=x,size=1}},.Path},
+        {{{name="",address=x,size=1}},.Path},
+        {{{name="nul",address=x,size=1}},.Path},
+        {{{name="Com1.txt",address=x,size=1}},.Path},
+        {{{name="name.",address=x,size=1}},.Path},
+        {{{name="a:b",address=x,size=1}},.Path},
+        {{{kind=KIND_FOLDER,name=".mirai",address=inner,size=1,files=1}},.Path},
+        {{{kind=KIND_FOLDER,name=".git",address=inner,size=1,files=1}},.Path},
+        {{{name="a",address=x,size=1},{name="a",address=x,size=1}},.Duplicate},
+        {{{name="b",address=x,size=1},{name="a",address=x,size=1}},.Duplicate},
+        {{{name="A.txt",address=x,size=1},{name="a.txt",address=x,size=1}},.Duplicate},
+        {{{name="a",address=x,size=0}},.Size},
+        {{{name="a",address=x,size=1<<63}},.Size},
+        {{{name="a",address=x,size=max(u64)/2},{name="b",address=x,size=max(u64)/2}},.Size},
+        {{{kind=KIND_FOLDER,name="a",address=inner,size=1,files=0}},.Size},
+        {{{kind=KIND_FOLDER,name="a",address=inner,size=1,files=2}},.Size},
+        {{{kind=KIND_FOLDER,name="a",address=inner,size=2,files=1}},.Size},
+        {{{kind=3,name="a",address=x,size=1}},.Not_Snapshot},
+        {{{kind=KIND_FOLDER,name="a",address=x,size=1,files=1}},.Not_Snapshot},
+        {{{kind=KIND_FOLDER,name="a",address=put(&s,"none"),size=1,files=1}},.Not_Snapshot},
+        {{{name="a",address=empty,size=0},{name="b",address=x,size=1},{kind=KIND_FOLDER,name="c",address=inner,size=1,files=1}},.None},
     }
     for c in cases {
-        bytes,_:=snapshot_encode({name="game",entries=c.entries},context.temp_allocator)
-        _,error:=snapshot_decode(bytes,context.temp_allocator)
-        testing.expectf(t,error==c.error,"%v: %v, not %v",c.entries,error,c.error)
+        root:=raw_folder(&s,c.records,"game")
+        _,error:=snapshot_read(&s,root,allocator=context.temp_allocator)
+        testing.expectf(t,error==c.error,"%v: %v, not %v",c.records,error,c.error)
+        free_all(context.temp_allocator)
     }
-    good,_:=snapshot_encode({name="game",entries={{path="a",address=some,size=1},{path="b/c",address=some,size=1}}},context.temp_allocator)
-    for cut in 0..<len(good) {
-        _,error:=snapshot_decode(good[:cut],context.temp_allocator)
-        testing.expectf(t,error!=.None,"a snapshot cut at %d is refused",cut)
+    read :: proc(s:^store.Store,root:store.Hash) -> Snapshot_Error {
+        _,error:=snapshot_read(s,root,allocator=context.temp_allocator)
+        return error
     }
-    // A count of entries the bytes cannot hold, a name that is not a folder, bytes after the end.
-    lying:=make([]u8,len(good),context.temp_allocator)
-    copy(lying,good)
-    lying[len(SNAPSHOT_MAGIC)+2+4+3]=0x7f
-    _,lie:=snapshot_decode(lying,context.temp_allocator)
-    testing.expect(t,lie!=.None)
-    badly,_:=snapshot_encode({name="..",entries={}},context.temp_allocator)
-    _,named:=snapshot_decode(badly,context.temp_allocator)
-    testing.expect_value(t,named,Snapshot_Error.Name)
-    longer:=make([]u8,len(good)+1,context.temp_allocator)
-    copy(longer,good)
-    _,trailing:=snapshot_decode(longer,context.temp_allocator)
-    testing.expect_value(t,trailing,Snapshot_Error.Not_Snapshot)
-    oversized:=make([]u8,SNAPSHOT_MAX_BYTES+1,context.temp_allocator)
-    copy(oversized,good)
-    _,large:=snapshot_decode(oversized,context.temp_allocator)
-    testing.expect_value(t,large,Snapshot_Error.Too_Large)
+    good:=[]Raw{{name="a",address=x,size=1},{kind=KIND_FOLDER,name="b",address=inner,size=1,files=1}}
+    // The meta: a root needs a folder's name, a folder below none; another magic is not a snapshot.
+    testing.expect_value(t,read(&s,raw_folder(&s,good,"..")),Snapshot_Error.Name)
+    testing.expect_value(t,read(&s,raw_folder(&s,good,"")),Snapshot_Error.Name)
+    testing.expect_value(t,read(&s,raw_folder(&s,good,"game",magic="mirai snapshot 1\n")),Snapshot_Error.Not_Snapshot)
+    named:=raw_folder(&s,{{name="f",address=x,size=1}},"inside")
+    testing.expect_value(t,read(&s,raw_folder(&s,{{kind=KIND_FOLDER,name="b",address=named,size=1,files=1}},"game")),Snapshot_Error.Not_Snapshot)
+    for cut in 1..<45 {testing.expectf(t,read(&s,raw_folder(&s,good,"game",cut=cut))==.Truncated,"a listing cut by %d is refused",cut)}
+    // What is not in the store is unavailable, never a crash.
+    testing.expect_value(t,read(&s,raw_folder(&s,{{kind=KIND_FOLDER,name="b",address=store.address_of_bytes(transmute([]u8)string("?")),size=1,files=1}},"game")),Snapshot_Error.Unavailable)
+    // Folders nested deeper than the bound.
+    deep:=inner
+    for _ in 0..<DEPTH_MAX {deep=raw_folder(&s,{{kind=KIND_FOLDER,name="d",address=deep,size=1,files=1}})}
+    testing.expect_value(t,read(&s,raw_folder(&s,{{kind=KIND_FOLDER,name="d",address=deep,size=1,files=1}},"game")),Snapshot_Error.Depth)
+    // A folder repeated under many names declares more files than a snapshot holds; one that lies about them is refused where it lies.
+    wide:=raw_folder(&s,{{kind=KIND_FOLDER,name="x",address=inner,size=1,files=FILES_MAX/2}})
+    testing.expect_value(t,read(&s,raw_folder(&s,{{kind=KIND_FOLDER,name="a",address=wide,size=1,files=FILES_MAX/2},{kind=KIND_FOLDER,name="b",address=wide,size=1,files=FILES_MAX/2},{kind=KIND_FOLDER,name="c",address=wide,size=1,files=1}},"game")),Snapshot_Error.Too_Large)
+    testing.expect_value(t,read(&s,raw_folder(&s,{{kind=KIND_FOLDER,name="a",address=wide,size=1,files=FILES_MAX/2}},"game")),Snapshot_Error.Size)
+    // More entries in a folder than a folder holds, and an object larger than a folder can be.
+    many:=make([]Raw,FOLDER_ENTRIES_MAX+1,context.temp_allocator)
+    for &r,k in many {r={name=fmt.tprintf("f%06d",k),address=empty}}
+    testing.expect_value(t,read(&s,raw_folder(&s,many,"game")),Snapshot_Error.Too_Large)
+    huge:=make([]u8,LISTING_MAX+1,context.temp_allocator)
+    p,_:=store.put_begin(&s)
+    store.put_write(&p,huge)
+    meta:=fmt.tprintf("%s%cgame",SNAPSHOT_MAGIC,rune(4))
+    large,_,_:=store.put_finish(&p,transmute([]u8)meta)
+    store.commit(&s)
+    testing.expect_value(t,read(&s,large),Snapshot_Error.Too_Large)
+    free_all(context.temp_allocator)
+    // Random listings, some under the magic.
     for seed in 0..<64 {
         random:=noise(int(seed)*37,u64(seed))
-        if seed%2==0 && len(random)>len(SNAPSHOT_MAGIC) {copy(random,SNAPSHOT_MAGIC)}
-        snapshot_decode(random,context.temp_allocator)
+        p,_:=store.put_begin(&s)
+        store.put_write(&p,random)
+        address,_,_:=store.put_finish(&p,transmute([]u8)fmt.tprintf("%s%cgame",SNAPSHOT_MAGIC,rune(4)) if seed%2==0 else random[:min(len(random),16)])
+        read(&s,address)
     }
+    store.commit(&s)
 }
 
 @(test)
@@ -517,16 +597,17 @@ a_join_keeps_what_the_joiner_changes_while_it_runs :: proc(t:^testing.T) {
     bytes :: proc(text:string) -> []u8 {return transmute([]u8)text}
     entries:=make([]Entry,3,context.temp_allocator)
     for name,k in ([3]string{"a","b","c"}) {
-        address,_:=store.put_bytes(&s,bytes(fmt.tprintf("host %s",name)))
+        address,_:=store.put(&s,bytes(fmt.tprintf("host %s",name)))
         entries[k]={path=fmt.tprintf("%s.txt",name),address=address,size=6}
     }
+    store.commit(&s)
     snap:=Snapshot{name="game",entries=entries}
     file_put(joined,"b.txt",bytes("base b"))
     file_put(joined,"c.txt",bytes("base c"))
     plan:Plan
     plan.write=make([dynamic]Write,context.temp_allocator)
-    append(&plan.write,Write{at=0},Write{at=1,present=true,base=store.address_of_bytes(bytes("base b"))},Write{at=2,present=true,base=store.address_of_bytes(bytes("base c"))})
-    // After the plan, before the blobs arrive.
+    append(&plan.write,Write{at=0},Write{at=1,present=true,base=bytes_address(bytes("base b"))},Write{at=2,present=true,base=bytes_address(bytes("base c"))})
+    // After the plan, before the objects arrive.
     file_put(joined,"a.txt",bytes("mine a"))
     file_put(joined,"b.txt",bytes("mine b"))
     index:=make(Index,context.temp_allocator)
@@ -644,18 +725,17 @@ a_third_peer_joins_from_the_second :: proc(t:^testing.T) {
     testing.expectf(t,len(report.packages.missing)==0 && report.packages.fetched==1,"%v",report.packages)
 }
 
-// A host whose snapshot lies about a size, and a blob above the limit asked
-// for, are refused without writing anything.
+// A host whose snapshot lies about the size of a file, and one whose root is
+// larger than a folder can be, are refused without writing anything.
 @(test)
-a_lying_size_and_an_oversized_blob_are_refused :: proc(t:^testing.T) {
+a_lying_size_and_an_oversized_folder_are_refused :: proc(t:^testing.T) {
     w:Test_Net
     if !test_net(t,&w,"share-lies",2) {return}
     defer test_net_destroy(&w)
     s:=&w.peers[0].s
-    data:=noise(200<<10,5)
-    address,_:=store.put_bytes(s,data)
-    bytes,_:=snapshot_encode({name="game",entries={{path="a.bin",address=address,size=100}}},context.temp_allocator)
-    snapshot,_:=store.put_bytes(s,bytes)
+    address,_:=store.put(s,noise(200<<10,5))
+    lying:=Snapshot{name="game",entries={{path="a.bin",address=address,size=100}}}
+    snapshot,_,_:=snapshot_put(s,&lying)
     digits:[64]u8
     store.ref_set(s,NAMESPACE,offer_name(w.peers[0].token,&digits),snapshot)
     test_connect(&w,1,0)
@@ -664,18 +744,218 @@ a_lying_size_and_an_oversized_blob_are_refused :: proc(t:^testing.T) {
     testing.expectf(t,error=="" && len(lied.failed)==1 && strings.contains(lied.failed[0],"not honest"),"%s %v",error,lied.failed)
     testing.expect(t,!os.exists(fmt.tprintf("%s/a.bin",joined)))
 
-    run:=Test_Join{desc=join_desc(&w,0,joined),allocator=test_arena(t)}
-    run.desc.node=&w.peers[1].n
-    big:=address
-    context.user_ptr=&big
-    th:=thread.create_and_start_with_data(&run,proc(data:rawptr) {
-        r:=(^Test_Join)(data)
-        _,r.error=join_blob(&r.desc,(^store.Hash)(context.user_ptr)^,1000,"a blob",r.allocator)
+    huge:=make([]u8,LISTING_MAX+1,context.temp_allocator)
+    p,_:=store.put_begin(s)
+    store.put_write(&p,huge)
+    meta:=fmt.tprintf("%s%cgame",SNAPSHOT_MAGIC,rune(4))
+    large,_,_:=store.put_finish(&p,transmute([]u8)meta)
+    store.commit(s)
+    store.ref_set(s,NAMESPACE,offer_name(w.peers[0].token,&digits),large)
+    _,refused:=test_join(t,&w,1,join_desc(&w,0,fmt.tprintf("%s/other",w.folder)))
+    testing.expectf(t,strings.contains(refused,"more than"),"%s",refused)
+    testing.expectf(t,node_totals(&w.peers[1].n).received<4<<20,"the folder was refused before it came: %d bytes",node_totals(&w.peers[1].n).received)
+}
+
+// Invariant: a join after one file changed at a depth of d folders receives
+// at most d+2 objects (the folders on its path, the root and the file), each
+// as its root with at most exchange.ROOT_BUDGET of what follows it and the
+// chunks its change rewrote (two at most) and one node per level: a bound of
+// the depth alone, whatever the number of files of the project.
+@(test)
+a_rejoin_after_one_file_changed_receives_what_does_not_grow_with_the_project :: proc(t:^testing.T) {
+    DEPTH :: 3 // assets/<a>/<b>
+    BOUND :: (DEPTH+2)*(exchange.ROOT_BUDGET+2*store.CHUNK_MAX)
+    for files in ([2]int{96,1536}) {
+        w:Test_Net
+        if !test_net(t,&w,fmt.tprintf("share-rejoin-%d",files),2) {return}
+        defer test_net_destroy(&w)
+        root:=fmt.tprintf("%s/host",w.folder)
+        file_put(root,"project.mirai",transmute([]u8)string("{}\n"))
+        for i in 0..<files {file_put(root,fmt.tprintf("assets/%d/%d/f%04d.txt",i%8,i/8%6,i),transmute([]u8)fmt.tprintf("file %d of the project",i))}
+        if !host_offer(t,&w,root) {return}
+        test_connect(&w,1,0)
+        joined:=fmt.tprintf("%s/joined",w.folder)
+        if _,error:=test_join(t,&w,1,join_desc(&w,0,joined));!testing.expectf(t,error=="","%s",error) {return}
+        file_put(root,"assets/3/2/f0019.txt",transmute([]u8)string("changed"))
+        if !host_offer(t,&w,root) {return}
+        before:=node_totals(&w.peers[1].n).received
+        report,error:=test_join(t,&w,1,join_desc(&w,0,joined))
+        if !testing.expectf(t,error=="","%s",error) {return}
+        received:=node_totals(&w.peers[1].n).received-before
+        testing.expectf(t,report.written==1 && report.files==files+1,"one file written of %d: %v",report.files,report.written)
+        fmt.printfln("re-join of %d files after one changed: %d bytes received, bound %d",files,received,BOUND)
+        testing.expectf(t,received<=BOUND,"%d files: %d bytes received, at most %d",files,received,BOUND)
+        testing.expect_value(t,read_text(joined,"assets/3/2/f0019.txt"),"changed")
         free_all(context.temp_allocator)
-        sync.atomic_store(&r.done,true)
-    },init_context=context)
-    for !sync.atomic_load(&run.done) {test_step(&w)}
-    thread.join(th)
-    thread.destroy(th)
-    testing.expectf(t,strings.contains(run.error,"more than"),"%s",run.error)
+    }
+}
+
+// A byte inserted in a large file moves its new chunks and the nodes above
+// them, also when the joiner's store lost the old version: its file is cut
+// as the host's and gives the chunks they share.
+@(test)
+a_byte_inserted_in_a_large_file_moves_little_also_from_a_new_store :: proc(t:^testing.T) {
+    SIZE :: 64<<20
+    TARGET :: 512<<10 // of an insert in 200 MB on the wire
+    w:Test_Net
+    if !test_net(t,&w,"share-insert",2) {return}
+    defer test_net_destroy(&w)
+    root:=fmt.tprintf("%s/host",w.folder)
+    file_put(root,"project.mirai",transmute([]u8)string("{}\n"))
+    data:=noise(SIZE,7)
+    file_put(root,"assets/big.bin",data)
+    if !host_offer(t,&w,root) {return}
+    test_connect(&w,1,0)
+    joined:=fmt.tprintf("%s/joined",w.folder)
+    if _,error:=test_join(t,&w,1,join_desc(&w,0,joined));!testing.expectf(t,error=="","%s",error) {return}
+    for round in 0..<2 {
+        at:=SIZE/3+round*SIZE/4
+        changed:=make([]u8,len(data)+1,context.temp_allocator)
+        copy(changed,data[:at])
+        changed[at]=u8(round+1)
+        copy(changed[at+1:],data[at:])
+        data=changed
+        file_put(root,"assets/big.bin",data)
+        if !host_offer(t,&w,root) {return}
+        if round==1 {
+            // The joiner's store is gone: a new one, a new node over it.
+            p:=&w.peers[1]
+            node_destroy(&p.n)
+            store.close(&p.s)
+            open_error:store.Error
+            if p.s,open_error=store.open(fmt.tprintf("%s/store-new",w.folder));!testing.expect_value(t,open_error,store.Error.None) {return}
+            if !testing.expect_value(t,node_init(&p.n,&p.s),.None) {return}
+            node_host(&p.n,p.server)
+            wire.host_destroy(p.client)
+            free(p.client)
+            p.client=nil
+            test_connect(&w,1,0)
+        }
+        before:=node_totals(&w.peers[1].n).received
+        report,error:=test_join(t,&w,1,join_desc(&w,0,joined))
+        if !testing.expectf(t,error=="","%s",error) {return}
+        received:=node_totals(&w.peers[1].n).received-before
+        testing.expectf(t,report.written==1,"%v",report)
+        fmt.printfln("one byte inserted in %d bytes, %s: %d bytes received",SIZE,round==0?"same store":"new store",received)
+        testing.expectf(t,received<=TARGET,"round %d: %d bytes received for one byte inserted in %d",round,received,SIZE)
+        got,_:=os.read_entire_file(fmt.tprintf("%s/assets/big.bin",joined),context.temp_allocator)
+        testing.expect(t,len(got)==len(data) && string(got)==string(data),"the file is the host's")
+    }
+}
+
+// A large generated file is shared and joined with memory that does not grow
+// with it. Its blocks repeat, each cut where the store cuts, so the stores
+// hold only distinct chunks while the files are whole. Opt-in, alone:
+// mirai test cook/share a_large_file_joins_within_bounded_memory -define:SHARE_LARGE=true -define:ODIN_TEST_THREADS=1
+@(test)
+a_large_file_joins_within_bounded_memory :: proc(t:^testing.T) {
+    when #config(SHARE_LARGE,false) {
+        SIZE :: i64(5_000_000_000)
+        POOL :: 512
+        // Blocks that end where the store cuts, whatever follows them.
+        pool:=make([][]u8,POOL)
+        defer {
+            for b in pool {delete(b)}
+            delete(pool)
+        }
+        for &b,k in pool {
+            random:=noise(store.CHUNK_MAX,u64(100+k))
+            b=make([]u8,store.chunk_cut(random))
+            copy(b,random)
+            free_all(context.temp_allocator)
+        }
+        w:Test_Net
+        if !test_net(t,&w,"share-large",2) {return}
+        defer test_net_destroy(&w)
+        root:=fmt.tprintf("%s/host",w.folder)
+        file_put(root,"project.mirai",transmute([]u8)string("{}\n"))
+        os.make_directory_all(fmt.tprintf("%s/assets",root))
+        path:=fmt.tprintf("%s/assets/large.bin",root)
+        file,_:=os.open(path,{.Write,.Create,.Trunc},os.Permissions_Default_File)
+        written:i64
+        for k:=u64(0);written<SIZE;k+=1 {
+            h:=k*0x9e3779b97f4a7c15
+            h~=h>>29
+            b:=pool[h%POOL]
+            b=b[:min(i64(len(b)),SIZE-written)]
+            os.write(file,b)
+            written+=i64(len(b))
+        }
+        os.close(file)
+        defer os.remove(path)
+        Sampler :: struct {base,peak:i64,stop:bool}
+        sample :: proc(data:rawptr) {
+            s:=(^Sampler)(data)
+            for !sync.atomic_load(&s.stop) {
+                sync.atomic_store(&s.peak,max(sync.atomic_load(&s.peak),i64(platform.process_memory().private)))
+                time.sleep(5*time.Millisecond)
+            }
+        }
+        measured :: proc(t:^testing.T,what:string,run:proc(data:rawptr),data:rawptr) -> i64 {
+            s:=Sampler{base=i64(platform.process_memory().private)}
+            s.peak=s.base
+            th:=thread.create_and_start_with_data(&s,sample)
+            started:=time.tick_now()
+            run(data)
+            sync.atomic_store(&s.stop,true)
+            thread.join(th)
+            thread.destroy(th)
+            fmt.printfln("%s: %.1f s, peak growth %d bytes",what,time.duration_seconds(time.tick_since(started)),s.peak-s.base)
+            return s.peak-s.base
+        }
+        Offer :: struct {t:^testing.T,w:^Test_Net,root:string}
+        offer:=Offer{t,&w,root}
+        shared:=measured(t,"share of 5 GB",proc(data:rawptr) {
+            o:=(^Offer)(data)
+            host_offer(o.t,o.w,o.root)
+        },&offer)
+        test_connect(&w,1,0)
+        joined:=fmt.tprintf("%s/joined",w.folder)
+        defer os.remove(fmt.tprintf("%s/assets/large.bin",joined))
+        Run :: struct {t:^testing.T,w:^Test_Net,joined:string,report:Join_Report,error:string}
+        run:=Run{t=t,w=&w,joined=joined}
+        both:=measured(t,"join of 5 GB, both peers",proc(data:rawptr) {
+            r:=(^Run)(data)
+            r.report,r.error=test_join(r.t,r.w,1,join_desc(r.w,0,r.joined))
+        },&run)
+        testing.expectf(t,run.error=="" && run.report.written==2,"%s %v",run.error,run.report)
+        info,_:=os.stat(fmt.tprintf("%s/assets/large.bin",joined),context.temp_allocator)
+        testing.expect_value(t,info.size,SIZE)
+        when #config(ODIN_TEST_THREADS,0)==1 {
+            testing.expectf(t,shared<=64<<20,"the share grew %d bytes",shared)
+            testing.expectf(t,both<=2*(64<<20),"the join grew %d bytes on both peers together",both)
+        }
+    }
+}
+
+// A join leaves the list of packages and their manifests as the host has
+// them, byte for byte, after its refresh: also the record of a document of a
+// package the joiner's refresh does not write, as a model's prefab, which
+// only a library with the game's types writes.
+@(test)
+the_packages_of_a_joined_project_are_the_hosts :: proc(t:^testing.T) {
+    w:Test_Net
+    if !test_net(t,&w,"share-packages",2) {return}
+    defer test_net_destroy(&w)
+    root:=fmt.tprintf("%s/host",w.folder)
+    if _,made:=host_project(t,&w);!made {return}
+    list,_,load_error:=asset.packages_load(root,context.temp_allocator)
+    if !testing.expect_value(t,load_error,asset.Error.None) || !testing.expect(t,len(list.packages)==1) {return}
+    entry:=&list.packages[0]
+    p,package_error:=asset.package_load(&w.peers[0].s,root,entry,context.temp_allocator)
+    if !testing.expect_value(t,package_error,asset.Error.None) {return}
+    append(&entry.written,asset.Package_Written{id=p.assets[0].id,hash=0x1234})
+    testing.expect_value(t,asset.packages_save(root,&list),asset.Error.None)
+    if !host_offer(t,&w,root) {return}
+    test_connect(&w,1,0)
+    joined:=fmt.tprintf("%s/joined",w.folder)
+    report,error:=test_join(t,&w,1,join_desc(&w,0,joined))
+    if !testing.expectf(t,error=="","%s",error) {return}
+    testing.expectf(t,len(report.packages.failures)==0 && report.packages.fetched==1,"%v",report.packages)
+    paths:=make([dynamic]string,context.temp_allocator)
+    append(&paths,asset.PACKAGES_FILE)
+    listed,_:=os.read_all_directory_by_path(fmt.tprintf("%s/packages",root),context.temp_allocator)
+    for info in listed {append(&paths,fmt.tprintf("packages/%s",info.name))}
+    testing.expect(t,len(paths)>1)
+    for path in paths {testing.expectf(t,read_text(root,path)==read_text(joined,path),"%s is the host's",path)}
 }

@@ -165,8 +165,10 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   std/subprocess` (low priority of a child, handles it inherits). GPU turns with real editors:
   two sessions at once on a heavy scene both run or the second waits naming the first, and
   killing the editor of one frees its turn (`mirai locks`). Sharing: `mirai test cook/share`
-  (snapshot rule, hostile snapshots, join, update by three ways with renames by case, edits while
-  a join runs, an incomplete join run again, resume, a third peer), all on `Sim_Network`.
+  (snapshot rule, hostile trees, join, update by three ways with renames by case, edits while a
+  join runs, an incomplete join run again, resume, a third peer, the bytes of a re-join and of an
+  insert, the packages as the host's), all on `Sim_Network`; the memory of a large file is the
+  opt-in `a_large_file_joins_within_bounded_memory` with `-define:SHARE_LARGE=true`, run alone.
 - Generator or build: `mirai build editor` and `mirai build game --out <separate folder>` of the
   affected project, and the player with `--no-gpu --frames 3`.
 - User commands, by hand: `mirai new`, and `mirai build game` twice (the second says "unchanged").
