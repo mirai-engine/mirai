@@ -218,11 +218,13 @@ a_build_this_engine_cannot_decode_is_not_taken :: proc(t:^testing.T) {
     digits:[64]u8
     key:=store.hex(report.key,&digits)
     testing.expect_value(t,store.ref_set(host,asset.REF_IMPORTS if report.final else asset.REF_IMPORTS_FAST,key,other),store.Error.None)
-    for refreshed in ([2]Library_Report{
+    // Here it names the compressor; a source does not give it, so a peer finds none.
+    for refreshed,peer in ([2]Library_Report{
         project_refresh(plugin,{store=host,root=plugin},context.temp_allocator),
         project_refresh(plugin,{store=test_store(t,fmt.tprintf("%s/peer",top)),root=plugin,source=cache.store_source(host),fast_textures=true},context.temp_allocator),
     }) {
-        testing.expectf(t,refreshed.fetched==0 && len(refreshed.missing)==1 && strings.contains(refreshed.missing[0],"package soft") && strings.contains(refreshed.missing[0],"private-codec"),"%v",refreshed)
+        testing.expectf(t,refreshed.fetched==0 && len(refreshed.missing)==1 && strings.contains(refreshed.missing[0],"package soft"),"%v",refreshed)
+        testing.expectf(t,peer==1 || (len(refreshed.missing)==1 && strings.contains(refreshed.missing[0],"private-codec")),"%v",refreshed)
     }
 }
 
