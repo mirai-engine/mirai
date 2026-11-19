@@ -3,11 +3,13 @@ package foliage
 import "base:runtime"
 import "core:math"
 import "core:math/linalg"
+import "core:mem/virtual"
 import "core:slice"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import render "mirai:engine/render"
+import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import physics "plugins:physics/runtime"
@@ -1091,4 +1093,51 @@ the_generate_brush_paints_the_density_of_the_cells_under_it :: proc(t:^testing.T
     cell=source_cell(&s,{0,0})
     testing.expect(t,cell.generate && cell_density_at(cell,16,16)==0 && cell_density_at(cell,0,0)==1)
     testing.expect(t,source_generate_area(&s,{16,0,16},60,false,0.5) && source_cell(&s,{0,0})==nil,"none of it takes out the cell that holds nothing else")
+}
+
+// Memory whose pages are released when it is freed: a read of it after that faults.
+@(private="file")
+released_on_free :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
+    #partial switch mode {
+    case .Alloc,.Alloc_Non_Zeroed,.Resize,.Resize_Non_Zeroed:
+        bytes,error:=virtual.reserve_and_commit(uint(size))
+        if error!=nil {return nil,error}
+        if old!=nil {
+            copy(bytes,([^]byte)(old)[:min(old_size,size)])
+            virtual.release(old,uint(old_size))
+        }
+        return bytes,nil
+    case .Free:
+        if old!=nil {virtual.release(old,uint(old_size))}
+        return nil,nil
+    }
+    return nil,.Mode_Not_Implemented
+}
+
+// The cells of a frame are expanded from the ground of the call: the work
+// a storage keeps holds no view of it, which a change of the ground frees
+// while the asset marks read the storages between frames.
+@(test)
+expanded_cells_keep_no_view_of_the_ground_they_read :: proc(t:^testing.T) {
+    s:Source
+    defer source_destroy(&s)
+    sample(&s)
+    at:=-1
+    for cell,i in s.cells {if cell.coord==([2]i32{0,0}) {at=i}}
+    if !testing.expect(t,at>=0) {return}
+    owner:Ground_Owner
+    owner.layers.allocator={released_on_free,nil}
+    layer:=base.Asset_Id{7,7}
+    _,added:=ground_layers_index(&owner,{layer,{},{},{}})
+    _,_,tile:=ground_tile(&owner,{0,0},2)
+    if !testing.expect(t,added && tile!=nil) {ground_owner_destroy(&owner);return}
+    work:Build_Work
+    defer build_work_destroy(&work)
+    expanded:=cells_expand(&work,&s,&owner,nil,{{index=u32(at)}},1,nil,context.allocator)
+    testing.expect_value(t,len(expanded),1)
+    ground_owner_destroy(&owner)
+    info:=core.World_Info{storages=[]core.Storage_Info{{name="Build_Work",info=type_info_of(Build_Work),place=.World}}}
+    ids:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    host.world_asset_ids(core.world_ref(&work,&info),&ids)
+    testing.expect(t,!slice.contains(ids[:],layer),"the work names no layer of a ground it does not own")
 }
