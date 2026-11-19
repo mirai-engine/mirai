@@ -224,7 +224,8 @@ import_info :: proc(source:string,name:string,index:int,size:u64,hash:u64,settin
 // Reads the builds outputs may be taken from: that of what the import is made
 // from now (which fixes it), Final or, with fast textures, Fast; and the one
 // this machine chose for the previous manifest. Before any writer_reuse, on
-// the writer's thread.
+// the writer's thread. Only a build in the formats of the compressor this one
+// records: the build it publishes says what its objects need to be decoded.
 @(private)
 writer_candidates :: proc(w:^Writer) {
     if w.candidates_read {return}
@@ -237,7 +238,7 @@ writer_candidates :: proc(w:^Writer) {
         hash,error:=store.ref_get(s,namespace,name)
         if error!=.None {return}
         b,read_error:=asset.build_get(s,hash,w.keep)
-        if read_error==.None && b.package_id==w.package_id {append(&w.candidates,Candidate{b,current})}
+        if read_error==.None && b.package_id==w.package_id && b.compressor==asset.build_compressor(w.types.codecs) {append(&w.candidates,Candidate{b,current})}
     }
     take(w,s,asset.REF_IMPORTS,store.hex(w.key,&digits),true)
     if w.options.fast_textures {take(w,s,asset.REF_IMPORTS_FAST,store.hex(w.key,&digits),true)}
