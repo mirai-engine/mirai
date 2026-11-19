@@ -226,6 +226,83 @@ texture_feedback_takes_what_reflections_see_and_nothing_unseen :: proc(t: ^testi
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
+// The resolve of the rows and that of each Surface program record what they
+// sample in one window frame of TEXTURE_FEEDBACK_TURNS, and in every frame
+// that waits for its textures: after a jump a texture asks for its finer
+// level within a turn, and a still view settles at the levels frames that
+// record every program ask for.
+@(test)
+texture_feedback_takes_turns :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 160, 120, feedback_settings(), programs = true) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	SIDE :: 1024
+	quad := feedback_quad(r)
+	sampled := program_find(r, "Sampled", .Surface)
+	if !testing.expect(t, sampled != nil, "the tests have the Sampled program") {return}
+	wholes: [2]Texture_Data
+	handles: [2]Texture_Handle
+	defer for &whole in wholes {texture_data_destroy(&whole)}
+	for &handle, i in handles {handle, wholes[i] = noise_texture(t, r, SIDE, SIDE)}
+	row, programmed := DEFAULT_MATERIAL, DEFAULT_MATERIAL
+	row.textures[.Base_Color] = handles[0]
+	programmed.program_id, programmed.custom_params = sampled.id, program_defaults(sampled)
+	testing.expect(t, program_parameter_set_texture(r, &programmed.custom_params, program_parameter(sampled, "image"), handles[1]))
+	materials_set(r, {row, programmed})
+	left, right := scaled(2), scaled(2)
+	left[0, 3], right[0, 3] = -1.1, 1.1
+	testing.expect(t, scene_update(r, 0, {
+		{object_id = 1, mesh = quad, transform = left, material = 1, tint = {1, 1, 1}},
+		{object_id = 2, mesh = quad, transform = right, material = 2, tint = {1, 1, 1}},
+	}, true))
+	far := Camera{position = {0, 30, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	near := far
+	near.position.y = 1.5
+	feedback_settle(t, r, far, wholes[:])
+	renderer_pipelines_wait(r)
+	res := &r.textures.residency
+	streams := res.streams[:]
+
+	// Which frames record each texture, once the feedback of the first comes back.
+	for whole in ([]bool{false, true}) {
+		recorded: [2]int
+		for frame in 0 ..< rhi.MAX_FRAMES_IN_FLIGHT + 2 * TEXTURE_FEEDBACK_TURNS {
+			res.frames = 0
+			for handle in handles {streams[handle - 1].window = max(f32)}
+			testing.expect(t, renderer_frame(r, {camera = far, offscreen = whole, streamed = whole}), r.error)
+			if frame < rhi.MAX_FRAMES_IN_FLIGHT {continue}
+			for handle, i in handles {if streams[handle - 1].window < max(f32) {recorded[i] += 1}}
+		}
+		expected := 2 * TEXTURE_FEEDBACK_TURNS if whole else 2
+		testing.expectf(t, recorded == [2]int{expected, expected}, "frames that wait for their textures %v: the row and the program record in %v of %d frames, not %d", whole, recorded, 2 * TEXTURE_FEEDBACK_TURNS, expected)
+	}
+
+	// A jump asks for the finer levels within a turn, and the frames in flight.
+	before := [2]f32{streams[handles[0] - 1].lod, streams[handles[1] - 1].lod}
+	asked := -1
+	for frame in 0 ..< 4 * TEXTURE_FEEDBACK_TURNS {
+		testing.expect(t, renderer_frame(r, {camera = near}), r.error)
+		if streams[handles[0] - 1].lod < before[0] && streams[handles[1] - 1].lod < before[1] {
+			asked = frame + 1
+			break
+		}
+	}
+	testing.expectf(t, asked > 0 && asked <= TEXTURE_FEEDBACK_TURNS + rhi.MAX_FRAMES_IN_FLIGHT, "after a jump both textures ask for finer levels within %d frames, not %d", TEXTURE_FEEDBACK_TURNS + rhi.MAX_FRAMES_IN_FLIGHT, asked)
+
+	// Still, a window of each settles at the same levels.
+	settled: [2][2]f32
+	for whole, at in ([]bool{false, true}) {
+		for _ in 0 ..< 2 * TEXTURE_FEEDBACK_FRAMES {testing.expect(t, renderer_frame(r, {camera = near, offscreen = whole, streamed = whole}), r.error)}
+		for handle, i in handles {
+			testing.expectf(t, streams[handle - 1].shown, "texture %d is shown", i)
+			settled[at][i] = streams[handle - 1].lod
+		}
+	}
+	testing.expectf(t, settled[0] == settled[1], "frames in turns settle at the levels %v, frames that record every program at %v", settled[0], settled[1])
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
 // Textures of hostile sizes (a texel, a line, odd sides) on quads of hostile
 // scales stream without a validation error, each within its levels.
 @(test)

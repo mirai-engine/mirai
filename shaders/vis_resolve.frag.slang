@@ -20,9 +20,12 @@
 //
 // plain: without the reflectance target; layers: with the reflectance and the
 // layers targets (as gbuffer.frag). nested: the pixels of a nested view.
+// quiet: in a frame off the feedback turn of the program, nothing it samples
+// is recorded (textures_feedback_turn).
 //! variant plain MIRAI_GBUFFER_PLAIN=1
 //! variant layers MIRAI_GBUFFER_LAYERS=1
 //! constant nested MIRAI_NESTED_PIXELS
+//! constant quiet MIRAI_TEXTURE_FEEDBACK_QUIET
 #ifndef MIRAI_GBUFFER_LAYERS
 // Without the layers target no instance with layers is in sight.
 #define MIRAI_MATERIAL_NO_LAYERS true

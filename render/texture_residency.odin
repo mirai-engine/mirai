@@ -35,6 +35,9 @@ TEXTURE_KEEP_LEVELS :: f32(0.32192809)
 // Frames whose feedback a texture takes the coarsest level of before it lets
 // levels go, and after which one no frame read is unseen.
 TEXTURE_FEEDBACK_FRAMES :: 60
+// Frames of which the resolve of each Surface program records what it samples one (textures_feedback_turn).
+TEXTURE_FEEDBACK_TURNS :: 8
+#assert(TEXTURE_FEEDBACK_FRAMES >= TEXTURE_FEEDBACK_TURNS, "a window holds a turn of every program")
 TEXTURE_FEEDBACK_FIRST :: abi.TEXTURE_FEEDBACK_FIRST
 TEXTURE_FEEDBACK_SLOT :: abi.TEXTURE_FEEDBACK_SLOT
 TEXTURE_FEEDBACK_LOW :: f32(abi.TEXTURE_FEEDBACK_LOW)
@@ -78,9 +81,12 @@ Texture_Residency :: struct {
 	readbacks: [rhi.MAX_FRAMES_IN_FLIGHT]rhi.Buffer,
 	written:   [rhi.MAX_FRAMES_IN_FLIGHT]int, // textures each readback holds; 0: none
 	recording: bool, // the frame being recorded writes feedback
+	whole:     bool, // and every program records it (textures_feedback_turn)
+	turn:      u64,  // frames that wrote feedback, the one being recorded among them
+	added:     bool, // a texture came since the last frame that wrote feedback
 	views:     u64,  // key of the views of the last frame that wrote feedback (feedback_views)
-	changed:   u64,  // frame + 1 of the first frame after other views or another texture
-	read:      u64,  // frame + 1 of the last feedback taken
+	changed:   u64,  // the turn of the last frame whose feedback other views or another texture wait for
+	read:      u64,  // the turn of the last feedback taken
 	read_from: [rhi.MAX_FRAMES_IN_FLIGHT]u64,
 }
 
@@ -145,13 +151,15 @@ textures_feedback_begin :: proc(r: ^Renderer, cmd: ^rhi.Command_List, frame: Fra
 	if t.feedback == 0 {return true}
 	room := min(r.textures.count, t.room)
 	t.recording = !frame.ui_only && (!frame.offscreen || frame.streamed) && room > 0
+	t.whole = frame.offscreen
 	count := [1]u32{u32(room) if t.recording else 0}
 	if !upload_transient(r, cmd, count[:], t.feedback) {return false}
 	if t.recording {
 		rhi.cmd_fill_buffer(cmd, t.feedback, TEXTURE_FEEDBACK_FIRST * 4, u64(room) * 4, 0xff)
+		t.turn += 1
 		views := feedback_views(frame)
-		if views != t.views {t.changed = r.frame + 1}
-		t.views = views
+		if views != t.views || t.added {t.changed = t.turn + (0 if t.whole else TEXTURE_FEEDBACK_TURNS - 1)}
+		t.views, t.added = views, false
 	}
 	rhi.cmd_barrier_buffer(cmd, t.feedback, .Shader_Write)
 	return true
@@ -188,7 +196,18 @@ textures_feedback_end :: proc(r: ^Renderer, cmd: ^rhi.Command_List, slot: int) {
 	rhi.cmd_barrier_buffer(cmd, t.feedback, .Transfer_Read)
 	rhi.cmd_copy_buffer(cmd, t.feedback, TEXTURE_FEEDBACK_FIRST * 4, t.readbacks[slot], 0, u64(count) * 4)
 	rhi.cmd_barrier_buffer(cmd, t.readbacks[slot], .Host_Read)
-	t.written[slot], t.read_from[slot] = count, r.frame + 1
+	t.written[slot], t.read_from[slot] = count, t.turn
+}
+
+// Whether the per-pixel resolve of a Surface program (0: of the rows without
+// one) records what it samples in the frame being recorded: every program in
+// a frame that waits for its textures, else each one frame of
+// TEXTURE_FEEDBACK_TURNS, in turns by program; off its turn its pipeline is
+// made without the recording.
+@(private)
+textures_feedback_turn :: proc(r: ^Renderer, program: u32) -> bool {
+	t := &r.textures.residency
+	return t.recording && (t.whole || (t.turn + u64(program)) % TEXTURE_FEEDBACK_TURNS == 0)
 }
 
 // Takes what the frame that used slot last sampled of each texture.
@@ -254,7 +273,7 @@ textures_update :: proc(r: ^Renderer) -> int {
 		t.reduced, t.pending = texture_targets(streams, texture_limits(r).max_size, room)
 	}
 	if t.pending > 0 && r.device != nil {textures_shrink(r)}
-	return t.pending + int(t.read < t.changed)
+	return t.pending + int(t.read < t.changed || t.added)
 }
 
 // The level of its source each streamed texture should start at:

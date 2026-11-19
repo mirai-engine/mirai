@@ -266,7 +266,7 @@ resolve_pass :: proc(p: ^Pass, nested: bool) {
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.program_draws)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.visible_moved)
 		textures_feedback_bind(r, cmd)
-		resolve_programs_draw(r, cmd, &r.pipelines[id])
+		resolve_programs_draw(r, cmd, id)
 	}
 	rhi.cmd_end_render_pass(cmd)
 }
@@ -291,16 +291,27 @@ rest_pass :: proc(p: ^Pass) {
 // program of the scene, with the stage of the program, or with that of
 // `target` while the shaders in use have none. The draw of a program has an
 // instance only when the cull of the view saw a cluster of it (cull_bins.comp).
+// Off its feedback turn a program takes the pipeline without the recording,
+// once it is made (textures_feedback_turn).
 @(private)
-resolve_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rhi.Pipeline) {
+resolve_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, id: Pipeline_Id) {
 	s := &r.scene
-	rhi.cmd_bind_pipeline(cmd, target^)
+	target := &r.pipelines[id]
+	quiet := pipeline_of(r, id, {VIS_RESOLVE_FRAG_QUIET}, optional = {VIS_RESOLVE_FRAG_QUIET})
+	pipeline :: proc(r: ^Renderer, target, quiet: ^rhi.Pipeline, program: u32) -> rhi.Pipeline {
+		if quiet != target && !textures_feedback_turn(r, program) {
+			if program == 0 {return quiet^}
+			if made := program_graphics(r, quiet, program, early = true); made != quiet^ {return made}
+		}
+		return program_graphics(r, target, program)
+	}
+	rhi.cmd_bind_pipeline(cmd, pipeline(r, target, quiet, 0))
 	rhi.cmd_draw_indirect(cmd, s.program_draws, 0, 1, size_of(Gpu_Program_Draw))
 	if s.programmed_rows == 0 {return}
 	for program in renderer_programs(r) {
 		// A program only blended rows show has no pixel there.
 		if program.domain != .Surface || program.id == 0 || program.id >= r.points.programs || s.program_opaque_rows[program.id] == 0 && !s.program_shown_opaque[program.id] {continue}
-		rhi.cmd_bind_pipeline(cmd, program_graphics(r, target, program.id))
+		rhi.cmd_bind_pipeline(cmd, pipeline(r, target, quiet, program.id))
 		rhi.cmd_draw_indirect(cmd, s.program_draws, u64(program.id) * size_of(Gpu_Program_Draw), 1, size_of(Gpu_Program_Draw))
 	}
 }
