@@ -32,6 +32,25 @@ an_automatic_slope_rule_fades_over_several_samples :: proc(t:^testing.T) {
     testing.expect(t,between>64,"the rule fades over a band of samples, not a line")
 }
 
+// The Chunk_Lod of a piece of a chunk at levels[coord], each side and corner
+// at the finest of the chunks that share it.
+@(private)
+test_chunk_lod :: proc(s:^Source,levels:[]u8,coord:[3]i32) -> (lod:Chunk_Lod) {
+    finest :: proc(s:^Source,levels:[]u8,coords:[][2]i32) -> (level:u8) {
+        level=255
+        for c in coords {if i:=chunk_index(s,{c.x,0,c.y});i>=0 {level=min(level,levels[i])}}
+        return
+    }
+    x,z:=coord.x,coord.z
+    lod.level=levels[chunk_index(s,coord)]
+    lod.sides={finest(s,levels,{{x,z},{x-1,z}}),finest(s,levels,{{x,z},{x+1,z}}),finest(s,levels,{{x,z},{x,z-1}}),finest(s,levels,{{x,z},{x,z+1}})}
+    for &corner,k in lod.corners {
+        dx,dz:=i32(k&1),i32(k>>1)
+        corner=finest(s,levels,{{x+dx-1,z+dz-1},{x+dx,z+dz-1},{x+dx-1,z+dz},{x+dx,z+dz}})
+    }
+    return
+}
+
 @(test)
 coarse_levels_take_normals_over_their_own_step_and_neighbors_share_them :: proc(t:^testing.T) {
     smooth,rough:Source
@@ -64,7 +83,7 @@ coarse_levels_take_normals_over_their_own_step_and_neighbors_share_them :: proc(
     shared:=0
     for i in 0..<4 {
         coord:=chunk_coord(&rough,i)
-        testing.expect(t,chunk_build(&rough,coord,&mesh,false,chunk_lod_sides(&rough,levels[:],coord)))
+        testing.expect(t,chunk_build(&rough,coord,&mesh,false,test_chunk_lod(&rough,levels[:],coord)))
         chunk_in_terrain(&mesh)
         for p,v in mesh.geometry.positions {
             key:=[2]f32{p.x,p.z}

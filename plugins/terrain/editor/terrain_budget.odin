@@ -18,7 +18,7 @@ terrain_limits :: proc(world:core.World_Ref) -> terrain.Terrain_Settings {
         if configured.chunks!=0 {settings.chunks=configured.chunks}
         if configured.samples!=0 {settings.samples=configured.samples}
     }
-    if configured!=nil {settings.lod_distance,settings.collision_distance,settings.resident_distance=configured.lod_distance,configured.collision_distance,configured.resident_distance}
+    if configured!=nil {settings.collision_distance,settings.resident_distance=configured.collision_distance,configured.resident_distance}
     return settings
 }
 

@@ -44,7 +44,7 @@ bench_terrain_update_while_a_brush_edits :: proc(t:^testing.T) {
         core.add(&w.terrains,owner,Terrain{source=id,solid=true})
         test_world_settle(&w.w)
         w.settings={heightfields=1024,meshes=1024}
-        settings:=Terrain_Settings{samples=64*1024*1024,lod_distance=-1}
+        settings:=Terrain_Settings{samples=64*1024*1024}
         for _ in 0..<3 {terrain_bench_tick(&w,&resident,&app,settings)}
         TICKS :: 90
         times:[TICKS]f64

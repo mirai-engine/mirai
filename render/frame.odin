@@ -521,7 +521,6 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     r.error=""
     r.pipeline_waiting=""
     started:=time.tick_now()
-    meshes_leave(r)
     zone:=render_zone_begin(r,"uploads arrived")
     texture_uploads_install(r)
     geometry_uploads_install(r)

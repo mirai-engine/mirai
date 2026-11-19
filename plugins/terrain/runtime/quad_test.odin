@@ -86,18 +86,18 @@ the_coarse_grid_built_in_jobs_is_the_one_built_alone :: proc(t:^testing.T) {
     alone:=make([]f32,size.x*size.y,context.temp_allocator)
     for j in 0..<size.y {for i in 0..<size.x {alone[i+size.x*j]=grid_get(&s.coarse.heights,i,j)}}
     alone_ranges:=slice.clone(s.coarse.ranges,context.temp_allocator)
-    alone_errors:=slice.clone(s.coarse.errors,context.temp_allocator)
     system:jobs.Job_System
     if !testing.expect(t,jobs.system_init(&system,{threads=3})) {return}
     defer jobs.system_destroy(&system)
     testing.expect(t,source_coarse_build(&s,&system))
     for j in 0..<size.y {for i in 0..<size.x {testing.expect_value(t,grid_get(&s.coarse.heights,i,j),alone[i+size.x*j])}}
     for range,i in s.coarse.ranges {testing.expect_value(t,range,alone_ranges[i])}
-    for e,i in s.coarse.errors {testing.expect_value(t,e,alone_errors[i])}
 }
 
-// A Heightfield of 8 by 8 chunks shown by chunks of mixed levels, nodes of
-// depth 1 and 2, and a chunk next to a node of depth 2: their borders meet.
+// A Heightfield of 8 by 8 chunks shown by chunks with borders of mixed
+// levels, nodes of depth 1 and 2, and a chunk next to a node of depth 2:
+// their borders meet, and each piece locks the vertices of its sides, which
+// its cluster levels keep.
 @(test)
 quadtree_nodes_and_chunks_of_mixed_levels_join_without_cracks_or_overlaps :: proc(t:^testing.T) {
     s:Source;defer source_destroy(&s)
@@ -121,7 +121,6 @@ quadtree_nodes_and_chunks_of_mixed_levels_join_without_cracks_or_overlaps :: pro
         a,_:=quad_chunks(&q,i)
         if depth_at(a.x,a.y)==d {append(&pieces,i)}
     }}
-    levels:[64]u8
     deep:[64]bool
     mesh:Chunk_Mesh;chunk_mesh_init(&mesh);defer chunk_mesh_destroy(&mesh)
     border:Piece_Border;defer piece_border_destroy(&border)
@@ -132,24 +131,28 @@ quadtree_nodes_and_chunks_of_mixed_levels_join_without_cracks_or_overlaps :: pro
     for round in 0..<8 {
         for i in 0..<64 {
             coord:=chunk_coord(&s,i)
-            levels[i]=u8(rand.int_max(int(chunk_lod_max(&s,coord))+1,generator))
             // Only a chunk that shows can be deep: its pages are in memory.
             deep[i]=depth_at(int(coord.x),int(coord.z))==0 && (round==0 || rand.int_max(3,generator)>0)
         }
-        b:=Border_Levels{counts=q.counts[0],levels=levels[:],deep=deep[:]}
+        b:=Border_Levels{counts=q.counts[0],deep=deep[:]}
         geom.mesh_buffer_clear(&all)
         nodes:=0
         for i in pieces {
             if i<q.first[1] {
                 coord:=chunk_coord(&s,i)
-                testing.expect(t,chunk_build(&s,coord,&mesh,false,chunk_lod_border(&b,levels[i],{int(coord.x),int(coord.z)})))
+                testing.expect(t,chunk_build(&s,coord,&mesh,false,chunk_lod_border(&b,{int(coord.x),int(coord.z)})))
             } else {
                 a,c:=quad_chunks(&q,i)
                 piece_border(&b,a,c,&border)
-                minimum,maximum:=node_lod_min(&s,&q,i),node_lod_max(&s,&q,i)
-                level:=minimum+u8(rand.int_max(int(maximum-minimum)+1,generator))
-                testing.expect(t,node_build(&s,&q,i,{level=level},&border,&mesh))
+                testing.expect(t,node_build(&s,&q,i,{level=node_lod_min(&s,&q,i)},&border,&mesh))
                 nodes+=1
+            }
+            low,high:=quad_region(&s,&q,i)
+            size:=[2]f32{f32(high.x-low.x),f32(high.y-low.y)}*s.cell
+            testing.expect_value(t,len(mesh.locked),len(mesh.geometry.positions))
+            for p,v in mesh.geometry.positions {
+                side:=abs(p.x)<1e-4 || abs(p.z)<1e-4 || abs(p.x-size.x)<1e-4 || abs(p.z-size.y)<1e-4
+                testing.expectf(t,mesh.locked[v]==side,"round %d: piece %d locks %v at %v",round,i,mesh.locked[v],p)
             }
             chunk_in_terrain(&mesh)
             lod_append(&all,&mesh.geometry)
@@ -184,32 +187,6 @@ quadtree_nodes_and_chunks_of_mixed_levels_join_without_cracks_or_overlaps :: pro
             if old,ok:=normals[p];ok {testing.expect_value(t,all.normals[i],old)} else {normals[p]=all.normals[i]}
         }
     }
-}
-
-// A level is the coarsest whose error covers about a pixel, never finer than
-// samples two pixels apart, and stays put near the bounds.
-@(test)
-levels_follow_the_projected_error_and_the_spacing_of_the_samples :: proc(t:^testing.T) {
-    q:Quad
-    q.first[1]=1
-    errors:=[]Lod_Errors{{levels={0,0.01,0.02,0.04,0.5,1,2,4,8,8,8,8,8,8,8,8,8,8,8,8,8}}}
-    // 100 pixels a metre: the error of level 2 covers 2 pixels, that of level 1 one.
-    testing.expect_value(t,lod_level_error(errors,&q,0,0,5,100,1000,0.01,99),u8(1))
-    // Smoother: everything up to level 3 fits; level 4 does not.
-    testing.expect_value(t,lod_level_error(errors,&q,0,0,5,10,1000,0.01,99),u8(3))
-    // Noise finer than a pixel: the samples 0.1 m apart cover 0.1 pixels, level 5 is the finest worth it.
-    testing.expect_value(t,lod_spacing_level(1,0.1),u8(5))
-    testing.expect_value(t,lod_level_error(errors,&q,0,0,6,100,1,0.1,99),u8(5))
-    // Near a bound the level held stays.
-    // At 55 pixels a metre level 1 fits and level 2 just misses: a level 2 held stays, a level 0 does not.
-    testing.expect_value(t,lod_level_error(errors,&q,0,0,5,55,1000,0.01,2),u8(2))
-    testing.expect_value(t,lod_level_error(errors,&q,0,0,5,55,1000,0.01,0),u8(1))
-    testing.expect_value(t,lod_level_error(errors,&q,0,0,5,55,1000,0.01,99),u8(1))
-    // The view: 900 pixels high at 60 degrees, or its own.
-    testing.expect(t,abs(view_pixels({})-LOD_VIEW_PIXELS)<1e-3)
-    view:=core.VIEW_DEFAULT
-    view.size={1440,1800}
-    testing.expect(t,abs(view_pixels(view)-2*LOD_VIEW_PIXELS)<1e-2)
 }
 
 // Appends a piece to a mesh of all of them, as they stand in their terrain.

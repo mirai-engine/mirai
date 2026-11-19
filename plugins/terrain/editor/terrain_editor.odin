@@ -83,7 +83,7 @@ Stroke :: struct {
     place:mm.Transform,        // of the terrain in the world
     brushes:[dynamic]terrain.Brush, // what the stroke touched with, in the world: the Heightfields beside take it too (stroke_spread)
 }
-// lod: the level the chunk shows outside the stroke, which its neighbors join.
+// lod: the border the chunk shows outside the stroke, which its neighbors join.
 Preview :: struct {coord:[3]i32,lod:terrain.Chunk_Lod,mesh:base.Asset_Id,maps:terrain.Piece_Maps,shape:terrain.Piece_Shape,dirty,ready:bool}
 
 // Lets go of the mesh of a preview and of the textures of its maps.
@@ -329,59 +329,20 @@ preview_find :: proc(stroke:^Stroke,coord:[3]i32) -> int {
     return -1
 }
 
-// The levels the chunks of the stroke show: each its level outside the
-// stroke, a chunk with holes level 0 as the runtime makes it, and each side
-// the finer of the two chunks it joins. A chunk previewed at a coarse level
-// joins those around it; one whose side changes is previewed too. Each keeps
-// the border it shows, lowered only where a hole takes a chunk to level 0;
-// the nodes of the quadtree are not previewed. A Volume has no levels.
+// The levels the chunks of the stroke show: each every sample, with the
+// border it shows outside the stroke, which the stroke does not change; the
+// nodes of the quadtree are not previewed. A Volume has no levels.
 @(private)
 preview_levels :: proc(stroke:^Stroke,terrains:^core.Table(terrain.Terrain,$A),chunks:^core.Table(terrain.Terrain_Chunk,$B)) {
     dirty:=false
     for preview in stroke.previews {dirty||=preview.dirty}
     if !core.touched(chunks,&stroke.levels_seen) && !dirty {return}
-    s:=&stroke.source
-    if s.kind!=.Heightfield {return}
-    counts:=terrain.chunk_counts(s)
-    levels:=make([]u8,counts.x*counts.y*counts.z,context.temp_allocator)
-    shown:=make([]terrain.Chunk_Lod,len(levels),context.temp_allocator)
-    has:=make([]bool,len(levels),context.temp_allocator)
-    dropped:=make([]bool,len(levels),context.temp_allocator)
+    if stroke.source.kind!=.Heightfield {return}
     for row in 0..<core.count(chunks) {
         chunk:=core.at(chunks,row)
         owner,known:=core.get(terrains,chunk.owner)
         if !known || owner.source!=stroke.id || chunk.depth>0 {continue}
-        if index:=terrain.chunk_index(s,chunk.coord);index>=0 {levels[index],shown[index],has[index]=chunk.lod.level,chunk.lod,true}
-    }
-    for &level,index in levels {if level>0 && terrain.chunk_holed(s,index) {level,dropped[index]=0,true}}
-    for index in 0..<len(levels) {
-        if !has[index] {continue}
-        coord:=terrain.chunk_coord(s,index)
-        lod:=shown[index]
-        lod.level=levels[index]
-        lower :: proc(s:^terrain.Source,levels:[]u8,dropped,has:[]bool,value:^u8,around:[]([3]i32)) {
-            for coord in around {
-                at:=terrain.chunk_index(s,coord)
-                if at>=0 && has[at] && dropped[at] {value^=min(value^,levels[at])}
-            }
-        }
-        x,z:=coord.x,coord.z
-        lower(s,levels,dropped,has,&lod.sides[0],{{x,0,z},{x-1,0,z}})
-        lower(s,levels,dropped,has,&lod.sides[1],{{x,0,z},{x+1,0,z}})
-        lower(s,levels,dropped,has,&lod.sides[2],{{x,0,z},{x,0,z-1}})
-        lower(s,levels,dropped,has,&lod.sides[3],{{x,0,z},{x,0,z+1}})
-        for &corner,k in lod.corners {
-            dx,dz:=i32(k&1),i32(k>>1)
-            lower(s,levels,dropped,has,&corner,{{x+dx-1,0,z+dz-1},{x+dx,0,z+dz-1},{x+dx-1,0,z+dz},{x+dx,0,z+dz}})
-        }
-        at:=preview_find(stroke,coord)
-        if at<0 {
-            if lod==shown[index] {continue}
-            if slot:=preview_slot(stroke,coord);slot>=0 {stroke.preview_at[slot]=i32(len(stroke.previews))}
-            append(&stroke.previews,Preview{coord=coord,lod=lod,dirty=true})
-            continue
-        }
-        if stroke.previews[at].lod!=lod {stroke.previews[at].lod,stroke.previews[at].dirty=lod,true}
+        if at:=preview_find(stroke,chunk.coord);at>=0 && stroke.previews[at].lod!=chunk.lod {stroke.previews[at].lod,stroke.previews[at].dirty=chunk.lod,true}
     }
 }
 @(private)

@@ -1,9 +1,7 @@
 package terrain
 
 import "base:runtime"
-import "core:hash"
 import "core:math/linalg"
-import "core:mem"
 import "core:slice"
 import "mirai:asset"
 import "mirai:core"
@@ -182,7 +180,7 @@ chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source
     index:=slot.index
     chunk:=&source.chunks[index]
     s:=&entry.source
-    mesh,ok:=chunk_publish(resident.assets,&slot.mesh,slot.key.collision,resident.picking,piece_levels(s,&source.quad,index),piece_surface(entry,source,slot))
+    mesh,ok:=chunk_publish(resident.assets,&slot.mesh,slot.key.collision,resident.picking,slot.patient)
     maps:Piece_Maps
     // The maps of a piece hold every sample at any level: one built again
     // only for its level keeps those it shows.
@@ -201,26 +199,9 @@ chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source
         return false
     }
     staged_release(resident.assets,chunk)
-    chunk.next={mesh,maps,shape,slot.version,slot.key,true,shared}
+    chunk.next={mesh,maps,shape,slot.version,slot.key,true,shared,piece_levels(s,&source.quad,index) && !slot.patient}
     if !chunk.listed {chunk.listed=true;append(&source.staged,u32(index))}
     return true
-}
-
-// What the levels of a piece show alike, for the maps of the shadows
-// (render.mesh_surface): the surface of its source, piece and version, and
-// how far a build of its levels and those of its sides lies from it at most,
-// where the source measured the errors of its levels; none elsewhere.
-@(private)
-piece_surface :: proc(entry:^Data_Source,source:^Resident_Source,slot:^Work_Slot) -> (surface:Piece_Surface) {
-    errors:=entry.source.coarse.errors
-    if len(errors)!=quad_total(&entry.quad) {return}
-    k:=slot.key
-    for level in ([9]u8{k.lod.level,k.lod.sides[0],k.lod.sides[1],k.lod.sides[2],k.lod.sides[3],k.lod.corners[0],k.lod.corners[1],k.lod.corners[2],k.lod.corners[3]}) {
-        surface.error=max(surface.error,lod_error(errors,&source.quad,slot.index,int(level)))
-    }
-    key:=[6]u64{u64(entry.id[0]),u64(entry.id[1]),u64(slot.index),u64(slot.version),k.border,k.join}
-    surface.id=hash.fnv64a(mem.ptr_to_bytes(&key))|1
-    return
 }
 
 // Shows the build that waits in piece index.
@@ -239,9 +220,10 @@ piece_show :: proc(resident:^Terrain_Resident,entry:^Data_Source,source:^Residen
         chunk.mesh,chunk.maps={},{}
     } else {piece_release(resident.assets,chunk)}
     chunk.mesh,chunk.revision,chunk.built,chunk.shown=next.mesh,next.revision,next.built,true
-    chunk.maps,chunk.shape=next.maps,next.shape
-    // The blocks a node of a Volume read may leave now.
-    if piece_levels(s,&source.quad,index) {source.leave=true}
+    chunk.maps,chunk.shape,chunk.bare=next.maps,next.shape,next.bare
+    // The blocks a node of a Volume read may leave now; one without its levels reads them again.
+    if s.kind==.Volume && index>=source.quad.first[1] && !next.bare {source.leave=true}
+    if next.bare {source_pending(source,index)}
     if next.mesh!={} {resident.stats.meshes+=1}
     append(&source.changed,u32(index))
     resident.stats.built+=1
@@ -355,7 +337,7 @@ piece_take_empty :: proc(resident:^Terrain_Resident,entry:^Data_Source,source:^R
     if !chunk.shown || chunk.mesh!={} {resident.marks+=1}
     piece_release(resident.assets,chunk)
     staged_release(resident.assets,chunk)
-    chunk.mesh,chunk.revision,chunk.built,chunk.shown={},data_version(entry,index),chunk.wanted,true
+    chunk.mesh,chunk.revision,chunk.built,chunk.shown,chunk.bare={},data_version(entry,index),chunk.wanted,true,false
     append(&source.changed,u32(index))
 }
 
@@ -366,7 +348,7 @@ chunk_evict :: proc(resident:^Terrain_Resident,source:^Resident_Source,index:int
     if chunk.mesh!={} {resident.stats.released+=1;resident.stats.meshes-=1} else if chunk.shown {resident.marks+=1}
     piece_release(resident.assets,chunk)
     staged_release(resident.assets,chunk)
-    chunk.revision,chunk.built,chunk.shown=0,{},false
+    chunk.revision,chunk.built,chunk.shown,chunk.bare=0,{},false,false
     append(&source.changed,u32(index))
     source.leave=true
     resident.stats.evicted+=1
@@ -465,7 +447,7 @@ works_take :: proc(c:^Chunk_Tables,data:^Terrain_Data,resident:^Terrain_Resident
         // One whose piece is gone only lets go: first.
         source:=slot.epoch==data.epoch?resident_source_find(resident,slot.id,slot.owner):nil
         distance:=f32(-1)
-        if source!=nil && slot.index<len(source.chunks) {distance=piece_near(&source.chunks[slot.index],resident.lod_distances[2]>0)}
+        if source!=nil && slot.index<len(source.chunks) {distance=piece_near(&source.chunks[slot.index],resident.lod_distances[1]>0)}
         held[count]={i,distance}
         count+=1
     }
@@ -583,7 +565,7 @@ terrain_schedule :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Da
         case chunk.next.ready: keep=true
         case !chunk.resident:
             if (chunk.shown || chunk.mesh!={}) && !chunk.visible {chunk_evict(resident,source,i)}
-        case chunk.shown && chunk.revision==data_version(entry,i) && chunk.built==chunk.wanted:
+        case chunk.shown && chunk.revision==data_version(entry,i) && chunk.built==chunk.wanted && !chunk.bare:
         case:
             urgent:=!chunk.shown && chunk.urgent
             border:^Piece_Border
@@ -606,11 +588,12 @@ terrain_schedule :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Da
                 if !node_border_ready(data,resident,entry,i,border,urgent,phase,problems,terrains) {keep=true;break build}
             }
             // While the world plays the next call waits for a build whose collider changes. A
-            // chunk of a Heightfield collides at level 0 whatever level it shows: one built again
-            // only for its level keeps its collider.
-            same_collider:=s.kind==.Heightfield && i<chunks && chunk.shown && chunk.built.collision && chunk.revision==data_version(entry,i) && chunk.built.join==chunk.wanted.join
-            waits:=!resident.picking && !same_collider && chunk.wanted.collision
-            slot:=work_slot(data,urgent,!work_frame(urgent,waits,piece_levels(s,q,i)))
+            // chunk of a Heightfield collides with every sample whatever border it shows, and a
+            // piece built again only for its levels keeps its collider. A node of a Volume, which
+            // welds the surface of many chunks, is not waited for.
+            same_collider:=chunk.shown && chunk.built.collision && chunk.revision==data_version(entry,i) && chunk.built.join==chunk.wanted.join && (s.kind==.Heightfield && i<chunks || chunk.bare && chunk.built==chunk.wanted)
+            waits:=!resident.picking && !same_collider && chunk.wanted.collision && !(s.kind==.Volume && i>=chunks)
+            slot:=work_slot(data,urgent,!work_frame(urgent,waits))
             if slot==nil {
                 keep=true
                 if urgent {urgent_left^=true}
@@ -653,7 +636,7 @@ pages_leave :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_So
             switch {
             case index<chunks: if chunk.resident || chunk.working {chunk_pages_mark(s,index)}
             // A node of a Volume reads the blocks of its chunks until it is built.
-            case s.kind==.Volume: if chunk.working || chunk.resident && (!chunk.shown || chunk.revision!=data_version(entry,index)) {
+            case s.kind==.Volume: if chunk.working || chunk.resident && (!chunk.shown || chunk.bare || chunk.revision!=data_version(entry,index)) {
                 low,high:=node_pages_region(s,&each.quad,index)
                 region_pages_mark(s,low,high)
             }

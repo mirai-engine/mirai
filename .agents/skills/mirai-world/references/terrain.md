@@ -26,8 +26,8 @@ Chunks:
 
 - `Terrain_Chunk{owner,coord,revision,lod,depth}` identifies each child by owner, coordinate (that
   of its first chunk) and depth in the [tree](#tree-and-nodes): 0 is a chunk, higher up a
-  node that covers 2^depth chunks per side. It says the level its mesh shows with that of its
-  sides. It carries no `core.Id`: it is rebuilt on load and is not saved as authoring.
+  node that covers 2^depth chunks per side. It says the level its mesh is built at with that of
+  its sides. It carries no `core.Id`: it is rebuilt on load and is not saved as authoring.
 - It has a Parent to the owner and a local transform at the origin of its chunk (`chunk_origin`,
   the lower corner of its cells): its vertices and its collider are in that space
   (`chunk_place`), so a terrain kilometers wide loses no f32 precision far from its center. An
@@ -103,8 +103,8 @@ Chunks:
 - **Coarse data** of a Heightfield ([tree](#tree-and-nodes)) is in the file too, in records the
   front of the file holds: the `coarse` table, a row per point of the coarse grid with a column
   per kind of value (heights, weights, the share of holes of the cell from the point, paint), and
-  the `pieces` table, a row per chunk and node with the heights it reaches and the errors of its
-  levels, a node with the largest error under it. A world reads it with the source, so no page
+  the `pieces` table, a row per chunk and node with the heights it reaches. A world reads it with
+  the source, so no page
   is decoded for what is far; a source without it in memory (one of the editor) measures it when
   it is written. A new value of the coarse grid is one more column of `coarse`.
 - **Edit layers** of a Heightfield are more X/Z grids, `edit<n>_pages` and `edit<n>_blocks`, with
@@ -150,43 +150,29 @@ Chunks:
 
 Levels of detail:
 
-- **Volume** has no levels of its own. Its chunks show every sample, and a node of its
-  [octree](#tree-and-nodes) is the surface of its chunks welded into one mesh, published with the
-  cluster levels the renderer makes of any mesh: the view picks the detail of each cluster. The
-  vertices on a side of the node's region that another piece shares are locked through every
-  level (`Chunk_Mesh.locked`, `asset.Mesh_Source.locked`), so nodes and chunks meet without cracks
-  at any mix of levels.
-- The level of a Heightfield piece is the coarsest whose error (`Lod_Errors`: the farthest it
-  ends up from its samples, stored in the file and followed by the edits) covers
-  about `LOD_PIXELS` of the view from its terrain, and never finer than samples at
-  `LOD_SPACING_PIXELS` pixels, which at a grazing angle come closer (`LOD_GRAZING`): the detail
-  between samples that a pixel covers is not seen, however large its error. The pixels come from
-  the height and field of each view (`core.View` and, on a split screen, the slot of each local
-  player in `camera.Camera_Views`), with hysteresis: a piece is one mesh for every view, so it
-  shows what the view that sees it finest needs. With a positive `Terrain_Settings.lod_distance`
-  the level comes from the distance to the box, never coarser than its error allows.
-- Two Heightfield chunks that touch, by a side or a corner, are at most one level apart
-  (`lod_levels_balance` refines the coarser one): a fine edge stitched to an interior several
-  levels coarser folds.
-- `Chunk_Lod` gives the level of a Heightfield chunk and that of its sides and corners: each takes
-  the finest of the chunks that share it, so neighbors build the same over it and no cracks or
-  T-junctions open. The border is cut into segments of one chunk and points of the
-  chunk grid (`Border_Levels`): each piece that shares it, chunk or node, builds it from those
-  levels, without looking at what the others show. Below `COARSE_LEVEL` a border reads the samples,
-  and only where both chunks are well within a viewer's reach (their pages are there); if not, the
-  [coarse grid](#tree-and-nodes).
-- The collider is always that of level 0: changing level publishes another mesh with the same
-  collision and physics keeps the shape.
-- A level is built when chosen, with the neighbors whose sides change; none is stored.
-- Level k of a Heightfield shows one sample out of every 2^k and a strip of triangles stitches
-  each side to the interior grid. A vertex's normal comes from the samples at a step of what the
-  vertex shares (interior, segment of the side or point of the chunk grid, at the level of its
-  border): a coarse level shades the slope that its triangles span and shared vertices have a
-  single normal: what a coarse level spans is its silhouette. What it shades (normal, layers,
-  paint) comes from the [maps](#materials-and-layers) of the piece, a texel per sample whatever
-  its level, so changing level moves only the triangles, by at most about `LOD_PIXELS`.
-- A chunk with holes takes any level: its triangles over holes alone are left out, and one whose
-  triangles span holes and ground shows the holed material, which cuts them by its mask map.
+- Every piece is published with the cluster levels the renderer makes of any mesh: the view and
+  each map of the shadows choose the detail of each cluster by their own error, so the mesh of a
+  piece changes only when its data, its border or its collider does, never because a view moves.
+- **Volume**: its chunks show every sample, and a node of its [octree](#tree-and-nodes) is the
+  surface of its chunks welded into one mesh.
+- **Heightfield**: a chunk shows every sample; a node, its region from the
+  [coarse grid](#tree-and-nodes) at the level of its depth (`node_lod_min`). Level k shows one
+  sample out of every 2^k, and a strip of triangles stitches each side to the interior grid.
+- The vertices on the sides of a piece are locked through every level (`Chunk_Mesh.locked`,
+  `asset.Mesh_Source.locked`), so pieces meet without cracks at any mix of levels.
+- `Chunk_Lod` gives the level of a Heightfield piece and that of its sides and corners. The
+  border is cut into segments of one chunk and points of the chunk grid (`Border_Levels`): each
+  piece that shares it, chunk or node, builds it alike, without looking at what the others show.
+  A border reads the samples only where the chunks on both sides are well within a viewer's reach
+  (`deep`: their pages are there); elsewhere it is at `COARSE_LEVEL`, from the coarse grid.
+- A vertex's normal comes from the samples at a step of what the vertex shares (interior, segment
+  of the side or point of the chunk grid, at the level of its border): shared vertices have a
+  single normal. What a piece shades (normal, layers, paint) comes from the
+  [maps](#materials-and-layers) of the piece, a texel per sample whatever its level.
+- A build that a call waits for (urgent, or a collider that changes while the world plays) shows
+  without its levels (`Resident_Chunk.bare`) and is built again with them in the background.
+- A chunk with holes leaves out its triangles over holes alone; a node whose triangles span holes
+  and ground shows the holed material, which cuts them by its mask map.
 
 Collision and picking:
 
@@ -216,9 +202,8 @@ Construction and publishing:
 - `chunk_build` is the single builder of preview and runtime. With `collision=false` it gives the
   same geometry without physical halos or masks.
 - The preview does not replace nodes: a stroke over an area that shows a node is seen on confirming.
-- The preview builds each Heightfield chunk at the level it shows outside the stroke, so it joins
-  those that do not change; a hole puts its chunk at level 0 and the neighbors whose side changes
-  enter the preview.
+- The preview builds each Heightfield chunk with every sample and the border it shows outside the
+  stroke, so it joins those that do not change, without levels.
 - `chunk_publish` uses [generated meshes](../../mirai-core/references/host.md): it creates an
   immutable identity and then frees the previous one; it does not deform the resident mesh or
   refit. At runtime construction runs in jobs and publishing is a transaction with the collider
@@ -707,15 +692,14 @@ Construction in jobs:
   changes or frees it (a request, a new read, saving, removing it and the `copy`, `free` and
   `reset` hooks) first waits for the jobs that read it. A page shared with another world is copied
   on writing it, so its jobs keep reading the one they had.
-- Each job stores the data's epoch, the source, the chunk, the key (level and collider) and the
+- Each job stores the data's epoch, the source, the chunk, the key (border and collider) and the
   source change it read (`Data_Source.change`); a result whose chunk changed while it ran is
   dropped and built again.
 - A piece whose collider changes while the world plays is published in the next `terrain_update`
   call of the phase that asked for it, which waits for it if it did not finish: when it collides
   does not depend on the threads, and a tick that edits shows the new chunk in the next one, with
-  the previous version in between. A Heightfield chunk collides at level 0 whatever level it
-  shows: one built again only for its level keeps its collider and only shows. It keeps its maps
-  too, which hold every sample at any level and are read texel by texel, in one level.
+  the previous version in between. A Heightfield chunk built again only for its levels or its
+  border keeps its collider and only shows. It keeps its maps too, which hold every sample.
 - What only shows, and everything out of Play, is published once its job ended, and no frame waits
   for it. A call publishes those builds to the assets nearest to a view first, within
   `PUBLISH_VERTICES` (at least one): what a view crossed at once arrives over the calls after, each
@@ -732,7 +716,7 @@ Construction in jobs:
   a view or a body. Urgent jobs can use all the slots; the others, half. Builds in the background
   run on at most one worker in `WORK_BACKGROUND_SHARE`: a build cannot stop, and the jobs of a
   frame keep the other workers. Pending pieces start chunks first, each nearest to a view first.
-- Changing level, border or collider builds again the piece and the neighbors whose sides change,
+- Changing border or collider builds again the piece and the neighbors whose sides change,
   which show together.
 - A source is read whole in a job (`data_load_begin`): its file and its coarse data, in memory of
   its own (`Data_Source.allocator`), and `data_load_end` adds
@@ -764,35 +748,35 @@ viewer (`URGENT_REACH`); farther away they wait for their jobs. While there are 
 residency is chosen again once per frame (in the first call); what the data changes, in each call.
 
 - Each terrain (owner) chooses which pieces it wants: from its roots, it opens the nodes under which
-  it needs a chunk, or, in a Heightfield, whose finest level is still coarse for the view (a node
-  of a Volume holds every sample, and the renderer picks its detail). It needs as a chunk what is
-  near a viewer if it has streaming; if not, being solid, what carries a collider (the nearest
-  ones that fit in `Physics_Settings`, within `collision_distance`, found nearest first from the
-  roots). It looks only at what a walk from its roots reaches: it goes down under a node where a
-  chunk may be near a viewer or take a collider, where the brush of the editor is, or where a node
-  under it may be finer for the view (`Lod_Errors.below` bounds their errors), with what holds a
-  state from before and the chunks along the borders of what shows; what it looks at follows what
-  is near and seen, not how many nodes it has. It opens the nearest first
+  it needs a chunk, never for the view: every piece shows in its cluster levels, which the view
+  and the maps of the shadows cut. It needs as a chunk what is near a viewer if it has streaming;
+  if not, every chunk of a Heightfield, whose nodes hold only its coarse grid, and of a solid
+  Volume, whose nodes hold every sample, what carries a collider (the nearest ones that fit in
+  `Physics_Settings`, within `collision_distance`, found nearest first from the roots). It looks
+  only at what a walk from its roots reaches: it goes down under a node where a chunk may be
+  needed or where the brush of the editor is, with what holds a state from before and the chunks
+  along the borders of what shows; what it looks at follows what is near, not how many nodes it
+  has. It opens the nearest first
   (reach and distance) as long as the pieces of all the terrains fit in `Terrain_Settings.chunks`:
   past that, the far field shows coarser nodes and nothing is hidden. Roots always count; if they
   alone do not fit it is `terrain.chunks_full`.
 - What a terrain shows follows what it wants as it is built: a region keeps what it showed until
   everything that replaces it is there, and a built node replaces in the meantime what is missing
   under it. Nothing is left twice or missing once covered.
-- Each terrain builds its pieces (`Resident_Source` per owner), at the levels and borders its view
-  asks for; the source's data are one. With streaming it keeps its root and the nodes it opens
-  built.
+- Each terrain builds its pieces (`Resident_Source` per owner), with the borders its cut asks
+  for; the source's data are one. With streaming it keeps its root and the nodes it opens built.
 - A Heightfield node is assembled from the coarse grid (`coarse.odin`): heights and layer weights
   every `COARSE` samples and in the last row and column, in memory while the source is there, with
   a bilinear between them. It comes from the file ([format](#canonical-format)); one made in
   memory measures it reading each page once, by rows of chunks in jobs (and the chunks of each row
-  too). Edits and layers follow it: the heights a piece reaches and its errors only grow with an
-  edit until the source is measured again. Its interior level is at least
+  too). Edits and layers follow it: the heights a piece reaches only grow with an edit until the
+  source is measured again. Its interior level is at least
   its depth and `COARSE_LEVEL`, and the layer rule reads the slope of the coarse grid. A node cuts
   the holes the coarse grid holds ([holes](#materials-and-layers)).
 - A Volume node is built from the blocks of its chunks (`node_build`), read for the build and let
-  go once it shows ([levels](#geometry-and-collision)). Its job is taken when it ends, without
-  waiting for it, and its levels are made in a second job that reads no source, so an edit does
+  go once it shows ([levels](#geometry-and-collision)). The job of a piece is taken when it ends,
+  without waiting for it, and its levels are made in a second job that reads no source, so an edit
+  does
   not wait for them. Chunks are built before nodes. An edit under a node that shows builds it
   again.
 - A node collides with the triangles it shows ([collision](#geometry-and-collision)); without a
@@ -807,8 +791,8 @@ Residency by distance:
 
 - With a positive `Terrain_Settings.resident_distance`, a chunk is resident (mesh, collider, entity
   and pages) if a viewer of some terrain that shows it is at that distance from its box; it stops
-  being so past `RESIDENT_KEEP` times, and a node covers it. At zero, the far field is also nodes,
-  and chunks are those that carry a collider.
+  being so past `RESIDENT_KEEP` times, and a node covers it. At zero every chunk of a Heightfield
+  stays, and a Volume shows as chunks those that carry a collider.
 - Viewers: the world's [streaming
   sources](../../mirai-gameplay/references/libraries.md#scene-references)
   (`scene.Streaming_Sources`: the view while it draws, the bodies of the seats and the entities
@@ -896,7 +880,7 @@ physics, saving, stability and world copy.
   `the_table_of_the_layers_holds_each_layer_where_the_program_reads_it`,
   `the_ground_takes_the_four_heaviest_materials_of_any_number_of_layers`,
   `color_and_roughness_painted_over_the_layers_reach_the_maps_and_the_file`,
-  `bodies_fall_through_holes_cut_at_run_time_and_far_holed_chunks_cut_them_by_their_material`,
+  `bodies_fall_through_holes_cut_at_run_time_and_far_chunks_leave_out_their_triangles`,
   `far_nodes_and_the_coarse_ground_keep_the_holes_the_coarse_grid_holds` and
   `displaced_chunks_split_less_far_away_and_meet_at_the_coarser_detail`.
 - Edit layers (`edits_test.odin`):
@@ -912,11 +896,9 @@ physics, saving, stability and world copy.
   capture.
 - What a terrain builds at once and what arrives from jobs:
   `a_terrain_that_opens_builds_its_root_and_the_ground_under_bodies_at_once_and_the_rest_in_jobs`.
-- Levels: `chunks_of_mixed_levels_join_without_cracks_or_overlaps`,
-  `balanced_levels_are_the_coarsest_one_apart_from_their_neighbors` and
-  `far_chunks_show_coarser_levels_while_colliders_keep_every_sample` (also a second local view).
-  `bench_terrain_levels`
-  (`-define:TERRAIN_BENCH=true`) measures each level.
+- Levels: `a_view_that_moves_over_a_heightfield_changes_no_mesh_of_it` (also a second local
+  view). `bench_terrain_levels` (`-define:TERRAIN_BENCH=true`) measures the build of a chunk of
+  the most cells and its levels.
 - `terrains_that_cannot_load_or_be_edited_report_their_entity_and_the_fix`.
 - Brushes (`brush_options_test.odin`):
   `capped_raise_and_lower_stop_at_the_height_of_the_press`,
@@ -993,7 +975,7 @@ Editor: `mirai test plugins/terrain/editor` (CPU).
 - `terrain_editor_budget_leaves_chunks_and_colliders_to_the_runtime`
 - `terrain_history_writes_its_file_at_the_flush_and_follows_a_change_outside_it`
 - `undoing_a_new_terrain_takes_its_file_away_after_its_strokes`
-- `a_preview_shows_the_level_of_its_chunk_and_a_hole_joins_its_neighbors_at_level_0`
+- `a_preview_shows_the_border_of_its_chunk_and_a_hole_changes_no_border`
 - `terrain_runtime_reads_sources_the_registry_holds_and_follows_them_without_reloading_each_frame`
 - `volume_strokes_are_steps_of_undo_that_keep_only_their_blocks`
 - `terrain_view_modes_ask_for_their_pipeline_only_while_one_is_shown`
