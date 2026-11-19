@@ -139,13 +139,13 @@ void main(uint3 id : SV_DispatchThreadID) {
         float4 texels;
         if (shadow_map_unseen(m, low, high) || !shadow_box_texels(m, low, high, texels) || !shadow_pages_drawn(m, texels)) continue;
         // A batch of a deformable sways as far as its mesh says (render.batch_sway):
-        // a map whose texel there is wider draws it at rest and keeps it, as what
-        // stays; a finer one draws it as it is, and while it sways, as what moves.
+        // a map past the reach of what sways, or whose texel there is wider than
+        // the sway, draws it at rest and keeps it, as what stays; the others draw
+        // it as it is, and while it sways, as what moves.
         bool rest = false, sways = false;
         bool moves = instance_moves(instance);
         if (instance_batched(instance) && mesh.posed_word != INVALID) {
-            float texel = shadow_map_texel(m, max(detail_span(shadow_map_detail(m), low, high).x, m.near));
-            rest = !(mesh.sway * instance_scale(inst) > texel);
+            rest = !shadow_map_sways(m, low, high, mesh.sway * instance_scale(inst), params.sway);
             moves = moves && !rest;
             sways = moves;
         }

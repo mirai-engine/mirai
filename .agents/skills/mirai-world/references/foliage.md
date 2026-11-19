@@ -278,27 +278,29 @@ gusts oscillate with the phase of a fixed wave of the world (`WIND_WAVE`), so ne
 together and the phase changes across a field or a forest. There are three paths with that same
 function:
 
-- **Type that casts a shadow: variants** (`wind.odin`). `wind_variants` deformable copies of each
-  mesh, with their levels (`render.deformable_create`), which `foliage_sway.comp` writes in the
-  `Geometry` stage and whose BLAS the renderer refits. They are up to `WIND_TURNS` turns about up
-  and, past them, phases of each turn (`wind_turns`): an instance takes the turn nearest its own
-  and tilts with the wind within half a step, and the phase of the band of the gust wave its place
-  is in (`wind_variant`). Each variant says how far it sways (`wind_reach`): the shadow maps
-  coarser than that keep it at rest. Raster and shadow rays see the same variant; reflections, GI
-  and probes see the rest mesh (`Ray_Visible` and `Rays_Only` batch). Sets of variants are per
-  zone of wind: a cell takes those of the `Wind` on top at the middle of its instances
-  (`wind_zone_at`, over a `volume.Index` of the zones), and each set sways with the wind of its
-  zone, so a calm valley
-  stays calm whatever blows at the view. Where the zones are (not their values) has a revision:
-  when it changes, the cells whose zone changed are published again. The wind is held to
-  `WIND_SPEED_MAX`: the variants' box contains it, so a frame of wind changes no boxes and marks
-  no light, and the direct light is not reset by it. Without wind the variants stay still
-  without writing.
-- **Type without shadow: hook.** `foliage_vertex.slang` is the [vertex hook][hook] of its batches,
+- **Type that casts a shadow and sways much: variants** (`wind.odin`). A part whose tip sways at
+  least `SHADOW_SWAY_LEAST` at `WIND_SPEED_MAX` (`type_sway`, from its `wind` and the reach of its
+  mesh at its largest instance: trees and bushes, not grass, flowers or wheat) takes `wind_variants`
+  deformable copies of each mesh, with their levels (`render.deformable_create`), which
+  `foliage_sway.comp` writes in the `Geometry` stage and whose BLAS the renderer refits. They are up
+  to `WIND_TURNS` turns about up and, past them, phases of each turn (`wind_turns`): an instance
+  takes the turn nearest its own and tilts with the wind within half a step, and the phase of the
+  band of the gust wave its place is in (`wind_variant`). Each variant says how far it sways
+  (`wind_reach`): the shadow maps coarser than that, and those past the [reach of what sways][sway],
+  keep it at rest. Raster and shadow rays see the same variant; reflections, GI and probes see the
+  rest mesh (`Ray_Visible` and `Rays_Only` batch). Sets of variants are per zone of wind: a cell
+  takes those of the `Wind` on top at the middle of its instances (`wind_zone_at`, over a
+  `volume.Index` of the zones), and each set sways with the wind of its zone, so a calm valley stays
+  calm whatever blows at the view. Where the zones are (not their values) has a revision: when it
+  changes, the cells whose zone changed are published again. The wind is held to `WIND_SPEED_MAX`:
+  the variants' box contains it, so a frame of wind changes no boxes and marks no light, and the
+  direct light is not reset by it. Without wind the variants stay still without writing.
+- **Any other type: hook.** `foliage_vertex.slang` is the [vertex hook][hook] of its batches,
   with the wind of its place (`//! mirai frame Foliage_Wind_Frame foliage_wind`, written from the
-  `Mask` stage relative to the origin of each view) and the gust wave of its place. No ray sees it
-  move. The hook moves only the batches of foliage (`Batch_Desc.vertex.y`); `vertex.x` is the
-  sway of a type that sways in it.
+  `Mask` stage relative to the origin of each view) and the gust wave of its place. No ray and no
+  shadow map sees it move: a small plant that casts a shadow casts it at rest, in the maps and in
+  the rays, as its moving shadow would be noise on the ground. The hook moves only the batches of
+  foliage (`Batch_Desc.vertex.y`); `vertex.x` is the sway of a type that sways in it.
 - **Impostors.** The quad of an impostor leans whole about its instance's origin by the lean of
   the top of its mesh in the wind of its place (`Impostor_Row.far.z`), so the crossfade does not
   go from swaying to still.
@@ -317,6 +319,7 @@ function:
   wind and a bender move a point (`hook_reach`), and the views cull them with those grown boxes.
 
 [hook]: ../../mirai-rendering/references/views.md#extension-hooks-and-constants
+[sway]: ../../mirai-rendering/references/lights.md#what-sways-in-the-maps
 
 ## Collision
 

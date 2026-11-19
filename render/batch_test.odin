@@ -519,6 +519,10 @@ the_kept_reach_of_the_shadow_maps_is_what_the_maps_give :: proc(t: ^testing.T) {
 			}
 		}
 		for &p in plans {if next(&random, 8) == 0 {p.flags = abi.SHADOW_PLAN_RESET}}
+		// The reach of what sways of the view: none, near, or every map.
+		reaches := [3]f32{0, 0.02, max(f32)}
+		if next(&random, 8) == 0 {view.sway = reaches[next(&random, 3)]}
+		fresh.sway = view.sway
 		kept, anew: [SHADOW_SLOTS]Shadow_Reach
 		if !testing.expect(t, shadow_reach(r, view, wants[:], plans[:], kept[:])) {return}
 		ranges := make([][2]u32, len(r.scene.shadow_ranges), context.temp_allocator)
@@ -548,7 +552,7 @@ the_kept_reach_of_the_shadow_maps_is_what_the_maps_give :: proc(t: ^testing.T) {
 				// Of a light, what lies past its range blocks none of what it lights.
 				within := slot < SHADOW_SUN_LEVELS || linalg.length(linalg.max(linalg.max(low - w.m.origin, w.m.origin - high), Vec3{})) <= w.m.far
 				if casts && within && shadow_map_reaches(w.m, low, high) && !testing.expectf(t, holds(ranges, lists[Shadow_Round.Stays], first, count), "frame %d, slot %d: a batch that casts into the map is left out", frame, slot) {return}
-				moving := s.batch.records[record].shadow_moving && casts && within && shadow_change_reaches(w.m, shadow_batch_change(s, k))
+				moving := s.batch.records[record].shadow_moving && casts && within && shadow_change_reaches(w.m, shadow_batch_change(s, k), view.sway)
 				if moving && !testing.expectf(t, holds(ranges, lists[Shadow_Round.Moves], first, count), "frame %d, slot %d: a batch that moves in the map is left out of what moves", frame, slot) {return}
 			}
 		}

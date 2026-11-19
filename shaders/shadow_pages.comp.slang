@@ -109,8 +109,9 @@ void table_set(uint slot, uint entry, uint e) { if (shadow_place_valid(slot, ent
 // cache, 1 the atlas, for Grant and Settle; chunks: what the list of the
 // chunks of the cull holds (render.Cull_List.Shadow_Chunks); moves: the
 // round of what moves runs this frame (something moves in a map, or a slot
-// lets go of every page).
-struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; uint box_count; uint sun; uint pool; uint reach; uint threads; uint fresh; uint full; uint slots; uint slot_count; uint keep; uint budget; uint round; uint chunks; uint moves; uint pad; };
+// lets go of every page); sway: the texel the view takes of a point at the
+// reach of what sways in the maps (render.shadow_sway_texel).
+struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; uint box_count; uint sun; uint pool; uint reach; uint threads; uint fresh; uint full; uint slots; uint slot_count; uint keep; uint budget; uint round; uint chunks; uint moves; float sway; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> shadow_data : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<uint> pages : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
@@ -258,16 +259,6 @@ uint refresh_order(uint slot, uint entry, uint sway) {
     uint age = (params.frame - sway) & SHADOW_SWAY_FRAME;
     uint late = min(age + 8u - min(coarser / REFRESH_NEARER, 8u), 0xFFFu);
     return ((0xFFFu - late) << 4u) | min(coarser, 15u);
-}
-
-// The narrowest texel of a map over a box of the world, metres
-// (render.shadow_map_finest).
-float shadow_map_finest(Shadow_Map m, float3 low, float3 high) {
-    float across = (m.span.z - m.span.x) / float(max(m.rect.z, 1u));
-    if (shadow_map_orthographic(m)) return across;
-    float3 center = 0.5 * (low + high) - m.origin;
-    float3 half = 0.5 * (high - low);
-    return across * max(dot(center, m.forward) - dot(half, abs(m.forward)), m.near);
 }
 
 // A page of a slot in a round: its bit, its slot listed once, the pages of
@@ -443,9 +434,9 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         if (!shadow_map_reaches(whole, low, high)) return;
         for (uint mip = 0u; mip < (slot < SHADOW_SUN_MAPS ? 1u : SHADOW_MIPS); mip++) {
             Shadow_Map m = shadow_map_mip(whole, mip);
-            // A box of what sways changes only the maps whose texel is narrower than its sway.
+            // A box of what sways changes only the maps that draw it as it sways.
             float4 texels;
-            if (fine > 0.0 && !(shadow_map_finest(m, low, high) < fine)) continue;
+            if (fine > 0.0 && !shadow_map_sways(m, low, high, fine, params.sway)) continue;
             if (!shadow_box_texels(m, low, high, texels)) continue;
             uint4 rect = shadow_texel_pages(m, texels);
             for (uint y = rect.y; y <= rect.w; y++) {

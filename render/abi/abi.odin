@@ -208,6 +208,9 @@ SHADOW_MAP_ORTHOGRAPHIC    :: 1
 // last one page.
 SHADOW_PAGE                :: u32(128)
 SHADOW_MAP_PAGES           :: 64
+// The texel of the level of the sun or of the mip a point takes spans from
+// half of this many pixels of the view across to all of them (sun_pick).
+SHADOW_TEXEL_PIXELS        :: f32(2)
 SHADOW_MAP_SIDE            :: SHADOW_PAGE * SHADOW_MAP_PAGES
 SHADOW_MIPS                :: 7
 // The levels of the sun, each twice as wide as the one before around the eye.
