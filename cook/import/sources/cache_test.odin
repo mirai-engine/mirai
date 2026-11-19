@@ -231,6 +231,13 @@ an_import_takes_a_texture_that_another_import_built_from_the_texture_cache :: pr
     testing.expect(t,.Fast in flags && format==.BC1,"Fast, for the sync of a build to encode again")
 }
 
+// The blob whose file blob_path gave.
+@(private="file")
+blob_at :: proc(path:string) -> store.Hash {
+    hash,_:=store.parse_hex(path[strings.last_index_byte(path,'/')+1:])
+    return hash
+}
+
 @(test)
 an_import_takes_a_mesh_that_another_import_built_from_the_mesh_cache :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -260,7 +267,7 @@ an_import_takes_a_mesh_that_another_import_built_from_the_mesh_cache :: proc(t:^
     if !testing.expect_value(t,len(entries),1) {return}
 
     // A mesh whose file is gone is built from the cache, to the same bytes.
-    testing.expect(t,os.remove(mesh_path)==nil)
+    testing.expect_value(t,store.remove(kept,blob_at(mesh_path)),store.Error.None)
     if _,ok=imported(t,source,options);!ok {return}
     again,_:=os.read_entire_file(mesh_path,context.temp_allocator)
     testing.expect(t,len(built)>0 && string(again)==string(built),"what the cache gives is what building gives")
@@ -277,7 +284,7 @@ an_import_takes_a_mesh_that_another_import_built_from_the_mesh_cache :: proc(t:^
     if !testing.expect_value(t,asset.mesh_document(&doc,&types,{id=cached.blob.header.id,geometry=view.geometry,slots=view.slots,colliders=hull[:],collision_points=points[:]},context.temp_allocator),asset.Error.None) {return}
     hulled,bytes_error:=asset.document_bytes(&doc,context.temp_allocator)
     testing.expect(t,bytes_error==.None && cache.put({store=kept},importer.MESH_CACHE,key,importer.MESH_CACHE_VERSION,hulled))
-    testing.expect(t,os.remove(mesh_path)==nil)
+    testing.expect_value(t,store.remove(kept,blob_at(mesh_path)),store.Error.None)
     hulled_path:string
     if hulled_path,ok=imported(t,source,options);!ok {return}
     testing.expect_value(t,colliders(t,&types,hulled_path),1)

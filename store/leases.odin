@@ -40,7 +40,7 @@ Lease :: struct {
 // The holder supplies a unique name and keeps the store open through release.
 lease_open :: proc(s:^Store,name:string,live:[]Hash,now:Maybe(time.Time)=nil) ->
     (lease:Lease,error:Error) {
-    if s==nil || s.root=="" || !name_valid(name) {return {},.Invalid_Argument}
+    if s==nil || s.state==nil || !name_valid(name) {return {},.Invalid_Argument}
     lease.store=s
     lease.name_len=copy(lease.name[:],name)
     lease.holder=holder_self()
@@ -57,7 +57,7 @@ lease_update :: proc(lease:^Lease,live:[]Hash,now:Maybe(time.Time)=nil) -> Error
     held,make_error:=make([]Hash,len(live),allocator)
     if make_error!=nil {return .Out_Of_Memory}
     copy(held,live)
-    if error:=lease_write(lease.store.root,path,lease.holder,held,now.? or_else time.now());error!=.None {
+    if error:=lease_write(lease.store,path,lease.holder,held,now.? or_else time.now());error!=.None {
         delete(held,allocator)
         return error
     }
@@ -69,7 +69,7 @@ lease_update :: proc(lease:^Lease,live:[]Hash,now:Maybe(time.Time)=nil) -> Error
 lease_refresh :: proc(lease:^Lease,now:Maybe(time.Time)=nil) -> Error {
     buffer:[PATH_BYTES]u8
     path:=lease_path(lease,&buffer) or_return
-    return lease_write(lease.store.root,path,lease.holder,lease.live,now.? or_else time.now())
+    return lease_write(lease.store,path,lease.holder,lease.live,now.? or_else time.now())
 }
 
 lease_release :: proc(lease:^Lease) -> Error {
@@ -113,13 +113,13 @@ lease_path :: proc(lease:^Lease,buffer:^[PATH_BYTES]u8) -> (string,Error) {
 }
 
 @(private)
-lease_write :: proc(root,path:string,holder:Holder,live:[]Hash,now:time.Time) -> Error {
+lease_write :: proc(s:^Store,path:string,holder:Holder,live:[]Hash,now:time.Time) -> Error {
     if len(live)>LEASE_MAX_HASHES {return .Invalid_Argument}
     holder:=holder
     who:=mem.ptr_to_bytes(&holder)
     payload:=mem.slice_to_bytes(live)
     checksum:=address_of_parts({who,payload})
-    return file_write(root,path,{transmute([]u8)string(LEASE_MAGIC),who,checksum[:],payload},now)
+    return file_write(s,s.root,path,{transmute([]u8)string(LEASE_MAGIC),who,checksum[:],payload},now)
 }
 
 // Adds the addresses of every lease that holds: its holder runs here, or
@@ -128,10 +128,10 @@ lease_write :: proc(root,path:string,holder:Holder,live:[]Hash,now:time.Time) ->
 leases_collect :: proc(s:^Store,live:^Live_Set,now:time.Time) -> Error {
     buffer:[PATH_BYTES]u8
     folder:=join(&buffer,s.root,"leases") or_return
-    entries,read_error:=os.read_all_directory_by_path(folder,s.allocator)
+    entries,read_error:=os.read_all_directory_by_path(folder,s.state.allocator)
     if read_error==.Not_Exist {return .None}
     if read_error!=nil {return os_error(read_error)}
-    defer os.file_info_slice_delete(entries,s.allocator)
+    defer os.file_info_slice_delete(entries,s.state.allocator)
     self:=holder_self()
     for entry in entries {
         if entry.type!=.Regular || !name_valid(entry.name) {continue}
@@ -151,7 +151,7 @@ lease_drop :: proc(s:^Store,path,name:string,now:time.Time,self:Holder) -> Error
     if claim_error!=.None {return .None}
     scratch:Live_Set
     defer delete(scratch)
-    scratch.allocator=s.allocator
+    scratch.allocator=s.state.allocator
     holds,error:=lease_collect(s,&scratch,claimed,now,self)
     if error==.None && !holds && file_remove(claimed)==nil {return .None}
     restored:=sweep_restore(path,claimed)
@@ -167,9 +167,9 @@ lease_collect :: proc(s:^Store,live:^Live_Set,path:string,now:time.Time,self:Hol
     if open_error==.Not_Exist {return true,.None}
     if open_error!=nil {return true,os_error(open_error)}
     defer os.close(file)
-    info,stat_error:=os.fstat(file,s.allocator)
+    info,stat_error:=os.fstat(file,s.state.allocator)
     if stat_error!=nil {return true,os_error(stat_error)}
-    defer os.file_info_delete(info,s.allocator)
+    defer os.file_info_delete(info,s.state.allocator)
     if info.type!=.Regular || info.size<LEASE_HEADER || info.size>LEASE_HEADER+LEASE_MAX_HASHES*size_of(Hash) {
         return false,.None
     }
@@ -185,9 +185,9 @@ lease_collect :: proc(s:^Store,live:^Live_Set,path:string,now:time.Time,self:Hol
     case .Ended: return false,.None
     case .Unknown: if older_than(info.modification_time,now,LEASE_MAX_AGE) {return false,.None}
     }
-    hashes,make_error:=make([]Hash,int(bytes/size_of(Hash)),s.allocator)
+    hashes,make_error:=make([]Hash,int(bytes/size_of(Hash)),s.state.allocator)
     if make_error!=nil {return true,.Out_Of_Memory}
-    defer delete(hashes,s.allocator)
+    defer delete(hashes,s.state.allocator)
     payload:=mem.slice_to_bytes(hashes)
     if read_exact(file,payload,LEASE_HEADER)!=.None {return false,.None}
     checksum:=address_of_parts({header[len(LEASE_MAGIC):][:size_of(Holder)],payload})

@@ -8,7 +8,6 @@ import "mirai:std/base"
 
 // Byte offset of a seeded stream, computed at any offset so a long stream is
 // generated where it is read, never held.
-@(private="file")
 random_fill :: proc "contextless" (seed,offset:u64,buffer:[]u8) {
     at:=offset
     i:=0

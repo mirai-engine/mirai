@@ -1,7 +1,9 @@
 package exchange
 
+import "core:fmt"
 import "core:os"
 import "core:slice"
+import "core:strings"
 import "core:sync"
 import "core:testing"
 import "core:thread"
@@ -154,6 +156,31 @@ a_liar_in_the_table_a_piece_or_the_size_is_marked_and_the_blob_still_arrives :: 
     }
 }
 
+// Flips the byte at at of a blob's bytes where a pack of the store at root
+// holds it, and drops the file blob_path wrote, as damage on the disk would
+// leave them; false when no pack holds those bytes.
+@(private="file")
+pack_damage :: proc(root:string,blob:[]u8,at:int,hash:store.Hash) -> bool {
+    start:=max(at-32,0)
+    needle:=blob[start:min(start+64,len(blob))]
+    digits:[64]u8
+    os.remove(fmt.tprintf("%s/tmp/blobs/%s",root,store.hex(hash,&digits)))
+    entries,_:=os.read_all_directory_by_path(fmt.tprintf("%s/packs",root),context.temp_allocator)
+    for e in entries {
+        bytes,read_error:=os.read_entire_file(e.fullpath,context.temp_allocator)
+        if read_error!=nil {continue}
+        found:=strings.index(string(bytes),string(needle))
+        if found<0 {continue}
+        file,open_error:=os.open(e.fullpath,{.Read,.Write})
+        if open_error!=nil {return false}
+        defer os.close(file)
+        flipped:=[1]u8{bytes[found+at-start]~0xff}
+        _,write_error:=os.write_at(file,flipped[:],i64(found+at-start))
+        return write_error==nil
+    }
+    return false
+}
+
 // A peer whose copy of a blob was damaged on its disk serves none of the
 // damage: it lacks the blob, is not taken for a liar, and drops it so that
 // it can fetch it again.
@@ -168,10 +195,7 @@ a_damaged_blob_is_lacked_removed_and_fetched_again :: proc(t:^testing.T) {
         honest:=test_host(&w,2,.Client)
         blob:=test_put(t,&w.nodes[1].s,size,11)
         test_put(t,&w.nodes[2].s,size,11)
-        path,_:=store.blob_path(&w.nodes[1].s,blob,context.temp_allocator)
-        bytes:=slice.clone(test_bytes(size,11),context.temp_allocator)
-        bytes[size-5]~=1
-        testing.expect(t,os.write_entire_file(path,bytes)==nil)
+        testing.expect(t,pack_damage(w.nodes[1].s.root,test_bytes(size,11),size-5,blob),"the damage lands in a pack")
         if !testing.expect(t,test_connect(&w,damaged,w.nodes[0].endpoints[0]) && test_connect(&w,honest,w.nodes[0].endpoints[0])) {return}
         r:=&w.nodes[0]
         want(&r.x,blob)

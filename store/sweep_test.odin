@@ -1,123 +1,251 @@
 package store
 
+import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:std/base"
 
+// An object put long ago and named by nothing, in a sealed pack of a writer
+// that ended.
+@(private)
+test_dead_object :: proc(t:^testing.T,root:string,data:[]u8,at:time.Time) -> (address:Hash) {
+    w,ok:=test_store(t,root);if !ok {return}
+    defer close(&w)
+    error:Error
+    address,error=put(&w,data,at)
+    testing.expect_value(t,error,Error.None)
+    testing.expect_value(t,commit(&w,at),Error.None)
+    return
+}
+
+// A writer that found the chunks of a dead object already stored names them
+// with a ref, committed at each point of a sweep: before it, after the mark,
+// after the generation is published and after the recheck. No committed put
+// is lost: the object reads, then and after the next sweep.
 @(test)
-existing_blobs_are_refreshed_only_after_a_quarter_of_grace :: proc(t:^testing.T) {
+a_sweep_beside_writers_loses_no_committed_put :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"store-beside");if folder=="" {return}
+    now:=time.now()
+    old:=time.time_add(now,-2*GRACE)
+    When :: enum {Before,Marked,Published,Rechecked}
+    for point in When {
+        root:=fmt.tprintf("%s/%v",folder,point)
+        data:=test_bytes(400<<10,u64(point)+7)
+        address:=test_dead_object(t,root,data,old)
+        sweeper,ok:=test_store(t,root);if !ok {return}
+        writer,_:=test_store(t,root)
+        Work :: struct {t:^testing.T,writer:^Store,data:[]u8,address:Hash,step:Sweep_Step,point:When,now:time.Time,done:bool}
+        work:=Work{t=t,writer=&writer,data=data,address=address,point=point,now=now}
+        run :: proc(w:^Work) {
+            if w.done {return}
+            w.done=true
+            again,error:=put(w.writer,w.data,w.now)
+            testing.expectf(w.t,error==.None && again==w.address,"%v: the put finds the object",w.point)
+            testing.expectf(w.t,w.writer.state.writer.frames>0 || len(w.writer.state.writer.deduped)>0,"%v: the writer named stored chunks",w.point)
+            testing.expect_value(w.t,ref_set(w.writer,"keep","object",w.address,w.now),Error.None)
+        }
+        hooks:=Hooks{data=&work,step=proc(data:rawptr,step:Sweep_Step) {
+            w:=(^Work)(data)
+            if (step==.Marked && w.point==.Marked) || (step==.Published && w.point==.Published) || (step==.Rechecked && w.point==.Rechecked) {run(w)}
+        }}
+        // The writer's view is read before the sweep, so its lookups find the old copy.
+        testing.expect(t,chunk_has(&writer,address),"the writer sees the object")
+        if point==.Before {run(&work)}
+        sweeper.state.hooks=&hooks
+        _,error:=sweep(&sweeper,nil,now)
+        sweeper.state.hooks=nil
+        testing.expectf(t,error==.None && work.done,"%v: %v",point,error)
+        close(&writer)
+        fresh,_:=test_store(t,root)
+        named,ref_error:=ref_get(&fresh,"keep","object")
+        testing.expectf(t,ref_error==.None && named==address,"%v: the ref reads",point)
+        test_object_bytes(t,&fresh,address,data)
+        _,again_error:=sweep(&sweeper,nil,now)
+        testing.expect_value(t,again_error,Error.None)
+        test_object_bytes(t,&fresh,address,data)
+        close(&fresh)
+        close(&sweeper)
+    }
+}
+
+// A sweep copies the live chunks of packs that are mostly dead into its own
+// pack and drops the dead ones; what is young, named or leased stays.
+@(test)
+compaction_keeps_every_live_chunk_and_drops_the_dead :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"store-compact");if folder=="" {return}
+    now:=time.now()
+    old:=time.time_add(now,-2*GRACE)
+    s,ok:=test_store(t,folder);if !ok {return}
+    defer close(&s)
+    COUNT :: 24
+    addresses:[COUNT]Hash
+    datas:[COUNT][]u8
+    for &a,i in addresses {
+        datas[i]=test_bytes(20000+i*3000,u64(500+i))
+        a,_=put(&s,datas[i],old)
+    }
+    testing.expect_value(t,commit(&s,old),Error.None)
+    young:=test_bytes(70000,600)
+    young_address,_:=put(&s,young,now)
+    testing.expect_value(t,commit(&s,now),Error.None)
+    // Named: a ref; leased; given; the rest is dead.
+    testing.expect_value(t,ref_set(&s,"keep","zero",addresses[0],old),Error.None)
+    lease,lease_error:=lease_open(&s,"holder",{addresses[1]},now)
+    testing.expect_value(t,lease_error,Error.None)
+    defer lease_release(&lease)
+    before,_:=usage(&s)
+    swept,error:=sweep(&s,{addresses[2]},now)
+    testing.expect_value(t,error,Error.None)
+    testing.expect(t,swept.chunks>=COUNT-3,"the dead chunks are dropped")
+    testing.expect(t,swept.packs>=1 && swept.bytes>0,"the mostly dead pack is retired and deleted")
+    after,_:=usage(&s)
+    testing.expect(t,after.bytes<before.bytes,"the store is smaller")
+    fresh,_:=test_store(t,folder)
+    defer close(&fresh)
+    for a,i in addresses {
+        live:=i<3
+        testing.expectf(t,chunk_has(&fresh,a)==live,"object %d is kept %v",i,live)
+        if live {test_object_bytes(t,&fresh,a,datas[i])}
+    }
+    test_object_bytes(t,&fresh,young_address,young)
+    got,_:=ref_get(&fresh,"keep","zero")
+    testing.expect(t,got==addresses[0],"refs are folded into the generation")
+    // A sweep with nothing to do keeps everything.
+    again,again_error:=sweep(&s,{addresses[2]},now)
+    testing.expect(t,again_error==.None && again.chunks==0,"nothing more is dropped")
+    for a in addresses[:3] {testing.expect(t,chunk_has(&fresh,a))}
+}
+
+// A retired pack that will not delete (one a process maps on Windows) is
+// skipped, counted, and deleted by a later sweep.
+@(test)
+a_pack_that_will_not_delete_is_skipped_and_counted :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"store-undeletable");if folder=="" {return}
+    now:=time.now()
+    test_dead_object(t,folder,test_bytes(300<<10,1),time.time_add(now,-2*GRACE))
+    s,ok:=test_store(t,folder);if !ok {return}
+    defer close(&s)
+    retired:=strings.concatenate({folder,"/retired"},context.temp_allocator)
+    hooks:=Hooks{undeletable=true}
+    s.state.hooks=&hooks
+    swept,error:=sweep(&s,nil,now)
+    s.state.hooks=nil
+    testing.expect_value(t,error,Error.None)
+    testing.expect(t,swept.packs==1 && swept.skipped==1,"the retired pack is skipped")
+    again,_:=sweep(&s,nil,now)
+    testing.expect(t,again.skipped==0 && again.bytes>=300<<10,"and deleted later")
+    left,_:=os.read_all_directory_by_path(retired,context.temp_allocator)
+    testing.expect_value(t,len(left),0)
+}
+
+// A full volume is No_Space, and a sweep still frees it: what an earlier
+// sweep retired goes before anything is written.
+@(test)
+a_full_volume_is_no_space_and_a_sweep_frees_it :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"store-space");if folder=="" {return}
+    now:=time.now()
+    test_dead_object(t,folder,test_bytes(2<<20,3),time.time_add(now,-2*GRACE))
+    s,ok:=test_store(t,folder);if !ok {return}
+    defer close(&s)
+    // Another writer runs, so the first sweep leaves what it retires.
+    other,_:=test_store(t,folder)
+    put(&other,test_bytes(10,4))
+    testing.expect_value(t,commit(&other),Error.None)
+    first,_:=sweep(&s,nil,now)
+    testing.expect(t,first.packs==1 && first.bytes==0,"the retired pack waits while another writer runs")
+    close(&other)
+    hooks:=Hooks{limited=true}
+    s.state.hooks=&hooks
+    defer s.state.hooks=nil
+    _,error:=put(&s,test_bytes(5000,5))
+    if error==.None {error=commit(&s)}
+    testing.expect_value(t,error,Error.No_Space)
+    swept,sweep_error:=sweep(&s,nil,now)
+    testing.expect_value(t,sweep_error,Error.None)
+    testing.expect(t,swept.bytes>=2<<20,"the sweep frees what was retired")
+    address,put_error:=put(&s,test_bytes(5000,5))
+    testing.expect_value(t,put_error,Error.None)
+    testing.expect_value(t,commit(&s),Error.None)
+    test_object_bytes(t,&s,address,test_bytes(5000,5))
+}
+
+// A scrub finds a chunk whose bytes no longer match, tombstones it so no
+// value reads it, and a sweep drops it.
+@(test)
+a_scrub_tombstones_a_damaged_chunk :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"store-scrub");if folder=="" {return}
+    datas:=[3][]u8{test_bytes(9000,10),test_bytes(9000,11),test_bytes(9000,12)}
+    addresses:[3]Hash
+    {
+        s,ok:=test_store(t,folder);if !ok {return}
+        defer close(&s)
+        for d,i in datas {
+            addresses[i],_=put(&s,d)
+            testing.expect_value(t,ref_set(&s,"keep",fmt.tprintf("%d",i),addresses[i]),Error.None)
+        }
+    }
+    s,ok:=test_store(t,folder);if !ok {return}
+    defer close(&s)
+    other,_:=test_store(t,folder)
+    defer close(&other)
+    testing.expect(t,test_damage(&s,datas[1],4000),"the damage lands in a pack")
+    result,error:=scrub(&s,1<<30)
+    testing.expect_value(t,error,Error.None)
+    testing.expect(t,result.damaged==1 && result.finished && result.chunks>=6,"the damaged chunk is found")
+    damaged:=address_of_bytes(datas[1])
+    testing.expect(t,!chunk_has(&s,damaged) && !chunk_has(&other,damaged),"no value reads it")
+    _,open_error:=object_open(&other,addresses[0])
+    testing.expect_value(t,open_error,Error.None)
+    test_object_bytes(t,&other,addresses[2],datas[2])
+    // Budgets go a part at a time and begin again at the end.
+    parts:=0
+    for {
+        part,part_error:=scrub(&s,1)
+        if part_error!=.None || part.damaged>0 {break}
+        parts+=1
+        if part.finished || parts>100 {break}
+    }
+    testing.expect(t,parts>1 && parts<100,"a small budget scrubs part by part")
+    swept,_:=sweep(&s,nil)
+    _=swept
+    put(&s,datas[1])
+    testing.expect_value(t,commit(&s),Error.None)
+    test_object_bytes(t,&other,addresses[1],datas[1])
+}
+
+// A blob put again, or a chunk found again, is refreshed only once it is
+// older than a quarter of GRACE, so a sweep keeps it.
+@(test)
+what_is_put_again_is_refreshed_after_a_quarter_of_grace :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"store-refresh");if folder=="" {return}
     s,ok:=test_store(t,folder);if !ok {return}
     defer close(&s)
-    now:=time.unix(time.time_to_unix(time.now()),0)
-    Put :: enum {Bytes,File,Begin,Complete}
-    for route,i in Put {
-        for age,j in ([2]time.Duration{2*BLOB_GRACE_AGE,BLOB_REFRESH_AGE/2}) {
-            data:=test_bytes(PIECE_BYTES+1,u64(100+2*i+j))
-            hash:=test_address(data)
-            if route==.Complete {test_full_unfinished(t,&s,data)}
-            _,put_error:=put_bytes(&s,data,now)
-            if !testing.expect_value(t,put_error,Error.None) {return}
-            before:=time.time_add(now,-age)
-            test_blob_time(t,&s,hash,before)
-            error:Error
-            switch route {
-            case .Bytes: _,error=put_bytes(&s,data,now)
-            case .File:
-                source:=join_test(folder,"source",0)
-                if !testing.expect(t,os.write_entire_file(source,data)==nil) {return}
-                _,error=put_file(&s,source,now)
-            case .Begin:
-                error=receive_begin(&s,hash,i64(len(data)),test_table(data),now)
-            case .Complete:
-                error=receive_piece(&s,hash,0,test_piece(data,0),now)
-            }
-            testing.expect_value(t,error,Error.None)
-            path:=[PATH_BYTES]u8{}
-            name,_:=blob_file(&s,hash,&path)
-            changed,time_error:=os.modification_time_by_path(name)
-            testing.expect(t,time_error==nil)
-            expected:=now if j==0 else before
-            testing.expectf(t,changed==expected,"%v with age %v",route,age)
-        }
-    }
-    // A file of another size in the place of the blob is not it: each route replaces it.
-    for route,i in Put {
-        data:=test_bytes(2*PIECE_BYTES+5,u64(120+i))
-        hash:=test_address(data)
-        if route==.Complete {test_full_unfinished(t,&s,data)}
-        path:=[PATH_BYTES]u8{}
-        name,_:=blob_file(&s,hash,&path)
-        os.make_directory(os.dir(name))
-        if !testing.expect(t,os.write_entire_file(name,data[:PIECE_BYTES])==nil) {return}
-        error:Error
-        switch route {
-        case .Bytes: _,error=put_bytes(&s,data,now)
-        case .File:
-            source:=join_test(folder,"source",1)
-            if !testing.expect(t,os.write_entire_file(source,data)==nil) {return}
-            _,error=put_file(&s,source,now)
-        case .Begin:
-            error=receive_begin(&s,hash,i64(len(data)),test_table(data),now)
-            for index in 0..<piece_count(i64(len(data))) {
-                if error==.None {error=receive_piece(&s,hash,index,test_piece(data,index),now)}
-            }
-        case .Complete:
-            error=receive_piece(&s,hash,0,test_piece(data,0),now)
-        }
-        testing.expect_value(t,error,Error.None)
-        testing.expectf(t,verify(&s,hash)==.None,"%v replaces a file of the wrong size",route)
-    }
-    _,sweep_error:=sweep(&s,nil,now)
-    testing.expect_value(t,sweep_error,Error.None)
-    total,_:=usage(&s)
-    testing.expect_value(t,total.blobs,8+len(Put))
-}
-
-@(test)
-sweep_and_put_resolve_both_claim_interleavings :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"store-claim-put");if folder=="" {return}
-    s,ok:=test_store(t,folder);if !ok {return}
-    defer close(&s)
-    other,ok_other:=test_store(t,folder);if !ok_other {return}
-    defer close(&other)
-    now:=time.now()
-    old:=time.time_add(now,-2*BLOB_GRACE_AGE)
-    for put_first,i in ([2]bool{true,false}) {
-        data:=test_bytes(123,u64(160+i))
-        hash,error:=put_bytes(&s,data,now)
-        if !testing.expect_value(t,error,Error.None) {return}
-        test_blob_time(t,&s,hash,old)
-        path,claim_buffer:[PATH_BYTES]u8
-        blob,_:=blob_file(&s,hash,&path)
-        entry,stat_error:=os.stat(blob,s.allocator)
-        if !testing.expect(t,stat_error==nil) {return}
-        defer os.file_info_delete(entry,s.allocator)
-        testing.expect(t,older_than(entry.modification_time,now,BLOB_GRACE_AGE))
-        if put_first {
-            _,error=put_bytes(&other,data,now)
-            testing.expect_value(t,error,Error.None)
-            state:=Sweep{s=&s,now=now}
-            sweep_entry(&state,entry,hash)
-            testing.expect_value(t,state.result.blobs,0)
-            testing.expect_value(t,state.result.skipped,0)
-        } else {
-            name:[64]u8
-            claimed,claim_error:=sweep_claim(&s,blob,.Blob,hex(hash,&name),&claim_buffer)
-            if !testing.expect_value(t,claim_error,Error.None) {return}
-            testing.expect(t,!has(&other,hash))
-            refreshed:=blob_touch(&other,blob,now)
-            testing.expect_value(t,refreshed,Error.Missing)
-            error=put_bytes_after_refresh(&other,data,test_table(data),hash,refreshed,now)
-            testing.expect_value(t,error,Error.None)
-            removed,finish_error:=sweep_finish(&s,blob,claimed,now)
-            testing.expect_value(t,finish_error,Error.None)
-            testing.expect(t,removed)
-        }
-        testing.expect_value(t,verify(&s,hash),Error.None)
-    }
+    start:=time.now()
+    at :: proc(start:time.Time,part:f64) -> time.Time {return time.time_add(start,time.Duration(part*f64(GRACE)))}
+    blob:=test_bytes(PIECE_BYTES+1,100)
+    object:=test_bytes(30000,101)
+    hash,_:=put_bytes(&s,blob,start)
+    address,_:=put(&s,object,start)
+    testing.expect_value(t,commit(&s,start),Error.None)
+    hooks:Hooks
+    s.state.hooks=&hooks
+    put_bytes(&s,blob,at(start,0.125))
+    put(&s,object,at(start,0.125))
+    testing.expect_value(t,commit(&s,at(start,0.125)),Error.None)
+    testing.expect_value(t,hooks.writes,0)
+    put_bytes(&s,blob,at(start,0.5))
+    put(&s,object,at(start,0.5))
+    testing.expect_value(t,commit(&s,at(start,0.5)),Error.None)
+    testing.expect(t,hooks.writes>=2,"a blob and a chunk older than a quarter of grace are refreshed")
+    s.state.hooks=nil
+    swept,error:=sweep(&s,nil,at(start,1.25))
+    testing.expect_value(t,error,Error.None)
+    testing.expect(t,has(&s,hash) && chunk_has(&s,address),"what was refreshed is kept")
+    testing.expect_value(t,swept.blobs,0)
+    swept,_=sweep(&s,nil,at(start,2))
+    testing.expect(t,!has(&s,hash) && !chunk_has(&s,address) && swept.blobs==1,"and goes once nothing refreshes it")
 }
 
 @(test)
@@ -128,13 +256,10 @@ fresh_leases_keep_their_current_addresses :: proc(t:^testing.T) {
     other,ok_other:=test_store(t,folder);if !ok_other {return}
     defer close(&other)
     now:=time.now()
-    old:=time.time_add(now,-2*BLOB_GRACE_AGE)
+    old:=time.time_add(now,-2*GRACE)
     stale:=time.time_add(now,-2*LEASE_MAX_AGE)
     hashes:[4]Hash
-    for &hash,i in hashes {
-        hash,_=put_bytes(&s,test_bytes(123,u64(180+i)),now)
-        test_blob_time(t,&s,hash,old)
-    }
+    for &hash,i in hashes {hash,_=put_bytes(&s,test_bytes(123,u64(180+i)),old)}
     fresh,open_error:=lease_open(&s,"editor",{hashes[0]},now)
     if !testing.expect_value(t,open_error,Error.None) {return}
     defer lease_release(&fresh)
@@ -145,9 +270,8 @@ fresh_leases_keep_their_current_addresses :: proc(t:^testing.T) {
     if !testing.expect_value(t,claim_error,Error.None) {return}
     testing.expect_value(t,lease_update(&fresh,updated[:],stale),Error.None)
     testing.expect_value(t,sweep_restore(fresh_path,claimed),Error.None)
-    modified,_,time_error:=regular_info(&other,fresh_path)
-    testing.expect_value(t,time_error,Error.None)
-    testing.expect(t,older_than(modified,now,LEASE_MAX_AGE),"the replacement stays in place")
+    modified,time_error:=os.modification_time_by_path(fresh_path)
+    testing.expect(t,time_error==nil && older_than(modified,now,LEASE_MAX_AGE),"the replacement stays in place")
     collected,make_error:=make(Live_Set,1,s.allocator)
     if !testing.expect(t,make_error==nil) {return}
     defer delete(collected)
@@ -159,6 +283,7 @@ fresh_leases_keep_their_current_addresses :: proc(t:^testing.T) {
     testing.expect_value(t,lease_release(&released),Error.None)
 
     // Leases this process did not open: who holds them decides, else their time.
+    // The value that wrote the blobs sweeps, so that its own pack is folded.
     self:=holder_self()
     ended:=self
     ended.start+=1
@@ -177,28 +302,25 @@ fresh_leases_keep_their_current_addresses :: proc(t:^testing.T) {
     holding:=0
     for c,k in cases {
         if c.holds {holding+=1}
-        held:=test_bytes(200,u64(300+k))
-        hash,_:=put_bytes(&s,held,now)
-        test_blob_time(t,&s,hash,old)
+        hash,_:=put_bytes(&s,test_bytes(200,u64(300+k)),old)
         buffer:[PATH_BYTES]u8
         path:=join(&buffer,folder,"leases",c.name) or_continue
-        testing.expect_value(t,lease_write(folder,path,c.holder,{hash},c.at),Error.None)
+        testing.expect_value(t,lease_write(&s,path,c.holder,{hash},c.at),Error.None)
         defer file_remove(path)
-        swept,sweep_error:=sweep(&other,kept[:],now)
+        swept,sweep_error:=sweep(&s,kept[:],now)
         append(&kept,hash)
         testing.expect_value(t,sweep_error,Error.None)
         testing.expectf(t,has(&s,hash)==c.holds && os.exists(path)==c.holds,"%s: the lease holds %v",c.name,c.holds)
         testing.expect_value(t,swept.blobs,0 if c.holds else 1)
     }
-
-    swept,sweep_error:=sweep(&other,nil,now)
+    swept,sweep_error:=sweep(&s,nil,now)
     testing.expect_value(t,sweep_error,Error.None)
     testing.expect_value(t,swept.blobs,3+holding)
     for hash,i in hashes {testing.expectf(t,has(&s,hash)==(i==1),"blob %d",i)}
 }
 
-// Partial blobs that no lease names and that took no piece for a day go,
-// and so does what a sweep that stopped left claimed, as it would have.
+// Partial blobs that no lease names and that took no piece for a day go, and
+// so does what a sweep that stopped left claimed, as it would have.
 @(test)
 sweep_removes_old_partials_and_settles_what_a_stopped_sweep_claimed :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"store-partials");if folder=="" {return}
@@ -232,24 +354,15 @@ sweep_removes_old_partials_and_settles_what_a_stopped_sweep_claimed :: proc(t:^t
         }
         if c.live {append(&live,hashes[k])}
     }
-    // Left by a sweep that stopped: an old blob it was about to remove, a young one and a lease.
-    stopped:[2]Hash
-    for &hash,k in stopped {
-        hash,_=put_bytes(&s,test_bytes(500,u64(450+k)),now)
-        path,claim_buffer:[PATH_BYTES]u8
-        blob,_:=blob_file(&s,hash,&path)
-        if k==0 {test_set_time(t,blob,time.time_add(now,-2*BLOB_GRACE_AGE))}
-        name:[64]u8
-        _,claim_error:=sweep_claim(&s,blob,.Blob,hex(hash,&name),&claim_buffer)
-        testing.expect_value(t,claim_error,Error.None)
-        testing.expect(t,!has(&s,hash))
-    }
     lease,lease_error:=lease_open(&s,"holder",{},now)
     if !testing.expect_value(t,lease_error,Error.None) {return}
     defer lease_release(&lease)
     lease_buffer,claim_buffer:[PATH_BYTES]u8
     lease_file,_:=lease_path(&lease,&lease_buffer)
     sweep_claim(&s,lease_file,.Lease,"holder",&claim_buffer)
+    stale,fresh:=join_test(folder,"tmp/stale",0),join_test(folder,"tmp/fresh",0)
+    testing.expect(t,os.write_entire_file(stale,[]u8{1})==nil && os.write_entire_file(fresh,[]u8{1})==nil)
+    test_set_time(t,stale,time.time_add(now,-2*TMP_STALE))
 
     swept,error:=sweep(&s,live[:],now)
     testing.expect_value(t,error,Error.None)
@@ -258,33 +371,8 @@ sweep_removes_old_partials_and_settles_what_a_stopped_sweep_claimed :: proc(t:^t
         _,missing_error:=receive_missing(&s,hashes[k],context.temp_allocator)
         testing.expectf(t,(missing_error==.None)==c.kept,"partial %d is kept %v",k,c.kept)
     }
-    testing.expect(t,!has(&s,stopped[0]) && has(&s,stopped[1]),"an old claimed blob goes and a young one comes back")
     testing.expect(t,os.is_file(lease_file),"a claimed lease comes back")
     claims,_:=os.read_all_directory_by_path(strings.concatenate({folder,"/tmp/sweep"},context.temp_allocator),context.temp_allocator)
     testing.expect_value(t,len(claims),0)
-}
-
-// A sweep claims into a folder made with the root, so it frees space where
-// nothing new can be created, as on a full volume.
-@(test)
-a_sweep_frees_blobs_where_nothing_new_can_be_created :: proc(t:^testing.T) {
-    when ODIN_OS==.Windows {return}
-    folder:=base.test_folder(t,"store-full");if folder=="" {return}
-    s,ok:=test_store(t,folder);if !ok {return}
-    defer close(&s)
-    now:=time.now()
-    hashes:[3]Hash
-    for &hash,k in hashes {
-        hash,_=put_bytes(&s,test_bytes(PIECE_BYTES+k,u64(470+k)),now)
-        test_blob_time(t,&s,hash,time.time_add(now,-2*BLOB_GRACE_AGE))
-    }
-    tmp:=strings.concatenate({folder,"/tmp"},context.temp_allocator)
-    if !testing.expect(t,os.change_mode(tmp,os.perm_number(0o555))==nil) {return}
-    defer os.change_mode(tmp,os.perm_number(0o755))
-    swept,error:=sweep(&s,nil,now)
-    testing.expect_value(t,error,Error.None)
-    testing.expect_value(t,swept.blobs,len(hashes))
-    testing.expect_value(t,swept.skipped,0)
-    _,put_error:=put_bytes(&s,test_bytes(10,480),now)
-    testing.expect(t,put_error!=.None,"nothing new is created there")
+    testing.expect(t,!os.exists(stale) && os.exists(fresh),"sweep removes only stale temporary files")
 }

@@ -373,11 +373,13 @@ store_sweep_keeps_what_refs_and_builds_reach :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"packages-sweep");if folder=="" {return}
     s,open_error:=store.open(fmt.tprintf("%s/store",folder),context.temp_allocator)
     if !testing.expect_value(t,open_error,store.Error.None) {return}
-    put :: proc(s:^store.Store,text:string) -> store.Hash {
-        hash,_:=store.put_bytes(s,transmute([]u8)text)
+    now:=time.now()
+    old:=time.time_add(now,-2*store.GRACE)
+    put :: proc(s:^store.Store,text:string,at:time.Time) -> store.Hash {
+        hash,_:=store.put_bytes(s,transmute([]u8)text,at)
         return hash
     }
-    mesh,texture,held,loose,cached:=put(&s,"mesh"),put(&s,"texture"),put(&s,"held"),put(&s,"loose"),put(&s,"cached")
+    mesh,texture,held,loose,cached:=put(&s,"mesh",old),put(&s,"texture",old),put(&s,"held",old),put(&s,"loose",old),put(&s,"cached",old)
     p:=sample_package()
     manifest,_:=package_put(&s,&p)
     blobs:=[2]store.Hash{mesh,texture}
@@ -388,12 +390,6 @@ store_sweep_keeps_what_refs_and_builds_reach :: proc(t:^testing.T) {
     store.ref_set(&s,REF_IMPORTS,store.hex(hash_of("key"),&digits),build)
     store.ref_set(&s,REF_PACKAGES,"crate",manifest)
     store.ref_set(&s,"cache-thumbs","1",cached)
-    now:=time.now()
-    old:=time.time_add(now,-2*store.BLOB_GRACE_AGE)
-    for hash in ([]store.Hash{mesh,texture,held,loose,cached,manifest,build}) {
-        path,_:=store.blob_path(&s,hash,context.temp_allocator)
-        os.change_times(path,old,old)
-    }
     swept,error:=store_sweep(&s,{held},now)
     testing.expect_value(t,error,store.Error.None)
     testing.expect_value(t,swept.blobs,1)

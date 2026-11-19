@@ -46,6 +46,31 @@ copy_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
     }
 }
 
+// Flips the byte at at of a blob's bytes where a pack of the store at root
+// holds it, and drops the file blob_path wrote, as damage on the disk would
+// leave them; false when no pack holds those bytes.
+@(private="file")
+pack_damage :: proc(root:string,blob:[]u8,at:int,hash:store.Hash) -> bool {
+    start:=max(at-32,0)
+    needle:=blob[start:min(start+64,len(blob))]
+    digits:[64]u8
+    os.remove(fmt.tprintf("%s/tmp/blobs/%s",root,store.hex(hash,&digits)))
+    entries,_:=os.read_all_directory_by_path(fmt.tprintf("%s/packs",root),context.temp_allocator)
+    for e in entries {
+        bytes,read_error:=os.read_entire_file(e.fullpath,context.temp_allocator)
+        if read_error!=nil {continue}
+        found:=strings.index(string(bytes),string(needle))
+        if found<0 {continue}
+        file,open_error:=os.open(e.fullpath,{.Read,.Write})
+        if open_error!=nil {return false}
+        defer os.close(file)
+        flipped:=[1]u8{bytes[found+at-start]~0xff}
+        _,write_error:=os.write_at(file,flipped[:],i64(found+at-start))
+        return write_error==nil
+    }
+    return false
+}
+
 @(private="file")
 blob_of :: proc(s:^store.Store,key,version:u64) -> store.Hash {
     namespace:[store.NAME_MAX]u8
@@ -90,11 +115,10 @@ a_result_is_found_by_its_ref_through_any_store_of_its_root_and_a_source_fills_a_
     testing.expect(t,put({store=&writer},NAME,KEY,VERSION,result_bytes(&types,KEY,VERSION,1)))
     if testing.expect(t,load({store=&reader},NAME,KEY,VERSION,&file,context.temp_allocator)) {asset.asset_close(&file)}
 
-    // A blob that no longer has its bytes is a miss and goes, so that building again replaces it.
-    path,_:=store.blob_path(&reader,hash,context.temp_allocator)
-    whole,_:=os.read_entire_file(path,context.temp_allocator)
-    for damaged in ([][]u8{whole[:len(whole)/2],slice.concatenate([][]u8{whole[:len(whole)-1],{whole[len(whole)-1]~0xff}},context.temp_allocator)}) {
-        testing.expect(t,os.write_entire_file(path,damaged)==nil)
+    // A blob whose bytes are damaged in its pack is a miss and goes, so that building again replaces it.
+    whole:=result_bytes(&types,KEY,VERSION,1)
+    for at in ([]int{len(whole)-9,len(whole)-1}) {
+        testing.expect(t,pack_damage(root,whole,at,blob_of(&reader,KEY,VERSION)),"the damage lands in a pack")
         testing.expect(t,!load({store=&reader},NAME,KEY,VERSION,&file),"a damaged blob is a miss")
         testing.expect(t,!store.has(&reader,hash),"and is removed")
         testing.expect(t,put({store=&writer},NAME,KEY,VERSION,result_bytes(&types,KEY,VERSION,1)))

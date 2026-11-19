@@ -180,6 +180,8 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
         }
         if !ok {fmt.wprintln(errors,IMPORT_USAGE);return 2}
     }
+    // Nothing to import is a misuse, whatever the store says.
+    if len(roots)==0 && file=="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
     js:jobs.Job_System
     if !jobs.system_init(&js,{threads=jobs.THREADS_AUTO,allocator=runtime.heap_allocator()}) {
         fmt.wprintln(errors,"mirai import: the threads to cook on could not be started")

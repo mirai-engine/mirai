@@ -3,25 +3,33 @@ package store
 import "base:runtime"
 import "core:crypto"
 import "core:os"
+import "core:sync"
 import "core:time"
 
-// A content-addressed store of the machine: blobs named by their address and
-// refs, mutable names of an address. Several Store values and processes share
-// one root without locks: every file appears whole through a rename.
+// A content-addressed store of the machine. Chunks live in append-only packs,
+// each appended only by the writer that made it; an object is a tree of chunks
+// named by its root; a ref names an address. Several Store values and
+// processes share one root: readers take a pack's frames only up to its last
+// commit, and an index generation, written only by a sweep, folds the sealed
+// packs.
 
-// The first line of the root's layout file; another one is refused.
-LAYOUT :: "mirai store 2\n"
+// The first line of the root's LAYOUT file; another one is refused.
+LAYOUT :: "mirai store 3\n"
 ROOT_MAX :: 1024 // bytes of a root path
 NAME_MAX :: 128  // bytes of a ref namespace or name
+
+GRACE :: time.Hour   // a chunk written or touched within it is kept by a sweep
+PACK_MAX :: 256<<20  // bytes after which a writer seals its pack and begins another
+BATCH_MAX :: 16<<20  // bytes written since the last commit that commit on their own
 
 @(private)
 PATH_BYTES :: ROOT_MAX+256
 
 Error :: enum u8 {
     None,
-    Missing,            // no blob, partial blob or ref with that name
+    Missing,            // no chunk, object, blob, partial blob or ref with that name; from commit: a chunk the batch named went missing beside a sweep, so the batch was dropped and is put again
     Not_Here_Yet,       // a range of a partial blob whose pieces have not arrived
-    Corrupt,            // bytes that do not match their address or table, or a damaged file of the root
+    Corrupt,            // bytes that do not match their address, or a damaged file of the root
     Wrong_Size,         // the last piece of a blob being received matches its table at another length than the size it began with: that size was wrong
     Invalid_Argument,
     Out_Of_Memory,
@@ -30,9 +38,64 @@ Error :: enum u8 {
     Unsupported_Layout, // a root written by another layout of the store
 }
 
+// What an error means for whoever keeps the root, and how to go on.
+error_text :: proc(error:Error) -> string {
+    switch error {
+    case .None: return "no error"
+    case .Missing: return "it is not in the store: put or fetch it again"
+    case .Not_Here_Yet: return "its bytes have not arrived yet: ask again once they have"
+    case .Corrupt: return "the store holds bytes that do not match their address: a sweep and a scrub drop them, and putting or fetching it again mends it"
+    case .Wrong_Size: return "a blob was begun with a size its last piece disproves: begin it again with the size that piece gives"
+    case .Invalid_Argument: return "an argument out of its range"
+    case .Out_Of_Memory: return "memory ran out"
+    case .Io: return "the file system refused an operation on the store's folder: give this user access to it"
+    case .No_Space: return "the volume of the store is full: free space there, or let a sweep remove what is no longer used"
+    case .Unsupported_Layout: return "the store was written by another version of Mirai: remove that folder, whose content is fetched or built again, or open another"
+    }
+    return ""
+}
+
 Store :: struct {
     root:string, // owned, without a trailing separator
-    allocator:runtime.Allocator,
+    allocator:runtime.Allocator, // of root
+    state:^State,
+}
+
+// What a Store value knows of its root, shared by its copies and guarded by
+// lock: the packs, the current generation, the chunks and refs of the packs
+// the generation does not hold, and its own writer.
+@(private)
+State :: struct {
+    allocator:runtime.Allocator, // the heap: of everything the state holds and the store's own scratch
+    lock:sync.Mutex,
+    written:sync.Cond, // signalled when a write in flight lands
+    packs:[dynamic]Pack,
+    pack_index:map[Pack_Id]int,
+    generation:Generation,
+    table:Table,
+    refs:map[string]Ref_Value, // the newest ref frame of each name in the packs the generation does not hold
+    tombs:map[Tomb_Key]struct{},
+    touched:map[Hash]i64, // newest Touch of a chunk in the packs the generation does not hold
+    writer:Writer,
+    stages:[dynamic]^Stage,
+    builders:[dynamic]^Object_Writer,
+    recent:[dynamic]Recent, // frames other writers committed while a sweep records them
+    recording:bool,
+    scrub_pack:int,
+    scrub_at:int,
+    hooks:^Hooks,
+}
+
+// What a test counts and decides of a store's file operations.
+@(private)
+Hooks :: struct {
+    creates,opens,renames,flushes,writes,listings:int,
+    limited:bool,
+    undeletable:bool, // removing a file fails, as one mapped by a process on Windows
+    space:i64, // bytes the volume still takes while limited
+    step:proc(data:rawptr,step:Sweep_Step),
+    flushing:proc(data:rawptr), // before each flush
+    data:rawptr,
 }
 
 // Opens the store at root, making its folders the first time.
@@ -43,19 +106,50 @@ open :: proc(root:string,allocator:=context.allocator) -> (s:Store,error:Error) 
     for c in transmute([]u8)trimmed {
         if c==0 {return {},.Invalid_Argument}
     }
-    buffer:[PATH_BYTES]u8
     folder_make(trimmed) or_return
-    for folder in ([7]string{"blobs","tables","partial","refs","leases","tmp",SWEEP_FOLDER}) {
+    fresh:=layout_check(trimmed) or_return
+    buffer:[PATH_BYTES]u8
+    for folder in ([?]string{"packs","index","retired","leases","tmp",SWEEP_FOLDER,PARTIAL_FOLDER,BLOBS_FOLDER}) {
         folder_make(join(&buffer,trimmed,folder) or_return) or_return
     }
-    layout_check(trimmed) or_return
+    if fresh {
+        layout_buffer:[PATH_BYTES]u8
+        file_write(nil,trimmed,join(&layout_buffer,trimmed,"LAYOUT") or_return,{transmute([]u8)string(LAYOUT)}) or_return
+    }
     cloned,clone_error:=make([]u8,len(trimmed),allocator)
     if clone_error!=nil {return {},.Out_Of_Memory}
     copy(cloned,trimmed)
-    return {root=string(cloned),allocator=allocator},.None
+    // The state outlives the calls and crosses the threads of whoever opened
+    // the store, whatever allocator it gave: it lives on the heap.
+    state,state_error:=new(State,runtime.heap_allocator())
+    if state_error!=nil {
+        delete(cloned,allocator)
+        return {},.Out_Of_Memory
+    }
+    state.allocator=runtime.heap_allocator()
+    s={root=string(cloned),allocator=allocator,state=state}
+    state_init(&s)
+    sync.mutex_lock(&state.lock)
+    error=refresh_locked(&s)
+    sync.mutex_unlock(&state.lock)
+    if error!=.None {
+        state_destroy(&s)
+        delete(s.root,allocator)
+        return {},error
+    }
+    return s,.None
 }
 
+// Commits what this value wrote, seals its pack and lets the root go.
 close :: proc(s:^Store) {
+    if s==nil || s.state==nil {
+        if s!=nil {s^={}}
+        return
+    }
+    sync.mutex_lock(&s.state.lock)
+    writer_close_locked(s)
+    sync.mutex_unlock(&s.state.lock)
+    state_destroy(s)
     delete(s.root,s.allocator)
     s^={}
 }
@@ -76,22 +170,27 @@ default_root :: proc(allocator:=context.allocator) -> string {
     return string(joined)
 }
 
+// A root holds LAYOUT; one that holds the lowercase layout file of the store
+// before packs, or a LAYOUT of another line, is refused. fresh: the root has
+// neither, and gets LAYOUT once its folders are made.
 @(private)
-layout_check :: proc(root:string) -> Error {
+layout_check :: proc(root:string) -> (fresh:bool,error:Error) {
     buffer:[PATH_BYTES]u8
-    path:=join(&buffer,root,"layout") or_return
+    path:=join(&buffer,root,"LAYOUT") or_return
     file,open_error:=file_open(path)
     if open_error==nil {
         defer os.close(file)
         read:[len(LAYOUT)+1]u8
         n,_:=os.read_at(file,read[:],0)
-        size,size_error:=os.file_size(file)
-        if size_error!=nil {return .Io}
-        if size!=len(LAYOUT) || n!=len(LAYOUT) || string(read[:n])!=LAYOUT {return .Unsupported_Layout}
-        return .None
+        if n!=len(LAYOUT) || string(read[:n])!=LAYOUT {return false,.Unsupported_Layout}
+        return false,.None
     }
-    if open_error!=.Not_Exist {return .Io}
-    return file_write(root,path,{transmute([]u8)string(LAYOUT)})
+    if open_error!=.Not_Exist {return false,.Io}
+    old_buffer:[PATH_BYTES]u8
+    for old in ([?]string{"layout","blobs"}) {
+        if os.exists(join(&old_buffer,root,old) or_return) {return false,.Unsupported_Layout}
+    }
+    return true,.None
 }
 
 // Copies parts joined by '/' into buffer.
@@ -131,45 +230,34 @@ os_error :: proc(error:os.Error) -> Error {
     return .No_Space if no_space(error) else .Io
 }
 
-// Writes chunks to a file of the root's tmp folder and renames it to path,
-// which then holds all of it or what it held before.
+// Writes chunks to a file of the root's tmp folder, syncs it and renames it to
+// path, which then holds all of it or what it held before.
 @(private)
-file_write :: proc(root,path:string,chunks:[][]u8,modified:Maybe(time.Time)=nil) -> Error {
+file_write :: proc(s:^Store,root,path:string,chunks:[][]u8,modified:Maybe(time.Time)=nil) -> Error {
     temp_buffer:[PATH_BYTES]u8
-    temp,file:=temp_create(root,&temp_buffer) or_return
-    error:=file_fill(file,chunks)
+    temp,file:=temp_create(s,root,&temp_buffer) or_return
+    error:Error
+    at:i64
+    for chunk in chunks {
+        if error=io_write_at(s,file,chunk,at);error!=.None {break}
+        at+=i64(len(chunk))
+    }
+    if error==.None {error=io_sync(s,file)}
     os.close(file)
-    if at,ok:=modified.?;ok && error==.None {error=os_error(os.change_times(temp,at,at))}
-    if error==.None {error=os_error(rename_replace(temp,path))}
+    if when_,ok:=modified.?;ok && error==.None {error=os_error(os.change_times(temp,when_,when_))}
+    if error==.None {error=io_rename(s,temp,path)}
     if error!=.None {file_remove(temp)}
     return error
 }
 
-// Writes chunks one after another and syncs them.
-@(private)
-file_fill :: proc(file:^os.File,chunks:[][]u8) -> Error {
-    file_append(file,chunks) or_return
-    return os_error(os.sync(file))
-}
-
-@(private)
-file_append :: proc(file:^os.File,chunks:[][]u8) -> Error {
-    for chunk in chunks {
-        n,error:=os.write(file,chunk)
-        if error!=nil {return os_error(error)}
-        if n!=len(chunk) {return .Io}
-    }
-    return .None
-}
-
 // A new file of the root's tmp folder, open to write; its path is in buffer.
 @(private)
-temp_create :: proc(root:string,buffer:^[PATH_BYTES]u8) -> (path:string,file:^os.File,error:Error) {
+temp_create :: proc(s:^Store,root:string,buffer:^[PATH_BYTES]u8) -> (path:string,file:^os.File,error:Error) {
     for _ in 0..<TEMP_ATTEMPTS {
         path=temp_name(root,"write-",buffer) or_return
-        created,create_error:=file_open(path,{.Read,.Write,.Create,.Excl})
-        if create_error==nil {return path,created,.None}
-        if create_error!=.Exist {return "",nil,os_error(create_error)}
+        created,create_error:=io_create(s,path)
+        if create_error==.None {return path,created,.None}
+        if create_error!=.Invalid_Argument {return "",nil,create_error}
     }
     return "",nil,.Io
 }
@@ -201,4 +289,86 @@ temp_name :: proc(root,prefix:string,buffer:^[PATH_BYTES]u8) -> (string,Error) {
     copy(name[:],prefix)
     copy(name[len(prefix):],hex(random,&text)[:32])
     return join(buffer,root,"tmp",string(name[:len(prefix)+32]))
+}
+
+// The file operations a test counts and can refuse as a full volume. A store
+// value of nil counts nothing.
+
+// Creates path, which must not exist; Invalid_Argument when it does.
+@(private)
+io_create :: proc(s:^Store,path:string) -> (^os.File,Error) {
+    if h:=hooks_of(s);h!=nil {h.creates+=1}
+    file,error:=file_open(path,{.Read,.Write,.Create,.Excl})
+    if error==.Exist {return nil,.Invalid_Argument}
+    if error!=nil {return nil,os_error(error)}
+    return file,.None
+}
+
+@(private)
+io_open :: proc(s:^Store,path:string,flags:=os.File_Flags{.Read}) -> (^os.File,Error) {
+    if h:=hooks_of(s);h!=nil {h.opens+=1}
+    file,error:=file_open(path,flags)
+    if error!=nil {return nil,os_error(error)}
+    return file,.None
+}
+
+@(private)
+io_write_at :: proc(s:^Store,file:^os.File,bytes:[]u8,offset:i64) -> Error {
+    if h:=hooks_of(s);h!=nil {
+        h.writes+=1
+        if h.limited {
+            size,_:=os.file_size(file)
+            grows:=max(offset+i64(len(bytes))-size,0)
+            if grows>h.space {return .No_Space}
+            h.space-=grows
+        }
+    }
+    n,error:=os.write_at(file,bytes,offset)
+    if error!=nil {return os_error(error)}
+    if n!=len(bytes) {return .Io}
+    return .None
+}
+
+@(private)
+io_sync :: proc(s:^Store,file:^os.File) -> Error {
+    if h:=hooks_of(s);h!=nil {
+        h.flushes+=1
+        if h.flushing!=nil {h.flushing(h.data)}
+    }
+    return os_error(os.sync(file))
+}
+
+@(private)
+io_rename :: proc(s:^Store,from,to:string) -> Error {
+    if h:=hooks_of(s);h!=nil {h.renames+=1}
+    return os_error(rename_replace(from,to))
+}
+
+// Removes path, giving its bytes back to a limited volume.
+@(private)
+io_remove :: proc(s:^Store,path:string) -> Error {
+    h:=hooks_of(s)
+    if h!=nil && h.undeletable {return .Io}
+    size:i64
+    if h!=nil && h.limited {
+        if info,error:=os.stat(path,context.temp_allocator);error==nil {size=info.size}
+    }
+    removed:=file_remove(path)
+    if removed!=nil {return os_error(removed)}
+    if h!=nil && h.limited {h.space+=size}
+    return .None
+}
+
+@(private)
+io_list :: proc(s:^Store,path:string) -> ([]os.File_Info,Error) {
+    if h:=hooks_of(s);h!=nil {h.listings+=1}
+    entries,error:=os.read_all_directory_by_path(path,s.state.allocator)
+    if error!=nil {return nil,os_error(error)}
+    return entries,.None
+}
+
+@(private)
+hooks_of :: proc "contextless" (s:^Store) -> ^Hooks {
+    if s==nil || s.state==nil {return nil}
+    return s.state.hooks
 }
