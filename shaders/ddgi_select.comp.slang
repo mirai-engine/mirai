@@ -4,9 +4,9 @@
 // for and that a pixel reads this frame (any, in a whole update) comes first,
 // then one a change keeps awake (params.awake frames after it reached it, the
 // nearer to it the sooner, or the next frame while its light moves). Of what
-// is left of the budget,
-// PROBE_WAITING_SHARE at most goes to the new probes no pixel reads, and as
-// much again keeps tracing by turns, the longest untraced against how much
+// is left of the budget, the new probes no pixel reads take PROBE_WAITING_SHARE
+// at most while the volume moves and all of it once it stops, and as much
+// as that share again keeps tracing by turns, the longest untraced against how much
 // pixels use it, finer cascades first, while nothing changes, only the probes
 // that need it: one whose rays met what changes with nothing that says so
 // (PROBE_PASSING), once it has waited 1 << its PROBE_WAITS frames, and one
@@ -66,7 +66,7 @@ struct Params_Block {
     // and the one in which the lights did (probe_update.slang).
     uint seen_everywhere;
     uint lit_everywhere;
-    uint pad0;
+    uint moving;     // 1: a cascade took other cells this frame
 };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] RWStructuredBuffer<uint> buckets : register(MIRAI_REGISTER(u, SLOT_PASS0), space0);
@@ -110,13 +110,15 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         if (bucket != NO_BUCKET) InterlockedAdd(histogram[bucket], 1u);
     } else if (params.mode == 1u) {
         if (index != 0u) return;
-        // The urgent ones take what they need; the new no pixel reads and the
-        // waiting take a share each, or all that is left in a whole update.
+        // The urgent ones take what they need; the new no pixel reads take a
+        // share while the volume moves and what is left once it stops, and the
+        // waiting a share, or all that is left in a whole update.
         uint share = params.whole != 0u ? params.budget : max(params.budget / PROBE_WAITING_SHARE, 1u);
         uint left = params.budget;
         uint waiting = share;
         for (uint b = 0u; b < PROBE_BUCKETS; b++) {
-            uint most = b < PROBE_NEW_UNREAD ? left : min(left, b == PROBE_NEW_UNREAD ? share : waiting);
+            uint unread = params.moving != 0u ? share : left;
+            uint most = b < PROBE_NEW_UNREAD ? left : min(left, b == PROBE_NEW_UNREAD ? unread : waiting);
             uint take = min(histogram[b], most);
             histogram[PROBE_BUCKETS + b] = take;
             left -= take;
