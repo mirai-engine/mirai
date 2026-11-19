@@ -25,7 +25,11 @@ import wire "mirai:net"
 // A folder joined before keeps the snapshot it last took
 // (<folder>/.mirai/share/snapshot), the base of three ways: a file the host
 // changed or removed is replaced or removed when the joiner left it as it
-// was; a file both changed is kept and reported, never overwritten.
+// was; a file both changed is kept and reported, never overwritten, also
+// when the joiner changes it while the join runs. A file that cannot be
+// written or removed is reported with why and how to fix it, the rest is
+// done, and the folder keeps as its base the last entry of each such file, so
+// running the join again completes it.
 
 Join_Desc :: struct {
     node:^Node,
@@ -45,17 +49,30 @@ Join_Report :: struct {
     files:int,      // of the snapshot
     written:int,    // files written now
     removed:int,    // files the host removed, removed here
-    kept:[dynamic]string, // files left as they are, each with why
+    kept:[dynamic]string,   // files left as they are on purpose, each with why
+    failed:[dynamic]string, // files not written or removed, each with why and how to fix it: the join is incomplete
     fetched:i64,    // bytes of files received now
     packages:sources.Library_Report,
 }
 
-// What a file of the snapshot needs.
+// What the files of the snapshot need here.
 @(private)
 Plan :: struct {
-    write:[dynamic]int,       // entries of the snapshot to write
-    remove:[dynamic]string,   // paths the host removed and the joiner did not change
+    write:[dynamic]Write,
+    remove:[dynamic]Remove,
+    folds:bool,                 // the folder's file system folds case: paths compare in lower case
+    last_folded:map[string]int, // with folds: the entries of the last snapshot by their path in lower case
+    snap_folded:map[string]int, // with folds: those of the snapshot
 }
+
+// An entry of the snapshot to write, with the file as the plan found it here:
+// absent, or with the address base. done: written, or left on purpose.
+@(private)
+Write :: struct {at:int,present:bool,base:store.Hash,done:bool}
+
+// An entry of the last snapshot the host removed and the joiner did not change.
+@(private)
+Remove :: struct {at:int,done:bool}
 
 @(private) MISSING_SECONDS :: 10.0 // a blob no connected peer has for this long fails the join
 @(private) WINDOW :: 256           // files wanted at once
@@ -66,6 +83,7 @@ join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,er
     if d.pace<=0 {d.pace=1}
     if d.connect_seconds<=0 {d.connect_seconds=15}
     report.kept=make([dynamic]string,allocator)
+    report.failed=make([dynamic]string,allocator)
     if error=join_connect(&d,allocator);error!="" {return}
 
     // The snapshot: its size is checked before it is taken whole.
@@ -107,20 +125,12 @@ join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,er
     plan:=join_plan(&snap,&last,&index,folder,&report,allocator)
     if error=join_room(&d,&snap,&plan,folder,allocator);error!="" {return}
 
-    // The files, smallest first.
-    if error=join_files(&d,&snap,&plan,&index,folder,&report,allocator);error!="" {
-        index_save(folder,&index)
-        return
-    }
-    for path in plan.remove {
-        if os.remove(project.path(folder,path,allocator=context.temp_allocator))==nil {
-            report.removed+=1
-            delete_key(&index,path)
-            folders_prune(folder,path)
-        }
-    }
-    file_save(share_path(folder,"snapshot",context.temp_allocator),bytes)
+    // The files, smallest first, then what the host removed.
+    error=join_files(&d,&snap,&plan,&index,folder,&report,allocator)
+    if error=="" {join_remove(&last,&plan,&index,folder,&report)}
+    base_save(folder,&snap,&last,&plan)
     index_save(folder,&index)
+    if error!="" {return}
 
     // The packages, their builds from the peers.
     if os.exists(project.path(folder,asset.PACKAGES_FILE,allocator=context.temp_allocator)) {
@@ -211,7 +221,7 @@ join_blob :: proc(d:^Join_Desc,address:store.Hash,limit:i64,what:string,allocato
             if p.total>limit {return nil,fmt.aprintf("the host sent %s of %d bytes, more than the %d this engine takes: it was refused",what,p.total,limit,allocator=allocator)}
             if p.state==.Complete {break}
             if p.state==.Failed {return nil,fmt.aprintf("%s could not be kept in the store at %s (%v, %v): free space there",what,n.s.root,p.error,p.store_error,allocator=allocator)}
-            if error=join_missing(d,p.state,&missing,what,allocator);error!="" {return}
+            if join_missing(d,p.state,&missing) {return nil,fmt.aprintf("no connected peer has %s: the host changed it while this join ran; run the join again",what,allocator=allocator)}
             if error=join_alive(d,allocator);error!="" {return}
         }
     }
@@ -223,56 +233,138 @@ join_blob :: proc(d:^Join_Desc,address:store.Hash,limit:i64,what:string,allocato
     return bytes,""
 }
 
-// A blob that stays missing at every connected peer for MISSING_SECONDS fails.
+// Whether a blob stayed missing at every connected peer for MISSING_SECONDS.
 @(private)
-join_missing :: proc(d:^Join_Desc,state:exchange.State,since:^f64,what:string,allocator:runtime.Allocator) -> string {
+join_missing :: proc(d:^Join_Desc,state:exchange.State,since:^f64) -> bool {
     if state!=.Missing {
         since^=-1
-        return ""
+        return false
     }
     now:=node_now(d.node)
     if since^<0 {since^=now}
-    if now-since^<MISSING_SECONDS {return ""}
-    return fmt.aprintf("no connected peer has %s: the host changed it while this join ran; run the join again",what,allocator=allocator)
+    return now-since^>=MISSING_SECONDS
 }
 
 // What the snapshot needs here, against the last one this folder took.
 @(private)
 join_plan :: proc(snap,last:^Snapshot,index:^Index,folder:string,report:^Join_Report,allocator:runtime.Allocator) -> (plan:Plan) {
-    plan.write=make([dynamic]int,allocator)
-    plan.remove=make([dynamic]string,allocator)
+    plan.write=make([dynamic]Write,allocator)
+    plan.remove=make([dynamic]Remove,allocator)
+    if plan.folds=folds_case(folder);plan.folds {
+        plan.last_folded=make(map[string]int,len(last.entries),allocator)
+        plan.snap_folded=make(map[string]int,len(snap.entries),allocator)
+        for e,at in last.entries {plan.last_folded[strings.to_lower(e.path,allocator)]=at}
+        for e,at in snap.entries {plan.snap_folded[strings.to_lower(e.path,allocator)]=at}
+        case_follow(snap,last,&plan,index,folder)
+    }
     for &e,at in snap.entries {
         here,_,present:=index_address(index,e.path,project.path(folder,e.path,allocator=context.temp_allocator))
         if present && here==e.address {continue}
-        base,based:=snapshot_find(last,e.path)
+        base,based:=base_find(&plan,last,e.path)
         switch {
         case !present && !based:
-            append(&plan.write,at)
+            append(&plan.write,Write{at=at})
         case !present:
             if base.address!=e.address {kept(report,"%s: you removed it and the host changed it; it stays removed",e.path)}
         case based && here==base.address:
-            append(&plan.write,at)
+            append(&plan.write,Write{at=at,present=true,base=here})
         case based && base.address==e.address:
             // Only the joiner changed it: it is the joiner's.
         case:
             kept(report,"%s: you changed it and the host has another one; yours is kept",e.path)
         }
     }
-    for &e in last.entries {
+    for &e,at in last.entries {
         if _,still:=snapshot_find(snap,e.path);still {continue}
+        // Renamed by the host changing only its case: on this system it is the same file.
+        if plan.folds && strings.to_lower(e.path,context.temp_allocator) in plan.snap_folded {continue}
         here,_,present:=index_address(index,e.path,project.path(folder,e.path,allocator=context.temp_allocator))
         switch {
         case !present:
-        case here==e.address: append(&plan.remove,strings.clone(e.path,allocator))
+        case here==e.address: append(&plan.remove,Remove{at=at})
         case: kept(report,"%s: the host removed it and you changed it; yours is kept",e.path)
         }
     }
     return
 }
 
+// The entry of path in the last snapshot, under any case where the system folds it.
+@(private)
+base_find :: proc(plan:^Plan,last:^Snapshot,path:string) -> (^Entry,bool) {
+    if e,found:=snapshot_find(last,path);found {return e,true}
+    if !plan.folds {return nil,false}
+    at,found:=plan.last_folded[strings.to_lower(path,context.temp_allocator)]
+    if !found {return nil,false}
+    return &last.entries[at],true
+}
+
+// Whether the file system of folder folds case, as APFS and NTFS do unless
+// formatted otherwise: a file made with a name in lower case is found under it
+// in upper case.
+@(private)
+folds_case :: proc(folder:string) -> bool {
+    temp_folder:=project.path(project.folder_path(folder,.Generated,context.temp_allocator),"tmp",allocator=context.temp_allocator)
+    if os.make_directory_all(temp_folder)!=nil && !os.is_dir(temp_folder) {return false}
+    name:=fmt.tprintf("share-case-%d",os.get_pid())
+    lower:=project.path(temp_folder,name,allocator=context.temp_allocator)
+    if os.write_entire_file(lower,nil)!=nil {return false}
+    defer os.remove(lower)
+    return os.exists(project.path(temp_folder,strings.to_upper(name,context.temp_allocator),allocator=context.temp_allocator))
+}
+
+// Where the system folds case, a file the host renamed changing only the case
+// of its path is renamed here too, folders first, where the joiner left the
+// name of the last snapshot; a name the joiner changed stays. The index follows.
+@(private)
+case_follow :: proc(snap,last:^Snapshot,plan:^Plan,index:^Index,folder:string) {
+    temp_folder:=project.path(project.folder_path(folder,.Generated,context.temp_allocator),"tmp",allocator=context.temp_allocator)
+    for &e in snap.entries {
+        if _,same:=snapshot_find(last,e.path);same {continue}
+        at,renamed:=plan.last_folded[strings.to_lower(e.path,context.temp_allocator)]
+        if !renamed {continue}
+        old:=last.entries[at].path
+        if len(old)!=len(e.path) {continue}
+        start:=0
+        for i in 0..=len(e.path) {
+            if i<len(e.path) && e.path[i]!='/' {continue}
+            if e.path[start:i]!=old[start:i] {
+                parent:=start==0?folder:project.path(folder,e.path[:start-1],allocator=context.temp_allocator)
+                part_rename(parent,old[start:i],e.path[start:i],temp_folder)
+            }
+            start=i+1
+        }
+        if k,known:=index[old];known {
+            delete_key(index,old)
+            index[strings.clone(e.path,index.allocator)]=k
+        }
+    }
+}
+
+// Renames the file or folder from to to in parent, which differ only in case,
+// through a name of its own in temp_folder; nothing when parent holds neither name.
+@(private)
+part_rename :: proc(parent,from,to,temp_folder:string) {
+    listed,error:=os.read_all_directory_by_path(parent,context.temp_allocator)
+    if error!=nil {return}
+    for info in listed {
+        if info.name==to {return}
+        if info.name!=from {continue}
+        temp:=fmt.tprintf("%s/share-case-%d-rename",temp_folder,os.get_pid())
+        source:=project.path(parent,from,allocator=context.temp_allocator)
+        if os.rename(source,temp)!=nil {return}
+        if os.rename(temp,project.path(parent,to,allocator=context.temp_allocator))!=nil {os.rename(temp,source)}
+        return
+    }
+}
+
 @(private)
 kept :: proc(report:^Join_Report,format:string,args:..any) {
     append(&report.kept,fmt.aprintf(format,..args,allocator=report.kept.allocator))
+}
+
+@(private)
+failed :: proc(report:^Join_Report,format:string,args:..any) {
+    append(&report.failed,fmt.aprintf(format,..args,allocator=report.failed.allocator))
 }
 
 // Whether the disks have room for what the plan fetches and writes.
@@ -281,8 +373,8 @@ join_room :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,folder:string,allocator
     s:=d.node.s
     fetch,write:i64
     seen:=make(map[store.Hash]bool,context.temp_allocator)
-    for at in plan.write {
-        e:=&snap.entries[at]
+    for w in plan.write {
+        e:=&snap.entries[w.at]
         write+=e.size
         if e.address in seen || store.has(s,e.address) {continue}
         seen[e.address]=true
@@ -308,41 +400,41 @@ join_room :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,folder:string,allocator
 }
 
 // Fetches the blobs of the files to write, smallest first and WINDOW at once,
-// and writes each file as its blob completes.
+// and writes each file as its blob completes. A file whose blob does not come
+// is reported and the others go on; the error is what stops the whole join.
 @(private)
 join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:string,report:^Join_Report,allocator:runtime.Allocator) -> string {
     n:=d.node
     s:=n.s
-    // The paths of each address, and the addresses to fetch by size.
+    // The writes of each address, and the addresses to fetch by size.
     paths:=make(map[store.Hash][dynamic]int,context.temp_allocator)
     order:=make([dynamic]int,context.temp_allocator)
     total:i64
-    for at in plan.write {
-        e:=&snap.entries[at]
+    for w,k in plan.write {
+        e:=&snap.entries[w.at]
         list,known:=&paths[e.address]
         if !known {
             paths[e.address]=make([dynamic]int,context.temp_allocator)
             list=&paths[e.address]
             if !store.has(s,e.address) {
-                append(&order,at)
+                append(&order,k)
                 total+=e.size
             }
         }
-        append(list,at)
+        append(list,k)
     }
-    Sized :: struct {size:i64,at:int}
+    Sized :: struct {size:i64,k:int}
     sized:=make([]Sized,len(order),context.temp_allocator)
-    for at,k in order {sized[k]={snap.entries[at].size,at}}
-    slice.sort_by(sized,proc(a,b:Sized) -> bool {return a.size<b.size || a.size==b.size && a.at<b.at})
-    for one,k in sized {order[k]=one.at}
+    for k,at in order {sized[at]={snap.entries[plan.write[k].at].size,k}}
+    slice.sort_by(sized,proc(a,b:Sized) -> bool {return a.size<b.size || a.size==b.size && a.k<b.k})
+    for one,at in sized {order[at]=one.k}
     // What is here already is written first.
     for address,list in paths {
-        if !store.has(s,address) {continue}
-        if error:=join_write(d,snap,list[:],index,folder,report,allocator);error!="" {return error}
+        if store.has(s,address) {join_write(d,snap,plan,list[:],index,folder,report)}
     }
     if len(order)==0 {return ""}
     say(d,"fetching %d files, %s",len(order),bytes_text(total))
-    Active :: struct {at:int,missing:f64}
+    Active :: struct {k:int,missing:f64}
     active:=make([dynamic]Active,context.temp_allocator)
     next:=0
     done:i64
@@ -352,7 +444,7 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
     rate:f64
     for next<len(order) || len(active)>0 {
         for len(active)<WINDOW && next<len(order) {
-            e:=&snap.entries[order[next]]
+            e:=&snap.entries[plan.write[order[next]].at]
             // Smaller first: the priority falls with the place in the order.
             if want_error:=exchange.want(&n.x,e.address,len(order)-next);want_error!=.None {break}
             append(&active,Active{order[next],-1})
@@ -361,22 +453,34 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
         here:i64
         for k:=0;k<len(active); {
             a:=&active[k]
-            e:=&snap.entries[a.at]
+            e:=&snap.entries[plan.write[a.k].at]
+            list:=paths[e.address][:]
             p,_:=exchange.progress(&n.x,e.address)
+            ended:=true
             #partial switch p.state {
             case .Complete:
-                exchange.forget(&n.x,e.address)
                 size,_:=store.blob_size(s,e.address)
-                if size!=e.size {return fmt.aprintf("the snapshot says %s has %d bytes and its blob has %d: the host is not honest; nothing more was written",e.path,e.size,size,allocator=allocator)}
-                if error:=join_write(d,snap,paths[e.address][:],index,folder,report,allocator);error!="" {return error}
+                if size!=e.size {
+                    for w in list {failed(report,"%s: the snapshot says %d bytes and its blob has %d: the host is not honest; it was not written",snap.entries[plan.write[w].at].path,e.size,size)}
+                } else {
+                    join_write(d,snap,plan,list,index,folder,report)
+                    report.fetched+=e.size
+                }
                 done+=e.size
-                report.fetched+=e.size
+            case .Failed:
+                for w in list {failed(report,"%s could not be kept in the store at %s (%v, %v): free space there, and run the join again",snap.entries[plan.write[w].at].path,s.root,p.error,p.store_error)}
+            case:
+                if join_missing(d,p.state,&a.missing) {
+                    for w in list {failed(report,"%s: no connected peer has it, the host changed it while this join ran: run the join again",snap.entries[plan.write[w].at].path)}
+                } else {
+                    ended=false
+                }
+            }
+            if ended {
+                exchange.forget(&n.x,e.address)
                 unordered_remove(&active,k)
                 continue
-            case .Failed:
-                return fmt.aprintf("%s could not be kept in the store at %s (%v, %v): free space there",e.path,s.root,p.error,p.store_error,allocator=allocator)
             }
-            if error:=join_missing(d,p.state,&a.missing,e.path,allocator);error!="" {return error}
             here+=max(p.here,0)
             k+=1
         }
@@ -397,40 +501,125 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
     return ""
 }
 
-// Writes each entry of a complete blob into the folder, whole through a rename.
+// Writes the planned writes list of a complete blob into the folder, each
+// whole through a rename, unless the joiner changed the file since the plan;
+// what cannot be written is reported with how to fix it.
 @(private)
-join_write :: proc(d:^Join_Desc,snap:^Snapshot,entries:[]int,index:^Index,folder:string,report:^Join_Report,allocator:runtime.Allocator) -> string {
+join_write :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,list:[]int,index:^Index,folder:string,report:^Join_Report) {
     s:=d.node.s
     temp_folder:=project.path(project.folder_path(folder,.Generated,context.temp_allocator),"tmp",allocator=context.temp_allocator)
-    if os.make_directory_all(temp_folder)!=nil && !os.is_dir(temp_folder) {return fmt.aprintf("%s could not be made: give this user access to %s",temp_folder,folder,allocator=allocator)}
-    for at in entries {
-        e:=&snap.entries[at]
-        from,path_error:=store.blob_path(s,e.address,context.temp_allocator)
-        if path_error!=.None {return fmt.aprintf("%s: its blob is not in the store at %s (%v)",e.path,s.root,path_error,allocator=allocator)}
+    if os.make_directory_all(temp_folder)!=nil && !os.is_dir(temp_folder) {
+        for k in list {failed(report,"%s: %s could not be made: give this user access to %s, and run the join again",snap.entries[plan.write[k].at].path,temp_folder,folder)}
+        return
+    }
+    for k in list {
+        w:=&plan.write[k]
+        e:=&snap.entries[w.at]
         target:=project.path(folder,e.path,allocator=context.temp_allocator)
-        temp:=fmt.tprintf("%s/share-%d-%d",temp_folder,os.get_pid(),at)
+        here,_,present:=index_address(index,e.path,target)
+        if present!=w.present || present && here!=w.base {
+            if !present || here!=e.address {kept(report,"%s: you changed it while the join ran; yours is kept",e.path)}
+            w.done=true
+            continue
+        }
+        if present && !writable(target) {
+            failed(report,"%s is read-only: make it writable (chmod u+w on macOS and Linux, attrib -r on Windows) and run the join again",target)
+            continue
+        }
+        from,path_error:=store.blob_path(s,e.address,context.temp_allocator)
+        if path_error!=.None {
+            failed(report,"%s: its blob is not in the store at %s (%v): run the join again",e.path,s.root,path_error)
+            continue
+        }
+        temp:=fmt.tprintf("%s/share-%d-%d",temp_folder,os.get_pid(),w.at)
         mode:=os.Permissions_Default_File
         if e.executable {mode+=os.Permissions_Execute_All}
         if e.size==0 {
-            if os.write_entire_file(temp,nil)!=nil {return fmt.aprintf("%s could not be written: free space on its disk, or give this user access",temp,allocator=allocator)}
+            if write_error:=os.write_entire_file(temp,nil);write_error!=nil {
+                failed(report,"%s could not be written (%v): free space on its disk, or give this user access to %s, and run the join again",target,write_error,temp_folder)
+                continue
+            }
         } else if copy_error:=os.copy_file(temp,from);copy_error!=nil {
             os.remove(temp)
-            return fmt.aprintf("%s could not be written (%v): free space on its disk, or give this user access",target,copy_error,allocator=allocator)
+            failed(report,"%s could not be written (%v): free space on its disk, or give this user access to %s, and run the join again",target,copy_error,temp_folder)
+            continue
         }
         os.change_mode(temp,mode)
         parent:=os.dir(target)
-        if os.make_directory_all(parent)!=nil && !os.is_dir(parent) {
+        if make_error:=os.make_directory_all(parent);make_error!=nil && !os.is_dir(parent) {
             os.remove(temp)
-            return fmt.aprintf("%s could not be made: a file of yours has the name of a folder of the host's",parent,allocator=allocator)
+            failed(report,"%s could not be made (%v): a file of yours has the name of a folder of the host's, or this user cannot write there; move it or give access, and run the join again",parent,make_error)
+            continue
         }
-        if os.rename(temp,target)!=nil {
+        if !writable(parent) {
             os.remove(temp)
-            return fmt.aprintf("%s could not be replaced: close what holds it, or give this user access",target,allocator=allocator)
+            failed(report,"%s: its folder %s is read-only: give this user write access to it (chmod u+w on macOS and Linux) and run the join again",e.path,parent)
+            continue
+        }
+        if rename_error:=os.rename(temp,target);rename_error!=nil {
+            os.remove(temp)
+            failed(report,"%s could not be replaced (%v): close what holds it, or give this user access, and run the join again",target,rename_error)
+            continue
         }
         if info,stat_error:=os.stat(target,context.temp_allocator);stat_error==nil {index_learn(index,e.path,info,e.address)}
         report.written+=1
+        w.done=true
     }
-    return ""
+}
+
+// Removes what the host removed, unless the joiner changed it since the plan
+// or it cannot be removed, which is reported with how to fix it.
+@(private)
+join_remove :: proc(last:^Snapshot,plan:^Plan,index:^Index,folder:string,report:^Join_Report) {
+    for &r in plan.remove {
+        e:=&last.entries[r.at]
+        target:=project.path(folder,e.path,allocator=context.temp_allocator)
+        here,_,present:=index_address(index,e.path,target)
+        switch {
+        case !present:
+            r.done=true
+        case here!=e.address:
+            kept(report,"%s: the host removed it and you changed it; yours is kept",e.path)
+            r.done=true
+        case !writable(target):
+            failed(report,"%s is read-only and the host removed it: make it writable (chmod u+w on macOS and Linux, attrib -r on Windows) and run the join again",target)
+        case:
+            if remove_error:=os.remove(target);remove_error!=nil {
+                failed(report,"%s could not be removed (%v): close what holds it, or give this user write access to its folder, and run the join again",target,remove_error)
+                continue
+            }
+            report.removed+=1
+            delete_key(index,e.path)
+            folders_prune(folder,e.path)
+            r.done=true
+        }
+    }
+}
+
+// Keeps as the base of the next join the host's snapshot, but for what this
+// one did not do: a file not written keeps its entry of the last snapshot, and
+// a file not removed its removed entry, so that the next join does them.
+@(private)
+base_save :: proc(folder:string,snap,last:^Snapshot,plan:^Plan) {
+    undone:=make(map[int]bool,context.temp_allocator)
+    for w in plan.write {
+        if !w.done {undone[w.at]=true}
+    }
+    entries:=make([dynamic]Entry,0,len(snap.entries)+len(plan.remove),context.temp_allocator)
+    for e,at in snap.entries {
+        if at not_in undone {
+            append(&entries,e)
+        } else if base,based:=base_find(plan,last,e.path);based {
+            append(&entries,base^)
+        }
+    }
+    for r in plan.remove {
+        if !r.done {append(&entries,last.entries[r.at])}
+    }
+    slice.sort_by(entries[:],proc(a,b:Entry) -> bool {return a.path<b.path})
+    if bytes,error:=snapshot_encode({name=snap.name,entries=entries[:]},context.temp_allocator);error==.None {
+        file_save(share_path(folder,"snapshot",context.temp_allocator),bytes)
+    }
 }
 
 // Removes the folders of path under root that were left empty.
