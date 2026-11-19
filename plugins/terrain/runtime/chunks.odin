@@ -516,11 +516,16 @@ chunk_heightfield_borders :: proc(s:^Source,low,high:[3]int,mesh:^Chunk_Mesh,cut
     return true
 }
 
+// A piece as one of the builds of its levels: the surface they show alike,
+// 0 for none, and how far it lies from that surface at most, metres.
+Piece_Surface :: struct {id:u64,error:f32}
+
 // picking keeps the triangles on the CPU without a collider: the editor picks
 // a chunk far from the view by them. levels: as chunk_render_prepare made it.
-chunk_publish :: proc(a:^host.Assets,mesh:^Chunk_Mesh,collision:=true,picking:=false,levels:=false) -> (id:base.Asset_Id,ok:bool) {
+// surface: piece_surface.
+chunk_publish :: proc(a:^host.Assets,mesh:^Chunk_Mesh,collision:=true,picking:=false,levels:=false,surface:=Piece_Surface{}) -> (id:base.Asset_Id,ok:bool) {
     if len(mesh.geometry.indices)==0 {return {},true}
-    options:=host.Mesh_Generate_Options{no_lods=!levels || !mesh.render_ready,collision=collision || picking,disabled_edges=mesh.disabled_edges[:],label="terrain chunk"}
+    options:=host.Mesh_Generate_Options{no_lods=!levels || !mesh.render_ready,collision=collision || picking,disabled_edges=mesh.disabled_edges[:],label="terrain chunk",surface=surface.id,surface_error=surface.error}
     if mesh.render_ready {
         options.render_geometry=&mesh.render
     } else if mesh.grid {

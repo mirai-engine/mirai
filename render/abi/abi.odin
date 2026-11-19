@@ -247,6 +247,10 @@ SHADOW_PAGE_CACHED         :: u32(1) << 16
 SHADOW_PAGE_COMPOSED       :: u32(1) << 17
 // Of an entry asked for that the pool could not give, until the pages are given again.
 SHADOW_PAGE_LEFT           :: u32(1) << 18
+// Of an entry the cache draws again for a change the atlas may show the frame
+// before of (render.Shadow_Box.moved): it holds what it held until the atlas
+// composed it again.
+SHADOW_PAGE_SOFT           :: u32(1) << 19
 SHADOW_ENTRY_COARSER       :: 20
 SHADOW_ENTRY_HELD          :: 24
 // What the plan tells a slot (render.Shadow_Slot_Plan.flags): every page lets
@@ -266,7 +270,7 @@ SHADOW_REACH_WORDS         :: 3 * SHADOW_REACH_LISTS
 // groups of the dispatch lie in rows of SHADOW_CULL_ROW.
 SHADOW_WORK_SHIFT          :: 8
 SHADOW_CULL_ROW            :: u32(32768)
-SHADOW_BOX_ROWS            :: 2
+SHADOW_BOX_ROWS            :: 3
 // The farthest depth the cache holds over blocks of each page of its pool
 // (render.Shadow_Raster.hiz): SHADOW_HIZ_BLOCK texels a side at its first
 // mip, each mip after twice as wide, the last the whole page.
@@ -324,7 +328,8 @@ SHADOW_WORDS_LATE          :: SHADOW_WORDS_SKIPPED + 2 * SHADOW_SLOTS
 SHADOW_WORDS_NEEDED        :: SHADOW_WORDS_LATE + SHADOW_MASKS
 SHADOW_WORDS_STALE         :: SHADOW_WORDS_NEEDED + SHADOW_MASKS
 SHADOW_WORDS_MOVED         :: SHADOW_WORDS_STALE + SHADOW_MASKS
-SHADOW_WORDS_ANCESTORS     :: SHADOW_WORDS_MOVED + SHADOW_MASKS
+SHADOW_WORDS_SOFT          :: SHADOW_WORDS_MOVED + SHADOW_MASKS
+SHADOW_WORDS_ANCESTORS     :: SHADOW_WORDS_SOFT + SHADOW_MASKS
 SHADOW_WORDS_ASKED         :: SHADOW_WORDS_ANCESTORS + SHADOW_MASKS
 SHADOW_WORDS_FIRST         :: SHADOW_WORDS_ASKED + SHADOW_MASKS
 SHADOW_WORDS_DRAWN         :: SHADOW_WORDS_FIRST + SHADOW_MASKS
