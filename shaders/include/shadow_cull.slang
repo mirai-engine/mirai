@@ -194,7 +194,7 @@ bool shadow_page_draw(StructuredBuffer<uint4> data, uint word, out Shadow_Page_D
     d.drawn = uint4(page.xy + part.xy, min(page.xy + part.zw, page.zw));
     // Texels of the pool, row 0 on top, then from its lower left corner.
     float4 at = float4(shadow_pool_corner(d.pool).xyxy + d.drawn - page.xyxy);
-    d.window = float4(at.x, float(SHADOW_POOL) - at.w, at.z, float(SHADOW_POOL) - at.y);
+    d.window = float4(at.x, float(frame.sun_maps.z) - at.w, at.z, float(frame.sun_maps.z) - at.y);
     return true;
 }
 
@@ -210,10 +210,11 @@ float4 shadow_page_clip(Shadow_Page_Draw d, float3 world, out float4 inside) {
     inside = float4(clip.x - edges.x * clip.w, edges.z * clip.w - clip.x, clip.y - edges.y * clip.w, edges.w * clip.w - clip.y);
     // From -1 to 1 over the map to its page of the pool, row 0 on top: where
     // the corner of its square would lie were the page where it is.
-    float side = float(d.m.rect.z) / float(SHADOW_POOL);
-    float2 corner = (float2(shadow_pool_corner(d.pool)) - float2(d.page * SHADOW_PAGE)) / float(SHADOW_POOL);
-    return float4((2.0 * corner.x + side) * clip.w - clip.w + side * clip.x,
-        clip.w - (2.0 * corner.y + side) * clip.w + side * clip.y, clip.z, clip.w);
+    float2 pool = float2(SHADOW_POOL, frame.sun_maps.z);
+    float2 side = float(d.m.rect.z) / pool;
+    float2 corner = (float2(shadow_pool_corner(d.pool)) - float2(d.page * SHADOW_PAGE)) / pool;
+    return float4((2.0 * corner.x + side.x) * clip.w - clip.w + side.x * clip.x,
+        clip.w - (2.0 * corner.y + side.y) * clip.w + side.y * clip.y, clip.z, clip.w);
 }
 
 // A window of a map as a map of its own, for what reaches it.
