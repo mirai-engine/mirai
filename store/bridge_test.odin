@@ -89,12 +89,12 @@ address_is_the_same_through_put_bytes_put_file_and_receiving :: proc(t:^testing.
             path,path_error:=blob_path(s,put,context.temp_allocator)
             testing.expect_value(t,path_error,Error.None)
             on_disk,_:=os.read_entire_file(path,context.temp_allocator)
-            testing.expect(t,string(on_disk)==string(data),"the blob file holds the raw bytes")
+            testing.expect(t,string(on_disk)==string(data),"the file of blob_path holds the raw bytes")
         }
         again,again_error:=put_bytes(&a,data)
         testing.expect(t,again_error==.None && again==put)
-        total,_:=usage(&a)
-        testing.expect_value(t,total,Usage{bytes=i64(c.size),blobs=1})
+        again_file,_:=put_file(&b,source)
+        testing.expect(t,again_file==put && has(&b,put),"a put of what is here keeps it")
     }
 }
 
@@ -139,8 +139,6 @@ a_wrong_table_or_piece_is_refused_and_leaves_no_blob :: proc(t:^testing.T) {
     missing,_:=receive_missing(&s,hash,context.temp_allocator)
     testing.expect_value(t,len(missing),3)
     testing.expect(t,!has(&s,hash),"refused pieces complete nothing")
-    total,_:=usage(&s)
-    testing.expect_value(t,total.blobs,0)
     partial,partial_error:=blob_table(&s,hash,context.temp_allocator)
     testing.expect(t,partial_error==.None && string(mem.slice_to_bytes(partial))==string(mem.slice_to_bytes(pieces)),"a blob being received serves the table it began with")
     // The table does not hold the length of the last piece: a size that keeps
@@ -209,90 +207,13 @@ receiving_resumes_after_reopening_and_reads_the_pieces_it_has :: proc(t:^testing
     testing.expect(t,has(&s,hash),"the last piece completes the blob")
     testing.expect_value(t,verify(&s,hash),Error.None)
     testing.expect_value(t,receive_piece(&s,hash,1,test_piece(data,1)),Error.None)
-    partials,_:=os.read_all_directory_by_path(strings.concatenate({folder,"/partial"},context.temp_allocator),context.temp_allocator)
+    partials,_:=os.read_all_directory_by_path(strings.concatenate({folder,"/tmp/partial"},context.temp_allocator),context.temp_allocator)
     testing.expect_value(t,len(partials),0)
-}
-
-@(test)
-sweep_keeps_live_young_and_undeletable_blobs :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"store-sweep");if folder=="" {return}
-    s,ok:=test_store(t,folder);if !ok {return}
-    defer close(&s)
-    hashes:[7]Hash
-    now:=time.now()
-    old:=time.time_add(now,-2*BLOB_GRACE_AGE)
-    young:=time.time_add(now,-BLOB_GRACE_AGE/2)
-    bytes:i64
-    for &hash,i in hashes {
-        data:=test_bytes(PIECE_BYTES+1000*(i+1),u64(i)+20)
-        hash,_=put_bytes(&s,data)
-        bytes+=i64(len(data))
-        test_blob_time(t,&s,hash,young if i==0 else old)
-        test_table_time(t,&s,hash,young if i==6 else old)
-    }
-    partial:=test_bytes(PIECE_BYTES+1,30)
-    partial_hash:=test_address(partial)
-    testing.expect_value(t,receive_begin(&s,partial_hash,i64(len(partial)),test_table(partial)),Error.None)
-    total,_:=usage(&s)
-    testing.expect_value(t,total,Usage{bytes=bytes,blobs=len(hashes)})
-    testing.expect_value(t,remove(&s,hashes[5]),Error.None)
-    table_keep(&s,hashes[5],PIECE_BYTES+6000,test_table(test_bytes(PIECE_BYTES+6000,25)))
-    test_table_time(t,&s,hashes[5],old)
-    stale,fresh:=join_test(folder,"tmp/stale",0),join_test(folder,"tmp/fresh",0)
-    testing.expect(t,os.write_entire_file(stale,[]u8{1})==nil && os.write_entire_file(fresh,[]u8{1})==nil)
-    test_set_time(t,stale,time.time_add(now,-2*TMP_STALE))
-    unknown:Hash
-    unknown[0]=0xee
-    path,path_error:=blob_path(&s,hashes[2],context.temp_allocator)
-    if !testing.expect_value(t,path_error,Error.None) {return}
-    when ODIN_OS==.Windows {
-        reader,reader_error:=reader_open(&s,hashes[2])
-        if !testing.expect_value(t,reader_error,Error.None) {return}
-        defer reader_close(&reader)
-    } else {
-        shard:=os.dir(path)
-        if !testing.expect(t,os.change_mode(shard,os.perm_number(0o555))==nil) {return}
-        defer os.change_mode(shard,os.perm_number(0o755))
-    }
-    swept,error:=sweep(&s,{hashes[3],unknown,hashes[1]},now)
-    testing.expect_value(t,error,Error.None)
-    testing.expect_value(t,swept.freed,Usage{bytes=2*PIECE_BYTES+5000+7000,blobs=2})
-    testing.expect_value(t,swept.skipped,1)
-    for hash,i in hashes {
-        testing.expectf(t,has(&s,hash)==(i<4),"blob %d",i)
-        buffer:[PATH_BYTES]u8
-        table,_:=table_file(&s,hash,&buffer)
-        testing.expectf(t,os.is_file(table)==(i<4 || i==6),"table %d",i)
-    }
-    total,_=usage(&s)
-    testing.expect_value(t,total,Usage{bytes=4*PIECE_BYTES+1000+2000+3000+4000,blobs=4})
-    _,missing_error:=receive_missing(&s,partial_hash,context.temp_allocator)
-    testing.expect_value(t,missing_error,Error.None)
-    testing.expect(t,!os.exists(stale) && os.exists(fresh),"sweep removes only stale temporary files")
-    testing.expect_value(t,remove(&s,hashes[1]),Error.None)
-    testing.expect_value(t,remove(&s,hashes[1]),Error.Missing)
-    testing.expect_value(t,remove(&s,partial_hash),Error.None)
-    _,missing_error=receive_missing(&s,partial_hash,context.temp_allocator)
-    testing.expect_value(t,missing_error,Error.Missing)
 }
 
 @(private)
 test_set_time :: proc(t:^testing.T,path:string,at:time.Time,loc:=#caller_location) {
     testing.expect(t,os.change_times(path,at,at)==nil,loc=loc)
-}
-
-@(private)
-test_blob_time :: proc(t:^testing.T,s:^Store,hash:Hash,at:time.Time,loc:=#caller_location) {
-    buffer:[PATH_BYTES]u8
-    path,_:=blob_file(s,hash,&buffer)
-    test_set_time(t,path,at,loc)
-}
-
-@(private="file")
-test_table_time :: proc(t:^testing.T,s:^Store,hash:Hash,at:time.Time) {
-    buffer:[PATH_BYTES]u8
-    path,_:=table_file(s,hash,&buffer)
-    test_set_time(t,path,at)
 }
 
 // Receives every piece but piece 0, whose bytes and mark are then written as
@@ -304,7 +225,7 @@ test_full_unfinished :: proc(t:^testing.T,s:^Store,data:[]u8) -> Hash {
     testing.expect_value(t,receive_begin(s,hash,i64(len(data)),pieces),Error.None)
     for index in 1..<len(pieces) {testing.expect_value(t,receive_piece(s,hash,index,test_piece(data,index)),Error.None)}
     name:[64]u8
-    folder:=strings.concatenate({s.root,"/partial/",hex(hash,&name)},context.temp_allocator)
+    folder:=strings.concatenate({s.root,"/tmp/partial/",hex(hash,&name)},context.temp_allocator)
     data_file,_:=os.open(strings.concatenate({folder,"/data"},context.temp_allocator),{.Write})
     os.write_at(data_file,test_piece(data,0),0)
     os.close(data_file)
@@ -349,9 +270,8 @@ completion_publishes_only_the_bytes_it_checked :: proc(t:^testing.T) {
     complete,error:=claim_verify(&s,hash,&c)
     testing.expect(t,error==.None && complete)
     // Meanwhile another receiver completes it, a sweep removes it and a third begins again.
-    _,put_error:=put_bytes(&s,data)
+    _,put_error:=put_bytes(&s,data,time.time_add(now,-2*GRACE))
     testing.expect_value(t,put_error,Error.None)
-    test_blob_time(t,&s,hash,time.time_add(now,-2*BLOB_GRACE_AGE))
     _,sweep_error:=sweep(&s,nil,now)
     testing.expect_value(t,sweep_error,Error.None)
     testing.expect_value(t,receive_begin(&s,hash,i64(len(data)),test_table(data)),Error.None)
@@ -363,53 +283,22 @@ completion_publishes_only_the_bytes_it_checked :: proc(t:^testing.T) {
     testing.expect_value(t,receive_piece(&s,hash,0,test_piece(data,0)),Error.None)
     missing,missing_error:=receive_missing(&s,hash,context.temp_allocator)
     testing.expect(t,missing_error==.None && len(missing)==0,"the receiver that began again finds the blob complete")
-    partials,_:=os.read_all_directory_by_path(strings.concatenate({folder,"/partial"},context.temp_allocator),context.temp_allocator)
+    partials,_:=os.read_all_directory_by_path(strings.concatenate({folder,"/tmp/partial"},context.temp_allocator),context.temp_allocator)
     testing.expect_value(t,len(partials),0)
 }
 
 @(test)
-a_failed_placement_loses_nothing_and_is_retried :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"store-place");if folder=="" {return}
-    s,ok:=test_store(t,folder);if !ok {return}
-    defer close(&s)
-    data:=test_bytes(2*PIECE_BYTES+9,70)
-    hash:=test_address(data)
-    name:[64]u8
-    shard:=strings.concatenate({folder,"/blobs/",hex(hash,&name)[:2]},context.temp_allocator)
-    testing.expect(t,os.make_directory(shard)==nil)
-    testing.expect(t,os.change_mode(shard,os.perm_number(0o555))==nil)
-    testing.expect_value(t,receive_begin(&s,hash,i64(len(data)),test_table(data)),Error.None)
-    testing.expect_value(t,receive_piece(&s,hash,0,test_piece(data,0)),Error.None)
-    testing.expect_value(t,receive_piece(&s,hash,2,test_piece(data,2)),Error.None)
-    testing.expect_value(t,receive_piece(&s,hash,1,test_piece(data,1)),Error.Io)
-    testing.expect(t,!has(&s,hash))
-    _,missing_error:=receive_missing(&s,hash,context.temp_allocator)
-    testing.expect_value(t,missing_error,Error.Io)
-    testing.expect(t,os.change_mode(shard,os.perm_number(0o755))==nil)
-    missing,error:=receive_missing(&s,hash,context.temp_allocator)
-    testing.expect(t,error==.None && len(missing)==0)
-    testing.expect(t,has(&s,hash),"the pieces kept through a failed placement complete the blob later")
-    testing.expect_value(t,verify(&s,hash),Error.None)
-}
-
-@(test)
-a_complete_blob_serves_its_kept_table_and_a_reader :: proc(t:^testing.T) {
+a_complete_blob_serves_its_table_and_a_reader :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"store-serve");if folder=="" {return}
     s,ok:=test_store(t,folder);if !ok {return}
     defer close(&s)
     data:=test_bytes(2*PIECE_BYTES+11,80)
     hash,_:=put_bytes(&s,data)
-    first,_:=blob_table(&s,hash,context.temp_allocator)
-    name:[64]u8
-    kept:=strings.concatenate({folder,"/tables/",hex(hash,&name)[:2],"/",hex(hash,&name)},context.temp_allocator)
-    testing.expect(t,os.is_file(kept),"the first table served is kept")
-    testing.expect(t,os.write_entire_file(kept,[]u8{1,2,3})==nil)
-    again,error:=blob_table(&s,hash,context.temp_allocator)
-    testing.expect(t,error==.None && len(again)==len(first) && again[2]==first[2],"a damaged kept table is hashed again")
+    table,table_error:=blob_table(&s,hash,context.temp_allocator)
+    testing.expect(t,table_error==.None && address_value(i64(len(data)),table)==hash,"the table of a complete blob makes its address")
     single,_:=put_bytes(&s,test_bytes(PIECE_BYTES,82))
     own,own_error:=blob_table(&s,single,context.temp_allocator)
     testing.expect(t,own_error==.None && len(own)==1 && own[0]==single,"the table of one piece is its address")
-    testing.expect(t,!os.exists(strings.concatenate({folder,"/tables/",hex(single,&name)[:2],"/",hex(single,&name)},context.temp_allocator)),"a blob of one piece keeps no table")
     r,open_error:=reader_open(&s,hash)
     testing.expect_value(t,open_error,Error.None)
     Range :: struct {offset,count:int,error:Error}
@@ -423,28 +312,39 @@ a_complete_blob_serves_its_kept_table_and_a_reader :: proc(t:^testing.T) {
     unknown:Hash
     _,unknown_error:=reader_open(&s,unknown)
     testing.expect_value(t,unknown_error,Error.Missing)
-    received:=test_full_unfinished(t,&s,test_bytes(PIECE_BYTES+1,81))
-    testing.expect_value(t,receive_begin(&s,received,PIECE_BYTES+1,test_table(test_bytes(PIECE_BYTES+1,81))),Error.None)
-    received_kept:=strings.concatenate({folder,"/tables/",hex(received,&name)[:2],"/",hex(received,&name)},context.temp_allocator)
-    testing.expect(t,os.is_file(received_kept),"a received blob keeps the table it was checked with")
-    testing.expect_value(t,remove(&s,hash),Error.None)
-    testing.expect(t,!os.is_file(kept))
 
-    // A piece of a complete blob that no longer matches proves the file
-    // damaged: it is never returned, and the blob goes so it can come again.
+    // A piece of a complete blob that no longer matches proves its chunk
+    // damaged: it is never returned, the chunk is tombstoned and the blob goes
+    // so it can come again.
     for size in ([2]int{PIECE_BYTES-3,3*PIECE_BYTES+4}) {
         good:=test_bytes(size,83)
         damaged_hash,_:=put_bytes(&s,good)
-        path,_:=blob_path(&s,damaged_hash,context.temp_allocator)
-        bad:=make([]u8,size,context.temp_allocator)
-        copy(bad,good)
-        bad[size-2]~=0x40
-        testing.expect(t,os.write_entire_file(path,bad)==nil)
+        testing.expect(t,test_damage(&s,good,size-2),"the damage lands in a pack")
         back:=make([]u8,size,context.temp_allocator)
-        if size>PIECE_BYTES {testing.expect_value(t,read(&s,damaged_hash,0,back[:PIECE_BYTES/2]),Error.None)}
         testing.expect_value(t,read(&s,damaged_hash,0,back),Error.Corrupt)
         testing.expectf(t,!has(&s,damaged_hash),"a damaged blob of %d bytes is removed",size)
         again,_:=put_bytes(&s,good)
         testing.expect(t,again==damaged_hash && read(&s,again,0,back)==.None && string(back)==string(good),"and put again")
     }
+}
+
+// Flips the byte at at of a blob's bytes in the chunk of this store that holds it.
+@(private)
+test_damage :: proc(s:^Store,blob:[]u8,at:int) -> bool {
+    start:=max(at-32,0)
+    needle:=string(blob[start:min(start+64,len(blob))])
+    entries,_:=os.read_all_directory_by_path(strings.concatenate({s.root,"/packs"},context.temp_allocator),context.temp_allocator)
+    for e in entries {
+        bytes,read_error:=os.read_entire_file(e.fullpath,context.temp_allocator)
+        if read_error!=nil {continue}
+        found:=strings.index(string(bytes),needle)
+        if found<0 {continue}
+        file,open_error:=os.open(e.fullpath,{.Read,.Write})
+        if open_error!=nil {return false}
+        defer os.close(file)
+        flipped:=[1]u8{bytes[found+at-start]~0xff}
+        _,write_error:=os.write_at(file,flipped[:],i64(found+at-start))
+        return write_error==nil
+    }
+    return false
 }

@@ -77,7 +77,7 @@ a_written_obj_is_read_back_with_its_material_and_its_dependencies :: proc(t:^tes
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     mesh_written,has_mesh:=written_of(&report,asset.KIND_MESH,"ConcaveL")
     material_written,has_material:=written_of(&report,asset.KIND_MATERIAL,"red")
-    testing.expect(t,has_mesh && has_material && strings.contains(mesh_written.path,"/store/blobs/") && strings.has_suffix(material_written.path,"/assets/concave/red.mat") && mesh_written.bytes>0)
+    testing.expect(t,has_mesh && has_material && strings.contains(mesh_written.path,"/store/tmp/blobs/") && strings.has_suffix(material_written.path,"/assets/concave/red.mat") && mesh_written.bytes>0)
     if !has_mesh || !has_material {return}
 
     a,loaded:=read_asset(t,mesh_written,&types)
@@ -737,7 +737,7 @@ a_standalone_image_becomes_a_texture :: proc(t:^testing.T) {
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     if !testing.expect_value(t,len(report.assets),1) {return}
-    testing.expect(t,report.assets[0].id!={} && strings.contains(report.assets[0].path,"/store/blobs/"))
+    testing.expect(t,report.assets[0].id!={} && strings.contains(report.assets[0].path,"/store/tmp/blobs/"))
     normal:=options
     normal.image,normal.ignore_stored=.Normal,true
     again,again_error:=importer.import_texture(path,normal)

@@ -342,6 +342,13 @@ object_writer_destroy :: proc(w:^Object_Writer) {
     tree_destroy(&w.tree)
 }
 
+// Drops the object being written, keeping the buffers.
+object_writer_reset :: proc(w:^Object_Writer) {
+    chunker_reset(&w.chunker)
+    tree_reset(&w.tree)
+    w.started=false
+}
+
 object_write :: proc(w:^Object_Writer,data:[]u8) -> Error {
     if !w.started {
         tree_group(&w.tree,0,0) or_return

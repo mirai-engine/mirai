@@ -2,10 +2,12 @@ package store
 
 import "core:mem"
 import "core:os"
+import "core:strings"
 import "core:time"
 import "mirai:std/base"
 
-// A blob being received lives in partial/<address>/: `table` (its size as
+// Bridge, removed by exchange/chunks with the wire that sends blobs in pieces.
+// A blob being received lives in tmp/partial/<address>/: `table` (its size as
 // u64 little endian and its piece hashes), `data` (the pieces at their
 // offsets) and `have` (one byte per piece, 1 once it is in data). A folder
 // appears there whole through a rename; each writer writes only its own
@@ -14,9 +16,21 @@ import "mirai:std/base"
 // by renaming it to partial/<address>.claimed, checks it there and publishes
 // only what it checked; a folder it cannot complete goes back. The rename
 // lets one claimer through, and the others keep using the claimed folder.
+// A completed blob is put as an object and its alias.
+
+@(private) PARTIAL_FOLDER :: "tmp/partial"
+@(private) TABLE_HEADER :: 8
 
 @(private)
-TABLE_HEADER :: 8
+file_append :: proc(file:^os.File,chunks:[][]u8) -> Error {
+    for chunk in chunks {
+        n,error:=os.write(file,chunk)
+        if error!=nil {return os_error(error)}
+        if n!=len(chunk) {return .Io}
+    }
+    return .None
+}
+PARTIAL_GRACE_AGE :: 24*time.Hour // a blob being received that no lease names and that took no piece for this long is removed
 
 @(private)
 Partial :: struct {
@@ -46,10 +60,10 @@ CLAIMED :: ".claimed"
 // is its own address and proves nothing: such a blob is put whole, once its
 // bytes are at hand, and receive_begin refuses it.
 receive_begin :: proc(s:^Store,hash:Hash,size:i64,pieces:[]Hash,now:Maybe(time.Time)=nil) -> Error {
-    if s==nil || s.root=="" {return .Invalid_Argument}
+    if s==nil || s.state==nil {return .Invalid_Argument}
     if size<0 || len(pieces)!=piece_count(size) || len(pieces)==1 {return .Invalid_Argument}
     if address_value(size,pieces)!=hash {return .Corrupt}
-    refreshed:=blob_refresh(s,hash,size,now.? or_else time.now())
+    refreshed:=blob_present(s,hash,size,now)
     if refreshed==.None {
         partial_discard(s,hash)
         return .None
@@ -104,7 +118,7 @@ Receiver :: struct {
 }
 
 receiver_open :: proc(s:^Store,hash:Hash) -> (r:Receiver,error:Error) {
-    if s==nil || s.root=="" {return {},.Invalid_Argument}
+    if s==nil || s.state==nil {return {},.Invalid_Argument}
     r.s,r.hash=s,hash
     r.p,error=partial_open(s,hash,{.Data,.Have})
     if error==.Missing && has(s,hash) {error=.None}
@@ -153,7 +167,7 @@ receiver_piece :: proc(r:^Receiver,index:int,piece:[]u8,now:Maybe(time.Time)=nil
 // complete blob. One with none missing is completed first.
 receive_missing :: proc(s:^Store,hash:Hash,allocator:=context.allocator,now:Maybe(time.Time)=nil) ->
     (missing:[]int,error:Error) {
-    if s==nil || s.root=="" {return nil,.Invalid_Argument}
+    if s==nil || s.state==nil {return nil,.Invalid_Argument}
     for attempt in 0..<2 {
         if has(s,hash) {return nil,.None}
         p:Partial
@@ -173,7 +187,7 @@ receive_missing :: proc(s:^Store,hash:Hash,allocator:=context.allocator,now:Mayb
 @(private)
 partial_folder :: proc(s:^Store,hash:Hash,buffer:^[PATH_BYTES]u8) -> (string,Error) {
     name:[64]u8
-    return join(buffer,s.root,"partial",hex(hash,&name))
+    return join(buffer,s.root,PARTIAL_FOLDER,hex(hash,&name))
 }
 
 // Opens the table of a blob being received, and the files asked for; the
@@ -191,7 +205,7 @@ claimed_folder :: proc(s:^Store,hash:Hash,buffer:^[PATH_BYTES]u8) -> (string,Err
     name:[64+len(CLAIMED)]u8
     hex(hash,(^[64]u8)(&name))
     copy(name[64:],CLAIMED)
-    return join(buffer,s.root,"partial",string(name[:]))
+    return join(buffer,s.root,PARTIAL_FOLDER,string(name[:]))
 }
 
 // What fails closes what it opened and gives nothing.
@@ -325,9 +339,9 @@ claim_verify :: proc(s:^Store,hash:Hash,c:^Claim) -> (complete:bool,error:Error)
     from:=0
     full:=partial_full(&p,&from) or_return
     if !full {return false,.None}
-    pieces,make_error:=make([]Hash,p.count,s.allocator)
+    pieces,make_error:=make([]Hash,p.count,s.state.allocator)
     if make_error!=nil {return false,.Out_Of_Memory}
-    defer delete(pieces,s.allocator)
+    defer delete(pieces,s.state.allocator)
     read_exact(p.table,mem.slice_to_bytes(pieces),TABLE_HEADER) or_return
     buffer:[PIECE_BYTES]u8=---
     damaged:=false
@@ -350,17 +364,12 @@ claim_verify :: proc(s:^Store,hash:Hash,c:^Claim) -> (complete:bool,error:Error)
     return true,.None
 }
 
-// Moves the checked data into the blob's place, and its table to the kept tables.
+// Puts the checked data as the blob's object and alias.
 @(private)
 claim_publish :: proc(s:^Store,hash:Hash,c:^Claim,now:Maybe(time.Time)=nil) -> Error {
-    buffer,table_buffer,kept_buffer,folder_buffer:[PATH_BYTES]u8
-    placed:=blob_place(s,join(&buffer,c.partial,"data") or_return,hash,c.size,now) or_return
+    buffer:[PATH_BYTES]u8
+    blob_put_path(s,join(&buffer,c.partial,"data") or_return,hash,now) or_return
     c.published=true
-    if !placed {return .None}
-    name:[64]u8
-    if folder_make(join(&folder_buffer,s.root,"tables",hex(hash,&name)[:2]) or_return)==.None {
-        rename_replace(join(&table_buffer,c.partial,"table") or_return,table_file(s,hash,&kept_buffer) or_return)
-    }
     return .None
 }
 
@@ -452,4 +461,73 @@ folder_discard :: proc(s:^Store,folder:string) -> Error {
     base.remove_all(made)
     if renamed!=nil {return .Missing if !os.is_directory(folder) else .Io}
     return .None
+}
+
+// Removes the partial blobs outside the live set whose marks took no piece
+// for PARTIAL_GRACE_AGE, and gives back the claimed folder of a completion
+// that ended without finishing.
+@(private)
+partials_sweep :: proc(s:^Store,live:^Live_Set,now:time.Time,result:^Sweep_Result) -> Error {
+    buffer:[PATH_BYTES]u8
+    entries:=io_list(s,join(&buffer,s.root,PARTIAL_FOLDER) or_return) or_return
+    defer os.file_info_slice_delete(entries,s.state.allocator)
+    for entry in entries {
+        if entry.type!=.Directory {continue}
+        name:=entry.name
+        claimed:=strings.has_suffix(name,CLAIMED)
+        if claimed {name=name[:len(name)-len(CLAIMED)]}
+        hash,ok:=parse_hex(name)
+        if !ok || hash in live^ {continue}
+        path:=entry.fullpath
+        back_buffer:[PATH_BYTES]u8
+        if claimed {
+            if !older_than(entry.modification_time,now,TMP_STALE) {continue}
+            path=partial_folder(s,hash,&back_buffer) or_continue
+            if rename_folder(entry.fullpath,path)!=nil {continue}
+        }
+        if !partial_old(s,path,now) {continue}
+        claim_buffer:[PATH_BYTES]u8
+        held,claim_error:=sweep_claim(s,path,.Partial,name,&claim_buffer)
+        if claim_error!=.None {
+            result.skipped+=1
+            continue
+        }
+        if !partial_old(s,held,now) {
+            sweep_restore(path,held)
+            continue
+        }
+        data_buffer:[PATH_BYTES]u8
+        bytes:i64
+        if data,data_error:=join(&data_buffer,held,"data");data_error==.None {
+            if info,stat_error:=os.lstat(data,s.state.allocator);stat_error==nil {
+                bytes=info.size
+                os.file_info_delete(info,s.state.allocator)
+            }
+        }
+        if base.remove_all(held)!=nil {
+            result.skipped+=1
+            continue
+        }
+        result.bytes+=bytes
+        result.partials+=1
+    }
+    return .None
+}
+
+// Whether the marks of the partial folder took no piece for PARTIAL_GRACE_AGE.
+@(private)
+partial_old :: proc(s:^Store,folder:string,now:time.Time) -> bool {
+    buffer:[PATH_BYTES]u8
+    have,error:=join(&buffer,folder,"have")
+    if error!=.None {return false}
+    info,stat_error:=os.lstat(have,s.state.allocator)
+    if stat_error!=nil {
+        // A folder without marks is a begin that never finished: judged by its own time.
+        folder_info,folder_error:=os.lstat(folder,s.state.allocator)
+        if folder_error!=nil {return false}
+        defer os.file_info_delete(folder_info,s.state.allocator)
+        return older_than(folder_info.modification_time,now,PARTIAL_GRACE_AGE)
+    }
+    defer os.file_info_delete(info,s.state.allocator)
+    return older_than(info.modification_time,now,PARTIAL_GRACE_AGE)
 }

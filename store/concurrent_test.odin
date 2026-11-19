@@ -38,13 +38,12 @@ two_stores_put_and_sweep_from_several_threads :: proc(t:^testing.T) {
     defer close(&b)
 
     now:=time.now()
-    old:=time.time_add(now,-2*BLOB_GRACE_AGE)
+    old:=time.time_add(now,-2*GRACE)
     data:[24][]u8
     for &sample,i in data {
         sample=test_bytes(83,u64(210+i))
-        hash,put_error:=put_bytes(&a,sample,now)
+        _,put_error:=put_bytes(&a,sample,old)
         if !testing.expect_value(t,put_error,Error.None) {return}
-        test_blob_time(t,&a,hash,old)
     }
     start:sync.Wait_Group
     sync.wait_group_add(&start,1)
@@ -72,11 +71,6 @@ two_stores_put_and_sweep_from_several_threads :: proc(t:^testing.T) {
         testing.expect_value(t,workers[i].error,Error.None)
     }
     for sample in data {testing.expect_value(t,verify(&a,test_address(sample)),Error.None)}
-    walked:=blobs_walk(&a,"blobs",proc(user:rawptr,file:os.File_Info,hash:Hash) {
-        address,_,error:=address_of_file(file.fullpath,context.allocator)
-        testing.expect((^testing.T)(user),error==.None && address==hash)
-    },t)
-    testing.expect_value(t,walked,Error.None)
 }
 
 @(private="file")
@@ -140,8 +134,6 @@ two_stores_on_one_root_put_and_receive_from_several_threads :: proc(t:^testing.T
         missing,error:=receive_missing(&b,hash,context.temp_allocator)
         testing.expect(t,error==.None && len(missing)==0)
     }
-    total,_:=usage(&a)
-    testing.expect_value(t,total.blobs,len(shared)+WORKERS)
-    partials,_:=os.read_all_directory_by_path(strings.concatenate({folder,"/partial"},context.temp_allocator),context.temp_allocator)
+    partials,_:=os.read_all_directory_by_path(strings.concatenate({folder,"/tmp/partial"},context.temp_allocator),context.temp_allocator)
     testing.expect_value(t,len(partials),0)
 }

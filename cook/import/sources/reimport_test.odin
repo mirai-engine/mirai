@@ -87,7 +87,7 @@ the_parts_of_an_import_name_its_prefab_and_keep_their_ids_where_they_were_moved 
     testing.expect(t,strings.has_prefix(wood.detail,"of its own: an island"),wood.detail)
     for written in first.assets {
         cached:=asset.import_cached(written.kind)
-        testing.expectf(t,strings.contains(written.path,cached?"/store/blobs/":"/assets/models/box/"),"%s: of the %s",written.path,cached?"store":"assets")
+        testing.expectf(t,strings.contains(written.path,cached?"/store/tmp/blobs/":"/assets/models/box/"),"%s: of the %s",written.path,cached?"store":"assets")
     }
     s:=test_store(t,fmt.tprintf("%s/store",root))
     p,read_error:=asset.package_get(s,first.manifest,context.temp_allocator)
@@ -464,7 +464,7 @@ a_refresh_reads_a_source_again_with_the_formats_of_the_plugins :: proc(t:^testin
     added:=project_add(game,first.manifest,"",nil,options,context.temp_allocator)
     testing.expectf(t,len(added.failures)==0 && len(added.missing)==0,"%v",added)
     mesh,has_mesh:=written_of(&first,asset.KIND_MESH,"Box")
-    testing.expect(t,has_mesh && strings.contains(mesh.path,"/store/blobs/"),"what a plugin format gives that nobody edits is a blob")
+    testing.expect(t,has_mesh && strings.contains(mesh.path,"/store/tmp/blobs/"),"what a plugin format gives that nobody edits is a blob")
 
     // An engine of other versions: without the plugins nothing reads it, with them it is ingested again.
     forget :: proc(s:^store.Store) {
@@ -543,7 +543,7 @@ a_refresh_ingests_again_a_whole_source_when_what_it_is_built_from_changes :: pro
     first,error:=ingest(level,options,allocator=context.temp_allocator)
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
     mesh,has_mesh:=written_of(&first,asset.KIND_MESH,"Box")
-    testing.expect(t,has_mesh && strings.contains(mesh.path,"/store/blobs/"),"the mesh of the level is a blob")
+    testing.expect(t,has_mesh && strings.contains(mesh.path,"/store/tmp/blobs/"),"the mesh of the level is a blob")
     p,_:=asset.package_get(s,first.manifest,context.temp_allocator)
     testing.expectf(t,slice.contains(p.inputs[:],"props/crate.gltf") && slice.contains(p.inputs[:],"props/wood.png"),"the files it reads are its inputs: %v",p.inputs)
     added:=project_add(root,first.manifest,"",nil,options,context.temp_allocator)

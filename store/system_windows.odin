@@ -228,3 +228,21 @@ host_name :: proc(buffer:^[HOST_BYTES]u8) {
     if !GetComputerNameW(&wide[0],&size) {return}
     windows.WideCharToMultiByte(windows.CP_UTF8,0,cstring16(&wide[0]),i32(size),&buffer[0],HOST_BYTES-1,nil,nil)
 }
+
+// Maps size bytes of file read-only; the mapping outlives the file's name.
+@(private)
+file_map :: proc(file:^os.File,size:i64) -> ([]u8,Error) {
+    if size<=0 || size>i64(max(int)) {return nil,.Invalid_Argument}
+    handle:=windows.HANDLE(os.fd(file))
+    mapping:=windows.CreateFileMappingW(handle,nil,windows.PAGE_READONLY,u32(u64(size)>>32),u32(size),nil)
+    if mapping==nil {return nil,.Io}
+    defer windows.CloseHandle(mapping)
+    address:=windows.MapViewOfFile(mapping,windows.FILE_MAP_READ,0,0,uint(size))
+    if address==nil {return nil,.Io}
+    return ([^]u8)(address)[:size],.None
+}
+
+@(private)
+file_unmap :: proc(view:[]u8) {
+    if len(view)>0 {windows.UnmapViewOfFile(raw_data(view))}
+}
