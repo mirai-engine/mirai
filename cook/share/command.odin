@@ -239,7 +239,8 @@ Offer :: struct {
 // Offers the project at root to whoever holds the invitation of token: its
 // snapshot put in the store of the node under offer_name of the token, with
 // its folders, files and what the packages it pins need held by the lease of
-// the node. Taking it again after a change offers the new snapshot. Jobs of
+// the node. Taking it again after a change offers the new snapshot, and a
+// joined peer that joins again gets only what differs. Jobs of
 // worker, when given, read the files. In allocator.
 offer :: proc(n:^Node,root:string,token:u64,worker:=jobs.Worker_Ref{},allocator:=context.allocator) -> (o:Offer,error:string) {
     manifest,manifest_error:=project.manifest_read(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator))
@@ -257,6 +258,10 @@ offer :: proc(n:^Node,root:string,token:u64,worker:=jobs.Worker_Ref{},allocator:
     o.problems=packages.problems
     for e in o.snapshot.entries {append(&served,e.address)}
     library_served(n.s,root,&served)
+    // An offer taken again replaces what the lease held for the one before.
+    sync.mutex_lock(&n.lock)
+    clear(&n.served)
+    sync.mutex_unlock(&n.lock)
     node_serve(n,..served[:])
     digits:[64]u8
     offer_set(n.s,root,offer_name(token,&digits),o.address)

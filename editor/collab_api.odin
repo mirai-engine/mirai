@@ -77,6 +77,8 @@ Api_Collab_Status :: struct {
     unsent_count:int,
     join:Api_Collab_Join `mirai:"label=A guest: how its folder is brought to the host's snapshot before it enters the scene"`,
     project:Api_Collab_Project `mirai:"label=What the session moved of the project and its builds"`,
+    offers:int `mirai:"label=The host: new snapshots of its project offered during the session, each once its files changed and were quiet"`,
+    updates:int `mirai:"label=A guest: updates of its folder to a new snapshot of the host done in the session; join says the last"`,
     sent_edits,received_edits,sent_ops,received_ops:u64,
 }
 
@@ -115,6 +117,7 @@ api_collab_result :: proc(s:^Session,call:^api.Call) {
     }
     r.sent_edits,r.received_edits,r.sent_ops,r.received_ops=st.sent_edits,st.received_edits,st.sent_ops,st.received_ops
     if j:=st.join;j!=nil {api_collab_join_result(j,&r.join)}
+    r.offers,r.updates=st.offers,st.updates
     if st.node!=nil {
         t:=share.node_totals(st.node)
         r.project={peers=t.connected,sent=t.sent,received=t.received,send_rate=t.send_rate,receive_rate=t.receive_rate,bad=t.bad,refused=t.refused}
@@ -287,6 +290,8 @@ share_build :: proc(s:^Session) {
             case .Ended:
                 if share_row(ctx,"Reason") {ui.text(ctx,st.reason,ui.prose(ctx,10.5,ui.tone(ctx,"text")))}
             }
+            // A guest updating its folder to a new snapshot of the host.
+            if st.phase==.Joined && st.join!=nil && st.join.update && !st.join.finished {ui.label(ctx,collab_join_text(st.join),10.5,ui.tone(ctx,"text_muted"),0)}
             share_join_lines(s,st)
             if st.role==.Host {
                 // One code joins from anywhere: a guest asks at both of its addresses.

@@ -8,6 +8,7 @@ import "core:os"
 import "core:sync"
 import "core:thread"
 import "mirai:cook/share"
+import "mirai:platform"
 import wire "mirai:net"
 import "mirai:project"
 import "mirai:std/base"
@@ -25,6 +26,13 @@ import "mirai:store"
 COLLAB_EXCHANGE_CHANNEL :: 2 // where the channels of the exchange start
 COLLAB_LINES :: 8            // kept, failed and missing lines collab.status gives
 COLLAB_LINE_BYTES :: 200
+// What the host changes during the session reaches the guests: once its files
+// are quiet for COLLAB_OFFER_QUIET it takes the snapshot again, at most once a
+// COLLAB_OFFER_EVERY, and tells the guests in the session when it differs;
+// a guest joins it again as soon as the update it runs ends.
+COLLAB_OFFER_QUIET :: 0.5 // seconds
+COLLAB_OFFER_EVERY :: 2.0 // seconds
+@(private) COLLAB_WATCH_BUDGET :: 512
 
 @(private)
 collab_channels :: proc() -> (channels:[COLLAB_EXCHANGE_CHANNEL+2]wire.Channel_Desc) {
@@ -51,6 +59,7 @@ Collab_Join :: struct {
     code:[64]u8,    // of the invitation, which the editor opened on folder joins with
     folder:string,  // where the join writes
     reopen:bool,    // folder is not the open project: it is opened once the join is done
+    update:bool,    // of a guest in the session, after the host offered a new snapshot
     opening:bool,   // and its editor library is being built to open it
     finished:bool,  // the end of the join was taken on the editor's thread
 }
@@ -89,13 +98,64 @@ collab_project_offer :: proc(s:^Session,st:^Collab_State) -> (problem:string) {
     o,error:=share.offer(st.node,s.project_root,st.invite,worker,context.temp_allocator)
     for line in o.taken.skipped {log.warnf("the session does not carry it: %s",line)}
     for line in o.problems {log.warnf("a guest will not get it: %s",line)}
+    if error=="" {st.offered=o.address}
     return error
+}
+
+// The host watches the files of its project; without a platform (a test) it is told with collab_project_touched.
+@(private)
+collab_watch_start :: proc(s:^Session,st:^Collab_State) {
+    if s.app.platform==nil {return}
+    watch,error:=platform.watch_create(s.app.platform,{path=s.project_root,recursive=true,file_capacity=1<<16})
+    if error!=.None {
+        log.warnf("the files of %s are not watched (%v): what changes on this side reaches the guests when they join again",s.project_root,error)
+        return
+    }
+    st.watch,st.watching=watch,true
+}
+
+// A file of the host's project changed: the next quiet moment offers the snapshot again.
+collab_project_touched :: proc(s:^Session) {
+    st:=collab_state(s)
+    if st!=nil && st.role==.Host && st.phase==.Joined {st.changed_at=max(collab_now(st),1e-9)}
+}
+
+// The host: what changed in its folder, and a new snapshot offered to the guests when it differs.
+@(private)
+collab_host_changes :: proc(s:^Session,st:^Collab_State,now:f64) {
+    if st.watching {
+        events:[64]platform.Watch_Event
+        count,_:=platform.watch_poll(s.app.platform,st.watch,COLLAB_WATCH_BUDGET,events[:])
+        for e in events[:count] {
+            if project.own_path(e.path) {st.changed_at=now;break}
+        }
+    }
+    if st.changed_at==0 || now-st.changed_at<COLLAB_OFFER_QUIET || now-st.offered_at<COLLAB_OFFER_EVERY {return}
+    st.changed_at,st.offered_at=0,now
+    before:=st.offered
+    if problem:=collab_project_offer(s,st);problem!="" {
+        log.warnf("the project could not be offered again: %s",problem)
+        return
+    }
+    if st.offered==before {return}
+    st.offers+=1
+    m:=[1]u8{u8(Collab_Message.Project)}
+    for &peer,i in st.peers {
+        if i!=0 && peer.used && peer.joined {collab_queue(&peer,m[:])}
+    }
+}
+
+// A guest told of a new snapshot updates its open project to it, after the update it runs.
+@(private)
+collab_update_request :: proc(st:^Collab_State) {
+    if st.role==.Guest && st.phase==.Joined {st.update_due=true}
 }
 
 // A guest's join of the snapshot the host offers under the token of its invitation, into folder.
 @(private)
-collab_join_start :: proc(s:^Session,st:^Collab_State,code,folder:string,reopen:bool) -> bool {
+collab_join_start :: proc(s:^Session,st:^Collab_State,code,folder:string,reopen:bool,update:=false) -> bool {
     j:=new(Collab_Join)
+    j.update=update
     base.text_set(j.code[:],code)
     mem.dynamic_arena_init(&j.arena,runtime.heap_allocator(),runtime.heap_allocator())
     j.allocator=base.dynamic_arena_allocator(&j.arena)
@@ -126,7 +186,19 @@ collab_join_start :: proc(s:^Session,st:^Collab_State,code,folder:string,reopen:
 collab_project_update :: proc(s:^Session,st:^Collab_State,now:f64) {
     if st.node==nil {return}
     share.node_step(st.node,now)
+    if st.role==.Host {
+        collab_host_changes(s,st,now)
+        return
+    }
     j:=st.join
+    if st.update_due && (j==nil || j.finished) {
+        st.update_due=false
+        code:=j!=nil?j.code:{}
+        if j!=nil {collab_join_free(j)}
+        st.join=nil
+        if !collab_join_start(s,st,base.text_get(code[:]),s.project_root,false,update=true) {log.warn("the project of the host could not be updated: no thread to do it on")}
+        return
+    }
     if j==nil {return}
     if j.opening {
         p:=s.projects
@@ -141,6 +213,13 @@ collab_project_update :: proc(s:^Session,st:^Collab_State,now:f64) {
     for line in j.report.kept {log.infof("kept: %s",line)}
     for line in j.report.failed {log.warnf("not written: %s",line)}
     for line in j.report.packages.missing {log.warnf("%s",line)}
+    if j.update {
+        // What changed on disk reloads as any file changed on disk does; the packages are listed again.
+        if j.error!="" {log.warnf("the project of the host could not be updated: %s",j.error)}
+        library_relist(s,{root=s.project_root})
+        st.updates+=1
+        return
+    }
     if j.error!="" {
         collab_end(st,fmt.tprintf("the project of the host could not be brought here: %s",j.error))
         return
@@ -164,13 +243,10 @@ collab_project_update :: proc(s:^Session,st:^Collab_State,now:f64) {
 @(private)
 collab_project_destroy :: proc(s:^Session,st:^Collab_State) {
     if st.node!=nil {share.node_close(st.node)}
+    if st.watching {platform.watch_destroy(s.app.platform,st.watch)}
+    st.watching=false
     if j:=st.join;j!=nil {
-        if j.thread!=nil {
-            thread.join(j.thread)
-            thread.destroy(j.thread)
-        }
-        mem.dynamic_arena_destroy(&j.arena)
-        free(j)
+        collab_join_free(j)
         st.join=nil
     }
     if st.node!=nil {
@@ -187,6 +263,16 @@ collab_project_destroy :: proc(s:^Session,st:^Collab_State) {
         free(st.node_jobs)
         st.node_jobs=nil
     }
+}
+
+@(private)
+collab_join_free :: proc(j:^Collab_Join) {
+    if j.thread!=nil {
+        thread.join(j.thread)
+        thread.destroy(j.thread)
+    }
+    mem.dynamic_arena_destroy(&j.arena)
+    free(j)
 }
 
 // What a phase of a join is doing, as Session says it.

@@ -57,9 +57,17 @@ Code: `collab.odin`, `collab_api.odin`, `collab_project.odin` (the project that 
 - Session shows the join's step (files and bytes, rate and time left, the builds) where it shows
   the phase, and after it the files kept, those not written and the packages no connected peer
   has a build of; `join` of `collab.status` gives the same.
-- The host's files are those of the snapshot taken when it started sharing: what changes on the
-  host afterwards reaches a guest when it joins again. A guest's own imports and file changes do
-  not travel to the host as files; the asset files edited in the session travel as below.
+- **What the host changes during the session** (an import, a saved asset, a source file, a file
+  moved or removed, a package build it now pins) reaches the joined guests: the host watches its
+  folder, and once its files have been quiet for `COLLAB_OFFER_QUIET` it takes the snapshot again,
+  at most once a `COLLAB_OFFER_EVERY`; when it differs it offers it under the same token and sends
+  `Project` through the session. A guest that gets it runs the same join into its open project,
+  as soon as the update it runs ends: only what differs is fetched, and the three-way rule keeps
+  and lists what it changed. What it wrote reloads as any file changed on disk; its packages are
+  listed again. A guest's document has no file of its own, so the scene file the host writes does
+  not apply its edits a second time.
+- A guest's own imports and file changes do not travel to the host as files; the asset files
+  edited in the session travel as below.
 
 ## What travels
 
