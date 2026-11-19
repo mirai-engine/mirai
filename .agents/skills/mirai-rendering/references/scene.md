@@ -294,8 +294,8 @@ instances.
   point, in meters: the boxes of its instances and clusters with which the views clip grow by
   that), `sway` and `wind` (how far it sways in the maps near the eye and the wind that sways it,
   [what sways](lights.md#what-sways-in-the-maps)) and `object_id`. `batches_wind` says how much of
-  its sway each wind gives now; a ray meets nothing of a batch that sways now nearer its origin
-  than it sways (`batch_near`). `engine/render.batch_desc` builds
+  its sway each wind gives now; a pixel the hook moved is lit from where it rests
+  ([what sways](lights.md#what-sways-in-the-maps)). `engine/render.batch_desc` builds
   it from a `Mesh_Renderer`. The material rows it derives (fade, override) live as long as the
   batch lives: `render_sync` retains them in each round of derived rows, so whoever publishes
   batches does not publish them again because what the entities show changes.

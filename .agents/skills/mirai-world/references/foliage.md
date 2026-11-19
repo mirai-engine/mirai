@@ -294,8 +294,8 @@ views draw is the mesh at rest moved per vertex.
   a revision, and the cells whose zone changed are published again.
 - **Rays meet foliage at rest**: traced shadows, reflections, the indirect light and the probes.
   The traced shadow of a swaying canopy under a light no map holds stands still, and the probes
-  see it at rest; a ray from a swayed leaf does not meet its own leaf at rest (the near distance
-  of [batches](../../mirai-rendering/references/scene.md#instance-batches)).
+  see it at rest; a swayed leaf, and a leaned impostor, is tested from where it rests
+  ([what sways](../../mirai-rendering/references/lights.md#what-sways-in-the-maps)).
 - **Impostors.** The quad of an impostor leans whole about its instance's origin by the lean of
   the top of its mesh in the wind of its place (`Impostor_Row.far.z`), so the crossfade does not
   go from swaying to still.

@@ -30,6 +30,7 @@
 #define MIRAI_TEXTURE_FEEDBACK
 #define MATERIAL_GRADIENTS
 #define MIRAI_BATCHES
+#define GBUFFER_REST_OUT SLOT_PASS4
 #include "gbuffer_output.slang"
 #include "visibility.slang"
 
@@ -38,8 +39,6 @@
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<uint> visibility : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 #include "cull_stats.slang"
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<Stats_Block> resolve_stats : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
-// The rest target (rest_pack of gbuffer.slang), while a batch gives the vertex hook values.
-[[vk::binding(SLOT_PASS4, 0)]] [[vk::image_format("rg32ui")]] RWTexture2D<uint2> out_rest : register(MIRAI_REGISTER(u, SLOT_PASS4), space0);
 #include <extension_vertex.slang>
 #include "gbuffer_build.slang"
 
@@ -222,8 +221,7 @@ Stage_Output resolve_shade(Resolve_Point s, bool2 steady) {
 // Where the vertex hook moved the point of a pixel that is not a helper from
 // where it rests, with the depth it wrote, for the passes that light it.
 void resolve_rest(float2 pixel, bool helper, Resolve_Point s, Stage_Output output) {
-    if (helper || (frame.flags & FRAME_FLAG_SWAY) == 0u) return;
-    out_rest[int2(pixel)] = uint2(rest_pack(s.input.in_world - s.rest), asuint(output.g_depth));
+    if (!helper) gbuffer_rest_write(int2(pixel), s.input.in_world - s.rest, output.g_depth);
 }
 
 // The tests of the program depth run before the fragment: a pixel of

@@ -59,7 +59,9 @@ or interleave its own passes.
      with the function of the raster (`gbuffer_build.slang`), so both place it at the same bits,
      takes its barycentrics at the pixel and the exact gradients of its inputs, reads the material
      row the visible list gives its cluster and its textures from the table, without binds per
-     material or per object, and writes the targets with `gbuffer_output.slang`; the passes read
+     material or per object, and writes the targets with `gbuffer_output.slang`, and while a batch
+     gives the vertex hook values, where the hook moved each pixel from its rest
+     ([what sways](lights.md#what-sways-in-the-maps)); the passes read
      them only with `include/gbuffer.slang` (`gbuffer_read`, `gbuffer_normal`, `gbuffer_shading`).
    - A reflectance target exists only while a visible instance has an opaque material that does
      not reflect like the default one ([materials](materials.md#evaluation)), and a

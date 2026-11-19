@@ -444,9 +444,16 @@ again as the bound leaves room ([what a frame draws at most](#pages-of-the-shado
 steps run each frame while one does.
 
 Rays meet a batch of the hook at rest: the traced shadow of a swaying canopy under a light no map
-holds stands still, and the probes see it at rest. A ray meets nothing of a batch that sways now
-nearer its origin than that batch sways (`batch_near`), so a point the hook swayed off its leaf
-does not meet that leaf at rest, and leaves farther apart still shade each other.
+holds stands still, and the probes see it at rest. A point the view shows swayed is tested from
+where it rests, so it meets what lies around its leaf at rest, as the same leaf still would, and
+not that leaf: the resolve places its triangle with and without the hook and leaves the
+difference in the rest target (`pixel_rest` of `gbuffer.slang`, while a batch gives the hook
+values: `FRAME_FLAG_SWAY`; the impostors of foliage write theirs with `pass_rest_write`). The
+shadow rays, contact occlusion and reflections of a pixel leave from its rest place, by the normal
+offset alone; a map that draws the caster at rest (its texel wider than that of a point at the
+reach) is read at the rest place, one inside the reach, which draws it swayed, at the swayed one
+(`shadow_place`). It reads the probes at its rest place too, and takes its unshadowed light
+where it is shown.
 
 Tests: the shadow ones of `render/render_test.odin` (`render_sun_shadow_is_ray_traced`,
 `render_soft_shadow_blurs_with_the_distance_to_its_caster`,
