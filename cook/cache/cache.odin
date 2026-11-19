@@ -152,8 +152,8 @@ load_here :: proc(s:^store.Store,namespace,ref:string,key,version:u64,file:^asse
 }
 
 // A source that copies from the store at from, a second root of objects and
-// refs: the object of the ref and, for a build (asset.REF_IMPORTS or
-// asset.REF_IMPORTS_FAST), every object it lists. What a peer gives, and what an installed engine gives from
+// refs: the object of the ref and, for a build (asset.REF_IMPORTS,
+// asset.REF_IMPORTS_FAST or asset.REF_BUILDS), every object it lists. What a peer gives, and what an installed engine gives from
 // the store of the builds of its plugins.
 store_source :: proc(from:^store.Store) -> Source {
     fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
@@ -163,7 +163,7 @@ store_source :: proc(from:^store.Store) -> Source {
     copy_ref :: proc(from,into:^store.Store,namespace,name:string) -> bool {
         object,error:=store.ref_get(from,namespace,name)
         if error!=.None || object_copy(from,into,object)!=.None {return false}
-        if namespace==asset.REF_IMPORTS || namespace==asset.REF_IMPORTS_FAST {
+        if namespace==asset.REF_IMPORTS || namespace==asset.REF_IMPORTS_FAST || namespace==asset.REF_BUILDS {
             b,build_error:=asset.build_get(from,object,context.temp_allocator)
             if build_error!=.None {return false}
             for o in b.outputs {

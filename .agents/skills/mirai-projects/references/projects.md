@@ -614,10 +614,10 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
   once the router answered, and serves until it is stopped (Ctrl+C), printing who comes and goes
   and how much went out. The snapshot is the ref `shares/<hash of the invitation's secret>`, so a
   joiner finds it by the code and the names peers list reveal no secret. Peers read the namespaces
-  of snapshots, package manifests, builds (Final and Fast, each under its own namespace) and
-  `cook/cache` results: the owner exposes the whole machine library to whoever holds the
-  invitation, never the choices, the origins or the sources of the machine. A lease holds the
-  snapshot, its folders and files and the builds the project pins.
+  of snapshots, package manifests, builds (Final and Fast, each under its own namespace), the build
+  the machine chose for each manifest and `cook/cache` results: the owner exposes the whole machine
+  library to whoever holds the invitation, never the origins or the sources of the machine. A
+  lease holds the snapshot, its folders and files and the builds the project pins.
 - **Join.** `mirai join` asks for the snapshot of the invitation only the host it connects to,
   so a peer that joined from the joiner cannot name another; folders and files come from any
   peer, verified by address. It fetches the tree a depth of folders at a time, refusing one whose
@@ -627,10 +627,13 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
   repeated under many names); checks that the disks have room; fetches the files, the project's
   manifest and its start scene first and then the smallest first, many at once, and writes each
   chunk by chunk at its offset into a temporary file renamed into place, so memory does not grow
-  with a file; then refreshes the packages as an editor does, with the peers as the
-  `cache.Source` of the library: a Final or a Fast build from the store, then from the peers, by
-  key, and a source in the folder is imported, in the quality an editor imports, only when no
-  peer gives a build of it. A join ends within a bounded time without progress whatever a peer
+  with a file; then builds the project's editor from the files that arrived, without its refresh,
+  for the importers of its plugins, and refreshes the packages as an editor does, with the peers as
+  the `cache.Source` of the library: a Final or a Fast build from the store, then from the peers,
+  by key, and a source in the folder is imported, in the quality an editor imports, only when no
+  peer gives a build of it. Where the editor does not build, a package whose importer is a plugin's
+  takes the build a peer chose for its manifest, and one no peer gives is reported with why the
+  editor did not build. A join ends within a bounded time without progress whatever a peer
   does or withholds: what is wanted while no chunk byte arrives and no object completes for a
   while fails, reported by path, and the files after it are asked. A build that cooks refreshes
   requiring Final, so a Fast build a join took never ships. A refresh asks the source for every

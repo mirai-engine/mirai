@@ -36,8 +36,9 @@ PORT :: 7950 // a share's, unless --port; taken, the system gives another
 @(private) STATUS_SECONDS :: 10.0
 @(private) MAPPING_SECONDS :: 15.0 // the most an invitation waits for the router
 
-// share or join, by the first argument. library reads the formats the plugins
-// of the project add (editor.import_library in the import program).
+// share or join, by the first argument. library reads the formats and the
+// importers the plugins of the joined project add, building its editor first
+// (editor.import_library_built in the import program).
 command :: proc(args:[]string,output,errors:io.Writer,library:sources.Library=nil) -> int {
     if len(args)>0 && args[0]=="share" {return share_command(args[1:],output,errors)}
     if len(args)>0 && args[0]=="join" {return join_command(args[1:],output,errors,library)}

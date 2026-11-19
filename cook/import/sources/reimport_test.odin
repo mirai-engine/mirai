@@ -594,6 +594,8 @@ a_refresh_ingests_again_a_whole_source_when_what_it_is_built_from_changes :: pro
 // A store that holds the build of a source a plugin imports whole, and not
 // the source, takes it by key from another store, lists and loads it, and
 // imports nothing; another version or code of the importer misses that build.
+// Without the importer it takes the build the other store chose, and with no
+// store to ask it says why the importer was not read.
 @(test)
 a_whole_source_build_is_found_by_key_without_its_source :: proc(t:^testing.T) {
     root,assets:=test_project(t,"whole-by-key")
@@ -620,15 +622,20 @@ a_whole_source_build_is_found_by_key_without_its_source :: proc(t:^testing.T) {
     folder_copy(root,peer)
     testing.expect(t,os.remove(fmt.tprintf("%s/assets/hall.level",peer))==nil)
     runs:=state.runs
-    Case :: struct {version:u16,code:u64,found:bool}
-    for c,k in ([]Case{{1,0,true},{2,0,false},{1,5,false}}) {
+    UNBUILT :: "the editor could not be built"
+    unbuilt :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> Library_Imports {return {problem=UNBUILT}}
+    Case :: struct {version:u16,code:u64,importer,asked,found:bool}
+    for c,k in ([]Case{{1,0,true,true,true},{2,0,true,true,false},{1,5,true,true,false},{1,0,false,true,true},{1,0,false,false,false}}) {
         state.version,state.code=c.version,c.code
         here:=test_store(t,fmt.tprintf("%s-store-%d",root,k))
         if here==nil {return}
-        refreshed:=project_refresh(peer,{store=here,root=peer,plugins=leveling,source=cache.store_source(s)},context.temp_allocator)
+        options:=Library_Options{store=here,root=peer,plugins=leveling if c.importer else unbuilt}
+        if c.asked {options.source=cache.store_source(s)}
+        refreshed:=project_refresh(peer,options,context.temp_allocator)
         testing.expect(t,state.runs==runs && refreshed.ingested==0,"nothing is imported")
         if !c.found {
             testing.expectf(t,refreshed.fetched==0 && len(refreshed.missing)==1,"%v: another importer misses the build: %v",c,refreshed)
+            if !c.importer && len(refreshed.missing)==1 {testing.expectf(t,strings.contains(refreshed.missing[0],UNBUILT),"it says why: %s",refreshed.missing[0])}
             continue
         }
         testing.expectf(t,refreshed.fetched==1 && len(refreshed.missing)==0 && len(refreshed.failures)==0,"%v",refreshed)

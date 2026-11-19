@@ -20,7 +20,7 @@ import "mirai:store"
 //   builds it writes it, names it with REF_IMPORTS/<import_key> (Final) or
 //   REF_IMPORTS_FAST/<import_key>, and the refresh of a project names the one
 //   it chose with REF_BUILDS/<build_select>, which a program that has no
-//   importer finds.
+//   importer finds, here or at a peer.
 // - Packages: the list of a project (PACKAGES_FILE, beside its manifest),
 //   versioned: the packages it uses by the hash of their manifest, the folder
 //   of its assets each is listed in, the assets it uses and what its file of
