@@ -243,7 +243,7 @@ asset_stored :: proc(a:^Asset,index:int) -> (stored:[]u8,error:Error) {
         bytes,at,chunk_error:=store.group_chunk(&o.object,index,0)
         if chunk_error!=.None {return nil,object_error(chunk_error)}
         if at!=0 || u64(len(bytes))!=entry.size {return nil,.Corrupt}
-        // A chunk of a pack not yet sealed is read into the buffer of the object, which the next read reuses.
+        // A chunk of a pack not sealed yet is read into a buffer of the object the next read reuses.
         if inside(bytes,o.object.chunk) || inside(bytes,o.object.nodes[0]) || inside(bytes,o.object.nodes[1]) {
             copied:=asset_alloc(a,len(bytes),1<<entry.alignment_log2) or_return
             copy(copied,bytes)
