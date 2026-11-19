@@ -19,10 +19,6 @@
 // Of a page of the pool listed for a round, that its points read it drawn the
 // frame before: it is granted before the pages that were not.
 #define SHADOW_JOB_KEPT 0x20000u
-// Of a page of the pool listed for the atlas, that what sways in it is all it
-// is composed again for (abi.SHADOW_SWAY_SWAYS): while it waits for room it
-// shows what the atlas last composed there.
-#define SHADOW_JOB_REFRESH 0x40000u
 
 // The first entry of a mip of a slot, the coarsest first, and its pages a side.
 uint shadow_mip_base(uint mip) { return ((1u << (2u * (SHADOW_MIPS - 1u - mip))) - 1u) / 3u; }

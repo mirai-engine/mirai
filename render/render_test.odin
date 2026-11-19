@@ -1439,7 +1439,11 @@ render_a_frame_draws_no_more_than_its_bound_and_the_rest_comes_after :: proc(t: 
 // read their own pages every frame, never a coarser one in between, and the
 // pages of the floor between its instances, under the box of the batch, stay
 // as the cache drew them. One batch over two groups composes no more pages
-// than a batch for each group.
+// than a batch for each group. Where the bound holds a third of what many
+// masked batches that sway take, every frame draws within it, the cache draws
+// nothing again, a page that waits keeps what the atlas last composed there
+// (the table does not change), and each is composed again within the frames
+// the others take once, and a few more (refresh_order of shadow_pages.comp).
 @(test)
 render_a_swaying_batch_keeps_its_pages_under_the_bound :: proc(t: ^testing.T) {
 	Sway :: struct {mesh: Mesh_Handle, x: f32}
@@ -1454,10 +1458,29 @@ render_a_swaying_batch_keeps_its_pages_under_the_bound :: proc(t: ^testing.T) {
 		for &v in vertices {v.position.x += sway.x}
 		rhi.cmd_copy_buffer(s.pass.cmd, at.buffer, at.offset, r.scene.vertex_buffer, u64(written) * 4, u64(count) * size_of(Gpu_Posed_Vertex))
 	}
+	// Of the pages the atlas listed in the last frame to compose again for
+	// what sways in them alone: how many, how many it composed, and the most
+	// frames since one was last composed.
+	refreshes :: proc(t: ^testing.T, r: ^Renderer) -> (listed, refreshed, worst: u32) {
+		rhi.device_wait_idle(r.device)
+		b := &r.main.targets.shadow_raster
+		counts: [16]u32
+		jobs, sway: [abi.SHADOW_POOL_PAGES]u32
+		testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_COUNTS) * 4, counts[:]))
+		testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_JOBS + abi.SHADOW_POOL_PAGES) * 4, jobs[:]))
+		testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_SWAY) * 4, sway[:]))
+		for job in jobs[:min(counts[abi.SHADOW_COUNT_COMPOSED], abi.SHADOW_POOL_PAGES)] {
+			if job & abi.SHADOW_JOB_REFRESH == 0 || job & 0xFFFF >= abi.SHADOW_POOL_PAGES {continue}
+			listed += 1
+			worst = max(worst, (b.frame - sway[job & 0xFFFF]) & abi.SHADOW_SWAY_FRAME)
+		}
+		return listed, counts[abi.SHADOW_COUNT_REFRESHED], worst
+	}
 	cases := [?]struct {
 		name:    string,
 		batches: int, // the groups in one batch, or a batch for each
-	}{{"one batch", 1}, {"a batch for each group", 2}}
+		room:    u32, // how many times what they take the bound holds less
+	}{{"one batch", 1, 1}, {"a batch for each group", 2, 1}, {"many masked batches past the bound", 64, 3}}
 	composed: [len(cases)]u32
 	for c, n in cases {
 		f: Cube_Fixture
@@ -1466,24 +1489,31 @@ render_a_swaying_batch_keeps_its_pages_under_the_bound :: proc(t: ^testing.T) {
 		settings.taa = false
 		if !cube_fixture_init(t, &f, 192, 128, settings) {return}
 		r := f.renderer
+		if c.room > 1 {
+			masked := DEFAULT_MATERIAL
+			masked.alpha_mode = .Mask
+			testing.expect(t, materials_set(r, {masked}))
+		}
 		floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {40, 0.2, 40}), tint = {0.8, 0.8, 0.8}}
 		sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
 		testing.expect(t, scene_given(r, {floor}, nil, sun, {sky = {0, 0, 0}}))
 		camera := Camera{position = {0, 9, 0.001}, forward = {0, -9, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 		mesh, made := deformable_create(r, f.cube, false, 0.3)
 		if !testing.expect(t, made) {fixture_destroy(&f); return}
-		// Two groups of posts 10 m apart, the floor between them still.
-		groups: [2][4]Batch_Instance
+		// Groups of four posts, the floor between them still: two 10 m apart, or
+		// 64 on a grid of 2 m.
+		groups := make([][4]Batch_Instance, max(c.batches, 2))
 		for &group, g in groups {
-			for &instance, k in group {instance = batch_instance({f32(g) * 10 - 5 + f32(k % 2) * 0.8, 0.6, f32(k / 2) * 0.8}, 1, {0.3, 1.2, 0.3})}
+			corner := Vec3{f32(g) * 10 - 5, 0.6, 0} if len(groups) == 2 else Vec3{f32(g % 8) * 2 - 7, 0.6, f32(g / 8) * 2 - 7}
+			for &instance, k in group {instance = batch_instance(corner + {f32(k % 2) * 0.8, 0, f32(k / 2) * 0.8}, 1, {0.3, 1.2, 0.3})}
 		}
-		all := [8]Batch_Instance{}
-		copy(all[:4], groups[0][:])
-		copy(all[4:], groups[1][:])
 		desc := Batch_Desc{mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}}
-		handles: [2]Batch_Handle
+		handles := make([]Batch_Handle, c.batches)
 		problem: string
 		if c.batches == 1 {
+			all := [8]Batch_Instance{}
+			copy(all[:4], groups[0][:])
+			copy(all[4:], groups[1][:])
 			handles[0], problem = batch_set(r, 0, 0, desc, all[:])
 		} else {
 			for &h, g in handles {if problem == "" {h, problem = batch_set(r, 0, 0, desc, groups[g][:])}}
@@ -1499,41 +1529,62 @@ render_a_swaying_batch_keeps_its_pages_under_the_bound :: proc(t: ^testing.T) {
 			testing.expect(t, frame_pass(r, .Geometry, write, sway))
 			testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 		}
+		stats :: proc(t: ^testing.T, r: ^Renderer) -> Shadow_Stats {
+			read: [1]Shadow_Stats
+			testing.expect(t, rhi.buffer_read_slice(r.device, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow)), read[:]))
+			return read[0]
+		}
 		// What the swaying posts take with room to spare.
 		b.budget = 1 << 20
 		for _ in 0 ..< 8 {frame(t, r, f.cube, &sway, camera)}
 		_, pages, _ := shadow_counts(r)
-		stats: [1]Shadow_Stats
-		testing.expect(t, rhi.buffer_read_slice(r.device, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow)), stats[:]))
-		// A bound with room for them but little more, from the start again.
-		bound := 2 * ((32 * pages + stats[0].units_moving) * 4 / 3 + 64)
+		// A bound with room for them but little more, or for a part of them, from the start again.
+		bound := 2 * ((32 * pages + stats(t, r).units_moving) * 4 / 3 + 64) / c.room
 		b.budget, b.forget = bound, true
-		waiting := u32(1)
-		for k := 0; k < 64 && waiting != 0; k += 1 {
-			frame(t, r, f.cube, &sway, camera)
-			count: [1]u32
-			testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_WAITING) * 4, count[:]))
-			waiting = count[0]
-		}
-		testing.expectf(t, waiting == 0, "%s: under a bound of %d the pages still wait", c.name, bound)
-		frame(t, r, f.cube, &sway, camera)
 		entries := make([]u32, abi.SHADOW_SLOT_ENTRIES * SHADOW_SLOTS)
 		before := make([]u32, len(entries))
+		if c.room == 1 {
+			waiting := u32(1)
+			for k := 0; k < 64 && waiting != 0; k += 1 {
+				frame(t, r, f.cube, &sway, camera)
+				count: [1]u32
+				testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_WAITING) * 4, count[:]))
+				waiting = count[0]
+			}
+			testing.expectf(t, waiting == 0, "%s: under a bound of %d the pages still wait", c.name, bound)
+		} else {
+			for _ in 0 ..< 8 {frame(t, r, f.cube, &sway, camera)}
+		}
+		frame(t, r, f.cube, &sway, camera)
 		testing.expect(t, rhi.texture_read(f.device, b.table, mem.slice_to_bytes(before)))
-		for k in 0 ..< 8 {
+		most_listed, least_refreshed, worst := u32(0), max(u32), u32(0)
+		for k in 0 ..< 16 {
 			frame(t, r, f.cube, &sway, camera)
 			drawn, moved, _ := shadow_counts(r)
 			composed[n] = max(composed[n], moved)
-			testing.expectf(t, drawn == 0 && moved > 0, "%s, frame %d: the cache drew %d pages again and the atlas composed %d", c.name, k, drawn, moved)
+			s := stats(t, r)
+			testing.expectf(t, drawn == 0 && s.units == 0 && moved > 0, "%s, frame %d: the cache drew %d pages again (%d units) and the atlas composed %d", c.name, k, drawn, s.units, moved)
+			testing.expectf(t, s.units_moving <= bound + PAGE_UNITS, "%s, frame %d: the atlas drew %d units past the bound of %d", c.name, k, s.units_moving, bound)
 			testing.expect(t, rhi.texture_read(f.device, b.table, mem.slice_to_bytes(entries)))
 			changed := 0
 			for e, i in entries {if e != before[i] {changed += 1}}
 			testing.expectf(t, changed == 0, "%s, frame %d: %d entries of the table changed while the posts swayed", c.name, k, changed)
+			listed, refreshed, oldest := refreshes(t, r)
+			most_listed, least_refreshed, worst = max(most_listed, listed), min(least_refreshed, refreshed), max(worst, oldest)
+		}
+		if c.room > 1 {
+			// Within the frames the others take to be composed once, and a few
+			// more for the pages farther from the eye.
+			testing.expectf(t, least_refreshed > 0 && most_listed > least_refreshed, "%s: of %d pages that sway at most %d were composed again in a frame at least: the bound holds them all", c.name, most_listed, least_refreshed)
+			given := (most_listed + max(least_refreshed, 1) - 1) / max(least_refreshed, 1) + 3
+			testing.expectf(t, worst <= given, "%s: a page that sways waited %d frames, the order gives %d (%d pages, %d composed in a frame at least)", c.name, worst, given, most_listed, least_refreshed)
 		}
 		delete(entries)
 		delete(before)
 		b.budget = 0
 		for h in handles {if h != 0 {batch_remove(r, h)}}
+		delete(handles)
+		delete(groups)
 		mesh_remove(r, mesh)
 		expect_clean(t, f.device)
 		fixture_destroy(&f)
