@@ -410,7 +410,7 @@ Scene_State :: struct {
 	tlas_moved:           bool,         // boxes changed: the tree is refit before the frame uploads it
 	tlas_classify:        bool,         // what rays see of instances changed: their references are classified again
 	instance_capacity:    int,
-	candidate_capacity:   int, // of the candidates: one per instance and per slot of a batch
+	candidate_capacity:   int, // of the candidates: one per instance and per slot of a batch, then one per group of slots
 	tlas_node_capacity:   int,
 	tlas_ref_capacity:    int,
 	tlas_node_count:      int, // nodes of the tree in tlas_nodes; the glass instances are listed after them, a box each
@@ -440,7 +440,7 @@ Scene_State :: struct {
 	mesh_draws_capacity:  u32, // of it, in indices
 	mesh_draws_wanted:    u32, // the most a frame asked for since the marks were set: it grows to it
 	cull_wanted:          [Cull_List]u32, // what a frame that dropped asked for since the marks were set (renderer_capacity_marks_set): they grow to it
-	candidate_buffer:     rhi.Buffer, // per instance and slot of a batch: rejected by the phase 0 occlusion test
+	candidate_buffer:     rhi.Buffer, // per instance and slot of a batch: rejected by the phase 0 occlusion test; then the groups of slots the cull lists
 	batch:                Batch_State,
 	tlas:                 rhi.Accel,
 	tlas_capacity:        u32,
@@ -2583,7 +2583,8 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		// What they held goes with them: the meshes listed are written again.
 		for &m in s.meshes {m.draw_written = false}
 	}
-	candidates := max(len(s.instances) + int(s.batch.slots), 1)
+	// And the groups of slots of the batches the cull lists (cull.comp).
+	candidates := max(len(s.instances) + int(s.batch.slots) + int(s.batch.slots) / BATCH_GROUP, 1)
 	if candidates > s.candidate_capacity || s.candidate_buffer == 0 {
 		capacity := max(candidates + candidates / 2, 64)
 		if s.candidate_buffer != 0 {rhi.buffer_destroy(d, s.candidate_buffer)}

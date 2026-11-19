@@ -1555,7 +1555,14 @@ render_a_swaying_batch_keeps_its_pages_under_the_bound :: proc(t: ^testing.T) {
 			}
 			testing.expectf(t, waiting == 0, "%s: under a bound of %d the pages still wait", c.name, bound)
 		} else {
-			for _ in 0 ..< 8 {frame(t, r, f.cube, &sway, camera)}
+			// Until the cache draws nothing again and the table stays.
+			for k := 0; k < 64; k += 1 {
+				frame(t, r, f.cube, &sway, camera)
+				drawn, _, _ := shadow_counts(r)
+				testing.expect(t, rhi.texture_read(f.device, b.table, mem.slice_to_bytes(entries)))
+				if drawn == 0 && slice.equal(entries, before) {break}
+				copy(before, entries)
+			}
 		}
 		frame(t, r, f.cube, &sway, camera)
 		testing.expect(t, rhi.texture_read(f.device, b.table, mem.slice_to_bytes(before)))
@@ -1594,182 +1601,311 @@ render_a_swaying_batch_keeps_its_pages_under_the_bound :: proc(t: ^testing.T) {
 	testing.expectf(t, composed[0] <= composed[1], "one batch over both groups composes %d pages, a batch for each %d", composed[0], composed[1])
 }
 
-// The maps follow what sways only near the eye (SHADOW_SWAY_REACH): a slab
-// that sways over bare ground near the camera moves its sun shadow every
-// frame, each of its pages composed again every frame; the same slab far
-// away casts at rest, and no page is drawn or composed again while it sways.
-// The camera that goes from near to far across the reach moves the edge of
-// its shadow from where it sways to where it rests, never farther than the
-// sway, with neither a hole nor a shadow past both.
+// Of the pages of the levels of the sun the atlas of the main view composed,
+// the texels where it is not the cache bit for bit: in all, those past a
+// texel of the layer of what sways around the boxes of what sways (boxes,
+// low then high), and those farther from the light than the cache.
+@(private = "file")
+sway_atlas_against_cache :: proc(t: ^testing.T, r: ^Renderer, boxes: [][2]Vec3) -> (changed, outside, farther: int) {
+	PAGE :: int(SHADOW_PAGE)
+	ROW :: int(SHADOW_POOL) / PAGE
+	b := &r.main.targets.shadow_raster
+	rhi.device_wait_idle(r.device)
+	table := make([]u32, abi.SHADOW_SLOT_ENTRIES * SHADOW_SLOTS)
+	atlas := make([]f32, SHADOW_POOL * SHADOW_POOL)
+	cache := make([]f32, SHADOW_POOL * SHADOW_POOL)
+	defer {delete(table);delete(atlas);delete(cache)}
+	if !testing.expect(t, rhi.texture_read(r.device, b.table, mem.slice_to_bytes(table)) && rhi.texture_read(r.device, b.atlas, mem.slice_to_bytes(atlas)) && rhi.texture_read(r.device, b.cache, mem.slice_to_bytes(cache))) {return -1, -1, -1}
+	grow := f32(u32(1) << shadow_coarser(b)) + 1
+	for level in 0 ..< SHADOW_SUN_LEVELS {
+		m := b.held[level].m
+		if m.rect.z == 0 {continue}
+		texel := (m.span.z - m.span.x) / f32(m.rect.z)
+		// The boxes in texels of the map, rows down.
+		rects := make([][4]f32, len(boxes), context.temp_allocator)
+		for box, k in boxes {
+			rects[k] = {max(f32), max(f32), -max(f32), -max(f32)}
+			for corner in 0 ..< 8 {
+				p := Vec3{box[corner & 1].x, box[(corner >> 1) & 1].y, box[corner >> 2].z} - m.origin
+				at := Vec2{(linalg.dot(p, m.right) - m.span.x) / texel, (m.span.w - linalg.dot(p, m.up)) / texel}
+				rects[k] = {min(rects[k].x, at.x - grow), min(rects[k].y, at.y - grow), max(rects[k].z, at.x + grow), max(rects[k].w, at.y + grow)}
+			}
+		}
+		n, ox, oy := u32(SHADOW_MAP_PAGES), m.rect.y & 0xFF, (m.rect.y >> 8) & 0xFF
+		for at in 0 ..< n * n {
+			e := table[u32(level) * abi.SHADOW_SLOT_ENTRIES + abi.SHADOW_FINEST_ENTRY + at]
+			if e & abi.SHADOW_PAGE_COMPOSED == 0 || e & 0xFFFF == 0 || (e >> abi.SHADOW_ENTRY_COARSER) & 0xF != 0 {continue}
+			px, py := int((at % n + n - ox % n) % n), int((at / n + n - oy % n) % n)
+			pool := int(e & 0xFFFF) - 1
+			for j in 0 ..< PAGE {
+				for i in 0 ..< PAGE {
+					k := (pool / ROW * PAGE + j) * int(SHADOW_POOL) + pool % ROW * PAGE + i
+					if atlas[k] == cache[k] {continue}
+					changed += 1
+					if atlas[k] < cache[k] {farther += 1}
+					c := Vec2{f32(px * PAGE + i) + 0.5, f32(py * PAGE + j) + 0.5}
+					near := false
+					for rect in rects {near ||= c.x >= rect.x && c.x <= rect.z && c.y >= rect.y && c.y <= rect.w}
+					if !near {outside += 1}
+				}
+			}
+		}
+	}
+	return
+}
+
+// The maps follow what sways only near the eye (SHADOW_SWAY_REACH), drawn
+// into a layer of what sways coarser than their pages, for each number of
+// levels it may be (SHADOW_SWAY_COARSER): a slab that sways over bare ground
+// near the camera and 12 m from it moves its sun shadow every frame, each of
+// its pages composed again every frame, and no light shows inside its shadow
+// where it crosses pages; past the reach it casts at rest, and no page is
+// drawn or composed again while it sways. Beside it, the shadow of a still
+// post stays as it was, and every texel of the atlas is that of the cache
+// but around what sways, where it is nearer. A post that sways standing on
+// the floor shades the floor from its base as the still post does, within
+// half a texel of the layer. The camera that goes from near to past the reach
+// moves the edge of the shadow of the slab from where it sways to where it
+// rests, never farther than the sway and a texel of the layer, with neither a
+// hole nor a shadow past both.
 @(test)
 render_a_swaying_batch_follows_its_sway_only_near_the_eye :: proc(t: ^testing.T) {
-	f: Cube_Fixture
-	settings := test_settings()
-	settings.gi_enabled = false
-	settings.taa = false
-	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
-	defer fixture_destroy(&f)
-	r := f.renderer
-	// Wide enough that the levels of the sun near the eye are not its coarsest,
-	// which holds every point past it too and draws what sways at rest.
-	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {600, 0.2, 600}), tint = {0.8, 0.8, 0.8}}
-	// From above and behind the slab: its shadow falls 1.2 m towards +z.
-	sun := Sun_Desc{direction = {0, 1, -0.8}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
-	testing.expect(t, scene_given(r, {floor}, nil, sun, {sky = {0, 0, 0}}), r.error)
-	mesh, made := deformable_create(r, f.cube)
-	if !testing.expect(t, made) {return}
-	defer mesh_remove(r, mesh)
-	batch, problem := batch_set(r, 0, 0, {mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}, sway = 0.3}, {batch_instance({0, 1.5, 0}, 1, {1, 0.2, 1})})
-	if !testing.expectf(t, problem == "", "%s", problem) {return}
-	defer batch_remove(r, batch)
 	looking :: proc(at: Vec3) -> Camera {
 		return {position = at, forward = Vec3{0, 0.2, 1.2} - at, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 200, exposure = UNIT_EXPOSURE}
 	}
-	sway := Sway{mesh = mesh}
 	frame :: proc(t: ^testing.T, r: ^Renderer, cube: Mesh_Handle, sway: ^Sway, camera: Camera) {
 		low, high, _ := mesh_bounds(r, cube)
 		testing.expect(t, deformable_update(r, sway.mesh, low - 0.3, high + 0.3))
 		testing.expect(t, frame_pass(r, .Geometry, sway_write, sway))
 		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	}
-	// The floor along x where the shadow falls, after a frame.
-	shade :: proc(t: ^testing.T, r: ^Renderer, camera: Camera, xs: []f32, out: []f32) -> bool {
+	// The floor at some places, after a frame.
+	shade :: proc(t: ^testing.T, r: ^Renderer, camera: Camera, at: []Vec3, out: []f32) -> bool {
 		rhi.device_wait_idle(r.device)
 		pixels, w, _, ok := golden_capture(r)
 		if !testing.expect(t, ok, r.error) {return false}
 		defer delete(pixels)
-		for x, i in xs {out[i] = pixel(pixels, w, project(r, camera, {x, 0.001, 1.2}))[0]}
+		for p, i in at {out[i] = pixel(pixels, w, project(r, camera, p))[0]}
 		return true
 	}
-	cases := [?]struct {
-		name: string,
-		eye:  Vec3,
-		near: bool, // within the reach: its shadow follows the sway
-	}{{"near", {0, 2.2, 3}, true}, {"far", {0, 5, 13}, false}}
-	for c in cases {
-		camera := looking(c.eye)
-		sway.x = 0.2
-		for _ in 0 ..< 12 {
-			sway.x = -sway.x
-			frame(t, r, f.cube, &sway, camera)
+	floor_at :: proc(x, z: f32) -> Vec3 {return {x, 0.001, z}}
+	// Metres a pixel of the view spans at a distance.
+	HEIGHT :: 1080
+	pixel_at :: proc(distance: f32) -> f32 {return distance * 2 * math.tan(f32(math.PI / 6)) / HEIGHT}
+	for coarser in ([?]u32{1, 2}) {
+		f: Cube_Fixture
+		settings := test_settings()
+		settings.gi_enabled = false
+		settings.taa = false
+		if !cube_fixture_init(t, &f, 1920, HEIGHT, settings) {return}
+		r := f.renderer
+		r.main.targets.shadow_raster.coarser = coarser
+		// Wide enough that the levels of the sun near the eye are not its
+		// coarsest, which holds every point past it too and draws what sways at
+		// rest; and a still post 1.2 m tall on it.
+		instances := []Instance_Desc{
+			{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {600, 0.2, 600}), tint = {0.8, 0.8, 0.8}},
+			{object_id = 2, mesh = f.cube, transform = trs({1.6, 0.6, 0}, {0.6, 1.2, 0.6}), tint = {0.5, 0.5, 0.5}},
 		}
-		// Between where its edge is swayed one way and the other; well inside
-		// and well outside of it.
-		xs := [3]f32{0.5, 0.1, 0.9}
-		before: [3]f32
-		for k in 0 ..< 8 {
-			sway.x = -sway.x
-			frame(t, r, f.cube, &sway, camera)
-			now: [3]f32
-			if !shade(t, r, camera, xs[:], now[:]) {return}
-			drawn, composed, _ := shadow_counts(r)
-			listed, refreshed, worst := sway_refreshes(t, r)
-			if c.near {
-				// Swayed to +x the slab covers the floor at 0.5, to -x it leaves it lit.
-				lit, dark := now[0] if sway.x < 0 else before[0], now[0] if sway.x > 0 else before[0]
-				if k > 0 {testing.expectf(t, dark < 0.5 * lit, "%s, frame %d: where the edge sways the floor is %f swayed over and %f swayed away", c.name, k, dark, lit)}
-				testing.expectf(t, drawn == 0 && composed > 0 && listed == refreshed && worst <= 1, "%s, frame %d: the cache drew %d pages again, the atlas composed %d, %d of %d that sway, the oldest %d frames ago", c.name, k, drawn, composed, refreshed, listed, worst)
-			} else {
-				testing.expectf(t, drawn == 0 && composed == 0, "%s, frame %d: at rest past the reach it moves nothing: %d pages drawn again, %d composed", c.name, k, drawn, composed)
-				if k > 0 {testing.expectf(t, abs(now[0] - before[0]) <= 2, "%s, frame %d: the edge of its shadow went from %f to %f", c.name, k, before[0], now[0])}
+		// From above and behind the slab: its shadow falls 1.2 m towards +z,
+		// those of the posts from their faces at 0.3 m to 1.26 m.
+		sun := Sun_Desc{direction = {0, 1, -0.8}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+		testing.expect(t, scene_given(r, instances, nil, sun, {sky = {0, 0, 0}}), r.error)
+		mesh, made := deformable_create(r, f.cube)
+		if !testing.expect(t, made) {fixture_destroy(&f); return}
+		// The slab, and a post like the still one standing on the floor, which
+		// sways along x and keeps its face towards the shadow.
+		posts := []Batch_Instance{batch_instance({0, 1.5, 0}, 1, {1, 0.2, 1}), batch_instance({-1.6, 0.6, 0}, 1, {0.6, 1.2, 0.6})}
+		boxes := [][2]Vec3{{{-0.7, 1.4, -0.5}, {0.7, 1.6, 0.5}}, {{-2.02, 0, -0.3}, {-1.18, 1.2, 0.3}}}
+		batch, problem := batch_set(r, 0, 0, {mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}, sway = 0.3}, posts)
+		if !testing.expectf(t, problem == "", "%s", problem) {mesh_remove(r, mesh); fixture_destroy(&f); return}
+		sway := Sway{mesh = mesh}
+		cases := [?]struct {
+			name: string,
+			eye:  Vec3,
+			near: bool, // within the reach: its shadow follows the sway
+		}{{"near", {0, 2.2, 3}, true}, {"12 m away", {0, 3.4, 12.6}, true}, {"past the reach", {0, 0.2, 1.2} + linalg.normalize(Vec3{0, 2, 1.8}) * 1.6 * SHADOW_SWAY_REACH, false}}
+		for c in cases {
+			camera := looking(c.eye)
+			sway.x = 0.2
+			for _ in 0 ..< 12 {
+				sway.x = -sway.x
+				frame(t, r, f.cube, &sway, camera)
 			}
-			testing.expectf(t, now[1] < 0.5 * now[2], "%s, frame %d: under the slab %f, beside its shadow %f", c.name, k, now[1], now[2])
-			before = now
+			// Between where the edge of the slab is swayed one way and the other;
+			// well inside and well outside of its shadow; across the edges of
+			// the shadow of the still post; along the shadows of both posts from
+			// a pixel past their faces at 0.3 m, whose pixel the face may take, a
+			// millimetre apart.
+			at := make([dynamic]Vec3, context.temp_allocator)
+			append(&at, floor_at(0.5, 1.2), floor_at(0.1, 1.2), floor_at(0.9, 1.2))
+			for i in 0 ..< 200 {append(&at, floor_at(1.2 + f32(i) * 0.004, 0.8))}
+			face := 0.3 + pixel_at(linalg.length(c.eye - {1.6, 0, 0.3}))
+			for side in ([2]f32{1.6, -1.6}) {for i in 0 ..< 200 {append(&at, floor_at(side, face + f32(i) * 0.001))}}
+			// Inside the shadow of the slab whichever way it sways, by more than
+			// its penumbra and a texel of the layer.
+			inside := len(at)
+			for z := f32(0.85); z <= 1.55; z += 0.003 {for x := f32(-0.15); x <= 0.15; x += 0.003 {append(&at, floor_at(x, z))}}
+			places := len(at) - inside
+			before := make([]f32, len(at), context.temp_allocator)
+			for k in 0 ..< 8 {
+				sway.x = -sway.x
+				frame(t, r, f.cube, &sway, camera)
+				now := make([]f32, len(at), context.temp_allocator)
+				if !shade(t, r, camera, at[:], now) {break}
+				drawn, composed, _ := shadow_counts(r)
+				listed, refreshed, worst := sway_refreshes(t, r)
+				lit := now[2]
+				if c.near {
+					// Swayed to +x the slab covers the floor at 0.5, to -x it leaves it lit.
+					over, away := now[0] if sway.x > 0 else before[0], now[0] if sway.x < 0 else before[0]
+					if k > 0 {testing.expectf(t, over < 0.5 * away, "%d levels coarser, %s, frame %d: where the edge sways the floor is %f swayed over and %f swayed away", coarser, c.name, k, over, away)}
+					testing.expectf(t, drawn == 0 && composed > 0 && listed == refreshed && worst <= 1, "%d levels coarser, %s, frame %d: the cache drew %d pages again, the atlas composed %d, %d of %d that sway, the oldest %d frames ago", coarser, c.name, k, drawn, composed, refreshed, listed, worst)
+					seams := 0
+					for v in now[inside:] {if v >= 0.5 * lit {seams += 1}}
+					testing.expectf(t, seams == 0, "%d levels coarser, %s, frame %d: %d of %d places inside the shadow of the slab read lit", coarser, c.name, k, seams, places)
+				} else {
+					testing.expectf(t, drawn == 0 && composed == 0, "%d levels coarser, %s, frame %d: at rest past the reach it moves nothing: %d pages drawn again, %d composed", coarser, c.name, k, drawn, composed)
+					if k > 0 {testing.expectf(t, abs(now[0] - before[0]) <= 2, "%d levels coarser, %s, frame %d: the edge of its shadow went from %f to %f", coarser, c.name, k, before[0], now[0])}
+				}
+				testing.expectf(t, now[1] < 0.5 * lit, "%d levels coarser, %s, frame %d: under the slab %f, beside its shadow %f", coarser, c.name, k, now[1], lit)
+				if k > 0 {
+					moved := 0
+					for i in 3 ..< 203 {if now[i] != before[i] {moved += 1}}
+					testing.expectf(t, moved == 0, "%d levels coarser, %s, frame %d: %d places across the shadow of the still post changed", coarser, c.name, k, moved)
+				}
+				if c.name == "near" {
+					// Where each post begins to shade the floor from its face.
+					gaps: [2]f32
+					for &gap, side in gaps {
+						gap = 0.2
+						for v, i in now[203 + 200 * side:][:200] {if v < 0.5 * lit {gap = face + f32(i) * 0.001 - 0.3; break}}
+					}
+					bound := f32(u32(1) << (coarser - 1)) * 2 * pixel_at(linalg.length(c.eye - {-1.6, 0, 0.3})) + pixel_at(linalg.length(c.eye - {-1.6, 0, 0.3}))
+					if k == 7 {log.infof("%d levels coarser: the swaying post shades the floor from %.1f mm past its face, the still one from %.1f mm (half a texel of the layer and a pixel: %.1f mm)", coarser, 1000 * gaps[1], 1000 * gaps[0], 1000 * bound)}
+					testing.expectf(t, gaps[1] <= gaps[0] + bound, "%d levels coarser, frame %d: the floor is lit %f m from the base of the swaying post, %f m from that of the still one, more than %f apart", coarser, k, gaps[1], gaps[0], bound)
+					changed, outside, farther := sway_atlas_against_cache(t, r, boxes)
+					testing.expectf(t, changed > 0 && outside == 0 && farther == 0, "%d levels coarser, frame %d: of %d texels of the atlas not the cache, %d lie away from what sways and %d are farther", coarser, k, changed, outside, farther)
+				}
+				copy(before, now)
+			}
+			free_all(context.temp_allocator)
 		}
-	}
-	// From near to far with the slab swayed 0.2 m to +x: the edge of its
-	// shadow there goes from 0.7 m to 0.5 m, where it rests.
-	sway.x = 0.2
-	xs: [64]f32
-	for &x, i in xs {x = f32(i) * 0.025}
-	edges: [16]f32
-	for &edge, step in edges {
-		eye := Vec3{0, 2.2, 3} + Vec3{0, 0.2, 0.7} * f32(step)
-		camera := looking(eye)
-		for _ in 0 ..< 3 {frame(t, r, f.cube, &sway, camera)}
-		values: [len(xs)]f32
-		beside: [1]f32
-		if !shade(t, r, camera, xs[:], values[:]) || !shade(t, r, camera, {1.6}, beside[:]) {return}
-		edge = -1
-		for v, i in values {
-			if v > 0.5 * (values[0] + beside[0]) {edge = xs[i]; break}
+		// From near to past the reach with the slab swayed 0.2 m to +x: the edge
+		// of its shadow there goes from 0.7 m to 0.5 m, where it rests.
+		sway.x = 0.2
+		xs: [64]Vec3
+		for &x, i in xs {x = floor_at(f32(i) * 0.025, 1.2)}
+		edges: [16]f32
+		for &edge, step in edges {
+			distance := 2.8 + (1.6 * SHADOW_SWAY_REACH - 2.8) * f32(step) / f32(len(edges) - 1)
+			eye := Vec3{0, 0.2, 1.2} + linalg.normalize(Vec3{0, 2, 1.8}) * distance
+			camera := looking(eye)
+			for _ in 0 ..< 3 {frame(t, r, f.cube, &sway, camera)}
+			values: [len(xs)]f32
+			beside: [1]f32
+			if !shade(t, r, camera, xs[:], values[:]) || !shade(t, r, camera, {floor_at(1.6, 2.2)}, beside[:]) {break}
+			edge = -1
+			for v, i in values {
+				if v > 0.5 * (values[0] + beside[0]) {edge = xs[i].x; break}
+			}
+			// Two pixels of the view there, a texel of the layer.
+			within := max(f32(u32(1) << coarser) * 2 * pixel_at(linalg.length(eye - {0.6, 0, 1.2})), 0.025)
+			testing.expectf(t, values[0] < 0.5 * beside[0], "%d levels coarser, eye %v: the floor under the slab is %f against %f beside its shadow", coarser, eye, values[0], beside[0])
+			testing.expectf(t, edge >= 0.5 - within && edge <= 0.7 + within, "%d levels coarser, eye %v: the edge of the shadow at %f m, past where it sways (0.7) or rests (0.5) by more than %f", coarser, eye, edge, within)
 		}
-		// Two pixels of the view there.
-		within := max(2 * linalg.length(eye - {0.6, 0, 1.2}) * 2 * math.tan(f32(math.PI / 6)) / 128, 0.05)
-		testing.expectf(t, values[0] < 0.5 * beside[0], "eye %v: the floor under the slab is %f against %f beside its shadow", eye, values[0], beside[0])
-		testing.expectf(t, edge >= 0.5 - within && edge <= 0.7 + within, "eye %v: the edge of the shadow at %f m, past where it sways (0.7) or rests (0.5) by more than %f", eye, edge, within)
+		testing.expectf(t, edges[0] > 0.6 && edges[len(edges) - 1] < 0.6, "%d levels coarser: the edge goes from %f near to %f past the reach: it follows the sway near and rests far", coarser, edges[0], edges[len(edges) - 1])
+		expect_clean(t, f.device)
+		batch_remove(r, batch)
+		mesh_remove(r, mesh)
+		fixture_destroy(&f)
 	}
-	testing.expectf(t, edges[0] > 0.6 && edges[len(edges) - 1] < 0.6, "the edge goes from %f near to %f far: it follows the sway near and rests far", edges[0], edges[len(edges) - 1])
-	expect_clean(t, f.device)
 }
 
 // A dense forest of masked posts that sway, seen from among them at the
 // height of an eye: the maps compose again only the pages of what sways near
-// the eye (SHADOW_SWAY_REACH), each of them every frame, and the rounds of
-// the maps draw well within the bound of the renderer.
+// the eye (SHADOW_SWAY_REACH), each of them every frame, into the layer of
+// what sways for each number of levels coarser it may be
+// (SHADOW_SWAY_COARSER), and the rounds of the maps draw well within the
+// bound of the renderer.
 @(test)
 render_a_swaying_forest_composes_again_only_what_is_near :: proc(t: ^testing.T) {
-	f: Cube_Fixture
-	settings := test_settings()
-	settings.gi_enabled = false
-	settings.taa = false
-	if !cube_fixture_init(t, &f, 1920, 1080, settings) {return}
-	defer fixture_destroy(&f)
-	r := f.renderer
-	masked := DEFAULT_MATERIAL
-	masked.alpha_mode = .Mask
-	testing.expect(t, materials_set(r, {masked}))
-	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {600, 0.2, 600}), tint = {0.8, 0.8, 0.8}}
-	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
-	testing.expect(t, scene_given(r, {floor}, nil, sun, {sky = {0, 0, 0}}), r.error)
-	mesh, made := deformable_create(r, f.cube)
-	if !testing.expect(t, made) {return}
-	defer mesh_remove(r, mesh)
-	// Posts 3 m tall every 1.5 m over 60 m, a batch for each cell of 7.5 m.
-	CELLS :: 8
-	handles: [CELLS * CELLS]Batch_Handle
-	defer for h in handles {if h != 0 {batch_remove(r, h)}}
-	for &h, c in handles {
-		posts: [25]Batch_Instance
-		for &post, k in posts {
-			at := Vec3{f32(c % CELLS) * 7.5 - 30 + f32(k % 5) * 1.5 + 0.4, 1.5, f32(c / CELLS) * 7.5 - 30 + f32(k / 5) * 1.5 + 0.7}
-			post = batch_instance(at, 1, {0.6, 3, 0.6})
+	for coarser in ([?]u32{1, 2}) {
+		f: Cube_Fixture
+		settings := test_settings()
+		settings.gi_enabled = false
+		settings.taa = false
+		if !cube_fixture_init(t, &f, 1920, 1080, settings) {return}
+		r := f.renderer
+		b := &r.main.targets.shadow_raster
+		b.coarser = coarser
+		masked := DEFAULT_MATERIAL
+		masked.alpha_mode = .Mask
+		testing.expect(t, materials_set(r, {masked}))
+		floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {600, 0.2, 600}), tint = {0.8, 0.8, 0.8}}
+		sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+		testing.expect(t, scene_given(r, {floor}, nil, sun, {sky = {0, 0, 0}}), r.error)
+		mesh, made := deformable_create(r, f.cube)
+		if !testing.expect(t, made) {fixture_destroy(&f); return}
+		// Posts 3 m tall every 1.5 m over 60 m, a batch for each cell of 7.5 m.
+		CELLS :: 8
+		handles: [CELLS * CELLS]Batch_Handle
+		for &h, c in handles {
+			posts: [25]Batch_Instance
+			for &post, k in posts {
+				at := Vec3{f32(c % CELLS) * 7.5 - 30 + f32(k % 5) * 1.5 + 0.4, 1.5, f32(c / CELLS) * 7.5 - 30 + f32(k / 5) * 1.5 + 0.7}
+				post = batch_instance(at, 1, {0.6, 3, 0.6})
+			}
+			problem: string
+			h, problem = batch_set(r, 0, 0, {mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}, sway = 0.4}, posts[:])
+			testing.expectf(t, problem == "", "%s", problem)
 		}
-		problem: string
-		h, problem = batch_set(r, 0, 0, {mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}, sway = 0.4}, posts[:])
-		if !testing.expectf(t, problem == "", "%s", problem) {return}
+		camera := Camera{position = {0, 1.7, 0}, forward = {0, -0.35, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 200, exposure = UNIT_EXPOSURE}
+		rhi.timestamps_want(f.device, true)
+		sway := Sway{mesh = mesh, x = 0.2}
+		FRAMES :: 30
+		composed, refreshed, waiting, units, ms, bound: f64
+		worst_age, most_units := u32(0), u32(0)
+		each: [FRAMES]f64
+		for k in 0 ..< 2 * FRAMES {
+			sway.x = -sway.x
+			low, high, _ := mesh_bounds(r, f.cube)
+			testing.expect(t, deformable_update(r, mesh, low - 0.4, high + 0.4))
+			testing.expect(t, frame_pass(r, .Geometry, sway_write, &sway))
+			testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+			if k < FRAMES {continue}
+			_, moved, _ := shadow_counts(r)
+			listed, again, worst := sway_refreshes(t, r)
+			stats := shadow_stats(t, r)
+			maps: f64
+			for timing in r.stats.timings {if strings.has_prefix(timing.name, "shadow ") && timing.name != SHADOW_PAGES_TIMING {maps += f64(timing.ms)}}
+			composed += f64(moved)
+			refreshed += f64(again)
+			waiting += f64(stats.pages_waiting)
+			units += f64(stats.units + stats.units_moving)
+			ms += maps
+			each[k - FRAMES] = maps
+			bound += f64(shadow_frame_units(r, b))
+			worst_age, most_units = max(worst_age, worst), max(most_units, stats.units_moving)
+			testing.expectf(t, listed == again && worst <= 1, "%d levels coarser, frame %d: %d of the %d pages that sway were composed again, the oldest %d frames ago", coarser, k, again, listed, worst)
+		}
+		// The texels of the layer what sways covers in the last frame.
+		rhi.device_wait_idle(f.device)
+		side := SHADOW_POOL >> coarser
+		layer := make([]f32, side * side)
+		testing.expect(t, rhi.texture_read(f.device, b.layer, mem.slice_to_bytes(layer)))
+		covered := 0
+		for v in layer {if v > 0 {covered += 1}}
+		delete(layer)
+		slice.sort(each[:])
+		log.infof("a swaying forest, its layer %d levels coarser: %.1f pages composed a frame, %.1f of them for what sways alone, %.1f waiting; %.0f units of a bound of %.0f, %d at most for what moves; %d texels of the layer covered; the rounds of the maps %.3f ms, %.3f in the middle frame; a page that sways waited %d frames at most", coarser, composed / FRAMES, refreshed / FRAMES, waiting / FRAMES, units / FRAMES, bound / FRAMES, most_units, covered, ms / FRAMES, each[FRAMES / 2], worst_age)
+		testing.expectf(t, units * 2 <= bound, "%d levels coarser: the maps drew %.0f units a frame, a bound of %.0f", coarser, units / FRAMES, bound / FRAMES)
+		expect_clean(t, f.device)
+		rhi.timestamps_want(f.device, false)
+		for h in handles {if h != 0 {batch_remove(r, h)}}
+		mesh_remove(r, mesh)
+		fixture_destroy(&f)
 	}
-	camera := Camera{position = {0, 1.7, 0}, forward = {0, -0.35, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 200, exposure = UNIT_EXPOSURE}
-	rhi.timestamps_want(f.device, true)
-	defer rhi.timestamps_want(f.device, false)
-	sway := Sway{mesh = mesh, x = 0.2}
-	FRAMES :: 30
-	composed, refreshed, waiting, units, ms, bound: f64
-	worst_age, most_units := u32(0), u32(0)
-	for k in 0 ..< 2 * FRAMES {
-		sway.x = -sway.x
-		low, high, _ := mesh_bounds(r, f.cube)
-		testing.expect(t, deformable_update(r, mesh, low - 0.4, high + 0.4))
-		testing.expect(t, frame_pass(r, .Geometry, sway_write, &sway))
-		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-		if k < FRAMES {continue}
-		_, moved, _ := shadow_counts(r)
-		listed, again, worst := sway_refreshes(t, r)
-		stats := shadow_stats(t, r)
-		maps: f64
-		for timing in r.stats.timings {if strings.has_prefix(timing.name, "shadow ") && timing.name != SHADOW_PAGES_TIMING {maps += f64(timing.ms)}}
-		composed += f64(moved)
-		refreshed += f64(again)
-		waiting += f64(stats.pages_waiting)
-		units += f64(stats.units + stats.units_moving)
-		ms += maps
-		bound += f64(shadow_frame_units(r, &r.main.targets.shadow_raster))
-		worst_age, most_units = max(worst_age, worst), max(most_units, stats.units_moving)
-		testing.expectf(t, listed == again && worst <= 1, "frame %d: %d of the %d pages that sway were composed again, the oldest %d frames ago", k, again, listed, worst)
-	}
-	log.infof("a swaying forest: %.1f pages composed a frame, %.1f of them for what sways alone, %.1f waiting; %.0f units of a bound of %.0f, %d at most for what moves; the rounds of the maps %.3f ms; a page that sways waited %d frames at most", composed / FRAMES, refreshed / FRAMES, waiting / FRAMES, units / FRAMES, bound / FRAMES, most_units, ms / FRAMES, worst_age)
-	testing.expectf(t, units * 2 <= bound, "the maps drew %.0f units a frame, a bound of %.0f", units / FRAMES, bound / FRAMES)
-	expect_clean(t, f.device)
 }
 
 // The search of the blockers of a point reaches far where something may
@@ -2321,16 +2457,74 @@ render_probes_settle_to_the_same_light_with_the_time :: proc(t: ^testing.T) {
 	testing.expectf(t, abs(sums[1] / sums[0] - 1) < 0.005 && most <= 4, "the indirect light with the time is %.2f%% of that without, a pixel %d apart", sums[1] / sums[0] * 100, most)
 }
 
+// A batch that sways in a wind (Batch_Desc.sway, batches_wind) is met by the
+// rays of the probe volume at rest whatever the wind: in a canopy around the
+// probes, a wind that blows or gusts gives them the light and the turns of
+// the same scene without it, as far as two runs of one scene agree.
+@(test)
+render_probes_see_swaying_batches_at_rest :: proc(t: ^testing.T) {
+	Case :: struct {name: string, share: f32, gusts: bool}
+	cases := [3]Case{{"calm", 0, false}, {"blowing", 1, false}, {"gusting", 0.5, true}}
+	light: [3]f64
+	traced: [3]int
+	for c, k in cases {
+		f: Cube_Fixture
+		settings := test_settings()
+		settings.taa = false
+		settings.probe_budget = 64
+		if !cube_fixture_init(t, &f, 96, 64, settings, programs = true) {return}
+		defer fixture_destroy(&f)
+		defer expect_clean(t, f.device)
+		r := f.renderer
+		pulse := program_find(r, "Pulse", .Surface)
+		if !testing.expect(t, pulse != nil, "the tests have the Pulse program") {return}
+		timed := DEFAULT_MATERIAL
+		timed.program_id, timed.custom_params = pulse.id, program_defaults(pulse)
+		testing.expect(t, materials_set(r, {timed}))
+		instances := []Instance_Desc{
+			{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {200, 0.2, 200}), tint = {0.8, 0.8, 0.8}, material = 1},
+			{object_id = 2, mesh = f.cube, transform = trs({0, 1.5, -6}, {200, 3, 0.2}), tint = {0.7, 0.6, 0.5}},
+		}
+		sun := Sun_Desc{direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 3, enabled = true, indirect = 1, scattering = 1}
+		scene_given(r, instances, nil, sun, {sky = {0.2, 0.3, 0.5}})
+		// Layers of leaves half a metre apart around the probes, swaying up to a metre,
+		// whose program reads the time: the rays that meet them are traced at
+		// every turn of their probes.
+		leaves := make([dynamic]Batch_Instance, context.temp_allocator)
+		for x in 0 ..< 4 {for y in 0 ..< 6 {for z in 0 ..< 3 {append(&leaves, batch_instance({f32(x) * 2.5 - 4 + f32(y % 2), 0.4 + f32(y) * 0.5, f32(z) * 2.5 - 5}, 1, {2, 0.08, 2}))}}}
+		batch, problem := batch_set(r, 0, 0, {mesh = f.cube, material = 1, tint = 0.4, flags = {.Casts_Shadow, .Ray_Visible}, sway = 0.5}, leaves[:])
+		if !testing.expectf(t, problem == "", "%s", problem) {return}
+		defer batch_remove(r, batch)
+		camera := Camera{position = {0, 2, 4}, forward = {0, -1, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 200, exposure = UNIT_EXPOSURE}
+		for frame in 0 ..< 1200 {
+			testing.expect(t, batches_wind(r, 0, c.share + (0.4 * math.sin(f32(frame) * 0.1) if c.gusts else 0)))
+			testing.expect(t, renderer_frame(r, {camera = camera, time = f32(frame) / 60, inspection = {mode = .Indirect}}), r.error)
+			if frame < 944 {continue}
+			rhi.device_wait_idle(r.device)
+			traced[k] += int(r.stats.probes_traced)
+		}
+		// The light the probes hold, decoded from the atlas (probe_light_decode).
+		desc := rhi.texture_desc(r.device, r.ddgi.irradiance)
+		atlas := make([]f16, int(desc.width * desc.height) * 4)
+		defer delete(atlas)
+		testing.expect(t, rhi.texture_read(r.device, r.ddgi.irradiance, slice.to_bytes(atlas)))
+		for v, i in atlas {if i % 4 != 3 {light[k] += math.pow(f64(v), 5)}}
+	}
+	for k in 1 ..< len(cases) {
+		testing.expectf(t, abs(light[k] / light[0] - 1) < 0.002 && abs(traced[k] - traced[0]) <= traced[0] / 8, "%s: the probes see the leaves as without wind: their light %.3f%% of it, %d probes traced over 256 frames against %d", cases[k].name, light[k] / light[0] * 100, traced[k], traced[0])
+	}
+}
+
 // When the volume moves with the camera, the new probes a pixel reads are
 // gathered in the frame they come, and those none reads wait behind them,
-// taking at most an eighth of the budget a frame while it moves and all that
-// is left once it stops.
+// taking at most an eighth of the budget a frame while it moves; once it
+// stops, all come before any probe their coming woke.
 @(test)
 render_probes_new_unread_wait_behind_those_read :: proc(t: ^testing.T) {
 	f: Cube_Fixture
 	settings := test_settings()
 	settings.taa = false
-	settings.probe_budget = 128
+	settings.probe_budget = 48
 	if !cube_fixture_init(t, &f, 96, 64, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
@@ -2342,7 +2536,7 @@ render_probes_new_unread_wait_behind_those_read :: proc(t: ^testing.T) {
 	scene_given(r, instances, nil, sun, {sky = {0.2, 0.3, 0.5}})
 	camera := Camera{position = {0, 2, 4}, forward = {0, -1, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 200, exposure = UNIT_EXPOSURE}
 	// Past the updates that gather the world shown anew.
-	for _ in 0 ..< 400 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	for _ in 0 ..< 800 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	testing.expect(t, r.gi_warm_spread == 0, "the world is gathered")
 	g := &r.ddgi
 	share := int(max(g.budget / 8, 1))
@@ -2368,9 +2562,22 @@ render_probes_new_unread_wait_behind_those_read :: proc(t: ^testing.T) {
 	}
 	testing.expectf(t, read_new > 0 && read_waiting == 0, "the new probes a pixel reads are gathered in the frame they come: %d of %d wait", read_waiting, read_new)
 	testing.expectf(t, unread > share && unread_taken <= share, "the new probes none reads take at most %d of the budget: %d of %d", share, unread_taken, unread)
-	// Once the volume stops they take all the urgent ones leave of the budget.
+	// Once the volume stops the new ones come before those their coming woke,
+	// which are traced once after they all came.
 	frames := (unread + int(g.budget) - 1) / int(g.budget) + 4
-	for _ in 0 ..< frames {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	woken := 0
+	for _ in 0 ..< frames {
+		waiting := 0
+		fresh := probes_read(t, r)
+		// New: of another cell, or moved far in its own and untraced there (Probe.frames.x 0).
+		for p, i in fresh {if p.cell.xyz != probe_slot_cell_of(g, u32(i)) || p.frames.x == 0 {waiting += 1}}
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		if waiting < int(g.budget) {continue}
+		rhi.device_wait_idle(r.device)
+		testing.expect(t, rhi.buffer_read_slice(r.device, g.chosen, 0, chosen))
+		for slot in chosen[1:1 + min(chosen[0], g.budget)] {if fresh[slot].cell.xyz == probe_slot_cell_of(g, slot) && fresh[slot].frames.x != 0 {woken += 1}}
+	}
+	testing.expectf(t, woken == 0, "while new probes wait, none of the others is traced: %d were", woken)
 	stale := 0
 	for p, i in probes_read(t, r) {if p.cell.xyz != probe_slot_cell_of(g, u32(i)) {stale += 1}}
 	testing.expectf(t, stale == 0, "every new probe is gathered within %d frames of the volume stopping: %d are not", frames, stale)
@@ -4664,3 +4871,4 @@ taa_weighs_the_light_as_it_shows :: proc(t: ^testing.T) {
 	testing.expectf(t, scale[0] / scale[1] > 500, "the key light changes the light scale: %v", scale)
 	testing.expectf(t, change[0] > 0 && abs(change[1] / change[0] - 1) < 0.05, "the highlight changes as much from frame to frame under either light scale: %v nits", change)
 }
+

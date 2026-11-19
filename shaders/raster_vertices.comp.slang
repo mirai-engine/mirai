@@ -170,9 +170,13 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     // a page with no place in the pool draws nothing.
     Shadow_Page_Draw page;
     if (!shadow_page_draw(shadow_data, entry.program & ~SHADOW_ENTRY_REST, page)) triangle_count = 0u;
-    float4 window = page.window;
-    float2 resolution = float2(SHADOW_POOL, SHADOW_POOL);
+    // The tile of the page in the layer of what sways, its texels as many times fewer.
+    float scale = (entry.program & SHADOW_ENTRY_LAYER) != 0u ? float(1u << params.coarser) : 1.0;
+    float4 window = page.window / scale;
+    float2 resolution = float2(SHADOW_POOL, SHADOW_POOL) / scale;
     uint pool = page.pool;
+    // The maps draw both faces of every triangle.
+    bool two_sided = true;
     // The maps leave the vertex hook of a batch out, but where they draw one
     // that sways as it sways.
     Gbuffer_Cluster k = (Gbuffer_Cluster)0;
@@ -191,6 +195,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     float4 window = float4(0.0, 0.0, frame.resolution);
     float2 resolution = frame.resolution;
     uint pool = INVALID;
+    bool two_sided = (bin & RASTER_BIN_TWO_SIDED) != 0u;
     Gbuffer_Cluster k = gbuffer_cluster_of(entry.instance, inst, mesh, entry.material, entry.along);
 #endif
 
@@ -218,7 +223,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
         // An instance that mirrors its mesh draws its triangles the other way round (gbuffer_corner).
         if (mirrored) corners = corners.xzy;
         if (corners.x == corners.y || corners.y == corners.z || corners.x == corners.z) continue;
-        if (!raster_triangle_shows(clips[corners.x], clips[corners.y], clips[corners.z], (bin & RASTER_BIN_TWO_SIDED) != 0u, window, resolution, params.margin)) continue;
+        if (!raster_triangle_shows(clips[corners.x], clips[corners.y], clips[corners.z], two_sided, window, resolution, params.margin)) continue;
         InterlockedOr(shown[t >> 5u], 1u << (t & 31u));
         InterlockedOr(used[corners.x >> 5u], 1u << (corners.x & 31u));
         InterlockedOr(used[corners.y >> 5u], 1u << (corners.y & 31u));
