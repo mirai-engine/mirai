@@ -233,7 +233,12 @@ model_cutouts :: proc(r:^Reader) {
     for made,at in meshes {
         if !made.cut {continue}
         mesh:=&r.meshes[at]
-        mesh.vertices,mesh.indices,mesh.submeshes,mesh.slots,mesh.outlines=made.vertices,made.indices,made.submeshes,made.slots,made.outlines
+        // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+        mesh.vertices=made.vertices
+        mesh.indices=made.indices
+        mesh.submeshes=made.submeshes
+        mesh.slots=made.slots
+        mesh.outlines=made.outlines
         if len(mesh.skin)>0 {mesh.skin=made.skin}
         if len(mesh.morphs)>0 {mesh.morphs,mesh.morph_deltas=made.morphs,made.morph_deltas}
         if len(mesh.vertices)>0 {

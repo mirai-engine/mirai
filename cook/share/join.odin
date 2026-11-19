@@ -565,22 +565,28 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
 join_scene :: proc(d:^Join_Desc,snap:^Snapshot,index:^Index,folder:string) -> string {
     e,found:=snapshot_find(snap,project.PROJECT_FILE)
     if !found || e.size>1<<20 {return ""}
-    m:project.Manifest
     path:=project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator)
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS): each manifest is read where it is declared.
     if here,_,present:=index_address(index,project.PROJECT_FILE,path);present && here==e.address {
-        read_error:project.Error
-        if m,read_error=project.manifest_read(path);read_error.code!=.None {return ""}
-    } else {
-        roots:=[1]store.Hash{e.address}
-        if join_fetch(d,roots[:],project.PROJECT_FILE,context.temp_allocator)!="" {return ""}
-        o,open_error:=store.object_open(d.node.s,e.address)
-        if open_error!=.None {return ""}
-        defer store.object_close(&o)
-        text:=make([]u8,int(store.object_size(&o)),context.temp_allocator)
-        if store.object_read(&o,0,text)!=.None {return ""}
-        parse_error:project.Error
-        if m,parse_error=project.manifest_parse(string(text));parse_error.code!=.None {return ""}
+        m,read_error:=project.manifest_read(path)
+        if read_error.code!=.None {return ""}
+        return start_scene(&m)
     }
+    roots:=[1]store.Hash{e.address}
+    if join_fetch(d,roots[:],project.PROJECT_FILE,context.temp_allocator)!="" {return ""}
+    o,open_error:=store.object_open(d.node.s,e.address)
+    if open_error!=.None {return ""}
+    defer store.object_close(&o)
+    text:=make([]u8,int(store.object_size(&o)),context.temp_allocator)
+    if store.object_read(&o,0,text)!=.None {return ""}
+    m,parse_error:=project.manifest_parse(string(text))
+    if parse_error.code!=.None {return ""}
+    return start_scene(&m)
+}
+
+// The path of the start scene of a manifest, in the temp allocator; "": none.
+@(private)
+start_scene :: proc(m:^project.Manifest) -> string {
     scene:=base.text_get(m.start_scene[:])
     if scene=="" {return ""}
     return fmt.tprintf("assets/%s",scene)
