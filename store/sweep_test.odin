@@ -308,6 +308,11 @@ fresh_leases_keep_their_current_addresses :: proc(t:^testing.T) {
     holds,collect_error:=lease_collect(&other,&collected,fresh_path,now,holder_self())
     testing.expect(t,collect_error==.None && holds,"the lease of a holder that runs here holds however old its time")
     testing.expect(t,hashes[1] in collected && !(hashes[0] in collected))
+    infos:=make([dynamic]Lease_Info,context.temp_allocator)
+    testing.expect_value(t,leases_collect(&other,&collected,now,&infos),Error.None)
+    named:=false
+    for &info in infos {named||=string(info.name[:info.name_len])=="editor"}
+    testing.expect(t,named,"a lease listed in its folder is known by its name")
     released,released_error:=lease_open(&s,"released",{hashes[3]},now)
     if !testing.expect_value(t,released_error,Error.None) {return}
     testing.expect_value(t,lease_release(&released),Error.None)
