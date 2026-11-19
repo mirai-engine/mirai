@@ -561,7 +561,7 @@ registry_mounts_a_guest_folder_that_never_takes_an_id_the_registry_has :: proc(t
 
 // What the packages a project and a plugin pin list of the cache is listed
 // from the store through root_packages of each root, with no source
-// anywhere: a built output is its blob and loads, one whose
+// anywhere: a built output is its object and loads, one whose
 // build is not here is listed Not_Built and named as a problem, a path a file of the folder has takes the id of the output after
 // its name, a refresh keeps every listed output and memory never holds one.
 @(test)
@@ -577,8 +577,9 @@ registry_lists_what_a_project_pins_without_its_sources :: proc(t:^testing.T) {
         buffer:[base.ASSET_ID_TEXT]u8
         path:=fmt.tprintf("%s/%s.tex",staging,base.asset_id_format(id,buffer[:]))
         write_texture(t,types,path,id)
-        hash,error:=store.put_file(s,path)
-        testing.expect_value(t,error,store.Error.None)
+        hash,error:=object_put_file(s,path)
+        testing.expect_value(t,error,Error.None)
+        testing.expect_value(t,store.commit(s),store.Error.None)
         return hash
     }
     pin :: proc(t:^testing.T,s:^store.Store,p:^Package,built:[]store.Hash,folder:string) -> Packages {
@@ -588,7 +589,7 @@ registry_lists_what_a_project_pins_without_its_sources :: proc(t:^testing.T) {
         b.outputs=make([dynamic]Build_Output,context.temp_allocator)
         for hash,at in built {
             info,_:=kind_info(p.assets[at].kind)
-            if hash!={} {append(&b.outputs,Build_Output{id=p.assets[at].id,kind=p.assets[at].kind,kind_version=info.version,blob=hash})}
+            if hash!={} {append(&b.outputs,Build_Output{id=p.assets[at].id,kind=p.assets[at].kind,kind_version=info.version,object=hash})}
         }
         hash,_:=build_put(s,&b)
         digits:[64]u8
@@ -625,18 +626,17 @@ registry_lists_what_a_project_pins_without_its_sources :: proc(t:^testing.T) {
     write_material(t,&types,fmt.tprintf("%s/props/crate/Wood.mat",root),{9,9},wood)
     buffer:[base.ASSET_ID_TEXT]u8
     renamed:=fmt.tprintf("props/crate/lid (%s).tex",base.asset_id_format(lid,buffer[:]))
-    wood_file,_:=store.blob_path(&s,wood_blob,context.temp_allocator)
-    lid_file,_:=store.blob_path(&s,lid_blob,context.temp_allocator)
 
     cache:=fmt.tprintf("%s/registry.cache",folder)
     for pass in 0..<2 {
         r:Registry;registry_init(&r,root,cache,listed=resolved.listed[:]);defer registry_destroy(&r)
+        r.store=&s
         testing.expect(t,registry_mount(&r,plugin,"plugins/pack",plugin_resolved.listed[:]))
         testing.expect_value(t,registry_scan(&r),Error.None)
         testing.expectf(t,pass==0 || r.stats.opened==0,"the second scan reads its cache: %v",r.stats)
         testing.expect_value(t,r.stats.files,6)
         Want :: struct {id:base.Asset_Id,path,file:string}
-        for w in ([]Want{{wood,"props/crate/wood.tex",wood_file},{lid,renamed,lid_file},{own,"props/crate/lid.tex",fmt.tprintf("%s/props/crate/lid.tex",root)}}) {
+        for w in ([]Want{{wood,"props/crate/wood.tex",""},{lid,renamed,""},{own,"props/crate/lid.tex",fmt.tprintf("%s/props/crate/lid.tex",root)}}) {
             file,found:=registry_find(&r,w.id)
             if !testing.expectf(t,found && file.path==w.path && file.state==.Asset && file.listed==(w.id!=own),"%v is listed at %s, not %v",w.id,w.path,found?file^:Registry_File{}) {continue}
             testing.expect_value(t,registry_file_path(&r,file.path,context.temp_allocator),w.file)
@@ -646,7 +646,7 @@ registry_lists_what_a_project_pins_without_its_sources :: proc(t:^testing.T) {
         data,read_error:=registry_read(&r,"props/crate/wood.tex")
         a:Asset
         if testing.expect_value(t,read_error,Error.None) && testing.expect_value(t,asset_open(&a,data),Error.None) {
-            testing.expect(t,a.blob.header.id==wood,"a listed output loads from its blob")
+            testing.expect(t,a.blob.header.id==wood,"a listed output loads from its object")
             asset_close(&a)
         }
         delete(data)
@@ -684,7 +684,7 @@ registry_lists_what_a_project_pins_without_its_sources :: proc(t:^testing.T) {
 
 // Entries no package list makes are refused or reported, never a crash nor
 // an error of the scan: a path that is empty, leaves the folder or is one a
-// scan leaves out, and a zero id are refused; a blob that is gone is Not_Built;
+// scan leaves out, and a zero id are refused; an output not built is Not_Built;
 // one that is not the asset its entry names is Broken; two entries with one
 // path are told apart by id.
 @(test)
@@ -693,16 +693,28 @@ registry_refuses_or_reports_hostile_listed_entries :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"registry-listed-hostile");if folder=="" {return}
     root:=fmt.tprintf("%s/assets",folder)
     os.make_directory_all(root)
-    texture,other,text:=fmt.tprintf("%s/texture.tex",folder),fmt.tprintf("%s/other.tex",folder),fmt.tprintf("%s/text.tex",folder)
-    write_texture(t,&types,texture,{1,1})
-    write_texture(t,&types,other,{2,2})
-    serial.file_write_atomic(text,transmute([]u8)string("not an asset"))
-    entry :: proc(path,file:string,id:base.Asset_Id) -> Package_Listed {return {path=path,file=file,id=id,kind=KIND_TEXTURE,state=file!=""?.Built:.Not_Built}}
+    s,open_error:=store.open(fmt.tprintf("%s/store",folder),context.temp_allocator)
+    if !testing.expect_value(t,open_error,store.Error.None) {return}
+    put :: proc(t:^testing.T,s:^store.Store,types:^Types,path:string,id:base.Asset_Id) -> store.Hash {
+        write_texture(t,types,path,id)
+        object,_:=object_put_file(s,path)
+        return object
+    }
+    texture,other:=put(t,&s,&types,fmt.tprintf("%s/texture.tex",folder),{1,1}),put(t,&s,&types,fmt.tprintf("%s/other.tex",folder),{2,2})
+    text,_:=store.put(&s,transmute([]u8)string("not an asset"))
+    store.commit(&s)
+    entry :: proc(s:^store.Store,path:string,object:store.Hash,id:base.Asset_Id) -> Package_Listed {
+        listed:=Package_Listed{path=path,object=object,id=id,kind=KIND_TEXTURE,state=object!={}?.Built:.Not_Built}
+        dependencies:=make([dynamic]base.Asset_Id,context.temp_allocator)
+        listed.header,_=object_header(s,object,&dependencies)
+        listed.dependencies=dependencies[:]
+        return listed
+    }
     entries:=[]Package_Listed{
-        entry("","",{3,3}),entry("../out.tex",texture,{1,1}),entry("/abs.tex",texture,{1,1}),entry("a\\b.tex",texture,{1,1}),
-        entry("a/./b.tex",texture,{1,1}),entry(".hidden/c.tex",texture,{1,1}),entry("zero.tex",texture,{}),entry("c:x.tex",texture,{1,1}),
-        entry("gone.tex",fmt.tprintf("%s/absent.tex",folder),{4,4}),entry("text.tex",text,{5,5}),entry("liar.tex",other,{6,6}),
-        entry("twice.tex",texture,{1,1}),entry("twice.tex","",{7,7}),entry("twice.tex","",{7,7}),
+        entry(&s,"",{},{3,3}),entry(&s,"../out.tex",texture,{1,1}),entry(&s,"/abs.tex",texture,{1,1}),entry(&s,"a\\b.tex",texture,{1,1}),
+        entry(&s,"a/./b.tex",texture,{1,1}),entry(&s,".hidden/c.tex",texture,{1,1}),entry(&s,"zero.tex",texture,{}),entry(&s,"c:x.tex",texture,{1,1}),
+        entry(&s,"gone.tex",{},{4,4}),entry(&s,"text.tex",text,{5,5}),entry(&s,"liar.tex",other,{6,6}),
+        entry(&s,"twice.tex",texture,{1,1}),entry(&s,"twice.tex",{},{7,7}),entry(&s,"twice.tex",{},{7,7}),
     }
     r:Registry;registry_init(&r,root,listed=entries);defer registry_destroy(&r)
     testing.expect_value(t,registry_scan(&r),Error.None)

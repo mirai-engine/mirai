@@ -110,6 +110,7 @@ error_text :: proc(error:asset.Error) -> string {
     case .Not_Found: return "does not exist"
     case .IO: return "could not be read or written"
     case .Invalid: return "contains something the format does not allow"
+    case .Not_Here: return "a part of it is not in the store yet: fetch it from a peer that has it, or build it again"
     }
     return "unknown error"
 }

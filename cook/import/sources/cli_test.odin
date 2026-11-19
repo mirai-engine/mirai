@@ -12,6 +12,7 @@ import importer "mirai:cook/import"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/subprocess"
+import "mirai:store"
 
 // End to end: imports the fixtures with the command of `mirai import`, as the
 // import program of the engine runs it, and checks what it writes with
@@ -59,6 +60,24 @@ reported_paths :: proc(out:string) -> []string {
     return paths[:]
 }
 
+// Opens each object of the store at root a report names ("object <address>"),
+// as the engine loads it: how many open.
+objects_open :: proc(t:^testing.T,root:string,paths:[]string,loc:=#caller_location) -> (opened:int) {
+    s:=test_store(t,root,loc)
+    if s==nil {return}
+    defer store.close(s)
+    for path in paths {
+        if !strings.has_prefix(path,"object ") {continue}
+        address,ok:=store.parse_hex(path[len("object "):])
+        a:asset.Asset
+        if testing.expectf(t,ok && asset.asset_open_object(&a,s,address,context.temp_allocator)==.None,"%s opens",path,loc=loc) {
+            asset.asset_close(&a)
+            opened+=1
+        }
+    }
+    return
+}
+
 // The lines of a report that name an asset: id, kind, bytes and path.
 reported_assets :: proc(out:string) -> []string {
     lines:=make([dynamic]string,context.temp_allocator)
@@ -104,9 +123,10 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
     // The scene is checked against the game of a project, which this folder is not.
     verify:=make([dynamic]string,context.temp_allocator)
     append(&verify,"asset","verify")
-    for path in paths {if !strings.has_suffix(path,".scene") {append(&verify,path)}}
+    for path in paths {if !strings.has_suffix(path,".scene") && !strings.has_prefix(path,"object ") {append(&verify,path)}}
     checked:=run(t,exe,..verify[:])
     testing.expectf(t,checked.code==0,"asset verify fails: %s%s",checked.out,checked.err)
+    objects_open(t,kept,paths)
 
     // Importing again keeps every id, and the mesh and the texture are not built again.
     again:=import_run(kept,plant,"--uncompressed")
@@ -118,11 +138,7 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
     bricks:=copy_in(root_folder,DEMO,"surfaces/bricks/bricks_color.png")
     texture:=import_run(kept,bricks,"--srgb")
     testing.expectf(t,texture.code==0 && strings.contains(texture.out,"texture"),"%d: %s%s",texture.code,texture.out,texture.err)
-    verify_texture:=make([dynamic]string,context.temp_allocator)
-    append(&verify_texture,"asset","verify")
-    append(&verify_texture,..reported_paths(texture.out))
-    verified:=run(t,exe,..verify_texture[:])
-    testing.expect_value(t,verified.code,0)
+    testing.expect_value(t,objects_open(t,kept,reported_paths(texture.out)),1)
     current:=import_run(kept,bricks)
     testing.expectf(t,current.code==0 && strings.contains(current.out,"0 assets"),"a current source is not imported again: %s%s",current.out,current.err)
 

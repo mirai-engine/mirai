@@ -23,6 +23,18 @@ each at a multiple of its alignment.
 - `header_read` validates only the header (what a scan uses). `blob_open` validates the whole file:
   exact size, each chunk inside the file and aligned, uncompressed size below `PACK_MAX` and a
   total memory limit (`DEFAULT_MEMORY_LIMIT`).
+- **An asset of the store** (`asset/parts.odin`) is an object of the
+  [store](../../mirai-store/SKILL.md): one group per container chunk in directory order, its
+  stored bytes as the file has them (nothing is compressed twice), and the header and directory
+  as the meta of its root. `object_put` cuts each chunk where the format reads alone: between the
+  pieces of a stream, between the levels of uncompressed `texels` (smallest first, so the first
+  chunks are the small levels), between the blocks of a mesh's `page_data` and of a block table.
+  The file is the meta, each group at its chunk's offset and zeros between: `object_file` gives
+  the bytes `object_put` took. `asset_open_object` checks meta against groups (tags, order, sizes,
+  limit) and reads each chunk the first time a table needs it: one chunk of a sealed pack is a
+  slice of its mapping, several are gathered into memory of the asset, and a stream that holds
+  levels reads only the pieces asked for. A chunk the store does not hold yet is `Not_Here` to
+  whoever reads it; nothing checks a whole-file hash.
 - `blob_build` stores a chunk compressed only when that shrinks it. The dependencies, names,
   schema and table directory are stored as they are: a scan reads them without a decoder.
 
@@ -223,22 +235,24 @@ scan opens every file and writes it again.
   its length, without walking the files (`asset.list` reports it as `used_by`).
 - **Listed outputs.** What the
   [imports](../../mirai-imports/references/imports.md#identity-and-reimport) build that nobody
-  edits is not a file of the assets folder but a blob of the machine store. The root and each
+  edits is not a file of the assets folder but an object of the machine store. The root and each
   mount take the entries `root_packages` gives for the packages their root pins: `packages_resolve`
   of its `packages.mirai` against the store (`asset/packages_root.odin`). Every program that sets
   up the registry of a root that is not shipped goes through it, with the store root as a value
   (the machine's unless it names another); a root without the list opens no store, and what it
   cannot list is a problem that names the package, reported where that program reports asset
   problems, never a failure to start. A scan lists each like any asset (`Registry_File.listed`),
-  with no source anywhere. An entry whose
-  build is not on this machine, or whose blob is gone, stays listed as `Not_Built` (its id and
-  kind, no file, not found by id), never removed and never an error of the scan; a blob that is
-  not the asset its entry names is `Broken`. A path a file, a folder or another entry has takes
-  the id of the entry after its name, never the order of a scan, and an entry with no id or a
-  path that is empty or leaves its folder is refused (`Registry.refused`). Blobs do not change:
-  a refresh keeps what is listed, unless a file of the folder appears at its path (which runs a
-  scan), and memory holds no listed path. `registry_file_path` gives the blob of a listed path.
-  A cooked folder has none: the cook writes every asset at its path.
+  with no source anywhere, from the header and dependencies `packages_resolve` read of its object.
+  An entry whose build is not on this machine, or whose object is not here, stays listed as
+  `Not_Built` (its id and kind, not found by id), never removed and never an error of the scan;
+  an object that is not the asset its entry names is `Broken`. A path a file, a folder or another
+  entry has takes the id of the entry after its name, never the order of a scan, and an entry with
+  no id or a path that is empty or leaves its folder is refused (`Registry.refused`). Objects do
+  not change: a refresh keeps what is listed, unless a file of the folder appears at its path
+  (which runs a scan), and memory holds no listed path. A listed path has no file
+  (`registry_file_path` gives ""): `registry_listed_object` gives its object, which `host` opens
+  by parts, and `registry_read` its file from `Registry.store`. A cooked folder has none: the cook
+  writes every asset at its path.
 - **Mounts.** `registry_mount` adds a folder under a prefix (a plugin's assets, in
   `plugins/<name>`). A prefix that starts with a dot belongs to the program's assets (the editor's,
   in `.editor`): they are found by id and by path, but a project's lists omit them
@@ -281,11 +295,13 @@ scan opens every file and writes it again.
 The records of the imports kept in the [machine store](../../mirai-store/SKILL.md)
 (`asset/packages.odin`), three texts with a version each.
 
-- **Package manifest** (`Package`): a blob, named by `packages/<package id>` on the machine
-  that ingested it. The import that ingests a source writes it. A root that pins it also keeps
+- **Package manifest** (`Package`): an object, named by `manifests/<BLAKE3 of its text>`, what a
+  pin names, and by `packages/<package id>` on the machine that ingested it. The import that
+  ingests a source writes it. A root that pins it also keeps
   its text, versioned, in `packages/<package id>.mirai` beside `packages.mirai`
   (`package_file`).
-- **Build manifest** (`Build`): a blob, named by `imports/<import_key>` (Final, which peers
+- **Build manifest** (`Build`): an object that names the object of each output, named by
+  `imports/<import_key>` (Final, which peers
   share) or `imports-fast/<import_key>` (never shared) by the import that builds it, and by
   `builds/<build_select>` by the refresh of a project that chose it.
 - **Project list** (`Packages`): `packages.mirai` beside `project.mirai`, versioned. The library
@@ -308,10 +324,10 @@ The records of the imports kept in the [machine store](../../mirai-store/SKILL.m
   cache it holds, so a program without importers (the dev player) finds the build the refresh
   chose. The caches of `cook/cache` name theirs in `cache-<name>`.
 - `packages_resolve` lists, for each package of the list, its assets of the cache the project
-  uses with what they depend on, at `<folder>/<name><extension>`, with the path of their blob. A
-  missing build lists them not built; a manifest that neither the store nor the root has, that
-  does not read or whose file is not its pin, a build that does not read and an asset the
-  manifest lacks are problems of the result. It removes, builds and fetches nothing.
+  uses with what they depend on, at `<folder>/<name><extension>`, with their object and its
+  header. A missing build lists them not built; a manifest that neither the store nor the root
+  has, that does not read or whose file is not its pin, a build that does not read and an asset
+  the manifest lacks are problems of the result. It removes, builds and fetches nothing.
 - An asset id is random at the first ingest and the manifest keeps it; an ingest again takes
   each id from the manifest before it.
 

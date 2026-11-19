@@ -16,8 +16,8 @@ import "mirai:std/serial"
 // file in memory takes the size of its content and the time it last changed.
 // A file outside the folders, named by its absolute path (the Slang source of
 // a program), is held the same way but is no file of the registry: no record,
-// scan or lookup by id sees it. A listed output of a package is a blob of the
-// store, which nothing changes: memory holds none.
+// scan or lookup by id sees it. A listed output of a package is an object of
+// the store, which nothing changes: memory holds none.
 
 Registry_Memory :: struct {
     path:string, // as Registry_File.path
@@ -137,10 +137,16 @@ registry_memory_write :: proc(r:^Registry,path:string) -> Error {
 }
 
 // What a file of the registry holds now: its content in memory, or the file
-// on disk, aligned for the chunks of the asset it is. Not_Found for a removed
-// file, for one that is not there and for a listed output not built.
+// on disk, aligned for the chunks of the asset it is; of a listed output, its
+// file as its object of the store gives it (object_file). Not_Found for a
+// removed file, for one that is not there and for a listed output not built
+// or without the store of the registry.
 registry_read :: proc(r:^Registry,path:string,allocator:=context.allocator,limit:=u64(DEFAULT_MEMORY_LIMIT)) -> (data:[]u8,error:Error) {
-    if blob,listed:=r.listed_files[path];listed && blob=="" {return nil,.Not_Found}
+    if object,listed:=r.listed_files[path];listed {
+        if object=={} || r.store==nil {return nil,.Not_Found}
+        if at,known:=r.by_path[path];known && u64(r.files[at].size)>limit {return nil,.Too_Large}
+        return object_file(r.store,object,allocator)
+    }
     if held,found:=registry_memory_find(r,path);found {
         if held.removed {return nil,.Not_Found}
         if u64(len(held.data))>limit {return nil,.Too_Large}

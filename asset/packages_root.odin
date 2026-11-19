@@ -61,7 +61,7 @@ packages_list :: proc(root:string,allocator:=context.allocator) -> (list:Package
     switch load_error {
     case .None:
     case .Out_Of_Memory: return {},problems,false,.Out_Of_Memory
-    case .Truncated,.Not_An_Asset,.Version,.Corrupt,.Hash,.Too_Large,.Schema,.Not_Found,.IO,.Invalid,.Codec_Missing:
+    case .Truncated,.Not_An_Asset,.Version,.Corrupt,.Hash,.Too_Large,.Schema,.Not_Found,.IO,.Invalid,.Codec_Missing,.Not_Here:
         problem_line(&problems,"%s/%s does not read (%v), so its packages are not listed: restore it from version control",root,PACKAGES_FILE,load_error) or_return
         return
     }
