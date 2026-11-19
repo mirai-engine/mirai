@@ -387,6 +387,7 @@ channel_resolve :: proc(p:^Peer,record:Record,received:bool) {
         c.resend[(c.resend_head+c.resend_count)%len(c.resend)]=seq
         c.resend_count+=1
         p.stats.chunks_resent+=1
+        p.stats.bytes_resent+=u64(chunk.length)
         return
     }
     chunk.state=.Acked
