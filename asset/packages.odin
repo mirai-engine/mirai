@@ -672,7 +672,7 @@ packages_resolve :: proc(s:^store.Store,root:string,list:^Packages,allocator:=co
             for o in b.outputs {outputs[o.id]=o}
         case .Missing:
         case .Out_Of_Memory: return {},.Out_Of_Memory
-        case .Not_Here_Yet,.Corrupt,.Wrong_Size,.Invalid_Argument,.Io,.No_Space,.Unsupported_Layout:
+        case .Corrupt,.Wrong_Size,.Invalid_Argument,.Io,.No_Space,.Unsupported_Layout:
             problem_add(&resolved,{entry.id,{},.Build_Unreadable}) or_return
         }
         folder:=entry.folder!=""?fmt.tprintf("%s/",entry.folder):""
@@ -1102,7 +1102,7 @@ file_error :: proc(error:serial.File_Error) -> Error {
 store_error :: proc(error:store.Error) -> Error {
     switch error {
     case .None: return .None
-    case .Missing,.Not_Here_Yet: return .Not_Found
+    case .Missing: return .Not_Found
     case .Corrupt,.Wrong_Size,.Unsupported_Layout: return .Corrupt
     case .Invalid_Argument: return .Invalid
     case .Out_Of_Memory: return .Out_Of_Memory

@@ -1,6 +1,5 @@
 package store
 
-import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:testing"
@@ -12,9 +11,8 @@ import "mirai:std/base"
 Worker :: struct {
     s:^Store,
     shared:[][]u8,
-    tables:[][]Hash,
+    source:^Store, // what a receiver copies from
     own:[]u8,
-    own_table:[]Hash,
     seed:int,
     error:Error,
 }
@@ -73,14 +71,16 @@ two_stores_put_and_sweep_from_several_threads :: proc(t:^testing.T) {
     for sample in data {testing.expect_value(t,verify(&a,test_address(sample)),Error.None)}
 }
 
+// Takes the chunks of a blob's object from the source and names it, as a
+// receiver does.
 @(private="file")
-worker_receive :: proc(w:^Worker,data:[]u8,pieces:[]Hash) {
+worker_receive :: proc(w:^Worker,data:[]u8) {
     hash:=test_address(data)
-    if error:=receive_begin(w.s,hash,i64(len(data)),pieces);error!=.None {w.error=error;return}
-    for i in 0..<len(pieces) {
-        index:=(i+w.seed)%len(pieces)
-        if error:=receive_piece(w.s,hash,index,test_piece(data,index));error!=.None {w.error=error;return}
-    }
+    root,found:=blob_root(w.source,hash)
+    if !found {w.error=.Missing;return}
+    if error:=test_copy(w.source,w.s,root);error!=.None {w.error=error;return}
+    if error:=blob_alias(w.s,hash,root);error!=.None {w.error=error;return}
+    w.error=commit(w.s)
 }
 
 @(private="file")
@@ -89,34 +89,34 @@ worker_run :: proc(w:^Worker) {
         if (i+w.seed)%2==0 {
             if _,error:=put_bytes(w.s,data);error!=.None {w.error=error;return}
         } else {
-            worker_receive(w,data,w.tables[i])
+            worker_receive(w,data)
         }
         if w.error!=.None {return}
     }
-    worker_receive(w,w.own,w.own_table)
+    _,w.error=put_bytes(w.s,w.own)
 }
 
 @(test)
 two_stores_on_one_root_put_and_receive_from_several_threads :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"store-threads");if folder=="" {return}
-    a,ok:=test_store(t,folder);if !ok {return}
+    a,ok:=test_store(t,strings.concatenate({folder,"/shared"},context.temp_allocator));if !ok {return}
     defer close(&a)
-    b,_:=test_store(t,folder)
+    b,_:=test_store(t,strings.concatenate({folder,"/shared"},context.temp_allocator))
     defer close(&b)
+    source,_:=test_store(t,strings.concatenate({folder,"/source"},context.temp_allocator))
+    defer close(&source)
     WORKERS :: 4
     shared:=make([][]u8,4,context.temp_allocator)
-    tables:=make([][]Hash,len(shared),context.temp_allocator)
     for &data,i in shared {
-        data=test_bytes(5*PIECE_BYTES+i*1000+7,u64(i)+100)
-        tables[i]=test_table(data)
+        data=test_bytes(5*CHUNK_MAX+i*1000+7,u64(i)+100)
+        put_bytes(&source,data)
     }
     workers:[WORKERS]Worker
     threads:[WORKERS]^thread.Thread
     for &w,i in workers {
         w.s=&a if i%2==0 else &b
-        w.shared,w.tables,w.seed=shared,tables,i
-        w.own=test_bytes(3*PIECE_BYTES+i,u64(i)+200)
-        w.own_table=test_table(w.own)
+        w.shared,w.source,w.seed=shared,&source,i
+        w.own=test_bytes(3*CHUNK_MAX+i,u64(i)+200)
     }
     for &w,i in workers {threads[i]=thread.create_and_start_with_poly_data(&w,worker_run)}
     for th in threads {
@@ -131,9 +131,5 @@ two_stores_on_one_root_put_and_receive_from_several_threads :: proc(t:^testing.T
         hash:=test_address(data)
         testing.expect_value(t,verify(&a,hash),Error.None)
         testing.expect_value(t,verify(&b,hash),Error.None)
-        missing,error:=receive_missing(&b,hash,context.temp_allocator)
-        testing.expect(t,error==.None && len(missing)==0)
     }
-    partials,_:=os.read_all_directory_by_path(strings.concatenate({folder,"/tmp/partial"},context.temp_allocator),context.temp_allocator)
-    testing.expect_value(t,len(partials),0)
 }

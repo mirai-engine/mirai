@@ -11,6 +11,7 @@ import "core:thread"
 import "core:time"
 import "mirai:asset"
 import "mirai:cook/import/sources"
+import "mirai:exchange"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:store"
@@ -614,8 +615,8 @@ a_stopped_join_resumes_without_fetching_again_what_it_has :: proc(t:^testing.T) 
     report,error:=test_join(t,&w,1,join_desc(&w,0,joined))
     if !testing.expectf(t,error=="","%s",error) {return}
     again:=node_totals(&w.peers[1].n).received
-    // What arrived before the stop is in the store, whole blobs and pieces of others: it is not asked again.
-    testing.expectf(t,first+again<=TOTAL+store.PIECE_BYTES,"%d bytes received again after %d",again,first)
+    // What arrived before the stop is in the store, whole blobs and chunks of others: it is not asked again.
+    testing.expectf(t,first+again<=TOTAL+store.CHUNK_MAX+exchange.ROOT_BUDGET,"%d bytes received again after %d",again,first)
     testing.expect(t,report.fetched>0,"the resume fetched the rest")
     same_files(t,root,joined)
 }
