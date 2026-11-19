@@ -431,7 +431,7 @@ the_assets_of_a_project_load_its_packages_from_the_store :: proc(t:^testing.T) {
         testing.expect_value(t,error,asset.Error.None)
         if entry.built {
             info,_:=asset.kind_info(asset.KIND_MESH)
-            b:=asset.Build{package_id=entry.p.id,final=true,compressor=asset.COMPRESSOR_OPEN}
+            b:=asset.Build{package_id=entry.p.id,final=true}
             b.outputs=make([dynamic]asset.Build_Output,context.temp_allocator)
             append(&b.outputs,asset.Build_Output{id=mesh,kind=asset.KIND_MESH,kind_version=info.version,object=blob})
             built,_:=asset.build_put(&s,&b)

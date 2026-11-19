@@ -253,7 +253,7 @@ writer_publish :: proc(w:^Writer,name,importer:string) -> bool {
     p.origin={path=origin_of(w.origin),folder=os.is_dir(w.path),importer=importer}
     if settings:=settings_text(w.report.settings,context.temp_allocator);settings!="{}" {p.settings=settings}
     slice.sort(p.inputs[:])
-    b:=asset.Build{package_id=w.package_id,key=w.key,final=!w.fast,compressor=asset.build_compressor(w.types.codecs)}
+    b:=asset.Build{package_id=w.package_id,key=w.key,final=!w.fast}
     b.outputs=make([dynamic]asset.Build_Output,context.temp_allocator)
     for output,at in w.outputs {
         if w.objects[at]=={} {continue}

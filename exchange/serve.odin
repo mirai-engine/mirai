@@ -177,13 +177,23 @@ serve_job :: proc(data:rawptr,worker:int) {
     }
 }
 
-// The chunk at address read into out after a Chunk head, or why not.
+// The chunk at address read into out after its Chunk head, in a codec the
+// peer decodes: the size of the message, or why not.
 @(private)
-serve_read :: proc(x:^Exchange,out:[]u8,address:store.Hash) -> (size:int,error:store.Error) {
+serve_read :: proc(x:^Exchange,p:^Peer,out:[]u8,address:store.Hash) -> (size:int,error:store.Error) {
     room:=out[MSG_CHUNK_HEAD:]
-    bytes:=store.chunk_read(x.desc.store,address,room) or_return
+    bytes,codec,raw:=store.chunk_read_in(x.desc.store,address,p.decodes,room,p.scratch) or_return
     if raw_data(bytes)!=raw_data(room) {copy(room,bytes)}
-    return len(bytes),.None
+    encode_chunk_head(out,address,codec,raw)
+    return MSG_CHUNK_HEAD+len(bytes),.None
+}
+
+// The bytes of a Chunk out holds, when they are a node as they are.
+@(private)
+chunk_node :: proc(out:[]u8,size:int) -> (n:store.Node_View,ok:bool) {
+    if out[1+32]!=store.CODEC_NONE {return}
+    parsed,error:=store.node_parse(out[MSG_CHUNK_HEAD:size])
+    return parsed,error==.None
 }
 
 // The node at address of a stream, held until another is read.
@@ -211,22 +221,21 @@ serve_build :: proc(x:^Exchange,p:^Peer,out:[]u8) -> int {
             return 1
         }
         if !p.started {
-            size,error:=serve_read(x,out,e.address)
+            size,error:=serve_read(x,p,out,e.address)
             p.started=true
             if error!=.None {
                 n:=encode_address(out,MSG_LACK,e.address)
                 serve_pop(p)
                 return n
             }
-            encode_chunk_head(out,e.address,size)
             if e.budget>0 {
-                if _,parse_error:=store.node_parse(out[MSG_CHUNK_HEAD:][:size]);parse_error==.None {
+                if _,node:=chunk_node(out,size);node {
                     p.stack[0]={address=e.address}
                     p.depth=1
                 }
             }
             if p.depth==0 {serve_pop(p)}
-            return MSG_CHUNK_HEAD+size
+            return size
         }
         for p.depth>0 {
             f:=&p.stack[p.depth-1]
@@ -237,20 +246,19 @@ serve_build :: proc(x:^Exchange,p:^Peer,out:[]u8) -> int {
             }
             child:=n.entries[f.index]
             f.index+=1
-            size,read_error:=serve_read(x,out,child.address)
-            if read_error!=.None || p.sent_under+i64(size)>i64(e.budget) {
+            size,read_error:=serve_read(x,p,out,child.address)
+            if read_error!=.None || p.sent_under+i64(size-MSG_CHUNK_HEAD)>i64(e.budget) {
                 p.depth=0
                 break
             }
-            p.sent_under+=i64(size)
-            encode_chunk_head(out,child.address,size)
+            p.sent_under+=i64(size-MSG_CHUNK_HEAD)
             if n.level>0 && p.depth<WALK_DEPTH {
-                if c,parse_error:=store.node_parse(out[MSG_CHUNK_HEAD:][:size]);parse_error==.None && c.level==n.level-1 {
+                if c,node:=chunk_node(out,size);node && c.level==n.level-1 {
                     p.stack[p.depth]={address=child.address}
                     p.depth+=1
                 }
             }
-            return MSG_CHUNK_HEAD+size
+            return size
         }
         serve_pop(p)
     }

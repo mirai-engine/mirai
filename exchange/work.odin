@@ -153,6 +153,8 @@ Receive_Slot :: struct {
     generation:u32,
     peer:int,
     epoch:u32,
+    codec:u8,     // of the bytes received after the chunk's, stored of them
+    stored:int,
     kind:Need_Kind,
     level:int,
     entry:u64,    // data bytes its parent says are under it
@@ -174,7 +176,12 @@ receive_job :: proc(data:rawptr,worker:int) {
     r:=(^Receive_Slot)(data)
     defer sync.atomic_store(&r.done,true)
     bytes:=r.bytes[:r.size]
+    stored:=r.bytes[r.size:][:r.stored]
     if r.result!=.Checked {
+        if r.codec!=store.CODEC_NONE && store.chunk_decode(r.x.desc.store,r.codec,stored,bytes)!=.None {
+            r.result=.Mismatch
+            return
+        }
         if store.address_of_bytes(bytes)!=r.address {
             r.result=.Mismatch
             return
@@ -204,7 +211,7 @@ receive_job :: proc(data:rawptr,worker:int) {
             return
         }
     }
-    if r.error=store.chunk_put(r.x.desc.store,r.address,bytes);r.error!=.None {
+    if r.error=store.chunk_put(r.x.desc.store,r.address,bytes,codec=r.codec,stored=stored);r.error!=.None {
         r.result=.Failed
         return
     }

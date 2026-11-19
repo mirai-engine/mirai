@@ -61,7 +61,7 @@ blob_round_trips_chunks_with_alignment_and_compression :: proc(t:^testing.T) {
         {tag=fourcc("BBBB"),index=2,alignment=64,compression=.Stream,data=noise},
         {tag=fourcc("EMPT"),alignment=8},
     }
-    testing.expect_value(t,blob_build(&w,KIND_TEST,7,{1,2},{3,4},{.Cooked},chunks[:],&scratch),Error.None)
+    testing.expect_value(t,blob_build(&w,KIND_TEST,7,{1,2},{3,4},{.Cooked},chunks[:],&scratch,codecs=.Open),Error.None)
     blob,error:=blob_open(serial.writer_bytes(&w))
     testing.expect_value(t,error,Error.None)
     testing.expect_value(t,blob.header.kind,KIND_TEST)
@@ -111,7 +111,7 @@ blob_open_rejects_files_that_contradict_themselves :: proc(t:^testing.T) {
     payload:=make([]u8,400);defer delete(payload)
     for &b,i in payload {b=u8(i%7)}
     chunks:=[?]Build_Chunk{{tag=fourcc("AAAA"),alignment=16,data=payload[:100]},{tag=fourcc("BBBB"),alignment=8,compression=.Stream,data=payload}}
-    blob_build(&w,KIND_TEST,0,{},{},{},chunks[:],&scratch)
+    blob_build(&w,KIND_TEST,0,{},{},{},chunks[:],&scratch,codecs=.Open)
     good:=serial.writer_bytes(&w)
     for cut in 0..<len(good) {
         _,error:=blob_open(good[:cut])
@@ -170,6 +170,7 @@ blob_open_rejects_files_that_contradict_themselves :: proc(t:^testing.T) {
 @(test)
 document_writes_and_reads_back_the_same_tables :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
+    types.codecs=.Open // what a cook ships: the streams under test
     doc:Document;sample_document(&doc,&types);defer document_destroy(&doc)
     w:serial.Writer;serial.writer_init(&w);defer serial.writer_destroy(&w)
     testing.expect_value(t,document_write(&doc,&w),Error.None)
@@ -193,6 +194,7 @@ document_writes_and_reads_back_the_same_tables :: proc(t:^testing.T) {
     testing.expect_value(t,back.tables[points].columns[0].compression,Compression.Stream)
 
     again:serial.Writer;serial.writer_init(&again);defer serial.writer_destroy(&again)
+    back.codecs=.Open
     testing.expect_value(t,document_write(&back,&again),Error.None)
     testing.expect(t,mem.compare(serial.writer_bytes(&again),serial.writer_bytes(&w))==0)
 
@@ -206,6 +208,7 @@ document_writes_and_reads_back_the_same_tables :: proc(t:^testing.T) {
 @(test)
 asset_gives_views_of_the_file_and_lists_what_it_depends_on :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
+    types.codecs=.Open // what a cook ships: the streams under test
     doc:Document;sample_document(&doc,&types);defer document_destroy(&doc)
     path:=fmt.tprintf("%s/views.test",base.test_folder(t,"asset"))
     testing.expect_value(t,document_save(&doc,path),Error.None)
@@ -432,7 +435,7 @@ a_large_chunk_decodes_its_pieces_on_the_job_workers :: proc(t:^testing.T) {
     w:serial.Writer;serial.writer_init(&w);defer serial.writer_destroy(&w)
     scratch:[dynamic]u8;defer delete(scratch)
     chunks:=[?]Build_Chunk{{tag=fourcc("BULK"),alignment=16,compression=.Stream,data=data}}
-    testing.expect_value(t,blob_build(&w,KIND_TEST,0,{},{},{},chunks[:],&scratch),Error.None)
+    testing.expect_value(t,blob_build(&w,KIND_TEST,0,{},{},{},chunks[:],&scratch,codecs=.Open),Error.None)
     blob,error:=blob_open(serial.writer_bytes(&w))
     testing.expect_value(t,error,Error.None)
     entry:=blob_chunk(&blob,0)

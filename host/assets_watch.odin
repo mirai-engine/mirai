@@ -33,9 +33,6 @@ app_assets_create :: proc(app:^App,desc:App_Desc) -> App_Error {
     }
     app.assets=assets
     if app.info!=nil && app.info.schema!=nil {assets.types.defaults=&app.info.schema.schema}
-    // What a program that edits a project saves its assets with; a shipped game saves with the open
-    // compressor.
-    if app.engine_root!="" {assets.types.codecs=asset.project_codecs(app.root,app.engine_root)}
     assets.load_profile=&app.load_profile
     // A frame never reads a texture for a material: it arrives in jobs (app_textures_stream).
     assets.arrive=app.renderer!=nil && jobs.worker_count(&app.jobs)>1

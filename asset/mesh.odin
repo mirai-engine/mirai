@@ -486,7 +486,7 @@ mesh_tables :: proc(doc:^Document,types:^Types,info:^Mesh_Info,view:Mesh_View,de
 // root is not every page as it does one of a file. In allocator, with
 // scratch from the temporary allocator; false without memory.
 mesh_pages_pack :: proc(g:^Mesh_Geometry,allocator:=context.allocator) -> bool {
-    pages,data,error:=pages_compress(g^,.Fast,.Open,allocator)
+    pages,data,error:=pages_compress(g^,.Fast,.None,allocator)
     if error!=.None {return false}
     delete(g.pages,allocator)
     g.pages,g.page_data=pages,data[:]
