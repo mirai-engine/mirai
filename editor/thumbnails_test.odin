@@ -172,3 +172,41 @@ the_key_of_a_package_thumbnail_is_its_objects :: proc(t:^testing.T) {
     buffer:[16]u8
     testing.expect_value(t,thumbnail_name(0x1a2b,&buffer),"0000000000001a2b")
 }
+
+// A texture's preview is read from its smallest levels once, on a machine
+// that has it, and kept in the store under its key; a browser that shows it
+// again, also another session of the machine, reads it from there instead.
+@(test)
+a_texture_preview_is_made_once_from_its_small_levels_and_then_read :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"thumbnail-texture")
+    if root=="" {return}
+    assets:host.Assets
+    asset.types_init(&assets.types)
+    defer asset.types_destroy(&assets.types)
+    os.make_directory_all(fmt.tprintf("%s/assets",root))
+    pixels:=make([]u8,128*128*4,context.temp_allocator)
+    for &value,at in pixels {value=200 if at%4!=1 else 40}
+    mips:=[][]u8{pixels}
+    texture:=base.Asset_Id{5,5}
+    testing.expect_value(t,asset.texture_save(fmt.tprintf("%s/assets/brick.tex",root),&assets.types,{id=texture,width=128,height=128,format=.RGBA8,mips=mips}),asset.Error.None)
+    asset.registry_init(&assets.registry,fmt.tprintf("%s/assets",root))
+    defer asset.registry_destroy(&assets.registry)
+    testing.expect_value(t,asset.registry_scan(&assets.registry),asset.Error.None)
+    app:=host.App{assets=&assets}
+    st,opened:=store.open(fmt.tprintf("%s/store",root))
+    if !testing.expect_value(t,opened,store.Error.None) {return}
+    defer store.close(&st)
+    for session in 0..<2 {
+        p:=new(Thumbnails);defer free(p)
+        defer {delete(p.pixels);delete(p.image);thumbnail_file_destroy(&p.file)}
+        edits:history.Edits
+        s:=Session{app=&app,thumbnails=p,store=st,edits=&edits,frame=10}
+        quad:=preview_texture(&s,texture,THUMBNAIL_SIZE)
+        if session==0 {
+            testing.expect(t,p.drawn==s.frame+1 && quad.kind!=.Solid,"made from the texture the first time")
+        } else {
+            testing.expect(t,p.drawn!=s.frame+1 && p.loads==1 && quad.kind!=.Solid,"read from the store the second")
+        }
+        st=s.store
+    }
+}

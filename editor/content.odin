@@ -1754,9 +1754,9 @@ content_preview :: proc(s:^Session,file:^asset.Registry_File,points:f32,clip:u32
     a:=s.app.assets
     if a.renderer==nil {return}
     switch file.kind {
-    case asset.KIND_MATERIAL:  if preview_load_turn(s,file.id) {quad=ui.quad_whole(host.UI_QUAD_MATERIAL_PREVIEW,host.assets_material_row(a,file.id))}
+    case asset.KIND_MATERIAL:  quad=preview_material(s,file.id,points)
     case asset.KIND_MESH:      quad=preview_geometry(s,.None,file.id,points)
-    case asset.KIND_TEXTURE:   if preview_load_turn(s,file.id) {quad=texture_quad(s,file.id)}
+    case asset.KIND_TEXTURE:   quad=preview_texture(s,file.id,points)
     case asset.KIND_SCENE:     quad=preview_document(s,file.id,points) if asset.registry_prefab(file) else preview_scene(s,file.id,points)
     case:                      quad=preview_provided(s,file,clip,points)
     }

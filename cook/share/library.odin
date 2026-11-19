@@ -104,7 +104,7 @@ peer_library :: proc(n:^Node,peer:Peer,allocator:=context.allocator) -> (list:[]
         if b,built:=chosen[p.id];built {
             entry.built,entry.here=true,true
             objects:=make([]store.Hash,len(b.outputs),allocator)
-            entry.root=asset.build_shown(&b,&p)
+            entry.root,_=asset.build_shown(&b,&p)
             for o,k in b.outputs {
                 append(&sizes,o.object)
                 entry.here&&=asset.object_whole(s,o.object)
