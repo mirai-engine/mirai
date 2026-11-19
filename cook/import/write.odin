@@ -122,6 +122,7 @@ read_whole :: proc(path:string) -> ([]u8,serial.File_Error) {
 Writer :: struct {
     options:Import_Options,
     folder:string,               // where new documents go: under the folder of the documents; "": none are written there
+    documents:string,            // under the folder of the documents, where new ones go (asset.Package.documents)
     registry:^asset.Registry,    // the assets of the root, where documents are found by id; nil without a folder of the documents
     types:asset.Types,
     report:^Import_Report,

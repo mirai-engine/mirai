@@ -47,10 +47,10 @@ Followed :: struct {
 
 // Writes into folder the documents of the build b of the package p, or
 // follows those whose ids registry has where it has them. A new file is
-// named as the package names its document, under folder. recorded: what the
-// project's pin says its files held when last written; one that changed since
-// is left as it is, with a warning, unless changed is Discard. What it wrote,
-// in allocator.
+// named as the package names its document, under the folder of its documents
+// (asset.Package.documents) in folder. recorded: what the project's pin says
+// its files held when last written; one that changed since is left as it is,
+// with a warning, unless changed is Discard. What it wrote, in allocator.
 // kinds: the extensions of the kinds of the plugins of the project, which a new
 // file of one of their documents takes.
 documents_follow :: proc(s:^store.Store,p:^asset.Package,b:^asset.Build,folder:string,registry:^asset.Registry,recorded:[]asset.Package_Written,changed:Changed,kinds:[]Kind_Extension={},allocator:=context.allocator) -> (written:[dynamic]Followed,error:Error) {
@@ -66,6 +66,7 @@ documents_follow :: proc(s:^store.Store,p:^asset.Package,b:^asset.Build,folder:s
     taken:=make(map[string]bool,context.temp_allocator)
     kept:[]base.Asset_Id
     if changed!=.Discard {kept=documents_changed(p,recorded,registry,context.temp_allocator)}
+    folder:=folder if p.documents=="" else fmt.tprintf("%s/%s",folder,p.documents)
     each: for o in b.outputs {
         if asset.import_cached(o.kind) {continue}
         for id in kept {
