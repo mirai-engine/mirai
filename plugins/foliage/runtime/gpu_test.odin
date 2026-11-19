@@ -877,3 +877,51 @@ a_world_copied_for_play_draws_its_swaying_entities_once_and_leaves_nothing :: pr
 	testing.expectf(t, count(f) == 2 && len(f.resident.sways.entities) == 2, "freed, the copy leaves the batches of the edited world alone, one each: %d", count(f))
 	testing.expect_value(t, problems.count, 0)
 }
+
+// A swaying entity is outlined around its mesh at rest only at a level that
+// shows something with the styles of the renderer, and a frame in which
+// nothing of its outline changed gives the outline it made before.
+@(test)
+a_swaying_entity_is_outlined_only_at_a_level_that_shows :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f) {return}
+	defer gpu_fixture_destroy(f)
+	defer sways_free(&f.resident)
+	w: Sway_World
+	if !test_world_init(t, &w) {return}
+	defer test_world_destroy(&w)
+	problems := new(core.Problems)
+	defer free(problems)
+	outlined :: proc(f: ^Gpu_Fixture, w: ^Sway_World, problems: ^core.Problems) -> []gpu.Instance_Desc {
+		test_world_settle(w)
+		clear(&f.app.extras.instances)
+		sway_step(f, w, problems)
+		return f.app.extras.instances[:]
+	}
+	e := core.create(&w.entities)
+	place := mm.TRANSFORM_IDENTITY
+	core.add(&w.meshes, e, render.Mesh_Renderer{shape = .Cube})
+	core.add(&w.worlds, e, core.World_Transform{place, place})
+	core.add(&w.sways, e, FOLIAGE_SWAY_DEFAULT)
+	// The first level of the agents, transparent until the editor gives it a color.
+	core.add(&w.highlights, e, render.Highlight{level = 5})
+	testing.expect(t, 5 not_in gpu.highlight_levels_shown(&f.renderer) && 1 in gpu.highlight_levels_shown(&f.renderer))
+	testing.expect_value(t, len(outlined(f, &w, problems)), 0)
+	core.edit(&w.highlights, e).level = 1
+	shown := outlined(f, &w, problems)
+	testing.expect(t, len(shown) == 1 && shown[0].highlight == 1 && shown[0].outline_only && shown[0].object_id == u64(e), "selected, it is outlined")
+	f.resident.sway_outlines.instances[0].copy_variant = 7
+	shown = outlined(f, &w, problems)
+	testing.expect(t, len(shown) == 1 && shown[0].copy_variant == 7, "a still frame gives the outline it made before")
+	core.edit(&w.highlights, e).level = 5
+	testing.expect_value(t, len(outlined(f, &w, problems)), 0)
+	style := f.renderer.highlight
+	style.colors[4] = {1, 0, 0, 1}
+	testing.expect(t, gpu.renderer_set_highlight_style(&f.renderer, style))
+	shown = outlined(f, &w, problems)
+	testing.expect(t, len(shown) == 1 && shown[0].highlight == 5, "once its level has a color, it is outlined")
+	core.add(&w.hidden, e, render.Hidden{})
+	testing.expect_value(t, len(outlined(f, &w, problems)), 0)
+	testing.expect_value(t, problems.count, 0)
+}

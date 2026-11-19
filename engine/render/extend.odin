@@ -390,8 +390,14 @@ colors_remove :: proc(renderer:^Renderer,colors:Colors_Handle) -> bool {
 instance_colors_set :: proc(renderer:^Renderer,index:int,colors:Colors_Handle) -> bool {
     return renderer!=nil && index>=0 && gpu.scene_set_instance_colors(renderer,u32(index),colors)
 }
-// A visual instance for this frame, without an entity of its own in the renderer.
-instance_add :: proc(extras:^host.Frame_Extras,instance:Instance_Desc) -> bool {return host.extras_instance_add(extras,instance)}
+// Visual instances for this frame, without an entity of their own in the renderer.
+instance_add :: proc(extras:^host.Frame_Extras,instances:..Instance_Desc) -> bool {return host.extras_instance_add(extras,..instances)}
+
+Highlight_Levels :: gpu.Highlight_Levels
+
+// The outline levels an instance shows something at, with the styles the
+// renderer has now.
+highlight_levels_shown :: proc(renderer:^Renderer) -> Highlight_Levels {return renderer!=nil?gpu.highlight_levels_shown(renderer):{}}
 
 // The box of a mesh, in its own space.
 mesh_bounds :: proc(renderer:^Renderer,mesh:Mesh_Handle) -> (bounds_min,bounds_max:[3]f32,ok:bool) {
