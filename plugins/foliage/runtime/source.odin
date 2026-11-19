@@ -68,7 +68,6 @@ Foliage_Type :: struct {
     casts_shadow:bool,
     ray_visible:bool,              // reflections and the indirect light see it
     impostor_distance:f32 `mirai:"min=0,unit=m"`, // from the eye, where its mesh gives way to its impostor and its shadows to its crown; 0: none
-    wind_variants:u32 `mirai:"max=16"`, // the swaying shapes of a type that casts shadows, each instance on one; 0: WIND_VARIANTS
     collision:Foliage_Collision,
     size:[3]f32 `mirai:"min=0,unit=m"`, // of its capsule or box, at scale 1
     preset:u32,                    // the Collision_Preset of its capsule or box
@@ -384,7 +383,7 @@ type_valid :: proc (type:Foliage_Type,next:u32) -> bool {
     for v in values {if !finite(v) || v<0 {return false}}
     if !finite(t.radius) || t.radius<0 || t.radius*t.scale[1]>RADIUS_MAX {return false}
     if t.density>1000 || t.scale[0]<=0 || t.scale[1]<t.scale[0] || t.height[0]<=0 || t.height[1]<t.height[0] || t.align>1 {return false}
-    if t.scale[1]>1000 || t.height[1]>1000 || t.collision>max(Foliage_Collision) || t.wind_variants>WIND_VARIANTS_MAX {return false}
+    if t.scale[1]>1000 || t.height[1]>1000 || t.collision>max(Foliage_Collision) {return false}
     r:=t.rule
     for v in ([7]f32{t.offset.x,t.offset.y,r.slope.x,r.slope.y,r.height.x,r.height.y,r.weight}) {if !finite(v) {return false}}
     if t.offset.x>t.offset.y || abs(t.offset.x)>POSITION_MAX || abs(t.offset.y)>POSITION_MAX {return false}
