@@ -386,7 +386,6 @@ texture_write :: proc(w:^Writer,job:Texture_Job,id,owner:base.Asset_Id,path,sour
     types:asset.Types
     asset.types_init(&types,context.temp_allocator)
     defer asset.types_destroy(&types)
-    types.codecs=w.types.codecs
     options:=texture_options(w,job)
     info:=import_info(source,job.name,job.index,job.size,job.hash,textures.settings_hash(options),job.version)
     if hash,fast,found:=texture_reuse(w,&types,job,id,owner,source);found {
@@ -410,7 +409,7 @@ texture_write :: proc(w:^Writer,job:Texture_Job,id,owner:base.Asset_Id,path,sour
     built:=&cooked.built
     out.fast=cooked.settings!=info.settings_hash
     info.settings_hash=cooked.settings
-    desc:=textures.built_desc(built,id,&info,types.codecs==.Best)
+    desc:=textures.built_desc(built,id,&info)
     desc.owner=owner
     out.format,out.width,out.height,out.mips=built.format,built.width,built.height,len(built.mips)
     zone(import_options,"texture.save")
@@ -481,7 +480,6 @@ writer_init :: proc(w:^Writer,path,folder:string,options:Import_Options,report:^
     w.followed.allocator=context.temp_allocator
     w.rng=base.rng_make(u64(time.time_to_unix_nano(time.now())),u64(uintptr(w)))
     asset.types_init(&w.types)
-    w.types.codecs=asset.project_codecs(options.root,project.engine_root_find("",context.temp_allocator))
     zone(options,"import.scan")
     return writer_source(w,path,folder) && writer_changed(w)
 }

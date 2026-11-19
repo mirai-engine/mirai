@@ -114,7 +114,6 @@ project_open :: proc(p:^Project,root,engine:string,library:=true,store_root:="")
     p.package_problems=make([]string,len(found.problems))
     for problem,i in found.problems {p.package_problems[i]=strings.clone(problem)}
     asset.types_init(&p.types)
-    p.types.codecs=asset.project_codecs(root,engine)
     p.assets={&p.registry,&p.types}
     if os.is_dir(p.assets_root) && asset.registry_scan(&p.registry)!=.None {return fmt.tprintf("the assets of %s could not be read",p.assets_root)}
     ui_settings:gui.UI_Settings

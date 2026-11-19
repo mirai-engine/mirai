@@ -764,7 +764,7 @@ source_compare :: proc(next,s:^Source) -> (change:Change,ok:bool) {
         change.changed=true
     }
     writer:Page_Writer
-    if !page_writer_init(&writer,context.temp_allocator) {return}
+    if !page_writer_init(&writer,context.temp_allocator,.Open) {return}
     defer page_writer_destroy(&writer)
     low,high,differ:=grid_take(&next.field,&s.field,&writer,next.kind==.Heightfield)
     if differ {widen(&change,low,high)}

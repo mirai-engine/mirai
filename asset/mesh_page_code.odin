@@ -570,7 +570,8 @@ page_pack :: proc(coder:^Page_Coder,encoder:^Stream_Encoder,g:Mesh_Geometry,page
     if ok {
         tried:=at+packed
         smaller:=pack(encoder,profile,codecs,coded[:size],blocks[tried:]) or_return
-        if smaller<packed {
+        // Without a compressor to ask, the coding is what compresses smaller where the bytes rest.
+        if smaller<packed || codecs==.None {
             copy(blocks[at:],blocks[tried:][:smaller])
             page.data_bytes,page.coded_bytes=u32(smaller),u32(size)
         }

@@ -5,6 +5,7 @@ import "core:mem"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "compressor:data"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:store"
@@ -37,11 +38,13 @@ kind_files :: proc(t:^testing.T,types:^Types) -> (names:[dynamic]string,files:[d
         append(names,name)
         append(files,bytes)
     }
-    {
+    for codecs in ([2]Codecs{.None,.Open}) {
         vertices,indices:=test_grid(300,context.temp_allocator)
         doc:Document
+        types.codecs=codecs
+        defer types.codecs=.None
         testing.expect_value(t,mesh_document(&doc,types,{id={1,1},geometry=test_geometry(vertices,indices)},context.temp_allocator),Error.None)
-        add(&names,&files,"mesh",document_file(&doc))
+        add(&names,&files,fmt.tprintf("mesh %v",codecs),document_file(&doc))
     }
     for codecs in ([2]Codecs{.Open,.None}) {
         SIDE :: 256
@@ -54,7 +57,7 @@ kind_files :: proc(t:^testing.T,types:^Types) -> (names:[dynamic]string,files:[d
         }
         doc:Document
         types.codecs=codecs
-        defer types.codecs=.Open
+        defer types.codecs=.None
         testing.expect_value(t,texture_document(&doc,types,{id={2,2},width=SIDE,height=SIDE,format=.RGBA8,mips=levels},context.temp_allocator),Error.None)
         add(&names,&files,fmt.tprintf("texture %v",codecs),document_file(&doc))
     }
@@ -71,7 +74,7 @@ kind_files :: proc(t:^testing.T,types:^Types) -> (names:[dynamic]string,files:[d
         testing.expect_value(t,font_document(&doc,types,{id={4,4},file=#load("../assets/fixtures/cff.otf"),compression=.Stream},context.temp_allocator),Error.None)
         add(&names,&files,"font",document_file(&doc))
     }
-    for file in ([]string{"blockout/column.mesh","gallery/plant/Leaves.mat","showcase/hud_badge.tex","showcase/showcase.scene","showcase/hud.ui","showcase/lift.anim"}) {
+    for file in ([]string{"blockout/column.mesh","gallery/plant/Leaves.mat","showcase/hud_badge.tex","showcase/showcase.scene","showcase/hud.ui","showcase/lift.anim","characters/spider/spider.skeleton","characters/jelly/jelly_moods.character","vfx_gallery/smoke_plume.particle","interface/merchant_answers.records","physics_gallery/bricks.fracture","forest/Hills.terrain","texts.strings","forest/Woods.foliage","physics_gallery/recorded.physics_cache","../../plugins/prompts_kenney/assets/kenney.prompts"}) {
         bytes,error:=serial.file_read(strings.concatenate({PARTS_DEMO,file},context.temp_allocator),context.temp_allocator)
         if testing.expectf(t,error==.None,"%s reads",file) {add(&names,&files,file,bytes)}
     }
@@ -81,61 +84,146 @@ kind_files :: proc(t:^testing.T,types:^Types) -> (names:[dynamic]string,files:[d
 // Every table and column of two opened assets, decoded.
 @(private="file")
 assets_equal :: proc(t:^testing.T,name:string,file,object:^Asset) -> bool {
-    if !testing.expectf(t,file.blob.header==object.blob.header && len(file.tables)==len(object.tables) && slice.equal(file.dependencies,object.dependencies),"%s: the same header, tables and dependencies",name) {return false}
+    // Sizes and the hash are of how the chunks are stored, which the store's object does not compress.
+    a,b:=file.blob.header,object.blob.header
+    a.total_size,a.content_hash,b.total_size,b.content_hash=0,0,0,0
+    if !testing.expectf(t,a==b && len(file.tables)==len(object.tables) && slice.equal(file.dependencies,object.dependencies),"%s: the same header, tables and dependencies",name) {return false}
     for &table,at in file.tables {
         other:=&object.tables[at]
-        if !testing.expectf(t,table.name==other.name && table.rows==other.rows && len(table.columns)==len(other.columns),"%s: table %s",name,table.name) {return false}
+        // A table of blocks is compared by what its blocks decode to, where its pages say.
+        blocks:=strings.has_suffix(table.name,"_blocks")
+        if !testing.expectf(t,table.name==other.name && (blocks || table.rows==other.rows) && len(table.columns)==len(other.columns),"%s: table %s",name,table.name) {return false}
+        if blocks {continue}
         for _,column in table.columns {
             a,a_error:=asset_column_data(file,&table,column)
             b,b_error:=asset_column_data(object,other,column)
+            if strings.has_suffix(table.name,"_pages") && table.columns[column].size==size_of(Block_Record) && a_error==.None && b_error==.None {
+                if !blocks_equal(t,name,file,object,table.name,a,b) {return false}
+                continue
+            }
             if !testing.expectf(t,a_error==.None && b_error==.None && mem.compare(a,b)==0,"%s: %s column %d (%v %v)",name,table.name,column,a_error,b_error) {return false}
         }
     }
     return true
 }
 
-// Every kind opens from its object as from its file, and the object gives the
-// file back byte for byte; the same input encodes into the same object.
+@(private="file")
+blocks_equal :: proc(t:^testing.T,name:string,file,object:^Asset,pages:string,a,b:[]u8) -> bool {
+    blocks_name:=strings.concatenate({pages[:len(pages)-len("_pages")],"_blocks"},context.temp_allocator)
+    file_table,_:=asset_table(file,blocks_name)
+    object_table,_:=asset_table(object,blocks_name)
+    file_blocks,_:=asset_column_data(file,file_table,0)
+    object_blocks,_:=asset_column_data(object,object_table,0)
+    ra,rb:=mem.slice_data_cast([]Block_Record,a),mem.slice_data_cast([]Block_Record,b)
+    if !testing.expectf(t,len(ra)==len(rb),"%s: %s",name,pages) {return false}
+    d:Stream_Decoder
+    stream_decoder_init(&d,context.temp_allocator)
+    defer stream_decoder_destroy(&d)
+    for x,i in ra {
+        y:=rb[i]
+        if !testing.expectf(t,x.count==y.count && x.fill==y.fill && x.raw==y.raw && (x.size==0)==(y.size==0),"%s: %s run %d",name,pages,i) {return false}
+        if x.size==0 {continue}
+        p,q:=make([]u8,x.raw,context.temp_allocator),make([]u8,y.raw,context.temp_allocator)
+        testing.expect_value(t,unpack(&d,file_blocks[x.offset:][:x.size],p),Error.None)
+        testing.expect_value(t,unpack(&d,object_blocks[y.offset:][:y.size],q),Error.None)
+        if !testing.expectf(t,mem.compare(p,q)==0,"%s: %s block %d",name,pages,i) {return false}
+    }
+    return true
+}
+
+// Frames as a store of each build holds them: of this build's codec, kept as they are (a
+// codec that never shrinks), and of a codec this build lacks (another build's).
+@(private="file")
+Frames :: enum {Build,Raw,Other}
+
+@(private="file")
+frames_store :: proc(t:^testing.T,name:string,frames:Frames) -> (s:store.Store,ok:bool) {
+    s,ok=parts_store(t,fmt.tprintf("%s-%v",name,frames))
+    if !ok {return}
+    switch frames {
+    case .Build:
+    case .Raw: store.codec_hook(&s,{codec=14,encode=proc(src,dst:[]u8) -> int {return 0},decode=proc(src,dst:[]u8) -> bool {return false}})
+    case .Other: store.codec_hook(&s,{codec=15,encode=proc(src,dst:[]u8) -> int {
+            e:data.Encoder
+            data.encoder_init(&e)
+            defer data.encoder_destroy(&e)
+            size,error:=data.encode(&e,.Fast,src,dst)
+            return size if error==.None else 0
+        },decode=proc(src,dst:[]u8) -> bool {
+            d:data.Decoder
+            if data.decoder_init(&d)!=.None {return false}
+            defer data.decoder_destroy(&d)
+            return data.decode(&d,data.ZSTD,src,dst)==.None
+        }})
+    }
+    return
+}
+
+// Every kind opens from its object as from its file, from a store of each kind of frames, and
+// is the same object in each and whatever compressor wrote its file: an object holds its file
+// as Codecs.None writes it, which it gives back byte for byte.
 @(test)
 every_kind_loads_equal_from_a_file_and_from_the_store :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    s,ok:=parts_store(t,"asset-parts-kinds");if !ok {return}
-    defer store.close(&s)
     names,files:=kind_files(t,&types)
     _,again:=kind_files(t,&types)
-    for bytes,at in files {
-        name:=names[at]
-        object,put_error:=object_put(&s,bytes)
-        if !testing.expectf(t,put_error==.None,"%s is put: %v",name,put_error) {continue}
-        twice,_:=object_put(&s,again[at])
-        testing.expectf(t,twice==object,"%s: the same input encodes into the same object",name)
-        testing.expect_value(t,store.commit(&s),store.Error.None)
-        file,stored:Asset
-        if !testing.expect_value(t,asset_open(&file,bytes,context.temp_allocator),Error.None) {continue}
-        defer asset_close(&file)
-        if !testing.expect_value(t,asset_open_object(&stored,&s,object,context.temp_allocator),Error.None) {continue}
-        defer asset_close(&stored)
-        assets_equal(t,name,&file,&stored)
-        switch stored.blob.header.kind {
-        case KIND_MESH:
-            a,a_error:=mesh_view(&file,&types)
-            b,b_error:=mesh_view(&stored,&types)
-            testing.expectf(t,a_error==.None && b_error==.None && a.info^==b.info^ && slice.equal(a.levels,b.levels) && len(a.clusters)==len(b.clusters),"%s: the same mesh",name)
-        case KIND_TEXTURE:
-            a,a_error:=texture_view(&file,&types)
-            b,b_error:=texture_view(&stored,&types)
-            testing.expectf(t,a_error==.None && b_error==.None && a.info^==b.info^ && mem.compare(a.texels,b.texels)==0,"%s: the same texture",name)
-        case KIND_SOUND:
-            a,a_error:=sound_view(&file,&types)
-            b,b_error:=sound_view(&stored,&types)
-            testing.expectf(t,a_error==.None && b_error==.None && mem.compare(a.lossless,b.lossless)==0,"%s: the same sound",name)
-        case KIND_FONT:
-            a,a_error:=font_view(&file,&types)
-            b,b_error:=font_view(&stored,&types)
-            testing.expectf(t,a_error==.None && b_error==.None && mem.compare(a.file,b.file)==0,"%s: the same font",name)
+    objects:=make([]store.Hash,len(files),context.temp_allocator)
+    for frames in Frames {
+        s,ok:=frames_store(t,"asset-parts-kinds",frames);if !ok {return}
+        defer store.close(&s)
+        for bytes,at in files {
+            name:=names[at]
+            object,put_error:=object_put(&s,bytes)
+            if !testing.expectf(t,put_error==.None,"%s is put: %v",name,put_error) {continue}
+            twice,_:=object_put(&s,again[at])
+            testing.expectf(t,twice==object,"%s: the same input encodes into the same object",name)
+            if frames==.Build {objects[at]=object}
+            testing.expectf(t,object==objects[at],"%s: the same object in a store of %v frames",name,frames)
+            testing.expect_value(t,store.commit(&s),store.Error.None)
+            file,stored:Asset
+            if !testing.expect_value(t,asset_open(&file,bytes,context.temp_allocator),Error.None) {continue}
+            defer asset_close(&file)
+            if !testing.expect_value(t,asset_open_object(&stored,&s,object,context.temp_allocator),Error.None) {continue}
+            defer asset_close(&stored)
+            if file.blob.header.kind!=KIND_TEXTURE && file.blob.header.kind!=KIND_MESH {assets_equal(t,name,&file,&stored)}
+            switch stored.blob.header.kind {
+            case KIND_MESH:
+                a,a_error:=mesh_view(&file,&types)
+                b,b_error:=mesh_view(&stored,&types)
+                testing.expectf(t,a_error==.None && b_error==.None && a.info^==b.info^ && slice.equal(a.levels,b.levels) && slice.equal(a.clusters,b.clusters) && len(a.pages)==len(b.pages),"%s: the same mesh",name)
+                if a_error==.None && b_error==.None {testing.expectf(t,slice.equal(a.vertices,b.vertices) && slice.equal(a.triangles,b.triangles),"%s: the same vertices and triangles",name)}
+            case KIND_TEXTURE:
+                a,a_error:=texture_view(&file,&types)
+                b,b_error:=texture_view(&stored,&types)
+                testing.expectf(t,a_error==.None && b_error==.None && a.info.width==b.info.width && a.info.format==b.info.format && len(a.mips)==len(b.mips),"%s: the same texture",name)
+                if a_error==.None && b_error==.None {
+                    for _,level in a.mips {testing.expectf(t,mem.compare(texture_mip(a,level),texture_mip(b,level))==0,"%s: level %d",name,level)}
+                }
+            case KIND_SOUND:
+                a,a_error:=sound_view(&file,&types)
+                b,b_error:=sound_view(&stored,&types)
+                testing.expectf(t,a_error==.None && b_error==.None && mem.compare(a.lossless,b.lossless)==0,"%s: the same sound",name)
+            case KIND_FONT:
+                a,a_error:=font_view(&file,&types)
+                b,b_error:=font_view(&stored,&types)
+                testing.expectf(t,a_error==.None && b_error==.None && mem.compare(a.file,b.file)==0,"%s: the same font",name)
+            }
+            back,back_error:=object_file(&s,object,context.temp_allocator)
+            if !testing.expectf(t,back_error==.None,"%s: the object gives a file back",name) {continue}
+            raw,_:=document_repack(bytes,.Fast,.None,context.temp_allocator)
+            if header,_:=header_read(bytes);header.kind!=KIND_TEXTURE && mem.compare(raw,bytes)==0 {
+                testing.expectf(t,mem.compare(back,bytes)==0,"%s: a file written without a compressor comes back byte for byte",name)
+            }
+            again_object,_:=object_put(&s,back)
+            testing.expectf(t,again_object==object,"%s: the file it gives back is the same object",name)
         }
-        back,back_error:=object_file(&s,object,context.temp_allocator)
-        testing.expectf(t,back_error==.None && mem.compare(back,bytes)==0,"%s: the object gives its file back",name)
+    }
+    for name,at in names {
+        for other,k in names {
+            kind:=name[:strings.index_byte(name,' ')+1]
+            if k<=at || (kind!="texture " && kind!="mesh ") || !strings.has_prefix(other,kind) {continue}
+            testing.expectf(t,objects[at]==objects[k],"%s and %s, of one content, are one object",name,other)
+        }
     }
 }
 
@@ -179,7 +267,7 @@ the_small_levels_of_a_texture_load_before_the_large_ones_arrive :: proc(t:^testi
     partial,partial_ok:=parts_store(t,"asset-parts-levels-partial");if !partial_ok {return}
     defer store.close(&partial)
     _,files:=kind_files(t,&types)
-    bytes:=files[2] // the texture stored as it is
+    bytes:=files[3] // the texture stored as it is
     object,_:=object_put(&full,bytes)
     store.commit(&full)
     file:Asset
@@ -337,15 +425,17 @@ hostile_object_meta_and_groups_fail_the_asset :: proc(t:^testing.T) {
     store.commit(&s)
 }
 
-// A chunk stored as it is that is one chunk of a sealed pack is read in place,
+// A chunk whose frame keeps it as it is, one chunk of a sealed pack, is read in place,
 // a slice of the mapped pack: no copy, and no read of anything else.
 @(test)
 a_chunk_stored_as_it_is_is_read_in_place :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     folder:=base.test_folder(t,"asset-parts-in-place");if folder=="" {return}
     root:=fmt.tprintf("%s/store",folder)
+    // Bytes that do not compress: the store keeps their frame as it is.
     pixels:=make([]u8,64*64*4,context.temp_allocator)
-    for &p,i in pixels {p=u8(i*7)}
+    state:=u64(5)
+    for &p in pixels {p=u8(test_random(&state)>>20)}
     doc:Document
     types.codecs=.None
     testing.expect_value(t,texture_document(&doc,&types,{id={8,8},width=64,height=64,format=.RGBA8,mips={pixels}},context.temp_allocator),Error.None)

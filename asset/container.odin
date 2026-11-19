@@ -273,7 +273,7 @@ Build_Chunk :: struct {
 
 // Writes a whole file into w, which has to be empty, compressed with profile as codecs allow.
 // scratch holds a chunk while it is compressed.
-blob_build :: proc(w:^serial.Writer,kind:Fourcc,kind_version:u16,id,owner:base.Asset_Id,flags:Header_Flags,chunks:[]Build_Chunk,scratch:^[dynamic]u8,profile:=data.Profile.Fast,codecs:=Codecs.Open,worker:=jobs.Worker_Ref{}) -> Error {
+blob_build :: proc(w:^serial.Writer,kind:Fourcc,kind_version:u16,id,owner:base.Asset_Id,flags:Header_Flags,chunks:[]Build_Chunk,scratch:^[dynamic]u8,profile:=data.Profile.Fast,codecs:=Codecs.None,worker:=jobs.Worker_Ref{}) -> Error {
     if w.count!=0 || len(chunks)>MAX_CHUNKS {return .Invalid}
     encoder:Stream_Encoder
     if codecs!=.None {stream_encoder_init(&encoder,scratch.allocator if scratch.allocator.procedure!=nil else context.allocator) or_return}
