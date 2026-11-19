@@ -620,7 +620,7 @@ occluders_list_what_moved_came_or_went_and_the_lights_that_moved :: proc(t: ^tes
 	testing.expect(t, s.occluders.sun, "a sun that turned past its radius")
 
 	f: Gpu_Frame
-	s.occluders.boxes[0] = {{1, 2, 3}, {4, 5, 6}, 7, 0}
+	s.occluders.boxes[0] = {low = {1, 2, 3}, high = {4, 5, 6}, instance = 7}
 	s.occluders.count = 1
 	frame_occluders(&f, &s.occluders)
 	testing.expect_value(t, f.moved, [4]u32{1, 1, MOVED_SUN, 0})

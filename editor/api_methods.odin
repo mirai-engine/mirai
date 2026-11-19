@@ -154,6 +154,13 @@ Api_Shadow_Maps :: struct {
     pages_left:int `mirai:"label=Of them, left out of the pool"`,
     pages_waiting:int `mirai:"label=Pages not drawn whole this frame, which wait for the frames after"`,
     pages_short:int `mirai:"label=Pages the clusters of a frame grow for: read with no page drawn to hold their points, or waiting in a still view"`,
+    pages_stale:int `mirai:"label=Pages drawn before that what stays changing under them draws again"`,
+    stale:[len(gpu.Shadow_Stale_Source)]Api_Shadow_Stale `mirai:"label=The boxes of what stays changed between the last two frames, by what raised them"`,
+}
+
+Api_Shadow_Stale :: struct {
+    source:[16]u8 `mirai:"text"`,
+    boxes:int,
 }
 
 Api_Textures :: struct {
@@ -567,7 +574,11 @@ api_status :: proc(s:^Session,call:^api.Call) {
         r.probe_rays_traced,r.probe_hits_lit=int(stats.probe_rays_traced),int(stats.probe_hits_lit)
         r.light_lists={int(stats.light_lists.cells),int(stats.light_lists.entries),int(stats.light_lists.longest),int(stats.light_lists.walked)}
         sh:=stats.shadow
-        r.shadow_maps={int(sh.clusters),int(sh.clusters_masked),int(sh.clusters_moving),int(sh.clusters_over),int(sh.pages_drawn),int(sh.pages_composed),int(sh.pages_asked),int(sh.pages_left),int(sh.pages_waiting),int(sh.pages_short)}
+        r.shadow_maps={int(sh.clusters),int(sh.clusters_masked),int(sh.clusters_moving),int(sh.clusters_over),int(sh.pages_drawn),int(sh.pages_composed),int(sh.pages_asked),int(sh.pages_left),int(sh.pages_waiting),int(sh.pages_short),int(sh.pages_stale),{}}
+        for count,source in stats.shadow_stale {
+            r.shadow_maps.stale[source].boxes=int(count)
+            base.text_set(r.shadow_maps.stale[source].source[:],fmt.tprint(source))
+        }
         r.textures.bytes,r.textures.view_bytes=stats.texture_bytes,stats.view_target_bytes
         r.textures.pending,r.textures.reduced=int(stats.textures_pending),int(stats.textures_reduced)
         r.geometry={

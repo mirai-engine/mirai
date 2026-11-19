@@ -63,6 +63,8 @@ Mesh_Record :: struct {
 	draw_written:                    bool, // and written: a mesh whose pages stream is written again each frame
 	draw_moved:                      bool, // its place changed since its row of the mesh table went to the GPU
 	draw_asked:                      u64,  // the frame + 1 an instance drawn whole asked for them
+	surface:                         u64,  // of the meshes that show one surface at several details; 0: none (mesh_surface)
+	surface_error:                   f32,  // how far it lies from that surface at most, metres of its space
 }
 
 // A mesh as the pools hold it: its clusters and levels, and the page table
@@ -323,8 +325,8 @@ mesh_ahead_make :: proc(g: asset.Mesh_Geometry, slots: int, software: bool, keep
 }
 
 mesh_ahead_destroy :: proc(ahead: ^Mesh_Ahead) {
-	mesh_rays_destroy(&ahead.rays)
 	delete(ahead.areas, ahead.rays.allocator)
+	mesh_rays_destroy(&ahead.rays)
 	mesh_stream_free(ahead.stream)
 	ahead^ = {}
 }

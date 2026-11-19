@@ -690,8 +690,8 @@ extras_debug_lines_add :: proc(extras:^Frame_Extras,lines:render.Debug_Lines) ->
 }
 
 // Visual instances for this frame, without entities in a world.
-extras_instance_add :: proc(extras:^Frame_Extras,instance:render.Instance_Desc) -> bool {
-    if _,error:=append(&extras.instances,instance);error!=nil {extras.dropped+=1;return false}
+extras_instance_add :: proc(extras:^Frame_Extras,instances:..render.Instance_Desc) -> bool {
+    if _,error:=append(&extras.instances,..instances);error!=nil {extras.dropped+=u64(len(instances));return false}
     return true
 }
 
