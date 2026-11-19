@@ -330,7 +330,6 @@ the_plan_of_the_shadow_maps_costs_little_while_everything_sways :: proc(t: ^test
 		mid := time.tick_since(start)
 		shadow_plan_casters(r, b, eye, false, wants[:], plans[:], &plan, reach[:], &stale, &moved)
 		took := time.tick_since(start)
-		if sways && took > 1e6 {fmt.printfln("DBG movers %.3f ms, casters %.3f ms", time.duration_milliseconds(mid), time.duration_milliseconds(took - mid))}
 		for mesh in meshes {r.scene.meshes[mesh].skin.dirty = false}
 		r.frame += 1
 		b.frame += 1
@@ -341,9 +340,12 @@ the_plan_of_the_shadow_maps_costs_little_while_everything_sways :: proc(t: ^test
 	still_before := frame(r, b, meshes[:], eye, low, high, false)
 	ROUNDS :: 50
 	flying_before: time.Duration
+	most_before: time.Duration
 	for _ in 0 ..< ROUNDS {
 		eye.x += 0.25
-		flying_before += frame(r, b, meshes[:], eye, low, high, false)
+		took := frame(r, b, meshes[:], eye, low, high, false)
+		flying_before += took
+		most_before = max(most_before, took)
 	}
 	eye.x = 0
 	for _ in 0 ..< 4 {frame(r, b, meshes[:], eye, low, high, false)}
@@ -351,11 +353,13 @@ the_plan_of_the_shadow_maps_costs_little_while_everything_sways :: proc(t: ^test
 	first: time.Duration
 	for _ in 0 ..< 3 {first = max(first, frame(r, b, meshes[:], eye, low, high, true))}
 	for _ in 0 ..< 8 {frame(r, b, meshes[:], eye, low, high, true)}
-	still, flying: time.Duration
+	still, flying, most: time.Duration
 	for _ in 0 ..< ROUNDS {still += frame(r, b, meshes[:], eye, low, high, true)}
 	for _ in 0 ..< ROUNDS {
 		eye.x += 0.25
-		flying += frame(r, b, meshes[:], eye, low, high, true)
+		took := frame(r, b, meshes[:], eye, low, high, true)
+		flying += took
+		most = max(most, took)
 	}
-	fmt.printfln("shadow plan, %d batches x %d swaying: before the wind %.3f ms still, %.3f ms flying; the first frames of the wind %.3f ms at most; swaying, still %.3f ms, flying %.3f ms a frame", BATCHES, INSTANCES, time.duration_milliseconds(still_before), time.duration_milliseconds(flying_before) / ROUNDS, time.duration_milliseconds(first), time.duration_milliseconds(still) / ROUNDS, time.duration_milliseconds(flying) / ROUNDS)
+	fmt.printfln("shadow plan, %d batches x %d swaying: before the wind %.3f ms still, %.3f ms flying (%.3f at most); the first frames of the wind %.3f ms at most; swaying, still %.3f ms, flying %.3f ms a frame and %.3f at most (where the eye crosses a cell of the cull)", BATCHES, INSTANCES, time.duration_milliseconds(still_before), time.duration_milliseconds(flying_before) / ROUNDS, time.duration_milliseconds(most_before), time.duration_milliseconds(first), time.duration_milliseconds(still) / ROUNDS, time.duration_milliseconds(flying) / ROUNDS, time.duration_milliseconds(most))
 }
