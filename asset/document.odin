@@ -449,10 +449,10 @@ document_from_asset :: proc(doc:^Document,a:^Asset,allocator:=context.allocator)
 }
 
 // The file bytes are, written again with profile as codecs allow: the same content with its
-// chunks, the pages of a mesh and the tables of blocks compressed again. A file written without
-// a compressor (Codecs.None) does not say which chunks its writer meant to compress: with codecs,
-// every column becomes a stream where that shrinks it, but those that hold streams of their own
-// (the page_data of a mesh, the blocks of a table of blocks), which are read by offset. With a
+// chunks and the pages of a mesh compressed again. A file written without a compressor
+// (Codecs.None) does not say which chunks its writer meant to compress: with codecs, every column
+// becomes a stream where that shrinks it, but those read by offset: the page_data of a mesh,
+// which holds streams of its own, and the blocks of a table of blocks, which their kind codes. With a
 // worker, the pieces of a large chunk are compressed on the workers of its job system.
 document_repack :: proc(bytes:[]u8,profile:data.Profile,codecs:Codecs,allocator:=context.allocator,worker:=jobs.Worker_Ref{}) -> (repacked:[]u8,error:Error) {
     doc:Document
@@ -466,7 +466,6 @@ document_repack :: proc(bytes:[]u8,profile:data.Profile,codecs:Codecs,allocator:
         }
     }
     if doc.kind==KIND_MESH {mesh_pages_repack(&doc,profile) or_return}
-    document_blocks_repack(&doc,profile,codecs) or_return
     return document_bytes(&doc,allocator,profile,worker)
 }
 

@@ -90,43 +90,12 @@ assets_equal :: proc(t:^testing.T,name:string,file,object:^Asset) -> bool {
     if !testing.expectf(t,a==b && len(file.tables)==len(object.tables) && slice.equal(file.dependencies,object.dependencies),"%s: the same header, tables and dependencies",name) {return false}
     for &table,at in file.tables {
         other:=&object.tables[at]
-        // A table of blocks is compared by what its blocks decode to, where its pages say.
-        blocks:=strings.has_suffix(table.name,"_blocks")
-        if !testing.expectf(t,table.name==other.name && (blocks || table.rows==other.rows) && len(table.columns)==len(other.columns),"%s: table %s",name,table.name) {return false}
-        if blocks {continue}
+        if !testing.expectf(t,table.name==other.name && table.rows==other.rows && len(table.columns)==len(other.columns),"%s: table %s",name,table.name) {return false}
         for _,column in table.columns {
             a,a_error:=asset_column_data(file,&table,column)
             b,b_error:=asset_column_data(object,other,column)
-            if strings.has_suffix(table.name,"_pages") && table.columns[column].size==size_of(Block_Record) && a_error==.None && b_error==.None {
-                if !blocks_equal(t,name,file,object,table.name,a,b) {return false}
-                continue
-            }
             if !testing.expectf(t,a_error==.None && b_error==.None && mem.compare(a,b)==0,"%s: %s column %d (%v %v)",name,table.name,column,a_error,b_error) {return false}
         }
-    }
-    return true
-}
-
-@(private="file")
-blocks_equal :: proc(t:^testing.T,name:string,file,object:^Asset,pages:string,a,b:[]u8) -> bool {
-    blocks_name:=strings.concatenate({pages[:len(pages)-len("_pages")],"_blocks"},context.temp_allocator)
-    file_table,_:=asset_table(file,blocks_name)
-    object_table,_:=asset_table(object,blocks_name)
-    file_blocks,_:=asset_column_data(file,file_table,0)
-    object_blocks,_:=asset_column_data(object,object_table,0)
-    ra,rb:=mem.slice_data_cast([]Block_Record,a),mem.slice_data_cast([]Block_Record,b)
-    if !testing.expectf(t,len(ra)==len(rb),"%s: %s",name,pages) {return false}
-    d:Stream_Decoder
-    stream_decoder_init(&d,context.temp_allocator)
-    defer stream_decoder_destroy(&d)
-    for x,i in ra {
-        y:=rb[i]
-        if !testing.expectf(t,x.count==y.count && x.fill==y.fill && x.raw==y.raw && (x.size==0)==(y.size==0),"%s: %s run %d",name,pages,i) {return false}
-        if x.size==0 {continue}
-        p,q:=make([]u8,x.raw,context.temp_allocator),make([]u8,y.raw,context.temp_allocator)
-        testing.expect_value(t,unpack(&d,file_blocks[x.offset:][:x.size],p),Error.None)
-        testing.expect_value(t,unpack(&d,object_blocks[y.offset:][:y.size],q),Error.None)
-        if !testing.expectf(t,mem.compare(p,q)==0,"%s: %s block %d",name,pages,i) {return false}
     }
     return true
 }

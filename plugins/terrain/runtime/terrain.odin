@@ -736,24 +736,21 @@ source_compare :: proc(next,s:^Source) -> (change:Change,ok:bool) {
         }
         change.changed=true
     }
-    writer:Page_Writer
-    if !page_writer_init(&writer,context.temp_allocator,.Open) {return}
-    defer page_writer_destroy(&writer)
-    low,high,differ:=grid_take(&next.field,&s.field,&writer,next.kind==.Heightfield)
+    low,high,differ:=grid_take(&next.field,&s.field,next.kind==.Heightfield)
     if differ {widen(&change,low,high)}
     if grid_none(&next.holes)!=grid_none(&s.holes) {
         widen(&change,{},{last.x,0,last.z})
-    } else if low,high,differ=grid_take(&next.holes,&s.holes,&writer,false);differ {
+    } else if low,high,differ=grid_take(&next.holes,&s.holes,false);differ {
         widen(&change,low,high+{1,0,1})
     }
     if grid_none(&next.paint)!=grid_none(&s.paint) {
         widen(&change,{},{last.x,0,last.z})
-    } else if low,high,differ=grid_take(&next.paint,&s.paint,&writer,false);differ {
+    } else if low,high,differ=grid_take(&next.paint,&s.paint,false);differ {
         widen(&change,low,high)
     }
     if layers_reshape(next.info,s.info) {
         widen(&change,{},last)
-    } else if low,high,differ=grid_take(&next.weights,&s.weights,&writer,false);differ {
+    } else if low,high,differ=grid_take(&next.weights,&s.weights,false);differ {
         widen(&change,low,high)
     }
     return change,true
