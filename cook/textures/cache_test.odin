@@ -1,5 +1,6 @@
 package textures
 
+import "core:log"
 import "core:slice"
 import "core:testing"
 import "mirai:asset"
@@ -45,3 +46,60 @@ built_textures_are_kept_by_image_and_settings_and_read_back_whole :: proc(t:^tes
     testing.expect(t,cache_has(c,key) && !cache_has(c,key+2) && !cache_has({},key))
 }
 
+
+// One texel changed in the image of a texture changes a bounded run of the
+// chunks of its object: the levels keep their cuts, so the rest are the same.
+@(test)
+a_texel_changed_changes_few_chunks_of_the_object :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    folder:=base.test_folder(t,"textures-one-texel")
+    if folder=="" {return}
+    s,opened:=store.open(folder,context.temp_allocator)
+    if !testing.expect_value(t,opened,store.Error.None) {return}
+    defer store.close(&s)
+    SIDE :: 1024
+    pixels:=make([]u8,SIDE*SIDE*4,context.temp_allocator)
+    state:=u64(11)
+    for &value in pixels {
+        state=state*6364136223846793005+1442695040888963407
+        value=u8(state>>56)
+    }
+    object_of :: proc(t:^testing.T,s:^store.Store,types:^asset.Types,pixels:[]u8) -> store.Hash {
+        built,error:=build(rgba8(pixels,SIDE,SIDE),{srgb=true,speed=.Fast},context.temp_allocator)
+        if !testing.expect_value(t,error,Error.None) {return {}}
+        doc:asset.Document
+        if !testing.expect_value(t,asset.texture_document(&doc,types,built_desc(&built,{9,9},nil),context.temp_allocator),asset.Error.None) {return {}}
+        defer asset.document_destroy(&doc)
+        bytes,_:=asset.document_bytes(&doc,context.temp_allocator)
+        object,put_error:=asset.object_put(s,bytes)
+        testing.expect_value(t,put_error,asset.Error.None)
+        return object
+    }
+    leaves_of :: proc(s:^store.Store,root:store.Hash) -> map[store.Hash]bool {
+        out:=make(map[store.Hash]bool,context.temp_allocator)
+        walk :: proc(s:^store.Store,address:store.Hash,out:^map[store.Hash]bool) {
+            buffer:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
+            bytes,_:=store.chunk_read(s,address,buffer)
+            n,error:=store.node_parse(bytes)
+            if error!=.None {return}
+            for e in n.entries {
+                if n.level>0 {walk(s,e.address,out)} else {out[e.address]=true}
+            }
+        }
+        walk(s,root,&out)
+        return out
+    }
+    before:=object_of(t,&s,&types,pixels)
+    pixels[(SIDE/3*SIDE+SIDE/2)*4]~=0x40
+    after:=object_of(t,&s,&types,pixels)
+    store.commit(&s)
+    testing.expect(t,before!=after)
+    old,new:=leaves_of(&s,before),leaves_of(&s,after)
+    changed:=0
+    for address in new {
+        if !(address in old) {changed+=1}
+    }
+    log.infof("one texel changed %d of %d chunks",changed,len(new))
+    testing.expectf(t,changed>0 && changed<=len(new)/2+1,"%d of %d chunks changed",changed,len(new))
+}

@@ -1,7 +1,6 @@
 package cache
 
 import "core:fmt"
-import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:testing"
@@ -35,44 +34,11 @@ store_at :: proc(t:^testing.T,root:string,loc:=#caller_location) -> (s:store.Sto
 // Copies what the store at user keeps, as a peer would give it.
 @(private="file")
 copy_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
-    from:=(^store.Store)(user)
-    for name,k in names {
-        hash,error:=store.ref_get(from,namespace,name)
-        if error!=.None {continue}
-        path,path_error:=store.blob_path(from,hash,context.temp_allocator)
-        if path_error!=.None {continue}
-        if put,put_error:=store.put_file(into,path);put_error!=.None || put!=hash {continue}
-        given[k]=store.ref_set(into,namespace,name,hash)==.None
-    }
-}
-
-// Flips the byte at at of a blob's bytes where a pack of the store at root
-// holds it, and drops the file blob_path wrote, as damage on the disk would
-// leave them; false when no pack holds those bytes.
-@(private="file")
-pack_damage :: proc(root:string,blob:[]u8,at:int,hash:store.Hash) -> bool {
-    start:=max(at-32,0)
-    needle:=blob[start:min(start+64,len(blob))]
-    digits:[64]u8
-    os.remove(fmt.tprintf("%s/tmp/blobs/%s",root,store.hex(hash,&digits)))
-    entries,_:=os.read_all_directory_by_path(fmt.tprintf("%s/packs",root),context.temp_allocator)
-    for e in entries {
-        bytes,read_error:=os.read_entire_file(e.fullpath,context.temp_allocator)
-        if read_error!=nil {continue}
-        found:=strings.index(string(bytes),string(needle))
-        if found<0 {continue}
-        file,open_error:=os.open(e.fullpath,{.Read,.Write})
-        if open_error!=nil {return false}
-        defer os.close(file)
-        flipped:=[1]u8{bytes[found+at-start]~0xff}
-        _,write_error:=os.write_at(file,flipped[:],i64(found+at-start))
-        return write_error==nil
-    }
-    return false
+    store_source((^store.Store)(user)).fetch(user,into,namespace,names,given)
 }
 
 @(private="file")
-blob_of :: proc(s:^store.Store,key,version:u64) -> store.Hash {
+object_of :: proc(s:^store.Store,key,version:u64) -> store.Hash {
     namespace:[store.NAME_MAX]u8
     hash,_:=store.ref_get(s,asset.cache_namespace(NAME,&namespace),fmt.tprintf("%016x-%016x",key,version))
     return hash
@@ -108,28 +74,52 @@ a_result_is_found_by_its_ref_through_any_store_of_its_root_and_a_source_fills_a_
     testing.expect(t,has({store=&peer},NAME,KEY,VERSION),"what the source gave stays")
     testing.expect(t,!load(from_writer,NAME,KEY+1,VERSION,&file) && !has(from_writer,NAME,KEY+1,VERSION))
 
-    // A ref whose blob is missing is a miss, and keeping the result again mends it.
-    hash:=blob_of(&reader,KEY,VERSION)
-    testing.expect_value(t,store.remove(&reader,hash),store.Error.None)
+    // A ref whose object is not here is a miss, and keeping the result again mends it.
+    namespace:[store.NAME_MAX]u8
+    testing.expect_value(t,store.ref_set(&writer,asset.cache_namespace(NAME,&namespace),fmt.tprintf("%016x-%016x",u64(KEY),u64(VERSION)),store.address_of_bytes(transmute([]u8)string("absent"))),store.Error.None)
     testing.expect(t,!load({store=&reader},NAME,KEY,VERSION,&file) && !has({store=&reader},NAME,KEY,VERSION))
     testing.expect(t,put({store=&writer},NAME,KEY,VERSION,result_bytes(&types,KEY,VERSION,1)))
     if testing.expect(t,load({store=&reader},NAME,KEY,VERSION,&file,context.temp_allocator)) {asset.asset_close(&file)}
 
-    // A blob whose bytes are damaged in its pack is a miss and goes, so that building again replaces it.
-    whole:=result_bytes(&types,KEY,VERSION,1)
-    for at in ([]int{len(whole)-9,len(whole)-1}) {
-        testing.expect(t,pack_damage(root,whole,at,blob_of(&reader,KEY,VERSION)),"the damage lands in a pack")
-        testing.expect(t,!load({store=&reader},NAME,KEY,VERSION,&file),"a damaged blob is a miss")
-        testing.expect(t,!store.has(&reader,hash),"and is removed")
-        testing.expect(t,put({store=&writer},NAME,KEY,VERSION,result_bytes(&types,KEY,VERSION,1)))
-        if testing.expect(t,load({store=&reader},NAME,KEY,VERSION,&file,context.temp_allocator)) {asset.asset_close(&file)}
-    }
-
-    // A whole blob of another result under the ref is a miss, and stays: it is whole.
+    // A whole object of another result under the ref is a miss, and stays: it is whole.
     other:=result_bytes(&types,KEY+1,VERSION,2)
     testing.expect(t,put({store=&writer},NAME,KEY,VERSION,other))
     testing.expect(t,!load({store=&reader},NAME,KEY,VERSION,&file))
-    testing.expect(t,store.has(&reader,blob_of(&reader,KEY,VERSION)))
+    testing.expect(t,asset.object_whole(&reader,object_of(&reader,KEY,VERSION)))
+}
+
+// A lookup of many keys asks the source once for all it lacks, and says which
+// are here after it.
+@(test)
+a_lookup_of_many_keys_asks_the_source_once :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    folder:=base.test_folder(t,"cache-lookup")
+    if folder=="" {return}
+    here,here_ok:=store_at(t,fmt.tprintf("%s/here",folder))
+    peer,peer_ok:=store_at(t,fmt.tprintf("%s/peer",folder))
+    if !here_ok || !peer_ok {return}
+    VERSION :: 3
+    keys:=[]u64{10,11,12,13,14}
+    testing.expect(t,put({store=&peer},NAME,10,VERSION,result_bytes(&types,10,VERSION,1)))
+    testing.expect(t,put({store=&here},NAME,11,VERSION,result_bytes(&types,11,VERSION,2)))
+    testing.expect(t,put({store=&peer},NAME,12,VERSION,result_bytes(&types,12,VERSION,3)))
+    Counted :: struct {from:^store.Store,calls,names:int}
+    counted:=Counted{from=&peer}
+    fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
+        c:=(^Counted)(user)
+        c.calls+=1
+        c.names+=len(names)
+        copy_fetch(c.from,into,namespace,names,given)
+    }
+    found:=make([]bool,len(keys),context.temp_allocator)
+    lookup({store=&here,source={fetch=fetch,user=&counted}},NAME,keys,VERSION,found)
+    testing.expectf(t,counted.calls==1 && counted.names==4,"one fetch of what is not here: %v",counted)
+    testing.expectf(t,slice.equal(found,[]bool{true,true,true,false,false}),"%v",found)
+    file:asset.Asset
+    if testing.expect(t,load({store=&here},NAME,12,VERSION,&file,context.temp_allocator)) {asset.asset_close(&file)}
+    lookup({store=&here,source={fetch=fetch,user=&counted}},NAME,keys[:3],VERSION,found[:3])
+    testing.expectf(t,counted.calls==1,"what is here asks nothing: %v",counted)
 }
 
 @(test)
