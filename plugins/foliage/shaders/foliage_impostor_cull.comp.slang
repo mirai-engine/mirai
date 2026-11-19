@@ -40,7 +40,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     Impostor_Instance inst = impostor_instances[i];
     if (inst.row == IMPOSTOR_NONE) return;
     Impostor_Shape s;
-    if (!impostor_shape(inst, impostor_rows[impostor_row_index(inst.row)], s)) return;
+    float2 lean;
+    if (!impostor_shape(inst, impostor_rows[impostor_row_index(inst.row)], s, lean)) return;
     float3 low = s.center - s.radius;
     float3 high = s.center + s.radius;
     if (phase == 0u) {

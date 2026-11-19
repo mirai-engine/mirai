@@ -73,7 +73,7 @@ Gpu_Frame :: struct {
 	moved_boxes:      [OCCLUDER_CHANGES_MAX][2]Vec4, // low (w: the instance, as bits; OCCLUDERS_MANY: several) and high, relative to the origin
 	moved_lights:     [LIGHT_MOVES_MAX / 4][4]u32,
 	sun_shares:       Vec4, // x what of the light of the sun the probes gather, y what of it media scatter (Sun_Desc.indirect and scattering); zw 0
-	sun_maps:         [4]u32, // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (shadow_maps_pass), 0: none; y where the rows of the maps start in their buffer; z the side of their atlas, texels, while the view drew maps, else 0; w 0
+	sun_maps:         [4]u32, // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (shadow_maps_pass), 0: none; y where the rows of the maps start in their buffer; z the side of their atlas, texels, while the view drew maps, else 0; w the bits of the texel of a point at the reach of what sways (shadow_sway_texel): a map no wider where it reads a point draws what sways as it sways
 	sun_map_rows:     [abi.SUN_MAP_ROWS][4]u32,
 }
 SUN_UNSHADOWED   :: abi.SUN_UNSHADOWED
@@ -97,6 +97,7 @@ FRAME_FLAG_GRID         :: abi.FRAME_FLAG_GRID
 FRAME_FLAG_GLASS        :: abi.FRAME_FLAG_GLASS
 FRAME_FLAG_REFLECTANCE  :: abi.FRAME_FLAG_REFLECTANCE
 FRAME_FLAG_NEUTRAL      :: abi.FRAME_FLAG_NEUTRAL
+FRAME_FLAG_SWAY         :: abi.FRAME_FLAG_SWAY
 
 // A whole vertex, which thumbnails and previews upload for themselves; the
 // scene keeps its vertices in clusters (Gpu_Cluster).

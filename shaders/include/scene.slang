@@ -364,7 +364,6 @@ float4 batch_vertex(Instance row) { return row.world_inv[0]; }       // what the
 float3 batch_anchor(Instance row) { return row.world_inv[1].xyz; }   // what its instances in the pool, its tree and its box are relative to, relative to the origin
 float batch_reach(Instance row) { return row.world_inv[1].w; }       // metres the vertex hook moves a point of its instances at most
 uint batch_colors(Instance row) { return asuint(row.world_inv[2].x); } // 1 + the word of the color of its first instance in the pool; 0: none
-float batch_near(Instance row) { return row.world_inv[2].y; }        // metres of the world from its origin where a ray meets none of it: how far it sways now (render.batch_near)
 
 // The transform of the instance of a batch whose words start at `words`,
 // moved by the anchor of its batch, and its inverse.

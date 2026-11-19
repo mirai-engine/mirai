@@ -206,6 +206,7 @@ pass_counters :: gpu.pass_counters
 pass_readback :: gpu.pass_readback
 pass_gbuffer_begin :: gpu.pass_gbuffer_begin
 pass_depth_pyramid :: gpu.pass_depth_pyramid
+pass_rest_write :: gpu.pass_rest_write
 pass_depth_pyramid_build :: gpu.pass_depth_pyramid_build
 // The next frame draws a mesh with a material (0: those of the mesh) in its
 // Gbuffer stage: each view keeps what they reflect and their layers.

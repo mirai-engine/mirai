@@ -46,6 +46,7 @@ SLOT_LAYERS         :: abi.SLOT_LAYERS
 SLOT_DISTANCE       :: abi.SLOT_DISTANCE
 SLOT_SHADOW_TABLE   :: abi.SLOT_SHADOW_TABLE
 SLOT_LIGHT_LISTS    :: abi.SLOT_LIGHT_LISTS
+SLOT_REST           :: abi.SLOT_REST
 // Of a draw of the clusters of an instance (gbuffer.vert): the Surface program
 // whose clusters it draws, 0 those without one, GPU_NONE all of them.
 SLOT_DRAW           :: abi.SLOT_DRAW
@@ -117,6 +118,7 @@ bind_scene_table :: proc(p: ^Pass) {
 	rhi.cmd_bind_texture(cmd, SLOT_SURFACE, texture_or_dummy(r, p.t.surface))
 	rhi.cmd_bind_texture(cmd, SLOT_VIEWS, p.t.motion)
 	rhi.cmd_bind_texture(cmd, SLOT_LAYERS, p.t.layers if p.t.layers != 0 else r.dummy_layers)
+	rhi.cmd_bind_texture(cmd, SLOT_REST, p.t.rest if p.t.rest != 0 else r.dummy_rest)
 	rhi.cmd_bind_texture(cmd, SLOT_SHADOW_TABLE, p.t.shadow_raster.table if p.t.shadow_raster.table != 0 else r.dummy_uint)
 	rhi.cmd_bind_buffer(cmd, SLOT_LIGHTS, or_dummy(r, s.light_buffer))
 	rhi.cmd_bind_buffer(cmd, SLOT_LIGHT_TREE, or_dummy(r, s.light_tree_buffer))
@@ -266,6 +268,21 @@ resolve_pass :: proc(p: ^Pass, nested: bool) {
 		resolve_programs_draw(r, cmd, &r.pipelines[id])
 	}
 	rhi.cmd_end_render_pass(cmd)
+}
+
+// Where the vertex hook moved each pixel from where it rests (rest.comp),
+// after the resolve of the view, while a batch gives the hook values.
+@(private)
+rest_pass :: proc(p: ^Pass) {
+	r, cmd, t := p.r, p.cmd, p.t
+	if !p.draw || t.rest == 0 || p.frame.flags & FRAME_FLAG_SWAY == 0 {return}
+	rhi.cmd_timestamp(cmd, "rest")
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Rest])
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, r.scene.visible_buffer)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.visibility)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.linear_depth)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.rest)
+	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
 }
 
 // The resolve of the materials without a program, then that of each Surface
@@ -998,7 +1015,9 @@ view_begin :: proc(p: ^Pass) -> bool {
 	if p.reflectance && !ensure_surface_target(r, t) {return false}
 	if p.layered && !ensure_layers_target(r, t) {return false}
 	if r.frame_layout.instance_ids && !ensure_instance_target(r, t) {return false}
+	if s.batch.hooked && !ensure_rest_target(r, t) {return false}
 	if p.reflectance {f.flags |= FRAME_FLAG_REFLECTANCE}
+	if s.batch.hooked {f.flags |= FRAME_FLAG_SWAY}
 	if p.use_probes {ddgi_frame_constants(r, &f)}
 	frame_occluders(&f, &r.frame_occluders)
 	p.constants = rhi.frame_alloc(d, u64(r.frame_layout.size), 256)
@@ -1313,6 +1332,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	if p.cost != 0 && p.draw {cost_pixels(p)}
 	rhi.cmd_timestamp(cmd, "resolve")
 	resolve_pass(p, false)
+	rest_pass(p)
 	if p.first && stage_asked(r, .Simulate) {stage_run(p, .Simulate)}
 	if stage_asked(r, .Gbuffer) {stage_run(p, .Gbuffer)}
 

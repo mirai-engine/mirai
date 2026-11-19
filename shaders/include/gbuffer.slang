@@ -11,7 +11,9 @@
 // target is pixel_views (rg the motion of the pixel, b the roughness traced
 // reflections decide by, a 1 + its nested view) and the reflectance target
 // surface_specular (pixel_reflectance), and while an instance with layers is
-// in sight, the layers target gbuffer_layers_target. The linear depth keeps
+// in sight, the layers target gbuffer_layers_target, and while a batch gives
+// the vertex hook values (FRAME_FLAG_SWAY), the rest target pixel_rests,
+// which rest.comp writes after the resolve (pixel_rest). The linear depth keeps
 // its own decoders (depth_* of common.slang).
 #ifndef MIRAI_GBUFFER_SLANG
 #define MIRAI_GBUFFER_SLANG
@@ -137,6 +139,41 @@ Material_Layers gbuffer_layers(int2 p, uint bits) {
     if ((bits & (MATERIAL_LAYER_COAT | MATERIAL_LAYER_FUZZ | MATERIAL_LAYER_ANISOTROPY | MATERIAL_LAYER_DIFFUSE_TRANSMISSION)) != 0u) l = gbuffer_layers_unpack(gbuffer_layers_target.Load(int3(p, 0)), bits);
     return l;
 }
+
+// The rest target (RG32 uint): x where the vertex hook moved the point of a
+// pixel from where it rests, each axis in 10 bits, signed, in 511ths of the
+// range of 0.25, 1, 4 or 16 m the top 2 bits choose; y the bits of the linear
+// depth of the pixel it was written for, so that a pixel a surface of the
+// Gbuffer stage of an extension drew over after the resolve reads none.
+uint rest_pack(float3 moved) {
+    float most = max(abs(moved.x), max(abs(moved.y), abs(moved.z)));
+    uint range = most <= 0.25 ? 0u : most <= 1.0 ? 1u : most <= 4.0 ? 2u : 3u;
+    uint3 q = uint3(int3(round(clamp(moved / (0.25 * exp2(2.0 * float(range))), -1.0, 1.0) * 511.0))) & 1023u;
+    return q.x | (q.y << 10u) | (q.z << 20u) | (range << 30u);
+}
+float3 rest_unpack(uint v) {
+    int3 q = int3(uint3(v << 22u, v << 12u, v << 2u)) >> 22;
+    return float3(q) * (0.25 * exp2(2.0 * float(v >> 30u)) / 511.0);
+}
+[[vk::binding(SLOT_REST, 0)]] Texture2D<uint2> pixel_rests : register(MIRAI_REGISTER(t, SLOT_REST), space0);
+// What the vertex hook moved the point of pixel p, of linear depth `depth`
+// as the G-buffer holds it, from where it rests: what rays and the maps that
+// draw it at rest meet is tested from there. 0 for every other pixel.
+float3 pixel_rest(int2 p, float depth) {
+    if ((frame.flags & FRAME_FLAG_SWAY) == 0u) return float3(0.0);
+    uint2 v = pixel_rests.Load(int3(p, 0));
+    return v.y == asuint(depth) ? rest_unpack(v.x) : float3(0.0);
+}
+#ifdef GBUFFER_REST_OUT
+// The rest target, for a pass that draws pixels the vertex hook or a wind
+// moved (rest.comp, and an extension through pass_rest_write).
+[[vk::binding(GBUFFER_REST_OUT, 0)]] [[vk::image_format("rg32ui")]] RWTexture2D<uint2> gbuffer_rest_out : register(MIRAI_REGISTER(u, GBUFFER_REST_OUT), space0);
+// What pixel p shows, of linear depth `depth` as the G-buffer holds it, was
+// moved by `moved` from where it rests.
+void gbuffer_rest_write(int2 p, float3 moved, float depth) {
+    if ((frame.flags & FRAME_FLAG_SWAY) != 0u) gbuffer_rest_out[p] = uint2(rest_pack(moved), asuint(depth));
+}
+#endif
 
 #ifdef GBUFFER_NORMAL
 [[vk::binding(GBUFFER_NORMAL, 0)]] Texture2D<float4> gbuffer_normal_target : register(MIRAI_REGISTER(t, GBUFFER_NORMAL), space0);
