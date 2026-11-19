@@ -181,6 +181,7 @@ state_destroy :: proc(s:^Store) {
     delete(state.tombs)
     delete(state.touched)
     table_destroy(&state.table,state.allocator)
+    table_destroy(&state.retired,state.allocator)
     for st in state.stages {stage_free(s,st)}
     delete(state.stages)
     for b in state.builders {
@@ -411,6 +412,7 @@ refresh_locked :: proc(s:^Store) -> Error {
             state.generation.map_pack[i]=index
         }
         state_rebuild_locked(s)
+        writer_ack_locked(s)
     }
     return packs_read_locked(s)
 }
@@ -431,14 +433,14 @@ packs_read_locked :: proc(s:^Store) -> Error {
         index:=pack_add_locked(s,id) or_return
         if index<len(listed) {listed[index]=true}
         p:=&state.packs[index]
-        if p.indexed || p.own || p.damaged || (p.sealed && p.file!=nil) {continue}
+        if p.indexed || p.own || p.damaged || p.retired>0 || (p.sealed && p.file!=nil) {continue}
         if !p.sealed && p.file!=nil && e.size<=p.size {continue}
         pack_load_locked(s,index) or_return
     }
     // A pack a sweep retired is no longer read, though this value may hold it open.
     w:=&state.writer
     for &p,i in state.packs {
-        if i<len(listed) && !listed[i] && !p.indexed && !(w.open && i==w.pack) {p.gone=true}
+        if i<len(listed) && !listed[i] && !p.indexed && p.retired==0 && !(w.open && i==w.pack) {p.gone=true}
     }
     return .None
 }
@@ -452,12 +454,17 @@ pack_load_locked :: proc(s:^Store,index:int) -> Error {
     p:=&state.packs[index]
     if p.file==nil {
         buffer:[PATH_BYTES]u8
-        file,error:=io_open(s,pack_path(s,"packs",p.id,&buffer) or_return)
+        file,error:=io_open(s,pack_file_path(s,p,&buffer) or_return)
         if error==.Missing {
-            p.gone=true
+            if p.retired==0 {p.gone=true}
             return .None
         }
         if error!=.None {return error}
+        // A pack its writer has made but not yet given its head is read again on the next miss.
+        if size,size_error:=os.file_size(file);size_error!=nil || size<size_of(Pack_Head) {
+            os.close(file)
+            return .None
+        }
         p.file=file
         head:Pack_Head
         if read_exact(file,mem.ptr_to_bytes(&head),0)!=.None || string(head.magic[:])!=PACK_MAGIC || head.writer!=p.id.writer {
@@ -482,7 +489,15 @@ pack_load_locked :: proc(s:^Store,index:int) -> Error {
     }
     pack_scan(p.file,p.size,size,&scan,proc(data:rawptr,scan:^Scan,time:i64) -> Error {
         a:=(^Apply)(data)
+        state:=a.s.state
+        retired:=state.packs[a.pack].retired>0
         for f in scan.frames {
+            if retired {
+                if f.head.kind!=.Chunk {continue}
+                l:=Location{pack=u32(a.pack),offset=u64(head_data_at(f.at,f.head)),stored=f.head.stored,raw=f.head.raw,codec=f.head.codec,align=f.head.align,time=time}
+                table_put(&state.retired,f.head.address,l,state.allocator) or_return
+                continue
+            }
             payload:=scan.payloads[f.payload[0]:f.payload[1]]
             frame_apply(a.s,a.pack,f.head,f.at,payload,time) or_return
         }
@@ -534,7 +549,7 @@ trailer_load_locked :: proc(s:^Store,index:int,size:i64) -> bool {
     }
     for x in extras {
         if !valid {break}
-        valid=x.offset>=size_of(Pack_Head) && x.offset+size_of(Frame_Head)<=footer.frames_end
+        valid=footer.frames_end>=size_of(Pack_Head)+size_of(Frame_Head) && x.offset>=size_of(Pack_Head) && x.offset<=footer.frames_end-size_of(Frame_Head)
     }
     if !valid {
         if mapped {file_unmap(view)}
@@ -543,11 +558,13 @@ trailer_load_locked :: proc(s:^Store,index:int,size:i64) -> bool {
     }
     p.view,p.sealed,p.size,p.last=view,true,size,footer.last
     if p.indexed {return true}
+    table:=&state.retired if p.retired>0 else &state.table
     for a,i in addresses {
         l:=locations[i]
         l.pack=u32(index)
-        if table_put(&state.table,a,l,state.allocator)!=.None {return true}
+        if table_put(table,a,l,state.allocator)!=.None {return true}
     }
+    if p.retired>0 {return true}
     for x in extras {
         head:=intrinsics.unaligned_load((^Frame_Head)(raw_data(view[x.offset:])))
         if !head_valid(&head) || head.kind==.Chunk || head.kind==.Commit || u64(head_end(i64(x.offset),head))>footer.frames_end {continue}
@@ -668,7 +685,7 @@ state_rebuild_locked :: proc(s:^Store) {
     clear(&state.touched)
     w:=&state.writer
     for &p,i in state.packs {
-        if p.indexed || p.gone || p.damaged {continue}
+        if p.indexed || p.gone || p.damaged || p.retired>0 {continue}
         if p.own && w.open && i==w.pack {
             for f in w.own {
                 at:=i64(f.location.offset)
@@ -733,7 +750,80 @@ find_locked :: proc(s:^Store,address:Hash) -> (pack:int,location:Location,found:
     pack,location,found=lookup_locked(s,address)
     if found {return}
     if refresh_locked(s)!=.None {return}
-    return lookup_locked(s,address)
+    pack,location,found=lookup_locked(s,address)
+    if found {return}
+    // A chunk a sweep retired that a commit still names is read where it went.
+    if retired_load_locked(s)!=.None {return}
+    return retired_lookup_locked(s,address)
+}
+
+// Where a chunk is in a pack a sweep retired.
+@(private)
+retired_lookup_locked :: proc(s:^Store,address:Hash) -> (pack:int,location:Location,found:bool) {
+    state:=s.state
+    slot,in_table:=table_slot(&state.retired,address)
+    if !in_table {return -1,{},false}
+    location=state.retired.values[slot]
+    pack=int(location.pack)
+    if pack>=len(state.packs) || state.packs[pack].damaged {return -1,{},false}
+    return pack,location,true
+}
+
+// Loads the packs of retired/ not loaded yet: retired/<generation>-<pack>,
+// the generation that dropped them.
+@(private)
+retired_load_locked :: proc(s:^Store) -> Error {
+    state:=s.state
+    buffer:[PATH_BYTES]u8
+    entries:=io_list(s,join(&buffer,s.root,"retired") or_return) or_return
+    defer os.file_info_slice_delete(entries,state.allocator)
+    for e in entries {
+        generation,id,ok:=retired_name_parse(e.name)
+        if !ok {continue}
+        index:=pack_add_locked(s,id) or_return
+        p:=&state.packs[index]
+        if p.retired==generation && p.file!=nil && (p.sealed || e.size<=p.size) {continue}
+        if p.retired!=generation {
+            // This value read it in packs/: its open file is the same one.
+            p.retired=generation
+            p.gone,p.indexed=true,false
+            if p.view==nil {p.sealed=false}
+            if p.file!=nil && !p.sealed {p.size=size_of(Pack_Head)}
+        }
+        pack_load_locked(s,index) or_return
+    }
+    return .None
+}
+
+@(private) RETIRED_NAME :: 17+PACK_NAME
+
+@(private)
+retired_name :: proc(generation:u64,id:Pack_Id,buffer:^[RETIRED_NAME]u8) -> string {
+    digits:="0123456789abcdef"
+    for i in 0..<16 {buffer[i]=digits[(generation>>(4*uint(15-i)))&15]}
+    buffer[16]='-'
+    name:[PACK_NAME]u8
+    copy(buffer[17:],pack_name(id,&name))
+    return string(buffer[:])
+}
+
+@(private)
+retired_name_parse :: proc(name:string) -> (generation:u64,id:Pack_Id,ok:bool) {
+    if len(name)!=RETIRED_NAME || name[16]!='-' {return}
+    for i in 0..<16 {
+        d:=hex_digit(name[i]) or_return
+        generation=generation<<4|u64(d)
+    }
+    id=pack_name_parse(name[17:]) or_return
+    return generation,id,generation>0
+}
+
+// The file of a pack: in packs/, or in retired/ under the generation that dropped it.
+@(private)
+pack_file_path :: proc(s:^Store,p:^Pack,buffer:^[PATH_BYTES]u8) -> (string,Error) {
+    if p.retired==0 {return pack_path(s,"packs",p.id,buffer)}
+    name:[RETIRED_NAME]u8
+    return join(buffer,s.root,"retired",retired_name(p.retired,p.id,&name))
 }
 
 // Whether a ref's target can be read: a blob's alias or a stored root.

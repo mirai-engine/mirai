@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:os"
 import "core:sync"
 import "core:time"
+import "mirai:std/jobs"
 
 // Puts cut bytes into chunks, look each one up and append only the missing
 // ones to this value's pack, gathered into one write per stage. A chunk found
@@ -11,16 +12,43 @@ import "core:time"
 // quarter of GRACE a Touch frame refreshes it, so a sweep keeps it. Nothing is
 // visible to other values until commit.
 
-// An object being put; put_finish ends it.
+// An object being put; put_finish ends it. With a worker of a job system,
+// the bytes are cut on the caller's thread, in order, and each chunk is hashed,
+// looked up and appended by a job; the leaves join the tree in the order of the
+// cuts, so the object is the same as one put on one thread.
 Put :: struct {
     s:^Store,
     builder:^Object_Writer,
     stage:^Stage,
     now:i64,
+    worker:jobs.Worker_Ref,
+    batches:^Put_Batches,
 }
 
+// Two runs of cut chunks: one the jobs work on while the caller cuts the other.
+@(private)
+Put_Batches :: struct {
+    bytes:[2][]u8,
+    chunks:[2][dynamic]Put_Chunk,
+    used:[2]int,
+    turn:int,
+    counter:jobs.Counter,
+    pending:bool, // the jobs of the other run are queued
+}
+
+@(private)
+Put_Chunk :: struct {
+    s:^Store,
+    now:i64,
+    bytes:[]u8,
+    address:Hash,
+    error:Error,
+}
+
+@(private) PUT_RUN :: 16*CHUNK_MAX // bytes of a run of chunks
+
 // Puts bytes as an object of one group, without committing.
-put :: proc(s:^Store,data:[]u8,now:Maybe(time.Time)=nil) -> (address:Hash,error:Error) {
+put :: proc(s:^Store,data:[]u8,now:Maybe(time.Time)=nil,worker:=jobs.Worker_Ref{}) -> (address:Hash,error:Error) {
     if s==nil || s.state==nil {return {},.Invalid_Argument}
     at:=(now.? or_else time.now())._nsec
     if len(data)<=CHUNK_MAX && chunk_cut(data)==len(data) {
@@ -44,7 +72,7 @@ put :: proc(s:^Store,data:[]u8,now:Maybe(time.Time)=nil) -> (address:Hash,error:
         batch_check(s,at) or_return
         return address,.None
     }
-    p:=put_begin(s,now) or_return
+    p:=put_begin(s,now,worker) or_return
     if e:=put_write(&p,data);e!=.None {
         put_abandon(&p)
         return {},e
@@ -53,10 +81,11 @@ put :: proc(s:^Store,data:[]u8,now:Maybe(time.Time)=nil) -> (address:Hash,error:
     return
 }
 
-put_begin :: proc(s:^Store,now:Maybe(time.Time)=nil) -> (p:Put,error:Error) {
+put_begin :: proc(s:^Store,now:Maybe(time.Time)=nil,worker:=jobs.Worker_Ref{}) -> (p:Put,error:Error) {
     if s==nil || s.state==nil {return {},.Invalid_Argument}
     p.s=s
     p.now=(now.? or_else time.now())._nsec
+    p.worker=worker
     p.stage=stage_take(s) or_return
     sync.mutex_lock(&s.state.lock)
     if n:=len(s.state.builders);n>0 {p.builder=pop(&s.state.builders)}
@@ -80,7 +109,82 @@ put_begin :: proc(s:^Store,now:Maybe(time.Time)=nil) -> (p:Put,error:Error) {
 // Gives the next bytes of the object.
 put_write :: proc(p:^Put,data:[]u8) -> Error {
     p.builder.tree.sink={procedure=put_sink,data=p}
-    return object_write(p.builder,data)
+    if p.worker.system==nil {return object_write(p.builder,data)}
+    b:=p.builder
+    if !b.started {
+        tree_group(&b.tree,0,0) or_return
+        b.started=true
+    }
+    chunker_feed(&b.chunker,data) or_return
+    for chunk in chunker_next(&b.chunker) {put_run_add(p,chunk) or_return}
+    return .None
+}
+
+// Copies a cut chunk into the run being filled, handing the run to jobs when full.
+@(private)
+put_run_add :: proc(p:^Put,chunk:[]u8) -> Error {
+    if p.batches==nil {
+        b,e:=new(Put_Batches,p.s.state.allocator)
+        if e!=nil {return .Out_Of_Memory}
+        p.batches=b
+        for k in 0..<2 {
+            bytes,f:=make([]u8,PUT_RUN,p.s.state.allocator)
+            if f!=nil {return .Out_Of_Memory}
+            b.bytes[k]=bytes
+            b.chunks[k]=make([dynamic]Put_Chunk,0,0,p.s.state.allocator)
+        }
+    }
+    b:=p.batches
+    if b.used[b.turn]+len(chunk)>PUT_RUN {put_run_dispatch(p) or_return}
+    at:=b.used[b.turn]
+    copy(b.bytes[b.turn][at:],chunk)
+    b.used[b.turn]+=len(chunk)
+    if _,e:=append(&b.chunks[b.turn],Put_Chunk{s=p.s,now=p.now,bytes=b.bytes[b.turn][at:][:len(chunk)]});e!=nil {return .Out_Of_Memory}
+    return .None
+}
+
+// Waits for the jobs of the other run and adds its leaves in order, then
+// queues the jobs of this one and turns to the other.
+@(private)
+put_run_dispatch :: proc(p:^Put) -> Error {
+    b:=p.batches
+    put_run_settle(p) or_return
+    js:=p.worker.system
+    for &c in b.chunks[b.turn] {jobs.run(js,p.worker.worker,.Frame,put_chunk_job,&c,&b.counter)}
+    b.pending=len(b.chunks[b.turn])>0
+    b.turn=1-b.turn
+    b.used[b.turn]=0
+    clear(&b.chunks[b.turn])
+    return .None
+}
+
+// Waits for the queued run and adds its leaves to the tree in the order of the cuts.
+@(private)
+put_run_settle :: proc(p:^Put) -> Error {
+    b:=p.batches
+    if b==nil || !b.pending {return .None}
+    jobs.wait(p.worker.system,p.worker.worker,&b.counter)
+    b.pending=false
+    other:=1-b.turn
+    for c in b.chunks[other] {
+        c.error or_return
+        tree_put_leaf(&p.builder.tree,c.address,u64(len(c.bytes))) or_return
+    }
+    return .None
+}
+
+@(private)
+put_chunk_job :: proc(c:^Put_Chunk,worker:int) {
+    c.address=address_of_bytes(c.bytes)
+    st,error:=stage_take(c.s)
+    if error!=.None {
+        c.error=error
+        return
+    }
+    defer stage_give(c.s,st)
+    p:=Put{s=c.s,stage=st,now=c.now}
+    if c.error=put_chunk(&p,c.address,c.bytes);c.error!=.None {return}
+    c.error=stage_write(c.s,st,c.now)
 }
 
 // Gives a container chunk of a native asset as the next group, cut where its
@@ -95,6 +199,15 @@ put_native :: proc(p:^Put,tag,index:u32,align:u8,data:[]u8,cuts:[]int) -> Error 
 put_finish :: proc(p:^Put,meta:[]u8={}) -> (address:Hash,total:u64,error:Error) {
     defer put_abandon(p)
     p.builder.tree.sink={procedure=put_sink,data=p}
+    if p.worker.system!=nil && p.builder.started {
+        b:=p.builder
+        chunker_end(&b.chunker)
+        for chunk in chunker_next(&b.chunker) {put_run_add(p,chunk) or_return}
+        if p.batches!=nil {
+            put_run_dispatch(p) or_return
+            put_run_settle(p) or_return
+        }
+    }
     address,total=object_finish(p.builder,meta) or_return
     stage_write(p.s,p.stage,p.now) or_return
     batch_check(p.s,p.now) or_return
@@ -105,6 +218,14 @@ put_finish :: proc(p:^Put,meta:[]u8={}) -> (address:Hash,total:u64,error:Error) 
 put_abandon :: proc(p:^Put) {
     if p.s==nil {return}
     s:=p.s
+    if b:=p.batches;b!=nil {
+        if b.pending {jobs.wait(p.worker.system,p.worker.worker,&b.counter)}
+        for k in 0..<2 {
+            delete(b.bytes[k],s.state.allocator)
+            delete(b.chunks[k])
+        }
+        free(b,s.state.allocator)
+    }
     if p.builder!=nil {
         object_writer_reset(p.builder)
         sync.mutex_lock(&s.state.lock)
@@ -255,21 +376,29 @@ chunk_locate :: proc(s:^Store,address:Hash) -> (file:^os.File,view:[]u8,location
         p:=&state.packs[pack]
         if p.file==nil {
             buffer:[PATH_BYTES]u8
-            path:=pack_path(s,"packs",p.id,&buffer) or_return
+            path:=pack_file_path(s,p,&buffer) or_return
             opened,open_error:=io_open(s,path)
             if open_error==.Missing && attempt==0 {
                 // Retired by a sweep since this value read the generation.
-                p.gone=true
+                if p.retired==0 {p.gone=true}
                 refresh_locked(s) or_return
                 continue
             }
             if open_error!=.None {return nil,nil,{},open_error}
             p.file=opened
         }
-        if p.sealed && p.view==nil {
+        // Nothing is read beyond the file's size now: a pack cut below a chunk is damaged.
+        end:=i64(location.offset)+i64(location.stored)
+        size,size_error:=os.file_size(p.file)
+        if size_error!=nil {return nil,nil,{},os_error(size_error)}
+        if end>size {
+            p.damaged=true
+            return nil,nil,{},.Corrupt
+        }
+        if p.sealed && p.view==nil && size>=p.size {
             if mapped,map_error:=file_map(p.file,p.size);map_error==.None {p.view=mapped}
         }
-        if p.view!=nil && i64(location.offset)+i64(location.stored)<=i64(len(p.view)) {return p.file,p.view,location,.None}
+        if p.view!=nil && end<=i64(len(p.view)) {return p.file,p.view,location,.None}
         return p.file,nil,location,.None
     }
     return nil,nil,{},.Missing
@@ -304,7 +433,50 @@ object_open :: proc(s:^Store,address:Hash) -> (o:Object,error:Error) {
     copy(root,bytes)
     o.root_bytes=root
     o.root=node_parse(root) or_return
+    if o.root.level>0 && len(o.root.groups)>1 {groups_check(&o) or_return}
     return o,.None
+}
+
+// Above level 0 a root's groups cannot be checked against its entries alone:
+// each group must begin on the boundary of its first leaf, so the leaves are
+// walked once, their nodes only.
+@(private)
+groups_check :: proc(o:^Object) -> Error {
+    Check :: struct {o:^Object,groups:[]Group,next:int,leaf,at:u64,buffers:[NODE_LEVEL_MAX+1][]u8}
+    c:=Check{o=o,groups=o.root.groups}
+    defer for b in c.buffers {delete(b,o.s.state.allocator)}
+    visit :: proc(c:^Check,n:Node_View) -> Error {
+        if n.level==0 {
+            for e in n.entries {
+                for c.next<len(c.groups) && u64(c.groups[c.next].first)==c.leaf {
+                    if c.groups[c.next].offset!=c.at {return .Corrupt}
+                    c.next+=1
+                }
+                c.leaf+=1
+                c.at+=e.size
+            }
+            return .None
+        }
+        if c.buffers[n.level-1]==nil {
+            b,e:=make([]u8,CHUNK_MAX,c.o.s.state.allocator)
+            if e!=nil {return .Out_Of_Memory}
+            c.buffers[n.level-1]=b
+        }
+        entries:=n.entries
+        for e in entries {
+            bytes:=chunk_read(c.o.s,e.address,c.buffers[n.level-1]) or_return
+            child,parse_error:=node_parse(bytes)
+            if parse_error!=.None || child.level!=n.level-1 || child.total!=e.size || len(child.groups)>0 || len(child.meta)>0 {return .Corrupt}
+            visit(c,child) or_return
+        }
+        return .None
+    }
+    visit(&c,o.root) or_return
+    for c.next<len(c.groups) {
+        if u64(c.groups[c.next].first)!=c.leaf || c.groups[c.next].offset!=c.at {return .Corrupt}
+        c.next+=1
+    }
+    return .None
 }
 
 object_close :: proc(o:^Object) {
