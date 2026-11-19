@@ -65,6 +65,8 @@ Transport :: struct {
     receive:proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool),
 }
 
+UDP_BUFFER_BYTES :: 4<<20 // asked for the receive and send buffers of a socket
+
 Udp :: struct {socket:cnet.UDP_Socket,open,dual:bool,address:Address}
 
 // Binds a non-blocking socket. Port 0 lets the system choose; u.address holds the result. Bound to
@@ -80,6 +82,10 @@ udp_open :: proc(u:^Udp,bind:Address) -> bool {
         cnet.close(socket)
         return false
     }
+    // A bulk transfer outruns the system's default buffers between two polls; less than asked,
+    // or a refusal, keeps what the system gives.
+    cnet.set_option(socket,.Receive_Buffer_Size,UDP_BUFFER_BYTES)
+    cnet.set_option(socket,.Send_Buffer_Size,UDP_BUFFER_BYTES)
     u.socket,u.open,u.dual,u.address=socket,true,dual,bind
     if bound,bound_error:=cnet.bound_endpoint(socket);bound_error==nil {u.address.port=u16(bound.port)}
     return true

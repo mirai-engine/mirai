@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "core:time"
 import "mirai:std/base"
 import "mirai:store"
 
@@ -363,4 +364,39 @@ a_root_carries_the_manifests_it_pins :: proc(t:^testing.T) {
     testing.expect(t,!store.has(&fresh,manifest),"a file that is not its pin goes into no store")
     testing.expect_value(t,package_file_remove(root,p.id),Error.None)
     testing.expect_value(t,package_file_remove(root,p.id),Error.None)
+}
+
+// A sweep of the machine's store keeps every ref, the outputs of the builds
+// refs name and what the owner holds, and removes the rest once old.
+@(test)
+store_sweep_keeps_what_refs_and_builds_reach :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"packages-sweep");if folder=="" {return}
+    s,open_error:=store.open(fmt.tprintf("%s/store",folder),context.temp_allocator)
+    if !testing.expect_value(t,open_error,store.Error.None) {return}
+    put :: proc(s:^store.Store,text:string) -> store.Hash {
+        hash,_:=store.put_bytes(s,transmute([]u8)text)
+        return hash
+    }
+    mesh,texture,held,loose,cached:=put(&s,"mesh"),put(&s,"texture"),put(&s,"held"),put(&s,"loose"),put(&s,"cached")
+    p:=sample_package()
+    manifest,_:=package_put(&s,&p)
+    blobs:=[2]store.Hash{mesh,texture}
+    b:=sample_build(&p,blobs[:])
+    for &o in b.outputs {o.thumbnail={}}
+    build,_:=build_put(&s,&b)
+    digits:[64]u8
+    store.ref_set(&s,REF_IMPORTS,store.hex(hash_of("key"),&digits),build)
+    store.ref_set(&s,REF_PACKAGES,"crate",manifest)
+    store.ref_set(&s,"cache-thumbs","1",cached)
+    now:=time.now()
+    old:=time.time_add(now,-2*store.BLOB_GRACE_AGE)
+    for hash in ([]store.Hash{mesh,texture,held,loose,cached,manifest,build}) {
+        path,_:=store.blob_path(&s,hash,context.temp_allocator)
+        os.change_times(path,old,old)
+    }
+    swept,error:=store_sweep(&s,{held},now)
+    testing.expect_value(t,error,store.Error.None)
+    testing.expect_value(t,swept.blobs,1)
+    for hash in ([]store.Hash{mesh,texture,held,cached,manifest,build}) {testing.expect(t,store.has(&s,hash))}
+    testing.expect(t,!store.has(&s,loose),"what nothing reaches goes")
 }

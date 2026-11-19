@@ -48,18 +48,37 @@ group_value :: proc "contextless" (data: []u8, index: u64) -> (value: Hash, ok: 
 }
 
 root :: proc "contextless" (values: []Hash, length: u64) -> (hash: Hash, ok: bool) {
-    if length <= GROUP_BYTES || u64(len(values)) != 1 + (length - 1) / GROUP_BYTES {
+    r: Root
+    for value in values {
+        root_push(&r, value)
+    }
+    return root_final(&r, length)
+}
+
+// The root of group values given one at a time, holding a value per level
+// of the tree instead of every value.
+Root :: struct {
+    tree: Tree,
+    count: u64,
+    last: Chaining_Value,
+}
+
+root_push :: proc "contextless" (r: ^Root, value: Hash) {
+    if r.count > 0 {
+        left := r.last
+        tree_push(&r.tree, r.count - 1, &left)
+    }
+    r.last = decode_hash(value)
+    r.count += 1
+}
+
+root_final :: proc "contextless" (r: ^Root, length: u64) -> (hash: Hash, ok: bool) {
+    if length <= GROUP_BYTES || r.count != 1 + (length - 1) / GROUP_BYTES {
         return {}, false
     }
-
-    tree: Tree
-    right := len(values) - 1
-    for group, index in values[:right] {
-        value := decode_hash(group)
-        tree_push(&tree, u64(index), &value)
-    }
-    value := decode_hash(values[right])
-    tree_fold(&tree, u64(right), &value, ROOT)
+    tree := r.tree
+    value := r.last
+    tree_fold(&tree, r.count - 1, &value, ROOT)
     return encode(value), true
 }
 
@@ -72,7 +91,7 @@ GROUP_CHUNKS :: GROUP_BYTES / CHUNK_BYTES
 
 @(private)
 Chaining_Value :: [8]u32
-@(private="file")
+@(private)
 Tree :: [54]Chaining_Value // A u64 byte length has at most 54 bits of chunk indices.
 
 @(private)

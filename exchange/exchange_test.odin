@@ -1,5 +1,6 @@
 package exchange
 
+import "core:os"
 import "core:slice"
 import "core:sync"
 import "core:testing"
@@ -150,6 +151,42 @@ a_liar_in_the_table_a_piece_or_the_size_is_marked_and_the_blob_still_arrives :: 
             lies[0 if p.lies>0 else 1]+=1
         }
         testing.expectf(t,lies=={1,1},"%v: the liar is marked and the honest peer is not: %v",lie,lies)
+    }
+}
+
+// A peer whose copy of a blob was damaged on its disk serves none of the
+// damage: it lacks the blob, is not taken for a liar, and drops it so that
+// it can fetch it again.
+@(test)
+a_damaged_blob_is_lacked_removed_and_fetched_again :: proc(t:^testing.T) {
+    for size in ([2]int{2*store.PIECE_BYTES+9,6*store.PIECE_BYTES+1000}) {
+        w:Test_World
+        defer test_world_destroy(&w)
+        if !test_world(t,&w,"exchange-damaged",3) {return}
+        test_host(&w,0,.Server)
+        damaged:=test_host(&w,1,.Client)
+        honest:=test_host(&w,2,.Client)
+        blob:=test_put(t,&w.nodes[1].s,size,11)
+        test_put(t,&w.nodes[2].s,size,11)
+        path,_:=store.blob_path(&w.nodes[1].s,blob,context.temp_allocator)
+        bytes:=slice.clone(test_bytes(size,11),context.temp_allocator)
+        bytes[size-5]~=1
+        testing.expect(t,os.write_entire_file(path,bytes)==nil)
+        if !testing.expect(t,test_connect(&w,damaged,w.nodes[0].endpoints[0]) && test_connect(&w,honest,w.nodes[0].endpoints[0])) {return}
+        r:=&w.nodes[0]
+        want(&r.x,blob)
+        testing.expectf(t,test_until_complete(&w,0,{blob},20),"%d: the blob arrives",size)
+        testing.expect_value(t,store.verify(&r.s,blob),store.Error.None)
+        server:=r.hosts[0]
+        for c in server.connection_handles {
+            if c==0 {continue}
+            p,_:=peer_progress(&r.x,server,c)
+            testing.expectf(t,p.lies==0 && !p.bad,"%d: nobody is taken for a liar",size)
+        }
+        testing.expect(t,!store.has(&w.nodes[1].s,blob),"the damaged copy is removed")
+        want(&w.nodes[1].x,blob)
+        testing.expect(t,test_until_complete(&w,1,{blob},20),"and fetched again")
+        testing.expect_value(t,store.verify(&w.nodes[1].s,blob),store.Error.None)
     }
 }
 
