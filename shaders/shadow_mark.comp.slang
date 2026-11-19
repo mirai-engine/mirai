@@ -55,9 +55,9 @@ void shadow_mark_pages(Shadow_Map m, float2 texel, float2 reach) {
 // the sun or the mip as many times coarser, which its far taps read; of its
 // own, those of the taps nearest it and of the ellipse whose lit share it
 // takes, which no coarser texel tells across its narrow side.
-void shadow_mark(Shadow_Map m, bool sun, float3 position, float3 n, float radius, float across, float grow) {
+void shadow_mark(Shadow_Map m, bool sun, float3 position, float3 n, float radius, float across, float grow, float3 swayed) {
     Shadow_Taps t;
-    if (!shadow_map_taps(m, sun, n, position, n, radius, across, grow, t)) return;
+    if (!shadow_map_taps(m, sun, n, position, n, radius, across, grow, t, swayed)) return;
     float reach = shadow_taps_reach(t), near = SHADOW_SEARCH_NEAR * grow;
     uint coarsest = sun ? sun_levels() - 1u - min(m.rect.x, sun_levels() - 1u) : SHADOW_MIPS - 1u - shadow_rect_mip(m.rect);
     uint coarser = min(uint(ceil(log2(max((reach - 2.0) / near, 1.0)))), coarsest);
@@ -86,22 +86,22 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float2 uv = (float2(source) + 0.5) * frame.inv_resolution;
     Pixel pixel = pixel_at(source, uv, depth);
     float3 normal = gbuffer_normal(source);
-    point_swayed = pixel_rest(source, depth);
+    float3 swayed = pixel_rest(source, depth);
     float across = float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth));
     Shadow_Map m;
     Sun_Pick pick;
     float pixel_across = across / float(scale);
-    if (direct_sun_weight(pixel.position, normal) > 0.0 && sun_pick(pixel.position, pixel_across, pick)) {
-        shadow_mark(sun_level(pick.level), true, pixel.position, normal, params.sun_radius, across, pick.grow);
-        if (pick.blend > 0.0) shadow_mark(sun_level(pick.level + 1u), true, pixel.position, normal, params.sun_radius, across, 1.0);
+    if (direct_sun_weight(pixel.position, normal) > 0.0 && sun_pick(pixel.position, pixel_across, pick, swayed)) {
+        shadow_mark(sun_level(pick.level), true, pixel.position, normal, params.sun_radius, across, pick.grow, swayed);
+        if (pick.blend > 0.0) shadow_mark(sun_level(pick.level + 1u), true, pixel.position, normal, params.sun_radius, across, 1.0, swayed);
     }
     uint4 row = direct_cell(pixel.position);
     uint count = direct_items(row);
     for (uint i = 0u; i < count; i++) {
         uint item = direct_item(row, i);
-        if (item == DIRECT_CELL_TABLE || !light_map_of(item, pixel.position, m)) continue;
-        Sun_Pick mip = light_pick(m, pixel.position, pixel_across, light_extent(lights[item]));
-        shadow_mark(shadow_map_mip(m, mip.level), false, pixel.position, normal, light_extent(lights[item]), across, mip.grow);
-        if (mip.blend > 0.0) shadow_mark(shadow_map_mip(m, mip.level + 1u), false, pixel.position, normal, light_extent(lights[item]), across, 1.0);
+        if (item == DIRECT_CELL_TABLE || !light_map_of(item, pixel.position, m, swayed)) continue;
+        Sun_Pick mip = light_pick(m, pixel.position, pixel_across, light_extent(lights[item]), swayed);
+        shadow_mark(shadow_map_mip(m, mip.level), false, pixel.position, normal, light_extent(lights[item]), across, mip.grow, swayed);
+        if (mip.blend > 0.0) shadow_mark(shadow_map_mip(m, mip.level + 1u), false, pixel.position, normal, light_extent(lights[item]), across, 1.0, swayed);
     }
 }

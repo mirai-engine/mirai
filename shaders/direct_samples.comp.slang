@@ -218,8 +218,8 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     float3 normal = gbuffer_normal(source);
     Shading s = gbuffer_shading(direct_point_gbuffer(source, scale), pixel);
     float3 reflectance = max(s.diffuse + specular_albedo(s), float3(0.02));
-    point_swayed = pixel_rest(source, depth);
-    float3 rest = pixel.position - point_swayed;
+    float3 swayed = pixel_rest(source, depth);
+    float3 rest = pixel.position - swayed;
     float3 origin = offset_origin(rest, normal, view_bias(pixel.distance));
     bool changes = frame.moved.x > 0u;
     float spin = direct_spin(p);
@@ -237,12 +237,12 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     bool sun_given = false;
     direct_across = frame.footprint.x + frame.footprint.y * depth_distance(depth);
     if (sun > 0.0) {
-        sun_given = sun_map_given(pixel.position, direct_across);
+        sun_given = sun_map_given(pixel.position, direct_across, swayed);
         if (sun_given) sun = 0.0;
     }
     float total = sun;
     for (uint i = 0u; i < count; i++) {
-        float w = direct_sampled_weight(row, direct_item(row, i), pixel.position, normal);
+        float w = direct_sampled_weight(row, direct_item(row, i), pixel.position, normal, swayed);
         uint bits = asuint(w) >> 16u;
         if ((i & 1u) == 0u) samples_weights[(i >> 1u) * GROUP_SIZE + index] = bits;
         else samples_weights[(i >> 1u) * GROUP_SIZE + index] |= bits << 16u;

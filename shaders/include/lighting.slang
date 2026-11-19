@@ -1168,7 +1168,8 @@ bool lights_changed(float3 position, float3 normal, float bias, uint budget, uin
 // that reach it one by one while they fit, and groups for the far ones when
 // they do not; those that cast no shadows add their light without rays. A
 // shadow ray stops at the surface of a light, so a lamp that holds its light
-// casts no shadow of it. The rays of the lights of extensions go to
+// casts no shadow of it. A point the vertex hook moved by `swayed` from where
+// it rests (pixel_rest) sends its rays from there. The rays of the lights of extensions go to
 // `extension_point` of them (mirai_extension_light): the center unless the
 // caller averages points over frames. A point of a medium (shading_medium)
 // sends the light of each by its phase function. `changed`, with
@@ -1177,9 +1178,9 @@ bool lights_changed(float3 position, float3 normal, float bias, uint budget, uin
 //
 // Every shadow ray goes through one traversal in the source: a call more
 // would be another copy of it in every stage.
-float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 extension_point, inout bool changed) {
-    // Its rays leave from where the point rests (point_swayed): what they meet rests there.
-    float3 rest = s.position - point_swayed;
+float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 extension_point, inout bool changed, float3 swayed = float3(0.0)) {
+    // Its rays leave from where the point rests: what they meet rests there.
+    float3 rest = s.position - swayed;
     float3 origin = offset_origin(rest, s.normal, bias);
     uint share = (which & LIGHTS_BOUNCED) != 0u ? LIGHT_SHARE_BOUNCED : (which & LIGHTS_SCATTERED) != 0u ? LIGHT_SHARE_SCATTERED : LIGHT_SHARE_ALL;
     bool changes = (which & LIGHTS_CHANGES) != 0u;
@@ -1208,7 +1209,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
             reach = sun_reach(origin, direction);
             if (changes) changed = changed || (frame.moved.z & MOVED_SUN) != 0u || occluder_changed(origin, direction, reach, INVALID, FLT_MAX);
 #ifdef MIRAI_LIGHT_MAPS
-            mapped = sun_shadow_seen(s.position, s.normal, s.across);
+            mapped = sun_shadow_seen(s.position, s.normal, s.across, true, swayed);
 #endif
         } else if (item <= local_items) {
             Light_Node node = light_nodes[light_cut_nodes[item - 1u]];
@@ -1218,7 +1219,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
             uint aimed = cut_ray(light_cut_nodes[item - 1u], rest, s.normal, share, direction, reach);
             if (changes) changed = changed || occluder_changed(origin, direction, reach, INVALID, FLT_MAX);
 #ifdef MIRAI_LIGHT_MAPS
-            mapped = light_shadow_seen(aimed, s.position, s.normal, light_extent(lights[aimed]), s.across);
+            mapped = light_shadow_seen(aimed, s.position, s.normal, light_extent(lights[aimed]), s.across, swayed);
 #endif
         }
         // The other side of a thin surface: its ray, where the maps hide the light or tell nothing, is that of light_through.
@@ -1277,9 +1278,9 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
     return sun + local;
 #endif
 }
-float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_ALL, float2 extension_point = float2(-1.0, 0.0)) {
+float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_ALL, float2 extension_point = float2(-1.0, 0.0), float3 swayed = float3(0.0)) {
     bool changed = false;
-    return direct_lighting(s, bias, budget, which & ~LIGHTS_CHANGES, extension_point, changed);
+    return direct_lighting(s, bias, budget, which & ~LIGHTS_CHANGES, extension_point, changed, swayed);
 }
 
 // The normal of a hit, facing the ray: the side of its triangle the ray
