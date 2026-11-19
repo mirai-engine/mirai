@@ -1172,6 +1172,7 @@ raster_round_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, round: u32, la
 		vertices.triangle_capacity = min(s.raster_share[1], s.cull_capacity[.Raster_Triangles])
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Vertices_Cost if cost != 0 else .Raster_Vertices])
 		set_params(cmd, &vertices)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS6, s.visible_moved)
 	}
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, l.state)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, stats)
