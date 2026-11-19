@@ -87,14 +87,13 @@ hostile_messages_are_refused_without_a_crash :: proc(t:^testing.T) {
         {LANE_DATA,test_chunk(root,0,len(big),big),true},
         {LANE_DATA,test_message({MSG_LACK},root[:4]),true},
         {LANE_DATA,test_message({MSG_LACK},root[:],{0}),true},
-        {LANE_DATA,test_message({MSG_ALIAS},root[:]),true},
+        {LANE_DATA,test_message({4},root[:],root[:]),true}, // an unknown kind
         {LANE_DATA,{MSG_DONE},true},
         {LANE_DATA,{MSG_DONE,0},true},
         // Nobody asked: ignored, counted against the peer.
         {LANE_DATA,test_chunk(root,0,10,big[:10]),false},
         {LANE_DATA,test_chunk(other,0,5,test_bytes(5,2)),false},
         {LANE_DATA,test_message({MSG_LACK},other[:]),false},
-        {LANE_DATA,test_message({MSG_ALIAS},other[:],root[:]),false},
         {LANE_CONTROL,test_message({MSG_REF},test_name("lib"),test_name("a"),{1},zero[:]),false},
         {LANE_CONTROL,test_message({MSG_NAMES},test_name("lib"),{0},{0},test_le(0,2)),false},
         {LANE_CONTROL,test_message({MSG_REF_GET},test_name("secret"),test_name("a")),false},
@@ -148,8 +147,7 @@ hostile_messages_are_refused_without_a_crash :: proc(t:^testing.T) {
 
 // Trees a peer holds whose chunks hash to their addresses but do not hold
 // together: a node of the wrong level, or whose bytes disagree with its
-// parent, fails the want. A wanted chunk that is no node is the blob of its
-// bytes.
+// parent, or a wanted root that is no node, fails the want.
 @(test)
 hostile_trees_fail_the_want_without_a_crash :: proc(t:^testing.T) {
     w:Test_World
@@ -183,8 +181,7 @@ hostile_trees_fail_the_want_without_a_crash :: proc(t:^testing.T) {
     x:=&w.nodes[1].x
     for a in ([]store.Hash{nonsense,skipped,wrong_size,short}) {want(x,a)}
     test_step(&w,1000)
-    testing.expect(t,test_state(x,nonsense)==.Complete && store.has(&w.nodes[1].s,nonsense),"a chunk that is no node arrives as a blob")
-    for a in ([]store.Hash{skipped,wrong_size,short}) {
+    for a in ([]store.Hash{nonsense,skipped,wrong_size,short}) {
         p,_:=progress(x,a)
         testing.expectf(t,p.state==.Failed && p.store_error==.Corrupt,"a tree that does not hold together fails: %v",p)
     }

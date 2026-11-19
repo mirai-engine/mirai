@@ -7,7 +7,7 @@ description: Mirai machine-wide content-addressed store (the `store` package) - 
   refs between peers over `net` (asks with a budget, wants as objects, priorities, several
   sources, lying peers, blocking fetch). Use when storing or sharing heavy content between
   projects or peers, building an asset library or a derived data cache on top of it, fetching an
-  object or a blob from another machine, or diagnosing a corrupt, missing, slow or growing store.
+  object from another machine, or diagnosing a corrupt, missing, slow or growing store.
 ---
 
 # Mirai store
@@ -30,7 +30,6 @@ derived data cache that use it decide what a ref means and what is live.
 - Sweep, compaction, generations, scrub and the sweep's claims: `store/sweep.odin`; leases:
   `store/leases.odin`. The sweep a long-running owner calls, with what is live on the machine:
   `asset.store_sweep` (`asset/collect.odin`).
-- Blobs, the whole-file address the consumers still use: `store/bridge.odin`.
 - Moving objects and refs between peers (`exchange`): what its owner calls →
   [exchange](references/exchange.md#what-the-owner-calls), its rules →
   [invariants](references/exchange.md#invariants), its tests →
@@ -57,7 +56,7 @@ derived data cache that use it decide what a ref means and what is live.
 - Every chunk lives in a pack, appended only by the writer that made it, whose lease (`w-` and its
   id) says it runs. A put reserves its range of the pack under the lock and writes outside it, so
   threads write at once; a small object is one write, and nothing is created, renamed or flushed
-  per put, because a file and a flush per blob cost far more than an append. Cuts stay in order
+  per put, because a file and a flush per object cost far more than an append. Cuts stay in order
   on one thread while jobs hash and append the chunks, and leaves join the tree in the order of
   the cuts, so an object is the same put on one thread or many.
 - A commit flushes the batch, then writes the commit frame that makes it visible: one flush per
@@ -97,8 +96,8 @@ derived data cache that use it decide what a ref means and what is live.
   live root reaches that only a retired pack holds, and deletes a retired pack only once every
   other writer's lease carries its generation and every other lease does or is what the sweep
   marked from, deleting before it writes anything so it frees space on a full volume.
-- A blob of another process's open pack, and its alias, stay until that pack is sealed: a sweep
-  folds only sealed packs.
+- What another process's open pack holds stays until that pack is sealed: a sweep folds only
+  sealed packs.
 - A ref is folded into a generation by the newest frame of its name; a removed ref stays there as
   a record while a pack still being written could hold an older frame of it.
 - Nothing is checked on a local read or a serve: a scrub checks the chunks of sealed packs against
@@ -116,7 +115,7 @@ derived data cache that use it decide what a ref means and what is live.
   POSIX semantics, so a reader, another process or an antivirus holding it does not stop it;
   sharing violations are retried briefly.
 - Ref namespaces and names are lowercase ASCII, digits, `.`, `_` and `-`, the same on every
-  system; the empty namespace is the store's own.
+  system.
 - External bytes are cut with FastCDC 2020, normalized at level 1 (`CHUNK_MIN`, `CHUNK_AVG`,
   `CHUNK_MAX`); the cut function and its gear table are part of the layout, since changing either
   changes every address. A cut is decided only with `CHUNK_MAX` bytes ahead or at the end, so a
@@ -137,10 +136,6 @@ derived data cache that use it decide what a ref means and what is live.
   sink its caller gives. A root's groups follow each other from leaf 0 and byte 0, each with the
   leaf and the byte where it begins; above level 0 only the leaves say where those are, so opening
   such an object walks its leaf nodes once and refuses a group that does not begin on its leaf.
-- Until the consumers move to objects, a blob (the standard BLAKE3 of a whole file) is an object
-  of one group and an alias, a ref of the empty namespace named by the blob's hex. A blob's file
-  path is a copy written once into `tmp/blobs`. A received object is named a blob only once its
-  bytes hash to the blob's address.
 - No input terminates the process: damaged, truncated or hostile packs and generations, random
   tables and pieces, out-of-range indices and memory that runs out return an `Error`; a pack that
   does not read is skipped and a generation that does not read refuses the root.
@@ -162,10 +157,8 @@ derived data cache that use it decide what a ref means and what is live.
   `compaction_keeps_every_live_chunk_and_drops_the_dead`,
   `a_full_volume_is_no_space_and_a_sweep_frees_it`, `a_scrub_tombstones_a_damaged_chunk`,
   `hostile_packs_and_generations_are_refused`, `hostile_inputs_return_errors` and
-  `fresh_leases_keep_their_current_addresses`; for blobs
-  `address_is_the_same_through_put_bytes_put_file_and_receiving`,
-  `a_received_object_is_named_a_blob_only_when_its_bytes_make_it` and
-  `a_chunk_check_tombstones_a_damaged_copy`; for chunks and nodes
+  `fresh_leases_keep_their_current_addresses`, `a_chunk_check_tombstones_a_damaged_copy`; for
+  chunks and nodes
   `chunks_are_the_same_streamed_in_any_split_and_whole`,
   `an_edit_changes_two_data_chunks_and_one_node_per_level`, `hostile_nodes_return_errors` and
   `groups_resolve_at_every_boundary`.

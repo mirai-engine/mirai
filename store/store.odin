@@ -28,9 +28,8 @@ PATH_BYTES :: ROOT_MAX+256
 
 Error :: enum u8 {
     None,
-    Missing,            // no chunk, object, blob or ref with that name; from commit: a chunk the batch named went missing beside a sweep, so the batch was dropped and is put again
+    Missing,            // no chunk, object or ref with that name; from commit: a chunk the batch named went missing beside a sweep, so the batch was dropped and is put again
     Corrupt,            // bytes that do not match their address, or a damaged file of the root
-    Wrong_Size,         // the last piece of a blob being received matches its table at another length than the size it began with: that size was wrong
     Invalid_Argument,
     Out_Of_Memory,
     Io,
@@ -44,7 +43,6 @@ error_text :: proc(error:Error) -> string {
     case .None: return "no error"
     case .Missing: return "it is not in the store: put or fetch it again"
     case .Corrupt: return "the store holds bytes that do not match their address: a sweep and a scrub drop them, and putting or fetching it again mends it"
-    case .Wrong_Size: return "a blob was begun with a size its last piece disproves: begin it again with the size that piece gives"
     case .Invalid_Argument: return "an argument out of its range"
     case .Out_Of_Memory: return "memory ran out"
     case .Io: return "the file system refused an operation on the store's folder: give this user access to it"
@@ -109,7 +107,7 @@ open :: proc(root:string,allocator:=context.allocator) -> (s:Store,error:Error) 
     folder_make(trimmed) or_return
     fresh:=layout_check(trimmed) or_return
     buffer:[PATH_BYTES]u8
-    for folder in ([?]string{"packs","index","retired","leases","tmp",SWEEP_FOLDER,BLOBS_FOLDER}) {
+    for folder in ([?]string{"packs","index","retired","leases","tmp",SWEEP_FOLDER}) {
         folder_make(join(&buffer,trimmed,folder) or_return) or_return
     }
     if fresh {

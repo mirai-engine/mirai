@@ -35,7 +35,7 @@ root_packages :: proc(root,store_root:string,allocator:=context.allocator) -> (r
     case .Unsupported_Layout:
         problem_line(&problems,"the store at %s was written by another version of Mirai, so the packages of %s are not listed: remove that folder and build again, which fills it",folder,root) or_return
         return {problems=problems[:]},.None
-    case .Missing,.Corrupt,.Wrong_Size,.Invalid_Argument,.Io,.No_Space:
+    case .Missing,.Corrupt,.Invalid_Argument,.Io,.No_Space:
         problem_line(&problems,"the store at %s does not open (%v), so the packages of %s are not listed",folder,open_error,root) or_return
         return {problems=problems[:]},.None
     }

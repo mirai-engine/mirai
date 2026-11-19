@@ -2,7 +2,7 @@ package exchange
 
 import "mirai:store"
 
-// Messages of exchange protocol 3, little endian, a kind byte first. Names are
+// Messages of exchange protocol 4, little endian, a kind byte first. Names are
 // a length byte and their bytes.
 //
 // Control channel:
@@ -15,7 +15,6 @@ import "mirai:store"
 //   Names     namespace, after, more u8, count u16, entries of name and address
 // Data channel, the answers to asks in the order asked:
 //   Chunk     address, codec u8, raw u32, bytes as stored
-//   Alias     blob, root: the asked address is a blob whose object has root
 //   Lack      address: a chunk asked that this end does not have
 //   Done      the end of the answer to an ask
 
@@ -29,7 +28,6 @@ import "mirai:store"
 @(private) MSG_CHUNK :: 1
 @(private) MSG_LACK :: 2
 @(private) MSG_DONE :: 3
-@(private) MSG_ALIAS :: 4
 
 @(private) ASK_ENTRY_BYTES :: 32+4
 @(private) MSG_ASK_HEAD :: 1+2
@@ -37,7 +35,6 @@ import "mirai:store"
 @(private) MSG_CHUNK_HEAD :: 1+32+1+4
 @(private) MSG_CHUNK_MAX :: MSG_CHUNK_HEAD+store.CHUNK_MAX
 @(private) MSG_ADDRESS_BYTES :: 1+32 // Lack and Bad
-@(private) MSG_ALIAS_BYTES :: 1+32+32
 @(private) MSG_NAMES_GET_MAX :: 1+2*(1+store.NAME_MAX)
 @(private) MSG_REF_MAX :: MSG_NAMES_GET_MAX+1+32
 @(private) MSG_NAMES_MAX :: MSG_NAMES_GET_MAX+3+NAMES_REPLY_BYTES
@@ -148,7 +145,6 @@ message :: proc(x:^Exchange,i:int,lane:int,data:[]u8) {
         case MSG_CHUNK: on_chunk(x,i,data)
         case MSG_LACK: on_lack(x,i,data)
         case MSG_DONE: on_done(x,i,data)
-        case MSG_ALIAS: on_alias(x,i,data)
         case: peer_bad(x,i)
         }
         return

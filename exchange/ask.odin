@@ -37,7 +37,7 @@ want_add :: proc(x:^Exchange,address:store.Hash,priority:int) -> (int,Error) {
     for &w,i in x.wants {
         if w.used {continue}
         generation:=w.generation+1
-        w={used=true,generation=generation,address=address,priority=priority,order=x.sequence,alias_peer=-1,first=-1,last=-1,total=-1}
+        w={used=true,generation=generation,address=address,priority=priority,order=x.sequence,first=-1,last=-1,total=-1}
         x.sequence+=1
         x.want_slots[want_slot(x,address)]=i32(i)
         x.order[x.want_count]=i
@@ -51,17 +51,14 @@ want_add :: proc(x:^Exchange,address:store.Hash,priority:int) -> (int,Error) {
     return -1,.Full
 }
 
-// Whether a complete want is still whole in the store: a blob by its alias,
-// an object by its root.
+// Whether the root of a complete want is still in the store.
 @(private)
 want_present :: proc(x:^Exchange,w:^Want) -> bool {
-    if w.blob {return store.has(x.desc.store,w.address)}
-    return store.chunk_has(x.desc.store,w.root)
+    return store.chunk_has(x.desc.store,w.address)
 }
 
-// From what this store value knows now, without reading its root again: a
-// blob complete, an object whose root is here walked from it by a job, or
-// nothing. What another process committed since is fetched again, harmlessly.
+// From what this store value knows now, without reading its root again: an
+// object whose root is here walked from it by a job, or nothing. What another process committed since is fetched again, harmlessly.
 @(private)
 want_begin :: proc(x:^Exchange,i:int) {
     needs_clear(x,i)
@@ -69,18 +66,11 @@ want_begin :: proc(x:^Exchange,i:int) {
     if w.settling {x.settling-=1}
     // Results of jobs for what the want was are not taken.
     w.generation+=1
-    w.state,w.rooted,w.blob,w.root,w.total,w.here=.Asking,false,false,{},-1,0
+    w.state,w.total,w.here=.Asking,-1,0
     w.walking,w.walked,w.blocked,w.walk_job,w.shared,w.depth=false,false,false,false,false,0
     w.settling,w.committing=false,false
     order_place(x,i)
-    s:=x.desc.store
-    if root,found:=store.blob_root(s,w.address);found {
-        w.rooted,w.blob,w.root=true,true,root
-        want_complete(x,i)
-        return
-    }
-    if store.chunk_here(s,w.address) {
-        w.rooted,w.root=true,w.address
+    if store.chunk_here(x.desc.store,w.address) {
         want_walk_root(x,i)
         return
     }
@@ -92,7 +82,7 @@ want_begin :: proc(x:^Exchange,i:int) {
 want_walk_root :: proc(x:^Exchange,i:int) {
     w:=&x.wants[i]
     w.walking,w.walked,w.blocked,w.depth=true,false,false,1
-    w.stack[0]={address=w.root}
+    w.stack[0]={address=w.address}
     attend(x,i)
 }
 
@@ -182,15 +172,9 @@ want_fail :: proc(x:^Exchange,i:int,error:Error,store_error:store.Error) {
 }
 
 // The tree under a verified root does not hold together: every peer would
-// send the same, so an object fails; a blob's alias came from a liar.
+// send the same, so the want fails.
 @(private)
 want_corrupt :: proc(x:^Exchange,i:int) {
-    w:=&x.wants[i]
-    if w.blob {
-        lie(x,i,w.alias_peer)
-        want_begin(x,i)
-        return
-    }
     want_fail(x,i,.Store,.Corrupt)
 }
 
@@ -282,41 +266,13 @@ need_remove :: proc(x:^Exchange,k:int) {
     x.need_free[len(x.needs)-1-x.need_count]=i32(k)
 }
 
-// Moves a need to another address: a blob's root an alias named.
-@(private)
-need_rename :: proc(x:^Exchange,k:int,address:store.Hash) -> bool {
-    if need_find(x,address)>=0 {return false}
-    n:=x.needs[k]
-    want,peer,lack,since:=int(n.want),n.peer,n.lack,n.lack_since
-    need_remove(x,k)
-    need_add(x,want,n.kind,address,n.level,n.size)
-    m:=need_find(x,address)
-    if m<0 {return false}
-    if peer>=0 {
-        x.needs[m].peer=peer
-        x.wants[want].free-=1
-        x.free-=1
-    }
-    x.needs[m].lack,x.needs[m].lack_since=lack,since
-    // The flight that asked it follows it.
-    p:=&x.peers[peer] if peer>=0 else nil
-    if p!=nil {
-        for j in 0..<p.flight_count {
-            f:=&p.flights[(p.flight_head+j)%len(p.flights)]
-            if int(f.need)==k && f.serial==n.serial {f.need,f.serial=i32(m),x.needs[m].serial}
-        }
-    }
-    return true
-}
-
 @(private)
 needs_clear :: proc(x:^Exchange,i:int) {
     w:=&x.wants[i]
     for w.first>=0 {need_remove(x,int(w.first))}
 }
 
-// Peer p sent a chunk of the want that failed its address, or named a root
-// for a blob that its bytes did not make: what it was asked of the want goes
+// Peer p sent a chunk of the want that failed its address: what it was asked of the want goes
 // to others, and it is not asked for it again.
 @(private)
 lie :: proc(x:^Exchange,i:int,p:int) {
@@ -452,19 +408,9 @@ asking :: proc(x:^Exchange) {
     }
 }
 
-// What a want that is asking does next: ask the root an alias named, walk,
-// or settle.
+// What a want that is asking does next: walk, or settle.
 @(private)
 want_attend :: proc(x:^Exchange,i:int) {
-    w:=&x.wants[i]
-    if w.rooted && !w.walking {
-        // The root an alias named, which another want may be asking.
-        if store.chunk_here(x.desc.store,w.root) {
-            want_walk_root(x,i)
-        } else if need_find(x,w.root)<0 {
-            need_add(x,i,.Root,w.root,0,0)
-        }
-    }
     walk_start(x,i)
     want_check(x,i)
 }
@@ -598,40 +544,11 @@ receive_fill :: proc(x:^Exchange,slot:^Receive_Slot,i:int,address:store.Hash,byt
     w:=&x.wants[wi]
     copy(slot.bytes,bytes)
     slot.address=address
-    slot.want,slot.generation,slot.blob=i32(wi),w.generation,w.blob
+    slot.want,slot.generation=i32(wi),w.generation
     slot.peer,slot.epoch=i,p.epoch
     slot.result,slot.error,slot.parsed=.Stored,.None,false
     slot.limit=0
     p.received+=u64(len(bytes))
-}
-
-// A blob's root, from the peer asked for the blob: the want walks that object,
-// and is complete once its bytes make the blob's address.
-@(private)
-on_alias :: proc(x:^Exchange,i:int,data:[]u8) {
-    r:=Reader{data=data[1:],ok=true}
-    blob:=read_hash(&r)
-    root:=read_hash(&r)
-    if !read_end(&r) {peer_bad(x,i);return}
-    p:=&x.peers[i]
-    f,own:=flight_answer(x,i,blob)
-    if f==nil || !own {p.refused+=1;return}
-    f.address=root
-    k:=need_find(x,blob)
-    if k<0 || x.needs[k].kind!=.Root || int(x.needs[k].peer)!=i {p.refused+=1;return}
-    wi:=int(x.needs[k].want)
-    w:=&x.wants[wi]
-    if w.rooted || w.address!=blob {p.refused+=1;return}
-    w.blob,w.rooted,w.root,w.alias_peer=true,true,root,i
-    flights_heard(x,i,wi)
-    attend(x,wi)
-    if store.chunk_here(x.desc.store,root) {
-        need_remove(x,k)
-        want_walk_root(x,wi)
-    } else if !need_rename(x,k,root) {
-        need_remove(x,k)
-    }
-    x.dirty=true
 }
 
 @(private)

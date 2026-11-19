@@ -132,7 +132,6 @@ walker_run :: proc(k:^Walker) {
 Receive_Result :: enum u8 {
     Stored,   // checked and stored; a node also walked from
     Mismatch, // it does not hash to its address
-    Blob,     // a root that is no node: the bytes of a blob of one chunk, put whole
     Corrupt,  // it hashes right but does not hold together with its parent
     Failed,   // the store refused it
     Checked,  // a descendant whose parent was not parsed when it came: hashed, not stored
@@ -157,7 +156,6 @@ Receive_Slot :: struct {
     kind:Need_Kind,
     level:int,
     entry:u64,    // data bytes its parent says are under it
-    blob:bool,    // a root the want names as a blob's
     limit:int,    // chunks its walk may find
     result:Receive_Result,
     error:store.Error,
@@ -192,12 +190,7 @@ receive_job :: proc(data:rawptr,worker:int) {
     switch r.kind {
     case .Root:
         if !r.parsed {
-            if r.blob {
-                r.result=.Corrupt
-                return
-            }
-            _,r.error=store.put_bytes(r.x.desc.store,bytes)
-            r.result=.Blob if r.error==.None else .Failed
+            r.result=.Corrupt
             return
         }
     case .Node:
@@ -245,13 +238,9 @@ walk_job :: proc(data:rawptr,worker:int) {
 Commit_Item :: struct {
     want:i32,
     generation:u32,
-    blob:bool,
-    address,root:store.Hash,
-    alias:store.Error,
 }
 
-// The commit of the batch that holds the last chunks of the wants that
-// settle, after naming each received blob once its bytes hash to its address.
+// The commit of the batch that holds the last chunks of the wants that settle.
 @(private)
 Commit_Slot :: struct {
     x:^Exchange,
@@ -267,13 +256,7 @@ Commit_Slot :: struct {
 commit_job :: proc(data:rawptr,worker:int) {
     c:=(^Commit_Slot)(data)
     defer sync.atomic_store(&c.done,true)
-    s:=c.x.desc.store
-    for &item in c.items[:c.count] {
-        item.alias=.None
-        if !item.blob || store.has(s,item.address) {continue}
-        item.alias=store.blob_alias(s,item.address,item.root)
-    }
-    c.committed=store.commit(s)
+    c.committed=store.commit(c.x.desc.store)
 }
 
 // A chunk a receiver reported damaged, checked against its address.
@@ -467,12 +450,6 @@ receive_apply :: proc(x:^Exchange,r:^Receive_Slot) -> bool {
             }
         }
         return false
-    case .Blob:
-        need_remove(x,k)
-        root,_:=store.blob_root(x.desc.store,r.address)
-        w.blob,w.rooted,w.root,w.total=true,true,root,i64(r.size)
-        want_complete(x,wi)
-        return false
     case .Corrupt:
         want_corrupt(x,wi)
         return false
@@ -487,7 +464,6 @@ receive_apply :: proc(x:^Exchange,r:^Receive_Slot) -> bool {
     switch kind {
     case .Data: w.here+=i64(size)
     case .Root:
-        w.rooted,w.root=true,r.address
         w.total=i64(r.parsed_total)
         if !w.walk_job {
             if r.walk!=nil {
@@ -610,7 +586,7 @@ settle :: proc(x:^Exchange) {
         w:=&x.wants[i]
         if !w.settling || w.committing || c.count==len(c.items) {continue}
         w.committing=true
-        c.items[c.count]={want=i32(i),generation=w.generation,blob=w.blob,address=w.address,root=w.root}
+        c.items[c.count]={want=i32(i),generation=w.generation}
         c.count+=1
     }
     c.used=true
@@ -629,23 +605,10 @@ commit_apply :: proc(x:^Exchange) {
         if !w.settling {continue}
         w.settling=false
         x.settling-=1
-        switch item.alias {
-        case .None:
-        case .Corrupt:
-            lie(x,i,w.alias_peer)
-            want_begin(x,i)
-            continue
-        case .Missing,.Invalid_Argument,.Wrong_Size,.Unsupported_Layout:
-            want_begin(x,i)
-            continue
-        case .Io,.No_Space,.Out_Of_Memory:
-            want_fail(x,i,.Store,item.alias)
-            continue
-        }
         switch c.committed {
         case .None: want_complete(x,i)
         case .Missing: want_begin(x,i) // a chunk a sweep dropped beside the batch
-        case .Corrupt,.Invalid_Argument,.Wrong_Size,.Unsupported_Layout,.Io,.No_Space,.Out_Of_Memory:
+        case .Corrupt,.Invalid_Argument,.Unsupported_Layout,.Io,.No_Space,.Out_Of_Memory:
             want_fail(x,i,.Store,c.committed)
         }
     }

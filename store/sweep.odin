@@ -48,7 +48,6 @@ Sweep_Step :: enum u8 {
 
 Sweep_Result :: struct {
     bytes:i64,    // of the packs removed
-    blobs:int,    // blobs no longer named
     chunks:int,   // dead chunks dropped
     packs:int,    // packs retired
     skipped:int,  // files that would not delete, left for the next sweep
@@ -81,7 +80,7 @@ usage :: proc(s:^Store) -> (total:Usage,error:Error) {
 Sweep :: struct {
     s:^Store,
     now:i64,
-    live:Live_Set,          // blobs and roots named by refs, leases and the caller
+    live:Live_Set,          // roots named by refs, leases and the caller
     marks_generation:[]bool,
     marks_table:[]bool,
     buffers:[NODE_LEVEL_MAX+2][]u8,
@@ -182,7 +181,6 @@ sweep :: proc(s:^Store,live:[]Hash,now:Maybe(time.Time)=nil) -> (result:Sweep_Re
     sweep_step(s,.Rechecked)
     retired_prune(&w,false) or_return
     generations_prune(s) or_return
-    bridge_sweep(s,&w.live,at,&w.result) or_return
     tmp_prune(s,at) or_return
     return w.result,.None
 }
@@ -230,7 +228,7 @@ dead_writers_find :: proc(w:^Sweep) -> Error {
     return .None
 }
 
-// Marks what the roots reach, the blobs they name, and every chunk written or
+// Marks what the roots reach and every chunk written or
 // touched within GRACE.
 @(private)
 sweep_mark :: proc(w:^Sweep) -> Error {
@@ -242,26 +240,15 @@ sweep_mark :: proc(w:^Sweep) -> Error {
     if e!=nil {return .Out_Of_Memory}
     w.marks_table,e=make([]bool,len(state.table.keys),s.state.allocator)
     if e!=nil {return .Out_Of_Memory}
-    // Refs name roots and blobs; a blob's alias is kept while something names it or it is young.
     targets:=make([dynamic]Hash,0,0,context.temp_allocator)
     defer delete(targets)
     refs_each(s,&targets,proc(data:rawptr,namespace,name:string,v:Ref_Value) -> Error {
-        if namespace=="" || v.address=={} {return .None}
+        if v.address=={} {return .None}
         if _,e:=append((^[dynamic]Hash)(data),v.address);e!=nil {return .Out_Of_Memory}
         return .None
     }) or_return
     live_add(&w.live,targets[:]) or_return
-    for target in w.live {walk_target(w,target) or_return}
-    Aliases :: struct {w:^Sweep}
-    aliases:=Aliases{w}
-    refs_each(s,&aliases,proc(data:rawptr,namespace,name:string,v:Ref_Value) -> Error {
-        w:=(^Aliases)(data).w
-        if namespace!="" || v.address=={} {return .None}
-        blob,ok:=parse_hex(name)
-        if !ok {return .None}
-        if blob in w.live || w.now-v.time<i64(GRACE) {return walk(w,v.address,-1,0)}
-        return .None
-    }) or_return
+    for target in w.live {walk(w,target,-1,0) or_return}
     for l,i in g.locations {
         if w.now-location_time(s,g.addresses[i],l)<i64(GRACE) {w.marks_generation[i]=true}
     }
@@ -281,14 +268,6 @@ sweep_mark :: proc(w:^Sweep) -> Error {
 location_time :: proc(s:^Store,address:Hash,l:Location) -> i64 {
     if touched,ok:=s.state.touched[address];ok && touched>l.time {return touched}
     return l.time
-}
-
-// A root named by its blob's alias or by itself.
-@(private)
-walk_target :: proc(w:^Sweep,target:Hash) -> Error {
-    text:[64]u8
-    if v,found:=ref_resolve_locked(w.s,"",hex(target,&text));found {walk(w,v.address,-1,0) or_return}
-    return walk(w,target,-1,0)
 }
 
 // A level of a walk: a data chunk, not a node; -1 is a root of any level.
@@ -589,8 +568,7 @@ sweep_out_close :: proc(w:^Sweep) {
 
 // Writes the next generation: every sealed pack not compacted, the chunks
 // they hold once each, and the refs of the generation and of sealed packs
-// folded; aliases of blobs nothing names that are older than GRACE are
-// dropped, and a removed ref is kept while a pack still being written could
+// folded, and a removed ref is kept while a pack still being written could
 // hold an older frame of it. The file is synced and renamed into index/.
 @(private)
 generation_publish :: proc(w:^Sweep) -> Error {
@@ -657,13 +635,6 @@ generation_publish :: proc(w:^Sweep) -> Error {
             indexed,found:=generation_ref(&state.generation,namespace,name)
             if !found {return .None}
             value={address=indexed.address,time=indexed.time,pack=-1}
-        }
-        if namespace=="" && value.address!={} {
-            blob,_:=parse_hex(name)
-            if !(blob in w.live) && w.now-value.time>=i64(GRACE) {
-                w.result.blobs+=1
-                return .None
-            }
         }
         if _,e:=append(&c.refs,Folded{namespace,name,value.address,value.time});e!=nil {return .Out_Of_Memory}
         return .None
@@ -896,7 +867,7 @@ tmp_prune :: proc(s:^Store,now:time.Time) -> Error {
     entries:=io_list(s,join(&buffer,s.root,"tmp") or_return) or_return
     defer os.file_info_slice_delete(entries,s.state.allocator)
     for entry in entries {
-        if entry.name=="sweep" || entry.name=="blobs" || !older_than(entry.modification_time,now,TMP_STALE) {continue}
+        if entry.name=="sweep" || !older_than(entry.modification_time,now,TMP_STALE) {continue}
         base.remove_all(entry.fullpath)
     }
     return .None
@@ -1104,7 +1075,7 @@ tomb_stage :: proc(s:^Store,st:^Stage,pack:int,location:Location,address:Hash) -
 // Looks up what roots names that before did not against the newest
 // generation, everything under each, and copies back and commits what a sweep
 // retired: the generation it was checked against. What is in no pack at all
-// (a blob still on its way) is not this lease's to bring back.
+// (an object still on its way) is not this lease's to bring back.
 @(private)
 roots_settle :: proc(s:^Store,roots,before:[]Hash) -> (generation:u64,error:Error) {
     if s==nil || s.state==nil {return 0,.Invalid_Argument}
@@ -1122,7 +1093,7 @@ roots_settle :: proc(s:^Store,roots,before:[]Hash) -> (generation:u64,error:Erro
         defer delete(visited)
         for r in roots {
             if r in known {continue}
-            root_restore_locked(s,&st,r,&visited) or_return
+            restore_locked(s,&st,r,-1,0,&visited) or_return
         }
         generation=state.generation.number
     }
@@ -1131,14 +1102,6 @@ roots_settle :: proc(s:^Store,roots,before:[]Hash) -> (generation:u64,error:Erro
     stage_write(s,st,at) or_return
     commit(s,time.Time{_nsec=at}) or_return
     return generation,.None
-}
-
-// restore_locked of a ref's target: its blob's alias when it has one, and itself.
-@(private)
-root_restore_locked :: proc(s:^Store,st:^^Stage,target:Hash,visited:^map[Hash]struct{}) -> (missing:int,error:Error) {
-    text:[64]u8
-    if v,found:=ref_resolve_locked(s,"",hex(target,&text));found {return restore_locked(s,st,v.address,-1,0,visited)}
-    return restore_locked(s,st,target,-1,0,visited)
 }
 
 // Stages into st, made when needed, what is missing under address and a

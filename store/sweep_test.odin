@@ -215,7 +215,7 @@ a_scrub_tombstones_a_damaged_chunk :: proc(t:^testing.T) {
     test_object_bytes(t,&other,addresses[1],datas[1])
 }
 
-// A blob put again, or a chunk found again, is refreshed only once it is
+// A chunk found again is refreshed only once it is
 // older than a quarter of GRACE, so a sweep keeps it.
 @(test)
 what_is_put_again_is_refreshed_after_a_quarter_of_grace :: proc(t:^testing.T) {
@@ -224,28 +224,23 @@ what_is_put_again_is_refreshed_after_a_quarter_of_grace :: proc(t:^testing.T) {
     defer close(&s)
     start:=time.now()
     at :: proc(start:time.Time,part:f64) -> time.Time {return time.time_add(start,time.Duration(part*f64(GRACE)))}
-    blob:=test_bytes(CHUNK_MAX+1,100)
     object:=test_bytes(30000,101)
-    hash,_:=put_bytes(&s,blob,start)
     address,_:=put(&s,object,start)
     testing.expect_value(t,commit(&s,start),Error.None)
     hooks:Hooks
     s.state.hooks=&hooks
-    put_bytes(&s,blob,at(start,0.125))
     put(&s,object,at(start,0.125))
     testing.expect_value(t,commit(&s,at(start,0.125)),Error.None)
     testing.expect_value(t,hooks.writes,0)
-    put_bytes(&s,blob,at(start,0.5))
     put(&s,object,at(start,0.5))
     testing.expect_value(t,commit(&s,at(start,0.5)),Error.None)
-    testing.expect(t,hooks.writes>=2,"a blob and a chunk older than a quarter of grace are refreshed")
+    testing.expect(t,hooks.writes>=1,"a chunk older than a quarter of grace is refreshed")
     s.state.hooks=nil
     swept,error:=sweep(&s,nil,at(start,1.25))
     testing.expect_value(t,error,Error.None)
-    testing.expect(t,has(&s,hash) && chunk_has(&s,address),"what was refreshed is kept")
-    testing.expect_value(t,swept.blobs,0)
-    swept,_=sweep(&s,nil,at(start,2))
-    testing.expect(t,!has(&s,hash) && !chunk_has(&s,address) && swept.blobs==1,"and goes once nothing refreshes it")
+    testing.expect(t,chunk_has(&s,address),"what was refreshed is kept")
+    _,error=sweep(&s,nil,at(start,2))
+    testing.expect(t,error==.None && !chunk_has(&s,address),"and goes once nothing refreshes it")
 }
 
 @(test)
@@ -259,7 +254,7 @@ fresh_leases_keep_their_current_addresses :: proc(t:^testing.T) {
     old:=time.time_add(now,-2*GRACE)
     stale:=time.time_add(now,-2*LEASE_MAX_AGE)
     hashes:[4]Hash
-    for &hash,i in hashes {hash,_=put_bytes(&s,test_bytes(123,u64(180+i)),old)}
+    for &hash,i in hashes {hash,_=test_put(&s,test_bytes(123,u64(180+i)),old)}
     fresh,open_error:=lease_open(&s,"editor",{hashes[0]},now)
     if !testing.expect_value(t,open_error,Error.None) {return}
     defer lease_release(&fresh)
@@ -283,7 +278,7 @@ fresh_leases_keep_their_current_addresses :: proc(t:^testing.T) {
     testing.expect_value(t,lease_release(&released),Error.None)
 
     // Leases this process did not open: who holds them decides, else their time.
-    // The value that wrote the blobs sweeps, so that its own pack is folded.
+    // The value that wrote the objects sweeps, so that its own pack is folded.
     self:=holder_self()
     ended:=self
     ended.start+=1
@@ -299,24 +294,20 @@ fresh_leases_keep_their_current_addresses :: proc(t:^testing.T) {
     }
     kept:=make([dynamic]Hash,context.temp_allocator)
     append(&kept,..hashes[:])
-    holding:=0
     for c,k in cases {
-        if c.holds {holding+=1}
-        hash,_:=put_bytes(&s,test_bytes(200,u64(300+k)),old)
+        hash,_:=test_put(&s,test_bytes(200,u64(300+k)),old)
         buffer:[PATH_BYTES]u8
         path:=join(&buffer,folder,"leases",c.name) or_continue
         testing.expect_value(t,lease_write(&s,path,c.holder,0,{hash},c.at),Error.None)
         defer file_remove(path)
-        swept,sweep_error:=sweep(&s,kept[:],now)
+        _,sweep_error:=sweep(&s,kept[:],now)
         append(&kept,hash)
         testing.expect_value(t,sweep_error,Error.None)
-        testing.expectf(t,has(&s,hash)==c.holds && os.exists(path)==c.holds,"%s: the lease holds %v",c.name,c.holds)
-        testing.expect_value(t,swept.blobs,0 if c.holds else 1)
+        testing.expectf(t,chunk_has(&s,hash)==c.holds && os.exists(path)==c.holds,"%s: the lease holds %v",c.name,c.holds)
     }
-    swept,sweep_error:=sweep(&s,nil,now)
+    _,sweep_error:=sweep(&s,nil,now)
     testing.expect_value(t,sweep_error,Error.None)
-    testing.expect_value(t,swept.blobs,3+holding)
-    for hash,i in hashes {testing.expectf(t,has(&s,hash)==(i==1),"blob %d",i)}
+    for hash,i in hashes {testing.expectf(t,chunk_has(&s,hash)==(i==1),"object %d",i)}
 }
 
 // What a sweep that stopped left claimed comes back, and stale temporary

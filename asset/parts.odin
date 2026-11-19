@@ -163,7 +163,7 @@ object_error :: proc(error:store.Error) -> Error {
     switch error {
     case .None: return .None
     case .Missing: return .Not_Here
-    case .Corrupt,.Wrong_Size,.Invalid_Argument,.Unsupported_Layout: return .Corrupt
+    case .Corrupt,.Invalid_Argument,.Unsupported_Layout: return .Corrupt
     case .Out_Of_Memory: return .Out_Of_Memory
     case .Io,.No_Space: return .IO
     }

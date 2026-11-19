@@ -825,12 +825,3 @@ pack_file_path :: proc(s:^Store,p:^Pack,buffer:^[PATH_BYTES]u8) -> (string,Error
     name:[RETIRED_NAME]u8
     return join(buffer,s.root,"retired",retired_name(p.retired,p.id,&name))
 }
-
-// Whether a ref's target can be read: a blob's alias or a stored root.
-@(private)
-root_present_locked :: proc(s:^Store,target:Hash) -> bool {
-    text:[64]u8
-    if _,found:=ref_resolve_locked(s,"",hex(target,&text));found {return true}
-    _,_,found:=lookup_locked(s,target)
-    return found
-}
