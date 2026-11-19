@@ -24,7 +24,7 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
     Mesh mesh = meshes[instance_mesh(inst)];
     Cluster c = mesh_cluster(mesh, vertex_id >> DRAW_VERTEX_BITS);
     bool drawn = MIRAI_EDITOR_HIGHLIGHT ? cluster_finest_resident(mesh, c) : cluster_in_cut(view_detail(), inst, instance_scale(inst), mesh, c, frame.cut.x);
-    Material m = materials[material_of(inst, cluster_material(mesh, c))].shared;
+    Material m = materials[material_of(instance_row(index), inst, cluster_material(mesh, c))].shared;
     uint program = MIRAI_EDITOR_HIGHLIGHT && m.alpha_mode != ALPHA_BLEND ? 0u : m.program_id;
     drawn = drawn && (draw.program == INVALID || program == draw.program);
     if (!drawn) {
