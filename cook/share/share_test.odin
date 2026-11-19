@@ -8,6 +8,7 @@ import "core:strings"
 import "core:sync"
 import "core:testing"
 import "core:thread"
+import "core:time"
 import "mirai:asset"
 import "mirai:cook/import/sources"
 import "mirai:project"
@@ -170,6 +171,13 @@ file_put :: proc(root,path:string,data:[]u8,executable:=false) {
     if executable {os.change_mode(full,os.Permissions_Default_File+os.Permissions_Execute_All)}
 }
 
+// Gives the file at path a time an hour ago, as a file written long before it is read.
+@(private="file")
+settle :: proc(root,path:string) {
+    old:=time.time_add(time.now(),-time.Hour)
+    os.change_times(fmt.tprintf("%s/%s",root,path),old,old)
+}
+
 @(private="file")
 noise :: proc(size:int,seed:u64) -> []u8 {
     data:=make([]u8,size,context.temp_allocator)
@@ -276,6 +284,7 @@ the_snapshot_leaves_out_what_the_layout_says_and_round_trips :: proc(t:^testing.
     file_put(root,".gitignore",transmute([]u8)string(".mirai/\n"))
     file_put(root,".mirai/build/out.o",transmute([]u8)string("built"))
     file_put(root,".git/HEAD",transmute([]u8)string("ref: main"))
+    for path in ([]string{"project.mirai","tools/run.sh","assets/b.txt","assets/empty.txt",".gitignore"}) {settle(root,path)}
     s,open_error:=store.open(fmt.tprintf("%s/store",folder))
     if !testing.expect_value(t,open_error,store.Error.None) {return}
     defer store.close(&s)
@@ -300,6 +309,28 @@ the_snapshot_leaves_out_what_the_layout_says_and_round_trips :: proc(t:^testing.
     // Taken again with nothing changed, nothing is read into the store and the blob is the same.
     _,second,second_report,_:=snapshot_take(&s,root,"game",context.temp_allocator)
     testing.expect(t,second==address && second_report.put==0,"the index knows every file")
+
+    // A file read just after it was written is not learned: a change of the same size within the same time is read.
+    // A time in whole seconds, which every system keeps exactly.
+    moment:=time.from_nanoseconds(time.to_unix_nanoseconds(time.now())/1e9*1e9)
+    file_put(root,"assets/fresh.txt",transmute([]u8)string("one"))
+    os.change_times(fmt.tprintf("%s/assets/fresh.txt",root),moment,moment)
+    snapshot_take(&s,root,"game",context.temp_allocator)
+    file_put(root,"assets/fresh.txt",transmute([]u8)string("two"))
+    os.change_times(fmt.tprintf("%s/assets/fresh.txt",root),moment,moment)
+    later,_,_,_:=snapshot_take(&s,root,"game",context.temp_allocator)
+    fresh,_:=snapshot_find(&later,"assets/fresh.txt")
+    testing.expect(t,fresh.address==store.address_of_bytes(transmute([]u8)string("two")),"the second bytes are shared")
+
+    // A file that changed after it was listed: its entry has the size of what was put, which the joiner checks, and the index does not learn it.
+    file_put(root,"assets/growing.txt",transmute([]u8)string("abc"))
+    settle(root,"assets/growing.txt")
+    listed,_:=os.stat(fmt.tprintf("%s/assets/growing.txt",root),context.temp_allocator)
+    file_put(root,"assets/growing.txt",transmute([]u8)string("abcdef"))
+    index:=make(Index,context.temp_allocator)
+    e,put,put_error:=entry_take(&s,&index,root,"assets/growing.txt",listed,context.temp_allocator)
+    testing.expect(t,put_error==.None && put && e.size==6 && e.address==store.address_of_bytes(transmute([]u8)string("abcdef")))
+    testing.expect(t,"assets/growing.txt" not_in index,"what changed while it was read is read again next time")
 }
 
 @(test)

@@ -103,8 +103,9 @@ Source_Hashes :: struct {
 Source_Hash :: struct {size,modified:i64,hash:store.Hash}
 
 // A file modified this close to when it was read may change again within the
-// same modification time: it is read again the next time.
-@(private="file") SETTLED_NANOSECONDS :: 2_000_000_000
+// same modification time (2 s on FAT, a coarse network file system): what was
+// learned of it is not kept, and it is read again the next time.
+SETTLED_NANOSECONDS :: 2_000_000_000
 
 // The hashes kept for the source at origin (path_key), in allocator; none
 // when the store has none or they do not read.
