@@ -139,7 +139,8 @@ and `tools/mirai`. The main checkout of a worktree is `project.shared_root(root)
   a fixed charge. While it runs an editor raises the charge of its turn to the most it held, and
   never lowers it; `mirai locks` says when what the holders held passes the card beside its part.
   The owner of a turn ends with its charge; the one waiting names the holders and since when,
-  like `mirai locks`.
+  like `mirai locks`. When only holders that stay open hold the room it needs, waiting would not
+  give it: the command fails at once, naming them and saying to close one.
   - A session opens on the adapter `session start` prints; one that opens on another adapter than
     the card the turns account for, and that `MIRAI_GPU` does not name, is closed with why: its
     frames and measures would mean nothing. A person's own editor opens on whatever there is.
@@ -163,8 +164,11 @@ and `tools/mirai`. The main checkout of a worktree is `project.shared_root(root)
     works or is open and idle (`workspace.gpu_turn_mark`): a test, a player and an editor that
     starts work; a manual editor is open while it waits for calls and works while one draws; the
     editor of a person and a windowed one are open. A measurement waits for the turns that work
-    and are neither its own nor of its measurement (`workspace.gpu_work`), and no process waits
-    for `measure.lock` while its turn says it works, so the two never wait for each other. The
+    and are neither its own nor of its measurement (`workspace.gpu_work`). Every command takes
+    its GPU turns before `measure.lock` (a benchmark of `mirai test` its turn, `bench`, `bench
+    flight` and `render check` their editors), and `workspace.measure_try` says the turn of the
+    process idle while it waits, so the two never wait for each other; only what runs under
+    `mirai measure` takes a turn inside the measurement. The
     owner of a turn of a measurement names it, and one is given beside the others of the same
     measurement while no one else holds a turn, also beyond the card: the two editors of `bench
     compare` run at once.
