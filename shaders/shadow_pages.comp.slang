@@ -110,8 +110,9 @@ void table_set(uint slot, uint entry, uint e) { if (shadow_place_valid(slot, ent
 // chunks of the cull holds (render.Cull_List.Shadow_Chunks); moves: the
 // round of what moves runs this frame (something moves in a map, or a slot
 // lets go of every page); sway: the texel the view takes of a point at the
-// reach of what sways in the maps (render.shadow_sway_texel).
-struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; uint box_count; uint sun; uint pool; uint reach; uint threads; uint fresh; uint full; uint slots; uint slot_count; uint keep; uint budget; uint round; uint chunks; uint moves; float sway; };
+// reach of what sways in the maps (render.shadow_sway_texel); coarser: the
+// levels its layer lies coarser than the pages (render.shadow_coarser).
+struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; uint box_count; uint sun; uint pool; uint reach; uint threads; uint fresh; uint full; uint slots; uint slot_count; uint keep; uint budget; uint round; uint chunks; uint moves; float sway; uint coarser; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> shadow_data : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<uint> pages : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
@@ -436,7 +437,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             Shadow_Map m = shadow_map_mip(whole, mip);
             // A box of what sways changes only the maps that draw it as it sways.
             float4 texels;
-            if (fine > 0.0 && !shadow_map_sways(m, low, high, fine, params.sway)) continue;
+            if (fine > 0.0 && !shadow_map_sways(m, low, high, fine, params.sway, params.coarser)) continue;
             if (!shadow_box_texels(m, low, high, texels)) continue;
             uint4 rect = shadow_texel_pages(m, texels);
             for (uint y = rect.y; y <= rect.w; y++) {

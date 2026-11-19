@@ -266,7 +266,8 @@ a_swaying_wall_casts_its_shadow_where_it_leans_only_near_the_eye :: proc(t: ^tes
 		near:   bool,
 	}{
 		{"near", {position = {-0.5, 1.2, -1.65}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 70, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}, true},
-		{"far", {position = {-0.5, 25, -42}, forward = {0, -25, 39.7}, up = {0, 1, 0}, fov_y = 15, near = 0.05, far = 200, exposure = gpu.UNIT_EXPOSURE}, false},
+		// Past every map that sways, which hold what lies within them as it sways where no point reads it.
+		{"far", {position = {-0.5, 55, -89.6}, forward = {0, -55, 87.3}, up = {0, 1, 0}, fov_y = 7, near = 0.05, far = 300, exposure = gpu.UNIT_EXPOSURE}, false},
 	}
 	for c in cases {
 		pixels, ok := view_frames(t, f, c.camera, sun, 16)

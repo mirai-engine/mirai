@@ -31,25 +31,30 @@
 // round, last, vertex_capacity, triangle_capacity, margin: those of the round
 // of the lists of the raster that draws them (raster_vertices.comp); sway:
 // the texel the view takes of a point at the reach of what sways in the maps
-// (render.shadow_sway_texel).
+// (render.shadow_sway_texel); coarser: the levels the layer of what sways
+// lies coarser than the pages (render.shadow_coarser).
 struct Params_Block {
     uint reach; uint ranges; uint rows; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers;
     uint masks; uint plan; uint part; uint bound; uint foresee;
-    uint round; uint last; uint vertex_capacity; uint triangle_capacity; float margin; float sway; uint pad1;
+    uint round; uint last; uint vertex_capacity; uint triangle_capacity; float margin; float sway; uint coarser;
     // The eye the instances of a batch past its cull distance are left out
     // from, and how much farther than it (render.shadow_cull_eye).
     float4 cull;
 };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 // Of a chunk, over its map and the mip of it from bit SHADOW_CHUNK_MIP: its
-// instance is drawn at rest (a batch that sways less than a texel of the map).
+// instance is drawn at rest (a batch that sways less than a texel of the map);
+// it sways, drawn into the layer of what sways.
 #define SHADOW_CHUNK_REST 0x20000000u
+#define SHADOW_CHUNK_LAYER 0x40000000u
 #define SHADOW_CHUNK_MAP 0xFFFFu
 #define SHADOW_CHUNK_MIP 16u
 // An entry of the list of the clusters the maps draw is a Visible_Cluster
 // (visibility.slang) whose program word is the page it draws into
-// (shadow_page_word), with SHADOW_ENTRY_REST where it is drawn at rest.
+// (shadow_page_word), with SHADOW_ENTRY_REST where it is drawn at rest and
+// SHADOW_ENTRY_LAYER where into the tile of the page in the layer.
 #define SHADOW_ENTRY_REST 0x80000000u
+#define SHADOW_ENTRY_LAYER 0x40000000u
 
 uint shadow_word(StructuredBuffer<uint4> data, uint word) { return data[word >> 2u][word & 3u]; }
 
@@ -113,14 +118,16 @@ bool shadow_page_drawn(Shadow_Map m, uint2 page, float4 texels) {
 // the map the area of its triangles spans in all, of which a page charges
 // the share its box has in the part of the page the round draws (part, from
 // its corner), at most its triangles over each of those texels; 0 where it
-// is not known, when it is taken as its box over them once.
-uint shadow_units(uint2 page, uint4 part, float4 texels, uint triangles, bool masked, float surface, float vertices) {
+// is not known, when it is taken as its box over them once. coarser: the
+// levels coarser it is drawn at (the layer of what sways), a fourth of the
+// texels each.
+uint shadow_units(uint2 page, uint4 part, float4 texels, uint triangles, bool masked, float surface, float vertices, uint coarser) {
     float4 at = texels - float4(page * SHADOW_PAGE, page * SHADOW_PAGE);
     float2 covered = max(min(at.zw, float2(part.zw)) - max(at.xy, float2(part.xy)), float2(1.0, 1.0));
     float2 box = max(texels.zw - texels.xy, float2(1.0, 1.0));
     float within = covered.x * covered.y;
     float area = surface > 0.0 ? min(surface * saturate(within / (box.x * box.y)), within * float(max(triangles, 1u))) : within;
-    area = max(area, 1.0) * float(masked ? SHADOW_MASKED_COST : 1u);
+    area = max(area / float(1u << (2u * coarser)), 1.0) * float(masked ? SHADOW_MASKED_COST : 1u);
     float placed = ceil(2.0 * vertices / float(SHADOW_UNIT_VERTICES));
     return uint(min(ceil(area / float(SHADOW_UNIT_TEXELS)) + placed, float(SHADOW_COST_UNITS / 4u)));
 }
@@ -221,10 +228,11 @@ Shadow_Map shadow_map_window(Shadow_Map m, uint4 window) {
 
 // Where a map chooses the detail of what it draws from: its light, a pixel
 // being a texel of the map where the cluster lies, so that what it holds does
-// not depend on the eye and stays valid while the casters stay.
-Detail shadow_map_detail(Shadow_Map m) {
+// not depend on the eye and stays valid while the casters stay; of a texel
+// `coarser` levels coarser (the layer of what sways).
+Detail shadow_map_detail(Shadow_Map m, uint coarser) {
     Detail d;
-    float across = (m.span.z - m.span.x) / float(max(m.rect.z, 1u));
+    float across = (m.span.z - m.span.x) / float(max(m.rect.z, 1u)) * float(1u << coarser);
     bool orthographic = shadow_map_orthographic(m);
     d.eye = float4(m.origin, orthographic ? 0.0 : m.near);
     d.footprint = orthographic ? float2(across, 0.0) : float2(0.0, across);
@@ -235,7 +243,7 @@ Detail shadow_map_detail(Shadow_Map m) {
 // Whether a box is too small to cover the middle of a texel of a map from
 // the nearest it lies: what it hides the map cannot hold.
 bool shadow_map_unseen(Shadow_Map m, float3 low, float3 high) {
-    float2 span = detail_span(shadow_map_detail(m), low, high);
+    float2 span = detail_span(shadow_map_detail(m, 0u), low, high);
     return length(high - low) < shadow_map_texel(m, max(span.x, m.near));
 }
 #endif
