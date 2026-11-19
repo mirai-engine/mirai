@@ -15,7 +15,7 @@ import "core:time"
 // packs.
 
 // The first line of the root's LAYOUT file; another one is refused.
-LAYOUT :: "mirai store 3\n"
+LAYOUT :: "mirai store 4\n"
 ROOT_MAX :: 1024 // bytes of a root path
 NAME_MAX :: 128  // bytes of a ref namespace or name
 
@@ -82,6 +82,10 @@ State :: struct {
     scrub_pack:int,
     scrub_at:int,
     hooks:^Hooks,
+    decodes:Codecs, // the codecs this value reads: this build's and a test's hook
+    write:u8,       // the codec its puts encode frames with
+    hook:Codec_Hook,
+    coders:[dynamic]^Coder,
 }
 
 // What a test counts and decides of a store's file operations.

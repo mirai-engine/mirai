@@ -85,6 +85,16 @@ hostile_messages_are_refused_without_a_crash :: proc(t:^testing.T) {
         {LANE_DATA,test_chunk(root,0,11,big[:10]),true},
         {LANE_DATA,test_chunk(root,0,0,nil),true},
         {LANE_DATA,test_chunk(root,0,len(big),big),true},
+        // Encoded: in a codec this end did not say it decodes, of an id past the last, no
+        // smaller than raw, or of a raw size past a chunk's.
+        {LANE_DATA,test_chunk(root,15,20,big[:10]),true},
+        {LANE_DATA,test_chunk(root,store.CODECS_MAX,20,big[:10]),true},
+        {LANE_DATA,test_chunk(root,255,20,big[:10]),true},
+        {LANE_DATA,test_chunk(root,1,9,big[:10]),true},
+        {LANE_DATA,test_chunk(root,1,store.CHUNK_MAX+1,big[:10]),true},
+        {LANE_DATA,test_chunk(root,1,int(max(u32)),big[:10]),true},
+        {LANE_CONTROL,{MSG_CODECS,1},true},
+        {LANE_CONTROL,{MSG_CODECS,1,0,0},true},
         {LANE_DATA,test_message({MSG_LACK},root[:4]),true},
         {LANE_DATA,test_message({MSG_LACK},root[:],{0}),true},
         {LANE_DATA,test_message({4},root[:],root[:]),true}, // an unknown kind
@@ -92,6 +102,8 @@ hostile_messages_are_refused_without_a_crash :: proc(t:^testing.T) {
         {LANE_DATA,{MSG_DONE,0},true},
         // Nobody asked: ignored, counted against the peer.
         {LANE_DATA,test_chunk(root,0,10,big[:10]),false},
+        {LANE_DATA,test_chunk(root,1,20,big[:10]),false},
+        {LANE_CONTROL,{MSG_CODECS,0xff,0xff},false},
         {LANE_DATA,test_chunk(other,0,5,test_bytes(5,2)),false},
         {LANE_DATA,test_message({MSG_LACK},other[:]),false},
         {LANE_CONTROL,test_message({MSG_REF},test_name("lib"),test_name("a"),{1},zero[:]),false},

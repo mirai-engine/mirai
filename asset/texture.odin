@@ -196,7 +196,8 @@ texture_tables :: proc(doc:^Document,types:^Types,info:^Texture_Info,mips:[]Text
         #reverse for run in desc.layouts {at+=copy(bytes[at:],run.payload)}
     } else {
         for level,i in desc.mips {copy(bytes[mips[i].offset:],level)}
-        if doc.codecs!=.None && texture_fields_format(desc.format) && .Fast not_in desc.flags && (texture_fields_smaller(desc.format,mips,bytes,doc.codecs,doc.allocator) or_return) {
+        // Without a compressor to ask, planes are what compresses smaller where the bytes rest.
+        if texture_fields_format(desc.format) && .Fast not_in desc.flags && (doc.codecs==.None || (texture_fields_smaller(desc.format,mips,bytes,doc.codecs,doc.allocator) or_return)) {
             info.flags+={.Fields}
             for level,i in desc.mips {texture_fields_split(desc.format,level,bytes[mips[i].offset:][:mips[i].size])}
         }

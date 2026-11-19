@@ -5,6 +5,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "compressor:data"
 import "mirai:asset"
 import "mirai:cook/cache"
 import importer "mirai:cook/import"
@@ -190,62 +191,65 @@ a_refresh_takes_the_builds_of_a_second_store_without_their_sources :: proc(t:^te
     testing.expect(t,!os.exists(brush),"nothing is written where the source was")
 }
 
-// A build whose assets use the formats of a compressor this engine lacks is as
-// if it were not there, in the store or at a source: the refresh says so by
-// package and takes nothing, and with the source it ingests again without
-// taking any of its objects into the build it publishes.
+// The same source ingested where the store writes frames of this build's codec and where it
+// writes those of a codec this build lacks (as a build with another compressor does) gives the
+// same build, of the same objects: a peer of this build takes it from the other and reads it.
 @(test)
-a_build_this_engine_cannot_decode_is_not_taken :: proc(t:^testing.T) {
-    top:=base.test_folder(t,"refresh-unreadable")
+a_build_is_the_same_objects_whatever_codec_its_store_writes :: proc(t:^testing.T) {
+    top:=base.test_folder(t,"refresh-codecs")
     if top=="" {return}
     defer free_all(context.temp_allocator)
     plugin:=fmt.tprintf("%s/plugin",top)
     os.make_directory_all(fmt.tprintf("%s/assets",plugin))
     brush:=fmt.tprintf("%s/assets/soft.png",plugin)
-    testing.expect(t,os.write_entire_file(brush,png_bytes(8,8,{40,200,40}))==nil)
+    testing.expect(t,os.write_entire_file(brush,png_bytes(64,64,{40,200,40}))==nil)
     host:=test_store(t,fmt.tprintf("%s/host",top))
-    if host==nil {return}
+    other:=test_store(t,fmt.tprintf("%s/other",top))
+    if host==nil || other==nil {return}
+    // Zstandard under an id of its own: frames no build here decodes.
+    testing.expect_value(t,store.codec_hook(other,{codec=15,encode=proc(src,dst:[]u8) -> int {
+        e:data.Encoder
+        data.encoder_init(&e)
+        defer data.encoder_destroy(&e)
+        size,error:=data.encode(&e,.Fast,src,dst)
+        return size if error==.None else 0
+    },decode=proc(src,dst:[]u8) -> bool {
+        d:data.Decoder
+        if data.decoder_init(&d)!=.None {return false}
+        defer data.decoder_destroy(&d)
+        return data.decode(&d,data.ZSTD,src,dst)==.None
+    }}),store.Error.None)
     options:=Library_Options{store=host,root=plugin}
     report,error:=ingest(brush,options,allocator=context.temp_allocator)
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
     added:=project_add(plugin,report.manifest,"",nil,options,context.temp_allocator)
     testing.expectf(t,len(added.failures)==0 && len(added.missing)==0,"%v",added)
-    testing.expect(t,os.remove(brush)==nil)
-    // Its build as an engine with another compressor writes it: other objects of the same assets.
-    b,build_error:=asset.build_get(host,report.build,context.temp_allocator)
-    if !testing.expect_value(t,build_error,asset.Error.None) {return}
-    b.compressor="private-codec"
-    others:=make(map[store.Hash]bool,context.temp_allocator)
-    for &o in b.outputs {
-        bytes,file_error:=asset.object_file(host,o.object,context.temp_allocator)
-        if !testing.expect_value(t,file_error,asset.Error.None) {return}
-        stored,repack_error:=asset.document_repack(bytes,.Fast,.None,context.temp_allocator)
-        if !testing.expect_value(t,repack_error,asset.Error.None) {return}
-        object,put_error:=asset.object_put(host,stored)
-        if !testing.expect_value(t,put_error,asset.Error.None) || !testing.expect(t,object!=o.object,"the other object differs") {return}
-        o.object=object
-        others[object]=true
-    }
-    other,_:=asset.build_put(host,&b)
+    // The other ingests it again from its source, as a machine of another compressor does.
+    again:=project_refresh(plugin,{store=other,root=plugin},context.temp_allocator)
+    testing.expectf(t,len(again.missing)==0 && len(again.failures)==0,"%v",again)
     digits:[64]u8
     key:=store.hex(report.key,&digits)
-    testing.expect_value(t,store.ref_set(host,asset.REF_IMPORTS if report.final else asset.REF_IMPORTS_FAST,key,other),store.Error.None)
-    // Here it names the compressor; a source does not give it, so a peer finds none.
-    for refreshed,peer in ([2]Library_Report{
-        project_refresh(plugin,{store=host,root=plugin},context.temp_allocator),
-        project_refresh(plugin,{store=test_store(t,fmt.tprintf("%s/peer",top)),root=plugin,source=cache.store_source(host),fast_textures=true},context.temp_allocator),
-    }) {
-        testing.expectf(t,refreshed.fetched==0 && len(refreshed.missing)==1 && strings.contains(refreshed.missing[0],"package soft"),"%v",refreshed)
-        testing.expectf(t,peer==1 || (len(refreshed.missing)==1 && strings.contains(refreshed.missing[0],"private-codec")),"%v",refreshed)
-    }
-    testing.expect(t,os.write_entire_file(brush,png_bytes(8,8,{40,200,40}))==nil)
-    again:=project_refresh(plugin,{store=host,root=plugin},context.temp_allocator)
-    testing.expectf(t,len(again.missing)==0 && len(again.failures)==0,"%v",again)
-    rebuilt,ref_error:=store.ref_get(host,asset.REF_IMPORTS if report.final else asset.REF_IMPORTS_FAST,key)
+    namespace:=asset.REF_IMPORTS if report.final else asset.REF_IMPORTS_FAST
+    mine,_:=asset.build_get(host,report.build,context.temp_allocator)
+    theirs_ref,ref_error:=store.ref_get(other,namespace,key)
     if !testing.expect_value(t,ref_error,store.Error.None) {return}
-    published,_:=asset.build_get(host,rebuilt,context.temp_allocator)
-    testing.expect_value(t,published.compressor,asset.COMPRESSOR_OPEN)
-    for o in published.outputs {testing.expect(t,!others[o.object],"no object of the build of the other compressor is taken")}
+    theirs,_:=asset.build_get(other,theirs_ref,context.temp_allocator)
+    testing.expect_value(t,theirs_ref,report.build)
+    if testing.expect_value(t,len(theirs.outputs),len(mine.outputs)) {
+        for o,at in mine.outputs {testing.expectf(t,theirs.outputs[at].object==o.object,"output %d is the same object",at)}
+    }
+    // A peer of this build takes the build from the other, whose frames it cannot decode.
+    testing.expect(t,os.remove(brush)==nil)
+    peer:=test_store(t,fmt.tprintf("%s/peer",top))
+    if peer==nil {return}
+    fetched:=project_refresh(plugin,{store=peer,root=plugin,source=cache.store_source(other)},context.temp_allocator)
+    testing.expectf(t,fetched.fetched==1 && len(fetched.missing)==0 && len(fetched.failures)==0,"%v",fetched)
+    for o in mine.outputs {
+        a:asset.Asset
+        testing.expect_value(t,asset.asset_open_object(&a,peer,o.object,context.temp_allocator),asset.Error.None)
+        testing.expect_value(t,asset.asset_object_settle(&a),asset.Error.None)
+        asset.asset_close(&a)
+    }
 }
 
 // A source of builds that holds only a Fast build of a package: the refresh
