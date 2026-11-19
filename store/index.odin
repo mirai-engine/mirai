@@ -731,20 +731,21 @@ state_rebuild_locked :: proc(s:^Store) {
 
 // Where the chunk at address is, without reading the root again; a copy a
 // tombstone names, in a pack that is gone or of a codec this value does not
-// decode is not found.
+// decode is not found unless readable is false: a chunk is in the store, for
+// what refs, leases and sweeps keep, in a frame of any codec.
 @(private)
-lookup_locked :: proc(s:^Store,address:Hash) -> (pack:int,location:Location,found:bool) {
+lookup_locked :: proc(s:^Store,address:Hash,readable:=true) -> (pack:int,location:Location,found:bool) {
     state:=s.state
     if slot,in_table:=table_slot(&state.table,address);in_table {
         location=state.table.values[slot]
         pack=int(location.pack)
-        found=!location_dead(s,pack,location) && codec_readable(s,location.codec)
+        found=!location_dead(s,pack,location) && (!readable || codec_readable(s,location.codec))
     }
     if !found {
         if i,in_generation:=generation_find(&state.generation,address);in_generation {
             location=state.generation.locations[i]
             pack=state.generation.map_pack[location.pack]
-            found=!location_dead(s,pack,location) && codec_readable(s,location.codec)
+            found=!location_dead(s,pack,location) && (!readable || codec_readable(s,location.codec))
         }
     }
     if !found {return -1,{},false}
@@ -760,22 +761,22 @@ location_dead :: proc(s:^Store,pack:int,location:Location) -> bool {
 
 // lookup_locked, reading the root again once when it misses.
 @(private)
-find_locked :: proc(s:^Store,address:Hash) -> (pack:int,location:Location,found:bool) {
-    pack,location,found=lookup_locked(s,address)
+find_locked :: proc(s:^Store,address:Hash,readable:=true) -> (pack:int,location:Location,found:bool) {
+    pack,location,found=lookup_locked(s,address,readable)
     if found {return}
     if refresh_locked(s)!=.None {return}
-    pack,location,found=lookup_locked(s,address)
+    pack,location,found=lookup_locked(s,address,readable)
     if found {return}
     // A chunk a sweep retired that a commit still names is read where it went.
     if retired_load_locked(s)!=.None {return}
     pack,location,found=retired_lookup_locked(s,address)
-    if found && !codec_readable(s,location.codec) {return -1,{},false}
+    if found && readable && !codec_readable(s,location.codec) {return -1,{},false}
     return
 }
 
 // Where a chunk is in a pack a sweep retired.
 @(private)
-retired_lookup_locked :: proc(s:^Store,address:Hash) -> (pack:int,location:Location,found:bool) {
+retired_lookup_locked :: proc(s:^Store,address:Hash,readable:=true) -> (pack:int,location:Location,found:bool) {
     state:=s.state
     slot,in_table:=table_slot(&state.retired,address)
     if !in_table {return -1,{},false}
