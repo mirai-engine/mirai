@@ -501,8 +501,15 @@ float3 finite_or_zero(float3 v) { return (any(isnan(v)) || any(isinf(v))) ? floa
 // hold the light raised to 1/PROBE_LIGHT_GAMMA, as RTXGI: in half floats, the
 // light of a room hundreds of times dimmer than the strongest light of the
 // scene (whose light scale it is) stays out of the denormals, where it faded.
+// The encoded value is the nearest half float: the device may store a float
+// in a half by cutting it toward zero, and then a probe whose light rises by
+// less than a step of the half never takes it, and settles short. A light
+// that is not finite is none, not the largest half.
 #define PROBE_LIGHT_GAMMA 5.0
-float3 probe_light_encode(float3 light) { return pow(max(light, float3(0.0)), float3(1.0 / PROBE_LIGHT_GAMMA)); }
+float3 probe_light_encode(float3 light) {
+    float3 e = pow(max(finite_or_zero(light), float3(0.0)), float3(1.0 / PROBE_LIGHT_GAMMA));
+    return float3(half_value(half_bits(e.x)), half_value(half_bits(e.y)), half_value(half_bits(e.z)));
+}
 float3 probe_light_decode(float3 stored) { return pow(max(stored, float3(0.0)), float3(PROBE_LIGHT_GAMMA)); }
 // The square root of the irradiance a stored value stands for, which a read blends.
 float3 probe_light_root(float3 stored) { return pow(max(stored, float3(0.0)), float3(0.5 * PROBE_LIGHT_GAMMA)); }
