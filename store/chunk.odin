@@ -96,15 +96,18 @@ chunk_cut :: proc "contextless" (data:[]u8) -> int {
     if n>CHUNK_MAX {n=CHUNK_MAX}
     center:=min(n,CHUNK_AVG)
     hash:u64
-    #no_bounds_check {
-        for i in CHUNK_MIN..<center {
-            hash=(hash<<1)+GEAR[data[i]]
-            if hash&MASK_SMALL==0 {return i+1}
-        }
-        for i in center..<n {
-            hash=(hash<<1)+GEAR[data[i]]
-            if hash&MASK_LARGE==0 {return i+1}
-        }
+    bytes:=([^]u8)(raw_data(data))
+    gear:=([^]u64)(&GEAR[0])
+    i:=CHUNK_MIN
+    for i<center {
+        hash=(hash<<1)+gear[bytes[i]]
+        i+=1
+        if hash&MASK_SMALL==0 {return i}
+    }
+    for i<n {
+        hash=(hash<<1)+gear[bytes[i]]
+        i+=1
+        if hash&MASK_LARGE==0 {return i}
     }
     return n
 }

@@ -75,12 +75,14 @@ ref_list :: proc(s:^Store,namespace:string,allocator:=context.allocator) -> (ref
     if s==nil || s.state==nil || !name_valid(namespace) {return nil,.Invalid_Argument}
     sync.mutex_lock(&s.state.lock)
     defer sync.mutex_unlock(&s.state.lock)
+    refresh_locked(s) or_return
     return ref_list_locked(s,namespace,allocator)
 }
 
+// The refs of a namespace as the state holds them; nothing reads the root,
+// so names taken from the state stay valid.
 @(private)
 ref_list_locked :: proc(s:^Store,namespace:string,allocator:=context.allocator) -> (refs:[]Ref,error:Error) {
-    refresh_locked(s) or_return
     state:=s.state
     names:=make([dynamic]string,0,0,context.temp_allocator)
     defer delete(names)
@@ -134,6 +136,7 @@ ref_namespaces :: proc(s:^Store,allocator:=context.allocator) -> (namespaces:[]s
         if _,e:=append(&seen,key[:slash]);e!=nil {return nil,.Out_Of_Memory}
     }
     slice.sort(seen[:])
+    sweep_step(s,.Names)
     list,make_error:=make([]string,len(seen),allocator)
     if make_error!=nil {return nil,.Out_Of_Memory}
     n:=0
