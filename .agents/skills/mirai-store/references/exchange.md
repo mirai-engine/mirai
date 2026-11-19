@@ -68,13 +68,17 @@ in `exchange/wire.odin`.
 - A want names an object by its root, which is always a node: a root that hashes right but is no
   node fails the want, since every peer would send the same.
 - What a peer exposes is the owner's `Desc.expose`; without one no namespace is read. Names come
-  sorted, a page at a time after the last one seen.
+  sorted, a page at a time after the last one seen. A ref is asked of every connected peer, or of
+  one when only that peer may say it (the snapshot of an invitation, from the host it names):
+  refs name content, and only content is verified by address.
 - Hostile input: a malformed message, an ask beyond the limits, descendants past a budget or an
   answer nobody could have asked for in that form marks the peer bad, and it is neither asked nor
   served again; a well formed message about something not asked for is ignored. An ask that does
   not fit the room for `BATCHES` asks is refused, and answers to questions find room only while
-  the asker keeps a few waiting, so a peer cannot make another send without bound. A question its
-  owner ended stays until every peer asked answered or left, so late answers return their credits.
+  the asker keeps a few waiting, so a peer cannot make another send without bound. A peer that
+  does not answer a question within `QUERY_SECONDS` is taken to know nothing of it and its credit
+  comes back, so a silent or overloaded peer never holds a question or its slot; a question its
+  owner ended stays until every peer asked answered, gave up or left.
 - The pump keeps the bookkeeping: wants, needs, flights, peers and the order of answers. Each job
   owns a slot sized at `init` (a ring of received chunks and their bytes, walks, the commit, a
   ring of answers per peer, checks of reported damage) and touches nothing else; the pump hands

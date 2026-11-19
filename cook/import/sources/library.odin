@@ -16,6 +16,7 @@ import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
+import "mirai:std/serial"
 import "mirai:store"
 
 // The library of the machine: the packages its store keeps (asset/packages.odin)
@@ -66,7 +67,7 @@ Library_Imports :: struct {
 Library_Options :: struct {
     store:^store.Store,
     // Asked for what the store does not have before building: a manifest by
-    // (asset.REF_PACKAGES, <id>), a build by (asset.REF_IMPORTS, <key>) and,
+    // (asset.REF_MANIFESTS, <hash its pin names>), a build by (asset.REF_IMPORTS, <key>) and,
     // with Fast textures allowed, then by (asset.REF_IMPORTS_FAST, <key>), with
     // every object it lists, a result of cook/cache.
     source:cache.Source,
@@ -238,20 +239,39 @@ project_refresh :: proc(root:string,options:Library_Options,allocator:=context.a
 // Pins entry in the packages.mirai of the project at root, in place of the
 // entry of the same package, and writes beside it the text of the manifest
 // that s keeps under entry.manifest (asset.package_file). It and
-// project_unpin are the only writers of those files.
+// project_unpin are the only writers of those files. A pin lands whole or
+// leaves the root as it was: a list that does not save puts the manifest's
+// file back.
 project_pin :: proc(root:string,s:^store.Store,entry:asset.Project_Package) -> asset.Error {
     entry:=entry
     list,_,error:=asset.packages_load(root,context.temp_allocator)
     if error!=.None {return error}
-    asset.package_file_save(s,root,&entry) or_return
+    replaced:=false
     for &other in list.packages {
-        if other.id==entry.id {
-            other=entry
-            return asset.packages_save(root,&list)
-        }
+        if other.id!=entry.id {continue}
+        other=entry
+        replaced=true
     }
-    if _,no_room:=append(&list.packages,entry);no_room!=nil {return .Out_Of_Memory}
-    return asset.packages_save(root,&list)
+    if !replaced {
+        if _,no_room:=append(&list.packages,entry);no_room!=nil {return .Out_Of_Memory}
+    }
+    // What refuses the list refuses it before a file changes.
+    asset.packages_text(&list,context.temp_allocator) or_return
+    path:=asset.package_file(root,entry.id)
+    folder:=os.dir(path)
+    had_folder:=os.is_dir(folder)
+    before,read_error:=serial.file_read(path,context.temp_allocator,limit=asset.RECORD_BYTES)
+    if read_error!=.None && read_error!=.Not_Found {return .IO}
+    asset.package_file_save(s,root,&entry) or_return
+    saved:=asset.packages_save(root,&list)
+    if saved==.None {return .None}
+    if read_error==.None {
+        serial.file_write_atomic(path,before)
+    } else {
+        os.remove(path)
+        if !had_folder {os.remove(folder)}
+    }
+    return saved
 }
 
 // Removes the package id from the packages.mirai of the project at root, and
@@ -383,6 +403,7 @@ Found :: struct {
     hash:store.Hash,
     final:bool,
     fast_here:bool, // a Fast build is here, which a Final one was required over
+    unreadable:string, // the compressor a build here needs and this engine lacks: as if it were not here
 }
 
 // The build of p under key this store has whole: Final, or Fast when Fast
@@ -398,6 +419,10 @@ build_here :: proc(l:^Library_State,p:^asset.Package,key:store.Hash) -> (f:Found
         if ref_error!=.None {continue}
         b,error:=asset.build_get(s,hash,l.temp)
         if error!=.None || b.package_id!=p.id || b.key!=key || b.final!=(at==0) {continue}
+        if !asset.build_readable(&b) {
+            f.unreadable=b.compressor
+            continue
+        }
         whole:=true
         for o in b.outputs {whole&&=asset.object_whole(s,o.object)}
         if !whole {continue}
@@ -423,6 +448,7 @@ build_found :: proc(l:^Library_State,p:^asset.Package,manifest,key:store.Hash,ke
     if ref_error!=.None {return}
     b,error:=asset.build_get(s,hash,l.temp)
     if error!=.None || b.package_id!=p.id {return}
+    if !asset.build_readable(&b) {return {unreadable=b.compressor},false}
     for o in b.outputs {
         if !asset.object_whole(s,o.object) {return}
     }
@@ -491,11 +517,11 @@ refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Pac
     for entry in entries {
         entry:=entry
         if _,error:=asset.package_load(s,top,&entry,l.temp);error==.Not_Found {
-            id_text:[64]u8
-            append(&lacking,strings.clone(base.asset_id_format(entry.id,id_text[:32]),l.temp))
+            digits:[64]u8
+            append(&lacking,strings.clone(store.hex(entry.manifest,&digits),l.temp))
         }
     }
-    fetch_many(l,asset.REF_PACKAGES,lacking[:])
+    fetch_many(l,asset.REF_MANIFESTS,lacking[:])
     keys:=make([dynamic]string,l.temp)
     for entry in entries {
         entry:=entry
@@ -583,7 +609,8 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     digits,id_text:[64]u8
     id_name:=base.asset_id_format(entry.id,id_text[:32])
     p,error:=asset.package_load(s,top,&entry,l.temp)
-    if error==.Not_Found && fetch(l,asset.REF_PACKAGES,id_name) {p,error=asset.package_load(s,top,&entry,l.temp)}
+    // The manifest the pin names, by the hash of its text: the ref that names its object.
+    if error==.Not_Found && fetch(l,asset.REF_MANIFESTS,store.hex(entry.manifest,&digits)) {p,error=asset.package_load(s,top,&entry,l.temp)}
     #partial switch error {
     case .None:
     case .Not_Found:
@@ -628,6 +655,8 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
         switch {
         case !keyed:
             report_line(&report.missing,"package %s: no plugin of the project imports it as %q, so its build cannot be found by key: activate the plugin that imports it, or ingest its source (%s) with this engine",p.name,p.origin.importer,p.origin.path)
+        case f.unreadable!="":
+            report_line(&report.missing,"package %s: its build (import key %s) uses the formats of the compressor %q, which this engine cannot decode: a machine with its source (%s) must ingest it with this engine, or with the open compression",p.name,store.hex(key,&digits),f.unreadable,p.origin.path)
         case f.fast_here:
             report_line(&report.missing,"package %s: only a build with Fast textures is here, and Final is required: a machine with its source (%s) must ingest it with this engine, or a peer that has its Final build (import key %s) must give it",p.name,p.origin.path,store.hex(key,&digits))
         case:

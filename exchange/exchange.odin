@@ -38,6 +38,7 @@ NAMES_PER_REPLY :: 128
 @(private) FETCH_WINDOW :: 256 // objects or refs a blocking form waits on at once
 @(private) LACK_RETRY :: 2.0    // s a peer that lacked a chunk is not asked for it again
 @(private) STALL_SECONDS :: 5.0 // s a peer keeps what it was asked of a want without progress on it, before others are asked
+@(private) QUERY_SECONDS :: 5.0 // s a question waits for a peer's answer before that peer is taken to know nothing of it
 @(private) RATE_SECONDS :: 1.0  // time constant of the smoothed rates
 @(private) WALK_AHEAD :: 1024   // chunks a want keeps found and not asked
 @(private) PREFETCH_NODES :: 16 // missing nodes asked ahead of the walk, which waits at the first
@@ -251,6 +252,7 @@ Query_Slot :: struct {
     namespace_len,name_len:int,
     peer:int,
     asked,answered:u64,
+    asked_at:f64, // when a peer was last asked it
     address:store.Hash,
     more:bool,
     names:[]Name,
@@ -741,10 +743,16 @@ want_addresses :: proc(x:^Exchange,buffer:[]store.Hash) -> []store.Hash {
     return buffer[:n]
 }
 
-// Asks every connected peer for the address namespace and name name.
-ref_ask :: proc(x:^Exchange,namespace,name:string) -> (Query,Error) {
+// Asks every connected peer for the address namespace and name name, or only
+// the peer of h and connection when h is given: what only that peer may say,
+// as the snapshot an invitation names.
+ref_ask :: proc(x:^Exchange,namespace,name:string,h:^wire.Host=nil,connection:=wire.Connection{}) -> (Query,Error) {
     sync.mutex_guard(&x.lock)
-    return query_add(x,.Ref,namespace,name,-1)
+    peer:=-1
+    if h!=nil {
+        if peer=peer_find(x,h,connection);peer<0 {return {},.Invalid}
+    }
+    return query_add(x,.Ref,namespace,name,peer)
 }
 
 // Asks a peer for the names of a namespace after after, at most NAMES_PER_REPLY.
@@ -804,6 +812,15 @@ connected_mask :: proc(x:^Exchange) -> (mask:u64) {
 queries_send :: proc(x:^Exchange) {
     connected:=connected_mask(x)
     for &q in x.queries {
+        // A peer that does not answer in time knows nothing of it, and its credit comes back.
+        if late:=q.asked&~q.answered&connected;q.used && late!=0 && x.now-q.asked_at>=QUERY_SECONDS {
+            cost:=q.kind==.Ref?1:NAMES_CREDITS
+            for &p,i in x.peers {
+                if late&(u64(1)<<uint(i))!=0 {p.queries-=cost}
+            }
+            q.answered|=late
+            x.dirty=true
+        }
         if q.used && q.ended && q.asked&~q.answered&connected==0 {
             q.used=false
             x.dirty=true // a fetch_refs may wait for the slot
@@ -811,7 +828,7 @@ queries_send :: proc(x:^Exchange) {
         if !q.used || q.ended || q.state!=.Waiting {continue}
         namespace,name:=string(q.namespace[:q.namespace_len]),string(q.name[:q.name_len])
         targets:=connected
-        if q.kind==.Names {targets=q.peer<0?0:connected&(u64(1)<<uint(q.peer))}
+        if q.peer>=0 {targets=connected&(u64(1)<<uint(q.peer))}
         for &p,i in x.peers {
             bit:=u64(1)<<uint(i)
             cost:=q.kind==.Ref?1:NAMES_CREDITS
@@ -820,6 +837,7 @@ queries_send :: proc(x:^Exchange) {
             message:=encode_question(buffer[:],q.kind==.Ref?MSG_REF_GET:MSG_NAMES_GET,namespace,name)
             if !control_append(&p,message) {continue}
             q.asked|=bit
+            q.asked_at=x.now
             p.queries+=cost
         }
         if targets&~q.answered==0 {

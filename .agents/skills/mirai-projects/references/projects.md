@@ -617,8 +617,10 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
   `cook/cache` results: the owner exposes the whole machine library to whoever holds the
   invitation, never the choices, the origins or the sources of the machine. A lease holds the
   snapshot, its folders and files and the builds the project pins.
-- **Join.** `mirai join` fetches the tree a depth of folders at a time, refusing one whose names
-  could leave the folder, are absolute, name a device, repeat or collide where case is folded,
+- **Join.** `mirai join` asks for the snapshot of the invitation only the host it connects to,
+  so a peer that joined from the joiner cannot name another; folders and files come from any
+  peer, verified by address. It fetches the tree a depth of folders at a time, refusing one whose
+  names could leave the folder, are absolute, name a device, repeat or collide where case is folded,
   whose folders nest beyond the bound, hold more entries or bytes than a folder can or declare
   files and sizes they do not hold (so the files read never exceed the bound, also from a folder
   repeated under many names); checks that the disks have room; fetches the files, the project's
@@ -627,8 +629,10 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
   with a file; then refreshes the packages as an editor does, with the peers as the
   `cache.Source` of the library: a Final or a Fast build from the store, then from the peers, by
   key, and a source in the folder is imported, in the quality an editor imports, only when no
-  peer gives a build of it. A build that cooks refreshes requiring Final, so a Fast build a join
-  took never ships. A refresh asks the source for every
+  peer gives a build of it. A join ends within a bounded time without progress whatever a peer
+  does or withholds: what is wanted while no chunk byte arrives and no object completes for a
+  while fails, reported by path, and the files after it are asked. A build that cooks refreshes
+  requiring Final, so a Fast build a join took never ships. A refresh asks the source for every
   manifest and build it lacks in one batch before it goes package by package, so it waits for the
   peers about once, not once per package. It prints progress at a steady pace and, at the end,
   how to open the project. The store keeps what arrived: a join stopped and run again fetches only
@@ -640,6 +644,12 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
   The join puts the base's tree in the store before it asks, so what the host did not change since
   is not asked, and a file to replace whose base the store lost is put from the folder first, cut
   as the host's, so the chunks both versions share are not asked either.
+- **Links.** A join never follows a link (a symbolic link, or a junction on Windows) inside its
+  folder: a file whose path passes through one, the file itself included, is neither written nor
+  removed but reported by path, with the link to replace, and so is the whole join when the
+  generated folder's state goes through one. Each path is checked when the join plans it and
+  again just before its rename or removal. The folder itself may be a link: it is the place the
+  joiner named.
 - **Case.** A join probes whether the folder's file system folds case (APFS, NTFS). There paths
   compare in lower case, so a host's rename that changes only case is the same file: it is
   renamed in place, folders first, and never removed. Elsewhere it is a removal and a new file.

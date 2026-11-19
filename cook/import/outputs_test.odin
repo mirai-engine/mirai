@@ -428,7 +428,7 @@ a_document_of_a_plugin_kind_takes_its_extension :: proc(t:^testing.T) {
     p:=asset.Package{id={71,1},name="hall"}
     p.assets=make([dynamic]asset.Package_Asset,context.temp_allocator)
     append(&p.assets,asset.Package_Asset{kind=KIND,name="hall",id={70,1}})
-    b:=asset.Build{package_id=p.id}
+    b:=asset.Build{package_id=p.id,compressor=asset.COMPRESSOR_OPEN}
     b.outputs=make([dynamic]asset.Build_Output,context.temp_allocator)
     append(&b.outputs,asset.Build_Output{id={70,1},kind=KIND,object=object})
     kinds:=[]Kind_Extension{{KIND,".kit"}}

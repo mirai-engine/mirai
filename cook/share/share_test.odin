@@ -28,6 +28,7 @@ Test_Peer :: struct {
     endpoint:int, // of its server
     token:u64,    // of its server
     pumped:bool,
+    mute:bool,    // its hosts keep their connections, and its node reads and answers nothing
 }
 
 @(private="file")
@@ -97,6 +98,14 @@ test_step :: proc(w:^Test_Net) {
     wire.sim_network_advance(&w.sim,w.now)
     for &p in w.peers[:w.count] {
         if !p.pumped {continue}
+        if p.mute {
+            for h in ([2]^wire.Host{p.server,p.client}) {
+                if h==nil {continue}
+                wire.host_poll(h)
+                wire.host_update(h,w.now)
+            }
+            continue
+        }
         node_pump(&p.n,w.now)
         for h in ([2]^wire.Host{p.server,p.client}) {
             if h!=nil {wire.host_update(h,w.now)}
@@ -625,6 +634,70 @@ a_join_keeps_what_the_joiner_changes_while_it_runs :: proc(t:^testing.T) {
     testing.expect_value(t,read_text(joined,"c.txt"),"host c")
     testing.expectf(t,report.written==1 && len(report.kept)==2 && len(report.failed)==0,"%v",report)
     for w in plan.write {testing.expect(t,w.done,"what is kept on purpose is done")}
+
+    // Edited while its replacement is copied, after the check before the copy.
+    file_put(joined,"c.txt",bytes("base c"))
+    clear(&plan.write)
+    append(&plan.write,Write{at=2,present=true,base=bytes_address(bytes("base c"))})
+    Edit :: struct {joined:string}
+    edit:=Edit{joined}
+    hooks:=Join_Hooks{data=&edit,saved=proc(data:rawptr,path:string) {
+        file_put((^Edit)(data).joined,path,transmute([]u8)string("mine c"))
+    }}
+    n.hooks=&hooks
+    late:=Join_Report{kept=make([dynamic]string,context.temp_allocator),failed=make([dynamic]string,context.temp_allocator)}
+    join_write(&d,&snap,&plan,{0},&index,joined,&late)
+    n.hooks=nil
+    testing.expect_value(t,read_text(joined,"c.txt"),"mine c")
+    testing.expectf(t,late.written==0 && len(late.kept)==1 && plan.write[0].done,"%v",late)
+}
+
+// A join never writes or removes through a link inside its folder: a file of
+// the host's under a linked folder, a linked file it replaces and a file it
+// removed under a linked folder are refused and reported by path, and what
+// the links lead to stays as it was.
+@(test)
+a_join_never_follows_a_link_inside_its_folder :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"share-links")
+    if folder=="" {return}
+    s,open_error:=store.open(fmt.tprintf("%s/store",folder))
+    if !testing.expect_value(t,open_error,store.Error.None) {return}
+    defer store.close(&s)
+    n:Node
+    n.s=&s
+    d:=Join_Desc{node=&n}
+    joined:=fmt.tprintf("%s/joined",folder)
+    outside:=fmt.tprintf("%s/outside",folder)
+    bytes :: proc(text:string) -> []u8 {return transmute([]u8)text}
+    file_put(outside,"old.txt",bytes("old"))
+    file_put(outside,"target.txt",bytes("target"))
+    file_put(joined,"plain.txt",bytes("plain 1"))
+    if !testing.expect(t,os.symlink(outside,fmt.tprintf("%s/linked",joined))==nil,"a link can be made here") {return}
+    os.symlink(fmt.tprintf("%s/target.txt",outside),fmt.tprintf("%s/file.txt",joined))
+    entry :: proc(s:^store.Store,path,text:string) -> Entry {
+        address,_:=store.put(s,transmute([]u8)text)
+        return {path=path,address=address,size=i64(len(text))}
+    }
+    last_entries:=[]Entry{entry(&s,"file.txt","target"),entry(&s,"linked/old.txt","old"),entry(&s,"plain.txt","plain 1")}
+    snap_entries:=[]Entry{entry(&s,"file.txt","host"),entry(&s,"linked/deep/new.txt","host"),entry(&s,"plain.txt","plain 2")}
+    store.commit(&s)
+    last:=Snapshot{name="game",entries=last_entries}
+    snap:=Snapshot{name="game",entries=snap_entries}
+    index:=make(Index,context.temp_allocator)
+    report:=Join_Report{kept=make([dynamic]string,context.temp_allocator),failed=make([dynamic]string,context.temp_allocator)}
+    plan:=join_plan(&snap,&last,&index,joined,&report,context.temp_allocator)
+    list:=make([dynamic]int,context.temp_allocator)
+    for _,k in plan.write {append(&list,k)}
+    join_write(&d,&snap,&plan,list[:],&index,joined,&report)
+    join_remove(&last,&plan,&index,joined,&report)
+    testing.expect_value(t,read_text(outside,"old.txt"),"old")
+    testing.expect_value(t,read_text(outside,"target.txt"),"target")
+    testing.expect_value(t,read_text(outside,"deep/new.txt"),"(none)")
+    testing.expect_value(t,read_text(joined,"plain.txt"),"plain 2")
+    listed:=strings.join(report.failed[:],"\n",context.temp_allocator)
+    testing.expectf(t,len(report.failed)==3 && strings.contains(listed,"file.txt:") && strings.contains(listed,"linked/deep/new.txt:") && strings.contains(listed,"linked/old.txt:") && strings.contains(listed,"is a link"),"each refused by path: %s",listed)
+    testing.expect_value(t,report.written,1)
+    testing.expect_value(t,report.removed,0)
 }
 
 // A file that cannot be written does not stop the join: a read-only file, a
@@ -730,6 +803,64 @@ a_third_peer_joins_from_the_second :: proc(t:^testing.T) {
     if !testing.expectf(t,error=="","%s",error) {return}
     same_files(t,root,third)
     testing.expectf(t,len(report.packages.missing)==0 && report.packages.fetched==1,"%v",report.packages)
+}
+
+// A peer that joined from the joiner and names another snapshot under the
+// host's invitation, answering before the host does, is not asked: the
+// snapshot of an invitation comes only from the host it connects to.
+@(test)
+a_downstream_peer_cannot_substitute_the_snapshot :: proc(t:^testing.T) {
+    w:Test_Net
+    if !test_net(t,&w,"share-substitute",3) {return}
+    defer test_net_destroy(&w)
+    root:=fmt.tprintf("%s/host",w.folder)
+    file_put(root,"project.mirai",transmute([]u8)string("{}\n"))
+    file_put(root,"assets/real.txt",transmute([]u8)string("real"))
+    if !host_offer(t,&w,root) {return}
+    fake:=fmt.tprintf("%s/fake",w.folder)
+    file_put(fake,"project.mirai",transmute([]u8)string("{}\n"))
+    file_put(fake,"assets/fake.txt",transmute([]u8)string("fake"))
+    folders:=make([dynamic]store.Hash,context.temp_allocator)
+    snap,address,_,error:=snapshot_take(&w.peers[2].s,fake,"game",&folders,allocator=context.temp_allocator)
+    if !testing.expectf(t,error=="","%s",error) {return}
+    digits:[64]u8
+    store.ref_set(&w.peers[2].s,NAMESPACE,offer_name(w.peers[0].token,&digits),address)
+    node_serve(&w.peers[2].n,..folders[:])
+    for e in snap.entries {node_serve(&w.peers[2].n,e.address)}
+    // The downstream peer is connected to the joiner first, and the host answers late.
+    test_connect(&w,2,1)
+    wire.sim_endpoint_conditions(&w.sim,w.peers[0].endpoint,{latency=0.2})
+    test_connect(&w,1,0)
+    joined:=fmt.tprintf("%s/joined",w.folder)
+    if _,join_error:=test_join(t,&w,1,join_desc(&w,0,joined));!testing.expectf(t,join_error=="","%s",join_error) {return}
+    same_files(t,root,joined)
+}
+
+// A host that stays connected and answers nothing, and one whose snapshot names
+// a file it does not have, end the join within a bounded time: the first with
+// why, the second with the file reported by path.
+@(test)
+a_host_that_withholds_ends_the_join_in_bounded_time :: proc(t:^testing.T) {
+    w:Test_Net
+    if !test_net(t,&w,"share-withholds",2) {return}
+    defer test_net_destroy(&w)
+    s:=&w.peers[0].s
+    here,_:=store.put(s,transmute([]u8)string("here"))
+    gone:=bytes_address(noise(1000,9))
+    withheld:=Snapshot{name="game",entries={{path="assets/gone.bin",address=gone,size=1000},{path="here.txt",address=here,size=4}}}
+    snapshot,_,_:=snapshot_put(s,&withheld)
+    digits:[64]u8
+    store.ref_set(s,NAMESPACE,offer_name(w.peers[0].token,&digits),snapshot)
+    test_connect(&w,1,0)
+    started:=w.now
+    report,error:=test_join(t,&w,1,join_desc(&w,0,fmt.tprintf("%s/joined",w.folder)))
+    testing.expectf(t,error=="" && len(report.failed)==1 && strings.contains(report.failed[0],"assets/gone.bin") && report.written==1,"%s %v",error,report.failed)
+    testing.expectf(t,w.now-started<60,"the file is reported in bounded time: %.1f s",w.now-started)
+
+    w.peers[0].mute=true
+    started=w.now
+    _,silent:=test_join(t,&w,1,join_desc(&w,0,fmt.tprintf("%s/other",w.folder)))
+    testing.expectf(t,silent!="" && w.now-started<60,"a silent host ends the join in bounded time: %.1f s, %s",w.now-started,silent)
 }
 
 // A host whose snapshot lies about the size of a file, and one whose root is
