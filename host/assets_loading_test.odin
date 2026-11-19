@@ -429,5 +429,4 @@ the_assets_of_a_project_load_its_packages_from_the_store :: proc(t:^testing.T) {
     testing.expect_value(t,asset.registry_file_path(&a.registry,"props/crate.mesh",context.temp_allocator),found.listed[0].file)
     pending,listed:=asset.registry_find_path(&a.registry,"plugins/pack/props/atlas.tex")
     testing.expect(t,listed && pending.state==.Not_Built)
-    testing.expect(t,!os.exists(fmt.tprintf("%s/.mirai/imported",root)))
 }

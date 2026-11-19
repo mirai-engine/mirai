@@ -332,10 +332,12 @@ checkout, worktree and project of the machine, keeps manifests and builds.
   the assets written every `importer.PROGRESS_EVERY`.
 - **Commands.** `mirai import <file>` ingests and adds to the project of `--project`, else the
   one whose assets hold the file, under `--folder` (else the folder of the file); `mirai import
-  --refresh <root>` refreshes a project or a plugin, `--fast` taking Fast. Every build of a
-  project refreshes it and its plugins once its target stands (`build.job_imports`,
-  `imports_refresh`) with the engine's import program, which reads the formats of plugins from
-  the editor library just built.
+  --refresh <root>` refreshes a project or a plugin, `--fast` taking Fast and `--from <folder>`
+  naming a second store as its source (`cache.store_source`, which copies a ref with its blobs,
+  as a peer gives them); an installed engine takes its `builds/` store as that source. Every
+  build of a project refreshes it and its plugins with a `packages.mirai` once its target stands
+  (`build.job_imports`, `imports_refresh`) with the engine's import program, which reads the
+  formats of plugins from the editor library just built.
 
 ## In parallel
 
@@ -375,8 +377,8 @@ machine that shares blobs with another finds what that one built.
   (`cache-<name>`, `<key>-<version>`) (`asset.cache_namespace`). The store reaches it as a value
   (`Import_Options.store`, `Cook_Desc.store`; nil, none): the editor's
   imports (the session's: `--store`, else the machine's), `mirai import` (the machine's store, or
-  `--store`) and the cook of a build (the machine's, `store.default_root`). Tests make one in a
-  temporary folder.
+  `--store`) and the cook of a build (that of the build: `--store`, else the machine's). Tests
+  make one in a temporary folder.
 - A miss asks `Import_Options.cache_source` (a `cache.Source`) once before building: it makes the
   blob present in the store and sets the ref, or says it has none.
 - A texture that is not kept looks for its `textures.cache_key_build` (the bytes of the image, or

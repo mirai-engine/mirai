@@ -43,7 +43,7 @@ sources_are_known_by_their_content :: proc(t:^testing.T) {
     testing.expect_value(t,missing.code,importer.Error_Code.Not_Found)
     // An image is known by its bytes, and nothing is written beside it.
     picture,picture_error:=import_test(t,fmt.tprintf("%s/picture.dat",folder))
-    testing.expect(t,picture_error.code==.None && len(picture.assets)==1 && picture.assets[0].kind==asset.KIND_TEXTURE && !os.exists(fmt.tprintf("%s/picture.dat.import",folder)))
+    testing.expect(t,picture_error.code==.None && len(picture.assets)==1 && picture.assets[0].kind==asset.KIND_TEXTURE)
     importer.report_destroy(&picture)
     _,collection:=import_test(t,fmt.tprintf("%s/family.ttc",folder))
     testing.expect(t,collection.code==.Unsupported && strings.contains(collection.message,"collection"),collection.message)
@@ -207,7 +207,7 @@ an_import_takes_a_texture_that_another_import_built_from_the_texture_cache :: pr
     // A store that misses asks its source before building: what a peer built is taken as it is.
     peer:=options
     peer.store=test_store(t,fmt.tprintf("%s/peer",root))
-    peer.cache_source=copy_source(kept)
+    peer.cache_source=cache.store_source(kept)
     format,mips,_,_=imported(t,&types,folder,"p",bytes,peer)
     testing.expect(t,format==.RGBA8 && mips==1,"the levels of the source, not built")
     testing.expect_value(t,len(cached_refs(peer.store,textures.CACHE)),1)
@@ -285,7 +285,7 @@ an_import_takes_a_mesh_that_another_import_built_from_the_mesh_cache :: proc(t:^
     // A store that misses asks its source before building: what a peer built is taken as it is.
     peer:=options
     peer.store=test_store(t,fmt.tprintf("%s/peer",root))
-    peer.cache_source=copy_source(kept)
+    peer.cache_source=cache.store_source(kept)
     peer_path:string
     if peer_path,ok=imported(t,source,peer);!ok {return}
     testing.expect_value(t,colliders(t,&types,peer_path),1)

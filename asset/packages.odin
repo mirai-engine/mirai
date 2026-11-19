@@ -447,8 +447,8 @@ packages_load :: proc(root:string,allocator:=context.allocator) -> (list:Package
 packages_save :: proc(root:string,list:^Packages) -> Error {
     text:=packages_text(list,context.temp_allocator) or_return
     path:=fmt.tprintf("%s/%s",root,PACKAGES_FILE)
-    if data,read_error:=os.read_entire_file(path,context.temp_allocator);read_error==nil && string(data)==text {return .None}
-    return file_error(serial.file_write_atomic(path,transmute([]u8)text))
+    _,write_error:=serial.file_write_changed(path,transmute([]u8)text)
+    return file_error(write_error)
 }
 
 // The file of root that holds the text of the manifest of the package id it
@@ -466,9 +466,9 @@ package_file_save :: proc(s:^store.Store,root:string,entry:^Project_Package) -> 
     p:=package_parse(text,context.temp_allocator) or_return
     if p.id!=entry.id {return .Corrupt}
     path:=package_file(root,entry.id)
-    if data,read_error:=os.read_entire_file(path,context.temp_allocator);read_error==nil && string(data)==text {return .None}
     if folder:=fmt.tprintf("%s/%s",root,PACKAGE_FILES);!os.is_dir(folder) && os.make_directory_all(folder)!=nil {return .IO}
-    return file_error(serial.file_write_atomic(path,transmute([]u8)text))
+    _,write_error:=serial.file_write_changed(path,transmute([]u8)text)
+    return file_error(write_error)
 }
 
 // Removes the file of root for the package id; .None also when it has none.
@@ -565,6 +565,15 @@ Package_Problem :: struct {
 Packages_Resolved :: struct {
     listed:[dynamic]Package_Listed,
     problems:[dynamic]Package_Problem,
+    packages:[dynamic]Resolved_Package, // each one whose manifest read, in the order of the list
+}
+
+// A package a root uses, by what its manifest says of it.
+Resolved_Package :: struct {
+    id:base.Asset_Id,
+    name:string,
+    origin:Package_Origin,
+    inputs:[]string, // the files the import read besides the source, from its folder
 }
 
 // What a project lists from the packages it uses: each asset of the cache it
@@ -579,6 +588,7 @@ Packages_Resolved :: struct {
 packages_resolve :: proc(s:^store.Store,root:string,list:^Packages,allocator:=context.allocator) -> (resolved:Packages_Resolved,error:Error) {
     resolved.listed=make([dynamic]Package_Listed,allocator)
     resolved.problems=make([dynamic]Package_Problem,allocator)
+    resolved.packages=make([dynamic]Resolved_Package,allocator)
     names:=make([dynamic]string,context.temp_allocator)
     for &entry in list.packages {
         p,manifest_error:=package_load(s,root,&entry,context.temp_allocator)
@@ -590,6 +600,15 @@ packages_resolve :: proc(s:^store.Store,root:string,list:^Packages,allocator:=co
         case: problem_add(&resolved,{entry.id,{},.Manifest_Unreadable}) or_return
         }
         if manifest_error!=.None {continue}
+        named:=Resolved_Package{id=p.id,origin={folder=p.origin.folder}}
+        named.name=clone(p.name,allocator) or_return
+        named.origin.path=clone(p.origin.path,allocator) or_return
+        named.origin.importer=clone(p.origin.importer,allocator) or_return
+        inputs,no_inputs:=make([]string,len(p.inputs),allocator)
+        if no_inputs!=nil {return {},.Out_Of_Memory}
+        for input,at in p.inputs {inputs[at]=clone(input,allocator) or_return}
+        named.inputs=inputs
+        if _,no_room:=append(&resolved.packages,named);no_room!=nil {return {},.Out_Of_Memory}
         used,no_used:=make([]bool,len(p.assets),context.temp_allocator)
         by_id:=make(map[base.Asset_Id]int,context.temp_allocator)
         if no_used!=nil || reserve(&by_id,len(p.assets))!=nil {return {},.Out_Of_Memory}
@@ -1031,4 +1050,47 @@ store_error :: proc(error:store.Error) -> Error {
 problem_add :: proc(resolved:^Packages_Resolved,problem:Package_Problem) -> Error {
     if _,no_room:=append(&resolved.problems,problem);no_room!=nil {return .Out_Of_Memory}
     return .None
+}
+
+// Whether what an import builds of a kind is of the cache: nothing edits it
+// after the import, so its build gives it back whole.
+import_cached :: proc "contextless" (kind:Fourcc) -> bool {
+    return kind==KIND_MESH || kind==KIND_TEXTURE || kind==KIND_SOUND || kind==KIND_FONT
+}
+
+// A name a file can have: what no file system takes becomes _, and the
+// spaces and dots of its ends go. "unnamed" when nothing is left. In the
+// temp allocator.
+safe_name :: proc(name:string) -> string {
+    cleaned:=name_clean(name)
+    return cleaned if cleaned!="" else "unnamed"
+}
+
+// Where under the folder of an import the output named name goes: each part
+// between '/' as safe_name makes it, without the parts that are empty, "."
+// or "..". "unnamed" when no part is left. In the temp allocator.
+safe_path :: proc(name:string) -> string {
+    b:=strings.builder_make(context.temp_allocator)
+    rest:=name
+    for part in strings.split_iterator(&rest,"/") {
+        cleaned:=name_clean(part)
+        if cleaned=="" {continue}
+        if strings.builder_len(b)>0 {strings.write_byte(&b,'/')}
+        strings.write_string(&b,cleaned)
+    }
+    return strings.to_string(b) if strings.builder_len(b)>0 else "unnamed"
+}
+
+@(private="file")
+name_clean :: proc(name:string) -> string {
+    b:=strings.builder_make(context.temp_allocator)
+    for r in name {
+        switch {
+        case r<32 || r==127,r=='<',r=='>',r==':',r=='"',r=='/',r=='\\',r=='|',r=='?',r=='*',r=='#':
+            strings.write_byte(&b,'_')
+        case:
+            strings.write_rune(&b,r)
+        }
+    }
+    return strings.trim(strings.to_string(b)," .")
 }

@@ -18,10 +18,10 @@ import "mirai:std/subprocess"
 NEW_USAGE :: "new <folder> [--name N] [--template T] | new --list"
 BUILD_USAGE :: "build tools [--debug]"
 BUILD_ENGINE_USAGE :: "build engine [--release] [--force]"
-BUILD_PROJECT_USAGE :: "build <editor|game|server> [project] [--release] [--out folder]"
-GENERATE_USAGE :: "generate [project]"
-EDIT_USAGE :: "edit [project] [--release] [editor arguments]"
-PLAY_USAGE :: "play [project] [--release] [player arguments]"
+BUILD_PROJECT_USAGE :: "build <editor|game|server> [project] [--release] [--out folder] [--store folder]"
+GENERATE_USAGE :: "generate [project] [--store folder]"
+EDIT_USAGE :: "edit [project] [--release] [--store folder] [editor arguments]"
+PLAY_USAGE :: "play [project] [--release] [--store folder] [player arguments]"
 
 // How optimized the engine and a project are built. Dev, what every command
 // builds unless --release is asked for: both at -o:minimal, for checking a
@@ -38,6 +38,28 @@ build_mode_take :: proc(args:[]string) -> (mode:Build_Mode,rest:[]string) {
         if arg=="--release" {mode=.Release} else {append(&list,arg)}
     }
     return mode,list[:]
+}
+
+// Takes --store <folder> out of args: the store of the library every command
+// that builds, imports or reads the packages of a project works with,
+// absolute; "": the machine's (store.default_root). ok is false when it names
+// no folder.
+store_take :: proc(args:[]string) -> (store_root:string,rest:[]string,ok:bool) {
+    list:=make([dynamic]string)
+    for i:=0;i<len(args);i+=1 {
+        if args[i]!="--store" {append(&list,args[i]);continue}
+        if i+1>=len(args) || args[i+1]=="" || !positional(args[i+1]) {return "",nil,false}
+        i+=1
+        store_root=project.path_absolute(args[i])
+    }
+    return store_root,list[:],true
+}
+
+// store_take of args in place, saying what is wrong as command.
+store_root_take :: proc(args:^[]string,command:string) -> (store_root:string,ok:bool) {
+    store_root,args^,ok=store_take(args^)
+    if !ok {fmt.eprintfln("mirai %s: --store needs the folder of a store",command)}
+    return
 }
 
 cmd_new :: proc(root:string,args:[]string) -> int {
@@ -94,7 +116,9 @@ cmd_new :: proc(root:string,args:[]string) -> int {
 // shown or heard, in .mirai/server unless --out says another folder.
 cmd_build_project :: proc(root:string,args:[]string) -> int {
     mode,rest:=build_mode_take(args[1:])
-    code,_,shaders_failed:=build_project(root,args[0]=="editor"?.Editor:.Game,rest,mode,server=args[0]=="server")
+    store_root,ok:=store_root_take(&rest,"build")
+    if !ok {return 2}
+    code,_,shaders_failed:=build_project(root,args[0]=="editor"?.Editor:.Game,rest,mode,server=args[0]=="server",store_root=store_root)
     if code==0 && args[0]=="editor" {scenes_stale_report(root,len(rest)>0 && positional(rest[0])?rest[0]:".",mode)}
     return code!=0?code:shaders_failed?1:0
 }
@@ -204,6 +228,9 @@ engine_report :: proc(result:build.Engine_Result,root:string,out:=os.stdout) -> 
 
 // mirai generate [project]: writes the generated packages and says what the attributes have wrong.
 cmd_generate :: proc(root:string,args:[]string) -> int {
+    args:=args
+    store_root,ok:=store_root_take(&args,"generate")
+    if !ok {return 2}
     if code:=positionals_only("generate",args);code!=0 {return code}
     if len(args)>1 {return argument_unknown("generate",args[1])}
     folder:=len(args)>0?args[0]:"."
@@ -213,9 +240,9 @@ cmd_generate :: proc(root:string,args:[]string) -> int {
         return 1
     }
     defer project.close(&p)
-    out,ok:=build.world_write_files(&p)
+    out,written:=build.world_write_files(&p,store_root=store_root)
     for e in out.errors {fmt.eprintln(e)}
-    if !ok {
+    if !written {
         if len(out.errors)==0 {fmt.eprintfln("mirai generate: could not write to %s",build.generated_root(p.root))}
         return 1
     }
@@ -229,6 +256,8 @@ cmd_generate :: proc(root:string,args:[]string) -> int {
 // launcher otherwise: the editor of the empty template with --launcher.
 cmd_edit :: proc(root:string,args:[]string) -> int {
     mode,args:=build_mode_take(args)
+    store_root,ok:=store_root_take(&args,"edit")
+    if !ok {return 2}
     named:=len(args)>0 && !strings.has_prefix(args[0],"-")
     folder:=named?args[0]:"."
     rest:=named?args[1:]:args
@@ -236,11 +265,12 @@ cmd_edit :: proc(root:string,args:[]string) -> int {
     if !named && !os.is_file(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator)) {
         folder,extra=edit_unnamed(root)
     }
-    code,_,_:=build_project(root,.Editor,{folder},mode)
+    code,_,_:=build_project(root,.Editor,{folder},mode,store_root=store_root)
     if code!=0 {return code}
     if slice.contains(rest,"--headless") {layers_isolate(root)}
     command:=make([dynamic]string)
     append(&command,project_engine_paths(root,folder,mode).editor_program,"--project",project.path_absolute(folder))
+    if store_root!="" {append(&command,"--store",store_root)}
     append(&command,..extra)
     append(&command,..rest)
     return run(root,command[:])
@@ -264,13 +294,16 @@ edit_unnamed :: proc(root:string) -> (folder:string,extra:[]string) {
 cmd_play :: proc(root:string,args:[]string) -> int {
     if len(args)>0 && args[0]=="test" {return cmd_play_test(root,args[1:])}
     mode,args:=build_mode_take(args)
+    store_root,ok:=store_root_take(&args,"play")
+    if !ok {return 2}
     folder:=len(args)>0 && !strings.has_prefix(args[0],"-")?args[0]:"."
     rest:=len(args)>0 && folder==args[0]?args[1:]:args
-    code,_,_:=build_project(root,.Editor,{folder},mode)
+    code,_,_:=build_project(root,.Editor,{folder},mode,store_root=store_root)
     if code!=0 {return code}
     if play_runs_headless(rest) {layers_isolate(root)}
     command:=make([dynamic]string)
     append(&command,project_engine_paths(root,folder,mode).player_program,"--project",project.path_absolute(folder))
+    if store_root!="" {append(&command,"--store",store_root)}
     append(&command,..play_arguments(rest))
     return run(root,command[:])
 }
@@ -298,7 +331,7 @@ play_arguments :: proc(args:[]string) -> []string {
 
 // Builds a target of a project. shaders_failed: the generation of its shaders
 // failed and the library was built with the ones it had.
-build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_Mode,server:=false) -> (code:int,output:string,shaders_failed:bool) {
+build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_Mode,server:=false,store_root:="") -> (code:int,output:string,shaders_failed:bool) {
     folder,out:=".",""
     named:=false
     for i:=0;i<len(args);i+=1 {
@@ -340,14 +373,14 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
         return 0,output,false
     }
     if !engine_current {engine_release(p.root,paths.folder,"build")}
-    code,output,shaders_failed=build_project_run(root,&p,target,out,mode,paths,engine_current,server)
+    code,output,shaders_failed=build_project_run(root,&p,target,out,mode,paths,engine_current,server,store_root)
     if code==0 && target!=.Game {session_take(p.root,paths)}
     return
 }
 
 // What build_project does once it has to compile, in its turn.
 @(private="file")
-build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out:string,mode:Build_Mode,engine:build.Engine_Paths,engine_current:bool,server:=false) -> (code:int,output:string,shaders_failed:bool) {
+build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out:string,mode:Build_Mode,engine:build.Engine_Paths,engine_current:bool,server:=false,store_root:="") -> (code:int,output:string,shaders_failed:bool) {
     lock:=build_lock(root,fmt.tprintf("build %v %s",target,p.root),{p.root})
     defer workspace.lock_release(&lock)
     // ui links the FreeType library, the importer that of ufbx and the editor that of SQLite.
@@ -378,7 +411,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
     }
     rebuilt:bool
     {
-        job:=build.job_run({project=p,target=target,output=out,server=server,dev=mode==.Dev,engine=engine.mode})
+        job:=build.job_run({project=p,target=target,output=out,server=server,dev=mode==.Dev,engine=engine.mode,store_root=store_root})
         defer build.job_destroy(job)
         result:=&job.result
         for diagnostic in result.diagnostics {

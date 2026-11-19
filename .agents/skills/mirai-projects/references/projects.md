@@ -439,6 +439,7 @@ release of the tag; run by hand, it leaves the packages as artifacts.
   .mirai/engine/release/   libraries, programs, SDL3, decl/, engine.declared and engine.stamp
   .mirai/cache/plugins/  libraries of the engine plugins, minimal and speed
   .deps/                 Odin, Slang and spirv-val/opt/cross; SDL3 on Linux and macOS
+  builds/                a store with the builds of the packages its plugins pin
   core/ engine/ ...      Odin sources without tests, plugins/, third_party/freetype already built
   shaders/ templates/ assets/fonts/ editor/assets/ .agents/skills/ THIRD_PARTY_NOTICES.md
   ```
@@ -503,23 +504,23 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Operation | Command |
 | --- | --- |
 | Create a worktree ready to build | `mirai worktree new <name> [--from <branch>]` |
-| Build and open the editor | `mirai edit [project] [--release] [editor arguments]` |
-| Build and run the game | `mirai play [project] [--release] [player arguments]` |
-| Build the editor without opening it | `mirai build editor [project] [--release]` |
-| Build the shippable game | `mirai build game [project] [--out folder]` |
+| Build and open the editor | `mirai edit [project] [--release] [--store folder] [editor arguments]` |
+| Build and run the game | `mirai play [project] [--release] [--store folder] [player arguments]` |
+| Build the editor without opening it | `mirai build editor [project] [--release] [--store folder]` |
+| Build the shippable game | `mirai build game [project] [--out folder] [--store folder]` |
 | Build its dedicated server | `mirai build server [project] [--out folder]` |
-| Build only the engine | `mirai build engine [--release] [--force]`|--release] [--force]` |
-| Generate the world without building | `mirai generate [project]` |
+| Build only the engine | `mirai build engine [--release] [--force]` |
+| Generate the world without building | `mirai generate [project] [--store folder]` |
 | Run the content tool of a project | `mirai content [project] [-- arguments]` |
 | Ingest a source from anywhere and add it to a project | `mirai import <file> [--project P] [--folder F] [settings]` |
-| Bring the packages a project pins to builds of this engine | `mirai import --refresh <root> [--fast]` |
+| Bring the packages a project pins to builds of this engine | `mirai import --refresh <root> [--fast] [--store folder] [--from folder]` |
 | Serve a project peer to peer until stopped | `mirai share [project] [--port N] [--store S]` |
 | Receive a shared project, or update a folder joined before | `mirai join <invitation> [folder] [--address A] [--port N] [--store S]` |
 | Documents of interfaces and scenes, no editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
 | Git plugins of a project | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
 | Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins. In a runtime package it also fails on an allocation whose error nothing receives (`tools/mirai/alloc_lint.odin` says which calls and which packages), and in the runtime or editor part of a plugin on an import of `render` or `rhi` outside its tests or of the physics solver (`tools/mirai/solver_lint.odin`) |
 | Run tests | `mirai test [<package>] [test\|file.odin...] [--list\|--failed\|--no-gpu\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
-| Headless background editor | `mirai session start\|restart\|stop\|status [project] [--release] [--copy]` |
+| Headless background editor | `mirai session start\|restart\|stop\|status [project] [--release] [--copy] [--store folder]` |
 | Call the editor API | `mirai rpc <method> [key=value...\|json] [--select c] [--wait-until c=v] [--project P]` |
 | Capture without UI | `mirai capture [project] --out x.png [--reference r.png] [--repeat]` |
 | Validate demo image and cost | `mirai render check [project] [--views a,b] [--quality] [--release]` |
@@ -530,7 +531,7 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Search the code | `rg <pattern> [folder]` |
 | Check the machine and a project | `mirai doctor [project]` |
 | Merge and diff assets with git, once per clone | `mirai setup git [folder]` |
-| Assemble the installed engine (binary) | `mirai package engine --out <folder>` |
+| Assemble the installed engine (binary) | `mirai package engine --out <folder> [--store folder]` |
 
 - Every command that builds does it in dev unless `--release` is asked for
   ([AGENTS.md](../../../../AGENTS.md#common-commands)).

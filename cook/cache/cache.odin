@@ -104,3 +104,33 @@ load_here :: proc(s:^store.Store,namespace,ref:string,key,version:u64,file:^asse
     if store.verify(s,hash)==.Corrupt {_=store.remove(s,hash)}
     return false
 }
+
+// A source that copies from the store at from, a second root of blobs and
+// refs: the blob of the ref and, for a build (asset.REF_IMPORTS), every blob
+// it lists. What a peer gives, and what an installed engine gives from the
+// store of the builds of its plugins.
+store_source :: proc(from:^store.Store) -> Source {
+    fetch :: proc(user:rawptr,into:^store.Store,namespace,name:string) -> bool {
+        from:=(^store.Store)(user)
+        hash,error:=store.ref_get(from,namespace,name)
+        if error!=.None || !blob_copy(from,into,hash) {return false}
+        if namespace==asset.REF_IMPORTS {
+            b,build_error:=asset.build_get(from,hash,context.temp_allocator)
+            if build_error!=.None {return false}
+            for o in b.outputs {
+                if !blob_copy(from,into,o.blob) {return false}
+            }
+        }
+        return store.ref_set(into,namespace,name,hash)==.None
+    }
+    return {fetch=fetch,user=from}
+}
+
+@(private="file")
+blob_copy :: proc(from,into:^store.Store,hash:store.Hash) -> bool {
+    if store.has(into,hash) {return true}
+    path,path_error:=store.blob_path(from,hash,context.temp_allocator)
+    if path_error!=.None {return false}
+    put,put_error:=store.put_file(into,path)
+    return put_error==.None && put==hash
+}
