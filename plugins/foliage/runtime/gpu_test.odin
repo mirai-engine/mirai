@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:path/filepath"
+import "core:slice"
 import "core:testing"
 import "mirai:core"
 import "mirai:asset"
@@ -80,14 +81,14 @@ gpu_fixture_destroy :: proc(f: ^Gpu_Fixture) {
 // the wind of the resident, a floor and the sun shining along `sun`, and the
 // pixels of the last.
 @(private = "file")
-view_frames :: proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera, sun: [3]f32, frames: int) -> (pixels: []u8, ok: bool) {
+view_frames :: proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera, sun: [3]f32, frames: int, illuminance := f32(3)) -> (pixels: []u8, ok: bool) {
 	for _ in 0 ..< frames {
 		test_world_settle(&f.world)
 		trample_draw(&f.resident, core.read(&f.world.benders), core.read(&f.world.volumes), core.read(&f.world.worlds), core.FRAME_TIME_DEFAULT, {}, &f.renderer)
 		render.frame_pass(&f.renderer, .Mask, foliage_wind_record, &f.resident)
 		// Wide enough that the levels of the sun near the eye are not its coarsest.
 		floor := gpu.Instance_Desc{object_id = 1, mesh = f.cube, transform = mm.transform_matrix({{0, -0.5, 0}, mm.QUAT_IDENTITY, {600, 1, 600}}), tint = {0.05, 0.05, 0.05}}
-		gpu.scene_set_environment(&f.renderer, {direction = -sun, color = {1, 1, 1}, illuminance = 3, indirect = 1, scattering = 1, enabled = true}, {sky = {0.4, 0.5, 0.6}})
+		gpu.scene_set_environment(&f.renderer, {direction = -sun, color = {1, 1, 1}, illuminance = illuminance, indirect = 1, scattering = 1, enabled = illuminance > 0}, {sky = {0.4, 0.5, 0.6}})
 		testing.expect(t, gpu.scene_update(&f.renderer, 0, {floor}, true), f.renderer.error)
 		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera}), f.renderer.error)
 	}
@@ -221,20 +222,29 @@ swaying_desc :: proc(f: ^Gpu_Fixture, mesh: gpu.Mesh_Handle, wind, size: f32) ->
 	return {mesh = mesh, tint = 1, flags = {.Casts_Shadow, .Ray_Visible}, vertex = {amount, 1, 0, 0}, reach = hook_reach(amount, high.y), sway = shadow_sway(kind, high.y, size)}
 }
 
-// Where a point of the world lands on the image of a camera, and its color.
+// Where a point of the world lands on an image of a camera `width` by
+// `height` pixels, and its linear depth; false off the image.
 @(private = "file")
-seen_at :: proc(f: ^Gpu_Fixture, pixels: []u8, camera: gpu.Camera, p: [3]f32) -> i32 {
+projected :: proc(camera: gpu.Camera, p: [3]f32, width, height: int) -> (x, y: int, depth: f32, inside: bool) {
 	forward := linalg.normalize(camera.forward)
 	right := linalg.normalize(linalg.cross(forward, camera.up))
 	up := linalg.cross(right, forward)
 	d := p - camera.position
-	z := linalg.dot(d, forward)
+	depth = linalg.dot(d, forward)
 	half := math.tan(camera.fov_y * math.PI / 360)
 	// Half the view up and down at the point: of an orthographic camera, half its height.
-	across := camera.height * 0.5 if camera.projection == .Orthographic else z * half
-	x := int((linalg.dot(d, right) / (across * f32(WIDTH) / f32(HEIGHT)) * 0.5 + 0.5) * f32(WIDTH))
-	y := int((0.5 - linalg.dot(d, up) / across * 0.5) * f32(HEIGHT))
-	if x < 0 || y < 0 || x >= WIDTH || y >= HEIGHT {return -1}
+	across := camera.height * 0.5 if camera.projection == .Orthographic else depth * half
+	x = int((linalg.dot(d, right) / (across * f32(width) / f32(height)) * 0.5 + 0.5) * f32(width))
+	y = int((0.5 - linalg.dot(d, up) / across * 0.5) * f32(height))
+	inside = x >= 0 && y >= 0 && x < width && y < height
+	return
+}
+
+// The color of a point of the world on the image of a camera, -1 off it.
+@(private = "file")
+seen_at :: proc(f: ^Gpu_Fixture, pixels: []u8, camera: gpu.Camera, p: [3]f32) -> i32 {
+	x, y, _, inside := projected(camera, p, WIDTH, HEIGHT)
+	if !inside {return -1}
 	i := (y * WIDTH + x) * 4
 	return i32(pixels[i]) + i32(pixels[i + 1]) + i32(pixels[i + 2])
 }
@@ -295,14 +305,16 @@ a_swaying_wall_casts_its_shadow_where_it_leans_only_near_the_eye :: proc(t: ^tes
 	}
 }
 
-// A canopy of two upright leaves of one plant facing a low sun whose shadow
-// is traced, not mapped (the view is orthographic): a wind pushes them away from the sun, out of their
-// leaves at rest, which rays meet. The near leaf is lit as it is without
-// wind, without the dark of meeting itself at rest, also in the light of the
-// probes; the half of it the far leaf hides, a metre toward the sun, stays
-// in its shadow.
+// A canopy of leaves closer together than the wind sways them, of one
+// plant standing at the origin, under the sun in the maps that follow what
+// sways (near the eye), under the sun in the maps that keep it at rest (past
+// the reach), under the sun traced (the view is orthographic: no maps) and
+// in the light of the probes alone: each leaf seen in the wind is lit as the
+// same leaf is still, the share of leaves the others shade is the same and
+// none is darker than it is still, as what hides a point swayed is what
+// hides it at rest.
 @(test)
-a_swaying_canopy_under_a_traced_light_meets_no_leaf_of_its_own_at_rest :: proc(t: ^testing.T) {
+a_swaying_canopy_is_shaded_as_it_is_at_rest :: proc(t: ^testing.T) {
 	f := new(Gpu_Fixture)
 	defer free(f)
 	if !gpu_fixture_init(t, f) {return}
@@ -310,28 +322,178 @@ a_swaying_canopy_under_a_traced_light_meets_no_leaf_of_its_own_at_rest :: proc(t
 	leaf := gpu.DEFAULT_MATERIAL
 	leaf.two_sided = true
 	if !testing.expect(t, gpu.materials_set(&f.renderer, {leaf})) {return}
-	// The near leaf in the plane x = 0 from 1 to 2 m up; the far one at x = 1 over its half toward +z.
-	canopy, made := sheets_mesh(t, f, {{corner = {0, 1, 1}, across = {0, 0, -2}, up = {0, 1, 0}, cells = 8}, {corner = {1, 1, 1.2}, across = {0, 0, -1.2}, up = {0, 1.4, 0}, cells = 4}})
+	canopy := new(Canopy)
+	defer free(canopy)
+	canopy_grow(canopy)
+	mesh, made := sheets_mesh(t, f, canopy.sheets[:])
 	if !made {return}
-	desc := swaying_desc(f, canopy, 0.6, 2.5)
+	// Wind 1.3: a lean of 0.15 rad in the wind of the cases, the leaves 3 m
+	// up move some 45 cm, farther than they lie apart.
+	desc := swaying_desc(f, mesh, 1.3, 4.2)
 	desc.material = 1
-	if !testing.expect(t, desc.sway > 0, "a canopy of 2.5 m casts swaying shadows") {return}
+	if !testing.expect(t, desc.sway > 0, "the canopy casts swaying shadows") {return}
 	_, problem := render.batch_set(&f.renderer, f.resident.world, 0, desc, {render.batch_instance({0, 0, 0}, 1, 1)})
 	if !testing.expect(t, problem == "", problem) {return}
-	camera := gpu.Camera{position = {3, 1.5, -3}, forward = {-3, 0, 3}, up = {0, 1, 0}, projection = .Orthographic, height = 3, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	sun := [3]f32{-1, -0.3, 0}
-	light: [2][2]i32
-	for speed, k in ([2]f32{0, 20}) {
-		if !wind_blow(t, f, speed) {return}
-		pixels, ok := view_frames(t, f, camera, sun, 8)
-		if !ok {return}
-		defer delete(pixels)
-		// The leaf leans 0.07 rad: its points move some 11 cm, rays meet nothing of it within 23.
-		light[k] = {seen_at(f, pixels, camera, {0, 1.6, -0.5}), seen_at(f, pixels, camera, {0, 1.4, 0.5})}
+	near := gpu.Camera{position = {0, 3, 3}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 75, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	cases := [?]struct {
+		name:        string,
+		camera:      gpu.Camera,
+		illuminance: f32,
+		frames:      int,
+	}{
+		{"sun in the maps near the eye", near, 3, 12},
+		{"sun in the maps past the reach", {position = {0, 3, 40}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 6.5, near = 0.05, far = 200, exposure = gpu.UNIT_EXPOSURE}, 3, 12},
+		{"sun traced", {position = {0, 3, 10}, forward = {0, 0, -1}, up = {0, 1, 0}, projection = .Orthographic, height = 4, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}, 3, 12},
+		{"probes", near, 0, 32},
 	}
-	still, windy := light[0], light[1]
-	testing.expectf(t, still[0] > 0 && windy[0] * 10 > still[0] * 9, "the lit half of the near leaf is %d in the wind, %d still", windy[0], still[0])
-	testing.expectf(t, windy[1] * 2 < windy[0], "the half the far leaf hides stays in its shadow: %d against %d", windy[1], windy[0])
+	sun := [3]f32{-1, -0.6, -0.4}
+	lean := 20 * sway_amount({wind = 1.3}) * (0.6 + 0.4 * 0.3 * math.sin(f32(1.7)))
+	for c in cases {
+		lights: [2][CANOPY_LEAVES]i32
+		for speed, k in ([2]f32{0, 20}) {
+			if !wind_blow(t, f, speed) {return}
+			pixels, ok := view_frames(t, f, c.camera, sun, c.frames, c.illuminance)
+			if !ok {return}
+			defer delete(pixels)
+			if !canopy_seen(t, f, pixels, c.camera, canopy, lean if k == 1 else 0, &lights[k]) {return}
+		}
+		resolve, lighting := canopy_cost(t, f, c.camera)
+		s := canopy_compare(canopy, c.camera, lights[0][:], lights[1][:])
+		fmt.printfln("%s: %d leaves, mean %.1f still and %.1f in the wind, %.3f shaded still and %.3f in the wind, %.3f darker in the wind; resolve %.3f ms, lighting %.3f ms", c.name, s.leaves, s.mean[0], s.mean[1], s.shaded[0], s.shaded[1], s.darker, resolve, lighting)
+		testing.expectf(t, s.leaves >= 50, "%s: %d leaves seen still and in the wind", c.name, s.leaves)
+		testing.expectf(t, abs(s.mean[1] - s.mean[0]) <= 0.1 * s.mean[0], "%s: the leaves are %.1f in the wind against %.1f still", c.name, s.mean[1], s.mean[0])
+		testing.expectf(t, abs(s.shaded[1] - s.shaded[0]) <= 0.08, "%s: %.3f of the leaves are shaded in the wind against %.3f still", c.name, s.shaded[1], s.shaded[0])
+		testing.expectf(t, s.darker <= 0.04, "%s: %.3f of the leaves are darker in the wind than still", c.name, s.darker)
+	}
+}
+
+@(private = "file")
+CANOPY_LEAVES :: 400
+
+// The GPU time of a frame of the canopy in the wind, ms, over 40 frames:
+// that of the resolve, and that of the passes of its light (the direct
+// light, reflections and contact occlusion).
+@(private = "file")
+canopy_cost :: proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera) -> (resolve, lighting: f64) {
+	LIGHTING :: [?]string{"direct maps", "direct rays", "direct samples", "direct points", "direct spread", "direct pixels", "reflect", "contact", "contact light", "contact pixels"}
+	// The device writes the timestamps of each pass only while asked to.
+	rhi.timestamps_want(f.device, true)
+	defer rhi.timestamps_want(f.device, false)
+	for _ in 0 ..< 40 {
+		if !testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera}), f.renderer.error) {return}
+		for timing in gpu.renderer_stats(&f.renderer).timings {
+			if timing.name == "resolve" || timing.name == "rest" {resolve += f64(timing.ms)}
+			for name in LIGHTING {if timing.name == name {lighting += f64(timing.ms)}}
+		}
+	}
+	return resolve / 40, lighting / 40
+}
+
+// The leaves of a canopy, squares 25 cm wide turned every way in a ball 1.2 m
+// in radius about a point 3 m up, and the center and normal of each.
+@(private = "file")
+Canopy :: struct {
+	sheets:  [CANOPY_LEAVES]Sheet,
+	centers: [CANOPY_LEAVES][3]f32,
+	normals: [CANOPY_LEAVES][3]f32,
+}
+
+@(private = "file")
+canopy_grow :: proc(c: ^Canopy) {
+	random :: proc(seed: ^u32) -> f32 {
+		seed^ ~= seed^ << 13
+		seed^ ~= seed^ >> 17
+		seed^ ~= seed^ << 5
+		return f32(seed^ & 0xFFFFFF) / f32(0x1000000) * 2 - 1
+	}
+	seed := u32(12345)
+	for k in 0 ..< CANOPY_LEAVES {
+		center, normal: [3]f32
+		for {
+			center = {random(&seed), random(&seed), random(&seed)}
+			if linalg.dot(center, center) <= 1 {break}
+		}
+		for {
+			normal = {random(&seed), random(&seed), random(&seed)}
+			if l := linalg.dot(normal, normal); l <= 1 && l > 0.01 {break}
+		}
+		center, normal = center * 1.2 + {0, 3, 0}, linalg.normalize(normal)
+		side := [3]f32{0, 1, 0} if abs(normal.y) < 0.9 else [3]f32{1, 0, 0}
+		across := linalg.normalize(linalg.cross(normal, side)) * 0.25
+		up := linalg.cross(normal, across)
+		c.sheets[k] = {corner = center - 0.5 * across - 0.5 * up, across = across, up = up, cells = 1}
+		c.centers[k], c.normals[k] = center, linalg.normalize(linalg.cross(across, up))
+	}
+}
+
+// Where the hook puts a point of the plant standing at the origin under a
+// wind along -x that leans it `lean` radians (foliage_bend).
+@(private = "file")
+canopy_swayed :: proc(p: [3]f32, lean: f32) -> [3]f32 {
+	return p + [3]f32{-math.sin(lean), math.cos(lean) - 1, 0} * max(p.y, 0)
+}
+
+// The light of each leaf of a canopy swayed `lean` radians as a camera sees
+// it, the mean of 3x3 points over its middle that the view shows (the linear
+// depth of the view there is theirs), -1 where others hide most of them.
+@(private = "file")
+canopy_seen :: proc(t: ^testing.T, f: ^Gpu_Fixture, pixels: []u8, camera: gpu.Camera, c: ^Canopy, lean: f32, lights: ^[CANOPY_LEAVES]i32) -> bool {
+	width, height := int(f.renderer.targets.width), int(f.renderer.targets.height)
+	depths := make([]f32, width * height)
+	defer delete(depths)
+	if !testing.expect(t, rhi.texture_read(f.device, f.renderer.targets.linear_depth, slice.to_bytes(depths))) {return false}
+	for center, k in c.centers {
+		sum, seen := i32(0), i32(0)
+		for i in 0 ..< 9 {
+			p := canopy_swayed(center + (f32(i % 3) - 1) * 0.3 * c.sheets[k].across + (f32(i / 3) - 1) * 0.3 * c.sheets[k].up, lean)
+			x, y, depth, inside := projected(camera, p, width, height)
+			if !inside || abs(depths[y * width + x] - depth) > 0.03 {continue}
+			sum += seen_at(f, pixels, camera, p)
+			seen += 1
+		}
+		lights[k] = sum / seen if seen >= 5 else -1
+	}
+	return true
+}
+
+// What a canopy shows in the wind against still, over the leaves seen in
+// both and not edge on: their mean light, the share of them in shadow (under
+// half the light of the brightest twentieth still) and the share darker in
+// the wind than still by more than a tenth of that light.
+@(private = "file")
+Canopy_Shading :: struct {
+	leaves: int,
+	mean:   [2]f32,
+	shaded: [2]f32,
+	darker: f32,
+}
+
+@(private = "file")
+canopy_compare :: proc(c: ^Canopy, camera: gpu.Camera, still, windy: []i32) -> (s: Canopy_Shading) {
+	compared :: proc(c: ^Canopy, camera: gpu.Camera, still, windy: []i32, k: int) -> bool {
+		view := camera.forward if camera.projection == .Orthographic else c.centers[k] - camera.position
+		return still[k] >= 0 && windy[k] >= 0 && abs(linalg.dot(linalg.normalize(view), c.normals[k])) >= 0.25
+	}
+	seen := make([dynamic]i32, context.temp_allocator)
+	for k in 0 ..< CANOPY_LEAVES {
+		if compared(c, camera, still, windy, k) {append(&seen, still[k])}
+	}
+	if len(seen) == 0 {return}
+	slice.sort(seen[:])
+	lit := f32(seen[len(seen) - 1 - len(seen) / 20])
+	for k in 0 ..< CANOPY_LEAVES {
+		if !compared(c, camera, still, windy, k) {continue}
+		a, b := f32(still[k]), f32(windy[k])
+		s.leaves += 1
+		s.mean += {a, b}
+		s.shaded += {1 if a < 0.5 * lit else 0, 1 if b < 0.5 * lit else 0}
+		s.darker += 1 if b < a - 0.1 * lit else 0
+	}
+	n := f32(s.leaves)
+	s.mean /= n
+	s.shaded /= n
+	s.darker /= n
+	return
 }
 
 // No swayed copy of a mesh is made: the geometry of the renderer is the same

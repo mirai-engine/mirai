@@ -75,11 +75,11 @@ static float direct_across = 0.0;
 
 // The weight of an item at a point for the samples: none for a light a map of
 // the view holds there, whose light direct_maps.comp gives.
-float direct_sampled_weight(uint4 row, uint item, float3 position, float3 normal) {
+float direct_sampled_weight(uint4 row, uint item, float3 position, float3 normal, float3 swayed) {
 #ifdef SHADOW_DATA_SLOT
     Shadow_Map m;
     Sun_Pick pick;
-    if (item != DIRECT_CELL_TABLE && light_map_given(item, position, direct_across, m, pick)) return 0.0;
+    if (item != DIRECT_CELL_TABLE && light_map_given(item, position, direct_across, m, pick, swayed)) return 0.0;
 #endif
     return direct_item_weight(row, item, position, normal);
 }

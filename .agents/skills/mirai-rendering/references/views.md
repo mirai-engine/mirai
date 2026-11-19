@@ -341,7 +341,9 @@ frame and the current one:
   binds the view's depth pyramids with `pass_depth_pyramid` (this frame's, or the previous one's
   with `previous`) and tests a box with `pyramid_hides` (`include/pyramid.slang`);
   `pass_depth_pyramid_build`, between its draws, rebuilds this frame's pyramid with what it drew,
-  which its next cull and the next frame see. Materials
+  which its next cull and the next frame see. A pass whose surfaces the wind moves binds the rest
+  target with `pass_rest_write` and writes where each pixel rests with `gbuffer_rest_write`
+  ([what sways](lights.md#what-sways-in-the-maps)). Materials
   with a Surface program are drawn with their program's fragment: `program` in
   `pass_gbuffer_pipeline` gives that pipeline, `pass_material_program` says the program of a
   material and `pass_mesh_programs` those of what a mesh shows, for a draw per program in which the

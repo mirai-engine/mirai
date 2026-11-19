@@ -186,20 +186,6 @@ struct Hit {
 #define RAY_SHADOWS (RAY_OPAQUE | RAY_SHADOW_ONLY)
 #define RAY_SEEN (RAY_OPAQUE | RAY_UNSHADOWED)
 
-// Metres from its origin where a ray meets nothing of a batch that sways now:
-// how far it sways (batch_near), so that a ray from a point the vertex hook
-// swayed does not meet its own leaf at rest. The rays of the probe volume
-// (MIRAI_TRACE_PROBES) leave probes and points at rest: they meet every
-// batch at rest whatever the wind, so a scene whose rays see no change is
-// the same to them with wind and without.
-float ray_batch_near(Instance row) {
-#ifdef MIRAI_TRACE_PROBES
-    return 0.0;
-#else
-    return batch_near(row);
-#endif
-}
-
 #ifdef MIRAI_HW_RT
 [[vk::binding(SLOT_TLAS, 0)]] RaytracingAccelerationStructure scene_tlas : register(MIRAI_REGISTER(t, SLOT_TLAS), space0);
 
@@ -219,12 +205,10 @@ Hit trace_ray_impl(float3 origin, float3 direction, float t_min, float t_max, bo
     RayDesc ray_desc; ray_desc.Origin = origin; ray_desc.TMin = t_min; ray_desc.Direction = direction; ray_desc.TMax = t_max; query.TraceRayInline(scene_tlas, flags, classes, ray_desc);
     // Opaque triangles commit their hits by themselves; the masked ones of
     // an instance that tests the slots of its mesh, and all those of one that
-    // tests others or of a batch that sways now, come here as candidates.
-    float length_t = length(direction);
+    // tests others, come here as candidates.
     while (query.Proceed()) {
         if (query.CandidateType() != CANDIDATE_NON_OPAQUE_TRIANGLE) continue;
         uint instance = uint(query.CandidateInstanceID());
-        if (instance_batched(instance) && query.CandidateTriangleRayT() * length_t < ray_batch_near(batch_row(batch_of(instance)))) continue;
         if (hit_covers(instance, hw_primitive(instance, uint(query.CandidateGeometryIndex()), uint(query.CandidatePrimitiveIndex())),
                 query.CandidateTriangleBarycentrics(), query.CandidateTriangleRayT(), query.CandidateObjectRayDirection(), blend)) {
             query.CommitNonOpaqueTriangleHit();
@@ -362,13 +346,10 @@ bool trace_blas(uint mesh_word, float3 origin, float3 dir, float t_min, inout Hi
 // nodes, its leaves naming instances through the order the pool keeps after
 // them) and the mesh of each instance it reaches. hit.t shrinks as in
 // trace_blas. The tree and the instances are relative to the anchor of the
-// batch, and so is the ray that walks them. Of a batch that sways now, the
-// ray meets nothing nearer than it sways (batch_near): a ray from a point the
-// vertex hook swayed does not meet that leaf at rest.
+// batch, and so is the ray that walks them.
 bool trace_batch(uint batch, float3 origin, float3 direction, float t_min, inout Hit hit, bool any_hit, uint blend, uint classes) {
     Instance row = batch_row(batch);
     if ((batch_classes(row) & classes) == 0u) return false;
-    t_min = max(t_min, ray_batch_near(row) / max(length(direction), 1e-12));
     origin -= batch_anchor(row);
     uint root = batch_tree(row);
     uint words = batch_records(row);

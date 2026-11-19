@@ -85,5 +85,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     }
     Pixel pixel = pixel_at(p, (float2(p) + 0.5) * frame.inv_resolution, depth);
     float3 normal = gbuffer_normal(p);
-    out_contact[q] = float4(contact_occlusion(q, pixel.position, normal, pixel.distance), depth_distance(depth), oct_encode(normal));
+    // Its rays leave from where the point rests: what they meet rests there.
+    float3 rest = pixel.position - pixel_rest(p, depth);
+    out_contact[q] = float4(contact_occlusion(q, rest, normal, pixel.distance), depth_distance(depth), oct_encode(normal));
 }

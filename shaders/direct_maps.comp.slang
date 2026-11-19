@@ -124,7 +124,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float3 normal = gbuffer_normal(source);
     Shading s = gbuffer_shading(direct_point_gbuffer(source, scale), pixel);
     float3 reflectance = max(s.diffuse + specular_albedo(s), float3(0.02));
-    float3 origin = offset_origin(pixel.position, normal, view_bias(pixel.distance));
+    float3 swayed = pixel_rest(source, depth);
+    float3 origin = offset_origin(pixel.position - swayed, normal, view_bias(pixel.distance));
     uint4 row = direct_cell(pixel.position);
     uint count = direct_items(row);
     float across = float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth));
@@ -138,21 +139,21 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float sun = direct_sun_weight(pixel.position, normal);
     float sun_part = -1.0, sun_wide = 0.0;
     Sun_Pick pick;
-    if (sun > 0.0 && sun_pick(pixel.position, pixel_across, pick)) {
+    if (sun > 0.0 && sun_pick(pixel.position, pixel_across, pick, swayed)) {
         // Its level, or the coarser one drawn where its page is not; over the
         // top of the octave of its level, blended into the next.
         Shadow_Map held = sun_level(pick.level);
-        if (shadow_map_held(held, pixel.position)) {
+        if (shadow_map_held(held, pixel.position, swayed)) {
             bool own = held.rect.x == pick.level;
             Shadow_Taps t;
             sun_part = 1.0;
-            if (shadow_map_taps(held, true, frame.sun_direction.xyz, pixel.position, normal, params.sun_radius, across, own ? pick.grow : 1.0, t)) {
+            if (shadow_map_taps(held, true, frame.sun_direction.xyz, pixel.position, normal, params.sun_radius, across, own ? pick.grow : 1.0, t, swayed)) {
                 sun_part = shadow_map_seen(held, t, shadow_near(held, t.texel, shadow_taps_reach(t)), true, params.sun_radius, spin, across, sun_wide);
             }
             Shadow_Map next = sun_level(pick.level + 1u);
-            if (own && pick.blend > 0.0 && shadow_map_held(next, pixel.position)) {
+            if (own && pick.blend > 0.0 && shadow_map_held(next, pixel.position, swayed)) {
                 float part = 1.0, next_wide = 0.0;
-                if (shadow_map_taps(next, true, frame.sun_direction.xyz, pixel.position, normal, params.sun_radius, across, 1.0, t)) {
+                if (shadow_map_taps(next, true, frame.sun_direction.xyz, pixel.position, normal, params.sun_radius, across, 1.0, t, swayed)) {
                     part = shadow_map_seen(next, t, shadow_near(next, t.texel, shadow_taps_reach(t)), true, params.sun_radius, spin, across, next_wide);
                 }
                 sun_part = lerp(sun_part, part, pick.blend);
@@ -173,7 +174,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         // page is not; over the top of the octave of the mip, blended into the next.
         Shadow_Map m;
         Sun_Pick mip;
-        if (item == DIRECT_CELL_TABLE || !light_map_given(item, pixel.position, pixel_across, m, mip)) {
+        if (item == DIRECT_CELL_TABLE || !light_map_given(item, pixel.position, pixel_across, m, mip, swayed)) {
             rest = rest || direct_item_weight(row, item, pixel.position, normal) > 0.0;
             continue;
         }
@@ -184,16 +185,16 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         float radius = light_extent(chosen);
         bool own = shadow_rect_mip(m.rect) == mip.level;
         Shadow_Taps t;
-        bool facing = shadow_map_taps(m, false, axis, pixel.position, normal, radius, across, own ? mip.grow : 1.0, t);
+        bool facing = shadow_map_taps(m, false, axis, pixel.position, normal, radius, across, own ? mip.grow : 1.0, t, swayed);
         if (!(luminance(radiance) > 0.0)) continue;
         open += radiance;
         if (changes && !marked) marked = light_moved(item) || occluder_changed_in_cone(origin, axis, far, radius / max(far, 1e-4));
         float spread = 0.0;
         float part = facing ? shadow_map_seen(m, t, shadow_near(m, t.texel, shadow_taps_reach(t)), false, radius, spin, across, spread) : 1.0;
         Shadow_Map next = shadow_map_mip(m, mip.level + 1u);
-        if (own && mip.blend > 0.0 && shadow_map_held(next, pixel.position)) {
+        if (own && mip.blend > 0.0 && shadow_map_held(next, pixel.position, swayed)) {
             float next_part = 1.0, next_spread = 0.0;
-            if (shadow_map_taps(next, false, axis, pixel.position, normal, radius, across, 1.0, t)) {
+            if (shadow_map_taps(next, false, axis, pixel.position, normal, radius, across, 1.0, t, swayed)) {
                 next_part = shadow_map_seen(next, t, shadow_near(next, t.texel, shadow_taps_reach(t)), false, radius, spin, across, next_spread);
             }
             part = lerp(part, next_part, mip.blend);
