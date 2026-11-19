@@ -569,13 +569,25 @@ bool texture_feedback_helper() {
     default: return false;
     }
 }
+#ifndef MIRAI_TEXTURE_FEEDBACK_QUIET
+#define MIRAI_TEXTURE_FEEDBACK_QUIET false
+#endif
+// Whether what this invocation samples is recorded: never in a pipeline made
+// without the recording (a constant), nor by a helper or while quiet.
+bool texture_feedback_on() {
+#ifdef MIRAI_TEXTURE_FEEDBACK
+    return !MIRAI_TEXTURE_FEEDBACK_QUIET && !texture_feedback_quiet && !texture_feedback_helper();
+#else
+    return false;
+#endif
+}
 // That a texture was sampled at `level`: log2 of the texels across its width
 // a sample spans at the level it reads, less log2 of that width, which no
 // level held changes; -FLT_MAX for every level. The lanes of a wave that
 // sample one texture write once, the finest level of them.
 void texture_feedback(uint texture_index, float level) {
 #ifdef MIRAI_TEXTURE_FEEDBACK
-    if (texture_feedback_quiet || texture_feedback_helper()) return;
+    if (!texture_feedback_on()) return;
     uint entry = texture_index - TEXTURE_TABLE_RESERVED;
     if (entry >= texture_feedback_words[0] || isnan(level)) return;
     uint code = uint(clamp(floor((level - TEXTURE_FEEDBACK_LOW) * TEXTURE_FEEDBACK_STEPS), 0.0, float(TEXTURE_FEEDBACK_CODES - 1u)));
@@ -615,6 +627,7 @@ static bool2 material_steady;
 // the shortest a device may take of it (the larger of its two steps in texels).
 void material_texel_feedback(uint texture_index, float2 dx, float2 dy, float lod) {
 #ifdef MIRAI_TEXTURE_FEEDBACK
+    if (!texture_feedback_on()) return;
     float2 size = float2(texture_size(material_textures[mirai_nonuniform(texture_index)], 0));
     float2 x = abs(dx * size), y = abs(dy * size);
     float across = max(x.x, x.y), down = max(y.x, y.y);
@@ -745,11 +758,13 @@ float4 mirai_sample_texture_grad(uint index, float2 uv, float2 dx, float2 dy) {
     if (!material_has(index)) return float4(1);
 #ifdef MIRAI_TEXTURE_FEEDBACK
     // As material_texel: the level anisotropic filtering reads of these gradients.
-    float2 size = float2(texture_size(material_textures[mirai_nonuniform(index)], 0));
-    float2 across2 = abs(dx * size), down2 = abs(dy * size);
-    float across = max(across2.x, across2.y), down = max(down2.x, down2.y);
-    float longer = max(across, down);
-    if (longer > 0.0) texture_feedback(index, log2(max(min(across, down), longer / MATERIAL_ANISOTROPY)) - log2(size.x));
+    if (texture_feedback_on()) {
+        float2 size = float2(texture_size(material_textures[mirai_nonuniform(index)], 0));
+        float2 across2 = abs(dx * size), down2 = abs(dy * size);
+        float across = max(across2.x, across2.y), down = max(down2.x, down2.y);
+        float longer = max(across, down);
+        if (longer > 0.0) texture_feedback(index, log2(max(min(across, down), longer / MATERIAL_ANISOTROPY)) - log2(size.x));
+    }
 #endif
     return material_textures[mirai_nonuniform(index)].SampleGrad(material_sampler, uv, dx, dy);
 }
