@@ -19,11 +19,11 @@ Code: `collab.odin`, `collab_api.odin`, `collab_project.odin` (the project that 
 - Joining **replaces** the guest's scene. Sharing and joining require `Edit`, the store the editor
   started with (`--store`, else the machine's) and no open session (`Busy`); sharing, and joining
   into the open project, a project with an assets folder. `COLLAB_PEERS` editors fit.
-- On sharing, the host creates a token and shows its invitation code
+- On sharing, the host makes the key of the session and shows its invitation code
   ([invitations](../../mirai-networking/references/networking.md)): the address of its network
   (`address_lan`: the one the system uses toward the internet, not a virtual adapter's), the one
   the router mapped for it ([port mapping](../../mirai-networking/references/port-mapping.md)) and
-  the token. Whoever enters without that token gets no answer and times out; the host's log shows
+  the key. Whoever enters without that key gets no answer and times out; the host's log shows
   the code each time it changes.
 - The host sees one code in Session, once the router answered: a guest asks at both addresses at
   once, so the same code joins from the host's network and from outside it. A guest's networked
@@ -44,7 +44,7 @@ Code: `collab.odin`, `collab_api.odin`, `collab_project.odin` (the project that 
   connections move the project and its builds; what a peer sends enters only through the checks
   of `cook/share` and `exchange`.
 - **Hosting** takes the snapshot of the project into the editor's store and offers it under the
-  session's token, with the builds its packages pin; the whole library of that store is exposed to
+  session's key, with the builds its packages pin; the whole library of that store is exposed to
   whoever holds the invitation, as in `mirai share`. A lease of the session holds what it serves
   and what it fetches.
 - **Joining** first runs the join of `cook/share` (phase `Updating`), and only then says Hello and
@@ -60,7 +60,7 @@ Code: `collab.odin`, `collab_api.odin`, `collab_project.odin` (the project that 
 - **What the host changes during the session** (an import, a saved asset, a source file, a file
   moved or removed, a package build it now pins) reaches the joined guests: the host watches its
   folder, and once its files have been quiet for `COLLAB_OFFER_QUIET` it takes the snapshot again,
-  at most once a `COLLAB_OFFER_EVERY`; when it differs it offers it under the same token and sends
+  at most once a `COLLAB_OFFER_EVERY`; when it differs it offers it under the same key and sends
   `Project` through the session. A guest that gets it runs the same join into its open project,
   as soon as the update it runs ends: only what differs is fetched, and the three-way rule keeps
   and lists what it changed. What it wrote reloads as any file changed on disk; its packages are

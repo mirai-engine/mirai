@@ -110,7 +110,7 @@ share_join :: proc(t:^testing.T,n:^Share_Net,first:=0) -> bool {
     // Called between frames, as the API is.
     context.temp_allocator=mem.arena_allocator(&n.frame)
     if error:=collab_host(&n.host.s,0,"Ana",wire.sim_endpoint_transport(&n.sim,first));!testing.expectf(t,error==.None,"%s",collab_error_say(&n.host.s,error)) {return false}
-    code:=wire.invite_encode({lan=wire.address_ip4(127,0,0,1,COLLAB_PORT),token=collab_state(&n.host.s).invite},context.temp_allocator)
+    code:=wire.invite_encode(wire.invite_make(collab_state(&n.host.s).invite,COLLAB_PORT),context.temp_allocator)
     if !testing.expect_value(t,collab_join(&n.guest.s,code,"Ben",at=wire.address_memory(first),transport=wire.sim_endpoint_transport(&n.sim,first+1)),Collab_Error.None) {return false}
     return share_until_joined(t,n)
 }

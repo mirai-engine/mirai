@@ -1,6 +1,9 @@
 package mirai_net
 
 import "core:testing"
+import "core:crypto/chacha20poly1305"
+import "core:crypto/ecdh"
+import "core:crypto/noise"
 import "core:crypto/x25519"
 import "core:fmt"
 import "core:time"
@@ -229,6 +232,11 @@ a_late_datagram_delivers_its_reliable_chunks_and_skips_the_rest :: proc(t:^testi
     on_server,on_client:=test_connect(&w,server,client)
     testing.expect(t,on_server!=0 && on_client!=0)
     test_step(&w,10)
+    // Until a step in which the client sent nothing: no datagram of it is on the way.
+    for sent:=u64(0);sent!=client.back.peers[0].stats.packets_sent; {
+        sent=client.back.peers[0].stats.packets_sent
+        test_step(&w)
+    }
     host_poll(server);host_poll(client)
     // The datagram with both messages is held back; the next one goes through.
     capture.hold=true
@@ -261,4 +269,181 @@ a_late_datagram_delivers_its_reliable_chunks_and_skips_the_rest :: proc(t:^testi
         host_poll(client)
     }
     testing.expectf(t,reliable==1 && unreliable==0,"reliable %d, unreliable %d",reliable,unreliable)
+}
+
+// The handshake is Noise NKpsk0 as the Noise framework defines it: an Initiate
+// and a Response of ours are read by core:crypto/noise and the other way
+// around, and both take the same two keys from Split.
+@(test)
+the_handshake_is_noise_nkpsk0_and_both_ends_take_the_keys_it_splits :: proc(t:^testing.T) {
+    static,public,psk:Key
+    for &b,i in static {b=u8(i*13+5)}
+    for &b,i in psk {b=u8(i*7+1)}
+    x25519.scalarmult_basepoint(public[:],static[:])
+    prologue:=[]u8{1,2,3,4}
+    s_key:ecdh.Private_Key
+    testing.expect(t,ecdh.private_key_set_bytes(&s_key,.X25519,static[:]))
+    rs:ecdh.Public_Key
+    testing.expect(t,ecdh.public_key_set_bytes(&rs,.X25519,public[:]))
+    // The transport keys of both: what one seals the other opens.
+    agree :: proc(t:^testing.T,cs:^noise.Cipher_States,ours:^Peer_Secure) {
+        sealed:[1+TAG_BYTES]u8
+        _,status:=noise.seal_message(cs,nil,{'x'},sealed[:])
+        testing.expect_value(t,status,noise.Status.Ok)
+        key:=ours.receive
+        ctx:chacha20poly1305.Context
+        iv:=noise_iv(0)
+        chacha20poly1305.init(&ctx,key[:])
+        plain:[1]u8
+        testing.expect(t,chacha20poly1305.open(&ctx,plain[:],iv[:],nil,sealed[:1],sealed[1:]) && plain[0]=='x')
+        key=ours.send
+        chacha20poly1305.init(&ctx,key[:])
+        mine:[1+TAG_BYTES]u8
+        chacha20poly1305.seal(&ctx,mine[:1],mine[1:],iv[:],nil,{'y'})
+        opened:[1]u8
+        _,status=noise.open_message(cs,nil,mine[:],opened[:])
+        testing.expect(t,status==.Ok && opened[0]=='y')
+    }
+    {
+        n:Noise
+        e:Key
+        message:[KEY_BYTES+5+TAG_BYTES]u8
+        copy(message[KEY_BYTES:],"hello")
+        testing.expect(t,noise_initiate(&n,&e,prologue,&public,&psk,message[:]))
+        hs:noise.Handshake_State
+        testing.expect_value(t,noise.handshake_init(&hs,false,prologue,&s_key,nil,NOISE_PROTOCOL,psk[:]),noise.Status.Ok)
+        buffer:[256]u8
+        reply,payload,status:=noise.handshake_responder_step(&hs,message[:],{'o','k'},buffer[:])
+        testing.expect(t,status==.Handshake_Complete && string(payload)=="hello")
+        response:[KEY_BYTES+2+TAG_BYTES]u8
+        testing.expect_value(t,copy(response[:],reply),len(response))
+        ours:Peer_Secure
+        testing.expect(t,noise_finish(&n,&e,response[:],&ours) && string(response[KEY_BYTES:][:2])=="ok")
+        cs:noise.Cipher_States
+        testing.expect_value(t,noise.handshake_split(&hs,&cs),noise.Status.Ok)
+        agree(t,&cs,&ours)
+        testing.expect(t,ours.send!=ours.receive)
+    }
+    {
+        hs:noise.Handshake_State
+        testing.expect_value(t,noise.handshake_init(&hs,true,prologue,nil,&rs,NOISE_PROTOCOL,psk[:]),noise.Status.Ok)
+        buffer:[256]u8
+        first,_,status:=noise.handshake_initiator_step(&hs,nil,{'h','i'},buffer[:])
+        testing.expect_value(t,status,noise.Status.Handshake_Pending)
+        message:[KEY_BYTES+2+TAG_BYTES]u8
+        testing.expect_value(t,copy(message[:],first),len(message))
+        n:Noise
+        testing.expect(t,noise_accept(&n,prologue,&static,&public,&psk,message[:]) && string(message[KEY_BYTES:][:2])=="hi")
+        ours:Peer_Secure
+        initiator:=(^Key)(&message[0])^
+        response:[KEY_BYTES+TAG_BYTES]u8
+        testing.expect(t,noise_respond(&n,&initiator,response[:],&ours))
+        more:[64]u8
+        _,payload,done:=noise.handshake_initiator_step(&hs,response[:],nil,more[:])
+        testing.expect(t,done==.Handshake_Complete && len(payload)==0)
+        cs:noise.Cipher_States
+        testing.expect_value(t,noise.handshake_split(&hs,&cs),noise.Status.Ok)
+        agree(t,&cs,&ours)
+    }
+}
+
+// What a recorded connection gives whoever lacks its keys. Its Initiate opens
+// only with s, so without s the right secret fails like any other: there is
+// nothing to try secrets against. With s and the secret its Initiate opens, but
+// what follows the Response does not: it takes the two ephemeral keys, which
+// die with the handshake, and s dies with the share, when its host goes.
+@(test)
+recorded_traffic_neither_tests_the_secret_nor_opens_once_its_keys_are_gone :: proc(t:^testing.T) {
+    key:=test_key(77)
+    psk:=invite_psk(key.secret,77)
+    prologue:=[]u8{9,9}
+    client,server:Noise
+    e:Key
+    initiate:[KEY_BYTES+5+TAG_BYTES]u8
+    copy(initiate[KEY_BYTES:],"early")
+    testing.expect(t,noise_initiate(&client,&e,prologue,&key.public,&psk,initiate[:]))
+    recorded:=initiate
+    testing.expect(t,noise_accept(&server,prologue,&key.private,&key.public,&psk,initiate[:]) && string(initiate[KEY_BYTES:][:5])=="early")
+    on_server,on_client:Peer_Secure
+    initiator:=(^Key)(&recorded[0])^
+    response:[KEY_BYTES+TAG_BYTES]u8
+    testing.expect(t,noise_respond(&server,&initiator,response[:],&on_server))
+    recorded_response:=response
+    testing.expect(t,noise_finish(&client,&e,response[:],&on_client))
+    testing.expect(t,on_client.send==on_server.receive && on_client.receive==on_server.send)
+    datagram:[DATA_HEADER+4+TAG_BYTES]u8
+    copy(datagram[DATA_HEADER:],"data")
+    aead_seal(&on_client.send,1,datagram[:DATA_HEADER],datagram[DATA_HEADER:][:4],datagram[DATA_HEADER+4:])
+
+    other:Key
+    for &b,i in other {b=u8(i+100)}
+    for secret in ([]u64{key.secret,key.secret+1,7}) {
+        guess:=invite_psk(secret,77)
+        copied:=recorded
+        n:Noise
+        testing.expectf(t,!noise_accept(&n,prologue,&other,&key.public,&guess,copied[:]),"without s the secret %x was tested",secret)
+    }
+    // With s and the secret: the Initiate, not the Response nor what follows.
+    copied:=recorded
+    n:Noise
+    testing.expect(t,noise_accept(&n,prologue,&key.private,&key.public,&psk,copied[:]))
+    after:=n
+    guess:Peer_Secure
+    fresh:[KEY_BYTES+TAG_BYTES]u8
+    testing.expect(t,noise_respond(&n,&initiator,fresh[:],&guess))
+    body:=datagram
+    testing.expect(t,!aead_open(&guess.receive,1,body[:DATA_HEADER],body[DATA_HEADER:][:4],body[DATA_HEADER+4:]))
+    other_e:Key
+    for &b,i in other_e {b=u8(i*3)}
+    reply:=recorded_response
+    testing.expect(t,!noise_finish(&after,&other_e,reply[:],&guess))
+
+    w:Test_World;test_world_init(&w,1);defer test_world_destroy(&w)
+    h:=test_host(&w,{mode=.Server,invite=key})
+    testing.expect(t,h.back.secure.private==key.private && h.back.secure.invited)
+    secure_host_destroy(h)
+    testing.expect(t,h.back.secure.private==Key{} && h.back.secure.psk==Key{})
+    secure_host_init(h)
+}
+
+// The keys a handshake splits take the place of the old ones in the ratchet:
+// the client's datagram 0 is its Initiate, so its first under AEGIS is 1; a key
+// is derived every rekey_interval datagrams at both ends; the receiver keeps
+// the previous key for late datagrams and refuses one two epochs back.
+@(test)
+the_ratchet_runs_on_the_keys_the_handshake_splits :: proc(t:^testing.T) {
+    w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
+    key:=test_key(3)
+    server:=test_host(&w,{mode=.Server,channels=SECURE_CHANNELS,invite=key})
+    client:=test_host(&w,{mode=.Client,channels=SECURE_CHANNELS,invite=test_invited(key)})
+    server.back.secure.rekey_interval,client.back.secure.rekey_interval=4,4
+    capture:=Capture{inner=server.desc.transport}
+    server.desc.transport=capture_transport(&capture)
+    host_connect(client,address_memory(0))
+    message_send(client,0,0,{0})
+    on_server,on_client:Connection
+    first:=-1
+    received,sent:=0,1
+    for step in 0..<200 {
+        if on_client!=0 && step%2==0 {
+            message_send(client,on_client,0,{u8(step)})
+            message_send(server,on_server,1,{u8(step)})
+            sent+=1
+        }
+        test_step(&w)
+        if first<0 && capture.count>0 {first=int(capture.last[0][1])|int(capture.last[0][2])<<8}
+        for command in host_poll(server) {
+            if command.kind==.Connected {on_server=command.connection}
+            if command.kind==.Message {received+=1}
+        }
+        for command in host_poll(client) {if command.kind==.Connected {on_client=command.connection}}
+    }
+    p,q:=peer_from(server,on_server),peer_from(client,on_client)
+    if !testing.expect(t,p!=nil && q!=nil) {return}
+    testing.expect_value(t,first,1)
+    testing.expectf(t,received==sent && q.secure.send_epoch>=10 && p.secure.receive_epoch==q.secure.send_epoch,"%d messages of %d, epochs %d and %d",received,sent,q.secure.send_epoch,p.secure.receive_epoch)
+    testing.expect(t,p.secure.send_epoch>=10 && q.secure.receive_epoch==p.secure.send_epoch && q.secure.has_old)
+    stale:[DATA_HEADER+1+TAG_BYTES]u8
+    counter:=(p.secure.receive_epoch-2)*4
+    testing.expect(t,!secure_open(server,p,counter,stale[:DATA_HEADER],stale[DATA_HEADER:][:1],stale[DATA_HEADER+1:]))
 }

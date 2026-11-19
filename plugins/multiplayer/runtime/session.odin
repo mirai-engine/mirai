@@ -94,9 +94,8 @@ Own_Events :: struct {
 Open_Request :: struct {
     server:bool,
     port:int,          // server: 0: Net_Settings.port
-    invite:bool,       // server: it lets in only who brings the code of its invitation; without it, anyone who reaches its address
-    invite_token:u64,  // of it; 0: one is made, the port is mapped on the router and the code carries that address too
-    connect:[96]u8 `mirai:"text"`, // client: the code of an invitation, or the address of a server without one
+    invite:bool,       // server: it lets in only who brings the code of its invitation, whose key it makes unless invite_give gave one (then it maps nothing on the router); without it, anyone who reaches its address
+    connect:[128]u8 `mirai:"text"`, // client: the code of an invitation, or the address of a server without one
     latency,jitter:f64, // seconds a datagram is delayed each way, and how much that varies
     loss:f32,          // share of the datagrams lost each way
     timeout:f64,       // seconds of silence that end a connection or an attempt; 0: those of the settings. A world that advances only when asked waits longer
@@ -150,7 +149,7 @@ Net_Session :: struct {
     taken:u32,    // client: the last place asked before a tick began, which its simulation took
     address:string,
     port:int,       // server: of the socket
-    invite:u64,     // server: the token a client must bring, 0: anyone joins; client: the one it brings
+    invite:wire.Invite_Key, // server: of its invitation, none: anyone joins; client: what the code it brings carries
     invite_code:string, // server: the code of the invitation, once the router answered
     mapping:wire.Port_Mapping, // server: of the port, when it made its own invitation
     mapping_on:bool,
@@ -249,7 +248,7 @@ session_start :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,settings:^Ne
     case .None:
     case .Transport_Failed:
         if wanted.server {session_fail(s,app.allocator,fmt.tprintf("could not open the UDP port %d: is another server on it?",port))}
-        else {session_fail(s,app.allocator,fmt.tprintf("\"%s\" is neither an invitation nor an address: give the code its host shows, like R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT (copy it again if a character changed), or an address like 1.2.3.4:27500 or [::1]:27500",connect))}
+        else {session_fail(s,app.allocator,fmt.tprintf("\"%s\" is neither an invitation nor an address: give the code its host shows, 87 characters by groups of four (copy it again if a character changed), or an address like 1.2.3.4:27500 or [::1]:27500",connect))}
     case .Protocol_Failed:
         if refusal:=base.text_get(s.refusal[:]);refusal!="" {
             session_fail(s,app.allocator,fmt.tprintf("the libraries do not describe a network protocol: %s",refusal))
@@ -298,10 +297,9 @@ session_open :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,port:int) -> 
         if !wire.udp_open(&s.udp,wire.address_any6(port)) {return .Transport_Failed,{}}
         s.port=int(s.udp.address.port)
         if s.wanted.invite {
-            s.invite=s.wanted.invite_token
-            if s.invite==0 {
+            if s.invite=={} {
                 made:bool
-                if s.invite,made=wire.invite_token();!made {
+                if s.invite,made=wire.invite_key();!made {
                     session_destroy(s)
                     return .Host_Failed,{field="invite",range="a system that gives secure random bytes"}
                 }
@@ -310,10 +308,10 @@ session_open :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,port:int) -> 
         }
     } else {
         connect:=base.text_get(s.wanted.connect[:])
-        invitation,invited:=wire.invite_decode(connect)
+        invitation,refused:=wire.invite_decode(connect)
         target=invitation.lan
-        if invited {
-            also,s.invite=invitation.public,invitation.token
+        if refused==.None {
+            also,s.invite=invitation.public,invitation.key
         } else {
             parsed:bool
             if target,parsed=wire.address_parse(connect);!parsed {return .Transport_Failed,{}}
@@ -545,6 +543,7 @@ session_destroy :: proc(s:^Net_Session) {
     delete(s.scratch,allocator);s.scratch=nil
     delete(s.address,allocator);s.address=""
     delete(s.invite_code,allocator);s.invite_code=""
+    crypto.zero_explicit(&s.invite,size_of(s.invite))
     if s.mapping_on {wire.mapping_close(&s.mapping)}
     s.mapping_on=false
     if s.status_file!=nil {
@@ -565,7 +564,7 @@ close :: proc(s:^Net_Session) {
 reason_text :: proc(reason:Disconnect_Reason,address:string,protocol:u64) -> string {
     #partial switch reason {
     case .Connect_Timeout:
-        if _,invited:=wire.invite_decode(address);invited {
+        if _,refused:=wire.invite_decode(address);refused==.None {
             return fmt.tprintf("the server of the invitation %s does not answer: the code is not the one its host shows now, or neither of its addresses (on its network and on its router) is reachable from here; ask its host for the current code, or for its address if it serves without --invite",address)
         }
         return fmt.tprintf("the server %s does not answer: nothing serves the game at that address and port, a firewall blocks the port, or it lets in only who brings its invitation; check the address, or join with --connect and the code its host shows",address)
@@ -686,11 +685,16 @@ is_server :: proc(s:core.Ref(Net_Session)) -> bool {return s.host_ready && s.mod
 // The code of the invitation of a server, once the router answered. True when it was made now.
 @(private)
 invite_update :: proc(s:^Net_Session) -> bool {
-    if !s.host_ready || s.mode!=.Server || s.invite==0 || s.invite_code!="" {return false}
+    if !s.host_ready || s.mode!=.Server || s.invite=={} || s.invite_code!="" {return false}
     if s.mapping_on && wire.mapping_poll(&s.mapping).phase==.Pending {return false}
     s.invite_code=wire.invite_encode(wire.invite_make(s.invite,s.port,s.mapping_on?&s.mapping:nil),s.allocator)
     return true
 }
+
+// Gives the server that opens next the key of its invitation, made by whoever
+// shows its code: it never goes through a storage of the World, and the session
+// zeroes it when it ends. The session then maps no port on the router.
+invite_give :: proc(s:^Net_Session,key:wire.Invite_Key) {s.invite=key}
 
 // The code of the invitation of this server, for the game to show: empty
 // without one (--invite), and while the router is still being asked.
@@ -776,7 +780,7 @@ player_id :: proc(secret:[2]u64) -> u64 {
 }
 
 // The arguments of the player the network reads: --server [port], --dedicated
-// (a server nobody plays on), --invite [token], --connect <invitation or
+// (a server nobody plays on), --invite, --connect <invitation or
 // address>, --new-player, --until-empty, --status <file> (every --status-ticks
 // <n> ticks) and a link worse than the real one, --latency <ms>,
 // --jitter <ms> and --loss <percent>. False, after saying why, when one has a
@@ -800,15 +804,11 @@ launch_read :: proc(s:^Net_Session,app:^host.App) -> bool {
     }
     if at,on:=host.launch_flag(launch,"--invite");on {
         wanted.invite=true
-        if text,given:=host.launch_value(launch,at);given {
-            token,parsed:=strconv.parse_u64(text,16)
-            if !parsed || token==0 {return fail("--invite takes a nonzero 64-bit hexadecimal token")}
-            wanted.invite_token=token
-        }
+        if _,given:=host.launch_value(launch,at);given {return fail("--invite takes no value: the server makes the key of its invitation, which lasts while it serves")}
     }
     if at,on:=host.launch_flag(launch,"--connect");on {
         text,given:=host.launch_value(launch,at)
-        if !given || len(text)>=len(wanted.connect) {return fail("--connect takes the code of an invitation (R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT) or the address of a server without one (1.2.3.4:27500)")}
+        if !given || len(text)>=len(wanted.connect) {return fail("--connect takes the code of an invitation (1R2M-0253-BDK5-G0W8-7DDP-ERX1-4HQA-72WY-3G7Z-9TCN-6G4Z-H69R-53KS-D1YS-JQ3K-6666-YHZK-J1MS-WDVS-Q5ZM-MZ0N-BE4) or the address of a server without one (1.2.3.4:27500)")}
         base.text_set(wanted.connect[:],text)
     }
     if wanted.server && wanted.connect[0]!=0 {return fail("--server or --dedicated and --connect do not go together: a player serves the game or joins one")}
