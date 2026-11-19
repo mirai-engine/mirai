@@ -254,6 +254,9 @@ shaders_copies :: proc(copies:^[dynamic]Copy,root,folder:string,a:runtime.Alloca
     for entry in entries {
         if entry.type!=.Regular {continue}
         if entry.name!=project.SHADERS_MANIFEST && entry.name!="catalog.json" && !strings.has_suffix(entry.name,CODE) {continue}
-        append(copies,Copy{project.path(built,entry.name,allocator=a),project.path(folder,project.SHADERS_SHIPPED,entry.name,allocator=a),false})
+        append(copies,Copy{
+            from=project.path(built,entry.name,allocator=a),
+            to=project.path(folder,project.SHADERS_SHIPPED,entry.name,allocator=a),
+        })
     }
 }
