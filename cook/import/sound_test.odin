@@ -11,6 +11,7 @@ import "mirai:asset"
 import audio "mirai:audio"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:store"
 
 @(private="file") SINE_OGG :: #load("../../audio/testdata/sine_mono.ogg")           // 0.5 s of 440 Hz at 44.1 kHz, amplitude 0.5
 @(private="file") THREE_OGG :: #load("../../audio/testdata/three_channels.ogg")
@@ -46,8 +47,8 @@ lossless_same :: proc(t:^testing.T,view:asset.Sound_View,samples:[]i16,loc:=#cal
 }
 
 @(private="file")
-sound_open :: proc(t:^testing.T,path:string,types:^asset.Types,a:^asset.Asset) -> (view:asset.Sound_View,ok:bool) {
-    if !testing.expect_value(t,asset.asset_load(a,path),asset.Error.None) {return}
+sound_open :: proc(t:^testing.T,s:^store.Store,written:Written,types:^asset.Types,a:^asset.Asset) -> (view:asset.Sound_View,ok:bool) {
+    if !testing.expect_value(t,written_open(s,written,a),asset.Error.None) {return}
     error:asset.Error
     view,error=asset.sound_view(a,types)
     return view,testing.expect_value(t,error,asset.Error.None)
@@ -56,7 +57,7 @@ sound_open :: proc(t:^testing.T,path:string,types:^asset.Types,a:^asset.Asset) -
 @(test)
 a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^testing.T) {
     defer free_all(context.temp_allocator)
-    root,folder:=test_assets(t,"sound")
+    _,folder,s:=test_assets(t,"sound")
     if folder=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
 
@@ -67,14 +68,14 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     path:=fmt.tprintf("%s/Step Left.wav",folder)
     _=os.write_entire_file(path,wav)
 
-    report,error:=import_sound(path,options={root=root})
+    report,error:=import_sound(path,options={store=s})
     testing.expect_value(t,error.code,Error_Code.None)
     testing.expect_value(t,len(report.assets),1)
     if len(report.assets)==1 {
         written:=report.assets[0]
-        testing.expect(t,written.kind==asset.KIND_SOUND && written.id!={} && strings.has_suffix(written.path,".sound") && strings.contains(written.path,"/.mirai/imported/") && written.bytes<len(samples)*2)
+        testing.expect(t,written.kind==asset.KIND_SOUND && written.id!={} && written.object!={} && written.path=="" && written.bytes<len(samples)*2)
         a:asset.Asset
-        if view,ok:=sound_open(t,written.path,&types,&a);ok {
+        if view,ok:=sound_open(t,s,written,&types,&a);ok {
             testing.expect(t,view.info^==asset.Sound_Info{2,48000,4410,0,.Lossless,{}})
             lossless_same(t,view,samples)
             testing.expect(t,view.source!=nil && serial.text_field(view.source.importer[:])==IMPORTER_NAME && view.source.source_size==u64(len(wav)))
@@ -82,12 +83,12 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
         asset.asset_close(&a)
     }
     // Imported again it is the same asset; told to stream, it streams the same coded samples.
-    again,again_error:=import_sound(path,{storage=.Stream},{root=root})
+    again,again_error:=import_sound(path,{storage=.Stream},{store=s})
     testing.expect_value(t,again_error.code,Error_Code.None)
     if len(again.assets)==1 && len(report.assets)==1 {
         testing.expect(t,again.assets[0].id==report.assets[0].id)
         a:asset.Asset
-        if view,ok:=sound_open(t,again.assets[0].path,&types,&a);ok {
+        if view,ok:=sound_open(t,s,again.assets[0],&types,&a);ok {
             testing.expect(t,view.info^==asset.Sound_Info{2,48000,4410,0,.Lossless,{.Stream}})
             lossless_same(t,view,samples)
         }
@@ -99,11 +100,11 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     deep:=wav_bytes(samples,2,48000,low=0x40);defer delete(deep)
     deep_path:=fmt.tprintf("%s/deep.wav",folder)
     _=os.write_entire_file(deep_path,deep)
-    report,error=import_sound(deep_path,{storage=.Stream},{root=root})
+    report,error=import_sound(deep_path,{storage=.Stream},{store=s})
     testing.expect_value(t,error.code,Error_Code.None)
     if len(report.assets)==1 {
         a:asset.Asset
-        if view,ok:=sound_open(t,report.assets[0].path,&types,&a);ok {
+        if view,ok:=sound_open(t,s,report.assets[0],&types,&a);ok {
             testing.expect(t,view.info^==asset.Sound_Info{2,48000,4410,0,.File,{.Stream}} && mem.compare(view.file,deep)==0)
         }
         asset.asset_close(&a)
@@ -114,11 +115,11 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     // mixer, streamed from a quarter of a second on as its file, at its own rate.
     ogg:=fmt.tprintf("%s/sine.ogg",folder)
     _=os.write_entire_file(ogg,SINE_OGG)
-    report,error=import_sound(ogg,options={root=root})
+    report,error=import_sound(ogg,options={store=s})
     testing.expect_value(t,error.code,Error_Code.None)
     if len(report.assets)==1 {
         a:asset.Asset
-        if view,ok:=sound_open(t,report.assets[0].path,&types,&a);ok {
+        if view,ok:=sound_open(t,s,report.assets[0],&types,&a);ok {
             testing.expect(t,view.info.encoding==.Lossless && view.info.channels==1 && view.info.sample_rate==audio.MIXER_RATE && abs(int(view.info.frames)-24000)<=70)
             pcm,_:=audio.decode(view.lossless,context.temp_allocator)
             peak:f32
@@ -128,11 +129,11 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
         asset.asset_close(&a)
     }
     report_destroy(&report)
-    report,error=import_sound(ogg,{stream_seconds=0.25},{root=root})
+    report,error=import_sound(ogg,{stream_seconds=0.25},{store=s})
     testing.expect_value(t,error.code,Error_Code.None)
     if len(report.assets)==1 {
         a:asset.Asset
-        if view,ok:=sound_open(t,report.assets[0].path,&types,&a);ok {
+        if view,ok:=sound_open(t,s,report.assets[0],&types,&a);ok {
             testing.expect(t,view.info.encoding==.File && .Stream in view.info.flags && view.info.sample_rate==44100 && mem.compare(view.file,SINE_OGG)==0)
         }
         asset.asset_close(&a)
@@ -145,11 +146,11 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     sine_wav:=wav_bytes(sine,1,44100);defer delete(sine_wav)
     sine_path:=fmt.tprintf("%s/air.wav",folder)
     _=os.write_entire_file(sine_path,sine_wav)
-    report,error=import_sound(sine_path,options={root=root})
+    report,error=import_sound(sine_path,options={store=s})
     testing.expect_value(t,error.code,Error_Code.None)
     if len(report.assets)==1 {
         a:asset.Asset
-        if view,ok:=sound_open(t,report.assets[0].path,&types,&a);ok {
+        if view,ok:=sound_open(t,s,report.assets[0],&types,&a);ok {
             testing.expect(t,view.info.sample_rate==audio.MIXER_RATE && view.info.frames==48000)
             mixer,_:=audio.mixer_create({})
             sound,_:=audio.sound_load(mixer,view.lossless)
@@ -179,11 +180,11 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     // that pitch, for its length, and loops back to its LOOPSTART, in the frames of the file.
     intro_path:=fmt.tprintf("%s/intro.ogg",folder)
     _=os.write_entire_file(intro_path,INTRO_OGG)
-    report,error=import_sound(intro_path,{stream_seconds=1},{root=root})
+    report,error=import_sound(intro_path,{stream_seconds=1},{store=s})
     testing.expect_value(t,error.code,Error_Code.None)
     if len(report.assets)==1 {
         a:asset.Asset
-        if view,ok:=sound_open(t,report.assets[0].path,&types,&a);ok {
+        if view,ok:=sound_open(t,s,report.assets[0],&types,&a);ok {
             testing.expect(t,view.info.encoding==.File && view.info.sample_rate==44100 && view.info.loop_start==44100 && mem.compare(view.file,INTRO_OGG)==0)
             testing.expectf(t,report.assets[0].bytes-len(INTRO_OGG)<2048,"%d bytes for a file of %d",report.assets[0].bytes,len(INTRO_OGG))
             mixer,_:=audio.mixer_create({})
@@ -229,17 +230,17 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     report_destroy(&report)
 
     // What is not a sound that plays leaves no file.
-    refuse :: proc(t:^testing.T,root,folder,name:string,bytes:[]u8,code:Error_Code) {
+    refuse :: proc(t:^testing.T,s:^store.Store,folder,name:string,bytes:[]u8,code:Error_Code) {
         path:=fmt.tprintf("%s/%s",folder,name)
         if bytes!=nil {_=os.write_entire_file(path,bytes)}
-        report,error:=import_sound(path,options={root=root})
+        report,error:=import_sound(path,options={store=s})
         testing.expect_value(t,error.code,code)
-        testing.expect(t,len(report.assets)==0 && !os.exists(fmt.tprintf("%s.import",path)),name)
+        testing.expect(t,len(report.assets)==0,name)
     }
-    refuse(t,root,folder,"noise.wav",{1,2,3,4,5,6,7,8,9,10,11,12,13,14},.Malformed)
-    refuse(t,root,folder,"surround.ogg",THREE_OGG,.Unsupported)
-    refuse(t,root,folder,"cut.wav",wav[:44],.Malformed)
-    refuse(t,root,folder,"none.ogg",nil,.Not_Found)
+    refuse(t,s,folder,"noise.wav",{1,2,3,4,5,6,7,8,9,10,11,12,13,14},.Malformed)
+    refuse(t,s,folder,"surround.ogg",THREE_OGG,.Unsupported)
+    refuse(t,s,folder,"cut.wav",wav[:44],.Malformed)
+    refuse(t,s,folder,"none.ogg",nil,.Not_Found)
 }
 
 // What loading a sound costs by how it is stored, and what it holds in memory.

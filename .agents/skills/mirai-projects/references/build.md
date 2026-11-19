@@ -275,7 +275,7 @@ SDL3 if the system does not provide it, and the
 reached in each scene, in its `.mirai/cache`, where the game goes on filling them.
 
 The copy replaces files and merges folders without deleting anything from the destination, except
-`assets/`, which ends up exactly with what was cooked, without the sources and sidecars among the
+`assets/`, which ends up exactly with what was cooked, without the sources among the
 assets. The code, `cook.mirai` and the `plugin.mirai` are not copied. `mirai play` copies nothing:
 `mirai-player` runs with `--project <project>` and reads assets and shaders from the project.
 
@@ -291,29 +291,47 @@ Settings > Input changed, and SDL3, which the executable links.
 
 ## Imported sources
 
-The meshes, textures, sounds and fonts an import builds are not versioned: they are in
-`.mirai/imported/` of the project and of each plugin with assets, and are built again from the
-sources and their sidecars ([sync](../../mirai-imports/references/imports.md#sync)).
+The meshes, textures, sounds and fonts an import builds are not versioned: they are objects of a
+store that the package manifests a project or plugin pins name
+([library](../../mirai-imports/references/imports.md#library)).
 
-- **A build imports, and says so.** Every build of a project runs the sync of the project and of
-  its active plugins once its target stands (`job_imports`, `build.imports_sync`): the editor,
-  the game, the server, `mirai play` and the builds the editor starts. It uses the engine's import
-  program, since the tool builds without the importers, which reads the formats the plugins of
-  the project add from its editor library; the game, compiled from the engine's sources,
-  builds those binaries too when its project has assets. A source that does not import fails
-  the build naming it (`Import_Failed`). There is no other step: a checkout that was just cloned
-  runs after any build. Only a build that cooks (and `mirai package engine`) encodes textures
-  Final; the others build them Fast, as the editor imports them, and take Final where it is.
-- **What ships.** A game has no imported folder and no sources: the cook writes every asset it
-  reaches at its path in the assets of the game, whichever of the two folders it came from.
-- **The installed engine** carries the imported folder of each of its plugins, built when it is
-  packaged (`mirai package engine`): nothing is imported on the machine that installs it.
+- **The store is a value.** The machine's (`store.default_root`), or the one `--store <folder>`
+  names on `build`, `play`, `play test`, `edit`, `generate`, `session`, `import`, `asset ls|deps`
+  and `package`: it reaches the build (`Desc.store_root`), the import program, the cook, the
+  editor and the player alike.
+- **A build refreshes, and says so.** Every build of a project runs the refresh of the project and
+  of each active plugin with a `packages.mirai` once its target stands (`job_imports`,
+  `build.imports_refresh`): the editor, the game, the server, `mirai play` and the builds the
+  editor starts. It uses the engine's import program, since the tool builds without the
+  importers, which reads the formats the plugins of the project add from its editor library; the
+  game, compiled from the engine's sources, builds those binaries too when it has packages. A
+  build is taken from the store, then from a second store (`--from` of `mirai import`; an
+  installed engine's own), then ingested from its source when the source is on this machine; a
+  package none of them gives fails the build by its name, saying what gives it
+  (`Import_Failed`). There is no other step: a checkout that was just cloned runs after any build.
+  A build that cooks requires Final textures; the others take Fast, as the editor imports them.
+- **Without sources.** A machine whose store holds the builds (fetched from a peer, or a copy of
+  another store) builds and ships with no source: it imports nothing.
+- **What ships.** The cook writes what the registry resolves, documents of the project and the
+  objects of builds alike, each as a file in the container format at its path in the assets of
+  the game (an object gives the file `asset.object_file` gives), with the index: a shipped game
+  never opens a store. One lookup of the texture cache serves the whole pass.
+- **The installed engine** carries `builds/` (`project.ENGINE_STORE`), a store with the Final
+  builds of the packages its plugins pin, made when it is packaged: a refresh on the machine that
+  installs it copies them into that machine's store (`cache.store_source`, as a peer gives them),
+  so nothing is imported there.
 
 ## Asset cooking
 
 `cook_assets` (`cook/build/cook.odin`) leaves in a folder the assets the game can reach. The `Game`
 job calls it with the project assets, `cook.mirai`, the asset folders of the active plugins and the
-texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error` and `detail`.
+store of the build, which lists their packages (`asset.root_packages_in`) and whose texture cache it
+reads and fills; a failure is `Cook_Failed` with `Result.cook.error` and `detail`.
+
+- **Packages.** The registry of the cook lists the outputs of the packages of the project and of
+  each plugin beside their files. A package the store does not list whole is `Package_Missing`,
+  by its name, and a texture still Fast is `Source_Failed`, naming its package: nothing is
+  cooked.
 
 - **Roots.** Every `.scene` (code reaches a prefab only by instantiating it) and `.records`
   of the folder and what `cook.mirai` (`COOK_FILE`) names: the other assets only code refers to (a
@@ -330,7 +348,8 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   or an asset id. A root that names nothing is `Root_Missing`; a malformed `cook.mirai` or one with
   another key, `Manifest_Invalid`; in both cases nothing is cooked.
 - **Plugins.** The folder of each plugin is mounted under `plugins/<name>` and everything in it is
-  a root (its code uses it).
+  a root (its code uses it), except what a package of a root was imported from (its origin and
+  inputs inside the root), which stays behind.
 - **Parallel.** Files are cooked on a job system (`Cook_Desc.worker`, else one of the cook with a
   thread per core), the largest first; what is written and the report are those of a cook on one
   thread, and an error is the first by path. Prefab resolution and texture cache writes take a lock.
@@ -344,10 +363,10 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   `content_hash` of the `.tex`
   ([texture cache](../../mirai-imports/references/imports.md#texture-cache)).
 - **Fast textures.** A texture the editor imported Fast ships Final, whatever `"textures"` says:
-  the [sync](#imported-sources) a game build that cooks starts with builds it again from its source,
-  with the id it has, and fills the texture cache, so the editor takes that Final from then on; the
-  sync of an editor build keeps textures Fast, so a session never waits for RDO. A cook that
-  finds one still Fast fails with `Source_Failed` and says so.
+  the [refresh](#imported-sources) a game build that cooks starts with builds it again from its
+  source, with the id it has, and fills the texture cache, so the editor takes that Final from then
+  on; the refresh of an editor build keeps textures Fast, so a session never waits for RDO. A
+  cook that finds one still Fast fails with `Source_Failed` and says so.
 - **Animations.** An `.anim` is written cooked: its clips sampled as the runtime plays them
   (`asset.animation_compress`, [storage](../../mirai-std/references/anim-storage.md)).
 - **Prefab instances.** A scene with a stale instance is written with its instances up
@@ -362,10 +381,12 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   with an `Auto` `Collider` (its `Rigid_Body`, or that of its nearest ancestor with one, not
   `Static`) ships with its convex pieces (`asset.mesh_pieces_put`), decomposed once and kept in the
   collision cache (`Cook_Desc.collision_cache`): a shipped game reads them and decomposes nothing.
-- **Compression.** A cook writes with the codecs of its project (`Cook_Desc.codecs`, from
-  `project.compression`): every texture is written again with the layouts and planes of fields
-  those codecs take, and with `None` its blocks are made without RDO. What a cook compresses with,
-  and the name of the compressor, are part of the key of each file it keeps.
+- **Compression.** The cook is the only place the container's own compression remains: a game
+  has no store, so each file is written in the container format and compressed then, with the
+  codecs of its project (`Cook_Desc.codecs`, from `project.compression`) that this build has;
+  every texture is written again with the layouts and planes of fields those codecs take, and
+  with `None` its blocks are made without RDO. What a cook compresses with, and the name of the
+  compressor, are part of the key of each file it keeps.
 
 #### Compressor
 

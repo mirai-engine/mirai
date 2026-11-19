@@ -15,8 +15,8 @@ import "mirai:std/serial"
 // The .anim of a project keeps its keys; the runtime plays them compressed into streams
 // (asset.animation_compress). A compression is kept in App.animation_cache as the cooked
 // document a shipped game carries, named by the asset and by a hash of what it is made from:
-// the .anim, the skeletons its clips are measured on, the container and .anim formats and the
-// compressor. A load takes it from there when it is whole and holds the clips of the .anim
+// the .anim, the skeletons its clips are measured on and the container and .anim formats. A
+// load takes it from there when it is whole and holds the clips of the .anim
 // (content_animation_cache_matches); else, as without a cache, it compresses in a job of
 // the application (at once with fewer than two workers), and the main thread takes the library
 // at the start of the frame after the job ended (app_content_adopt), writing the cache then.

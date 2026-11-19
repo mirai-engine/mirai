@@ -29,8 +29,8 @@ Asset_Command :: struct {name,usage,summary:string,run:proc(root:string,args:[]s
 
 ASSET_COMMANDS :: [?]Asset_Command{
     {"info","info <file>","Header, chunks and tables",asset_info},
-    {"ls","ls <folder> [--cache <file>]","Assets of a folder: id, kind, bytes, dependencies and path",asset_ls},
-    {"deps","deps <file> [--root <folder>] [--all|--users]","Dependencies of an asset, or the assets that depend on it",asset_deps},
+    {"ls","ls <folder> [--cache <file>] [--store <folder>]","Assets of a folder: id, kind, bytes, dependencies and path",asset_ls},
+    {"deps","deps <file> [--root <folder>] [--store <folder>] [--all|--users]","Dependencies of an asset, or the assets that depend on it",asset_deps},
     {"verify","verify <file>...","Checks the container, hash, tables and the rules of the kind; of a scene, what mirai scene check says",asset_verify},
     {"dump","dump <file> [--schema|--textconv]","The whole asset as JSON, a scene or a .ui as its document, or as the text git diffs",asset_dump},
     {"get","get <file> <path>","A table, a row or a value as JSON",asset_get},
@@ -39,7 +39,7 @@ ASSET_COMMANDS :: [?]Asset_Command{
     {"merge","merge <base> <ours> <theirs> [--out <file>]","Three-way merge by row and field; writes into <ours> as a git merge driver",asset_merge},
     {"unpack","unpack <file> <folder>","asset.json and one file per bulk column",asset_unpack},
     {"pack","pack <folder> <file>","The binary file of an unpack folder",asset_pack},
-    {"repack","repack <file>...","Writes each file again compressed as the project that holds it saves (build.compression)",asset_repack},
+    {"repack","repack <file>...","Writes each file again as a project keeps it, without a stage of a compressor (a cook compresses what it ships)",asset_repack},
 }
 
 cmd_asset :: proc(root:string,args:[]string) -> int {
@@ -105,11 +105,12 @@ error_text :: proc(error:asset.Error) -> string {
     case .Hash: return "the content does not match its hash"
     case .Too_Large: return "needs more memory than the limit"
     case .Schema: return "the schema table is not valid"
-    case .Codec_Missing: return "it is compressed with a format the compressor of this build does not decode: build with the private compressor, or write it again with build.compression open"
+    case .Codec_Missing: return "it is compressed with a format the compressor of this build does not decode: build with the private compressor, or have a build that has it write it again with `mirai asset repack`"
     case .Out_Of_Memory: return "out of memory"
     case .Not_Found: return "does not exist"
     case .IO: return "could not be read or written"
     case .Invalid: return "contains something the format does not allow"
+    case .Not_Here: return "a part of it is not in the store yet: fetch it from a peer that has it, or build it again"
     }
     return "unknown error"
 }
@@ -240,21 +241,24 @@ asset_info :: proc(_:string,args:[]string) -> int {
 }
 
 asset_ls :: proc(_:string,args:[]string) -> int {
-    folder,cache:="",""
+    folder,cache,store_root:="","",""
     for i:=0;i<len(args);i+=1 {
         switch {
         case args[i]=="--cache" && i+1<len(args): i+=1;cache=args[i]
+        case args[i]=="--store" && i+1<len(args): i+=1;store_root=args[i]
         case !positional(args[i]): return unknown("ls",args[i])
         case folder=="": folder=args[i]
         case: return misuse("ls")
         }
     }
     if folder=="" {return misuse("ls")}
+    packages:=packages_beside(folder,store_root)
     r:asset.Registry
-    asset.registry_init(&r,folder,cache,imported=imported_beside(folder))
+    asset.registry_init(&r,folder,cache,listed=packages.listed)
     if error:=asset.registry_scan(&r);error!=.None {return failed("ls",folder,error_text(error))}
     w:serial.Writer;serial.writer_init(&w)
-    problems:=0
+    problems:=len(packages.problems)
+    for problem in packages.problems {serial.text_write_raw(&w,fmt.tprintf("! package %s\n",problem))}
     for &file in r.files {
         if file.state!=.Asset {continue}
         write_id(&w,file.id);serial.write_u8(&w,' ');write_kind(&w,file.kind)
@@ -282,11 +286,12 @@ asset_ls :: proc(_:string,args:[]string) -> int {
 }
 
 asset_deps :: proc(_:string,args:[]string) -> int {
-    file,folder:="",""
+    file,folder,store_root:="","",""
     all,users:=false,false
     for i:=0;i<len(args);i+=1 {
         switch {
         case args[i]=="--root" && i+1<len(args): i+=1;folder=args[i]
+        case args[i]=="--store" && i+1<len(args): i+=1;store_root=args[i]
         case args[i]=="--all": all=true
         case args[i]=="--users": users=true
         case !positional(args[i]): return unknown("deps",args[i])
@@ -303,8 +308,10 @@ asset_deps :: proc(_:string,args:[]string) -> int {
         print(&w)
         return 0
     }
+    packages:=packages_beside(folder,store_root)
+    for problem in packages.problems {fmt.eprintfln("mirai asset deps: %s",problem)}
     r:asset.Registry
-    asset.registry_init(&r,folder,imported=imported_beside(folder))
+    asset.registry_init(&r,folder,listed=packages.listed)
     if error:=asset.registry_scan(&r);error!=.None {return failed("deps",folder,error_text(error))}
     id:=a.blob.header.id
     missing:=0
@@ -738,19 +745,20 @@ asset_pack :: proc(_:string,args:[]string) -> int {
     return 0
 }
 
-// The imported folder that goes with a folder of assets: that of the project
-// or the plugin whose assets folder it is; "" for any other folder.
+// What the packages of the project or the plugin whose assets folder is folder
+// list, from the store at store_root ("": the machine's); nothing for any other
+// folder. In the temp allocator.
 @(private="file")
-imported_beside :: proc(folder:string) -> string {
+packages_beside :: proc(folder,store_root:string) -> asset.Root_Packages {
     absolute:=project.path_absolute(folder,context.temp_allocator)
     names:=project.FOLDER_NAMES
-    if os.base(absolute)!=names[.Assets] {return ""}
-    return project.imported_path(os.dir(absolute),context.temp_allocator)
+    if os.base(absolute)!=names[.Assets] {return {}}
+    packages,_:=asset.root_packages(os.dir(absolute),store_root,context.temp_allocator)
+    return packages
 }
 
-// Writes each asset again compressed as the project that holds it saves (build.compression), or
-// with the open compressor outside a project; a texture, with its blocks as they are. A file
-// that already is so stays as it is.
+// Writes each asset again as a project keeps it: without a stage of a compressor (Codecs.None),
+// which only the files a cook ships take. A file that already is so stays as it is.
 asset_repack :: proc(root:string,args:[]string) -> int {
     if code:=positionals("repack",args);code!=0 {return code}
     if len(args)==0 {return misuse("repack")}
@@ -759,14 +767,6 @@ asset_repack :: proc(root:string,args:[]string) -> int {
     bad,written:=0,0
     for path in args {
         defer free_all(context.temp_allocator)
-        types.codecs=.Open
-        for at:=os.dir(project.path_absolute(path,context.temp_allocator));at!="";at=os.dir(at) {
-            if os.is_file(project.path(at,project.PROJECT_FILE,allocator=context.temp_allocator)) {
-                types.codecs=asset.project_codecs(at,root)
-                break
-            }
-            if os.dir(at)==at {break}
-        }
         data,error:=asset.asset_file_read(path,context.temp_allocator)
         header:asset.Header
         if error==.None {header,error=asset.header_read(data)}
@@ -774,7 +774,7 @@ asset_repack :: proc(root:string,args:[]string) -> int {
         switch {
         case error!=.None:
         case header.kind==asset.KIND_TEXTURE: repacked,error=asset.texture_repack(data,&types,.Fast,context.temp_allocator)
-        case: repacked,error=asset.document_repack(data,.Fast,types.codecs,context.temp_allocator)
+        case: repacked,error=asset.document_repack(data,.Fast,.None,context.temp_allocator)
         }
         if error!=.None {
             bad+=failed("repack",path,error_text(error))

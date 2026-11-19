@@ -23,6 +23,20 @@ each at a multiple of its alignment.
 - `header_read` validates only the header (what a scan uses). `blob_open` validates the whole file:
   exact size, each chunk inside the file and aligned, uncompressed size below `PACK_MAX` and a
   total memory limit (`DEFAULT_MEMORY_LIMIT`).
+- **An asset of the store** (`asset/parts.odin`) is an object of the
+  [store](../../mirai-store/SKILL.md): one group per container chunk in directory order, and the
+  header and directory as the meta of its root. It holds its file as `Codecs.None` writes it:
+  `object_put` writes again a file a compressor touched (a stream chunk, a block or mesh page not
+  `STORED`, texture layouts, planes chosen otherwise), so the same asset is the same object for
+  every compressor, and the store compresses each chunk in its frame. It cuts each chunk where the
+  format reads alone: between the levels of `texels` (smallest first, so the first chunks are the
+  small levels), between the blocks of a mesh's `page_data` and of a block table. The file is the
+  meta, each group at its chunk's offset and zeros between: `object_file` gives the bytes
+  `object_put` kept. `asset_open_object` checks meta against groups (tags, order, sizes,
+  limit) and reads each chunk the first time a table needs it: one chunk of a sealed pack is a
+  slice of its mapping, several are gathered into memory of the asset, and a stream that holds
+  levels reads only the pieces asked for. A chunk the store does not hold yet is `Not_Here` to
+  whoever reads it; nothing checks a whole-file hash.
 - `blob_build` stores a chunk compressed only when that shrinks it. The dependencies, names,
   schema and table directory are stored as they are: a scan reads them without a decoder.
 
@@ -45,11 +59,13 @@ journal sends over the network, editor thumbnails, the shaders the executables e
   imports and a running game save; a cook writes with `Ultra` (a shipped game) or `Balanced` (a
   dev game), and what streams while playing with `profile_streamed` of it (`Speed` in place of
   `Ultra`). A read needs no profile: the stream names its format.
-- **Codecs.** What a write may use (`Codecs`): `Open`, the formats every build reads; `Best`, what
-  the compressor of the build has; `None`, nothing. `Types.codecs` says it for every document made
-  with those types (the zero value is `Open`): a program that edits a project sets it from
-  `project.compression`, and everything else (the assets of the engine and its plugins, caches) is
-  written open. A stream of a format the build does not decode is `Codec_Missing`.
+- **Codecs.** What a write may use (`Codecs`): `None`, the zero value, no stage of a compressor;
+  `Open`, the formats every build reads; `Best`, what the compressor of the build has. Every
+  document is written `None` but the files a cook ships, which take `project_codecs`
+  (`build.compression`). Under `None` the modeling a kind chooses by what compresses smaller is
+  chosen without a compressor, as what compresses smaller where the bytes rest: a mesh page keeps
+  its coding and BC1, BC3 and BC5 their planes of fields. A stream of a format the build does not
+  decode is `Codec_Missing`.
 - **Block tables.** A kind whose asset stores blocks it reads alone keeps them in `<name>_blocks`,
   with the `Block_Record`s of its pages in `<name>_pages`; a cook compresses them again from what
   the records say (`document_repack`).
@@ -61,10 +77,10 @@ journal sends over the network, editor thumbnails, the shaders the executables e
   without one makes its own the first time it decodes. A mesh page or a terrain block decodes with
   a `Stream_Decoder` of its reader (the renderer keeps one per worker).
 - **Texture levels.** The `texels` column holds the smallest level first: a read of the small
-  levels decodes only the first pieces. A texture written with `Best` codecs may store layouts of
-  runs of levels (the `layouts` table, `blocks.layout_encode`), and BC1, BC3 and BC5 may store
-  planes of fields ([texture](kinds.md#texture)); `texture_decode` restores them into memory of the
-  asset before the renderer takes them.
+  levels decodes only the first pieces. A texture a cook writes with `Best` codecs may store
+  layouts of runs of levels (the `layouts` table, `blocks.layout_encode`), and BC1, BC3 and BC5
+  may store planes of fields ([texture](kinds.md#texture)); `texture_decode` restores them into
+  memory of the asset before the renderer takes them.
 
 ## Typed tables
 
@@ -180,8 +196,8 @@ One rule for all types, of the engine and of plugins:
   plugin's type, in the `version` of its `asset_kinds`, which the build generates as
   `<STEM>_VERSION` ([manifests](../../mirai-projects/references/projects.md#manifests)).
 - **A change in what a type stores or in what a stored value means raises its version**, and every
-  file of the type is made again: the [sync](../../mirai-imports/references/imports.md#sync) of
-  the next build imports again the source of an imported one. `version_message` says which asset
+  file of the type is made again: the [refresh](../../mirai-imports/references/imports.md#library)
+  of the next build ingests again the source of an imported one. `version_message` says which asset
   it is, its type, its version and the one the build reads and, if it was imported, the
   `mirai import` that rebuilds it in its folder with the root where its source is; for a newer
   file, a newer engine. `mirai asset verify`
@@ -221,17 +237,25 @@ scan opens every file and writes it again.
   is a prefab ([prefab](scenes.md#prefab)).
 - `registry_dependents` comes from an inverse index built with each change: how many use an asset is
   its length, without walking the files (`asset.list` reports it as `used_by`).
-- **Imported folders.** An assets folder may have an imported folder with it (that of the root
-  and of each mount: `.mirai/imported/` of the project or the plugin): what the
-  [imports](../../mirai-imports/references/imports.md#identity-and-reimport) of its sources build
-  that nobody edits, never versioned, each file named by its id and the key of what it was built
-  from. A scan reads the sidecars it walks (`asset/sidecar.odin`, the one reader of the format)
-  and lists each output of the cache like any asset (`Registry_File.imported` is that key) at
-  `<folder of the sidecar>/<folder it names>/<name><extension>`; two outputs of one kind and
-  name are told apart by their index, and a path another file or output has takes the name of
-  the source: never the order of a scan. One whose source is gone is not listed, and one that
-  moved is listed there at the next scan, which a refresh of a sidecar or of its source runs.
-  `registry_file_path` gives the file of either folder. A cooked folder has none: the cook
+- **Listed outputs.** What the
+  [imports](../../mirai-imports/references/imports.md#identity-and-reimport) build that nobody
+  edits is not a file of the assets folder but an object of the machine store. The root and each
+  mount take the entries `root_packages` gives for the packages their root pins: `packages_resolve`
+  of its `packages.mirai` against the store (`asset/packages_root.odin`). Every program that sets
+  up the registry of a root that is not shipped goes through it, with the store root as a value
+  (the machine's unless it names another); a root without the list opens no store, and what it
+  cannot list is a problem that names the package, reported where that program reports asset
+  problems, never a failure to start. A scan lists each like any asset (`Registry_File.listed`),
+  with no source anywhere, from the header and dependencies `packages_resolve` read of its object.
+  An entry whose build is not on this machine, or whose object is not here, stays listed as
+  `Not_Built` (its id and kind, not found by id), never removed and never an error of the scan;
+  an object that is not the asset its entry names is `Broken`. A path a file, a folder or another
+  entry has takes the id of the entry after its name, never the order of a scan, and an entry with
+  no id or a path that is empty or leaves its folder is refused (`Registry.refused`). Objects do
+  not change: a refresh keeps what is listed, unless a file of the folder appears at its path
+  (which runs a scan), and memory holds no listed path. A listed path has no file
+  (`registry_file_path` gives ""): `registry_listed_object` gives its object, which `host` opens
+  by parts, and `registry_read` its file from `Registry.store`. A cooked folder has none: the cook
   writes every asset at its path.
 - **Mounts.** `registry_mount` adds a folder under a prefix (a plugin's assets, in
   `plugins/<name>`). A prefix that starts with a dot belongs to the program's assets (the editor's,
@@ -269,6 +293,47 @@ scan opens every file and writes it again.
   The cook refuses the pair (`Duplicate_Id`, naming both files): which one the editor takes depends
   on the creation times of a machine, so a game ships neither until the copy is written with its own
   id.
+
+## Packages
+
+The records of the imports kept in the [machine store](../../mirai-store/SKILL.md)
+(`asset/packages.odin`), three texts with a version each.
+
+- **Package manifest** (`Package`): an object, named by `manifests/<BLAKE3 of its text>`, what a
+  pin names; `packages/<package id>` holds that BLAKE3, not an object, on the machine that
+  ingested it, so a refresh asks a source or a peer for a manifest only by `manifests/`. The
+  import that ingests a source writes it. A root that pins it also keeps
+  its text, versioned, in `packages/<package id>.mirai` beside `packages.mirai`
+  (`package_file`).
+- **Build manifest** (`Build`): an object that names the object of each output, named by
+  `imports/<import_key>` (Final) or `imports-fast/<import_key>` by the import that builds it, and by
+  `builds/<build_select>` by the refresh of a project that chose it.
+- **Project list** (`Packages`): `packages.mirai` beside `project.mirai`, versioned. The library
+  (`project_pin`, `project_unpin`) writes it and the manifest files, and nothing else does.
+
+- **A project pins the manifest, never a build.** The manifest holds what the source is (its
+  `identity`), where it was (`origin`, a hint) and each asset with its id, and nothing that
+  depends on the engine version: an engine that changes a version leaves the list as it is.
+- **A root carries the manifests it pins.** The address a pin names is that of its manifest
+  file's bytes, so a clone or a copy of the root, with an empty store, has every id and setting;
+  only builds need the store, a source or a peer. `package_load` takes a manifest the store
+  lacks from that file and puts it in the store; a file that is not its pin's bytes is a problem
+  of that package, also when the store has the manifest.
+- **The origin of a source in a root is relative to it** (`assets/...`, from the root whose
+  assets folder holds it), so every copy of the root writes the same manifest and finds the
+  source; a source in no root keeps its absolute path.
+- **Builds are found by name.** `import_key` combines the identity with the versions of what
+  imports; any machine with the manifest computes it, without the source, and a peer that built
+  that key gives it. `build_select` combines the manifest with the version of each kind of the
+  cache it holds, so a program without importers (the dev player) finds the build the refresh
+  chose. The caches of `cook/cache` name theirs in `cache-<name>`.
+- `packages_resolve` lists, for each package of the list, its assets of the cache the project
+  uses with what they depend on, at `<folder>/<name><extension>`, with their object and its
+  header. A missing build lists them not built; a manifest that neither the store nor the root
+  has, that does not read or whose file is not its pin, a build that does not read and an asset
+  the manifest lacks are problems of the result. It removes, builds and fetches nothing.
+- An asset id is random at the first ingest and the manifest keeps it; an ingest again takes
+  each id from the manifest before it.
 
 ## Text
 

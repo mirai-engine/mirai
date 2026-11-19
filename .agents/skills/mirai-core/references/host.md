@@ -39,7 +39,13 @@ without pacing (deterministic runs).
   settings only); `options`: folder of the player options, which the player provides
   (`app_user_folder`) and the editor does not; `assets_root`, `shaders_root`. `root`, `engine_root`
   and `options` are copied into the application.
-- `asset_mounts`: plugin assets mounted under `plugins/<name>`.
+- `store_root`: the machine store the packages of `root` and of its plugins list from
+  (`project_assets`); empty is the machine's. The application mounts the assets of the active
+  plugins of `root` under `plugins/<name>` with the outputs of their packages, logs and keeps
+  (`assets_package_problems`) what a package could not list, and opens no store for assets that
+  carry the index of a cook; one that lists keeps it open (`Assets.store`). A part of a listed
+  output not in it yet is `Not_Here`: the stand-in shows, nothing fails, and a later request
+  loads it. `asset_mounts`: more folders mounted beside them.
 - `gpu_validation`.
 
 `App` stores the platform, `jobs`, `info`, `shared` (the `Shared` of the application), `world` (the
@@ -343,13 +349,13 @@ of pieces) is not a fixed cap, and a frame that does not load does not allocate.
   stores none are kept
   ([`asset.mesh_collision_pieces`](../../mirai-assets/references/kinds.md#mesh)); physics asks for
   them in a job.
-- `assets_file(a,id,kind,&Asset)`: transactional load of any type by Fourcc, validating identity and
-  hash; the caller closes with `asset_close`. It serves plugin formats without adding them to the
-  GPU caches. It reads with `registry_read`: what the registry has in memory before the disk
-  ([in-memory files](../../mirai-assets/references/formats.md#registry)); likewise the `content_*`.
-- **Loading in jobs.** `assets_source` gives, on the assets thread, where a job reads the file of an
-  asset from (its path, or a copy of what the registry has in memory); `assets_source_open` opens it
-  as `assets_file` on any thread. `assets_prepare` does in a job what loading a mesh, a texture or a
+- `assets_file(a,id,kind,&Asset)`: transactional load of any kind by Fourcc (plugin formats too),
+  checked by identity and hash. It reads what the registry has in memory before the disk
+  ([in-memory files](../../mirai-assets/references/formats.md#registry)), and a listed output by
+  parts of its [object](../../mirai-assets/references/formats.md#container), no whole-file read.
+- **Loading in jobs.** `assets_source` gives, on the assets thread, where a job reads an asset
+  from (its path, what memory holds, or its object); `assets_source_open` opens it as
+  `assets_file` on any thread. `assets_prepare` does in a job what loading a mesh, a texture or a
   material does before the renderer (read, verify, decompress, decode the levels that the device
   takes), with the same code as the direct load, and `assets_take` installs it between frames as if
   it had been requested; it does nothing if the asset was loaded in the meantime or its file changed

@@ -2,7 +2,6 @@ package importer
 
 import "core:fmt"
 import "core:mem"
-import "core:os"
 import "core:path/filepath"
 import "mirai:asset"
 import "mirai:std/base"
@@ -49,20 +48,20 @@ import_font :: proc(path:string,options:Import_Options={},allocator:=context.all
     report_init(&report,allocator)
     w:Writer
     ok:=writer_init(&w,path,"",options,&report,allocator)
-    defer asset.types_destroy(&w.types)
+    defer writer_close(&w)
     if ok {
         source:=w.source
         name:=filepath.stem(path)
         info:=import_info(source,name,0,u64(len(bytes)),base.hash64(bytes),0,import_version(0))
         desc:=asset.Font_Desc{file=bytes,source=&info,compression=.Stream}
         target:string
-        desc.id,target=root_take(&w,asset.KIND_FONT,name,".font")
-        existed:=os.exists(target)
+        output:int
+        desc.id,target,output=root_take(&w,asset.KIND_FONT,name,".font")
         if save_error:=asset.font_save(target,&w.types,desc,context.temp_allocator);save_error!=.None {
             ok=save_failed(&w,save_error,target)
-        } else {
-            record(&w,desc.id,asset.KIND_FONT,name,target,source,existed,fmt.tprintf("%v outlines, %d glyphs of the atlas",outlines,glyphs))
-            ok=writer_finish(&w)
+        } else if ok=writer_put(&w,output,target);ok {
+            record(&w,output,name,fmt.tprintf("%v outlines, %d glyphs of the atlas",outlines,glyphs))
+            ok=writer_finish(&w,name,"font")
         }
     }
     if !ok {

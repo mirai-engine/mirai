@@ -1,21 +1,22 @@
 package textures
 
-import "core:hash/xxhash"
-import "core:os"
+import "core:mem"
 import "core:slice"
 import "mirai:asset"
 import "mirai:cook/cache"
 import "mirai:std/base"
 
-// Built textures kept by what they are made from (cook/cache): an import that
-// builds the same image with the same settings, and a cook that compresses
-// the same RGBA8 texture, read the levels instead of making them again. Its
-// files are textures built by BUILD_VERSION.
+// Built textures kept by what they are made from in the cache CACHE
+// (cook/cache): an import that builds the same image with the same settings,
+// and a cook that compresses the same RGBA8 texture, read the levels instead
+// of making them again. Its files are textures built by BUILD_VERSION.
+
+CACHE :: "textures"
 
 // An image built with options: its bytes, encoded, or the texels of made
 // (whose width is 0 for encoded bytes).
 cache_key_build :: proc(bytes:[]u8,made:Source,options:Build_Options) -> u64 {
-    key:=base.hash_combine(xxhash.XXH3_64_default(bytes),u64(u32(made.width))<<32|u64(u32(made.height)))
+    key:=base.hash_combine(base.hash64(bytes),u64(u32(made.width))<<32|u64(u32(made.height)))
     key=base.hash_combine(key,u64(u32(made.layers))|u64(made.format)<<32|u64(made.cube)<<40)
     return base.hash_combine(key,settings_hash(options))|1
 }
@@ -26,15 +27,20 @@ cache_key_blocks :: proc(content_hash:u64,rdo:=true) -> u64 {
 }
 
 // Whether the cache keeps a texture under key, without reading it.
-cache_has :: proc(folder:string,key:u64) -> bool {
-    return folder!="" && os.exists(cache.file_path(folder,key,".tex"))
+cache_has :: proc(c:cache.Cache,key:u64) -> bool {
+    return cache.has(c,CACHE,key,BUILD_VERSION)
+}
+
+// Which of keys the cache keeps, into here, asking its source once for those it lacks.
+cache_lookup :: proc(c:cache.Cache,keys:[]u64,here:[]bool) {
+    cache.lookup(c,CACHE,keys,BUILD_VERSION,here)
 }
 
 // The texture the cache keeps under key, its levels in allocator. False
 // without one, or with one that does not read back whole.
-cache_read :: proc(folder:string,key:u64,types:^asset.Types,allocator:=context.allocator) -> (built:Built,ok:bool) {
+cache_read :: proc(c:cache.Cache,key:u64,types:^asset.Types,allocator:=context.allocator) -> (built:Built,ok:bool) {
     file:asset.Asset
-    if !cache.load(folder,key,BUILD_VERSION,".tex",&file,context.temp_allocator) {return}
+    if !cache.load(c,CACHE,key,BUILD_VERSION,&file,context.temp_allocator) {return}
     defer asset.asset_close(&file)
     view,error:=asset.texture_view(&file,types)
     if error!=.None {return}
@@ -45,11 +51,15 @@ cache_read :: proc(folder:string,key:u64,types:^asset.Types,allocator:=context.a
     return built,true
 }
 
-// Keeps built under key; false when it cannot be written, which costs only
-// the time of building it the next time.
-cache_write :: proc(folder:string,key:u64,types:^asset.Types,built:^Built) -> bool {
-    if !cache.ready(folder) {return false}
-    if asset.texture_save(cache.file_path(folder,key,".tex"),types,built_desc(built,cache.id(key,BUILD_VERSION),nil))!=.None {return false}
-    cache.written(folder)
-    return true
+// Keeps built under key; false when it cannot be kept, which costs only the
+// time of building it the next time.
+cache_write :: proc(c:cache.Cache,key:u64,types:^asset.Types,built:^Built) -> bool {
+    if c.store==nil {return false}
+    doc:asset.Document
+    if asset.texture_document(&doc,types,built_desc(built,cache.id(key,BUILD_VERSION),nil))!=.None {return false}
+    defer asset.document_destroy(&doc)
+    bytes,error:=asset.document_bytes(&doc)
+    if error!=.None {return false}
+    defer mem.free_bytes(bytes)
+    return cache.put(c,CACHE,key,BUILD_VERSION,bytes)
 }

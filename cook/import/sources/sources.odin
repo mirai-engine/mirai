@@ -104,26 +104,14 @@ source_kind :: proc(path:string,formats:[]importer.Format=nil) -> Source_Kind {
     return .None
 }
 
-// The project or the plugin whose assets folder has the file at path: the
-// folder that holds the nearest assets folder above it. False for a file in
-// no assets folder.
-source_root :: proc(path:string,allocator:=context.allocator) -> (root:string,ok:bool) {
-    names:=project.FOLDER_NAMES
-    folder:=project.path_absolute(path,context.temp_allocator)
-    for {
-        parent:=filepath.dir(folder)
-        if parent==folder {return}
-        if filepath.base(parent)==names[.Assets] {return strings.clone(filepath.dir(parent),allocator),true}
-        folder=parent
-    }
-}
-
 // A source a plugin imports whole (editor.Source_Importer), prepared for the
 // assets of a root: claims says whether it is one, by its path and up to
 // importer.SNIFF_BYTES of its head, and run imports it as import_source does,
 // with the state its plugin prepared. scene: the scene it wrote, in
 // allocator, "" for none.
 Whole_Source :: struct {
+    name:string,    // what imports it, as its package records it (asset.Package_Origin.importer)
+    version:u16,    // the format version its run gives importer.import_version
     claims:proc(path:string,head:[]u8) -> bool,
     run:proc(state:rawptr,source:string,options:importer.Import_Options,allocator:mem.Allocator) -> (report:importer.Import_Report,scene:string,error:importer.Error),
     state:rawptr,
@@ -168,19 +156,18 @@ whole_find :: proc(wholes:[]Whole_Source,path:string) -> (whole:Whole_Source,cla
 }
 
 // Imports a source file in the assets folder of a project or a plugin
-// (options.root; "": source_root): one of wholes claims is imported whole by
+// (options.root; "": importer.source_root): one of wholes claims is imported whole by
 // it, before the formats; a model writes its assets and, when it
 // has nodes, the prefab of its hierarchy, which the report lists last; an
-// image or a sound writes one asset. The sidecar of the source
-// (<source>.import, Import_Report.saved) keeps the settings it was imported
-// with, the folder of its assets and the id of each of them: importing the
-// source again gives the same assets. What the import builds that nobody
-// edits goes to the imported folder of the root (importer.Sidecar), whatever
-// the format that reads it.
+// image or a sound writes one asset. The package of the source in
+// options.store keeps the settings it was imported with and the id of each
+// asset: importing the source again gives the same assets. What the import
+// builds that nobody edits is a blob of its build, whatever the format that
+// reads it, and its documents go to options.documents.
 import_source :: proc(path:string,options:importer.Import_Options={},formats:[]importer.Format=nil,wholes:[]Whole_Source=nil,allocator:=context.allocator) -> (report:importer.Import_Report,error:importer.Error) {
     formats:=formats if formats!=nil else FORMATS[:]
     options:=options
-    if options.root=="" {options.root,_=source_root(path,context.temp_allocator)}
+    if options.root=="" {options.root,_=importer.source_root(path,context.temp_allocator)}
     if whole,claimed:=whole_find(wholes,path);claimed {
         options.importer_code=whole.code
         scene:string

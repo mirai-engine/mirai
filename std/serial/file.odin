@@ -86,6 +86,30 @@ file_write_atomic :: proc(path:string,data:[]u8,sync:=false) -> File_Error {
     return .None
 }
 
+// file_write_atomic of data unless the file at path already holds exactly
+// those bytes: then nothing is written and written is false.
+file_write_changed :: proc(path:string,data:[]u8,sync:=false) -> (written:bool,error:File_Error) {
+    if file_holds(path,data) {return false,.None}
+    error=file_write_atomic(path,data,sync)
+    return error==.None,error
+}
+
+// Whether the file at path is exactly data, read in pieces.
+@(private="file")
+file_holds :: proc(path:string,data:[]u8) -> bool {
+    file,open_error:=file_open_read(path)
+    if open_error!=.None {return false}
+    defer file_close(file)
+    size,sized:=file_size(file)
+    if !sized || size!=i64(len(data)) {return false}
+    buffer:[1<<16]u8
+    for at:=0;at<len(data);at+=len(buffer) {
+        piece:=buffer[:min(len(buffer),len(data)-at)]
+        if !file_read_at(file,i64(at),piece) || mem.compare(piece,data[at:at+len(piece)])!=0 {return false}
+    }
+    return true
+}
+
 // Past this age a staging file is left over even if its pid runs: the system
 // gave the pid of the process that wrote it to another one.
 STAGING_STALE :: time.Hour

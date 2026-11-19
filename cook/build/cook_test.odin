@@ -12,6 +12,7 @@ import anim "mirai:std/anim"
 import mm "mirai:std/math"
 import "mirai:std/base"
 import "mirai:std/jobs"
+import "mirai:store"
 
 @(private="file") WOOD_COLOR :: base.Asset_Id{1,1}
 @(private="file") WOOD_NORMAL :: base.Asset_Id{1,2}
@@ -133,7 +134,7 @@ a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc
     manifest:=fmt.tprintf("%s/project/%s",folder,COOK_FILE)
 
     // Without cook.mirai the scenes and the prefabs are the roots.
-    report:=cook_assets({assets=assets,output=output,manifest=manifest,allocator=context.temp_allocator})
+    report:=cook_assets({assets=assets,output=output,manifest=manifest,codecs=.Open,allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)
     kept,dropped:=names(&report)
     testing.expect_value(t,kept,"materials/wood.mat models/crate.mesh prefabs/prop.scene scenes/main.scene textures/wood_color.tex textures/wood_normal.tex ")
@@ -267,8 +268,6 @@ a_cook_ships_every_asset_of_an_active_plugin_under_its_prefix :: proc(t:^testing
     BRUSH :: base.Asset_Id{7,1}
     material_write(t,&types,fmt.tprintf("%s/brushes/soft.mat",plugin),BRUSH,WOOD_COLOR,{})
     testing.expect(t,os.write_entire_file(fmt.tprintf("%s/readme.txt",plugin),"for the code of the plugin")==nil)
-    // A source and its sidecar stay behind: what its import made ships, not what it was made from.
-    testing.expect(t,os.write_entire_file(fmt.tprintf("%s/brushes/soft.png",plugin),"a source")==nil && os.write_entire_file(fmt.tprintf("%s/brushes/soft.png.import",plugin),"{}")==nil)
 
     report:=cook_assets({assets=assets,output=output,plugins={{path=plugin,prefix="plugins/probe"}},allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)
@@ -393,7 +392,9 @@ a_cook_on_many_workers_writes_what_a_cook_on_one_does :: proc(t:^testing.T) {
         js:jobs.Job_System
         if !jobs.system_init(&js,{threads=threads,allocator=runtime.heap_allocator()}) {return {error=.Write_Failed}}
         defer jobs.system_destroy(&js)
-        return cook_assets({assets=assets,output=fmt.tprintf("%s/%s",folder,name),manifest=manifest,texture_cache=fmt.tprintf("%s/%s_cache",folder,name),worker={system=&js},allocator=context.temp_allocator})
+        kept,opened:=store.open(fmt.tprintf("%s/%s_store",folder,name),context.temp_allocator)
+        if opened!=.None {return {error=.Write_Failed}}
+        return cook_assets({assets=assets,output=fmt.tprintf("%s/%s",folder,name),manifest=manifest,store=&kept,worker={system=&js},allocator=context.temp_allocator})
     }
     one:=cook(folder,assets,manifest,"one",0)
     many:=cook(folder,assets,manifest,"many",7)
@@ -567,8 +568,10 @@ a_cook_writes_again_only_what_is_made_of_what_changed :: proc(t:^testing.T) {
     }
 }
 
-// What a cook writes is compressed as its project allows and reads back: nothing, or streams of
-// the formats of the codecs it allows, with the layouts of blocks only of the best.
+// What a cook writes is compressed as its project allows and reads back as what the project
+// holds: nothing, or streams of the formats of the codecs it allows, with the layouts of blocks
+// only of the best. The cook is where the container's own compression is made: the project keeps
+// its assets written without a compressor.
 @(test)
 a_cook_compresses_as_its_project_says_and_what_it_writes_decodes :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -601,6 +604,18 @@ a_cook_compresses_as_its_project_says_and_what_it_writes_decodes :: proc(t:^test
                 _,laid:=asset.asset_table(&a,asset.TEXTURE_TABLE_LAYOUTS)
                 testing.expect(t,!laid || codecs==.Best,"layouts only of the best codecs")
             }
+            if file.compressed || file.resolved {continue}
+            // Written again without a compressor, the file shipped is the one the project holds.
+            source,_:=os.read_entire_file(fmt.tprintf("%s/%s",assets,file.path),context.temp_allocator)
+            shipped,_:=os.read_entire_file(path,context.temp_allocator)
+            header,_:=asset.header_read(source)
+            raw :: proc(bytes:[]u8,types:^asset.Types,texture:bool) -> []u8 {
+                out:[]u8
+                if texture {out,_=asset.texture_repack(bytes,types,.Fast,context.temp_allocator)} else {out,_=asset.document_repack(bytes,.Fast,.None,context.temp_allocator)}
+                return out
+            }
+            want,got:=raw(source,&types,header.kind==asset.KIND_TEXTURE),raw(shipped,&types,header.kind==asset.KIND_TEXTURE)
+            testing.expectf(t,len(want)>0 && string(want)==string(got),"%s ships what the project holds (%v)",file.path,codecs)
         }
         testing.expect(t,(streams==0)==(codecs==.None),"something compresses unless nothing may")
     }

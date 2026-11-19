@@ -2,10 +2,12 @@ package asset
 
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:store"
 
 @(private="file")
 write_material :: proc(t:^testing.T,types:^Types,path:string,id:base.Asset_Id,texture:base.Asset_Id) {
@@ -557,70 +559,173 @@ registry_mounts_a_guest_folder_that_never_takes_an_id_the_registry_has :: proc(t
     }
 }
 
-// What the imports of the sources of a folder build that nobody edits is in
-// the imported folder that goes with it, each file named by its id and the
-// key of what it was built from, and is listed where the sidecar that lists it
-// is now, in the folder it names: never by the order of a scan. A sidecar
-// that moves with its source moves the listing, also through a refresh; one
-// whose source is gone lists nothing.
+// What the packages a project and a plugin pin list of the cache is listed
+// from the store through root_packages of each root, with no source
+// anywhere: a built output is its object and loads, one whose
+// build is not here is listed Not_Built and named as a problem, a path a file of the folder has takes the id of the output after
+// its name, a refresh keeps every listed output and memory never holds one.
 @(test)
-registry_lists_the_imported_folder_by_where_the_sources_are :: proc(t:^testing.T) {
+registry_lists_what_a_project_pins_without_its_sources :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    folder:=base.test_folder(t,"registry-imported")
-    if folder=="" {return}
-    root:=fmt.tprintf("%s/game/assets",folder)
-    imported:=fmt.tprintf("%s/game/.mirai/imported",folder)
-    plugin:=fmt.tprintf("%s/pack/assets",folder)
-    plugin_imported:=fmt.tprintf("%s/pack/.mirai/imported",folder)
-    for made in ([]string{fmt.tprintf("%s/props/crate",root),fmt.tprintf("%s/kit",root),imported,plugin,plugin_imported}) {os.make_directory_all(made)}
-    wood,body,lid,second,atlas,lost,unbuilt,other:=base.Asset_Id{1,1},base.Asset_Id{2,2},base.Asset_Id{3,3},base.Asset_Id{10,10},base.Asset_Id{5,5},base.Asset_Id{6,6},base.Asset_Id{7,7},base.Asset_Id{9,9}
-    pixels:[16]u8
-    sidecar :: proc(t:^testing.T,source,folder:string,present:bool,outputs:[]Import_Output) {
-        listed:=make([dynamic]Import_Output,context.temp_allocator)
-        append(&listed,..outputs)
-        text:=sidecar_text(`{"lods": "None"}`,{folder=folder,outputs=listed},context.temp_allocator)
-        testing.expect_value(t,serial.file_write_atomic(fmt.tprintf("%s%s",source,SIDECAR_EXTENSION),transmute([]u8)text),serial.File_Error.None)
-        if present {testing.expect_value(t,serial.file_write_atomic(source,transmute([]u8)string("a source")),serial.File_Error.None)}
+    folder:=base.test_folder(t,"registry-listed");if folder=="" {return}
+    root,plugin,staging:=fmt.tprintf("%s/game/assets",folder),fmt.tprintf("%s/pack/assets",folder),fmt.tprintf("%s/staging",folder)
+    for made in ([]string{fmt.tprintf("%s/props/crate",root),plugin,staging}) {os.make_directory_all(made)}
+    s,open_error:=store.open(fmt.tprintf("%s/store",folder),context.temp_allocator)
+    if !testing.expect_value(t,open_error,store.Error.None) {return}
+    wood,lid,later,atlas,own:=base.Asset_Id{1,1},base.Asset_Id{3,3},base.Asset_Id{7,7},base.Asset_Id{5,5},base.Asset_Id{4,4}
+    blob :: proc(t:^testing.T,types:^Types,s:^store.Store,staging:string,id:base.Asset_Id) -> store.Hash {
+        buffer:[base.ASSET_ID_TEXT]u8
+        path:=fmt.tprintf("%s/%s.tex",staging,base.asset_id_format(id,buffer[:]))
+        write_texture(t,types,path,id)
+        hash,error:=object_put_file(s,path)
+        testing.expect_value(t,error,Error.None)
+        testing.expect_value(t,store.commit(s),store.Error.None)
+        return hash
     }
-    sidecar(t,fmt.tprintf("%s/props/wood.png",root),"",true,{{kind=KIND_TEXTURE,name="wood",id=wood}})
-    sidecar(t,fmt.tprintf("%s/props/crate.glb",root),"crate",true,{{kind=KIND_SCENE,name="crate",id={8,8}},{kind=KIND_TEXTURE,name="body",id=body,part=true},{kind=KIND_TEXTURE,name="lid",id=lid},{kind=KIND_TEXTURE,name="lid",index=1,id=second},{kind=KIND_TEXTURE,name="later",id=unbuilt}})
-    sidecar(t,fmt.tprintf("%s/props/crate.obj",root),"crate",true,{{kind=KIND_TEXTURE,name="body",id=other}})
-    sidecar(t,fmt.tprintf("%s/props/gone.png",root),"",false,{{kind=KIND_TEXTURE,name="gone",id=lost}})
-    sidecar(t,fmt.tprintf("%s/atlas.png",plugin),"",true,{{kind=KIND_TEXTURE,name="atlas",id=atlas}})
-    Built :: struct {imported:string,id:base.Asset_Id,key:u64,listed:string}
-    built:=[]Built{
-        {imported,wood,0x11,"props/wood.tex"},{imported,body,0x22,"props/crate/body (crate.glb).tex"},{imported,lid,0x22,"props/crate/lid.tex"},
-        {imported,second,0x22,"props/crate/lid (1).tex"},{imported,other,0x55,"props/crate/body (crate.obj).tex"},{plugin_imported,atlas,0x33,"plugins/pack/atlas.tex"},{imported,lost,0x44,""},
+    pin :: proc(t:^testing.T,s:^store.Store,p:^Package,built:[]store.Hash,folder:string) -> Packages {
+        manifest,error:=package_put(s,p)
+        testing.expect_value(t,error,Error.None)
+        b:=Build{package_id=p.id,final=true}
+        b.outputs=make([dynamic]Build_Output,context.temp_allocator)
+        for hash,at in built {
+            info,_:=kind_info(p.assets[at].kind)
+            if hash!={} {append(&b.outputs,Build_Output{id=p.assets[at].id,kind=p.assets[at].kind,kind_version=info.version,object=hash})}
+        }
+        hash,_:=build_put(s,&b)
+        digits:[64]u8
+        testing.expect_value(t,store.ref_set(s,REF_BUILDS,store.hex(build_select(manifest,p),&digits),hash),store.Error.None)
+        list:Packages
+        list.packages=make([dynamic]Project_Package,context.temp_allocator)
+        append(&list.packages,Project_Package{id=p.id,manifest=manifest,folder=folder})
+        return list
     }
-    for b in built {testing.expect_value(t,texture_save(imported_file(b.imported,b.id,b.key,".tex",context.temp_allocator),&types,{id=b.id,width=2,height=2,format=.RGBA8,mips={pixels[:]}}),Error.None)}
-    write_material(t,&types,fmt.tprintf("%s/props/crate/Wood.mat",root),{4,4},wood)
+    crate:=Package{id={20,20},name="crate",identity=store.address_of_bytes(transmute([]u8)string("crate"))}
+    crate.assets=make([dynamic]Package_Asset,context.temp_allocator)
+    append(&crate.assets,Package_Asset{kind=KIND_SCENE,name="crate",id={8,8}},Package_Asset{kind=KIND_TEXTURE,name="wood",id=wood},Package_Asset{kind=KIND_TEXTURE,name="lid",id=lid},Package_Asset{kind=KIND_TEXTURE,name="later",id=later})
+    wood_blob,lid_blob:=blob(t,&types,&s,staging,wood),blob(t,&types,&s,staging,lid)
+    crate_list:=pin(t,&s,&crate,{{},wood_blob,lid_blob,{}},"props/crate")
+    pack:=Package{id={30,30},name="pack",identity=store.address_of_bytes(transmute([]u8)string("pack"))}
+    pack.assets=make([dynamic]Package_Asset,context.temp_allocator)
+    append(&pack.assets,Package_Asset{kind=KIND_TEXTURE,name="atlas",id=atlas})
+    pack_list:=pin(t,&s,&pack,{blob(t,&types,&s,staging,atlas)},"")
+    os.remove_all(staging)
+    // Each root lists from its own list and the store it is given; one without a list lists nothing.
+    game,pack_root:=fmt.tprintf("%s/game",folder),fmt.tprintf("%s/pack",folder)
+    testing.expect_value(t,packages_save(game,&crate_list),Error.None)
+    testing.expect_value(t,packages_save(pack_root,&pack_list),Error.None)
+    resolved,resolve_error:=root_packages(game,s.root,context.temp_allocator)
+    plugin_resolved,plugin_error:=root_packages(pack_root,s.root,context.temp_allocator)
+    if !testing.expect(t,resolve_error==.None && plugin_error==.None && len(resolved.listed)==3 && len(plugin_resolved.listed)==1) {return}
+    // The output whose build is not here is a problem that names its package; the others load.
+    testing.expectf(t,len(resolved.problems)==1 && strings.contains(resolved.problems[0],"package crate") && strings.contains(resolved.problems[0],"no build"),"%v",resolved.problems)
+    testing.expect_value(t,len(plugin_resolved.problems),0)
+    none,none_error:=root_packages(staging,fmt.tprintf("%s/unopened",folder),context.temp_allocator)
+    testing.expect(t,none_error==.None && len(none.listed)==0 && len(none.problems)==0 && !os.exists(fmt.tprintf("%s/unopened",folder)),"a root without a list opens no store")
+    // A file of the project at the path of a listed output keeps it.
+    write_texture(t,&types,fmt.tprintf("%s/props/crate/lid.tex",root),own)
+    write_material(t,&types,fmt.tprintf("%s/props/crate/Wood.mat",root),{9,9},wood)
+    buffer:[base.ASSET_ID_TEXT]u8
+    renamed:=fmt.tprintf("props/crate/lid (%s).tex",base.asset_id_format(lid,buffer[:]))
 
     cache:=fmt.tprintf("%s/registry.cache",folder)
     for pass in 0..<2 {
-        r:Registry;registry_init(&r,root,cache,imported=imported);defer registry_destroy(&r)
-        testing.expect(t,registry_mount(&r,plugin,"plugins/pack",plugin_imported))
+        r:Registry;registry_init(&r,root,cache,listed=resolved.listed[:]);defer registry_destroy(&r)
+        r.store=&s
+        testing.expect(t,registry_mount(&r,plugin,"plugins/pack",plugin_resolved.listed[:]))
         testing.expect_value(t,registry_scan(&r),Error.None)
         testing.expectf(t,pass==0 || r.stats.opened==0,"the second scan reads its cache: %v",r.stats)
-        for b in built {
-            file,found:=registry_find(&r,b.id)
-            if b.listed=="" {
-                testing.expect(t,!found,"what a source that is gone gave is not listed")
-                continue
-            }
-            if !testing.expectf(t,found && file.path==b.listed && file.imported==b.key,"%v is listed at %s, not %s",b.id,b.listed,file.path) {continue}
-            testing.expect_value(t,registry_file_path(&r,file.path,context.temp_allocator),imported_file(b.imported,b.id,b.key,".tex",context.temp_allocator))
+        testing.expect_value(t,r.stats.files,6)
+        Want :: struct {id:base.Asset_Id,path,file:string}
+        for w in ([]Want{{wood,"props/crate/wood.tex",""},{lid,renamed,""},{own,"props/crate/lid.tex",fmt.tprintf("%s/props/crate/lid.tex",root)}}) {
+            file,found:=registry_find(&r,w.id)
+            if !testing.expectf(t,found && file.path==w.path && file.state==.Asset && file.listed==(w.id!=own),"%v is listed at %s, not %v",w.id,w.path,found?file^:Registry_File{}) {continue}
+            testing.expect_value(t,registry_file_path(&r,file.path,context.temp_allocator),w.file)
         }
-        _,pending:=registry_find(&r,unbuilt)
+        shipped,found_atlas:=registry_find(&r,atlas)
+        testing.expect(t,found_atlas && shipped.path=="plugins/pack/atlas.tex" && shipped.listed)
+        data,read_error:=registry_read(&r,"props/crate/wood.tex")
+        a:Asset
+        if testing.expect_value(t,read_error,Error.None) && testing.expect_value(t,asset_open(&a,data),Error.None) {
+            testing.expect(t,a.blob.header.id==wood,"a listed output loads from its object")
+            asset_close(&a)
+        }
+        delete(data)
+        pending,listed_pending:=registry_find_path(&r,"props/crate/later.tex")
+        testing.expect(t,listed_pending && pending.state==.Not_Built && pending.listed && pending.id==later && pending.kind==KIND_TEXTURE,"an output not built is listed as such")
+        _,by_id:=registry_find(&r,later)
+        _,not_built:=registry_read(&r,"props/crate/later.tex")
+        testing.expect(t,!by_id && not_built==.Not_Found)
         missing:=make([dynamic]Registry_Missing,context.temp_allocator)
         registry_missing(&r,&missing)
-        testing.expect(t,!pending && len(missing)==0,"an output that is not built is not listed, and one in the imported folder is not missing")
+        testing.expect_value(t,len(missing),0)
+        folders:=[]string{"plugins/","plugins/pack/","props/","props/crate/"}
+        testing.expectf(t,len(r.refused)==0 && len(r.folders)==len(folders),"%v",r.folders[:])
+        for f,at in r.folders[:min(len(folders),len(r.folders))] {testing.expect_value(t,f,folders[at])}
+        testing.expect_value(t,registry_memory_set(&r,"props/crate/wood.tex",data),Error.Invalid)
+        testing.expect_value(t,registry_memory_remove(&r,"props/crate/wood.tex"),Error.Invalid)
         if pass==0 {continue}
-        // The source moves with its sidecar: its assets are listed there once the editor refreshes what moved, as they are.
-        for end in ([2]string{"",SIDECAR_EXTENSION}) {testing.expect(t,os.rename(fmt.tprintf("%s/props/crate.glb%s",root,end),fmt.tprintf("%s/kit/box.glb%s",root,end))==nil)}
-        testing.expect_value(t,registry_refresh(&r,{"props/crate.glb","kit/box.glb"+SIDECAR_EXTENSION}),Error.None)
-        moved,again:=registry_find(&r,body)
-        testing.expect(t,again && moved.path=="kit/crate/body.tex" && moved.imported==0x22,"the asset is listed where its source is, with its id and its file")
-        alone,listed:=registry_find(&r,other)
-        testing.expect(t,listed && alone.path=="props/crate/body.tex","a path no other output has takes no source name")
+
+        // A refresh keeps what is listed, also what it names.
+        revision:=r.revision
+        testing.expect_value(t,registry_refresh(&r,{"props/crate/wood.tex","props/crate/later.tex",renamed,"plugins/pack/atlas.tex","props/crate/Wood.mat"}),Error.None)
+        testing.expect(t,r.revision==revision && r.stats.files==6 && r.stats.opened==0)
+        _,kept:=registry_find(&r,wood)
+        _,kept_pending:=registry_find_path(&r,"props/crate/later.tex")
+        testing.expect(t,kept && kept_pending)
+        // A file written where an output is listed takes the path over, through a scan.
+        write_texture(t,&types,fmt.tprintf("%s/props/crate/wood.tex",root),{11,11})
+        testing.expect_value(t,registry_refresh(&r,{"props/crate/wood.tex"}),Error.None)
+        moved,again:=registry_find(&r,wood)
+        written,taken:=registry_find(&r,{11,11})
+        testing.expect(t,again && moved.path==fmt.tprintf("props/crate/wood (%s).tex",base.asset_id_format(wood,buffer[:])) && taken && written.path=="props/crate/wood.tex" && !written.listed)
+        os.remove(fmt.tprintf("%s/props/crate/wood.tex",root))
     }
+}
+
+// Entries no package list makes are refused or reported, never a crash nor
+// an error of the scan: a path that is empty, leaves the folder or is one a
+// scan leaves out, and a zero id are refused; an output not built is Not_Built;
+// one that is not the asset its entry names is Broken; two entries with one
+// path are told apart by id.
+@(test)
+registry_refuses_or_reports_hostile_listed_entries :: proc(t:^testing.T) {
+    types:Types;types_init(&types);defer types_destroy(&types)
+    folder:=base.test_folder(t,"registry-listed-hostile");if folder=="" {return}
+    root:=fmt.tprintf("%s/assets",folder)
+    os.make_directory_all(root)
+    s,open_error:=store.open(fmt.tprintf("%s/store",folder),context.temp_allocator)
+    if !testing.expect_value(t,open_error,store.Error.None) {return}
+    put :: proc(t:^testing.T,s:^store.Store,types:^Types,path:string,id:base.Asset_Id) -> store.Hash {
+        write_texture(t,types,path,id)
+        object,_:=object_put_file(s,path)
+        return object
+    }
+    texture,other:=put(t,&s,&types,fmt.tprintf("%s/texture.tex",folder),{1,1}),put(t,&s,&types,fmt.tprintf("%s/other.tex",folder),{2,2})
+    text,_:=store.put(&s,transmute([]u8)string("not an asset"))
+    store.commit(&s)
+    entry :: proc(s:^store.Store,path:string,object:store.Hash,id:base.Asset_Id) -> Package_Listed {
+        listed:=Package_Listed{path=path,object=object,id=id,kind=KIND_TEXTURE,state=object!={}?.Built:.Not_Built}
+        dependencies:=make([dynamic]base.Asset_Id,context.temp_allocator)
+        listed.header,_=object_header(s,object,&dependencies)
+        listed.dependencies=dependencies[:]
+        return listed
+    }
+    entries:=[]Package_Listed{
+        entry(&s,"",{},{3,3}),entry(&s,"../out.tex",texture,{1,1}),entry(&s,"/abs.tex",texture,{1,1}),entry(&s,"a\\b.tex",texture,{1,1}),
+        entry(&s,"a/./b.tex",texture,{1,1}),entry(&s,".hidden/c.tex",texture,{1,1}),entry(&s,"zero.tex",texture,{}),entry(&s,"c:x.tex",texture,{1,1}),
+        entry(&s,"gone.tex",{},{4,4}),entry(&s,"text.tex",text,{5,5}),entry(&s,"liar.tex",other,{6,6}),
+        entry(&s,"twice.tex",texture,{1,1}),entry(&s,"twice.tex",{},{7,7}),entry(&s,"twice.tex",{},{7,7}),
+    }
+    r:Registry;registry_init(&r,root,listed=entries);defer registry_destroy(&r)
+    testing.expect_value(t,registry_scan(&r),Error.None)
+    testing.expectf(t,len(r.refused)==9,"refused: %v",r.refused[:])
+    buffer:[base.ASSET_ID_TEXT]u8
+    State :: struct {path:string,state:Registry_State}
+    for want in ([]State{{"gone.tex",.Not_Built},{"text.tex",.Broken},{"liar.tex",.Broken},{"twice.tex",.Asset},{fmt.tprintf("twice (%s).tex",base.asset_id_format({7,7},buffer[:])),.Not_Built}}) {
+        file,found:=registry_find_path(&r,want.path)
+        testing.expectf(t,found && file.state==want.state && file.listed,"%s is %v, not %v",want.path,want.state,found?file^:Registry_File{})
+    }
+    testing.expect_value(t,len(r.files),5)
+    _,error:=registry_read(&r,"gone.tex")
+    testing.expect_value(t,error,Error.Not_Found)
 }

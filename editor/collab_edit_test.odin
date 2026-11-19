@@ -1,5 +1,6 @@
 package editor
 
+import "base:intrinsics"
 import "core:fmt"
 import "core:mem"
 import "core:strings"
@@ -88,19 +89,26 @@ a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^tes
     }
     good,error:=asset.scene_bytes(&host_scene,context.temp_allocator)
     if !testing.expect_value(t,error,asset.Error.None) {return}
-    // The transforms of the broken copy do not decompress.
+    // The transforms of the broken copy are a stream that does not decode: its directory says so
+    // of the bytes, stored as they are, of their chunk. The load meets it when it reads the
+    // components, as it met a stream a compressor wrote.
     broken:=make([]u8,len(good),context.temp_allocator)
     copy(broken,good)
     file:asset.Asset
     if !testing.expect_value(t,asset.asset_open(&file,broken),asset.Error.None) {return}
     view,_:=asset.scene_view(&file,&assets.types)
-    entry:asset.Chunk_Entry
+    chunk:=-1
     for &component in view.components {
-        if component.name=="Transform" {entry=asset.blob_chunk(&file.blob,component.table.columns[1].chunk)}
+        if component.name=="Transform" {chunk=component.table.columns[1].chunk}
     }
+    entry:asset.Chunk_Entry
+    if chunk>=0 {entry=asset.blob_chunk(&file.blob,chunk)}
     asset.asset_close(&file)
-    if !testing.expect_value(t,entry.compression,asset.Compression.Stream) {return}
+    if !testing.expect(t,chunk>=0) {return}
+    if !testing.expect(t,entry.compression==.None && entry.size>=64) {return}
     mem.set(&broken[entry.offset],0xff,int(entry.size))
+    entry.compression=.Stream
+    intrinsics.unaligned_store((^asset.Chunk_Entry)(&broken[asset.HEADER_SIZE+chunk*asset.CHUNK_ENTRY_SIZE]),entry)
 
     world:=cast(^Play_Test_World)f.data
     testing.expect(t,!collab_snapshot_load(&f.s,st,broken))
@@ -286,8 +294,9 @@ a_file_as_large_as_a_session_carries_crosses_as_one_message :: proc(t:^testing.T
     host,guest:=new(Collab_State),new(Collab_State)
     defer free(host);defer free(guest)
     host.role,guest.role=.Host,.Guest
+    channels:=collab_channels()
     for st,i in ([2]^Collab_State{host,guest}) {
-        desc:=wire.Host_Desc{mode=i==0?.Server:.Client,transport=wire.sim_endpoint_transport(&network,i),protocol_id=0x4d495241,seed=u64(7+i),channels=COLLAB_CHANNELS,send_rate=1<<30,packets_per_update=64}
+        desc:=wire.Host_Desc{mode=i==0?.Server:.Client,transport=wire.sim_endpoint_transport(&network,i),protocol_id=0x4d495241,seed=u64(7+i),channels=channels[:]}
         testing.expect_value(t,wire.host_init(&st.host,desc),wire.Error.None)
     }
     defer {wire.host_destroy(&host.host);wire.host_destroy(&guest.host)}
@@ -322,4 +331,16 @@ a_file_as_large_as_a_session_carries_crosses_as_one_message :: proc(t:^testing.T
         if arrived {break}
     }
     testing.expect(t,arrived,"the file arrives")
+}
+
+// The code collab.status returns is the whole code: it decodes to the invitation of the host.
+@(test)
+the_code_collab_status_returns_reads_as_the_invitation :: proc(t:^testing.T) {
+    key,made:=wire.invite_key()
+    if !testing.expect(t,made) {return}
+    invitation:=wire.Invitation{lan=wire.address_ip4(192,168,1,2,COLLAB_PORT),public=wire.address_ip4(203,0,113,9,COLLAB_PORT),key={public=key.public,secret=key.secret}}
+    r:Api_Collab_Status
+    testing.expect(t,base.text_set(r.invite[:],wire.invite_encode(invitation,context.temp_allocator)))
+    got,refused:=wire.invite_decode(base.text_get(r.invite[:]))
+    testing.expect(t,refused==.None && got==invitation)
 }

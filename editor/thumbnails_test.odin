@@ -11,6 +11,7 @@ import "mirai:host"
 import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:store"
 import "mirai:ui"
 
 @(private="file") PROGRAMS :: u64(0x7072)
@@ -37,6 +38,9 @@ stored_thumbnails_last_until_their_asset_or_what_it_needs_changes :: proc(t:^tes
     texture_write(t,&types,fmt.tprintf("%s/textures/wood.tex",assets),texture,10)
     material_write(t,&types,fmt.tprintf("%s/wood.mat",assets),material,texture,0.5)
     material_write(t,&types,fmt.tprintf("%s/other.mat",assets),other,{},0.5)
+    st,opened:=store.open(fmt.tprintf("%s/store",root))
+    if !testing.expect_value(t,opened,store.Error.None) {return}
+    defer store.close(&st)
     r:asset.Registry;asset.registry_init(&r,assets,fmt.tprintf("%s/.mirai/cache/registry",root));defer asset.registry_destroy(&r)
     testing.expect_value(t,asset.registry_scan(&r),asset.Error.None)
 
@@ -54,27 +58,27 @@ stored_thumbnails_last_until_their_asset_or_what_it_needs_changes :: proc(t:^tes
     file:Thumbnail_File
     read:[dynamic]u8
     defer {thumbnail_file_destroy(&file);delete(read)}
-    testing.expect(t,thumbnail_save(folder,material,THUMBNAIL_SIZE,key,image,&file))
-    testing.expect(t,thumbnail_load(folder,material,THUMBNAIL_SIZE,key,&file,&read) && slice.equal(read[:],image))
-    testing.expect(t,!thumbnail_load(folder,material,THUMBNAIL_LARGE,key,&file,&read))
-    testing.expect(t,!thumbnail_load(folder,other,THUMBNAIL_SIZE,key,&file,&read))
+    testing.expect(t,thumbnail_store_save(&st,THUMBNAIL_SIZE,key,image,&file))
+    testing.expect(t,thumbnail_store_load(&st,THUMBNAIL_SIZE,key,&file,&read) && slice.equal(read[:],image))
+    testing.expect(t,!thumbnail_store_load(&st,THUMBNAIL_LARGE,key,&file,&read))
+    testing.expect(t,!thumbnail_store_load(&st,THUMBNAIL_SIZE,key+2,&file,&read))
 
     // Saving what the asset needs gives another key: the stored preview is drawn again.
     time.sleep(10*time.Millisecond)
     texture_write(t,&types,fmt.tprintf("%s/textures/wood.tex",assets),texture,200)
     testing.expect_value(t,asset.registry_refresh(&r,{"textures/wood.tex"}),asset.Error.None)
     saved_texture:=thumbnail_store_key(&r,material,subject,.Small,PROGRAMS)
-    testing.expect(t,saved_texture!=key && !thumbnail_load(folder,material,THUMBNAIL_SIZE,saved_texture,&file,&read))
+    testing.expect(t,saved_texture!=key && !thumbnail_store_load(&st,THUMBNAIL_SIZE,saved_texture,&file,&read))
     testing.expect_value(t,thumbnail_store_key(&r,other,{},.Small,PROGRAMS),thumbnail_store_key(&r,other,subject,.Small,PROGRAMS))
-    testing.expect(t,thumbnail_save(folder,material,THUMBNAIL_SIZE,saved_texture,image,&file))
-    testing.expect(t,thumbnail_load(folder,material,THUMBNAIL_SIZE,saved_texture,&file,&read))
+    testing.expect(t,thumbnail_store_save(&st,THUMBNAIL_SIZE,saved_texture,image,&file))
+    testing.expect(t,thumbnail_store_load(&st,THUMBNAIL_SIZE,saved_texture,&file,&read))
 
     // Writing the asset itself does too.
     time.sleep(10*time.Millisecond)
     material_write(t,&types,fmt.tprintf("%s/wood.mat",assets),material,texture,0.25)
     testing.expect_value(t,asset.registry_refresh(&r,{"wood.mat"}),asset.Error.None)
     saved_material:=thumbnail_store_key(&r,material,subject,.Small,PROGRAMS)
-    testing.expect(t,saved_material!=saved_texture && saved_material!=key && !thumbnail_load(folder,material,THUMBNAIL_SIZE,saved_material,&file,&read))
+    testing.expect(t,saved_material!=saved_texture && saved_material!=key && !thumbnail_store_load(&st,THUMBNAIL_SIZE,saved_material,&file,&read))
 
     // What the registry holds of it until its step is written is another content;
     // dropping it gives back the key of the file.
@@ -88,25 +92,24 @@ stored_thumbnails_last_until_their_asset_or_what_it_needs_changes :: proc(t:^tes
     {dropped,_:=asset.registry_memory_drop(&r,"other.mat");testing.expect(t,dropped)}
     testing.expect_value(t,thumbnail_store_key(&r,other,subject,.Small,PROGRAMS),other_key)
 
-    // An asset that no file is any more loses its previews; the others keep theirs.
-    other_large:=thumbnail_store_key(&r,other,subject,.Large,PROGRAMS)
-    testing.expect(t,thumbnail_save(folder,other,THUMBNAIL_LARGE,other_large,make([]u8,THUMBNAIL_LARGE*THUMBNAIL_LARGE*4,context.temp_allocator),&file))
-    testing.expect(t,thumbnail_save(folder,other,THUMBNAIL_SIZE,other_key,image,&file))
+    // The views of scenes an asset that no file is any more had leave the thumbs folder.
+    testing.expect(t,thumbnail_save(folder,other,THUMBNAIL_SIZE,THUMBNAIL_CAPTURED,image,&file))
+    testing.expect(t,thumbnail_save(folder,material,THUMBNAIL_SIZE,THUMBNAIL_CAPTURED,image,&file))
     testing.expect(t,os.remove(fmt.tprintf("%s/other.mat",assets))==nil)
     testing.expect_value(t,asset.registry_refresh(&r,{"other.mat"}),asset.Error.None)
     testing.expect(t,len(r.removed)==1 && r.removed[0]==other)
-    thumbnail_store_forget(folder,r.removed[:])
+    thumbnail_views_forget(folder,r.removed[:])
     clear(&r.removed)
-    testing.expect(t,!os.exists(thumbnail_file(folder,other,THUMBNAIL_SIZE)) && !os.exists(thumbnail_file(folder,other,THUMBNAIL_LARGE)))
+    testing.expect(t,!os.exists(thumbnail_file(folder,other,THUMBNAIL_SIZE)))
     testing.expect(t,os.is_file(thumbnail_file(folder,material,THUMBNAIL_SIZE)))
 
-    // A file cut short is no preview.
-    path:=thumbnail_file(folder,material,THUMBNAIL_SIZE)
-    whole,_:=serial.file_read(path,context.temp_allocator)
+    // Bytes cut short are no preview.
+    whole:=thumbnail_encode(THUMBNAIL_SIZE,saved_texture,image,&file)
+    whole=slice.clone(whole,context.temp_allocator)
     for cut in ([]int{0,THUMBNAIL_FILE_HEADER-1,THUMBNAIL_FILE_HEADER,len(whole)-1}) {
-        testing.expect_value(t,serial.file_write_atomic(path,whole[:cut]),serial.File_Error.None)
-        testing.expect(t,!thumbnail_load(folder,material,THUMBNAIL_SIZE,saved_texture,&file,&read))
+        testing.expect(t,!thumbnail_decode(whole[:cut],THUMBNAIL_SIZE,saved_texture,&file,&read))
     }
+    testing.expect(t,thumbnail_decode(whole,THUMBNAIL_SIZE,saved_texture,&file,&read))
     free_all(context.temp_allocator)
 }
 
@@ -151,4 +154,59 @@ a_provider_image_is_drawn_between_frames_after_the_frame_that_asked :: proc(t:^t
     p.cells[p.picture.slot].key=9
     thumbnail_picture_draw(s)
     testing.expect(t,p.picture.key==0 && !p.dirty)
+}
+
+// The key of the preview of an asset of a package: its object and those of its
+// build, its size and the programs; nothing of the asset's bytes.
+@(test)
+the_key_of_a_package_thumbnail_is_its_objects :: proc(t:^testing.T) {
+    object:=store.address_of_bytes(transmute([]u8)string("mesh"))
+    other:=store.address_of_bytes(transmute([]u8)string("material"))
+    objects:=[]store.Hash{object,other}
+    key:=thumbnail_package_key(.Small,PROGRAMS,object,objects)
+    testing.expect(t,key!=0 && key==thumbnail_package_key(.Small,PROGRAMS,object,objects),"any machine with the build computes it")
+    testing.expect(t,key!=thumbnail_package_key(.Large,PROGRAMS,object,objects))
+    testing.expect(t,key!=thumbnail_package_key(.Small,PROGRAMS+1,object,objects))
+    testing.expect(t,key!=thumbnail_package_key(.Small,PROGRAMS,other,objects))
+    testing.expect(t,key!=thumbnail_package_key(.Small,PROGRAMS,object,objects[:1]))
+    buffer:[16]u8
+    testing.expect_value(t,thumbnail_name(0x1a2b,&buffer),"0000000000001a2b")
+}
+
+// A texture's preview is read from its smallest levels once, on a machine
+// that has it, and kept in the store under its key; a browser that shows it
+// again, also another session of the machine, reads it from there instead.
+@(test)
+a_texture_preview_is_made_once_from_its_small_levels_and_then_read :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"thumbnail-texture")
+    if root=="" {return}
+    assets:host.Assets
+    asset.types_init(&assets.types)
+    defer asset.types_destroy(&assets.types)
+    os.make_directory_all(fmt.tprintf("%s/assets",root))
+    pixels:=make([]u8,128*128*4,context.temp_allocator)
+    for &value,at in pixels {value=200 if at%4!=1 else 40}
+    mips:=[][]u8{pixels}
+    texture:=base.Asset_Id{5,5}
+    testing.expect_value(t,asset.texture_save(fmt.tprintf("%s/assets/brick.tex",root),&assets.types,{id=texture,width=128,height=128,format=.RGBA8,mips=mips}),asset.Error.None)
+    asset.registry_init(&assets.registry,fmt.tprintf("%s/assets",root))
+    defer asset.registry_destroy(&assets.registry)
+    testing.expect_value(t,asset.registry_scan(&assets.registry),asset.Error.None)
+    app:=host.App{assets=&assets}
+    st,opened:=store.open(fmt.tprintf("%s/store",root))
+    if !testing.expect_value(t,opened,store.Error.None) {return}
+    defer store.close(&st)
+    for session in 0..<2 {
+        p:=new(Thumbnails);defer free(p)
+        defer {delete(p.pixels);delete(p.image);thumbnail_file_destroy(&p.file)}
+        edits:history.Edits
+        s:=Session{app=&app,thumbnails=p,store=st,edits=&edits,frame=10}
+        quad:=preview_texture(&s,texture,THUMBNAIL_SIZE)
+        if session==0 {
+            testing.expect(t,p.drawn==s.frame+1 && quad.kind!=.Solid,"made from the texture the first time")
+        } else {
+            testing.expect(t,p.drawn!=s.frame+1 && p.loads==1 && quad.kind!=.Solid,"read from the store the second")
+        }
+        st=s.store
+    }
 }

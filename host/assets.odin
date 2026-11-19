@@ -12,6 +12,7 @@ import "mirai:rhi"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
+import "mirai:store"
 
 // The assets the worlds use, by id. An asset is loaded the first time
 // something asks for it, as a transaction between frames, or read by a job
@@ -41,13 +42,15 @@ ASSETS_LABEL_BYTES :: 32 // of what a mesh made at run time is (Mesh_Generate_Op
 
 Assets_Desc :: struct {
     root:string,               // folder of the asset registry
-    imported:string,           // the imported folder that goes with root (asset.Registry); "" for none
+    listed:[]asset.Package_Listed, // the outputs of the packages of the project root is the assets of (project_assets)
+    package_problems:[]string, // what those packages and the ones of the mounts could not list: kept for whoever reports asset problems
     cache:string,              // file where the registry keeps what it scanned; "" for none
     renderer:^render.Renderer, // nil: nothing is uploaded
     allocator:mem.Allocator,   // context.allocator when unset
     capacity:int,              // the most assets of each kind loaded at once, and derived material rows: the tables grow to it as they load. 0: ASSETS_DEFAULT_CAPACITY
     error_capacity:int,        // 0: ASSETS_DEFAULT_ERRORS
     mounts:[]asset.Registry_Mount, // folders seen beside root under a prefix: the assets of active plugins
+    store_root:string,         // of the store the listed outputs are read from: "" the machine's (store.default_root); opened only when something is listed
 }
 
 Assets_Kind :: enum u8 {Mesh,Texture,Material,Scene,Shape,Document}
@@ -61,6 +64,7 @@ Assets_Problem :: enum u8 {
     Rejected,    // the renderer did not take it: Renderer.error says why
     Capacity,    // no room for another asset of its kind
     Coverage,    // a masked material whose Surface program sets alpha: a mask map (maps.mask) cuts it, never its program
+    Not_Here,    // a part of its file is not in the store yet: it loads when asked for again once it arrives, and fails nothing
 }
 
 Assets_Error :: struct {
@@ -183,6 +187,7 @@ Assets_Stats :: struct {
     reloads:int,
     unloads:int,           // assets that assets_collect unloaded
     streamed:int,          // ranges of levels given to textures that follow what the GPU samples
+    not_here:int,          // loads of meshes and textures a part of whose file the store did not hold yet
     errors_dropped:int,    // errors that did not fit in the list
 }
 
@@ -225,6 +230,9 @@ Assets :: struct {
     missing_texture:Assets_Texture,
     missing_texture_ready:bool,
     errors:[dynamic]Assets_Error,
+    package_problems:[]string, // Assets_Desc.package_problems, owned
+    store:store.Store,         // where the listed outputs of packages are read: opened when something is listed
+    store_root:string,         // Assets_Desc.store_root, owned
     revision:u64,   // advances when something that was given out changes: who holds handles or rows asks again
     structure:u64,  // advances when the instances of a scene are no longer what they need: who extracted it does it again
     structure_changes:[ASSETS_STRUCTURE_LOG]Assets_Structure_Change,
@@ -276,10 +284,10 @@ assets_init :: proc(a:^Assets,desc:Assets_Desc) -> bool {
     allocator:=desc.allocator.procedure!=nil?desc.allocator:context.allocator
     capacity:=desc.capacity>0?desc.capacity:ASSETS_DEFAULT_CAPACITY
     a^={allocator=allocator,renderer=desc.renderer}
-    listed:=asset.registry_init(&a.registry,desc.root,desc.cache,allocator,desc.imported)
+    listed:=asset.registry_init(&a.registry,desc.root,desc.cache,allocator,desc.listed)
     // A copy of an asset made outside the editor gets an id of its own.
     a.registry.resolve_duplicates=true
-    for mount in desc.mounts {listed&&=asset.registry_mount(&a.registry,mount.folder,mount.prefix,mount.imported)}
+    for mount in desc.mounts {listed&&=asset.registry_mount(&a.registry,mount.folder,mount.prefix,mount.listed)}
     asset.types_init(&a.types,allocator)
     a.index=make(map[base.Asset_Id]Assets_Ref,allocator)
     a.derived=make(map[u64]u32,allocator)
@@ -304,6 +312,7 @@ assets_init :: proc(a:^Assets,desc:Assets_Desc) -> bool {
     a.free_scenes,errors[5]=make([dynamic]u32,0,start,allocator)
     a.errors,errors[6]=make([dynamic]Assets_Error,0,desc.error_capacity>0?desc.error_capacity:ASSETS_DEFAULT_ERRORS,allocator)
     for error in errors {ok&&=error==nil}
+    if ok {a.package_problems,ok=assets_texts_clone(desc.package_problems,allocator)}
     if desc.renderer!=nil {a.texture_assets=make([dynamic]base.Asset_Id,allocator)}
     ok=ok && cap(a.meshes)==capacity && cap(a.textures)==capacity && cap(a.materials)==capacity && cap(a.scenes)==capacity
     ok=ok && cap(a.material_descs)==capacity*2 && cap(a.row_marks)==capacity*2 && cap(a.row_hashes)==capacity*2 && cap(a.free_rows)==start && cap(a.free_meshes)==start && cap(a.rows_dirty)==ASSETS_ROWS_DIRTY
@@ -314,11 +323,43 @@ assets_init :: proc(a:^Assets,desc:Assets_Desc) -> bool {
         a.indexed=ok && asset.registry_load(&a.registry,index)==.None
         delete(index,allocator)
     }
+    if ok {
+        no_root:mem.Allocator_Error
+        a.store_root,no_root=strings.clone(desc.store_root,allocator)
+        ok=no_root==nil
+    }
+    // What packages list is read from the store, by its parts, while the assets live.
+    if ok && assets_listing(desc) {assets_store(a)}
     if !ok || (!a.indexed && asset.registry_scan(&a.registry)!=.None) {
         assets_destroy(a)
         return false
     }
     return true
+}
+
+// The store the listed outputs are read from, opened the first time something
+// listed is read: at the start, or once a project that had no package lists one.
+// nil when it does not open.
+@(private="file")
+assets_store :: proc(a:^Assets) -> ^store.Store {
+    if a.registry.store!=nil {return a.registry.store}
+    folder:=a.store_root!="" ? a.store_root : store.default_root(context.temp_allocator)
+    if folder=="" {return nil}
+    opened,open_error:=store.open(folder,a.allocator)
+    if open_error!=.None {return nil}
+    a.store=opened
+    a.registry.store=&a.store
+    return a.registry.store
+}
+
+// Whether a registry of desc lists outputs of packages.
+@(private="file")
+assets_listing :: proc(desc:Assets_Desc) -> bool {
+    if len(desc.listed)>0 {return true}
+    for mount in desc.mounts {
+        if len(mount.listed)>0 {return true}
+    }
+    return false
 }
 
 assets_destroy :: proc(a:^Assets) {
@@ -334,7 +375,26 @@ assets_destroy :: proc(a:^Assets) {
     for &scope in a.scopes {delete(scope.ids)}
     asset.types_destroy(&a.types)
     asset.registry_destroy(&a.registry)
+    store.close(&a.store)
+    delete(a.store_root,a.allocator)
+    for problem in a.package_problems {delete(problem,a.allocator)}
+    delete(a.package_problems,a.allocator)
     a^={}
+}
+
+@(private="file")
+assets_texts_clone :: proc(texts:[]string,allocator:mem.Allocator) -> (kept:[]string,ok:bool) {
+    if len(texts)==0 {return nil,true}
+    no_room:runtime.Allocator_Error
+    if kept,no_room=make([]string,len(texts),allocator);no_room!=nil {return nil,false}
+    for text,i in texts {
+        if kept[i],no_room=strings.clone(text,allocator);no_room!=nil {
+            for done in kept[:i] {delete(done,allocator)}
+            delete(kept,allocator)
+            return nil,false
+        }
+    }
+    return kept,true
 }
 
 // Looks at the folder again: for files that appeared or went away. A folder
@@ -376,6 +436,8 @@ assets_unmount :: proc(a:^Assets,prefix:string) -> asset.Error {
 
 assets_errors :: proc(a:^Assets) -> []Assets_Error {return a.errors[:]}
 assets_errors_clear :: proc(a:^Assets) {clear(&a.errors)}
+// What the packages of the project could not list, one line per package that names it.
+assets_package_problems :: proc(a:^Assets) -> []string {return a.package_problems}
 
 // The id of the asset at a path of the folder, as its file is spelled
 // ("arena/Chrome.mat"): what code that names an asset by path resolves.
@@ -454,6 +516,12 @@ assets_open :: proc(a:^Assets,id:base.Asset_Id,kind:Assets_Kind,file:^asset.Asse
     return
 }
 
+// What reading the tables of an open file meets: a part not in the store yet, or a file that contradicts itself.
+@(private="file")
+assets_view_problem :: proc "contextless" (detail:asset.Error) -> Assets_Problem {
+    return .Not_Here if detail==.Not_Here else .Corrupt
+}
+
 // What loading an asset meets when its file does not open.
 @(private="file")
 assets_problem_of :: proc "contextless" (detail:asset.Error) -> (problem:Assets_Problem,ok:bool) {
@@ -461,20 +529,41 @@ assets_problem_of :: proc "contextless" (detail:asset.Error) -> (problem:Assets_
     case .None:      return {},true
     case .Not_Found: return .Missing,false
     case .IO:        return .Unreadable,false
+    case .Not_Here:  return .Not_Here,false
     }
     return .Corrupt,false
 }
 
-// A transaction owned by the caller, which closes file with asset_close.
+// A transaction owned by the caller, which closes file with asset_close. A
+// listed output of a package opens from the store, where each part is read
+// when it is first asked for: one the store does not hold yet is Not_Here.
 assets_file :: proc(a:^Assets,id:base.Asset_Id,kind:asset.Fourcc,file:^asset.Asset) -> asset.Error {
     if a==nil || file==nil {return .Invalid}
     record,found:=asset.registry_find(&a.registry,id)
     if !found {return .Not_Found}
     if record.kind!=kind {return .Invalid}
     limit:=assets_byte_limit(a,record.path)
-    data:=asset.registry_read(&a.registry,record.path,a.allocator,limit) or_return
-    assets_file_take(file,data,id,kind,a.allocator,limit) or_return
+    if object,listed:=asset.registry_listed_object(&a.registry,record.path);listed {
+        s:=assets_store(a)
+        if s==nil {return .Not_Found}
+        assets_object_open(file,s,object,id,kind,a.allocator,limit) or_return
+    } else {
+        data:=asset.registry_read(&a.registry,record.path,a.allocator,limit) or_return
+        assets_file_take(file,data,id,kind,a.allocator,limit) or_return
+    }
     a.stats.loads+=1
+    return .None
+}
+
+// Opens the asset of the store at object as assets_file_take opens a file: its id and its kind
+// those of the record. Any thread.
+@(private="file")
+assets_object_open :: proc(file:^asset.Asset,s:^store.Store,object:store.Hash,id:base.Asset_Id,kind:asset.Fourcc,allocator:mem.Allocator,limit:u64,decoder:^asset.Decoder=nil) -> asset.Error {
+    asset.asset_open_object(file,s,object,allocator,limit,decoder) or_return
+    if file.blob.header.id!=id || file.blob.header.kind!=kind {
+        asset.asset_close(file)
+        return .Corrupt
+    }
     return .None
 }
 
@@ -501,14 +590,16 @@ assets_file_take :: proc(file:^asset.Asset,data:[]u8,id:base.Asset_Id,kind:asset
 }
 
 // Where a job reads the file of an asset: a copy of what the registry holds
-// in memory, or its path on disk. Its kind and content hash are those of the
-// record when it was found.
+// in memory, its path on disk, or the object of the store a package lists.
+// Its kind and content hash are those of the record when it was found.
 Assets_Source :: struct {
     id:base.Asset_Id,
     kind:asset.Fourcc,
     hash:u64,
     path:string,
     data:[]u8,
+    object:store.Hash,
+    store:^store.Store, // of object, which outlives the source
     allocator:mem.Allocator, // of path and data: one any thread can use
     limit:u64,               // the most its file may take; 0: asset.DEFAULT_MEMORY_LIMIT
 }
@@ -519,7 +610,10 @@ assets_source :: proc(a:^Assets,id:base.Asset_Id,allocator:mem.Allocator) -> (so
     record:=asset.registry_find(&a.registry,id) or_return
     if record.state!=.Asset {return}
     source={id=id,kind=record.kind,hash=record.content_hash,allocator=allocator,limit=assets_byte_limit(a,record.path)}
-    if held,in_memory:=asset.registry_memory_find(&a.registry,record.path);in_memory {
+    if object,listed:=asset.registry_listed_object(&a.registry,record.path);listed {
+        source.object,source.store=object,assets_store(a)
+        if source.store==nil {return {},false}
+    } else if held,in_memory:=asset.registry_memory_find(&a.registry,record.path);in_memory {
         if held.removed {return {},false}
         data,error:=asset.asset_bytes_clone(held.data,allocator)
         if error!=.None {return {},false}
@@ -536,6 +630,7 @@ assets_source_open :: proc(source:^Assets_Source,file:^asset.Asset,decoder:^asse
     data:=source.data
     source.data=nil
     limit:=source.limit!=0?source.limit:asset.DEFAULT_MEMORY_LIMIT
+    if source.store!=nil {return assets_object_open(file,source.store,source.object,source.id,source.kind,source.allocator,limit,decoder)}
     if data==nil {data=asset.asset_file_read(source.path,source.allocator,limit) or_return}
     return assets_file_take(file,data,source.id,source.kind,source.allocator,limit,decoder)
 }
@@ -545,6 +640,28 @@ assets_source_free :: proc(source:^Assets_Source) {
     delete(source.path,source.allocator)
     delete(source.data,source.allocator)
     source^={}
+}
+
+// Forgets the entry of a mesh or a texture a part of whose file is not in the
+// store yet: the stand-in shows meanwhile, nothing fails, and a later
+// request loads it again.
+@(private="file")
+assets_not_here :: proc(a:^Assets,id:base.Asset_Id) {
+    ref,known:=a.index[id]
+    if !known {return}
+    #partial switch ref.kind {
+    case .Mesh:
+        a.meshes[ref.index]={handle=ASSETS_MESH_NONE}
+        append(&a.free_meshes,ref.index)
+        a.stats.meshes-=1
+    case .Texture:
+        a.textures[ref.index]={}
+        append(&a.free_textures,ref.index)
+        a.stats.textures-=1
+    case: return
+    }
+    delete_key(&a.index,id)
+    a.stats.not_here+=1
 }
 
 // An entry for another asset of a kind: one an unloaded asset left, or a new one while there is room.
@@ -636,7 +753,7 @@ assets_mesh_load :: proc(a:^Assets,id:base.Asset_Id,entry:^Assets_Mesh,replace:=
 @(private="file")
 assets_mesh_view :: proc(file:^asset.Asset,types:^asset.Types) -> (view:asset.Mesh_View,problem:Assets_Problem,detail:asset.Error,ok:bool) {
     view_error:asset.Error
-    if view,view_error=asset.mesh_view(file,types);view_error!=.None {return {},.Corrupt,view_error,false}
+    if view,view_error=asset.mesh_view(file,types);view_error!=.None {return {},assets_view_problem(view_error),view_error,false}
     if !asset.mesh_check_indices(view) {return {},.Corrupt,.Corrupt,false}
     return view,{},.None,true
 }
@@ -704,6 +821,11 @@ assets_mesh :: proc(a:^Assets,id:base.Asset_Id) -> ^Assets_Mesh {
     if entry==nil {return assets_missing_mesh(a)}
     scope:=load_asset_begin(a.load_profile)
     problem,detail,ok:=assets_mesh_load(a,id,entry)
+    if !ok && problem==.Not_Here {
+        load_asset_end(a.load_profile,scope,id,.Mesh,0,true)
+        assets_not_here(a,id)
+        return assets_missing_mesh(a)
+    }
     if !ok {
         assets_fail(a,id,.Mesh,problem,detail)
         entry^=assets_missing_mesh(a)^
@@ -1132,12 +1254,12 @@ assets_texture_load :: proc(a:^Assets,id:base.Asset_Id,entry:^Assets_Texture,rep
     if problem,detail,ok=assets_open(a,id,.Texture,&file);!ok {return}
     defer asset.asset_close(&file)
     view,view_error:=asset.texture_open(&file,&a.types)
-    if view_error!=.None {return .Corrupt,view_error,false}
+    if view_error!=.None {return assets_view_problem(view_error),view_error,false}
     levels:Assets_Levels
     defer assets_levels_free(&levels)
     first:=0
     if a.renderer!=nil {first,_=assets_texture_first(view,render.texture_limits(a.renderer),0)}
-    if view_error=asset.texture_decode(&file,&a.types,&view,first);view_error!=.None {return .Corrupt,view_error,false}
+    if view_error=asset.texture_decode(&file,&a.types,&view,first);view_error!=.None {return assets_view_problem(view_error),view_error,false}
     if a.renderer!=nil {
         if problem,detail,ok=assets_texture_levels(view,render.texture_limits(a.renderer),0,&levels,a.allocator);!ok {return}
     }
@@ -1320,6 +1442,11 @@ assets_texture :: proc(a:^Assets,id:base.Asset_Id) -> ^Assets_Texture {
     if entry==nil {return nil}
     scope:=load_asset_begin(a.load_profile)
     problem,detail,ok:=assets_texture_load(a,id,entry)
+    if !ok && problem==.Not_Here {
+        load_asset_end(a.load_profile,scope,id,.Texture,0,true)
+        assets_not_here(a,id)
+        return assets_missing_texture(a)
+    }
     if !ok {
         assets_fail(a,id,.Texture,problem,detail)
         entry^=assets_missing_texture(a)^
@@ -1690,7 +1817,7 @@ assets_prepare :: proc(prepared:^Assets_Prepared,limits:Assets_Limits,types:^ass
         }
         if view_error==.None {view_error=asset.texture_decode(&prepared.file,types,&view,first)}
         if view_error!=.None {
-            prepared.problem,prepared.detail=.Corrupt,view_error
+            prepared.problem,prepared.detail=assets_view_problem(view_error),view_error
             return
         }
         prepared.texture,prepared.ok,prepared.cost=view.info^,true,len(view.texels)
@@ -1740,7 +1867,9 @@ assets_take :: proc(a:^Assets,prepared:^Assets_Prepared,over_frames:=false) -> A
         if entry==nil {return .Taken}
         if ok {problem,detail,ok=assets_mesh_install(a,prepared.mesh,entry,ahead=&prepared.ahead,over_frames=split,upload=&prepared.mesh_upload)}
         if ok && prepared.mesh_upload!={} {taken=.Uploading}
-        if !ok {
+        if !ok && problem==.Not_Here {
+            assets_not_here(a,id)
+        } else if !ok {
             assets_fail(a,id,.Mesh,problem,detail)
             entry^=assets_missing_mesh(a)^
         }
@@ -1753,7 +1882,9 @@ assets_take :: proc(a:^Assets,prepared:^Assets_Prepared,over_frames:=false) -> A
         } else if ok {
             problem,detail,ok=assets_texture_install(a,id,prepared.texture,&prepared.levels,entry)
         }
-        if !ok {
+        if !ok && problem==.Not_Here {
+            assets_not_here(a,id)
+        } else if !ok {
             assets_fail(a,id,.Texture,problem,detail)
             entry^=assets_missing_texture(a)^
         }

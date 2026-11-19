@@ -68,7 +68,7 @@ compressor_flags :: proc(engine_root:string,allocator:=context.allocator) -> (fl
     return
 }
 
-// A cache of what imports build, kept by content (TEXTURE_CACHE, MESH_CACHE):
+// A cache of what is built from content (COLLISION_CACHE):
 // what a file of it holds depends on what it was made from and on no project,
 // so every project of a checkout shares it, and so do the worktrees of the
 // repository: <main>/.mirai/cache/<name>, where main is the main checkout of

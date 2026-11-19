@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "id": "de7548cbbad3494b21280744cd16ed68",
+  "name": "tiles_orm",
+  "origin": {"path": "assets/surfaces/tiles/tiles_orm.png", "folder": false, "importer": "image"},
+  "identity": "032ec4ed33e3897d8890d072eaf44ae99ea73024adfe597e062e583e61c06b88",
+  "inputs": [],
+  "assets": [
+    {"kind": "TEX", "name": "tiles_orm", "index": 0, "id": "84dbfd2533a249a9716c78d548c6c654"}
+  ]
+}

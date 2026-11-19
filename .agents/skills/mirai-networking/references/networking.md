@@ -14,13 +14,22 @@ Descriptors, defaults and statistics (`Host_Desc`, `Replication_Desc`, `Object_D
 - Values: single bits, bool, ranged integers, varuint and zigzag varint, raw floats or floats by
   range and precision, octahedral unit vectors, smallest-three quaternions, and bytes and strings
   with a length. `quantize_*`/`dequantize_*` do the conversions without a stream.
+- Bytes on a byte boundary (`bit_write_align`, `bit_read_align`) are copied whole, and
+  `bit_read_view` returns them where they lie without a copy.
 
 ## Transport
 
-`Transport` is two non-blocking procedures, `send` and `receive`; `PACKET_BYTES` is the largest
-datagram.
+`Transport` moves datagrams a batch at a time: `send` and `receive` never block, and `wait` blocks
+until a datagram arrives, `wake` is called from any thread, or a time passes. A worker needs `wait`
+and `wake`; a host the caller updates uses neither. `PACKET_BYTES` is the largest datagram. A host
+builds its datagrams in a batch of slots and hands them over when the batch fills and at the end of
+the update, and asks for as many as its command buffer has room for.
 
-- **`Udp`**: a non-blocking UDP socket from `core:net` (port 0: the system chooses). Bound to
+- **`Udp`**: a non-blocking UDP socket from `core:net` (port 0: the system chooses). A batch is one
+  call where the system has one (`sendmsg_x`/`recvmsg_x` on macOS, `sendmmsg`/`recvmmsg` on Linux)
+  and a call per datagram on Windows, behind the same signatures (`udp_send_batch`,
+  `udp_receive_batch`). `wait` polls the socket and a second one on `127.0.0.1` that `wake` sends a
+  byte to. Bound to
   `address_any6` it is dual-stack: it turns off `IPV6_V6ONLY` before the bind (`udp_dual_stack`, one
   signature per system) and receives both IPv6 and IPv4 peers. An IPv4 peer arrives as
   `::ffff:a.b.c.d` and `address_from_endpoint` returns it as IPv4; sending to it from that socket
@@ -52,7 +61,10 @@ like `replication.hysteresis`) and the values it admits.
   and updates statistics, replicas, the input buffer and the clock.
 - **Network half**: `host_update(h,now)` in the calling thread, or `worker_start(h)` in its own
   thread. It applies the frames, receives, evaluates scope, packs and sends. It never reads game
-  memory: the frame carries copies of the quantized state.
+  memory: the frame carries copies of the quantized state. Between updates the worker waits in the
+  transport until a datagram arrives, the simulation half queues a frame or empties the command
+  buffer it filled (both wake it), or something is due: at most a millisecond while a connection
+  has anything in flight, waiting or unacknowledged, else its keepalive or handshake.
 - The two halves only touch when swapping buffers under a mutex, with preallocated frames and
   command buffers. If the network falls behind, the frame keeps filling and goes out with the next
   publication (`publish_stalls`); if the command buffer has no reserve for what one datagram can
@@ -62,90 +74,153 @@ like `replication.hysteresis`) and the values it admits.
 
 ## Connections
 
-- **Four-datagram handshake, always sealed.** The client's request and response are padded.
-  - *Request*: the client salt, to every address `host_connect` got at once: one, or the two of
-    an invitation. The client proves itself to each that answers and goes on with the one that
-    accepts; answers from any other address are ignored. A denial or another version ends the
-    attempt once every candidate gave one: the other may be the host while this one is another
-    machine at a private address of the client's own network.
-  - *Challenge*: a SipHash cookie of the address, the salt and the
-    time, the server's version and its lasting X25519 key; every request gets it and the server
-    stores nothing.
-  - *Response*: the cookie, the protocol hash, the client's key for the attempt and its proof,
-    sealed with a key from the exchange of that key with the server's lasting one and the
-    invitation.
-  - *Accepted*: the server's key for the connection and, sealed with the session keys, its salt,
-    object capacity, history and the slot of the connection.
-  - Nothing but the challenge answers an address that has not returned a valid cookie, and
-    nothing at all a proof that does not open (a wrong invitation): both count in
-    `handshakes_dropped`. Denials (`Denied_Protocol`, `Denied_Full`) go only to a returned cookie,
-    and `Denied_Full` only to a proof that opened; they count in `handshakes_refused`. The idea
-    is netcode's: answer only when necessary, and deny only a request that passed every check
-    ([standard](https://raw.githubusercontent.com/mas-bandwidth/netcode/main/STANDARD.md)).
-  - A wrong proof costs its address (the IP without the port, an IPv6 /64): a few back to back,
-    then one per interval; what comes sooner is put off before the key exchange
+- **Two datagrams to connect, and the first carries data** (`net/secure.odin`): the handshake is
+  the Noise pattern `NKpsk0` (`Noise_NKpsk0_25519_ChaChaPoly_SHA256`). The client knows the
+  server's key `s` before it writes anything, and the pre-shared key is the invitation's secret.
+  - *Initiate* (`-> psk, e, es`): its header (salt, version, protocol hash and the cookie of a Key)
+    is the prologue, and its payload is the client's datagram 0 of the connection: what it queued
+    with `message_send` to connection zero after `host_connect`. The game of the server has it half
+    a round trip after the client connected. The same bytes go to every address `host_connect` got,
+    each interval, until a Response opens; a denial or another version ends the attempt once every
+    candidate gave one: the other may be the host while this one is another machine at a private
+    address of the client's own network.
+  - *Response* (`<- e, ee`): sealed, the object capacity, the history and the slot of the
+    connection. Both ends then split the keys of the connection.
+  - What each end proves: the client, that it holds the invitation (an Initiate opens only for the
+    holder of `s` and only if its sender knew `s` and the secret), and nothing of who it is; until
+    a datagram under the keys of the connection comes from its address, not even that it receives
+    there. The server, that it holds `s` and the secret.
+  - Without an invitation the client first sends a padded *Hello* to every candidate, and the
+    first server that answers with its *Key* (`s`, its version and a SipHash cookie of the
+    address, the salt and the time, keeping nothing) gets the Initiate, which returns the cookie
+    and mixes a zero secret. That is one round trip before data, and the same handshake: the client
+    takes `s` from the Key, so only an active attacker on the path could pose as the server.
+- **The MAC of the invitation.** An Initiate ends in an HMAC-SHA256 under a key derived from `s`
+  and the secret: a host with an invitation answers nothing, not even a denial, to one without it,
+  and it costs no key exchange. Without an invitation `s` comes in the Key and the MAC filters only
+  strays.
+- **Replays and early data.** The server keeps the key `e` of every Initiate it opened in Bloom
+  filters, whether it then accepts or refuses it: those without a cookie in one that lasts as long
+  as `s`, those with one in two generations that turn every `COOKIE_SECONDS`, as long as a cookie
+  is good. A copy that comes later, from any address, while its connection lives or after it ended,
+  opens nothing: no second connection, no early data delivered again, no key exchange. A copy from
+  the address of a connection still waiting for its client gets the stored Response again. So the
+  early data is applied once and may carry anything the client queues; what needs the server's
+  answer is sent after `Connected`. The server's own traffic waits for the client: until a datagram
+  under the keys comes from its address, that address hears only the Response, one for each copy
+  of the Initiate, and the Disconnect of a game that closes the connection. The game of the server
+  hears `Connected` and the early data at once; a connection whose client never answers ends with
+  `Connect_Timeout` after `connect_timeout`, without a word to its address.
+- **Retry.** Each filter takes at most `SEEN_LIMIT`, which keeps a false positive under one in
+  10^4. An Initiate the filter holds, one without a cookie when that filter is full, and, for
+  `BUSY_SECONDS` after an update ran out of key exchanges, any without a cookie, gets a Retry: a
+  cookie of its address, smaller than the Initiate. The client seals the same datagram 0 again with
+  the cookie and a new `e`. Spoofed senders never return the cookie, so the exchanges go to those
+  who do; a filled filter or a flood costs a client one round trip, never its connection, and an
+  unloaded server keeps none. A generation that is full puts off what comes until it turns.
+- **Amplification and work.** The Hello and the Initiate are padded to `HANDSHAKE_BYTES`, more than
+  any answer to them: an unconfirmed address never hears more than it sent. A server answers no
+  Hello when it has an invitation. An Initiate costs at most one X25519 exchange before it opens,
+  and two more when it does, `handshakes_per_update` at a time per update. Denials go to an
+  Initiate with the MAC: `Denied_Version` read from the header, `Denied_Protocol` and `Denied_Full`
+  after it opened; they count in `handshakes_refused`, and what gets no answer in
+  `handshakes_dropped`.
+  - A wrong Initiate with the MAC costs its address (the IP without the port, an IPv6 /64): a few
+    back to back, then one per interval; what comes sooner is put off before the key exchange
     (`handshakes_deferred`). The allowance is a token bucket kept as one time per address in a
     fixed table of sets; a full set gives its slot that frees soonest to the newcomer, so a crowd
-    of guessers never shuts out who brings the invitation, which joins with no added round trip.
-- **Format.** Every datagram starts with a type byte. The handshake ends in an XXH3 checksum keyed
-  with `protocol_id`, which only filters strays; data ends in the ChaCha20-Poly1305 tag, with the
-  type, sequence and the slot of the connection at the receiver as associated data. The protocol
-  hash includes fragments, events, input, channels and `TRANSPORT_VERSION`, which rises when the
-  format of the handshake or of data datagrams changes.
+    of guessers never shuts out who brings the invitation.
+- **Format.** Every datagram starts with a type byte. A handshake datagram ends in an XXH3 checksum
+  keyed with `protocol_id`, which only filters strays; data ends in the AEGIS-128L tag, with the
+  type, sequence and the slot of the connection at the receiver as associated data. AEGIS runs on
+  the AES instructions where the processor has them and on a portable implementation, about ten
+  times slower, where it does not. The protocol hash includes fragments, events, input, channels and
+  `TRANSPORT_VERSION`, which rises when the format of the handshake or of data datagrams changes.
 - **Roaming.** A data datagram from an address no connection has goes to the connection of the
   slot it names; if it opens under that key and is newer than any the connection accepted, the
   connection moves to that address, as WireGuard roams: a router that changes the port, or a
   switch of network, loses nothing and costs no round trip. A forged datagram does not open, and
   one replayed from elsewhere is not newer, so neither moves a connection.
-- **Sealing** (`net/secure.odin`, only with `core:crypto`; there is no unsealed mode): the session
-  keys come from HKDF-SHA256 over the exchange of the two keys made for the connection and that of
-  the client's key with the server's lasting one, salted with the key of the invitation. The
-  client takes the server's key from the challenge, so only an active attacker on the path could
-  pose as the server, and only knowing the invitation. One key per direction, with the 64-bit
-  sequence as nonce, which every `REKEY_INTERVAL` datagrams is derived from the previous one; the
-  receiver's only advances when a datagram with the new one turns out authentic. A tampered,
-  truncated, repeated or older-than-the-last-accepted datagram is discarded. A system without
-  secure random bytes cannot make a host (`host_init` refuses `invite`) nor an invitation
-  (`invite_token` is not ok).
-- **Two ways in.** By address: a server whose `Host_Desc.invite` is zero admits anyone who reaches
-  it, and the client calls `host_connect` with that address. By invitation: `Host_Desc.invite` is
-  in every key, so both ends must have the same one, and a client without it times out with
-  `Connect_Timeout`. It is a 64-bit secret so that whoever received the code gets in, not a
-  credential: nobody can try invitations from the server's answers, and neither the guesses the
-  server lets through nor whoever poses as the server on the path, trying them against the
-  client's proof offline, get near it.
+- **Sealing** (only with `core:crypto`; there is no unsealed mode): Split gives one key per
+  direction, and AEGIS-128L seals every datagram after the handshake with the first half of it and
+  the 64-bit sequence as nonce. Every `REKEY_INTERVAL` datagrams the key is derived from the
+  previous one; the receiver's only advances when a datagram with the new one turns out authentic.
+  The client's datagram 0 is its Initiate, sealed by the handshake, so its first under AEGIS is 1.
+  A tampered, truncated, repeated or older-than-the-last-accepted datagram is discarded. A system
+  without secure random bytes cannot make a host (`host_init` refuses `security`) nor an
+  invitation (`invite_key` is not ok).
+- **Secrecy.** The keys that follow the Response come from `ee` and die with the two ephemeral
+  keys: with `s` and the secret a recorded connection still does not open. The early data depends
+  on `s` as well, and `s` belongs to a share: `invite_key` makes it when the share starts, its
+  owner and its `Host` keep it in memory, and it is gone when the share ends; its private key is
+  never written down nor put on a command line. Nobody can try secrets against recorded traffic:
+  that takes `s`.
+- **Two ways in.** By address: a server whose `Host_Desc.invite` is none makes its `s` in
+  `host_init` and gives it in its Key; anyone who reaches it joins with `host_connect` and that
+  address. By invitation: `Host_Desc.invite` is the share's key at the server and what the code
+  carries at the client; a host with one answers nothing else, so a client without it hears nothing
+  and times out with `Connect_Timeout`.
 - **Invitation codes** (`net/invite.odin`): the host says where it is, as ICE gathers a host and a
   reflexive candidate: `invite_make` takes its address on its network (`address_lan`) and, once
-  the router mapped its port, the mapped one; `invite_encode` writes both with the token and a
-  CRC-15 in Crockford base32, tolerant of case, separators and confusable characters, and the
-  client passes both addresses of `invite_decode` to `host_connect`. On the host's network the LAN
-  address answers; from outside, the mapped one; a router that does not loop its public address
-  back does not matter, and the client asks no other address.
-- **Amplification.** The Challenge is smaller than the padded request, and the server does X25519
-  exchanges (two per accepted client, one per refused proof) only for whoever returned the cookie,
-  `handshakes_per_update` at a time per update.
-- **Acks.** Each data datagram carries its sequence, the last one received and a variable number of
-  ack bits: from what the other end might not have resolved when reading the last ack this end
-  received (`ack_known`), capped by `ACK_WINDOW`. Everything the sender has in flight arrives this
-  way with its real fate, also after a receiver stall.
-  - A datagram older than the last accepted is not acked: when a later one is acked, the fate of
-    the earlier ones is final and what was in a lost one is resent.
-  - If it arrives late (at most `LATE_WINDOW` behind) and had not been received, only what is safe
-    out of order is taken (`packets_late`): the chunks of the game's reliable channels, which
-    assemble only once, and on the server the inputs of ticks after the last received.
-  - Skipped are unreliable and sequenced messages, the server time and the objects, because what
-    arrived later is newer; and the library channels (reliable events and replication messages),
-    because they talk about objects whose state in that datagram is discarded and delivering them
-    earlier would change the order in which the game applies them.
+  the router mapped its port, the mapped one; `invite_encode` writes the version of the layout,
+  both addresses, `s` and the secret with a CRC-15 in Crockford base32 by groups of four, tolerant
+  of case, separators and confusable characters, and the client passes both addresses of
+  `invite_decode` to `host_connect`. `invite_decode` says why a text is no code (`Invite_Error`,
+  `invite_error_text`): a code of the earlier format, of another version, a character changed or two
+  swapped, or a key of small order. Everything stands at 128 bits but the secret, 64 bits that only
+  whoever learned `s` without the code could guess, online, at the rate each address is allowed. On
+  the host's network the LAN address answers; from outside, the mapped one; a router that does not
+  loop its public address back does not matter, and the client asks no other address.
+- **Acks.** Each data datagram carries its sequence, the last one received and which of the ones
+  before it arrived, from what the other end might not have resolved when reading the last ack this
+  end received (`ack_known`), capped by `ACK_WINDOW`, as runs of arrived and missing datagrams in
+  Elias gamma code: a stream with few losses acks thousands of datagrams in a few bytes. Everything
+  the sender has in flight arrives this way with its real fate, also after a receiver stall. The
+  ack takes only what the clock or the inputs leave of the datagram: runs that do not fit are left
+  out, and the sender takes those datagrams as lost. It also names the datagram that arrived last
+  and how long ago, which the RTT is taken from: on a path that reorders, the newest one received
+  is the one that came fastest.
+  - A receiver acks within `ACK_DELAY`, or with what it sends anyway, and at once after
+    `ACK_EVERY` datagrams that carried reliable chunks or one that came late: a stream is acked as
+    it arrives, and a connection without one sends no datagram more for it.
+  - **Loss.** A datagram missing from an ack is lost only when reordering can no longer explain
+    it, as RACK and QUIC judge it: `REORDER_COUNT` datagrams sent after it were acked, and it has
+    been out longer than the RTT and a window from its variation (`loss_delay`). Its records are
+    resolved then; acked ones are resolved as they are acked, in any order. A lost datagram that
+    an ack later reports as arrived takes its loss back, so it does not count for the rate, widens
+    the window to what it needed (fading over seconds), and what was resent for it is a duplicate.
+  - A datagram older than the last accepted came late. If it had not been received and lies within
+    `ACK_WINDOW`, its ack is read and what is safe out of order is taken (`packets_late`): the
+    chunks of the game's reliable channels, which assemble only once, the messages of a game
+    channel that delivered none from a later datagram (each channel keeps its order), and on the
+    server the inputs of ticks after the last received. If that was all it carried it is acked,
+    and the receiver keeps it in its acks until the other end read one that has it.
+  - Skipped are the server time and the objects, because what arrived later is newer; and the
+    library channels (reliable events and replication messages), because they talk about objects
+    whose state in that datagram is discarded and delivering them earlier would change the order
+    in which the game applies them. A late datagram with something skipped is not acked: what was
+    in it is resent.
   - With nothing to say it is sent anyway to ack, keep the connection alive or probe a queue with
     no ack.
 - **Send limit**: a token bucket with the connection's rate that stores at most one tick of rate
   (`send_burst`), so a network half that updates more often than the tick spreads the datagrams.
-  The object budget of each send is the lesser of `budget_bytes` and the tokens: replication
-  follows the rate.
-- **Congestion**: AIMD driven by the queue (the mean RTT of the interval above the lowest of the
-  recent window), not by loss, to cut back before the path buffer overflows; a link that loses at
-  random without a queue keeps its rate, which never drops below `min_send_rate`.
+  An update sends while the tokens last, up to `RECORD_WINDOW` datagrams in flight; past it, one
+  datagram a keepalive still goes, so a connection whose every datagram in flight was lost to an
+  outage learns their fate from the ack of a newer one and resumes. A reliable
+  channel with a datagram of chunks ready sends at every update the tokens allow; the rest goes once
+  a tick, or at the update that takes a message its owner queued, so an owner that publishes no
+  ticks (a transfer, the exchange) does not wait a tick for the end of each message. The object
+  budget of each send is the lesser of `budget_bytes` and the tokens: replication follows the rate.
+- **Congestion**: the connection finds the rate of its path; nothing in `Host_Desc` sets it. It
+  starts at `CC_START_RATE` and doubles each interval that wanted more, until the queue appears
+  (the mean RTT of the interval above the lowest mean of an interval in the recent window, beyond
+  `CC_QUEUE_DELAY` and two datagrams at the rate; each mean counts with the uncertainty its spread
+  and its number of samples leave, so jitter does not read as a queue). Then it drops below what
+  the path delivered and grows by the same bytes per second for every connection (at most a
+  quarter each interval), so connections on one path converge to equal shares and the queue stays
+  short for the game traffic on it. Losses cut it only with a queue or past `CC_OVERRUN_SHARE`; a
+  link that loses at random keeps its rate, which never drops below `CC_MIN_RATE`. An interval
+  that delivered next to nothing, as after an outage, starts again from `CC_START_RATE`.
 - **Close**: `host_disconnect` tells the other end with its reason; silence closes with `Timeout`,
   and an authentic datagram that cannot be interpreted, with `Protocol_Error`. The reasons for
   rejection and closing are `Disconnect_Reason` (`host.odin`).
@@ -153,26 +228,42 @@ like `replication.hysteresis`) and the values it admits.
 ## Channels
 
 Game channels in `Host_Desc.channels`, the same at both ends; `message_send` and the `Message`
-command. `budget` limits the bytes of a channel per update.
+command. `budget` limits the bytes of a channel per update. In each datagram the library's channels
+go first, then the unreliable and sequenced game channels, then the reliable game channels one
+chunk each in turn, starting with a different one each datagram: a channel that streams leaves the
+others their share.
 
 - `Unreliable` is sent once; `Sequenced` too, and a message that is still waiting is replaced by
   the next one.
-- `Reliable` is resent until its ack, delivered in order and cut into chunks as the window draws
-  them from the queue: the one fragmentation of the transport. `message_send` returns `Full` and
-  sends nothing if the message does not fit in the queue of some destination connection (it knows
-  from `Connection_Stats.queue_free` of the last `host_poll` minus what was queued since): the
-  sender retries after `host_poll`. With `sent`, a message to one connection streams: each call
-  queues what has room, and the channel takes nothing else until it is in, so a message has no
-  size limit. A message longer than `PIECE_BYTES` arrives in pieces (`Command.more`), which the
-  receiver joins; the library's own reliable channel takes only whole messages.
+- `Reliable` is a stream of its messages, each its size and its bytes, cut into chunks as each
+  datagram has room: the one fragmentation of the transport. A datagram carries the next messages
+  whole or a part of one, up to `chunk_longest` bytes, which is what is left past the longest clock
+  or inputs and an acknowledgement kept to `ACK_KEPT` bits, all a datagram spares while a lost chunk
+  waits: so a resend always fits in the next datagram. A chunk says where its bytes lie in the
+  sender's queue; the queue keeps them until the ack, so they are not copied anywhere else, and the
+  receiver keeps a chunk that comes ahead of a gap at the same place of its own. `message_send`
+  returns `Full` and sends nothing if the message does not fit in the queue of some destination
+  connection (it knows from `Connection_Stats.queue_free` of the last `host_poll` minus what was
+  queued since): the sender retries after `host_poll`. With `sent`, a message to one connection
+  streams: each call queues what has room, and the channel takes nothing else until it is in, so a
+  message has no size limit. A message up to `PIECE_BYTES` arrives whole: straight from the datagram
+  when it lies in one, joined first when it spans several. A longer one arrives in pieces as its
+  datagrams bring them (`Command.more`), which the receiver joins; the library's own reliable
+  channel takes only whole messages, no larger than it allows.
 - **Window.** The chunks a reliable channel keeps in flight grow by what the path acknowledges
   (`channel_window`, each congestion interval), so they double each round trip while they hold the
-  channel back. Twice what the connection's rate sends in a round trip bounds them,
-  so congestion control and `send_rate` decide what a stream takes, and `Channel_Desc.window`, a
-  power of two the same at both ends, is the most a channel holds and receives ahead. A loss does
-  not shrink the window: its resend waits a round trip with the chunks after it acknowledged.
+  channel back. What the connection's rate sends in a round trip and the time a loss takes to be
+  found, in chunks of the size the channel's acknowledged ones had, bounds them, so congestion
+  control decides what a stream takes, and the channel's `queue_bytes` sets the most it holds in
+  flight and receives ahead (`channel_chunks`, a power of two up to `MAX_WINDOW`). A loss does not
+  shrink the window: its resend waits with the chunks after it acknowledged until the loss is
+  found, ahead of new ones.
 - While objects wait for the update, the reliable game channels leave half of each datagram to
   them: a part that streams does not starve the state.
+- **Receiving.** A reliable channel delivers what follows what it delivered only while the command
+  buffer has room besides what a datagram may still bring. A gap that closes over many small
+  messages leaves the rest held, and the network half reads no datagram until it is delivered: what
+  arrives is never acked without room to keep it.
 - The library channels count their queue the same way: `event_send` of a `Reliable` event and the
   authority requests return `Full` and send nothing if they do not fit in the queue of some
   connection they may go to, and the sender retries. The connection is not closed;
@@ -449,7 +540,8 @@ The client predicts with copies of the world and interpolates with `replica_blen
 
 - Congestion control does not tell a queue from a path that lengthens: a route change to a higher
   RTT cuts the rate until the window forgets the previous minimum. A buffer smaller than the queue
-  threshold overflows without the queue being seen, and then the rate does not drop.
+  threshold overflows without the queue being seen, and the rate drops only once the losses pass
+  `CC_OVERRUN_SHARE`.
 - A late datagram is not acked: even though its reliable chunks were already delivered, the sender
   resends them (the receiver discards them), and its objects, unreliable messages and time are
   lost.

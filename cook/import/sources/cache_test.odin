@@ -6,9 +6,12 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import "mirai:cook/cache"
 import importer "mirai:cook/import"
 import "mirai:cook/prefab"
+import "mirai:cook/textures"
 import "mirai:std/base"
+import "mirai:store"
 
 @(test)
 sources_are_known_by_their_content :: proc(t:^testing.T) {
@@ -31,18 +34,18 @@ sources_are_known_by_their_content :: proc(t:^testing.T) {
         testing.expectf(t,source_kind(path)==c.kind,"%s is a %v source, not %v",c.name,c.kind,source_kind(path))
     }
     // A GLB is read as one whatever its name says.
-    report,error:=import_source(fmt.tprintf("%s/model.bin",folder),{world=prefab.import_world(t)})
+    report,error:=import_test(t,fmt.tprintf("%s/model.bin",folder),{world=prefab.import_world(t)})
     testing.expectf(t,error.code==.None && len(report.assets)>0,"%v %s",error.code,error.message)
     importer.report_destroy(&report)
-    _,refused:=import_source(fmt.tprintf("%s/mesh.txt",folder))
+    _,refused:=import_test(t,fmt.tprintf("%s/mesh.txt",folder))
     testing.expect(t,refused.code==.Unsupported && strings.contains(refused.message,"glTF, USD, FBX and OBJ"),refused.message)
-    _,missing:=import_source(fmt.tprintf("%s/none.obj",folder))
+    _,missing:=import_test(t,fmt.tprintf("%s/none.obj",folder))
     testing.expect_value(t,missing.code,importer.Error_Code.Not_Found)
-    // Every source has a sidecar, next to it, which keeps its id.
-    picture,picture_error:=import_source(fmt.tprintf("%s/picture.dat",folder))
-    testing.expect(t,picture_error.code==.None && len(picture.assets)==1 && picture.assets[0].kind==asset.KIND_TEXTURE && os.exists(fmt.tprintf("%s/picture.dat.import",folder)))
+    // An image is known by its bytes, and nothing is written beside it.
+    picture,picture_error:=import_test(t,fmt.tprintf("%s/picture.dat",folder))
+    testing.expect(t,picture_error.code==.None && len(picture.assets)==1 && picture.assets[0].kind==asset.KIND_TEXTURE)
     importer.report_destroy(&picture)
-    _,collection:=import_source(fmt.tprintf("%s/family.ttc",folder))
+    _,collection:=import_test(t,fmt.tprintf("%s/family.ttc",folder))
     testing.expect(t,collection.code==.Unsupported && strings.contains(collection.message,"collection"),collection.message)
 }
 
@@ -59,13 +62,31 @@ kept_of :: proc(report:^importer.Import_Report) -> (meshes,textures,others:int) 
     return
 }
 
-// The path and id of the asset of kind a report wrote.
+// The path and id of the asset of kind a report wrote: of an object of the
+// store, a file of it beside the store named by its address.
 @(private="file")
-written_of :: proc(report:^importer.Import_Report,kind:asset.Fourcc=asset.KIND_MESH) -> (path:string,id:base.Asset_Id) {
+written_of :: proc(s:^store.Store,report:^importer.Import_Report,kind:asset.Fourcc=asset.KIND_MESH) -> (path:string,id:base.Asset_Id) {
     for written in report.assets {
-        if written.kind==kind {return strings.clone(written.path,context.temp_allocator),written.id}
+        if written.kind!=kind {continue}
+        if written.path!="" {return strings.clone(written.path,context.temp_allocator),written.id}
+        digits:[64]u8
+        folder:=fmt.tprintf("%s-objects",s.root)
+        os.make_directory_all(folder)
+        path=fmt.tprintf("%s/%s",folder,store.hex(written.object,&digits))
+        asset.object_file_write(s,written.object,path)
+        return path,written.id
     }
     return
+}
+
+// Forgets every build the store names, as a store that lost them: an import
+// finds no output to take.
+@(private="file")
+builds_forget :: proc(s:^store.Store) {
+    for namespace in ([]string{asset.REF_IMPORTS,asset.REF_IMPORTS_FAST,asset.REF_BUILDS}) {
+        refs,_:=store.ref_list(s,namespace,context.temp_allocator)
+        for ref in refs {store.ref_remove(s,namespace,ref.name)}
+    }
 }
 
 // Records in the file at path that it was built with settings, as one that
@@ -83,26 +104,30 @@ built_with :: proc(t:^testing.T,path:string,settings:u64) -> (was:u64) {
     return
 }
 
-// What is current is decided by the name of a file of the cache: the key of
-// what the import builds from now. A file under another key is taken as it is
-// when what it records it was built from is what it would be built from now.
+// What is current is a blob a build of the package has: the build of the key
+// of what the import is made from now, else the one this machine chose for
+// its previous manifest, when what the blob records it was built from is what
+// it would be built from now.
 @(test)
-an_import_keeps_what_its_cache_says_is_current_and_builds_again_what_changed :: proc(t:^testing.T) {
+an_import_keeps_what_its_builds_say_is_current_and_builds_again_what_changed :: proc(t:^testing.T) {
     root,_:=test_project(t,"cache")
     if root=="" {return}
     source:=copy_in(root,DEMO,"gallery/vase.obj","gallery/vase.mtl","gallery/vase_color.png")
     world:=prefab.import_world(t)
-    Kept :: struct {meshes,textures,others:int,mesh,texture:string,id:base.Asset_Id}
+    s:=test_store(t,fmt.tprintf("%s/store",root))
+    if s==nil {return}
+    Kept :: struct {meshes,textures,others:int,mesh,texture:string,id:base.Asset_Id,manifest,build:store.Hash}
     import_kept :: proc(t:^testing.T,source:string,options:importer.Import_Options,loc:=#caller_location) -> (k:Kept,ok:bool) {
-        report,error:=import_source(source,options)
+        report,error:=import_test(t,source,options)
         defer importer.report_destroy(&report)
         if !testing.expectf(t,error.code==.None,"%v %s",error.code,error.message,loc=loc) {return}
         k.meshes,k.textures,k.others=kept_of(&report)
-        k.mesh,k.id=written_of(&report)
-        k.texture,_=written_of(&report,asset.KIND_TEXTURE)
+        k.mesh,k.id=written_of(options.store,&report)
+        k.texture,_=written_of(options.store,&report,asset.KIND_TEXTURE)
+        k.manifest,k.build=report.manifest,report.build
         return k,true
     }
-    first,ok:=import_kept(t,source,{world=world})
+    first,ok:=import_kept(t,source,{world=world,store=s})
     if !ok {return}
     testing.expect(t,first.meshes==0 && first.textures==0 && first.others==0,"a first import builds everything")
     built,_:=os.read_entire_file(first.mesh,context.temp_allocator)
@@ -114,33 +139,44 @@ an_import_keeps_what_its_cache_says_is_current_and_builds_again_what_changed :: 
 
     // Nothing changed: the mesh and the texture are kept; materials and the prefab, cheap, are written again.
     again:Kept
-    again,ok=import_kept(t,source,{world=world})
+    again,ok=import_kept(t,source,{world=world,store=s})
     testing.expect(t,ok && again.meshes==1 && again.textures==1 && again.others==0 && again.mesh==first.mesh && same(first.mesh,built),"an unchanged source keeps its mesh and its texture")
 
     // Another code that imports it (that of a plugin that imports it whole) is another key, and
-    // the same mesh and image: their files are taken under it as they are, not built nor written.
+    // the same mesh and image: the blobs of the build before are taken, not built.
     coded:Kept
-    coded,ok=import_kept(t,source,{world=world,importer_code=1})
-    testing.expect(t,ok && coded.meshes==1 && coded.textures==1 && coded.id==first.id && coded.mesh!=first.mesh && !os.exists(first.mesh) && !os.exists(first.texture),"a file under another key is taken")
-    testing.expect(t,same(coded.mesh,built) && same(coded.texture,texture),"as it is")
+    coded,ok=import_kept(t,source,{world=world,store=s,importer_code=1})
+    testing.expect(t,ok && coded.meshes==1 && coded.textures==1 && coded.id==first.id && coded.mesh==first.mesh && coded.texture==first.texture,"a blob of another key is taken")
 
     // One that records other encoders (a texture) or another builder (a mesh) is built again.
-    texture_settings:=built_with(t,coded.texture,1)
-    mesh_settings:=built_with(t,coded.mesh,1)
+    b,read_error:=asset.build_get(s,coded.build,context.temp_allocator)
+    p,_:=asset.package_get(s,coded.manifest,context.temp_allocator)
+    if !testing.expect_value(t,read_error,asset.Error.None) {return}
+    recorded:[2]u64
+    for &o in b.outputs {
+        if o.kind!=asset.KIND_MESH && o.kind!=asset.KIND_TEXTURE {continue}
+        other:=fmt.tprintf("%s/other",root)
+        asset.object_file_write(s,o.object,other)
+        recorded[int(o.kind==asset.KIND_TEXTURE)]=built_with(t,other,1)
+        o.object,_=asset.object_put_file(s,other)
+    }
+    forged,_:=asset.build_put(s,&b)
+    digits:[64]u8
+    store.ref_set(s,asset.REF_BUILDS,store.hex(asset.build_select(coded.manifest,&p),&digits),forged)
     other:Kept
-    other,ok=import_kept(t,source,{world=world,importer_code=2})
+    other,ok=import_kept(t,source,{world=world,store=s,importer_code=2})
     testing.expect(t,ok && other.meshes==0 && other.textures==0,"what other encoders or another builder made is built again")
-    testing.expect(t,same(other.mesh,built) && same(other.texture,texture) && texture_settings!=1 && mesh_settings!=1,"to the bytes of now")
+    testing.expect(t,same(other.mesh,built) && same(other.texture,texture) && recorded[0]!=1 && recorded[1]!=1,"to the bytes of now")
 
-    // A setting of the mesh builds it again, under a new name, with the same id; the texture is
+    // A setting of the mesh builds it again, another blob with the same id; the texture is
     // built from the same image and settings and is taken.
     turned:Kept
-    turned,ok=import_kept(t,source,{world=world,front=.X,ignore_stored=true})
-    testing.expect(t,ok && turned.meshes==0 && turned.textures==1 && turned.id==first.id && turned.mesh!=other.mesh && !os.exists(other.mesh),"a setting builds again, and the file of before goes")
+    turned,ok=import_kept(t,source,{world=world,store=s,front=.X,ignore_stored=true})
+    testing.expect(t,ok && turned.meshes==0 && turned.textures==1 && turned.id==first.id && turned.mesh!=other.mesh && os.exists(other.mesh),"a setting builds again, and the blob of before stays in the store")
 
     // --rebuild keeps nothing; with the settings of the first import, it gives its bytes.
     rebuilt:Kept
-    rebuilt,ok=import_kept(t,source,{world=world,rebuild=true,ignore_stored=true})
+    rebuilt,ok=import_kept(t,source,{world=world,store=s,rebuild=true,ignore_stored=true})
     testing.expect(t,ok && rebuilt.meshes==0 && rebuilt.textures==0 && rebuilt.others==0 && rebuilt.mesh==first.mesh,"rebuild builds everything")
     testing.expect(t,same(first.mesh,built))
 }
@@ -150,25 +186,26 @@ an_import_takes_a_texture_that_another_import_built_from_the_texture_cache :: pr
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     root,folder:=test_project(t,"texture-cache")
     if folder=="" {return}
-    cache:=fmt.tprintf("%s/cache",root)
+    kept:=test_store(t,fmt.tprintf("%s/store",root))
+    if kept==nil {return}
     bytes:=png_bytes(16,16,{200,100,50})
     // Each import is another image of the project, with its own id: the levels are what the cache gives.
     imported :: proc(t:^testing.T,types:^asset.Types,folder,name:string,bytes:[]u8,options:importer.Import_Options) -> (format:asset.Texture_Format,mips:int,texels:string,flags:asset.Texture_Flags) {
         image:=fmt.tprintf("%s/%s.png",folder,name)
         _=os.write_entire_file(image,bytes)
-        report,error:=import_source(image,options)
+        report,error:=import_test(t,image,options)
         defer importer.report_destroy(&report)
         if !testing.expectf(t,error.code==.None && len(report.assets)==1,"%v %s",error.code,error.message) {return}
         a:asset.Asset
-        if !testing.expect_value(t,asset.asset_load(&a,report.assets[0].path,context.temp_allocator),asset.Error.None) {return}
+        if !testing.expect_value(t,importer.written_open(options.store,report.assets[0],&a,context.temp_allocator),asset.Error.None) {return}
         view,view_error:=asset.texture_view(&a,types)
         if !testing.expect_value(t,view_error,asset.Error.None) {return}
         return view.info.format,len(view.mips),strings.clone(string(view.texels),context.temp_allocator),view.info.flags
     }
-    options:=importer.Import_Options{texture_cache=cache}
+    options:=importer.Import_Options{store=kept}
     format,mips,first,_:=imported(t,&types,folder,"a",bytes,options)
     testing.expect(t,format==.BC1 && mips==5)
-    entries:=cached_files(cache,".tex")
+    entries:=cached_refs(kept,textures.CACHE)
     if !testing.expect_value(t,len(entries),1) {return}
 
     // Another import of the same image has the same levels, made from the cache.
@@ -176,12 +213,20 @@ an_import_takes_a_texture_that_another_import_built_from_the_texture_cache :: pr
     testing.expect(t,len(first)>0 && second==first)
 
     // What the cache holds is what the import takes: a texture put under its key is the one written.
-    kept:asset.Asset
-    testing.expect_value(t,asset.asset_load(&kept,entries[0].fullpath,context.temp_allocator),asset.Error.None)
     plain:[16*16*4]u8
-    testing.expect_value(t,asset.texture_save(entries[0].fullpath,&types,{id=kept.blob.header.id,width=16,height=16,format=.RGBA8,mips={plain[:]}}),asset.Error.None)
+    planes:=[1][]u8{plain[:]}
+    flat:=textures.Built{width=16,height=16,format=.RGBA8,mips=planes[:]}
+    testing.expect(t,textures.cache_write({store=kept},cached_key(entries[0]),&types,&flat))
     format,mips,_,_=imported(t,&types,folder,"c",bytes,options)
     testing.expect(t,format==.RGBA8 && mips==1)
+
+    // A store that misses asks its source before building: what a peer built is taken as it is.
+    peer:=options
+    peer.store=test_store(t,fmt.tprintf("%s/peer",root))
+    peer.cache_source=cache.store_source(kept)
+    format,mips,_,_=imported(t,&types,folder,"p",bytes,peer)
+    testing.expect(t,format==.RGBA8 && mips==1,"the levels of the source, not built")
+    testing.expect_value(t,len(cached_refs(peer.store,textures.CACHE)),1)
 
     // Rebuilding does not read the cache, and builds it again.
     rebuilt:=options
@@ -196,7 +241,7 @@ an_import_takes_a_texture_that_another_import_built_from_the_texture_cache :: pr
     fast.fast_textures=true
     _,_,taken,_:=imported(t,&types,folder,"f",bytes,fast)
     testing.expect(t,taken==first,"the Final the cache holds")
-    fast.texture_cache=fmt.tprintf("%s/empty",root)
+    fast.store=test_store(t,fmt.tprintf("%s/empty",root))
     flags:asset.Texture_Flags
     format,_,_,flags=imported(t,&types,folder,"g",bytes,fast)
     testing.expect(t,.Fast in flags && format==.BC1,"Fast, for the sync of a build to encode again")
@@ -207,8 +252,10 @@ an_import_takes_a_mesh_that_another_import_built_from_the_mesh_cache :: proc(t:^
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     root,_:=test_project(t,"mesh-cache")
     if root=="" {return}
+    kept:=test_store(t,fmt.tprintf("%s/store",root))
+    if kept==nil {return}
     source:=copy_in(root,DEMO,"gallery/vase.obj","gallery/vase.mtl")
-    options:=importer.Import_Options{world=prefab.import_world(t),mesh_cache=fmt.tprintf("%s/cache",root)}
+    options:=importer.Import_Options{world=prefab.import_world(t),store=kept}
     colliders :: proc(t:^testing.T,types:^asset.Types,path:string) -> int {
         a:asset.Asset
         if !testing.expect_value(t,asset.asset_load(&a,path,context.temp_allocator),asset.Error.None) {return -1}
@@ -217,52 +264,54 @@ an_import_takes_a_mesh_that_another_import_built_from_the_mesh_cache :: proc(t:^
         return len(view.colliders)
     }
     imported :: proc(t:^testing.T,source:string,options:importer.Import_Options) -> (mesh:string,ok:bool) {
-        report,error:=import_source(source,options)
+        report,error:=import_test(t,source,options)
         defer importer.report_destroy(&report)
-        mesh,_=written_of(&report)
+        mesh,_=written_of(options.store,&report)
         return mesh,testing.expectf(t,error.code==.None,"%v %s",error.code,error.message)
     }
     mesh_path,ok:=imported(t,source,options)
     if !ok {return}
     built,_:=os.read_entire_file(mesh_path,context.temp_allocator)
-    entries:=cached_files(options.mesh_cache,".mesh")
+    entries:=cached_refs(kept,importer.MESH_CACHE)
     if !testing.expect_value(t,len(entries),1) {return}
 
-    // A mesh whose file is gone is built from the cache, to the same bytes.
-    testing.expect(t,os.remove(mesh_path)==nil)
+    // A mesh whose build is gone is built from the cache, to the same bytes.
+    builds_forget(kept)
     if _,ok=imported(t,source,options);!ok {return}
     again,_:=os.read_entire_file(mesh_path,context.temp_allocator)
     testing.expect(t,len(built)>0 && string(again)==string(built),"what the cache gives is what building gives")
 
     // What the cache holds is what the import takes: a mesh put under its key, with a collider, is the one written.
+    key:=cached_key(entries[0])
     cached:asset.Asset
-    if !testing.expect_value(t,asset.asset_load(&cached,entries[0].fullpath,context.temp_allocator),asset.Error.None) {return}
+    if !testing.expect(t,cache.load({store=kept},importer.MESH_CACHE,key,importer.MESH_CACHE_VERSION,&cached,context.temp_allocator)) {return}
     view,view_error:=asset.mesh_view(&cached,&types)
     if !testing.expect_value(t,view_error,asset.Error.None) {return}
     points:=[4][3]f32{{0,0,0},{1,0,0},{0,1,0},{0,0,1}}
     hull:=[1]asset.Collider{{kind=.Hull,rotation=1,point_count=4}}
-    desc:=asset.Mesh_Desc{id=cached.blob.header.id,geometry=view.geometry,slots=view.slots,colliders=hull[:],collision_points=points[:]}
-    testing.expect_value(t,asset.mesh_save(entries[0].fullpath,&types,desc),asset.Error.None)
-    testing.expect(t,os.remove(mesh_path)==nil)
-    if _,ok=imported(t,source,options);!ok {return}
-    testing.expect_value(t,colliders(t,&types,mesh_path),1)
+    doc:asset.Document
+    if !testing.expect_value(t,asset.mesh_document(&doc,&types,{id=cached.blob.header.id,geometry=view.geometry,slots=view.slots,colliders=hull[:],collision_points=points[:]},context.temp_allocator),asset.Error.None) {return}
+    hulled,bytes_error:=asset.document_bytes(&doc,context.temp_allocator)
+    testing.expect(t,bytes_error==.None && cache.put({store=kept},importer.MESH_CACHE,key,importer.MESH_CACHE_VERSION,hulled))
+    builds_forget(kept)
+    hulled_path:string
+    if hulled_path,ok=imported(t,source,options);!ok {return}
+    testing.expect_value(t,colliders(t,&types,hulled_path),1)
+
+    // A store that misses asks its source before building: what a peer built is taken as it is.
+    peer:=options
+    peer.store=test_store(t,fmt.tprintf("%s/peer",root))
+    peer.cache_source=cache.store_source(kept)
+    peer_path:string
+    if peer_path,ok=imported(t,source,peer);!ok {return}
+    testing.expect_value(t,colliders(t,&types,peer_path),1)
 
     // Rebuilding does not read the cache, and builds it again.
     rebuilt:=options
     rebuilt.rebuild=true
-    if _,ok=imported(t,source,rebuilt);!ok {return}
-    testing.expect_value(t,colliders(t,&types,mesh_path),0)
-    testing.expect(t,os.remove(mesh_path)==nil)
-    if _,ok=imported(t,source,options);!ok {return}
-    last,_:=os.read_entire_file(mesh_path,context.temp_allocator)
+    rebuilt_path:string
+    if rebuilt_path,ok=imported(t,source,rebuilt);!ok {return}
+    testing.expect_value(t,colliders(t,&types,rebuilt_path),0)
+    last,_:=os.read_entire_file(rebuilt_path,context.temp_allocator)
     testing.expect(t,string(last)==string(built))
-}
-
-// The files of a cache folder that hold what was built, of extension.
-@(private="file")
-cached_files :: proc(folder,extension:string) -> []os.File_Info {
-    entries,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
-    files:=make([dynamic]os.File_Info,context.temp_allocator)
-    for entry in entries {if strings.has_suffix(entry.name,extension) {append(&files,entry)}}
-    return files[:]
 }

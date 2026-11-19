@@ -137,17 +137,19 @@ a_client_that_presents_the_id_of_another_player_does_not_take_its_seat :: proc(t
 Scan :: struct {inner:wire.Transport,secret:[2]u64,datagrams,readable:int}
 @(private="file")
 scan_transport :: proc(s:^Scan) -> wire.Transport {
-    return {s,proc(data:rawptr,to:wire.Address,sent:[]u8) -> bool {
+    return {data=s,send=proc(data:rawptr,batch:[]wire.Datagram) -> int {
         s:=(^Scan)(data)
-        s.datagrams+=1
-        for half in s.secret {
-            half:=half
-            if bytes.index(sent,mem.ptr_to_bytes(&half))>=0 {s.readable+=1}
+        for datagram in batch {
+            s.datagrams+=1
+            for half in s.secret {
+                half:=half
+                if bytes.index(datagram.bytes,mem.ptr_to_bytes(&half))>=0 {s.readable+=1}
+            }
         }
-        return s.inner.send(s.inner.data,to,sent)
-    },proc(data:rawptr,buffer:[]u8) -> (size:int,from:wire.Address,ok:bool) {
+        return s.inner.send(s.inner.data,batch)
+    },receive=proc(data:rawptr,batch:[]wire.Datagram) -> int {
         s:=(^Scan)(data)
-        return s.inner.receive(s.inner.data,buffer)
+        return s.inner.receive(s.inner.data,batch)
     }}
 }
 

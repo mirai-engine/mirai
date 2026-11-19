@@ -322,7 +322,7 @@ project's world through
 
 Numbered layers; a package only imports lower layers.
 
-- **0** `std/*`: standard library (base, math, serial, jobs, spatial, geom, anim, ai, input,
+- **0** `std/*`: standard library (base, blake3, math, serial, jobs, spatial, geom, anim, ai, input,
   subprocess, ui_format). It does not depend on the engine. `std/compressor` is not imported as
   `mirai:`: it is the open implementation of the collection `compressor` (`data`, `texture`,
   `blocks`, the last engine-time), which every compile names and which the private
@@ -330,10 +330,14 @@ Numbered layers; a package only imports lower layers.
   `std/ui_format` is what the structure of a `.ui` is judged by (node kinds, override fields,
   limits), which `ui` builds and `asset` checks without importing each other.
 - **1** `project`: `project.mirai` and `plugin.mirai` manifests, the layout of a project.
+- **1** `store`: the machine-wide content-addressed store of objects and refs under one root.
 - **2** `net`, `asset`, `ui`, `audio`, `rhi`: network transport, asset formats, UI, mixer and GPU;
-  independent of each other; `asset` reads from `project` what a project's assets compress with.
+  independent of each other; `asset` reads from `project` what a project's assets compress with
+  and keeps in `store` the records of imports (package and build manifests, `packages.mirai`).
   `rhi/shared_device` is the device the GPU tests share; only tests import it, also the GPU tests of
   `rhi`, in `rhi/tests`.
+- **3** `exchange`: objects and refs of `store` between peers over the connections of `net` hosts;
+  a headless peer and the editor link it.
 - **3** `render`, `platform`: hybrid renderer and SDL3. `render/abi` declares the constants the
   renderer shares with its shaders, on top of `asset` alone: `cook/shaders` imports it to write
   them for the shaders, since the tool cannot import `render`.
@@ -357,7 +361,9 @@ Numbered layers; a package only imports lower layers.
   `cook/install` (a project's plugins that come from git, and the catalog). The importers are
   `cook/import` (core, no formats), one package per format (`cook/import/obj`, `gltf`, `usd`, `fbx`,
   which reads with the C library of `third_party/ufbx`) and `cook/import/sources` (the table of
-  formats and `import_source`, on top of `cook/prefab`). `cook/author` is what an interface or a
+  formats and `import_source`, on top of `cook/prefab`). `cook/share` shares a project peer to
+  peer: its snapshot, and its packages refreshed through the library from `exchange` peers.
+  `cook/author` is what an interface or a
   scene is authored with as a nested document, between its text and the file of the asset, on top of
   `asset`, `ui`, `core`, `host` and `engine/*`: the editor's `ui.*` methods and `mirai ui` and
   `mirai scene` go through it, and the presets an entity is made from are there.

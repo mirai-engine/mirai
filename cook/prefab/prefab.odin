@@ -154,7 +154,7 @@ model_prefab :: proc(model:^importer.Imported_Model,assets:^importer.Import_Repo
     bytes,problem:=author.scene_file_bytes(&scene,types,info,&scratch)
     if problem!="" {return report,.Write}
     os.make_directory_all(filepath.dir(path))
-    if serial.file_write_atomic(path,bytes)!=.None {return report,.Save}
+    if _,write_error:=serial.file_write_changed(path,bytes);write_error!=.None {return report,.Save}
     report.entities=asset.scene_entity_count(&scene)
     return report,.None
 }
@@ -282,12 +282,10 @@ model_import :: proc(path:string,formats:[]importer.Format,options:importer.Impo
 // prefab of its hierarchy; only its clips with Import_Settings.skeleton.
 model_write :: proc(model:^importer.Imported_Model,path:string,options:importer.Import_Options,allocator:=context.allocator) -> (report:importer.Import_Report,error:importer.Error) {
     if report,error=importer.import_write(model,options,allocator);error.code!=.None {return}
-    if len(model.nodes)==0 || report.settings.skeleton!={} {return report,{}}
+    if len(model.nodes)==0 || report.settings.skeleton!={} || report.prefab_path=="" {return report,{}}
     name:=filepath.stem(path)
-    source:=importer.source_path(options,path)
+    source:=importer.source_path(path)
     id,target:=report.prefab,report.prefab_path
-    // A prefab changed since the import wrote it, which the import keeps (Changed.Keep).
-    if target=="" {return report,{}}
     if options.world==nil {
         importer.report_destroy(&report)
         return {},importer.error_make(.Write,"the prefab %s is written in the types of the game, which the library of the project's editor has: %s",target,author.BUILD_FIX)
@@ -303,10 +301,7 @@ model_write :: proc(model:^importer.Imported_Model,path:string,options:importer.
         importer.report_destroy(&report)
         return {},importer.error_make(.Write,"the prefab %s could not be written: %v",target,prefab_error)
     }
-    if !importer.output_recorded(path,id,target) {
-        importer.report_destroy(&report)
-        return {},importer.error_make(.Write,"%s%s, which records what the import wrote, could not be written",path,importer.SIDECAR_EXTENSION)
-    }
+    append(&report.written,asset.Package_Written{id,importer.written_hash(target)})
     size:int
     if info,stat_error:=os.stat(target,context.temp_allocator);stat_error==nil {size=int(info.size)}
     append(&report.assets,importer.Written{

@@ -23,7 +23,7 @@ import mm "mirai:std/math"
 MAX_SOURCE_SIDE :: 1<<15
 MAX_SOURCE_PIXELS :: 1<<28
 // Changes when build would give other bytes for the same image and options.
-BUILD_VERSION :: 6
+BUILD_VERSION :: 7
 RDO_LAMBDA_DEFAULT :: 30
 RDO_LAMBDA_MAX :: 100
 // Texels of a level from which build encodes its blocks on a job system of
@@ -320,14 +320,19 @@ built_desc :: proc(built:^Built,id:base.Asset_Id,source:^asset.Import_Info,layou
 // What decides the bytes build gives for an image: the settings hash an
 // import records, so a texture is built again when one of them changes. Fast
 // is another hash; Final is the hash of the settings alone.
-settings_hash :: proc(options:Build_Options) -> u64 {
+settings_hash :: proc(options:Build_Options) -> u64 {return settings_hash_of(options,encoders_id())}
+
+// settings_hash with the encoders named encoders, which count only where they make the bytes:
+// texels stored uncompressed are the same whatever block encoder the build has.
+@(private)
+settings_hash_of :: proc(options:Build_Options,encoders:u64) -> u64 {
     kind:=u64(options.srgb)|u64(options.normal_map)<<1|u64(options.encoding)<<2|u64(options.green_down)<<4|u64(options.keep_precision)<<5|u64(BUILD_VERSION)<<8
     hash:=base.hash_combine(kind,u64(transmute(u32)options.alpha_coverage))
     if options.alpha_fill>0 {hash=base.hash_combine(hash,u64(transmute(u32)options.alpha_fill)|1<<32)}
     final:=options
     final.speed=.Final
     hash=base.hash_combine(hash,u64(rdo_lambda(final)))
-    hash=base.hash_combine(hash,encoders_id())
+    if options.encoding==.Blocks {hash=base.hash_combine(hash,encoders)}
     if options.channels!={} {
         c:=options.channels
         packed:=u64(c.from[0])|u64(c.from[1])<<8|u64(c.from[2])<<16|u64(c.from[3])<<24|u64(transmute(u8)c.invert)<<32

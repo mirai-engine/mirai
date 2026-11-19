@@ -281,11 +281,11 @@ Content:
   others, the light meter alone: `lights` used to be clipped and `skeletal`, without light. No demo
   camera carries `Exposure`: the viewport and the game expose the same.
 - **Imports**: each image is a source beside the materials that show it (`assets/surfaces/bricks`,
-  `assets/sky`, `assets/gallery`), read as its sidecar says; each model is a source beside a
-  folder with its materials and the prefab of its nodes (`assets/gallery/plant.gltf` and
-  `assets/gallery/plant/`). The textures and the meshes are not versioned: they are in
-  `demo/.mirai/imported`, which `mirai build` makes again from the sources.
-  Re-importing keeps the ids, which the sidecars list
+  `assets/sky`, `assets/gallery`), and each model a source beside a folder with its materials and
+  the prefab of its nodes (`assets/gallery/plant.gltf` and `assets/gallery/plant/`), each a
+  package `demo/packages.mirai` pins. The textures and the meshes are not versioned: they are
+  blobs of the store, which `mirai build` refreshes from the sources or from a peer.
+  Re-importing keeps the ids, which the manifests of the packages list
   ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)), and what the
   demo generates over what was imported reads them from there (`imported.odin`); what it generates
   on its own uses `asset.content_id`. What did not change is kept

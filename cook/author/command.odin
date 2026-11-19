@@ -56,10 +56,10 @@ import "mirai:ui"
 // its id. Given several --project, the command runs on the first whose assets
 // have the asset of the first file it names.
 
-COMMAND_USAGE :: `Usage: mirai ui|scene read <asset> [--out <file>]
-       mirai ui|scene write <asset> <document file>
-       mirai ui|scene check [<asset>...]
-       mirai texts list | missing | set <key> <language> <text> | export <file.csv> | import <file.csv>`
+COMMAND_USAGE :: `Usage: mirai ui|scene read <asset> [--out <file>] [--store <folder>]
+       mirai ui|scene write <asset> <document file> [--store <folder>]
+       mirai ui|scene check [<asset>...] [--store <folder>]
+       mirai texts list | missing | set <key> <language> <text> | export <file.csv> | import <file.csv> [--store <folder>]`
 
 // What a command reads and writes: the interfaces, or the scenes.
 Document_Kind :: enum u8 {Ui,Scene}
@@ -91,24 +91,29 @@ Project :: struct {
     untyped:string,        // why it has none, with what gives them
     recipes:[]Recipe,       // of the engine and of its active plugins
     scratch:Scratch_World,  // where a recipe is run; made the first time
+    package_problems:[]string, // what the packages of the project and its plugins could not list (host.project_assets)
 }
 
 // What builds the library the types of a game come from.
 BUILD_FIX :: "mirai build editor <project> builds it"
 
 
-// Opens the project at root with the assets of its plugins. library false
-// leaves the types of its game out. problem: why it does not open.
-project_open :: proc(p:^Project,root,engine:string,library:=true) -> (problem:string) {
+// Opens the project at root with the assets of its plugins and of the
+// packages of both, from the store at store_root ("": the machine's). library
+// false leaves the types of its game out. problem: why it does not open.
+project_open :: proc(p:^Project,root,engine:string,library:=true,store_root:="") -> (problem:string) {
     opened,error:=project.open(root,engine,context.temp_allocator)
     if error.code!=.None {return project.error_text(root,error,context.temp_allocator)}
     p.root=strings.clone(opened.root)
     p.name=strings.clone(base.text_get(opened.manifest.name[:]))
     p.assets_root=project.folder_path(p.root,.Assets)
-    asset.registry_init(&p.registry,p.assets_root,imported=project.imported_path(p.root,context.temp_allocator))
-    for mount in host.project_asset_mounts(&opened,context.temp_allocator) {asset.registry_mount(&p.registry,mount.folder,mount.prefix,mount.imported)}
+    found,listed:=host.project_assets(&opened,store_root,context.temp_allocator)
+    if !listed {return "out of memory to list its assets"}
+    asset.registry_init(&p.registry,p.assets_root,listed=found.listed)
+    for mount in found.mounts {asset.registry_mount(&p.registry,mount.folder,mount.prefix,mount.listed)}
+    p.package_problems=make([]string,len(found.problems))
+    for problem,i in found.problems {p.package_problems[i]=strings.clone(problem)}
     asset.types_init(&p.types)
-    p.types.codecs=asset.project_codecs(root,engine)
     p.assets={&p.registry,&p.types}
     if os.is_dir(p.assets_root) && asset.registry_scan(&p.registry)!=.None {return fmt.tprintf("the assets of %s could not be read",p.assets_root)}
     ui_settings:gui.UI_Settings
@@ -130,6 +135,8 @@ project_close :: proc(p:^Project) {
     delete(p.assets_root)
     delete(p.source)
     delete(p.untyped)
+    for problem in p.package_problems {delete(problem)}
+    delete(p.package_problems)
     p^={}
 }
 
@@ -341,14 +348,18 @@ run_fail :: proc(run:^Run,what,why:string) {
 }
 
 command :: proc(args:[]string,output,errors:io.Writer) -> int {
-    engine:string
+    engine,store_root:string
     roots:=make([dynamic]string,context.temp_allocator)
     rest:=make([dynamic]string,context.temp_allocator)
     for at:=0;at<len(args);at+=1 {
         switch args[at] {
-        case "--project","--engine":
+        case "--project","--engine","--store":
             if at+1>=len(args) {fmt.wprintln(errors,COMMAND_USAGE);return 2}
-            if args[at]=="--project" {append(&roots,args[at+1])} else {engine=args[at+1]}
+            switch args[at] {
+            case "--project": append(&roots,args[at+1])
+            case "--engine": engine=args[at+1]
+            case "--store": store_root=args[at+1]
+            }
             at+=1
         case: append(&rest,args[at])
         }
@@ -361,14 +372,15 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
         return 2
     }
     if len(roots)==0 {append(&roots,".")}
-    root:=project_choose(roots[:],engine,rest[2] if len(rest)>2 else "")
+    root:=project_choose(roots[:],engine,store_root,rest[2] if len(rest)>2 else "")
     p:Project
     reads:=kind==.Ui && verb=="read" || rest[0]=="texts"
-    if problem:=project_open(&p,root,engine,!reads);problem!="" {
+    if problem:=project_open(&p,root,engine,!reads,store_root);problem!="" {
         fmt.wprintfln(errors,"mirai %s %s: %s",rest[0],verb,problem)
         return 1
     }
     defer project_close(&p)
+    for problem in p.package_problems {fmt.wprintfln(errors,"mirai %s %s: %s",rest[0],verb,problem)}
     if rest[0]=="texts" {return texts_command(&p,rest[1:],output,errors)}
     return project_run(&p,kind,verb,rest[2:],output,errors)
 }
@@ -376,7 +388,7 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
 // Of several projects, the one whose assets have the asset of a file: the
 // first when none has it, or named is no file.
 @(private="file")
-project_choose :: proc(roots:[]string,engine,named:string) -> string {
+project_choose :: proc(roots:[]string,engine,store_root,named:string) -> string {
     if len(roots)==1 || !os.is_file(named) {return roots[0]}
     file:asset.Asset
     if asset.asset_load(&file,named,context.temp_allocator)!=.None {return roots[0]}
@@ -384,7 +396,7 @@ project_choose :: proc(roots:[]string,engine,named:string) -> string {
     asset.asset_close(&file)
     for root in roots {
         p:Project
-        problem:=project_open(&p,root,engine,false)
+        problem:=project_open(&p,root,engine,false,store_root)
         _,has:=asset.registry_find(&p.registry,id)
         project_close(&p)
         if problem=="" && has {return root}

@@ -41,6 +41,8 @@ neither the data world nor physics. A replicated object is an opaque game id plu
   [clock and inputs](references/networking.md#time-and-inputs),
   [interpolation](references/networking.md#smoothing-and-interpolation-interpolationodin) and
   [known limits](references/networking.md#known-limits)
+- Blobs and refs of the store between peers on a host's connections →
+  [exchange](../mirai-store/references/exchange.md#what-the-owner-calls)
 - Opening a host's UDP port (`mapping_start`, `mapping_poll`, `mapping_stop`, `mapping_close`;
   PCP, NAT-PMP, UPnP) → [API and lifecycle](references/port-mapping.md#api-and-lifecycle),
   [protocols](references/port-mapping.md#protocols) and
@@ -141,21 +143,44 @@ In `plugins/multiplayer/runtime`:
 - After `host_init`, every capacity comes from `Host_Desc`/`Replication_Desc`; exhausting one
   returns `Error` or counts in the statistics. Replicated traffic, even damaged, does not
   allocate.
-- **Every connection is sealed, and nothing answers an unproven sender:** before a returned cookie
-  only the challenge, and nothing to a proof that does not open. There is no unsealed mode.
+- **Every connection is sealed, and its first datagram carries data:** the handshake is the Noise
+  pattern `NKpsk0` over the key and the secret of the invitation, and the Initiate carries the
+  client's datagram 0. An address hears only the Response, one per copy of its Initiate (and the
+  Disconnect if the game closes it), until a datagram under the keys of the connection comes from
+  it; an Initiate that does not open, or a Hello to a host with an invitation, hears nothing. There
+  is no unsealed mode.
+- **An Initiate opens once** while the key of its server lasts, also one refused: a later copy,
+  from anywhere, makes no connection and delivers nothing again. What the replay filter cannot take
+  or holds by mistake, and what comes while the server ran out of key exchanges, gets a Retry: a
+  full filter or a flood costs a round trip, never a connection.
 - **A connection changes address only on a datagram that opens under its key** and is newer than
-  any it accepted ([roaming](references/networking.md#connections)). A wrong proof costs its
+  any it accepted ([roaming](references/networking.md#connections)). A wrong Initiate costs its
   address, never everyone: guessers do not shut out who brings the invitation.
+- **The key of an invitation belongs to its share:** made when it starts, kept in memory by its
+  owner and its `Host`, gone when it ends; its private key is never written down.
 - **Two ways in, nothing else:** by address (a server without an invitation admits anyone who
-  reaches it) and by invitation code (only its holders). The code carries the host's real
-  addresses, on its network and on its router; a client asks only those, never guesses others.
+  reaches it, after a Hello and its Key) and by invitation code (only its holders). The code carries
+  the host's key and secret and its real addresses, on its network and on its router; a client asks
+  only those, never guesses others.
 - **Every byte from the network is hostile.** It is read with `Bit_Reader`, which never leaves the
   buffer; every index, type, mask and length is validated before use. A datagram that cannot be
   interpreted closes the connection with `Protocol_Error`; it is never half-applied over another
   connection.
-- **Datagram acks and losses are final.** Late datagrams are not acked and only allow
-  [the partial delivery described in connections](references/networking.md#connections). Do not
-  extend that exception without reviewing channels, links and baselines.
+- **A connection finds its rate by itself.** Nothing in `Host_Desc` starts or caps it; a reliable
+  channel holds in flight what its `queue_bytes` holds, and the game channels of a connection stay
+  on time next to a stream on it.
+- **Nothing waits a fixed tick:** the worker waits in the transport, and a datagram that arrives or
+  a frame the simulation queues wakes it. Datagrams go and come in batches, one call where the
+  system has one.
+- **A reliable byte is copied into its queue once and stays there until its ack:** a chunk is a
+  range of the queue, as long as the datagram has room for, and a lost one fits in the next
+  datagram (`chunk_longest`).
+- **A datagram is lost only when reordering cannot explain its absence**, and an ack is final. A
+  late datagram is acked only if everything in it that a resend would bring was taken
+  ([connections](references/networking.md#connections)); objects, the server time and the library
+  channels are never taken late. Do not extend what is taken late without reviewing channels,
+  links and baselines. A loss taken back by a late ack does not count for the rate; what was
+  resent for it stays resent.
 - **Nothing changes until it is known that the entry fits.** `entry_write` writes, checks and only
   then modifies the link; if it does not fit, it restores the writer.
 - **A baseline is used only after its ack**, and the receiver stores it from the state that results
@@ -251,7 +276,9 @@ In `plugins/multiplayer/runtime`:
 
 - `mirai test net [test...]`, `mirai test std/serial` (bitstream) and
   `mirai test plugins/multiplayer/runtime`. Run the `*_test.odin` of the touched area: `address`,
-  `connection`, `secure`, `invite`, `congestion`, `flow` (reliable window, a streamed part),
+  `connection`, `secure`, `invite`, `congestion`, `flow` (reliable window, a streamed part, a bulk
+  stream on a 100 Mbit/s link, a shared link, ack runs), `chunk` (hostile chunks, a small message
+  beside the batches and the worker's wait),
   `conditioner`, `replication`,
   `descriptor_boundary`, `large_state`, `collection`, `references`, `convergence`, `grid`, `scope`,
   `authority`, `interpolation`, `clock`, `worker`, `baseline` (pools and shared baselines),
@@ -264,7 +291,10 @@ In `plugins/multiplayer/runtime`:
 - `multiplayer`: [multiplayer verification](references/multiplayer.md#verification).
 - They are deterministic (`Sim_Network` with a fixed seed), except those that open UDP sockets on
   `127.0.0.1`.
-- Optional benchmarks: the server with 64 clients,
+- Optional benchmarks: a reliable stream on UDP loopback (rate, CPU per side, datagrams and
+  transport calls per GiB),
+  `mirai test net a_reliable_stream_on_udp_loopback -define:NET_BENCHMARK=true`; the server with 64
+  clients,
   `mirai test net server_with_64_clients_and_2000_objects --release -define:NET_BENCHMARK=true`,
   and the frames of a client with interpolated replicas,
   `mirai test plugins/multiplayer/runtime bench_client_frames -define:NET_CLIENT_BENCH=true`.

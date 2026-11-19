@@ -166,6 +166,15 @@ clock_interpolation_tick :: proc(h:^Host,tick:u32) -> f64 {
 }
 
 // Start of the payload of a data datagram: the server's tick and input margin, or the client's inputs.
+// The most bits time_write writes.
+@(private)
+time_max_bits :: proc(h:^Host) -> int {
+    protocol:=h.desc.protocol
+    if protocol==nil {return 0}
+    if h.desc.mode==.Server {return 32+1+1+32+1+8}
+    return 4+32+h.desc.replication.input_redundancy*protocol.input.max_bits
+}
+
 @(private)
 time_write :: proc(h:^Host,p:^Peer,w:^serial.Bit_Writer,seq:u16) -> (wrote:bool) {
     protocol:=h.desc.protocol

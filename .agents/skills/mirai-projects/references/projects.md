@@ -10,9 +10,12 @@ Targets, jobs, fingerprint, project shaders, cooking and shipped game (`cook/bui
   project.mirai     manifest: what makes the folder a project
   settings.mirai    project settings, the bindings in Input_Settings: what differs (optional)
   cook.mirai        cooking roots that no scene names (optional)
+  packages.mirai    the packages of the machine store the project uses, by the hash of their
+                    manifest, and the folder each is listed in (optional; a plugin may have one)
+  packages/         <package id>.mirai: the text of each manifest packages.mirai pins (settings,
+                    origin and asset ids), so a clone has them without the store
   assets/           assets, by theme: what is authored, the art sources beside what they make,
-                    each with its sidecar (<source>.import: settings, folder and asset ids), and
-                    the documents their imports write
+                    and the documents their imports write
   game/             game library of the project
   editor/           editor package of the project (engine-time)
   plugins/<name>/   plugin.mirai, runtime/, editor/, shaders/, assets/
@@ -20,9 +23,6 @@ Targets, jobs, fingerprint, project shaders, cooking and shipped game (`cook/bui
   panels/           editor panels built by the chat agent (engine-time)
   tests/scenarios/  gameplay tests the editor plays (`mirai play test`), optional
   .mirai/           generated; not edited or versioned
-    imported/       what imports build from the sources that nobody edits (meshes, textures, sounds,
-                    fonts), each file named by its id and what it was built from; a build makes
-                    it again
     gen/            generated packages: the worlds and the root of each target
     plugins/        libraries of the engine plugins, with their stages and declarations
     editor<ext>     library of mirai-editor and of the players it opens; play<ext>, that of
@@ -32,7 +32,9 @@ Targets, jobs, fingerprint, project shaders, cooking and shipped game (`cook/bui
     shaders/        shader generation of the project
     build/          files of the jobs, sources and fingerprint of the last build per target
     cache/          machine caches (asset registry, textures, built meshes, compressed .anim)
-    thumbs/         asset previews of the editor
+    share/          what sharing keeps on this machine: the last snapshot joined, the index of
+                    the files and the name of the offer (sharing a project, below)
+    thumbs/         views of scenes the editor took
 ```
 
 The first-party plugins are in `<engine>/plugins/<name>/` with the same shape; the engine binaries,
@@ -77,10 +79,11 @@ keeps its default; one the struct does not have is an error.
 - `import_sources`: the extensions of the files the importers of a plugin read (`.umap`): a
   repository with LFS keeps them in it as it keeps the sources of the engine's formats
   ([git and assets](../../mirai-assets/references/cli.md#git)).
-- `build.compression`: what the assets of the project and its game are compressed with: `none`,
-  `open`, or empty for the best its engine has ([compressor](build.md#compressor)). The projects
-  of the repository of the engine (the demo, the templates) declare `open`; a project made from a
-  template does not keep it.
+- `build.compression`: what the files of its shipped game are compressed with: `none`, `open`, or
+  empty for the best its engine has ([compressor](build.md#compressor)). Only the cook compresses
+  with it: the documents of the project and what the store and the exchange hold never depend on
+  a compressor. The projects of the repository of the engine (the demo, the templates) declare
+  `open`; a project made from a template does not keep it.
 - `development`: a tool for making the game (`profiler`, `tracy`). It goes into the `editor` and
   `play` libraries; the shipped game is generated with `shipped_world`, the world without them, and
   if its code reaches them the build fails with `Engine_Time_Code`.
@@ -194,7 +197,6 @@ the `Project` owns everything it points to.
   and, apart from that, in the project's order. A cycle between inactive plugins is not an error.
 - The caches of `.mirai/cache` (`cache_path`) and `.mirai/thumbs` cost only time if deleted: the
   [registry](../../mirai-assets/references/formats.md#registry), the
-  [textures](../../mirai-imports/references/imports.md#texture-cache), the
   [compressed animations](../../mirai-core/references/host.md#content) and the
   [previews](../../mirai-editor/references/panels.md#previews) are made again, and the
   [capacities](../../mirai-rendering/references/frame-graph.md#passes) of the scenes are learned
@@ -337,7 +339,8 @@ Each mode has its folder: switching between them compiles nothing.
 - Programs `mirai-editor` and `mirai-player`, which load the `editor` library of the project
   ([host](../../mirai-core/references/host.md#project-libraries)), and over the editor
   library `mirai-import`, that of `mirai import`
-  ([import](../../mirai-imports/references/imports.md#what-is-written)), and `mirai-author`,
+  ([import](../../mirai-imports/references/imports.md#what-is-written)) and of `mirai share`
+  and `mirai join` ([sharing](#sharing-a-project)), and `mirai-author`,
   that of `mirai ui` and `mirai scene`
   ([documents](../../mirai-agent-api/references/api.md#mirai-ui-and-mirai-scene)): this way the
   `mirai` tool links neither importers nor renderer and compiles before the generated shaders
@@ -441,6 +444,7 @@ release of the tag; run by hand, it leaves the packages as artifacts.
   .mirai/engine/release/   libraries, programs, SDL3, decl/, engine.declared and engine.stamp
   .mirai/cache/plugins/  libraries of the engine plugins, minimal and speed
   .deps/                 Odin, Slang and spirv-val/opt/cross; SDL3 on Linux and macOS
+  builds/                a store with the builds of the packages its plugins pin
   core/ engine/ ...      Odin sources without tests, plugins/, third_party/freetype already built
   shaders/ templates/ assets/fonts/ editor/assets/ .agents/skills/ THIRD_PARTY_NOTICES.md
   ```
@@ -505,19 +509,23 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Operation | Command |
 | --- | --- |
 | Create a worktree ready to build | `mirai worktree new <name> [--from <branch>]` |
-| Build and open the editor | `mirai edit [project] [--release] [editor arguments]` |
-| Build and run the game | `mirai play [project] [--release] [player arguments]` |
-| Build the editor without opening it | `mirai build editor [project] [--release]` |
-| Build the shippable game | `mirai build game [project] [--out folder]` |
+| Build and open the editor | `mirai edit [project] [--release] [--store folder] [editor arguments]` |
+| Build and run the game | `mirai play [project] [--release] [--store folder] [player arguments]` |
+| Build the editor without opening it | `mirai build editor [project] [--release] [--store folder]` |
+| Build the shippable game | `mirai build game [project] [--out folder] [--store folder]` |
 | Build its dedicated server | `mirai build server [project] [--out folder]` |
-| Build only the engine | `mirai build engine [--release] [--force]`|--release] [--force]` |
-| Generate the world without building | `mirai generate [project]` |
+| Build only the engine | `mirai build engine [--release] [--force]` |
+| Generate the world without building | `mirai generate [project] [--store folder]` |
 | Run the content tool of a project | `mirai content [project] [-- arguments]` |
+| Ingest a source from anywhere and add it to a project | `mirai import <file> [--project P] [--folder F] [settings]` |
+| Bring the packages a project pins to builds of this engine | `mirai import --refresh <root> [--final] [--store folder] [--from folder]` |
+| Serve a project peer to peer until stopped | `mirai share [project] [--port N] [--store S]` |
+| Receive a shared project, or update a folder joined before | `mirai join <invitation> [folder] [--address A] [--port N] [--store S]` |
 | Documents of interfaces and scenes, no editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
 | Git plugins of a project | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
 | Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins. In a runtime package it also fails on an allocation whose error nothing receives (`tools/mirai/alloc_lint.odin` says which calls and which packages), and in the runtime or editor part of a plugin on an import of `render` or `rhi` outside its tests or of the physics solver (`tools/mirai/solver_lint.odin`) |
 | Run tests | `mirai test [<package>] [test\|file.odin...] [--list\|--failed\|--no-gpu\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
-| Headless background editor | `mirai session start\|restart\|stop\|status [project] [--release] [--copy]` |
+| Headless background editor | `mirai session start\|restart\|stop\|status [project] [--release] [--copy] [--store folder]` |
 | Call the editor API | `mirai rpc <method> [key=value...\|json] [--select c] [--wait-until c=v] [--project P]` |
 | Capture without UI | `mirai capture [project] --out x.png [--camera NAME] [--reference r.png]` |
 | Validate demo image and cost | `mirai render check [project] [--views a,b] [--quality] [--release]` |
@@ -529,7 +537,7 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Search the code | `rg <pattern> [folder]` |
 | Check the machine and a project | `mirai doctor [project]` |
 | Merge and diff assets with git, once per clone | `mirai setup git [folder]` |
-| Assemble the installed engine (binary) | `mirai package engine --out <folder>` |
+| Assemble the installed engine (binary) | `mirai package engine --out <folder> [--store folder]` |
 
 - Every command that builds does it in dev unless `--release` is asked for
   ([AGENTS.md](../../../../AGENTS.md#common-commands)).
@@ -575,6 +583,89 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
   ends with 1 if there are errors. It requires `git config core.symlinks` and `.claude/skills` as a
   symbolic link to `.agents/skills`: without it, the skills do not reach the agents (on Windows
   developer mode is needed).
+
+## Sharing a project
+
+`cook/share` gives one person's project to another, peer to peer, with no server and no git: the
+files of the project travel as a snapshot, and its heavy content as the builds of its packages,
+by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
+
+- **Snapshot.** Every file under the root that `project.own_path` accepts: all but the generated
+  folder and the folders of version control. It is a tree of objects of the store: each file an
+  object of its bytes, cut on content, so a changed file shares the chunks the change did not
+  touch; each folder an object whose bytes list its entries sorted by name (a file with its
+  executable bit, or a folder, by the address and size of its object, a folder with the files and
+  bytes under it), whose meta carries the name of the project in the root only; a folder holds at
+  least one file. The same files give the same tree, so two snapshots that differ in one file
+  share every folder off its path, and a join after a change asks for those folders, the file's
+  new chunks and the nodes above them, a bound of the depth whatever the size of the project. No
+  limit is set on the size of a file. The size of an entry is that of what was put, so a file
+  saved while the snapshot is taken gives a consistent entry. The index in `.mirai/share` keeps
+  the address of each file by its size and time, so a file that did not change is not read again;
+  it learns a file only once it is settled (the rule of the source hashes of the library), so an
+  edit of the same size within the same time is read.
+- **What a file carries.** Its bytes and its executable bit. Not its time: a joined file gets the
+  time it is written, which keeps build tools' staleness right. Not its other permissions: a
+  read-only file of the host is shared as any other, and a read-only file or folder of the joiner
+  is never replaced or removed, but reported. A link or a special file is left out with a message
+  that says to replace it with the file it points to.
+- **Share.** `mirai share` takes the snapshot, opens a server host with its port mapped as
+  [collaboration](../../mirai-editor/references/collaboration.md) does, prints one invitation
+  once the router answered, and serves until it is stopped (Ctrl+C), printing who comes and goes
+  and how much went out. The snapshot is the ref `shares/<hash of the invitation's secret>`, so a
+  joiner finds it by the code and the names peers list reveal no secret. Peers read the namespaces
+  of snapshots, package manifests, builds (Final and Fast, each under its own namespace) and
+  `cook/cache` results: the owner exposes the whole machine library to whoever holds the
+  invitation, never the choices, the origins or the sources of the machine. A lease holds the
+  snapshot, its folders and files and the builds the project pins.
+- **Join.** `mirai join` asks for the snapshot of the invitation only the host it connects to,
+  so a peer that joined from the joiner cannot name another; folders and files come from any
+  peer, verified by address. It fetches the tree a depth of folders at a time, refusing one whose
+  names could leave the folder, are absolute, name a device, repeat or collide where case is folded,
+  whose folders nest beyond the bound, hold more entries or bytes than a folder can or declare
+  files and sizes they do not hold (so the files read never exceed the bound, also from a folder
+  repeated under many names); checks that the disks have room; fetches the files, the project's
+  manifest and its start scene first and then the smallest first, many at once, and writes each
+  chunk by chunk at its offset into a temporary file renamed into place, so memory does not grow
+  with a file; then refreshes the packages as an editor does, with the peers as the
+  `cache.Source` of the library: a Final or a Fast build from the store, then from the peers, by
+  key, and a source in the folder is imported, in the quality an editor imports, only when no
+  peer gives a build of it. A join ends within a bounded time without progress whatever a peer
+  does or withholds: what is wanted while no chunk byte arrives and no object completes for a
+  while fails, reported by path, and the files after it are asked. A build that cooks refreshes
+  requiring Final, so a Fast build a join took never ships. A refresh asks the source for every
+  manifest and build it lacks in one batch before it goes package by package, so it waits for the
+  peers about once, not once per package. It prints progress at a steady pace and, at the end,
+  how to open the project. The store keeps what arrived: a join stopped and run again fetches only
+  the rest. The lease of the node holds what a share serves and what a join fetches and wrote.
+- **Updating.** A folder joined before keeps its last snapshot in `.mirai/share`, by path, the base
+  of three ways: a file the host changed or removed is replaced or removed when the joiner left it
+  as it was; a file both changed is kept and reported, never overwritten. Each file is checked
+  again just before it is written or removed, so an edit made while the join runs is kept too.
+  The join puts the base's tree in the store before it asks, so what the host did not change since
+  is not asked, and a file to replace whose base the store lost is put from the folder first, cut
+  as the host's, so the chunks both versions share are not asked either.
+- **Links.** A join never follows a link (a symbolic link, or a junction on Windows) inside its
+  folder: a file whose path passes through one, the file itself included, is neither written nor
+  removed but reported by path, with the link to replace, and so is the whole join when the
+  generated folder's state goes through one. Each path is checked when the join plans it and
+  again just before its rename or removal. The folder itself may be a link: it is the place the
+  joiner named.
+- **Case.** A join probes whether the folder's file system folds case (APFS, NTFS). There paths
+  compare in lower case, so a host's rename that changes only case is the same file: it is
+  renamed in place, folders first, and never removed. Elsewhere it is a removal and a new file.
+- **Incomplete.** A file that cannot be written or removed (read-only, a read-only folder, held
+  open, an object no peer has) is listed by path with why and how to fix it, the rest is done, and
+  `mirai join` exits with 3. The base it keeps holds the last entry of each such file, so running
+  the same join again does only those.
+- **Peers.** While a join runs it serves what it has, with an invitation of its own, so a third
+  machine joins from either. After a join, `mirai share` in the folder serves it too.
+- **Editors.** A collaboration session of the editor carries its project with this same node and
+  join over its own connections
+  ([the project](../../mirai-editor/references/collaboration.md#the-project)).
+- Reaching a host is the invitation's: on another network one side needs a router that maps a port;
+  the failures say so, as they say an invitation whose share ended, another version of Mirai, a
+  store of another layout, a disk without room and a package no connected peer has a build of.
 
 ## Tool and machine
 

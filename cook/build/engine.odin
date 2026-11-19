@@ -77,11 +77,11 @@ Engine_Package :: struct {
 ENGINE_PACKAGES :: [?]Engine_Package{
     {.Base,"std/base","std"},{.Base,"std/subprocess","std"},{.Base,"std/math","std"},{.Base,"std/geom","std"},{.Base,"std/serial","std"},
     {.Base,"std/spatial","std"},{.Base,"std/jobs","std"},{.Base,"std/anim","std"},{.Base,"std/ai","std"},{.Base,"std/input","std"},
-    {.Base,"std/ui_format","std"},
+    {.Base,"std/ui_format","std"},{.Base,"std/blake3","std"},
     {.Base,"audio","system"},{.Base,"platform","system"},{.Base,"rhi","system"},
-    {.Base,"project","system"},{.Base,"core",""},
+    {.Base,"project","system"},{.Base,"store","system"},{.Base,"core",""},
 
-    {.Engine,"asset",""},{.Engine,"net",""},{.Engine,"render/abi","render"},{.Engine,"render","render"},{.Engine,"third_party/freetype","freetype"},
+    {.Engine,"asset",""},{.Engine,"net",""},{.Engine,"exchange",""},{.Engine,"render/abi","render"},{.Engine,"render","render"},{.Engine,"third_party/freetype","freetype"},
     {.Engine,"ui","ui"},{.Engine,"host",""},{.Engine,"engine/input","engine"},{.Engine,"engine/scene","engine"},{.Engine,"engine/volume","engine"},
     {.Engine,"engine/render","engine"},{.Engine,"engine/audio","engine"},{.Engine,"engine/gui","engine"},{.Engine,"engine/camera","engine"},{.Engine,"engine/save","engine"},
 
@@ -89,7 +89,7 @@ ENGINE_PACKAGES :: [?]Engine_Package{
     {.Cook,"cook/textures","cook"},{.Cook,"cook/image","cook"},{.Cook,"cook/movie","cook"},{.Cook,"cook/rig","cook"},
     {.Cook,"cook/import","cook"},{.Cook,"cook/import/obj","cook"},{.Cook,"cook/import/gltf","cook"},{.Cook,"cook/import/usd","cook"},
     {.Cook,"cook/import/fbx","cook"},{.Cook,"cook/shaders","cook"},{.Cook,"cook/author","cook"},{.Cook,"cook/prefab","cook"},{.Cook,"cook/import/sources","cook"},
-    {.Cook,"cook/install","cook"},{.Cook,"cook/build",""},
+    {.Cook,"cook/share","cook"},{.Cook,"cook/install","cook"},{.Cook,"cook/build",""},
 
     {.Editor,"third_party/sqlite","sqlite"},{.Editor,"editor/api","editor-parts"},{.Editor,"editor/acp","editor-parts"},{.Editor,"editor/diff","editor-parts"},{.Editor,"editor/ai_store","editor-parts"},
     {.Editor,"editor/git","editor-parts"},{.Editor,"editor/history","editor-parts"},{.Editor,"editor/records","editor-parts"},{.Editor,"editor/kit","editor-parts"},{.Editor,"editor",""},
@@ -173,7 +173,7 @@ Engine_Paths :: struct {
     stage:string,
     work:string,                      // what the compilers say while a build runs
     editor_program,player_program:string,
-    import_program:string,            // runs cook/import/sources.command: what mirai import does
+    import_program:string,            // runs cook/import/sources.command, what mirai import does, and cook/share.command, mirai share and join
     author_program:string,            // runs cook/author.command: what mirai ui and mirai scene do
     stamp:string,
     defines:[]string,                 // what the binaries are built with (engine_defines)
@@ -479,9 +479,14 @@ engine_program_sources :: proc(paths:Engine_Paths) -> [4]Engine_Program {
 
 import "core:os"
 import "mirai:cook/import/sources"
+import "mirai:cook/share"
 import "mirai:editor"
 
-main :: proc() {os.exit(sources.command(os.args[1:],os.to_writer(os.stdout),os.to_writer(os.stderr),editor.import_library))}
+main :: proc() {
+    args:=os.args[1:]
+    if len(args)>0 && (args[0]=="share" || args[0]=="join") {os.exit(share.command(args,os.to_writer(os.stdout),os.to_writer(os.stderr),editor.import_library))}
+    os.exit(sources.command(args,os.to_writer(os.stdout),os.to_writer(os.stderr),editor.import_library))
+}
 `,paths.import_program},
         {"author program","author",`package main
 
@@ -639,9 +644,9 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
         result.status=.Up_To_Date
         return
     }
-    // What runs these binaries goes on with them; the build writes in their place (engine_unlock.odin).
-    if file,unlocked:=engine_unlock(paths.folder);!unlocked {
-        return engine_fail(.Write_Failed,"binaries of the engine",fmt.tprintf("%s runs and could not be moved aside: close what runs it",file))
+    when ODIN_OS==.Windows {
+        retired:=project.path(paths.folder,ENGINE_RETIRED,allocator=context.temp_allocator)
+        engine_retired_sweep(retired)
     }
     // No stamp says what the stage, the declarations and the programs there were written from.
     if desc.force || !plan.stamped {
@@ -748,13 +753,23 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
     if build_programs {stamp.programs,stamp.programs_against=0,0}
     _=engine_stamp_write(paths.stamp,stamp,libraries)
 
+    linking,link_error:=os.make_directory_temp(paths.folder,".link-*",context.temp_allocator)
+    if link_error!=nil {return engine_fail(.Write_Failed,paths.folder,"")}
+    defer base.remove_all(linking)
     tasks:=make([dynamic]Engine_Task,context.temp_allocator)
     for library,which in libraries {
         output,_:=engine_library_files(paths,library,context.temp_allocator)
-        task:=Engine_Task{name=fmt.tprintf("library %s",library.file),compile={streams=engine_streams(paths,library.file),staged=output,library=which},state=.Done}
+        task:=Engine_Task{
+            name=fmt.tprintf("library %s",library.file),output=output,state=.Done,
+            compile={streams=engine_streams(paths,library.file),library=which},
+        }
         if compile[which] {
             task.state=.Pending
-            task.command=engine_library_command(compiler,paths,library,slice.contains(reach.needs[which],true),mode,plan.library_flags[which])
+            _,name:=os.split_path(output)
+            task.compile.staged=project.path(linking,name,allocator=context.temp_allocator)
+            links:=slice.contains(reach.needs[which],true)
+            task.command=engine_library_command(compiler,paths,library,task.compile.staged,
+                links,mode,plan.library_flags[which])
         }
         append(&tasks,task)
     }
@@ -762,10 +777,17 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
     every:=make([]bool,len(libraries),context.temp_allocator)
     slice.fill(every,true)
     for program in programs {
-        task:=Engine_Task{name=program.name,compile={streams=engine_streams(paths,fmt.tprintf("program-%s",program.package_name)),staged=program.output,library=-1},state=.Done,needs=every}
+        streams:=engine_streams(paths,fmt.tprintf("program-%s",program.package_name))
+        task:=Engine_Task{
+            name=program.name,output=program.output,state=.Done,needs=every,
+            compile={streams=streams,library=-1},
+        }
         if build_programs {
             task.state=.Pending
-            task.command=engine_program_command(compiler,paths,program,plan.flags[:])
+            _,name:=os.split_path(program.output)
+            task.compile.staged=project.path(linking,name,allocator=context.temp_allocator)
+            task.command=engine_program_command(compiler,paths,program,task.compile.staged,
+                plan.flags[:])
         }
         append(&tasks,task)
     }
@@ -780,9 +802,10 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
     if len(compiled)>0 {cache_trim(workspace.cache_folder(root,ENGINE_CACHE,context.temp_allocator),ENGINE_CACHE_ENTRIES)}
     if !ok {return failed}
     done.programs=build_programs
-    for copy in engine_copies(root,paths.folder,compiler) {
-        if !build_programs && os.is_file(copy.to) {continue}
-        if os.copy_file(copy.to,copy.from)!=nil {return engine_fail(.Copy_Failed,copy.to,"")}
+    if copy:=sdl_copy(root,paths.folder,compiler,context.temp_allocator);copy.from!="" {
+        if (build_programs || !os.is_file(copy.to)) && !copy_binary(copy.to,copy.from) {
+            return engine_fail(.Copy_Failed,copy.to,"")
+        }
     }
     stamp.programs,stamp.programs_against=plan.programs,programs_against
     _=engine_stamp_write(paths.stamp,stamp,libraries)
@@ -795,6 +818,7 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
 Engine_Task :: struct {
     name:string,    // the step it is
     command:[]string,
+    output:string,
     needs:[]bool,   // the libraries it links against: it starts once none of them is being built
     state:enum u8 {Done,Pending,Running,Failed},
     compile:Compile, // library: of the libraries, -1 for a program
@@ -851,6 +875,7 @@ engine_tasks_run :: proc(root:string,paths:Engine_Paths,libraries:[]Engine_Libra
                 continue
             }
             diagnostics,text,failure,_:=compile_end(&task.compile,state.exit_code)
+            if failure==.None && !engine_publish(&task) {failure=.Output_Locked}
             if failure==.None {
                 task.state=.Done
                 if which:=task.compile.library;ok && which>=0 {
@@ -878,8 +903,8 @@ engine_tasks_run :: proc(root:string,paths:Engine_Paths,libraries:[]Engine_Libra
 // The compiler's command for a library of the engine: its own packages from
 // the stage, every other one as its declarations.
 @(private)
-engine_library_command :: proc(compiler:string,paths:Engine_Paths,library:Engine_Library,links_libraries:bool,mode:Engine_Mode,flags:[]string) -> []string {
-    output,_:=engine_library_files(paths,library,context.temp_allocator)
+engine_library_command :: proc(compiler:string,paths:Engine_Paths,library:Engine_Library,
+    output:string,links_libraries:bool,mode:Engine_Mode,flags:[]string) -> []string {
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,compiler,"build",project.path(paths.stage,engine_library_entry(library,context.temp_allocator),allocator=context.temp_allocator),"-build-mode:dll")
     append(&command,fmt.tprintf("-collection:mirai=%s",paths.decl),fmt.tprintf("-collection:%s=%s",STAGE_COLLECTION,paths.stage),fmt.tprintf("-out:%s",output))
@@ -898,19 +923,42 @@ engine_library_command :: proc(compiler:string,paths:Engine_Paths,library:Engine
 }
 
 @(private)
-engine_program_command :: proc(compiler:string,paths:Engine_Paths,program:Engine_Program,flags:[]string) -> []string {
+engine_program_command :: proc(compiler:string,paths:Engine_Paths,program:Engine_Program,
+    output:string,flags:[]string) -> []string {
     folder:=project.path(paths.folder,"programs",program.package_name,allocator=context.temp_allocator)
     command:=make([dynamic]string,context.temp_allocator)
-    append(&command,compiler,"build",folder,fmt.tprintf("-collection:mirai=%s",paths.decl),fmt.tprintf("-out:%s",program.output))
+    append(&command,compiler,"build",folder,fmt.tprintf("-collection:mirai=%s",paths.decl),
+        fmt.tprintf("-out:%s",output))
     append(&command,..flags)
     append(&command,"-json-errors")
     // The program of the editor has the name of its library, and so would their PDBs.
-    when ODIN_OS==.Windows {append(&command,fmt.tprintf("-pdb-name:%s",strings.concatenate({program.output[:len(program.output)-len(project.EXECUTABLE_SUFFIX)],"-program.pdb"},context.temp_allocator)))}
+    when ODIN_OS==.Windows {append(&command,fmt.tprintf("-pdb-name:%s",engine_pdb(output,true)))}
     when ODIN_OS==.Linux {linker_flags_append(&command,"-Wl,-rpath,$ORIGIN",context.temp_allocator)}
     else when ODIN_OS==.Darwin {linker_flags_append(&command,"-Wl,-rpath,@executable_path",context.temp_allocator)}
     return command[:]
 }
 
+@(private="file")
+engine_publish :: proc(task:^Engine_Task) -> bool {
+    staged:=task.compile.staged
+    when ODIN_OS==.Windows {
+        program:=task.compile.library<0
+        pdb:=engine_pdb(staged,program)
+        if os.is_file(pdb) && !publish(pdb,engine_pdb(task.output,program)) {return false}
+    } else when ODIN_OS==.Darwin {
+        from,to:=fmt.tprintf("%s.dSYM",staged),fmt.tprintf("%s.dSYM",task.output)
+        if os.is_dir(from) && (base.remove_all(to)!=nil || os.rename(from,to)!=nil) {return false}
+    }
+    return publish(staged,task.output)
+}
+
+when ODIN_OS==.Windows {
+    @(private="file")
+    engine_pdb :: proc(output:string,program:bool) -> string {
+        stem:=strings.trim_suffix(output,program?project.EXECUTABLE_SUFFIX:project.LIBRARY_SUFFIX)
+        return fmt.tprintf("%s%s",stem,program?"-program.pdb":".pdb")
+    }
+}
 
 // Whether an installed engine has every binary its package carries.
 @(private)
@@ -964,7 +1012,8 @@ engine_cache_take :: proc(entry:string,paths:Engine_Paths,library:Engine_Library
         from:=project.path(entry,name,allocator=context.temp_allocator)
         // The debug information is there only when the library was built with it.
         if at==1 && !os.is_file(from) {continue}
-        if os.copy_file(project.path(paths.folder,name,allocator=context.temp_allocator),from)!=nil {return false}
+        to:=project.path(paths.folder,name,allocator=context.temp_allocator)
+        if !copy_binary(to,from) {return false}
     }
     cache_entry_used(entry)
     return true
@@ -1230,26 +1279,26 @@ engine_fail :: proc(failure:Failure,step,text:string) -> Engine_Result {
 }
 
 // What the programs load besides the libraries of the engine: SDL3.
-@(private="file")
-engine_copies :: proc(root,folder,compiler:string) -> []Copy {
-    copies:=make([dynamic]Copy,context.temp_allocator)
+@(private)
+sdl_copy :: proc(root,folder,compiler:string,allocator:=context.allocator) -> Copy {
+    from,name:string
     when ODIN_OS==.Windows {
         odin_root,configured:=os.lookup_env("ODIN_ROOT",context.temp_allocator)
         if !configured || odin_root=="" {
             cut:=strings.last_index_any(compiler,"/\\")
             odin_root=cut>=0?compiler[:cut]:"."
         }
-        if sdl:=project.path(odin_root,"vendor/sdl3/SDL3.dll",allocator=context.temp_allocator);os.is_file(sdl) {
-            append(&copies,Copy{sdl,project.path(folder,"SDL3.dll",allocator=context.temp_allocator),false})
-        }
+        name="SDL3.dll"
+        from=project.path(odin_root,"vendor/sdl3",name,allocator=allocator)
     } else when ODIN_OS==.Linux {
-        if sdl:=project.path(linux_deps(root),"sdl3/lib/libSDL3.so.0",allocator=context.temp_allocator);os.is_file(sdl) {
-            append(&copies,Copy{sdl,project.path(folder,"libSDL3.so.0",allocator=context.temp_allocator),false})
-        }
+        name="libSDL3.so.0"
+        from=project.path(linux_deps(root),"sdl3/lib",name,allocator=allocator)
     } else when ODIN_OS==.Darwin {
         if sdl,relocatable:=macos_sdl(root);relocatable {
-            append(&copies,Copy{project.path(sdl,MACOS_SDL,allocator=context.temp_allocator),project.path(folder,MACOS_SDL,allocator=context.temp_allocator),false})
+            name=MACOS_SDL
+            from=project.path(sdl,name,allocator=allocator)
         }
     }
-    return copies[:]
+    if from=="" || !os.is_file(from) {return {}}
+    return {from=from,to=project.path(folder,name,allocator=allocator),binary=true}
 }

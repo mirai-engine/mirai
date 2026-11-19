@@ -61,6 +61,16 @@ test_host :: proc(w:^Test_World,desc:Host_Desc) -> ^Host {
     w.count+=1
     return host
 }
+// The key of a share, made from a number, and what the code of its invitation carries.
+@(private)
+test_key :: proc(n:u64) -> Invite_Key {
+    private:Key
+    state:=n
+    for &b in private {b=u8(base.splitmix_next(&state))}
+    return invite_key_from(&private,n)
+}
+@(private)
+test_invited :: proc(key:Invite_Key) -> Invite_Key {return {public=key.public,secret=key.secret}}
 @(private)
 test_step :: proc(w:^Test_World,steps:=1) {
     for _ in 0..<steps {
@@ -93,12 +103,12 @@ test_connect :: proc(w:^Test_World,server,client:^Host,limit:=600) -> (on_server
 Test_Fuzz :: struct {inner:Transport,host:^Host,rng:u64,rate:f64,mutated:int,only:Address}
 @(private)
 test_fuzz_transport :: proc(f:^Test_Fuzz) -> Transport {
-    return {f,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
+    return {data=f,send=proc(data:rawptr,batch:[]Datagram) -> int {return test_send_each(data,batch,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
         f:=(^Test_Fuzz)(data)
-        return f.inner.send(f.inner.data,to,bytes)
-    },proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
+        return test_send_one(f.inner,to,bytes)
+    })},receive=proc(data:rawptr,batch:[]Datagram) -> int {return test_receive_each(data,batch,proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
         f:=(^Test_Fuzz)(data)
-        size,from,ok=f.inner.receive(f.inner.data,buffer)
+        size,from,ok=test_receive_one(f.inner,buffer)
         if !ok || size<8 || (f.only.kind!=.None && from!=f.only) || rng_unit(&f.rng)>=f.rate {return}
         plain,opened:=test_unseal(f.host,buffer[:size],from)
         if !opened {return}
@@ -118,7 +128,7 @@ test_fuzz_transport :: proc(f:^Test_Fuzz) -> Transport {
         }
         size=test_reseal(f.host,buffer,plain,from)
         return
-    }}
+    })}}
 }
 @(private)
 test_packet_data :: proc(bytes:[]u8) -> bool {return bytes[0]==u8(Packet_Type.Data) || bytes[0]==u8(Packet_Type.Disconnect)}
@@ -276,4 +286,34 @@ test_baselines_counted :: proc(server:^Host) -> bool {
         held+=int(count>0)
     }
     return held+r.base_free_count==len(r.base_refs)
+}
+
+// The transports of tests look at one datagram at a time: these hand them a batch one by one.
+@(private)
+test_send_each :: proc(data:rawptr,batch:[]Datagram,one:proc(data:rawptr,to:Address,bytes:[]u8) -> bool) -> int {
+    sent:=0
+    for datagram in batch {
+        if one(data,datagram.address,datagram.bytes) {sent+=1}
+    }
+    return sent
+}
+@(private)
+test_receive_each :: proc(data:rawptr,batch:[]Datagram,one:proc(data:rawptr,buffer:[]u8) -> (int,Address,bool)) -> int {
+    for &datagram,i in batch {
+        size,from,ok:=one(data,datagram.bytes)
+        if !ok {return i}
+        datagram={from,datagram.bytes[:size]}
+    }
+    return len(batch)
+}
+@(private)
+test_send_one :: proc(t:Transport,to:Address,bytes:[]u8) -> bool {
+    batch:=[1]Datagram{{to,bytes}}
+    return t.send(t.data,batch[:])==1
+}
+@(private)
+test_receive_one :: proc(t:Transport,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
+    batch:=[1]Datagram{{bytes=buffer}}
+    if t.receive(t.data,batch[:])==0 {return}
+    return len(batch[0].bytes),batch[0].address,true
 }

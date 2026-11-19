@@ -386,16 +386,15 @@ plugin_cache_trim :: proc(engine_root:string) {
 	cache_trim(workspace.cache_folder(engine_root,"plugins",context.temp_allocator),PLUGIN_CACHE_ENTRIES)
 }
 
-// Copies the library of an entry to staged. False when the cache has none or
+// Publishes the library of an entry. False when the cache has none or
 // it cannot be copied.
 @(private)
-plugin_cache_take :: proc(engine_root:string,lib:^Plugin_Library,hash:u64,staged:string) -> bool {
+plugin_cache_take :: proc(engine_root:string,lib:^Plugin_Library,hash:u64) -> bool {
 	entry:=plugin_cache_entry(engine_root,lib,hash)
 	if !cache_entry_complete(entry) {return false}
-	if os.copy_file(staged,project.path(entry,project.library_file(lib.file,context.temp_allocator),allocator=context.temp_allocator))!=nil {
-		_=os.remove(staged)
-		return false
-	}
+	name:=project.library_file(lib.file,context.temp_allocator)
+	from:=project.path(entry,name,allocator=context.temp_allocator)
+	if !copy_binary(lib.library,from) {return false}
 	cache_entry_used(entry)
 	return true
 }

@@ -12,6 +12,7 @@ import "mirai:asset"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/subprocess"
+import "mirai:store"
 
 // Builds of a project. A job generates the world and the main package of
 // its target and runs the compiler without blocking; whoever started it polls
@@ -77,6 +78,7 @@ Desc :: struct {
     action:Action,               // Check and Test: of the Editor target
     test_package:string,         // Test: the folder of the package, absolute
     test:Test_Options,           // Test: how its executable runs
+    store_root:string,           // the store the packages of the project and its plugins are refreshed in and listed from; "": the machine's (store.default_root)
     allocator:runtime.Allocator, // of the job. Unset: context.allocator
 }
 
@@ -113,6 +115,7 @@ Job :: struct {
     engine:Engine_Mode,
     imports:[]string,           // Build: the roots whose sources it imports once the target stands (imports_roots)
     import_program:string,      // Build: that of the engine of the project's defines, which imports them
+    store_root:string,          // Desc.store_root, or the machine's
     compiler:string,
     flags:[]string,             // what identifies the build besides its sources
     staged:string,              // what the compiler writes
@@ -124,6 +127,7 @@ Job :: struct {
     copies:[]Copy,              // Game: what goes next to the executable
     settings:string,            // Game: its settings file: those of the engine and of the project merged, since it ships without the engine
     cook:Cook_Desc,             // Game: the assets it ships; without assets, a project that has none
+    store:store.Store,          // Game: the store of store_root, which cook.store names; unopened: none
     plugin_assets:[dynamic]project.Asset_Folder, // Game: the folders of assets of its active plugins, in cook.plugins
     development:[dynamic]string, // Game: the folders of the active development plugins, which it must not reach
     plugins:[]Plugin_Library,    // the plugin libraries the target links (plugins.odin)
@@ -150,7 +154,7 @@ Job :: struct {
 }
 
 @(private)
-Copy :: struct {from,to:string,folder:bool}
+Copy :: struct {from,to:string,folder,binary:bool}
 
 // How long job_wait waits on one compiler before it looks at the others.
 @(private)
@@ -219,13 +223,14 @@ job_start :: proc(desc:Desc) -> ^Job {
         }
     }
     job.engine=desc.engine
+    job.store_root=strings.clone(desc.store_root!=""?desc.store_root:store.default_root(context.temp_allocator),a)
     if desc.action==.Build {
         roots:=imports_roots(p)
         job.imports=make([]string,len(roots),a)
         for root,i in roots {job.imports[i]=strings.clone(root,a)}
         job.import_program=project_engine(p,desc.engine,a).import_program
     }
-    generated,written:=generated_write(p,desc.target)
+    generated,written:=generated_write(p,desc.target,job.store_root)
     if !written {
         if len(generated.errors)>0 {
             job.result.text=strings.join(generated.errors,"\n",a)
@@ -260,8 +265,14 @@ job_start :: proc(desc:Desc) -> ^Job {
             if p.plugins[index].manifest.development {append(&job.development,strings.clone(p.plugins[index].folder,a))}
         }
         if assets:=project.folder_path(p.root,.Assets,a);os.is_dir(assets) {
-            job.cook={assets=assets,output=project.folder_path(folder,.Assets,a),manifest=project.path(p.root,COOK_FILE,allocator=a),texture_cache=project.content_cache_path(p.root,project.TEXTURE_CACHE,allocator=a),mesh_cache=project.content_cache_path(p.root,project.MESH_CACHE,allocator=a),collision_cache=project.content_cache_path(p.root,project.COLLISION_CACHE,allocator=a),root=p.root,server=desc.server,quick=desc.dev,keys=project.path(job.work,fmt.tprintf("%s.cook",name),allocator=a),allocator=a}
+            job.cook={assets=assets,output=project.folder_path(folder,.Assets,a),manifest=project.path(p.root,COOK_FILE,allocator=a),collision_cache=project.content_cache_path(p.root,project.COLLISION_CACHE,allocator=a),root=p.root,server=desc.server,quick=desc.dev,keys=project.path(job.work,fmt.tprintf("%s.cook",name),allocator=a),allocator=a}
             job.cook.codecs=asset.project_codecs(p.root,p.engine_root)
+            if job.store_root!="" {
+                if opened,error:=store.open(job.store_root,a);error==.None {
+                    job.store=opened
+                    job.cook.store=&job.store
+                }
+            }
             job.plugin_assets=make([dynamic]project.Asset_Folder,a)
             for found in project.asset_folders(p,a) {
                 if found.prefix!="" {append(&job.plugin_assets,found)}
@@ -376,9 +387,7 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
 @(private)
 job_plugin_restore :: proc(job:^Job,index:int) -> bool {
     lib:=&job.plugins[index]
-    if os.make_directory_all(job.work)!=nil && !os.is_dir(job.work) {return false}
-    staged:=project.path(job.work,strings.concatenate({job_plugin_name(job,index),project.LIBRARY_SUFFIX},context.temp_allocator),allocator=context.temp_allocator)
-    if !plugin_cache_take(job.engine_root,lib,job.plugin_hashes[index],staged) || !publish(staged,lib.library,job_plugin_retired(job,lib)) {return false}
+    if !plugin_cache_take(job.engine_root,lib,job.plugin_hashes[index]) {return false}
     job_plugin_stamp(job,index)
     job.plugin_published[index]=true
     job.result.plugins_built+=1
@@ -535,7 +544,8 @@ job_project_start :: proc(job:^Job) -> ^Job {
                 // The game built for another folder is the same executable.
                 if current==saved && !present && job.target==.Game && built!="" && !project.path_same(built,job.published) && os.is_file(built) {
                     folder:=job.published[:strings.last_index_byte(job.published,'/')]
-                    present=(os.make_directory_all(folder)==nil || os.is_dir(folder)) && os.copy_file(job.published,built)==nil
+                    present=(os.make_directory_all(folder)==nil || os.is_dir(folder)) &&
+                        copy_binary(job.published,built)
                 }
                 if present && len(job.compiles)>0 {
                     job.project_stands=true
@@ -878,14 +888,14 @@ job_run :: proc(desc:Desc) -> ^Job {
     return job
 }
 
-// What the imports of the project keep outside version control, from its
-// sources, once the target stands: the library of its editor, built, has the
-// formats its plugins add. False, with the job failed, when a source did not
-// import.
+// The packages of the project and its plugins brought to builds this engine
+// reads, once the target stands: the library of its editor, built, has the
+// formats its plugins add. A build that cooks requires Final textures. False,
+// with the job failed, when a package has no build and could not get one.
 @(private)
 job_imports :: proc(job:^Job) -> bool {
     if len(job.imports)==0 {return true}
-    ok,message:=imports_sync(job.import_program,job.imports,final=job.cook.assets!="")
+    ok,message:=imports_refresh(job.import_program,job.imports,job.cook.assets!="",job.store_root)
     if !ok {
         job.result.text=strings.clone(message,virtual.arena_allocator(&job.arena))
         job_fail(job,.Import_Failed)

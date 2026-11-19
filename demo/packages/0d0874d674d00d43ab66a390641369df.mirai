@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "0d0874d674d00d43ab66a390641369df",
+  "name": "bricks_color",
+  "origin": {"path": "assets/surfaces/bricks/bricks_color.png", "folder": false, "importer": "image"},
+  "identity": "5161142e9629e908d0b4834890974b3c71806bdc8c2ef3f4dac651326c87609b",
+  "settings": {
+    "image": "Color"
+  },
+  "inputs": [],
+  "assets": [
+    {"kind": "TEX", "name": "bricks_color", "index": 0, "id": "4c24cf1fa5b4eeca8ac84ea3d8813cfc"}
+  ]
+}

@@ -4,10 +4,11 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   `cook/build` (generated world, engine binaries, libraries and shipped game, project shaders,
   fingerprint, cooking and engine-time exclusion), `cook/workspace` (worktrees, dependencies, shared
   cache and locks), the installed engine (`mirai package engine`, binary package and release
-  workflow), the `tools/mirai` commands, the external scripts and the `templates`. Use when changing
+  workflow), sharing a project peer to peer (`cook/share`, `mirai share`, `mirai join`), the
+  `tools/mirai` commands, the external scripts and the `templates`. Use when changing
   a manifest, the layout or how a project or the engine is generated, compiled or distributed, when
-  investigating why something does not compile or what went into the game, or when taking reference
-  frames or sound from a YouTube or X video.
+  investigating why something does not compile or what went into the game, when sending a project
+  to another machine, or when taking reference frames or sound from a YouTube or X video.
 ---
 
 # Mirai projects and build
@@ -38,6 +39,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 - Turns between processes, build, measurement and GPU locks and implicit Vulkan layers:
   [turns](references/build.md#turns-between-processes) and
   [layers](references/build.md#implicit-vulkan-layers).
+- Sharing a project peer to peer (`cook/share`, `mirai share` and `mirai join`), its snapshot and
+  updating a folder joined before: [sharing](references/projects.md#sharing-a-project).
 - `mirai` launcher, `mirai worktree` and `mirai doctor`:
   [tool and machine](references/projects.md#tool-and-machine).
 - `mirai` subcommands (their usage, with `mirai <command>` without arguments):
@@ -161,7 +164,11 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   lock, GPU turns by the room of the card, a person and a measurement) and `mirai test
   std/subprocess` (low priority of a child, handles it inherits). GPU turns with real editors:
   two sessions at once on a heavy scene both run or the second waits naming the first, and
-  killing the editor of one frees its turn (`mirai locks`).
+  killing the editor of one frees its turn (`mirai locks`). Sharing: `mirai test cook/share`
+  (snapshot rule, hostile trees, join, update by three ways with renames by case, edits while a
+  join runs, an incomplete join run again, resume, a third peer, the bytes of a re-join and of an
+  insert, the packages as the host's), all on `Sim_Network`; the memory of a large file is the
+  opt-in `a_large_file_joins_within_bounded_memory` with `-define:SHARE_LARGE=true`, run alone.
 - Generator or build: `mirai build editor` and `mirai build game --out <separate folder>` of the
   affected project, and the player with `--no-gpu --frames 3`.
 - User commands, by hand: `mirai new`, and `mirai build game` twice (the second says "unchanged").

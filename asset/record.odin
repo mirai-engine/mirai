@@ -92,6 +92,7 @@ Asset :: struct {
     view_types:^Types,
     decoder:^Decoder,     // lent by whoever reads, else made by asset_decoder and owned
     lacking:[2]string,    // the table and the field of a row a whole read refused: the file does not store that field
+    object:^Asset_Object, // of an asset of the store (asset_open_object): blob.data is its header and directory
     decoder_owned:bool,
 }
 
@@ -163,6 +164,7 @@ asset_close :: proc(a:^Asset) {
     delete(a.owned);delete(a.hashes)
     if a.schema.allocator.procedure!=nil {serial.schema_destroy(&a.schema)}
     mem.free_bytes(a.file,a.allocator)
+    object_detach(a)
     if a.decoder_owned {
         decoder_destroy(a.decoder)
         free(a.decoder,a.allocator)
@@ -198,17 +200,22 @@ asset_alloc :: proc(a:^Asset,size:int,alignment:int) -> (block:[]u8,error:Error)
 @(private)
 asset_chunk :: proc(a:^Asset,index:int,alignment:int) -> (data:[]u8,error:Error) {
     entry:=blob_chunk(&a.blob,index)
-    // The front of a file (asset_open_front) holds only the chunks it was read for.
-    if entry.offset+entry.size>u64(len(a.blob.data)) {return nil,.Truncated}
-    if entry.compression==.None {
-        stored:=blob_stored(&a.blob,entry)
-        if len(stored)==0 || uintptr(raw_data(stored))&uintptr(alignment-1)==0 {return stored,.None}
-    }
+    stored:=asset_stored(a,index) or_return
+    if entry.compression==.None && (len(stored)==0 || uintptr(raw_data(stored))&uintptr(alignment-1)==0) {return stored,.None}
     data=asset_alloc(a,int(entry.uncompressed_size),alignment) or_return
     decoder:^Decoder
     if entry.compression!=.None {decoder=asset_decoder(a) or_return}
-    blob_read(&a.blob,entry,data,decoder) or_return
+    chunk_decode(entry,stored,data,decoder) or_return
     return data,.None
+}
+
+// The content of a chunk into dst of its uncompressed size, whether the asset is a file or of the store.
+asset_chunk_read :: proc(a:^Asset,index:int,dst:[]u8) -> Error {
+    entry:=blob_chunk(&a.blob,index)
+    stored:=asset_stored(a,index) or_return
+    decoder:^Decoder
+    if entry.compression!=.None {decoder=asset_decoder(a) or_return}
+    return chunk_decode(entry,stored,dst,decoder)
 }
 
 // Opens the front of an asset file: everything up to the chunks a caller
@@ -262,8 +269,12 @@ front_read :: proc(path:string,head:[]u8,header:Header,all:bool,allocator:=conte
 }
 
 @(private)
-asset_parse :: proc(a:^Asset,data:[]u8,limit:u64,front:=false) -> Error {
-    if front {
+asset_parse :: proc(a:^Asset,data:[]u8,limit:u64,front:=false,object:=false) -> Error {
+    if object {
+        header:=header_read(data) or_return
+        a.blob={data=data,header=header}
+        object_check(a,limit) or_return
+    } else if front {
         header:=header_read(data) or_return
         if u64(len(data))>header.total_size || len(data)<HEADER_SIZE+int(header.chunk_count)*CHUNK_ENTRY_SIZE {return .Truncated}
         a.blob={data=data,header=header}

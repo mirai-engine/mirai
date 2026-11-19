@@ -9,10 +9,10 @@ import "mirai:project"
 import "mirai:std/base"
 
 // An import is never run with an editor library its project's sources would
-// not build: that of the project of the file, or of a root of --sync, is
+// not build: that of the project of the file, or of a root of --refresh, is
 // built first while it is missing or built from other sources (the
 // fingerprint of its last build no longer matches, or what the engine
-// generates for it changed). What is not in a project, a cache folder and
+// generates for it changed). What is not in a project, a store and
 // what is not there build nothing.
 @(test)
 an_import_builds_the_editor_library_of_its_project_first_unless_it_is_current :: proc(t:^testing.T) {
@@ -20,7 +20,7 @@ an_import_builds_the_editor_library_of_its_project_first_unless_it_is_current ::
     folder:=base.test_folder(t,"import-library")
     if folder=="" {return}
     testing.expect(t,os.write_entire_file(project.path(folder,project.PROJECT_FILE),`{"name":"Stale","plugins":[]}`)==nil)
-    testing.expect(t,os.make_directory_all(project.path(folder,"assets","props"))==nil)
+    testing.expect(t,base.make_directory_all(project.path(folder,"assets","props"))==nil)
     model:=project.path(folder,"assets","props","crate.glb",allocator=context.temp_allocator)
     testing.expect(t,os.write_entire_file(model,"glTF")==nil)
     outside:=project.path(root,"assets",allocator=context.temp_allocator)
@@ -39,9 +39,9 @@ an_import_builds_the_editor_library_of_its_project_first_unless_it_is_current ::
             testing.expect(t,os.write_entire_file(world,fmt.tprintf("%s// what an engine of other components generated\n",string(text)))==nil)
         }
         work:=project.path(project.folder_path(folder,.Generated,context.temp_allocator),"build",allocator=context.temp_allocator)
-        testing.expect(t,os.make_directory_all(work)==nil)
+        testing.expect(t,base.make_directory_all(work)==nil)
         game:=project.path(folder,"game","game.odin",allocator=context.temp_allocator)
-        testing.expect(t,os.make_directory_all(project.path(folder,"game"))==nil && os.write_entire_file(game,"package game\n")==nil)
+        testing.expect(t,base.make_directory_all(project.path(folder,"game"))==nil && os.write_entire_file(game,"package game\n")==nil)
         testing.expect(t,os.write_entire_file(project.path(work,"editor.sources.json"),fmt.tprintf(`{{"source_files":["%s"],"load_files":[]}}`,base_slashes(game)))==nil)
         testing.expect(t,os.write_entire_file(project.path(work,"editor.stamp"),"0123456789abcdef")==nil)
         testing.expect(t,os.write_entire_file(project.project_library(folder,"editor",context.temp_allocator),"library")==nil)
@@ -49,8 +49,8 @@ an_import_builds_the_editor_library_of_its_project_first_unless_it_is_current ::
     Case :: struct {name:string,library:Library,args:[]string,stale:bool}
     cases:=[]Case{
         {"a model of a project never built",.None,{model},true},
-        {"a root to sync",.None,{"--sync",folder},true},
-        {"a cache folder",.None,{"--texture-cache",folder,"--mesh-cache",folder},false},
+        {"a root to refresh",.None,{"--refresh",folder},true},
+        {"a store",.None,{"--store",folder,"--from",folder},false},
         {"what is not there",.None,{project.path(folder,"assets","gone.glb",allocator=context.temp_allocator)},false},
         {"what is in no project",.None,{outside},false},
         {"a library built from other sources",.Other_Sources,{model},true},

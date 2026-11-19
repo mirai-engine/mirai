@@ -16,8 +16,9 @@ import "mirai:project"
 // of the import alone. The program loads the editor library of the project
 // of what it imports (its importers and the types of its game): one built
 // from other sources, of the engine or of the project, is built again first,
-// as mirai build editor does, and never loaded. The program runs in the
-// current folder with the other arguments, and its exit code is the command's.
+// as mirai build editor does with the store of the import, and never loaded.
+// The program runs in the current folder with the other arguments, and its
+// exit code is the command's.
 
 cmd_import :: proc(root:string,args:[]string) -> int {
     mode,rest:=build_mode_take(args)
@@ -29,6 +30,7 @@ cmd_import :: proc(root:string,args:[]string) -> int {
         command:=make([dynamic]string,context.temp_allocator)
         append(&command,self,"build","editor",folder)
         if mode==.Release {append(&command,"--release")}
+        if store_root,_,named:=store_take(rest);named && store_root!="" {append(&command,"--store",store_root)}
         if code:=run_with(root,command[:],os.stderr);code!=0 {return code}
     }
     if !c_libraries_current(root) || !build.engine_current(root,mode) {
@@ -45,13 +47,13 @@ cmd_import :: proc(root:string,args:[]string) -> int {
 }
 
 // The projects of what the arguments of an import name (the file and the
-// roots of --sync, the paths that are there) whose editor library a build in
-// mode would compile: missing, or built from other sources. The folders of
-// the caches are not imported.
+// roots of --refresh and --project, the paths that are there) whose editor
+// library a build in mode would compile: missing, or built from other
+// sources. The stores and the folder under the assets are not imported.
 import_libraries_stale :: proc(root:string,args:[]string,mode:Build_Mode) -> []string {
     stale:=make([dynamic]string,context.temp_allocator)
     for i:=0;i<len(args);i+=1 {
-        if args[i]=="--texture-cache" || args[i]=="--mesh-cache" {i+=1;continue}
+        if args[i]=="--store" || args[i]=="--from" || args[i]=="--folder" {i+=1;continue}
         if !os.exists(args[i]) {continue}
         folder:=project_of(os.is_dir(args[i])?args[i]:os.dir(args[i]))
         if folder=="" || slice.contains(stale[:],folder) {continue}

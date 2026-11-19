@@ -10,7 +10,7 @@ import "mirai:std/base"
 CHANNELS :: []Channel_Desc{{kind=.Reliable,queue_bytes=64<<10},{kind=.Unreliable},{kind=.Sequenced}}
 
 @(test)
-client_connects_through_the_challenge_and_both_ends_report_it :: proc(t:^testing.T) {
+client_connects_and_both_ends_report_it :: proc(t:^testing.T) {
     w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
     server:=test_host(&w,{mode=.Server,channels=CHANNELS})
     client:=test_host(&w,{mode=.Client,channels=CHANNELS})
@@ -35,8 +35,9 @@ client_connects_through_the_challenge_and_both_ends_report_it :: proc(t:^testing
 @(test)
 a_client_goes_on_with_the_candidate_that_accepts :: proc(t:^testing.T) {
     Case :: struct {lan,public:Address,decoy:Host_Desc,want:Disconnect_Reason}
-    other_version:=Host_Desc{mode=.Server,channels=CHANNELS,invite=0x5a5a,version=3}
-    other_invite:=Host_Desc{mode=.Server,channels=CHANNELS,invite=0x6b6b,version=2}
+    key:=test_key(0x5a5a)
+    other_version:=Host_Desc{mode=.Server,channels=CHANNELS,invite=key,version=3}
+    other_invite:=Host_Desc{mode=.Server,channels=CHANNELS,invite=test_key(0x6b6b),version=2}
     for c in ([]Case{
         {address_memory(0),address_memory(5),other_version,.None},
         {address_memory(5),address_memory(0),other_version,.None},
@@ -46,9 +47,9 @@ a_client_goes_on_with_the_candidate_that_accepts :: proc(t:^testing.T) {
     }) {
         w:Test_World;test_world_init(&w,3)
         defer test_world_destroy(&w)
-        server:=test_host(&w,{mode=.Server,channels=CHANNELS,invite=0x5a5a,version=2})
+        server:=test_host(&w,{mode=.Server,channels=CHANNELS,invite=key,version=2})
         test_host(&w,c.decoy)
-        client:=test_host(&w,{mode=.Client,channels=CHANNELS,invite=0x5a5a,version=2,connect_timeout=1})
+        client:=test_host(&w,{mode=.Client,channels=CHANNELS,invite=test_invited(key),version=2,connect_timeout=1})
         testing.expect_value(t,host_connect(client,c.lan,c.public),Error.None)
         on_server,on_client:Connection
         reason:Disconnect_Reason
@@ -84,6 +85,9 @@ a_client_goes_on_with_the_candidate_that_accepts :: proc(t:^testing.T) {
     testing.expect_value(t,host_connect(client,address_memory(1),address_memory(2),address_memory(3)),Error.Invalid)
 }
 
+// Without an invitation a server answers a Hello with its key and a cookie of
+// the sender's address, smaller than the Hello, and keeps nothing; an Initiate
+// whose cookie was not made for its address gets no answer and makes nothing.
 @(test)
 handshake_gives_a_spoofed_address_nothing_to_amplify_or_allocate :: proc(t:^testing.T) {
     w:Test_World;test_world_init(&w,3);defer test_world_destroy(&w)
@@ -92,30 +96,33 @@ handshake_gives_a_spoofed_address_nothing_to_amplify_or_allocate :: proc(t:^test
     buffer:[PACKET_BYTES]u8
     writer:serial.Bit_Writer
 
-    buffer[0]=u8(Packet_Type.Request)
+    buffer[0]=u8(Packet_Type.Hello)
     serial.bit_writer_init(&writer,buffer[1:])
     serial.bit_write(&writer,0x1234,64)
-    request:=test_handshake(buffer[:],&writer,server.back.key,HANDSHAKE_BYTES)
-    forger.send(forger.data,address_memory(0),request)
-    forger.send(forger.data,address_memory(0),request[:HANDSHAKE_BYTES-1])
+    hello:=test_handshake(buffer[:],&writer,server.back.key,HANDSHAKE_BYTES)
+    test_send_one(forger,address_memory(0),hello)
+    test_send_one(forger,address_memory(0),hello[:HANDSHAKE_BYTES-1])
     test_step(&w,2)
     answer:[PACKET_BYTES]u8
-    size,_,ok:=forger.receive(forger.data,answer[:])
-    testing.expect(t,ok && size*3<HANDSHAKE_BYTES)
-    _,_,again:=forger.receive(forger.data,answer[:])
+    size,_,ok:=test_receive_one(forger,answer[:])
+    testing.expect(t,ok && size<HANDSHAKE_BYTES)
+    _,_,again:=test_receive_one(forger,answer[:])
     testing.expect(t,!again)
-    testing.expect_value(t,Packet_Type(answer[0]),Packet_Type.Challenge)
+    testing.expect_value(t,Packet_Type(answer[0]),Packet_Type.Key)
+    for peer in server.back.peers {testing.expect_value(t,peer.state,Peer_State.Free)}
 
-    // A response whose cookie was not issued to this address gets no answer.
-    buffer[0]=u8(Packet_Type.Response)
-    serial.bit_writer_init(&writer,buffer[1:])
-    serial.bit_write(&writer,0x1234,64)
-    serial.bit_write(&writer,u64(w.now*1000),64)
-    serial.bit_write(&writer,0xdeadbeef,64)
-    serial.bit_write(&writer,host_protocol_hash(server),64)
-    forger.send(forger.data,address_memory(0),test_handshake(buffer[:],&writer,server.back.key,HANDSHAKE_BYTES))
+    // An Initiate whose cookie was not issued to this address gets no answer.
+    buffer={}
+    buffer[0]=u8(Packet_Type.Initiate)
+    stamp,cookie:=u64(w.now*1000),u64(0xdeadbeef)
+    mem.copy(&buffer[1],&answer[1],8)
+    mem.copy(&buffer[21],&stamp,8)
+    mem.copy(&buffer[29],&cookie,8)
+    initiate:=buffer[:HANDSHAKE_BYTES]
+    checksum_write(initiate,server.back.key)
+    test_send_one(forger,address_memory(0),initiate)
     test_step(&w,2)
-    _,_,answered:=forger.receive(forger.data,answer[:])
+    _,_,answered:=test_receive_one(forger,answer[:])
     testing.expect(t,!answered)
     for peer in server.back.peers {testing.expect_value(t,peer.state,Peer_State.Free)}
     testing.expect_value(t,len(host_poll(server)),0)
@@ -331,8 +338,10 @@ unreliable_messages_arrive_at_most_once_and_sequenced_ones_keep_only_the_latest 
     testing.expect(t,received>250 && received<380)
 
     sim_endpoint_conditions(&w.sim,1,{})
-    test_step(&w,10)
-    host_poll(server)
+    for _ in 0..<10 {
+        test_step(&w)
+        host_poll(server)
+    }
     for i in 0..<5 {
         value:=u32(100+i)
         message_send(client,on_client,2,mem.ptr_to_bytes(&value))
@@ -446,51 +455,19 @@ a_reliable_message_larger_than_its_queue_streams_and_arrives_in_pieces :: proc(t
     testing.expect(t,false,"the message and the one after it arrive")
 }
 
-@(test)
-send_rate_limits_the_bytes_a_connection_puts_on_the_wire :: proc(t:^testing.T) {
-    w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
-    channels:=[]Channel_Desc{{kind=.Reliable,queue_bytes=1<<20}}
-    server:=test_host(&w,{mode=.Server,channels=channels,command_bytes=4<<20})
-    client:=test_host(&w,{mode=.Client,channels=channels,send_rate=20000,command_bytes=4<<20,frame_bytes=1<<20})
-    _,on_client:=test_connect(&w,server,client)
-    blob:=make([]u8,200000);defer delete(blob)
-    for &b,i in blob {b=u8(i)}
-    testing.expect_value(t,message_send(client,on_client,0,blob),Error.None)
-    test_step(&w,30)
-    host_poll(client);host_poll(server)
-    before,_:=connection_stats(client,on_client)
-    arrived:=false
-    steps,got:=0,0
-    for !arrived && steps<1200 {
-        test_step(&w)
-        steps+=1
-        host_poll(client)
-        for command in host_poll(server) {
-            if command.kind!=.Message {continue}
-            got+=len(command.data)
-            arrived=!command.more && got==len(blob)
-        }
-    }
-    testing.expect(t,arrived)
-    after,_:=connection_stats(client,on_client)
-    rate:=f64(after.bytes_sent-before.bytes_sent)/(f64(steps)*TEST_STEP)
-    testing.expect(t,rate<22000 && rate>15000)
-    testing.expect(t,after.send_rate>10000 && after.send_rate<24000)
-}
-
 // A transport that keeps the last datagram of a connection its host sent.
 @(private="file")
 Capture :: struct {inner:Transport,last:[PACKET_BYTES]u8,size:int}
 @(private="file")
 capture_transport :: proc(c:^Capture) -> Transport {
-    return {c,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
+    return {data=c,send=proc(data:rawptr,batch:[]Datagram) -> int {return test_send_each(data,batch,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
         c:=(^Capture)(data)
         if test_packet_data(bytes) {c.size=copy(c.last[:],bytes)}
-        return c.inner.send(c.inner.data,to,bytes)
-    },proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
+        return test_send_one(c.inner,to,bytes)
+    })},receive=proc(data:rawptr,batch:[]Datagram) -> int {return test_receive_each(data,batch,proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
         c:=(^Capture)(data)
-        return c.inner.receive(c.inner.data,buffer)
-    }}
+        return test_receive_one(c.inner,buffer)
+    })}}
 }
 // A message each way, stepped until both arrive. False when an end lost the connection or they did not.
 @(private="file")
@@ -533,7 +510,7 @@ a_connection_follows_its_client_to_a_new_port_and_a_replay_moves_nothing :: proc
         p:=peer_from(server,on_server)
         testing.expect(t,p!=nil && p.address==address_memory(2))
         forger:=sim_endpoint_transport(&w.sim,3)
-        forger.send(forger.data,address_memory(0),capture.last[:capture.size])
+        test_send_one(forger,address_memory(0),capture.last[:capture.size])
         testing.expect(t,both_ways(server,client,on_server,on_client,sim_step,&w))
         testing.expect(t,p.address==address_memory(2),"a replay moved the connection")
         testing.expect_value(t,host_stats(server).connections,1)
@@ -577,7 +554,7 @@ a_connection_follows_its_client_to_a_new_port_and_a_replay_moves_nothing :: proc
     p:=peer_from(pair.server,on_server)
     testing.expect(t,p!=nil && p.address==moved)
     forger:=udp_transport(&sockets[3])
-    forger.send(forger.data,address_loopback(int(sockets[0].address.port)),capture.last[:capture.size])
+    test_send_one(forger,address_loopback(int(sockets[0].address.port)),capture.last[:capture.size])
     testing.expect(t,both_ways(pair.server,pair.client,on_server,on_client,udp_step,&pair))
     testing.expect(t,p.address==moved,"a replay moved the connection")
 }
@@ -601,7 +578,7 @@ hostile_datagrams_never_crash_a_host_nor_reach_the_game_as_data :: proc(t:^testi
             junk[0]&=7
             checksum_write(junk[:size],server.back.key)
         }
-        forger.send(forger.data,address_memory(0),junk[:size])
+        test_send_one(forger,address_memory(0),junk[:size])
         if round%16==0 {test_step(&w)}
     }
     // Every type at the lengths around the limits, straight to the parsers of both ends, with
@@ -719,4 +696,57 @@ udp_sockets_carry_a_connection_on_localhost :: proc(t:^testing.T) {
     testing.expect(t,echoed)
     stats,_:=connection_stats(client,on_client)
     testing.expect(t,stats.packets_received>0)
+}
+
+// Prompt acknowledgements answer only a stream of reliable chunks: an idle connection sends its
+// keepalives and their answers, and one that carries game traffic both ways (a message every tick, a
+// small reliable one every few ticks and a larger one now and then) sends about a datagram a tick.
+@(test)
+idle_and_game_connections_send_no_more_datagrams_for_prompt_acknowledgements :: proc(t:^testing.T) {
+    channels:=[]Channel_Desc{{kind=.Reliable},{kind=.Unreliable}}
+    w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
+    server:=test_host(&w,{mode=.Server,channels=channels})
+    client:=test_host(&w,{mode=.Client,channels=channels})
+    on_server,on_client:=test_connect(&w,server,client)
+    if !testing.expect(t,on_server!=0 && on_client!=0) {return}
+    sim_endpoint_conditions(&w.sim,0,{latency=0.02})
+    sim_endpoint_conditions(&w.sim,1,{latency=0.02})
+    SECONDS :: 10
+    for game in ([]bool{false,true}) {
+        host_poll(server);host_poll(client)
+        before_server,_:=connection_stats(server,on_server)
+        before_client,_:=connection_stats(client,on_client)
+        next:=w.now
+        tick:=0
+        small:[200]u8
+        large:[2000]u8
+        start:=w.now
+        for w.now-start<SECONDS {
+            w.now+=0.001
+            sim_network_advance(&w.sim,w.now)
+            if game && w.now>=next {
+                next+=1.0/60
+                tick+=1
+                for pair in ([][2]^Host{{server,client},{client,server}}) {
+                    connection:=pair[0]==server?on_server:on_client
+                    message_send(pair[0],connection,1,small[:8])
+                    if tick%6==0 {message_send(pair[0],connection,0,small[:])}
+                    if tick%60==0 {message_send(pair[0],connection,0,large[:])}
+                }
+            }
+            host_update(server,w.now);host_update(client,w.now)
+            for command in host_poll(server) {testing.expect(t,command.kind!=.Disconnected)}
+            for command in host_poll(client) {testing.expect(t,command.kind!=.Disconnected)}
+        }
+        after_server,_:=connection_stats(server,on_server)
+        after_client,_:=connection_stats(client,on_client)
+        per_second:=[2]f64{f64(after_server.packets_sent-before_server.packets_sent)/SECONDS,f64(after_client.packets_sent-before_client.packets_sent)/SECONDS}
+        for rate in per_second {
+            if game {
+                testing.expectf(t,rate<=1.05*60+1,"with game traffic %.1f datagrams a second, more than one a tick",rate)
+            } else {
+                testing.expectf(t,rate<1/ACK_DELAY,"idle %.1f datagrams a second: acknowledgements come sooner than ACK_DELAY",rate)
+            }
+        }
+    }
 }

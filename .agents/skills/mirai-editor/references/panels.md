@@ -558,9 +558,9 @@ assets. They are off outside Edit and while watching.
 (`content_focused`, which `shortcuts_run` looks at before the entity Delete), opens
 `Modal.Delete_Asset` with the asset, its parts and what uses it. Confirming sends it to the trash
 (`platform.trash`) immediately, without undo: it is an operation on files, like import.
-What uses it keeps the reference. Assets of a plugin, the
-engine or the editor, an open scene or prefab, are not deleted, nor outside Edit; the modal says
-why.
+What uses it keeps the reference. The root of a package takes the package out of the project
+([import](#import)). Assets of a plugin, the engine or the editor, an open scene or prefab, are
+not deleted, nor outside Edit; the modal says why.
 
 **Rename, move and duplicate** (`asset_move.odin`) also change the files immediately, without undo,
 and rescan the registry. Identity is the id, so references, Recent, Favorites and open
@@ -579,8 +579,9 @@ documents follow the asset; the selection passes to it (`Content.reveal`).
   registry paths that the scan replaces.
 - **Parts and imports.** An asset moves with the parts it owns; each keeps its place relative to
   the owner's folder (the one outside it goes to the destination folder), and if one cannot go,
-  nothing moves. The link with the source does not change: `Import_Info.source` names the source
-  from the project and reimporting finds the outputs by their `Import_Info`
+  nothing moves; a part a package lists goes with the listing of its package ([import](#import)).
+  The link with the source does not change: `Import_Info.source` names the source from its
+  package and reimporting finds the outputs by their ids
   ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)).
 - **History and references.** The history names the moved files at their new path, so that undo
   and redo write there, and the project's `start_scene` follows its scene.
@@ -731,17 +732,25 @@ browser cards and asset fields):
   ([thumbnails](../../mirai-plugins/references/previews.md#animation-thumbnails)); without it
   they show their icon.
 - **Stored.** The preview of an asset (mesh, prefab or a type of a project plugin, not that of an
-  entity, a shape or the default of a type) stays in `.mirai/thumbs/<id>-<side>.thumb`, one per
-  asset and size, with premultiplied alpha, compressed, and the key it was drawn with.
-  - The key (`thumbnail_store_key`) combines `THUMBNAIL_RENDERER`, the size, the subject without
-    the revision and the `content_hash` of the asset and of the whole dependency closure the
-    subject names, as the registry has it. Changing the asset or a dependency
-    gives another key and the preview is redrawn.
+  entity, a shape or the default of a type) is derived data of the machine's store: an object
+  under `THUMBNAIL_NAMESPACE` named by its key, with premultiplied alpha, compressed. It is drawn
+  once per machine, whatever project shows the asset, and a peer of a session gives it to the
+  others ([import](#import), Libraries).
+  - The key of an asset of a package (`thumbnail_package_key`) combines `THUMBNAIL_RENDERER`, the
+    size, the programs, the asset's object and every object of the build it is in: any machine
+    with the manifest and the build computes it without the asset. That of the project's own files
+    (`thumbnail_store_key`) takes the subject without the revision and the `content_hash` of the
+    asset and of the whole dependency closure the subject names, as the registry has it. Changing
+    the asset or a dependency gives another key and the preview is redrawn.
   - When the signature changes, a cell that already has the image of the current key is not
-    redrawn; otherwise, the file is read (up to `THUMBNAIL_LOADS` per frame, apart from drawing) and
-    it is drawn only without a file or with another key.
-  - Those of an id that the registry notes in `Registry.removed` are deleted in the next frame
-    (`thumbnails_forget`).
+    redrawn; otherwise, the store is read (up to `THUMBNAIL_LOADS` per frame, apart from drawing)
+    and it is drawn only when the store has no preview of that key.
+  - A texture's preview is read on the processor from the largest of its levels that fits the
+    cell, decoded alone (`thumbnail_texture_image`); a material's is the sphere of the studio
+    wearing it. Both are stored previews like the others: the browser draws nothing else.
+  - The view of a scene the editor took is no derived data: it stays in
+    `.mirai/thumbs/<id>-<side>.thumb`, and those of an id that the registry notes in
+    `Registry.removed` are deleted in the next frame (`thumbnails_forget`).
   - Raise `THUMBNAIL_RENDERER` when the same subject would give another image (studio, reduction,
     geometry or how a provider draws its image). A program's Slang source does not enter the key:
     changing it does not redraw the stored previews.
@@ -846,15 +855,16 @@ plugin [vfx](../../mirai-world/references/vfx-editor.md#particle-document).
 
 ## Import
 
-`import_file(s, path)` converts a source file into project assets, only in `Edit`, with
-`sources.import_source` like `mirai import`. A source in the assets of the project or of a plugin
-imports where it is; one from outside the project is first copied into `folder`
-(`asset_folder_clean`, the folder of the browser), and one in the project but outside its assets
-is refused. The source is versioned with its sidecar beside what it makes, and what it builds
-that nobody edits goes to the imported folder
-([identity](../../mirai-imports/references/imports.md#identity-and-reimport)). The imported folder
-is brought up to date with the sources by the build that opens the editor
-([sync](../../mirai-imports/references/imports.md#sync)).
+`import_file(s, path)` ingests a source file or folder from anywhere on disk into the library of
+the machine, where it is, and pins its package in the project, only in `Edit`, with
+`sources.project_ingest` like `mirai import`
+([library](../../mirai-imports/references/imports.md#library)).
+Nothing is copied: the package is listed in `folder` (`asset_folder_clean`, the folder of the
+browser; for a source in the assets without one, its own folder), in the project or in the plugin
+whose assets that folder is. What nobody edits is listed from the blobs of the store, and the
+documents are files of that folder. The store is the session's: `--store`, else the machine's
+(`store.default_root`); the registry lists from the same one. The build that opens the editor
+refreshes the packages ([refresh](../../mirai-imports/references/imports.md#library)).
 File > Import, the content browser, a file dropped on the window and `asset.import` call it. It
 imports in a thread of its own, with its own job system, while the editor keeps drawing; the
 content browser shows the dot of what works. `import_poll`, between frames, takes what it wrote on
@@ -870,32 +880,53 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   imported before the formats and takes no folder.
 - An image is sRGB unless its settings or its name say it is data or a normal (`sources.image_use`,
   which `mirai import` applies too); `asset.import {image}` chooses it.
-- The sidecar of a source (`<source>.import`) keeps its settings and the id of each asset;
-  reimporting writes the same assets with their ids where they are and keeps what did not change.
-  Over a document changed since its import wrote it, the dialog and a file dropped ask first
-  (`Modal.Import_Changes`, with what changed: discard and import, or cancel), and `asset.import`
-  fails naming it
-  ([changed documents](../../mirai-imports/references/imports.md#changed-documents)).
-  Textures with
+- The package of a source keeps its settings and the id of each asset; reimporting writes the
+  same assets with their ids where they are and keeps what did not change. Over a document
+  changed since it was written, the dialog and a file dropped ask first (`Modal.Import_Changes`,
+  with what changed: discard and import, or cancel), and `asset.import` fails naming it
+  ([changed documents](../../mirai-imports/references/imports.md#changed-documents)). Textures with
   the same image and settings and meshes with the same geometry and settings come from their caches
   ([textures](../../mirai-imports/references/imports.md#texture-cache),
   [meshes](../../mirai-imports/references/imports.md#mesh-cache)).
-- On finishing, the written files are refreshed in the registry and the replaced assets are
-  reloaded; if Surface programs were written (`Import_Report.programs`), the project's programs
-  are published (`programs_publish_request`) without waiting for another change.
+- On finishing, the registry lists the packages of the root again and rescans, and the replaced
+  assets are reloaded; if Surface programs were written (`Import_Report.programs`), the
+  project's programs are published (`programs_publish_request`) without waiting for another change.
 - **Parts.** Meshes and skeletons of a model, and the materials and textures that are only its, are
   parts of its prefab (`asset.Header.owner`,
   [rule](../../mirai-imports/references/imports.md#parts)). `asset_detach`
   (`editor/assets_parts.odin`, `asset.detach`) takes one out of its owner as an edit of its file
   with undo: it only clears `owner`, and the import leaves it out; there is no UI that calls it yet.
-- **What an import keeps in the imported folder is not edited where it is.** Moving, renaming,
-  detaching or deleting a part on its own is refused, saying to duplicate it. Moving the root of
-  an import of the cache (`asset_move`, the texture of an image) moves its source and sidecar, and
-  moving a folder moves the sources in it: the registry lists their assets there at once, without
-  an import. Deleting the root of an import (its prefab, the texture of an image) gives the import
-  up: its source and its sidecar go to the trash with what only the import can build. A
-  copy made outside the editor receives an id of its own on scanning
-  ([repeated ids](../../mirai-assets/references/formats.md#registry)).
+- **What a package lists is not edited where it is.** Moving, renaming, detaching or deleting
+  another asset it lists is refused, naming the root of the package and saying to duplicate it.
+  The root of a package (the prefab of a model, the scene of a whole source, else its one asset
+  that is no part: the texture of an image) stands for it: moving it (`asset_move`) moves where
+  the project lists the package (`packages.mirai`, `sources.project_pin`), keeping the name its
+  source gives a listed asset, and moving a folder moves the packages listed in it. Deleting it
+  takes the package out of the project (`sources.project_unpin`): its documents go to the trash,
+  what it listed leaves the registry, its blobs stay in the store, and a source of it inside the
+  project goes to the trash while one outside stays. None of these is undone by undo; version
+  control brings `packages.mirai` back. A copy made outside the editor receives an id of its own
+  on scanning ([repeated ids](../../mirai-assets/references/formats.md#registry)).
+- **Libraries.** `packages.list` lists the packages of the store with their assets (name, kind,
+  bytes, whether this machine has them built) and whether the project pins each; `packages.add`
+  pins one, or some of its assets, in a folder, as an import that runs in the thread of imports
+  and answers as `asset.import` (`sources.project_add`, `library.odin`). In the browser
+  (`content_library.odin`) the libraries are roots beside the project's content, as virtual
+  folders are: This machine and, in a session, one per other editor by the name the session gives
+  it ([libraries of the session](collaboration.md#libraries-of-the-session)). A root holds the
+  packages the project does not pin, in every arrangement and the search; a peer's package this
+  machine has shows once, under This machine, and one whose root goes with its peer. A package
+  shows its thumbnail, else the icon of its kind, its size and what is still to fetch, and its
+  fetch and why it failed on its card; the thumbnail is the stored preview of what it shows
+  (`asset.build_shown`: its root when its build holds it, else its first mesh). A card of This
+  machine whose store lacks it makes it as the project's content does: the packages the project
+  does not pin are listed by id under `LIBRARY_MOUNT`, a folder no path of the project reaches,
+  and only the visible cards make theirs, one a frame; a visible card of a peer's root that lacks it
+  asks that peer by its key, a few at a time (`collab_thumbs_update`, `share.fetch_start`): a
+  peer gives one it has and makes none, and nothing of the package is fetched for it; two of one
+  name in a root take the folder their source was in. Carried onto a folder of the project, or
+  Add to project of its menu (into the folder Create makes in), it is added whole; nothing else
+  adds from a library.
 
 ## Graphics
 

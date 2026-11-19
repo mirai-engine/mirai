@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "6cc37d40c23ded0fb9cc963a4dec2fbb",
+  "name": "stained_glass_color",
+  "origin": {"path": "assets/surfaces/glass/stained_glass_color.png", "folder": false, "importer": "image"},
+  "identity": "d5232abb2f9a961f16fd3e896f55ae94418df3baa00ced6f3ed776b29c4e34cc",
+  "settings": {
+    "image": "Color"
+  },
+  "inputs": [],
+  "assets": [
+    {"kind": "TEX", "name": "stained_glass_color", "index": 0, "id": "601bad68a6b7e349bc2655ac13c9196f"}
+  ]
+}

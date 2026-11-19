@@ -5,7 +5,7 @@ import "core:io"
 import "core:time"
 
 // What an import says of how far it is while it runs, for a sync to print
-// under the line of its source: the assets it wrote, of those its sidecar
+// under the line of its source: the assets it wrote, of those its package
 // listed (what the previous import gave), and how long it has run; a line at
 // most every PROGRESS_EVERY. The caller owns it; the thread that writes the
 // import updates it.

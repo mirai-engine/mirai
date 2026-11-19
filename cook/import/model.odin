@@ -4,10 +4,12 @@ import "core:fmt"
 import "core:mem"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:cook/cache"
 import "mirai:cook/textures"
 import "mirai:std/base"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
+import mstore "mirai:store"
 
 // What an importer reads from a source file, as plain data that depends on no
 // engine component: the geometry as .mesh is built of it, the materials with
@@ -48,30 +50,42 @@ Error :: struct {
 }
 
 Import_Options :: struct {
-    // Replaced by the settings the sidecar of the source keeps when it has
-    // one, unless ignore_stored.
+    // Replaced by the settings the package of the source keeps when it was
+    // ingested before, unless ignore_stored.
     using settings:Import_Settings,
     ignore_stored:bool,
-    // The project or the plugin whose assets folder the source is in: sources
-    // are named relative to it in Import_Info, its documents are found among
-    // its assets, and what it builds of the cache kinds goes to its imported
-    // folder (sidecar.odin).
+    // The machine store: where the import puts the blobs of its build and the
+    // records of its package (package.odin), and whose caches keep textures
+    // and meshes built before by what they are built from (textures.cache_read,
+    // mesh_cook).
+    store:^mstore.Store,
+    cache_source:cache.Source, // asked on a miss of those caches before building
+    // The manifest of the package the source was ingested as, whose ids and
+    // settings the import keeps; zero: the one the store names for the path
+    // of the source (package_previous), else a new package.
+    manifest:mstore.Hash,
+    // The folder of the assets of a project the documents of the import are
+    // written or followed in (documents.odin), and the prefab of a model;
+    // "": they are blobs of the build alone.
+    documents:string,
+    // The project or the plugin the import is for: the codecs of its
+    // assets, and the assets its documents are found among by id.
     root:string,
     registry:^asset.Registry, // the scanned assets of root, which the import does not change; nil: it scans them
     world:^core.World_Info,   // the types of the game of root, which the prefab of a model is written in
     rebuild:bool,        // writes every asset, also one whose file already is the one the import would write
-    changed:Changed,     // what becomes of a document it writes over that was changed since it last wrote it
-    texture_cache:string, // folder of textures built before, kept by image and settings (textures.cache_read); "": none
+    changed:Changed,     // what becomes of a document it writes over in documents that was changed since it last wrote it
+    written:[]asset.Package_Written, // what the files of its documents in documents held when it last wrote them (the project's pin)
     // A texture is built Fast unless the texture cache keeps it as Final
     // (textures.Encode_Speed): the imports of the editor, which a cook
     // encodes again as Final, and mirai import. False: Final, what a build
     // that cooks and the package of the engine build.
     fast_textures:bool,
-    mesh_cache:string,    // folder of meshes built before, kept by geometry and settings (mesh_cook); "": none
     // The identity of the code of the plugin that imports the source whole
     // (sources.code_identity), 0 for the engine's: part of what its outputs
-    // are built from (import_key).
+    // are made from (identity_of).
     importer_code:u64,
+    hashes:^Source_Hashes, // the files of the source known by size and time (identity_of); nil: every one is read
     material_index:int,   // the index of the first material among those of the source: imports that write its materials apart give each its own
     // Where the import cooks: the worker that calls it (the owner of its
     // job system, or the job that imports), which runs its builds in
@@ -81,10 +95,10 @@ Import_Options :: struct {
 }
 
 // What an import does with the documents it writes over that were changed
-// since it last wrote them (outputs_changed). Refuse: it writes nothing and
+// since it last wrote them (documents_changed). Refuse: it writes nothing and
 // fails with Error_Code.Changed, naming them, so whoever imports decides.
 // Discard: it writes over them. Keep: it leaves them as they are, imports the
-// rest and warns of each: what an import nobody asked for (sync) does.
+// rest and warns of each: what an import nobody asked for (a refresh) does.
 Changed :: enum u8 {Refuse,Discard,Keep}
 
 // A zone of the import that base.profile_end ends.
@@ -217,7 +231,7 @@ Imported_Model :: struct {
     warnings:[]string,  // what the importer left out or could not honor
     programs:[]string,  // the Surface programs reading it wrote to the shaders of the project, their files
     files:[]string,     // the files reading it read besides the source and its images (buffers, material libraries)
-    settings:Import_Settings, // those of the sidecar of the source when stored is set, else those of the options it was read with
+    settings:Import_Settings, // those of the package of the source when stored is set, else those of the options it was read with
     stored:bool,
     arena:^mem.Dynamic_Arena,
     allocator:mem.Allocator,

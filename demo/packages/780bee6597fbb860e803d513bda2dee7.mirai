@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "id": "780bee6597fbb860e803d513bda2dee7",
+  "name": "jelly",
+  "origin": {"path": "assets/characters/jelly/jelly.gltf", "folder": false, "importer": "glTF"},
+  "identity": "a8aa4182d7481e139c7925b475ece930212b1ddf640d0b4da7342ca25c2d26af",
+  "inputs": ["jelly.bin"],
+  "assets": [
+    {"kind": "SCEN", "name": "jelly", "index": 0, "id": "107c9b8f4bf9dfe8936235eae8e042a6"},
+    {"kind": "MAT", "name": "Candy", "index": 0, "id": "a18adcad4fedf21125038a819d27acd2"},
+    {"kind": "SKEL", "name": "Jelly bones", "index": 0, "id": "dae452ce18d59e780ff745f7d1b43697", "owner": "107c9b8f4bf9dfe8936235eae8e042a6"},
+    {"kind": "MESH", "name": "Party Jelly", "index": 0, "id": "25a3e22ecb9c265a1614515f868efc52", "part": true, "owner": "107c9b8f4bf9dfe8936235eae8e042a6", "dependencies": ["a18adcad4fedf21125038a819d27acd2"]},
+    {"kind": "MESH", "name": "Party Jelly (1)", "index": 1, "id": "1c00bfb5bceb2619036b114104f42040", "part": true, "owner": "107c9b8f4bf9dfe8936235eae8e042a6", "dependencies": ["a18adcad4fedf21125038a819d27acd2", "dae452ce18d59e780ff745f7d1b43697"]},
+    {"kind": "ANIM", "name": "jelly", "index": 0, "id": "0d555b0da56949fb3cdbdf41410432f4", "dependencies": ["dae452ce18d59e780ff745f7d1b43697"]}
+  ]
+}

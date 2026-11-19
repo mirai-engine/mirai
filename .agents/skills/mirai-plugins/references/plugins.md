@@ -216,8 +216,8 @@ demo enables. How an `editor/` adds steps, panels and tools:
     which gives an image to each `core.Key`, to the mouse buttons and movement and to the faces,
     shoulders, triggers, sticks and their press, d-pad and its directions, Start and Back of each
     gamepad (the colored buttons on the faces), and beside it `kenney.prompts`, imported with
-    `mirai import plugins/prompts_kenney/assets/kenney.prompts.json`; its atlases are of the
-    imported folder of the plugin ([prompts](../../mirai-imports/references/imports.md#prompts)).
+    `mirai import plugins/prompts_kenney/assets/kenney.prompts.json`; its atlases are blobs of the
+    package the plugin pins ([prompts](../../mirai-imports/references/imports.md#prompts)).
 - **`playtest`** (`Editor`, development): `play.observe`, the monitors of `play.qa.*` with their
   repros and the bot of `play.explore`, over the ticks the API runs
   ([`Run_Provider`](../../mirai-editor/references/extensions.md#runs-the-api-drives)). The bot

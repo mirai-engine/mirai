@@ -32,10 +32,10 @@ mirai import assets/player/step.wav     # assets/player/step.sound
 - A model writes meshes, materials, textures, skeletons, clips and a prefab: instantiate that.
 - An image is color unless its name says otherwise (`normal`, `_n`, `rough`, `metal`, `orm`,
   `_ao`, `height`, `mask`); force it with `--srgb`, `--data`, `--normal`, `--normal-green-down`.
-- `<file>.import` beside the source keeps its flags, folder and asset ids, so importing again
-  updates in place and keeps material edits; another edit stops it, which names the file, until
-  `--discard-changes`. Commit it and move it with its source; a renamed part is a new asset.
-- Meshes, textures, sounds and fonts are built into `.mirai/imported/`, never committed: `mirai
+- An import leaves the source where it is and pins its package in `packages.mirai`, manifest in
+  `packages/` (flags, folder, asset ids): importing again keeps ids and material edits, another
+  edit stops it until `--discard-changes`; a renamed part is a new asset. Commit both.
+- Meshes, textures, sounds and fonts are built into the machine's store, never committed: `mirai
   build` makes them again on a fresh clone. Edit their source, not them.
 - A mesh keeps only the colliders its source brings; placed, it collides only with them. An `Auto`
   `Collider` without them is its triangles when still, convex pieces of them when it moves.

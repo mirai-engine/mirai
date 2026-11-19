@@ -162,6 +162,7 @@ with a map from tasks to references.
 | Projects and build | [mirai-projects](.agents/skills/mirai-projects/SKILL.md) |
 | Standard library | [mirai-std](.agents/skills/mirai-std/SKILL.md) |
 | Platform and audio | [mirai-platform](.agents/skills/mirai-platform/SKILL.md) |
+| Content-addressed store | [mirai-store](.agents/skills/mirai-store/SKILL.md) |
 
 The layers and contracts are in [ARCHITECTURE.md](docs/ARCHITECTURE.md) and the project rules in
 [AGENTS.md](AGENTS.md).

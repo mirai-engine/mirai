@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "09648c700552c36b5b4062fd1822de01",
+  "name": "marble_color",
+  "origin": {"path": "assets/surfaces/marble/marble_color.png", "folder": false, "importer": "image"},
+  "identity": "2bbad925aaaa5a3c690d3e9061e0cee2f6d89ed230c0a78735a74b97bd707b66",
+  "settings": {
+    "image": "Color"
+  },
+  "inputs": [],
+  "assets": [
+    {"kind": "TEX", "name": "marble_color", "index": 0, "id": "f3ace87b27d210d20ba711efdf73ad3a"}
+  ]
+}
