@@ -223,7 +223,7 @@ machine: the source an asset names is relative to the package, a changed owner i
 `Written.path` is the file of a document, and an output of the cache has only its object
 (`written_open` opens either; `mirai import` prints `object <address>`). The build lists the
 object of each output, which encoders built it and whether it is Final; it is named under
-`imports/<key>` when Final, else under `imports-fast/<key>` (never shared), and as the build
+`imports/<key>` when Final, else under `imports-fast/<key>`, and as the build
 this machine chose (`builds/<build_select>`), which a program without importers finds. Of two sorts
 (`asset.import_cached`):
 
@@ -336,16 +336,17 @@ checkout, worktree and project of the machine, keeps manifests and builds.
   identity and the versions of what reads its origin, an engine importer or a format of the engine
   or of the plugins) is looked up in `imports` (and `imports-fast` with `fast_textures`), then asked
   of the caller's source (`cache.Source`, the same procedure value the caches of `cook/cache` take:
-  given `(imports, <keys>)` it makes each build and every object it lists whole, given `(packages,
-  <ids>)` the manifests; it takes many names at once, and a refresh asks every key and id it will
-  need in one call before it goes package by package), then built by ingesting the origin when it
-  exists on this machine. Otherwise the report says, by package name, that a machine with its source
-  must ingest it with this engine; when only a Fast build is here and Final is required, it says
-  that. It then names the build under `builds/<build_select>` and, when that changed, follows the
-  documents. A source here whose identity changed (its bytes, an input, the code of the plugin that
-  imports it whole) is ingested again with the ids its manifest gives, and the project pins the new
-  manifest. A document changed since it was last written is left as it is, with a warning that
-  names it ([changed documents](#changed-documents)): the rest is written.
+  given `(imports, <keys>)` or `(imports-fast, <keys>)` it makes each build and every object it
+  lists whole, given `(packages, <ids>)` the manifests; it takes many names at once, and a refresh
+  asks every key and id it will need in one call before it goes package by package, `imports-fast`
+  only with `fast_textures` and for the keys the source gave no Final of), then built by ingesting
+  the origin when it exists on this machine. Otherwise the report says, by package name, that a
+  machine with its source must ingest it with this engine; when only a Fast build is here and Final
+  is required, it says that. It then names the build under `builds/<build_select>` and, when that
+  changed, follows the documents. A source here whose identity changed (its bytes, an input, the
+  code of the plugin that imports it whole) is ingested again with the ids its manifest gives, and
+  the project pins the new manifest. A document changed since it was last written is left as it is,
+  with a warning that names it ([changed documents](#changed-documents)): the rest is written.
 - **It never removes** an object, a ref or a file of a project because a source is missing, and
   never builds without the source. What the store does not have stays listed as not built.
 - A source a plugin imports whole has a key only its importer knows: the refresh takes the build

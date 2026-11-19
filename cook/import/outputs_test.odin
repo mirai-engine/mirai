@@ -357,10 +357,10 @@ a_changed_setting_changes_the_identity_and_a_changed_engine_does_not :: proc(t:^
     testing.expect(t,strings.contains(lods.settings,"lods"),"the package keeps the settings that differ from the defaults")
 }
 
-// A build of Fast textures stays on this machine: never under the namespace
-// peers share, while the machine chooses it for the package.
+// A build of Fast textures is named apart from the Final builds, where only a
+// refresh that takes Fast looks, while the machine chooses it for the package.
 @(test)
-a_fast_build_is_not_published_where_peers_find_builds :: proc(t:^testing.T) {
+a_fast_build_is_named_apart_from_the_final_builds :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"outputs-fast")
     if folder=="" {return}
     s:=test_store(t,fmt.tprintf("%s/store",folder))
@@ -372,7 +372,7 @@ a_fast_build_is_not_published_where_peers_find_builds :: proc(t:^testing.T) {
     digits:[64]u8
     _,shared:=store.ref_get(s,asset.REF_IMPORTS,store.hex(report.key,&digits))
     fast,local:=store.ref_get(s,asset.REF_IMPORTS_FAST,store.hex(report.key,&digits))
-    testing.expect(t,shared==.Missing && local==.None && fast==report.build,"published under the local namespace alone")
+    testing.expect(t,shared==.Missing && local==.None && fast==report.build,"published under the namespace of Fast builds alone")
     p,_,_:=test_package(t,s,report)
     chosen,_:=store.ref_get(s,asset.REF_BUILDS,store.hex(asset.build_select(report.manifest,&p),&digits))
     testing.expect(t,chosen==report.build,"the build this machine chose")

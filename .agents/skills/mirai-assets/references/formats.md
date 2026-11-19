@@ -301,8 +301,7 @@ The records of the imports kept in the [machine store](../../mirai-store/SKILL.m
   its text, versioned, in `packages/<package id>.mirai` beside `packages.mirai`
   (`package_file`).
 - **Build manifest** (`Build`): an object that names the object of each output, named by
-  `imports/<import_key>` (Final, which peers
-  share) or `imports-fast/<import_key>` (never shared) by the import that builds it, and by
+  `imports/<import_key>` (Final) or `imports-fast/<import_key>` by the import that builds it, and by
   `builds/<build_select>` by the refresh of a project that chose it.
 - **Project list** (`Packages`): `packages.mirai` beside `project.mirai`, versioned. The library
   (`project_pin`, `project_unpin`) writes it and the manifest files, and nothing else does.

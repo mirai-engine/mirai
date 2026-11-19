@@ -66,12 +66,13 @@ Library_Imports :: struct {
 Library_Options :: struct {
     store:^store.Store,
     // Asked for what the store does not have before building: a manifest by
-    // (asset.REF_PACKAGES, <id>), a build by (asset.REF_IMPORTS, <key>) with
-    // every blob it lists, a result of cook/cache.
+    // (asset.REF_PACKAGES, <id>), a build by (asset.REF_IMPORTS, <key>) and,
+    // with Fast textures allowed, then by (asset.REF_IMPORTS_FAST, <key>), with
+    // every object it lists, a result of cook/cache.
     source:cache.Source,
     // Fast textures allowed: imports build them Fast unless the texture cache
-    // has them Final, and a Fast build is taken; false: Final required, what a
-    // cook ships.
+    // has them Final, and a Fast build is taken, here or from the source; false:
+    // Final required, what a cook ships, and a Fast build is never asked for.
     fast_textures:bool,
     rebuild:bool,    // ingest: imports the source again, also when it is current
     // What an import into a project (project_ingest) does with its documents
@@ -381,7 +382,8 @@ Found :: struct {
 }
 
 // The build of p under key this store has whole: Final, or Fast when Fast
-// textures are allowed.
+// textures are allowed. A build is taken only under the namespace of what its
+// manifest says it is.
 @(private="file")
 build_here :: proc(l:^Library_State,p:^asset.Package,key:store.Hash) -> (f:Found,ok:bool) {
     s:=l.options.store
@@ -391,7 +393,7 @@ build_here :: proc(l:^Library_State,p:^asset.Package,key:store.Hash) -> (f:Found
         hash,ref_error:=store.ref_get(s,namespace,name)
         if ref_error!=.None {continue}
         b,error:=asset.build_get(s,hash,l.temp)
-        if error!=.None || b.package_id!=p.id || b.key!=key {continue}
+        if error!=.None || b.package_id!=p.id || b.key!=key || b.final!=(at==0) {continue}
         whole:=true
         for o in b.outputs {whole&&=asset.object_whole(s,o.object)}
         if !whole {continue}
@@ -453,6 +455,25 @@ fetch_many :: proc(l:^Library_State,namespace:string,names:[]string) {
     for key,k in keys {l.asked[key]=given[k]}
 }
 
+// Asks the source for the builds of the keys (hex of import keys) together:
+// Final, then, with Fast textures allowed, Fast for those it gave no Final of.
+@(private="file")
+fetch_builds :: proc(l:^Library_State,keys:[]string) {
+    fetch_many(l,asset.REF_IMPORTS,keys)
+    if !l.options.fast_textures {return}
+    lacking:=make([dynamic]string,l.temp)
+    for key in keys {
+        if !build_given(l,key) {append(&lacking,key)}
+    }
+    fetch_many(l,asset.REF_IMPORTS_FAST,lacking[:])
+}
+
+// Whether the source gave a build of the key (hex of an import key).
+@(private="file")
+build_given :: proc(l:^Library_State,key:string) -> bool {
+    return l.asked[fmt.aprintf("%s/%s",asset.REF_IMPORTS,key,allocator=l.temp)] || l.asked[fmt.aprintf("%s/%s",asset.REF_IMPORTS_FAST,key,allocator=l.temp)]
+}
+
 // What a refresh will ask the source for, asked together before the packages
 // are refreshed in order, which then find it here: the manifests the store
 // does not keep, then the builds of the packages that have none here and no
@@ -483,7 +504,7 @@ refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Pac
         digits:[64]u8
         append(&keys,strings.clone(store.hex(key,&digits),l.temp))
     }
-    fetch_many(l,asset.REF_IMPORTS,keys[:])
+    fetch_builds(l,keys[:])
 }
 
 // The import of the source at origin into the store, with its lock: what
@@ -583,11 +604,16 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     f:Found
     found:bool
     f,found=build_found(l,&p,entry.manifest,key,keyed)
-    if found && keyed && l.asked[fmt.aprintf("%s/%s",asset.REF_IMPORTS,store.hex(key,&digits),allocator=l.temp)] {
+    key_name:=strings.clone(store.hex(key,&digits),l.temp)
+    if found && keyed && build_given(l,key_name) {
         // The source gave it before the refresh came to it.
         report.fetched+=1
-    } else if !found && keyed && fetch(l,asset.REF_IMPORTS,store.hex(key,&digits)) {
-        if f,found=build_here(l,&p,key);found {report.fetched+=1}
+    } else if !found && keyed {
+        names:=[1]string{key_name}
+        fetch_builds(l,names[:])
+        if build_given(l,key_name) {
+            if f,found=build_here(l,&p,key);found {report.fetched+=1}
+        }
     }
     if !found {
         if origin_here {

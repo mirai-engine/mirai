@@ -184,3 +184,75 @@ a_refresh_takes_the_builds_of_a_second_store_without_their_sources :: proc(t:^te
     testing.expectf(t,resolve_error==.None && len(resolved.problems)==0 && len(resolved.listed)==1 && resolved.listed[0].state==.Built,"%v",resolved)
     testing.expect(t,!os.exists(brush),"nothing is written where the source was")
 }
+
+// A source of builds that holds only a Fast build of a package: the refresh
+// of a cook never asks for it and fails by the package's name, the refresh of
+// a build that does not cook takes it without importing, and a cook still
+// ships nothing Fast. Once the source holds the Final build, the refresh of
+// the cook takes it and the game ships it.
+@(test)
+a_cook_never_takes_a_fast_build_a_source_holds :: proc(t:^testing.T) {
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    top:=base.test_folder(t,"cook-fast-source")
+    if top=="" {return}
+    defer free_all(context.temp_allocator)
+    game:=fmt.tprintf("%s/game",top)
+    os.make_directory_all(fmt.tprintf("%s/assets",game))
+    poster:=fmt.tprintf("%s/assets/poster.png",game)
+    testing.expect(t,os.write_entire_file(poster,png_bytes(8,8,{30,60,220}))==nil)
+    host:=test_store(t,fmt.tprintf("%s/host",top))
+    if host==nil {return}
+    fast_options:=Library_Options{store=host,root=game,fast_textures=true}
+    quick,quick_error:=ingest(poster,fast_options,allocator=context.temp_allocator)
+    if !testing.expectf(t,quick_error.code==.None,"%s",quick_error.message) {return}
+    added:=project_add(game,quick.manifest,"",nil,fast_options,context.temp_allocator)
+    if !testing.expectf(t,len(added.failures)==0 && len(added.missing)==0,"%v",added) {return}
+    testing.expect(t,!quick.final,"the host holds a Fast build alone")
+    p,_:=asset.package_get(host,quick.manifest,context.temp_allocator)
+
+    peer:=fmt.tprintf("%s/peer",top)
+    folder_copy(game,peer)
+    testing.expect(t,os.remove(fmt.tprintf("%s/assets/poster.png",peer))==nil)
+    here:=test_store(t,fmt.tprintf("%s/here",top))
+    if here==nil {return}
+    cook :: proc(root:string,s:^store.Store,output:string) -> build.Cook_Report {
+        manifest:=fmt.tprintf("%s/%s",root,build.COOK_FILE)
+        _=os.write_entire_file(manifest,`{"roots":["poster.tex"]}`)
+        return build.cook_assets({assets=fmt.tprintf("%s/assets",root),output=output,manifest=manifest,root=root,store=s,allocator=context.temp_allocator})
+    }
+    digits:[64]u8
+    key:=store.hex(quick.key,&digits)
+    from:=cache.store_source(host)
+    final:=project_refresh(peer,{store=here,root=peer,source=from},context.temp_allocator)
+    testing.expectf(t,final.fetched==0 && len(final.missing)==1 && strings.contains(final.missing[0],fmt.tprintf("package %s",p.name)),"%v",final)
+    _,asked:=store.ref_get(here,asset.REF_IMPORTS_FAST,key)
+    testing.expect_value(t,asked,store.Error.Missing)
+    lacking:=cook(peer,here,fmt.tprintf("%s/lacking",top))
+    testing.expectf(t,lacking.error==.Package_Missing && strings.contains(lacking.detail,p.name),"%v %s",lacking.error,lacking.detail)
+
+    taken:=project_refresh(peer,{store=here,root=peer,source=from,fast_textures=true},context.temp_allocator)
+    testing.expectf(t,taken.fetched==1 && taken.ingested==0 && len(taken.missing)==0 && len(taken.failures)==0,"%v",taken)
+    refused:=cook(peer,here,fmt.tprintf("%s/refused",top))
+    testing.expectf(t,refused.error==.Source_Failed && strings.contains(refused.detail,p.name),"a Fast build taken is not shipped: %v %s",refused.error,refused.detail)
+    still:=project_refresh(peer,{store=here,root=peer,source=from},context.temp_allocator)
+    testing.expectf(t,len(still.missing)==1 && strings.contains(still.missing[0],"only a build with Fast textures is here"),"%v",still)
+
+    shipped_report,shipped_error:=ingest(poster,{store=host,root=game},allocator=context.temp_allocator)
+    if !testing.expectf(t,shipped_error.code==.None,"%s",shipped_error.message) {return}
+    testing.expect(t,shipped_report.final && shipped_report.key==quick.key,"the host builds the Final of the same key")
+    fetched:=project_refresh(peer,{store=here,root=peer,source=from},context.temp_allocator)
+    testing.expectf(t,fetched.fetched==1 && fetched.ingested==0 && len(fetched.missing)==0 && len(fetched.failures)==0,"%v",fetched)
+    output:=fmt.tprintf("%s/game-out",top)
+    shipped:=cook(peer,here,output)
+    if !testing.expectf(t,shipped.error==.None,"%v %s",shipped.error,shipped.detail) {return}
+    textures_shipped:=0
+    for file in shipped.files {
+        a:asset.Asset
+        if asset.asset_load(&a,fmt.tprintf("%s/%s",output,file.path),context.temp_allocator)!=.None {continue}
+        if view,error:=asset.texture_view(&a,&types);error==.None {
+            textures_shipped+=1
+            testing.expectf(t,.Fast not_in view.info.flags,"%s ships Final",file.path)
+        }
+    }
+    testing.expect(t,textures_shipped>0,"the texture ships")
+}

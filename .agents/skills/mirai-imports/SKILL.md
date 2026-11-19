@@ -123,9 +123,14 @@ the assets.
   identity (package, source, inputs, settings, plugin code: two packages of the same bytes never
   share a build, since its objects hold their ids) is in the manifest; the key
   (`asset.import_key`) adds the writer, format, kind and texture builder versions, so any machine
-  with the manifest finds a build without the source. A Final build is named under `imports`,
-  which peers share; a Fast one only under `imports-fast`; `builds` names the one this machine
-  chose. The editor never imports by itself.
+  with the manifest finds a build without the source. A Final build is named under `imports`, a
+  Fast one under `imports-fast`, and peers share both; `builds` names the one this machine chose.
+  The editor never imports by itself.
+- **A share serves what the host has; a refresh takes what its build accepts.** A refresh that
+  does not cook (the editor's, a play build's, a join's) takes a Final or a Fast build, from the
+  store first and then from the source, before importing anything; one that cooks asks only
+  `imports` and takes a build only under the namespace its manifest's `final` matches, so a Fast
+  build never reaches a cook, and a package with no Final reachable fails by name.
 - **What imports and cooks build is kept as refs into the machine store** (`cook/cache`): an
   object named by `(cache-<name>, <key>-<version>)`, found by any program or machine that shares
   the store's objects; a miss asks the caller's `cache.Source` before building, what a pass needs
@@ -226,7 +231,8 @@ the assets.
   `cook/import/sources/cook_test.odin` (the refresh of a cook builds a fast texture
   final from its source; that of a build that does not cook keeps either; a peer with only
   fetched builds cooks what the sources cook, sources inside a root stay behind and a missing
-  build fails by package; a refresh takes builds from a second store).
+  build fails by package; a refresh takes builds from a second store; a cook never takes a Fast
+  build a source holds, and ships once that source holds the Final one).
 - Parallel: import a map with `mirai import --rebuild` over a copy of an import made without the
   job system (or before the change) and compare the trees with `diff -r`: the same bytes.
 - Also test `cook/prefab` if the imported hierarchy changes, and `asset` if an asset format or its
@@ -244,7 +250,7 @@ the assets.
   a part of a model), `cook/import/outputs_test.odin` (the outputs of a source are the assets its
   package lists, the models of a whole source share their parts by name, inputs count in the
   identity, importing again keeps ids and objects, a source outside any project imports, a setting
-  changes the identity and an engine version only the key, a Fast build is not shared, two stores
+  changes the identity and an engine version only the key, a Fast build is named apart, two stores
   hold the same objects), `cook/import/sources/settings_test.odin` (the package keeps the settings;
   settings that are not this build's are refused) and `cook/import/sources/write_test.odin`
   (importing again keeps what was changed in a material and takes the rest from the source).
