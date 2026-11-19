@@ -330,7 +330,11 @@ import_run :: proc(job:^Import_Job) {
         import_added_report(job)
     } else {
         settings:=&job.settings if job.settled else nil
-        job.report,added,error=sources.project_ingest(job.root,job.source,job.folder,job.options,settings,job.allocator)
+        // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+        report,ingested,ingest_error:=sources.project_ingest(job.root,job.source,job.folder,job.options,settings,job.allocator)
+        job.report=report
+        added=ingested
+        error=ingest_error
     }
     defer sources.library_report_destroy(&added)
     if error.code==.None && len(added.failures)+len(added.missing)>0 {
