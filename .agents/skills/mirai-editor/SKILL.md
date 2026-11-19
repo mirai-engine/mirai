@@ -113,6 +113,8 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 - **Shared session and the host's networked game**:
   [entering and leaving](references/collaboration.md#entering-and-leaving), the project and its
   builds that travel with the session ([the project](references/collaboration.md#the-project)),
+  the libraries of the other editors
+  ([libraries of the session](references/collaboration.md#libraries-of-the-session)),
   [the host's networked games](references/collaboration.md#the-hosts-networked-games) and
   [where each one plays](references/collaboration.md#where-each-one-plays).
 - **Figure of agents and editors, glyph menu, Follow, palette, pings, the editor's own assets

@@ -905,6 +905,10 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   thread of imports and answers as `asset.import` (`sources.project_add`, `library.odin`). Add
   from library of the menu of the content browser offers the packages and adds one whole to the
   folder of the browser; one the project pins is shown checked and off.
+- **Libraries of the other editors.** In a session with others, Add from library holds This
+  machine, the packages above, and a submenu per other editor, by its name, with the packages its
+  machine exposes, each with the size of the build it has and `here` when this machine has it already
+  ([libraries of the session](collaboration.md#libraries-of-the-session)).
 
 ## Graphics
 

@@ -101,6 +101,7 @@ api_assets_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="asset.move",summary="Moves, renames or copies an asset with the parts it owns, or a folder with all it holds, at once and without undo; a move keeps ids and references, an asset its extension, and moving the root of a package of the library moves where the project lists the package. A move fails for another asset a package lists, files of plugins, the engine or the editor, open tabs, files being edited, a folder into itself and outside Edit.",params=type_info_of(Api_Asset_Move_Params),result=type_info_of(Api_Asset_Moved_Result),run=api_asset_move})
     api_register(s,st,{name="packages.list",summary="The packages of the library of this machine, what every import ingests into its store, with their assets: name, kind, bytes, whether built, and whether the project pins the package.",params=type_info_of(Api_Packages_List_Params),result=type_info_of(Api_Packages_List_Result),flags={.Read_Only},run=api_packages_list})
     api_register(s,st,{name="packages.add",summary="Pins a package of the library, or some of its assets, in the project, listed in a folder of the assets, as Add from library of the content browser does; its documents are written there. Answers as asset.import does when it ends.",params=type_info_of(Api_Packages_Add_Params),result=type_info_of(Import_Status_Result),defaults=&add_default,run=api_packages_add})
+    collab_library_api_register(s,st)
 }
 
 // ---------------------------------------------------------------- component.list

@@ -1135,3 +1135,148 @@ a_join_from_a_host_with_only_fast_builds_fetches_them_and_imports_nothing :: pro
     _,final_error:=store.ref_get(&w.peers[1].s,asset.REF_IMPORTS,key)
     testing.expect(t,fast_error==.None && fast==imported.build && final_error==.Missing,"the joiner names the Fast build as Fast")
 }
+
+// Runs work on a thread while the network steps, as test_join does; stop_bytes:
+// in the step peer k has received that many chunk bytes, peer from leaves
+// (its server says goodbye and is pumped no more).
+@(private="file")
+test_run :: proc(t:^testing.T,w:^Test_Net,k:int,work:proc(data:rawptr),data:rawptr,stop_bytes:u64=0,from:=0) {
+    Run :: struct {work:proc(data:rawptr),data:rawptr,done:bool}
+    run:=Run{work,data,false}
+    th:=thread.create_and_start_with_data(&run,proc(data:rawptr) {
+        r:=(^Run)(data)
+        r.work(r.data)
+        free_all(context.temp_allocator)
+        sync.atomic_store(&r.done,true)
+    },init_context=context)
+    n:=&w.peers[k].n
+    // The clock moves while the work waits on the node, or, as a blocking fetch waits on the
+    // exchange, after it yielded a while.
+    for steps,yields:=0,0;!sync.atomic_load(&run.done); {
+        if !node_waiting(n) && yields<200 {
+            yields+=1
+            thread.yield()
+            continue
+        }
+        yields=0
+        test_step(w)
+        steps+=1
+        if steps==600_000 {
+            testing.expect(t,false,"the work did not end in 600 virtual seconds")
+            node_stop(n)
+        }
+        if stop_bytes>0 && w.peers[from].pumped && node_totals(n).received>=stop_bytes {
+            w.peers[from].pumped=false
+            h:=w.peers[from].server
+            wire.host_disconnect(h,0,.Closed)
+            wire.host_poll(h)
+            wire.host_update(h,w.now)
+        }
+    }
+    thread.join(th)
+    thread.destroy(th)
+}
+
+// A package of the library of peer 0 that no project of it pins: a sound of samples.
+@(private="file")
+library_sound :: proc(t:^testing.T,w:^Test_Net,samples:int) -> (manifest:store.Hash,ok:bool) {
+    sources_folder:=fmt.tprintf("%s/library",w.folder)
+    file_put(sources_folder,"chime.wav",wav(samples,9))
+    report,error:=sources.ingest(fmt.tprintf("%s/chime.wav",sources_folder),{store=&w.peers[0].s},allocator=context.temp_allocator)
+    if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
+    // Its source leaves the machine: only its build gives it.
+    testing.expect(t,os.rename(sources_folder,fmt.tprintf("%s/library-gone",w.folder))==nil)
+    return report.manifest,true
+}
+
+@(private="file")
+Library_Run :: struct {
+    w:^Test_Net,
+    list:[]Peer_Package,
+    error:string,
+    manifest:store.Hash,
+    root:string,
+}
+
+@(private="file")
+library_list_run :: proc(t:^testing.T,w:^Test_Net,r:^Library_Run) {
+    test_run(t,w,1,proc(data:rawptr) {
+        r:=(^Library_Run)(data)
+        buffer:[PEERS]Peer
+        peers:=node_peers(&r.w.peers[1].n,buffer[:])
+        for tries:=0;len(peers)==0 && tries<1000 && node_wait(&r.w.peers[1].n,0.01);tries+=1 {peers=node_peers(&r.w.peers[1].n,buffer[:])}
+        if len(peers)!=1 {r.error="not one peer";return}
+        r.list,r.error=peer_library(&r.w.peers[1].n,peers[0],context.allocator)
+    },r)
+}
+
+// A peer's library is listed with name, kinds, size and whether this machine
+// has it; one of its packages is taken with its build, pinned into a project
+// that then has it built, stays in the library of this machine, and lists as here.
+@(test)
+a_peers_library_is_listed_and_a_package_of_it_taken_and_pinned :: proc(t:^testing.T) {
+    w:Test_Net
+    if !test_net(t,&w,"share-library",2) {return}
+    defer test_net_destroy(&w)
+    manifest,made:=library_sound(t,&w,4800)
+    if !made {return}
+    test_connect(&w,1,0)
+    r:=Library_Run{w=&w,root=fmt.tprintf("%s/guest",w.folder)}
+    os.make_directory_all(r.root)
+    library_list_run(t,&w,&r)
+    defer {for p in r.list {delete(p.name);delete(p.kinds)};delete(r.list)}
+    if !testing.expectf(t,r.error=="" && len(r.list)==1,"%s: %d",r.error,len(r.list)) {return}
+    listed:=r.list[0]
+    testing.expect(t,listed.manifest==manifest && listed.name=="chime" && listed.built && !listed.here && listed.bytes>0 && len(listed.kinds)==1,"the package is listed with what it holds")
+
+    r.manifest=manifest
+    test_run(t,&w,1,proc(data:rawptr) {
+        r:=(^Library_Run)(data)
+        r.error=strings.clone(package_take(&r.w.peers[1].n,r.manifest,r.root))
+    },&r)
+    if !testing.expectf(t,r.error=="","%s",r.error) {return}
+    s:=&w.peers[1].s
+    added:=sources.project_add(r.root,manifest,"sounds",nil,{store=s,fast_textures=true},context.temp_allocator)
+    testing.expectf(t,len(added.failures)==0 && len(added.missing)==0 && added.fetched==0 && added.ingested==0,"pinned from this machine's library: %v",added)
+    pinned,_:=asset.root_packages(r.root,s.root,context.temp_allocator)
+    testing.expectf(t,len(pinned.problems)==0 && len(pinned.listed)>0,"%v",pinned)
+    for l in pinned.listed {
+        a:asset.Asset
+        if testing.expectf(t,asset.asset_open_object(&a,s,l.object,context.temp_allocator)==.None,"%s is built here",l.path) {asset.asset_close(&a)}
+    }
+    buffer:[base.ASSET_ID_TEXT]u8
+    kept,ref_error:=store.ref_get(s,asset.REF_PACKAGES,base.asset_id_format(listed.id,buffer[:]))
+    testing.expect(t,ref_error==.None && kept==manifest,"it stays in the library of this machine")
+
+    for p in r.list {delete(p.name);delete(p.kinds)}
+    delete(r.list)
+    r.list=nil
+    library_list_run(t,&w,&r)
+    testing.expect(t,r.error=="" && len(r.list)==1 && r.list[0].here,"listed again, it is here")
+}
+
+// A peer that leaves while a package of it is taken leaves no package in the
+// library of this machine and no project changed, and says why.
+@(test)
+a_peer_that_leaves_mid_take_leaves_nothing_taken :: proc(t:^testing.T) {
+    w:Test_Net
+    if !test_net(t,&w,"share-library-gone",2) {return}
+    defer test_net_destroy(&w)
+    manifest,made:=library_sound(t,&w,1<<20)
+    if !made {return}
+    test_connect(&w,1,0)
+    r:=Library_Run{w=&w,manifest=manifest,root=fmt.tprintf("%s/guest",w.folder)}
+    os.make_directory_all(r.root)
+    test_run(t,&w,1,proc(data:rawptr) {
+        r:=(^Library_Run)(data)
+        for tries:=0;tries<1000 && node_totals(&r.w.peers[1].n).connected==0 && node_wait(&r.w.peers[1].n,0.01);tries+=1 {}
+        r.error=strings.clone(package_take(&r.w.peers[1].n,r.manifest,r.root))
+    },&r,stop_bytes=256<<10)
+    defer delete(r.error)
+    testing.expectf(t,strings.contains(r.error,"left"),"why: %s",r.error)
+    p,_:=asset.package_get(&w.peers[0].s,manifest,context.temp_allocator)
+    buffer:[base.ASSET_ID_TEXT]u8
+    _,ref_error:=store.ref_get(&w.peers[1].s,asset.REF_PACKAGES,base.asset_id_format(p.id,buffer[:]))
+    testing.expect(t,ref_error!=.None,"nothing taken into the library")
+    testing.expect(t,!os.exists(fmt.tprintf("%s/%s",r.root,asset.PACKAGES_FILE)),"no project changed")
+}

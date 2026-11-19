@@ -1687,7 +1687,15 @@ content_settings_build :: proc(s:^Session,content_view:bool) {
             if asset.registry_scan(&s.app.assets.registry)!=.None {notify(s,"The asset folder could not be read")}
         }
         command_menu_item(s,ui.id(ctx,"import"),"import","Import")
-        if ui.submenu(ctx,ui.id(ctx,"library"),"Add from library",{icon=.Import,disabled=s.store.root=="" || s.mode!=.Edit}) {content_library_items(s)}
+        if ui.submenu(ctx,ui.id(ctx,"library"),"Add from library",{icon=.Import,disabled=s.store.root=="" || s.mode!=.Edit}) {
+            // In a session, this machine's library is one more beside those of the other editors.
+            if content_peer_library_count(s)==0 {
+                content_library_items(s)
+            } else {
+                if ui.submenu(ctx,ui.id(ctx,"library_here"),"This machine",{icon=.Import}) {content_library_items(s)}
+                content_peer_library_items(s)
+            }
+        }
         ui.id_pop(ctx)
     }
 }

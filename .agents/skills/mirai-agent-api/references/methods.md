@@ -892,6 +892,10 @@ of an instance" are `-32602`; the rest, `-32000`
   assets by id, listed in `folder`, as Add from library of the content browser; it runs as an
   import and answers as `asset.import`. An unknown package or asset, an invalid folder or a
   session without a store fail saying how to fix it.
+- `packages.peers {refresh?, seconds?}`: in a session, the libraries of the other editors, each
+  package with `bytes`, `built`, `here` and `pinned`; `listing` while they are read, `adding` for
+  the last package taken. `packages.peer_add {peer, name, folder?}` takes one into this machine's
+  library and adds it as `packages.add` does; one whose peer left says so in `adding.error`.
 - `asset.detach`: `asset` (path or id) is a part that leaves its owner: it is left without `owner`
   and shown alone; the import keeps writing it and leaves it out
   ([parts](../../mirai-imports/references/imports.md#parts)). It is an edit of its file, with undo;
