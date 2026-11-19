@@ -1870,11 +1870,13 @@ RENDER_SCALE_MIN :: f32(0.25)
 @(private)
 render_extent :: proc "contextless" (output: u32, scale: f32) -> u32 {return max(u32(f32(output) * scale + 0.5), 8)}
 
-// The targets every frame of a view writes; those of an effect are made when
-// the view first runs it. width and height: what the view shows, in device
-// pixels, and scale what the scene is drawn at of them: window_render_scale
-// for a view of the window, 1 for one drawn into a texture. main: the view
-// the UI of the screen is composed on, which holds its isolated layers.
+// The targets of a view: what it shows and, but for the main view, those
+// every frame of its scene writes (scene_targets); those of an effect are
+// made when the view first runs it. width and height: what the view shows, in
+// device pixels, and scale what the scene is drawn at of them:
+// window_render_scale for a view of the window, 1 for one drawn into a
+// texture. main: the view the UI of the screen is composed on, which holds its
+// isolated layers and draws a scene only while the window has no views.
 @(private)
 create_targets :: proc(r: ^Renderer, v: ^View_State, width, height: u32, scale: f32, main := false) -> bool {
 	t := &v.targets
@@ -1885,6 +1887,20 @@ create_targets :: proc(r: ^Renderer, v: ^View_State, width, height: u32, scale: 
 	t.height = render_extent(height, scale)
 	t.half_width = max((t.width + 1) / 2, 1)
 	t.half_height = max((t.height + 1) / 2, 1)
+	t.ldr = rhi.texture_create(d, {width = t.output_width, height = t.output_height, format = .RGBA8_Unorm, usage = {.Color_Target, .Sampled, .Transfer_Src}, name = "ldr"})
+	if t.ldr == 0 {set_error(r, "render targets: %s", rhi.device_error(d)); return false}
+	if main {return ui_layer_targets(r, t.ui_layers[:], t.ui_blur[:], t.output_width, t.output_height)}
+	return scene_targets(r, v)
+}
+
+// The targets every frame of the scene of a view writes, of the sizes
+// create_targets gave it: the main view makes them the first frame it draws
+// the scene (main_scene_release).
+@(private)
+scene_targets :: proc(r: ^Renderer, v: ^View_State) -> bool {
+	t := &v.targets
+	d := r.device
+	if t.taa[0] != 0 {return true}
 	full :: proc(r: ^Renderer, t: ^Targets, texture: ^rhi.Texture, format: rhi.Format, usage: rhi.Texture_Usage, name: string) -> bool {
 		return target(r, nil, texture, t.width, t.height, format, usage, name, shared = true)
 	}
@@ -1914,14 +1930,27 @@ create_targets :: proc(r: ^Renderer, v: ^View_State, width, height: u32, scale: 
 	t.hiz_levels = levels
 	for i in 0 ..< 2 {t.hiz[i] = rhi.texture_create(d, {width = side.x, height = side.y, mip_levels = levels, format = .R32_Float, usage = {.Sampled, .Storage}, name = "depth pyramid"})}
 	t.hiz_valid = false
-	t.ldr = rhi.texture_create(d, {width = t.output_width, height = t.output_height, format = .RGBA8_Unorm, usage = {.Color_Target, .Sampled, .Transfer_Src}, name = "ldr"})
-	if main && !ui_layer_targets(r, t.ui_layers[:], t.ui_blur[:], t.output_width, t.output_height) {return false}
 	t.reactive = rhi.texture_create(d, {width = t.width, height = t.height, format = .R8_Unorm, usage = attachment, name = "blended coverage"})
 	t.needs_clear = true
 	v.has_previous = false
-	all := []rhi.Texture{t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.reactive}
+	all := []rhi.Texture{t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.reactive}
 	for tex in all {if tex == 0 {set_error(r, "render targets: %s", rhi.device_error(d)); return false}}
 	return true
+}
+
+// While views of their own draw the window, the main view keeps only what
+// shows them and its UI: what it drew its scene with goes, histories and maps
+// of the shadows too. A transaction of the frame the views change.
+@(private)
+main_scene_release :: proc(r: ^Renderer) {
+	t := &r.main.targets
+	if t.taa[0] == 0 && t.depth == 0 {return}
+	kept := t^
+	t.ldr, t.generated, t.ui_layers, t.ui_blur = 0, 0, {}, {}
+	destroy_targets(r, t)
+	t.width, t.height, t.half_width, t.half_height = kept.width, kept.height, kept.half_width, kept.half_height
+	t.ldr, t.generated, t.ui_layers, t.ui_blur = kept.ldr, kept.generated, kept.ui_layers, kept.ui_blur
+	r.main.has_previous = false
 }
 
 @(private)
