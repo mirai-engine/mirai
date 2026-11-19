@@ -54,7 +54,7 @@ gltf_animation_import_preserves_tangents_and_unambiguous_targets :: proc(t:^test
     testing.expect_value(t,anim.clip_evaluate(&library,bound[0],1),position)
     testing.expect_value(t,anim.clip_evaluate(&library,bound[1],1),rotation)
     // Imported again over its files, it keeps their ids.
-    again,again_error:=importer.import_write(&model,{root=filepath.dir(folder)})
+    again,again_error:=write_again(t,&model,filepath.dir(folder))
     defer importer.report_destroy(&again)
     if !testing.expect_value(t,again_error.code,importer.Error_Code.None) {return}
     testing.expect_value(t,again.animation_id,report.animation_id)

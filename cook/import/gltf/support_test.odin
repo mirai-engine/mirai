@@ -10,6 +10,7 @@ import "mirai:asset"
 import importer "mirai:cook/import"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "mirai:store"
 
 FIXTURES :: #directory+"/../../../assets/fixtures/"
 DEMO :: #directory+"/../../../demo/assets/"
@@ -34,7 +35,27 @@ write_model :: proc(t:^testing.T,model:^importer.Imported_Model,name:string) -> 
     data,_:=os.read_entire_file(model.source,context.temp_allocator)
     _=os.write_entire_file(copied,data)
     model.source=copied
-    report,error=importer.import_write(model,{root=root})
+    report,error=write_again(t,model,root)
+    return
+}
+
+// Writes model again as the import of the project at root, into the store of
+// that project, with the documents beside its source; each output of the cache
+// gets the file of its object as its path.
+write_again :: proc(t:^testing.T,model:^importer.Imported_Model,root:string) -> (report:importer.Import_Report,error:importer.Error) {
+    opened,store_error:=store.open(fmt.tprintf("%s/store",root),context.temp_allocator)
+    if !testing.expect_value(t,store_error,store.Error.None) {return {},{code=.Write}}
+    s:=new(store.Store,context.temp_allocator)
+    s^=opened
+    report,error=importer.import_write(model,{root=root,store=s,documents=filepath.dir(importer.path_key(model.source))})
+    for &written in report.assets {
+        if written.path!="" || written.object=={} {continue}
+        digits:[64]u8
+        path:=fmt.tprintf("%s-objects/%s",s.root,store.hex(written.object,&digits))
+        os.make_directory_all(filepath.dir(path))
+        if !os.exists(path) {asset.object_file_write(s,written.object,path)}
+        written.path=strings.clone(path)
+    }
     return
 }
 
