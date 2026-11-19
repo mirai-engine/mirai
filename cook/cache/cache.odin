@@ -165,7 +165,8 @@ store_source :: proc(from:^store.Store) -> Source {
         if error!=.None || object_copy(from,into,object)!=.None {return false}
         if namespace==asset.REF_IMPORTS || namespace==asset.REF_IMPORTS_FAST {
             b,build_error:=asset.build_get(from,object,context.temp_allocator)
-            if build_error!=.None {return false}
+            // A build this engine cannot decode is not copied: as if the source had none.
+            if build_error!=.None || !asset.build_readable(&b) {return false}
             for o in b.outputs {
                 if object_copy(from,into,o.object)!=.None {return false}
                 if o.thumbnail!={} && object_copy(from,into,o.thumbnail)!=.None {return false}

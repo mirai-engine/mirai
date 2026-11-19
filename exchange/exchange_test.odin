@@ -580,6 +580,31 @@ a_late_done_does_not_release_what_another_peer_was_asked :: proc(t:^testing.T) {
     testing.expectf(t,w.nodes[1].requests==1,"the late peer is asked %d times",w.nodes[1].requests)
 }
 
+// A connected peer that never answers a question is taken to know nothing of
+// it in bounded time, and its credits come back: questions after the first
+// credits' worth end too.
+@(test)
+a_question_a_silent_peer_never_answers_ends :: proc(t:^testing.T) {
+    w:Test_World
+    defer test_world_destroy(&w)
+    if !test_world(t,&w,"exchange-silent-question",2) {return}
+    test_host(&w,0,.Server)
+    silent:=test_scripted(t,&w,1,.Hold)
+    if !testing.expect(t,test_connect(&w,silent,w.nodes[0].endpoints[0])) {return}
+    x:=&w.nodes[0].x
+    for round in 0..<QUERY_CREDITS+2 {
+        q,_:=ref_ask(x,"lib",fmt.tprintf("name-%d",round))
+        started:=w.now
+        r:Query_Result
+        for w.now-started<4*QUERY_SECONDS {
+            test_step(&w)
+            if r,_=query_result(x,q);r.state!=.Waiting {break}
+        }
+        query_end(x,q)
+        if !testing.expectf(t,r.state==.Not_Found,"question %d ends: %v after %.1f s",round,r.state,w.now-started) {return}
+    }
+}
+
 // Destroying the exchange wakes a fetch waiting on a job with Closed, and
 // frees only once it left.
 @(test)
@@ -704,6 +729,41 @@ the_batch_blocking_forms_return_for_a_hit_a_partial_miss_and_a_disconnect :: pro
         if p,ok:=peer_progress(&w.nodes[1].x,client,client.connection_handles[0]);ok && p.received>1<<20 {wire.host_disconnect(w.nodes[0].hosts[0])}
     }) && j.error==.Missing,"a disconnect returns Missing")
     testing.expect(t,!test_whole(here,big[0]) || !test_whole(here,big[1]),"the disconnect came before the objects")
+}
+
+// A batch of refs that came back missing leaves its query slots to free as
+// their answers arrive: the next batch, asked at once, waits for them and
+// finds what it names instead of failing as full.
+@(test)
+a_batch_of_refs_waits_for_the_slots_of_the_last :: proc(t:^testing.T) {
+    w:Test_World
+    defer test_world_destroy(&w)
+    if !test_world(t,&w,"exchange-refs-full",2,desc={expose=test_expose_lib}) {return}
+    test_host(&w,0,.Server)
+    client:=test_host(&w,1,.Client)
+    if !testing.expect(t,test_connect(&w,client,w.nodes[0].endpoints[0])) {return}
+    present:=test_put(t,&w.nodes[0].s,3000,7)
+    store.ref_set(&w.nodes[0].s,"lib","present",present)
+    x:=&w.nodes[1].x
+    // Every slot holds a question asked and ended whose answer is on its way.
+    wire.sim_endpoint_conditions(&w.sim,w.nodes[0].endpoints[0],{latency=0.1})
+    asked:=make([]Query,len(x.queries),context.temp_allocator)
+    for &q,k in asked {q,_=ref_ask(x,"lib",fmt.tprintf("absent-%d",k))}
+    test_step(&w,2)
+    for q in asked {query_end(x,q)}
+    j:=Test_Job{x=x,namespace="lib",names={"present"},addresses=make([]store.Hash,1,context.temp_allocator)}
+    th:=thread.create_and_start_with_poly_data(&j,test_job)
+    defer {thread.join(th);thread.destroy(th)}
+    // Nothing steps until the job returned or waits: no slot frees before it asks.
+    for !sync.atomic_load(&j.done) {
+        sync.mutex_lock(&x.lock)
+        waiting:=x.waiting>0
+        sync.mutex_unlock(&x.lock)
+        if waiting {break}
+        thread.yield()
+    }
+    for step:=0;!sync.atomic_load(&j.done) && step<10_000;step+=1 {test_step(&w)}
+    testing.expectf(t,sync.atomic_load(&j.done) && j.error==.None && j.addresses[0]==present,"the batch finds its ref: %v",j.error)
 }
 
 // An object of ten gigabytes moves with the memory of each side bounded by

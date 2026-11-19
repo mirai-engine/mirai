@@ -59,13 +59,12 @@ derived data cache that use it decide what a ref means and what is live.
   per put, because a file and a flush per object cost far more than an append. Cuts stay in order
   on one thread while jobs hash and append the chunks, and leaves join the tree in the order of
   the cuts, so an object is the same put on one thread or many.
-- A commit flushes the batch, then writes the commit frame that makes it visible: one flush per
-  batch. Readers take a pack's frames only up to its last commit whose count and sum of heads
-  match, so a torn tail is never read; a ref is a frame of the same pack written after the chunks
-  it reaches, so no reader sees a ref before what it names is durable. What a batch names in
-  another writer's open pack is flushed by the commit too, so a crash never keeps a ref and loses
-  what it names. The commit frame itself reaches the disk with the next flush or the seal: a
-  machine that crashes loses at most a writer's last batch.
+- A commit writes the batch's frames and the commit frame that makes them visible, then flushes
+  once: a commit that returns success is durable. Readers take a pack's frames only up to its
+  last commit whose count and sum of heads match, so a torn tail is never read; a ref is a frame
+  of the same pack written after the chunks it reaches. What a batch names in another writer's
+  open pack is flushed before its commit frame is written, so a crash never keeps a ref and loses
+  what it names.
 - A pack is written only by its writer: it is sealed (a trailer of its chunks sorted by address)
   at its size bound or when its writer closes. A sweep never writes into another's pack: one whose
   writer's lease is gone is folded up to its last commit and retired, and a writer that is in fact
@@ -106,6 +105,10 @@ derived data cache that use it decide what a ref means and what is live.
   beyond the file's size now: a pack cut below a chunk is damaged, an error.
 - A full volume is `No_Space`, never `Io`; a pack that will not delete (one a process maps on
   Windows) is skipped, counted and deleted by a later sweep.
+- Slices of a mapping handed to a caller have no lifetime, so a pack a value lent stays mapped
+  until it closes: a sweep reports what it deleted that its value lent as held, apart from what it
+  freed, and a value closes the gone packs it never lent when it reads a new generation. What
+  other processes map is invisible to it and stays on disk until they close it.
 - The store never decides what is live: refs, leases and what its caller names are, and what was
   written or touched within `GRACE`. A process that uses addresses holds a lease that names its
   machine, pid and process start: on that machine it holds while the process runs, whatever the
@@ -150,7 +153,7 @@ derived data cache that use it decide what a ref means and what is live.
   `two_sweeps_taking_a_stale_claim_publish_once`,
   `an_address_added_to_a_lease_during_a_sweep_is_kept`,
   `a_pack_cut_anywhere_in_its_tail_opens_to_its_last_commit`,
-  `a_ref_is_never_visible_before_what_it_names_is_durable`,
+  `a_commit_that_returns_is_durable`,
   `a_small_put_writes_once_and_a_batch_flushes_once`,
   `an_object_of_several_groups_reads_by_group_and_offset`,
   `a_sweep_beside_writers_loses_no_committed_put`,

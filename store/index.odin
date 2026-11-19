@@ -399,7 +399,8 @@ generation_ref :: proc "contextless" (g:^Generation,namespace,name:string) -> (I
 refresh_locked :: proc(s:^Store) -> Error {
     state:=s.state
     newest:=generation_newest(s) or_return
-    if newest>state.generation.number {
+    number:=state.generation.number
+    if newest>number {
         g:=generation_load(s,newest) or_return
         generation_close(s,&state.generation)
         state.generation=g
@@ -414,7 +415,14 @@ refresh_locked :: proc(s:^Store) -> Error {
         state_rebuild_locked(s)
         writer_ack_locked(s)
     }
-    return packs_read_locked(s)
+    packs_read_locked(s) or_return
+    // Outside a sweep, a pack that is gone is read again only by its path, from retired/.
+    if newest>number && !state.recording {
+        for &p in state.packs {
+            if p.gone && !p.lent && !p.own {pack_close(&p)}
+        }
+    }
+    return .None
 }
 
 // Reads the packs folder: loads each pack not seen and the new commits of
@@ -765,7 +773,7 @@ retired_lookup_locked :: proc(s:^Store,address:Hash) -> (pack:int,location:Locat
     if !in_table {return -1,{},false}
     location=state.retired.values[slot]
     pack=int(location.pack)
-    if pack>=len(state.packs) || state.packs[pack].damaged {return -1,{},false}
+    if pack>=len(state.packs) || state.packs[pack].damaged || state.packs[pack].pruned {return -1,{},false}
     return pack,location,true
 }
 

@@ -73,14 +73,16 @@ Plan :: struct {
 
 // An entry of the snapshot to write, with the file as the plan found it here:
 // absent, or with the address base. done: written, or left on purpose.
+// refused: its path passes through a link here, and it is not written.
 @(private)
-Write :: struct {at:int,present:bool,base:store.Hash,done:bool}
+Write :: struct {at:int,present:bool,base:store.Hash,done:bool,refused:bool}
 
 // An entry of the last snapshot the host removed and the joiner did not change.
 @(private)
-Remove :: struct {at:int,done:bool}
+Remove :: struct {at:int,done:bool,refused:bool}
 
 @(private) MISSING_SECONDS :: 10.0 // an object no connected peer has for this long fails the join
+@(private) STALL_SECONDS :: 20.0   // without a byte received or an object complete, what is wanted fails
 @(private) WINDOW :: 256           // files wanted at once
 
 join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,error:string) {
@@ -110,6 +112,14 @@ join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,er
     if os.exists(folder) && !os.is_dir(folder) {
         error=fmt.aprintf("%s is a file: give the join a folder",folder,allocator=allocator)
         return
+    }
+    // Its state and temporary files are not written through a link either.
+    names:=project.FOLDER_NAMES
+    for part in ([2]string{"tmp",SHARE_FOLDER}) {
+        if link:=link_on(folder,fmt.tprintf("%s/%s",names[.Generated],part));link!="" {
+            error=fmt.aprintf("%s is a link, and a join never writes through a link inside its folder: replace it with a folder of its own and run the join again",link,allocator=allocator)
+            return
+        }
     }
     node_serve(n,address)
     if d.own_offer!="" {offer_set(n.s,folder,d.own_offer,address)}
@@ -197,11 +207,14 @@ refusal :: proc(reason:wire.Disconnect_Reason,allocator:=context.allocator) -> s
     return strings.clone("the host did not answer. Either its share has ended (an invitation lasts while the share that printed it runs: ask for a new one), or it cannot be reached from here: on another network one side needs a router that maps a port (UPnP, NAT-PMP or PCP) and the host must give the code it prints once its router answered; a firewall must let UDP through",allocator)
 }
 
-// The address of the snapshot the host offers.
+// The address of the snapshot the host offers, asked of the host alone: a
+// peer that joined from this one could name another.
 @(private)
 join_offer :: proc(d:^Join_Desc,allocator:runtime.Allocator) -> (address:store.Hash,error:string) {
     n:=d.node
-    q,ask_error:=exchange.ref_ask(&n.x,NAMESPACE,d.offer)
+    host,connection,connected:=node_host_peer(n)
+    if !connected {return {},refusal(.Timeout,allocator)}
+    q,ask_error:=exchange.ref_ask(&n.x,NAMESPACE,d.offer,host,connection)
     if ask_error!=.None {return {},fmt.aprintf("the snapshot could not be asked for (%v)",ask_error,allocator=allocator)}
     defer exchange.query_end(&n.x,q)
     for {
@@ -209,7 +222,7 @@ join_offer :: proc(d:^Join_Desc,allocator:runtime.Allocator) -> (address:store.H
         if !ok {return {},strings.clone("the question for the snapshot was lost",allocator)}
         switch result.state {
         case .Found: return result.address,""
-        case .Not_Found: return {},strings.clone("the host offers no project under this invitation: its share ended and another runs; ask for its new invitation",allocator)
+        case .Not_Found: return {},strings.clone("the host offers no project under this invitation, or did not answer: its share ended and another runs; ask for its new invitation",allocator)
         case .Waiting:
         }
         if error=join_alive(d,allocator);error!="" {return}
@@ -252,7 +265,8 @@ join_fetch :: proc(d:^Join_Desc,addresses:[]store.Hash,what:string,allocator:run
     Active :: struct {address:store.Hash,missing:f64}
     active:=make([dynamic]Active,context.temp_allocator)
     defer for a in active {exchange.forget(&n.x,a.address)}
-    next:=0
+    next,complete:=0,0
+    stall:Stall
     for next<len(addresses) || len(active)>0 {
         for len(active)<WINDOW && next<len(addresses) {
             if exchange.want(&n.x,addresses[next],1<<20)!=.None {break}
@@ -267,6 +281,7 @@ join_fetch :: proc(d:^Join_Desc,addresses:[]store.Hash,what:string,allocator:run
             case .Complete:
                 exchange.forget(&n.x,a.address)
                 unordered_remove(&active,k)
+                complete+=1
                 continue
             case .Failed:
                 return fmt.aprintf("%s could not be kept in the store at %s (%v, %v): free space there",what,n.s.root,p.error,p.store_error,allocator=allocator)
@@ -275,9 +290,26 @@ join_fetch :: proc(d:^Join_Desc,addresses:[]store.Hash,what:string,allocator:run
             k+=1
         }
         if len(active)==0 && next==len(addresses) {break}
+        if stalled(d,&stall,complete) {return fmt.aprintf("no connected peer sent any of %s for %.0f s: the host withholds it, or stopped; run the join again",what,STALL_SECONDS,allocator=allocator)}
         if error:=join_alive(d,allocator);error!="" {return error}
     }
     return ""
+}
+
+// Whether the join made no progress for STALL_SECONDS: no chunk byte received
+// from any peer and no object complete, whatever the peers do or withhold.
+@(private)
+Stall :: struct {at:f64,received:u64,complete:int}
+
+@(private)
+stalled :: proc(d:^Join_Desc,s:^Stall,complete:int) -> bool {
+    now:=node_now(d.node)
+    received:=node_totals(d.node).received
+    if s.at==0 || received!=s.received || complete!=s.complete {
+        s^={at=now,received=received,complete=complete}
+        return false
+    }
+    return now-s.at>=STALL_SECONDS
 }
 
 // Whether an object stayed missing at every connected peer for MISSING_SECONDS.
@@ -305,6 +337,10 @@ join_plan :: proc(snap,last:^Snapshot,index:^Index,folder:string,report:^Join_Re
         case_follow(snap,last,&plan,index,folder)
     }
     for &e,at in snap.entries {
+        if link_refused(report,folder,e.path) {
+            append(&plan.write,Write{at=at,refused=true})
+            continue
+        }
         here,_,present:=index_address(index,e.path,project.path(folder,e.path,allocator=context.temp_allocator))
         if present && here==e.address {continue}
         base,based:=base_find(&plan,last,e.path)
@@ -325,6 +361,10 @@ join_plan :: proc(snap,last:^Snapshot,index:^Index,folder:string,report:^Join_Re
         if _,still:=snapshot_find(snap,e.path);still {continue}
         // Renamed by the host changing only its case: on this system it is the same file.
         if plan.folds && strings.to_lower(e.path,context.temp_allocator) in plan.snap_folded {continue}
+        if link_refused(report,folder,e.path) {
+            append(&plan.remove,Remove{at=at,refused=true})
+            continue
+        }
         here,_,present:=index_address(index,e.path,project.path(folder,e.path,allocator=context.temp_allocator))
         switch {
         case !present:
@@ -333,6 +373,32 @@ join_plan :: proc(snap,last:^Snapshot,index:^Index,folder:string,report:^Join_Re
         }
     }
     return
+}
+
+// The first part of relative under folder that is a link (a symbolic link, or
+// a junction on Windows), as a path; "" when none. The folder itself may be
+// one: it is the place the joiner named.
+@(private)
+link_on :: proc(folder,relative:string) -> string {
+    for at in 1..=len(relative) {
+        if at<len(relative) && relative[at]!='/' {continue}
+        path:=project.path(folder,relative[:at],allocator=context.temp_allocator)
+        info,error:=os.lstat(path,context.temp_allocator)
+        // What does not exist holds nothing below it.
+        if error!=nil {return ""}
+        if info.type==.Symlink {return path}
+    }
+    return ""
+}
+
+// Whether the path of an entry passes through a link inside folder, which a
+// join never follows: reported with how to fix it.
+@(private)
+link_refused :: proc(report:^Join_Report,folder,relative:string) -> bool {
+    link:=link_on(folder,relative)
+    if link=="" {return false}
+    failed(report,"%s: %s is a link, and a join never writes or removes through a link inside its folder: replace it with a folder or file of its own and run the join again",relative,link)
+    return true
 }
 
 // The entry of path in the last snapshot, under any case where the system folds it.
@@ -370,7 +436,7 @@ case_follow :: proc(snap,last:^Snapshot,plan:^Plan,index:^Index,folder:string) {
         at,renamed:=plan.last_folded[strings.to_lower(e.path,context.temp_allocator)]
         if !renamed {continue}
         old:=last.entries[at].path
-        if len(old)!=len(e.path) {continue}
+        if len(old)!=len(e.path) || link_on(folder,old)!="" {continue}
         start:=0
         for i in 0..=len(e.path) {
             if i<len(e.path) && e.path[i]!='/' {continue}
@@ -423,6 +489,7 @@ join_room :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,folder:string,allocator
     // The root read once: each file then asks only what this value knows.
     store.chunk_has(s,{})
     for w in plan.write {
+        if w.refused {continue}
         e:=&snap.entries[w.at]
         write+=e.size
         if e.address in seen || store.chunk_here(s,e.address) {continue}
@@ -461,6 +528,7 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
     order:=make([dynamic]int,context.temp_allocator)
     total:i64
     for w,k in plan.write {
+        if w.refused {continue}
         e:=&snap.entries[w.at]
         if e.size==0 {
             one:=[1]int{k}
@@ -495,7 +563,8 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
     // What arrived, which the lease of the node holds from the end on.
     complete:=make([dynamic]store.Hash,context.temp_allocator)
     defer node_serve(n,..complete[:])
-    next:=0
+    next,complete_count:=0,0
+    stall:Stall
     done:i64
     started:=node_now(n)
     totals:=node_totals(n)
@@ -521,6 +590,7 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
             case .Complete:
                 join_write(d,snap,plan,list,index,folder,report)
                 append(&complete,e.address)
+                complete_count+=1
                 report.fetched+=e.size
                 done+=e.size
             case .Failed:
@@ -551,6 +621,17 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
             say(d,"%d of %d files, %s of %s, %s/s, %s left",next-len(active),len(order),bytes_text(done+here),bytes_text(total),bytes_text(i64(rate)),eta<0?"time":seconds_text(max(eta,0)))
         }
         if len(active)==0 && next==len(order) {break}
+        // Nothing arrives: what is wanted fails by path, and the files after it are asked.
+        if stalled(d,&stall,complete_count) {
+            for a in active {
+                e:=&snap.entries[plan.write[a.k].at]
+                for w in paths[e.address] {failed(report,"%s: no connected peer sent any of it for %.0f s: the host withholds it, or stopped; run the join again",snap.entries[plan.write[w].at].path,STALL_SECONDS)}
+                exchange.forget(&n.x,e.address)
+            }
+            clear(&active)
+            stall={}
+            continue
+        }
         if error:=join_alive(d,allocator);error!="" {return error}
     }
     elapsed:=node_now(n)-started
@@ -620,8 +701,10 @@ join_write :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,list:[]int,index:^Inde
     }
     for k in list {
         w:=&plan.write[k]
+        if w.refused {continue}
         e:=&snap.entries[w.at]
         target:=project.path(folder,e.path,allocator=context.temp_allocator)
+        if link_refused(report,folder,e.path) {continue}
         here,_,present:=index_address(index,e.path,target)
         if present!=w.present || present && here!=w.base {
             if !present || here!=e.address {kept(report,"%s: you changed it while the join ran; yours is kept",e.path)}
@@ -651,6 +734,14 @@ join_write :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,list:[]int,index:^Inde
             continue
         }
         os.change_mode(temp,mode)
+        if h:=d.node.hooks;h!=nil && h.saved!=nil {h.saved(h.data,e.path)}
+        // The copy of a large file takes time: an edit made meanwhile is kept too.
+        if again,_,still:=index_address(index,e.path,target);still!=present || still && again!=here {
+            os.remove(temp)
+            if !still || again!=e.address {kept(report,"%s: you changed it while the join ran; yours is kept",e.path)}
+            w.done=true
+            continue
+        }
         parent:=os.dir(target)
         if make_error:=os.make_directory_all(parent);make_error!=nil && !os.is_dir(parent) {
             os.remove(temp)
@@ -660,6 +751,11 @@ join_write :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,list:[]int,index:^Inde
         if !writable(parent) {
             os.remove(temp)
             failed(report,"%s: its folder %s is read-only: give this user write access to it (chmod u+w on macOS and Linux) and run the join again",e.path,parent)
+            continue
+        }
+        // A link made inside the folder while the file was written is not followed either.
+        if link_refused(report,folder,e.path) {
+            os.remove(temp)
             continue
         }
         if rename_error:=os.rename(temp,target);rename_error!=nil {
@@ -740,8 +836,10 @@ object_save :: proc(s:^store.Store,address:store.Hash,size:i64,path:string) -> (
 @(private)
 join_remove :: proc(last:^Snapshot,plan:^Plan,index:^Index,folder:string,report:^Join_Report) {
     for &r in plan.remove {
+        if r.refused {continue}
         e:=&last.entries[r.at]
         target:=project.path(folder,e.path,allocator=context.temp_allocator)
+        if link_refused(report,folder,e.path) {continue}
         here,_,present:=index_address(index,e.path,target)
         switch {
         case !present:

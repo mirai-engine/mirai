@@ -124,11 +124,16 @@ a_peer_with_only_fetched_builds_cooks_the_game_its_sources_cook :: proc(t:^testi
     peer:=fmt.tprintf("%s/peer",top)
     folder_copy(game,peer)
     for source in ([3]string{"assets/props/box.gltf","assets/props/wood.png","plugins/brushes/assets/soft.png"}) {testing.expect(t,os.remove(fmt.tprintf("%s/%s",peer,source))==nil)}
+    // Nor the files of their manifests: the source gives each by the hash its pin names.
+    for root in ([2]string{peer,fmt.tprintf("%s/plugins/brushes",peer)}) {
+        pins,_,_:=asset.packages_load(root,context.temp_allocator)
+        for entry in pins.packages {testing.expect(t,os.remove(asset.package_file(root,entry.id))==nil)}
+    }
     there:=test_store(t,fmt.tprintf("%s/there",top))
     if there==nil {return}
     lacking:=cook(peer,there,fmt.tprintf("%s/lacking",top))
     testing.expect_value(t,lacking.error,build.Cook_Error.Package_Missing)
-    for name in names {testing.expectf(t,strings.contains(lacking.detail,name),"the package %s is named: %s",name,lacking.detail)}
+    testing.expectf(t,strings.contains(lacking.detail,"neither in the store"),"the package is named: %s",lacking.detail)
     for root in ([2]string{peer,fmt.tprintf("%s/plugins/brushes",peer)}) {
         fetched:=project_refresh(root,{store=there,root=root,source=cache.store_source(here)},context.temp_allocator)
         testing.expectf(t,fetched.fetched==1 && fetched.ingested==0 && len(fetched.failures)==0 && len(fetched.missing)==0,"%v",fetched)
@@ -183,6 +188,44 @@ a_refresh_takes_the_builds_of_a_second_store_without_their_sources :: proc(t:^te
     resolved,resolve_error:=asset.root_packages_in(machine,plugin,context.temp_allocator)
     testing.expectf(t,resolve_error==.None && len(resolved.problems)==0 && len(resolved.listed)==1 && resolved.listed[0].state==.Built,"%v",resolved)
     testing.expect(t,!os.exists(brush),"nothing is written where the source was")
+}
+
+// A build whose assets use the formats of a compressor this engine lacks is as
+// if it were not there, in the store or at a source: the refresh says so by
+// package and takes nothing.
+@(test)
+a_build_this_engine_cannot_decode_is_not_taken :: proc(t:^testing.T) {
+    top:=base.test_folder(t,"refresh-unreadable")
+    if top=="" {return}
+    defer free_all(context.temp_allocator)
+    plugin:=fmt.tprintf("%s/plugin",top)
+    os.make_directory_all(fmt.tprintf("%s/assets",plugin))
+    brush:=fmt.tprintf("%s/assets/soft.png",plugin)
+    testing.expect(t,os.write_entire_file(brush,png_bytes(8,8,{40,200,40}))==nil)
+    host:=test_store(t,fmt.tprintf("%s/host",top))
+    if host==nil {return}
+    options:=Library_Options{store=host,root=plugin}
+    report,error:=ingest(brush,options,allocator=context.temp_allocator)
+    if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
+    added:=project_add(plugin,report.manifest,"",nil,options,context.temp_allocator)
+    testing.expectf(t,len(added.failures)==0 && len(added.missing)==0,"%v",added)
+    testing.expect(t,os.remove(brush)==nil)
+    // Its build as an engine with another compressor writes it.
+    b,build_error:=asset.build_get(host,report.build,context.temp_allocator)
+    if !testing.expect_value(t,build_error,asset.Error.None) {return}
+    b.compressor="private-codec"
+    other,_:=asset.build_put(host,&b)
+    digits:[64]u8
+    key:=store.hex(report.key,&digits)
+    testing.expect_value(t,store.ref_set(host,asset.REF_IMPORTS if report.final else asset.REF_IMPORTS_FAST,key,other),store.Error.None)
+    // Here it names the compressor; a source does not give it, so a peer finds none.
+    for refreshed,peer in ([2]Library_Report{
+        project_refresh(plugin,{store=host,root=plugin},context.temp_allocator),
+        project_refresh(plugin,{store=test_store(t,fmt.tprintf("%s/peer",top)),root=plugin,source=cache.store_source(host),fast_textures=true},context.temp_allocator),
+    }) {
+        testing.expectf(t,refreshed.fetched==0 && len(refreshed.missing)==1 && strings.contains(refreshed.missing[0],"package soft"),"%v",refreshed)
+        testing.expectf(t,peer==1 || (len(refreshed.missing)==1 && strings.contains(refreshed.missing[0],"private-codec")),"%v",refreshed)
+    }
 }
 
 // A source of builds that holds only a Fast build of a package: the refresh

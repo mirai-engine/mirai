@@ -398,6 +398,7 @@ chunk_locate :: proc(s:^Store,address:Hash) -> (file:^os.File,view:[]u8,location
         if p.sealed && p.view==nil && size>=p.size {
             if mapped,map_error:=file_map(p.file,p.size);map_error==.None {p.view=mapped}
         }
+        p.lent=true
         if p.view!=nil && end<=i64(len(p.view)) {return p.file,p.view,location,.None}
         return p.file,nil,location,.None
     }

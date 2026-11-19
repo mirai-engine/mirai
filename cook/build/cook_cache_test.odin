@@ -107,7 +107,7 @@ a_cook_ships_package_assets_from_their_objects_and_looks_the_cache_up_once :: pr
     }
     p:=asset.Package{id={40,40},name="kit"}
     p.assets=make([dynamic]asset.Package_Asset,context.temp_allocator)
-    b:=asset.Build{package_id=p.id,final=true}
+    b:=asset.Build{package_id=p.id,final=true,compressor=asset.COMPRESSOR_OPEN}
     b.outputs=make([dynamic]asset.Build_Output,context.temp_allocator)
     info,_:=asset.kind_info(asset.KIND_TEXTURE)
     objects:[2]store.Hash

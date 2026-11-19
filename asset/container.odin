@@ -169,7 +169,7 @@ file_owner_set :: proc(path:string,owner:base.Asset_Id) -> Error {
 }
 
 // One entry of the directory, checked against the file: inside it, aligned,
-// and with a decompressed size a stream holds.
+// and with a decompressed size the pieces its stored bytes hold can make.
 @(private)
 chunk_entry_check :: proc(header:Header,entry:Chunk_Entry) -> bool {
     directory_end:=header.directory_offset+u64(header.chunk_count)*CHUNK_ENTRY_SIZE
@@ -178,7 +178,8 @@ chunk_entry_check :: proc(header:Header,entry:Chunk_Entry) -> bool {
     if entry.offset&(u64(1)<<entry.alignment_log2-1)!=0 {return false}
     switch entry.compression {
     case .None: return entry.uncompressed_size==entry.size
-    case .Stream: return entry.uncompressed_size<PACK_MAX && entry.size>=STREAM_HEAD
+    // Each piece of a stream takes a word of its table: what it decodes to is bounded by what it stores.
+    case .Stream: return entry.uncompressed_size<PACK_MAX && entry.size>=u64(STREAM_HEAD+4*stream_pieces(int(entry.uncompressed_size)))
     }
     return false
 }

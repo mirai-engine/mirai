@@ -118,6 +118,8 @@ Pack :: struct {
     retired:u64,   // the generation that dropped it into retired/; 0: in packs/
     sealed,indexed,own,gone,damaged:bool,
     dead:bool,     // still being written by a writer whose lease is gone: a sweep folds what it committed
+    lent:bool,     // its file or mapping went to a caller, who may still hold slices of it: kept open
+    pruned:bool,   // deleted from retired/ and closed: nothing reads it
 }
 
 @(private)
@@ -465,12 +467,11 @@ writer_pack_open_locked :: proc(s:^Store) -> Error {
     return .None
 }
 
-// Commits the batch of this value's writer: its frames reach the disk, then
-// the commit frame that makes them visible to every reader. One flush of its
-// own pack; an open pack of another writer whose chunks or objects the batch
-// names is flushed first, so nothing it names can be lost to a crash that
-// keeps it. The commit frame itself reaches the disk with the next flush or
-// the seal. When a sweep published a generation since the batch's lookups,
+// Commits the batch of this value's writer: its frames and the commit frame
+// that makes them visible to every reader reach the disk with one flush of its
+// own pack before it returns; an open pack of another writer whose chunks or
+// objects the batch names is flushed first, so nothing it names can be lost to
+// a crash that keeps it. When a sweep published a generation since the batch's lookups,
 // before or after its commit frame, what the batch named without writing is
 // looked up again and what the sweep dropped is copied back from the retired
 // pack that still holds it; what is gone everywhere fails the commit
@@ -525,15 +526,15 @@ commit_locked :: proc(s:^Store,now:i64) -> Error {
     return .None
 }
 
-// Flushes what the batch names in other open packs and its own, looks the
-// batch up against the newest generation and writes the commit frame.
+// Flushes what the batch names in other open packs, looks the batch up
+// against the newest generation, writes the commit frame and flushes its own
+// pack once.
 @(private)
 commit_frame_locked :: proc(s:^Store,now:i64) -> Error {
     state:=s.state
     w:=&state.writer
     if w.frames==0 {return .None}
     foreign_flush_locked(s) or_return
-    io_sync(s,w.file) or_return
     batch_verify_locked(s,now) or_return
     sweep_step(s,.Verified)
     payload:=Commit_Payload{frames=w.frames,heads=w.heads,time=now}
@@ -545,6 +546,7 @@ commit_frame_locked :: proc(s:^Store,now:i64) -> Error {
     at:=align_up(w.end,8)
     io_write_at(s,w.file,bytes[:],at) or_return
     w.end=at+len(bytes)
+    io_sync(s,w.file) or_return
     w.committed=w.end
     w.frames,w.heads,w.pending=0,0,0
     p:=&state.packs[w.pack]
@@ -592,9 +594,8 @@ batch_verify_locked :: proc(s:^Store,now:i64) -> Error {
     if newest<=w.generation {return .None}
     refresh_locked(s) or_return
     w.generation=state.generation.number
-    copied,missing:=batch_restore_locked(s,now) or_return
+    _,missing:=batch_restore_locked(s,now) or_return
     if missing>0 {return .Missing}
-    if copied {io_sync(s,w.file) or_return}
     return .None
 }
 

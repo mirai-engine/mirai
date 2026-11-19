@@ -8,6 +8,7 @@ import "core:sync"
 import "mirai:asset"
 import "mirai:cook/cache"
 import "mirai:exchange"
+import "mirai:std/jobs"
 import "mirai:store"
 import wire "mirai:net"
 
@@ -71,12 +72,22 @@ Node :: struct {
     lease_at:f64,
     lease_due:bool,
     stopped:bool,
+    hooks:^Join_Hooks,
 }
 
-node_init :: proc(n:^Node,s:^store.Store,allocator:=context.allocator) -> exchange.Error {
+// What a test does at the crash points of a join.
+@(private)
+Join_Hooks :: struct {
+    saved:proc(data:rawptr,path:string), // a file's replacement is whole in its temporary file
+    data:rawptr,
+}
+
+// worker: the job system and worker of the thread that pumps, which reads,
+// hashes, stores and commits for the exchange; none: all of it runs on the pump.
+node_init :: proc(n:^Node,s:^store.Store,allocator:=context.allocator,worker:=jobs.Worker_Ref{}) -> exchange.Error {
     n^={s=s,allocator=allocator}
     n.served=make([dynamic]store.Hash,allocator)
-    return exchange.init(&n.x,{store=s,channel=0,peers=PEERS,wants=WANTS,expose=node_expose,expose_user=n,allocator=allocator})
+    return exchange.init(&n.x,{store=s,channel=0,peers=PEERS,wants=WANTS,expose=node_expose,expose_user=n,allocator=allocator,worker=worker})
 }
 
 node_destroy :: proc(n:^Node) {
@@ -177,6 +188,16 @@ node_event :: proc(n:^Node,e:Event) {
     }
     n.events[(n.event_head+n.event_count)%EVENTS]=e
     n.event_count+=1
+}
+
+// The connection of the client host of the node: to the host its join connects to.
+@(private)
+node_host_peer :: proc(n:^Node) -> (h:^wire.Host,connection:wire.Connection,ok:bool) {
+    sync.mutex_guard(&n.lock)
+    for p in n.peers {
+        if p.used && p.host.desc.mode==.Client {return p.host,p.connection,true}
+    }
+    return
 }
 
 // The events since the last call, oldest first, into buffer.
@@ -282,7 +303,8 @@ node_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
         for &address in addresses {
             if address=={} || !asset.object_whole(into,address) {continue}
             b,build_error:=asset.build_get(into,address,context.temp_allocator)
-            if build_error!=.None {
+            // A build this engine cannot decode is not fetched: as if no peer had it.
+            if build_error!=.None || !asset.build_readable(&b) {
                 address={}
                 continue
             }

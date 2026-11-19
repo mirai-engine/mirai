@@ -505,3 +505,31 @@ two_ingests_of_one_source_at_once_import_it_once :: proc(t:^testing.T) {
     testing.expect(t,!runs[0].failed && !runs[1].failed && runs[0].manifest==runs[1].manifest && runs[0].manifest!={})
     testing.expectf(t,(runs[0].assets==0)!=(runs[1].assets==0),"one imports and the other finds it done: %d and %d assets",runs[0].assets,runs[1].assets)
 }
+
+// A pin that cannot be saved leaves the root as it was: the pin before it
+// still reads its manifest, whose file is not replaced.
+@(test)
+a_failed_pin_leaves_the_root_as_it_was :: proc(t:^testing.T) {
+    top:=base.test_folder(t,"library-pin-whole")
+    if top=="" {return}
+    s:=test_store(t,fmt.tprintf("%s/store",top))
+    if s==nil {return}
+    defer store.close(s)
+    root:=fmt.tprintf("%s/game",top)
+    os.make_directory_all(root)
+    id:=base.Asset_Id{7,9}
+    first:=asset.Package{id=id,name="first"}
+    second:=asset.Package{id=id,name="second"}
+    m1,e1:=asset.package_put(s,&first)
+    m2,e2:=asset.package_put(s,&second)
+    if !testing.expect(t,e1==.None && e2==.None) {return}
+    pinned:=asset.Project_Package{id=id,manifest=m1}
+    if !testing.expect_value(t,project_pin(root,s,pinned),asset.Error.None) {return}
+    // A folder that leaves the assets: the list refuses it.
+    refused:=asset.Project_Package{id=id,manifest=m2,folder="../out"}
+    testing.expect(t,project_pin(root,s,refused)!=.None,"the pin is refused")
+    list,_,_:=asset.packages_load(root,context.temp_allocator)
+    testing.expect(t,len(list.packages)==1 && list.packages[0].manifest==m1,"the list is the one before")
+    p,load_error:=asset.package_load(s,root,&list.packages[0],context.temp_allocator)
+    testing.expectf(t,load_error==.None && p.name=="first","the pin before reads its manifest: %v",load_error)
+}
