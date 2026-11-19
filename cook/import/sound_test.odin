@@ -47,8 +47,8 @@ lossless_same :: proc(t:^testing.T,view:asset.Sound_View,samples:[]i16,loc:=#cal
 }
 
 @(private="file")
-sound_open :: proc(t:^testing.T,path:string,types:^asset.Types,a:^asset.Asset) -> (view:asset.Sound_View,ok:bool) {
-    if !testing.expect_value(t,asset.asset_load(a,path),asset.Error.None) {return}
+sound_open :: proc(t:^testing.T,s:^store.Store,written:Written,types:^asset.Types,a:^asset.Asset) -> (view:asset.Sound_View,ok:bool) {
+    if !testing.expect_value(t,written_open(s,written,a),asset.Error.None) {return}
     error:asset.Error
     view,error=asset.sound_view(a,types)
     return view,testing.expect_value(t,error,asset.Error.None)
@@ -73,9 +73,9 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     testing.expect_value(t,len(report.assets),1)
     if len(report.assets)==1 {
         written:=report.assets[0]
-        testing.expect(t,written.kind==asset.KIND_SOUND && written.id!={} && written.blob!={} && strings.has_prefix(written.path,s.root) && written.bytes<len(samples)*2)
+        testing.expect(t,written.kind==asset.KIND_SOUND && written.id!={} && written.object!={} && written.path=="" && written.bytes<len(samples)*2)
         a:asset.Asset
-        if view,ok:=sound_open(t,written.path,&types,&a);ok {
+        if view,ok:=sound_open(t,s,written,&types,&a);ok {
             testing.expect(t,view.info^==asset.Sound_Info{2,48000,4410,0,.Lossless,{}})
             lossless_same(t,view,samples)
             testing.expect(t,view.source!=nil && serial.text_field(view.source.importer[:])==IMPORTER_NAME && view.source.source_size==u64(len(wav)))
@@ -88,7 +88,7 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     if len(again.assets)==1 && len(report.assets)==1 {
         testing.expect(t,again.assets[0].id==report.assets[0].id)
         a:asset.Asset
-        if view,ok:=sound_open(t,again.assets[0].path,&types,&a);ok {
+        if view,ok:=sound_open(t,s,again.assets[0],&types,&a);ok {
             testing.expect(t,view.info^==asset.Sound_Info{2,48000,4410,0,.Lossless,{.Stream}})
             lossless_same(t,view,samples)
         }
@@ -104,7 +104,7 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     testing.expect_value(t,error.code,Error_Code.None)
     if len(report.assets)==1 {
         a:asset.Asset
-        if view,ok:=sound_open(t,report.assets[0].path,&types,&a);ok {
+        if view,ok:=sound_open(t,s,report.assets[0],&types,&a);ok {
             testing.expect(t,view.info^==asset.Sound_Info{2,48000,4410,0,.File,{.Stream}} && mem.compare(view.file,deep)==0)
         }
         asset.asset_close(&a)
@@ -119,7 +119,7 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     testing.expect_value(t,error.code,Error_Code.None)
     if len(report.assets)==1 {
         a:asset.Asset
-        if view,ok:=sound_open(t,report.assets[0].path,&types,&a);ok {
+        if view,ok:=sound_open(t,s,report.assets[0],&types,&a);ok {
             testing.expect(t,view.info.encoding==.Lossless && view.info.channels==1 && view.info.sample_rate==audio.MIXER_RATE && abs(int(view.info.frames)-24000)<=70)
             pcm,_:=audio.decode(view.lossless,context.temp_allocator)
             peak:f32
@@ -133,7 +133,7 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     testing.expect_value(t,error.code,Error_Code.None)
     if len(report.assets)==1 {
         a:asset.Asset
-        if view,ok:=sound_open(t,report.assets[0].path,&types,&a);ok {
+        if view,ok:=sound_open(t,s,report.assets[0],&types,&a);ok {
             testing.expect(t,view.info.encoding==.File && .Stream in view.info.flags && view.info.sample_rate==44100 && mem.compare(view.file,SINE_OGG)==0)
         }
         asset.asset_close(&a)
@@ -150,7 +150,7 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     testing.expect_value(t,error.code,Error_Code.None)
     if len(report.assets)==1 {
         a:asset.Asset
-        if view,ok:=sound_open(t,report.assets[0].path,&types,&a);ok {
+        if view,ok:=sound_open(t,s,report.assets[0],&types,&a);ok {
             testing.expect(t,view.info.sample_rate==audio.MIXER_RATE && view.info.frames==48000)
             mixer,_:=audio.mixer_create({})
             sound,_:=audio.sound_load(mixer,view.lossless)
@@ -184,7 +184,7 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     testing.expect_value(t,error.code,Error_Code.None)
     if len(report.assets)==1 {
         a:asset.Asset
-        if view,ok:=sound_open(t,report.assets[0].path,&types,&a);ok {
+        if view,ok:=sound_open(t,s,report.assets[0],&types,&a);ok {
             testing.expect(t,view.info.encoding==.File && view.info.sample_rate==44100 && view.info.loop_start==44100 && mem.compare(view.file,INTRO_OGG)==0)
             testing.expectf(t,report.assets[0].bytes-len(INTRO_OGG)<2048,"%d bytes for a file of %d",report.assets[0].bytes,len(INTRO_OGG))
             mixer,_:=audio.mixer_create({})

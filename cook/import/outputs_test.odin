@@ -67,7 +67,7 @@ the_outputs_of_a_source_are_the_assets_its_package_lists :: proc(t:^testing.T) {
         testing.expect(t,failed || len(report.assets)==1+len(names) && report.manifest!={} && report.build!={},"the report lists what was recorded, and the package")
         for w in report.assets {
             if w.kind==asset.KIND_MATERIAL {testing.expectf(t,strings.contains(w.path,"/assets/level/materials/"),"%s goes to the folder asked for",w.path)}
-            if w.id==p.floor {p.floor_blob=w.blob}
+            if w.id==p.floor {p.floor_blob=w.object}
         }
         p.report=report
         return p,true
@@ -81,7 +81,7 @@ the_outputs_of_a_source_are_the_assets_its_package_lists :: proc(t:^testing.T) {
     for o in build.outputs {
         listed:=false
         for a in manifest.assets {listed||=a.id==o.id && a.kind==o.kind}
-        testing.expect(t,listed && store.has(s,o.blob),"each output of the build is an asset of its package, in the store")
+        testing.expect(t,listed && asset.object_whole(s,o.object),"each output of the build is an asset of its package, in the store")
     }
     testing.expect(t,os.exists(fmt.tprintf("%s/level/materials/Stone.mat",assets)),"a document is written in the folder of the documents")
 
@@ -243,7 +243,7 @@ an_image_only_its_format_decodes_is_taken_from_the_cache_without_decoding :: pro
             if w.kind!=asset.KIND_TEXTURE {continue}
             types:asset.Types;asset.types_init(&types,context.temp_allocator)
             a:asset.Asset
-            if asset.asset_load(&a,w.path,context.temp_allocator)!=.None {return}
+            if written_open(s,w,&a,context.temp_allocator)!=.None {return}
             view,view_error:=asset.texture_view(&a,&types)
             if view_error==.None {texels=strings.clone(string(asset.texture_mip(view,0)),context.temp_allocator)}
         }
@@ -267,10 +267,14 @@ an_image_only_its_format_decodes_is_taken_from_the_cache_without_decoding :: pro
     testing.expect(t,current(s,root,assets),"nothing changed")
     _,build,read:=test_package(t,s,report)
     if !read {return}
-    for o in build.outputs {
-        if o.kind==asset.KIND_MESH {store.remove(s,o.blob)}
+    // A build whose mesh is an object the store does not hold is no current one.
+    for &o in build.outputs {
+        if o.kind==asset.KIND_MESH {o.object=store.address_of_bytes(transmute([]u8)string("gone"))}
     }
-    testing.expect(t,!current(s,root,assets),"a blob is gone")
+    stale,_:=asset.build_put(s,&build)
+    digits:[64]u8
+    testing.expect_value(t,store.ref_set(s,asset.REF_IMPORTS,store.hex(report.key,&digits),stale),store.Error.None)
+    testing.expect(t,!current(s,root,assets),"an object is gone")
 }
 
 // A source a model was read from, in a folder of its own that no project
@@ -376,7 +380,7 @@ a_fast_build_is_not_published_where_peers_find_builds :: proc(t:^testing.T) {
     append(&list.packages,asset.Project_Package{id=p.id,manifest=report.manifest})
     resolved,resolve_error:=asset.packages_resolve(s,"",&list,context.temp_allocator)
     testing.expect(t,resolve_error==.None && len(resolved.problems)==0 && len(resolved.listed)==2,"a project lists the mesh and the texture of the package")
-    for l in resolved.listed {testing.expectf(t,l.state==.Built && os.exists(l.file),"%s is built",l.path)}
+    for l in resolved.listed {testing.expectf(t,l.state==.Built && asset.object_whole(s,l.object) && l.header.id==l.id,"%s is built",l.path)}
 }
 
 // Two machines that import one source as the same package write the same
