@@ -322,14 +322,12 @@ the_plan_of_the_shadow_maps_costs_little_while_everything_sways :: proc(t: ^test
 		wants: [SHADOW_SLOTS]Shadow_Want
 		plans: [SHADOW_SLOTS]Shadow_Slot_Plan
 		reach: [SHADOW_SLOTS]Shadow_Reach
-		sway: [SHADOW_SLOTS]u32
-		sway_count := 0
 		stale, moved: Occluder_Changes
 		plan: Shadow_Plan
 		bench_shadow_wants(r, b, eye, low, high, &wants)
 		start := time.tick_now()
 		shadow_movers_update(r)
-		shadow_plan_casters(r, b, eye, false, wants[:], plans[:], &plan, reach[:], sway[:], &sway_count, &stale, &moved)
+		shadow_plan_casters(r, b, eye, false, wants[:], plans[:], &plan, reach[:], &stale, &moved)
 		took := time.tick_since(start)
 		for mesh in meshes {r.scene.meshes[mesh].skin.dirty = false}
 		r.frame += 1
