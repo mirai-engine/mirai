@@ -300,7 +300,8 @@ node_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
         for &address in addresses {
             if address=={} || !asset.object_whole(into,address) {continue}
             b,build_error:=asset.build_get(into,address,context.temp_allocator)
-            if build_error!=.None {
+            // A build this engine cannot decode is not fetched: as if no peer had it.
+            if build_error!=.None || !asset.build_readable(&b) {
                 address={}
                 continue
             }
