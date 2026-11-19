@@ -323,8 +323,8 @@ mesh_ahead_make :: proc(g: asset.Mesh_Geometry, slots: int, software: bool, keep
 }
 
 mesh_ahead_destroy :: proc(ahead: ^Mesh_Ahead) {
-	mesh_rays_destroy(&ahead.rays)
 	delete(ahead.areas, ahead.rays.allocator)
+	mesh_rays_destroy(&ahead.rays)
 	mesh_stream_free(ahead.stream)
 	ahead^ = {}
 }
