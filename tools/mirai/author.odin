@@ -6,9 +6,9 @@ import "mirai:cook/build"
 import "mirai:cook/workspace"
 import "mirai:project"
 
-UI_USAGE :: "ui read <asset> [--out <file>] | write <asset> <document> | check [<asset>...] [--project P]"
-TEXTS_USAGE :: "texts list | missing | set <key> <language> <text> | export <file.csv> | import <file.csv> [--project P]"
-SCENE_USAGE :: "scene read <asset> [--out <file>] | write <asset> <document> | check [<asset>...] [--project P]"
+UI_USAGE :: "ui read <asset> [--out <file>] | write <asset> <document> | check [<asset>...] [--project P] [--store folder]"
+TEXTS_USAGE :: "texts list | missing | set <key> <language> <text> | export <file.csv> | import <file.csv> [--project P] [--store folder]"
+SCENE_USAGE :: "scene read <asset> [--out <file>] | write <asset> <document> | check [<asset>...] [--project P] [--store folder]"
 
 // mirai ui, mirai scene and mirai texts: the documents of the interfaces and
 // the scenes of a project and the texts of its .strings, read, checked and
@@ -20,7 +20,8 @@ SCENE_USAGE :: "scene read <asset> [--out <file>] | write <asset> <document> | c
 // that build says goes to stderr. The project is not built: a command that
 // reads the types of its game (all but ui read and texts) refuses, with what builds it,
 // a project that was never built or whose code changed since. The project is the one of --project, or the
-// one the current folder is in; the program runs in the current folder, so
+// one the current folder is in, and its packages are read from the store of
+// --store (the machine's without it); the program runs in the current folder, so
 // the files it is given are named from there, and its exit code is the
 // command's.
 
@@ -29,10 +30,12 @@ cmd_scene :: proc(root:string,args:[]string) -> int {return author_run(root,"sce
 cmd_texts :: proc(root:string,args:[]string) -> int {return author_run(root,"texts",TEXTS_USAGE,args)}
 
 // What the author program takes besides the arguments of the command: the
-// project and the engine it belongs to.
-author_command :: proc(program,root,owner,kind:string,rest:[]string) -> [dynamic]string {
+// project, the engine it belongs to and the store of its packages ("": the machine's).
+author_command :: proc(program,root,owner,store_root,kind:string,rest:[]string) -> [dynamic]string {
     command:=make([dynamic]string,context.temp_allocator)
-    append(&command,program,"--project",owner,"--engine",root,kind)
+    append(&command,program,"--project",owner,"--engine",root)
+    if store_root!="" {append(&command,"--store",store_root)}
+    append(&command,kind)
     append(&command,..rest)
     return command
 }
@@ -79,6 +82,8 @@ author_engine :: proc(root,kind:string,mode:Build_Mode) -> int {
 @(private="file")
 author_run :: proc(root,kind,usage:string,args:[]string) -> int {
     mode,without_mode:=build_mode_take(args)
+    store_root,stored:=store_root_take(&without_mode,kind)
+    if !stored {return 2}
     folder,rest,named:=author_project_take(without_mode)
     if !named || len(rest)==0 {
         fmt.eprintfln("Usage: mirai %s",usage)
@@ -107,6 +112,6 @@ author_run :: proc(root,kind,usage:string,args:[]string) -> int {
         }
     }
     here,_:=os.get_working_directory(context.temp_allocator)
-    command:=author_command(build.engine_paths(root,mode,context.temp_allocator).author_program,root,owner,kind,rest)
+    command:=author_command(build.engine_paths(root,mode,context.temp_allocator).author_program,root,owner,store_root,kind,rest)
     return run(here,command[:])
 }
