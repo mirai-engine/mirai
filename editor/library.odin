@@ -54,7 +54,7 @@ Library_Asset :: struct {
     id:base.Asset_Id,
     name:string,
     kind:asset.Fourcc,
-    bytes:i64, // of its blob in the build of this machine; 0 when not built
+    bytes:i64, // of its file in the build of this machine; 0 when not built
     built:bool,
 }
 
@@ -180,9 +180,10 @@ library_list :: proc(s:^Session,root:string,allocator:=context.allocator) -> (li
         assets:=make([]Library_Asset,len(p.assets),allocator)
         for &a,at in p.assets {
             assets[at]={id=a.id,name=a.name,kind=a.kind}
-            if o,found:=outputs[a.id];found && o.kind==a.kind && store.has(&s.store,o.blob) {
+            if o,found:=outputs[a.id];found && o.kind==a.kind && asset.object_whole(&s.store,o.object) {
                 assets[at].built=true
-                assets[at].bytes,_=store.blob_size(&s.store,o.blob)
+                dependencies:=make([dynamic]base.Asset_Id,context.temp_allocator)
+                if header,header_error:=asset.object_header(&s.store,o.object,&dependencies);header_error==.None {assets[at].bytes=i64(header.total_size)}
             }
         }
         entry.assets=assets
@@ -260,7 +261,7 @@ Api_Package_Asset :: struct {
     id:base.Asset_Id,
     name:string `mirai:"label=In the source"`,
     kind:string,
-    bytes:i64 `mirai:"label=Of its blob in the build of this machine; 0 when not built"`,
+    bytes:i64 `mirai:"label=Of its file in the build of this machine; 0 when not built"`,
     built:bool `mirai:"label=This machine has a build of it this engine reads"`,
 }
 

@@ -149,7 +149,7 @@ a_peer_without_sources_lists_and_loads_and_nothing_is_removed_or_built :: proc(t
         other,found:=seen[path]
         if !testing.expectf(t,found && other.id==l.id && other.state==.Built,"%s is listed with its id",path) {continue}
         a:asset.Asset
-        if testing.expectf(t,asset.asset_load(&a,other.file,context.temp_allocator)==.None,"%s loads",path) {
+        if testing.expectf(t,asset.asset_open_object(&a,there,other.object,context.temp_allocator)==.None,"%s loads",path) {
             testing.expect_value(t,a.blob.header.id,l.id)
             asset.asset_close(&a)
         }
@@ -201,7 +201,7 @@ a_source_outside_any_project_ingests_and_two_projects_use_the_same_blobs :: proc
         }
     }
     testing.expect(t,len(lists[0])>0 && len(lists[0])==len(lists[1]))
-    for path,l in lists[0] {testing.expectf(t,lists[1][path].file==l.file,"%s is the same blob for both",path)}
+    for path,l in lists[0] {testing.expectf(t,lists[1][path].object==l.object,"%s is the same object for both",path)}
 
     box_source(downloads,"box.gltf","Wood","Paint","0.9")
     changed,changed_ok:=ingested(t,box,options)
@@ -307,8 +307,7 @@ a_copy_of_a_root_with_its_sources_and_an_empty_store_builds_the_same :: proc(t:^
     blobs_of :: proc(t:^testing.T,s:^store.Store,root:string) -> map[string]store.Hash {
         out:=make(map[string]store.Hash,context.temp_allocator)
         for path,l in listed_of(t,s,root) {
-            hash,_,_:=store.address_of_file(l.file)
-            out[path]=hash
+            out[path]=l.object
         }
         return out
     }
@@ -428,7 +427,13 @@ hostile_packages_and_manifests_are_reported_without_a_crash :: proc(t:^testing.T
     s:=test_store(t,fmt.tprintf("%s/store",top))
     if s==nil {return}
     options:=Library_Options{store=s,root=game}
-    garbage,_:=store.put_bytes(s,transmute([]u8)string(`{"version": 1, "id": "nonsense"}`))
+    nonsense:=transmute([]u8)string(`{"version": 1, "id": "nonsense"}`)
+    garbage:=store.address_of_bytes(nonsense)
+    {
+        digits:[64]u8
+        object,_:=asset.record_put(s,nonsense)
+        store.ref_set(s,asset.REF_MANIFESTS,store.hex(garbage,&digits),object)
+    }
     other:=asset.Package{id={9,9},name="other",origin={path="/nowhere/other.png",importer="image"}}
     other_manifest,_:=asset.package_put(s,&other)
     lost:=asset.Package{id={7,7},name="lost",origin={path="/nowhere/lost.png",importer="image"}}

@@ -62,13 +62,31 @@ kept_of :: proc(report:^importer.Import_Report) -> (meshes,textures,others:int) 
     return
 }
 
-// The path and id of the asset of kind a report wrote.
+// The path and id of the asset of kind a report wrote: of an object of the
+// store, a file of it beside the store named by its address.
 @(private="file")
-written_of :: proc(report:^importer.Import_Report,kind:asset.Fourcc=asset.KIND_MESH) -> (path:string,id:base.Asset_Id) {
+written_of :: proc(s:^store.Store,report:^importer.Import_Report,kind:asset.Fourcc=asset.KIND_MESH) -> (path:string,id:base.Asset_Id) {
     for written in report.assets {
-        if written.kind==kind {return strings.clone(written.path,context.temp_allocator),written.id}
+        if written.kind!=kind {continue}
+        if written.path!="" {return strings.clone(written.path,context.temp_allocator),written.id}
+        digits:[64]u8
+        folder:=fmt.tprintf("%s-objects",s.root)
+        os.make_directory_all(folder)
+        path=fmt.tprintf("%s/%s",folder,store.hex(written.object,&digits))
+        asset.object_file_write(s,written.object,path)
+        return path,written.id
     }
     return
+}
+
+// Forgets every build the store names, as a store that lost them: an import
+// finds no output to take.
+@(private="file")
+builds_forget :: proc(s:^store.Store) {
+    for namespace in ([]string{asset.REF_IMPORTS,asset.REF_IMPORTS_FAST,asset.REF_BUILDS}) {
+        refs,_:=store.ref_list(s,namespace,context.temp_allocator)
+        for ref in refs {store.ref_remove(s,namespace,ref.name)}
+    }
 }
 
 // Records in the file at path that it was built with settings, as one that
@@ -104,8 +122,8 @@ an_import_keeps_what_its_builds_say_is_current_and_builds_again_what_changed :: 
         defer importer.report_destroy(&report)
         if !testing.expectf(t,error.code==.None,"%v %s",error.code,error.message,loc=loc) {return}
         k.meshes,k.textures,k.others=kept_of(&report)
-        k.mesh,k.id=written_of(&report)
-        k.texture,_=written_of(&report,asset.KIND_TEXTURE)
+        k.mesh,k.id=written_of(options.store,&report)
+        k.texture,_=written_of(options.store,&report,asset.KIND_TEXTURE)
         k.manifest,k.build=report.manifest,report.build
         return k,true
     }
@@ -137,12 +155,10 @@ an_import_keeps_what_its_builds_say_is_current_and_builds_again_what_changed :: 
     recorded:[2]u64
     for &o in b.outputs {
         if o.kind!=asset.KIND_MESH && o.kind!=asset.KIND_TEXTURE {continue}
-        blob,_:=store.blob_path(s,o.blob,context.temp_allocator)
-        data,_:=os.read_entire_file(blob,context.temp_allocator)
         other:=fmt.tprintf("%s/other",root)
-        _=os.write_entire_file(other,data)
+        asset.object_file_write(s,o.object,other)
         recorded[int(o.kind==asset.KIND_TEXTURE)]=built_with(t,other,1)
-        o.blob,_=store.put_file(s,other)
+        o.object,_=asset.object_put_file(s,other)
     }
     forged,_:=asset.build_put(s,&b)
     digits:[64]u8
@@ -181,7 +197,7 @@ an_import_takes_a_texture_that_another_import_built_from_the_texture_cache :: pr
         defer importer.report_destroy(&report)
         if !testing.expectf(t,error.code==.None && len(report.assets)==1,"%v %s",error.code,error.message) {return}
         a:asset.Asset
-        if !testing.expect_value(t,asset.asset_load(&a,report.assets[0].path,context.temp_allocator),asset.Error.None) {return}
+        if !testing.expect_value(t,importer.written_open(options.store,report.assets[0],&a,context.temp_allocator),asset.Error.None) {return}
         view,view_error:=asset.texture_view(&a,types)
         if !testing.expect_value(t,view_error,asset.Error.None) {return}
         return view.info.format,len(view.mips),strings.clone(string(view.texels),context.temp_allocator),view.info.flags
@@ -231,13 +247,6 @@ an_import_takes_a_texture_that_another_import_built_from_the_texture_cache :: pr
     testing.expect(t,.Fast in flags && format==.BC1,"Fast, for the sync of a build to encode again")
 }
 
-// The blob whose file blob_path gave.
-@(private="file")
-blob_at :: proc(path:string) -> store.Hash {
-    hash,_:=store.parse_hex(path[strings.last_index_byte(path,'/')+1:])
-    return hash
-}
-
 @(test)
 an_import_takes_a_mesh_that_another_import_built_from_the_mesh_cache :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -257,7 +266,7 @@ an_import_takes_a_mesh_that_another_import_built_from_the_mesh_cache :: proc(t:^
     imported :: proc(t:^testing.T,source:string,options:importer.Import_Options) -> (mesh:string,ok:bool) {
         report,error:=import_test(t,source,options)
         defer importer.report_destroy(&report)
-        mesh,_=written_of(&report)
+        mesh,_=written_of(options.store,&report)
         return mesh,testing.expectf(t,error.code==.None,"%v %s",error.code,error.message)
     }
     mesh_path,ok:=imported(t,source,options)
@@ -266,8 +275,8 @@ an_import_takes_a_mesh_that_another_import_built_from_the_mesh_cache :: proc(t:^
     entries:=cached_refs(kept,importer.MESH_CACHE)
     if !testing.expect_value(t,len(entries),1) {return}
 
-    // A mesh whose file is gone is built from the cache, to the same bytes.
-    testing.expect_value(t,store.remove(kept,blob_at(mesh_path)),store.Error.None)
+    // A mesh whose build is gone is built from the cache, to the same bytes.
+    builds_forget(kept)
     if _,ok=imported(t,source,options);!ok {return}
     again,_:=os.read_entire_file(mesh_path,context.temp_allocator)
     testing.expect(t,len(built)>0 && string(again)==string(built),"what the cache gives is what building gives")
@@ -284,7 +293,7 @@ an_import_takes_a_mesh_that_another_import_built_from_the_mesh_cache :: proc(t:^
     if !testing.expect_value(t,asset.mesh_document(&doc,&types,{id=cached.blob.header.id,geometry=view.geometry,slots=view.slots,colliders=hull[:],collision_points=points[:]},context.temp_allocator),asset.Error.None) {return}
     hulled,bytes_error:=asset.document_bytes(&doc,context.temp_allocator)
     testing.expect(t,bytes_error==.None && cache.put({store=kept},importer.MESH_CACHE,key,importer.MESH_CACHE_VERSION,hulled))
-    testing.expect_value(t,store.remove(kept,blob_at(mesh_path)),store.Error.None)
+    builds_forget(kept)
     hulled_path:string
     if hulled_path,ok=imported(t,source,options);!ok {return}
     testing.expect_value(t,colliders(t,&types,hulled_path),1)

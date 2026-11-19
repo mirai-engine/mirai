@@ -131,6 +131,7 @@ Error :: enum u8 {
     IO,             // a file could not be read or written
     Invalid,        // an argument that the format cannot hold
     Codec_Missing,  // a stream of a format the compressor of this build does not decode
+    Not_Here,       // a part of an asset of the store that the store does not hold yet: asked again once it arrives
 }
 
 Blob :: struct {
@@ -239,8 +240,11 @@ blob_stored :: proc(blob:^Blob,entry:Chunk_Entry) -> []u8 {
 }
 // The content of a chunk, into dst of its uncompressed size, with the decoder of the reader.
 blob_read :: proc(blob:^Blob,entry:Chunk_Entry,dst:[]u8,decoder:^Decoder) -> Error {
-    if u64(len(dst))!=entry.uncompressed_size {return .Invalid}
-    stored:=blob_stored(blob,entry)
+    return chunk_decode(entry,blob_stored(blob,entry),dst,decoder)
+}
+// The content of a chunk from its stored bytes, into dst of its uncompressed size.
+chunk_decode :: proc(entry:Chunk_Entry,stored:[]u8,dst:[]u8,decoder:^Decoder) -> Error {
+    if u64(len(dst))!=entry.uncompressed_size || u64(len(stored))!=entry.size {return .Invalid}
     switch entry.compression {
     case .None:
         copy(dst,stored)

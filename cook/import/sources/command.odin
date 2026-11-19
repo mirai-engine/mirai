@@ -367,7 +367,8 @@ profile_print :: proc(profile:^base.Profile,started:time.Tick,output:io.Writer) 
     if lost>0 {fmt.wprintfln(output,"  %d zones were lost: the rings hold %d each",lost,importer.PROFILE_ZONES)}
 }
 
-// One line per asset written (id, kind, bytes and path) with what it holds
+// One line per asset written (id, kind, bytes, and its path or its object of
+// the store) with what it holds
 // under it, and how many there are.
 @(private="file")
 written_print :: proc(output:io.Writer,assets:[]importer.Written) {
@@ -375,7 +376,9 @@ written_print :: proc(output:io.Writer,assets:[]importer.Written) {
     kept:=0
     for written in assets {
         info,_:=asset.kind_info(written.kind)
-        fmt.wprintfln(output,"%s %-8s %d %s",base.asset_id_format(written.id,buffer[:]),info.name,written.bytes,written.path)
+        digits:[64]u8
+        at:=written.path if written.path!="" else fmt.tprintf("object %s",store.hex(written.object,&digits))
+        fmt.wprintfln(output,"%s %-8s %d %s",base.asset_id_format(written.id,buffer[:]),info.name,written.bytes,at)
         if written.detail!="" {fmt.wprintfln(output,"  %s",written.detail)}
         if written.kept {kept+=1}
     }

@@ -83,7 +83,10 @@ write_into :: proc(t:^testing.T,model:^importer.Imported_Model,root:string,optio
     }
     options:=options
     options.root=root
-    return importer.import_write(model,test_options(t,model.source,options))
+    opened:=test_options(t,model.source,options)
+    report,error=importer.import_write(model,opened)
+    objects_written(opened.store,&report)
+    return
 }
 
 // Copies files of a folder (FIXTURES, DEMO), by their paths under it, into
@@ -124,8 +127,31 @@ test_options :: proc(t:^testing.T,path:string,options:importer.Import_Options={}
 
 // import_source with test_options.
 import_test :: proc(t:^testing.T,path:string,options:importer.Import_Options={},formats:[]importer.Format=nil,wholes:[]Whole_Source=nil,allocator:=context.allocator,loc:=#caller_location) -> (report:importer.Import_Report,error:importer.Error) {
-    return import_source(path,test_options(t,path,options,loc),formats,wholes,allocator)
+    opened:=test_options(t,path,options,loc)
+    report,error=import_source(path,opened,formats,wholes,allocator)
+    objects_written(opened.store,&report,allocator)
+    return
 }
+
+// Gives each output of the cache a report lists, an object of the store, a
+// file of its bytes beside the store named by its address (objects_folder),
+// as its path: what tests read and compare.
+objects_written :: proc(s:^store.Store,report:^importer.Import_Report,allocator:=context.allocator) {
+    if s==nil {return}
+    for &written in report.assets {
+        if written.path!="" || written.object=={} {continue}
+        digits:[64]u8
+        folder:=objects_folder(s)
+        os.make_directory_all(folder)
+        path:=fmt.tprintf("%s/%s",folder,store.hex(written.object,&digits))
+        if !os.exists(path) {asset.object_file_write(s,written.object,path)}
+        delete(written.path,allocator)
+        written.path=strings.clone(path,allocator)
+    }
+}
+
+// Where objects_written writes the files of objects of s.
+objects_folder :: proc(s:^store.Store) -> string {return fmt.tprintf("%s-objects",s.root)}
 
 // A store at folder, in the temp allocator; nil when it cannot be opened.
 test_store :: proc(t:^testing.T,folder:string,loc:=#caller_location) -> ^store.Store {
@@ -148,6 +174,7 @@ registry_with :: proc(t:^testing.T,root:string,report:^importer.Import_Report,r:
     resolved,error:=asset.packages_resolve(s,"",&list,context.temp_allocator)
     if !testing.expect_value(t,error,asset.Error.None,loc=loc) {return false}
     asset.registry_init(r,fmt.tprintf("%s/assets",root),"",context.allocator,resolved.listed[:])
+    r.store=s
     return testing.expect_value(t,asset.registry_scan(r),asset.Error.None,loc=loc)
 }
 

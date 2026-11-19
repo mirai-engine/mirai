@@ -10,6 +10,7 @@ import "core:strings"
 import "core:time"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:store"
 
 // The assets of a project folder: which file holds which id, of what kind,
 // and what it depends on. A scan reads the first bytes of every file, never
@@ -38,7 +39,7 @@ Registry_File :: struct {
     size:i64,
     time:i64,    // of its last change, nanoseconds since 1970
     state:Registry_State,
-    listed:bool, // an output of a package the registry was given (Package_Listed): its file is a blob of the store
+    listed:bool, // an output of a package the registry was given (Package_Listed): an object of the store, no file
     id:base.Asset_Id,
     owner:base.Asset_Id, // the asset it is a part of; zero for one of its own
     kind:Fourcc,
@@ -92,7 +93,8 @@ registry_listed :: proc "contextless" (file:^Registry_File) -> bool {return len(
 Registry :: struct {
     root:string,
     listed:[]Package_Listed, // the outputs of the packages of the root, listed with its files
-    listed_files:map[string]string, // the path where each listed output is, to the blob of its entry ("" when not built)
+    listed_files:map[string]store.Hash, // the path where each listed output is, to the object of its entry (zero when not built)
+    store:^store.Store, // where the listed outputs are read (registry_read); nil: they are not
     cache:string, // "" for none
     mounts:[dynamic]Registry_Mount,
     files:[dynamic]Registry_File, // every file, sorted by path
@@ -145,7 +147,7 @@ registry_init :: proc(r:^Registry,root:string,cache:="",allocator:=context.alloc
         no_root=.Out_Of_Memory
     }
     r.listed=kept
-    r.listed_files=make(map[string]string,allocator)
+    r.listed_files=make(map[string]store.Hash,allocator)
     r.files=make([dynamic]Registry_File,allocator)
     r.folders=make([dynamic]string,allocator)
     r.dependencies=make([dynamic]base.Asset_Id,allocator)
@@ -212,12 +214,12 @@ registry_listed_clone :: proc(entries:[]Package_Listed,allocator:runtime.Allocat
     no_room:runtime.Allocator_Error
     if kept,no_room=make([]Package_Listed,len(entries),allocator);no_room!=nil {return nil,false}
     for entry,at in entries {
-        no_path,no_file:runtime.Allocator_Error
+        no_path,no_dependencies:runtime.Allocator_Error
         copied:=entry
         copied.path,no_path=strings.clone(entry.path,allocator)
-        copied.file,no_file=strings.clone(entry.file,allocator)
+        copied.dependencies,no_dependencies=slice.clone(entry.dependencies,allocator)
         kept[at]=copied
-        if no_path!=nil || no_file!=nil {
+        if no_path!=nil || no_dependencies!=nil {
             registry_listed_free(kept,allocator)
             return nil,false
         }
@@ -229,7 +231,7 @@ registry_listed_clone :: proc(entries:[]Package_Listed,allocator:runtime.Allocat
 registry_listed_free :: proc(entries:[]Package_Listed,allocator:runtime.Allocator) {
     for entry in entries {
         delete(entry.path,allocator)
-        delete(entry.file,allocator)
+        delete(entry.dependencies,allocator)
     }
     delete(entries,allocator)
 }
@@ -346,16 +348,20 @@ registry_refused_clear :: proc(r:^Registry,prefix:string) {
     base.truncate(&r.refused,kept)
 }
 
-// The file a path of the registry is: the blob of a listed output, under the
-// root, under the folder of the mount whose prefix it starts with, or itself
-// when it is outside them. "" for a listed output not built, and without
-// memory for it.
+// The file a path of the registry is: under the root, under the folder of the
+// mount whose prefix it starts with, or itself when it is outside them. ""
+// for a listed output, which is an object of the store and no file
+// (registry_listed_object), and without memory for it.
 registry_file_path :: proc(r:^Registry,path:string,allocator:=context.allocator) -> string {
-    if blob,listed:=r.listed_files[path];listed {
-        file,error:=strings.clone(blob,allocator)
-        return file if error==nil else ""
-    }
+    if path in r.listed_files {return ""}
     return registry_disk_path(r,path,allocator)
+}
+
+// The object of the store a listed output at path is; false for a path that
+// is no listed output, or one not built.
+registry_listed_object :: proc(r:^Registry,path:string) -> (object:store.Hash,ok:bool) {
+    object,ok=r.listed_files[path]
+    return object,ok && object!={}
 }
 
 // The file of the folders at a path of the registry, whatever is listed there.
@@ -507,16 +513,7 @@ registry_probe :: proc(r:^Registry,full:string,file:^Registry_File,dependencies:
         if resize(dependencies,first+int(count))!=nil {return .Out_Of_Memory}
         target:=mem.slice_to_bytes(dependencies[first:])
         copy(target,stored)
-        listed:=dependencies[first:]
-        slice.sort_by(listed,proc(a,b:base.Asset_Id) -> bool {return a[0]<b[0] || a[0]==b[0] && a[1]<b[1]})
-        unique:=0
-        for id in listed {
-            if unique>0 && id==listed[unique-1] {continue}
-            listed[unique]=id
-            unique+=1
-        }
-        base.truncate(dependencies,first+unique)
-        file.dependency_count=u32(unique)
+        file.dependency_count=u32(dependencies_unique(dependencies,first))
     }
     file.state=.Asset
     return
@@ -688,25 +685,48 @@ registry_listed_under :: proc(r:^Registry,prefix:string,entries:[]Package_Listed
             claims^[folder]=true
         }
         file:=Registry_File{listed=true,state=.Not_Built,id=entry.id,kind=entry.kind,first_dependency=u32(len(r.dependencies))}
-        if entry.state==.Built && entry.file!="" {
-            if info,stat_error:=os.stat(entry.file,context.temp_allocator);stat_error==nil && info.type==.Regular {
-                file=Registry_File{listed=true,size=info.size,time=time.time_to_unix_nano(info.modification_time)}
-                registry_walk_reuse(r,&file,entry.file,path,known,previous,previous_dependencies) or_return
-                // A blob that is not the asset its entry names contradicts it.
-                if file.state!=.Asset || file.id!=entry.id || file.kind!=entry.kind {file.state=.Broken}
-            }
+        if entry.state==.Built && entry.object!={} {
+            h:=entry.header
+            file=Registry_File{listed=true,size=i64(h.total_size),state=.Asset,id=h.id,owner=h.owner,kind=h.kind,kind_version=h.kind_version,flags=h.flags,content_hash=h.content_hash,first_dependency=u32(len(r.dependencies))}
+            registry_dependencies_add(r,&file,entry.dependencies) or_return
+            // An object that is not the asset its entry names contradicts it.
+            if h.magic!=MAGIC || file.id!=entry.id || file.kind!=entry.kind {file.state=.Broken}
         }
         r.stats.files+=1
         registry_file_add(r,file,path) or_return
         key,no_key:=strings.clone(path,r.allocator)
         if no_key!=nil {return .Out_Of_Memory}
-        _,blob,_,no_entry:=map_entry(&r.listed_files,key)
+        _,object,_,no_entry:=map_entry(&r.listed_files,key)
         if no_entry!=nil {
             delete(key,r.allocator)
             return .Out_Of_Memory
         }
-        blob^=entry.file
+        object^=entry.object
     }
+    return .None
+}
+
+// The ids at the end of dependencies from first, sorted and each once: how many are left.
+@(private="file")
+dependencies_unique :: proc(dependencies:^[dynamic]base.Asset_Id,first:int) -> int {
+    listed:=dependencies[first:]
+    slice.sort_by(listed,proc(a,b:base.Asset_Id) -> bool {return a[0]<b[0] || a[0]==b[0] && a[1]<b[1]})
+    unique:=0
+    for id in listed {
+        if unique>0 && id==listed[unique-1] {continue}
+        listed[unique]=id
+        unique+=1
+    }
+    base.truncate(dependencies,first+unique)
+    return unique
+}
+
+@(private="file")
+registry_dependencies_add :: proc(r:^Registry,file:^Registry_File,ids:[]base.Asset_Id) -> Error {
+    first:=len(r.dependencies)
+    if len(ids)>REGISTRY_MAX_DEPENDENCIES {return .None}
+    if _,no_room:=append(&r.dependencies,..ids);no_room!=nil {return .Out_Of_Memory}
+    file.dependency_count=u32(dependencies_unique(&r.dependencies,first))
     return .None
 }
 
