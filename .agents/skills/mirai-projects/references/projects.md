@@ -79,10 +79,11 @@ keeps its default; one the struct does not have is an error.
 - `import_sources`: the extensions of the files the importers of a plugin read (`.umap`): a
   repository with LFS keeps them in it as it keeps the sources of the engine's formats
   ([git and assets](../../mirai-assets/references/cli.md#git)).
-- `build.compression`: what the assets of the project and its game are compressed with: `none`,
-  `open`, or empty for the best its engine has ([compressor](build.md#compressor)). The projects
-  of the repository of the engine (the demo, the templates) declare `open`; a project made from a
-  template does not keep it.
+- `build.compression`: what the files of its shipped game are compressed with: `none`, `open`, or
+  empty for the best its engine has ([compressor](build.md#compressor)). Only the cook compresses
+  with it: the documents of the project and what the store and the exchange hold never depend on
+  a compressor. The projects of the repository of the engine (the demo, the templates) declare
+  `open`; a project made from a template does not keep it.
 - `development`: a tool for making the game (`profiler`, `tracy`). It goes into the `editor` and
   `play` libraries; the shipped game is generated with `shipped_world`, the world without them, and
   if its code reaches them the build fails with `Engine_Time_Code`.

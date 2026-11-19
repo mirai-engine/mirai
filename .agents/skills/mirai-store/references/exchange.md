@@ -2,7 +2,7 @@
 
 `exchange` (layer 3) moves the chunks of a `store`'s objects and its refs between peers over the
 connections of `net` hosts its owner already runs. It imports `store` and `net` and nothing
-engine-time, so a headless peer and the editor link the same code. Its messages (protocol 4) are
+engine-time, so a headless peer and the editor link the same code. Its messages (protocol 5) are
 in `exchange/wire.odin`.
 
 ## What the owner calls
@@ -52,6 +52,12 @@ in `exchange/wire.odin`.
   `Missing`, asked again when a peer joins. What a peer was asked stays reserved to it only while
   it makes progress on that want; otherwise it goes to others, that peer is not asked for the
   want for a while, and its late answers release nothing a second time.
+- A chunk travels in a codec its receiver decodes: before its first ask a receiver says which
+  frame codecs its store decodes (`store.codecs_read`), and a server sends a frame as stored when
+  the receiver decodes its codec, else decoded and encoded again in an open codec the receiver
+  decodes, or as it is (`store.chunk_read_in`); until a receiver says, chunks go as they are. The
+  receiver decodes what it gets, hashes the bytes and keeps the frame as it came. Peers of builds
+  with different compressors exchange every object, and each ends reading all of them.
 - Nothing is checked on serve. Nothing unverified reaches the store: a chunk is taken only as the
   answer to an entry asked of that peer or as a descendant of the entry it is answering within its
   budget, and only once it hashes to the address the ask or its parent named. A node is parsed and
@@ -120,5 +126,6 @@ in `exchange/wire.odin`.
   `a_peer_that_holds_a_want_without_progress_loses_it`,
   `a_peer_in_a_freed_slot_is_not_blamed_for_its_predecessor`,
   `late_ref_answers_return_their_credits`,
-  `a_late_done_does_not_release_what_another_peer_was_asked` and
+  `a_late_done_does_not_release_what_another_peer_was_asked`,
+  `peers_of_different_codecs_exchange_objects_both_read` and
   `destroy_wakes_a_waiting_fetch`.
