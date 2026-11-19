@@ -30,11 +30,13 @@
 // by more than its noise, or PROBE_SETTLED, is traced again next frame with
 // the probes beside it, which read it: what its rays meet is still settling,
 // and a probe new to its cell is traced twice. One whose light stays is left
-// alone until a change reaches it, or one beside it moves. One whose light,
-// as this update leaves it, moved by no more than half of PROBE_SETTLED, or
-// by less than the view can show (PROBE_UNSEEN, exposed), and no change keeps
-// awake, says so to ddgi_relocate.comp (CHOSEN_STILL), as one buried does: a
-// turn by time that leaves it there lets it wait longer for the next. What moves one whose rays meet what changes by
+// alone until a change reaches it, or one beside it moves. One whose light
+// moved by no more than half of PROBE_SETTLED, or by less than the view can
+// show (PROBE_UNSEEN, exposed), and no change keeps awake, says so to
+// ddgi_relocate.comp (CHOSEN_STILL), as one buried does: a turn by time that
+// leaves it there lets it wait longer for the next. Measured against what it
+// would take, not against what the blend wrote, a probe still approaching
+// its light keeps its turns. What moves one whose rays meet what changes by
 // itself (CHOSEN_PASSING) is followed by its turns: it wakes neither itself,
 // unless a change keeps it awake or it is new, nor the probes beside it that
 // take turns of their own, so that the time does not keep waking the volume.
@@ -85,12 +87,19 @@ groupshared float4 ray_values[MAX_RAYS];
 groupshared float3 ray_dirs[MAX_RAYS];
 groupshared uint backfaces;
 // The light of the tile, before or after, how much it moved, in thousandths
-// of its brightest texel, and that texel; and how much what is written of it
-// moved.
+// of its brightest texel, and that texel.
 groupshared uint tile_light;
 groupshared uint tile_moved;
 groupshared uint tile_peak;
-groupshared uint tile_written;
+
+// The light a texel takes: `blend` of the way from what it held (`stored`,
+// as the atlas keeps it, and decoded) to `fresh`, or all the way in each
+// channel where that step is less than the half float of the atlas holds:
+// there the probe would stay short of its light for good.
+float4 probe_blend(float4 stored, float4 before, float4 fresh, float blend) {
+    float4 blended = lerp(before, fresh, blend);
+    return float4(select(probe_light_encode(blended.rgb) == stored.rgb, fresh.rgb, blended.rgb), blended.a);
+}
 
 // What a probe next to this one along the grid, `step` away, holds in
 // direction `dir` (interior texel `local` of its tile), with its share of the
@@ -133,7 +142,7 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
     if (slot >= chosen[0]) return;
     uint probe = chosen[1u + slot];
     uint rays = min(params.rays_per_probe, uint(MAX_RAYS));
-    if (local_index == 0u) { backfaces = 0u; tile_light = 0u; tile_moved = 0u; tile_peak = 0u; tile_written = 0u; }
+    if (local_index == 0u) { backfaces = 0u; tile_light = 0u; tile_moved = 0u; tile_peak = 0u; }
     GroupMemoryBarrierWithGroupSync();
     for (uint r = local_index; r < rays; r += (MIRAI_GROUP_X * MIRAI_GROUP_Y)) {
         float4 ray_value = ray_data.Load(int3(int2(r, slot), 0));
@@ -219,30 +228,27 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
     // Kept awake by a change of the scene, not by its own light moving (frame + 1).
     bool marked = state.frames.z > params.frame_number;
     bool change = !held || marked || share > max(PROBE_SETTLED, PROBE_NOISE_CHANGE * noise);
-    if (interior) tile_values[local.y][local.x] = lerp(before, tile_values[local.y][local.x], change ? 1.0 : PROBE_BLEND);
+    if (interior && !change) tile_values[local.y][local.x] = probe_blend(stored, before, tile_values[local.y][local.x], PROBE_BLEND);
     for (int j = int(local_index); j < across * across; j += THREADS) {
         int2 at = int2(j % across, j / across) + 1;
         float4 held_narrow = irradiance[gloss_origin + at];
-        gloss_values[at.y * GLOSS + at.x] = lerp(float4(probe_light_decode(held_narrow.rgb), held_narrow.a), gloss_values[at.y * GLOSS + at.x], change ? 1.0 : PROBE_BLEND);
+        if (!change) gloss_values[at.y * GLOSS + at.x] = probe_blend(held_narrow, float4(probe_light_decode(held_narrow.rgb), held_narrow.a), gloss_values[at.y * GLOSS + at.x], PROBE_BLEND);
     }
     GroupMemoryBarrierWithGroupSync();
     int2 source = interior ? local : probe_tile_interior(local, TILE);
     float4 value = tile_values[source.y][source.x];
     irradiance[origin + local] = float4(probe_light_encode(value.rgb), value.a);
-    if (interior && peak > 0.0) InterlockedAdd(tile_written, uint(min(abs(luminance(value.rgb) - luminance(before.rgb)) / peak, 1.0) * 1000.0 + 0.5));
     for (int k = int(local_index); k < GLOSS * GLOSS; k += THREADS) {
         int2 at = int2(k % GLOSS, k / GLOSS);
         int2 from = probe_tile_interior(at, GLOSS);
         float4 gloss = gloss_values[from.y * GLOSS + from.x];
         irradiance[gloss_origin + at] = float4(probe_light_encode(gloss.rgb), gloss.a);
     }
-    GroupMemoryBarrierWithGroupSync();
     if (local_index != 0u || buried) return;
     if (held && !marked) probes[probe].frames.w = asuint(lerp(noise, share, PROBE_NOISE_RATE));
-    // What is written of it moved: of its light, and the mean of a texel, exposed.
-    float written = float(tile_written) / max(float(tile_light), 1.0);
-    float seen = float(tile_written) * 0.001 * peak / float((TILE - 2) * (TILE - 2)) * frame.exposure;
-    if (held && !marked && (written <= 0.5 * PROBE_SETTLED || seen <= PROBE_UNSEEN)) chosen[chosen_traced(slot)] |= CHOSEN_STILL;
+    // The mean move of a texel, exposed.
+    float seen = float(tile_moved) * 0.001 * peak / float((TILE - 2) * (TILE - 2)) * frame.exposure;
+    if (held && !marked && (share <= 0.5 * PROBE_SETTLED || seen <= PROBE_UNSEEN)) chosen[chosen_traced(slot)] |= CHOSEN_STILL;
     if (held && share <= max(PROBE_SETTLED, PROBE_NOISE_CHANGE * noise)) return;
     bool passing = (chosen[chosen_traced(slot)] & CHOSEN_PASSING) != 0u;
     if (!passing || !held || marked) probes[probe].frames.z = max(probes[probe].frames.z, params.frame_number + 1u);
