@@ -282,7 +282,8 @@ INSTANCE_ABSENT :: Gpu_Instance{meta = {0, 0, 0, INSTANCE_FLAG_HIDDEN}}
 @(private)
 occluder_moved :: proc(s: ^Scene_State, index: u32, before, after: Gpu_Instance) {
 	was, now := int(before.meta.x & INSTANCE_MESH_MASK), int(after.meta.x & INSTANCE_MESH_MASK)
-	same := before.world == after.world && before.meta.y == after.meta.y && before.meta.w == after.meta.w && before.slot_materials == after.slot_materials
+	// What the maps test of its materials stays: none of its slots is masked, or they are the same.
+	same := before.world == after.world && before.meta.y == after.meta.y && before.meta.w == after.meta.w && (before.slot_materials == after.slot_materials || before.tested == 0 && after.tested == 0)
 	if same && was != now && was < len(s.meshes) && now < len(s.meshes) && s.meshes[was].surface != 0 && s.meshes[was].surface == s.meshes[now].surface && instance_casts(after) {
 		occluder_add(&s.occluders, index, before.bounds_min.xyz, before.bounds_max.xyz)
 		occluder_add(&s.occluders, index, after.bounds_min.xyz, after.bounds_max.xyz)
@@ -538,6 +539,7 @@ Scene_State :: struct {
 	shadow_movers_version: u64, // counts the changes of the batches drawn that move in the maps (Batch_Record.shadow_moving)
 	shadow_sway_tables:   u64, // the tables of the batches those were last found in (Batch_State.tables)
 	shadow_views:         [dynamic]Shadow_View_Reach, // what the culls of the slots of each view go over, kept (Shadow_Raster.reach)
+	meshes_leaving:       [dynamic]Mesh_Handle,     // removed while instances named them, until the next frame begins (mesh_remove)
 	shadow_cull_boxes:    [dynamic]mm.Aabb,         // of the plan of a view: where instances of batches came or went past their cull distance (shadow_cull_changes)
 	shadow_cull_cells:    map[[2]i32]u32,           // and the box of each cell of SHADOW_CULL_STEP they lie in
 	shadow_stale:         Occluder_Changes,
@@ -606,6 +608,7 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.shadow_sun_boxes = make([dynamic][2]Vec3, a)
 	s.shadow_views = make([dynamic]Shadow_View_Reach, a)
 	s.shadow_cull_boxes = make([dynamic]mm.Aabb, a)
+	s.meshes_leaving = make([dynamic]Mesh_Handle, a)
 	s.shadow_cull_cells = make(map[[2]i32]u32, allocator = a)
 	s.overlays = make([dynamic]Instance_Overlays, a)
 	s.reflective = make([dynamic]Reflective_Instance, a)
@@ -1137,6 +1140,7 @@ meshes_clear :: proc(r: ^Renderer) {
 	clear(&s.vertices)
 	clear(&s.indices)
 	clear(&s.meshes)
+	clear(&s.meshes_leaving)
 	clear(&s.skinned)
 	clear(&s.displaced)
 	clear(&s.blas_nodes)
@@ -2910,6 +2914,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	}
 	delete(s.shadow_views)
 	delete(s.shadow_cull_boxes)
+	delete(s.meshes_leaving)
 	delete(s.shadow_cull_cells)
 	delete(s.overlays)
 	delete(s.reflective)

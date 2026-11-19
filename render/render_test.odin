@@ -626,6 +626,21 @@ render_a_surface_at_another_detail_draws_again_only_pages_finer_than_its_error :
 		drawn := swap(t, &f, &bar, other, camera)
 		testing.expectf(t, drawn >= c.least && drawn <= c.most, "an error of %f m drew %d pages again, against %d for a change for good", c.error, drawn, whole)
 	}
+	// The mesh it showed removed before it takes the next, as a terrain lets
+	// go of a level: still the same surface.
+	if bar.mesh == f.cube {swap(t, &f, &bar, other, camera)}
+	next, made := mesh_add(r, vertices[:], indices[:])
+	if !testing.expect(t, made) {return}
+	testing.expect(t, mesh_surface(r, next, 77, cases[0].error / 80) && mesh_surface(r, bar.mesh, 77, cases[0].error / 80))
+	for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	testing.expect(t, mesh_remove(r, bar.mesh))
+	bar.mesh = next
+	testing.expect(t, scene_update(r, 1, {bar}), r.error)
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	rhi.device_wait_idle(f.device)
+	counts: [abi.SHADOW_COUNT_STALE + 1]u32
+	testing.expect(t, rhi.buffer_read_slice(r.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_WORDS_COUNTS) * 4, counts[:]))
+	testing.expectf(t, counts[abi.SHADOW_COUNT_STALE] == 0, "a mesh removed for the next level drew %d pages again", counts[abi.SHADOW_COUNT_STALE])
 	expect_clean(t, f.device)
 }
 
