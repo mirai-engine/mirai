@@ -109,6 +109,8 @@ vk_create_accel :: proc(d: ^Device, type: vk.AccelerationStructureTypeKHR, sizes
 	b := pool_get(&d.buffers, base.Handle(buffer))
 	info := vk.AccelerationStructureCreateInfoKHR{sType = .ACCELERATION_STRUCTURE_CREATE_INFO_KHR, buffer = b.handle, offset = vk.DeviceSize(offset), size = sizes.accelerationStructureSize, type = type}
 	a := Vk_Accel{buffer = buffer, block = i32(block + 1), offset = offset, size = size, top_level = type == .TOP_LEVEL, blas = blas, max_instances = max_instances, scratch_size = u64(max(sizes.buildScratchSize,sizes.updateScratchSize))}
+	a.blas.name = ""
+	resource_name_set(&a.name, name)
 	if !vk_check(d, d.dvk.CreateAccelerationStructureKHR(d.handle, &info, nil, &a.handle), "vkCreateAccelerationStructureKHR") {
 		if arena_give(&d.accel_arena, block, offset, size) {append(&d.accel_empty, block)}
 		return 0
