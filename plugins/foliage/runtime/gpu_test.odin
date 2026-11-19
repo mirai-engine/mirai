@@ -129,7 +129,7 @@ a_stalk_leans_away_from_where_a_bender_trampled_the_field :: proc(t: ^testing.T)
 	if !gpu_fixture_init(t, f) {return}
 	defer gpu_fixture_destroy(f)
 	// A white stalk 4 m tall standing at the origin, its place at its middle.
-	desc := render.Batch_Desc{mesh = f.cube, tint = 1, vertex = {0, 1, 0, 0}, reach = hook_reach(0, 2)}
+	desc := render.Batch_Desc{mesh = f.cube, tint = 1, vertex = {0, 1, 0, 0}, reach = hook_reach({}, 2)}
 	stalk, problem := render.batch_set(&f.renderer, f.resident.world, 0, desc, {render.batch_instance({0, 2, 0}, 1, {0.4, 4, 0.4})})
 	if !testing.expect(t, problem == "", problem) {return}
 	standing, ok := stalk_frames(t, f)
@@ -219,8 +219,7 @@ swaying_desc :: proc(f: ^Gpu_Fixture, mesh: gpu.Mesh_Handle, wind, size: f32) ->
 	kind := FOLIAGE_TYPE_DEFAULT
 	kind.wind, kind.casts_shadow, kind.scale, kind.height = wind, true, {1, 1}, {1, 1}
 	_, high, _ := render.mesh_bounds(&f.renderer, mesh)
-	amount := sway_amount(kind)
-	return {mesh = mesh, tint = 1, flags = {.Casts_Shadow, .Ray_Visible}, vertex = {amount, 1, 0, 0}, reach = hook_reach(amount, high.y), sway = shadow_sway(kind, high.y, size)}
+	return {mesh = mesh, tint = 1, flags = {.Casts_Shadow, .Ray_Visible}, vertex = hook_vertex(kind), reach = hook_reach(kind, high.y), sway = shadow_sway(kind, high.y, size)}
 }
 
 // Where a point of the world lands on an image of a camera `width` by
