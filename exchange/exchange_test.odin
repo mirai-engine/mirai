@@ -155,7 +155,7 @@ a_transfer_resumes_after_the_connection_drops_and_after_the_store_reopens :: pro
     if !testing.expect(t,test_node_open(&w,1),"the store reopens") {return}
     testing.expect(t,test_connect(&w,client,w.nodes[0].endpoints[0]),"the peers connect again")
     want(&n.x,second)
-    test_step(&w)
+    test_step(&w,3)
     resumed,_:=progress(&n.x,second)
     testing.expectf(t,resumed.here>0,"the reopened store resumes from the chunks it committed: %d of %d before",resumed.here,part.here)
     testing.expect(t,test_until_complete(&w,1,{second},30),"the second object completes")

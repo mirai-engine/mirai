@@ -3,6 +3,7 @@ package exchange
 import "core:fmt"
 import "core:testing"
 import "mirai:std/base"
+import "mirai:std/jobs"
 import "mirai:store"
 import wire "mirai:net"
 
@@ -53,6 +54,7 @@ Test_World :: struct {
     channels:[]wire.Channel_Desc,
     channel:int,
     folder:string,
+    js:jobs.Job_System, // the test thread is its owner: every exchange runs its jobs there
 }
 
 @(private) TEST_STEP :: 0.001
@@ -61,6 +63,7 @@ Test_World :: struct {
 test_world :: proc(t:^testing.T,w:^Test_World,name:string,nodes:int,game:=false,desc:=Desc{}) -> bool {
     w.folder=base.test_folder(t,name)
     if w.folder=="" {return false}
+    if !testing.expect(t,jobs.system_init(&w.js,{threads=2})) {return false}
     wire.sim_network_init(&w.sim,{seed=7,endpoints=8,packets=1<<16})
     ours:=channels()
     if game {
@@ -87,6 +90,9 @@ test_node_open :: proc(w:^Test_World,k:int,desc:=Desc{}) -> bool {
     if error!=.None {return false}
     d:=desc
     d.store,d.channel=&n.s,w.channel
+    // Opt-in: -define:EXCHANGE_TEST_JOBS=true runs every exchange's jobs on the
+    // job system; by default they run on the pump, so virtual time steps fast.
+    if #config(EXCHANGE_TEST_JOBS,false) {d.worker={system=&w.js,worker=jobs.OWNER}}
     if d.peers==0 {d.peers=4}
     n.open=init(&n.x,d)==.None
     return n.open
@@ -106,6 +112,7 @@ test_world_destroy :: proc(w:^Test_World) {
         for h in n.hosts[:n.host_count] {wire.host_destroy(h);free(h)}
     }
     wire.sim_network_destroy(&w.sim)
+    jobs.system_destroy(&w.js)
 }
 
 @(private)
@@ -151,6 +158,10 @@ test_step :: proc(w:^Test_World,steps:=1) {
             if n.script!=nil {test_script_tick(w,&n)}
             if n.open {update(&n.x,w.now)}
             for h in n.hosts[:n.host_count] {wire.host_update(h,w.now)}
+        }
+        // The jobs end within the step, so virtual time does not run ahead of them.
+        for &n in w.nodes[:w.count] {
+            if n.open {work_wait_all(&n.x)}
         }
     }
 }
