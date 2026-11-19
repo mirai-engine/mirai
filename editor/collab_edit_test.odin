@@ -323,3 +323,15 @@ a_file_as_large_as_a_session_carries_crosses_as_one_message :: proc(t:^testing.T
     }
     testing.expect(t,arrived,"the file arrives")
 }
+
+// The code collab.status returns is the whole code: it decodes to the invitation of the host.
+@(test)
+the_code_collab_status_returns_reads_as_the_invitation :: proc(t:^testing.T) {
+    key,made:=wire.invite_key()
+    if !testing.expect(t,made) {return}
+    invitation:=wire.Invitation{lan=wire.address_ip4(192,168,1,2,COLLAB_PORT),public=wire.address_ip4(203,0,113,9,COLLAB_PORT),key={public=key.public,secret=key.secret}}
+    r:Api_Collab_Status
+    testing.expect(t,base.text_set(r.invite[:],wire.invite_encode(invitation,context.temp_allocator)))
+    got,refused:=wire.invite_decode(base.text_get(r.invite[:]))
+    testing.expect(t,refused==.None && got==invitation)
+}

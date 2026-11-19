@@ -612,8 +612,8 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
 - **Share.** `mirai share` takes the snapshot, opens a server host with its port mapped as
   [collaboration](../../mirai-editor/references/collaboration.md) does, prints one invitation
   once the router answered, and serves until it is stopped (Ctrl+C), printing who comes and goes
-  and how much went out. The snapshot is the ref `shares/<hash of the invitation token>`, so a
-  joiner finds it by the code and the names peers list reveal no token. Peers read the namespaces
+  and how much went out. The snapshot is the ref `shares/<hash of the invitation's secret>`, so a
+  joiner finds it by the code and the names peers list reveal no secret. Peers read the namespaces
   of snapshots, package manifests, builds (Final and Fast, each under its own namespace) and
   `cook/cache` results: the owner exposes the whole machine library to whoever holds the
   invitation, never the choices, the origins or the sources of the machine. A lease holds the

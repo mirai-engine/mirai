@@ -1,5 +1,6 @@
 package multiplayer_editor
 
+import "core:crypto"
 import "core:encoding/endian"
 import "core:fmt"
 import "core:log"
@@ -29,7 +30,7 @@ import multiplayer "plugins:multiplayer/runtime"
 
 NET_PLAY_PORTS :: 16               // tried from the default port of the player
 NET_PLAY_STEPPED_TIMEOUT :: 600.0 // seconds the runs of a turn wait for each other: they advance when the turn asks
-NET_PLAY_OFFER :: 17              // bytes of the offer: port, port on the router, game, invitation, whether the router is still asked
+NET_PLAY_OFFER :: 17+wire.KEY_BYTES // bytes of the offer: port, port on the router, game, secret of the invitation, whether the router is still asked, its key
 
 Net_Play_Phase :: enum u8 {
     Idle,
@@ -56,7 +57,7 @@ Net_Play :: struct {
     role:Net_Play_Role,
     serial:u32,     // of the game: the offer of the host says which one it serves
     port:int,       // of the server
-    invite:u64,     // the token of the invitation of the server
+    invite:wire.Invite_Key, // what the code of the invitation of the server carries: its private key is only in the session of the server
     scene_ready:bool,
     mapping:wire.Port_Mapping, // of the port of the server on the router, while the session is shared
     mapping_on:bool,
@@ -142,13 +143,12 @@ serve :: proc(s:^editor.Session,n:^Net_Play) -> string {
     }
     port,refused:=net_play_port(s)
     if port==0 {return refused}
-    invite,made:=wire.invite_token()
-    if !made {return "The game could not start: this system gives no secure random bytes to seal the network with"}
+    when !crypto.HAS_RAND_BYTES {return "The game could not start: this system gives no secure random bytes to seal the network with"}
     players:=clamp(local_players(s),1,editor.PLAYER_PROCESSES)
     if s.play_players!=nil {s.play_players.players=players}
     n.party.online=clamp(n.party.online,0,editor.PLAYER_PROCESSES-players)
     n.party.ping=clamp(n.party.ping,0,1000)
-    n.role,n.port,n.serial,n.invite=.Server,port,u32(platform.clock_ns()>>10)|1,invite
+    n.role,n.port,n.serial=.Server,port,u32(platform.clock_ns()>>10)|1
     n.scene_ready=true
     n.reason={}
     n.phase=n.party.online>0?.Waiting:.Running
@@ -197,7 +197,8 @@ host_game :: proc(s:^editor.Session) -> (code:string,game:u32,ok,reachable:bool)
     port,_:=endian.get_u16(offer[0:2],.Little)
     external,_:=endian.get_u16(offer[2:4],.Little)
     game,_=endian.get_u32(offer[4:8],.Little)
-    invitation.token,_=endian.get_u64(offer[8:16],.Little)
+    invitation.key.secret,_=endian.get_u64(offer[8:16],.Little)
+    copy(invitation.key.public[:],offer[17:NET_PLAY_OFFER])
     invitation.lan.port,invitation.public.port=port,external
     if external==0 {invitation.public={}}
     code=wire.invite_encode(invitation,context.temp_allocator)
@@ -218,8 +219,9 @@ net_play_offer :: proc(s:^editor.Session,out:[]u8) -> int {
     endian.put_u16(out[0:2],.Little,u16(n.port))
     endian.put_u16(out[2:4],.Little,external)
     endian.put_u32(out[4:8],.Little,n.serial)
-    endian.put_u64(out[8:16],.Little,n.invite)
+    endian.put_u64(out[8:16],.Little,n.invite.secret)
     out[16]=u8(mapping)
+    copy(out[17:NET_PLAY_OFFER],n.invite.public[:])
     return NET_PLAY_OFFER
 }
 
@@ -267,7 +269,8 @@ net_play_served_end :: proc(s:^editor.Session) {
 net_play_begin :: proc(s:^editor.Session,r:^editor.Run) {
     n:=net_play_of(s)
     if !net_play_serving(n) {return}
-    session_open(editor.run_ref(s,r),{server=true,port=n.port,invite=true,invite_token=n.invite})
+    session_open(editor.run_ref(s,r),{server=true,port=n.port,invite=true})
+    n.invite=serve_invited(s,r)
 }
 
 // Between frames: what the players wait for, then the processes and what they print.
@@ -333,7 +336,7 @@ launch :: proc(s:^editor.Session,n:^Net_Play) {
     commands:=make([][]string,count,context.temp_allocator)
     for &command in commands {
         args:=make([dynamic]string,context.temp_allocator)
-        connect:=wire.invite_encode({lan=wire.address_loopback(n.port),token=n.invite},context.temp_allocator)
+        connect:=wire.invite_encode({lan=wire.address_loopback(n.port),key={public=n.invite.public,secret=n.invite.secret}},context.temp_allocator)
         if n.role==.Client {connect,_,_,_=host_game(s)}
         append(&args,"--project",s.project_root,"--scene",file,"--connect",connect)
         // Each way of a datagram is delayed: the ping is twice the latency.
@@ -357,7 +360,8 @@ net_play_end :: proc(s:^editor.Session,n:^Net_Play,reason:string) {
     editor.player_processes_close(s)
     if n.mapping_on {wire.mapping_close(&n.mapping)}
     n.mapping_on=false
-    n.phase,n.scene_ready,n.serial,n.port,n.invite=.Idle,false,0,0,0
+    n.phase,n.scene_ready,n.serial,n.port=.Idle,false,0,0
+    n.invite={}
     base.text_set(n.reason[:],reason)
     if reason!="" {
         log.warn(reason)
@@ -446,10 +450,9 @@ net_play_turn :: proc(s:^editor.Session,owner,players,online,ping:int) -> string
     if r==nil {return "The game could not start"}
     port,refused:=net_play_port(s)
     if port==0 {return refused}
-    token,made:=wire.invite_token()
-    if !made {return "The game could not start: this system gives no secure random bytes to seal the network with"}
-    session_open(editor.run_ref(s,r),{server=true,port=port,invite=true,invite_token=token,timeout=NET_PLAY_STEPPED_TIMEOUT})
-    code:=wire.invite_encode({lan=wire.address_loopback(port),token=token},context.temp_allocator)
+    when !crypto.HAS_RAND_BYTES {return "The game could not start: this system gives no secure random bytes to seal the network with"}
+    session_open(editor.run_ref(s,r),{server=true,port=port,invite=true,timeout=NET_PLAY_STEPPED_TIMEOUT})
+    code:=wire.invite_encode({lan=wire.address_loopback(port),key=serve_invited(s,r)},context.temp_allocator)
     for player in 1..=online {
         client:=editor.run_create(s,owner,player)
         if client==nil {return "There is no room for another run"}
@@ -460,6 +463,18 @@ net_play_turn :: proc(s:^editor.Session,owner,players,online,ping:int) -> string
     }
     log.infof("network game of an agent: a run serves on port %d with %d online",port,online)
     return ""
+}
+
+// The server of run r serves with the key of an invitation made here, which goes
+// straight to its session, never to a storage of a World; what its code carries.
+@(private)
+serve_invited :: proc(s:^editor.Session,r:^editor.Run) -> (carried:wire.Invite_Key) {
+    key,made:=wire.invite_key()
+    defer crypto.zero_explicit(&key,size_of(key))
+    session:=host.app_world_storage(s.app,r.world,multiplayer.Net_Session)
+    if !made || session==nil {return}
+    multiplayer.invite_give(session,key)
+    return {public=key.public,secret=key.secret}
 }
 
 // What a run opens on the network before its first frame.

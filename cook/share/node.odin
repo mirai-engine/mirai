@@ -18,7 +18,7 @@ import wire "mirai:net"
 // Whoever owns it calls node_pump once per step; a join runs on another
 // thread and reads the clock and waits through the node.
 
-NAMESPACE :: "shares"      // <hash of an invitation token>: the snapshot a share offers under it
+NAMESPACE :: "shares"      // <hash of the secret of an invitation>: the snapshot a share offers under it
 PROTOCOL_ID :: 0x4d495348  // of the hosts of sharing: datagrams of any other application are ignored
 VERSION :: 4               // of what two peers say to each other: the snapshot and the exchange over it
 PEERS :: 8                 // connections of a node at once
@@ -350,10 +350,10 @@ objects_fetch :: proc(x:^exchange.Exchange,addresses:[]store.Hash) {
     objects_fetch(x,addresses[half:])
 }
 
-// The name of the snapshot a share offers under its invitation token: a hash of
-// the token, so the names peers list reveal no token.
-offer_name :: proc(token:u64,buffer:^[64]u8) -> string {
+// The name of the snapshot a share offers under the secret of its invitation:
+// a hash of the secret, so the names peers list reveal no secret.
+offer_name :: proc(secret:u64,buffer:^[64]u8) -> string {
     bytes:[8]u8
-    for k in 0..<8 {bytes[k]=u8(token>>(8*uint(k)))}
+    for k in 0..<8 {bytes[k]=u8(secret>>(8*uint(k)))}
     return store.hex(store.address_of_bytes(bytes[:]),buffer)
 }

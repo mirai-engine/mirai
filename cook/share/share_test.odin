@@ -26,7 +26,7 @@ Test_Peer :: struct {
     n:Node,
     server,client:^wire.Host,
     endpoint:int, // of its server
-    token:u64,    // of its server
+    key:wire.Invite_Key, // of the invitation of its server
     pumped:bool,
     mute:bool,    // its hosts keep their connections, and its node reads and answers nothing
 }
@@ -52,8 +52,10 @@ test_net :: proc(t:^testing.T,w:^Test_Net,name:string,peers:int) -> bool {
         error:store.Error
         if p.s,error=store.open(fmt.tprintf("%s/store-%d",w.folder,k));!testing.expect_value(t,error,store.Error.None) {return false}
         if !testing.expect_value(t,node_init(&p.n,&p.s),.None) {return false}
-        p.token=u64(1000+k)
-        p.server=test_host(w,.Server,p.token,&p.endpoint)
+        private:wire.Key
+        for &b,i in private {b=u8(31*k+i+1)}
+        p.key=wire.invite_key_from(&private,u64(1000+k))
+        p.server=test_host(w,.Server,p.key,&p.endpoint)
         node_host(&p.n,p.server)
         p.pumped=true
     }
@@ -61,12 +63,12 @@ test_net :: proc(t:^testing.T,w:^Test_Net,name:string,peers:int) -> bool {
 }
 
 @(private="file")
-test_host :: proc(w:^Test_Net,mode:wire.Mode,token:u64,endpoint:^int=nil) -> ^wire.Host {
+test_host :: proc(w:^Test_Net,mode:wire.Mode,key:wire.Invite_Key,endpoint:^int=nil) -> ^wire.Host {
     h:=new(wire.Host)
     at:=w.endpoints
     w.endpoints+=1
     chans:=channels()
-    wire.host_init(h,{mode=mode,transport=wire.sim_endpoint_transport(&w.sim,at),channels=chans[:],protocol_id=PROTOCOL_ID,version=VERSION,invite=token,seed=u64(200+at),max_connections=PEERS-1})
+    wire.host_init(h,{mode=mode,transport=wire.sim_endpoint_transport(&w.sim,at),channels=chans[:],protocol_id=PROTOCOL_ID,version=VERSION,invite=key,seed=u64(200+at),max_connections=PEERS-1})
     if endpoint!=nil {endpoint^=at}
     return h
 }
@@ -75,7 +77,7 @@ test_host :: proc(w:^Test_Net,mode:wire.Mode,token:u64,endpoint:^int=nil) -> ^wi
 @(private="file")
 test_connect :: proc(w:^Test_Net,k,from:int) {
     p:=&w.peers[k]
-    p.client=test_host(w,.Client,w.peers[from].token)
+    p.client=test_host(w,.Client,{public=w.peers[from].key.public,secret=w.peers[from].key.secret})
     node_host(&p.n,p.client)
     wire.host_connect(p.client,wire.address_memory(w.peers[from].endpoint))
 }
@@ -296,7 +298,7 @@ host_offer :: proc(t:^testing.T,w:^Test_Net,root:string) -> bool {
     snap,address,_,error:=snapshot_take(s,root,"game",&folders,allocator=context.temp_allocator)
     if !testing.expectf(t,error=="","%s",error) {return false}
     digits:[64]u8
-    offer_set(s,root,offer_name(w.peers[0].token,&digits),address)
+    offer_set(s,root,offer_name(w.peers[0].key.secret,&digits),address)
     node_serve(&w.peers[0].n,..folders[:])
     for e in snap.entries {node_serve(&w.peers[0].n,e.address)}
     return true
@@ -305,7 +307,7 @@ host_offer :: proc(t:^testing.T,w:^Test_Net,root:string) -> bool {
 @(private="file")
 join_desc :: proc(w:^Test_Net,from:int,folder:string) -> Join_Desc {
     digits:=new([64]u8,context.temp_allocator)
-    return {offer=offer_name(w.peers[from].token,digits),folder=folder,parent=w.folder}
+    return {offer=offer_name(w.peers[from].key.secret,digits),folder=folder,parent=w.folder}
 }
 
 @(test)
@@ -793,7 +795,7 @@ a_third_peer_joins_from_the_second :: proc(t:^testing.T) {
     second:=fmt.tprintf("%s/second",w.folder)
     desc:=join_desc(&w,0,second)
     digits:[64]u8
-    desc.own_offer=offer_name(w.peers[1].token,&digits)
+    desc.own_offer=offer_name(w.peers[1].key.secret,&digits)
     if _,error:=test_join(t,&w,1,desc);!testing.expectf(t,error=="","%s",error) {return}
     // The host is gone: all comes from the second.
     w.peers[0].pumped=false
@@ -824,7 +826,7 @@ a_downstream_peer_cannot_substitute_the_snapshot :: proc(t:^testing.T) {
     snap,address,_,error:=snapshot_take(&w.peers[2].s,fake,"game",&folders,allocator=context.temp_allocator)
     if !testing.expectf(t,error=="","%s",error) {return}
     digits:[64]u8
-    store.ref_set(&w.peers[2].s,NAMESPACE,offer_name(w.peers[0].token,&digits),address)
+    store.ref_set(&w.peers[2].s,NAMESPACE,offer_name(w.peers[0].key.secret,&digits),address)
     node_serve(&w.peers[2].n,..folders[:])
     for e in snap.entries {node_serve(&w.peers[2].n,e.address)}
     // The downstream peer is connected to the joiner first, and the host answers late.
@@ -850,7 +852,7 @@ a_host_that_withholds_ends_the_join_in_bounded_time :: proc(t:^testing.T) {
     withheld:=Snapshot{name="game",entries={{path="assets/gone.bin",address=gone,size=1000},{path="here.txt",address=here,size=4}}}
     snapshot,_,_:=snapshot_put(s,&withheld)
     digits:[64]u8
-    store.ref_set(s,NAMESPACE,offer_name(w.peers[0].token,&digits),snapshot)
+    store.ref_set(s,NAMESPACE,offer_name(w.peers[0].key.secret,&digits),snapshot)
     test_connect(&w,1,0)
     started:=w.now
     report,error:=test_join(t,&w,1,join_desc(&w,0,fmt.tprintf("%s/joined",w.folder)))
@@ -875,7 +877,7 @@ a_lying_size_and_an_oversized_folder_are_refused :: proc(t:^testing.T) {
     lying:=Snapshot{name="game",entries={{path="a.bin",address=address,size=100}}}
     snapshot,_,_:=snapshot_put(s,&lying)
     digits:[64]u8
-    store.ref_set(s,NAMESPACE,offer_name(w.peers[0].token,&digits),snapshot)
+    store.ref_set(s,NAMESPACE,offer_name(w.peers[0].key.secret,&digits),snapshot)
     test_connect(&w,1,0)
     joined:=fmt.tprintf("%s/joined",w.folder)
     lied,error:=test_join(t,&w,1,join_desc(&w,0,joined))
@@ -888,7 +890,7 @@ a_lying_size_and_an_oversized_folder_are_refused :: proc(t:^testing.T) {
     meta:=fmt.tprintf("%s%cgame",SNAPSHOT_MAGIC,rune(4))
     large,_,_:=store.put_finish(&p,transmute([]u8)meta)
     store.commit(s)
-    store.ref_set(s,NAMESPACE,offer_name(w.peers[0].token,&digits),large)
+    store.ref_set(s,NAMESPACE,offer_name(w.peers[0].key.secret,&digits),large)
     _,refused:=test_join(t,&w,1,join_desc(&w,0,fmt.tprintf("%s/other",w.folder)))
     testing.expectf(t,strings.contains(refused,"more than"),"%s",refused)
     testing.expectf(t,node_totals(&w.peers[1].n).received<4<<20,"the folder was refused before it came: %d bytes",node_totals(&w.peers[1].n).received)
