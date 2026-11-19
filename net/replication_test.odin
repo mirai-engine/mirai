@@ -200,7 +200,7 @@ protocols_reject_what_they_cannot_replicate_and_hash_every_choice :: proc(t:^tes
     testing.expect(t,hash_of(&schema,narrow,"T",{.Reliable})!=reference)
     unsealed:Protocol;protocol_init(&unsealed);defer protocol_destroy(&unsealed)
     host:Host
-    testing.expect_value(t,host_init(&host,{mode=.Server,protocol=&unsealed,transport={nil,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {return true},proc(data:rawptr,buffer:[]u8) -> (int,Address,bool) {return 0,{},false}}}),Error.Invalid)
+    testing.expect_value(t,host_init(&host,{mode=.Server,protocol=&unsealed,transport={send=proc(data:rawptr,batch:[]Datagram) -> int {return len(batch)},receive=proc(data:rawptr,batch:[]Datagram) -> int {return 0}}}),Error.Invalid)
 }
 
 @(private)

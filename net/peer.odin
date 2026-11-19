@@ -54,13 +54,14 @@ MAX_CONNECTIONS :: 1024
 @(private) HANDSHAKE_INTERVAL :: 0.2
 @(private) COOKIE_SECONDS :: 10
 @(private) ACK_DELAY :: 0.03
+@(private) ACK_KEPT :: 320 // bits of runs an acknowledgement keeps to while a lost chunk waits: what chunk_longest leaves
 @(private) ACK_EVERY :: 4 // datagrams with reliable chunks after which a receiver acknowledges without waiting
 @(private) SECTION_RESERVE :: 4 // bits kept free for the terminators of the sections still to come
 @(private) DATA_HEADER :: 5     // bytes: type, sequence and the slot of the connection at the receiver
 @(private) CHECKSUM_BYTES :: 4
 @(private) ACCEPT_BYTES :: 18   // server salt, object capacity, ticks of history and the slot of the connection, sealed
 @(private) CANDIDATES :: 2      // addresses a client asks at once: those of an invitation
-@(private) TRANSPORT_VERSION :: 10 // of the layout of the handshake and of the datagrams after it: raised when it changes
+@(private) TRANSPORT_VERSION :: 12 // of the layout of the handshake and of the datagrams after it: raised when it changes
 
 Connection_Stats :: struct {
     rtt,rtt_variance,jitter:f32, // seconds
@@ -74,6 +75,7 @@ Connection_Stats :: struct {
     bytes_sent,bytes_received:u64,
     messages_sent,messages_received,messages_dropped:u64,
     chunks_resent:u64,
+    bytes_resent:u64,            // of those chunks
     objects_in_scope:u32,
     object_bytes_sent,object_bytes_received:u64,
     objects_sent,objects_received:u64,
@@ -410,11 +412,12 @@ peer_drop :: proc(h:^Host,p:^Peer,reason:Disconnect_Reason,notify:bool) {
 // Tells the other end why the connection ends, under the key of the connection.
 @(private)
 peer_notice :: proc(h:^Host,p:^Peer,reason:Disconnect_Reason) {
-    w:serial.Bit_Writer
-    data_begin(h,p,&w,.Disconnect)
-    serial.bit_write(&w,u64(reason),8)
-    bytes:=data_seal(h,p,&w)
-    for _ in 0..<2 {transport_send(h,p.address,bytes)}
+    for _ in 0..<2 {
+        w:serial.Bit_Writer
+        data_begin(h,p,&w,.Disconnect)
+        serial.bit_write(&w,u64(reason),8)
+        transport_send(h,p.address,data_seal(h,p,&w))
+    }
 }
 
 @(private)
@@ -515,12 +518,26 @@ send_burst :: proc "contextless" (h:^Host,rate:f64) -> f64 {
     return max(rate/f64(h.desc.tick_rate),PACKET_BYTES*2)
 }
 
+// Queues a datagram built in the next slot of Back.outgoing; a full batch goes at once, the rest at
+// the end of the update (transport_flush).
 @(private)
 transport_send :: proc(h:^Host,to:Address,bytes:[]u8) {
-    h.back.stats.packets_sent+=1
-    h.back.stats.bytes_sent+=u64(len(bytes))
-    h.desc.transport.send(h.desc.transport.data,to,bytes)
+    b:=&h.back
+    b.stats.packets_sent+=1
+    b.stats.bytes_sent+=u64(len(bytes))
+    b.out[b.out_count]={to,bytes}
+    b.out_count+=1
+    if b.out_count==BATCH {transport_flush(h)}
 }
+@(private)
+transport_flush :: proc(h:^Host) {
+    b:=&h.back
+    if b.out_count>0 {h.desc.transport.send(h.desc.transport.data,b.out[:b.out_count])}
+    b.out_count=0
+}
+// The slot the next datagram is built in.
+@(private)
+outgoing_slot :: #force_inline proc(h:^Host) -> []u8 {return h.back.outgoing[h.back.out_count][:]}
 
 // The checksum of a handshake datagram, keyed by the application: it filters strays, it does not authenticate.
 @(private)
@@ -540,13 +557,13 @@ checksum_check :: proc(bytes:[]u8,key:u64) -> bool {
 // A datagram of a connection: its type, its sequence, a body and the tag that authenticates the three.
 @(private)
 data_begin :: proc(h:^Host,p:^Peer,w:^serial.Bit_Writer,type:Packet_Type) {
-    out:=h.back.outgoing[:]
+    out:=outgoing_slot(h)
     out[0],out[1],out[2],out[3],out[4]=u8(type),u8(p.send_counter),u8(p.send_counter>>8),u8(p.remote),u8(p.remote>>8)
     serial.bit_writer_init(w,out[DATA_HEADER:PACKET_BYTES-TAG_BYTES])
 }
 @(private)
 data_seal :: proc(h:^Host,p:^Peer,w:^serial.Bit_Writer) -> []u8 {
-    out:=h.back.outgoing[:]
+    out:=outgoing_slot(h)
     end:=DATA_HEADER+len(serial.bit_writer_flush(w))
     secure_seal(h,p,out[:DATA_HEADER],out[DATA_HEADER:end],out[end:][:TAG_BYTES])
     return out[:end+TAG_BYTES]
@@ -575,14 +592,14 @@ cookie_make :: proc(b:^Back,address:Address,salt,stamp:u64) -> u64 {
 
 @(private)
 handshake_begin :: proc(h:^Host,w:^serial.Bit_Writer,type:Packet_Type,salt:u64) {
-    out:=h.back.outgoing[:]
+    out:=outgoing_slot(h)
     out[0]=u8(type)
     serial.bit_writer_init(w,out[1:PACKET_BYTES-CHECKSUM_BYTES])
     serial.bit_write(w,salt,64)
 }
 @(private)
 handshake_send :: proc(h:^Host,w:^serial.Bit_Writer,to:Address,pad:=0) {
-    out:=h.back.outgoing[:]
+    out:=outgoing_slot(h)
     total:=1+len(serial.bit_writer_flush(w))+CHECKSUM_BYTES
     if total<pad {
         mem.zero_slice(out[total-CHECKSUM_BYTES:pad])
@@ -651,7 +668,7 @@ handshake_accept :: proc(h:^Host,p:^Peer) {
 host_protocol_hash :: proc(h:^Host) -> u64 {
     hash:=base.hash_combine(h.desc.protocol!=nil?h.desc.protocol.hash:0,TRANSPORT_VERSION)
     for c in h.channels[:USER_CHANNELS] {
-        hash=base.hash_combine(base.hash_combine(hash,u64(c.kind)<<32|u64(c.max_message_bytes)),u64(c.kind==.Reliable?channel_chunks(c.queue_bytes):0))
+        hash=base.hash_combine(base.hash_combine(hash,u64(c.kind)<<32|u64(c.max_message_bytes)),u64(c.kind==.Reliable?c.queue_bytes:0))
     }
     return hash
 }
@@ -1029,6 +1046,7 @@ peer_send :: proc(h:^Host,p:^Peer) {
         // What must go after it bounds the acknowledgement: its delay, the clock or the inputs, and the
         // ends of the sections.
         ack_budget:=serial.bit_writer_remaining(&w)-1-ACK_COUNT_BITS-8-time_max_bits(h)-SECTION_RESERVE
+        if channels_resending(p) {ack_budget=min(ack_budget,ACK_KEPT)}
         from:=min(p.ack_known,p.reack,p.reack_next)
         covered:=ack_bits_write(&w,&p.recv_bits,p.recv_any && p.recv_counter>from?int(min(p.recv_counter-from,ACK_WINDOW)):0,ack_budget)
         // The datagram that arrived last, and how long ago: on a path that reorders, the newest one

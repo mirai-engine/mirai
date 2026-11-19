@@ -112,6 +112,14 @@ bit_write_align :: proc "contextless" (w:^Bit_Writer) {bit_write(w,0,(8-w.bits&7
 bit_write_bytes :: proc "contextless" (w:^Bit_Writer,bytes:[]u8) {
     if w.overflow || (!w.measure && w.bits+len(bytes)*8>w.capacity) {w.overflow=true;return}
     if w.measure {w.bits+=len(bytes)*8;return}
+    // On a byte boundary the scratch is put down and the bytes copied as they are.
+    if w.bits&7==0 {
+        for i in 0..<int(w.scratch_bits>>3) {w.buffer[w.stored+i]=u8(w.scratch>>(8*uint(i)))}
+        copy(w.buffer[w.bits>>3:],bytes)
+        w.bits+=len(bytes)*8
+        w.stored,w.scratch,w.scratch_bits=w.bits>>3,0,0
+        return
+    }
     i:=0
     for ;i+8<=len(bytes);i+=8 {bit_write(w,u64(intrinsics.unaligned_load((^u64le)(&bytes[i]))),64)}
     for ;i<len(bytes);i+=1 {bit_write(w,u64(bytes[i]),8)}
@@ -199,10 +207,24 @@ bit_read_bytes :: proc "contextless" (r:^Bit_Reader,out:[]u8) -> bool {
         for &b in out {b=0}
         return false
     }
+    if r.position&7==0 {
+        copy(out,r.buffer[r.position>>3:][:len(out)])
+        r.position+=len(out)*8
+        return true
+    }
     i:=0
     for ;i+8<=len(out);i+=8 {intrinsics.unaligned_store((^u64le)(&out[i]),u64le(bit_read(r,64)))}
     for ;i<len(out);i+=1 {out[i]=u8(bit_read(r,8))}
     return true
+}
+
+// The next count bytes as they lie in the buffer, from a byte boundary (bit_read_align): nothing is
+// copied. Not ok, with error set, when the reader is not on a boundary or the stream is shorter.
+bit_read_view :: proc "contextless" (r:^Bit_Reader,count:int) -> (bytes:[]u8,ok:bool) {
+    if r.error || r.position&7!=0 || count<0 || r.position+count*8>r.size {r.error=true;return nil,false}
+    bytes=r.buffer[r.position>>3:][:count]
+    r.position+=count*8
+    return bytes,true
 }
 
 // Reads into storage and returns the part used. A length that does not fit storage or the stream is an error.

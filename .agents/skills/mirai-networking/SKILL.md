@@ -158,6 +158,12 @@ In `plugins/multiplayer/runtime`:
 - **A connection finds its rate by itself.** Nothing in `Host_Desc` starts or caps it; a reliable
   channel holds in flight what its `queue_bytes` holds, and the game channels of a connection stay
   on time next to a stream on it.
+- **Nothing waits a fixed tick:** the worker waits in the transport, and a datagram that arrives or
+  a frame the simulation queues wakes it. Datagrams go and come in batches, one call where the
+  system has one.
+- **A reliable byte is copied into its queue once and stays there until its ack:** a chunk is a
+  range of the queue, as long as the datagram has room for, and a lost one fits in the next
+  datagram (`chunk_longest`).
 - **A datagram is lost only when reordering cannot explain its absence**, and an ack is final. A
   late datagram is acked only if everything in it that a resend would bring was taken
   ([connections](references/networking.md#connections)); objects, the server time and the library
@@ -260,7 +266,8 @@ In `plugins/multiplayer/runtime`:
 - `mirai test net [test...]`, `mirai test std/serial` (bitstream) and
   `mirai test plugins/multiplayer/runtime`. Run the `*_test.odin` of the touched area: `address`,
   `connection`, `secure`, `invite`, `congestion`, `flow` (reliable window, a streamed part, a bulk
-  stream on a 100 Mbit/s link, a shared link, ack runs),
+  stream on a 100 Mbit/s link, a shared link, ack runs), `chunk` (hostile chunks, a small message
+  beside the batches and the worker's wait),
   `conditioner`, `replication`,
   `descriptor_boundary`, `large_state`, `collection`, `references`, `convergence`, `grid`, `scope`,
   `authority`, `interpolation`, `clock`, `worker`, `baseline` (pools and shared baselines),
@@ -273,7 +280,10 @@ In `plugins/multiplayer/runtime`:
 - `multiplayer`: [multiplayer verification](references/multiplayer.md#verification).
 - They are deterministic (`Sim_Network` with a fixed seed), except those that open UDP sockets on
   `127.0.0.1`.
-- Optional benchmarks: the server with 64 clients,
+- Optional benchmarks: a reliable stream on UDP loopback (rate, CPU per side, datagrams and
+  transport calls per GiB),
+  `mirai test net a_reliable_stream_on_udp_loopback -define:NET_BENCHMARK=true`; the server with 64
+  clients,
   `mirai test net server_with_64_clients_and_2000_objects --release -define:NET_BENCHMARK=true`,
   and the frames of a client with interpolated replicas,
   `mirai test plugins/multiplayer/runtime bench_client_frames -define:NET_CLIENT_BENCH=true`.

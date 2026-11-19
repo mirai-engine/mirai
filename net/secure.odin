@@ -1,7 +1,7 @@
 package mirai_net
 
 import "core:crypto"
-import "core:crypto/chacha20poly1305"
+import "core:crypto/aegis"
 import "core:crypto/hkdf"
 import "core:crypto/x25519"
 import "core:encoding/endian"
@@ -16,14 +16,15 @@ import "core:mem"
 // wrong invitation gets no answer at all, and only who holds the exchange can
 // try invitations offline. The server then makes its own key for the
 // connection, and the session keys come from both exchanges and the
-// invitation. Every datagram after that is sealed with ChaCha20-Poly1305: one
-// key per direction, the sequence number of the datagram as nonce, and a new
-// key derived from the old one every rekey_interval datagrams, long before a
-// nonce could repeat.
+// invitation. Every datagram after that is sealed with AEGIS-128L, on the AES
+// instructions where the processor has them: one key per direction (the first
+// half of a derived Key), the sequence number of the datagram as nonce, and a
+// new key derived from the old one every rekey_interval datagrams, long before
+// a nonce could repeat and far below what one key may seal.
 
 KEY_BYTES :: 32
 Key :: [KEY_BYTES]u8
-@(private) TAG_BYTES :: chacha20poly1305.TAG_SIZE
+@(private) TAG_BYTES :: aegis.TAG_SIZE_128
 @(private) REKEY_INTERVAL :: 1<<24
 @(private) LABEL_SESSION :: "mirai-net-2 session"
 @(private) LABEL_PROOF :: "mirai-net-2 proof"
@@ -105,26 +106,26 @@ secure_exchange :: proc(out,scalar,point:^Key) -> bool {
 }
 
 @(private)
-aead_nonce :: #force_inline proc "contextless" (counter:u64) -> (nonce:[chacha20poly1305.IV_SIZE]u8) {
-    endian.unchecked_put_u64le(nonce[4:],counter)
+aead_nonce :: #force_inline proc "contextless" (counter:u64) -> (nonce:[aegis.IV_SIZE_128L]u8) {
+    endian.unchecked_put_u64le(nonce[:],counter)
     return
 }
 @(private)
 aead_seal :: proc(key:^Key,counter:u64,aad,body,tag:[]u8) {
-    ctx:chacha20poly1305.Context
+    ctx:aegis.Context
     nonce:=aead_nonce(counter)
-    chacha20poly1305.init(&ctx,key[:])
-    chacha20poly1305.seal(&ctx,body,tag,nonce[:],aad,body)
-    chacha20poly1305.reset(&ctx)
+    aegis.init(&ctx,key[:aegis.KEY_SIZE_128L])
+    aegis.seal(&ctx,body,tag,nonce[:],aad,body)
+    aegis.reset(&ctx)
 }
 // Opens in place. A body that is not authentic comes back zeroed.
 @(private)
 aead_open :: proc(key:^Key,counter:u64,aad,body,tag:[]u8) -> bool {
-    ctx:chacha20poly1305.Context
+    ctx:aegis.Context
     nonce:=aead_nonce(counter)
-    chacha20poly1305.init(&ctx,key[:])
-    ok:=chacha20poly1305.open(&ctx,body,nonce[:],aad,body,tag)
-    chacha20poly1305.reset(&ctx)
+    aegis.init(&ctx,key[:aegis.KEY_SIZE_128L])
+    ok:=aegis.open(&ctx,body,nonce[:],aad,body,tag)
+    aegis.reset(&ctx)
     return ok
 }
 

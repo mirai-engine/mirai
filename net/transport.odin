@@ -57,17 +57,27 @@ address_to_endpoint :: proc "contextless" (address:Address) -> (endpoint:cnet.En
     return {},false
 }
 
-// How a host exchanges datagrams. Neither procedure blocks: send drops what it
-// cannot send now and receive returns ok=false when nothing is waiting.
+// A datagram of a batch. To send: bytes go to address. To receive: bytes is the buffer to fill, and
+// comes back cut to what arrived from address.
+Datagram :: struct {address:Address,bytes:[]u8}
+
+// How a host exchanges datagrams, a batch at a time. send and receive never block: send returns how
+// many of the batch went, in order, and drops the rest; receive fills the first datagrams of the
+// batch with what waits and returns how many, 0 when nothing does. wait blocks until a datagram waits,
+// wake was called since the last wait, or seconds pass; wake may come from any thread. A worker needs
+// both (worker_start); a host the caller updates uses neither.
 Transport :: struct {
     data:rawptr,
-    send:proc(data:rawptr,to:Address,bytes:[]u8) -> bool,
-    receive:proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool),
+    send:proc(data:rawptr,batch:[]Datagram) -> int,
+    receive:proc(data:rawptr,batch:[]Datagram) -> int,
+    wait:proc(data:rawptr,seconds:f64),
+    wake:proc(data:rawptr),
 }
 
 UDP_BUFFER_BYTES :: 4<<20 // asked for the receive and send buffers of a socket
 
-Udp :: struct {socket:cnet.UDP_Socket,open,dual:bool,address:Address}
+// waker: a socket on 127.0.0.1 that wake sends a byte to, so that wait returns.
+Udp :: struct {socket,waker:cnet.UDP_Socket,open,dual:bool,address:Address,waker_endpoint:cnet.Endpoint}
 
 // Binds a non-blocking socket. Port 0 lets the system choose; u.address holds the result. Bound to
 // address_any6 the socket is dual-stack: IPv4 peers reach it too and appear with IPv4 addresses.
@@ -82,44 +92,76 @@ udp_open :: proc(u:^Udp,bind:Address) -> bool {
         cnet.close(socket)
         return false
     }
+    waker,waker_error:=cnet.make_unbound_udp_socket(.IP4)
+    if waker_error!=nil {cnet.close(socket);return false}
+    loopback,_:=address_to_endpoint(address_loopback(0))
+    if cnet.bind(waker,loopback)!=nil || cnet.set_blocking(waker,false)!=nil {
+        cnet.close(socket);cnet.close(waker)
+        return false
+    }
     // A bulk transfer outruns the system's default buffers between two polls; less than asked,
     // or a refusal, keeps what the system gives.
     cnet.set_option(socket,.Receive_Buffer_Size,UDP_BUFFER_BYTES)
     cnet.set_option(socket,.Send_Buffer_Size,UDP_BUFFER_BYTES)
-    u.socket,u.open,u.dual,u.address=socket,true,dual,bind
+    u.socket,u.waker,u.open,u.dual,u.address=socket,waker,true,dual,bind
     if bound,bound_error:=cnet.bound_endpoint(socket);bound_error==nil {u.address.port=u16(bound.port)}
+    if bound,bound_error:=cnet.bound_endpoint(waker);bound_error==nil {u.waker_endpoint=bound}
     return true
 }
 udp_close :: proc(u:^Udp) {
-    if u.open {cnet.close(u.socket)}
+    if u.open {cnet.close(u.socket);cnet.close(u.waker)}
     u^={}
 }
-udp_transport :: proc "contextless" (u:^Udp) -> Transport {return {u,udp_send,udp_receive}}
+udp_transport :: proc "contextless" (u:^Udp) -> Transport {return {u,udp_transport_send,udp_transport_receive,udp_wait,udp_wake}}
 
+// Where a datagram to `to` goes from this socket: an IPv4 peer of a dual-stack socket as ::ffff:a.b.c.d.
 @(private)
-udp_send :: proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
-    u:=(^Udp)(data)
-    target:=to
-    if u.dual && to.kind==.IP4 {
-        target={kind=.IP6,port=to.port,ip={10=0xff,11=0xff}}
-        for i in 0..<4 {target.ip[12+i]=to.ip[i]}
-    }
-    endpoint,valid:=address_to_endpoint(target)
-    if !u.open || !valid {return false}
-    _,error:=cnet.send_udp(u.socket,bytes,endpoint)
-    return error==nil
+udp_target :: proc "contextless" (u:^Udp,to:Address) -> Address {
+    if !u.dual || to.kind!=.IP4 {return to}
+    target:=Address{kind=.IP6,port=to.port,ip={10=0xff,11=0xff}}
+    for i in 0..<4 {target.ip[12+i]=to.ip[i]}
+    return target
 }
 @(private)
-udp_receive :: proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
+udp_transport_send :: proc(data:rawptr,batch:[]Datagram) -> int {
+    u:=(^Udp)(data)
+    if !u.open {return 0}
+    return udp_send_batch(u,batch)
+}
+@(private)
+udp_transport_receive :: proc(data:rawptr,batch:[]Datagram) -> int {
+    u:=(^Udp)(data)
+    if !u.open {return 0}
+    return udp_receive_batch(u,batch)
+}
+// One datagram, for what talks to a router or a test.
+@(private)
+udp_send :: proc(u:^Udp,to:Address,bytes:[]u8) -> bool {
+    batch:=[1]Datagram{{to,bytes}}
+    return udp_transport_send(u,batch[:])==1
+}
+@(private)
+udp_receive :: proc(u:^Udp,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
+    batch:=[1]Datagram{{bytes=buffer}}
+    if udp_transport_receive(u,batch[:])==0 {return}
+    return len(batch[0].bytes),batch[0].address,true
+}
+@(private)
+udp_wait :: proc(data:rawptr,seconds:f64) {
+    u:=(^Udp)(data)
+    if !u.open || !(seconds>0) {return}
+    if !udp_poll(u,int(min(seconds,1)*1000+0.999)) {return}
+    drain:[16]u8
+    for {
+        if _,_,error:=cnet.recv_udp(u.waker,drain[:]);error!=nil {break}
+    }
+}
+@(private)
+udp_wake :: proc(data:rawptr) {
     u:=(^Udp)(data)
     if !u.open {return}
-    // An ICMP answer to an earlier send surfaces as an error on the next receive: skip those.
-    for _ in 0..<8 {
-        count,endpoint,error:=cnet.recv_udp(u.socket,buffer)
-        if error==nil {return count,address_from_endpoint(endpoint),true}
-        if error==.Would_Block || error==.Timeout {return}
-    }
-    return
+    signal:=[1]u8{1}
+    cnet.send_udp(u.waker,signal[:],u.waker_endpoint)
 }
 
 // What a simulated link does to the datagrams an endpoint sends.
@@ -196,7 +238,7 @@ sim_endpoint_conditions :: proc(n:^Sim_Network,endpoint:int,conditions:Sim_Condi
     n.endpoints[endpoint].conditions=conditions
 }
 sim_endpoint_transport :: proc(n:^Sim_Network,endpoint:int) -> Transport {
-    return {&n.endpoints[endpoint],sim_send,sim_receive}
+    return {data=&n.endpoints[endpoint],send=sim_send,receive=sim_receive}
 }
 
 @(private)
@@ -227,10 +269,18 @@ sim_enqueue :: proc(n:^Sim_Network,target:^Sim_Endpoint,from:u16,bytes:[]u8,dela
     heap[i]=slot
 }
 @(private)
-sim_send :: proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
+sim_send :: proc(data:rawptr,batch:[]Datagram) -> int {
     source:=(^Sim_Endpoint)(data)
     n:=source.network
     sync.mutex_guard(&n.lock)
+    sent:=0
+    for datagram in batch {
+        if sim_send_one(n,source,datagram.address,datagram.bytes) {sent+=1}
+    }
+    return sent
+}
+@(private)
+sim_send_one :: proc(n:^Sim_Network,source:^Sim_Endpoint,to:Address,bytes:[]u8) -> bool {
     if to.kind!=.Memory || int(to.port)>=len(n.endpoints) || len(bytes)>PACKET_BYTES {return false}
     n.stats.sent+=1
     c:=source.conditions
@@ -254,10 +304,19 @@ sim_send :: proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
     return true
 }
 @(private)
-sim_receive :: proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
+sim_receive :: proc(data:rawptr,batch:[]Datagram) -> int {
     target:=(^Sim_Endpoint)(data)
     n:=target.network
     sync.mutex_guard(&n.lock)
+    for &datagram,i in batch {
+        size,from,ok:=sim_receive_one(n,target,datagram.bytes)
+        if !ok {return i}
+        datagram={from,datagram.bytes[:size]}
+    }
+    return len(batch)
+}
+@(private)
+sim_receive_one :: proc(n:^Sim_Network,target:^Sim_Endpoint,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
     if target.count==0 {return}
     heap:=target.heap
     slot:=heap[0]

@@ -48,7 +48,7 @@ COLLAB_PRESENCE_SEEN :: 3.0 // seconds
 COLLAB_MESSAGE_BYTES :: 1<<30 // what one message may hold: a peer that sends more is cut off
 COLLAB_CHANNELS :: []wire.Channel_Desc{{kind=.Reliable,queue_bytes=256<<10},{kind=.Unreliable}}
 COLLAB_HELLO_TIMEOUT :: 10.0
-COLLAB_WORKER_INTERVAL :: 2*time.Millisecond // between updates of the network half
+COLLAB_LEAVE_WAIT :: 8*time.Millisecond // for the worker, which host_poll wakes, to send the goodbye
 COLLAB_PLAYING :: u8(1) // presence: inside a Play or a Simulate of its own
 COLLAB_SERVING :: u8(2) // presence: serves the game of a plugin, whose offer follows
 COLLAB_JOINED :: u8(4)  // presence: a guest that plays the game the host serves
@@ -337,7 +337,7 @@ collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invitation
     }
     // Its network half runs on a thread of its own: an editor busy for a while
     // (generating the world of a game) keeps answering, and the session lives.
-    if wire.host_init(&st.host,desc)!=.None || !wire.worker_start(&st.host,COLLAB_WORKER_INTERVAL) {
+    if wire.host_init(&st.host,desc)!=.None || !wire.worker_start(&st.host) {
         wire.host_destroy(&st.host)
         wire.udp_close(&st.udp)
         free(st)
@@ -396,7 +396,7 @@ collab_leave :: proc(s:^Session) {
         wire.host_disconnect(&st.host,0,.Closed)
         wire.host_poll(&st.host)
         // The worker sends them before the host goes.
-        time.sleep(4*COLLAB_WORKER_INTERVAL)
+        time.sleep(COLLAB_LEAVE_WAIT)
     }
     collab_destroy(s)
 }
