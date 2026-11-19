@@ -516,7 +516,7 @@ the registry's memory as a file of the undo step that creates it.
   (`the_shadows_of_a_calm_valley_stay_still_whatever_blows_at_the_view`); on the GPU, with
   validation: `a_stalk_leans_away_from_where_a_bender_trampled_the_field`,
   `a_swaying_wall_casts_its_shadow_where_it_leans_only_near_the_eye`,
-  `a_swaying_canopy_under_a_traced_light_meets_no_leaf_of_its_own_at_rest`,
+  `a_swaying_canopy_is_shaded_as_it_is_at_rest`,
   `a_swaying_kind_builds_no_geometry_and_leaves_the_probes_still` and
   `a_swaying_kind_is_culled_by_cluster`.
 - Ids of the manual ones: `a_manual_instance_keeps_its_id_through_the_edits_of_its_cell`.
