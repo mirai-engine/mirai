@@ -5,6 +5,7 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "core:testing"
+import "core:thread"
 import "core:time"
 import "mirai:std/base"
 
@@ -291,6 +292,78 @@ a_measurement_waits_for_the_gpu_work_in_flight_and_not_for_an_open_session :: pr
         holders:=gpu_holders(root,context.temp_allocator)
         if len(holders)==1 {testing.expectf(t,gpu_holder_measurement(holders[0].holder)==c.part_of && strings.has_prefix(holders[0].holder,c.what),"%s: marking keeps who holds it: %s",c.name,holders[0].holder)}
         lock_release(&turn)
+    }
+}
+
+// The GPU first, the measurement after it: what would hold the measurement
+// never waits for room on the GPU, a wait for room that only what stays open
+// holds fails at once, and what waits for the measurement says its GPU turn
+// is idle meanwhile, so the measurement does not wait for it. The shapes: a
+// test with a benchmark beside a session that holds the card and wants a
+// capture, and two sessions that hold memory and both want a capture.
+@(test)
+a_measurement_and_the_memory_of_the_gpu_never_wait_for_each_other :: proc(t:^testing.T) {
+    if measuring() {return}
+    root:=base.test_folder(t,"workspace")
+    if root=="" {return}
+    GB :: i64(1)<<30
+    gpu_card_write(root,{7*GB+800<<20,true,"card"})
+    own:=fmt.tprintf("pid %d",os.get_pid())
+    Staged :: struct {what:string,charge:i64,open:bool}
+    Case :: struct {
+        name:string,
+        staged:[]Staged,
+        measuring:string, // who holds the measurement; "" for none
+        charge:i64,       // >0: this process asks for a GPU turn first, as a test does
+        taken,stuck:bool,
+        measure:bool,     // then it asks for the measurement, waiting a moment
+        started:bool,
+        why:Measure_Wait,
+        idle_for:string,  // the measurer that sees no GPU work of this process while it waits
+    }
+    cases:=[]Case{
+        {name="a test beside a session that holds the card fails at once, without the measurement",staged={{"pid 21, the session of cave",7*GB,true}},charge=GPU_CHARGE_DEVICE,stuck=true},
+        {name="and the capture of that session starts",staged={{"pid 21, the session of cave",7*GB,true}},measure=true,started=true},
+        {name="a test whose room a test in flight holds waits for it",staged={{"pid 22, mirai test rhi",6*GB,false}},charge=2*GB},
+        {name="a test with its turn waits idle for the capture that measures",staged={{fmt.tprintf("%s, mirai test render",own),GPU_CHARGE_DEVICE,false},{"pid 21, the session of cave",5*GB,true}},measuring="pid 21, profile.capture in cave",measure=true,why=.Measurement,idle_for="21"},
+        {name="a session waits idle for the capture of another session",staged={{fmt.tprintf("%s, the session of a",own),3*GB,false},{"pid 31, the session of b",3*GB,true}},measuring="pid 31, profile.capture in b",measure=true,why=.Measurement,idle_for="31"},
+        {name="a session waits for another session to settle, which ends by itself",staged={{fmt.tprintf("%s, the session of a",own),3*GB,true},{"pid 31, the session of b",3*GB,false}},measure=true,why=.Gpu},
+    }
+    for c in cases {
+        held:=make([dynamic]Lock,context.temp_allocator)
+        for staged,i in c.staged {
+            lock,taken,_,_:=lock_take(gpu_turn_path(root,i,context.temp_allocator),gpu_holder_text(staged.what,staged.charge,open=staged.open))
+            testing.expectf(t,taken,"%s: staged %s",c.name,staged.what)
+            append(&held,lock)
+        }
+        measure:Lock
+        if c.measuring!="" {measure,_=lock_acquire(lock_path(root,MEASURE_LOCK,context.temp_allocator),c.measuring)}
+        if c.charge>0 {
+            turn,taken,waiting:=gpu_try(root,"pid 1, mirai test render",c.charge)
+            testing.expectf(t,taken==c.taken && waiting.stuck==c.stuck,"%s: taken %v, stuck %v",c.name,taken,waiting.stuck)
+            lock_release(&turn)
+        }
+        if c.measure {
+            Try :: struct {root:string,ok:bool,why:Measure_Wait}
+            try_:=new(Try)
+            try_.root=root
+            th:=thread.create_and_start_with_poly_data(try_,proc(try_:^Try) {
+                lock,ok,_,why:=measure_try(try_.root,measure_holder("profile.capture"),600*time.Millisecond)
+                lock_release(&lock)
+                try_.ok,try_.why=ok,why
+            })
+            if c.idle_for!="" {
+                time.sleep(250*time.Millisecond)
+                testing.expectf(t,len(gpu_work(root,c.idle_for,context.temp_allocator))==0,"%s: its turn is idle while it waits",c.name)
+            }
+            thread.join(th)
+            thread.destroy(th)
+            testing.expectf(t,try_.ok==c.started && (c.started || try_.why==c.why),"%s: started %v, waited for %v",c.name,try_.ok,try_.why)
+            if c.idle_for!="" {testing.expectf(t,len(gpu_work(root,c.idle_for,context.temp_allocator))==1,"%s: its turn works again when it gives up",c.name)}
+            free(try_)
+        }
+        lock_release(&measure)
+        for &lock in held {lock_release(&lock)}
     }
 }
 
