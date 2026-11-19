@@ -64,7 +64,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
             nested = true;
         }
 #endif
-        float4 sky = float4(frame.background.w > 0.5 ? frame.background.rgb : sky_seen(sky_dir), 1.0);
+        float4 sky = float4(sky_shown(sky_dir), 1.0);
         // The editor's reference grid goes behind transparency.
         float3 backdrop = nested ? sky.rgb : ground_grid_background(sky.rgb, uv);
         out_display[p] = float4(backdrop, 1.0);

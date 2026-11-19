@@ -64,7 +64,7 @@ struct Frame_Data {
     float4 sun_direction;     // xyz towards the sun, w = 0 no sun, 1 active, SUN_UNSHADOWED active and no ray goes to it
     float4 sun_color;         // rgb its illuminance over pi, render units (above the air of an atmosphere: sun_light), w = the angular radius of its disc in the sky; 0: it is not seen
     float4 sky_color;         // rgb the luminance of the sky, render units, w = the light scale: render units per nit
-    float4 background;        // rgb luminance shown where no geometry is visible, render units, w = 1 to use it instead of the sky
+    float4 background;        // rgb luminance shown where no geometry is visible, render units (with an image, what multiplies it), w = 1 to use it instead of the sky
     float4 frustum[6];        // world planes (xyz normal, w distance), inside when dot >= 0
     float4 volume_cascades[VOLUME_CASCADES_MAX]; // xyz the place of the probe at the lowest corner of each cascade, relative to the origin, w its spacing
     uint4 volume_counts;    // xyz probes of a cascade along each axis, w cascades
@@ -105,6 +105,7 @@ struct Frame_Data {
     float4 sky_orientation;  // the turn of the sky, a quaternion (xyz, w): a direction of the world is one of the sky by its inverse
     float4 sky_from;         // a change of the sky on its way: rgb the luminance it changes from (render units), a how much of it still shows
     float4 sky_from_map;     // the image it changes from, as sky_map
+    float4 background_map;   // the image of the background, as sky_map, turned as the sky; y = 1 when what reflects the sky shows the background
     float4 tint;             // rgb what the image is multiplied by before the display
     Air_Data air;            // the air of an atmosphere (sky_map.y), with sun_color the light of the sun above it
     int4 origin;             // xyz what every place of the frame is relative to (render/origin.odin), in steps of ORIGIN_STEP: what it adds to a place, origin.slang

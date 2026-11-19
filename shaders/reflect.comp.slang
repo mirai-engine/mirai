@@ -188,7 +188,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         }
         uint owner = uint(cell.x) | (uint(cell.y) << 16u);
         if (hit.instance == INVALID) {
-            float3 sky = ended ? float3(0.0) : sky_radiance(path.direction, roughness);
+            float3 sky = ended ? float3(0.0) : sky_reflected(path.direction, roughness);
             if (filtered) filters_weigh(sky);
             if (filter_chain != INVALID && head_append(point_head(INVALID, filter_chain, owner))) {
                 out_radiance[cell] = float4(finite_or_zero(sky * through + glow), distance);

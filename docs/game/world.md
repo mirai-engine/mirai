@@ -6,8 +6,7 @@ description: Author an outdoor or indoor scene in a Mirai game - terrain, foliag
 
 # Game world
 
-A scene is entities with components, a file of `assets/` written through `mirai rpc` or in the
-editor.
+A scene is entities with components: a file of `assets/` written by `mirai rpc` or the editor.
 
 ## Map
 
@@ -45,14 +44,16 @@ noon is 100000), point and spot lights in candelas, rect lights in nits.
  {"name":"Look","components":{"View_Volume":{"exposure":{"compensation":0.5}}}}]}}
 ```
 
-`scene.write` is how a scene changes: it names only what it adds or changes, and an
-entity is matched by its `id` or its `name`. A component starts from its defaults and takes the
-fields named. The `sun` preset aims it like the
-editor's sun, shining toward its -Z; a `View_Volume` without a `Volume` is the whole scene.
+`scene.write` is how a scene changes: it names only what it adds or changes, and an entity is
+matched by its `id` or its `name`. A component starts from its defaults and takes the fields
+named. The `sun` preset aims it like the editor's sun, shining toward its -Z; a `View_Volume`
+without a `Volume` is the whole scene.
 
 - Sky: `luminance` and an `image` (a 2:1 equirectangular HDR), or `atmosphere=true` for the air
-  lit by the sun: turning the sun entity then changes the whole day. One `Sky` is on at a time;
-  without one there is no sky light and the background is black. One `Sun` is on at a time.
+  lit by the sun: turning the sun entity then changes the whole day. A painted sky:
+  `use_background` with a `background_image` (2:1) times `background` (nits) is what the camera
+  and mirrors see, while `luminance` and `image` light; a lit `atmosphere` shows instead. One
+  `Sky` and one `Sun` are on at a time; without a `Sky` the background is black.
 - API: `"preset":"sun"` aims a new entity like the editor's sun; `scene.write {"root":"Sky",
   "entities":[{"components":{"Sky":{"atmosphere":true}}}]}` changes only the fields
   named of the entity `root` names.
