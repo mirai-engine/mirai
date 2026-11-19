@@ -78,11 +78,6 @@ bool fade_pixel_left(uint2 pixel, float fade) {
 // The motion target of the view: rg the motion of each pixel, b the roughness
 // of its material before specular antialiasing, a 1 + its nested view.
 [[vk::binding(SLOT_VIEWS, 0)]] Texture2D<float4> pixel_views : register(MIRAI_REGISTER(t, SLOT_VIEWS), space0);
-// What the vertex hook moved the point a pass lights from where it rests,
-// where rays and the maps that draw it at rest meet it (pixel_rest of
-// gbuffer.slang); 0 for a point at rest. A pass that lights a pixel of the
-// view sets it for that pixel.
-static float3 point_swayed = float3(0.0);
 #include "brdf.slang"
 #include "air.slang"
 

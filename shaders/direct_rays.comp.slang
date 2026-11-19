@@ -46,18 +46,18 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     }
     Pixel pixel = pixel_at(source, (float2(source) + 0.5) * frame.inv_resolution, depth);
     float3 normal = gbuffer_normal(source);
-    point_swayed = pixel_rest(source, depth);
-    float3 rest = pixel.position - point_swayed;
+    float3 swayed = pixel_rest(source, depth);
+    float3 rest = pixel.position - swayed;
     uint4 row = direct_cell(pixel.position);
     uint count = direct_items(row);
     // The weights of the items and of the sun, the sun last; none for one a map holds here.
     direct_across = frame.footprint.x + frame.footprint.y * depth_distance(depth);
     float sun = direct_sun_weight(pixel.position, normal);
     Shadow_Map held;
-    if (sun > 0.0 && sun_map_given(pixel.position, direct_across)) sun = 0.0;
+    if (sun > 0.0 && sun_map_given(pixel.position, direct_across, swayed)) sun = 0.0;
     float total = sun;
     for (uint i = 0u; i < count; i++) {
-        total += direct_sampled_weight(row, direct_item(row, i), pixel.position, normal);
+        total += direct_sampled_weight(row, direct_item(row, i), pixel.position, normal, swayed);
     }
     uint m = max(params.samples, 1u);
     if (!(total > 0.0)) {
@@ -75,7 +75,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     uint first = 0u;
     bool found = false;
     for (uint i = 0u; i <= count && k < m; i++) {
-        float w = i < count ? direct_sampled_weight(row, direct_item(row, i), pixel.position, normal) : sun;
+        float w = i < count ? direct_sampled_weight(row, direct_item(row, i), pixel.position, normal, swayed) : sun;
         upto += w;
         first = k;
         while (k < m && next < upto) {
