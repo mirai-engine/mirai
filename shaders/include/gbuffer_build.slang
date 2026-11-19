@@ -67,7 +67,7 @@ Gbuffer_Cluster gbuffer_cluster_of(uint index, Instance inst, Mesh mesh, uint ma
 // the next level; else level 0 as it is.
 Gbuffer_Cluster gbuffer_cluster(uint index, Instance inst, Mesh mesh, Cluster c, bool cut) {
     float along = cut ? cluster_along(view_detail(), inst, instance_scale(inst), mesh, c, frame.cut.x) : 0.0;
-    return gbuffer_cluster_of(index, inst, mesh, material_of(inst, cluster_material(mesh, c)), along);
+    return gbuffer_cluster_of(index, inst, mesh, material_of(instance_row(index), inst, cluster_material(mesh, c)), along);
 }
 
 // Where the vertex hook puts a point of the world of an instance at a time.

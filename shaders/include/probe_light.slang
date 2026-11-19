@@ -65,7 +65,7 @@ float3 indirect_irradiance(float3 position, float3 normal, float3 view_dir, bool
 // sharp as the lobe, as without the probes; a rough lobe keeps what they hold.
 float3 probe_specular(float4 around, float3 direction, float roughness) {
     float sky = around.w * (1.0 - roughness);
-    return sky > 0.0 ? lerp(around.rgb, sky_radiance(direction, roughness), sky) : around.rgb;
+    return sky > 0.0 ? lerp(around.rgb, sky_reflected(direction, roughness), sky) : around.rgb;
 }
 
 // What indirect_lobes reads: the light around the normal, and around the
@@ -93,8 +93,8 @@ Indirect indirect_lobes(float3 position, float3 normal, float3 view_dir, Shading
     directions.wants = wants;
     if (!indirect_cached()) {
         if ((wants & INDIRECT_DIFFUSE) != 0u) light.irradiance = sky_irradiance(normal) * frame.indirect;
-        if ((wants & INDIRECT_SPECULAR) != 0u) light.radiance = sky_radiance(directions.at[PROBE_SPECULAR], s.roughness) * frame.indirect;
-        if ((wants & INDIRECT_COAT) != 0u) light.coat_radiance = sky_radiance(directions.at[PROBE_COAT], s.coat_roughness) * frame.indirect;
+        if ((wants & INDIRECT_SPECULAR) != 0u) light.radiance = sky_reflected(directions.at[PROBE_SPECULAR], s.roughness) * frame.indirect;
+        if ((wants & INDIRECT_COAT) != 0u) light.coat_radiance = sky_reflected(directions.at[PROBE_COAT], s.coat_roughness) * frame.indirect;
         return light;
     }
     float4 around[PROBE_READS];

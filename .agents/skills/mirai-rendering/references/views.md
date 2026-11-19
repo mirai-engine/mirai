@@ -63,6 +63,10 @@ views are recorded one after another and each writes them before it reads them. 
 them once its view is recorded; what outlives it (histories, LDR, coverage, selection mask) is
 the view's own.
 
+The main view holds what the window shows and the screen UI; its scene targets exist only while
+the window has no views and it draws the scene itself (`scene_targets`), and go, histories and
+shadow pool included, the frame views of the window draw it (`main_scene_release`).
+
 ## Cameras and layers
 
 `Camera` describes the projection (perspective, orthographic or a custom matrix), its off-center

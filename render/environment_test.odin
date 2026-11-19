@@ -1,5 +1,6 @@
 package mirai_render
 
+import "core:math/linalg"
 import "core:mem"
 import "core:math"
 import "core:testing"
@@ -119,27 +120,65 @@ ground_grid_blends_behind_transparency :: proc(t:^testing.T) {
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
 }
 
+// The background of the sky is what the view and a mirror see, while the sky
+// keeps lighting a diffuse surface as without it: a color, an image times its
+// color, a studio's that shows only behind, and the editor's, which shows only
+// behind and leaves the environment alone. Without one the view is as before.
 @(test)
-a_backdrop_is_shown_behind_the_scene_instead_of_the_sky_until_it_is_removed :: proc(t:^testing.T) {
+the_background_is_what_the_view_and_a_mirror_see_while_the_sky_lights :: proc(t:^testing.T) {
     settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.taa=false
     f:Fixture
     if !fixture_init(t,&f,96,64,settings,hardware_rt=false) {return}
     defer fixture_destroy(&f)
     r,device:=f.renderer,f.device
-    camera:=Camera{position={0,1,4},forward={0,0,-4},up={0,1,0},fov_y=50,near=0.05,far=100,exposure=UNIT_EXPOSURE}
-    scene_given(r,nil,nil,{},{sky={0.5,0.6,0.9}})
-    center:=(32*96+48)*4
-    testing.expect(t,renderer_frame(r,{camera=camera}),r.error)
-    sky,_,_,captured:=golden_capture(r);testing.expect(t,captured,r.error);if !captured {return};defer delete(sky)
-    testing.expectf(t,sky[center+2]>40,"the sky of the environment shows (%d)",sky[center+2])
-    renderer_set_backdrop(r,{0.0019,0.0026,0.0045})
-    testing.expect(t,renderer_frame(r,{camera=camera}),r.error)
-    dark,_,_,read:=golden_capture(r);testing.expect(t,read,r.error);if !read {return};defer delete(dark)
-    testing.expectf(t,dark[center]<12 && dark[center+1]<12 && dark[center+2]<16,"the backdrop shows (%d %d %d)",dark[center],dark[center+1],dark[center+2])
-    testing.expect(t,r.scene.environment.sky==Vec3{0.5,0.6,0.9} && !r.scene.environment.use_background,"the environment of the scene is left alone")
-    renderer_set_backdrop(r,{},false)
-    testing.expect(t,renderer_frame(r,{camera=camera}),r.error)
-    again,_,_,third:=golden_capture(r);testing.expect(t,third,r.error);if !third {return};defer delete(again)
-    testing.expect_value(t,again[center+2],sky[center+2])
+    quad::proc(r:^Renderer,x0,x1:f32,material:Material_Handle) -> (Mesh_Handle,bool) {
+        vertices:=[4]Mesh_Vertex{{position={x0,-0.8,0},normal={0,0,1},color={1,1,1},material=material},{position={x1,-0.8,0},normal={0,0,1},color={1,1,1},material=material},{position={x1,0.8,0},normal={0,0,1},color={1,1,1},material=material},{position={x0,0.8,0},normal={0,0,1},color={1,1,1},material=material}}
+        indices:=[6]u32{0,1,2,0,2,3}
+        return mesh_add(r,vertices[:],indices[:])
+    }
+    diffuse,mirror:=DEFAULT_MATERIAL,DEFAULT_MATERIAL
+    diffuse.base_color,diffuse.roughness=0.8,1
+    mirror.base_color,mirror.metallic,mirror.roughness=1,1,0
+    materials_set(r,{diffuse,mirror})
+    left,made:=quad(r,-2,-0.4,1);testing.expect(t,made,r.error);if !made {return}
+    right,added:=quad(r,0.4,2,2);testing.expect(t,added,r.error);if !added {return}
+    red:[8*4*4]u8
+    for i in 0..<8*4 {red[i*4],red[i*4+3]=255,255}
+    image,loaded:=texture_add(r,{pixels=red[:],width=8,height=4,srgb=true,name="red background"});testing.expect(t,loaded,r.error);if !loaded {return}
+    scene_given(r,{{object_id=1,mesh=left,transform=Mat4(1),material=1,tint={1,1,1}},{object_id=2,mesh=right,transform=Mat4(1),material=2,tint={1,1,1}}},nil,{},{})
+    camera:=Camera{position={0,0,5},forward={0,0,-1},up={0,1,0},fov_y=50,near=0.05,far=100,exposure=UNIT_EXPOSURE}
+    at::proc(pixels:[]f16,width,x,y:int) -> Vec3 {i:=(y*width+x)*4;return {f32(pixels[i]),f32(pixels[i+1]),f32(pixels[i+2])}}
+    sky:=Vec3{0.5,0.5,0.5}
+    blue:=Vec3{0.05,0.05,0.5}
+    Case::struct {name:string,environment:Environment,editor:bool,shown,mirrored:Vec3}
+    cases:=[]Case{
+        {name="no background",environment={sky=sky}},
+        {name="a color",environment={sky=sky,background=blue,use_background=true},shown={0,0,1},mirrored={0,0,1}},
+        {name="an image",environment={sky=sky,background={0.5,0.5,0.5},background_texture=image,use_background=true},shown={1,0,0},mirrored={1,0,0}},
+        {name="a studio's",environment={sky=sky,background=blue,use_background=true,background_behind=true},shown={0,0,1}},
+        {name="the editor's",environment={sky=sky},editor=true,shown={0,0,1}},
+        {name="none again",environment={sky=sky}},
+    }
+    width:=int(r.targets.width)
+    first:[3]Vec3 // sky, diffuse and mirror without a background
+    for c,index in cases {
+        scene_set_environment(r,{},c.environment)
+        renderer_set_backdrop(r,blue,c.editor)
+        for _ in 0..<2 {testing.expect(t,renderer_frame(r,{camera=camera}),r.error)}
+        pixels:=grid_read_hdr(t,r,r.targets.display);defer delete(pixels)
+        seen:=[3]Vec3{at(pixels,width,48,3),at(pixels,width,31,32),at(pixels,width,64,32)}
+        if index==0 {first=seen}
+        testing.expectf(t,seen[1]==first[1],"%s: the sky lights the diffuse surface as without a background: %v, %v",c.name,seen[1],first[1])
+        for which in 0..<2 {
+            pixel,hue:=seen[which*2],which==0?c.shown:c.mirrored
+            if hue=={} {
+                testing.expectf(t,pixel==first[which*2],"%s: %s the sky as without a background: %v, %v",c.name,which==0?"the view shows":"the mirror shows",pixel,first[which*2])
+                continue
+            }
+            other:=Vec3{1,1,1}-hue
+            testing.expectf(t,linalg.dot(pixel,hue)>2*linalg.dot(pixel,other) && linalg.dot(pixel,hue)>0.05,"%s: %s the background: %v",c.name,which==0?"the view shows":"the mirror shows",pixel)
+        }
+        if c.editor {testing.expect(t,r.scene.environment==c.environment,"the editor's background leaves the environment alone")}
+    }
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
 }
