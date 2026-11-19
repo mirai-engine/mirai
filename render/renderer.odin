@@ -320,6 +320,7 @@ Pipeline_Id :: enum {
 	Program_Depth, // the depth of the Surface program of each pixel, which its resolve tests
 	Resolve, Resolve_Plain, Resolve_Layers, // the G-buffer from the visibility target: with the reflectance target, without it, with the layers target
 	Resolve_Nested, Resolve_Nested_Plain, Resolve_Nested_Layers, // the same of the nested views of a view
+	Rest, // where the vertex hook moved each pixel from where it rests (rest.comp)
 	Ui_World, Ui_Composite, Ui_Blur, Debug_Lines,
 	Skin, Skin_Triangles, Skin_Refit,
 	Nested_Prime, Nested_Reflectance, // of the nested views of a view
@@ -363,6 +364,7 @@ Frame_Targets :: struct {
 	surface:                 rhi.Texture, // evaluated F0 as sRGB, encoded F90 in alpha; made when the scene first needs it
 	layers:                  rhi.Texture, // the layers of the materials (gbuffer.slang); made when the scene first needs it
 	instance:                rhi.Texture, // R32 uint: the instance that drew each pixel + 1, while the shaders ask for it (Frame_Layout.instance_ids)
+	rest:                    rhi.Texture, // RG32 uint: where the vertex hook moved each pixel from where it rests (gbuffer.slang), while a batch gives it values
 	post_hdr,post_ldr:        [2]rhi.Texture, // made when the PostProcess stack first uses them
 	normal:                  rhi.Texture,
 	emission:                rhi.Texture,
@@ -604,6 +606,7 @@ Renderer :: struct {
 	dummy_texture:   rhi.Texture,
 	dummy_layers:    rhi.Texture, // in place of the layers target (RGBA32 uint) while there is none
 	dummy_uint:      rhi.Texture, // in place of a one-channel uint texture (the shadow table, instance ids) while there is none
+	dummy_rest:      rhi.Texture, // in place of the rest target (RG32 uint) while there is none
 	dfg:             rhi.Texture, // the split-sum table of the specular lobe, in the entry DFG_TEXTURE of the texture table
 	air:             Air_State,   // the tables of the air of an atmosphere (air.odin)
 	display_lut:     rhi.Texture, // the ACES 2.0 Output Transform (display.odin)
@@ -744,6 +747,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	r.dummy_texture = rhi.texture_create(device, {width = 1, height = 1, format = .RGBA16_Float, usage = {.Sampled, .Storage, .Color_Target}, name = "dummy"})
 	r.dummy_layers = rhi.texture_create(device, {width = 1, height = 1, format = .RGBA32_Uint, usage = {.Sampled, .Color_Target}, name = "dummy layers"})
 	r.dummy_uint = rhi.texture_create(device, {width = 1, height = 1, format = .R32_Uint, usage = {.Sampled, .Color_Target}, name = "dummy uint"})
+	r.dummy_rest = rhi.texture_create(device, {width = 1, height = 1, format = .RG32_Uint, usage = {.Sampled, .Storage}, name = "dummy rest"})
 	r.stats_buffer = rhi.buffer_create(device, {size = size_of(Gpu_Cull_Stats), usage = {.Storage}, name = "cull stats"})
 	r.scratch_buffer = rhi.buffer_create(device, {size = 256, usage = {.Storage}, name = "scratch"})
 	r.glass_dispatch = rhi.buffer_create(device, {size = size_of(Gpu_Glass_Dispatch), usage = {.Storage, .Indirect}, name = "glass dispatch"})
@@ -760,7 +764,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	for &b in r.ui_shape_buffers {b=rhi.buffer_create(device,{size=u64(r.ui_shape_capacity*size_of(Ui_Shape)),usage={.Storage},memory=.Upload,name="ui shapes"})}
 	r.debug_capacity = desc.debug_vertex_capacity if desc.debug_vertex_capacity > 0 else DEBUG_VERTEX_CAPACITY
 	for &b in r.debug_buffers {b = rhi.buffer_create(device, {size = u64(r.debug_capacity * size_of(Debug_Vertex)), usage = {.Storage}, memory = .Upload, name = "debug lines"})}
-	if r.ui_shape_buffers[0]==0 || r.ui_shape_buffers[1]==0 || r.ui_buffers[0] == 0 || r.ui_buffers[1] == 0 || r.debug_buffers[0] == 0 || r.debug_buffers[1] == 0 || r.linear_sampler == 0 || r.point_sampler == 0 || r.material_sampler == 0 || r.dummy_buffer == 0 || r.dummy_texture == 0 || r.dummy_layers == 0 || r.dummy_uint == 0 || r.stats_buffer == 0 || r.scratch_buffer == 0 || r.glass_dispatch == 0 || r.dispatch_start == 0 || r.light_changes == 0 || !feedback {
+	if r.ui_shape_buffers[0]==0 || r.ui_shape_buffers[1]==0 || r.ui_buffers[0] == 0 || r.ui_buffers[1] == 0 || r.debug_buffers[0] == 0 || r.debug_buffers[1] == 0 || r.linear_sampler == 0 || r.point_sampler == 0 || r.material_sampler == 0 || r.dummy_buffer == 0 || r.dummy_texture == 0 || r.dummy_layers == 0 || r.dummy_uint == 0 || r.dummy_rest == 0 || r.stats_buffer == 0 || r.scratch_buffer == 0 || r.glass_dispatch == 0 || r.dispatch_start == 0 || r.light_changes == 0 || !feedback {
 		set_error(r, "renderer resources: %s", rhi.device_error(device))
 		return false
 	}
@@ -835,7 +839,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 	cost_destroy(r)
 	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.glass_dispatch, r.dispatch_start, r.dummy_buffer, r.shadow_buffers.state, r.shadow_buffers.table}) {if b != 0 {rhi.buffer_destroy(d, b)}}
 	if r.light_changes != 0 {rhi.buffer_destroy(d, r.light_changes)}
-	for t in ([]rhi.Texture{r.dummy_texture, r.dummy_layers, r.dummy_uint, r.dfg, r.display_lut, r.font, r.thumbnails}) {if t != 0 {rhi.texture_destroy(d, t)}}
+	for t in ([]rhi.Texture{r.dummy_texture, r.dummy_layers, r.dummy_uint, r.dummy_rest, r.dfg, r.display_lut, r.font, r.thumbnails}) {if t != 0 {rhi.texture_destroy(d, t)}}
 	air_destroy(r)
 	if r.linear_sampler != 0 {rhi.sampler_destroy(d, r.linear_sampler)}
 	if r.point_sampler != 0 {rhi.sampler_destroy(d, r.point_sampler)}
@@ -966,6 +970,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	traced(list, r, .Contact, .Contact_Comp, .Contact_Hw_Comp)
 	compute(list, r, .Contact_Light, .Contact_Light_Comp)
 	compute(list, r, .Contact_Pixels, .Contact_Pixels_Comp)
+	compute(list, r, .Rest, .Rest_Comp)
 	compute(list, r, .Composite, .Composite_Comp)
 	compute(list, r, .Taa, .Taa_Comp)
 	compute(list, r, .Hiz, .Hiz_Comp)
@@ -1766,6 +1771,13 @@ gbuffer_ids :: proc(desc: rhi.Graphics_Pipeline_Desc, ids: bool) -> rhi.Graphics
 @(private)
 ensure_instance_target :: proc(r: ^Renderer, t: ^Targets) -> bool {
 	return target(r, nil, &t.instance, t.width, t.height, .R32_Uint, {.Color_Target, .Sampled}, "instance ids", shared = true)
+}
+
+// Where the vertex hook moved each pixel from where it rests, which the
+// resolve writes while a batch gives the hook values (gbuffer.slang).
+@(private)
+ensure_rest_target :: proc(r: ^Renderer, t: ^Targets) -> bool {
+	return target(r, nil, &t.rest, t.width, t.height, .RG32_Uint, {.Storage, .Sampled}, "rest", shared = true)
 }
 
 // The targets of the contact occlusion, which the next frame that needs them

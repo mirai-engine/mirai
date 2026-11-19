@@ -4,6 +4,7 @@
 //! variant plain MIRAI_GBUFFER_PLAIN=1
 //! variant layers MIRAI_GBUFFER_LAYERS=1
 #include "foliage_impostor.slang"
+#define GBUFFER_REST_OUT SLOT_PASS5
 #include "gbuffer.slang"
 
 struct Stage_Output {
@@ -123,6 +124,7 @@ Stage_Output main(Impostor_Varyings input, float4 pixel_position : SV_Position) 
 #ifdef MIRAI_INSTANCE_IDS
     output.g_instance = 0u;
 #endif
+    gbuffer_rest_write(int2(pixel), place - impostor_rest(place, float3(world[0].w, world[1].w, world[2].w), input.lean), output.g_depth);
     float4 clip = view_clip(place);
     output.depth = clip.z / clip.w;
     return output;

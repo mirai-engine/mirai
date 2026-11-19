@@ -162,6 +162,7 @@ Batch_State :: struct {
 	dropped:         int,                        // batches left out of the tables: more instance indices than BATCH_INDICES_MAX
 	winds:           [dynamic]f32,               // by wind, the share of their sway the batches that sway in it take now (batches_wind)
 	winds_changed:   bool,                       // a share went from 0 or to 0 since the last frame that drew the maps
+	hooked:          bool,                       // a batch drawn gives the vertex hook values (Batch_Desc.vertex): the resolve leaves where its pixels rest
 }
 
 // A batch drawn whose instances a native TLAS holds: their first custom
@@ -410,35 +411,23 @@ batch_set :: proc(r: ^Renderer, handle: Batch_Handle, world: u64, desc: Batch_De
 
 // Says how much of their sway the batches that sway in `wind` take now
 // (Batch_Desc.sway): 0, still, to 1, the most; the vertex hook sways them as
-// the wind is, and this says to the maps whether they move and to rays how
-// near what they meet of them is not met. A frame that drew the maps does not
-// look at the batches again while each share stays above 0 or at 0. Grows
-// the winds known: a load transaction for a wind not given before.
+// the wind is, and this says to the maps whether they move. A frame that drew
+// the maps does not look at the batches again while each share stays above 0
+// or at 0. Grows the winds known: a load transaction for a wind not given
+// before.
 batches_wind :: proc(r: ^Renderer, wind: u32, share: f32) -> bool {
 	b := &r.scene.batch
 	if !(share >= 0) || !(share <= 1) || wind >= BATCH_INDICES_MAX {return false}
 	if int(wind) >= len(b.winds) && resize(&b.winds, int(wind) + 1) != nil {return false}
-	if b.winds[wind] == share {return true}
-	// The native TLAS holds the instances of a batch that sways now as candidates (batch_tlas_flags).
-	if (b.winds[wind] > 0) != (share > 0) {b.winds_changed, r.scene.tlas_dirty = true, true}
+	if (b.winds[wind] > 0) != (share > 0) {b.winds_changed = true}
 	b.winds[wind] = share
-	for index, k in b.drawn {
-		record := &b.records[index]
-		if record.desc.sway > 0 && record.desc.wind == wind {
-			b.rows[k].world_inv[2].y = batch_near(b, record)
-			b.upload = true
-		}
-	}
 	return true
 }
 
-// Metres of the world near a ray's origin where it meets nothing of a batch
-// that sways in a wind that blows: as far as its largest instance sways now,
-// so a ray from a point the hook swayed does not meet its own leaf at rest.
+// Whether a batch sways in the maps now: it says how far, and its wind blows.
 @(private)
-batch_near :: proc "contextless" (b: ^Batch_State, record: ^Batch_Record) -> f32 {
-	if !(record.desc.sway > 0) || int(record.desc.wind) >= len(b.winds) {return 0}
-	return record.desc.sway * record.scale * b.winds[record.desc.wind]
+batch_swaying :: proc "contextless" (b: ^Batch_State, record: ^Batch_Record) -> bool {
+	return record.desc.sway > 0 && int(record.desc.wind) < len(b.winds) && b.winds[record.desc.wind] > 0
 }
 
 // Takes a batch out of the renderer: its instances leave the pool and the
@@ -515,7 +504,7 @@ batches_build :: proc(r: ^Renderer) {
 	clear(&b.drawn);clear(&b.rows);clear(&b.boxes);clear(&b.traced);clear(&b.hw);clear(&b.reflective)
 	if b.groups.count > 0 {pool_release(&s.indices, &s.pool_free[.Index], b.groups.first, b.groups.count)}
 	b.groups = {}
-	b.slots, b.dropped, b.hw_count = 0, 0, 0
+	b.slots, b.dropped, b.hw_count, b.hooked = 0, 0, 0, false
 	b.bounds_min, b.bounds_max = {1e30, 1e30, 1e30}, {-1e30, -1e30, -1e30}
 	for &record in b.records {record.drawn = -1}
 	instance_count := u32(len(s.instances))
@@ -546,6 +535,7 @@ batches_build :: proc(r: ^Renderer) {
 		if .Rays_Only in desc.flags {layers = 0}
 		flags := layers << INSTANCE_LAYERS_SHIFT | alpha_flags({tested = a.tested, glass = a.glass})
 		record.drawn = i32(drawn)
+		if desc.vertex != {} {b.hooked = true}
 		append(&b.drawn, u32(index))
 		offset := batch_offset(r, &record)
 		low, high := record.bounds_min + offset, record.bounds_max + offset
@@ -555,7 +545,7 @@ batches_build :: proc(r: ^Renderer) {
 				{bits(record.order), desc.fade_distance, desc.cull_distance, desc.sway},
 				{0, 0, 0, bits(classes)},
 			},
-			world_inv = {desc.vertex, {offset.x, offset.y, offset.z, desc.reach}, {bits(record.colors + 1 if record.colored else 0), batch_near(b, &record), 0, 0}},
+			world_inv = {desc.vertex, {offset.x, offset.y, offset.z, desc.reach}, {bits(record.colors + 1 if record.colored else 0), 0, 0, 0}},
 			// Rays meet the instances of a batch in the cut its mesh always has.
 			meta = {u32(desc.mesh) | (u32(ray_cut_always(s.meshes[desc.mesh])) << INSTANCE_RAY_SHIFT if int(desc.mesh) < len(s.meshes) else 0), material, u32(desc.object_id), flags},
 			bounds_min = low,
@@ -629,15 +619,6 @@ tlas_mask_flags :: #force_inline proc "contextless" (mask: u8, tested, mesh_test
 	return u32(mask) | (rhi.TLAS_ALPHA_GEOMETRY if tested == mesh_tested else rhi.TLAS_ALPHA_TESTED)
 }
 
-// The mask and flags of the instances of a batch in the native TLAS: those of
-// one that sways in a wind that blows are candidates, which a ray meets past
-// its near distance alone (batch_near).
-@(private)
-batch_tlas_flags :: proc "contextless" (s: ^Scene_State, record: ^Batch_Record, hw: Batch_Hw) -> u32 {
-	if batch_near(&s.batch, record) > 0 {return u32(hw.mask) | rhi.TLAS_ALPHA_TESTED}
-	return tlas_mask_flags(hw.mask, hw.tested, s.meshes[record.desc.mesh].tested)
-}
-
 // A batch rays meet, as the compute that writes the instances of the native
 // TLAS reads it (tlas_batches.comp).
 @(private)
@@ -680,7 +661,7 @@ tlas_instances_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> int {
 		offset := batch_offset(r, record)
 		rows[k] = {
 			words = record.words, first = at, custom = first + hw.slot, blas = rhi.accel_id(d, s.meshes[record.desc.mesh].rays[ray_cut_always(s.meshes[record.desc.mesh])].blas),
-			mask_flags = batch_tlas_flags(s, record, hw), anchor = {offset.x, offset.y, offset.z, 0},
+			mask_flags = tlas_mask_flags(hw.mask, hw.tested, s.meshes[record.desc.mesh].tested), anchor = {offset.x, offset.y, offset.z, 0},
 		}
 		at += record.count
 	}
