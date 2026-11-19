@@ -24,7 +24,8 @@
 //   stays or what moves where they changed, and of a page a point reads, the
 //   frame before read late, or the safety net keeps: asks for a page of the
 //   pool where it has none, else lists it for the cache to draw where what
-//   stays is not drawn there and for the atlas to compose where that is not;
+//   stays is not drawn there and for the atlas to compose where that is not,
+//   or where it holds a batch that sways there (SHADOW_JOB_REFRESH);
 //   a slot that lets go of every page (a light that turned or moved) draws
 //   them whole into the atlas alone that frame, and the cache the next;
 // - Rank and Sums: the rank of each page asked for, in one order every frame
@@ -39,19 +40,23 @@
 // - Allocate, a thread for each word of the ranks: each page asked for takes
 //   the page of the pool of its rank, which its entry lets go of; past them it
 //   is left out;
-// - Finish: the arguments of the culls and the draws of the rounds: each cull
-//   by instance goes over the slots with pages listed, the coarsest first
-//   (the levels of the sun from the coarsest, then the faces of the lights),
-//   while the threads of the instances that reach them (render.Shadow_Reach)
-//   fit those of a frame (Params_Block.threads), one slot at least; the
-//   foresight of the cache over those of them with pages not foreseen yet;
-//   the pages of a slot past them wait for the frames after;
+// - Finish, one group: the arguments of the culls and the draws of the
+//   rounds: each cull by instance goes over the slots with pages listed, those
+//   it left out the most frames in a row first, then the coarsest (the levels
+//   of the sun from the coarsest, then the faces of the lights), while the
+//   threads of the instances that reach them (render.Shadow_Reach) fit those
+//   of a frame (Params_Block.threads), one slot at least; the foresight of the
+//   cache over those of them with pages not foreseen yet; the pages of a slot
+//   past them wait for the frames after, and no slot waits on the others for
+//   long;
 // - Grant, one group, for the cache and then for the atlas (Params_Block.round)
 //   between the cull by instance and the cull by cluster of the round: of the
 //   pages it lists of the slots Finish kept, those its points read drawn the
-//   frame before first, then
-//   in the order the pages are given, those whose units of raster work fit a
-//   share of those of a frame (Params_Block.budget) with those before: what a page
+//   frame before first, then in the order the pages are given, then those of
+//   the atlas composed again for what sways in them alone, the latest first
+//   and those nearest the eye sooner (refresh_order), those whose units of
+//   raster work fit a share of those of a frame (Params_Block.budget) with
+//   those before: what a page
 //   took the last time the round drew it (SHADOW_WORDS_KNOWN), else what the
 //   cull by instance foresees, scaled by what the draws took of that before
 //   (SHADOW_WORDS_SCALE); a page of the atlas that came only where its quota
@@ -64,7 +69,10 @@
 // - Settle, a thread for each page the round lists, after its cull by
 //   cluster: a page not drawn whole this frame (waiting, a band before its
 //   last, or one that took more than it may) is not ready, and the steps run
-//   again the next frame;
+//   again the next frame, but a page of the atlas that waits to be composed
+//   again for what sways in it alone shows what the atlas last composed there;
+//   a page the atlas composed holds what sways where the cull found it there,
+//   and the steps run again the next frame while one does;
 // - Propagate, a thread for each entry of each slot in use, after the rounds:
 //   where its page is not drawn, how many levels of the sun or mips coarser
 //   the nearest one drawn lies, which its taps read; of a page a point reads,
@@ -134,8 +142,11 @@ struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; u
 #define POOL_KEPT 0x40000000u
 // Of the key of a page a round grants: its points did not read it drawn the frame before;
 // its slot is past the threads of the culls by instance of the frame, and it waits.
+// its points read it drawn the frame before and what sways in it is all it
+// is composed again for (SHADOW_JOB_REFRESH);
 #define KEY_NEW 0x4000000u
-#define KEY_WAITS 0x8000000u
+#define KEY_REFRESH 0x8000000u
+#define KEY_WAITS 0x10000000u
 // The threads of a group of shadow_maps.comp.
 #define CULL_GROUP 256u
 // The pages a round grants fill 1/GRANT_SHARE of the bound with what they are
@@ -232,6 +243,21 @@ uint rank_of(uint slot, uint entry) {
     return SHADOW_RANK_FIRST + SHADOW_SUN_MAPS * SHADOW_SUN_WORDS + (entry >> 5u) * SHADOW_LOCAL_SLOTS;
 }
 
+// Of a page of the atlas composed again for what sways in it alone, its
+// place among the others in Grant, the first the soonest: by how many frames
+// ago the atlas last composed it (SHADOW_WORDS_SWAY) less a frame for each
+// REFRESH_NEARER levels of the sun or mips it lies coarser, and then nearest
+// the eye first. Each frame it waits it comes sooner, so none waits on the
+// others longer than they take to be composed once, and those nearest the
+// eye, larger on the screen, are composed a little more often.
+#define REFRESH_NEARER 4u
+uint refresh_order(uint slot, uint entry, uint sway) {
+    uint coarser = slot < SHADOW_SUN_MAPS ? slot : shadow_entry_mip(entry);
+    uint age = (params.frame - sway) & SHADOW_SWAY_FRAME;
+    uint late = min(age + 8u - min(coarser / REFRESH_NEARER, 8u), 0xFFFu);
+    return ((0xFFFu - late) << 4u) | min(coarser, 15u);
+}
+
 // The narrowest texel of a map over a box of the world, metres
 // (render.shadow_map_finest).
 float shadow_map_finest(Shadow_Map m, float3 low, float3 high) {
@@ -249,6 +275,8 @@ void listed(uint round, uint slot, uint entry, uint2 page, uint job) {
     if (!shadow_place_valid(slot, entry) || (job & SHADOW_ENTRY_POOL) >= SHADOW_POOL_PAGES) return;
     // What the cull by instance foresees it hands over for the page starts anew.
     if (round != ROUND_STAYS) pages[SHADOW_WORDS_REACH + (round == ROUND_MOVES ? SHADOW_POOL_PAGES : 0u) + (job & SHADOW_ENTRY_POOL)] = 0u;
+    // Whether what sways shows in it is found anew by the cull of the atlas.
+    if (round == ROUND_MOVES) pages[SHADOW_WORDS_SWAY + (job & SHADOW_ENTRY_POOL)] &= ~SHADOW_SWAY_NOW;
     uint masks[3] = {SHADOW_WORDS_DRAWN, SHADOW_WORDS_COMPOSE, SHADOW_WORDS_FORESEE};
     InterlockedOr(pages[masks[round] + slot * SHADOW_MASK_WORDS + (entry >> 5u)], 1u << (entry & 31u));
     uint mip = shadow_entry_mip(entry);
@@ -392,8 +420,8 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         step_args(STEP_SETTLE, run ? SHADOW_POOL_PAGES : 0u);
         if (run) return;
         // A still view: the rounds of what stays and of what moves draw nothing.
-        uint counts[7] = {SHADOW_COUNT_DRAWN, SHADOW_COUNT_COMPOSED, SHADOW_COUNT_REQUESTS, SHADOW_COUNT_LEFT, SHADOW_COUNT_WAITING, SHADOW_COUNT_SHORT, SHADOW_COUNT_THREADS};
-        for (uint k = 0u; k < 7u; k++) pages[SHADOW_WORDS_COUNTS + counts[k]] = 0u;
+        uint counts[8] = {SHADOW_COUNT_DRAWN, SHADOW_COUNT_COMPOSED, SHADOW_COUNT_REQUESTS, SHADOW_COUNT_LEFT, SHADOW_COUNT_WAITING, SHADOW_COUNT_SHORT, SHADOW_COUNT_THREADS, SHADOW_COUNT_REFRESHED};
+        for (uint k = 0u; k < 8u; k++) pages[SHADOW_WORDS_COUNTS + counts[k]] = 0u;
         for (uint round = 0u; round < 3u; round++) pages[SHADOW_WORDS_ARGS + SHADOW_ARGS_DISPATCH + 3u * round] = 0u;
         for (uint round = 0u; round < 2u; round++) {
             pages[SHADOW_WORDS_ARGS + SHADOW_ARGS_DRAW + 4u * round + 1u] = 0u;
@@ -512,6 +540,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             if (draw) listed(ROUND_STAYS, slot, entry, page, pool | kept);
             if (draw && pages[SHADOW_WORDS_KNOWN + pool] == 0u) listed(ROUND_FORESEE, slot, entry, page, pool);
             if (draw || (e & SHADOW_PAGE_COMPOSED) == 0u) listed(ROUND_MOVES, slot, entry, page, pool | SHADOW_JOB_HELD | kept);
+            else if ((pages[SHADOW_WORDS_SWAY + pool] & SHADOW_SWAY_SWAYS) != 0u) listed(ROUND_MOVES, slot, entry, page, pool | SHADOW_JOB_HELD | SHADOW_JOB_REFRESH);
             e |= SHADOW_PAGE_READY;
         }
         table_set(slot, entry, e);
@@ -614,6 +643,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             pages[SHADOW_WORDS_BAND + pool] = 0u;
             pages[SHADOW_WORDS_KNOWN + pool] = 0u;
             pages[SHADOW_WORDS_KNOWN + SHADOW_POOL_PAGES + pool] = 0u;
+            pages[SHADOW_WORDS_SWAY + pool] = params.frame & SHADOW_SWAY_FRAME;
             if (!whole) part_band(pool);
             if (!whole) listed(ROUND_STAYS, w.y, entry, page, pool);
             if (!whole) listed(ROUND_FORESEE, w.y, entry, page, pool);
@@ -635,7 +665,9 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
                 uint rank = !placed || stuck ? 0xFFFFu : rank_of(slot, entry);
                 // A page of a slot past the threads of the culls by instance waits, after the others.
                 bool waits = placed && pages[SHADOW_WORDS_HAS + params.round * SHADOW_SLOTS + slot] != 2u;
-                key = (waits ? KEY_WAITS : 0u) | ((job & SHADOW_JOB_KEPT) != 0u ? 0u : KEY_NEW) | (rank << 10u) | pool;
+                bool refresh = placed && !stuck && (job & SHADOW_JOB_REFRESH) != 0u;
+                if (refresh) rank = refresh_order(slot, entry, pages[SHADOW_WORDS_SWAY + pool]);
+                key = (waits ? KEY_WAITS : 0u) | (refresh ? KEY_REFRESH : (job & SHADOW_JOB_KEPT) != 0u ? 0u : KEY_NEW) | (rank << 10u) | pool;
             }
             shared_words[k] = key;
         }
@@ -780,7 +812,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         }
     } else if (params.step == STEP_SETTLE) {
         if (i >= round_count()) return;
-        uint pool = pages[round_jobs() + i] & SHADOW_ENTRY_POOL, slot, entry;
+        uint job = pages[round_jobs() + i], pool = job & SHADOW_ENTRY_POOL, slot, entry;
         if (pool >= SHADOW_POOL_PAGES || !shadow_owner_place(pages[SHADOW_WORDS_OWNER + pool], slot, entry)) return;
         uint cost = pages[round_cost(pool)], taken = pages[round_taken(pool)], e = shadow_table_entry(slot, entry);
         // What the cache left for the frames after is not ready already.
@@ -792,6 +824,16 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         if (granted && (cost & SHADOW_COST_GUESS) != 0u) InterlockedAdd(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_MEASURED + params.round], taken);
         // What composing it took, which the next frame grants it for.
         if (params.round == 1u && granted) pages[round_known(pool)] = taken;
+        // Whether what the atlas composed holds what sways, and when; the steps
+        // run again the next frame while it does.
+        bool refresh = (job & SHADOW_JOB_REFRESH) != 0u;
+        if (params.round == 1u) {
+            uint sway = pages[SHADOW_WORDS_SWAY + pool], sways = (sway & (SHADOW_SWAY_NOW | SHADOW_SWAY_SWAYS)) != 0u ? SHADOW_SWAY_SWAYS : 0u;
+            if (done) sways = (sway & SHADOW_SWAY_NOW) != 0u ? SHADOW_SWAY_SWAYS : 0u;
+            pages[SHADOW_WORDS_SWAY + pool] = sways | (done ? params.frame : sway) & SHADOW_SWAY_FRAME;
+            if (sways != 0u) pages[SHADOW_STEP_NEW] = 1u;
+            if (done && refresh) InterlockedAdd(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_REFRESHED], 1u);
+        }
         if (params.round == 0u) {
             uint band = pages[SHADOW_WORDS_BAND + pool], shift = (band >> SHADOW_BAND_SHIFT) & 0xFFu, rows = band & 0xFFu;
             uint stuck = band & SHADOW_BAND_STUCK;
@@ -805,7 +847,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
                 table_set(slot, entry, e & ~SHADOW_PAGE_READY);
                 InterlockedAnd(pages[SHADOW_WORDS_COMPOSE + slot * SHADOW_MASK_WORDS + (entry >> 5u)], ~(1u << (entry & 31u)));
             }
-        } else if (!done) {
+        } else if (!done && (granted || !refresh)) {
             table_set(slot, entry, e & ~SHADOW_PAGE_COMPOSED);
         }
         if (done) return;
@@ -845,23 +887,50 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             if (held == 0u) InterlockedAdd(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_SHORT], 1u);
         }
         if (coarser != 0u || held != 0u) table_set(slot, entry, e | (coarser << SHADOW_ENTRY_COARSER) | (held << SHADOW_ENTRY_HELD));
-    } else if (i == 0u) {
-        // The slots each cull by instance goes over, the coarsest first, while
-        // their threads fit those of a frame, one at least; a slot it keeps
-        // (2) has its pages granted, the others wait.
+    } else if (params.step == STEP_FINISH) {
+        // The slots each cull by instance goes over, those it left out the most
+        // frames in a row first, then the coarsest, while their threads fit
+        // those of a frame, one at least; a slot it keeps (2) has its pages
+        // granted, the others wait.
         for (uint round = 0u; round < 2u; round++) {
-            uint list = work_list(round), count = 0u, total = 0u;
-            for (uint k = 0u; k < SHADOW_SLOTS; k++) {
-                uint slot = slot_by_rank(k), has = SHADOW_WORDS_HAS + round * SHADOW_SLOTS + slot, threads = reach_threads(slot, round);
-                if (pages[has] == 0u || (count > 0u && total + threads > params.threads)) continue;
-                pages[has] = 2u;
-                if (threads == 0u) continue;
-                pages[list + 1u + count++] = slot | total << SHADOW_WORK_SHIFT;
-                total += threads;
+            uint slot = lane < SHADOW_SLOTS ? slot_by_rank(lane) : SHADOW_SLOTS, key = 0xFFFFu;
+            uint skipped = SHADOW_WORDS_SKIPPED + round * SHADOW_SLOTS;
+            if (slot < SHADOW_SLOTS && pages[SHADOW_WORDS_HAS + round * SHADOW_SLOTS + slot] != 0u) key = ((0xFFu - min(pages[skipped + slot], 0xFFu)) << 8u) | lane;
+            shared_words[lane] = key;
+            GroupMemoryBarrierWithGroupSync();
+            for (uint size = 2u; size <= ROUND_GROUP; size <<= 1u) {
+                for (uint stride = size >> 1u; stride > 0u; stride >>= 1u) {
+                    if (lane < ROUND_GROUP / 2u) {
+                        uint low = 2u * stride * (lane / stride) + lane % stride, high = low + stride;
+                        uint a = shared_words[low], b = shared_words[high];
+                        if ((a > b) == ((low & size) == 0u) && a != b) {
+                            shared_words[low] = b;
+                            shared_words[high] = a;
+                        }
+                    }
+                    GroupMemoryBarrierWithGroupSync();
+                }
             }
-            pages[list] = count;
-            cull_args(round, total, round != ROUND_STAYS);
+            if (lane == 0u) {
+                uint list = work_list(round), count = 0u, total = 0u;
+                for (uint k = 0u; k < SHADOW_SLOTS && shared_words[k] != 0xFFFFu; k++) {
+                    uint at = slot_by_rank(shared_words[k] & 0xFFu), has = SHADOW_WORDS_HAS + round * SHADOW_SLOTS + at, threads = reach_threads(at, round);
+                    if (count > 0u && total + threads > params.threads) {
+                        pages[skipped + at] += 1u;
+                        continue;
+                    }
+                    pages[has] = 2u;
+                    pages[skipped + at] = 0u;
+                    if (threads == 0u) continue;
+                    pages[list + 1u + count++] = at | total << SHADOW_WORK_SHIFT;
+                    total += threads;
+                }
+                pages[list] = count;
+                cull_args(round, total, round != ROUND_STAYS);
+            }
+            AllMemoryBarrierWithGroupSync();
         }
+        if (lane != 0u) return;
         // The foresight of the cache: of the slots it keeps, those with pages not foreseen yet.
         uint list = work_list(ROUND_FORESEE), count = 0u, total = 0u;
         for (uint k = 0u; k < SHADOW_SLOTS; k++) {
