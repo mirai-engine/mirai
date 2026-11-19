@@ -3,11 +3,11 @@ name: mirai-store
 description: Mirai machine-wide content-addressed store (the `store` package) - chunks in
   append-only packs, objects as trees of chunks read by group and offset, refs, commits and
   batches, index generations, the sweep that compacts packs beside running writers, the scrub,
-  leases and the default root - and the `exchange` package that moves blobs and refs between peers
-  over `net` (wants, priorities, several sources, lying peers, blocking fetch). Use when storing or
-  sharing heavy content between projects or peers, building an asset library or a derived data
-  cache on top of it, fetching a blob from another machine, or diagnosing a corrupt, missing,
-  slow or growing store.
+  leases and the default root - and the `exchange` package that moves the chunks of objects and
+  refs between peers over `net` (asks with a budget, wants as objects, priorities, several
+  sources, lying peers, blocking fetch). Use when storing or sharing heavy content between
+  projects or peers, building an asset library or a derived data cache on top of it, fetching an
+  object or a blob from another machine, or diagnosing a corrupt, missing, slow or growing store.
 ---
 
 # Mirai store
@@ -30,9 +30,8 @@ derived data cache that use it decide what a ref means and what is live.
 - Sweep, compaction, generations, scrub and the sweep's claims: `store/sweep.odin`; leases:
   `store/leases.odin`. The sweep a long-running owner calls, with what is live on the machine:
   `asset.store_sweep` (`asset/collect.odin`).
-- Blobs, the whole-file address the consumers still use, and receiving them in pieces:
-  `store/bridge.odin`, `store/receive.odin`.
-- Moving blobs and refs between peers (`exchange`): what its owner calls →
+- Blobs, the whole-file address the consumers still use: `store/bridge.odin`.
+- Moving objects and refs between peers (`exchange`): what its owner calls →
   [exchange](references/exchange.md#what-the-owner-calls), its rules →
   [invariants](references/exchange.md#invariants), its tests →
   [verification](references/exchange.md#verification).
@@ -128,9 +127,8 @@ derived data cache that use it decide what a ref means and what is live.
   leaf and the byte where it begins.
 - Until the consumers move to objects, a blob (the standard BLAKE3 of a whole file) is an object
   of one group and an alias, a ref of the empty namespace named by the blob's hex. A blob's file
-  path is a copy written once into `tmp/blobs`, and its piece table is hashed from its bytes and
-  checked against its address when served, so the old wire keeps working; a blob being received
-  in pieces lives in `tmp/partial` until whoever finds every piece claims, checks and puts it.
+  path is a copy written once into `tmp/blobs`. A received object is named a blob only once its
+  bytes hash to the blob's address.
 - No input terminates the process: damaged, truncated or hostile packs and generations, random
   tables and pieces, out-of-range indices and memory that runs out return an `Error`; a pack that
   does not read is skipped and a generation that does not read refuses the root.
@@ -148,8 +146,9 @@ derived data cache that use it decide what a ref means and what is live.
   `a_full_volume_is_no_space_and_a_sweep_frees_it`, `a_scrub_tombstones_a_damaged_chunk`,
   `hostile_packs_and_generations_are_refused`, `hostile_inputs_return_errors` and
   `fresh_leases_keep_their_current_addresses`; for blobs
-  `address_is_the_same_through_put_bytes_put_file_and_receiving` and
-  `receiving_resumes_after_reopening_and_reads_the_pieces_it_has`; for chunks and nodes
+  `address_is_the_same_through_put_bytes_put_file_and_receiving`,
+  `a_received_object_is_named_a_blob_only_when_its_bytes_make_it` and
+  `a_chunk_check_tombstones_a_damaged_copy`; for chunks and nodes
   `chunks_are_the_same_streamed_in_any_split_and_whole`,
   `an_edit_changes_two_data_chunks_and_one_node_per_level`, `hostile_nodes_return_errors` and
   `groups_resolve_at_every_boundary`.
