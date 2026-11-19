@@ -172,7 +172,9 @@ object_error :: proc(error:store.Error) -> Error {
 
 // The meta and the groups of an object against each other: a directory of
 // entries inside the file, ascending and apart, each with the group of its
-// tag and index holding its stored bytes.
+// tag and index holding its stored bytes, and a file that ends with its last
+// chunk. Every size the meta declares is bounded by the groups before anything
+// is allocated.
 @(private)
 object_check :: proc(a:^Asset,limit:u64) -> Error {
     header:=a.blob.header
@@ -193,6 +195,8 @@ object_check :: proc(a:^Asset,limit:u64) -> Error {
         total+=entry.uncompressed_size
         if total>limit {return .Too_Large}
     }
+    // The file ends where its last chunk does: its size is what the groups hold.
+    if header.total_size!=end {return .Corrupt}
     allocation:mem.Allocator_Error
     if a.object.stored,allocation=make([][]u8,count,a.allocator);allocation!=nil {return .Out_Of_Memory}
     if a.object.here,allocation=make([]bool,count,a.allocator);allocation!=nil {return .Out_Of_Memory}

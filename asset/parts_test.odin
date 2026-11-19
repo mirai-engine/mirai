@@ -273,20 +273,35 @@ hostile_object_meta_and_groups_fail_the_asset :: proc(t:^testing.T) {
             entry.offset=1<<40
         },-1,0,.Corrupt},
         {"count",proc(meta:[]u8,random:^u64) {(^Header)(raw_data(meta)).chunk_count+=1},-1,0,.Corrupt},
+        {"a total beyond its groups",proc(meta:[]u8,random:^u64) {(^Header)(raw_data(meta)).total_size=1<<40},-1,0,.Corrupt},
+        {"a stream larger than its pieces",proc(meta:[]u8,random:^u64) {
+            header:=(^Header)(raw_data(meta))
+            for i in 0..<int(header.chunk_count) {
+                entry:=(^Chunk_Entry)(raw_data(meta[HEADER_SIZE+i*CHUNK_ENTRY_SIZE:]))
+                if entry.tag!=TAG_SCHM {continue}
+                entry.compression,entry.uncompressed_size=.Stream,PACK_MAX-1
+            }
+        },-1,0,.Corrupt},
     }
+    // What a meta declares is bounded by its groups before anything is allocated.
+    backing:=make([]u8,64<<20)
+    defer delete(backing)
     for c in cases {
         meta:=slice.clone(bytes[:meta_size],context.temp_allocator)
         if c.edit!=nil {c.edit(meta,&random)}
         root:=put(&s,&good,bytes,meta,c.skip,c.tag)
+        arena:mem.Arena
+        mem.arena_init(&arena,backing)
         a:Asset
-        error:=asset_open_object(&a,&s,root,context.temp_allocator)
+        error:=asset_open_object(&a,&s,root,mem.arena_allocator(&arena))
         if error==.None {
             // What opens reads each chunk it names and still holds together.
             for i in 0..<int(a.blob.header.chunk_count) {_,error=asset_stored(&a,i);if error!=.None {break}}
             asset_close(&a)
         }
         testing.expectf(t,error==c.want,"%s: %v, not %v",c.name,error,c.want)
-        _,file_error:=object_file(&s,root,context.temp_allocator)
+        mem.arena_init(&arena,backing)
+        _,file_error:=object_file(&s,root,mem.arena_allocator(&arena))
         testing.expectf(t,file_error!=.None,"%s: no file is made of it",c.name)
     }
     // A root whose groups go beyond its entries is no node the store reads.
