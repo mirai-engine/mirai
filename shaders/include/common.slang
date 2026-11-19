@@ -370,30 +370,42 @@ float3 transform_normal(float4 inv[3], float3 n) {
     return normalize(inv[0].xyz * n.x + inv[1].xyz * n.y + inv[2].xyz * n.z);
 }
 
+// A corner of the polygon polygon_projected_angle sums: the edge from the
+// corner before it is summed as it comes, so no corner is kept in an array,
+// which would be local memory.
+void polygon_corner(float3 p, float3 normal, inout float3 first, inout float3 last, inout uint count, inout float sum) {
+    if (count == 0u) {
+        first = p;
+    } else {
+        float3 a = normalize(last);
+        float3 b = normalize(p);
+        float3 edge = cross(a, b);
+        float sine = length(edge);
+        if (sine > 1e-7) sum += dot(normal, edge) * (atan2(sine, dot(a, b)) / sine);
+    }
+    last = p;
+    count++;
+}
 // The solid angle of a convex polygon seen from a point, each direction
 // weighed by its cosine to normal, of the part above the horizon of normal:
 // pi when it covers that whole side. The integral along the edges of that
 // part (Arvo 1995). Corners relative to the point, in order around it.
 float polygon_projected_angle<let N : int>(float3 corners[N], float3 normal) {
-    float3 polygon[N + 1];
+    float3 first = float3(0.0);
+    float3 last = float3(0.0);
     uint count = 0u;
+    float sum = 0.0;
+    [unroll]
     for (uint i = 0u; i < uint(N); i++) {
         float3 a = corners[i];
         float3 b = corners[i + 1u < uint(N) ? i + 1u : 0u];
         float above_a = dot(normal, a);
         float above_b = dot(normal, b);
-        if (above_a >= 0.0) { polygon[count] = a; count++; }
-        if ((above_a >= 0.0) != (above_b >= 0.0)) { polygon[count] = a + (b - a) * (above_a / (above_a - above_b)); count++; }
+        if (above_a >= 0.0) polygon_corner(a, normal, first, last, count, sum);
+        if ((above_a >= 0.0) != (above_b >= 0.0)) polygon_corner(a + (b - a) * (above_a / (above_a - above_b)), normal, first, last, count, sum);
     }
     if (count < 3u) return 0.0;
-    float sum = 0.0;
-    for (uint i = 0u; i < count; i++) {
-        float3 a = normalize(polygon[i]);
-        float3 b = normalize(polygon[i + 1u < count ? i + 1u : 0u]);
-        float3 edge = cross(a, b);
-        float sine = length(edge);
-        if (sine > 1e-7) sum += dot(normal, edge) * (atan2(sine, dot(a, b)) / sine);
-    }
+    polygon_corner(first, normal, first, last, count, sum);
     return abs(sum) * 0.5;
 }
 

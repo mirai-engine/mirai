@@ -163,7 +163,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         Material medium = (Material)0;
         if (inside) {
             Instance solid = scene_instance(params.medium - 1u);
-            medium = material_row(material_of(solid, 0u), solid.material_values);
+            medium = material_row(material_of(instance_row(params.medium - 1u), solid, 0u), solid.material_values);
             reach = min(reach, material_reach(medium, REFLECT_MEDIUM_CUT));
         }
         Ray_Path path;

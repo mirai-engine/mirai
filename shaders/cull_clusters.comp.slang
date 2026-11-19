@@ -111,7 +111,7 @@ uint4 cluster_pixels(float3 low, float3 high, bool boxed) {
 void cluster_visible(uint index, Mesh mesh, uint ordinal, Cluster c, float3 low, float3 high, bool boxed) {
     uint phase = min(params.phase, 1u);
     Instance inst = scene_instance(index);
-    Material m = material_row(material_of(inst, cluster_material(mesh, c)), inst.material_values);
+    Material m = material_row(material_of(instance_row(index), inst, cluster_material(mesh, c)), inst.material_values);
     uint base = phase == 0u ? 0u : min(cull_state[CULL_LISTED], params.visible_capacity);
     uint first = 0u;
     uint listing = WaveActiveCountBits(true);
@@ -209,7 +209,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
         float scale = instance_scale(inst);
         Cluster_Cut cut = cluster_cut(view_detail(), inst, scale, mesh, c, frame.cut.x);
         if (!cut.drawn) return;
-        Material m = material_row(material_of(inst, cluster_material(mesh, c)), inst.material_values);
+        Material m = material_row(material_of(instance_row(index), inst, cluster_material(mesh, c)), inst.material_values);
         if (m.alpha_mode == ALPHA_BLEND) return;
         if (boxed) {
             bool away = m.two_sided == 0u && (posed ? pose.cone && cone_backfacing(inst, scale, pose.axis, pose.cutoff, low, high) : cluster_backfacing(inst, scale, c, low, high));
