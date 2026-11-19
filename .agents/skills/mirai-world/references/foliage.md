@@ -292,6 +292,14 @@ views draw is the mesh at rest moved per vertex.
   the view. A cell takes the zone of the `Wind` on top at the middle of its instances
   (`wind_zone_at`, over a `volume.Index` of the zones); where the zones are (not their values) has
   a revision, and the cells whose zone changed are published again.
+- **A mesh entity that sways.** A `Foliage_Sway` on an entity with a `Mesh_Renderer` sways it as a
+  type of the same `wind` sways, through the same hook, wind zones, swaying shadow and rays at
+  rest: `foliage_sway_render` draws its mesh as a batch of one instance at its place (with its
+  `Material_Values`, layers and shadows) while the entity is `Drawn_Elsewhere`, and sets the batch
+  again only where the entity's place, mesh, values, visibility or zone changed. The entity stays
+  what it was: its transform, collider and picking are its own, and an outline it is given is
+  drawn around its mesh at rest. It exists because a hand-placed plant that sways is better on its
+  own merits; nothing of it imitates another engine.
 - **Rays meet foliage at rest**: traced shadows, reflections, the indirect light and the probes.
   The traced shadow of a swaying canopy under a light no map holds stands still, and the probes
   see it at rest; a swayed leaf, and a leaned impostor, is tested from where it rests
@@ -515,6 +523,7 @@ the registry's memory as a file of the undo step that creates it.
   (`every_bender_tramples_the_foliage_and_it_stands_back_up_over_time`), zones of wind
   (`the_shadows_of_a_calm_valley_stay_still_whatever_blows_at_the_view`); on the GPU, with
   validation: `a_stalk_leans_away_from_where_a_bender_trampled_the_field`,
+  `a_mesh_entity_that_sways_is_drawn_once_as_it_stands_and_casts_its_swaying_shadow`,
   `a_swaying_wall_casts_its_shadow_where_it_leans_only_near_the_eye`,
   `a_swaying_canopy_is_shaded_as_it_is_at_rest`,
   `a_swaying_kind_builds_no_geometry_and_leaves_the_probes_still` and
