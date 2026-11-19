@@ -581,9 +581,16 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
 
 - **Snapshot.** Every file under the root that `project.own_path` accepts: all but the generated
   folder and the folders of version control. Each file is a blob of the store; the snapshot (path,
-  address, size, executable bit, sorted by path) is one more blob. The index in `.mirai/share`
-  keeps the address of each file by its size and time, so a file that did not change is not read
-  again.
+  address, size, executable bit, sorted by path) is one more blob. The size of an entry is that of
+  the blob put, so a file saved while the snapshot is taken gives a consistent entry. The index in
+  `.mirai/share` keeps the address of each file by its size and time, so a file that did not
+  change is not read again; it learns a file only once it is settled (the rule of the source
+  hashes of the library), so an edit of the same size within the same time is read.
+- **What a file carries.** Its bytes and its executable bit. Not its time: a joined file gets the
+  time it is written, which keeps build tools' staleness right. Not its other permissions: a
+  read-only file of the host is shared as any other, and a read-only file or folder of the joiner
+  is never replaced or removed, but reported. A link or a special file is left out with a message
+  that says to replace it with the file it points to.
 - **Share.** `mirai share` takes the snapshot, opens a server host with its port mapped as
   [collaboration](../../mirai-editor/references/collaboration.md) does, prints one invitation
   once the router answered, and serves until it is stopped (Ctrl+C), printing who comes and goes
@@ -597,12 +604,22 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
   leave the folder, are absolute, name a device, repeat where case is folded or put a file inside
   another; checks that the disks have room; fetches the files smallest first, many at once, and
   writes each whole through a rename; then refreshes the packages with the peers as the
-  `cache.Source` of the library, so the builds arrive by key and no source is needed. It prints
+  `cache.Source` of the library, so the builds arrive by key and no source is needed. A refresh
+  asks the source for every manifest and build it lacks in one batch before it goes package by
+  package, so it waits for the peers about once, not once per package. It prints
   progress at a steady pace and, at the end, how to open the project. The store keeps what
   arrived: a join stopped and run again fetches only the rest.
 - **Updating.** A folder joined before keeps its last snapshot in `.mirai/share`, the base of three
   ways: a file the host changed or removed is replaced or removed when the joiner left it as it
-  was; a file both changed is kept and reported, never overwritten.
+  was; a file both changed is kept and reported, never overwritten. Each file is checked again
+  just before it is written or removed, so an edit made while the join runs is kept too.
+- **Case.** A join probes whether the folder's file system folds case (APFS, NTFS). There paths
+  compare in lower case, so a host's rename that changes only case is the same file: it is
+  renamed in place, folders first, and never removed. Elsewhere it is a removal and a new file.
+- **Incomplete.** A file that cannot be written or removed (read-only, a read-only folder, held
+  open, a blob no peer has) is listed by path with why and how to fix it, the rest is done, and
+  `mirai join` exits with 3. The base it keeps holds the last entry of each such file, so running
+  the same join again does only those.
 - **Peers.** While a join runs it serves what it has, with an invitation of its own, so a third
   machine joins from either. After a join, `mirai share` in the folder serves it too.
 - Reaching a host is the invitation's: on another network one side needs a router that maps a port;
