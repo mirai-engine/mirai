@@ -357,8 +357,8 @@ SHADOW_RANK_GROUPS         :: (SHADOW_RANK_WORDS + SHADOW_RANK_GROUP - 1) / SHAD
 // The counts: pages the cache draws, the atlas composes, asked for, of the
 // pool that can be given (free, then those no point read, the oldest read
 // first), of them free, asked for and left out; the threads the culls by
-// instance ran; pages the cache or the
-// atlas did not draw whole this frame, which wait for the frames after; and
+// instance ran; pages the cache or the atlas did not draw whole this frame,
+// which wait for the frames after; and
 // the pages the bound of a frame grows for: those points read where no page
 // drawn holds them, and in a still view those that wait.
 SHADOW_COUNT_DRAWN         :: 0

@@ -136,7 +136,10 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - The engine has no Surface program: those of the tests are in `render/testdata/`.
 - A view's direct light costs its samples, not its lights: no pixel traces or reads one per light.
 - The maps of the shadows draw only what changed, in the frame it changed: no map shows a caster
-  or a light where it was in a frame before ([cache](references/lights.md#direct-light-of-a-view)).
+  or a light where it was in a frame before ([cache](references/lights.md#direct-light-of-a-view)),
+  but a page that waits for room to follow a batch that sways, which shows the sway it last drew,
+  never a lit page or a hole. What sways obeys the bound of the frame like the rest, and its plan
+  looks at no batch while none starts or stops swaying.
 - Shadows are never colored or darkened by the glass they pass, in the maps or in the rays: colored
   light through glass comes from the light, one that projects a texture.
 - What is decided per instance (its class, the row of its material with its own values) is built

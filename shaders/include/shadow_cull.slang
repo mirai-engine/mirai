@@ -20,7 +20,7 @@
 // (render.shadow_maps_pass), 0 that of those that stay, whose pages span
 // SHADOW_WORDS_BOUNDS for the round; movers:
 // words of the bits of what moves, the instances of the scene then the
-// batches drawn; threads: unused;
+// batches drawn;
 // plan: the word of the buffer of the maps the plans of the slots start at;
 // part: 1 while
 // the round draws of each page the texels SHADOW_WORDS_PART names alone (the
@@ -32,8 +32,8 @@
 // of the lists of the raster that draws them (raster_vertices.comp).
 struct Params_Block {
     uint reach; uint ranges; uint rows; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers;
-    uint threads; uint masks; uint plan; uint part; uint bound; uint foresee;
-    uint round; uint last; uint vertex_capacity; uint triangle_capacity; float margin; uint pad0;
+    uint masks; uint plan; uint part; uint bound; uint foresee;
+    uint round; uint last; uint vertex_capacity; uint triangle_capacity; float margin; uint pad0; uint pad1;
     // The eye the instances of a batch past its cull distance are left out
     // from, and how much farther than it (render.shadow_cull_eye).
     float4 cull;
