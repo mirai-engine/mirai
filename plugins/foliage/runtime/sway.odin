@@ -33,7 +33,7 @@ Sway_Key :: struct {
 }
 
 // The batch of a swaying entity; handle 0 while it is not drawn (hidden, or
-// its mesh not loaded). drawn: this plugin made it Drawn_Elsewhere.
+// its mesh not loaded). drawn: it is Drawn_Elsewhere.
 Resident_Sway :: struct {
     handle:render.Batch_Handle,
     key:Sway_Key,
@@ -96,8 +96,8 @@ Sway_Tables :: struct {
 }
 
 // The batch of a swaying entity as its rows are now: made, set again or
-// removed. One another library draws (Drawn_Elsewhere it did not take) is
-// left to it.
+// removed. A world copied with its entities (Play) keeps their
+// Drawn_Elsewhere, which this one takes as its own.
 @(private)
 sway_update :: proc(resident:^Foliage_Resident,t:Sway_Tables,commands:core.Commands,e:core.Entity,id:core.World_Id,problems:^core.Problems) {
     sway,swaying:=core.get(t.sways,e)
@@ -109,7 +109,6 @@ sway_update :: proc(resident:^Foliage_Resident,t:Sway_Tables,commands:core.Comma
     }
     held:=core.entity_map_get(&resident.sways,e)
     if held==nil {
-        if core.has(t.elsewhere,e) {return}
         put,kept:=core.entity_map_put(&resident.sways,e,Resident_Sway{})
         if !kept {
             memory_problem(problems,e,"this Foliage_Sway, which does not sway")
