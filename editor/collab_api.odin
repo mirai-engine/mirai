@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:sync"
 import "mirai:cook/share"
 import "mirai:editor/api"
+import wire "mirai:net"
 import "mirai:platform"
 import "mirai:std/base"
 import "mirai:ui"
@@ -16,7 +17,7 @@ Api_Collab_Host_Params :: struct {
 }
 
 Api_Collab_Join_Params :: struct {
-    invite:[64]u8 `mirai:"text,label=The code of the invitation of the host (like R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT)"`,
+    invite:[2*wire.INVITE_TEXT_BYTES]u8 `mirai:"text,label=The code of the invitation of the host (like 1R2M-0253-BDK5-G0W8-7DDP-ERX1-4HQA-72WY-3G7Z-9TCN-6G4Z-H69R-53KS-D1YS-JQ3K-6666-YHZK-J1MS-WDVS-Q5ZM-MZ0N-BE4)"`,
     name:[COLLAB_NAME_BYTES]u8 `mirai:"text,optional"`,
     folder:[512]u8 `mirai:"text,optional,label=Where the host's project goes: empty or the open project, updated by three ways; another folder, new or joined before, is opened once it has the files and joins the session from there"`,
 }
@@ -68,7 +69,7 @@ Api_Collab_Unsent :: struct {
 Api_Collab_Status :: struct {
     role:Collab_Role,
     phase:Collab_Phase,
-    invite:[48]u8 `mirai:"text,label=The host: the code to give others to join with"`,
+    invite:[wire.INVITE_TEXT_BYTES+1]u8 `mirai:"text,label=The host: the code to give others to join with"`,
     port:int,
     reason:[96]u8 `mirai:"text,label=Why the session ended"`,
     peers:[COLLAB_PEERS]Api_Collab_Peer `mirai:"label=The first count are in the session"`,
@@ -243,8 +244,12 @@ share_code :: proc(s:^Session,id,name,code,missing:string) {
             notify(s,"Copied the code")
         }
     }
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(24),padding={6,0,6,0},align_y=.Center,fill=ui.tone(ctx,"well"),stroke=ui.tone(ctx,"well_stroke"),radius=ui.metric(ctx,"radius_control"),clip_x=true}) {
-        ui.label(ctx,code!=""?code:missing,code!=""?10.5:ui.metric(ctx,"font_label"),code!=""?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted"),0)
+    // A code is wider than the popup: six of its groups a line.
+    LINE :: 6*5
+    lines:=code!=""?(len(code)+LINE-1)/LINE:1
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(f32(18*lines+6)),direction=.Column,padding={6,3,6,3},fill=ui.tone(ctx,"well"),stroke=ui.tone(ctx,"well_stroke"),radius=ui.metric(ctx,"radius_control"),clip_x=true}) {
+        if code=="" {ui.label(ctx,missing,ui.metric(ctx,"font_label"),ui.tone(ctx,"text_muted"),0)}
+        for at:=0;at<len(code);at+=LINE {ui.label(ctx,code[at:min(at+LINE-1,len(code))],10.5,ui.tone(ctx,"text"),0)}
     }
 }
 
@@ -267,7 +272,7 @@ share_build :: proc(s:^Session) {
         case st==nil || st.role==.None:
             if share_row(ctx,"Name") {ui.text_field(ctx,shell_id(g,"share_name"),c.name[:],&c.name_length,{height=24,size=11,live=true,keep_caret=true})}
             if c.joining {
-                if share_row(ctx,"Invitation") {ui.text_field(ctx,shell_id(g,"share_address"),c.join[:],&c.join_length,{height=24,size=11,placeholder="R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT",live=true,keep_caret=true})}
+                if share_row(ctx,"Invitation") {ui.text_field(ctx,shell_id(g,"share_address"),c.join[:],&c.join_length,{height=24,size=11,placeholder="1R2M-0253-BDK5-G0W8-7DDP-ERX1-4HQA-72WY-3G7Z-9TCN-6G4Z-H69R-53KS-D1YS-JQ3K-6666-YHZK-J1MS-WDVS-Q5ZM-MZ0N-BE4",live=true,keep_caret=true})}
             }
             if c.error!=.None {
                 if share_row(ctx,"Error") {ui.text(ctx,collab_error_say(s,c.error),ui.prose(ctx,ui.metric(ctx,"font_label"),ui.tone(ctx,"danger_soft")))}

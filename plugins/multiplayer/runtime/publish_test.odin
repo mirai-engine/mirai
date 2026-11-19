@@ -338,7 +338,7 @@ settings_the_host_refuses_name_their_field_and_its_range :: proc(t:^testing.T) {
         testing.expectf(t,strings.contains(text,field) && strings.contains(text,range),"%s",text)
         testing.expectf(t,strings.contains(s.reason_text,field),"%s",s.reason_text)
     }
-    text_of :: proc(s:string) -> (out:[96]u8) {
+    text_of :: proc(s:string) -> (out:[128]u8) {
         copy(out[:],s)
         return
     }

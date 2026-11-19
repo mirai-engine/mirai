@@ -95,7 +95,7 @@ collab_project_offer :: proc(s:^Session,st:^Collab_State) -> (problem:string) {
     defer if threaded {jobs.system_destroy(&js)}
     worker:=jobs.Worker_Ref{}
     if threaded {worker={system=&js,worker=jobs.OWNER}}
-    o,error:=share.offer(st.node,s.project_root,st.invite,worker,context.temp_allocator)
+    o,error:=share.offer(st.node,s.project_root,st.invite.secret,worker,context.temp_allocator)
     for line in o.taken.skipped {log.warnf("the session does not carry it: %s",line)}
     for line in o.problems {log.warnf("a guest will not get it: %s",line)}
     if error=="" {st.offered=o.address}
@@ -161,7 +161,7 @@ collab_join_start :: proc(s:^Session,st:^Collab_State,code,folder:string,reopen:
     j.allocator=base.dynamic_arena_allocator(&j.arena)
     j.folder=fmt.aprint(folder,allocator=j.allocator)
     j.reopen=reopen
-    j.desc={node=st.node,offer=share.offer_name(st.invite,&j.digits),folder=j.folder,progress=&j.progress,connect_seconds=COLLAB_HELLO_TIMEOUT}
+    j.desc={node=st.node,offer=share.offer_name(st.invite.secret,&j.digits),folder=j.folder,progress=&j.progress,connect_seconds=COLLAB_HELLO_TIMEOUT}
     // The importers of the project's plugins, for a package no peer has a build of.
     if s.has_project {j.desc.library=import_library}
     st.join=j
@@ -252,7 +252,7 @@ collab_project_destroy :: proc(s:^Session,st:^Collab_State) {
     if st.node!=nil {
         if st.role==.Host && s.store.root!="" {
             digits:[64]u8
-            store.ref_remove(&s.store,share.NAMESPACE,share.offer_name(st.invite,&digits))
+            store.ref_remove(&s.store,share.NAMESPACE,share.offer_name(st.invite.secret,&digits))
         }
         share.node_destroy(st.node)
         free(st.node)

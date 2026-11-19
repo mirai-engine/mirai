@@ -280,7 +280,7 @@ A third library declares its operation bytes, applies them and writes its parts:
   `host.launch_flag` and `host.launch_value` ([plugin
   arguments](../../mirai-core/references/host.md#plugin-arguments)): `--server [port]`
   (`Net_Settings.port` without a port), `--dedicated` (serves like `--server`, in a player without
-  the phases of whoever watches), `--invite [token]`, `--connect <invitation or address>`,
+  the phases of whoever watches), `--invite`, `--connect <invitation or address>`,
   `--new-player`, `--until-empty`, `--status <file>`, `--latency`, `--jitter` and `--loss`.
   A value that does not work,
   or `--server` with `--connect`, says why and ends the player with `host.PLAYER_USAGE`. Without
@@ -321,8 +321,10 @@ reason, and with `--until-empty` a server that emptied ends normally.
 - **Two ways in.** By address: `--server` serves, anyone who reaches its port joins with
   `--connect <address>`. By invitation: `--server --invite` serves only who brings its code, which
   it prints and `invite_code(session)` gives once the router answered; it carries the host's
-  address on its network and on its router, so the same `--connect <code>` joins from both.
-  `--invite <token>` fixes the token and maps nothing: the code carries only the LAN address.
+  address on its network and on its router, so the same `--connect <code>` joins from both. The
+  key of the invitation lasts while the server serves; `invite_give` hands the session one made by
+  whoever shows the code, never through a storage of the World, and then the session maps nothing.
+  The session zeroes it when it ends.
 - A server saves and loads its world with `save`; a client does not (`Unavailable`). Loading with
   clients is a [scene change](#scene-change).
 
@@ -407,13 +409,13 @@ this plugin the editor shows nothing of networking.
   shares its scene as host, Play serves the game from its own world; without online it serves only
   guests.
 - Serving: the scene is written to `.mirai/play/play.scene` and the world of Play opens a server
-  (`Session_Request.open`) on the first free UDP port from `Net_Settings.port`, with a new token;
-  its local players play in it and, as soon as the server listens, one `mirai-player` is opened per
-  online player (`--connect` through `127.0.0.1`, `--players 1` and `--latency` equal to half the
-  ping) over the editor's library, without compiling anything
-  ([player processes](../../mirai-editor/references/editor.md#networked-play)). Server and clients
-  run the same library this way; the protocol hash still rejects a client of another build, like an
-  external player or a guest with other code.
+  (`Session_Request.open`) on the first free UDP port from `Net_Settings.port`, with a new
+  invitation key; its local players play in it and, as soon as the server listens, one
+  `mirai-player` is opened per online player (`--connect` through `127.0.0.1`, `--players 1` and
+  `--latency` equal to half the ping) over the editor's library, without compiling anything ([player
+  processes](../../mirai-editor/references/editor.md#networked-play)). Server and clients run the
+  same library this way; the protocol hash still rejects a client of another build, like an external
+  player or a guest with other code.
 - `play.network.status` reports the state of `Net_Play`, with `invite`, the code to enter from an
   external player. Stop ends Play, the session and the online players; a paused Play keeps its
   connections.
