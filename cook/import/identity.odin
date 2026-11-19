@@ -58,7 +58,10 @@ writer_source :: proc(w:^Writer,path,folder:string) -> bool {
     if s==nil {return writer_fail(w,.Write,"%s: an import puts what it builds in a store: give it one (Import_Options.store)",path)}
     previous,manifest,found,error:=package_previous(s,w.options.manifest,w.origin,context.temp_allocator)
     if error.code!=.None {return writer_fail(w,error.code,"%s",error.message)}
-    w.previous,w.previous_manifest,w.stored=previous,manifest,found
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    w.previous=previous
+    w.previous_manifest=manifest
+    w.stored=found
     w.package_id=previous.id if found else writer_id(w)
     w.taken=make([]bool,len(previous.assets),context.temp_allocator)
     if documents:=w.options.documents;documents!="" {
