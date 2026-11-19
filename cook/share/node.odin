@@ -235,7 +235,9 @@ node_events :: proc(n:^Node,buffer:[]Event) -> []Event {
     return buffer[:count]
 }
 
-Node_Totals :: struct {connected:int,sent,received:u64,send_rate,receive_rate:f64}
+// bad: peers that sent what no peer sends, neither asked nor served since;
+// refused: their messages refused.
+Node_Totals :: struct {connected:int,sent,received:u64,send_rate,receive_rate:f64,bad:int,refused:u64}
 
 // Chunk bytes sent and received with every peer since the node began, and the rates now.
 node_totals :: proc(n:^Node) -> (t:Node_Totals) {
@@ -248,6 +250,8 @@ node_totals :: proc(n:^Node) -> (t:Node_Totals) {
             t.received+=progress.received
             t.send_rate+=progress.send_rate
             t.receive_rate+=progress.receive_rate
+            t.refused+=progress.refused
+            if progress.bad {t.bad+=1}
         }
     }
     return
