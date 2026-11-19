@@ -173,8 +173,8 @@ struct Hit {
 // blended are a class apart, so a ray that goes through glass never visits
 // them (RAY_SOLID, RAY_GLASS and RAY_SMALL, the mask of an instance).
 // The solid instances a ray meets: every one, or, in the passes of the probe
-// volume (MIRAI_TRACE_NO_SMALL), all but the small ones.
-#ifdef MIRAI_TRACE_NO_SMALL
+// volume (MIRAI_TRACE_PROBES), all but the small ones.
+#ifdef MIRAI_TRACE_PROBES
 #define RAY_OPAQUE RAY_SOLID
 #else
 #define RAY_OPAQUE (RAY_SOLID | RAY_SMALL)
@@ -185,6 +185,20 @@ struct Hit {
 // What the shadow rays of lights meet, and what the rays that see surfaces meet.
 #define RAY_SHADOWS (RAY_OPAQUE | RAY_SHADOW_ONLY)
 #define RAY_SEEN (RAY_OPAQUE | RAY_UNSHADOWED)
+
+// Metres from its origin where a ray meets nothing of a batch that sways now:
+// how far it sways (batch_near), so that a ray from a point the vertex hook
+// swayed does not meet its own leaf at rest. The rays of the probe volume
+// (MIRAI_TRACE_PROBES) leave probes and points at rest: they meet every
+// batch at rest whatever the wind, so a scene whose rays see no change is
+// the same to them with wind and without.
+float ray_batch_near(Instance row) {
+#ifdef MIRAI_TRACE_PROBES
+    return 0.0;
+#else
+    return batch_near(row);
+#endif
+}
 
 #ifdef MIRAI_HW_RT
 [[vk::binding(SLOT_TLAS, 0)]] RaytracingAccelerationStructure scene_tlas : register(MIRAI_REGISTER(t, SLOT_TLAS), space0);
@@ -210,7 +224,7 @@ Hit trace_ray_impl(float3 origin, float3 direction, float t_min, float t_max, bo
     while (query.Proceed()) {
         if (query.CandidateType() != CANDIDATE_NON_OPAQUE_TRIANGLE) continue;
         uint instance = uint(query.CandidateInstanceID());
-        if (instance_batched(instance) && query.CandidateTriangleRayT() * length_t < batch_near(batch_row(batch_of(instance)))) continue;
+        if (instance_batched(instance) && query.CandidateTriangleRayT() * length_t < ray_batch_near(batch_row(batch_of(instance)))) continue;
         if (hit_covers(instance, hw_primitive(instance, uint(query.CandidateGeometryIndex()), uint(query.CandidatePrimitiveIndex())),
                 query.CandidateTriangleBarycentrics(), query.CandidateTriangleRayT(), query.CandidateObjectRayDirection(), blend)) {
             query.CommitNonOpaqueTriangleHit();
@@ -354,7 +368,7 @@ bool trace_blas(uint mesh_word, float3 origin, float3 dir, float t_min, inout Hi
 bool trace_batch(uint batch, float3 origin, float3 direction, float t_min, inout Hit hit, bool any_hit, uint blend, uint classes) {
     Instance row = batch_row(batch);
     if ((batch_classes(row) & classes) == 0u) return false;
-    t_min = max(t_min, batch_near(row) / max(length(direction), 1e-12));
+    t_min = max(t_min, ray_batch_near(row) / max(length(direction), 1e-12));
     origin -= batch_anchor(row);
     uint root = batch_tree(row);
     uint words = batch_records(row);
