@@ -1420,14 +1420,18 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 					}
 				}
 				if scene_count > 0 && !shadow_range_add(&kept.ranges, &list, &end, 0, scene_count, scene_count) {return false}
+				if non_zero_resize(&kept.casters, len(casters)) != nil {return false}
+				held := 0
 				for &word, i in s.shadow_marks {
 					for ; word != 0; word &= word - 1 {
 						k := i * 64 + int(intrinsics.count_trailing_zeros(word))
 						c := &casters[k]
 						if !shadow_range_add(&kept.ranges, &list, &end, c.first, c.count, scene_count) {return false}
-						if _, err := append(&kept.casters, u32(k)); err != nil {return false}
+						kept.casters[held] = u32(k)
+						held += 1
 					}
 				}
+				base.truncate(&kept.casters, held)
 			}
 			kept.m, kept.tables, kept.cull, kept.threads = m, batch.tables, key, list.threads
 		}
@@ -1438,26 +1442,28 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 			if kept.movers != 0 {forget(s, view, kept)}
 			list: Shadow_Reach_List
 			end: u32
-			add :: proc(s: ^Scene_State, view: ^Shadow_View_Reach, kept: ^Shadow_Reached, list: ^Shadow_Reach_List, end: ^u32, k: i32, scene_count: u32) -> bool {
-				mover := s.shadow_movers[k]
-				if mover.change.fine > 0 && !(shadow_map_finest(kept.m, mover.change.low, mover.change.high) < mover.change.fine) {return true}
-				if !shadow_range_add(&kept.moves, list, end, mover.first, mover.count, scene_count) {return false}
-				if _, err := append(&kept.moving, u32(k)); err != nil {return false}
-				if view.mover_slots[k] == 0 {view.mover_threads += mover.count}
-				view.mover_slots[k] += 1
-				return true
-			}
-			// A level of the sun whose texel is no narrower than any sway holds none.
+			// A level of the sun, whose texel is the same over it, holds none
+			// where it is no narrower than any sway.
+			orthographic := m.kind == SHADOW_MAP_ORTHOGRAPHIC
 			texel := (m.span.z - m.span.x) / f32(max(m.rect.z, 1))
-			if slot >= SHADOW_SUN_LEVELS || texel < s.shadow_movers_fine {
-				if kept.all {
-					for _, k in s.shadow_movers {if !add(s, view, kept, &list, &end, i32(k), scene_count) {return false}}
-				} else {
-					for k in kept.casters {
-						if mover := s.shadow_mover_of[k]; mover >= 0 && !add(s, view, kept, &list, &end, mover, scene_count) {return false}
-					}
+			found := 0
+			if non_zero_resize(&kept.moving, len(s.shadow_movers)) != nil {return false}
+			if !orthographic || texel < s.shadow_movers_fine {
+				count := len(s.shadow_movers) if kept.all else len(kept.casters)
+				for i in 0 ..< count {
+					k := i32(i) if kept.all else s.shadow_mover_of[kept.casters[i]]
+					if k < 0 {continue}
+					mover := &s.shadow_movers[k]
+					fine := mover.change.fine
+					if fine > 0 && !((texel if orthographic else shadow_map_finest(m, mover.change.low, mover.change.high)) < fine) {continue}
+					if !shadow_range_add(&kept.moves, &list, &end, mover.first, mover.count, scene_count) {return false}
+					kept.moving[found] = u32(k)
+					found += 1
+					if view.mover_slots[k] == 0 {view.mover_threads += mover.count}
+					view.mover_slots[k] += 1
 				}
 			}
+			base.truncate(&kept.moving, found)
 			kept.movers, kept.move_threads = s.shadow_movers_found, list.threads
 		}
 		stays := &reach[slot][Shadow_Round.Stays]
