@@ -151,9 +151,11 @@ lock_path :: proc(root,name:string,allocator:=context.allocator) -> string {
 // holder, which is also what the holder wrote first in the lock
 // (measure_holder): a process that is no child of the measurement, like the
 // editor of a session a command of it calls, is told that pid and runs as
-// part of it while the lock says the same (measurement_holds). No process
-// waits for MEASURE_LOCK while its GPU turn says it works (gpu_turn_mark):
-// a measurement waits for those, so the two never wait for each other.
+// part of it while the lock says the same (measurement_holds). A process
+// takes its GPU turn before MEASURE_LOCK, never after, and its turn says it
+// is idle while it waits for MEASURE_LOCK (measure_try): what holds the
+// measurement never waits for room on the GPU, and no measurement waits for
+// what waits for it.
 BUILD_LOCK :: "build.lock"
 SHADERS_LOCK :: "shaders.lock"
 BUILD_NOTE :: "build.last"
