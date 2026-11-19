@@ -348,8 +348,25 @@ for what is seen and for every ray that finds nothing.
   that of its penumbra; radiance bounded by `SUN_DISC_MAX`) and its halo when the `Sun` has
   `disc`. The background of each view and what is seen through glass use it; the rays that gather
   light and the reflections do not, to which the sun arrives as light and specular highlight.
-- With `use_background`, or in the prefab editor background, the solid color replaces the seen sky
-  and the disc; the sky light keeps coming from `sky_radiance`.
+- **Background.** With `use_background` the background is what a camera sees past the scene: the
+  color `background` (nits), or `background_image` times it, an image of the same kind as `image`
+  that turns with it (`Gpu_Frame.background` and `background_map`). The sky keeps lighting: it is
+  a painted sky with light the game controls.
+  - The view (`sky_shown`, without the disc) and the reflections (`sky_reflected`: the traced ones
+    that miss, the sky share of `probe_specular` and the specular and coat lobes without probes)
+    see it; a lobe of roughness r takes `r` of it from the sky's light, so a mirror shows the
+    background and a fully rough surface is lit as without it. Glass shows it through the image
+    behind and in its lobes.
+  - The sky's light (`sky_radiance`, `sky_irradiance`): the probe rays and what they gather, the
+    diffuse light without GI, the glow of media and the fog, the meter (background pixels do not
+    count) and the indirect reference.
+  - A lit atmosphere is what is seen and reflected and the haze over the far scene, so no
+    background stands for it; the background shows while no `Sun` lights the air.
+  - It is not part of a change of the sky (`from`, `arrival`). `background_image` without
+    `use_background` never shows: the problem `render.sky_background`.
+  - The studio of the previews, thumbnails and the prefab editor (`background_behind`) and the
+    editor's `renderer_set_backdrop` show their background only behind: their reflections show the
+    light that shapes what they show.
 - The sun light at a place comes only from `sun_light(position)`: `Gpu_Frame.sun_color` is that of
   above the air when the sky is an atmosphere.
 
