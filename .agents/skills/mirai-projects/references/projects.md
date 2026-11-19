@@ -32,6 +32,8 @@ Targets, jobs, fingerprint, project shaders, cooking and shipped game (`cook/bui
     shaders/        shader generation of the project
     build/          files of the jobs, sources and fingerprint of the last build per target
     cache/          machine caches (asset registry, textures, built meshes, compressed .anim)
+    share/          what sharing keeps on this machine: the last snapshot joined, the index of
+                    the files and the name of the offer (sharing a project, below)
     thumbs/         asset previews of the editor
 ```
 
@@ -332,7 +334,8 @@ Each mode has its folder: switching between them compiles nothing.
 - Programs `mirai-editor` and `mirai-player`, which load the `editor` library of the project
   ([host](../../mirai-core/references/host.md#project-libraries)), and over the editor
   library `mirai-import`, that of `mirai import`
-  ([import](../../mirai-imports/references/imports.md#what-is-written)), and `mirai-author`,
+  ([import](../../mirai-imports/references/imports.md#what-is-written)) and of `mirai share`
+  and `mirai join` ([sharing](#sharing-a-project)), and `mirai-author`,
   that of `mirai ui` and `mirai scene`
   ([documents](../../mirai-agent-api/references/api.md#mirai-ui-and-mirai-scene)): this way the
   `mirai` tool links neither importers nor renderer and compiles before the generated shaders
@@ -510,6 +513,8 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Run the content tool of a project | `mirai content [project] [-- arguments]` |
 | Ingest a source from anywhere and add it to a project | `mirai import <file> [--project P] [--folder F] [settings]` |
 | Bring the packages a project pins to builds of this engine | `mirai import --refresh <root> [--fast]` |
+| Serve a project peer to peer until stopped | `mirai share [project] [--port N] [--store S]` |
+| Receive a shared project, or update a folder joined before | `mirai join <invitation> [folder] [--address A] [--port N] [--store S]` |
 | Documents of interfaces and scenes, no editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
 | Git plugins of a project | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
 | Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins. In a runtime package it also fails on an allocation whose error nothing receives (`tools/mirai/alloc_lint.odin` says which calls and which packages), and in the runtime or editor part of a plugin on an import of `render` or `rhi` outside its tests or of the physics solver (`tools/mirai/solver_lint.odin`) |
@@ -566,6 +571,42 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
   ends with 1 if there are errors. It requires `git config core.symlinks` and `.claude/skills` as a
   symbolic link to `.agents/skills`: without it, the skills do not reach the agents (on Windows
   developer mode is needed).
+
+## Sharing a project
+
+`cook/share` gives one person's project to another, peer to peer, with no server and no git: the
+files of the project travel as a snapshot, and its heavy content as the builds of its packages,
+by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
+
+- **Snapshot.** Every file under the root that `project.own_path` accepts: all but the generated
+  folder and the folders of version control. Each file is a blob of the store; the snapshot (path,
+  address, size, executable bit, sorted by path) is one more blob. The index in `.mirai/share`
+  keeps the address of each file by its size and time, so a file that did not change is not read
+  again.
+- **Share.** `mirai share` takes the snapshot, opens a server host with its port mapped as
+  [collaboration](../../mirai-editor/references/collaboration.md) does, prints one invitation
+  once the router answered, and serves until it is stopped (Ctrl+C), printing who comes and goes
+  and how much went out. The snapshot is the ref `shares/<hash of the invitation token>`, so a
+  joiner finds it by the code and the names peers list reveal no token. Peers read the namespaces
+  of snapshots, package manifests, shared builds and `cook/cache` results: the owner exposes the
+  whole machine library to whoever holds the invitation, never the Fast builds, the choices or
+  the origins of the machine. A lease holds the snapshot, its files and the builds the project
+  pins.
+- **Join.** `mirai join` fetches the snapshot, refusing one that is too large or whose paths could
+  leave the folder, are absolute, name a device, repeat where case is folded or put a file inside
+  another; checks that the disks have room; fetches the files smallest first, many at once, and
+  writes each whole through a rename; then refreshes the packages with the peers as the
+  `cache.Source` of the library, so the builds arrive by key and no source is needed. It prints
+  progress at a steady pace and, at the end, how to open the project. The store keeps what
+  arrived: a join stopped and run again fetches only the rest.
+- **Updating.** A folder joined before keeps its last snapshot in `.mirai/share`, the base of three
+  ways: a file the host changed or removed is replaced or removed when the joiner left it as it
+  was; a file both changed is kept and reported, never overwritten.
+- **Peers.** While a join runs it serves what it has, with an invitation of its own, so a third
+  machine joins from either. After a join, `mirai share` in the folder serves it too.
+- Reaching a host is the invitation's: on another network one side needs a router that maps a port;
+  the failures say so, as they say an invitation whose share ended, another version of Mirai, a
+  store of another layout, a disk without room and a package no connected peer has a build of.
 
 ## Tool and machine
 

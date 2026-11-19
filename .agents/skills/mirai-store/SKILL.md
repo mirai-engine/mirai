@@ -27,6 +27,8 @@ derived data cache that use it decide what a ref means and what is live.
   [exchange](references/exchange.md#what-the-owner-calls), its rules →
   [invariants](references/exchange.md#invariants), its tests →
   [verification](references/exchange.md#verification).
+- Sharing a whole project over the exchange (`mirai share`, `mirai join`):
+  [sharing](../mirai-projects/references/projects.md#sharing-a-project).
 
 ## Workflow
 

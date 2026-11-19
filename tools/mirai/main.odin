@@ -50,6 +50,8 @@ COMMANDS :: [?]Command{
     {"scene",SCENE_USAGE,"Reads, writes and checks the scenes of a project as the documents scene.inspect gives with root and scene.write takes, with no editor",cmd_scene},
     {"content",CONTENT_USAGE,"Runs the content tool of a project, which writes the assets it makes from code",cmd_content},
     {"import","import <file> [--project P] [--folder F] [settings] | import --refresh <root>... [--fast]","Ingests a model, an image, a sound, a font or a prompts manifest from anywhere into the library of the machine store and adds it to a project; --refresh brings the packages a project or plugin pins to builds this engine reads",cmd_import},
+    {"share",SHARE_USAGE,"Serves a project to whoever holds the invitation it prints, peer to peer, with the packages of the machine store, until stopped",cmd_share},
+    {"join",JOIN_USAGE,"Writes the project a share offers into a folder, or updates one joined before, and fetches the builds of its packages from the peers",cmd_join},
 }
 
 main :: proc() {
