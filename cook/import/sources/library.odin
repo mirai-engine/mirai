@@ -34,7 +34,8 @@ import "mirai:store"
 //   ingesting its origin when it is on this machine (also when the source
 //   changed); else the report says, by package name, that a machine with its
 //   source must ingest it. A manifest the store lacks comes from the
-//   project's file of it, else from the caller's source. It never removes a
+//   project's file of it, else from the caller's source. What it asks the
+//   source for is asked together first (refresh_prefetch). It never removes a
 //   blob, a ref or a file, and never builds without the source.
 //
 // Following a package writes or follows its documents in the project's folder
@@ -203,6 +204,7 @@ project_refresh :: proc(root:string,options:Library_Options,allocator:=context.a
     report.packages=len(list.packages)
     if len(list.packages)==0 {return}
     project_follow_begin(&l,top)
+    refresh_prefetch(&l,top,list.packages[:])
     for &entry,at in list.packages {
         if options.progress.procedure!=nil {fmt.wprintfln(options.progress,"package %d of %d",at+1,len(list.packages))}
         package_refresh(&l,top,entry,&report,false)
@@ -255,6 +257,7 @@ Library_State :: struct {
     formats:[]importer.Format,     // FORMATS and those of the plugins, once read
     assets:string,                 // of the project followed
     registry:^asset.Registry,      // its assets, scanned once
+    asked:map[string]bool,         // "<namespace>/<name>" asked of the source, and whether it gave it
 }
 
 @(private="file")
@@ -263,6 +266,7 @@ library_begin :: proc(l:^Library_State,options:Library_Options,allocator:mem.All
     mem.dynamic_arena_init(&l.scratch,allocator,allocator,block_size=1<<20,out_band_size=1<<20)
     l.temp=base.dynamic_arena_allocator(&l.scratch)
     l.formats=FORMATS[:]
+    l.asked=make(map[string]bool,l.temp)
 }
 
 @(private="file")
@@ -397,11 +401,67 @@ build_found :: proc(l:^Library_State,p:^asset.Package,manifest,key:store.Hash,ke
     return {build=b,hash=hash,final=b.final},true
 }
 
-// Asks the source of the library for the ref (namespace, name).
+// Asks the source of the library for the ref (namespace, name), once per call
+// of the library.
 @(private="file")
 fetch :: proc(l:^Library_State,namespace,name:string) -> bool {
+    if given,asked:=l.asked[fmt.aprintf("%s/%s",namespace,name,allocator=l.temp)];asked {return given}
+    names:=[1]string{name}
+    fetch_many(l,namespace,names[:])
+    return l.asked[fmt.aprintf("%s/%s",namespace,name,allocator=l.temp)]
+}
+
+// Asks the source for the refs of namespace with names together, but those
+// asked before.
+@(private="file")
+fetch_many :: proc(l:^Library_State,namespace:string,names:[]string) {
     source:=l.options.source
-    return source.fetch!=nil && source.fetch(source.user,l.options.store,namespace,name)
+    if source.fetch==nil || len(names)==0 {return}
+    asking:=make([dynamic]string,l.temp)
+    keys:=make([dynamic]string,l.temp)
+    for name in names {
+        key:=fmt.aprintf("%s/%s",namespace,name,allocator=l.temp)
+        if key in l.asked {continue}
+        l.asked[key]=false
+        append(&asking,name)
+        append(&keys,key)
+    }
+    given:=make([]bool,len(asking),l.temp)
+    source.fetch(source.user,l.options.store,namespace,asking[:],given)
+    for key,k in keys {l.asked[key]=given[k]}
+}
+
+// What a refresh will ask the source for, asked together before the packages
+// are refreshed in order, which then find it here: the manifests the store
+// does not keep, then the builds of the packages that have none here and no
+// changed source here to ingest again. A refresh asks for nothing else.
+@(private="file")
+refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Package) {
+    if l.options.source.fetch==nil {return}
+    s:=l.options.store
+    lacking:=make([dynamic]string,l.temp)
+    for entry in entries {
+        entry:=entry
+        if _,error:=asset.package_load(s,top,&entry,l.temp);error==.Not_Found {
+            id_text:[64]u8
+            append(&lacking,strings.clone(base.asset_id_format(entry.id,id_text[:32]),l.temp))
+        }
+    }
+    fetch_many(l,asset.REF_PACKAGES,lacking[:])
+    keys:=make([dynamic]string,l.temp)
+    for entry in entries {
+        entry:=entry
+        p,error:=asset.package_load(s,top,&entry,l.temp)
+        if error!=.None {continue}
+        source:=importer.origin_path(p.origin.path,top)
+        if source!="" && !importer.unsafe_path(source) && os.exists(source) && source_changed(l,&p,source) {continue}
+        key,keyed:=package_key(l,&p)
+        if !keyed {continue}
+        if _,found:=build_found(l,&p,entry.manifest,key,keyed);found {continue}
+        digits:[64]u8
+        append(&keys,strings.clone(store.hex(key,&digits),l.temp))
+    }
+    fetch_many(l,asset.REF_IMPORTS,keys[:])
 }
 
 // The import of the source at origin into the store, with its lock: what
@@ -499,7 +559,10 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     f:Found
     found:bool
     f,found=build_found(l,&p,entry.manifest,key,keyed)
-    if !found && keyed && fetch(l,asset.REF_IMPORTS,store.hex(key,&digits)) {
+    if found && keyed && l.asked[fmt.aprintf("%s/%s",asset.REF_IMPORTS,store.hex(key,&digits),allocator=l.temp)] {
+        // The source gave it before the refresh came to it.
+        report.fetched+=1
+    } else if !found && keyed && fetch(l,asset.REF_IMPORTS,store.hex(key,&digits)) {
         if f,found=build_here(l,&p,key);found {report.fetched+=1}
     }
     if !found {

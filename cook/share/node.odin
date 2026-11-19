@@ -253,31 +253,70 @@ node_lease :: proc(n:^Node,now:f64) {
     }
 }
 
-// The source a refresh of the library asks: a ref of the peers with its blob,
-// and for a build every blob it lists, made complete in the store before the
-// ref is set there. For a thread other than the pump's.
+// The source a refresh of the library asks: refs of the peers with their
+// blobs, and for a build every blob it lists, made complete in the store
+// before the ref is set there. The names of one call are asked together, and
+// the blobs of their builds fetched together. For a thread other than the pump's.
 node_source :: proc(n:^Node) -> cache.Source {
     return {fetch=node_fetch,user=n}
 }
 
 @(private)
-node_fetch :: proc(user:rawptr,into:^store.Store,namespace,name:string) -> bool {
+node_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
     n:=(^Node)(user)
-    if into!=n.s {return false}
-    address,error:=exchange.fetch_ref(&n.x,namespace,name)
-    if error!=.None {return false}
-    defer exchange.forget(&n.x,address)
+    if into!=n.s || len(names)==0 {return}
+    addresses:=make([]store.Hash,len(names),context.temp_allocator)
+    refs_fetch(&n.x,namespace,names,addresses)
     if namespace==asset.REF_IMPORTS {
-        b,build_error:=asset.build_get(into,address,context.temp_allocator)
-        if build_error!=.None {return false}
         blobs:=make([dynamic]store.Hash,context.temp_allocator)
-        for o in b.outputs {
-            append(&blobs,o.blob)
-            if o.thumbnail!={} {append(&blobs,o.thumbnail)}
+        for &address in addresses {
+            if address=={} || !store.has(into,address) {continue}
+            b,build_error:=asset.build_get(into,address,context.temp_allocator)
+            if build_error!=.None {
+                address={}
+                continue
+            }
+            for o in b.outputs {
+                append(&blobs,o.blob)
+                if o.thumbnail!={} {append(&blobs,o.thumbnail)}
+            }
         }
-        if exchange.fetch_all(&n.x,blobs[:])!=.None {return false}
+        blobs_fetch(&n.x,blobs[:])
+        for &address in addresses {
+            if address=={} {continue}
+            b,_:=asset.build_get(into,address,context.temp_allocator)
+            for o in b.outputs {
+                if !store.has(into,o.blob) || o.thumbnail!={} && !store.has(into,o.thumbnail) {address={}}
+            }
+        }
     }
-    return store.ref_set(into,namespace,name,address)==.None
+    for address,k in addresses {
+        given[k]=address!={} && store.has(into,address) && store.ref_set(into,namespace,names[k],address)==.None
+    }
+}
+
+// The addresses peers name with namespace and names, each with its blob
+// complete, or {} for a name none names. A name or a blob that none has makes
+// the batch Missing, which says nothing of the others: the batch is asked
+// again by halves, so m missing of n cost about m log n round trips, not n.
+@(private)
+refs_fetch :: proc(x:^exchange.Exchange,namespace:string,names:[]string,addresses:[]store.Hash) {
+    error:=exchange.fetch_refs(x,namespace,names,addresses)
+    if error!=.Missing || len(names)==1 {return}
+    half:=len(names)/2
+    refs_fetch(x,namespace,names[:half],addresses[:half])
+    refs_fetch(x,namespace,names[half:],addresses[half:])
+}
+
+// The blobs of addresses fetched together, by halves when some peer lacks one.
+@(private)
+blobs_fetch :: proc(x:^exchange.Exchange,addresses:[]store.Hash) {
+    if len(addresses)==0 {return}
+    error:=exchange.fetch_all(x,addresses)
+    if error!=.Missing || len(addresses)==1 {return}
+    half:=len(addresses)/2
+    blobs_fetch(x,addresses[:half])
+    blobs_fetch(x,addresses[half:])
 }
 
 // The name of the snapshot a share offers under its invitation token: a hash of

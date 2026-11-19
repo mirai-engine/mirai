@@ -15,9 +15,11 @@ import "mirai:store"
 // no longer has the bytes of its address is removed so that building again
 // replaces it. The store owns space: the cache removes nothing it can read.
 
-// Asked on a miss before building: makes the blob of the ref (namespace,
-// name) complete in into and sets the ref there, or says it has none.
-Fetch :: #type proc(user:rawptr,into:^store.Store,namespace,name:string) -> bool
+// Asked on a miss before building: for each of names, makes the blob of the
+// ref (namespace, name) complete in into and sets the ref there; given (as
+// long as names, all false when asked) says for which it did. Names known together are asked
+// together, so a source that asks peers waits for them once.
+Fetch :: #type proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool)
 
 Source :: struct {
     fetch:Fetch, // nil: none
@@ -82,7 +84,16 @@ names :: proc(c:Cache,name:string,key,version:u64,namespace_buffer:^[store.NAME_
 
 @(private)
 fetched :: proc(c:Cache,namespace,ref:string) -> bool {
-    return c.source.fetch!=nil && c.source.fetch(c.source.user,c.store,namespace,ref)
+    return source_fetch(c.source,c.store,namespace,ref)
+}
+
+// Asks source for the one ref (namespace, name); false without a source.
+source_fetch :: proc(source:Source,into:^store.Store,namespace,name:string) -> bool {
+    if source.fetch==nil {return false}
+    names:=[1]string{name}
+    given:[1]bool
+    source.fetch(source.user,into,namespace,names[:],given[:])
+    return given[0]
 }
 
 @(private)
@@ -110,8 +121,11 @@ load_here :: proc(s:^store.Store,namespace,ref:string,key,version:u64,file:^asse
 // it lists. What a peer gives, and what an installed engine gives from the
 // store of the builds of its plugins.
 store_source :: proc(from:^store.Store) -> Source {
-    fetch :: proc(user:rawptr,into:^store.Store,namespace,name:string) -> bool {
+    fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
         from:=(^store.Store)(user)
+        for name,k in names {given[k]=copy_ref(from,into,namespace,name)}
+    }
+    copy_ref :: proc(from,into:^store.Store,namespace,name:string) -> bool {
         hash,error:=store.ref_get(from,namespace,name)
         if error!=.None || !blob_copy(from,into,hash) {return false}
         if namespace==asset.REF_IMPORTS {
