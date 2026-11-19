@@ -34,10 +34,16 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     Probe held = probes[probe];
     probes[probe].hits = uint4(kept.stands ? held.hits.x : stamp, kept.stands && !kept.unlit ? held.hits.y : stamp, stamp, 0u);
     uint traced = chosen[chosen_traced(slot)];
-    uint passing = (traced & CHOSEN_PASSING) != 0u ? PROBE_PASSING : 0;
+    // One whose rays meet what changes with nothing that says so waits for its
+    // next turn twice as long as it waited for this one, if this one left its
+    // light where it was, and takes every turn again once one moves it.
+    uint waits = uint(held.cell.w & PROBE_WAITS) / uint(PROBE_WAIT);
+    uint waited = firstbithigh(max(params.frame_number - held.frames.x, 1u));
+    waits = (traced & CHOSEN_STILL) != 0u ? min(max(waits, waited) + 1u, PROBE_WAIT_MOST) : 0u;
+    int passing = (traced & CHOSEN_PASSING) != 0u ? PROBE_PASSING | int(waits) * PROBE_WAIT : 0;
     if ((traced & CHOSEN_TRACED) == 0u) {
         probes[probe].frames.x = params.frame_number;
-        probes[probe].cell.w = (held.cell.w & ~PROBE_PASSING) | passing;
+        probes[probe].cell.w = (held.cell.w & ~(PROBE_PASSING | PROBE_WAITS)) | passing;
         return;
     }
     uint cascade;

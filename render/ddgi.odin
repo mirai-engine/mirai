@@ -9,10 +9,12 @@ import "mirai:render/abi"
 // the first view (Camera.focus), each twice as far apart as the one before (Settings.probe_spacing the
 // first), probe_grid of them along x and z and half that along y. A cell of
 // the world keeps its probe while the cascades scroll. Each frame traces at
-// most probe_budget probes (ddgi_select.comp): those a new cell took, those a
-// change reached and, by turns, the longest untraced against how much the
+// most probe_budget probes (ddgi_select.comp): those a new cell took that a
+// pixel reads, those a change reached and, within a share each, the new ones
+// no pixel reads and, by turns, the longest untraced against how much the
 // pixels use them of those a change everywhere left behind or whose rays met
-// what changes with nothing that says so (a program that reads the time). A
+// what changes with nothing that says so (a program that reads the time),
+// which wait longer for each turn that leaves their light where it was. A
 // probe traces the same directions every time, whole and without
 // hysteresis: one of a scene that did not change gives what it gave, and one
 // that did follows at once. One whose light moved
@@ -27,10 +29,10 @@ IRRADIANCE_TILE :: 8
 DISTANCE_TILE   :: abi.DISTANCE_TILE
 VOLUME_CASCADES_MAX :: abi.VOLUME_CASCADES_MAX
 PROBE_GRID_MAX :: 32
-// Buckets of the priority of the probes, and the words of the histogram
-// after them (ddgi_select.comp).
+// Buckets of the priority of the probes, and the words of the histogram: the
+// count of each, how many of each are taken and how many were (ddgi_select.comp).
 PROBE_BUCKETS :: abi.PROBE_BUCKETS
-PROBE_HISTOGRAM_WORDS :: PROBE_BUCKETS + 4
+PROBE_HISTOGRAM_WORDS :: 3 * PROBE_BUCKETS
 // The indirect dispatches of the update passes, in words: the trace, the
 // passes per probe and the passes per 32 probes.
 PROBE_DISPATCH_WORDS :: 12
@@ -90,6 +92,7 @@ Ddgi_State :: struct {
 	corners:            [VOLUME_CASCADES_MAX]Vec4, // of this frame: the place of the lowest probe of each cascade, relative to the origin, w its spacing
 	cells:              [VOLUME_CASCADES_MAX][4]i32, // and its cell of the world
 	center:             Vec3,   // of this frame: where the cascades centre, relative to the origin, off their corners by up to half a cell
+	moved:              bool,   // a cascade took other cells this frame
 	// The update, plus one, in which what rays meet last changed everywhere
 	// and the one in which the lights did: what a probe keeps of its rays
 	// from before is traced or lit again (probe_hits.slang).
@@ -281,6 +284,7 @@ ddgi_place :: proc(r: ^Renderer, center: Vec3) {
 	g := &r.ddgi
 	center := center - {0, g.spacing, 0}
 	g.center = center
+	g.moved = false
 	for c in 0 ..< g.cascades {
 		spacing := f64(g.spacing) * f64(u32(1) << c)
 		cell: [4]i32
@@ -288,6 +292,7 @@ ddgi_place :: proc(r: ^Renderer, center: Vec3) {
 			cell[axis] = i32(math.round((f64(center[axis]) + f64(r.origin[axis])) / spacing)) - i32(g.counts[axis] / 2)
 		}
 		corner := origin_cell(cell.xyz, spacing, r.origin)
+		g.moved ||= g.cells[c] != cell
 		g.corners[c], g.cells[c] = {corner.x, corner.y, corner.z, f32(spacing)}, cell
 	}
 }
@@ -366,8 +371,8 @@ ddgi_update :: proc(p: ^Pass, warm := false) -> bool {
 	}
 	rhi.cmd_timestamp(cmd, "ddgi select")
 	rhi.cmd_fill_buffer(cmd, g.histogram, 0, PROBE_HISTOGRAM_WORDS * 4, 0)
-	Select :: struct {mode, budget, frame_number, rays_per_probe, total, awake, whole, room, slots, seen_everywhere, lit_everywhere, pad0: u32}
-	select := Select{budget = budget, frame_number = frame_number, rays_per_probe = g.rays_per_probe, total = g.total, awake = awake, whole = 1 if warm else 0, room = room, slots = h.count, seen_everywhere = g.seen_everywhere, lit_everywhere = g.lit_everywhere}
+	Select :: struct {mode, budget, frame_number, rays_per_probe, total, awake, whole, room, slots, seen_everywhere, lit_everywhere, moving: u32}
+	select := Select{budget = budget, frame_number = frame_number, rays_per_probe = g.rays_per_probe, total = g.total, awake = awake, whole = 1 if warm else 0, room = room, slots = h.count, seen_everywhere = g.seen_everywhere, lit_everywhere = g.lit_everywhere, moving = 1 if g.moved else 0}
 	for mode in u32(0) ..< 4 {
 		select.mode = mode
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Ddgi_Select])

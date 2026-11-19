@@ -90,6 +90,13 @@ POSED_BOUNDS_WORDS :: abi.POSED_BOUNDS_WORDS
     source:Mesh_Handle, // of a displaced one
     reach:f32,      // how far those programs move a vertex, in its own space: the boxes of its instances grow by it
     sway:f32,       // of an external one, how far it moves a vertex from where it is at rest, in its own space; 0: anywhere in its box
+    // Of an external one, as the maps of the shadows follow an instance (Shadow_Track): the frame its
+    // vertices last changed in while they follow it, whether they changed again within
+    // SHADOW_MOVER_FRAMES, and whether it started or stopped moving this frame
+    // (touched, shadow_movers_update).
+    shadow_frame:u64,
+    shadow_moving,shadow_touched:bool,
+    shadow_low,shadow_high:Vec3, shadow_fine:f32, // of one touched, the box of its batches drawn and their widest sway
     inputs:u64,     // what its vertices were last moved from (displaced_prepare)
     allocator:mem.Allocator,
 }

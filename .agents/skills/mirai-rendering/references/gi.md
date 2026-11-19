@@ -190,7 +190,9 @@ other and do not see the corner of a table or the floor under a wardrobe.
     are not kept: its probes trace their rays when it returns.
 - A change of its light is followed in full. Between traces it measures how much its light moves
   while the bounces it reads settle (`Probe.frames.w`): a movement within that approaches it
-  little by little; only a larger one traces it again.
+  little by little, and reaches it: a step the half floats of the atlas cannot hold takes the
+  light whole, and every light is stored as its nearest half (`probe_light_encode`), since a
+  device may cut a float toward zero when it stores it and a probe would settle short.
 - **Filter between neighbors.** Each texel also takes what the neighboring probes store in that
   direction, where they see what this one would see: the point the neighbor sees lies in that
   direction and the distance of the probe itself ends there, unless one of the two is open (it
@@ -198,17 +200,28 @@ other and do not see the corner of a table or the floor under a wardrobe.
   `ddgi_keep.comp` copies each probe after its trace, never from the tile being written. A probe
   awakened by a change filters the same as a settled one.
 - **Priority** (`ddgi_select.comp`, `probe_budget` per frame): first the probes that do not store
-  the light of their cell; then those that a change keeps awake, first those nearest to it
-  relative to its reach (what a change changes most is near), or their own light; then the one
-  that has gone longest without being traced relative to how much pixels use it
-  (`ddgi_mark.comp`), fine cascades first. A probe whose light moves more than its noise
-  (`ddgi_irradiance.comp`) wakes its six neighbors for the next frame, so that a change spreads
-  with its bounces. With the scene still a settled probe gives what it gave, and none is traced
-  but, by turns within a small share of the budget, those that need it: one whose rays met what
-  changes with nothing that says so (`PROBE_PASSING`: a program that reads the time, the gate or
-  a light of an extension) and one a change everywhere left behind. A sky that changes without
-  stopping (a sunset with an atmosphere) is followed in turns, with stains of the previous light
-  until it stops.
+  the light of their cell and that a pixel reads this frame; then those that a change keeps
+  awake, first those nearest to it relative to its reach (what a change changes most is near),
+  or their own light. What is left of the budget goes to the new probes no pixel reads, with
+  all their rays, a share at most while the volume moves and all of it once it stops, and,
+  a share at most, by turns to the one that has gone longest
+  without being traced relative to how much pixels use it (`ddgi_mark.comp`), fine cascades
+  first: a volume that moves with the camera gathers first what the view shows. A probe whose
+  light moves more than its noise (`ddgi_irradiance.comp`) wakes its six neighbors for the next
+  frame, so that a change spreads with its bounces. With the scene still a settled probe gives
+  what it gave, and none is traced but, by turns within that share, those that need it: one
+  whose rays met what changes with nothing that says so (`PROBE_PASSING`: a program that reads
+  the time, the gate or a light of an extension) and one a change everywhere left behind. A sky
+  that changes without stopping (a sunset with an atmosphere) is followed in turns, with stains
+  of the previous light until it stops.
+- **The time costs what it changes.** A `PROBE_PASSING` probe is gathered by turns only as much
+  as its light moves: after a turn that leaves it within half of the settled share, or below
+  what the view shows exposed, it waits for the next twice as long as it waited for that one, up
+  to `1 << PROBE_WAIT_MOST` frames (the most before a light that starts moving is followed), and
+  keeps its slot of hits that long; a turn that moves it brings it back to every turn. What
+  moves it is followed by its turns: it wakes neither itself nor the neighbors that take turns
+  of their own, so the time never keeps the volume awake. In a world shown anew the new probes
+  no pixel reads are gathered first, as those read.
 - **Relocation** within its cell: a probe inside a wall comes out and one stuck to a surface
   moves away. A covered one keeps the light it had; one that never had it gives nothing. One that
   moved is traced again from where it is, first if it moved far, as one whose light moves if not.

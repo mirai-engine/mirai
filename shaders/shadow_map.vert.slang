@@ -4,7 +4,8 @@
 // (vis_raster.vert shadow): of each word of a list of the buffer of the pages
 // from params.list, its page of the pool (with SHADOW_JOB_HELD where the
 // cache holds it this frame), for shadow_map.frag to clear or copy: the part
-// of it the round draws (shadow_page_part).
+// of it the round draws (shadow_page_part); of the atlas (params.moving 1),
+// none of a page that waits, which keeps what it last composed.
 #include "shadow_maps.slang"
 #define SHADOW_PAGES_SLOT SLOT_PASS3
 #include "shadow_cull.slang"
@@ -24,6 +25,7 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     if (vertex_id >= 6u) return output;
     float2 at = float2(vertex_id == 1u || vertex_id >= 4u ? 1.0 : 0.0, vertex_id == 2u || vertex_id == 3u || vertex_id == 5u ? 0.0 : 1.0);
     uint word = shadow_pages[params.list + instance_id];
+    if (params.moving == 1u && (word & SHADOW_ENTRY_POOL) < SHADOW_POOL_PAGES && (shadow_pages[shadow_cost_word(word & SHADOW_ENTRY_POOL)] & SHADOW_COST_WAITS) != 0u) return output;
     uint2 corner = shadow_pool_corner(word & SHADOW_ENTRY_POOL);
     output.held = (word & SHADOW_JOB_HELD) != 0u ? 1.0 : 0.0;
     uint4 part = shadow_page_part(word & SHADOW_ENTRY_POOL);
