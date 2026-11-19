@@ -131,8 +131,10 @@ Environment :: struct {
 	sky_atmosphere: bool, // the sky is the air lit by the sun (air.odin), whose light it crosses: sky does not apply
 	sky_from_atmosphere: bool, // and what it changes from, of the same air
 	air:            Air,  // of an atmosphere
-	background:     Vec3, // luminance behind the scene, nits
-	use_background: bool, // false: show the sky gradient
+	background:     Vec3, // luminance behind the scene, nits; with an image, what multiplies its values
+	background_texture: Texture_Handle, // an image behind the scene, as sky_texture, turned as the sky; 0: background alone
+	use_background: bool, // the view, mirrors and glass show the background in place of the sky, which keeps lighting the scene; false: they show the sky
+	background_behind: bool, // the background shows only behind the scene, not in what reflects the sky: a studio, whose reflections show the light that shapes what it shows
 	ground_grid:    bool, // display-only reference plane; never geometry or lighting
 }
 

@@ -582,7 +582,7 @@ render_sync :: proc(
     suns:^core.Table(Sun,.Read),points:^core.Table(Point_Light,.Read),spots:^core.Table(Spot_Light,.Read),rects:^core.Table(Rect_Light,.Read),emissions:^core.Table(Light_Emission,.Read),skies:^core.Table(Sky,.Read),bounces:^core.Table(Bounce_Light,.Read),view_volumes:^core.Table(View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
     highlights:^core.Table(Highlight,.Read),outlines:^core.Table(Outline,.Read),outline_styles:core.Ref(Outline_Styles),
     offsets:^core.Table(Draw_Offset,.Read),layers:^core.Table(Layers,.Read),bodies:core.Ref(View_Bodies),preview:core.Ref(Environment_Preview),
-    locals:^core.Table(core.Transform,.Read),cameras:^core.Table(Camera,.Read),posed:^Posed_Meshes,
+    locals:^core.Table(core.Transform,.Read),cameras:^core.Table(Camera,.Read),posed:^Posed_Meshes,problems:^core.Problems,
 ) {
     a:=app.assets
     r:=app.renderer
@@ -766,7 +766,7 @@ render_sync :: proc(
     }
     sky_entity,sky,sky_found:=sky_previewed(skies,preview)
     if !sky_found {sky_entity,sky,sky_found=sky_active(skies,hidden,parents)}
-    environment:=sky_environment(sky_entity,sky,sky_found,own.enabled,worlds,a)
+    environment:=sky_environment(sky_entity,sky,sky_found,own.enabled,worlds,a,problems)
     // It dims with the height of the view.
     given:=own
     given.illuminance*=sun_height_factor(fade,view.position.y)

@@ -964,6 +964,10 @@ view_begin :: proc(p: ^Pass) -> bool {
 	frame_sun_sky(&f, s.sun, s.environment, scale, max(settings.sun_radius, SUN_RADIUS), r.air.built, settings.sun_shadows && !s.sun.shadowless)
 	f.sky_map = sky_map(r, s.environment.sky_texture, s.environment.sky_atmosphere)
 	f.sky_from_map = sky_map(r, s.environment.sky_from_texture, s.environment.sky_from_atmosphere)
+	if s.environment.use_background {
+		f.background_map = sky_map(r, s.environment.background_texture, false)
+		f.background_map.y = 0 if s.environment.background_behind else 1
+	}
 	air_view(p, &f)
 	tint := exposure_of_camera(r, camera).tint
 	f.tint = {1, 1, 1, 0} if tint == {} else {tint.x, tint.y, tint.z, 0}
@@ -977,6 +981,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 	if r.has_backdrop && !p.texture {
 		backdrop := r.backdrop * scale
 		f.background = {backdrop.x, backdrop.y, backdrop.z, 1}
+		f.background_map = {}
 	}
 	if p.use_gi {f.flags |= FRAME_FLAG_GI}
 	if p.use_gi && p.plan.gi_given {f.flags |= FRAME_FLAG_GI_GIVEN}
