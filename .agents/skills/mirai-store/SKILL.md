@@ -59,13 +59,12 @@ derived data cache that use it decide what a ref means and what is live.
   per put, because a file and a flush per object cost far more than an append. Cuts stay in order
   on one thread while jobs hash and append the chunks, and leaves join the tree in the order of
   the cuts, so an object is the same put on one thread or many.
-- A commit flushes the batch, then writes the commit frame that makes it visible: one flush per
-  batch. Readers take a pack's frames only up to its last commit whose count and sum of heads
-  match, so a torn tail is never read; a ref is a frame of the same pack written after the chunks
-  it reaches, so no reader sees a ref before what it names is durable. What a batch names in
-  another writer's open pack is flushed by the commit too, so a crash never keeps a ref and loses
-  what it names. The commit frame itself reaches the disk with the next flush or the seal: a
-  machine that crashes loses at most a writer's last batch.
+- A commit writes the batch's frames and the commit frame that makes them visible, then flushes
+  once: a commit that returns success is durable. Readers take a pack's frames only up to its
+  last commit whose count and sum of heads match, so a torn tail is never read; a ref is a frame
+  of the same pack written after the chunks it reaches. What a batch names in another writer's
+  open pack is flushed before its commit frame is written, so a crash never keeps a ref and loses
+  what it names.
 - A pack is written only by its writer: it is sealed (a trailer of its chunks sorted by address)
   at its size bound or when its writer closes. A sweep never writes into another's pack: one whose
   writer's lease is gone is folded up to its last commit and retired, and a writer that is in fact
