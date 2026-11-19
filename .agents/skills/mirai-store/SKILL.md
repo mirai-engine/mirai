@@ -149,7 +149,7 @@ derived data cache that use it decide what a ref means and what is live.
   `two_sweeps_taking_a_stale_claim_publish_once`,
   `an_address_added_to_a_lease_during_a_sweep_is_kept`,
   `a_pack_cut_anywhere_in_its_tail_opens_to_its_last_commit`,
-  `a_ref_is_never_visible_before_what_it_names_is_durable`,
+  `a_commit_that_returns_is_durable`,
   `a_small_put_writes_once_and_a_batch_flushes_once`,
   `an_object_of_several_groups_reads_by_group_and_offset`,
   `a_sweep_beside_writers_loses_no_committed_put`,
