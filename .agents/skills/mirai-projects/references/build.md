@@ -291,7 +291,7 @@ Settings > Input changed, and SDL3, which the executable links.
 
 ## Imported sources
 
-The meshes, textures, sounds and fonts an import builds are not versioned: they are blobs of a
+The meshes, textures, sounds and fonts an import builds are not versioned: they are objects of a
 store that the package manifests a project or plugin pins name
 ([library](../../mirai-imports/references/imports.md#library)).
 
@@ -312,9 +312,10 @@ store that the package manifests a project or plugin pins name
   A build that cooks requires Final textures; the others take Fast, as the editor imports them.
 - **Without sources.** A machine whose store holds the builds (fetched from a peer, or a copy of
   another store) builds and ships with no source: it imports nothing.
-- **What ships.** The cook copies what the registry resolves, documents of the project and blobs of
-  builds alike, at its path in the assets of the game, with the index: a shipped game never opens
-  a store.
+- **What ships.** The cook writes what the registry resolves, documents of the project and the
+  objects of builds alike, each as a file in the container format at its path in the assets of
+  the game (an object gives the file `asset.object_file` gives), with the index: a shipped game
+  never opens a store. One lookup of the texture cache serves the whole pass.
 - **The installed engine** carries `builds/` (`project.ENGINE_STORE`), a store with the Final
   builds of the packages its plugins pin, made when it is packaged: a refresh on the machine that
   installs it copies them into that machine's store (`cache.store_source`, as a peer gives them),

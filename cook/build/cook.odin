@@ -255,6 +255,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     missing_packages:=make([dynamic]string,temp)
     asset.registry_init(&registry,desc.assets,"",temp,cook_listed(desc,desc.root,&packages,&missing_packages))
     for folder in desc.plugins {asset.registry_mount(&registry,folder.path,folder.prefix,cook_listed(desc,folder.root,&packages,&missing_packages))}
+    registry.store=desc.store
     defer asset.registry_destroy(&registry)
     if len(missing_packages)>0 {cook_fail(&report,.Package_Missing,strings.join(missing_packages[:],"\n",temp),allocator);return}
     if asset.registry_scan(&registry)!=.None {cook_fail(&report,.Assets_Missing,desc.assets,allocator);return}
@@ -383,6 +384,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     slice.sort_by(order[:],proc(a,b:Cook_Order) -> bool {return a.bytes>b.bytes || a.bytes==b.bytes && a.at<b.at})
     work.order,work.probed=order[:],probed[:]
     keys_reuse(&work)
+    textures_lookup(&work)
 
     jobs.parallel_for(on.system,on.worker,len(work.probed),1,texture_probe,&work)
     jobs.parallel_for(on.system,on.worker,len(work.order),1,files_cook,&work)
@@ -517,7 +519,7 @@ texture_probe :: proc(work:^Cook_Work,first,last:int,worker:int) {
         result:=&work.results[at]
         if result.entry.reused {continue}
         file:asset.Asset
-        if asset.asset_load(&file,asset.registry_file_path(work.registry,work.files[at].path,context.temp_allocator),context.temp_allocator)!=.None {
+        if cook_open(work,work.files[at].path,&file)!=.None {
             result.problem=work_text(work,"it cannot be read")
             continue
         }
@@ -558,7 +560,7 @@ files_cook :: proc(work:^Cook_Work,first,last:int,worker:int) {
 file_cook :: proc(work:^Cook_Work,at:int,worker:int,entry:^Cook_File) -> (error:Cook_Error,detail:string) {
     file:=&work.files[at]
     types:=work_types(work,worker)
-    source:=asset.registry_file_path(work.registry,file.path,context.temp_allocator)
+    source:=file.path
     target:=fmt.tprintf("%s/%s",work.desc.output,file.path)
     if slash:=strings.last_index_byte(target,'/');slash>=0 {
         if os.make_directory_all(target[:slash])!=nil && !os.is_dir(target[:slash]) {return .Write_Failed,work_text(work,"%s",file.path)}
@@ -583,8 +585,17 @@ file_cook :: proc(work:^Cook_Work,at:int,worker:int,entry:^Cook_File) -> (error:
     laid:=!entry.compressed && file.state==.Asset && file.kind==asset.KIND_TEXTURE
     if laid && !texture_lay(work,source,target,types) {return .Write_Failed,work_text(work,"%s",file.path)}
     if !entry.compressed && !laid {
-        data,read_error:=serial.file_read(source,context.temp_allocator)
-        if read_error!=.None {return .Read_Failed,work_text(work,"%s",file.path)}
+        // A listed output of a package is its object of the store, in the container format.
+        data:[]u8
+        if object,listed:=asset.registry_listed_object(work.registry,file.path);listed {
+            read_error:asset.Error
+            data,read_error=asset.object_file(work.registry.store,object,context.temp_allocator)
+            if read_error!=.None {return .Read_Failed,work_text(work,"%s",file.path)}
+        } else {
+            read_error:serial.File_Error
+            data,read_error=serial.file_read(asset.registry_file_path(work.registry,file.path,context.temp_allocator),context.temp_allocator)
+            if read_error!=.None {return .Read_Failed,work_text(work,"%s",file.path)}
+        }
         if file.state==.Asset && (file.kind==asset.KIND_SCENE) {
             sync.mutex_lock(&work.resolve)
             resolved,resolve_ok:=scene_cook(&work.resolver,&work.resolver_types,data)
@@ -615,6 +626,33 @@ file_cook :: proc(work:^Cook_Work,at:int,worker:int,entry:^Cook_File) -> (error:
     }
     if info,stat_error:=os.stat(target,context.temp_allocator);stat_error==nil {entry.bytes=info.size}
     return .None,""
+}
+
+// Opens the asset at path of the registry of the cook, in the temp allocator: a listed output of
+// a package from its object of the store, any other from its file.
+@(private="file")
+cook_open :: proc(work:^Cook_Work,path:string,file:^asset.Asset) -> asset.Error {
+    if object,listed:=asset.registry_listed_object(work.registry,path);listed {
+        if work.registry.store==nil {return .Not_Found}
+        return asset.asset_open_object(file,work.registry.store,object,context.temp_allocator)
+    }
+    return asset.asset_load(file,asset.registry_file_path(work.registry,path,context.temp_allocator),context.temp_allocator)
+}
+
+// Looks the texture cache up once for every texture the pass may compress, asking its source in
+// one fetch for what the store lacks: the jobs then read the cache without asking.
+@(private="file")
+textures_lookup :: proc(work:^Cook_Work) {
+    if work.desc.store==nil || work.textures!=.Blocks {return}
+    keys:=make([dynamic]u64,context.temp_allocator)
+    rdo:=work.desc.codecs!=.None
+    for at in work.probed {
+        if work.results[at].entry.reused || !(work.drawn[at] || !work.shown[at]) {continue}
+        append(&keys,textures.cache_key_blocks(work.files[at].content_hash,rdo))
+    }
+    if len(keys)==0 {return}
+    here:=make([]bool,len(keys),context.temp_allocator)
+    textures.cache_lookup({store=work.desc.store,source=work.desc.cache_source},keys[:],here)
 }
 
 // Raise it when the cook writes a file otherwise from the same inputs: every key changes.
@@ -716,7 +754,7 @@ far_meshes_cook :: proc(work:^Cook_Work,reached,left:[]bool,allocator:runtime.Al
     for file,at in work.files {
         if !reached[at] || left[at] || file.state!=.Asset || file.kind!=asset.KIND_SCENE {continue}
         source:asset.Asset
-        if asset.asset_load(&source,asset.registry_file_path(work.registry,file.path,context.temp_allocator),context.temp_allocator)!=.None {return nil,.Read_Failed,strings.clone(file.path,allocator)}
+        if cook_open(work,file.path,&source)!=.None {return nil,.Read_Failed,strings.clone(file.path,allocator)}
         far.far_scenes(&source,types,&scenes)
         asset.asset_close(&source)
     }
@@ -776,12 +814,13 @@ far_meshes_cook :: proc(work:^Cook_Work,reached,left:[]bool,allocator:runtime.Al
 @(private="file")
 texture_cook :: proc(work:^Cook_Work,source,target:string,types:^asset.Types,worker:jobs.Worker_Ref) -> (compressed,ok:bool) {
     file:asset.Asset
-    if asset.asset_load(&file,source,context.temp_allocator)!=.None {return}
+    if cook_open(work,source,&file)!=.None {return}
     defer asset.asset_close(&file)
     view,error:=asset.texture_view(&file,types)
     if error!=.None {return}
     if view.info.format!=.RGBA8 {return false,true}
-    kept:=cache.Cache{store=work.desc.store,source=work.desc.cache_source}
+    // The pass looked up the cache for every texture at once (textures_lookup): no texture asks the source.
+    kept:=cache.Cache{store=work.desc.store}
     // Blocks that nothing compresses keep the least error.
     rdo:=work.desc.codecs!=.None
     key:=textures.cache_key_blocks(file.blob.header.content_hash,rdo)
@@ -807,7 +846,7 @@ texture_cook :: proc(work:^Cook_Work,source,target:string,types:^asset.Types,wor
 @(private="file")
 texture_lay :: proc(work:^Cook_Work,source,target:string,types:^asset.Types) -> bool {
     file:asset.Asset
-    if asset.asset_load(&file,source,context.temp_allocator)!=.None {return false}
+    if cook_open(work,source,&file)!=.None {return false}
     defer asset.asset_close(&file)
     view,error:=asset.texture_view(&file,types)
     if error!=.None {return false}
@@ -885,7 +924,7 @@ cook_summary :: proc(report:^Cook_Report,allocator:=context.allocator) -> string
 @(private="file")
 animation_cook :: proc(work:^Cook_Work,source,target:string,types:^asset.Types) -> (compressed,ok:bool) {
     file:asset.Asset
-    if asset.asset_load(&file,source,context.temp_allocator)!=.None {return}
+    if cook_open(work,source,&file)!=.None {return}
     defer asset.asset_close(&file)
     view,error:=asset.animation_view(&file,types)
     if error!=.None {return}
@@ -970,7 +1009,7 @@ pieces_wanted :: proc(registry:^asset.Registry,reached,left:[]bool,allocator:run
 @(private="file")
 mesh_pieces_cook :: proc(work:^Cook_Work,source:string,data:[]u8,types:^asset.Types) -> (out:[]u8,ok:bool) {
     file:asset.Asset
-    if asset.asset_load(&file,source,context.temp_allocator)!=.None {return}
+    if cook_open(work,source,&file)!=.None {return}
     defer asset.asset_close(&file)
     points:=make([dynamic][3]f32,context.temp_allocator)
     sizes:=make([dynamic]u32,context.temp_allocator)

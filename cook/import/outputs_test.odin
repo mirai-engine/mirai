@@ -67,7 +67,7 @@ the_outputs_of_a_source_are_the_assets_its_package_lists :: proc(t:^testing.T) {
         testing.expect(t,failed || len(report.assets)==1+len(names) && report.manifest!={} && report.build!={},"the report lists what was recorded, and the package")
         for w in report.assets {
             if w.kind==asset.KIND_MATERIAL {testing.expectf(t,strings.contains(w.path,"/assets/level/materials/"),"%s goes to the folder asked for",w.path)}
-            if w.id==p.floor {p.floor_blob=w.blob}
+            if w.id==p.floor {p.floor_blob=w.object}
         }
         p.report=report
         return p,true
@@ -81,7 +81,7 @@ the_outputs_of_a_source_are_the_assets_its_package_lists :: proc(t:^testing.T) {
     for o in build.outputs {
         listed:=false
         for a in manifest.assets {listed||=a.id==o.id && a.kind==o.kind}
-        testing.expect(t,listed && store.has(s,o.blob),"each output of the build is an asset of its package, in the store")
+        testing.expect(t,listed && asset.object_whole(s,o.object),"each output of the build is an asset of its package, in the store")
     }
     testing.expect(t,os.exists(fmt.tprintf("%s/level/materials/Stone.mat",assets)),"a document is written in the folder of the documents")
 
@@ -243,7 +243,7 @@ an_image_only_its_format_decodes_is_taken_from_the_cache_without_decoding :: pro
             if w.kind!=asset.KIND_TEXTURE {continue}
             types:asset.Types;asset.types_init(&types,context.temp_allocator)
             a:asset.Asset
-            if asset.asset_load(&a,w.path,context.temp_allocator)!=.None {return}
+            if written_open(s,w,&a,context.temp_allocator)!=.None {return}
             view,view_error:=asset.texture_view(&a,&types)
             if view_error==.None {texels=strings.clone(string(asset.texture_mip(view,0)),context.temp_allocator)}
         }
@@ -267,10 +267,14 @@ an_image_only_its_format_decodes_is_taken_from_the_cache_without_decoding :: pro
     testing.expect(t,current(s,root,assets),"nothing changed")
     _,build,read:=test_package(t,s,report)
     if !read {return}
-    for o in build.outputs {
-        if o.kind==asset.KIND_MESH {store.remove(s,o.blob)}
+    // A build whose mesh is an object the store does not hold is no current one.
+    for &o in build.outputs {
+        if o.kind==asset.KIND_MESH {o.object=store.address_of_bytes(transmute([]u8)string("gone"))}
     }
-    testing.expect(t,!current(s,root,assets),"a blob is gone")
+    stale,_:=asset.build_put(s,&build)
+    digits:[64]u8
+    testing.expect_value(t,store.ref_set(s,asset.REF_IMPORTS,store.hex(report.key,&digits),stale),store.Error.None)
+    testing.expect(t,!current(s,root,assets),"an object is gone")
 }
 
 // A source a model was read from, in a folder of its own that no project
@@ -376,7 +380,7 @@ a_fast_build_is_not_published_where_peers_find_builds :: proc(t:^testing.T) {
     append(&list.packages,asset.Project_Package{id=p.id,manifest=report.manifest})
     resolved,resolve_error:=asset.packages_resolve(s,"",&list,context.temp_allocator)
     testing.expect(t,resolve_error==.None && len(resolved.problems)==0 && len(resolved.listed)==2,"a project lists the mesh and the texture of the package")
-    for l in resolved.listed {testing.expectf(t,l.state==.Built && os.exists(l.file),"%s is built",l.path)}
+    for l in resolved.listed {testing.expectf(t,l.state==.Built && asset.object_whole(s,l.object) && l.header.id==l.id,"%s is built",l.path)}
 }
 
 // Two machines that import one source as the same package write the same
@@ -405,4 +409,36 @@ two_stores_that_import_one_source_hold_the_same_blobs :: proc(t:^testing.T) {
     for o,at in a {
         if at<len(b) {testing.expectf(t,o==b[at],"%v is the same blob on both",o.id)}
     }
+}
+
+// A document of a plugin's kind that a refresh writes as a new file takes the
+// extension the plugin declares for its kind, else that of a file of its kind
+// the registry has.
+@(test)
+a_document_of_a_plugin_kind_takes_its_extension :: proc(t:^testing.T) {
+    _,folder,s:=test_assets(t,"plugin-document")
+    if folder=="" {return}
+    KIND :: asset.Fourcc(u32('K')|u32('I')<<8|u32('T')<<16|u32('T')<<24)
+    doc:asset.Document
+    asset.document_init(&doc,KIND,{70,1},context.temp_allocator)
+    bytes,_:=asset.document_bytes(&doc,context.temp_allocator)
+    asset.document_destroy(&doc)
+    object,put_error:=asset.object_put(s,bytes)
+    if !testing.expect_value(t,put_error,asset.Error.None) {return}
+    p:=asset.Package{id={71,1},name="hall"}
+    p.assets=make([dynamic]asset.Package_Asset,context.temp_allocator)
+    append(&p.assets,asset.Package_Asset{kind=KIND,name="hall",id={70,1}})
+    b:=asset.Build{package_id=p.id}
+    b.outputs=make([dynamic]asset.Build_Output,context.temp_allocator)
+    append(&b.outputs,asset.Build_Output{id={70,1},kind=KIND,object=object})
+    kinds:=[]Kind_Extension{{KIND,".kit"}}
+    written,error:=documents_follow(s,&p,&b,fmt.tprintf("%s/declared",folder),nil,nil,.Keep,kinds,context.temp_allocator)
+    testing.expectf(t,error.code==.None && len(written)==1 && strings.has_suffix(written[0].path,"/declared/hall.kit") && os.exists(written[0].path),"%s %v",error.message,written[:])
+    // Without what the plugin declares, a file of its kind the registry has gives it.
+    r:asset.Registry
+    asset.registry_init(&r,folder,"",context.temp_allocator)
+    defer asset.registry_destroy(&r)
+    testing.expect_value(t,asset.registry_scan(&r),asset.Error.None)
+    written,error=documents_follow(s,&p,&b,fmt.tprintf("%s/found",folder),&r,nil,.Discard,nil,context.temp_allocator)
+    testing.expectf(t,error.code==.None && len(written)==1 && strings.has_suffix(written[0].path,".kit"),"%s %v",error.message,written[:])
 }

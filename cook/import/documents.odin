@@ -23,10 +23,16 @@ import "mirai:store"
 // not kept, is written over: one whose file changed since it was last written
 // (documents_changed) is left as it is unless the changes are discarded.
 
-// The baseline of a skeleton the clips followed with it play on.
+// The baseline of a skeleton the clips followed with it play on: the bytes of its file.
 Followed_Skeleton :: struct {
     id:base.Asset_Id,
-    path:string,
+    data:[]u8,
+}
+
+// The extension of the files of a kind of a plugin, as its manifest declares it.
+Kind_Extension :: struct {
+    kind:asset.Fourcc,
+    extension:string,
 }
 
 // A document documents_follow wrote.
@@ -45,7 +51,9 @@ Followed :: struct {
 // project's pin says its files held when last written; one that changed since
 // is left as it is, with a warning, unless changed is Discard. What it wrote,
 // in allocator.
-documents_follow :: proc(s:^store.Store,p:^asset.Package,b:^asset.Build,folder:string,registry:^asset.Registry,recorded:[]asset.Package_Written,changed:Changed,allocator:=context.allocator) -> (written:[dynamic]Followed,error:Error) {
+// kinds: the extensions of the kinds of the plugins of the project, which a new
+// file of one of their documents takes.
+documents_follow :: proc(s:^store.Store,p:^asset.Package,b:^asset.Build,folder:string,registry:^asset.Registry,recorded:[]asset.Package_Written,changed:Changed,kinds:[]Kind_Extension={},allocator:=context.allocator) -> (written:[dynamic]Followed,error:Error) {
     written=make([dynamic]Followed,allocator)
     types:asset.Types
     asset.types_init(&types,context.temp_allocator)
@@ -53,7 +61,7 @@ documents_follow :: proc(s:^store.Store,p:^asset.Package,b:^asset.Build,folder:s
     skeletons:=make([dynamic]Followed_Skeleton,context.temp_allocator)
     for o in b.outputs {
         if o.kind!=asset.KIND_SKELETON {continue}
-        if blob,path_error:=store.blob_path(s,o.blob,context.temp_allocator);path_error==.None {append(&skeletons,Followed_Skeleton{o.id,blob})}
+        if data,read_error:=asset.object_file(s,o.object,context.temp_allocator);read_error==.None {append(&skeletons,Followed_Skeleton{o.id,data})}
     }
     taken:=make(map[string]bool,context.temp_allocator)
     kept:[]base.Asset_Id
@@ -67,8 +75,8 @@ documents_follow :: proc(s:^store.Store,p:^asset.Package,b:^asset.Build,folder:s
             append(&written,Followed{id=o.id,kind=o.kind,path=strings.clone(asset.registry_file_path(registry,file.path,context.temp_allocator),allocator),warning=strings.clone(warning,allocator),hash=written_of(recorded,id),kept=true})
             continue each
         }
-        blob,path_error:=store.blob_path(s,o.blob,context.temp_allocator)
-        if path_error!=.None {return written,error_make(.Not_Found,"the store at %s has no blob of the document %v of the package %v: fetch it from a peer that has it",s.root,o.id,p.id,allocator=context.temp_allocator)}
+        baseline,read_error:=asset.object_file(s,o.object,context.temp_allocator)
+        if read_error!=.None {return written,error_make(.Not_Found,"the store at %s has no object of the document %v of the package %v whole (%v): fetch it from a peer that has it",s.root,o.id,p.id,read_error,allocator=context.temp_allocator)}
         target:string
         if registry!=nil {
             if file,found:=asset.registry_find(registry,o.id);found && file.kind==o.kind {target=asset.registry_file_path(registry,file.path,context.temp_allocator)}
@@ -78,9 +86,9 @@ documents_follow :: proc(s:^store.Store,p:^asset.Package,b:^asset.Build,folder:s
             for &a in p.assets {
                 if a.id==o.id {name=asset.safe_path(a.name)}
             }
-            info,_:=asset.kind_info(o.kind)
+            extension:=kind_extension(o.kind,kinds,registry)
             for at:=1;;at+=1 {
-                candidate:=fmt.tprintf("%s/%s%s",folder,name,info.extension) if at==1 else fmt.tprintf("%s/%s (%d)%s",folder,name,at,info.extension)
+                candidate:=fmt.tprintf("%s/%s%s",folder,name,extension) if at==1 else fmt.tprintf("%s/%s (%d)%s",folder,name,at,extension)
                 key:=strings.to_lower(candidate,context.temp_allocator)
                 if taken[key] || os.exists(candidate) {continue}
                 taken[key]=true
@@ -89,7 +97,7 @@ documents_follow :: proc(s:^store.Store,p:^asset.Package,b:^asset.Build,folder:s
             }
             if under:=filepath.dir(target);!os.is_dir(under) {_=os.make_directory_all(under)}
         }
-        warning,follow_error:=document_follow(&types,o.kind,blob,target,skeletons[:],registry)
+        warning,follow_error:=document_follow(&types,o.kind,baseline,target,skeletons[:],registry)
         if follow_error!=.None {return written,error_make(.Write,"%s could not be written: %v",target,follow_error,allocator=context.temp_allocator)}
         hash:=written_hash(target) if o.kind!=asset.KIND_MATERIAL else 0
         append(&written,Followed{id=o.id,kind=o.kind,path=strings.clone(target,allocator),warning=strings.clone(warning,allocator),hash=hash})
@@ -97,15 +105,33 @@ documents_follow :: proc(s:^store.Store,p:^asset.Package,b:^asset.Build,folder:s
     return written,{}
 }
 
-// Writes the document whose baseline is the file at baseline to target, or
+// The extension of the files of kind: of the engine, of a plugin as kinds
+// says, else of a file of that kind registry has; "" for none of them.
+@(private="file")
+kind_extension :: proc(kind:asset.Fourcc,kinds:[]Kind_Extension,registry:^asset.Registry) -> string {
+    if info,known:=asset.kind_info(kind);known {return info.extension}
+    for k in kinds {
+        if k.kind==kind {return k.extension}
+    }
+    if registry!=nil {
+        for &file in registry.files {
+            if file.kind!=kind || file.state!=.Asset {continue}
+            dot:=strings.last_index_byte(file.path,'.')
+            if dot>strings.last_index_byte(file.path,'/') {return file.path[dot:]}
+        }
+    }
+    return ""
+}
+
+// Writes the document whose baseline is the file in baseline to target, or
 // follows the file target has. skeletons: the baselines the clips of an
 // animation may play on, else registry has them. decided: the owner of the
 // baseline wins over the one of the file (Import_Settings.parts decides it
 // again). The warning, in the temp allocator, says what of the file could not
 // be kept.
-document_follow :: proc(types:^asset.Types,kind:asset.Fourcc,baseline,target:string,skeletons:[]Followed_Skeleton,registry:^asset.Registry,decided:=false) -> (warning:string,error:asset.Error) {
+document_follow :: proc(types:^asset.Types,kind:asset.Fourcc,baseline:[]u8,target:string,skeletons:[]Followed_Skeleton,registry:^asset.Registry,decided:=false) -> (warning:string,error:asset.Error) {
     given:asset.Asset
-    asset.asset_load(&given,baseline,context.temp_allocator) or_return
+    asset.asset_open(&given,baseline,context.temp_allocator) or_return
     defer asset.asset_close(&given)
     previous:asset.Asset
     existed:=os.exists(target) && asset.asset_load(&previous,target,context.temp_allocator)==.None
@@ -160,8 +186,7 @@ document_follow :: proc(types:^asset.Types,kind:asset.Fourcc,baseline,target:str
         return warning,asset.animation_save(target,types,{id=id,owner=owner,clips=clips,source=view.source})
     }
     // Any other document is the baseline, with the owner of its file.
-    data,read_error:=serial.file_read(baseline,context.temp_allocator)
-    if read_error!=.None {return "",.IO}
+    data:=asset.asset_bytes_clone(baseline,context.temp_allocator) or_return
     if owner!=given.blob.header.owner {asset.header_owner_set(data,owner) or_return}
     if _,write_error:=serial.file_write_changed(target,data);write_error!=.None {return "",.IO}
     return "",.None
@@ -171,16 +196,16 @@ document_follow :: proc(types:^asset.Types,kind:asset.Fourcc,baseline,target:str
 // registry has. In the temp allocator.
 @(private="file")
 skeleton_bones :: proc(types:^asset.Types,id:base.Asset_Id,skeletons:[]Followed_Skeleton,registry:^asset.Registry) -> (bones:[]asset.Skeleton_Bone,found:bool) {
-    path:string
+    data:[]u8
     for s in skeletons {
-        if s.id==id {path=s.path}
+        if s.id==id {data=s.data}
     }
-    if path=="" && registry!=nil {
-        if file,known:=asset.registry_find(registry,id);known {path=asset.registry_file_path(registry,file.path,context.temp_allocator)}
+    if data==nil && registry!=nil {
+        if file,known:=asset.registry_find(registry,id);known {data,_=asset.registry_read(registry,file.path,context.temp_allocator)}
     }
-    if path=="" {return}
+    if data==nil {return}
     a:asset.Asset
-    if asset.asset_load(&a,path,context.temp_allocator)!=.None {return}
+    if asset.asset_open(&a,data,context.temp_allocator)!=.None {return}
     view,error:=asset.skeleton_view(&a,types)
     if error!=.None {return}
     return view.bones,true

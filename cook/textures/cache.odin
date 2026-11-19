@@ -31,6 +31,11 @@ cache_has :: proc(c:cache.Cache,key:u64) -> bool {
     return cache.has(c,CACHE,key,BUILD_VERSION)
 }
 
+// Which of keys the cache keeps, into here, asking its source once for those it lacks.
+cache_lookup :: proc(c:cache.Cache,keys:[]u64,here:[]bool) {
+    cache.lookup(c,CACHE,keys,BUILD_VERSION,here)
+}
+
 // The texture the cache keeps under key, its levels in allocator. False
 // without one, or with one that does not read back whole.
 cache_read :: proc(c:cache.Cache,key:u64,types:^asset.Types,allocator:=context.allocator) -> (built:Built,ok:bool) {

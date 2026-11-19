@@ -28,6 +28,8 @@ asset_problem :: proc(problems:^core.Problems,e:core.Entity,assets:^host.Assets,
         core.report(problems,e,code,"%s names %s, which did not fit in memory; it is read again when the assets change: free memory",field,path)
     case .Codec_Missing:
         core.report(problems,e,code,"%s names %s, compressed with a format the compressor of this build does not decode; build with the compressor that wrote it, or write it again with build.compression open",field,path)
+    case .Not_Here:
+        core.report(problems,e,code,"%s names %s, a part of which is not in the store yet; it is read again once a peer gives it",field,path)
     case .Truncated,.Not_An_Asset,.Corrupt,.Hash,.Too_Large,.Schema,.IO:
         core.report(problems,e,code,"%s names %s, which cannot be read (%v); import it again or write it again from the editor",field,path,error)
     }

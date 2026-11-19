@@ -45,17 +45,17 @@ fonts_import_as_the_file_they_are_and_collections_are_refused :: proc(t:^testing
         report,error:=import_font(source,{store=s})
         if !testing.expectf(t,error.code==.None,"%s imports: %s",file,error.message) {continue}
         defer report_destroy(&report)
-        testing.expect(t,len(report.assets)==1 && report.assets[0].kind==asset.KIND_FONT && report.assets[0].blob!={} && strings.has_prefix(report.assets[0].path,s.root))
+        testing.expect(t,len(report.assets)==1 && report.assets[0].kind==asset.KIND_FONT && report.assets[0].object!={} && report.assets[0].path=="")
         types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
         a:asset.Asset
-        if !testing.expect_value(t,asset.asset_load(&a,report.assets[0].path),asset.Error.None) {continue}
+        if !testing.expect_value(t,written_open(s,report.assets[0],&a),asset.Error.None) {continue}
         defer asset.asset_close(&a)
         view,view_error:=asset.font_view(&a,&types)
         testing.expect_value(t,view_error,asset.Error.None)
         testing.expect(t,view.info.outlines==(.CFF if file=="face.otf" else .TrueType) && len(view.file)==len(CFF_OTF if file=="face.otf" else INTER))
         // Again: the same asset, with the same id.
         again,again_error:=import_font(source,{store=s})
-        testing.expect(t,again_error.code==.None && len(again.assets)==1 && again.assets[0].id==report.assets[0].id && again.assets[0].path==report.assets[0].path)
+        testing.expect(t,again_error.code==.None && len(again.assets)==1 && again.assets[0].id==report.assets[0].id && again.assets[0].object==report.assets[0].object)
         report_destroy(&again)
     }
     collection:=fmt.tprintf("%s/family.ttc",folder)
@@ -191,7 +191,7 @@ prompts_import_packs_the_images_of_a_manifest :: proc(t:^testing.T) {
     defer report_destroy(&report)
     if !testing.expect_value(t,len(report.assets),2) {return}
     atlas,pack:=report.assets[0],report.assets[1]
-    testing.expect(t,atlas.kind==asset.KIND_TEXTURE && pack.kind==asset.KIND_PROMPTS && pack.path==fmt.tprintf("%s/pad.prompts",folder) && strings.has_prefix(atlas.path,s.root))
+    testing.expect(t,atlas.kind==asset.KIND_TEXTURE && pack.kind==asset.KIND_PROMPTS && pack.path==fmt.tprintf("%s/pad.prompts",folder) && atlas.path=="" && atlas.object!={})
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     a,b:asset.Asset
     if !testing.expect_value(t,asset.asset_load(&a,pack.path),asset.Error.None) {return}
@@ -201,7 +201,7 @@ prompts_import_packs_the_images_of_a_manifest :: proc(t:^testing.T) {
     testing.expect(t,len(view.images)==3 && view.images[0].texture==atlas.id && view.images[0].uv==view.images[1].uv,"One image shown by two entries is packed once")
     space:=view.images[2]
     testing.expect(t,serial.text_field(space.key[:])=="Space" && space.aspect==2 && space.family==0 && space.input==asset.PROMPT_INPUT_KEY)
-    if !testing.expect_value(t,asset.asset_load(&b,atlas.path),asset.Error.None) {return}
+    if !testing.expect_value(t,written_open(s,atlas,&b),asset.Error.None) {return}
     defer asset.asset_close(&b)
     texture,texture_error:=asset.texture_view(&b,&types)
     if !testing.expect_value(t,texture_error,asset.Error.None) {return}

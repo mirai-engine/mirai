@@ -20,7 +20,7 @@ the assets.
 ## Map
 
 - Packages, `import_source`, the imported model and CLI: [imports.md](references/imports.md#api).
-- The package of a source in the store (settings, ids, build of blobs), documents written or
+- The package of a source in the store (settings, ids, build of objects), documents written or
   followed in a project (`documents_follow`), reimporting and parts with `owner`:
   [Identity](references/imports.md#identity-and-reimport).
 - The records of the store (package and build manifests, refs, `packages.mirai`):
@@ -57,9 +57,9 @@ the assets.
 ## Workflow
 
 1. **Importing a file.** An import takes the store (`Import_Options.store`) and puts in it the
-   package of the source and a build of its blobs; given `documents`, it also writes or follows
+   package of the source and a build of its objects; given `documents`, it also writes or follows
    the documents in that folder of a project. Review the assets with `mirai asset verify`, `ls`
-   and `info`; commit `packages.mirai` and the documents, never the blobs. The editor, the CLI,
+   and `info`; commit `packages.mirai` and the documents, never the objects. The editor, the CLI,
    the library and the content tools import with the same `sources.import_source`: same assets,
    prefab included. `mirai import <file>` ingests it and adds it to a project
    ([library](references/imports.md#library)).
@@ -112,22 +112,25 @@ the assets.
 - **An import never touches another.** Two models that embed the same image get a texture each,
   encoded once in the content cache; no import edits the documents or the package of another
   source. Decided by the owner.
-- **Every output is an immutable blob of the store, the same on every machine.** The build lists
-  the blobs, documents among them as their baseline. No blob is rewritten in place (a changed
-  owner is a new blob), and the source an asset names is relative to its package. Materials,
+- **Every output is an immutable object of the store, the same on every machine**
+  (`asset.object_put`, cut where its format reads alone). The build lists the objects, documents
+  among them as their baseline. No object is rewritten in place (a changed owner is a new
+  object), and the source an asset names is relative to its package. A document of a plugin's
+  kind a refresh writes takes the extension the plugin's manifest gives its kind. Materials,
   prefabs, skeletons, clips, texts and prompts, which the editor edits, are also documents of a
   project, followed from the baseline. Decided by the owner.
 - **The identity holds no engine version; the key holds the identity and the versions.** The
   identity (package, source, inputs, settings, plugin code: two packages of the same bytes never
-  share a build, since its blobs hold their ids) is in the manifest; the key
+  share a build, since its objects hold their ids) is in the manifest; the key
   (`asset.import_key`) adds the writer, format, kind and texture builder versions, so any machine
   with the manifest finds a build without the source. A Final build is named under `imports`,
   which peers share; a Fast one only under `imports-fast`; `builds` names the one this machine
   chose. The editor never imports by itself.
-- **What imports and cooks build is kept as refs into the machine store** (`cook/cache`): a blob
-  named by `(cache-<name>, <key>-<version>)`, found by any program or machine that shares blobs;
-  a miss asks the caller's `cache.Source` before building, and `cook/cache` removes nothing: the
-  store owns space ([texture cache](references/imports.md#texture-cache)).
+- **What imports and cooks build is kept as refs into the machine store** (`cook/cache`): an
+  object named by `(cache-<name>, <key>-<version>)`, found by any program or machine that shares
+  the store's objects; a miss asks the caller's `cache.Source` before building, what a pass needs
+  is looked up at once (`cache.lookup`, one fetch for the pass), and `cook/cache` removes nothing:
+  the store owns space ([texture cache](references/imports.md#texture-cache)).
 - **Following a package is a pure function of the package, its build and the game's types**:
   two refreshes on any machine give the same bytes, and a document, prefab or record that would
   be written as it is is not written (`serial.file_write_changed`).
@@ -212,13 +215,15 @@ the assets.
   layers in `layers_test.odin`). The fixtures of `assets/fixtures/` and the models of
   `demo/assets` import (without warnings) and what is written reads back with `asset`.
 - Caches: `cook/cache/cache_test.odin` (a result kept through one store is found through another
-  of its root or through a source on a miss; a missing or damaged blob is a miss; hostile names),
-  `cook/textures/cache_test.odin` and `cook/import/sources/cache_test.odin` (a texture or a mesh
+  of its root or through a source on a miss; an object not here is a miss; a lookup of many keys
+  asks once; hostile names), `cook/textures/cache_test.odin` (and one texel changed changes few
+  chunks of the object) and `cook/import/sources/cache_test.odin` (a texture or a mesh
   that another import built is taken from the cache or from a source; one whose file under another
   key records what it is built from now is taken without writing it, and one that records other
   encoders or another builder is built again);
   `cook/build/cook_cache_test.odin` (a cook takes the blocks of a texture from the cache of its
-  content) and `cook/import/sources/cook_test.odin` (the refresh of a cook builds a fast texture
+  content, ships package assets from their objects and looks the cache up once per pass) and
+  `cook/import/sources/cook_test.odin` (the refresh of a cook builds a fast texture
   final from its source; that of a build that does not cook keeps either; a peer with only
   fetched builds cooks what the sources cook, sources inside a root stay behind and a missing
   build fails by package; a refresh takes builds from a second store).
@@ -238,18 +243,18 @@ the assets.
   models with the same image get a texture each and neither touches the other, when a material is
   a part of a model), `cook/import/outputs_test.odin` (the outputs of a source are the assets its
   package lists, the models of a whole source share their parts by name, inputs count in the
-  identity, importing again keeps ids and blobs, a source outside any project imports, a setting
+  identity, importing again keeps ids and objects, a source outside any project imports, a setting
   changes the identity and an engine version only the key, a Fast build is not shared, two stores
-  hold the same blobs), `cook/import/sources/settings_test.odin` (the package keeps the settings;
+  hold the same objects), `cook/import/sources/settings_test.odin` (the package keeps the settings;
   settings that are not this build's are refused) and `cook/import/sources/write_test.odin`
   (importing again keeps what was changed in a material and takes the rest from the source).
 - Library: `cook/import/sources/library_test.odin` (a peer without sources fetches, lists and
   loads what a project pins, and without a source of builds reports by package and neither
   removes nor builds; a source outside any project ingests once and two projects list the same
-  blobs; an engine change ingests again where the source is and is reported by name elsewhere,
+  objects; an engine change ingests again where the source is and is reported by name elsewhere,
   also when only Fast is here and Final is required; hostile `packages.mirai` and manifests are
   reported; two ingests of one source at once import it once; a copy of a root with its sources
-  and an empty store builds the same ids, manifests and blobs, and without them reports each
+  and an empty store builds the same ids, manifests and objects, and without them reports each
   package; refreshing from two empty stores writes nothing the second time) and
   `cook/import/sources/reimport_test.odin` (a refresh reads a source again with the formats of
   the plugins, and ingests a whole source again when what it is built from changes).

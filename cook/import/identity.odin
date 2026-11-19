@@ -15,7 +15,7 @@ import "mirai:store"
 // of the package the source was ingested as (package_previous) says the
 // asset: the one of its kind and name (of its kind for the root of the
 // import), else a new one. Every part is written to a file of the scratch
-// folder of the import and put in the store as a blob of its build; a
+// folder of the import and put in the store as an object of its build; a
 // document is also written, or followed, in the folder of the documents
 // (Import_Options.documents): where the registry of the root has its id, else
 // a new file there.
@@ -53,7 +53,7 @@ writer_source :: proc(w:^Writer,path,folder:string) -> bool {
     w.outputs.allocator=context.temp_allocator
     w.targets.allocator=context.temp_allocator
     w.paths.allocator=context.temp_allocator
-    w.blobs.allocator=context.temp_allocator
+    w.objects.allocator=context.temp_allocator
     w.fixed=false
     s:=w.options.store
     if s==nil {return writer_fail(w,.Write,"%s: an import puts what it builds in a store: give it one (Import_Options.store)",path)}
@@ -142,7 +142,7 @@ parts_plan :: proc(w:^Writer,parts:[]Part) {
                 if file,found:=asset.registry_find(w.registry,p.id);found && file.kind==p.kind {p.target=asset.registry_file_path(w.registry,file.path,context.temp_allocator)}
             }
             if _,keeping:=w.keeping[p.id];keeping {
-                // A document the import keeps as it is: its blob alone is written.
+                // A document the import keeps as it is: its object alone is written.
                 p.target=""
             } else {
                 if p.target=="" {p.target=fresh_path(w,fmt.tprintf("%s%s",asset.safe_path(p.name),p.extension))}
@@ -153,7 +153,7 @@ parts_plan :: proc(w:^Writer,parts:[]Part) {
         append(&w.outputs,asset.Package_Asset{kind=p.kind,name=strings.clone(p.name,w.keep),index=p.index,id=p.id})
         append(&w.paths,strings.clone(p.path,w.keep))
         append(&w.targets,strings.clone(p.target,w.keep))
-        append(&w.blobs,store.Hash{})
+        append(&w.objects,store.Hash{})
     }
 }
 
@@ -166,16 +166,16 @@ root_take :: proc(w:^Writer,kind:asset.Fourcc,name,extension:string) -> (id:base
     return parts[0].id,parts[0].path,parts[0].output
 }
 
-// Takes the file of an output written at file as a blob of the build, with the
+// Takes the file of an output written at file as an object of the build, with the
 // owner and the dependencies its header gives, and its document written or
 // followed at its target (document_follow). False, with the writer failed,
 // when the store does not take it or the target cannot be written.
 @(private)
 writer_put :: proc(w:^Writer,output:int,file:string) -> bool {
     s:=w.options.store
-    hash,error:=store.put_file(s,file)
+    object,error:=asset.object_put_file(s,file)
     if error!=.None {return writer_fail(w,.Write,"%s could not be put in the store at %s: %v",file,s.root,error)}
-    return writer_take(w,output,hash)
+    return writer_take(w,output,object)
 }
 
 // What the project's pin records its file of the document id held when the
@@ -204,7 +204,7 @@ documents_changed :: proc(p:^asset.Package,written:[]asset.Package_Written,regis
 
 // Applies Import_Options.changed to the documents of the import that changed
 // since it last wrote them: Refuse fails naming them, Keep leaves each as it
-// is (Writer.keeping), writing its blob alone, and warns of it.
+// is (Writer.keeping), writing its object alone, and warns of it.
 @(private)
 writer_changed :: proc(w:^Writer) -> bool {
     if w.folder=="" || w.options.changed==.Discard {return true}
@@ -254,18 +254,23 @@ writer_written :: proc(w:^Writer,id:base.Asset_Id,kind:asset.Fourcc,hash:u64) {
     if hash!=0 {append(&w.report.written,asset.Package_Written{id,hash})}
 }
 
-// Takes the blob hash as the output of the build, from the store: its owner and
+// Takes the object hash as the output of the build, from the store: its owner and
 // dependencies, and its document at its target.
 @(private)
 writer_take :: proc(w:^Writer,output:int,hash:store.Hash) -> bool {
     s:=w.options.store
-    blob,path_error:=store.blob_path(s,hash,context.temp_allocator)
-    if path_error!=.None {return writer_fail(w,.Write,"the store at %s does not have the blob it took: %v",s.root,path_error)}
     dependencies:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    header,_,_,peek_error:=asset.import_peek(blob,&w.types,&dependencies)
-    if peek_error!=.None {return writer_fail(w,.Write,"%s, written for %s, does not read: %v",blob,w.outputs[output].name,peek_error)}
+    header,peek_error:=asset.object_header(s,hash,&dependencies)
+    digits:[64]u8
+    if peek_error!=.None {return writer_fail(w,.Write,"the object %s of the store at %s, taken for %s, does not read: %v",store.hex(hash,&digits),s.root,w.outputs[output].name,peek_error)}
     o:=&w.outputs[output]
-    w.blobs[output]=hash
+    w.objects[output]=hash
+    baseline:[]u8
+    if w.targets[output]!="" || o.kind==asset.KIND_SKELETON {
+        read_error:asset.Error
+        baseline,read_error=asset.object_file(s,hash,w.keep)
+        if read_error!=.None {return writer_fail(w,.Write,"the object %s of the store at %s, taken for %s, does not read: %v",store.hex(hash,&digits),s.root,o.name,read_error)}
+    }
     o.owner=header.owner
     o.part=asset.import_cached(o.kind) && header.owner!={}
     o.dependencies=make([dynamic]base.Asset_Id,w.keep)
@@ -274,7 +279,7 @@ writer_take :: proc(w:^Writer,output:int,hash:store.Hash) -> bool {
     }
     if target:=w.targets[output];target!="" {
         existed:=os.exists(target)
-        warning,follow_error:=document_follow(&w.types,o.kind,blob,target,w.followed[:],w.registry,decided=w.report.settings.parts!=.Auto)
+        warning,follow_error:=document_follow(&w.types,o.kind,baseline,target,w.followed[:],w.registry,decided=w.report.settings.parts!=.Auto)
         if follow_error!=.None {return save_failed(w,follow_error,target)}
         if warning!="" {writer_warn(w,"%s",warning)}
         if !existed {append(&w.created,strings.clone(target,w.keep))}
@@ -282,7 +287,7 @@ writer_take :: proc(w:^Writer,output:int,hash:store.Hash) -> bool {
     } else if _,keeping:=w.keeping[o.id];keeping {
         writer_written(w,o.id,o.kind,0)
     }
-    if o.kind==asset.KIND_SKELETON {append(&w.followed,Followed_Skeleton{o.id,strings.clone(blob,w.keep)})}
+    if o.kind==asset.KIND_SKELETON {append(&w.followed,Followed_Skeleton{o.id,baseline})}
     return true
 }
 
@@ -303,7 +308,7 @@ writer_finish :: proc(w:^Writer,name,importer:string) -> bool {
     return writer_publish(w,name,importer)
 }
 
-// Removes the documents the import created and the scratch folder; the blobs it
+// Removes the documents the import created and the scratch folder; the objects it
 // put stay, named by nothing.
 @(private)
 writer_rollback :: proc(w:^Writer) {
