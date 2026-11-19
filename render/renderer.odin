@@ -320,6 +320,7 @@ Pipeline_Id :: enum {
 	Program_Depth, // the depth of the Surface program of each pixel, which its resolve tests
 	Resolve, Resolve_Plain, Resolve_Layers, // the G-buffer from the visibility target: with the reflectance target, without it, with the layers target
 	Resolve_Nested, Resolve_Nested_Plain, Resolve_Nested_Layers, // the same of the nested views of a view
+	Rest, // where the vertex hook moved each pixel from where it rests (rest.comp)
 	Ui_World, Ui_Composite, Ui_Blur, Debug_Lines,
 	Skin, Skin_Triangles, Skin_Refit,
 	Nested_Prime, Nested_Reflectance, // of the nested views of a view
@@ -969,6 +970,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	traced(list, r, .Contact, .Contact_Comp, .Contact_Hw_Comp)
 	compute(list, r, .Contact_Light, .Contact_Light_Comp)
 	compute(list, r, .Contact_Pixels, .Contact_Pixels_Comp)
+	compute(list, r, .Rest, .Rest_Comp)
 	compute(list, r, .Composite, .Composite_Comp)
 	compute(list, r, .Taa, .Taa_Comp)
 	compute(list, r, .Hiz, .Hiz_Comp)

@@ -460,8 +460,8 @@ steps run each frame while one does.
 Rays meet a batch of the hook at rest: the traced shadow of a swaying canopy under a light no map
 holds stands still, and the probes see it at rest. A point the view shows swayed is tested from
 where it rests, so it meets what lies around its leaf at rest, as the same leaf still would, and
-not that leaf: the resolve places its triangle with and without the hook and leaves the
-difference in the rest target (`pixel_rest` of `gbuffer.slang`, while a batch gives the hook
+not that leaf: after the resolve, `rest.comp` places the triangle of each pixel of a batch with
+and without the hook, as the resolve does, and leaves the difference in the rest target (`pixel_rest` of `gbuffer.slang`, while a batch gives the hook
 values: `FRAME_FLAG_SWAY`; the impostors of foliage write theirs with `pass_rest_write`). The
 shadow rays, contact occlusion and reflections of a pixel leave from its rest place, by the normal
 offset alone; a map that draws the caster at rest (its texel wider than that of a point at the

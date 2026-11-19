@@ -30,7 +30,6 @@
 #define MIRAI_TEXTURE_FEEDBACK
 #define MATERIAL_GRADIENTS
 #define MIRAI_BATCHES
-#define GBUFFER_REST_OUT SLOT_PASS4
 #include "gbuffer_output.slang"
 #include "visibility.slang"
 
@@ -47,7 +46,6 @@
 struct Resolve_Corner {
     float4 position; // jittered clip
     float3 world;
-    float3 rest;     // in the world, before the vertex hook moves it
     float3 before;   // in the world, in the frame before
     float3 normal;   // a unit, in the world
     float4 tangent;
@@ -61,7 +59,6 @@ Resolve_Corner resolve_corner(Instance inst, Mesh mesh, Cluster c, Cluster_Block
     Resolve_Corner r;
     r.position = view_clip(p.world);
     r.world = p.world;
-    r.rest = p.rest;
     r.before = gbuffer_corner_world_previous(inst, mesh, c, b, k, p);
     r.normal = transform_normal(inst.world_inv, p.v.normal);
     r.tangent = instance_tangent(inst, p.v.tangent);
@@ -132,7 +129,6 @@ struct Resolve_Point {
     float4 uv1_gradients;
     float3 world_dx, world_dy;
     float3 normal_dx, normal_dy; // of the interpolated normal, normalized
-    float3 rest;                 // where the point is before the vertex hook moves it
 };
 
 Resolve_Point resolve_point(Resolve_Triangle t, float2 pixel) {
@@ -147,7 +143,6 @@ Resolve_Point resolve_point(Resolve_Triangle t, float2 pixel) {
     s.input.in_emission = t.emission;
     s.input.in_surface = t.surface;
     s.input.in_world = resolve_mix(t.a.world, t.b.world, t.c.world, w);
-    s.rest = resolve_mix(t.a.rest, t.b.rest, t.c.rest, w);
     // What is linear in the triangle is taken to the clip spaces once.
     s.input.in_clip = view_clip_unjittered(s.input.in_world);
     s.input.in_prev_clip = view_clip_previous(resolve_mix(t.a.before, t.b.before, t.c.before, w));
@@ -218,12 +213,6 @@ Stage_Output resolve_shade(Resolve_Point s, bool2 steady) {
     return output;
 }
 
-// Where the vertex hook moved the point of a pixel that is not a helper from
-// where it rests, with the depth it wrote, for the passes that light it.
-void resolve_rest(float2 pixel, bool helper, Resolve_Point s, Stage_Output output) {
-    if (!helper) gbuffer_rest_write(int2(pixel), s.input.in_world - s.rest, output.g_depth);
-}
-
 // The tests of the program depth run before the fragment: a pixel of
 // another program fails them, and is a helper of its quad.
 [shader("fragment")]
@@ -273,13 +262,9 @@ Stage_Output main(float4 pixel : SV_Position) {
             steady = bool2(true, true);
         }
         Stage_Output shaded = resolve_shade(s, steady);
-        if (!again) {
-            resolve_rest(pixel.xy, helper, s, shaded);
-            return shaded;
-        }
+        if (!again) return shaded;
         if (pending == leader) {
             output = shaded;
-            resolve_rest(pixel.xy, helper, s, shaded);
             pending = 0u;
         }
     }
