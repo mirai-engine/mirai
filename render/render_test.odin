@@ -1916,6 +1916,185 @@ render_probes_trace_and_light_only_what_a_change_crosses :: proc(t: ^testing.T) 
 	expect_clean(t, f.device)
 }
 
+// The probes of the volume as the GPU holds them after the frames given.
+@(private = "file")
+probes_read :: proc(t: ^testing.T, r: ^Renderer, allocator := context.temp_allocator) -> []Gpu_Probe {
+	rhi.device_wait_idle(r.device)
+	probes := make([]Gpu_Probe, r.ddgi.total, allocator)
+	testing.expect(t, rhi.buffer_read_slice(r.device, r.ddgi.probes, 0, probes))
+	return probes
+}
+
+// The cell of the world slot `index` of the volume stands for this frame (probe_slot_cell).
+@(private = "file")
+probe_slot_cell_of :: proc(g: ^Ddgi_State, index: u32) -> [3]i32 {
+	counts := [3]i32{i32(g.counts[0]), i32(g.counts[1]), i32(g.counts[2])}
+	size := u32(counts.x * counts.y * counts.z)
+	cascade, local := index / size, i32(index % size)
+	wrapped := [3]i32{local % counts.x, (local / counts.x) % counts.y, local / (counts.x * counts.y)}
+	corner := g.cells[cascade].xyz
+	from := ((corner % counts) + counts) % counts
+	return corner + ((wrapped - from) % counts + counts) % counts
+}
+
+// A wall whose program reads the time: once a turn leaves the light of a
+// probe where it was, the probe waits twice as long for the next, up to
+// 1 << PROBE_WAIT_MOST frames, so that a light the time does not move costs
+// about nothing, while one it moves is gathered every turn, and one that
+// starts moving is gathered within that bound.
+@(test)
+render_probes_follow_time_by_what_it_changes :: proc(t: ^testing.T) {
+	Case :: struct {name: string, glow: [3]f64, rate, start: f64, follows: bool}
+	cases := []Case{
+		{"a glow of nothing", {0, 0, 0}, 1, 0, false},
+		{"a faint glow that pans", {0, 0.00005, 0}, 1, 0, false},
+		{"a glow that waves", {0, 4, 0}, 6, 0, true},
+		{"a glow that comes on later", {0, 4, 0}, 0, 20, true},
+	}
+	WAIT :: 1 << abi.PROBE_WAIT_MOST
+	for c in cases {
+		f: Cube_Fixture
+		settings := test_settings()
+		settings.taa = false
+		if !cube_fixture_init(t, &f, 96, 64, settings, programs = true) {return}
+		defer fixture_destroy(&f)
+		defer expect_clean(t, f.device)
+		r := f.renderer
+		pulse := program_find(r, "Pulse", .Surface)
+		if !testing.expect(t, pulse != nil, "the tests have the Pulse program") {return}
+		glowing := DEFAULT_MATERIAL
+		glowing.program_id = pulse.id
+		glowing.custom_params = program_defaults(pulse)
+		program_parameter_set(&glowing.custom_params, program_parameter(pulse, "glow"), {c.glow.x, c.glow.y, c.glow.z, 0})
+		program_parameter_set(&glowing.custom_params, program_parameter(pulse, "rate"), {c.rate, 0, 0, 0})
+		program_parameter_set(&glowing.custom_params, program_parameter(pulse, "start"), {c.start, 0, 0, 0})
+		testing.expect(t, materials_set(r, {glowing}))
+		instances := []Instance_Desc{
+			{object_id = 1, mesh = f.cube, transform = trs({0, -0.5, 0}, {14, 0.2, 14}), tint = {0.8, 0.8, 0.8}},
+			{object_id = 2, mesh = f.cube, transform = trs({0, 1.1, -3.5}, {14, 3, 0.2}), tint = {0.8, 0.8, 0.8}, material = 1},
+		}
+		sun := Sun_Desc{direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 1, enabled = true, indirect = 1, scattering = 1}
+		scene_given(r, instances, nil, sun, {sky = {0.05, 0.05, 0.05}})
+		camera := Camera{position = {2.6, 2.2, 3}, forward = {0.4, -1.6, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+		frame := 0
+		step :: proc(t: ^testing.T, r: ^Renderer, camera: Camera, frame: ^int) {
+			testing.expect(t, renderer_frame(r, {camera = camera, time = f32(frame^) / 60, inspection = {mode = .Indirect}}), r.error)
+			frame^ += 1
+		}
+		// The change of the material wakes the probes for a while; then their turns go by.
+		for frame < 900 {step(t, r, camera, &frame)}
+		passing := 0
+		for p in probes_read(t, r) {if p.cell.w & 0x80 != 0 {passing += 1}}
+		if c.start == 0 {
+			traced := 0
+			for _ in 0 ..< WAIT {
+				step(t, r, camera, &frame)
+				rhi.device_wait_idle(r.device)
+				traced += int(r.stats.probes_traced)
+			}
+			if c.follows {
+				turn := min(passing, int(max(r.ddgi.budget / 8, 1)))
+				testing.expectf(t, traced >= turn * WAIT / 2, "%s: its probes are gathered every turn, %d a frame: %d over %d frames, %d probes", c.name, turn, traced, WAIT, passing)
+			} else {
+				testing.expectf(t, traced <= passing * 2, "%s: its probes are gathered about once in %d frames: %d, %d probes", c.name, WAIT, traced, passing)
+				// Gathered that seldom, the still view stays as steady as when it
+				// was gathered every turn: no step shows.
+				testing.expect(t, renderer_frame(r, {camera = camera, time = f32(frame) / 60}), r.error)
+				frame += 1
+				rhi.device_wait_idle(r.device)
+				first, _, _, ok := golden_capture(r)
+				if !testing.expect(t, ok, r.error) {continue}
+				defer delete(first)
+				most := 0
+				for _ in 0 ..< 60 {
+					testing.expect(t, renderer_frame(r, {camera = camera, time = f32(frame) / 60}), r.error)
+					frame += 1
+					rhi.device_wait_idle(r.device)
+					now, _, _, captured := golden_capture(r)
+					if !captured {break}
+					for v, i in now {most = max(most, abs(int(v) - int(first[i])))}
+					delete(now)
+				}
+				testing.expectf(t, most <= 1, "%s: the lit view moves by %d over 60 frames", c.name, most)
+			}
+			continue
+		}
+		// Off until the time comes, then the floor beside the wall takes its glow within the bound.
+		before, width, _, ok := golden_capture(r)
+		if !testing.expect(t, ok, r.error) {continue}
+		defer delete(before)
+		floor := project(r, camera, {1, -0.39, -2.4})
+		was := pixel(before, width, floor)
+		testing.expectf(t, f64(frame) < c.start * 60, "%s: the glow is still off", c.name)
+		for f64(frame) < c.start * 60 {step(t, r, camera, &frame)}
+		lit := -1
+		for k in 0 ..< WAIT + 8 {
+			step(t, r, camera, &frame)
+			rhi.device_wait_idle(r.device)
+			after, _, _, captured := golden_capture(r)
+			if !captured {break}
+			now := pixel(after, width, floor)
+			delete(after)
+			if now[1] > was[1] + 20 {lit = k; break}
+		}
+		testing.expectf(t, lit >= 0, "%s: the floor takes the glow within %d frames of it coming on (it was %v)", c.name, WAIT + 8, was)
+	}
+}
+
+// When the volume moves with the camera, the new probes a pixel reads are
+// gathered in the frame they come, and those none reads wait behind them,
+// taking at most an eighth of the budget a frame, until all are gathered.
+@(test)
+render_probes_new_unread_wait_behind_those_read :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.taa = false
+	settings.probe_budget = 128
+	if !cube_fixture_init(t, &f, 96, 64, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	instances := []Instance_Desc{
+		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {60, 0.2, 60}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 2, mesh = f.cube, transform = trs({0, 1.5, -6}, {60, 3, 0.2}), tint = {0.7, 0.6, 0.5}},
+	}
+	sun := Sun_Desc{direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 3, enabled = true, indirect = 1, scattering = 1}
+	scene_given(r, instances, nil, sun, {sky = {0.2, 0.3, 0.5}})
+	camera := Camera{position = {0, 2, 4}, forward = {0, -1, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 200, exposure = UNIT_EXPOSURE}
+	// Past the updates that gather the world shown anew.
+	for _ in 0 ..< 400 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	testing.expect(t, r.gi_warm_spread == 0, "the world is gathered")
+	g := &r.ddgi
+	share := int(max(g.budget / 8, 1))
+	before := probes_read(t, r)
+	camera.position.x += 3 * settings.probe_spacing
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	after := probes_read(t, r)
+	chosen := make([]u32, 1 + g.budget, context.temp_allocator)
+	testing.expect(t, rhi.buffer_read_slice(r.device, g.chosen, 0, chosen))
+	taken := make([]bool, g.total, context.temp_allocator)
+	for slot in chosen[1:1 + min(chosen[0], g.budget)] {taken[slot] = true}
+	frame := u32(r.light_frame - 1)
+	read_new, read_waiting, unread, unread_taken := 0, 0, 0, 0
+	for i in 0 ..< g.total {
+		if before[i].cell.xyz == probe_slot_cell_of(g, i) {continue}
+		if after[i].frames.y == frame {
+			read_new += 1
+			if !taken[i] {read_waiting += 1}
+		} else {
+			unread += 1
+			if taken[i] {unread_taken += 1}
+		}
+	}
+	testing.expectf(t, read_new > 0 && read_waiting == 0, "the new probes a pixel reads are gathered in the frame they come: %d of %d wait", read_waiting, read_new)
+	testing.expectf(t, unread > share && unread_taken <= share, "the new probes none reads take at most %d of the budget: %d of %d", share, unread_taken, unread)
+	// And they all come once the urgent ones leave room for their share.
+	for _ in 0 ..< 64 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	stale := 0
+	for p, i in probes_read(t, r) {if p.cell.xyz != probe_slot_cell_of(g, u32(i)) {stale += 1}}
+	testing.expectf(t, stale == 0, "every new probe is gathered in the frames after: %d are not", stale)
+	expect_clean(t, f.device)
+}
+
 @(test)
 render_culls_and_keeps_steady_frames_allocation_free :: proc(t: ^testing.T) {
 	f: Cube_Fixture

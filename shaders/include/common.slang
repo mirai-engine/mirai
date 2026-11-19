@@ -343,7 +343,9 @@ struct Bvh_Triangle {
 // it is (probe_hits.slang); the times it moved in its cell, PROBE_MOVE each;
 // and one of its rays met what changes with nothing that says so (a program
 // that reads the time, the gate or a light of an extension), which keeps it
-// traced by turns.
+// traced by turns; and the frames it waits for its next turn, 1 << this
+// field (PROBE_WAIT each), longer while its turns leave its light where it
+// was (ddgi_relocate.comp).
 #define PROBE_VALID 1
 #define PROBE_BURIED 2
 #define PROBE_CHOSEN 4
@@ -351,6 +353,8 @@ struct Bvh_Triangle {
 #define PROBE_MOVE 16
 #define PROBE_MOVES 0x70
 #define PROBE_PASSING 0x80
+#define PROBE_WAIT 0x100
+#define PROBE_WAITS 0xF00
 struct Probe {
     float4 offset; // xyz from the center of its cell, metres; w how near it is to the change that keeps it awake, 0 to 1 (ddgi_touch.comp)
     int4 cell;     // xyz the cell of the world it was last traced for, w PROBE_* flags
