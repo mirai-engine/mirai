@@ -423,7 +423,7 @@ a_join_reproduces_the_files_and_loads_the_packages_without_sources :: proc(t:^te
     testing.expectf(t,len(listed.problems)==0 && len(listed.listed)>0,"%v",listed)
     for l in listed.listed {
         a:asset.Asset
-        if testing.expectf(t,asset.asset_load(&a,l.file,context.temp_allocator)==.None,"%s loads on the joiner",l.path) {
+        if testing.expectf(t,asset.asset_open_object(&a,&w.peers[1].s,l.object,context.temp_allocator)==.None,"%s loads on the joiner",l.path) {
             testing.expect_value(t,a.blob.header.id,l.id)
             asset.asset_close(&a)
         }

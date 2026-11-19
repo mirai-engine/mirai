@@ -246,7 +246,7 @@ library_served :: proc(s:^store.Store,root:string,served:^[dynamic]store.Hash) {
         b,build_error:=asset.build_get(s,hash,context.temp_allocator)
         if build_error!=.None {continue}
         for o in b.outputs {
-            append(served,o.blob)
+            append(served,o.object)
             if o.thumbnail!={} {append(served,o.thumbnail)}
         }
     }

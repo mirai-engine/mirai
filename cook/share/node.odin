@@ -277,7 +277,7 @@ node_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
                 continue
             }
             for o in b.outputs {
-                append(&blobs,o.blob)
+                append(&blobs,o.object)
                 if o.thumbnail!={} {append(&blobs,o.thumbnail)}
             }
         }
@@ -286,7 +286,7 @@ node_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
             if address=={} {continue}
             b,_:=asset.build_get(into,address,context.temp_allocator)
             for o in b.outputs {
-                if !store.has(into,o.blob) || o.thumbnail!={} && !store.has(into,o.thumbnail) {address={}}
+                if !asset.object_whole(into,o.object) || o.thumbnail!={} && !asset.object_whole(into,o.thumbnail) {address={}}
             }
         }
     }
