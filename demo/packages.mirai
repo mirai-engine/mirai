@@ -37,6 +37,9 @@
     {"id": "de7548cbbad3494b21280744cd16ed68", "manifest": "e6a7c04950a4f843283e188eeca9538d0f98035ff07ddf8e2216edc44f76ab90", "folder": "surfaces/tiles", "assets": [], "written": []},
     {"id": "e96915c067e6fe50d517b59bf3b17d61", "manifest": "79982691c9fd719b5f3e34331a1cbeb88676be5f5fd8c630453b5860d0fd59f9", "folder": "surfaces/wood", "assets": [], "written": []},
     {"id": "f4ccf188ab1bf19a62c53faaef829fba", "manifest": "a129e3f38b1008609560167f132b43076b087fce75805e78f41f0d2cd09623c2", "folder": "surfaces/wood", "assets": [], "written": []},
-    {"id": "0964d5141215cea8462119f07a904e49", "manifest": "c5c4fb4a315b60117f7f6564c7f39b7e4efa7d2db6caa5afcf0cb48f30715cc9", "folder": "surfaces/wood", "assets": [], "written": []}
+    {"id": "0964d5141215cea8462119f07a904e49", "manifest": "c5c4fb4a315b60117f7f6564c7f39b7e4efa7d2db6caa5afcf0cb48f30715cc9", "folder": "surfaces/wood", "assets": [], "written": []},
+    {"id": "81dd55e2e057dae790850f4a006dce86", "manifest": "1c7577bc9dc9e0fb9098a9f76c5b544b0bb04c872b8bf8522dbec916b883cbfd", "folder": "foliage_extreme/tree_broad", "assets": [], "written": [{"id": "73668be537ffad086162e2c98e1c79f6", "hash": "955c44da9d712793"}]},
+    {"id": "9c80ffb4545f5d74f0a1ccf6acedba6b", "manifest": "177382bb6964ce9c6b3d15e12f6f50c25d7d5c68bb17d46d7a0b0e1b8bfe0445", "folder": "foliage_extreme/tree_bush", "assets": [], "written": [{"id": "317c6ad95fead4485707ae3231936f9b", "hash": "167b7aa7f3c8a611"}]},
+    {"id": "2dbac73486cbcaad3569e05ecd01bb4f", "manifest": "17a6ed50f1576aa65e2279d141ce04423e7ade5c7804d215099db38d9a35ddb0", "folder": "foliage_extreme/tree_tall", "assets": [], "written": [{"id": "10f19381013cd286f491234605c5ca3a", "hash": "e1f3b6995fc343e8"}]}
   ]
 }
