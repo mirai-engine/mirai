@@ -218,8 +218,9 @@ a_batch_with_a_basis_is_drawn_where_its_transform_says :: proc(t: ^testing.T) {
 	}
 	post := Instance_Desc{object_id = 2, mesh = box, transform = transform, tint = {0.9, 0.3, 0.2}}
 	end := centre + linalg.quaternion128_mul_vector3(rotation, Vec3{6, 0, 0})
-	sun := Sun_Desc{direction = {0.1, 1, 0.05}, color = {1, 1, 1}, illuminance = 1.5 * math.PI, enabled = true, indirect = 1, scattering = 1}
-	sky := Environment{sky = {0.3, 0.4, 0.6}}
+	// Without indirect light: what differs is where things are, not the noise of the probes.
+	sun := Sun_Desc{direction = {0.1, 1, 0.05}, color = {1, 1, 1}, illuminance = 1.5 * math.PI, enabled = true, scattering = 1}
+	sky := Environment{}
 	camera := Camera{position = end + {0, 7, 7}, forward = {0, -7, -7}, up = {0, 1, 0}, fov_y = 3, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	rms_of :: proc(a, b: Trace_Image) -> (rms: f64, worst: f32) {
 		total := f64(0)
@@ -255,7 +256,7 @@ a_batch_with_a_basis_is_drawn_where_its_transform_says :: proc(t: ^testing.T) {
 		if len(instanced.pixels) == 0 || len(exact.pixels) != len(instanced.pixels) || len(packed.pixels) != len(instanced.pixels) {continue}
 		rms, worst := rms_of(exact, instanced)
 		apart, _ := rms_of(packed, instanced)
-		testing.expectf(t, rms < 2 && apart > 4 * max(rms, 0.5), "%v: with its basis the batch differs from the instance by %.2f (rms of 0-255, at most %v); packed, by %.2f", provider, rms, worst, apart)
+		testing.expectf(t, rms < 1 && apart > 4 * max(rms, 0.5), "%v: with its basis the batch differs from the instance by %.2f (rms of 0-255, at most %v); packed, by %.2f", provider, rms, worst, apart)
 	}
 	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
 }
