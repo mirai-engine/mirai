@@ -118,6 +118,8 @@ Pack :: struct {
     retired:u64,   // the generation that dropped it into retired/; 0: in packs/
     sealed,indexed,own,gone,damaged:bool,
     dead:bool,     // still being written by a writer whose lease is gone: a sweep folds what it committed
+    lent:bool,     // its file or mapping went to a caller, who may still hold slices of it: kept open
+    pruned:bool,   // deleted from retired/ and closed: nothing reads it
 }
 
 @(private)
