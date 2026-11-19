@@ -63,6 +63,52 @@ shadow_counts :: proc(r: ^Renderer) -> (drawn, composed, left: u32) {
 	return counts[abi.SHADOW_COUNT_DRAWN], counts[abi.SHADOW_COUNT_COMPOSED], counts[abi.SHADOW_COUNT_LEFT]
 }
 
+// A deformable whose vertices are those of its mesh at rest moved along x by
+// x, written by sway_write in the geometry stage of a frame.
+@(private = "file")
+Sway :: struct {mesh: Mesh_Handle, x: f32}
+
+@(private = "file")
+sway_write :: proc(s: ^Stage_Pass, user: rawptr) {
+	sway := (^Sway)(user)
+	r := s.pass.r
+	written, rest, count, _, known := deformable_vertices(r, sway.mesh)
+	if !known {return}
+	vertices, at := rhi.frame_alloc_typed(r.device, Gpu_Posed_Vertex, int(count))
+	if vertices == nil {return}
+	copy(vertices, ([^]Gpu_Posed_Vertex)(&r.scene.vertices[rest])[:count])
+	for &v in vertices {v.position.x += sway.x}
+	rhi.cmd_copy_buffer(s.pass.cmd, at.buffer, at.offset, r.scene.vertex_buffer, u64(written) * 4, u64(count) * size_of(Gpu_Posed_Vertex))
+}
+
+// Of the pages the atlas of the main view listed in the last frame to compose
+// again for what sways in them alone: how many, how many it composed, and the
+// most frames since one was last composed.
+@(private = "file")
+sway_refreshes :: proc(t: ^testing.T, r: ^Renderer) -> (listed, refreshed, worst: u32) {
+	rhi.device_wait_idle(r.device)
+	b := &r.main.targets.shadow_raster
+	counts: [16]u32
+	jobs, sway: [abi.SHADOW_POOL_PAGES]u32
+	testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_COUNTS) * 4, counts[:]))
+	testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_JOBS + abi.SHADOW_POOL_PAGES) * 4, jobs[:]))
+	testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_SWAY) * 4, sway[:]))
+	for job in jobs[:min(counts[abi.SHADOW_COUNT_COMPOSED], abi.SHADOW_POOL_PAGES)] {
+		if job & abi.SHADOW_JOB_REFRESH == 0 || job & 0xFFFF >= abi.SHADOW_POOL_PAGES {continue}
+		listed += 1
+		worst = max(worst, (b.frame - sway[job & 0xFFFF]) & abi.SHADOW_SWAY_FRAME)
+	}
+	return listed, counts[abi.SHADOW_COUNT_REFRESHED], worst
+}
+
+// What the maps of the main view drew in the last frame (Shadow_Stats).
+@(private = "file")
+shadow_stats :: proc(t: ^testing.T, r: ^Renderer) -> Shadow_Stats {
+	read: [1]Shadow_Stats
+	testing.expect(t, rhi.buffer_read_slice(r.device, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow)), read[:]))
+	return read[0]
+}
+
 // The most units a cluster costs in a page (render.shadow_units): its
 // triangles over all of its texels, masked, and its vertices, placed and drawn.
 @(private = "file")
@@ -419,10 +465,10 @@ render_shadow_maps_follow_what_moves_in_its_frame :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
-// A batch of a deformable that casts shadows and sways (the wind): where its
-// sway is wider than a texel of the maps they draw it as it is each frame it
-// sways; where it is narrower they draw it at rest and keep it, drawing
-// nothing again.
+// A batch of a deformable that casts shadows and sways (the wind), near the
+// eye: where its sway is wider than a texel of the maps they draw it as it is
+// each frame it sways; where it is narrower they draw it at rest and keep it,
+// drawing nothing again.
 @(test)
 render_a_swaying_batch_shades_where_it_is :: proc(t: ^testing.T) {
 	f: Cube_Fixture
@@ -433,37 +479,26 @@ render_a_swaying_batch_shades_where_it_is :: proc(t: ^testing.T) {
 	defer fixture_destroy(&f)
 	r := f.renderer
 	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {16, 0.2, 16}), tint = {0.8, 0.8, 0.8}}
-	light := Light_Desc{position = {0, 3, 0}, color = {1, 1, 1}, intensity = 30 * math.PI, range = 14, indirect = 1, scattering = 1}
+	light := Light_Desc{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 15 * math.PI, range = 14, indirect = 1, scattering = 1}
 	testing.expect(t, scene_given(r, {floor}, []Light_Desc{light}, {}, {}))
-	camera := Camera{position = {0, 9, 0.001}, forward = {0, -9, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	// The vertices of the slab, at rest under the light, moved along x by sway.
-	Sway :: struct {mesh: Mesh_Handle, x: f32}
-	write :: proc(s: ^Stage_Pass, user: rawptr) {
-		sway := (^Sway)(user)
-		r := s.pass.r
-		written, rest, count, _, known := deformable_vertices(r, sway.mesh)
-		if !known {return}
-		vertices, at := rhi.frame_alloc_typed(r.device, Gpu_Posed_Vertex, int(count))
-		if vertices == nil {return}
-		copy(vertices, ([^]Gpu_Posed_Vertex)(&r.scene.vertices[rest])[:count])
-		for &v in vertices {v.position.x += sway.x}
-		rhi.cmd_copy_buffer(s.pass.cmd, at.buffer, at.offset, r.scene.vertex_buffer, u64(written) * 4, u64(count) * size_of(Gpu_Posed_Vertex))
-	}
+	// Near enough that the maps follow what sways (SHADOW_SWAY_REACH), from
+	// beside the slab, which hides none of its shadow.
+	camera := Camera{position = {0, 1.6, 1.2}, forward = {0, -1.6, -1.2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for wide in ([]bool{true, false}) {
-		// Wide: it sways up to 1.2 m, wider than any texel; narrow, it says it
+		// Wide: it sways up to 0.6 m, wider than any texel; narrow, it says it
 		// sways a tenth of a millimetre, narrower than every texel, and the maps keep it at rest.
-		mesh, made := deformable_create(r, f.cube, false, 1.2 if wide else 0.0001)
+		mesh, made := deformable_create(r, f.cube, false, 0.6 if wide else 0.0001)
 		if !testing.expect(t, made) {return}
 		defer mesh_remove(r, mesh)
-		batch, problem := batch_set(r, 0, 0, {mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}}, {batch_instance({0, 1.5, 0}, 1, {1, 0.2, 1})})
+		batch, problem := batch_set(r, 0, 0, {mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}}, {batch_instance({0, 1, 0}, 1, {1, 0.2, 1})})
 		if !testing.expectf(t, problem == "", "%s", problem) {return}
 		defer batch_remove(r, batch)
 		sway := Sway{mesh = mesh}
 		for k in 0 ..< 8 {
-			sway.x = f32(-1) if k % 2 == 0 else 1
+			sway.x = f32(-0.4) if k % 2 == 0 else 0.4
 			low, high, _ := mesh_bounds(r, f.cube)
-			testing.expect(t, deformable_update(r, mesh, low - 1.2, high + 1.2))
-			testing.expect(t, frame_pass(r, .Geometry, write, &sway))
+			testing.expect(t, deformable_update(r, mesh, low - 0.6, high + 0.6))
+			testing.expect(t, frame_pass(r, .Geometry, sway_write, &sway))
 			testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 			if k < 4 {continue}
 			rhi.device_wait_idle(f.device)
@@ -476,7 +511,7 @@ render_a_swaying_batch_shades_where_it_is :: proc(t: ^testing.T) {
 				testing.expectf(t, open > 40 && shaded < 0.5 * open, "frame %d: the floor under where it sways has %f against %f where it was", k, shaded, open)
 				testing.expectf(t, r.stats.shadow_movers == 1, "frame %d: the swaying batch is drawn as what moves: %d movers", k, r.stats.shadow_movers)
 			} else {
-				shaded, open := at(r, pixels, w, camera, 0), at(r, pixels, w, camera, 2 * sway.x)
+				shaded, open := at(r, pixels, w, camera, 0), at(r, pixels, w, camera, 3.5 * sway.x)
 				testing.expectf(t, open > 40 && shaded < 0.5 * open, "frame %d: the floor under its rest has %f against %f where it sways", k, shaded, open)
 				drawn, composed, _ := shadow_counts(r)
 				testing.expectf(t, r.stats.shadow_movers == 0 && drawn == 0 && composed == 0, "frame %d: at rest in every map it moves nothing: %d movers, %d pages drawn again, %d composed", k, r.stats.shadow_movers, drawn, composed)
@@ -1446,36 +1481,6 @@ render_a_frame_draws_no_more_than_its_bound_and_the_rest_comes_after :: proc(t: 
 // the others take once, and a few more (refresh_order of shadow_pages.comp).
 @(test)
 render_a_swaying_batch_keeps_its_pages_under_the_bound :: proc(t: ^testing.T) {
-	Sway :: struct {mesh: Mesh_Handle, x: f32}
-	write :: proc(s: ^Stage_Pass, user: rawptr) {
-		sway := (^Sway)(user)
-		r := s.pass.r
-		written, rest, count, _, known := deformable_vertices(r, sway.mesh)
-		if !known {return}
-		vertices, at := rhi.frame_alloc_typed(r.device, Gpu_Posed_Vertex, int(count))
-		if vertices == nil {return}
-		copy(vertices, ([^]Gpu_Posed_Vertex)(&r.scene.vertices[rest])[:count])
-		for &v in vertices {v.position.x += sway.x}
-		rhi.cmd_copy_buffer(s.pass.cmd, at.buffer, at.offset, r.scene.vertex_buffer, u64(written) * 4, u64(count) * size_of(Gpu_Posed_Vertex))
-	}
-	// Of the pages the atlas listed in the last frame to compose again for
-	// what sways in them alone: how many, how many it composed, and the most
-	// frames since one was last composed.
-	refreshes :: proc(t: ^testing.T, r: ^Renderer) -> (listed, refreshed, worst: u32) {
-		rhi.device_wait_idle(r.device)
-		b := &r.main.targets.shadow_raster
-		counts: [16]u32
-		jobs, sway: [abi.SHADOW_POOL_PAGES]u32
-		testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_COUNTS) * 4, counts[:]))
-		testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_JOBS + abi.SHADOW_POOL_PAGES) * 4, jobs[:]))
-		testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_SWAY) * 4, sway[:]))
-		for job in jobs[:min(counts[abi.SHADOW_COUNT_COMPOSED], abi.SHADOW_POOL_PAGES)] {
-			if job & abi.SHADOW_JOB_REFRESH == 0 || job & 0xFFFF >= abi.SHADOW_POOL_PAGES {continue}
-			listed += 1
-			worst = max(worst, (b.frame - sway[job & 0xFFFF]) & abi.SHADOW_SWAY_FRAME)
-		}
-		return listed, counts[abi.SHADOW_COUNT_REFRESHED], worst
-	}
 	cases := [?]struct {
 		name:    string,
 		batches: int, // the groups in one batch, or a batch for each
@@ -1494,17 +1499,19 @@ render_a_swaying_batch_keeps_its_pages_under_the_bound :: proc(t: ^testing.T) {
 			masked.alpha_mode = .Mask
 			testing.expect(t, materials_set(r, {masked}))
 		}
-		floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {40, 0.2, 40}), tint = {0.8, 0.8, 0.8}}
+		// Wide enough that the levels of the sun near the eye are not its coarsest.
+		floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {600, 0.2, 600}), tint = {0.8, 0.8, 0.8}}
 		sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
 		testing.expect(t, scene_given(r, {floor}, nil, sun, {sky = {0, 0, 0}}))
-		camera := Camera{position = {0, 9, 0.001}, forward = {0, -9, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+		// Near enough that the maps follow what sways (SHADOW_SWAY_REACH).
+		camera := Camera{position = {0, 3, 0.001}, forward = {0, -3, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 		mesh, made := deformable_create(r, f.cube, false, 0.3)
 		if !testing.expect(t, made) {fixture_destroy(&f); return}
-		// Groups of four posts, the floor between them still: two 10 m apart, or
-		// 64 on a grid of 2 m.
+		// Groups of four posts, the floor between them still: two 2.4 m apart,
+		// or 64 on a grid of 1.2 m.
 		groups := make([][4]Batch_Instance, max(c.batches, 2))
 		for &group, g in groups {
-			corner := Vec3{f32(g) * 10 - 5, 0.6, 0} if len(groups) == 2 else Vec3{f32(g % 8) * 2 - 7, 0.6, f32(g / 8) * 2 - 7}
+			corner := Vec3{f32(g) * 2.4 - 1.6, 0.6, -0.4} if len(groups) == 2 else Vec3{f32(g % 8) * 1.2 - 4.6, 0.6, f32(g / 8) * 1.2 - 4.6}
 			for &instance, k in group {instance = batch_instance(corner + {f32(k % 2) * 0.8, 0, f32(k / 2) * 0.8}, 1, {0.3, 1.2, 0.3})}
 		}
 		desc := Batch_Desc{mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}}
@@ -1526,20 +1533,15 @@ render_a_swaying_batch_keeps_its_pages_under_the_bound :: proc(t: ^testing.T) {
 			sway.x = -sway.x if sway.x != 0 else 0.2
 			low, high, _ := mesh_bounds(r, cube)
 			testing.expect(t, deformable_update(r, sway.mesh, low - 0.3, high + 0.3))
-			testing.expect(t, frame_pass(r, .Geometry, write, sway))
+			testing.expect(t, frame_pass(r, .Geometry, sway_write, sway))
 			testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-		}
-		stats :: proc(t: ^testing.T, r: ^Renderer) -> Shadow_Stats {
-			read: [1]Shadow_Stats
-			testing.expect(t, rhi.buffer_read_slice(r.device, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow)), read[:]))
-			return read[0]
 		}
 		// What the swaying posts take with room to spare.
 		b.budget = 1 << 20
 		for _ in 0 ..< 8 {frame(t, r, f.cube, &sway, camera)}
 		_, pages, _ := shadow_counts(r)
 		// A bound with room for them but little more, or for a part of them, from the start again.
-		bound := 2 * ((32 * pages + stats(t, r).units_moving) * 4 / 3 + 64) / c.room
+		bound := 2 * ((32 * pages + shadow_stats(t, r).units_moving) * 4 / 3 + 64) / c.room
 		b.budget, b.forget = bound, true
 		entries := make([]u32, abi.SHADOW_SLOT_ENTRIES * SHADOW_SLOTS)
 		before := make([]u32, len(entries))
@@ -1562,14 +1564,14 @@ render_a_swaying_batch_keeps_its_pages_under_the_bound :: proc(t: ^testing.T) {
 			frame(t, r, f.cube, &sway, camera)
 			drawn, moved, _ := shadow_counts(r)
 			composed[n] = max(composed[n], moved)
-			s := stats(t, r)
+			s := shadow_stats(t, r)
 			testing.expectf(t, drawn == 0 && s.units == 0 && moved > 0, "%s, frame %d: the cache drew %d pages again (%d units) and the atlas composed %d", c.name, k, drawn, s.units, moved)
 			testing.expectf(t, s.units_moving <= bound + PAGE_UNITS, "%s, frame %d: the atlas drew %d units past the bound of %d", c.name, k, s.units_moving, bound)
 			testing.expect(t, rhi.texture_read(f.device, b.table, mem.slice_to_bytes(entries)))
 			changed := 0
 			for e, i in entries {if e != before[i] {changed += 1}}
 			testing.expectf(t, changed == 0, "%s, frame %d: %d entries of the table changed while the posts swayed", c.name, k, changed)
-			listed, refreshed, oldest := refreshes(t, r)
+			listed, refreshed, oldest := sway_refreshes(t, r)
 			most_listed, least_refreshed, worst = max(most_listed, listed), min(least_refreshed, refreshed), max(worst, oldest)
 		}
 		if c.room > 1 {
@@ -1590,6 +1592,184 @@ render_a_swaying_batch_keeps_its_pages_under_the_bound :: proc(t: ^testing.T) {
 		fixture_destroy(&f)
 	}
 	testing.expectf(t, composed[0] <= composed[1], "one batch over both groups composes %d pages, a batch for each %d", composed[0], composed[1])
+}
+
+// The maps follow what sways only near the eye (SHADOW_SWAY_REACH): a slab
+// that sways over bare ground near the camera moves its sun shadow every
+// frame, each of its pages composed again every frame; the same slab far
+// away casts at rest, and no page is drawn or composed again while it sways.
+// The camera that goes from near to far across the reach moves the edge of
+// its shadow from where it sways to where it rests, never farther than the
+// sway, with neither a hole nor a shadow past both.
+@(test)
+render_a_swaying_batch_follows_its_sway_only_near_the_eye :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	// Wide enough that the levels of the sun near the eye are not its coarsest,
+	// which holds every point past it too and draws what sways at rest.
+	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {600, 0.2, 600}), tint = {0.8, 0.8, 0.8}}
+	// From above and behind the slab: its shadow falls 1.2 m towards +z.
+	sun := Sun_Desc{direction = {0, 1, -0.8}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+	testing.expect(t, scene_given(r, {floor}, nil, sun, {sky = {0, 0, 0}}), r.error)
+	mesh, made := deformable_create(r, f.cube, false, 0.3)
+	if !testing.expect(t, made) {return}
+	defer mesh_remove(r, mesh)
+	batch, problem := batch_set(r, 0, 0, {mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}}, {batch_instance({0, 1.5, 0}, 1, {1, 0.2, 1})})
+	if !testing.expectf(t, problem == "", "%s", problem) {return}
+	defer batch_remove(r, batch)
+	looking :: proc(at: Vec3) -> Camera {
+		return {position = at, forward = Vec3{0, 0.2, 1.2} - at, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 200, exposure = UNIT_EXPOSURE}
+	}
+	sway := Sway{mesh = mesh}
+	frame :: proc(t: ^testing.T, r: ^Renderer, cube: Mesh_Handle, sway: ^Sway, camera: Camera) {
+		low, high, _ := mesh_bounds(r, cube)
+		testing.expect(t, deformable_update(r, sway.mesh, low - 0.3, high + 0.3))
+		testing.expect(t, frame_pass(r, .Geometry, sway_write, sway))
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	}
+	// The floor along x where the shadow falls, after a frame.
+	shade :: proc(t: ^testing.T, r: ^Renderer, camera: Camera, xs: []f32, out: []f32) -> bool {
+		rhi.device_wait_idle(r.device)
+		pixels, w, _, ok := golden_capture(r)
+		if !testing.expect(t, ok, r.error) {return false}
+		defer delete(pixels)
+		for x, i in xs {out[i] = pixel(pixels, w, project(r, camera, {x, 0.001, 1.2}))[0]}
+		return true
+	}
+	cases := [?]struct {
+		name: string,
+		eye:  Vec3,
+		near: bool, // within the reach: its shadow follows the sway
+	}{{"near", {0, 2.2, 3}, true}, {"far", {0, 5, 13}, false}}
+	for c in cases {
+		camera := looking(c.eye)
+		sway.x = 0.2
+		for _ in 0 ..< 12 {
+			sway.x = -sway.x
+			frame(t, r, f.cube, &sway, camera)
+		}
+		// Between where its edge is swayed one way and the other; well inside
+		// and well outside of it.
+		xs := [3]f32{0.5, 0.1, 0.9}
+		before: [3]f32
+		for k in 0 ..< 8 {
+			sway.x = -sway.x
+			frame(t, r, f.cube, &sway, camera)
+			now: [3]f32
+			if !shade(t, r, camera, xs[:], now[:]) {return}
+			drawn, composed, _ := shadow_counts(r)
+			listed, refreshed, worst := sway_refreshes(t, r)
+			if c.near {
+				// Swayed to +x the slab covers the floor at 0.5, to -x it leaves it lit.
+				lit, dark := now[0] if sway.x < 0 else before[0], now[0] if sway.x > 0 else before[0]
+				if k > 0 {testing.expectf(t, dark < 0.5 * lit, "%s, frame %d: where the edge sways the floor is %f swayed over and %f swayed away", c.name, k, dark, lit)}
+				testing.expectf(t, drawn == 0 && composed > 0 && listed == refreshed && worst <= 1, "%s, frame %d: the cache drew %d pages again, the atlas composed %d, %d of %d that sway, the oldest %d frames ago", c.name, k, drawn, composed, refreshed, listed, worst)
+			} else {
+				testing.expectf(t, drawn == 0 && composed == 0, "%s, frame %d: at rest past the reach it moves nothing: %d pages drawn again, %d composed", c.name, k, drawn, composed)
+				if k > 0 {testing.expectf(t, abs(now[0] - before[0]) <= 2, "%s, frame %d: the edge of its shadow went from %f to %f", c.name, k, before[0], now[0])}
+			}
+			testing.expectf(t, now[1] < 0.5 * now[2], "%s, frame %d: under the slab %f, beside its shadow %f", c.name, k, now[1], now[2])
+			before = now
+		}
+	}
+	// From near to far with the slab swayed 0.2 m to +x: the edge of its
+	// shadow there goes from 0.7 m to 0.5 m, where it rests.
+	sway.x = 0.2
+	xs: [64]f32
+	for &x, i in xs {x = f32(i) * 0.025}
+	edges: [16]f32
+	for &edge, step in edges {
+		eye := Vec3{0, 2.2, 3} + Vec3{0, 0.2, 0.7} * f32(step)
+		camera := looking(eye)
+		for _ in 0 ..< 3 {frame(t, r, f.cube, &sway, camera)}
+		values: [len(xs)]f32
+		beside: [1]f32
+		if !shade(t, r, camera, xs[:], values[:]) || !shade(t, r, camera, {1.6}, beside[:]) {return}
+		edge = -1
+		for v, i in values {
+			if v > 0.5 * (values[0] + beside[0]) {edge = xs[i]; break}
+		}
+		// Two pixels of the view there.
+		within := max(2 * linalg.length(eye - {0.6, 0, 1.2}) * 2 * math.tan(f32(math.PI / 6)) / 128, 0.05)
+		testing.expectf(t, values[0] < 0.5 * beside[0], "eye %v: the floor under the slab is %f against %f beside its shadow", eye, values[0], beside[0])
+		testing.expectf(t, edge >= 0.5 - within && edge <= 0.7 + within, "eye %v: the edge of the shadow at %f m, past where it sways (0.7) or rests (0.5) by more than %f", eye, edge, within)
+	}
+	testing.expectf(t, edges[0] > 0.6 && edges[len(edges) - 1] < 0.6, "the edge goes from %f near to %f far: it follows the sway near and rests far", edges[0], edges[len(edges) - 1])
+	expect_clean(t, f.device)
+}
+
+// A dense forest of masked posts that sway, seen from among them at the
+// height of an eye: the maps compose again only the pages of what sways near
+// the eye (SHADOW_SWAY_REACH), each of them every frame, and the rounds of
+// the maps draw well within the bound of the renderer.
+@(test)
+render_a_swaying_forest_composes_again_only_what_is_near :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 1920, 1080, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	masked := DEFAULT_MATERIAL
+	masked.alpha_mode = .Mask
+	testing.expect(t, materials_set(r, {masked}))
+	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {600, 0.2, 600}), tint = {0.8, 0.8, 0.8}}
+	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+	testing.expect(t, scene_given(r, {floor}, nil, sun, {sky = {0, 0, 0}}), r.error)
+	mesh, made := deformable_create(r, f.cube, false, 0.4)
+	if !testing.expect(t, made) {return}
+	defer mesh_remove(r, mesh)
+	// Posts 3 m tall every 1.5 m over 60 m, a batch for each cell of 7.5 m.
+	CELLS :: 8
+	handles: [CELLS * CELLS]Batch_Handle
+	defer for h in handles {if h != 0 {batch_remove(r, h)}}
+	for &h, c in handles {
+		posts: [25]Batch_Instance
+		for &post, k in posts {
+			at := Vec3{f32(c % CELLS) * 7.5 - 30 + f32(k % 5) * 1.5 + 0.4, 1.5, f32(c / CELLS) * 7.5 - 30 + f32(k / 5) * 1.5 + 0.7}
+			post = batch_instance(at, 1, {0.6, 3, 0.6})
+		}
+		problem: string
+		h, problem = batch_set(r, 0, 0, {mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}}, posts[:])
+		if !testing.expectf(t, problem == "", "%s", problem) {return}
+	}
+	camera := Camera{position = {0, 1.7, 0}, forward = {0, -0.35, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 200, exposure = UNIT_EXPOSURE}
+	rhi.timestamps_want(f.device, true)
+	defer rhi.timestamps_want(f.device, false)
+	sway := Sway{mesh = mesh, x = 0.2}
+	FRAMES :: 30
+	composed, refreshed, waiting, units, ms, bound: f64
+	worst_age, most_units := u32(0), u32(0)
+	for k in 0 ..< 2 * FRAMES {
+		sway.x = -sway.x
+		low, high, _ := mesh_bounds(r, f.cube)
+		testing.expect(t, deformable_update(r, mesh, low - 0.4, high + 0.4))
+		testing.expect(t, frame_pass(r, .Geometry, sway_write, &sway))
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		if k < FRAMES {continue}
+		_, moved, _ := shadow_counts(r)
+		listed, again, worst := sway_refreshes(t, r)
+		stats := shadow_stats(t, r)
+		maps: f64
+		for timing in r.stats.timings {if strings.has_prefix(timing.name, "shadow ") && timing.name != SHADOW_PAGES_TIMING {maps += f64(timing.ms)}}
+		composed += f64(moved)
+		refreshed += f64(again)
+		waiting += f64(stats.pages_waiting)
+		units += f64(stats.units + stats.units_moving)
+		ms += maps
+		bound += f64(shadow_frame_units(r, &r.main.targets.shadow_raster))
+		worst_age, most_units = max(worst_age, worst), max(most_units, stats.units_moving)
+		testing.expectf(t, listed == again && worst <= 1, "frame %d: %d of the %d pages that sway were composed again, the oldest %d frames ago", k, again, listed, worst)
+	}
+	log.infof("a swaying forest: %.1f pages composed a frame, %.1f of them for what sways alone, %.1f waiting; %.0f units of a bound of %.0f, %d at most for what moves; the rounds of the maps %.3f ms; a page that sways waited %d frames at most", composed / FRAMES, refreshed / FRAMES, waiting / FRAMES, units / FRAMES, bound / FRAMES, most_units, ms / FRAMES, worst_age)
+	testing.expectf(t, units * 2 <= bound, "the maps drew %.0f units a frame, a bound of %.0f", units / FRAMES, bound / FRAMES)
+	expect_clean(t, f.device)
 }
 
 // The search of the blockers of a point reaches far where something may

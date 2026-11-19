@@ -11,7 +11,8 @@ import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import mm "mirai:std/math"
 
-// The wind of a type that casts shadows sways a few variants of its meshes,
+// The wind of a type that casts shadows, whose tip sways at least
+// SHADOW_SWAY_LEAST, sways a few variants of its meshes,
 // whose vertices a compute writes each frame from their shape at rest and
 // whose BLAS the renderer refits (render.deformable_create): its instances
 // are drawn and cast their shadows with the variant they take, so the raster
@@ -25,9 +26,10 @@ import mm "mirai:std/math"
 // their speed is held to WIND_SPEED_MAX, which their boxes hold: a frame of
 // wind changes no box and marks no light. What the
 // rays of reflections and probes see is the mesh at rest (batch of
-// Rays_Only). A type without shadows sways in the vertex hook of its batches
+// Rays_Only). Another type sways in the vertex hook of its batches
 // (foliage_vertex.slang), with the wind where each instance stands and the
-// phase of its place; no ray meets it swaying. Both bend about where the
+// phase of its place; no ray and no map of the shadows meets it swaying: a
+// small plant casts its shadow at rest. Both bend about where the
 // plant stands as foliage_sway.slang says, and the hook bends every batch of
 // foliage where bodies trampled it (Foliage_Trample).
 
@@ -37,6 +39,13 @@ WIND_TURNS :: 4         // the most turns the variants of a type take; past them
 WIND_SPEED_MAX :: f32(20) // m/s: the strongest wind a variant sways with
 WIND_WAVE :: [2]f64{0.37,0.71} // radians a metre along x and z of the world of the gust wave (FOLIAGE_WAVE)
 FOLIAGE_SWAY :: f32(0.08) // metres a plant leans per m/s of wind and 10 metres of height, before its type
+// Metres the tip of a type sways at WIND_SPEED_MAX (type_sway) below which it
+// sways in the hook and its shadow stands at rest: in a common wind, a fifth
+// of the strongest, its tip moves under 4 cm, a few texels of the maps near
+// the eye, and the shadows of many small plants moving so read as noise on
+// the ground. With wind 1, grass and flowers and wheat to 1.2 m come under
+// it; bushes from 1.3 m and trees over it.
+SHADOW_SWAY_LEAST :: f32(0.2)
 
 BEND_LEAN_MAX :: f32(1.4)    // radians, the most a bender leans foliage
 BEND_RADIUS_MAX :: f32(4)    // metres
@@ -95,6 +104,17 @@ hook_reach :: proc "contextless" (amount,height:f32) -> f32 {return height*(WIND
 // Metres a point of a type moves per m/s of wind and metre of its height:
 // what its batches give the hook (Batch_Desc.vertex.x) and its variants the compute.
 sway_amount :: proc "contextless" (t:Foliage_Type) -> f32 {return t.wind*FOLIAGE_SWAY*0.1}
+
+// Metres the tip of a type sways at WIND_SPEED_MAX, its farthest point `size`
+// metres from where its largest instance stands.
+type_sway :: proc "contextless" (t:Foliage_Type,size:f32) -> f32 {return WIND_SPEED_MAX*sway_amount(t)*size}
+
+// The variants a part of a type sways with, its farthest point `size` metres
+// from where its largest instance stands: none where its tip sways less than
+// SHADOW_SWAY_LEAST, whose shadow stands at rest.
+shadow_variants :: proc "contextless" (t:Foliage_Type,size:f32) -> u32 {
+    return wind_variants(t) if type_sway(t,size)>=SHADOW_SWAY_LEAST else 0
+}
 
 // How many variants a type sways with: turns times phases; 0 for one that
 // sways in the hook, or not at all.

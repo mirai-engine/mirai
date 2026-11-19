@@ -122,6 +122,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     i(&b,"LIGHT_MOVES_MAX",abi.LIGHT_MOVES_MAX)
     u(&b,"OCCLUDERS_MANY",abi.OCCLUDERS_MANY)
     f(&b,"SUN_UNSHADOWED",abi.SUN_UNSHADOWED)
+    f(&b,"SHADOW_TEXEL_PIXELS",abi.SHADOW_TEXEL_PIXELS)
     u(&b,"MOVED_SUN",abi.MOVED_SUN)
     u(&b,"MOVED_LIGHTS_ALL",abi.MOVED_LIGHTS_ALL)
     f(&b,"ORIGIN_STEP",abi.ORIGIN_STEP)
