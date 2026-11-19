@@ -202,11 +202,11 @@ sky_environment :: proc(e:core.Entity,sky:Sky,found,sunlit:bool,worlds:^core.Tab
     return environment
 }
 
-// The texture of an image asset, loaded if it was not: 0 for none and for
-// one that does not load.
+// The texture of an image asset, loaded if it was not: 0 for none, for one
+// that does not load and without assets.
 @(private)
 image_texture :: proc(a:^host.Assets,image:base.Asset_Id) -> gpu.Texture_Handle {
-    if image=={} {return 0}
+    if image=={} || a==nil {return 0}
     if texture:=host.assets_texture_image(a,image);texture!=nil && !texture.failed {return texture.handle}
     return 0
 }

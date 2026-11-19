@@ -281,11 +281,13 @@ float3 sky_shown(float3 dir) {
     return frame.background.w > 0.5 ? background_look(dir, 0.0) : sky_seen(dir);
 }
 
-// What a reflection or a view through glass sees of the sky, as sharp as
-// spread: the background when the frame shows it there, as a camera would see
-// it; else the light of the sky. What gathers light takes sky_radiance.
+// What a reflection of that roughness (spread) sees of the sky: where the
+// frame shows the background there, a mirror sees it as a camera would, and a
+// rougher lobe less of it and more of the light of the sky, all of it when
+// fully rough, as what gathers light (sky_radiance).
 float3 sky_reflected(float3 dir, float spread) {
-    return frame.background_map.y > 0.5 ? background_look(dir, spread) : sky_radiance(dir, spread);
+    float3 light = sky_radiance(dir, spread);
+    return frame.background_map.y > 0.5 ? lerp(background_look(dir, spread), light, saturate(spread)) : light;
 }
 
 // How much of a pixel's specular reflection is traced instead of read from

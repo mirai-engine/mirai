@@ -355,8 +355,10 @@ Components that describe the scene and `render_sync`, which carries it to the re
   - `luminance` (nits) and `image` (the whole sky, which `luminance` multiplies; the rotation of its
     entity turns it), or `atmosphere`: the air of `air` (Earth by default) lit by the sun that is
     on, which follows its direction and its illuminance and veils the distance.
-    `background` and `use_background`: what is seen behind. Exposure is not the sky's but that of
-    the `View_Volume` where each view is.
+    `use_background` with `background` (nits) and `background_image` (which `background`
+    multiplies): what the camera and mirrors see in place of the sky, which keeps lighting
+    ([background](../../mirai-rendering/references/gi.md#sky-and-sun)). Exposure is not the sky's
+    but that of the `View_Volume` where each view is.
   - **A change on its way** (a day cycle, weather) is state of the component, which the game, an
     animation or a cinematic writes: `from` (what it was) and `fade`, how much of that is still
     seen, from 1 to 0. The renderer draws the blend; it is saved and replicated.

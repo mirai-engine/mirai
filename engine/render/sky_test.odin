@@ -55,6 +55,33 @@ a_sky_turned_on_blends_from_the_one_that_was_on :: proc(t:^testing.T) {
     testing.expect(t,!unlit.sky_atmosphere && unlit.use_background && unlit.sky==SKY_DEFAULT.luminance)
 }
 
+// The background shows in place of the sky with use_background, unless a lit
+// atmosphere is what shows; the sky lights as without it. A background image
+// without use_background never shows: a problem that says how to fix it.
+@(test)
+a_sky_background_shows_with_use_background_and_reports_an_image_that_cannot :: proc(t:^testing.T) {
+    w:Render_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    e:=core.create(&w.entities)
+    painted:=base.Asset_Id{1,2}
+    Case::struct {name:string,sky:Sky,sunlit,shown,problem:bool}
+    cases:=[]Case{
+        {name="a color",sky={luminance={900,900,900},background={10,20,30},use_background=true},shown=true},
+        {name="an image",sky={luminance={900,900,900},background={400,400,400},background_image=painted,use_background=true},shown=true},
+        {name="an image under a lit atmosphere",sky={luminance={900,900,900},background_image=painted,use_background=true,atmosphere=true},sunlit=true},
+        {name="an image under an unlit atmosphere",sky={luminance={900,900,900},background_image=painted,use_background=true,atmosphere=true},shown=true},
+        {name="an image without use_background",sky={luminance={900,900,900},background_image=painted},problem=true},
+    }
+    for c in cases {
+        problems:core.Problems
+        environment:=sky_environment(e,c.sky,true,c.sunlit,core.read(&w.worlds),nil,&problems)
+        testing.expectf(t,environment.use_background==c.shown,"%s: the background shows: %v",c.name,environment.use_background)
+        testing.expectf(t,environment.sky==c.sky.luminance && environment.background==c.sky.background,"%s: the sky lights as without a background",c.name)
+        testing.expectf(t,(core.problem_find(&problems,e,"render.sky_background")!=nil)==c.problem,"%s: a problem: %d",c.name,problems.count)
+    }
+}
+
 // Turning a sky on writes only how it arrives: what drives its change, its
 // fade and its luminance, keeps what was written before the activation and
 // after it in the same frame.
