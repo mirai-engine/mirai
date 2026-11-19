@@ -1,17 +1,17 @@
 package exchange
 
 import "base:runtime"
-import "core:mem"
 import "core:slice"
 import "core:sync"
 import wire "mirai:net"
 import "mirai:store"
 
-// Blobs and refs between peers over the connections of net hosts that the
-// owner runs. Requests are stateless, by address and runs of pieces: any peer
-// that has the pieces answers, also from a blob it is still receiving. What is
-// asked first is what matters most to the receiver; every piece goes through
-// the store's receive path, so nothing unverified reaches a reader.
+// Objects and refs between peers over the connections of net hosts that the
+// owner runs. An object travels as its chunks, asked by address: any peer that
+// has a chunk answers, also one still receiving the object. The receiver walks
+// the tree of what it wants, asks only the chunks it lacks, most important
+// first and spread over peers, and checks every chunk against the address its
+// parent or its ask named before the store keeps it.
 //
 // The owner adds the CHANNELS of channels() to every host, gives each
 // connection with peer_add, hands every Message command to receive and calls
@@ -20,40 +20,42 @@ import "mirai:store"
 
 CHANNELS :: 2
 MAX_PEERS :: 64
-REQUEST_ENTRIES :: 64     // blobs and runs one request asks for
-REQUEST_BYTES :: 16<<20   // piece bytes one request asks for
-BATCHES :: 2              // requests in flight to a peer
-FIRST_PIECES :: 4         // pieces asked with the table of a blob: a blob of at most these comes whole
+ASK_ENTRIES :: 256        // chunks one ask names
+ASK_BYTES :: 16<<20       // chunk bytes one ask expects at most
+BATCHES :: 2              // asks in flight to a peer
+ROOT_BUDGET :: 96<<10     // descendant bytes asked with a root not here: a small object comes whole in one round trip
 NAMES_PER_REPLY :: 128
-MAX_BLOB_BYTES :: 1<<40   // the largest max_blob_bytes, and what a request may address
 
-@(private) LANE_CONTROL :: 0 // requests, refs and their answers
-@(private) LANE_DATA :: 1    // tables, pieces and the end of each request
+@(private) LANE_CONTROL :: 0 // asks, reports, refs and their answers
+@(private) LANE_DATA :: 1    // chunks and the end of each ask
 @(private) CONTROL_BYTES :: 64<<10
 @(private) DATA_QUEUE_BYTES :: 4<<20
 @(private) NAMES_REPLY_BYTES :: 16<<10
 @(private) MIN_BATCH_BYTES :: 1<<20
 @(private) QUERY_CREDITS :: 32 // questions a peer keeps waiting: a ref costs one, a listing NAMES_CREDITS, so their answers fit in CONTROL_BYTES
 @(private) NAMES_CREDITS :: 10
-@(private) FETCH_WINDOW :: 256 // blobs or refs a blocking form waits on at once
-@(private) LACK_RETRY :: 2.0    // s a peer that lacked a blob is not asked for it again
+@(private) FETCH_WINDOW :: 256 // objects or refs a blocking form waits on at once
+@(private) LACK_RETRY :: 2.0    // s a peer that lacked a chunk is not asked for it again
 @(private) STALL_SECONDS :: 5.0 // s a peer keeps what it was asked of a want without progress on it, before others are asked
 @(private) RATE_SECONDS :: 1.0  // time constant of the smoothed rates
-@(private) RECEIVERS :: 8       // blobs held open while their pieces arrive
-@(private) REQUEST_PIECES :: REQUEST_BYTES/store.PIECE_BYTES
-@(private) MAX_PIECES :: MAX_BLOB_BYTES/store.PIECE_BYTES
+@(private) WALK_AHEAD :: 1024   // chunks a want keeps found and not asked
+@(private) PREFETCH_NODES :: 16 // missing nodes asked ahead of the walk, which waits at the first
+@(private) NODE_ESTIMATE :: 16<<10 // bytes an ask counts for a node, whose size is not known
+@(private) COMMIT_SECONDS :: 0.005 // between two commits that complete wants
+@(private) COMMIT_IDLE :: 1.0      // s between two commits of what arrived while no want completes
+@(private) WALK_DEPTH :: store.NODE_LEVEL_MAX+1
 
 // Whether peers may read the refs of namespace.
 Expose :: #type proc(user:rawptr,namespace:string) -> bool
 
 Desc :: struct {
     store:^store.Store,
-    channel:int,        // index of the first of the CHANNELS channels in the channels of every host
-    peers:int,          // connections at once, default 8, at most MAX_PEERS
-    wants:int,          // blobs asked at once, default 256
-    queries:int,        // ref questions at once, default 16
-    max_blob_bytes:i64, // the largest blob taken and served, default 1 GiB: a table of its size is held per peer
-    expose:Expose,      // nil exposes no namespace
+    channel:int, // index of the first of the CHANNELS channels in the channels of every host
+    peers:int,   // connections at once, default 8, at most MAX_PEERS
+    wants:int,   // objects asked at once, default 256
+    queries:int, // ref questions at once, default 16
+    needs:int,   // chunks known missing at once over every want, default 8192
+    expose:Expose, // nil exposes no namespace
     expose_user:rawptr,
     allocator:runtime.Allocator,
 }
@@ -70,23 +72,23 @@ Error :: enum u8 {
 
 State :: enum u8 {
     Asking,   // being received
-    Complete, // in the store
-    Missing,  // no connected peer has it now; asked again when a peer joins or after a while
+    Complete, // in the store, committed
+    Missing,  // no connected peer has it, or one of its chunks, now; asked again when a peer joins or after a while
     Failed,   // error
 }
 
 Progress :: struct {
     state:State,
-    here:i64,   // bytes in the store
-    total:i64,  // -1 until the table is known
+    here:i64,  // data bytes in the store
+    total:i64, // -1 until the root is known
     error:Error,
     store_error:store.Error,
 }
 
 Peer_Progress :: struct {
-    receive_rate,send_rate:f64, // piece bytes per second, smoothed
-    received,sent:u64,          // piece bytes
-    lies:int,                   // blobs it gave a table, a piece or a size for that did not match
+    receive_rate,send_rate:f64, // chunk bytes per second, smoothed
+    received,sent:u64,          // chunk bytes
+    lies:int,                   // wants it sent a chunk for that failed its address, or a wrong alias
     refused:u64,                // its messages refused
     bad:bool,                   // it sent what no peer sends: it is neither asked nor served
 }
@@ -105,9 +107,16 @@ Query_Result :: struct {
 }
 
 @(private)
+Walk_Frame :: struct {address:store.Hash,index:int}
+
+@(private)
 Want :: struct {
-    address:store.Hash,
+    address:store.Hash, // as wanted: the root of an object, or a blob
+    root:store.Hash,    // of its object, once rooted
     used,wanted:bool,
+    rooted:bool,  // the root is known: the address is one, or a peer named the blob's
+    blob:bool,    // a peer named the address as a blob: complete once its bytes hash to it
+    alias_peer:int,
     waiters:int,
     generation:u32,
     priority:int,
@@ -115,58 +124,83 @@ Want :: struct {
     state:State,
     error:Error,
     store_error:store.Error,
-    known:bool,
-    size:i64,
-    count,had:int,
-    table_peer:int, // the peer asked for the table, or that gave it; -1
+    total,here:i64,
     wrong,lack:u64, // peers that lied about it, and that lack it
     lack_since:f64,
     misses:u32,     // times it went Missing
-    have,asked:[]u64,
-    here:i64,
-    receiver:store.Receiver, // open while its pieces arrive
-    receiving:bool,
-    written:u64, // x.sequence when it last took a piece
+    needs,free:int, // its needs, and those not asked of a peer
+    first,last:i32, // its needs, in the order its walk found them
+    stack:[WALK_DEPTH]Walk_Frame,
+    depth:int,
+    walking:bool,  // the walk began at the root
+    walked:bool,   // the walk reached the end
+    shared:bool ,  // the walk passed a chunk another want needs
+    settling:bool, // complete once the batch that holds its last chunk is committed
+}
+
+@(private)
+Need_Kind :: enum u8 {Root,Node,Data}
+
+// A chunk a want lacks, found by its walk, until it is here.
+@(private)
+Need :: struct {
+    address:store.Hash,
+    used:bool,
+    kind:Need_Kind,
+    level:int,  // of a node
+    size:u64,   // data bytes under it, as its parent says
+    want:i32,
+    serial:u32,
+    peer:i32,   // asked of; -1
+    lack:u64,   // peers that lacked it
+    lack_since:f64,
+    next,prev:i32,
 }
 
 @(private)
 Flight :: struct {
-    want:int,
-    generation:u32,
-    first,count:u32,
-    blob:bool,
-    released:bool, // what it reserved went back to be asked of others
-    heard:f64,     // when it was sent or the peer last made progress on its want
+    need:i32,
+    serial:u32,
+    want:i32,
+    generation:u32,     // of the want
+    address:store.Hash, // what answers it: the chunk asked, or the root an alias named
+    left:i64,           // descendant bytes it may still bring
+    released:bool,      // what it reserved went back to be asked of others
+    heard:f64,          // when it was sent or the peer last made progress on its want
 }
 
 @(private)
-Serve_Kind :: enum u8 {Blob,Run,Done}
+Serve_Kind :: enum u8 {Ask,Done}
 
 @(private)
-Serve :: struct {kind:Serve_Kind,address:store.Hash,first,count:u32}
+Serve :: struct {kind:Serve_Kind,address:store.Hash,budget:u32}
 
 @(private)
 Peer :: struct {
     used,bad:bool,
     host:^wire.Host,
     connection:wire.Connection,
-    // Asking: the entries of the requests in flight, oldest first.
+    // Asking: the entries of the asks in flight, oldest first.
     flights:[]Flight,
     flight_head,flight_count:int,
     batch_sizes:[BATCHES]int,
     batch_head,batches:int,
-    queries:int, // credits of the questions asked of it and not answered
-    // Serving: the entries of the requests received, oldest first.
+    answering:int, // the entry of the oldest ask being answered
+    queries:int,   // credits of the questions asked of it and not answered
+    // Serving: the entries of the asks received, oldest first.
     serve:[]Serve,
     serve_head,serve_count:int,
-    started:bool,
-    cursor:u32,
-    entry_size:i64,
-    lack_first,lack_count:u32,
+    started:bool,  // the chunk of the first entry went
+    aliased:bool,  // its address was a blob, replaced by its root
+    sent_under:i64, // descendant bytes of the first entry sent
+    stack:[WALK_DEPTH]Walk_Frame,
+    depth:int,
+    node:[]u8,     // a node being streamed
+    node_address:store.Hash,
+    node_view:store.Node_View,
+    node_held:bool,
     out:[]u8,
     out_len,out_sent:int,
-    reader:store.Reader, // the blob being served, while there is one
-    reading:bool,
     control:[]u8,
     control_start,control_end:int,
     // Receiving, per lane: a message that arrives in pieces.
@@ -209,12 +243,21 @@ Exchange :: struct {
     wants:[]Want,
     order:[]int, // wants in use, most important first
     want_count:int,
-    receivers:int, // wants with their receiver open
     sequence:u64,
+    needs:[]Need,
+    need_slots:[]i32, // open addressing by address, -1 empty
+    need_free:[]i32,
+    need_count:int,
+    need_serial:u32,
     peers:[]Peer,
     queries:[]Query_Slot,
-    scratch:[]u8, // what the store hands back: a table, the missing pieces
-    table_max:int, // pieces of the largest blob
+    walk:[]u8, // a node the walk reads
+    walk_address:store.Hash,
+    walk_view:store.Node_View,
+    walk_held:bool,
+    settling:int,
+    commit_time:f64,
+    uncommitted:bool, // chunks arrived since the last commit
     now,rate_time:f64,
     dirty:bool,
     closing:bool, // destroy is waiting for the waiters to leave
@@ -233,34 +276,35 @@ init :: proc(x:^Exchange,desc:Desc) -> Error {
     if d.peers<=0 {d.peers=8}
     if d.wants<=0 {d.wants=256}
     if d.queries<=0 {d.queries=16}
-    if d.max_blob_bytes<=0 {d.max_blob_bytes=1<<30}
-    if d.peers>MAX_PEERS || d.max_blob_bytes>MAX_BLOB_BYTES {return .Invalid}
-    x.table_max=store.piece_count(d.max_blob_bytes)
-    words:=(x.table_max+63)/64
+    if d.needs<=0 {d.needs=8192}
+    if d.peers>MAX_PEERS || d.needs>1<<24 {return .Invalid}
     failed:=false
     make_into :: proc(x:^Exchange,slot:^$T/[]$E,count:int,failed:^bool) {
         made,error:=make(T,count,x.allocator)
         if error!=nil {failed^=true;return}
         slot^=made
     }
+    slots:=1
+    for slots<2*d.needs {slots*=2}
     make_into(x,&x.wants,d.wants,&failed)
     make_into(x,&x.order,d.wants,&failed)
+    make_into(x,&x.needs,d.needs,&failed)
+    make_into(x,&x.need_slots,slots,&failed)
+    make_into(x,&x.need_free,d.needs,&failed)
     make_into(x,&x.peers,d.peers,&failed)
     make_into(x,&x.queries,d.queries,&failed)
-    make_into(x,&x.scratch,x.table_max*size_of(store.Hash)+64,&failed)
+    make_into(x,&x.walk,store.CHUNK_MAX,&failed)
     if failed {destroy(x);return .Out_Of_Memory}
-    for &w in x.wants {
-        make_into(x,&w.have,words,&failed)
-        make_into(x,&w.asked,words,&failed)
-    }
-    data_bytes:=max(MSG_TABLE_HEAD+x.table_max*size_of(store.Hash),MSG_WHOLE_HEAD+FIRST_PIECES*store.PIECE_BYTES)
+    for &s in x.need_slots {s=-1}
+    for k in 0..<d.needs {x.need_free[k]=i32(d.needs-1-k)}
     for &p in x.peers {
-        make_into(x,&p.flights,BATCHES*REQUEST_ENTRIES,&failed)
-        make_into(x,&p.serve,BATCHES*(REQUEST_ENTRIES+1),&failed)
-        make_into(x,&p.out,data_bytes,&failed)
+        make_into(x,&p.flights,BATCHES*ASK_ENTRIES,&failed)
+        make_into(x,&p.serve,BATCHES*(ASK_ENTRIES+1),&failed)
+        make_into(x,&p.out,MSG_CHUNK_MAX,&failed)
+        make_into(x,&p.node,store.CHUNK_MAX,&failed)
         make_into(x,&p.control,CONTROL_BYTES,&failed)
         make_into(x,&p.assembly[LANE_CONTROL],CONTROL_BYTES,&failed)
-        make_into(x,&p.assembly[LANE_DATA],data_bytes,&failed)
+        make_into(x,&p.assembly[LANE_DATA],MSG_CHUNK_MAX,&failed)
     }
     for &q in x.queries {
         make_into(x,&q.names,NAMES_PER_REPLY,&failed)
@@ -278,18 +322,15 @@ destroy :: proc(x:^Exchange) {
     sync.cond_broadcast(&x.changed)
     for x.waiting>0 {sync.cond_wait(&x.changed,&x.lock)}
     sync.mutex_unlock(&x.lock)
-    for &w in x.wants {
-        if w.receiving {store.receiver_close(&w.receiver)}
-        delete(w.have,x.allocator);delete(w.asked,x.allocator)
-    }
     for &p in x.peers {
-        if p.reading {store.reader_close(&p.reader)}
-        delete(p.flights,x.allocator);delete(p.serve,x.allocator);delete(p.out,x.allocator);delete(p.control,x.allocator)
+        delete(p.flights,x.allocator);delete(p.serve,x.allocator);delete(p.out,x.allocator)
+        delete(p.node,x.allocator);delete(p.control,x.allocator)
         for a in p.assembly {delete(a,x.allocator)}
     }
     for q in x.queries {delete(q.names,x.allocator);delete(q.name_bytes,x.allocator)}
     delete(x.wants,x.allocator);delete(x.order,x.allocator);delete(x.peers,x.allocator)
-    delete(x.queries,x.allocator);delete(x.scratch,x.allocator)
+    delete(x.needs,x.allocator);delete(x.need_slots,x.allocator);delete(x.need_free,x.allocator)
+    delete(x.queries,x.allocator);delete(x.walk,x.allocator)
     x^={}
 }
 
@@ -339,8 +380,7 @@ peer_find :: proc(x:^Exchange,h:^wire.Host,connection:wire.Connection) -> int {
 
 @(private)
 peer_reset :: proc(p:^Peer) {
-    serve_stop(p)
-    keep:=Peer{flights=p.flights,serve=p.serve,out=p.out,control=p.control,assembly=p.assembly}
+    keep:=Peer{flights=p.flights,serve=p.serve,out=p.out,node=p.node,control=p.control,assembly=p.assembly}
     p^=keep
 }
 
@@ -348,9 +388,6 @@ peer_reset :: proc(p:^Peer) {
 peer_drop :: proc(x:^Exchange,i:int) {
     p:=&x.peers[i]
     flights_release(x,i)
-    for &w in x.wants {
-        if w.used && w.table_peer==i {w.table_peer=-1}
-    }
     for &q in x.queries {
         if q.used && q.kind==.Names && q.peer==i {q.peer=-1}
     }
@@ -359,10 +396,16 @@ peer_drop :: proc(x:^Exchange,i:int) {
     x.dirty=true
 }
 
+// What a peer was marked for leaves with it, and never passes to the next peer in its slot.
 @(private)
 clear_peer_bits :: proc(x:^Exchange,i:int) {
     mask:=~(u64(1)<<uint(i))
-    for &w in x.wants {w.wrong&=mask;w.lack&=mask}
+    for &w in x.wants {
+        w.wrong&=mask
+        w.lack&=mask
+        if w.alias_peer==i {w.alias_peer=-1}
+    }
+    for &n in x.needs {n.lack&=mask}
     for &q in x.queries {q.asked&=mask;q.answered&=mask}
 }
 
@@ -373,12 +416,8 @@ peer_bad :: proc(x:^Exchange,i:int) {
     p.refused+=1
     if p.bad {return}
     flights_release(x,i)
-    for &w in x.wants {
-        if w.used && w.table_peer==i && !w.known {w.table_peer=-1}
-    }
     p.bad=true
-    p.serve_count,p.out_len,p.out_sent,p.started=0,0,0,false
-    serve_stop(p)
+    p.serve_count,p.out_len,p.out_sent,p.started,p.depth=0,0,0,false,0
     x.dirty=true
 }
 
@@ -404,7 +443,7 @@ receive :: proc(x:^Exchange,h:^wire.Host,command:wire.Command) -> bool {
         }
         if !command.more {
             whole:=buffer[:p.assembled[lane]]
-            if p.overflow[lane] {oversized(x,i,lane,whole)} else {message(x,i,lane,whole)}
+            if p.overflow[lane] {peer_bad(x,i)} else {message(x,i,lane,whole)}
             p.assembled[lane],p.overflow[lane]=0,false
         }
     }
@@ -423,6 +462,7 @@ update :: proc(x:^Exchange,now:f64) {
         if !p.bad {serve_pump(x,i)}
     }
     asking(x)
+    settle(x)
     queries_send(x)
     rates(x)
     signal(x)
@@ -449,8 +489,9 @@ signal :: proc(x:^Exchange) {
     sync.cond_broadcast(&x.changed)
 }
 
-// Wants a blob: asks connected peers for it, most important first. Asking
-// again raises its priority. A want stays until forget, also once complete.
+// Wants an object by its root, or a blob by its address: asks connected peers
+// for what the store lacks of it, most important first. Asking again raises
+// its priority. A want stays until forget, also once complete.
 want :: proc(x:^Exchange,address:store.Hash,priority:=0) -> Error {
     sync.mutex_guard(&x.lock)
     i,error:=want_add(x,address,priority)
@@ -471,18 +512,18 @@ progress :: proc(x:^Exchange,address:store.Hash) -> (Progress,bool) {
     i:=want_find(x,address)
     if i<0 {return {},false}
     w:=&x.wants[i]
-    return {state=w.state,here=w.here,total=w.known?w.size:-1,error=w.error,store_error=w.store_error},true
+    return {state=w.state,here=w.here,total=w.total,error=w.error,store_error=w.store_error},true
 }
 
-// Returns once the blob is complete in the store, or once no connected peer
-// has it (Missing). For job threads: the owner keeps calling update meanwhile.
+// Returns once the object or blob is complete in the store, or once no
+// connected peer has it (Missing). For job threads: the owner keeps calling update meanwhile.
 fetch :: proc(x:^Exchange,address:store.Hash,priority:=0) -> Error {
     sync.mutex_guard(&x.lock)
     address:=address
     return fetch_set(x,{address},priority)
 }
 
-// fetch of many blobs: wants them together, so they arrive in few round
+// fetch of many objects or blobs: wants them together, so they arrive in few round
 // trips, and returns once all are complete, at the first that no connected
 // peer has (Missing) or at the first error.
 fetch_all :: proc(x:^Exchange,addresses:[]store.Hash,priority:=0) -> Error {
@@ -490,8 +531,8 @@ fetch_all :: proc(x:^Exchange,addresses:[]store.Hash,priority:=0) -> Error {
     return fetch_set(x,addresses,priority)
 }
 
-// Returns the address peers name with namespace and name once its blob is
-// complete in the store, or Missing once no connected peer names it or has it.
+// Returns the address peers name with namespace and name once what it names
+// is complete in the store, or Missing once no connected peer names it or has it.
 fetch_ref :: proc(x:^Exchange,namespace,name:string,priority:=0) -> (store.Hash,Error) {
     names:=[1]string{name}
     addresses:[1]store.Hash
@@ -500,8 +541,8 @@ fetch_ref :: proc(x:^Exchange,namespace,name:string,priority:=0) -> (store.Hash,
 }
 
 // fetch_ref of many names, asked together: addresses (as long as names) gets
-// the address of each name peers name, {} for one none names, and the blobs
-// are fetched as with fetch_all. Missing when a name or a blob is missing.
+// the address of each name peers name, {} for one none names, and what they
+// name is fetched as with fetch_all. Missing when a name or an object is missing.
 fetch_refs :: proc(x:^Exchange,namespace:string,names:[]string,addresses:[]store.Hash,priority:=0) -> Error {
     sync.mutex_guard(&x.lock)
     if len(addresses)!=len(names) {return .Invalid}
@@ -599,11 +640,15 @@ fetch_let_go :: proc(x:^Exchange,i:int) {
 }
 
 // The addresses of every want, in progress or kept, into buffer (Desc.wants
-// long): what the owner's store lease holds alive against a sweep.
+// long): what the owner's store lease holds alive against a sweep. A want
+// whose root is known gives the root, which reaches every chunk it received.
 want_addresses :: proc(x:^Exchange,buffer:[]store.Hash) -> []store.Hash {
     sync.mutex_guard(&x.lock)
     n:=min(x.want_count,len(buffer))
-    for k in 0..<n {buffer[k]=x.wants[x.order[k]].address}
+    for k in 0..<n {
+        w:=&x.wants[x.order[k]]
+        buffer[k]=w.root if w.rooted else w.address
+    }
     return buffer[:n]
 }
 
@@ -721,11 +766,4 @@ control_flush :: proc(x:^Exchange,i:int) {
         p.control_start+=2+size
     }
     if p.control_start==p.control_end {p.control_start,p.control_end=0,0}
-}
-
-// An arena over the scratch buffer, for one answer of the store.
-@(private)
-scratch_arena :: proc(x:^Exchange,arena:^mem.Arena) -> runtime.Allocator {
-    mem.arena_init(arena,x.scratch)
-    return mem.arena_allocator(arena)
 }

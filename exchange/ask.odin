@@ -1,8 +1,5 @@
 package exchange
 
-import "base:intrinsics"
-import "core:mem"
-import "core:slice"
 import "mirai:store"
 import wire "mirai:net"
 
@@ -22,8 +19,8 @@ want_add :: proc(x:^Exchange,address:store.Hash,priority:int) -> (int,Error) {
             w.priority=priority
             order_sort(x)
         }
-        // A blob kept complete may have been swept since: success is what the store says now.
-        if w.state==.Complete && !store.has(x.desc.store,w.address) {
+        // A want kept complete may have been swept since: success is what the store says now.
+        if w.state==.Complete && !want_present(x,w) {
             want_begin(x,i)
             x.dirty=true
         }
@@ -32,8 +29,7 @@ want_add :: proc(x:^Exchange,address:store.Hash,priority:int) -> (int,Error) {
     for &w,i in x.wants {
         if w.used {continue}
         generation:=w.generation+1
-        have,asked:=w.have,w.asked
-        w={used=true,generation=generation,address=address,priority=priority,order=x.sequence,table_peer=-1,have=have,asked=asked}
+        w={used=true,generation=generation,address=address,priority=priority,order=x.sequence,alias_peer=-1,first=-1,last=-1}
         x.sequence+=1
         x.order[x.want_count]=i
         x.want_count+=1
@@ -45,28 +41,66 @@ want_add :: proc(x:^Exchange,address:store.Hash,priority:int) -> (int,Error) {
     return -1,.Full
 }
 
-// From what the store has now: complete, being received, or nothing.
+// Whether a complete want is still whole in the store: a blob by its alias,
+// an object by its root.
+@(private)
+want_present :: proc(x:^Exchange,w:^Want) -> bool {
+    if w.blob {return store.has(x.desc.store,w.address)}
+    return store.chunk_has(x.desc.store,w.root)
+}
+
+// From what the store has now: a blob complete, an object whose root is here
+// walked from it, or nothing.
 @(private)
 want_begin :: proc(x:^Exchange,i:int) {
+    needs_clear(x,i)
     w:=&x.wants[i]
-    if store.has(x.desc.store,w.address) {
-        want_complete(x,i)
-        return
+    w.state,w.rooted,w.blob,w.root,w.total,w.here=.Asking,false,false,{},-1,0
+    w.walking,w.walked,w.shared,w.depth=false,false,false,0
+    if w.settling {
+        w.settling=false
+        x.settling-=1
     }
-    want_unknown(x,i)
-    w.state=.Asking
-    // A blob already being received resumes from the pieces it has.
-    size,size_error:=store.blob_size(x.desc.store,w.address)
-    if size_error==.None && size<=x.desc.max_blob_bytes {
-        arena:mem.Arena
-        if _,table_error:=store.blob_table(x.desc.store,w.address,scratch_arena(x,&arena));table_error==.None {table_known(x,i,-1,size)}
+    s:=x.desc.store
+    if store.has(s,w.address) {
+        if root,found:=store.blob_root(s,w.address);found {
+            w.rooted,w.blob,w.root=true,true,root
+            if want_root(x,i) {want_complete(x,i);return}
+        }
     }
+    if store.chunk_here(s,w.address) {
+        w.rooted,w.root=true,w.address
+        if want_root(x,i) {
+            want_walk(x,i)
+            want_check(x,i)
+            return
+        }
+        w.rooted,w.root=false,{}
+    }
+    need_add(x,i,.Root,w.address,0,0)
+}
+
+// Starts the walk at a root that is here; false when it is not a node.
+@(private)
+want_root :: proc(x:^Exchange,i:int) -> bool {
+    w:=&x.wants[i]
+    n,error:=walk_node(x,w.root)
+    if error!=.None {return false}
+    w.total=i64(n.total)
+    w.walking,w.walked,w.depth=true,false,1
+    w.stack[0]={address=w.root}
+    return true
 }
 
 @(private)
 want_release :: proc(x:^Exchange,i:int) {
-    receiver_stop(x,i)
-    x.wants[i].used=false
+    needs_clear(x,i)
+    w:=&x.wants[i]
+    if w.settling {
+        w.settling=false
+        x.settling-=1
+    }
+    w.used=false
     for k in 0..<x.want_count {
         if x.order[k]!=i {continue}
         copy(x.order[k:x.want_count-1],x.order[k+1:x.want_count])
@@ -94,92 +128,295 @@ want_before :: proc(x:^Exchange,a,b:int) -> bool {
 
 @(private)
 want_complete :: proc(x:^Exchange,i:int) {
-    receiver_stop(x,i)
+    needs_clear(x,i)
     w:=&x.wants[i]
     w.state=.Complete
-    if size,error:=store.blob_size(x.desc.store,w.address);error==.None {w.size,w.here=size,size}
-    w.known=true
+    if w.total>=0 {w.here=w.total}
     x.dirty=true
 }
 
 @(private)
 want_fail :: proc(x:^Exchange,i:int,error:Error,store_error:store.Error) {
-    receiver_stop(x,i)
+    needs_clear(x,i)
     w:=&x.wants[i]
+    if w.settling {
+        w.settling=false
+        x.settling-=1
+    }
     w.state,w.error,w.store_error=.Failed,error,store_error
     x.dirty=true
 }
 
-// Back to asking for the table, with nothing of the blob kept.
+// The tree under a verified root does not hold together: every peer would
+// send the same, so an object fails; a blob's alias came from a liar.
 @(private)
-want_unknown :: proc(x:^Exchange,i:int) {
-    receiver_stop(x,i)
+want_corrupt :: proc(x:^Exchange,i:int) {
     w:=&x.wants[i]
-    w.known,w.size,w.count,w.had,w.here,w.table_peer=false,0,0,0,0,-1
-    slice.zero(w.have)
-    slice.zero(w.asked)
-}
-
-@(private)
-bit_has :: #force_inline proc(bits:[]u64,i:int) -> bool {return bits[i>>6]&(u64(1)<<uint(i&63))!=0}
-@(private)
-bit_on :: #force_inline proc(bits:[]u64,i:int) {bits[i>>6]|=u64(1)<<uint(i&63)}
-@(private)
-bit_off :: #force_inline proc(bits:[]u64,i:int) {bits[i>>6]&=~(u64(1)<<uint(i&63))}
-
-// The first piece from from on that is neither here nor asked; count when none.
-@(private)
-next_free :: proc(w:^Want,from:int) -> int {
-    for word:=from>>6;word*64<w.count;word+=1 {
-        free:=~(w.have[word]|w.asked[word])
-        if word==from>>6 {free&=~u64(0)<<uint(from&63)}
-        if free!=0 {return min(word*64+int(intrinsics.count_trailing_zeros(free)),w.count)}
-    }
-    return w.count
-}
-
-// The table of the want is in the store, from peer p (-1: found there):
-// which pieces are here comes from the store.
-@(private)
-table_known :: proc(x:^Exchange,i:int,p:int,size:i64) {
-    w:=&x.wants[i]
-    w.known,w.size,w.count,w.table_peer=true,size,store.piece_count(size),p
-    slice.zero(w.have)
-    slice.zero(w.asked)
-    if store.has(x.desc.store,w.address) || w.count==0 {
-        want_complete(x,i)
+    if w.blob {
+        lie(x,i,w.alias_peer)
+        want_begin(x,i)
         return
     }
-    arena:mem.Arena
-    missing,error:=store.receive_missing(x.desc.store,w.address,scratch_arena(x,&arena))
-    if error!=.None {
-        if store.has(x.desc.store,w.address) {want_complete(x,i)} else {want_fail(x,i,.Store,error)}
-        return
+    want_fail(x,i,.Store,.Corrupt)
+}
+
+// The walk is done and nothing it found is missing: once the store commits,
+// the want is complete. A chunk another want was asked for is looked up
+// again by a walk over the whole tree.
+@(private)
+want_check :: proc(x:^Exchange,i:int) {
+    w:=&x.wants[i]
+    if w.state!=.Asking || !w.walked || w.needs>0 || w.settling {return}
+    if w.shared {
+        w.shared=false
+        if !want_root(x,i) {want_begin(x,i);return}
+        want_walk(x,i)
+        if !w.walked || w.needs>0 {return}
     }
-    words:=(w.count+63)/64
-    for k in 0..<words {w.have[k]=~u64(0)}
-    if w.count%64!=0 {w.have[words-1]=(u64(1)<<uint(w.count%64))-1}
-    w.had,w.here=w.count,size
-    for m in missing {
-        if m<0 || m>=w.count || !bit_has(w.have,m) {continue}
-        bit_off(w.have,m)
-        w.had-=1
-        w.here-=i64(store.piece_size(size,m))
-    }
-    if p>=0 {
-        // The first pieces asked with the table come in the same answer.
-        peer:=&x.peers[p]
-        for k in 0..<peer.flight_count {
-            f:=&peer.flights[(peer.flight_head+k)%len(peer.flights)]
-            if f.want!=i || f.generation!=w.generation || !f.blob {continue}
-            for n in int(f.first)..<min(int(f.first)+int(f.count),w.count) {bit_on(w.asked,n)}
-        }
-    }
+    w.settling=true
+    x.settling+=1
     x.dirty=true
 }
 
-// Peer p gave a table, a piece or a size of the want that did not match: what
-// it gave is gone and the want is asked of others.
+// Commits the batch that holds the last chunks of the wants that settle, once
+// a COMMIT_SECONDS, and completes them: a blob once its bytes make its
+// address, else a liar named its root.
+@(private)
+settle :: proc(x:^Exchange) {
+    s:=x.desc.store
+    if x.settling==0 && x.uncommitted && x.now-x.commit_time>=COMMIT_IDLE {
+        // What arrived of wants still asking reaches the disk too, so a restart keeps it.
+        x.commit_time,x.uncommitted=x.now,false
+        store.commit(s)
+        return
+    }
+    if x.settling==0 || x.now-x.commit_time<COMMIT_SECONDS {return}
+    x.commit_time,x.uncommitted=x.now,false
+    for k:=0;k<x.want_count;k+=1 {
+        i:=x.order[k]
+        w:=&x.wants[i]
+        if !w.settling || !w.blob || store.has(s,w.address) {continue}
+        switch error:=store.blob_alias(s,w.address,w.root);error {
+        case .None:
+        case .Corrupt:
+            w.settling=false
+            x.settling-=1
+            lie(x,i,w.alias_peer)
+            want_begin(x,i)
+        case .Missing,.Not_Here_Yet,.Invalid_Argument,.Wrong_Size,.Unsupported_Layout:
+            w.settling=false
+            x.settling-=1
+            want_begin(x,i)
+        case .Io,.No_Space,.Out_Of_Memory:
+            want_fail(x,i,.Store,error)
+        }
+    }
+    committed:=store.commit(s)
+    for k:=0;k<x.want_count;k+=1 {
+        i:=x.order[k]
+        w:=&x.wants[i]
+        if !w.settling {continue}
+        w.settling=false
+        x.settling-=1
+        switch committed {
+        case .None: want_complete(x,i)
+        case .Missing: want_begin(x,i) // a chunk a sweep dropped beside the batch
+        case .Corrupt,.Not_Here_Yet,.Invalid_Argument,.Wrong_Size,.Unsupported_Layout,.Io,.No_Space,.Out_Of_Memory:
+            want_fail(x,i,.Store,committed)
+        }
+    }
+}
+
+// The node at address, read from the store; the view lasts until the next read.
+@(private)
+walk_node :: proc(x:^Exchange,address:store.Hash) -> (store.Node_View,store.Error) {
+    if x.walk_held && x.walk_address==address {return x.walk_view,.None}
+    x.walk_held=false
+    bytes,error:=store.chunk_read(x.desc.store,address,x.walk)
+    if error!=.None {return {},error}
+    if raw_data(bytes)!=raw_data(x.walk) {copy(x.walk,bytes)}
+    n,parse_error:=store.node_parse(x.walk[:len(bytes)])
+    if parse_error!=.None {return {},parse_error}
+    x.walk_address,x.walk_view,x.walk_held=address,n,true
+    return n,.None
+}
+
+// Walks the tree of want i over what is here, depth first, and records what
+// it lacks, until WALK_AHEAD of it is unasked or the table is full. A missing
+// node stops the walk until it arrives; the next missing nodes after it are
+// asked meanwhile.
+@(private)
+want_walk :: proc(x:^Exchange,i:int) {
+    w:=&x.wants[i]
+    if w.state!=.Asking || !w.rooted || w.walked {return}
+    s:=x.desc.store
+    if !w.walking {
+        if store.chunk_here(s,w.root) {
+            if !want_root(x,i) {want_corrupt(x,i);return}
+        } else {
+            // The root an alias named, which another want may be asking.
+            if need_find(x,w.root)<0 {need_add(x,i,.Root,w.root,0,0)}
+            return
+        }
+    }
+    for w.depth>0 {
+        if w.free>=WALK_AHEAD || x.need_count==len(x.needs) {return}
+        f:=&w.stack[w.depth-1]
+        n,error:=walk_node(x,f.address)
+        if error!=.None {
+            if error==.Missing {want_begin(x,i)} else {want_corrupt(x,i)}
+            return
+        }
+        if f.index>=len(n.entries) {
+            w.depth-=1
+            continue
+        }
+        e:=n.entries[f.index]
+        if n.level==0 {
+            f.index+=1
+            if store.chunk_here(s,e.address) {
+                w.here+=i64(e.size)
+                continue
+            }
+            if k:=need_find(x,e.address);k>=0 {
+                if int(x.needs[k].want)!=i {w.shared=true}
+                continue
+            }
+            need_add(x,i,.Data,e.address,0,e.size)
+            continue
+        }
+        if store.chunk_here(s,e.address) {
+            child,child_error:=walk_node(x,e.address)
+            if child_error!=.None || child.level!=n.level-1 || child.total!=e.size || len(child.groups)>0 || len(child.meta)>0 || w.depth==WALK_DEPTH {
+                want_corrupt(x,i)
+                return
+            }
+            f.index+=1
+            w.stack[w.depth]={address=e.address}
+            w.depth+=1
+            continue
+        }
+        if k:=need_find(x,e.address);k<0 {
+            need_add(x,i,.Node,e.address,n.level-1,e.size)
+        } else if int(x.needs[k].want)!=i {
+            // Another want asks it: this one walks on once it is here.
+            w.shared=true
+            f.index+=1
+            continue
+        }
+        // Ask the next missing nodes now, so they are here when the walk reaches them.
+        ahead:=0
+        for next in n.entries[f.index+1:] {
+            if ahead==PREFETCH_NODES || x.need_count==len(x.needs) {break}
+            ahead+=1
+            if need_find(x,next.address)>=0 || store.chunk_here(s,next.address) {continue}
+            need_add(x,i,.Node,next.address,n.level-1,next.size)
+        }
+        return
+    }
+    w.walked=true
+}
+
+@(private)
+need_slot :: proc(x:^Exchange,address:store.Hash) -> int {
+    mask:=len(x.need_slots)-1
+    h:=int(u32(address[0])|u32(address[1])<<8|u32(address[2])<<16|u32(address[3])<<24)&mask
+    for {
+        k:=x.need_slots[h]
+        if k<0 || x.needs[k].address==address {return h}
+        h=(h+1)&mask
+    }
+}
+
+@(private)
+need_find :: proc(x:^Exchange,address:store.Hash) -> int {
+    return int(x.need_slots[need_slot(x,address)])
+}
+
+// Records a chunk want i lacks; nothing when the table is full, so the walk
+// stops there and finds it again later.
+@(private)
+need_add :: proc(x:^Exchange,i:int,kind:Need_Kind,address:store.Hash,level:int,size:u64) {
+    if x.need_count==len(x.needs) {return}
+    slot:=need_slot(x,address)
+    if x.need_slots[slot]>=0 {return}
+    k:=x.need_free[len(x.needs)-1-x.need_count]
+    x.need_count+=1
+    x.need_serial+=1
+    w:=&x.wants[i]
+    x.needs[k]={address=address,used=true,kind=kind,level=level,size=size,want=i32(i),serial=x.need_serial,peer=-1,next=-1,prev=w.last}
+    if w.last>=0 {x.needs[w.last].next=k} else {w.first=k}
+    w.last=k
+    w.needs+=1
+    w.free+=1
+    x.need_slots[slot]=k
+    x.dirty=true
+}
+
+@(private)
+need_remove :: proc(x:^Exchange,k:int) {
+    n:=&x.needs[k]
+    w:=&x.wants[n.want]
+    if n.prev>=0 {x.needs[n.prev].next=n.next} else {w.first=n.next}
+    if n.next>=0 {x.needs[n.next].prev=n.prev} else {w.last=n.prev}
+    w.needs-=1
+    if n.peer<0 {w.free-=1}
+    // Backward shift: the entries after the hole that probed past it move into it.
+    mask:=len(x.need_slots)-1
+    hole:=need_slot(x,n.address)
+    j:=hole
+    for {
+        j=(j+1)&mask
+        m:=x.need_slots[j]
+        if m<0 {break}
+        a:=x.needs[m].address
+        home:=int(u32(a[0])|u32(a[1])<<8|u32(a[2])<<16|u32(a[3])<<24)&mask
+        if (j>hole && (home<=hole || home>j)) || (j<hole && home<=hole && home>j) {
+            x.need_slots[hole]=m
+            hole=j
+        }
+    }
+    x.need_slots[hole]=-1
+    n.used=false
+    x.need_count-=1
+    x.need_free[len(x.needs)-1-x.need_count]=i32(k)
+}
+
+// Moves a need to another address: a blob's root an alias named.
+@(private)
+need_rename :: proc(x:^Exchange,k:int,address:store.Hash) -> bool {
+    if need_find(x,address)>=0 {return false}
+    n:=x.needs[k]
+    want,peer,lack,since:=int(n.want),n.peer,n.lack,n.lack_since
+    need_remove(x,k)
+    need_add(x,want,n.kind,address,n.level,n.size)
+    m:=need_find(x,address)
+    if m<0 {return false}
+    if peer>=0 {
+        x.needs[m].peer=peer
+        x.wants[want].free-=1
+    }
+    x.needs[m].lack,x.needs[m].lack_since=lack,since
+    // The flight that asked it follows it.
+    p:=&x.peers[peer] if peer>=0 else nil
+    if p!=nil {
+        for j in 0..<p.flight_count {
+            f:=&p.flights[(p.flight_head+j)%len(p.flights)]
+            if int(f.need)==k && f.serial==n.serial {f.need,f.serial=i32(m),x.needs[m].serial}
+        }
+    }
+    return true
+}
+
+@(private)
+needs_clear :: proc(x:^Exchange,i:int) {
+    w:=&x.wants[i]
+    for w.first>=0 {need_remove(x,int(w.first))}
+}
+
+// Peer p sent a chunk of the want that failed its address, or named a root
+// for a blob that its bytes did not make: what it was asked of the want goes
+// to others, and it is not asked for it again.
 @(private)
 lie :: proc(x:^Exchange,i:int,p:int) {
     if p<0 {return}
@@ -187,11 +424,10 @@ lie :: proc(x:^Exchange,i:int,p:int) {
     bit:=u64(1)<<uint(p)
     if w.wrong&bit==0 {x.peers[p].lies+=1}
     w.wrong|=bit
-    if !w.known && w.table_peer==p {w.table_peer=-1}
     peer:=&x.peers[p]
     for k in 0..<peer.flight_count {
         f:=&peer.flights[(peer.flight_head+k)%len(peer.flights)]
-        if f.want==i {flight_release(x,p,f);f.want=-1}
+        if int(f.want)==i {flight_release(x,p,f)}
     }
     x.dirty=true
 }
@@ -200,44 +436,20 @@ lie :: proc(x:^Exchange,i:int,p:int) {
 // flight timed out does not release what another peer was asked since.
 @(private)
 flight_release :: proc(x:^Exchange,p:int,f:^Flight) {
-    if f.want<0 || f.released {return}
+    if f.released {return}
     f.released=true
-    w:=&x.wants[f.want]
-    if !w.used || w.generation!=f.generation {return}
-    if !w.known {
-        if f.blob && w.table_peer==p {w.table_peer=-1}
-        return
-    }
-    for n in int(f.first)..<min(int(f.first)+int(f.count),w.count) {
-        if !bit_has(w.have,n) {bit_off(w.asked,n)}
-    }
+    if f.need<0 {return}
+    n:=&x.needs[f.need]
+    if !n.used || n.serial!=f.serial || int(n.peer)!=p {return}
+    n.peer=-1
+    x.wants[n.want].free+=1
 }
 
-// What peer i was asked goes back to be asked of others; its requests stay counted.
+// What peer i was asked goes back to be asked of others; its asks stay counted.
 @(private)
 flights_release :: proc(x:^Exchange,i:int) {
     p:=&x.peers[i]
     for k in 0..<p.flight_count {flight_release(x,i,&p.flights[(p.flight_head+k)%len(p.flights)])}
-}
-
-@(private) FLIGHT_TABLE :: -1 // flight_of: the table of the want
-@(private) FLIGHT_ANY :: -2   // flight_of: anything of the want
-
-// Whether peer i was asked for piece index of want wi, or its table, or anything of it.
-@(private)
-flight_of :: proc(x:^Exchange,i,wi,index:int) -> bool {
-    p:=&x.peers[i]
-    w:=&x.wants[wi]
-    for k in 0..<p.flight_count {
-        f:=&p.flights[(p.flight_head+k)%len(p.flights)]
-        if f.want!=wi || f.generation!=w.generation {continue}
-        switch {
-        case index==FLIGHT_ANY: return true
-        case index==FLIGHT_TABLE: if f.blob {return true}
-        case index>=int(f.first) && index<int(f.first)+int(f.count): return true
-        }
-    }
-    return false
 }
 
 // Peer i made progress on want wi: what it was asked of it stays reserved.
@@ -246,8 +458,26 @@ flights_heard :: proc(x:^Exchange,i,wi:int) {
     p:=&x.peers[i]
     for k in 0..<p.flight_count {
         f:=&p.flights[(p.flight_head+k)%len(p.flights)]
-        if f.want==wi {f.heard=x.now}
+        if int(f.want)==wi {f.heard=x.now}
     }
+}
+
+// The entry of the oldest ask of peer i an answer about address belongs to:
+// its own entry when one names it, from the one being answered on, else the
+// entry being answered, whose descendant it is. nil without an ask in flight.
+@(private)
+flight_answer :: proc(x:^Exchange,i:int,address:store.Hash) -> (f:^Flight,own:bool) {
+    p:=&x.peers[i]
+    if p.batches==0 {return nil,false}
+    size:=p.batch_sizes[p.batch_head]
+    for k in p.answering..<size {
+        e:=&p.flights[(p.flight_head+k)%len(p.flights)]
+        if e.address==address {
+            p.answering=k
+            return e,true
+        }
+    }
+    return &p.flights[(p.flight_head+p.answering)%len(p.flights)],false
 }
 
 @(private)
@@ -255,17 +485,30 @@ batch_bytes :: proc(x:^Exchange,i:int) -> int {
     p:=&x.peers[i]
     rtt:=f64(0)
     if stats,ok:=wire.connection_stats(p.host,p.connection);ok {rtt=f64(stats.rtt)}
-    return int(clamp(p.receive_rate*rtt,MIN_BATCH_BYTES,REQUEST_BYTES))
+    return int(clamp(p.receive_rate*rtt,MIN_BATCH_BYTES,ASK_BYTES))
 }
 
 @(private)
 asking :: proc(x:^Exchange) {
     connected:=connected_mask(x)
     for k in 0..<x.want_count {
-        w:=&x.wants[x.order[k]]
+        i:=x.order[k]
+        w:=&x.wants[i]
         if w.state!=.Asking && w.state!=.Missing {continue}
         if w.lack!=0 && x.now-w.lack_since>=LACK_RETRY {w.lack=0}
-        if connected&~(w.wrong|w.lack)==0 {
+        if w.state==.Asking {
+            want_walk(x,i)
+            want_check(x,i)
+        }
+        if w.state!=.Asking && w.state!=.Missing {continue}
+        // Missing when no peer may be asked for the want, or for a chunk of it.
+        open:=connected&~(w.wrong|w.lack)
+        for j:=w.first;j>=0 && open!=0;j=x.needs[j].next {
+            n:=&x.needs[j]
+            if n.lack!=0 && x.now-n.lack_since>=LACK_RETRY {n.lack=0}
+            if n.peer<0 && open&~n.lack==0 {open=0}
+        }
+        if open==0 {
             if w.state==.Asking {
                 w.state=.Missing
                 w.misses+=1
@@ -279,7 +522,7 @@ asking :: proc(x:^Exchange) {
         if !p.used || p.bad {continue}
         for k in 0..<p.flight_count {
             f:=&p.flights[(p.flight_head+k)%len(p.flights)]
-            if f.released || f.want<0 || x.now-f.heard<=STALL_SECONDS {continue}
+            if f.released || x.now-f.heard<=STALL_SECONDS {continue}
             // No progress on the want: others are asked, and this peer not for a while.
             w:=&x.wants[f.want]
             if w.used && w.generation==f.generation {
@@ -292,63 +535,51 @@ asking :: proc(x:^Exchange) {
     }
 }
 
-// Asks peer i for the most important pieces nobody was asked for, up to what
-// it carries in a round trip. A blob whose size is unknown counts only
-// against the limits of a request, since most blobs are small: a batch
-// carries as many as fit.
+// Asks peer i for the most important chunks nobody was asked for, up to what
+// it carries in a round trip. A root not here counts only against the entries
+// of an ask, since most objects are small: an ask carries as many as fit, each
+// with ROOT_BUDGET, so a small object comes whole.
 @(private)
 batch_send :: proc(x:^Exchange,i:int) {
     p:=&x.peers[i]
     bit:=u64(1)<<uint(i)
-    budget:=batch_bytes(x,i)/store.PIECE_BYTES
-    pieces:=0 // what the request addresses, at most REQUEST_PIECES
-    entries:[REQUEST_ENTRIES]Flight
+    budget:=batch_bytes(x,i)
+    bytes:=0
+    entries:[ASK_ENTRIES]Flight
     n:=0
     wants: for k in 0..<x.want_count {
         wi:=x.order[k]
         w:=&x.wants[wi]
-        if w.state!=.Asking || (w.wrong|w.lack)&bit!=0 {continue}
-        if !w.known {
-            if w.table_peer>=0 || pieces+FIRST_PIECES>REQUEST_PIECES {continue}
-            entries[n]={want=wi,generation=w.generation,first=0,count=FIRST_PIECES,blob=true,heard=x.now}
-            n+=1
-            pieces+=FIRST_PIECES
-        } else {
-            at:=0
-            for n<REQUEST_ENTRIES && budget>0 && pieces<REQUEST_PIECES {
-                start:=next_free(w,at)
-                if start>=w.count {break}
-                end:=start+1
-                for end<w.count && end-start<min(budget,REQUEST_PIECES-pieces) && !bit_has(w.have,end) && !bit_has(w.asked,end) {end+=1}
-                entries[n]={want=wi,generation=w.generation,first=u32(start),count=u32(end-start),heard=x.now}
-                n+=1
-                budget-=end-start
-                pieces+=end-start
-                at=end
+        if w.state!=.Asking || (w.wrong|w.lack)&bit!=0 || w.free==0 {continue}
+        for j:=w.first;j>=0;j=x.needs[j].next {
+            need:=&x.needs[j]
+            if need.peer>=0 || need.lack&bit!=0 {continue}
+            cost,left:=0,0
+            switch need.kind {
+            case .Root: left=ROOT_BUDGET
+            case .Node: cost=NODE_ESTIMATE
+            case .Data: cost=int(need.size)
             }
+            if n>0 && bytes+cost>budget {break wants}
+            entries[n]={need=j,serial=need.serial,want=i32(wi),generation=w.generation,address=need.address,left=i64(left),heard=x.now}
+            n+=1
+            bytes+=cost
+            if n==ASK_ENTRIES {break wants}
         }
-        if n==REQUEST_ENTRIES || budget<=0 || pieces>=REQUEST_PIECES {break wants}
     }
     if n==0 {return}
-    buffer:[MSG_REQUEST_MAX]u8
+    buffer:[MSG_ASK_MAX]u8
     out:=Writer{data=buffer[:]}
-    write_u8(&out,MSG_REQUEST)
+    write_u8(&out,MSG_ASK)
     write_u16(&out,u16(n))
-    for e in entries[:n] {
-        address:=x.wants[e.want].address
-        write_u8(&out,e.blob?0:1)
-        write_bytes(&out,address[:])
-        write_u32(&out,e.first)
-        write_u32(&out,e.count)
+    for &e in entries[:n] {
+        write_bytes(&out,e.address[:])
+        write_u32(&out,u32(e.left))
     }
     if !control_append(p,buffer[:out.n]) {return}
     for e in entries[:n] {
-        w:=&x.wants[e.want]
-        if e.blob {
-            w.table_peer=i
-        } else {
-            for m in int(e.first)..<int(e.first+e.count) {bit_on(w.asked,m)}
-        }
+        x.needs[e.need].peer=i32(i)
+        x.wants[e.want].free-=1
         p.flights[(p.flight_head+p.flight_count)%len(p.flights)]=e
         p.flight_count+=1
     }
@@ -356,133 +587,133 @@ batch_send :: proc(x:^Exchange,i:int) {
     p.batches+=1
 }
 
+// A chunk is taken only as the answer to an entry asked of that peer, or as a
+// descendant of the entry it is answering within its budget, and only once it
+// hashes to the address the ask or its parent named: one that does not is
+// reported back, and the peer is not asked for that want again.
 @(private)
-on_table :: proc(x:^Exchange,i:int,data:[]u8) {
+on_chunk :: proc(x:^Exchange,i:int,data:[]u8) {
     r:=Reader{data=data[1:],ok=true}
     address:=read_hash(&r)
-    size:=i64(read_u64(&r))
-    if !r.ok {peer_bad(x,i);return}
-    wi:=want_find(x,address)
-    if wi<0 || !flight_of(x,i,wi,FLIGHT_TABLE) {x.peers[i].refused+=1;return}
-    w:=&x.wants[wi]
-    if w.state!=.Asking && w.state!=.Missing || w.known || w.wrong&(u64(1)<<uint(i))!=0 {return}
-    flights_heard(x,i,wi)
-    if size<0 || size>x.desc.max_blob_bytes || len(data)!=MSG_TABLE_HEAD+store.piece_count(size)*size_of(store.Hash) {lie(x,wi,i);return}
-    // A blob of FIRST_PIECES pieces or fewer comes whole, never with a table.
-    if store.piece_count(size)<=FIRST_PIECES {lie(x,wi,i);return}
-    pieces:=slice.reinterpret([]store.Hash,data[MSG_TABLE_HEAD:])
-    switch error:=store.receive_begin(x.desc.store,address,size,pieces);error {
-    case .None: table_known(x,wi,i,size)
-    case .Corrupt,.Invalid_Argument: lie(x,wi,i)
-    case .Missing,.Not_Here_Yet,.Wrong_Size,.Out_Of_Memory,.Io,.No_Space,.Unsupported_Layout: want_fail(x,wi,.Store,error)
+    codec:=read_u8(&r)
+    raw:=int(read_u32(&r))
+    bytes:=data[min(MSG_CHUNK_HEAD,len(data)):]
+    if !r.ok || codec!=0 || raw!=len(bytes) || len(bytes)==0 || len(bytes)>store.CHUNK_MAX {peer_bad(x,i);return}
+    p:=&x.peers[i]
+    f,own:=flight_answer(x,i,address)
+    if f==nil {p.refused+=1;return}
+    if !own {
+        f.left-=i64(len(bytes))
+        if f.left<0 {peer_bad(x,i);return}
     }
-}
-
-@(private)
-on_piece :: proc(x:^Exchange,i:int,data:[]u8) {
-    r:=Reader{data=data[1:],ok=true}
-    address:=read_hash(&r)
-    index:=int(read_u32(&r))
-    piece:=data[min(MSG_PIECE_HEAD,len(data)):]
-    if !r.ok || len(piece)==0 || len(piece)>store.PIECE_BYTES {peer_bad(x,i);return}
-    wi:=want_find(x,address)
-    if wi<0 || !flight_of(x,i,wi,index) {x.peers[i].refused+=1;return}
+    k:=need_find(x,address)
+    if k<0 {p.refused+=1;return}
+    need:=&x.needs[k]
+    wi:=int(need.want)
     w:=&x.wants[wi]
-    if w.state!=.Asking && w.state!=.Missing || w.wrong&(u64(1)<<uint(i))!=0 {return}
-    if !w.known || index>=w.count || bit_has(w.have,index) {return}
-    flights_heard(x,i,wi)
-    switch error:=want_piece(x,wi,index,piece);error {
-    case .None:
-        bit_on(w.have,index)
-        bit_on(w.asked,index)
-        w.had+=1
-        w.here+=i64(len(piece))
-        x.peers[i].received+=u64(len(piece))
-        x.dirty=true
-        if w.had==w.count {
-            if store.has(x.desc.store,address) {want_complete(x,wi)} else {table_known(x,wi,w.table_peer,w.size)}
-        }
-    case .Corrupt,.Invalid_Argument:
+    bit:=u64(1)<<uint(i)
+    under:=!own && !f.released && int(f.want)==wi && f.generation==w.generation
+    if int(need.peer)!=i && !under {p.refused+=1;return}
+    if w.wrong&bit!=0 {return}
+    if store.address_of_bytes(bytes)!=address {
+        buffer:[MSG_ADDRESS_BYTES]u8
+        if !control_append(p,buffer[:encode_address(buffer[:],MSG_BAD,address)]) {p.refused+=1}
         lie(x,wi,i)
-    case .Wrong_Size:
-        // The piece proves the size the table came with was wrong; the store
-        // dropped that partial blob, and keeps a complete one published meanwhile.
-        lie(x,wi,w.table_peer)
-        if store.has(x.desc.store,address) {want_complete(x,wi)} else {want_unknown(x,wi)}
-        x.dirty=true
-    case .Missing:
-        if store.has(x.desc.store,address) {want_complete(x,wi)} else {want_unknown(x,wi)}
-    case .Not_Here_Yet,.Out_Of_Memory,.Io,.No_Space,.Unsupported_Layout:
-        want_fail(x,wi,.Store,error)
+        return
     }
-}
-
-// Keeps a piece of want wi through its receiver, which it opens, closing the
-// one that took no piece for longest when RECEIVERS are open.
-@(private)
-want_piece :: proc(x:^Exchange,wi,index:int,piece:[]u8) -> store.Error {
-    w:=&x.wants[wi]
-    if !w.receiving {
-        if x.receivers>=RECEIVERS {
-            oldest:=-1
-            for &v,k in x.wants {
-                if v.used && v.receiving && (oldest<0 || v.written<x.wants[oldest].written) {oldest=k}
+    switch need.kind {
+    case .Root:
+        n,error:=store.node_parse(bytes)
+        if error!=.None {
+            if w.blob {want_corrupt(x,wi);return}
+            // Not a node: the bytes of a blob of one chunk, whose address is the blob's.
+            if _,put_error:=store.put_bytes(x.desc.store,bytes);put_error!=.None {
+                want_fail(x,wi,.Store,put_error)
+                return
             }
-            if oldest>=0 {receiver_stop(x,oldest)}
+            p.received+=u64(len(bytes))
+            need_remove(x,k)
+            root,_:=store.blob_root(x.desc.store,address)
+            w.blob,w.rooted,w.root,w.total=true,true,root,i64(len(bytes))
+            want_complete(x,wi)
+            return
         }
-        // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-        receiver,error:=store.receiver_open(x.desc.store,w.address)
-        w.receiver=receiver
-        if error!=.None {return error}
-        w.receiving=true
-        x.receivers+=1
+        w.total=i64(n.total)
+    case .Node:
+        n,error:=store.node_parse(bytes)
+        if error!=.None || n.level!=need.level || n.total!=need.size || len(n.groups)>0 || len(n.meta)>0 {want_corrupt(x,wi);return}
+    case .Data:
+        if u64(len(bytes))!=need.size {want_corrupt(x,wi);return}
     }
-    w.written=x.sequence
-    x.sequence+=1
-    return store.receiver_piece(&w.receiver,index,piece)
-}
-
-@(private)
-receiver_stop :: proc(x:^Exchange,i:int) {
-    w:=&x.wants[i]
-    if !w.receiving {return}
-    store.receiver_close(&w.receiver)
-    w.receiver={}
-    w.receiving=false
-    x.receivers-=1
-}
-
-// A blob asked with its table, whole: taken when its bytes hash to its address.
-@(private)
-on_whole :: proc(x:^Exchange,i:int,data:[]u8) {
-    r:=Reader{data=data[1:],ok=true}
-    address:=read_hash(&r)
-    if !r.ok {peer_bad(x,i);return}
-    bytes:=data[MSG_WHOLE_HEAD:]
-    wi:=want_find(x,address)
-    if wi<0 || !flight_of(x,i,wi,FLIGHT_TABLE) {x.peers[i].refused+=1;return}
-    w:=&x.wants[wi]
-    if w.state!=.Asking && w.state!=.Missing || w.known || w.wrong&(u64(1)<<uint(i))!=0 {return}
+    if error:=store.chunk_put(x.desc.store,address,bytes);error!=.None {
+        want_fail(x,wi,.Store,error)
+        return
+    }
+    p.received+=u64(len(bytes))
+    x.uncommitted=true
     flights_heard(x,i,wi)
-    if len(bytes)>FIRST_PIECES*store.PIECE_BYTES || i64(len(bytes))>x.desc.max_blob_bytes || store.address_of_bytes(bytes)!=address {lie(x,wi,i);return}
-    if _,error:=store.put_bytes(x.desc.store,bytes);error!=.None {want_fail(x,wi,.Store,error);return}
-    x.peers[i].received+=u64(len(bytes))
-    want_complete(x,wi)
+    kind,size:=need.kind,need.size
+    need_remove(x,k)
+    x.dirty=true
+    switch kind {
+    case .Data: w.here+=i64(size)
+    case .Root:
+        w.rooted,w.root=true,address
+        w.walking,w.walked,w.depth=true,false,1
+        w.stack[0]={address=address}
+        want_walk(x,wi)
+    case .Node: want_walk(x,wi)
+    }
+    want_check(x,wi)
+}
+
+// A blob's root, from the peer asked for the blob: the want walks that object,
+// and is complete once its bytes make the blob's address.
+@(private)
+on_alias :: proc(x:^Exchange,i:int,data:[]u8) {
+    r:=Reader{data=data[1:],ok=true}
+    blob:=read_hash(&r)
+    root:=read_hash(&r)
+    if !read_end(&r) {peer_bad(x,i);return}
+    p:=&x.peers[i]
+    f,own:=flight_answer(x,i,blob)
+    if f==nil || !own {p.refused+=1;return}
+    f.address=root
+    k:=need_find(x,blob)
+    if k<0 || x.needs[k].kind!=.Root || int(x.needs[k].peer)!=i {p.refused+=1;return}
+    wi:=int(x.needs[k].want)
+    w:=&x.wants[wi]
+    if w.rooted || w.address!=blob {p.refused+=1;return}
+    w.blob,w.rooted,w.root,w.alias_peer=true,true,root,i
+    flights_heard(x,i,wi)
+    if store.chunk_here(x.desc.store,root) || !need_rename(x,k,root) {
+        need_remove(x,k)
+        want_walk(x,wi)
+        want_check(x,wi)
+    }
+    x.dirty=true
 }
 
 @(private)
 on_lack :: proc(x:^Exchange,i:int,data:[]u8) {
     r:=Reader{data=data[1:],ok=true}
     address:=read_hash(&r)
-    read_u32(&r)
-    read_u32(&r)
     if !read_end(&r) {peer_bad(x,i);return}
-    wi:=want_find(x,address)
-    if wi<0 || !flight_of(x,i,wi,FLIGHT_ANY) {x.peers[i].refused+=1;return}
-    w:=&x.wants[wi]
-    if w.lack==0 {w.lack_since=x.now}
-    w.lack|=u64(1)<<uint(i)
-    if !w.known && w.table_peer==i {w.table_peer=-1}
+    p:=&x.peers[i]
+    f,own:=flight_answer(x,i,address)
+    if f==nil || !own {p.refused+=1;return}
+    flight_release(x,i,f)
+    k:=need_find(x,address)
+    if k<0 {return}
+    n:=&x.needs[k]
+    bit:=u64(1)<<uint(i)
+    if n.lack==0 {n.lack_since=x.now}
+    n.lack|=bit
+    if n.kind==.Root {
+        w:=&x.wants[n.want]
+        if w.lack==0 {w.lack_since=x.now}
+        w.lack|=bit
+    }
     x.dirty=true
 }
 
@@ -493,6 +724,7 @@ on_done :: proc(x:^Exchange,i:int,data:[]u8) {
     n:=p.batch_sizes[p.batch_head]
     p.batch_head=(p.batch_head+1)%BATCHES
     p.batches-=1
+    p.answering=0
     for _ in 0..<n {
         f:=&p.flights[p.flight_head]
         flight_release(x,i,f)
@@ -554,3 +786,4 @@ on_names :: proc(x:^Exchange,i:int,data:[]u8) {
         return
     }
 }
+

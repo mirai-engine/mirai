@@ -2,41 +2,42 @@ package exchange
 
 import "mirai:store"
 
-// Messages, little endian, a kind byte first. Names are a length byte and
-// their bytes.
+// Messages of exchange protocol 3, little endian, a kind byte first. Names are
+// a length byte and their bytes.
 //
 // Control channel:
-//   Request   count u16, entries of kind u8 (0 blob, 1 run), address, first u32, count u32
+//   Ask       count u16, entries of address and budget u32: send each chunk,
+//             then its descendants in tree order while their bytes fit budget
+//   Bad       address: the chunk this end received does not hash to it
 //   Ref_Get   namespace, name
 //   Ref       namespace, name, found u8, address
 //   Names_Get namespace, after
 //   Names     namespace, after, more u8, count u16, entries of name and address
-// Data channel, the answers to requests in the order asked:
-//   Whole     address, bytes: a blob of at most FIRST_PIECES pieces
-//   Table     address, size u64, piece hashes: a larger blob
-//   Piece     address, index u32, bytes
-//   Lack      address, first u32, count u32: pieces it does not have; count 0: the blob
-//   Done      the end of the answer to a request
+// Data channel, the answers to asks in the order asked:
+//   Chunk     address, codec u8, raw u32, bytes as stored
+//   Alias     blob, root: the asked address is a blob whose object has root
+//   Lack      address: a chunk asked that this end does not have
+//   Done      the end of the answer to an ask
 
-@(private) MSG_REQUEST :: 1
+@(private) MSG_ASK :: 1
 @(private) MSG_REF_GET :: 2
 @(private) MSG_REF :: 3
 @(private) MSG_NAMES_GET :: 4
 @(private) MSG_NAMES :: 5
+@(private) MSG_BAD :: 6
 
-@(private) MSG_TABLE :: 1
-@(private) MSG_PIECE :: 2
-@(private) MSG_LACK :: 3
-@(private) MSG_DONE :: 4
-@(private) MSG_WHOLE :: 5
+@(private) MSG_CHUNK :: 1
+@(private) MSG_LACK :: 2
+@(private) MSG_DONE :: 3
+@(private) MSG_ALIAS :: 4
 
-@(private) ENTRY_BYTES :: 1+32+4+4
-@(private) MSG_REQUEST_HEAD :: 1+2
-@(private) MSG_REQUEST_MAX :: MSG_REQUEST_HEAD+REQUEST_ENTRIES*ENTRY_BYTES
-@(private) MSG_TABLE_HEAD :: 1+32+8
-@(private) MSG_PIECE_HEAD :: 1+32+4
-@(private) MSG_WHOLE_HEAD :: 1+32
-@(private) MSG_LACK_BYTES :: 1+32+4+4
+@(private) ASK_ENTRY_BYTES :: 32+4
+@(private) MSG_ASK_HEAD :: 1+2
+@(private) MSG_ASK_MAX :: MSG_ASK_HEAD+ASK_ENTRIES*ASK_ENTRY_BYTES
+@(private) MSG_CHUNK_HEAD :: 1+32+1+4
+@(private) MSG_CHUNK_MAX :: MSG_CHUNK_HEAD+store.CHUNK_MAX
+@(private) MSG_ADDRESS_BYTES :: 1+32 // Lack and Bad
+@(private) MSG_ALIAS_BYTES :: 1+32+32
 @(private) MSG_NAMES_GET_MAX :: 1+2*(1+store.NAME_MAX)
 @(private) MSG_REF_MAX :: MSG_NAMES_GET_MAX+1+32
 @(private) MSG_NAMES_MAX :: MSG_NAMES_GET_MAX+3+NAMES_REPLY_BYTES
@@ -45,8 +46,6 @@ import "mirai:store"
 put_u16 :: proc(b:[]u8,v:u16) {b[0],b[1]=u8(v),u8(v>>8)}
 @(private)
 put_u32 :: proc(b:[]u8,v:u32) {for i in 0..<4 {b[i]=u8(v>>(8*uint(i)))}}
-@(private)
-put_u64 :: proc(b:[]u8,v:u64) {for i in 0..<8 {b[i]=u8(v>>(8*uint(i)))}}
 @(private)
 get_u16 :: proc(b:[]u8) -> u16 {return u16(b[0])|u16(b[1])<<8}
 
@@ -59,8 +58,6 @@ write_u8 :: proc(w:^Writer,v:u8) {w.data[w.n]=v;w.n+=1}
 write_u16 :: proc(w:^Writer,v:u16) {put_u16(w.data[w.n:],v);w.n+=2}
 @(private)
 write_u32 :: proc(w:^Writer,v:u32) {put_u32(w.data[w.n:],v);w.n+=4}
-@(private)
-write_u64 :: proc(w:^Writer,v:u64) {put_u64(w.data[w.n:],v);w.n+=8}
 @(private)
 write_bytes :: proc(w:^Writer,v:[]u8) {copy(w.data[w.n:],v);w.n+=len(v)}
 @(private)
@@ -94,12 +91,6 @@ read_u32 :: proc(r:^Reader) -> (v:u32) {
     return
 }
 @(private)
-read_u64 :: proc(r:^Reader) -> (v:u64) {
-    b:=read_bytes(r,8)
-    if r.ok {for i in 0..<8 {v|=u64(b[i])<<(8*uint(i))}}
-    return
-}
-@(private)
 read_hash :: proc(r:^Reader) -> (h:store.Hash) {
     b:=read_bytes(r,32)
     if r.ok {copy(h[:],b)}
@@ -128,24 +119,24 @@ encode_question :: proc(buffer:[]u8,kind:u8,namespace,name:string) -> []u8 {
     return buffer[:w.n]
 }
 
+// A Lack or a Bad.
 @(private)
-encode_lack :: proc(buffer:[]u8,address:store.Hash,first,count:u32) -> int {
+encode_address :: proc(buffer:[]u8,kind:u8,address:store.Hash) -> int {
     address:=address
-    w:=Writer{data=buffer}
-    write_u8(&w,MSG_LACK)
-    write_bytes(&w,address[:])
-    write_u32(&w,first)
-    write_u32(&w,count)
-    return w.n
+    buffer[0]=kind
+    copy(buffer[1:],address[:])
+    return MSG_ADDRESS_BYTES
 }
 
+// The head of a Chunk whose bytes follow it in buffer.
 @(private)
-encode_piece_head :: proc(buffer:[]u8,address:store.Hash,index:u32) {
+encode_chunk_head :: proc(buffer:[]u8,address:store.Hash,size:int) {
     address:=address
     w:=Writer{data=buffer}
-    write_u8(&w,MSG_PIECE)
+    write_u8(&w,MSG_CHUNK)
     write_bytes(&w,address[:])
-    write_u32(&w,index)
+    write_u8(&w,0)
+    write_u32(&w,u32(size))
 }
 
 // One whole message from peer i on a lane.
@@ -154,35 +145,21 @@ message :: proc(x:^Exchange,i:int,lane:int,data:[]u8) {
     if len(data)==0 {peer_bad(x,i);return}
     if lane==LANE_DATA {
         switch data[0] {
-        case MSG_TABLE: on_table(x,i,data)
-        case MSG_PIECE: on_piece(x,i,data)
+        case MSG_CHUNK: on_chunk(x,i,data)
         case MSG_LACK: on_lack(x,i,data)
         case MSG_DONE: on_done(x,i,data)
-        case MSG_WHOLE: on_whole(x,i,data)
+        case MSG_ALIAS: on_alias(x,i,data)
         case: peer_bad(x,i)
         }
         return
     }
     switch data[0] {
-    case MSG_REQUEST: on_request(x,i,data)
+    case MSG_ASK: on_ask(x,i,data)
+    case MSG_BAD: on_bad(x,i,data)
     case MSG_REF_GET: on_ref_get(x,i,data)
     case MSG_NAMES_GET: on_names_get(x,i,data)
     case MSG_REF: on_ref(x,i,data)
     case MSG_NAMES: on_names(x,i,data)
     case: peer_bad(x,i)
     }
-}
-
-// A message larger than this end holds: a table or a whole blob asked of that
-// peer fails the peer for that blob, never the want; one nobody asked for
-// counts against the peer; anything else is from a bad peer.
-@(private)
-oversized :: proc(x:^Exchange,i:int,lane:int,head:[]u8) {
-    if lane==LANE_DATA && len(head)>=MSG_WHOLE_HEAD && (head[0]==MSG_TABLE || head[0]==MSG_WHOLE) {
-        r:=Reader{data=head[1:],ok=true}
-        address:=read_hash(&r)
-        if w:=want_find(x,address);w>=0 && flight_of(x,i,w,FLIGHT_TABLE) {lie(x,w,i)} else {x.peers[i].refused+=1}
-        return
-    }
-    peer_bad(x,i)
 }

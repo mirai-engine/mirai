@@ -1,38 +1,38 @@
 package exchange
 
-import "core:mem"
 import "core:slice"
 import "mirai:store"
 import wire "mirai:net"
 
-// A request is taken whole or refused whole: a peer keeps at most BATCHES in
-// flight, so one with more is not one this end needs to answer.
+// An ask is taken whole or refused whole: a peer keeps at most BATCHES in
+// flight, so one with more is not one this end needs to answer. Nothing is
+// checked on serve: the receiver checks every chunk and reports a bad one.
 @(private)
-on_request :: proc(x:^Exchange,i:int,data:[]u8) {
+on_ask :: proc(x:^Exchange,i:int,data:[]u8) {
     p:=&x.peers[i]
     r:=Reader{data=data[1:],ok=true}
     count:=int(read_u16(&r))
-    if count==0 || count>REQUEST_ENTRIES || len(data)!=MSG_REQUEST_HEAD+count*ENTRY_BYTES {peer_bad(x,i);return}
-    pieces:=0
-    for _ in 0..<count {
-        kind:=read_u8(&r)
-        read_hash(&r)
-        first:=read_u32(&r)
-        n:=read_u32(&r)
-        if kind>1 || kind==1 && n==0 || u64(first)+u64(n)>MAX_PIECES || n>REQUEST_PIECES {peer_bad(x,i);return}
-        pieces+=int(n)
-    }
-    if pieces>REQUEST_PIECES {peer_bad(x,i);return}
+    if count==0 || count>ASK_ENTRIES || len(data)!=MSG_ASK_HEAD+count*ASK_ENTRY_BYTES {peer_bad(x,i);return}
     if p.serve_count+count+1>len(p.serve) {p.refused+=1;return}
-    r=Reader{data=data[MSG_REQUEST_HEAD:],ok=true}
     for _ in 0..<count {
-        kind:=read_u8(&r)
         address:=read_hash(&r)
-        first:=read_u32(&r)
-        n:=read_u32(&r)
-        serve_push(p,{kind=kind==0?.Blob:.Run,address=address,first=first,count=n})
+        budget:=read_u32(&r)
+        serve_push(p,{kind=.Ask,address=address,budget=budget})
     }
     serve_push(p,{kind=.Done})
+}
+
+// A receiver's report that a chunk this end sent failed its address: the copy
+// is checked, and a damaged one is tombstoned, so it is lacked from now on and
+// fetched again by whoever wants it.
+@(private)
+on_bad :: proc(x:^Exchange,i:int,data:[]u8) {
+    r:=Reader{data=data[1:],ok=true}
+    address:=read_hash(&r)
+    if !read_end(&r) {peer_bad(x,i);return}
+    store.chunk_check(x.desc.store,address)
+    p:=&x.peers[i]
+    if p.node_held && p.node_address==address {p.node_held=false}
 }
 
 @(private)
@@ -45,7 +45,7 @@ serve_push :: proc(p:^Peer,s:Serve) {
 serve_pop :: proc(p:^Peer) {
     p.serve_head=(p.serve_head+1)%len(p.serve)
     p.serve_count-=1
-    p.started,p.lack_count=false,0
+    p.started,p.aliased,p.sent_under,p.depth=false,false,0,0
 }
 
 @(private)
@@ -78,7 +78,7 @@ on_ref_get :: proc(x:^Exchange,i:int,data:[]u8) {
 }
 
 // The names after after, sorted. Reading a namespace is the one answer the
-// store allocates for: it reads a folder.
+// store allocates for.
 @(private)
 on_names_get :: proc(x:^Exchange,i:int,data:[]u8) {
     r:=Reader{data=data[1:],ok=true}
@@ -127,41 +127,40 @@ serve_pump :: proc(x:^Exchange,i:int) {
             if p.out_sent<p.out_len {return}
             p.out_len,p.out_sent=0,0
         }
-        if !serve_build(x,i) {
-            serve_stop(p)
-            return
-        }
+        if !serve_build(x,i) {return}
     }
 }
 
-// Closes the blob a peer was served.
+// The chunk at address read into the out buffer of p after a Chunk head, or why not.
 @(private)
-serve_stop :: proc(p:^Peer) {
-    if !p.reading {return}
-    store.reader_close(&p.reader)
-    p.reading=false
+serve_read :: proc(x:^Exchange,p:^Peer,address:store.Hash) -> (size:int,error:store.Error) {
+    room:=p.out[MSG_CHUNK_HEAD:]
+    bytes:=store.chunk_read(x.desc.store,address,room) or_return
+    if raw_data(bytes)!=raw_data(room) {copy(room,bytes)}
+    return len(bytes),.None
 }
 
-// The blob of address held open for peer p, or why it is not served.
+// The node at address of a stream, held until another is read.
 @(private)
-serve_open :: proc(x:^Exchange,p:^Peer,address:store.Hash) -> store.Error {
-    if p.reading && p.reader.hash==address {return .None}
-    serve_stop(p)
-    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-    reader,error:=store.reader_open(x.desc.store,address)
-    p.reader=reader
-    p.reading=error==.None
-    return error
+serve_node :: proc(x:^Exchange,p:^Peer,address:store.Hash) -> (n:store.Node_View,error:store.Error) {
+    if p.node_held && p.node_address==address {return p.node_view,.None}
+    p.node_held=false
+    bytes:=store.chunk_read(x.desc.store,address,p.node) or_return
+    if raw_data(bytes)!=raw_data(p.node) {copy(p.node,bytes)}
+    n=store.node_parse(p.node[:len(bytes)]) or_return
+    p.node_address,p.node_view,p.node_held=address,n,true
+    return n,.None
 }
 
-// Writes the next answer of peer i into its out buffer; false when there is none.
-// A piece of a complete blob that fails its check is never sent: the store
-// removes the blob, so it is fetched again, and the rest of it is lacked.
+// Writes the next answer of peer i into its out buffer; false when there is
+// none. Each entry is its chunk, or the alias of a blob and then its root,
+// or a Lack; then, while their bytes fit its budget, the descendants of that
+// chunk depth first, until one is missing.
 @(private)
 serve_build :: proc(x:^Exchange,i:int) -> bool {
     p:=&x.peers[i]
     for p.serve_count>0 {
-        e:=p.serve[p.serve_head]
+        e:=&p.serve[p.serve_head]
         if e.kind==.Done {
             p.out[0]=MSG_DONE
             p.out_len=1
@@ -169,74 +168,62 @@ serve_build :: proc(x:^Exchange,i:int) -> bool {
             return true
         }
         if !p.started {
-            p.started,p.cursor,p.lack_count=true,e.first,0
-            size:=i64(-1)
-            if serve_open(x,p,e.address)==.None {size=store.reader_size(&p.reader)}
-            if size<0 || size>x.desc.max_blob_bytes {
-                p.out_len=encode_lack(p.out,e.address,e.first,e.kind==.Blob?0:e.count)
+            size,error:=serve_read(x,p,e.address)
+            if error==.Missing && !p.aliased {
+                // A blob of several chunks: its alias, then its root. A blob of
+                // one chunk is that chunk, whose address is the blob's.
+                if root,found:=store.blob_root(x.desc.store,e.address);found {
+                    p.out_len=MSG_ALIAS_BYTES
+                    p.out[0]=MSG_ALIAS
+                    copy(p.out[1:],e.address[:])
+                    copy(p.out[33:],root[:])
+                    e.address=root
+                    p.aliased=true
+                    return true
+                }
+            }
+            p.started=true
+            if error!=.None {
+                p.out_len=encode_address(p.out,MSG_LACK,e.address)
                 serve_pop(p)
                 return true
             }
-            p.entry_size=size
-            if e.kind==.Blob && store.piece_count(size)<=FIRST_PIECES {
-                // A blob a still receiving end has only in part is lacked whole.
-                address:=e.address
-                if store.reader_read(&p.reader,0,p.out[MSG_WHOLE_HEAD:][:size])!=.None {
-                    p.out_len=encode_lack(p.out,address,0,0)
-                } else {
-                    p.out[0]=MSG_WHOLE
-                    copy(p.out[1:],address[:])
-                    p.out_len=MSG_WHOLE_HEAD+int(size)
-                    p.sent+=u64(size)
+            encode_chunk_head(p.out,e.address,size)
+            p.out_len=MSG_CHUNK_HEAD+size
+            p.sent+=u64(size)
+            if e.budget>0 {
+                if _,parse_error:=store.node_parse(p.out[MSG_CHUNK_HEAD:][:size]);parse_error==.None {
+                    p.stack[0]={address=e.address}
+                    p.depth=1
                 }
-                serve_pop(p)
-                return true
             }
-            if e.kind==.Blob {
-                arena:mem.Arena
-                pieces,table_error:=store.reader_table(&p.reader,scratch_arena(x,&arena))
-                if table_error!=.None || len(pieces)!=store.piece_count(size) {
-                    p.out_len=encode_lack(p.out,e.address,0,0)
-                    serve_pop(p)
-                    return true
-                }
-                address:=e.address
-                w:=Writer{data=p.out}
-                write_u8(&w,MSG_TABLE)
-                write_bytes(&w,address[:])
-                write_u64(&w,u64(size))
-                write_bytes(&w,slice.to_bytes(pieces))
-                p.out_len=w.n
-                return true
-            }
+            if p.depth==0 {serve_pop(p)}
+            return true
         }
-        end:=u32(min(i64(e.first)+i64(e.count),i64(store.piece_count(p.entry_size))))
-        for p.cursor<end {
-            index:=p.cursor
-            bytes:=store.piece_size(p.entry_size,int(index))
-            error:=store.Error.Missing
-            if p.reading {_,error=store.reader_piece(&p.reader,int(index),p.out[MSG_PIECE_HEAD:][:bytes])}
-            if error==.None {
-                if p.lack_count>0 {
-                    // The piece is read again once the lack before it is out.
-                    p.out_len=encode_lack(p.out,e.address,p.lack_first,p.lack_count)
-                    p.lack_count=0
-                    return true
-                }
-                encode_piece_head(p.out,e.address,index)
-                p.out_len=MSG_PIECE_HEAD+bytes
-                p.cursor+=1
-                p.sent+=u64(bytes)
-                return true
+        for p.depth>0 {
+            f:=&p.stack[p.depth-1]
+            n,error:=serve_node(x,p,f.address)
+            if error!=.None || f.index>=len(n.entries) {
+                p.depth-=1
+                continue
             }
-            if error!=.Not_Here_Yet {serve_stop(p)}
-            if p.lack_count==0 {p.lack_first=index}
-            p.lack_count+=1
-            p.cursor+=1
-        }
-        if p.lack_count>0 {
-            p.out_len=encode_lack(p.out,e.address,p.lack_first,p.lack_count)
-            p.lack_count=0
+            child:=n.entries[f.index]
+            f.index+=1
+            size,read_error:=serve_read(x,p,child.address)
+            if read_error!=.None || p.sent_under+i64(size)>i64(e.budget) {
+                p.depth=0
+                break
+            }
+            p.sent_under+=i64(size)
+            encode_chunk_head(p.out,child.address,size)
+            p.out_len=MSG_CHUNK_HEAD+size
+            p.sent+=u64(size)
+            if n.level>0 && p.depth<WALK_DEPTH {
+                if c,parse_error:=store.node_parse(p.out[MSG_CHUNK_HEAD:][:size]);parse_error==.None && c.level==n.level-1 {
+                    p.stack[p.depth]={address=child.address}
+                    p.depth+=1
+                }
+            }
             return true
         }
         serve_pop(p)

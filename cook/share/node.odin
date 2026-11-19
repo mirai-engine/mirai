@@ -75,7 +75,7 @@ Node :: struct {
 node_init :: proc(n:^Node,s:^store.Store,allocator:=context.allocator) -> exchange.Error {
     n^={s=s,allocator=allocator}
     n.served=make([dynamic]store.Hash,allocator)
-    return exchange.init(&n.x,{store=s,channel=0,peers=PEERS,wants=WANTS,max_blob_bytes=FILE_MAX_BYTES,expose=node_expose,expose_user=n,allocator=allocator})
+    return exchange.init(&n.x,{store=s,channel=0,peers=PEERS,wants=WANTS,expose=node_expose,expose_user=n,allocator=allocator})
 }
 
 node_destroy :: proc(n:^Node) {

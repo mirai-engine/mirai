@@ -20,25 +20,24 @@ Test_Node :: struct {
     lie:Test_Lie,
     source:^store.Store, // what the scripted peer serves
     game:Test_Game,
-    requests:int,          // requests a scripted peer got
+    requests:int,          // asks a scripted peer got
+    other:store.Hash,      // Alias: the root it names
     held:int,              // Late_Done: Dones owed
     held_at:f64,           // when they are sent
     held_host:^wire.Host,
     held_connection:wire.Connection,
 }
 
-// What a scripted peer does with the requests it gets.
+// What a scripted peer does with the asks it gets.
 @(private)
 Test_Lie :: enum {
     None,
-    Table,      // a table that does not match the address
-    Piece,      // pieces that do not match the table
-    Size,       // a size the last piece contradicts
-    Single,     // for a blob of several pieces, a size of half a piece and the address as its table
-    Huge,       // a table larger than the receiver holds
-    Size_First, // Size, without the last piece
-    Hold,       // nothing, and an unrelated Lack every 0.1 s
-    Late_Done,  // nothing, and a Done for each request 5.1 s later
+    Bytes,       // data chunks with a byte flipped
+    Alias,       // for a blob, the root of another object
+    Nonsense,    // for a blob, a root that is no node
+    Over_Budget, // every descendant of each entry, whatever its budget
+    Hold,        // nothing, and an unrelated Lack every 0.1 s
+    Late_Done,   // nothing, and a Done for each ask 5.1 s later
 }
 
 // A 60 Hz unreliable message from the server to the client on channel 0.
@@ -88,7 +87,6 @@ test_node_open :: proc(w:^Test_World,k:int,desc:=Desc{}) -> bool {
     if error!=.None {return false}
     d:=desc
     d.store,d.channel=&n.s,w.channel
-    if d.max_blob_bytes==0 {d.max_blob_bytes=64<<20}
     if d.peers==0 {d.peers=4}
     n.open=init(&n.x,d)==.None
     return n.open
@@ -198,6 +196,16 @@ test_bytes :: proc(size:int,seed:u64) -> []u8 {
     return data
 }
 
+// Whether node k holds address whole: a blob by its alias, an object as its
+// want says once committed.
+@(private)
+test_here :: proc(n:^Test_Node,address:store.Hash) -> bool {
+    if store.has(&n.s,address) {return true}
+    if !n.open {return false}
+    p,known:=progress(&n.x,address)
+    return known && p.state==.Complete
+}
+
 // Steps until every address is complete at node k or seconds pass.
 @(private)
 test_until_complete :: proc(w:^Test_World,k:int,addresses:[]store.Hash,seconds:f64) -> bool {
@@ -206,7 +214,7 @@ test_until_complete :: proc(w:^Test_World,k:int,addresses:[]store.Hash,seconds:f
         test_step(w)
         all:=true
         for a in addresses {
-            if !store.has(&w.nodes[k].s,a) {all=false;break}
+            if !test_here(&w.nodes[k],a) {all=false;break}
         }
         if all {return true}
     }
@@ -227,16 +235,16 @@ test_script_tick :: proc(w:^Test_World,n:^Test_Node) {
         n.held=0
     }
     if n.lie==.Hold && n.held_host!=nil && int(w.now*1000)%100==0 {
-        buffer:[MSG_LACK_BYTES]u8
+        buffer:[MSG_ADDRESS_BYTES]u8
         unrelated:=store.address_of_bytes(test_bytes(8,u64(w.now*1000)))
-        wire.message_send(n.held_host,n.held_connection,w.channel+LANE_DATA,buffer[:encode_lack(buffer[:],unrelated,0,0)])
+        wire.message_send(n.held_host,n.held_connection,w.channel+LANE_DATA,buffer[:encode_address(buffer[:],MSG_LACK,unrelated)])
     }
 }
 
-// A scripted peer that answers requests from n.source and lies as n.lie says.
+// A scripted peer that answers asks from n.source and lies as n.lie says.
 @(private)
 test_liar :: proc(w:^Test_World,n:^Test_Node,h:^wire.Host,command:wire.Command) {
-    if command.kind!=.Message || int(command.channel)!=w.channel+LANE_CONTROL || len(command.data)<MSG_REQUEST_HEAD || command.data[0]!=MSG_REQUEST {return}
+    if command.kind!=.Message || int(command.channel)!=w.channel+LANE_CONTROL || len(command.data)<MSG_ASK_HEAD || command.data[0]!=MSG_ASK {return}
     n.requests+=1
     if n.lie==.Hold || n.lie==.Late_Done {
         n.held_host,n.held_connection=h,command.connection
@@ -246,55 +254,62 @@ test_liar :: proc(w:^Test_World,n:^Test_Node,h:^wire.Host,command:wire.Command) 
         }
         return
     }
-    r:=Reader{data=command.data[MSG_REQUEST_HEAD:],ok=true}
+    Script :: struct {w:^Test_World,n:^Test_Node,h:^wire.Host,c:wire.Connection,out:[]u8,sent:i64,budget:i64}
+    send_chunk :: proc(sc:^Script,address:store.Hash,bytes:[]u8) {
+        encode_chunk_head(sc.out,address,len(bytes))
+        copy(sc.out[MSG_CHUNK_HEAD:],bytes)
+        if sc.n.lie==.Bytes {
+            if _,e:=store.node_parse(bytes);e!=.None {sc.out[MSG_CHUNK_HEAD+len(bytes)/2]~=1}
+        }
+        wire.message_send(sc.h,sc.c,sc.w.channel+LANE_DATA,sc.out[:MSG_CHUNK_HEAD+len(bytes)])
+    }
+    descend :: proc(sc:^Script,bytes:[]u8,depth:int) -> bool {
+        node,error:=store.node_parse(bytes)
+        if error!=.None || depth>store.NODE_LEVEL_MAX {return true}
+        held:=make([]u8,len(bytes),context.temp_allocator)
+        copy(held,bytes)
+        node,_=store.node_parse(held)
+        buffer:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
+        for e in node.entries {
+            child,read_error:=store.chunk_read(sc.n.source,e.address,buffer)
+            if read_error!=.None {return false}
+            if sc.n.lie!=.Over_Budget && sc.sent+i64(len(child))>sc.budget {return false}
+            sc.sent+=i64(len(child))
+            send_chunk(sc,e.address,child)
+            if node.level>0 && !descend(sc,child,depth+1) {return false}
+        }
+        return true
+    }
+    r:=Reader{data=command.data[MSG_ASK_HEAD:],ok=true}
     count:=int(get_u16(command.data[1:]))
-    out:=make([]u8,MSG_TABLE_HEAD+4096*32+store.PIECE_BYTES,context.temp_allocator)
+    sc:=Script{w=w,n=n,h=h,c=command.connection,out=make([]u8,MSG_CHUNK_MAX,context.temp_allocator)}
+    buffer:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
     for _ in 0..<count {
-        kind:=read_u8(&r)
         address:=read_hash(&r)
-        first:=int(read_u32(&r))
-        n_pieces:=int(read_u32(&r))
-        size,size_error:=store.blob_size(n.source,address)
-        if size_error!=.None {continue}
-        if kind==0 {
-            pieces,_:=store.blob_table(n.source,address,context.temp_allocator)
-            told:=size
+        sc.budget,sc.sent=i64(read_u32(&r)),0
+        if root,found:=store.blob_root(n.source,address);found && !store.chunk_here(n.source,address) {
+            named:=root
+            junk:=test_bytes(100,7)
             #partial switch n.lie {
-            case .Size,.Size_First: told=size-100
-            case .Table: pieces[1][3]~=0x40
-            case .Single:
-                told=store.PIECE_BYTES/2
-                pieces=pieces[:1]
-                pieces[0]=address
-            case .Huge:
-                told=128<<20
-                pieces=make([]store.Hash,store.piece_count(told),context.temp_allocator)
+            case .Alias: named=n.other
+            case .Nonsense: named=store.address_of_bytes(junk)
             }
-            wr:=Writer{data=out}
-            write_u8(&wr,MSG_TABLE)
-            write_bytes(&wr,address[:])
-            write_u64(&wr,u64(told))
-            for &p in pieces {write_bytes(&wr,p[:])}
-            wire.message_send(h,command.connection,w.channel+LANE_DATA,out[:wr.n])
-            if n.lie==.Single {
-                encode_piece_head(out,address,0)
-                piece:=out[MSG_PIECE_HEAD:][:told]
-                store.read(n.source,address,0,piece)
-                wire.message_send(h,command.connection,w.channel+LANE_DATA,out[:MSG_PIECE_HEAD+int(told)])
+            alias:=test_message({MSG_ALIAS},address[:],named[:])
+            wire.message_send(h,command.connection,w.channel+LANE_DATA,alias)
+            if n.lie==.Nonsense {
+                send_chunk(&sc,named,junk)
                 continue
             }
+            address=named
         }
-        last:=store.piece_count(size)-1
-        for index in first..<min(first+n_pieces,last+1) {
-            bytes:=store.piece_size(size,index)
-            if n.lie==.Size_First && index==last {continue}
-            if n.lie==.Size && index==last {bytes-=100}
-            encode_piece_head(out,address,u32(index))
-            piece:=out[MSG_PIECE_HEAD:][:bytes]
-            store.read(n.source,address,i64(index)*store.PIECE_BYTES,piece)
-            if n.lie==.Piece {piece[7]~=1}
-            wire.message_send(h,command.connection,w.channel+LANE_DATA,out[:MSG_PIECE_HEAD+bytes])
+        bytes,error:=store.chunk_read(n.source,address,buffer)
+        if error!=.None {
+            lack:[MSG_ADDRESS_BYTES]u8
+            wire.message_send(h,command.connection,w.channel+LANE_DATA,lack[:encode_address(lack[:],MSG_LACK,address)])
+            continue
         }
+        send_chunk(&sc,address,bytes)
+        if sc.budget>0 || n.lie==.Over_Budget {descend(&sc,bytes,0)}
     }
     done:=[1]u8{MSG_DONE}
     wire.message_send(h,command.connection,w.channel+LANE_DATA,done[:])

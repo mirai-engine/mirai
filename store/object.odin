@@ -177,6 +177,56 @@ chunk_has :: proc(s:^Store,address:Hash) -> bool {
     return found
 }
 
+// Whether this value knows the chunk at address is stored, without reading the
+// root again: what it wrote and what it read last. For a walk that looks up
+// every chunk of an object after one chunk_has.
+chunk_here :: proc(s:^Store,address:Hash) -> bool {
+    if s==nil || s.state==nil {return false}
+    sync.mutex_lock(&s.state.lock)
+    defer sync.mutex_unlock(&s.state.lock)
+    _,_,found:=lookup_locked(s,address)
+    return found
+}
+
+// Appends a chunk whose bytes its caller checked against address, unless it
+// is stored, into the batch; commit makes it visible to other values.
+chunk_put :: proc(s:^Store,address:Hash,bytes:[]u8,now:Maybe(time.Time)=nil) -> Error {
+    if s==nil || s.state==nil || len(bytes)==0 || len(bytes)>CHUNK_MAX {return .Invalid_Argument}
+    at:=(now.? or_else time.now())._nsec
+    st:=stage_take(s) or_return
+    defer stage_give(s,st)
+    p:=Put{s=s,stage=st,now=at}
+    put_chunk(&p,address,bytes) or_return
+    stage_write(s,st,at) or_return
+    return batch_check(s,at)
+}
+
+// Checks the stored copy of a chunk against its address, as a receiver's
+// report asks: a damaged copy gets a Tombstone frame, committed, so it is no
+// longer read or served (Corrupt).
+chunk_check :: proc(s:^Store,address:Hash,now:Maybe(time.Time)=nil) -> Error {
+    if s==nil || s.state==nil {return .Invalid_Argument}
+    at:=(now.? or_else time.now())._nsec
+    st:=stage_take(s) or_return
+    defer stage_give(s,st)
+    {
+        sync.mutex_lock(&s.state.lock)
+        defer sync.mutex_unlock(&s.state.lock)
+        pack,location,found:=find_locked(s,address)
+        if !found {return .Missing}
+        buffer,e:=make([]u8,CHUNK_MAX,context.temp_allocator)
+        if e!=nil {return .Out_Of_Memory}
+        defer delete(buffer,context.temp_allocator)
+        bytes,read_error:=location_bytes_locked(s,pack,location,buffer)
+        if read_error==.Out_Of_Memory {return read_error}
+        if read_error==.None && address_of_bytes(bytes)==address {return .None}
+        tomb_stage(s,st,pack,location,address) or_return
+    }
+    stage_write(s,st,at) or_return
+    commit(s,time.Time{_nsec=at}) or_return
+    return .Corrupt
+}
+
 // The bytes of the chunk at address: a slice of its mapped pack once the pack
 // is sealed, otherwise read into buffer, which holds at least CHUNK_MAX bytes
 // or the chunk's size. Nothing is checked against the address: a scrub and a
