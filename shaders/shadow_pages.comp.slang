@@ -414,8 +414,8 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         step_args(STEP_SETTLE, run ? SHADOW_POOL_PAGES : 0u);
         if (run) return;
         // A still view: the rounds of what stays and of what moves draw nothing.
-        uint counts[8] = {SHADOW_COUNT_DRAWN, SHADOW_COUNT_COMPOSED, SHADOW_COUNT_REQUESTS, SHADOW_COUNT_LEFT, SHADOW_COUNT_WAITING, SHADOW_COUNT_SHORT, SHADOW_COUNT_THREADS, SHADOW_COUNT_REFRESHED};
-        for (uint k = 0u; k < 8u; k++) pages[SHADOW_WORDS_COUNTS + counts[k]] = 0u;
+        uint counts[9] = {SHADOW_COUNT_DRAWN, SHADOW_COUNT_COMPOSED, SHADOW_COUNT_REQUESTS, SHADOW_COUNT_LEFT, SHADOW_COUNT_WAITING, SHADOW_COUNT_SHORT, SHADOW_COUNT_THREADS, SHADOW_COUNT_REFRESHED, SHADOW_COUNT_STALE};
+        for (uint k = 0u; k < 9u; k++) pages[SHADOW_WORDS_COUNTS + counts[k]] = 0u;
         for (uint round = 0u; round < 3u; round++) pages[SHADOW_WORDS_ARGS + SHADOW_ARGS_DISPATCH + 3u * round] = 0u;
         for (uint round = 0u; round < 2u; round++) {
             pages[SHADOW_WORDS_ARGS + SHADOW_ARGS_DRAW + 4u * round + 1u] = 0u;
@@ -508,6 +508,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         // Where the cache holds the page and what stays changed in boxes, it draws their part of it alone.
         bool part = (e & SHADOW_PAGE_CACHED) != 0u && (plan.x & SHADOW_PLAN_STALE) == 0u;
         bool stale = (plan.x & SHADOW_PLAN_STALE) != 0u || mask_bit(SHADOW_WORDS_STALE, slot, entry);
+        if (stale && (e & SHADOW_PAGE_READY) != 0u) InterlockedAdd(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_STALE], 1u);
         if (stale) e &= ~SHADOW_PAGE_READY;
         if (mask_bit(SHADOW_WORDS_MOVED, slot, entry)) e &= ~SHADOW_PAGE_COMPOSED;
         // The safety net: of a level of the sun the 2x2 pages nearest the eye, of a face its coarsest mip.

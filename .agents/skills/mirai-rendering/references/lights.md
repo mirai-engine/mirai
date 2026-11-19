@@ -364,9 +364,10 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   `Scene_State.shadow_changes`): the cache leaves it out once, and the atlas draws it in the pages
   its moves cover until it stays that long and joins the cache again; a mover that stands still
   costs nothing. While the eye stays in its cell no instance of a batch comes or goes past its cull
-  distance; where it leaves it, what stays changed in the part of each batch whose instances may
-  have come or gone (`shadow_cull_changes`). What sways moves so only near the eye
-  ([what sways](#what-sways-in-the-maps)).
+  distance; where it leaves it, what stays changed where instances of a batch may have come or
+  gone, in a box for each cell of the world they lie in, apart from the few boxes of what changed:
+  merged, those far boxes would take the pages near the eye along (`shadow_cull_changes`). What
+  sways moves so only near the eye ([what sways](#what-sways-in-the-maps)).
   A light or a level of the sun that moves or turns lets go of its pages and draws those read whole
   into the atlas alone that frame, and the cache the next still frame; an origin jump lets go of
   every page.
@@ -414,7 +415,10 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
     validation of the history reaches it.
 - The debug view Shadows shows the part of the light that got there. `Stats.shadow` counts what
   the maps of the views of a frame drew, summed: clusters, triangles and pages, those left out,
-  those that wait and those the bound grows for, and the threads their culls by instance ran.
+  those that wait and those the bound grows for, those drawn again for what stays changing under
+  them, and the threads their culls by instance ran; `Stats.shadow_stale`, the boxes of what stays
+  changed by what raised them, which `engine.status` gives too: a burst of pages drawn again while
+  only the eye moves names its cause there.
 - **Reference.** What the tests compare with, outside the renderer games run: a custom pass of the
   tests in place of the `Direct` stage (`render/reference_test.odin`) traces from each pixel to
   the whole set of points of the sun and of each light, randomly rotated per frame, without grid,
