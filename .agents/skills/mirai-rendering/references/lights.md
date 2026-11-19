@@ -365,14 +365,8 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   its moves cover until it stays that long and joins the cache again; a mover that stands still
   costs nothing. While the eye stays in its cell no instance of a batch comes or goes past its cull
   distance; where it leaves it, what stays changed in the part of each batch whose instances may
-  have come or gone (`shadow_cull_changes`). A batch of a deformable that sways (the wind) moves so
-  in the maps whose texel is narrower than its sway; the others draw it at rest and keep it. The
-  deformable is followed whole: its batches start and stop moving with it, what stays changes in
-  one box of them all, and the plan finds the batches that move of each slot again only where one
-  starts or stops or the tables or the casters the slot holds change. A page of the atlas holds
-  what sways where the cull of what moves found an instance of such a batch there that the cache
-  does not hide (`SHADOW_SWAY_*`), as of the last time it composed it; while the points read it, it
-  is composed again as the bound leaves room (above), and the steps run each frame while one does.
+  have come or gone (`shadow_cull_changes`). What sways moves so only near the eye
+  ([what sways](#what-sways-in-the-maps)).
   A light or a level of the sun that moves or turns lets go of its pages and draws those read whole
   into the atlas alone that frame, and the cache the next still frame; an origin jump lets go of
   every page.
@@ -429,6 +423,24 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   frames smooth it; a light without map whose penumbra no ray of its group crosses is as soft as
   the filter lets it.
 
+## What sways in the maps
+
+A batch of a deformable that sways (the wind) moves so only near the eye: in the maps whose texel
+is narrower than its sway and, where its shadow falls, than the texel a point `SHADOW_SWAY_REACH`
+from the eye takes (`shadow_sway_texel`), so that every point that reads such a map lies within the
+reach; the coarsest level of the sun, which holds every point past it too, is never one. The others
+draw it at rest and keep it, whatever time the frame has left. Where a caster leaves the reach its
+shadow goes from the map that sways to the one at rest as the points blend the levels over the top
+of an octave, the two shadows apart by its sway at most; a view whose reach changes by an octave
+draws its maps again. The deformable is followed whole: its batches start and stop moving with it,
+what stays changes in one box of them all, and the plan finds the batches that move of each slot
+again only where one starts or stops or the tables or the casters the slot holds change. A page of
+the atlas holds what sways where the cull of what moves found an instance of such a batch there
+that the cache does not hide (`SHADOW_SWAY_*`), as of the last time it composed it; while the
+points read it, it is composed again as the bound leaves room
+([what a frame draws at most](#pages-of-the-shadow-maps)), and the steps run each frame while one
+does.
+
 Tests: the shadow ones of `render/render_test.odin` (`render_sun_shadow_is_ray_traced`,
 `render_soft_shadow_blurs_with_the_distance_to_its_caster`,
 `render_soft_shadow_leaves_with_its_caster`, `render_a_low_sun_draws_out_the_end_of_a_shadow`,
@@ -442,6 +454,8 @@ Tests: the shadow ones of `render/render_test.odin` (`render_sun_shadow_is_ray_t
 `render_a_view_the_maps_cannot_hold_shows_no_lit_hole`,
 `render_a_frame_draws_no_more_than_its_bound_and_the_rest_comes_after`,
 `render_a_swaying_batch_keeps_its_pages_under_the_bound`,
+`render_a_swaying_batch_follows_its_sway_only_near_the_eye`,
+`render_a_swaying_forest_composes_again_only_what_is_near`,
 `render_a_wide_search_asks_for_coarser_pages_not_more_of_the_finest`,
 `render_a_turning_sun_gives_what_whole_maps_give`
 and `render_an_origin_jump_gives_what_whole_maps_give`, and for the lights and the sun without

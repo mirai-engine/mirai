@@ -78,7 +78,8 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   direct light of a view (grid, samples, shadow maps) →
   [direct light](references/lights.md#direct-light-of-a-view); their pages, what a frame draws of
   them at most, a still view, the cache and reading them →
-  [pages](references/lights.md#pages-of-the-shadow-maps)
+  [pages](references/lights.md#pages-of-the-shadow-maps); what sways (the wind) and the reach its
+  shadows follow it within → [what sways](references/lights.md#what-sways-in-the-maps)
 - GI, BVH, probe volume, sky →
   [GI](references/gi.md#lighting-techniques-and-optimization); contact occlusion, small instances
   outside the volume → [contact](references/gi.md#contact-occlusion)
@@ -140,6 +141,9 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   but a page that waits for room to follow a batch that sways, which shows the sway it last drew,
   never a lit page or a hole. What sways obeys the bound of the frame like the rest, and its plan
   looks at no batch while none starts or stops swaying.
+- Shadows of what sways move only where they read: within a fixed reach of the eye
+  (`SHADOW_SWAY_REACH`), never farther because the frame has time to spare; small plants cast at
+  rest.
 - Shadows are never colored or darkened by the glass they pass, in the maps or in the rays: colored
   light through glass comes from the light, one that projects a texture.
 - What is decided per instance (its class, the row of its material with its own values) is built
