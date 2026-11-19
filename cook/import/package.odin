@@ -289,6 +289,17 @@ writer_identity :: proc(w:^Writer) {
     w.fixed=true
     slice.sort(w.inputs[:])
     w.identity=identity_of(w.package_id,w.origin,w.inputs[:],w.report.settings,w.options.importer_code,w.options.hashes)
-    versions:=import_versions(w.version)
-    w.key,_=asset.import_key(w.identity,versions[:])
+    w.key=build_key(w.identity,w.version,w.options.importer_code)
+}
+
+// The key of the build of a package of identity (asset.import_key): the
+// versions of what reads its source with a format of version (import_version)
+// and, for a source a plugin imports whole, the identity of the code of that
+// plugin (code; 0: none), so a changed importer builds again also where its
+// source is not.
+build_key :: proc(identity:store.Hash,version:u32,code:u64) -> store.Hash {
+    versions:=import_versions(version)
+    all:=[4]u64{versions[0],versions[1],versions[2],code}
+    key,_:=asset.import_key(identity,all[:3 if code==0 else 4])
+    return key
 }

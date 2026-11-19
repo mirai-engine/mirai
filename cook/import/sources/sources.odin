@@ -110,6 +110,8 @@ source_kind :: proc(path:string,formats:[]importer.Format=nil) -> Source_Kind {
 // with the state its plugin prepared. scene: the scene it wrote, in
 // allocator, "" for none.
 Whole_Source :: struct {
+    name:string,    // what imports it, as its package records it (asset.Package_Origin.importer)
+    version:u16,    // the format version its run gives importer.import_version
     claims:proc(path:string,head:[]u8) -> bool,
     run:proc(state:rawptr,source:string,options:importer.Import_Options,allocator:mem.Allocator) -> (report:importer.Import_Report,scene:string,error:importer.Error),
     state:rawptr,

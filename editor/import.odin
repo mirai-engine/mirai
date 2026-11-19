@@ -284,7 +284,7 @@ import_plugins_prepare :: proc(s:^Session,job:^Import_Job,models:bool,whole:Sour
         job.wholes=make([]Source_Importer,1,job.allocator)
         job.wholes[0]=whole
         wholes:=make([]sources.Whole_Source,1,job.allocator)
-        wholes[0]={claims=whole.claims,run=whole.run,code=code}
+        wholes[0]={name=whole.name,version=whole.version,claims=whole.claims,run=whole.run,code=code}
         if whole.prepare!=nil {wholes[0].state=whole.prepare(&job.store,job.root,s.info,job.allocator)}
         job.imports.wholes=wholes
     }
@@ -580,7 +580,8 @@ Import_Format_Provider :: struct {
 // textures it names, the packages it reads being its inputs), in the editor
 // and in the refresh of every build (import_library). It is read where it is.
 Source_Importer :: struct {
-    name:string, // "Unreal maps": its filter in the file dialog and in messages
+    name:string, // "Unreal maps": its filter in the file dialog and in messages, and the importer its packages record
+    version:u16, // the format version its run gives importer.import_version: a build is found by it without the source
     extensions:[importer.FORMAT_EXTENSIONS]string, // lower case, with the dot, "" after the last
     claims:proc(path:string,head:[]u8) -> bool,    // head: up to importer.SNIFF_BYTES from the start of the file
     // Before the import starts: what run needs, in allocator; nil for
@@ -649,7 +650,7 @@ import_library :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> (i
     engine:=project.engine_root_find("",context.temp_allocator)
     for provider,i in claimed[:count] {
         held.importers[i]=provider.source
-        held.wholes[i]={claims=provider.source.claims,run=provider.source.run,code=plugin_code(root,engine,plugins[i])}
+        held.wholes[i]={name=provider.source.name,version=provider.source.version,claims=provider.source.claims,run=provider.source.run,code=plugin_code(root,engine,plugins[i])}
         if provider.source.prepare!=nil {held.wholes[i].state=provider.source.prepare(s,root,&held.library.info,allocator)}
     }
     imports.formats=held.formats

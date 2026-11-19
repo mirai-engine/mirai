@@ -170,8 +170,12 @@ part ([extension](../../mirai-editor/references/extensions.md#importers-of-a-plu
   is the single source of every asset it makes (a scene, the models it reads with
   `output_model`), and the files it reads besides it are its `inputs`, like the `.bin` of a glTF.
   It appears with its name as a filter of the dialog and claims a file with `claims(path, head)`
-  before the formats. The import program takes these importers from the same library and the
-  [refresh](#library) runs them. The Unreal content importer is the `unreal` plugin of the catalog
+  before the formats. Its `name` is the importer its packages record (the `importer` its run gives
+  `outputs_begin`) and its `version` the one its run gives `import_version`: with the identity of
+  the plugin's code they make the key of a build (`importer.build_key`), so a machine with the
+  plugin and without the source finds the build by key, and a changed importer builds again. The
+  import program takes these importers from the same library and the [refresh](#library) runs
+  them. The Unreal content importer is the `unreal` plugin of the catalog
   ([git plugins and catalog](../../mirai-plugins/references/plugins.md#git-plugins-and-catalog)).
 
 ## Import cache
