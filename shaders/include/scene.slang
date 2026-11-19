@@ -355,6 +355,7 @@ uint batch_tree(Instance row) { return asuint(row.world[0].w); }     // the root
 uint batch_order(Instance row) { return asuint(row.world[1].x); }    // the instances of the leaves of that tree, in the pool
 float batch_fade(Instance row) { return row.world[1].y; }            // metres from the eye where it starts to fade out
 float batch_cull(Instance row) { return row.world[1].z; }            // metres from the eye where it is gone; 0: never
+float batch_sway(Instance row) { return row.world[1].w; }            // metres of the space of its mesh the hook sways a point in its wind at most; 0: it casts at rest
 uint batch_visible(Instance row) { return asuint(row.world[2].x); }  // its first entry of the visible list
 uint batch_levels(Instance row) { return asuint(row.world[2].y); }   // of detail of its mesh, a draw record and a visible list each
 uint batch_draw(Instance row) { return asuint(row.world[2].z); }     // its first draw record after those of the instances
@@ -363,6 +364,7 @@ float4 batch_vertex(Instance row) { return row.world_inv[0]; }       // what the
 float3 batch_anchor(Instance row) { return row.world_inv[1].xyz; }   // what its instances in the pool, its tree and its box are relative to, relative to the origin
 float batch_reach(Instance row) { return row.world_inv[1].w; }       // metres the vertex hook moves a point of its instances at most
 uint batch_colors(Instance row) { return asuint(row.world_inv[2].x); } // 1 + the word of the color of its first instance in the pool; 0: none
+float batch_near(Instance row) { return row.world_inv[2].y; }        // metres of the world from its origin where a ray meets none of it: how far it sways now (render.batch_near)
 
 // The transform of the instance of a batch whose words start at `words`,
 // moved by the anchor of its batch, and its inverse.

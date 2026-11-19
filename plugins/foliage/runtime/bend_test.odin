@@ -113,17 +113,17 @@ Zone_World :: struct {
 	splines: core.Table(volume.Spline),
 }
 
-@(private = "file")
+@(private)
 zone_where :: proc(w: ^Zone_World) -> volume.Where {
 	return {core.read(&w.volumes), core.read(&w.worlds), core.read(&w.parents), core.read(&w.sections), core.read(&w.splines)}
 }
 
 // Each place takes the zone of the Wind on top where it stands, and the
-// variants of a zone sway with the wind of that zone wherever the view is: a
+// shadows of a zone sway with the wind of that zone wherever the view is: a
 // calm valley under a windy world stays still. A change of the speed of a
 // wind keeps the zones of the cells; a move of its volume takes them again.
 @(test)
-the_variants_of_a_calm_valley_stay_still_whatever_blows_at_the_view :: proc(t: ^testing.T) {
+the_shadows_of_a_calm_valley_stay_still_whatever_blows_at_the_view :: proc(t: ^testing.T) {
 	w: Zone_World
 	if !test_world_init(t, &w) {return}
 	defer test_world_destroy(&w)
@@ -144,18 +144,18 @@ the_variants_of_a_calm_valley_stay_still_whatever_blows_at_the_view :: proc(t: ^
 	testing.expect_value(t, resident.zones_revision, 1)
 	open, calm := wind_zone_at(&resident, {0, 0, 0}), wind_zone_at(&resident, {100, 0, 0})
 	testing.expect(t, open >= 0 && calm >= 0 && open != calm, "the valley is a zone of its own")
-	// Sets made without a renderer: no variants, only their wind.
-	append(&resident.winds, Wind_Set{zone = open, at = {0, 0, 0}, made = true}, Wind_Set{zone = calm, at = {100, 0, 0}, made = true})
-	testing.expect(t, wind_sets_sway(&resident, core.read(&w.winds), zone_where(&w), nil), "the open set sways")
-	testing.expect(t, abs(linalg.length(resident.winds[0].sway.xyz) - 8) < 1e-4, "the open world sways with its wind")
-	testing.expect(t, resident.winds[1].sway.xyz == {} && resident.winds[1].still, "the valley stays still")
+	share :: proc(w: ^Zone_World, z: Wind_Zone) -> f32 {return wind_share(volume.wind_at(core.read(&w.winds), zone_where(w), z.at))}
+	testing.expect(t, wind_zone_take(&resident, open, {0, 0, 0}) != wind_zone_take(&resident, calm, {100, 0, 0}), "each zone is a wind of its own")
+	testing.expect_value(t, wind_zone_take(&resident, open, {1, 0, 0}), u32(open + 1))
+	testing.expect_value(t, len(resident.winds), 2)
+	testing.expect(t, abs(share(&w, resident.winds[0]) - 8 / WIND_SPEED_MAX) < 1e-4, "the open world sways with its wind")
+	testing.expect(t, share(&w, resident.winds[1]) == 0, "the valley stays still")
 	// A stronger wind keeps the zones; a valley moved takes them again.
 	core.free(&w.winds, everywhere).speed = 12
 	test_world_settle(&w)
 	wind_zones_update(&resident, core.read(&w.winds), zone_where(&w))
 	testing.expect_value(t, resident.zones_revision, 1)
-	wind_sets_sway(&resident, core.read(&w.winds), zone_where(&w), nil)
-	testing.expect(t, abs(linalg.length(resident.winds[0].sway.xyz) - 12) < 1e-4, "the open world sways with its new wind")
+	testing.expect(t, abs(share(&w, resident.winds[0]) - 12 / WIND_SPEED_MAX) < 1e-4, "the open world sways with its new wind")
 	place.position = {300, 0, 0}
 	core.free(&w.worlds, valley)^ = core.World_Transform{place, place}
 	test_world_settle(&w)

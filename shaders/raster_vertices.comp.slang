@@ -173,10 +173,20 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     float4 window = page.window;
     float2 resolution = float2(SHADOW_POOL, SHADOW_POOL);
     uint pool = page.pool;
-    // The maps leave the vertex hook of a batch and the colors out.
+    // The maps leave the vertex hook of a batch out, but where they draw one
+    // that sways as it sways.
     Gbuffer_Cluster k = (Gbuffer_Cluster)0;
-    k.posed = (entry.program & SHADOW_ENTRY_REST) != 0u ? INVALID : mesh.posed_word;
+    bool rest = (entry.program & SHADOW_ENTRY_REST) != 0u;
+    k.posed = rest ? INVALID : mesh.posed_word;
     k.along = entry.along;
+#ifdef MIRAI_HOOK_VERTEX
+    if (!rest && instance_batched(entry.instance)) {
+        Instance row = batch_row(batch_of(entry.instance));
+        k.batched = batch_sway(row) > 0.0;
+        k.hook = batch_vertex(row);
+        k.pivot = float3(inst.world[0].w, inst.world[1].w, inst.world[2].w);
+    }
+#endif
 #else
     float4 window = float4(0.0, 0.0, frame.resolution);
     float2 resolution = frame.resolution;
