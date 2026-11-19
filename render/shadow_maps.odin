@@ -53,6 +53,7 @@ SHADOW_POOL_PIXELS :: u64(1440)
 SHADOW_POOL_STEP :: 4 * abi.SHADOW_POOL_ROW
 
 // The pages of the pool of a view that renders width x height pixels.
+@(private)
 shadow_pool_pages :: proc "contextless" (width, height: u32) -> u32 {
 	need := u64(4 * SHADOW_SUN_LEVELS) + (u64(width) * u64(height) + SHADOW_POOL_PIXELS - 1) / SHADOW_POOL_PIXELS
 	step := u64(SHADOW_POOL_STEP)
