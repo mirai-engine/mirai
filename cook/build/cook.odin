@@ -586,8 +586,16 @@ file_cook :: proc(work:^Cook_Work,at:int,worker:int,entry:^Cook_File) -> (error:
     if laid && !texture_lay(work,source,target,types) {return .Write_Failed,work_text(work,"%s",file.path)}
     if !entry.compressed && !laid {
         // A listed output of a package is its object of the store, in the container format.
-        data,read_error:=asset.registry_read(work.registry,file.path,context.temp_allocator)
-        if read_error!=.None {return .Read_Failed,work_text(work,"%s",file.path)}
+        data:[]u8
+        if object,listed:=asset.registry_listed_object(work.registry,file.path);listed {
+            read_error:asset.Error
+            data,read_error=asset.object_file(work.registry.store,object,context.temp_allocator)
+            if read_error!=.None {return .Read_Failed,work_text(work,"%s",file.path)}
+        } else {
+            read_error:serial.File_Error
+            data,read_error=serial.file_read(asset.registry_file_path(work.registry,file.path,context.temp_allocator),context.temp_allocator)
+            if read_error!=.None {return .Read_Failed,work_text(work,"%s",file.path)}
+        }
         if file.state==.Asset && (file.kind==asset.KIND_SCENE) {
             sync.mutex_lock(&work.resolve)
             resolved,resolve_ok:=scene_cook(&work.resolver,&work.resolver_types,data)
