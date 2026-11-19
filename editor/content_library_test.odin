@@ -1,9 +1,15 @@
 package editor
 
+import "core:fmt"
 import "core:testing"
 import "mirai:asset"
 import "mirai:cook/share"
 import "mirai:core"
+import "mirai:editor/history"
+import "mirai:host"
+import "mirai:std/base"
+import "mirai:store"
+import "mirai:ui"
 
 // The libraries the browser draws: a root for this machine and one per peer;
 // what the project pins is in none, a peer's package this machine has is
@@ -69,4 +75,50 @@ content_libraries_are_roots_of_what_the_project_does_not_hold :: proc(t:^testing
     c.restore=true
     content_test_show(&c,&registry)
     testing.expect(t,c.at.virtual==.None,"the root of a peer that left is not where the browser stays")
+}
+
+// A card of a peer's root asks for its thumbnail only while it is in sight:
+// of two hundred packages, the few the browser draws, never all of them.
+@(test)
+the_browser_asks_peers_only_for_the_thumbnails_of_visible_cards :: proc(t:^testing.T) {
+    ctx:ui.Context
+    testing.expect(t,test_ui_init(&ctx,{}))
+    defer ui.context_destroy(&ctx)
+    assets:=host.Assets{registry=content_test_registry(),indexed=true}
+    defer content_test_registry_free(&assets.registry)
+    app:=host.App{assets=&assets}
+    g:=Editor_Ui{ctx=&ctx}
+    c:=CONTENT_DEFAULT
+    defer core.value_free(&c,type_info_of(Content))
+    selection:history.Selection
+    info:core.World_Info
+    session:=Session{app=&app,gui=&g,content=&c,selection=&selection,info=&info,headless=true}
+    folder:=base.test_folder(t,"library-thumbs")
+    if folder=="" {return}
+    opened,error:=store.open(folder)
+    if !testing.expect_value(t,error,store.Error.None) {return}
+    session.store=opened
+    defer store.close(&session.store)
+    peers:=make([]share.Peer_Package,200,context.temp_allocator)
+    for &p,k in peers {
+        object:=store.address_of_bytes(transmute([]u8)fmt.tprintf("object %d",k))
+        p={id={7,u64(k+1)},name=fmt.tprintf("p%03d",k),kinds=[]asset.Fourcc{asset.KIND_MESH},bytes=1000,built=true,root=object,objects=[]store.Hash{object}}
+    }
+    listing:=[]Content_Peer_Listing{{peer=1,name="Ana",list=peers}}
+    c.libraries.roots,c.libraries.packages=content_library_listing(nil,listing,false,context.temp_allocator)
+    // What content_libraries_update would read is what is set: it keeps it.
+    c.libraries.ready,c.libraries.key=true,{assets.registry.revision,0,c.library_revision,u64(len(session.store.root))}
+    _=content_test_frame(&session,{size={800,600},pointer_absent=true})
+    _=content_test_frame(&session,{size={800,600},pointer_absent=true})
+    wanted:=len(c.thumb_wants)
+    testing.expectf(t,wanted>0 && wanted<30,"the visible cards ask: %d",wanted)
+    first:=thumbnail_package_key(.Small,thumbnail_programs(&session),peers[0].root,peers[0].objects)
+    last:=thumbnail_package_key(.Small,thumbnail_programs(&session),peers[199].root,peers[199].objects)
+    asked_first,asked_last:=false,false
+    for want in c.thumb_wants {
+        testing.expect_value(t,want.peer,1)
+        asked_first||=want.key==first
+        asked_last||=want.key==last
+    }
+    testing.expect(t,asked_first && !asked_last,"the first card is in sight, the last is not")
 }

@@ -187,6 +187,7 @@ collab_project_update :: proc(s:^Session,st:^Collab_State,now:f64) {
     if st.node==nil {return}
     share.node_step(st.node,now)
     collab_take_update(s,st)
+    collab_thumbs_update(s,st)
     if st.role==.Host {
         collab_host_changes(s,st,now)
         return
