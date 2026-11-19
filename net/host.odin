@@ -69,7 +69,7 @@ Host_Desc :: struct {
     protocol_id:u32,          // identity of the application: datagrams of any other are ignored
     version:u32,              // both ends must have the same
     seed:u64,                 // source of salts; 0 takes it from the system
-    invite:u64,               // the invitation both ends must have; 0 at both: anyone who reaches the server joins. Every key of a connection depends on it (invite.odin)
+    invite:Invite_Key,        // server: of the share it serves, with private; client: what the code carries. None at both: anyone who reaches the server joins (invite.odin)
     max_connections:int,      // server; default 32. A client has one
     channels:[]Channel_Desc,  // at most USER_CHANNELS
     tick_rate:int,            // Hz, default 60
@@ -127,9 +127,9 @@ Host_Stats :: struct {
     packets_sent,packets_received:u64,
     bytes_sent,bytes_received:u64,
     packets_invalid:u64,     // wrong size, checksum or contents
-    handshakes_refused:u64,  // answered with a denial, after the cookie and the proof of the client
-    handshakes_dropped:u64,  // answered with nothing: a cookie that is not this host's or is old, or a proof that does not open
-    handshakes_deferred:u64, // key exchanges put off: the update had computed its share, or the address presented wrong proofs too fast
+    handshakes_refused:u64,  // answered with a denial: another version, or an Initiate that opened from another protocol or with no room
+    handshakes_dropped:u64,  // answered with nothing: a Hello to a host with an invitation, a cookie that is not this host's or is old, an Initiate that does not open or came before
+    handshakes_deferred:u64, // key exchanges put off: the update had computed its share, or the address presented wrong Initiates too fast
     commands_dropped:u64,    // the command buffer was full
     receive_stalls:u64,      // updates that stopped reading because the command buffer had no reserve left
     operations_dropped:u64,  // the frame of the simulation was full
@@ -328,6 +328,14 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
     h.start=time.tick_now()
 
     when !crypto.HAS_RAND_BYTES {return refuse(h,"security","a system that gives secure random bytes: every connection is sealed")}
+    if d.invite!={} {
+        if d.invite.secret==0 {return refuse(h,"invite.secret","not zero: the secret of the invitation")}
+        if d.mode==.Server {
+            if d.invite!=invite_key_from(&d.invite.private,d.invite.secret) {return refuse(h,"invite","a key made by invite_key, with its private key")}
+        } else if !key_usable(&d.invite.public) {
+            return refuse(h,"invite.public","the key of an invitation: invite_decode refuses the rest")
+        }
+    }
     b:=&h.back
     b.rng=d.seed
     b.scale=1
@@ -397,7 +405,7 @@ host_destroy :: proc(h:^Host) {
     repl_destroy(h)
     for &peer in h.back.peers {peer_release(h,&peer)}
     delete(h.back.peers,h.allocator)
-    delete(h.back.secure.failed,h.allocator)
+    secure_host_destroy(h)
     base.hash_map_destroy(&h.back.by_address)
     for frame in h.frames {delete(frame.ops,h.allocator);delete(frame.bytes,h.allocator)}
     for buffer in h.buffers {delete(buffer.commands,h.allocator);delete(buffer.bytes,h.allocator);delete(buffer.released,h.allocator)}
@@ -455,7 +463,10 @@ frame_submit :: proc(h:^Host) {
 // Client: starts connecting to a server at one of addresses: those of its
 // invitation, its address on its network and the one its router mapped, are
 // asked at once, and the first that accepts is the connection. The answer is
-// a Connected or a Disconnected command.
+// a Connected or a Disconnected command. What message_send queues for
+// connection zero after this call and before the next update goes in the
+// first datagram, which a client with an invitation sends at once and the
+// server takes once.
 host_connect :: proc(h:^Host,addresses:..Address) -> Error {
     if h.desc.mode!=.Client {return .Invalid}
     request:Connect_Request
@@ -628,6 +639,7 @@ back_update :: proc(h:^Host,now:f64) {
     applied:=time.tick_now()
 
     b.secure.handshakes=h.desc.handshakes_per_update
+    if h.desc.mode==.Server {seen_turn(&b.secure,b.now)}
     channels_held(h)
     for reads:=0;reads<RECEIVE_LIMIT; {
         // As many datagrams as the command buffer has room for what they can turn into.
@@ -716,7 +728,8 @@ op_apply :: proc(h:^Host,frame:^Frame,op:^Op) {
         size:=u64(total==0?len(data):4+len(data))
         if op.handle==0 {b.applied_all[op.a]+=size}
         for &peer in b.peers {
-            if peer.state!=.Connected || (op.handle!=0 && u64(peer_handle(h,&peer))!=op.handle) {continue}
+            // A client's first datagram carries what it queued while connecting.
+            if !(peer.state==.Connected || peer.state==.Connecting && op.handle==0) || (op.handle!=0 && u64(peer_handle(h,&peer))!=op.handle) {continue}
             if op.handle!=0 {peer.channels[op.a].applied+=size}
             if channel_queue(h,&peer,int(op.a),data,total) {peer.flush=true}
         }
@@ -798,8 +811,12 @@ back_due :: proc(h:^Host) -> f64 {
     for &p in b.peers {
         switch p.state {
         case .Free:
-        case .Requesting,.Responding: due=min(due,p.next_handshake-b.now)
+        case .Connecting: due=min(due,p.next_handshake-b.now)
         case .Connected:
+            if !p.secure.confirmed {
+                due=min(due,p.started+h.desc.connect_timeout-b.now)
+                continue
+            }
             due=min(due,h.desc.keepalive-(b.now-p.last_send),p.last_receive+h.desc.timeout-b.now)
             if p.ack_pending || p.sent_tail!=p.send_seq || channels_pending(&p) {due=min(due,0.001)}
         }

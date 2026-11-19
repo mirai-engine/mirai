@@ -39,7 +39,7 @@ import wire "mirai:net"
 
 Join_Desc :: struct {
     node:^Node,
-    offer:string,      // the name of the snapshot under NAMESPACE the host offers (offer_name of its token)
+    offer:string,      // the name of the snapshot under NAMESPACE the host offers (offer_name of the secret of its invitation)
     own_offer:string,  // the name this node offers it under to others; "": none
     folder:string,     // where the project goes; "": a new folder by its name under parent
     parent:string,     // "": the current folder

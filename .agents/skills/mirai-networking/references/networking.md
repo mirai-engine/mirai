@@ -74,70 +74,91 @@ like `replication.hysteresis`) and the values it admits.
 
 ## Connections
 
-- **Four-datagram handshake, always sealed.** The client's request and response are padded.
-  - *Request*: the client salt, to every address `host_connect` got at once: one, or the two of
-    an invitation. The client proves itself to each that answers and goes on with the one that
-    accepts; answers from any other address are ignored. A denial or another version ends the
-    attempt once every candidate gave one: the other may be the host while this one is another
-    machine at a private address of the client's own network.
-  - *Challenge*: a SipHash cookie of the address, the salt and the
-    time, the server's version and its lasting X25519 key; every request gets it and the server
-    stores nothing.
-  - *Response*: the cookie, the protocol hash, the client's key for the attempt and its proof,
-    sealed with a key from the exchange of that key with the server's lasting one and the
-    invitation.
-  - *Accepted*: the server's key for the connection and, sealed with the session keys, its salt,
-    object capacity, history and the slot of the connection.
-  - Nothing but the challenge answers an address that has not returned a valid cookie, and
-    nothing at all a proof that does not open (a wrong invitation): both count in
-    `handshakes_dropped`. Denials (`Denied_Protocol`, `Denied_Full`) go only to a returned cookie,
-    and `Denied_Full` only to a proof that opened; they count in `handshakes_refused`. The idea
-    is netcode's: answer only when necessary, and deny only a request that passed every check
-    ([standard](https://raw.githubusercontent.com/mas-bandwidth/netcode/main/STANDARD.md)).
-  - A wrong proof costs its address (the IP without the port, an IPv6 /64): a few back to back,
+- **Two datagrams to connect, and the first carries data** (`net/secure.odin`): the handshake is
+  the Noise pattern `NKpsk0` (`Noise_NKpsk0_25519_ChaChaPoly_SHA256`). The client knows the
+  server's key `s` before it writes anything, and the pre-shared key is the invitation's secret.
+  - *Initiate* (`-> psk, e, es`): its header (salt, version, protocol hash and the cookie of a Key)
+    is the prologue, and its payload is the client's datagram 0 of the connection: what it queued
+    with `message_send` to connection zero after `host_connect`. The game of the server has it half
+    a round trip after the client connected. The same bytes go to every address `host_connect` got,
+    each interval, until a Response opens; a denial or another version ends the attempt once every
+    candidate gave one: the other may be the host while this one is another machine at a private
+    address of the client's own network.
+  - *Response* (`<- e, ee`): sealed, the object capacity, the history and the slot of the
+    connection. Both ends then split the keys of the connection.
+  - What each end proves: the client, that it holds the invitation (an Initiate opens only for the
+    holder of `s` and only if its sender knew `s` and the secret), and nothing of who it is; until
+    a datagram under the keys of the connection comes from its address, not even that it receives
+    there. The server, that it holds `s` and the secret.
+  - Without an invitation the client first sends a padded *Hello* to every candidate, and the
+    first server that answers with its *Key* (`s`, its version and a SipHash cookie of the
+    address, the salt and the time, keeping nothing) gets the Initiate, which returns the cookie
+    and mixes a zero secret. That is one round trip before data, and the same handshake: the client
+    takes `s` from the Key, so only an active attacker on the path could pose as the server.
+- **Replays and early data.** The server keeps the key `e` of every Initiate it accepted in a Bloom
+  filter of two generations: with an invitation it lasts as long as `s`, without one a generation
+  turns every `COOKIE_SECONDS`, as long as a cookie is good. A copy that comes later, from any
+  address, while its connection lives or after it ended, opens nothing: no second connection, no
+  early data delivered again, nothing kept. A copy from the address of a connection still waiting
+  for its client gets the stored Response again. So the early data is applied once and may carry
+  anything the client queues; what needs the server's answer is sent after `Connected`. The
+  server's own traffic waits for the client: until a datagram under the keys comes from its
+  address, that address hears only the Response, one for each copy of the Initiate, and the
+  Disconnect of a game that closes the connection. The game of the
+  server hears `Connected` and the early data at once; a connection whose client never answers
+  ends with `Connect_Timeout` after `connect_timeout`, without a word to its address.
+- **Amplification and work.** The Hello and the Initiate are padded to `HANDSHAKE_BYTES`, more than
+  any answer to them: an unconfirmed address never hears more than it sent. A server answers no
+  Hello when it has an invitation. An Initiate costs at most one X25519 exchange before it opens,
+  and two more when it does, `handshakes_per_update` at a time per update. Denials go after the
+  Initiate opened (`Denied_Protocol`, `Denied_Full`), except `Denied_Version`, read from the header;
+  they count in `handshakes_refused`, and what gets no answer in `handshakes_dropped`.
+  - A wrong Initiate costs its address (the IP without the port, an IPv6 /64): a few back to back,
     then one per interval; what comes sooner is put off before the key exchange
     (`handshakes_deferred`). The allowance is a token bucket kept as one time per address in a
     fixed table of sets; a full set gives its slot that frees soonest to the newcomer, so a crowd
-    of guessers never shuts out who brings the invitation, which joins with no added round trip.
-- **Format.** Every datagram starts with a type byte. The handshake ends in an XXH3 checksum keyed
-  with `protocol_id`, which only filters strays; data ends in the AEGIS-128L tag, with the type,
-  sequence and the slot of the connection at the receiver as associated data. AEGIS runs on the
-  AES instructions where the processor has them and on a portable implementation, about ten times
-  slower, where it does not. The protocol
-  hash includes fragments, events, input, channels and `TRANSPORT_VERSION`, which rises when the
-  format of the handshake or of data datagrams changes.
+    of guessers never shuts out who brings the invitation.
+- **Format.** Every datagram starts with a type byte. A handshake datagram ends in an XXH3 checksum
+  keyed with `protocol_id`, which only filters strays; data ends in the AEGIS-128L tag, with the
+  type, sequence and the slot of the connection at the receiver as associated data. AEGIS runs on
+  the AES instructions where the processor has them and on a portable implementation, about ten
+  times slower, where it does not. The protocol hash includes fragments, events, input, channels and
+  `TRANSPORT_VERSION`, which rises when the format of the handshake or of data datagrams changes.
 - **Roaming.** A data datagram from an address no connection has goes to the connection of the
   slot it names; if it opens under that key and is newer than any the connection accepted, the
   connection moves to that address, as WireGuard roams: a router that changes the port, or a
   switch of network, loses nothing and costs no round trip. A forged datagram does not open, and
   one replayed from elsewhere is not newer, so neither moves a connection.
-- **Sealing** (`net/secure.odin`, only with `core:crypto`; there is no unsealed mode): the session
-  keys come from HKDF-SHA256 over the exchange of the two keys made for the connection and that of
-  the client's key with the server's lasting one, salted with the key of the invitation. The
-  client takes the server's key from the challenge, so only an active attacker on the path could
-  pose as the server, and only knowing the invitation. One key per direction, with the 64-bit
-  sequence as nonce, which every `REKEY_INTERVAL` datagrams is derived from the previous one; the
-  receiver's only advances when a datagram with the new one turns out authentic. A tampered,
-  truncated, repeated or older-than-the-last-accepted datagram is discarded. A system without
-  secure random bytes cannot make a host (`host_init` refuses `invite`) nor an invitation
-  (`invite_token` is not ok).
-- **Two ways in.** By address: a server whose `Host_Desc.invite` is zero admits anyone who reaches
-  it, and the client calls `host_connect` with that address. By invitation: `Host_Desc.invite` is
-  in every key, so both ends must have the same one, and a client without it times out with
-  `Connect_Timeout`. It is a 64-bit secret so that whoever received the code gets in, not a
-  credential: nobody can try invitations from the server's answers, and neither the guesses the
-  server lets through nor whoever poses as the server on the path, trying them against the
-  client's proof offline, get near it.
+- **Sealing** (only with `core:crypto`; there is no unsealed mode): Split gives one key per
+  direction, and AEGIS-128L seals every datagram after the handshake with the first half of it and
+  the 64-bit sequence as nonce. Every `REKEY_INTERVAL` datagrams the key is derived from the
+  previous one; the receiver's only advances when a datagram with the new one turns out authentic.
+  The client's datagram 0 is its Initiate, sealed by the handshake, so its first under AEGIS is 1.
+  A tampered, truncated, repeated or older-than-the-last-accepted datagram is discarded. A system
+  without secure random bytes cannot make a host (`host_init` refuses `security`) nor an
+  invitation (`invite_key` is not ok).
+- **Secrecy.** The keys that follow the Response come from `ee` and die with the two ephemeral
+  keys: with `s` and the secret a recorded connection still does not open. The early data depends
+  on `s` as well, and `s` belongs to a share: `invite_key` makes it when the share starts, its
+  owner and its `Host` keep it in memory, and it is gone when the share ends; its private key is
+  never written down nor put on a command line. Nobody can try secrets against recorded traffic:
+  that takes `s`.
+- **Two ways in.** By address: a server whose `Host_Desc.invite` is none makes its `s` in
+  `host_init` and gives it in its Key; anyone who reaches it joins with `host_connect` and that
+  address. By invitation: `Host_Desc.invite` is the share's key at the server and what the code
+  carries at the client; a host with one answers nothing else, so a client without it hears nothing
+  and times out with `Connect_Timeout`.
 - **Invitation codes** (`net/invite.odin`): the host says where it is, as ICE gathers a host and a
   reflexive candidate: `invite_make` takes its address on its network (`address_lan`) and, once
-  the router mapped its port, the mapped one; `invite_encode` writes both with the token and a
-  CRC-15 in Crockford base32, tolerant of case, separators and confusable characters, and the
-  client passes both addresses of `invite_decode` to `host_connect`. On the host's network the LAN
-  address answers; from outside, the mapped one; a router that does not loop its public address
-  back does not matter, and the client asks no other address.
-- **Amplification.** The Challenge is smaller than the padded request, and the server does X25519
-  exchanges (two per accepted client, one per refused proof) only for whoever returned the cookie,
-  `handshakes_per_update` at a time per update.
+  the router mapped its port, the mapped one; `invite_encode` writes the version of the layout,
+  both addresses, `s` and the secret with a CRC-15 in Crockford base32 by groups of four, tolerant
+  of case, separators and confusable characters, and the client passes both addresses of
+  `invite_decode` to `host_connect`. `invite_decode` says why a text is no code (`Invite_Error`,
+  `invite_error_text`): a code of the earlier format, of another version, a character changed or two
+  swapped, or a key of small order. Everything stands at 128 bits but the secret, 64 bits that only
+  whoever learned `s` without the code could guess, online, at the rate each address is allowed. On
+  the host's network the LAN address answers; from outside, the mapped one; a router that does not
+  loop its public address back does not matter, and the client asks no other address.
 - **Acks.** Each data datagram carries its sequence, the last one received and which of the ones
   before it arrived, from what the other end might not have resolved when reading the last ack this
   end received (`ack_known`), capped by `ACK_WINDOW`, as runs of arrived and missing datagrams in

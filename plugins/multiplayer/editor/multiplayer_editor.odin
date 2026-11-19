@@ -2,6 +2,7 @@ package multiplayer_editor
 
 import "mirai:editor"
 import "mirai:editor/api"
+import wire "mirai:net"
 import "mirai:std/base"
 
 // What the network gives the editor: Play on the network (network_play.odin),
@@ -13,7 +14,7 @@ Api_Network_Result :: struct {
     players,online,ping_ms,port:int,
     game:u32,
     processes:int `mirai:"label=Player processes alive"`,
-    invite:[48]u8 `mirai:"text,label=The code of the invitation of the server: players outside the editor join with it"`,
+    invite:[wire.INVITE_TEXT_BYTES]u8 `mirai:"text,label=The code of the invitation of the server: players outside the editor join with it"`,
     reason:[128]u8 `mirai:"text,label=Why the last game ended"`,
 }
 

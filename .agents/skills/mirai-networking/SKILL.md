@@ -143,14 +143,23 @@ In `plugins/multiplayer/runtime`:
 - After `host_init`, every capacity comes from `Host_Desc`/`Replication_Desc`; exhausting one
   returns `Error` or counts in the statistics. Replicated traffic, even damaged, does not
   allocate.
-- **Every connection is sealed, and nothing answers an unproven sender:** before a returned cookie
-  only the challenge, and nothing to a proof that does not open. There is no unsealed mode.
+- **Every connection is sealed, and its first datagram carries data:** the handshake is the Noise
+  pattern `NKpsk0` over the key and the secret of the invitation, and the Initiate carries the
+  client's datagram 0. An address hears only the Response, one per copy of its Initiate (and the
+  Disconnect if the game closes it), until a datagram under the keys of the connection comes from
+  it; an Initiate that does not open, or a Hello to a host with an invitation, hears nothing. There
+  is no unsealed mode.
+- **An Initiate opens once** while the key of its server lasts: a later copy, from anywhere, makes
+  no connection and delivers nothing again.
 - **A connection changes address only on a datagram that opens under its key** and is newer than
-  any it accepted ([roaming](references/networking.md#connections)). A wrong proof costs its
+  any it accepted ([roaming](references/networking.md#connections)). A wrong Initiate costs its
   address, never everyone: guessers do not shut out who brings the invitation.
+- **The key of an invitation belongs to its share:** made when it starts, kept in memory by its
+  owner and its `Host`, gone when it ends; its private key is never written down.
 - **Two ways in, nothing else:** by address (a server without an invitation admits anyone who
-  reaches it) and by invitation code (only its holders). The code carries the host's real
-  addresses, on its network and on its router; a client asks only those, never guesses others.
+  reaches it, after a Hello and its Key) and by invitation code (only its holders). The code carries
+  the host's key and secret and its real addresses, on its network and on its router; a client asks
+  only those, never guesses others.
 - **Every byte from the network is hostile.** It is read with `Bit_Reader`, which never leaves the
   buffer; every index, type, mask and length is validated before use. A datagram that cannot be
   interpreted closes the connection with `Protocol_Error`; it is never half-applied over another
