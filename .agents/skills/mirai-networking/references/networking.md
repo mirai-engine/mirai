@@ -176,8 +176,8 @@ like `replication.hysteresis`) and the values it admits.
   outage learns their fate from the ack of a newer one and resumes. A reliable
   channel with a datagram of chunks ready sends at every update the tokens allow; the rest goes once
   a tick, or at the update that takes a message its owner queued, so an owner that publishes no
-  ticks (a transfer, the exchange) does not wait a tick for the end of each message. The object budget of each send is the lesser of `budget_bytes` and the tokens:
-  replication follows the rate.
+  ticks (a transfer, the exchange) does not wait a tick for the end of each message. The object
+  budget of each send is the lesser of `budget_bytes` and the tokens: replication follows the rate.
 - **Congestion**: the connection finds the rate of its path; nothing in `Host_Desc` sets it. It
   starts at `CC_START_RATE` and doubles each interval that wanted more, until the queue appears
   (the mean RTT of the interval above the lowest mean of an interval in the recent window, beyond

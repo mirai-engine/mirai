@@ -9,8 +9,10 @@ in `exchange/wire.odin`.
 
 - `channels()` gives the two reliable channels the exchange needs; the owner puts them in the
   `Host_Desc.channels` of every host at the same index and passes that index as `Desc.channel`.
-- `init` sizes every buffer and table from the `Desc`; nothing is sized by an object, so an object
-  of any size moves.
+- `init` sizes every buffer, table and job slot from the `Desc`; nothing is sized by an object, so
+  an object of any size moves. `Desc.worker` is the job system and worker of the thread that
+  pumps: reading, hashing, storing, walking, serving and committing run as its jobs; without one
+  they run on the pump. `destroy` waits for them, so it is called from that thread.
 - Per host poll: `peer_add` on `Connected`, `peer_remove` on `Disconnected`, `receive` on every
   `Message` (it says whether the message was its own). Then `update(now)` before `host_update`.
 - A connection is given from its start: a message that began before `peer_add` is not read from
@@ -76,14 +78,26 @@ in `exchange/wire.odin`.
   not fit the room for `BATCHES` asks is refused, and answers to questions find room only while
   the asker keeps a few waiting, so a peer cannot make another send without bound. A question its
   owner ended stays until every peer asked answered or left, so late answers return their credits.
+- The pump keeps the bookkeeping: wants, needs, flights, peers and the order of answers. Each job
+  owns a slot sized at `init` (a ring of received chunks and their bytes, walks, the commit, a
+  ring of answers per peer, checks of reported damage) and touches nothing else; the pump hands
+  work to a slot and applies its result under the lock, so a job never takes the lock and the
+  pump may wait for one, helping, when a ring is full. Received chunks are applied in the order
+  they came, so a node is parsed and its entries are needs before a descendant streamed after it
+  is taken; a descendant that came first is hashed and waits for its parent. A received node is
+  walked by its own job, as far as it names chunks, and the walk goes on with the store's nodes
+  in a walk job.
 - Serving and receiving do not allocate in the exchange after `init`, except listing a namespace,
-  for which the store reads its root. Reading, hashing and appending run on the pump thread.
+  for which the store reads its root. Answers to ref and name questions are read on the pump.
 
 ## Verification
 
 - `mirai check exchange` and `mirai test exchange` (no GPU): every test runs peers on `net`'s
   `Sim_Network` in virtual time with temporary stores. The rate over UDP on loopback is the opt-in
-  `objects_over_udp_loopback` with `-define:EXCHANGE_BENCHMARK=true`. The memory bound of
+  `objects_over_udp_loopback` with `-define:EXCHANGE_BENCHMARK=true`; it prints the CPU of the
+  exchange (pump and jobs) apart from that of `net`'s worker. Tests run the jobs on the pump, so
+  virtual time steps fast; `-define:EXCHANGE_TEST_JOBS=true` runs them on a job system, each step
+  waiting for them. The memory bound of
   `a_ten_gigabyte_object_moves_within_bounded_memory` is the process's footprint, checked when it
   runs alone with `-define:ODIN_TEST_THREADS=1`.
 - Focal tests:
