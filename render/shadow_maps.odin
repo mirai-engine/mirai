@@ -63,6 +63,18 @@ SHADOW_RASTER_LIGHTS :: abi.SHADOW_RASTER_LIGHTS // the most lights rasterized i
 SHADOW_SUN_FIRST :: f32(1)
 SHADOW_SUN_LEVELS :: abi.SHADOW_SUN_MAPS
 SHADOW_MAP_ORTHOGRAPHIC :: abi.SHADOW_MAP_ORTHOGRAPHIC
+// Metres from the eye within which the maps follow what sways (the wind):
+// only the levels of the sun and the mips of the faces read within it draw a
+// caster that sways as it sways; the rest draw it at rest and keep it,
+// whatever time the frame has left (shadow_sway_texel). The levels from the
+// fourth each serve an octave of the distance from the eye and, in a forest,
+// a like share of the pages what sways composes again, some 16 % each, the
+// two finest under 2 %; those read within 4 m are the finest four (to 3.7 m
+// at 1080 lines and 60 degrees), a third of those pages, and with the small
+// plants at rest, which take near half of them, a fifth: what the share of
+// the bound composes again every frame.
+SHADOW_SWAY_REACH :: f32(4)
+
 // The frames after its last change an instance whose shadow changed twice
 // within them keeps moving (shadow_movers_update).
 SHADOW_MOVER_FRAMES :: u64(30)
@@ -229,6 +241,7 @@ Shadow_Raster :: struct {
 	reach:    u32, // what the culls of what stays of its slots go over: its place in Scene_State.shadow_views + 1, 0: none
 	cull:     [3]i32, // the cell of the world of the eye its maps leave out the batches past their cull distance from (SHADOW_CULL_STEP)
 	culled:   bool,   // its maps were drawn from that cell
+	sway:     f32,    // the texel of a point at the reach of what sways, its maps drawn with (shadow_sway_texel)
 }
 
 // What the marks of the points of a view depend on besides the maps and the
@@ -504,23 +517,47 @@ batch_sway :: proc(s: ^Scene_State, record: ^Batch_Record) -> (fine: f32) {
 	return max(fine, 1e-6)
 }
 
-// The narrowest texel of a map over a box of the world, metres: where the box
-// comes nearest the light of a perspective one.
+// The narrowest and the widest texel of a map over a box of the world,
+// metres: where the box comes nearest the light of a perspective one and
+// where it goes farthest, as shadow_map_texels of shadow_maps.slang.
 @(private)
-shadow_map_finest :: proc "contextless" (m: Gpu_Shadow_Map, low, high: Vec3) -> f32 {
+shadow_map_finest :: proc "contextless" (m: Gpu_Shadow_Map, low, high: Vec3) -> (finest, widest: f32) {
 	across := (m.span.z - m.span.x) / f32(max(m.rect.z, 1))
-	if m.kind == SHADOW_MAP_ORTHOGRAPHIC {return across}
+	if m.kind == SHADOW_MAP_ORTHOGRAPHIC {return across, across}
 	center := 0.5 * (low + high) - m.origin
-	half := 0.5 * (high - low)
-	nearest := linalg.dot(center, m.forward) - linalg.dot(half, linalg.abs(m.forward))
-	return across * max(nearest, m.near)
+	along, half := linalg.dot(center, m.forward), linalg.dot(0.5 * (high - low), linalg.abs(m.forward))
+	return across * max(along - half, m.near), across * max(along + half, m.near)
+}
+
+// The texel the view takes of a point SHADOW_SWAY_REACH from the eye, of a
+// pixel there `footprint` wide (Gpu_Frame.footprint): a point takes a texel
+// of half to all of abi.SHADOW_TEXEL_PIXELS of its pixels (sun_pick), so a
+// map whose texel is no wider is read only within the reach. Put between the
+// texels of two levels of the sun, so that a view whose pixels change by less
+// than an octave keeps the maps that follow what sways.
+@(private)
+shadow_sway_texel :: proc "contextless" (footprint: Vec2) -> f32 {
+	first := 2 * SHADOW_SUN_FIRST / f32(SHADOW_MAP_SIDE)
+	texel := (footprint.x + footprint.y * SHADOW_SWAY_REACH) * abi.SHADOW_TEXEL_PIXELS / 2
+	return first * math.pow(2, math.floor(math.log2(max(texel / first, 1e-6))) + 0.5)
+}
+
+// Whether a map draws a caster within a box that sways `sway` metres as it
+// sways, not at rest: its texel there is narrower than the sway, and where
+// its shadow falls, past the box from the light, narrower than `reach`
+// (shadow_sway_texel), as shadow_map_sways of shadow_maps.slang.
+@(private)
+shadow_map_sways :: proc "contextless" (m: Gpu_Shadow_Map, low, high: Vec3, sway, reach: f32) -> bool {
+	finest, widest := shadow_map_finest(m, low, high)
+	return finest < sway && widest < reach
 }
 
 // Whether a change reaches a map: its box reaches the frustum, and the map is
-// one it changes (Occluder_Change.fine).
+// one it changes (Occluder_Change.fine) in a view whose reach of what sways
+// is `reach` (shadow_sway_texel).
 @(private)
-shadow_change_reaches :: proc "contextless" (m: Gpu_Shadow_Map, box: Occluder_Change) -> bool {
-	return shadow_map_reaches(m, box.low, box.high) && (box.fine == 0 || shadow_map_finest(m, box.low, box.high) < box.fine)
+shadow_change_reaches :: proc "contextless" (m: Gpu_Shadow_Map, box: Occluder_Change, reach: f32) -> bool {
+	return shadow_map_reaches(m, box.low, box.high) && (box.fine == 0 || shadow_map_sways(m, box.low, box.high, box.fine, reach))
 }
 
 // What changed for the shadows this frame (Renderer.frame_occluders), given
@@ -754,8 +791,12 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	tan_y := math.tan(math.to_radians(camera.fov_y) * 0.5) if !orthographic else 0.5 * camera.height
 	tan_x := tan_y * aspect
 	near := max(camera.near, 0.001)
-	forget := fresh || b.forget
-	b.forget = false
+	// A view whose reach of what sways changed draws its maps again: the
+	// cache of a map that follows what sways now, or no longer, does not hold
+	// what it would.
+	sway := shadow_sway_texel(p.frame.footprint)
+	forget := fresh || b.forget || b.sway != sway
+	b.forget, b.sway = false, sway
 	if forget {b.held = {}}
 	wants: [SHADOW_SLOTS]Shadow_Want
 	sun := s.sun
@@ -1182,6 +1223,7 @@ Shadow_Reached :: struct {
 	all:          bool,
 	casters:      [dynamic]u32,
 	movers:       u64, // the movers the moves were found among (Scene_State.shadow_movers_found); 0: not found
+	sway:         f32, // and the reach of what sways they were found for (Shadow_Raster.sway)
 	moves:        [dynamic][2]u32,
 	move_threads: u32,
 	moving:       [dynamic]u32, // of Scene_State.shadow_movers
@@ -1210,7 +1252,7 @@ shadow_reach_release :: proc(r: ^Renderer, b: ^Shadow_Raster) {
 			clear(&kept.casters)
 			clear(&kept.moves)
 			clear(&kept.moving)
-			kept.m, kept.tables, kept.cull, kept.threads, kept.all, kept.movers, kept.move_threads = {}, 0, {}, 0, false, 0, 0
+			kept.m, kept.tables, kept.cull, kept.threads, kept.all, kept.movers, kept.move_threads, kept.sway = {}, 0, {}, 0, false, 0, 0, 0
 		}
 		clear(&view.mover_slots)
 		view.used, view.movers, view.mover_threads = false, 0, 0
@@ -1436,26 +1478,25 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 			kept.m, kept.tables, kept.cull, kept.threads = m, batch.tables, key, list.threads
 		}
 		// The batches that move and change the map: of the casters it holds,
-		// which reach it, those that move, where their sway is wider than its
-		// texel.
-		if kept.movers != s.shadow_movers_found {
+		// which reach it, those that move, where the map draws them as they sway.
+		if kept.movers != s.shadow_movers_found || kept.sway != b.sway {
 			if kept.movers != 0 {forget(s, view, kept)}
 			list: Shadow_Reach_List
 			end: u32
 			// A level of the sun, whose texel is the same over it, holds none
-			// where it is no narrower than any sway.
+			// where it is no narrower than any sway or past the reach.
 			orthographic := m.kind == SHADOW_MAP_ORTHOGRAPHIC
 			texel := (m.span.z - m.span.x) / f32(max(m.rect.z, 1))
 			found := 0
 			if non_zero_resize(&kept.moving, len(s.shadow_movers)) != nil {return false}
-			if !orthographic || texel < s.shadow_movers_fine {
+			if !orthographic || texel < min(s.shadow_movers_fine, b.sway) {
 				count := len(s.shadow_movers) if kept.all else len(kept.casters)
 				for i in 0 ..< count {
 					k := i32(i) if kept.all else s.shadow_mover_of[kept.casters[i]]
 					if k < 0 {continue}
 					mover := &s.shadow_movers[k]
 					fine := mover.change.fine
-					if fine > 0 && !((texel if orthographic else shadow_map_finest(m, mover.change.low, mover.change.high)) < fine) {continue}
+					if fine > 0 && !shadow_map_sways(m, mover.change.low, mover.change.high, fine, b.sway) {continue}
 					if !shadow_range_add(&kept.moves, &list, &end, mover.first, mover.count, scene_count) {return false}
 					kept.moving[found] = u32(k)
 					found += 1
@@ -1464,7 +1505,7 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 				}
 			}
 			base.truncate(&kept.moving, found)
-			kept.movers, kept.move_threads = s.shadow_movers_found, list.threads
+			kept.movers, kept.move_threads, kept.sway = s.shadow_movers_found, list.threads, b.sway
 		}
 		stays := &reach[slot][Shadow_Round.Stays]
 		stays^ = {first = u32(len(s.shadow_ranges)), count = u32(len(kept.ranges)), threads = kept.threads}
@@ -1493,7 +1534,8 @@ Shadow_Params :: struct {
 	reach, ranges, rows, chunk_capacity, entry_capacity, list, moving, movers, masks, plan, part, bound, foresee: u32,
 	round, last, vertex_capacity, triangle_capacity: u32,
 	margin: f32,
-	_:      [2]u32,
+	sway:   f32, // shadow_sway_texel
+	_:      u32,
 	cull:   Vec4, // shadow_cull_eye
 }
 
@@ -1513,7 +1555,7 @@ shadow_params :: proc(p: ^Pass, plan: Shadow_Plan, round: Shadow_Round) -> Shado
 		list = abi.SHADOW_WORDS_SLOTS + u32(round) * (SHADOW_SLOTS + 1), masks = masks[round],
 		chunk_capacity = shadow_chunk_room(p.r, &p.t.shadow_raster), entry_capacity = s.cull_capacity[.Shadow_Entries],
 		moving = u32(round), movers = plan.movers, plan = plan.plan, part = 1 if round == .Stays else 0,
-		bound = shadow_frame_units(p.r, &p.t.shadow_raster), cull = plan.cull,
+		bound = shadow_frame_units(p.r, &p.t.shadow_raster), cull = plan.cull, sway = p.t.shadow_raster.sway,
 	}
 }
 
@@ -1653,7 +1695,10 @@ Shadow_Pages_Step :: enum u32 {Gate, Clear, Invalidate, Ancestors, Entries, Rank
 
 // shadow_pages.comp Params_Block.
 @(private)
-Shadow_Pages_Params :: struct {step, frame, rows, plan, boxes, box_count, sun, pool, reach, threads, fresh, full, slots, slot_count, keep, budget, round, chunks, moves, pad: u32}
+Shadow_Pages_Params :: struct {
+	step, frame, rows, plan, boxes, box_count, sun, pool, reach, threads, fresh, full, slots, slot_count, keep, budget, round, chunks, moves: u32,
+	sway: f32, // shadow_sway_texel
+}
 
 // The units each round of the maps of a view draws in a frame.
 @(private)
@@ -1750,6 +1795,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 		budget = shadow_frame_units(r, b),
 		chunks = shadow_chunk_room(r, b),
 		moves = 1 if plan.whole || plan.moving_threads > 0 else 0,
+		sway = b.sway,
 	}
 	for step in Shadow_Pages_Step {
 		if step == .Propagate || step >= .Grant {continue}
