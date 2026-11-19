@@ -123,14 +123,14 @@ mesh_surface :: proc(r: ^Renderer, handle: Mesh_Handle, surface: u64, error: f32
 	return true
 }
 
-// Removes only this mesh's ranges and hides the instances that named it.
-// One that instances still name goes when the next frame begins: an instance
-// given another mesh before then changes from one to the other, as a surface
-// that takes another detail does (mesh_surface).
+// Removes only this mesh's ranges and hides the instances that named it. One
+// of a surface (mesh_surface) that instances still name goes when the next
+// frame begins: an instance given another detail of it before then changes
+// from one to the other.
 mesh_remove :: proc(r: ^Renderer, handle: Mesh_Handle) -> bool {
 	s := &r.scene
 	if int(handle) >= len(s.meshes) || s.meshes[handle].vertex_count == 0 {return false}
-	if s.meshes[handle].first_instance >= 0 {
+	if s.meshes[handle].surface != 0 && s.meshes[handle].first_instance >= 0 {
 		for leaving in s.meshes_leaving {if leaving == handle {return true}}
 		if _, error := append(&s.meshes_leaving, handle); error == nil {return true}
 	}
