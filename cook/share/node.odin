@@ -8,6 +8,7 @@ import "core:sync"
 import "mirai:asset"
 import "mirai:cook/cache"
 import "mirai:exchange"
+import "mirai:std/jobs"
 import "mirai:store"
 import wire "mirai:net"
 
@@ -81,10 +82,12 @@ Join_Hooks :: struct {
     data:rawptr,
 }
 
-node_init :: proc(n:^Node,s:^store.Store,allocator:=context.allocator) -> exchange.Error {
+// worker: the job system and worker of the thread that pumps, which reads,
+// hashes, stores and commits for the exchange; none: all of it runs on the pump.
+node_init :: proc(n:^Node,s:^store.Store,allocator:=context.allocator,worker:=jobs.Worker_Ref{}) -> exchange.Error {
     n^={s=s,allocator=allocator}
     n.served=make([dynamic]store.Hash,allocator)
-    return exchange.init(&n.x,{store=s,channel=0,peers=PEERS,wants=WANTS,expose=node_expose,expose_user=n,allocator=allocator})
+    return exchange.init(&n.x,{store=s,channel=0,peers=PEERS,wants=WANTS,expose=node_expose,expose_user=n,allocator=allocator,worker=worker})
 }
 
 node_destroy :: proc(n:^Node) {
