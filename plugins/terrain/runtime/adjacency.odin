@@ -229,10 +229,6 @@ edge_owner :: proc "contextless" (s:^Source,edges:^[4]Edge_Read,x,z:int) -> (oth
     return
 }
 
-// The levels of the chunks along the edges two terrains share, while they
-// are made to meet (owners_levels_meet).
-Side_Level :: struct {owner,chunk:u32}
-
 // A key of what a piece on an edge reads across it: the versions of the
 // chunks of the other side along it. A piece whose neighbor changes there is
 // built again.
@@ -259,19 +255,19 @@ edge_key :: proc(resident:^Terrain_Resident,data:^Terrain_Data,owner:^Resident_O
     return
 }
 
-// The levels the borders of the pieces of a source are built from, for its
-// owner: its chunks and those of the terrains beside it.
+// What the borders of the pieces of a source are built from, for its owner:
+// its chunks and those of the terrains beside it.
 @(private)
 resident_border :: proc(resident:^Terrain_Resident,source:^Resident_Source) -> (b:Border_Levels) {
     q:=&source.quad
-    b={counts=q.counts[0],levels=source.levels,deep=source.deep}
+    b={counts=q.counts[0],deep=source.deep}
     owner:=resident_owner_find(resident,source.owner,source.id)
     if owner==nil {return}
     for side,i in owner.sides {
         if side.owner<0 || side.owner>=len(resident.owners) {continue}
         other:=&resident.owners[side.owner]
         beside:=resident_source_find(resident,other.source,other.entity)
-        if beside==nil || len(beside.levels)==0 {continue}
+        if beside==nil || len(beside.deep)==0 {continue}
         counts:=beside.quad.counts[0]
         shift:[2]int
         switch i {
@@ -280,39 +276,7 @@ resident_border :: proc(resident:^Terrain_Resident,source:^Resident_Source) -> (
         case 2: shift={side.shift,-counts.y}
         case 3: shift={side.shift,b.counts.y}
         }
-        b.sides[i]={counts=counts,levels=beside.levels,deep=beside.deep,shift=shift}
+        b.sides[i]={counts=counts,deep=beside.deep,shift=shift}
     }
     return
-}
-
-// The levels of the chunks along the edges terrains share made to meet: two
-// chunks that touch across one are one level apart at most, the coarser made
-// finer, as lod_levels_balance does inside a terrain; each owner balances
-// again from what changed. Rounds until nothing does.
-@(private)
-owners_levels_meet :: proc(resident:^Terrain_Resident,data:^Terrain_Data) {
-    for _ in 0..<LOD_LEVELS_MAX+QUAD_DEPTH_MAX {
-        changed:=false
-        for &owner in resident.owners {
-            source:=resident_source_find(resident,owner.source,owner.entity)
-            entry:=data_find(data,owner.source)
-            if source==nil || entry==nil || entry.source.kind!=.Heightfield || len(source.levels)==0 {continue}
-            b:=resident_border(resident,source)
-            lowered:=false
-            for z in 0..<b.counts.y {for x in 0..<b.counts.x {
-                if x>0 && x<b.counts.x-1 && z>0 && z<b.counts.y-1 {continue}
-                level:=&source.levels[x+b.counts.x*z]
-                for dz in -1..=1 {for dx in -1..=1 {
-                    if x+dx>=0 && x+dx<b.counts.x && z+dz>=0 && z+dz<b.counts.y {continue}
-                    other,_,ok:=border_chunk(&b,x+dx,z+dz)
-                    if ok && level^>other+1 {level^=other+1;lowered=true}
-                }}
-            }}
-            if lowered {
-                changed=true
-                levels_balance_sparse(&entry.source,&owner,source.levels,resident.lod_pass,&resident.stack)
-            }
-        }
-        if !changed {return}
-    }
 }

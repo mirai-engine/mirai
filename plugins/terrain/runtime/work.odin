@@ -26,7 +26,7 @@ Work_Slot :: struct {
     counter:jobs.Counter,
     kind:Work_Kind,
     urgent:bool,      // taken in the call that made it
-    patient:bool,     // Build: a node of a Volume, whose levels are a job of their own after the one that reads the source
+    patient:bool,     // Build: a piece shown in its levels (piece_levels) that no call waits for: they are a job of their own after the one that reads the source
     waits:bool,       // Build: the next call waits for it: a collider that changes in a world that plays
     reads:bool,       // its job reads the source: what writes the source waits for it
     background:bool,  // its job runs as a background job (work_slot counts those of builds)
@@ -134,16 +134,16 @@ work_slot :: proc(data:^Terrain_Data,urgent,background:bool) -> ^Work_Slot {
 }
 
 // Whether a job runs as a job of the frame, which a call waits for: urgent,
-// or a collider a call waits for that is not the levels of a patient one.
+// or a collider a call waits for.
 @(private)
-work_frame :: #force_inline proc "contextless" (urgent,waits,patient:bool) -> bool {return urgent || waits && !patient}
+work_frame :: #force_inline proc "contextless" (urgent,waits:bool) -> bool {return urgent || waits}
 
 @(private)
 work_start :: proc(data:^Terrain_Data,slot:^Work_Slot) {
     slot.background=false
     if data.jobs==nil {work_run(slot,jobs.OWNER);return}
     // A patient slot is taken once it ended; the others are waited for by the next call of their phase.
-    frame:=work_frame(slot.urgent,slot.waits,slot.patient)
+    frame:=work_frame(slot.urgent,slot.waits)
     slot.background=!frame
     jobs.run(data.jobs,jobs.OWNER,.Frame if frame else .Background,work_run,slot,&slot.counter)
 }
@@ -161,8 +161,10 @@ work_build :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,owner:c
     slot.owner=owner
     slot.kind,slot.urgent,slot.phase,slot.epoch,slot.limits=.Build,urgent,phase,data.epoch,limits
     slot.source,slot.id,slot.index,slot.version,slot.key,slot.ok=&entry.source,entry.id,index,data_version(entry,index),key,false
-    slot.patient,slot.reads=piece_levels(&entry.source,&entry.quad,index),true
+    slot.reads=true
     slot.waits=waits && key.collision
+    // What a call waits for shows without its levels, and is built again with them (Resident_Chunk.bare).
+    slot.patient=piece_levels(&entry.source,&entry.quad,index) && !urgent && !slot.waits
     slot.join={}
     clear(&slot.cuts)
     if join!=nil && key.join!=0 {
@@ -232,9 +234,10 @@ work_run :: proc(slot:^Work_Slot,worker:int) {
     }
 }
 
-// Whether a piece shows in the levels of its clusters: a node of a Volume.
+// Whether a piece shows in the levels of its clusters: a piece of a
+// Heightfield, a node of a Volume.
 @(private)
-piece_levels :: #force_inline proc "contextless" (s:^Source,q:^Quad,index:int) -> bool {return s.kind==.Volume && index>=q.first[1]}
+piece_levels :: #force_inline proc "contextless" (s:^Source,q:^Quad,index:int) -> bool {return s.kind==.Heightfield || index>=q.first[1]}
 
 // Lets go of what a slot holds; it is free again.
 @(private)
@@ -250,15 +253,16 @@ work_release :: proc(slot:^Work_Slot) {
 @(private)
 work_due :: proc(data:^Terrain_Data,slot:^Work_Slot,phase:core.Phase) -> bool {
     if slot.kind==.None || slot.phase!=phase && !slot.urgent {return false}
-    // A node of a Volume, which builds the surface of many chunks, is taken
-    // once it ended, and its levels are a job of their own that reads no
-    // source: an edit does not wait for them.
+    // A piece shown in its levels is taken once it ended, and its levels are
+    // a job of their own that reads no source: an edit does not wait for them.
     for {
         if jobs.pending(&slot.counter) {
-            if (slot.patient || !slot.waits) && !slot.urgent {return false}
+            if !slot.waits && !slot.urgent {return false}
             jobs.wait(data.jobs,jobs.OWNER,&slot.counter)
         }
         if !slot.patient || !slot.reads || !slot.ok {return true}
+        // One whose piece changed meanwhile is let go without its levels.
+        if entry:=data_find(data,slot.id);slot.epoch!=data.epoch || entry==nil || &entry.source!=slot.source || data_version(entry,slot.index)!=slot.version {return true}
         slot.reads=false
         work_start(data,slot)
     }
