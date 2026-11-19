@@ -139,6 +139,8 @@ say :: proc(d:^Join_Desc,format:string,args:..any) {
 @(private)
 join_connect :: proc(d:^Join_Desc,allocator:runtime.Allocator) -> string {
     n:=d.node
+    // The clock of the node is its owner's from its first step on.
+    if !node_wait(n,0) {return strings.clone("the join was stopped",allocator)}
     started:=node_now(n)
     for {
         sync.mutex_lock(&n.lock)

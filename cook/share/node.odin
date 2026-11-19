@@ -55,6 +55,7 @@ Node :: struct {
     lock:sync.Mutex,
     tick:sync.Cond,
     now:f64,
+    stepped:bool, // now is a time of the owner's clock: before the first step it is not
     peers:[PEERS]Node_Peer,
     numbers:int,
     connected:int,
@@ -125,6 +126,7 @@ node_pump :: proc(n:^Node,now:f64) {
     exchange.update(&n.x,now)
     sync.mutex_lock(&n.lock)
     n.now=now
+    n.stepped=true
     due:=n.lease_due || now-n.lease_at>=LEASE_SECONDS
     sync.cond_broadcast(&n.tick)
     sync.mutex_unlock(&n.lock)
@@ -210,11 +212,12 @@ node_now :: proc(n:^Node) -> f64 {
     return n.now
 }
 
-// Waits until the node stepped to at least now+seconds; false once it stopped.
+// Waits until the node stepped to at least now+seconds, and at least once;
+// false once it stopped.
 node_wait :: proc(n:^Node,seconds:f64) -> bool {
     sync.mutex_guard(&n.lock)
     until:=n.now+seconds
-    for n.now<until && !n.stopped {sync.cond_wait(&n.tick,&n.lock)}
+    for (!n.stepped || n.now<until) && !n.stopped {sync.cond_wait(&n.tick,&n.lock)}
     return !n.stopped
 }
 
