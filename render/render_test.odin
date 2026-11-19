@@ -1703,6 +1703,75 @@ render_a_swaying_batch_follows_its_sway_only_near_the_eye :: proc(t: ^testing.T)
 	expect_clean(t, f.device)
 }
 
+// A dense forest of masked posts that sway, seen from among them at the
+// height of an eye: the maps compose again only the pages of what sways near
+// the eye (SHADOW_SWAY_REACH), each of them every frame, and the rounds of
+// the maps draw well within the bound of the renderer.
+@(test)
+render_a_swaying_forest_composes_again_only_what_is_near :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 1920, 1080, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	masked := DEFAULT_MATERIAL
+	masked.alpha_mode = .Mask
+	testing.expect(t, materials_set(r, {masked}))
+	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {600, 0.2, 600}), tint = {0.8, 0.8, 0.8}}
+	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+	testing.expect(t, scene_given(r, {floor}, nil, sun, {sky = {0, 0, 0}}), r.error)
+	mesh, made := deformable_create(r, f.cube, false, 0.4)
+	if !testing.expect(t, made) {return}
+	defer mesh_remove(r, mesh)
+	// Posts 3 m tall every 1.5 m over 60 m, a batch for each cell of 7.5 m.
+	CELLS :: 8
+	handles: [CELLS * CELLS]Batch_Handle
+	defer for h in handles {if h != 0 {batch_remove(r, h)}}
+	for &h, c in handles {
+		posts: [25]Batch_Instance
+		for &post, k in posts {
+			at := Vec3{f32(c % CELLS) * 7.5 - 30 + f32(k % 5) * 1.5 + 0.4, 1.5, f32(c / CELLS) * 7.5 - 30 + f32(k / 5) * 1.5 + 0.7}
+			post = batch_instance(at, 1, {0.6, 3, 0.6})
+		}
+		problem: string
+		h, problem = batch_set(r, 0, 0, {mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}}, posts[:])
+		if !testing.expectf(t, problem == "", "%s", problem) {return}
+	}
+	camera := Camera{position = {0, 1.7, 0}, forward = {0, -0.35, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 200, exposure = UNIT_EXPOSURE}
+	rhi.timestamps_want(f.device, true)
+	defer rhi.timestamps_want(f.device, false)
+	sway := Sway{mesh = mesh, x = 0.2}
+	FRAMES :: 30
+	composed, refreshed, waiting, units, ms, bound: f64
+	worst_age, most_units := u32(0), u32(0)
+	for k in 0 ..< 2 * FRAMES {
+		sway.x = -sway.x
+		low, high, _ := mesh_bounds(r, f.cube)
+		testing.expect(t, deformable_update(r, mesh, low - 0.4, high + 0.4))
+		testing.expect(t, frame_pass(r, .Geometry, sway_write, &sway))
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		if k < FRAMES {continue}
+		_, moved, _ := shadow_counts(r)
+		listed, again, worst := sway_refreshes(t, r)
+		stats := shadow_stats(t, r)
+		maps: f64
+		for timing in r.stats.timings {if strings.has_prefix(timing.name, "shadow ") && timing.name != SHADOW_PAGES_TIMING {maps += f64(timing.ms)}}
+		composed += f64(moved)
+		refreshed += f64(again)
+		waiting += f64(stats.pages_waiting)
+		units += f64(stats.units + stats.units_moving)
+		ms += maps
+		bound += f64(shadow_frame_units(r, &r.main.targets.shadow_raster))
+		worst_age, most_units = max(worst_age, worst), max(most_units, stats.units_moving)
+		testing.expectf(t, listed == again && worst <= 1, "frame %d: %d of the %d pages that sway were composed again, the oldest %d frames ago", k, again, listed, worst)
+	}
+	log.infof("a swaying forest: %.1f pages composed a frame, %.1f of them for what sways alone, %.1f waiting; %.0f units of a bound of %.0f, %d at most for what moves; the rounds of the maps %.3f ms; a page that sways waited %d frames at most", composed / FRAMES, refreshed / FRAMES, waiting / FRAMES, units / FRAMES, bound / FRAMES, most_units, ms / FRAMES, worst_age)
+	testing.expectf(t, units * 2 <= bound, "the maps drew %.0f units a frame, a bound of %.0f", units / FRAMES, bound / FRAMES)
+	expect_clean(t, f.device)
+}
+
 // The search of the blockers of a point reaches far where something may
 // stand far above it: its far taps read a coarser level, so a tall scene asks
 // for hardly more pages of the level its points read than a low one, where
