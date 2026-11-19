@@ -42,12 +42,13 @@ import mm "mirai:std/math"
 // the table of the frames before, and the pages are given again only where a
 // point asks for one not drawn (shadow_pages.comp).
 SHADOW_POOL :: abi.SHADOW_POOL
-// The pixels of a view for each page of its pool past the safety net of the
-// levels of the sun: where the sun lights ground out to the horizon, a view
-// reads a page for some 1,500 of the pixels it renders at a texel of one or two
-// of them (abi.SHADOW_TEXEL_PIXELS), and as many more pages as it renders
-// more pixels. The pool holds no more than abi.SHADOW_POOL_PAGES.
-SHADOW_POOL_PIXELS :: u64(1440)
+// The pool of a view: where the sun lights ground out to the horizon, each
+// level of the sun reads a band of pages of the ground whatever the pixels of
+// the view, and the pixels add the pages of the finer levels their texel of
+// one or two of them takes (abi.SHADOW_TEXEL_PIXELS). The pool holds no more
+// than abi.SHADOW_POOL_PAGES.
+SHADOW_POOL_LEVEL_PAGES :: u64(40)
+SHADOW_POOL_PIXELS :: u64(2048)
 // The pages a pool grows or shrinks by: four rows, so that a view resized a
 // little keeps its pool.
 SHADOW_POOL_STEP :: 4 * abi.SHADOW_POOL_ROW
@@ -55,7 +56,7 @@ SHADOW_POOL_STEP :: 4 * abi.SHADOW_POOL_ROW
 // The pages of the pool of a view that renders width x height pixels.
 @(private)
 shadow_pool_pages :: proc "contextless" (width, height: u32) -> u32 {
-	need := u64(4 * SHADOW_SUN_LEVELS) + (u64(width) * u64(height) + SHADOW_POOL_PIXELS - 1) / SHADOW_POOL_PIXELS
+	need := SHADOW_POOL_LEVEL_PAGES * SHADOW_SUN_LEVELS + (u64(width) * u64(height) + SHADOW_POOL_PIXELS - 1) / SHADOW_POOL_PIXELS
 	step := u64(SHADOW_POOL_STEP)
 	return u32(min((need + step - 1) / step * step, u64(abi.SHADOW_POOL_PAGES)))
 }

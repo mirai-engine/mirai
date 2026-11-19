@@ -270,9 +270,10 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   it twice as wide, and the grid of the pages and texels of every level lies on the world, not on
   the origin of the frame. `shadow_pages.comp` gives each marked page a page of the pool of the view
   through the table of the pages (`Shadow_Raster.table`, at `SLOT_SHADOW_TABLE`), in the same frame,
-  so a page first read is drawn before it is read. The pool of each view holds pages for the pixels
-  it renders, past the safety net (`shadow_pool_pages`), in whole rows of the atlas and at most
-  `SHADOW_POOL_PAGES`, so a view drawn into a small texture takes a small one; a view made again at
+  so a page first read is drawn before it is read. The pool of each view holds the band of pages each
+  level of the sun reads of ground out to the horizon, whatever its size, and pages for the pixels
+  it renders (`shadow_pool_pages`), in whole rows of the atlas and at most `SHADOW_POOL_PAGES`, so a
+  view drawn into a small texture takes a smaller one; a view made again at
   another size keeps its maps: a pool grown keeps each page where it was with what it held, one
   shrunk is made anew. Of every page read, the page of each of the two
   coarser levels or mips that holds it and the eight around that one are asked for too
