@@ -1139,7 +1139,8 @@ because they are too large to travel. an invalid code is `-32602`. `collab.join`
 `folder` (the open project when empty) and returns at once; `join` of `collab.status` follows how
 that folder is brought to the host's project, phase by phase, and lists after it what was kept,
 not written and the packages no peer has a build of; `project`, the chunk bytes the session moved
-and the peers that went bad.
+and the peers that went bad; `offers` and `updates`, the new snapshots a host offered and a guest
+took during the session.
 
 ## Project panels
 

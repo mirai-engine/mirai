@@ -1,6 +1,7 @@
 package editor
 
 import "core:fmt"
+import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:sync"
@@ -51,17 +52,21 @@ share_end_destroy :: proc(e:^Share_End) {
     prefab_fixture_destroy(&e.f)
 }
 
+// frame: the temporary memory of the editors' frames, freed and written over at the end of each.
 @(private="file")
 Share_Net :: struct {
     sim:wire.Sim_Network,
     now:f64,
     host,guest:^Share_End,
+    frame:mem.Arena,
+    frame_bytes:[]u8,
 }
 
 // One millisecond of the network: each editor updates its session as a frame
 // does between frames, then its host sends, and the frame's temporary memory goes.
 @(private="file")
 share_step :: proc(n:^Share_Net) {
+    context.temp_allocator=mem.arena_allocator(&n.frame)
     n.now+=0.001
     wire.sim_network_advance(&n.sim,n.now)
     for e in ([2]^Share_End{n.host,n.guest}) {
@@ -72,19 +77,21 @@ share_step :: proc(n:^Share_Net) {
         if st:=collab_state(&e.s);st!=nil {wire.host_update(&st.host,n.now)}
         prefab_fixture_step(&e.f)
     }
-    // As the end of a frame: what the thread of a join holds is its own.
+    // As the end of a frame, and the next one writing over that memory: what the thread of a
+    // join holds is its own.
     free_all(context.temp_allocator)
+    mem.set(raw_data(n.frame_bytes),0xaa,64<<10)
 }
 
 // Steps until the guest is in the scene or its session ended, at most 600
 // virtual seconds. The clock moves only while its join waits for it, as a
 // join of cook/share runs in its tests.
 @(private="file")
-share_until_joined :: proc(t:^testing.T,n:^Share_Net) -> bool {
+share_until_joined :: proc(t:^testing.T,n:^Share_Net,updates:=0) -> bool {
     for steps:=0;steps<600_000; {
         st:=collab_state(&n.guest.s)
         if !testing.expect(t,st!=nil) {return false}
-        if st.phase==.Joined {return true}
+        if st.phase==.Joined && st.updates>=updates && (updates==0 || st.join.finished) {return true}
         if st.phase==.Ended {return testing.expectf(t,false,"the session ended: %s",st.reason)}
         if j:=st.join;j!=nil && !j.finished && !sync.atomic_load(&j.done) && !share.node_waiting(st.node) {
             thread.yield()
@@ -100,6 +107,8 @@ share_until_joined :: proc(t:^testing.T,n:^Share_Net) -> bool {
 // network; each session on endpoints of its own, which nothing of an earlier one reaches.
 @(private="file")
 share_join :: proc(t:^testing.T,n:^Share_Net,first:=0) -> bool {
+    // Called between frames, as the API is.
+    context.temp_allocator=mem.arena_allocator(&n.frame)
     if error:=collab_host(&n.host.s,0,"Ana",wire.sim_endpoint_transport(&n.sim,first));!testing.expectf(t,error==.None,"%s",collab_error_say(&n.host.s,error)) {return false}
     code:=wire.invite_encode({lan=wire.address_ip4(127,0,0,1,COLLAB_PORT),token=collab_state(&n.host.s).invite},context.temp_allocator)
     if !testing.expect_value(t,collab_join(&n.guest.s,code,"Ben",at=wire.address_memory(first),transport=wire.sim_endpoint_transport(&n.sim,first+1)),Collab_Error.None) {return false}
@@ -159,6 +168,8 @@ share_host_project :: proc(t:^testing.T,n:^Share_Net) -> (crate:base.Entity_Id,o
 @(private="file")
 share_net_init :: proc(t:^testing.T,n:^Share_Net,host,guest:^Share_End,name:string) -> bool {
     if !testing.expect(t,wire.sim_network_init(&n.sim,{seed=5,endpoints=4,packets=1<<16})) {return false}
+    n.frame_bytes=make([]u8,16<<20)
+    mem.arena_init(&n.frame,n.frame_bytes)
     n.host,n.guest=host,guest
     return share_end_init(t,host,fmt.tprintf("%s-host",name)) && share_end_init(t,guest,fmt.tprintf("%s-guest",name))
 }
@@ -171,7 +182,7 @@ a_guest_with_an_empty_folder_joins_with_the_hosts_files_and_packages_then_its_sc
     host,guest:=new(Share_End),new(Share_End)
     defer {free(host);free(guest)}
     ok:=share_net_init(t,n,host,guest,"collab-share-empty")
-    defer {share_end_destroy(guest);share_end_destroy(host);wire.sim_network_destroy(&n.sim)}
+    defer {share_end_destroy(guest);share_end_destroy(host);wire.sim_network_destroy(&n.sim);delete(n.frame_bytes)}
     if !ok {return}
     crate,made:=share_host_project(t,n)
     if !made || !share_join(t,n) {return}
@@ -202,7 +213,7 @@ a_guest_that_joins_again_keeps_its_own_edit_and_is_told :: proc(t:^testing.T) {
     host,guest:=new(Share_End),new(Share_End)
     defer {free(host);free(guest)}
     ok:=share_net_init(t,n,host,guest,"collab-share-kept")
-    defer {share_end_destroy(guest);share_end_destroy(host);wire.sim_network_destroy(&n.sim)}
+    defer {share_end_destroy(guest);share_end_destroy(host);wire.sim_network_destroy(&n.sim);delete(n.frame_bytes)}
     if !ok {return}
     if _,made:=share_host_project(t,n);!made || !share_join(t,n) {return}
     collab_leave(&guest.s)
@@ -219,4 +230,60 @@ a_guest_that_joins_again_keeps_its_own_edit_and_is_told :: proc(t:^testing.T) {
     api_collab_join_result(st.join,&status)
     testing.expect_value(t,status.kept_count,1)
     testing.expect(t,strings.contains(base.text_get(status.kept[0].text[:]),"assets/notes.txt"),base.text_get(status.kept[0].text[:]))
+}
+
+// What the host changes in its folder during the session reaches the guest
+// without leaving it: a change, a new file, a removal and a move are the
+// host's; a file both changed and one only the guest changed stay the
+// guest's, the first listed. Only what differs travels, and a scene edit the
+// session carries live arrives once.
+@(test)
+what_the_host_changes_in_the_session_reaches_the_guest_by_three_ways :: proc(t:^testing.T) {
+    n:=new(Share_Net);defer free(n)
+    host,guest:=new(Share_End),new(Share_End)
+    defer {free(host);free(guest)}
+    ok:=share_net_init(t,n,host,guest,"collab-share-update")
+    defer {share_end_destroy(guest);share_end_destroy(host);wire.sim_network_destroy(&n.sim);delete(n.frame_bytes)}
+    if !ok {return}
+    if _,made:=share_host_project(t,n);!made {return}
+    Case :: struct {path,host,guest,then:string,kept:bool}
+    cases:=[?]Case{
+        {path="assets/change.txt",host="host 2, changed\n",then="host 2, changed\n"},
+        {path="assets/added/new.txt",host="new\n",then="new\n"},
+        {path="assets/delete.txt",host="(none)",then="(none)"},
+        {path="assets/move.txt",host="(none)",then="(none)"},
+        {path="assets/moved/move.txt",host="moved\n",then="moved\n"},
+        {path="assets/both.txt",host="host 2, both\n",guest="guest 2\n",then="guest 2\n",kept=true},
+        {path="assets/mine.txt",guest="guest only\n",then="guest only\n"},
+    }
+    for c in cases {
+        if c.path!="assets/added/new.txt" && c.path!="assets/moved/move.txt" {share_file(host.root,c.path,c.path=="assets/move.txt"?"moved\n":"1\n")}
+    }
+    if !share_join(t,n) {return}
+    gst:=collab_state(&guest.s)
+    first:=share.node_totals(gst.node).received
+    for c in cases {
+        switch c.host {
+        case "":
+        case "(none)": os.remove(fmt.tprintf("%s/%s",host.root,c.path))
+        case: share_file(host.root,c.path,c.host)
+        }
+        if c.guest!="" {share_file(guest.root,c.path,c.guest)}
+    }
+    // A scene edit of the host travels live as ever, while the update runs.
+    hw:=edited_world(&host.s)
+    made:=entity_create(&host.s,{name="Lamp",named=true})
+    core.world_settle(hw)
+    lamp:=api_entity_id(hw,made)
+    collab_project_touched(&host.s)
+    if !share_until_joined(t,n,updates=1) {return}
+
+    for c in cases {testing.expectf(t,share_text(guest.root,c.path)==c.then,"%s: %q",c.path,share_text(guest.root,c.path))}
+    kept:=strings.join(gst.join.report.kept[:],"\n",context.temp_allocator)
+    testing.expectf(t,len(gst.join.report.kept)==1 && strings.contains(kept,"assets/both.txt"),"what both changed is listed: %s",kept)
+    testing.expect_value(t,collab_state(&host.s).offers,1)
+    update:=share.node_totals(gst.node).received-first
+    testing.expectf(t,update>0 && update<first/2,"only what differs travels: %d bytes after %d",update,first)
+    testing.expect(t,api_entity(edited_world(&guest.s),lamp)!=core.NONE,"the live edit arrived")
+    testing.expect_value(t,guest.world.entities.alive,host.world.entities.alive)
 }

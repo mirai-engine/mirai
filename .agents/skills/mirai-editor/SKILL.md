@@ -330,7 +330,9 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   variant); their view in an open editor, `editor.document` (`Open` with the asset's path) and
   `capture` with the UI.
 - The project a session carries: `editor/collab_share_test.odin` (a guest with an empty folder
-  ends with the host's files, packages built and scene; a guest's own edit is kept and listed),
+  ends with the host's files, packages built and scene; a guest's own edit is kept and listed;
+  what the host changes in the session reaches the guest by three ways; the join's thread keeps
+  off the frame's temporary memory),
   over `Sim_Network` in virtual time with temporary stores.
 - Build and reload, networked Play (`templates/game`) and collaboration
   (`--share`/`--join`) are checked by API in an open editor. Images:

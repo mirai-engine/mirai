@@ -13,12 +13,14 @@ import "mirai:core"
 import "mirai:editor/history"
 import scene "mirai:engine/scene"
 import "mirai:host"
+import "mirai:platform"
 import wire "mirai:net"
 import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
 import "mirai:std/serial"
+import "mirai:store"
 import "mirai:ui"
 
 // Collaboration: several editors share the scene of one of them. The host
@@ -99,6 +101,7 @@ Collab_Message :: enum u8 {
     Ping,                                              // a point of the scene an editor pinged (collab_ping.odin)
     File,                                              // an asset file an editor changed (collab_files.odin)
     File_Unsent,                                       // an asset file an editor changed that is too large to travel
+    Project,                                           // the host offers a new snapshot of its project (collab_project.odin)
 }
 
 // Set: the whole row, for whoever has none. Fields: runs of bytes of a row,
@@ -207,6 +210,15 @@ Collab_State :: struct {
     node_jobs:^jobs.Job_System, // of the exchange of node
     node:^share.Node,  // the project and the library over the connections of the session (collab_project.odin)
     join:^Collab_Join, // a guest: what brings its folder to the host's snapshot
+    // The host: its project offered, and what changed since (collab_host_changes).
+    offered:store.Hash,
+    offers:int,        // new snapshots offered during the session
+    watch:platform.Watch,
+    watching:bool,
+    changed_at,offered_at:f64,
+    // A guest: an update asked for, and those done.
+    update_due:bool,
+    updates:int,
 }
 
 @(storage)
@@ -394,6 +406,7 @@ collab_host :: proc(s:^Session,port:int,name:string,transport:=wire.Transport{})
         base.text_set(c.problem[:],problem)
         return .Project
     }
+    collab_watch_start(s,st)
     st.phase=.Joined
     st.self=0
     c:=collab_of(s)
@@ -850,6 +863,8 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_ping_receive(s,st,from,data)}
     case .File:
         if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_file_receive(s,st,from,data,&r)}
+    case .Project:
+        if st.role==.Guest {collab_update_request(st)}
     case .File_Unsent:
         if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_unsent_receive(s,st,from,&r)}
     }
