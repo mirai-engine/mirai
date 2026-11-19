@@ -43,7 +43,7 @@ Join_Desc :: struct {
     own_offer:string,  // the name this node offers it under to others; "": none
     folder:string,     // where the project goes; "": a new folder by its name under parent
     parent:string,     // "": the current folder
-    library:sources.Library,
+    library:sources.Library, // asked once the files are written, for the importers of the folder's plugins (editor.import_library_built)
     worker:jobs.Worker_Ref,
     output:io.Writer,  // progress and what was kept; nil: nowhere
     pace:f64,          // seconds between two progress lines, default 1

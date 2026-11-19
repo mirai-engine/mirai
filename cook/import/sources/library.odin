@@ -68,8 +68,9 @@ Library_Options :: struct {
     store:^store.Store,
     // Asked for what the store does not have before building: a manifest by
     // (asset.REF_MANIFESTS, <hash its pin names>), a build by (asset.REF_IMPORTS, <key>) and,
-    // with Fast textures allowed, then by (asset.REF_IMPORTS_FAST, <key>), with
-    // every object it lists, a result of cook/cache.
+    // with Fast textures allowed, then by (asset.REF_IMPORTS_FAST, <key>), or
+    // for a package whose importer the library lacks by (asset.REF_BUILDS,
+    // <build_select>), with every object it lists, a result of cook/cache.
     source:cache.Source,
     // Fast textures allowed: imports build them Fast unless the texture cache
     // has them Final, and a Fast build is taken, here or from the source; false:
@@ -502,7 +503,8 @@ build_given :: proc(l:^Library_State,key:string) -> bool {
 // What a refresh will ask the source for, asked together before the packages
 // are refreshed in order, which then find it here: the manifests the store
 // does not keep, then the builds of the packages that have none here and no
-// changed source here to ingest again. A refresh asks for nothing else.
+// changed source here to ingest again: by key, or the build a peer chose for
+// one whose importer this library lacks. A refresh asks for nothing else.
 @(private="file")
 refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Package) {
     if l.options.source.fetch==nil {return}
@@ -517,6 +519,7 @@ refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Pac
     }
     fetch_many(l,asset.REF_MANIFESTS,lacking[:])
     keys:=make([dynamic]string,l.temp)
+    choices:=make([dynamic]string,l.temp) // of the packages whose importer this library lacks: the build a peer chose
     for entry in entries {
         entry:=entry
         p,error:=asset.package_load(s,top,&entry,l.temp)
@@ -524,12 +527,16 @@ refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Pac
         source:=importer.origin_path(p.origin.path,top)
         if source!="" && !importer.unsafe_path(source) && os.exists(source) && source_changed(l,&p,source) {continue}
         key,keyed:=package_key(l,&p)
-        if !keyed {continue}
         if _,found:=build_found(l,&p,entry.manifest,key,keyed);found {continue}
         digits:[64]u8
-        append(&keys,strings.clone(store.hex(key,&digits),l.temp))
+        if keyed {
+            append(&keys,strings.clone(store.hex(key,&digits),l.temp))
+        } else {
+            append(&choices,strings.clone(store.hex(asset.build_select(entry.manifest,&p),&digits),l.temp))
+        }
     }
     fetch_builds(l,keys[:])
+    fetch_many(l,asset.REF_BUILDS,choices[:])
 }
 
 // The import of the source at origin into the store, with its lock: what
@@ -631,15 +638,23 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     found:bool
     f,found=build_found(l,&p,entry.manifest,key,keyed)
     key_name:=strings.clone(store.hex(key,&digits),l.temp)
-    if found && keyed && build_given(l,key_name) {
+    select:=strings.clone(store.hex(asset.build_select(entry.manifest,&p),&digits),l.temp)
+    chosen_given:=false // the ref of this machine's choice is the one the source gave, not yet followed
+    switch {
+    case keyed && found && build_given(l,key_name):
         // The source gave it before the refresh came to it.
         report.fetched+=1
-    } else if !found && keyed {
+    case keyed && !found:
         names:=[1]string{key_name}
         fetch_builds(l,names[:])
         if build_given(l,key_name) {
             if f,found=build_here(l,&p,key);found {report.fetched+=1}
         }
+    case !keyed:
+        // Without its importer the build is the one a peer chose for its manifest.
+        if !found && fetch(l,asset.REF_BUILDS,select) {f,found=build_found(l,&p,entry.manifest,key,keyed)}
+        chosen_given=found && l.asked[fmt.tprintf("%s/%s",asset.REF_BUILDS,select)]
+        if chosen_given {report.fetched+=1}
     }
     if !found {
         if origin_here {
@@ -648,7 +663,8 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
         }
         switch {
         case !keyed:
-            report_line(&report.missing,"package %s: no plugin of the project imports it as %q, so its build cannot be found by key: activate the plugin that imports it, or ingest its source (%s) with this engine",p.name,p.origin.importer,p.origin.path)
+            problem:=l.plugins.problem!="" ? fmt.tprintf(" (%s)",l.plugins.problem) : ""
+            report_line(&report.missing,"package %s: no plugin of the project read here imports it as %q%s, so its build cannot be found by key, and no peer gave the build it chose: build the project's editor with the plugin that imports it active, or ingest its source (%s) with this engine",p.name,p.origin.importer,problem,p.origin.path)
         case f.fast_here:
             report_line(&report.missing,"package %s: only a build with Fast textures is here, and Final is required: a machine with its source (%s) must ingest it with this engine, or a peer that has its Final build (import key %s) must give it",p.name,p.origin.path,store.hex(key,&digits))
         case:
@@ -656,7 +672,6 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
         }
         return
     }
-    select:=store.hex(asset.build_select(entry.manifest,&p),&digits)
     previous,_:=store.ref_get(s,asset.REF_BUILDS,select)
     if previous!=f.hash {
         if ref_error:=store.ref_set(s,asset.REF_BUILDS,select,f.hash);ref_error!=.None {
@@ -664,7 +679,7 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
             return
         }
     }
-    if !follow && previous==f.hash {return}
+    if !follow && previous==f.hash && !chosen_given {return}
     // A model's prefab is written from its source in the game's types: the import does it, with the documents.
     if prefab && origin_here && plugins_world(l)!=nil {
         reingest(l,top,&entry,&p,source,documents,prefab,"it is followed into the project",report)
