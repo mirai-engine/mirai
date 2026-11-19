@@ -578,15 +578,16 @@ package_root :: proc(p:^Package) -> base.Asset_Id {
 // The object of a build its package shows: that of its root (package_root)
 // when the build holds it, else of its first mesh, else of its first asset;
 // a model's prefab is a document of the project, not of its build. Zero: none.
-build_shown :: proc(b:^Build,p:^Package) -> store.Hash {
+build_shown :: proc(b:^Build,p:^Package) -> (object:store.Hash,id:base.Asset_Id) {
     root:=package_root(p)
     for &o in b.outputs {
-        if o.id==root {return o.object}
+        if o.id==root {return o.object,o.id}
     }
     for &o in b.outputs {
-        if o.kind==KIND_MESH {return o.object}
+        if o.kind==KIND_MESH {return o.object,o.id}
     }
-    return len(b.outputs)>0 ? b.outputs[0].object : {}
+    if len(b.outputs)==0 {return}
+    return b.outputs[0].object,b.outputs[0].id
 }
 
 build_get :: proc(s:^store.Store,object:store.Hash,allocator:=context.allocator) -> (b:Build,error:Error) {

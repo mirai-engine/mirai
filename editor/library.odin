@@ -49,6 +49,7 @@ Library_Package :: struct {
     folder:string, // where the project lists it, when pinned
     assets:[]Library_Asset,
     root:store.Hash,      // the object its card shows (asset.build_shown) in the build of this machine; zero: none
+    shown:base.Asset_Id,  // the asset of that object
     objects:[]store.Hash, // of every asset of that build, sorted
 }
 
@@ -165,7 +166,7 @@ library_list :: proc(s:^Session,root:string,allocator:=context.allocator) -> (li
             }
         }
         entry.assets=assets
-        entry.root,entry.objects,_=library_build_objects(s,ref.hash,&p,{},allocator)
+        entry.root,entry.objects,entry.shown,_=library_build_objects(s,ref.hash,&p,{},allocator)
         append(&out,entry)
     }
     slice.sort_by(out[:],proc(a,b:Library_Package) -> bool {return a.name<b.name || a.name==b.name && a.id.x<b.id.x})
@@ -296,14 +297,15 @@ api_packages_add :: proc(s:^Session,call:^api.Call) {
 // (none: the one it shows, asset.build_shown) and those of all its assets,
 // sorted, as thumbnail_package_key takes them.
 @(private)
-library_build_objects :: proc(s:^Session,manifest:store.Hash,p:^asset.Package,id:base.Asset_Id,allocator:=context.temp_allocator) -> (object:store.Hash,objects:[]store.Hash,built:bool) {
+library_build_objects :: proc(s:^Session,manifest:store.Hash,p:^asset.Package,id:base.Asset_Id,allocator:=context.temp_allocator) -> (object:store.Hash,objects:[]store.Hash,shown:base.Asset_Id,built:bool) {
     digits:[64]u8
     hash,ref_error:=store.ref_get(&s.store,asset.REF_BUILDS,store.hex(asset.build_select(manifest,p),&digits))
     if ref_error!=.None {return}
     b,error:=asset.build_get(&s.store,hash,context.temp_allocator)
     if error!=.None || b.package_id!=p.id {return}
     objects=make([]store.Hash,len(b.outputs),allocator)
-    if id=={} {object=asset.build_shown(&b,p)}
+    shown=id
+    if id=={} {object,shown=asset.build_shown(&b,p)}
     for o,k in b.outputs {
         objects[k]=o.object
         if id!={} && o.id==id {object=o.object}
@@ -312,7 +314,7 @@ library_build_objects :: proc(s:^Session,manifest:store.Hash,p:^asset.Package,id
         a,b:=a,b
         return string(a[:])<string(b[:])
     })
-    return object,objects,object!={}
+    return object,objects,shown,object!={}
 }
 
 // The key of the small thumbnail of a package whose root is object, and whether this store keeps it.
@@ -324,4 +326,25 @@ api_thumbnail_of :: proc(s:^Session,object:store.Hash,objects:[]store.Hash,alloc
     name=strings.clone(thumbnail_name(key,&buffer),allocator)
     _,error:=store.ref_get(&s.store,THUMBNAIL_NAMESPACE,name)
     return name,error==.None
+}
+
+// The manifest and package of this machine's library a listed output of the registry comes from.
+@(private)
+library_package_of_output :: proc(s:^Session,r:^asset.Registry,id:base.Asset_Id) -> (manifest:store.Hash,p:asset.Package,found:bool) {
+    package_id:base.Asset_Id
+    lists:=make([dynamic][]asset.Package_Listed,context.temp_allocator)
+    append(&lists,r.listed)
+    for mount in r.mounts {append(&lists,mount.listed)}
+    search: for list in lists {
+        for &l in list {
+            if l.id==id {package_id=l.package_id;break search}
+        }
+    }
+    if package_id=={} || s.store.root=="" {return}
+    buffer:[base.ASSET_ID_TEXT]u8
+    hash,error:=store.ref_get(&s.store,asset.REF_PACKAGES,base.asset_id_format(package_id,buffer[:]))
+    if error!=.None {return}
+    read,read_error:=asset.package_get(&s.store,hash,context.temp_allocator)
+    if read_error!=.None || read.id!=package_id {return}
+    return hash,read,true
 }
