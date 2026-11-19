@@ -527,10 +527,10 @@ batch_ray :: proc(renderer:^Renderer,world:core.World_Id,origin,direction:[3]f32
     return gpu.batch_ray(renderer,world_key(world),origin,direction,max_distance)
 }
 
-// The mesh and materials of a batch from what a Mesh_Renderer shows, as an
-// entity with it would be drawn. False while its mesh is not loaded.
-batch_desc :: proc(a:^host.Assets,static:Mesh_Renderer) -> (desc:Batch_Desc,ok:bool) {
-    instance:=mesh_instance(a,static,1) or_return
+// The mesh, materials and tint of a batch from what a Mesh_Renderer shows with
+// its Material_Values, as an entity with them would be drawn. False while its mesh is not loaded.
+batch_desc :: proc(a:^host.Assets,static:Mesh_Renderer,values:=MATERIAL_VALUES_DEFAULT) -> (desc:Batch_Desc,ok:bool) {
+    instance:=mesh_instance(a,static,1,values) or_return
     return {mesh=instance.mesh,material=instance.material,slot_materials=instance.slot_materials,tint=instance.tint},true
 }
 
