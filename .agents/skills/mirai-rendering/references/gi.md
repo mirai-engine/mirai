@@ -137,7 +137,7 @@ other and do not see the corner of a table or the floor under a wardrobe.
   not gathered.
 - **Small things.** An instance smaller than `SMALL_INSTANCE_REACH` is of the ray class
   `RAY_SMALL`: contact occlusion, reflections and direct light see it, and the volume rays
-  (`MIRAI_TRACE_NO_SMALL`) do not. What moves at that size does not change the volume light: its
+  (`MIRAI_TRACE_PROBES`) do not. What moves at that size does not change the volume light: its
   near shadow is the contact one and what it emits is given by the light it carries inside
   (`light_stands_for`); a small one that glows without a light does not illuminate its
   surroundings. The class follows the box: a movement or a pose that enlarges it takes it out of
@@ -177,6 +177,9 @@ other and do not see the corner of a table or the floor under a wardrobe.
     go, materials past what the scene lists, another world) traces every ray. A texture that
     goes changes what rays meet only around what shows a material that reads it, since the next
     texture may take its handle: one no material names (the image of a view) changes nothing.
+  - The volume rays meet a batch that sways in a wind at rest, wherever the wind is
+    (`MIRAI_TRACE_PROBES`): they leave probes and points at rest, and a scene whose rays see
+    no change is the same to the probes with wind and without.
   - What changes with nothing that says so is not kept from one update to the next: the hit of
     a Surface program that reads the time of its context (`abi.Program.reads`), a ray that
     went through the gate of an extension, and the light of a hit a light of an extension
@@ -202,9 +205,10 @@ other and do not see the corner of a table or the floor under a wardrobe.
 - **Priority** (`ddgi_select.comp`, `probe_budget` per frame): first the probes that do not store
   the light of their cell and that a pixel reads this frame; then those that a change keeps
   awake, first those nearest to it relative to its reach (what a change changes most is near),
-  or their own light. What is left of the budget goes to the new probes no pixel reads, with
-  all their rays, a share at most while the volume moves and all of it once it stops, and,
-  a share at most, by turns to the one that has gone longest
+  or their own light. While the volume moves, the new probes no pixel reads take a share at
+  most of what is left; once it stands still every new probe comes before the woken ones, so
+  that those its arrival wakes are traced once after it filled. A share at most goes by turns
+  to the one that has gone longest
   without being traced relative to how much pixels use it (`ddgi_mark.comp`), fine cascades
   first: a volume that moves with the camera gathers first what the view shows. A probe whose
   light moves more than its noise (`ddgi_irradiance.comp`) wakes its six neighbors for the next
