@@ -579,7 +579,7 @@ a_refresh_ingests_again_a_whole_source_when_what_it_is_built_from_changes :: pro
         testing.expectf(t,changed.ingested==1 && len(changed.failures)==0 && state.runs==runs+1,"%v: %v",change,changed)
         if change==.Edited {
             now,_:=os.read_entire_file(kit,context.temp_allocator)
-            testing.expectf(t,string(now)==string(edited) && len(changed.warnings)==1 && contains(changed.warnings[0],"hall.kit"),"what was changed of it stays, and the refresh says so: %v",changed.warnings)
+            testing.expectf(t,string(now)==string(edited) && len(changed.warnings)==1 && contains(changed.warnings[0],"assets/hall"),"what was changed of it stays, and the refresh says so: %v",changed.warnings)
         }
         testing.expectf(t,project_refresh(root,options,context.temp_allocator).ingested==0,"%v: then nothing",change)
     }
