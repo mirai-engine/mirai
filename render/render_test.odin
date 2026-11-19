@@ -578,6 +578,14 @@ render_a_batch_casts_no_shadow_past_its_cull_distance :: proc(t: ^testing.T) {
 	counts: [abi.SHADOW_COUNT_STALE + 1]u32
 	testing.expect(t, rhi.buffer_read_slice(r.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_WORDS_COUNTS) * 4, counts[:]))
 	testing.expectf(t, counts[abi.SHADOW_COUNT_STALE] == 0, "the eye left its cell and %d pages were drawn again where nothing came or went", counts[abi.SHADOW_COUNT_STALE])
+	// An eye that goes to and fro across the border of its cell, within the
+	// margin, keeps the cell: nothing comes or goes.
+	held := r.main.targets.shadow_raster.cull
+	for k in 0 ..< 8 {
+		to.position.x = 16 + (SHADOW_CULL_MARGIN * 0.5 if k % 2 == 0 else -SHADOW_CULL_MARGIN * 0.5)
+		testing.expect(t, renderer_frame(r, {camera = to}), r.error)
+		testing.expectf(t, r.main.targets.shadow_raster.cull == held, "frame %d: the eye %f m across the border took another cell", k, to.position.x - 16)
+	}
 	expect_clean(t, f.device)
 }
 
