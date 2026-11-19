@@ -114,6 +114,7 @@ vk_create_buffer :: proc(d: ^Device, desc: Buffer_Desc, extra_usage: vk.BufferUs
 	b.size = size
 	b.usage = desc.usage
 	b.kind = desc.memory
+	resource_name_set(&b.name, desc.name)
 	vk_set_name(d, .BUFFER, u64(b.handle), desc.name)
 	made := Buffer(pool_add(&d.buffers, b))
 	if desc.memory == .GPU && zero && !vk_zero_new(d, made) {
@@ -234,6 +235,7 @@ texture_create :: proc(d: ^Device, desc: Texture_Desc) -> Texture {
 	if !device_room(d, &d.textures, "textures") {return 0}
 	t := Vk_Texture{desc = desc}
 	t.desc.name = ""
+	resource_name_set(&t.name, desc.name)
 	t.desc.mip_levels = max(desc.mip_levels, 1)
 	t.desc.layers = layers
 	t.vk_format = vk_format(desc.format)

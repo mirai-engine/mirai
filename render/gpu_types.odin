@@ -573,6 +573,9 @@ gbuffer_normal_decode :: proc "contextless" (texel: Vec4) -> (normal: Vec3, roug
 // cull.
 Cull_List :: enum {Chunks, Visible, Candidates, Shadow_Chunks, Shadow_Entries, Raster_Vertices, Raster_Triangles}
 CULL_START :: [Cull_List]u32{.Chunks = 1 << 16, .Visible = 1 << 18, .Candidates = 1 << 16, .Shadow_Chunks = 1 << 14, .Shadow_Entries = 1 << 18, .Raster_Vertices = 1 << 20, .Raster_Triangles = 1 << 20}
+// The most entries a list holds, its slack included: what a mark or a frame
+// asks for past it is taken at it.
+CULL_MOST :: [Cull_List]u32{.Chunks = CULL_MARK_MAX, .Visible = CULL_MARK_MAX, .Candidates = CULL_MARK_MAX, .Shadow_Chunks = SHADOW_CHUNKS_MOST, .Shadow_Entries = SHADOW_ENTRIES_MOST, .Raster_Vertices = CULL_MARK_MAX, .Raster_Triangles = CULL_MARK_MAX}
 // The lists of the raster of the visibility target hold a third of what the
 // view that needs most writes (RASTER_LIST_SHARE), and grow by an eighth past
 // it (RASTER_LIST_SLACK: a view whose need creeps up by less takes no new

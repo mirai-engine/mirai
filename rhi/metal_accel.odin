@@ -125,6 +125,7 @@ blas_create :: proc(d: ^Device, desc: Blas_Desc) -> Accel {
 	mtl_set_label(handle, desc.name)
 	a := Mtl_Accel{handle = handle, descriptor = descriptor, blas = desc, scratch_size = u64(max(sizes.buildScratchBufferSize,sizes.refitScratchBufferSize)), block = i32(block + 1), offset = offset, size = taken}
 	a.blas.name = ""
+	resource_name_set(&a.name, desc.name)
 	return Accel(pool_add(&d.accels, a))
 }
 
@@ -149,6 +150,7 @@ tlas_create :: proc(d: ^Device, max_instances: u32, name: string = "tlas") -> Ac
 	mtl_set_label(handle, name)
 	a := Mtl_Accel{handle = handle, top_level = true, max_instances = count, scratch_size = u64(sizes.buildScratchBufferSize), block = i32(block + 1), offset = offset, size = taken}
 	a.referenced = make([dynamic]^MTL.AccelerationStructure, d.allocator)
+	resource_name_set(&a.name, name)
 	return Accel(pool_add(&d.accels, a))
 }
 

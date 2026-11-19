@@ -394,3 +394,75 @@ a_mesh_drawn_whole_loads_every_page_and_keeps_them :: proc(t: ^testing.T) {
 	if !testing.expect(t, len(frontier) > 0) {return}
 	testing.expect_value(t, pages_load(r, {{mesh = u32(other), page = frontier[0], priority = 2}}), 0)
 }
+
+// The region of the slots starts at what the streamed meshes can take and
+// grows, between frames, after one whose pages found no slot: the pages in it
+// keep their blocks and entries in the new region, and nothing else placed in
+// the pools moves.
+@(test)
+the_page_slots_grow_from_what_the_views_ask_for_and_nothing_placed_moves :: proc(t: ^testing.T) {
+	small, built_small := streamed_sheet(96)
+	big, built_big := streamed_sheet(160)
+	if !testing.expect(t, built_small && built_big, "the sheets have pages out of their root") {return}
+	r := new(Renderer);defer free(r)
+	streamed_renderer(r, PAGE_SLOTS_MAX)
+	defer scene_destroy(r)
+	s := &r.scene
+	st := &s.pages
+	h1, added1 := mesh_add_geometry(r, small, {0})
+	if !testing.expect(t, added1) {return}
+	first := st.slot_count
+	testing.expectf(t, first == min(small.root_page, PAGE_SLOTS_START), "the region starts at what the mesh can take: %d slots for %d pages", first, small.root_page)
+	h2, added2 := mesh_add_geometry(r, big, {0})
+	if !testing.expect(t, added2) {return}
+	testing.expect_value(t, st.slot_count, first)
+	placed := [2]Mesh_Handle{h1, h2}
+	at: [2]u32
+	blocks: [2][]u32
+	for h, k in placed {
+		m := s.meshes[h]
+		at[k] = m.vertex_word
+		blocks[k] = make([]u32, m.vertex_span, context.temp_allocator)
+		copy(blocks[k], s.vertices[m.vertex_word:][:m.vertex_span])
+	}
+	stream := s.meshes[h2].stream
+	if !testing.expectf(t, stream.root > first, "more pages ask than the region holds: %d for %d slots", stream.root, first) {return}
+	// Every page out of the root, the coarsest most wanted.
+	frontier := make([]u32, stream.root, context.temp_allocator)
+	for &page, k in frontier {page = u32(k)}
+	ask :: proc(handle: Mesh_Handle, pages: []u32) -> []Page_Request {
+		requests := make([]Page_Request, len(pages), context.temp_allocator)
+		for page, k in pages {requests[k] = {mesh = u32(handle), page = page, priority = f32(page)}}
+		return requests
+	}
+	// Within PAGE_KEEP frames no page gives its slot up.
+	r.frame = 10
+	for frames := 0; st.short == 0 && frames < len(frontier); frames += 1 {
+		pages_load(r, ask(h2, frontier[:]))
+		r.frame += 1
+	}
+	if !testing.expectf(t, st.short > 0 && len(st.free) == 0, "the pages fill the region and some find no slot: %d short, %d free", st.short, len(st.free)) {return}
+	kept := make(map[u32][]u32, context.temp_allocator)
+	for page in frontier {
+		if stream.slots[page] == PAGE_SLOT_NONE {continue}
+		base := record_pooled(s, s.meshes[h2]).pages[page].base
+		block := make([]u32, stream.pages[page].words, context.temp_allocator)
+		copy(block, s.vertices[base:][:len(block)])
+		kept[page] = block
+	}
+	pages_region_need(r)
+	testing.expectf(t, st.slot_count > first && st.slot_count <= pages_slots_most(r) && st.short == 0, "the region grew from %d to %d slots, within %d", first, st.slot_count, pages_slots_most(r))
+	for page, block in kept {
+		slot := stream.slots[page]
+		base := record_pooled(s, s.meshes[h2]).pages[page].base
+		testing.expectf(t, base == st.region + slot * PAGE_SLOT_WORDS, "page %d is at its slot %d of the new region", page, slot)
+		testing.expectf(t, mem.compare(mem.slice_to_bytes(s.vertices[base:][:len(block)]), mem.slice_to_bytes(block)) == 0, "page %d keeps its block", page)
+	}
+	for h, k in placed {
+		m := s.meshes[h]
+		testing.expectf(t, m.vertex_word == at[k] && mem.compare(mem.slice_to_bytes(s.vertices[m.vertex_word:][:m.vertex_span]), mem.slice_to_bytes(blocks[k])) == 0, "mesh %d stays where it was placed", k)
+	}
+	testing.expect(t, pages_load(r, ask(h2, frontier[:])) > 0, "the pages that waited load")
+	decodes_as_given(t, r, h2, big)
+	decodes_as_given(t, r, h1, small)
+}

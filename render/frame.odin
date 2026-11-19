@@ -163,7 +163,8 @@ read_stats :: proc(r: ^Renderer, slot: int) {
 		for dropped, list in stats.most_dropped {
 			if dropped > 0 && list < .Raster_Vertices {r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], r.scene.cull_capacity[list] + dropped)}
 		}
-		r.scene.cull_wanted[.Shadow_Chunks] = min(r.scene.cull_wanted[.Shadow_Chunks], SHADOW_CHUNKS_MOST)
+		most := CULL_MOST
+		for &wanted, list in r.scene.cull_wanted {wanted = min(wanted, most[list])}
 		// Those of the raster, which a view writes again in each of its rounds,
 		// ask for a third of what the view that needs most would hold: it is
 		// drawn in up to RASTER_ROUNDS of them.

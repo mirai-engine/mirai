@@ -77,6 +77,7 @@ vk_shared_image :: proc(d: ^Device, desc: Texture_Desc) -> (t: Vk_Texture, ok: b
 	if !device_room(d, &d.textures, "textures") {return}
 	t = Vk_Texture{desc = desc}
 	t.desc.name = ""
+	resource_name_set(&t.name, desc.name)
 	t.desc.mip_levels = 1
 	t.vk_format = vk_format(desc.format)
 	t.aspect = {.COLOR}

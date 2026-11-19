@@ -25,10 +25,9 @@
     `reflection_light_budget` and `reflections`. The direct light and the
     reflections keep none;
   - the texture levels with `texture_max_size` and `texture_pool_megabytes`.
-- `page_pool_bytes` recreates nothing: the
-  [pages](scene.md#scene-and-instances) region is reserved once, with the first mesh that uses
-  it, inside the vertex pool and before the blocks of the meshes that arrive later; a later
-  change waits for the renderer to start again.
+- `page_pool_bytes` recreates nothing: it is the most the
+  [pages](scene.md#scene-and-instances) region grows to, read when it grows; a region already
+  past a lower value keeps its slots.
 - `Graphics_Settings.texture_memory` and `geometry_memory` set `texture_pool_megabytes` and
   `page_pool_bytes`; at 0 they are automatic (a part of the device memory and the renderer
   default), and no preset touches them.

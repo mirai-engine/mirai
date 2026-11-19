@@ -24,6 +24,7 @@ Vk_Buffer :: struct {
 	write:    Access,          // last write not yet superseded (None = clean)
 	reads:    bit_set[Access], // reads made visible since that write
 	fresh:    bool,            // of GPU memory, waiting in Device.fresh for the fill that zeroes it
+	name:     Resource_Name,
 }
 
 // The hazard state of a mip of a texture; its layers share it.
@@ -46,6 +47,7 @@ Vk_Texture :: struct {
 	swapchain:   bool,
 	shared:      uintptr, // the handle a shared texture exports, held while it lives (a file descriptor plus one, or a HANDLE)
 	table:       Table_Refs,
+	name:        Resource_Name,
 }
 
 Slot_Info :: struct {
@@ -83,6 +85,7 @@ Vk_Accel :: struct {
 	compact_slot:      i32,
 	compact_frame:     u64,
 	compact_immediate: bool,
+	name:              Resource_Name,
 }
 
 // Raw objects whose destruction waits until the frame slot that may still use
