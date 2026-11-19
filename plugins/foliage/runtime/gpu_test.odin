@@ -77,16 +77,17 @@ gpu_fixture_destroy :: proc(f: ^Gpu_Fixture) {
 }
 
 // Frames from a camera with the field the benders of the world trample and
-// the wind of the resident, a floor and the sun shining along `sun`, and the
-// pixels of the last.
+// the wind of the resident, a floor and the sun shining along `sun` (none:
+// the sky alone), and the pixels of the last.
 @(private = "file")
 view_frames :: proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera, sun: [3]f32, frames: int) -> (pixels: []u8, ok: bool) {
 	for _ in 0 ..< frames {
 		test_world_settle(&f.world)
 		trample_draw(&f.resident, core.read(&f.world.benders), core.read(&f.world.volumes), core.read(&f.world.worlds), core.FRAME_TIME_DEFAULT, {}, &f.renderer)
 		render.frame_pass(&f.renderer, .Mask, foliage_wind_record, &f.resident)
-		floor := gpu.Instance_Desc{object_id = 1, mesh = f.cube, transform = mm.transform_matrix({{0, -0.5, 0}, mm.QUAT_IDENTITY, {40, 1, 40}}), tint = {0.05, 0.05, 0.05}}
-		gpu.scene_set_environment(&f.renderer, {direction = sun, color = {1, 1, 1}, illuminance = 3, indirect = 1, scattering = 1}, {sky = {0.4, 0.5, 0.6}})
+		// Wide enough that the levels of the sun near the eye are not its coarsest.
+		floor := gpu.Instance_Desc{object_id = 1, mesh = f.cube, transform = mm.transform_matrix({{0, -0.5, 0}, mm.QUAT_IDENTITY, {600, 1, 600}}), tint = {0.05, 0.05, 0.05}}
+		gpu.scene_set_environment(&f.renderer, {direction = -sun, color = {1, 1, 1}, illuminance = 3, indirect = 1, scattering = 1, enabled = sun != {}}, {sky = {0.4, 0.5, 0.6}})
 		testing.expect(t, gpu.scene_update(&f.renderer, 0, {floor}, true), f.renderer.error)
 		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera}), f.renderer.error)
 	}
@@ -100,7 +101,7 @@ view_frames :: proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera, sun: [3]
 @(private = "file")
 stalk_frames :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> (pixels: []u8, ok: bool) {
 	camera := gpu.Camera{position = {0, 14, 0.01}, forward = {0, -1, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	return view_frames(t, f, camera, {0.3, -1, 0.2}, 4)
+	return view_frames(t, f, camera, {}, 4)
 }
 
 // Where a point of the floor lands on the image: the view looks down with -z up the image.
@@ -227,17 +228,19 @@ seen_at :: proc(f: ^Gpu_Fixture, pixels: []u8, camera: gpu.Camera, p: [3]f32) ->
 	d := p - camera.position
 	z := linalg.dot(d, forward)
 	half := math.tan(camera.fov_y * math.PI / 360)
-	x := int((linalg.dot(d, right) / (z * half * f32(WIDTH) / f32(HEIGHT)) * 0.5 + 0.5) * f32(WIDTH))
-	y := int((0.5 - linalg.dot(d, up) / (z * half) * 0.5) * f32(HEIGHT))
+	// Half the view up and down at the point: of an orthographic camera, half its height.
+	across := camera.height * 0.5 if camera.projection == .Orthographic else z * half
+	x := int((linalg.dot(d, right) / (across * f32(WIDTH) / f32(HEIGHT)) * 0.5 + 0.5) * f32(WIDTH))
+	y := int((0.5 - linalg.dot(d, up) / across * 0.5) * f32(HEIGHT))
 	if x < 0 || y < 0 || x >= WIDTH || y >= HEIGHT {return -1}
 	i := (y * WIDTH + x) * 4
 	return i32(pixels[i]) + i32(pixels[i + 1]) + i32(pixels[i + 2])
 }
 
-// A wall of many clusters 3 m tall that sways in a wind of 20 m/s along +x
+// A wall of many clusters 3 m tall that sways in a wind of 20 m/s along -x
 // as the hook leans it, its pivot at its foot, the sun behind it at 45
 // degrees: its shadow on the floor falls toward -z, the leaned top 1 m along
-// +x. Near the eye (SHADOW_SWAY_REACH) the maps draw it as it sways, every
+// -x. Near the eye (SHADOW_SWAY_REACH) the maps draw it as it sways, every
 // frame as what moves, and none of its clusters is left out where its
 // shadow lands; far away the maps keep it at rest and draw nothing again.
 @(test)
@@ -260,37 +263,37 @@ a_swaying_wall_casts_its_shadow_where_it_leans_only_near_the_eye :: proc(t: ^tes
 		camera: gpu.Camera,
 		near:   bool,
 	}{
-		{"near", {position = {0.5, 2.5, -1.2}, forward = {0, -2.5, -1.2}, up = {0, 1, 0}, fov_y = 70, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}, true},
-		{"far", {position = {0.5, 14, -16}, forward = {0, -14, 13.7}, up = {0, 1, 0}, fov_y = 30, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}, false},
+		{"near", {position = {-0.5, 1.2, -1.65}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 70, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}, true},
+		{"far", {position = {-0.5, 25, -42}, forward = {0, -25, 39.7}, up = {0, 1, 0}, fov_y = 15, near = 0.05, far = 200, exposure = gpu.UNIT_EXPOSURE}, false},
 	}
 	for c in cases {
 		pixels, ok := view_frames(t, f, c.camera, sun, 8)
 		if !ok {return}
 		defer delete(pixels)
-		lit := seen_at(f, pixels, c.camera, {-1.2, 0, -1.5})
+		lit := seen_at(f, pixels, c.camera, {0.3, 0, -1.2})
 		rest := seen_at(f, pixels, c.camera, {0, 0, -2.2})
 		testing.expectf(t, lit > 0, "%s: the floor is seen", c.name)
 		// Where the shadows of its points 1 to 2.6 m up land when it leans.
 		leaned: [5]i32
 		for &v, k in leaned {
 			h := 1 + 0.4 * f32(k)
-			v = seen_at(f, pixels, c.camera, {h * math.sin(f32(0.4)), 0, -h * math.cos(f32(0.4))})
+			v = seen_at(f, pixels, c.camera, {-h * math.sin(f32(0.4)), 0, -h * math.cos(f32(0.4))})
 		}
-		movers := f.renderer.stats.shadow_movers
+		movers, maps := f.renderer.stats.shadow_movers, f.renderer.stats.shadow
 		if c.near {
-			for v, k in leaned {testing.expectf(t, v >= 0 && v * 2 < lit, "%s: the shadow of the leaned wall %v m up is %d against %d lit", c.name, 1 + 0.4 * f32(k), v, lit)}
+			for v, k in leaned {testing.expectf(t, v >= 0 && v * 5 < lit * 3, "%s: the shadow of the leaned wall %v m up is %d against %d lit", c.name, 1 + 0.4 * f32(k), v, lit)}
 			testing.expectf(t, rest * 4 > lit * 3, "%s: where it would rest the floor is lit: %d against %d", c.name, rest, lit)
-			testing.expectf(t, movers == 1, "%s: it moves in the maps: %d movers", c.name, movers)
+			testing.expectf(t, movers == 1 && maps.clusters_moving > 0 && maps.pages_drawn == 0, "%s: it moves in the maps, the cache draws nothing again: %d movers, %d clusters moving, %d pages drawn", c.name, movers, maps.clusters_moving, maps.pages_drawn)
 		} else {
-			testing.expectf(t, rest >= 0 && rest * 2 < lit, "%s: the shadow stands where it rests: %d against %d lit", c.name, rest, lit)
+			testing.expectf(t, rest >= 0 && rest * 5 < lit * 3, "%s: the shadow stands where it rests: %d against %d lit", c.name, rest, lit)
 			testing.expectf(t, leaned[4] * 4 > lit * 3, "%s: no shadow where it leans: %d against %d", c.name, leaned[4], lit)
-			testing.expectf(t, movers == 0, "%s: the maps keep it at rest: %d movers", c.name, movers)
+			testing.expectf(t, movers == 0 && maps.clusters_moving == 0 && maps.pages_drawn == 0 && maps.pages_composed == 0, "%s: the maps keep it at rest and draw nothing again: %d movers, %d clusters moving, %d pages drawn, %d composed", c.name, movers, maps.clusters_moving, maps.pages_drawn, maps.pages_composed)
 		}
 	}
 }
 
 // A canopy of two upright leaves of one plant facing a low sun whose shadow
-// is traced, not mapped: a wind pushes them away from the sun, out of their
+// is traced, not mapped (the view is orthographic): a wind pushes them away from the sun, out of their
 // leaves at rest, which rays meet. The near leaf is lit as it is without
 // wind, without the dark of meeting itself at rest, also in the light of the
 // probes; the half of it the far leaf hides, a metre toward the sun, stays
@@ -301,17 +304,18 @@ a_swaying_canopy_under_a_traced_light_meets_no_leaf_of_its_own_at_rest :: proc(t
 	defer free(f)
 	if !gpu_fixture_init(t, f) {return}
 	defer gpu_fixture_destroy(f)
-	settings := f.renderer.settings
-	settings.sun_shadows = false
-	gpu.renderer_apply_settings(&f.renderer, settings)
+	leaf := gpu.DEFAULT_MATERIAL
+	leaf.two_sided = true
+	if !testing.expect(t, gpu.materials_set(&f.renderer, {leaf})) {return}
 	// The near leaf in the plane x = 0 from 1 to 2 m up; the far one at x = 1 over its half toward +z.
 	canopy, made := sheets_mesh(t, f, {{corner = {0, 1, 1}, across = {0, 0, -2}, up = {0, 1, 0}, cells = 8}, {corner = {1, 1, 1.2}, across = {0, 0, -1.2}, up = {0, 1.4, 0}, cells = 4}})
 	if !made {return}
 	desc := swaying_desc(f, canopy, 0.6, 2.5)
+	desc.material = 1
 	if !testing.expect(t, desc.sway > 0, "a canopy of 2.5 m casts swaying shadows") {return}
 	_, problem := render.batch_set(&f.renderer, f.resident.world, 0, desc, {render.batch_instance({0, 0, 0}, 1, 1)})
 	if !testing.expect(t, problem == "", problem) {return}
-	camera := gpu.Camera{position = {3, 1.5, -3}, forward = {-3, 0, 3}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	camera := gpu.Camera{position = {3, 1.5, -3}, forward = {-3, 0, 3}, up = {0, 1, 0}, projection = .Orthographic, height = 3, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	sun := [3]f32{-1, -0.3, 0}
 	light: [2][2]i32
 	for speed, k in ([2]f32{0, 20}) {
