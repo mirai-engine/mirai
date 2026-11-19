@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:slice"
 import "core:sync"
 import wire "mirai:net"
+import "mirai:std/jobs"
 import "mirai:store"
 
 // Objects and refs between peers over the connections of net hosts that the
@@ -44,6 +45,14 @@ NAMES_PER_REPLY :: 128
 @(private) COMMIT_SECONDS :: 0.005 // between two commits that complete wants
 @(private) COMMIT_IDLE :: 1.0      // s between two commits of what arrived while no want completes
 @(private) WALK_DEPTH :: store.NODE_LEVEL_MAX+1
+@(private) ASK_SECONDS :: 0.05 // between asking passes when nothing changed: lacks and reservations expire
+@(private) RECEIVE_SLOTS :: 512     // chunks received and not yet checked and stored
+@(private) RECEIVE_BYTES :: 8<<20   // their bytes, in a ring
+@(private) RECEIVE_WALKERS :: 8     // received nodes walked from at once, reading the store
+@(private) LIGHT_FOUND :: 64        // chunks the walk of a received node finds without reading the store
+@(private) WALK_SLOTS :: 4     // walks reading the store at once
+@(private) SEND_BYTES :: 1<<20      // answers of a peer read and not yet sent, in a ring
+@(private) CHECK_SLOTS :: 4    // reports of damage being checked at once
 
 // Whether peers may read the refs of namespace.
 Expose :: #type proc(user:rawptr,namespace:string) -> bool
@@ -55,6 +64,7 @@ Desc :: struct {
     wants:int,   // objects asked at once, default 256
     queries:int, // ref questions at once, default 16
     needs:int,   // chunks known missing at once over every want, default 8192
+    worker:jobs.Worker_Ref, // of the thread that pumps: reading, hashing, storing and committing run as its jobs; zero: on the pump
     expose:Expose, // nil exposes no namespace
     expose_user:rawptr,
     allocator:runtime.Allocator,
@@ -121,6 +131,8 @@ Want :: struct {
     generation:u32,
     priority:int,
     order:u64,
+    rank:int,       // its place in Exchange.order
+    attention:bool, // in Exchange.attention
     state:State,
     error:Error,
     store_error:store.Error,
@@ -132,10 +144,14 @@ Want :: struct {
     first,last:i32, // its needs, in the order its walk found them
     stack:[WALK_DEPTH]Walk_Frame,
     depth:int,
-    walking:bool,  // the walk began at the root
-    walked:bool,   // the walk reached the end
-    shared:bool ,  // the walk passed a chunk another want needs
-    settling:bool, // complete once the batch that holds its last chunk is committed
+    walking:bool,    // the walk began at the root
+    walked:bool,     // the walk reached the end
+    blocked:bool,    // the walk waits for the node of the entry at the top of its stack
+    waiting_for:store.Hash, // that node
+    walk_job:bool,   // a walk job holds the stack
+    shared:bool,     // the walk passed a chunk another want needs
+    settling:bool,   // complete once the batch that holds its last chunk is committed
+    committing:bool, // in the commit job running
 }
 
 @(private)
@@ -154,6 +170,7 @@ Need :: struct {
     peer:i32,   // asked of; -1
     lack:u64,   // peers that lacked it
     lack_since:f64,
+    arriving:bool, // its chunk is in a receive slot
     next,prev:i32,
 }
 
@@ -178,6 +195,7 @@ Serve :: struct {kind:Serve_Kind,address:store.Hash,budget:u32}
 @(private)
 Peer :: struct {
     used,bad:bool,
+    exchange:^Exchange,
     host:^wire.Host,
     connection:wire.Connection,
     // Asking: the entries of the asks in flight, oldest first.
@@ -187,9 +205,14 @@ Peer :: struct {
     batch_head,batches:int,
     answering:int, // the entry of the oldest ask being answered
     queries:int,   // credits of the questions asked of it and not answered
-    // Serving: the entries of the asks received, oldest first.
+    // Serving: the entries of the asks received, oldest first, taken by its
+    // serve job; the pump appends at serve_tail, the job takes at serve_head.
     serve:[]Serve,
-    serve_head,serve_count:int,
+    serve_head,serve_tail:int,
+    serving:bool,  // its serve job runs and owns what follows, up to the send slots
+    stop:bool,     // its serve job stops at the next answer
+    draining:bool, // it left while its serve job ran: the slot frees once it ends
+    epoch:u32,     // of the peer in the slot: results of jobs for another are not its
     started:bool,  // the chunk of the first entry went
     aliased:bool,  // its address was a blob, replaced by its root
     sent_under:i64, // descendant bytes of the first entry sent
@@ -199,8 +222,13 @@ Peer :: struct {
     node_address:store.Hash,
     node_view:store.Node_View,
     node_held:bool,
-    out:[]u8,
-    out_len,out_sent:int,
+    serve_counter:jobs.Counter,
+    // Answers the serve job made and the pump sends in order, each its size as
+    // a u32 and its bytes padded to 4; the job writes at send_tail, the pump
+    // sends from send_head, both counting bytes from the start.
+    send:[]u8,
+    send_head,send_tail:int,
+    out_sent:int,
     control:[]u8,
     control_start,control_end:int,
     // Receiving, per lane: a message that arrives in pieces.
@@ -251,13 +279,26 @@ Exchange :: struct {
     need_serial:u32,
     peers:[]Peer,
     queries:[]Query_Slot,
-    walk:[]u8, // a node the walk reads
-    walk_address:store.Hash,
-    walk_view:store.Node_View,
-    walk_held:bool,
+    want_slots:[]i32, // open addressing by address, -1 empty
     settling:int,
     commit_time:f64,
     uncommitted:bool, // chunks arrived since the last commit
+    ask_due:bool,     // something changed that the asking pass reads
+    free:int,         // needs not asked of a peer, over every want
+    attention:[]int,  // wants something happened to, for the next asking pass
+    attention_count:int,
+    ask_time:f64,     // of the last asking pass
+    receives:[]Receive_Slot, // a ring: applied in the order received
+    receive_head,receive_count:int,
+    receive_bytes:[]u8,      // of the slots, a ring in their order
+    receive_tail:int,        // where the next slot's bytes go
+    walkers:[]Walker,        // for received nodes
+    light_found:[]Walk_Found, // of the slots' own walkers
+    walker_used:[RECEIVE_WALKERS]bool,
+    walks:[]Walk_Slot,
+    commit:Commit_Slot,
+    checks:[]Check_Slot,
+    found:[]Walk_Found, // what applying a walk adds, deduplicated
     now,rate_time:f64,
     dirty:bool,
     closing:bool, // destroy is waiting for the waiters to leave
@@ -277,7 +318,7 @@ init :: proc(x:^Exchange,desc:Desc) -> Error {
     if d.wants<=0 {d.wants=256}
     if d.queries<=0 {d.queries=16}
     if d.needs<=0 {d.needs=8192}
-    if d.peers>MAX_PEERS || d.needs>1<<24 {return .Invalid}
+    if d.peers>MAX_PEERS || d.needs>1<<24 || d.wants>1<<24 {return .Invalid}
     failed:=false
     make_into :: proc(x:^Exchange,slot:^$T/[]$E,count:int,failed:^bool) {
         made,error:=make(T,count,x.allocator)
@@ -286,21 +327,47 @@ init :: proc(x:^Exchange,desc:Desc) -> Error {
     }
     slots:=1
     for slots<2*d.needs {slots*=2}
+    want_slots:=1
+    for want_slots<2*d.wants {want_slots*=2}
     make_into(x,&x.wants,d.wants,&failed)
     make_into(x,&x.order,d.wants,&failed)
+    make_into(x,&x.want_slots,want_slots,&failed)
+    make_into(x,&x.attention,d.wants,&failed)
     make_into(x,&x.needs,d.needs,&failed)
     make_into(x,&x.need_slots,slots,&failed)
     make_into(x,&x.need_free,d.needs,&failed)
     make_into(x,&x.peers,d.peers,&failed)
     make_into(x,&x.queries,d.queries,&failed)
-    make_into(x,&x.walk,store.CHUNK_MAX,&failed)
+    make_into(x,&x.receives,RECEIVE_SLOTS,&failed)
+    make_into(x,&x.receive_bytes,RECEIVE_BYTES,&failed)
+    make_into(x,&x.walkers,RECEIVE_WALKERS,&failed)
+    make_into(x,&x.light_found,RECEIVE_SLOTS*LIGHT_FOUND,&failed)
+    make_into(x,&x.walks,WALK_SLOTS,&failed)
+    make_into(x,&x.checks,CHECK_SLOTS,&failed)
+    make_into(x,&x.found,WALK_AHEAD+PREFETCH_NODES,&failed)
+    make_into(x,&x.commit.items,d.wants,&failed)
     if failed {destroy(x);return .Out_Of_Memory}
     for &s in x.need_slots {s=-1}
+    for &s in x.want_slots {s=-1}
     for k in 0..<d.needs {x.need_free[k]=i32(d.needs-1-k)}
+    if failed {destroy(x);return .Out_Of_Memory}
+    for &r,k in x.receives {
+        r.x=x
+        r.light.s=x.desc.store
+        r.light.found=x.light_found[k*LIGHT_FOUND:][:LIGHT_FOUND]
+    }
+    for &k in x.walkers {walker_make(x,&k,&failed)}
+    for &k in x.walks {
+        k.x=x
+        walker_make(x,&k.walk,&failed)
+    }
+    for &c in x.checks {c.x=x}
+    x.commit.x=x
     for &p in x.peers {
+        p.exchange=x
         make_into(x,&p.flights,BATCHES*ASK_ENTRIES,&failed)
         make_into(x,&p.serve,BATCHES*(ASK_ENTRIES+1),&failed)
-        make_into(x,&p.out,MSG_CHUNK_MAX,&failed)
+        make_into(x,&p.send,SEND_BYTES,&failed)
         make_into(x,&p.node,store.CHUNK_MAX,&failed)
         make_into(x,&p.control,CONTROL_BYTES,&failed)
         make_into(x,&p.assembly[LANE_CONTROL],CONTROL_BYTES,&failed)
@@ -314,23 +381,40 @@ init :: proc(x:^Exchange,desc:Desc) -> Error {
     return .None
 }
 
-// Wakes every fetch with Closed and frees once none waits; the owner stops
-// calling the exchange first.
+@(private)
+walker_make :: proc(x:^Exchange,k:^Walker,failed:^bool) {
+    k.s=x.desc.store
+    buffer,e:=make([]u8,store.CHUNK_MAX,x.allocator)
+    found,f:=make([]Walk_Found,WALK_AHEAD+PREFETCH_NODES,x.allocator)
+    if e!=nil || f!=nil {failed^=true}
+    k.buffer,k.found=buffer,found
+}
+
+// Wakes every fetch with Closed, waits for the jobs it runs and frees once no
+// fetch waits; the owner stops calling the exchange first and calls this from
+// the thread that pumps.
 destroy :: proc(x:^Exchange) {
     sync.mutex_lock(&x.lock)
     x.closing=true
     sync.cond_broadcast(&x.changed)
     for x.waiting>0 {sync.cond_wait(&x.changed,&x.lock)}
+    for &p in x.peers {sync.atomic_store(&p.stop,true)}
+    work_wait_all(x)
     sync.mutex_unlock(&x.lock)
     for &p in x.peers {
-        delete(p.flights,x.allocator);delete(p.serve,x.allocator);delete(p.out,x.allocator)
+        delete(p.flights,x.allocator);delete(p.serve,x.allocator)
+        delete(p.send,x.allocator)
         delete(p.node,x.allocator);delete(p.control,x.allocator)
         for a in p.assembly {delete(a,x.allocator)}
     }
     for q in x.queries {delete(q.names,x.allocator);delete(q.name_bytes,x.allocator)}
-    delete(x.wants,x.allocator);delete(x.order,x.allocator);delete(x.peers,x.allocator)
+    for k in x.walkers {delete(k.buffer,x.allocator);delete(k.found,x.allocator)}
+    delete(x.walkers,x.allocator);delete(x.receive_bytes,x.allocator);delete(x.light_found,x.allocator)
+    for k in x.walks {delete(k.walk.buffer,x.allocator);delete(k.walk.found,x.allocator)}
+    delete(x.wants,x.allocator);delete(x.order,x.allocator);delete(x.want_slots,x.allocator);delete(x.attention,x.allocator);delete(x.peers,x.allocator)
     delete(x.needs,x.allocator);delete(x.need_slots,x.allocator);delete(x.need_free,x.allocator)
-    delete(x.queries,x.allocator);delete(x.walk,x.allocator)
+    delete(x.queries,x.allocator);delete(x.receives,x.allocator);delete(x.walks,x.allocator)
+    delete(x.checks,x.allocator);delete(x.found,x.allocator);delete(x.commit.items,x.allocator)
     x^={}
 }
 
@@ -349,7 +433,7 @@ peer_add :: proc(x:^Exchange,h:^wire.Host,connection:wire.Connection) -> Error {
         peer_reset(&p)
         p.used,p.host,p.connection=true,h,connection
         clear_peer_bits(x,i)
-        x.dirty=true
+        x.dirty,x.ask_due=true,true
         return .None
     }
     return .Full
@@ -373,14 +457,15 @@ peer_progress :: proc(x:^Exchange,h:^wire.Host,connection:wire.Connection) -> (P
 @(private)
 peer_find :: proc(x:^Exchange,h:^wire.Host,connection:wire.Connection) -> int {
     for p,i in x.peers {
-        if p.used && p.host==h && p.connection==connection {return i}
+        if p.used && !p.draining && p.host==h && p.connection==connection {return i}
     }
     return -1
 }
 
+// A slot free again, its buffers kept.
 @(private)
 peer_reset :: proc(p:^Peer) {
-    keep:=Peer{flights=p.flights,serve=p.serve,out=p.out,node=p.node,control=p.control,assembly=p.assembly}
+    keep:=Peer{exchange=p.exchange,flights=p.flights,serve=p.serve,send=p.send,node=p.node,control=p.control,assembly=p.assembly,epoch=p.epoch+1}
     p^=keep
 }
 
@@ -392,7 +477,14 @@ peer_drop :: proc(x:^Exchange,i:int) {
         if q.used && q.kind==.Names && q.peer==i {q.peer=-1}
     }
     clear_peer_bits(x,i)
-    peer_reset(p)
+    if sync.atomic_load(&p.serving) {
+        // Its serve job still holds the slot: it frees once the job ends.
+        sync.atomic_store(&p.stop,true)
+        p.draining=true
+        p.epoch+=1
+    } else {
+        peer_reset(p)
+    }
     x.dirty=true
 }
 
@@ -417,7 +509,7 @@ peer_bad :: proc(x:^Exchange,i:int) {
     if p.bad {return}
     flights_release(x,i)
     p.bad=true
-    p.serve_count,p.out_len,p.out_sent,p.started,p.depth=0,0,0,false,0
+    sync.atomic_store(&p.stop,true)
     x.dirty=true
 }
 
@@ -456,8 +548,13 @@ receive :: proc(x:^Exchange,h:^wire.Host,command:wire.Command) -> bool {
 update :: proc(x:^Exchange,now:f64) {
     sync.mutex_guard(&x.lock)
     x.now=max(x.now,now)
+    work_collect(x)
     for &p,i in x.peers {
         if !p.used {continue}
+        if p.draining {
+            if !sync.atomic_load(&p.serving) {peer_reset(&p)}
+            continue
+        }
         control_flush(x,i)
         if !p.bad {serve_pump(x,i)}
     }
