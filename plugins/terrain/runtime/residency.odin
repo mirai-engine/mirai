@@ -80,6 +80,7 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
     clear(&resident.splits)
     roots:=0
     owners_sides(resident,data,worlds,c.ids)
+    defer clear(&resident.places)
     if !lod_places(resident,data,worlds,terrains,views,sources,simulated,settings.resident_distance,stream) {return}
     // What each terrain held a state of is looked at again, with what is above it.
     for &owner,o in resident.owners {
