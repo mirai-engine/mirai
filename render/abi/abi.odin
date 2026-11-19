@@ -418,6 +418,10 @@ DEPTH_PYRAMID_BATCH :: 4
 // The probe volume, and the rays of its contact occlusion at each pixel.
 DISTANCE_TILE :: 16
 PROBE_BUCKETS :: 22
+// The most times a probe whose rays meet what changes with nothing that says
+// so doubles the frames it waits for its next turn while its light stays:
+// 1 << it is the most frames before a light that starts moving is gathered.
+PROBE_WAIT_MOST :: 8
 // Texels across the tile of the narrow lobes of a probe, with its border of one.
 PROBE_GLOSS_TILE :: 12
 // What the probes keep of their rays (probe_hits.slang): the words of a ray,

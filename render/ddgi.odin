@@ -9,10 +9,12 @@ import "mirai:render/abi"
 // the first view (Camera.focus), each twice as far apart as the one before (Settings.probe_spacing the
 // first), probe_grid of them along x and z and half that along y. A cell of
 // the world keeps its probe while the cascades scroll. Each frame traces at
-// most probe_budget probes (ddgi_select.comp): those a new cell took, those a
-// change reached and, by turns, the longest untraced against how much the
+// most probe_budget probes (ddgi_select.comp): those a new cell took that a
+// pixel reads, those a change reached and, within a share each, the new ones
+// no pixel reads and, by turns, the longest untraced against how much the
 // pixels use them of those a change everywhere left behind or whose rays met
-// what changes with nothing that says so (a program that reads the time). A
+// what changes with nothing that says so (a program that reads the time),
+// which wait longer for each turn that leaves their light where it was. A
 // probe traces the same directions every time, whole and without
 // hysteresis: one of a scene that did not change gives what it gave, and one
 // that did follows at once. One whose light moved
@@ -27,10 +29,10 @@ IRRADIANCE_TILE :: 8
 DISTANCE_TILE   :: abi.DISTANCE_TILE
 VOLUME_CASCADES_MAX :: abi.VOLUME_CASCADES_MAX
 PROBE_GRID_MAX :: 32
-// Buckets of the priority of the probes, and the words of the histogram
-// after them (ddgi_select.comp).
+// Buckets of the priority of the probes, and the words of the histogram: the
+// count of each, how many of each are taken and how many were (ddgi_select.comp).
 PROBE_BUCKETS :: abi.PROBE_BUCKETS
-PROBE_HISTOGRAM_WORDS :: PROBE_BUCKETS + 4
+PROBE_HISTOGRAM_WORDS :: 3 * PROBE_BUCKETS
 // The indirect dispatches of the update passes, in words: the trace, the
 // passes per probe and the passes per 32 probes.
 PROBE_DISPATCH_WORDS :: 12
