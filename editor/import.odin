@@ -13,6 +13,7 @@ import "core:thread"
 import "core:time"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:cook/build"
 import importer "mirai:cook/import"
 import "mirai:cook/import/sources"
 import "mirai:host"
@@ -665,6 +666,31 @@ import_library :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> (i
         host.project_library_unload(&held.library)
     }
     return
+}
+
+// import_library of the project at root with the library of its editor
+// built first from its files as they are, against the binaries of the engine
+// this program runs, its packages left for the caller to refresh: what a join
+// refreshes the packages that just arrived with. problem: why it could not be
+// built, and what to do.
+import_library_built :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> sources.Library_Imports {
+    opened,open_error:=project.open(root,project.engine_root_find("",context.temp_allocator))
+    if open_error.code!=.None {
+        return {problem=fmt.aprintf("the library of its editor, where the importers of its plugins are, could not be built: %s",project.error_text(root,open_error,context.temp_allocator),allocator=allocator)}
+    }
+    defer project.close(&opened)
+    runs,_:=os.get_executable_directory(context.temp_allocator)
+    job:=build.job_run({project=&opened,target=.Editor,dev=build.ENGINE_MODE_HERE==.Dev,engine=build.ENGINE_MODE_HERE,runs=runs,store_root=s.root,refresh_skip=true})
+    defer build.job_destroy(job)
+    if result:=&job.result;result.status==.Failed {
+        text:=result.text
+        for d in result.diagnostics {
+            if d.severity==.Error {text=fmt.tprintf("%s(%d:%d) %s",d.file,d.line,d.column,d.message);break}
+        }
+        if text=="" {text=fmt.tprintf("%v",result.failure)}
+        return {problem=fmt.aprintf("the library of its editor, where the importers of its plugins are, could not be built (%s): fix that and run mirai build editor %s",text,root,allocator=allocator)}
+    }
+    return import_library(root,s,allocator)
 }
 
 // The importer of a plugin that claims source whole, with the identity of

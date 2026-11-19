@@ -10,6 +10,7 @@ import "core:testing"
 import "core:thread"
 import "core:time"
 import "mirai:asset"
+import importer "mirai:cook/import"
 import "mirai:cook/import/sources"
 import "mirai:exchange"
 import "mirai:platform"
@@ -1134,6 +1135,70 @@ a_join_from_a_host_with_only_fast_builds_fetches_them_and_imports_nothing :: pro
     fast,fast_error:=store.ref_get(&w.peers[1].s,asset.REF_IMPORTS_FAST,key)
     _,final_error:=store.ref_get(&w.peers[1].s,asset.REF_IMPORTS,key)
     testing.expect(t,fast_error==.None && fast==imported.build && final_error==.Missing,"the joiner names the Fast build as Fast")
+}
+
+// A source a plugin imports whole: "ROOM <name>", a document of the kind ROOM.
+@(private="file") ROOM :: asset.Fourcc(u32('R')|u32('O')<<8|u32('O')<<16|u32('M')<<24)
+@(private="file") ROOMS :: "Rooms"
+@(private="file") ROOMS_UNBUILT :: "the editor of the project could not be built"
+@(private="file")
+room_run :: proc(state:rawptr,source:string,options:importer.Import_Options,allocator:mem.Allocator) -> (report:importer.Import_Report,scene:string,error:importer.Error) {
+    bytes,_:=os.read_entire_file(source,context.temp_allocator)
+    o:importer.Outputs
+    if error=importer.outputs_begin(&o,source,"",u64(len(bytes)),base.hash64(bytes),importer.import_version(1),options,ROOMS,allocator);error.code!=.None {return}
+    id,path,_:=importer.output_root(&o,ROOM,string(bytes[len("ROOM "):]),".room")
+    doc:asset.Document
+    asset.document_init(&doc,ROOM,id,context.temp_allocator)
+    if asset.document_save(&doc,path)!=.None {error=importer.error_make(.Write,"%s could not be written",path)}
+    if error.code==.None {error=importer.output_written(&o,id,"room")}
+    if error.code!=.None {
+        _,_=importer.outputs_end(&o,true)
+        return {},"",error
+    }
+    report,error=importer.outputs_end(&o,false,allocator)
+    return report,"",error
+}
+@(private="file")
+rooms :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> sources.Library_Imports {
+    claims :: proc(path:string,head:[]u8) -> bool {return strings.has_prefix(string(head),"ROOM ")}
+    wholes:=make([]sources.Whole_Source,1,allocator)
+    wholes[0]={name=ROOMS,version=1,claims=claims,run=room_run}
+    return {wholes=wholes}
+}
+@(private="file")
+rooms_unbuilt :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> sources.Library_Imports {return {problem=ROOMS_UNBUILT}}
+
+// A package a plugin imports whole, its source on no peer, joined into an
+// empty folder: its build is fetched by key when the library of the folder
+// has the importer, and when it could not be built, the build the host
+// chose for its manifest; nothing is imported either way.
+@(test)
+a_join_fetches_the_build_of_a_whole_source_with_or_without_its_importer :: proc(t:^testing.T) {
+    w:Test_Net
+    if !test_net(t,&w,"share-whole",3) {return}
+    defer test_net_destroy(&w)
+    root:=fmt.tprintf("%s/host",w.folder)
+    file_put(root,"project.mirai",transmute([]u8)string("{}\n"))
+    file_put(root,"assets/hall.level",transmute([]u8)string("ROOM hall"))
+    options:=sources.Library_Options{store=&w.peers[0].s,root=root,plugins=rooms}
+    imported,import_error:=sources.ingest(fmt.tprintf("%s/assets/hall.level",root),options,allocator=context.temp_allocator)
+    if !testing.expectf(t,import_error.code==.None,"%s",import_error.message) {return}
+    added:=sources.project_add(root,imported.manifest,"",nil,options,context.temp_allocator)
+    if !testing.expectf(t,len(added.failures)==0 && len(added.missing)==0,"%v",added) {return}
+    testing.expect(t,os.remove(fmt.tprintf("%s/assets/hall.level",root))==nil)
+    if !host_offer(t,&w,root) {return}
+    Case :: struct {library:sources.Library,name:string}
+    for c,k in ([]Case{{rooms,"keyed"},{rooms_unbuilt,"chosen"}}) {
+        test_connect(&w,k+1,0)
+        joined:=fmt.tprintf("%s/%s",w.folder,c.name)
+        desc:=join_desc(&w,0,joined)
+        desc.library=c.library
+        report,error:=test_join(t,&w,k+1,desc)
+        if !testing.expectf(t,error=="","%s: %s",c.name,error) {continue}
+        testing.expectf(t,report.packages.fetched==1 && report.packages.ingested==0 && len(report.packages.missing)==0 && len(report.packages.failures)==0,"%s: %v",c.name,report.packages)
+        listed,listed_error:=asset.root_packages(joined,w.peers[k+1].s.root,context.temp_allocator)
+        testing.expectf(t,listed_error==.None && len(listed.problems)==0 && len(listed.packages)==1,"%s: %v",c.name,listed)
+    }
 }
 
 // Runs work on a thread while the network steps, as test_join does; stop_bytes:
