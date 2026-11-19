@@ -130,7 +130,7 @@ round_trip_keeps_quality_at_uber_levels :: proc(t: ^testing.T) {
 }
 
 // Without mode 1 (no partitions to scan, or masked out) or without mode 6, a block still takes
-// the best mode it has.
+// the best mode it has; with no mode that can encode it, mode 6.
 @(private = "file")
 SETTINGS := [?]struct {
 	mode_mask, max_partitions: u32,
@@ -141,6 +141,9 @@ SETTINGS := [?]struct {
 	{1 << 6 | 1 << 1, 0},
 	{1 << 1 | 1 << 5, MAX_PARTITIONS},
 	{1 << 5, 0},
+	{1 << 1, 0},
+	{1 << 1, MAX_PARTITIONS},
+	{0, MAX_PARTITIONS},
 }
 
 @(test)
