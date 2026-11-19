@@ -124,7 +124,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float3 normal = gbuffer_normal(source);
     Shading s = gbuffer_shading(direct_point_gbuffer(source, scale), pixel);
     float3 reflectance = max(s.diffuse + specular_albedo(s), float3(0.02));
-    float3 origin = offset_origin(pixel.position, normal, view_bias(pixel.distance));
+    point_swayed = pixel_rest(source, depth);
+    float3 origin = offset_origin(pixel.position - point_swayed, normal, view_bias(pixel.distance));
     uint4 row = direct_cell(pixel.position);
     uint count = direct_items(row);
     float across = float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth));

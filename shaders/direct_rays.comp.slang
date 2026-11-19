@@ -46,6 +46,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     }
     Pixel pixel = pixel_at(source, (float2(source) + 0.5) * frame.inv_resolution, depth);
     float3 normal = gbuffer_normal(source);
+    point_swayed = pixel_rest(source, depth);
+    float3 rest = pixel.position - point_swayed;
     uint4 row = direct_cell(pixel.position);
     uint count = direct_items(row);
     // The weights of the items and of the sun, the sun last; none for one a map holds here.
@@ -95,10 +97,10 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         float chance;
         light = direct_table_draw(row, (float(traced - first) + direct_start(place)) / float(k - first), chance);
     }
-    float3 origin = offset_origin(pixel.position, normal, view_bias(pixel.distance));
+    float3 origin = offset_origin(rest, normal, view_bias(pixel.distance));
     float3 direction;
     float reach;
-    direct_ray(light, pixel.position, origin, direct_point(place, m, traced), direct_spin(p), params.sun_radius, direction, reach);
+    direct_ray(light, rest, origin, direct_point(place, m, traced), direct_spin(p), params.sun_radius, direction, reach);
     Hit hit = trace_ray_impl(origin, direction, 0.0, reach, true, BLEND_PASSES, RAY_SHADOWS);
     bool changed = occluder_changed(origin, direction, reach, hit.instance, hit.instance == INVALID ? reach : hit.t) || (light != INVALID && light_moved(light));
     out_blockers[p] = (hit.instance == INVALID ? DIRECT_NONE : min(hit.instance, DIRECT_NONE - 1u)) | (changed ? DIRECT_CHANGED : 0u);

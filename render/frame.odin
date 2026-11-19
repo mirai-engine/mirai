@@ -46,6 +46,7 @@ SLOT_LAYERS         :: abi.SLOT_LAYERS
 SLOT_DISTANCE       :: abi.SLOT_DISTANCE
 SLOT_SHADOW_TABLE   :: abi.SLOT_SHADOW_TABLE
 SLOT_LIGHT_LISTS    :: abi.SLOT_LIGHT_LISTS
+SLOT_REST           :: abi.SLOT_REST
 // Of a draw of the clusters of an instance (gbuffer.vert): the Surface program
 // whose clusters it draws, 0 those without one, GPU_NONE all of them.
 SLOT_DRAW           :: abi.SLOT_DRAW
@@ -117,6 +118,7 @@ bind_scene_table :: proc(p: ^Pass) {
 	rhi.cmd_bind_texture(cmd, SLOT_SURFACE, texture_or_dummy(r, p.t.surface))
 	rhi.cmd_bind_texture(cmd, SLOT_VIEWS, p.t.motion)
 	rhi.cmd_bind_texture(cmd, SLOT_LAYERS, p.t.layers if p.t.layers != 0 else r.dummy_layers)
+	rhi.cmd_bind_texture(cmd, SLOT_REST, p.t.rest if p.t.rest != 0 else r.dummy_rest)
 	rhi.cmd_bind_texture(cmd, SLOT_SHADOW_TABLE, p.t.shadow_raster.table if p.t.shadow_raster.table != 0 else r.dummy_uint)
 	rhi.cmd_bind_buffer(cmd, SLOT_LIGHTS, or_dummy(r, s.light_buffer))
 	rhi.cmd_bind_buffer(cmd, SLOT_LIGHT_TREE, or_dummy(r, s.light_tree_buffer))
@@ -262,6 +264,7 @@ resolve_pass :: proc(p: ^Pass, nested: bool) {
 		// A nested view counts with its cull, apart.
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, r.scratch_buffer if nested else r.stats_buffer)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.program_draws)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.rest if t.rest != 0 else r.dummy_rest)
 		textures_feedback_bind(r, cmd)
 		resolve_programs_draw(r, cmd, &r.pipelines[id])
 	}
@@ -998,7 +1001,9 @@ view_begin :: proc(p: ^Pass) -> bool {
 	if p.reflectance && !ensure_surface_target(r, t) {return false}
 	if p.layered && !ensure_layers_target(r, t) {return false}
 	if r.frame_layout.instance_ids && !ensure_instance_target(r, t) {return false}
+	if s.batch.hooked && !ensure_rest_target(r, t) {return false}
 	if p.reflectance {f.flags |= FRAME_FLAG_REFLECTANCE}
+	if s.batch.hooked {f.flags |= FRAME_FLAG_SWAY}
 	if p.use_probes {ddgi_frame_constants(r, &f)}
 	frame_occluders(&f, &r.frame_occluders)
 	p.constants = rhi.frame_alloc(d, u64(r.frame_layout.size), 256)

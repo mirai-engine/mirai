@@ -145,7 +145,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
             float3 sampled = reflect(view, normalize(t * h.x + b * h.y + n * h.z));
             if (dot(sampled, n) > 0.0) dir = sampled;
         }
-        float3 origin = offset_origin(position, n, view_bias(pixel.distance));
+        // Its ray leaves from where the point rests: what it meets rests there.
+        float3 origin = offset_origin(position - pixel_rest(p, depth), n, view_bias(pixel.distance));
         bool detailed = roughness < params.detail_below;
         float3 fresnel;
         if (coat) {
