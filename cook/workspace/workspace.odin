@@ -151,9 +151,11 @@ lock_path :: proc(root,name:string,allocator:=context.allocator) -> string {
 // holder, which is also what the holder wrote first in the lock
 // (measure_holder): a process that is no child of the measurement, like the
 // editor of a session a command of it calls, is told that pid and runs as
-// part of it while the lock says the same (measurement_holds). No process
-// waits for MEASURE_LOCK while its GPU turn says it works (gpu_turn_mark):
-// a measurement waits for those, so the two never wait for each other.
+// part of it while the lock says the same (measurement_holds). A process
+// takes its GPU turn before MEASURE_LOCK, never after, and its turn says it
+// is idle while it waits for MEASURE_LOCK (measure_try): what holds the
+// measurement never waits for room on the GPU, and no measurement waits for
+// what waits for it.
 BUILD_LOCK :: "build.lock"
 SHADERS_LOCK :: "shaders.lock"
 BUILD_NOTE :: "build.last"
@@ -368,19 +370,29 @@ MEASURE_WAIT_ALL :: time.Duration(1<<62)
 // MEASURE_LOCK and then waits for the compilations that run and for the GPU
 // work of others in flight (gpu_work); compilations that start later run at
 // low priority, and GPU work waits for it to end (measured). notice runs once
-// for each thing it waits for, with its holder. When the time runs out, why
-// is what it waited for and holder who holds it. A lock that cannot be made
+// for each thing it waits for, with its holder. While it waits, the GPU turn
+// this process holds says it is open and idle, as it says again how it was
+// when it returns: the measurement that runs, or the one that waits for this
+// one's GPU work, never waits for it. When the time runs out, why is what it
+// waited for and holder who holds it. A lock that cannot be made
 // does not stop it, nor does being part of a measurement that holds it, the
 // one of this process (its MEASURE_ENV) or of the caller it measures for
 // (part_of): lock is then not held.
 measure_try :: proc(root,what:string,wait:=time.Duration(0),part_of:="",notice:proc(why:Measure_Wait,holder:string)=nil) -> (lock:Lock,ok:bool,holder:string,why:Measure_Wait) {
     if measurement_holds(root,measurement(context.temp_allocator)) || measurement_holds(root,part_of) {return {},true,"",.None}
     start:=time.tick_now()
-    told:bit_set[Measure_Wait]
-    tell :: proc(told:^bit_set[Measure_Wait],notice:proc(why:Measure_Wait,holder:string),why:Measure_Wait,holder:string) {
-        if why in told^ || notice==nil {return}
+    Waited :: struct {told:bit_set[Measure_Wait],idled,began:bool,root:string}
+    waited:=Waited{root=root}
+    defer if waited.idled {gpu_turn_mark(root,os.get_pid(),false)}
+    tell :: proc(waited:^Waited,notice:proc(why:Measure_Wait,holder:string),why:Measure_Wait,holder:string) {
+        if !waited.began {
+            waited.began=true
+            _,_,turn:=gpu_turn_owner(waited.root,os.get_pid(),-1)
+            if turn!="" && !gpu_holder_open(turn) {waited.idled=gpu_turn_mark(waited.root,os.get_pid(),true)>=0}
+        }
+        if why in waited.told || notice==nil {return}
         notice(why,holder!=""?holder:"a process that does not say which")
-        told^+={why}
+        waited.told+={why}
     }
     measure_path:=lock_path(root,MEASURE_LOCK,context.temp_allocator)
     for {
@@ -390,7 +402,7 @@ measure_try :: proc(root,what:string,wait:=time.Duration(0),part_of:="",notice:p
         if taken {break}
         left:=wait-time.tick_since(start)
         if left<=0 {return {},false,holder,.Measurement}
-        tell(&told,notice,.Measurement,holder)
+        tell(&waited,notice,.Measurement,holder)
         lock_wait(measure_path,nil,left)
     }
     for build_path in build_paths(root) {
@@ -403,7 +415,7 @@ measure_try :: proc(root,what:string,wait:=time.Duration(0),part_of:="",notice:p
                 lock_release(&lock)
                 return {},false,builder,.Build
             }
-            tell(&told,notice,.Build,builder)
+            tell(&waited,notice,.Build,builder)
             lock_wait(build_path,nil,left)
         }
     }
@@ -415,7 +427,7 @@ measure_try :: proc(root,what:string,wait:=time.Duration(0),part_of:="",notice:p
             lock_release(&lock)
             return {},false,work[0].holder,.Gpu
         }
-        tell(&told,notice,.Gpu,work[0].holder)
+        tell(&waited,notice,.Gpu,work[0].holder)
         time.sleep(250*time.Millisecond)
     }
     return lock,true,"",.None

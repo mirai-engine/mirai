@@ -327,8 +327,7 @@ api_profile_capture :: proc(s:^Session,call:^api.Call) {
     }
     loaded:=make([dynamic]string,context.temp_allocator)
     if p.advance && s.engine_root!="" {
-        // Waiting for the turn it draws nothing: no measurement waits for it.
-        gpu_turn_use(s,true)
+        // While it waits for the turn its GPU turn says it is idle (measure_try).
         ok:bool
         holder:string
         why:workspace.Measure_Wait

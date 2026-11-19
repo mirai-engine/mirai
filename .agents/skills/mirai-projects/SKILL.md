@@ -87,8 +87,9 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   measurement times: then what would put work on it and is not part of the measurement waits for
   it, and the measurement first waits for the GPU work in flight but not for sessions kept open,
   whose load it reports ([turns](references/build.md#turns-between-processes)).
-- A measurement holds `measure.lock` only while it times, and no process waits for it while its
-  GPU turn says it works: the two never wait for each other.
+- A measurement holds `measure.lock` only while it times. The GPU turn comes first and the
+  measurement after it: what holds the measurement never waits for room on the GPU, and what
+  waits for the measurement says its turn is idle meanwhile.
 - `tools/mirai` and everything it imports, counting its `_test.odin` files (the compiler reads them
   too), do not reach `render`, `host`, `platform`, `editor` or `engine/*`: the tool writes
   `render/shaders_gen.odin` and the test worlds, so it builds where they are missing or stale (a

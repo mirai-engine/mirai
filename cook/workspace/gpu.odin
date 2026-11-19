@@ -356,7 +356,13 @@ Gpu_Wait :: struct {
     holders:[]Gpu_Holder,
     memory:i64,         // of the card, as admission took it
     memory_known:bool,
+    refused:Gpu_Refused,
 }
+
+// Why a turn is refused rather than waited for: the room is held by what
+// waits for the command to end (Own: its process, an ancestor of it or the
+// session of its project), or the time it was given passed (Limit).
+Gpu_Refused :: enum u8 {None,Own,Limit}
 
 // Takes a turn when one is given now. what names the holder; a person takes
 // one without the room for it and stays open, and part_of is the measurement
@@ -374,13 +380,7 @@ gpu_try :: proc(root,what:string,charge:i64,person:=false,part_of:="") -> (lock:
     defer lock_release(&admission)
     waiting.holders=gpu_holders(root,context.temp_allocator)
     waiting.memory,waiting.memory_known=gpu_memory(root)
-    charges:=make([]i64,len(waiting.holders),context.temp_allocator)
-    alone:=part_of!=""
-    for holder,i in waiting.holders {
-        charges[i]=holder.charge
-        alone&&=gpu_holder_measurement(holder.holder)==part_of
-    }
-    if !person && (len(waiting.holders)>=GPU_TURNS || !alone && !gpu_admits(waiting.memory,charges,charge)) {return}
+    if !person && !gpu_room(waiting.holders,waiting.memory,charge,part_of) {return}
     text:=gpu_holder_text(what,charge,part_of,open=person)
     for turn in 0..<GPU_TURNS {
         failed:bool
@@ -390,22 +390,87 @@ gpu_try :: proc(root,what:string,charge:i64,person:=false,part_of:="") -> (lock:
     return
 }
 
-// Blocks until a turn is given and takes it (gpu_try). notice runs when what
-// it waits for changes. A person never waits: ok is false when every turn
-// file is held.
-gpu_acquire :: proc(root,what:string,charge:i64,person:=false,notice:proc(waiting:Gpu_Wait)=nil) -> (lock:Lock,ok:bool) {
+// Whether a turn charged charge fits beside holders on a card of memory
+// bytes: a turn free and the room for it, or every holder part of the same
+// measurement (part_of).
+@(private)
+gpu_room :: proc(holders:[]Gpu_Holder,memory,charge:i64,part_of:string) -> bool {
+    charges:=make([]i64,len(holders),context.temp_allocator)
+    alone:=part_of!=""
+    for holder,i in holders {
+        charges[i]=holder.charge
+        alone&&=gpu_holder_measurement(holder.holder)==part_of
+    }
+    return len(holders)<GPU_TURNS && (alone || gpu_admits(memory,charges,charge))
+}
+
+// The holders that wait for a command to end, so that waiting for them does
+// not give it room: those of the processes of own (it and its ancestors) and
+// the session or editor of its project folder.
+gpu_own :: proc(holders:[]Gpu_Holder,own:[]int,folder:string,allocator:=context.temp_allocator) -> []Gpu_Holder {
+    list:=make([dynamic]Gpu_Holder,allocator)
+    for holder in holders {
+        mine:=false
+        for pid in own {mine||=strings.has_prefix(holder.holder,fmt.tprintf("pid %d, ",pid))}
+        if folder!="" {
+            key:=slashes(folder,context.temp_allocator)
+            for at:=strings.index(holder.holder,key);at>=0 && !mine; {
+                end:=at+len(key)
+                mine=end==len(holder.holder) || holder.holder[end]==',' || holder.holder[end]==' '
+                next:=strings.index(holder.holder[end:],key)
+                at=next<0?-1:end+next
+            }
+        }
+        if mine {append(&list,holder)}
+    }
+    return list[:]
+}
+
+// This process and those above it, nearest first.
+process_lineage :: proc(allocator:=context.temp_allocator) -> []int {
+    list:=make([dynamic]int,allocator)
+    for pid:=os.get_pid();pid>0 && len(list)<64 && !slice.contains(list[:],pid); {
+        append(&list,pid)
+        info,error:=os.process_info_by_pid(pid,{.PPid},context.temp_allocator)
+        if error!=nil {break}
+        pid=info.ppid
+    }
+    return list[:]
+}
+
+// Blocks until a turn is given and takes it (gpu_try), at most limit (zero:
+// no limit). notice runs once with who holds the room, and again when they
+// or their charges change. A person never waits: ok is false when every turn
+// file is held. Nor does what waiting would not help (Gpu_Refused.Own: the
+// room is held by holders gpu_own names for its project folder), nor what
+// waited limit: ok is false and refused says why and who holds it.
+gpu_acquire :: proc(root,what:string,charge:i64,person:=false,notice:proc(waiting:Gpu_Wait)=nil,limit:=time.Duration(0),folder:="") -> (lock:Lock,ok:bool,refused:Gpu_Wait) {
     told:=""
     part_of:=measurement(context.temp_allocator)
+    lineage:=process_lineage()
+    start:=time.tick_now()
     for {
         taken:bool
         waiting:Gpu_Wait
         lock,taken,waiting=gpu_try(root,what,charge,person,part_of)
-        if taken {return lock,true}
+        if taken {return lock,true,{}}
         if person {return}
         if waiting.measurement=="" && len(waiting.holders)==0 {return}
+        if waiting.measurement=="" && !gpu_room(gpu_own(waiting.holders,lineage,folder),waiting.memory,charge,part_of) {
+            waiting.refused=.Own
+            return {},false,waiting
+        }
+        if limit>0 && time.tick_since(start)>=limit {
+            waiting.refused=.Limit
+            return {},false,waiting
+        }
+        // Who holds it and their charges: not what they held nor whether they draw now.
         b:=strings.builder_make(context.temp_allocator)
         strings.write_string(&b,waiting.measurement)
-        for holder in waiting.holders {strings.write_string(&b,holder.holder)}
+        for holder in waiting.holders {
+            what_,_,_,_:=gpu_holder_parse(holder.holder)
+            fmt.sbprintf(&b,"%s %d;",strings.trim_suffix(what_,GPU_OPEN_TAG),holder.charge)
+        }
         if said:=strings.to_string(b);said!=told && notice!=nil {
             notice(waiting)
             told=strings.clone(said,context.temp_allocator)

@@ -12,18 +12,50 @@ import "mirai:std/subprocess"
 // folder ("" for one without a project): it waits, saying for what, until the
 // card has room for it (workspace.gpu_acquire). A person waits for nothing.
 // Not held when the lock cannot be made or, for a person, when every turn is
-// held: the program runs without one. A program no person watches runs under
-// the GPU watchdog, with the limit of the tools unless one is set: nobody is
-// there to see a submission hang before the driver resets the card.
-gpu_turn :: proc(root,folder,what:string,person:=false) -> (lock:workspace.Lock,charge:i64) {
+// held: the program runs without one. ok is false, after naming who holds
+// the room, when waiting would not help (it is held by this command, an
+// ancestor of it or the session of the project own, which wait for it) or
+// limit (zero: none) passed. A program no person watches runs under the GPU
+// watchdog, with the limit of the tools unless one is set: nobody is there to
+// see a submission hang before the driver resets the card.
+gpu_turn :: proc(root,folder,what:string,person:=false,limit:=time.Duration(0),own:="") -> (lock:workspace.Lock,charge:i64,ok:bool) {
     if _,limited:=os.lookup_env(rhi.WATCHDOG_VARIABLE,context.temp_allocator);!person && !limited {
         _=os.set_env(rhi.WATCHDOG_VARIABLE,fmt.tprintf("%d",rhi.WATCHDOG_UNWATCHED_MS))
     }
     charge=workspace.gpu_charge(root,folder)
     held:bool
-    lock,held=workspace.gpu_acquire(root,fmt.tprintf("pid %d, mirai %s",os.get_pid(),what),charge,person,gpu_wait_notice)
+    refused:workspace.Gpu_Wait
+    lock,held,refused=workspace.gpu_acquire(root,fmt.tprintf("pid %d, mirai %s",os.get_pid(),what),charge,person,gpu_wait_notice,limit,own)
     if person && !held {fmt.eprintfln("mirai: the %d GPU turns are held; opening without one (mirai locks says who holds them)",workspace.GPU_TURNS)}
-    return
+    switch refused.refused {
+    case .None: return lock,charge,true
+    case .Own:
+        fmt.eprintfln("mirai: %s needs %.1f GiB of the GPU (%s), and what holds it waits for this command to end:",what,f64(charge)/(1<<30),gpu_card_text(refused))
+        gpu_holders_say(refused.holders)
+        fmt.eprintfln("Close the session of the project (mirai session stop <project>) or run the command outside the program that holds the GPU.")
+    case .Limit:
+        if refused.measurement!="" {
+            fmt.eprintfln("mirai: %s waited %s for a measurement to finish (%s), the time it was given",what,duration_text(limit),refused.measurement)
+        } else {
+            fmt.eprintfln("mirai: %s waited %s for %.1f GiB of the GPU (%s), the time it was given; these hold it:",what,duration_text(limit),f64(charge)/(1<<30),gpu_card_text(refused))
+            gpu_holders_say(refused.holders)
+        }
+        fmt.eprintfln("Run it again when they end, or give it more time.")
+    }
+    return {},charge,false
+}
+
+@(private="file")
+gpu_card_text :: proc(waiting:workspace.Gpu_Wait) -> string {
+    card:=fmt.tprintf("the card has %.1f GiB, %d turns at most",f64(waiting.memory)/(1<<30),workspace.GPU_TURNS)
+    if !waiting.memory_known {card=fmt.tprintf("%s, assumed until an editor opens it",card)}
+    return card
+}
+
+@(private="file")
+gpu_holders_say :: proc(holders:[]workspace.Gpu_Holder) {
+    now:=time.now()
+    for holder in holders {fmt.eprintfln("  %s, for %s",holder.holder,duration_text(time.diff(holder.since,now)))}
 }
 
 @(private="file")
@@ -32,11 +64,8 @@ gpu_wait_notice :: proc(waiting:workspace.Gpu_Wait) {
         fmt.eprintfln("mirai: waiting for a measurement to finish before opening the GPU (%s)",waiting.measurement)
         return
     }
-    card:=fmt.tprintf("%.1f GiB",f64(waiting.memory)/(1<<30))
-    if !waiting.memory_known {card=fmt.tprintf("%s assumed until an editor opens it",card)}
-    fmt.eprintfln("mirai: waiting for room on the GPU (%s, %d turns at most); these hold it:",card,workspace.GPU_TURNS)
-    now:=time.now()
-    for holder in waiting.holders {fmt.eprintfln("  %s, for %s",holder.holder,duration_text(time.diff(holder.since,now)))}
+    fmt.eprintfln("mirai: waiting for room on the GPU (%s); these hold it:",gpu_card_text(waiting))
+    gpu_holders_say(waiting.holders)
     fmt.eprintfln("A session closes with mirai session stop <project>, and by itself after %s without calls.",duration_text(api.SESSION_IDLE))
 }
 
