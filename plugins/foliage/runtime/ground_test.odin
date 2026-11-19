@@ -2,6 +2,7 @@ package foliage
 
 import "core:testing"
 import "mirai:core"
+import "mirai:host"
 import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import mm "mirai:std/math"
@@ -135,6 +136,8 @@ the_ground_of_foliage_is_read_where_the_ground_changed :: proc(t:^testing.T) {
     ground_request(&f.requests,f.plant,{0,0})
     ground_test_step(&f)
     testing.expect(t,!ground_tile_sparse(owner,{0,0}) && ground_tile_samples(owner,{0,0})==owner.samples)
+    found,tracked:=host.lists_not_owned({f.data,f.ground})
+    testing.expectf(t,tracked && len(found)==0,"between calls the storages hold only their own lists: %v",found)
     // The Foliage moves off the ground: its tiles go.
     core.edit(&f.worlds,f.plant).transform.position={1000,0,0}
     test_world_settle(&f.w)
