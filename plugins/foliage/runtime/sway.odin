@@ -25,6 +25,7 @@ FOLIAGE_SWAY_DEFAULT :: Foliage_Sway{wind=1}
 Sway_Key :: struct {
     transform:mm.Transform,
     renderer:render.Mesh_Renderer,
+    mesh:render.Mesh_Handle, // of the renderer, which a reload of its asset changes
     sway:Foliage_Sway,
     values:u64, // hash of its Material_Values; 0 without them
     layers:u32,
@@ -125,6 +126,7 @@ sway_update :: proc(resident:^Foliage_Resident,t:Sway_Tables,commands:core.Comma
     key.layers=1
     if in_layers,has_layers:=core.get(t.layers,e);has_layers {key.layers=in_layers.mask}
     key.zone=wind_zone_at(resident,world.transform.position)
+    key.mesh,_=render.mesh_handle(resident.app.assets,static)
     if !held.drawn {
         if !core.has(t.elsewhere,e) {core.commands_add(commands,e,render.Drawn_Elsewhere{})}
         held.drawn=true
