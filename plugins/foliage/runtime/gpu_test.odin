@@ -16,6 +16,7 @@ import "mirai:rhi"
 import "mirai:rhi/shared_device"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import phys "plugins:physics/runtime"
 
 // The hook of foliage on the GPU, with the shaders of the engine and of the
 // plugin: a stalk of a batch of foliage over a dark floor, seen from above.
@@ -625,4 +626,132 @@ an_impostor_another_hides_is_not_drawn_and_shows_when_it_moves :: proc(t: ^testi
 	if shown, ok = center(t, f, camera, 1); !ok {return}
 	testing.expectf(t, shown.r > shown.g + 20, "the far one shows in the frame the near one left, got %v", shown)
 	testing.expect(t, render.readback_release(&f.renderer, f.resident.world, "test impostor draws"))
+}
+
+@(private)
+@(test_world)
+Sway_World :: struct {
+	using world: Test_World,
+	sways:      core.Table(Foliage_Sway),
+	meshes:     core.Table(render.Mesh_Renderer),
+	values:     core.Table(render.Material_Values),
+	worlds:     core.Table(core.World_Transform),
+	hidden:     core.Table(render.Hidden),
+	parents:    core.Table(core.Parent),
+	layers:     core.Table(render.Layers),
+	elsewhere:  core.Table(render.Drawn_Elsewhere),
+	highlights: core.Table(render.Highlight),
+	outlines:   core.Table(render.Outline),
+	colliders:  core.Table(phys.Collider),
+}
+
+@(private = "file")
+sway_step :: proc(f: ^Gpu_Fixture, w: ^Sway_World, problems: ^core.Problems) {
+	foliage_sway_render(&f.resident, core.read(&w.sways), core.read(&w.meshes), core.read(&w.values), core.read(&w.worlds), core.read(&w.hidden), core.read(&w.parents), core.read(&w.layers), core.read(&w.elsewhere), core.read(&w.highlights), core.read(&w.outlines), core.commands(w, test_world_info(w)), f.resident.world, &f.app, problems)
+	test_world_settle(w)
+}
+
+// Whether a ray along -z at (x, y) meets a batch of the entity, at rest.
+@(private = "file")
+sway_met :: proc(f: ^Gpu_Fixture, e: core.Entity, x, y: f32) -> bool {
+	hit, found := render.batch_ray(&f.renderer, f.resident.world, {x, y, 5}, {0, 0, -1}, 10)
+	return found && hit.object_id == u64(e)
+}
+
+// A wall 3 m tall placed by hand, a mesh entity with a collider, sways as
+// foliage of its wind does once it has a Foliage_Sway: it is drawn once, by a
+// batch of one instance (its own mesh Drawn_Elsewhere), which rays and the
+// picker meet at rest as the entity; it keeps its collider and mesh, casts
+// its shadow leaned near the eye, follows the entity when it moves and
+// scales, goes while it is hidden and draws as its own mesh again without
+// the component.
+@(test)
+a_mesh_entity_that_sways_is_drawn_once_as_it_stands_and_casts_its_swaying_shadow :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f) {return}
+	defer gpu_fixture_destroy(f)
+	defer sways_free(&f.resident)
+	n := 24
+	positions := make([dynamic][3]f32, context.temp_allocator)
+	normals := make([dynamic][3]f32, context.temp_allocator)
+	colors := make([dynamic][4]f32, context.temp_allocator)
+	uvs := make([dynamic][2]f32, context.temp_allocator)
+	indices := make([dynamic]u32, context.temp_allocator)
+	for j in 0 ..= n {
+		for i in 0 ..= n {
+			append(&positions, [3]f32{-0.2 + 0.4 * f32(i) / f32(n), 3 * f32(j) / f32(n), 0})
+			append(&normals, [3]f32{0, 0, 1})
+			append(&colors, [4]f32{1, 1, 1, 1})
+			append(&uvs, [2]f32{f32(i) / f32(n), f32(j) / f32(n)})
+		}
+	}
+	for j in 0 ..< u32(n) {
+		for i in 0 ..< u32(n) {
+			a := j * u32(n + 1) + i
+			append(&indices, a, a + 1, a + u32(n) + 1, a + 1, a + u32(n) + 2, a + u32(n) + 1)
+		}
+	}
+	mesh, made := host.assets_mesh_generate(&f.assets, {positions = positions[:], normals = normals[:], uvs = uvs[:], colors = colors[:], indices = indices[:]})
+	if !testing.expect(t, made) {return}
+	w: Sway_World
+	if !test_world_init(t, &w) {return}
+	defer test_world_destroy(&w)
+	problems := new(core.Problems)
+	defer free(problems)
+	e := core.create(&w.entities)
+	place := mm.TRANSFORM_IDENTITY
+	core.add(&w.meshes, e, render.Mesh_Renderer{mesh = mesh, shadows = true})
+	core.add(&w.worlds, e, core.World_Transform{place, place})
+	core.add(&w.colliders, e, phys.Collider{kind = .Box, size = {0.2, 1.5, 0.05}})
+	// Wind 3.5: a lean of 14.4 times its sway_amount at the phase the wave has at the origin, 0.4 rad.
+	core.add(&w.sways, e, Foliage_Sway{wind = 3.5})
+	test_world_settle(&w)
+	sway_step(f, &w, problems)
+	batches, instances := gpu.batch_count(&f.renderer)
+	testing.expectf(t, batches == 1 && instances == 1 && core.has(&w.elsewhere, e), "one batch of one instance draws it, and its own mesh is drawn elsewhere: %d batches, %d instances", batches, instances)
+	testing.expect(t, core.has(&w.colliders, e) && core.has(&w.meshes, e), "it keeps its collider and its mesh")
+	testing.expect(t, sway_met(f, e, 0, 1.5) && !sway_met(f, e, 0, 3.5), "a ray meets it at rest as the entity")
+	held := core.entity_map_get(&f.resident.sways, e)
+	if !testing.expect(t, held != nil && held.handle != 0) {return}
+	handle := held.handle
+	if !wind_blow(t, f, 20) {return}
+	sun := [3]f32{0, -1, -1}
+	camera := gpu.Camera{position = {-0.5, 1.2, -1.65}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 70, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	pixels, ok := view_frames(t, f, camera, sun, 16)
+	if !ok {return}
+	defer delete(pixels)
+	lit := seen_at(f, pixels, camera, {0.3, 0, -1.2})
+	rest := seen_at(f, pixels, camera, {0, 0, -2.2})
+	for k in 0 ..< 5 {
+		h := 1 + 0.4 * f32(k)
+		v := seen_at(f, pixels, camera, {-h * math.sin(f32(0.4)), 0, -h * math.cos(f32(0.4))})
+		testing.expectf(t, v >= 0 && v * 5 < lit * 3, "the shadow of the leaned wall %v m up is %d against %d lit", h, v, lit)
+	}
+	testing.expectf(t, rest * 4 > lit * 3, "where it would rest the floor is lit: %d against %d", rest, lit)
+	testing.expectf(t, f.renderer.stats.shadow_movers == 1, "it moves in the maps near the eye: %d movers", f.renderer.stats.shadow_movers)
+	// Moved and scaled, its batch follows it.
+	place.position, place.scale = {2, 0, 0}, {1, 2, 1}
+	core.edit(&w.worlds, e)^ = {place, place}
+	test_world_settle(&w)
+	sway_step(f, &w, problems)
+	held = core.entity_map_get(&f.resident.sways, e)
+	testing.expect(t, held != nil && held.handle == handle, "the same batch draws it")
+	testing.expect(t, sway_met(f, e, 2, 4.5) && !sway_met(f, e, 0, 1.5), "it stands where the entity was moved, as tall as it was scaled")
+	core.add(&w.hidden, e, render.Hidden{})
+	test_world_settle(&w)
+	sway_step(f, &w, problems)
+	batches, _ = gpu.batch_count(&f.renderer)
+	testing.expect(t, batches == 0 && core.has(&w.elsewhere, e), "hidden, it is not drawn")
+	core.remove(&w.hidden, e)
+	test_world_settle(&w)
+	sway_step(f, &w, problems)
+	batches, _ = gpu.batch_count(&f.renderer)
+	testing.expect_value(t, batches, 1)
+	core.remove(&w.sways, e)
+	test_world_settle(&w)
+	sway_step(f, &w, problems)
+	batches, _ = gpu.batch_count(&f.renderer)
+	testing.expect(t, batches == 0 && !core.has(&w.elsewhere, e), "without the component its own mesh draws it again")
+	testing.expect_value(t, problems.count, 0)
 }
