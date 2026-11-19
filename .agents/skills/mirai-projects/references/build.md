@@ -381,10 +381,12 @@ reads and fills; a failure is `Cook_Failed` with `Result.cook.error` and `detail
   with an `Auto` `Collider` (its `Rigid_Body`, or that of its nearest ancestor with one, not
   `Static`) ships with its convex pieces (`asset.mesh_pieces_put`), decomposed once and kept in the
   collision cache (`Cook_Desc.collision_cache`): a shipped game reads them and decomposes nothing.
-- **Compression.** A cook writes with the codecs of its project (`Cook_Desc.codecs`, from
-  `project.compression`): every texture is written again with the layouts and planes of fields
-  those codecs take, and with `None` its blocks are made without RDO. What a cook compresses with,
-  and the name of the compressor, are part of the key of each file it keeps.
+- **Compression.** The cook is the only place the container's own compression remains: a game
+  has no store, so each file is written in the container format and compressed then, with the
+  codecs of its project (`Cook_Desc.codecs`, from `project.compression`) that this build has;
+  every texture is written again with the layouts and planes of fields those codecs take, and
+  with `None` its blocks are made without RDO. What a cook compresses with, and the name of the
+  compressor, are part of the key of each file it keeps.
 
 #### Compressor
 

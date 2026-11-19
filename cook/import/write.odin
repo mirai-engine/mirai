@@ -224,8 +224,7 @@ import_info :: proc(source:string,name:string,index:int,size:u64,hash:u64,settin
 // Reads the builds outputs may be taken from: that of what the import is made
 // from now (which fixes it), Final or, with fast textures, Fast; and the one
 // this machine chose for the previous manifest. Before any writer_reuse, on
-// the writer's thread. Only a build in the formats of the compressor this one
-// records: the build it publishes says what its objects need to be decoded.
+// the writer's thread.
 @(private)
 writer_candidates :: proc(w:^Writer) {
     if w.candidates_read {return}
@@ -238,7 +237,7 @@ writer_candidates :: proc(w:^Writer) {
         hash,error:=store.ref_get(s,namespace,name)
         if error!=.None {return}
         b,read_error:=asset.build_get(s,hash,w.keep)
-        if read_error==.None && b.package_id==w.package_id && b.compressor==asset.build_compressor(w.types.codecs) {append(&w.candidates,Candidate{b,current})}
+        if read_error==.None && b.package_id==w.package_id {append(&w.candidates,Candidate{b,current})}
     }
     take(w,s,asset.REF_IMPORTS,store.hex(w.key,&digits),true)
     if w.options.fast_textures {take(w,s,asset.REF_IMPORTS_FAST,store.hex(w.key,&digits),true)}
@@ -386,7 +385,6 @@ texture_write :: proc(w:^Writer,job:Texture_Job,id,owner:base.Asset_Id,path,sour
     types:asset.Types
     asset.types_init(&types,context.temp_allocator)
     defer asset.types_destroy(&types)
-    types.codecs=w.types.codecs
     options:=texture_options(w,job)
     info:=import_info(source,job.name,job.index,job.size,job.hash,textures.settings_hash(options),job.version)
     if hash,fast,found:=texture_reuse(w,&types,job,id,owner,source);found {
@@ -410,7 +408,7 @@ texture_write :: proc(w:^Writer,job:Texture_Job,id,owner:base.Asset_Id,path,sour
     built:=&cooked.built
     out.fast=cooked.settings!=info.settings_hash
     info.settings_hash=cooked.settings
-    desc:=textures.built_desc(built,id,&info,types.codecs==.Best)
+    desc:=textures.built_desc(built,id,&info)
     desc.owner=owner
     out.format,out.width,out.height,out.mips=built.format,built.width,built.height,len(built.mips)
     zone(import_options,"texture.save")
@@ -481,7 +479,6 @@ writer_init :: proc(w:^Writer,path,folder:string,options:Import_Options,report:^
     w.followed.allocator=context.temp_allocator
     w.rng=base.rng_make(u64(time.time_to_unix_nano(time.now())),u64(uintptr(w)))
     asset.types_init(&w.types)
-    w.types.codecs=asset.project_codecs(options.root,project.engine_root_find("",context.temp_allocator))
     zone(options,"import.scan")
     return writer_source(w,path,folder) && writer_changed(w)
 }

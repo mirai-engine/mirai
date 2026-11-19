@@ -460,6 +460,13 @@ batch_send :: proc(x:^Exchange,i:int) {
         }
     }
     if n==0 {return}
+    if !p.told {
+        // Before its first ask: what this end decodes.
+        codecs:=[3]u8{MSG_CODECS,0,0}
+        put_u16(codecs[1:],transmute(u16)store.codecs_read(x.desc.store))
+        if !control_append(p,codecs[:]) {return}
+        p.told=true
+    }
     buffer:[MSG_ASK_MAX]u8
     out:=Writer{data=buffer[:]}
     write_u8(&out,MSG_ASK)
@@ -493,7 +500,10 @@ on_chunk :: proc(x:^Exchange,i:int,data:[]u8) {
     codec:=read_u8(&r)
     raw:=int(read_u32(&r))
     bytes:=data[min(MSG_CHUNK_HEAD,len(data)):]
-    if !r.ok || codec!=0 || raw!=len(bytes) || len(bytes)==0 || len(bytes)>store.CHUNK_MAX {peer_bad(x,i);return}
+    // As they are, or encoded smaller in a codec this end said it decodes.
+    plain:=codec==store.CODEC_NONE && raw==len(bytes)
+    encoded:=codec!=store.CODEC_NONE && int(codec)<store.CODECS_MAX && int(codec) in store.codecs_read(x.desc.store) && len(bytes)<raw
+    if !r.ok || !plain && !encoded || len(bytes)==0 || raw>store.CHUNK_MAX {peer_bad(x,i);return}
     // What jobs finished is applied first: a parent parsed names its descendants.
     work_collect(x)
     p:=&x.peers[i]
@@ -508,8 +518,8 @@ on_chunk :: proc(x:^Exchange,i:int,data:[]u8) {
     if k<0 {
         fw:=&x.wants[f.want]
         if own || f.released || !fw.used || fw.generation!=f.generation || fw.state!=.Asking || fw.wrong&bit!=0 {p.refused+=1;return}
-        slot:=receive_slot(x,len(bytes))
-        receive_fill(x,slot,i,address,bytes,int(f.want))
+        slot:=receive_slot(x,len(bytes)+(raw if encoded else 0))
+        receive_fill(x,slot,i,address,codec,raw,bytes,int(f.want))
         slot.need=-1
         work_run(x,receive_job,slot,&slot.counter)
         return
@@ -521,7 +531,7 @@ on_chunk :: proc(x:^Exchange,i:int,data:[]u8) {
     if int(need.peer)!=i && !under || need.arriving {p.refused+=1;return}
     if w.wrong&bit!=0 {return}
     flights_heard(x,i,wi)
-    slot:=receive_slot(x,len(bytes))
+    slot:=receive_slot(x,len(bytes)+(raw if encoded else 0))
     // The table may have moved while a slot was waited for.
     k=need_find(x,address)
     if k<0 || x.needs[k].arriving || int(x.needs[k].want)!=wi {
@@ -531,7 +541,7 @@ on_chunk :: proc(x:^Exchange,i:int,data:[]u8) {
     }
     need=&x.needs[k]
     need.arriving=true
-    receive_fill(x,slot,i,address,bytes,wi)
+    receive_fill(x,slot,i,address,codec,raw,bytes,wi)
     slot.need,slot.serial,slot.kind,slot.level,slot.entry=i32(k),need.serial,need.kind,need.level,need.size
     slot.limit=walk_room(x,wi)
     receive_walker(x,slot)
@@ -539,16 +549,32 @@ on_chunk :: proc(x:^Exchange,i:int,data:[]u8) {
 }
 
 @(private)
-receive_fill :: proc(x:^Exchange,slot:^Receive_Slot,i:int,address:store.Hash,bytes:[]u8,wi:int) {
+// The slot holds the chunk's raw bytes, and after them its encoded bytes, which
+// its job decodes in front of them.
+receive_fill :: proc(x:^Exchange,slot:^Receive_Slot,i:int,address:store.Hash,codec:u8,raw:int,bytes:[]u8,wi:int) {
     p:=&x.peers[i]
     w:=&x.wants[wi]
-    copy(slot.bytes,bytes)
+    slot.codec,slot.stored=codec,0
+    if codec!=store.CODEC_NONE {
+        slot.size,slot.stored=raw,len(bytes)
+        copy(slot.bytes[raw:],bytes)
+    } else {
+        copy(slot.bytes,bytes)
+    }
     slot.address=address
     slot.want,slot.generation=i32(wi),w.generation
     slot.peer,slot.epoch=i,p.epoch
     slot.result,slot.error,slot.parsed=.Stored,.None,false
     slot.limit=0
     p.received+=u64(len(bytes))
+}
+
+@(private)
+on_codecs :: proc(x:^Exchange,i:int,data:[]u8) {
+    r:=Reader{data=data[1:],ok=true}
+    codecs:=transmute(store.Codecs)read_u16(&r)
+    if !read_end(&r) {peer_bad(x,i);return}
+    x.peers[i].decodes=codecs+{store.CODEC_NONE}
 }
 
 @(private)

@@ -265,7 +265,7 @@ test_liar :: proc(w:^Test_World,n:^Test_Node,h:^wire.Host,command:wire.Command) 
     }
     Script :: struct {w:^Test_World,n:^Test_Node,h:^wire.Host,c:wire.Connection,out:[]u8,sent:i64,budget:i64}
     send_chunk :: proc(sc:^Script,address:store.Hash,bytes:[]u8) {
-        encode_chunk_head(sc.out,address,len(bytes))
+        encode_chunk_head(sc.out,address,store.CODEC_NONE,len(bytes))
         copy(sc.out[MSG_CHUNK_HEAD:],bytes)
         if sc.n.lie==.Bytes {
             if _,e:=store.node_parse(bytes);e!=.None {sc.out[MSG_CHUNK_HEAD+len(bytes)/2]~=1}

@@ -215,6 +215,9 @@ Peer :: struct {
     stack:[WALK_DEPTH]Walk_Frame,
     depth:int,
     node:[]u8,     // a node being streamed
+    decodes:store.Codecs, // what it said it decodes; until it says, chunks go as they are
+    told:bool,     // it was told what this end decodes
+    scratch:[]u8,  // a chunk decoded on its way to a codec it decodes
     node_address:store.Hash,
     node_view:store.Node_View,
     node_held:bool,
@@ -366,6 +369,7 @@ init :: proc(x:^Exchange,desc:Desc) -> Error {
         make_into(x,&p.serve,BATCHES*(ASK_ENTRIES+1),&failed)
         make_into(x,&p.send,SEND_BYTES,&failed)
         make_into(x,&p.node,store.CHUNK_MAX,&failed)
+        make_into(x,&p.scratch,store.CHUNK_MAX,&failed)
         make_into(x,&p.control,CONTROL_BYTES,&failed)
         make_into(x,&p.assembly[LANE_CONTROL],CONTROL_BYTES,&failed)
         make_into(x,&p.assembly[LANE_DATA],MSG_CHUNK_MAX,&failed)
@@ -401,7 +405,7 @@ destroy :: proc(x:^Exchange) {
     for &p in x.peers {
         delete(p.flights,x.allocator);delete(p.serve,x.allocator)
         delete(p.send,x.allocator)
-        delete(p.node,x.allocator);delete(p.control,x.allocator)
+        delete(p.node,x.allocator);delete(p.scratch,x.allocator);delete(p.control,x.allocator)
         for a in p.assembly {delete(a,x.allocator)}
     }
     for q in x.queries {delete(q.names,x.allocator);delete(q.name_bytes,x.allocator)}
@@ -462,7 +466,7 @@ peer_find :: proc(x:^Exchange,h:^wire.Host,connection:wire.Connection) -> int {
 // A slot free again, its buffers kept.
 @(private)
 peer_reset :: proc(p:^Peer) {
-    keep:=Peer{exchange=p.exchange,flights=p.flights,serve=p.serve,send=p.send,node=p.node,control=p.control,assembly=p.assembly,epoch=p.epoch+1}
+    keep:=Peer{exchange=p.exchange,flights=p.flights,serve=p.serve,send=p.send,node=p.node,scratch=p.scratch,control=p.control,assembly=p.assembly,epoch=p.epoch+1,decodes={store.CODEC_NONE}}
     p^=keep
 }
 

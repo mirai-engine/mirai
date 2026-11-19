@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:os"
 import "core:sync"
 import "core:time"
+import "compressor:data"
 import "mirai:std/jobs"
 
 // Puts cut bytes into chunks, look each one up and append only the missing
@@ -23,6 +24,8 @@ Put :: struct {
     now:i64,
     worker:jobs.Worker_Ref,
     batches:^Put_Batches,
+    codec:u8,    // of stored, the frame of the chunk chunk_put_frame is given
+    stored:[]u8,
 }
 
 // Two runs of cut chunks: one the jobs work on while the caller cuts the other.
@@ -269,7 +272,18 @@ put_chunk :: proc(p:^Put,address:Hash,bytes:[]u8) -> Error {
         if touch {return stage_frame(p.stage,.Touch,address,nil)}
         return .None
     }
-    stage_frame(p.stage,.Chunk,address,bytes) or_return
+    if p.codec!=CODEC_NONE && codec_readable(s,p.codec) {
+        // What a peer sent encoded is kept so; it is a node only if it decoded to one.
+        if _,e:=node_parse(bytes);e!=.None {
+            stage_frame(p.stage,.Chunk,address,p.stored,0,p.codec,len(bytes)) or_return
+        } else {
+            stage_frame(p.stage,.Chunk,address,bytes) or_return
+        }
+    } else {
+        if p.stage.coder==nil {p.stage.coder=coder_new(s) or_return}
+        codec,stored:=frame_encode(s,p.stage.coder,bytes)
+        stage_frame(p.stage,.Chunk,address,stored,0,codec,len(bytes)) or_return
+    }
     if len(p.stage.bytes)>=STAGE_BYTES {
         stage_write(s,p.stage,p.now) or_return
         stage_reset(p.stage)
@@ -322,6 +336,23 @@ chunk_put :: proc(s:^Store,address:Hash,bytes:[]u8,now:Maybe(time.Time)=nil) -> 
     return batch_check(s,at)
 }
 
+// Appends a chunk that came as a frame of codec (a peer's), kept as it came:
+// stored is decoded into all of raw, the chunk's size, and checked against
+// address first, so a frame of other bytes is Corrupt and nothing is kept.
+// Missing for a codec this value does not decode. raw holds the chunk after.
+chunk_put_frame :: proc(s:^Store,address:Hash,codec:u8,stored,raw:[]u8,now:Maybe(time.Time)=nil) -> Error {
+    if s==nil || s.state==nil || codec==CODEC_NONE || !sizes_valid(codec,u32(len(stored)),u32(len(raw))) {return .Invalid_Argument}
+    chunk_decode(s,codec,stored,raw) or_return
+    if address_of_bytes(raw)!=address {return .Corrupt}
+    at:=(now.? or_else time.now())._nsec
+    st:=stage_take(s) or_return
+    defer stage_give(s,st)
+    p:=Put{s=s,stage=st,now=at,codec=codec,stored=stored}
+    put_chunk(&p,address,raw) or_return
+    stage_write(s,st,at) or_return
+    return batch_check(s,at)
+}
+
 // Checks the stored copy of a chunk against its address, as a receiver's
 // report asks: a damaged copy gets a Tombstone frame, committed, so it is no
 // longer read or served (Corrupt).
@@ -338,9 +369,9 @@ chunk_check :: proc(s:^Store,address:Hash,now:Maybe(time.Time)=nil) -> Error {
         buffer,e:=make([]u8,CHUNK_MAX,context.temp_allocator)
         if e!=nil {return .Out_Of_Memory}
         defer delete(buffer,context.temp_allocator)
-        bytes,read_error:=location_bytes_locked(s,pack,location,buffer)
+        _,holds,read_error:=location_holds_locked(s,pack,location,address,buffer)
         if read_error==.Out_Of_Memory {return read_error}
-        if read_error==.None && address_of_bytes(bytes)==address {return .None}
+        if read_error==.None && holds {return .None}
         tomb_stage(s,st,pack,location,address) or_return
     }
     stage_write(s,st,at) or_return
@@ -349,17 +380,64 @@ chunk_check :: proc(s:^Store,address:Hash,now:Maybe(time.Time)=nil) -> Error {
 }
 
 // The bytes of the chunk at address: a slice of its mapped pack once the pack
-// is sealed, otherwise read into buffer, which holds at least CHUNK_MAX bytes
-// or the chunk's size. Nothing is checked against the address: a scrub and a
-// receiver's report find damage.
+// is sealed and its frame holds them as they are, otherwise read or decoded
+// into buffer, which holds at least CHUNK_MAX bytes or the chunk's size.
+// Nothing is checked against the address: a scrub and a receiver's report find
+// damage; a frame that does not decode is Corrupt.
 chunk_read :: proc(s:^Store,address:Hash,buffer:[]u8) -> (bytes:[]u8,error:Error) {
     if s==nil || s.state==nil {return nil,.Invalid_Argument}
     file,view,location:=chunk_locate(s,address) or_return
+    if location.codec==CODEC_NONE {
+        if view!=nil {return view[location.offset:][:location.stored],.None}
+        if len(buffer)<int(location.stored) {return nil,.Invalid_Argument}
+        bytes=buffer[:location.stored]
+        if e:=read_exact(file,bytes,i64(location.offset));e!=.None {return nil,e}
+        return bytes,.None
+    }
+    if len(buffer)<int(location.raw) {return nil,.Invalid_Argument}
+    c:=coder_take(s) or_return
+    defer coder_give(s,c)
+    stored:=chunk_stored(file,view,location,c.scratch) or_return
+    frame_decode(s,c,location.codec,stored,buffer[:location.raw]) or_return
+    return buffer[:location.raw],.None
+}
+
+// The bytes of the chunk at address in a codec of codecs, for a peer that
+// decodes those: as its frame stores them when that is one, else decoded and
+// encoded again in a codec every build reads that is one, else as they are.
+// In buffer or a mapped pack; scratch, of CHUNK_MAX bytes, holds what is
+// decoded on the way. raw is the chunk's size.
+chunk_read_in :: proc(s:^Store,address:Hash,codecs:Codecs,buffer,scratch:[]u8) -> (bytes:[]u8,codec:u8,raw:int,error:Error) {
+    if s==nil || s.state==nil || len(buffer)<CHUNK_MAX || len(scratch)<CHUNK_MAX {return nil,0,0,.Invalid_Argument}
+    file,view,location:=chunk_locate(s,address) or_return
+    raw=int(location.raw)
+    if location.codec==CODEC_NONE || int(location.codec) in codecs {
+        if view!=nil {return view[location.offset:][:location.stored],location.codec,raw,.None}
+        stored:=chunk_stored(file,nil,location,buffer) or_return
+        return stored,location.codec,raw,.None
+    }
+    c:=coder_take(s) or_return
+    defer coder_give(s,c)
+    stored:=chunk_stored(file,view,location,c.scratch) or_return
+    frame_decode(s,c,location.codec,stored,scratch[:raw]) or_return
+    plain:=scratch[:raw]
+    if open:=codec_of(data.format(.Fast,open=true));open!=CODEC_NONE && int(open) in codecs {
+        if size,e:=data.encode(c.encoder,.Fast,plain,c.scratch,open=true);e==.None && size>0 && size<raw {
+            copy(buffer,c.scratch[:size])
+            return buffer[:size],open,raw,.None
+        }
+    }
+    copy(buffer,plain)
+    return buffer[:raw],CODEC_NONE,raw,.None
+}
+
+// The stored bytes of a frame: of the mapping, or read into buffer.
+@(private)
+chunk_stored :: proc(file:^os.File,view:[]u8,location:Location,buffer:[]u8) -> (stored:[]u8,error:Error) {
     if view!=nil {return view[location.offset:][:location.stored],.None}
     if len(buffer)<int(location.stored) {return nil,.Invalid_Argument}
-    bytes=buffer[:location.stored]
-    if e:=read_exact(file,bytes,i64(location.offset));e!=.None {return nil,e}
-    return bytes,.None
+    read_exact(file,buffer[:location.stored],i64(location.offset)) or_return
+    return buffer[:location.stored],.None
 }
 
 // The file or mapping that holds a chunk; a sealed pack is mapped the first

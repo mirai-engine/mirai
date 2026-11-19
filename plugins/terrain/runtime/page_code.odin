@@ -184,7 +184,7 @@ page_decode :: proc(block:[]u8,hash:u64,out:[]u8,decoder:^asset.Stream_Decoder,c
 Page_Writer :: struct {encoder:asset.Stream_Encoder,codecs:asset.Codecs,coded:[]u8,block:[]u8,allocator:runtime.Allocator}
 
 @(private)
-page_writer_init :: proc(w:^Page_Writer,allocator:runtime.Allocator,codecs:=asset.Codecs.Open) -> bool {
+page_writer_init :: proc(w:^Page_Writer,allocator:runtime.Allocator,codecs:asset.Codecs) -> bool {
     w^={codecs=codecs,allocator=allocator}
     error:runtime.Allocator_Error
     if w.coded,error=make([]u8,PAGE_BYTES_MAX,allocator);error!=nil {return false}

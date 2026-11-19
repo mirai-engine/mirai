@@ -111,9 +111,11 @@ types, scenes and their prefab instances, registry).
   package: `compressor:data`, `compressor:texture` and, engine-time, `compressor:blocks`. The open
   one (`std/compressor`) is a real implementation; the private one has the same packages and
   declarations. Its sources are never versioned in the engine nor packaged.
-- **What the repository of the engine versions is open**: its projects declare
-  `build.compression` `open`, and the assets of the engine and its plugins are always written
-  open. A project chooses for itself (`none`, `open`, or the best its engine has).
+- **What is hashed and shared never depends on a compressor.** The documents of a project, the
+  assets of the engine and its plugins, imports and objects of the store are written with
+  `Codecs.None`: no stage of a compressor, each kind keeping the modeling of its data, chosen
+  without one. The store compresses where bytes rest and the exchange where they travel; only the
+  files a cook ships are compressed as the project's `build.compression` says.
 - **A stream says what decodes it**: a read needs no profile nor codecs.
 - **Decoders are preallocated.** A `Stream_Decoder` holds all the scratch, allocated once by
   whoever reads; a decode never allocates, and for any input never reads outside `src` nor writes

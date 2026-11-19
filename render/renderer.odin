@@ -223,6 +223,14 @@ Ui_Vertex :: struct {
 UI_MATERIAL_PREVIEW_BIT :: u32(1) << 31
 UI_MATERIAL_THUMBNAIL :: u32(2)
 
+// What raised a box of what stays changed under the maps of the shadows:
+// instances that changed, instances that show their surface at another
+// detail (mesh_surface), batches set or removed, pages of a streamed mesh,
+// masked materials, batches that start or stop swaying, the eye that left its
+// cell of the cull of the batches, a reach of what sways that changed, and
+// the scene whole.
+Shadow_Stale_Source :: enum {Instances, Levels, Batches, Mesh_Pages, Materials, Sway, Cull_Cell, Sway_Reach, Scene}
+
 Stats :: struct {
 	frame:             u64,
 	backend:           rhi.Backend,
@@ -289,6 +297,7 @@ Stats :: struct {
 	shadow_movers:          u32, // of the last frame: the movers the maps drew, which their caches leave out
 	shadow_marked:          u32, // of the last frame: the views whose points marked the pages of the maps they read
 	shadow:                 Shadow_Stats, // of the frame two frames ago: what the maps of its views drew
+	shadow_stale:           [Shadow_Stale_Source]u32, // the boxes of what stays changed under the maps between the last two frames, by what raised them
 	light_lists:            Light_List_Stats, // of the frame two frames ago: the lists of the lights without shadows of its last view
 	ui_vertices_dropped:    u32, // of the last frame: UI vertices beyond the capacity
 	ui_shapes_dropped:      u32,

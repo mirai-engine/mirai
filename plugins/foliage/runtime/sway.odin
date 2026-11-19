@@ -42,7 +42,17 @@ Resident_Sway :: struct {
     drawn:bool,
 }
 
-Sway_Seen :: struct {sways,meshes,values,worlds,hidden,parents,layers:core.Seen}
+Sway_Seen :: struct {sways,meshes,values,worlds,hidden,parents,layers,highlights,outlines:core.Seen}
+
+// The outline instance, of its mesh at rest, of each swaying entity at a
+// level that shows (highlight_levels_shown), given to every frame as they
+// are and made again only after a batch, a Highlight, an Outline or the
+// levels that show changed.
+Sway_Outlines :: struct {
+    instances:[dynamic]render.Instance_Desc,
+    levels:render.Highlight_Levels, // that showed when they were made
+    stale:bool,
+}
 
 // The mesh entities that sway are drawn by their batches of one, made again
 // where what they show, their place or their wind changes; their outline,
@@ -72,6 +82,7 @@ foliage_sway_render :: proc(
     resident.sway_structure,resident.sway_zones=a.structure,resident.zones_revision
     t:=Sway_Tables{sways,meshes,values,worlds,hidden,parents,layers,elsewhere}
     if full {
+        resident.sway_outlines.stale=true
         for i:=len(resident.sways.entities)-1;i>=0;i-=1 {
             if e:=resident.sways.entities[i];!core.has(sways,e) {sway_drop(resident,t,commands,e)}
         }
@@ -82,7 +93,7 @@ foliage_sway_render :: proc(
         }
         for e in cw.gone {if core.entity_map_get(&resident.sways,e)!=nil {sway_update(resident,t,commands,e,id,problems)}}
     }
-    sway_outlines(resident,t,highlights,outlines,app)
+    sway_outlines(resident,highlights,outlines,app,problems)
 }
 
 @(private)
@@ -133,6 +144,7 @@ sway_update :: proc(resident:^Foliage_Resident,t:Sway_Tables,commands:core.Comma
         held.drawn=true
     }
     if held.handle!=0 && held.key==key {return}
+    resident.sway_outlines.stale=true
     app:=resident.app
     desc,known:=render.batch_desc(app.assets,static,shown)
     if key.hidden || !known {
@@ -186,27 +198,35 @@ sway_drop :: proc(resident:^Foliage_Resident,t:Sway_Tables,commands:core.Command
     if held.handle!=0 && resident.app!=nil {render.batch_remove(resident.app.renderer,held.handle)}
     if held.drawn && core.has(t.elsewhere,e) {core.commands_remove(commands,e,render.Drawn_Elsewhere)}
     core.entity_map_remove(&resident.sways,e)
+    resident.sway_outlines.stale=true
 }
 
-// The outline of each swaying entity that has one, around its mesh at rest,
-// for this frame.
+// The outlines of the swaying entities for this frame, made again if
+// anything they show changed.
 @(private)
-sway_outlines :: proc(resident:^Foliage_Resident,t:Sway_Tables,highlights:^core.Table(render.Highlight,.Read),outlines:^core.Table(render.Outline,.Read),app:^host.App) {
-    outline :: proc(resident:^Foliage_Resident,t:Sway_Tables,e:core.Entity,level:u8,app:^host.App) {
-        held:=core.entity_map_get(&resident.sways,e)
-        if held==nil || held.handle==0 || level==0 {return}
-        static,_:=core.get(t.meshes,e)
-        world,_:=core.get(t.worlds,e)
-        instance,ok:=render.mesh_instance(app.assets,static,mm.transform_matrix(world.transform))
-        if !ok {return}
-        instance.object_id,instance.copy_owner=u64(e),SWAY_OUTLINE_OWNER
-        instance.highlight,instance.outline_only,instance.layers=level,true,held.key.layers
-        render.instance_add(&app.extras,instance)
+sway_outlines :: proc(resident:^Foliage_Resident,highlights:^core.Table(render.Highlight,.Read),outlines:^core.Table(render.Outline,.Read),app:^host.App,problems:^core.Problems) {
+    o:=&resident.sway_outlines
+    levels:=render.highlight_levels_shown(app.renderer)
+    o.stale|=core.touched(highlights,&resident.sway_seen.highlights) | core.touched(outlines,&resident.sway_seen.outlines) | (levels!=o.levels)
+    if o.stale {
+        o.stale,o.levels=false,levels
+        clear(&o.instances)
+        for e,i in resident.sways.entities {
+            held:=resident.sways.values[i]
+            level:=render.instance_outline(highlights,outlines,e)
+            if held.handle==0 || level==0 || int(level) not_in levels {continue}
+            instance,ok:=render.mesh_instance(app.assets,held.key.renderer,mm.transform_matrix(held.key.transform))
+            if !ok {continue}
+            instance.object_id,instance.copy_owner=u64(e),SWAY_OUTLINE_OWNER
+            instance.highlight,instance.outline_only,instance.layers=level,true,held.key.layers
+            if _,error:=append(&o.instances,instance);error!=nil {
+                memory_problem(problems,e,"the outline of this Foliage_Sway")
+                o.stale=true
+                break
+            }
+        }
     }
-    for row in 0..<core.count(highlights) {outline(resident,t,core.entity_at(highlights,row),render.instance_outline(highlights,outlines,core.entity_at(highlights,row)),app)}
-    for row in 0..<core.count(outlines) {
-        if e:=core.entity_at(outlines,row);!core.has(highlights,e) {outline(resident,t,e,render.instance_outline(highlights,outlines,e),app)}
-    }
+    if len(o.instances)>0 {render.instance_add(&app.extras,..o.instances[:])}
 }
 
 SWAY_OUTLINE_OWNER :: u64(0x5357415900000001) // the copy an outline of a swaying entity is drawn as
@@ -221,4 +241,6 @@ sway_zone_used :: proc(resident:^Foliage_Resident,zone:i32) -> bool {
 sways_free :: proc(resident:^Foliage_Resident) {
     if resident.app!=nil {for held in resident.sways.values {if held.handle!=0 {render.batch_remove(resident.app.renderer,held.handle)}}}
     core.entity_map_destroy(&resident.sways)
+    delete(resident.sway_outlines.instances)
+    resident.sway_outlines={}
 }

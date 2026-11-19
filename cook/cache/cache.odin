@@ -33,8 +33,8 @@ Cache :: struct {
 }
 
 // The layout of what a result is: raised when results are kept otherwise, so a
-// result of another layout is never read. 2: an object of the store.
-RESULTS_VERSION :: 2
+// result of another layout is never read. 3: an object of the store, as Codecs.None writes it.
+RESULTS_VERSION :: 3
 
 // The id of the file of key, built by version.
 id :: proc "contextless" (key,version:u64) -> base.Asset_Id {return {key,version}}
@@ -165,8 +165,7 @@ store_source :: proc(from:^store.Store) -> Source {
         if error!=.None || object_copy(from,into,object)!=.None {return false}
         if namespace==asset.REF_IMPORTS || namespace==asset.REF_IMPORTS_FAST {
             b,build_error:=asset.build_get(from,object,context.temp_allocator)
-            // A build this engine cannot decode is not copied: as if the source had none.
-            if build_error!=.None || !asset.build_readable(&b) {return false}
+            if build_error!=.None {return false}
             for o in b.outputs {
                 if object_copy(from,into,o.object)!=.None {return false}
                 if o.thumbnail!={} && object_copy(from,into,o.thumbnail)!=.None {return false}

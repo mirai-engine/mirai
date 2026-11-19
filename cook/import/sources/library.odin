@@ -403,7 +403,6 @@ Found :: struct {
     hash:store.Hash,
     final:bool,
     fast_here:bool, // a Fast build is here, which a Final one was required over
-    unreadable:string, // the compressor a build here needs and this engine lacks: as if it were not here
 }
 
 // The build of p under key this store has whole: Final, or Fast when Fast
@@ -419,10 +418,6 @@ build_here :: proc(l:^Library_State,p:^asset.Package,key:store.Hash) -> (f:Found
         if ref_error!=.None {continue}
         b,error:=asset.build_get(s,hash,l.temp)
         if error!=.None || b.package_id!=p.id || b.key!=key || b.final!=(at==0) {continue}
-        if !asset.build_readable(&b) {
-            f.unreadable=b.compressor
-            continue
-        }
         whole:=true
         for o in b.outputs {whole&&=asset.object_whole(s,o.object)}
         if !whole {continue}
@@ -448,7 +443,6 @@ build_found :: proc(l:^Library_State,p:^asset.Package,manifest,key:store.Hash,ke
     if ref_error!=.None {return}
     b,error:=asset.build_get(s,hash,l.temp)
     if error!=.None || b.package_id!=p.id {return}
-    if !asset.build_readable(&b) {return {unreadable=b.compressor},false}
     for o in b.outputs {
         if !asset.object_whole(s,o.object) {return}
     }
@@ -655,8 +649,6 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
         switch {
         case !keyed:
             report_line(&report.missing,"package %s: no plugin of the project imports it as %q, so its build cannot be found by key: activate the plugin that imports it, or ingest its source (%s) with this engine",p.name,p.origin.importer,p.origin.path)
-        case f.unreadable!="":
-            report_line(&report.missing,"package %s: its build (import key %s) uses the formats of the compressor %q, which this engine cannot decode: a machine with its source (%s) must ingest it with this engine, or with the open compression",p.name,store.hex(key,&digits),f.unreadable,p.origin.path)
         case f.fast_here:
             report_line(&report.missing,"package %s: only a build with Fast textures is here, and Final is required: a machine with its source (%s) must ingest it with this engine, or a peer that has its Final build (import key %s) must give it",p.name,p.origin.path,store.hex(key,&digits))
         case:

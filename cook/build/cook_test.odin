@@ -134,7 +134,7 @@ a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc
     manifest:=fmt.tprintf("%s/project/%s",folder,COOK_FILE)
 
     // Without cook.mirai the scenes and the prefabs are the roots.
-    report:=cook_assets({assets=assets,output=output,manifest=manifest,allocator=context.temp_allocator})
+    report:=cook_assets({assets=assets,output=output,manifest=manifest,codecs=.Open,allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)
     kept,dropped:=names(&report)
     testing.expect_value(t,kept,"materials/wood.mat models/crate.mesh prefabs/prop.scene scenes/main.scene textures/wood_color.tex textures/wood_normal.tex ")
@@ -568,8 +568,10 @@ a_cook_writes_again_only_what_is_made_of_what_changed :: proc(t:^testing.T) {
     }
 }
 
-// What a cook writes is compressed as its project allows and reads back: nothing, or streams of
-// the formats of the codecs it allows, with the layouts of blocks only of the best.
+// What a cook writes is compressed as its project allows and reads back as what the project
+// holds: nothing, or streams of the formats of the codecs it allows, with the layouts of blocks
+// only of the best. The cook is where the container's own compression is made: the project keeps
+// its assets written without a compressor.
 @(test)
 a_cook_compresses_as_its_project_says_and_what_it_writes_decodes :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -602,6 +604,18 @@ a_cook_compresses_as_its_project_says_and_what_it_writes_decodes :: proc(t:^test
                 _,laid:=asset.asset_table(&a,asset.TEXTURE_TABLE_LAYOUTS)
                 testing.expect(t,!laid || codecs==.Best,"layouts only of the best codecs")
             }
+            if file.compressed || file.resolved {continue}
+            // Written again without a compressor, the file shipped is the one the project holds.
+            source,_:=os.read_entire_file(fmt.tprintf("%s/%s",assets,file.path),context.temp_allocator)
+            shipped,_:=os.read_entire_file(path,context.temp_allocator)
+            header,_:=asset.header_read(source)
+            raw :: proc(bytes:[]u8,types:^asset.Types,texture:bool) -> []u8 {
+                out:[]u8
+                if texture {out,_=asset.texture_repack(bytes,types,.Fast,context.temp_allocator)} else {out,_=asset.document_repack(bytes,.Fast,.None,context.temp_allocator)}
+                return out
+            }
+            want,got:=raw(source,&types,header.kind==asset.KIND_TEXTURE),raw(shipped,&types,header.kind==asset.KIND_TEXTURE)
+            testing.expectf(t,len(want)>0 && string(want)==string(got),"%s ships what the project holds (%v)",file.path,codecs)
         }
         testing.expect(t,(streams==0)==(codecs==.None),"something compresses unless nothing may")
     }

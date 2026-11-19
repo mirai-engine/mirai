@@ -166,6 +166,7 @@ Stage :: struct {
     frames:[dynamic]Staged,
     align:int,
     time:i64,
+    coder:^Coder, // of the puts that stage into it, made the first time one encodes
 }
 
 @(private)
@@ -199,16 +200,24 @@ head_end :: proc "contextless" (at:i64,head:Frame_Head) -> i64 {
 // alignment and sizes.
 @(private)
 head_valid :: proc "contextless" (head:^Frame_Head) -> bool {
-    if head.reserved!=0 || head.check!=hash.crc32(mem.ptr_to_bytes(head)[:44]) || head.codec!=0 {return false}
+    if head.reserved!=0 || head.check!=hash.crc32(mem.ptr_to_bytes(head)[:44]) || head.codec!=CODEC_NONE && head.kind!=.Chunk {return false}
     switch head.kind {
     case .Pad: return false
-    case .Chunk: return (head.align==ALIGN_SMALL || head.align==ALIGN_LARGE) && head.stored>=1 && head.stored<=CHUNK_MAX && head.raw==head.stored
+    case .Chunk: return (head.align==ALIGN_SMALL || head.align==ALIGN_LARGE) && sizes_valid(head.codec,head.stored,head.raw)
     case .Ref: return head.align==ALIGN_FRAME && head.stored>REF_FIXED && head.stored<=REF_FIXED+2*NAME_MAX && head.raw==head.stored
     case .Touch: return head.align==ALIGN_FRAME && head.stored==0 && head.raw==0
     case .Tombstone: return head.align==ALIGN_FRAME && head.stored==size_of(Tomb_Payload) && head.raw==head.stored
     case .Commit: return head.align==ALIGN_FRAME && head.stored==size_of(Commit_Payload) && head.raw==head.stored && head.address=={}
     }
     return false
+}
+
+// Whether a chunk frame's sizes are ones a writer writes: as they are, or
+// encoded smaller than the chunk.
+@(private)
+sizes_valid :: proc "contextless" (codec:u8,stored,raw:u32) -> bool {
+    if int(codec)>=CODECS_MAX || stored<1 || stored>CHUNK_MAX {return false}
+    return raw==stored if codec==CODEC_NONE else raw>stored && raw<=CHUNK_MAX
 }
 
 // What a commit sums of a frame: its head, the payload of one that is not a
@@ -225,12 +234,13 @@ stage_reset :: proc(st:^Stage) {
     st.align=1<<ALIGN_SMALL
 }
 
-// Appends a frame; data is copied.
+// Appends a frame; data is copied. A chunk's data is encoded by codec from
+// raw bytes, or with CODEC_NONE the chunk as it is.
 @(private)
-stage_frame :: proc(st:^Stage,kind:Frame_Kind,address:Hash,data:[]u8,data_time:i64=0) -> Error {
+stage_frame :: proc(st:^Stage,kind:Frame_Kind,address:Hash,data:[]u8,data_time:i64=0,codec:=u8(CODEC_NONE),raw:=0) -> Error {
     align:=u8(ALIGN_FRAME)
     if kind==.Chunk {align=ALIGN_LARGE if len(data)>=CHUNK_AVG else ALIGN_SMALL}
-    head:=Frame_Head{kind=kind,align=align,stored=u32(len(data)),raw=u32(len(data)),address=address}
+    head:=Frame_Head{kind=kind,codec=codec,align=align,stored=u32(len(data)),raw=u32(raw if codec!=CODEC_NONE else len(data)),address=address}
     head_seal(&head)
     at:=align_up(i64(len(st.bytes)),8)
     data_at:=head_data_at(at,head)
@@ -285,6 +295,7 @@ stage_give :: proc(s:^Store,st:^Stage) {
 
 @(private)
 stage_free :: proc(s:^Store,st:^Stage) {
+    if st.coder!=nil {coder_free(s,st.coder)}
     delete(st.bytes)
     delete(st.frames)
     free(st,s.state.allocator)
@@ -378,7 +389,7 @@ land_locked :: proc(s:^Store,st:^Stage,base:i64,sum:u64,written:Error,now:i64) -
         switch f.head.kind {
         case .Chunk:
             time:=f.data_time if f.data_time!=0 else now
-            frame.location={pack=u32(w.pack),offset=u64(head_data_at(at,f.head)),stored=f.head.stored,raw=f.head.raw,align=f.head.align,time=time}
+            frame.location={pack=u32(w.pack),offset=u64(head_data_at(at,f.head)),stored=f.head.stored,raw=f.head.raw,codec=f.head.codec,align=f.head.align,time=time}
         case .Ref,.Touch,.Tombstone,.Commit,.Pad:
             frame.location={offset=u64(at),time=now}
         }
@@ -710,7 +721,7 @@ writer_redo_locked :: proc(s:^Store,from:i64,now:i64) -> Error {
         if f.kind==.Chunk {
             data:=buffer[:f.location.stored]
             read_exact(old,data,i64(f.location.offset)) or_return
-            stage_frame(st,.Chunk,f.address,data,f.location.time) or_return
+            stage_frame(st,.Chunk,f.address,data,f.location.time,f.location.codec,int(f.location.raw)) or_return
             continue
         }
         head:Frame_Head

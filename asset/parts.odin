@@ -9,12 +9,16 @@ import "mirai:std/serial"
 import "mirai:store"
 
 // A native asset of a package lives in the store as an object: one group per
-// container chunk in the order of the directory, holding the chunk as the
-// file stores it and cut where the format has pieces it reads alone, and the
-// header and the directory as the meta of the root. Nothing is compressed
-// twice, and the file is the meta, then each group at the offset of its chunk
-// with zeros between them: loading the object and saving a file gives the
-// bytes that were put.
+// container chunk in the order of the directory, cut where the format has
+// pieces it reads alone, and the header and the directory as the meta of the
+// root. The object holds its file as a write with Codecs.None makes it: no
+// chunk, block or page goes through a stage of a compressor, and each kind's
+// own modeling (BC blocks, planes of their fields, the coding of mesh pages and
+// of terrain pages) is chosen without one; the store compresses each chunk
+// where it rests. So the same asset is the same object for every compressor.
+// The file is the meta, then each group at the offset of its chunk with zeros
+// between them: loading the object and saving a file gives the bytes that were
+// put once written so.
 
 // The most chunks an asset of the store has: its header and directory fit in the meta of a root.
 OBJECT_CHUNKS_MAX :: (int(max(u16))-HEADER_SIZE)/CHUNK_ENTRY_SIZE
@@ -30,8 +34,20 @@ Asset_Object :: struct {
 // Puts the file of an asset held in data as an object into the batch of s,
 // without committing. The file is checked whole, its hash too, before any
 // of it goes in.
-object_put :: proc(s:^store.Store,data:[]u8) -> (address:store.Hash,error:Error) {
+object_put :: proc(s:^store.Store,original:[]u8) -> (address:store.Hash,error:Error) {
     if s==nil {return {},.Invalid}
+    data:=original
+    // The file as it arrived is checked: what is written again from it carries a hash of its own.
+    {
+        arrived:Blob
+        arrived,error=blob_open(original)
+        if error!=.None {return}
+        if !blob_verify_hash(&arrived) {return {},.Hash}
+    }
+    if !(object_raw(data) or_return) {
+        data=object_raw_write(data) or_return
+    }
+    defer if raw_data(data)!=raw_data(original) {mem.free_bytes(data,context.temp_allocator)}
     a:Asset
     asset_open(&a,data,context.temp_allocator) or_return
     defer asset_close(&a)
@@ -59,6 +75,63 @@ object_put :: proc(s:^store.Store,data:[]u8) -> (address:store.Hash,error:Error)
     }
     root,_,finish_error:=store.put_finish(&p,data[:HEADER_SIZE+count*CHUNK_ENTRY_SIZE])
     return root,store_error(finish_error)
+}
+
+// Whether a file is as a write with Codecs.None makes it: no chunk is a
+// stream, every block of a table of blocks and every page of a mesh is stored
+// as it is, and a texture has no layouts and the planes the kind chooses.
+@(private="file")
+object_raw :: proc(data:[]u8) -> (raw:bool,error:Error) {
+    a:Asset
+    asset_open(&a,data,context.temp_allocator) or_return
+    defer asset_close(&a)
+    for i in 0..<int(a.blob.header.chunk_count) {
+        if blob_chunk(&a.blob,i).compression!=.None {return false,.None}
+    }
+    types:Types
+    types_init(&types,context.temp_allocator)
+    defer types_destroy(&types)
+    switch a.blob.header.kind {
+    case KIND_TEXTURE:
+        if _,laid:=asset_table(&a,TEXTURE_TABLE_LAYOUTS);laid {return false,.None}
+        info:=asset_row(&a,&types,"texture",Texture_Info) or_return
+        planes:=texture_fields_format(info.format) && .Fast not_in info.flags
+        return planes==(.Fields in info.flags),.None
+    case KIND_MESH:
+        pages:=table_rows(&a,&types,"pages",Mesh_Page) or_return
+        page_data:=table_rows(&a,&types,"page_data",u8) or_return
+        for page in pages {
+            if u64(page.data_offset)+u64(page.data_bytes)>u64(len(page_data)) {return false,.Corrupt}
+            if page.data_bytes>0 && !pack_matches(page_data[page.data_offset:][:page.data_bytes],.Fast,.None) {return false,.None}
+        }
+    }
+    for &table in a.tables {
+        if !strings.has_suffix(table.name,"_pages") || len(table.columns)!=1 || table.columns[0].size!=size_of(Block_Record) {continue}
+        blocks_table,found:=asset_table(&a,strings.concatenate({table.name[:len(table.name)-len("_pages")],"_blocks"},context.temp_allocator))
+        if !found || len(blocks_table.columns)!=1 {continue}
+        records:=asset_column_data(&a,&table,0) or_return
+        blocks:=asset_column_data(&a,blocks_table,0) or_return
+        for at:=0;at+size_of(Block_Record)<=len(records);at+=size_of(Block_Record) {
+            record:=intrinsics.unaligned_load((^Block_Record)(raw_data(records[at:])))
+            if record.size==0 {continue}
+            if record.offset>u64(len(blocks)) || record.size>u64(len(blocks))-record.offset {return false,.Corrupt}
+            if !pack_matches(blocks[record.offset:][:record.size],.Fast,.None) {return false,.None}
+        }
+    }
+    return true,.None
+}
+
+// A file written again as Codecs.None writes it, in the temporary allocator.
+@(private="file")
+object_raw_write :: proc(data:[]u8) -> (raw:[]u8,error:Error) {
+    header:=header_read(data) or_return
+    if header.kind==KIND_TEXTURE {
+        types:Types
+        types_init(&types,context.temp_allocator)
+        defer types_destroy(&types)
+        return texture_repack(data,&types,.Fast,context.temp_allocator)
+    }
+    return document_repack(data,.Fast,.None,context.temp_allocator)
 }
 
 // object_put of the file at path.
