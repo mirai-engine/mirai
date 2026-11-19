@@ -65,6 +65,7 @@ Foliage_Type :: struct {
     fade_distance:f32 `mirai:"min=0,unit=m"`, // from the eye, where it starts to fade out
     cull_distance:f32 `mirai:"min=0,unit=m"`, // where it is gone; 0: never
     wind:f32 `mirai:"min=0"`,      // how much the wind moves it; its vertex colors weigh it
+    flutter:f32 `mirai:"min=0"`,   // how much the wind flutters its leaves on top, by the red and the green of its vertex colors; 0: they move with it
     casts_shadow:bool,
     ray_visible:bool,              // reflections and the indirect light see it
     impostor_distance:f32 `mirai:"min=0,unit=m"`, // from the eye, where its mesh gives way to its impostor and its shadows to its crown; 0: none
@@ -379,7 +380,7 @@ finite :: proc "contextless" (v:f32) -> bool {return v-v==0}
 type_valid :: proc (type:Foliage_Type,next:u32) -> bool {
     t:=type
     if t.id>=next || len(serial.text_field(t.name[:]))>=len(t.name) {return false}
-    values:=[?]f32{t.density,t.scale[0],t.scale[1],t.height[0],t.height[1],t.yaw,t.tilt,t.align,t.fade_distance,t.cull_distance,t.wind,t.size.x,t.size.y,t.size.z,t.impostor_distance}
+    values:=[?]f32{t.density,t.scale[0],t.scale[1],t.height[0],t.height[1],t.yaw,t.tilt,t.align,t.fade_distance,t.cull_distance,t.wind,t.flutter,t.size.x,t.size.y,t.size.z,t.impostor_distance}
     for v in values {if !finite(v) || v<0 {return false}}
     if !finite(t.radius) || t.radius<0 || t.radius*t.scale[1]>RADIUS_MAX {return false}
     if t.density>1000 || t.scale[0]<=0 || t.scale[1]<t.scale[0] || t.height[0]<=0 || t.height[1]<t.height[0] || t.align>1 {return false}
