@@ -24,7 +24,7 @@ store_sweep :: proc(s:^store.Store,live:[]store.Hash,now:Maybe(time.Time)=nil) -
             b,build_error:=build_get(s,ref.hash,context.temp_allocator)
             if build_error!=.None {continue}
             for o in b.outputs {
-                append(&held,o.blob)
+                append(&held,o.object)
                 if o.thumbnail!={} {append(&held,o.thumbnail)}
             }
         }

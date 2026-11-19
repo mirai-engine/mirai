@@ -36,13 +36,35 @@ sample_package :: proc() -> Package {
     return p
 }
 
+// The object of a small texture whose id is id.
+@(private="file")
+texture_object :: proc(t:^testing.T,s:^store.Store,types:^Types,id:base.Asset_Id) -> store.Hash {
+    pixels:[16]u8
+    doc:Document
+    if !testing.expect_value(t,texture_document(&doc,types,{id=id,width=2,height=2,format=.RGBA8,mips={pixels[:]}},context.temp_allocator),Error.None) {return {}}
+    defer document_destroy(&doc)
+    bytes,_:=document_bytes(&doc,context.temp_allocator)
+    object,error:=object_put(s,bytes)
+    testing.expect_value(t,error,Error.None)
+    testing.expect_value(t,store.commit(s),store.Error.None)
+    return object
+}
+
+// Whether the store keeps the manifest pinned by hash.
+@(private="file")
+manifest_kept :: proc(s:^store.Store,hash:store.Hash) -> bool {
+    digits:[64]u8
+    object,error:=store.ref_get(s,REF_MANIFESTS,store.hex(hash,&digits))
+    return error==.None && object_whole(s,object)
+}
+
 @(private="file")
 sample_build :: proc(p:^Package,blobs:[]store.Hash) -> Build {
     b:=Build{package_id=p.id,key=hash_of("key"),final=true,encoders=0x0123456789abcdef}
     b.outputs=make([dynamic]Build_Output,context.temp_allocator)
     for &a,at in p.assets {
         info,_:=kind_info(a.kind)
-        append(&b.outputs,Build_Output{id=a.id,kind=a.kind,kind_version=info.version,blob=blobs[at%len(blobs)],thumbnail=at==0?hash_of("thumb"):{}})
+        append(&b.outputs,Build_Output{id=a.id,kind=a.kind,kind_version=info.version,object=blobs[at%len(blobs)],thumbnail=at==0?hash_of("thumb"):{}})
     }
     return b
 }
@@ -99,7 +121,7 @@ package_records_read_back_what_they_write :: proc(t:^testing.T) {
     s,open_error:=store.open(fmt.tprintf("%s/store",folder),context.temp_allocator)
     if !testing.expect_value(t,open_error,store.Error.None) {return}
     put,put_error:=package_put(&s,&p)
-    testing.expect(t,put_error==.None && put==hash_of(text),"a manifest is the blob of its text")
+    testing.expect(t,put_error==.None && put==hash_of(text),"a manifest is pinned by the hash of its text")
     got,get_error:=package_get(&s,put,context.temp_allocator)
     testing.expect(t,get_error==.None && got.id==p.id,"and reads back from the store")
     _,missing:=package_get(&s,hash_of("nothing"),context.temp_allocator)
@@ -122,17 +144,17 @@ package_records_read_back_what_they_write :: proc(t:^testing.T) {
 }
 
 // The listing of a project comes from its list, the manifests and the build
-// each one's ref names, with the paths of the blobs. A package without a
+// each one's ref names, with the objects and their headers. A package without a
 // build is listed not built; a manifest the store lacks, a build that does not
 // read or an asset the manifest lacks is a problem of the result; nothing is
 // removed.
 @(test)
-packages_resolve_lists_the_blobs_of_what_a_project_uses :: proc(t:^testing.T) {
+packages_resolve_lists_the_objects_of_what_a_project_uses :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"packages-resolve");if folder=="" {return}
     s,open_error:=store.open(fmt.tprintf("%s/store",folder),context.temp_allocator)
     if !testing.expect_value(t,open_error,store.Error.None) {return}
-    mesh,_:=store.put_bytes(&s,transmute([]u8)string("mesh bytes"))
-    texture,_:=store.put_bytes(&s,transmute([]u8)string("texture bytes"))
+    types:Types;types_init(&types);defer types_destroy(&types)
+    mesh,texture:=texture_object(t,&s,&types,{3,3}),texture_object(t,&s,&types,{5,5})
     p:=sample_package()
     manifest,_:=package_put(&s,&p)
     blobs:=[6]store.Hash{mesh,mesh,mesh,texture,mesh,texture}
@@ -151,7 +173,7 @@ packages_resolve_lists_the_blobs_of_what_a_project_uses :: proc(t:^testing.T) {
     broken.assets=make([dynamic]Package_Asset,context.temp_allocator)
     append(&broken.assets,Package_Asset{kind=KIND_MESH,name="m",id={31,31}})
     broken_manifest,_:=package_put(&s,&broken)
-    not_a_build,_:=store.put_bytes(&s,transmute([]u8)string("not a build"))
+    not_a_build,_:=store.put(&s,transmute([]u8)string("not a build"))
     testing.expect_value(t,store.ref_set(&s,REF_BUILDS,store.hex(build_select(broken_manifest,&broken),&digits),not_a_build),store.Error.None)
 
     list:Packages
@@ -164,15 +186,13 @@ packages_resolve_lists_the_blobs_of_what_a_project_uses :: proc(t:^testing.T) {
     )
     resolved,error:=packages_resolve(&s,"",&list,context.temp_allocator)
     if !testing.expect_value(t,error,Error.None) {return}
-    mesh_path,_:=store.blob_path(&s,mesh,context.temp_allocator)
-    texture_path,_:=store.blob_path(&s,texture,context.temp_allocator)
-    Want :: struct {id:base.Asset_Id,path,file:string,state:Listed_State}
+    Want :: struct {id:base.Asset_Id,path:string,object:store.Hash,state:Listed_State,header:base.Asset_Id}
     wanted:=[]Want{
-        {{3,3},"kit/body.mesh",mesh_path,.Built},
-        {{5,5},"kit/wood (crate _kit__ü).tex",texture_path,.Built},
-        {{6,6},"kit/body (1).mesh","",.Not_Built},
-        {{21,21},"kit/wood (rock).tex","",.Not_Built},
-        {{31,31},"m.mesh","",.Not_Built},
+        {{3,3},"kit/body.mesh",mesh,.Built,{3,3}},
+        {{5,5},"kit/wood (crate _kit__ü).tex",texture,.Built,{5,5}},
+        {{6,6},"kit/body (1).mesh",{},.Not_Built,{}},
+        {{21,21},"kit/wood (rock).tex",{},.Not_Built,{}},
+        {{31,31},"m.mesh",{},.Not_Built,{}},
     }
     testing.expectf(t,len(resolved.listed)==len(wanted),"the cache assets used, with what they depend on: %v",resolved.listed)
     for w in wanted {
@@ -180,7 +200,7 @@ packages_resolve_lists_the_blobs_of_what_a_project_uses :: proc(t:^testing.T) {
         for l in resolved.listed {
             if l.id!=w.id {continue}
             found=true
-            testing.expectf(t,l.path==w.path && l.file==w.file && l.state==w.state,"%v is %s at %s (%v), not %s at %s (%v)",w.id,w.path,w.file,w.state,l.path,l.file,l.state)
+            testing.expectf(t,l.path==w.path && l.object==w.object && l.state==w.state && l.header.id==w.header,"%v is %s (%v), not %s (%v)",w.id,w.path,w.state,l.path,l.state)
         }
         testing.expectf(t,found,"%v is listed",w.id)
     }
@@ -192,7 +212,8 @@ packages_resolve_lists_the_blobs_of_what_a_project_uses :: proc(t:^testing.T) {
         for got in resolved.problems {seen||=got.package_id==want.package_id && got.asset==want.asset && got.code==want.code}
         testing.expectf(t,seen,"%v is reported",want)
     }
-    for blob in ([]store.Hash{mesh,texture,manifest,build,unbuilt,not_a_build}) {testing.expect(t,store.has(&s,blob),"resolving removes no blob")}
+    for object in ([]store.Hash{mesh,texture,build,not_a_build}) {testing.expect(t,object_whole(&s,object),"resolving removes no object")}
+    for pin in ([]store.Hash{manifest,unbuilt}) {testing.expect(t,manifest_kept(&s,pin),"nor a manifest")}
     _,ref_error:=store.ref_get(&s,REF_BUILDS,store.hex(build_select(manifest,&p),&digits))
     testing.expect_value(t,ref_error,store.Error.None)
 
@@ -334,10 +355,11 @@ a_root_carries_the_manifests_it_pins :: proc(t:^testing.T) {
     if !testing.expect_value(t,error,Error.None) {return}
     testing.expectf(t,len(resolved.problems)==0 && len(resolved.listed)==4,"%v %v",resolved.problems,resolved.listed)
     for l in resolved.listed {testing.expectf(t,l.state==.Not_Built,"%s is not built without a build",l.path)}
-    testing.expect(t,store.has(&fresh,manifest),"the manifest of the root goes into the store, at the address it pins")
+    testing.expect(t,manifest_kept(&fresh,manifest),"the manifest of the root goes into the store, under the hash it pins")
     lines,_:=root_packages(root,fresh.root,context.temp_allocator)
     testing.expectf(t,len(lines.listed)==4 && len(lines.problems)==1 && strings.contains(lines.problems[0],"crate"),"not built, said by package: %v",lines.problems)
-    testing.expect_value(t,store.remove(&fresh,manifest),store.Error.None)
+    digits:[64]u8
+    testing.expect_value(t,store.ref_remove(&fresh,REF_MANIFESTS,store.hex(manifest,&digits)),store.Error.None)
 
     file:=package_file(root,p.id)
     text,_:=package_text(&p,context.temp_allocator)
@@ -361,7 +383,7 @@ a_root_carries_the_manifests_it_pins :: proc(t:^testing.T) {
         id:[base.ASSET_ID_TEXT]u8
         testing.expectf(t,len(said.problems)==1 && strings.contains(said.problems[0],base.asset_id_format(p.id,id[:])),"case %d is said by package: %v",at,said.problems)
     }
-    testing.expect(t,!store.has(&fresh,manifest),"a file that is not its pin goes into no store")
+    testing.expect(t,!manifest_kept(&fresh,manifest),"a file that is not its pin goes into no store")
     testing.expect_value(t,package_file_remove(root,p.id),Error.None)
     testing.expect_value(t,package_file_remove(root,p.id),Error.None)
 }
@@ -376,10 +398,14 @@ store_sweep_keeps_what_refs_and_builds_reach :: proc(t:^testing.T) {
     now:=time.now()
     old:=time.time_add(now,-2*store.GRACE)
     put :: proc(s:^store.Store,text:string,at:time.Time) -> store.Hash {
-        hash,_:=store.put_bytes(s,transmute([]u8)text,at)
+        hash,_:=store.put(s,transmute([]u8)text,at)
+        store.commit(s,at)
         return hash
     }
-    mesh,texture,held,loose,cached:=put(&s,"mesh",old),put(&s,"texture",old),put(&s,"held",old),put(&s,"loose",old),put(&s,"cached",old)
+    // What nothing reaches is most of the pack, which a sweep compacts.
+    noise:=make([]u8,1<<20,context.temp_allocator)
+    for &n,at in noise {n=u8((at*2654435761)>>13)}
+    mesh,texture,held,loose,cached:=put(&s,"mesh",old),put(&s,"texture",old),put(&s,"held",old),put(&s,string(noise),old),put(&s,"cached",old)
     p:=sample_package()
     manifest,_:=package_put(&s,&p)
     blobs:=[2]store.Hash{mesh,texture}
@@ -392,7 +418,8 @@ store_sweep_keeps_what_refs_and_builds_reach :: proc(t:^testing.T) {
     store.ref_set(&s,"cache-thumbs","1",cached)
     swept,error:=store_sweep(&s,{held},now)
     testing.expect_value(t,error,store.Error.None)
-    testing.expect_value(t,swept.blobs,1)
-    for hash in ([]store.Hash{mesh,texture,held,cached,manifest,build}) {testing.expect(t,store.has(&s,hash))}
-    testing.expect(t,!store.has(&s,loose),"what nothing reaches goes")
+    testing.expect(t,swept.chunks>0)
+    for hash in ([]store.Hash{mesh,texture,held,cached,build}) {testing.expect(t,object_whole(&s,hash))}
+    testing.expect(t,manifest_kept(&s,manifest))
+    testing.expect(t,!store.chunk_has(&s,loose),"what nothing reaches goes")
 }

@@ -10,12 +10,13 @@ import "mirai:store"
 
 // The records of the imports kept in the machine store, as text:
 //
-// - Package: what one ingest of a source made, a blob of the store. Its id,
-//   where the source was, what the source and its settings are (identity) and
-//   each asset with its id. Nothing in it depends on the version of the
-//   engine. The import that ingests the source writes it and names it with
-//   the ref REF_PACKAGES/<id>.
-// - Build: the blob of each asset of one build of a package. The import that
+// - Package: what one ingest of a source made, an object of the store pinned
+//   by the BLAKE3 of its text, which the ref REF_MANIFESTS/<that hash> names.
+//   Its id, where the source was, what the source and its settings are
+//   (identity) and each asset with its id. Nothing in it depends on the
+//   version of the engine. The import that ingests the source writes it and
+//   names it with the ref REF_PACKAGES/<id>.
+// - Build: the object of each asset of one build of a package. The import that
 //   builds it writes it, names it with REF_IMPORTS/<import_key> (Final) or
 //   REF_IMPORTS_FAST/<import_key>, and the refresh of a project names the one
 //   it chose with REF_BUILDS/<build_select>, which a program that has no
@@ -36,11 +37,12 @@ PACKAGES_FILE :: "packages.mirai"
 PACKAGE_FILES :: "packages" // the folder of a root, beside PACKAGES_FILE, with <package id>.mirai of each manifest it pins
 PACKAGES_VERSION :: 2
 PACKAGE_MANIFEST_VERSION :: 1
-BUILD_MANIFEST_VERSION :: 1
+BUILD_MANIFEST_VERSION :: 2
 RECORD_BYTES :: 16<<20 // the most a record takes as text: a larger one is refused unread
 
 // Namespaces of the refs of the records.
 REF_PACKAGES :: "packages"         // <package id>: its manifest, on a machine that ingested it
+REF_MANIFESTS :: "manifests"       // <BLAKE3 of the text of a manifest>: its object, what a pin names
 REF_IMPORTS :: "imports"           // <import_key>: a build with Final textures, which peers share
 REF_IMPORTS_FAST :: "imports-fast" // <import_key>: a build with Fast textures, never shared
 REF_BUILDS :: "builds"             // <build_select>: the build the refresh of this machine chose
@@ -81,8 +83,8 @@ Build_Output :: struct {
     id:base.Asset_Id,
     kind:Fourcc,
     kind_version:u16,
-    blob:store.Hash,
-    thumbnail:store.Hash, // zero: none
+    object:store.Hash,    // of the asset (object_put)
+    thumbnail:store.Hash, // an object of its bytes; zero: none
 }
 
 Build :: struct {
@@ -313,8 +315,8 @@ build_text :: proc(b:^Build,allocator:=context.allocator) -> (text:string,error:
         kind_write(&w,o.kind)
         serial.text_write_raw(&w,", \"kind_version\": ")
         serial.text_write_int(&w,i64(o.kind_version))
-        serial.text_write_raw(&w,", \"blob\": ")
-        hash_write(&w,o.blob)
+        serial.text_write_raw(&w,", \"object\": ")
+        hash_write(&w,o.object)
         if o.thumbnail!={} {
             serial.text_write_raw(&w,", \"thumbnail\": ")
             hash_write(&w,o.thumbnail)
@@ -480,9 +482,9 @@ package_file :: proc(root:string,id:base.Asset_Id) -> string {
 
 // Writes the manifest the store keeps under entry.manifest to the file of
 // root for its package, unless the file already holds it. .Corrupt when that
-// blob is not a manifest of the package entry names.
+// object is not a manifest of the package entry names.
 package_file_save :: proc(s:^store.Store,root:string,entry:^Project_Package) -> Error {
-    text:=record_get(s,entry.manifest) or_return
+    text:=manifest_get(s,entry.manifest) or_return
     p:=package_parse(text,context.temp_allocator) or_return
     if p.id!=entry.id {return .Corrupt}
     path:=package_file(root,entry.id)
@@ -521,36 +523,61 @@ package_load :: proc(s:^store.Store,root:string,entry:^Project_Package,allocator
     if error==.Not_Found && kept {
         p,error=package_parse(string(file),allocator)
         if error!=.None {return {},error}
-        if _,put_error:=store.put_bytes(s,file);put_error!=.None {return {},store_error(put_error)}
+        manifest_put(s,file) or_return
     }
     if error==.None && p.id!=entry.id {return {},.Corrupt}
     return
 }
 
-// Keeps a manifest in the store, by the hash of its text.
+// Keeps a manifest in the store: hash, what pins it, is the BLAKE3 of its text.
 package_put :: proc(s:^store.Store,p:^Package) -> (hash:store.Hash,error:Error) {
     text:=package_text(p,context.temp_allocator) or_return
-    put_error:store.Error
-    hash,put_error=store.put_bytes(s,transmute([]u8)text)
-    return hash,store_error(put_error)
+    return manifest_put(s,transmute([]u8)text)
 }
 
-// The manifest the store keeps under hash, in allocator. .Not_Found without it.
+// The manifest the store keeps under the hash of its text, in allocator. .Not_Found without it.
 package_get :: proc(s:^store.Store,hash:store.Hash,allocator:=context.allocator) -> (p:Package,error:Error) {
-    text:=record_get(s,hash) or_return
+    text:=manifest_get(s,hash) or_return
     return package_parse(text,allocator)
 }
 
-build_put :: proc(s:^store.Store,b:^Build) -> (hash:store.Hash,error:Error) {
-    text:=build_text(b,context.temp_allocator) or_return
-    put_error:store.Error
-    hash,put_error=store.put_bytes(s,transmute([]u8)text)
-    return hash,store_error(put_error)
+// Keeps the text of a manifest as an object named by the ref REF_MANIFESTS/<its BLAKE3>, committed.
+@(private="file")
+manifest_put :: proc(s:^store.Store,text:[]u8) -> (hash:store.Hash,error:Error) {
+    hash=store.address_of_bytes(text)
+    object:=record_put(s,text) or_return
+    digits:[64]u8
+    return hash,store_error(store.ref_set(s,REF_MANIFESTS,store.hex(hash,&digits),object))
 }
 
-build_get :: proc(s:^store.Store,hash:store.Hash,allocator:=context.allocator) -> (b:Build,error:Error) {
-    text:=record_get(s,hash) or_return
+// The text of the manifest pinned by hash, only when it still hashes to it, in the temp allocator.
+@(private="file")
+manifest_get :: proc(s:^store.Store,hash:store.Hash) -> (text:string,error:Error) {
+    digits:[64]u8
+    object,ref_error:=store.ref_get(s,REF_MANIFESTS,store.hex(hash,&digits))
+    if ref_error!=.None {return "",store_error(ref_error)}
+    text=record_get(s,object) or_return
+    if store.address_of_bytes(transmute([]u8)text)!=hash {return "",.Hash}
+    return text,.None
+}
+
+// Keeps a build in the store: the address of its object, which refs name.
+build_put :: proc(s:^store.Store,b:^Build) -> (object:store.Hash,error:Error) {
+    text:=build_text(b,context.temp_allocator) or_return
+    return record_put(s,transmute([]u8)text)
+}
+
+build_get :: proc(s:^store.Store,object:store.Hash,allocator:=context.allocator) -> (b:Build,error:Error) {
+    text:=record_get(s,object) or_return
     return build_parse(text,allocator)
+}
+
+// Puts the text of a record as an object, without committing: the ref that names it commits it.
+record_put :: proc(s:^store.Store,text:[]u8) -> (object:store.Hash,error:Error) {
+    if len(text)>RECORD_BYTES {return {},.Too_Large}
+    put_error:store.Error
+    object,put_error=store.put(s,text)
+    return object,store_error(put_error)
 }
 
 Listed_State :: enum u8 {
@@ -560,12 +587,14 @@ Listed_State :: enum u8 {
 
 // An asset of the cache a project lists from its packages.
 Package_Listed :: struct {
-    path:string, // in the registry: <folder>/<name><extension>, as listed_path makes it
-    file:string, // the blob that holds it; "" when not built
+    path:string,   // in the registry: <folder>/<name><extension>, as listed_path makes it
+    object:store.Hash, // the object of the store that holds it; zero when not built
     id:base.Asset_Id,
     kind:Fourcc,
     package_id:base.Asset_Id,
     state:Listed_State,
+    header:Header, // of the object when built: zero when it does not read
+    dependencies:[]base.Asset_Id, // what its header and directory name, when built
 }
 
 Package_Problem_Code :: enum u8 {
@@ -597,7 +626,7 @@ Resolved_Package :: struct {
 }
 
 // What a project lists from the packages it uses: each asset of the cache it
-// uses, with what they depend on, at its path, and the blob of the build
+// uses, with what they depend on, at its path, and the object of the build
 // REF_BUILDS names for its manifest, or Not_Built. Documents are files of the
 // project and are not listed. The manifests come from the store or from the
 // files of root (package_load; "": the store alone). A manifest or a build
@@ -684,9 +713,15 @@ packages_resolve :: proc(s:^store.Store,root:string,list:^Packages,allocator:=co
             listed:=Package_Listed{id=a.id,kind=a.kind,package_id=p.id,state=.Not_Built}
             listed.path=clone(listed_path(folder,a.name,a.index,repeated,info.extension),allocator) or_return
             if o,found:=outputs[a.id];found && o.kind==a.kind && o.kind_version==info.version {
-                file,path_error:=store.blob_path(s,o.blob,allocator)
-                if path_error==.Out_Of_Memory {return {},.Out_Of_Memory}
-                if path_error==.None {listed.file,listed.state=file,.Built}
+                dependencies:=make([dynamic]base.Asset_Id,allocator)
+                header,header_error:=object_header(s,o.object,&dependencies)
+                #partial switch header_error {
+                case .Out_Of_Memory: return {},.Out_Of_Memory
+                case .Not_Here:
+                case .None: listed.object,listed.state,listed.header,listed.dependencies=o.object,.Built,header,dependencies[:]
+                // An object that does not read is listed for the registry to tell it is broken.
+                case: listed.object,listed.state=o.object,.Built
+                }
             }
             if _,no_room:=append(&resolved.listed,listed);no_room!=nil {return {},.Out_Of_Memory}
             if _,no_room:=append(&names,p.name);no_room!=nil {return {},.Out_Of_Memory}
@@ -974,7 +1009,7 @@ asset_read :: proc(r:^serial.Text_Reader,allocator:runtime.Allocator) -> (a:Pack
 
 @(private="file")
 output_read :: proc(r:^serial.Text_Reader) -> (o:Build_Output,error:Error) {
-    Field :: enum {Id,Kind,Kind_Version,Blob,Thumbnail}
+    Field :: enum {Id,Kind,Kind_Version,Object,Thumbnail}
     seen:bit_set[Field]
     expect(r,'{') or_return
     for first:=true;!serial.text_accept(r,'}');first=false {
@@ -985,7 +1020,7 @@ output_read :: proc(r:^serial.Text_Reader) -> (o:Build_Output,error:Error) {
         case "id": field=.Id
         case "kind": field=.Kind
         case "kind_version": field=.Kind_Version
-        case "blob": field=.Blob
+        case "object": field=.Object
         case "thumbnail": field=.Thumbnail
         case: return {},.Corrupt
         }
@@ -995,13 +1030,13 @@ output_read :: proc(r:^serial.Text_Reader) -> (o:Build_Output,error:Error) {
         case .Id: o.id=id_read(r) or_return
         case .Kind: o.kind=kind_read(r) or_return
         case .Kind_Version: o.kind_version=u16(count_read(r,u64(max(u16))) or_return)
-        case .Blob: o.blob=hash_read(r) or_return
+        case .Object: o.object=hash_read(r) or_return
         case .Thumbnail:
             o.thumbnail=hash_read(r) or_return
             if o.thumbnail=={} {return {},.Corrupt}
         }
     }
-    if seen&{.Id,.Kind,.Kind_Version,.Blob}!={.Id,.Kind,.Kind_Version,.Blob} {return {},.Corrupt}
+    if seen&{.Id,.Kind,.Kind_Version,.Object}!={.Id,.Kind,.Kind_Version,.Object} {return {},.Corrupt}
     return o,.None
 }
 
@@ -1074,15 +1109,16 @@ written_read :: proc(r:^serial.Text_Reader) -> (written:Package_Written,error:Er
     return written,.None
 }
 
-// The text of the record the store keeps under hash, in the temp allocator.
-@(private="file")
-record_get :: proc(s:^store.Store,hash:store.Hash) -> (text:string,error:Error) {
-    size,size_error:=store.blob_size(s,hash)
-    if size_error!=.None {return "",store_error(size_error)}
+// The text of the record the store keeps as the object at address, in the temp allocator.
+record_get :: proc(s:^store.Store,address:store.Hash) -> (text:string,error:Error) {
+    o,open_error:=store.object_open(s,address)
+    if open_error!=.None {return "",store_error(open_error)}
+    defer store.object_close(&o)
+    size:=store.object_size(&o)
     if size>RECORD_BYTES {return "",.Too_Large}
     bytes,no_room:=make([]u8,int(size),context.temp_allocator)
     if no_room!=nil {return "",.Out_Of_Memory}
-    if read_error:=store.read(s,hash,0,bytes);read_error!=.None {return "",store_error(read_error)}
+    if read_error:=store.object_read(&o,0,bytes);read_error!=.None {return "",store_error(read_error)}
     return string(bytes),.None
 }
 
@@ -1098,7 +1134,7 @@ file_error :: proc(error:serial.File_Error) -> Error {
     return .IO
 }
 
-@(private="file")
+@(private)
 store_error :: proc(error:store.Error) -> Error {
     switch error {
     case .None: return .None
