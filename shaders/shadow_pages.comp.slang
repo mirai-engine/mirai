@@ -768,7 +768,10 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         uint spent = shared_sums[lane] - four, reached = shared_reach_sums[lane] - four_reach;
         for (uint j = 0u; j < 4u; j++) {
             uint k = lane * 4u + j, key = shared_words[k], cost = shared_costs[k], reach = shared_reach[k];
-            bool kept = key < KEY_NEW || params.round == 0u;
+            // A page composed again for what sways in it comes after those kept and
+            // those that came, and fills the share as they do: the frame after,
+            // those go first again.
+            bool kept = key < KEY_NEW || (key & KEY_REFRESH) != 0u || params.round == 0u;
             bool granted = (key & KEY_WAITS) == 0u && (spent == 0u || ((kept ? spent + cost <= share : spent + 2u * cost <= share - share / GRANT_NEW) && reached + reach <= params.chunks));
             spent += cost;
             reached = min(reached + reach, SHADOW_COST_UNITS);

@@ -337,16 +337,23 @@ the_plan_of_the_shadow_maps_costs_little_while_everything_sways :: proc(t: ^test
 	eye := Vec3{0, 12, 0}
 	for _ in 0 ..< 4 {frame(r, b, meshes[:], eye, low, high, false)}
 	still_before := frame(r, b, meshes[:], eye, low, high, false)
+	ROUNDS :: 50
+	flying_before: time.Duration
+	for _ in 0 ..< ROUNDS {
+		eye.x += 0.25
+		flying_before += frame(r, b, meshes[:], eye, low, high, false)
+	}
+	eye.x = 0
+	for _ in 0 ..< 4 {frame(r, b, meshes[:], eye, low, high, false)}
 	// The wind starts.
 	first: time.Duration
 	for _ in 0 ..< 3 {first = max(first, frame(r, b, meshes[:], eye, low, high, true))}
 	for _ in 0 ..< 8 {frame(r, b, meshes[:], eye, low, high, true)}
-	ROUNDS :: 50
 	still, flying: time.Duration
 	for _ in 0 ..< ROUNDS {still += frame(r, b, meshes[:], eye, low, high, true)}
 	for _ in 0 ..< ROUNDS {
 		eye.x += 0.25
 		flying += frame(r, b, meshes[:], eye, low, high, true)
 	}
-	fmt.printfln("shadow plan, %d batches x %d swaying: before the wind %.3f ms; the first frames of the wind %.3f ms at most; swaying, still %.3f ms, flying %.3f ms a frame", BATCHES, INSTANCES, time.duration_milliseconds(still_before), time.duration_milliseconds(first), time.duration_milliseconds(still) / ROUNDS, time.duration_milliseconds(flying) / ROUNDS)
+	fmt.printfln("shadow plan, %d batches x %d swaying: before the wind %.3f ms still, %.3f ms flying; the first frames of the wind %.3f ms at most; swaying, still %.3f ms, flying %.3f ms a frame", BATCHES, INSTANCES, time.duration_milliseconds(still_before), time.duration_milliseconds(flying_before) / ROUNDS, time.duration_milliseconds(first), time.duration_milliseconds(still) / ROUNDS, time.duration_milliseconds(flying) / ROUNDS)
 }
