@@ -84,6 +84,9 @@ SHADOW_MOVER_FRAMES :: u64(30)
 // leave out the instances of a batch past its cull distance, as the view
 // does; while the eye stays in its cell, no instance comes or goes.
 SHADOW_CULL_STEP :: f32(8)
+// Metres: how far past its cell the eye may go before it takes another, so
+// that an eye that goes to and fro across the border of a cell takes none.
+SHADOW_CULL_MARGIN :: f32(2)
 // The units of raster work (abi.SHADOW_UNIT_TEXELS) the draws of the cache
 // of a view take in a frame, and those of its atlas, at least: what the least
 // GPU the engine runs on draws, masked, in a few milliseconds, a unit taking
@@ -740,13 +743,23 @@ shadow_cull_cell :: proc "contextless" (eye, origin: Vec3) -> (cell: [3]i32) {
 
 // The middle of a cell relative to the origin, and how much farther than its
 // cull distance an instance of a batch lies from it before the maps leave it
-// out: half the diagonal of the cell, so that what the view draws from any
-// eye within the cell casts.
+// out: half the diagonal of the cell grown by its margin, so that what the
+// view draws from any eye the cell holds casts.
 @(private)
 shadow_cull_eye :: proc "contextless" (cell: [3]i32, origin: Vec3) -> (eye: Vec4) {
 	for axis in 0 ..< 3 {eye[axis] = f32((f64(cell[axis]) + 0.5) * f64(SHADOW_CULL_STEP) - f64(origin[axis]))}
-	eye.w = 0.5 * SHADOW_CULL_STEP * math.SQRT_THREE
+	eye.w = 0.5 * (SHADOW_CULL_STEP + 2 * SHADOW_CULL_MARGIN) * math.SQRT_THREE
 	return
+}
+
+// Whether a cell still holds an eye relative to the origin: within its margin past it.
+@(private)
+shadow_cull_holds :: proc "contextless" (cell: [3]i32, eye, origin: Vec3) -> bool {
+	for axis in 0 ..< 3 {
+		at := f64(eye[axis]) + f64(origin[axis]) - f64(cell[axis]) * f64(SHADOW_CULL_STEP)
+		if at < -f64(SHADOW_CULL_MARGIN) || at > f64(SHADOW_CULL_STEP + SHADOW_CULL_MARGIN) {return false}
+	}
+	return true
 }
 
 // Whether the maps leave out every instance within a box of a batch whose
@@ -1043,6 +1056,7 @@ shadow_plan_casters :: proc(r: ^Renderer, b: ^Shadow_Raster, eye: Vec3, forget: 
 	// The cell of the eye the batches with a cull distance are left out from;
 	// where it changed, what stays changed where their instances came or went.
 	cell := shadow_cull_cell(eye, r.origin)
+	if b.culled && !forget && shadow_cull_holds(b.cull, eye, r.origin) {cell = b.cull}
 	plan.cull = shadow_cull_eye(cell, r.origin)
 	clear(&s.shadow_cull_boxes)
 	clear(&s.shadow_cull_cells)
@@ -1876,6 +1890,10 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	// not drawn (shadow_pages.comp).
 	seen := Shadow_Seen{view = p.unjittered, eye = p.frame.camera_position.xyz, size = {t.width, t.height, scale}, params = hash.fnv64a(([^]u8)(mark)[:size_of(T)]), lights = s.light_grid_placed, pool = b.pool}
 	full := made || plan.whole || b.whole || plan.changed || plan.box_count > 0 || seen != b.seen
+	// A view that moves keeps for the frames of the cycle of its jitter only
+	// the pages it read the frame before: those it left behind give their
+	// place to those it reads now.
+	keep := max(p.jitter_phases, 1) if seen.view == b.seen.view && seen.eye == b.seen.eye else min(max(p.jitter_phases, 1), 2)
 	b.seen, b.whole = seen, plan.whole
 	if full {b.settle = max(p.jitter_phases, 1)}
 	marking := b.settle > 0
@@ -1903,7 +1921,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 		frame = b.frame, rows = plan.rows, plan = plan.plan, boxes = plan.boxes, box_count = plan.box_count, sun = plan.sun >> 16,
 		pool = b.pool if b.pool != 0 else abi.SHADOW_POOL_PAGES, fresh = 1 if made else 0, full = 1 if full else 0, slots = plan.slots, slot_count = plan.slot_count,
 		reach = plan.reach, threads = shadow_frame_units(r, b),
-		keep = max(p.jitter_phases, 1),
+		keep = keep,
 		budget = shadow_frame_units(r, b),
 		chunks = shadow_chunk_room(r, b),
 		moves = 1 if plan.whole || plan.moving_threads > 0 else 0,
