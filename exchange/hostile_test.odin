@@ -84,6 +84,7 @@ hostile_messages_are_refused_without_a_crash :: proc(t:^testing.T) {
         {LANE_DATA,test_message({MSG_LACK},blob[:],test_le(0,4)),true},
         {LANE_DATA,{MSG_DONE},true},
         {LANE_DATA,{MSG_DONE,0},true},
+        {LANE_DATA,test_message({MSG_WHOLE},blob[:5]),true},
         // Nobody asked: ignored, counted against the peer.
         {LANE_DATA,test_message({MSG_TABLE},blob[:],test_le(1<<62,8)),false},
         {LANE_DATA,test_message({MSG_TABLE},blob[:],test_le(2*store.PIECE_BYTES,8),zero[:]),false},
@@ -92,6 +93,7 @@ hostile_messages_are_refused_without_a_crash :: proc(t:^testing.T) {
         {LANE_DATA,test_message({MSG_PIECE},blob[:],test_le(9,4),big[:100]),false},
         {LANE_DATA,test_message({MSG_PIECE},other[:],test_le(1<<31,4),big[:100]),false},
         {LANE_DATA,test_message({MSG_TABLE},zero[:],test_le(10,8),zero[:]),false},
+        {LANE_DATA,test_message({MSG_WHOLE},other[:],big[:5]),false},
         {LANE_DATA,test_message({MSG_LACK},zero[:],test_le(0,4),test_le(0,4)),false},
         {LANE_CONTROL,test_message({MSG_REF_GET},test_name("secret"),test_name("a")),false},
         {LANE_CONTROL,test_message({MSG_NAMES_GET},test_name("lib"),{0}),false},

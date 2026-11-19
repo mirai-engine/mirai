@@ -20,7 +20,9 @@ headless peer and the editor link the same code. Its messages are in `exchange/w
   its store lease so a sweep keeps them; the exchange holds no lease.
 - `fetch` and `fetch_ref` block a job thread until the blob is complete in the store, or return
   `Missing` once no connected peer has it; the owner keeps pumping meanwhile, since every procedure
-  takes the exchange's lock. Success is what the store says now: a kept want whose blob was swept
+  takes the exchange's lock. `fetch_all` and `fetch_refs` do the same for a set, asked together:
+  a caller that needs many blobs or refs waits on the set, since each blocking call costs at least
+  a round trip. Success is what the store says now: a kept want whose blob was swept
   is asked again. `destroy` wakes every waiter with `Closed` and frees once none is left.
 
 ## Invariants
@@ -28,12 +30,17 @@ headless peer and the editor link the same code. Its messages are in `exchange/w
 - Requests are stateless, by address and runs of pieces; there is no session or fetch id. Any peer
   that has the pieces answers, also from a blob it is still receiving (`store.read` and
   `store.blob_table` work on partial blobs).
-- The answer to a blob carries its size, its table and its first pieces; adjacent pieces nobody
-  was asked for go as one run. A request is bounded by `REQUEST_ENTRIES` and `REQUEST_BYTES`.
+- A blob is asked with its first `FIRST_PIECES` pieces. A blob of no more comes back whole, taken
+  once its bytes hash to its address, so it needs no table and no partial blob; a larger one
+  comes back as its size, its table and those pieces, and a table of `FIRST_PIECES` pieces or
+  fewer is a lie. Adjacent pieces nobody was asked for go as one run. A request is bounded by
+  `REQUEST_ENTRIES` and `REQUEST_BYTES`.
 - Priority belongs to the receiver: it asks for the most important wants first and nothing about
   priority goes on the wire beyond the order of the entries. At most `BATCHES` requests are in
   flight per peer, each sized to what the peer delivers in a round trip, so they keep twice that
-  outstanding without queueing a low priority want ahead of a later high one.
+  outstanding without queueing a low priority want ahead of a later high one. A blob whose size is
+  not known yet counts only against the limits of a request, since most blobs are small: a
+  request carries as many of them as fit.
 - Pieces are spread among the connected peers that do not lack the blob; a peer that lacks it is
   not asked again for a while, and a want with no peer left to ask is `Missing`, asked again when
   a peer joins. What a peer was asked stays reserved to it only while it makes progress on that
@@ -46,10 +53,9 @@ headless peer and the editor link the same code. Its messages are in `exchange/w
   counts against that peer. A table that does not match its address, claims a size this end does
   not hold, or a piece that does not match its table, marks that peer wrong for that blob, never
   the want; a true last piece that proves the size wrong (`Wrong_Size`) marks whoever gave the
-  table, and the store drops only the partial blob. A table of one piece begins nothing: the piece
-  that came with it is put only if it hashes to the address, so a failed piece never blames a peer
-  for a table another gave. Marks are per peer and leave with it, never passing to the next peer
-  in its slot.
+  table, and the store drops only the partial blob. A whole blob that does not hash to its address
+  marks the peer that sent it. Marks are per peer and leave with it, never passing to the next
+  peer in its slot.
 - What a peer exposes is the owner's `Desc.expose`; without one no namespace is read. Names come
   sorted, a page at a time after the last one seen.
 - Hostile input: a malformed message, a request beyond the limits or an answer nobody could have
@@ -73,6 +79,8 @@ headless peer and the editor link the same code. Its messages are in `exchange/w
   `a_peer_still_receiving_a_blob_serves_its_pieces_to_a_third`,
   `refs_are_asked_and_listed_and_a_namespace_not_exposed_gives_nothing`,
   `the_blocking_form_returns_for_a_hit_a_miss_and_a_disconnect`,
+  `the_batch_blocking_forms_return_for_a_hit_a_partial_miss_and_a_disconnect`,
+  `many_small_blobs_wanted_together_take_round_trips_that_do_not_grow_with_their_count`,
   `hostile_messages_are_refused_without_a_crash`,
   `a_game_channel_keeps_its_delay_small_during_a_transfer`,
   `a_wrong_size_found_after_another_process_published_the_blob_keeps_it`,

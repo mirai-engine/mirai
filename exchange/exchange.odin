@@ -2,6 +2,7 @@ package exchange
 
 import "base:runtime"
 import "core:mem"
+import "core:slice"
 import "core:sync"
 import wire "mirai:net"
 import "mirai:store"
@@ -22,7 +23,7 @@ MAX_PEERS :: 64
 REQUEST_ENTRIES :: 64     // blobs and runs one request asks for
 REQUEST_BYTES :: 16<<20   // piece bytes one request asks for
 BATCHES :: 2              // requests in flight to a peer
-FIRST_PIECES :: 2         // pieces asked with the table of a blob
+FIRST_PIECES :: 4         // pieces asked with the table of a blob: a blob of at most these comes whole
 NAMES_PER_REPLY :: 128
 MAX_BLOB_BYTES :: 1<<40   // the largest max_blob_bytes, and what a request may address
 
@@ -32,7 +33,9 @@ MAX_BLOB_BYTES :: 1<<40   // the largest max_blob_bytes, and what a request may 
 @(private) DATA_QUEUE_BYTES :: 4<<20
 @(private) NAMES_REPLY_BYTES :: 16<<10
 @(private) MIN_BATCH_BYTES :: 1<<20
-@(private) QUERIES_PER_PEER :: 3
+@(private) QUERY_CREDITS :: 32 // questions a peer keeps waiting: a ref costs one, a listing NAMES_CREDITS, so their answers fit in CONTROL_BYTES
+@(private) NAMES_CREDITS :: 10
+@(private) FETCH_WINDOW :: 256 // blobs or refs a blocking form waits on at once
 @(private) LACK_RETRY :: 2.0    // s a peer that lacked a blob is not asked for it again
 @(private) STALL_SECONDS :: 5.0 // s a peer keeps what it was asked of a want without progress on it, before others are asked
 @(private) RATE_SECONDS :: 1.0  // time constant of the smoothed rates
@@ -115,7 +118,6 @@ Want :: struct {
     size:i64,
     count,had:int,
     table_peer:int, // the peer asked for the table, or that gave it; -1
-    claim:bool,     // table_peer gave a table of one piece: nothing is begun until the piece proves it
     wrong,lack:u64, // peers that lied about it, and that lack it
     lack_since:f64,
     misses:u32,     // times it went Missing
@@ -149,7 +151,7 @@ Peer :: struct {
     flight_head,flight_count:int,
     batch_sizes:[BATCHES]int,
     batch_head,batches:int,
-    queries:int,
+    queries:int, // credits of the questions asked of it and not answered
     // Serving: the entries of the requests received, oldest first.
     serve:[]Serve,
     serve_head,serve_count:int,
@@ -244,7 +246,7 @@ init :: proc(x:^Exchange,desc:Desc) -> Error {
         make_into(x,&w.have,words,&failed)
         make_into(x,&w.asked,words,&failed)
     }
-    data_bytes:=max(MSG_TABLE_HEAD+x.table_max*size_of(store.Hash),MSG_PIECE_HEAD+store.PIECE_BYTES)
+    data_bytes:=max(MSG_TABLE_HEAD+x.table_max*size_of(store.Hash),MSG_WHOLE_HEAD+FIRST_PIECES*store.PIECE_BYTES)
     for &p in x.peers {
         make_into(x,&p.flights,BATCHES*REQUEST_ENTRIES,&failed)
         make_into(x,&p.serve,BATCHES*(REQUEST_ENTRIES+1),&failed)
@@ -335,7 +337,7 @@ peer_drop :: proc(x:^Exchange,i:int) {
     p:=&x.peers[i]
     flights_release(x,i)
     for &w in x.wants {
-        if w.used && w.table_peer==i {w.table_peer,w.claim=-1,false}
+        if w.used && w.table_peer==i {w.table_peer=-1}
     }
     for &q in x.queries {
         if q.used && q.kind==.Names && q.peer==i {q.peer=-1}
@@ -360,7 +362,7 @@ peer_bad :: proc(x:^Exchange,i:int) {
     if p.bad {return}
     flights_release(x,i)
     for &w in x.wants {
-        if w.used && w.table_peer==i && !w.known {w.table_peer,w.claim=-1,false}
+        if w.used && w.table_peer==i && !w.known {w.table_peer=-1}
     }
     p.bad=true
     p.serve_count,p.out_len,p.out_sent,p.started=0,0,0,false
@@ -463,57 +465,124 @@ progress :: proc(x:^Exchange,address:store.Hash) -> (Progress,bool) {
 // has it (Missing). For job threads: the owner keeps calling update meanwhile.
 fetch :: proc(x:^Exchange,address:store.Hash,priority:=0) -> Error {
     sync.mutex_guard(&x.lock)
-    return fetch_locked(x,address,priority)
+    address:=address
+    return fetch_set(x,{address},priority)
+}
+
+// fetch of many blobs: wants them together, so they arrive in few round
+// trips, and returns once all are complete, at the first that no connected
+// peer has (Missing) or at the first error.
+fetch_all :: proc(x:^Exchange,addresses:[]store.Hash,priority:=0) -> Error {
+    sync.mutex_guard(&x.lock)
+    return fetch_set(x,addresses,priority)
 }
 
 // Returns the address peers name with namespace and name once its blob is
 // complete in the store, or Missing once no connected peer names it or has it.
 fetch_ref :: proc(x:^Exchange,namespace,name:string,priority:=0) -> (store.Hash,Error) {
-    sync.mutex_guard(&x.lock)
-    if x.closing {return {},.Closed}
-    q,error:=query_add(x,.Ref,namespace,name,-1)
-    if error!=.None {return {},error}
-    slot:=&x.queries[q.index]
-    slot.waiters+=1
-    x.waiting+=1
-    for slot.state==.Waiting && !x.closing {sync.cond_wait(&x.changed,&x.lock)}
-    slot.waiters-=1
-    x.waiting-=1
-    found,address:=slot.state==.Found,slot.address
-    slot.ended=true
-    if x.closing {
-        sync.cond_broadcast(&x.changed)
-        return {},.Closed
-    }
-    if !found {return {},.Missing}
-    return address,fetch_locked(x,address,priority)
+    names:=[1]string{name}
+    addresses:[1]store.Hash
+    error:=fetch_refs(x,namespace,names[:],addresses[:],priority)
+    return addresses[0],error
 }
 
-@(private)
-fetch_locked :: proc(x:^Exchange,address:store.Hash,priority:int) -> Error {
+// fetch_ref of many names, asked together: addresses (as long as names) gets
+// the address of each name peers name, {} for one none names, and the blobs
+// are fetched as with fetch_all. Missing when a name or a blob is missing.
+fetch_refs :: proc(x:^Exchange,namespace:string,names:[]string,addresses:[]store.Hash,priority:=0) -> Error {
+    sync.mutex_guard(&x.lock)
+    if len(addresses)!=len(names) {return .Invalid}
+    slice.zero(addresses)
     if x.closing {return .Closed}
-    i,error:=want_add(x,address,priority)
-    if error!=.None {return error}
-    w:=&x.wants[i]
-    w.waiters+=1
-    x.waiting+=1
-    misses:=w.misses
+    Held :: struct {query,name:int}
+    held:[FETCH_WINDOW]Held
+    count,next:=0,0
     result:Error
+    x.waiting+=1
     for {
-        if x.closing {result=.Closed;break}
-        if w.state==.Complete {break}
-        if w.state==.Failed {result=w.error;break}
-        if w.state==.Missing || w.misses!=misses {result=.Missing;break}
+        for next<len(names) && count<FETCH_WINDOW {
+            q,error:=query_add(x,.Ref,namespace,names[next],-1)
+            if error==.Full && count>0 {break}
+            if error!=.None {result=error;break}
+            x.queries[q.index].waiters+=1
+            held[count]={int(q.index),next}
+            count+=1
+            next+=1
+        }
+        for k:=0;k<count && result==.None; {
+            slot:=&x.queries[held[k].query]
+            if slot.state==.Waiting {k+=1;continue}
+            if slot.state==.Found {addresses[held[k].name]=slot.address} else {result=.Missing}
+            slot.waiters-=1
+            slot.ended=true
+            count-=1
+            held[k]=held[count]
+        }
+        if x.closing || result!=.None || count==0 && next==len(names) {break}
         sync.cond_wait(&x.changed,&x.lock)
     }
-    w.waiters-=1
+    for h in held[:count] {
+        x.queries[h.query].waiters-=1
+        x.queries[h.query].ended=true
+    }
     x.waiting-=1
     if x.closing {
         sync.cond_broadcast(&x.changed)
         return .Closed
     }
-    if !w.wanted && w.waiters==0 {want_release(x,i)}
+    if result!=.None {return result}
+    return fetch_set(x,addresses,priority)
+}
+
+// Waits on a window of the addresses at once, wanting the next as each completes.
+@(private)
+fetch_set :: proc(x:^Exchange,addresses:[]store.Hash,priority:int) -> Error {
+    if x.closing {return .Closed}
+    Held :: struct {want:int,misses:u32}
+    held:[FETCH_WINDOW]Held
+    count,next:=0,0
+    result:Error
+    x.waiting+=1
+    for {
+        for next<len(addresses) && count<FETCH_WINDOW {
+            i,error:=want_add(x,addresses[next],priority)
+            if error==.Full && count>0 {break}
+            if error!=.None {result=error;break}
+            x.wants[i].waiters+=1
+            held[count]={i,x.wants[i].misses}
+            count+=1
+            next+=1
+        }
+        for k:=0;k<count && result==.None; {
+            w:=&x.wants[held[k].want]
+            switch {
+            case w.state==.Complete:
+                fetch_let_go(x,held[k].want)
+                count-=1
+                held[k]=held[count]
+                continue
+            case w.state==.Failed: result=w.error
+            case w.state==.Missing || w.misses!=held[k].misses: result=.Missing
+            }
+            k+=1
+        }
+        if x.closing || result!=.None || count==0 && next==len(addresses) {break}
+        sync.cond_wait(&x.changed,&x.lock)
+    }
+    for h in held[:count] {fetch_let_go(x,h.want)}
+    x.waiting-=1
+    if x.closing {
+        sync.cond_broadcast(&x.changed)
+        return .Closed
+    }
     return result
+}
+
+@(private)
+fetch_let_go :: proc(x:^Exchange,i:int) {
+    w:=&x.wants[i]
+    w.waiters-=1
+    if !w.wanted && w.waiters==0 {want_release(x,i)}
 }
 
 // The addresses of every want, in progress or kept, into buffer (Desc.wants
@@ -588,19 +657,23 @@ connected_mask :: proc(x:^Exchange) -> (mask:u64) {
 queries_send :: proc(x:^Exchange) {
     connected:=connected_mask(x)
     for &q in x.queries {
-        if q.used && q.ended && q.asked&~q.answered&connected==0 {q.used=false}
+        if q.used && q.ended && q.asked&~q.answered&connected==0 {
+            q.used=false
+            x.dirty=true // a fetch_refs may wait for the slot
+        }
         if !q.used || q.ended || q.state!=.Waiting {continue}
         namespace,name:=string(q.namespace[:q.namespace_len]),string(q.name[:q.name_len])
         targets:=connected
         if q.kind==.Names {targets=q.peer<0?0:connected&(u64(1)<<uint(q.peer))}
         for &p,i in x.peers {
             bit:=u64(1)<<uint(i)
-            if targets&bit==0 || q.asked&bit!=0 || p.queries>=QUERIES_PER_PEER {continue}
+            cost:=q.kind==.Ref?1:NAMES_CREDITS
+            if targets&bit==0 || q.asked&bit!=0 || p.queries+cost>QUERY_CREDITS {continue}
             buffer:[MSG_NAMES_GET_MAX]u8
             message:=encode_question(buffer[:],q.kind==.Ref?MSG_REF_GET:MSG_NAMES_GET,namespace,name)
             if !control_append(&p,message) {continue}
             q.asked|=bit
-            p.queries+=1
+            p.queries+=cost
         }
         if targets&~q.answered==0 {
             q.state=.Not_Found
