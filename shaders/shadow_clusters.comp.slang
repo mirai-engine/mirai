@@ -104,6 +104,10 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     float4 texels;
     if (mesh.posed_word == INVALID || rest) {
         cluster_world_box(inst, mesh, c, low, high);
+        // What the vertex hook sways stays in its box grown by how far it sways.
+        float sway = !rest && instance_batched(instance) ? batch_sway(batch_row(batch_of(instance))) * instance_scale(inst) : 0.0;
+        low -= sway;
+        high += sway;
     } else {
         Posed_Bounds pose;
         if (posed_bounds(mesh, k, pose)) instance_world_box(inst, pose.low, pose.high, low, high);
