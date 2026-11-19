@@ -107,7 +107,6 @@ Test_Join :: struct {
     report:Join_Report,
     error:string,
     done:bool,
-    stop_at:int, // stop the node once the store has this many blobs of the snapshot; 0: never
     allocator:mem.Allocator,
 }
 
@@ -124,10 +123,14 @@ test_arena :: proc(t:^testing.T) -> mem.Allocator {
     return base.dynamic_arena_allocator(arena)
 }
 
-// Runs a join of peer k on a thread while the network steps, at most 600 virtual seconds.
+// Runs a join of peer k on a thread while the network steps, at most 600
+// virtual seconds. stop_bytes: in the step its node has received that many
+// piece bytes, peer k leaves (its client disconnects and it is pumped no
+// more) and its join is stopped, so nothing arrives after the stop whenever
+// the thread of the join notices it.
 @(private="file")
-test_join :: proc(t:^testing.T,w:^Test_Net,k:int,desc:Join_Desc,stop:^Snapshot=nil,stop_at:=0) -> (report:Join_Report,error:string) {
-    run:=Test_Join{desc=desc,stop_at=stop_at}
+test_join :: proc(t:^testing.T,w:^Test_Net,k:int,desc:Join_Desc,stop_bytes:u64=0) -> (report:Join_Report,error:string) {
+    run:=Test_Join{desc=desc}
     run.desc.node=&w.peers[k].n
     run.allocator=test_arena(t)
     run.desc.pace=1000
@@ -143,12 +146,15 @@ test_join :: proc(t:^testing.T,w:^Test_Net,k:int,desc:Join_Desc,stop:^Snapshot=n
             testing.expect(t,false,"the join did not end in 600 virtual seconds")
             node_stop(run.desc.node)
         }
-        if stop!=nil && stop_at>0 && steps%10==0 {
-            have:=0
-            for e in stop.entries {
-                if store.has(&w.peers[k].s,e.address) {have+=1}
+        if stop_bytes>0 && w.peers[k].pumped && node_totals(run.desc.node).received>=stop_bytes {
+            // As a process that ends: its client says goodbye and nothing more is read.
+            w.peers[k].pumped=false
+            node_stop(run.desc.node)
+            if c:=w.peers[k].client;c!=nil {
+                wire.host_disconnect(c,0,.Closed)
+                wire.host_poll(c)
+                wire.host_update(c,w.now)
             }
-            if have>=stop_at {node_stop(run.desc.node)}
         }
     }
     thread.join(th)
@@ -441,32 +447,30 @@ a_stopped_join_resumes_without_fetching_again_what_it_has :: proc(t:^testing.T) 
     defer test_net_destroy(&w)
     root:=fmt.tprintf("%s/host",w.folder)
     for k in 0..<8 {file_put(root,fmt.tprintf("data/%d.bin",k),noise(512<<10,u64(10+k)))}
-    s:=&w.peers[0].s
-    snap,_,_,_:=snapshot_take(s,root,"game",context.temp_allocator)
     if !host_offer(t,&w,root) {return}
     test_connect(&w,1,0)
     joined:=fmt.tprintf("%s/joined",w.folder)
-    _,stopped:=test_join(t,&w,1,join_desc(&w,0,joined),&snap,4)
-    testing.expect(t,stopped!="","the join was stopped")
-    have:i64
-    for e in snap.entries {
-        if store.has(&w.peers[1].s,e.address) {have+=e.size}
-    }
-    testing.expect(t,have>=4*(512<<10) && have<8*(512<<10),"it stopped in the middle")
+    TOTAL :: 8*(512<<10)
+    _,stopped:=test_join(t,&w,1,join_desc(&w,0,joined),TOTAL/2)
+    testing.expect(t,strings.contains(stopped,"stopped"),"the join was stopped")
+    first:=node_totals(&w.peers[1].n).received
+    testing.expectf(t,first>=TOTAL/2 && first<TOTAL,"it stopped in the middle: %d bytes",first)
 
     // Run again: a new node over the same store.
     node_destroy(&w.peers[1].n)
     if !testing.expect_value(t,node_init(&w.peers[1].n,&w.peers[1].s),.None) {return}
     node_host(&w.peers[1].n,w.peers[1].server)
+    w.peers[1].pumped=true
     wire.host_destroy(w.peers[1].client)
     free(w.peers[1].client)
     w.peers[1].client=nil
     test_connect(&w,1,0)
     report,error:=test_join(t,&w,1,join_desc(&w,0,joined))
     if !testing.expectf(t,error=="","%s",error) {return}
-    received:=node_totals(&w.peers[1].n).received
-    testing.expectf(t,i64(received)<=8*(512<<10)-have+(1<<20),"%d bytes received again, with %d here already",received,have)
-    testing.expect(t,report.fetched>0)
+    again:=node_totals(&w.peers[1].n).received
+    // What arrived before the stop is in the store, whole blobs and pieces of others: it is not asked again.
+    testing.expectf(t,first+again<=TOTAL+store.PIECE_BYTES,"%d bytes received again after %d",again,first)
+    testing.expect(t,report.fetched>0,"the resume fetched the rest")
     same_files(t,root,joined)
 }
 
