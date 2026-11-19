@@ -77,8 +77,8 @@ gpu_fixture_destroy :: proc(f: ^Gpu_Fixture) {
 }
 
 // Frames from a camera with the field the benders of the world trample and
-// the wind of the resident, a floor and the sun shining along `sun` (none:
-// the sky alone), and the pixels of the last.
+// the wind of the resident, a floor and the sun shining along `sun`, and the
+// pixels of the last.
 @(private = "file")
 view_frames :: proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera, sun: [3]f32, frames: int) -> (pixels: []u8, ok: bool) {
 	for _ in 0 ..< frames {
@@ -87,7 +87,7 @@ view_frames :: proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera, sun: [3]
 		render.frame_pass(&f.renderer, .Mask, foliage_wind_record, &f.resident)
 		// Wide enough that the levels of the sun near the eye are not its coarsest.
 		floor := gpu.Instance_Desc{object_id = 1, mesh = f.cube, transform = mm.transform_matrix({{0, -0.5, 0}, mm.QUAT_IDENTITY, {600, 1, 600}}), tint = {0.05, 0.05, 0.05}}
-		gpu.scene_set_environment(&f.renderer, {direction = -sun, color = {1, 1, 1}, illuminance = 3, indirect = 1, scattering = 1, enabled = sun != {}}, {sky = {0.4, 0.5, 0.6}})
+		gpu.scene_set_environment(&f.renderer, {direction = -sun, color = {1, 1, 1}, illuminance = 3, indirect = 1, scattering = 1, enabled = true}, {sky = {0.4, 0.5, 0.6}})
 		testing.expect(t, gpu.scene_update(&f.renderer, 0, {floor}, true), f.renderer.error)
 		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera}), f.renderer.error)
 	}
@@ -97,11 +97,11 @@ view_frames :: proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera, sun: [3]
 	return
 }
 
-// Frames of the stalk, seen from above.
+// Frames of the stalk, seen from above under a sun overhead.
 @(private = "file")
 stalk_frames :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> (pixels: []u8, ok: bool) {
 	camera := gpu.Camera{position = {0, 14, 0.01}, forward = {0, -1, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	return view_frames(t, f, camera, {}, 4)
+	return view_frames(t, f, camera, {0, -1, 0}, 4)
 }
 
 // Where a point of the floor lands on the image: the view looks down with -z up the image.
@@ -145,6 +145,8 @@ a_stalk_leans_away_from_where_a_bender_trampled_the_field :: proc(t: ^testing.T)
 	leaning, leaned := stalk_frames(t, f)
 	if !leaned {return}
 	defer delete(leaning)
+	// The floor of each image where nothing stands, as the light of the frames settles.
+	floor = pixel_at(leaning, {-3, 0})
 	testing.expect(t, differs(pixel_at(leaning, {1.4, 0}), floor), "trampled, its top leans away from the bender")
 	testing.expect(t, !differs(pixel_at(leaning, {-1.4, 0}), floor), "and nothing leans toward it")
 	// The same stalk, of a batch that is not of foliage, stands.
@@ -154,7 +156,7 @@ a_stalk_leans_away_from_where_a_bender_trampled_the_field :: proc(t: ^testing.T)
 	other, drawn := stalk_frames(t, f)
 	if !drawn {return}
 	defer delete(other)
-	testing.expect(t, !differs(pixel_at(other, {1.4, 0}), floor), "a batch of anything else does not lean")
+	testing.expect(t, !differs(pixel_at(other, {1.4, 0}), pixel_at(other, {-3, 0})), "a batch of anything else does not lean")
 }
 
 // The wind of the resident: one Wind everywhere, of `speed` m/s along -x
@@ -267,7 +269,7 @@ a_swaying_wall_casts_its_shadow_where_it_leans_only_near_the_eye :: proc(t: ^tes
 		{"far", {position = {-0.5, 25, -42}, forward = {0, -25, 39.7}, up = {0, 1, 0}, fov_y = 15, near = 0.05, far = 200, exposure = gpu.UNIT_EXPOSURE}, false},
 	}
 	for c in cases {
-		pixels, ok := view_frames(t, f, c.camera, sun, 8)
+		pixels, ok := view_frames(t, f, c.camera, sun, 16)
 		if !ok {return}
 		defer delete(pixels)
 		lit := seen_at(f, pixels, c.camera, {0.3, 0, -1.2})
