@@ -648,7 +648,8 @@ value_free :: proc(data:rawptr,info:^runtime.Type_Info) {
         for i in 0..<v.count {value_free(rawptr(uintptr(data)+uintptr(i*v.elem_size)),v.elem)}
     case runtime.Type_Info_Dynamic_Array:
         a:=cast(^runtime.Raw_Dynamic_Array)data
-        if a.allocator.procedure!=nil {context.allocator=a.allocator}
+        // What the elements hold was made with the array's allocator (array_copy).
+        context.allocator=a.allocator if a.allocator.procedure!=nil else context.allocator
         for i in 0..<a.len {value_free(rawptr(uintptr(a.data)+uintptr(i*v.elem_size)),v.elem)}
         if a.data!=nil && a.allocator.procedure!=nil {_=mem.free_with_size(a.data,a.cap*v.elem_size,a.allocator)}
         a^={}
