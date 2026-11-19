@@ -639,6 +639,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     r.stats.ui_vertices_dropped,r.stats.debug_vertices_dropped=0,0
     r.stats.shadow_movers=0
     r.stats.shadow_marked=0
+    r.stats.shadow_stale,r.scene.shadow_stale_by=r.scene.shadow_stale_by,{}
     r.stats.ui_shapes_dropped,r.stats.ui_layers_dropped=0,0
     r.ui_shape_written,r.ui_shape_cache_count,r.ui_vertex_cache_count=0,0,0
     ui_written:=0

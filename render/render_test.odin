@@ -524,7 +524,7 @@ render_a_swaying_batch_shades_where_it_is :: proc(t: ^testing.T) {
 // A batch casts into the maps as far as the view draws it: past its cull
 // distance from the eye its shadow is gone too; the eye that comes near
 // brings it back, and the one that goes away takes it from the pages the
-// maps keep, each in the frame it moves.
+// maps keep, each in the frame it moves; nothing else is drawn again.
 @(test)
 render_a_batch_casts_no_shadow_past_its_cull_distance :: proc(t: ^testing.T) {
 	f: Cube_Fixture
@@ -561,6 +561,23 @@ render_a_batch_casts_no_shadow_past_its_cull_distance :: proc(t: ^testing.T) {
 		under, beside = floor_at(t, &f, far)
 		testing.expectf(t, beside > 40 && abs(under - beside) < 12, "round %d, the eye far again: no shadow stays of the slab, %f under it, %f beside it", k, under, beside)
 	}
+	// An eye that goes to another cell of the cull draws no page again where no
+	// instance came or went, though the box of a batch reaches past its cull
+	// distance from both: one slab near, one far past it.
+	batch_remove(r, batch)
+	pair := []Batch_Instance{batch_instance({8, 1.5, -4}, 1, {2, 0.2, 2}), batch_instance({8, 1.5, -100}, 1, {2, 0.2, 2})}
+	batch, problem = batch_set(r, 0, 0, {mesh = f.cube, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}, fade_distance = 25, cull_distance = 30}, pair)
+	if !testing.expectf(t, problem == "", "%s", problem) {return}
+	from := Camera{position = {4, 6, 4}, forward = {0, -0.6, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	to := from
+	to.position.x = 12
+	for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = from}), r.error)}
+	testing.expect(t, shadow_cull_cell(from.position, r.origin) != shadow_cull_cell(to.position, r.origin))
+	testing.expect(t, renderer_frame(r, {camera = to}), r.error)
+	rhi.device_wait_idle(f.device)
+	counts: [abi.SHADOW_COUNT_STALE + 1]u32
+	testing.expect(t, rhi.buffer_read_slice(r.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_WORDS_COUNTS) * 4, counts[:]))
+	testing.expectf(t, counts[abi.SHADOW_COUNT_STALE] == 0, "the eye left its cell and %d pages were drawn again where nothing came or went", counts[abi.SHADOW_COUNT_STALE])
 	expect_clean(t, f.device)
 }
 

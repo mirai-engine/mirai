@@ -522,7 +522,10 @@ Scene_State :: struct {
 	shadow_movers_version: u64, // counts the changes of the batches drawn that move in the maps (Batch_Record.shadow_moving)
 	shadow_sway_tables:   u64, // the tables of the batches those were last found in (Batch_State.tables)
 	shadow_views:         [dynamic]Shadow_View_Reach, // what the culls of the slots of each view go over, kept (Shadow_Raster.reach)
+	shadow_cull_boxes:    [dynamic]mm.Aabb,         // of the plan of a view: where instances of batches came or went past their cull distance (shadow_cull_changes)
+	shadow_cull_cells:    map[[2]i32]u32,           // and the box of each cell of SHADOW_CULL_STEP they lie in
 	shadow_stale:         Occluder_Changes,
+	shadow_stale_by:      [Shadow_Stale_Source]u32, // the boxes of what stays changed since the last frame began, by what raised them
 	// The rows of masked materials that changed what their casters cover since
 	// the maps last drew; past their room every caster is stale (shadow_stale.covers).
 	shadow_rows:          [OCCLUDER_CHANGES_MAX]u32,
@@ -586,6 +589,8 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.shadow_band_keys = make([dynamic]f32, a)
 	s.shadow_sun_boxes = make([dynamic][2]Vec3, a)
 	s.shadow_views = make([dynamic]Shadow_View_Reach, a)
+	s.shadow_cull_boxes = make([dynamic]mm.Aabb, a)
+	s.shadow_cull_cells = make(map[[2]i32]u32, allocator = a)
 	s.overlays = make([dynamic]Instance_Overlays, a)
 	s.reflective = make([dynamic]Reflective_Instance, a)
 	s.materials = make([dynamic]Gpu_Material_Row, a)
@@ -2888,6 +2893,8 @@ scene_destroy :: proc(r: ^Renderer) {
 		delete(view.mover_slots)
 	}
 	delete(s.shadow_views)
+	delete(s.shadow_cull_boxes)
+	delete(s.shadow_cull_cells)
 	delete(s.overlays)
 	delete(s.reflective)
 	delete(s.materials)

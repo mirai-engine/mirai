@@ -433,6 +433,7 @@ page_entry_write :: proc(s: ^Scene_State, m: Mesh_Record, page, base: u32) {
 		if !instance_casts(inst) {continue}
 		low, high = linalg.min(low, inst.bounds_min.xyz), linalg.max(high, inst.bounds_max.xyz)
 	}
+	s.shadow_stale_by[.Mesh_Pages] += 1
 	occluder_add(&s.shadow_stale, OCCLUDERS_MANY, low, high)
 }
 
