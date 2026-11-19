@@ -29,11 +29,13 @@
 // in a frame (render.SHADOW_FRAME_UNITS); foresee: 1 while the pass by
 // instance only foresees what each page takes, before the pages are granted;
 // round, last, vertex_capacity, triangle_capacity, margin: those of the round
-// of the lists of the raster that draws them (raster_vertices.comp).
+// of the lists of the raster that draws them (raster_vertices.comp); sway:
+// the texel the view takes of a point at the reach of what sways in the maps
+// (render.shadow_sway_texel).
 struct Params_Block {
     uint reach; uint ranges; uint rows; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers;
     uint masks; uint plan; uint part; uint bound; uint foresee;
-    uint round; uint last; uint vertex_capacity; uint triangle_capacity; float margin; uint pad0; uint pad1;
+    uint round; uint last; uint vertex_capacity; uint triangle_capacity; float margin; float sway; uint pad1;
     // The eye the instances of a batch past its cull distance are left out
     // from, and how much farther than it (render.shadow_cull_eye).
     float4 cull;

@@ -99,6 +99,25 @@ float shadow_map_texel(Shadow_Map m, float z) {
     return shadow_map_orthographic(m) ? across : across * z;
 }
 
+// The narrowest and the widest texel of a map over a box of the world,
+// metres: where the box comes nearest the light of a perspective one and
+// where it goes farthest (render.shadow_map_finest).
+float2 shadow_map_texels(Shadow_Map m, float3 low, float3 high) {
+    float3 center = 0.5 * (low + high) - m.origin;
+    float along = dot(center, m.forward), half = dot(0.5 * (high - low), abs(m.forward));
+    return float2(shadow_map_texel(m, max(along - half, m.near)), shadow_map_texel(m, max(along + half, m.near)));
+}
+
+// Whether a map draws a caster within a box that sways `sway` metres as it
+// sways, not at rest (render.shadow_map_sways): its texel there is narrower
+// than the sway, and where its shadow falls, past the box from the light,
+// narrower than `reach`, the texel the view takes of a point at the reach of
+// what sways in the maps (render.shadow_sway_texel).
+bool shadow_map_sways(Shadow_Map m, float3 low, float3 high, float sway, float reach) {
+    float2 texels = shadow_map_texels(m, low, high);
+    return texels.x < sway && texels.y < reach;
+}
+
 // Whether a box of the world reaches into the frustum of a map.
 bool shadow_box_side(float3 low, float3 high, float3 n, float offset) {
     return dot(n, select(n >= 0.0, high, low)) + offset >= 0.0;
@@ -180,9 +199,6 @@ uint4 shadow_texel_pages(Shadow_Map m, float4 texels) {
 // The top of each octave of the levels of the sun over which a point blends
 // its level with the next, so that no line shows where they meet.
 #define SHADOW_LEVEL_BAND 0.2
-// The texel of the level of the sun or of the mip a point takes spans from
-// half of SHADOW_TEXEL_PIXELS pixels of the view across to all of them.
-#define SHADOW_TEXEL_PIXELS 2.0
 
 // Where a point at position with normal n reads map m of a light (the sun
 // for sun), towards the light along `toward` (shadow_map_seen of
