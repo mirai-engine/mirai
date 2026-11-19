@@ -108,7 +108,7 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     now:=time.now()
     unleased,_:=put_bytes(&s,data[:31],time.time_add(now,-2*GRACE))
     truncated:=path_in(folder,"leases","truncated")
-    testing.expect_value(t,lease_write(&s,truncated,holder_self(),{unleased,hash},now),Error.None)
+    testing.expect_value(t,lease_write(&s,truncated,holder_self(),0,{unleased,hash},now),Error.None)
     valid,valid_error:=os.read_entire_file(truncated,context.temp_allocator)
     if !testing.expect(t,valid_error==nil && len(valid)>size_of(Hash)) {return}
     testing.expect(t,os.write_entire_file(truncated,valid[:len(valid)-size_of(Hash)])==nil)

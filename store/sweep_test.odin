@@ -305,7 +305,7 @@ fresh_leases_keep_their_current_addresses :: proc(t:^testing.T) {
         hash,_:=put_bytes(&s,test_bytes(200,u64(300+k)),old)
         buffer:[PATH_BYTES]u8
         path:=join(&buffer,folder,"leases",c.name) or_continue
-        testing.expect_value(t,lease_write(&s,path,c.holder,{hash},c.at),Error.None)
+        testing.expect_value(t,lease_write(&s,path,c.holder,0,{hash},c.at),Error.None)
         defer file_remove(path)
         swept,sweep_error:=sweep(&s,kept[:],now)
         append(&kept,hash)
