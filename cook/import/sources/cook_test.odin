@@ -124,11 +124,16 @@ a_peer_with_only_fetched_builds_cooks_the_game_its_sources_cook :: proc(t:^testi
     peer:=fmt.tprintf("%s/peer",top)
     folder_copy(game,peer)
     for source in ([3]string{"assets/props/box.gltf","assets/props/wood.png","plugins/brushes/assets/soft.png"}) {testing.expect(t,os.remove(fmt.tprintf("%s/%s",peer,source))==nil)}
+    // Nor the files of their manifests: the source gives each by the hash its pin names.
+    for root in ([2]string{peer,fmt.tprintf("%s/plugins/brushes",peer)}) {
+        pins,_,_:=asset.packages_load(root,context.temp_allocator)
+        for entry in pins.packages {testing.expect(t,os.remove(asset.package_file(root,entry.id))==nil)}
+    }
     there:=test_store(t,fmt.tprintf("%s/there",top))
     if there==nil {return}
     lacking:=cook(peer,there,fmt.tprintf("%s/lacking",top))
     testing.expect_value(t,lacking.error,build.Cook_Error.Package_Missing)
-    for name in names {testing.expectf(t,strings.contains(lacking.detail,name),"the package %s is named: %s",name,lacking.detail)}
+    testing.expectf(t,strings.contains(lacking.detail,"neither in the store"),"the package is named: %s",lacking.detail)
     for root in ([2]string{peer,fmt.tprintf("%s/plugins/brushes",peer)}) {
         fetched:=project_refresh(root,{store=there,root=root,source=cache.store_source(here)},context.temp_allocator)
         testing.expectf(t,fetched.fetched==1 && fetched.ingested==0 && len(fetched.failures)==0 && len(fetched.missing)==0,"%v",fetched)

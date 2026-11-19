@@ -67,7 +67,7 @@ Library_Imports :: struct {
 Library_Options :: struct {
     store:^store.Store,
     // Asked for what the store does not have before building: a manifest by
-    // (asset.REF_PACKAGES, <id>), a build by (asset.REF_IMPORTS, <key>) and,
+    // (asset.REF_MANIFESTS, <hash its pin names>), a build by (asset.REF_IMPORTS, <key>) and,
     // with Fast textures allowed, then by (asset.REF_IMPORTS_FAST, <key>), with
     // every object it lists, a result of cook/cache.
     source:cache.Source,
@@ -511,11 +511,11 @@ refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Pac
     for entry in entries {
         entry:=entry
         if _,error:=asset.package_load(s,top,&entry,l.temp);error==.Not_Found {
-            id_text:[64]u8
-            append(&lacking,strings.clone(base.asset_id_format(entry.id,id_text[:32]),l.temp))
+            digits:[64]u8
+            append(&lacking,strings.clone(store.hex(entry.manifest,&digits),l.temp))
         }
     }
-    fetch_many(l,asset.REF_PACKAGES,lacking[:])
+    fetch_many(l,asset.REF_MANIFESTS,lacking[:])
     keys:=make([dynamic]string,l.temp)
     for entry in entries {
         entry:=entry
@@ -603,7 +603,8 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     digits,id_text:[64]u8
     id_name:=base.asset_id_format(entry.id,id_text[:32])
     p,error:=asset.package_load(s,top,&entry,l.temp)
-    if error==.Not_Found && fetch(l,asset.REF_PACKAGES,id_name) {p,error=asset.package_load(s,top,&entry,l.temp)}
+    // The manifest the pin names, by the hash of its text: the ref that names its object.
+    if error==.Not_Found && fetch(l,asset.REF_MANIFESTS,store.hex(entry.manifest,&digits)) {p,error=asset.package_load(s,top,&entry,l.temp)}
     #partial switch error {
     case .None:
     case .Not_Found:
