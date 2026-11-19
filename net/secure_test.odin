@@ -13,24 +13,24 @@ SECURE_CHANNELS :: []Channel_Desc{{kind=.Reliable,queue_bytes=64<<10},{kind=.Unr
 Capture :: struct {inner:Transport,last:[2][PACKET_BYTES]u8,sizes:[2]int,count:int,hold:bool,held:[PACKET_BYTES]u8,held_size:int}
 @(private="file")
 capture_transport :: proc(c:^Capture) -> Transport {
-    return {c,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
+    return {data=c,send=proc(data:rawptr,batch:[]Datagram) -> int {return test_send_each(data,batch,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
         c:=(^Capture)(data)
-        return c.inner.send(c.inner.data,to,bytes)
-    },proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
+        return test_send_one(c.inner,to,bytes)
+    })},receive=proc(data:rawptr,batch:[]Datagram) -> int {return test_receive_each(data,batch,proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
         c:=(^Capture)(data)
-        size,from,ok=c.inner.receive(c.inner.data,buffer)
+        size,from,ok=test_receive_one(c.inner,buffer)
         if !ok || !test_packet_data(buffer[:size]) || buffer[0]!=u8(Packet_Type.Data) {return}
         if c.hold && c.held_size==0 {
             copy(c.held[:],buffer[:size])
             c.held_size=size
-            return c.inner.receive(c.inner.data,buffer)
+            return test_receive_one(c.inner,buffer)
         }
         slot:=c.count%2
         copy(c.last[slot][:],buffer[:size])
         c.sizes[slot]=size
         c.count+=1
         return
-    }}
+    })}}
 }
 
 @(test)
@@ -141,19 +141,19 @@ cost_of_sealing_a_datagram :: proc(t:^testing.T) {
 Kept :: struct {inner:Transport,keep:bool,datagrams:[200][PACKET_BYTES]u8,sizes:[200]int,count:int}
 @(private="file")
 kept_transport :: proc(k:^Kept) -> Transport {
-    return {k,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
+    return {data=k,send=proc(data:rawptr,batch:[]Datagram) -> int {return test_send_each(data,batch,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
         k:=(^Kept)(data)
-        if !k.keep {return k.inner.send(k.inner.data,to,bytes)}
+        if !k.keep {return test_send_one(k.inner,to,bytes)}
         if k.count<len(k.datagrams) {
             copy(k.datagrams[k.count][:],bytes)
             k.sizes[k.count]=len(bytes)
             k.count+=1
         }
         return true
-    },proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
+    })},receive=proc(data:rawptr,batch:[]Datagram) -> int {return test_receive_each(data,batch,proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
         k:=(^Kept)(data)
-        return k.inner.receive(k.inner.data,buffer)
-    }}
+        return test_receive_one(k.inner,buffer)
+    })}}
 }
 
 // Opt-in: mirai test net cost_of_connecting_and_of_each_datagram -define:NET_BENCHMARK=true

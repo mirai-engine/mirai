@@ -277,7 +277,7 @@ bulk_stream :: proc(t:^testing.T,rtt:f64,loss:f32,clients:int,seconds:f64,jitter
         warm:=w.now-start>=BULK_WARM
         if !warm {
             stats,_:=connection_stats(server,on_server[0])
-            resent_before=stats.chunks_resent
+            resent_before=stats.bytes_resent
         }
         for i in 0..<clients {
             if sent[i]==len(blob) {sent[i]=0}
@@ -317,7 +317,7 @@ bulk_stream :: proc(t:^testing.T,rtt:f64,loss:f32,clients:int,seconds:f64,jitter
     sent_datagrams:=w.sim.stats.sent-sim_before.sent
     result.drop_share=f64(w.sim.stats.dropped_queue-sim_before.dropped_queue)/f64(max(sent_datagrams,1))
     stats,_:=connection_stats(server,on_server[0])
-    result.resent_share=f64(stats.chunks_resent-resent_before)*CHUNK_BYTES/max(got[0],1)
+    result.resent_share=f64(stats.bytes_resent-resent_before)/max(got[0],1)
     return result,true
 }
 
@@ -485,17 +485,17 @@ a_long_acknowledgement_never_overflows_a_datagram :: proc(t:^testing.T) {
 Drop_Once :: struct {inner:Transport,count,drop:int}
 @(private="file")
 drop_once_transport :: proc(d:^Drop_Once) -> Transport {
-    return {d,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
+    return {data=d,send=proc(data:rawptr,batch:[]Datagram) -> int {return test_send_each(data,batch,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
         d:=(^Drop_Once)(data)
         if len(bytes)>0 && bytes[0]==u8(Packet_Type.Data) {
             d.count+=1
             if d.count==d.drop {return true}
         }
-        return d.inner.send(d.inner.data,to,bytes)
-    },proc(data:rawptr,buffer:[]u8) -> (int,Address,bool) {
+        return test_send_one(d.inner,to,bytes)
+    })},receive=proc(data:rawptr,batch:[]Datagram) -> int {return test_receive_each(data,batch,proc(data:rawptr,buffer:[]u8) -> (int,Address,bool) {
         d:=(^Drop_Once)(data)
-        return d.inner.receive(d.inner.data,buffer)
-    }}
+        return test_receive_one(d.inner,buffer)
+    })}}
 }
 
 // Thousands of tiny reliable messages held behind one lost chunk all arrive, in order, when the gap

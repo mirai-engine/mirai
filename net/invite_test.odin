@@ -62,16 +62,16 @@ invitation_codes_round_trip_and_refuse_typos :: proc(t:^testing.T) {
 Answers :: struct {inner:Transport,sent:[6][Packet_Type]int,all:[Packet_Type]int,only:Address,response:[PACKET_BYTES]u8,response_size:int}
 @(private="file")
 answers_transport :: proc(a:^Answers) -> Transport {
-    return {a,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
+    return {data=a,send=proc(data:rawptr,batch:[]Datagram) -> int {return test_send_each(data,batch,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
         a:=(^Answers)(data)
         if len(bytes)>0 && bytes[0]==u8(Packet_Type.Response) {a.response_size=copy(a.response[:],bytes)}
         if to==a.only && len(bytes)>0 && bytes[0]<=u8(max(Packet_Type)) {a.all[Packet_Type(bytes[0])]+=1}
         if to.kind==.Memory && int(to.port)<len(a.sent) && len(bytes)>0 && bytes[0]<=u8(max(Packet_Type)) {a.sent[to.port][Packet_Type(bytes[0])]+=1}
-        return a.inner.send(a.inner.data,to,bytes)
-    },proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
+        return test_send_one(a.inner,to,bytes)
+    })},receive=proc(data:rawptr,batch:[]Datagram) -> int {return test_receive_each(data,batch,proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
         a:=(^Answers)(data)
-        return a.inner.receive(a.inner.data,buffer)
-    }}
+        return test_receive_one(a.inner,buffer)
+    })}}
 }
 
 // The invitation is in every key of the connection: a client without the
@@ -113,10 +113,10 @@ a_server_with_an_invitation_answers_only_who_brings_it :: proc(t:^testing.T) {
     buffer[0]=u8(Packet_Type.Request)
     serial.bit_writer_init(&writer,buffer[1:])
     serial.bit_write(&writer,0x77,64)
-    forger.send(forger.data,address_memory(0),test_handshake(buffer[:],&writer,server.back.key,HANDSHAKE_BYTES))
+    test_send_one(forger,address_memory(0),test_handshake(buffer[:],&writer,server.back.key,HANDSHAKE_BYTES))
     test_step(&w,2)
     host_poll(server)
-    size,_,challenged:=forger.receive(forger.data,answer[:])
+    size,_,challenged:=test_receive_one(forger,answer[:])
     testing.expect(t,challenged && Packet_Type(answer[0])==.Challenge)
     reader:serial.Bit_Reader
     serial.bit_reader_init(&reader,answer[1:size-CHECKSUM_BYTES])
@@ -133,11 +133,11 @@ a_server_with_an_invitation_answers_only_who_brings_it :: proc(t:^testing.T) {
         for _ in 0..<KEY_BYTES+TAG_BYTES {serial.bit_write(&writer,base.splitmix_next(&state)&0xff,8)}
         datagram:=test_handshake(buffer[:],&writer,server.back.key,HANDSHAKE_BYTES)
         if round%2==1 {datagram=datagram[:40];checksum_write(datagram,server.back.key)}
-        forger.send(forger.data,address_memory(0),datagram)
+        test_send_one(forger,address_memory(0),datagram)
     }
     test_step(&w,2)
     host_poll(server)
-    _,_,answered:=forger.receive(forger.data,answer[:])
+    _,_,answered:=test_receive_one(forger,answer[:])
     testing.expect(t,!answered)
     testing.expect_value(t,host_stats(server).handshakes_dropped,dropped+2)
     testing.expect_value(t,host_stats(server).packets_invalid,invalid+2)
@@ -148,10 +148,10 @@ a_server_with_an_invitation_answers_only_who_brings_it :: proc(t:^testing.T) {
     on_server,on_client:=test_connect(&w,server,invited)
     testing.expect(t,on_server!=0 && on_client!=0 && captured.response_size==HANDSHAKE_BYTES)
     dropped=host_stats(server).handshakes_dropped
-    forger.send(forger.data,address_memory(0),captured.response[:captured.response_size])
+    test_send_one(forger,address_memory(0),captured.response[:captured.response_size])
     test_step(&w,2)
     for command in host_poll(server) {testing.expect(t,command.kind!=.Connected)}
-    _,_,answered=forger.receive(forger.data,answer[:])
+    _,_,answered=test_receive_one(forger,answer[:])
     testing.expect(t,!answered)
     testing.expect_value(t,host_stats(server).handshakes_dropped,dropped+1)
     testing.expect_value(t,host_stats(server).connections,1)
@@ -197,12 +197,12 @@ wrong_proofs_cost_their_address_and_the_invited_join_meanwhile :: proc(t:^testin
         buffer[0]=u8(Packet_Type.Request)
         serial.bit_writer_init(&writer,buffer[1:])
         serial.bit_write(&writer,f.salt,64)
-        forger.send(forger.data,address_memory(0),test_handshake(buffer[:],&writer,server.back.key,HANDSHAKE_BYTES))
+        test_send_one(forger,address_memory(0),test_handshake(buffer[:],&writer,server.back.key,HANDSHAKE_BYTES))
     }
     test_step(&w,2)
     for &f,i in forged {
         forger:=sim_endpoint_transport(&w.sim,3+i)
-        size,_,challenged:=forger.receive(forger.data,answer[:])
+        size,_,challenged:=test_receive_one(forger,answer[:])
         if !testing.expect(t,challenged && Packet_Type(answer[0])==.Challenge) {return}
         reader:serial.Bit_Reader
         serial.bit_reader_init(&reader,answer[1:size-CHECKSUM_BYTES])
@@ -225,7 +225,7 @@ wrong_proofs_cost_their_address_and_the_invited_join_meanwhile :: proc(t:^testin
             serial.bit_write(&writer,host_protocol_hash(a.server),64)
             for _ in 0..<KEY_BYTES+TAG_BYTES {serial.bit_write(&writer,base.splitmix_next(&a.state)&0xff,8)}
             forger:=sim_endpoint_transport(&w.sim,3+i)
-            forger.send(forger.data,address_memory(0),test_handshake(buffer[:],&writer,a.server.back.key,HANDSHAKE_BYTES))
+            test_send_one(forger,address_memory(0),test_handshake(buffer[:],&writer,a.server.back.key,HANDSHAKE_BYTES))
         }
     }
     before:=host_stats(server)
@@ -251,7 +251,7 @@ wrong_proofs_cost_their_address_and_the_invited_join_meanwhile :: proc(t:^testin
     testing.expect_value(t,after.handshakes_refused,u64(0))
     for i in 0..<ADDRESSES {
         forger:=sim_endpoint_transport(&w.sim,3+i)
-        _,_,answered:=forger.receive(forger.data,answer[:])
+        _,_,answered:=test_receive_one(forger,answer[:])
         if !testing.expectf(t,!answered,"forger %d heard an answer",i) {break}
     }
     testing.expectf(t,calm_steps<300 && invited_steps<=calm_steps+1,"the invited joined in %d steps, with nobody guessing in %d",invited_steps,calm_steps)
