@@ -655,7 +655,23 @@ documents_write :: proc(l:^Library_State,top:string,entry:^asset.Project_Package
 // differs from what it records.
 @(private="file")
 written_pin :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,written:[]asset.Package_Written,p:^asset.Package,report:^Library_Report) {
-    written:=written_list(written)
+    // A document of the package this pass did not write holds what it held, so
+    // its record stays: a model's prefab, which only a library with the game's
+    // types writes, is not forgotten by a refresh without them.
+    merged:=make([dynamic]asset.Package_Written,context.temp_allocator)
+    append(&merged,..written)
+    records: for old in entry.written {
+        for w in written {
+            if w.id==old.id {continue records}
+        }
+        for &a in p.assets {
+            if a.id==old.id {
+                append(&merged,old)
+                continue records
+            }
+        }
+    }
+    written:=written_list(merged[:])
     same:=len(written)==len(entry.written)
     for w,at in written {
         if !same {break}
