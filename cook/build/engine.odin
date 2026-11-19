@@ -484,7 +484,7 @@ import "mirai:editor"
 
 main :: proc() {
     args:=os.args[1:]
-    if len(args)>0 && (args[0]=="share" || args[0]=="join") {os.exit(share.command(args,os.to_writer(os.stdout),os.to_writer(os.stderr),editor.import_library))}
+    if len(args)>0 && (args[0]=="share" || args[0]=="join") {os.exit(share.command(args,os.to_writer(os.stdout),os.to_writer(os.stderr),editor.import_library_built))}
     os.exit(sources.command(args,os.to_writer(os.stdout),os.to_writer(os.stderr),editor.import_library))
 }
 `,paths.import_program},

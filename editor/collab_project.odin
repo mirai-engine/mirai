@@ -162,8 +162,8 @@ collab_join_start :: proc(s:^Session,st:^Collab_State,code,folder:string,reopen:
     j.folder=fmt.aprint(folder,allocator=j.allocator)
     j.reopen=reopen
     j.desc={node=st.node,offer=share.offer_name(st.invite.secret,&j.digits),folder=j.folder,progress=&j.progress,connect_seconds=COLLAB_HELLO_TIMEOUT}
-    // The importers of the project's plugins, for a package no peer has a build of.
-    if s.has_project {j.desc.library=import_library}
+    // The importers of the project's plugins, built from the files that arrived, to find its builds by key.
+    j.desc.library=import_library_built
     st.join=j
     // With a context of its own: the temp allocator of the editor's is freed every frame.
     j.thread=thread.create_and_start_with_poly_data(j,proc(j:^Collab_Join) {

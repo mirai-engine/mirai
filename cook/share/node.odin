@@ -128,12 +128,14 @@ node_host :: proc(n:^Node,h:^wire.Host) -> bool {
 }
 
 // What peers may read: the snapshots offered, the manifests of packages, their
-// builds, Final and Fast each under its own namespace, and the results of
-// cook/cache. Never the choices, the origins or the sources of this machine.
+// builds, Final and Fast each under its own namespace, the build this machine
+// chose for each manifest (for a peer without the importer that finds it by
+// key), and the results of cook/cache. Never the origins or the sources of
+// this machine.
 @(private)
 node_expose :: proc(user:rawptr,namespace:string) -> bool {
     switch namespace {
-    case NAMESPACE,asset.REF_PACKAGES,asset.REF_MANIFESTS,asset.REF_IMPORTS,asset.REF_IMPORTS_FAST: return true
+    case NAMESPACE,asset.REF_PACKAGES,asset.REF_MANIFESTS,asset.REF_IMPORTS,asset.REF_IMPORTS_FAST,asset.REF_BUILDS: return true
     }
     return strings.has_prefix(namespace,asset.REF_CACHE_PREFIX)
 }
@@ -327,7 +329,7 @@ node_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
     if into!=n.s || len(names)==0 {return}
     addresses:=make([]store.Hash,len(names),context.temp_allocator)
     refs_fetch(&n.x,namespace,names,addresses)
-    if namespace==asset.REF_IMPORTS || namespace==asset.REF_IMPORTS_FAST {
+    if namespace==asset.REF_IMPORTS || namespace==asset.REF_IMPORTS_FAST || namespace==asset.REF_BUILDS {
         objects:=make([dynamic]store.Hash,context.temp_allocator)
         for &address in addresses {
             if address=={} || !asset.object_whole(into,address) {continue}

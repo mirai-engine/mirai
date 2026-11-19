@@ -79,6 +79,7 @@ Desc :: struct {
     test_package:string,         // Test: the folder of the package, absolute
     test:Test_Options,           // Test: how its executable runs
     store_root:string,           // the store the packages of the project and its plugins are refreshed in and listed from; "": the machine's (store.default_root)
+    refresh_skip:bool,           // Build: the packages are left as they are, for a caller that refreshes them with the library built (a join, with its peers)
     allocator:runtime.Allocator, // of the job. Unset: context.allocator
 }
 
@@ -224,7 +225,7 @@ job_start :: proc(desc:Desc) -> ^Job {
     }
     job.engine=desc.engine
     job.store_root=strings.clone(desc.store_root!=""?desc.store_root:store.default_root(context.temp_allocator),a)
-    if desc.action==.Build {
+    if desc.action==.Build && !desc.refresh_skip {
         roots:=imports_roots(p)
         job.imports=make([]string,len(roots),a)
         for root,i in roots {job.imports[i]=strings.clone(root,a)}
