@@ -65,6 +65,8 @@ are kept here and, where the license asks for it, in the header of the file.
   `std/geom/simplify.odin`, `cluster.odin`, `partition.odin` and `cluster_dag.odin`. Game.
   The vertex codec and the quaternion and exponential filters of
   `cook/import/gltf/meshopt.odin`. Editor.
+- **Lore** (MIT; © 2026 Epic Games, Inc.), <https://github.com/EpicGames/lore>.
+  The streaming windows of the chunker of `store/chunk.odin`, altered. Game.
 - **Mesh2Motion** (MIT; © 2025 Scott Petrovic), <https://github.com/Mesh2Motion/mesh2motion-app>.
   The skinning solvers of `cook/rig/weights.odin`, altered. Editor.
 - **ACL 2.1, Animation Compression Library** (MIT; © 2017 Nicholas Frechette),
