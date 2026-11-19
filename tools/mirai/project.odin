@@ -119,19 +119,19 @@ cmd_build_project :: proc(root:string,args:[]string) -> int {
     store_root,ok:=store_root_take(&rest,"build")
     if !ok {return 2}
     code,_,shaders_failed:=build_project(root,args[0]=="editor"?.Editor:.Game,rest,mode,server=args[0]=="server",store_root=store_root)
-    if code==0 && args[0]=="editor" {scenes_stale_report(root,len(rest)>0 && positional(rest[0])?rest[0]:".",mode)}
+    if code==0 && args[0]=="editor" {scenes_stale_report(root,len(rest)>0 && positional(rest[0])?rest[0]:".",mode,store_root)}
     return code!=0?code:shaders_failed?1:0
 }
 
 // One line after the editor of a project builds when its scenes or the recipes
 // of the engine and its plugins store what its game no longer reads (a
 // component it lost, a field under no name), with the command that names
-// them. mirai scene check runs only when a file it reads changed since the
+// them, with the packages of the store at store_root. mirai scene check runs only when a file it reads changed since the
 // last one (SCENES_STAMP: their sizes and times, and how many problems it
 // found), and checks again only the scenes whose key moved. Nothing is
 // changed: a scene is fixed by writing it.
 @(private="file")
-scenes_stale_report :: proc(root,folder:string,mode:Build_Mode) {
+scenes_stale_report :: proc(root,folder:string,mode:Build_Mode,store_root:string) {
     p,error:=project.open(folder,root,context.temp_allocator)
     if error.code!=.None {return}
     program:=project_engine_paths(root,folder,build.engine_mode_resolve(root,mode)).author_program
@@ -151,7 +151,7 @@ scenes_stale_report :: proc(root,folder:string,mode:Build_Mode) {
         if r.failed {problems=-1}
     }
     if problems<0 {
-        command:=author_command(program,root,p.root,"scene",{"check"})
+        command:=author_command(program,root,p.root,store_root,"scene",{"check"})
         state,_,errors,run_error:=subprocess.exec({command=command[:]},context.temp_allocator)
         if run_error!=nil || state.exit_code>1 {return}
         problems=0

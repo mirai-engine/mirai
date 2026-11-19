@@ -56,10 +56,10 @@ import "mirai:ui"
 // its id. Given several --project, the command runs on the first whose assets
 // have the asset of the first file it names.
 
-COMMAND_USAGE :: `Usage: mirai ui|scene read <asset> [--out <file>]
-       mirai ui|scene write <asset> <document file>
-       mirai ui|scene check [<asset>...]
-       mirai texts list | missing | set <key> <language> <text> | export <file.csv> | import <file.csv>`
+COMMAND_USAGE :: `Usage: mirai ui|scene read <asset> [--out <file>] [--store <folder>]
+       mirai ui|scene write <asset> <document file> [--store <folder>]
+       mirai ui|scene check [<asset>...] [--store <folder>]
+       mirai texts list | missing | set <key> <language> <text> | export <file.csv> | import <file.csv> [--store <folder>]`
 
 // What a command reads and writes: the interfaces, or the scenes.
 Document_Kind :: enum u8 {Ui,Scene}
@@ -349,14 +349,18 @@ run_fail :: proc(run:^Run,what,why:string) {
 }
 
 command :: proc(args:[]string,output,errors:io.Writer) -> int {
-    engine:string
+    engine,store_root:string
     roots:=make([dynamic]string,context.temp_allocator)
     rest:=make([dynamic]string,context.temp_allocator)
     for at:=0;at<len(args);at+=1 {
         switch args[at] {
-        case "--project","--engine":
+        case "--project","--engine","--store":
             if at+1>=len(args) {fmt.wprintln(errors,COMMAND_USAGE);return 2}
-            if args[at]=="--project" {append(&roots,args[at+1])} else {engine=args[at+1]}
+            switch args[at] {
+            case "--project": append(&roots,args[at+1])
+            case "--engine": engine=args[at+1]
+            case "--store": store_root=args[at+1]
+            }
             at+=1
         case: append(&rest,args[at])
         }
@@ -369,10 +373,10 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
         return 2
     }
     if len(roots)==0 {append(&roots,".")}
-    root:=project_choose(roots[:],engine,rest[2] if len(rest)>2 else "")
+    root:=project_choose(roots[:],engine,store_root,rest[2] if len(rest)>2 else "")
     p:Project
     reads:=kind==.Ui && verb=="read" || rest[0]=="texts"
-    if problem:=project_open(&p,root,engine,!reads);problem!="" {
+    if problem:=project_open(&p,root,engine,!reads,store_root);problem!="" {
         fmt.wprintfln(errors,"mirai %s %s: %s",rest[0],verb,problem)
         return 1
     }
@@ -385,7 +389,7 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
 // Of several projects, the one whose assets have the asset of a file: the
 // first when none has it, or named is no file.
 @(private="file")
-project_choose :: proc(roots:[]string,engine,named:string) -> string {
+project_choose :: proc(roots:[]string,engine,store_root,named:string) -> string {
     if len(roots)==1 || !os.is_file(named) {return roots[0]}
     file:asset.Asset
     if asset.asset_load(&file,named,context.temp_allocator)!=.None {return roots[0]}
@@ -393,7 +397,7 @@ project_choose :: proc(roots:[]string,engine,named:string) -> string {
     asset.asset_close(&file)
     for root in roots {
         p:Project
-        problem:=project_open(&p,root,engine,false)
+        problem:=project_open(&p,root,engine,false,store_root)
         _,has:=asset.registry_find(&p.registry,id)
         project_close(&p)
         if problem=="" && has {return root}
