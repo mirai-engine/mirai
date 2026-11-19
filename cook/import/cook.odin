@@ -192,19 +192,26 @@ texture_cook :: proc(bytes:[]u8,made:textures.Source,decoded:textures.Image,buil
     jobs.worker_zone(options.worker,"texture.build")
     switch {
     case make!=nil && decoded.pixels!=nil:
-        cooked.built,cooked.error=textures.build(textures.rgba8(decoded.pixels,decoded.width,decoded.height),build,allocator,options.worker)
+        cooked_set(cooked,textures.build(textures.rgba8(decoded.pixels,decoded.width,decoded.height),build,allocator,options.worker))
     case make!=nil:
         source,ok:=make(bytes,context.temp_allocator)
         if !ok {cooked.error=.Unsupported;return}
-        cooked.built,cooked.error=textures.build(source,build,allocator,options.worker)
+        cooked_set(cooked,textures.build(source,build,allocator,options.worker))
     case made.width>0:
-        cooked.built,cooked.error=textures.build(made,build,allocator,options.worker)
+        cooked_set(cooked,textures.build(made,build,allocator,options.worker))
     case decoded.pixels!=nil && !textures.source_wide(bytes):
-        cooked.built,cooked.error=textures.build(textures.rgba8(decoded.pixels,decoded.width,decoded.height),build,allocator,options.worker)
+        cooked_set(cooked,textures.build(textures.rgba8(decoded.pixels,decoded.width,decoded.height),build,allocator,options.worker))
     case:
-        cooked.built,cooked.error=textures.from_bytes(bytes,build,allocator,options.worker)
+        cooked_set(cooked,textures.from_bytes(bytes,build,allocator,options.worker))
     }
     if cooked.error==.None {textures.cache_write(c,key,&types,&cooked.built)}
+}
+
+// One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+@(private="file")
+cooked_set :: proc(cooked:^Cooked_Texture,built:textures.Built,error:textures.Error) {
+    cooked.built=built
+    cooked.error=error
 }
 
 // The settings hash of a texture of build built Fast.
