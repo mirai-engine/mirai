@@ -130,10 +130,18 @@ a_peer_without_sources_lists_and_loads_and_nothing_is_removed_or_built :: proc(t
     for file in before {testing.expectf(t,after[file],"%s stays",file)}
 
     // With a store that has them, the builds are fetched: listed where the project lists them, loaded.
+    // The builds of both packages are asked together, in one call of the source.
+    Counted :: struct {inner:cache.Source,calls,names:int}
+    counted:=Counted{inner=cache.store_source(here)}
     fetching:=alone
-    fetching.source=cache.store_source(here)
+    fetching.source={user=&counted,fetch=proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
+        c:=(^Counted)(user)
+        if namespace==asset.REF_IMPORTS {c.calls,c.names=c.calls+1,c.names+len(names)}
+        c.inner.fetch(c.inner.user,into,namespace,names,given)
+    }}
     fetched:=project_refresh(peer,fetching,context.temp_allocator)
     testing.expectf(t,fetched.fetched==2 && fetched.ingested==0,"%v",fetched)
+    testing.expectf(t,counted.calls==1 && counted.names==2,"%d calls for %d builds",counted.calls,counted.names)
     if !report_clean(t,fetched) {return}
     seen:=listed_of(t,there,peer)
     testing.expect_value(t,len(seen),len(listed))
