@@ -550,9 +550,12 @@ Hooks:
   gate, where to read it on the other side, which side it gives to and how the directions rotate.
   `sample_probes_around` blends the two reads in that proportion: the probe field is not cut at the
   opening.
-- **Vertices** (signature in `extensions.odin`): where a vertex of a batch instance is at
-  `frame.time`; the G-buffer also calls it with the previous time for the motion vectors. It moves
-  only what is rasterized: shadows and reflections see the mesh at rest.
+- **Vertices** (signatures in `extensions.odin`), in two parts: what moves a whole batch instance
+  at `frame.time`, computed once per visible cluster (the cull, which also keeps it at the previous
+  time for the motion vectors) or per cluster of a map, and where each vertex lands from its rest
+  with what that part gave. An instance the first part leaves at zero rests and pays no vertex
+  part. It moves only what is rasterized: rays see the mesh at rest, and the maps place through it
+  only [what sways](lights.md#what-sways-in-the-maps).
 - **Lights** (`mirai_extension_light_count` and an `Extension_Light` per index, in
   `lighting.slang`): they are lights like the others. The
   [direct filter](lights.md#direct-light-of-a-view) traces their ray (and the optional second) to
