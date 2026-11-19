@@ -308,6 +308,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     f(&b,"SHARED_RAY_ROUGHNESS",abi.REFLECTION_SHARED_ROUGHNESS)
     i(&b,"DISTANCE_TILE",abi.DISTANCE_TILE)
     u(&b,"PROBE_BUCKETS",abi.PROBE_BUCKETS)
+    u(&b,"PROBE_WAIT_MOST",abi.PROBE_WAIT_MOST)
     u(&b,"PROBE_HIT_WORDS",abi.PROBE_HIT_WORDS)
     u(&b,"PROBE_CHANGE_SEEN",abi.PROBE_CHANGE_SEEN)
     u(&b,"PROBE_CHANGE_CASTER",abi.PROBE_CHANGE_CASTER)
