@@ -553,3 +553,27 @@ a_reader_of_the_frame_reads_once_what_a_tick_run_again_pushes :: proc(t:^testing
         testing.expectf(t,slice.equal(read(&w),[]u32{3}),"marks %v: the reader of the frame saw %v",with_marks,read(&w))
     }
 }
+
+@(test)
+value_free_frees_what_a_dynamic_array_holds_with_the_array_allocator :: proc(t:^testing.T) {
+    tracking:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracking,context.allocator)
+    defer mem.tracking_allocator_destroy(&tracking)
+    owner:=mem.tracking_allocator(&tracking)
+    value:Copy_Value
+    value.items=make([dynamic]Copy_Item,2,owner)
+    value.items[0].slice=make([]i32,3,owner)
+    value.items[1].items=make([dynamic]i32,owner)
+    append(&value.items[1].items,1)
+    // The caller's allocator owns none of it: an arena of a storage's arrays, freed by a World of another allocator.
+    frees:=0
+    saved:=context
+    context.allocator={proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
+        if mode==.Free {(^int)(data)^+=1}
+        return nil,nil
+    },&frees}
+    value_free(&value,type_info_of(Copy_Value))
+    context=saved
+    testing.expect_value(t,frees,0)
+    testing.expect_value(t,len(tracking.allocation_map),0)
+}
