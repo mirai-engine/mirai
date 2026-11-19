@@ -3,45 +3,55 @@ package sources
 import "base:runtime"
 import "core:fmt"
 import "core:io"
+import "core:os"
 import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
 import "core:time"
 import "mirai:asset"
+import "mirai:cook/cache"
 import importer "mirai:cook/import"
 import "mirai:cook/textures"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
+import "mirai:store"
 
 // The command mirai import, which the import program of the engine runs: it
-// turns a model (OBJ, glTF, GLB, USD, FBX, or a format a plugin of the
+// ingests a model (OBJ, glTF, GLB, USD, FBX, or a format a plugin of the
 // project adds), an image, a sound (WAV, Ogg Vorbis), a font (TrueType,
 // OpenType), a manifest of prompts (<name>.prompts.json) or a source a plugin
-// of the project imports whole in the assets folder of a project or a plugin
-// into assets with import_source, as the editor does: a model also gets the
-// prefab of its hierarchy.
-// A source is imported with the settings its sidecar keeps (<file>.import),
-// changed by the options given; the result is written back there with the id
-// of each asset, so importing again without options gives the same assets.
+// of the project imports whole, from wherever it is, into the library of the
+// machine store (ingest), and adds it to a project (project_add): the one of
+// --project, else the one whose assets hold the file, else none. Its cache
+// is listed under --folder of the project's assets (else the folder of the
+// file under them, else the top), and its documents and the prefab of a
+// model are written there.
+// A source is ingested with the settings its package keeps, changed by the
+// options given; ingesting again without options gives the same assets, and
+// a source whose package is current is not imported again, unless --rebuild.
 // --rdo-lambda 0 encodes the blocks of textures for the least error and a
-// higher lambda for smaller files. An asset whose file already is the one the
-// import gives is kept as it is, unless --rebuild. A document the import
-// writes over that changed since it last wrote it stops the import, which
-// names it, unless --discard-changes; a sync leaves it as it is and warns. An
-// image imported for the first time without --srgb, --data or --normal holds
+// higher lambda for smaller files. A document the import writes over in the
+// project that changed since it last wrote it stops the import, which names
+// it, unless --discard-changes; a refresh leaves it as it is and warns. An
+// image ingested for the first time without --srgb, --data or --normal holds
 // what its name says (image_use). Only models and images have settings.
-// --sync <root>, once per project or plugin, imports instead every source
-// under it whose outputs in its imported folder are missing or stale (sync):
-// what a checkout needs before it runs. Textures are built Fast, as the
-// editor imports them, unless the texture cache keeps them Final, and outputs
-// built either way are current: an import takes what the sync of the editor
-// left. --final builds them Final: what a build that cooks and the package of
-// the engine take.
+// --refresh <root>, once per project or plugin, instead brings every package
+// its packages.mirai pins to a build this engine reads (project_refresh): what
+// a checkout needs before it runs. It removes nothing and builds only from a
+// source on this machine; a package nothing here gives is a failure that names
+// it. Textures are built Fast, as the editor imports them, unless the texture
+// cache keeps them Final, and a Fast build is taken; --final builds them Final
+// and takes only a Final build: what a build that cooks and the package of the
+// engine take. --from <folder> names a second store a build this store lacks
+// is copied from before it is built (cache.store_source), as a peer gives it;
+// an installed engine takes the store of the builds of its plugins
+// (project.ENGINE_STORE) unless another is given. The store is that of the
+// machine, or the one at --store.
 // The report goes to output, one asset per line: id, kind, bytes and path, and
-// under it, indented, what the asset holds; then the settings file and the
+// under it, indented, what the asset holds; then the package and the
 // warnings. How far a long import is goes to errors while it runs, and a
-// failure as "mirai import: <file>: <reason>". A sync says each source it
+// failure as "mirai import: <file>: <reason>". A refresh says each source it
 // imports, and how far it is, in output.
 // --profile adds the seconds each zone of the import took, summed over the
 // threads that cooked it and on the thread that imports, and the time no zone
@@ -50,7 +60,7 @@ import "mirai:std/jobs"
 // Exit codes: 0 done, 1 failed, 2 misuse.
 
 @(private="file")
-IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--rebuild] [--discard-changes] [--final] [--texture-cache <folder>] [--mesh-cache <folder>] [--profile] [--release]"
+IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--project <root>] [--folder <folder>] [--rebuild] [--discard-changes] [--final] [--store <folder>] [--profile] [--release] | mirai import --refresh <root> [--refresh <root>...] [--final] [--store <folder>] [--from <folder>] [--release]"
 
 // library reads the formats and the importers of whole sources the plugins of
 // a project add and the types of its game (in the import program of the
@@ -58,8 +68,13 @@ IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lam
 command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> int {
     file:string
     options:=importer.Import_Options{fast_textures=true}
-    roots:=make([dynamic]string,context.temp_allocator) // of --sync
+    roots:=make([dynamic]string,context.temp_allocator) // of --refresh
+    root:string   // of --project
+    folder:string // of --folder
+    foldered:bool
     profiled:bool
+    store_root:string // of the store whose caches keep what imports build; "": that of the machine
+    from_root:string  // of --from
     // What the options change of the settings the source has.
     Change :: enum {Textures,Rdo_Lambda,Image,Alpha_Coverage,Lods,Parts,Front,Rig,Rig_Crotch,Rig_Neck,Skeleton}
     given:importer.Import_Settings
@@ -73,9 +88,11 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     for ;at<len(args);at+=1 {
         ok:=true
         switch args[at] {
-        case "--sync":
-            root:string
-            if root,ok=value(args,&at);ok {append(&roots,root)}
+        case "--refresh":
+            refreshed:string
+            if refreshed,ok=value(args,&at);ok {append(&roots,refreshed)}
+        case "--project": root,ok=value(args,&at)
+        case "--folder": folder,ok=value(args,&at);foldered=true
         case "--skeleton":
             text:string
             if text,ok=value(args,&at);ok {
@@ -101,8 +118,8 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
                 given.alpha_coverage=f32(cutoff)
                 changed+={.Alpha_Coverage}
             }
-        case "--texture-cache": options.texture_cache,ok=value(args,&at)
-        case "--mesh-cache": options.mesh_cache,ok=value(args,&at)
+        case "--store": store_root,ok=value(args,&at)
+        case "--from": from_root,ok=value(args,&at)
         case "--profile": profiled=true
         case "--rebuild": options.rebuild=true
         case "--discard-changes": options.changed=.Discard
@@ -163,6 +180,8 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
         }
         if !ok {fmt.wprintln(errors,IMPORT_USAGE);return 2}
     }
+    // Nothing to import is a misuse, whatever the store says.
+    if len(roots)==0 && file=="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
     js:jobs.Job_System
     if !jobs.system_init(&js,{threads=jobs.THREADS_AUTO,allocator=runtime.heap_allocator()}) {
         fmt.wprintln(errors,"mirai import: the threads to cook on could not be started")
@@ -170,93 +189,168 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     }
     defer jobs.system_destroy(&js)
     options.worker={system=&js,worker=jobs.OWNER}
-    if len(roots)>0 {
-        return sync_command(roots[:],options,library,output,errors)
+    if store_root=="" {store_root=store.default_root(context.temp_allocator)}
+    kept:store.Store
+    if store_root!="" {
+        opened:store.Error
+        if kept,opened=store.open(store_root,context.temp_allocator);opened!=.None {
+            fmt.wprintfln(errors,"mirai import: the store at %s could not be opened (%v): pass another with --store",store_root,opened)
+            return 1
+        }
+        options.store=&kept
     }
+    library_options:=Library_Options{store=options.store,fast_textures=options.fast_textures,rebuild=options.rebuild,changed=options.changed,plugins=library,worker=options.worker}
+    if options.store==nil {fmt.wprintln(errors,"mirai import: this machine has no folder of user data for its store: pass one with --store");return 1}
+    if len(roots)>0 {
+        if file!="" || root!="" || foldered || changed!={} || options.changed!=.Refuse {fmt.wprintln(errors,IMPORT_USAGE);return 2}
+        if from_root=="" {
+            if engine:=project.engine_root_find("",context.temp_allocator);project.engine_installed(engine) {
+                if bundled:=project.path(engine,project.ENGINE_STORE,allocator=context.temp_allocator);os.is_dir(bundled) {from_root=bundled}
+            }
+        }
+        from:store.Store
+        if from_root!="" {
+            opened:store.Error
+            if from,opened=store.open(from_root,context.temp_allocator);opened!=.None {
+                fmt.wprintfln(errors,"mirai import: the store at %s could not be opened (%v): pass another with --from",from_root,opened)
+                return 1
+            }
+            library_options.source=cache.store_source(&from)
+        }
+        return refresh_command(roots[:],library_options,output,errors)
+    }
+    if from_root!="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
     if file=="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
-    root,in_assets:=source_root(file,context.temp_allocator)
-    if !in_assets {fmt.wprintfln(errors,"mirai import: %s is in no assets folder of a project or a plugin: move it beside what it makes, under assets/",file);return 1}
-    options.root=root
-    if options.texture_cache=="" {options.texture_cache=project.content_cache_path(root,project.TEXTURE_CACHE,context.temp_allocator)}
-    if options.mesh_cache=="" {options.mesh_cache=project.content_cache_path(root,project.MESH_CACHE,context.temp_allocator)}
+    origin:=importer.path_key(file)
+    // The project it is added to, and where under its assets.
+    if root=="" {
+        if inside,in_assets:=importer.source_root(origin,context.temp_allocator);in_assets {
+            root=inside
+            if !foldered {
+                assets:=project.folder_path(root,.Assets,context.temp_allocator)
+                folder=strings.trim_prefix(filepath.dir(origin),assets)
+                folder=strings.trim_prefix(folder,"/")
+            }
+        }
+    }
+    if root!="" {
+        root=project.path_absolute(root,context.temp_allocator)
+        library_options.root=root
+    } else if foldered {
+        fmt.wprintln(errors,"mirai import: --folder is a folder of the assets of a project: give it with --project")
+        return 2
+    }
     formats:=FORMATS[:]
-    kind:=source_kind(file)
+    kind:=source_kind(origin)
     plugins:Library_Imports
     defer if plugins.release!=nil {plugins.release(plugins.state)}
-    if (kind==.None || kind==.Model) && library!=nil {
-        plugins=library(root,context.temp_allocator)
-        options.world=plugins.world
+    if (kind==.None || kind==.Model) && library!=nil && root!="" {
+        plugins=library(root,options.store,context.temp_allocator)
         all:=make([dynamic]importer.Format,0,len(FORMATS)+len(plugins.formats),context.temp_allocator)
         append(&all,..FORMATS[:])
         append(&all,..plugins.formats)
         formats=all[:]
-        kind=source_kind(file,formats)
-        if _,claimed:=whole_find(plugins.wholes,file);claimed {kind=.None}
+        kind=source_kind(origin,formats)
+        if _,claimed:=whole_find(plugins.wholes,origin);claimed {kind=.None}
     }
     if changed&{.Image,.Alpha_Coverage}!={} && kind!=.Image {fmt.wprintln(errors,"mirai import: --srgb, --normal, --normal-green-down, --data and --alpha-coverage apply only to images");return 2}
     if changed&{.Lods,.Parts,.Front,.Rig,.Rig_Crotch,.Rig_Neck,.Skeleton}!={} && kind!=.Model {fmt.wprintln(errors,"mirai import: --lods, --parts, --front, --skeleton and the --rig options apply only to models");return 2}
 
+    // The settings the package keeps, changed by the options: given only when they change it.
+    settings:^importer.Import_Settings
     if kind==.Model || kind==.Image {
-        stored,found,settings_error:=importer.settings_load(file)
+        stored,found,settings_error:=importer.settings_load(options,origin)
         if settings_error.code!=.None {
             fmt.wprintfln(errors,"mirai import: %s: %s",file,settings_error.message)
             return 1
         }
-        options.settings,options.ignore_stored=stored,true
+        chosen:=stored
         // An image with no settings yet holds what its name says, as in the editor.
-        if kind==.Image && !found {options.image=image_use(file)}
-        if .Textures in changed {options.textures=given.textures}
-        if .Rdo_Lambda in changed {options.rdo_lambda=given.rdo_lambda}
-        if .Image in changed {options.image=given.image}
-        if .Alpha_Coverage in changed {options.alpha_coverage=given.alpha_coverage}
-        if .Lods in changed {options.lods=given.lods}
-        if .Parts in changed {options.parts=given.parts}
-        if .Front in changed {options.front=given.front}
-        if .Rig in changed {options.rig=given.rig}
-        if .Rig_Crotch in changed {options.rig_crotch=given.rig_crotch}
-        if .Rig_Neck in changed {options.rig_neck=given.rig_neck}
-        if .Skeleton in changed {options.skeleton=given.skeleton}
+        if kind==.Image && !found {chosen.image=image_use(origin)}
+        if .Textures in changed {chosen.textures=given.textures}
+        if .Rdo_Lambda in changed {chosen.rdo_lambda=given.rdo_lambda}
+        if .Image in changed {chosen.image=given.image}
+        if .Alpha_Coverage in changed {chosen.alpha_coverage=given.alpha_coverage}
+        if .Lods in changed {chosen.lods=given.lods}
+        if .Parts in changed {chosen.parts=given.parts}
+        if .Front in changed {chosen.front=given.front}
+        if .Rig in changed {chosen.rig=given.rig}
+        if .Rig_Crotch in changed {chosen.rig_crotch=given.rig_crotch}
+        if .Rig_Neck in changed {chosen.rig_neck=given.rig_neck}
+        if .Skeleton in changed {chosen.skeleton=given.skeleton}
         // The heights tell the fit of a person where the body is.
-        if options.rig!=.Humanoid {
+        if chosen.rig!=.Humanoid {
             if changed&{.Rig_Crotch,.Rig_Neck}!={} {fmt.wprintln(errors,"mirai import: --rig-crotch and --rig-neck go with --rig humanoid");return 2}
-            options.rig_crotch,options.rig_neck=0,0
+            chosen.rig_crotch,chosen.rig_neck=0,0
+        }
+        if chosen!=stored || !found {
+            settings=new(importer.Import_Settings,context.temp_allocator)
+            settings^=chosen
         }
     }
     profile:base.Profile
     started:=time.tick_now()
     if profiled && !importer.profile_begin(&profile,&options) {fmt.wprintln(errors,"mirai import: no memory for --profile");return 1}
     defer if profiled {profile_print(&profile,started,output);base.profile_destroy(&profile)}
-    progress:importer.Progress
-    importer.progress_begin(&progress,errors,filepath.base(file))
-    options.progress=&progress
-    report,error:=import_source(file,options,formats,plugins.wholes)
+    library_options.worker=options.worker
+    library_options.progress=errors
+    if root=="" {
+        report,error:=ingest(origin,library_options,settings)
+        if error.code!=.None {
+            fmt.wprintfln(errors,"mirai import: %s: %s",file,error.message)
+            return 1
+        }
+        defer importer.report_destroy(&report)
+        ingest_print(&report,output)
+        return 0
+    }
+    report,added,error:=project_ingest(root,origin,folder,library_options,settings)
+    defer library_report_destroy(&added)
     if error.code!=.None {
         fmt.wprintfln(errors,"mirai import: %s: %s",file,error.message)
         return 1
     }
     defer importer.report_destroy(&report)
-    written_print(output,report.assets[:])
-    if report.saved!="" {fmt.wprintfln(output,"sidecar %s",report.saved)}
-    for warning in report.warnings {fmt.wprintfln(output,"warning: %s",warning)}
-    return 0
+    ingest_print(&report,output)
+    return library_print(&added,root,output,errors)
 }
 
-// --sync: every root in turn, one line each with what its sync did.
+// The assets an ingest wrote, its warnings and its package.
 @(private="file")
-sync_command :: proc(roots:[]string,options:importer.Import_Options,library:Library,output,errors:io.Writer) -> int {
+ingest_print :: proc(report:^importer.Import_Report,output:io.Writer) {
+    written_print(output,report.assets[:])
+    for warning in report.warnings {fmt.wprintfln(output,"warning: %s",warning)}
+    id:[base.ASSET_ID_TEXT]u8
+    digits:[64]u8
+    fmt.wprintfln(output,"package %s %s",base.asset_id_format(report.package_id,id[:]),store.hex(report.manifest,&digits))
+}
+
+// --refresh: every root in turn, one line each with what its refresh did.
+@(private="file")
+refresh_command :: proc(roots:[]string,options:Library_Options,output,errors:io.Writer) -> int {
     code:=0
     for root in roots {
         started:=time.tick_now()
-        report:=sync(root,{texture_cache=options.texture_cache,mesh_cache=options.mesh_cache,rebuild=options.rebuild,fast_textures=options.fast_textures,worker=options.worker,library=library,progress=output})
-        defer sync_report_destroy(&report)
-        for warning in report.warnings {fmt.wprintfln(output,"warning: %s",warning)}
-        for failure in report.failures {fmt.wprintfln(errors,"mirai import: %s",failure)}
-        if len(report.failures)>0 {code=1}
-        if report.sources>0 || report.removed>0 {
-            fmt.wprintfln(output,"%s: %d of %d imported sources built again, %d stale files removed (%.1f s).",root,report.imported,report.sources,report.removed,time.duration_seconds(time.tick_since(started)))
+        options:=options
+        options.root=project.path_absolute(root,context.temp_allocator)
+        options.progress=output
+        report:=project_refresh(root,options)
+        defer library_report_destroy(&report)
+        if library_print(&report,root,output,errors)!=0 {code=1}
+        if report.packages>0 {
+            fmt.wprintfln(output,"%s: %d packages, %d ingested, %d builds fetched (%.1f s).",root,report.packages,report.ingested,report.fetched,time.duration_seconds(time.tick_since(started)))
         }
     }
     return code
+}
+
+// The warnings, failures and missing packages of a report; 1 with any failure or package missing.
+@(private="file")
+library_print :: proc(report:^Library_Report,root:string,output,errors:io.Writer) -> int {
+    for warning in report.warnings {fmt.wprintfln(output,"warning: %s",warning)}
+    for failure in report.failures {fmt.wprintfln(errors,"mirai import: %s",failure)}
+    for missing in report.missing {fmt.wprintfln(errors,"mirai import: %s: %s",root,missing)}
+    return 1 if len(report.failures)>0 || len(report.missing)>0 else 0
 }
 
 // The zones of a profiled import (importer.profile_totals), each with its
@@ -273,7 +367,8 @@ profile_print :: proc(profile:^base.Profile,started:time.Tick,output:io.Writer) 
     if lost>0 {fmt.wprintfln(output,"  %d zones were lost: the rings hold %d each",lost,importer.PROFILE_ZONES)}
 }
 
-// One line per asset written (id, kind, bytes and path) with what it holds
+// One line per asset written (id, kind, bytes, and its path or its object of
+// the store) with what it holds
 // under it, and how many there are.
 @(private="file")
 written_print :: proc(output:io.Writer,assets:[]importer.Written) {
@@ -281,7 +376,9 @@ written_print :: proc(output:io.Writer,assets:[]importer.Written) {
     kept:=0
     for written in assets {
         info,_:=asset.kind_info(written.kind)
-        fmt.wprintfln(output,"%s %-8s %d %s",base.asset_id_format(written.id,buffer[:]),info.name,written.bytes,written.path)
+        digits:[64]u8
+        at:=written.path if written.path!="" else fmt.tprintf("object %s",store.hex(written.object,&digits))
+        fmt.wprintfln(output,"%s %-8s %d %s",base.asset_id_format(written.id,buffer[:]),info.name,written.bytes,at)
         if written.detail!="" {fmt.wprintfln(output,"  %s",written.detail)}
         if written.kept {kept+=1}
     }

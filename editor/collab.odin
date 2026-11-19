@@ -8,15 +8,19 @@ import "core:slice"
 import "core:strings"
 import "core:time"
 import "mirai:asset"
+import "mirai:cook/share"
 import "mirai:core"
 import "mirai:editor/history"
 import scene "mirai:engine/scene"
 import "mirai:host"
+import "mirai:platform"
 import wire "mirai:net"
 import gpu "mirai:render"
 import "mirai:std/base"
+import "mirai:std/jobs"
 import mm "mirai:std/math"
 import "mirai:std/serial"
+import "mirai:store"
 import "mirai:ui"
 
 // Collaboration: several editors share the scene of one of them. The host
@@ -35,10 +39,10 @@ import "mirai:ui"
 // draw as avatars and outlines: selecting holds nothing.
 //
 // A guest joins with the code of the invitation of the host (net/invite.odin):
-// its address on its network and on its router, and the token of the session.
+// its address on its network and on its router, and the key of the session.
 
 COLLAB_PORT :: 7950
-COLLAB_VERSION :: 7 // of the messages: an editor of another one has another version of the project
+COLLAB_VERSION :: 8 // of the messages: an editor of another one has another version of the project
 COLLAB_PEERS :: 8 // the host and seven guests
 COLLAB_NAME_BYTES :: 32
 COLLAB_SELECTION :: 16
@@ -46,16 +50,19 @@ COLLAB_PRESENCE_INTERVAL :: 1.0/12
 COLLAB_EDIT_INTERVAL :: 1.0/30
 COLLAB_PRESENCE_SEEN :: 3.0 // seconds
 COLLAB_MESSAGE_BYTES :: 1<<30 // what one message may hold: a peer that sends more is cut off
-COLLAB_CHANNELS :: []wire.Channel_Desc{{kind=.Reliable,queue_bytes=256<<10,window=512},{kind=.Unreliable}}
+// Of the hosts of a session, whatever the project: a guest of another one still gets its files,
+// and its Hello says whether it can enter the scene.
+COLLAB_WIRE :: u32(COLLAB_VERSION)<<8 | u32(share.VERSION)
 COLLAB_HELLO_TIMEOUT :: 10.0
-COLLAB_WORKER_INTERVAL :: 2*time.Millisecond // between updates of the network half
+COLLAB_LEAVE_WAIT :: 8*time.Millisecond // for the worker, which host_poll wakes, to send the goodbye
 COLLAB_PLAYING :: u8(1) // presence: inside a Play or a Simulate of its own
 COLLAB_SERVING :: u8(2) // presence: serves the game of a plugin, whose offer follows
 COLLAB_JOINED :: u8(4)  // presence: a guest that plays the game the host serves
-COLLAB_OFFER_BYTES :: 32 // what the presence of the host carries of the game it serves (Play_Provider.offer)
+COLLAB_OFFER_BYTES :: 64 // what the presence of the host carries of the game it serves (Play_Provider.offer)
 
 Collab_Role :: enum u8 {None,Host,Guest}
-Collab_Phase :: enum u8 {Idle,Connecting,Syncing,Joined,Ended}
+// Updating: a guest brings its folder to the host's snapshot before it enters the scene.
+Collab_Phase :: enum u8 {Idle,Connecting,Updating,Syncing,Joined,Ended}
 
 Collab_Error :: enum u8 {
     None,
@@ -65,6 +72,9 @@ Collab_Error :: enum u8 {
     Transport,   // the port could not be opened
     No_Assets,
     No_Random,   // the system gives no secure random bytes, which the session is sealed with
+    No_Store,    // the editor has no store, where the project travels through
+    No_Project,  // the editor has no project to share or to join into
+    Project,     // the project could not be offered: Collab.problem says why
 }
 
 collab_error_text :: proc(error:Collab_Error) -> string {
@@ -72,10 +82,13 @@ collab_error_text :: proc(error:Collab_Error) -> string {
     case .None:      return ""
     case .Busy:      return "a session is open; leave it first"
     case .Playing:   return "a game is playing; stop it first"
-    case .Invite:    return "not the code of an invitation: like R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT; copy it again"
+    case .Invite:    return "not the code of an invitation of this Mirai: 87 characters by groups of four; copy it again"
     case .Transport: return "the port could not be opened"
     case .No_Assets: return "the project has no assets folder"
     case .No_Random: return "this system gives no secure random bytes to seal the session with"
+    case .No_Store:  return "the editor has no store, which the project travels through: start it with --store <folder>"
+    case .No_Project: return "the editor has no project: open one, or join into a folder"
+    case .Project:   return "the project could not be offered"
     }
     return ""
 }
@@ -88,6 +101,7 @@ Collab_Message :: enum u8 {
     Ping,                                              // a point of the scene an editor pinged (collab_ping.odin)
     File,                                              // an asset file an editor changed (collab_files.odin)
     File_Unsent,                                       // an asset file an editor changed that is too large to travel
+    Project,                                           // the host offers a new snapshot of its project (collab_project.odin)
 }
 
 // Set: the whole row, for whoever has none. Fields: runs of bytes of a row,
@@ -162,7 +176,7 @@ Collab_State :: struct {
     mapping:wire.Port_Mapping,
     mapping_on:bool,
     port:int,
-    invite:u64,           // the token of the session
+    invite:wire.Invite_Key, // of the session: the host's, with its private key
     invitation:wire.Invitation, // a guest: of the host
     self:u8,
     peers:[COLLAB_PEERS]Collab_Peer,
@@ -175,7 +189,7 @@ Collab_State :: struct {
     by_hash:map[u64]int,
     epoch:u64,            // of the history of the document being shared
     presence_at,edit_at:f64,
-    code:[48]u8,          // the host: its invitation, as others reach it
+    code:[wire.INVITE_TEXT_BYTES]u8, // the host: its invitation, as others reach it
     code_length:int,
     sent_edits,received_edits,sent_ops,received_ops:u64,
     guest_name:[COLLAB_NAME_BYTES]u8,
@@ -191,6 +205,25 @@ Collab_State :: struct {
     applying_file:bool,        // a file of another end is being put: its change is not this end's
     unsent:[COLLAB_UNSENT]Collab_Unsent, // the files that did not travel; the first unsent_count
     unsent_count:int,
+    virtual:bool,      // on the network of a test, whose clock is now
+    now:f64,
+    node_jobs:^jobs.Job_System, // of the exchange of node
+    node:^share.Node,  // the project and the library over the connections of the session (collab_project.odin)
+    join:^Collab_Join, // a guest: what brings its folder to the host's snapshot
+    // The host: its project offered, and what changed since (collab_host_changes).
+    offered:store.Hash,
+    offers:int,        // new snapshots offered during the session
+    watch:platform.Watch,
+    watching:bool,
+    changed_at,offered_at:f64,
+    libraries:^Collab_Libraries, // of the other editors, as last read (collab_library.odin)
+    reading:^Collab_Libraries,   // and as being read again
+    take:^Collab_Take,           // a package of one of them being taken
+    thumbs:[COLLAB_THUMB_FETCHES]Collab_Thumb, // thumbnails asked of them
+    thumbs_absent:map[u64]struct{},            // keys a peer had no thumbnail of
+    // A guest: an update asked for, and those done.
+    update_due:bool,
+    updates:int,
 }
 
 @(storage)
@@ -199,10 +232,11 @@ Collab :: struct {
     // The fields of the Share popup.
     name:[COLLAB_NAME_BYTES]u8,
     name_length:int,
-    join:[64]u8,
+    join:[2*wire.INVITE_TEXT_BYTES]u8,
     join_length:int,
     joining:bool,
     error:Collab_Error,
+    problem:[256]u8, // of the error Project
     client:u64,   // who this editor is in every session: one that joins again takes its place back
     pings:[COLLAB_PEERS]Collab_Ping, // the last of each editor, by its place in the session; this one alone is 0
 }
@@ -227,6 +261,10 @@ collab_state :: proc(s:^Session) -> ^Collab_State {
     c:=collab_of(s)
     return c==nil?nil:c.state
 }
+
+// The clock of the session, in seconds.
+@(private)
+collab_now :: proc(st:^Collab_State) -> f64 {return st.virtual?st.now:wire.host_time(&st.host)}
 
 collab_active :: proc(s:^Session) -> bool {
     st:=collab_state(s)
@@ -255,6 +293,7 @@ collab_summary :: proc(s:^Session) -> string {
         switch st.phase {
         case .Idle:       return "guest"
         case .Connecting: return "guest connecting"
+        case .Updating:   return "guest updating"
         case .Syncing:    return "guest syncing"
         case .Joined:     return "guest joined"
         case .Ended:      return "ended"
@@ -315,10 +354,13 @@ collab_name_set :: proc(c:^Collab,name:string) {
 }
 
 @(private)
-collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invitation:wire.Invitation) -> (st:^Collab_State,error:Collab_Error) {
+// transport: a network of a test, on its clock (Collab_State.now); none: UDP on port.
+collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invitation:wire.Invitation,assets:=true,transport:=wire.Transport{}) -> (st:^Collab_State,error:Collab_Error) {
     c:=collab_of(s)
     if c.state!=nil && c.state.role!=.None && c.state.phase!=.Ended {return nil,.Busy}
-    if s.app.assets==nil {return nil,.No_Assets}
+    if assets && !s.has_project {return nil,.No_Project}
+    if assets && s.app.assets==nil {return nil,.No_Assets}
+    if s.store.root=="" {return nil,.No_Store}
     if s.mode!=.Edit {return nil,.Playing}
     if c.state!=nil {collab_destroy(s)}
     collab_name_set(c,name)
@@ -326,37 +368,50 @@ collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invitation
     st.role=role
     st.layout=collab_layout_hash(s.info)
     // The addresses of an invitation are IPv4.
+    st.virtual=transport.send!=nil
     bind:=role==.Guest?wire.address_ip4(0,0,0,0,0):wire.address_any6(port)
-    if !wire.udp_open(&st.udp,bind) {
+    if !st.virtual && !wire.udp_open(&st.udp,bind) {
         free(st)
         return nil,.Transport
     }
+    channels:=collab_channels()
     desc:=wire.Host_Desc{
-        mode=role==.Host?.Server:.Client,transport=wire.udp_transport(&st.udp),protocol_id=0x4d495241,version=st.layout,invite=invitation.token,
-        max_connections=COLLAB_PEERS-1,channels=COLLAB_CHANNELS,
+        mode=role==.Host?.Server:.Client,transport=st.virtual?transport:wire.udp_transport(&st.udp),protocol_id=0x4d495241,version=COLLAB_WIRE,invite=invitation.key,
+        max_connections=COLLAB_PEERS-1,channels=channels[:],
     }
     // Its network half runs on a thread of its own: an editor busy for a while
     // (generating the world of a game) keeps answering, and the session lives.
-    if wire.host_init(&st.host,desc)!=.None || !wire.worker_start(&st.host,COLLAB_WORKER_INTERVAL) {
+    if wire.host_init(&st.host,desc)!=.None || !st.virtual && !wire.worker_start(&st.host) {
         wire.host_destroy(&st.host)
-        wire.udp_close(&st.udp)
+        if !st.virtual {wire.udp_close(&st.udp)}
         free(st)
         return nil,.Transport
     }
     collab_tables_build(s,st)
     st.epoch=s.edits.epoch
     st.port=int(st.udp.address.port)
-    st.invite=invitation.token
+    st.invite=invitation.key
     c.state=st
+    if !collab_node_start(s,st) {
+        collab_destroy(s)
+        return nil,.Transport
+    }
     return st,.None
 }
 
 // Shares the scene: guests connect to this editor.
-collab_host :: proc(s:^Session,port:int,name:string) -> Collab_Error {
-    invite,made:=wire.invite_token()
+collab_host :: proc(s:^Session,port:int,name:string,transport:=wire.Transport{}) -> Collab_Error {
+    invite,made:=wire.invite_key()
     if !made {return .No_Random}
-    st,error:=collab_start(s,.Host,port>0?port:COLLAB_PORT,name,{token=invite})
+    st,error:=collab_start(s,.Host,port>0?port:COLLAB_PORT,name,{key=invite},transport=transport)
     if error!=.None {return error}
+    if problem:=collab_project_offer(s,st);problem!="" {
+        collab_destroy(s)
+        c:=collab_of(s)
+        base.text_set(c.problem[:],problem)
+        return .Project
+    }
+    collab_watch_start(s,st)
     st.phase=.Joined
     st.self=0
     c:=collab_of(s)
@@ -364,25 +419,32 @@ collab_host :: proc(s:^Session,port:int,name:string) -> Collab_Error {
     st.peers[0].name_length=copy(st.peers[0].name[:],string(c.name[:c.name_length]))
     st.peers[0].orbit=s.viewport.orbit
     collab_journal_reset(s,st)
-    st.mapping_on=wire.mapping_start(&st.mapping,u16(st.port))
+    st.mapping_on=!st.virtual && wire.mapping_start(&st.mapping,u16(st.port))
     collab_codes_update(st)
     return .None
 }
 
-// Enters the session of another editor with the code of its invitation: the scene is replaced by the one of the host.
-collab_join :: proc(s:^Session,code,name:string) -> Collab_Error {
-    invitation,valid:=wire.invite_decode(code)
-    if !valid {return .Invite}
-    st,error:=collab_start(s,.Guest,0,name,invitation)
+// Enters the session of another editor with the code of its invitation:
+// first folder is brought to the host's snapshot (collab_project.odin), then
+// the scene is replaced by the one of the host. folder: "" or the open
+// project; another is opened once it has the host's files, and joins again.
+// at: the host at that address, with the key of the invitation, in place of
+// the addresses it carries.
+collab_join :: proc(s:^Session,code,name:string,folder:="",at:=wire.Address{},transport:=wire.Transport{}) -> Collab_Error {
+    invitation,refused:=wire.invite_decode(code)
+    if refused!=.None {return .Invite}
+    target,reopen:=collab_join_folder(s,folder)
+    if target=="" {return .No_Project}
+    st,error:=collab_start(s,.Guest,0,name,invitation,assets=!reopen,transport=transport)
     if error!=.None {return error}
-    if wire.host_connect(&st.host,invitation.lan,invitation.public)!=.None {
+    connected:=at.kind!=.None?wire.host_connect(&st.host,at):wire.host_connect(&st.host,invitation.lan,invitation.public)
+    if connected!=.None || !collab_join_start(s,st,code,target,reopen) {
         collab_destroy(s)
         return .Transport
     }
     st.phase=.Connecting
     st.self=0xff
     st.invitation=invitation
-    st.peers[0].connected_at=wire.host_time(&st.host)
     return .None
 }
 
@@ -396,7 +458,7 @@ collab_leave :: proc(s:^Session) {
         wire.host_disconnect(&st.host,0,.Closed)
         wire.host_poll(&st.host)
         // The worker sends them before the host goes.
-        time.sleep(4*COLLAB_WORKER_INTERVAL)
+        time.sleep(COLLAB_LEAVE_WAIT)
     }
     collab_destroy(s)
 }
@@ -417,9 +479,10 @@ collab_destroy :: proc(s:^Session) {
     c:=collab_of(s)
     st:=c.state
     if st==nil {return}
+    collab_project_destroy(s,st)
     if st.mapping_on {wire.mapping_close(&st.mapping)}
     wire.host_destroy(&st.host)
-    wire.udp_close(&st.udp)
+    if !st.virtual {wire.udp_close(&st.udp)}
     for &peer in st.peers {collab_peer_free(&peer)}
     for path in st.files_out {delete(path)}
     delete(st.files_out)
@@ -436,6 +499,8 @@ collab_destroy :: proc(s:^Session) {
 collab_end :: proc(st:^Collab_State,reason:string) {
     st.phase=.Ended
     st.reason=reason
+    // A join that runs ends at its next wait.
+    if st.node!=nil {share.node_stop(st.node)}
 }
 
 // The close of the editor.
@@ -536,12 +601,15 @@ collab_peer_name :: proc(s:^Session,id:int) -> string {
 collab_update :: proc(s:^Session) {
     st:=collab_state(s)
     if st==nil || st.role==.None || st.phase==.Ended {return}
-    now:=wire.host_time(&st.host)
+    now:=collab_now(st)
     if st.role==.Host && st.mapping_on && int(now)%2==0 {collab_codes_update(st)}
     for command in wire.host_poll(&st.host) {
+        if share.node_command(st.node,&st.host,command) {continue}
         collab_command(s,st,command,now)
         if st.phase==.Ended {return}
     }
+    collab_project_update(s,st,now)
+    if st.phase==.Ended {return}
     // The scene of the document was replaced: the host shares the new one.
     if st.epoch!=s.edits.epoch {
         st.epoch=s.edits.epoch
@@ -565,6 +633,8 @@ collab_update :: proc(s:^Session) {
         collab_presence_send(s,st)
         collab_agents_send(s,st,now)
     }
+    // From the first update: the clock of a test's network is the test's from then on.
+    if st.role==.Guest && st.phase==.Connecting && st.peers[0].connected_at==0 {st.peers[0].connected_at=now}
     if st.role==.Guest && st.phase==.Connecting && now-st.peers[0].connected_at>COLLAB_HELLO_TIMEOUT {
         collab_end(st,"the host did not answer")
         return
@@ -585,16 +655,10 @@ collab_command :: proc(s:^Session,st:^Collab_State,command:wire.Command,now:f64)
     switch command.kind {
     case .Connected:
         if st.role==.Guest {
-            st.phase=.Syncing
+            // The Hello goes once the folder has the host's snapshot.
+            st.phase=.Updating
             st.peers[0].used=true
             st.peers[0].connection=command.connection
-            c:=collab_of(s)
-            w:serial.Writer
-            collab_begin(&w,.Hello)
-            serial.write_scalar(&w,st.layout)
-            serial.write_string(&w,string(c.name[:c.name_length]))
-            serial.write_scalar(&w,collab_client(c))
-            collab_queue(&st.peers[0],serial.writer_bytes(&w))
         } else {
             slot:=-1
             for &peer,i in st.peers {
@@ -610,7 +674,7 @@ collab_command :: proc(s:^Session,st:^Collab_State,command:wire.Command,now:f64)
         if st.role==.Guest {
             reason:="the host left"
             #partial switch command.reason {
-            case .Denied_Version: reason="the host has another version of the project"
+            case .Denied_Version: reason="this editor was built from other code than the host's project, whose files are here now: build the editor (Build) and join again"
             case .Denied_Full:    reason="the session is full"
             case .Timeout:        reason="the host stopped answering"
             case .Reliable_Overflow: reason="the connection could not keep up with what the session sends"
@@ -804,9 +868,24 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_ping_receive(s,st,from,data)}
     case .File:
         if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_file_receive(s,st,from,data,&r)}
+    case .Project:
+        if st.role==.Guest {collab_update_request(st)}
     case .File_Unsent:
         if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_unsent_receive(s,st,from,&r)}
     }
+}
+
+// A guest whose folder has the host's snapshot asks for the scene.
+@(private)
+collab_hello :: proc(s:^Session,st:^Collab_State) {
+    st.phase=.Syncing
+    c:=collab_of(s)
+    w:serial.Writer
+    collab_begin(&w,.Hello)
+    serial.write_scalar(&w,st.layout)
+    serial.write_string(&w,string(c.name[:c.name_length]))
+    serial.write_scalar(&w,collab_client(c))
+    collab_queue(&st.peers[0],serial.writer_bytes(&w))
 }
 
 @(private)
@@ -1326,7 +1405,7 @@ collab_in_game :: proc(s:^Session) -> bool {
 collab_draw :: proc(s:^Session) {
     st:=collab_state(s)
     if st==nil || st.role==.None || st.phase!=.Joined || !presence_in_scene(s) {return}
-    now:=wire.host_time(&st.host)
+    now:=collab_now(st)
     lines:=&s.viewport.lines
     w:=edited_world(s)
     _,low,high,loaded:=presence_mesh(s.app.assets)
@@ -1376,7 +1455,7 @@ collab_highlights :: proc(s:^Session,w:core.World_Ref,levels:[]u8) {
     st:=collab_state(s)
     if st==nil || st.phase!=.Joined || w.data!=s.edit_world || s.mode!=.Edit {return}
     es:=core.world_entities(w)
-    now:=wire.host_time(&st.host)
+    now:=collab_now(st)
     for &peer,i in st.peers {
         if !collab_peer_live(st,i,now) {continue}
         for id in peer.selection[:peer.selection_count] {
@@ -1394,7 +1473,7 @@ collab_highlights :: proc(s:^Session,w:core.World_Ref,levels:[]u8) {
 collab_highlights_key :: proc(s:^Session) -> u64 {
     st:=collab_state(s)
     if st==nil || st.phase!=.Joined {return 0}
-    now:=wire.host_time(&st.host)
+    now:=collab_now(st)
     key:=u64(1)
     for &peer,i in st.peers {
         if !collab_peer_live(st,i,now) {continue}

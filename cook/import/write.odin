@@ -17,16 +17,25 @@ import "mirai:std/base"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
 import "mirai:std/serial"
+import "mirai:store"
 
 Written :: struct {
     id:base.Asset_Id,
     kind:asset.Fourcc,
     name:string,
-    path:string,
+    path:string,   // for a document, its file in the folder of the documents; "" for an object of the store alone
+    object:store.Hash,
     source:string, // the source as imports name it
     bytes:int,
     detail:string, // what it holds, for a report: levels and colliders of a mesh, format and size of a texture
-    kept:bool,     // its file already was the one this import gives: nothing was built
+    kept:bool,     // an object the store had was taken: nothing was built
+}
+
+// Opens what an import wrote: a document from its file, an output of the
+// cache from its object of s.
+written_open :: proc(s:^store.Store,w:Written,a:^asset.Asset,allocator:=context.allocator) -> asset.Error {
+    if w.path!="" {return asset.asset_load(a,w.path,allocator)}
+    return asset.asset_open_object(a,s,w.object,allocator)
 }
 
 Import_Report :: struct {
@@ -36,15 +45,23 @@ Import_Report :: struct {
     // The asset of each mesh, material and image of the model, by row; zero for an image that was not written.
     mesh_ids,material_ids,image_ids,skeleton_ids:[]base.Asset_Id,
     animation_id:base.Asset_Id,
-    // The prefab of a model, the owner its parts name: the id the sidecar of
-    // the source lists and the file that has it, else new ones. Zero for a
-    // model without nodes that had no prefab. import_source writes it, with
-    // prefab_info.
+    // The prefab of a model, the owner its parts name: the id the previous
+    // manifest lists, else a new one, and the file it is written to: in the
+    // folder of the documents (none without one), or for Outputs the file
+    // output_written takes. Zero for a model without nodes that had no
+    // prefab. import_source writes it, with prefab_info.
     prefab:base.Asset_Id,
     prefab_path:string,
     prefab_info:asset.Import_Info,
-    settings:Import_Settings, // what the source was imported with: what its sidecar keeps
-    saved:string,             // the sidecar of the source, which the import wrote or found saying the same
+    settings:Import_Settings, // what the source was imported with: what its package keeps
+    // What the project's file of each document the import writes over in
+    // Import_Options.documents holds as it leaves it: the pin records it.
+    written:[dynamic]asset.Package_Written,
+    // The package the import wrote: its id, the hash of its manifest, its
+    // build, the key of the build and whether its textures are Final.
+    package_id:base.Asset_Id,
+    manifest,build,key:store.Hash,
+    final:bool,
     allocator:mem.Allocator,
 }
 
@@ -60,11 +77,11 @@ report_destroy :: proc(report:^Import_Report) {
     delete(report.assets)
     delete(report.warnings)
     delete(report.programs)
+    delete(report.written)
     delete(report.mesh_ids,report.allocator)
     delete(report.material_ids,report.allocator)
     delete(report.image_ids,report.allocator)
     delete(report.skeleton_ids,report.allocator)
-    delete(report.saved,report.allocator)
     delete(report.prefab_path,report.allocator)
     report^={}
 }
@@ -75,35 +92,24 @@ report_init :: proc(report:^Import_Report,allocator:=context.allocator) {
     report.assets.allocator=allocator
     report.warnings.allocator=allocator
     report.programs.allocator=allocator
+    report.written.allocator=allocator
 }
 
-// Moves what src lists (assets, warnings and programs) to the end of dst and
+// Moves what src lists (assets, warnings, programs and what was written) to the end of dst and
 // destroys src; both live in the same allocator.
 report_take :: proc(dst,src:^Import_Report) {
     append(&dst.assets,..src.assets[:])
     append(&dst.warnings,..src.warnings[:])
     append(&dst.programs,..src.programs[:])
-    clear(&src.assets);clear(&src.warnings);clear(&src.programs)
+    append(&dst.written,..src.written[:])
+    clear(&src.assets);clear(&src.warnings);clear(&src.programs);clear(&src.written)
     report_destroy(src)
 }
 
-// A source path as imports name it: relative to options.root when it is inside, with forward slashes.
-source_path :: proc(options:Import_Options,path:string,allocator:=context.temp_allocator) -> string {
-    absolute,error:=filepath.abs(path,context.temp_allocator)
-    if error!=nil {absolute=path}
-    cleaned,_:=filepath.clean(absolute,context.temp_allocator)
-    slashed,_:=strings.replace_all(cleaned,"\\","/",context.temp_allocator)
-    if options.root!="" {
-        root_absolute,root_error:=filepath.abs(options.root,context.temp_allocator)
-        if root_error!=nil {root_absolute=options.root}
-        root_clean,_:=filepath.clean(root_absolute,context.temp_allocator)
-        root,_:=strings.replace_all(root_clean,"\\","/",context.temp_allocator)
-        prefix:=strings.concatenate({strings.trim_right(root,"/"),"/"},context.temp_allocator)
-        if len(slashed)>len(prefix) && strings.equal_fold(slashed[:len(prefix)],prefix) {
-            return strings.clone(slashed[len(prefix):],allocator)
-        }
-    }
-    return strings.clone(slashed,allocator)
+// A source path as imports name it, relative to its package: the name of its
+// file, the same on every machine.
+source_path :: proc(path:string,allocator:=context.temp_allocator) -> string {
+    return strings.clone(filepath.base(path_key(path)),allocator)
 }
 
 @(private)
@@ -115,33 +121,48 @@ read_whole :: proc(path:string) -> ([]u8,serial.File_Error) {
 @(private)
 Writer :: struct {
     options:Import_Options,
-    folder:string,               // where new documents go: the folder of the source, or the one of it its sidecar names
-    registry:^asset.Registry,    // the assets of the root, where documents are found by id
+    folder:string,               // where new documents go: under the folder of the documents; "": none are written there
+    registry:^asset.Registry,    // the assets of the root, where documents are found by id; nil without a folder of the documents
     types:asset.Types,
     report:^Import_Report,
-    created:[dynamic]string,
+    created:[dynamic]string,     // the documents the import wrote that were not there
     names:map[string]bool,       // files of the folder new parts took, in lower case
-    source:string,               // the source as imports name it (source_path)
-    sidecar:Sidecar,             // of the source, as the import found it
-    taken:[]bool,                // the outputs of sidecar the import gives again
-    outputs:[dynamic]Output,     // what the import gives: the outputs of the sidecar it writes
-    paths:[dynamic]string,       // the file of each of outputs
-    imported:string,             // the imported folder of options.root
     path:string,                 // the source
+    origin:string,               // the source as an absolute path with forward slashes
+    source:string,               // the source as imports name it (source_path)
+    previous:asset.Package,      // the manifest the source was ingested as, when stored
+    previous_manifest:store.Hash,
+    stored:bool,
+    package_id:base.Asset_Id,
+    taken:[]bool,                // the assets of previous the import gives again
+    outputs:[dynamic]asset.Package_Asset, // what the import gives: the assets of the manifest it writes
+    paths:[dynamic]string,       // the scratch file of each of outputs
+    targets:[dynamic]string,     // the file of each document of outputs in the folder of the documents; "": none
+    objects:[dynamic]store.Hash, // the object of each of outputs once the store took it; zero: none
+    followed:[dynamic]Followed_Skeleton, // the baselines of the skeletons taken, which clips follow onto
+    scratch:string,              // the folder parts are written in before the store takes them
     version:u32,                 // import_version of what reads the source
-    inputs:[dynamic]string,      // the files read besides the source, as the sidecar lists them (writer_input)
-    key:u64,                     // import_key of the import, once a file of the cache is named; inputs are whole by then
-    previous:map[string]string,  // the files of the imported folder under another key, by their name without it (writer_reuse)
-    previous_read:bool,
+    inputs:[dynamic]string,      // the files read besides the source, as the manifest lists them (writer_input)
+    fixed:bool,                  // identity and key are fixed (writer_identity): inputs are whole
+    identity,key:store.Hash,
+    candidates:[dynamic]Candidate, // the builds outputs may be taken from (writer_candidates)
+    candidates_read:bool,
+    fast:bool,                   // a texture taken or built is Fast
     owner:base.Asset_Id,         // of the parts: the prefab of a model
-    stored:bool,                 // the source has a sidecar
     whole:bool,                  // writes a model for Outputs: its prefab and clips are parts by their names
     given:int,                   // of outputs, those a part of the same kind and name is (parts_plan)
-    keeping:map[base.Asset_Id]string, // the documents changed since the import wrote them that it leaves as they are (Changed.Keep), with the file that takes what is written of each
+    keeping:map[base.Asset_Id]u64, // the documents changed since the import wrote them that it leaves as they are (Changed.Keep), with what the pin recorded of each
     rng:base.Rng,
     allocator:mem.Allocator,
     keep:mem.Allocator,          // what lives as long as the writer: the temp allocator it began in
     error:Error,
+}
+
+// A build of the package this machine has, whose objects an import takes.
+@(private)
+Candidate :: struct {
+    build:asset.Build,
+    current:bool, // of what the import is made from now (its key)
 }
 
 // The message goes to the allocator of the writer: the temp one where the
@@ -166,28 +187,24 @@ writer_warn :: proc(w:^Writer,format:string,args:..any) {
     append(&w.report.warnings,fmt.aprintf(format,..args,allocator=w.allocator))
 }
 
-// A document the writer follows (follows: what a person changed in it stays)
-// records nothing of what it wrote: importing again never writes over a change.
+// Lists an output the store took in the report.
 @(private)
-record :: proc(w:^Writer,id:base.Asset_Id,kind:asset.Fourcc,name,path,source:string,existed:bool,detail:="",kept:=false,follows:=false) {
-    if _,keeping:=w.keeping[id];keeping {
-        progress_written(w.options.progress,len(w.sidecar.outputs))
-        return
-    }
-    if !asset.import_cached(kind) {
-        for at:=len(w.outputs)-1;at>=0;at-=1 {
-            if w.outputs[at].id==id {w.outputs[at].written=0 if follows else written_hash(path);break}
-        }
-    }
+record :: proc(w:^Writer,output:int,name:string,detail:="",kept:=false) {
+    o:=w.outputs[output]
+    path:=w.targets[output]
     size:int
-    if info,error:=os.stat(path,context.temp_allocator);error==nil {size=int(info.size)}
+    if path!="" {
+        if info,error:=os.stat(path,context.temp_allocator);error==nil {size=int(info.size)}
+    } else {
+        dependencies:=make([dynamic]base.Asset_Id,context.temp_allocator)
+        if header,error:=asset.object_header(w.options.store,w.objects[output],&dependencies);error==.None {size=int(header.total_size)}
+    }
     clone,_:=strings.clone(path,w.allocator)
     named,_:=strings.clone(name,w.allocator)
-    from,_:=strings.clone(source,w.allocator)
+    from,_:=strings.clone(w.source,w.allocator)
     described,_:=strings.clone(detail,w.allocator)
-    append(&w.report.assets,Written{id=id,kind=kind,name=named,path=clone,source=from,bytes=size,detail=described,kept=kept})
-    if !existed {append(&w.created,clone)}
-    progress_written(w.options.progress,len(w.sidecar.outputs))
+    append(&w.report.assets,Written{id=o.id,kind=o.kind,name=named,path=clone,object=w.objects[output],source=from,bytes=size,detail=described,kept=kept})
+    progress_written(w.options.progress,len(w.previous.assets))
 }
 
 @(private)
@@ -204,74 +221,62 @@ import_info :: proc(source:string,name:string,index:int,size:u64,hash:u64,settin
     return info
 }
 
-// The file of the cache an asset would be written to, open for its report,
-// when it already is there: its name says it was built from what the import
-// builds from now. Its owner, which the sidecar decides, is written again in
-// its header when it changed. The caller closes it.
-@(private="file")
-writer_kept :: proc(w:^Writer,path:string,owner:base.Asset_Id,file:^asset.Asset) -> bool {
-    if w.options.rebuild || !os.exists(path) || asset.asset_load(file,path,context.temp_allocator)!=.None {return false}
-    if file.blob.header.owner==owner {return true}
-    if asset.header_owner_set(file.blob.data,owner)==.None && serial.file_write_atomic(path,file.blob.data)==.None {
-        file.blob.header.owner=owner
-        return true
+// Reads the builds outputs may be taken from: that of what the import is made
+// from now (which fixes it), Final or, with fast textures, Fast; and the one
+// this machine chose for the previous manifest. Before any writer_reuse, on
+// the writer's thread.
+@(private)
+writer_candidates :: proc(w:^Writer) {
+    if w.candidates_read {return}
+    w.candidates_read=true
+    w.candidates.allocator=w.keep
+    writer_identity(w)
+    s:=w.options.store
+    digits:[64]u8
+    take :: proc(w:^Writer,s:^store.Store,namespace,name:string,current:bool) {
+        hash,error:=store.ref_get(s,namespace,name)
+        if error!=.None {return}
+        b,read_error:=asset.build_get(s,hash,w.keep)
+        if read_error==.None && b.package_id==w.package_id {append(&w.candidates,Candidate{b,current})}
     }
-    asset.asset_close(file)
-    return false
+    take(w,s,asset.REF_IMPORTS,store.hex(w.key,&digits),true)
+    if w.options.fast_textures {take(w,s,asset.REF_IMPORTS_FAST,store.hex(w.key,&digits),true)}
+    if w.stored {take(w,s,asset.REF_BUILDS,store.hex(asset.build_select(w.previous_manifest,&w.previous),&digits),false)}
 }
 
-// The file of the imported folder that has the id and the extension of path
-// under another key than that of the import, and its name without the key.
-// The folder is read once, on the writer's thread.
-@(private="file")
-writer_previous :: proc(w:^Writer,path:string) -> (previous,unkeyed:string,found:bool) {
-    if !w.previous_read {
-        w.previous_read=true
-        w.previous=make(map[string]string,w.keep)
-        entries,_:=os.read_all_directory_by_path(w.imported,context.temp_allocator)
-        for entry in entries {
-            if _,key,named:=asset.imported_name(entry.name);named && key!=w.key && entry.type==.Regular {
-                w.previous[strings.concatenate({entry.name[:32],entry.name[49:]},w.keep)]=strings.clone(entry.fullpath,w.keep)
-            }
+// The object of a build of the package (writer_candidates) for the output id,
+// to take without building it: of kind in the version it is written in now,
+// with owner, and made from one of expected, which records what decides its
+// bytes beyond the key (the image of a texture and its encoders, the mesh as
+// read and what builds it). Never with rebuild. Reads what it is given only:
+// any thread, with types of its own.
+@(private)
+writer_reuse :: proc(w:^Writer,types:^asset.Types,id:base.Asset_Id,kind:asset.Fourcc,owner:base.Asset_Id,expected:..asset.Import_Info) -> (hash:store.Hash,info:asset.Import_Info,found:bool) {
+    if w.options.rebuild {return}
+    known,_:=asset.kind_info(kind)
+    for &c in w.candidates {
+        for o in c.build.outputs {
+            if o.id!=id || o.kind!=kind || o.kind_version!=known.version {continue}
+            header,recorded,imported,error:=asset.object_peek(w.options.store,o.object,types)
+            if error!=.None || !imported || header.kind!=kind || header.owner!=owner || !slice.contains(expected,recorded) {continue}
+            return o.object,recorded,true
         }
     }
-    name:=filepath.base(path)
-    if len(name)<49 {return}
-    unkeyed=strings.concatenate({name[:32],name[49:]},context.temp_allocator)
-    previous,found=w.previous[unkeyed]
     return
 }
 
-// Takes the file an output of the cache had under another key as its file
-// under the key of now (path), without building or writing it, when what it
-// records it was built from is one of expected and it is of the version its
-// kind is written in now: what is not in the key of the file but decides its
-// bytes (the image of a texture and its encoders, the mesh as read and what
-// builds it) is in what it records. False with rebuild or a file at path.
+// The object a texture had, built from the same image with the same settings and
+// encoders (Import_Info.settings_hash): Final, or Fast for an import of fast
+// textures while the texture cache holds no Final of it. fast: it is Fast.
 @(private="file")
-writer_reuse :: proc(w:^Writer,kind:asset.Fourcc,path:string,expected:..asset.Import_Info) -> bool {
-    if w.options.rebuild || os.exists(path) {return false}
-    previous,unkeyed,found:=writer_previous(w,path)
-    if !found {return false}
-    header,info,imported,error:=asset.import_peek(previous,&w.types)
-    known,_:=asset.kind_info(kind)
-    if error!=.None || !imported || header.kind!=kind || header.kind_version!=known.version || !slice.contains(expected,info) {return false}
-    if os.rename(previous,path)!=nil {return false}
-    delete_key(&w.previous,unkeyed)
-    return true
-}
-
-// Takes the file a texture had under another key when it was built from the
-// same image with the same settings and encoders (Import_Info.settings_hash):
-// Final, or Fast for an import of fast textures while the texture cache holds
-// no Final of it.
-@(private="file")
-texture_reuse :: proc(w:^Writer,job:Texture_Job,path,source:string) -> bool {
+texture_reuse :: proc(w:^Writer,types:^asset.Types,job:Texture_Job,id,owner:base.Asset_Id,source:string) -> (hash:store.Hash,fast,found:bool) {
     options:=texture_options(w,job)
     final:=import_info(source,job.name,job.index,job.size,job.hash,textures.settings_hash(options),job.version)
-    fast:=final
-    if w.options.fast_textures && !textures.cache_has(w.options.texture_cache,textures.cache_key_build(job.bytes,job.made,options)) {fast.settings_hash=fast_settings(options)}
-    return writer_reuse(w,asset.KIND_TEXTURE,path,final,fast)
+    quick:=final
+    if w.options.fast_textures && !textures.cache_has(import_cache(w.options),textures.cache_key_build(job.bytes,job.made,options)) {quick.settings_hash=fast_settings(options)}
+    info:asset.Import_Info
+    hash,info,found=writer_reuse(w,types,id,asset.KIND_TEXTURE,owner,final,quick)
+    return hash,found && info.settings_hash!=final.settings_hash,found
 }
 
 // The slots of a mesh as its file stores them, naming the materials by row; in
@@ -299,23 +304,6 @@ mesh_info :: proc(source:string,mesh:^Imported_Mesh,index:int,content:u64,slots:
     hash=base.hash_combine(hash,base.hash64(mem.ptr_to_bytes(&skeleton)))
     size:=u64(len(mesh.vertices)*size_of(asset.Vertex)+len(mesh.indices)*size_of(u32))
     return import_info(source,mesh.name,index,size,hash,mesh_build_hash(settings),version)
-}
-
-// Writes a material the source gives as desc. Over the file of the same
-// material it follows what the source gives now and keeps what was changed
-// after the last import, with the parameters, layers and hidden names it has.
-@(private="file")
-material_write :: proc(w:^Writer,path:string,existed:bool,desc:asset.Material_Desc) -> asset.Error {
-    desc:=desc
-    file:asset.Asset
-    if !existed || asset.asset_load(&file,path,context.temp_allocator)!=.None {return asset.material_save(path,&w.types,desc)}
-    defer asset.asset_close(&file)
-    if view,error:=asset.material_view(&file,&w.types);error==.None && file.blob.header.id==desc.id {
-        desc.info=asset.material_follow(&w.types,view,desc.imported^)
-        desc.parameters=asset.material_parameters_follow(view,desc.imported_parameters,context.temp_allocator)
-        desc.overlays,desc.hidden=view.overlays,view.hidden
-    }
-    return asset.material_save(path,&w.types,desc)
 }
 
 // What the source gives a material, its maps naming the textures of the
@@ -365,27 +353,31 @@ texture_options :: proc(w:^Writer,job:Texture_Job) -> textures.Build_Options {
     return image_build_options({srgb=job.srgb,normal_map=job.normal_map,green_down=job.green_down,alpha_cutoff=job.alpha_cutoff,alpha_fill=job.alpha_fill,keep_precision=job.keep_precision,channels=job.channels},w.options.settings)
 }
 
-// Builds and writes one texture of source as the asset id at path; false when
-// the image cannot be turned into one (a warning says why).
+// Builds one texture of source as the asset id at path, or takes the object it
+// had, and puts it in the store as output; false when the image cannot be
+// turned into one (a warning says why) or the store does not take it (the
+// writer failed).
 @(private)
-write_texture :: proc(w:^Writer,job:Texture_Job,id,owner:base.Asset_Id,path,source:string) -> bool {
-    return texture_written(w,job,texture_write(w,job,id,owner,path,source,w.options.worker),id,path,source)
+write_texture :: proc(w:^Writer,job:Texture_Job,id,owner:base.Asset_Id,path,source:string,output:int) -> bool {
+    writer_candidates(w)
+    return texture_written(w,job,texture_write(w,job,id,owner,path,source,w.options.worker),output)
 }
 
 // What building and saving a texture gave, for its writer to record.
 @(private)
 Texture_Write :: struct {
-    kept:bool,    // its file already was the one the import gives
-    existed:bool, // a file was at its path before
+    kept:bool,       // an object of a build was taken (hash)
+    hash:store.Hash,
+    fast:bool,       // its blocks are Fast
     format:asset.Texture_Format,
     width,height,mips:int,
     built:textures.Error,
     saved:asset.Error,
 }
 
-// Builds and saves a texture as write_texture does, or keeps its file,
-// without changing w: on worker, so that the textures of a model are written
-// on the job system at once.
+// Builds and saves a texture as write_texture does, or finds the object to take
+// (writer_reuse), without changing w: on worker, so that the textures of a
+// model are written on the job system at once.
 @(private)
 texture_write :: proc(w:^Writer,job:Texture_Job,id,owner:base.Asset_Id,path,source:string,worker:jobs.Worker_Ref) -> (out:Texture_Write) {
     import_options:=w.options
@@ -393,13 +385,15 @@ texture_write :: proc(w:^Writer,job:Texture_Job,id,owner:base.Asset_Id,path,sour
     types:asset.Types
     asset.types_init(&types,context.temp_allocator)
     defer asset.types_destroy(&types)
-    types.codecs=w.types.codecs
     options:=texture_options(w,job)
     info:=import_info(source,job.name,job.index,job.size,job.hash,textures.settings_hash(options),job.version)
-    if file:asset.Asset;writer_kept(w,path,owner,&file) {
-        defer asset.asset_close(&file)
-        if view,error:=asset.texture_view(&file,&types);error==.None {
-            return {kept=true,existed=true,format=view.info.format,width=int(view.info.width),height=int(view.info.height),mips=len(view.mips)}
+    if hash,fast,found:=texture_reuse(w,&types,job,id,owner,source);found {
+        file:asset.Asset
+        if asset.asset_open_object(&file,w.options.store,hash,context.temp_allocator)==.None {
+            defer asset.asset_close(&file)
+            if view,error:=asset.texture_view(&file,&types);error==.None {
+                return {kept=true,hash=hash,fast=fast,format=view.info.format,width=int(view.info.width),height=int(view.info.height),mips=len(view.mips)}
+            }
         }
     }
     cooked:=job.cooked
@@ -412,20 +406,21 @@ texture_write :: proc(w:^Writer,job:Texture_Job,id,owner:base.Asset_Id,path,sour
     out.built=cooked.error
     if cooked.error!=.None {return}
     built:=&cooked.built
+    out.fast=cooked.settings!=info.settings_hash
     info.settings_hash=cooked.settings
-    desc:=textures.built_desc(built,id,&info,types.codecs==.Best)
+    desc:=textures.built_desc(built,id,&info)
     desc.owner=owner
-    out.existed=os.exists(path)
     out.format,out.width,out.height,out.mips=built.format,built.width,built.height,len(built.mips)
     zone(import_options,"texture.save")
     out.saved=asset.texture_save(path,&types,desc)
     return
 }
 
-// Records what texture_write gave; false, with a warning, for an image that
-// does not become a texture.
+// Puts what texture_write gave in the store as output and records it; false,
+// with a warning, for an image that does not become a texture, or with the
+// writer failed.
 @(private)
-texture_written :: proc(w:^Writer,job:Texture_Job,out:Texture_Write,id:base.Asset_Id,path,source:string) -> bool {
+texture_written :: proc(w:^Writer,job:Texture_Job,out:Texture_Write,output:int) -> bool {
     switch {
     case out.built==.Too_Large:
         writer_warn(w,"image %s is not used: a side is above the %d texels a texture holds; scale it down in the source",job.name,asset.TEXTURE_MAX_SIZE)
@@ -434,9 +429,11 @@ texture_written :: proc(w:^Writer,job:Texture_Job,out:Texture_Write,id:base.Asse
         writer_warn(w,"image %s is not used: %v",job.name,out.built)
         return false
     case out.saved!=.None:
-        return save_failed(w,out.saved,path)
+        return save_failed(w,out.saved,w.paths[output])
     }
-    record(w,id,asset.KIND_TEXTURE,job.name,path,source,out.existed,texture_detail(out.format,out.width,out.height,out.mips),kept=out.kept)
+    if !(writer_take(w,output,out.hash) if out.kept else writer_put(w,output,w.paths[output])) {return false}
+    w.fast||=out.fast
+    record(w,output,job.name,texture_detail(out.format,out.width,out.height,out.mips),kept=out.kept)
     return true
 }
 
@@ -444,6 +441,7 @@ texture_written :: proc(w:^Writer,job:Texture_Job,out:Texture_Write,id:base.Asse
 // them, each a job of the job system of the import: into out by row.
 @(private)
 textures_write :: proc(w:^Writer,texture_jobs:[]Texture_Job,parts:[]Part,source:string,out:[]Texture_Write) {
+    writer_candidates(w)
     Work :: struct {w:^Writer,jobs:[]Texture_Job,parts:[]Part,source:string,out:[]Texture_Write}
     work:=Work{w,texture_jobs,parts,source,out}
     run :: proc(work:^Work,first,last:int,worker:int) {
@@ -470,54 +468,51 @@ texture_detail :: proc(format:asset.Texture_Format,width,height,mips:int) -> str
     return fmt.tprintf("%v %dx%d, %d mips",format,width,height,mips)
 }
 
-// Starts the writes of the import of the source at path: reads its sidecar
-// and, without options.registry, the assets of the root its documents are
-// found among. folder: under the folder of the source, where the documents of
-// a first import go ("" beside it).
+// Starts the writes of the import of the source at path (writer_source).
+// folder: under the folder of the documents, where the documents of a first
+// import go ("" in it).
 @(private)
 writer_init :: proc(w:^Writer,path,folder:string,options:Import_Options,report:^Import_Report,allocator:mem.Allocator) -> bool {
     w^={options=options,report=report,allocator=allocator,version=import_version(0)}
     w.created.allocator=context.temp_allocator
     w.names.allocator=context.temp_allocator
+    w.followed.allocator=context.temp_allocator
     w.rng=base.rng_make(u64(time.time_to_unix_nano(time.now())),u64(uintptr(w)))
     asset.types_init(&w.types)
-    w.types.codecs=asset.project_codecs(options.root,project.engine_root_find("",context.temp_allocator))
     zone(options,"import.scan")
     return writer_source(w,path,folder) && writer_changed(w)
 }
 
-// Whether every output of the cache the sidecar lists has its file under the
-// key of what the import builds from now, or one under another key that the
-// writer may take (writer_reuse): then nothing is built ahead.
+// Whether the build of what the import is made from now has an object in the
+// store for every output of the cache the previous manifest lists: then
+// nothing is built ahead. It fixes what the import is made from.
 @(private)
 writer_current :: proc(w:^Writer) -> bool {
-    if w.options.rebuild || len(w.sidecar.outputs)==0 {return false}
-    for output in w.sidecar.outputs {
-        info,known:=asset.kind_info(output.kind)
-        if !known || !asset.import_cached(output.kind) {continue}
-        path:=imported_file(w,output.id,info.extension)
-        if _,_,previous:=writer_previous(w,path);!previous && !os.exists(path) {return false}
+    if w.options.rebuild || !w.stored {return false}
+    writer_candidates(w)
+    for a in w.previous.assets {
+        if !asset.import_cached(a.kind) {continue}
+        held:=false
+        for &c in w.candidates {
+            if !c.current {continue}
+            for o in c.build.outputs {held||=o.id==a.id && asset.object_whole(w.options.store,o.object)}
+        }
+        if !held {return false}
     }
     return true
 }
 
-@(private)
-writer_rollback :: proc(w:^Writer) {
-    for path in w.created {os.remove(path)}
-    for _,kept in w.keeping {os.remove(kept)}
-}
-
 // Writes the meshes, materials, textures, skeletons and clips of a model as
-// assets. Importing a source again writes each part again with the id its
-// sidecar lists (identity.odin); a new document gets a random id and
-// <name>.mat, <name>.skeleton or <name>.anim in the folder of the import
-// (model.folder beside the source the first time), and what nobody edits is a
-// file of the imported folder of the root named by its id (sidecar.odin).
-// The parts name the prefab of the model as their owner
-// (Import_Report.prefab), which import_source writes. A mesh or a texture
-// whose file already is the one it would write is kept as it is
-// (Written.kept), unless options.rebuild. A failure removes the files this
-// call created.
+// the objects of a build of its package (package.odin). Importing a source again
+// gives each part the asset the previous manifest lists (identity.odin); a new
+// one gets a random id. A document is also written or followed in the folder
+// of the documents (documents.odin): <name>.mat, <name>.skeleton or
+// <name>.anim there (under model.folder the first time). The parts name the
+// prefab of the model as their owner (Import_Report.prefab), which
+// import_source writes. A mesh or a texture a build of the package already
+// has, made from what it would be made from now, is taken as it is
+// (Written.kept), unless options.rebuild. A failure removes the documents this
+// call created and records nothing.
 import_write :: proc(model:^Imported_Model,options:Import_Options={},allocator:=context.allocator) -> (report:Import_Report,error:Error) {
     caller:=context.temp_allocator
     scratch:mem.Dynamic_Arena
@@ -528,11 +523,11 @@ import_write :: proc(model:^Imported_Model,options:Import_Options={},allocator:=
 
     w:Writer
     ok:=writer_init(&w,model.source,model.folder,options,&report,allocator)
-    defer asset.types_destroy(&w.types)
+    defer writer_close(&w)
     defer model_cooked_destroy(model)
     if ok {
         model_begin(&w,model)
-        ok=write_model(&w,model) && writer_finish(&w)
+        ok=write_model(&w,model) && writer_finish(&w,model.name if model.name!="" else filepath.stem(model.source),model.format)
     }
     if !ok {
         writer_rollback(&w)
@@ -545,18 +540,20 @@ import_write :: proc(model:^Imported_Model,options:Import_Options={},allocator:=
 
 // Writes a model as parts of the import of o, with what import_write writes
 // one with: its meshes, materials, textures, skeletons and clips, each the
-// output of the sidecar of its kind and name (then index), named as the model
-// names them, a name with '/' in that folder under the one of the import. A
-// part of the kind and name of one o already gave is that asset, which is not
-// written again. When the model has nodes, its prefab is the scene of its
-// name, the owner of its meshes and skeletons: the caller writes it
-// (cook/prefab.model_prefab) and records it (output_written), unless
-// prefab_path is "" (o gave it already, or the import keeps it as it is). The report gives, in allocator, the
-// ids by row as that of import_write and the prefab; what is written, the
-// warnings and the programs of the model go to the report of o. The files the
-// model was read from are inputs of the import (output_input). Its assets name
-// the source of o, with its size, hash and version, and are made with its
-// settings. A failure leaves in o what was written, for outputs_end.
+// asset of the previous manifest of its kind and name (then index), named as
+// the model names them, a name with '/' in that folder under the one of the
+// documents. A part of the kind and name of one o already gave is that asset,
+// which is not written again. When the model has nodes, its prefab is the
+// scene of its name, the owner of its meshes and skeletons: the caller writes
+// it at prefab_path (cook/prefab.model_prefab) and records it
+// (output_written), unless prefab_path is "" (o gave it already, or the import
+// keeps it as it is). The report
+// gives, in allocator, the ids by row as that of import_write and the prefab;
+// what is written, the warnings and the programs of the model go to the
+// report of o. The files the model was read from are inputs of the import
+// (output_input). Its assets name the source of o, with its size, hash and
+// version, and are made with its settings. A failure leaves in o what was
+// written, for outputs_end.
 output_model :: proc(o:^Outputs,model:^Imported_Model,allocator:=context.allocator) -> (report:Import_Report,error:Error) {
     caller:=context.temp_allocator
     w:=&o.w
@@ -604,17 +601,17 @@ output_model :: proc(o:^Outputs,model:^Imported_Model,allocator:=context.allocat
     return report,{}
 }
 
-// The error of an input given once the key of the import was fixed.
+// The error of an input given once what the import is made from was fixed.
 @(private)
 input_late :: proc(file:string,allocator:mem.Allocator) -> Error {
-    return error_make(.Malformed,"%s is an input given after the first output of the cache was planned, when what the import is built from was fixed: give every input (output_input) before",file,allocator=allocator)
+    return error_make(.Malformed,"%s is an input given after the first output of the cache was planned, when what the import is made from was fixed: give every input (output_input) before",file,allocator=allocator)
 }
 
 // What a model is written with: its settings, its warnings and programs, and
 // the files it was read from.
 @(private="file")
 model_begin :: proc(w:^Writer,model:^Imported_Model) {
-    // The settings kept with the source are those of every import of it.
+    // The settings its package keeps are those of every import of it.
     if model.stored && !w.options.ignore_stored {w.options.settings=model.settings}
     w.report.settings=w.options.settings
     for warning in model.warnings {writer_warn(w,"%s",warning)}
@@ -634,17 +631,18 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
     name:=model.name if model.name!="" else filepath.stem(source)
     if chosen.skeleton!={} {return write_clips_onto(w,model,source,name,chosen.skeleton)}
 
-    // The prefab of the model: the one its sidecar lists, which a model that lost its nodes keeps.
-    // For Outputs, a scene of its name.
+    // The prefab of the model: the one its package lists, which a model that lost its nodes keeps.
+    // For Outputs, a scene of its name, written to the file output_written takes.
     listed:=false
-    for output in w.sidecar.outputs {listed||=output.kind==asset.KIND_SCENE && (!w.whole || output.name==name)}
+    for a in w.previous.assets {listed||=a.kind==asset.KIND_SCENE && (!w.whole || a.name==name)}
     w.owner={}
     if listed || len(model.nodes)>0 {
         prefab:=[1]Part{{kind=asset.KIND_SCENE,name=name,extension=".scene",only=!w.whole}}
         parts_plan(w,prefab[:])
         w.owner=prefab[0].id
         _,keeping:=w.keeping[w.owner]
-        w.report.prefab,w.report.prefab_path=w.owner,strings.clone("" if keeping else prefab[0].path,w.allocator)
+        if keeping && !w.whole {writer_written(w,w.owner,asset.KIND_SCENE,0)}
+        w.report.prefab,w.report.prefab_path=w.owner,strings.clone(prefab[0].path if w.whole else prefab[0].target,w.allocator)
         w.report.prefab_info=import_info(source,name,0,model.source_size,model.source_hash,0,model.version)
     }
 
@@ -679,43 +677,48 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
     parts_plan(w,parts[:])
     reasons:=make([]string,len(model.materials),context.temp_allocator)
     parts_own(w,model,jobs[:],parts[:],first_material,reasons)
-    parts_record(w,parts[:])
 
-    // What the writer keeps (its file under the key of now, or taken from
-    // another key) is not built; the rest is built ahead on a job system.
-    // Without one the writer builds each when it gets to it, holding one at a time.
+    // What a build of the package has, made from what it is made from now,
+    // is taken, not built; the rest is built ahead on a job system. Without
+    // one the writer builds each when it gets to it, holding one at a time.
+    writer_candidates(w)
     kept_images:=make([]bool,len(model.images),context.temp_allocator)
-    kept_meshes:=make([]bool,len(model.meshes),context.temp_allocator)
+    kept_meshes:=make([]store.Hash,len(model.meshes),context.temp_allocator)
+    given_meshes:=make([]bool,len(model.meshes),context.temp_allocator)
     if !w.options.rebuild {
         reuse_zone:=zone_begin(w.options,"import.reuse")
         defer base.profile_end(reuse_zone)
         for job,i in jobs {
             part:=parts[i]
-            kept_images[job.index]=part.given || os.exists(part.path) || texture_reuse(w,job,part.path,source)
+            _,_,found:=texture_reuse(w,&w.types,job,part.id,part.owner,source)
+            kept_images[job.index]=part.given || found
         }
         material_part_ids:=make([]base.Asset_Id,len(model.materials),context.temp_allocator)
         for i in 0..<len(model.materials) {material_part_ids[i]=parts[first_material+i].id}
         for &mesh,i in model.meshes {
             part:=parts[first_mesh+i]
-            if part.given || os.exists(part.path) {kept_meshes[i]=true;continue}
+            if part.given {given_meshes[i]=true;continue}
             skeleton:base.Asset_Id
             if len(mesh.skin)>0 && mesh.skeleton>=0 && mesh.skeleton<len(model.skeletons) {skeleton=parts[first_skeleton+mesh.skeleton].id}
             info:=mesh_info(source,&mesh,i,mesh_content_hash(&mesh),mesh_slots(&mesh,material_part_ids),skeleton,chosen,model.version)
-            kept_meshes[i]=writer_reuse(w,asset.KIND_MESH,part.path,info)
+            kept_meshes[i],_,_=writer_reuse(w,&w.types,part.id,asset.KIND_MESH,part.owner,info)
         }
     }
-    if w.options.worker.system!=nil {model_cook(model,w.options,kept_meshes,kept_images)}
+    if w.options.worker.system!=nil {
+        cook_meshes:=make([]bool,len(model.meshes),context.temp_allocator)
+        for &kept,i in cook_meshes {kept=given_meshes[i] || kept_meshes[i]!={}}
+        model_cook(model,w.options,cook_meshes,kept_images)
+    }
 
     image_ids:=make([]base.Asset_Id,len(model.images),w.allocator)
     w.report.image_ids=image_ids
     writes:=make([]Texture_Write,len(jobs),context.temp_allocator)
     textures_write(w,jobs[:],parts[:len(jobs)],source,writes)
-    // Each is recorded, also after a save that failed: what was saved is removed with the rest.
     for job,i in jobs {
         part:=&parts[i]
-        if part.given || texture_written(w,job,writes[i],part.id,part.path,source) {image_ids[job.index]=part.id}
+        if part.given || texture_written(w,job,writes[i],part.output) {image_ids[job.index]=part.id}
+        if w.error.code!=.None {return false}
     }
-    if w.error.code!=.None {return false}
 
     material_ids:=make([]base.Asset_Id,len(model.materials),w.allocator)
     w.report.material_ids=material_ids
@@ -725,11 +728,11 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
         if part.given {continue}
         info:=material_given(&material,image_ids)
         import_data:=import_info(source,material.name,i,model.source_size,model.source_hash,0,model.version)
-        existed:=os.exists(part.path)
         parameters:=material_given_parameters(&material,image_ids)
         material_zone:=zone_begin(w.options,"material.save")
-        if error:=material_write(w,part.path,existed,{id=part.id,owner=part.owner,info=info,imported=&info,parameters=parameters,imported_parameters=parameters,source=&import_data});error!=.None {return save_failed(w,error,part.path)}
-        record(w,part.id,asset.KIND_MATERIAL,material.name,part.path,source,existed,fmt.tprintf("%s: %s",part.owner!={}?fmt.tprintf("part of %s",name):"of its own",reasons[i]),follows=true)
+        if error:=asset.material_save(part.path,&w.types,{id=part.id,owner=part.owner,info=info,imported=&info,parameters=parameters,imported_parameters=parameters,source=&import_data});error!=.None {return save_failed(w,error,part.path)}
+        writer_put(w,part.output,part.path) or_return
+        record(w,part.output,material.name,fmt.tprintf("%s: %s",part.owner!={}?fmt.tprintf("part of %s",name):"of its own",reasons[i]))
         base.profile_end(material_zone)
     }
 
@@ -738,36 +741,17 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
     for skeleton,i in model.skeletons {
         part:=&parts[first_skeleton+i]
         w.report.skeleton_ids[i]=part.id
-        if part.given {
-            body:asset.Skeleton_Body
-            body_parts:[len(anim.Body_Part)]asset.Skeleton_Body_Part
-            count,map_:=skeleton_body(nil,skeleton.bones,&body,&body_parts)
-            root_bones[i]=skeleton_root_bone(skeleton.bones,map_) if count>0 else -1
-            continue
-        }
-        import_data:=import_info(source,skeleton.name,i,model.source_size,model.source_hash,0,model.version)
-        existed:=os.exists(part.path)
-        // The file it replaces: what a person set on it stays (body parts, sockets of their own).
-        previous_file:asset.Asset
-        previous:^asset.Skeleton_View
-        previous_view:asset.Skeleton_View
-        loaded:bool
-        if existed && asset.asset_load(&previous_file,part.path,context.temp_allocator)==.None {
-            loaded=true
-            view,error:=asset.skeleton_view(&previous_file,&w.types)
-            if error==.None {previous_view=view;previous=&previous_view}
-            if error==.Version {writer_warn(w,"%s is of a version this build does not read: the body parts, axes and sockets set by hand on it were not kept; set them again",part.path)}
-        }
-        defer if loaded {asset.asset_close(&previous_file)}
         body:asset.Skeleton_Body
         body_parts:[len(anim.Body_Part)]asset.Skeleton_Body_Part
-        count,map_:=skeleton_body(previous,skeleton.bones,&body,&body_parts)
+        count,map_:=skeleton_body(nil,skeleton.bones,&body,&body_parts)
         root_bones[i]=skeleton_root_bone(skeleton.bones,map_) if count>0 else -1
+        if part.given {continue}
+        import_data:=import_info(source,skeleton.name,i,model.source_size,model.source_hash,0,model.version)
         sockets:=skeleton_sockets(model,skeleton)
         if count>0 {skeleton_grips(w,model,i,map_,&sockets)}
-        skeleton_sockets_kept(previous,skeleton.bones,&sockets)
         if error:=asset.skeleton_save(part.path,&w.types,{id=part.id,owner=part.owner,bones=skeleton.bones,sockets=sockets[:],body=&body if count>0 else nil,body_parts=body_parts[:count],source=&import_data});error!=.None {return save_failed(w,error,part.path)}
-        record(w,part.id,asset.KIND_SKELETON,skeleton.name,part.path,source,existed,fmt.tprintf("%d bones",len(skeleton.bones)))
+        writer_put(w,part.output,part.path) or_return
+        record(w,part.output,skeleton.name,fmt.tprintf("%d bones",len(skeleton.bones)))
     }
     w.report.mesh_ids=make([]base.Asset_Id,len(model.meshes),w.allocator)
     for &mesh,i in model.meshes {
@@ -780,17 +764,22 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
             if mesh.skeleton<0 || mesh.skeleton>=len(w.report.skeleton_ids) {return writer_fail(w,.Malformed,"mesh %s has no skeleton",mesh.name)}
             skeleton=w.report.skeleton_ids[mesh.skeleton]
         }
-        file:asset.Asset
-        kept_zone:=zone_begin(w.options,"mesh.kept")
-        if writer_kept(w,path,owner,&file) {
-            view,view_error:=asset.mesh_view(&file,&w.types)
-            if view_error==.None {
-                record(w,id,asset.KIND_MESH,mesh.name,path,source,true,mesh_detail(view.levels,view.colliders,len(view.collision_points),len(view.collision_indices)),kept=true)
+        if kept:=kept_meshes[i];kept!={} {
+            kept_zone:=zone_begin(w.options,"mesh.kept")
+            file:asset.Asset
+            if asset.asset_open_object(&file,w.options.store,kept,context.temp_allocator)==.None {
+                view,view_error:=asset.mesh_view(&file,&w.types)
+                detail:=mesh_detail(view.levels,view.colliders,len(view.collision_points),len(view.collision_indices)) if view_error==.None else ""
+                asset.asset_close(&file)
+                if view_error==.None {
+                    writer_take(w,part.output,kept) or_return
+                    record(w,part.output,mesh.name,detail,kept=true)
+                    base.profile_end(kept_zone)
+                    continue
+                }
             }
-            asset.asset_close(&file)
-            if view_error==.None {base.profile_end(kept_zone);continue}
+            base.profile_end(kept_zone)
         }
-        base.profile_end(kept_zone)
         slots:=mesh_slots(&mesh,material_ids)
         cooked:=mesh.cooked
         own:Cooked_Mesh
@@ -809,49 +798,40 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
             id=id,owner=owner,geometry=geometry,slots=slots,joints=mesh.joints,skeleton=skeleton,
             colliders=collision.colliders,collision_points=collision.points,collision_indices=collision.indices,source=&import_data,
         }
-        existed:=os.exists(path)
         save_zone:=zone_begin(w.options,"mesh.save")
         saved:=asset.mesh_save(path,&w.types,desc)
         base.profile_end(save_zone)
-        if saved==.None {record(w,id,asset.KIND_MESH,mesh.name,path,source,existed,mesh_detail(geometry.levels,collision.colliders,len(collision.points),len(collision.indices)))}
+        detail:=mesh_detail(geometry.levels,collision.colliders,len(collision.points),len(collision.indices))
         if cooked==&own {cooked_mesh_destroy(&own)}
         if saved!=.None {return save_failed(w,saved,path)}
+        writer_put(w,part.output,path) or_return
+        record(w,part.output,mesh.name,detail)
     }
     if len(model.animations)>0 && parts[animation].given {w.report.animation_id=parts[animation].id}
     if len(model.animations)>0 && !parts[animation].given {
         part:=&parts[animation]
         import_data:=import_info(source,name,0,model.source_size,model.source_hash,0,model.version)
-        existed:=os.exists(part.path)
         clips:=make([]asset.Animation_Clip_Desc,len(model.animations),context.temp_allocator)
         copy(clips,model.animations)
-        // The file it replaces: the root a person set on a clip stays.
-        previous_file:asset.Asset
-        previous:asset.Animation_View
-        loaded:=existed && asset.asset_load(&previous_file,part.path,context.temp_allocator)==.None
-        defer if loaded {asset.asset_close(&previous_file)}
-        if loaded {
-            view_error:asset.Error
-            previous,view_error=asset.animation_view(&previous_file,&w.types)
-            if view_error==.Version {writer_warn(w,"%s is of a version this build does not read: the root bones set by hand on its clips were not kept; set them again",part.path)}
-        }
         for &clip in clips {
             index:int
             clip.skeleton,index=clip_skeleton(model,clip,w.report.skeleton_ids)
-            if index>=0 {clip.root=clip_root(model.skeletons[index].bones,root_bones[index],clip,previous)}
+            if index>=0 {clip.root=clip_root(model.skeletons[index].bones,root_bones[index],clip)}
         }
         desc:=asset.Animation_Desc{id=part.id,owner=part.owner,clips=clips,source=&import_data}
         if error:=asset.animation_save(part.path,&w.types,desc);error!=.None {return save_failed(w,error,part.path)}
+        writer_put(w,part.output,part.path) or_return
         w.report.animation_id=part.id
-        record(w,part.id,asset.KIND_ANIMATION,name,part.path,source,existed,fmt.tprintf("%d clips",len(model.animations)))
+        record(w,part.output,name,fmt.tprintf("%d clips",len(model.animations)))
     }
     return true
 }
 
 // Only the clips of a model, as an .anim of its own bound to a skeleton the project has
 // (Import_Settings.skeleton): the motion of another file onto a character imported before. Each clip
-// keeps the root the model's own skeleton gives it, and the root a person set on the .anim it
-// replaces. A clip that moves no bone at all (its markers alone, or curves) goes on that skeleton as
-// well: only one whose bones the skeleton lacks is refused.
+// keeps the root the model's own skeleton gives it. A clip that moves no bone at all (its markers
+// alone, or curves) goes on that skeleton as well: only one whose bones the skeleton lacks is
+// refused.
 @(private="file")
 write_clips_onto :: proc(w:^Writer,model:^Imported_Model,source,name:string,skeleton:base.Asset_Id) -> bool {
     if len(model.animations)==0 {return writer_fail(w,.Malformed,"%s has no clips to put on the skeleton of Import_Settings.skeleton",source)}
@@ -861,14 +841,8 @@ write_clips_onto :: proc(w:^Writer,model:^Imported_Model,source,name:string,skel
     w.report.animation_id=part.id
     if part.given {return true}
     import_data:=import_info(source,name,0,model.source_size,model.source_hash,0,model.version)
-    existed:=os.exists(part.path)
     clips:=make([]asset.Animation_Clip_Desc,len(model.animations),context.temp_allocator)
     copy(clips,model.animations)
-    previous_file:asset.Asset
-    previous:asset.Animation_View
-    loaded:=existed && asset.asset_load(&previous_file,part.path,context.temp_allocator)==.None
-    defer if loaded {asset.asset_close(&previous_file)}
-    if loaded {previous,_=asset.animation_view(&previous_file,&w.types)}
     ids:=make([]base.Asset_Id,len(model.skeletons),context.temp_allocator)
     for &id in ids {id=skeleton}
     for &clip in clips {
@@ -881,13 +855,14 @@ write_clips_onto :: proc(w:^Writer,model:^Imported_Model,source,name:string,skel
         body_parts:[len(anim.Body_Part)]asset.Skeleton_Body_Part
         bones:=model.skeletons[index].bones
         count,map_:=skeleton_body(nil,bones,&body,&body_parts)
-        clip.root=clip_root(bones,skeleton_root_bone(bones,map_) if count>0 else -1,clip,previous)
+        clip.root=clip_root(bones,skeleton_root_bone(bones,map_) if count>0 else -1,clip)
     }
     desc:=asset.Animation_Desc{id=part.id,owner=part.owner,clips=clips,source=&import_data}
     if error:=asset.animation_save(part.path,&w.types,desc);error!=.None {return save_failed(w,error,part.path)}
+    writer_put(w,part.output,part.path) or_return
     w.report.animation_id=part.id
     text:[base.ASSET_ID_TEXT]u8
-    record(w,part.id,asset.KIND_ANIMATION,name,part.path,source,existed,fmt.tprintf("%d clips on skeleton %s",len(model.animations),base.asset_id_format(skeleton,text[:])))
+    record(w,part.output,name,fmt.tprintf("%d clips on skeleton %s",len(model.animations),base.asset_id_format(skeleton,text[:])))
     return true
 }
 
@@ -929,16 +904,12 @@ skeleton_root_bone :: proc(bones:[]asset.Skeleton_Bone,map_:anim.Body_Map) -> in
     return parent if parent>=0 && parent<len(bones) else -1
 }
 
-// The root of a clip of the skeleton of bones: the one a person set on the clip of that name in the
-// file the import replaces while its bone is still there, else its root bone with translation and
-// rotation when the clip moves or turns it (a clamber, a jump start), so that a character whose
-// capsule moves the body plays it in place (Root_Motion_Policy.In_Place); else none.
+// The root of a clip of the skeleton of bones: its root bone with translation and rotation when the
+// clip moves or turns it (a clamber, a jump start), so that a character whose capsule moves the
+// body plays it in place (Root_Motion_Policy.In_Place); else none. A root a person set on the clip
+// in a project stays there (document_follow).
 @(private="file")
-clip_root :: proc(bones:[]asset.Skeleton_Bone,root:int,clip:asset.Animation_Clip_Desc,previous:asset.Animation_View) -> (value:asset.Animation_Root) {
-    for &kept in previous.clips {
-        if base.text_get(kept.name[:])!=clip.name || !kept.root.translation && !kept.root.rotation {continue}
-        for &bone in bones {if bone.path==kept.root.bone {return kept.root}}
-    }
+clip_root :: proc(bones:[]asset.Skeleton_Bone,root:int,clip:asset.Animation_Clip_Desc) -> (value:asset.Animation_Root) {
     if root<0 {return}
     for track in clip.tracks {
         if track.property!=.Position && track.property!=.Rotation || base.name_hash(track.target)!=bones[root].target || len(track.keys)<2 {continue}
@@ -977,13 +948,13 @@ mesh_detail :: proc(levels:[]asset.Mesh_Level,colliders:[]asset.Collider,points,
 
 // Imports an image file as a texture of its own, read as options.image says
 // and keeping the coverage of options.alpha_coverage, unless the settings
-// its sidecar keeps say otherwise. The texture is the root of the import:
-// importing the file again writes the asset its sidecar lists.
+// its package keeps say otherwise. The texture is the root of the import:
+// importing the file again gives the asset its package lists.
 import_texture :: proc(path:string,options:Import_Options={},allocator:=context.allocator) -> (report:Import_Report,error:Error) {
     caller:=context.temp_allocator
     options:=options
     if !options.ignore_stored {
-        stored,found,settings_error:=settings_load(path)
+        stored,found,settings_error:=settings_load(options,path)
         if settings_error.code!=.None {return {},settings_error}
         if found {options.settings=stored}
     }
@@ -996,7 +967,7 @@ import_texture :: proc(path:string,options:Import_Options={},allocator:=context.
 
     w:Writer
     ok:=writer_init(&w,path,"",options,&report,allocator)
-    defer asset.types_destroy(&w.types)
+    defer writer_close(&w)
     if ok {
         data,read_error:=read_whole(path)
         if read_error!=.None {
@@ -1008,10 +979,10 @@ import_texture :: proc(path:string,options:Import_Options={},allocator:=context.
                 name=filepath.stem(path),bytes=data,size=u64(len(data)),hash=base.hash64(data),
                 srgb=use==.Color,normal_map=use==.Normal || use==.Normal_Green_Down,green_down=use==.Normal_Green_Down,alpha_cutoff=options.alpha_coverage,version=import_version(0),
             }
-            id,target:=root_take(&w,asset.KIND_TEXTURE,job.name,".tex")
-            built:=write_texture(&w,job,id,{},target,source)
+            id,target,output:=root_take(&w,asset.KIND_TEXTURE,job.name,".tex")
+            built:=write_texture(&w,job,id,{},target,source,output)
             if w.error.code!=.None {ok=false} else if !built {ok=writer_fail(&w,.Unsupported,"%s is not an image that can be decoded",path)}
-            ok=ok && writer_finish(&w)
+            ok=ok && writer_finish(&w,job.name,"image")
         }
     }
     if !ok {
@@ -1070,38 +1041,4 @@ skeleton_grips :: proc(w:^Writer,model:^Imported_Model,skeleton:int,map_:anim.Bo
         if error.code!=.None {writer_warn(w,"%s",error.message);continue}
         if found {append(sockets,socket)}
     }
-}
-
-// The sockets of the file an import replaces that it does not make again (one a person or an agent
-// added, such as where a weapon hangs), on a bone it still has. Those it makes (named by the
-// source, bone.*, grips) are made again from the source.
-@(private="file")
-skeleton_sockets_kept :: proc(previous:^asset.Skeleton_View,bones:[]asset.Skeleton_Bone,sockets:^[dynamic]asset.Skeleton_Socket) {
-    if previous==nil {return}
-    made:=len(sockets)
-    for &socket in previous.sockets {
-        name:=base.text_get(socket.name[:])
-        if strings.has_prefix(name,"bone.") {continue}
-        again:=false
-        for &other in sockets[:made] {if other.name==socket.name {again=true;break}}
-        if again {continue}
-        for &bone in bones {if bone.path==socket.bone {append(sockets,socket);break}}
-    }
-}
-
-// The body of an imported skeleton: found on its bones, keeping the parts a
-// person set in the file it replaces when their bones are still there.
-// Returns how many parts it wrote, 0 for a skeleton without a body, and the map they come from.
-@(private="file")
-skeleton_body :: proc(previous_file:^asset.Skeleton_View,bones:[]asset.Skeleton_Bone,body:^asset.Skeleton_Body,parts:^[len(anim.Body_Part)]asset.Skeleton_Body_Part) -> (count:int,map_:anim.Body_Map) {
-    previous:=anim.body_map_empty()
-    if previous_file!=nil {
-        previous=asset.skeleton_body_map(bones,previous_file.body,previous_file.body_parts)
-        for part in anim.Body_Part {if part not_in previous.manual {previous.bones[part],previous.confidence[part]=-1,0}}
-    }
-    found:bool
-    map_,found=asset.skeleton_body_detect(bones,previous)
-    if !found {return 0,map_}
-    count,_=asset.skeleton_body_rows(bones,map_,body,parts)
-    return count,map_
 }

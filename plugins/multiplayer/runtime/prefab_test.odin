@@ -89,6 +89,10 @@ a_replica_of_a_spawned_copy_is_filled_when_its_prefab_arrives :: proc(t:^testing
         apps[1].stats.frames+=1
         scene.spawns_fill(client_ref,&apps[1],&warms[1],&problems[1])
         core.settle(&info,client,nil)
+        // The ticks run without waiting, faster than any frame: each waits for the reads its jobs began.
+        for warm in warms[1].items {
+            if jobs.pending(&warm.job.counter) {jobs.wait(&apps[1].jobs,jobs.OWNER,&warm.job.counter)}
+        }
         if tick==10 {
             spawner:=scene.Spawner{core.commands_of(server_ref),&assets[0],&problems[0]}
             copy=scene.spawn(spawner,CRATE,{position={1,0,0}})

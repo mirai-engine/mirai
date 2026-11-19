@@ -249,7 +249,8 @@ texture_read_take :: proc(app:^App,read:^Texture_Read) -> bool {
     ref,known:=a.index[id]
     if !known || ref.kind!=.Texture || a.textures[ref.index].handle!=read.request.handle {return true}
     if !read.prepared.ok {
-        render.texture_stream_stop(r,read.request)
+        // Levels not in the store yet are asked for again; any other failure keeps what it has.
+        if read.prepared.problem!=.Not_Here {render.texture_stream_stop(r,read.request)}
         return true
     }
     switch render.texture_levels_queue(r,read.request,read.prepared.levels.data) {

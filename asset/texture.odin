@@ -196,7 +196,8 @@ texture_tables :: proc(doc:^Document,types:^Types,info:^Texture_Info,mips:[]Text
         #reverse for run in desc.layouts {at+=copy(bytes[at:],run.payload)}
     } else {
         for level,i in desc.mips {copy(bytes[mips[i].offset:],level)}
-        if doc.codecs!=.None && texture_fields_format(desc.format) && .Fast not_in desc.flags && (texture_fields_smaller(desc.format,mips,bytes,doc.codecs,doc.allocator) or_return) {
+        // Without a compressor to ask, planes are what compresses smaller where the bytes rest.
+        if texture_fields_format(desc.format) && .Fast not_in desc.flags && (doc.codecs==.None || (texture_fields_smaller(desc.format,mips,bytes,doc.codecs,doc.allocator) or_return)) {
             info.flags+={.Fields}
             for level,i in desc.mips {texture_fields_split(desc.format,level,bytes[mips[i].offset:][:mips[i].size])}
         }
@@ -370,21 +371,31 @@ texture_decode :: proc(a:^Asset,types:^Types,view:^Texture_View,from:int) -> Err
 @(private="file")
 texels_read :: proc(a:^Asset,table:^Asset_Table,column:int,size:int) -> (data:[]u8,owned:bool,error:Error) {
     if size==0 {return nil,false,.None}
-    entry:=blob_chunk(&a.blob,table.columns[column].chunk)
+    chunk:=table.columns[column].chunk
+    entry:=blob_chunk(&a.blob,chunk)
+    total:=int(entry.uncompressed_size)
+    if total!=table.rows || size>total {return nil,false,.Corrupt}
+    // Of the store, only the chunks that hold the first size bytes are read.
+    if entry.compression==.None && a.object!=nil && !table.columns[column].ready && size<total {
+        stored:=asset_stored_prefix(a,chunk,size) or_return
+        return stored[:size],false,.None
+    }
     if entry.compression==.None || table.columns[column].ready {
         data=asset_column_data(a,table,column) or_return
         return data[:size],false,.None
     }
-    if entry.offset+entry.size>u64(len(a.blob.data)) {return nil,false,.Truncated}
-    total:=int(entry.uncompressed_size)
-    if total!=table.rows || size>total {return nil,false,.Corrupt}
     decoded:=total
     // A stream restores whole pieces.
     if size<total {decoded=min(total,(size+PACK_PIECE-1)/PACK_PIECE*PACK_PIECE)}
     data=asset_alloc(a,decoded,TEXTURE_BULK_ALIGNMENT) or_return
     decoder:=asset_decoder(a) or_return
-    if decoded==total {blob_read(&a.blob,entry,data,decoder) or_return}
-    else {stream_unpack(&decoder.stream,blob_stored(&a.blob,entry),data,total) or_return}
+    if decoded==total {
+        stored:=asset_stored(a,chunk) or_return
+        chunk_decode(entry,stored,data,decoder) or_return
+    } else {
+        stored:=asset_stream_prefix(a,chunk,decoded) or_return
+        stream_unpack(&decoder.stream,stored,data,total) or_return
+    }
     return data[:size],true,.None
 }
 

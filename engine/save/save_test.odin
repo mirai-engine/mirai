@@ -1,5 +1,6 @@
 package save
 
+import "base:intrinsics"
 import "base:runtime"
 import "core:c"
 import "core:fmt"
@@ -151,7 +152,7 @@ a_slot_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^testing.T) {
     serial.writer_init(&out,0,context.allocator)
     defer serial.writer_destroy(&out)
     if !testing.expect_value(t,capture(ref,f.app.assets,f.app.allocator,&out),Error.None) {return}
-    // The transforms of the broken copy do not decompress.
+    // The transforms of the broken copy are a stream that does not decode.
     broken:=make([]u8,len(serial.writer_bytes(&out)))
     defer delete(broken)
     copy(broken,serial.writer_bytes(&out))
@@ -161,13 +162,18 @@ a_slot_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^testing.T) {
     file:asset.Asset
     if !testing.expect_value(t,asset.asset_open(&file,body),asset.Error.None) {return}
     view,_:=asset.scene_view(&file,&types)
-    entry:asset.Chunk_Entry
+    chunk:=-1
     for &component in view.components {
-        if component.name=="Transform" {entry=asset.blob_chunk(&file.blob,component.table.columns[1].chunk)}
+        if component.name=="Transform" {chunk=component.table.columns[1].chunk}
     }
+    entry:asset.Chunk_Entry
+    if chunk>=0 {entry=asset.blob_chunk(&file.blob,chunk)}
     asset.asset_close(&file)
-    if !testing.expect_value(t,entry.compression,asset.Compression.Stream) {return}
+    // Stored as they are, the bytes are made a stream that does not decode: the directory says so.
+    if !testing.expect(t,chunk>=0 && entry.compression==.None && entry.size>=64) {return}
     mem.set(&body[entry.offset],0xff,int(entry.size))
+    entry.compression=.Stream
+    intrinsics.unaligned_store((^asset.Chunk_Entry)(&body[asset.HEADER_SIZE+chunk*asset.CHUNK_ENTRY_SIZE]),entry)
 
     first:=core.entity_of(&w.entities,1)
     testing.expect_value(t,restore(ref,&f.app,broken),Error.Failed)

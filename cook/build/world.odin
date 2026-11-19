@@ -303,8 +303,10 @@ generator_read :: proc(p:^project.Project) -> (g:Generator) {
 }
 
 // The source of the world packages and of the main packages. The world of
-// the game that ships is generated only when shipped is asked for.
-world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=false) -> (out:Generated) {
+// the game that ships is generated only when shipped is asked for. The paths
+// of assets the code writes are checked against the packages of the project
+// and its plugins in the store at store_root ("": the machine's).
+world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=false,store_root:="") -> (out:Generated) {
     context.allocator=allocator
     g:=generator_read(p)
     for pkg in g.packages {
@@ -317,7 +319,7 @@ world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=
     for pkg in g.packages {draws_read(&g,pkg)}
     rules_check(&g)
     defaults_check(&g)
-    asset_paths_check(&g,p)
+    asset_paths_check(&g,p,store_root)
     out.errors=g.errors[:]
     if len(g.errors)>0 {return}
     out.game_world=world_write(&g,false)
@@ -382,10 +384,10 @@ PROJECT_INFO_SYMBOL :: "mirai_project_info"
 
 // Writes the generated packages under <project>/.mirai/gen when they changed.
 // out has what was generated, in the temp allocator.
-world_write_files :: proc(p:^project.Project,shipped:=false) -> (out:Generated,ok:bool) {
+world_write_files :: proc(p:^project.Project,shipped:=false,store_root:="") -> (out:Generated,ok:bool) {
     if out.errors=kinds_write(p);len(out.errors)>0 {return}
     if out.errors=records_write(p);len(out.errors)>0 {return}
-    out=world_generate(p,context.temp_allocator,shipped)
+    out=world_generate(p,context.temp_allocator,shipped,store_root)
     if len(out.errors)>0 {return}
     gen:=project.path(project.folder_path(p.root,.Generated,context.temp_allocator),"gen",allocator=context.temp_allocator)
     files:=[4][2]string{{"editor_world/world.odin",out.editor_world},{"shipped_world/world.odin",out.shipped_world},{"editor/main.odin",out.editor_main},{"game/main.odin",out.game_main}}
@@ -3364,17 +3366,20 @@ defaults_check :: proc(g:^Generator) {
 
 // The paths of assets the code of the project writes: a string literal that
 // ends in the extension of an asset ("pets/Dog.scene") names an asset of the
-// project or of its plugins, or the build fails where it is written, with the
-// path that has the same name when there is one.
+// project, of its plugins or of their packages, or the build fails where it
+// is written, with the path that has the same name when there is one.
 @(private="file")
-asset_paths_check :: proc(g:^Generator,p:^project.Project) {
+asset_paths_check :: proc(g:^Generator,p:^project.Project,store_root:string) {
     assets:=project.folder_path(p.root,.Assets,context.temp_allocator)
     if !os.is_dir(assets) {return}
     registry:asset.Registry
-    asset.registry_init(&registry,assets,"",context.temp_allocator,project.imported_path(p.root,context.temp_allocator))
+    packages,_:=asset.root_packages(p.root,store_root,context.temp_allocator)
+    asset.registry_init(&registry,assets,"",context.temp_allocator,packages.listed)
     defer asset.registry_destroy(&registry)
     for folder in project.asset_folders(p,context.temp_allocator) {
-        if folder.prefix!="" {asset.registry_mount(&registry,folder.path,folder.prefix,folder.imported)}
+        if folder.prefix=="" {continue}
+        plugin,_:=asset.root_packages(folder.root,store_root,context.temp_allocator)
+        asset.registry_mount(&registry,folder.path,folder.prefix,plugin.listed)
     }
     if asset.registry_scan(&registry)!=.None {return}
     extensions:=make(map[string]bool,context.temp_allocator)

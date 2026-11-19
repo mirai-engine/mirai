@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "a270e82878cb164498ba98398060ccb8",
+  "name": "tiles_color",
+  "origin": {"path": "assets/surfaces/tiles/tiles_color.png", "folder": false, "importer": "image"},
+  "identity": "3915769e8b5d9cc9af39584990a4fb69ac1f58764adc66d3fb4094005497f149",
+  "settings": {
+    "image": "Color"
+  },
+  "inputs": [],
+  "assets": [
+    {"kind": "TEX", "name": "tiles_color", "index": 0, "id": "cd3d66765e834e0c508906257f888eba"}
+  ]
+}

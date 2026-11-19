@@ -83,7 +83,7 @@ Api_Detach_Result :: struct {
 
 // What api_asset_delete (asset_delete.odin) writes.
 Api_Asset_Delete_Result :: struct {
-    moved:[]string `mirai:"label=The paths moved to the trash: the asset and its parts"`,
+    moved:[]string `mirai:"label=The paths that left the project: the asset and its parts, moved to the trash, and what the package it is the root of listed"`,
     used_by:[]string `mirai:"label=The files that use what moved; they keep the reference"`,
     error:string `mirai:"optional,label=Why the rest could not be moved after some were"`,
 }
@@ -91,13 +91,17 @@ Api_Asset_Delete_Result :: struct {
 @(private)
 api_assets_register :: proc(s:^Session,st:^Api_State) {
     assets:=Api_Asset_Params{limit=256}
+    add_default:=Api_Packages_Add_Params{seconds=API_IMPORT_SECONDS}
     api_register(s,st,{name="component.list",summary="The components a scene can hold, with their defaults and their fields as scene.write takes them.",params=type_info_of(Api_Component_Params),result=type_info_of(Api_Component_List),flags={.Core,.Read_Only},run=api_component_list})
     api_register(s,st,{name="asset.list",summary="The assets of the registry by kind and folder, with a count of its broken files, duplicated ids and missing dependencies.",params=type_info_of(Api_Asset_Params),result=type_info_of(Api_Asset_List),defaults=&assets,flags={.Core,.Read_Only},run=api_asset_list})
     api_register(s,st,{name="asset.detach",summary="Takes a part of an import out of the asset that owns it so it shows on its own; the import still writes it and leaves it out of the owner.",params=type_info_of(Api_Detach_Params),result=type_info_of(Api_Detach_Result),run=api_asset_detach})
     api_register(s,st,{name="asset.create",summary="Makes an empty asset in a folder of the assets as Create of the content browser does; material.set, particle.set and the like fill it.",params=type_info_of(Api_Asset_Create_Params),result=type_info_of(Api_Asset_Create_Result),run=api_asset_create})
     api_register(s,st,{name="asset.users",summary="The files that use an asset or a part it owns, as the Delete modal of the content browser lists them.",params=type_info_of(Api_Asset_Users_Params),result=type_info_of(Api_Asset_Users_Result),flags={.Read_Only},run=api_asset_users})
-    api_register(s,st,{name="asset.delete",summary="Moves an asset and the parts it owns to the trash of the system at once and without undo. Fails for files of plugins, the engine or the editor, open tabs and outside Edit.",params=type_info_of(Api_Asset_Delete_Params),result=type_info_of(Api_Asset_Delete_Result),flags={.Destructive},run=api_asset_delete})
-    api_register(s,st,{name="asset.move",summary="Moves, renames or copies an asset with the parts it owns, or a folder with all it holds, at once and without undo; a move keeps ids and references, an asset its extension. A move fails for files of plugins, the engine or the editor, open tabs, files being edited, a folder into itself and outside Edit.",params=type_info_of(Api_Asset_Move_Params),result=type_info_of(Api_Asset_Moved_Result),run=api_asset_move})
+    api_register(s,st,{name="asset.delete",summary="Moves an asset and the parts it owns to the trash of the system at once and without undo; the root of a package of the library also takes the package out of the project, and the store keeps it. Fails for another asset a package lists, files of plugins, the engine or the editor, open tabs and outside Edit.",params=type_info_of(Api_Asset_Delete_Params),result=type_info_of(Api_Asset_Delete_Result),flags={.Destructive},run=api_asset_delete})
+    api_register(s,st,{name="asset.move",summary="Moves, renames or copies an asset with the parts it owns, or a folder with all it holds, at once and without undo; a move keeps ids and references, an asset its extension, and moving the root of a package of the library moves where the project lists the package. A move fails for another asset a package lists, files of plugins, the engine or the editor, open tabs, files being edited, a folder into itself and outside Edit.",params=type_info_of(Api_Asset_Move_Params),result=type_info_of(Api_Asset_Moved_Result),run=api_asset_move})
+    api_register(s,st,{name="packages.list",summary="The packages of the library of this machine, what every import ingests into its store, with their assets: name, kind, bytes, whether built, and whether the project pins the package.",params=type_info_of(Api_Packages_List_Params),result=type_info_of(Api_Packages_List_Result),flags={.Read_Only},run=api_packages_list})
+    api_register(s,st,{name="packages.add",summary="Pins a package of the library, or some of its assets, in the project, listed in a folder of the assets, as carrying it from the library in the content browser does; its documents are written there. Answers as asset.import does when it ends.",params=type_info_of(Api_Packages_Add_Params),result=type_info_of(Import_Status_Result),defaults=&add_default,run=api_packages_add})
+    collab_library_api_register(s,st)
 }
 
 // ---------------------------------------------------------------- component.list

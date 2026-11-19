@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "id": "e0495081646e8954b731fc082bcd8884",
+  "name": "grate_color",
+  "origin": {"path": "assets/surfaces/metal/grate_color.png", "folder": false, "importer": "image"},
+  "identity": "f65a1b168299988cb3046b4003612437577bb217f7afbbeae8dada3c085b60c2",
+  "settings": {
+    "image": "Color",
+    "alpha_coverage": 0.5
+  },
+  "inputs": [],
+  "assets": [
+    {"kind": "TEX", "name": "grate_color", "index": 0, "id": "90b31208c9dfc6a6d00ab5517f084571"}
+  ]
+}

@@ -42,6 +42,10 @@ folders, which include the notices of the work they carry.
 Parts of Mirai are rewrites in Odin or Slang of the algorithms of these projects. Their notices
 are kept here and, where the license asks for it, in the header of the file.
 
+- **BLAKE3** (CC0 1.0, Apache-2.0, or Apache-2.0 with LLVM exceptions;
+  © 2019 Jack O'Connor and Samuel Neves), <https://github.com/BLAKE3-team/BLAKE3>.
+  `std/blake3`, translated from the reference implementation under CC0 1.0, with test vectors.
+  Game.
 - **Clay v0.14** (zlib; © 2024 Nic Barker), <https://github.com/nicbarker/clay>.
   `ui/layout_tree.odin`, altered. Game.
 - **MikkTSpace** (zlib; © 2011 Morten S. Mikkelsen), <https://github.com/mmikk/MikkTSpace>.
@@ -66,6 +70,11 @@ are kept here and, where the license asks for it, in the header of the file.
   of islands of `cluster_islands.odin`. Game. That retry where whole levels
   stop in `cook/import/levels.odin`, the vertex codec and the quaternion and exponential filters of
   `cook/import/gltf/meshopt.odin`. Editor.
+- **Lore** (MIT; © 2026 Epic Games, Inc.), <https://github.com/EpicGames/lore>.
+  The streaming windows of the chunker of `store/chunk.odin`, and the reservation of a range of a
+  pack under its lock, written outside it, a failed write giving its range back unless another
+  was reserved after it, of `stage_write`, `reserve_locked` and `land_locked` in
+  `store/pack.odin`, altered. Game.
 - **Mesh2Motion** (MIT; © 2025 Scott Petrovic), <https://github.com/Mesh2Motion/mesh2motion-app>.
   The skinning solvers of `cook/rig/weights.odin`, altered. Editor.
 - **ACL 2.1, Animation Compression Library** (MIT; © 2017 Nicholas Frechette),

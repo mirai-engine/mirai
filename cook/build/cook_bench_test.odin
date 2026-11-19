@@ -5,6 +5,7 @@ import "core:os"
 import "core:testing"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:store"
 
 // The cook of a project as the job Game does it: filling an empty texture
 // cache and from it. Run with --release -define:COOK_BENCH=true;
@@ -32,7 +33,9 @@ bench_cook_of_a_project_filling_its_texture_cache_and_from_it :: proc(t:^testing
         if found.prefix!="" {append(&plugins,found)}
     }
     desc.plugins=plugins[:]
-    desc.texture_cache=fmt.tprintf("%s/cache",folder)
+    kept,opened:=store.open(fmt.tprintf("%s/store",folder),context.temp_allocator)
+    if !testing.expect_value(t,opened,store.Error.None) {return}
+    desc.store=&kept
     filling:=cook_assets(desc)
     testing.expect_value(t,filling.error,Cook_Error.None)
     cached:=cook_assets(desc)

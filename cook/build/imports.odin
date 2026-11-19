@@ -3,35 +3,60 @@ package build
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "mirai:asset"
 import "mirai:project"
 import "mirai:std/subprocess"
 
-// Brings the imported folder of each root (a project, a plugin) up to date
-// with the sources of its assets folder (cook/import/sources.sync), with the
-// import program of the engine (Engine_Paths.import_program, of the defines
-// the engine was built with), which reads the formats the plugins of the
-// project add from the library of its editor: the tool builds without the
-// importers. Textures are built Final for a build that cooks them (final)
-// and Fast, as the editor imports them, for one that does not. What the program
-// says of each source it imports goes to the output of this process as it
-// says it: a large source imports for minutes. message, in the temp
-// allocator: why it failed.
-imports_sync :: proc(program:string,roots:[]string,final:bool) -> (ok:bool,message:string) {
+// Brings the packages each root (a project, a plugin) pins in its
+// packages.mirai to builds this engine reads (cook/import/sources.project_refresh)
+// in the store at store_root ("": the machine's), with the import program of
+// the engine (Engine_Paths.import_program, of the defines the engine was
+// built with), which reads the formats the plugins of the project add from
+// the library of its editor: the tool builds without the importers. A build
+// is taken from the store, then from the store at from ("": none; an
+// installed engine adds the store of the builds of its plugins), then built
+// from its source when the source is on this machine; a package none of them
+// gives fails by name. Textures are required Final for a build that cooks
+// them (final) and taken Fast, as the editor imports them, for one that does
+// not. What the program says of each source it imports goes to the output
+// of this process as it says it: a large source imports for minutes.
+// message, in the temp allocator: why it failed, with the source and the
+// reason the program gave, or, when it ended without saying (a crash, a
+// signal), how it ended and the source it was importing.
+imports_refresh :: proc(program:string,roots:[]string,final:bool,store_root:string,from:="") -> (ok:bool,message:string) {
     if len(roots)==0 {return true,""}
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,program)
     if final {append(&command,"--final")}
-    for root in roots {append(&command,"--sync",root)}
-    state,_,errors,error:=subprocess.exec({command=command[:]},context.temp_allocator,echo=os.to_writer(os.stdout))
+    if store_root!="" {append(&command,"--store",store_root)}
+    if from!="" {append(&command,"--from",from)}
+    for root in roots {append(&command,"--refresh",root)}
+    state,said,errors,error:=subprocess.exec({command=command[:]},context.temp_allocator,echo=os.to_writer(os.stdout))
     if error!=nil {return false,fmt.tprintf("the import program could not run: %v",error)}
-    if state.exit_code!=0 {return false,strings.trim_space(string(errors))}
-    return true,""
+    if state.exit_code==0 && state.success {return true,""}
+    return false,imports_failure(state,string(said),string(errors))
 }
 
-// The roots of a project whose sources its builds import: the project and
-// its active plugins, those with an assets folder. In the temp allocator.
+// Why the import program failed: what it said on its error output, else how
+// it ended and the last source it said it was importing.
+@(private)
+imports_failure :: proc(state:os.Process_State,said,errors:string) -> string {
+    if text:=strings.trim_space(errors);text!="" {return text}
+    ended:=fmt.tprintf("the import program ended with exit code %d",state.exit_code)
+    if !state.success {ended=fmt.tprintf("the import program crashed or was killed (code %d)",state.exit_code)}
+    lines:=strings.split_lines(said,context.temp_allocator)
+    #reverse for line in lines {
+        if strings.has_prefix(line,"importing ") {return fmt.tprintf("%s while %s, without saying why: run the import again (mirai import --refresh) to see it",ended,line)}
+    }
+    return fmt.tprintf("%s before importing any source, without saying why: run the import again (mirai import --refresh) to see it",ended)
+}
+
+// The roots of a project whose packages its builds refresh: the project and
+// its active plugins, those with a packages.mirai. In the temp allocator.
 imports_roots :: proc(p:^project.Project) -> []string {
     roots:=make([dynamic]string,context.temp_allocator)
-    for folder in project.asset_folders(p,context.temp_allocator) {append(&roots,folder.root)}
+    for folder in project.asset_folders(p,context.temp_allocator) {
+        if os.is_file(project.path(folder.root,asset.PACKAGES_FILE,allocator=context.temp_allocator)) {append(&roots,folder.root)}
+    }
     return roots[:]
 }

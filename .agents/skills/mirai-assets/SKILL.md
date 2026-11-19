@@ -27,6 +27,9 @@ types, scenes and their prefab instances, registry).
   [container](references/formats.md#container), [typed tables](references/formats.md#typed-tables),
   [asset types](references/formats.md#asset-types), [versions](references/formats.md#versions),
   [registry](references/formats.md#registry) and [text](references/formats.md#text).
+- The records of imports in the machine store (package and build manifests, `packages.mirai`
+  and the manifest files a root carries), their refs and `packages_resolve`:
+  [packages](references/formats.md#packages).
 - The collection `compressor`, profiles, codecs, streams and decoders:
   [compression](references/formats.md#compression).
 - Streams, schemas, migration, paths, text: [serial](references/serial.md#stdserial).
@@ -108,9 +111,11 @@ types, scenes and their prefab instances, registry).
   package: `compressor:data`, `compressor:texture` and, engine-time, `compressor:blocks`. The open
   one (`std/compressor`) is a real implementation; the private one has the same packages and
   declarations. Its sources are never versioned in the engine nor packaged.
-- **What the repository of the engine versions is open**: its projects declare
-  `build.compression` `open`, and the assets of the engine and its plugins are always written
-  open. A project chooses for itself (`none`, `open`, or the best its engine has).
+- **What is hashed and shared never depends on a compressor.** The documents of a project, the
+  assets of the engine and its plugins, imports and objects of the store are written with
+  `Codecs.None`: no stage of a compressor, each kind keeping the modeling of its data, chosen
+  without one. The store compresses where bytes rest and the exchange where they travel; only the
+  files a cook ships are compressed as the project's `build.compression` says.
 - **A stream says what decodes it**: a read needs no profile nor codecs.
 - **Decoders are preallocated.** A `Stream_Decoder` holds all the scratch, allocated once by
   whoever reads; a decode never allocates, and for any input never reads outside `src` nor writes
@@ -131,6 +136,12 @@ types, scenes and their prefab instances, registry).
 - **The header says Scene or Prefab.** One `.scene` extension and kind; `Header_Flag.Prefab` is
   what whoever made the file chose, never guessed from its roots, and a prefab has exactly one root
   ([prefab](references/scenes.md#prefab)).
+- **A package asset is an object of the store read by parts**, never a file opened by path: what
+  a load needs reads only its chunks, a part not here is `Not_Here` to its caller, and encoding
+  the same input twice gives the same object ([store](references/formats.md#container)).
+- **A project pins the manifest of each package it uses, never a build**, and carries the text
+  of each manifest it pins; builds are found by key through refs, and resolving a list never
+  removes nor rebuilds ([packages](references/formats.md#packages)).
 - **A guest mount never takes an id the registry has**: what the program shipped wins over what a
   player adds ([guest mounts](references/formats.md#registry)).
 
@@ -157,7 +168,15 @@ types, scenes and their prefab instances, registry).
     `a_scene_saved_with_another_layout_of_a_component_loads_it_by_field_names` of `engine/scene`;
   - the document of a scene or a `.ui` from a file outside the assets (what `dump` and git
     show): `the_commands_read_write_and_check_the_document_of_an_asset` of `cook/author`;
+  - records of packages: `package_records_read_back_what_they_write`,
+    `packages_resolve_lists_the_objects_of_what_a_project_uses`,
+    `package_records_refuse_hostile_text` and `a_root_carries_the_manifests_it_pins` of
+    `asset/packages_test.odin`;
   - registry: `asset/registry_test.odin` and, in the editor, `editor/content_test.odin`;
+  - assets of the store: `every_kind_loads_equal_from_a_file_and_from_the_store`,
+    `the_small_levels_of_a_texture_load_before_the_large_ones_arrive`,
+    `a_chunk_stored_as_it_is_is_read_in_place` and `hostile_object_meta_and_groups_fail_the_asset`
+    of `asset/parts_test.odin`;
   - layers of an imported material: `asset/kinds_test.odin`, and the overrides shared with prefabs
     in the editor, `editor/prefabs_test.odin`;
   - JSON inspection with transient fields: `std/serial/text_runtime_test.odin`.

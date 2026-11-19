@@ -13,6 +13,7 @@ import "core:time"
 import "compressor:data"
 import "compressor:blocks"
 import "mirai:asset"
+import "mirai:cook/cache"
 import "mirai:cook/far"
 import anim "mirai:std/anim"
 import "mirai:cook/textures"
@@ -21,6 +22,7 @@ import "mirai:std/base"
 import "mirai:std/jobs"
 import "mirai:std/serial"
 import "mirai:std/subprocess"
+import "mirai:store"
 
 // The assets a game ships: of the assets folder of a project, the ones the
 // game can reach, as the runtime loads them fastest.
@@ -31,10 +33,14 @@ import "mirai:std/subprocess"
 // interfaces, rows and code show) of the project and what cook.mirai
 // names, the other assets only code refers to. From them, everything an
 // asset depends on, and so on. The rest stays behind and is listed in the
-// report. A texture that stores RGBA8 is written in the blocks of its use,
-// unless only interfaces show it, and the blocks are kept in the texture
-// cache for the next cook; a texture the editor imported Fast is encoded
-// again as Final from its source, which the cook imports again; a scene or prefab with a stale prefab
+// report. The assets of the project and of each plugin are their files and
+// the outputs of the packages each root pins, listed from the store of the
+// build (asset.root_packages_in), which its refresh brought to Final builds:
+// a package not listed whole fails the cook by its name, and a texture still
+// Fast is not shipped. What a package was imported from, inside a root, is a
+// source and stays behind. A texture that stores RGBA8 is written in the
+// blocks of its use, unless only interfaces show it, and the blocks are kept
+// in the texture cache for the next cook; a scene or prefab with a stale prefab
 // instance is written with its instances brought up to date, so a shipped
 // game loads them as they are; every other file is copied byte for byte.
 // With far, every scene a section references gets its far mesh beside it
@@ -44,7 +50,8 @@ import "mirai:std/subprocess"
 // (asset.mesh_collision_pieces, kept in the collision cache), which a
 // shipped game reads and never makes. The
 // folder gets a packed index, so the game does not look at its files to
-// know what they are, and everything written is read back and checked.
+// know what they are, and never opens a store; everything written is read
+// back and checked.
 
 COOK_FILE :: "cook.mirai"
 
@@ -57,12 +64,12 @@ Cook_Desc :: struct {
     assets:string,   // the assets folder of the project
     output:string,   // the assets folder of the shipped game: it ends up holding what was cooked and nothing else
     manifest:string, // the cook.mirai of the project. "", or a file that does not exist: the scenes are the only roots
-    plugins:[]project.Asset_Folder, // the assets of active plugins: every file a root, cooked under its prefix
-    texture_cache:string, // folder of compressed textures kept by content (textures.cache_read); "": none
-    mesh_cache:string,    // folder of the meshes an import keeps (cook/import Import_Options); "": none
+    plugins:[]project.Asset_Folder, // the assets of active plugins: every file but the sources of its packages a root, cooked under its prefix
+    store:^store.Store,   // that lists the packages of the roots and whose texture cache keeps compressed textures by content (textures.cache_read); nil: none, for roots without packages
+    cache_source:cache.Source, // asked on a miss of that cache before compressing
     collision_cache:string, // folder of the convex pieces of meshes kept by content (asset.mesh_collision_pieces); "": none
     codecs:asset.Codecs, // what the project ships with (build.compression)
-    root:string,          // of the project: the sources of imported assets are named relative to it. "": the folder of assets
+    root:string,          // of the project, where its packages.mirai is. "": a project without packages
     worker:jobs.Worker_Ref, // where the files are cooked, in parallel on its system. No system: a system of the cook, a thread per core
     server:bool, // for a dedicated server: what is only shown or heard (asset.Kind_Info.presentation) stays behind, and is not missing
     quick:bool,  // a cook that checks a change (a dev game): the profile Balanced in place of Ultra
@@ -84,7 +91,8 @@ Cook_Error :: enum u8 {
     Write_Failed,     // detail: the file
     Verify_Failed,    // detail: the file that does not read back as what was written
     Resolve_Failed,   // detail: the scene or prefab whose prefab instances could not be brought up to date
-    Source_Failed,    // detail: the texture that is still Fast, which the import of its source by a build makes Final
+    Source_Failed,    // detail: the texture that is still Fast and the package it is of, which a refresh that requires Final brings
+    Package_Missing,  // detail: one line per package the store does not list whole, with how to fix it
     Duplicate_Id,     // detail: the two files with one id and how to tell them apart
 }
 
@@ -169,6 +177,57 @@ manifest_read :: proc(path:string,allocator:runtime.Allocator) -> (manifest:Cook
     return
 }
 
+// A package a root pins, with its outputs as the registry lists them.
+@(private="file")
+Cook_Package :: struct {
+    name:string,
+    source:string,   // absolute, when it is inside the root: what it was imported from
+    folder:bool,     // the source is a folder
+    inputs:[]string, // absolute, with the source: the other files the import read
+    listed:[]asset.Package_Listed,
+}
+
+// The outputs of the packages root pins, from the store of the cook, with
+// each package added to packages; a package not listed whole adds a line to
+// missing. In the temp allocator.
+@(private="file")
+cook_listed :: proc(desc:Cook_Desc,root:string,packages:^[dynamic]Cook_Package,missing:^[dynamic]string) -> []asset.Package_Listed {
+    if root=="" {return nil}
+    if desc.store==nil {
+        if list,found,_:=asset.packages_load(root,context.temp_allocator);found && len(list.packages)>0 {
+            append(missing,fmt.tprintf("the packages of %s are listed from a store, and the cook has none",root))
+        }
+        return nil
+    }
+    resolved,error:=asset.root_packages_in(desc.store,root,context.temp_allocator)
+    if error!=.None {
+        append(missing,fmt.tprintf("the packages of %s could not be listed (%v)",root,error))
+        return nil
+    }
+    append(missing,..resolved.problems)
+    for &found in resolved.packages {
+        entry:=Cook_Package{name=found.name,folder=found.origin.folder}
+        if found.origin.path!="" && !filepath.is_abs(found.origin.path) && !strings.has_prefix(found.origin.path,"/") {
+            entry.source=fmt.tprintf("%s/%s",root,found.origin.path)
+            beside:=entry.source if found.origin.folder else entry.source[:strings.last_index_byte(entry.source,'/')]
+            inputs:=make([]string,len(found.inputs),context.temp_allocator)
+            for input,at in found.inputs {inputs[at]=fmt.tprintf("%s/%s",beside,input)}
+            entry.inputs=inputs
+        }
+        first:=-1
+        count:=0
+        for &l,at in resolved.listed {
+            if l.package_id!=found.id {continue}
+            if first<0 {first=at}
+            count+=1
+        }
+        // packages_resolve lists the outputs of each package together.
+        if first>=0 {entry.listed=resolved.listed[first:first+count]}
+        append(packages,entry)
+    }
+    return resolved.listed
+}
+
 @(private="file")
 cook_fail :: proc(report:^Cook_Report,error:Cook_Error,detail:string,allocator:runtime.Allocator) {
     report.error,report.detail=error,strings.clone(detail,allocator)
@@ -192,11 +251,34 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     if problem!="" {cook_fail(&report,.Manifest_Invalid,problem,allocator);return}
 
     registry:asset.Registry
-    asset.registry_init(&registry,desc.assets,"",temp,desc.root!=""?project.imported_path(desc.root,temp):"")
-    for folder in desc.plugins {asset.registry_mount(&registry,folder.path,folder.prefix,folder.imported)}
+    packages:=make([dynamic]Cook_Package,temp)
+    missing_packages:=make([dynamic]string,temp)
+    asset.registry_init(&registry,desc.assets,"",temp,cook_listed(desc,desc.root,&packages,&missing_packages))
+    for folder in desc.plugins {asset.registry_mount(&registry,folder.path,folder.prefix,cook_listed(desc,folder.root,&packages,&missing_packages))}
+    registry.store=desc.store
     defer asset.registry_destroy(&registry)
+    if len(missing_packages)>0 {cook_fail(&report,.Package_Missing,strings.join(missing_packages[:],"\n",temp),allocator);return}
     if asset.registry_scan(&registry)!=.None {cook_fail(&report,.Assets_Missing,desc.assets,allocator);return}
     files:=registry.files[:]
+    // What a package was imported from, inside a root, is not for the game.
+    source:=make([]bool,len(files),temp)
+    owners:=make(map[base.Asset_Id]string,temp)
+    for &found in packages {
+        for &l in found.listed {owners[l.id]=found.name}
+        if found.source=="" {continue}
+        path:=asset.registry_relative(&registry,found.source) or_continue
+        for input in found.inputs {
+            if read,inside:=asset.registry_relative(&registry,input);inside {
+                if at,listed:=registry.by_path[read];listed {source[at]=true}
+            }
+        }
+        if !found.folder {
+            if at,listed:=registry.by_path[path];listed {source[at]=true}
+            continue
+        }
+        under:=strings.concatenate({path,"/"},temp)
+        for file,at in files {source[at]||=strings.has_prefix(file.path,under)}
+    }
     // Which of two files with one id is the asset depends on the machine: the cook takes neither.
     if len(registry.duplicates)>0 {
         twins:=registry.duplicates[0]
@@ -220,11 +302,9 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     }
     for file,at in files {
         if file.state==.Asset && (file.kind==asset.KIND_SCENE || file.kind==asset.KIND_RECORDS || file.kind==asset.KIND_STRINGS) {root_add(reached,&pending,&report,u32(at))}
-        // What a plugin brings is for its code, which no scene names; its sources
-        // (a file with a sidecar beside it) and their sidecars stay behind.
-        source:=strings.has_suffix(file.path,asset.SIDECAR_EXTENSION) || strings.concatenate({file.path,asset.SIDECAR_EXTENSION},temp) in registry.by_path
+        // What a plugin brings is for its code, which no scene names; its sources stay behind.
         for folder in desc.plugins {
-            if !source && strings.has_prefix(file.path,folder.prefix) && len(file.path)>len(folder.prefix) && file.path[len(folder.prefix)]=='/' {root_add(reached,&pending,&report,u32(at))}
+            if !source[at] && strings.has_prefix(file.path,folder.prefix) && len(file.path)>len(folder.prefix) && file.path[len(folder.prefix)]=='/' {root_add(reached,&pending,&report,u32(at))}
         }
     }
     for root in manifest.roots {
@@ -283,7 +363,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     }
     defer if on.system==&own {jobs.system_destroy(&own)}
     work:=Cook_Work{
-        desc=desc,registry=&registry,files=files,textures=manifest.textures,drawn=drawn,shown=shown,pieces=pieces_wanted(&registry,reached,left,temp),
+        desc=desc,registry=&registry,files=files,owners=owners,textures=manifest.textures,drawn=drawn,shown=shown,pieces=pieces_wanted(&registry,reached,left,temp),
         on=on,allocator=on.system.allocator,first_error=len(files),
         results=make([]Cook_Result,len(files),temp),
         types=make([]asset.Types,jobs.worker_count(on.system),temp),
@@ -304,6 +384,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     slice.sort_by(order[:],proc(a,b:Cook_Order) -> bool {return a.bytes>b.bytes || a.bytes==b.bytes && a.at<b.at})
     work.order,work.probed=order[:],probed[:]
     keys_reuse(&work)
+    textures_lookup(&work)
 
     jobs.parallel_for(on.system,on.worker,len(work.probed),1,texture_probe,&work)
     jobs.parallel_for(on.system,on.worker,len(work.order),1,files_cook,&work)
@@ -365,6 +446,7 @@ Cook_Work :: struct {
     desc:Cook_Desc,
     registry:^asset.Registry,
     files:[]asset.Registry_File,
+    owners:map[base.Asset_Id]string, // the name of the package each listed output is of
     textures:Cook_Textures,
     drawn,shown:[]bool,
     pieces:[]bool, // a mesh written with the convex pieces a moving body collides as
@@ -428,7 +510,7 @@ work_types :: proc(work:^Cook_Work,worker:int) -> ^asset.Types {
 }
 
 // A texture still built Fast is not shipped: the imports of the editor build one so until its
-// Final is there, and the sync before the cook builds every one Final.
+// Final is there, and the refresh before the cook requires Final.
 @(private="file")
 texture_probe :: proc(work:^Cook_Work,first,last:int,worker:int) {
     context.allocator=work.allocator
@@ -437,15 +519,18 @@ texture_probe :: proc(work:^Cook_Work,first,last:int,worker:int) {
         result:=&work.results[at]
         if result.entry.reused {continue}
         file:asset.Asset
-        if asset.asset_load(&file,asset.registry_file_path(work.registry,work.files[at].path,context.temp_allocator),context.temp_allocator)!=.None {
+        if cook_open(work,work.files[at].path,&file)!=.None {
             result.problem=work_text(work,"it cannot be read")
             continue
         }
         defer asset.asset_close(&file)
         view,error:=asset.texture_view(&file,types)
         if error!=.None || .Fast not_in view.info.flags {continue}
-        named:=view.source!=nil?base.text_get(view.source.source[:]):"a source it does not name"
-        result.problem=work_text(work,"it was imported Fast and %s was not imported again as Final: `mirai build game` does it before it cooks",named)
+        if name,listed:=work.owners[work.files[at].id];listed {
+            result.problem=work_text(work,"the package %s has only a build with Fast textures here, and a game ships Final: `mirai build game` refreshes it requiring Final, which a machine with its source must ingest with this engine, or a peer that has that build must give",name)
+        } else {
+            result.problem=work_text(work,"it was written Fast, and a game ships Final: write it again Final")
+        }
     }
 }
 
@@ -475,7 +560,7 @@ files_cook :: proc(work:^Cook_Work,first,last:int,worker:int) {
 file_cook :: proc(work:^Cook_Work,at:int,worker:int,entry:^Cook_File) -> (error:Cook_Error,detail:string) {
     file:=&work.files[at]
     types:=work_types(work,worker)
-    source:=asset.registry_file_path(work.registry,file.path,context.temp_allocator)
+    source:=file.path
     target:=fmt.tprintf("%s/%s",work.desc.output,file.path)
     if slash:=strings.last_index_byte(target,'/');slash>=0 {
         if os.make_directory_all(target[:slash])!=nil && !os.is_dir(target[:slash]) {return .Write_Failed,work_text(work,"%s",file.path)}
@@ -500,8 +585,17 @@ file_cook :: proc(work:^Cook_Work,at:int,worker:int,entry:^Cook_File) -> (error:
     laid:=!entry.compressed && file.state==.Asset && file.kind==asset.KIND_TEXTURE
     if laid && !texture_lay(work,source,target,types) {return .Write_Failed,work_text(work,"%s",file.path)}
     if !entry.compressed && !laid {
-        data,read_error:=serial.file_read(source,context.temp_allocator)
-        if read_error!=.None {return .Read_Failed,work_text(work,"%s",file.path)}
+        // A listed output of a package is its object of the store, in the container format.
+        data:[]u8
+        if object,listed:=asset.registry_listed_object(work.registry,file.path);listed {
+            read_error:asset.Error
+            data,read_error=asset.object_file(work.registry.store,object,context.temp_allocator)
+            if read_error!=.None {return .Read_Failed,work_text(work,"%s",file.path)}
+        } else {
+            read_error:serial.File_Error
+            data,read_error=serial.file_read(asset.registry_file_path(work.registry,file.path,context.temp_allocator),context.temp_allocator)
+            if read_error!=.None {return .Read_Failed,work_text(work,"%s",file.path)}
+        }
         if file.state==.Asset && (file.kind==asset.KIND_SCENE) {
             sync.mutex_lock(&work.resolve)
             resolved,resolve_ok:=scene_cook(&work.resolver,&work.resolver_types,data)
@@ -534,9 +628,36 @@ file_cook :: proc(work:^Cook_Work,at:int,worker:int,entry:^Cook_File) -> (error:
     return .None,""
 }
 
+// Opens the asset at path of the registry of the cook, in the temp allocator: a listed output of
+// a package from its object of the store, any other from its file.
+@(private="file")
+cook_open :: proc(work:^Cook_Work,path:string,file:^asset.Asset) -> asset.Error {
+    if object,listed:=asset.registry_listed_object(work.registry,path);listed {
+        if work.registry.store==nil {return .Not_Found}
+        return asset.asset_open_object(file,work.registry.store,object,context.temp_allocator)
+    }
+    return asset.asset_load(file,asset.registry_file_path(work.registry,path,context.temp_allocator),context.temp_allocator)
+}
+
+// Looks the texture cache up once for every texture the pass may compress, asking its source in
+// one fetch for what the store lacks: the jobs then read the cache without asking.
+@(private="file")
+textures_lookup :: proc(work:^Cook_Work) {
+    if work.desc.store==nil || work.textures!=.Blocks {return}
+    keys:=make([dynamic]u64,context.temp_allocator)
+    rdo:=work.desc.codecs!=.None
+    for at in work.probed {
+        if work.results[at].entry.reused || !(work.drawn[at] || !work.shown[at]) {continue}
+        append(&keys,textures.cache_key_blocks(work.files[at].content_hash,rdo))
+    }
+    if len(keys)==0 {return}
+    here:=make([]bool,len(keys),context.temp_allocator)
+    textures.cache_lookup({store=work.desc.store,source=work.desc.cache_source},keys[:],here)
+}
+
 // Raise it when the cook writes a file otherwise from the same inputs: every key changes.
 @(private="file")
-COOK_KEYS_VERSION :: 1
+COOK_KEYS_VERSION :: 3
 
 // What an earlier cook wrote of a file: the key of what it was made of, and the output as it left it.
 @(private="file")
@@ -633,7 +754,7 @@ far_meshes_cook :: proc(work:^Cook_Work,reached,left:[]bool,allocator:runtime.Al
     for file,at in work.files {
         if !reached[at] || left[at] || file.state!=.Asset || file.kind!=asset.KIND_SCENE {continue}
         source:asset.Asset
-        if asset.asset_load(&source,asset.registry_file_path(work.registry,file.path,context.temp_allocator),context.temp_allocator)!=.None {return nil,.Read_Failed,strings.clone(file.path,allocator)}
+        if cook_open(work,file.path,&source)!=.None {return nil,.Read_Failed,strings.clone(file.path,allocator)}
         far.far_scenes(&source,types,&scenes)
         asset.asset_close(&source)
     }
@@ -693,25 +814,26 @@ far_meshes_cook :: proc(work:^Cook_Work,reached,left:[]bool,allocator:runtime.Al
 @(private="file")
 texture_cook :: proc(work:^Cook_Work,source,target:string,types:^asset.Types,worker:jobs.Worker_Ref) -> (compressed,ok:bool) {
     file:asset.Asset
-    if asset.asset_load(&file,source,context.temp_allocator)!=.None {return}
+    if cook_open(work,source,&file)!=.None {return}
     defer asset.asset_close(&file)
     view,error:=asset.texture_view(&file,types)
     if error!=.None {return}
     if view.info.format!=.RGBA8 {return false,true}
-    cache:=work.desc.texture_cache
+    // The pass looked up the cache for every texture at once (textures_lookup): no texture asks the source.
+    kept:=cache.Cache{store=work.desc.store}
     // Blocks that nothing compresses keep the least error.
     rdo:=work.desc.codecs!=.None
     key:=textures.cache_key_blocks(file.blob.header.content_hash,rdo)
-    built,cached:=textures.cache_read(cache,key,types,context.temp_allocator)
+    built,cached:=textures.cache_read(kept,key,types,context.temp_allocator)
     if !cached {
         built_ok:bool
         if built,built_ok=textures.blocks_of(view,context.temp_allocator,worker,rdo);!built_ok {return}
         // Textures of one content build the same blocks: the first to get here keeps them.
-        if cache!="" {
+        if kept.store!=nil {
             sync.mutex_lock(&work.cache)
             if key not_in work.cached {
                 work.cached[key]={}
-                textures.cache_write(cache,key,types,&built)
+                textures.cache_write(kept,key,types,&built)
             }
             sync.mutex_unlock(&work.cache)
         }
@@ -724,7 +846,7 @@ texture_cook :: proc(work:^Cook_Work,source,target:string,types:^asset.Types,wor
 @(private="file")
 texture_lay :: proc(work:^Cook_Work,source,target:string,types:^asset.Types) -> bool {
     file:asset.Asset
-    if asset.asset_load(&file,source,context.temp_allocator)!=.None {return false}
+    if cook_open(work,source,&file)!=.None {return false}
     defer asset.asset_close(&file)
     view,error:=asset.texture_view(&file,types)
     if error!=.None {return false}
@@ -802,7 +924,7 @@ cook_summary :: proc(report:^Cook_Report,allocator:=context.allocator) -> string
 @(private="file")
 animation_cook :: proc(work:^Cook_Work,source,target:string,types:^asset.Types) -> (compressed,ok:bool) {
     file:asset.Asset
-    if asset.asset_load(&file,source,context.temp_allocator)!=.None {return}
+    if cook_open(work,source,&file)!=.None {return}
     defer asset.asset_close(&file)
     view,error:=asset.animation_view(&file,types)
     if error!=.None {return}
@@ -887,7 +1009,7 @@ pieces_wanted :: proc(registry:^asset.Registry,reached,left:[]bool,allocator:run
 @(private="file")
 mesh_pieces_cook :: proc(work:^Cook_Work,source:string,data:[]u8,types:^asset.Types) -> (out:[]u8,ok:bool) {
     file:asset.Asset
-    if asset.asset_load(&file,source,context.temp_allocator)!=.None {return}
+    if cook_open(work,source,&file)!=.None {return}
     defer asset.asset_close(&file)
     points:=make([dynamic][3]f32,context.temp_allocator)
     sizes:=make([dynamic]u32,context.temp_allocator)

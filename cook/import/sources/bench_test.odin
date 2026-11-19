@@ -23,7 +23,7 @@ best_of :: proc(body:proc(data:rawptr),data:rawptr) -> time.Duration {
 }
 
 @(private="file")
-Large :: struct {path,out:string,model_bytes,asset_bytes:int,triangles,vertices:int}
+Large :: struct {t:^testing.T,path,out:string,model_bytes,asset_bytes:int,triangles,vertices:int}
 
 @(test)
 bench_import_and_write_of_a_large_obj :: proc(t:^testing.T) {
@@ -42,7 +42,7 @@ bench_import_and_write_of_a_large_obj :: proc(t:^testing.T) {
             fmt.sbprintf(&text,"f %d/%d/%d %d/%d/%d %d/%d/%d %d/%d/%d\n",a,a,a,b,b,b,c,c,c,d,d,d)
         }
     }
-    large:=Large{path=write_text(folder,"grid.obj",string(text.buf[:])),out=fmt.tprintf("%s/out",folder),model_bytes=len(text.buf)}
+    large:=Large{t=t,path=write_text(folder,"grid.obj",string(text.buf[:])),out=fmt.tprintf("%s/out",folder),model_bytes=len(text.buf)}
     read:=best_of(proc(data:rawptr) {
         large:=(^Large)(data)
         model,error:=importer.import_model(large.path,FORMATS[:])
@@ -58,7 +58,7 @@ bench_import_and_write_of_a_large_obj :: proc(t:^testing.T) {
         model,_:=importer.import_model(large.path,FORMATS[:])
         defer importer.model_destroy(&model)
         // Every round builds the mesh: the one before left the same file.
-        report,error:=write_into(&model,large.out,{rebuild=true})
+        report,error:=write_into(large.t,&model,large.out,{rebuild=true})
         assert(error.code==.None)
         large.asset_bytes=report.assets[0].bytes
         importer.report_destroy(&report)

@@ -390,11 +390,13 @@ document_write :: proc(doc:^Document,w:^serial.Writer,profile:=data.Profile.Fast
     return blob_build(w,doc.kind,doc.kind_version,doc.id,doc.owner,doc.flags,chunks[:],&scratch,profile,doc.codecs,worker)
 }
 
-// Writes the document to a file, whole or not at all.
+// Writes the document to a file, whole or not at all; a file that already
+// holds its bytes is left untouched.
 document_save :: proc(doc:^Document,path:string,sync:=false,profile:=data.Profile.Fast) -> Error {
     bytes:=document_bytes(doc,doc.allocator,profile) or_return
     defer mem.free_bytes(bytes,doc.allocator)
-    return serial.file_write_atomic(path,bytes,sync)==.None?.None:.IO
+    _,error:=serial.file_write_changed(path,bytes,sync)
+    return .None if error==.None else .IO
 }
 
 // The file the document is, as bytes from allocator, aligned for its chunks.
@@ -436,9 +438,7 @@ document_from_asset :: proc(doc:^Document,a:^Asset,allocator:=context.allocator)
             error:=column_size(doc,&column,source.rows*from.size)
             append(&target.columns,column)
             if no_column_name!=nil {error=.Out_Of_Memory}
-            decoder:^Decoder
-            if error==.None && entry.compression!=.None {decoder,error=asset_decoder(a)}
-            if error==.None {error=blob_read(&a.blob,entry,target.columns[at].data,decoder)}
+            if error==.None {error=asset_chunk_read(a,from.chunk,target.columns[at].data)}
             if error!=.None {
                 document_destroy(doc)
                 return error
@@ -449,13 +449,22 @@ document_from_asset :: proc(doc:^Document,a:^Asset,allocator:=context.allocator)
 }
 
 // The file bytes are, written again with profile as codecs allow: the same content with its
-// chunks, the pages of a mesh and the tables of blocks compressed again. With a worker, the
-// pieces of a large chunk are compressed on the workers of its job system.
+// chunks, the pages of a mesh and the tables of blocks compressed again. A file written without
+// a compressor (Codecs.None) does not say which chunks its writer meant to compress: with codecs,
+// every column becomes a stream where that shrinks it, but those that hold streams of their own
+// (the page_data of a mesh, the blocks of a table of blocks), which are read by offset. With a
+// worker, the pieces of a large chunk are compressed on the workers of its job system.
 document_repack :: proc(bytes:[]u8,profile:data.Profile,codecs:Codecs,allocator:=context.allocator,worker:=jobs.Worker_Ref{}) -> (repacked:[]u8,error:Error) {
     doc:Document
     document_read(&doc,bytes,allocator) or_return
     defer document_destroy(&doc)
     doc.codecs=codecs
+    if codecs!=.None {
+        for &table in doc.tables {
+            if doc.kind==KIND_MESH && table.name=="page_data" || strings.has_suffix(table.name,"_blocks") {continue}
+            for &column in table.columns {column.compression=.Stream}
+        }
+    }
     if doc.kind==KIND_MESH {mesh_pages_repack(&doc,profile) or_return}
     document_blocks_repack(&doc,profile,codecs) or_return
     return document_bytes(&doc,allocator,profile,worker)

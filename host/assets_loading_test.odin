@@ -2,14 +2,18 @@ package host
 
 import "base:runtime"
 import "core:fmt"
+import "core:os"
+import "core:strings"
 import "core:testing"
 import "core:thread"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:project"
 import "mirai:render"
 import "mirai:std/base"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
+import "mirai:store"
 
 // Three loads share a frame: each gets a part of what the ones before it
 // left; one whose next asset does not fit its part, having taken nothing,
@@ -355,4 +359,113 @@ what_a_load_read_is_freed_in_a_job :: proc(t:^testing.T) {
     testing.expect(t,alone.asset_releases.queued==nil && inline.source.id=={},"freed in the call")
     app_release(&alone,{count,&freed})
     testing.expect(t,freed==3 && alone.asset_releases.calls==nil,"called in the call")
+}
+
+// The dev player sets up the assets of a project with a list of packages and
+// no imported folder or source: an output built in the store loads from its
+// object, a plugin's packages list under its prefix, and a build that is not on
+// this machine is a problem that names its package, never a failure. A part of
+// an object the store does not hold yet shows the stand-in, fails nothing, and
+// loads once it arrives.
+@(test)
+the_assets_of_a_project_load_its_packages_from_the_store :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"host-packages")
+    if folder=="" {return}
+    root,staging:=fmt.tprintf("%s/game",folder),fmt.tprintf("%s/staging",folder)
+    plugin:=fmt.tprintf("%s/plugins/pack",root)
+    for made in ([]string{fmt.tprintf("%s/assets",root),fmt.tprintf("%s/assets",plugin),staging}) {testing.expect(t,os.make_directory_all(made)==nil)}
+    m:=project.manifest_default("Game")
+    base.text_set(m.plugins[0][:],"pack")
+    testing.expect(t,os.write_entire_file(fmt.tprintf("%s/%s",root,project.PROJECT_FILE),project.manifest_text(&m,context.temp_allocator))==nil)
+    pm:project.Plugin_Manifest
+    base.text_set(pm.name[:],"pack");base.text_set(pm.version[:],"1.0.0")
+    pm.parts={.Assets}
+    testing.expect(t,os.write_entire_file(fmt.tprintf("%s/%s",plugin,project.PLUGIN_FILE),project.plugin_text(&pm,context.temp_allocator))==nil)
+
+    s,open_error:=store.open(fmt.tprintf("%s/store",folder),context.temp_allocator)
+    if !testing.expect_value(t,open_error,store.Error.None) {return}
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    mesh:=base.Asset_Id{0x7061636b,1}
+    vertices:=[3]asset.Vertex{{position={0,0,0},normal=mm.normal_pack({0,1,0})},{position={1,0,0},normal=mm.normal_pack({0,1,0})},{position={0,0,1},normal=mm.normal_pack({0,1,0})}}
+    testing.expect_value(t,mesh_save_test(fmt.tprintf("%s/crate.mesh",staging),&types,mesh,vertices[:],{0,2,1}),asset.Error.None)
+    // The object is whole in another store; this one gets its nodes and front, not its bulk.
+    full,full_error:=store.open(fmt.tprintf("%s/full",folder),context.temp_allocator)
+    if !testing.expect_value(t,full_error,store.Error.None) {return}
+    defer store.close(&full)
+    blob,put_error:=asset.object_put_file(&full,fmt.tprintf("%s/crate.mesh",staging))
+    testing.expect_value(t,put_error,asset.Error.None)
+    store.commit(&full)
+    lacking:=make([dynamic]store.Hash,context.temp_allocator)
+    {
+        o,_:=store.object_open(&full,blob)
+        defer store.object_close(&o)
+        testing.expect(t,o.root.level==0,"a small object is a root of leaves")
+        buffer:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
+        copy_chunk :: proc(from,into:^store.Store,address:store.Hash,buffer:[]u8) {
+            bytes,_:=store.chunk_read(from,address,buffer)
+            store.chunk_put(into,address,bytes)
+        }
+        copy_chunk(&full,&s,blob,buffer)
+        bulk:=make(map[int]bool,context.temp_allocator)
+        for g in store.object_groups(&o) {
+            if g.tag!=u32(asset.TAG_BULK) {continue}
+            for leaf in int(g.first)..<int(g.first+g.count) {bulk[leaf]=true}
+        }
+        for e,leaf in o.root.entries {
+            if bulk[leaf] {append(&lacking,e.address);continue}
+            copy_chunk(&full,&s,e.address,buffer)
+        }
+        store.commit(&s)
+    }
+    testing.expect(t,len(lacking)>0)
+    os.remove_all(staging)
+    // The crate is built here; the atlas of the plugin's package is not.
+    crate:=asset.Package{id={20,20},name="crate"}
+    crate.assets=make([dynamic]asset.Package_Asset,context.temp_allocator)
+    append(&crate.assets,asset.Package_Asset{kind=asset.KIND_MESH,name="crate",id=mesh})
+    pack:=asset.Package{id={30,30},name="pack"}
+    pack.assets=make([dynamic]asset.Package_Asset,context.temp_allocator)
+    append(&pack.assets,asset.Package_Asset{kind=asset.KIND_TEXTURE,name="atlas",id={31,31}})
+    for entry in ([]struct{p:^asset.Package,root:string,built:bool}{{&crate,root,true},{&pack,plugin,false}}) {
+        manifest,error:=asset.package_put(&s,entry.p)
+        testing.expect_value(t,error,asset.Error.None)
+        if entry.built {
+            info,_:=asset.kind_info(asset.KIND_MESH)
+            b:=asset.Build{package_id=entry.p.id,final=true}
+            b.outputs=make([dynamic]asset.Build_Output,context.temp_allocator)
+            append(&b.outputs,asset.Build_Output{id=mesh,kind=asset.KIND_MESH,kind_version=info.version,object=blob})
+            built,_:=asset.build_put(&s,&b)
+            digits:[64]u8
+            testing.expect_value(t,store.ref_set(&s,asset.REF_BUILDS,store.hex(asset.build_select(manifest,entry.p),&digits),built),store.Error.None)
+        }
+        list:asset.Packages
+        list.packages=make([dynamic]asset.Project_Package,context.temp_allocator)
+        append(&list.packages,asset.Project_Package{id=entry.p.id,manifest=manifest,folder="props"})
+        testing.expect_value(t,asset.packages_save(entry.root,&list),asset.Error.None)
+    }
+
+    p,error:=project.open(root,"",context.temp_allocator)
+    if !testing.expect_value(t,error.code,project.Error_Code.None) {return}
+    found,ok:=project_assets(&p,s.root,context.temp_allocator)
+    if !testing.expect(t,ok && len(found.listed)==1 && len(found.mounts)>=1) {return}
+    testing.expect(t,found.mounts[0].prefix=="plugins/pack" && len(found.mounts[0].listed)==1)
+    testing.expectf(t,len(found.problems)==1 && strings.contains(found.problems[0],"package pack"),"%v",found.problems)
+    a:Assets
+    if !testing.expect(t,assets_init(&a,{root=fmt.tprintf("%s/assets",root),listed=found.listed,mounts=found.mounts,package_problems=found.problems,capacity=8,store_root=s.root})) {return}
+    defer assets_destroy(&a)
+    testing.expect_value(t,len(assets_package_problems(&a)),1)
+    waiting:=assets_mesh(&a,mesh)
+    testing.expect(t,waiting!=nil && waiting.failed && len(assets_errors(&a))==0 && a.stats.not_here==1,"a part not here shows the stand-in and fails nothing")
+    buffer:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
+    for address in lacking {
+        bytes,_:=store.chunk_read(&full,address,buffer)
+        store.chunk_put(&s,address,bytes)
+    }
+    store.commit(&s)
+    loaded:=assets_mesh(&a,mesh)
+    testing.expect(t,loaded!=nil && !loaded.failed && loaded.vertex_count==3,"the mesh loads from its object once its parts are here")
+    object,listed_object:=asset.registry_listed_object(&a.registry,"props/crate.mesh")
+    testing.expect(t,listed_object && object==found.listed[0].object && asset.registry_file_path(&a.registry,"props/crate.mesh",context.temp_allocator)=="","a listed output is an object, no file")
+    pending,listed:=asset.registry_find_path(&a.registry,"plugins/pack/props/atlas.tex")
+    testing.expect(t,listed && pending.state==.Not_Built)
 }

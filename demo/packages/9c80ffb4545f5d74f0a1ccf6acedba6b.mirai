@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "9c80ffb4545f5d74f0a1ccf6acedba6b",
+  "name": "tree_bush",
+  "origin": {"path": "assets/foliage_extreme/tree_bush.obj", "folder": false, "importer": "OBJ"},
+  "identity": "ade0468efbb5b7d565235873a7fb3b8f09186d1e1c8ade8e4b8eaa226147f748",
+  "inputs": ["trees.mtl"],
+  "assets": [
+    {"kind": "SCEN", "name": "tree_bush", "index": 0, "id": "317c6ad95fead4485707ae3231936f9b"},
+    {"kind": "MAT", "name": "bark", "index": 0, "id": "b96df7055aceeb7248fcde10158da5cc"},
+    {"kind": "MAT", "name": "leaf", "index": 1, "id": "fbcbc189b6096b232b1c8ff070f19043"},
+    {"kind": "MESH", "name": "tree_bush", "index": 0, "id": "61539a5b43404159745748d7814cab3c", "part": true, "owner": "317c6ad95fead4485707ae3231936f9b", "dependencies": ["b96df7055aceeb7248fcde10158da5cc", "fbcbc189b6096b232b1c8ff070f19043"]}
+  ]
+}

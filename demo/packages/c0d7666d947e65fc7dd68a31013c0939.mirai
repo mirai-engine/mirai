@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "c0d7666d947e65fc7dd68a31013c0939",
+  "name": "cobblestone_color",
+  "origin": {"path": "assets/surfaces/cobblestone/cobblestone_color.png", "folder": false, "importer": "image"},
+  "identity": "4bf20aa0c9be138d32c781598a709118b64335c81d7d9b86aec7b3ddf9efbf07",
+  "settings": {
+    "image": "Color"
+  },
+  "inputs": [],
+  "assets": [
+    {"kind": "TEX", "name": "cobblestone_color", "index": 0, "id": "9a69320baec0a94ab9eb8d2010a8a8a4"}
+  ]
+}

@@ -872,19 +872,30 @@ of an instance" are `-32602`; the rest, `-32000`
   another asset (that of an imported prefab), is its owner.
 - `asset.import`: what the Import button of the content browser does with any source it imports
   ([import](../../mirai-editor/references/panels.md#import)), wherever it is on disk: the
-  editor reads it and writes only in the assets folder. `folder` replaces the folder of its type; a
-  source that a plugin imports whole (a map) does not accept it. It imports, writing to disk (it
-  is an operation on files) while the editor goes on, and answers when it ends: whether it wrote
-  (`ok`), its message, the scene of a map and the assets it wrote (`kept`: its file was already
-  the one it gives). `asset.import_status` gives the same, and whether one runs (`importing`), at
-  any moment. While it runs, another import and whatever writes assets fail saying what is being
-  imported. Reimporting keeps ids and files, which the sidecar of the source lists
+  source stays where it is, its package goes to the store of the session and the project pins it,
+  listed in `folder` (else the root, or the folder of a source in the assets). It imports,
+  writing to disk (it is an operation on files) while the editor goes on, and answers when it
+  ends: whether it wrote (`ok`), its message, the scene of a map and the assets it wrote
+  (`kept`: its file was already the one it gives). `asset.import_status` gives the same, and
+  whether one runs (`importing`), at any moment. While it runs, another import and whatever
+  writes assets fail saying what is being imported. Reimporting keeps ids and files, which the
+  package of the source lists
   ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)); over a document
-  that changed since it was imported it fails naming it, and `discard_changes` writes over it
-  ([changed documents](../../mirai-imports/references/imports.md#changed-documents)).
+  of the project that changed since it was written it fails naming it, and `discard_changes`
+  writes over it ([changed documents](../../mirai-imports/references/imports.md#changed-documents)).
   `image` (`color`, `data`, `normal`, `normal_green_down`) says what an image imported on
   its own holds, over its settings and its name (a packed metallic-roughness or a mask is `data`); a
   source in the project keeps the choice in its settings
+- `packages.list {name?}`: the packages of the library of the machine (the store of the session)
+  with their assets (`name`, `kind`, `bytes`, `built`) and whether the project pins each (`pinned`,
+  `folder`). `packages.add {name, assets?, folder?}` pins one, by id or name, or some of its
+  assets by id, listed in `folder`, as carrying it from a library root of the content
+  browser; it runs as an import and answers as `asset.import`. An unknown package or asset, an
+  invalid folder or a session without a store fail saying how to fix it.
+- `packages.peers {refresh?, seconds?}`: in a session, the libraries of the other editors, each
+  package with `bytes`, `built`, `here` and `pinned`; `listing` while they are read, `adding` for
+  the last package taken. `packages.peer_add {peer, name, folder?}` takes one into this machine's
+  library and adds it as `packages.add` does; one whose peer left says so in `adding.error`.
 - `asset.detach`: `asset` (path or id) is a part that leaves its owner: it is left without `owner`
   and shown alone; the import keeps writing it and leaves it out
   ([parts](../../mirai-imports/references/imports.md#parts)). It is an edit of its file, with undo;
@@ -898,14 +909,17 @@ of an instance" are `-32602`; the rest, `-32000`
   `{id,path}`; an unknown type fails naming the valid ones, and a taken or invalid name says why.
 - `asset.delete`: `asset` (path or id) goes to the system trash with the import parts it owns, like
   Delete of the [content browser](../../mirai-editor/references/panels.md#content-browser): at
-  once, without undo. Returns `{moved,used_by}`; those that use it keep the
-  reference. Fails saying why with an asset of a plugin, of the engine or of the editor, a scene
-  open in a tab or outside Edit.
+  once, without undo; the root of a package also takes the package out of the project, and what
+  it listed leaves with it while the store keeps its blobs. Returns `{moved,used_by}`; those that
+  use it keep the reference. Fails saying why with another asset a package lists, an asset of a
+  plugin, of the engine or of the editor, a scene open in a tab or outside Edit.
 - `asset.move {asset, folder?, name?, copy?}` takes an asset by path or id, or a folder by path,
   and writes at once, without undo; it returns the resulting path and id
   ([rename, move and duplicate](../../mirai-editor/references/panels.md#content-browser)). No
   `folder` keeps the one it is in and `/` is the root. Moving keeps the id and takes the parts
-  along; what is being edited fails asking to finish the edit. With `copy` it
+  along; the root of a package moves where the project lists it, keeping its name, and another
+  asset a package lists fails naming that root; what is being edited fails asking to finish the
+  edit. With `copy` it
   copies with new ids and the copy is not an output of the import; without `name` it takes a free
   one.
 - `asset.users`: `asset` (path or id). Returns `{used_by}`, the files that reference it or a part
@@ -1125,7 +1139,12 @@ The methods read the source the editor has.
 [Collaboration](../../mirai-editor/references/collaboration.md). In `peers` of `collab.status`,
 `playing` says that editor is in a Play or Simulate of its own and `serving`, that it serves a
 networked game; `unsent` lists the asset files changed in the session that the others do not have
-because they are too large to travel. an invalid code is `-32602`.
+because they are too large to travel. an invalid code is `-32602`. `collab.join` takes an optional
+`folder` (the open project when empty) and returns at once; `join` of `collab.status` follows how
+that folder is brought to the host's project, phase by phase, and lists after it what was kept,
+not written and the packages no peer has a build of; `project`, the chunk bytes the session moved
+and the peers that went bad; `offers` and `updates`, the new snapshots a host offered and a guest
+took during the session.
 
 ## Project panels
 

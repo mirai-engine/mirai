@@ -1,6 +1,7 @@
 # Collaboration
 
-Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networked games).
+Code: `collab.odin`, `collab_api.odin`, `collab_project.odin` (the project that travels) and
+`collab_play.odin` (the host's networked games).
 
 - Several editors share one's scene. The **host** owns the file and orders the edits; a **guest**
   receives the whole scene on entering and keeps its copy in memory.
@@ -15,13 +16,14 @@ Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networ
   `--join <invitation>`, Session > Join or `collab.join`, with the host's invitation code. The name
   comes from `--name`, the Name field of Session or `name` of the API. It is left with Session >
   Stop (host) or Leave (guest), or `collab.leave`, and the scene stays as it is.
-- Joining **replaces** the guest's scene. Sharing and joining require `Edit`, a project with an
-  assets folder and no open session (`Busy`). `COLLAB_PEERS` editors fit.
-- On sharing, the host creates a token and shows its invitation code
+- Joining **replaces** the guest's scene. Sharing and joining require `Edit`, the store the editor
+  started with (`--store`, else the machine's) and no open session (`Busy`); sharing, and joining
+  into the open project, a project with an assets folder. `COLLAB_PEERS` editors fit.
+- On sharing, the host makes the key of the session and shows its invitation code
   ([invitations](../../mirai-networking/references/networking.md)): the address of its network
   (`address_lan`: the one the system uses toward the internet, not a virtual adapter's), the one
   the router mapped for it ([port mapping](../../mirai-networking/references/port-mapping.md)) and
-  the token. Whoever enters without that token gets no answer and times out; the host's log shows
+  the key. Whoever enters without that key gets no answer and times out; the host's log shows
   the code each time it changes.
 - The host sees one code in Session, once the router answered: a guest asks at both addresses at
   once, so the same code joins from the host's network and from outside it. A guest's networked
@@ -30,14 +32,62 @@ Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networ
   the host holds its previous connection takes its place and its color, and that connection is
   closed with what it had selected. Whoever leaves the session's list retains nothing.
 - `collab.join` returns before the scene arrives: query `collab.status` until `Joined`. The phases
-  are `Collab_Phase`, with the reason for the end.
+  are `Collab_Phase`, with the reason for the end; `Updating` is the guest bringing its folder to
+  the host's project ([the project](#the-project)).
+
+## The project
+
+- The session carries the project as `mirai share` and `mirai join` do
+  ([sharing a project](../../mirai-projects/references/projects.md#sharing-a-project)), with the
+  same node of `cook/share`: the session's net host also carries the channels of the
+  [exchange](../../mirai-store/references/exchange.md), at `COLLAB_EXCHANGE_CHANNEL`, so its
+  connections move the project and its builds; what a peer sends enters only through the checks
+  of `cook/share` and `exchange`.
+- **Hosting** takes the snapshot of the project into the editor's store and offers it under the
+  session's key, with the builds its packages pin; the whole library of that store is exposed to
+  whoever holds the invitation, as in `mirai share`. A lease of the session holds what it serves
+  and what it fetches.
+- **Joining** first runs the join of `cook/share` (phase `Updating`), and only then says Hello and
+  receives the scene. Into the open project (Session > Join, or `collab.join` without `folder`) it
+  is the three-way update: a file both changed stays the guest's and is listed as kept, never
+  overwritten. Into another `folder` (new, or joined before), once the files and the packages are
+  there the editor opens that folder as File > Open project does, and the editor started on it
+  joins the session again with the same invitation, which then finds nothing to fetch. A guest
+  needs none of the files beforehand.
+- Session shows the join's step (files and bytes, rate and time left, the builds) where it shows
+  the phase, and after it the files kept, those not written and the packages no connected peer
+  has a build of; `join` of `collab.status` gives the same.
+- **What the host changes during the session** (an import, a saved asset, a source file, a file
+  moved or removed, a package build it now pins) reaches the joined guests: the host watches its
+  folder, and once its files have been quiet for `COLLAB_OFFER_QUIET` it takes the snapshot again,
+  at most once a `COLLAB_OFFER_EVERY`; when it differs it offers it under the same key and sends
+  `Project` through the session. A guest that gets it runs the same join into its open project,
+  as soon as the update it runs ends: only what differs is fetched, and the three-way rule keeps
+  and lists what it changed. What it wrote reloads as any file changed on disk; its packages are
+  listed again. A guest's document has no file of its own, so the scene file the host writes does
+  not apply its edits a second time.
+- A guest's own imports and file changes do not travel to the host as files; the asset files
+  edited in the session travel as below.
+
+## Libraries of the session
+
+- Each editor of a session sees the machine libraries of the others it is connected to (a guest,
+  the host's; the host, each guest's): the packages each one's store exposes, which `exchange`
+  already serves to whoever holds the invitation. They are read on a thread
+  (`collab_library.odin`, `share.peer_library`) when the content browser or `packages.peers` shows
+  them, at most once a `COLLAB_LIBRARY_SECONDS`.
+- Adding one takes it into this machine's library first (`share.package_take`): its manifest and
+  a build this engine reads, as a join fetches builds, refreshed in a project of its own under the
+  generated folder, so nothing is reimported when its source is not here. Only then is it added
+  as a package of this machine. A peer that leaves before the build is here leaves the project and
+  the library as they were, and says so; once taken, the package stays in this machine's library.
 
 ## What travels
 
 - **The whole scene**, once on entering: what `scene.capture` writes, as one message over the
   reliable channel. The guest loads it with `scene.replace`: one that does not fit whole leaves its
-  world as it was and ends the session. Assets do not travel, except those an editor of the session
-  changes (below): both editors must have the same files.
+  world as it was and ends the session. The files it needs arrived before, with
+  [the project](#the-project).
 - The network half of the session runs in its own thread (`worker_start`): an editor busy for a
   while (generating a game's world, a long frame) keeps responding and nobody gives it up for gone.
 - Reliable messages wait in each peer's queue (`Collab_Peer.out`) and stream into the channel as
@@ -114,11 +164,13 @@ Edits:
 
 ## Compatibility
 
-- The handshake carries the world layout version: a hash of `COLLAB_VERSION` (that of the
-  messages) and of names and sizes of the `World` tables.
-- If it differs, the guest stops on reading the host's challenge (`Denied_Version`: "has another
-  version of the project"). Both editors must be generated and compiled from the same project and
-  engine.
+- The handshake carries `COLLAB_WIRE`, the version of the messages and of `cook/share`, so a guest
+  built from another project still gets the host's files. Its Hello carries the world layout: a
+  hash of `COLLAB_VERSION` and of names and sizes of the `World` tables.
+- If the layout differs, the host refuses the Hello (`Denied_Version`) and the guest's session
+  ends saying to build its editor, whose files are the host's by then, and join again. A guest
+  that joins into another folder never meets it: the editor opened there is built from the host's
+  files.
 
 ## When the host changes scene
 

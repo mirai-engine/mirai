@@ -15,7 +15,7 @@ import "mirai:std/serial"
 import "mirai:std/subprocess"
 import "mirai:std/base"
 
-SESSION_USAGE :: "session start|restart|stop|status|sync [project] [paths of sync] [--release] [--no-build] [--copy] [--force] [--orphans] [--timeout S] [editor arguments]"
+SESSION_USAGE :: "session start|restart|stop|status|sync [project] [paths of sync] [--release] [--no-build] [--copy] [--force] [--orphans] [--timeout S] [--store folder] [editor arguments]"
 
 SESSION_FILE :: api.SESSION_FILE
 Session_Record :: api.Session_Record
@@ -95,6 +95,11 @@ session_options :: proc(arguments:[]string) -> (options:Session_Options,problem:
             if !valid || value<=0 {return {},"--timeout is a number of seconds"}
             options.timeout=value
             i+=1
+        // The build and the editor take it, absolute: the editor runs in the engine.
+        case "--store":
+            if i+1>=len(args) || args[i+1]=="" || !positional(args[i+1]) {return {},"--store needs the folder of a store"}
+            append(&editor_args,"--store",project.path_absolute(args[i+1],context.temp_allocator))
+            i+=1
         case: append(&editor_args,args[i])
         }
     }
@@ -141,7 +146,7 @@ process_end :: proc(pid:int,wait:time.Duration) {
 // What the command draws in a session it reuses waits, saying for whom, for a
 // measurement it is no part of to end (workspace.measurement_wait), as
 // opening one waits for its turn of the GPU.
-session_borrow :: proc(root,folder:string,mode:Build_Mode,command:string) -> (file:api.Port_File,reused:bool,code:int) {
+session_borrow :: proc(root,folder:string,mode:Build_Mode,command:string,store_root:="") -> (file:api.Port_File,reused:bool,code:int) {
     alive:bool
     file,alive=session_find(folder)
     reused=alive && session_answers(file.port)
@@ -156,7 +161,8 @@ session_borrow :: proc(root,folder:string,mode:Build_Mode,command:string) -> (fi
             fmt.eprintfln("mirai %s: %s",command,ended)
             return file,false,1
         }
-        file,code=session_open(root,folder,mode,false,180,{})
+        given:=[2]string{"--store",store_root}
+        file,code=session_open(root,folder,mode,false,180,given[:] if store_root!="" else nil)
     }
     return
 }
@@ -291,7 +297,11 @@ session_open :: proc(root,folder:string,mode:Build_Mode,no_build:bool,timeout:in
     // The build can close and open the session of the project itself, so it
     // goes before the lock; what is opened meanwhile is found under it.
     if !no_build {
-        if built,_,_:=build_project(root,.Editor,{folder},mode);built!=0 {return {},built}
+        store_root:string
+        for arg,i in editor_args {
+            if arg=="--store" && i+1<len(editor_args) {store_root=editor_args[i+1]}
+        }
+        if built,_,_:=build_project(root,.Editor,{folder},mode,store_root=store_root);built!=0 {return {},built}
     }
     // Two at once would open two editors: the second waits and finds the first.
     lock,_:=workspace.lock_acquire(project.path(folder,".mirai","session.lock",allocator=context.temp_allocator),fmt.tprintf("pid %d, mirai session in %s",os.get_pid(),folder),proc(holder:string) {
@@ -400,15 +410,14 @@ SESSION_COPY_PREFIX :: "session-copy-"
 
 // Whether a path relative to the project, with forward slashes, stays out of
 // a copy: the history of git and the generated folder except its caches and
-// what its imports built, so that neither the port file, the record, the locks
-// nor the libraries of the editor that holds the project go with it, and the
-// copy imports nothing again.
+// thumbnails, so that neither the port file, the record, the locks nor the
+// libraries of the editor that holds the project go with it.
 session_copy_skips :: proc(relative:string) -> bool {
     first,_,rest:=strings.partition(relative,"/")
     if first==".git" {return true}
     if first!=project.FOLDER_NAMES[.Generated] || rest=="" {return false}
     kept,_,_:=strings.partition(rest,"/")
-    if kept!=project.CACHE_FOLDER && kept!=project.THUMBNAIL_FOLDER && kept!=project.IMPORTED_FOLDER {return true}
+    if kept!=project.CACHE_FOLDER && kept!=project.THUMBNAIL_FOLDER {return true}
     return strings.has_suffix(relative,".lock")
 }
 

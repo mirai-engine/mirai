@@ -8,7 +8,7 @@ import "core:strings"
 import "mirai:editor/api"
 import "mirai:project"
 
-PLAY_TEST_USAGE :: "play test [project] [scenario...] [--release]"
+PLAY_TEST_USAGE :: "play test [project] [scenario...] [--release] [--store folder]"
 
 // The folder and extension of the scenarios of a project, as the editor reads
 // them (editor/api_play_scenario.odin).
@@ -23,6 +23,8 @@ PLAY_SCENARIO_EXTENSION :: ".mirai"
 // answered. Exit 0 when all pass, 1 when one fails, 2 when they cannot run.
 cmd_play_test :: proc(root:string,args:[]string) -> int {
     mode,rest:=build_mode_take(args)
+    store_root,taken:=store_root_take(&rest,"play test")
+    if !taken {return 2}
     folder:="."
     names:=make([dynamic]string,context.temp_allocator)
     for arg,i in rest {
@@ -38,7 +40,7 @@ cmd_play_test :: proc(root:string,args:[]string) -> int {
     files,problem:=play_scenario_files(folder,names[:])
     if problem!="" {fmt.eprintfln("mirai play test: %s",problem);return 2}
 
-    file,reused,code:=session_borrow(root,folder,mode,"play test")
+    file,reused,code:=session_borrow(root,folder,mode,"play test",store_root)
     if code!=0 {return code}
     defer if !reused {session_close(folder,file,true)}
 

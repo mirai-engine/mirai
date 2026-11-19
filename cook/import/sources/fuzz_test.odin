@@ -125,55 +125,25 @@ damaged_images_and_settings_are_imported_or_refused :: proc(t:^testing.T) {
     png:=png_bytes(8,8,{200,120,60},true)
     path:=fmt.tprintf("%s/subject.png",folder)
     imported,refused:=0,0
-    attempt :: proc(path,root:string,data:[]u8,imported,refused:^int) {
+    options:=test_options(t,path,{root=root,image=.Color,ignore_stored=true})
+    attempt :: proc(path:string,options:importer.Import_Options,data:[]u8,imported,refused:^int) {
         if os.write_entire_file(path,data)!=nil {return}
-        report,error:=importer.import_texture(path,{root=root,image=.Color,ignore_stored=true})
+        report,error:=importer.import_texture(path,options)
         if error.code==.None {
             importer.report_destroy(&report)
             imported^+=1
         } else {refused^+=1}
     }
-    attempt(path,root,png,&imported,&refused)
+    attempt(path,options,png,&imported,&refused)
     testing.expect_value(t,imported,1)
-    for length in 0..<len(png) {attempt(path,root,png[:length],&imported,&refused)}
+    for length in 0..<len(png) {attempt(path,options,png[:length],&imported,&refused)}
     changed:=make([]u8,len(png),context.temp_allocator)
     for position in 0..<len(png) {
         copy(changed,png)
         changed[position]~=0xff
-        attempt(path,root,changed,&imported,&refused)
+        attempt(path,options,changed,&imported,&refused)
     }
     testing.expectf(t,refused>len(png)/2,"%d of %d damaged images are refused",refused,imported+refused)
-
-    // The sidecar of a source: any text is the settings and the outputs it says or is refused, and never the defaults or other ids by accident.
-    wanted:=importer.Import_Settings{textures=.Uncompressed,rdo_lambda=30,image=.Color,alpha_coverage=0.25,lods=.None,front=.X}
-    listed:=make([dynamic]importer.Output,context.temp_allocator)
-    append(&listed,importer.Output{kind=asset.KIND_MESH,name="Crate \"big\"",index=2,id={3,4},part=true},importer.Output{kind=asset.KIND_MATERIAL,name="Wood",id={5,6}},importer.Output{kind=asset.KIND_TEXTURE,name="wood",id={7,8}})
-    text:=importer.sidecar_text({settings=wanted,folder="crate",outputs=listed},context.temp_allocator)
-    parsed,valid:=importer.sidecar_parse(text,context.temp_allocator)
-    testing.expect(t,valid && parsed.settings==wanted && parsed.folder=="crate" && len(parsed.outputs)==3)
-    if valid && len(parsed.outputs)==3 {
-        for output,at in parsed.outputs {testing.expectf(t,output==listed[at],"output %d is read as written: %v",at,output)}
-    }
-    read,rejected:=0,0
-    for length in 0..<len(text) {
-        if _,ok:=importer.sidecar_parse(text[:length],context.temp_allocator);ok {read+=1} else {rejected+=1}
-    }
-    work:=make([]u8,len(text),context.temp_allocator)
-    marks:="{}[]\":,0-9ex \x00\xff"
-    state:=u64(0x082efa98ec4e6c89)
-    for _ in 0..<2000 {
-        copy(work,text)
-        state=state*6364136223846793005+1442695040888963407
-        work[int((state>>33)%u64(len(work)))]=marks[int((state>>20)%u64(len(marks)))]
-        if changed,ok:=importer.sidecar_parse(string(work),context.temp_allocator);ok {
-            read+=1
-            // What is read is settings an import can use, and outputs it can write.
-            changed_settings:=changed.settings
-            testing.expect(t,changed_settings.alpha_coverage>=0 && changed_settings.alpha_coverage<=1 && changed_settings.lods<=max(importer.Lods) && changed_settings.front<=max(importer.Front))
-            for output in changed.outputs {testing.expect(t,output.id!={} && output.kind!=0,"an output has an id and a kind")}
-        } else {rejected+=1}
-    }
-    testing.expectf(t,rejected>len(text)/2 && read>0,"%d texts are sidecars and %d are refused",read,rejected)
 }
 
 // Fonts and manifests of prompts, cut at lengths spread over them or with
@@ -191,26 +161,27 @@ damaged_fonts_and_prompts_are_imported_or_refused :: proc(t:^testing.T) {
     for subject in subjects {
         path:=fmt.tprintf("%s/%s",folder,subject.file)
         imported,refused:=0,0
-        attempt :: proc(path,folder:string,data:[]u8,imported,refused:^int) {
+        options:=test_options(t,path)
+        attempt :: proc(path:string,options:importer.Import_Options,data:[]u8,imported,refused:^int) {
             if os.write_entire_file(path,data)!=nil {return}
-            report,error:=import_source(path,{})
+            report,error:=import_source(path,options)
             if error.code==.None {
                 importer.report_destroy(&report)
                 imported^+=1
             } else {refused^+=1}
         }
-        attempt(path,folder,subject.data,&imported,&refused)
+        attempt(path,options,subject.data,&imported,&refused)
         testing.expectf(t,imported==1,"%s as it is is imported",subject.file)
         step:=max(len(subject.data)/200,1)
-        for length:=0;length<len(subject.data);length+=step {attempt(path,folder,subject.data[:length],&imported,&refused)}
+        for length:=0;length<len(subject.data);length+=step {attempt(path,options,subject.data[:length],&imported,&refused)}
         changed:=make([]u8,len(subject.data),context.temp_allocator)
         for position:=0;position<len(subject.data);position+=step {
             copy(changed,subject.data)
             changed[position]~=0xff
-            attempt(path,folder,changed,&imported,&refused)
+            attempt(path,options,changed,&imported,&refused)
             copy(changed,subject.data)
             changed[position]=0
-            attempt(path,folder,changed,&imported,&refused)
+            attempt(path,options,changed,&imported,&refused)
         }
         testing.expectf(t,refused>0 && imported>1,"%s: %d damaged files imported and %d refused",subject.file,imported-1,refused)
     }

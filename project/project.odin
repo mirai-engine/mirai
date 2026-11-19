@@ -21,6 +21,9 @@ FOLDER_NAMES :: [Folder]string{
     .Assets="assets",.Game="game",.Editor="editor",
     .Plugins="plugins",.Shaders="shaders",.Panels="panels",.Generated=".mirai",
 }
+// Folders at the top of a project that keep the history of version control,
+// not the project: like the generated folder, they are not its own files.
+VERSION_CONTROL_FOLDERS :: [?]string{".git",".hg",".svn",".jj"}
 PART_NAMES :: [Plugin_Part]string{.Runtime="runtime",.Editor="editor",.Shaders="shaders",.Assets="assets",.Recipes="recipes",.Cook="cook"}
 
 // What build.compression names besides the default, the best compressor of the engine.
@@ -33,19 +36,12 @@ PLUGIN_LIBRARIES :: "plugins/lib"
 // it and keeps so as not to make it again. Deleting them costs only time.
 CACHE_FOLDER :: "cache"
 REGISTRY_CACHE :: "registry"   // in it: what the registry of the assets saw
-TEXTURE_CACHE :: "textures"    // in it: built textures, by image and settings
-MESH_CACHE :: "meshes"         // in it: built meshes, by geometry and settings
 ANIMATION_CACHE :: "animations" // in it: compressed .anim libraries, by asset and inputs
 COLLISION_CACHE :: "collision"  // in it: the convex pieces of meshes, by their content
 FAR_CACHE :: "far"             // in it: the far meshes of scenes the editor made, by what they are made of (asset.far_key)
 FAR_PREFIX :: "mirai-far"      // where the registry of a project that is not cooked mounts the far cache
 CAPACITY_CACHE :: "capacities" // a file: what the lists of the renderer asked for in each scene (host/capacities.odin); a game ships the one of its project
-THUMBNAIL_FOLDER :: "thumbs"   // beside it: the previews of the editor
-// Under the generated folder of a project or a plugin: what the imports of its
-// sources build that nobody edits (meshes, textures, sounds, fonts), each at
-// the path it has among the assets. Built again from the sources and their
-// sidecars wherever it is missing (cook/import/sources.sync).
-IMPORTED_FOLDER :: "imported"
+THUMBNAIL_FOLDER :: "thumbs"   // beside it: the views of scenes the editor took
 
 Plugin :: struct {
     manifest:Plugin_Manifest,
@@ -343,9 +339,18 @@ cache_path :: proc(root:string,parts:..string,allocator:=context.allocator) -> s
     return strings.to_string(b)
 }
 
-// The imported folder of the project or the plugin at root.
-imported_path :: proc(root:string,allocator:=context.allocator) -> string {
-    return path(folder_path(root,.Generated,context.temp_allocator),IMPORTED_FOLDER,allocator=allocator)
+// Whether a path relative to the root of a project, with forward slashes, is
+// one of its own files: not under its generated folder, which each machine
+// makes, nor under the folder of a version control system.
+own_path :: proc(relative:string) -> bool {
+    top:=relative
+    if slash:=strings.index_byte(relative,'/');slash>=0 {top=relative[:slash]}
+    names:=FOLDER_NAMES
+    if path_same(top,names[.Generated]) {return false}
+    for folder in VERSION_CONTROL_FOLDERS {
+        if path_same(top,folder) {return false}
+    }
+    return top!=""
 }
 
 folder_path :: proc(root:string,folder:Folder,allocator:=context.allocator) -> string {
@@ -418,9 +423,9 @@ recipe_folders :: proc(p:^Project,allocator:=context.allocator) -> []string {
 
 // A folder of assets of a project, and the path its files have among the
 // assets: "" for the ones of the project, plugins/<name> for those of a plugin.
-// imported: the imported folder that goes with it, whose files are assets at
-// the same paths. root: the project or the plugin the folder is of.
-Asset_Folder :: struct {path,prefix,imported,root:string}
+// root: the project or the plugin the folder is of, where the list of the
+// packages it uses is (asset.root_packages).
+Asset_Folder :: struct {path,prefix,root:string}
 
 // The assets folder of the project, when it has one, and the one of each
 // active plugin that declares the part, in the order of p.active.
@@ -428,14 +433,13 @@ asset_folders :: proc(p:^Project,allocator:=context.allocator) -> []Asset_Folder
     folders:=make([dynamic]Asset_Folder,allocator)
     names:=FOLDER_NAMES
     parts:=PART_NAMES
-    if own:=folder_path(p.root,.Assets,allocator);os.is_dir(own) {append(&folders,Asset_Folder{own,"",imported_path(p.root,allocator),p.root})}
+    if own:=folder_path(p.root,.Assets,allocator);os.is_dir(own) {append(&folders,Asset_Folder{own,"",p.root})}
     for index in p.active {
         plugin:=&p.plugins[index]
         if .Assets not_in plugin.manifest.parts {continue}
         append(&folders,Asset_Folder{
             path(plugin.folder,parts[.Assets],allocator=allocator),
             path(names[.Plugins],base.text_get(plugin.manifest.name[:]),allocator=allocator),
-            imported_path(plugin.folder,allocator),
             plugin.folder,
         })
     }

@@ -111,7 +111,10 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   variants and Apply to base, in
   [variants](references/prefabs.md#variants).
 - **Shared session and the host's networked game**:
-  [entering and leaving](references/collaboration.md#entering-and-leaving),
+  [entering and leaving](references/collaboration.md#entering-and-leaving), the project and its
+  builds that travel with the session ([the project](references/collaboration.md#the-project)),
+  the libraries of the other editors
+  ([libraries of the session](references/collaboration.md#libraries-of-the-session)),
   [the host's networked games](references/collaboration.md#the-hosts-networked-games) and
   [where each one plays](references/collaboration.md#where-each-one-plays).
 - **Figure of agents and editors, glyph menu, Follow, palette, pings, the editor's own assets
@@ -159,6 +162,10 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   are off, and the project library does not swap while a plugin's handler is on the stack.
 - Asset folders are thematic, never by type (the browser filters by type): what the editor
   imports or creates goes where the user is, and it creates no folder named after a type.
+- The editor imports through the library and the store of its session
+  ([import](references/panels.md#import)): a source is read where it is and never copied into a
+  project, and importing, deleting or moving the root of a package changes only the project's
+  `packages.mirai` and its documents, never a blob of the store nor a source outside the project.
 - State located according to [the session](references/editor.md#the-session). `Api` keeps only a
   pointer because the server must stay where it was born.
 - A procedure takes the storage it reads and writes (`^Ai`, the chat store, `^Git`, `^Edits`),
@@ -324,6 +331,11 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   (the program a material document reads, its picks for the next message, the values of a
   variant); their view in an open editor, `editor.document` (`Open` with the asset's path) and
   `capture` with the UI.
+- The project a session carries: `editor/collab_share_test.odin` (a guest with an empty folder
+  ends with the host's files, packages built and scene; a guest's own edit is kept and listed;
+  what the host changes in the session reaches the guest by three ways; the join's thread keeps
+  off the frame's temporary memory),
+  over `Sim_Network` in virtual time with temporary stores.
 - Build and reload, networked Play (`templates/game`) and collaboration
   (`--share`/`--join`) are checked by API in an open editor. Images:
   [rendering](../mirai-rendering/SKILL.md#verification); protocol:

@@ -95,7 +95,8 @@ RUN_COMMANDS := [Run_Kind]string{.Play="play",.Simulate="simulate",.Play_From_Ca
 // Rectangles of the last frame, in window points; no size: not shown.
 Shell_Rects :: struct {bar,left,right,bottom:ui.Rect}
 
-Drag_Kind :: enum u8 {None,Preset,Asset,Entity}
+// Package: a package of a library of the content browser (content_library.odin).
+Drag_Kind :: enum u8 {None,Preset,Asset,Entity,Package}
 
 // Something carried from a panel: to the scene, to a row of the outliner, to a field.
 Drag :: struct {
@@ -106,6 +107,7 @@ Drag :: struct {
     asset_id:base.Asset_Id,
     asset_kind:asset.Fourcc,
     part:[64]u8,       // Asset: the clip of a library it carries; empty: the whole asset
+    library:i32,       // Package: the peer of its library +1; 0: this machine's
     entity:core.Entity,
     press:[2]f32,
     moved:bool,    // it travelled: a drag, not a click
@@ -626,7 +628,7 @@ drag_icon :: proc(s:^Session,d:^Drag) -> (ui.Icon,ui.Color) {
     case .None:   return .None,{}
     case .Preset: return d.icon,d.color
     case .Entity: return .Group,GROUP_COLOR
-    case .Asset:  return asset_icon(s,d.asset_kind)
+    case .Asset,.Package: return asset_icon(s,d.asset_kind)
     }
     return .None,{}
 }

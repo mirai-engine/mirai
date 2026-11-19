@@ -312,6 +312,13 @@ api_idle :: proc(s:^Session) -> bool {
         restart(s,{"--built"})
         return true
     }
+    // Nor the end that starts the editor of another project, which a join into its folder asks
+    // for: whoever drives this editor asked for it, so its own turn working is no question.
+    if .Quit_Check in s.requests && s.projects!=nil && s.projects.next {
+        s.requests-={.Quit_Check}
+        documents_quit(s,agents_asked=true)
+        if s.quit {return true}
+    }
     api_jobs(s)
     api.server_wait(&st.server,API_IDLE_WAIT)
     return true

@@ -7,7 +7,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "mirai:asset"
-import importer "mirai:cook/import"
+import "mirai:cook/import/sources"
 import "mirai:editor/api"
 import "mirai:editor/history"
 import "mirai:host"
@@ -21,9 +21,12 @@ import "mirai:std/serial"
 // asset names its id, which moving keeps: references, Recent, Favorites and
 // open documents follow it. An asset moves with the parts it owns, which keep
 // where they are beside it; an import keeps its source, which Import_Info
-// names from the project. What is being edited does not move until its step
-// ends. A duplicate is a new asset with ids of its own, and no
-// output of an import.
+// names from its package. Moving the root of a package of the library
+// (library.odin) moves where the project lists the package, and what it
+// lists goes there; a folder takes the packages listed in it. Another asset
+// a package lists does not move on its own. What is being edited does not
+// move until its step ends. A duplicate is a new asset with ids of its own,
+// and no output of an import.
 
 Api_Asset_Move_Params :: struct {
     asset:[API_PATH_BYTES]u8 `mirai:"text,label=The asset or folder: its path under the asset folder or the id of an asset"`,
@@ -84,7 +87,6 @@ asset_held_refusal :: proc(r:^asset.Registry,paths:[]string,folder:="") -> strin
 // Why an asset cannot be renamed or moved now; "" when it can.
 @(private)
 asset_move_refusal :: proc(s:^Session,r:^asset.Registry,file:^asset.Registry_File) -> string {
-    if file.imported!=0 {return "It is a part of what its source gives, listed in the folder of its source: move that folder, or duplicate it to have a copy that moves"}
     if refusal:=asset_create_refusal(s);refusal!="" {return refusal}
     if refusal:=asset_delete_refusal(s,r,file);refusal!="" {return refusal}
     files:=asset_delete_files(r,file.id)
@@ -102,25 +104,20 @@ asset_move :: proc(s:^Session,id:base.Asset_Id,folder,name:string) -> (path,mess
     if r==nil {return "","The editor has no asset folder it can change"}
     file,found:=asset.registry_find(r,id)
     if !found {return "","The asset is not in the registry: asset.list lists them"}
-    // What a source gives is listed where the source is: its source moves, with its sidecar, and nothing is imported.
-    if sidecar,_:=import_root(s,r,id);file.imported!=0 && sidecar!="" {
-        into,refused:=asset_folder_clean(r,folder)
-        if refused!="" {return "",fmt.tprintf("folder: %s",refused)}
-        if busy:=import_busy(s);busy!="" {return "",busy}
-        source:=strings.trim_suffix(sidecar,importer.SIDECAR_EXTENSION)
-        target:=fmt.tprintf("%s/%s",asset.registry_file_path(r,into,context.temp_allocator),filepath.base(source))
-        if dir:=filepath.dir(target);!os.is_dir(dir) {_=os.make_directory_all(dir)}
-        if os.exists(target) || os.rename(source,target)!=nil || os.rename(sidecar,fmt.tprintf("%s%s",target,importer.SIDECAR_EXTENSION))!=nil {
-            return "",fmt.tprintf("%s could not be moved to %s: a file is there, or another program has it open",source,target)
-        }
-        host.assets_scan(s.app.assets)
-        if moved,listed:=asset.registry_find(r,id);listed {path=strings.clone(moved.path,context.temp_allocator)}
-        return
-    }
+    if file.listed {return asset_move_listed(s,r,file,folder,name)}
     if refusal:=asset_move_refusal(s,r,file);refusal!="" {return "",refusal}
+    pin,pinned:=library_pin_of(s,r,file)
+    pinned&&=asset.package_root(&pin.p)==id
     into,refused:=asset_folder_clean(r,folder)
     if refused!="" {return "",fmt.tprintf("folder: %s",refused)}
     into=strings.clone(into,context.temp_allocator)
+    // The listing of its package goes where it goes, in the root it is pinned in.
+    listing:string
+    if pinned {
+        root,rest,rooted:=import_root_of(s,r,into)
+        if !rooted || root.root!=pin.root.root {return "",fmt.tprintf("folder: the package %s is pinned in %s: give a folder of its assets",pin.p.name,pin.root.root)}
+        listing=strings.clone(rest,context.temp_allocator)
+    }
     extension:=asset_path_extension(file.path)
     named:=strings.trim_space(name)
     if named=="" {named=asset_name(file.path)}
@@ -129,8 +126,8 @@ asset_move :: proc(s:^Session,id:base.Asset_Id,folder,name:string) -> (path,mess
     source:=content_folder_of(file.path)
     moves:=make([dynamic]Asset_Move,context.temp_allocator)
     for at,i in asset_delete_files(r,id) {
-        // A part of the imported folder stays at the path its sidecar lists.
-        if i>0 && r.files[at].imported!=0 {continue}
+        // A part a package lists goes with the listing of its package.
+        if i>0 && r.files[at].listed {continue}
         from:=strings.clone(r.files[at].path,context.temp_allocator)
         to:=asset_create_join(into,named,extension)
         if i>0 {to=asset_create_join(into,from[len(source)+1:] if source!="" && asset_path_inside(from,source) else asset_path_base(from),"")}
@@ -142,7 +139,7 @@ asset_move :: proc(s:^Session,id:base.Asset_Id,folder,name:string) -> (path,mess
         }
         append(&moves,Asset_Move{from,to})
     }
-    if len(moves)==0 {return}
+    if len(moves)==0 && !(pinned && listing!=pin.entry.folder) {return}
     done:=0
     for move in moves {
         from:=asset.registry_file_path(r,move.from,context.temp_allocator)
@@ -165,12 +162,75 @@ asset_move :: proc(s:^Session,id:base.Asset_Id,folder,name:string) -> (path,mess
         asset_history_moved(s,asset.registry_file_path(r,move.from,context.temp_allocator),asset.registry_file_path(r,move.to,context.temp_allocator),false)
         asset_start_scene_moved(s,move.from,move.to,false)
     }
+    if pinned && listing!=pin.entry.folder {
+        entry:=pin.entry
+        entry.folder=listing
+        if problem:=library_repin(s,pin.root,entry);problem!="" {message=problem}
+    }
     host.assets_scan(s.app.assets)
     if c:=s.content;c!=nil {
         c.reveal=id
         content_place_set(c,into)
     }
     return
+}
+
+// Moves what a package lists: its root moves where the project lists the
+// package, keeping the name its source gives it; any other is refused.
+@(private)
+asset_move_listed :: proc(s:^Session,r:^asset.Registry,file:^asset.Registry_File,folder,name:string) -> (path,message:string) {
+    id:=file.id
+    pin,found:=library_pin_of(s,r,file)
+    if !found {return "","It is listed from a package the project pins and the store at hand does not have: refresh the project, or duplicate it to have a copy that moves"}
+    if asset.package_root(&pin.p)!=id {return "",fmt.tprintf("It is listed from the package %s: move the asset that package gives, %s, which moves where the project lists the package, or duplicate it to have a copy that moves",pin.p.name,library_root_named(r,&pin.p))}
+    if refusal:=asset_create_refusal(s);refusal!="" {return "",refusal}
+    into,refused:=asset_folder_clean(r,folder)
+    if refused!="" {return "",fmt.tprintf("folder: %s",refused)}
+    extension:=asset_path_extension(file.path)
+    named:=strings.trim_space(name)
+    if extension!="" && strings.has_suffix(named,extension) {named=named[:len(named)-len(extension)]}
+    if named!="" && named!=asset_name(file.path) {return "",fmt.tprintf("name: %s keeps the name its source gives it: move it without a name, or duplicate it to name a copy",file.path)}
+    root,rest,rooted:=import_root_of(s,r,into)
+    if !rooted || root.root!=pin.root.root {return "",fmt.tprintf("folder: the package %s is pinned in %s: give a folder of its assets",pin.p.name,pin.root.root)}
+    entry:=pin.entry
+    entry.folder=rest
+    if entry.folder!=pin.entry.folder {
+        if problem:=library_repin(s,pin.root,entry);problem!="" {return "",problem}
+    }
+    moved,there:=asset.registry_find(r,id)
+    if !there {return "",fmt.tprintf("The package %s was listed in %s and its asset is not there: refresh the project",pin.p.name,into)}
+    path=strings.clone(moved.path,context.temp_allocator)
+    if c:=s.content;c!=nil {
+        c.reveal=id
+        content_place_set(c,into)
+    }
+    return
+}
+
+// The entries of the packages root pins that are listed in the folder from
+// of its assets or under it, each with the folder it is listed in once from
+// is to; in the temp allocator.
+@(private)
+asset_folder_pins :: proc(root:Library_Root,from,to:string) -> []asset.Project_Package {
+    list,_,error:=asset.packages_load(root.root,context.temp_allocator)
+    if error!=.None {return nil}
+    out:=make([dynamic]asset.Project_Package,context.temp_allocator)
+    for entry in list.packages {
+        if entry.folder!=from && !asset_path_inside(entry.folder,from) {continue}
+        moved:=entry
+        moved.folder=strings.concatenate({to,entry.folder[len(from):]},context.temp_allocator)
+        append(&out,moved)
+    }
+    return out[:]
+}
+
+// Whether the folder of the registry holds what a package lists.
+@(private)
+asset_folder_listed :: proc(r:^asset.Registry,folder:string) -> bool {
+    for &file in r.files {
+        if file.listed && asset_path_inside(file.path,folder) {return true}
+    }
+    return false
 }
 
 // Moves the folder from, with all it holds, to folder under name ("" keeps
@@ -191,15 +251,26 @@ asset_folder_move :: proc(s:^Session,from,folder,name:string) -> (path,message:s
     for &file in r.files {
         if file.state==.Asset && asset_path_inside(file.path,source) && scene_tab(s,file.id)>=0 {return "",fmt.tprintf("%s is open in a tab: close the tab first",file.path)}
     }
+    // The packages listed in it go with it, in the root they are pinned in.
+    root,from_rest,_:=import_root_of(s,r,source)
+    to_root,to_rest,rooted:=import_root_of(s,r,path)
+    pins:=asset_folder_pins(root,from_rest,to_rest)
+    if len(pins)>0 && (!rooted || to_root.root!=root.root) {return "",fmt.tprintf("%s lists packages pinned in %s: give a folder of its assets",source,root.root)}
     full:=asset.registry_file_path(r,source,context.temp_allocator)
     target:=asset.registry_file_path(r,path,context.temp_allocator)
-    // The sources of the folder go with it, with their sidecars: what they give is listed where they are, and nothing is imported.
     if os.is_dir(full) {
         if dir:=filepath.dir(target);!os.is_dir(dir) {_=os.make_directory_all(dir)}
         if os.rename(full,target)!=nil {return "",fmt.tprintf("%s could not be moved to %s; another program may have a file of it open",source,path)}
     }
     asset_history_moved(s,full,target,true)
     asset_start_scene_moved(s,source,path,true)
+    for entry in pins {
+        if error:=sources.project_pin(root.root,&s.store,entry);error!=.None {
+            message=fmt.tprintf("%s/%s could not be written (%v): the folder moved and some of its packages are listed where it was; check that the file is not read-only and move them",root.root,asset.PACKAGES_FILE,error)
+            break
+        }
+    }
+    if len(pins)>0 {library_relist(s,root)}
     host.assets_scan(s.app.assets)
     if c:=s.content;c!=nil {content_place_set(c,path)}
     return
@@ -322,7 +393,7 @@ asset_folder_subject :: proc(s:^Session,from:string) -> (r:^asset.Registry,folde
     switch {
     case refusal!="": return
     case folder=="":  refusal="The assets folder itself stays: give one of its folders"
-    case !os.is_dir(asset.registry_file_path(r,folder,context.temp_allocator)): refusal=fmt.tprintf("%s is not a folder of the assets: asset.list lists what they hold",folder)
+    case !os.is_dir(asset.registry_file_path(r,folder,context.temp_allocator)) && !asset_folder_listed(r,folder): refusal=fmt.tprintf("%s is not a folder of the assets: asset.list lists what they hold",folder)
     }
     return
 }
@@ -423,7 +494,7 @@ api_asset_subject :: proc(call:^api.Call,r:^asset.Registry,name:string) -> (id:b
     }
     if file,found:=asset.registry_find_path(r,name);found && file.state==.Asset {return file.id,"",true}
     clean,refusal:=asset_folder_clean(r,name)
-    if refusal=="" && clean!="" && os.is_dir(asset.registry_file_path(r,clean,context.temp_allocator)) {return {},clean,true}
+    if refusal=="" && clean!="" && (os.is_dir(asset.registry_file_path(r,clean,context.temp_allocator)) || asset_folder_listed(r,clean)) {return {},clean,true}
     api.call_failf(call,api.INVALID_PARAMS,"%q is no asset nor folder: give a path under the asset folder or the id of an asset as asset.list lists them",name)
     return
 }

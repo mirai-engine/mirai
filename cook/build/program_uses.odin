@@ -87,13 +87,24 @@ program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[
         }
     }
     for folder in project.asset_folders(p,context.temp_allocator) {
-        for root in ([2]string{folder.path,folder.imported}) {
-            if root=="" || !os.is_dir(root) {continue}
-            w:=os.walker_create(root)
+        if os.is_dir(folder.path) {
+            w:=os.walker_create(folder.path)
             for info in os.walker_walk(&w) {
                 if info.type==.Regular {visit(strings.clone(info.fullpath,context.temp_allocator),&types,kinds,&materials,&meshes,&drawings,&looks)}
             }
             os.walker_destroy(&w)
+        }
+        // The meshes of the packages the root pins are blobs of the store: the
+        // materials each depends on are those its manifest lists.
+        list,_,_:=asset.packages_load(folder.root,context.temp_allocator)
+        for &entry in list.packages {
+            text,read_error:=os.read_entire_file(asset.package_file(folder.root,entry.id),context.temp_allocator)
+            if read_error!=nil {continue}
+            pinned,parse_error:=asset.package_parse(string(text),context.temp_allocator)
+            if parse_error!=.None {continue}
+            for &a in pinned.assets {
+                if a.kind==asset.KIND_MESH {meshes[a.id]=a.dependencies[:]}
+            }
         }
     }
     found:=make(map[string]abi.Program_Uses,context.temp_allocator)

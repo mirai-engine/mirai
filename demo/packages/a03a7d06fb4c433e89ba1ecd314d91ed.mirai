@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "id": "a03a7d06fb4c433e89ba1ecd314d91ed",
+  "name": "brushed_orm",
+  "origin": {"path": "assets/surfaces/metal/brushed_orm.png", "folder": false, "importer": "image"},
+  "identity": "1ec644f5675f0f31c435f1531200733cd7404a1dfc65c6ff16e37b9ac6040feb",
+  "inputs": [],
+  "assets": [
+    {"kind": "TEX", "name": "brushed_orm", "index": 0, "id": "ec4b617cf48145349c2c76f465e19ae6"}
+  ]
+}

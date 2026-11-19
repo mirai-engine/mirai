@@ -262,7 +262,7 @@ repl_budget :: proc(h:^Host,p:^Peer) -> int {
     r:=&b.repl
     r.key_count,r.key_cursor,r.key_overflow,r.key_wrote=0,0,false,false
     if r.protocol==nil {return 0}
-    if !r.server {return PACKET_BYTES*8*h.desc.packets_per_update}
+    if !r.server {return int(max(p.tokens,PACKET_BYTES))*8}
     if !b.send_pending {return 0}
     pr:=&p.repl
     keys:=r.keys

@@ -8,52 +8,66 @@ import "mirai:asset"
 import cimage "mirai:cook/image"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:store"
 
 @(private="file") CFF_OTF :: #load("../../assets/fixtures/cff.otf")
 @(private="file") INTER :: #load("../../assets/fonts/Inter-Regular.ttf")
 
 // A folder of a test as the root of a project: its assets folder, where the
-// sources of an import are. "" when there is none.
-test_assets :: proc(t:^testing.T,name:string) -> (root,assets:string) {
+// sources of an import are, and a store of its own (Import_Options.store),
+// in the temp allocator. "" when there is none.
+test_assets :: proc(t:^testing.T,name:string) -> (root,assets:string,s:^store.Store) {
     root=base.test_folder(t,name)
     if root=="" {return}
     assets=fmt.tprintf("%s/assets",root)
     os.make_directory_all(assets)
+    s=test_store(t,fmt.tprintf("%s/store",root))
+    if s==nil {return "","",nil}
     return
+}
+
+// A store at folder, in the temp allocator; nil when it does not open.
+test_store :: proc(t:^testing.T,folder:string) -> ^store.Store {
+    s:=new(store.Store,context.temp_allocator)
+    opened,error:=store.open(folder,context.temp_allocator)
+    if !testing.expect_value(t,error,store.Error.None) {return nil}
+    s^=opened
+    return s
 }
 
 @(test)
 fonts_import_as_the_file_they_are_and_collections_are_refused :: proc(t:^testing.T) {
-    root,folder:=test_assets(t,"fonts")
+    _,folder,s:=test_assets(t,"fonts")
     if folder=="" {return}
     for file in ([2]string{"face.otf","inter.ttf"}) {
         source:=fmt.tprintf("%s/%s",folder,file)
         _=os.write_entire_file(source,CFF_OTF if file=="face.otf" else INTER)
-        report,error:=import_font(source,{root=root})
+        report,error:=import_font(source,{store=s})
         if !testing.expectf(t,error.code==.None,"%s imports: %s",file,error.message) {continue}
         defer report_destroy(&report)
-        testing.expect(t,len(report.assets)==1 && report.assets[0].kind==asset.KIND_FONT && strings.has_suffix(report.assets[0].path,".font"))
+        testing.expect(t,len(report.assets)==1 && report.assets[0].kind==asset.KIND_FONT && report.assets[0].object!={} && report.assets[0].path=="")
         types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
         a:asset.Asset
-        if !testing.expect_value(t,asset.asset_load(&a,report.assets[0].path),asset.Error.None) {continue}
+        if !testing.expect_value(t,written_open(s,report.assets[0],&a),asset.Error.None) {continue}
         defer asset.asset_close(&a)
         view,view_error:=asset.font_view(&a,&types)
         testing.expect_value(t,view_error,asset.Error.None)
         testing.expect(t,view.info.outlines==(.CFF if file=="face.otf" else .TrueType) && len(view.file)==len(CFF_OTF if file=="face.otf" else INTER))
         // Again: the same asset, with the same id.
-        again,again_error:=import_font(source,{root=root})
-        testing.expect(t,again_error.code==.None && len(again.assets)==1 && again.assets[0].id==report.assets[0].id && again.assets[0].path==report.assets[0].path)
+        again,again_error:=import_font(source,{store=s})
+        testing.expect(t,again_error.code==.None && len(again.assets)==1 && again.assets[0].id==report.assets[0].id && again.assets[0].object==report.assets[0].object)
         report_destroy(&again)
     }
     collection:=fmt.tprintf("%s/family.ttc",folder)
     _=os.write_entire_file(collection,transmute([]u8)string("ttcf\x00\x02\x00\x00\x00\x00\x00\x02............"))
-    _,error:=import_font(collection,{root=root})
+    _,error:=import_font(collection,{store=s})
     testing.expect(t,error.code==.Unsupported && strings.contains(error.message,"collection") && strings.contains(error.message,"fonttools ttLib -y 0"),error.message)
     broken:=fmt.tprintf("%s/broken.otf",folder)
     _=os.write_entire_file(broken,transmute([]u8)string("OTTO\x00\x09\x00\x80\x00\x03\x00\x10 not tables at all"))
-    _,error=import_font(broken,{root=root})
+    _,error=import_font(broken,{store=s})
     testing.expect(t,error.code==.Malformed,error.message)
-    testing.expect(t,!os.exists(fmt.tprintf("%s/broken.font",folder)),"A refused font writes nothing")
+    refs,_:=store.ref_list(s,asset.REF_PACKAGES,context.temp_allocator)
+    testing.expect(t,len(refs)==2,"A refused font records nothing")
 }
 
 @(test)
@@ -155,7 +169,7 @@ prompt_images_pack_into_power_of_two_atlases :: proc(t:^testing.T) {
 
 @(test)
 prompts_import_packs_the_images_of_a_manifest :: proc(t:^testing.T) {
-    root,folder:=test_assets(t,"prompts")
+    root,folder,s:=test_assets(t,"prompts")
     if folder=="" {return}
     os.make_directory_all(fmt.tprintf("%s/images",folder))
     paint :: proc(path:string,width,height:int,color:[4]u8) {
@@ -172,12 +186,12 @@ prompts_import_packs_the_images_of_a_manifest :: proc(t:^testing.T) {
         {"family": "PlayStation", "input": "South", "image": "images/a.png"},
         {"family": "Keyboard", "input": "Key", "key": "Space", "image": "images/space.png"}
     ]}`))
-    report,error:=import_prompts(manifest,{root=root})
+    report,error:=import_prompts(manifest,{store=s,root=root,documents=folder})
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
     defer report_destroy(&report)
     if !testing.expect_value(t,len(report.assets),2) {return}
     atlas,pack:=report.assets[0],report.assets[1]
-    testing.expect(t,atlas.kind==asset.KIND_TEXTURE && pack.kind==asset.KIND_PROMPTS && pack.path==fmt.tprintf("%s/pad.prompts",folder) && strings.contains(atlas.path,"/.mirai/imported/"))
+    testing.expect(t,atlas.kind==asset.KIND_TEXTURE && pack.kind==asset.KIND_PROMPTS && pack.path==fmt.tprintf("%s/pad.prompts",folder) && atlas.path=="" && atlas.object!={})
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     a,b:asset.Asset
     if !testing.expect_value(t,asset.asset_load(&a,pack.path),asset.Error.None) {return}
@@ -187,7 +201,7 @@ prompts_import_packs_the_images_of_a_manifest :: proc(t:^testing.T) {
     testing.expect(t,len(view.images)==3 && view.images[0].texture==atlas.id && view.images[0].uv==view.images[1].uv,"One image shown by two entries is packed once")
     space:=view.images[2]
     testing.expect(t,serial.text_field(space.key[:])=="Space" && space.aspect==2 && space.family==0 && space.input==asset.PROMPT_INPUT_KEY)
-    if !testing.expect_value(t,asset.asset_load(&b,atlas.path),asset.Error.None) {return}
+    if !testing.expect_value(t,written_open(s,atlas,&b),asset.Error.None) {return}
     defer asset.asset_close(&b)
     texture,texture_error:=asset.texture_view(&b,&types)
     if !testing.expect_value(t,texture_error,asset.Error.None) {return}
@@ -199,7 +213,7 @@ prompts_import_packs_the_images_of_a_manifest :: proc(t:^testing.T) {
     testing.expect_value(t,texel(level,width,x,y),[4]u8{255,255,255,128})
     testing.expect_value(t,texel(level,width,x-PROMPTS_PADDING,y-PROMPTS_PADDING),[4]u8{255,255,255,128}) // the padding repeats the edge, alpha straight
     // Again: the same files and ids.
-    again,again_error:=import_prompts(manifest,{root=root})
+    again,again_error:=import_prompts(manifest,{store=s,root=root,documents=folder})
     testing.expect(t,again_error.code==.None && len(again.assets)==2 && again.assets[0].id==atlas.id && again.assets[1].id==pack.id && again.assets[0].kept)
     report_destroy(&again)
 
@@ -215,7 +229,7 @@ prompts_import_packs_the_images_of_a_manifest :: proc(t:^testing.T) {
     }) {
         bad:=fmt.tprintf("%s/bad.prompts.json",folder)
         _=os.write_entire_file(bad,transmute([]u8)c.json)
-        _,refused:=import_prompts(bad,{root=root})
+        _,refused:=import_prompts(bad,{store=s,root=root,documents=folder})
         testing.expectf(t,refused.code!=.None && strings.contains(refused.message,c.says),"%s: %s",c.json,refused.message)
     }
 }

@@ -9,18 +9,20 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
 
-// What a write may compress with, as the project of what it writes allows (build.compression).
-// Types.codecs says it for the documents made with them.
+// What a write may compress with. Types.codecs says it for the documents made with them. Only
+// the files a cook ships are compressed, as their project says (project_codecs); what the store
+// holds and the documents of a project are written with None, so what is hashed and shared never
+// depends on a compressor.
 Codecs :: enum u8 {
+    None, // no stage of a compressor: each kind keeps the modeling of its data, chosen without one
     Open, // the formats of the open compressor, which every build reads
     Best, // the best the compressor of this build has
-    None, // nothing is compressed
 }
 
-// What the assets of the project at root, built with the engine at engine_root, are compressed
-// with (build.compression): Best only where the games of that engine have the private compressor,
-// since what a game does not decode it cannot ship. A folder without a project, as the assets of
-// the engine and of its plugins: Open.
+// What the files a cook ships of the project at root, built with the engine at engine_root, are
+// compressed with (build.compression): Best only where the games of that engine have the private
+// compressor, since what a game does not decode it cannot ship. A folder without a project, as
+// the assets of the engine and of its plugins: Open.
 project_codecs :: proc(root,engine_root:string) -> Codecs {
     m,error:=project.manifest_read(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator))
     if error.code!=.None {return .Open}

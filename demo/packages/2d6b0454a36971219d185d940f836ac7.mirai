@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "2d6b0454a36971219d185d940f836ac7",
+  "name": "marble_normal",
+  "origin": {"path": "assets/surfaces/marble/marble_normal.png", "folder": false, "importer": "image"},
+  "identity": "bc6f7c7783c0abc4aa24aa5951e9358ffcce1a75eabeba4a844305b51a82fecd",
+  "settings": {
+    "image": "Normal"
+  },
+  "inputs": [],
+  "assets": [
+    {"kind": "TEX", "name": "marble_normal", "index": 0, "id": "6efbfe1939e3a2a35c0ccc8621cc6abb"}
+  ]
+}

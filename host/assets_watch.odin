@@ -1,23 +1,38 @@
 package host
 
+import "core:log"
 import "core:strings"
 import "mirai:asset"
 import "mirai:platform"
+import "mirai:project"
 import "mirai:std/jobs"
 
 @(private)
-app_assets_create :: proc(app:^App,root,cache:string,mounts:[]asset.Registry_Mount=nil,imported:="") -> App_Error {
+app_assets_create :: proc(app:^App,desc:App_Desc) -> App_Error {
+    root:=desc.assets_root
+    // The project lists its packages and the assets of its plugins; what its packages could not list is
+    // told, and never keeps it from starting.
+    listed:[]asset.Package_Listed
+    problems:[]string
+    mounts:=make([dynamic]asset.Registry_Mount,context.temp_allocator)
+    if desc.root!="" {
+        if p,open_error:=project.open(desc.root,desc.engine_root,context.temp_allocator);open_error.code==.None {
+            found,ok:=project_assets(&p,desc.store_root,context.temp_allocator)
+            if !ok {return .Out_Of_Memory}
+            listed,problems=found.listed,found.problems
+            if _,no_room:=append(&mounts,..found.mounts);no_room!=nil {return .Out_Of_Memory}
+        }
+    }
+    if _,no_room:=append(&mounts,..desc.asset_mounts);no_room!=nil {return .Out_Of_Memory}
+    for problem in problems {log.warnf("assets: %s",problem)}
     assets,error:=new(Assets,app.allocator)
     if error!=nil {return .Out_Of_Memory}
-    if !assets_init(assets,{root=root,imported=imported,cache=cache,renderer=app.renderer,allocator=app.allocator,mounts=mounts}) {
+    if !assets_init(assets,{root=root,listed=listed,package_problems=problems,cache=desc.assets_cache,renderer=app.renderer,allocator=app.allocator,mounts=mounts[:],store_root=desc.store_root}) {
         free(assets,app.allocator)
         return .Assets_Failed
     }
     app.assets=assets
     if app.info!=nil && app.info.schema!=nil {assets.types.defaults=&app.info.schema.schema}
-    // What a program that edits a project saves its assets with; a shipped game saves with the open
-    // compressor.
-    if app.engine_root!="" {assets.types.codecs=asset.project_codecs(app.root,app.engine_root)}
     assets.load_profile=&app.load_profile
     // A frame never reads a texture for a material: it arrives in jobs (app_textures_stream).
     assets.arrive=app.renderer!=nil && jobs.worker_count(&app.jobs)>1

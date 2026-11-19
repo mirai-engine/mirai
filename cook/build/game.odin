@@ -18,37 +18,24 @@ game_copies :: proc(p:^project.Project,folder,compiler:string,a:runtime.Allocato
     copies:=make([dynamic]Copy,a)
     names:=project.FOLDER_NAMES
     parts:=project.PART_NAMES
-    append(&copies,Copy{project.path(p.root,project.PROJECT_FILE,allocator=a),project.path(folder,project.PROJECT_FILE,allocator=a),false})
+    append(&copies,Copy{
+        from=project.path(p.root,project.PROJECT_FILE,allocator=a),
+        to=project.path(folder,project.PROJECT_FILE,allocator=a),
+    })
     if icon:=base.text_get(p.manifest.icon[:]);icon!="" && !server {
-        if from:=project.path(p.root,icon,allocator=a);os.is_file(from) {append(&copies,Copy{from,project.path(folder,icon,allocator=a),false})}
+        if from:=project.path(p.root,icon,allocator=a);os.is_file(from) {
+            append(&copies,Copy{from=from,to=project.path(folder,icon,allocator=a)})
+        }
     }
     if !server {shaders_copies(&copies,p.root,folder,a)}
     // What the lists of the renderer asked for in each scene the runs of the
     // project opened: the game starts its lists there and goes on filling it.
     if capacities:=project.cache_path(p.root,project.CAPACITY_CACHE,allocator=a);!server && os.is_file(capacities) {
-        append(&copies,Copy{capacities,project.cache_path(folder,project.CAPACITY_CACHE,allocator=a),false})
+        append(&copies,Copy{
+            from=capacities,to=project.cache_path(folder,project.CAPACITY_CACHE,allocator=a),
+        })
     }
-    when ODIN_OS==.Windows {
-        // SDL3 is linked dynamically and ships with the compiler.
-        odin_root,configured:=os.lookup_env("ODIN_ROOT",context.temp_allocator)
-        if !configured || odin_root=="" {
-            cut:=strings.last_index_any(compiler,"/\\")
-            odin_root=cut>=0?compiler[:cut]:"."
-        }
-        if sdl:=project.path(odin_root,"vendor/sdl3/SDL3.dll",allocator=a);os.is_file(sdl) {
-            append(&copies,Copy{sdl,project.path(folder,"SDL3.dll",allocator=a),false})
-        }
-    } else when ODIN_OS==.Linux {
-        // The SDL3 of scripts/setup_linux_deps.py: platform_flags makes the game look for it next to itself.
-        if sdl:=project.path(linux_deps(p.engine_root),"sdl3/lib/libSDL3.so.0",allocator=a);os.is_file(sdl) {
-            append(&copies,Copy{sdl,project.path(folder,"libSDL3.so.0",allocator=a),false})
-        }
-    } else when ODIN_OS==.Darwin {
-        // The SDL3 of scripts/setup_macos_deps.py: platform_flags makes the game look for it next to itself.
-        if sdl,relocatable:=macos_sdl(p.engine_root);relocatable {
-            append(&copies,Copy{project.path(sdl,MACOS_SDL,allocator=a),project.path(folder,MACOS_SDL,allocator=a),false})
-        }
-    }
+    if sdl:=sdl_copy(p.engine_root,folder,compiler,a);sdl.from!="" {append(&copies,sdl)}
     return copies[:]
 }
 
@@ -68,10 +55,14 @@ job_ship :: proc(job:^Job) -> Failure {
 @(private)
 copies_run :: proc(copies:[]Copy) -> bool {
     for copy in copies {
-        parent:=copy.to[:strings.last_index_byte(copy.to,'/')]
+        parent,name:=os.split_path(copy.to)
+        if name=="" {return false}
+        if parent=="" {parent="."}
         if os.make_directory_all(parent)!=nil && !os.is_dir(parent) {return false}
         if copy.folder {
             if base.copy_directory_all(copy.to,copy.from)!=nil {return false}
+        } else if copy.binary {
+            if !copy_binary(copy.to,copy.from) {return false}
         } else if os.copy_file(copy.to,copy.from)!=nil {
             return false
         }

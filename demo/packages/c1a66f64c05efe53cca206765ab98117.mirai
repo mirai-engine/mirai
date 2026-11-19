@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "c1a66f64c05efe53cca206765ab98117",
+  "name": "sky_night",
+  "origin": {"path": "assets/sky/sky_night.jpg", "folder": false, "importer": "image"},
+  "identity": "a6bc49bf6d7489954dafb9d55d279df060250cc8f6d8366cbd48b1501a6ee048",
+  "settings": {
+    "image": "Color"
+  },
+  "inputs": [],
+  "assets": [
+    {"kind": "TEX", "name": "sky_night", "index": 0, "id": "8a6329018eb7b53a0215bd4bdbf5a2c9"}
+  ]
+}
