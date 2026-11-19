@@ -88,7 +88,7 @@ SHADOW_MAP_ORTHOGRAPHIC :: abi.SHADOW_MAP_ORTHOGRAPHIC
 // sways (SHADOW_SWAY_COARSER); the others draw it at rest and keep it,
 // whatever time the frame has left. A level serves an octave of the distance,
 // so the reach is that of the coarsest level within it.
-SHADOW_SWAY_REACH :: f32(8)
+SHADOW_SWAY_REACH :: f32(4)
 // The levels the layer of what sways lies coarser than the pages of the atlas
 // it is composed into (Shadow_Raster.layer): a caster that sways is drawn into
 // it, at the detail of its texel, and the atlas takes the nearer of the cache
