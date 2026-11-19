@@ -1,7 +1,9 @@
 package terrain
 
 import "base:runtime"
+import "core:hash"
 import "core:math/linalg"
+import "core:mem"
 import "core:slice"
 import "mirai:asset"
 import "mirai:core"
@@ -180,7 +182,7 @@ chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source
     index:=slot.index
     chunk:=&source.chunks[index]
     s:=&entry.source
-    mesh,ok:=chunk_publish(resident.assets,&slot.mesh,slot.key.collision,resident.picking,piece_levels(s,&source.quad,index))
+    mesh,ok:=chunk_publish(resident.assets,&slot.mesh,slot.key.collision,resident.picking,piece_levels(s,&source.quad,index),piece_surface(entry,source,slot))
     maps:Piece_Maps
     // The maps of a piece hold every sample at any level: one built again
     // only for its level keeps those it shows.
@@ -202,6 +204,23 @@ chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source
     chunk.next={mesh,maps,shape,slot.version,slot.key,true,shared}
     if !chunk.listed {chunk.listed=true;append(&source.staged,u32(index))}
     return true
+}
+
+// What the levels of a piece show alike, for the maps of the shadows
+// (render.mesh_surface): the surface of its source, piece and version, and
+// how far a build of its levels and those of its sides lies from it at most,
+// where the source measured the errors of its levels; none elsewhere.
+@(private)
+piece_surface :: proc(entry:^Data_Source,source:^Resident_Source,slot:^Work_Slot) -> (surface:Piece_Surface) {
+    errors:=entry.source.coarse.errors
+    if len(errors)!=quad_total(&entry.quad) {return}
+    k:=slot.key
+    for level in ([9]u8{k.lod.level,k.lod.sides[0],k.lod.sides[1],k.lod.sides[2],k.lod.sides[3],k.lod.corners[0],k.lod.corners[1],k.lod.corners[2],k.lod.corners[3]}) {
+        surface.error=max(surface.error,lod_error(errors,&source.quad,slot.index,int(level)))
+    }
+    key:=[6]u64{u64(entry.id[0]),u64(entry.id[1]),u64(slot.index),u64(slot.version),k.border,k.join}
+    surface.id=hash.fnv64a(mem.ptr_to_bytes(&key))|1
+    return
 }
 
 // Shows the build that waits in piece index.

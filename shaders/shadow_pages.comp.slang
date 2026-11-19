@@ -430,14 +430,16 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         if (whole.rect.z == 0u) return;
         uint4 a = shadow_data[(params.boxes >> 2u) + box * SHADOW_BOX_ROWS], b = shadow_data[(params.boxes >> 2u) + box * SHADOW_BOX_ROWS + 1u];
         float3 low = asfloat(a.xyz), high = asfloat(b.xyz);
-        float fine = asfloat(a.w);
-        uint region = b.w != 0u ? SHADOW_WORDS_MOVED : SHADOW_WORDS_STALE;
+        float fine = asfloat(a.w), error = asfloat(shadow_data[(params.boxes >> 2u) + box * SHADOW_BOX_ROWS + 2u].x);
+        uint region = b.w == 1u ? SHADOW_WORDS_MOVED : b.w == 2u ? SHADOW_WORDS_SOFT : SHADOW_WORDS_STALE;
         if (!shadow_map_reaches(whole, low, high)) return;
         for (uint mip = 0u; mip < (slot < SHADOW_SUN_MAPS ? 1u : SHADOW_MIPS); mip++) {
             Shadow_Map m = shadow_map_mip(whole, mip);
             // A box of what sways changes only the maps that draw it as it sways.
             float4 texels;
             if (fine > 0.0 && !shadow_map_sways(m, low, high, fine, params.sway, params.coarser)) continue;
+            // A surface shown at another detail changes only the maps whose texel there is finer than its error.
+            if (error > 0.0 && shadow_map_texels(m, low, high).x >= error) continue;
             if (!shadow_box_texels(m, low, high, texels)) continue;
             uint4 rect = shadow_texel_pages(m, texels);
             for (uint y = rect.y; y <= rect.w; y++) {
@@ -449,7 +451,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
                     bool cached = (e & SHADOW_PAGE_CACHED) != 0u && shadow_entry_pool(e, pool);
                     if (cached && shadow_box_hidden(hiz, m, uint2(x, y), pool, low, high)) continue;
                     mask_set(region, slot, entry);
-                    if (region != SHADOW_WORDS_STALE || !cached) continue;
+                    if (region == SHADOW_WORDS_MOVED || !cached) continue;
                     // The texels of the page the box covers, and one around them.
                     float4 at = texels - float4(uint2(x, y) * SHADOW_PAGE, uint2(x, y) * SHADOW_PAGE);
                     uint2 first = uint2(clamp(floor(at.xy) - 1.0, 0.0, float(SHADOW_PAGE - 1u))), last = uint2(clamp(floor(at.zw) + 1.0, 0.0, float(SHADOW_PAGE - 1u)));
@@ -508,8 +510,12 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         // Where the cache holds the page and what stays changed in boxes, it draws their part of it alone.
         bool part = (e & SHADOW_PAGE_CACHED) != 0u && (plan.x & SHADOW_PLAN_STALE) == 0u;
         bool stale = (plan.x & SHADOW_PLAN_STALE) != 0u || mask_bit(SHADOW_WORDS_STALE, slot, entry);
-        if (stale && (e & SHADOW_PAGE_READY) != 0u) InterlockedAdd(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_STALE], 1u);
-        if (stale) e &= ~SHADOW_PAGE_READY;
+        // What changed by less than the texel shows, or came or went past a cull
+        // distance, the atlas shows as it held it until the cache drew it again.
+        bool soft = !stale && (e & SHADOW_PAGE_COMPOSED) != 0u && mask_bit(SHADOW_WORDS_SOFT, slot, entry);
+        if ((stale || soft) && (e & SHADOW_PAGE_READY) != 0u) InterlockedAdd(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_STALE], 1u);
+        if (stale) e &= ~(SHADOW_PAGE_READY | SHADOW_PAGE_SOFT);
+        if (soft) e = (e & ~SHADOW_PAGE_CACHED) | SHADOW_PAGE_SOFT;
         if (mask_bit(SHADOW_WORDS_MOVED, slot, entry)) e &= ~SHADOW_PAGE_COMPOSED;
         // The safety net: of a level of the sun the 2x2 pages nearest the eye, of a face its coarsest mip.
         bool net = inside && (plan.x & SHADOW_PLAN_NET) != 0u;
@@ -529,12 +535,12 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             // A page drawn in bands under what changed starts again from its
             // first row; one drawn in part is drawn in one frame.
             uint band = pages[SHADOW_WORDS_BAND + pool];
-            pages[SHADOW_WORDS_BAND + pool] = part ? 0u : stale ? band & ~(0xFFu | SHADOW_BAND_STUCK) : band;
+            pages[SHADOW_WORDS_BAND + pool] = part ? 0u : stale || soft ? band & ~(0xFFu | SHADOW_BAND_STUCK) : band;
             if (part) pages[SHADOW_WORDS_KNOWN + pool] = 0u;
             if (draw && !part) part_band(pool);
             if (draw) listed(ROUND_STAYS, slot, entry, page, pool | kept);
             if (draw && pages[SHADOW_WORDS_KNOWN + pool] == 0u) listed(ROUND_FORESEE, slot, entry, page, pool);
-            if (draw || (e & SHADOW_PAGE_COMPOSED) == 0u) listed(ROUND_MOVES, slot, entry, page, pool | SHADOW_JOB_HELD | kept);
+            if (draw || (e & (SHADOW_PAGE_COMPOSED | SHADOW_PAGE_SOFT)) != SHADOW_PAGE_COMPOSED) listed(ROUND_MOVES, slot, entry, page, pool | SHADOW_JOB_HELD | kept);
             else if ((pages[SHADOW_WORDS_SWAY + pool] & SHADOW_SWAY_SWAYS) != 0u && params.moves != 0u) listed(ROUND_MOVES, slot, entry, page, pool | SHADOW_JOB_HELD | SHADOW_JOB_REFRESH);
             // Where nothing moves, nothing sways in it.
             if (params.moves == 0u) pages[SHADOW_WORDS_SWAY + pool] &= ~SHADOW_SWAY_SWAYS;
@@ -815,8 +821,8 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         uint job = pages[round_jobs() + i], pool = job & SHADOW_ENTRY_POOL, slot, entry;
         if (pool >= SHADOW_POOL_PAGES || !shadow_owner_place(pages[SHADOW_WORDS_OWNER + pool], slot, entry)) return;
         uint cost = pages[round_cost(pool)], taken = pages[round_taken(pool)], e = shadow_table_entry(slot, entry);
-        // What the cache left for the frames after is not ready already.
-        if (params.round == 1u && (e & SHADOW_PAGE_COMPOSED) == 0u) return;
+        // What the cache left for the frames after is not ready already, or shows what it held.
+        if (params.round == 1u && ((e & SHADOW_PAGE_COMPOSED) == 0u || (e & (SHADOW_PAGE_SOFT | SHADOW_PAGE_CACHED)) == SHADOW_PAGE_SOFT)) return;
         // Where the list of the chunks of the round had no room, no page of it is drawn whole.
         bool dropped = pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_DROPPED + params.round] != 0u;
         bool granted = (cost & SHADOW_COST_WAITS) == 0u, done = granted && (cost & SHADOW_COST_OVER) == 0u && !dropped;
@@ -844,11 +850,14 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             // What its band took, which the next band of it takes too.
             if (granted || done) pages[SHADOW_WORDS_KNOWN + pool] = done ? 0u : taken;
             if (!done) {
-                table_set(slot, entry, e & ~SHADOW_PAGE_READY);
+                table_set(slot, entry, e & ~((e & SHADOW_PAGE_SOFT) != 0u ? SHADOW_PAGE_CACHED : SHADOW_PAGE_READY));
                 InterlockedAnd(pages[SHADOW_WORDS_COMPOSE + slot * SHADOW_MASK_WORDS + (entry >> 5u)], ~(1u << (entry & 31u)));
             }
-        } else if (!done && (granted || !refresh)) {
-            table_set(slot, entry, e & ~SHADOW_PAGE_COMPOSED);
+        } else if (done) {
+            if ((e & SHADOW_PAGE_SOFT) != 0u) table_set(slot, entry, e & ~SHADOW_PAGE_SOFT);
+        } else if (granted || !refresh) {
+            // One the atlas did not start shows what it held while it waits.
+            if ((e & SHADOW_PAGE_SOFT) == 0u || granted) table_set(slot, entry, e & ~(SHADOW_PAGE_COMPOSED | SHADOW_PAGE_SOFT));
         }
         if (done) return;
         InterlockedAdd(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_WAITING], 1u);

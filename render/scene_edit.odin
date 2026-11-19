@@ -111,6 +111,18 @@ scene_instances_clear :: proc(s: ^Scene_State) {
 	s.has_bounds = false
 }
 
+// That a mesh shows a surface other meshes show at other details, within
+// `error` metres of its space of it: an instance that takes one of them in
+// place of another changes the maps of the shadows only where their texel is
+// finer than the two errors. surface 0: of no such set. False for a handle of no mesh
+// or an error that is not a distance.
+mesh_surface :: proc(r: ^Renderer, handle: Mesh_Handle, surface: u64, error: f32) -> bool {
+	s := &r.scene
+	if int(handle) >= len(s.meshes) || s.meshes[handle].vertex_count == 0 || !(error >= 0 && error < max(f32)) {return false}
+	s.meshes[handle].surface, s.meshes[handle].surface_error = surface, error
+	return true
+}
+
 // Removes only this mesh's ranges and hides the instances that named it.
 mesh_remove :: proc(r: ^Renderer, handle: Mesh_Handle) -> bool {
 	scene_changed(&r.scene)
