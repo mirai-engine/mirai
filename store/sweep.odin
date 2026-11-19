@@ -302,9 +302,9 @@ walk :: proc(w:^Sweep,address:Hash,level:int,depth:int) -> Error {
         if address in w.revive {return .None}
         pack,location,found:=retired_lookup_locked(s,address)
         if !found {return .None}
-        read,error:=location_bytes_locked(s,pack,location,w.buffers[depth])
+        read,holds,error:=location_holds_locked(s,pack,location,address,w.buffers[depth])
         if error==.Out_Of_Memory {return error}
-        if error!=.None || address_of_bytes(read)!=address {return .None}
+        if error!=.None || !holds {return .None}
         if _,e:=map_insert(&w.revive,address,Moved{pack,location});e!=nil {return .Out_Of_Memory}
         if level==DATA {return .None}
         bytes=read
@@ -341,10 +341,11 @@ mark :: proc(w:^Sweep,address:Hash) -> Marked {
     return .Missing
 }
 
-// The bytes of a stored chunk with the lock held, in buffer or mapped.
+// The stored bytes of a chunk with the lock held, in buffer or mapped: what a
+// walk parses as a node, which every build stores as it is.
 @(private)
 chunk_bytes_locked :: proc(s:^Store,address:Hash,buffer:[]u8) -> ([]u8,Error) {
-    pack,location,found:=lookup_locked(s,address)
+    pack,location,found:=lookup_locked(s,address,readable=false)
     if !found {return nil,.Missing}
     return location_bytes_locked(s,pack,location,buffer)
 }
@@ -441,6 +442,29 @@ sweep_compact :: proc(w:^Sweep) -> Error {
         if !pack_foldable(&p) {continue}
         w.compacted[i]=p.dead || live[i]*2<total[i] || total[i]==0 || (small>=2 && total[i]<PACK_SMALL)
     }
+    // Of the copies of a live chunk in the packs compacted, the one copied is one every build
+    // reads when there is one: the generation then indexes it, whichever copy a table favored.
+    chosen:=make(map[Hash]int,16,context.temp_allocator)
+    defer delete(chosen)
+    order:=make([dynamic]Moved,0,0,context.temp_allocator)
+    defer delete(order)
+    order_addresses:=make([dynamic]Hash,0,0,context.temp_allocator)
+    defer delete(order_addresses)
+    choose :: proc(w:^Sweep,chosen:^map[Hash]int,order:^[dynamic]Moved,addresses:^[dynamic]Hash,address:Hash,pack:int,l:Location) -> Error {
+        kept:=l
+        kept.time=location_time(w.s,address,l)
+        if at,found:=chosen[address];found {
+            old:=&order[at]
+            time:=max(old.location.time,kept.time)
+            if int(old.location.codec) not_in CODECS_OPEN && int(l.codec) in CODECS_OPEN {old^=Moved{pack,kept}}
+            old.location.time=time
+            return .None
+        }
+        if _,e:=map_insert(chosen,address,len(order));e!=nil {return .Out_Of_Memory}
+        if _,e:=append(order,Moved{pack,kept});e!=nil {return .Out_Of_Memory}
+        if _,e:=append(addresses,address);e!=nil {return .Out_Of_Memory}
+        return .None
+    }
     for l,i in g.locations {
         pack:=g.map_pack[l.pack]
         if !w.compacted[pack] || location_dead(s,pack,l) {continue}
@@ -449,7 +473,7 @@ sweep_compact :: proc(w:^Sweep) -> Error {
             w.result.chunks+=1
             continue
         }
-        sweep_copy(w,g.addresses[i],pack,l) or_return
+        choose(w,&chosen,&order,&order_addresses,g.addresses[i],pack,l) or_return
     }
     for k,i in state.table.keys {
         if k=={} {continue}
@@ -461,15 +485,16 @@ sweep_compact :: proc(w:^Sweep) -> Error {
             w.result.chunks+=1
             continue
         }
-        sweep_copy(w,k,pack,l) or_return
+        choose(w,&chosen,&order,&order_addresses,k,pack,l) or_return
     }
+    for m,at in order {sweep_copy(w,order_addresses[at],m.pack,m.location) or_return}
     for address,moved in w.revive {
         if address in w.copied {continue}
         if _,e:=map_insert(&w.copied,address,struct{}{});e!=nil {return .Out_Of_Memory}
         buffer,e:=make([]u8,moved.location.stored,context.temp_allocator)
         if e!=nil {return .Out_Of_Memory}
-        bytes,error:=location_bytes_locked(s,moved.pack,moved.location,buffer)
-        if error==.None && address_of_bytes(bytes)==address {error=sweep_out_add(w,address,bytes,moved.location.time)}
+        bytes,holds,error:=location_holds_locked(s,moved.pack,moved.location,address,buffer)
+        if error==.None && holds {error=sweep_out_add(w,address,bytes,moved.location)}
         delete(buffer,context.temp_allocator)
         if error==.Out_Of_Memory || error==.No_Space || error==.Io {return error}
     }
@@ -481,7 +506,7 @@ pack_foldable :: proc(p:^Pack) -> bool {
     return (p.sealed || p.dead) && !p.gone && !p.damaged && p.retired==0
 }
 
-// Copies a live chunk into the sweep's pack, keeping its time.
+// Copies a live chunk into the sweep's pack, with the time of l.
 @(private)
 sweep_copy :: proc(w:^Sweep,address:Hash,pack:int,l:Location) -> Error {
     if address in w.copied {return .None}
@@ -491,11 +516,13 @@ sweep_copy :: proc(w:^Sweep,address:Hash,pack:int,l:Location) -> Error {
     if e!=nil {return .Out_Of_Memory}
     defer delete(buffer,context.temp_allocator)
     bytes:=location_bytes_locked(s,pack,l,buffer) or_return
-    return sweep_out_add(w,address,bytes,location_time(s,address,l))
+    return sweep_out_add(w,address,bytes,l)
 }
 
+// Appends the stored bytes of a chunk to the sweep's pack in the frame they
+// had, with the time of from.
 @(private)
-sweep_out_add :: proc(w:^Sweep,address:Hash,bytes:[]u8,time:i64) -> Error {
+sweep_out_add :: proc(w:^Sweep,address:Hash,bytes:[]u8,from:Location) -> Error {
     s:=w.s
     out:=&w.out
     if out.file==nil {
@@ -510,7 +537,7 @@ sweep_out_add :: proc(w:^Sweep,address:Hash,bytes:[]u8,time:i64) -> Error {
         out.stage=stage_new(s) or_return
         stage_reset(out.stage)
     }
-    stage_frame(out.stage,.Chunk,address,bytes,time) or_return
+    stage_frame(out.stage,.Chunk,address,bytes,from.time,from.codec,int(from.raw)) or_return
     if len(out.stage.bytes)>=STAGE_BYTES {sweep_out_flush(w) or_return}
     if out.end>=PACK_MAX {sweep_out_seal(w) or_return}
     return .None
@@ -526,7 +553,7 @@ sweep_out_flush :: proc(w:^Sweep) -> Error {
     io_write_at(s,out.file,st.bytes[:],base) or_return
     for f in st.frames {
         at:=base+i64(f.at)
-        l:=Location{offset=u64(head_data_at(at,f.head)),stored=f.head.stored,raw=f.head.raw,align=f.head.align,time=f.data_time}
+        l:=Location{offset=u64(head_data_at(at,f.head)),stored=f.head.stored,raw=f.head.raw,codec=f.head.codec,align=f.head.align,time=f.data_time}
         if _,e:=append(&out.frames,Own_Frame{kind=.Chunk,address=f.head.address,location=l});e!=nil {return .Out_Of_Memory}
     }
     out.end=base+i64(len(st.bytes))
@@ -611,10 +638,14 @@ generation_publish :: proc(w:^Sweep) -> Error {
         if _,e:=append(&chunks,c);e!=nil {return .Out_Of_Memory}
     }
     slice.sort_by(chunks[:],proc(a,b:Chunk) -> bool {return hash_less(a.address,b.address)})
+    // Of several copies, one every build reads.
     unique:=0
     for c in chunks {
         if unique>0 && chunks[unique-1].address==c.address {
-            chunks[unique-1].location.time=max(chunks[unique-1].location.time,c.location.time)
+            kept:=&chunks[unique-1].location
+            time:=max(kept.time,c.location.time)
+            if int(kept.codec) not_in CODECS_OPEN && int(c.location.codec) in CODECS_OPEN {kept^=c.location}
+            kept.time=time
             continue
         }
         chunks[unique]=c
@@ -764,7 +795,7 @@ recheck_walk :: proc(w:^Sweep,address:Hash,level:int,depth:int,visited:^map[Hash
         w.buffers[depth]=b
     }
     bytes:[]u8
-    if _,_,found:=lookup_locked(s,address);found {
+    if _,_,found:=lookup_locked(s,address,readable=false);found {
         if level==DATA {return 0,.None}
         bytes=chunk_bytes_locked(s,address,w.buffers[depth]) or_return
     } else {
@@ -774,9 +805,12 @@ recheck_walk :: proc(w:^Sweep,address:Hash,level:int,depth:int,visited:^map[Hash
             if !found {return 0,.None}
             moved={pack,location}
         }
-        bytes=location_bytes_locked(s,moved.pack,moved.location,w.buffers[depth]) or_return
-        if address_of_bytes(bytes)!=address {return 0,.None}
-        sweep_out_add(w,address,bytes,max(moved.location.time,w.now)) or_return
+        holds:bool
+        bytes,holds=location_holds_locked(s,moved.pack,moved.location,address,w.buffers[depth]) or_return
+        if !holds {return 0,.None}
+        kept:=moved.location
+        kept.time=max(kept.time,w.now)
+        sweep_out_add(w,address,bytes,kept) or_return
         restored=1
         if level==DATA {return restored,.None}
     }
@@ -1057,12 +1091,13 @@ scrub :: proc(s:^Store,budget:i64,now:Maybe(time.Time)=nil) -> (result:Scrub_Res
                 result.finished=false
                 break
             }
-            if location_dead(s,spot.pack,spot.location) {continue}
-            bytes,read_error:=location_bytes_locked(s,spot.pack,spot.location,buffer)
+            // A frame of a codec this build lacks is for a build that has it to check.
+            if location_dead(s,spot.pack,spot.location) || !codec_readable(s,spot.location.codec) {continue}
+            _,holds,read_error:=location_holds_locked(s,spot.pack,spot.location,spot.address,buffer)
             if read_error==.Out_Of_Memory {return result,read_error}
             result.chunks+=1
             result.bytes+=i64(spot.location.stored)
-            if read_error==.None && address_of_bytes(bytes)==spot.address {continue}
+            if read_error==.None && holds {continue}
             tomb_stage(s,st,spot.pack,spot.location,spot.address) or_return
             result.damaged+=1
         }
@@ -1122,7 +1157,7 @@ restore_locked :: proc(s:^Store,st:^^Stage,address:Hash,level,depth:int,visited:
     if e!=nil {return 0,.Out_Of_Memory}
     defer delete(buffer,context.temp_allocator)
     bytes:[]u8
-    if pack,location,found:=lookup_locked(s,address);found {
+    if pack,location,found:=lookup_locked(s,address,readable=false);found {
         if level==DATA {return 0,.None}
         read,read_error:=location_bytes_locked(s,pack,location,buffer)
         if read_error!=.None {return 0,read_error if read_error==.Out_Of_Memory else .None}
@@ -1131,13 +1166,13 @@ restore_locked :: proc(s:^Store,st:^^Stage,address:Hash,level,depth:int,visited:
         retired_load_locked(s) or_return
         pack,location,in_retired:=retired_lookup_locked(s,address)
         if !in_retired {return 1,.None}
-        read,read_error:=location_bytes_locked(s,pack,location,buffer)
-        if read_error!=.None || address_of_bytes(read)!=address {return 1,.None}
+        read,holds,read_error:=location_holds_locked(s,pack,location,address,buffer)
+        if read_error!=.None || !holds {return 1,.None}
         if st^==nil {
             st^=stage_new(s) or_return
             stage_reset(st^)
         }
-        stage_frame(st^,.Chunk,address,read,location.time) or_return
+        stage_frame(st^,.Chunk,address,read,location.time,location.codec,int(location.raw)) or_return
         if level==DATA {return 0,.None}
         bytes=read
     }
@@ -1165,7 +1200,7 @@ root_packs_locked :: proc(s:^Store,target:Hash,packs:^map[int]struct{},visited:^
 tree_packs_locked :: proc(s:^Store,address:Hash,level,depth:int,packs:^map[int]struct{},visited:^map[Hash]struct{}) {
     if depth>NODE_LEVEL_MAX+1 || address in visited^ {return}
     map_insert(visited,address,struct{}{})
-    pack,location,found:=find_locked(s,address)
+    pack,location,found:=find_locked(s,address,readable=false)
     if !found {return}
     map_insert(packs,pack,struct{}{})
     if level==DATA {return}

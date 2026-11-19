@@ -214,6 +214,9 @@ or interleave its own passes.
 - On an instance the editor level replaces the game one (`instance_outline` of `engine/render`).
   On screen every editor level covers the game ones. The levels the editor reserves:
   [shapes](../../mirai-editor/references/editor.md#figures-of-whoever-works).
+- A level shows something (`highlight_levels_shown`) when its editor style has a radius and a coat
+  or a color that is not transparent; every game style does, since a PostProcess may read the mask.
+  Who draws an outline of its own (a batch that stands for an entity) sends it only at those levels.
 - **Mask.** It draws only the highlighted instances, after the G-buffer and with its own depth
   buffer: the surrounding geometry does not clip it. It is rasterized without jitter at the
   window point resolution, independent of `Settings.resolution`, and respects the material's alpha

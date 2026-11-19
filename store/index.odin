@@ -126,7 +126,7 @@ table_slot :: proc "contextless" (t:^Table,address:Hash) -> (slot:int,found:bool
 }
 
 @(private)
-table_put :: proc(t:^Table,address:Hash,location:Location,allocator:=context.allocator) -> Error {
+table_put :: proc(t:^Table,address:Hash,location:Location,decodes:Codecs,allocator:=context.allocator) -> Error {
     if address=={} {return .None}
     if (t.count+1)*4>len(t.keys)*3 {
         bigger:Table
@@ -142,8 +142,9 @@ table_put :: proc(t:^Table,address:Hash,location:Location,allocator:=context.all
     }
     slot,found:=table_slot(t,address)
     if found {
+        // Of two copies the newer is kept, unless the other reads where it does not.
         time:=max(t.values[slot].time,location.time)
-        t.values[slot]=location
+        if codec_rank(location.codec,decodes)>=codec_rank(t.values[slot].codec,decodes) {t.values[slot]=location}
         t.values[slot].time=time
         return .None
     }
@@ -163,6 +164,8 @@ state_init :: proc(s:^Store) {
     state.stages=make([dynamic]^Stage,0,0,s.state.allocator)
     state.builders=make([dynamic]^Object_Writer,0,0,s.state.allocator)
     state.recent=make([dynamic]Recent,0,0,s.state.allocator)
+    state.coders=make([dynamic]^Coder,0,0,s.state.allocator)
+    codecs_init(s)
     w:=&state.writer
     w.deduped=make([dynamic]Deduped,0,0,s.state.allocator)
     w.named=make([dynamic]Hash,0,0,s.state.allocator)
@@ -190,6 +193,8 @@ state_destroy :: proc(s:^Store) {
     }
     delete(state.builders)
     delete(state.recent)
+    for c in state.coders {coder_free(s,c)}
+    delete(state.coders)
     w:=&state.writer
     delete(w.deduped)
     delete(w.named)
@@ -336,7 +341,7 @@ generation_load :: proc(s:^Store,number:u64) -> (g:Generation,error:Error) {
 
 @(private)
 location_valid :: proc "contextless" (l:Location,packs:u64,pack_size:u64) -> bool {
-    if u64(l.pack)>=packs || l.codec!=0 || l.raw!=l.stored || l.stored==0 || l.stored>CHUNK_MAX {return false}
+    if u64(l.pack)>=packs || !sizes_valid(l.codec,l.stored,l.raw) {return false}
     if l.align!=ALIGN_SMALL && l.align!=ALIGN_LARGE {return false}
     return l.offset>=size_of(Pack_Head)+size_of(Frame_Head) && l.offset<=pack_size && u64(l.stored)<=pack_size-l.offset
 }
@@ -503,7 +508,7 @@ pack_load_locked :: proc(s:^Store,index:int) -> Error {
             if retired {
                 if f.head.kind!=.Chunk {continue}
                 l:=Location{pack=u32(a.pack),offset=u64(head_data_at(f.at,f.head)),stored=f.head.stored,raw=f.head.raw,codec=f.head.codec,align=f.head.align,time=time}
-                table_put(&state.retired,f.head.address,l,state.allocator) or_return
+                table_put(&state.retired,f.head.address,l,state.decodes,state.allocator) or_return
                 continue
             }
             payload:=scan.payloads[f.payload[0]:f.payload[1]]
@@ -570,7 +575,7 @@ trailer_load_locked :: proc(s:^Store,index:int,size:i64) -> bool {
     for a,i in addresses {
         l:=locations[i]
         l.pack=u32(index)
-        if table_put(table,a,l,state.allocator)!=.None {return true}
+        if table_put(table,a,l,state.decodes,state.allocator)!=.None {return true}
     }
     if p.retired>0 {return true}
     for x in extras {
@@ -589,7 +594,7 @@ frame_apply :: proc(s:^Store,pack:int,head:Frame_Head,at:i64,payload:[]u8,time:i
     switch head.kind {
     case .Chunk:
         l:=Location{pack=u32(pack),offset=u64(head_data_at(at,head)),stored=head.stored,raw=head.raw,codec=head.codec,align=head.align,time=time}
-        return table_put(&state.table,head.address,l,state.allocator)
+        return table_put(&state.table,head.address,l,state.decodes,state.allocator)
     case .Touch:
         if old,found:=state.touched[head.address];found && old>=time {return .None}
         if _,e:=map_insert(&state.touched,head.address,time);e!=nil {return .Out_Of_Memory}
@@ -701,7 +706,7 @@ state_rebuild_locked :: proc(s:^Store) {
                 case .Chunk:
                     l:=f.location
                     l.pack=u32(i)
-                    table_put(&state.table,f.address,l,state.allocator)
+                    table_put(&state.table,f.address,l,state.decodes,state.allocator)
                 case .Ref,.Touch,.Tombstone:
                     head:Frame_Head
                     payload:[REF_FIXED+2*NAME_MAX]u8
@@ -725,20 +730,22 @@ state_rebuild_locked :: proc(s:^Store) {
 }
 
 // Where the chunk at address is, without reading the root again; a copy a
-// tombstone names or in a pack that is gone is not found.
+// tombstone names, in a pack that is gone or of a codec this value does not
+// decode is not found unless readable is false: a chunk is in the store, for
+// what refs, leases and sweeps keep, in a frame of any codec.
 @(private)
-lookup_locked :: proc(s:^Store,address:Hash) -> (pack:int,location:Location,found:bool) {
+lookup_locked :: proc(s:^Store,address:Hash,readable:=true) -> (pack:int,location:Location,found:bool) {
     state:=s.state
     if slot,in_table:=table_slot(&state.table,address);in_table {
         location=state.table.values[slot]
         pack=int(location.pack)
-        found=!location_dead(s,pack,location)
+        found=!location_dead(s,pack,location) && (!readable || codec_readable(s,location.codec))
     }
     if !found {
         if i,in_generation:=generation_find(&state.generation,address);in_generation {
             location=state.generation.locations[i]
             pack=state.generation.map_pack[location.pack]
-            found=!location_dead(s,pack,location)
+            found=!location_dead(s,pack,location) && (!readable || codec_readable(s,location.codec))
         }
     }
     if !found {return -1,{},false}
@@ -754,20 +761,22 @@ location_dead :: proc(s:^Store,pack:int,location:Location) -> bool {
 
 // lookup_locked, reading the root again once when it misses.
 @(private)
-find_locked :: proc(s:^Store,address:Hash) -> (pack:int,location:Location,found:bool) {
-    pack,location,found=lookup_locked(s,address)
+find_locked :: proc(s:^Store,address:Hash,readable:=true) -> (pack:int,location:Location,found:bool) {
+    pack,location,found=lookup_locked(s,address,readable)
     if found {return}
     if refresh_locked(s)!=.None {return}
-    pack,location,found=lookup_locked(s,address)
+    pack,location,found=lookup_locked(s,address,readable)
     if found {return}
     // A chunk a sweep retired that a commit still names is read where it went.
     if retired_load_locked(s)!=.None {return}
-    return retired_lookup_locked(s,address)
+    pack,location,found=retired_lookup_locked(s,address)
+    if found && readable && !codec_readable(s,location.codec) {return -1,{},false}
+    return
 }
 
 // Where a chunk is in a pack a sweep retired.
 @(private)
-retired_lookup_locked :: proc(s:^Store,address:Hash) -> (pack:int,location:Location,found:bool) {
+retired_lookup_locked :: proc(s:^Store,address:Hash,readable:=true) -> (pack:int,location:Location,found:bool) {
     state:=s.state
     slot,in_table:=table_slot(&state.retired,address)
     if !in_table {return -1,{},false}

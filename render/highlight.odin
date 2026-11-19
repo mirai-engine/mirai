@@ -50,6 +50,20 @@ highlight_style_of :: proc(r: ^Renderer, level: u32) -> (^Highlight_Style, int) 
     return &r.highlight, int(level - 1)
 }
 
+Highlight_Levels :: bit_set[1 ..= HIGHLIGHT_LEVELS + OUTLINE_STYLES; u32]
+
+// The outline levels an instance shows something at, as the filter draws
+// them: a level of the editor whose style has a radius and a coat or a color
+// that is not transparent, and every style of the game, whose mask a
+// PostProcess may read whatever its style.
+highlight_levels_shown :: proc(r: ^Renderer) -> (shown: Highlight_Levels) {
+    for level in 1 ..= HIGHLIGHT_LEVELS + OUTLINE_STYLES {
+        style, at := highlight_style_of(r, u32(level))
+        if level > HIGHLIGHT_LEVELS || style.width > 0 && (style.fill[at] > 0 || style.colors[at].a > 0) {shown += {level}}
+    }
+    return
+}
+
 // Whether the Geometry stage of the view drew the outline mask this frame.
 @(private)
 highlight_drawn_in :: proc(p: ^Pass) -> bool {return !p.texture && p.r.scene.highlighted > 0 && p.t.highlight != 0}

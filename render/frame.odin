@@ -521,6 +521,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     r.error=""
     r.pipeline_waiting=""
     started:=time.tick_now()
+    meshes_leave(r)
     zone:=render_zone_begin(r,"uploads arrived")
     texture_uploads_install(r)
     geometry_uploads_install(r)
@@ -639,6 +640,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     r.stats.ui_vertices_dropped,r.stats.debug_vertices_dropped=0,0
     r.stats.shadow_movers=0
     r.stats.shadow_marked=0
+    r.stats.shadow_stale,r.scene.shadow_stale_by=r.scene.shadow_stale_by,{}
     r.stats.ui_shapes_dropped,r.stats.ui_layers_dropped=0,0
     r.ui_shape_written,r.ui_shape_cache_count,r.ui_vertex_cache_count=0,0,0
     ui_written:=0
@@ -1263,7 +1265,6 @@ cull_record :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glas
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.candidate_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, glass)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, s.depth_buckets)
-	if cost != 0 {rhi.cmd_bind_buffer(cmd, SLOT_PASS8, cost)}
 	if params.phase == 0 {
 		batches := params
 		batches.phase = abi.CULL_PHASE_BATCHES
@@ -1271,6 +1272,8 @@ cull_record :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glas
 		rhi.cmd_dispatch(cmd, groups(max(u32(len(s.batch.drawn)), 1), 64))
 		cull_bind(p, params, hiz, stats, glass)
 	}
+	// After cull_bind, which binds the stamps of the pages in its place.
+	if cost != 0 {rhi.cmd_bind_buffer(cmd, SLOT_PASS8, cost)}
 	rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, instance_dispatch)))
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull_Clusters])
 	cull_bind(p, params, hiz, stats, glass)

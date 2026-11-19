@@ -276,9 +276,11 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   each level of the sun nearest the eye, the coarsest page of each face), then from the coarsest
   level or mip to the finest; past the pool the finest are left out (`SHADOW_COUNT_LEFT`), the same
   every frame. A page keeps its place while no point reads it, until another needs it: free pages
-  first, then those unread the longest; one read within a cycle of the jitter of the view gives its
-  place only to a page of a level that ranks sooner, so that where the pool is full a page the
-  points of one frame miss and those of the next read is not drawn again. What stays changing under
+  first, then those unread the longest; one read within a cycle of the jitter of a still view, or
+  the frame before by one that moves, gives its place only to a page of a level that ranks sooner,
+  so that where the pool is full a page the points of one frame miss and those of the next read is
+  not drawn again, and a view that moves does not keep the pages it left behind before those it
+  reads. What stays changing under
   a page still marks it stale, so a page read is always of this frame. Where a page is not drawn its
   entry names the nearest coarser level or mip drawn there (`SHADOW_ENTRY_COARSER`), which a tap
   reads. A point is held by the nearest page, its own or up to two levels or mips coarser
@@ -354,7 +356,14 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   (`Shadow_Raster.cache`) holds what stays, page by page: a page draws there again only where it is
   new or what stays changed under it (an instance that came, went or changed its box or pose, a
   page of its mesh, a masked material), of a page it held only the texels the boxes of what
-  changed cover (`SHADOW_WORDS_PART`): what else lies in a wide page is not drawn again. The
+  changed cover (`SHADOW_WORDS_PART`): what else lies in a wide page is not drawn again. A
+  surface shown at another detail changes only the pages whose texel there is finer than its
+  error: a page of a streamed mesh, by the error of what its clusters replace over the error a
+  texel takes in the cut (`lod_error_pixels`), in the box of its clusters; an instance that takes
+  another mesh of its surface (`mesh_surface`: the pieces of a terrain at their levels), by the
+  errors of both. Such a page, and one where instances of a batch came or went past their cull
+  distance, keeps what the atlas showed until the cache drew it again and the atlas composed it
+  (`SHADOW_PAGE_SOFT`): a page that waits for that shows the frame before, not a coarser page. The
   atlas (`Shadow_Raster.atlas`), what the passes read, composes the cache and what moves again
   only in the pages where the cache drew or what
   moves was or is. The boxes of what changed mark their pages on the GPU, but where the cache hides
@@ -363,9 +372,12 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   `SHADOW_MOVER_FRAMES` moves (each followed on its own, however many,
   `Scene_State.shadow_changes`): the cache leaves it out once, and the atlas draws it in the pages
   its moves cover until it stays that long and joins the cache again; a mover that stands still
-  costs nothing. While the eye stays in its cell no instance of a batch comes or goes past its cull
-  distance; where it leaves it, what stays changed in the part of each batch whose instances may
-  have come or gone (`shadow_cull_changes`). What sways moves so only near the eye
+  costs nothing. While the eye stays in its cell, or within a margin past it
+  (`SHADOW_CULL_MARGIN`, so that an eye going to and fro across a border takes no other), no
+  instance of a batch comes or goes past its cull distance; where it leaves it, what stays changed
+  where instances of a batch may have come or gone, in a box for each cell of the world they lie
+  in, apart from the few boxes of what changed: merged, those far boxes would take the pages near
+  the eye along (`shadow_cull_changes`). What sways moves so only near the eye
   ([what sways](#what-sways-in-the-maps)).
   A light or a level of the sun that moves or turns lets go of its pages and draws those read whole
   into the atlas alone that frame, and the cache the next still frame; an origin jump lets go of
@@ -414,7 +426,10 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
     validation of the history reaches it.
 - The debug view Shadows shows the part of the light that got there. `Stats.shadow` counts what
   the maps of the views of a frame drew, summed: clusters, triangles and pages, those left out,
-  those that wait and those the bound grows for, and the threads their culls by instance ran.
+  those that wait and those the bound grows for, those drawn again for what stays changing under
+  them, and the threads their culls by instance ran; `Stats.shadow_stale`, the boxes of what stays
+  changed by what raised them, which `engine.status` gives too: a burst of pages drawn again while
+  only the eye moves names its cause there.
 - **Reference.** What the tests compare with, outside the renderer games run: a custom pass of the
   tests in place of the `Direct` stage (`render/reference_test.odin`) traces from each pixel to
   the whole set of points of the sun and of each light, randomly rotated per frame, without grid,

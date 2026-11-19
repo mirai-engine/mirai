@@ -22,7 +22,7 @@ import wire "mirai:net"
 
 NAMESPACE :: "shares"      // <hash of the secret of an invitation>: the snapshot a share offers under it
 PROTOCOL_ID :: 0x4d495348  // of the hosts of sharing: datagrams of any other application are ignored
-VERSION :: 3               // of what two peers say to each other: the snapshot and the exchange over it
+VERSION :: 4               // of what two peers say to each other: the snapshot and the exchange over it
 PEERS :: 8                 // connections of a node at once
 LEASE_SECONDS :: 60.0      // between two refreshes of the lease
 @(private) WANTS :: 512
@@ -332,8 +332,7 @@ node_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
         for &address in addresses {
             if address=={} || !asset.object_whole(into,address) {continue}
             b,build_error:=asset.build_get(into,address,context.temp_allocator)
-            // A build this engine cannot decode is not fetched: as if no peer had it.
-            if build_error!=.None || !asset.build_readable(&b) {
+            if build_error!=.None {
                 address={}
                 continue
             }

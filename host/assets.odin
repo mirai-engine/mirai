@@ -117,6 +117,11 @@ Mesh_Generate_Options :: struct {
     tangents:[][4]f32, // one per vertex, with the sign of the bitangent in w, as MikkTSpace gives them; empty: MikkTSpace's over the uvs
     render_geometry:^Mesh_Render_Geometry, // what assets_render_geometry_make made of the mesh ahead; nil: made here
     label:string, // what the mesh is, for whoever names it ("terrain chunk"); the entity that shows it says whose. Cut to ASSETS_LABEL_BYTES
+    // Of a mesh that shows a surface other meshes show at other details: the
+    // surface (0: none) and how far the mesh lies from it at most, metres
+    // (render.mesh_surface).
+    surface:u64,
+    surface_error:f32,
 }
 
 // What the renderer takes of a mesh made at run time: its clusters, as
@@ -875,6 +880,7 @@ assets_mesh_generate :: proc(a:^Assets,mesh:geom.Mesh,slot_materials:[]base.Asse
     if len(mesh.normals)!=0 && len(mesh.normals)!=count || len(mesh.uvs)!=0 && len(mesh.uvs)!=count || len(mesh.colors)!=0 && len(mesh.colors)!=count {return}
     if len(uv1s)!=0 && len(uv1s)!=count {return}
     if len(mesh.materials)!=0 && len(mesh.materials)!=len(mesh.indices)/3 {return}
+    if !(options.surface_error>=0 && options.surface_error<max(f32)) {return}
     for index in mesh.indices {
         if int(index)>=count {return}
     }
@@ -999,6 +1005,7 @@ assets_mesh_generate :: proc(a:^Assets,mesh:geom.Mesh,slot_materials:[]base.Asse
             assets_fail(a,{},.Mesh,.Rejected)
             return
         }
+        render.mesh_surface(a.renderer,entry.handle,options.surface,options.surface_error)
     }
     at:u32
     if len(a.free_meshes)>0 {

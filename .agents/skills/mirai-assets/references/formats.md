@@ -24,13 +24,15 @@ each at a multiple of its alignment.
   exact size, each chunk inside the file and aligned, uncompressed size below `PACK_MAX` and a
   total memory limit (`DEFAULT_MEMORY_LIMIT`).
 - **An asset of the store** (`asset/parts.odin`) is an object of the
-  [store](../../mirai-store/SKILL.md): one group per container chunk in directory order, its
-  stored bytes as the file has them (nothing is compressed twice), and the header and directory
-  as the meta of its root. `object_put` cuts each chunk where the format reads alone: between the
-  pieces of a stream, between the levels of uncompressed `texels` (smallest first, so the first
-  chunks are the small levels), between the blocks of a mesh's `page_data` and of a block table.
-  The file is the meta, each group at its chunk's offset and zeros between: `object_file` gives
-  the bytes `object_put` took. `asset_open_object` checks meta against groups (tags, order, sizes,
+  [store](../../mirai-store/SKILL.md): one group per container chunk in directory order, and the
+  header and directory as the meta of its root. It holds its file as `Codecs.None` writes it:
+  `object_put` writes again a file a compressor touched (a stream chunk, a block or mesh page not
+  `STORED`, texture layouts, planes chosen otherwise), so the same asset is the same object for
+  every compressor, and the store compresses each chunk in its frame. It cuts each chunk where the
+  format reads alone: between the levels of `texels` (smallest first, so the first chunks are the
+  small levels), between the blocks of a mesh's `page_data` and of a block table. The file is the
+  meta, each group at its chunk's offset and zeros between: `object_file` gives the bytes
+  `object_put` kept. `asset_open_object` checks meta against groups (tags, order, sizes,
   limit) and reads each chunk the first time a table needs it: one chunk of a sealed pack is a
   slice of its mapping, several are gathered into memory of the asset, and a stream that holds
   levels reads only the pieces asked for. A chunk the store does not hold yet is `Not_Here` to
@@ -57,11 +59,13 @@ journal sends over the network, editor thumbnails, the shaders the executables e
   imports and a running game save; a cook writes with `Ultra` (a shipped game) or `Balanced` (a
   dev game), and what streams while playing with `profile_streamed` of it (`Speed` in place of
   `Ultra`). A read needs no profile: the stream names its format.
-- **Codecs.** What a write may use (`Codecs`): `Open`, the formats every build reads; `Best`, what
-  the compressor of the build has; `None`, nothing. `Types.codecs` says it for every document made
-  with those types (the zero value is `Open`): a program that edits a project sets it from
-  `project.compression`, and everything else (the assets of the engine and its plugins, caches) is
-  written open. A stream of a format the build does not decode is `Codec_Missing`.
+- **Codecs.** What a write may use (`Codecs`): `None`, the zero value, no stage of a compressor;
+  `Open`, the formats every build reads; `Best`, what the compressor of the build has. Every
+  document is written `None` but the files a cook ships, which take `project_codecs`
+  (`build.compression`). Under `None` the modeling a kind chooses by what compresses smaller is
+  chosen without a compressor, as what compresses smaller where the bytes rest: a mesh page keeps
+  its coding and BC1, BC3 and BC5 their planes of fields. A stream of a format the build does not
+  decode is `Codec_Missing`.
 - **Block tables.** A kind whose asset stores blocks it reads alone keeps them in `<name>_blocks`,
   with the `Block_Record`s of its pages in `<name>_pages`; a cook compresses them again from what
   the records say (`document_repack`).
@@ -73,10 +77,10 @@ journal sends over the network, editor thumbnails, the shaders the executables e
   without one makes its own the first time it decodes. A mesh page or a terrain block decodes with
   a `Stream_Decoder` of its reader (the renderer keeps one per worker).
 - **Texture levels.** The `texels` column holds the smallest level first: a read of the small
-  levels decodes only the first pieces. A texture written with `Best` codecs may store layouts of
-  runs of levels (the `layouts` table, `blocks.layout_encode`), and BC1, BC3 and BC5 may store
-  planes of fields ([texture](kinds.md#texture)); `texture_decode` restores them into memory of the
-  asset before the renderer takes them.
+  levels decodes only the first pieces. A texture a cook writes with `Best` codecs may store
+  layouts of runs of levels (the `layouts` table, `blocks.layout_encode`), and BC1, BC3 and BC5
+  may store planes of fields ([texture](kinds.md#texture)); `texture_decode` restores them into
+  memory of the asset before the renderer takes them.
 
 ## Typed tables
 

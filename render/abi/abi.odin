@@ -247,6 +247,10 @@ SHADOW_PAGE_CACHED         :: u32(1) << 16
 SHADOW_PAGE_COMPOSED       :: u32(1) << 17
 // Of an entry asked for that the pool could not give, until the pages are given again.
 SHADOW_PAGE_LEFT           :: u32(1) << 18
+// Of an entry the cache draws again for a change the atlas may show the frame
+// before of (render.Shadow_Box.moved): it holds what it held until the atlas
+// composed it again.
+SHADOW_PAGE_SOFT           :: u32(1) << 19
 SHADOW_ENTRY_COARSER       :: 20
 SHADOW_ENTRY_HELD          :: 24
 // What the plan tells a slot (render.Shadow_Slot_Plan.flags): every page lets
@@ -266,7 +270,7 @@ SHADOW_REACH_WORDS         :: 3 * SHADOW_REACH_LISTS
 // groups of the dispatch lie in rows of SHADOW_CULL_ROW.
 SHADOW_WORK_SHIFT          :: 8
 SHADOW_CULL_ROW            :: u32(32768)
-SHADOW_BOX_ROWS            :: 2
+SHADOW_BOX_ROWS            :: 3
 // The farthest depth the cache holds over blocks of each page of its pool
 // (render.Shadow_Raster.hiz): SHADOW_HIZ_BLOCK texels a side at its first
 // mip, each mip after twice as wide, the last the whole page.
@@ -324,7 +328,8 @@ SHADOW_WORDS_LATE          :: SHADOW_WORDS_SKIPPED + 2 * SHADOW_SLOTS
 SHADOW_WORDS_NEEDED        :: SHADOW_WORDS_LATE + SHADOW_MASKS
 SHADOW_WORDS_STALE         :: SHADOW_WORDS_NEEDED + SHADOW_MASKS
 SHADOW_WORDS_MOVED         :: SHADOW_WORDS_STALE + SHADOW_MASKS
-SHADOW_WORDS_ANCESTORS     :: SHADOW_WORDS_MOVED + SHADOW_MASKS
+SHADOW_WORDS_SOFT          :: SHADOW_WORDS_MOVED + SHADOW_MASKS
+SHADOW_WORDS_ANCESTORS     :: SHADOW_WORDS_SOFT + SHADOW_MASKS
 SHADOW_WORDS_ASKED         :: SHADOW_WORDS_ANCESTORS + SHADOW_MASKS
 SHADOW_WORDS_FIRST         :: SHADOW_WORDS_ASKED + SHADOW_MASKS
 SHADOW_WORDS_DRAWN         :: SHADOW_WORDS_FIRST + SHADOW_MASKS
@@ -336,7 +341,7 @@ SHADOW_WORDS_PART          :: SHADOW_WORDS_BOUNDS + 3 * SHADOW_SLOTS * SHADOW_MI
 SHADOW_WORDS_COST          :: SHADOW_WORDS_PART + 4 * SHADOW_POOL_PAGES
 SHADOW_WORDS_TAKEN         :: SHADOW_WORDS_COST + 2 * SHADOW_POOL_PAGES
 SHADOW_WORDS_COUNTS        :: SHADOW_WORDS_TAKEN + 2 * SHADOW_POOL_PAGES
-SHADOW_WORDS_ARGS          :: SHADOW_WORDS_COUNTS + 16
+SHADOW_WORDS_ARGS          :: SHADOW_WORDS_COUNTS + 17
 SHADOW_WORDS_SLOTS         :: SHADOW_WORDS_ARGS + 20
 SHADOW_WORDS_JOBS          :: SHADOW_WORDS_SLOTS + 3 * (SHADOW_SLOTS + 1)
 SHADOW_WORDS_RANK          :: SHADOW_WORDS_JOBS + 2 * SHADOW_POOL_PAGES
@@ -380,6 +385,7 @@ SHADOW_COUNT_MEASURED      :: 10 // two: and what they took
 SHADOW_COUNT_SHORT         :: 12
 SHADOW_COUNT_DROPPED       :: 13 // two: chunks the cull of the cache and of the atlas had no room for
 SHADOW_COUNT_REFRESHED     :: 15 // pages the atlas composed again for what sways in them alone
+SHADOW_COUNT_STALE         :: 16 // pages drawn before that what stays changing under them draws again
 SHADOW_SCALE_ONE           :: 256
 // Of a page of the pool drawn in bands (SHADOW_WORDS_BAND): the rows of it the
 // cache holds from its top, from bit SHADOW_BAND_SHIFT how many times the page

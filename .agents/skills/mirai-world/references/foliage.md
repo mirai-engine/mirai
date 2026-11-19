@@ -307,7 +307,9 @@ views draw is the mesh at rest moved per vertex.
   while the entity is `Drawn_Elsewhere`, which a world copied for Play takes as its own, and sets
   the batch again only where the entity's place, mesh, values, visibility or zone changed. The
   entity stays what it was: its transform, collider and picking are its own, and an outline it is
-  given is drawn around its mesh at rest. It exists because a hand-placed plant that sways is
+  given at a level that shows ([outlines](../../mirai-rendering/references/frame-graph.md#outlines))
+  is drawn around its mesh at rest, made again only after its batch, its `Highlight` or `Outline`
+  or the levels that show changed. It exists because a hand-placed plant that sways is
   better on its own merits; nothing of it imitates another engine.
 - **Rays meet foliage at rest**: traced shadows, reflections, the indirect light and the probes.
   The traced shadow of a swaying canopy under a light no map holds stands still, and the probes
