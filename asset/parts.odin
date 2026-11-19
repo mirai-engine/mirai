@@ -37,6 +37,13 @@ Asset_Object :: struct {
 object_put :: proc(s:^store.Store,original:[]u8) -> (address:store.Hash,error:Error) {
     if s==nil {return {},.Invalid}
     data:=original
+    // The file as it arrived is checked: what is written again from it carries a hash of its own.
+    {
+        arrived:Blob
+        arrived,error=blob_open(original)
+        if error!=.None {return}
+        if !blob_verify_hash(&arrived) {return {},.Hash}
+    }
     if !(object_raw(data) or_return) {
         data=object_raw_write(data) or_return
     }

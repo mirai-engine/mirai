@@ -458,3 +458,31 @@ a_chunk_stored_as_it_is_is_read_in_place :: proc(t:^testing.T) {
     for block in a.owned {testing.expect(t,at<uintptr(raw_data(block)) || at>=uintptr(raw_data(block))+uintptr(len(block)),"the level is no memory of the asset")}
     testing.expect(t,mem.compare(texture_mip(view,0),pixels)==0)
 }
+
+// A file whose content does not match its hash is refused as it arrived, also one a compressor
+// wrote, which the store's object holds written again without it.
+@(test)
+a_damaged_file_is_refused_before_it_is_written_again :: proc(t:^testing.T) {
+    types:Types;types_init(&types);defer types_destroy(&types)
+    s,ok:=parts_store(t,"asset-parts-damaged");if !ok {return}
+    defer store.close(&s)
+    names,files:=kind_files(t,&types)
+    for bytes,at in files {
+        if names[at]!="mesh Open" {continue}
+        a:Asset
+        if !testing.expect_value(t,asset_open(&a,bytes,context.temp_allocator),Error.None) {return}
+        streams,flipped:=0,false
+        for i in 0..<int(a.blob.header.chunk_count) {
+            entry:=blob_chunk(&a.blob,i)
+            if entry.compression==.Stream {streams+=1;continue}
+            if !flipped && entry.size>8 {
+                bytes[entry.offset+entry.size/2]~=0x40
+                flipped=true
+            }
+        }
+        asset_close(&a)
+        if !testing.expect(t,streams>0 && flipped,"a file of a compressed and an uncompressed chunk") {return}
+        _,error:=object_put(&s,bytes)
+        testing.expect_value(t,error,Error.Hash)
+    }
+}
