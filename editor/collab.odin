@@ -216,6 +216,9 @@ Collab_State :: struct {
     watch:platform.Watch,
     watching:bool,
     changed_at,offered_at:f64,
+    libraries:^Collab_Libraries, // of the other editors, as last read (collab_library.odin)
+    reading:^Collab_Libraries,   // and as being read again
+    take:^Collab_Take,           // a package of one of them being taken
     // A guest: an update asked for, and those done.
     update_due:bool,
     updates:int,
