@@ -163,7 +163,11 @@ sway_update :: proc(resident:^Foliage_Resident,t:Sway_Tables,commands:core.Comma
         desc.sway=shadow_sway(kind,top/scale,size)
         if desc.sway>0 {desc.wind=wind_zone_take(resident,key.zone,world.transform.position)}
     }
-    instance:=[1]render.Batch_Instance{render.batch_instance(world.transform.position,world.transform.rotation,world.transform.scale)}
+    // Drawn exactly as its transform says: its rotation and scale whole in the
+    // basis of the batch, not packed in its instance.
+    m:=mm.quat_to_mat3(world.transform.rotation)
+    for i in 0..<3 {for j in 0..<3 {desc.basis[i,j]=m[i,j]*world.transform.scale[j]}}
+    instance:=[1]render.Batch_Instance{render.batch_instance(world.transform.position,1,1)}
     next,error:=render.batch_set(app.renderer,id,held.handle,desc,instance[:])
     if error!="" {
         if held.handle!=0 {render.batch_remove(app.renderer,held.handle)}

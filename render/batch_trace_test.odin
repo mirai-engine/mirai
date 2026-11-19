@@ -2,6 +2,7 @@ package mirai_render
 
 import "core:fmt"
 import "core:math"
+import "core:math/linalg"
 import "core:testing"
 import "mirai:rhi"
 import "mirai:rhi/shared_device"
@@ -188,5 +189,74 @@ a_native_tlas_larger_than_the_upload_ring_is_built_and_met :: proc(t: ^testing.T
 		}
 	}
 	fmt.printfln("native TLAS of %d instances: a frame records in %.3f ms of CPU, %.3f ms when it builds the TLAS", count + 1, cost[0], cost[1])
+	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
+}
+
+// A post 12 m long turned by a rotation its packed instance cannot hold,
+// seen closely at its end with its shadow under it: a batch of one with that
+// rotation and scale as its basis draws, shades and casts as the instance of
+// the scene of the same transform, by each tracer; packed in its instance,
+// it would stand apart from it.
+@(test)
+a_batch_with_a_basis_is_drawn_where_its_transform_says :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 160, 96, DEFAULT_SETTINGS) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
+	box := trace_box(r)
+	floor := Instance_Desc{object_id = 1, mesh = box, transform = trace_placed({0, -0.1, 0}, {40, 0.2, 40}), tint = {0.8, 0.8, 0.8}}
+	rotation := linalg.quaternion_angle_axis_f32(0.7123, linalg.normalize(Vec3{0.05, 1, 0.031}))
+	scale := Vec3{12, 0.2, 0.3}
+	centre := Vec3{0, 0.6, 0}
+	m := linalg.matrix3_from_quaternion_f32(rotation)
+	basis: matrix[3, 3]f32
+	for i in 0 ..< 3 {for j in 0 ..< 3 {basis[i, j] = m[i, j] * scale[j]}}
+	transform := Mat4(1)
+	for i in 0 ..< 3 {
+		for j in 0 ..< 3 {transform[i, j] = basis[i, j]}
+		transform[i, 3] = centre[i]
+	}
+	post := Instance_Desc{object_id = 2, mesh = box, transform = transform, tint = {0.9, 0.3, 0.2}}
+	end := centre + linalg.quaternion128_mul_vector3(rotation, Vec3{6, 0, 0})
+	// Without indirect light: what differs is where things are, not the noise of the probes.
+	sun := Sun_Desc{direction = {0.1, 1, 0.05}, color = {1, 1, 1}, illuminance = 1.5 * math.PI, enabled = true, scattering = 1}
+	sky := Environment{}
+	camera := Camera{position = end + {0, 7, 7}, forward = {0, -7, -7}, up = {0, 1, 0}, fov_y = 3, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	rms_of :: proc(a, b: Trace_Image) -> (rms: f64, worst: f32) {
+		total := f64(0)
+		for i in 0 ..< len(a.pixels) / 4 {
+			for c in 0 ..< 3 {
+				d := abs(f32(a.pixels[i * 4 + c]) - f32(b.pixels[i * 4 + c]))
+				total += f64(d * d)
+				worst = max(worst, d)
+			}
+		}
+		return math.sqrt(total / f64(len(a.pixels) / 4 * 3)), worst
+	}
+	for provider in ([]Trace_Mode{.Software, .Hardware}) {
+		if !fixture_traces(r, provider) {continue}
+		applied := r.settings
+		applied.trace_mode = provider
+		testing.expect(t, renderer_apply_settings(r, applied))
+		scene_given(r, {floor, post}, nil, sun, sky)
+		instanced := trace_frame(t, r, camera)
+		defer delete(instanced.pixels)
+		scene_given(r, {floor}, nil, sun, sky)
+		desc := Batch_Desc{mesh = box, tint = {0.9, 0.3, 0.2}, flags = {.Casts_Shadow, .Ray_Visible}, basis = basis}
+		handle, error := batch_set(r, 0, r.world_key, desc, {batch_instance(centre, 1, 1)})
+		testing.expect_value(t, error, "")
+		exact := trace_frame(t, r, camera)
+		defer delete(exact.pixels)
+		desc.basis = {}
+		_, error = batch_set(r, handle, r.world_key, desc, {batch_instance(centre, rotation, scale)})
+		testing.expect_value(t, error, "")
+		packed := trace_frame(t, r, camera)
+		defer delete(packed.pixels)
+		testing.expect(t, batch_remove(r, handle))
+		if len(instanced.pixels) == 0 || len(exact.pixels) != len(instanced.pixels) || len(packed.pixels) != len(instanced.pixels) {continue}
+		rms, worst := rms_of(exact, instanced)
+		apart, _ := rms_of(packed, instanced)
+		testing.expectf(t, rms < 1 && apart > 4 * max(rms, 0.5), "%v: with its basis the batch differs from the instance by %.2f (rms of 0-255, at most %v); packed, by %.2f", provider, rms, worst, apart)
+	}
 	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
 }
