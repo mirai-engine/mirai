@@ -966,3 +966,39 @@ the_packages_of_a_joined_project_are_the_hosts :: proc(t:^testing.T) {
     testing.expect(t,len(paths)>1)
     for path in paths {testing.expectf(t,read_text(root,path)==read_text(joined,path),"%s is the host's",path)}
 }
+
+// A host that only opened its project in the editor holds Fast builds alone:
+// a join takes them from it as an editor would and imports nothing, though
+// the source is in the folder it wrote.
+@(test)
+a_join_from_a_host_with_only_fast_builds_fetches_them_and_imports_nothing :: proc(t:^testing.T) {
+    w:Test_Net
+    if !test_net(t,&w,"share-fast",2) {return}
+    defer test_net_destroy(&w)
+    root:=fmt.tprintf("%s/host",w.folder)
+    file_put(root,"project.mirai",transmute([]u8)string("{}\n"))
+    // An uncompressed TGA, top to bottom, of noise.
+    SIDE :: 16
+    image:=make([]u8,18+SIDE*SIDE*4,context.temp_allocator)
+    image[2],image[12],image[14],image[16],image[17]=2,SIDE,SIDE,32,0x28
+    copy(image[18:],noise(SIDE*SIDE*4,3))
+    file_put(root,"assets/poster.tga",image)
+    options:=sources.Library_Options{store=&w.peers[0].s,root=root,fast_textures=true}
+    imported,import_error:=sources.ingest(fmt.tprintf("%s/assets/poster.tga",root),options,allocator=context.temp_allocator)
+    if !testing.expectf(t,import_error.code==.None,"%s",import_error.message) {return}
+    testing.expect(t,!imported.final,"the host's build is Fast")
+    added:=sources.project_add(root,imported.manifest,"",nil,options,context.temp_allocator)
+    if !testing.expectf(t,len(added.failures)==0 && len(added.missing)==0,"%v",added) {return}
+    if !host_offer(t,&w,root) {return}
+    test_connect(&w,1,0)
+    joined:=fmt.tprintf("%s/joined",w.folder)
+    report,error:=test_join(t,&w,1,join_desc(&w,0,joined))
+    if !testing.expectf(t,error=="","%s",error) {return}
+    testing.expect(t,os.exists(fmt.tprintf("%s/assets/poster.tga",joined)),"the source is in the joined folder")
+    testing.expectf(t,report.packages.fetched==1 && report.packages.ingested==0 && len(report.packages.missing)==0 && len(report.packages.failures)==0,"%v",report.packages)
+    digits:[64]u8
+    key:=store.hex(imported.key,&digits)
+    fast,fast_error:=store.ref_get(&w.peers[1].s,asset.REF_IMPORTS_FAST,key)
+    _,final_error:=store.ref_get(&w.peers[1].s,asset.REF_IMPORTS,key)
+    testing.expect(t,fast_error==.None && fast==imported.build && final_error==.Missing,"the joiner names the Fast build as Fast")
+}

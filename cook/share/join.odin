@@ -795,7 +795,9 @@ folders_prune :: proc(root,path:string) {
 }
 
 // The project's packages refreshed with the peers as the source, on a thread
-// of its own, while this one says how far it is.
+// of its own, while this one says how far it is: as an editor refreshes them,
+// a Final or a Fast build taken from the store and then from the peers, and a
+// source imported only when none gives one, in the quality an editor imports.
 @(private)
 join_packages :: proc(d:^Join_Desc,folder:string,allocator:runtime.Allocator) -> sources.Library_Report {
     n:=d.node
@@ -807,7 +809,7 @@ join_packages :: proc(d:^Join_Desc,folder:string,allocator:runtime.Allocator) ->
         done:bool,
     }
     work:=Work{folder=folder,allocator=allocator}
-    work.options={store=n.s,source=node_source(n),root=folder,plugins=d.library,worker=d.worker,progress=d.output}
+    work.options={store=n.s,source=node_source(n),fast_textures=true,root=folder,plugins=d.library,worker=d.worker,progress=d.output}
     t:=thread.create_and_start_with_data(&work,proc(data:rawptr) {
         w:=(^Work)(data)
         w.report=sources.project_refresh(w.folder,w.options,w.allocator)

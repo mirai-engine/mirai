@@ -647,7 +647,8 @@ fetch_refs :: proc(x:^Exchange,namespace:string,names:[]string,addresses:[]store
     for {
         for next<len(names) && count<FETCH_WINDOW {
             q,error:=query_add(x,.Ref,namespace,names[next],-1)
-            if error==.Full && count>0 {break}
+            // No slot: one frees once a question asked before is answered or its peers leave.
+            if error==.Full {break}
             if error!=.None {result=error;break}
             x.queries[q.index].waiters+=1
             held[count]={int(q.index),next}

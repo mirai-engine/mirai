@@ -44,7 +44,7 @@ RECORD_BYTES :: 16<<20 // the most a record takes as text: a larger one is refus
 REF_PACKAGES :: "packages"         // <package id>: its manifest, on a machine that ingested it
 REF_MANIFESTS :: "manifests"       // <BLAKE3 of the text of a manifest>: its object, what a pin names
 REF_IMPORTS :: "imports"           // <import_key>: a build with Final textures, which peers share
-REF_IMPORTS_FAST :: "imports-fast" // <import_key>: a build with Fast textures, never shared
+REF_IMPORTS_FAST :: "imports-fast" // <import_key>: a build with Fast textures, which peers share and a cook never takes
 REF_BUILDS :: "builds"             // <build_select>: the build the refresh of this machine chose
 REF_CACHE_PREFIX :: "cache-"       // and the name of a folder of cook/cache: <key>-<version>
 REF_ORIGINS :: "origins"           // <origin_name>: the manifest of the package its source was ingested as on this machine
