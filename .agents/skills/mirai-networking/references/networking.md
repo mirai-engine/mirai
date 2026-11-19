@@ -100,8 +100,10 @@ like `replication.hysteresis`) and the values it admits.
     fixed table of sets; a full set gives its slot that frees soonest to the newcomer, so a crowd
     of guessers never shuts out who brings the invitation, which joins with no added round trip.
 - **Format.** Every datagram starts with a type byte. The handshake ends in an XXH3 checksum keyed
-  with `protocol_id`, which only filters strays; data ends in the ChaCha20-Poly1305 tag, with the
-  type, sequence and the slot of the connection at the receiver as associated data. The protocol
+  with `protocol_id`, which only filters strays; data ends in the AEGIS-128L tag, with the type,
+  sequence and the slot of the connection at the receiver as associated data. AEGIS runs on the
+  AES instructions where the processor has them and on a portable implementation, about ten times
+  slower, where it does not. The protocol
   hash includes fragments, events, input, channels and `TRANSPORT_VERSION`, which rises when the
   format of the handshake or of data datagrams changes.
 - **Roaming.** A data datagram from an address no connection has goes to the connection of the

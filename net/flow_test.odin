@@ -277,7 +277,7 @@ bulk_stream :: proc(t:^testing.T,rtt:f64,loss:f32,clients:int,seconds:f64,jitter
         warm:=w.now-start>=BULK_WARM
         if !warm {
             stats,_:=connection_stats(server,on_server[0])
-            resent_before=stats.chunks_resent
+            resent_before=stats.bytes_resent
         }
         for i in 0..<clients {
             if sent[i]==len(blob) {sent[i]=0}
@@ -317,7 +317,7 @@ bulk_stream :: proc(t:^testing.T,rtt:f64,loss:f32,clients:int,seconds:f64,jitter
     sent_datagrams:=w.sim.stats.sent-sim_before.sent
     result.drop_share=f64(w.sim.stats.dropped_queue-sim_before.dropped_queue)/f64(max(sent_datagrams,1))
     stats,_:=connection_stats(server,on_server[0])
-    result.resent_share=f64(stats.chunks_resent-resent_before)*CHUNK_BYTES/max(got[0],1)
+    result.resent_share=f64(stats.bytes_resent-resent_before)/max(got[0],1)
     return result,true
 }
 
