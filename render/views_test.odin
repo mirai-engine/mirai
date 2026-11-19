@@ -80,11 +80,14 @@ the_targets_of_texture_views_take_room_from_the_texture_pool :: proc(t: ^testing
 // view of the window that aims at 1080 lines holds what a wide view over far
 // ground reads, whatever its display; one that renders more lines takes
 // more, up to what a pool holds; a small view drawn into a texture takes a
-// small one, which still holds the safety net of every level of the sun.
+// smaller one, which still holds the band of pages every level of the sun
+// reads of far ground.
 @(test)
 the_pool_of_shadow_pages_follows_the_pixels_a_view_renders :: proc(t: ^testing.T) {
-	// Pages a still wide view over far ground read rendering 1920x1080 lines (Dreamscape).
+	// Pages a wide view flying over far ground reads rendering 1920x1080 lines,
+	// and a still one rendering 860x485 (Dreamscape).
 	WIDE_VIEW_READ :: 1442
+	SMALL_VIEW_READ :: 796
 	window :: proc(width, height, lines: u32) -> u32 {
 		scale := views_render_scale(lines, f32(height), 1)
 		return shadow_pool_pages(render_extent(width, scale), render_extent(height, scale))
@@ -93,6 +96,6 @@ the_pool_of_shadow_pages_follows_the_pixels_a_view_renders :: proc(t: ^testing.T
 	small := shadow_pool_pages(256, 256)
 	testing.expectf(t, hd >= WIDE_VIEW_READ && qhd == hd, "1080 lines take %d pages at 1920x1080 and %d at 2560x1440", hd, qhd)
 	testing.expectf(t, more > hd && most == abi.SHADOW_POOL_PAGES, "1440 lines take %d pages, 4320 %d", more, most)
-	testing.expectf(t, 8 * small <= hd && small >= 4 * SHADOW_SUN_LEVELS, "a view of 256x256 takes %d pages", small)
+	testing.expectf(t, small < hd && shadow_pool_pages(860, 485) >= SMALL_VIEW_READ, "a view of 256x256 takes %d pages, one of 860x485 %d", small, shadow_pool_pages(860, 485))
 	for pages in ([?]u32{hd, more, most, small}) {testing.expectf(t, pages % abi.SHADOW_POOL_ROW == 0, "%d pages are whole rows", pages)}
 }
