@@ -629,7 +629,9 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
   with a file; then refreshes the packages as an editor does, with the peers as the
   `cache.Source` of the library: a Final or a Fast build from the store, then from the peers, by
   key, and a source in the folder is imported, in the quality an editor imports, only when no
-  peer gives a build of it. A build that cooks refreshes requiring Final, so a Fast build a join
+  peer gives a build of it. A join ends within a bounded time without progress whatever a peer
+  does or withholds: what is wanted while no chunk byte arrives and no object completes for a
+  while fails, reported by path, and the files after it are asked. A build that cooks refreshes requiring Final, so a Fast build a join
   took never ships. A refresh asks the source for every
   manifest and build it lacks in one batch before it goes package by package, so it waits for the
   peers about once, not once per package. It prints progress at a steady pace and, at the end,
