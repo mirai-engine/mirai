@@ -306,7 +306,10 @@ session_open :: proc(root,folder:string,mode:Build_Mode,no_build:bool,timeout:in
     editor_args:=session_api_args(editor_args)
     turn:workspace.Lock
     charge:i64
-    if !slice.contains(editor_args,"--no-gpu") {turn,charge=gpu_turn(root,folder,fmt.tprintf("session start %s",folder))}
+    if !slice.contains(editor_args,"--no-gpu") {
+        turned:bool
+        if turn,charge,turned=gpu_turn(root,folder,fmt.tprintf("session start %s",folder));!turned {return {},1}
+    }
     defer workspace.lock_release(&turn)
     command:=make([dynamic]string)
     append(&command,project_engine_paths(root,folder,engine).editor_program,"--project",folder,"--headless")

@@ -168,7 +168,8 @@ cmd_doctor :: proc(root:string,args:[]string) -> int {
 // The device rhi would give a renderer, in a process of its own: a driver
 // that takes the process down is a finding, not the end of the report.
 gpu_probe :: proc(root:string) -> int {
-    turn,_:=gpu_turn(root,"","doctor --probe-gpu")
+    turn,_,turned:=gpu_turn(root,"","doctor --probe-gpu")
+    if !turned {return 1}
     defer workspace.lock_release(&turn)
     device,error:=rhi.device_create({app_name="mirai doctor",allow_hardware_ray_tracing=true,upload_bytes_per_frame=1<<20})
     if device==nil {

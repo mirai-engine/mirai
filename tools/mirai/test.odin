@@ -126,10 +126,18 @@ cmd_test :: proc(root:string,args:[]string) -> int {
         if p.nothing {continue}
         if len(packages)>1 {fmt.printfln("== %s",p.path)}
         options:=build.Test_Options{names=p.names[:],timeout=timeout,quiet=quiet}
-        lock,measuring:=test_measure_begin(root,p.path,benchmark,p.gpu,&options)
-        // After the measurement, which no turn of the GPU waits for while it holds one.
+        // The GPU first and the measurement after it: what holds the
+        // measurement never waits for room on the GPU, and while this waits
+        // for the measurement its turn says it is idle (workspace.measure_try).
         turn:workspace.Lock
-        if p.gpu {turn,_=gpu_turn(root,"",fmt.tprintf("test %s",p.path))}
+        if p.gpu {
+            turned:bool
+            if turn,_,turned=gpu_turn(root,"",fmt.tprintf("test %s",p.path));!turned {
+                append(&failed,p.path)
+                continue
+            }
+        }
+        lock,measuring:=test_measure_begin(root,p.path,benchmark,p.gpu,&options)
         ran:=time.tick_now()
         ok:bool
         names:[]string
