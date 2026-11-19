@@ -154,7 +154,7 @@ Job :: struct {
 }
 
 @(private)
-Copy :: struct {from,to:string,folder:bool}
+Copy :: struct {from,to:string,folder,binary:bool}
 
 // How long job_wait waits on one compiler before it looks at the others.
 @(private)
@@ -387,9 +387,7 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
 @(private)
 job_plugin_restore :: proc(job:^Job,index:int) -> bool {
     lib:=&job.plugins[index]
-    if os.make_directory_all(job.work)!=nil && !os.is_dir(job.work) {return false}
-    staged:=project.path(job.work,strings.concatenate({job_plugin_name(job,index),project.LIBRARY_SUFFIX},context.temp_allocator),allocator=context.temp_allocator)
-    if !plugin_cache_take(job.engine_root,lib,job.plugin_hashes[index],staged) || !publish(staged,lib.library,job_plugin_retired(job,lib)) {return false}
+    if !plugin_cache_take(job.engine_root,lib,job.plugin_hashes[index]) {return false}
     job_plugin_stamp(job,index)
     job.plugin_published[index]=true
     job.result.plugins_built+=1
@@ -546,7 +544,8 @@ job_project_start :: proc(job:^Job) -> ^Job {
                 // The game built for another folder is the same executable.
                 if current==saved && !present && job.target==.Game && built!="" && !project.path_same(built,job.published) && os.is_file(built) {
                     folder:=job.published[:strings.last_index_byte(job.published,'/')]
-                    present=(os.make_directory_all(folder)==nil || os.is_dir(folder)) && os.copy_file(job.published,built)==nil
+                    present=(os.make_directory_all(folder)==nil || os.is_dir(folder)) &&
+                        copy_binary(job.published,built)
                 }
                 if present && len(job.compiles)>0 {
                     job.project_stands=true

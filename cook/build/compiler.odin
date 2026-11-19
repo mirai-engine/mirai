@@ -438,15 +438,6 @@ compile_end :: proc(c:^Compile,exit_code:int,allocator:=context.allocator,links:
     return diagnostics,text,failure,said[0]
 }
 
-// Puts what a compiler wrote at staged in place of published. Windows does
-// not replace a file a program has loaded, and lets it be renamed: the
-// previous one goes to retired first. False when it cannot be replaced.
-@(private)
-publish :: proc(staged,published,retired:string) -> bool {
-    if os.rename(staged,published)==nil {return true}
-    return os.rename(published,retired)==nil && os.rename(staged,published)==nil
-}
-
 // What a published build is stamped with: the fingerprint of the sources its
 // compiler read (fingerprint), with root, compiler, flags and tests.
 @(private)
