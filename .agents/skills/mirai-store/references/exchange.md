@@ -56,7 +56,8 @@ in `exchange/wire.odin`.
   frame codecs its store decodes (`store.codecs_read`), and a server sends a frame as stored when
   the receiver decodes its codec, else decoded and encoded again in an open codec the receiver
   decodes, or as it is (`store.chunk_read_in`); until a receiver says, chunks go as they are. The
-  receiver decodes what it gets, hashes the bytes and keeps the frame as it came. Peers of builds
+  receiver's store decodes what it gets, checks it against its address and keeps the frame as it
+  came (`store.chunk_put_frame`), one decode per chunk asked. Peers of builds
   with different compressors exchange every object, and each ends reading all of them.
 - Nothing is checked on serve. Nothing unverified reaches the store: a chunk is taken only as the
   answer to an entry asked of that peer or as a descendant of the entry it is answering within its
