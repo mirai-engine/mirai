@@ -2457,16 +2457,74 @@ render_probes_settle_to_the_same_light_with_the_time :: proc(t: ^testing.T) {
 	testing.expectf(t, abs(sums[1] / sums[0] - 1) < 0.005 && most <= 4, "the indirect light with the time is %.2f%% of that without, a pixel %d apart", sums[1] / sums[0] * 100, most)
 }
 
+// A batch that sways in a wind (Batch_Desc.sway, batches_wind) is met by the
+// rays of the probe volume at rest whatever the wind: in a canopy around the
+// probes, a wind that blows or gusts gives them the light and the turns of
+// the same scene without it, as far as two runs of one scene agree.
+@(test)
+render_probes_see_swaying_batches_at_rest :: proc(t: ^testing.T) {
+	Case :: struct {name: string, share: f32, gusts: bool}
+	cases := [3]Case{{"calm", 0, false}, {"blowing", 1, false}, {"gusting", 0.5, true}}
+	light: [3]f64
+	traced: [3]int
+	for c, k in cases {
+		f: Cube_Fixture
+		settings := test_settings()
+		settings.taa = false
+		settings.probe_budget = 64
+		if !cube_fixture_init(t, &f, 96, 64, settings, programs = true) {return}
+		defer fixture_destroy(&f)
+		defer expect_clean(t, f.device)
+		r := f.renderer
+		pulse := program_find(r, "Pulse", .Surface)
+		if !testing.expect(t, pulse != nil, "the tests have the Pulse program") {return}
+		timed := DEFAULT_MATERIAL
+		timed.program_id, timed.custom_params = pulse.id, program_defaults(pulse)
+		testing.expect(t, materials_set(r, {timed}))
+		instances := []Instance_Desc{
+			{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {200, 0.2, 200}), tint = {0.8, 0.8, 0.8}, material = 1},
+			{object_id = 2, mesh = f.cube, transform = trs({0, 1.5, -6}, {200, 3, 0.2}), tint = {0.7, 0.6, 0.5}},
+		}
+		sun := Sun_Desc{direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 3, enabled = true, indirect = 1, scattering = 1}
+		scene_given(r, instances, nil, sun, {sky = {0.2, 0.3, 0.5}})
+		// Layers of leaves half a metre apart around the probes, swaying up to a metre,
+		// whose program reads the time: the rays that meet them are traced at
+		// every turn of their probes.
+		leaves := make([dynamic]Batch_Instance, context.temp_allocator)
+		for x in 0 ..< 4 {for y in 0 ..< 6 {for z in 0 ..< 3 {append(&leaves, batch_instance({f32(x) * 2.5 - 4 + f32(y % 2), 0.4 + f32(y) * 0.5, f32(z) * 2.5 - 5}, 1, {2, 0.08, 2}))}}}
+		batch, problem := batch_set(r, 0, 0, {mesh = f.cube, material = 1, tint = 0.4, flags = {.Casts_Shadow, .Ray_Visible}, sway = 0.5}, leaves[:])
+		if !testing.expectf(t, problem == "", "%s", problem) {return}
+		defer batch_remove(r, batch)
+		camera := Camera{position = {0, 2, 4}, forward = {0, -1, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 200, exposure = UNIT_EXPOSURE}
+		for frame in 0 ..< 1200 {
+			testing.expect(t, batches_wind(r, 0, c.share + (0.4 * math.sin(f32(frame) * 0.1) if c.gusts else 0)))
+			testing.expect(t, renderer_frame(r, {camera = camera, time = f32(frame) / 60, inspection = {mode = .Indirect}}), r.error)
+			if frame < 944 {continue}
+			rhi.device_wait_idle(r.device)
+			traced[k] += int(r.stats.probes_traced)
+		}
+		// The light the probes hold, decoded from the atlas (probe_light_decode).
+		desc := rhi.texture_desc(r.device, r.ddgi.irradiance)
+		atlas := make([]f16, int(desc.width * desc.height) * 4)
+		defer delete(atlas)
+		testing.expect(t, rhi.texture_read(r.device, r.ddgi.irradiance, slice.to_bytes(atlas)))
+		for v, i in atlas {if i % 4 != 3 {light[k] += math.pow(f64(v), 5)}}
+	}
+	for k in 1 ..< len(cases) {
+		testing.expectf(t, abs(light[k] / light[0] - 1) < 0.002 && abs(traced[k] - traced[0]) <= traced[0] / 8, "%s: the probes see the leaves as without wind: their light %.3f%% of it, %d probes traced over 256 frames against %d", cases[k].name, light[k] / light[0] * 100, traced[k], traced[0])
+	}
+}
+
 // When the volume moves with the camera, the new probes a pixel reads are
 // gathered in the frame they come, and those none reads wait behind them,
-// taking at most an eighth of the budget a frame while it moves and all that
-// is left once it stops.
+// taking at most an eighth of the budget a frame while it moves; once it
+// stops, all come before any probe their coming woke.
 @(test)
 render_probes_new_unread_wait_behind_those_read :: proc(t: ^testing.T) {
 	f: Cube_Fixture
 	settings := test_settings()
 	settings.taa = false
-	settings.probe_budget = 128
+	settings.probe_budget = 48
 	if !cube_fixture_init(t, &f, 96, 64, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
@@ -2478,7 +2536,7 @@ render_probes_new_unread_wait_behind_those_read :: proc(t: ^testing.T) {
 	scene_given(r, instances, nil, sun, {sky = {0.2, 0.3, 0.5}})
 	camera := Camera{position = {0, 2, 4}, forward = {0, -1, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 200, exposure = UNIT_EXPOSURE}
 	// Past the updates that gather the world shown anew.
-	for _ in 0 ..< 400 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	for _ in 0 ..< 800 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	testing.expect(t, r.gi_warm_spread == 0, "the world is gathered")
 	g := &r.ddgi
 	share := int(max(g.budget / 8, 1))
@@ -2504,9 +2562,22 @@ render_probes_new_unread_wait_behind_those_read :: proc(t: ^testing.T) {
 	}
 	testing.expectf(t, read_new > 0 && read_waiting == 0, "the new probes a pixel reads are gathered in the frame they come: %d of %d wait", read_waiting, read_new)
 	testing.expectf(t, unread > share && unread_taken <= share, "the new probes none reads take at most %d of the budget: %d of %d", share, unread_taken, unread)
-	// Once the volume stops they take all the urgent ones leave of the budget.
+	// Once the volume stops the new ones come before those their coming woke,
+	// which are traced once after they all came.
 	frames := (unread + int(g.budget) - 1) / int(g.budget) + 4
-	for _ in 0 ..< frames {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	woken := 0
+	for _ in 0 ..< frames {
+		waiting := 0
+		fresh := probes_read(t, r)
+		// New: of another cell, or moved far in its own and untraced there (Probe.frames.x 0).
+		for p, i in fresh {if p.cell.xyz != probe_slot_cell_of(g, u32(i)) || p.frames.x == 0 {waiting += 1}}
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		if waiting < int(g.budget) {continue}
+		rhi.device_wait_idle(r.device)
+		testing.expect(t, rhi.buffer_read_slice(r.device, g.chosen, 0, chosen))
+		for slot in chosen[1:1 + min(chosen[0], g.budget)] {if fresh[slot].cell.xyz == probe_slot_cell_of(g, slot) && fresh[slot].frames.x != 0 {woken += 1}}
+	}
+	testing.expectf(t, woken == 0, "while new probes wait, none of the others is traced: %d were", woken)
 	stale := 0
 	for p, i in probes_read(t, r) {if p.cell.xyz != probe_slot_cell_of(g, u32(i)) {stale += 1}}
 	testing.expectf(t, stale == 0, "every new probe is gathered within %d frames of the volume stopping: %d are not", frames, stale)
@@ -4800,3 +4871,4 @@ taa_weighs_the_light_as_it_shows :: proc(t: ^testing.T) {
 	testing.expectf(t, scale[0] / scale[1] > 500, "the key light changes the light scale: %v", scale)
 	testing.expectf(t, change[0] > 0 && abs(change[1] / change[0] - 1) < 0.05, "the highlight changes as much from frame to frame under either light scale: %v nits", change)
 }
+
