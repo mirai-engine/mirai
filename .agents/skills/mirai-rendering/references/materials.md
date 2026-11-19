@@ -244,9 +244,14 @@ A texture of an asset resides with the levels the GPU samples of it
   largest one held. A loaded texel (`mirai_load_texture`) reports nothing: data that does not stream
   would pay a read of the buffer at each pixel for no level.
 - **Which frames.** Those the window shows; an offscreen frame only when it waits for its textures
-  (`Frame_Desc.streamed`). The stages of extensions (decals, particles), the sky and the UI do not
-  report: what only they show keeps the levels it has unless the pool asks for them. Nothing asks
-  for a level before a frame samples it; the streaming sources still load sections with their tails.
+  (`Frame_Desc.streamed`). The resolve of each Surface program, and that of the rows, records in
+  one window frame of `TEXTURE_FEEDBACK_TURNS`, in turns by program, and in every frame that waits
+  for its textures; in the others it takes its pipeline made without the recording (the constant
+  `quiet`), once made. A level a view newly needs is asked for within a turn; a still view asks
+  for the same levels, since a window holds a turn of every program. The stages of extensions
+  (decals, particles), the sky and the UI do not report: what only they show keeps the levels it
+  has unless the pool asks for them. Nothing asks for a level before a frame samples it; the
+  streaming sources still load sections with their tails.
 - **Hysteresis.** A finer level is taken as soon as a frame reads it; levels go only when a window
   of `TEXTURE_FEEDBACK_FRAMES` frames read it `TEXTURE_KEEP_LEVELS` coarser, the proportion of
   `RESIDENT_KEEP`. A texture no frame of a window sampled is unseen and keeps its levels: what was
