@@ -23,7 +23,8 @@ Headless_Editor :: struct {
 // editor may still run: headless_close ends it.
 headless_open :: proc(e:^Headless_Editor,tool,label,editor,project,checkout,log:string,size:[2]int,port:^int) -> bool {
     for session_answers(port^) {port^+=1}
-    turn,charge:=gpu_turn(checkout,project,fmt.tprintf("%s, %s in %s",tool,label,project))
+    turn,charge,turned:=gpu_turn(checkout,project,fmt.tprintf("%s, %s in %s",tool,label,project))
+    if !turned {return false}
     defer workspace.lock_release(&turn)
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,editor,"--project",project,"--headless","--api-port",fmt.tprintf("%d",port^),"--width",fmt.tprintf("%d",size.x),"--height",fmt.tprintf("%d",size.y))
