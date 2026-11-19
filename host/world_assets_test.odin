@@ -64,3 +64,19 @@ what_no_world_names_unloads_at_the_next_mark :: proc(t:^testing.T) {
     testing.expect_value(t,app_assets_mark(&app),1)
     testing.expect(t,!assets_loaded(&assets,meshes[1]))
 }
+
+// A list the marks reach is its storage's own when it begins an allocation no
+// other list reaches; a view into another, or memory freed, is not.
+@(test)
+a_list_that_views_another_is_not_owned :: proc(t:^testing.T) {
+    Lists :: struct {owned,view:[]base.Asset_Id}
+    a:=Lists{owned=make([]base.Asset_Id,4)}
+    defer delete(a.owned)
+    found,tracked:=lists_not_owned({a})
+    if !testing.expect(t,tracked,"runs under the memory tracker") {return}
+    testing.expect_value(t,len(found),0)
+    for view in ([][]base.Asset_Id{a.owned,a.owned[1:]}) {
+        found,_=lists_not_owned({a,Lists{view=view}})
+        testing.expect_value(t,len(found),1)
+    }
+}

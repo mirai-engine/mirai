@@ -70,11 +70,15 @@ work_ready :: proc(data:^Terrain_Data,job_system:^jobs.Job_System,allocator:runt
     workers:=jobs.worker_count(job_system)
     data.jobs=workers>1?job_system:nil
     if len(data.work)>0 {return true}
-    slots,error:=make([]Work_Slot,clamp(2*workers,WORK_SLOTS_MIN,WORK_SLOTS_MAX),allocator)
+    count:=clamp(2*workers,WORK_SLOTS_MIN,WORK_SLOTS_MAX)
+    block,error:=make([]Work_Slot,count,allocator)
     if error!=nil {return false}
-    for &slot in slots {
+    slots,no_slots:=make([]^Work_Slot,count,allocator)
+    if no_slots!=nil {delete(block,allocator);return false}
+    for &slot,i in block {
         chunk_mesh_init(&slot.mesh,allocator);slot.allocator=allocator
         for i in 0..<4 {slot.border.sides[i]=make([dynamic]u8,allocator);slot.border.corners[i]=make([dynamic]u8,allocator)}
+        slots[i]=&slot
     }
     data.work=slots
     return true
@@ -82,21 +86,25 @@ work_ready :: proc(data:^Terrain_Data,job_system:^jobs.Job_System,allocator:runt
 
 @(private)
 work_free :: proc(data:^Terrain_Data) {
-    for &slot in data.work {
+    for slot in data.work {
         chunk_mesh_destroy(&slot.mesh)
         piece_border_destroy(&slot.border)
         delete(slot.cuts)
         page_reader_destroy(&slot.read,slot.allocator)
         shared_free(slot.page)
     }
-    if len(data.work)>0 {delete(data.work,data.work[0].allocator)}
+    if len(data.work)>0 {
+        allocator:=data.work[0].allocator
+        free(data.work[0],allocator) // the block of every slot
+        delete(data.work,allocator)
+    }
     data.work=nil
 }
 
 // Waits for the jobs that read source, or every one for nil.
 @(private)
 work_wait :: proc(data:^Terrain_Data,source:^Source) {
-    for &slot in data.work {
+    for slot in data.work {
         if slot.kind==.None || source!=nil && (!slot.reads || slot.source!=source && slot.join.ground!=source && !edges_read(&slot.join,source)) || !jobs.pending(&slot.counter) {continue}
         jobs.wait(data.jobs,jobs.OWNER,&slot.counter)
     }
@@ -105,7 +113,7 @@ work_wait :: proc(data:^Terrain_Data,source:^Source) {
 // Whether a slot holds a job or a result over source, nil for any.
 @(private)
 work_busy :: proc(data:^Terrain_Data,source:^Source) -> bool {
-    for &slot in data.work {if slot.kind!=.None && (source==nil || slot.source==source || slot.join.ground==source || edges_read(&slot.join,source)) {return true}}
+    for slot in data.work {if slot.kind!=.None && (source==nil || slot.source==source || slot.join.ground==source || edges_read(&slot.join,source)) {return true}}
     return false
 }
 
@@ -115,13 +123,13 @@ work_busy :: proc(data:^Terrain_Data,source:^Source) -> bool {
 @(private)
 work_slot :: proc(data:^Terrain_Data,urgent,background:bool) -> ^Work_Slot {
     used,running:=0,0
-    for &slot in data.work {
+    for slot in data.work {
         if slot.kind!=.None && !slot.urgent {used+=1}
         if slot.kind==.Build && slot.background && jobs.pending(&slot.counter) {running+=1}
     }
     if !urgent && 2*used>=len(data.work) {return nil}
     if background && data.jobs!=nil && running>=max(jobs.worker_count(data.jobs)/WORK_BACKGROUND_SHARE,1) {return nil}
-    for &slot in data.work {if slot.kind==.None {return &slot}}
+    for slot in data.work {if slot.kind==.None {return slot}}
     return nil
 }
 
@@ -194,7 +202,7 @@ work_page :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,grid:Gri
 // Whether a job reads page index of a grid of source.
 @(private)
 work_reading :: proc(data:^Terrain_Data,source:^Source,grid:Grid_Kind,index:int) -> bool {
-    for &slot in data.work {if slot.kind==.Page && slot.source==source && slot.grid==grid && slot.index==index {return true}}
+    for slot in data.work {if slot.kind==.Page && slot.source==source && slot.grid==grid && slot.index==index {return true}}
     return false
 }
 

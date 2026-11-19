@@ -3,6 +3,7 @@ package terrain
 import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
+import "core:slice"
 import "core:testing"
 import "core:time"
 import "mirai:asset"
@@ -201,7 +202,7 @@ builds_that_end_together_are_published_over_calls_nearest_first_within_the_bound
             if pieces>0 {calls+=1}
             testing.expectf(t,vertices<=PUBLISH_VERTICES || pieces==1,"%v, tick %d: %d pieces of %d vertices published in one call",test_case,tick,pieces,vertices)
             for index,s in ended[:len(w.data.work)] {
-                slot:=&w.data.work[s]
+                slot:=w.data.work[s]
                 if index<0 || slot.kind!=.Build || slot.index!=index {continue}
                 testing.expectf(t,source.chunks[index].distance>=farthest,"%v, tick %d: a nearer build waits behind a farther one",test_case,tick)
             }
@@ -275,16 +276,16 @@ frame_jobs_keep_the_other_workers_while_many_long_terrain_builds_run :: proc(t:^
     resident:Terrain_Resident;defer terrain_resident_free(&resident)
     pipeline_owner(&w,id)
     building :: proc(data:^Terrain_Data) -> (count:int) {
-        for &slot in data.work {if slot.kind==.Build && jobs.pending(&slot.counter) {count+=1}}
+        for slot in data.work {if slot.kind==.Build && jobs.pending(&slot.counter) {count+=1}}
         return
     }
     // Its pages first, then builds of every chunk at level 0 out of Play, as many as start.
     for _ in 0..<64 {
         reading:=false
-        for &slot in w.data.work {reading||=slot.kind==.Page}
+        for slot in w.data.work {reading||=slot.kind==.Page}
         pipeline_tick(&w,&resident,&app,playing=false)
         if !reading && building(&w.data)>0 {break}
-        for &slot in w.data.work {if slot.kind==.Page && jobs.pending(&slot.counter) {jobs.wait(&app.jobs,jobs.OWNER,&slot.counter)}}
+        for slot in w.data.work {if slot.kind==.Page && jobs.pending(&slot.counter) {jobs.wait(&app.jobs,jobs.OWNER,&slot.counter)}}
     }
     testing.expect(t,building(&w.data)>0,"the chunks are being built")
     Meeting :: struct {arrived,needed:i32,met:bool,start:time.Tick}
@@ -653,3 +654,29 @@ a_streamed_volume_past_its_budget_shows_nodes_in_place_of_its_far_chunks :: proc
 // The heights of a bumpy source: no page of it is uniform.
 @(private="file")
 pipeline_bump :: proc "contextless" (x,z:int) -> f32 {return f32((x*7+z*3)%5)*0.125}
+
+// Between calls the storages of the terrain hold no view of lists they do not
+// own, and none of what a job writes: the asset marks read them meanwhile.
+@(test)
+between_calls_the_terrain_holds_only_its_own_lists :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"terrain")
+    id:=base.Asset_Id{311,312}
+    pipeline_source(t,root,.Heightfield,{33,1,33},8,id)
+    assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=256}));defer host.assets_destroy(&assets)
+    app:=host.App{assets=&assets,allocator=context.allocator}
+    w:Terrain_Test_World
+    if !terrain_test_world_init(t,&w) {return}
+    defer terrain_test_world_free(&w)
+    resident:Terrain_Resident;defer terrain_resident_free(&resident)
+    pipeline_owner(&w,id)
+    pipeline_settle(&w,&resident,&app)
+    found,tracked:=host.lists_not_owned({w.data,resident})
+    if !testing.expect(t,tracked,"runs under the memory tracker") || !testing.expect(t,len(w.data.work)>0) {return}
+    testing.expectf(t,len(found)==0,"%v",found)
+    material:=base.Asset_Id{313,314}
+    append(&w.data.work[0].mesh.materials,material)
+    info:=core.World_Info{storages=[]core.Storage_Info{{name="Terrain_Data",info=type_info_of(Terrain_Data),place=.World}}}
+    ids:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    host.world_asset_ids(core.world_ref(&w.data,&info),&ids)
+    testing.expect(t,!slice.contains(ids[:],material),"the marks read nothing a job writes")
+}

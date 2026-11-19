@@ -2,6 +2,7 @@ package host
 
 import "base:intrinsics"
 import "base:runtime"
+import "core:fmt"
 import "core:mem"
 import "core:slice"
 import "mirai:core"
@@ -205,6 +206,37 @@ ids_take :: proc(plan:^Ids_Plan,value:rawptr,seen:^map[base.Asset_Id]bool,ids:^[
         raw:=cast(^runtime.Raw_Slice)(uintptr(value)+list.offset)
         if raw.data==nil || raw.len<=0 {continue}
         for i in 0..<raw.len {ids_take(list.plan,rawptr(uintptr(raw.data)+uintptr(i*list.size)),seen,ids)}
+    }
+}
+
+// The lists the asset marks reach in values (storages) that are not their
+// own, by the live allocations of track: one whose data begins none, or whose
+// allocation another list also reaches. For tests, under the memory tracker
+// (tracked): after the procedures that write the storages return, each list
+// is empty or owned.
+lists_not_owned :: proc(values:[]any) -> (found:[dynamic]string,tracked:bool) {
+    if context.allocator.procedure!=mem.tracking_allocator_proc {return}
+    track:=(^mem.Tracking_Allocator)(context.allocator.data)
+    found,tracked=make([dynamic]string,context.temp_allocator),true
+    seen:=make(map[rawptr]bool,context.temp_allocator)
+    for value in values {
+        plan,_:=ids_plan(type_info_of(value.id),context.temp_allocator)
+        lists_check(&plan,value.data,value.id,track,&seen,&found)
+    }
+    return
+}
+
+@(private="file")
+lists_check :: proc(plan:^Ids_Plan,value:rawptr,of:typeid,track:^mem.Tracking_Allocator,seen:^map[rawptr]bool,found:^[dynamic]string) {
+    for list in plan.lists {
+        raw:=cast(^runtime.Raw_Slice)(uintptr(value)+list.offset)
+        if raw.data==nil || raw.len<=0 {continue}
+        if raw.data not_in track.allocation_map || seen[raw.data] {
+            append(found,fmt.tprintf("a list of %v at offset %d",of,list.offset))
+            continue
+        }
+        seen[raw.data]=true
+        for i in 0..<raw.len {lists_check(list.plan,rawptr(uintptr(raw.data)+uintptr(i*list.size)),of,track,seen,found)}
     }
 }
 
