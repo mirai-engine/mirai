@@ -49,6 +49,7 @@ struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uin
 float3 filter_light(int2 p, float depth, float3 normal, float3 open, float part, float sun) {
     Pixel pixel = pixel_at(p, (float2(p) + 0.5) * frame.inv_resolution, depth);
     Shading s = gbuffer_shading(gbuffer_read(p), pixel);
+    point_swayed = pixel_rest(p, depth);
     float3 reflectance = max(s.diffuse + specular_albedo(s), float3(0.02));
     float3 light = open * reflectance * part;
     // The light that got there, which the lights without shadows err against.

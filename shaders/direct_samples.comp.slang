@@ -152,8 +152,7 @@ float direct_hit(float3 o, float3 w, float reach, uint2 mask) {
             hit.instance = INVALID;
             hit.primitive = INVALID;
             hit.bary = float2(0.0);
-            float near = instance_batched(list_ids[i]) ? batch_near(batch_row(batch_of(list_ids[i]))) : 0.0;
-            if (trace_blas(list_mesh[i], transform_point(inverse, o), transform_vector(inverse, w), near, hit, list_ids[i], true, list_tested[i], BLEND_PASSES)) return hit.t;
+            if (trace_blas(list_mesh[i], transform_point(inverse, o), transform_vector(inverse, w), 0.0, hit, list_ids[i], true, list_tested[i], BLEND_PASSES)) return hit.t;
         }
     }
     return -1.0;
@@ -219,7 +218,9 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     float3 normal = gbuffer_normal(source);
     Shading s = gbuffer_shading(direct_point_gbuffer(source, scale), pixel);
     float3 reflectance = max(s.diffuse + specular_albedo(s), float3(0.02));
-    float3 origin = offset_origin(pixel.position, normal, view_bias(pixel.distance));
+    point_swayed = pixel_rest(source, depth);
+    float3 rest = pixel.position - point_swayed;
+    float3 origin = offset_origin(rest, normal, view_bias(pixel.distance));
     bool changes = frame.moved.x > 0u;
     float spin = direct_spin(p);
     uint stopped = blockers.Load(int3(p, 0));
@@ -291,6 +292,10 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
                 } else {
                     Light chosen = lights[item];
                     radiance = light_radiance(chosen, s, axis, far);
+                    // The cone of its rays, from where the point rests.
+                    float3 toward = chosen.position_range.xyz - rest;
+                    far = length(toward);
+                    axis = toward / max(far, 1e-6);
                     spread = light_extent(chosen) / max(far, 1e-4);
                     if (!(luminance(radiance) > 0.0)) continue;
                 }
@@ -329,7 +334,7 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
                         uint q = first + at;
                         float3 direction;
                         float reach;
-                        direct_ray(item, pixel.position, origin, direct_point(place, m, q), spin, params.sun_radius, direction, reach);
+                        direct_ray(item, rest, origin, direct_point(place, m, q), spin, params.sun_radius, direction, reach);
                         if (!(dot(direction, normal) > 0.0)) continue;
                         met += 1.0;
                         if (q == traced) {
@@ -367,7 +372,7 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
                     uint light = direct_table_draw(row, (float(q - first) + direct_start(place)) / float(k - first), chance);
                     float3 direction, toward;
                     float reach, distance;
-                    direct_ray(light, pixel.position, origin, direct_point(place, m, q), spin, params.sun_radius, direction, reach);
+                    direct_ray(light, rest, origin, direct_point(place, m, q), spin, params.sun_radius, direction, reach);
                     float3 add = light_radiance(lights[light], s, toward, distance) * (factor / max(chance, 1e-6));
                     if (!(luminance(add) > 0.0)) continue;
                     open += add;

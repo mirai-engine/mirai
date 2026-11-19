@@ -1178,7 +1178,9 @@ bool lights_changed(float3 position, float3 normal, float bias, uint budget, uin
 // Every shadow ray goes through one traversal in the source: a call more
 // would be another copy of it in every stage.
 float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 extension_point, inout bool changed) {
-    float3 origin = offset_origin(s.position, s.normal, bias);
+    // Its rays leave from where the point rests (point_swayed): what they meet rests there.
+    float3 rest = s.position - point_swayed;
+    float3 origin = offset_origin(rest, s.normal, bias);
     uint share = (which & LIGHTS_BOUNCED) != 0u ? LIGHT_SHARE_BOUNCED : (which & LIGHTS_SCATTERED) != 0u ? LIGHT_SHARE_SCATTERED : LIGHT_SHARE_ALL;
     bool changes = (which & LIGHTS_CHANGES) != 0u;
     float sun_share = share == LIGHT_SHARE_BOUNCED ? frame.sun_shares.x : share == LIGHT_SHARE_SCATTERED ? frame.sun_shares.y : 1.0;
@@ -1213,7 +1215,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
             float distance;
             radiance = node_radiance(node, s, direction, distance) * node_share(node, share);
             if (luminance(radiance) <= light_cutoff()) continue;
-            uint aimed = cut_ray(light_cut_nodes[item - 1u], s.position, s.normal, share, direction, reach);
+            uint aimed = cut_ray(light_cut_nodes[item - 1u], rest, s.normal, share, direction, reach);
             if (changes) changed = changed || occluder_changed(origin, direction, reach, INVALID, FLT_MAX);
 #ifdef MIRAI_LIGHT_MAPS
             mapped = light_shadow_seen(aimed, s.position, s.normal, light_extent(lights[aimed]), s.across);

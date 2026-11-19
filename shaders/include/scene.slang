@@ -78,6 +78,11 @@ bool fade_pixel_left(uint2 pixel, float fade) {
 // The motion target of the view: rg the motion of each pixel, b the roughness
 // of its material before specular antialiasing, a 1 + its nested view.
 [[vk::binding(SLOT_VIEWS, 0)]] Texture2D<float4> pixel_views : register(MIRAI_REGISTER(t, SLOT_VIEWS), space0);
+// What the vertex hook moved the point a pass lights from where it rests,
+// where rays and the maps that draw it at rest meet it (pixel_rest of
+// gbuffer.slang); 0 for a point at rest. A pass that lights a pixel of the
+// view sets it for that pixel.
+static float3 point_swayed = float3(0.0);
 #include "brdf.slang"
 #include "air.slang"
 
@@ -364,7 +369,6 @@ float4 batch_vertex(Instance row) { return row.world_inv[0]; }       // what the
 float3 batch_anchor(Instance row) { return row.world_inv[1].xyz; }   // what its instances in the pool, its tree and its box are relative to, relative to the origin
 float batch_reach(Instance row) { return row.world_inv[1].w; }       // metres the vertex hook moves a point of its instances at most
 uint batch_colors(Instance row) { return asuint(row.world_inv[2].x); } // 1 + the word of the color of its first instance in the pool; 0: none
-float batch_near(Instance row) { return row.world_inv[2].y; }        // metres of the world from its origin where a ray meets none of it: how far it sways now (render.batch_near)
 
 // The transform of the instance of a batch whose words start at `words`,
 // moved by the anchor of its batch, and its inverse.

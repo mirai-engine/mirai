@@ -523,7 +523,7 @@ batch_sway :: proc(s: ^Scene_State, record: ^Batch_Record) -> (fine: f32) {
 batch_moving :: proc(s: ^Scene_State, record: ^Batch_Record) -> bool {
 	skin := s.meshes[record.desc.mesh].skin
 	if skin != nil && skin.external {return skin.shadow_moving}
-	return batch_near(&s.batch, record) > 0
+	return batch_swaying(&s.batch, record)
 }
 
 // The narrowest and the widest texel of a map over a box of the world,
@@ -1769,7 +1769,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 		rows := ([^][4]u32)(b.data.ptr)[int(plan.rows):][:count * SHADOW_MAP_ROWS]
 		copy(p.frame.sun_map_rows[:], rows)
 	}
-	p.frame.sun_maps = {u32(count), plan.rows, SHADOW_POOL, 0}
+	p.frame.sun_maps = {u32(count), plan.rows, SHADOW_POOL, transmute(u32)b.sway}
 	constants := (^Gpu_Frame)(p.constants.ptr)
 	constants.sun_maps, constants.sun_map_rows = p.frame.sun_maps, p.frame.sun_map_rows
 	rhi.cmd_copy_buffer(cmd, b.data.buffer, b.data.offset, d.table, 0, b.data.size)
