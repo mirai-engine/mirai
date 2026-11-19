@@ -62,8 +62,13 @@ are kept here and, where the license asks for it, in the header of the file.
   `std/geom/delaunay.odin`. Game.
 - **meshoptimizer 1.3** (MIT; © 2016-2026 Arseny Kapoulkine),
   <https://github.com/zeux/meshoptimizer>.
-  `std/geom/simplify.odin`, `cluster.odin`, `partition.odin` and `cluster_dag.odin`. Game.
-  The vertex codec and the quaternion and exponential filters of
+  `std/geom/simplify.odin`, `cluster.odin` (with the triangle order of
+  `meshopt_optimizeMeshletLevel`), `partition.odin` and `cluster_dag.odin` (the builder of
+  `demo/clusterlod.h` with the retry of its stuck groups and its limit of the error by edge
+  length), and its rules for groups (error the
+  largest of the children's and its own, sphere around theirs, a stuck group a root) in the groups
+  of islands of `cluster_islands.odin`. Game. That retry where whole levels
+  stop in `cook/import/levels.odin`, the vertex codec and the quaternion and exponential filters of
   `cook/import/gltf/meshopt.odin`. Editor.
 - **Lore** (MIT; © 2026 Epic Games, Inc.), <https://github.com/EpicGames/lore>.
   The streaming windows of the chunker of `store/chunk.odin`, altered. Game.
@@ -107,8 +112,10 @@ are kept here and, where the license asks for it, in the header of the file.
   Game.
 - **pbrt-v4** (Apache-2.0; © 1998-2020 Matt Pharr, Wenzel Jakob and Greg Humphreys),
   <https://github.com/mmp/pbrt-v4>. The watertight test of a ray and a triangle of
-  `shaders/include/trace.slang` and `std/math/ray.odin`, and the union of cones of
-  `render/light_tree.odin`. Game.
+  `shaders/include/trace.slang` and `std/math/ray.odin`; the build of the light tree by
+  the cost of its splits, with the bounds of the directions its lights shine in and the
+  union of their cones, of `render/light_tree.odin`; and the bounds of those directions
+  and the clamped cosine of a difference of `shaders/include/lighting.slang`. Game.
 - **lightyear** (MIT or Apache-2.0; © the lightyear contributors),
   <https://github.com/cBournhonesque/lightyear>. The input delay of `net/clock.odin`. Game.
 - **MaterialX** (Apache-2.0; © Contributors to the MaterialX Project),
@@ -123,8 +130,8 @@ are kept here and, where the license asks for it, in the header of the file.
   <https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK>. `plugins/fsr/shaders/fsr3` (the
   upscaler, optical flow, frame interpolation and SPD headers, altered: reduced to the one
   configuration Mirai compiles, as their `UPSTREAM.md` says) and the pass sequence of
-  `plugins/fsr/runtime/framegen.odin`, translated from `ffx_opticalflow.cpp` and
-  `ffx_frameinterpolation.cpp`. Game, with the `fsr` plugin.
+  `plugins/fsr/runtime/framegen.odin`, translated from `ffx_opticalflow.cpp`,
+  `ffx_frameinterpolation.cpp` and `ffx_fsr3.cpp`. Game, with the `fsr` plugin.
 - **Zstandard 1.5.7** (BSD-3-Clause; © Meta Platforms, Inc. and affiliates),
   <https://github.com/facebook/zstd>. `std/compressor/zstd`, a translation of its decoder and of
   three levels of its encoder, as its `UPSTREAM.md` says. Game.
@@ -139,6 +146,15 @@ are kept here and, where the license asks for it, in the header of the file.
   `std/compressor/blocks/bc6h`, translated. Editor.
 
 The files derived from Apache-2.0 work state their changes in their header.
+- **Frogfood** (MIT; © 2023 Jake Ryan), <https://github.com/JuanDiegoMontoya/Frogfood>. The
+  level of the sun a point takes by the width of its footprint, in `sun_pick` of
+  `shaders/include/shadow_maps.slang`, altered. Game.
+- **Bevy** (MIT or Apache-2.0; © the Bevy contributors), <https://github.com/bevyengine/bevy>.
+  The band over which a level of the sun or a mip of a light blends into the next, in
+  `shaders/include/shadow_maps.slang` and `shaders/direct_maps.comp.slang`, altered. Game.
+- **The Forge** (Apache-2.0; © 2017 - 2025 The Forge Interactive Inc.),
+  <https://github.com/ConfettiFX/The-Forge>. The order in which pages of the shadow pool are taken
+  back, those unread the longest first, in `shaders/shadow_pages.comp.slang`, altered. Game.
 
 ## Fonts and assets
 

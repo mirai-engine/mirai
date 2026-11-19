@@ -1,8 +1,10 @@
 package terrain
 
+import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
 import "core:testing"
+import "core:time"
 import "mirai:asset"
 import "mirai:core"
 import phys "plugins:physics/runtime"
@@ -29,6 +31,21 @@ pipeline_settle :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^ho
         pipeline_tick(w,resident,app,settings,view)
         idle:=!work_busy(&w.data,nil)
         for &source in resident.sources {if len(source.pending)>0 {idle=false}}
+        if idle {break}
+    }
+}
+
+// Ticks, each once the jobs of the one before ended, until what the terrain
+// wants is built and shows, and collides: a tick that asks for the tree of a
+// mesh makes its body in the next.
+@(private="file")
+pipeline_built :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,settings:Terrain_Settings,ticks:=64) {
+    for _ in 0..<ticks {
+        work_wait(&w.data,nil)
+        trees:=w.collision_meshes.built
+        pipeline_tick(w,resident,app,settings)
+        idle:=!work_busy(&w.data,nil) && w.collision_meshes.built==trees
+        for &source in resident.sources {if len(source.pending)>0 || len(source.staged)>0 {idle=false}}
         if idle {break}
     }
 }
@@ -112,6 +129,180 @@ rebuilt_chunks_show_in_the_next_tick_whatever_the_threads_and_stale_results_are_
         testing.expect_value(t,w.statics.version,version)
         testing.expect_value(t,w.problems.count,0)
     }
+}
+
+// Builds that end together and only show, as when a view crosses many chunks,
+// are published to the assets over the calls that follow, the nearest first
+// within PUBLISH_VERTICES, in or out of Play: a chunk built again for its
+// level keeps its collider and its maps, so no call waits for it. Each piece
+// shows what it showed until its build shows, and pieces whose shared edge changes show in
+// the same call even when their builds arrived in different ones: no call
+// shows a crack. Every build arrives, and then a call allocates nothing.
+@(test)
+builds_that_end_together_are_published_over_calls_nearest_first_within_the_bound :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"terrain")
+    id:=base.Asset_Id{305,306}
+    pipeline_source(t,root,.Heightfield,{513,1,513},128,id,bumpy=true)
+    // From coarse far chunks: every chunk at level 0, or the view at the other corner.
+    coarse,fine:=Terrain_Settings{lod_distance=4},Terrain_Settings{lod_distance=-1}
+    near,far:=[3]f32{-250,5,-250},[3]f32{250,5,250}
+    cases:=[?]struct{threads:int,playing:bool,to:Terrain_Settings,moved:[3]f32}{
+        {0,false,fine,near},{3,false,fine,near},{3,true,fine,near},{3,false,coarse,far},
+    }
+    for test_case in cases {
+        counter:=Terrain_Test_Allocator{owner=runtime.heap_allocator()}
+        context.allocator={terrain_test_allocator,&counter}
+        assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=1024}));defer host.assets_destroy(&assets)
+        app:=host.App{assets=&assets,allocator=context.allocator}
+        if test_case.threads>0 {testing.expect(t,jobs.system_init(&app.jobs,{threads=test_case.threads,allocator=runtime.heap_allocator()}))}
+        defer if test_case.threads>0 {jobs.system_destroy(&app.jobs)}
+        w:Terrain_Test_World
+        if !terrain_test_world_init(t,&w) {return}
+        defer terrain_test_world_free(&w)
+        resident:Terrain_Resident;defer terrain_resident_free(&resident)
+        pipeline_owner(&w,id)
+        view:=core.VIEW_DEFAULT
+        view.position=near
+        for _ in 0..<64 {
+            work_wait(&w.data,nil)
+            pipeline_tick(&w,&resident,&app,coarse,view,playing=test_case.playing)
+            if !work_busy(&w.data,nil) && len(resident.sources[0].pending)==0 && len(resident.sources[0].staged)==0 {break}
+        }
+        source:=&resident.sources[0]
+        chunks:=source.quad.first[1]
+        testing.expect_value(t,chunks,16)
+        first:[16]Chunk_Lod
+        maps:[16]Piece_Maps
+        for chunk,i in source.chunks[:chunks] {first[i],maps[i]=chunk.built.lod,chunk.maps}
+        shown,staged:[16]base.Asset_Id;pipeline_meshes(&resident,shown[:])
+        staged_at,shown_at:[16]int
+        calls:=0
+        view.position=test_case.moved
+        for tick in 1..<64 {
+            work_wait(&w.data,nil)
+            ended:[WORK_SLOTS_MAX]int
+            for slot,s in w.data.work {ended[s]=slot.kind==.Build?slot.index:-1}
+            pipeline_tick(&w,&resident,&app,test_case.to,view,playing=test_case.playing)
+            vertices,pieces,farthest:=0,0,f32(0)
+            for &chunk,i in source.chunks[:chunks] {
+                testing.expectf(t,chunk.mesh!={},"%v, tick %d: chunk %d shows what it showed until its build shows",test_case,tick,i)
+                published:=base.Asset_Id{}
+                if chunk.next.ready && chunk.next.mesh!=staged[i] {published=chunk.next.mesh}
+                if chunk.mesh!=shown[i] {
+                    if chunk.mesh!=staged[i] {published=chunk.mesh}
+                    shown[i],shown_at[i]=chunk.mesh,tick
+                }
+                if published=={} {continue}
+                staged[i],staged_at[i]=published,tick
+                vertices+=int(host.assets_mesh(&assets,published).vertex_count)
+                pieces+=1
+                farthest=max(farthest,chunk.distance)
+            }
+            if pieces>0 {calls+=1}
+            testing.expectf(t,vertices<=PUBLISH_VERTICES || pieces==1,"%v, tick %d: %d pieces of %d vertices published in one call",test_case,tick,pieces,vertices)
+            for index,s in ended[:len(w.data.work)] {
+                slot:=&w.data.work[s]
+                if index<0 || slot.kind!=.Build || slot.index!=index {continue}
+                testing.expectf(t,source.chunks[index].distance>=farthest,"%v, tick %d: a nearer build waits behind a farther one",test_case,tick)
+            }
+            testing.expectf(t,pipeline_cracks(&resident)==0,"%v, tick %d: chunks side by side show other levels along their edge",test_case,tick)
+            done:=!work_busy(&w.data,nil) && len(source.staged)==0
+            for chunk in source.chunks[:chunks] {done&&=chunk.built==chunk.wanted}
+            if done {break}
+        }
+        for chunk,i in source.chunks[:chunks] {
+            testing.expectf(t,chunk.shown && chunk.built==chunk.wanted,"%v: chunk %d shows what is wanted",test_case,i)
+            // Its maps hold every sample at any level: a new level keeps them.
+            testing.expectf(t,chunk.maps==maps[i] && chunk.maps.control!={},"%v: chunk %d keeps its maps",test_case,i)
+        }
+        testing.expectf(t,calls>1,"%v: the builds were published over %d calls",test_case,calls)
+        // Two chunks whose shared edge changed, built in different calls, show in the same one.
+        together:=false
+        for z in 0..<4 {for x in 0..<3 {
+            a,b:=x+4*z,x+1+4*z
+            changed:=first[a].sides[1]!=source.chunks[a].built.lod.sides[1]
+            together||=changed && staged_at[a]!=staged_at[b] && shown_at[a]==shown_at[b]
+        }}
+        testing.expectf(t,together,"%v: neighbors whose edge changed, built apart, show together",test_case)
+        requests,built:=counter.requests,resident.stats.built
+        for _ in 0..<5 {pipeline_tick(&w,&resident,&app,test_case.to,view,playing=test_case.playing)}
+        testing.expect_value(t,counter.requests,requests)
+        testing.expect_value(t,resident.stats.built,built)
+        testing.expect_value(t,w.problems.count,0)
+    }
+}
+
+// The pairs of chunks shown side by side whose builds take other levels for
+// the side or the corners they share.
+@(private="file")
+pipeline_cracks :: proc(resident:^Terrain_Resident) -> (cracks:int) {
+    source:=&resident.sources[0]
+    nodes:=resident.owners[0].nodes
+    n:=source.quad.counts[0]
+    for z in 0..<n.y {for x in 0..<n.x {
+        i:=x+n.x*z
+        if !nodes[i].visible {continue}
+        a:=source.chunks[i].built.lod
+        if x+1<n.x && nodes[i+1].visible {
+            b:=source.chunks[i+1].built.lod
+            if a.sides[1]!=b.sides[0] || a.corners[1]!=b.corners[0] || a.corners[3]!=b.corners[2] {cracks+=1}
+        }
+        if z+1<n.y && nodes[i+n.x].visible {
+            b:=source.chunks[i+n.x].built.lod
+            if a.sides[3]!=b.sides[2] || a.corners[2]!=b.corners[0] || a.corners[3]!=b.corners[1] {cracks+=1}
+        }
+    }}
+    return
+}
+
+// The builds of a terrain that run in the background take at most the share
+// WORK_BACKGROUND_SHARE of the workers: while many long builds go on, as many
+// jobs of a frame as the other workers all run at once, without waiting for
+// a build to end.
+@(test)
+frame_jobs_keep_the_other_workers_while_many_long_terrain_builds_run :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"terrain")
+    id:=base.Asset_Id{315,316}
+    pipeline_source(t,root,.Heightfield,{1021,1,1021},255,id,bumpy=true)
+    assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=256}));defer host.assets_destroy(&assets)
+    app:=host.App{assets=&assets,allocator=context.allocator}
+    testing.expect(t,jobs.system_init(&app.jobs,{threads=7,allocator=runtime.heap_allocator()}))
+    defer jobs.system_destroy(&app.jobs)
+    w:Terrain_Test_World
+    if !terrain_test_world_init(t,&w) {return}
+    defer terrain_test_world_free(&w)
+    defer work_wait(&w.data,nil)
+    resident:Terrain_Resident;defer terrain_resident_free(&resident)
+    pipeline_owner(&w,id)
+    building :: proc(data:^Terrain_Data) -> (count:int) {
+        for &slot in data.work {if slot.kind==.Build && jobs.pending(&slot.counter) {count+=1}}
+        return
+    }
+    // Its pages first, then builds of every chunk at level 0 out of Play, as many as start.
+    for _ in 0..<64 {
+        reading:=false
+        for &slot in w.data.work {reading||=slot.kind==.Page}
+        pipeline_tick(&w,&resident,&app,playing=false)
+        if !reading && building(&w.data)>0 {break}
+        for &slot in w.data.work {if slot.kind==.Page && jobs.pending(&slot.counter) {jobs.wait(&app.jobs,jobs.OWNER,&slot.counter)}}
+    }
+    testing.expect(t,building(&w.data)>0,"the chunks are being built")
+    Meeting :: struct {arrived,needed:i32,met:bool,start:time.Tick}
+    meet :: proc(m:^Meeting,worker:int) {
+        intrinsics.atomic_add(&m.arrived,1)
+        for intrinsics.atomic_load(&m.arrived)<m.needed {
+            if time.tick_since(m.start)>10*time.Second {return}
+            intrinsics.cpu_relax()
+        }
+        intrinsics.atomic_store(&m.met,true)
+    }
+    before:=building(&w.data)
+    workers:=jobs.worker_count(&app.jobs)
+    meeting:=Meeting{needed=i32(workers-max(workers/WORK_BACKGROUND_SHARE,1)),start=time.tick_now()}
+    counter:jobs.Counter
+    for _ in 0..<meeting.needed {jobs.run(&app.jobs,jobs.OWNER,.Frame,meet,&meeting,&counter)}
+    jobs.wait(&app.jobs,jobs.OWNER,&counter)
+    testing.expectf(t,meeting.met && building(&w.data)==before,"%d jobs of a frame met before any of the %d builds that ran ended: %v, after %v",meeting.needed,before,meeting.met,time.tick_since(meeting.start))
 }
 
 @(test)
@@ -215,7 +406,7 @@ letting_go_of_an_excavated_zone_and_reading_it_again_keeps_its_edits :: proc(t:^
         source_place(&w,near)
         settings:=Terrain_Settings{resident_distance=100,lod_distance=-1}
         // What it showed stays until the nodes that replace it are built.
-        for _ in 0..<8 {pipeline_tick(&w,&resident,&app,settings)}
+        pipeline_built(&w,&resident,&app,settings)
         s:=&w.data.entries[0].source
         testing.expect(t,source_paged(s),"a Heightfield on disk is read by pages")
         resident_chunks:=len(w.chunks.values)
@@ -241,7 +432,7 @@ letting_go_of_an_excavated_zone_and_reading_it_again_keeps_its_edits :: proc(t:^
         far:=[3]f32{100,0,100}
         source_place(&w,far)
         // What it showed stays until the nodes that replace it are built; what only shows is taken once its job ended.
-        for _ in 0..<8 {work_wait(&w.data,nil);pipeline_tick(&w,&resident,&app,settings)}
+        pipeline_built(&w,&resident,&app,settings)
         s=&w.data.entries[0].source
         hit,ok=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
         testing.expect(t,ok && piece_depth(&w,hit)>0,"the zone let go of its chunk colliders: its node collides")
@@ -259,7 +450,7 @@ letting_go_of_an_excavated_zone_and_reading_it_again_keeps_its_edits :: proc(t:^
         // The viewer comes back: the zone shows the excavation again.
         source_place(&w,near)
         // What it showed stays until the nodes that replace it are built.
-        for _ in 0..<8 {pipeline_tick(&w,&resident,&app,settings)}
+        pipeline_built(&w,&resident,&app,settings)
         hit,ok=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
         testing.expectf(t,ok && abs(hit.point.y+2)<1e-4,"reading the zone again keeps its edits (%d threads): %v",threads,hit.point)
         height,known=terrain_height({&w.data},id,near.x,near.z)
@@ -306,9 +497,10 @@ a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps
         testing.expectf(t,ok && abs(hit.point.y)<1e-3,"the top of the box: %v",hit.point)
         _,ok=phys.raycast({&w.state},{50,20,50},{0,-1,0})
         testing.expect(t,!ok,"far from the viewer there is no collider")
-        // Excavate near the viewer.
+        // Excavate near the viewer, once what it reads there came and is built.
+        pipeline_built(&w,&resident,&app,settings)
         dig(&w.terrain_requests,{kind=.Carve,center=near,radius=2,amount=1},owner)
-        for _ in 0..<2 {pipeline_tick(&w,&resident,&app,settings)}
+        pipeline_built(&w,&resident,&app,settings)
         hit,ok=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
         testing.expectf(t,ok && hit.point.y< -1.5,"the excavation: %v",hit.point)
         excavated:=hit.point.y
@@ -322,7 +514,7 @@ a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps
         far:=[3]f32{50,0,50}
         source_place(&w,far)
         // The node over the zone is built from its blocks before they leave; a node is taken when its job ends.
-        for _ in 0..<48 {work_wait(&w.data,nil);pipeline_tick(&w,&resident,&app,settings)}
+        pipeline_built(&w,&resident,&app,settings)
         s=&w.data.entries[0].source
         hit,ok=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
         testing.expect(t,ok && piece_depth(&w,hit)>0,"the zone let go of its chunk colliders: its node collides")
@@ -336,7 +528,7 @@ a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps
             // A dig there, far from every viewer, shows on the node.
             before:=core.at(&w.statics,core.row_of(&w.statics,zone)).mesh
             dig(&w.terrain_requests,{kind=.Carve,center=near+{20,0,20},radius=3,amount=1},owner)
-            for _ in 0..<24 {work_wait(&w.data,nil);pipeline_tick(&w,&resident,&app,settings)}
+            pipeline_built(&w,&resident,&app,settings)
             shown,still:=core.get(&w.statics,zone)
             testing.expect(t,still && shown.mesh!={} && shown.mesh!=before,"the node is built again with what was dug under it")
             // Far from every viewer its block may be in the file: it is read to be looked at.
@@ -351,7 +543,7 @@ a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps
         testing.expect(t,ok && abs(hit.point.y)<1e-3)
         // The viewer comes back: the zone shows the excavation again.
         source_place(&w,near)
-        for _ in 0..<8 {pipeline_tick(&w,&resident,&app,settings)}
+        pipeline_built(&w,&resident,&app,settings)
         hit,ok=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
         testing.expectf(t,ok && hit.point.y==excavated,"reading the zone again keeps its edits (%d threads): %v",threads,hit.point)
         testing.expect_value(t,source_value(&w.data.entries[0].source,at) or_else 0,dug)

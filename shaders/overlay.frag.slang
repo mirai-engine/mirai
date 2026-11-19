@@ -1,5 +1,5 @@
 #include "native.slang"
-//! per surface program
+//! per surface program overlay
 //! variant hw MIRAI_HW_RT=1
 #include "raster.slang"
 #include "lighting.slang"
@@ -10,8 +10,9 @@ struct Overlay_Params { uint overlay_material; uint blend; uint light_budget; ui
 
 struct Stage_Output { [[vk::location(0)]] float4 out_color : SV_Target0; };
 [shader("fragment")]
-Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position) {
+Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool front_facing : SV_IsFrontFace) {
     Stage_Output output;
+    input = raster_facing(input, front_facing);
     Material base = fragment_material(input);
     if (base.alpha_mode == ALPHA_BLEND || !fragment_mask_covers(input, frame.texturing.x)) discard;
     Material overlay = material_row(params.overlay_material);
@@ -19,7 +20,7 @@ Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position) {
     float3 normal = fragment_surface_normal(input, overlay, view, frame.texturing.x);
     float3 vertex_normal = normalize(input.in_normal);
     float4 tangent = input.in_tangent;
-    if (dot(vertex_normal, view) < 0.0) {
+    if (raster_back(input)) {
         vertex_normal = -vertex_normal;
         tangent = -tangent;
     }

@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "core:mem"
 import "mirai:asset"
 import "mirai:rhi"
+import "mirai:std/geom"
 import mm "mirai:std/math"
 
 @(private = "file")
@@ -319,35 +320,17 @@ impostor_transmission :: proc "contextless" (surface, transmitted: []u8) -> Vec3
 // stays cleared.
 impostor_dilate :: proc(images: ^Impostor_Images) {
 	side := int(images.grid * images.frame)
-	frame := int(images.frame)
 	if side == 0 || len(images.color) < side * side * 4 || len(images.normal) < side * side * 4 || len(images.surface) < side * side * 4 {return}
-	filled := make([]bool, side * side, context.temp_allocator)
-	queue := make([]u32, side * side, context.temp_allocator)
-	head, tail := 0, 0
-	for i in 0 ..< side * side {
-		if images.color[i * 4 + 3] == 0 {continue}
-		filled[i] = true
-		queue[tail] = u32(i)
-		tail += 1
-	}
-	// Breadth first from every covered texel, within its frame.
-	for head < tail {
-		at := int(queue[head])
-		head += 1
-		x, y := at % side, at / side
-		for step in ([4][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
-			nx, ny := x + step.x, y + step.y
-			if nx < 0 || ny < 0 || nx >= side || ny >= side || nx / frame != x / frame || ny / frame != y / frame {continue}
-			next := ny * side + nx
-			if filled[next] {continue}
-			filled[next] = true
-			for c in 0 ..< 3 {images.color[next * 4 + c] = images.color[at * 4 + c]}
-			for c in 0 ..< 4 {
-				images.normal[next * 4 + c] = images.normal[at * 4 + c]
-				images.surface[next * 4 + c] = images.surface[at * 4 + c]
-			}
-			queue[tail] = u32(next)
-			tail += 1
+	covered := make([]bool, side * side, context.temp_allocator)
+	nearest := make([]u32, side * side, context.temp_allocator)
+	for &cover, i in covered {cover = images.color[i * 4 + 3] != 0}
+	if !geom.grid_nearest(covered, side, side, int(images.frame), nearest) {return}
+	for from, at in nearest {
+		if covered[at] || from == max(u32) {continue}
+		for c in 0 ..< 3 {images.color[at * 4 + c] = images.color[int(from) * 4 + c]}
+		for c in 0 ..< 4 {
+			images.normal[at * 4 + c] = images.normal[int(from) * 4 + c]
+			images.surface[at * 4 + c] = images.surface[int(from) * 4 + c]
 		}
 	}
 }

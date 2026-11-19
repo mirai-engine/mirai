@@ -7,6 +7,7 @@ import "core:strings"
 import "core:time"
 import "core:path/filepath"
 import "mirai:cook/build"
+import "mirai:cook/shaders"
 import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/subprocess"
@@ -29,7 +30,7 @@ COMMANDS :: [?]Command{
     {"test",TEST_USAGE,"Builds if needed and runs the tests of one or more packages",cmd_test},
     {"test",TEST_LIST_USAGE,"Lists the tests of a package or of a file without building",cmd_test},
     {"check","check <package> [-flag...]","Checks the types of a package",cmd_check},
-    {"locks",LOCKS_USAGE,"Says who holds the build and measurement turns of all checkouts and since when, or that they are free",cmd_locks},
+    {"locks",LOCKS_USAGE,"Says who holds the build, measurement and GPU turns of all checkouts and since when, or that they are free",cmd_locks},
     {"measure",MEASURE_USAGE,"Runs a command that measures times alone: waits for other measurements and for builds; what builds or tests meanwhile runs at low priority",cmd_measure},
     {"deps","deps","Builds the C dependencies pinned in third_party/",cmd_deps},
     {"asset","asset <subcommand> [arguments]","Inspects and edits binary assets of any type",cmd_asset},
@@ -42,6 +43,7 @@ COMMANDS :: [?]Command{
     {"record",RECORD_USAGE,"Records the game of the project frame after frame at a fixed rate as 16-bit PNG or EXR images and a WAV, with a contact sheet and a manifest of its frames and its validation errors",cmd_record},
     {"render",RENDER_USAGE,"Measures the fixed views of a project as the user sees them (cost per pass, stability, luminance, captures) against the base build",cmd_render},
     {"bench",BENCH_USAGE,"Measures the frame cost of a project against the base build in alternating pairs, alone among the checkouts, and writes the table for a report",cmd_bench},
+    {"bench",BENCH_FLIGHT_USAGE,"Flies the camera through a scene of a copy of a project as a flight of its tests/flights says, alone among the checkouts, and writes where its frames hitch",cmd_bench},
     {"rpc",RPC_USAGE,"Calls a method of the editor of the project or of the given port, shows fields of the response or waits for a state; describe shows the params of the methods",cmd_rpc},
     {"docs",DOCS_USAGE,"Prints the game documentation of this engine: the index, a topic or one section of it",cmd_docs},
     {"mcp",MCP_USAGE,"MCP server over stdio that forwards to the editor of the project or of the given port; gives the editor tools and those of the plugins in --plugins",cmd_mcp},
@@ -49,12 +51,15 @@ COMMANDS :: [?]Command{
     {"ui",UI_USAGE,"Reads, writes and checks the interfaces of a project as the documents ui.inspect gives and ui.write takes, with no editor",cmd_ui},
     {"scene",SCENE_USAGE,"Reads, writes and checks the scenes of a project as the documents scene.inspect gives with root and scene.write takes, with no editor",cmd_scene},
     {"content",CONTENT_USAGE,"Runs the content tool of a project, which writes the assets it makes from code",cmd_content},
-    {"import","import <file> [--project P] [--folder F] [--store S] [settings] | import --refresh <root>... [--fast] [--store S] [--from S]","Ingests a model, an image, a sound, a font or a prompts manifest from anywhere into the library of the machine store and adds it to a project; --refresh brings the packages a project or plugin pins to builds this engine reads",cmd_import},
+    {"import","import <file> [--project P] [--folder F] [--store S] [settings] | import --refresh <root>... [--final] [--store S] [--from S]","Ingests a model, an image, a sound, a font or a prompts manifest from anywhere into the library of the machine store and adds it to a project; --refresh brings the packages a project or plugin pins to builds this engine reads",cmd_import},
     {"share",SHARE_USAGE,"Serves a project to whoever holds the invitation it prints, peer to peer, with the packages of the machine store, until stopped",cmd_share},
     {"join",JOIN_USAGE,"Writes the project a share offers into a folder, or updates one joined before, and fetches the builds of its packages from the peers",cmd_join},
 }
 
 main :: proc() {
+    // A compiler of a shader generation speaks only to it, on its streams: it
+    // neither refreshes this tool nor says anything else.
+    if len(os.args)==4 && os.args[1]=="shaders" && os.args[2]=="compiler" {os.exit(shaders.compiler_serve(os.args[3]))}
     root:=project.engine_root_find("")
     if root=="" {fmt.eprintfln("mirai: cannot find the root of the engine: a checkout (AGENTS.md and tools/mirai) or an installed engine (%s)",project.ENGINE_FILE);os.exit(2)}
     // The editor and the player it starts look for the engine there first.
@@ -79,7 +84,8 @@ main :: proc() {
 // or its tool, package it, or measure against another build of it.
 installed_runs :: proc(args:[]string) -> bool {
     switch args[0] {
-    case "worktree","bench","render","package": return false
+    case "worktree","render","package": return false
+    case "bench": return len(args)>1 && args[1]=="flight"
     case "build": return len(args)<2 || args[1]!="tools"
     }
     return true
@@ -208,8 +214,13 @@ build_sources_file :: proc(root,output:string) -> string {
 
 // Puts a built executable and the list of its sources in their place. One
 // that is running cannot be replaced on Windows but can be renamed: it
-// leaves under another name, removed by a later build.
+// leaves under another name, removed by a later build. A build that read a
+// package of the engine (tool_engine_read) is put in place with a warning,
+// not refused: the rule is the running tool's, which the new sources may change.
 executable_publish :: proc(root,staging,final,staged_sources,sources:string) -> bool {
+    if file:=tool_engine_read(root,staged_sources);file!="" {
+        fmt.eprintfln("mirai: the tool now reads %s, a package that reaches the shader tables it generates: a new checkout or a merge will not build it. What render and the cook share goes in render/abi, and the cook reads a component from an asset by the names of its fields.",file)
+    }
     if !os.is_file(staging) {
         fmt.eprintfln("mirai: the compiler succeeded and %s is missing.",staging)
         when ODIN_OS==.Windows {fmt.eprintfln("mirai: an antivirus may have quarantined it; exclude %s from real-time scanning.",join(root,"bin"))}

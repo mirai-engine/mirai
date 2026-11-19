@@ -2,7 +2,7 @@
 #include "native.slang"
 // The farthest depth each column of the grid sees (fog.fog_record): a group
 // for each column takes the pixels of the view under it. What nothing was
-// drawn on counts as the end of the grid.
+// drawn on is seen without end: the slices past the grid are read there.
 #include "fog.slang"
 #include "depth.slang"
 #define MIRAI_GROUP_X 8
@@ -24,7 +24,7 @@ void main(uint3 column : SV_GroupID, uint3 thread : SV_GroupThreadID, uint index
     for (int y = low.y + int(thread.y); y < high.y; y += MIRAI_GROUP_Y) {
         for (int x = low.x + int(thread.x); x < high.x; x += MIRAI_GROUP_X) {
             float depth = linear_depth.Load(int3(x, y, 0)).r;
-            far = max(far, depth_empty(depth) ? fog.distance : depth_distance(depth));
+            far = max(far, depth_empty(depth) ? FOG_ENDLESS : depth_distance(depth));
         }
     }
     farthest[index] = far;

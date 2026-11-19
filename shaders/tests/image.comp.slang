@@ -2,7 +2,8 @@
 #define MIRAI_GROUP_X 8
 #define MIRAI_GROUP_Y 8
 #define MIRAI_GROUP_Z 1
-[[vk::binding(0, 0)]] Texture2D<float4> source : register(t0, space0);
+// At a slot past the 32 a word of bits holds (rhi_test.odin IMAGE_SOURCE_SLOT).
+[[vk::binding(35, 0)]] Texture2D<float4> source : register(t35, space0);
 [[vk::binding(1, 0)]] SamplerState point_sampler : register(s1, space0);
 [[vk::binding(2, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> target : register(u2, space0);
 

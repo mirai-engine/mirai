@@ -40,7 +40,7 @@ Command_List :: struct {
 	pipeline:         Pipeline,
 	pipeline_applied: bool, // pipeline state set on the current encoder
 	slots:            [MAX_BINDING_SLOTS]Slot_Binding,
-	dirty:            u32, // slots to apply to the current encoder
+	dirty:            Mtl_Slots, // slots to apply to the current encoder
 	table:            Shader_Stages, // stages of the current encoder that have the texture table
 	index_buffer:     Buffer,
 	index_offset:     u64,
@@ -66,7 +66,7 @@ mtl_list_reset :: proc(c: ^Command_List, cmd: ^MTL.CommandBuffer) {
 	c.pipeline = 0
 	c.pipeline_applied = false
 	c.slots = {}
-	c.dirty = max(u32)
+	c.dirty = ~Mtl_Slots{}
 	c.table = {}
 	c.index_buffer = 0
 	c.index_offset = 0
@@ -106,7 +106,7 @@ mtl_end_encoder :: proc(c: ^Command_List) {
 	c.accel = nil
 	c.encoder_kind = .None
 	c.pipeline_applied = false
-	c.dirty = max(u32)
+	c.dirty = ~Mtl_Slots{}
 	c.table = {}
 }
 
@@ -118,7 +118,7 @@ mtl_opened_encoder :: proc(c: ^Command_List, encoder: ^MTL.CommandEncoder, kind:
 	c.encoder_kind = kind
 	for i in 0 ..< c.label_count {MTL.CommandEncoder_pushDebugGroup(encoder, c.labels[i])}
 	c.pipeline_applied = false
-	c.dirty = max(u32)
+	c.dirty = ~Mtl_Slots{}
 	c.table = {}
 	c.scratch_used = 0
 }
@@ -134,8 +134,12 @@ mtl_sample_slot :: proc(c: ^Command_List) -> (buffer: ^MTL.CounterSampleBuffer, 
 	if c.immediate {return}
 	d := c.device
 	f := &d.frames[d.slot]
-	if !f.passes || f.query_count == 0 || f.encoder_count >= MAX_TIMESTAMPS {return}
-	f.encoder_marks[f.encoder_count] = u16(f.query_count - 1)
+	if f.queries == nil || f.encoder_count >= MAX_TIMESTAMPS {return}
+	switch {
+	case f.passes && f.recorded.count > 0: f.encoder_marks[f.encoder_count] = u16(f.recorded.count - 1)
+	case !f.passes && f.measuring: f.encoder_marks[f.encoder_count] = u16(f.measured.count - 1)
+	case: return
+	}
 	index = NS.UInteger(f.encoder_count) * 2
 	f.encoder_count += 1
 	return f.queries, index, true
@@ -341,7 +345,7 @@ cmd_bind_pipeline :: proc(c: ^Command_List, pipeline: Pipeline) {
 	c.pipeline = pipeline
 	c.pipeline_applied = false
 	// Stage masks differ between pipelines; re-apply every slot.
-	c.dirty = max(u32)
+	c.dirty = ~Mtl_Slots{}
 }
 
 cmd_bind_buffer :: proc(c: ^Command_List, slot: u32, buffer: Buffer, offset: u64 = 0, size: u64 = 0) {
@@ -349,7 +353,7 @@ cmd_bind_buffer :: proc(c: ^Command_List, slot: u32, buffer: Buffer, offset: u64
 	if b == nil || !binding_slot_valid(slot, .Storage_Buffer) {set_error(c.device, "invalid buffer binding at slot %d", slot); return}
 	range := size if size > 0 else b.size - offset
 	c.slots[slot] = {set = true, buffer = buffer, offset = offset, range = range}
-	c.dirty |= 1 << slot
+	c.dirty += {int(slot)}
 }
 
 cmd_bind_transient :: proc(c: ^Command_List, slot: u32, t: Transient) {
@@ -377,19 +381,19 @@ cmd_set_constants :: proc(c: ^Command_List, slot: u32, data: rawptr, size: int) 
 cmd_bind_texture :: proc(c: ^Command_List, slot: u32, texture: Texture, mip: i32 = -1) {
 	if pool_get(&c.device.textures, base.Handle(texture)) == nil || slot >= MAX_BINDING_SLOTS {set_error(c.device, "invalid texture binding at slot %d", slot); return}
 	c.slots[slot] = {set = true, texture = texture, mip = mip}
-	c.dirty |= 1 << slot
+	c.dirty += {int(slot)}
 }
 
 cmd_bind_sampler :: proc(c: ^Command_List, slot: u32, sampler: Sampler) {
 	if pool_get(&c.device.samplers, base.Handle(sampler)) == nil || !binding_slot_valid(slot, .Sampler) {set_error(c.device, "invalid sampler binding at slot %d", slot); return}
 	c.slots[slot] = {set = true, sampler = sampler}
-	c.dirty |= 1 << slot
+	c.dirty += {int(slot)}
 }
 
 cmd_bind_accel :: proc(c: ^Command_List, slot: u32, accel: Accel) {
 	if pool_get(&c.device.accels, base.Handle(accel)) == nil || !binding_slot_valid(slot, .Accel) {set_error(c.device, "invalid acceleration structure binding at slot %d", slot); return}
 	c.slots[slot] = {set = true, accel = accel}
-	c.dirty |= 1 << slot
+	c.dirty += {int(slot)}
 }
 
 @(private)
@@ -447,7 +451,7 @@ mtl_flush_bindings :: proc(c: ^Command_List, compute: bool) -> bool {
 	}
 	dirty := c.dirty & p.slot_mask
 	for i in 0 ..< u32(MAX_BINDING_SLOTS) {
-		if dirty & (1 << i) == 0 {continue}
+		if int(i) not_in dirty {continue}
 		slot := p.slots[i]
 		s := c.slots[i]
 		index := NS.UInteger(i)
@@ -498,7 +502,7 @@ mtl_flush_bindings :: proc(c: ^Command_List, compute: bool) -> bool {
 		case .Texture_Table:
 		}
 	}
-	c.dirty &~= dirty
+	c.dirty -= dirty
 	if missing := p.table - c.table; missing != {} {
 		resident := d.table_resident[:]
 		buffer := d.table_buffers[table_copy(c.immediate, d.slot)]
@@ -546,6 +550,16 @@ cmd_draw :: proc(c: ^Command_List, vertex_count: u32, instance_count: u32 = 1, f
 	if vertex_count == 0 || instance_count == 0 {return}
 	if !mtl_flush_bindings(c, false) {return}
 	MTL.RenderCommandEncoder_drawPrimitives(c.render, mtl_primitive(c), NS.UInteger(first_vertex), NS.UInteger(vertex_count), NS.UInteger(instance_count), NS.UInteger(first_instance))
+}
+
+// Draws index_count indices of the bound index buffer from first_index.
+cmd_draw_indexed :: proc(c: ^Command_List, index_count: u32, instance_count: u32 = 1, first_index: u32 = 0, first_instance: u32 = 0) {
+	assert(c.in_render_pass)
+	if index_count == 0 || instance_count == 0 {return}
+	index_buffer := mtl_index_buffer(c)
+	if index_buffer == nil || !mtl_flush_bindings(c, false) {return}
+	offset := NS.UInteger(c.index_offset + u64(first_index) * size_of(u32))
+	MTL.RenderCommandEncoder_drawIndexedPrimitives(c.render, mtl_primitive(c), NS.UInteger(index_count), .UInt32, index_buffer, offset, NS.UInteger(instance_count), 0, NS.UInteger(first_instance))
 }
 
 // Metal has no multi-draw indirect without indirect command buffers; each
@@ -707,14 +721,33 @@ cmd_pop_label :: proc(c: ^Command_List) {
 }
 
 // Marks the start of an interval that frame_timings reports under this name
+// in every frame, also one that does not want timings, until cmd_measure_end:
+// what the renderer paces its own work by. Outside a render pass. In a frame
+// that wants timings it is a cmd_timestamp, which the next one ends; in one
+// that does not, its encoders are sampled.
+cmd_measure_begin :: proc(c: ^Command_List, name: string) {
+	if c.immediate || c.in_render_pass {return}
+	f := &c.device.frames[c.device.slot]
+	if f.passes {cmd_timestamp(c, name); return}
+	if f.queries == nil || f.measuring || !frame_passes_add(&f.measured, name) {return}
+	f.measuring = true
+	mtl_end_encoder(c)
+}
+
+// Ends the interval of the last cmd_measure_begin.
+cmd_measure_end :: proc(c: ^Command_List) {
+	if c.immediate || c.in_render_pass {return}
+	f := &c.device.frames[c.device.slot]
+	if f.passes || !f.measuring {return}
+	f.measuring = false
+	mtl_end_encoder(c)
+}
+
+// Marks the start of an interval that frame_timings reports under this name
 // once the slot completes, in a frame that wants timings. The work after the
 // mark opens an encoder of its own, whose boundary samples bound it.
 cmd_timestamp :: proc(c: ^Command_List, name: string) {
 	if c.immediate {return}
-	d := c.device
-	f := &d.frames[d.slot]
-	if !f.passes || f.query_count >= MAX_TIMESTAMPS {return}
-	if !c.in_render_pass {mtl_end_encoder(c)}
-	f.query_names[f.query_count] = string(f.query_bytes[f.query_count][:copy(f.query_bytes[f.query_count][:], name)])
-	f.query_count += 1
+	f := &c.device.frames[c.device.slot]
+	if frame_passes_add(&f.recorded, name) && f.passes && !c.in_render_pass {mtl_end_encoder(c)}
 }

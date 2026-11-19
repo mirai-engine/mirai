@@ -68,8 +68,11 @@ $P scene.write '{"entities":[{"name":"Valley mist","position":[0,0,0],"component
 
 - `density` is per metre, about the share of light stopped by each metre; the starting value is a
   heavy fog, and haze is a fraction of it. `anisotropy` above 0 scatters forward: the sun glows
-  seen through it. `falloff` thins it with height over the base of its `Volume`: ground mist.
+  seen through it. `falloff` thins it with height over its base, the bottom of its `Volume`
+  raised by `base` (ground mist); under the base it holds its `density`.
 - `variable` makes wisps and banks that drift and change by themselves; `density` is their mean.
+- `glow` (nits) is light the fog gives off on its own: where it is thick it shows that luminance
+  over the light it scatters, as a haze lit from nowhere (a magic mist, the glow of a cave).
 
 ## Pitfalls that fail silently
 

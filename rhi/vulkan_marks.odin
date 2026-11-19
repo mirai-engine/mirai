@@ -77,6 +77,12 @@ vk_stopped :: proc(d: ^Device, out: []u8) -> string {
 		if newest == nil {return ""}
 		frame, stop = newest, newest.count
 	}
+	return vk_marks_stopped(frame, stop, out)
+}
+
+// The open labels and the section at mark stop of a frame, as vk_stopped says them.
+@(private)
+vk_marks_stopped :: proc(frame: ^Vk_Marks, stop: int, out: []u8) -> string {
 	labels: [MAX_LABEL_DEPTH]string
 	section: [MAX_LABEL_DEPTH + 1]string
 	depth := 0
@@ -104,4 +110,31 @@ vk_stopped :: proc(d: ^Device, out: []u8) -> string {
 	if pipeline != "" {fmt.sbprintf(&text, ", with the pipeline %s", pipeline)}
 	if stop == frame.count {fmt.sbprintf(&text, ", where its frame ended")}
 	return strings.to_string(text)
+}
+
+// Where the GPU stopped in the frame of a slot, for the watchdog, which reads
+// the marks of a frame the GPU did not finish.
+@(private)
+watchdog_stopped :: proc(d: ^Device, slot: int, out: []u8) -> string {
+	m := &d.frames[slot].marks
+	if m.buffer == 0 || !m.sent {return ""}
+	count := min(m.count, MAX_FRAME_MARKS)
+	stop := count
+	for i in 0 ..< count {
+		if m.words[i] != m.serial {stop = i; break}
+	}
+	return vk_marks_stopped(m, stop, out)
+}
+
+// Waits up to timeout_ns for the GPU to pass serial of the timeline, from the
+// thread of the watchdog.
+@(private)
+watchdog_gpu_wait :: proc(d: ^Device, serial: u64, timeout_ns: i64) -> Watchdog_Wait {
+	value := serial
+	info := vk.SemaphoreWaitInfo{sType = .SEMAPHORE_WAIT_INFO, semaphoreCount = 1, pSemaphores = &d.timeline, pValues = &value}
+	#partial switch d.dvk.WaitSemaphores(d.handle, &info, u64(timeout_ns)) {
+	case .SUCCESS: return .Done
+	case .TIMEOUT: return .Waiting
+	}
+	return .Failed
 }

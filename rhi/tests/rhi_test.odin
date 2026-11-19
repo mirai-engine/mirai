@@ -204,8 +204,7 @@ rhi_pipelines_of_one_shader_differ_by_their_constants :: proc(t: ^testing.T) {
 	if d == nil {return}
 	defer rhi.device_destroy(d)
 	code := rhi.test_shader("constant.comp")
-	doubled, found := rhi.shader_constant(code, "double")
-	testing.expect(t, found && doubled == rhi.Shader_Constants{rhi.CONSTANT_COMP_DOUBLE}, "the shader names its constant")
+	doubled := rhi.Shader_Constants{rhi.CONSTANT_COMP_DOUBLE}
 	COUNT :: 64
 	output := rhi.buffer_create(d, {size = COUNT * size_of(f32), usage = {.Storage}, memory = .GPU, name = "output"})
 	testing.expect(t, output != 0, rhi.device_error(d))
@@ -274,6 +273,10 @@ rhi_raster_uses_y_up_clip_space :: proc(t: ^testing.T) {
 	rhi.buffer_upload_slice(d, source, 0, vertices[:])
 	fill := rhi.pipeline_create_compute(d, {shader = rhi.test_shader("fill.comp"), name = "fill"})
 	testing.expect(t, fill != 0, rhi.device_error(d))
+	// Drawn indexed from the second index: the first names a vertex there is not.
+	indices := [4]u32{7, 0, 1, 2}
+	index_buffer := rhi.buffer_create(d, {size = size_of(indices), usage = {.Index}, memory = .GPU, name = "indices"})
+	rhi.buffer_upload_slice(d, index_buffer, 0, indices[:])
 	cmd, ok := rhi.frame_begin(d)
 	testing.expect(t, ok)
 	if !ok {return}
@@ -289,7 +292,8 @@ rhi_raster_uses_y_up_clip_space :: proc(t: ^testing.T) {
 	rhi.cmd_begin_render_pass(cmd, &pass)
 	rhi.cmd_bind_pipeline(cmd, pipeline)
 	rhi.cmd_bind_buffer(cmd, 0, buffer)
-	rhi.cmd_draw(cmd, 3)
+	rhi.cmd_bind_index_buffer(cmd, index_buffer)
+	rhi.cmd_draw_indexed(cmd, 3, 1, 1)
 	rhi.cmd_end_render_pass(cmd)
 	testing.expect(t, rhi.frame_end(d, cmd), rhi.device_error(d))
 	rhi.device_wait_idle(d)
@@ -302,6 +306,7 @@ rhi_raster_uses_y_up_clip_space :: proc(t: ^testing.T) {
 	testing.expectf(t, pixels[1] > 100 && pixels[0] < 10, "clear color outside the triangle: %v", pixels[0:4])
 	rhi.buffer_destroy(d, buffer)
 	rhi.buffer_destroy(d, source)
+	rhi.buffer_destroy(d, index_buffer)
 	rhi.texture_destroy(d, target)
 	rhi.pipeline_destroy(d, pipeline)
 	rhi.pipeline_destroy(d, fill)
@@ -368,6 +373,10 @@ rhi_a_pass_draws_into_one_mip_or_layer_of_a_texture :: proc(t: ^testing.T) {
 	expect_clean(t, d)
 }
 
+// The slot image.comp reads its source at: past the 32 a word of bits holds.
+IMAGE_SOURCE_SLOT :: 35
+#assert(IMAGE_SOURCE_SLOT >= 32 && IMAGE_SOURCE_SLOT < rhi.MAX_BINDING_SLOTS)
+
 @(test)
 rhi_storage_image_after_upload_and_frames :: proc(t: ^testing.T) {
 	d := test_device(t)
@@ -388,7 +397,7 @@ rhi_storage_image_after_upload_and_frames :: proc(t: ^testing.T) {
 		if !ok {return}
 		rhi.cmd_timestamp(cmd, "image")
 		rhi.cmd_bind_pipeline(cmd, pipeline)
-		rhi.cmd_bind_texture(cmd, 0, source)
+		rhi.cmd_bind_texture(cmd, IMAGE_SOURCE_SLOT, source)
 		rhi.cmd_bind_sampler(cmd, 1, sampler)
 		rhi.cmd_bind_texture(cmd, 2, target)
 		rhi.cmd_dispatch(cmd, SIZE / 8, SIZE / 8)

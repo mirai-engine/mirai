@@ -1,6 +1,5 @@
 package rhi
 
-import "base:runtime"
 import "core:sync"
 import "core:thread"
 import "core:time"
@@ -207,18 +206,14 @@ present_start :: proc(d: ^Device) -> bool {
 	if !present_backend_start(d) {present_pairs_destroy(d); return false}
 	p.head, p.count, p.busy, p.quit = 0, 0, false, false
 	p.interval_ns, p.last_ended_ns, p.last_shown_ns = 0, 0, 0
-	previous := context.allocator
-	context.allocator = d.allocator
-	p.worker = thread.create(present_worker, name = "rhi presenter")
-	context.allocator = previous
-	if p.worker == nil {
+	error: Thread_Create_Error
+	p.worker, error = device_thread_create(d, present_worker, d)
+	if error != .None {
 		present_backend_stop(d)
 		present_pairs_destroy(d)
-		set_error(d, "the presentation thread could not start")
+		set_error(d, "the presentation thread could not start: %s", thread_create_text(error))
 		return false
 	}
-	p.worker.data = d
-	p.worker.init_context = runtime.Context{allocator = d.allocator}
 	thread.start(p.worker)
 	p.active = true
 	return true

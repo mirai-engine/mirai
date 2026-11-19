@@ -69,7 +69,7 @@ a_project_follows_the_editor_its_port_file_names :: proc(t:^testing.T) {
     root:=base.test_folder(t,"mcp")
     if root=="" {return}
     folder:=project.path(root,".mirai",allocator=context.temp_allocator)
-    testing.expect(t,os.make_directory_all(folder)==nil)
+    testing.expect(t,base.make_directory_all(folder)==nil)
 
     connection,ok:=connection_args({"--project",root},{})
     testing.expect(t,ok && connection.project!="" && len(connection.rest)==0)

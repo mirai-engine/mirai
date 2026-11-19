@@ -47,12 +47,29 @@
   the game's 15 styles. `Highlight_Style` gives color, fill and what is seen behind for each level,
   and the width of its side. The renderer does not know the selection or the editor tools
   ([outlines](frame-graph.md#outlines)).
+- **Without shadows.** An instance with `Instance_Desc.shadowless` (`Mesh_Renderer.shadows` off)
+  is drawn, takes shadows and is seen by every ray that sees surfaces (reflections, probes,
+  contact occlusion), but no shadow ray meets it and no map of the shadows draws it: it is of the
+  class of a batch without `Casts_Shadow` ([BVH](gi.md#bvh-and-acceleration-structures)), and,
+  all glass, a ray that carries light leaves out its filter. Changing it changes its occluder and
+  the light around it, as a move does.
 - **Pools.** Geometry lives in two pools of u32 words: the vertex one (the block of each page of
   each mesh, with the layout of `asset.mesh_page_layout`: vertices, UV1, colors, surface and
   triangles of the page; and the posed vertices of skins and deformables, by mesh vertex index) and
   the index one (clusters, page table, levels, the material word of each slot, the primitive tables
-  of the native BLAS and the batch instances). A mesh is one block of each, with those of its pages
-  following in its order; its row of the mesh table (`Gpu_Mesh`) gives where each part starts.
+  of the native BLAS and the batch instances). A mesh is one block of each, with
+  those of its pages following in its order; its row of the mesh table (`Gpu_Mesh`) gives where
+  each part starts.
+- **Meshes drawn whole.** What draws a mesh out of the raster of a view (glass and its filter,
+  translucents, overlays, the highlight; extensions through `frame_mesh_whole`, the meshes of
+  particles) draws it indexed by a list the frame lays out (`mesh_draws.odin`): of each cluster
+  the three vertices of each triangle, as the cluster and the vertex in it, padded to a fixed
+  room a cluster. A mesh keeps no list of its own: each frame places the meshes it draws so in
+  one buffer by the order of their handles, writes only those whose place is new (and those whose
+  pages stream), and gives the place to the row of the mesh table (`Gpu_Mesh.draw_first`), which
+  extensions read. The buffer starts at a fixed size and grows, as the lists of the cull, to the
+  most a frame asked for; what does not fit is not drawn that frame. A frame that draws the same
+  meshes, or a first mesh within that room, allocates nothing.
   Instances, materials and lights are indexed buffers; the material textures are in the
   [texture table](rhi.md#bindings-and-texture-table).
 - **Pages.** The vertices and triangles of a cluster are read only through the entry of its page
@@ -70,10 +87,15 @@
   `Mesh_Stream` its pages, their compressed blocks and the parents of each page, and whoever
   registered it can release its geometry. What is made in memory without `page_data` always has
   all its pages.
-  - **Slots.** The first streamed mesh reserves once, through `pool_room`, a region of the vertex
-    pool of `Settings.page_pool_bytes` in slots of `MESH_PAGE_WORDS` words. The CPU copy of a slot
-    is the decoded block of its page, and it is published like any dirty range. Without memory for
-    the region there is no streaming: those meshes draw their root and `Stats.problem` says so.
+  - **Slots.** The first streamed mesh makes a region of the vertex pool in slots of
+    `MESH_PAGE_WORDS` words, as many as its pages out of the root up to `PAGE_SLOTS_START`. After
+    a frame whose pages found no slot the region grows, between frames, to a power of two that
+    holds them, never past `Settings.page_pool_bytes` nor the pages out of the root of the
+    streamed meshes: a new range of the pool takes the pages in slots with their entries, and the
+    old range goes free; no other geometry moves. The CPU copy of a slot is the decoded block of
+    its page, and it is published like any dirty range. Without memory for the region there is no
+    streaming: those meshes draw their root and `Stats.problem` says so; without memory to grow
+    it, it stays as it is.
   - **Cull rule.** For a streamed mesh `cull_clusters` draws a cluster if its page is there, the
     error of its parent is not within the threshold, and its own is or the page of its children
     (`child_page`) is not there; in that case it requests that page with the pixels of its error,
@@ -97,26 +119,40 @@
     frames, has no loaded children, is not a parent of the one loading and is not in a ray cut
     that an instance traces: the first eviction of a frame sorts those slots by stamp once.
     Releasing it leaves its entry at `GPU_NONE`. A stable frame does not allocate.
-  - If for `PAGE_SHORT_FRAMES` consecutive frames requests are left without room, `Stats.problem`
-    says `page_pool_bytes` is lacking.
+  - If for `PAGE_SHORT_FRAMES` consecutive frames requests are left without room once the region
+    cannot grow, `Stats.problem` says `page_pool_bytes` or the GPU memory is lacking.
 - **Clusters.** A mesh arrives in the clusters of `.mesh` v6
   ([format](../../mirai-assets/references/kinds.md)): up to 128 triangles of one slot with their
   own vertices, local u8 indices and position and UV on power-of-two grids of the mesh, so two
   clusters that share a vertex place it at the same spot. The shaders read vertices, triangles and
   posed vertices only in `geometry.slang` and `posed.slang`; the CPU, with the `asset` decoders
   (`cluster_vertex`, `mesh_level_decode`) over each page.
-- **Levels.** A static mesh is a DAG of clusters; one with skin or pruned foliage, whole levels
-  whose clusters share the mesh sphere. Both are drawn with the same cut (`cut.slang`,
-  `cluster_in_cut` on the CPU): a cluster enters when its projected error is within
+- **Levels.** A static mesh is a DAG of clusters, its foliage pruned group by group; one with
+  skin, whole levels whose clusters share the mesh sphere. Both are drawn with the same cut
+  (`cut.slang`, `cluster_in_cut` on the CPU): a cluster enters when its projected error is within
   `lod_error_pixels` and that of what replaces it is not.
+- **Foliage changes level without a pop.** A mesh with islands (`MESH_FLAG_ISLANDS`) carries in
+  each vertex where its island goes as the cut moves from the error of its cluster to that of its
+  group (`asset.Island_Vertex`): the G-buffer and the shadow maps move it by how far their own cut
+  has gone (`cluster_along`, `island_offset` of `geometry.slang`), survivors growing and the islands
+  the group drops shrinking one after another, so at the switch the cluster draws what its group
+  does. The same vertex of every draw of a view moves alike; rays meet level 0 at rest. Its boxes
+  hold the islands grown.
 - **Detail of another camera.** The error is projected from `Gpu_Frame.detail_eye`, the eye of
   the view unless `Frame_Desc.detail` holds a camera: then the views of the window take from it
   the levels of the meshes, the cuts rays trace and the levels of the textures, while visibility
   and the image stay those of their own camera. It is what a paused game saw, kept while the
   editor looks closer.
-- The G-buffer is drawn with one non-indexed indirect draw per phase, whose instance count is
-  written by the culling: one instance per visible cluster, which the vertex shader reads from the
-  visible list ([culling](frame-graph.md#passes)). No binds per material or per object.
+- The visibility target is drawn with one indexed indirect draw per phase and raster bin, of
+  the triangles of the visible clusters that may show, which compute passes list each frame
+  with their vertices placed once; the G-buffer is resolved from it once per pixel
+  ([culling](frame-graph.md#passes)). No binds per material or per object.
+- **Size of the raster lists.** They hold a round, not a view: they grow, with a small slack, to
+  a third of what the view of the frame that needs most writes (`RASTER_LIST_SHARE`), and a
+  larger view is drawn over more rounds. Rounds of that share hold a view whole but for the room
+  a list leaves past the cluster that did not fit; a view that passes all its rounds (a jump in
+  what it sees) has what does not fit left out and counted, and the lists grow for the frames
+  after.
 - `mesh_add` encodes vertices and indices with `asset.mesh_build` at one level and registers them
   with `mesh_add_geometry`, which takes the geometry from a file or that made earlier in a job
   (`host.assets_render_geometry_make`) with its ray cuts. The meshes made at runtime
@@ -291,7 +327,9 @@ instances.
   distance and the cull one it fades with the dither pattern of its own body, which TAA blends. An
   instance whose box covers fewer than `Settings.batch_min_pixels` pixels is not rasterized, and
   fades the same from twice that: far away, foliage leaves the raster without jumps. The rays keep
-  seeing it (the distant shadow remains, with the canopy and the coarse cuts).
+  seeing it (the distant shadow remains, with the canopy and the coarse cuts); the maps of the
+  shadows draw it up to its cull distance from the eye, as the view does
+  ([pages](lights.md#pages-of-the-shadow-maps)).
 - **Glass.** A batch draws no blend triangles; one made entirely of blend is neither drawn nor
   traced.
 - **Rays only.** `Rays_Only` leaves the batch in no layer: no view draws it, the picker
@@ -391,10 +429,10 @@ of `GEOMETRY_UPLOADS` meshes, without allocating in a stable frame.
   buffer waits for it to grow.
 - **Hidden until complete.** Until all of it has been uploaded, nothing reads it on the GPU: its
   instances stay hidden (`INSTANCE_FLAG_COLLAPSED`: a `scene_move` does not show them and the
-  outline does not draw them), its batches are not built, `mesh_draw_range` rejects it, its BLAS
-  is not built and its pose is neither deformed nor refit, and stays dirty. Before the frame that
-  follows that of its last range it is shown at once (`geometry_uploads_install`): its instances,
-  the light around it, its batches and its BLAS, in the publication of that frame.
+  outline does not draw them), its batches are not built, `mesh_primitive_count` rejects it, its
+  BLAS is not built and its pose is neither deformed nor refit, and stays dirty. Before the frame
+  that follows that of its last range it is shown at once (`geometry_uploads_install`): its
+  instances, the light around it, its batches and its BLAS, in the publication of that frame.
   `mesh_upload_pending` and `mesh_uploading` say so.
 - **Reused slots.** A range uploads from the CPU copy when its turn comes, and `Mesh_Upload`
   carries a serial: the mesh that takes the handle or the ranges of one that left (`mesh_remove`
@@ -439,6 +477,12 @@ rejecting another type or out of range. The result goes in `Material_Desc.custom
   the weights at zero), blends matrices, deforms and writes the previous positions. Afterwards
   the ray structure is refit: the BVH keeps the bind topology, and the native BLAS is rebuilt
   every `SKIN_REBUILD_INTERVAL` refits, staggered per mesh.
+- **Refit by what rays tell** (`pose_traced`). A pose none of whose instances is traced is not
+  refit; a skinned one is not refit either while its joints moved it from the pose its structure
+  holds by less than the error a coarser ray cut may have at the distance of its nearest instance
+  to the eye of any view of the frame (`ray_cut_distance`). The first frame that tells, the
+  structure takes the vertices before any ray reads it. Extensions' meshes, moved vertices,
+  changed morph weights and a structure made again (pools, tracer, tree) are refit whenever traced.
 - Raster, shadows, reflections and rays read the same geometry. A still pose makes one last write
   to equalize current and previous and stops dispatching. `mesh_remove` frees it.
 - **Preview** (`skin_preview_*`): the same compute, with the deformed vertices returned between

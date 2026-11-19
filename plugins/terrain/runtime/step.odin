@@ -173,16 +173,22 @@ resident_owner_remove :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,index:i
     resident.marks+=1
 }
 
-// Publishes what a job built for a chunk or a node. Its owners show it with
-// their colliders as they show it (owner_chunk_show).
+// Publishes to the assets what a job built for a chunk or a node: it waits
+// in chunk.next until it shows (piece_show). False when it could not.
 @(private)
-chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source,source:^Resident_Source,slot:^Work_Slot,physics:phys.Physics_Settings,problems:^core.Problems,terrains:^core.Table(Terrain,$A)) {
+chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source,source:^Resident_Source,slot:^Work_Slot,physics:phys.Physics_Settings,problems:^core.Problems,terrains:^core.Table(Terrain,$A)) -> bool {
     index:=slot.index
     chunk:=&source.chunks[index]
     s:=&entry.source
     mesh,ok:=chunk_publish(resident.assets,&slot.mesh,slot.key.collision,resident.picking,piece_levels(s,&source.quad,index))
     maps:Piece_Maps
-    if ok && mesh!={} {
+    // The maps of a piece hold every sample at any level: one built again
+    // only for its level keeps those it shows.
+    shape:=piece_shape(s,&slot.mesh.maps)
+    shared:=ok && mesh!={} && chunk.shown && chunk.mesh!={} && chunk.revision==slot.version && chunk.built.join==slot.key.join && chunk.shape==shape
+    if shared {
+        maps=chunk.maps
+    } else if ok && mesh!={} {
         maps,ok=piece_maps_publish(resident.assets,&slot.mesh.maps)
         if !ok {host.assets_mesh_release(resident.assets,mesh)}
     }
@@ -190,20 +196,135 @@ chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source
         name:[base.ASSET_ID_TEXT]u8
         core.report(problems,source_owner(terrains,entry.id),"terrain.chunk_mesh","the mesh of piece %v (depth %d) of terrain source %s could not be made: out of memory for the mesh or its collision; free memory, or give the source fewer cells per chunk",quad_place(&entry.source,&source.quad,index),quad_depth(&source.quad,index),host.assets_name(resident.assets,entry.id,&name))
         source_pending(source,index)
-        return
+        return false
     }
+    staged_release(resident.assets,chunk)
+    chunk.next={mesh,maps,shape,slot.version,slot.key,true,shared}
+    if !chunk.listed {chunk.listed=true;append(&source.staged,u32(index))}
+    return true
+}
+
+// Shows the build that waits in piece index.
+@(private)
+piece_show :: proc(resident:^Terrain_Resident,entry:^Data_Source,source:^Resident_Source,index:int) {
+    chunk:=&source.chunks[index]
+    next:=chunk.next
+    chunk.next={}
+    s:=&entry.source
     if chunk.mesh!={} {resident.stats.released+=1;resident.stats.meshes-=1}
     if !chunk.shown {resident.cut=true}
     // A chunk that turns empty or stops being so gives or wants a collider (resident_colliders).
-    if !chunk.shown || (chunk.mesh=={})!=(mesh=={}) {resident.marks+=1}
-    piece_release(resident.assets,chunk)
-    chunk.mesh,chunk.revision,chunk.built,chunk.shown=mesh,slot.version,slot.key,true
-    chunk.maps,chunk.shape=maps,piece_shape(s,&slot.mesh.maps)
+    if !chunk.shown || (chunk.mesh=={})!=(next.mesh=={}) {resident.marks+=1}
+    if next.shared {
+        if chunk.mesh!={} {host.assets_mesh_release(resident.assets,chunk.mesh)}
+        chunk.mesh,chunk.maps={},{}
+    } else {piece_release(resident.assets,chunk)}
+    chunk.mesh,chunk.revision,chunk.built,chunk.shown=next.mesh,next.revision,next.built,true
+    chunk.maps,chunk.shape=next.maps,next.shape
     // The blocks a node of a Volume read may leave now.
     if piece_levels(s,&source.quad,index) {source.leave=true}
-    if mesh!={} {resident.stats.meshes+=1}
+    if next.mesh!={} {resident.stats.meshes+=1}
     append(&source.changed,u32(index))
     resident.stats.built+=1
+}
+
+// Lets go of the build that waits in a piece.
+@(private)
+staged_release :: proc(a:^host.Assets,chunk:^Resident_Chunk) {
+    if !chunk.next.ready {return}
+    if chunk.next.mesh!={} {host.assets_mesh_release(a,chunk.next.mesh)}
+    if !chunk.next.shared {piece_maps_release(a,&chunk.next.maps)}
+    chunk.next={}
+}
+
+// Whether the build that waits in piece i is what its owner wants of it now.
+@(private)
+staged_fresh :: proc "contextless" (entry:^Data_Source,chunk:^Resident_Chunk,i:int) -> bool {
+    return chunk.next.ready && chunk.resident && chunk.next.built==chunk.wanted && chunk.next.revision==data_version(entry,i)
+}
+
+// Whether two builds of piece i of a Heightfield build its edges alike: the
+// levels of the sides and corners of a chunk, the border of a node.
+@(private)
+edges_alike :: proc "contextless" (q:^Quad,i:int,a,b:Chunk_Key) -> bool {
+    if i<q.first[1] {return a.lod.sides==b.lod.sides && a.lod.corners==b.lod.corners}
+    return a.border==b.border
+}
+
+// Shows the builds that wait in the pieces of every terrain. A piece of a
+// Heightfield whose shown edges change, or that did not show, shows together
+// with the pieces shown beside it whose edges change too, and theirs, once
+// every one of them waits with what its owner wants now: no frame shows two
+// pieces built against other levels along the edge they share. The rest wait
+// for the calls after; a build no longer wanted is let go.
+@(private)
+pieces_show :: proc(resident:^Terrain_Resident,data:^Terrain_Data) {
+    for &source in resident.sources {
+        entry:=data_find(data,source.id)
+        if entry==nil || len(source.chunks)!=len(entry.dirty) {continue}
+        owner:=resident_owner_find(resident,source.owner,source.id)
+        grouped:=entry.source.kind==.Heightfield && owner!=nil && len(owner.nodes)==len(source.chunks)
+        for index in source.staged {
+            i:=int(index)
+            chunk:=&source.chunks[i]
+            if chunk.next.ready && !staged_fresh(entry,chunk,i) {
+                staged_release(resident.assets,chunk)
+                source_pending(&source,i)
+            }
+            if !chunk.next.ready || grouped && !group_gather(resident,owner,entry,&source,i) {continue}
+            if !grouped {
+                piece_show(resident,entry,&source,i)
+                continue
+            }
+            for member in resident.members {piece_show(resident,entry,&source,int(member))}
+        }
+        // What waits stays in the list; what showed, with its group or alone, leaves it.
+        kept:=0
+        for index in source.staged {
+            chunk:=&source.chunks[index]
+            chunk.listed=chunk.next.ready
+            if !chunk.listed {continue}
+            source.staged[kept]=index
+            kept+=1
+        }
+        base.truncate(&source.staged,kept)
+    }
+}
+
+// Gathers in resident.members the group that shows with piece i: from it,
+// the pieces shown beside a member whose edges change (or that did not show)
+// and whose edges change too. True when every one of them waits fresh.
+@(private)
+group_gather :: proc(resident:^Terrain_Resident,owner:^Resident_Owner,entry:^Data_Source,source:^Resident_Source,i:int) -> bool {
+    resident.group+=1
+    pass:=resident.group
+    q:=&source.quad
+    s:=&entry.source
+    clear(&resident.members)
+    source.chunks[i].group=pass
+    if append(&resident.members,u32(i))!=1 {return false}
+    for k:=0;k<len(resident.members);k+=1 {
+        at:=int(resident.members[k])
+        chunk:=&source.chunks[at]
+        if !staged_fresh(entry,chunk,at) {return false}
+        // One that showed with the same edges changes nothing beside it.
+        if chunk.shown && edges_alike(q,at,chunk.built,chunk.next.built) {continue}
+        low,high:=quad_chunks(q,at)
+        for z in low.y-1..=high.y {for x in low.x-1..=high.x {
+            if z>=low.y && z<high.y && x>=low.x && x<high.x {continue}
+            beside:=chunk_index(s,{i32(x),0,i32(z)})
+            for beside>=0 && !owner.nodes[beside].visible {beside=quad_parent(q,beside)}
+            if beside<0 {continue}
+            // A node over it gives way to it, and one no owner wants is not built again.
+            above_low,above_high:=quad_chunks(q,beside)
+            if above_low.x<=low.x && above_low.y<=low.y && above_high.x>=high.x && above_high.y>=high.y {continue}
+            other:=&source.chunks[beside]
+            if other.group==pass || !other.shown || !other.resident || edges_alike(q,beside,other.built,other.wanted) {continue}
+            other.group=pass
+            if append(&resident.members,u32(beside))!=1 {return false}
+        }}
+    }
+    return true
 }
 
 // A piece whose region holds no surface shows nothing, as one built empty.
@@ -214,6 +335,7 @@ piece_take_empty :: proc(resident:^Terrain_Resident,entry:^Data_Source,source:^R
     if !chunk.shown {resident.cut=true}
     if !chunk.shown || chunk.mesh!={} {resident.marks+=1}
     piece_release(resident.assets,chunk)
+    staged_release(resident.assets,chunk)
     chunk.mesh,chunk.revision,chunk.built,chunk.shown={},data_version(entry,index),chunk.wanted,true
     append(&source.changed,u32(index))
 }
@@ -224,6 +346,7 @@ chunk_evict :: proc(resident:^Terrain_Resident,source:^Resident_Source,index:int
     chunk:=&source.chunks[index]
     if chunk.mesh!={} {resident.stats.released+=1;resident.stats.meshes-=1} else if chunk.shown {resident.marks+=1}
     piece_release(resident.assets,chunk)
+    staged_release(resident.assets,chunk)
     chunk.revision,chunk.built,chunk.shown=0,{},false
     append(&source.changed,u32(index))
     source.leave=true
@@ -232,9 +355,10 @@ chunk_evict :: proc(resident:^Terrain_Resident,source:^Resident_Source,index:int
 }
 
 // Takes what a slot holds: a chunk it built, or a page it read, if what it
-// read did not change meanwhile.
+// read did not change meanwhile. vertices: of the mesh it published. show:
+// the piece shows it now; else it waits for pieces_show.
 @(private)
-work_take :: proc(c:^Chunk_Tables,data:^Terrain_Data,resident:^Terrain_Resident,slot:^Work_Slot,physics:phys.Physics_Settings,problems:^core.Problems,terrains:^core.Table(Terrain,$A)) {
+work_take :: proc(c:^Chunk_Tables,data:^Terrain_Data,resident:^Terrain_Resident,slot:^Work_Slot,physics:phys.Physics_Settings,problems:^core.Problems,terrains:^core.Table(Terrain,$A),show:=true) -> (vertices:int) {
     defer work_release(slot)
     entry:=data_find(data,slot.id)
     fresh:=slot.epoch==data.epoch && entry!=nil && &entry.source==slot.source
@@ -260,7 +384,9 @@ work_take :: proc(c:^Chunk_Tables,data:^Terrain_Data,resident:^Terrain_Resident,
             source_pending(source,slot.index)
             return
         }
-        chunk_take(c,resident,entry,source,slot,physics,problems,terrains)
+        if !chunk_take(c,resident,entry,source,slot,physics,problems,terrains) {return}
+        vertices=len(slot.mesh.geometry.positions)
+        if show {piece_show(resident,entry,source,slot.index)}
     case .Page:
         if !fresh {return}
         s:=&entry.source
@@ -291,6 +417,48 @@ work_take :: proc(c:^Chunk_Tables,data:^Terrain_Data,resident:^Terrain_Resident,
         data_pages_arrived(entry,first,last)
         resident.marks+=1
     }
+    return
+}
+
+// How near a piece is to what it is built for, the nearest first: its
+// viewers when the terrain streams, else its views.
+@(private)
+piece_near :: #force_inline proc "contextless" (chunk:^Resident_Chunk,stream:bool) -> f32 {return stream?chunk.reach:chunk.distance}
+
+// The vertices a call publishes of the builds no one waits for: a chunk of the
+// most cells at level 0. Past them the rest stay in their slots, and their
+// pieces show what they showed, for the calls after.
+PUBLISH_VERTICES :: (CHUNK_CELLS_MAX+1)*(CHUNK_CELLS_MAX+1)
+
+// Takes what the jobs of the calls before made in this phase: every page,
+// and every build the call waits for (urgent, or a collider that changes in
+// a world that plays), which shows at once; then, of the builds that only
+// show, the nearest first (piece_near) within PUBLISH_VERTICES, at least one,
+// which show with their neighbors (pieces_show).
+@(private)
+works_take :: proc(c:^Chunk_Tables,data:^Terrain_Data,resident:^Terrain_Resident,phase:core.Phase,physics:phys.Physics_Settings,problems:^core.Problems,terrains:^core.Table(Terrain,$A)) {
+    Held :: struct {slot:int,distance:f32}
+    held:[WORK_SLOTS_MAX]Held
+    count,spent:=0,0
+    for &slot,i in data.work {
+        if !work_due(data,&slot,phase) {continue}
+        if slot.kind!=.Build || slot.urgent || slot.waits {spent+=work_take(c,data,resident,&slot,physics,problems,terrains);continue}
+        // One whose piece is gone only lets go: first.
+        source:=slot.epoch==data.epoch?resident_source_find(resident,slot.id,slot.owner):nil
+        distance:=f32(-1)
+        if source!=nil && slot.index<len(source.chunks) {distance=piece_near(&source.chunks[slot.index],resident.lod_distances[2]>0)}
+        held[count]={i,distance}
+        count+=1
+    }
+    slice.sort_by(held[:count],proc(a,b:Held) -> bool {return a.distance<b.distance || a.distance==b.distance && a.slot<b.slot})
+    took:=false
+    for h in held[:count] {
+        slot:=&data.work[h.slot]
+        if took && spent+len(slot.mesh.geometry.positions)>PUBLISH_VERTICES {break}
+        spent+=work_take(c,data,resident,slot,physics,problems,terrains,show=false)
+        took=true
+    }
+    pieces_show(resident,data)
 }
 
 // Starts the reading of the pages of a source over a region that are in
@@ -309,7 +477,7 @@ pages_start :: proc(data:^Terrain_Data,entry:^Data_Source,low,high:[3]int,phase:
                 core.report(problems,e,"terrain.budget","the pages of terrain source %s near its viewers need more samples than the %d of Terrain_Settings.samples; raise it, or lower Terrain_Settings.resident_distance",host.assets_name(a,entry.id,&name),data.settings.samples)
                 return false
             }
-            slot:=work_slot(data,false)
+            slot:=work_slot(data,false,false)
             if slot==nil || !work_page(data,slot,entry,grid,i,phase) {return false}
         }}}
         return true
@@ -374,14 +542,26 @@ terrain_schedule :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Da
     q:=&source.quad
     chunks:=q.first[1]
     write:=0
-    // The chunks before the nodes above them: what an edit changed near a viewer is built first.
-    slice.sort(source.pending[:])
+    // The chunks before the nodes above them, each the nearest first (piece_near).
+    Order :: struct {source:^Resident_Source,stream:bool}
+    order:=Order{source,stream}
+    context.user_ptr=&order
+    slice.sort_by(source.pending[:],proc(a,b:u32) -> bool {
+        order:=(^Order)(context.user_ptr)
+        chunks:=u32(order.source.quad.first[1])
+        if (a<chunks)!=(b<chunks) {return a<chunks}
+        near,far:=piece_near(&order.source.chunks[a],order.stream),piece_near(&order.source.chunks[b],order.stream)
+        return near<far || near==far && a<b
+    })
     for index in source.pending {
         i:=int(index)
         chunk:=&source.chunks[i]
         keep:=false
+        if chunk.next.ready && !staged_fresh(entry,chunk,i) {staged_release(resident.assets,chunk)}
         build: switch {
         case chunk.working: keep=true
+        // Built, it waits to show with its neighbors (pieces_show).
+        case chunk.next.ready: keep=true
         case !chunk.resident:
             if (chunk.shown || chunk.mesh!={}) && !chunk.visible {chunk_evict(resident,source,i)}
         case chunk.shown && chunk.revision==data_version(entry,i) && chunk.built==chunk.wanted:
@@ -406,7 +586,12 @@ terrain_schedule :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Da
                 piece_border(&levels,a,b,border)
                 if !node_border_ready(data,resident,entry,i,border,urgent,phase,problems,terrains) {keep=true;break build}
             }
-            slot:=work_slot(data,urgent)
+            // While the world plays the next call waits for a build whose collider changes. A
+            // chunk of a Heightfield collides at level 0 whatever level it shows: one built again
+            // only for its level keeps its collider.
+            same_collider:=s.kind==.Heightfield && i<chunks && chunk.shown && chunk.built.collision && chunk.revision==data_version(entry,i) && chunk.built.join==chunk.wanted.join
+            waits:=!resident.picking && !same_collider && chunk.wanted.collision
+            slot:=work_slot(data,urgent,!work_frame(urgent,waits,piece_levels(s,q,i)))
             if slot==nil {
                 keep=true
                 if urgent {urgent_left^=true}
@@ -414,7 +599,7 @@ terrain_schedule :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Da
             }
             edges:[4]Edge_Read
             if owner:=resident_owner_find(resident,source.owner,source.id);owner!=nil && s.kind==.Heightfield {edges=owner_edges(resident,data,owner)}
-            if !work_build(data,slot,entry,source.owner,i,chunk.wanted,urgent,phase,host.assets_limits(resident.assets),border,&source.join,edges,!resident.picking) {
+            if !work_build(data,slot,entry,source.owner,i,chunk.wanted,urgent,phase,host.assets_limits(resident.assets),border,&source.join,edges,waits) {
                 name:[base.ASSET_ID_TEXT]u8
                 core.report(problems,source.owner,"terrain.memory","out of memory for the border of a piece of terrain source %s; it is built in a later frame: free memory, or make the source smaller",host.assets_name(resident.assets,entry.id,&name))
                 keep=true
@@ -474,7 +659,7 @@ resident_layers_override :: proc(resident:^Terrain_Resident,source:^Resident_Sou
         layers_table(a,s,pixels[:4*LAYERS_TEXELS*int(s.layer_count)])
         if source.table!={} && pixels==source.table_pixels {return source.override}
         if source.table!={} {host.assets_texture_release(a,source.table);source.table={}}
-        source.table,_=host.assets_texture_generate(a,pixels[:4*LAYERS_TEXELS*int(s.layer_count)],LAYERS_TEXELS,int(s.layer_count),false,"terrain layers")
+        source.table,_=host.assets_texture_generate(a,pixels[:4*LAYERS_TEXELS*int(s.layer_count)],LAYERS_TEXELS,int(s.layer_count),false,"terrain layers",texels=true)
         source.table_pixels=pixels
         source.override=render.MATERIAL_VALUES_DEFAULT
         render.material_texture(&source.override,base.name_hash("layers"),0,source.table)
@@ -594,7 +779,7 @@ owner_chunk_show :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resid
     }
     materials:=owner.materials
     if chunk.shape.holed {materials[0]=piece_material(s,true)}
-    core.add(c.meshes,e,render.Mesh_Renderer{mesh=chunk.mesh,materials=materials})
+    core.add(c.meshes,e,render.Mesh_Renderer{mesh=chunk.mesh,shape=.None,materials=materials,shadows=true})
     look:=owner.tint
     render.material_values_over(&look,&owner.override)
     piece_values(&look,chunk.maps,chunk.shape)
@@ -773,7 +958,7 @@ terrain_update :: proc(
     resident.pass+=1
     resident.picking=!time.playing
     // What the jobs of the calls before made shows before the sources change again.
-    for &slot in data.work {if work_due(data,&slot,frame.phase) {work_take(&c,data,resident,&slot,physics,problems,terrains)}}
+    works_take(&c,data,resident,frame.phase,physics,problems,terrains)
     // A source is read again when its file changes, on disk or in the memory
     // of the registry; the revision of an owner is the key of the history of
     // its editor.

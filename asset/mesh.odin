@@ -1,5 +1,6 @@
 package asset
 
+import "core:math"
 import "core:mem"
 import "compressor:data"
 import "mirai:std/base"
@@ -24,9 +25,9 @@ import "mirai:std/serial"
 // The levels of a static mesh are a DAG: a cluster of a level is replaced by
 // clusters of the next one wherever its error is small enough, and a view
 // draws the clusters whose own error is within its threshold and whose
-// parent's is not. The levels of a skinned mesh, or of foliage pruned by
-// islands, are whole meshes (Levels) whose clusters share one sphere, so the
-// same test picks one of them. Every bulk column is LZ but page_data, whose
+// parent's is not; its islands (foliage) are pruned group by group. The
+// levels of a skinned mesh are whole meshes (Levels) whose clusters share one
+// sphere, so the same test picks one of them. Every bulk column is LZ but page_data, whose
 // pages are coded and LZ one by one.
 //
 // A page holds whole groups of one level (the clusters that share a parent)
@@ -37,7 +38,8 @@ import "mirai:std/serial"
 // holds its children. Pages [root_page, page count) are the root: whole
 // levels from the coarsest while they fit in MESH_ROOT_WORDS, and every
 // cluster nothing replaces, so the coarsest cut is always there. Skinned,
-// deformed (morphs) and whole-level (Levels) meshes are root whole.
+// deformed (morphs), pruned (islands) and whole-level (Levels) meshes are
+// root whole.
 //
 // Positions and texture coordinates are integers of grids of the whole mesh
 // (position_step, uv_step, uv1_step), stored in each cluster from its lowest
@@ -47,7 +49,7 @@ import "mirai:std/serial"
 // Skin vertices are immutable bind-space geometry. The palette transforms them
 // by inverse(mesh_node_world) * joint_world * inverse_bind.
 
-MESH_VERSION :: 13
+MESH_VERSION :: 14
 MESH_MAX_SLOTS :: 32
 MESH_MAX_LEVELS :: 32
 MESH_RAY_LEVELS :: 4 // the level 0 rays trace near, and up to three coarser cuts of the DAG for far away
@@ -113,6 +115,22 @@ Surface_Vertex :: struct {
     emission:u32, // nits, rgb9e5 (math.rgb9e5_pack)
 }
 
+// Where the vertex of an island (a leaf, a card) goes as the cut of its
+// cluster moves from the error of the cluster to that of its group
+// (geom.Cluster_Made): the center of its island, on the grid of positions
+// from the lowest corner of its cluster as its position is, and in the 16
+// high bits of center_z_fate its fate: with ISLAND_DROPPED, the rank of its
+// island among those its group drops, 0 to 1 over 32768; without, the scale
+// its island grows by, 1 over ISLAND_SCALE_ONE. A vertex that is of no
+// island has the scale 1.
+Island_Vertex :: struct {
+    center_xy:u32,
+    center_z_fate:u32,
+}
+ISLAND_DROPPED :: u32(0x8000)
+ISLAND_SCALE_ONE :: f32(8192)
+ISLAND_FADE_BAND :: f32(0.1) // of the ranks of the islands a group drops, half of those that shrink at once
+
 // Eight influences whose weights add up to 255.
 Skin_Vertex :: struct {
     joints:[8]u16, // rows of joints
@@ -124,8 +142,9 @@ Mesh_Flag :: enum u8 {
     Has_Colors, // some vertex color is not white
     Has_Uv1,    // uv1 is a set of its own, not a copy of uv
     Levels,     // its levels are whole meshes, not a DAG
-    Closed,     // level 0 is closed: no cluster of it is seen from behind its normals
+    Closed,     // level 0 is closed: it bounds a solid, which a ray of glass that enters it leaves
     Has_Surface, // a far mesh: with its colors, its vertices carry roughness, metallic and emission (Surface_Vertex)
+    Has_Islands, // foliage pruned in its DAG: its vertices carry where their islands go as a group gives way to the next level (Island_Vertex)
 }
 Mesh_Flags :: bit_set[Mesh_Flag;u32]
 
@@ -166,9 +185,10 @@ Mesh_Page :: struct {
 
 // Where each stream of the block of a page starts, in words: its vertices
 // (Cluster_Vertex), then uv1 with Has_Uv1, colors with Has_Colors and
-// surfaces (Surface_Vertex) with Has_Surface, one each a vertex, then its
+// surfaces (Surface_Vertex) with Has_Surface, islands (Island_Vertex) with
+// Has_Islands, one each a vertex, then its
 // words of triangles. A stream the mesh has not takes no words.
-Mesh_Page_Layout :: struct {vertices,uv1s,colors,surfaces,triangles,words:u32}
+Mesh_Page_Layout :: struct {vertices,uv1s,colors,surfaces,islands,triangles,words:u32}
 
 Material_Slot :: struct {
     id:u32, // stable inside the mesh: what an entity assigns a material to
@@ -207,6 +227,7 @@ Mesh_Geometry :: struct {
     uv1s:[]u32,   // one per vertex with Has_Uv1: u and v from the lowest uv1 of its cluster
     colors:[]u32, // one per vertex with Has_Colors
     surfaces:[]Surface_Vertex, // one per vertex with Has_Surface
+    islands:[]Island_Vertex,   // one per vertex with Has_Islands
     skin:[]Skin_Vertex,
     triangles:[]u32,
     pages:[]Mesh_Page,
@@ -273,6 +294,29 @@ cluster_position :: proc "contextless" (g:Mesh_Geometry,c:Cluster,local:u32) -> 
     return {f32(c.position.x+i32(v.xy&0xffff)),f32(c.position.y+i32(v.xy>>16)),f32(c.position.z+i32(v.z_u&0xffff))}*g.position_step
 }
 
+// How far a vertex of an island of a cluster has moved from its place
+// `along` of the way from the cluster to its group, as the raster moves it
+// (island_offset of geometry.slang): a survivor grows to its size in the next
+// level, its area linearly; one its group drops shrinks to nothing in a band
+// of ISLAND_FADE_BAND of the ranks of those dropped, the last first.
+cluster_island_offset :: proc "contextless" (g:Mesh_Geometry,c:Cluster,local:u32,along:f32) -> [3]f32 {
+    if .Has_Islands not_in g.flags || !(along>0) {return {}}
+    island:=g.islands[c.vertex_first+local]
+    fate:=island.center_z_fate>>16
+    scale:f32
+    if fate&ISLAND_DROPPED!=0 {
+        rank:=f32(fate&(ISLAND_DROPPED-1))/32768
+        band:=1+ISLAND_FADE_BAND-along*(1+2*ISLAND_FADE_BAND)
+        scale=math.sqrt(clamp((band+ISLAND_FADE_BAND-rank)/(2*ISLAND_FADE_BAND),0,1))
+    } else {
+        grown:=f32(fate)/ISLAND_SCALE_ONE
+        scale=math.sqrt(max(1+(grown*grown-1)*along,0))
+    }
+    if scale==1 {return {}}
+    center:=[3]f32{f32(c.position.x+i32(island.center_xy&0xffff)),f32(c.position.y+i32(island.center_xy>>16)),f32(c.position.z+i32(island.center_z_fate&0xffff))}*g.position_step
+    return (cluster_position(g,c,local)-center)*(scale-1)
+}
+
 // The box of a cluster, from its grid.
 cluster_box :: proc "contextless" (step:f32,c:Cluster) -> (low,high:[3]f32) {
     low={f32(c.position.x),f32(c.position.y),f32(c.position.z)}*step
@@ -323,6 +367,8 @@ mesh_page_layout :: proc "contextless" (flags:Mesh_Flags,vertex_count,triangle_w
     if .Has_Colors in flags {at+=vertex_count}
     layout.surfaces=at
     if .Has_Surface in flags {at+=vertex_count*size_of(Surface_Vertex)/4}
+    layout.islands=at
+    if .Has_Islands in flags {at+=vertex_count*size_of(Island_Vertex)/4}
     layout.triangles=at
     layout.words=at+triangle_words
     return
@@ -337,6 +383,7 @@ mesh_page_gather :: proc(g:Mesh_Geometry,page:Mesh_Page,out:[]u32) -> bool {
     if .Has_Uv1 in g.flags {copy(out[layout.uv1s:],g.uv1s[page.first_vertex:][:page.vertex_count])}
     if .Has_Colors in g.flags {copy(out[layout.colors:],g.colors[page.first_vertex:][:page.vertex_count])}
     if .Has_Surface in g.flags {copy(out[layout.surfaces:],words(g.surfaces,page.first_vertex,page.vertex_count))}
+    if .Has_Islands in g.flags {copy(out[layout.islands:],words(g.islands,page.first_vertex,page.vertex_count))}
     copy(out[layout.triangles:],g.triangles[page.first_triangle:][:page.triangle_words])
     return true
 }
@@ -359,7 +406,8 @@ page_scatter :: proc(g:^Mesh_Geometry,page:Mesh_Page,block:[]u32) {
     copy(words(g.vertices,page.first_vertex,page.vertex_count),block[layout.vertices:layout.uv1s])
     if .Has_Uv1 in g.flags {copy(g.uv1s[page.first_vertex:][:page.vertex_count],block[layout.uv1s:layout.colors])}
     if .Has_Colors in g.flags {copy(g.colors[page.first_vertex:][:page.vertex_count],block[layout.colors:layout.surfaces])}
-    if .Has_Surface in g.flags {copy(words(g.surfaces,page.first_vertex,page.vertex_count),block[layout.surfaces:layout.triangles])}
+    if .Has_Surface in g.flags {copy(words(g.surfaces,page.first_vertex,page.vertex_count),block[layout.surfaces:layout.islands])}
+    if .Has_Islands in g.flags {copy(words(g.islands,page.first_vertex,page.vertex_count),block[layout.islands:layout.triangles])}
     copy(g.triangles[page.first_triangle:][:page.triangle_words],block[layout.triangles:layout.words])
 }
 
@@ -564,6 +612,7 @@ pages_decode :: proc(a:^Asset,view:^Mesh_View) -> Error {
     view.uv1s=rows(a,u32,vertices,.Has_Uv1 in view.flags) or_return
     view.colors=rows(a,u32,vertices,.Has_Colors in view.flags) or_return
     view.surfaces=rows(a,Surface_Vertex,vertices,.Has_Surface in view.flags) or_return
+    view.islands=rows(a,Island_Vertex,vertices,.Has_Islands in view.flags) or_return
     view.triangles=rows(a,u32,words,true) or_return
     block,allocation:=make([]u32,largest,a.allocator)
     if allocation!=nil {return .Out_Of_Memory}
@@ -602,6 +651,7 @@ mesh_check :: proc(view:Mesh_View) -> bool {
     if (.Has_Uv1 in info.flags)!=(len(view.uv1s)>0) || (.Has_Colors in info.flags)!=(len(view.colors)>0) {return false}
     if len(view.uv1s)!=0 && len(view.uv1s)!=len(view.vertices) || len(view.colors)!=0 && len(view.colors)!=len(view.vertices) {return false}
     if (.Has_Surface in info.flags)!=(len(view.surfaces)>0) || len(view.surfaces)!=0 && (len(view.surfaces)!=len(view.vertices) || len(view.colors)==0) {return false}
+    if (.Has_Islands in info.flags)!=(len(view.islands)>0) || len(view.islands)!=0 && len(view.islands)!=len(view.vertices) {return false}
     if len(view.skin)!=0 && len(view.skin)!=len(view.vertices) {return false}
     // Coarser each, and none after the first that is not there.
     previous:f32

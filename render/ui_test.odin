@@ -222,7 +222,7 @@ place :: proc(position,scale:Vec3) -> Mat4 {
 // A wall across the left half of the view, two metres from the origin towards the camera's far side.
 @(private)
 wall_scene :: proc(f:^Overlay_Fixture) {
-    scene_given(f.renderer,{{object_id=1,mesh=f.cube,transform=place({-2,0,0},{4,6,0.2}),tint={0.2,0.2,0.2}}},nil,{direction={0,0.3,1},color={1,1,1},illuminance=1 * math.PI,enabled=true},{background={0,0,0},use_background=true})
+    scene_given(f.renderer,{{object_id=1,mesh=f.cube,transform=place({-2,0,0},{4,6,0.2}),tint={0.2,0.2,0.2}}},nil,{direction={0,0.3,1},color={1,1,1},illuminance=1 * math.PI,enabled=true,indirect=1,scattering=1},{background={0,0,0},use_background=true})
 }
 
 @(private)
@@ -409,6 +409,9 @@ frames_with_layers_panels_and_lines_allocate_nothing_and_make_no_resources :: pr
         frame.debug[0]=lines
         testing.expect(t,renderer_frame(r,frame),r.error)
     }
+    // The variants asked ahead of time are made on the pipeline threads as the driver finishes
+    // them, during any frame: a stable frame is one after them.
+    renderer_pipelines_wait(r,all=true)
     allocations:=f.tracking.total_allocation_count
     resources:=rhi.device_stats(f.device)
     caller:mem.Tracking_Allocator

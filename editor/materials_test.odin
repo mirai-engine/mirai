@@ -106,7 +106,7 @@ the_override_of_a_slot_of_an_entity_goes_into_its_material :: proc(t:^testing.T)
     info:core.World_Info
     s:=Session{app=&app,materials=&materials,info=&info}
 
-    names:=erender.MATERIAL_VALUE_FIELDS
+    names:=asset.MATERIAL_VALUE_FIELDS
     maps:=erender.MATERIAL_MAP_NAMES
     roughness:=base.name_hash(names[3].name)
     override:=erender.Material_Values{own_overlays=true,overlay_count=1}

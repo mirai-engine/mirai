@@ -29,8 +29,6 @@ their own (`vfx.Particle_Override`, fields and program parameters alike). Tables
     (-Z) along where it last went faster than `PARTICLE_MESH_FACING_SPEED` (kept in the bits of
     `flags` a ribbon has, so what rests does not turn), its +Y up, rolled by its rotation and
     scaled along each axis by its emitter; a sorted effect has one mesh (validation);
-  - its particles light the scene with `lights`, and cast shadows only with `light_shadows`
-    ([lights](#particle-lights));
   - the editor shows each field in the group its `group` tag names, or in that of the field
     before it ([document](vfx-editor.md#particle-document)).
 - Curves have `PARTICLE_CURVE_KEYS` keys with non-decreasing times from 0 to 1; the surplus ones
@@ -201,9 +199,9 @@ layer, `x` is the density and `y` how much it glows. A flat grid is not drawn (p
 
 - Once per frame, after the steps, each cell with density takes the light it receives with the
   light of the engine's media (`shaders/include/media.slang`, the same as `fog`): the sun through
-  the scene and through what the medium lets pass cell by cell toward it, a local light in turns
-  and the ambient one. It stores it in the world buffer, added to that of the previous frames: one
-  light per turn gives all.
+  the scene and through what the medium lets pass cell by cell toward it, the local lights as the
+  fog takes them and the ambient one. It stores it in the world buffer, the same in every frame of
+  a still scene, with no history: a light that turns on is whole in the frame it does.
 - In each view, before the sprites, a ray from the camera walks the region in half-cell steps up
   to the scene or the pass's glass: at each step it adds what the medium scatters of that light
   (the sun with the medium's phase toward the eye) and what it glows, behind what the previous
@@ -309,9 +307,10 @@ Requests (`Particle_Requests`, a `core.Queue` of the world; `particles_tick` tak
 
 To the GPU:
 
-- `particles_sync` (`render`, both loops, after `render_sync`) builds each frame the world's
-  emitters (`Emitter_Desc`: the resolved `Particle_Info` and what the frame resolves of it) with the
-  births of its clock that it did not start and its age, and the seconds that the world advanced:
+- `particles_sync` (`render`, both loops, after `render_sync`) gives the pool the world's emitters
+  that changed ([pools](#pools-and-emitters); `Emitter_Desc`: the resolved `Particle_Info` and what
+  the frame resolves of it) with the births of its clock that it did not start and its age, and the
+  seconds that the world advanced:
   those of its ticks while playing (a paused Play does not move its particles) and the frame in the
   editor. A rollback that repeats ticks does not start again what was started; one that started
   fewer starts what comes after.
@@ -340,24 +339,40 @@ To the GPU:
 - One pool per world: its buffers (`pass_buffer`) belong to the renderer, under the world and the
   plugin's name; a world that is not drawn keeps its particles still, and `particles_release`
   (`release` phase) releases its own (`buffer_release`).
-- `pool_emitters` receives each frame a world's whole list:
-  - the pool's tables are built the first time the world gives emitters, and again, without its
-    particles, if it asks for another capacity;
+- A frame does only what changed. `particles_sync` tells the pool (`pool_put`) only of the
+  emitters whose emitter, values, place, hiding, bindings or channel changed (`core.changes` of
+  those tables), whose clock started births, restarted or paused since, or whose effect reads
+  otherwise in the assets; an emitter that did not change costs nothing but the look at its clock.
+  The clocks are written every tick, as their time goes, so it is the one thing compared for all.
+  Those whose frames give something every time are told every frame: a program (its age), the
+  resources or stages it reads, the births of its channel, or a place drawn between two ticks.
+- The desc of an emitter is resolved again only when its effect, its `Particle_Override`, the
+  shaders or what the effect reads of the assets (`effect_inputs`: its file and its sub effect's,
+  their materials' rows and blending, and the meshes they draw) changed. The assets are read again
+  once per effect, not per emitter, when their revision or the shaders move; `particles_tick`
+  resolves the emission of a clock the same way.
+- The pool keeps every emitter it was given until `pool_remove`: an emitter that goes, is hidden or
+  loses its place leaves with its particles.
+  - `pool_frame` starts each frame; the pool's tables are built when the world first has
+    emitters, and again, without its particles, for another capacity. `particles_sync` then puts
+    every emitter again (`Pool.made_count`);
   - a capacity whose buffer exceeds what the device binds leaves the pool as it was; one that the
     device cannot create leaves it with the capacity it had, without its particles. Neither is
     retried;
-  - a new `id` takes a range (first free gap; freed gaps join their neighbors) and starts empty; an
-    `id` that is missing returns its range;
-  - one that changes capacity or `generation` starts again.
-- An emitter that does not fit in the pool or the table (`EMITTER_CAPACITY` per world) is left out.
-- Nothing allocates in a stable frame: the pool's tables are built when it is created, the emitter
-  table goes up to the frame memory once (`pass_rows_upload`) and all its passes bind it, and a
-  program's parameters go up only when they change (`pass_buffer_write`).
+  - a new `id` takes a range (first free gap; freed gaps join their neighbors) and starts empty;
+    one that changes capacity or `generation` starts again.
+- An emitter that does not fit in the pool or the table (`EMITTER_CAPACITY` per world) is left out
+  and tried again the next frame.
+- The table of emitters lives on the GPU (`Pool_Buffer.Emitters`) and the GPU keeps the rows it was
+  given: a frame builds and writes (`pass_buffer_write`, in runs of neighbors) only the rows that
+  were put, the slots that were freed, and the rows whose births, start or previous place go back
+  to rest after the frame that simulated them. All of them when the pool's buffers were made or the
+  renderer's origin moved. What every emitter shares in a frame (the step, the births of the
+  channels, where the reports go) is in `Gpu_Frame`, first in the rows of the frame.
+- Nothing allocates in a stable frame: the pool's tables are built when it is created, and a
+  program's parameters go up only when they change.
 - An effect field exists once: in `Particle_Info`, which `Emitter_Desc` carries as it is, and in
-  the one place that packs it into the `Gpu_Emitter` row (`emitter_row`). The desc is built when
-  the key of what it shows changes, the row only when its `revision` changes (0: every frame) or
-  its range starts; each frame writes its place, its births, the step, its lights and its age, and
-  uploads the table.
+  the one place that packs it into the `Gpu_Emitter` row (`emitter_row`).
 - `Gpu_Particle` and `Gpu_Emitter` are equal to `particles.slang`; the values that that file copies
   from the plugin (flags, types, sizes and capacities) are compared with those of Odin by a test.
   A pool's free and draw lists go in one buffer, and the programs' `Attributes` (those that their
@@ -395,8 +410,8 @@ To the GPU:
   random values even if the frames change.
 - A birth older than the frame (a prewarm, or a world that was not drawn) starts where its life took
   it, with the emitter's acceleration; one older than its life does not start.
-- Lists that arrive without a simulating frame in between are added: their seconds, and their
-  groups age with those of the following ones; if they exceed `SPAWNS`, the neighbors are merged
+- Frames given without a simulating frame in between add up: their seconds, and the births put in
+  them age with those of the following ones; if they exceed `SPAWNS`, the neighbors are merged
   without losing births.
 - A frame simulates `dt` (up to `FRAME_MAX`) in steps of at most `STEP`, up to `STEPS`; each step
   starts the births that fall in it.
@@ -497,30 +512,6 @@ In each view:
 - **meshes** (`Gbuffer`): `Mesh` particles (but those whose material blends) in the G-buffer
   ([mesh particles](#mesh-particles)).
 
-### Particle lights
-
-The particles of an emitter with `lights` are scene lights
-([GPU lights](../../mirai-rendering/references/lights.md#gpu-lights)). Those of an effect with
-`light_shadows` cast shadows within the shadow budgets, like the others; without it (the default)
-they light everything within their reach, without shadow rays or a place in those budgets.
-
-- Each frame, `particles_frame` asks for room for those of all the live emitters of the world, the
-  ones that cast shadows and the ones that do not (`erender.lights_ask`, up to `LIGHTS_ASKED_MAX` of
-  each class), and `pool_prepare` gives each emitter its share of that of its class, in the order
-  of its slots (`light_share`, `Gpu_Emitter.lights`).
-- Those that cast shadows are asked for with a box (`lights_box`): around each emitter, as far as
-  its particles may go in their life at their fastest start or the fastest wind with the strongest
-  pull on them; anywhere when they are born on a surface, on bones, in a channel or at the events
-  of another emitter, or a program moves them.
-- **lights** (`Simulate`, after **finish**): one group per share writes all its room
-  (`erender.pass_lights`). An emitter with fewer alive than its share lights with all of them; with
-  more, with those of even slots of its range, which keep their light while they live.
-- A light is a sphere on the particle, of the color and opacity it shows (after its program) times
-  `light_intensity` in candelas, with reach `light_range` and radius `light_radius` (0: half its
-  size). A `lit` particle receives the light of the others and its own.
-- Each group sorts its lights by a Z curve over the box of those of this frame and builds its tree
-  by halves, each node what its lights give together, like the CPU tree.
-
 ## Ribbons
 
 - A particle joins a ribbon (`flags` above `RIBBON_SHIFT`; 0, that of the emitter): that of the
@@ -551,9 +542,10 @@ they light everything within their reach, without shadow rays or a place in thos
   emitter's material or the mesh's, which the plugin tells the renderer each frame
   (`frame_gbuffer_mesh`) so that the views store their reflectance and their layers. Everything
   that follows lights, shades and reflects them.
-- Each draw takes the level 0 clusters of its mesh without indices (`erender.mesh_draw_range`,
-  `pass_draw_indirect`, the draws `finish` writes after the events, `MESH_DRAWS_AT`; weights and
-  vertices are in the emitter's row) and reads its vertices only through `geometry.slang`: the
+- Each draw takes the level 0 clusters of its mesh indexed by where the frame lists it among the
+  meshes drawn whole (`pass_indices(.Meshes)`, `pass_draw_indexed_indirect`, the draws `finish`
+  writes after the events from `Mesh.draw_first`, `MESH_DRAWS_AT`; weights and meshes are in the
+  emitter's row) and reads its vertices only through `geometry.slang`: the
   plugin asks each frame for the whole mesh (`frame_mesh_whole`), and a mesh with pages outside
   its root loads them all and does not release them while it is drawn, because the scene's cull
   does not see the particles. What a program's `render` gives does not reach them.
@@ -562,8 +554,8 @@ they light everything within their reach, without shadow rays or a place in thos
 
 - `mirai test plugins/vfx/runtime/effect`: format, validation and value paths.
 - `mirai test plugins/vfx/runtime` (with `MIRAI_VALIDATION=1` and `-define:ODIN_TEST_THREADS=1`):
-  emission, requests, values, curves read as on the GPU, the values that `particles.slang` copies
-  and the parts of the lights' place that each emitter takes, without a renderer (`vfx_test.odin`,
+  emission, requests, values and curves read as on the GPU and the values that `particles.slang`
+  copies, without a renderer (`vfx_test.odin`,
   `data_test.odin`), and on the GPU (`gpu_test.odin`), with the generation of the engine and plugin
   shaders that `mirai test` does in `.mirai/tmp/vfx-test-shaders`: births, steps, generations and
   pauses, events, pools per world, rejected capacity, ribbons (trails of two heads, curves, pieces
@@ -576,8 +568,7 @@ they light everything within their reach, without shadow rays or a place in thos
   splats that a stage stores (`spread.slang`), mesh particles that pick their meshes by weight
   and face their velocity, rays from a
   stage against a cube (`probe.slang`), read back with `pass_readback`, a volume that glows
-  (`puff.slang`), particle lights with shadow that light the floor within their reach and not
-  behind a cube, and without shadow, also behind it, a floor whose Surface program reads a grid's
+  (`puff.slang`), a floor whose Surface program reads a grid's
   world texture (`count_ground.slang`), channel births and their rollback (`testdata/gather.slang`),
   reports, sprites behind a `fog` box dimmed by it and one in front of it not, all the modes
   around glass without validation errors and stable frames without allocating; for debugging,

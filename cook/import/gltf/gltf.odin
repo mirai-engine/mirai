@@ -352,6 +352,7 @@ gltf_material :: proc(g:^Gltf,mat:^cg.material) -> (row:int,ok:bool) {
     info:=asset.MATERIAL_DEFAULTS
     images:[asset.Material_Map_Kind]int
     for &image in images {image=-1}
+    info.two_sided=bool(mat.double_sided)
     #partial switch mat.alpha_mode {
     case .mask:
         info.alpha_mode=.Mask

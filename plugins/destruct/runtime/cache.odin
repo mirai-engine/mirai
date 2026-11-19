@@ -96,6 +96,7 @@ Entry :: struct {
     prepared:^Prepared,
     visuals:[dynamic]Visual,
     materials:[render.MATERIAL_SLOTS]base.Asset_Id, // of the Mesh_Renderer of the groups
+    shadows:bool,                                   // of the Mesh_Renderer of the groups
     generated:[asset.MESH_MAX_SLOTS]base.Asset_Id,  // of the meshes generated for them
     slots:u32,                                      // material slots of those meshes; the last is the interior
     event:physics.Break_Event,                       // the strongest applied in event_tick: what Fracture tells
@@ -391,7 +392,7 @@ group_mesh_make :: proc(assets:^host.Assets,cache:^Destruct_Cache,entry:^Entry,m
     if len(m.uvs)!=len(m.positions) {clear(&m.uvs)}
     if len(m.colors)!=len(m.positions) {clear(&m.colors)}
     if len(m.materials)*3!=len(m.indices) {clear(&m.materials)}
-    id,ok=host.assets_mesh_generate(assets,geom.mesh_buffer_view(m),entry.generated[:entry.slots])
+    id,ok=host.assets_mesh_generate(assets,geom.mesh_buffer_view(m),entry.generated[:entry.slots],options={label="fractured pieces"})
     if _,err:=append(&cache.meshes,id);ok && err!=nil {
         host.assets_mesh_release(assets,id)
         return {},false

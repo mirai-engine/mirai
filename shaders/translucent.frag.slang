@@ -1,8 +1,6 @@
 #include "native.slang"
-//! per surface program
+//! per surface program blend
 //! variant hw MIRAI_HW_RT=1
-// color: with colored shadows, the rays cross glass as the mean of its instance (trace.slang).
-//! constant color MIRAI_GLASS_MEANS
 // The light of the blended surfaces behind the per-pixel glass layers, added
 // back to front over the scene that glass_filter.frag has filtered: sun and
 // local lights with shadow rays where they matter, and the probe volume for
@@ -22,13 +20,14 @@ struct Stage_Output {
 [shader("fragment")]
 Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool front_facing : SV_IsFrontFace) {
     Stage_Output output;
+    input = raster_facing(input, front_facing);
     int2 p = int2(pixel_position.xy);
     float opaque = g_depth.Load(int3(p, 0)).r;
-    if (!fragment_forward(input, front_facing, last_layer_depth.Load(int3(p, 0)).r, opaque)) discard;
+    if (!fragment_forward(input, last_layer_depth.Load(int3(p, 0)).r, opaque)) discard;
     Fragment f = fragment_evaluate(input, opaque);
     // Behind a layer of glass, the few percent a pane reflects of the probes do not show.
     Glass g = fragment_glass(f, input.in_world);
-    float3 color = glass_light(f.material, g, glass_shading(f.material, g), float3(0.0), 0.0, 0.08, params.light_budget);
+    float3 color = glass_light(g, glass_shading(f.material, g), float3(0.0), 0.0, 0.08, params.light_budget);
     output.out_color = float4(finite_or_zero(color), 0.0);
     return output;
 }

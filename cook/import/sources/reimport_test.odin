@@ -161,6 +161,90 @@ a_source_keeps_the_ids_of_its_package_and_a_copy_is_another_package :: proc(t:^t
     }
 }
 
+// A document an import writes over in a project that changed since it wrote
+// it (the prefab of a model with an entity added) stops an import into the
+// project that was not told what to do with it, which names it and writes
+// nothing; a refresh leaves it as it is, builds the rest and warns;
+// discard_changes writes over it. The pin records what each such file held
+// as written; a change of its owner alone is none, and a material, which
+// follows its source, records nothing.
+@(test)
+an_import_does_not_write_over_a_document_changed_since_it_wrote_it :: proc(t:^testing.T) {
+    root,assets:=test_project(t,"reimport-changed")
+    if root=="" {return}
+    source:=box_source(assets,"box.gltf","Wood","Paint")
+    s:=test_store(t,fmt.tprintf("%s/store",root))
+    if s==nil {return}
+    context.user_ptr=prefab.import_world(t)
+    options:=Library_Options{store=s,root=root,plugins=test_library,fast_textures=true}
+    settings:=importer.Import_Settings{textures=.Uncompressed}
+    into :: proc(t:^testing.T,root,source:string,options:Library_Options,settings:^importer.Import_Settings) -> (report:importer.Import_Report,error:importer.Error) {
+        added:Library_Report
+        report,added,error=project_ingest(root,source,"",options,settings,context.temp_allocator)
+        testing.expectf(t,len(added.failures)==0,"%v",added.failures)
+        return
+    }
+    first,first_error:=into(t,root,source,options,&settings)
+    if !testing.expectf(t,first_error.code==.None,"%s",first_error.message) {return}
+    scene,_:=written_of(&first,asset.KIND_SCENE,"box")
+    wood,_:=written_of(&first,asset.KIND_MATERIAL,"Wood")
+    list,_,_:=asset.packages_load(root,context.temp_allocator)
+    if !testing.expect_value(t,len(list.packages),1) {return}
+    recorded:=list.packages[0].written[:]
+    testing.expectf(t,importer.written_of(recorded,scene.id)==header_of(scene.path).content_hash && importer.written_of(recorded,wood.id)==0,"the pin records what the prefab holds, and nothing of a material: %v",recorded)
+    data,_:=os.read_entire_file(scene.path,context.temp_allocator)
+    testing.expect_value(t,asset.header_owner_set(data,wood.id),asset.Error.None)
+    _=os.write_entire_file(scene.path,data)
+    _,again_error:=into(t,root,source,options,nil)
+    if !testing.expectf(t,again_error.code==.None,"a change of owner alone is none: %s",again_error.message) {return}
+
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    edited:asset.Scene
+    if !testing.expect_value(t,asset.scene_load(&edited,&types,scene.path,context.temp_allocator),asset.Error.None) {return}
+    _,_=asset.scene_entity_add(&edited,asset.scene_new_id(&edited),{},"Added")
+    testing.expect_value(t,asset.scene_save(&edited,scene.path),asset.Error.None)
+    asset.scene_destroy(&edited)
+    changed,_:=os.read_entire_file(scene.path,context.temp_allocator)
+    pins,_:=os.read_entire_file(fmt.tprintf("%s/%s",root,asset.PACKAGES_FILE),context.temp_allocator)
+    held :: proc(t:^testing.T,path:string,bytes:[]u8,why:string) {
+        now,_:=os.read_entire_file(path,context.temp_allocator)
+        testing.expectf(t,string(now)==string(bytes),"%s: %s",path,why)
+    }
+
+    _,error:=into(t,root,source,options,&settings)
+    testing.expectf(t,error.code==.Changed && contains(error.message,"assets/box/box.scene") && contains(error.message,"discard_changes"),"the import names what changed and how to go on: %v %s",error.code,error.message)
+    held(t,scene.path,changed,"the import wrote nothing")
+    held(t,fmt.tprintf("%s/%s",root,asset.PACKAGES_FILE),pins,"nor its pin")
+
+    // The source changes: the refresh ingests it again and leaves the prefab.
+    box_source(assets,"box.gltf","Wood","Paint","0.8")
+    refreshed:=project_refresh(root,options,context.temp_allocator)
+    testing.expectf(t,refreshed.ingested==1 && len(refreshed.failures)==0 && len(refreshed.warnings)==1 && contains(refreshed.warnings[0],"assets/box/box.scene"),"the refresh builds the rest and says what it left: %v",refreshed)
+    held(t,scene.path,changed,"the refresh leaves it as it is")
+    _,still:=into(t,root,source,options,nil)
+    testing.expectf(t,still.code==.Changed,"what the pin records is still what was written: %v",still.code)
+
+    options.changed=.Discard
+    _,discard_error:=into(t,root,source,options,nil)
+    if !testing.expectf(t,discard_error.code==.None,"%s",discard_error.message) {return}
+    testing.expect(t,!scene_named(t,&types,scene.path,"Added"),"discard_changes writes over it")
+    options.changed=.Refuse
+    _,last_error:=into(t,root,source,options,nil)
+    testing.expectf(t,last_error.code==.None,"then importing again asks nothing: %s",last_error.message)
+}
+
+// Whether the scene at path has an entity named name.
+@(private="file")
+scene_named :: proc(t:^testing.T,types:^asset.Types,path,name:string) -> bool {
+    loaded:asset.Scene
+    if !testing.expect_value(t,asset.scene_load(&loaded,types,path,context.temp_allocator),asset.Error.None) {return false}
+    defer asset.scene_destroy(&loaded)
+    for &held in asset.scene_names(&loaded) {
+        if base.text_get(held[:])==name {return true}
+    }
+    return false
+}
+
 // A part is found by its kind and name alone: one renamed in the source is
 // a new asset, and the one that left stays as it is, with a warning.
 @(test)
@@ -436,7 +520,8 @@ level_run :: proc(state:rawptr,source:string,options:importer.Import_Options,all
 
 // A refresh ingests again a whole source a plugin claims when what it is
 // built from changes: its bytes or those of a file it reads, or the code of
-// the plugin; it leaves a current one alone, and the ids stay.
+// the plugin; it leaves a current one alone, the ids stay, and a document it
+// wrote into the project that was changed since stays as it is.
 @(test)
 a_refresh_ingests_again_a_whole_source_when_what_it_is_built_from_changes :: proc(t:^testing.T) {
     root,assets:=test_project(t,"refresh-whole")
@@ -469,15 +554,33 @@ a_refresh_ingests_again_a_whole_source_when_what_it_is_built_from_changes :: pro
     runs:=state.runs
     current:=project_refresh(root,options,context.temp_allocator)
     testing.expectf(t,current.ingested==0 && len(current.failures)==0 && len(current.missing)==0 && state.runs==runs,"a current source is left alone: %v",current)
-    Change :: enum {Input,Code}
+    Change :: enum {Input,Code,Edited}
+    kit_id,_:=written_of(&first,KIT,"hall")
+    r:asset.Registry
+    asset.registry_init(&r,assets,"",context.temp_allocator)
+    testing.expect_value(t,asset.registry_scan(&r),asset.Error.None)
+    kit_file,kit_found:=asset.registry_find(&r,kit_id.id)
+    if !testing.expect(t,kit_found,"the project has its file of the document") {return}
+    kit:=asset.registry_file_path(&r,kit_file.path,context.temp_allocator)
     for change in Change {
         switch change {
         case .Input: _=os.write_entire_file(fmt.tprintf("%s/wood.png",props),png_bytes(4,4,{20,90,200}))
         case .Code: state.code=7
+        case .Edited:
+            doc:asset.Document
+            testing.expect_value(t,asset.document_load(&doc,kit,context.temp_allocator),asset.Error.None)
+            _,_=asset.document_table_add(&doc,"notes")
+            testing.expect_value(t,asset.document_save(&doc,kit),asset.Error.None)
+            state.code=9
         }
+        edited,_:=os.read_entire_file(kit,context.temp_allocator)
         runs=state.runs
         changed:=project_refresh(root,options,context.temp_allocator)
         testing.expectf(t,changed.ingested==1 && len(changed.failures)==0 && state.runs==runs+1,"%v: %v",change,changed)
+        if change==.Edited {
+            now,_:=os.read_entire_file(kit,context.temp_allocator)
+            testing.expectf(t,string(now)==string(edited) && len(changed.warnings)==1 && contains(changed.warnings[0],"assets/hall"),"what was changed of it stays, and the refresh says so: %v",changed.warnings)
+        }
         testing.expectf(t,project_refresh(root,options,context.temp_allocator).ingested==0,"%v: then nothing",change)
     }
     list,_,_:=asset.packages_load(root,context.temp_allocator)

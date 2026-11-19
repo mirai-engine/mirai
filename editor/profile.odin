@@ -55,6 +55,7 @@ Profile_Conditions :: struct {
     document:string,
     entities:int,
     workers:int,         // threads of the job system besides the main one
+    pending:host.App_Pending, // what the frames drew stand-ins for when the recording began or ended (view_pending)
 }
 
 Profile_Frame_Record :: struct {
@@ -103,6 +104,7 @@ Profile_Capture :: struct {
     lost:u64,
     warmup:int,      // frames run before recording until they stopped getting faster
     unsettled:bool,  // they were still getting faster after PROFILE_SETTLE_MAX
+    loaded:[]string, // what else loaded the GPU when the frames began (workspace.gpu_load)
 }
 
 Profile_Sample :: struct {end:time.Tick,ms,gpu_ms:f32} // a frame the API ran
@@ -124,6 +126,13 @@ profiles_destroy :: proc(s:^Session) {
 profile_capture_free :: proc(c:^Profile_Capture) {
     if c.id!=0 {vmem.arena_destroy(&c.arena)}
     c^={}
+}
+
+// Keeps with the capture what else loaded the GPU when its frames began.
+profile_loaded_set :: proc(c:^Profile_Capture,warnings:[]string) {
+    if len(warnings)==0 {return}
+    c.loaded=make([]string,len(warnings),vmem.arena_allocator(&c.arena))
+    for warning,i in warnings {c.loaded[i]=strings.clone(warning,vmem.arena_allocator(&c.arena))}
 }
 
 profile_find :: proc(s:^Session,id:int) -> ^Profile_Capture {
@@ -172,6 +181,9 @@ profile_collect :: proc(s:^Session) {
     if c==nil {return}
     recording:=host.profile_recording(s.app)
     c.state=recording.complete?.Done:.Stopped
+    // What the last frames asked for and found being made, as what the first ones found.
+    end:=view_pending(s)
+    c.conditions.pending={max(c.conditions.pending.programs,end.programs),max(c.conditions.pending.pipelines,end.pipelines),max(c.conditions.pending.assets,end.assets)}
     context.allocator=vmem.arena_allocator(&c.arena)
     profile_build(c,recording,s.app)
 }
@@ -203,6 +215,7 @@ profile_conditions :: proc(s:^Session) -> (c:Profile_Conditions) {
     current:=status(s)
     c.document,c.entities=strings.clone(current.document),current.entities
     c.workers=max(jobs.worker_count(&app.jobs)-1,0)
+    c.pending=view_pending(s)
     return
 }
 

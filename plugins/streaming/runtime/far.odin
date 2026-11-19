@@ -159,7 +159,7 @@ streaming_far :: proc(
         above,_:=core.get(parents,e)
         if above.entity!=core.NONE {core.commands_add(c,proxy,core.Parent{above.entity,above.order})}
         core.commands_add(c,proxy,pose)
-        core.commands_add(c,proxy,render.Mesh_Renderer{mesh=mesh})
+        core.commands_add(c,proxy,render.Mesh_Renderer{mesh=mesh,shape=.None,shadows=true})
         core.commands_add(c,proxy,scene.Section_Proxy{e})
     }
 }

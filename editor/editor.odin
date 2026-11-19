@@ -6,6 +6,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
+import "core:time"
 import "mirai:asset"
 import "mirai:cook/author"
 import "mirai:core"
@@ -137,6 +138,7 @@ Options :: struct {
     git_init:bool,   // the project becomes a repository once git answers, with git_lfs and git_remote
     git_lfs:bool,
     git_remote:string,
+    gpu_turn:uintptr, // the handle of the turn of the GPU the tool gave it (gpu_turn.odin)
 }
 
 // The editor while it runs. The other storages of the editor are reachable
@@ -195,11 +197,14 @@ Session :: struct {
     headless:bool,
     args:[dynamic]string, // what a restart passes on besides the scene
     gpu_lost_before:string, // --gpu-lost: what stopped the GPU of the editor that started this one
+    gpu:Gpu_Turn,           // the turn of the GPU it holds and what it learns of the card (gpu_turn.odin)
     ready_ns:u64,           // platform.clock_ns when open finished
     gpu_failure:Gpu_Failure_Reaction, // what the editor did once its GPU stopped working (gpu_failure.odin)
     open_path:[1024]u8,open_length:int,
     open_confirmed:bool, // the scene of open_path replaces the open one: the question was answered
     open_shown:bool,     // a frame drew the tab of open_path loading: the open runs at the end of the next
+    start_documents:string, // the tabs a restart left, read at the end of the first frame (start_deferred)
+    start_select:string,    // --select, once the scene of the start is open
     new_prefab:bool,     // what New makes: a prefab, or a scene
     new_path:[DOCUMENT_PATH_BYTES]u8, // the file New was given
     new_length:int,
@@ -391,6 +396,7 @@ run :: proc(info:^core.World_Info,args:[]string,frame:proc(s:^Session) -> bool) 
 // the exit code, when the editor cannot start. Whoever drives the frames
 // (run, a test, a host that steps it) calls advance and then close.
 open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
+    started:=time.tick_now()
     options,understood:=options_read(args)
     if !understood {
         fmt.eprintln(USAGE_TEXT)
@@ -432,6 +438,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
         animation_cache=project.cache_path(root,project.ANIMATION_CACHE,allocator=context.temp_allocator),
         collision_cache=project.content_cache_path(root,project.COLLISION_CACHE,allocator=context.temp_allocator),
         asset_mounts=mounts[:],shaders_root=root,store_root=store_root,
+        gpu_late_record=project.path(root,".mirai",GPU_LATE_RECORD,allocator=context.temp_allocator) if has_project else "",
     })
     if app==nil {
         fmt.eprintfln("mirai: the editor could not start: %v",app_error)
@@ -468,6 +475,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     // build.status of the editor that restarted on a Build says it ended, as the one before would have.
     if options.built {s.build.phase=.Built}
     for arg in options_passed(args) {append(&s.args,strings.clone(arg))}
+    gpu_turn_take(s,options.gpu_turn)
     preferences_open(s,options)
     events_open(s)
     s.projects.launcher=options.launcher
@@ -477,9 +485,17 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     if options.view!="" {view_parse(&s.viewport.orbit,options.view)}
     scene:=options.scene
     if scene=="" && options.documents=="" && has_project {scene=project.start_scene(root,context.temp_allocator)}
+    host.load_startup(app,time.duration_nanoseconds(time.tick_since(started)))
+    // The window of a person shows from the first frame, which draws the scene
+    // loading: what the start opens is read at the end of that frame.
+    deferred:=start_deferred(options)
     switch {
+    case options.documents!="" && deferred:
+        s.start_documents=strings.clone(options.documents)
     case options.documents!="":
         if why:=documents_restore(s,options.documents);why!="" {log.errorf("The document tabs could not all be opened again: %s",why)}
+    case scene!="" && deferred:
+        start_open(s,scene)
     case scene!="":
         if error:=scene_open(s,scene);error!=.None {
             fmt.eprintfln("mirai: could not open the scene %s: %s",scene,document_error_text(error))
@@ -489,7 +505,9 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
             }
         }
     }
-    if options.select!="" {select_ids(s,options.select)}
+    if options.select!="" {
+        if deferred {s.start_select=strings.clone(options.select)} else {select_ids(s,options.select)}
+    }
     // A headless editor is driven through its API: one that cannot open it ends.
     if !services_open(s,options) && options.headless {
         close(s)
@@ -497,6 +515,37 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     }
     s.ready_ns=platform.clock_ns()
     return s,EDITOR_OK
+}
+
+// Whether what the start opens waits for the first frame: a window a person
+// looks at draws before the scene is read. Without a window, hidden or for a
+// count of frames, whoever drives it finds the scene open once open returns.
+start_deferred :: proc(options:Options) -> bool {
+    return !options.headless && !options.hidden && options.frames==0
+}
+
+// The scene of the start opens after the first frame. Nobody can lose
+// anything in the document it replaces: it never asks first, though an agent
+// already drives the editor.
+start_open :: proc(s:^Session,path:string) {
+    file_open_path(s,path)
+    s.open_confirmed=true
+}
+
+// What the start left for after the first frame: the tabs of a restart, and
+// the selection of --select once the scene is open.
+@(private)
+start_run :: proc(s:^Session) {
+    if s.start_documents!="" {
+        if why:=documents_restore(s,s.start_documents);why!="" {log.errorf("The document tabs could not all be opened again: %s",why)}
+        delete(s.start_documents)
+        s.start_documents=""
+    }
+    if s.start_select!="" && .Open not_in s.requests {
+        select_ids(s,s.start_select)
+        delete(s.start_select)
+        s.start_select=""
+    }
 }
 
 // One frame: the game loop of a Play, the loop of the editor over the World
@@ -738,6 +787,7 @@ between_frames :: proc(s:^Session) {
     play_plugin_poll(s)
     events_steps(s)
     files_flush(s)
+    gpu_watch(s)
     asset_documents_retain(s)
 }
 
@@ -770,6 +820,7 @@ requests_run :: proc(s:^Session) {
     if .Quit_Check in requests {documents_quit(s)}
     if .Restart in requests {restart(s,{"--built"})}
     if .Quit in requests {s.quit=true}
+    start_run(s)
 }
 
 // Ends what the editor shows in place of the document: the watch of another
@@ -788,11 +839,11 @@ open_run :: proc(s:^Session) {
     scene:=document_scene_tab(s)
     // Another scene takes the place of the one open: who would lose what
     // they do is asked about first.
-    replaces:=scene>=0 && !path_is_prefab(s,path) && !document_holds_file(s,path)
+    replaces:=open_replaces(s)
     if replaces && !s.open_confirmed {
         asset_document_activate(s,-1)
         document_activate(s,scene)
-        if scene_switch_interrupts(s) || !collab_can_open(s) {
+        if open_asks(s) {
             confirm_open(s,.Open_Scene)
             return
         }
@@ -809,6 +860,19 @@ open_run :: proc(s:^Session) {
     runs_stop(s)
     asset_document_activate(s,-1)
     if error:=document_open_tab(s,path);error!=.None {notify(s,fmt.tprintf("%s: %s",filepath.base(path),document_error_text(error)))}
+}
+
+// The scene of open_path takes the place of the scene open.
+@(private)
+open_replaces :: proc(s:^Session) -> bool {
+    path:=string(s.open_path[:s.open_length])
+    return document_scene_tab(s)>=0 && !path_is_prefab(s,path) && !document_holds_file(s,path)
+}
+
+// The open of open_path asks first: others would lose what they do.
+@(private)
+open_asks :: proc(s:^Session) -> bool {
+    return open_replaces(s) && !s.open_confirmed && (scene_switch_interrupts(s) || !collab_can_open(s))
 }
 
 // A run of an owner on a copy of the edited World, with its own clock. The
@@ -1058,13 +1122,15 @@ restart :: proc(s:^Session,extra:[]string=nil) -> bool {
     append(&command,exe,"--project",s.project_root,"--documents",file)
     for arg in s.args {append(&command,arg)}
     append(&command,..extra)
-    process,error:=subprocess.detached({command=command[:],stdin=os.stdin,stdout=os.stdout,stderr=os.stderr})
+    turn:=gpu_turn_pass(s,&command)
+    process,error:=subprocess.detached({command=command[:],stdin=os.stdin,stdout=os.stdout,stderr=os.stderr},turn)
     if error!=nil {
         log.errorf("%s could not be started: %v",exe,error)
         notify(s,"The built editor could not be started")
         return false
     }
     session_record_follow(s,process.pid)
+    gpu_turn_handed(s,process.pid)
     log.infof("restarting with %s",exe)
     s.quit=true
     return true
@@ -1155,6 +1221,7 @@ session_free :: proc(s:^Session) {
 
 @(private)
 session_destroy :: proc(s:^Session) {
+    gpu_watch_end(s)
     profiles_destroy(s)
     asset_documents_free(s)
     documents_free(s)
@@ -1181,10 +1248,11 @@ session_destroy :: proc(s:^Session) {
     settings_engine_free(s)
     if s.store.root!="" {store.close(&s.store)}
     s.store={}
-    delete(s.project_root);delete(s.engine_root);delete(s.program);delete(s.engine_stamp);delete(s.library_stamp);delete(s.assets_root);delete(s.capture);delete(s.gpu_lost_before)
+    delete(s.project_root);delete(s.engine_root);delete(s.program);delete(s.engine_stamp);delete(s.library_stamp);delete(s.assets_root);delete(s.capture);delete(s.gpu_lost_before);delete(s.start_documents);delete(s.start_select)
     for arg in s.args {delete(arg)}
     delete(s.args)
     s.project_root,s.engine_root,s.program,s.assets_root,s.capture,s.gpu_lost_before,s.args="","","","","","",{}
+    s.start_documents,s.start_select="",""
 }
 
 @(private)
@@ -1208,6 +1276,11 @@ options_read :: proc(args:[]string) -> (o:Options,ok:bool) {
         case "--capture":    o.capture=value(args,&i) or_return
         case "--documents":  o.documents=value(args,&i) or_return
         case "--gpu-lost":   o.gpu_lost=value(args,&i) or_return
+        case "--gpu-turn":
+            text:=value(args,&i) or_return
+            handle,parsed:=strconv.parse_u64(text,10)
+            if !parsed || handle==0 {return o,false}
+            o.gpu_turn=uintptr(handle)
         case "--built":      o.built=true
         case "--view":       o.view=value(args,&i) or_return
         case "--select":     o.select=value(args,&i) or_return
@@ -1262,7 +1335,7 @@ options_passed :: proc(args:[]string) -> []string {
         case "--engine","--width","--height","--density","--api-port","--name","--store":
             if i+1<len(args) {append(&kept,args[i],args[i+1])}
             i+=1
-        case "--project","--scene","--documents","--gpu-lost","--view","--select","--frames","--capture","--join":
+        case "--project","--scene","--documents","--gpu-lost","--gpu-turn","--view","--select","--frames","--capture","--join":
             i+=1
         }
     }

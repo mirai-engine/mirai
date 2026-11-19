@@ -7,6 +7,7 @@ import "core:mem"
 import "core:time"
 import "mirai:rhi"
 import "mirai:render/abi"
+import "mirai:std/base"
 
 // Binding slots.
 SLOT_FRAME          :: abi.SLOT_FRAME
@@ -43,6 +44,8 @@ SLOT_SURFACE        :: abi.SLOT_SURFACE
 SLOT_VIEWS          :: abi.SLOT_VIEWS
 SLOT_LAYERS         :: abi.SLOT_LAYERS
 SLOT_DISTANCE       :: abi.SLOT_DISTANCE
+SLOT_SHADOW_TABLE   :: abi.SLOT_SHADOW_TABLE
+SLOT_LIGHT_LISTS    :: abi.SLOT_LIGHT_LISTS
 // Of a draw of the clusters of an instance (gbuffer.vert): the Surface program
 // whose clusters it draws, 0 those without one, GPU_NONE all of them.
 SLOT_DRAW           :: abi.SLOT_DRAW
@@ -70,6 +73,7 @@ Pass :: struct {
 	jitter:    Vec2,
 	jitter_phases: u32, // of the sequence the jitter of the view follows; 0: none
 	use_gi, use_probes, use_reflections: bool,
+	pyramid_previous: bool, // the depth pyramid of the frame before holds what the view drew then (pass_depth_pyramid)
 	reflectance:    bool, // the G-buffer keeps what each pixel reflects
 	layered:        bool, // and the layers of its material (gbuffer.slang)
 	instance_count: u32,
@@ -87,6 +91,7 @@ Pass :: struct {
 	shown: rhi.Texture, // the image so far: the Display or the Taa a pass last wrote, which the Output stage finishes
 	nested:       [NESTED_VIEW_CAPACITY]Nested_View,
 	nested_count: int,
+	cost:         rhi.Buffer, // the count of a request the view adds to (cost.odin); 0: none
 }
 
 @(private)
@@ -112,6 +117,7 @@ bind_scene_table :: proc(p: ^Pass) {
 	rhi.cmd_bind_texture(cmd, SLOT_SURFACE, texture_or_dummy(r, p.t.surface))
 	rhi.cmd_bind_texture(cmd, SLOT_VIEWS, p.t.motion)
 	rhi.cmd_bind_texture(cmd, SLOT_LAYERS, p.t.layers if p.t.layers != 0 else r.dummy_layers)
+	rhi.cmd_bind_texture(cmd, SLOT_SHADOW_TABLE, p.t.shadow_raster.table if p.t.shadow_raster.table != 0 else r.dummy_uint)
 	rhi.cmd_bind_buffer(cmd, SLOT_LIGHTS, or_dummy(r, s.light_buffer))
 	rhi.cmd_bind_buffer(cmd, SLOT_LIGHT_TREE, or_dummy(r, s.light_tree_buffer))
 	rhi.cmd_bind_buffer(cmd, SLOT_BLAS_NODES, or_dummy(r, s.blas_node_buffer))
@@ -125,12 +131,6 @@ bind_scene_table :: proc(p: ^Pass) {
 	rhi.cmd_bind_texture(cmd, SLOT_DISTANCE, g.distance if g.valid else r.dummy_texture)
 }
 
-// Whether shadow rays take the color of the glass they cross.
-@(private)
-shadows_colored :: proc(r: ^Renderer) -> bool {
-	return r.settings.colored_shadows && len(r.scene.translucent) > 0
-}
-
 @(private)
 set_params :: proc(cmd: ^rhi.Command_List, params: ^$T) {
 	rhi.cmd_set_constants(cmd, SLOT_PARAMS, params, size_of(T))
@@ -138,6 +138,15 @@ set_params :: proc(cmd: ^rhi.Command_List, params: ^$T) {
 
 @(private)
 groups :: proc "contextless" (size, group: u32) -> u32 {return (size + group - 1) / group}
+
+// Keeps of what the last view counted what the lists of the cull grow from,
+// as the most any view of the frame needed (cull_stats_fold.comp).
+@(private)
+cull_stats_fold :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull_Stats_Fold])
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, r.stats_buffer)
+	rhi.cmd_dispatch(cmd, 1)
+}
 
 @(private)
 read_stats :: proc(r: ^Renderer, slot: int) {
@@ -148,14 +157,30 @@ read_stats :: proc(r: ^Renderer, slot: int) {
 		r.stats.visible_clusters = stats.visible_clusters
 		for kind, k in stats.kinds {r.stats.visible_kinds[Visible_Kind_Id(k)] = kind}
 		r.stats.visible_late = stats.late
-		r.stats.cull_dropped = stats.dropped
+		r.stats.cull_dropped = stats.most_dropped
+		r.stats.raster_vertices, r.stats.raster_triangles, r.stats.raster_deferred = stats.raster[0], stats.raster[1], stats.raster[2]
 		// A list that dropped grows for the frames after, by what it lacked.
-		for dropped, list in stats.dropped {
-			if dropped > 0 {r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], r.scene.cull_capacity[list] + dropped)}
+		for dropped, list in stats.most_dropped {
+			if dropped > 0 && list < .Raster_Vertices {r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], r.scene.cull_capacity[list] + dropped)}
+		}
+		most := CULL_MOST
+		for &wanted, list in r.scene.cull_wanted {wanted = min(wanted, most[list])}
+		// Those of the raster, which a view writes again in each of its rounds,
+		// ask for a third of what the view that needs most would hold: it is
+		// drawn in up to RASTER_ROUNDS of them.
+		// A round of the maps is the only one of its cull: they hold what it needs
+		// whole, of which a round of a view takes its share alone (raster_share).
+		for list, k in ([2]Cull_List{.Raster_Vertices, .Raster_Triangles}) {
+			r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], min((stats.most_raster_need[k] + RASTER_LIST_SHARE - 1) / RASTER_LIST_SHARE, CULL_MARK_MAX))
+			r.scene.raster_shadow_wanted[k] = max(r.scene.raster_shadow_wanted[k], min(stats.shadow_need[k], CULL_MARK_MAX))
 		}
 		r.stats.culled_instances = stats.culled_instances
 		r.stats.occluded_instances = stats.occluded_instances
 		r.stats.probes_traced = stats.probes_traced
+		r.stats.probe_rays_traced, r.stats.probe_hits_lit = stats.probe_rays[0], stats.probe_rays[1]
+		r.stats.resolved_pixels, r.stats.resolve_helpers, r.stats.resolve_quads_again = stats.resolved[0], stats.resolved[1], stats.resolved[2]
+		r.stats.light_lists = stats.lists
+		r.stats.shadow = stats.views_shadow
 	}
 	r.stats.timings, _, _ = rhi.frame_timings(r.device)
 	total: f32
@@ -175,45 +200,109 @@ gbuffer_targets :: proc(p: ^Pass) -> (targets: [8]rhi.Texture, count: int) {
 	return
 }
 
+// The raster of the visibility target of a round into depth, a draw of each
+// raster bin, indexed by the triangles the round listed of its clusters
+// (raster_round_record); a view with a clip plane draws nothing behind it.
+// ids, depth: what the pass does first with the visibility target and depth.
 @(private)
-gbuffer_pass :: proc(p: ^Pass, phase: u32, clear, keep_depth: bool) {
+visibility_pass :: proc(p: ^Pass, round: u32, ids, depth: rhi.Load_Op, depth_target: rhi.Texture, keep_depth, clip: bool) {
 	r, cmd, t := p.r, p.cmd, p.t
 	s := &r.scene
-	load: rhi.Load_Op = .Clear if clear else .Load
-	targets, count := gbuffer_targets(p)
-	pass := rhi.Render_Pass_Desc{color_count = count, name = "gbuffer" if clear else "gbuffer late"}
-	for target, i in targets[:count] {pass.colors[i] = {texture = target, load = load, store = .Store}}
-	pass.depth = {texture = t.depth, load = load, store = .Store if keep_depth else .Dont_Care, clear = 0}
+	names := [abi.RASTER_ROUNDS]string{0 = "visibility", 1 = "visibility late"}
+	pass := rhi.Render_Pass_Desc{color_count = 1, name = names[round] if names[round] != "" else "visibility of what found no room"}
+	pass.colors[0] = {texture = t.visibility, load = ids, store = .Store}
+	pass.depth = {texture = depth_target, load = depth, store = .Store if keep_depth else .Dont_Care, clear = 0}
 	rhi.cmd_begin_render_pass(cmd, &pass)
 	if p.draw {
-		target := &r.pipelines[.Gbuffer_Layers if p.layered else .Gbuffer if p.reflectance else .Gbuffer_Plain]
-		if clipped := &r.pipelines[.Gbuffer_Layers_Clip if p.layered else .Gbuffer_Clip if p.reflectance else .Gbuffer_Plain_Clip]; p.camera.clip_plane != {} && clipped^ != 0 {target = clipped}
-		rhi.cmd_bind_pipeline(cmd, target^)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
-		textures_feedback_bind(r, cmd)
-		rhi.cmd_draw_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, draws)) + u64(phase) * size_of(Gpu_Draw), 1, size_of(Gpu_Draw))
-		gbuffer_programs_draw(p, target, phase)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.raster_vertices)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, s.raster_ids)
+		rhi.cmd_bind_index_buffer(cmd, s.raster_indices)
+		first := Pipeline_Id.Visibility_Clip if clip && r.pipelines[.Visibility_Clip] != 0 else .Visibility
+		for bin in 0 ..< RASTER_BINS {
+			rhi.cmd_bind_pipeline(cmd, r.pipelines[Pipeline_Id(int(first) + bin)])
+			rhi.cmd_draw_indexed_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, draws)) + u64(int(round) * RASTER_BINS + bin) * size_of(rhi.Draw_Indexed_Indirect), 1)
+		}
 	}
 	rhi.cmd_end_render_pass(cmd)
 }
 
+// The G-buffer from the visibility target: the depth of the Surface program
+// of each pixel, then the resolve of each program the cull saw a cluster of,
+// which runs where that depth is its own. A nested view resolves its own
+// pixels over those of its view.
+#assert(POINTS_PROGRAM_CAPACITY < 65534, "the 16-bit program depth holds a step for each program and one for none")
+@(private)
+resolve_pass :: proc(p: ^Pass, nested: bool) {
+	r, cmd, t := p.r, p.cmd, p.t
+	render_zone(r, "material resolve")
+	s := &r.scene
+	classify := rhi.Render_Pass_Desc{name = "program depth"}
+	classify.depth = {texture = t.program_depth, load = .Clear, store = .Store, clear = 0}
+	rhi.cmd_begin_render_pass(cmd, &classify)
+	if p.draw {
+		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Program_Depth])
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.visibility)
+		rhi.cmd_draw(cmd, 3)
+	}
+	rhi.cmd_end_render_pass(cmd)
+	targets, count := gbuffer_targets(p)
+	pass := rhi.Render_Pass_Desc{color_count = count, name = "nested view resolve" if nested else "resolve"}
+	for target, i in targets[:count] {pass.colors[i] = {texture = target, load = .Load if nested else .Clear, store = .Store}}
+	pass.depth = {texture = t.program_depth, load = .Load, store = .Dont_Care}
+	rhi.cmd_begin_render_pass(cmd, &pass)
+	if p.draw {
+		variant := 2 if p.layered else 1 if p.reflectance else 0
+		ids := [2][3]Pipeline_Id{{.Resolve_Plain, .Resolve, .Resolve_Layers}, {.Resolve_Nested_Plain, .Resolve_Nested, .Resolve_Nested_Layers}}
+		id := ids[1 if nested else 0][variant]
+		rhi.cmd_bind_pipeline(cmd, r.pipelines[id])
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.visibility)
+		// A nested view counts with its cull, apart.
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, r.scratch_buffer if nested else r.stats_buffer)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.program_draws)
+		textures_feedback_bind(r, cmd)
+		resolve_programs_draw(r, cmd, &r.pipelines[id])
+	}
+	rhi.cmd_end_render_pass(cmd)
+}
+
+// The resolve of the materials without a program, then that of each Surface
+// program of the scene, with the stage of the program, or with that of
+// `target` while the shaders in use have none. The draw of a program has an
+// instance only when the cull of the view saw a cluster of it (cull_bins.comp).
+@(private)
+resolve_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rhi.Pipeline) {
+	s := &r.scene
+	rhi.cmd_bind_pipeline(cmd, target^)
+	rhi.cmd_draw_indirect(cmd, s.program_draws, 0, 1, size_of(Gpu_Program_Draw))
+	if s.programmed_rows == 0 {return}
+	for program in renderer_programs(r) {
+		// A program only blended rows show has no pixel there.
+		if program.domain != .Surface || program.id == 0 || program.id >= r.points.programs || s.program_opaque_rows[program.id] == 0 && !s.program_shown_opaque[program.id] {continue}
+		rhi.cmd_bind_pipeline(cmd, program_graphics(r, target, program.id))
+		rhi.cmd_draw_indirect(cmd, s.program_draws, u64(program.id) * size_of(Gpu_Program_Draw), 1, size_of(Gpu_Program_Draw))
+	}
+}
+
 // Draws the clusters of an instance whose mesh is in the pools, for a pass of
-// its own (gbuffer.vert without the visible list): those of level 0, or all
-// of them, the vertices of those out of the cut of the view collapsed, and
-// those of materials of another program than `program` (SLOT_DRAW).
+// its own (gbuffer.vert without the visible list), indexed by where the
+// frame listed its mesh (mesh_draws.odin): those of level 0, or all of them,
+// the vertices of those out of the cut of the view collapsed, and those of
+// materials of another program than `program` (SLOT_DRAW).
 @(private)
 instance_clusters_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, instance: u32, level0: bool, program: u32) {
 	s := &r.scene
-	inst := &s.instances[instance]
-	mesh := inst.meta.x & INSTANCE_MESH_MASK
-	if int(mesh) >= len(s.meshes) || s.meshes[mesh].vertex_count == 0 || mesh_pending(s, mesh) {return}
-	m := &s.meshes[mesh]
-	clusters := m.cluster_count
+	mesh := s.instances[instance].meta.x & INSTANCE_MESH_MASK
 	// A streamed mesh draws the finest its pools hold, which may be coarser than level 0.
-	if level0 && m.stream == nil {_, clusters = record_level(s, m^, 0)}
+	streamed := int(mesh) < len(s.meshes) && s.meshes[mesh].stream != nil
+	first, count, ok := mesh_draws_range(s, mesh, level0 && !streamed)
+	if !ok {return}
 	drawn := [4]u32{program, 0, 0, 0}
 	rhi.cmd_set_constants(cmd, SLOT_DRAW, &drawn, size_of(drawn))
-	rhi.cmd_draw(cmd, clusters * CLUSTER_DRAW_VERTICES, 1, 0, instance)
+	rhi.cmd_bind_index_buffer(cmd, s.mesh_draws)
+	rhi.cmd_draw_indexed(cmd, count, 1, first, instance)
 }
 
 // Editor selection mask: the highlighted instances alone, in full detail
@@ -229,7 +318,7 @@ highlight_pass :: proc(p: ^Pass) {
 	rhi.cmd_begin_render_pass(cmd, &pass)
 	for inst, index in s.instances {
 		if !highlight_drawn(inst.meta.w) {continue}
-		instance_programs_draw(r, cmd, &r.pipelines[.Highlight], u32(index), true)
+		instance_programs_draw(r, cmd, &r.pipelines[.Highlight], u32(index), true, blended = true)
 	}
 	rhi.cmd_end_render_pass(cmd)
 }
@@ -299,9 +388,8 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, filtered: rhi.Texture, sto
 	// Its rays shade what they hit with the layers of its material, and a
 	// layer of glass traces the lobe its own layers shape.
 	constants: rhi.Shader_Constants
-	if shadows_colored(r) {constants += {REFLECT_COMP_COLOR}}
 	if !scene_layered(s) && !(glass && glass_layered(s)) {constants += {REFLECT_COMP_UNLAYERED}}
-	pipeline := pipeline_of(r, .Reflect, constants, {REFLECT_COMP_COLOR, REFLECT_COMP_UNLAYERED})^
+	pipeline := pipeline_of(r, .Reflect, constants, {REFLECT_COMP_UNLAYERED})^
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, albedo)
@@ -342,31 +430,40 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, filtered: rhi.Texture, sto
 }
 
 // The maps of the view for a pass that lights hits with MIRAI_LIGHT_MAPS of
-// lighting.slang (SUN_SHADOW_SLOT, SHADOW_TINT_SLOT, SHADOW_DATA_SLOT); the
+// lighting.slang (SUN_SHADOW_SLOT, SHADOW_DATA_SLOT); the
 // dummies when the view drew none.
 @(private)
 bind_light_maps :: proc(p: ^Pass, maps: bool) {
 	r, cmd, t := p.r, p.cmd, p.t
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.shadow_raster.atlas if maps else r.dummy_texture)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.shadow_tint if maps && p.frame.sun_maps.w != 0 else r.dummy_texture)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS8, r.shadow_buffers.table if maps else r.dummy_buffer)
 }
 
-// Farthest-depth mip chain of the linear depth target.
+// Farthest-depth mip chain of the linear depth of the depth target, up to
+// DEPTH_PYRAMID_BATCH levels a dispatch (hiz.comp), each from the last level
+// of the one before.
 @(private)
 build_depth_pyramid :: proc(p: ^Pass, pyramid: rhi.Texture) {
 	r, cmd, t := p.r, p.cmd, p.t
-	Params :: struct {source_size: [2]i32, from_depth, pad: u32}
+	Params :: struct {source_size: [2]i32, from_depth, levels: u32, along, by: Vec4}
+	// A point of the depth target, (ndc, depth, 1), is at inv_view_proj of it
+	// from the eye, and at the linear depth of that along the forward axis.
+	m, forward := p.frame.inv_view_proj, p.frame.camera_forward.xyz
+	along := Vec4{}
+	for i in 0 ..< 3 {along += forward[i] * Vec4{m[i, 0], m[i, 1], m[i, 2], m[i, 3]}}
+	by := Vec4{m[3, 0], m[3, 1], m[3, 2], m[3, 3]}
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Hiz])
-	width, height := t.width, t.height
-	for level in 0 ..< t.hiz_levels {
-		params := Params{source_size = {i32(width), i32(height)}, from_depth = 1 if level == 0 else 0}
+	source := [2]u32{t.width, t.height}
+	for first: u32 = 0; first < t.hiz_levels; first += DEPTH_PYRAMID_BATCH {
+		count := min(DEPTH_PYRAMID_BATCH, t.hiz_levels - first)
+		params := Params{source_size = {i32(source.x), i32(source.y)}, from_depth = 1 if first == 0 else 0, levels = count, along = along, by = by}
 		set_params(cmd, &params)
-		if level == 0 {rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.linear_depth)} else {rhi.cmd_bind_texture(cmd, SLOT_PASS0, pyramid, i32(level - 1))}
-		rhi.cmd_bind_texture(cmd, SLOT_PASS1, pyramid, i32(level))
-		width = max(t.hiz_width >> level, 1)
-		height = max(t.hiz_height >> level, 1)
-		rhi.cmd_dispatch(cmd, groups(width, 8), groups(height, 8))
+		if first == 0 {rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.depth)} else {rhi.cmd_bind_texture(cmd, SLOT_PASS0, pyramid, i32(first - 1))}
+		// The targets past the last level are bound to it, and not written.
+		for k in 0 ..< u32(DEPTH_PYRAMID_BATCH) {rhi.cmd_bind_texture(cmd, SLOT_PASS1 + k, pyramid, i32(first + min(k, count - 1)))}
+		top := [2]u32{(source.x + 1) / 2, (source.y + 1) / 2}
+		rhi.cmd_dispatch(cmd, groups(top.x, 8), groups(top.y, 8))
+		for &extent in source {extent = (extent + (1 << count) - 1) >> count}
 	}
 }
 
@@ -394,11 +491,15 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     r.error=""
     r.pipeline_waiting=""
     started:=time.tick_now()
+    zone:=render_zone_begin(r,"uploads arrived")
     texture_uploads_install(r)
     geometry_uploads_install(r)
+    base.profile_end(zone)
+    zone=render_zone_begin(r,"programs")
     pipelines_install(r)
     if r.variants_wanted {pipeline_variants_ask(r)}
     if r.scene.programs_arrived {programs_ask(r)}
+    base.profile_end(zone)
     // What the extensions asked of this frame lasts for it alone.
     defer {
         r.pass_count=0;r.main_pipeline=0;r.gbuffer_asked={}
@@ -420,43 +521,66 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         for view in frame.views {if view.texture==0 && !view.disabled {eye=view.camera.position;break}}
         renderer_origin_follow(r,eye)
     }
+    zone=render_zone_begin(r,"poses")
     frame,framed:=origin_frame(r,frame)
+    if framed {
+        displaced_prepare(r)
+        skins_bounds(r)
+    }
+    base.profile_end(zone)
     if !framed {return false}
-    displaced_prepare(r)
-    skins_bounds(r)
     // What changed for the shadows reaches the views of a frame that draws the scene.
     if !frame.ui_only {r.frame_occluders,r.scene.occluders=r.scene.occluders,{}}
+    zone=render_zone_begin(r,"batches")
     batches_build(r)
-    // The room for the lights of the GPU sizes the light buffers: it is taken before they are made.
-    if !scene_lights_settle(r) || !scene_light_region(r) || !ensure_scene_capacity(r) {return false}
+    base.profile_end(zone)
+    zone=render_zone_begin(r,"light tree")
+    settled:=scene_lights_settle(r)
+    base.profile_end(zone)
+    zone=render_zone_begin(r,"scene capacity")
+    settled=settled && ensure_scene_capacity(r)
+    base.profile_end(zone)
+    if !settled {return false}
     if !frame.offscreen && !frame.ui_only {
         // The cuts rays trace follow the eye of the first view of the window, as the probes.
         eye:=frame.camera.position
         for view in frame.views {if view.texture==0 && !view.disabled {eye=view.camera.position;break}}
         if frame.detail.on {eye=frame.detail.camera.position}
+        zone=render_zone_begin(r,"ray cuts")
         ray_cuts_update(r,eye)
+        base.profile_end(zone)
     }
     if r.settings.gi_enabled && !frame.offscreen && !frame.ui_only {
         // The probes follow the focus of the first view of the window.
         focus:=camera_focus(frame.camera)
         for view in frame.views {if view.texture==0 && !view.disabled {focus=camera_focus(view.camera);break}}
+        zone=render_zone_begin(r,"probes placed")
         if ddgi_ensure(r) {ddgi_place(r,focus)}
-    } else if !r.settings.gi_enabled && r.ddgi.valid {ddgi_release(r)}
-    if r.main.targets.ldr==0 && !create_targets(r,&r.main,r.window_width,r.window_height,window_render_scale(r,f32(r.window_height)),true) {return false}
+        base.profile_end(zone)
+    } else if !r.settings.gi_enabled && r.ddgi.valid {
+        ddgi_release(r)
+        probe_hits_release(r)
+    }
+    zone=render_zone_begin(r,"views prepared")
     // A frame no window shows that draws only into textures leaves the views
     // of the window as they are: it records those alone.
     alone:=frame.offscreen && len(frame.views)>0
     for view in frame.views {if view.texture==0 {alone=false}}
-    if !prepare_views(r,frame.views,alone) {return false}
-    if r.view_count==0 && !ensure_glass_targets(r,&r.main.targets) {return false}
-    if !frame.ui_only && (!air_tables_ensure(r) || !points_prepare(r)) {return false}
+    prepared_ok:=(r.main.targets.ldr!=0 || create_targets(r,&r.main,r.window_width,r.window_height,window_render_scale(r,f32(r.window_height)),true)) &&
+                 prepare_views(r,frame.views,alone) && (r.view_count>0 || (alone || frame.ui_only || scene_targets(r,&r.main)) && ensure_glass_targets(r,&r.main.targets)) &&
+                 (frame.ui_only || air_tables_ensure(r) && points_prepare(r))
+    if prepared_ok && r.view_count>0 {main_scene_release(r)}
     // A window whose pipeline generates frames shows them through the presenter of the device.
-    if !frame.offscreen {
+    if prepared_ok && !frame.offscreen {
         _,main_plan:=view_plan(r,0,true)
         rhi.swapchain_set_paced(d,main_plan.generates)
     }
+    base.profile_end(zone)
+    if !prepared_ok {return false}
     prepared:=time.tick_now()
+    zone=render_zone_begin(r,"gpu slot")
     cmd,began:=rhi.frame_begin(d,!frame.offscreen)
+    base.profile_end(zone)
     gpu_submission_keep(r)
     if !began {
         set_error(r,"the device gave no frame to draw: %s",rhi.device_error(d)!=""?rhi.device_error(d):"the window is being resized or its image is not ready")
@@ -464,37 +588,66 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     }
     begun:=time.tick_now()
     slot:=int(rhi.frame_number(d)%rhi.MAX_FRAMES_IN_FLIGHT)
+    zone=render_zone_begin(r,"readbacks")
     read_stats(r,slot)
     points_read(r,slot)
     pages_update(r,slot)
+    base.profile_end(zone)
+    zone=render_zone_begin(r,"shadow movers")
     if !frame.ui_only {shadow_movers_update(r)}
+    shadow_bound_update(r,slot,frame.refresh_hz)
+    base.profile_end(zone)
+    zone=render_zone_begin(r,"readbacks")
     textures_feedback_read(r,slot)
     extension_counters_begin(r,cmd,slot)
     // A frame none of whose views culls reports no counts, not those of the last one that did.
     rhi.cmd_fill_buffer(cmd,r.stats_buffer,0,size_of(Gpu_Cull_Stats),0)
+    cost_begin(r,cmd)
     depth_probes_begin(r,cmd,slot,frame.probes)
     extension_readbacks_take(r,slot)
     r.stats.counters=r.counters.counters[:r.counters.count]
     r.stats.ui_vertices_dropped,r.stats.debug_vertices_dropped=0,0
+    r.stats.shadow_movers=0
+    r.stats.shadow_marked=0
     r.stats.ui_shapes_dropped,r.stats.ui_layers_dropped=0,0
     r.ui_shape_written,r.ui_shape_cache_count,r.ui_vertex_cache_count=0,0,0
     ui_written:=0
     s:=&r.scene
     s.lights_changed=false
+    base.profile_end(zone)
+    zone=render_zone_begin(r,"uploads")
     texture_uploads_record(r,cmd)
-    recorded_ok:=renderer_commit_geometry(r,cmd,slot) && font_record(r,cmd,slot) && upload_scene(r,cmd) && (frame.ui_only || air_frame(r,cmd))
+    recorded_ok:=renderer_commit_geometry(r,cmd,slot) && font_record(r,cmd,slot)
+    base.profile_end(zone)
+    zone=render_zone_begin(r,"scene tables")
+    recorded_ok=recorded_ok && upload_scene(r,cmd)
+    base.profile_end(zone)
+    zone=render_zone_begin(r,"mesh draws")
+    recorded_ok=recorded_ok && mesh_draws_record(r,cmd) && (frame.ui_only || air_frame(r,cmd))
     if recorded_ok {pages_record_begin(r,cmd)}
     recorded_ok=recorded_ok && textures_feedback_begin(r,cmd,frame)
+    base.profile_end(zone)
     // The BLASes built frames ago become their compacted copies; the TLAS of this frame names those.
     if recorded_ok && r.hardware_rt {
+        zone=render_zone_begin(r,"ray structures")
         if replaced,freed:=rhi.cmd_compact_blases(cmd);replaced>0 {s.tlas_dirty=true;geometry_released(s,freed)}
+        base.profile_end(zone)
     }
     histories_rescale(r,cmd)
-    if recorded_ok {ui_textures_record(r,cmd,slot,&ui_written,frame.ui_textures)}
+    if recorded_ok {
+        zone=render_zone_begin(r,"ui textures")
+        ui_textures_record(r,cmd,slot,&ui_written,frame.ui_textures)
+        base.profile_end(zone)
+    }
     if recorded_ok && !frame.ui_only {
+        zone=render_zone_begin(r,"extensions")
         geometry:=Pass{r=r,cmd=cmd,slot=slot}
         stage_run(&geometry,.Geometry)
-        recorded_ok=deformables_record(r,cmd)
+        base.profile_end(zone)
+        zone=render_zone_begin(r,"ray structures")
+        eyes:[VIEW_CAPACITY+TEXTURE_VIEW_CAPACITY+2]Vec3
+        recorded_ok=deformables_record(r,cmd,frame_eyes(frame,&eyes))
+        base.profile_end(zone)
     }
     // The views drawn into a texture come first: those of the window may show
     // them. What runs once a frame goes with the first view of the window, or
@@ -513,12 +666,14 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     r.main.generated=false
     for &view in r.views {view.generated=false}
     if recorded_ok && !alone && frame.ui_only {
+        zone=render_zone_begin(r,"compose")
         // What covers the scene may show images of previews: they are drawn without it.
         if r.preview_count>0 {
             rhi.cmd_timestamp(cmd,"previews")
             previews_pass(r,cmd,slot)
         }
         compose_views(r,cmd,{ui=frame.ui},slot,&ui_written)
+        base.profile_end(zone)
     } else if recorded_ok && !alone && r.view_count==0 {
         single:=Frame_View{camera=frame.camera,camera_cut=frame.camera_cut,carried=frame.carried,inspection=frame.inspection}
         for view in frame.views {
@@ -538,14 +693,17 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
             recorded_ok &&=ok
             if !ok {break}
         }
+        zone=render_zone_begin(r,"compose")
         if recorded_ok {compose_views(r,cmd,frame,slot,&ui_written)}
         for &view in r.views[:r.view_count] {generated||=view.generated}
         if recorded_ok && generated {
             recorded_ok=ensure_generated_target(r,&r.main.targets)
             if recorded_ok {compose_views(r,cmd,frame,slot,&ui_written,true)}
         }
+        base.profile_end(zone)
     }
 	// ---------------------------------------------------------- present
+	zone = render_zone_begin(r, "present")
 	if swap := rhi.swapchain_texture(d); recorded_ok && swap != 0 {present_blit(r, cmd, swap, rhi.swapchain_format(d), r.main.targets.ldr)}
 	shown_generated := false
 	if before := rhi.swapchain_generated_texture(d); recorded_ok && generated && before != 0 {
@@ -560,8 +718,12 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
 	}
     if recorded_ok {
         if r.settings.gi_enabled {
-            if r.ddgi.valid {rhi.cmd_copy_buffer(cmd,r.ddgi.chosen,0,r.stats_buffer,u64(offset_of(Gpu_Cull_Stats,probes_traced)),4)}
+            if r.ddgi.valid {
+                rhi.cmd_copy_buffer(cmd,r.ddgi.chosen,0,r.stats_buffer,u64(offset_of(Gpu_Cull_Stats,probes_traced)),4)
+                rhi.cmd_copy_buffer(cmd,r.ddgi.chosen,ddgi_counts_offset(&r.ddgi),r.stats_buffer,u64(offset_of(Gpu_Cull_Stats,probe_rays)),8)
+            }
         }
+        cull_stats_fold(r,cmd)
         rhi.cmd_copy_buffer(cmd,r.stats_buffer,0,r.stats_readback[slot],0,size_of(Gpu_Cull_Stats))
         rhi.cmd_barrier_buffer(cmd,r.stats_readback[slot],.Host_Read)
         pages_record_end(r,cmd,slot)
@@ -569,10 +731,15 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         points_end(r,cmd,slot)
         extension_counters_end(r,cmd,slot)
         depth_probes_end(r,cmd,slot)
+        cost_end(r,cmd)
     }
+    r.cost.counting,r.cost.taken=false,false
+	base.profile_end(zone)
 	rhi.cmd_timestamp(cmd, "end")
 	recorded := time.tick_now()
+	zone = render_zone_begin(r, "submit")
 	ok := rhi.frame_end(d, cmd, shown_generated)
+	base.profile_end(zone)
 	ended := time.tick_now()
 	r.stats.cpu_prepare_ms = f32(time.duration_milliseconds(time.tick_diff(started, prepared)))
 	r.stats.cpu_begin_ms = f32(time.duration_milliseconds(time.tick_diff(prepared, begun)))
@@ -605,6 +772,8 @@ histories_rescale :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
 	if r.ddgi.valid {
 		set_params(cmd, &params)
 		scale(r, cmd, r.ddgi.irradiance);scale(r, cmd, r.ddgi.kept)
+		// What the probes keep of the light of their hits is in the units before: they take it again.
+		r.ddgi.lit_everywhere = u32(r.light_frame) + 1
 	}
 	params.encoded = 0
 	set_params(cmd, &params)
@@ -618,6 +787,7 @@ histories_rescale :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
 // is drawn over the image of a view of the window.
 @(private)
 record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Frame_View,frame:Frame_Desc,slot:int,ui_written:^int,first:bool,index:=0) -> bool {
+    render_zone(r,"view")
     if view.camera_cut || !state.has_previous {view_camera_cut(state)}
     // A camera carried with what it sees keeps its histories: its last frame
     // is taken as seen from where the camera would have been.
@@ -627,22 +797,32 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
         state.prev_eye=point_carried(view.carried,state.prev_eye)
         state.prev_depth_plane=plane_carried(state.prev_depth_plane,back)
     }
+    zone:=render_zone_begin(r,"view plan")
     handle,plan:=view_plan(r,view.pipeline,view.texture==0)
-    if !view_pipeline_prepare(r,state,handle,plan) {return false}
+    planned:=view_pipeline_prepare(r,state,handle,plan)
+    base.profile_end(zone)
+    if !planned {return false}
     // The passes after the Output stage generate the image shown before this
-    // one, for a view of a window; with a history, it is shown.
-    generate:=plan.generates && view.texture==0 && !frame.offscreen
+    // one, for a view of a window whose device presents it; with a history, it
+    // is shown. Without a window nobody would see it: they do not run.
+    generate:=plan.generates && view.texture==0 && !frame.offscreen && rhi.swapchain_generated_texture(r.device)!=0
     shown:=generate && state.has_previous && !state.resources_made
     if generate && !ensure_generated_target(r,&state.targets) {return false}
     extension_textures_release(r,state)
     p:=Pass{r=r,cmd=cmd,view=state,t=&state.targets,camera=view.camera,slot=slot,first=first,index=index,plan=plan,texture=view.texture!=0,offscreen=frame.offscreen,inspection=view.inspection,wide=view.texture!=0?view.wide:.None}
+    p.cost=cost_take(r,first,view.texture!=0,state.targets.hiz_valid)
     p.current=int(state.frames%2)
     p.previous=1-p.current
-    if !view_begin(&p) {return false}
+    zone=render_zone_begin(r,"view constants")
+    begun:=view_begin(&p)
+    base.profile_end(zone)
+    if !begun {return false}
     output:=false
+    stages:=STAGE_ZONES
     for index in plan.order[:plan.order_count] {
         pass:=&plan.passes[index]
         ok:=true
+        render_zone(r,stages[pass.stage])
         switch pass.stage {
         case .Custom:      if !output || generate {custom_pass_record(&p,pass)}
         case .Geometry:    ok=pass_gbuffer(&p)
@@ -685,6 +865,7 @@ frame_sun_sky :: proc(f: ^Gpu_Frame, sun: Sun_Desc, environment: Environment, sc
 		if air && environment.sky_atmosphere {light *= air_overhead(environment.air)}
 		f.sun_direction = {sun.direction.x, sun.direction.y, sun.direction.z, 1 if shadows else SUN_UNSHADOWED}
 		f.sun_color = {light.x, light.y, light.z, disc if sun.disc else 0}
+		f.sun_shares = {sun.indirect, sun.scattering, 0, 0}
 	}
 	sky := environment.sky * scale
 	f.sky_color = {sky.x, sky.y, sky.z, scale}
@@ -751,12 +932,12 @@ view_begin :: proc(p: ^Pass) -> bool {
 		time={r.time,r.previous_time,r.delta_time,0},
 		frame_index = u32(p.view.turn),
 		light_nodes = u32(len(s.light_tree)),
-		shadowless_lights = light_region_frame(s.light_region),
+		shadowless_lights = light_tree_shadowless(s.light_tree[:]),
 		instance_count = u32(len(s.instances)),
 		cut = {settings.lod_error_pixels, settings.batch_min_pixels if settings.lod_error_pixels > 0 else 0, 0, 0},
 		batches = {s.batch.slots, s.batch.groups.first, u32(len(s.batch.drawn)), u32(len(s.batch.traced))},
 		debug_view = DEBUG_VIEW_EXTENSION if p.inspection.mode == .None && p.inspection.record != nil else u32(p.inspection.mode),
-		gi_strength = settings.gi_strength,
+		indirect = s.indirect,
 		exposure = view_exposure(p),
 		// Rendering below the output resolution samples the mips the output would use.
 		texturing = {clamp(math.log2(f32(t.width) / f32(t.output_width)), -2, 0), settings.reflection_roughness if p.use_reflections else 0, f32(s.tlas_node_count), f32(s.glass_node_count)},
@@ -781,9 +962,13 @@ view_begin :: proc(p: ^Pass) -> bool {
 		if length > 1e-8 {f.frustum[5] = camera.clip_plane / length}
 	}
 	scale := s.light_scale if s.light_scale > 0 else 1
-	frame_sun_sky(&f, s.sun, s.environment, scale, max(settings.sun_radius, SUN_RADIUS), r.air.built, settings.sun_shadows)
+	frame_sun_sky(&f, s.sun, s.environment, scale, max(settings.sun_radius, SUN_RADIUS), r.air.built, settings.sun_shadows && !s.sun.shadowless)
 	f.sky_map = sky_map(r, s.environment.sky_texture, s.environment.sky_atmosphere)
 	f.sky_from_map = sky_map(r, s.environment.sky_from_texture, s.environment.sky_from_atmosphere)
+	if s.environment.use_background {
+		f.background_map = sky_map(r, s.environment.background_texture, false)
+		f.background_map.y = 0 if s.environment.background_behind else 1
+	}
 	air_view(p, &f)
 	tint := exposure_of_camera(r, camera).tint
 	f.tint = {1, 1, 1, 0} if tint == {} else {tint.x, tint.y, tint.z, 0}
@@ -797,6 +982,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 	if r.has_backdrop && !p.texture {
 		backdrop := r.backdrop * scale
 		f.background = {backdrop.x, backdrop.y, backdrop.z, 1}
+		f.background_map = {}
 	}
 	if p.use_gi {f.flags |= FRAME_FLAG_GI}
 	if p.use_gi && p.plan.gi_given {f.flags |= FRAME_FLAG_GI_GIVEN}
@@ -826,7 +1012,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 	rhi.cmd_timestamp(cmd, "upload")
 	frame_exposure_copy(p, p.constants)
 	if t.needs_clear {
-		clear_textures(cmd, t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.reactive, r.dummy_texture, r.dummy_layers)
+		clear_textures(cmd, t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.reactive, r.dummy_texture, r.dummy_layers, r.dummy_uint)
 		t.needs_clear = false
 	}
 	if t.glass_needs_clear {
@@ -835,7 +1021,6 @@ view_begin :: proc(p: ^Pass) -> bool {
 	}
 	bind_scene_table(p)
 	if !air_aerial(p) {return false}
-	if !glass_means_record(p) {return false}
 
 	// What the stages a pipeline may leave out give the ones after them.
 	p.reflections, p.gi, p.gathered = 0, r.dummy_texture, false
@@ -889,81 +1074,127 @@ frame_constants :: proc(r: ^Renderer, frame: Gpu_Frame) -> rhi.Transient {
 Cull_Params :: struct {
 	phase, occlusion, hiz_levels, programs: u32,
 	glass_groups: [4]u32,
-	chunk_capacity, visible_capacity, candidate_capacity, program_capacity: u32,
+	chunk_capacity, visible_capacity, candidate_capacity, pad: u32,
 	pages: [4]u32, // pages_cull_params
 }
 
 // The state of the cull of a view as each starts: the draws of its phases
-// with the vertices of a cluster and no instances, nothing counted.
+// and bins with no triangles, and nothing counted. Phase 0 of the instance
+// pass starts the rest (cull.comp).
 @(private)
 cull_reset :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
-	start := [1]Gpu_Cull_State{{
-		draws = {{vertex_count = CLUSTER_DRAW_VERTICES}, {vertex_count = CLUSTER_DRAW_VERTICES}},
-		chunk_dispatch = {0, 0, 1}, candidate_dispatch = {0, 1, 1},
-	}}
-	if program_clusters(r) {cull_programs_dispatch(r, cmd, 0, 0)}
+	start := [1]Gpu_Cull_State{{chunk_dispatch = {0, 0, 1}, candidate_dispatch = {0, 1, 1}, bins_dispatch = {{0, 1, 1}, {0, 1, 1}}, raster_dispatch = {0, 0, 1}, raster_pending = {GPU_NONE, 0}}}
 	return upload_transient(r, cmd, start[:], r.scene.cull_state_buffer)
 }
 
-// Whether the cull lists the clusters of Surface programs apart: a material
-// of the scene has a program.
-@(private)
-program_clusters :: proc(r: ^Renderer) -> bool {
-	return r.points.programs > 0 && r.scene.programmed_rows > 0 && r.scene.program_bins != 0
-}
+// Of each phase and tested raster bin, a word per depth bucket for its
+// clusters and one for the cursor they take their places with; then, of
+// each tested bin, a word per bucket for the triangles a round of the raster
+// lists of it and one for where they start (raster_lists.slang).
+DEPTH_BUCKET_WORDS :: 2 * 2 * 2 * RASTER_DEPTH_BUCKETS + 2 * 2 * RASTER_DEPTH_BUCKETS
 
-// A pass of cull_programs.comp over the clusters of Surface programs of a phase.
+// The pass of cull_bins.comp after the cull of a phase: it places the
+// clusters it listed in their raster bins, the list the draws of the phase
+// read.
 @(private)
-cull_programs_dispatch :: proc(r: ^Renderer, cmd: ^rhi.Command_List, mode, phase: u32) {
+cull_bins_dispatch :: proc(r: ^Renderer, cmd: ^rhi.Command_List, phase: u32) {
 	s := &r.scene
-	Params :: struct {mode, phase, programs, capacity: u32}
-	params := Params{mode = mode, phase = phase, programs = r.points.programs, capacity = s.cull_capacity[.Programs]}
-	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull_Programs])
+	Params :: struct {phase, capacity, pad0, pad1: u32}
+	params := Params{phase = phase, capacity = s.cull_capacity[.Visible]}
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull_Bins])
 	set_params(cmd, &params)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.program_bins)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.program_visible)
-	switch mode {
-	case 0:
-		rhi.cmd_dispatch(cmd, groups(r.points.programs, 64))
-	case 2:
-		rhi.cmd_dispatch(cmd, 1)
-	case:
-		rhi.cmd_dispatch_indirect(cmd, s.program_bins, u64(PROGRAMS_DISPATCH + 3 * phase) * size_of(u32))
-	}
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.cull_state_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.listed_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, s.visible_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS5, s.raster_entries)
+	rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, bins_dispatch)) + u64(phase) * size_of([3]u32))
 }
 
-// The clusters of Surface programs the cull of a phase listed, by program:
-// the draws of each program read them (gbuffer_programs_draw).
+// How far a device may move a corner of a triangle as it places it on the
+// grid of its raster, in pixels: a step of that grid, and what the float
+// that holds a pixel of a view loses (raster_triangle_shows).
 @(private)
-cull_programs_bin :: proc(p: ^Pass, phase: u32) {
-	if !program_clusters(p.r) {return}
-	for mode in u32(1) ..= 3 {cull_programs_dispatch(p.r, p.cmd, mode, phase)}
+raster_margin :: proc "contextless" (subpixel_bits: u32) -> f32 {
+	return 1 / f32(u32(1) << clamp(subpixel_bits, 4, 16)) + 1.0 / 512
 }
 
-// The layout of Scene_State.program_bins (cull_programs.slang), for the most bins.
-@(private) PROGRAMS_DISPATCH :: abi.PROGRAMS_DISPATCH
-@(private) PROGRAMS_HEADER :: abi.PROGRAMS_HEADER
+// What a round of the passes of raster_lists.slang reads and writes: the
+// state of its cull, the list of its clusters and what each keeps between
+// the passes. shadow: of a round of the maps of the shadows, its parameters,
+// which raster_vertices.comp places the vertices with for the pages of the
+// pool (shadow_cull.slang); nil for the view.
 @(private)
-program_entry_word :: proc "contextless" (entry: u32) -> u32 {return PROGRAMS_HEADER + 14 * POINTS_PROGRAM_CAPACITY + 3 * entry}
-@(private)
-program_draw_offset :: proc "contextless" (phase, program, programs: u32) -> u64 {
-	return u64(PROGRAMS_HEADER + 6 * programs + (phase * programs + program) * 4) * size_of(u32)
+Raster_Round_Lists :: struct {
+	state, visible, entries: rhi.Buffer,
+	shadow:                  ^Shadow_Params,
+	pages, maps:             rhi.Buffer, // of the maps: the buffer of the pages of the view and the words of the maps
 }
 
-// The clusters of each Surface program of the scene that the cull of the view
-// listed in a phase, each with the stage of its program, or with the one of
-// `target` while the shaders in use have none.
+// A round of the passes of raster_lists.slang: it takes the clusters of the
+// list no round listed yet, those cull_bins.comp placed since the round
+// before (or the cull of the maps listed) and those that found no room in
+// it, and writes their vertices, which of their triangles show, where the
+// triangles of each raster bin and depth bucket go, and the triangles
+// themselves, which the draws of the round read. last: no round follows, so
+// what finds no room is left out and counted. stats: what counts the
+// vertices and the triangles written, the clusters left to the next round
+// and what was left out. lists: those of the view where nil.
 @(private)
-gbuffer_programs_draw :: proc(p: ^Pass, target: ^rhi.Pipeline, phase: u32) {
-	r, cmd := p.r, p.cmd
+raster_round_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, round: u32, last: bool, stats: rhi.Buffer, lists: ^Raster_Round_Lists = nil, cost: rhi.Buffer = 0) {
+	render_zone(r, "raster round")
 	s := &r.scene
-	if !program_clusters(r) {return}
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.program_visible)
-	for program in renderer_programs(r) {
-		if program.domain != .Surface || program.id >= r.points.programs || s.program_rows[program.id] == 0 {continue}
-		rhi.cmd_bind_pipeline(cmd, program_graphics(r, target, program.id))
-		rhi.cmd_draw_indirect(cmd, s.program_bins, program_draw_offset(phase, program.id, r.points.programs), 1, size_of(Gpu_Draw))
+	view := Raster_Round_Lists{state = s.cull_state_buffer, visible = s.visible_buffer, entries = s.raster_entries}
+	l := lists if lists != nil else &view
+	groups := u64(offset_of(Gpu_Cull_State, raster_dispatch))
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Round])
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, l.state)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
+	rhi.cmd_dispatch(cmd, 1)
+	margin := raster_margin(rhi.device_info(r.device).subpixel_bits)
+	if l.shadow != nil {
+		params := l.shadow^
+		params.round, params.last, params.margin = round, u32(last), margin
+		params.vertex_capacity, params.triangle_capacity = s.cull_capacity[.Raster_Vertices], s.cull_capacity[.Raster_Triangles]
+		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Vertices_Shadow_Cost if cost != 0 else .Raster_Vertices_Shadow])
+		set_params(cmd, &params)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS6, l.pages)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS7, l.maps)
+	} else {
+		Vertices_Params :: struct {round, last, vertex_capacity, triangle_capacity: u32, margin: f32, pad: [3]u32}
+		// A round of a view takes its share of the lists, whatever a round of the
+		// maps grew them to: what finds no room is drawn by the round after, over
+		// the depth of those before.
+		vertices := Vertices_Params{round = round, last = u32(last), margin = margin}
+		vertices.vertex_capacity = min(s.raster_share[0], s.cull_capacity[.Raster_Vertices])
+		vertices.triangle_capacity = min(s.raster_share[1], s.cull_capacity[.Raster_Triangles])
+		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Vertices_Cost if cost != 0 else .Raster_Vertices])
+		set_params(cmd, &vertices)
 	}
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, l.state)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, stats)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, l.visible)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.raster_vertices)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS5, l.entries)
+	if cost != 0 {rhi.cmd_bind_buffer(cmd, SLOT_PASS8, cost)}
+	rhi.cmd_dispatch_indirect(cmd, l.state, groups)
+	Params :: struct {round, ids, pad0, pad1: u32}
+	params := Params{round = round, ids = 0 if l.shadow != nil else 1}
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Starts])
+	set_params(cmd, &params)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, l.state)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
+	rhi.cmd_dispatch(cmd, 1)
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Triangles])
+	set_params(cmd, &params)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, l.state)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, l.visible)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.raster_indices)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS5, l.entries)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, s.raster_ids)
+	rhi.cmd_dispatch_indirect(cmd, l.state, groups)
 }
 
 @(private)
@@ -972,7 +1203,7 @@ cull_bind :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glass:
 	s := &r.scene
 	params := params
 	params.chunk_capacity, params.visible_capacity, params.candidate_capacity = s.cull_capacity[.Chunks], s.cull_capacity[.Visible], s.cull_capacity[.Candidates]
-	if program_clusters(r) {params.programs, params.program_capacity = r.points.programs, s.cull_capacity[.Programs]}
+	params.programs = r.points.programs
 	params.pages = pages_cull_params(r)
 	set_params(cmd, &params)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.cull_state_buffer)
@@ -982,70 +1213,87 @@ cull_bind :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glass:
 	// The cluster pass asks for pages and stamps their slots.
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS7, or_dummy(r, s.pages.request_buffer))
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS8, or_dummy(r, s.pages.stamp_buffer))
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, or_dummy(r, s.program_bins))
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, s.program_draws)
 }
 
 // The two passes of a phase of the cull: by instance, which hands the
 // clusters of their cuts over in chunks, and by cluster over the chunks.
 @(private)
-cull_record :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glass: rhi.Buffer) {
+cull_record :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glass: rhi.Buffer, cost: rhi.Buffer = 0) {
 	r, cmd := p.r, p.cmd
+	render_zone(r, "cull")
 	s := &r.scene
-	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull])
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull_Cost if cost != 0 else .Cull])
 	cull_bind(p, params, hiz, stats, glass)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.candidate_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, glass)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, s.depth_buckets)
+	if cost != 0 {rhi.cmd_bind_buffer(cmd, SLOT_PASS8, cost)}
 	rhi.cmd_dispatch(cmd, groups(p.instance_count + p.batch_slots, 64))
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull_Clusters])
 	cull_bind(p, params, hiz, stats, glass)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.cluster_candidate_buffer)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, s.visible_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, s.listed_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
 	rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, chunk_dispatch)))
 }
 
-// Culling and the G-buffer. Phase 0 draws what last frame's depth pyramid
-// says is visible; the pyramid of this frame then rescues occlusion-rejected
-// instances and clusters that are visible after all (phase 1), so the result
-// is exact with no popping. The pyramid is built before any nested view is
-// drawn: it holds the depths of the view alone.
+// Culling and the G-buffer. Phase 0 rasters into the visibility target what
+// last frame's depth pyramid says is visible; the pyramid of this frame then
+// rescues occlusion-rejected instances and clusters that are visible after
+// all (phase 1), so the result is exact with no popping. The material of each
+// pixel then runs once (resolve_pass). The pyramid is built before any nested
+// view is drawn: it holds the depths of the view alone.
 @(private)
 pass_gbuffer :: proc(p: ^Pass) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
 	s := &r.scene
 	threads := p.instance_count + p.batch_slots
 	occlusion := threads > 0
-	keep_depth := p.draw_translucent || p.draw_overlays || p.blend || stage_asked(r, .Gbuffer) || r.pass_count > 0 && .Nested in p.plan.stages
+	keep_depth := occlusion || p.draw_translucent || p.draw_overlays || p.blend || stage_asked(r, .Gbuffer) || r.pass_count > 0 && .Nested in p.plan.stages
+	clip := p.camera.clip_plane != {}
 	glass_groups := [4]u32{groups(t.width, 8), groups(t.height, 8), groups(t.half_width, 8), groups(t.half_height, 8)}
+	p.pyramid_previous = t.hiz_valid
 	rhi.cmd_timestamp(cmd, "cull")
-	rhi.cmd_fill_buffer(cmd, r.stats_buffer, 0, size_of(Gpu_Cull_Stats), 0)
+	// What the view before counted, before this one counts its own.
+	cull_stats_fold(r, cmd)
+	rhi.cmd_fill_buffer(cmd, r.stats_buffer, 0, u64(offset_of(Gpu_Cull_Stats, most_dropped)), 0)
 	rhi.cmd_fill_buffer(cmd, p.view.glass_dispatch, 0, size_of(Gpu_Glass_Dispatch), 0)
 	if !cull_reset(r, cmd) {return false}
 	if threads > 0 {
-		cull_record(p, {phase = 0, occlusion = 1 if occlusion && t.hiz_valid else 0, hiz_levels = t.hiz_levels, glass_groups = glass_groups}, t.hiz[p.previous], r.stats_buffer, p.view.glass_dispatch)
+		cull_record(p, {phase = 0, occlusion = 1 if occlusion && t.hiz_valid else 0, hiz_levels = t.hiz_levels, glass_groups = glass_groups}, t.hiz[p.previous], r.stats_buffer, p.view.glass_dispatch, p.cost)
 	}
-	cull_programs_bin(p, 0)
-	rhi.cmd_timestamp(cmd, "gbuffer")
-	gbuffer_pass(p, 0, true, occlusion || keep_depth)
+	cull_bins_dispatch(r, cmd, 0)
+	rhi.cmd_timestamp(cmd, "visible triangles")
+	if p.draw {raster_round_record(r, cmd, 0, false, r.stats_buffer, cost = p.cost)}
+	rhi.cmd_timestamp(cmd, "visibility")
+	visibility_pass(p, 0, .Clear, .Clear, t.depth, keep_depth, clip)
 	if occlusion && p.draw {
 		rhi.cmd_timestamp(cmd, "occlusion")
 		build_depth_pyramid(p, t.hiz[p.current])
 		// Phase 1 hands its own chunks over, from none: a dispatch of x 0, y 0
-		// and z 1 (a fill writes bytes, so z is uploaded as a word); its draw
-		// lists after those of phase 0.
+		// and z 1 (a fill writes bytes, so z is uploaded as a word); its
+		// clusters go to the visible list after those of phase 0.
 		restart := [4]u32{0, 0, 1, 0}
 		if !upload_transient(r, cmd, restart[:], s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, chunk_dispatch))) {return false}
 		params := Cull_Params{phase = 1, occlusion = 1, hiz_levels = t.hiz_levels, glass_groups = glass_groups}
-		cull_record(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch)
+		cull_record(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch, p.cost)
 		if candidates := pipeline_of(r, .Cull_Clusters, {CULL_CLUSTERS_COMP_CANDIDATES})^; candidates != 0 {
 			rhi.cmd_bind_pipeline(cmd, candidates)
 			cull_bind(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch)
 			rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, candidate_dispatch)))
 		}
-		cull_programs_bin(p, 1)
-		rhi.cmd_timestamp(cmd, "gbuffer late")
-		draw1 := u64(offset_of(Gpu_Cull_State, draws)) + size_of(Gpu_Draw)
-		rhi.cmd_copy_buffer(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, draws)) + u64(offset_of(Gpu_Draw, instance_count)), s.cull_state_buffer, draw1 + u64(offset_of(Gpu_Draw, first_instance)), size_of(u32))
-		gbuffer_pass(p, 1, false, keep_depth)
+		cull_bins_dispatch(r, cmd, 1)
+		rhi.cmd_timestamp(cmd, "visible triangles late")
+		raster_round_record(r, cmd, 1, false, r.stats_buffer, cost = p.cost)
+		rhi.cmd_timestamp(cmd, "visibility late")
+		visibility_pass(p, 1, .Load, .Load, t.depth, keep_depth, clip)
+		// What found no room in the lists of the rounds of both phases.
+		rhi.cmd_timestamp(cmd, "visibility rest")
+		for round in u32(2) ..< abi.RASTER_ROUNDS {
+			raster_round_record(r, cmd, round, round == abi.RASTER_ROUNDS - 1, r.stats_buffer, cost = p.cost)
+			visibility_pass(p, round, .Load, .Load, t.depth, keep_depth, clip)
+		}
 		// The pyramid the next frame tests against holds what both phases drew:
 		// what phase 1 rescued hides what is behind it from the next phase 0.
 		rhi.cmd_timestamp(cmd, "depth pyramid")
@@ -1054,6 +1302,9 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	} else {
 		t.hiz_valid = false
 	}
+	if p.cost != 0 && p.draw {cost_pixels(p)}
+	rhi.cmd_timestamp(cmd, "resolve")
+	resolve_pass(p, false)
 	if p.first && stage_asked(r, .Simulate) {stage_run(p, .Simulate)}
 	if stage_asked(r, .Gbuffer) {stage_run(p, .Gbuffer)}
 
@@ -1174,7 +1425,8 @@ nested_views_record :: proc(p: ^Pass) -> bool {
 		// What the nested camera sees, without the pyramid of the view: its depths are of another camera.
 		if !cull_reset(r, cmd) {return false}
 		cull_record(p, {phase = 0, hiz_levels = t.hiz_levels}, t.hiz[p.previous], r.scratch_buffer, r.scratch_buffer)
-		cull_programs_bin(p, 0)
+		cull_bins_dispatch(r, cmd, 0)
+		if p.draw {raster_round_record(r, cmd, 0, false, r.scratch_buffer)}
 
 		// Its pixels alone pass the depth test of its draws: the farthest depth where the mask named it, the nearest elsewhere.
 		prime := rhi.Render_Pass_Desc{name = "nested view pixels"}
@@ -1192,20 +1444,16 @@ nested_views_record :: proc(p: ^Pass) -> bool {
 		rhi.cmd_draw(cmd, 3)
 		rhi.cmd_end_render_pass(cmd)
 
-		targets, count := gbuffer_targets(p)
-		pass := rhi.Render_Pass_Desc{color_count = count, name = "nested view gbuffer"}
-		for texture, i in targets[:count] {pass.colors[i] = {texture = texture, load = .Load, store = .Store}}
-		pass.depth = {texture = t.nested_depth, load = .Load, store = .Dont_Care}
-		rhi.cmd_begin_render_pass(cmd, &pass)
+		// Its visibility target holds its own pixels alone, which it resolves over those of the view.
+		visibility_pass(p, 0, .Clear, .Load, t.nested_depth, false, true)
+		// It has one phase: the rounds after it take what found no room in its lists.
 		if p.draw {
-			target := &r.pipelines[.Gbuffer_Nested_Layers if p.layered else .Gbuffer_Nested if p.reflectance else .Gbuffer_Nested_Plain]
-			rhi.cmd_bind_pipeline(cmd, target^)
-			rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
-			textures_feedback_bind(r, cmd)
-			rhi.cmd_draw_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, draws)), 1, size_of(Gpu_Draw))
-			gbuffer_programs_draw(p, target, 0)
+			for round in u32(1) ..< abi.RASTER_ROUNDS - 1 {
+				raster_round_record(r, cmd, round, round == abi.RASTER_ROUNDS - 2, r.scratch_buffer)
+				visibility_pass(p, round, .Load, .Load, t.nested_depth, false, true)
+			}
 		}
-		rhi.cmd_end_render_pass(cmd)
+		resolve_pass(p, true)
 	}
 	bind_scene_table(p)
 	return true
@@ -1231,28 +1479,29 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	if !ensure_direct_targets(r, cmd, t, scale) {return false}
 	if s.light_grid_dirty {
 		rhi.cmd_timestamp(cmd, "light grid")
+		render_zone(r, "light grid")
 		light_grid_record(r, cmd)
 		s.light_grid_dirty = false
 	}
-	Params :: struct {pad0, samples: u32, sun_radius: f32, scale, hard, resume, glass, pad2: u32, grid_origin: Vec3, grid_cell: f32, grid_size: [3]u32, cells: u32, shadow: Shadow_Maps}
+	Params :: struct {pad0, samples: u32, sun_radius: f32, scale, hard, pad1, pad2, pad3: u32, grid_origin: Vec3, grid_cell: f32, grid_size: [3]u32, cells: u32, shadow: Shadow_Maps}
 	cells := s.light_grid.size.x * s.light_grid.size.y * s.light_grid.size.z
 	params := Params{
 		scale       = scale,
 		samples     = clamp(settings.direct_samples, 1, DIRECT_SAMPLES_MAX),
 		sun_radius  = settings.sun_radius,
 		hard        = clamp(settings.light_budget, 1, LIGHT_CUT_MAX),
-		// The glass the light of the samples crosses colors it (direct_glass).
-		glass       = 1 if shadows_colored(r) else 0,
 		grid_origin = s.light_grid.origin,
 		grid_cell   = s.light_grid.cell,
 		grid_size   = s.light_grid.size,
 		cells       = cells if s.light_grid_buffer != 0 else 0,
 	}
 	points := [2]u32{(t.width + scale - 1) / scale, (t.height + scale - 1) / scale}
-	params.shadow = shadow_maps_pass(p)
+	grid := or_dummy(r, s.light_grid_buffer)
+	zone := render_zone_begin(r, "shadow maps")
+	params.shadow = shadow_maps_pass(p, &params, scale, grid)
+	base.profile_end(zone)
 	atlas := t.shadow_raster.atlas if params.shadow.on != 0 else r.dummy_texture
 	table := r.shadow_buffers.table if params.shadow.on != 0 else r.dummy_buffer
-	grid := or_dummy(r, s.light_grid_buffer)
 	unlayered := rhi.Shader_Constants{} if p.layered else {DIRECT_MAPS_COMP_UNLAYERED}
 	#assert(DIRECT_MAPS_COMP_UNLAYERED == DIRECT_SAMPLES_COMP_UNLAYERED && DIRECT_MAPS_COMP_UNLAYERED == DIRECT_FILTER_COMP_UNLAYERED)
 	// The light of what the maps hold, while the view drew them: the samples
@@ -1265,7 +1514,6 @@ pass_direct :: proc(p: ^Pass) -> bool {
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_samples)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.albedo)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.shadow_tint if p.frame.sun_maps.w != 0 else r.dummy_texture)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_depth)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_sun)
@@ -1279,7 +1527,6 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_blockers)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_depth)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, table)
 	// A thread for each square of 2x2 points, and a group of the samples for
@@ -1287,10 +1534,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	squares := (points.x + 1) / 2
 	rhi.cmd_dispatch(cmd, groups(squares, 8), groups((points.y + 1) / 2, 8))
 	rhi.cmd_timestamp(cmd, "direct samples")
-	samples := pipeline_of(r, .Direct_Samples, unlayered + ({DIRECT_SAMPLES_COMP_COLOR} if params.glass != 0 else {}), {DIRECT_SAMPLES_COMP_UNLAYERED, DIRECT_SAMPLES_COMP_COLOR})^
-	// Glass with a program colors the light by what its program gives where each ray crosses it.
-	batch := params.glass != 0 && points_begin(p, filters = true)
-	rhi.cmd_bind_pipeline(cmd, samples)
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Samples, unlayered, {DIRECT_SAMPLES_COMP_UNLAYERED})^)
 	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
@@ -1302,9 +1546,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_sun)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, table)
-	points_bind(p)
 	rhi.cmd_dispatch(cmd, groups(squares, 4), groups(points.y, 8))
-	points_rounds(p, batch, samples, &params, 1)
 	// What the window of the pattern gives each point.
 	rhi.cmd_timestamp(cmd, "direct points")
 	Window :: struct {scale, samples, pad0, pad1: u32}
@@ -1337,8 +1579,13 @@ pass_direct :: proc(p: ^Pass) -> bool {
 			rhi.cmd_dispatch(cmd, points.x, groups(points.y, 64))
 		}
 	}
+	zone = render_zone_begin(r, "light lists")
+	lists, listed := light_lists_record(p)
+	base.profile_end(zone)
+	if !listed {return false}
 	rhi.cmd_timestamp(cmd, "direct pixels")
-	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Filter, unlayered, unlayered)^)
+	filter := unlayered + ({DIRECT_FILTER_COMP_UNLISTED} if p.frame.shadowless_lights == 0 else {})
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Filter, filter, {DIRECT_FILTER_COMP_UNLAYERED, DIRECT_FILTER_COMP_UNLISTED})^)
 	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
@@ -1346,10 +1593,9 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.albedo)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.direct_sun_points)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_marks)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.direct_sun)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_points)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS9, t.shadow_tint if p.frame.sun_maps.w != 0 else r.dummy_texture)
+	rhi.cmd_bind_texture(cmd, SLOT_LIGHT_LISTS, lists)
 	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
 	return true
 }
@@ -1365,14 +1611,16 @@ pass_reflections :: proc(p: ^Pass) -> bool {
 	return true
 }
 
-// Updates of the probe volume in the frame that shows a world anew
-// (Renderer.gi_warm), each a bounce more: the light it shows from its first
-// frame instead of over seconds.
+// Updates over PROBE_WARM_BUDGET probes that gather the light of a world shown
+// anew (Renderer.gi_warm), each a bounce more, taken over the frames after
+// within the budget of each (ddgi_warm_frames).
 GI_WARM_UPDATES :: 64
 
-// What lights the world whatever the view: the probe volume. Once a frame,
-// with its first view; several times in the frame of a world shown anew, and
-// over GI_BLACKOUT_FRAMES after a blackout.
+// What lights the world whatever the view: the probe volume, updated once a
+// frame with its first view, within the budget of a frame: no frame, the
+// first of a world either, traces more than another may, whatever else the
+// GPU runs. A world shown anew and a blackout gather their light over the
+// frames after, each update taking every probe in turn (whole).
 @(private)
 pass_world_lighting :: proc(p: ^Pass) -> bool {
 	r, cmd := p.r, p.cmd
@@ -1380,24 +1628,15 @@ pass_world_lighting :: proc(p: ^Pass) -> bool {
 	changes := &r.scene.changes
 	if p.first && !p.offscreen && p.use_gi {
 		if changes.count > 0 && !changes.all && !upload_transient(r, cmd, changes.spheres[:changes.count], r.light_changes) {return false}
-		updates := 1
-		if r.gi_warm {updates = GI_WARM_UPDATES}
+		if r.gi_warm {r.gi_warm_spread = max(r.gi_warm_spread, ddgi_warm_frames(g, GI_WARM_UPDATES))}
 		r.gi_warm = false
-		// A blackout spreads the warm updates over its frames; only the last
-		// update of the last frame keeps its history.
-		spread := r.gi_warm_spread
-		if spread > 0 && updates == 1 {
-			updates = int((GI_BLACKOUT_UPDATES + GI_BLACKOUT_FRAMES - 1) / GI_BLACKOUT_FRAMES)
-			r.gi_warm_spread -= 1
+		warm := r.gi_warm_spread > 0
+		if warm {r.gi_warm_spread -= 1}
+		if p.use_probes && g.valid {
+			rhi.cmd_timestamp(cmd, "ddgi")
+			if !ddgi_update(p, warm) {return false}
 		}
-		for update in 0 ..< updates {
-			warm := update < updates - 1 || (spread > 1 && updates > 1)
-			if p.use_probes && g.valid {
-				rhi.cmd_timestamp(cmd, "ddgi")
-				if !ddgi_update(p, warm) {return false}
-			}
-			r.light_frame += 1
-		}
+		r.light_frame += 1
 	}
 	if p.use_probes && p.first && !p.offscreen {
 		// Later passes sample the updated atlases through the scene table.
@@ -1732,7 +1971,7 @@ update_stats :: proc(r: ^Renderer) {
 		memory = fmt.tprintf("%d resources of GPU memory went to system memory because the device memory was full, which slows the frames: a lower resolution or texture quality frees device memory", host)
 	}
 	waiting := fmt.tprintf("the pass of the stage %s is skipped while its pipeline is made", r.pipeline_waiting) if r.pipeline_waiting != "" else ""
-	for other in ([]string{r.tlas_problem, pages_problem(r), memory, r.pipeline_problem, waiting}) {
+	for other in ([]string{r.tlas_problem, pages_problem(r), memory, r.pipeline_problem, r.program_problem, waiting}) {
 		if other == "" {continue}
 		if s.problem == "" {s.problem = string(r.problem_buffer[:copy(r.problem_buffer[:], other)]); continue}
 		// The problems before are at the start of problem_buffer: this one follows them.
@@ -1751,8 +1990,8 @@ update_stats :: proc(r: ^Renderer) {
 	samples := u64(clamp(r.settings.direct_samples, 1, DIRECT_SAMPLES_MAX))
 	rays := points(t, t.direct_scale) * (4 * samples + 1) / 4
 	if r.settings.gi_enabled {
-		// A probe ray traces the sun and the lights of its cut where it hits.
-		rays += u64(s.probes_traced) * u64(r.ddgi.rays_per_probe) * u64(2 + min(s.lights, PROBE_LIGHT_BUDGET))
+		// The rays the probes traced, and the sun and the lights of its cut at each hit they lit.
+		rays += u64(s.probe_rays_traced) + u64(s.probe_hits_lit) * u64(1 + min(s.lights, PROBE_LIGHT_BUDGET))
 		// The contact occlusion: CONTACT_RAYS short rays of each point.
 		rays += points(t, t.contact_scale) * CONTACT_RAYS
 	}

@@ -63,6 +63,10 @@ views are recorded one after another and each writes them before it reads them. 
 them once its view is recorded; what outlives it (histories, LDR, coverage, selection mask) is
 the view's own.
 
+The main view holds what the window shows and the screen UI; its scene targets exist only while
+the window has no views and it draws the scene itself (`scene_targets`), and go, histories and
+shadow pool included, the frame views of the window draw it (`main_scene_release`).
+
 ## Cameras and layers
 
 `Camera` describes the projection (perspective, orthographic or a custom matrix), its off-center
@@ -98,7 +102,7 @@ Rules:
   current and the previous camera (`view_depth`, `previous_depth`).
 - `frame.footprint`: width of a pixel at depth 0 and its growth per unit of depth; texture LOD,
   ray cones and bias come from it.
-- **Clip plane.** A view with `clip_plane` uses the `clip` variant of the G-buffer vertex stage
+- **Clip plane.** A view with `clip_plane` uses the `clip` variants of the raster vertex stage
   (`SV_ClipDistance`), which exist with `Features.clip_distance`; the cull uses it as the sixth
   frustum plane.
 - **Layers.** `Instance_Desc.layers` (16 bits; 0: only the first) says in which layers an instance
@@ -107,9 +111,10 @@ Rules:
 - **The own body.** `Instance_Desc.owner` (1 + the local slot whose body it is; 0: none) sets
   `INSTANCE_FLAG_OWNED` and the slot in bits 13 to 15 of the flags. A view of a slot
   (`core.View.own`) does not draw from its body the `own_hidden` layers, and fades it in `fade`:
-  with 1 the cull discards it; below that, the G-buffer discards that part of its pixels with a
+  with 1 the cull discards it; below that, the raster discards that part of its pixels with a
   4x4 Bayer pattern fixed on screen, which TAA blends into transparency without passing the body
-  to the blend pass. `Gpu_Frame.own` carries the slot and the `fade`; bits 16 to 31 of
+  to the blend pass; the [fade of an instance](materials.md#material-row) takes the same
+  pattern. `Gpu_Frame.own` carries the slot and the `fade`; bits 16 to 31 of
   `Gpu_Frame.layers`, `own_hidden`. The renderer does not know what a head is: it decides by
   layers. The body still gives shadow and reflection and is seen whole in nested views (which set
   `own` to 0). `engine/render` marks the instances from `View_Bodies`, and a replacement of an
@@ -180,8 +185,8 @@ discarding them. Zero: there was none.
   2. The `Mask` stage of an extension writes which pixels belong to each nested view and seals the
      hardware depth with that of the opening.
   3. For each nested view: cull with its camera; a second depth buffer (the farthest where the mask
-     named it, the nearest elsewhere, scissor in `Nested_View.rect`); G-buffer with the `nested`
-     constant, which writes negated depth and index.
+     named it, the nearest elsewhere, scissor in `Nested_View.rect`); its visibility target,
+     cleared, and its resolve with the `nested` constant, which writes negated depth and index.
 - **Opening.** `Nested_View.opening` is the plane of the face through which the nested view is seen.
   What is drawn without history (lines, panels) stays in front of a nested pixel only if it is in
   front of that plane; without a plane it is compared with the distance of what the pixel shows.
@@ -273,8 +278,9 @@ The `Custom` passes after `Output` generate the image that the window shows betw
 frame and the current one:
 
 - They read `Ldr` before `Output` draws over it the scene panels, the debug lines and the screen
-  layers, and write `Generated`, of output size. They run only in the window views of a frame that
-  presents, never in a texture view or in a capture.
+  layers, and write `Generated`, of output size. They run only in the window views of a frame
+  whose device presents the generated image: never in a texture view, in a capture or without a
+  window (a headless editor or player), where nobody would be shown it.
 - Afterwards, `overlays_pass` draws the same over `Ldr` and over `Generated`; the UI vertices are
   uploaded once. In split screen `compose_views` also composes the generated images (a view that
   did not generate puts its own).
@@ -331,7 +337,11 @@ frame and the current one:
   with `material_vertex_tint`: a program reads the color as data and does not multiply it. With
   `fragment`, `<fragment>.frag` writes the targets instead of the engine, with the `plain` and
   `layers` variants and the packing of `gbuffer.slang`, like the
-  [foliage](../../mirai-world/references/foliage.md#far-impostor-and-crown) impostor. Materials
+  [foliage](../../mirai-world/references/foliage.md#far-impostor-and-crown) impostor. A cull
+  binds the view's depth pyramids with `pass_depth_pyramid` (this frame's, or the previous one's
+  with `previous`) and tests a box with `pyramid_hides` (`include/pyramid.slang`);
+  `pass_depth_pyramid_build`, between its draws, rebuilds this frame's pyramid with what it drew,
+  which its next cull and the next frame see. Materials
   with a Surface program are drawn with their program's fragment: `program` in
   `pass_gbuffer_pipeline` gives that pipeline, `pass_material_program` says the program of a
   material and `pass_mesh_programs` those of what a mesh shows, for a draw per program in which the
@@ -456,13 +466,8 @@ frame and the current one:
     with a value; both outside a draw pass;
   - `pass_buffer_held(pass, desc)` says whether the world holds the buffer with that size;
   - `pass_dispatch_indirect` and `pass_draw_indexed_indirect` take their arguments from a buffer;
-    `pass_indices(pass, .Scene)` binds the scene indices (`mesh_draw_range` gives those of a mesh)
+    `pass_indices(pass, .Meshes)` binds the indices of the meshes drawn whole (`frame_mesh_whole`)
     and `.Quad`, the six of a quad.
-- **Lights.** `lights_ask(renderer, with_shadow, without_shadow, box, reach)` asks for room for
-  lights that a `Simulate` pass writes with `pass_lights(pass, lights, nodes)`: they shine like
-  those of the scene; those of the first part cast shadows, lie within `box` and light up to
-  `reach` metres from it (`LIGHTS_ANYWHERE` when the pass cannot tell), and those of the second
-  trace no rays ([GPU lights](lights.md#gpu-lights)).
 - **Table textures.** `table_texture(renderer, world, Table_Texture_Desc{name, width, height})`,
   between frames, gives the table place of an RGBA16F texture of the world under that name, which
   the extension fills each frame with `pass_table_texture_copy(pass, buffer, offset, desc)` from a
@@ -494,11 +499,9 @@ frame and the current one:
     writing it);
   - for `Geometry`, `Simulate`, `Lit`, `Post`, `Custom` and `Inspect`, and for `Surface` with
     `compute`, that of `<shader>.comp`. `Gbuffer` takes `pass_gbuffer_pipeline`. A stage that traces
-    declares the `hw` variant and the `color` constant (`//! variant`, `//! constant`, like
-    `direct_samples.comp`) and receives the pipeline of the rays the renderer traces: by hardware,
-    and through the colored-shadow glass filters (`colored_shadows` and some blend instance).
-    Without the variant, the stage itself: one that traces without `hw` does not see the scene
-    with ray queries.
+    declares the `hw` variant (`//! variant`, like `direct_samples.comp`) and receives the pipeline
+    of the rays the renderer traces. Without the variant, the stage itself: one that traces without
+    `hw` does not see the scene with ray queries.
   - with `program`, that of a graphics stage with the fragment of that Surface program, if the stage
     marks it `//! per surface program`; that of the stage without it while it is not made.
 - The renderer creates the pipeline at the first request, keeps it (up to `STAGE_PIPELINE_CAPACITY`
@@ -572,6 +575,10 @@ their handles in a `by_world` storage and removes them in the `release` of its w
 - Each frame in which the shape changes, the extension calls `deformable_update` with its box and
   writes the current vertices in `Geometry`; a shape that stops changing makes one last pass to
   equalize current and previous. A box that does not change marks no light.
+- `sway`, given at creation, bounds how far a vertex moves from its rest. The maps of the shadows
+  whose texel is wider draw a batch of the copy at rest and keep it; finer ones draw it as it is,
+  as a caster that moves while it sways. Without it (0), the copy may be anywhere in its box and
+  every map draws it as it is.
 - `pass_deformable` gives where, in vertex pool words, the vertices that the extension writes and
   the rest ones it reads are (one `Posed_Vertex` each, which its shader reads and writes with
   `posed.slang`: `posed_load`, `posed_store`), and its row of the mesh table. Vertex `i` is the `i`

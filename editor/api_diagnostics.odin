@@ -125,6 +125,7 @@ api_diagnostics :: proc(s:^Session,call:^api.Call) {
             buffer:[base.ASSET_ID_TEXT]u8
             entry:=Api_Engine_Diagnostics_Result_Asset_Errors{id=strings.clone(base.asset_id_format(known.id,buffer[:]),call.allocator),kind=fmt.tprint(known.kind),problem=fmt.tprint(known.problem),detail=fmt.tprint(known.detail)}
             if known.detail==.Version {entry.message=api_asset_stale(app.assets,known.id)}
+            if known.problem==.Coverage {entry.message="a masked material is cut by its mask map, never by its program: the program sets alpha; declare the mask as maps.mask and leave alpha out of the program, or make the material blend"}
             append(&errors,entry)
         }
         api_duplicates_list(&app.assets.registry,&errors)

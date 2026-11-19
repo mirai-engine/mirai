@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "core:mem"
 import "core:testing"
 import "mirai:asset"
+import "mirai:render/abi"
 import "mirai:rhi"
 import "mirai:std/geom"
 import mm "mirai:std/math"
@@ -143,6 +144,17 @@ read_normal :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) -> 
 	i := (p.y * int(r.targets.width) + p.x) * 4
 	normal, roughness, _ := gbuffer_normal_decode({f32(halves[i]), f32(halves[i + 1]), f32(halves[i + 2]), f32(halves[i + 3])})
 	return {normal.x, normal.y, normal.z, roughness}
+}
+
+// G-buffer linear depth at a world position: 0 where nothing was drawn.
+@(private = "file")
+read_depth :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) -> f32 {
+	r := f.renderer
+	rhi.device_wait_idle(f.device)
+	depths := make([]f32, int(r.targets.width * r.targets.height), context.temp_allocator)
+	testing.expect(t, golden_read_texture(f.device, r.targets.linear_depth, mem.slice_data_cast([]u8, depths)), rhi.device_error(f.device))
+	p := target_pixel(r, camera, world)
+	return depths[p.y * int(r.targets.width) + p.x]
 }
 
 @(private = "file")
@@ -352,7 +364,9 @@ material_normal_map_tilts_towards_its_axes :: proc(t: ^testing.T) {
 	tilt_up.textures[.Normal] = up_texture
 	flat.textures[.Normal] = right_texture
 	flat.normal_scale = 0
-	materials_set(r, {tilt_right, tilt_up, flat})
+	two_sided := tilt_right
+	two_sided.two_sided = true
+	materials_set(r, {tilt_right, tilt_up, flat, two_sided})
 	quad := ground_quad(r)
 	expected := [3]Vec3{{0.5, 0.866, 0}, {0, 0.866, -0.5}, {0, 1, 0}}
 	for want, i in expected {
@@ -361,12 +375,16 @@ material_normal_map_tilts_towards_its_axes :: proc(t: ^testing.T) {
 		n := read_normal(t, &f, OVERHEAD, {0.2, 0, 0.1})
 		testing.expectf(t, abs(n.x - want.x) < 0.03 && abs(n.y - want.y) < 0.03 && abs(n.z - want.z) < 0.03, "material %d: normal %v, expected %v", i + 1, n.xyz, want)
 	}
-	// Seen from below, the sheet is the same surface: its normal is the opposite of the front one.
+	// Seen from below, a two-sided sheet is the same surface: its normal is the
+	// opposite of the front one. A one-sided one shows nothing from there.
 	below := Camera{position = {0, -2, 0}, forward = {0, 2, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), material = 1, tint = {1, 1, 1}}}, nil, {}, {})
+	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), material = 4, tint = {1, 1, 1}}}, nil, {}, {})
 	frames(t, &f, below, 2)
 	n := read_normal(t, &f, below, {0.2, 0, 0.1})
 	testing.expectf(t, abs(n.x + 0.5) < 0.03 && abs(n.y + 0.866) < 0.03 && abs(n.z) < 0.03, "back face: normal %v", n.xyz)
+	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), material = 1, tint = {1, 1, 1}}}, nil, {}, {})
+	frames(t, &f, below, 2)
+	testing.expectf(t, read_depth(t, &f, below, {0.2, 0, 0.1}) == 0, "a one-sided sheet shows nothing from behind")
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
@@ -387,7 +405,7 @@ material_gloss_adds_a_highlight_and_metal_tints_it :: proc(t: ^testing.T) {
 	quad := ground_quad(r)
 	// The light, the camera and the floor point between them form a mirror path.
 	camera := Camera{position = {0, 2, 4}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	lights := []Light_Desc{{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 4 * math.PI, range = 30}}
+	lights := []Light_Desc{{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 4 * math.PI, range = 30, indirect = 1, scattering = 1}}
 	shot :: proc(t: ^testing.T, f: ^Fixture, quad: Mesh_Handle, lights: []Light_Desc, camera: Camera, material: Material_Handle, world: Vec3) -> [3]f32 {
 		r := f.renderer
 		scene_given(r, {{object_id = 1, mesh = quad, transform = scale_matrix(20), material = material, tint = {1, 1, 1}}}, lights, {}, {})
@@ -483,7 +501,7 @@ material_textures_color_the_bounced_light :: proc(t: ^testing.T) {
 	}
 	camera := Camera{position = {0, 2.5, 2.5}, forward = {0, -2.5, -2.5}, up = {0, 1, 0}, fov_y = 70, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified {continue}
+		if !fixture_traces(r, provider) {continue}
 		settings.trace_mode = provider
 		testing.expect(t, renderer_apply_settings(r, settings), r.error)
 		for mesh, uv_set in ([2]Mesh_Handle{cube, secondary}) {
@@ -519,7 +537,7 @@ material_textures_color_the_bounced_light :: proc(t: ^testing.T) {
 		painted.custom_params = program_defaults(grid)
 		for name in ([]string{"color", "line_color"}) {testing.expect(t, program_parameter_set(&painted.custom_params, program_parameter(grid, name), {1, 0, 0, 0}))}
 		materials_set(r, {black, row, painted})
-		lamp_light := []Light_Desc{{position = {0, 1.5, 0}, color = {1, 1, 1}, intensity = 16 * math.PI, range = 30}}
+		lamp_light := []Light_Desc{{position = {0, 1.5, 0}, color = {1, 1, 1}, intensity = 16 * math.PI, range = 30, indirect = 1, scattering = 1}}
 		floors: [2][3]f32
 		for &floor, k in floors {
 			room: [6]Instance_Desc
@@ -740,6 +758,79 @@ material_mirror_reads_the_sky_sharp_from_the_probes_and_not_under_a_roof :: proc
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
+// Without traced reflections a smooth metal still shows what is around it, as
+// sharp as the rays of the probes tell it apart: under a panel that glows it
+// is bright, and a few metres aside, where the panel is off its lobe, dark.
+// From the irradiance of the probes alone it showed the mean of a hemisphere:
+// a third as bright under the panel and a glow of it everywhere else.
+@(test)
+material_metal_without_traced_reflections_shows_what_is_around_it :: proc(t: ^testing.T) {
+	f: Fixture
+	settings := material_settings()
+	settings.gi_enabled = true
+	settings.reflections = .Off
+	if !fixture_init(t, &f, 64, 64, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	metal, dark := DEFAULT_MATERIAL, DEFAULT_MATERIAL
+	metal.base_color = {0.9, 0.9, 0.9}
+	metal.metallic = 1
+	metal.roughness = 0.2
+	dark.base_color = {0, 0, 0}
+	materials_set(r, {metal, dark})
+	quad := ground_quad(r)
+	floor := Instance_Desc{object_id = 1, mesh = quad, transform = scale_matrix(30), material = 1, tint = {1, 1, 1}}
+	over := scale_matrix(4)
+	over[1, 1], over[2, 2], over[1, 3] = -4, -4, 4
+	panel := Instance_Desc{object_id = 2, mesh = quad, transform = over, material = 2, tint = {1, 1, 1}, emission = {0.5, 0.5, 0.5}}
+	scene_given(r, {floor, panel}, nil, {}, {})
+	frames(t, &f, OVERHEAD, 64)
+	under := screen_color(t, &f, OVERHEAD, {0, 0, 0})
+	aside := OVERHEAD
+	aside.position = {9, 2, 0}
+	frames(t, &f, aside, 64)
+	away := screen_color(t, &f, aside, {9, 0, 0})
+	testing.expectf(t, under.r > 110, "under the panel the metal shows it: %v", under)
+	testing.expectf(t, away.r * 6 < under.r, "aside of the panel the metal does not: %v against %v", away, under)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// Beyond the probe volume the light around a surface is the sky's, as much of
+// it as the surface sees: under an open sky all of it, and under a roof, which
+// no probe reaches there either, the little that comes in past its edges.
+@(test)
+beyond_the_probe_volume_a_surface_takes_the_sky_it_sees :: proc(t: ^testing.T) {
+	f: Fixture
+	settings := material_settings()
+	settings.gi_enabled = true
+	settings.reflections = .Off
+	settings.probe_grid, settings.probe_cascades, settings.probe_spacing = 8, 1, 1
+	if !fixture_init(t, &f, 64, 64, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	white := DEFAULT_MATERIAL
+	white.base_color = {0.8, 0.8, 0.8}
+	white.roughness = 1
+	materials_set(r, {white})
+	quad := ground_quad(r)
+	floor := Instance_Desc{object_id = 1, mesh = quad, transform = scale_matrix(60), material = 1, tint = {1, 1, 1}}
+	environment := Environment{sky = {1, 1, 1}}
+	// The eye, and the volume around it, 10 m over the floor it looks at.
+	high := OVERHEAD
+	high.position = {0, 10, 0}
+	scene_given(r, {floor}, nil, {}, environment)
+	frames(t, &f, high, 48)
+	open := screen_color(t, &f, high, {0, 0, 0})
+	testing.expectf(t, open.r > 60, "under an open sky the floor takes its light: %v", open)
+	over := scale_matrix(60)
+	over[1, 1], over[2, 2], over[1, 3] = -60, -60, 12
+	scene_given(r, {floor, {object_id = 2, mesh = quad, transform = over, material = 1, tint = {1, 1, 1}}}, nil, {}, environment)
+	frames(t, &f, high, 48)
+	roofed := screen_color(t, &f, high, {0, 0, 0})
+	testing.expectf(t, roofed.r < open.r * 0.5, "under a roof the floor takes the sky it sees: %v against %v", roofed, open)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
 // A ray that finds a surface with a program shows what the program gives
 // there (points.odin), not the values of its row: no stage of rays runs it.
 // With the program alone in the scene its stage takes the whole window of
@@ -756,6 +847,7 @@ material_program_shows_in_what_a_reflection_finds :: proc(t: ^testing.T) {
 	mirror, wall, other := DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL
 	other.program_id = pieces.id
 	other.custom_params = program_defaults(pieces)
+	other.alpha_mode = .Blend
 	mirror.base_color = {0.9, 0.9, 0.9}
 	mirror.metallic = 1
 	mirror.roughness = 0.05
@@ -774,13 +866,16 @@ material_program_shows_in_what_a_reflection_finds :: proc(t: ^testing.T) {
 		{object_id = 1, mesh = quad, transform = scale_matrix(20), material = 1, tint = {1, 1, 1}},
 		{object_id = 2, mesh = quad, transform = standing, material = 2, tint = {1, 1, 1}},
 	}
-	sun := Sun_Desc{direction = linalg.normalize(Vec3{0, 0.5, 1}), color = {1, 1, 1}, illuminance = math.PI, enabled = true}
+	sun := Sun_Desc{direction = linalg.normalize(Vec3{0, 0.5, 1}), color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}
 	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for binned in ([]bool{false, true}) {
 		// The other program is in a row of the table that no instance takes.
 		materials_set(r, {mirror, wall, other if binned else DEFAULT_MATERIAL})
 		scene_given(r, instances, nil, sun, {sky = {0, 0, 0.05}})
 		testing.expect_value(t, r.scene.programs_used, u32(2 if binned else 1))
+		// The resolve of the visibility target draws the opaque program alone: the other one is blended.
+		testing.expect_value(t, r.scene.program_opaque_rows[grid.id], 1)
+		testing.expect_value(t, r.scene.program_opaque_rows[pieces.id], 0)
 		mirrored := screen_color(t, &f, camera, {0, 0, 0})
 		testing.expectf(t, mirrored.r > 100 && mirrored.r > 3 * mirrored.b, "binned %v: the mirror shows the wall as its program paints it: %v", binned, mirrored)
 	}
@@ -826,7 +921,7 @@ material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^test
 	scene_given(r, {
 		{object_id = 1, mesh = quad, transform = scale_matrix(20), material = 1, tint = {1, 1, 1}},
 		{object_id = 2, mesh = quad, transform = standing, material = 2, tint = {1, 1, 1}},
-	}, nil, {direction = linalg.normalize(Vec3{0, 0.5, 1}), color = {1, 1, 1}, illuminance = math.PI, enabled = true}, {sky = {0, 0, 0.05}})
+	}, nil, {direction = linalg.normalize(Vec3{0, 0.5, 1}), color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0, 0, 0.05}})
 	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	look :: proc(t: ^testing.T, f: ^Fixture, camera: Camera) -> (seen, mirrored: [3]f32) {
 		rhi.device_wait_idle(f.device)
@@ -842,11 +937,14 @@ material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^test
 		return at(f.renderer, pixels, w, camera, {0, 0.3, -3}), at(f.renderer, pixels, w, camera, {0, 0, 0})
 	}
 	testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)
-	testing.expect(t, renderer_pipelines_pending(r), "the frame asked the thread for the pipelines of the program")
+	// What a capture waits for until it is 0: the pipelines the frame drew without.
+	asked := renderer_pipelines_pending(r)
+	testing.expectf(t, asked >= 1, "the frame asked the thread for the pipelines of the program: %d pending", asked)
 	seen, mirrored := look(t, &f, camera)
 	testing.expectf(t, seen.b > seen.r + 40 && mirrored.b > mirrored.r + 40, "until they are made the wall is its row: %v, in the mirror %v", seen, mirrored)
-	for renderer_pipelines_pending(r) {
+	for renderer_pipelines_pending(r) > 0 {
 		renderer_pipelines_wait(r)
+		testing.expect_value(t, renderer_pipelines_pending(r), 0)
 		renderer_reset_history(r)
 		frames(t, &f, camera, 3)
 	}
@@ -876,7 +974,7 @@ material_program_pipelines_are_made_before_a_frame_draws_with_them :: proc(t: ^t
 	testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)
 	renderer_pipelines_wait(r, all = true)
 	for program in programs {
-		for id in ([]Pipeline_Id{.Gbuffer, .Gbuffer_Plain, .Gbuffer_Layers}) {
+		for id in ([]Pipeline_Id{.Resolve, .Resolve_Plain, .Resolve_Layers}) {
 			testing.expectf(t, program_graphics(r, &r.pipelines[id], program.id) != r.pipelines[id], "the pipeline of %s for %v is made before a frame draws with it", program.name, id)
 		}
 		testing.expectf(t, r.points.stages.pipelines[program.id] != 0, "and that of its points")
@@ -905,7 +1003,7 @@ material_program_shows_on_what_the_camera_sees :: proc(t: ^testing.T) {
 	glass.alpha_mode, glass.opacity = .Blend, 0.6
 	materials_set(r, {painted, glass})
 	quad := ground_quad(r)
-	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = math.PI, enabled = true}
+	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}
 	camera := OVERHEAD
 	camera.position.y = 5
 	scene_given(r, {{object_id = 1, mesh = quad, transform = scale_matrix(20), material = 1, tint = {1, 1, 1}}}, nil, sun, {})
@@ -918,6 +1016,75 @@ material_program_shows_on_what_the_camera_sees :: proc(t: ^testing.T) {
 	}, nil, sun, {})
 	through := screen_color(t, &f, camera, {})
 	testing.expectf(t, through.r > 2 * through.b, "the glass shows its program: %v", through)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// The resolve shades each pixel of a triangle once, whichever program it is
+// of, and runs the other pixels of its quads only as helpers: with the sky
+// and several programs in view, the draw of a program does not shade the
+// pixels of the others nor those where nothing is.
+@(test)
+material_program_resolve_shades_each_pixel_once :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, material_settings(), programs = true) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	grid, sampled := program_find(r, "Grid", .Surface), program_find(r, "Sampled", .Surface)
+	if !testing.expect(t, grid != nil && sampled != nil, "the tests have the Grid and Sampled programs") {return}
+	lined, imaged := DEFAULT_MATERIAL, DEFAULT_MATERIAL
+	lined.program_id, lined.custom_params = grid.id, program_defaults(grid)
+	imaged.program_id, imaged.custom_params = sampled.id, program_defaults(sampled)
+	materials_set(r, {lined, imaged, DEFAULT_MATERIAL})
+	quad := ground_quad(r)
+	// Three squares under the camera, each of its own material, and the sky around them.
+	instances: [3]Instance_Desc
+	for &instance, i in instances {
+		transform := scale_matrix(0.5)
+		transform[0, 3] = f32(i - 1) * 0.6
+		instance = {object_id = u64(i + 1), mesh = quad, transform = transform, material = Material_Handle(i + 1), tint = {1, 1, 1}}
+	}
+	scene_given(r, instances[:], nil, {}, {})
+	testing.expect(t, renderer_frame(r, {}), r.error)
+	renderer_pipelines_wait(r)
+	frames(t, &f, OVERHEAD, 4)
+	pixels := r.targets.width * r.targets.height
+	testing.expectf(t, r.stats.resolved_pixels > 0 && r.stats.resolved_pixels < pixels / 2, "the resolve shades the pixels of the squares once: %d of %d", r.stats.resolved_pixels, pixels)
+	testing.expectf(t, r.stats.resolve_helpers <= 3 * r.stats.resolved_pixels, "and only the quads of those as helpers: %d", r.stats.resolve_helpers)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// Where two halves of a square meet, each of its own material, a quad holds
+// two triangles that do not continue one another: a program that samples by
+// a plain uv evaluates such quads again, once per triangle, for derivatives
+// across them; one that carries the derivatives of its uv (Tiled) evaluates
+// each pixel once.
+@(test)
+material_program_with_derivatives_of_its_own_evaluates_no_quad_again :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, material_settings(), programs = true) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	for name in ([]string{"Sampled", "Tiled"}) {
+		program := program_find(r, name, .Surface)
+		if !testing.expectf(t, program != nil, "the tests have the %s program", name) {return}
+		material := DEFAULT_MATERIAL
+		material.program_id, material.custom_params = program.id, program_defaults(program)
+		materials_set(r, {material, material})
+		halves := halves_quad(r, 1, 2)
+		scene_given(r, {{object_id = 1, mesh = halves, transform = scale_matrix(3), tint = {1, 1, 1}}}, nil, {}, {})
+		testing.expect(t, renderer_frame(r, {}), r.error)
+		renderer_pipelines_wait(r)
+		camera := OVERHEAD
+		// The seam off the edges of the quads of the image.
+		camera.position.x = 0.03
+		frames(t, &f, camera, 4)
+		testing.expectf(t, r.stats.resolved_pixels > 0, "%s: the square is resolved", name)
+		if name == "Tiled" {
+			testing.expectf(t, r.stats.resolve_quads_again == 0, "%s: no quad is evaluated again: %d", name, r.stats.resolve_quads_again)
+		} else {
+			testing.expectf(t, r.stats.resolve_quads_again > 0 && r.stats.resolve_quads_again <= r.targets.height, "%s: the quads along the seam are evaluated again: %d", name, r.stats.resolve_quads_again)
+		}
+	}
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
@@ -955,7 +1122,7 @@ material_program_moves_the_vertices_the_camera_the_rays_and_the_motion_see :: pr
 	piece, added := mesh_add(r, vertices[:], []u32{0, 2, 1, 0, 3, 2})
 	if !testing.expect(t, added, r.error) {return}
 	floor := ground_quad(r)
-	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = math.PI, enabled = true}
+	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}
 	instances := []Instance_Desc{
 		{object_id = 1, mesh = floor, transform = scale_matrix(20), tint = {1, 1, 1}},
 		{object_id = 2, mesh = piece, transform = placed(1, 1), material = 1, tint = {1, 1, 1}},
@@ -963,7 +1130,7 @@ material_program_moves_the_vertices_the_camera_the_rays_and_the_motion_see :: pr
 	above := Camera{position = {1.5, 6, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	side := Camera{position = {0, 3, 6}, forward = {0, -3, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified {continue}
+		if !fixture_traces(r, provider) {continue}
 		settings := r.settings; settings.trace_mode = provider
 		testing.expect(t, renderer_apply_settings(r, settings), r.error)
 		for progress in ([]f64{0, 1}) {
@@ -1015,6 +1182,22 @@ screen_color :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) ->
 	return {f32(pixels[i]), f32(pixels[i + 1]), f32(pixels[i + 2])}
 }
 
+// A unit square on the ground of two halves, slot 1 at -X with row left and
+// slot 2 at +X with row right, each with the whole of its uvs.
+@(private = "file")
+halves_quad :: proc(r: ^Renderer, left, right: Material_Handle) -> Mesh_Handle {
+	vertices: [8]Mesh_Vertex
+	indices: [12]u32
+	for half in 0 ..< 2 {
+		x := -0.5 + 0.5 * f32(half)
+		corners := [4]Vec3{{x, 0, -0.5}, {x + 0.5, 0, -0.5}, {x + 0.5, 0, 0.5}, {x, 0, 0.5}}
+		for c, i in corners {vertices[half * 4 + i] = {position = c, normal = {0, 1, 0}, tangent = {1, 0, 0, 1}, uv = {(c.x - x) * 2, c.z + 0.5}, color = {1, 1, 1}, material = left if half == 0 else right, slot = u32(half + 1)}}
+		for corner, i in ([6]u32{0, 2, 1, 0, 3, 2}) {indices[half * 6 + i] = u32(half * 4) + corner}
+	}
+	mesh, _ := mesh_add(r, vertices[:], indices[:])
+	return mesh
+}
+
 @(private = "file")
 placed :: proc(scale: f32, height: f32) -> Mat4 {
 	m := scale_matrix(scale)
@@ -1022,10 +1205,14 @@ placed :: proc(scale: f32, height: f32) -> Mat4 {
 	return m
 }
 
+// The mask map of a masked material cuts it for the camera and for rays: the
+// alpha of its base color map, or a mask map of its own, read at the uv set
+// the map names, with or without a program that shades it; the program never
+// decides it.
 @(test)
 material_mask_cuts_holes_for_the_camera_and_for_rays :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, material_settings(), reference = {.Lights}) {return}
+	if !fixture_init(t, &f, 96, 64, material_settings(), programs = true, reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	// The left half of the image is solid and the right half is a hole.
@@ -1051,7 +1238,10 @@ material_mask_cuts_holes_for_the_camera_and_for_rays :: proc(t: ^testing.T) {
 	for c, i in corners {vertices[i] = {position = c, normal = {0, 1, 0}, uv = {0.25, 0.25}, uv1 = {c.x + 0.5, c.z + 0.5}, color = {1, 1, 1}}}
 	secondary, added_mesh := mesh_add(r, vertices[:], []u32{0, 2, 1, 0, 3, 2})
 	testing.expect(t, added_mesh, r.error)
-	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}
+	// Its left half opaque, its right half masked by the half image.
+	mixed := halves_quad(r, 2, 1)
+	solid := DEFAULT_MATERIAL
+	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1}
 	instances := []Instance_Desc{
 		{object_id = 1, mesh = quad, transform = scale_matrix(20), tint = {1, 1, 1}},
 		{object_id = 2, mesh = quad, transform = placed(2, 1), material = 1, tint = {1, 1, 1}},
@@ -1059,25 +1249,35 @@ material_mask_cuts_holes_for_the_camera_and_for_rays :: proc(t: ^testing.T) {
 	above := Camera{position = {0, 4, 0}, forward = {0, -4, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	// From the side: the solid half shades the floor and the hole lets the sun through.
 	side := Camera{position = {0, 3, 6}, forward = {0, -3, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	grid := program_find(r, "Grid", .Surface)
+	if !testing.expect(t, grid != nil, "the tests have the Grid program") {return}
+	// The Grid program gives every point the alpha of the default material: it would cover the hole.
+	Mask_Case :: struct {name: string, own, programmed: bool, mesh: Mesh_Handle, uv_set: u32}
+	mask_cases := [?]Mask_Case{{"base color UV0", false, false, quad, 0}, {"base color UV1", false, false, secondary, 1}, {"mask map and program UV0", true, true, quad, 0}, {"mask map and program UV1", true, true, secondary, 1}}
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified {continue}
+		if !fixture_traces(r, provider) {continue}
 		settings := r.settings; settings.trace_mode = provider
 		testing.expect(t, renderer_apply_settings(r, settings), r.error)
-		cutout.alpha_mode, cutout.opacity = .Mask, 1
-		cutout.textures[.Base_Color] = texture
-		for mesh, uv_set in ([2]Mesh_Handle{quad, secondary}) {
-			cutout.maps.base_color.uv_set = u32(uv_set)
-			materials_set(r, {cutout})
-			instances[1].mesh = mesh
+		for c in mask_cases {
+			masked := cutout
+			masked.alpha_mode, masked.opacity = .Mask, 1
+			masked.textures[.Base_Color], masked.textures[.Mask] = (0 if c.own else texture), (texture if c.own else 0)
+			masked.maps.base_color.uv_set, masked.maps.mask.uv_set = c.uv_set, c.uv_set
+			if c.programmed {masked.program_id, masked.custom_params = grid.id, program_defaults(grid)}
+			materials_set(r, {masked})
+			instances[1].mesh = c.mesh
 			scene_given(r, instances, nil, sun, {})
 			frames(t, &f, above, 2)
-			testing.expectf(t, near_bytes(read_albedo(t, &f, above, {-0.5, 1, 0}), {255, 0, 0, 0}, 3), "%v UV%d solid half is drawn", provider, uv_set)
-			testing.expectf(t, near_bytes(read_albedo(t, &f, above, {0.5, 1, 0}), {255, 255, 255, 0}, 3), "%v UV%d floor shows through the hole", provider, uv_set)
+			testing.expectf(t, !near_bytes(read_albedo(t, &f, above, {-0.5, 1, 0}), {255, 255, 255, 0}, 3), "%v %s: the solid half is drawn", provider, c.name)
+			testing.expectf(t, near_bytes(read_albedo(t, &f, above, {0.5, 1, 0}), {255, 255, 255, 0}, 3), "%v %s: the floor shows through the hole", provider, c.name)
 			testing.expect(t, r.scene.instances[1].meta.w & INSTANCE_FLAG_ALPHA_TESTED != 0 && r.scene.instances[0].meta.w & INSTANCE_FLAG_ALPHA_TESTED == 0, "only the masked instance asks its material")
 			shaded := screen_color(t, &f, side, {-0.5, 0, 0.8})
 			lit := screen_color(t, &f, side, {0.5, 0, 0.8})
-			testing.expectf(t, lit.g > shaded.g + 40, "%v UV%d ray shadow follows the cutout: %v vs %v", provider, uv_set, lit, shaded)
+			testing.expectf(t, lit.g > shaded.g + 40, "%v %s: the ray shadow follows the cutout: %v vs %v", provider, c.name, lit, shaded)
 		}
+		cutout.alpha_mode, cutout.opacity = .Mask, 1
+		cutout.textures[.Base_Color] = texture
+		instances[1].mesh = quad
 		// A masked material without a base map reads only its uniform opacity.
 		cutout.textures[.Base_Color] = 0
 		cutout.opacity = 1
@@ -1097,6 +1297,107 @@ material_mask_cuts_holes_for_the_camera_and_for_rays :: proc(t: ^testing.T) {
 		frames(t, &f, above, 2)
 		testing.expectf(t, near_bytes(read_albedo(t, &f, above, {0.5, 1, 0}), {255, 0, 0, 0}, 3), "an opaque material has no holes: %v", read_albedo(t, &f, above, {0.5, 1, 0}))
 		testing.expect(t, r.scene.instances[1].meta.w & INSTANCE_FLAG_ALPHA_TESTED == 0)
+		// Of a mesh with an opaque slot and a masked one, the triangles of the masked slot
+		// alone ask their material: the masked BLAS geometry of the mesh, which an instance
+		// that tests other slots overrides.
+		cutout.alpha_mode, cutout.opacity, cutout.maps.base_color.uv_set = .Mask, 1, 0
+		cutout.textures[.Base_Color] = texture
+		materials_set(r, {cutout, solid})
+		Case :: struct {material: Material_Handle, tested, flags: u32}
+		cases := [3]Case{{0, 0b10, rhi.TLAS_ALPHA_GEOMETRY}, {1, 0b11, rhi.TLAS_ALPHA_TESTED}, {2, 0, 0}}
+		for c in cases {
+			instances[1] = {object_id = 2, mesh = mixed, transform = placed(2, 1), material = c.material, tint = {1, 1, 1}}
+			scene_given(r, instances, nil, sun, {})
+			frames(t, &f, above, 2)
+			testing.expectf(t, r.scene.instances[1].tested == c.tested, "%v material %d tests slots %b", provider, c.material, r.scene.instances[1].tested)
+			testing.expectf(t, r.scene.hw_instances[1].mask_flags & (rhi.TLAS_ALPHA_TESTED | rhi.TLAS_ALPHA_GEOMETRY) == c.flags, "%v material %d: TLAS flags %x", provider, c.material, r.scene.hw_instances[1].mask_flags)
+		}
+		instances[1].material = 0
+		scene_given(r, instances, nil, sun, {})
+		m := r.scene.meshes[mixed]
+		testing.expectf(t, m.tested == 0b10, "the mesh tests its masked slot: %b", m.tested)
+		p := record_pooled(&r.scene, m)
+		if provider == .Hardware {
+			frames(t, &f, above, 1)
+			ray := r.scene.meshes[mixed].rays[0]
+			testing.expect_value(t, ray.table_opaque, 2)
+			for primitive, k in r.scene.indices[ray.table_word:][:ray.table_count] {
+				testing.expectf(t, (asset.cluster_slot(p.clusters[primitive >> PRIMITIVE_TRIANGLE_BITS]) == 1) == (u32(k) >= ray.table_opaque), "the opaque triangles lead the table: %d", k)
+			}
+		} else {
+			for tri in r.scene.blas_triangles[m.rays[0].triangle_offset:][:m.rays[0].triangle_count] {
+				testing.expect_value(t, tri.slot, asset.cluster_slot(p.clusters[tri.primitive >> PRIMITIVE_TRIANGLE_BITS]))
+			}
+		}
+		opaque := screen_color(t, &f, side, {-0.5, 0, 0.8})
+		within := screen_color(t, &f, side, {0.25, 0, 0.8})
+		hole := screen_color(t, &f, side, {0.75, 0, 0.8})
+		testing.expectf(t, hole.g > opaque.g + 40 && hole.g > within.g + 40, "%v the opaque half and the solid of the masked half cast, its hole does not: %v %v %v", provider, opaque, within, hole)
+		instances[1] = {object_id = 2, mesh = quad, transform = placed(2, 1), material = 1, tint = {1, 1, 1}}
+	}
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// The maps of the shadows draw the clusters of an opaque slot of an instance
+// with a masked one as they draw opaque instances, and those of the masked
+// slot with the coverage of its mask map, whatever program shades it.
+@(test)
+material_mask_draws_only_masked_clusters_with_their_coverage_into_the_maps :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 96, 64, material_settings(), programs = true) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	grid := program_find(r, "Grid", .Surface)
+	if !testing.expect(t, grid != nil, "the tests have the Grid program") {return}
+	// A clear mask map: the program, which gives the alpha of the default material, would cover it all.
+	clear_texels: [4 * 4 * 4]u8
+	clear, added := texture_add(r, {pixels = clear_texels[:], width = 4, height = 4, name = "clear"})
+	testing.expect(t, added, r.error)
+	cutout := DEFAULT_MATERIAL
+	cutout.alpha_mode, cutout.opacity = .Mask, 0
+	programmed := DEFAULT_MATERIAL
+	programmed.alpha_mode, programmed.program_id, programmed.custom_params = .Mask, grid.id, program_defaults(grid)
+	programmed.textures[.Mask] = clear
+	materials_set(r, {cutout, DEFAULT_MATERIAL, programmed})
+	quad := ground_quad(r)
+	mixed := halves_quad(r, 2, 1)
+	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	side := Camera{position = {0, 3, 6}, forward = {0, -3, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	s := &r.scene
+	// Its masked slot shows the cutout, then the program with its mask map.
+	for row in ([2]u32{1, 3}) {
+		slots: [32]u32
+		slots[1] = row + 1
+		scene_given(r, {{object_id = 1, mesh = quad, transform = scale_matrix(20), tint = {1, 1, 1}}, {object_id = 2, mesh = mixed, transform = placed(2, 1), tint = {1, 1, 1}, slot_materials = slots}}, nil, sun, {})
+		opaque, tested, masked_opaque, opaque_tested := 0, 0, 0, 0
+		// It moves each frame: the last round of the maps culls it, as what moves.
+		for k in 0 ..< 4 {
+			moved := placed(2, 1)
+			moved[0, 3] += 0.001 * f32(k % 2)
+			testing.expect(t, scene_move(r, {1}, {moved}))
+			frames(t, &f, side, 1)
+			if k < 2 {continue}
+			rhi.device_wait_idle(f.device)
+			state: [1]Gpu_Cull_State
+			if !testing.expect(t, rhi.buffer_read_slice(f.device, r.shadow_buffers.state, 0, state[:])) {return}
+			count := min(state[0].listed[0], s.cull_capacity[.Shadow_Entries])
+			if count == 0 {continue}
+			entries := make([]Gpu_Visible_Cluster, count, context.temp_allocator)
+			kept := make([][abi.RASTER_ENTRY_WORDS]u32, count, context.temp_allocator)
+			if !testing.expect(t, rhi.buffer_read_slice(f.device, s.shadow_entries, 0, entries)) {return}
+			if !testing.expect(t, rhi.buffer_read_slice(f.device, s.shadow_raster_entries, 0, kept)) {return}
+			m := s.meshes[mixed]
+			p := record_pooled(s, m)
+			for entry, k in entries {
+				if entry.instance != 1 {continue}
+				masked := asset.cluster_slot(p.clusters[(entry.cluster_word - m.cluster_word) / CLUSTER_WORDS]) == 1
+				if kept[k][abi.RASTER_ENTRY_BIN] & RASTER_BIN_TESTED == 0 {opaque += 1;masked_opaque += int(masked)} else {tested += 1;opaque_tested += int(!masked)}
+			}
+		}
+		testing.expectf(t, opaque > 0 && tested > 0 && masked_opaque == 0 && opaque_tested == 0, "row %d: the opaque cluster in the opaque bin (%d, %d masked), the masked one in the tested bin (%d, %d opaque)", row, opaque, masked_opaque, tested, opaque_tested)
+		shaded := screen_color(t, &f, side, {-0.5, 0, 0.8})
+		lit := screen_color(t, &f, side, {0.5, 0, 0.8})
+		testing.expectf(t, lit.g > shaded.g + 40, "row %d: the opaque half casts and the masked half covers nothing: %v vs %v", row, lit, shaded)
 	}
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
@@ -1225,7 +1526,7 @@ material_blend_shows_the_scene_through_and_casts_no_shadow :: proc(t: ^testing.T
 	blue.alpha_mode = .Blend
 	materials_set(r, {red, blue})
 	quad := ground_quad(r)
-	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}
+	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1}
 	floor := Instance_Desc{object_id = 1, mesh = quad, transform = scale_matrix(20), tint = {1, 1, 1}}
 	glass := Instance_Desc{object_id = 2, mesh = quad, transform = placed(2, 1), material = 1, tint = {1, 1, 1}}
 	scene_given(r, {floor, glass}, nil, sun, {})
@@ -1274,112 +1575,62 @@ read_light :: proc(t:^testing.T,f:^Fixture,camera:Camera,world:Vec3,target:rhi.T
     return {f32(pixels[i]),f32(pixels[i+1]),f32(pixels[i+2])}
 }
 
+// Glass between a point and a light neither darkens nor colors its light: a
+// shadow ray goes through it as if it were not there, with every light traced
+// by rays (the reference) and in the direct light of the view, where a light
+// without a map traces its samples; a solid beyond the glass still stops it.
 @(test)
-material_colored_shadows_filter_textures_and_respect_blockers :: proc(t:^testing.T) {
+material_glass_casts_no_shadow_in_rays :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,64,64,material_settings(), programs = true, reference = {.Lights}) {return}
+    if !fixture_init(t,&f,64,64,material_settings(), reference = {.Lights}) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
-    image:[16*16*4]u8
-    for y in 0..<16 {for x in 0..<16 {
-        i:=(y*16+x)*4
-        image[i]=255 if x<8 else 0;image[i+2]=0 if x<8 else 255
-        image[i+3]=255 if y<8 else 0
-    }}
-    texture,ok:=texture_add(r,{pixels=image[:],width=16,height=16,srgb=true,name="shadow red blue clear"})
-    testing.expect(t,ok,r.error)
-    glass:=DEFAULT_MATERIAL;glass.alpha_mode=.Blend;glass.textures[.Base_Color]=texture
+    glass:=DEFAULT_MATERIAL;glass.alpha_mode=.Blend;glass.base_color={1,0,0};glass.opacity=0.9
     materials_set(r,{glass})
     quad:=ground_quad(r)
-    // UV0 is always the opaque red texel; only UV1 spans blue and clear.
-    corners:=[4]Vec3{{-0.5,0,-0.5},{0.5,0,-0.5},{0.5,0,0.5},{-0.5,0,0.5}}
-    vertices:[4]Mesh_Vertex
-    for c,i in corners {vertices[i]={position=c,normal={0,1,0},uv={0.25,0.25},uv1={c.x+0.5,c.z+0.5},color={1,1,1}}}
-    secondary,secondary_ok:=mesh_add(r,vertices[:],[]u32{0,2,1,0,3,2})
-    testing.expect(t,secondary_ok,r.error)
     floor:=Instance_Desc{object_id=1,mesh=quad,transform=scale_matrix(20),tint={1,1,1}}
-    filter:=Instance_Desc{object_id=2,mesh=quad,transform=placed(2,1),material=1,tint={1,1,1}}
+    pane:=Instance_Desc{object_id=2,mesh=quad,transform=placed(2,1),material=1,tint={1,1,1}}
     opaque:=Instance_Desc{object_id=3,mesh=quad,transform=placed(2,2),tint={1,1,1}}
     camera:=OVERHEAD;camera.position.y=5
-    sun:=Sun_Desc{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true}
-    spot:=Light_Desc{position={0,4,0},color={1,1,1},intensity=16 * math.PI,range=10,direction={0,-1,0},cone=0.7}
-    grid:=program_find(r,"Grid",.Surface)
-    if !testing.expect(t,grid!=nil,"the tests have the Grid program") {return}
+    sun:=Sun_Desc{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true,indirect=1,scattering=1}
+    spot:=Light_Desc{position={0,4,0},color={1,1,1},intensity=16 * math.PI,range=10,direction={0,-1,0},cone=0.7,indirect=1,scattering=1}
     for provider in ([]Trace_Mode{.Software,.Hardware}) {
-        if provider==.Hardware && !r.hardware_rt_verified {continue}
-        for mesh,uv_set in ([2]Mesh_Handle{quad,secondary}) {
-            glass.maps.base_color.uv_set=u32(uv_set)
-            materials_set(r,{glass})
-            filter.mesh=mesh
-            settings:=r.settings;settings.trace_mode=provider;settings.colored_shadows=false
-            testing.expect(t,renderer_apply_settings(r,settings))
-            scene_given(r,{floor,filter},nil,sun,{})
-            frames(t, &f,camera,2)
-            white:=read_light(t,&f,camera,{-0.4,0,-0.4},r.targets.direct)
-            testing.expectf(t,abs(white.r-white.b)<0.01,"%v UV%d disabled filter passes white: %v",provider,uv_set,white)
-            settings.colored_shadows=true;testing.expect(t,renderer_apply_settings(r,settings))
-            for source in 0..<3 {
-                settings.light_budget=0 if source==2 else 8 // source 2 exercises the shadow ray of a sampled light.
-                testing.expect(t,renderer_apply_settings(r,settings))
-                scene_given(r,{floor,filter},nil if source==0 else ([]Light_Desc{spot}),sun if source==0 else Sun_Desc{},{})
-                frames(t, &f,camera,4)
-                // The spot gives the scene another light scale: in nits.
-                red:=read_light(t,&f,camera,{-0.4,0,-0.4},r.targets.direct)/r.scene.light_scale
-                blue:=read_light(t,&f,camera,{0.4,0,-0.4},r.targets.direct)/r.scene.light_scale
-                clear:=read_light(t,&f,camera,{0,0,0.4},r.targets.direct)/r.scene.light_scale
-                testing.expectf(t,red.r>0.2 && red.r>4*red.b && blue.b>0.2 && blue.b>4*blue.r,"%v UV%d source %d projects the texture: %v and %v",provider,uv_set,source,red,blue)
-                testing.expectf(t,clear.r>0.2 && abs(clear.r-clear.b)<0.02,"%v UV%d alpha zero passes white: %v",provider,uv_set,clear)
-            }
-            // A blocker behind the glass must still stop light; layer traversal
-            // must not return as soon as it finds a transmitting surface.
-            // Look from the side so the opaque blocker is not the visible pixel.
-            camera.position={0,3,6};camera.forward={0,-3,-6};camera.up={0,1,0}
-            scene_given(r,{floor,filter,opaque},nil,sun,{})
-            frames(t, &f,camera,2)
-            blocked:=read_light(t,&f,camera,{-0.4,0,-0.4},r.targets.direct)
-            testing.expectf(t,blocked.r+blocked.g+blocked.b<0.01,"%v UV%d opaque geometry behind the filter blocks: %v",provider,uv_set,blocked)
-            glass.alpha_mode=.Mask;materials_set(r,{glass})
-            scene_given(r,{floor,filter},nil,sun,{})
-            frames(t, &f,camera,2)
-            masked:=read_light(t,&f,camera,{-0.4,0,-0.4},r.targets.direct)
-            hole:=read_light(t,&f,camera,{0,0,0.4},r.targets.direct)
-            testing.expectf(t,masked.r+masked.g+masked.b<0.01 && hole.r>0.2,"%v UV%d Mask keeps opaque coverage and transparent holes: %v and %v",provider,uv_set,masked,hole)
-            glass.alpha_mode=.Blend;materials_set(r,{glass})
-            camera=OVERHEAD;camera.position.y=5
-        }
-    }
-    // Glass whose program paints a cross of blue lines over red cells, on a
-    // green row: its shadow shows what the program gives where each ray
-    // crosses it, not the mean of the glass, in the blocks of soft shadows
-    // and in the rays every pixel of the reference traces. Cells of 20 m:
-    // the lines of every ten cross the origin, 0.8 m wide to each side.
-    painted:=DEFAULT_MATERIAL;painted.alpha_mode=.Blend;painted.base_color={0,1,0}
-    painted.program_id=grid.id;painted.custom_params=program_defaults(grid)
-    testing.expect(t,program_parameter_set(&painted.custom_params,program_parameter(grid,"color"),{1,0,0,0}))
-    testing.expect(t,program_parameter_set(&painted.custom_params,program_parameter(grid,"line_color"),{0,0,1,0}))
-    testing.expect(t,program_parameter_set(&painted.custom_params,program_parameter(grid,"cell"),{20,0,0,0}))
-    materials_set(r,{painted})
-    wide:=Instance_Desc{object_id=2,mesh=quad,transform=placed(8,1),material=1,tint={1,1,1}}
-    for provider in ([]Trace_Mode{.Software,.Hardware}) {
-        if provider==.Hardware && !r.hardware_rt_verified || provider==.Software && !SOFTWARE_TRACER {continue}
-        for reference in ([2]bool{false,true}) {
+        if !fixture_traces(r,provider) {continue}
+        for reference in ([2]bool{true,false}) {
             f.reference=Reference_Set{.Lights} if reference else {}
-            settings:=r.settings;settings.trace_mode=provider;settings.colored_shadows=true;settings.light_budget=8
-            testing.expect(t,renderer_apply_settings(r,settings))
-            scene_given(r,{floor,wide},nil,sun,{})
-            frames(t, &f,camera,4)
-            line:=read_light(t,&f,camera,{},r.targets.direct)
-            cell:=read_light(t,&f,camera,{2,0,2},r.targets.direct)
-            testing.expectf(t,line.b>0.2 && line.b>4*line.r && cell.r>0.2 && cell.r>4*cell.b && line.g+cell.g<0.05,"%v reference %v: the shadow of the glass shows its program where each ray crosses it: line %v, cell %v",provider,reference,line,cell)
+            // The sun, the spot, and the spot by the shadow ray of a sampled light.
+            for source in 0..<3 {
+                settings:=r.settings;settings.trace_mode=provider;settings.light_budget=0 if source==2 else 8
+                testing.expect(t,renderer_apply_settings(r,settings))
+                lights:=nil if source==0 else ([]Light_Desc{spot})
+                light:=sun if source==0 else Sun_Desc{}
+                scene_given(r,{floor},lights,light,{})
+                frames(t, &f,camera,4)
+                open:=read_light(t,&f,camera,{-0.4,0,-0.4},r.targets.direct)
+                scene_given(r,{floor,pane},lights,light,{})
+                frames(t, &f,camera,4)
+                under:=read_light(t,&f,camera,{-0.4,0,-0.4},r.targets.direct)
+                testing.expectf(t,open.r>0.05 && abs(under.r-open.r)<0.02*open.r && abs(under.g-open.g)<0.02*open.g && abs(under.b-open.b)<0.02*open.b,"%v, reference %v, source %d: the glass leaves the light as it is: %v under it, %v without it",provider,reference,source,under,open)
+            }
         }
+        f.reference={.Lights}
+        // A blocker behind the glass still stops the light: a ray does not end
+        // at the glass, nor does the glass hide what is beyond it.
+        settings:=r.settings;settings.trace_mode=provider;settings.light_budget=8
+        testing.expect(t,renderer_apply_settings(r,settings))
+        side:=Camera{position={0,3,6},forward={0,-3,-6},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE}
+        scene_given(r,{floor,pane,opaque},nil,sun,{})
+        frames(t, &f,side,2)
+        blocked:=read_light(t,&f,side,{-0.4,0,-0.4},r.targets.direct)
+        testing.expectf(t,blocked.r+blocked.g+blocked.b<0.01,"%v: what is solid behind the glass blocks: %v",provider,blocked)
     }
     testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))
 }
 
 @(test)
-uniform_instance_color_overrides_vertex_colors_in_raster_and_shadow_rays :: proc(t:^testing.T) {
+uniform_instance_color_overrides_vertex_colors_in_raster :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,64,64,material_settings(), reference = {.Lights}) {return}
+    if !fixture_init(t,&f,64,64,material_settings()) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
     vertices:=[4]Mesh_Vertex{
@@ -1408,24 +1659,11 @@ uniform_instance_color_overrides_vertex_colors_in_raster_and_shadow_rays :: proc
     floor:=Instance_Desc{object_id=12,mesh=ground_quad(r),transform=scale_matrix(20),tint={1,1,1}}
     source.transform=placed(2,1);source.material=1;source.tint={1,1,1}
     camera:=OVERHEAD;camera.position.y=5
-    sun:=Sun_Desc{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true}
-    for provider in ([]Trace_Mode{.Software,.Hardware}) {
-        if provider==.Hardware && !r.hardware_rt_verified {continue}
-        settings:=r.settings;settings.trace_mode=provider;settings.colored_shadows=true
-        testing.expect(t,renderer_apply_settings(r,settings))
-        source.uniform_color=false
-        scene_given(r,{floor,source},nil,sun,{})
-        frames(t, &f,camera,2)
-        colored:=read_light(t,&f,camera,{},r.targets.direct)
-        testing.expectf(t,colored.r>colored.g*1.5 && colored.r>colored.b*1.5,"%v shadows retain ordinary red vertex colors: %v",provider,colored)
-        source.uniform_color=true
-        scene_given(r,{floor,source},nil,sun,{})
-        frames(t, &f,camera,2)
-        white:=read_light(t,&f,camera,{},r.targets.direct)
-        visible:=screen_color(t,&f,camera,{0,1,0})
-        testing.expectf(t,white.r>0.2 && abs(white.r-white.g)<0.01 && abs(white.r-white.b)<0.01,"%v uniform white passes light without coloring it: %v",provider,white)
-        testing.expectf(t,abs(visible.r-visible.g)<2 && abs(visible.r-visible.b)<2,"Blended raster uses the same uniform white appearance: %v",visible)
-    }
+    sun:=Sun_Desc{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true,indirect=1,scattering=1}
+    scene_given(r,{floor,source},nil,sun,{})
+    frames(t, &f,camera,2)
+    visible:=screen_color(t,&f,camera,{0,1,0})
+    testing.expectf(t,abs(visible.r-visible.g)<2 && abs(visible.r-visible.b)<2,"Blended raster uses the same uniform white appearance: %v",visible)
     testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))
 }
 
@@ -1444,15 +1682,15 @@ material_mirror_lighting_is_exact_with_four_local_lights :: proc(t:^testing.T) {
         {object_id=2,mesh=quad,transform=patch,tint={1,1,1}},
     }
     lights:=[]Light_Desc{
-        {position={0,1,-2},color={1,1,1},intensity=6 * math.PI,range=6,direction={0,1,0},cone=0.7},
-        {position={0,3,-2},color={1,1,1},intensity=6 * math.PI,range=6},
-        {position={10,1,-2},color={1,1,1},intensity=6 * math.PI,range=6},
-        {position={-10,1,-2},color={1,1,1},intensity=6 * math.PI,range=6},
+        {position={0,1,-2},color={1,1,1},intensity=6 * math.PI,range=6,direction={0,1,0},cone=0.7,indirect=1,scattering=1},
+        {position={0,3,-2},color={1,1,1},intensity=6 * math.PI,range=6,indirect=1,scattering=1},
+        {position={10,1,-2},color={1,1,1},intensity=6 * math.PI,range=6,indirect=1,scattering=1},
+        {position={-10,1,-2},color={1,1,1},intensity=6 * math.PI,range=6,indirect=1,scattering=1},
     }
     scene_given(r,instances,lights,{},{})
     camera:=Camera{position={0,2,2},forward={0,-2,-2},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE}
     for provider in ([]Trace_Mode{.Software,.Hardware}) {
-        if provider==.Hardware && !r.hardware_rt_verified {continue}
+        if !fixture_traces(r,provider) {continue}
         settings:=r.settings;settings.trace_mode=provider;settings.reflection_light_budget=8
         testing.expect(t,renderer_apply_settings(r,settings))
         low,high:=f32(1e6),f32(0)
@@ -1467,7 +1705,7 @@ material_mirror_lighting_is_exact_with_four_local_lights :: proc(t:^testing.T) {
         // reflection holds still and shows about the light of them all.
         crowd:[8]Light_Desc
         crowd[0]=lights[0]
-        for &light,i in crowd[1:] {light={position={f32(i%3)-1,3+0.2*f32(i),-2},color={1,1,1},intensity=6 * math.PI,range=6}}
+        for &light,i in crowd[1:] {light={position={f32(i%3)-1,3+0.2*f32(i),-2},color={1,1,1},intensity=6 * math.PI,range=6,indirect=1,scattering=1}}
         scene_lights_given(r,crowd[:],{},{})
         frames(t, &f,camera,4)
         every:=read_light(t,&f,camera,{},r.targets.reflect_raw).r
@@ -1710,7 +1948,7 @@ material_without_specular_keeps_the_whole_diffuse_lobe :: proc(t:^testing.T) {
     material.base_color={1,1,1};material.roughness=1;material.specular_factor=0
     materials_set(r,{material})
     mesh:=ground_quad(r)
-    scene_given(r,{{object_id=1,mesh=mesh,transform=scale_matrix(12),material=1,tint={1,1,1}}},nil,{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true},{})
+    scene_given(r,{{object_id=1,mesh=mesh,transform=scale_matrix(12),material=1,tint={1,1,1}}},nil,{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true,indirect=1,scattering=1},{})
     direct_at_origin :: proc(t:^testing.T,f:^Fixture,camera:Camera)->Vec3 {
         frames(t,f,camera,2)
         rhi.device_wait_idle(f.device)
@@ -1740,7 +1978,7 @@ material_reflectance_target_follows_frustum_and_preserves_plain_shading :: proc(
     offscreen:=scale_matrix(4);offscreen[0,3]=20
     floor:=Instance_Desc{object_id=1,mesh=mesh,transform=scale_matrix(4),material=1,tint={1,1,1}}
     other:=Instance_Desc{object_id=2,mesh=mesh,transform=offscreen,material=2,tint={1,1,1}}
-    scene_given(r,{floor,other},nil,{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true},{})
+    scene_given(r,{floor,other},nil,{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true,indirect=1,scattering=1},{})
     testing.expect_value(t,len(r.scene.reflective),1)
     camera_needs_reflectance :: proc(r:^Renderer,camera:Camera)->bool {
         view,proj,_:=camera_matrices(camera,1)
@@ -1790,7 +2028,7 @@ material_gbuffer_stage_surfaces_ask_for_their_targets :: proc(t:^testing.T) {
     coated.coat.weight=1
     materials_set(r,{plain,reflective,coated})
     mesh:=ground_quad(r)
-    scene_given(r,{{object_id=1,mesh=mesh,transform=scale_matrix(4),material=1,tint={1,1,1}}},nil,{direction={0,1,0},color={1,1,1},illuminance=math.PI,enabled=true},{})
+    scene_given(r,{{object_id=1,mesh=mesh,transform=scale_matrix(4),material=1,tint={1,1,1}}},nil,{direction={0,1,0},color={1,1,1},illuminance=math.PI,enabled=true,indirect=1,scattering=1},{})
     Seen :: struct {reflectance,layered:bool}
     record :: proc(s:^Stage_Pass,user:rawptr) {(^Seen)(user)^={s.pass.reflectance,s.pass.layered}}
     drawn :: proc(t:^testing.T,f:^Fixture,mesh:Mesh_Handle,material:Material_Handle) -> (seen:Seen) {
@@ -1923,7 +2161,7 @@ light_albedo :: proc(t:^testing.T,f:^Fixture,mesh:Mesh_Handle,material:Material_
         angle:=2*math.PI*(f32(i/SIDE)+0.5)/SIDE
         up:=math.sqrt(1-u)
         direction:=Vec3{math.sqrt(u)*math.cos(angle),up,math.sqrt(u)*math.sin(angle)}
-        scene_given(r,{{object_id=1,mesh=mesh,transform=scale_matrix(12),material=material,tint={1,1,1}}},nil,{direction=direction,color={1,1,1},illuminance=math.PI,enabled=true},{})
+        scene_given(r,{{object_id=1,mesh=mesh,transform=scale_matrix(12),material=material,tint={1,1,1}}},nil,{direction=direction,color={1,1,1},illuminance=math.PI,enabled=true,indirect=1,scattering=1},{})
         frames(t, f,camera,2)
         sum+=target_at(t,f,r.targets.direct,camera,{})/up
     }
@@ -1976,7 +2214,7 @@ diffuse_transmission_lets_the_light_of_the_other_side_through :: proc(t:^testing
     quad:=ground_quad(r)
     below:=proc(t:^testing.T,f:^Fixture,quad:Mesh_Handle,material:Material_Handle) -> Vec3 {
         r:=f.renderer
-        scene_given(r,{{object_id=1,mesh=quad,transform=scale_matrix(12),material=material,tint={1,1,1}}},nil,{direction={0,-1,0},color={1,1,1},illuminance=math.PI,enabled=true},{})
+        scene_given(r,{{object_id=1,mesh=quad,transform=scale_matrix(12),material=material,tint={1,1,1}}},nil,{direction={0,-1,0},color={1,1,1},illuminance=math.PI,enabled=true,indirect=1,scattering=1},{})
         frames(t, f,OVERHEAD,2)
         return target_at(t,f,r.targets.direct,OVERHEAD,{})
     }
@@ -2002,6 +2240,78 @@ diffuse_transmission_lets_the_light_of_the_other_side_through :: proc(t:^testing
         expected:=reflected.x+0.5*left(table,camera)*(SKY_BELOW-1)
         testing.expectf(t,abs(seen.x-expected)<0.02,"a white leaf under a white sky from %v: %v, expected %v",camera.position,seen,expected)
     }
+    testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))
+}
+
+// A thin card that lets light through, with others of its kind between it and
+// the sun, gets through each the share it lets through itself: its own light
+// from behind times that share once more for each card, so it grows with the
+// weight and falls with the cards stacked. Under a card that lets nothing
+// through, masked as they are, it gets none, and that card lights the card
+// and the probes alike whether it is two-sided or not: being two-sided opens
+// only what lets light through.
+@(test)
+diffuse_transmission_lets_the_sun_through_the_leaves_in_its_way :: proc(t:^testing.T) {
+    f:Fixture
+    settings:=layer_settings()
+    settings.gi_enabled=true
+    if !fixture_init(t,&f,32,32,settings) {return}
+    defer fixture_destroy(&f)
+    r:=f.renderer
+    card :: proc(weight:f32,two_sided:=true) -> Material_Desc {
+        m:=DEFAULT_MATERIAL
+        m.base_color={1,1,1}
+        m.roughness=0.5
+        m.alpha_mode=.Mask
+        m.two_sided=two_sided
+        m.diffuse_transmission={weight=weight,color={1,1,1}}
+        return m
+    }
+    materials_set(r,{card(0.5),card(0.8),card(0),card(0,false)})
+    quad:=ground_quad(r)
+    table:=dfg_table(t,&f)
+    left:=1-dielectric_albedo(table,1,0.5,0.04)
+    // blocker: the material of the cards below; 0, the card's own.
+    Case :: struct {material:Material_Handle,weight:f32,stacked:int,blocker:Material_Handle}
+    cases:=[?]Case{{1,0.5,1,0},{2,0.8,1,0},{1,0.5,2,0},{1,0.5,1,4},{1,0.5,1,3}}
+    seen:[len(cases)]f32
+    lit:[2][3]u8
+    for c,i in cases {
+        instances:[3]Instance_Desc
+        instances[0]={object_id=1,mesh=quad,transform=scale_matrix(12),material=c.material,tint={1,1,1}}
+        for k in 1..=c.stacked {
+            below:=scale_matrix(12)
+            below[1,3]=-0.3*f32(k)
+            if c.blocker!=0 {
+                // Facing the sun, 1.5 m below, with probes between: they meet its back.
+                below[1,1],below[2,2],below[1,3]=-12,-12,-1.5
+            }
+            instances[k]={object_id=u64(k+1),mesh=quad,transform=below,material=c.blocker if c.blocker!=0 else c.material,tint={1,1,1}}
+        }
+        // Each case a world of its own: its probes keep nothing of the one before.
+        scene_world(r,u64(i+1),true)
+        // A sky above, whose light the card lets through to what is under it.
+        scene_given(r,instances[:1+c.stacked],nil,{direction={0,-1,0},color={1,1,1},illuminance=math.PI,enabled=true,indirect=1,scattering=1},{sky={1,1,1}})
+        frames(t,&f,OVERHEAD,4)
+        seen[i]=target_at(t,&f,r.targets.direct,OVERHEAD,{}).y
+        // What the point lets through: its weight as the G-buffer holds it, in 6
+        // bits, under its specular lobe. Each card above, the sun and the view
+        // along its normal as along the point's, lets through as much.
+        through:=math.round(c.weight*63)/63*left
+        expected:=0 if c.blocker!=0 else math.pow(through,f32(c.stacked+1))
+        testing.expectf(t,abs(seen[i]-expected)<0.02,"%v: the sun through the cards %v, expected %v",c,seen[i],expected)
+        if c.blocker==0 {continue}
+        frames(t,&f,OVERHEAD,64,.Lighting)
+        rhi.device_wait_idle(f.device)
+        pixels,width,_,ok:=golden_capture(r)
+        if !testing.expect(t,ok,r.error) {return}
+        p:=target_pixel(r,OVERHEAD,{})
+        at:=(p.y*width+p.x)*4
+        lit[c.blocker-3]={pixels[at],pixels[at+1],pixels[at+2]}
+        delete(pixels)
+    }
+    testing.expectf(t,seen[1]>seen[0] && seen[0]>seen[2] && seen[2]>0.01 && seen[3]<1e-3 && seen[4]<1e-3,"more weight lets more through, more cards less, an opaque one none: %v",seen)
+    testing.expectf(t,lit[0]==lit[1],"the light of the card under an opaque one, two-sided or not: %v and %v",lit[0],lit[1])
     testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))
 }
 
@@ -2073,7 +2383,7 @@ material_anisotropy_turns_with_its_object :: proc(t:^testing.T) {
     seen :: proc(t:^testing.T,f:^Fixture,quad:Mesh_Handle,turn:mm.Quat,spin:f32,camera:Camera,sun:Vec3) -> f32 {
         transform:=mm.transform_matrix({rotation=turn*mm.quat_axis_angle({0,1,0},spin),scale={12,12,12}})
         direction:=mm.quat_rotate(turn,sun)
-        scene_given(f.renderer,{{object_id=1,mesh=quad,transform=transform,material=1,tint={1,1,1}}},nil,{direction=direction,color={1,1,1},illuminance=math.PI,enabled=true},{})
+        scene_given(f.renderer,{{object_id=1,mesh=quad,transform=transform,material=1,tint={1,1,1}}},nil,{direction=direction,color={1,1,1},illuminance=math.PI,enabled=true,indirect=1,scattering=1},{})
         frames(t,f,camera,2)
         return target_at(t,f,f.renderer.targets.direct,camera,{}).x
     }
@@ -2092,6 +2402,59 @@ material_anisotropy_turns_with_its_object :: proc(t:^testing.T) {
 // Two halves of a quad share their uvs mirrored across x = 0, as a baker lays
 // out a symmetric model. With MikkTSpace tangents a map that tilts up the
 // image tilts both halves alike, and one that tilts along u mirrors.
+// A material that is not two-sided loses the back faces of an open sheet and
+// of a closed box; a two-sided one keeps them, lit by a normal turned to the
+// viewer. An instance that mirrors its mesh still shows its front.
+@(test)
+material_back_faces_show_only_where_the_material_is_two_sided :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, material_settings(), reference = {.Lights}) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	two := DEFAULT_MATERIAL
+	two.two_sided = true
+	materials_set(r, {DEFAULT_MATERIAL, two})
+	sheet := ground_quad(r)
+	// A box around the origin, its faces wound counter-clockwise from outside.
+	box_vertices: [24]Mesh_Vertex
+	box_indices: [36]u32
+	for n, face in ([6]Vec3{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}}) {
+		u := Vec3{n.y, n.z, n.x}
+		v := linalg.cross(n, u)
+		for c, i in ([4]Vec3{n - u - v, n + u - v, n + u + v, n - u + v}) {box_vertices[face * 4 + i] = {position = c * 2, normal = n, tangent = {u.x, u.y, u.z, 1}, color = {1, 1, 1}}}
+		base := u32(face * 4)
+		for q, i in ([6]u32{base, base + 1, base + 2, base, base + 2, base + 3}) {box_indices[face * 6 + i] = q}
+	}
+	box, added := mesh_add(r, box_vertices[:], box_indices[:])
+	if !testing.expect(t, added, r.error) {return}
+	UNDER :: Camera{position = {0, -2, 0}, forward = {0, 2, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	INSIDE :: Camera{position = {0, 0, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	Case :: struct {name: string, mesh: Mesh_Handle, material: Material_Handle, scale: Vec3, camera: Camera, at: Vec3, seen: bool}
+	cases := [?]Case{
+		{"an open sheet from its front", sheet, 1, {1, 1, 1}, OVERHEAD, {0.2, 0, 0.1}, true},
+		{"an open sheet from behind", sheet, 1, {1, 1, 1}, UNDER, {0.2, 0, 0.1}, false},
+		{"a two-sided sheet from behind", sheet, 2, {1, 1, 1}, UNDER, {0.2, 0, 0.1}, true},
+		{"a sheet mirrored along x from its front", sheet, 1, {-1, 1, 1}, OVERHEAD, {0.2, 0, 0.1}, true},
+		{"a sheet mirrored upside down from below, its front", sheet, 1, {1, -1, 1}, UNDER, {0.2, 0, 0.1}, true},
+		{"a sheet mirrored upside down from above, its back", sheet, 1, {1, -1, 1}, OVERHEAD, {0.2, 0, 0.1}, false},
+		{"a closed box from inside", box, 1, {1, 1, 1}, INSIDE, {0.3, 0.2, -2}, false},
+		{"a two-sided box from inside", box, 2, {1, 1, 1}, INSIDE, {0.3, 0.2, -2}, true},
+	}
+	for c in cases {
+		transform := Mat4(1)
+		transform[0, 0], transform[1, 1], transform[2, 2] = c.scale.x, c.scale.y, c.scale.z
+		scene_given(r, {{object_id = 1, mesh = c.mesh, transform = transform, material = c.material, tint = {1, 1, 1}}}, nil, {}, {})
+		frames(t, &f, c.camera, 2)
+		depth := read_depth(t, &f, c.camera, c.at)
+		testing.expectf(t, (depth > 0) == c.seen, "%s: seen %v, depth %v", c.name, c.seen, depth)
+		if !c.seen || depth <= 0 {continue}
+		n := read_normal(t, &f, c.camera, c.at)
+		toward := linalg.normalize(c.camera.position - c.at)
+		testing.expectf(t, linalg.dot(n.xyz, toward) > 0.3, "%s: its normal faces the viewer, %v", c.name, n.xyz)
+	}
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
 @(test)
 material_mirrored_uvs_share_their_bitangent :: proc(t:^testing.T) {
     f:Fixture

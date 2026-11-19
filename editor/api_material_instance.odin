@@ -80,7 +80,7 @@ material_instance_entity :: proc(s:^Session,w:core.World_Ref,call:^api.Call,text
 // The name of a value, a parameter or a texture of an override, as the API names it.
 @(private)
 override_label :: proc(program:^gpu.Program,name:u64) -> string {
-    for standard in erender.MATERIAL_VALUE_FIELDS {if base.name_hash(standard.name)==name {return standard.name}}
+    for standard in asset.MATERIAL_VALUE_FIELDS {if base.name_hash(standard.name)==name {return standard.name}}
     for map_name in erender.MATERIAL_MAP_NAMES {if base.name_hash(map_name)==name {return map_name}}
     if program!=nil {
         for &parameter in program.parameters {if base.name_hash(parameter.name)==name {return parameter.name}}
@@ -177,7 +177,7 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
         for value in Material_Value {
             name:=material_value_name(value)
             now:=material_parameter_value(&given,nil,name)
-            erender.material_standard_value(&kept,name,&now,true)
+            asset.material_standard_value(&kept,name,&now,true)
             if now==material_parameter_value(&material,nil,name) {
                 erender.material_value_drop(&next,name,slot)
             } else if !erender.material_value(&next,name,now,slot) {

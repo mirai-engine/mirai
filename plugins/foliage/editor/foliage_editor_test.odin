@@ -9,11 +9,13 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/history"
+import "mirai:editor/kit"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
+import "mirai:ui"
 import foliage "plugins:foliage/runtime"
 
 @(private)
@@ -25,6 +27,7 @@ Foliage_Test_World :: struct {
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     foliages:core.Table(foliage.Foliage),
+    worlds:core.Table(core.World_Transform),
 }
 
 // The source the registry answers for a foliage.
@@ -385,6 +388,79 @@ instances_placed_on_the_ground_lean_with_it_when_it_changes :: proc(t:^testing.T
     testing.expect(t,abs(sloped.position.y-6)<1e-3,"and it stands on the slope")
 }
 
+// Scrolled to its end, the panel shows the last field of the type it shows,
+// floating over the scene and docked: no card of the list holds it back, the
+// first type and its id 0 neither.
+@(test)
+the_panel_scrolls_to_the_last_field_of_its_type :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"foliage-panel")
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
+    defer host.assets_destroy(&assets)
+    source:foliage.Source
+    defer foliage.source_destroy(&source)
+    source.info={seed=2,revision=1}
+    for name in ([3]string{"fern","moss","birch"}) {foliage.source_type_add(&source,name,{1,1})}
+    id:=base.Asset_Id{91,92}
+    bytes,error:=foliage.source_bytes(&source,id,&assets.types)
+    if !testing.expect_value(t,error,asset.Error.None) {return}
+    testing.expect_value(t,os.write_entire_file(fmt.tprintf("%s/meadow.foliage",root),bytes),nil)
+    delete(bytes)
+    host.assets_scan(&assets)
+    world:Foliage_Test_World
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
+    meadow:=core.create(&world.entities)
+    core.add(&world.transforms,meadow,core.TRANSFORM_IDENTITY)
+    core.add(&world.worlds,meadow,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
+    core.add(&world.foliages,meadow,foliage.Foliage{source=id,revision=1})
+    test_world_settle(&world)
+    // On the heap: with the session and the app, a context on the stack of a test thread overflows it.
+    ctx:=new(ui.Context);defer free(ctx)
+    if !testing.expect(t,ui.context_init(ctx,{}) && kit.theme_set(ctx)) {return}
+    defer ui.context_destroy(ctx)
+    app:=host.App{allocator=context.allocator,assets=&assets}
+    selection:history.Selection;defer delete(selection.entities)
+    history.selection_set(&selection,{meadow})
+    viewport:editor.Viewport
+    inspector:editor.Inspector
+    gui:=editor.Editor_Ui{ctx=ctx,begun=true}
+    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,viewport=&viewport,gui=&gui,inspector=&inspector}
+    editor.tool_set(&s,TOOL,true)
+    tool:Foliage_Tool;tool_ready(&tool);defer foliage_tool_free(&tool)
+    frame :: proc(t:^testing.T,s:^editor.Session,tool:^Foliage_Tool,world:^Foliage_Test_World,input:^ui.Input,top,dock:f32) {
+        ctx:=s.gui.ctx
+        ui.frame_begin(ctx,input^)
+        s.gui.tool_top,s.gui.tool_width,s.gui.tool_dock=top,280,dock
+        foliage_panel(s,tool,test_world_ref(world),core.read(&world.foliages),core.read(&world.worlds),{},{},s.app.assets,s.app.allocator,{})
+        testing.expect(t,!ui.frame_end(ctx).overflow)
+        testing.expect_value(t,ctx.stats.layout_errors,u32(0))
+        ui.input_next_frame(input)
+    }
+    panel:=ui.id_derive(ctx,PANEL_SCOPE,"panel")
+    height:=f32(600)
+    input:=ui.Input{size={1000,height},pointer_absent=true,dt=1.0/60}
+    frame(t,&s,&tool,&world,&input,48,0)
+    if !testing.expect(t,len(tool.edit.source.types)==3) {return}
+    tool.type=tool.edit.source.types[2].id
+    for dock in ([2]f32{0,height-36}) {
+        top:=f32(36) if dock>0 else 48
+        tool.scroll=1e6
+        for _ in 0..<3 {frame(t,&s,&tool,&world,&input,top,dock)}
+        rect,found:=ui.widget_rect(ctx,panel)
+        if !testing.expect(t,found && rect.y==top && rect.y+rect.h<=height+0.01) {continue}
+        testing.expectf(t,tool.scroll.y>0,"docked %v: the panel does not scroll",dock>0)
+        // What the panel holds ends inside it: the last field is in reach.
+        lowest:f32
+        for &w in ctx.previous[:ctx.previous_count] {
+            if w.id==panel || w.rect.x<rect.x || w.rect.x+w.rect.w>rect.x+rect.w+0.01 {continue}
+            lowest=max(lowest,w.rect.y+w.rect.h)
+        }
+        testing.expectf(t,lowest<=rect.y+rect.h+0.01,"docked %v: a row ends at %v, under the panel that ends at %v",dock>0,lowest,rect.y+rect.h)
+    }
+}
+
 @(test)
 the_search_finds_types_by_any_part_of_their_name :: proc(t:^testing.T) {
     testing.expect(t,type_matches("Fern_Large",""))
@@ -429,7 +505,8 @@ the_type_of_a_selected_instance_is_taken_alone_and_removed_types_leave_the_selec
     types_click(&tool,[]u32{fern,moss},fern,false,false)
     types_click(&tool,[]u32{fern,moss},moss,true,false)
     type_reveal(&tool,fern)
-    testing.expect(t,slice.equal(tool.painted[:],[]u32{fern}) && tool.type==fern && tool.reveal==fern)
+    reveal,revealing:=tool.reveal.?
+    testing.expect(t,slice.equal(tool.painted[:],[]u32{fern}) && tool.type==fern && revealing && reveal==fern)
     foliage.source_type_remove(&tool.edit.source,fern)
     types_keep(&tool)
     testing.expect(t,slice.equal(tool.painted[:],[]u32{moss}) && tool.type==moss,"one stays selected while there are types")

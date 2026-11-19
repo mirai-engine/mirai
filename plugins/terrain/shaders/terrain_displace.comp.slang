@@ -8,6 +8,7 @@
 #include "native.slang"
 #include "common.slang"
 #include "origin.slang"
+#include "terrain_blend.slang"
 #include "terrain_projection.slang"
 #include <constants/plugins/terrain.slang>
 #define MIRAI_GROUP_X 64
@@ -17,8 +18,8 @@
 // terrain.Gpu_Displace_Layer
 struct Layer {
     uint color;          // the base color texture of its material, its alpha the height; INVALID: none
-    float tiling;        // metres of a repeat
-    float blend;         // height_blend
+    float scale;         // repeats a metre
+    float height_blend;  // that of terrain.Terrain_Layer
     float displacement;  // metres from its lowest texel to its highest
 };
 // terrain.Gpu_Displace
@@ -51,7 +52,7 @@ struct Params_Block {
 #define MIRAI_POSED_STORE
 #include "geometry.slang"
 // The Geometry stage binds no sampler: a texel of a map is loaded.
-#define TERRAIN_TEXEL(texture, texel, size) material_textures[mirai_nonuniform(texture)].Load(int3(texel, 0))
+#define TERRAIN_TEXEL(texture, texel) material_textures[mirai_nonuniform(texture)].Load(int3(texel, 0))
 #include "terrain_surface.slang"
 
 // The cluster of the first level that holds vertex: the last whose first
@@ -88,7 +89,7 @@ float layer_height(Layer layer, float3 world, float3 normal) {
     Texture2D<float4> image = material_textures[mirai_nonuniform(layer.color)];
     uint width, height, levels;
     image.GetDimensions(0u, width, height, levels);
-    float scale = 1.0 / max(layer.tiling, 1e-6);
+    float scale = layer.scale;
     uint level = min(uint(max(log2(params.spacing * scale * float(max(width, height))), 0.0)), levels - 1u);
     uint2 size = max(uint2(width, height) >> level, uint2(1u));
     float3 weights = projection_weights(normal, false);
@@ -113,27 +114,29 @@ void main(uint3 id : SV_DispatchThreadID) {
     Mesh_Point point = cluster_point_at(mesh, c, id.x - c.vertex_first, INVALID);
     Terrain_Mix mix;
     if (params.control != INVALID) {
-        bool hole;
-        mix = terrain_weights_at(params.control, float2(float(params.map_size & 0xffffu), float(params.map_size >> 16u)), point.uv, hole);
+        float2 size = float2(float(params.map_size & 0xffffu), float(params.map_size >> 16u));
+        mix = terrain_weights_at(params.control, size, point.uv * size);
     } else {
         for (int i = 0; i < 4; i++) { mix.layers[i] = 0u; mix.weights[i] = i == 0 ? 1.0 : 0.0; }
     }
     float3 local_normal = unpack_normal(v.normal);
     float3 world = float3(dot(params.row0.xyz, v.position) + params.row0.w, dot(params.row1.xyz, v.position) + params.row1.w, dot(params.row2.xyz, v.position) + params.row2.w);
     float3 normal = normalize(float3(dot(params.row0.xyz, local_normal), dot(params.row1.xyz, local_normal), dot(params.row2.xyz, local_normal)));
-    float4 blend = float4(0.0);
+    float4 shown = terrain_heaviest(float4(mix.weights[0], mix.weights[1], mix.weights[2], mix.weights[3]));
     float4 heights = float4(0.0);
+    float4 height_blend = float4(0.0);
     for (uint i = 0u; i < 4u; i++) {
-        if (mix.weights[i] <= 0.0 || mix.layers[i] >= params.layer_count) continue;
+        if (mix.layers[i] >= params.layer_count) shown[i] = 0.0;
+        if (shown[i] <= 0.0) continue;
         Layer layer = params.layers[mix.layers[i]];
         heights[i] = layer_height(layer, world, normal);
-        blend[i] = mix.weights[i] * exp2(5.0 * layer.blend * heights[i]);
+        height_blend[i] = layer.height_blend;
     }
-    float sum = blend.x + blend.y + blend.z + blend.w;
+    float4 blend = terrain_height_blend(shown, heights, height_blend);
     float offset = 0.0;
     for (uint i = 0u; i < 4u; i++) {
-        if (blend[i] <= 0.0) continue;
-        offset += blend[i] / sum * (heights[i] - 0.5) * params.layers[mix.layers[i]].displacement;
+        if (shown[i] <= 0.0 || blend[i] <= 0.0) continue;
+        offset += blend[i] * (heights[i] - 0.5) * params.layers[mix.layers[i]].displacement;
     }
     float edge = 1e30;
     if ((params.pinned & 1u) != 0u) edge = min(edge, v.position.x);

@@ -54,7 +54,7 @@ Accel    :: distinct base.Handle
 MAX_FRAMES_IN_FLIGHT :: 2
 MAX_LABEL_DEPTH :: 16 // labels open at once; deeper ones are not kept
 PIPELINE_NAME_BYTES :: 64 // of the name a pipeline keeps; past them it is cut
-MAX_BINDING_SLOTS    :: 35 // Shared texture slots precede the texture table.
+MAX_BINDING_SLOTS    :: 37 // Shared texture slots precede the texture table.
 MAX_BUFFER_BINDING_SLOTS :: 30 // Metal buffer index 30, its last, holds the texture table.
 MAX_SAMPLER_BINDING_SLOTS :: 16
 MAX_COLOR_TARGETS    :: 8
@@ -170,13 +170,14 @@ Format :: enum u8 {
 	BC7_Unorm, BC7_Srgb, // 16 bytes: rgb or rgba
 	BC6H_Ufloat,         // 16 bytes: rgb half floats without sign
 	RGBA16_Unorm,
+	D16_Unorm,
 }
 
 format_size :: proc "contextless" (f: Format) -> int {
 	switch f {
 	case .Undefined:                                         return 0
 	case .R8_Unorm, .R8_Uint:                                return 1
-	case .RG8_Unorm, .R16_Float:                             return 2
+	case .RG8_Unorm, .R16_Float, .D16_Unorm:                 return 2
 	case .RGBA8_Unorm, .RGBA8_Srgb, .BGRA8_Unorm, .BGRA8_Srgb, .RG16_Float, .RG16_Sint, .R32_Float, .R32_Uint, .RG11B10_Float, .D32_Float: return 4
 	case .RGBA16_Float, .RGBA16_Unorm, .RG32_Float, .RG32_Uint: return 8
 	case .RGBA32_Float, .RGBA32_Uint:                        return 16
@@ -184,7 +185,7 @@ format_size :: proc "contextless" (f: Format) -> int {
 	}
 	return 0
 }
-format_is_depth :: proc "contextless" (f: Format) -> bool {return f == .D32_Float}
+format_is_depth :: proc "contextless" (f: Format) -> bool {return f == .D32_Float || f == .D16_Unorm}
 
 // Bytes of a block of a block compressed format, 0 for the others.
 format_block_size :: proc "contextless" (f: Format) -> int {
@@ -353,15 +354,6 @@ MAX_SHADER_CONSTANTS :: 8
 // compiles the shader with them folded, so one code serves every combination.
 // A SPIR-V specialization constant, a Metal function constant.
 Shader_Constants :: distinct bit_set[0 ..< MAX_SHADER_CONSTANTS; u32]
-
-// The constant of a shader by its name; false when it declares none so named.
-shader_constant :: proc "contextless" (code: ^Shader_Code, name: string) -> (constants: Shader_Constants, found: bool) {
-	if code == nil {return}
-	for constant, id in code.constants[:min(len(code.constants), MAX_SHADER_CONSTANTS)] {
-		if constant == name {return {id}, true}
-	}
-	return
-}
 
 // Whether a pipeline may set constants of code; false with the error of the device.
 @(private)
@@ -534,6 +526,7 @@ Blas_Desc :: struct {
 	index_buffer:   Buffer,
 	index_offset:   u64,
 	triangle_count: u32,
+	masked_count:   u32,  // the last triangles, a geometry of their own that ray queries report as candidates; the others are opaque
 	deformable:     bool, // fixed topology, positions can be refitted
 	compact:        bool, // made smaller once built (cmd_compact_blases); not with deformable
 	name:           string,
@@ -546,13 +539,15 @@ Tlas_Instance :: struct {
 	transform:    [3][4]f32, // row-major 3x4 object-to-world
 	custom_index: u32,       // 24 bits, returned by ray queries as the instance custom index
 	blas:         u32,       // accel_id of its BLAS; 0, or a BLAS gone or not built: no ray meets it
-	mask_flags:   u32,       // the mask rays test (bits 0-7), and TLAS_ALPHA_TESTED
+	mask_flags:   u32,       // the mask rays test (bits 0-7), and TLAS_ALPHA_TESTED or TLAS_ALPHA_GEOMETRY
 	pad:          u32,
 }
 #assert(size_of(Tlas_Instance) == 64)
-// Ray queries report the triangles of the instance as candidates for the
-// shader to confirm; without it every hit is committed.
+// Ray queries report every triangle of the instance as a candidate for the
+// shader to confirm. With TLAS_ALPHA_GEOMETRY, those of the masked geometry
+// of its BLAS (Blas_Desc.masked_count). With neither, every hit is committed.
 TLAS_ALPHA_TESTED :: u32(1) << 8
+TLAS_ALPHA_GEOMETRY :: u32(1) << 9
 
 // The translation of instances (tlas_instances.comp.slang): its bindings, the
 // words of its table before the native value of each BLAS, and its dispatch,
@@ -569,11 +564,12 @@ TLAS_LAYOUT_COLUMNS :: 1
 
 // The words of the table of a translation: how many instances from which of
 // the buffer, how the backend lays one out, and the word of its flags for an
-// opaque instance and for one alpha tested. After it, a pair of words by BLAS
+// opaque instance, for one alpha tested and for one whose geometries decide.
+// After it, a pair of words by BLAS
 // id: the native value its instances take (Vulkan: its address; Metal: its
 // place among the structures of the build + 1), 0 for none.
 @(private)
-Tlas_Table_Header :: struct {count, layout, stride, first, ids, opaque, tested, pad: u32}
+Tlas_Table_Header :: struct {count, layout, stride, first, ids, opaque, tested, geometry: u32}
 #assert(size_of(Tlas_Table_Header) == TLAS_TABLE_HEADER * 4)
 
 // The id of a BLAS in Tlas_Instance.blas, while it lives; 0 for anything else.
@@ -606,7 +602,7 @@ Features :: struct {
 	timestamps:          bool, // cmd_timestamp intervals while timestamps_want is on; else one "frame" interval
 	validation:          bool, // API validation is active
 	clip_distance:       bool, // a vertex shader can clip by planes of its own
-	stop_place:          bool, // a loss names where the GPU stopped (device_failure); Vulkan with VK_AMD_buffer_marker
+	stop_place:          bool, // the GPU marks where it goes, so a loss (device_failure) and a hang (the watchdog) name where it stopped; Vulkan with VK_AMD_buffer_marker
 }
 
 Device_Type :: enum u8 {Other, Integrated, Discrete, Virtual, CPU}
@@ -622,6 +618,7 @@ Device_Info :: struct {
 	uniform_alignment:    u64,
 	storage_alignment:    u64,
 	max_storage_range:    u64,    // bytes one storage buffer binding spans
+	subpixel_bits:        u32,    // of the grid the raster places a vertex on, a pixel in 2 to that many steps; at least
 	memory:               u64,    // bytes of the memory the device keeps its resources in; 0: unknown
 }
 
@@ -658,6 +655,10 @@ Device_Desc :: struct {
 	// presents to it is chosen. Zero: no window, frames draw only into textures.
 	surface:                    Surface_Desc,
 	pipeline_cache_path:        string,   // Vulkan: compiled pipelines persisted across runs ("" = memory only)
+	// The file a submission the GPU has not finished late_ms after it went is
+	// written to, flushed to disk, until it finishes (watchdog.odin); "": none.
+	late_record:                string,
+	late_ms:                    int,      // 0: WATCHDOG_LATE_MS
 	capacities:                 Device_Capacities,
 	allocator:                  runtime.Allocator, // of the device and its tables; context.allocator when unset
 	on_message:                 Message_Proc,      // presents errors and validation reports; nil keeps them silent
@@ -807,6 +808,24 @@ Gpu_Timing :: struct {
 MAX_TIMESTAMPS :: 256
 // Bytes of the name of a timestamp that are kept; a longer one is cut.
 MAX_TIMESTAMP_NAME_BYTES :: 64
+
+// The cmd_timestamp names a frame recorded, in order, kept on the CPU on every
+// device: its timings name their intervals by them and the watchdog lists them.
+@(private)
+Frame_Passes :: struct {
+	count: u32,
+	names: [MAX_TIMESTAMPS]string,
+	bytes: [MAX_TIMESTAMPS][MAX_TIMESTAMP_NAME_BYTES]u8, // the names, which a caller may build in the frame
+}
+
+// Records the next pass of a frame; false past MAX_TIMESTAMPS.
+@(private)
+frame_passes_add :: proc(p: ^Frame_Passes, name: string) -> bool {
+	if p.count >= MAX_TIMESTAMPS {return false}
+	p.names[p.count] = string(p.bytes[p.count][:copy(p.bytes[p.count][:], name)])
+	p.count += 1
+	return true
+}
 
 // Oversized transients one frame holds.
 MAX_FRAME_OVERSIZED :: 16

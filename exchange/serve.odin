@@ -147,8 +147,9 @@ serve_stop :: proc(p:^Peer) {
 serve_open :: proc(x:^Exchange,p:^Peer,address:store.Hash) -> store.Error {
     if p.reading && p.reader.hash==address {return .None}
     serve_stop(p)
-    error:store.Error
-    p.reader,error=store.reader_open(x.desc.store,address)
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    reader,error:=store.reader_open(x.desc.store,address)
+    p.reader=reader
     p.reading=error==.None
     return error
 }

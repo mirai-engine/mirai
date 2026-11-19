@@ -20,6 +20,7 @@ Mtl_Buffer :: struct {
 	mapped: rawptr,
 	usage:  Buffer_Usage,
 	kind:   Memory,
+	name:   Resource_Name,
 }
 
 Mtl_Texture :: struct {
@@ -31,6 +32,7 @@ Mtl_Texture :: struct {
 	swapchain: bool, // handle is the current drawable texture, not owned
 	surface:   rawptr, // the IOSurface of a shared texture, owned
 	table:     Table_Refs,
+	name:      Resource_Name,
 }
 
 Mtl_Slot :: struct {
@@ -38,6 +40,8 @@ Mtl_Slot :: struct {
 	kind:   Binding_Kind,
 	stages: Shader_Stages,
 }
+
+Mtl_Slots :: bit_set[0 ..< MAX_BINDING_SLOTS; u64]
 
 Mtl_Pipeline :: struct {
 	compute:     ^MTL.ComputePipelineState,
@@ -48,7 +52,7 @@ Mtl_Pipeline :: struct {
 	cull:        MTL.CullMode,
 	primitive:   MTL.PrimitiveType,
 	slots:       [MAX_BINDING_SLOTS]Mtl_Slot,
-	slot_mask:   u32,
+	slot_mask:   Mtl_Slots,
 	table:       Shader_Stages, // stages that declare the texture table
 	name:        string,
 	shaders:     [2]base.Handle, // shared functions/libraries while this generation has pipelines
@@ -82,6 +86,7 @@ Mtl_Accel :: struct {
 	compact_slot:      i32,
 	compact_frame:     u64,
 	compact_immediate: bool,
+	name:              Resource_Name,
 }
 
 Mtl_Frame :: struct {
@@ -98,11 +103,11 @@ Mtl_Frame :: struct {
 	ranges:      [dynamic][3]u64,     // block, offset and size of the arena given back then
 	queries:     ^MTL.CounterSampleBuffer, // two samples per encoder, at its start and its end; nil without stage boundary sampling
 	passes:      bool, // the frame samples its encoders: timestamps_want was on when it began
-	query_count: u32,  // cmd_timestamp marks
-	query_names: [MAX_TIMESTAMPS]string,
-	query_bytes: [MAX_TIMESTAMPS][MAX_TIMESTAMP_NAME_BYTES]u8,
+	recorded:    Frame_Passes, // its cmd_timestamp marks
+	measured:    Frame_Passes, // without passes, its cmd_measure_begin marks
+	measuring:   bool,         // without passes, between a cmd_measure_begin and its end: its encoders are sampled
 	encoder_count: u32,
-	encoder_marks: [MAX_TIMESTAMPS]u16, // of each sampled encoder: the mark it runs after
+	encoder_marks: [MAX_TIMESTAMPS]u16, // of each sampled encoder: the mark it runs after, or the measure it runs in
 	number:        u64,  // the frame_number it committed
 	submitted:     bool, // until frame_begin collects its timings
 	paced:         bool, // the frame draws into a pair of the presenter
@@ -255,6 +260,9 @@ Device :: struct {
 	refuse:         Pipeline_Refusal,
 	presenter:      Presenter,
 	present:        Mtl_Present,
+	watchdog:       Watchdog,
+	watchdog_event: ^MTL.SharedEvent, // what the GPU signals as it finishes each command buffer, while the watchdog runs
+	watchdog_value: u64,
 	pipeline_lock:  sync.Mutex, // pipelines are made on other threads too: guards their pool and that of shaders
 	message_lock:   sync.Mutex, // guards the error and the failure
 }
@@ -333,6 +341,7 @@ device_create :: proc(desc: Device_Desc) -> (device: ^Device, error: string) {
 	ok := mtl_create_pools(d) && mtl_create_device(d, desc)
 	// Every Metal device of a Mac presents to the layer of its windows.
 	if ok && desc.surface != {} {ok = mtl_swapchain_create(d, desc.surface)}
+	ok = ok && watchdog_start(d, desc)
 	if !ok {
 		error = strings.clone(d.error, context.temp_allocator)
 		device_destroy(d)
@@ -396,6 +405,8 @@ mtl_create_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	d.info.uniform_alignment = 256
 	d.info.storage_alignment = 256
 	d.info.max_storage_range = u64(MTL.Device_maxBufferLength(d.device))
+	// Metal does not say: the fewest a device of the other backend may have.
+	d.info.subpixel_bits = 4
 	d.info.memory = MTL.Device_recommendedMaxWorkingSetSize(d.device)
 
 	// API validation is a process-wide switch read by Metal itself
@@ -410,7 +421,6 @@ mtl_create_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	d.info.features.texture_bc = bool(MTL.Device_supportsBCTextureCompression(d.device))
 	d.info.features.timestamps = false
 	d.info.features.clip_distance = true
-	d.info.features.stop_place = true
 
 	upload_size := desc.upload_bytes_per_frame if desc.upload_bytes_per_frame > 0 else 16 * 1024 * 1024
 
@@ -593,6 +603,8 @@ device_destroy :: proc(d: ^Device) {
 			f.queries = nil
 		}
 	}
+	watchdog_stop(d)
+	mtl_release(d.watchdog_event)
 	// Resources the caller did not destroy are released here.
 	for &a, i in d.accels.items {
 		if !d.accels.alive[i] {continue}
@@ -829,8 +841,8 @@ MTL_COUNTER_ERROR :: max(u64)
 mtl_collect_timestamps :: proc(d: ^Device, f: ^Mtl_Frame) {
 	NS.scoped_autoreleasepool()
 	d.timing_count = 0
-	marks, encoders := f.query_count, f.encoder_count
-	f.query_count, f.encoder_count = 0, 0
+	marks, encoders, measures := f.recorded.count, f.encoder_count, f.measured.count
+	f.recorded.count, f.encoder_count, f.measured.count, f.measuring = 0, 0, 0, false
 	if begun, ended := MTL.CommandBuffer_GPUStartTime(f.cmd), MTL.CommandBuffer_GPUEndTime(f.cmd); ended > begun && begun > 0 {
 		present_latency(d, f.begun_ns, f.submitted_ns, i64((ended - begun) * 1e9))
 	}
@@ -864,7 +876,7 @@ mtl_collect_timestamps :: proc(d: ^Device, f: ^Mtl_Frame) {
 					if ends[i] != 0 {start, end = max(starts[i], previous), ends[i]}
 					previous = end
 					start_ns, end_ns := tick_of(start, gpu, now, rate), tick_of(end, gpu, now, rate)
-					name := string(d.timing_bytes[i][:copy(d.timing_bytes[i][:], f.query_names[i])])
+					name := string(d.timing_bytes[i][:copy(d.timing_bytes[i][:], f.recorded.names[i])])
 					d.timings[i] = {name = name, ms = f32(f64(end_ns - start_ns) / 1e6), start_ns = start_ns, end_ns = end_ns}
 				}
 				d.timing_count = intervals
@@ -880,6 +892,29 @@ mtl_collect_timestamps :: proc(d: ^Device, f: ^Mtl_Frame) {
 		end_ns := now + i64(end_seconds * 1e9) - i64(cpu)
 		d.timings[0] = {name = "frame", ms = f32((end_seconds - start_seconds) * 1000), start_ns = start_ns, end_ns = end_ns}
 		d.timing_count = 1
+	}
+	// The intervals it measured, each from the start of its first encoder to
+	// the end of its last, which the frame interval leaves out.
+	if d.timing_count == 0 || f.passes || measures == 0 || encoders == 0 || f.queries == nil {return}
+	data := MTL.CounterSampleBuffer_resolveCounterRange(f.queries, NS.Range{0, NS.UInteger(encoders * 2)})
+	if data == nil || u32(NS.Data_length(data)) < encoders * 2 * size_of(u64) {return}
+	samples := cast([^]u64)NS.Data_bytes(data)
+	starts, ends: [MAX_TIMESTAMPS]u64
+	for i in 0 ..< int(measures) {starts[i] = max(u64)}
+	for k in 0 ..< int(encoders) {
+		mark := int(f.encoder_marks[k])
+		first, last := samples[2 * k], samples[2 * k + 1]
+		if mark >= int(measures) || first == 0 || last == 0 || first == MTL_COUNTER_ERROR || last == MTL_COUNTER_ERROR {continue}
+		starts[mark] = min(starts[mark], first)
+		ends[mark] = max(ends[mark], max(first, last))
+	}
+	for i in 0 ..< int(measures) {
+		if ends[i] == 0 || d.timing_count >= MAX_TIMESTAMPS {continue}
+		start_ns, end_ns := tick_of(starts[i], gpu, now, rate), tick_of(ends[i], gpu, now, rate)
+		name := string(d.timing_bytes[d.timing_count][:copy(d.timing_bytes[d.timing_count][:], f.measured.names[i])])
+		d.timings[d.timing_count] = {name = name, ms = f32(f64(end_ns - start_ns) / 1e6), start_ns = start_ns, end_ns = end_ns}
+		d.timings[0].ms = max(d.timings[0].ms - d.timings[d.timing_count].ms, 0)
+		d.timing_count += 1
 	}
 }
 
@@ -975,7 +1010,9 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	if presented {
 		MTL.CommandBuffer_presentDrawable(f.cmd, cast(^MTL.Drawable)d.swapchain.drawable)
 	}
+	serial := mtl_watchdog_signal(d, f.cmd)
 	MTL.CommandBuffer_commit(f.cmd)
+	if serial > 0 {watchdog_sent(d, serial, d.frame_number, d.slot)}
 	f.submitted_ns = present_now_ns()
 	f.number, f.submitted = d.frame_number, true
 	if presented {present_count_direct(d)}
@@ -1034,7 +1071,9 @@ mtl_immediate_end :: proc(d: ^Device, cmd: ^Command_List, wait: bool) -> bool {
 	mtl_release_labels(cmd)
 	ok := cmd.cmd != nil && d.failure == .None
 	if ok {
+		serial := mtl_watchdog_signal(d, cmd.cmd)
 		MTL.CommandBuffer_commit(cmd.cmd)
+		if serial > 0 {watchdog_sent(d, serial, d.frame_number, -1)}
 		if wait {ok = mtl_wait(d, cmd.cmd, "immediate")}
 		if ok && device_lose_take(d) {
 			device_fail(d, .Lost, "the immediate command buffer failed: the GPU device was lost")
@@ -1049,6 +1088,34 @@ mtl_immediate_end :: proc(d: ^Device, cmd: ^Command_List, wait: bool) -> bool {
 	d.immediate_pool = nil
 	return ok
 }
+
+// ---------------------------------------------------------------- watchdog
+
+// The value the shared event of the watchdog takes once the GPU finished cmd,
+// which is not committed yet; 0 while the watchdog does not run.
+@(private)
+mtl_watchdog_signal :: proc(d: ^Device, cmd: ^MTL.CommandBuffer) -> u64 {
+	if d.watchdog.watch_ns == 0 {return 0}
+	if d.watchdog_event == nil {d.watchdog_event = MTL.Device_newSharedEvent(d.device)}
+	if d.watchdog_event == nil {return 0}
+	d.watchdog_value += 1
+	MTL.CommandBuffer_encodeSignalEvent(cmd, cast(^MTL.Event)d.watchdog_event, d.watchdog_value)
+	return d.watchdog_value
+}
+
+// Waits up to timeout_ns for the GPU to pass serial of the shared event, from
+// the thread of the watchdog.
+@(private)
+watchdog_gpu_wait :: proc(d: ^Device, serial: u64, timeout_ns: i64) -> Watchdog_Wait {
+	NS.scoped_autoreleasepool()
+	if MTL.SharedEvent_waitUntilSignaledValue(d.watchdog_event, serial, u64(max(timeout_ns / 1_000_000, 1))) {return .Done}
+	return .Waiting
+}
+
+// Metal marks no progress (stop_place is off): a command buffer names the
+// encoder that faulted only once it reports its error, never while it hangs.
+@(private)
+watchdog_stopped :: proc(d: ^Device, slot: int, out: []u8) -> string {return ""}
 
 // ---------------------------------------------------------------- swapchain
 
@@ -1077,13 +1144,9 @@ mtl_swapchain_create :: proc(d: ^Device, surface: Surface_Desc) -> bool {
 		desc = {width = sc.width, height = sc.height, mip_levels = 1, format = .BGRA8_Unorm, usage = {.Color_Target, .Transfer_Src, .Transfer_Dst}},
 	}
 	sc.texture = Texture(pool_add(&d.textures, t))
-	previous_allocator := context.allocator
-	context.allocator = d.allocator
-	sc.acquire.worker = thread.create(mtl_acquire_worker, name = "Metal drawable")
-	context.allocator = previous_allocator
-	if sc.acquire.worker == nil {set_error(d, "drawable acquisition thread failed"); return false}
-	sc.acquire.worker.data = sc
-	sc.acquire.worker.init_context = runtime.Context{allocator = d.allocator}
+	error: Thread_Create_Error
+	sc.acquire.worker, error = device_thread_create(d, mtl_acquire_worker, sc)
+	if error != .None {set_error(d, "the drawable acquisition thread could not start: %s", thread_create_text(error)); return false}
 	thread.start(sc.acquire.worker)
 	d.has_swapchain = true
 	return true

@@ -1,23 +1,74 @@
 // What the passes that update the probe volume share: the probes chosen this
-// frame (ddgi_select.comp: their count, then their slots) and the directions
-// each traces.
+// frame (ddgi_select.comp: their count, then their slots, then for each
+// whether it traced a ray this update, then the rays the update traced and
+// the hits it lit) and the directions each traces.
 #ifndef MIRAI_PROBE_UPDATE_SLANG
 #define MIRAI_PROBE_UPDATE_SLANG
 #include "scene.slang"
+#include "probe_slots.slang"
 
+#ifdef CHOSEN_WRITABLE
+[[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<uint> chosen : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
+#else
 [[vk::binding(SLOT_PASS2, 0)]] StructuredBuffer<uint> chosen : register(MIRAI_REGISTER(t, SLOT_PASS2), space0);
+#endif
 
 struct Params_Block {
     uint rays_per_probe;
     uint light_budget;
     float max_distance;
-    uint frame_number; // render.Renderer.frame, as Probe.frames counts
+    uint frame_number; // render.Renderer.light_frame, as Probe.frames counts
     uint resume;       // ddgi_trace.comp: a thread for each head of the round of its batch (points.slang)
+    uint room;         // probes the list of the chosen has room for
+    // Of what the probes keep of their rays (probe_hits.slang): the changes
+    // the scene lists, and the update, plus one, of the newest that left the
+    // list; then the update, plus one, in which what rays meet last changed
+    // everywhere, and the one in which the lights did.
+    uint changes;
+    uint changes_lost;
+    uint seen_everywhere;
+    uint lit_everywhere;
+    uint slots;        // of what the probes keep of their rays (probe_slots.slang)
     uint pad0;
-    uint pad1;
-    uint pad2;
 };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
+
+// Where the list says whether a probe of the chosen, by its place in it,
+// traced a ray this update (CHOSEN_TRACED), whether what one of its rays may
+// meet changed (CHOSEN_CROSSED) and whether one met what changes with nothing
+// that says so (CHOSEN_PASSING, PROBE_PASSING), whether its light stayed
+// within half of what is a change (CHOSEN_STILL, ddgi_irradiance.comp), and
+// where it counts the rays traced and the hits lit.
+#define CHOSEN_TRACED 1u
+#define CHOSEN_CROSSED 2u
+#define CHOSEN_PASSING 4u
+#define CHOSEN_STILL 8u
+uint chosen_traced(uint slot) { return 1u + params.room + slot; }
+uint chosen_rays() { return 1u + 2u * params.room; }
+uint chosen_lit() { return 2u + 2u * params.room; }
+
+// What a probe keeps of its rays as an update finds it: the slot it holds for
+// it (INVALID: none); whether it is what they found from where it is, with
+// what they may meet as it was but for the changes listed since it last
+// checked them (`checked`, an update plus one); and whether its hits were lit
+// before the lights last changed everywhere.
+struct Probe_Kept {
+    uint slot;
+    bool stands;
+    bool unlit;
+    uint checked;
+};
+Probe_Kept probe_kept(uint index) {
+    Probe probe = probes[index];
+    uint cascade;
+    int3 cell = probe_slot_cell(index, cascade);
+    Probe_Kept kept;
+    kept.slot = probe_slot_held(index, params.slots);
+    kept.checked = probe.hits.z;
+    kept.stands = kept.slot != INVALID && all(probe.cell.xyz == cell) && (probe.cell.w & PROBE_KEPT) != 0 && probe.hits.x >= params.seen_everywhere && probe.hits.z >= params.changes_lost;
+    kept.unlit = probe.hits.y < params.lit_everywhere;
+    return kept;
+}
 
 // A rotation of the set of rays for each cell of the world and cascade, the
 // same every update: what a probe gives changes only when what it sees does,

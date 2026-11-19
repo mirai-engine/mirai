@@ -47,6 +47,10 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
   - `assets`: meshes, textures, materials and scenes loaded now, and how many assets were unloaded
     that no world names
     ([unloading](../../mirai-core/references/host.md#failures-unloading-and-watching)).
+  - `pending`: what the frames draw a stand-in for because it is still being made: compilations
+    of the material programs (their materials draw as their rows), pipelines frames asked for, and
+    meshes and textures arriving. An image or a time taken meanwhile is not that of the scene;
+    `--wait-until 'pending={"programs":0,"pipelines":0,"assets":0}'` waits for it.
 - `engine.step`: only in a manual editor; advances whole editor, game and render frames with a
   fixed `dt`.
 - `engine.shutdown`: stops a Play and exits after replying. Fails with an open file dialog.
@@ -118,7 +122,11 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
   - `mouse_position` and `mouse_delta` do not go together; `text` is printable ASCII.
   - Keys by `core.Key` name (`W`, `Left_Control`, `F5`); the Mac Cmd is `Left_Super`.
 - `capture`: the only image of the editor and the game; requires a GPU. Draws `frames` frames (0:
-  what the image needs) and writes a PNG. With `frames` at 0 it keeps drawing while textures stream
+  what the image needs) and writes a PNG. It never shows a stand-in: before drawing, and after its
+  frames, it waits until nothing they draw is being made (`pending` of `engine.status`), drawing
+  frames again once it is; past a bounded wait it fails with what is pending and how long it
+  waited. A manual editor draws no frames while only programs compile, so `seconds` holds. With
+  `frames` at 0 it keeps drawing while textures stream
   in, up to a bounded wait. Only when nothing was drawn or textures were left, the result adds
   `textures_pending` and `instances_drawn`, `instances_culled` and `instances_occluded`, which tell
   a camera that sees nothing from a scene with nothing in it. A failure says the cause: the
@@ -276,6 +284,11 @@ the GPU passes and the conditions of the measurement. The editor keeps the last 
   `advance:false` it records the frames the loop runs afterwards (those of a window, or those of
   `engine.step`, `editor.input` and
   `play.step` in a manual editor); fails while another one is recording.
+- With `advance`, once it has the turn, it waits as `capture` does until nothing its frames draw
+  is being made, within the same `wait`, and fails past it saying what is pending. Without
+  `advance` it refuses while something is (`allow_limited` records anyway); `conditions.pending`
+  says what the first or the last frames drew stand-ins for, and a capture with any is not
+  `comparable`.
 - With `advance`, once it has the turn, it runs frames until they stop speeding up and only then
   records: a GPU that was idle starts at a lower clock and raises it in steps, and lowers it again
   after a while without frames. The frames the API ran back to back right before count
@@ -295,6 +308,20 @@ the GPU passes and the conditions of the measurement. The editor keeps the last 
   or the world, `resident_ms` until the end of the first frame after that which drew with nothing
   busy. While it is not, its state is `Loading` with what the last frame waited for; in a manual
   editor that needs frames (`engine.step`).
+- `profile.cost` asks the renderer to count one frame of the viewport by mesh and by material and
+  runs frames until the count comes back: what the view drew of each (instances, clusters,
+  triangles, the pixels it shades) and what the maps of the shadows drew. Only the frame asked for
+  runs the counting variants of its passes. A still view keeps the pages of the maps it drew
+  before, so its `shadow_*` are what that frame drew again; a view covered by a panel draws no
+  frame of the scene and the call fails. Its frames are frames of the user: held keys and a
+  camera flown with the pointer go on through them. A mesh made at run time is named by what its
+  maker says it is and by the entity that shows it.
+- `profile.gpu_memory` answers where the memory of the GPU goes, without running a frame: every
+  buffer, texture and acceleration structure of the device grouped by the name it was made with
+  (one made without a name, by its kind), the largest first. `held_bytes` (what the resources
+  hold, the room of the blocks none holds and what waits for deletion) compares with
+  `driver_bytes`, what the driver says the editor holds; `outside_bytes` is the driver's own part
+  past it (pipelines, descriptors, the images of the window).
 
 Reading a load:
 
@@ -338,12 +365,34 @@ Reading a capture:
   without pair scripts or a hand-built base. It builds head and the base (`--base`: `main`, a ref
   or a checkout with its editor already built) alike, dev unless `--release`, since two
   builds of the same mode compare; the base goes in the worktree of
-  [`render check`](../../mirai-rendering/references/verification.md#render-check). With
-  `measure.lock` taken it opens the two headless editors (no pacing, VSync or validation) and
-  alternates `--pairs` captures: head, base, base, head… It prints a Markdown table for the final
+  [`render check`](../../mirai-rendering/references/verification.md#render-check). It opens the
+  two headless editors (no pacing, VSync or validation), takes `measure.lock` and alternates
+  `--pairs` captures: head, base, base, head… It prints a Markdown table for the final
   report of the task with the median and the spread of each build and the difference per pair with
   its range, warns if another engine program was open or the GPU had another load, and leaves the
   JSON in `--out`.
+- **Hitches and freezes while flying.** `mirai bench flight [project] <flight> [--limit MS]`,
+  without scripts of held keys and chunked captures. A flight is a file of the project's
+  `tests/flights/` (named without `.mirai`, or a path; `demo/tests/flights/raft.mirai` is the
+  example): its `scene` and `segments`, each an optional jump (`camera`, a
+  [named camera](api.md#mirai-capture), or `position`, `target` and `fov`) and then `frames`
+  (still, or flying with the right button and `keys` held and a `turn` of mouse per frame) or
+  `settle` (the most frames it waits still until nothing is pending and no shadow page waits).
+  The first segment places the camera. The window is the size of `captures.mirai`.
+  1. It checks the whole file before building and says what to fix, then builds a copy of the
+     project and opens it with the GPU turn and the watchdog every unwatched editor gets, and
+     flies alone among the checkouts (`measure.lock`).
+  2. Every frame runs through `editor.input` and is recorded with `profile.capture`
+     (`advance:false`), in chunks read back with `profile.frames`, with `engine.status` at the end
+     of each segment.
+  3. It prints the table: per segment the frame, p95, worst, GPU and CPU, the frames over each
+     threshold, the frames a settle took and the shadows and what is pending at its end; the
+     frames over each threshold by frames after the last jump; the slowest frames with their
+     passes and parts; and the GPU passes. The frames, the table and the editor's log go to
+     `--out` (`bin/flight/<time>`).
+  4. A frame of a segment that does not settle past `--limit` stops it with exit 1, naming its
+     costliest GPU pass and CPU part; the watchdog ending the editor exits with
+     `rhi.WATCHDOG_EXIT_CODE` and the pass the GPU stopped in. What flew is printed either way.
 
 ## History
 
@@ -831,7 +880,9 @@ of an instance" are `-32602`; the rest, `-32000`
   whether one runs (`importing`), at any moment. While it runs, another import and whatever
   writes assets fail saying what is being imported. Reimporting keeps ids and files, which the
   package of the source lists
-  ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)).
+  ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)); over a document
+  of the project that changed since it was written it fails naming it, and `discard_changes`
+  writes over it ([changed documents](../../mirai-imports/references/imports.md#changed-documents)).
   `image` (`color`, `data`, `normal`, `normal_green_down`) says what an image imported on
   its own holds, over its settings and its name (a packed metallic-roughness or a mask is `data`); a
   source in the project keeps the choice in its settings

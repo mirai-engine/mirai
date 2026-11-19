@@ -1,10 +1,13 @@
 package importer
 
 import "core:fmt"
+import "core:slice"
 import "core:math"
 import "core:math/linalg"
+import "core:mem"
 import "core:testing"
 import "mirai:asset"
+import "mirai:cook/textures"
 import "mirai:std/geom"
 
 // The vertices of a shape as an importer leaves them, all of slot `slot`.
@@ -23,9 +26,9 @@ shape_vertices :: proc(buffer:^geom.Mesh_Buffer,slot:u32=0) -> []asset.Vertex {
 levels_valid :: proc(t:^testing.T,levels:Mesh_Levels,slots:int,loc:=#caller_location) -> bool {
     geometry:asset.Mesh_Geometry
     if !testing.expect(t,levels_geometry(levels,{},&geometry,context.temp_allocator),"the levels make clusters",loc=loc) {return false}
-    if len(levels.skin)==0 && !levels.pruned && len(levels.lods)>1 {
+    if levels.dag {
         // A static mesh keeps level 0 and the DAG of its clusters, whose levels shed triangles.
-        if !testing.expect(t,len(geometry.levels)>1,"the DAG has levels",loc=loc) {return false}
+        testing.expect_value(t,len(levels.lods),1,loc=loc)
         testing.expect_value(t,geometry.levels[0].triangle_count,levels.lods[0].index_count/3,loc=loc)
         for level,at in geometry.levels[1:] {testing.expect(t,level.triangle_count<=geometry.levels[at].triangle_count && level.error>=geometry.levels[at].error,"a coarser level of the DAG",loc=loc)}
     } else {
@@ -55,7 +58,10 @@ a_sphere_gets_levels_that_shed_triangles_and_stay_on_its_surface :: proc(t:^test
     geom.sphere_build(&sphere,1,128,64)
     vertices:=shape_vertices(&sphere)
     whole:=[1]Submesh{{index_count=u32(len(sphere.indices))}}
-    levels:=mesh_levels(vertices,sphere.indices[:],nil,whole[:],allocator=context.temp_allocator)
+    // Skinned, so it keeps whole levels.
+    skin:=make([]asset.Skin_Vertex,len(vertices),context.temp_allocator)
+    for &s in skin {s.weights[0]=255}
+    levels:=mesh_levels(vertices,sphere.indices[:],skin,whole[:],allocator=context.temp_allocator)
     if !levels_valid(t,levels,1) {return}
     testing.expectf(t,len(levels.lods)>=4 && levels.lods[len(levels.lods)-1].index_count/3<LOD_MIN_TRIANGLES,"the levels go on until one has fewer than LOD_MIN_TRIANGLES: %d levels",len(levels.lods))
     testing.expect(t,levels.lods[0].error==0 && int(levels.lods[0].vertex_count)==len(vertices) && int(levels.lods[0].index_count)==len(sphere.indices),"level 0 is the mesh as given")
@@ -137,16 +143,54 @@ a_small_mesh_or_one_told_not_to_keeps_one_level :: proc(t:^testing.T) {
     geom.mesh_buffer_init(&cube,context.temp_allocator)
     geom.cube_build(&cube)
     small:=mesh_levels(shape_vertices(&cube),cube.indices[:],nil,nil,allocator=context.temp_allocator)
-    testing.expect(t,len(small.lods)==1 && len(small.vertices)==len(cube.positions) && len(small.indices)==len(cube.indices))
+    testing.expect(t,len(small.lods)==1 && small.dag && len(small.vertices)==len(cube.positions) && len(small.indices)==len(cube.indices))
     testing.expect(t,levels_valid(t,small,1))
     sphere:geom.Mesh_Buffer
     geom.mesh_buffer_init(&sphere,context.temp_allocator)
     geom.sphere_build(&sphere,1,48,24)
     kept:=mesh_levels(shape_vertices(&sphere),sphere.indices[:],nil,nil,false,context.temp_allocator)
-    testing.expect(t,len(kept.lods)==1 && len(kept.indices)==len(sphere.indices))
+    testing.expect(t,len(kept.lods)==1 && !kept.dag && len(kept.indices)==len(sphere.indices))
     // Without submeshes the levels have none either.
-    plain:=mesh_levels(shape_vertices(&sphere),sphere.indices[:],nil,nil,allocator=context.temp_allocator)
+    skin:=make([]asset.Skin_Vertex,len(sphere.positions),context.temp_allocator)
+    for &s in skin {s.weights[0]=255}
+    plain:=mesh_levels(shape_vertices(&sphere),sphere.indices[:],skin,nil,allocator=context.temp_allocator)
     testing.expect(t,len(plain.lods)>1 && len(plain.submeshes)==0 && levels_valid(t,plain,1))
+}
+
+@(test)
+a_faceted_mesh_with_a_seam_on_every_edge_reaches_a_small_root :: proc(t:^testing.T) {
+    // A crystal: each triangle has vertices of its own, its flat normal and a uv chart of its own.
+    sphere:geom.Mesh_Buffer
+    geom.mesh_buffer_init(&sphere,context.temp_allocator)
+    geom.sphere_build(&sphere,1,64,32)
+    triangles:=len(sphere.indices)/3
+    vertices:=make([]asset.Vertex,triangles*3,context.temp_allocator)
+    indices:=make([]u32,triangles*3,context.temp_allocator)
+    for triangle in 0..<triangles {
+        p:=[3]geom.Vec3{}
+        for k in 0..<3 {p[k]=sphere.positions[sphere.indices[triangle*3+k]]}
+        normal:=linalg.normalize(linalg.cross(p[1]-p[0],p[2]-p[0]))
+        chart:=f32(triangle%61)
+        for k in 0..<3 {
+            vertices[triangle*3+k]=test_vertex(p[k],normal,{p[k].x*0.25+chart,p[k].z*0.25})
+            indices[triangle*3+k]=u32(triangle*3+k)
+        }
+    }
+    skin:=make([]asset.Skin_Vertex,len(vertices),context.temp_allocator)
+    for &s in skin {s.weights[0]=255}
+    // Static as a DAG, skinned as whole levels.
+    cases:=[]struct{name:string,skin:[]asset.Skin_Vertex}{{"static",nil},{"skinned",skin}}
+    for c in cases {
+        levels:=mesh_levels(vertices,indices,c.skin,nil,allocator=context.temp_allocator)
+        if !levels_valid(t,levels,1) {continue}
+        geometry:asset.Mesh_Geometry
+        levels_geometry(levels,{},&geometry,context.temp_allocator)
+        root:=0
+        for cluster in geometry.clusters {
+            if cluster.parent_error==asset.CLUSTER_ROOT {root+=int(asset.cluster_triangle_count(cluster))}
+        }
+        testing.expectf(t,root<LOD_MIN_TRIANGLES,"%s: the roots keep %d of %d triangles",c.name,root,triangles)
+    }
 }
 
 // A sphere in slot 0 and, in slot 1, cards of two triangles at the corners
@@ -178,72 +222,175 @@ cards_add :: proc(c:^Cards,center:geom.Vec3,size:f32) {
     append(&c.indices,first,first+2,first+1,first+1,first+2,first+3)
 }
 
-// The area of the triangles of a range of a level.
+// A cut of the DAG of a mesh: a cluster is drawn where its own error is
+// within what the cut allows at its sphere and its parent's is not. Its eye
+// allows slope metres of error per metre of distance; with slope 0, error
+// everywhere.
 @(private="file")
-cards_area :: proc(levels:Mesh_Levels,range:Submesh) -> (sum:f32) {
-    for i:=u32(0);i<range.index_count;i+=3 {
-        p:=[3]geom.Vec3{}
-        for k in 0..<u32(3) {p[k]=levels.vertices[levels.indices[range.first_index+i+k]].position}
-        sum+=0.5*linalg.length(linalg.cross(p[1]-p[0],p[2]-p[0]))
+Cut :: struct {eye:[3]f32,slope:f32,error:f32}
+
+@(private="file")
+cut_allows :: proc(cut:Cut,sphere:[4]f32) -> f32 {
+    if cut.slope==0 {return cut.error}
+    return cut.slope*max(linalg.length(sphere.xyz-cut.eye)-sphere.w,1e-3)
+}
+
+@(private="file")
+cut_takes :: proc(cut:Cut,c:asset.Cluster) -> bool {
+    return c.error<=cut_allows(cut,c.lod) && !(c.parent_error<=cut_allows(cut,c.parent))
+}
+
+// The corners of a triangle of a cluster.
+@(private="file")
+cluster_corners :: proc(g:asset.Mesh_Geometry,c:asset.Cluster,t:u32) -> (p:[3][3]f32) {
+    for corner,k in asset.cluster_triangle(g.triangles,c,t) {p[k]=asset.cluster_position(g,c,corner)}
+    return
+}
+
+// What a cut draws of a slot: its triangles and their area.
+@(private="file")
+cut_draws :: proc(g:asset.Mesh_Geometry,cut:Cut,slot:u32) -> (triangles:int,area:f32) {
+    for c in g.clusters {
+        if asset.cluster_slot(c)!=slot || !cut_takes(cut,c) {continue}
+        for t in 0..<asset.cluster_triangle_count(c) {
+            p:=cluster_corners(g,c,t)
+            area+=0.5*linalg.length(linalg.cross(p[1]-p[0],p[2]-p[0]))
+            triangles+=1
+        }
     }
     return
 }
 
-// The centers of the cards of a level, which they grow around, in millimetres.
+// How far a cut has gone from the error of a cluster to that of its parent,
+// as the raster takes it (cluster_along of cut.slang).
 @(private="file")
-cards_centers :: proc(levels:Mesh_Levels,lod:Lod) -> map[[2]i32]bool {
-    cards:=levels.submeshes[lod.first_submesh+1]
-    out:=make(map[[2]i32]bool,context.temp_allocator)
-    for i:=u32(0);i<cards.index_count;i+=6 {
-        p:=levels.vertices[levels.indices[cards.first_index+i]].position
-        q:=levels.vertices[levels.indices[cards.first_index+i+5]].position
-        out[{i32(math.round((p.x+q.x)*500)),i32(math.round((p.z+q.z)*500))}]=true
+cut_along :: proc(cut:Cut,c:asset.Cluster) -> f32 {
+    if c.parent_error==asset.CLUSTER_ROOT {return 0}
+    own,parent:=c.error/cut_allows(cut,c.lod),c.parent_error/cut_allows(cut,c.parent)
+    return clamp((1-own)/(parent-own),0,1) if parent>own else 0
+}
+
+// What a cut draws of a slot with its islands on their way to the next
+// level: the area of its triangles in cubes of `cell` metres.
+@(private="file")
+cut_coverage :: proc(g:asset.Mesh_Geometry,cut:Cut,slot:u32,cell:f32) -> map[[3]i32]f32 {
+    out:=make(map[[3]i32]f32,context.temp_allocator)
+    for c in g.clusters {
+        if asset.cluster_slot(c)!=slot || !cut_takes(cut,c) {continue}
+        along:=cut_along(cut,c)
+        for t in 0..<asset.cluster_triangle_count(c) {
+            p:[3][3]f32
+            for corner,k in asset.cluster_triangle(g.triangles,c,t) {p[k]=asset.cluster_position(g,c,corner)+asset.cluster_island_offset(g,c,corner,along)}
+            middle:=(p[0]+p[1]+p[2])/3
+            out[{i32(math.floor(middle.x/cell)),i32(math.floor(middle.y/cell)),i32(math.floor(middle.z/cell))}]+=0.5*linalg.length(linalg.cross(p[1]-p[0],p[2]-p[0]))
+        }
     }
     return out
 }
 
+// The cards of two triangles of slot 1 a cut draws, by their centers in
+// millimetres, with the side of each.
+@(private="file")
+cut_cards :: proc(g:asset.Mesh_Geometry,cut:Cut) -> map[[3]i32]f32 {
+    out:=make(map[[3]i32]f32,context.temp_allocator)
+    for c in g.clusters {
+        if asset.cluster_slot(c)!=1 || !cut_takes(cut,c) {continue}
+        for t:=u32(0);t+1<asset.cluster_triangle_count(c);t+=2 {
+            a,b:=cluster_corners(g,c,t),cluster_corners(g,c,t+1)
+            // The first corner of the first triangle and the last of the second are a diagonal.
+            center:=(a[0]+b[2])*0.5
+            out[{i32(math.round(center.x*1000)),i32(math.round(center.y*1000)),i32(math.round(center.z*1000))}]=linalg.length(a[0]-a[2])
+        }
+    }
+    return out
+}
+
+// The errors at which the cut of a geometry changes, each once, ascending.
+@(private="file")
+cut_errors :: proc(g:asset.Mesh_Geometry) -> []f32 {
+    errors:=make([dynamic]f32,context.temp_allocator)
+    for c in g.clusters {
+        if c.parent_error!=asset.CLUSTER_ROOT {append(&errors,c.parent_error)}
+    }
+    slice.sort(errors[:])
+    out:=make([dynamic]f32,context.temp_allocator)
+    for e in errors {if len(out)==0 || e>out[len(out)-1] {append(&out,e)}}
+    return out[:]
+}
+
+// A field of cards apart, pruned on to one card, and a crown of cards that
+// overlap, to the few that grown fill its cloud: no card grows past the cloud
+// of its class, and wherever a card of level 0 was, a cut draws one within
+// ISLAND_PIXELS of its error.
 @(test)
 a_submesh_of_cards_drops_half_of_them_where_its_error_allows_and_keeps_its_area :: proc(t:^testing.T) {
+    Case :: struct {name:string,spacing:f32,layers:int,most:int}
+    cases:=[]Case{{"a field",0.3,1,1},{"a crown",0.08,4,8}}
+    for test in cases {cards_pruned(t,test.name,test.spacing,test.layers,test.most)}
+}
+
+@(private="file")
+cards_pruned :: proc(t:^testing.T,name:string,spacing:f32,layers:int,most:int) {
     CARDS :: 256
     SIZE :: f32(0.1)
     c:=cards_build(64)
-    for card in 0..<CARDS {cards_add(&c,{f32(card%16)*0.3-2.4,1.5,f32(card/16)*0.3-2.4},SIZE)}
+    per_layer:=CARDS/layers
+    side:=int(math.sqrt(f32(per_layer)))
+    centers:=make([dynamic][3]f32,context.temp_allocator)
+    for card in 0..<CARDS {
+        k:=card%per_layer
+        center:=geom.Vec3{(f32(k%side)-f32(side)*0.5)*spacing,1.5+f32(card/per_layer)*spacing,(f32(k/side)-f32(side)*0.5)*spacing}
+        cards_add(&c,center,SIZE)
+        append(&centers,center)
+    }
     submeshes:=[2]Submesh{{index_count=u32(c.sphere),slot=0},{first_index=u32(c.sphere),index_count=CARDS*6,slot=1}}
     levels:=mesh_levels(c.vertices[:],c.indices[:],nil,submeshes[:],allocator=context.temp_allocator)
     if !levels_valid(t,levels,2) {return}
-    testing.expect(t,len(levels.lods)>=3)
+    testing.expectf(t,levels.dag && levels.pruned && len(levels.islands.islands)==CARDS,"%s: the cards are islands of the DAG",name)
+    g:asset.Mesh_Geometry
+    if !testing.expect(t,levels_geometry(levels,{},&g,context.temp_allocator)) {return}
     radius:=SIZE*math.SQRT_TWO/2
-    previous_error:f32
-    previous_cards:=CARDS
-    for lod,k in levels.lods {
-        cards:=levels.submeshes[lod.first_submesh+1]
-        testing.expect_value(t,cards.slot,1)
-        kept:=int(cards.index_count)/6
-        // A power of two of them, never more than the level before.
-        testing.expectf(t,kept<=previous_cards && CARDS%kept==0 && (CARDS/kept)&(CARDS/kept-1)==0,"level %d keeps %d cards after %d",k,kept,previous_cards)
-        testing.expectf(t,abs(cards_area(levels,cards)-CARDS*SIZE*SIZE)<CARDS*SIZE*SIZE*1e-3,"level %d keeps the area of the cards: %f",k,cards_area(levels,cards))
-        // Where cards are dropped, the error covers the radius they grew to.
-        grown:=radius*math.sqrt(f32(CARDS)/f32(kept))/ISLAND_PIXELS
-        testing.expectf(t,kept==CARDS || lod.error>=grown*0.999,"level %d keeps %d cards with an error of %f under their grown radius %f",k,kept,lod.error,grown)
-        testing.expect(t,k==0 || lod.error>=previous_error,"the error does not drop")
-        previous_error,previous_cards=lod.error,kept
-        // The sphere is simplified, and its vertices stay those of level 0.
+    clouds,_:=geom.islands_clouds(levels.islands.islands,context.temp_allocator)
+    // Where a cluster draws cards grown, its error covers the radius they grew to, within their cloud.
+    for cluster in g.clusters {
+        if asset.cluster_slot(cluster)!=1 {continue}
+        p:=cluster_corners(g,cluster,0)
+        grow:=linalg.length(p[0]-p[2])/SIZE
+        testing.expectf(t,radius*grow<=clouds[0]*1.001,"%s: cards grown %f past their cloud of %f",name,grow,clouds[0])
+        if grow>1.001 {testing.expectf(t,cluster.error>=radius*grow/geom.ISLAND_PIXELS*0.999,"%s: cards grown %f with an error of %f",name,grow,cluster.error)}
+    }
+    // Every cut draws the area of the cards; a coarser one keeps some of the cards a finer one keeps,
+    // and one near every card of level 0.
+    previous:map[[3]i32]f32
+    whole:=f32(CARDS)*SIZE*SIZE
+    for e,k in cut_errors(g) {
+        cut:=Cut{error=e}
+        _,area:=cut_draws(g,cut,1)
+        testing.expectf(t,abs(area-whole)<whole*1e-3,"%s: the cut at %f draws %f of the cards",name,e,area)
+        cards:=cut_cards(g,cut)
         if k>0 {
-            body:=levels.submeshes[lod.first_submesh]
-            testing.expect(t,body.index_count<levels.submeshes[0].index_count)
-            for index in levels.indices[body.first_index:][:body.index_count] {
-                if abs(linalg.length(levels.vertices[index].position)-1)>1e-4 {testing.expect(t,false,"a vertex of the sphere moved");break}
+            testing.expect(t,len(cards)<=len(previous))
+            for center in cards {testing.expectf(t,center in previous,"%s: a cut keeps a card the finer one dropped",name)}
+        }
+        far:f32
+        for p in centers {
+            nearest:=max(f32)
+            for key in cards {nearest=min(nearest,linalg.length([3]f32{f32(key.x),f32(key.y),f32(key.z)}/1000-p))}
+            far=max(far,nearest)
+        }
+        testing.expectf(t,far<=e*geom.ISLAND_PIXELS*1.001+1e-3,"%s: the cut at %f draws no card within %f of a card of level 0",name,e,far)
+        previous=cards
+        // The sphere is simplified, and its vertices stay on it.
+        for cluster in g.clusters {
+            if asset.cluster_slot(cluster)!=0 || !cut_takes(cut,cluster) {continue}
+            for v in 0..<asset.cluster_vertex_count(cluster) {
+                if abs(linalg.length(asset.cluster_position(g,cluster,v))-1)>1e-3 {testing.expect(t,false,"a vertex of the sphere moved");break}
             }
         }
     }
-    // The first level simplifies the sphere with less error than dropping a card would take: it keeps them all.
-    testing.expectf(t,levels.submeshes[levels.lods[1].first_submesh+1].index_count/6==CARDS && levels.lods[1].error<radius*math.SQRT_TWO/ISLAND_PIXELS,"level 1 keeps every card: error %f",levels.lods[1].error)
-    testing.expect(t,previous_cards<CARDS,"the coarsest level drops cards")
-    // The cards a level keeps are among those of the level before.
-    for k in 2..<len(levels.lods) {
-        before,after:=cards_centers(levels,levels.lods[k-1]),cards_centers(levels,levels.lods[k])
-        for center in after {testing.expect(t,center in before,"a level keeps a card the level before dropped")}
-    }
+    // Below the radius of a card over ISLAND_PIXELS every card is kept; the coarsest cut keeps a handful.
+    testing.expect_value(t,len(cut_cards(g,{error=0.99*radius/geom.ISLAND_PIXELS})),CARDS)
+    testing.expectf(t,len(previous)<=most,"%s: the coarsest cut keeps %d cards",name,len(previous))
 }
 
 @(test)
@@ -256,20 +403,594 @@ a_few_large_islands_do_not_hold_back_the_small_ones :: proc(t:^testing.T) {
     submeshes:=[2]Submesh{{index_count=u32(c.sphere),slot=0},{first_index=u32(c.sphere),index_count=(SMALL+LARGE)*6,slot=1}}
     levels:=mesh_levels(c.vertices[:],c.indices[:],nil,submeshes[:],allocator=context.temp_allocator)
     if !levels_valid(t,levels,2) {return}
+    g:asset.Mesh_Geometry
+    if !testing.expect(t,levels_geometry(levels,{},&g,context.temp_allocator)) {return}
     large_radius:=f32(2)*math.SQRT_TWO/2
-    pruned_small:=false
-    for lod,k in levels.lods[1:] {
-        cards:=levels.submeshes[lod.first_submesh+1]
+    // The first cut that drops small cards keeps every large one, below what dropping one takes.
+    for e in cut_errors(g) {
         large,small:=0,0
-        for i:=u32(0);i<cards.index_count;i+=6 {
-            p:=levels.vertices[levels.indices[cards.first_index+i]].position
-            q:=levels.vertices[levels.indices[cards.first_index+i+5]].position
-            if abs(p.y-3)<1e-3 {large+=1} else {small+=1}
+        for center in cut_cards(g,{error=e}) {
+            if abs(f32(center.y)/1000-3)<1e-2 {large+=1} else {small+=1}
         }
-        if large==LARGE && small<SMALL {
-            pruned_small=true
-            testing.expectf(t,lod.error<large_radius*math.SQRT_TWO/ISLAND_PIXELS,"level %d drops small cards with an error %f below what dropping a large one takes",k+1,lod.error)
+        if small==SMALL {continue}
+        testing.expectf(t,large==LARGE && e<large_radius/geom.ISLAND_PIXELS,"the first cut that drops small cards, at %f, keeps %d large ones",e,large)
+        return
+    }
+    testing.expect(t,false,"no cut drops small cards")
+}
+
+// A mask of size² texels: a serrated leaf with a stem, or a cluster of
+// round leaves with gaps between them, as an image whose color is that of
+// the leaves where the mask keeps them and black where it does not.
+@(private="file")
+Test_Mask :: enum {Leaf,Cluster}
+
+@(private="file")
+mask_kept :: proc(kind:Test_Mask,size:int,x,y:int) -> bool {
+    p:=[2]f32{(f32(x)+0.5)/f32(size),(f32(y)+0.5)/f32(size)}
+    switch kind {
+    case .Leaf:
+        if abs(p.x-0.5)<0.012 && p.y>0.85 {return true}
+        d:=p-{0.5,0.48}
+        angle:=math.atan2(d.y,d.x)
+        teeth:=1-0.1*abs(math.mod(angle*7/math.PI+8,1)*2-1)
+        return (d.x/0.2)*(d.x/0.2)+(d.y/0.4)*(d.y/0.4)<=teeth*teeth
+    case .Cluster:
+        centers:=[?][2]f32{{0.2,0.2},{0.33,0.25},{0.25,0.36},{0.7,0.2},{0.82,0.3},{0.7,0.33},{0.2,0.72},{0.34,0.8},{0.22,0.86},{0.72,0.7},{0.84,0.78},{0.66,0.84},{0.5,0.5},{0.6,0.55}}
+        for c in centers {
+            d:=p-c
+            if d.x*d.x+d.y*d.y<=0.065*0.065 {return true}
         }
     }
-    testing.expect(t,pruned_small,"a level drops small cards and keeps every large one")
+    return false
+}
+
+@(private="file")
+mask_source :: proc(kind:Test_Mask,size:int) -> textures.Source {
+    texels:=make([]u8,size*size*4,context.temp_allocator)
+    for y in 0..<size {
+        for x in 0..<size {
+            if !mask_kept(kind,size,x,y) {continue}
+            at:=(y*size+x)*4
+            texels[at],texels[at+1],texels[at+2],texels[at+3]=40,120,30,255
+        }
+    }
+    return textures.rgba8(texels,size,size)
+}
+
+@(private="file")
+mask_of :: proc(source:textures.Source,cutoff:u8) -> Outline_Mask {
+    covered:=make([]bool,source.width*source.height,context.temp_allocator)
+    for &c,i in covered {c=source.texels[i*4+3]>=cutoff}
+    return {covered,source.width,source.height,1}
+}
+
+// Every outline of a ladder holds every texel its mask keeps, draws no
+// farther from them than its tolerance allows nor than its error says
+// (exactly that on a mask cut texel by texel, at most on one wider than
+// OUTLINE_MASK_SIDE, cut on cells), and each draws fewer triangles with more
+// error than the one before, none more than OUTLINE_TRIANGLES. The forest's leaf: its quad covers 0.417, and with the
+// outline each size on screen takes at 1 pixel of error under four triangles
+// a leaf, at least 0.7 of what it draws covered, over 1.3 to 40 m. A
+// single leaf is drawn as its outlines; a cluster of leaves keeps its mask on
+// a convex outline that halves the empty area of its quad.
+@(test)
+a_masked_card_becomes_the_outlines_its_mask_needs :: proc(t:^testing.T) {
+    forest,_:=textures.image_decode(#load("../../demo/assets/forest/leaves_color.png"),context.temp_allocator)
+    Case :: struct {name:string,source:textures.Source,leaf:bool,quad:f64,triangles:[2]f64,coverage:f64}
+    cases:=[]Case{
+        {"forest leaf",textures.rgba8(forest.pixels,forest.width,forest.height),true,0.417,{2,4},0.7},
+        {"serrated leaf",mask_source(.Leaf,128),true,0,{},0},
+        {"cluster",mask_source(.Cluster,128),false,0,{},0},
+    }
+    for c in cases {
+        mask:=mask_of(c.source,128)
+        scale:=f32((max(mask.width,mask.height)+OUTLINE_MASK_SIDE-1)/OUTLINE_MASK_SIDE)
+        ladder,ok:=outline_ladder(mask,context.temp_allocator)
+        if !testing.expectf(t,ok,"%s: a ladder",c.name) {continue}
+        testing.expectf(t,ladder.leaf==c.leaf,"%s: drawn as outlines %v",c.name,ladder.leaf)
+        distance2:=make([]u32,len(mask.covered),context.temp_allocator)
+        nearest:=make([]u32,len(mask.covered),context.temp_allocator)
+        geom.grid_nearest(mask.covered,mask.width,mask.height,0,nearest,distance2)
+        for rung,k in ladder.rungs {
+            drawn:=make([]bool,len(mask.covered),context.temp_allocator)
+            first,loop:=0,0
+            for loops in rung.set.polygon_loops {
+                count:=0
+                for size in rung.set.loop_sizes[loop:][:loops] {count+=size}
+                points:=rung.set.points[first:][:count]
+                indices:[dynamic]u32
+                indices.allocator=context.temp_allocator
+                geom.polygon_triangulate(points,rung.set.loop_sizes[loop:][:loops],&indices)
+                for i:=0;i+2<len(indices);i+=3 {triangle_raster({points[indices[i]],points[indices[i+1]],points[indices[i+2]]},mask.width,mask.height,drawn)}
+                first+=count
+                loop+=loops
+            }
+            worst:u32
+            for d,at in drawn {
+                if d {worst=max(worst,distance2[at])}
+                if mask.covered[at] && !d {testing.expectf(t,false,"%s: outline %d leaves out texel %d the mask keeps",c.name,k,at);break}
+            }
+            error:=f32(math.sqrt(f64(worst)))
+            if scale==1 {
+                testing.expectf(t,abs(error-rung.error)<1e-3,"%s: outline %d draws %f texels out, not %f",c.name,k,error,rung.error)
+            } else {
+                testing.expectf(t,error<=rung.error+1e-3,"%s: outline %d draws %f texels out, past its %f",c.name,k,error,rung.error)
+            }
+            if rung.tolerance>0 {testing.expectf(t,rung.error<=2*rung.tolerance+(2+math.SQRT_TWO)*scale,"%s: outline %d cut at %f draws %f out",c.name,k,rung.tolerance,rung.error)}
+            testing.expectf(t,rung.triangles<=OUTLINE_TRIANGLES,"%s: outline %d draws %d triangles",c.name,k,rung.triangles)
+            if k>0 {
+                finer:=ladder.rungs[k-1]
+                testing.expectf(t,rung.error>=finer.error && rung.triangles<=finer.triangles,"%s: outline %d is not coarser than %d",c.name,k,k-1)
+            }
+        }
+        opaque:=0
+        for covered in mask.covered {if covered {opaque+=1}}
+        quad:=f64(opaque)/f64(mask.width*mask.height)
+        if c.quad>0 {testing.expectf(t,abs(quad-c.quad)<0.002,"%s: the quad covers %f",c.name,quad)}
+        if !c.leaf {
+            hull:=f64(opaque)/ladder.hull.area
+            testing.expectf(t,ladder.hull.triangles<=6 && hull>=1.5*quad,"%s: masked on %d triangles covering %f, the quad %f",c.name,ladder.hull.triangles,hull,quad)
+        }
+        if c.triangles=={} {continue}
+        // Cards of 5.8 to 180 pixels, uniform over the ground from 1.3 to 40 m, each with the outline its pixel allows.
+        triangles,coverage,weight:f64
+        for i in 0..<2000 {
+            distance:=1.3+(40-1.3)*f64(i)/1999
+            allowed:=f32(f64(mask.width)*distance/234)
+            pick:=ladder.rungs[0]
+            for rung in ladder.rungs {if rung.error<=allowed {pick=rung}}
+            triangles+=f64(pick.triangles)*distance
+            coverage+=f64(opaque)/pick.area*distance
+            weight+=distance
+        }
+        triangles/=weight
+        coverage/=weight
+        testing.expectf(t,triangles>=c.triangles[0] && triangles<=c.triangles[1] && coverage>=c.coverage,"%s: %f triangles a card covering %f at 1 pixel",c.name,triangles,coverage)
+        fmt.printfln("%s: quad %.3f, %.1f triangles a card covering %.3f at 1 pixel over 1.3-40 m",c.name,quad,triangles,coverage)
+    }
+}
+
+// A tree read with masked cards: a trunk, leaves of one masked material and
+// clusters of another, each card a strip bent along its middle.
+@(private="file")
+tree_read :: proc(r:^Reader) {
+    r.out=context.temp_allocator
+    r.meshes.allocator=context.temp_allocator
+    r.materials.allocator=context.temp_allocator
+    r.images.allocator=context.temp_allocator
+    r.material_names.allocator=context.temp_allocator
+    no_images:[asset.Material_Map_Kind]int
+    for &i in no_images {i=-1}
+    material_add(r,"Bark",0,asset.MATERIAL_DEFAULTS,no_images)
+    for kind,k in Test_Mask {
+        append(&r.images,Imported_Image{name="mask",made=mask_source(kind,128),srgb=true})
+        info:=asset.MATERIAL_DEFAULTS
+        info.alpha_mode=.Mask
+        images:=no_images
+        images[.Base_Color]=int(k)
+        material_add(r,"Leaves" if kind==.Leaf else "Clusters",int(k)+1,info,images)
+    }
+    c:=cards_build(128)
+    for &v in c.vertices {v.material=0}
+    Strips :: struct {count:int,slot:u32,size:f32}
+    for s in ([2]Strips{{48,1,0.3},{24,2,0.6}}) {
+        for card in 0..<s.count {
+            first:=u32(len(c.vertices))
+            base:=geom.Vec3{f32(card%8)*0.7-2.5,1.5+f32(s.slot),f32(card/8)*0.7-2.5}
+            for row in 0..<3 {
+                for column in 0..<2 {
+                    uv:=[2]f32{f32(column),f32(row)*0.5}
+                    // The upper half leans up: the strip is bent along its middle.
+                    position:=base+{(uv.x-0.5)*s.size,0,f32(row)*0.5*s.size}
+                    if row==2 {position=base+{(uv.x-0.5)*s.size,0.3*s.size,0.85*s.size}}
+                    v:=test_vertex(position,{0,1,0},uv)
+                    v.material=s.slot
+                    append(&c.vertices,v)
+                }
+            }
+            append(&c.indices,first,first+2,first+1,first+1,first+2,first+3,first+2,first+4,first+3,first+3,first+4,first+5)
+        }
+    }
+    leaves:=u32(48*12)
+    submeshes:=make([]Submesh,3,context.temp_allocator)
+    submeshes[0]={index_count=u32(c.sphere),slot=0}
+    submeshes[1]={first_index=u32(c.sphere),index_count=leaves,slot=1}
+    submeshes[2]={first_index=u32(c.sphere)+leaves,index_count=24*12,slot=2}
+    slots:=make([]Imported_Slot,3,context.temp_allocator)
+    for &slot,at in slots {slot={id=u32(at)+1,material=at}}
+    append(&r.meshes,Imported_Mesh{name="tree",vertices=c.vertices[:],indices=c.indices[:],submeshes=submeshes,slots=slots})
+}
+
+// Leaf cards become opaque outlines seen from both sides whose image fills
+// what the mask left empty; cluster cards keep their mask on a convex
+// outline. The cuts step through the coarser outlines of the leaves before
+// they prune them, so the first cut that changes them comes long before a
+// leaf is a pixel wide, and every cut draws at least the area of what the
+// masks keep and not much more.
+@(test)
+masked_cards_are_cut_to_outlines_whose_levels_coarsen_in_steps :: proc(t:^testing.T) {
+    r:Reader
+    tree_read(&r)
+    model_cutouts(&r)
+    leaves,clusters:=r.materials[1].info,r.materials[2].info
+    testing.expect(t,leaves.alpha_mode==.Opaque && leaves.two_sided,"the leaves are opaque sheets")
+    testing.expect(t,clusters.alpha_mode==.Mask && clusters.two_sided,"the clusters keep their mask")
+    testing.expect(t,r.images[0].alpha_fill==leaves.alpha_cutoff && r.images[1].alpha_fill==0,"the image of the leaves fills what the mask left empty")
+    mesh:=&r.meshes[0]
+    testing.expect_value(t,len(mesh.outlines.cards),48)
+    testing.expect_value(t,len(mesh.outlines.rungs),48*(OUTLINE_RUNGS-1))
+    for sub in mesh.submeshes {
+        for index in mesh.indices[sub.first_index:][:sub.index_count] {
+            if mesh.vertices[index].material!=sub.slot {testing.expect(t,false,"a vertex of another slot");break}
+        }
+    }
+    // A cluster card is drawn on a few triangles.
+    clusters_range:=mesh.submeshes[2]
+    testing.expectf(t,clusters_range.slot==2 && clusters_range.index_count/3<=24*6,"the clusters draw %d triangles",clusters_range.index_count/3)
+    levels:=mesh_levels(mesh.vertices,mesh.indices,nil,mesh.submeshes,allocator=context.temp_allocator,outlines=mesh.outlines)
+    if !levels_valid(t,levels,3) {return}
+    // Level 0 draws each leaf on at most OUTLINE_TRIANGLES, as far from its mask as that outline is.
+    for card in mesh.outlines.cards {testing.expectf(t,card.triangle_count<=OUTLINE_TRIANGLES && card.error>0,"a leaf of level 0 draws %d triangles at an error of %f",card.triangle_count,card.error)}
+    testing.expectf(t,levels.lods[0].error>0,"level 0 has the error of its outlines: %f",levels.lods[0].error)
+    g:asset.Mesh_Geometry
+    if !testing.expect(t,levels_geometry(levels,{},&g,context.temp_allocator)) {return}
+    level0,area:=cut_draws(g,{},1)
+    quad:=f32(48)*0.3*0.3*0.5*(1+math.sqrt(f32(0.3*0.3+0.35*0.35))/0.15)
+    testing.expectf(t,area<0.6*quad,"level 0 draws %f of the %f of the leaf cards",area,quad)
+    // Some cut draws every leaf on an outline coarser than level 0 and finer than its quadrilateral;
+    // the first that changes the leaves is far below the radius of a leaf over ISLAND_PIXELS.
+    stepped:=false
+    first:=max(f32)
+    for e in cut_errors(g) {
+        triangles,cut_area:=cut_draws(g,{error=e},1)
+        if triangles<level0 {first=min(first,e)}
+        stepped||=triangles<level0 && triangles>48*2
+        testing.expectf(t,cut_area>=0.999*area && cut_area<=1.6*area,"the cut at %f draws %f of the leaves, level 0 %f",e,cut_area,area)
+    }
+    testing.expect(t,stepped,"the leaves step through an outline between the finest and the coarsest")
+    // The first cut that changes them comes while a leaf spans four pixels and more.
+    largest:f32
+    for island in levels.islands.islands {
+        if levels.vertices[levels.islands.indices[levels.islands.rungs[island.first_rung].first_index]].material==1 {largest=max(largest,island.radius)}
+    }
+    testing.expectf(t,first<largest/2,"the leaves change first at an error of %f",first)
+}
+
+// The forest bush (demo/assets/forest/bush.gltf): its bin holds the
+// positions, normals and uvs of BUSH_VERTICES vertices, then the indices of
+// the bark and of 2,500 leaves of the forest's leaf, each a strip of four
+// triangles, read here as its reader lays them out.
+@(private="file") BUSH_VERTICES :: 15065
+@(private="file") BUSH_BARK :: 288
+@(private="file") BUSH_LEAVES :: 30000
+
+@(private="file")
+bush_read :: proc(r:^Reader) {
+    r.out=context.temp_allocator
+    r.meshes.allocator=context.temp_allocator
+    r.materials.allocator=context.temp_allocator
+    r.images.allocator=context.temp_allocator
+    r.material_names.allocator=context.temp_allocator
+    bin:=#load("../../demo/assets/forest/bush.bin")
+    forest,_:=textures.image_decode(#load("../../demo/assets/forest/leaves_color.png"),context.temp_allocator)
+    no_images:[asset.Material_Map_Kind]int
+    for &i in no_images {i=-1}
+    material_add(r,"Bark",0,asset.MATERIAL_DEFAULTS,no_images)
+    append(&r.images,Imported_Image{name="leaves_color",made=textures.rgba8(forest.pixels,forest.width,forest.height),srgb=true})
+    info:=asset.MATERIAL_DEFAULTS
+    info.alpha_mode=.Mask
+    info.alpha_cutoff=0.5
+    images:=no_images
+    images[.Base_Color]=0
+    material_add(r,"Leaves",1,info,images)
+    floats:=([^]f32)(raw_data(bin))
+    words:=([^]u32)(raw_data(bin))
+    vertices:=make([]asset.Vertex,BUSH_VERTICES,context.temp_allocator)
+    for &v,at in vertices {
+        p,n,uv:=floats[at*3:][:3],floats[BUSH_VERTICES*3+at*3:][:3],floats[BUSH_VERTICES*6+at*2:][:2]
+        v=test_vertex({p[0],p[1],p[2]},{n[0],n[1],n[2]},{uv[0],uv[1]})
+    }
+    first:=BUSH_VERTICES*8
+    indices:=make([]u32,BUSH_BARK+BUSH_LEAVES,context.temp_allocator)
+    copy(indices,words[first:][:BUSH_BARK+BUSH_LEAVES])
+    for index in indices[BUSH_BARK:] {vertices[index].material=1}
+    submeshes:=make([]Submesh,2,context.temp_allocator)
+    submeshes[0]={index_count=BUSH_BARK,slot=0}
+    submeshes[1]={first_index=BUSH_BARK,index_count=BUSH_LEAVES,slot=1}
+    slots:=make([]Imported_Slot,2,context.temp_allocator)
+    for &slot,at in slots {slot={id=u32(at)+1,material=at}}
+    append(&r.meshes,Imported_Mesh{name="bush",vertices=vertices,indices=indices,submeshes=submeshes,slots=slots})
+}
+
+// The cut of the forest bush draws its finer leaves only where they are
+// near: from every distance of the eye to its side, no more triangles than
+// with all of it as near as its nearest part, as whole levels drew it, and
+// fewer where its far side can be coarser. Its leaves cover the area level
+// 0 does at every cut, and where a group gives way to the next level they
+// cover the same on both sides of it: no pop.
+@(test)
+the_near_part_of_a_bush_alone_is_fine :: proc(t:^testing.T) {
+    r:Reader
+    bush_read(&r)
+    model_cutouts(&r)
+    mesh:=&r.meshes[0]
+    testing.expect_value(t,len(mesh.outlines.cards),2500)
+    levels:=mesh_levels(mesh.vertices,mesh.indices,nil,mesh.submeshes,allocator=context.temp_allocator,outlines=mesh.outlines)
+    g:asset.Mesh_Geometry
+    if !testing.expect(t,levels.dag && levels_geometry(levels,{},&g,context.temp_allocator)) {return}
+    // A pixel of a view 1440 wide with a field of view of 90 degrees, per metre away.
+    SLOPE :: f32(2.0/1440)
+    level0,area:=cut_draws(g,{},1)
+    side:=[3]f32{g.bounds_max.x,0.5*(g.bounds_min.y+g.bounds_max.y),0}
+    near_sum,all_sum:int
+    fmt.printf("bush: level 0 %d triangles of leaves; from its side, by the cut (all of it as near):",level0)
+    for step in 1..=200 {
+        distance:=f32(step)*0.5
+        eye:=side+{distance,0,0}
+        near,_:=cut_draws(g,{eye=eye,slope=SLOPE},1)
+        // All of it as near as the nearest of its spheres.
+        nearest:=max(f32)
+        for c in g.clusters {
+            for sphere in ([2][4]f32{c.lod,c.parent}) {nearest=min(nearest,max(linalg.length(sphere.xyz-eye)-sphere.w,1e-3))}
+        }
+        all,_:=cut_draws(g,{error=SLOPE*nearest},1)
+        testing.expectf(t,near<=all,"%f m from its side the bush draws %d triangles of leaves; all of it as near, %d",distance,near,all)
+        near_sum+=near
+        all_sum+=all
+        if slice.contains([]int{1,2,4,10,20,30,40,50,60,80,120,200},step) {fmt.printf(" %.1f m %d (%d),",distance,near,all)}
+    }
+    fmt.println()
+    testing.expectf(t,near_sum<all_sum,"over the distances the bush draws %d triangles of leaves; all of it as near, %d",near_sum,all_sum)
+    // Where a group gives way to the next level, what is drawn on either side covers the same:
+    // its islands have grown and shrunk into those of the next level.
+    worst:f32
+    for e in cut_errors(g) {
+        _,cut_area:=cut_draws(g,{error=e},1)
+        testing.expectf(t,cut_area>=0.98*area && cut_area<=1.6*area,"the cut at %f covers %f of the leaves, level 0 %f",e,cut_area,area)
+        before,after:=cut_coverage(g,{error=e*(1-1e-5)},1,0.5),cut_coverage(g,{error=e},1,0.5)
+        moved,changing:f32
+        for cell,a in before {
+            moved+=abs(a-after[cell])
+            if a!=after[cell] {changing+=a}
+        }
+        for cell,a in after {if cell not_in before {moved+=a}}
+        if changing>0 {worst=max(worst,moved/changing)}
+    }
+    testing.expectf(t,worst<0.1,"a group that gives way to the next level moves %f of what it covers",worst)
+}
+
+// The cards of a material with a program that names its mask, of a skinned
+// mesh, of a morphing one, of a submesh of a few of them and of uvs a period
+// away or across the edge of the image, which repeats, are cut as those of
+// the row material are. A vertex of an outline takes the influences and the
+// deltas of the corners of the card where it lies: those of a rigid card
+// exactly, those of a card between two bones a blend of both, and the deltas
+// of a card that moves. A leaf alone in its mesh, as large as it, keeps its
+// mask: its finest outline draws farther past the mask than level 0, drawn
+// however near, may.
+@(test)
+cards_are_cut_alike_whatever_their_material_mesh_siblings_or_period :: proc(t:^testing.T) {
+    Case :: struct {name:string,program,skinned,morphing:bool,leaves:int,shift:f32,alone:bool}
+    cases:=[]Case{
+        {"row",false,false,false,48,0,false},{"program",true,false,false,48,0,false},{"skinned",false,true,false,48,0,false},{"morphing",false,false,true,48,0,false},
+        {"a few",false,false,false,4,0,false},{"a period over",false,false,false,48,1,false},{"across the edge",false,false,false,48,-0.25,false},
+        {"alone in its mesh",false,false,false,1,0,true},
+    }
+    reference:int
+    for c in cases {
+        r:Reader
+        tree_read(&r)
+        mesh:=&r.meshes[0]
+        leaf_vertex :: proc(mesh:^Imported_Mesh,leaf,row,column:int) -> u32 {return mesh.indices[int(mesh.submeshes[1].first_index)+leaf*12]+u32(row*2+column)}
+        if c.leaves<48 {
+            // The first leaves alone in their submesh.
+            leaves:=mesh.submeshes[1]
+            dropped:=int(leaves.index_count)-c.leaves*12
+            indices:=make([dynamic]u32,0,len(mesh.indices)-dropped,context.temp_allocator)
+            append(&indices,..mesh.indices[:int(leaves.first_index)+c.leaves*12])
+            append(&indices,..mesh.indices[int(leaves.first_index+leaves.index_count):])
+            mesh.indices=indices[:]
+            mesh.submeshes[1].index_count=u32(c.leaves*12)
+            mesh.submeshes[2].first_index-=u32(dropped)
+        }
+        if c.alone {
+            // The first leaf and nothing else.
+            leaves:=mesh.submeshes[1]
+            first:=mesh.indices[leaves.first_index]
+            vertices:=make([]asset.Vertex,6,context.temp_allocator)
+            copy(vertices,mesh.vertices[first:][:6])
+            indices:=make([]u32,12,context.temp_allocator)
+            for &index,k in indices {index=mesh.indices[int(leaves.first_index)+k]-first}
+            mesh.vertices,mesh.indices=vertices,indices
+            mesh.submeshes=mesh.submeshes[1:2]
+            mesh.submeshes[0].first_index=0
+            model_cutouts(&r)
+            testing.expectf(t,len(mesh.outlines.cards)==0 && r.materials[1].info.alpha_mode==.Mask,"%s: %d leaves cut",c.name,len(mesh.outlines.cards))
+            continue
+        }
+        if c.shift!=0 {
+            for leaf in 0..<48 {
+                for k in 0..<6 {mesh.vertices[leaf_vertex(mesh,leaf,k/2,k%2)].uv.x+=c.shift}
+            }
+        }
+        if c.program {
+            leaves:=&r.materials[1]
+            asset.text_set(leaves.info.program[:],"Leaf")
+            // A program and a mask map of its own: its cards are cut to that mask.
+            leaves.images[.Mask],leaves.images[.Base_Color]=leaves.images[.Base_Color],-1
+        }
+        if c.skinned {
+            // The even leaves on joint 0; the odd ones from joint 0 at their foot to joint 1 at their tip.
+            skin:=make([]asset.Skin_Vertex,len(mesh.vertices),context.temp_allocator)
+            for &s in skin {s.weights[0]=255}
+            for leaf in 0..<48 {
+                for row in 0..<3 {
+                    for column in 0..<2 {
+                        s:=&skin[leaf_vertex(mesh,leaf,row,column)]
+                        s^={joints={0,0,0,0,0,0,0,0},weights={255,0,0,0,0,0,0,0}}
+                        if leaf%2==1 && row==1 {s^={joints={0,1,0,0,0,0,0,0},weights={128,127,0,0,0,0,0,0}}}
+                        if leaf%2==1 && row==2 {s.joints[0]=1}
+                    }
+                }
+            }
+            mesh.skin=skin
+        }
+        if c.morphing {
+            // The even leaves rise by 0.1.
+            deltas:=make([dynamic]asset.Morph_Delta,context.temp_allocator)
+            for leaf:=0;leaf<48;leaf+=2 {
+                for k in 0..<6 {append(&deltas,asset.Morph_Delta{vertex=leaf_vertex(mesh,leaf,k/2,k%2),position={0,0.1,0}})}
+            }
+            targets:=make([]asset.Morph_Target,1,context.temp_allocator)
+            targets[0]={weight=0,first=0,count=u32(len(deltas))}
+            asset.text_set(targets[0].name[:],"rise")
+            mesh.morphs,mesh.morph_deltas=targets,deltas[:]
+        }
+        model_cutouts(&r)
+        testing.expectf(t,len(mesh.outlines.cards)==c.leaves && r.materials[1].info.alpha_mode==.Opaque,"%s: %d leaves cut",c.name,len(mesh.outlines.cards))
+        if len(mesh.outlines.cards)!=c.leaves {continue}
+        triangles:=0
+        for card in mesh.outlines.cards {triangles+=int(card.triangle_count)}
+        if c.name=="row" {reference=triangles}
+        testing.expectf(t,triangles*48==reference*c.leaves,"%s: the leaves draw %d triangles, those of the row material %d",c.name,triangles,reference*c.leaves/48)
+        if c.skinned {
+            testing.expect_value(t,len(mesh.skin),len(mesh.vertices))
+            testing.expect_value(t,len(mesh.outlines.skin),len(mesh.outlines.vertices))
+            for card,leaf in mesh.outlines.cards {
+                blended:=false
+                for index in mesh.indices[card.first_triangle*3:][:card.triangle_count*3] {
+                    s:=mesh.skin[index]
+                    sum:=0
+                    for w in s.weights {sum+=int(w)}
+                    testing.expect_value(t,sum,255)
+                    if leaf%2==0 {
+                        if s.joints[0]!=0 || s.weights[0]!=255 {testing.expectf(t,false,"a vertex of a rigid leaf has %v",s);break}
+                    } else {
+                        for w,j in s.weights {if w>0 && s.joints[j]>1 {testing.expectf(t,false,"a vertex of a bent leaf has %v",s)}}
+                        blended||=s.weights[0]>0 && s.weights[1]>0
+                    }
+                }
+                if leaf%2==1 {testing.expectf(t,blended,"leaf %d between two bones blends them",leaf)}
+            }
+        }
+        if c.morphing {
+            moved:=make(map[u32][3]f32,context.temp_allocator)
+            target:=mesh.morphs[0]
+            for delta in mesh.morph_deltas[target.first:][:target.count] {moved[delta.vertex]=delta.position}
+            for card,leaf in mesh.outlines.cards {
+                for index in mesh.indices[card.first_triangle*3:][:card.triangle_count*3] {
+                    delta,found:=moved[index]
+                    if leaf%2==0 && (!found || linalg.length(delta-[3]f32{0,0.1,0})>1e-5) || leaf%2==1 && found {testing.expectf(t,false,"leaf %d moves %v",leaf,delta);break}
+                }
+            }
+            testing.expect(t,len(mesh.outlines.morphs)==1 && mesh.outlines.morphs[0].count>0,"the coarser outlines of the leaves that rise rise too")
+        }
+        levels:=mesh_levels(mesh.vertices,mesh.indices,mesh.skin,mesh.submeshes,allocator=context.temp_allocator,morphs=mesh.morphs,morph_deltas=mesh.morph_deltas,outlines=mesh.outlines)
+        testing.expectf(t,levels.pruned && len(levels.islands.islands)+len(levels.lods)>1,"%s: the leaves are pruned",c.name)
+        testing.expectf(t,levels_valid(t,levels,3),"%s: the levels make a mesh",c.name)
+    }
+}
+
+// A card over a mask of 8192 texels a side, a disk that keeps every texel
+// whose centre is within its radius, is cut on cells within the memory its
+// side allows: every outline holds every texel the disk keeps and draws none
+// farther from it than its error says.
+@(test)
+a_mask_of_any_size_cuts_within_bounded_memory :: proc(t:^testing.T) {
+    SIDE :: 8192
+    center:=[2]f32{0.5*SIDE,0.48*SIDE}
+    radius:=f32(0.4*SIDE)
+    covered:=make([]bool,SIDE*SIDE,context.temp_allocator)
+    for y in 0..<SIDE {
+        for x in 0..<SIDE {
+            d:=[2]f32{f32(x)+0.5,f32(y)+0.5}-center
+            covered[y*SIDE+x]=d.x*d.x+d.y*d.y<=radius*radius
+        }
+    }
+    ladder,ok:=outline_ladder({covered,SIDE,SIDE,1},context.temp_allocator)
+    if !testing.expect(t,ok && ladder.leaf,"the disk is cut") {return}
+    for rung,k in ladder.rungs {
+        first,loop:=0,0
+        for loops in rung.set.polygon_loops {
+            count:=0
+            for size in rung.set.loop_sizes[loop:][:loops] {count+=size}
+            points:=rung.set.points[first:][:count]
+            indices:[dynamic]u32
+            indices.allocator=context.temp_allocator
+            geom.polygon_triangulate(points,rung.set.loop_sizes[loop:][:loops],&indices)
+            // What it draws of the rectangle, by texels 32 apart, is within its error of the disk; the texels the disk keeps nearest its edge are inside.
+            holds :: proc(points:[]geom.Vec2,indices:[]u32,p:geom.Vec2) -> bool {
+                for i:=0;i+2<len(indices);i+=3 {
+                    a,b,c:=points[indices[i]],points[indices[i+1]],points[indices[i+2]]
+                    e0,e1,e2:=orient(a,b,p),orient(b,c,p),orient(c,a,p)
+                    if e0>=0 && e1>=0 && e2>=0 || e0<=0 && e1<=0 && e2<=0 {return true}
+                }
+                return false
+            }
+            worst:f32
+            for y:=f32(0.5);y<SIDE;y+=32 {
+                for x:=f32(0.5);x<SIDE;x+=32 {
+                    if !holds(points,indices[:],{x,y}) {continue}
+                    d:=[2]f32{x,y}-center
+                    worst=max(worst,math.sqrt(d.x*d.x+d.y*d.y)-radius)
+                }
+            }
+            testing.expectf(t,worst<=rung.error,"outline %d draws %f texels out, past its %f",k,worst,rung.error)
+            for step in 0..<4096 {
+                angle:=f32(step)*math.TAU/4096
+                p:=center+[2]f32{math.cos(angle),math.sin(angle)}*(radius-0.75)
+                texel:=[2]f32{math.floor(p.x)+0.5,math.floor(p.y)+0.5}
+                d:=texel-center
+                if d.x*d.x+d.y*d.y>radius*radius {continue}
+                if !holds(points,indices[:],texel) {testing.expectf(t,false,"outline %d leaves out the texel %v the disk keeps",k,texel);break}
+            }
+            first+=count
+            loop+=loops
+        }
+    }
+}
+
+// An allocator that fails every allocation past its first `room` bytes.
+@(private="file")
+Failing :: struct {arena:mem.Arena,buffer:[]u8}
+
+@(private="file")
+failing_allocator :: proc(f:^Failing,room:int) -> mem.Allocator {
+    f.buffer=make([]u8,room,context.allocator)
+    mem.arena_init(&f.arena,f.buffer)
+    failing :: proc(data:rawptr,mode:mem.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,mem.Allocator_Error) {
+        f:=(^Failing)(data)
+        if (mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed) && f.arena.offset+size+alignment>len(f.arena.data) {return nil,.Out_Of_Memory}
+        return mem.arena_allocator_proc(&f.arena,mode,size,alignment,old_memory,old_size,loc)
+    }
+    return {failing,f}
+}
+
+// Without the memory to cut them, the cards of a model keep their mask and
+// the import goes on: whatever allocation fails, nothing crashes, and the
+// model is cut whole or not at all.
+@(test)
+cards_without_memory_keep_their_mask :: proc(t:^testing.T) {
+    for room in ([]int{0,1<<10,64<<10,1<<20,8<<20,32<<20,96<<20}) {
+        r:Reader
+        tree_read(&r)
+        mesh:=r.meshes[0]
+        f:Failing
+        failing:=failing_allocator(&f,room)
+        {
+            context.allocator=failing
+            context.temp_allocator=failing
+            r.out=failing
+            model_cutouts(&r)
+        }
+        r.out=context.temp_allocator
+        delete(f.buffer)
+        // All of the model is cut, or nothing of it.
+        if r.materials[1].info.alpha_mode==.Mask {
+            testing.expectf(t,len(r.materials)==3 && len(r.meshes[0].indices)==len(mesh.indices) && len(r.meshes[0].outlines.cards)==0,"%d bytes: the leaves keep their mask and the mesh is as it was",room)
+        } else {
+            testing.expectf(t,len(r.meshes[0].outlines.cards)==48,"%d bytes: the leaves are cut, %d of them",room,len(r.meshes[0].outlines.cards))
+        }
+    }
 }

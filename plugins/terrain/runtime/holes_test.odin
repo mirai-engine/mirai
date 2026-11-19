@@ -108,6 +108,11 @@ bodies_fall_through_holes_cut_at_run_time_and_far_holed_chunks_cut_them_by_their
     testing.expect(t,chunk.built.lod.level>0 && chunk.shape.holed)
     shown:=resident.owners[0].chunks[far]
     if static,has:=core.get(&w.statics,shown);testing.expect(t,has) {testing.expect_value(t,static.materials[0],LAYERS_HOLED_MATERIAL)}
+    // Its material takes the mask of the holes of the piece, made again with the edit.
+    if look,has:=core.get(&w.looks,shown);testing.expect(t,has) {
+        given,found:=render.material_texture_of(&look,0,base.name_hash("maps.mask"))
+        testing.expect(t,found && given!={} && given==chunk.maps.mask)
+    }
     testing.expect(t,w.data.entries[0].source.revision==2)
     _,hit=phys.raycast({&w.state},{28.5,10,28.5},{0,-1,0})
     testing.expect(t,!hit,"the collider has the hole")
@@ -117,7 +122,7 @@ bodies_fall_through_holes_cut_at_run_time_and_far_holed_chunks_cut_them_by_their
     terrain_test_update(&w,&resident,&app,view=view,settings=settings)
     _,hit=phys.raycast({&w.state},{28.5,10,28.5},{0,-1,0})
     testing.expect(t,hit)
-    testing.expect(t,resident.sources[0].chunks[far].built.lod.level>0 && !resident.sources[0].chunks[far].shape.holed)
+    testing.expect(t,resident.sources[0].chunks[far].built.lod.level>0 && !resident.sources[0].chunks[far].shape.holed && resident.sources[0].chunks[far].maps.mask=={})
     testing.expect_value(t,w.problems.count,0)
 }
 
@@ -146,6 +151,12 @@ far_nodes_and_the_coarse_ground_keep_the_holes_the_coarse_grid_holds :: proc(t:^
     testing.expect_value(t,m.spacing,4)
     testing.expect(t,m.control[12+m.size.x*12]&WEIGHT_HOLE!=0,"the texel inside the pit is a hole")
     testing.expect(t,m.control[2+m.size.x*2]&WEIGHT_HOLE==0)
+    // The mask map that cuts what spans holes and surface, a texel a cell, which uv0 reads over the maps.
+    mask:=make([][4]u8,len(m.control),context.temp_allocator)
+    piece_mask(m,mask)
+    testing.expect(t,mask[12+m.size.x*12].a==0 && mask[2+m.size.x*2].a==255,"the mask is clear over the pit alone")
+    testing.expect(t,mask[m.size.x-1+m.size.x*3]==mask[m.size.x-2+m.size.x*3],"the last column repeats the cells before it")
+    for uv in mesh.geometry.uvs {testing.expect(t,uv.x>=0 && uv.x<1 && uv.y>=0 && uv.y<1,"a vertex lies over the maps")}
     // No triangle lies inside the pit.
     origin:=chunk_origin(&s,quad_place(&s,&q,node))
     for corner:=0;corner+2<len(mesh.geometry.indices);corner+=3 {

@@ -72,7 +72,7 @@ ribbon_build :: proc(physics:core.Ref(phys.Physics_State),found:[]phys.Fluid_Inf
         if run^>0 {
             // From the section before to this one, counter-clockwise seen from above.
             a:=u32(len(out.positions)-4)
-            append(&out.indices,a,a+2,a+1,a+1,a+2,a+3)
+            append(&out.indices,a,a+1,a+2,a+1,a+3,a+2)
         }
         run^+=1
     }
@@ -133,7 +133,7 @@ ribbon_place :: proc(state:^Water_Gpu,app:^host.App,physics:core.Ref(phys.Physic
         id:base.Asset_Id
         curve:=make([]mm.Path_Point,RIVER_SAMPLES,context.temp_allocator)
         if ribbon_build(physics,found,river,curve[:mm.path_sample(points[:count],1,curve)],&buffer,&tangents) {
-            id,_=host.assets_mesh_generate(app.assets,geom.mesh_buffer_view(&buffer),options={no_lods=true,tangents=tangents[:]})
+            id,_=host.assets_mesh_generate(app.assets,geom.mesh_buffer_view(&buffer),options={no_lods=true,tangents=tangents[:],label="river surface"})
         }
         if r.mesh!={} {host.assets_mesh_release(app.assets,r.mesh)}
         r^={entity=info.entity,mesh=id,key=key,seen=state.frame}

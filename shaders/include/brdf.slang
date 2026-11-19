@@ -16,6 +16,15 @@
 #define MIN_DIRECT_ROUGHNESS 0.08
 // Below this a traced reflection follows the mirror direction alone.
 #define MIRROR_ROUGHNESS 0.06
+
+// A lobe narrower than the spread of the normal over what one value of the
+// light stands for (a pixel, or a point of the direct light) flickers as the
+// jitter moves it: that spread, the variance of the normal over it, widens the
+// lobe (Tokuyoshi and Kaplanyan 2019).
+float roughness_widened(float roughness, float variance) {
+    float alpha = roughness * roughness;
+    return sqrt(sqrt(clamp(alpha * alpha + min(2.0 * variance, 0.18), 0.0, 1.0)));
+}
 // From this roughness a block of 2x2 pixels can share one reflection ray: the
 // lobe is wide enough for the filter to hide it: SHARED_RAY_ROUGHNESS
 // (render.REFLECTION_SHARED_ROUGHNESS).
@@ -97,7 +106,18 @@ struct Shading {
     // that reaches its other side, as a Lambert reflector facing that side
     // would (shading_back), the layers over it included.
     float3 transmit;
+    // A point of a medium (shading_medium), whose normal is zero: it sends
+    // towards view what the phase function of its anisotropy (media_phase)
+    // gives of the light from each direction, and nothing of a lobe.
+    bool medium;
+    float anisotropy;
+    float across;      // how wide the place of the medium it stands for is, metres: the maps of the shadows read a texel about as wide
+    float footprint;   // a surface of a view: how wide its pixel is there, metres
 };
+
+// How wide the place a point stands for is, metres: what the image a light
+// shows is blurred over there (0: as sharp as its texture).
+float shading_footprint(Shading s) { return max(s.footprint, s.across); }
 
 // 1 - noh^2 is taken as |n x h|^2: near the peak of a sharp lobe, 1 - noh^2
 // rounds away what the lobe is made of, and a highlight of glass bands.
@@ -236,6 +256,26 @@ Shading shading_make(float3 position, float3 normal, float3 view, float3 diffuse
     s.mirror = reflect(-view, normal);
     s.coat_color = float3(1.0);
     s.coat_through = float3(1.0);
+    return s;
+}
+
+// Henyey-Greenstein times pi: what a point of a medium sends towards the eye
+// of Lambert-normalized light. cosine: between where the light goes and where
+// the eye looks; g, the anisotropy of the medium, forward above 0. Its mean
+// over every direction is a quarter.
+float media_phase(float cosine, float g) {
+    float g2 = g * g;
+    return 0.25 * (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * cosine, 1e-4), 1.5);
+}
+
+// A point of a medium seen from `view`, of anisotropy g, standing for a
+// place `across` metres wide: its diffuse reflectance is what it sends of
+// light that comes evenly from around.
+Shading shading_medium(float3 position, float3 view, float g, float across) {
+    Shading s = shading_make(position, float3(0.0), view, float3(0.25), float3(0.0), float3(0.0), 1.0);
+    s.medium = true;
+    s.anisotropy = g;
+    s.across = across;
     return s;
 }
 
@@ -517,6 +557,7 @@ void shading_lobes(Shading s, float3 light, Highlight base, Highlight coat, out 
 // mirror direction, with the lobe widened by its size and lowered to keep its
 // energy (Karis 2013).
 float3 shading_response(Shading s, float3 light, float distance = 0.0, float radius = 0.0) {
+    if (s.medium) return float3(media_phase(dot(-s.view, light), s.anisotropy));
     if (!s.glossy && s.layers == 0u) return s.diffuse;
     Highlight base = highlight_at(light), coat = highlight_at(light);
     if (radius > 0.0 && distance > 0.0) sphere_highlights(s, light * distance, radius, base, coat);
@@ -589,15 +630,27 @@ Indirect indirect_make(float3 irradiance, float3 radiance, float occlusion) {
     return light;
 }
 
+// What the ambient occlusion of a material leaves of the light around it,
+// with the light that bounces within the crevice: a bright surface lights its
+// own crevices, a dark one keeps them as dark as the occlusion says (the fit
+// of Jimenez et al. 2016, "Practical Real-Time Strategies for Accurate
+// Indirect Occlusion").
+float3 occlusion_bounced(float3 albedo, float occlusion) {
+    float3 a = 2.0404 * albedo - 0.3324;
+    float3 b = -4.7951 * albedo + 0.6417;
+    float3 c = 2.7552 * albedo + 0.6903;
+    return max(float3(occlusion), ((occlusion * a + b) * occlusion + c) * occlusion);
+}
+
 // What a point sends towards its viewer of the light around it: its diffuse
 // lobe reflects the irradiance, with what its specular lobe leaves it
-// (base_diffuse_share, as for each light) and the ambient occlusion; its specular lobe, the radiance around its dominant
+// (base_diffuse_share, as for each light) and the ambient occlusion with its bounces; its specular lobe, the radiance around its dominant
 // direction, with the specular occlusion. The layers over the base take
 // their share as they do of each light (shading_lobes), the coat the mean
 // of its transmission towards the light around.
 float3 indirect_compose(Shading s, Indirect light) {
     float3 reflectance = environment_reflectance(s);
-    float3 diffuse = s.diffuse * base_diffuse_share(s) * light.irradiance * light.occlusion;
+    float3 diffuse = s.diffuse * base_diffuse_share(s) * light.irradiance * occlusion_bounced(s.diffuse, light.occlusion);
     float3 around = light.traced_coat ? light.radiance : lerp(light.radiance, light.traced, light.traced_share);
     float3 color = diffuse + reflectance * around * specular_occlusion(s.nov, s.roughness, light.occlusion);
     if (s.layers == 0u) return color;

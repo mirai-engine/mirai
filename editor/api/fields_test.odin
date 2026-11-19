@@ -3,6 +3,8 @@ package api
 import "core:encoding/json"
 import "core:strings"
 import "core:testing"
+import "core:thread"
+import "core:time"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -66,43 +68,61 @@ select_keeps_the_fields_it_names_and_tools_keep_the_whole_structured_result :: p
     }
 }
 
+// A request that waits for its condition while another one arrives, and what it was answered.
+@(private="file")
+Waiter :: struct {
+    port:int,
+    body:string,
+    status:int,
+    response:[1024]u8,
+    length:int,
+}
+
+@(private="file")
+waiter_post :: proc(w:^Waiter) {
+    status,bytes,_:=client_post(w.port,"/rpc",w.body,5000,context.allocator)
+    w.status,w.length=status,copy(w.response[:],bytes)
+    delete(bytes)
+}
+
+// _wait_until calls the method again until its result meets the condition or
+// the wait runs out, waiting on its connection: the server answers the other
+// requests meanwhile.
 @(test)
-wait_until_calls_the_method_again_until_its_result_meets_the_condition :: proc(t:^testing.T) {
-    server:Server
-    if !testing.expect_value(t,server_init(&server,{port=0}),Init_Error.None) {return}
-    defer server_destroy(&server)
-    count:=0
-    testing.expect_value(t,method_register(&server,{name="count",result=type_info_of(Count_Result),handler=count_handler,user=&count,flags={.Read_Only}}),Register_Error.None)
-    changes:=0
-    testing.expect_value(t,method_register(&server,{name="change",result=type_info_of(Count_Result),handler=count_handler,user=&changes}),Register_Error.None)
-    pause :: proc(s:^Server,seconds:f64) -> bool {return true}
-    server.pause=pause
-    out:serial.Writer
-    serial.writer_init(&out,allocator=context.allocator)
-    defer serial.writer_destroy(&out)
-    method:=method_find(&server,"count")
-    error,ok,selected,_:=method_call(&server,method,`{"_wait_until":"value>=3","_select":"value"}`,&out)
-    testing.expectf(t,ok,"%v",error)
+a_wait_until_waits_on_its_connection_while_the_server_answers_the_others :: proc(t:^testing.T) {
+    f:=new(Fixture);defer free(f)
+    if !fixture_start(f,t,{timeout_ms=5000}) {return}
+    defer fixture_finish(f)
+    count,changes:=0,0
+    testing.expect_value(t,method_register(&f.server,{name="count",result=type_info_of(Count_Result),handler=count_handler,user=&count,flags={.Read_Only}}),Register_Error.None)
+    testing.expect_value(t,method_register(&f.server,{name="change",result=type_info_of(Count_Result),handler=count_handler,user=&changes}),Register_Error.None)
+    met:=rpc(t,f,`{"jsonrpc":"2.0","id":1,"method":"count","params":{"_wait_until":"value>=3","_select":"value"}}`)
+    testing.expect_value(t,integer(at(met,"result","value")),3)
     testing.expect_value(t,count,3)
-    testing.expect_value(t,selected,`{"value":3}`)
-    base.arena_reset(&server.scratch)
-    error,ok,_,_=method_call(&server,method,`{"_wait_until":"value<0","_wait_seconds":0.01}`,&out)
-    testing.expect(t,!ok && error.code==TIMEOUT && strings.contains(error.message,"did not meet"),error.message)
-    base.arena_reset(&server.scratch)
-    error,ok,_,_=method_call(&server,method,`{"_wait_until":"value<0","_wait_seconds":1e999}`,&out)
-    testing.expect(t,!ok && error.code==INVALID_PARAMS,error.message)
-    base.arena_reset(&server.scratch)
-    ending :: proc(s:^Server,seconds:f64) -> bool {return false}
-    server.pause=ending
-    error,ok,_,_=method_call(&server,method,`{"_wait_until":"value<0"}`,&out)
-    testing.expect(t,!ok && error.code==CLOSED && strings.contains(error.message,"ending"),error.message)
+    waiter:=Waiter{port=server_port(&f.server),body=`{"jsonrpc":"2.0","id":2,"method":"count","params":{"_wait_until":"value<0","_wait_seconds":1}}`}
+    th:=thread.create_and_start_with_poly_data(&waiter,waiter_post)
+    time.sleep(200*time.Millisecond)
+    began:=time.tick_now()
+    other:=rpc(t,f,`{"jsonrpc":"2.0","id":3,"method":"test.add","params":{"a":2,"b":3}}`)
+    testing.expect_value(t,integer(at(other,"result","sum")),5)
+    testing.expect(t,time.duration_seconds(time.tick_since(began))<0.5,"another request is answered while one waits")
+    thread.join(th);thread.destroy(th)
+    ran_out:=parse_json(t,string(waiter.response[:waiter.length]))
+    testing.expect_value(t,integer(at(ran_out,"error","code")),TIMEOUT)
+    testing.expect(t,strings.contains(string_of(at(ran_out,"error","message")),"did not meet"),string(waiter.response[:waiter.length]))
+    _,batched:=post(f,"/rpc",`[{"jsonrpc":"2.0","id":4,"method":"count","params":{"_wait_until":"value>=0"}},{"jsonrpc":"2.0","id":5,"method":"test.add","params":{"a":1,"b":1}}]`)
+    in_batch:=parse_json(t,batched)
+    testing.expect_value(t,integer(at(in_batch,0,"error","code")),INVALID_PARAMS)
+    testing.expect(t,strings.contains(string_of(at(in_batch,0,"error","message")),"request of its own"),batched)
+    testing.expect_value(t,integer(at(in_batch,1,"result","sum")),2)
+    endless:=rpc(t,f,`{"jsonrpc":"2.0","id":6,"method":"count","params":{"_wait_until":"value<0","_wait_seconds":1e999}}`)
+    testing.expect_value(t,integer(at(endless,"error","code")),INVALID_PARAMS)
     for params in ([]string{`{"_wait_until":"value>=3"}`,`{"_wait_seconds":1}`,`{"_wait_until":"value>=3","_wait_seconds":1,"_select":"value"}`}) {
-        base.arena_reset(&server.scratch)
-        error,ok,_,_=method_call(&server,method_find(&server,"change"),params,&out)
-        testing.expectf(t,!ok && error.code==INVALID_PARAMS && strings.contains(error.message,"change changes things") && strings.contains(error.message,"read-only method"),"%s: %s",params,error.message)
+        refused:=rpc(t,f,strings.concatenate({`{"jsonrpc":"2.0","id":7,"method":"change","params":`,params,`}`},context.temp_allocator))
+        message:=string_of(at(refused,"error","message"))
+        testing.expectf(t,integer(at(refused,"error","code"))==INVALID_PARAMS && strings.contains(message,"change changes things") && strings.contains(message,"read-only method"),"%s: %s",params,message)
     }
     testing.expect_value(t,changes,0)
-    base.arena_reset(&server.scratch)
-    error,ok,selected,_=method_call(&server,method_find(&server,"change"),`{"_select":"value"}`,&out)
-    testing.expectf(t,ok && changes==1 && selected==`{"value":1}`,"a method that changes things runs once and still takes _select: %v",error)
+    once:=rpc(t,f,`{"jsonrpc":"2.0","id":8,"method":"change","params":{"_select":"value"}}`)
+    testing.expectf(t,changes==1 && integer(at(once,"result","value"))==1,"a method that changes things runs once and still takes _select: %v",once)
 }

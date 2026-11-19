@@ -48,7 +48,7 @@ geometry_generated_colors_are_owned_and_missing_colors_are_white :: proc(t:^test
 }
 
 @(test)
-geometry_file_preserves_packed_colors_normals_uvs_materials_and_slots :: proc(t:^testing.T) {
+geometry_file_preserves_packed_colors_normals_uvs_second_uvs_materials_and_slots :: proc(t:^testing.T) {
     root:=base.test_folder(t,"host-geometry")
     if root=="" {return}
     path:=fmt.tprintf("%s/colored.mesh",root)
@@ -67,7 +67,9 @@ geometry_file_preserves_packed_colors_normals_uvs_materials_and_slots :: proc(t:
     defer assets_destroy(&assets)
     buffer:geom.Mesh_Buffer;geom.mesh_buffer_init(&buffer);defer geom.mesh_buffer_destroy(&buffer)
     slots:Assets_Slots
-    testing.expect(t,assets_geometry(&assets,id,.None,&buffer,true,&slots))
+    uv1s:=make([dynamic]geom.Vec2,context.temp_allocator)
+    testing.expect(t,assets_geometry(&assets,id,.None,&buffer,true,&slots,&uv1s))
+    testing.expect_value(t,len(uv1s),3)
     testing.expect(t,geom.mesh_is_valid(geom.mesh_buffer_view(&buffer)))
     testing.expect_value(t,len(buffer.positions),3)
     // The slots come from the file, which is not loaded for them.
@@ -79,6 +81,7 @@ geometry_file_preserves_packed_colors_normals_uvs_materials_and_slots :: proc(t:
         testing.expect_value(t,buffer.positions[at],vertex.position)
         testing.expect_value(t,buffer.normals[at],mm.normal_unpack(vertex.normal))
         testing.expect(t,linalg.length(buffer.uvs[at]-vertex.uv)<1e-4)
+        testing.expect(t,int(at)<len(uv1s) && linalg.length(uv1s[at]-vertex.uv1)<1e-4)
         testing.expect_value(t,buffer.colors[at],mm.rgba8_unpack(vertex.color))
     }
     testing.expect_value(t,buffer.materials[0],u32(0))

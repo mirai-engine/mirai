@@ -266,6 +266,8 @@ Terrain_Resident :: struct {
     side_levels:[dynamic]Side_Level, // of the chunks on the shared edges, while their levels meet
     border:Piece_Border,    // of a node, while its pages are looked for
     picking:bool,           // chunks without a collider keep their triangles on the CPU: while the world does not play, for the picking of the editor
+    group:u32,              // the groups pieces_show has gathered so far
+    members:[dynamic]u32,   // of the group it gathers
 }
 // stale: results of jobs whose chunk changed while they ran; starved: chunks
 // shown without the collider Physics_Settings had no slot for.
@@ -285,7 +287,13 @@ Resident_Chunk :: struct {
     working:bool,           // a job builds it
     maps:Piece_Maps,        // the textures of the maps of its mesh (surface.odin)
     shape:Piece_Shape,
+    next:Staged_Piece,      // a build published to the assets that waits to show (pieces_show)
+    listed:bool,            // in Resident_Source.staged
+    group:u32,              // Terrain_Resident.group when pieces_show last looked at it
 }
+// A build of a piece published to the assets, until it shows with the
+// neighbors whose shared edges change with it.
+Staged_Piece :: struct {mesh:base.Asset_Id,maps:Piece_Maps,shape:Piece_Shape,revision:u32,built:Chunk_Key,ready:bool,shared:bool} // shared: maps are those the piece shows
 // A piece is built again when its level, its border or its collider changes.
 // border: a hash of the levels of the border of a node (Piece_Border).
 Chunk_Key :: struct {lod:Chunk_Lod,collision:bool,border:u64,join:u64} // join: what it builds from its joins (join_cut_key, Terrain_Join.hash), 0 none
@@ -299,6 +307,7 @@ Resident_Source :: struct {
     changed:[dynamic]u32,    // nodes published or let go since the owner last showed them
     dirty:[]bool,            // by node: in pending
     pending:[dynamic]u32,    // nodes whose mesh may show something else than what is wanted
+    staged:[dynamic]u32,     // nodes whose next build waits to show
     leave:bool,              // a chunk was let go: pages may leave with it
     override:render.Material_Values, // of its layers
     override_info:Source_Info,         // the layers it was made from
@@ -788,7 +797,7 @@ terrain_release :: proc(resident:^Terrain_Resident,allocator:runtime.Allocator) 
 terrain_resident_free :: proc(resident:^Terrain_Resident) {
     for &source in resident.sources {resident_source_free(resident,&source)}
     for &owner in resident.owners {resident_owner_free(&owner)}
-    delete(resident.sources);delete(resident.owners);delete(resident.splits);delete(resident.places);delete(resident.stack);delete(resident.near);delete(resident.side_levels);delete(resident.bodies)
+    delete(resident.sources);delete(resident.owners);delete(resident.splits);delete(resident.places);delete(resident.stack);delete(resident.near);delete(resident.side_levels);delete(resident.bodies);delete(resident.members)
     piece_border_destroy(&resident.border)
     resident^={}
 }
@@ -802,9 +811,10 @@ resident_source_free :: proc(resident:^Terrain_Resident,source:^Resident_Source)
         if resident.assets==nil {continue}
         if chunk.mesh!={} {resident.stats.released+=1;resident.stats.meshes-=1}
         piece_release(resident.assets,&chunk)
+        staged_release(resident.assets,&chunk)
     }
     if source.table!={} && resident.assets!=nil {host.assets_texture_release(resident.assets,source.table)}
-    delete(source.chunks);delete(source.levels);delete(source.deep);delete(source.changed);delete(source.dirty);delete(source.pending)
+    delete(source.chunks);delete(source.levels);delete(source.deep);delete(source.changed);delete(source.dirty);delete(source.pending);delete(source.staged)
     delete(source.join.cuts)
     source^={}
 }
@@ -817,16 +827,17 @@ resident_source :: proc(resident:^Terrain_Resident,entry:^Data_Source,e:core.Ent
     if found!=nil && found.quad==entry.quad && len(found.chunks)==count {return found}
     next:=Resident_Source{id=entry.id,owner=e,quad=entry.quad}
     allocator:=resident.assets.allocator
-    e0,e1,e2,e3,e4,e5:runtime.Allocator_Error
+    e0,e1,e2,e3,e4,e5,e6:runtime.Allocator_Error
     next.chunks,e0=make([]Resident_Chunk,count,allocator)
     next.levels,e1=make([]u8,chunks,allocator)
     next.deep,e2=make([]bool,chunks,allocator)
     next.changed,e3=make([dynamic]u32,0,count,allocator)
     next.dirty,e4=make([]bool,count,allocator)
     next.pending,e5=make([dynamic]u32,0,count,allocator)
-    if e0!=nil || e1!=nil || e2!=nil || e3!=nil || e4!=nil || e5!=nil || found==nil && append(&resident.sources,Resident_Source{})!=1 {
+    next.staged,e6=make([dynamic]u32,0,count,allocator)
+    if e0!=nil || e1!=nil || e2!=nil || e3!=nil || e4!=nil || e5!=nil || e6!=nil || found==nil && append(&resident.sources,Resident_Source{})!=1 {
         delete(next.chunks,allocator);delete(next.levels,allocator);delete(next.deep,allocator);delete(next.changed)
-        delete(next.dirty,allocator);delete(next.pending)
+        delete(next.dirty,allocator);delete(next.pending);delete(next.staged)
         source_memory(problems,e,resident.assets,entry.id)
         return nil
     }

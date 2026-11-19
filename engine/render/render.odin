@@ -19,7 +19,7 @@ import mm "mirai:std/math"
 // and otherwise the instances and the lights of the rows written, added or
 // gone.
 
-MATERIAL_SLOTS :: 8
+MATERIAL_SLOTS :: abi.MATERIAL_SLOTS
 POST_PROCESS_CAPACITY :: 8
 MATERIAL_VALUES_CAPACITY :: gpu.INSTANCE_VALUES_MAX // values among all the slots
 MATERIAL_VALUES_TEXTURES :: 8
@@ -36,7 +36,10 @@ Mesh_Renderer :: struct {
     mesh:base.Asset_Id,
     shape:Shape,
     materials:[MATERIAL_SLOTS]base.Asset_Id,
+    shadows:bool, // it casts shadows; off, light goes through it and it is still seen, by the eye and by rays
 }
+
+MESH_RENDERER_DEFAULT :: Mesh_Renderer{shape=.Cube,shadows=true}
 
 // Not drawn, nor what hangs from it.
 @(component,description="Hides this entity and its descendants from rendering.")
@@ -57,7 +60,8 @@ Drawn_Elsewhere :: struct {}
 // Every light shines toward -Z of its entity, as a camera looks, and its
 // shape follows the scale of its entity, as a mesh does. Units are those of
 // KHR_lights_punctual: an intensity in candela is what it gives a point far
-// along its axis whatever its size.
+// along its axis whatever its size. Its indirect and scattering leave what it
+// lights directly as it is.
 
 // The renderer takes the first one on that is not hidden.
 @(component,single,replicated,description="Lights the whole scene from one direction, as the sun. Only one shines: turning one on turns off the one that shone, which shines again when it goes off.")
@@ -65,10 +69,13 @@ Sun :: struct {
     color:[3]f32 `mirai:"color"`,
     illuminance:f32 `mirai:"min=0,unit=lx"`,
     disc:bool, // the sun is seen in the sky
+    shadows:bool, // it casts shadows; off, its light goes through everything and costs no shadow work
+    indirect:f32 `mirai:"min=0"`,   // multiplies the part of its light that bounces (the GI): 1 as it gives it
+    scattering:f32 `mirai:"min=0"`, // multiplies the part of its light a fog scatters
     height_fade:Sun_Height_Fade `mirai:"section=Height"`,
 }
 
-SUN_DEFAULT :: Sun{color={1,0.96,0.9},illuminance=100000,disc=true} // a clear noon
+SUN_DEFAULT :: Sun{color={1,0.96,0.9},illuminance=100000,disc=true,shadows=true,indirect=1,scattering=1} // a clear noon
 
 // A choice of art for a vertical world: the sun dims with the height of the
 // view, from its illuminance at start to minimum times it at end and past it.
@@ -98,9 +105,12 @@ Point_Light :: struct {
     intensity:f32 `mirai:"min=0,unit=cd"`,
     range:f32 `mirai:"min=0,unit=m"`,
     radius:f32 `mirai:"min=0,unit=m"`, // of the sphere that glows at scale 1; it softens shadows and widens highlights
+    shadows:bool, // it casts shadows; off, its light goes through everything and costs no shadow work
+    indirect:f32 `mirai:"min=0"`,   // multiplies the part of its light that bounces (the GI): 1 as it gives it
+    scattering:f32 `mirai:"min=0"`, // multiplies the part of its light a fog scatters
 }
 
-POINT_LIGHT_DEFAULT :: Point_Light{color={1,0.92,0.8},intensity=1000,range=20,radius=0.05} // a 1000 W bulb
+POINT_LIGHT_DEFAULT :: Point_Light{color={1,0.92,0.8},intensity=1000,range=20,radius=0.05,shadows=true,indirect=1,scattering=1} // a 1000 W bulb
 
 // A point light that lights a cone around -Z of its entity.
 @(component,description="Lights a cone in front of it. Stretching its entity makes a tube.")
@@ -110,9 +120,13 @@ Spot_Light :: struct {
     range:f32 `mirai:"min=0,unit=m"`,
     radius:f32 `mirai:"min=0,unit=m"`, // of the sphere that glows at scale 1; it softens shadows and widens highlights
     angle:f32 `mirai:"angle,min=0.0174532,max=1.5533431"`, // from its axis to the edge, 1° to 89°; it fades out over the last fifth
+    texture:base.Asset_Id `mirai:"kind=.tex"`, // an image across its cone, as a slide in a projector seen from behind it: it multiplies its color where it falls; none: its color alone
+    shadows:bool, // it casts shadows; off, its light goes through everything and costs no shadow work
+    indirect:f32 `mirai:"min=0"`,   // multiplies the part of its light that bounces (the GI): 1 as it gives it
+    scattering:f32 `mirai:"min=0"`, // multiplies the part of its light a fog scatters
 }
 
-SPOT_LIGHT_DEFAULT :: Spot_Light{color={1,0.92,0.8},intensity=5000,range=20,radius=0.05,angle=mm.PI/6}
+SPOT_LIGHT_DEFAULT :: Spot_Light{color={1,0.92,0.8},intensity=5000,range=20,radius=0.05,angle=mm.PI/6,shadows=true,indirect=1,scattering=1}
 
 // The unit square of its entity, x by y; it lights the side its -z faces, so
 // a larger one gives more light.
@@ -121,17 +135,38 @@ Rect_Light :: struct {
     color:[3]f32 `mirai:"color"`,
     luminance:f32 `mirai:"min=0,unit=nit"`,
     range:f32 `mirai:"min=0,unit=m"`,
+    texture:base.Asset_Id `mirai:"kind=.tex"`, // an image across its face, seen from the side it lights: it multiplies its color where each part of it shines, in place of a Light_Emission; none: its color alone
+    shadows:bool, // it casts shadows; off, its light goes through everything and costs no shadow work
+    indirect:f32 `mirai:"min=0"`,   // multiplies the part of its light that bounces (the GI): 1 as it gives it
+    scattering:f32 `mirai:"min=0"`, // multiplies the part of its light a fog scatters
 }
 
-RECT_LIGHT_DEFAULT :: Rect_Light{color={1,0.92,0.8},luminance=5000,range=20} // a bright LED panel
+RECT_LIGHT_DEFAULT :: Rect_Light{color={1,0.92,0.8},luminance=5000,range=20,shadows=true,indirect=1,scattering=1} // a bright LED panel
 
 // A rectangle that shows an image: the Rect_Light of its entity takes its
 // color, across it, from the emission of the material its mesh is drawn with
 // in `slot`, its texture laid on the square as on the face of a Cube that
-// faces -Z.
+// faces -Z. A Rect_Light with a texture of its own shows that one instead.
 @(component,description="Lights with the image a rectangular light's mesh shows: the emission of the material in a slot, as a screen lights a room.")
 Light_Emission :: struct {
     slot:u8,
+}
+
+// The same for every place and camera: the light of a world does not change
+// as the camera moves.
+@(component,single,replicated,description="Multiplies all the indirect light (GI) of the world, the light that bounces from every light, the sky and what glows: 1 leaves it as the lights give it. Without one, 1. The world uses one at a time: turning one on turns off the one that was on.")
+Bounce_Light :: struct {
+    scale:f32 `mirai:"min=0"`,
+}
+
+BOUNCE_LIGHT_DEFAULT :: Bounce_Light{scale=1}
+
+// What multiplies the indirect light of the world: that of the first
+// Bounce_Light not hidden, or 1.
+@(private)
+bounce_scale :: proc(bounces:^core.Table(Bounce_Light,$A),hidden:^core.Table(Hidden,$B),parents:^core.Table(core.Parent,$C)) -> f32 {
+    if bounces==nil || core.count(bounces)==0 || is_hidden(hidden,parents,core.entity_at(bounces,0)) {return 1}
+    return core.at(bounces,0).scale
 }
 
 Camera_Projection :: enum u8 {Perspective,Orthographic}
@@ -213,7 +248,7 @@ Post_Process_Layer :: struct {
 // color and its alpha fades the entity; emission is added to their light.
 // Each value and texture is of the slot beside it, by the base.name_hash of
 // its name: of the program of the material of that slot, or one of
-// MATERIAL_VALUE_FIELDS or MATERIAL_MAP_NAMES. With own_overlays its overlays
+// asset.MATERIAL_VALUE_FIELDS or MATERIAL_MAP_NAMES. With own_overlays its overlays
 // replace those of the material of the first slot. Several functions write
 // it, in loop order: each sets and drops only the names it gives. Its
 // instance holds its color, its light and its values (slot_row), given in
@@ -328,32 +363,6 @@ Draw_Offset :: struct {
     rotation:mm.Quat `mirai:"transient"`,
 }
 
-// The values of the standard model an entity gives by name, and where
-// asset.Material_Info holds each: a number, a color, a flag or, with modes,
-// an enum of a byte with that many members.
-Material_Value_Field :: struct {
-    name:string,
-    offset:uintptr,
-    kind:enum u8 {Number,Color,Flag,Mode},
-    modes:u8,
-}
-MATERIAL_VALUE_FIELDS :: [22]Material_Value_Field{
-    {"base_color",offset_of(asset.Material_Info,base_color),.Color,0},{"opacity",offset_of(asset.Material_Info,opacity),.Number,0},
-    {"metallic",offset_of(asset.Material_Info,metallic),.Number,0},{"roughness",offset_of(asset.Material_Info,roughness),.Number,0},
-    {"emission",offset_of(asset.Material_Info,emission),.Color,0},{"specular",offset_of(asset.Material_Info,specular_factor),.Number,0},
-    {"ior",offset_of(asset.Material_Info,ior),.Number,0},{"transmission",offset_of(asset.Material_Info,transmission),.Number,0},
-    {"alpha_mode",offset_of(asset.Material_Info,alpha_mode),.Mode,len(asset.Alpha_Mode)},
-    {"coat",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,weight),.Number,0},{"coat_roughness",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,roughness),.Number,0},
-    {"coat_color",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,color),.Color,0},{"coat_ior",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,ior),.Number,0},
-    {"fuzz",offset_of(asset.Material_Info,fuzz)+offset_of(asset.Material_Fuzz,weight),.Number,0},{"fuzz_color",offset_of(asset.Material_Info,fuzz)+offset_of(asset.Material_Fuzz,color),.Color,0},
-    {"fuzz_roughness",offset_of(asset.Material_Info,fuzz)+offset_of(asset.Material_Fuzz,roughness),.Number,0},
-    {"anisotropy",offset_of(asset.Material_Info,anisotropy)+offset_of(asset.Material_Anisotropy,amount),.Number,0},
-    {"anisotropy_rotation",offset_of(asset.Material_Info,anisotropy)+offset_of(asset.Material_Anisotropy,rotation),.Number,0},
-    {"unlit",offset_of(asset.Material_Info,unlit),.Flag,0},{"emission_mode",offset_of(asset.Material_Info,emission_mode),.Mode,len(asset.Emission_Mode)},
-    {"diffuse_transmission",offset_of(asset.Material_Info,diffuse_transmission)+offset_of(asset.Material_Diffuse_Transmission,weight),.Number,0},
-    {"diffuse_transmission_color",offset_of(asset.Material_Info,diffuse_transmission)+offset_of(asset.Material_Diffuse_Transmission,color),.Color,0},
-}
-
 // The maps of the standard model as Material_Values names them, the paths
 // of asset.material_revert.
 MATERIAL_MAP_NAMES :: [asset.Material_Map_Kind]string{
@@ -362,6 +371,7 @@ MATERIAL_MAP_NAMES :: [asset.Material_Map_Kind]string{
     .Coat_Roughness="maps.coat_roughness",.Coat_Normal="maps.coat_normal",.Fuzz_Color="maps.fuzz_color",
     .Fuzz_Roughness="maps.fuzz_roughness",.Anisotropy="maps.anisotropy",
     .Diffuse_Transmission="maps.diffuse_transmission",.Diffuse_Transmission_Color="maps.diffuse_transmission_color",
+    .Mask="maps.mask",
 }
 
 // Toward the sun of the editor's presets, a morning one behind who looks along -Z.
@@ -569,10 +579,10 @@ render_sync :: proc(
     sync:^Render_Sync,app:^host.App,id:core.World_Id,frame:core.Frame_Time,view:core.View,
     worlds:^core.Table(core.World_Transform,.Read),meshes:^core.Table(Mesh_Renderer,.Read),values:^core.Table(Material_Values,.Read),lives:^core.Table(Material_Live,.Read),
     hidden:^core.Table(Hidden,.Read),elsewhere:^core.Table(Drawn_Elsewhere,.Read),parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),
-    suns:^core.Table(Sun,.Read),points:^core.Table(Point_Light,.Read),spots:^core.Table(Spot_Light,.Read),rects:^core.Table(Rect_Light,.Read),emissions:^core.Table(Light_Emission,.Read),skies:^core.Table(Sky,.Read),view_volumes:^core.Table(View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
+    suns:^core.Table(Sun,.Read),points:^core.Table(Point_Light,.Read),spots:^core.Table(Spot_Light,.Read),rects:^core.Table(Rect_Light,.Read),emissions:^core.Table(Light_Emission,.Read),skies:^core.Table(Sky,.Read),bounces:^core.Table(Bounce_Light,.Read),view_volumes:^core.Table(View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
     highlights:^core.Table(Highlight,.Read),outlines:^core.Table(Outline,.Read),outline_styles:core.Ref(Outline_Styles),
     offsets:^core.Table(Draw_Offset,.Read),layers:^core.Table(Layers,.Read),bodies:core.Ref(View_Bodies),preview:core.Ref(Environment_Preview),
-    locals:^core.Table(core.Transform,.Read),cameras:^core.Table(Camera,.Read),posed:^Posed_Meshes,
+    locals:^core.Table(core.Transform,.Read),cameras:^core.Table(Camera,.Read),posed:^Posed_Meshes,problems:^core.Problems,
 ) {
     a:=app.assets
     r:=app.renderer
@@ -740,7 +750,7 @@ render_sync :: proc(
             if material,slots,overlays,held:=gpu.scene_instance_materials(r,u32(at));held {instance_materials_retain(a,material,slots,overlays)}
         }
         for instance in extras {instance_materials_retain(a,instance.material,instance.slot_materials,instance.overlays)}
-        for light in r.scene.lights {if light.direction_cone.w==gpu.GPU_LIGHT_RECT {host.assets_material_retain(a,transmute(u32)light.size.w)}}
+        for light in r.scene.lights {if row,rect:=gpu.light_emission_row(light);rect {host.assets_material_retain(a,row)}}
         host.assets_appearance_end(a);host.assets_commit(a)
         sync.assets_appearance,sync.derived,sync.extra_rows=a.appearance,a.stats.derived,rows
     }
@@ -751,18 +761,19 @@ render_sync :: proc(
     own:gpu.Sun_Desc
     fade:Sun_Height_Fade
     if sun,direction,found:=sun_on(worlds,suns,preview.ptr!=nil?preview.ptr.sun:core.NONE,hidden,parents);found {
-        own={direction=direction,color=sun.color,illuminance=sun.illuminance,enabled=true,disc=sun.disc}
+        own={direction=direction,color=sun.color,illuminance=sun.illuminance,enabled=true,disc=sun.disc,indirect=sun.indirect,scattering=sun.scattering,shadowless=!sun.shadows}
         fade=sun.height_fade
     }
     sky_entity,sky,sky_found:=sky_previewed(skies,preview)
     if !sky_found {sky_entity,sky,sky_found=sky_active(skies,hidden,parents)}
-    environment:=sky_environment(sky_entity,sky,sky_found,own.enabled,worlds,a)
+    environment:=sky_environment(sky_entity,sky,sky_found,own.enabled,worlds,a,problems)
     // It dims with the height of the view.
     given:=own
     given.illuminance*=sun_height_factor(fade,view.position.y)
     if given!=sync.sun || environment!=sync.environment {gpu.scene_set_environment(r,given,environment)}
     sync.sun=given
     sync.environment=environment
+    gpu.scene_set_indirect(r,bounce_scale(bounces,hidden,parents))
 
     looked:=view.position
     if preview.ptr!=nil && preview.section!=core.NONE {
@@ -1247,20 +1258,19 @@ light_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tab
     switch kind {
     case .Point:
         if point,has:=core.get(t.points,e);has && placed {
-            desc=sphere_desc(world,point.color,point.intensity,point.range,point.radius)
+            desc=point_desc(world,point)
             on=true
         }
     case .Spot:
         if spot,has:=core.get(t.spots,e);has && placed {
-            desc=sphere_desc(world,spot.color,spot.intensity,spot.range,spot.radius)
-            desc.direction,desc.cone=mm.quat_forward(world.rotation),spot.angle
+            desc=spot_desc(world,spot,a)
             on=true
         }
     case .Rect:
         if rect,has:=core.get(t.rects,e);has && placed {
-            desc=rect_desc(world,rect)
+            desc=rect_desc(world,rect,a)
             on=true
-            if emission,shows:=core.get(t.emissions,e);shows {desc.material=emission_material(sync,a,r,t,extras,e,u32(emission.slot))}
+            if emission,shows:=core.get(t.emissions,e);shows && desc.texture==0 {desc.material=emission_material(sync,a,r,t,extras,e,u32(emission.slot))}
         }
     }
     on&&=gpu.light_gives(desc) && !is_hidden(t.hidden,t.parents,e)
@@ -1310,11 +1320,26 @@ lights_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Ta
     for at in sync.tinted {light_settle(sync,a,r,t,extras,sync.drawn.entities[at],.Rect)}
 }
 
-// A point or a spot in the world: a sphere the scale of its entity draws
-// out, as thick as the axes it stretches less, as long as the one it
-// stretches most. A spot adds where it points and its cone.
-sphere_desc :: proc(world:core.World_Transform,color:[3]f32,intensity,range,radius:f32) -> (desc:gpu.Light_Desc) {
-    desc={position=world.position,color=color,intensity=intensity,range=range}
+// A point light in the world: a sphere the scale of its entity draws out, as
+// thick as the axes it stretches less, as long as the one it stretches most.
+point_desc :: proc(world:core.World_Transform,point:Point_Light) -> gpu.Light_Desc {
+    desc:=sphere_desc(world,point.color,point.intensity,point.range,point.radius,point.indirect,point.scattering)
+    desc.shadowless=!point.shadows
+    return desc
+}
+
+// A spot in the world: the sphere of a point light, where it points and its
+// cone, and its texture, the width of it along +X of its entity.
+spot_desc :: proc(world:core.World_Transform,spot:Spot_Light,a:^host.Assets) -> (desc:gpu.Light_Desc) {
+    desc=sphere_desc(world,spot.color,spot.intensity,spot.range,spot.radius,spot.indirect,spot.scattering)
+    desc.direction,desc.cone,desc.shadowless=mm.quat_forward(world.rotation),spot.angle,!spot.shadows
+    desc.texture,desc.texture_axis=image_texture(a,spot.texture),mm.quat_rotate(world.rotation,[3]f32{1,0,0})
+    return
+}
+
+@(private)
+sphere_desc :: proc(world:core.World_Transform,color:[3]f32,intensity,range,radius,indirect,scattering:f32) -> (desc:gpu.Light_Desc) {
+    desc={position=world.position,color=color,intensity=intensity,range=range,indirect=indirect,scattering=scattering}
     scale:=[3]f32{abs(world.scale.x),abs(world.scale.y),abs(world.scale.z)}
     longest:=0
     for axis in 1..<3 {if scale[axis]>scale[longest] {longest=axis}}
@@ -1330,12 +1355,13 @@ sphere_desc :: proc(world:core.World_Transform,color:[3]f32,intensity,range,radi
 }
 
 // A rectangle in the world: the unit square of its entity, lighting the side
-// -Z faces. Its width runs along -X: seen from that side, its right.
-rect_desc :: proc(world:core.World_Transform,rect:Rect_Light) -> gpu.Light_Desc {
+// -Z faces, and its texture. Its width runs along -X: seen from that side, its
+// right.
+rect_desc :: proc(world:core.World_Transform,rect:Rect_Light,a:^host.Assets) -> gpu.Light_Desc {
     return {
-        position=world.position,color=rect.color,intensity=rect.luminance,range=rect.range,
+        position=world.position,color=rect.color,intensity=rect.luminance,range=rect.range,indirect=rect.indirect,scattering=rect.scattering,shadowless=!rect.shadows,
         direction=mm.quat_forward(world.rotation),axis=mm.quat_rotate(world.rotation,[3]f32{-1,0,0}),
-        size={abs(world.scale.x),abs(world.scale.y)},
+        size={abs(world.scale.x),abs(world.scale.y)},texture=image_texture(a,rect.texture),
     }
 }
 
@@ -1435,26 +1461,7 @@ material_value_apply :: proc(values:^gpu.Material_Desc,program:^gpu.Program,name
         }
     }
     value:=value
-    return material_standard_value(&values.info,name,&value,true)
-}
-
-// Puts a value of the standard model over the values of a material (put), or
-// reads it, by the name_hash of one of MATERIAL_VALUE_FIELDS. False for
-// another name.
-material_standard_value :: proc(info:^asset.Material_Info,name:u64,value:^[4]f32,put:bool) -> bool {
-    fields:=MATERIAL_VALUE_FIELDS
-    for field in fields {
-        if base.name_hash(field.name)!=name {continue}
-        at:=rawptr(uintptr(info)+field.offset)
-        switch field.kind {
-        case .Number: if put {(^f32)(at)^=value.x} else {value^={(^f32)(at)^,0,0,0}}
-        case .Color:  if put {(^[3]f32)(at)^=value.xyz} else {value.xyz,value.w=(^[3]f32)(at)^,0}
-        case .Flag:   if put {(^bool)(at)^=value.x>0.5} else {value^={f32(u8((^bool)(at)^)),0,0,0}}
-        case .Mode:   if put {(^u8)(at)^=u8(clamp(int(value.x+0.5),0,int(field.modes)-1))} else {value^={f32((^u8)(at)^),0,0,0}}
-        }
-        return true
-    }
-    return false
+    return asset.material_standard_value(&values.info,name,&value,true)
 }
 
 // The Surface program a material of the table names; nil for the standard model.
@@ -1535,8 +1542,8 @@ material_values_apply :: proc(a:^host.Assets,values:^gpu.Material_Desc,o:^Materi
         for map_name,kind in maps {
             if base.name_hash(map_name)!=name {continue}
             asset.material_maps(&values.maps)[kind].texture=o.textures[i]
-            // A program reads the normal map alone of the maps, unless it builds on the standard model.
-            if program==nil || kind==.Normal || program.standard {values.textures[kind]=handle}
+            // A program reads the normal map and the mask alone of the maps, unless it builds on the standard model.
+            if program==nil || kind==.Normal || kind==.Mask || program.standard {values.textures[kind]=handle}
             continue each
         }
     }
@@ -1595,7 +1602,7 @@ material_value_find :: proc "contextless" (o:^$T,slot:int,name:u64) -> int {
 
 // Gives a value to a name of the material of a slot of the entity, leaving
 // the other names as they are: a parameter of the program of that material,
-// or one of MATERIAL_VALUE_FIELDS, by its name or the base.name_hash of it.
+// or one of asset.MATERIAL_VALUE_FIELDS, by its name or the base.name_hash of it.
 // False when the entity holds MATERIAL_VALUES_CAPACITY values of other names,
 // for a slot that does not exist or for a value that is not finite.
 material_value :: proc{material_value_named,material_value_hashed}
@@ -1655,7 +1662,7 @@ mesh_instance :: proc(a:^host.Assets,static:Mesh_Renderer,transform:mm.Mat4,valu
     values:=values
     mesh:=static.mesh!={}?host.assets_mesh(a,static.mesh):host.assets_shape(a,static.shape)
     if mesh==nil || mesh.handle==host.ASSETS_MESH_NONE {return {},false}
-    instance=gpu.Instance_Desc{mesh=mesh.handle,transform=transform,tint=values.color.rgb,emission=values.emission}
+    instance=gpu.Instance_Desc{mesh=mesh.handle,transform=transform,tint=values.color.rgb,emission=values.emission,shadowless=!static.shadows}
     instance.material_values.fade=1-clamp(values.color.a,0,1)
     shown:=static.materials[0]
     if mesh.slot_count==0 {

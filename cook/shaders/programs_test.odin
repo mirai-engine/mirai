@@ -48,6 +48,7 @@ programs_fixture :: proc(t:^testing.T,f:^Programs_Fixture) -> bool {
     slangc,found:=tool_find(root,.Slangc,context.temp_allocator)
     if !found {log.warn("slangc is not installed: run `mirai setup slang`");return false}
     f.slangc=slangc
+    runner_compiler(&f.runner,context.temp_allocator)
     version,ran:=tool_run(&f.runner,{slangc,"-version"},context.temp_allocator)
     testing.expect(t,ran,version)
     f.version=strings.trim_space(version)
@@ -62,6 +63,7 @@ programs_fixture :: proc(t:^testing.T,f:^Programs_Fixture) -> bool {
 
 @(private="file")
 programs_of :: proc(f:^Programs_Fixture) -> (catalog:Catalog,problem:string) {
+    defer runner_close(&f.runner)
     catalog,problem=programs_generate(&f.runner,path_clean(ENGINE_ROOT,context.temp_allocator),f.project,f.output,f.slangc,f.version,f.cache,allocator=context.temp_allocator)
     // A program left out is the problem of these tests; the others are published.
     if problem=="" && len(catalog.refused)>0 {problem=strings.join(catalog.refused," | ",context.temp_allocator)}
@@ -245,7 +247,7 @@ programs_reuse_a_warm_reflection_and_reflect_again_only_what_changed :: proc(t:^
     fixture_write(t,f.project,"shaders/helper.slang","float helper() {return 2;}\n")
     _,problem=programs_of(&f)
     testing.expect_value(t,problem,"")
-    testing.expect_value(t,f.runner.runs,2)
+    testing.expect_value(t,f.runner.runs,3)
     // A cache file that is not what its hash says is reflected again.
     f.runner.runs=0
     entries,_:=os.read_all_directory_by_path(f.cache,context.temp_allocator)
@@ -331,8 +333,8 @@ program_declaration_and_metadata_lines_are_recognized :: proc(t:^testing.T) {
     testing.expect(t,said.name=="Swarm" && len(said.metadata)==1 && said.metadata[0][0]=="speed" && said.metadata[0][1]=="{\"default\":1}")
     testing.expect(t,len(said.resources)==1 && said.resources[0][2]=="ground" && len(said.stages)==1 && said.stages[0][2]=="settle")
     testing.expect(t,said.moves && said.births && !said.prepare && said.vertex==nil)
-    said=program_directives("//! mirai surface Sway\n//! vertex animated reach 0.5\n")
-    testing.expect(t,len(said.vertex)==5 && said.vertex[2]=="animated" && said.vertex[4]=="0.5")
+    said=program_directives("//! mirai surface Sway\n//! vertex reach 0.5\n")
+    testing.expect(t,len(said.vertex)==4 && said.vertex[2]=="reach" && said.vertex[3]=="0.5")
     field,value,found:=parameter_metadata("//! parameter tint {\"default\":[1,1,1]}  ")
     testing.expect(t,found && field=="tint" && value=="{\"default\":[1,1,1]}")
     for line in ([]string{"//! parameter tint","//! parameter tint [1]","//!parameter tint {}","// parameter tint {}","//! parameter {}"}) {
@@ -345,17 +347,19 @@ program_declaration_and_metadata_lines_are_recognized :: proc(t:^testing.T) {
 // program, and one more for the Attributes of a Vfx one.
 @(private="file")
 // The compilations of a cold reflection: a Surface program has its alpha
-// probed too (alpha_probe), unless the cache has it.
+// and its derivatives and reads probed too (alpha_probe, surface_probe), unless the
+// cache has them.
 reflections :: proc(catalog:Catalog,probes:=true) -> (runs:int) {
-    for program in catalog.programs {runs+=program.domain==.Vfx || probes && program.domain==.Surface?2:1}
+    for program in catalog.programs {runs+=program.domain==.Vfx?2:probes && program.domain==.Surface?3:1}
     return
 }
 
-// A Surface program is in the coverage include when its alpha is not the
-// constant of the default material, whatever it reads it from; its alpha
-// alone, while its include has the whole program.
+// A Surface program has coverage when it sets alpha, whatever it reads it
+// from: not when it keeps the alpha of the default material or of the
+// standard model it builds on. A masked material whose program has it is an
+// error of the material.
 @(test)
-surface_coverage_holds_the_programs_whose_alpha_is_not_the_default :: proc(t:^testing.T) {
+the_probe_of_a_surface_program_says_whether_it_sets_alpha :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
     Case :: struct {name,body:string,coverage:bool}
@@ -365,23 +369,20 @@ surface_coverage_holds_the_programs_whose_alpha_is_not_the_default :: proc(t:^te
         {"Mapped","s.alpha=mirai_sample_texture(ctx,p.map,ctx.uv0,ctx.lod).a;",true},
         {"Mixed","Mirai_Surface hole=s;hole.alpha=0.0;s=mirai_surface_mix(s,hole,p.tint.y);",true},
         {"Constant","s.alpha=0.25;",true},
-        {"Built","s=mirai_surface_standard(ctx);s.emission+=p.tint;",true}, // the alpha of its material
+        {"Built","s=mirai_surface_standard(ctx);s.emission+=p.tint;",false}, // the alpha of its material
+        {"Rebuilt","s=mirai_surface_standard(ctx);s.alpha*=p.tint.z;",true},
     }
     for c in cases {
         fixture_write(t,f.project,fmt.tprintf("shaders/%s.slang",c.name),fmt.tprintf("//! mirai surface %s\nnamespace %s {{struct Parameters {{float3 tint;uint map;}}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {{Mirai_Surface s=mirai_surface_default(ctx);%sreturn s;}}}}\n",c.name,c.name,c.body))
     }
     catalog,problem:=programs_of(&f)
     testing.expect_value(t,problem,"")
-    coverage_bytes,_:=os.read_entire_file(path_join(f.output,"include",SURFACE_COVERAGE_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
-    coverage:=string(coverage_bytes)
     for c in cases {
         program,found:=program_named(catalog,c.name)
         testing.expectf(t,found && program.coverage==c.coverage,"%s: coverage %v",c.name,program.coverage)
-        listed:=strings.contains(coverage,fmt.tprintf("alpha=%s::evaluate(",c.name))
-        testing.expectf(t,listed==c.coverage,"%s is in the coverage include: %v",c.name,listed)
-        testing.expectf(t,program.standard==(c.name=="Built"),"%s: only a program that names the standard model of its material builds on it",c.name)
+        testing.expectf(t,program.standard==(c.name=="Built" || c.name=="Rebuilt"),"%s: only a program that names the standard model of its material builds on it",c.name)
         own,_:=os.read_entire_file(path_join(f.output,"include",SURFACE_FOLDER,c.name,SURFACE_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
-        testing.expectf(t,strings.contains(string(own),fmt.tprintf("#ifndef MIRAI_PROGRAM_%s",c.name)),"%s: one source for both includes of a stage",c.name)
+        testing.expectf(t,strings.contains(string(own),fmt.tprintf("value=%s::evaluate(",c.name)),"%s: its include evaluates it",c.name)
     }
     stored,_:=os.read_entire_file(path_join(f.output,"catalog.json",allocator=context.temp_allocator),context.temp_allocator)
     testing.expect(t,strings.contains(string(stored),"\"coverage\": true"))
@@ -394,29 +395,53 @@ surface_coverage_holds_the_programs_whose_alpha_is_not_the_default :: proc(t:^te
     testing.expect(t,mapped.coverage)
 }
 
-// The stages that trace include a program with coverage for its alpha alone:
-// their fingerprint follows that alpha compiled, not the text of the
-// program, so an edit that keeps the alpha changes only the fingerprint of
-// the stages of the program. Every argument of a texture read is the alpha.
+// The probe of a Surface program says whether its evaluation takes
+// derivatives across the pixels of a quad (in its include): a sample by a
+// plain uv or a derivative of its own does; one by a dual uv, by the
+// footprint of the point or by the standard model of its material does not.
+// And what it and its function vertex read of their contexts, a read behind a
+// branch a parameter turns off included; the cache keeps both.
 @(test)
-the_stages_that_trace_follow_the_alpha_of_a_program_and_not_its_text :: proc(t:^testing.T) {
+the_probe_of_a_surface_program_says_its_derivatives_and_what_it_reads :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
-    prints :: proc(t:^testing.T,f:^Programs_Fixture,body:string) -> (tracing,own:string) {
-        fixture_write(t,f.project,"shaders/holes.slang",fmt.tprintf("//! mirai surface Holes\nnamespace Holes {{struct Parameters {{float3 tint;uint map;}}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {{Mirai_Surface s=mirai_surface_default(ctx);%sreturn s;}}}}\n",body))
-        _,problem:=programs_of(f)
-        testing.expect_value(t,problem,"")
-        include:=path_join(f.output,"include",allocator=context.temp_allocator)
-        tracing=fingerprint(path_join(include,SURFACE_COVERAGE_INCLUDE,allocator=context.temp_allocator),{include},nil,nil,context.temp_allocator)
-        own=fingerprint(path_join(include,SURFACE_FOLDER,"Holes",SURFACE_INCLUDE,allocator=context.temp_allocator),{include},nil,nil,context.temp_allocator)
-        return
+    Case :: struct {name,body,vertex:string,derivatives:bool,reads,vertex_reads:abi.Program_Reads}
+    cases:=[]Case{
+        {"Implicit","s.base_color=mirai_sample_texture(ctx,p.map,ctx.uv0*4.0,ctx.lod).rgb;","",true,{},{}},
+        {"Differenced","s.roughness=length(ddx(ctx.world_position));","",true,{.Place},{}},
+        {"Dual","Mirai_Dual2 uv=mirai_uv0(ctx)*4.0+sin(mirai_uv1(ctx));if (p.tint.x>0.5) {s.base_color=mirai_sample_texture(ctx,p.map,uv).rgb;}","",false,{},{}},
+        {"Projected","s.base_color=mirai_sample_triplanar(ctx,p.map,2.0,4.0).rgb;","",false,{.Place},{}},
+        {"Standard","s=mirai_surface_standard(ctx);s.emission+=p.tint;","",false,{},{}},
+        {"Plain","s.base_color=p.tint;","",false,{},{}},
+        {"Pulse","if (p.tint.x>2.0) {s.emission=p.tint*sin(ctx.time);}","",false,{.Time},{}},
+        {"Faded","s.alpha=saturate((ctx.scene_depth-ctx.depth)*p.tint.x);","",false,{.View},{}},
+        {"Sized","s.base_color=p.tint*mirai_object_scale(ctx).x;","",false,{.Place},{}},
+        {"Sparked","s.emission=ctx.particle_data[0].rgb*ctx.particle_random;","",false,{.Particle},{}},
+        {"Sway","s.base_color=p.tint;","v.position.x+=sin(ctx.time)*0.1;",false,{},{.Time}},
+        {"Spread","s.base_color=p.tint;","v.position+=v.normal*mirai_noise(ctx,1.0)*0.1;",false,{},{.Place}},
     }
-    tracing,own:=prints(t,&f,"s.alpha=mirai_sample_texture(ctx,p.map,ctx.uv0,ctx.lod).a;s.base_color=p.tint;")
-    painted,repainted:=prints(t,&f,"s.alpha=mirai_sample_texture(ctx,p.map,ctx.uv0,ctx.lod).a;s.base_color=p.tint*0.5;")
-    testing.expect_value(t,painted,tracing)
-    testing.expect(t,repainted!=own,"another color is another program for its own stages")
-    finer,_:=prints(t,&f,"s.alpha=mirai_sample_texture(ctx,p.map,ctx.uv0,ctx.lod+1.0).a;s.base_color=p.tint*0.5;")
-    testing.expect(t,finer!=tracing,"another level of its texture is another alpha")
+    for c in cases {
+        vertex,line:="",""
+        if c.vertex!="" {
+            line="//! vertex reach 0.1\n"
+            vertex=fmt.tprintf("Mirai_Vertex vertex(Mirai_Vertex_Context ctx,Parameters p) {{Mirai_Vertex v=mirai_vertex_default(ctx);%sreturn v;}} ",c.vertex)
+        }
+        fixture_write(t,f.project,fmt.tprintf("shaders/%s.slang",c.name),fmt.tprintf("//! mirai surface %s\n%snamespace %s {{struct Parameters {{float3 tint;uint map;}}; %sMirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {{Mirai_Surface s=mirai_surface_default(ctx);%sreturn s;}}}}\n",c.name,line,c.name,vertex,c.body))
+    }
+    catalog,problem:=programs_of(&f)
+    testing.expect_value(t,problem,"")
+    f.runner.runs=0
+    warm,_:=programs_of(&f)
+    testing.expect_value(t,f.runner.runs,0)
+    for c in cases {
+        own,_:=os.read_entire_file(path_join(f.output,"include",SURFACE_FOLDER,c.name,SURFACE_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
+        said:=fmt.tprintf("mirai_program_derivatives = %v;",c.derivatives)
+        testing.expectf(t,strings.contains(string(own),said),"%s: its include says %s",c.name,said)
+        for read in ([]Catalog{catalog,warm}) {
+            program,found:=program_named(read,c.name)
+            testing.expectf(t,found && program.reads==c.reads && program.vertex.reads==c.vertex_reads,"%s reads %v and its vertex %v, not %v and %v",c.name,c.reads,c.vertex_reads,program.reads,program.vertex.reads)
+        }
+    }
 }
 
 @(test)
@@ -583,7 +608,7 @@ programs_leave_out_one_that_fails_and_publish_the_others :: proc(t:^testing.T) {
 }
 
 // A Surface program that says `//! vertex` has its function vertex called in
-// its own include, says in the catalog whether it is animated and how far it
+// its own include, says in the catalog what it reads and how far it
 // reaches, a number or a float parameter, and is listed for the stages
 // compiled per vertex program; a wrong line leaves it out, saying why.
 @(test)
@@ -593,7 +618,7 @@ programs_that_move_vertices_declare_their_function_and_reach :: proc(t:^testing.
     program :: proc(name,line,fields:string) -> string {
         return fmt.tprintf("//! mirai surface %s\n%s\nnamespace %s {{struct Parameters {{%s}}; Mirai_Vertex vertex(Mirai_Vertex_Context ctx,Parameters p) {{Mirai_Vertex v=mirai_vertex_default(ctx);v.position.y+=sin(ctx.time);return v;}} Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {{return mirai_surface_default(ctx);}}}}\n",name,line,name,fields)
     }
-    fixture_write(t,f.project,"shaders/sway.slang",program("Sway","//! vertex animated reach 0.25","float strength;"))
+    fixture_write(t,f.project,"shaders/sway.slang",program("Sway","//! vertex reach 0.25","float strength;"))
     fixture_write(t,f.project,"shaders/spread.slang",program("Spread","//! vertex reach distance","float3 color;float distance;"))
     fixture_write(t,f.project,"shaders/still.slang","//! mirai surface Still\nnamespace Still {struct Parameters {float amount;}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {return mirai_surface_default(ctx);}}\n")
     catalog,problem:=programs_of(&f)
@@ -602,8 +627,8 @@ programs_that_move_vertices_declare_their_function_and_reach :: proc(t:^testing.
     spread,has_spread:=program_named(catalog,"Spread")
     still,has_still:=program_named(catalog,"Still")
     if !testing.expect(t,has_sway && has_spread && has_still) {return}
-    testing.expect(t,sway.vertex.declared && sway.vertex.animated && sway.vertex.reach==0.25 && sway.vertex.reach_offset<0)
-    testing.expect(t,spread.vertex.declared && !spread.vertex.animated && spread.vertex.reach_offset==12)
+    testing.expect(t,sway.vertex.declared && sway.vertex.reads=={.Time} && sway.vertex.reach==0.25 && sway.vertex.reach_offset<0)
+    testing.expect(t,spread.vertex.declared && spread.vertex.reach_offset==12)
     testing.expect(t,!still.vertex.declared,"a program without the line moves no vertices")
     listed :: proc(names:[]string,name:string) -> bool {
         for n in names {if n==name {return true}}
@@ -620,7 +645,7 @@ programs_that_move_vertices_declare_their_function_and_reach :: proc(t:^testing.
         {"//! vertex reach color","float3 color;","one float"},
         {"//! vertex reach far","float amount;","neither a number nor a parameter"},
         {"//! vertex reach -1","float amount;","reach is metres"},
-        {"//! vertex wobbly","float amount;","declare a vertex function"},
+        {"//! vertex animated","float amount;","declare a vertex function"},
     }
     os.remove(path_join(f.project,"shaders/sway.slang",allocator=context.temp_allocator))
     os.remove(path_join(f.project,"shaders/spread.slang",allocator=context.temp_allocator))

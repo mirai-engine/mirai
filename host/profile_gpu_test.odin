@@ -38,5 +38,23 @@ a_recorded_frame_keeps_the_gpu_passes_of_every_submission :: proc(t: ^testing.T)
 		}
 		testing.expectf(t, abs(total - f64(frame.gpu_ms)) < 0.01, "frame %d: gpu_ms %.3f is not the sum of its passes %.3f", i, frame.gpu_ms, total)
 	}
+	// The CPU of the renderer is told by its stages: the zones inside render
+	// name where it went and add up to nearly all of it.
+	renders := 0
+	for zone in recording.zones {
+		if zone.thread != 0 || zone.depth != 1 || zone.name != "render" {continue}
+		renders += 1
+		inside: i64
+		named: [2]bool
+		for child in recording.zones {
+			if child.thread != 0 || child.depth != 2 || child.frame != zone.frame || child.start < zone.start || child.start + child.duration > zone.start + zone.duration {continue}
+			inside += child.duration
+			if child.name == "view" {named[0] = true}
+			if child.name == "submit" {named[1] = true}
+		}
+		testing.expectf(t, named == {true, true}, "frame %d: the render zone has no zones of its view and its submission inside", zone.frame)
+		testing.expectf(t, f64(inside) >= 0.75 * f64(zone.duration), "frame %d: the stages inside render add up to %d of its %d ns", zone.frame, inside, zone.duration)
+	}
+	testing.expect(t, renders >= FRAMES, "every recorded frame has its render zone")
 	testing.expectf(t, rhi.device_validation_errors(app.device) == 0, "validation: %s", rhi.device_validation_message(app.device))
 }

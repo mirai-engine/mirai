@@ -78,7 +78,7 @@ a_game_build_writes_the_test_worlds_of_what_it_reads :: proc(t:^testing.T) {
     engine:=slashes(project.path_absolute(#directory+"../.."),context.allocator)
     root:=project.path(folder,"project")
     game:=project.path(root,project.FOLDER_NAMES[.Game])
-    testing.expect(t,os.make_directory_all(game)==nil)
+    testing.expect(t,base.make_directory_all(game)==nil)
     m:=project.manifest_default("Worlds Game")
     testing.expect(t,os.write_entire_file(project.path(root,project.PROJECT_FILE),project.manifest_text(&m))==nil)
     testing.expect(t,os.write_entire_file(project.path(game,"game.odin"),"package game\n\n@(component)\nScore :: struct {points:int}\n")==nil)
@@ -101,7 +101,7 @@ a_game_ships_the_settings_of_the_engine_and_of_its_project_merged :: proc(t:^tes
     folder:=base.test_folder(t,"ship")
     if folder=="" {return}
     root,engine:=project.path(folder,"project",allocator=context.temp_allocator),project.path(folder,"engine",allocator=context.temp_allocator)
-    testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(project.path(engine,".mirai",allocator=context.temp_allocator))==nil)
+    testing.expect(t,base.make_directory_all(root)==nil && base.make_directory_all(project.path(engine,".mirai",allocator=context.temp_allocator))==nil)
     m:=project.manifest_default("Set Game")
     testing.expect(t,os.write_entire_file(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator),project.manifest_text(&m,context.temp_allocator))==nil)
     testing.expect(t,os.write_entire_file(project.settings_file(.Project,root,engine,context.temp_allocator),`{"Graphics": {"vsync": false}}`)==nil)

@@ -74,6 +74,7 @@ Instance_Desc :: struct {
 	outline_only: bool,        // with a highlight: only its outline is drawn, as of something that is not there
 	layers: u32,               // the layers it is in (16 of them), which a view draws or not; 0: the first one alone
 	owner: u8,                 // 1 + the local slot whose body it is: a view of that slot that hides its body fades it out; 0: none
+	shadowless: bool,          // it casts no shadow: the rays that see surfaces meet it, the shadow rays and the maps do not
 }
 
 // An instance whose materials need more of the G-buffer than base color and metallic.
@@ -102,6 +103,11 @@ Light_Desc :: struct {
 	length:    f32,  // a capsule: of its segment, metres; 0: a sphere
 	size:      Vec2, // a rectangle: its width and height, metres; zero: not one
 	material:  Material_Handle, // a rectangle: the material whose emission colors it across, its texture mapped to it as to a unit quad (0: its color alone)
+	texture:   Texture_Handle,  // a spot or a rectangle: the image its color is multiplied by across its cone or its face, in place of the emission of material (0: none)
+	texture_axis: Vec3,         // a spot: the way the width of its texture runs across the cone, its right seen from the light
+	indirect:  f32,  // what of its light the probes gather, and so bounces: 1 all of it, 0 none
+	scattering: f32, // what of its light media scatter (fog, the volumes of particles): 1 all of it
+	shadowless: bool, // it casts no shadows: its light goes through everything, with no shadow map or ray
 }
 
 Sun_Desc :: struct {
@@ -110,6 +116,9 @@ Sun_Desc :: struct {
 	illuminance: f32,  // lux, on a surface that faces it
 	enabled:   bool,
 	disc:      bool, // it is seen in the sky
+	indirect:  f32,  // what of its light the probes gather, as Light_Desc.indirect
+	scattering: f32, // what of its light media scatter, as Light_Desc.scattering
+	shadowless: bool, // it casts no shadows, as Light_Desc.shadowless
 }
 
 Environment :: struct {
@@ -122,8 +131,10 @@ Environment :: struct {
 	sky_atmosphere: bool, // the sky is the air lit by the sun (air.odin), whose light it crosses: sky does not apply
 	sky_from_atmosphere: bool, // and what it changes from, of the same air
 	air:            Air,  // of an atmosphere
-	background:     Vec3, // luminance behind the scene, nits
-	use_background: bool, // false: show the sky gradient
+	background:     Vec3, // luminance behind the scene, nits; with an image, what multiplies its values
+	background_texture: Texture_Handle, // an image behind the scene, as sky_texture, turned as the sky; 0: background alone
+	use_background: bool, // the view, mirrors and glass show the background in place of the sky, which keeps lighting the scene; false: they show the sky
+	background_behind: bool, // the background shows only behind the scene, not in what reflects the sky: a studio, whose reflections show the light that shapes what it shows
 	ground_grid:    bool, // display-only reference plane; never geometry or lighting
 }
 
@@ -141,13 +152,20 @@ Translucent :: struct {
 
 // Where the light of the world changed since the GI last looked: spheres
 // (center, radius), or everywhere. The probe volume traces again the probes
-// they reach.
+// they reach. With each, the box in which what a ray may meet changed (low,
+// then high; low above high: none, only lights changed there): what the
+// probes keep of the rays that cross it is traced again, and of the hits a
+// sphere without a box holds, lit again (probe_changes_list).
 LIGHT_CHANGES_MAX :: 64
 Light_Changes :: struct {
 	spheres: [LIGHT_CHANGES_MAX]Vec4,
+	boxes:   [LIGHT_CHANGES_MAX][2]Vec4,
 	count:   int,
 	all:     bool,
+	seen:    bool, // with all: what rays meet changed everywhere too, not only the lights
 }
+@(private)
+LIGHT_CHANGE_NO_BOX :: [2]Vec4{{1, 1, 1, 0}, {-1, -1, -1, 0}}
 // How far around an instance a change of its glow changes the light, metres;
 // what it changes otherwise, by its shadow and the light it reflects, falls
 // with the square of the distance over its size: LIGHT_CHANGE_SIZES of its
@@ -167,6 +185,7 @@ OCCLUDERS_MANY :: abi.OCCLUDERS_MANY
 Occluder_Change :: struct {
 	low, high: Vec3,
 	instance:  u32, // OCCLUDERS_MANY: several, or one that is gone
+	fine:      f32, // of the maps of the shadows, those whose texel there is narrower than this alone (a sway); 0: every map
 }
 Occluder_Changes :: struct {
 	boxes:       [OCCLUDER_CHANGES_MAX]Occluder_Change,
@@ -177,26 +196,67 @@ Occluder_Changes :: struct {
 	covers:      bool, // a masked material changed what its casters cover, wherever they are
 }
 
+// What the maps of the shadows follow of each instance (shadow_movers_update).
+@(private)
+Shadow_Track :: struct {
+	change: i32,  // its place in Scene_State.shadow_changes + 1 while it has one; 0: none
+	frame:  u64,  // the frame its shadow last changed in while the maps follow it; 0: they do not
+	moving: bool, // it changed again within SHADOW_MOVER_FRAMES: the caches leave it out
+}
+
 // An instance that casts shadows covered low to high in the frame before, or
-// covers it now: the box it changed in grows by it.
+// covers it now: the box it changed in grows by it, for the samples, and the
+// maps of the shadows follow it apart, each instance on its own however many
+// change (shadow_changed).
 @(private)
 occluder_changed :: proc(s: ^Scene_State, instance: u32, low, high: Vec3) {
 	occluder_add(&s.occluders, instance, low, high)
+	shadow_changed(s, instance, low, high)
+}
+
+// The change of an instance for the maps of the shadows, with the box it
+// covered before and covers now; one that is not an instance (OCCLUDERS_MANY)
+// is stale where it is. Its room is that of the instances (instances_reserve).
+@(private)
+shadow_changed :: proc(s: ^Scene_State, instance: u32, low, high: Vec3) {
+	if !(low.x <= high.x && low.y <= high.y && low.z <= high.z) {return}
+	if instance == OCCLUDERS_MANY || int(instance) >= len(s.instances) {
+		occluder_add(&s.shadow_stale, OCCLUDERS_MANY, low, high)
+		return
+	}
+	if int(instance) >= len(s.shadow_tracks) && resize(&s.shadow_tracks, len(s.instances)) != nil {
+		occluder_add(&s.shadow_stale, OCCLUDERS_MANY, low, high)
+		return
+	}
+	track := &s.shadow_tracks[instance]
+	if track.change > 0 {
+		box := &s.shadow_changes[track.change - 1]
+		box.low, box.high = linalg.min(box.low, low), linalg.max(box.high, high)
+		return
+	}
+	if len(s.shadow_changes) >= cap(s.shadow_changes) {
+		occluder_add(&s.shadow_stale, OCCLUDERS_MANY, low, high)
+		return
+	}
+	append(&s.shadow_changes, Occluder_Change{low, high, instance, 0})
+	track.change = i32(len(s.shadow_changes))
 }
 
 // The box of an instance (OCCLUDERS_MANY: of several) joins a list of changes.
+// fine: as Occluder_Change.fine.
 @(private)
-occluder_add :: proc "contextless" (o: ^Occluder_Changes, instance: u32, low, high: Vec3) {
+occluder_add :: proc "contextless" (o: ^Occluder_Changes, instance: u32, low, high: Vec3, fine := f32(0)) {
 	if !(low.x <= high.x && low.y <= high.y && low.z <= high.z) {return}
+	joined :: proc "contextless" (a, b: f32) -> f32 {return 0 if a == 0 || b == 0 else max(a, b)}
 	if instance != OCCLUDERS_MANY {
 		for &box in o.boxes[:o.count] {
 			if box.instance != instance {continue}
-			box.low, box.high = linalg.min(box.low, low), linalg.max(box.high, high)
+			box.low, box.high, box.fine = linalg.min(box.low, low), linalg.max(box.high, high), joined(box.fine, fine)
 			return
 		}
 	}
 	if o.count < OCCLUDER_CHANGES_MAX {
-		o.boxes[o.count] = {low, high, instance}
+		o.boxes[o.count] = {low, high, instance, fine}
 		o.count += 1
 		return
 	}
@@ -207,7 +267,7 @@ occluder_add :: proc "contextless" (o: ^Occluder_Changes, instance: u32, low, hi
 		if grown < growth {best, growth = i, grown}
 	}
 	box := &o.boxes[best]
-	box.low, box.high, box.instance = linalg.min(box.low, low), linalg.max(box.high, high), OCCLUDERS_MANY
+	box.low, box.high, box.instance, box.fine = linalg.min(box.low, low), linalg.max(box.high, high), OCCLUDERS_MANY, joined(box.fine, fine)
 }
 
 // What an instance that came or went covers in the frame it is not there.
@@ -217,9 +277,14 @@ INSTANCE_ABSENT :: Gpu_Instance{meta = {0, 0, 0, INSTANCE_FLAG_HIDDEN}}
 // An instance that changed what it covers: the box of the frame before, then the one now.
 @(private)
 occluder_moved :: proc(s: ^Scene_State, index: u32, before, after: Gpu_Instance) {
-	shown :: proc "contextless" (inst: Gpu_Instance) -> bool {return inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED) == 0}
-	if shown(before) {occluder_changed(s, index, before.bounds_min.xyz, before.bounds_max.xyz)}
-	if shown(after) {occluder_changed(s, index, after.bounds_min.xyz, after.bounds_max.xyz)}
+	if instance_casts(before) {occluder_changed(s, index, before.bounds_min.xyz, before.bounds_max.xyz)}
+	if instance_casts(after) {occluder_changed(s, index, after.bounds_min.xyz, after.bounds_max.xyz)}
+}
+
+// Whether an instance is drawn in the depth of the maps of the shadows and stops their rays.
+@(private)
+instance_casts :: proc "contextless" (inst: Gpu_Instance) -> bool {
+	return inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED) == 0 && inst.meta.x & INSTANCE_UNSHADOWED == 0
 }
 
 // A light of the set that moved or changed its shape: what it shades is new.
@@ -242,19 +307,36 @@ frame_occluders :: proc(f: ^Gpu_Frame, o: ^Occluder_Changes) {
 	for light, i in o.lights[:lights] {f.moved_lights[i / 4][i % 4] = light}
 }
 
-scene_changed :: proc(s: ^Scene_State) {s.changes.all = true}
+// The light changed everywhere, and what rays meet with it.
+scene_changed :: proc(s: ^Scene_State) {s.changes.all, s.changes.seen = true, true}
 
-// The light changed within `radius` of `center`; past the capacity, everywhere.
+// The lights changed everywhere (the sun, the sky, how the probes gather
+// them): what rays meet is where it was.
+scene_relit :: proc(s: ^Scene_State) {s.changes.all = true}
+
+// The lights changed within `radius` of `center`; past the capacity, everywhere.
 scene_changed_near :: proc(s: ^Scene_State, center: Vec3, radius: f32) {
 	if s.changes.all {return}
 	if s.changes.count == LIGHT_CHANGES_MAX {s.changes.all = true; return}
 	s.changes.spheres[s.changes.count] = {center.x, center.y, center.z, radius}
+	s.changes.boxes[s.changes.count] = LIGHT_CHANGE_NO_BOX
 	s.changes.count += 1
 }
 
-scene_changed_box :: proc(s: ^Scene_State, low, high: Vec3) {
-	scene_changed_near(s, (low + high) * 0.5, linalg.length(high - low) * 0.5)
+// What a ray may meet changed in the box low to high, and the light with it
+// as far as `reach` around the box; past the capacity, everywhere. A box is
+// listed also once the lights changed everywhere.
+scene_changed_seen :: proc(s: ^Scene_State, low, high: Vec3, reach: f32) {
+	c := &s.changes
+	if c.all && c.seen {return}
+	if c.count == LIGHT_CHANGES_MAX {c.all, c.seen = true, true; return}
+	center := (low + high) * 0.5
+	c.spheres[c.count] = {center.x, center.y, center.z, linalg.length(high - low) * 0.5 + reach}
+	c.boxes[c.count] = {{low.x, low.y, low.z, 0}, {high.x, high.y, high.z, 0}}
+	c.count += 1
 }
+
+scene_changed_box :: proc(s: ^Scene_State, low, high: Vec3) {scene_changed_seen(s, low, high, 0)}
 
 Scene_State :: struct {
 	vertices:             [dynamic]u32, // the vertex pool (gpu_types.odin)
@@ -296,10 +378,11 @@ Scene_State :: struct {
 	reflective:           [dynamic]Reflective_Instance,
 	materials:            [dynamic]Gpu_Material_Row, // the material table; row 0 is the default
 	program_rows:         [POINTS_PROGRAM_CAPACITY]u32, // rows of the table of each Surface program, by id
+	program_opaque_rows:  [POINTS_PROGRAM_CAPACITY]u32, // of them, those not blended: the visibility target may hold the program
+	program_shown_opaque: [POINTS_PROGRAM_CAPACITY]bool, // programs of blended rows an instance shows otherwise by its values
 	programs_used:        u32, // ids with rows there
 	programs_arrived:     bool, // a program got its first row: the next frame asks for its pipelines (programs_ask)
 	programmed_rows:      u32, // rows with a Surface program
-	programmed_glass:     u32, // and of them, blended ones
 	materials_dirty:      bool,                      // the whole table goes to the GPU
 	material_ranges:      [dynamic]Pool_Range,       // else the rows that changed since the last upload
 	material_capacity:    int,
@@ -338,14 +421,25 @@ Scene_State :: struct {
 	tlas_ref_buffer:      rhi.Buffer,
 	cull_state_buffer:    rhi.Buffer, // Gpu_Cull_State of the view being culled: the draws of its phases and what its passes count
 	chunk_buffer:         rhi.Buffer, // the chunks the instance pass hands the cluster pass
-	visible_buffer:       rhi.Buffer, // the visible clusters of both phases
+	visible_buffer:       rhi.Buffer, // the visible clusters of both phases by raster bin, which their draws read, with their programs
+	depth_buckets:        rhi.Buffer, // of each phase and tested raster bin, its clusters of each depth bucket, then where they start (cull_bins.comp); then the same of the triangles listed of them (raster_lists.slang)
+	listed_buffer:        rhi.Buffer, // and as the cull listed them, with their bins
+	raster_entries:       rhi.Buffer, // what each keeps between the passes that list its triangles for the raster (abi.RASTER_ENTRY_WORDS)
+	raster_vertices:      rhi.Buffer, // the vertices the raster of the visibility target draws of them (raster_vertices.comp)
+	raster_indices:       rhi.Buffer, // the triangles of them it draws, three of those vertices each (raster_triangles.comp)
+	raster_ids:           rhi.Buffer, // and the word the visibility target names each by
 	cluster_candidate_buffer: rhi.Buffer, // the clusters phase 0 found hidden
-	program_bins:         rhi.Buffer, // the visible clusters of Surface programs as the cull lists them, their counts by program and the draws of each (cull_programs.slang)
-	program_visible:      rhi.Buffer, // and the same, by program: the list those draws read
+	program_draws:        rhi.Buffer, // Gpu_Program_Draw of the resolve of each Surface program, POINTS_PROGRAM_CAPACITY of them
 	shadow_chunks:        rhi.Buffer, // the chunks the instance pass of the cull of the maps of the shadows hands its cluster pass
-	shadow_entries:       rhi.Buffer, // the clusters the maps of the shadows draw (shadow_cull.slang)
+	shadow_entries:       rhi.Buffer, // the clusters the maps of the shadows draw into each page (shadow_cull.slang)
+	shadow_raster_entries: rhi.Buffer, // what each keeps between the passes that list its triangles for the raster (abi.RASTER_ENTRY_WORDS)
 	cull_capacity:        [Cull_List]u32, // of those lists, in entries
-	cull_wanted:          [Cull_List]u32, // what a frame that dropped asked for: they grow to it
+	raster_share:         [2]u32, // of the vertices and the triangles of the raster, what a round of a view takes: the share of its own need, whatever a round of the maps grew them to
+	raster_shadow_wanted: [2]u32, // the most a round of the maps asked them for (Gpu_Cull_Stats.shadow_need)
+	mesh_draws:           rhi.Buffer, // the indices of the meshes drawn whole this frame (mesh_draws_plan), which gbuffer.vert and extensions draw them by
+	mesh_draws_capacity:  u32, // of it, in indices
+	mesh_draws_wanted:    u32, // the most a frame asked for since the marks were set: it grows to it
+	cull_wanted:          [Cull_List]u32, // what a frame that dropped asked for since the marks were set (renderer_capacity_marks_set): they grow to it
 	candidate_buffer:     rhi.Buffer, // per instance and slot of a batch: rejected by the phase 0 occlusion test
 	batch:                Batch_State,
 	tlas:                 rhi.Accel,
@@ -357,6 +451,7 @@ Scene_State :: struct {
 	light_tree:           [dynamic]Gpu_Light_Node, // the lights by groups of neighbors (light_tree.odin)
 	light_keys:           [dynamic]Light_Key,
 	light_leaves:         [dynamic]u32, // of each light, its leaf in light_tree, or LIGHT_TREE_NONE
+	light_shadowless:     [dynamic]bool, // of each light, whether it casts no shadows (Light_Desc.shadowless)
 	light_tree_cost:      f64,          // of the tree now (light_tree_cost)
 	light_tree_built:     f64,          // of the tree when it was built
 	light_capacity:       int,
@@ -366,6 +461,7 @@ Scene_State :: struct {
 	light_grid:           Light_Grid,
 	light_grid_buffer:    rhi.Buffer,
 	light_grid_stale:     bool, // a light changed since the grid was placed
+	light_grid_placed:    u64,  // counts the times the grid was placed
 	light_grid_dirty:     bool, // the grid was placed again and the GPU fills it in the next frame (light_grid_record)
 	lights_dirty:         bool,               // every light and node goes to the GPU
 	light_ranges:         [dynamic]Pool_Range, // else the lights that changed since the last upload
@@ -376,18 +472,60 @@ Scene_State :: struct {
 	light_flux:           f32,  // of the lights the probe volume holds, when they last changed (blackout.odin)
 	flux_seen:            f32,  // of the whole scene in the frame before
 	lights_scale:         f32,  // render units per nit the lights are in: the light scale, or the one before a world started without light
-	light_region:         Light_Region, // lights a pass writes on the GPU, in the room before the tree (light_region_first)
-	light_region_written: bool, // by a pass of the frame before (pass_lights)
-	light_region_box:     [2]Vec3, // what of the scene its lights with shadows light, grown so that they move a little before the grid is placed again; empty: none
-	light_region_reach:   f32,  // the farthest one of them lights, metres
-	light_region_asked:   u32,  // how many of them a pass asked for
 	light_revision:       u64,  // counts the sets of lights: an index means the same light while it holds
 	light_scale:          f32,  // render units per nit (light_scale_of)
 	light_key:            f32,  // what the strongest local light gives a white surface a metre away that faces it, nits
 	exposure:             Exposure, // of the views whose camera has no exposure of its own (Exposure.own)
+	indirect:             f32,      // what multiplies the light of the probe volume where the views take it (scene_set_indirect)
 	changes:              Light_Changes, // where the light of the world changed since the GI last looked
 	occluders:            Occluder_Changes, // what casts shadows and changed since the last frame drew the scene
-	paged:                Occluder_Changes, // the instances of the meshes whose pages came or went since then
+	// What changed since then for the maps of the shadows (shadow_changed):
+	// each instance once, the room of the instances; what is not one instance
+	// (batches, the instances of the meshes whose pages came or went, instances
+	// gone) and the masked materials whose coverage changed.
+	shadow_changes:       [dynamic]Occluder_Change,
+	shadow_tracks:        [dynamic]Shadow_Track, // of each instance
+	shadow_followed:      [dynamic]u32,          // the instances whose track has a frame
+	// What the culls by instance of the maps of a view go over (shadow_reach):
+	// the ranges of instances, written each time they are planned; the
+	// batches drawn that cast, by the middle of their box along x, taken
+	// again with the tables of the batches, the widest half of their boxes;
+	// the batches that move in a frame, and those a slot reaches.
+	shadow_ranges:        [dynamic][2]u32,
+	shadow_casters:       [dynamic]Shadow_Caster, // of each batch drawn (shadow_casters_update)
+	shadow_casters_tables: u64,
+	shadow_casters_half:  f32,
+	shadow_casters_cull:  bool, // a caster has a cull distance
+	shadow_casters_low:   Vec3,
+	shadow_casters_high:  Vec3,
+	shadow_order:         [dynamic]u32,
+	shadow_all:           [dynamic][2]u32,
+	shadow_all_threads:   u32,
+	shadow_merge:         [dynamic]u32,
+	shadow_keys:          [dynamic]Shadow_Key,
+	shadow_marks:         [dynamic]u64,
+	shadow_near:          [dynamic]u32,
+	shadow_band:          [dynamic]u32, // the batches drawn of shadow_order
+	shadow_band_keys:     [dynamic]f32, // and twice the middle of their box along x
+	shadow_sun_boxes:     [dynamic][2]Vec3, // of each caster on the axes of the levels of the sun, while the tables and the axes stay
+	shadow_sun_tables:    u64,
+	shadow_sun_axes:      [3]Vec3,
+	shadow_movers:        [dynamic]Shadow_Mover,
+	shadow_mover_bits:    [dynamic]u32, // a bit for each instance that moves in the maps, of the scene then of the batches drawn (Shadow_Plan.movers words)
+	shadow_batch_bits:    [dynamic]u32, // and of the batches that move alone, found with them (shadow_movers_find)
+	shadow_mover_of:      [dynamic]i32, // of each batch drawn, its place in shadow_movers; -1: it does not move
+	shadow_movers_fine:   f32, // the widest sway of them
+	shadow_movers_last:   u32, // past the bit of the last of them
+	shadow_movers_key:    [3]u64, // what they were found from: shadow_movers_version, the tables and the instances of the scene
+	shadow_movers_found:  u64, // counts the times they were found
+	shadow_movers_version: u64, // counts the changes of the batches drawn that move in the maps (Batch_Record.shadow_moving)
+	shadow_sway_tables:   u64, // the tables of the batches those were last found in (Batch_State.tables)
+	shadow_views:         [dynamic]Shadow_View_Reach, // what the culls of the slots of each view go over, kept (Shadow_Raster.reach)
+	shadow_stale:         Occluder_Changes,
+	// The rows of masked materials that changed what their casters cover since
+	// the maps last drew; past their room every caster is stale (shadow_stale.covers).
+	shadow_rows:          [OCCLUDER_CHANGES_MAX]u32,
+	shadow_row_count:     int,
 	sun:                  Sun_Desc,
 	environment:          Environment,
 
@@ -398,6 +536,7 @@ Scene_State :: struct {
 	ray_cut_eye:          Vec3, // where the eye was when the cuts rays trace were chosen (ray_cuts_update)
 	ray_cut_frame:        u64,  // and the frame
 	ray_cuts_stale:       bool, // the instances changed since
+	tested_stale:         bool, // a row changed how rays see it since the meshes were laid out by the slots their rows test (meshes_tested_update)
 	pages:                Pages_State, // the slots of the pages of streamed meshes
 	uploads:              Geometry_Uploads, // meshes whose geometry goes to the GPU over frames (geometry_uploads.odin)
 }
@@ -417,6 +556,7 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.colors = make([dynamic]Pool_Range,a)
 	s.pages.streamed = make([dynamic]u32, a)
 	s.light_scale, s.lights_scale = 1, 1
+	s.indirect = 1
 	// An empty table has no smooth material.
 	s.smoothest = 1
 	for &ranges in s.pool_free {ranges=make([dynamic]Pool_Range,a)}
@@ -426,6 +566,25 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.instances = make([dynamic]Gpu_Instance, a)
 	s.instance_next=make([dynamic]i32,a)
 	s.instance_prev=make([dynamic]i32,a)
+	s.shadow_changes = make([dynamic]Occluder_Change, a)
+	s.shadow_tracks = make([dynamic]Shadow_Track, a)
+	s.shadow_followed = make([dynamic]u32, a)
+	s.shadow_ranges = make([dynamic][2]u32, a)
+	s.shadow_casters = make([dynamic]Shadow_Caster, a)
+	s.shadow_movers = make([dynamic]Shadow_Mover, a)
+	s.shadow_mover_bits = make([dynamic]u32, a)
+	s.shadow_batch_bits = make([dynamic]u32, a)
+	s.shadow_mover_of = make([dynamic]i32, a)
+	s.shadow_order = make([dynamic]u32, a)
+	s.shadow_all = make([dynamic][2]u32, a)
+	s.shadow_merge = make([dynamic]u32, a)
+	s.shadow_keys = make([dynamic]Shadow_Key, a)
+	s.shadow_marks = make([dynamic]u64, a)
+	s.shadow_near = make([dynamic]u32, a)
+	s.shadow_band = make([dynamic]u32, a)
+	s.shadow_band_keys = make([dynamic]f32, a)
+	s.shadow_sun_boxes = make([dynamic][2]Vec3, a)
+	s.shadow_views = make([dynamic]Shadow_View_Reach, a)
 	s.overlays = make([dynamic]Instance_Overlays, a)
 	s.reflective = make([dynamic]Reflective_Instance, a)
 	s.materials = make([dynamic]Gpu_Material_Row, a)
@@ -445,6 +604,7 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.light_tree = make([dynamic]Gpu_Light_Node, a)
 	s.light_keys = make([dynamic]Light_Key, a)
 	s.light_leaves = make([dynamic]u32, a)
+	s.light_shadowless = make([dynamic]bool, a)
 	// A refit adds a path of the tree before the ranges are counted.
 	s.light_ranges, errors[1] = make([dynamic]Pool_Range, 0, LIGHT_RANGES_MAX + LIGHT_TREE_DEPTH + 1, a)
 	s.light_node_ranges, errors[2] = make([dynamic]Pool_Range, 0, LIGHT_RANGES_MAX + LIGHT_TREE_DEPTH + 1, a)
@@ -460,7 +620,7 @@ MATERIAL_RANGES_MAX :: 64 // rows that go to the GPU in ranges; past them the wh
 gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
 	mode, opacity := m.alpha_mode, clamp(m.opacity, 0, 1)
 	transmission := clamp(m.transmission, 0, 1) if mode != .Mask else 0
-	// The opacity of an opaque material is not a filter: its glass passes its base color.
+	// The opacity of an opaque material is not its coverage: its glass covers whole.
 	if transmission > 0 && mode == .Opaque {mode, opacity = .Blend, 1}
 	result := Gpu_Material_Row{
 		shared = {
@@ -472,6 +632,7 @@ gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row 
 			transmission = transmission, ior = max(m.ior, 1), thickness = max(m.thickness, 0), attenuation_distance = max(m.attenuation_distance, 0),
 			attenuation_color = {clamp(m.attenuation_color.x, 0, 1), clamp(m.attenuation_color.y, 0, 1), clamp(m.attenuation_color.z, 0, 1)},
 			alpha_mode = u32(mode), emission_mode = u32(m.emission_mode), program_id = m.program_id,
+			two_sided = 1 if m.two_sided else 0,
 		},
 		custom_params = m.custom_params,
 	}
@@ -482,7 +643,9 @@ gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row 
 	// of those it does not.
 	if m.program_id != 0 {
 		for program in renderer_programs(r) {
-			if program.id == m.program_id && program.domain == .Surface {layers += program.layers}
+			if program.id != m.program_id || program.domain != .Surface {continue}
+			layers += program.layers
+			result.volume.changing = u32(.Time in program.reads)
 		}
 	}
 	result.layers = transmute(u32)layers
@@ -493,6 +656,7 @@ gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row 
 	result.anisotropy = {amount = clamp(m.anisotropy.amount, 0, 1), rotation = {math.cos(m.anisotropy.rotation), math.sin(m.anisotropy.rotation)}}
 	result.diffuse_transmission = {color = linalg.clamp(d.color, 0, 1), weight = clamp(d.weight, 0, 1)}
 	for texture, kind in m.textures {result.textures[kind] = texture_index(r, texture)}
+	if !material_mask_own(m) {result.textures[.Mask] = result.textures[.Base_Color]}
 	// The usual packing of glTF: occlusion in the red of the metallic-roughness
 	// texture. Placed the same way, the shader reads it from that sample.
 	maps := m.maps
@@ -503,10 +667,16 @@ gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row 
 	return result
 }
 
+// Whether a material has a mask map of its own; without one its mask is its
+// base color map, placed the same way.
+@(private = "file")
+material_mask_own :: proc "contextless" (m: Material_Desc) -> bool {return m.textures[.Mask] != 0 || m.maps.mask.texture != {}}
+
 @(private)
 gpu_material :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
 	result := gpu_material_values(r, m)
 	maps := m.maps
+	if !material_mask_own(m) {maps.mask = maps.base_color}
 	for transform, kind in asset.material_maps(&maps) {
 		// rotation * (scale * uv) + offset, as one matrix and one offset.
 		sine, cosine := math.sin(transform.rotation), math.cos(transform.rotation)
@@ -525,7 +695,8 @@ gpu_material :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
 // the default material. Vertices and instances name rows, so while meshes are
 // resident the table only grows or changes the values of its rows. Only the
 // rows whose values differ go to the GPU, with the next frame, and they keep
-// the BLASes, the TLAS and the light list (materials_store). False without
+// the TLAS, the light list and the BLASes but those of the meshes whose slots
+// a row starts or stops testing (meshes_tested_update). False without
 // memory for the rows: the table stays as it was.
 materials_set :: proc(r: ^Renderer, materials: []Material_Desc) -> bool {
 	s := &r.scene
@@ -600,7 +771,14 @@ material_store :: proc(s: ^Scene_State, row: u32, value: Gpu_Material_Row, chang
 	}
 	changes.class ||= material_class(held^) != material_class(value)
 	// What a masked row covers is in the maps of the shadows that hold its casters.
-	s.occluders.covers ||= held.alpha_mode != value.alpha_mode || value.alpha_mode == u32(asset.Alpha_Mode.Mask)
+	if held.alpha_mode != value.alpha_mode || value.alpha_mode == u32(asset.Alpha_Mode.Mask) {
+		if s.shadow_row_count < len(s.shadow_rows) {
+			s.shadow_rows[s.shadow_row_count] = row
+			s.shadow_row_count += 1
+		} else {
+			s.shadow_stale.covers = true
+		}
+	}
 	changes.smoothest ||= material_smoothness(value) < s.smoothest || material_smoothness(held^) == s.smoothest
 	if held.program_id != value.program_id || held.alpha_mode != value.alpha_mode {
 		program_rows_count(s, held^, false)
@@ -616,11 +794,11 @@ program_rows_count :: proc(s: ^Scene_State, row: Gpu_Material_Row, added: bool) 
 	program := row.program_id
 	if program == 0 {return}
 	if added {s.programmed_rows += 1} else {s.programmed_rows -= 1}
-	if row.alpha_mode == u32(asset.Alpha_Mode.Blend) {
-		if added {s.programmed_glass += 1} else {s.programmed_glass -= 1}
-	}
 	if program >= POINTS_PROGRAM_CAPACITY {return}
 	if added {s.program_rows[program] += 1} else {s.program_rows[program] -= 1}
+	if row.alpha_mode != u32(asset.Alpha_Mode.Blend) {
+		if added {s.program_opaque_rows[program] += 1} else {s.program_opaque_rows[program] -= 1}
+	}
 	if s.program_rows[program] == (1 if added else 0) {
 		if added {s.programs_used += 1} else {s.programs_used -= 1}
 		s.programs_arrived ||= added
@@ -660,11 +838,11 @@ materials_lit :: proc(s: ^Scene_State, rows: []u32) {
 			if layer.enabled && shows(rows, u32(layer.material)) {found = true}
 		}
 		if !found {continue}
-		scene_changed_near(s, (inst.bounds_min.xyz + inst.bounds_max.xyz) * 0.5, linalg.length(inst.bounds_max.xyz - inst.bounds_min.xyz) * 0.5 + LIGHT_CHANGE_REACH)
-		if s.changes.all {return}
+		scene_changed_seen(s, inst.bounds_min.xyz, inst.bounds_max.xyz, LIGHT_CHANGE_REACH)
+		if s.changes.all && s.changes.seen {return}
 	}
 	for light in s.lights {
-		if light.direction_cone.w == GPU_LIGHT_RECT && shows(rows, transmute(u32)light.size.w) {scene_changed_near(s, light.position_range.xyz, light.position_range.w)}
+		if row, rect := light_emission_row(light); rect && shows(rows, row) {scene_changed_near(s, light.position_range.xyz, light.position_range.w)}
 	}
 }
 
@@ -748,9 +926,27 @@ materials_changed :: proc(s: ^Scene_State, changes: Material_Changes) {
 	}
 	// The alpha mode of a material decides how its instances are traced and drawn,
 	// and its program whether they move their vertices.
-	if changes.class {instances_classify(s);s.displaced_stale=true}
+	if changes.class {instances_classify(s);s.displaced_stale=true;s.tested_stale=true;s.geometry_dirty=true}
 	// The rows of the batches take the classes of their materials when they are built.
 	if changes.class {s.batch.built = false}
+}
+
+// The texture of the table at `entry` goes: what rays meet changes around
+// what shows a row whose light reads it (material_lit), in a map or in a
+// texture of its program, as when that row changes. The next texture added
+// may take its handle under the same rows.
+@(private)
+materials_texture_gone :: proc(r: ^Renderer, entry: u32) {
+	changes: Material_Changes
+	for row, i in r.scene.materials {
+		seen := material_lit(row)
+		reads := program_names_texture(r, &seen, entry)
+		for texture in seen.textures {reads ||= texture == entry}
+		if !reads {continue}
+		if changes.lit_count < MATERIAL_LIT_ROWS {changes.lit[changes.lit_count] = u32(i)}
+		changes.lit_count += 1
+	}
+	materials_changed(&r.scene, changes)
 }
 
 // The instances that reflect and those with glass, and how rays see each, from
@@ -759,18 +955,32 @@ materials_changed :: proc(s: ^Scene_State, changes: Material_Changes) {
 instances_classify :: proc(s: ^Scene_State) {
 	clear(&s.translucent)
 	clear(&s.reflective)
+	s.program_shown_opaque = {}
 	for &inst, i in s.instances {
 		if int(inst.meta.x & INSTANCE_MESH_MASK) >= len(s.meshes) {continue}
-		tested, blended, glass, reflectance, layered, solid, glass_layered := instance_alpha(s, s.meshes[inst.meta.x & INSTANCE_MESH_MASK], inst.meta.y, inst.slot_materials, inst.material_values)
-		flags := (inst.meta.w &~ (INSTANCE_FLAG_ALPHA_TESTED | INSTANCE_FLAG_BLENDED | INSTANCE_FLAG_TRANSLUCENT)) | alpha_flags(tested, blended, glass)
-		if reflectance && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.reflective, Reflective_Instance{u32(i), layered})}
-		if flags != inst.meta.w {
-			inst.meta.w = flags
-			s.hw_instances[i].mask_flags = tlas_mask_flags(ray_class(flags), tested)
+		mesh := s.meshes[inst.meta.x & INSTANCE_MESH_MASK]
+		a := instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
+		if a.shown_opaque != 0 {
+			palette := inst.slot_materials
+			for packed, k in s.indices[mesh.slot_word:][:mesh.slot_count] {
+				row := instance_row(packed, inst.meta.y, &palette)
+				if a.shown_opaque & (1 << u32(k)) == 0 || int(row) >= len(s.materials) {continue}
+				if program := s.materials[row].program_id; program < POINTS_PROGRAM_CAPACITY {s.program_shown_opaque[program] = true}
+			}
+		}
+		flags := (inst.meta.w &~ (INSTANCE_FLAG_ALPHA_TESTED | INSTANCE_FLAG_BLENDED | INSTANCE_FLAG_TRANSLUCENT)) | alpha_flags(a)
+		if a.reflectance && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.reflective, Reflective_Instance{u32(i), a.layered})}
+		mask_flags := tlas_mask_flags(ray_class(inst.meta.x, flags), a.tested, mesh.tested)
+		if flags != inst.meta.w || a.tested != inst.tested || mask_flags != s.hw_instances[i].mask_flags {
+			before := inst
+			inst.meta.w, inst.tested = flags, a.tested
+			// What its values made glass, or fade, the maps draw again where it is.
+			if !instance_shades_same(before, inst) {occluder_moved(s, u32(i), before, inst)}
+			s.hw_instances[i].mask_flags = mask_flags
 			s.instances_dirty = true
 			s.tlas_dirty = true
 		}
-		if blended && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.translucent, Translucent{instance = u32(i), solid = solid, layered = glass_layered})}
+		if a.blended && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.translucent, Translucent{instance = u32(i), solid = a.solid, layered = a.glass_layered})}
 	}
 	overlay_count_update(s)
 	tlas_refs_classify(s)
@@ -781,7 +991,7 @@ instances_classify :: proc(s: ^Scene_State) {
 tlas_refs_classify :: proc(s: ^Scene_State) {
 	if s.tlas_off {return}
 	s.glass_node_count = 0
-	if len(s.instances) == 0 || s.tlas_node_count == 0 {return}
+	if s.tlas_node_count == 0 {return}
 	for &ref in s.tlas_refs {
 		index := ref &~ TLAS_REF_GLASS
 		if int(index) >= len(s.instances) {continue}
@@ -798,44 +1008,68 @@ tlas_refs_classify :: proc(s: ^Scene_State) {
 	}
 }
 
-// Whether rays have to ask the materials of an instance, whether some of its
-// triangles are blended, and whether all of them are. material is the row
-// that replaces those of the mesh, or GPU_NONE.
+// What the materials of an instance make of how it is traced and drawn.
+// tested: the slots whose materials rays and the maps of the shadows ask, a
+// bit each (Gpu_Instance.tested); blended: some of its triangles are
+// blended; glass: all of them; reflectance: one of its opaque materials
+// reflects other than the default dielectric, which the albedo and metallic
+// of the G-buffer give by themselves; layered: one of its opaque materials
+// has layers; solid: one of its blended ones has a thickness; glass_layered:
+// one of its blended ones has layers. shown_opaque: a bit for each slot
+// whose row is a blended one with a program that its values show otherwise.
 @(private)
-// reflectance: one of its opaque materials reflects other than the default
-// dielectric, which the albedo and metallic of the G-buffer give by themselves.
-// glass_layered: one of its blended materials has layers. given: what the
-// instance gives its rows (Gpu_Instance.material_values).
-instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:[32]u32, given: u32 = 0) -> (tested, blended, glass, reflectance, layered, solid, glass_layered: bool) {
+Instance_Alpha :: struct {
+	tested, shown_opaque: u32,
+	blended, glass, reflectance, layered, solid, glass_layered: bool,
+}
+
+// material is the row that replaces those of the mesh, or GPU_NONE; given:
+// what the instance gives its rows (Gpu_Instance.material_values).
+@(private)
+instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:[32]u32, given: u32 = 0) -> (a: Instance_Alpha) {
     palette:=slots
     defaults:=asset.MATERIAL_DEFAULTS
-    glass = mesh.slot_count > 0
-    for packed in s.indices[mesh.slot_word:][:mesh.slot_count] {
+    a.glass = mesh.slot_count > 0
+    // A fade leaves out, by a pattern, what rays and the maps of the shadows meet of every row.
+    faded:=instance_values_fade(s,given)>0
+    for packed, k in s.indices[mesh.slot_word:][:mesh.slot_count] {
         row:=instance_row(packed,material,&palette)
         m:=asset.Alpha_Mode.Opaque
         if int(row)<len(s.materials) {
             values:=instance_material(s,given,row)
             m=asset.Alpha_Mode(values.alpha_mode)
+            if given!=0 && m!=.Blend && values.program_id!=0 && s.materials[row].alpha_mode==u32(asset.Alpha_Mode.Blend) {a.shown_opaque|=1<<u32(k)}
             departs:=values.program_id!=0 || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior
-            if m != .Blend && (departs || values.textures[.Specular]!=GPU_NONE || values.textures[.Specular_Color]!=GPU_NONE) {reflectance=true}
+            if m != .Blend && (departs || values.textures[.Specular]!=GPU_NONE || values.textures[.Specular_Color]!=GPU_NONE) {a.reflectance=true}
             lit:=transmute(asset.Material_Layers)values.layers-{.Unlit}
             if card(lit)>0 {
-                if m == .Blend {glass_layered=true} else {layered=true}
+                if m == .Blend {a.glass_layered=true} else {a.layered=true}
             }
-            if m == .Blend {solid ||= values.transmission > 0 && values.thickness > 0}
+            if m == .Blend {a.solid ||= values.transmission > 0 && values.thickness > 0}
         }
-        tested ||= m != .Opaque
-        blended ||= m == .Blend
-        glass &&= m == .Blend
+        if m != .Opaque || faded {a.tested |= 1 << u32(k)}
+        a.blended ||= m == .Blend
+        a.glass &&= m == .Blend
     }
     // The layers of a material reach the G-buffer with its reflectance.
-    reflectance ||= layered
+    a.reflectance ||= a.layered
     return
 }
 
+// The slots of a mesh whose own rows rays ask, a bit each: the BLASes of its
+// cuts hold their triangles apart from the others (table_partition).
 @(private)
-alpha_flags :: proc "contextless" (tested, blended, glass: bool) -> u32 {
-	return (INSTANCE_FLAG_ALPHA_TESTED if tested else 0) | (INSTANCE_FLAG_TRANSLUCENT if blended else 0) | (INSTANCE_FLAG_BLENDED if glass else 0)
+mesh_tested :: proc "contextless" (s: ^Scene_State, m: Mesh_Record) -> (tested: u32) {
+	for packed, k in s.indices[m.slot_word:][:m.slot_count] {
+		row := packed & 0xffffff
+		if int(row) < len(s.materials) && s.materials[row].alpha_mode != u32(asset.Alpha_Mode.Opaque) {tested |= 1 << u32(k)}
+	}
+	return
+}
+
+@(private)
+alpha_flags :: proc "contextless" (a: Instance_Alpha) -> u32 {
+	return (INSTANCE_FLAG_ALPHA_TESTED if a.tested != 0 else 0) | (INSTANCE_FLAG_TRANSLUCENT if a.blended else 0) | (INSTANCE_FLAG_BLENDED if a.glass else 0)
 }
 
 @(private = "file")
@@ -848,14 +1082,21 @@ instance_small :: proc "contextless" (low, high: Vec3) -> u32 {
 instance_resized :: proc(s: ^Scene_State, index: int, low, high: Vec3) {
 	inst := &s.instances[index]
 	inst.meta.w = (inst.meta.w & ~u32(INSTANCE_FLAG_SMALL)) | instance_small(low, high)
-	hw := &s.hw_instances[index]
-	hw.mask_flags = tlas_mask_flags(ray_class(inst.meta.w), hw.mask_flags & rhi.TLAS_ALPHA_TESTED != 0)
+	s.hw_instances[index].mask_flags = instance_tlas_flags(s, inst^)
+}
+
+// The mask and the flags of an instance of the native TLAS.
+@(private)
+instance_tlas_flags :: proc "contextless" (s: ^Scene_State, inst: Gpu_Instance) -> u32 {
+	mesh := int(inst.meta.x & INSTANCE_MESH_MASK)
+	return tlas_mask_flags(ray_class(inst.meta.x, inst.meta.w), inst.tested, s.meshes[mesh].tested if mesh < len(s.meshes) else 0)
 }
 
 @(private = "file")
-ray_class :: proc "contextless" (flags: u32) -> u8 {
+ray_class :: proc "contextless" (mesh_word, flags: u32) -> u8 {
 	if flags & INSTANCE_FLAG_HIDDEN != 0 {return 0}
 	if flags & INSTANCE_FLAG_BLENDED != 0 {return RAY_GLASS}
+	if mesh_word & INSTANCE_UNSHADOWED != 0 {return RAY_UNSHADOWED}
 	return RAY_SMALL if flags & INSTANCE_FLAG_SMALL != 0 else RAY_SOLID
 }
 
@@ -993,6 +1234,42 @@ geometry_blas_inputs :: proc(r:^Renderer,frame:bool) -> (left:bool) {
 
 BLAS_INPUT_TRIANGLES :: 1<<18 // of the meshes whose native BLAS a frame builds, before the next mesh waits
 
+// The meshes whose rows test other slots than their BLASes hold apart
+// (Mesh_Record.tested) take them, and their BLASes and inputs go, to be built
+// again with them; until then their instances that ask other slots than the
+// mesh make every triangle a candidate. A mesh whose inputs still go to the
+// GPU waits for the publication after.
+@(private)
+meshes_tested_update :: proc(r:^Renderer) {
+    s:=&r.scene
+    if !s.tested_stale {return}
+    s.tested_stale=false
+    changed:=false
+    for &m,index in s.meshes {
+        if m.vertex_count==0 {continue}
+        tested:=mesh_tested(s,m)
+        if tested==m.tested {continue}
+        if inputs_queued(s,u32(index)) {s.tested_stale=true;continue}
+        m.tested=tested
+        for &ray in m.rays[:m.ray_count] {
+            if ray.blas!=0 {
+                rhi.accel_destroy(r.device,ray.blas)
+                ray.blas=0
+                geometry_released(s,u64(ray.table_count)*BLAS_TRIANGLE_BYTES)
+            }
+            if ray.input_vertices>0 {pool_release(&s.vertices,&s.pool_free[.Vertex],ray.input_vertex,ray.input_vertices)}
+            if ray.input_indices>0 {pool_release(&s.indices,&s.pool_free[.Index],ray.input_index,ray.input_indices)}
+            ray.input_vertex,ray.input_vertices,ray.input_index,ray.input_indices=0,0,0,0
+        }
+        range_add(&s.mesh_dirty,{u32(index),1})
+        changed=true
+    }
+    if !changed {return}
+    instances_classify(s)
+    s.batch.built=false
+    s.ray_cuts_stale,s.tlas_dirty=true,true
+}
+
 @(private)
 geometry_blases_prepare :: proc(r:^Renderer,pending:^[dynamic]rhi.Accel) -> bool {
     if !r.hardware_rt {return true}
@@ -1084,6 +1361,7 @@ renderer_commit_geometry :: proc(r: ^Renderer, cmd: ^rhi.Command_List = nil, slo
 	if !dirty && !written && !geometry_uploads_left(s) {return true}
 	d := r.device
 	blas_inputs_release(r)
+	meshes_tested_update(r)
 	left := geometry_blas_inputs(r, cmd != nil)
 	held: [Mesh_Pool]int
 	for pool in Mesh_Pool {
@@ -1098,7 +1376,7 @@ renderer_commit_geometry :: proc(r: ^Renderer, cmd: ^rhi.Command_List = nil, slo
 	s.pools_grown = {}
 	// A BLAS a pose refits reads the pools it was made over: new ones make it again.
 	for &m,index in s.meshes {
-		if m.skin!=nil && grown & {.Vertex,.Node,.Triangle} != {} {m.skin.dirty=true}
+		if m.skin!=nil && grown & {.Vertex,.Node,.Triangle} != {} {m.skin.dirty,m.skin.retrace=true,true}
 		if m.skin!=nil && m.rays[0].blas!=0 && grown & {.Vertex,.Index} != {} {
 			rhi.accel_destroy(d,m.rays[0].blas);m.rays[0].blas=0;range_add(&s.mesh_dirty,{u32(index),1})
 		}
@@ -1130,10 +1408,7 @@ renderer_commit_geometry :: proc(r: ^Renderer, cmd: ^rhi.Command_List = nil, slo
 	// Meshes whose BLAS waits for the budget of a frame come in the next one.
 	s.geometry_dirty = left
 	// What goes over frames alone is of meshes nothing draws yet.
-	if dirty {
-		s.tlas_dirty = true
-		r.glass_stale = true
-	}
+	if dirty {s.tlas_dirty = true}
 	if cmd == nil {geometry_uploads_install(r)}
 	return true
 }
@@ -1178,6 +1453,9 @@ instance_placement :: proc "contextless" (m: Mat4, low, high: Vec3) -> (inverse:
 	return
 }
 
+// The tree of nothing, which rays miss: its root names itself as its children.
+TLAS_EMPTY :: Gpu_Bvh_Node{bounds_min = {1, 1, 1}, bounds_max = {-1, -1, -1}}
+
 TLAS_REFIT_SLACK :: 1.5 // how much worse than when it was built a refit tree may get before it is built again
 
 // The tree of the instances, their references classified, from tlas_items,
@@ -1206,7 +1484,7 @@ tlas_build :: proc(s: ^Scene_State) {
 	}
 	if !built {
 		clear(&s.tlas_nodes)
-		append(&s.tlas_nodes, Gpu_Bvh_Node{bounds_min = {1, 1, 1}, bounds_max = {-1, -1, -1}})
+		append(&s.tlas_nodes, TLAS_EMPTY)
 		clear(&s.tlas_refs)
 		append(&s.tlas_refs, 0)
 	}
@@ -1228,7 +1506,9 @@ tlas_build :: proc(s: ^Scene_State) {
 @(private = "file")
 tlas_refit :: proc(s: ^Scene_State) -> f32 {
 	nodes := s.tlas_nodes[:s.tlas_node_count]
-	if len(s.instances) == 0 && len(s.batch.traced) == 0 || len(nodes) == 0 {return 0}
+	// What the tree holds is what it was built over, not what the scene has
+	// now: the tree of nothing is TLAS_EMPTY, an inner root without children.
+	if len(nodes) == 0 || nodes[0].count == 0 && nodes[0].left_first == 0 {return 0}
 	total: f64
 	// Children are stored after their parent.
 	#reverse for &node, i in nodes {
@@ -1286,7 +1566,7 @@ scene_move :: proc(r: ^Renderer, descs: []u32, transforms: []Mat4, anchors: []Ve
 		inst.prev_world = inst.world
 		inst.world = world
 		inst.world_inv = rows_3x4(inverse)
-		inst.bounds_min = {bmin.x, bmin.y, bmin.z, inst.bounds_min.w}
+		inst.bounds_min = bmin
 		inst.bounds_max = {bmax.x, bmax.y, bmax.z, inst.bounds_max.w}
 		if !invertible && inst.meta.w & INSTANCE_FLAG_HIDDEN == 0 {
 			inst.meta.w |= INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_COLLAPSED
@@ -1321,7 +1601,7 @@ instance_uncollapse :: proc(s: ^Scene_State, index: u32) -> bool {
 		inst.meta.w &~= INSTANCE_FLAG_HIDDEN
 		s.hidden_count -= 1
 	}
-	s.hw_instances[index].mask_flags = tlas_mask_flags(ray_class(inst.meta.w), inst.meta.w & INSTANCE_FLAG_ALPHA_TESTED != 0)
+	s.hw_instances[index].mask_flags = instance_tlas_flags(s, inst^)
 	return true
 }
 
@@ -1445,12 +1725,12 @@ scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3, values:
 		if values != nil {
 			given := values[at]
 			mesh := s.meshes[inst.meta.x & INSTANCE_MESH_MASK]
-			was: [7]bool
-			was[0], was[1], was[2], was[3], was[4], was[5], was[6] = instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
+			was := instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
+			fade := instance_values_fade(s, inst.material_values)
 			changed ||= instance_material_values_give(r, inst, &given)
-			now: [7]bool
-			now[0], now[1], now[2], now[3], now[4], now[5], now[6] = instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
-			classify ||= now != was
+			classify ||= instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values) != was
+			// The pattern of its fade is in the maps of the shadows that hold it.
+			if fade != instance_values_fade(s, inst.material_values) {occluder_moved(s, u32(index), inst^, inst^)}
 		}
 		if !changed {continue}
 		instance_changed_near(s, inst, glowed || instance_material_values_glow(s, inst.material_values))
@@ -1484,17 +1764,21 @@ instance_row_words :: proc "contextless" (s: ^Scene_State, values, row: u32) -> 
 }
 
 // The values of a row shading holds as an instance shows them, as the
-// shaders read them (material_row(row, block)): its own of the row, and its
-// fade.
+// shaders read them (material_row(row, block)): its own of the row, and the
+// fade of a blended one.
 @(private)
 instance_material :: proc "contextless" (s: ^Scene_State, values, row: u32) -> (m: Gpu_Material) {
 	m = s.materials[row].shared
 	if shown := instance_row_words(s, values, row); shown != nil {m = (cast(^Gpu_Material)raw_data(shown))^}
-	if block := instance_material_values_block(s, values); len(block) > 0 && transmute(f32)block[1] > 0 {
-		m.opacity *= 1 - transmute(f32)block[1]
-		if m.alpha_mode == u32(asset.Alpha_Mode.Opaque) {m.alpha_mode = u32(asset.Alpha_Mode.Blend)}
-	}
+	if m.alpha_mode == u32(asset.Alpha_Mode.Blend) {m.opacity *= 1 - instance_values_fade(s, values)}
 	return
+}
+
+// How much an instance fades out by its values (Instance_Material_Values.fade).
+@(private)
+instance_values_fade :: proc "contextless" (s: ^Scene_State, values: u32) -> f32 {
+	block := instance_material_values_block(s, values)
+	return transmute(f32)block[1] if len(block) > 0 else 0
 }
 
 // Whether what an instance gives changes the emission of a row it shows: its glow reaches as far as that of a tint.
@@ -1679,6 +1963,7 @@ instance_given :: proc "contextless" (inst:Gpu_Instance) -> Instance_Given {retu
 @(private="file")
 instances_reserve :: proc(s:^Scene_State,count:int) -> bool {
     return reserve(&s.instances,count)==nil && reserve(&s.instance_next,count)==nil && reserve(&s.instance_prev,count)==nil &&
+           reserve(&s.shadow_changes,count)==nil && reserve(&s.shadow_tracks,count)==nil && reserve(&s.shadow_followed,count)==nil &&
            reserve(&s.overlays,count)==nil && reserve(&s.instance_keys,count)==nil && reserve(&s.tlas_items,count)==nil &&
            reserve(&s.hw_instances,count)==nil && reserve(&s.touched,(count+63)/64)==nil &&
            reserve(&s.translucent,count)==nil && reserve(&s.reflective,count)==nil &&
@@ -1705,9 +1990,10 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		mesh := s.meshes[desc.mesh]
 		// The cut rays trace an instance with stays while it shows the same mesh
 		// (ray_cuts_update) and, of a streamed mesh, has its pages in the pools.
-		was := s.instances[index].meta.x >> INSTANCE_RAY_SHIFT
+		was := s.instances[index].meta.x >> INSTANCE_RAY_SHIFT & 3
 		kept := s.instances[index].meta.x & INSTANCE_MESH_MASK == u32(desc.mesh) && int(desc.mesh) < len(s.meshes) && was < max(mesh.ray_count, 1) && (mesh.stream == nil || mesh.stream.cut_missing[was] == 0)
 		cut := was << INSTANCE_RAY_SHIFT if kept else u32(ray_cut_always(mesh)) << INSTANCE_RAY_SHIFT
+		if desc.shadowless {cut |= INSTANCE_UNSHADOWED}
 		reach := pose_reach(mesh)
 		inverse, bmin, bmax, invertible := instance_placement(desc.transform, mesh.bounds_min - reach, mesh.bounds_max + reach)
 		key := Instance_Key{desc.object_id, desc.copy_owner, desc.copy_variant}
@@ -1734,7 +2020,7 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 			world_inv = rows_3x4(inverse),
 			prev_world = rows_3x4(previous),
 			meta = {u32(desc.mesh) | cut, material, u32(desc.object_id), flags},
-			bounds_min = {bmin.x, bmin.y, bmin.z, 0},
+			bounds_min = bmin,
 			bounds_max = {bmax.x, bmax.y, bmax.z, 0},
 			tint = {desc.tint.x, desc.tint.y, desc.tint.z, 0},
 			emission = {desc.emission.x, desc.emission.y, desc.emission.z, 0},
@@ -1745,11 +2031,11 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		// Without room for its values it shows its rows as they are (stats.problem says what is missing).
 		values_given := desc.material_values
 		if instance_material_values_give(r, &s.instances[index], &values_given) && instance_material_values_glow(s, s.instances[index].material_values) {instance_changed_near(s, &s.instances[index], true)}
-		tested, blended, glass, reflectance, layered, solid, glass_layered := instance_alpha(s, mesh, material, slot_materials, s.instances[index].material_values)
-		flags |= alpha_flags(tested, blended, glass)
-		s.instances[index].meta.w = flags
-		if reflectance && !hidden {append(&s.reflective, Reflective_Instance{index, layered})}
-		if blended && !hidden {append(&s.translucent, Translucent{instance = index, solid = solid, layered = glass_layered})}
+		a := instance_alpha(s, mesh, material, slot_materials, s.instances[index].material_values)
+		flags |= alpha_flags(a)
+		s.instances[index].meta.w, s.instances[index].tested = flags, a.tested
+		if a.reflectance && !hidden {append(&s.reflective, Reflective_Instance{index, a.layered})}
+		if a.blended && !hidden {append(&s.translucent, Translucent{instance = index, solid = a.solid, layered = a.glass_layered})}
 		head:=s.meshes[desc.mesh].first_instance
 		s.instance_next[index],s.instance_prev[index]=head,-1
 		if head>=0 {s.instance_prev[head]=i32(index)}
@@ -1758,12 +2044,12 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		layers.count=min(layers.count,OVERLAY_CAPACITY)
 		for &layer in layers.entries[:layers.count] {
 			if int(layer.material)>=len(s.materials) || layer.material==0 {layer.enabled=false}
-			if layer.enabled && !hidden && !blended {s.overlay_count+=1}
+			if layer.enabled && !hidden && !a.blended {s.overlay_count+=1}
 		}
 		s.overlays[index]=layers
 		s.instance_keys[index]=key
 		s.tlas_items[index]={bmin, bmax}
-		s.hw_instances[index]=rhi.Tlas_Instance{transform = rows_3x4(desc.transform) if invertible else {}, custom_index = index, mask_flags = tlas_mask_flags(ray_class(flags), tested)}
+		s.hw_instances[index]=rhi.Tlas_Instance{transform = rows_3x4(desc.transform) if invertible else {}, custom_index = index, mask_flags = instance_tlas_flags(s, s.instances[index])}
 		if !hidden {
 			s.bounds_min = linalg.min(s.bounds_min, bmin)
 			s.bounds_max = linalg.max(s.bounds_max, bmax)
@@ -1851,7 +2137,7 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
         if !instance_shades_same(before,s.instances[index]) {occluder_moved(s,index,before,s.instances[index])}
         changed:=flags~s.instances[index].meta.w
         classification||=changed&(INSTANCE_FLAG_BLENDED|INSTANCE_FLAG_HIDDEN)!=0
-        ray_properties||=classification || changed&INSTANCE_FLAG_ALPHA_TESTED!=0
+        ray_properties||=classification || changed&INSTANCE_FLAG_ALPHA_TESTED!=0 || before.tested!=s.instances[index].tested || (before.meta.x~s.instances[index].meta.x)&INSTANCE_UNSHADOWED!=0
         instance_touch(s, index)
     }
     if truncate && end<old {
@@ -1884,7 +2170,7 @@ instance_changed_near :: proc(s: ^Scene_State, inst: ^Gpu_Instance, glowed := fa
 	radius := linalg.length(inst.bounds_max.xyz - inst.bounds_min.xyz) * 0.5
 	glows := glowed || inst.emission.xyz != {}
 	reach := LIGHT_CHANGE_REACH if glows else min(LIGHT_CHANGE_REACH, LIGHT_CHANGE_SIZES * radius)
-	scene_changed_near(s, (inst.bounds_min.xyz + inst.bounds_max.xyz) * 0.5, radius + reach)
+	scene_changed_seen(s, inst.bounds_min.xyz, inst.bounds_max.xyz, reach)
 }
 
 // Whether two instances cast the same shadows.
@@ -1898,7 +2184,7 @@ instance_shades_same :: proc(a, b: Gpu_Instance) -> bool {
 // changes is drawn over the image and leaves it.
 @(private = "file")
 instance_lit_same :: proc(a, b: Gpu_Instance) -> bool {
-	return a.world == b.world && a.meta.x & INSTANCE_MESH_MASK == b.meta.x & INSTANCE_MESH_MASK && a.meta.y == b.meta.y && a.meta.w &~ INSTANCE_HIGHLIGHT_MASK == b.meta.w &~ INSTANCE_HIGHLIGHT_MASK && a.tint.xyz == b.tint.xyz && a.emission.xyz == b.emission.xyz && a.slot_materials == b.slot_materials
+	return a.world == b.world && a.meta.x & (INSTANCE_MESH_MASK | INSTANCE_UNSHADOWED) == b.meta.x & (INSTANCE_MESH_MASK | INSTANCE_UNSHADOWED) && a.meta.y == b.meta.y && a.meta.w &~ INSTANCE_HIGHLIGHT_MASK == b.meta.w &~ INSTANCE_HIGHLIGHT_MASK && a.tint.xyz == b.tint.xyz && a.emission.xyz == b.emission.xyz && a.slot_materials == b.slot_materials
 }
 
 // Lighting runs in render units: a luminance in nits by the light scale of
@@ -1926,28 +2212,68 @@ light_gives :: proc "contextless" (l: Light_Desc) -> bool {
 	return l.intensity > 0 && luminance_of(l.color) > 0 && l.range > 0
 }
 
+// The shares of the light of a light the probes gather and media scatter, as
+// the GPU keeps them in the w of the axis of its Gpu_Light: two halves, the
+// first in the low bits (light_shares of common.slang).
+light_shares :: proc "contextless" (indirect, scattering: f32) -> f32 {
+	half :: proc "contextless" (share: f32) -> u32 {return u32(transmute(u16)f16(light_share(share)))}
+	return transmute(f32)(half(indirect) | half(scattering) << 16)
+}
+
+// A share as the renderer takes it: from 0 to the largest half, 0 for NaN.
+@(private)
+light_share :: proc "contextless" (share: f32) -> f32 {return clamp(share, 0, 65504) if share == share else 0}
+
+// The shares a light keeps: what the probes gather (x) and media scatter (y).
+light_shares_of :: proc "contextless" (l: Gpu_Light) -> Vec2 {
+	bits := transmute(u32)l.axis.w
+	return {f32(transmute(f16)u16(bits & 0xffff)), f32(transmute(f16)u16(bits >> 16))}
+}
+
+// The image word of a light (Gpu_Light.size.w): the entry of the texture it
+// projects with GPU_LIGHT_TEXTURE, or else the material row whose emission a
+// rectangle shows; 0: none.
+light_image :: proc "contextless" (texture: Texture_Handle, material: Material_Handle) -> u32 {
+	if texture != 0 {return GPU_LIGHT_TEXTURE | texture_entry(int(texture) - 1)}
+	return u32(material)
+}
+
+// The material row whose emission a rectangle that projects no texture
+// shows (0: none); false for the other lights.
+light_emission_row :: proc "contextless" (l: Gpu_Light) -> (row: u32, rect: bool) {
+	image := transmute(u32)l.size.w
+	return image, l.direction_cone.w == GPU_LIGHT_RECT && image & GPU_LIGHT_TEXTURE == 0
+}
+
 // A local light that gives light in render units.
 @(private = "file")
 gpu_light :: proc(l: Light_Desc, scale: f32) -> Gpu_Light {
 	power := l.intensity / math.PI * scale
 	if l.size.x > 0 && l.size.y > 0 {power *= l.size.x * l.size.y}
-	light := Gpu_Light{position_range = {l.position.x, l.position.y, l.position.z, l.range}, color_intensity = {l.color.x, l.color.y, l.color.z, power}, direction_cone = {0, 0, 0, GPU_LIGHT_POINT}, size = {max(l.radius, 0), 0, 0, 0}}
+	shares := light_shares(l.indirect, l.scattering)
+	light := Gpu_Light{position_range = {l.position.x, l.position.y, l.position.z, l.range}, color_intensity = {l.color.x, l.color.y, l.color.z, power}, direction_cone = {0, 0, 0, GPU_LIGHT_POINT}, size = {max(l.radius, abi.LIGHT_RADIUS_MIN), 0, 0, 0}, axis = {0, 0, 0, shares}}
 	facing := linalg.length(l.direction) > 1e-6
 	along := l.axis - linalg.dot(l.axis, l.direction) / max(linalg.dot(l.direction, l.direction), 1e-12) * l.direction
 	switch {
 	case l.size.x > 0 && l.size.y > 0 && facing && linalg.length(along) > 1e-6:
 		normal, width := linalg.normalize(l.direction), linalg.normalize(along)
 		light.direction_cone = {normal.x, normal.y, normal.z, GPU_LIGHT_RECT}
-		light.size = {0, l.size.x * 0.5, l.size.y * 0.5, transmute(f32)u32(l.material)}
-		light.axis = {width.x, width.y, width.z, 0}
+		light.size = {0, l.size.x * 0.5, l.size.y * 0.5, transmute(f32)light_image(l.texture, l.material)}
+		light.axis = {width.x, width.y, width.z, shares}
 	case l.cone > 0 && facing:
 		direction := linalg.normalize(l.direction)
 		light.direction_cone = {direction.x, direction.y, direction.z, math.cos(clamp(l.cone, 0.001, math.PI * 0.5))}
+		// The right of its texture across the cone: without one, no texture.
+		right := l.texture_axis - linalg.dot(l.texture_axis, direction) * direction
+		if l.texture != 0 && linalg.length(right) > 1e-6 {
+			light.size.z = transmute(f32)mm.normal_pack(linalg.normalize(right))
+			light.size.w = transmute(f32)light_image(l.texture, 0)
+		}
 	}
 	if l.length > 0 && linalg.length(l.axis) > 1e-6 && light.direction_cone.w != GPU_LIGHT_RECT {
 		axis := linalg.normalize(l.axis)
 		light.size.y = l.length * 0.5
-		light.axis = {axis.x, axis.y, axis.z, 0}
+		light.axis = {axis.x, axis.y, axis.z, shares}
 	}
 	return light
 }
@@ -1970,8 +2296,9 @@ LIGHT_RANGES_MAX :: 64
 // other is replaced. A light keeps its index until it is removed, when the
 // last takes its place (scene_light_remove); while the lights keep their
 // number and each keeps its kind (spot or rectangle, or not; with a place or
-// without one) its path of the tree is refit and it goes to the GPU alone,
-// and scene_lights_settle builds the tree again once a frame otherwise. False
+// without one; with shadows or without) its path of the tree is refit and it
+// goes to the GPU alone, and scene_lights_settle builds the tree again once a
+// frame otherwise. False
 // for an index past the last, a light that gives none (light_gives) or
 // without memory for it: nothing changes.
 scene_light_update :: proc(r: ^Renderer, index: u32, desc: Light_Desc) -> bool {
@@ -1987,14 +2314,17 @@ scene_light_update :: proc(r: ^Renderer, index: u32, desc: Light_Desc) -> bool {
 	light := gpu_light(l, s.lights_scale)
 	if added {
 		append(&s.lights, light)
+		append(&s.light_shadowless, desc.shadowless)
 		s.lights_stale = true
+		occluder_light_moved(s, index)
 	} else {
 		before := s.lights[index]
 		Bits :: [size_of(Gpu_Light) / 4]u32
-		if transmute(Bits)before == transmute(Bits)light {return true}
+		if transmute(Bits)before == transmute(Bits)light && s.light_shadowless[index] == desc.shadowless {return true}
 		scene_changed_near(s, before.position_range.xyz, before.position_range.w)
 		s.lights[index] = light
-		s.lights_stale ||= light_directed(before) != light_directed(light) || light_placed(before) != light_placed(light)
+		s.lights_stale ||= light_directed(before) != light_directed(light) || light_reach_class(before) != light_reach_class(light) || light_placed(before) != light_placed(light) || s.light_shadowless[index] != desc.shadowless
+		s.light_shadowless[index] = desc.shadowless
 		if !s.lights_stale {
 			if !light_placed_same(before, light) {occluder_light_moved(s, index)}
 			// Past LIGHT_REFITS_MAX in a frame the whole tree is refit once (scene_lights_settle).
@@ -2002,7 +2332,7 @@ scene_light_update :: proc(r: ^Renderer, index: u32, desc: Light_Desc) -> bool {
 			if s.light_refits > LIGHT_REFITS_MAX {s.lights_dirty = true} else {
 				if !s.lights_dirty {range_add(&s.light_ranges, {index, 1})}
 				if leaf := s.light_leaves[index]; leaf != LIGHT_TREE_NONE {
-					s.light_tree_cost += light_tree_refit(s.light_tree[:], s.lights[:], leaf, nil if s.lights_dirty else &s.light_node_ranges, s.light_region)
+					s.light_tree_cost += light_tree_refit(s.light_tree[:], s.lights[:], leaf, nil if s.lights_dirty else &s.light_node_ranges)
 				}
 				if len(s.light_ranges) > LIGHT_RANGES_MAX || len(s.light_node_ranges) > LIGHT_RANGES_MAX {s.lights_dirty = true}
 			}
@@ -2021,7 +2351,10 @@ scene_light_remove :: proc(r: ^Renderer, index: u32) {
 	gone := s.lights[index]
 	scene_changed_near(s, gone.position_range.xyz, gone.position_range.w)
 	unordered_remove(&s.lights, int(index))
+	unordered_remove(&s.light_shadowless, int(index))
 	s.lights_stale, s.lights_changed = true, true
+	// What it lit is new, wherever: every light counts as moved.
+	s.occluders.light_count = LIGHT_MOVES_MAX + 1
 }
 
 // The lights once a frame, whatever the updates before it were: the units of
@@ -2043,11 +2376,11 @@ scene_lights_settle :: proc(r: ^Renderer) -> bool {
 	// A blackout: how much the light of the whole scene changed since the frame before, as a sum.
 	flux := sky_flux(s.sun, s.environment, s.lights_scale) + s.light_flux
 	if abs(flux - s.flux_seen) > GI_BLACKOUT_SHARE * max(flux, s.flux_seen) {
-		scene_changed(s)
-		r.gi_warm_spread = GI_BLACKOUT_FRAMES
+		scene_relit(s)
+		r.gi_warm_spread = max(r.gi_warm_spread, ddgi_warm_frames(&r.ddgi, GI_BLACKOUT_UPDATES))
 	}
 	s.flux_seen = flux
-	if s.light_refits > LIGHT_REFITS_MAX && !s.lights_stale {s.light_tree_cost = light_tree_refit_all(s.light_tree[:], s.lights[:], s.light_region)}
+	if s.light_refits > LIGHT_REFITS_MAX && !s.lights_stale {s.light_tree_cost = light_tree_refit_all(s.light_tree[:], s.lights[:])}
 	s.light_refits = 0
 	if s.lights_stale || s.light_tree_cost > s.light_tree_built * LIGHT_TREE_REFIT_SLACK {
 		if !light_tree_rebuild(s) {set_error(r, "light tree of %d lights: out of memory", len(s.lights));return false}
@@ -2066,77 +2399,15 @@ scene_lights_settle :: proc(r: ^Renderer) -> bool {
 // run out of memory. False without memory.
 @(private = "file")
 lights_reserve :: proc(s: ^Scene_State, count: int) -> bool {
-	return reserve(&s.lights, count) == nil && light_tree_reserve(&s.light_tree, &s.light_keys, &s.light_leaves, count, s.light_region)
+	return reserve(&s.lights, count) == nil && reserve(&s.light_shadowless, count) == nil && light_tree_reserve(&s.light_tree, &s.light_keys, &s.light_leaves, count)
 }
 
 // Builds the tree of the lights again. False without memory: it stays as it was.
 @(private = "file")
 light_tree_rebuild :: proc(s: ^Scene_State) -> bool {
-	built := light_tree_build(&s.light_tree, &s.light_keys, &s.light_leaves, s.lights[:], s.light_region) or_return
+	built := light_tree_build(&s.light_tree, &s.light_keys, &s.light_leaves, s.lights[:], s.light_shadowless[:]) or_return
 	s.light_tree_built, s.light_tree_cost = built, built
 	return true
-}
-
-// Takes the room for lights on the GPU the extensions asked for since the
-// last frame (lights_ask): another size builds the tree again. A room no pass
-// wrote in the frame before goes back to the root of the scene alone, and
-// its part without shadows to none. False without memory for the tree of
-// another room: the room stays as it was.
-@(private)
-scene_light_region :: proc(r: ^Renderer) -> bool {
-	s := &r.scene
-	asked := light_region_of(r.lights_asked, r.shadowless_asked)
-	scene_light_region_box(s, r.lights_asked, r.lights_asked_box, r.lights_asked_reach)
-	r.lights_asked, r.shadowless_asked = 0, 0
-	if asked != s.light_region {
-		previous := s.light_region
-		s.light_region = asked
-		if !light_tree_rebuild(s) {
-			s.light_region = previous
-			set_error(r, "light tree with room for %d lights of the passes: out of memory", asked.lights + asked.shadowless)
-			return false
-		}
-		s.light_revision += 1
-		s.lights_dirty = true
-		clear(&s.light_ranges)
-		clear(&s.light_node_ranges)
-	} else if s.light_region.lights > 0 && !s.light_region_written && !s.lights_dirty {
-		range_add(&s.light_node_ranges, {0, 2})
-		if root := light_region_shadowless(s.light_region); root > 0 {range_add(&s.light_node_ranges, {root, 1})}
-	}
-	s.light_region_written = false
-	return true
-}
-
-// What of the scene the lights with shadows a pass asked for light: the
-// cells of the grid of the lights they need. The grid is placed again when
-// they leave the box it holds, light farther or are more, or the box is far
-// larger than they need.
-@(private)
-scene_light_region_box :: proc(s: ^Scene_State, count: u32, box: [2]Vec3, reach: f32) {
-	EMPTY :: [2]Vec3{{1, 1, 1}, {-1, -1, -1}}
-	needed := EMPTY
-	if count > 0 && s.has_bounds {
-		needed = {linalg.max(box[0] - reach, s.bounds_min), linalg.min(box[1] + reach, s.bounds_max)}
-		if !(needed[0].x <= needed[1].x && needed[0].y <= needed[1].y && needed[0].z <= needed[1].z) {needed = EMPTY}
-	}
-	held := s.light_region_box
-	if needed == EMPTY {
-		if s.light_region_asked > 0 {
-			s.light_region_box, s.light_region_reach, s.light_region_asked = EMPTY, 0, 0
-			s.light_grid_stale = true
-		}
-		return
-	}
-	span := needed[1] - needed[0]
-	inside := s.light_region_asked > 0 && linalg.min(held[0], needed[0]) == held[0] && linalg.max(held[1], needed[1]) == held[1]
-	held_span := held[1] - held[0]
-	wide := held_span.x > 4 * span.x + 4 || held_span.y > 4 * span.y + 4 || held_span.z > 4 * span.z + 4
-	if inside && !wide && reach <= s.light_region_reach && count <= s.light_region_asked {return}
-	grow := linalg.max(span * 0.25, Vec3{1, 1, 1})
-	s.light_region_box = {linalg.max(needed[0] - grow, s.bounds_min), linalg.min(needed[1] + grow, s.bounds_max)}
-	s.light_region_reach, s.light_region_asked = reach, count
-	s.light_grid_stale = true
 }
 
 // The light scale for the local lights of the scene with a sun and an
@@ -2155,7 +2426,7 @@ scene_light_scale :: proc(r: ^Renderer, sun: Sun_Desc, environment: Environment)
 		for &l in s.lights {l.color_intensity.w *= ratio}
 		s.light_flux *= ratio
 		s.flux_seen *= ratio
-		if !s.lights_stale {s.light_tree_cost = light_tree_refit_all(s.light_tree[:], s.lights[:], s.light_region)}
+		if !s.lights_stale {s.light_tree_cost = light_tree_refit_all(s.light_tree[:], s.lights[:])}
 		s.lights_dirty = true
 	}
 	if s.light_scale > 0 && scale != s.light_scale {r.light_rescale = (r.light_rescale if r.light_rescale > 0 else 1) * scale / s.light_scale}
@@ -2163,16 +2434,22 @@ scene_light_scale :: proc(r: ^Renderer, sun: Sun_Desc, environment: Environment)
 	return scale
 }
 
+// What multiplies all the indirect light the views and media take: the light
+// of the probe volume, or of the sky that stands for it without GI. The probes
+// gather without it, so a change shows in the frame it is made.
+scene_set_indirect :: proc(r: ^Renderer, scale: f32) {r.scene.indirect = light_share(scale)}
+
 // Changes the view environment without uploading geometry or rebuilding the
 // TLAS. A preview lighting toggle can discard radiance history in-place.
 scene_set_environment :: proc(r:^Renderer,sun:Sun_Desc,environment:Environment,reset_history:bool=false) {
     scene_light_scale(r,sun,environment)
     normalized:=sun
     if linalg.length(normalized.direction)>1e-6 {normalized.direction=linalg.normalize(normalized.direction)} else {normalized.enabled=false}
-    if r.scene.sun!=normalized || r.scene.environment!=environment {scene_changed(&r.scene)}
+    normalized.indirect,normalized.scattering=light_share(sun.indirect),light_share(sun.scattering)
+    if r.scene.sun!=normalized || r.scene.environment!=environment {scene_relit(&r.scene)}
     // A sun that turns by less than its radius moves its shadows by less than their penumbra.
     before:=r.scene.sun
-    if normalized.enabled && (!before.enabled || linalg.dot(before.direction,normalized.direction)<math.cos(max(r.settings.sun_radius,SUN_RADIUS))) {r.scene.occluders.sun=true}
+    if normalized.enabled && (!before.enabled || before.shadowless!=normalized.shadowless || linalg.dot(before.direction,normalized.direction)<math.cos(max(r.settings.sun_radius,SUN_RADIUS))) {r.scene.occluders.sun=true}
     r.scene.sun=normalized;r.scene.environment=environment
     if reset_history {
         renderer_reset_history(r)
@@ -2194,6 +2471,37 @@ renderer_reset_history :: proc(r:^Renderer,reset_camera:bool=false) {
 
 @(private)
 highlight_flags :: proc "contextless" (level: u8) -> u32 {return (u32(level) << INSTANCE_HIGHLIGHT_SHIFT) & INSTANCE_HIGHLIGHT_MASK}
+
+// The most the lists that grow asked for (the lists of the cull and the
+// material points): a list that dropped asked for what it held and what it
+// dropped; one that did not, for no more than the mark it started from; the
+// lists of the raster of the visibility target, for what the rounds of a
+// frame wrote; the indices of the meshes drawn whole, for what a frame drew.
+// The host keeps them by scene, so that a scene seen again starts its lists
+// there and drops nothing the first time.
+Capacity_Marks :: struct {
+	cull:       [Cull_List]u32,
+	points:     u32,
+	mesh_draws: u32,
+}
+
+// The most a mark asks of a list of the cull, in entries: one read from
+// elsewhere past it is taken at it.
+CULL_MARK_MAX :: 1 << 24
+
+renderer_capacity_marks :: proc "contextless" (r: ^Renderer) -> Capacity_Marks {
+	return {r.scene.cull_wanted, r.points.wanted, r.scene.mesh_draws_wanted}
+}
+
+// The lists grow to marks before the next frame, as after a frame that asked
+// for them, and keep what they hold beyond them; what they ask for from now
+// on counts from marks.
+renderer_capacity_marks_set :: proc "contextless" (r: ^Renderer, marks: Capacity_Marks) {
+	most := CULL_MOST
+	for &wanted, list in r.scene.cull_wanted {wanted = min(marks.cull[list], most[list])}
+	r.points.wanted = min(marks.points, POINTS_MAX)
+	r.scene.mesh_draws_wanted = min(marks.mesh_draws, CULL_MARK_MAX)
+}
 
 // Ensures GPU capacity for the current instance/light sets (between frames).
 @(private)
@@ -2225,23 +2533,55 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 	if s.cull_state_buffer == 0 {
 		s.cull_state_buffer = rhi.buffer_create(d, {size = size_of(Gpu_Cull_State), usage = {.Storage, .Indirect}, name = "cull state"})
 	}
-	start := CULL_START
+	if s.depth_buckets == 0 {
+		s.depth_buckets = rhi.buffer_create(d, {size = DEPTH_BUCKET_WORDS * size_of(u32), usage = {.Storage}, name = "depth buckets of the tested bins"})
+	}
+	if s.program_draws == 0 {
+		s.program_draws = rhi.buffer_create(d, {size = POINTS_PROGRAM_CAPACITY * size_of(Gpu_Program_Draw), usage = {.Storage, .Indirect}, name = "resolve draws of programs"})
+	}
+	// The slots of the pages grow for those that found none.
+	pages_region_need(r)
+	start, most := CULL_START, CULL_MOST
 	for list in Cull_List {
-		buffer := [Cull_List]^rhi.Buffer{.Chunks = &s.chunk_buffer, .Visible = &s.visible_buffer, .Candidates = &s.cluster_candidate_buffer, .Programs = &s.program_visible, .Shadow_Chunks = &s.shadow_chunks, .Shadow_Entries = &s.shadow_entries}[list]
-		wanted := max(start[list], s.cull_wanted[list])
+		buffer := [Cull_List]^rhi.Buffer{.Chunks = &s.chunk_buffer, .Visible = &s.visible_buffer, .Candidates = &s.cluster_candidate_buffer, .Shadow_Chunks = &s.shadow_chunks, .Shadow_Entries = &s.shadow_entries, .Raster_Vertices = &s.raster_vertices, .Raster_Triangles = &s.raster_indices}[list]
+		wanted := s.cull_wanted[list]
+		// The raster holds the share of a view and, at once, a round of the maps.
+		if list >= .Raster_Vertices {
+			k := int(list) - int(Cull_List.Raster_Vertices)
+			if s.raster_share[k] == 0 || wanted > s.raster_share[k] {s.raster_share[k] = max(wanted + wanted / RASTER_LIST_SLACK, start[list], s.raster_share[k])}
+			shadow := s.raster_shadow_wanted[k]
+			wanted = max(s.raster_share[k], shadow + shadow / RASTER_LIST_SLACK)
+		}
+		wanted = min(wanted, most[list])
 		if buffer^ != 0 && wanted <= s.cull_capacity[list] {continue}
-		capacity := max(wanted + wanted / 2, start[list], s.cull_capacity[list])
+		capacity := min(max(wanted + wanted / 2 if list < .Raster_Vertices else wanted, start[list], s.cull_capacity[list]), most[list])
 		if buffer^ != 0 {rhi.buffer_destroy(d, buffer^)}
-		names := [Cull_List]string{.Chunks = "cull chunks", .Visible = "visible clusters", .Candidates = "cluster occlusion candidates", .Programs = "visible clusters by program", .Shadow_Chunks = "shadow map chunks", .Shadow_Entries = "shadow map clusters"}
-		entry := u64(size_of([4]u32) if list >= .Shadow_Chunks else size_of([2]u32))
-		buffer^ = rhi.buffer_create(d, {size = u64(capacity) * entry, usage = {.Storage}, name = names[list]})
+		names := [Cull_List]string{.Chunks = "cull chunks", .Visible = "visible clusters", .Candidates = "cluster occlusion candidates", .Shadow_Chunks = "shadow map chunks", .Shadow_Entries = "shadow map clusters", .Raster_Vertices = "vertices of the raster", .Raster_Triangles = "triangles of the raster"}
+		entries := [Cull_List]u64{.Chunks = size_of([2]u32), .Visible = size_of(Gpu_Visible_Cluster), .Candidates = size_of([2]u32), .Shadow_Chunks = size_of([4]u32), .Shadow_Entries = size_of(Gpu_Visible_Cluster), .Raster_Vertices = abi.RASTER_VERTEX_WORDS * size_of(u32), .Raster_Triangles = size_of([3]u32)}
+		buffer^ = rhi.buffer_create(d, {size = u64(capacity) * entries[list], usage = {.Storage, .Index} if list == .Raster_Triangles else {.Storage}, name = names[list]})
 		made := buffer^ != 0
-		if list == .Programs {
-			if s.program_bins != 0 {rhi.buffer_destroy(d, s.program_bins)}
-			s.program_bins = rhi.buffer_create(d, {size = u64(program_entry_word(capacity)) * size_of(u32), usage = {.Storage, .Indirect}, name = "visible clusters of programs"})
-			made &&= s.program_bins != 0
+		// What a list holds besides, an entry for each of its own.
+		also: [2]struct {buffer: ^rhi.Buffer, entry: u64, name: string}
+		#partial switch list {
+		case .Visible: also = {{&s.listed_buffer, size_of([4]u32), "visible clusters as listed"}, {&s.raster_entries, abi.RASTER_ENTRY_WORDS * size_of(u32), "visible clusters for the raster"}}
+		case .Shadow_Entries: also[0] = {&s.shadow_raster_entries, abi.RASTER_ENTRY_WORDS * size_of(u32), "shadow map clusters for the raster"}
+		case .Raster_Triangles: also[0] = {&s.raster_ids, size_of(u32), "triangles of the visibility raster by name"}
+		}
+		for other in also {
+			if other.buffer == nil {continue}
+			if other.buffer^ != 0 {rhi.buffer_destroy(d, other.buffer^)}
+			other.buffer^ = rhi.buffer_create(d, {size = u64(capacity) * other.entry, usage = {.Storage}, name = other.name})
+			made &&= other.buffer^ != 0
 		}
 		s.cull_capacity[list] = capacity if made else 0
+	}
+	if s.mesh_draws == 0 || s.mesh_draws_wanted > s.mesh_draws_capacity {
+		capacity := max(s.mesh_draws_wanted + s.mesh_draws_wanted / 2, MESH_DRAWS_START, s.mesh_draws_capacity)
+		if s.mesh_draws != 0 {rhi.buffer_destroy(d, s.mesh_draws)}
+		s.mesh_draws = rhi.buffer_create(d, {size = u64(capacity) * size_of(u32), usage = {.Storage, .Index}, name = "indices of the meshes drawn whole"})
+		s.mesh_draws_capacity = capacity if s.mesh_draws != 0 else 0
+		// What they held goes with them: the meshes listed are written again.
+		for &m in s.meshes {m.draw_written = false}
 	}
 	candidates := max(len(s.instances) + int(s.batch.slots), 1)
 	if candidates > s.candidate_capacity || s.candidate_buffer == 0 {
@@ -2279,7 +2619,7 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		s.tlas_ref_capacity = capacity
 		s.instances_dirty = true
 	}
-	lights := max(len(s.lights) + light_region_lights(s.light_region), 1)
+	lights := max(len(s.lights), 1)
 	if lights > s.light_capacity || s.light_buffer == 0 {
 		capacity := max(lights + lights / 2, 32)
 		if s.light_buffer != 0 {rhi.buffer_destroy(d, s.light_buffer)}
@@ -2294,7 +2634,7 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		s.light_tree_capacity = capacity
 		s.lights_dirty = true
 	}
-	ok := s.instance_buffer != 0 && s.material_buffer != 0 && s.cull_state_buffer != 0 && s.chunk_buffer != 0 && s.visible_buffer != 0 && s.cluster_candidate_buffer != 0 && s.candidate_buffer != 0 && (r.hardware_rt || s.tlas_node_buffer != 0 && s.tlas_ref_buffer != 0) && s.light_buffer != 0 && s.light_tree_buffer != 0
+	ok := s.instance_buffer != 0 && s.material_buffer != 0 && s.cull_state_buffer != 0 && s.chunk_buffer != 0 && s.visible_buffer != 0 && s.listed_buffer != 0 && s.raster_entries != 0 && s.raster_vertices != 0 && s.raster_indices != 0 && s.raster_ids != 0 && s.mesh_draws != 0 && s.depth_buckets != 0 && s.program_draws != 0 && s.cluster_candidate_buffer != 0 && s.candidate_buffer != 0 && (r.hardware_rt || s.tlas_node_buffer != 0 && s.tlas_ref_buffer != 0) && s.light_buffer != 0 && s.light_tree_buffer != 0
 	if !ok {set_error(r, "scene buffers: %s", rhi.device_error(d))}
 	return ok
 }
@@ -2410,20 +2750,16 @@ touched_settle :: proc(s: ^Scene_State) {
 @(private)
 upload_scene :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 	s := &r.scene
+	zone := render_zone_begin(r, "instance tree")
 	tlas_settle(s)
-	if !poses_record(r,cmd) {return false}
+	base.profile_end(zone)
+	zone = render_zone_begin(r, "poses")
+	posed := poses_record(r,cmd)
+	base.profile_end(zone)
+	if !posed {return false}
 	// What the frame's transient memory has no room for stays dirty and goes
 	// with the next frame: the GPU never falls behind the scene unnoticed.
 	ok := true
-	if s.instances_dirty || s.materials_dirty || len(s.material_ranges) > 0 {r.glass_stale = true}
-	// The row of an instance with glass brings the mean the CPU holds, not the one glass_mean.comp gave it.
-	if !r.glass_stale && len(s.translucent) > 0 {
-		each: for range, more := touched_range(s, 0); more; range, more = touched_range(s, range.first + range.count) {
-			for &inst in s.instances[range.first:][:range.count] {
-				if inst.meta.w & INSTANCE_FLAG_TRANSLUCENT != 0 {r.glass_stale = true;break each}
-			}
-		}
-	}
 	if s.materials_dirty {
 		if upload_transient(r, cmd, s.materials[:], s.material_buffer) {
 			s.materials_dirty = false
@@ -2453,7 +2789,6 @@ upload_scene :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 	}
 	if s.lights_dirty || len(s.light_ranges) > 0 {s.light_grid_stale = true}
 	if s.lights_dirty {
-		if s.light_region.lights > 0 {rhi.cmd_fill_buffer(cmd, s.light_buffer, u64(len(s.lights) * size_of(Gpu_Light)), u64(light_region_lights(s.light_region) * size_of(Gpu_Light)), 0)}
 		if upload_transient(r, cmd, s.lights[:], s.light_buffer) && upload_transient(r, cmd, s.light_tree[:], s.light_tree_buffer) {
 			s.lights_dirty = false
 			clear(&s.light_ranges)
@@ -2466,17 +2801,21 @@ upload_scene :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 		} else {ok = false}
 	}
 	// The programs of the instances read the tables just uploaded.
+	zone = render_zone_begin(r, "programs")
 	if ok && !displaced_record(r, cmd) {ok = false}
+	base.profile_end(zone)
+	zone = render_zone_begin(r, "light grid")
 	ok &&= light_grid_update(r)
+	base.profile_end(zone)
 	return ok
 }
 
 // The trees of the poses that changed, once the extensions wrote their
 // vertices, and the native TLAS over them.
 @(private)
-deformables_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
+deformables_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, eyes: []Vec3) -> bool {
 	s := &r.scene
-	if !poses_refit(r, cmd) {return false}
+	if !poses_refit(r, cmd, eyes) {return false}
 	if r.hardware_rt && s.tlas_dirty && s.tlas != 0 {
 		instances := tlas_instances_record(r, cmd)
 		if instances >= 0 && rhi.cmd_build_tlas(cmd, s.tlas, s.tlas_instance_buffer, 0, u32(instances)) {
@@ -2503,7 +2842,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	if s.tlas != 0 {rhi.accel_destroy(d, s.tlas)}
 	for b in s.geometry_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for move in s.pool_moves {if move.from != 0 {rhi.buffer_destroy(d, move.from)}}
-	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.cluster_candidate_buffer, s.program_bins, s.program_visible, s.shadow_chunks, s.shadow_entries, s.candidate_buffer, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
+	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.listed_buffer, s.raster_entries, s.raster_vertices, s.raster_indices, s.raster_ids, s.mesh_draws, s.depth_buckets, s.cluster_candidate_buffer, s.program_draws, s.shadow_chunks, s.shadow_entries, s.shadow_raster_entries, s.candidate_buffer, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
 		if b != 0 {rhi.buffer_destroy(d, b)}
 	}
 	delete(s.vertices)
@@ -2519,6 +2858,34 @@ scene_destroy :: proc(r: ^Renderer) {
 	delete(s.instances)
 	delete(s.instance_next)
 	delete(s.instance_prev)
+	delete(s.shadow_changes)
+	delete(s.shadow_tracks)
+	delete(s.shadow_followed)
+	delete(s.shadow_ranges)
+	delete(s.shadow_casters)
+	delete(s.shadow_movers)
+	delete(s.shadow_mover_bits)
+	delete(s.shadow_batch_bits)
+	delete(s.shadow_mover_of)
+	delete(s.shadow_order)
+	delete(s.shadow_all)
+	delete(s.shadow_merge)
+	delete(s.shadow_keys)
+	delete(s.shadow_marks)
+	delete(s.shadow_near)
+	delete(s.shadow_band)
+	delete(s.shadow_band_keys)
+	delete(s.shadow_sun_boxes)
+	for &view in s.shadow_views {
+		for &kept in view.slots {
+			delete(kept.ranges)
+			delete(kept.casters)
+			delete(kept.moves)
+			delete(kept.moving)
+		}
+		delete(view.mover_slots)
+	}
+	delete(s.shadow_views)
 	delete(s.overlays)
 	delete(s.reflective)
 	delete(s.materials)
@@ -2536,6 +2903,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	delete(s.light_tree)
 	delete(s.light_keys)
 	delete(s.light_leaves)
+	delete(s.light_shadowless)
 	delete(s.light_ranges)
 	delete(s.light_node_ranges)
 	s^ = {}

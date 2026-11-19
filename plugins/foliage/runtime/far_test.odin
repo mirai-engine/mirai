@@ -114,6 +114,13 @@ an_instance_sways_with_the_variant_of_its_turn_and_downwind :: proc(t:^testing.T
         t_type.wind_variants=asked[0]
         testing.expectf(t,wind_variants(t_type)==asked[1],"%d variants asked are %d",asked[0],wind_variants(t_type))
     }
+    // The kinds of a forest with wind 1, metres to their farthest point: the
+    // small plants cast at rest and build no variants, what is taller sways.
+    t_type.wind_variants=0
+    for kind in ([]struct{name:string,size:f32,sways:bool}{{"grass",0.5,false},{"flowers",0.4,false},{"wheat",1.2,false},{"bush",1.5,true},{"hazel",3.5,true},{"tree",12,true}}) {
+        variants:=shadow_variants(t_type,kind.size)
+        testing.expectf(t,(variants==WIND_VARIANTS)==kind.sways,"%s of %v m sways %v m at its tip: %d variants",kind.name,kind.size,type_sway(t_type,kind.size),variants)
+    }
     t_type.casts_shadow=false
     testing.expect_value(t,wind_variants(t_type),u32(0))
 }
@@ -317,4 +324,19 @@ what_the_renderer_forgets_takes_the_crowns_and_far_forms_with_it :: proc(t:^test
     testing.expect_value(t,len(resident.crowns),0)
     testing.expect_value(t,len(resident.kinds),0)
     testing.expect(t,len(resident.owners[0].cells)==0 && !resident.owners[0].built && len(resident.owners[0].kinds)==0)
+}
+
+// The far form of a type is not made, nor the budget of the frame spent on
+// it, while what its parts show is not settled: its frames are drawn once,
+// as they will stay.
+@(test)
+a_far_form_waits_until_what_its_parts_show_is_settled :: proc(t:^testing.T) {
+    resident:Foliage_Resident
+    defer foliage_resident_free(&resident)
+    key:=Kind_Key{{6,6},64}
+    resident.kinds_left=1
+    testing.expect_value(t,kind_ensure(&resident,nil,nil,nil,context.allocator,key,nil,false,nil,{}),-1)
+    testing.expect(t,len(resident.kinds)==0 && resident.kinds_left==1,"nothing is made and the budget stays")
+    testing.expect_value(t,kind_ensure(&resident,nil,nil,nil,context.allocator,key,nil,true,nil,{}),0)
+    testing.expect(t,len(resident.kinds)==1 && resident.kinds[0].made)
 }

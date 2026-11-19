@@ -16,9 +16,6 @@
 // DIRECT_NONE; DIRECT_CHANGED where it met what changed (occluder_changed).
 #define DIRECT_NONE 0x7FFFFFFFu
 #define DIRECT_CHANGED 0x80000000u
-// The y of the depth of a point (direct_depth) where direct_maps.comp leaves
-// all of its light to the samples (direct_maps_give).
-#define DIRECT_MAPS_NONE -1.0
 
 // The place of a pixel in the pattern of 3x3: consecutive places stand apart,
 // as in an ordered dither, so that a window of 3x3 holds each once.
@@ -31,6 +28,28 @@ float direct_start(uint place) { return (float(place) + 0.5) / 9.0; }
 // The points of a view the samples are taken at: one for each pixel, or the
 // first of each `scale` x `scale` of them; what follows counts in points.
 int2 direct_points(int scale) { return (int2(frame.resolution) + scale - 1) / scale; }
+
+#if defined(GBUFFER_ALBEDO) && defined(GBUFFER_NORMAL)
+// The G-buffer of the point at pixel `source`, which stands for `scale` x
+// `scale` pixels: its lobes widen by the spread of the normal over them, as
+// those of a pixel do over it (roughness_widened), or a highlight narrower
+// than a point would come and go as the jitter moves what the point sees. The
+// spread is that between the pixel and those beside it on its surface; what a
+// pixel spans of it is in its roughness already.
+Gbuffer_Pixel direct_point_gbuffer(int2 source, int scale) {
+    Gbuffer_Pixel g = gbuffer_read(source);
+    if (scale <= 1) return g;
+    int2 last = int2(frame.resolution) - 1;
+    float3 across = gbuffer_normal(min(source + int2(1, 0), last));
+    float3 down = gbuffer_normal(min(source + int2(0, 1), last));
+    float3 dx = dot(across, g.normal) >= 0.9 ? across - g.normal : float3(0.0);
+    float3 dy = dot(down, g.normal) >= 0.9 ? down - g.normal : float3(0.0);
+    float variance = 0.25 * float(scale * scale - 1) * (dot(dx, dx) + dot(dy, dy));
+    g.roughness = roughness_widened(g.roughness, variance);
+    if (g.layers.coat > 0.0) g.layers.coat_roughness = roughness_widened(g.layers.coat_roughness, variance);
+    return g;
+}
+#endif
 
 // The pixel of thread t of a group of 4x4 squares of 2x2 pixels, the threads
 // of a square together.

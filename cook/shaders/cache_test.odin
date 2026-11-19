@@ -1,5 +1,6 @@
 package shaders
 
+import "core:fmt"
 import "core:log"
 import "core:os"
 import "core:strings"
@@ -50,6 +51,33 @@ change_invalidates_only_the_stages_that_depend_on_it :: proc(t:^testing.T) {
     stable:=fingerprint_of(root,"a.comp.slang")
     fixture_write(t,root,"b.comp.slang","void main() {int unrelated=2;}\n")
     testing.expect_value(t,fingerprint_of(root,"a.comp.slang"),stable)
+
+    // Of a source both include, each stage takes the functions and the macros it reaches alone.
+    LIB :: "#define FIRST_SCALE 2\n#define SECOND_SCALE 3\nfloat first(float x) {return x*FIRST_SCALE;}\nfloat second(float x) {return helper(x)*SECOND_SCALE;}\nfloat helper(float x) {return x;}\nfloat unused(float x) {return x;}\n"
+    fixture_write(t,root,"include/lib.slang",LIB)
+    fixture_write(t,root,"first.comp.slang","#include \"lib.slang\"\nvoid main() {first(1.0);}\n")
+    fixture_write(t,root,"second.comp.slang","#include \"lib.slang\"\nvoid main() {second(1.0);}\n")
+    keys :: proc(root:string) -> [2]string {return {fingerprint_of(root,"first.comp.slang"),fingerprint_of(root,"second.comp.slang")}}
+    edited :: proc(t:^testing.T,root,old,new:string) {
+        text,_:=os.read_entire_file(path_join(root,"include/lib.slang",allocator=context.temp_allocator),context.temp_allocator)
+        changed,_:=strings.replace(string(text),old,new,1,context.temp_allocator)
+        testing.expectf(t,changed!=string(text),"the fixture has %s",old)
+        fixture_write(t,root,"include/lib.slang",changed)
+    }
+    before:=keys(root)
+    edited(t,root,"float unused(float x) {return x;}","float unused(float x) {return x+1.0;}")
+    testing.expect_value(t,keys(root),before)
+    edited(t,root,"#define FIRST_SCALE 2","#define FIRST_SCALE 2\n#define LATER_SCALE 5")
+    testing.expect_value(t,keys(root),before)
+    edited(t,root,"return x;}\nfloat unused","return x*0.5;}\nfloat unused")
+    after:=keys(root)
+    testing.expect(t,after[0]==before[0] && after[1]!=before[1],"a function another reaches is part of the stage that reaches it alone")
+    edited(t,root,"#define FIRST_SCALE 2","#define FIRST_SCALE 4")
+    again:=keys(root)
+    testing.expect(t,again[0]!=after[0] && again[1]==after[1],"a macro is part of the stages that name it alone")
+    edited(t,root,"float second(","float first(int x) {return 0.0;}\nfloat second(")
+    overloaded:=keys(root)
+    testing.expect(t,overloaded[0]!=again[0] && overloaded[1]==again[1],"another function of a name a stage reaches is part of it")
 }
 
 @(test)
@@ -257,6 +285,43 @@ shared_cache_keeps_an_entry_per_digest_and_completes_one_with_another_backend ::
     testing.expect(t,found && completed.entry=="main0" && string(code[.Vulkan])=="spirv-bytes" && string(code[.Metal])=="metal-source","the entry keeps the Vulkan code")
 }
 
+// A stage no backend takes the code of is compiled without the optimizer: what
+// it leaves in the shared cache, its entry and its peak, never reaches a
+// generation that takes code of the same digest, written before or after it.
+@(test)
+stage_compiled_only_to_be_reflected_never_reaches_one_that_takes_code :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
+    entry,files:=stored_entry()
+    // Its group tells which entry a reader took.
+    reflected:=shader_trim(entry,{})
+    reflected.group={1,1,1}
+    Case :: struct {written:[]Backends,read:Backends,found:bool,group:[3]int}
+    cases:=[]Case{
+        {{{}},{},true,{1,1,1}},
+        {{{}},{.Vulkan},false,{}},
+        {{{}},{.Metal},false,{}},
+        {{{}},{.Vulkan,.Metal},false,{}},
+        {{{.Vulkan},{}},{.Vulkan},true,{8,8,1}},
+        {{{.Vulkan,.Metal},{}},{.Vulkan,.Metal},true,{8,8,1}},
+        {{{},{.Metal}},{.Metal},true,{8,8,1}},
+        {{{.Metal},{}},{},true,{1,1,1}},
+    }
+    for c,i in cases {
+        shared:=path_join(root,fmt.tprintf("case%d",i),allocator=context.temp_allocator)
+        for backends in c.written {
+            testing.expect(t,cache_stage_write(shared,reflected if reflected_only(backends) else shader_trim(entry,backends),files,backends))
+        }
+        restored,_,found:=cache_stage_read(shared,"digest",c.read,context.temp_allocator)
+        testing.expectf(t,found==c.found && (!found || restored.group==c.group),"case %d: read for %v found %v with the group %v",i,c.read,found,restored.group)
+    }
+    reflected_job:=Job{name="a.comp"}
+    for backends in ([]Backends{{.Vulkan},{.Metal},{.Vulkan,.Metal}}) {
+        job:=Job{name="a.comp",backends=backends}
+        testing.expectf(t,job_key(&job)!=job_key(&reflected_job),"the compilation for %v has a peak of its own",backends)
+    }
+}
+
 @(test)
 previous_output_cannot_name_a_file_outside_its_folder :: proc(t:^testing.T) {
     root:=base.test_folder(t,"shaders")
@@ -388,9 +453,57 @@ tool_run_returns_the_output_and_whether_it_succeeded :: proc(t:^testing.T) {
     testing.expect_value(t,runner.runs,3)
 }
 
+// A compilation starts while the memory free holds its charge, besides what
+// those that run have not taken yet of theirs, and a reserve; one always runs.
+@(test)
+a_compilation_starts_only_when_the_memory_has_room_for_its_charge :: proc(t:^testing.T) {
+    GB :: i64(1)<<30
+    MB :: i64(1)<<20
+    Case :: struct {name:string,peaks:[]string,known:[]i64,key:string,free:i64,running:[]Admitted,own:int,starts:bool}
+    cases:=[]Case{
+        {name="the first of a generation, with no memory free",key="a.comp",free=0,starts=true},
+        {name="one known as small, among many small ones",peaks={"a.comp"},known={400*MB},key="a.comp",free=10*GB,running={{400*MB,400*MB},{400*MB,350*MB}},own=2,starts=true},
+        {name="what those that run have not taken yet is not free",peaks={"a.comp"},known={400*MB},key="a.comp",free=3*GB,running={{2*GB,1*GB}},own=1,starts=false},
+        {name="those that run at their charge took it already",peaks={"a.comp"},known={400*MB},key="a.comp",free=3*GB,running={{2*GB,2*GB}},own=1,starts=true},
+        {name="one never compiled is charged the largest peak known",peaks={"a.comp","b.comp"},known={400*MB,5*GB},key="c.comp",free=6*GB,own=1,starts=false},
+        {name="the largest peak known fits",peaks={"a.comp","b.comp"},known={400*MB,3*GB},key="c.comp",free=6*GB,own=1,starts=true},
+        {name="with nothing known, the largest stages",key="c.comp",free=7*GB,own=1,starts=false},
+        {name="with nothing known, room for the largest stages",key="c.comp",free=SLANGC_PEAK_BYTES+MEMORY_RESERVE,own=1,starts=true},
+        {name="those of another process count, not toward the first",peaks={"a.comp"},known={400*MB},key="a.comp",free=3*GB,running={{3*GB,0}},own=0,starts=true},
+    }
+    for c in cases {
+        peaks:=make(map[string]i64,context.temp_allocator)
+        for key,i in c.peaks {peaks[key]=c.known[i]}
+        testing.expectf(t,admits(c.free,c.running,c.own,charge_of(peaks,c.key))==c.starts,"%s: starts %v",c.name,c.starts)
+    }
+}
+
+// A compilation keeps its peak where the next generation reads it, and leaves
+// the ledger once it ends.
+@(test)
+the_peak_of_a_compilation_is_recorded_and_read_back :: proc(t:^testing.T) {
+    slangc,found:=tool_find(path_clean(ENGINE_ROOT,context.temp_allocator),.Slangc,context.temp_allocator)
+    if !found {log.warn("slangc is not installed: run `mirai setup slang`");return}
+    shared,made:=os.make_directory_temp("","mirai-peaks-*",context.temp_allocator)
+    if !testing.expect(t,made==nil) {return}
+    defer base.remove_all(shared)
+    runner:Runner
+    ledger:=path_join(shared,CACHE_LEDGER,allocator=context.temp_allocator)
+    _,ok:=tool_run(&runner,{slangc,"-version"},context.temp_allocator,{charge=charge_of(peaks_read(shared,context.temp_allocator),"a.comp"),ledger=ledger,record=peak_path(shared,"a.comp",context.temp_allocator)})
+    testing.expect(t,ok)
+    peaks:=peaks_read(shared,context.temp_allocator)
+    peak,known:=peaks["a.comp"]
+    testing.expectf(t,known && peak>0,"the peak is kept: %v",peaks)
+    testing.expect_value(t,charge_of(peaks,"a.comp"),peak)
+    testing.expect_value(t,charge_of(peaks,"b.comp"),peak)
+    listed,_:=os.read_entire_file(ledger,context.temp_allocator)
+    testing.expectf(t,strings.trim_space(string(listed))=="","a compilation that ended is not in the ledger: %q",string(listed))
+    testing.expect_value(t,runner.most,1)
+}
+
 @(test)
 cancel_kills_the_tools_that_run_and_starts_no_other :: proc(t:^testing.T) {
-    Run :: struct {runner:^Runner,command:[]string,ok:bool}
+    Run :: struct {runner:^Runner,command:[]string,charge:i64,ok:bool}
     words:[4]string
     command:[]string
     when ODIN_OS==.Windows {
@@ -402,8 +515,10 @@ cancel_kills_the_tools_that_run_and_starts_no_other :: proc(t:^testing.T) {
         command=words[:2]
     }
     runner:Runner
-    run:=Run{runner=&runner,command=command}
-    worker:=thread.create_and_start_with_poly_data(&run,proc(run:^Run) {_,run.ok=tool_run(run.runner,run.command,context.temp_allocator)})
+    // The first compilation of a runner always starts; the second waits for room it will not find.
+    run:=Run{runner=&runner,command=command,charge=1}
+    waits:=Run{runner=&runner,command=command,charge=max(i64)/2}
+    worker:=thread.create_and_start_with_poly_data(&run,proc(run:^Run) {_,run.ok=tool_run(run.runner,run.command,context.temp_allocator,{charge=run.charge})})
     started:=time.tick_now()
     for time.duration_seconds(time.tick_since(started))<10 {
         sync.lock(&runner.lock)
@@ -412,11 +527,15 @@ cancel_kills_the_tools_that_run_and_starts_no_other :: proc(t:^testing.T) {
         if running>0 {break}
         time.sleep(10*time.Millisecond)
     }
+    waiter:=thread.create_and_start_with_poly_data(&waits,proc(run:^Run) {_,run.ok=tool_run(run.runner,run.command,context.temp_allocator,{charge=run.charge})})
+    time.sleep(3*ROOM_POLL)
     stopping:=time.tick_now()
     runner_cancel(&runner)
-    thread.join(worker)
-    thread.destroy(worker)
-    testing.expect(t,!run.ok,"a tool killed is a failure")
+    for each in ([]^thread.Thread{worker,waiter}) {
+        thread.join(each)
+        thread.destroy(each)
+    }
+    testing.expect(t,!run.ok && !waits.ok,"a tool killed, or one that waited for room, is a failure")
     testing.expect(t,time.duration_seconds(time.tick_since(stopping))<10,"it does not run to its end")
     message,started_again:=tool_run(&runner,command,context.temp_allocator)
     testing.expect(t,!started_again && message!="","a cancelled runner starts nothing")

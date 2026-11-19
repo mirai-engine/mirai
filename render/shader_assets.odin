@@ -317,6 +317,7 @@ renderer_publish_shader_reload :: proc(r:^Renderer,assets:^Shader_Assets,candida
     points_pipelines_destroy(r)
     program_graphics_destroy(r)
     program_catalog_destroy(&r.programs)
+    program_misses_clear(r)
     r.shader_codes=candidate.shader_codes;r.pipelines=candidate.pipelines;r.overlay_pipelines=candidate.overlay_pipelines
     r.variants,r.variant_count=candidate.variants,candidate.variant_count
     r.overlay_hw_pipelines=candidate.overlay_hw_pipelines
@@ -363,4 +364,5 @@ renderer_publish_shader_metadata :: proc(r:^Renderer,assets:^Shader_Assets) {
     r.shader_codes=r.shader_assets.codes
     r.frame_layout=frame_layout_of(&r.shader_assets)
     program_catalog_destroy(&r.programs)
+    program_misses_clear(r)
 }

@@ -34,7 +34,7 @@ settings_are_written_by_layer_and_the_project_wins :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"editor-settings")
     if folder=="" {return}
     root,engine:=project.path(folder,"project",allocator=context.temp_allocator),project.path(folder,"engine",allocator=context.temp_allocator)
-    testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(engine)==nil)
+    testing.expect(t,base.make_directory_all(root)==nil && base.make_directory_all(engine)==nil)
     info,made:=test_info(t,Layer_World)
     if !made {return}
     defer test_info_destroy(&info)

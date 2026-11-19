@@ -83,6 +83,7 @@ app_gpu_create :: proc(app:^App,desc:App_Desc) -> App_Error {
     // folder: building them all again takes the GPU driver many seconds.
     pipelines:string
     if folder:=app_user_folder(app.root,context.temp_allocator);folder!="" {pipelines,_=filepath.join({folder,PIPELINE_CACHE_FILE},context.temp_allocator)}
+    app_gpu_late_take(app,desc.gpu_late_record)
     surface:rhi.Surface_Desc
     if desc.window {
         surface={
@@ -97,6 +98,7 @@ app_gpu_create :: proc(app:^App,desc:App_Desc) -> App_Error {
         on_message=desc.gpu_message!=nil?desc.gpu_message:rhi.message_print,
         loader_lock=desc.gpu_loader_lock,
         pipeline_cache_path=pipelines,
+        late_record=desc.gpu_late_record,
         surface=surface,
     })
     if device==nil {
@@ -122,6 +124,8 @@ app_gpu_create :: proc(app:^App,desc:App_Desc) -> App_Error {
         // A window or a surface shows each frame to someone, who would see one
         // wait for the driver; without them, what a frame draws does not depend on that time.
         pipeline_thread=desc.window || desc.shown,
+        // Zeroed until a recording or a request reserves its rings: it records nothing until then.
+        profile=&app.profiler.profile,
     }) {
         log.errorf("renderer: %s",renderer.error)
         return .Renderer_Failed
@@ -512,6 +516,7 @@ app_frame_end :: proc(app:^App) {
     profile_gpu_want(app)
     drawn:=app_draw(app,frame.window)
     app_gpu_failure_check(app)
+    capacities_frame(app)
     base.profile_end(zone)
     app.extras.layer_count,app.extras.panel_count,app.extras.debug_count=0,0,0
     clear(&app.extras.instances)
@@ -606,6 +611,7 @@ app_draw :: proc(app:^App,window:platform.Window_Frame) -> bool {
         ui_textures=extras.ui_textures[:extras.ui_texture_count],effect_views=extras.effect_views[:extras.effect_view_count],
         probes=extras.probes[:extras.probe_count],
         output=app.output,ui_only=app.ui_only,
+        refresh_hz=app.platform.window.refresh_hz if app.platform!=nil else 0,
     })
     app.stats.render_ms=f32(time.duration_milliseconds(time.tick_since(started)))
     if !drawn {
@@ -751,10 +757,11 @@ split_rect :: proc "contextless" (size:[2]i32,count,index:int) -> [4]i32 {
 // pixels: the tile it was given, or its part of the drawable.
 app_player_rect :: proc "contextless" (app:^App,slot,count:int) -> [4]i32 {
     if slot>=0 && slot<app.player_tile_count {return app.player_tiles[slot]}
-    // What the editor keeps at the side of the view is no player's.
-    left:=max(app.scene.x,0)
-    rect:=split_rect({app.drawable.x-left,app.drawable.y},max(count,1),slot)
-    rect.x+=left
+    // What the editor keeps around the view (its bars and panels) is no player's.
+    area:=[4]i32{0,0,app.drawable.x,app.drawable.y}
+    if app.scene.z>0 && app.scene.w>0 {area=app.scene}
+    rect:=split_rect(area.zw,max(count,1),slot)
+    rect.xy+=area.xy
     return rect
 }
 
@@ -814,6 +821,27 @@ app_capture :: proc(app:^App,path:string) -> bool {
     defer delete(pixels,app.allocator)
     file:=strings.clone_to_cstring(path,context.temp_allocator)
     return stbi.write_png(file,c.int(width),c.int(height),4,raw_data(pixels),c.int(width*4))!=0
+}
+
+// What the frames draw a stand-in for because it is still being made or
+// loaded: the materials of a program as their rows, a pass without its
+// pipeline, a material without its texture, a mesh not at all. An image or a
+// measurement taken meanwhile is not that of the scene. The levels of a
+// texture finer than those it has are not in it: Stats.textures_pending.
+App_Pending :: struct {
+    programs:int `mirai:"label=Shaders of the material programs of the project being compiled or made, by generation; their materials draw as their rows until they are in place"`,
+    pipelines:int `mirai:"label=Pipelines frames asked for that are being made; meanwhile their programs draw as their rows or their passes without them"`,
+    assets:int `mirai:"label=Meshes and textures frames asked for that are arriving or still going to the GPU; meanwhile a mesh is not drawn and a material shows without its texture"`,
+}
+
+// What the frames of the application wait for now. The editor adds the
+// programs it compiles itself.
+app_pending :: proc(app:^App) -> (pending:App_Pending) {
+    if app.renderer==nil {return}
+    pending.programs=len(app.shaders.loads)
+    pending.pipelines=render.renderer_pipelines_pending(app.renderer)
+    pending.assets=app_assets_arriving(app)+len(app.asset_releases.uploading)
+    return
 }
 
 // Draws a world the window does not show, with the camera and the UI its
@@ -881,7 +909,7 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
         if !drawn {break}
         if wait>0 {count=capture_frames_streaming(count,frame,max(frames,1),render.textures_update(r)+app_assets_arriving(app),time.tick_since(started),wait)}
         // The last frame drew a program as its rows while its pipelines were made: one more with them.
-        if frame==count-1 && render.renderer_pipelines_pending(r) {
+        if frame==count-1 && render.renderer_pipelines_pending(r)>0 {
             render.renderer_pipelines_wait(r)
             count+=1
         }

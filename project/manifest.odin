@@ -29,6 +29,7 @@ MAX_DEPENDENCIES :: 16
 MAX_DEFINES :: 16
 MAX_SOURCES :: 16
 MAX_ASSET_KINDS :: 16
+MAX_KIND_PROGRAM_USES :: 4
 MAX_IMPORT_SOURCES :: 8
 
 Name :: [64]u8
@@ -126,6 +127,7 @@ Asset_Kind :: struct {
     icon:[32]u8 `mirai:"text"`,      // a ui.Icon or an editor.User_Icon, by name
     field:[16]u8 `mirai:"text"`,     // a word: an Asset_Id field whose name has it takes the kind
     scene_data:bool,                 // what a scene makes of itself: the browser lists it with the Plugins filter or a search
+    program_uses:[MAX_KIND_PROGRAM_USES]Name `mirai:"text"`, // what its assets draw the programs of the materials they name, and of those the meshes they name, as (render/abi Program_Use, by name): the build compiles those programs for it
 }
 
 Plugin_Manifest :: struct {
@@ -329,6 +331,9 @@ plugin_validate :: proc(m:^Plugin_Manifest) -> Error {
             if letter<=' ' || letter>'~' {return error_about(.Asset_Kind_Invalid,extension)}
         }
         if folder:=base.text_get(kind.folder[:]);folder!="" && !relative_path_valid(folder) {return error_about(.Asset_Kind_Invalid,extension)}
+        for &use in kind.program_uses {
+            if word:=base.text_get(use[:]);word!="" && !name_valid(word) {return error_about(.Asset_Kind_Invalid,extension)}
+        }
         for &other in m.asset_kinds[:i] {
             if other.extension==kind.extension || other.kind==kind.kind {return error_about(.Asset_Kind_Invalid,extension)}
         }

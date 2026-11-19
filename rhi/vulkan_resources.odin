@@ -40,6 +40,7 @@ vk_format :: proc "contextless" (f: Format) -> vk.Format {
 	case .BC7_Srgb:      return .BC7_SRGB_BLOCK
 	case .BC6H_Ufloat:   return .BC6H_UFLOAT_BLOCK
 	case .RGBA16_Unorm:  return .R16G16B16A16_UNORM
+	case .D16_Unorm:     return .D16_UNORM
 	}
 	return .UNDEFINED
 }
@@ -113,6 +114,7 @@ vk_create_buffer :: proc(d: ^Device, desc: Buffer_Desc, extra_usage: vk.BufferUs
 	b.size = size
 	b.usage = desc.usage
 	b.kind = desc.memory
+	resource_name_set(&b.name, desc.name)
 	vk_set_name(d, .BUFFER, u64(b.handle), desc.name)
 	made := Buffer(pool_add(&d.buffers, b))
 	if desc.memory == .GPU && zero && !vk_zero_new(d, made) {
@@ -233,6 +235,7 @@ texture_create :: proc(d: ^Device, desc: Texture_Desc) -> Texture {
 	if !device_room(d, &d.textures, "textures") {return 0}
 	t := Vk_Texture{desc = desc}
 	t.desc.name = ""
+	resource_name_set(&t.name, desc.name)
 	t.desc.mip_levels = max(desc.mip_levels, 1)
 	t.desc.layers = layers
 	t.vk_format = vk_format(desc.format)
@@ -552,7 +555,6 @@ vk_merge_bindings :: proc(d: ^Device, p: ^Vk_Pipeline, stages: Shader_Stages, co
 			slot.used = true
 			slot.kind = b.kind
 			stage_mask[b.slot] += {code.stage}
-			p.slot_mask |= 1 << b.slot
 		}
 	}
 	entries: [MAX_BINDING_SLOTS]vk.DescriptorSetLayoutBinding
@@ -598,10 +600,9 @@ vk_pipeline_room :: proc(d: ^Device) -> bool {
 }
 
 // A pipeline cache for one pipeline, holding the blob the device keeps for
-// key: what the driver puts in it is that pipeline alone. 0 without a store.
+// key: what the driver puts in it is that pipeline alone.
 @(private)
 vk_pipeline_cache_open :: proc(d: ^Device, key: u64) -> (cache: vk.PipelineCache) {
-	if d.store_path_len == 0 {return 0}
 	info := vk.PipelineCacheCreateInfo{sType = .PIPELINE_CACHE_CREATE_INFO}
 	sync.lock(&d.pipelines_kept.lock)
 	blob := pipeline_store_find(&d.pipelines_kept, key, d.allocator)
@@ -636,7 +637,7 @@ vk_pipeline_cache_close :: proc(d: ^Device, key: u64, cache: vk.PipelineCache, f
 	sync.lock(&d.pipelines_kept.lock)
 	due := pipeline_store_put(&d.pipelines_kept, key, data[:size], took)
 	sync.unlock(&d.pipelines_kept.lock)
-	if due {pipeline_store_save(&d.pipelines_kept, string(d.store_path[:d.store_path_len]))}
+	if due && d.store_path_len > 0 {pipeline_store_save(&d.pipelines_kept, string(d.store_path[:d.store_path_len]))}
 }
 
 // What the constants of a shader are in a pipeline, as the driver takes them:

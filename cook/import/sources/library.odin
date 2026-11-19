@@ -5,6 +5,7 @@ import "core:io"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
+import "core:slice"
 import "core:strings"
 import "core:time"
 import "mirai:asset"
@@ -41,7 +42,10 @@ import "mirai:store"
 // Following a package writes or follows its documents in the project's folder
 // of it: from the build's baselines (importer.documents_follow), and for a
 // model whose source is here, by importing it with the project's folder,
-// which also writes its prefab in the game's types (prefab.model_prefab).
+// which also writes its prefab in the game's types (prefab.model_prefab). The
+// pin records what each file it writes over holds as written
+// (asset.Package_Written): a refresh leaves one that changed since as it is
+// and warns, and an import into the project asks first (Library_Options.changed).
 
 // What the library of the editor of the project at root gives its imports:
 // the formats of models and the importers of whole sources its plugins add,
@@ -70,6 +74,10 @@ Library_Options :: struct {
     // cook ships.
     fast_textures:bool,
     rebuild:bool,    // ingest: imports the source again, also when it is current
+    // What an import into a project (project_ingest) does with its documents
+    // that changed since they were last written; a refresh and the follow of
+    // project_add keep them, unless Discard.
+    changed:importer.Changed,
     // The project or plugin the library works for: its plugins read sources
     // (plugins) and its game's types hold prefabs. "": the formats of the engine alone.
     root:string,
@@ -110,7 +118,7 @@ ingest :: proc(origin:string,options:Library_Options,settings:^importer.Import_S
     l:Library_State
     library_begin(&l,options,allocator)
     defer library_end(&l)
-    return library_ingest(&l,origin,{},settings,"",allocator)
+    return library_ingest(&l,origin,{},settings,"",nil,.Keep,allocator)
 }
 
 // Pins the package whose manifest the store keeps under manifest in the
@@ -167,16 +175,21 @@ project_ingest :: proc(root,origin,folder:string,options:Library_Options,setting
     documents:=l.assets if folder=="" else fmt.tprintf("%s/%s",l.assets,folder)
     r,_:=reader_of(&l,importer.path_key(origin))
     model:=r.kind==.Model && plugins_world(&l)!=nil
-    report,error=library_ingest(&l,origin,{},settings,documents if model else "",allocator)
+    // What the project pins of the package its source was ingested as before.
+    if p,_,found,_:=importer.package_previous(options.store,{},importer.path_key(origin),context.temp_allocator);found {
+        list,_,_:=asset.packages_load(top,context.temp_allocator)
+        for &other in list.packages {
+            if other.id==p.id {entry.assets,entry.written=other.assets,other.written}
+        }
+    }
+    report,error=library_ingest(&l,origin,{},settings,documents if model else "",entry.written[:],l.options.changed,allocator)
     if error.code!=.None {
         error.message=strings.clone(error.message,caller)
         return
     }
+    if entry.id!=report.package_id {entry.assets,entry.written={},{}}
     entry.id,entry.manifest=report.package_id,report.manifest
-    list,_,_:=asset.packages_load(top,context.temp_allocator)
-    for &other in list.packages {
-        if other.id==entry.id {entry.assets=other.assets}
-    }
+    if model {entry.written=written_list(report.written[:])}
     if pin_error:=project_pin(top,options.store,entry);pin_error!=.None {
         report_line(&added.failures,"%s: %s could not be written (%v): a folder is relative to the assets, with forward slashes, and never leaves them",top,asset.PACKAGES_FILE,pin_error)
         return
@@ -184,6 +197,15 @@ project_ingest :: proc(root,origin,folder:string,options:Library_Options,setting
     added.packages=1
     if !model {package_refresh(&l,top,entry,&added,true)}
     return
+}
+
+// A list of what was written the pin keeps, by id, in the temp allocator.
+@(private="file")
+written_list :: proc(written:[]asset.Package_Written) -> [dynamic]asset.Package_Written {
+    list:=make([dynamic]asset.Package_Written,context.temp_allocator)
+    append(&list,..written)
+    slice.sort_by(list[:],proc(a,b:asset.Package_Written) -> bool {return a.id[0]<b.id[0] || a.id[0]==b.id[0] && a.id[1]<b.id[1]})
+    return list
 }
 
 // Brings the packages the project at root pins to builds this engine reads,
@@ -468,9 +490,11 @@ refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Pac
 // ingest does. manifest: the package it was ingested as (zero: the one this
 // machine names for origin). documents: the folder of the project the
 // documents and the prefab of the import are written or followed in ("":
-// none), with the registry and the game types of the library.
+// none), with the registry and the game types of the library; written and
+// changed: what the project's pin records its files held when last written,
+// and what becomes of one that changed since (Import_Options.changed).
 @(private="file")
-library_ingest :: proc(l:^Library_State,path:string,manifest:store.Hash,settings:^importer.Import_Settings,documents:string,allocator:mem.Allocator) -> (report:importer.Import_Report,error:importer.Error) {
+library_ingest :: proc(l:^Library_State,path:string,manifest:store.Hash,settings:^importer.Import_Settings,documents:string,written:[]asset.Package_Written,changed:importer.Changed,allocator:mem.Allocator) -> (report:importer.Import_Report,error:importer.Error) {
     caller:=context.temp_allocator
     context.temp_allocator=l.temp
     s:=l.options.store
@@ -509,7 +533,7 @@ library_ingest :: proc(l:^Library_State,path:string,manifest:store.Hash,settings
         store=s,cache_source=l.options.source,manifest=manifest,documents=documents,root=l.options.root,
         rebuild=l.options.rebuild,fast_textures=l.options.fast_textures,worker=l.options.worker,hashes=&hashes,
     }
-    if documents!="" {options.registry,options.world=l.registry,l.plugins.world}
+    if documents!="" {options.registry,options.world,options.written,options.changed=l.registry,l.plugins.world,written,changed}
     if options.root=="" {options.root,_=importer.source_root(origin,l.temp)}
     if settings!=nil {options.settings,options.ignore_stored=settings^,true}
     progress:importer.Progress
@@ -594,7 +618,7 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
         reingest(l,top,&entry,&p,source,documents,prefab,"it is followed into the project",report)
         return
     }
-    documents_write(l,&p,&f.build,documents,report)
+    documents_write(l,top,&entry,&p,&f.build,documents,report)
     if prefab && follow {
         if _,has:=asset.registry_find(l.registry,prefab_id(&p));!has {
             report_line(&report.warnings,"package %s: its prefab is written from its source (%s) in the types of the game: add it on a machine that has the source, with the project's editor built",p.name,p.origin.path)
@@ -609,15 +633,38 @@ plugins_world :: proc(l:^Library_State) -> ^core.World_Info {
     return l.plugins.world
 }
 
+// Writes or follows the documents of the build b of p into documents and pins
+// what their files hold as it leaves them in entry.
 @(private="file")
-documents_write :: proc(l:^Library_State,p:^asset.Package,b:^asset.Build,documents:string,report:^Library_Report) {
-    written,error:=importer.documents_follow(l.options.store,p,b,documents,l.registry,l.temp)
+documents_write :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,p:^asset.Package,b:^asset.Build,documents:string,report:^Library_Report) {
+    changed:=importer.Changed.Discard if l.options.changed==.Discard else .Keep
+    written,error:=importer.documents_follow(l.options.store,p,b,documents,l.registry,entry.written[:],changed,l.temp)
     if error.code!=.None {
         report_line(&report.failures,"package %s: %s",p.name,error.message)
         return
     }
+    recorded:=make([dynamic]asset.Package_Written,l.temp)
     for w in written {
         if w.warning!="" {report_line(&report.warnings,"package %s: %s",p.name,w.warning)}
+        if w.hash!=0 {append(&recorded,asset.Package_Written{w.id,w.hash})}
+    }
+    written_pin(l,top,entry,recorded[:],p,report)
+}
+
+// Pins in entry what the files of its documents hold as written, when it
+// differs from what it records.
+@(private="file")
+written_pin :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,written:[]asset.Package_Written,p:^asset.Package,report:^Library_Report) {
+    written:=written_list(written)
+    same:=len(written)==len(entry.written)
+    for w,at in written {
+        if !same {break}
+        same=entry.written[at]==w
+    }
+    if same {return}
+    entry.written=written
+    if pin_error:=project_pin(top,l.options.store,entry^);pin_error!=.None {
+        report_line(&report.failures,"package %s: %s/%s could not be written: %v",p.name,top,asset.PACKAGES_FILE,pin_error)
     }
 }
 
@@ -643,7 +690,8 @@ reingest :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,p:^ass
     if l.options.progress.procedure!=nil {fmt.wprintfln(l.options.progress,"importing %s: %s",source,why)}
     started:=time.tick_now()
     model:=prefab && plugins_world(l)!=nil
-    written,error:=library_ingest(l,source,entry.manifest,nil,documents if model else "",l.temp)
+    changed:=importer.Changed.Discard if l.options.changed==.Discard else .Keep
+    written,error:=library_ingest(l,source,entry.manifest,nil,documents if model else "",entry.written[:],changed,l.temp)
     if error.code!=.None {
         report_line(&report.failures,"package %s: %s",p.name,error.message)
         return
@@ -659,14 +707,17 @@ reingest :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,p:^ass
             return
         }
     }
-    if model {return}
+    if model {
+        written_pin(l,top,entry,written.written[:],p,report)
+        return
+    }
     again,read_error:=asset.package_get(l.options.store,written.manifest,l.temp)
     b,build_error:=asset.build_get(l.options.store,written.build,l.temp)
     if read_error!=.None || build_error!=.None {
         report_line(&report.failures,"package %s: the store at %s does not read what its import put (%v, %v)",p.name,l.options.store.root,read_error,build_error)
         return
     }
-    documents_write(l,&again,&b,documents,report)
+    documents_write(l,top,entry,&again,&b,documents,report)
     if prefab {
         if _,has:=asset.registry_find(l.registry,prefab_id(&again));!has {
             report_line(&report.warnings,"package %s: its prefab is written in the types of the game, which the library of the project's editor has: %s",p.name,"build the project's editor, then refresh")

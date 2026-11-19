@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "id": "3df37c7e292cc0578d432dfdb3489314",
+  "name": "bush",
+  "origin": {"path": "assets/forest/bush.gltf", "folder": false, "importer": "glTF"},
+  "identity": "28e19acd32a28538e3db9c40143f10c02e7e8a08e3074331c48e40485f284a47",
+  "inputs": ["bush.bin", "leaves_color.png"],
+  "assets": [
+    {"kind": "SCEN", "name": "bush", "index": 0, "id": "48eed1e5335b875bef27025acf93953a"},
+    {"kind": "TEX", "name": "leaves_color", "index": 0, "id": "33f31fe1b5c654da025e160204ebcd70"},
+    {"kind": "MAT", "name": "Bark", "index": 0, "id": "f9bebb3af1fed4d0e8103c0e0387b11a"},
+    {"kind": "MAT", "name": "Leaves", "index": 1, "id": "e26eb420ab436a838111b0626b6a8a79", "dependencies": ["33f31fe1b5c654da025e160204ebcd70"]},
+    {"kind": "MESH", "name": "Bush", "index": 0, "id": "88ceb31480f8e2c656ca94fb40dbda3d", "part": true, "owner": "48eed1e5335b875bef27025acf93953a", "dependencies": ["e26eb420ab436a838111b0626b6a8a79", "f9bebb3af1fed4d0e8103c0e0387b11a"]}
+  ]
+}
