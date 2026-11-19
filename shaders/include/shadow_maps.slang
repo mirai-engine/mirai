@@ -13,7 +13,7 @@
 #include "shadow_pages.slang"
 
 // SHADOW_MAP_ROWS, SHADOW_LIGHT_FACES: the buffer of the maps (render/abi);
-// the clusters they draw, shadow_cull.slang. The side of the atlas, texels,
+// the clusters they draw, shadow_cull.slang. The height of the atlas, texels,
 // is Frame.sun_maps.z.
 
 struct Shadow_Map {
