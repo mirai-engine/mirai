@@ -2483,7 +2483,8 @@ renderer_capacity_marks :: proc "contextless" (r: ^Renderer) -> Capacity_Marks {
 // for them, and keep what they hold beyond them; what they ask for from now
 // on counts from marks.
 renderer_capacity_marks_set :: proc "contextless" (r: ^Renderer, marks: Capacity_Marks) {
-	for &wanted, list in r.scene.cull_wanted {wanted = min(marks.cull[list], CULL_MARK_MAX)}
+	most := CULL_MOST
+	for &wanted, list in r.scene.cull_wanted {wanted = min(marks.cull[list], most[list])}
 	r.points.wanted = min(marks.points, POINTS_MAX)
 	r.scene.mesh_draws_wanted = min(marks.mesh_draws, CULL_MARK_MAX)
 }
@@ -2524,7 +2525,7 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 	if s.program_draws == 0 {
 		s.program_draws = rhi.buffer_create(d, {size = POINTS_PROGRAM_CAPACITY * size_of(Gpu_Program_Draw), usage = {.Storage, .Indirect}, name = "resolve draws of programs"})
 	}
-	start := CULL_START
+	start, most := CULL_START, CULL_MOST
 	for list in Cull_List {
 		buffer := [Cull_List]^rhi.Buffer{.Chunks = &s.chunk_buffer, .Visible = &s.visible_buffer, .Candidates = &s.cluster_candidate_buffer, .Shadow_Chunks = &s.shadow_chunks, .Shadow_Entries = &s.shadow_entries, .Raster_Vertices = &s.raster_vertices, .Raster_Triangles = &s.raster_indices}[list]
 		wanted := s.cull_wanted[list]
@@ -2535,8 +2536,9 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 			shadow := s.raster_shadow_wanted[k]
 			wanted = max(s.raster_share[k], shadow + shadow / RASTER_LIST_SLACK)
 		}
+		wanted = min(wanted, most[list])
 		if buffer^ != 0 && wanted <= s.cull_capacity[list] {continue}
-		capacity := max(wanted + wanted / 2 if list < .Raster_Vertices else wanted, start[list], s.cull_capacity[list])
+		capacity := min(max(wanted + wanted / 2 if list < .Raster_Vertices else wanted, start[list], s.cull_capacity[list]), most[list])
 		if buffer^ != 0 {rhi.buffer_destroy(d, buffer^)}
 		names := [Cull_List]string{.Chunks = "cull chunks", .Visible = "visible clusters", .Candidates = "cluster occlusion candidates", .Shadow_Chunks = "shadow map chunks", .Shadow_Entries = "shadow map clusters", .Raster_Vertices = "vertices of the raster", .Raster_Triangles = "triangles of the raster"}
 		entries := [Cull_List]u64{.Chunks = size_of([2]u32), .Visible = size_of(Gpu_Visible_Cluster), .Candidates = size_of([2]u32), .Shadow_Chunks = size_of([4]u32), .Shadow_Entries = size_of(Gpu_Visible_Cluster), .Raster_Vertices = abi.RASTER_VERTEX_WORDS * size_of(u32), .Raster_Triangles = size_of([3]u32)}
