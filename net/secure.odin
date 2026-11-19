@@ -4,6 +4,7 @@ import "core:crypto"
 import "core:crypto/aegis"
 import "core:crypto/chacha20poly1305"
 import "core:crypto/hkdf"
+import "core:crypto/hmac"
 import "core:crypto/sha2"
 import "core:crypto/siphash"
 import "core:crypto/x25519"
@@ -56,13 +57,25 @@ Key :: [KEY_BYTES]u8
 @(private) FAILED_INTERVAL :: 1.0 // s
 @(private) Failed :: struct {key:u64,due:f64}
 
-// The Initiates a server accepted, by their key e, in a Bloom filter of two
-// generations: a copy that comes later opens nothing. With an invitation the
-// filter lasts as long as the host, which is as long as its key s; without
-// one a generation turns every COOKIE_SECONDS, as long as the cookie of the
-// Initiate is good.
+// The Initiates a server opened, by their key e, in Bloom filters: a copy that
+// comes later opens nothing. Those without a cookie (only with an invitation)
+// go to a filter that lasts as long as the host, which is as long as its key s;
+// those with one, to two generations that turn every COOKIE_SECONDS, as long as
+// a cookie is good. A filter takes at most SEEN_LIMIT, which keeps a false
+// positive under one in 10^4; past it, or on a hit, the client gets a Retry
+// with a cookie and tries again with another e: a full filter costs a round
+// trip, never a connection. A generation that is full puts off what comes until
+// it turns.
 @(private) SEEN_BITS :: 1<<20
 @(private) SEEN_HASHES :: 3
+@(private) SEEN_LIMIT :: 1<<14
+@(private) SEEN_LASTING :: 0 // the filter of Initiates without a cookie; 1 and 2 are the generations of those with one
+// With an invitation, an update that ran out of key exchanges makes Initiates
+// without a cookie get a Retry instead for BUSY_SECONDS: spoofed senders never
+// return the cookie, and the exchanges are left for those who do.
+@(private) BUSY_SECONDS :: 1.0
+@(private) MAC_BYTES :: 16
+@(private) LABEL_MAC :: "mirai-net-3 mac"
 
 @(private)
 Host_Secure :: struct {
@@ -71,10 +84,14 @@ Host_Secure :: struct {
     invited:bool,       // s and the secret come from an invitation: no Hello is answered, no cookie asked
     rekey_interval:u64,
     handshakes:int,     // key exchanges left in this update
+    exchanges:u64,      // server: Initiates it tried to open
     failed:[]Failed,    // server: FAILED_SETS sets of FAILED_WAYS, by the address_key of the address
-    seen:[2][]u64,      // server: the generations of the filter of Initiates
-    seen_current:int,
+    seen:[3][]u64,      // server: the filters of Initiates (SEEN_LASTING and the two generations)
+    seen_count:[3]int,  // what each one took
+    seen_current:int,   // the generation that takes now: 1 or 2
     seen_since:f64,
+    busy_until:f64,     // server with an invitation: until then an Initiate needs a cookie
+    mac:Key,            // the key of the MAC that ends an Initiate: whoever knows s and the secret has it
 }
 
 @(private)
@@ -99,6 +116,7 @@ secure_host_init :: proc(h:^Host) {
     s.rekey_interval=REKEY_INTERVAL
     if d.handshakes_per_update<=0 {d.handshakes_per_update=8}
     s.psk=invite_psk(d.invite.secret,d.protocol_id)
+    s.seen_current=1
     if d.mode==.Server {
         s.invited=d.invite.private!={}
         s.private=d.invite.private
@@ -110,6 +128,27 @@ secure_host_init :: proc(h:^Host) {
         s.invited=d.invite.public!={}
         s.public=d.invite.public
     }
+    s.mac=mac_key(&s.public,&s.psk)
+}
+
+// The key of the MAC of an Initiate to the server of key s, with the pre-shared key psk.
+@(private)
+mac_key :: proc(public,psk:^Key) -> (key:Key) {
+    ctx:sha2.Context_256
+    sha2.init_256(&ctx)
+    sha2.update(&ctx,transmute([]u8)string(LABEL_MAC))
+    sha2.update(&ctx,public[:])
+    sha2.update(&ctx,psk[:])
+    sha2.final(&ctx,key[:])
+    return
+}
+// The MAC of what comes before it in an Initiate.
+@(private)
+mac_of :: proc(key:^Key,bytes:[]u8) -> (mac:[MAC_BYTES]u8) {
+    sum:[32]u8
+    hmac.sum(.SHA256,sum[:],bytes,key[:])
+    copy(mac[:],sum[:MAC_BYTES])
+    return
 }
 
 // The pre-shared key of the handshake: the secret of the invitation, for the application.
@@ -160,30 +199,39 @@ failed_record :: proc(b:^Back,from:Address) -> ^Failed {
 
 @(private)
 seen_hash :: proc(b:^Back,initiator:^Key) -> u64 {return siphash.sum_2_4(initiator[:],b.secret[:])}
+// Whether the filter (SEEN_LASTING, or the generations when cookied) holds hash.
 @(private)
-seen_has :: proc(s:^Host_Secure,hash:u64) -> bool {
-    generations: for generation in s.seen {
+seen_has :: proc(s:^Host_Secure,hash:u64,cookied:bool) -> bool {
+    filters: for filter in (cookied?s.seen[1:]:s.seen[:1]) {
         for i in 0..<SEEN_HASHES {
             bit:=hash>>(20*uint(i))&(SEEN_BITS-1)
-            if generation[bit/64]&(1<<(bit%64))==0 {continue generations}
+            if filter[bit/64]&(1<<(bit%64))==0 {continue filters}
         }
         return true
     }
     return false
 }
+// The filter an Initiate goes to, and whether it has room.
 @(private)
-seen_add :: proc(s:^Host_Secure,hash:u64) {
-    generation:=s.seen[s.seen_current]
+seen_filter :: proc(s:^Host_Secure,cookied:bool) -> (index:int,room:bool) {
+    index=cookied?s.seen_current:SEEN_LASTING
+    return index,s.seen_count[index]<SEEN_LIMIT
+}
+@(private)
+seen_add :: proc(s:^Host_Secure,hash:u64,cookied:bool) {
+    index,_:=seen_filter(s,cookied)
     for i in 0..<SEEN_HASHES {
         bit:=hash>>(20*uint(i))&(SEEN_BITS-1)
-        generation[bit/64]|=1<<(bit%64)
+        s.seen[index][bit/64]|=1<<(bit%64)
     }
+    s.seen_count[index]+=1
 }
 @(private)
 seen_turn :: proc(s:^Host_Secure,now:f64) {
-    if s.invited || now-s.seen_since<COOKIE_SECONDS {return}
-    s.seen_current=1-s.seen_current
+    if now-s.seen_since<COOKIE_SECONDS {return}
+    s.seen_current=3-s.seen_current
     mem.zero_slice(s.seen[s.seen_current])
+    s.seen_count[s.seen_current]=0
     s.seen_since=now
 }
 

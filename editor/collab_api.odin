@@ -37,7 +37,7 @@ Api_Collab_Unsent :: struct {
 Api_Collab_Status :: struct {
     role:Collab_Role,
     phase:Collab_Phase,
-    invite:[wire.INVITE_TEXT_BYTES]u8 `mirai:"text,label=The host: the code to give others to join with"`,
+    invite:[wire.INVITE_TEXT_BYTES+1]u8 `mirai:"text,label=The host: the code to give others to join with"`,
     port:int,
     reason:[96]u8 `mirai:"text,label=Why the session ended"`,
     peers:[COLLAB_PEERS]Api_Collab_Peer `mirai:"label=The first count are in the session"`,

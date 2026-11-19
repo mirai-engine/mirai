@@ -149,8 +149,10 @@ In `plugins/multiplayer/runtime`:
   Disconnect if the game closes it), until a datagram under the keys of the connection comes from
   it; an Initiate that does not open, or a Hello to a host with an invitation, hears nothing. There
   is no unsealed mode.
-- **An Initiate opens once** while the key of its server lasts: a later copy, from anywhere, makes
-  no connection and delivers nothing again.
+- **An Initiate opens once** while the key of its server lasts, also one refused: a later copy,
+  from anywhere, makes no connection and delivers nothing again. What the replay filter cannot take
+  or holds by mistake, and what comes while the server ran out of key exchanges, gets a Retry: a
+  full filter or a flood costs a round trip, never a connection.
 - **A connection changes address only on a datagram that opens under its key** and is newer than
   any it accepted ([roaming](references/networking.md#connections)). A wrong Initiate costs its
   address, never everyone: guessers do not shut out who brings the invitation.

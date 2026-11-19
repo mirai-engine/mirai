@@ -51,7 +51,7 @@ Invite_Error :: enum u8 {
     Invalid,   // no address, a zero secret or a key that leaves nothing secret
 }
 
-INVITE_TEXT_BYTES :: INVITE_CHARACTERS+(INVITE_CHARACTERS-1)/INVITE_GROUP // of a code as invite_encode writes it
+INVITE_TEXT_BYTES :: INVITE_CHARACTERS+(INVITE_CHARACTERS-1)/INVITE_GROUP // of a code as invite_encode writes it; a text field takes one more
 
 @(private) INVITE_ALPHABET :: "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 @(private) INVITE_VERSION :: 1

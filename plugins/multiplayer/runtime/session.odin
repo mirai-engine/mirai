@@ -94,8 +94,7 @@ Own_Events :: struct {
 Open_Request :: struct {
     server:bool,
     port:int,          // server: 0: Net_Settings.port
-    invite:bool,       // server: it lets in only who brings the code of its invitation; without it, anyone who reaches its address
-    invite_key:wire.Invite_Key, // of it, made by whoever shows the code; none: the session makes one, the port is mapped on the router and the code carries that address too
+    invite:bool,       // server: it lets in only who brings the code of its invitation, whose key it makes unless invite_give gave one (then it maps nothing on the router); without it, anyone who reaches its address
     connect:[128]u8 `mirai:"text"`, // client: the code of an invitation, or the address of a server without one
     latency,jitter:f64, // seconds a datagram is delayed each way, and how much that varies
     loss:f32,          // share of the datagrams lost each way
@@ -298,7 +297,6 @@ session_open :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,port:int) -> 
         if !wire.udp_open(&s.udp,wire.address_any6(port)) {return .Transport_Failed,{}}
         s.port=int(s.udp.address.port)
         if s.wanted.invite {
-            s.invite=s.wanted.invite_key
             if s.invite=={} {
                 made:bool
                 if s.invite,made=wire.invite_key();!made {
@@ -545,6 +543,7 @@ session_destroy :: proc(s:^Net_Session) {
     delete(s.scratch,allocator);s.scratch=nil
     delete(s.address,allocator);s.address=""
     delete(s.invite_code,allocator);s.invite_code=""
+    crypto.zero_explicit(&s.invite,size_of(s.invite))
     if s.mapping_on {wire.mapping_close(&s.mapping)}
     s.mapping_on=false
     if s.status_file!=nil {
@@ -691,6 +690,11 @@ invite_update :: proc(s:^Net_Session) -> bool {
     s.invite_code=wire.invite_encode(wire.invite_make(s.invite,s.port,s.mapping_on?&s.mapping:nil),s.allocator)
     return true
 }
+
+// Gives the server that opens next the key of its invitation, made by whoever
+// shows its code: it never goes through a storage of the World, and the session
+// zeroes it when it ends. The session then maps no port on the router.
+invite_give :: proc(s:^Net_Session,key:wire.Invite_Key) {s.invite=key}
 
 // The code of the invitation of this server, for the game to show: empty
 // without one (--invite), and while the router is still being asked.

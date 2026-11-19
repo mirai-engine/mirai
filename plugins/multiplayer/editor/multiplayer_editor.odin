@@ -14,7 +14,7 @@ Api_Network_Result :: struct {
     players,online,ping_ms,port:int,
     game:u32,
     processes:int `mirai:"label=Player processes alive"`,
-    invite:[wire.INVITE_TEXT_BYTES]u8 `mirai:"text,label=The code of the invitation of the server: players outside the editor join with it"`,
+    invite:[wire.INVITE_TEXT_BYTES+1]u8 `mirai:"text,label=The code of the invitation of the server: players outside the editor join with it"`,
     reason:[128]u8 `mirai:"text,label=Why the last game ended"`,
 }
 
