@@ -255,13 +255,7 @@ content_open :: proc(a:^Assets,id:base.Asset_Id,kind:asset.Fourcc,file:^asset.As
     record,found:=asset.registry_find(&a.registry,id)
     if !found || record.kind!=kind {return false}
     stamp.size,stamp.time=record.size,record.time
-    data,error:=asset.registry_read(&a.registry,record.path,a.allocator)
-    if error!=.None || asset.asset_take(file,data,a.allocator)!=.None {return false}
-    if !asset.blob_verify_hash(&file.blob) || file.blob.header.id!=id || file.blob.header.kind!=kind {
-        asset.asset_close(file)
-        return false
-    }
-    return true
+    return assets_file(a,id,kind,file)==.None
 }
 
 @(private="file")
