@@ -65,14 +65,14 @@ SHADOW_SUN_LEVELS :: abi.SHADOW_SUN_MAPS
 SHADOW_MAP_ORTHOGRAPHIC :: abi.SHADOW_MAP_ORTHOGRAPHIC
 // Metres from the eye within which the maps follow what sways (the wind):
 // only the levels of the sun and the mips of the faces read within it draw a
-// caster that sways as it sways; the rest draw it at rest and keep it,
-// whatever time the frame has left (shadow_sway_texel). The levels from the
-// fourth each serve an octave of the distance from the eye and, in a forest,
-// a like share of the pages what sways composes again, some 16 % each, the
-// two finest under 2 %; those read within 4 m are the finest four (to 3.7 m
-// at 1080 lines and 60 degrees), a third of those pages, and with the small
-// plants at rest, which take near half of them, a fifth: what the share of
-// the bound composes again every frame.
+// caster that sways as it sways (shadow_sway_texel); the others draw it at
+// rest and keep it, whatever time the frame has left. Each level from the
+// fourth serves an octave of the distance (from 0.9 m at 1080 lines and 60
+// degrees) and, in a forest, some 16 % of the pages that sway each, the two
+// finest under 2 %. Within 4 m lie the finest five, to 3.7 m there: a third
+// of those pages, and with the small plants at rest, near half of the work,
+// a fifth of the 10 to 13 ms all of them took, some 2 ms, the share of the
+// most bound the atlas composes again each frame (SHADOW_MAPS_MOST_MS).
 SHADOW_SWAY_REACH :: f32(4)
 
 // The frames after its last change an instance whose shadow changed twice
