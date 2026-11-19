@@ -231,7 +231,8 @@ Assets :: struct {
     missing_texture_ready:bool,
     errors:[dynamic]Assets_Error,
     package_problems:[]string, // Assets_Desc.package_problems, owned
-    store:store.Store,         // where the listed outputs of packages are read: open when something is listed
+    store:store.Store,         // where the listed outputs of packages are read: opened when something is listed
+    store_root:string,         // Assets_Desc.store_root, owned
     revision:u64,   // advances when something that was given out changes: who holds handles or rows asks again
     structure:u64,  // advances when the instances of a scene are no longer what they need: who extracted it does it again
     structure_changes:[ASSETS_STRUCTURE_LOG]Assets_Structure_Change,
@@ -322,21 +323,33 @@ assets_init :: proc(a:^Assets,desc:Assets_Desc) -> bool {
         a.indexed=ok && asset.registry_load(&a.registry,index)==.None
         delete(index,allocator)
     }
-    if ok && assets_listing(desc) {
-        // What packages list is read from the store, by its parts, while the assets live.
-        folder:=desc.store_root!="" ? desc.store_root : store.default_root(context.temp_allocator)
-        if folder!="" {
-            if opened,open_error:=store.open(folder,allocator);open_error==.None {
-                a.store=opened
-                a.registry.store=&a.store
-            }
-        }
+    if ok {
+        no_root:mem.Allocator_Error
+        a.store_root,no_root=strings.clone(desc.store_root,allocator)
+        ok=no_root==nil
     }
+    // What packages list is read from the store, by its parts, while the assets live.
+    if ok && assets_listing(desc) {assets_store(a)}
     if !ok || (!a.indexed && asset.registry_scan(&a.registry)!=.None) {
         assets_destroy(a)
         return false
     }
     return true
+}
+
+// The store the listed outputs are read from, opened the first time something
+// listed is read: at the start, or once a project that had no package lists one.
+// nil when it does not open.
+@(private="file")
+assets_store :: proc(a:^Assets) -> ^store.Store {
+    if a.registry.store!=nil {return a.registry.store}
+    folder:=a.store_root!="" ? a.store_root : store.default_root(context.temp_allocator)
+    if folder=="" {return nil}
+    opened,open_error:=store.open(folder,a.allocator)
+    if open_error!=.None {return nil}
+    a.store=opened
+    a.registry.store=&a.store
+    return a.registry.store
 }
 
 // Whether a registry of desc lists outputs of packages.
@@ -363,6 +376,7 @@ assets_destroy :: proc(a:^Assets) {
     asset.types_destroy(&a.types)
     asset.registry_destroy(&a.registry)
     store.close(&a.store)
+    delete(a.store_root,a.allocator)
     for problem in a.package_problems {delete(problem,a.allocator)}
     delete(a.package_problems,a.allocator)
     a^={}
@@ -530,8 +544,9 @@ assets_file :: proc(a:^Assets,id:base.Asset_Id,kind:asset.Fourcc,file:^asset.Ass
     if record.kind!=kind {return .Invalid}
     limit:=assets_byte_limit(a,record.path)
     if object,listed:=asset.registry_listed_object(&a.registry,record.path);listed {
-        if a.registry.store==nil {return .Not_Found}
-        assets_object_open(file,a.registry.store,object,id,kind,a.allocator,limit) or_return
+        s:=assets_store(a)
+        if s==nil {return .Not_Found}
+        assets_object_open(file,s,object,id,kind,a.allocator,limit) or_return
     } else {
         data:=asset.registry_read(&a.registry,record.path,a.allocator,limit) or_return
         assets_file_take(file,data,id,kind,a.allocator,limit) or_return
@@ -596,8 +611,8 @@ assets_source :: proc(a:^Assets,id:base.Asset_Id,allocator:mem.Allocator) -> (so
     if record.state!=.Asset {return}
     source={id=id,kind=record.kind,hash=record.content_hash,allocator=allocator,limit=assets_byte_limit(a,record.path)}
     if object,listed:=asset.registry_listed_object(&a.registry,record.path);listed {
-        if a.registry.store==nil {return {},false}
-        source.object,source.store=object,a.registry.store
+        source.object,source.store=object,assets_store(a)
+        if source.store==nil {return {},false}
     } else if held,in_memory:=asset.registry_memory_find(&a.registry,record.path);in_memory {
         if held.removed {return {},false}
         data,error:=asset.asset_bytes_clone(held.data,allocator)
