@@ -320,7 +320,7 @@ Pipeline_Id :: enum {
 	Ddgi_Trace, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
 	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
 	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Reflect, Translucent, Reflect_Resolve,
-	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Clear, Shadow_Map_Copy, Shadow_Mark, Shadow_Pages, Shadow_Hiz, // the cull of the maps of the shadows by instance and by cluster, the draws of the triangles their lists hold by what each writes, the pages of the cache they clear and the atlas copies, the marks of the points, the table of the pages and the farthest depth of the cache
+	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Clear, Shadow_Map_Copy, Shadow_Mark, Shadow_Pages, Shadow_Pages_Sort, Shadow_Hiz, // the cull of the maps of the shadows by instance and by cluster, the draws of the triangles their lists hold by what each writes, the pages of the cache they clear and the atlas copies, the marks of the points, the table of the pages (the steps that sort the pool apart) and the farthest depth of the cache
 	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Inside,
 	// The raster of the visibility target by raster bin (RASTER_BIN_*), then the same of a view with a clip plane.
 	Visibility, Visibility_Two_Sided, Visibility_Tested, Visibility_Tested_Two_Sided,
@@ -1100,6 +1100,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	})
 	compute(list, r, .Shadow_Mark, .Shadow_Mark_Comp)
 	compute(list, r, .Shadow_Pages, .Shadow_Pages_Comp)
+	compute(list, r, .Shadow_Pages_Sort, .Shadow_Pages_Sort_Comp)
 	compute(list, r, .Shadow_Hiz, .Shadow_Hiz_Comp)
 	compute(list, r, .Shadow_Maps, .Shadow_Maps_Comp)
 	compute(list, r, .Shadow_Clusters, .Shadow_Clusters_Comp)
@@ -1591,7 +1592,7 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	}
 	// The views of several are made again at their next frame, at the scale it gives them.
 	if resolution {
-		destroy_targets(r, &r.main.targets)
+		destroy_targets(r, &r.main.targets, shadows = true)
 		if !create_targets(r, &r.main, r.window_width, r.window_height, window_render_scale(r, f32(r.window_height)), true) {return false}
 	}
 	pipeline_variants_ask(r)
@@ -1712,9 +1713,14 @@ shared_targets_release :: proc(r: ^Renderer, textures: []rhi.Texture) {
 	}
 }
 
+// shadows: the maps of the shadows stay, for the view made again at another
+// size, whose pages lie in the world.
 @(private)
-destroy_targets :: proc(r: ^Renderer, t: ^Targets) {
+destroy_targets :: proc(r: ^Renderer, t: ^Targets, shadows := false) {
 	d := r.device
+	kept: Shadow_Raster
+	if shadows {kept, t.shadow_raster = t.shadow_raster, {}}
+	defer t.shadow_raster = kept
 	for tex in targets_textures(t) {if tex != 0 {rhi.texture_destroy(d, tex)}}
 	if t.shadow_raster.pages != 0 {rhi.buffer_destroy(d, t.shadow_raster.pages)}
 	shadow_reach_release(r, &t.shadow_raster)
@@ -1991,7 +1997,7 @@ renderer_resize :: proc(r: ^Renderer, requested_width, requested_height: u32, ui
 	r.pixel_density = density
 	rhi.device_wait_idle(r.device)
 	destroy_view_targets(r)
-	destroy_targets(r, &r.main.targets)
+	destroy_targets(r, &r.main.targets, shadows = true)
 	create_targets(r, &r.main, width, height, window_render_scale(r, f32(height)), true)
 	rhi.swapchain_resize(r.device, width, height)
 }

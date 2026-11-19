@@ -42,6 +42,24 @@ import mm "mirai:std/math"
 // the table of the frames before, and the pages are given again only where a
 // point asks for one not drawn (shadow_pages.comp).
 SHADOW_POOL :: abi.SHADOW_POOL
+// The pool of a view: where the sun lights ground out to the horizon, each
+// level of the sun reads a band of pages of the ground whatever the pixels of
+// the view, and the pixels add the pages of the finer levels their texel of
+// one or two of them takes (abi.SHADOW_TEXEL_PIXELS). The pool holds no more
+// than abi.SHADOW_POOL_PAGES.
+SHADOW_POOL_LEVEL_PAGES :: u64(40)
+SHADOW_POOL_PIXELS :: u64(2048)
+// The pages a pool grows or shrinks by: four rows, so that a view resized a
+// little keeps its pool.
+SHADOW_POOL_STEP :: 4 * abi.SHADOW_POOL_ROW
+
+// The pages of the pool of a view that renders width x height pixels.
+@(private)
+shadow_pool_pages :: proc "contextless" (width, height: u32) -> u32 {
+	need := SHADOW_POOL_LEVEL_PAGES * SHADOW_SUN_LEVELS + (u64(width) * u64(height) + SHADOW_POOL_PIXELS - 1) / SHADOW_POOL_PIXELS
+	step := u64(SHADOW_POOL_STEP)
+	return u32(min((need + step - 1) / step * step, u64(abi.SHADOW_POOL_PAGES)))
+}
 SHADOW_SLOTS :: abi.SHADOW_SLOTS
 SHADOW_MAP_ROWS :: abi.SHADOW_MAP_ROWS
 SHADOW_GROUP :: u32(256) // the threads of a group of shadow_maps.comp
@@ -234,7 +252,8 @@ Shadow_Raster :: struct {
 	table:    rhi.Texture,   // an entry for each page of each slot (abi.SHADOW_PAGE_*)
 	hiz:      rhi.Texture,   // the farthest depth of the cache over blocks of each page of the pool (shadow_hiz.comp)
 	pages:    rhi.Buffer,    // abi.SHADOW_WORDS_*
-	pool:     u32,           // the pages of the pool it gives, 0: all of them
+	pool:     u32,           // the pages of the pool it gives, 0: shadow_pool_pages of the view
+	rows:     u32,           // of pages of abi.SHADOW_POOL_ROW, of the cache, the atlas, the layer and the hiz
 	budget:   u32,           // the units each of its rounds draws in a frame, 0: those of the renderer (Shadow_Bound)
 	held:     [SHADOW_SLOTS]Shadow_Held,
 	forget:   bool, // every page is let go of in the next frame
@@ -1741,7 +1760,7 @@ shadow_pages_step :: proc(p: ^Pass, steps: ^Shadow_Pages_Params, step: Shadow_Pa
 	r, cmd, b := p.r, p.cmd, &p.t.shadow_raster
 	steps.step, steps.round = u32(step), round
 	rhi.cmd_bind_texture(cmd, SLOT_SHADOW_TABLE, r.dummy_uint)
-	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Pages])
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Pages_Sort if step == .Pool || step == .Grant else .Shadow_Pages])
 	set_params(cmd, steps)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, r.shadow_buffers.table)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, b.pages)
@@ -1846,6 +1865,9 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	maps.sun = max(u32)
 	if !p.draw {return}
 	b, d := &t.shadow_raster, &r.shadow_buffers
+	pool := b.pool if b.pool != 0 else shadow_pool_pages(t.width, t.height)
+	rows := (pool + abi.SHADOW_POOL_ROW - 1) / abi.SHADOW_POOL_ROW
+	if b.cache != 0 && rows != b.rows && !shadow_pool_resize(r, cmd, b, rows) {b.forget = true; return}
 	// The cache holds nothing it can keep when it is new or the cut changed.
 	fresh := b.cache == 0 || b.cut != r.settings.lod_error_pixels
 	zone := render_zone_begin(r, "shadow plan")
@@ -1853,14 +1875,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	base.profile_end(zone)
 	if !ok || plan.on == 0 {return}
 	made := b.pages == 0 || b.table == 0 || b.hiz == 0
-	if b.hiz == 0 {
-		b.hiz = rhi.texture_create(r.device, {width = SHADOW_POOL / abi.SHADOW_HIZ_BLOCK, height = SHADOW_POOL / abi.SHADOW_HIZ_BLOCK, mip_levels = abi.SHADOW_HIZ_MIPS, format = .R32_Float, usage = {.Storage, .Sampled}, name = "shadow hiz"})
-		if b.hiz == 0 {set_error(r, "shadow hiz: %s", rhi.device_error(r.device)); b.forget = true; return}
-	}
-	good := target(r, cmd, &b.cache, SHADOW_POOL, SHADOW_POOL, .D32_Float, {.Depth_Target, .Sampled}, "shadow cache") &&
-	        target(r, cmd, &b.atlas, SHADOW_POOL, SHADOW_POOL, .D32_Float, {.Depth_Target, .Sampled}, "shadow atlas") &&
-	        target(r, cmd, &b.layer, SHADOW_POOL >> shadow_coarser(b), SHADOW_POOL >> shadow_coarser(b), .D32_Float, {.Depth_Target, .Sampled}, "shadow layer") &&
-	        target(r, cmd, &b.table, abi.SHADOW_SLOT_ENTRIES, SHADOW_SLOTS, .R32_Uint, {.Storage, .Sampled}, "shadow table")
+	good := shadow_pool_textures(r, cmd, b, rows) && target(r, cmd, &b.table, abi.SHADOW_SLOT_ENTRIES, SHADOW_SLOTS, .R32_Uint, {.Storage, .Sampled}, "shadow table")
 	pages_ok, _ := ensure_buffer(r, &b.pages, u64(abi.SHADOW_WORDS) * 4, {.Storage, .Indirect, .Transfer_Dst, .Transfer_Src}, "shadow pages")
 	state_ok, _ := ensure_buffer(r, &d.state, size_of(Gpu_Cull_State), {.Storage, .Indirect, .Transfer_Dst}, "shadow map state")
 	table_ok, _ := ensure_buffer(r, &d.table, b.data.size, {.Storage, .Transfer_Dst}, "shadow maps")
@@ -1879,7 +1894,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 		rows := ([^][4]u32)(b.data.ptr)[int(plan.rows):][:count * SHADOW_MAP_ROWS]
 		copy(p.frame.sun_map_rows[:], rows)
 	}
-	p.frame.sun_maps = {u32(count), plan.rows, SHADOW_POOL, transmute(u32)b.sway}
+	p.frame.sun_maps = {u32(count), plan.rows, b.rows * SHADOW_PAGE, transmute(u32)b.sway}
 	constants := (^Gpu_Frame)(p.constants.ptr)
 	constants.sun_maps, constants.sun_map_rows = p.frame.sun_maps, p.frame.sun_map_rows
 	rhi.cmd_copy_buffer(cmd, b.data.buffer, b.data.offset, d.table, 0, b.data.size)
@@ -1888,7 +1903,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	// mark the pages they read for a cycle of the jitter of the view; a still
 	// view keeps them, and the steps run only where a point asked for a page
 	// not drawn (shadow_pages.comp).
-	seen := Shadow_Seen{view = p.unjittered, eye = p.frame.camera_position.xyz, size = {t.width, t.height, scale}, params = hash.fnv64a(([^]u8)(mark)[:size_of(T)]), lights = s.light_grid_placed, pool = b.pool}
+	seen := Shadow_Seen{view = p.unjittered, eye = p.frame.camera_position.xyz, size = {t.width, t.height, scale}, params = hash.fnv64a(([^]u8)(mark)[:size_of(T)]), lights = s.light_grid_placed, pool = pool}
 	full := made || plan.whole || b.whole || plan.changed || plan.box_count > 0 || seen != b.seen
 	// A view that moves keeps for the frames of the cycle of its jitter only
 	// the pages it read the frame before: those it left behind give their
@@ -1919,7 +1934,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	// rounds have drawn (Propagate).
 	steps := Shadow_Pages_Params{
 		frame = b.frame, rows = plan.rows, plan = plan.plan, boxes = plan.boxes, box_count = plan.box_count, sun = plan.sun >> 16,
-		pool = b.pool if b.pool != 0 else abi.SHADOW_POOL_PAGES, fresh = 1 if made else 0, full = 1 if full else 0, slots = plan.slots, slot_count = plan.slot_count,
+		pool = pool, fresh = 1 if made else 0, full = 1 if full else 0, slots = plan.slots, slot_count = plan.slot_count,
 		reach = plan.reach, threads = shadow_frame_units(r, b),
 		keep = keep,
 		budget = shadow_frame_units(r, b),
@@ -1966,6 +1981,43 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	rhi.cmd_copy_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_THREADS) * 4, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow) + offset_of(Shadow_Stats, cull_threads)), 4)
 	rhi.cmd_copy_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_STALE) * 4, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow) + offset_of(Shadow_Stats, pages_stale)), 4)
 	return plan.shadow
+}
+
+// The textures of the pool of a view with `rows` rows of pages, those it lacks.
+@(private)
+shadow_pool_textures :: proc(r: ^Renderer, cmd: ^rhi.Command_List, b: ^Shadow_Raster, rows: u32) -> bool {
+	height := rows * SHADOW_PAGE
+	if b.hiz == 0 {
+		b.hiz = rhi.texture_create(r.device, {width = SHADOW_POOL / abi.SHADOW_HIZ_BLOCK, height = height / abi.SHADOW_HIZ_BLOCK, mip_levels = abi.SHADOW_HIZ_MIPS, format = .R32_Float, usage = {.Storage, .Sampled}, name = "shadow hiz"})
+		if b.hiz == 0 {set_error(r, "shadow hiz: %s", rhi.device_error(r.device)); return false}
+	}
+	b.rows = rows
+	return target(r, cmd, &b.cache, SHADOW_POOL, height, .D32_Float, {.Depth_Target, .Sampled}, "shadow cache") &&
+	       target(r, cmd, &b.atlas, SHADOW_POOL, height, .D32_Float, {.Depth_Target, .Sampled}, "shadow atlas") &&
+	       target(r, cmd, &b.layer, SHADOW_POOL >> shadow_coarser(b), height >> shadow_coarser(b), .D32_Float, {.Depth_Target, .Sampled}, "shadow layer")
+}
+
+// The pool of a view to another count of rows of pages, a transaction of the
+// frame its size or the pages it gives changed. Grown, each page keeps its
+// place and what the cache, the atlas and the farthest depth of the cache
+// hold of it; shrunk, the pool is made anew and every page drawn again.
+@(private)
+shadow_pool_resize :: proc(r: ^Renderer, cmd: ^rhi.Command_List, b: ^Shadow_Raster, rows: u32) -> bool {
+	old := [?]rhi.Texture{b.cache, b.atlas, b.hiz, b.layer}
+	b.cache, b.atlas, b.hiz, b.layer = 0, 0, 0, 0
+	defer {for texture in old {if texture != 0 {rhi.texture_destroy(r.device, texture)}}}
+	if rows < b.rows {return true}
+	if !shadow_pool_textures(r, cmd, b, rows) {
+		for texture in ([?]^rhi.Texture{&b.cache, &b.atlas, &b.hiz, &b.layer}) {
+			if texture^ != 0 {rhi.texture_destroy(r.device, texture^)}
+			texture^ = 0
+		}
+		return false
+	}
+	rhi.cmd_copy_texture(cmd, old[0], b.cache)
+	rhi.cmd_copy_texture(cmd, old[1], b.atlas)
+	rhi.cmd_copy_texture(cmd, old[2], b.hiz, mips = abi.SHADOW_HIZ_MIPS)
+	return true
 }
 
 @(private)
