@@ -79,13 +79,15 @@ float3 gbuffer_hooked(Gbuffer_Cluster k, float3 world, float4 color, float time)
 }
 
 // A corner of a cluster: its vertex in the space of its mesh with the colors
-// of the instance, its place in the cluster, how far its island has moved and
-// where it is in the world now.
+// of the instance, its place in the cluster, how far its island has moved,
+// where it is in the world now and where it rests there, before the vertex
+// hook moves it.
 struct Gbuffer_Corner {
     Mesh_Point v;
     uint local;
     float3 offset;
     float3 world;
+    float3 rest;
 };
 
 // The same of the vertex `local` of the cluster. b: where the streams of the
@@ -96,7 +98,8 @@ Gbuffer_Corner gbuffer_local_place(Instance inst, Mesh mesh, Cluster c, Cluster_
     p.v = block_point_at(mesh, c, b, p.local, k.posed);
     p.v.color = instance_vertex_color(inst, c.vertex_first + p.local, p.v.color);
     p.offset = k.along != 0.0 ? block_island_offset(mesh, c, b, p.local, k.along) : float3(0.0);
-    p.world = gbuffer_hooked(k, transform_point(inst.world, p.v.position + p.offset), p.v.color, frame.time.x);
+    p.rest = transform_point(inst.world, p.v.position + p.offset);
+    p.world = gbuffer_hooked(k, p.rest, p.v.color, frame.time.x);
     return p;
 }
 Gbuffer_Corner gbuffer_corner_place(Instance inst, Mesh mesh, Cluster c, Cluster_Block b, Gbuffer_Cluster k, uint corner) {

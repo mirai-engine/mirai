@@ -52,6 +52,8 @@ SLOT_IRRADIANCE       :: 34
 SLOT_SHADOW_TABLE     :: 35
 // The lists of the lights that cast no shadows of the view (render/light_lists.odin).
 SLOT_LIGHT_LISTS      :: 36
+// Where the vertex hook moved each pixel of the view from where it rests (gbuffer.slang).
+SLOT_REST             :: 37
 SLOT_DRAW             :: SLOT_PASS9
 
 // The finest level the passes that shade surfaces sample of each texture
@@ -95,6 +97,7 @@ FRAME_FLAG_GRID         :: 16
 FRAME_FLAG_GLASS        :: 32  // some instance has blended triangles
 FRAME_FLAG_REFLECTANCE  :: 64  // the G-buffer keeps what each pixel reflects (surface_specular)
 FRAME_FLAG_NEUTRAL      :: 128 // the display transform is PBR Neutral, computed (display_encode); else the display LUT
+FRAME_FLAG_SWAY         :: 256 // a batch drawn gives the vertex hook values: the resolve leaves where each pixel rests (SLOT_REST)
 
 // Gpu_Instance.meta: the mesh and the cut rays trace in x, the flags in w.
 INSTANCE_MESH_MASK          :: u32(0xffffff)
