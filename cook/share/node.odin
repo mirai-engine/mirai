@@ -275,13 +275,7 @@ node_fetch :: proc(user:rawptr,into:^store.Store,namespace,name:string) -> bool 
             append(&blobs,o.blob)
             if o.thumbnail!={} {append(&blobs,o.thumbnail)}
         }
-        // A window of wants ahead of the one waited on, so the peers send them together.
-        AHEAD :: 64
-        defer for blob in blobs {exchange.forget(&n.x,blob)}
-        for blob,at in blobs {
-            for ahead in blobs[at:min(at+AHEAD,len(blobs))] {exchange.want(&n.x,ahead)}
-            if exchange.fetch(&n.x,blob)!=.None {return false}
-        }
+        if exchange.fetch_all(&n.x,blobs[:])!=.None {return false}
     }
     return store.ref_set(into,namespace,name,address)==.None
 }
