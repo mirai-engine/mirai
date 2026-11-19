@@ -267,6 +267,27 @@ float3 sky_seen(float3 dir) {
     return sky + sun_light(frame.camera_position.xyz) * (disc + glow);
 }
 
+// The background in a direction of the world: its image (Frame.background_map),
+// turned as the sky, at the level spread picks, times its color; or its color.
+float3 background_look(float3 dir, float spread) {
+    float4 map = frame.background_map;
+    if (map.w < 0.5) return frame.background.rgb;
+    return sky_image(map, frame.background.rgb, sky_direction(dir), saturate(spread) * max(map.z - SKY_GATHER_LEVELS, 0.0));
+}
+
+// What the eye sees past the scene: the background when the frame shows one,
+// else the sky with the sun.
+float3 sky_shown(float3 dir) {
+    return frame.background.w > 0.5 ? background_look(dir, 0.0) : sky_seen(dir);
+}
+
+// What a reflection or a view through glass sees of the sky, as sharp as
+// spread: the background when the frame shows it there, as a camera would see
+// it; else the light of the sky. What gathers light takes sky_radiance.
+float3 sky_reflected(float3 dir, float spread) {
+    return frame.background_map.y > 0.5 ? background_look(dir, spread) : sky_radiance(dir, spread);
+}
+
 // How much of a pixel's specular reflection is traced instead of read from
 // the probe volume: all of it on smooth surfaces, fading to none at the limit.
 // The G-buffer keeps roughness in half floats, and a material set exactly at a
