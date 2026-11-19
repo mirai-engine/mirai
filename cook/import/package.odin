@@ -10,12 +10,13 @@ import "mirai:asset"
 import "mirai:cook/textures"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:std/blake3"
 import "mirai:store"
 
 // An import ingests its source as a package of the store (asset/packages.odin).
 // Its manifest says what the source is (identity, settings, inputs) and which
 // asset each thing of the source is; nothing else decides an id, and importing
-// the source again keeps them. Its build holds the blob of every output, the
+// the source again keeps them. Its build holds the object of every output, the
 // documents as the source gives them (their baseline) among them, under the
 // key of its identity and the versions of what imports and writes it
 // (import_key): what any machine with the manifest finds without the source.
@@ -114,11 +115,8 @@ source_hashes_load :: proc(s:^store.Store,origin:string,allocator:=context.alloc
     name:[64]u8
     hash,ref_error:=store.ref_get(s,asset.REF_SOURCES,asset.origin_name(origin,&name))
     if ref_error!=.None {return}
-    size,size_error:=store.blob_size(s,hash)
-    if size_error!=.None || size>asset.RECORD_BYTES {return}
-    data:=make([]u8,int(size),context.temp_allocator)
-    if store.read(s,hash,0,data)!=.None {return}
-    text:=string(data)
+    text,read_error:=asset.record_get(s,hash)
+    if read_error!=.None {return}
     for line in strings.split_lines_iterator(&text) {
         parts:=strings.split_n(line," ",4,context.temp_allocator)
         if len(parts)!=4 {continue}
@@ -142,10 +140,29 @@ source_hashes_save :: proc(s:^store.Store,origin:string,hashes:^Source_Hashes) {
         known:=hashes.files[file]
         fmt.sbprintf(&b,"%s %d %d %s\n",store.hex(known.hash,&digits),known.size,known.modified,file)
     }
-    hash,error:=store.put_bytes(s,transmute([]u8)strings.to_string(b))
+    hash,error:=asset.record_put(s,transmute([]u8)strings.to_string(b))
     if error!=.None {return}
     name:[64]u8
     _=store.ref_set(s,asset.REF_SOURCES,asset.origin_name(origin,&name),hash)
+}
+
+// The BLAKE3 of the bytes of the file at path, read once; false when it does not read.
+@(private="file")
+file_hash :: proc(path:string) -> (hash:store.Hash,read:bool) {
+    file,open_error:=os.open(path)
+    if open_error!=nil {return}
+    defer os.close(file)
+    size,size_error:=os.file_size(file)
+    if size_error!=nil {return}
+    hasher:blake3.Hasher
+    buffer:[64<<10]u8=---
+    for at:=i64(0);at<size; {
+        n,read_error:=os.read_at(file,buffer[:min(i64(len(buffer)),size-at)],at)
+        if read_error!=nil || n<=0 {return}
+        blake3.update(&hasher,buffer[:n])
+        at+=i64(n)
+    }
+    return store.Hash(blake3.final(&hasher)),true
 }
 
 // The address of the bytes of a file, from hashes when its size and
@@ -158,8 +175,8 @@ file_address :: proc(hashes:^Source_Hashes,file:string) -> store.Hash {
     if hashes!=nil && stat_error==nil {
         if known,found:=hashes.files[file];found && known.size==size && known.modified==modified {return known.hash}
     }
-    hash,_,error:=store.address_of_file(file)
-    if error!=.None {return store.address_of_bytes(nil)}
+    hash,read:=file_hash(file)
+    if !read {return store.address_of_bytes(nil)}
     if hashes!=nil && stat_error==nil && time.time_to_unix_nano(time.now())-modified>SETTLED_NANOSECONDS {
         if _,found:=hashes.files[file];!found {hashes.files[strings.clone(file,hashes.files.allocator)]={}}
         hashes.files[file]={size,modified,hash}
@@ -239,9 +256,9 @@ writer_publish :: proc(w:^Writer,name,importer:string) -> bool {
     b:=asset.Build{package_id=w.package_id,key=w.key,final=!w.fast,encoders=textures.encoders_id()}
     b.outputs=make([dynamic]asset.Build_Output,context.temp_allocator)
     for output,at in w.outputs {
-        if w.blobs[at]=={} {continue}
+        if w.objects[at]=={} {continue}
         info,_:=asset.kind_info(output.kind)
-        append(&b.outputs,asset.Build_Output{id=output.id,kind=output.kind,kind_version=info.version,blob=w.blobs[at]})
+        append(&b.outputs,asset.Build_Output{id=output.id,kind=output.kind,kind_version=info.version,object=w.objects[at]})
     }
     manifest,manifest_error:=asset.package_put(s,&p)
     if manifest_error!=.None {return writer_fail(w,.Write,"the manifest of the package of %s could not be put in the store at %s: %v",w.path,s.root,manifest_error)}

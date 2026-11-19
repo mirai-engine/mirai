@@ -44,6 +44,7 @@ a_cook_ships_a_fast_texture_final_from_its_source :: proc(t:^testing.T) {
         report,error:=ingest(source,options)
         defer importer.report_destroy(&report)
         if !testing.expectf(t,error.code==.None && len(report.assets)==1,"%v %s",error.code,error.message) {return}
+        objects_written(options.store,&report)
         id,flags,blocks=level_of(t,types,report.assets[0].path)
         return id,flags,blocks,report.manifest
     }
