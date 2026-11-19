@@ -516,6 +516,8 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         if ((stale || soft) && (e & SHADOW_PAGE_READY) != 0u) InterlockedAdd(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_STALE], 1u);
         if (stale) e &= ~(SHADOW_PAGE_READY | SHADOW_PAGE_SOFT);
         if (soft) e = (e & ~SHADOW_PAGE_CACHED) | SHADOW_PAGE_SOFT;
+        // One that shows what it held comes after those whose points read nothing drawn.
+        if ((e & SHADOW_PAGE_SOFT) != 0u) kept = 0u;
         if (mask_bit(SHADOW_WORDS_MOVED, slot, entry)) e &= ~SHADOW_PAGE_COMPOSED;
         // The safety net: of a level of the sun the 2x2 pages nearest the eye, of a face its coarsest mip.
         bool net = inside && (plan.x & SHADOW_PLAN_NET) != 0u;
