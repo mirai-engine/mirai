@@ -319,15 +319,29 @@ test_entries :: proc(count:int,level:int,seed:u64) -> []Entry {
     return entries
 }
 
+// Fills the offset of each group of a node of level 0 from its entries.
+@(private="file")
+group_offsets :: proc(entries:[]Entry,groups:[]Group) -> []Group {
+    for &g in groups {
+        g.offset=0
+        for e in entries[:g.first] {g.offset+=e.size}
+    }
+    return groups
+}
+
 @(test)
 nodes_round_trip :: proc(t:^testing.T) {
     meta:=[?]u8{1,2,3,4,5}
+    two:=test_entries(300,0,3)
+    high:=test_entries(17,3,4)
+    high_total:u64
+    for e in high {high_total+=e.size}
     cases:=[?]struct{level:int,entries:[]Entry,groups:[]Group,meta:[]u8}{
         {0,nil,{{first=0,count=0}},nil},
         {0,test_entries(1,0,1),{{first=0,count=1}},nil},
         {0,test_entries(NODE_ENTRIES_MAX,0,2),nil,nil},
-        {0,test_entries(300,0,3),{{tag=7,index=1,first=0,count=100,align=4},{tag=7,index=2,first=100,count=200}},meta[:]},
-        {3,test_entries(17,3,4),{{first=5,count=1_000_000}},meta[:]},
+        {0,two,group_offsets(two,{{tag=7,index=1,first=0,count=100,align=4},{tag=7,index=2,first=100,count=0},{tag=7,index=3,first=100,count=200}}),meta[:]},
+        {3,high,{{first=0,count=2_000_000_000},{first=2_000_000_000,count=2_000_000_000,offset=high_total/2}},meta[:]},
     }
     buffer:=make([]u8,CHUNK_MAX,context.temp_allocator)
     for k,i in cases {
@@ -351,7 +365,14 @@ nodes_round_trip :: proc(t:^testing.T) {
 @(test)
 hostile_nodes_return_errors :: proc(t:^testing.T) {
     buffer:=make([]u8,CHUNK_MAX,context.temp_allocator)
-    valid,_:=node_encode(buffer,0,test_entries(9,0,8),{{first=0,count=4},{first=4,count=5}},{9,9})
+    nine:=test_entries(9,0,8)
+    valid,valid_error:=node_encode(buffer,0,nine,group_offsets(nine,{{first=0,count=4},{first=4,count=5}}),{9,9})
+    testing.expect_value(t,valid_error,Error.None)
+    high_buffer:=make([]u8,CHUNK_MAX,context.temp_allocator)
+    high:=test_entries(3,1,12)
+    for &e in high {e.size=100*CHUNK_MAX}
+    high_valid,high_error:=node_encode(high_buffer,1,high,{{first=0,count=200},{first=200,count=250,offset=100*CHUNK_MAX}})
+    testing.expect_value(t,high_error,Error.None)
     h:=base.Hostile{state=77}
     random:=make([]u8,CHUNK_MAX+8,context.temp_allocator)
     for _ in 0..<2000 {
@@ -379,7 +400,7 @@ hostile_nodes_return_errors :: proc(t:^testing.T) {
         {"more meta",proc(b:[]u8) {(^Node)(raw_data(b)).meta=max(u16)}},
         {"a level beyond the bound",proc(b:[]u8) {(^Node)(raw_data(b)).level=NODE_LEVEL_MAX+1}},
         {"a reserved byte",proc(b:[]u8) {(^Node)(raw_data(b)).reserved=1}},
-        {"another version",proc(b:[]u8) {(^Node)(raw_data(b)).version=2}},
+        {"another version",proc(b:[]u8) {(^Node)(raw_data(b)).version=NODE_VERSION+1}},
         {"entries that sum to another total",proc(b:[]u8) {(^Node)(raw_data(b)).total+=1}},
         {"a leaf above the chunk maximum",proc(b:[]u8) {entry_size(b,0)^=CHUNK_MAX+1}},
         {"an empty leaf",proc(b:[]u8) {entry_size(b,3)^=0}},
@@ -389,6 +410,11 @@ hostile_nodes_return_errors :: proc(t:^testing.T) {
             entry_size(b,1)^=2
         }},
         {"overlapping groups",proc(b:[]u8) {group(b,1).first=3}},
+        {"a gap between groups",proc(b:[]u8) {group(b,1).first=5;group(b,1).count=4}},
+        {"leaves after the last group",proc(b:[]u8) {group(b,1).count=4}},
+        {"a group offset one above",proc(b:[]u8) {group(b,1).offset+=1}},
+        {"a group offset one below",proc(b:[]u8) {group(b,1).offset-=1}},
+        {"a first group past byte 0",proc(b:[]u8) {group(b,0).offset=1}},
         {"a group beyond the leaves",proc(b:[]u8) {group(b,1).count=6}},
         {"a group past u32",proc(b:[]u8) {
             group(b,1).first=max(u32)
@@ -405,6 +431,21 @@ hostile_nodes_return_errors :: proc(t:^testing.T) {
     }
     _,error:=node_parse(valid)
     testing.expect_value(t,error,Error.None)
+    high_group :: proc(bytes:[]u8,i:int) -> ^Group {return (^Group)(raw_data(bytes[size_of(Node)+3*size_of(Entry)+i*size_of(Group):]))}
+    high_cases:=[?]struct{name:string,change:proc(bytes:[]u8)}{
+        {"a group with fewer bytes than leaves",proc(b:[]u8) {high_group(b,1).offset=199}},
+        {"a group with more bytes than its leaves hold",proc(b:[]u8) {high_group(b,1).offset=200*CHUNK_MAX+1}},
+        {"a group offset beyond the total",proc(b:[]u8) {high_group(b,1).offset=300*CHUNK_MAX+1}},
+        {"a last group with more bytes than its leaves hold",proc(b:[]u8) {high_group(b,1).count=1}},
+        {"offsets that go back",proc(b:[]u8) {high_group(b,1).offset=0;high_group(b,1).first=200}},
+    }
+    high_mutated:=make([]u8,len(high_valid),context.temp_allocator)
+    for k in high_cases {
+        copy(high_mutated,high_valid)
+        k.change(high_mutated)
+        _,high_parse:=node_parse(high_mutated)
+        testing.expectf(t,high_parse==.Corrupt,"%s: %v",k.name,high_parse)
+    }
 
     // A tree whose child is not one level below, or whose child holds other
     // bytes than its entry says, fails to resolve.
@@ -504,6 +545,11 @@ groups_resolve_at_every_boundary :: proc(t:^testing.T) {
         starts:=make([]u64,k.leaves+1,context.temp_allocator)
         for s,i in sizes {starts[i+1]=starts[i]+s}
         testing.expect_value(t,total,starts[k.leaves])
+        root_view,_:=node_parse(nodes.nodes[root])
+        testing.expectf(t,len(root_view.groups)==len(group_first),"%d leaves: %d groups",k.leaves,len(root_view.groups))
+        for g,i in root_view.groups[:min(len(root_view.groups),len(group_first))] {
+            testing.expectf(t,int(g.first)==group_first[i] && g.offset==starts[group_first[i]],"%d leaves: group %d at leaf %d byte %d",k.leaves,i,g.first,g.offset)
+        }
         source:=collect_source(&nodes)
         for i in 0..<k.leaves {
             for offset in ([2]u64{starts[i],starts[i+1]-1}) {
