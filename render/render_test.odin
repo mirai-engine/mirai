@@ -2433,12 +2433,13 @@ render_probes_new_unread_wait_behind_those_read :: proc(t: ^testing.T) {
 	for _ in 0 ..< frames {
 		waiting := 0
 		fresh := probes_read(t, r)
-		for p, i in fresh {if p.cell.xyz != probe_slot_cell_of(g, u32(i)) {waiting += 1}}
+		// New: of another cell, or moved far in its own and untraced there (Probe.frames.x 0).
+		for p, i in fresh {if p.cell.xyz != probe_slot_cell_of(g, u32(i)) || p.frames.x == 0 {waiting += 1}}
 		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 		if waiting < int(g.budget) {continue}
 		rhi.device_wait_idle(r.device)
 		testing.expect(t, rhi.buffer_read_slice(r.device, g.chosen, 0, chosen))
-		for slot in chosen[1:1 + min(chosen[0], g.budget)] {if fresh[slot].cell.xyz == probe_slot_cell_of(g, slot) {woken += 1}}
+		for slot in chosen[1:1 + min(chosen[0], g.budget)] {if fresh[slot].cell.xyz == probe_slot_cell_of(g, slot) && fresh[slot].frames.x != 0 {woken += 1}}
 	}
 	testing.expectf(t, woken == 0, "while new probes wait, none of the others is traced: %d were", woken)
 	stale := 0
