@@ -281,17 +281,25 @@ origin of each view) and the gust wave of its place; the hook moves only the bat
 (`Batch_Desc.vertex.y`), by the sway of the type (`vertex.x`). No copy of a mesh sways: what the
 views draw is the mesh at rest moved per vertex.
 
+- **Flutter.** On top of the bend, the leaves of a type with `flutter` loop on their own
+  (`vertex.z`, `flutter_amount`): metres per m/s of wind, more in a gust, at a beat of the plant
+  from which each leaf goes apart by where it rests, so leaves a hand away move apart and a leaf
+  moves whole. The red and the green of the vertex color weigh it: what does not bend does not
+  flutter, and green 0 holds a trunk still under fluttering leaves. The part of each instance gives
+  the amount and the beat with the lean; each vertex only places itself by them, so a type without
+  flutter costs nothing more. It exists because foliage whose leaves move reads as alive.
+
 - **Shadows.** A type that casts a shadow and stands at least `SHADOW_SWAY_HEIGHT` from where its
-  largest instance stands to its farthest point casts a swaying one (`shadow_sway`): its batches
-  say how far its top moves in the strongest wind (`Batch_Desc.sway`) and the wind they sway in
-  (`Batch_Desc.wind`, the zone of wind of the cell plus one), and the maps near the eye place it
-  through the same hook ([what sways][sway]). A smaller plant casts at rest whatever its wind:
-  its moving shadow would be noise on the ground. Each frame, `foliage_wind` gives the renderer
-  how much of their sway the batches of each zone take (`batches_wind`: the speed of the wind of
-  the zone along the ground over `WIND_SPEED_MAX`), so a calm valley stays calm whatever blows at
-  the view. A cell takes the zone of the `Wind` on top at the middle of its instances
-  (`wind_zone_at`, over a `volume.Index` of the zones); where the zones are (not their values) has
-  a revision, and the cells whose zone changed are published again.
+  largest instance stands to its farthest point casts a swaying one (`shadow_sway`): its batches say
+  how far its top moves in the strongest wind, its leaves fluttering (`Batch_Desc.sway`), and the
+  wind they sway in (`Batch_Desc.wind`, the zone of wind of the cell plus one), and the maps near
+  the eye place it through the same hook, flutter included ([what sways][sway]). A smaller plant
+  casts at rest whatever its wind: its moving shadow would be noise on the ground. Each frame,
+  `foliage_wind` gives the renderer how much of their sway the batches of each zone take
+  (`batches_wind`: the speed of the wind of the zone along the ground over `WIND_SPEED_MAX`), so a
+  calm valley stays calm whatever blows at the view. A cell takes the zone of the `Wind` on top at
+  the middle of its instances (`wind_zone_at`, over a `volume.Index` of the zones); where the zones
+  are (not their values) has a revision, and the cells whose zone changed are published again.
 - **A mesh entity that sways.** A `Foliage_Sway` on an entity with a `Mesh_Renderer` sways it as a
   type of the same `wind` sways, through the same hook, wind zones, swaying shadow and rays at
   rest: `foliage_sway_render` draws its mesh as a batch of one instance at its place (with its
@@ -526,8 +534,9 @@ the registry's memory as a file of the undo step that creates it.
   `a_mesh_entity_that_sways_is_drawn_once_as_it_stands_and_casts_its_swaying_shadow`,
   `a_swaying_wall_casts_its_shadow_where_it_leans_only_near_the_eye`,
   `a_swaying_canopy_is_shaded_as_it_is_at_rest`,
-  `a_swaying_kind_builds_no_geometry_and_leaves_the_probes_still` and
-  `a_swaying_kind_is_culled_by_cluster`.
+  `a_swaying_kind_builds_no_geometry_and_leaves_the_probes_still`,
+  `a_swaying_kind_is_culled_by_cluster` and
+  `a_kind_that_flutters_moves_its_leaves_on_their_own_and_one_that_does_not_stands`.
 - Ids of the manual ones: `a_manual_instance_keeps_its_id_through_the_edits_of_its_cell`.
 - Resident cap: `past_their_budget_the_nearest_cells_stay_resident`.
 - Streaming: `the_cells_near_the_sources_are_found_by_rows_and_every_one_they_keep`,
