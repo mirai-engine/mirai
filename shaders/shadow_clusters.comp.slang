@@ -111,7 +111,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
         float sway = 0.0;
         if (!rest && instance_batched(instance)) {
             Instance row = batch_row(batch_of(instance));
-            sway = min(batch_sway(row) * instance_scale(inst), batch_near(row));
+            sway = min(batch_sway(row) * instance_scale(inst), batch_swayed(row));
         }
         low -= sway;
         high += sway;

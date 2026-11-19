@@ -1657,7 +1657,7 @@ sway_atlas_against_cache :: proc(t: ^testing.T, r: ^Renderer, boxes: [][2]Vec3) 
 // The maps follow what sways only near the eye (SHADOW_SWAY_REACH), drawn
 // into a layer of what sways coarser than their pages, for each number of
 // levels it may be (SHADOW_SWAY_COARSER): a slab that sways over bare ground
-// near the camera and 12 m from it moves its sun shadow every frame, each of
+// near the camera and far within the reach moves its sun shadow every frame, each of
 // its pages composed again every frame, and no light shows inside its shadow
 // where it crosses pages; past the reach it casts at rest, and no page is
 // drawn or composed again while it sways. Beside it, the shadow of a still
@@ -1724,7 +1724,7 @@ render_a_swaying_batch_follows_its_sway_only_near_the_eye :: proc(t: ^testing.T)
 			name: string,
 			eye:  Vec3,
 			near: bool, // within the reach: its shadow follows the sway
-		}{{"near", {0, 2.2, 3}, true}, {"12 m away", {0, 3.4, 12.6}, true}, {"past the reach", {0, 0.2, 1.2} + linalg.normalize(Vec3{0, 2, 1.8}) * 1.6 * SHADOW_SWAY_REACH, false}}
+		}{{"near", {0, 2.2, 3}, true}, {"far within the reach", {0, 0.2, 1.2} + linalg.normalize(Vec3{0, 2, 1.8}) * 0.7 * SHADOW_SWAY_REACH, true}, {"past the reach", {0, 0.2, 1.2} + linalg.normalize(Vec3{0, 2, 1.8}) * 1.6 * SHADOW_SWAY_REACH, false}}
 		for c in cases {
 			camera := looking(c.eye)
 			sway.x = 0.2
