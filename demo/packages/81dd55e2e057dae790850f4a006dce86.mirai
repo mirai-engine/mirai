@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "81dd55e2e057dae790850f4a006dce86",
+  "name": "tree_broad",
+  "origin": {"path": "assets/foliage_extreme/tree_broad.obj", "folder": false, "importer": "OBJ"},
+  "identity": "6d2d4abbfd3f449acaf45b90767efd7adebd784081516a03ba0eff0df68583ff",
+  "inputs": ["trees.mtl"],
+  "assets": [
+    {"kind": "SCEN", "name": "tree_broad", "index": 0, "id": "73668be537ffad086162e2c98e1c79f6"},
+    {"kind": "MAT", "name": "bark", "index": 0, "id": "031b5c900785b6de16ce2ab9904c2288"},
+    {"kind": "MAT", "name": "leaf", "index": 1, "id": "2012dad11d76c044f98348272649af04"},
+    {"kind": "MESH", "name": "tree_broad", "index": 0, "id": "f745c4a330cd0cdd5a593bdf377d89ca", "part": true, "owner": "73668be537ffad086162e2c98e1c79f6", "dependencies": ["031b5c900785b6de16ce2ab9904c2288", "2012dad11d76c044f98348272649af04"]}
+  ]
+}
