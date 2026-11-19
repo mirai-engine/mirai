@@ -432,9 +432,10 @@ falls, is narrower than the texel a point `SHADOW_SWAY_REACH` from the eye takes
 the texel of their layer of what sways is narrower than its sway; the coarsest level of the sun,
 which holds every point past it too, is never one. The reach is a fixed distance, not what the
 frame has time for. Those maps place it through the vertex hook, as the view does, and cull its
-clusters by their boxes grown by its sway, so a leaning caster loses none and the growth is paid
-only where it sways; the others leave the hook out, draw it at rest and keep it, whatever time the
-frame has left.
+clusters by their boxes grown by how far it sways in the wind that blows now (`batches_wind`, the
+share of its sway), so a leaning caster loses none and a light wind hands its clusters to no more
+pages than it reaches; its sway in the strongest wind chooses the maps. The others leave the hook
+out, draw it at rest and keep it, whatever time the frame has left.
 
 What sways is drawn into the layer of what sways (`Shadow_Raster.layer`), the pool of the atlas
 `SHADOW_SWAY_COARSER` levels coarser, a tile for each page the atlas composes, at the detail of
