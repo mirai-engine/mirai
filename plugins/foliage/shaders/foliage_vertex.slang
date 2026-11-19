@@ -1,11 +1,13 @@
-//! mirai hook vertex foliage_sway
+//! mirai hook vertex foliage_lean foliage_sway
 // How a vertex of an instance of a batch of foliage moves (params.y 1; the
 // batches of anything else are left alone): bent about the place of its
-// instance, by the red of its vertex color, by the wind where it stands with
-// the phase of the gust wave there, if its batch sways in the hook (params.x,
-// the sway of its type: Batch_Desc.vertex; a type without shadows, which no
-// ray meets swaying), and by the field of trampled foliage, which leans every
-// batch of foliage away from where bodies passed (foliage.Foliage_Trample).
+// instance by the lean of the whole plant, by the red of its vertex color.
+// The lean is that of the wind where it stands with the phase of the gust
+// wave there, by the sway of its type (params.x: Batch_Desc.vertex), and that
+// of the field of trampled foliage, which leans every batch of foliage away
+// from where bodies passed (foliage.Foliage_Trample).
+// The maps of the shadows near the eye place a swaying caster through it too;
+// no ray meets it swaying.
 #include "foliage_sway.slang"
 
 // The lean the field keeps at a plant standing at pivot, radians along x and
@@ -28,12 +30,17 @@ float2 foliage_trampled(float3 pivot, float time) {
     return v.xy * (edge * near);
 }
 
-float3 foliage_sway(float3 world, float3 pivot, float4 color, float4 params, float time) {
-    if (!(params.y > 0.0)) return world;
+// The lean of a plant at time, radians along x and z of the world, in xy.
+float4 foliage_lean(float3 pivot, float4 params, float time) {
+    if (!(params.y > 0.0)) return float4(0.0);
     float2 lean = foliage_trampled(pivot, time);
     if (params.x > 0.0) {
         float4 wind = wind_at(frame.foliage_wind.wind, pivot);
         lean += foliage_wind_lean(wind.xyz, wind.w, 1.0, params.x, foliage_wave(pivot, frame.origin.xyz), time);
     }
-    return pivot + foliage_bend(world - pivot, lean * color.r);
+    return float4(lean, 0.0, 0.0);
+}
+
+float3 foliage_sway(float3 world, float3 pivot, float4 color, float4 lean) {
+    return pivot + foliage_bend(world - pivot, lean.xy * color.r);
 }

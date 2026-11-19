@@ -52,6 +52,8 @@ SLOT_IRRADIANCE       :: 34
 SLOT_SHADOW_TABLE     :: 35
 // The lists of the lights that cast no shadows of the view (render/light_lists.odin).
 SLOT_LIGHT_LISTS      :: 36
+// Where the vertex hook moved each pixel of the view from where it rests (gbuffer.slang).
+SLOT_REST             :: 37
 SLOT_DRAW             :: SLOT_PASS9
 
 // The finest level the passes that shade surfaces sample of each texture
@@ -95,6 +97,7 @@ FRAME_FLAG_GRID         :: 16
 FRAME_FLAG_GLASS        :: 32  // some instance has blended triangles
 FRAME_FLAG_REFLECTANCE  :: 64  // the G-buffer keeps what each pixel reflects (surface_specular)
 FRAME_FLAG_NEUTRAL      :: 128 // the display transform is PBR Neutral, computed (display_encode); else the display LUT
+FRAME_FLAG_SWAY         :: 256 // a batch drawn gives the vertex hook values: the resolve leaves where each pixel rests (SLOT_REST)
 
 // Gpu_Instance.meta: the mesh and the cut rays trace in x, the flags in w.
 INSTANCE_MESH_MASK          :: u32(0xffffff)
@@ -540,6 +543,9 @@ CULL_RASTER_CURSORS     :: 125 // where the next triangle of each raster bin goe
 CULL_DROPPED            :: 129 // of each list of the cull (render.Cull_List)
 CULL_RASTER_NEED        :: 136 // two words: the vertices and the triangles the rounds of the view wrote and its last left out
 CULL_SHADOW_TAKEN       :: 138 // of a cull of the maps of the shadows, the units the clusters it listed take (shadow_clusters.comp)
+CULL_INSTANCE_DISPATCH  :: 139 // three words: the groups of the cull by instance, those of the instances of the scene, then those of the batches listed
+// The phase of cull.comp that tests each batch by its box before phase 0.
+CULL_PHASE_BATCHES      :: 2
 
 // What the raster of the visibility target draws of the visible clusters
 // (raster_lists.slang): a vertex is RASTER_VERTEX_WORDS, where it is in the

@@ -73,7 +73,7 @@ Gpu_Frame :: struct {
 	moved_boxes:      [OCCLUDER_CHANGES_MAX][2]Vec4, // low (w: the instance, as bits; OCCLUDERS_MANY: several) and high, relative to the origin
 	moved_lights:     [LIGHT_MOVES_MAX / 4][4]u32,
 	sun_shares:       Vec4, // x what of the light of the sun the probes gather, y what of it media scatter (Sun_Desc.indirect and scattering); zw 0
-	sun_maps:         [4]u32, // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (shadow_maps_pass), 0: none; y where the rows of the maps start in their buffer; z the side of their atlas, texels, while the view drew maps, else 0; w 0
+	sun_maps:         [4]u32, // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (shadow_maps_pass), 0: none; y where the rows of the maps start in their buffer; z the side of their atlas, texels, while the view drew maps, else 0; w the bits of the texel of a point at the reach of what sways (shadow_sway_texel): a map no wider where it reads a point draws what sways as it sways
 	sun_map_rows:     [abi.SUN_MAP_ROWS][4]u32,
 }
 SUN_UNSHADOWED   :: abi.SUN_UNSHADOWED
@@ -97,6 +97,7 @@ FRAME_FLAG_GRID         :: abi.FRAME_FLAG_GRID
 FRAME_FLAG_GLASS        :: abi.FRAME_FLAG_GLASS
 FRAME_FLAG_REFLECTANCE  :: abi.FRAME_FLAG_REFLECTANCE
 FRAME_FLAG_NEUTRAL      :: abi.FRAME_FLAG_NEUTRAL
+FRAME_FLAG_SWAY         :: abi.FRAME_FLAG_SWAY
 
 // A whole vertex, which thumbnails and previews upload for themselves; the
 // scene keeps its vertices in clusters (Gpu_Cluster).
@@ -252,7 +253,7 @@ Gpu_Mesh :: struct {
 	uv1_step:        f32,
 	lod_reach:       f32, // how far a sphere of its levels reaches past its box, in its space
 	bounds_word:     u32, // of a pose: the box and the cone of the normals of each cluster it poses, POSED_BOUNDS_WORDS each in the vertex pool, as the skin writes them; GPU_NONE: none
-	sway:            f32, // of a pose, how far it moves a vertex from where it is at rest, in its own space (deformable_create); max(f32): anywhere
+	pad0:            u32,
 	bounds_min:      Vec4,
 	bounds_max:      Vec4,
 	rays:            [asset.MESH_RAY_LEVELS]Gpu_Mesh_Ray,
@@ -464,7 +465,9 @@ Gpu_Cull_State :: struct {
 	dropped:            [Cull_List]u32, // past the capacities of the lists of the cull
 	raster_need:        [2]u32, // the vertices and the triangles the rounds of the view wrote and its last left out
 	shadow_taken:       u32,
+	instance_dispatch:  [3]u32, // groups of the cull by instance: of the instances of the scene, then of the batches listed
 }
+#assert(offset_of(Gpu_Cull_State, instance_dispatch) == abi.CULL_INSTANCE_DISPATCH * size_of(u32))
 #assert(offset_of(Gpu_Cull_State, shadow_taken) == abi.CULL_SHADOW_TAKEN * size_of(u32))
 #assert(offset_of(Gpu_Cull_State, dropped) == abi.CULL_DROPPED * size_of(u32))
 #assert(offset_of(Gpu_Cull_State, raster_need) == abi.CULL_RASTER_NEED * size_of(u32))

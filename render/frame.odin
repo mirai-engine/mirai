@@ -46,6 +46,7 @@ SLOT_LAYERS         :: abi.SLOT_LAYERS
 SLOT_DISTANCE       :: abi.SLOT_DISTANCE
 SLOT_SHADOW_TABLE   :: abi.SLOT_SHADOW_TABLE
 SLOT_LIGHT_LISTS    :: abi.SLOT_LIGHT_LISTS
+SLOT_REST           :: abi.SLOT_REST
 // Of a draw of the clusters of an instance (gbuffer.vert): the Surface program
 // whose clusters it draws, 0 those without one, GPU_NONE all of them.
 SLOT_DRAW           :: abi.SLOT_DRAW
@@ -77,7 +78,7 @@ Pass :: struct {
 	reflectance:    bool, // the G-buffer keeps what each pixel reflects
 	layered:        bool, // and the layers of its material (gbuffer.slang)
 	instance_count: u32,
-	batch_slots:    u32, // instance slots of the batches drawn, a cull thread each after the instances
+	batch_slots:    u32, // instance slots of the batches drawn, after the instances
 
 	draw, draw_translucent, draw_overlays: bool,
 	blend:   bool,       // the view runs the Blend stage of extensions
@@ -117,6 +118,7 @@ bind_scene_table :: proc(p: ^Pass) {
 	rhi.cmd_bind_texture(cmd, SLOT_SURFACE, texture_or_dummy(r, p.t.surface))
 	rhi.cmd_bind_texture(cmd, SLOT_VIEWS, p.t.motion)
 	rhi.cmd_bind_texture(cmd, SLOT_LAYERS, p.t.layers if p.t.layers != 0 else r.dummy_layers)
+	rhi.cmd_bind_texture(cmd, SLOT_REST, p.t.rest if p.t.rest != 0 else r.dummy_rest)
 	rhi.cmd_bind_texture(cmd, SLOT_SHADOW_TABLE, p.t.shadow_raster.table if p.t.shadow_raster.table != 0 else r.dummy_uint)
 	rhi.cmd_bind_buffer(cmd, SLOT_LIGHTS, or_dummy(r, s.light_buffer))
 	rhi.cmd_bind_buffer(cmd, SLOT_LIGHT_TREE, or_dummy(r, s.light_tree_buffer))
@@ -262,26 +264,54 @@ resolve_pass :: proc(p: ^Pass, nested: bool) {
 		// A nested view counts with its cull, apart.
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, r.scratch_buffer if nested else r.stats_buffer)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.program_draws)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.visible_moved)
 		textures_feedback_bind(r, cmd)
-		resolve_programs_draw(r, cmd, &r.pipelines[id])
+		resolve_programs_draw(r, cmd, id)
 	}
 	rhi.cmd_end_render_pass(cmd)
+}
+
+// Where the vertex hook moved each pixel from where it rests (rest.comp),
+// after the resolve of the view, while a batch gives the hook values.
+@(private)
+rest_pass :: proc(p: ^Pass) {
+	r, cmd, t := p.r, p.cmd, p.t
+	if !p.draw || t.rest == 0 || p.frame.flags & FRAME_FLAG_SWAY == 0 {return}
+	rhi.cmd_timestamp(cmd, "rest")
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Rest])
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, r.scene.visible_buffer)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.visibility)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.linear_depth)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.rest)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, r.scene.visible_moved)
+	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
 }
 
 // The resolve of the materials without a program, then that of each Surface
 // program of the scene, with the stage of the program, or with that of
 // `target` while the shaders in use have none. The draw of a program has an
 // instance only when the cull of the view saw a cluster of it (cull_bins.comp).
+// Off its feedback turn a program takes the pipeline without the recording,
+// once it is made (textures_feedback_turn).
 @(private)
-resolve_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rhi.Pipeline) {
+resolve_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, id: Pipeline_Id) {
 	s := &r.scene
-	rhi.cmd_bind_pipeline(cmd, target^)
+	target := &r.pipelines[id]
+	quiet := pipeline_of(r, id, {VIS_RESOLVE_FRAG_QUIET}, optional = {VIS_RESOLVE_FRAG_QUIET})
+	pipeline :: proc(r: ^Renderer, target, quiet: ^rhi.Pipeline, program: u32) -> rhi.Pipeline {
+		if quiet != target && !textures_feedback_turn(r, program) {
+			if program == 0 {return quiet^}
+			if made := program_graphics(r, quiet, program, early = true); made != quiet^ {return made}
+		}
+		return program_graphics(r, target, program)
+	}
+	rhi.cmd_bind_pipeline(cmd, pipeline(r, target, quiet, 0))
 	rhi.cmd_draw_indirect(cmd, s.program_draws, 0, 1, size_of(Gpu_Program_Draw))
 	if s.programmed_rows == 0 {return}
 	for program in renderer_programs(r) {
 		// A program only blended rows show has no pixel there.
 		if program.domain != .Surface || program.id == 0 || program.id >= r.points.programs || s.program_opaque_rows[program.id] == 0 && !s.program_shown_opaque[program.id] {continue}
-		rhi.cmd_bind_pipeline(cmd, program_graphics(r, target, program.id))
+		rhi.cmd_bind_pipeline(cmd, pipeline(r, target, quiet, program.id))
 		rhi.cmd_draw_indirect(cmd, s.program_draws, u64(program.id) * size_of(Gpu_Program_Draw), 1, size_of(Gpu_Program_Draw))
 	}
 }
@@ -998,7 +1028,9 @@ view_begin :: proc(p: ^Pass) -> bool {
 	if p.reflectance && !ensure_surface_target(r, t) {return false}
 	if p.layered && !ensure_layers_target(r, t) {return false}
 	if r.frame_layout.instance_ids && !ensure_instance_target(r, t) {return false}
+	if s.batch.hooked && !ensure_rest_target(r, t) {return false}
 	if p.reflectance {f.flags |= FRAME_FLAG_REFLECTANCE}
+	if s.batch.hooked {f.flags |= FRAME_FLAG_SWAY}
 	if p.use_probes {ddgi_frame_constants(r, &f)}
 	frame_occluders(&f, &r.frame_occluders)
 	p.constants = rhi.frame_alloc(d, u64(r.frame_layout.size), 256)
@@ -1082,8 +1114,8 @@ Cull_Params :: struct {
 // and bins with no triangles, and nothing counted. Phase 0 of the instance
 // pass starts the rest (cull.comp).
 @(private)
-cull_reset :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
-	start := [1]Gpu_Cull_State{{chunk_dispatch = {0, 0, 1}, candidate_dispatch = {0, 1, 1}, bins_dispatch = {{0, 1, 1}, {0, 1, 1}}, raster_dispatch = {0, 0, 1}, raster_pending = {GPU_NONE, 0}}}
+cull_reset :: proc(r: ^Renderer, cmd: ^rhi.Command_List, instances: u32) -> bool {
+	start := [1]Gpu_Cull_State{{chunk_dispatch = {0, 0, 1}, candidate_dispatch = {0, 1, 1}, bins_dispatch = {{0, 1, 1}, {0, 1, 1}}, raster_dispatch = {0, 0, 1}, raster_pending = {GPU_NONE, 0}, instance_dispatch = {groups(instances, 64), 1, 1}}}
 	return upload_transient(r, cmd, start[:], r.scene.cull_state_buffer)
 }
 
@@ -1106,6 +1138,7 @@ cull_bins_dispatch :: proc(r: ^Renderer, cmd: ^rhi.Command_List, phase: u32) {
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.cull_state_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.listed_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, s.visible_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.visible_moved)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS5, s.raster_entries)
 	rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, bins_dispatch)) + u64(phase) * size_of([3]u32))
@@ -1170,6 +1203,7 @@ raster_round_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, round: u32, la
 		vertices.triangle_capacity = min(s.raster_share[1], s.cull_capacity[.Raster_Triangles])
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Vertices_Cost if cost != 0 else .Raster_Vertices])
 		set_params(cmd, &vertices)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS6, s.visible_moved)
 	}
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, l.state)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, stats)
@@ -1216,8 +1250,9 @@ cull_bind :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glass:
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, s.program_draws)
 }
 
-// The two passes of a phase of the cull: by instance, which hands the
-// clusters of their cuts over in chunks, and by cluster over the chunks.
+// The passes of a phase of the cull: before phase 0, by batch, which lists
+// the slots of the batches the view draws; by instance, which hands the
+// clusters of their cuts over in chunks; and by cluster over the chunks.
 @(private)
 cull_record :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glass: rhi.Buffer, cost: rhi.Buffer = 0) {
 	r, cmd := p.r, p.cmd
@@ -1229,7 +1264,14 @@ cull_record :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glas
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, glass)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, s.depth_buckets)
 	if cost != 0 {rhi.cmd_bind_buffer(cmd, SLOT_PASS8, cost)}
-	rhi.cmd_dispatch(cmd, groups(p.instance_count + p.batch_slots, 64))
+	if params.phase == 0 {
+		batches := params
+		batches.phase = abi.CULL_PHASE_BATCHES
+		cull_bind(p, batches, hiz, stats, glass)
+		rhi.cmd_dispatch(cmd, groups(max(u32(len(s.batch.drawn)), 1), 64))
+		cull_bind(p, params, hiz, stats, glass)
+	}
+	rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, instance_dispatch)))
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull_Clusters])
 	cull_bind(p, params, hiz, stats, glass)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.cluster_candidate_buffer)
@@ -1259,7 +1301,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	cull_stats_fold(r, cmd)
 	rhi.cmd_fill_buffer(cmd, r.stats_buffer, 0, u64(offset_of(Gpu_Cull_Stats, most_dropped)), 0)
 	rhi.cmd_fill_buffer(cmd, p.view.glass_dispatch, 0, size_of(Gpu_Glass_Dispatch), 0)
-	if !cull_reset(r, cmd) {return false}
+	if !cull_reset(r, cmd, p.instance_count) {return false}
 	if threads > 0 {
 		cull_record(p, {phase = 0, occlusion = 1 if occlusion && t.hiz_valid else 0, hiz_levels = t.hiz_levels, glass_groups = glass_groups}, t.hiz[p.previous], r.stats_buffer, p.view.glass_dispatch, p.cost)
 	}
@@ -1305,6 +1347,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	if p.cost != 0 && p.draw {cost_pixels(p)}
 	rhi.cmd_timestamp(cmd, "resolve")
 	resolve_pass(p, false)
+	rest_pass(p)
 	if p.first && stage_asked(r, .Simulate) {stage_run(p, .Simulate)}
 	if stage_asked(r, .Gbuffer) {stage_run(p, .Gbuffer)}
 
@@ -1423,7 +1466,7 @@ nested_views_record :: proc(p: ^Pass) -> bool {
 		rhi.cmd_bind_transient(cmd, SLOT_FRAME, constants)
 
 		// What the nested camera sees, without the pyramid of the view: its depths are of another camera.
-		if !cull_reset(r, cmd) {return false}
+		if !cull_reset(r, cmd, p.instance_count) {return false}
 		cull_record(p, {phase = 0, hiz_levels = t.hiz_levels}, t.hiz[p.previous], r.scratch_buffer, r.scratch_buffer)
 		cull_bins_dispatch(r, cmd, 0)
 		if p.draw {raster_round_record(r, cmd, 0, false, r.scratch_buffer)}

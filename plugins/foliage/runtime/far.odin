@@ -550,6 +550,7 @@ impostors_phase :: proc(pass:^render.Pass,v:^Impostor_View,late:bool) -> (waited
     render.pass_buffer(pass,1,v.visible)
     render.pass_rows(pass,3,v.rows)
     render.pass_rows(pass,4,v.bases)
+    render.pass_rest_write(pass,5)
     if render.pass_params(pass,&v.params,size_of(v.params)) {render.pass_draw_indirect(pass,v.args,late?16:0)}
     render.pass_end(pass)
     return before && !late

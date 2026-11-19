@@ -425,20 +425,51 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
 
 ## What sways in the maps
 
-A batch of a deformable that sways (the wind) moves so only near the eye: in the maps whose texel is
-narrower than its sway and, where its shadow falls, than the texel a point `SHADOW_SWAY_REACH` from
-the eye takes (`shadow_sway_texel`), so that every point that reads such a map lies within the
-reach; the coarsest level of the sun, which holds every point past it too, is never one. The others
-draw it at rest and keep it, whatever time the frame has left. Where a caster leaves the reach its
-shadow goes from the map that sways to the one at rest as the points blend the levels over the top
-of an octave, the two shadows apart by its sway at most; a view whose reach changes by an octave
-draws again what stays where what sways lies. The deformable is followed whole: its batches start
-and stop moving with it, what stays changes in one box of them all, and the plan finds the batches
-that move of each slot again only where one starts or stops or the tables or the casters the slot
-holds change. A page of the atlas holds what sways where the cull of what moves found an instance of
-such a batch there that the cache does not hide (`SHADOW_SWAY_*`), as of the last time it composed
-it; while the points read it, it is composed again as the bound leaves room ([what a frame draws at
-most](#pages-of-the-shadow-maps)), and the steps run each frame while one does.
+A batch that sways (`Batch_Desc.sway`: the vertex hook while its wind blows, `batches_wind`, or a
+deformable that moves) moves so only near the eye: in the maps whose texel, where its shadow
+falls, is narrower than the texel a point `SHADOW_SWAY_REACH` from the eye takes
+(`shadow_sway_texel`), so that every point that reads such a map lies within the reach, and where
+the texel of their layer of what sways is narrower than its sway; the coarsest level of the sun,
+which holds every point past it too, is never one. The reach is a fixed distance, not what the
+frame has time for. Those maps place it through the vertex hook, as the view does, and cull its
+clusters by their boxes grown by how far it sways in the wind that blows now (`batches_wind`, the
+share of its sway), so a leaning caster loses none and a light wind hands its clusters to no more
+pages than it reaches; its sway in the strongest wind chooses the maps. The others leave the hook
+out, draw it at rest and keep it, whatever time the frame has left.
+
+What sways is drawn into the layer of what sways (`Shadow_Raster.layer`), the pool of the atlas
+`SHADOW_SWAY_COARSER` levels coarser, a tile for each page the atlas composes, at the detail of
+the texel of the tile and charged its texels in units. The atlas composes such a page as the
+nearer of the cache and its tile, from the four texels of the tile around each of its own: where
+what sways covers less than half of it, the cache bit for bit, so what stays is exact; inside, the
+plane the tile sampled; on its outline, the farthest of those it covers, so the outline does not
+shade the caster itself. What sways shows the texel of the tile: its outline lies within half of
+one, so the floor at the base of a trunk that sways may be lit that much more than at a still one,
+a moving outline may step by a texel of the page where it crosses a page border, and a twig
+thinner than a texel of the tile flickers as it sways or is left out with the coarser detail.
+Where a caster leaves the
+reach its shadow goes from the map that sways to the one at rest as the points blend the levels
+over the top of an octave, the two shadows apart by its sway at most; a view whose reach changes
+by an octave draws again what stays where what sways lies. The plan looks at the batches again
+only where a wind or a deformable starts or stops or the tables change, and what stays changes in
+one box of those that started or stopped. A page of the atlas holds what sways where the cull of
+what moves found an instance of such a batch there that the cache does not hide
+(`SHADOW_SWAY_*`), as of the last time it composed it; while the points read it, it is composed
+again as the bound leaves room ([what a frame draws at most](#pages-of-the-shadow-maps)), and the
+steps run each frame while one does.
+
+Rays meet a batch of the hook at rest: the traced shadow of a swaying canopy under a light no map
+holds stands still, and the probes see it at rest. A point the view shows swayed is tested from
+where it rests, so it meets what lies around its leaf at rest, as the same leaf still would, and
+not that leaf: after the resolve, `rest.comp` places the triangle of each pixel of a batch with
+and without the hook, as the resolve does, and leaves the difference in the rest target
+(`pixel_rest` of `gbuffer.slang`, while a batch gives the hook values: `FRAME_FLAG_SWAY`; the
+impostors of foliage write theirs with `pass_rest_write`). The
+shadow rays, contact occlusion and reflections of a pixel leave from its rest place, by the normal
+offset alone; a map that draws the caster at rest (its texel wider than that of a point at the
+reach) is read at the rest place, one inside the reach, which draws it swayed, at the swayed one
+(`shadow_place`). It reads the probes at its rest place too, and takes its unshadowed light
+where it is shown.
 
 Tests: the shadow ones of `render/render_test.odin` (`render_sun_shadow_is_ray_traced`,
 `render_soft_shadow_blurs_with_the_distance_to_its_caster`,

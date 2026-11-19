@@ -100,25 +100,26 @@ the_vertex_hook_has_a_source_and_an_include_of_its_own :: proc(t:^testing.T) {
         data,_:=os.read_entire_file(path_join(output,"include",name,allocator=context.temp_allocator),context.temp_allocator)
         return string(data)
     }
-    fixture_write(t,folder,"wind_vertex.slang","//! mirai hook vertex wind_bend\nfloat3 wind_bend(float3 w, float3 p, float4 c, float4 q, float t) { return w; }\n")
+    fixture_write(t,folder,"wind_vertex.slang","//! mirai hook vertex wind_lean wind_bend\nfloat4 wind_lean(float3 p, float4 q, float t) { return q; }\nfloat3 wind_bend(float3 w, float3 p, float4 c, float4 m) { return w; }\n")
     files:Sources
     sources_init(&files,context.temp_allocator)
     extensions,error:=extensions_generate(nil,ENGINE_ROOT,"",output,"",sources,&files,context.temp_allocator)
     testing.expect_value(t,error,"")
+    testing.expect_value(t,extensions.vertex_instance,"wind_lean")
     testing.expect_value(t,extensions.vertex,"wind_bend")
     testing.expect_value(t,extension_macros("#ifdef MIRAI_HOOK_VERTEX"),Extension_Features{.Hook_Vertex})
     testing.expect(t,strings.contains(read(output,EXTENSIONS_INCLUDE),"#define MIRAI_HOOK_VERTEX 1"))
     vertex:=read(output,VERTEX_INCLUDE)
     testing.expect(t,strings.contains(vertex,`#include "programs/plugins/wind/wind_vertex.slang"`),vertex)
-    testing.expect(t,strings.contains(vertex,"return wind_bend(world,pivot,color,params,time);"),vertex)
+    testing.expect(t,strings.contains(vertex,"return wind_lean(pivot,params,time);") && strings.contains(vertex,"return wind_bend(world,pivot,color,moved);"),vertex)
 
-    fixture_write(t,folder,"wind_vertex.slang","//! mirai hook vertex wind_bend\n//! mirai hook ray gate_ray\n")
+    fixture_write(t,folder,"wind_vertex.slang","//! mirai hook vertex wind_lean wind_bend\n//! mirai hook ray gate_ray\n")
     again:Sources
     sources_init(&again,context.temp_allocator)
     _,error=extensions_generate(nil,ENGINE_ROOT,"",output,"",sources,&again,context.temp_allocator)
     testing.expect(t,strings.contains(error,"the vertex hook goes in a source of its own"),error)
-    fixture_write(t,folder,"wind_vertex.slang","//! mirai hook vertex wind_bend\n")
-    fixture_write(t,folder,"other_vertex.slang","//! mirai hook vertex other_bend\n")
+    fixture_write(t,folder,"wind_vertex.slang","//! mirai hook vertex wind_lean wind_bend\n")
+    fixture_write(t,folder,"other_vertex.slang","//! mirai hook vertex other_lean other_bend\n")
     twice:Sources
     sources_init(&twice,context.temp_allocator)
     _,error=extensions_generate(nil,ENGINE_ROOT,"",output,"",sources,&twice,context.temp_allocator)

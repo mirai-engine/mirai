@@ -4,8 +4,10 @@
 // (vis_raster.vert shadow): of each word of a list of the buffer of the pages
 // from params.list, its page of the pool (with SHADOW_JOB_HELD where the
 // cache holds it this frame), for shadow_map.frag to clear or copy: the part
-// of it the round draws (shadow_page_part); of the atlas (params.moving 1),
-// none of a page that waits, which keeps what it last composed.
+// of it the round draws (shadow_page_part), or its tile in the layer of what
+// sways, which lies where the page lies in the pool, scaled; of the atlas
+// (params.moving 1), none of a page that waits, which keeps what it last
+// composed.
 #include "shadow_maps.slang"
 #define SHADOW_PAGES_SLOT SLOT_PASS3
 #include "shadow_cull.slang"

@@ -292,7 +292,10 @@ instances.
   `flags`, fade and cull distances, `vertex` (four numbers for the
   [vertex hook](views.md#extension-hooks-and-constants)), `reach` (the most that hook moves a
   point, in meters: the boxes of its instances and clusters with which the views clip grow by
-  that) and `object_id`. `engine/render.batch_desc` builds
+  that), `sway` and `wind` (how far it sways in the maps near the eye and the wind that sways it,
+  [what sways](lights.md#what-sways-in-the-maps)) and `object_id`. `batches_wind` says how much of
+  its sway each wind gives now; a pixel the hook moved is lit from where it rests
+  ([what sways](lights.md#what-sways-in-the-maps)). `engine/render.batch_desc` builds
   it from a `Mesh_Renderer`. The material rows it derives (fade, override) live as long as the
   batch lives: `render_sync` retains them in each round of derived rows, so whoever publishes
   batches does not publish them again because what the entities show changes.
@@ -323,7 +326,8 @@ instances.
     those of the scene.
 - **Instance index.** Below `frame.instance_count` it names a scene instance; from there, the slot
   of a batch instance. Every pass that reads an instance by index goes through `scene_instance`.
-- **Cull.** The same tests and the same per-cluster cut as the instances; between the fade
+- **Cull.** The same tests and the same per-cluster cut as the instances, on the box of the batch
+  once and then on those of its instances only where the box passes; between the fade
   distance and the cull one it fades with the dither pattern of its own body, which TAA blends. An
   instance whose box covers fewer than `Settings.batch_min_pixels` pixels is not rasterized, and
   fades the same from twice that: far away, foliage leaves the raster without jumps. The rays keep

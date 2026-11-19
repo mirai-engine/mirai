@@ -173,8 +173,8 @@ struct Hit {
 // blended are a class apart, so a ray that goes through glass never visits
 // them (RAY_SOLID, RAY_GLASS and RAY_SMALL, the mask of an instance).
 // The solid instances a ray meets: every one, or, in the passes of the probe
-// volume (MIRAI_TRACE_NO_SMALL), all but the small ones.
-#ifdef MIRAI_TRACE_NO_SMALL
+// volume (MIRAI_TRACE_PROBES), all but the small ones.
+#ifdef MIRAI_TRACE_PROBES
 #define RAY_OPAQUE RAY_SOLID
 #else
 #define RAY_OPAQUE (RAY_SOLID | RAY_SMALL)

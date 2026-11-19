@@ -327,7 +327,7 @@ texture_add_data :: proc(r: ^Renderer, data: Texture_Data, name: string, key:u64
 	state.sizes[index]={data.width,data.height}
 	state.stored[index]=bytes
 	texture_stream_set(&state.residency.streams[index], data, first)
-	state.residency.retarget, state.residency.changed = true, r.frame + 1
+	state.residency.retarget, state.residency.added = true, true
 	streamed := state.residency.streams[index].levels > 0
 	state.partial[index]=first>0 && !streamed
 	if state.partial[index] {state.reduced += 1}

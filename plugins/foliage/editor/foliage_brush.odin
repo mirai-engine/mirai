@@ -131,17 +131,15 @@ Instance_Ref :: struct {
 // The instance of a cell that the k-th instance of a batch of a type shows:
 // the batches of a cell hold the instances of each type in the order the
 // cell places them.
-instance_of_batch :: proc(s:^foliage.Source,ground:^foliage.Ground_Owner,coord:[2]i32,type:u32,k:int,work:^foliage.Build_Work,role:=foliage.ROLE_MESH,owner:=mm.TRANSFORM_IDENTITY) -> (ref:Instance_Ref,placed:foliage.Placed,found:bool) {
+instance_of_batch :: proc(s:^foliage.Source,ground:^foliage.Ground_Owner,coord:[2]i32,type:u32,k:int,work:^foliage.Build_Work) -> (ref:Instance_Ref,placed:foliage.Placed,found:bool) {
     cell:=foliage.source_cell(s,coord)
     if cell==nil {return}
     if !foliage.cell_build(s,cell,ground_of(ground,coord),work) || !foliage.placed_group(s,work) {return}
-    t,index:=foliage.source_type(s,type)
+    _,index:=foliage.source_type(s,type)
     if index<0 {return}
     order:=work.order[work.firsts[index]:work.firsts[index+1]]
-    // A variant of the wind holds the instances of its turn alone.
-    at:=foliage.role_instance(role,foliage.wind_variants(t^),owner,work.placed[:],order,k)
-    if at<0 || at>=len(order) {return}
-    placed=work.placed[order[at]]
+    if k<0 || k>=len(order) {return}
+    placed=work.placed[order[k]]
     return {coord,placed.id},placed,true
 }
 

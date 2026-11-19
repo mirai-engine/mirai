@@ -410,7 +410,7 @@ Scene_State :: struct {
 	tlas_moved:           bool,         // boxes changed: the tree is refit before the frame uploads it
 	tlas_classify:        bool,         // what rays see of instances changed: their references are classified again
 	instance_capacity:    int,
-	candidate_capacity:   int, // of the candidates: one per instance and per slot of a batch
+	candidate_capacity:   int, // of the candidates: one per instance and per slot of a batch, then one per group of slots
 	tlas_node_capacity:   int,
 	tlas_ref_capacity:    int,
 	tlas_node_count:      int, // nodes of the tree in tlas_nodes; the glass instances are listed after them, a box each
@@ -425,6 +425,7 @@ Scene_State :: struct {
 	depth_buckets:        rhi.Buffer, // of each phase and tested raster bin, its clusters of each depth bucket, then where they start (cull_bins.comp); then the same of the triangles listed of them (raster_lists.slang)
 	listed_buffer:        rhi.Buffer, // and as the cull listed them, with their bins
 	raster_entries:       rhi.Buffer, // what each keeps between the passes that list its triangles for the raster (abi.RASTER_ENTRY_WORDS)
+	visible_moved:        rhi.Buffer, // of each of an instance of a batch, what the vertex hook moves it by now and in the frame before (cull_bins.comp)
 	raster_vertices:      rhi.Buffer, // the vertices the raster of the visibility target draws of them (raster_vertices.comp)
 	raster_indices:       rhi.Buffer, // the triangles of them it draws, three of those vertices each (raster_triangles.comp)
 	raster_ids:           rhi.Buffer, // and the word the visibility target names each by
@@ -440,7 +441,7 @@ Scene_State :: struct {
 	mesh_draws_capacity:  u32, // of it, in indices
 	mesh_draws_wanted:    u32, // the most a frame asked for since the marks were set: it grows to it
 	cull_wanted:          [Cull_List]u32, // what a frame that dropped asked for since the marks were set (renderer_capacity_marks_set): they grow to it
-	candidate_buffer:     rhi.Buffer, // per instance and slot of a batch: rejected by the phase 0 occlusion test
+	candidate_buffer:     rhi.Buffer, // per instance and slot of a batch: rejected by the phase 0 occlusion test; then the groups of slots the cull lists
 	batch:                Batch_State,
 	tlas:                 rhi.Accel,
 	tlas_capacity:        u32,
@@ -2561,9 +2562,9 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		buffer^ = rhi.buffer_create(d, {size = u64(capacity) * entries[list], usage = {.Storage, .Index} if list == .Raster_Triangles else {.Storage}, name = names[list]})
 		made := buffer^ != 0
 		// What a list holds besides, an entry for each of its own.
-		also: [2]struct {buffer: ^rhi.Buffer, entry: u64, name: string}
+		also: [3]struct {buffer: ^rhi.Buffer, entry: u64, name: string}
 		#partial switch list {
-		case .Visible: also = {{&s.listed_buffer, size_of([4]u32), "visible clusters as listed"}, {&s.raster_entries, abi.RASTER_ENTRY_WORDS * size_of(u32), "visible clusters for the raster"}}
+		case .Visible: also = {{&s.listed_buffer, size_of([4]u32), "visible clusters as listed"}, {&s.raster_entries, abi.RASTER_ENTRY_WORDS * size_of(u32), "visible clusters for the raster"}, {&s.visible_moved, size_of([2][4]f32), "visible clusters moved by the vertex hook"}}
 		case .Shadow_Entries: also[0] = {&s.shadow_raster_entries, abi.RASTER_ENTRY_WORDS * size_of(u32), "shadow map clusters for the raster"}
 		case .Raster_Triangles: also[0] = {&s.raster_ids, size_of(u32), "triangles of the visibility raster by name"}
 		}
@@ -2583,7 +2584,8 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		// What they held goes with them: the meshes listed are written again.
 		for &m in s.meshes {m.draw_written = false}
 	}
-	candidates := max(len(s.instances) + int(s.batch.slots), 1)
+	// And the groups of slots of the batches the cull lists (cull.comp).
+	candidates := max(len(s.instances) + int(s.batch.slots) + int(s.batch.slots) / BATCH_GROUP, 1)
 	if candidates > s.candidate_capacity || s.candidate_buffer == 0 {
 		capacity := max(candidates + candidates / 2, 64)
 		if s.candidate_buffer != 0 {rhi.buffer_destroy(d, s.candidate_buffer)}
@@ -2634,7 +2636,7 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		s.light_tree_capacity = capacity
 		s.lights_dirty = true
 	}
-	ok := s.instance_buffer != 0 && s.material_buffer != 0 && s.cull_state_buffer != 0 && s.chunk_buffer != 0 && s.visible_buffer != 0 && s.listed_buffer != 0 && s.raster_entries != 0 && s.raster_vertices != 0 && s.raster_indices != 0 && s.raster_ids != 0 && s.mesh_draws != 0 && s.depth_buckets != 0 && s.program_draws != 0 && s.cluster_candidate_buffer != 0 && s.candidate_buffer != 0 && (r.hardware_rt || s.tlas_node_buffer != 0 && s.tlas_ref_buffer != 0) && s.light_buffer != 0 && s.light_tree_buffer != 0
+	ok := s.instance_buffer != 0 && s.material_buffer != 0 && s.cull_state_buffer != 0 && s.chunk_buffer != 0 && s.visible_buffer != 0 && s.listed_buffer != 0 && s.raster_entries != 0 && s.visible_moved != 0 && s.raster_vertices != 0 && s.raster_indices != 0 && s.raster_ids != 0 && s.mesh_draws != 0 && s.depth_buckets != 0 && s.program_draws != 0 && s.cluster_candidate_buffer != 0 && s.candidate_buffer != 0 && (r.hardware_rt || s.tlas_node_buffer != 0 && s.tlas_ref_buffer != 0) && s.light_buffer != 0 && s.light_tree_buffer != 0
 	if !ok {set_error(r, "scene buffers: %s", rhi.device_error(d))}
 	return ok
 }
@@ -2842,7 +2844,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	if s.tlas != 0 {rhi.accel_destroy(d, s.tlas)}
 	for b in s.geometry_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for move in s.pool_moves {if move.from != 0 {rhi.buffer_destroy(d, move.from)}}
-	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.listed_buffer, s.raster_entries, s.raster_vertices, s.raster_indices, s.raster_ids, s.mesh_draws, s.depth_buckets, s.cluster_candidate_buffer, s.program_draws, s.shadow_chunks, s.shadow_entries, s.shadow_raster_entries, s.candidate_buffer, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
+	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.listed_buffer, s.raster_entries, s.visible_moved, s.raster_vertices, s.raster_indices, s.raster_ids, s.mesh_draws, s.depth_buckets, s.cluster_candidate_buffer, s.program_draws, s.shadow_chunks, s.shadow_entries, s.shadow_raster_entries, s.candidate_buffer, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
 		if b != 0 {rhi.buffer_destroy(d, b)}
 	}
 	delete(s.vertices)

@@ -1,14 +1,13 @@
 // How the wind sways foliage, the one way of the hook of the vertices of its
-// batches (foliage_vertex.slang), of the compute of its variants
-// (foliage_sway.comp.slang) and of its impostors (foliage_impostor.vert.slang).
+// batches (foliage_vertex.slang) and of its impostors (foliage_impostor.vert.slang).
 #ifndef FOLIAGE_SWAY_SLANG
 #define FOLIAGE_SWAY_SLANG
 #include "origin.slang"
-#define FOLIAGE_WAVE float2(0.37, 0.71) // foliage.WIND_WAVE: radians a metre along x and z of the world of the gust wave
+#define FOLIAGE_WAVE float2(0.37, 0.71) // radians a metre along x and z of the world of the gust wave
 
-// The phase of the gust wave at a place relative to an origin, radians, as
-// foliage.wind_wave gives it: what the origin adds to it is taken in turns of
-// 20π, which the two waves of foliage_wind_lean repeat together in.
+// The phase of the gust wave at a place relative to an origin, radians: what
+// the origin adds to it is taken in turns of 20π, which the two waves of
+// foliage_wind_lean repeat together in.
 float foliage_wave(float3 at, int3 origin) {
     return origin_phase(origin, float3(FOLIAGE_WAVE.x, 0.0, FOLIAGE_WAVE.y) / 62.831853) * 62.831853 + dot(at.xz, FOLIAGE_WAVE);
 }

@@ -49,6 +49,7 @@ struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uin
 float3 filter_light(int2 p, float depth, float3 normal, float3 open, float part, float sun) {
     Pixel pixel = pixel_at(p, (float2(p) + 0.5) * frame.inv_resolution, depth);
     Shading s = gbuffer_shading(gbuffer_read(p), pixel);
+    float3 swayed = pixel_rest(p, depth);
     float3 reflectance = max(s.diffuse + specular_albedo(s), float3(0.02));
     float3 light = open * reflectance * part;
     // The light that got there, which the lights without shadows err against.
@@ -58,7 +59,7 @@ float3 filter_light(int2 p, float depth, float3 normal, float3 open, float part,
         float3 irradiance = sun_light(pixel.position) * cosine;
         if (luminance(irradiance) > 0.0) {
             // Where no point of its surface tells, its map does, as it tells the points.
-            float seen = sun < 0.0 ? sun_shadow_seen(pixel.position, normal, frame.footprint.x + frame.footprint.y * pixel.distance, false) : sun;
+            float seen = sun < 0.0 ? sun_shadow_seen(pixel.position, normal, frame.footprint.x + frame.footprint.y * pixel.distance, false, swayed) : sun;
             irradiance *= seen < 0.0 ? 1.0 : seen;
             light += irradiance * shading_response(s, frame.sun_direction.xyz);
             known += luminance(irradiance);
@@ -67,10 +68,10 @@ float3 filter_light(int2 p, float depth, float3 normal, float3 open, float part,
     if (!MIRAI_NO_LIGHT_LISTS) light += light_list_lighting(s, known, light_list_of_pixel(p));
     float bias = view_bias(pixel.distance);
 #ifdef MIRAI_HOOK_LIGHTS
-    light += direct_lighting(s, bias, 0u, LIGHTS_EXTENSION);
+    light += direct_lighting(s, bias, 0u, LIGHTS_EXTENSION, float2(-1.0, 0.0), swayed);
 #endif
     // Only a layer lets light through: without layers in sight the pass holds no ray of its own.
-    if (!MIRAI_GBUFFER_NO_LAYERS && shading_transmits(s)) light += direct_lighting(shading_back(s), bias, params.hard, LIGHTS_ALL | LIGHTS_THROUGH);
+    if (!MIRAI_GBUFFER_NO_LAYERS && shading_transmits(s)) light += direct_lighting(shading_back(s), bias, params.hard, LIGHTS_ALL | LIGHTS_THROUGH, float2(-1.0, 0.0), swayed);
     return finite_or_zero(light);
 }
 

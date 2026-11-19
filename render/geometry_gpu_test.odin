@@ -395,8 +395,10 @@ gpu_triangles_past_their_list_are_drawn_in_the_rounds_after :: proc(t: ^testing.
 
 // An instance of a batch smaller on the screen than Settings.batch_min_pixels
 // is not rasterized; one twice as large is, and without the setting every one.
+// A batch behind the eye or past its cull distance lists no slot for the cull
+// by instance; one that straddles the frustum lists its own and draws those in it.
 @(test)
-gpu_instances_of_batches_smaller_than_a_pixel_are_not_rasterized :: proc(t: ^testing.T) {
+gpu_the_cull_lists_the_slots_of_batches_in_view_and_rasterizes_none_smaller_than_a_pixel :: proc(t: ^testing.T) {
 	f: Fixture
 	if !skin_fixture(t, &f, false) {return}
 	defer fixture_destroy(&f)
@@ -423,6 +425,23 @@ gpu_instances_of_batches_smaller_than_a_pixel_are_not_rasterized :: proc(t: ^tes
 	settings.batch_min_pixels = 0
 	testing.expect(t, renderer_apply_settings(r, settings))
 	testing.expect_value(t, drawn(t, r, cube, tiny[:], camera), u32(1))
+	grid: [100]Batch_Instance
+	for &instance, k in grid {instance = batch_instance({f32(k % 10) - 4.5, f32(k / 10) - 4.5, 20}, 1, 0.5)}
+	straddles := [2]Batch_Instance{batch_instance({8, 0, 20}, 1, 1), batch_instance({-1000, 0, 20}, 1, 1)}
+	behind := [1]Batch_Instance{batch_instance({0, 0, -50}, 1, 1)}
+	far := [1]Batch_Instance{batch_instance({0, 0, 200}, 1, 1)}
+	Set :: struct {instances: []Batch_Instance, cull: f32}
+	for set in ([4]Set{{grid[:], 0}, {straddles[:], 0}, {behind[:], 0}, {far[:], 100}}) {
+		_, error := batch_set(r, 0, r.world_key, {mesh = cube, tint = 1, cull_distance = set.cull}, set.instances)
+		testing.expect_value(t, error, "")
+	}
+	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	rhi.device_wait_idle(device)
+	state: [1]Gpu_Cull_State
+	if !testing.expect(t, rhi.buffer_read_slice(device, r.scene.cull_state_buffer, 0, state[:])) {return}
+	listed := state[0].instance_dispatch.x - groups(u32(len(r.scene.instances)), BATCH_GROUP)
+	testing.expectf(t, listed == 3, "the groups of the grid and of the batch that straddles alone are listed: %d", listed)
+	testing.expect_value(t, r.stats.visible_kinds[.Batch].instances, u32(len(grid) + 1))
 	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
 }
 

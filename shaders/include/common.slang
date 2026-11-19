@@ -120,7 +120,7 @@ struct Frame_Data {
     float4 moved_boxes[OCCLUDER_CHANGES_MAX * 2]; // low (w: the instance, as bits; OCCLUDERS_MANY: several), then high, relative to the origin
     uint4 moved_lights[LIGHT_MOVES_MAX / 4];
     float4 sun_shares;       // x what of the light of the sun the probes gather, y what of it media scatter (Sun_Desc.indirect and scattering); zw 0
-    uint4 sun_maps;          // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (sun_shadow_seen of shadow_maps.slang), 0: none; y where the rows of the maps start in their buffer; z the side of their atlas, texels, while the view drew maps, else 0; w 0
+    uint4 sun_maps;          // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (sun_shadow_seen of shadow_maps.slang), 0: none; y where the rows of the maps start in their buffer; z the side of their atlas, texels, while the view drew maps, else 0; w the bits of the texel of a point at the reach of what sways (render.shadow_sway_texel): a map no wider where it reads a point draws what sways as it sways
     uint4 sun_map_rows[SUN_MAP_ROWS];
 #ifdef MIRAI_FRAME_NESTED
     Nested_View nested[NESTED_VIEW_CAPACITY]; // nested[i - 1] for the pixels whose view index is i
@@ -216,7 +216,7 @@ struct Mesh {
     float uv1_step;
     float lod_reach;     // how far a sphere of its levels reaches past its box
     uint bounds_word;    // of a pose: the box and the cone of the normals of each cluster it poses, as posed now (geometry.slang, posed_bounds); INVALID: none
-    float sway;          // of a pose, how far it moves a vertex from where it is at rest, in its own space (render.deformable_create); FLT_MAX: anywhere
+    uint pad0;
     float4 bounds_min;   // object space
     float4 bounds_max;
     Mesh_Ray rays[MESH_RAY_LEVELS];

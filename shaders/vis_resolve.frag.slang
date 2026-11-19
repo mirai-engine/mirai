@@ -20,9 +20,12 @@
 //
 // plain: without the reflectance target; layers: with the reflectance and the
 // layers targets (as gbuffer.frag). nested: the pixels of a nested view.
+// quiet: in a frame off the feedback turn of the program, nothing it samples
+// is recorded (textures_feedback_turn).
 //! variant plain MIRAI_GBUFFER_PLAIN=1
 //! variant layers MIRAI_GBUFFER_LAYERS=1
 //! constant nested MIRAI_NESTED_PIXELS
+//! constant quiet MIRAI_TEXTURE_FEEDBACK_QUIET
 #ifndef MIRAI_GBUFFER_LAYERS
 // Without the layers target no instance with layers is in sight.
 #define MIRAI_MATERIAL_NO_LAYERS true
@@ -39,6 +42,10 @@
 #include "cull_stats.slang"
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<Stats_Block> resolve_stats : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
 #include <extension_vertex.slang>
+#ifdef MIRAI_HOOK_VERTEX
+// What the vertex hook moves the instance of each visible cluster by (cull_bins.comp).
+[[vk::binding(SLOT_PASS4, 0)]] StructuredBuffer<float4> visible_moved : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
+#endif
 #include "gbuffer_build.slang"
 
 // A corner of the triangle a pixel shows, as the raster placed it, with what
@@ -82,12 +89,16 @@ struct Resolve_Triangle {
 };
 
 Resolve_Triangle resolve_triangle(uint id) {
-    Visible_Cluster entry = visible[visibility_entry(id)];
+    uint e = visibility_entry(id);
+    Visible_Cluster entry = visible[e];
     Instance inst = scene_instance(entry.instance);
     Mesh mesh = meshes[instance_mesh(inst)];
     Cluster cluster = cluster_at(entry.cluster);
     Cluster_Block block = visible_block(mesh, cluster, entry);
     Gbuffer_Cluster k = gbuffer_cluster_of(entry.instance, inst, mesh, entry.material, entry.along);
+#ifdef MIRAI_HOOK_VERTEX
+    if (instance_batched(entry.instance)) gbuffer_cluster_moved(k, visible_moved[e * 2u], visible_moved[e * 2u + 1u]);
+#endif
     uint corner = visibility_triangle(id) * 3u;
     Resolve_Triangle t;
     t.a = resolve_corner(inst, mesh, cluster, block, k, corner);

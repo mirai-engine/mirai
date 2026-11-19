@@ -16,7 +16,7 @@ Impostor_Varyings main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV
     uint row_index = impostor_row_index(inst.row);
     Impostor_Row row = impostor_rows[row_index];
     Impostor_Shape s;
-    if (!impostor_shape(inst, row, s)) return o;
+    if (!impostor_shape(inst, row, s, o.lean)) return o;
     // Toward the eye, or against the direction a parallel view looks along.
     bool point = frame.eye.w > 0.5;
     float3 toward = point ? frame.eye.xyz - s.center : frame.eye.xyz;
