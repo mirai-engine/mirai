@@ -16,8 +16,9 @@
 // A hit on a material with a program waits for it (points.slang) and is
 // completed by the resume (params.resume) from what the program gave there.
 #define MIRAI_DIFFUSE_HITS
-// Small instances are not in the light this pass gathers (render.INSTANCE_FLAG_SMALL).
-#define MIRAI_TRACE_NO_SMALL
+// Small instances are not in the light this pass gathers (render.INSTANCE_FLAG_SMALL),
+// and its rays meet every batch at rest (trace.slang).
+#define MIRAI_TRACE_PROBES
 // It reports the levels it samples of each texture (texture_feedback in scene.slang).
 #define MIRAI_TEXTURE_FEEDBACK
 #define POINTS_SLOT SLOT_POINTS

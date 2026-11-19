@@ -426,13 +426,27 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
 ## What sways in the maps
 
 A batch that sways (`Batch_Desc.sway`: the vertex hook while its wind blows, `batches_wind`, or a
-deformable that moves) moves so only near the eye: in the maps whose texel is narrower than its
-sway and, where its shadow falls, than the texel a point `SHADOW_SWAY_REACH` from the eye takes
-(`shadow_sway_texel`), so that every point that reads such a map lies within the reach; the
-coarsest level of the sun, which holds every point past it too, is never one. Those maps place it
-through the vertex hook, as the view does, and cull its clusters by their boxes grown by its sway,
-so a leaning caster loses none and the growth is paid only where it sways; the others leave the
-hook out, draw it at rest and keep it, whatever time the frame has left. Where a caster leaves the
+deformable that moves) moves so only near the eye: in the maps whose texel, where its shadow
+falls, is narrower than the texel a point `SHADOW_SWAY_REACH` from the eye takes
+(`shadow_sway_texel`), so that every point that reads such a map lies within the reach, and where
+the texel of their layer of what sways is narrower than its sway; the coarsest level of the sun,
+which holds every point past it too, is never one. The reach is a fixed distance, not what the
+frame has time for. Those maps place it through the vertex hook, as the view does, and cull its
+clusters by their boxes grown by its sway, so a leaning caster loses none and the growth is paid
+only where it sways; the others leave the hook out, draw it at rest and keep it, whatever time the
+frame has left.
+
+What sways is drawn into the layer of what sways (`Shadow_Raster.layer`), the pool of the atlas
+`SHADOW_SWAY_COARSER` levels coarser, a tile for each page the atlas composes, at the detail of
+the texel of the tile and charged its texels in units. The atlas composes such a page as the
+nearer of the cache and its tile, from the four texels of the tile around each of its own: where
+what sways covers less than half of it, the cache bit for bit, so what stays is exact; inside, the
+plane the tile sampled; on its outline, the farthest of those it covers, so the outline does not
+shade the caster itself. What sways shows the texel of the tile: its outline lies within half of
+one, so the floor at the base of a trunk that sways may be lit that much more than at a still one,
+a moving outline may step by a texel of the page where it crosses a page border, and a twig
+thinner than a texel of the tile flickers as it sways or is left out with the coarser detail.
+Where a caster leaves the
 reach its shadow goes from the map that sways to the one at rest as the points blend the levels
 over the top of an octave, the two shadows apart by its sway at most; a view whose reach changes
 by an octave draws again what stays where what sways lies. The plan looks at the batches again

@@ -543,6 +543,9 @@ CULL_RASTER_CURSORS     :: 125 // where the next triangle of each raster bin goe
 CULL_DROPPED            :: 129 // of each list of the cull (render.Cull_List)
 CULL_RASTER_NEED        :: 136 // two words: the vertices and the triangles the rounds of the view wrote and its last left out
 CULL_SHADOW_TAKEN       :: 138 // of a cull of the maps of the shadows, the units the clusters it listed take (shadow_clusters.comp)
+CULL_INSTANCE_DISPATCH  :: 139 // three words: the groups of the cull by instance, those of the instances of the scene, then those of the batches listed
+// The phase of cull.comp that tests each batch by its box before phase 0.
+CULL_PHASE_BATCHES      :: 2
 
 // What the raster of the visibility target draws of the visible clusters
 // (raster_lists.slang): a vertex is RASTER_VERTEX_WORDS, where it is in the

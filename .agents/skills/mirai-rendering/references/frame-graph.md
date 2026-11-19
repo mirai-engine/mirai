@@ -15,10 +15,11 @@ or interleave its own passes.
    change with the air. Each view, at its start, redoes the row of its sky and its aerial
    perspective if its eye or the sun moved.
 2. **cull (phase 0)**, per instance and then per cluster (`cull.comp`, `cull_clusters.comp`).
-   - One thread per instance, and then one per slot of the drawn
-     [batches](scene.md#instance-batches): frustum and occlusion of its box, under the transform
-     of the previous frame, against the depth pyramid of the previous frame (with the previous
-     camera): what moves is not hidden by where it was. One that passes delivers, in
+   - First one thread per drawn [batch](scene.md#instance-batches), which lists for both phases
+     the slots of those whose box passes the tests of the view; then one per instance and per slot
+     listed: frustum and occlusion of its box, under the transform of the previous frame, against
+     the depth pyramid of the previous frame (with the previous camera): what moves is not hidden
+     by where it was. One that passes delivers, in
      chunks of up to 64, the clusters of the levels the cut can take at some point of its box: a
      distant object whose root already suffices delivers only the root. One that is hidden stays
      a candidate for phase 1.
