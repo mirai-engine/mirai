@@ -22,6 +22,10 @@ Cell_Params :: struct {
 	has_pbits:            bool,
 	endpoints_share_pbit: bool,
 	perceptual:           bool,
+	// Both p-bits 1: mode 6 of an opaque block, whose alpha then decodes 255.
+	pbits_one:            bool,
+	// Mode 5 keeps the alpha endpoints of the block that are 0 or 255.
+	pin_alpha_extremes:   bool,
 }
 
 Cell_Results :: struct {
@@ -538,17 +542,17 @@ find_optimal_solution :: proc(t: ^Tables, mode: u32, xl_in, xh_in: Vec4, params:
 
 		if !params.endpoints_share_pbit {
 			if params.comp_bits == 7 && comp.quant_mode6_endpoints {
-				best_pbits[0] = 0
+				best_pbits[0] = params.pbits_one ? 1 : 0
 				best_pbits[1] = 1
 				for c in 0 ..< 4 {
-					best_min[c] = t.mode6_reduced_quant[i32(xl[c] * 2047 + .5)][0]
+					best_min[c] = t.mode6_reduced_quant[i32(xl[c] * 2047 + .5)][best_pbits[0]]
 					best_max[c] = t.mode6_reduced_quant[i32(xh[c] * 2047 + .5)][1]
 				}
 			} else {
 				best_err0: f32 = 1e9
 				best_err1: f32 = 1e9
 
-				for p in i32(0) ..< 2 {
+				for p in i32(params.pbits_one ? 1 : 0) ..< 2 {
 					x_min := quantize_endpoint_with_pbit(t, params.comp_bits, xl, p, iscalep, scalep)
 					x_max := quantize_endpoint_with_pbit(t, params.comp_bits, xh, p, iscalep, scalep)
 
@@ -1422,6 +1426,10 @@ handle_alpha_block_mode5 :: proc(
 			if new_lo_a > new_hi_a {
 				new_lo_a, new_hi_a = new_hi_a, new_lo_a
 			}
+			if params.pin_alpha_extremes {
+				if lo_a_in == 0 {new_lo_a = 0}
+				if hi_a_in == 255 {new_hi_a = 255}
+			}
 
 			if new_lo_a == lo_a && new_hi_a == hi_a {
 				break
@@ -1589,6 +1597,8 @@ handle_opaque_block :: proc(t: ^Tables, block: [^]u8, pixels: [^]Color_Rgba, com
 		params.comp_bits = 7
 		params.has_pbits = true
 		params.endpoints_share_pbit = false
+		params.pbits_one = true
+		defer params.pbits_one = false
 
 		results6: Cell_Results
 		results6.selectors = &opt.selectors[0]
