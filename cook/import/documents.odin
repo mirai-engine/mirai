@@ -147,7 +147,7 @@ document_follow :: proc(types:^asset.Types,kind:asset.Fourcc,baseline,target:str
     data,read_error:=serial.file_read(baseline,context.temp_allocator)
     if read_error!=.None {return "",.IO}
     if owner!=given.blob.header.owner {asset.header_owner_set(data,owner) or_return}
-    if serial.file_write_atomic(target,data)!=.None {return "",.IO}
+    if _,write_error:=serial.file_write_changed(target,data);write_error!=.None {return "",.IO}
     return "",.None
 }
 

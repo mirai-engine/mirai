@@ -154,7 +154,7 @@ model_prefab :: proc(model:^importer.Imported_Model,assets:^importer.Import_Repo
     bytes,problem:=author.scene_file_bytes(&scene,types,info,&scratch)
     if problem!="" {return report,.Write}
     os.make_directory_all(filepath.dir(path))
-    if serial.file_write_atomic(path,bytes)!=.None {return report,.Save}
+    if _,write_error:=serial.file_write_changed(path,bytes);write_error!=.None {return report,.Save}
     report.entities=asset.scene_entity_count(&scene)
     return report,.None
 }
