@@ -779,7 +779,10 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
             desc.object_id=u64(owner.entity)
             part:=Part_Draw{desc=desc,placement=piece.placement,identity=piece.placement==1,amount=amount}
             low,high,known:=render.mesh_bounds(renderer,desc.mesh)
-            if variants>0 && known {
+            // Metres from where its largest instance stands to its farthest point.
+            size:=linalg.length(linalg.max(linalg.abs(low),linalg.abs(high)))*t.scale[1]*max(t.height[1],1)
+            // Its shadow sways only where its tip does by SHADOW_SWAY_LEAST.
+            if variants>0 && known && type_sway(t,size)>=SHADOW_SWAY_LEAST {
                 part.variants=variants
                 append(&owner.winds,Wind_Key{desc.mesh,variants,amount})
             }
@@ -787,10 +790,7 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
             // sways in the wind what does not sway in variants (x); the views
             // cull it by boxes that hold how far both move it.
             part.desc.vertex={amount if part.variants==0 && t.wind>0 else 0,1,0,0}
-            if known {
-                corner:=linalg.max(linalg.abs(low),linalg.abs(high))
-                part.desc.reach=hook_reach(part.desc.vertex.x,linalg.length(corner)*t.scale[1]*max(t.height[1],1))
-            }
+            if known {part.desc.reach=hook_reach(part.desc.vertex.x,size)}
             append(&owner.parts,part)
         }
         draw.count=len(owner.parts)-draw.first
