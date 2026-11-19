@@ -34,4 +34,22 @@ void batch_instance_placement(float3 p, uint rotation, uint2 packed, out float4 
     inverse[1] = float4(y / scale.y, -dot(y, p) / scale.y);
     inverse[2] = float4(z / scale.z, -dot(z, p) / scale.z);
 }
+
+// The transform of an instance at p with a basis of its batch in place of
+// its own rotation and scale (render.Batch_Desc.basis): the rows of the
+// basis, w of the first 1 while the batch has one, and its inverse.
+void batch_basis_placement(float3 p, float4 basis[3], inout float4 world[3], inout float4 inverse[3]) {
+    if (basis[0].w == 0.0) return;
+    float3 a = basis[0].xyz, b = basis[1].xyz, c = basis[2].xyz;
+    float3 x = cross(b, c), y = cross(c, a), z = cross(a, b);
+    float inv = 1.0 / dot(a, x);
+    // The columns of the inverse are the cross products of the rows over the determinant.
+    float3 r0 = float3(x.x, y.x, z.x) * inv, r1 = float3(x.y, y.y, z.y) * inv, r2 = float3(x.z, y.z, z.z) * inv;
+    world[0] = float4(a, p.x);
+    world[1] = float4(b, p.y);
+    world[2] = float4(c, p.z);
+    inverse[0] = float4(r0, -dot(r0, p));
+    inverse[1] = float4(r1, -dot(r1, p));
+    inverse[2] = float4(r2, -dot(r2, p));
+}
 #endif
