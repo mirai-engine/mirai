@@ -96,13 +96,13 @@ handshake_gives_a_spoofed_address_nothing_to_amplify_or_allocate :: proc(t:^test
     serial.bit_writer_init(&writer,buffer[1:])
     serial.bit_write(&writer,0x1234,64)
     request:=test_handshake(buffer[:],&writer,server.back.key,HANDSHAKE_BYTES)
-    forger.send(forger.data,address_memory(0),request)
-    forger.send(forger.data,address_memory(0),request[:HANDSHAKE_BYTES-1])
+    test_send_one(forger,address_memory(0),request)
+    test_send_one(forger,address_memory(0),request[:HANDSHAKE_BYTES-1])
     test_step(&w,2)
     answer:[PACKET_BYTES]u8
-    size,_,ok:=forger.receive(forger.data,answer[:])
+    size,_,ok:=test_receive_one(forger,answer[:])
     testing.expect(t,ok && size*3<HANDSHAKE_BYTES)
-    _,_,again:=forger.receive(forger.data,answer[:])
+    _,_,again:=test_receive_one(forger,answer[:])
     testing.expect(t,!again)
     testing.expect_value(t,Packet_Type(answer[0]),Packet_Type.Challenge)
 
@@ -113,9 +113,9 @@ handshake_gives_a_spoofed_address_nothing_to_amplify_or_allocate :: proc(t:^test
     serial.bit_write(&writer,u64(w.now*1000),64)
     serial.bit_write(&writer,0xdeadbeef,64)
     serial.bit_write(&writer,host_protocol_hash(server),64)
-    forger.send(forger.data,address_memory(0),test_handshake(buffer[:],&writer,server.back.key,HANDSHAKE_BYTES))
+    test_send_one(forger,address_memory(0),test_handshake(buffer[:],&writer,server.back.key,HANDSHAKE_BYTES))
     test_step(&w,2)
-    _,_,answered:=forger.receive(forger.data,answer[:])
+    _,_,answered:=test_receive_one(forger,answer[:])
     testing.expect(t,!answered)
     for peer in server.back.peers {testing.expect_value(t,peer.state,Peer_State.Free)}
     testing.expect_value(t,len(host_poll(server)),0)
@@ -451,14 +451,14 @@ a_reliable_message_larger_than_its_queue_streams_and_arrives_in_pieces :: proc(t
 Capture :: struct {inner:Transport,last:[PACKET_BYTES]u8,size:int}
 @(private="file")
 capture_transport :: proc(c:^Capture) -> Transport {
-    return {c,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
+    return {data=c,send=proc(data:rawptr,batch:[]Datagram) -> int {return test_send_each(data,batch,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
         c:=(^Capture)(data)
         if test_packet_data(bytes) {c.size=copy(c.last[:],bytes)}
-        return c.inner.send(c.inner.data,to,bytes)
-    },proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
+        return test_send_one(c.inner,to,bytes)
+    })},receive=proc(data:rawptr,batch:[]Datagram) -> int {return test_receive_each(data,batch,proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
         c:=(^Capture)(data)
-        return c.inner.receive(c.inner.data,buffer)
-    }}
+        return test_receive_one(c.inner,buffer)
+    })}}
 }
 // A message each way, stepped until both arrive. False when an end lost the connection or they did not.
 @(private="file")
@@ -501,7 +501,7 @@ a_connection_follows_its_client_to_a_new_port_and_a_replay_moves_nothing :: proc
         p:=peer_from(server,on_server)
         testing.expect(t,p!=nil && p.address==address_memory(2))
         forger:=sim_endpoint_transport(&w.sim,3)
-        forger.send(forger.data,address_memory(0),capture.last[:capture.size])
+        test_send_one(forger,address_memory(0),capture.last[:capture.size])
         testing.expect(t,both_ways(server,client,on_server,on_client,sim_step,&w))
         testing.expect(t,p.address==address_memory(2),"a replay moved the connection")
         testing.expect_value(t,host_stats(server).connections,1)
@@ -545,7 +545,7 @@ a_connection_follows_its_client_to_a_new_port_and_a_replay_moves_nothing :: proc
     p:=peer_from(pair.server,on_server)
     testing.expect(t,p!=nil && p.address==moved)
     forger:=udp_transport(&sockets[3])
-    forger.send(forger.data,address_loopback(int(sockets[0].address.port)),capture.last[:capture.size])
+    test_send_one(forger,address_loopback(int(sockets[0].address.port)),capture.last[:capture.size])
     testing.expect(t,both_ways(pair.server,pair.client,on_server,on_client,udp_step,&pair))
     testing.expect(t,p.address==moved,"a replay moved the connection")
 }
@@ -569,7 +569,7 @@ hostile_datagrams_never_crash_a_host_nor_reach_the_game_as_data :: proc(t:^testi
             junk[0]&=7
             checksum_write(junk[:size],server.back.key)
         }
-        forger.send(forger.data,address_memory(0),junk[:size])
+        test_send_one(forger,address_memory(0),junk[:size])
         if round%16==0 {test_step(&w)}
     }
     // Every type at the lengths around the limits, straight to the parsers of both ends, with
