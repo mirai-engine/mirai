@@ -98,7 +98,7 @@ Progress :: struct {
 Peer_Progress :: struct {
     receive_rate,send_rate:f64, // chunk bytes per second, smoothed
     received,sent:u64,          // chunk bytes
-    lies:int,                   // wants it sent a chunk for that failed its address, or a wrong alias
+    lies:int,                   // wants it sent a chunk for that failed its address
     refused:u64,                // its messages refused
     bad:bool,                   // it sent what no peer sends: it is neither asked nor served
 }
@@ -121,12 +121,8 @@ Walk_Frame :: struct {address:store.Hash,index:int}
 
 @(private)
 Want :: struct {
-    address:store.Hash, // as wanted: the root of an object, or a blob
-    root:store.Hash,    // of its object, once rooted
+    address:store.Hash, // the root of its object
     used,wanted:bool,
-    rooted:bool,  // the root is known: the address is one, or a peer named the blob's
-    blob:bool,    // a peer named the address as a blob: complete once its bytes hash to it
-    alias_peer:int,
     waiters:int,
     generation:u32,
     priority:int,
@@ -180,7 +176,7 @@ Flight :: struct {
     serial:u32,
     want:i32,
     generation:u32,     // of the want
-    address:store.Hash, // what answers it: the chunk asked, or the root an alias named
+    address:store.Hash, // the chunk asked, which answers it
     left:i64,           // descendant bytes it may still bring
     released:bool,      // what it reserved went back to be asked of others
     heard:f64,          // when it was sent or the peer last made progress on its want
@@ -214,7 +210,6 @@ Peer :: struct {
     draining:bool, // it left while its serve job ran: the slot frees once it ends
     epoch:u32,     // of the peer in the slot: results of jobs for another are not its
     started:bool,  // the chunk of the first entry went
-    aliased:bool,  // its address was a blob, replaced by its root
     sent_under:i64, // descendant bytes of the first entry sent
     stack:[WALK_DEPTH]Walk_Frame,
     depth:int,
@@ -495,7 +490,6 @@ clear_peer_bits :: proc(x:^Exchange,i:int) {
     for &w in x.wants {
         w.wrong&=mask
         w.lack&=mask
-        if w.alias_peer==i {w.alias_peer=-1}
     }
     for &n in x.needs {n.lack&=mask}
     for &q in x.queries {q.asked&=mask;q.answered&=mask}
@@ -586,7 +580,7 @@ signal :: proc(x:^Exchange) {
     sync.cond_broadcast(&x.changed)
 }
 
-// Wants an object by its root, or a blob by its address: asks connected peers
+// Wants an object by its root: asks connected peers
 // for what the store lacks of it, most important first. Asking again raises
 // its priority. A want stays until forget, also once complete.
 want :: proc(x:^Exchange,address:store.Hash,priority:=0) -> Error {
@@ -612,7 +606,7 @@ progress :: proc(x:^Exchange,address:store.Hash) -> (Progress,bool) {
     return {state=w.state,here=w.here,total=w.total,error=w.error,store_error=w.store_error},true
 }
 
-// Returns once the object or blob is complete in the store, or once no
+// Returns once the object is complete in the store, or once no
 // connected peer has it (Missing). For job threads: the owner keeps calling update meanwhile.
 fetch :: proc(x:^Exchange,address:store.Hash,priority:=0) -> Error {
     sync.mutex_guard(&x.lock)
@@ -620,7 +614,7 @@ fetch :: proc(x:^Exchange,address:store.Hash,priority:=0) -> Error {
     return fetch_set(x,{address},priority)
 }
 
-// fetch of many objects or blobs: wants them together, so they arrive in few round
+// fetch of many objects: wants them together, so they arrive in few round
 // trips, and returns once all are complete, at the first that no connected
 // peer has (Missing) or at the first error.
 fetch_all :: proc(x:^Exchange,addresses:[]store.Hash,priority:=0) -> Error {
@@ -738,14 +732,11 @@ fetch_let_go :: proc(x:^Exchange,i:int) {
 
 // The addresses of every want, in progress or kept, into buffer (Desc.wants
 // long): what the owner's store lease holds alive against a sweep. A want
-// whose root is known gives the root, which reaches every chunk it received.
+// gives its root, which reaches every chunk it received.
 want_addresses :: proc(x:^Exchange,buffer:[]store.Hash) -> []store.Hash {
     sync.mutex_guard(&x.lock)
     n:=min(x.want_count,len(buffer))
-    for k in 0..<n {
-        w:=&x.wants[x.order[k]]
-        buffer[k]=w.root if w.rooted else w.address
-    }
+    for k in 0..<n {buffer[k]=x.wants[x.order[k]].address}
     return buffer[:n]
 }
 

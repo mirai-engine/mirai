@@ -628,7 +628,7 @@ batch_restore_locked :: proc(s:^Store,now:i64) -> (copied:bool,missing:int,error
     for d in w.deduped {missing+=restore_locked(s,&st,d.address,DATA,0,&visited) or_return}
     for target in w.named {
         if target=={} {continue}
-        missing+=root_restore_locked(s,&st,target,&visited) or_return
+        missing+=restore_locked(s,&st,target,-1,0,&visited) or_return
     }
     if st!=nil && len(st.frames)>0 {
         stage_write_locked(s,st,now) or_return

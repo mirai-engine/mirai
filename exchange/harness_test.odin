@@ -22,7 +22,6 @@ Test_Node :: struct {
     source:^store.Store, // what the scripted peer serves
     game:Test_Game,
     requests:int,          // asks a scripted peer got
-    other:store.Hash,      // Alias: the root it names
     held:int,              // Late_Done: Dones owed
     held_at:f64,           // when they are sent
     held_host:^wire.Host,
@@ -34,8 +33,6 @@ Test_Node :: struct {
 Test_Lie :: enum {
     None,
     Bytes,       // data chunks with a byte flipped
-    Alias,       // for a blob, the root of another object
-    Nonsense,    // for a blob, a root that is no node
     Over_Budget, // every descendant of each entry, whatever its budget
     Hold,        // nothing, and an unrelated Lack every 0.1 s
     Late_Done,   // nothing, and a Done for each ask 5.1 s later
@@ -207,14 +204,15 @@ test_bytes :: proc(size:int,seed:u64) -> []u8 {
     return data
 }
 
-// Whether node k holds address whole: a blob by its alias, an object as its
-// want says once committed.
+// Whether node k holds the object at address whole: as its want says once
+// committed, or read whole from its store.
 @(private)
 test_here :: proc(n:^Test_Node,address:store.Hash) -> bool {
-    if store.has(&n.s,address) {return true}
-    if !n.open {return false}
-    p,known:=progress(&n.x,address)
-    return known && p.state==.Complete
+    if n.open {
+        if p,known:=progress(&n.x,address);known {return p.state==.Complete}
+    }
+    _,whole:=test_read(&n.s,address)
+    return whole
 }
 
 // Steps until every address is complete at node k or seconds pass.
@@ -298,21 +296,6 @@ test_liar :: proc(w:^Test_World,n:^Test_Node,h:^wire.Host,command:wire.Command) 
     for _ in 0..<count {
         address:=read_hash(&r)
         sc.budget,sc.sent=i64(read_u32(&r)),0
-        if root,found:=store.blob_root(n.source,address);found && !store.chunk_here(n.source,address) {
-            named:=root
-            junk:=test_bytes(100,7)
-            #partial switch n.lie {
-            case .Alias: named=n.other
-            case .Nonsense: named=store.address_of_bytes(junk)
-            }
-            alias:=test_message({MSG_ALIAS},address[:],named[:])
-            wire.message_send(h,command.connection,w.channel+LANE_DATA,alias)
-            if n.lie==.Nonsense {
-                send_chunk(&sc,named,junk)
-                continue
-            }
-            address=named
-        }
         bytes,error:=store.chunk_read(n.source,address,buffer)
         if error!=.None {
             lack:[MSG_ADDRESS_BYTES]u8

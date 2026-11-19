@@ -6,6 +6,7 @@ import "core:strings"
 import "core:sync"
 import "core:testing"
 import "core:thread"
+import "core:time"
 import "mirai:platform"
 import "mirai:store"
 import wire "mirai:net"
@@ -19,12 +20,10 @@ test_pair :: proc(t:^testing.T,w:^Test_World,name:string,game:=false) -> bool {
     return testing.expect(t,server!=nil && client!=nil && test_connect(w,client,w.nodes[0].endpoints[0]),"the peers connect")
 }
 
-// A blob: an object and its alias, committed.
+// An object of size bytes of seed, committed: its root.
 @(private)
 test_put :: proc(t:^testing.T,s:^store.Store,size:int,seed:u64) -> store.Hash {
-    hash,error:=store.put_bytes(s,test_bytes(size,seed))
-    testing.expect_value(t,error,store.Error.None)
-    return hash
+    return test_object(t,s,test_bytes(size,seed))
 }
 
 // An object of bytes, committed: its root.
@@ -34,6 +33,13 @@ test_object :: proc(t:^testing.T,s:^store.Store,data:[]u8) -> store.Hash {
     testing.expect_value(t,error,store.Error.None)
     testing.expect_value(t,store.commit(s),store.Error.None)
     return root
+}
+
+// Whether the object at root reads whole from a store.
+@(private)
+test_whole :: proc(s:^store.Store,root:store.Hash) -> bool {
+    _,whole:=test_read(s,root)
+    return whole
 }
 
 // The bytes of an object read back from a store.
@@ -58,35 +64,27 @@ test_peer :: proc(n:^Test_Node,host:=0) -> Peer_Progress {
 }
 
 @(test)
-objects_and_blobs_of_every_size_arrive_verified_under_loss_and_jitter :: proc(t:^testing.T) {
+objects_of_every_size_arrive_verified_under_loss_and_jitter :: proc(t:^testing.T) {
     w:Test_World
     defer test_world_destroy(&w)
     if !test_pair(t,&w,"exchange-loss") {return}
     M:=store.CHUNK_MAX
     sizes:=[]int{0,1,store.CHUNK_MIN-1,M,M+1,3*M+17,6<<20}
-    addresses:=make([]store.Hash,2*len(sizes),context.temp_allocator)
-    for size,k in sizes {
-        addresses[2*k]=test_put(t,&w.nodes[0].s,size,u64(k)+1)
-        addresses[2*k+1]=test_object(t,&w.nodes[0].s,test_bytes(size,u64(k)+100))
-    }
+    addresses:=make([]store.Hash,len(sizes),context.temp_allocator)
+    for size,k in sizes {addresses[k]=test_put(t,&w.nodes[0].s,size,u64(k)+1)}
     for e in w.nodes[0].endpoints[:1] {wire.sim_endpoint_conditions(&w.sim,e,{latency=0.02,jitter=0.005,loss=0.05})}
     wire.sim_endpoint_conditions(&w.sim,w.nodes[1].endpoints[0],{latency=0.02,jitter=0.005,loss=0.05})
     for a in addresses {testing.expect_value(t,want(&w.nodes[1].x,a),Error.None)}
     testing.expect(t,test_until_complete(&w,1,addresses,60),"everything arrives")
     s:=&w.nodes[1].s
     for size,k in sizes {
-        blob:=addresses[2*k]
-        testing.expect_value(t,store.verify(s,blob),store.Error.None)
-        back:=make([]u8,size,context.temp_allocator)
-        testing.expect_value(t,store.read(s,blob,0,back),store.Error.None)
-        testing.expect(t,string(back)==string(test_bytes(size,u64(k)+1)),"the blob reads back its bytes")
-        p,_:=progress(&w.nodes[1].x,blob)
-        testing.expect(t,p.state==.Complete && p.here==i64(size) && p.total==i64(size),"progress counts the whole blob")
-        data,ok:=test_read(s,addresses[2*k+1])
-        testing.expect(t,ok && string(data)==string(test_bytes(size,u64(k)+100)),"the object reads back its bytes")
+        data,ok:=test_read(s,addresses[k])
+        testing.expect(t,ok && string(data)==string(test_bytes(size,u64(k)+1)),"the object reads back its bytes")
+        p,_:=progress(&w.nodes[1].x,addresses[k])
+        testing.expect(t,p.state==.Complete && p.here==i64(size) && p.total==i64(size),"progress counts the whole object")
     }
     rate:=test_peer(&w.nodes[1])
-    testing.expect(t,rate.received>=12<<20 && rate.receive_rate>0,"the peer's rate is measured")
+    testing.expect(t,rate.received>=6<<20 && rate.receive_rate>0,"the peer's rate is measured")
 }
 
 // What matters most is asked first: a small want asked after a large one and
@@ -167,30 +165,27 @@ a_transfer_resumes_after_the_connection_drops_and_after_the_store_reopens :: pro
 }
 
 // Two sources, one of which lies; it is asked first, so its lie is met. A
-// chunk that fails its address, or a blob's alias to another object or to no
-// node, marks the liar for the want, never the honest peer, and the want
-// still completes.
+// chunk that fails its address marks the liar for the want, never the honest
+// peer, and the want still completes.
 @(test)
 a_liar_is_marked_and_the_object_still_arrives :: proc(t:^testing.T) {
-    for lie in ([]Test_Lie{.Bytes,.Alias,.Nonsense}) {
-        w:Test_World
-        defer test_world_destroy(&w)
-        if !test_world(t,&w,"exchange-liar",3) {return}
-        test_host(&w,0,.Server)
-        liar:=test_host(&w,1,.Client)
-        honest:=test_host(&w,2,.Client)
-        w.nodes[1].script,w.nodes[1].lie,w.nodes[1].source=test_liar,lie,&w.nodes[1].s
-        size:=3*store.CHUNK_MAX+1000
-        blob:=test_put(t,&w.nodes[1].s,size,9)
-        w.nodes[1].other=test_object(t,&w.nodes[1].s,test_bytes(size,10))
-        test_put(t,&w.nodes[2].s,size,9)
-        if !testing.expect(t,test_connect(&w,liar,w.nodes[0].endpoints[0]) && test_connect(&w,honest,w.nodes[0].endpoints[0])) {return}
-        r:=&w.nodes[0]
-        want(&r.x,blob)
-        testing.expectf(t,test_until_complete(&w,0,{blob},20),"%v: the blob arrives",lie)
-        testing.expect_value(t,store.verify(&r.s,blob),store.Error.None)
-        testing.expectf(t,test_received_by(&r.x,r.hosts[0])=={1,1},"%v: the liar is marked and the honest peer is not",lie)
-    }
+    w:Test_World
+    defer test_world_destroy(&w)
+    if !test_world(t,&w,"exchange-liar",3) {return}
+    test_host(&w,0,.Server)
+    liar:=test_host(&w,1,.Client)
+    honest:=test_host(&w,2,.Client)
+    w.nodes[1].script,w.nodes[1].lie,w.nodes[1].source=test_liar,.Bytes,&w.nodes[1].s
+    size:=3*store.CHUNK_MAX+1000
+    object:=test_put(t,&w.nodes[1].s,size,9)
+    test_put(t,&w.nodes[2].s,size,9)
+    if !testing.expect(t,test_connect(&w,liar,w.nodes[0].endpoints[0]) && test_connect(&w,honest,w.nodes[0].endpoints[0])) {return}
+    r:=&w.nodes[0]
+    want(&r.x,object)
+    testing.expect(t,test_until_complete(&w,0,{object},20),"the object arrives")
+    data,ok:=test_read(&r.s,object)
+    testing.expect(t,ok && string(data)==string(test_bytes(size,9)),"with its bytes")
+    testing.expect(t,test_received_by(&r.x,r.hosts[0])=={1,1},"the liar is marked and the honest peer is not")
 }
 
 // Flips the byte at at of an object's bytes where a pack of the store at root
@@ -394,19 +389,20 @@ the_blocking_form_returns_for_a_hit_a_miss_and_a_disconnect :: proc(t:^testing.T
     x:=&w.nodes[1].x
     hit:=test_put(t,&w.nodes[0].s,200<<10,1)
     j:=Test_Job{x=x,address=hit}
-    testing.expect(t,test_fetch(&w,&j,10) && j.error==.None && store.has(&w.nodes[1].s,hit),"a hit returns once the blob is here")
+    testing.expect(t,test_fetch(&w,&j,10) && j.error==.None && test_whole(&w.nodes[1].s,hit),"a hit returns once the object is here")
     _,still:=progress(x,hit)
     testing.expect(t,!still,"a fetch leaves no want behind")
-    // A want kept complete whose blob a sweep removed is fetched again: success is what the store says.
+    // A want kept complete whose object a sweep removed is fetched again: success is what the store says.
     want(x,hit)
-    store.remove(&w.nodes[1].s,hit)
+    _,swept:=store.sweep(&w.nodes[1].s,nil,time.time_add(time.now(),2*store.GRACE))
+    testing.expect(t,swept==.None && !store.chunk_has(&w.nodes[1].s,hit),"a sweep removes the object")
     j={x=x,address=hit}
-    testing.expect(t,test_fetch(&w,&j,10) && j.error==.None && store.has(&w.nodes[1].s,hit),"a swept blob is fetched again")
+    testing.expect(t,test_fetch(&w,&j,10) && j.error==.None && test_whole(&w.nodes[1].s,hit),"a swept object is fetched again")
     forget(x,hit)
     keyed:=test_put(t,&w.nodes[0].s,3000,2)
     store.ref_set(&w.nodes[0].s,"lib","derived",keyed)
     j={x=x,namespace="lib",name="derived"}
-    testing.expect(t,test_fetch(&w,&j,10) && j.error==.None && j.found==keyed && store.has(&w.nodes[1].s,keyed),"a ref hit returns its blob")
+    testing.expect(t,test_fetch(&w,&j,10) && j.error==.None && j.found==keyed && test_whole(&w.nodes[1].s,keyed),"a ref hit returns its object")
     j={x=x,address=store.address_of_bytes(test_bytes(10,99))}
     testing.expect(t,test_fetch(&w,&j,10) && j.error==.Missing,"a miss returns Missing")
     j={x=x,namespace="lib",name="absent"}
@@ -419,7 +415,7 @@ the_blocking_form_returns_for_a_hit_a_miss_and_a_disconnect :: proc(t:^testing.T
         if client.connection_handles[0]==0 {return}
         if p,ok:=peer_progress(&w.nodes[1].x,client,client.connection_handles[0]);ok && p.received>1<<20 {wire.host_disconnect(w.nodes[0].hosts[0])}
     }) && j.error==.Missing,"a disconnect returns Missing")
-    testing.expect(t,!store.has(&w.nodes[1].s,big),"the disconnect came before the blob")
+    testing.expect(t,!test_whole(&w.nodes[1].s,big),"the disconnect came before the object")
 }
 
 // A 60 Hz unreliable message from the source keeps its delay small while objects stream.
@@ -598,6 +594,14 @@ destroy_wakes_a_waiting_fetch :: proc(t:^testing.T) {
     j:=Test_Job{x=&n.x,address=store.address_of_bytes(test_bytes(10,5))}
     th:=thread.create_and_start_with_poly_data(&j,test_job)
     test_step(&w,200)
+    // The thread may start late on a loaded machine: destroy comes once it waits.
+    for _ in 0..<10000 {
+        sync.mutex_lock(&n.x.lock)
+        waiting:=n.x.waiting
+        sync.mutex_unlock(&n.x.lock)
+        if waiting>0 {break}
+        time.sleep(time.Millisecond)
+    }
     testing.expect(t,!sync.atomic_load(&j.done),"the fetch waits on the silent peer")
     destroy(&n.x)
     n.open=false
@@ -670,12 +674,12 @@ the_batch_blocking_forms_return_for_a_hit_a_partial_miss_and_a_disconnect :: pro
     client:=test_host(&w,1,.Client)
     if !testing.expect(t,test_connect(&w,client,w.nodes[0].endpoints[0])) {return}
     x,here:=&w.nodes[1].x,&w.nodes[1].s
-    blobs:=make([]store.Hash,40,context.temp_allocator)
-    for &b,k in blobs {b=test_put(t,&w.nodes[0].s,(k%7)*30000+1,u64(k)+1)}
-    j:=Test_Job{x=x,addresses=blobs}
+    objects:=make([]store.Hash,40,context.temp_allocator)
+    for &o,k in objects {o=test_put(t,&w.nodes[0].s,(k%7)*30000+1,u64(k)+1)}
+    j:=Test_Job{x=x,addresses=objects}
     testing.expectf(t,test_fetch(&w,&j,10) && j.error==.None,"a set of hits returns: %v",j.error)
-    for b in blobs {
-        testing.expect(t,store.has(here,b),"every blob is here")
+    for b in objects {
+        testing.expect(t,test_whole(here,b),"every object is here")
         _,still:=progress(x,b)
         testing.expect(t,!still,"a fetch_all leaves no want behind")
     }
@@ -684,7 +688,7 @@ the_batch_blocking_forms_return_for_a_hit_a_partial_miss_and_a_disconnect :: pro
     for name,k in names {store.ref_set(&w.nodes[0].s,"lib",name,test_put(t,&w.nodes[0].s,5000*(k+1),u64(100+k)))}
     j={x=x,namespace="lib",names=names,addresses=make([]store.Hash,len(names),context.temp_allocator)}
     testing.expect(t,test_fetch(&w,&j,10) && j.error==.None,"a set of ref hits returns")
-    for a in j.addresses {testing.expect(t,a!={} && store.has(here,a),"each ref's blob is here")}
+    for a in j.addresses {testing.expect(t,a!={} && test_whole(here,a),"each ref's object is here")}
     absent:=store.address_of_bytes(test_bytes(10,99))
     fresh:=[]store.Hash{test_put(t,&w.nodes[0].s,3000,200),absent,test_put(t,&w.nodes[0].s,4000,201)}
     j={x=x,addresses=fresh}
@@ -699,7 +703,7 @@ the_batch_blocking_forms_return_for_a_hit_a_partial_miss_and_a_disconnect :: pro
         if client.connection_handles[0]==0 {return}
         if p,ok:=peer_progress(&w.nodes[1].x,client,client.connection_handles[0]);ok && p.received>1<<20 {wire.host_disconnect(w.nodes[0].hosts[0])}
     }) && j.error==.Missing,"a disconnect returns Missing")
-    testing.expect(t,!store.has(here,big[0]) || !store.has(here,big[1]),"the disconnect came before the blobs")
+    testing.expect(t,!test_whole(here,big[0]) || !test_whole(here,big[1]),"the disconnect came before the objects")
 }
 
 // An object of ten gigabytes moves with the memory of each side bounded by

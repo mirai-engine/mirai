@@ -9,8 +9,8 @@ refs_set_get_replace_remove_and_list :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"store-refs");if folder=="" {return}
     s,ok:=test_store(t,folder);if !ok {return}
     defer close(&s)
-    one,_:=put_bytes(&s,transmute([]u8)string("one"))
-    two,_:=put_bytes(&s,transmute([]u8)string("two"))
+    one,_:=test_put(&s,transmute([]u8)string("one"))
+    two,_:=test_put(&s,transmute([]u8)string("two"))
     _,missing:=ref_get(&s,"library","knight")
     testing.expect_value(t,missing,Error.Missing)
     testing.expect_value(t,ref_set(&s,"library","knight",one),Error.None)

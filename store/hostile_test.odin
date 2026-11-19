@@ -35,7 +35,7 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     if !testing.expect_value(t,error,Error.None) {return}
     h:=base.Hostile{state=42}
     data:=test_bytes(3*CHUNK_MAX+9,5)
-    hash,_:=put_bytes(&s,data)
+    hash,_:=test_put(&s,data)
     random:=make([]u8,CHUNK_MAX+3,context.temp_allocator)
     for _ in 0..<64 {
         target:Hash
@@ -43,27 +43,21 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
         chunk:=random[:base.hostile_int(&h,len(random))]
         e:=chunk_put(&s,target,chunk)
         testing.expectf(t,e==(.Invalid_Argument if len(chunk)==0 || len(chunk)>CHUNK_MAX else .None),"a chunk of %d bytes: %v",len(chunk),e)
-        alias_error:=blob_alias(&s,target,target)
-        testing.expectf(t,alias_error!=.None,"a random object is no blob: %v",alias_error)
+        o,open_error:=object_open(&s,target)
+        if open_error==.None {object_close(&o)}
+        testing.expectf(t,open_error!=.None,"a random chunk is no object: %v",open_error)
     }
     unknown:Hash
     unknown[5]=9
     testing.expect_value(t,chunk_check(&s,unknown),Error.Missing)
-    testing.expect_value(t,blob_alias(&s,hash,unknown),Error.Missing)
-    testing.expect_value(t,read(&s,unknown,0,random[:1]),Error.Missing)
-    testing.expect_value(t,verify(&s,unknown),Error.Missing)
-    _,size_error:=blob_size(&s,unknown)
-    testing.expect_value(t,size_error,Error.Missing)
-    testing.expect_value(t,read(&s,hash,-1,random[:1]),Error.Invalid_Argument)
-    testing.expect_value(t,read(&s,hash,i64(len(data))+1,nil),Error.Invalid_Argument)
-    testing.expect_value(t,read(&s,hash,max(i64),random[:1]),Error.Invalid_Argument)
-
-    // A blob whose chunk is damaged on disk.
-    damaged:=test_bytes(CHUNK_MAX+5,6)
-    stored,_:=put_bytes(&s,damaged)
-    testing.expect(t,test_damage(&s,damaged,CHUNK_MAX+1),"the damage lands in a pack")
-    testing.expect_value(t,verify(&s,stored),Error.Corrupt)
-    testing.expect(t,!has(&s,stored),"a damaged blob goes")
+    _,unknown_error:=object_open(&s,unknown)
+    testing.expect_value(t,unknown_error,Error.Missing)
+    if o,open_error:=object_open(&s,hash);testing.expect_value(t,open_error,Error.None) {
+        testing.expect_value(t,object_read(&o,u64(len(data))+1,nil),Error.Invalid_Argument)
+        testing.expect_value(t,object_read(&o,max(u64),random[:1]),Error.Invalid_Argument)
+        testing.expect_value(t,object_read(&o,u64(len(data)),random[:1]),Error.Invalid_Argument)
+        object_close(&o)
+    }
 
     // Refs.
     for name in ([]string{"","."," ..","..","a/b","a\\b","A","con","com1.txt","x.","a b",strings.repeat("x",NAME_MAX+1,context.temp_allocator)}) {
@@ -77,7 +71,7 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     testing.expect_value(t,ref_set(&s,"ns","n",hash),Error.None)
 
     now:=time.now()
-    unleased,_:=put_bytes(&s,data[:31],time.time_add(now,-2*GRACE))
+    unleased,_:=test_put(&s,data[:31],time.time_add(now,-2*GRACE))
     truncated:=path_in(folder,"leases","truncated")
     testing.expect_value(t,lease_write(&s,truncated,holder_self(),0,{unleased,hash},now),Error.None)
     valid,valid_error:=os.read_entire_file(truncated,context.temp_allocator)
@@ -91,21 +85,22 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     copy(lease_bytes,valid)
     testing.expect(t,os.write_entire_file(oversized,lease_bytes)==nil)
     for file in ([3]string{truncated,random_lease,oversized}) {test_set_time(t,file,now)}
+    collected,make_error:=make(Live_Set,1,s.allocator)
+    if !testing.expect(t,make_error==nil) {return}
+    testing.expect_value(t,leases_collect(&s,&collected,now),Error.None)
+    testing.expect(t,!(unleased in collected) && !(hash in collected),"invalid leases do not keep addresses")
+    delete(collected)
     _,hostile_sweep_error:=sweep(&s,nil,now)
     testing.expect_value(t,hostile_sweep_error,Error.None)
-    testing.expect(t,!has(&s,unleased),"invalid leases do not keep addresses")
 
     // Memory that runs out.
     out:=s
     out.allocator=failing_allocator()
-    good,_:=put_bytes(&s,data[:10])
-    _,path_error:=blob_path(&s,good,out.allocator)
-    testing.expect_value(t,path_error,Error.Out_Of_Memory)
     _,list_error:=ref_list(&s,"ns",out.allocator)
     testing.expect_value(t,list_error,Error.Out_Of_Memory)
-    other,_:=put_bytes(&s,data[:20])
+    other,_:=test_put(&s,data[:20])
     testing.expect_value(t,chunk_put(&out,test_address(data[:CHUNK_MAX]),data[:CHUNK_MAX]),Error.None)
-    testing.expect(t,has(&s,other))
+    testing.expect(t,chunk_has(&s,other))
     _,open_error:=open(path_in(folder,"other"),failing_allocator())
     testing.expect_value(t,open_error,Error.Out_Of_Memory)
     close(&s)

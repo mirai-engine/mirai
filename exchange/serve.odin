@@ -47,7 +47,7 @@ on_bad :: proc(x:^Exchange,i:int,data:[]u8) {
 @(private)
 serve_pop :: proc(p:^Peer) {
     sync.atomic_store(&p.serve_head,p.serve_head+1)
-    p.started,p.aliased,p.sent_under,p.depth=false,false,0,0
+    p.started,p.sent_under,p.depth=false,0,0
 }
 
 @(private)
@@ -199,8 +199,7 @@ serve_node :: proc(x:^Exchange,p:^Peer,address:store.Hash) -> (n:store.Node_View
 }
 
 // Writes the next answer of a peer into out: its size, 0 when there is none.
-// Each entry is its chunk, or the alias of a blob and then its root, or a
-// Lack; then, while their bytes fit its budget, the descendants of that chunk
+// Each entry is its chunk or a Lack; then, while their bytes fit its budget, the descendants of that chunk
 // depth first, until one is missing.
 @(private)
 serve_build :: proc(x:^Exchange,p:^Peer,out:[]u8) -> int {
@@ -213,18 +212,6 @@ serve_build :: proc(x:^Exchange,p:^Peer,out:[]u8) -> int {
         }
         if !p.started {
             size,error:=serve_read(x,out,e.address)
-            if error==.Missing && !p.aliased {
-                // A blob of several chunks: its alias, then its root. A blob of
-                // one chunk is that chunk, whose address is the blob's.
-                if root,found:=store.blob_root(x.desc.store,e.address);found {
-                    out[0]=MSG_ALIAS
-                    copy(out[1:],e.address[:])
-                    copy(out[33:],root[:])
-                    e.address=root
-                    p.aliased=true
-                    return MSG_ALIAS_BYTES
-                }
-            }
             p.started=true
             if error!=.None {
                 n:=encode_address(out,MSG_LACK,e.address)

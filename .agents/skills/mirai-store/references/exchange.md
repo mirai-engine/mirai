@@ -2,7 +2,7 @@
 
 `exchange` (layer 3) moves the chunks of a `store`'s objects and its refs between peers over the
 connections of `net` hosts its owner already runs. It imports `store` and `net` and nothing
-engine-time, so a headless peer and the editor link the same code. Its messages (protocol 3) are
+engine-time, so a headless peer and the editor link the same code. Its messages (protocol 4) are
 in `exchange/wire.odin`.
 
 ## What the owner calls
@@ -17,10 +17,9 @@ in `exchange/wire.odin`.
   `Message` (it says whether the message was its own). Then `update(now)` before `host_update`.
 - A connection is given from its start: a message that began before `peer_add` is not read from
   its middle, so a restarted exchange takes new connections.
-- `want` takes an object's root or, until the consumers hold objects, a blob's address; asking
-  again raises the priority. `forget`, `progress`, `peer_progress`; `ref_ask`, `names_ask`,
-  `query_result`, `query_end`.
-- `want_addresses` gives every want, in progress or kept, as its root once known: the owner puts
+- `want` takes an object's root; asking again raises the priority. `forget`, `progress`,
+  `peer_progress`; `ref_ask`, `names_ask`, `query_result`, `query_end`.
+- `want_addresses` gives the root of every want, in progress or kept: the owner puts
   them in its store lease so a sweep keeps them and everything already received under them; the
   exchange holds no lease.
 - `fetch` and `fetch_ref` block a job thread until what they name is complete in the store, or
@@ -66,10 +65,8 @@ in `exchange/wire.odin`.
   store's batch and the exchange commits once for the wants that finished, at most every
   `COMMIT_SECONDS`, and every `COMMIT_IDLE` for what arrived meanwhile, so a restarted receiver
   walks again from what it committed without asking for it.
-- Blobs, until the consumers hold objects: a peer asked for an address that is no chunk it holds
-  but a blob's alias answers with `Alias` and that object's root; the receiver walks it and names
-  it a blob only once its bytes hash to the blob's address, else the peer that named the root
-  lied. A blob of one chunk is that chunk, whose address is the blob's, and is put whole.
+- A want names an object by its root, which is always a node: a root that hashes right but is no
+  node fails the want, since every peer would send the same.
 - What a peer exposes is the owner's `Desc.expose`; without one no namespace is read. Names come
   sorted, a page at a time after the last one seen.
 - Hostile input: a malformed message, an ask beyond the limits, descendants past a budget or an
@@ -101,7 +98,7 @@ in `exchange/wire.odin`.
   `a_ten_gigabyte_object_moves_within_bounded_memory` is the process's footprint, checked when it
   runs alone with `-define:ODIN_TEST_THREADS=1`.
 - Focal tests:
-  `objects_and_blobs_of_every_size_arrive_verified_under_loss_and_jitter`,
+  `objects_of_every_size_arrive_verified_under_loss_and_jitter`,
   `a_high_priority_want_asked_later_completes_before_a_large_low_one`,
   `a_transfer_resumes_after_the_connection_drops_and_after_the_store_reopens`,
   `a_liar_is_marked_and_the_object_still_arrives`,
