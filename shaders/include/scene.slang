@@ -267,6 +267,29 @@ float3 sky_seen(float3 dir) {
     return sky + sun_light(frame.camera_position.xyz) * (disc + glow);
 }
 
+// The background in a direction of the world: its image (Frame.background_map),
+// turned as the sky, at the level spread picks, times its color; or its color.
+float3 background_look(float3 dir, float spread) {
+    float4 map = frame.background_map;
+    if (map.w < 0.5) return frame.background.rgb;
+    return sky_image(map, frame.background.rgb, sky_direction(dir), saturate(spread) * max(map.z - SKY_GATHER_LEVELS, 0.0));
+}
+
+// What the eye sees past the scene: the background when the frame shows one,
+// else the sky with the sun.
+float3 sky_shown(float3 dir) {
+    return frame.background.w > 0.5 ? background_look(dir, 0.0) : sky_seen(dir);
+}
+
+// What a reflection of that roughness (spread) sees of the sky: where the
+// frame shows the background there, a mirror sees it as a camera would, and a
+// rougher lobe less of it and more of the light of the sky, all of it when
+// fully rough, as what gathers light (sky_radiance).
+float3 sky_reflected(float3 dir, float spread) {
+    float3 light = sky_radiance(dir, spread);
+    return frame.background_map.y > 0.5 ? lerp(background_look(dir, spread), light, saturate(spread)) : light;
+}
+
 // How much of a pixel's specular reflection is traced instead of read from
 // the probe volume: all of it on smooth surfaces, fading to none at the limit.
 // The G-buffer keeps roughness in half floats, and a material set exactly at a
@@ -434,9 +457,19 @@ struct Material_Sample {
     Material_Layers layers;
 };
 
-uint material_of(Instance inst, uint vertex_material) {
+// The row of the instances whose slots an instance of the scene or of a
+// batch takes: its own, or that of its batch.
+uint instance_row(uint index) { return instance_batched(index) ? frame.instance_count + batch_of(index) : index; }
+
+// The slots are read from the row of the instances (instance_row), not from
+// the copy inst: an array of a copy indexed by a value is local memory once
+// for every place this is inlined.
+uint material_of(uint row, Instance inst, uint vertex_material) {
     uint slot = vertex_material >> 24;
-    if (slot > 0u && slot <= 32u && inst.slot_materials[slot-1u] != 0u) return inst.slot_materials[slot-1u] - 1u;
+    if (slot > 0u && slot <= 32u) {
+        uint given = instances[row].slot_materials[slot - 1u];
+        if (given != 0u) return given - 1u;
+    }
     return inst.meta.y != INVALID ? inst.meta.y : (vertex_material & 0xffffffu);
 }
 
@@ -1267,7 +1300,7 @@ float3 triangle_face(uint instance_index, uint primitive, out uint material) {
     float3 a, b, c;
     uint word;
     mesh_triangle_positions(meshes[instance_mesh(inst)], primitive, a, b, c, word);
-    material = material_of(inst, word);
+    material = material_of(instance_row(instance_index), inst, word);
     return transform_normal(inst.world_inv, cross(b - a, c - a));
 }
 
@@ -1344,7 +1377,7 @@ Hit_Point hit_point(uint instance_index, uint primitive, float2 bary, float foot
     float3 edge2 = tri.c.position - tri.a.position;
     float3 face = cross(edge1, edge2);
     h.geometric_normal = dot(face, face) > 1e-20 ? transform_normal(h.inst.world_inv, face) : h.normal;
-    h.m = material_row(material_of(h.inst, tri.material), h.inst.material_values);
+    h.m = material_row(material_of(instance_row(instance_index), h.inst, tri.material), h.inst.material_values);
     float3 world_edge1 = transform_vector(h.inst.world, edge1);
     float3 world_edge2 = transform_vector(h.inst.world, edge2);
     float2 lod = float2(hit_lod(world_edge1, world_edge2, tri.b.uv - tri.a.uv, tri.c.uv - tri.a.uv, footprint), hit_lod(world_edge1, world_edge2, tri.b.uv1 - tri.a.uv1, tri.c.uv1 - tri.a.uv1, footprint));

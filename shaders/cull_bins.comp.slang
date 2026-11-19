@@ -100,7 +100,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 lane : SV_GroupThreadID
     v.instance = entry.x;
     v.cluster = entry.y;
     v.program = entry.w;
-    v.material = material_of(inst, cluster_material(mesh, c));
+    v.material = material_of(instance_row(entry.x), inst, cluster_material(mesh, c));
     v.page = cluster_page_word(mesh, c);
     Cluster_Block b = page_block(mesh, c, page_at_word(v.page));
     v.vertices = b.vertices;

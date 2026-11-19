@@ -3219,6 +3219,8 @@ a_settings_change_starts_again_only_what_depends_on_it :: proc(t:^testing.T) {
 
 // Views of one size share the targets that live within the frame of each
 // (targets_frame) and keep their own histories: each still shows what it sees.
+// The window they cover keeps no scene of its own, and draws one again
+// without them.
 @(test)
 views_of_one_size_share_the_targets_of_a_frame :: proc(t:^testing.T) {
     f:Cube_Fixture
@@ -3235,8 +3237,12 @@ views_of_one_size_share_the_targets_of_a_frame :: proc(t:^testing.T) {
         {position={-3,0,4},forward={0,0,-4},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE},
         {position={3,0,4},forward={0,0,-4},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE},
     }
+    window:=&r.main.targets
+    testing.expect(t,renderer_frame(r,{camera=cameras[0]}),r.error)
+    testing.expect(t,window.taa[0]!=0 && window.depth!=0,"a window without views draws its scene")
     views:=[2]Frame_View{{camera=cameras[0],rect={0,0,64,64}},{camera=cameras[1],rect={64,0,64,64}}}
     for _ in 0..<4 {testing.expect(t,renderer_frame(r,{views=views[:]}),r.error)}
+    testing.expect(t,window.ldr!=0 && window.taa[0]==0 && window.hiz[0]==0 && window.depth==0 && window.shadow_raster.cache==0,"the window its views cover holds only what shows them")
     pixels,w,_,ok:=renderer_capture(r)
     testing.expect(t,ok)
     if ok {
@@ -3253,6 +3259,14 @@ views_of_one_size_share_the_targets_of_a_frame :: proc(t:^testing.T) {
         for other in shared[:i] {testing.expectf(t,texture==0 || texture!=other,"target %d of the frame of a view is one of its own",i)}
     }
     testing.expect(t,a.albedo!=0 && a.taa[0]!=b.taa[0] && a.hiz[0]!=b.hiz[0],"each view keeps its histories")
+    for _ in 0..<4 {testing.expect(t,renderer_frame(r,{camera=cameras[0]}),r.error)}
+    pixels,w,_,ok=renderer_capture(r)
+    testing.expect(t,ok)
+    if ok {
+        center:=pixel(pixels,w,{64,32})
+        testing.expectf(t,center[0]>150 && center[0]-center[1]>100,"the window without views shows %v",center)
+        delete(pixels)
+    }
     expect_clean(t,f.device)
 }
 

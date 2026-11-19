@@ -76,6 +76,8 @@ postprocess_gpu_order_stage_filter_and_hdr_ldr_precision :: proc(t:^testing.T) {
     if !fixture_init(t,&f,8,8,settings,hardware_rt=false) {return}
     defer fixture_destroy(&f)
     r,d:=f.renderer,f.device
+    // The passes run on the targets of the scene of the window, which its first frame makes.
+    if !testing.expect(t,scene_targets(r,&r.main),r.error) {return}
     doubled,raised,halved:=GRADE_DEFAULT,GRADE_DEFAULT,GRADE_DEFAULT
     doubled.tint,raised.contrast,halved.tint=2,.5,.5
     a,b,after:=grade_desc(r,doubled),grade_desc(r,raised),grade_desc(r,halved)
@@ -148,6 +150,8 @@ the_color_grade_saturates_around_luminance_and_contrasts_around_middle_gray :: p
     if !fixture_init(t,&f,8,8,settings,hardware_rt=false) {return}
     defer fixture_destroy(&f)
     r,d:=f.renderer,f.device
+    // The passes run on the targets of the scene of the window, which its first frame makes.
+    if !testing.expect(t,scene_targets(r,&r.main),r.error) {return}
     // Each row holds these colors.
     colors:=[8][3]f32{{.01,.02,.005},{.05,.04,.03},{.2,.4,.6},{.18,.18,.18},{.9,.6,.3},{.7,.75,.8},{2,1.5,1},{0,0,0}}
     hdr:[8*8][4]f16
@@ -194,6 +198,8 @@ postprocess_reads_the_image_around_its_pixel :: proc(t:^testing.T) {
     if !fixture_init(t,&f,16,8,settings,hardware_rt=false) {return}
     defer fixture_destroy(&f)
     r,d:=f.renderer,f.device
+    // The passes run on the targets of the scene of the window, which its first frame makes.
+    if !testing.expect(t,scene_targets(r,&r.main),r.error) {return}
     blur:=program_find(r,"Blur",.Postprocess)
     if !testing.expect(t,blur!=nil,"the Blur program is built in") {return}
     // radius at byte 0, strength at 4.
