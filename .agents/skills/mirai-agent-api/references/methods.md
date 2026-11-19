@@ -889,9 +889,9 @@ of an instance" are `-32602`; the rest, `-32000`
 - `packages.list {name?}`: the packages of the library of the machine (the store of the session)
   with their assets (`name`, `kind`, `bytes`, `built`) and whether the project pins each (`pinned`,
   `folder`). `packages.add {name, assets?, folder?}` pins one, by id or name, or some of its
-  assets by id, listed in `folder`, as Add from library of the content browser; it runs as an
-  import and answers as `asset.import`. An unknown package or asset, an invalid folder or a
-  session without a store fail saying how to fix it.
+  assets by id, listed in `folder`, as carrying it from a library root of the content
+  browser; it runs as an import and answers as `asset.import`. An unknown package or asset, an
+  invalid folder or a session without a store fail saying how to fix it.
 - `packages.peers {refresh?, seconds?}`: in a session, the libraries of the other editors, each
   package with `bytes`, `built`, `here` and `pinned`; `listing` while they are read, `adding` for
   the last package taken. `packages.peer_add {peer, name, folder?}` takes one into this machine's

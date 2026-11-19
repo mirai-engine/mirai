@@ -1227,7 +1227,7 @@ a_peers_library_is_listed_and_a_package_of_it_taken_and_pinned :: proc(t:^testin
     defer {for p in r.list {delete(p.name);delete(p.kinds)};delete(r.list)}
     if !testing.expectf(t,r.error=="" && len(r.list)==1,"%s: %d",r.error,len(r.list)) {return}
     listed:=r.list[0]
-    testing.expect(t,listed.manifest==manifest && listed.name=="chime" && listed.built && !listed.here && listed.bytes>0 && len(listed.kinds)==1,"the package is listed with what it holds")
+    testing.expectf(t,listed.manifest==manifest && listed.name=="chime" && listed.built && !listed.here && listed.bytes>0 && len(listed.kinds)==1,"the package is listed with what it holds: %v",listed)
 
     r.manifest=manifest
     test_run(t,&w,1,proc(data:rawptr) {

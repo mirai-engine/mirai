@@ -60,8 +60,6 @@ Importer :: struct {
     zones:[dynamic]importer.Zone_Total, // of the last one that ended, when it was profiled
     publishing:time.Tick, // since the last one asked for its programs to be published, while they are; zero otherwise
     profiled:bool,        // the last one was profiled: the publication it asked for is a zone too
-    library:[dynamic]Library_Shown, // what Add from library shows, read when it opens
-    library_frame:u64,              // the frame it was last shown in
 }
 
 // An import in a thread of its own: of a source (source), or the add of a
@@ -513,8 +511,7 @@ import_end :: proc(s:^Session) {
     delete(s.importer.written)
     delete(s.importer.warnings)
     delete(s.importer.zones)
-    delete(s.importer.library)
-    s.importer.written,s.importer.warnings,s.importer.zones,s.importer.library=nil,nil,nil,nil
+    s.importer.written,s.importer.warnings,s.importer.zones=nil,nil,nil
 }
 
 @(private)

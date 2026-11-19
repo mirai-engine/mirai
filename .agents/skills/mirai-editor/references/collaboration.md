@@ -74,7 +74,7 @@ Code: `collab.odin`, `collab_api.odin`, `collab_project.odin` (the project that 
 - Each editor of a session sees the machine libraries of the others it is connected to (a guest,
   the host's; the host, each guest's): the packages each one's store exposes, which `exchange`
   already serves to whoever holds the invitation. They are read on a thread
-  (`collab_library.odin`, `share.peer_library`) when Add from library or `packages.peers` shows
+  (`collab_library.odin`, `share.peer_library`) when the content browser or `packages.peers` shows
   them, at most once a `COLLAB_LIBRARY_SECONDS`.
 - Adding one takes it into this machine's library first (`share.package_take`): its manifest and
   a build this engine reads, as a join fetches builds, refreshed in a project of its own under the
