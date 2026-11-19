@@ -410,3 +410,35 @@ two_stores_that_import_one_source_hold_the_same_blobs :: proc(t:^testing.T) {
         if at<len(b) {testing.expectf(t,o==b[at],"%v is the same blob on both",o.id)}
     }
 }
+
+// A document of a plugin's kind that a refresh writes as a new file takes the
+// extension the plugin declares for its kind, else that of a file of its kind
+// the registry has.
+@(test)
+a_document_of_a_plugin_kind_takes_its_extension :: proc(t:^testing.T) {
+    _,folder,s:=test_assets(t,"plugin-document")
+    if folder=="" {return}
+    KIND :: asset.Fourcc(u32('K')|u32('I')<<8|u32('T')<<16|u32('T')<<24)
+    doc:asset.Document
+    asset.document_init(&doc,KIND,{70,1},context.temp_allocator)
+    bytes,_:=asset.document_bytes(&doc,context.temp_allocator)
+    asset.document_destroy(&doc)
+    object,put_error:=asset.object_put(s,bytes)
+    if !testing.expect_value(t,put_error,asset.Error.None) {return}
+    p:=asset.Package{id={71,1},name="hall"}
+    p.assets=make([dynamic]asset.Package_Asset,context.temp_allocator)
+    append(&p.assets,asset.Package_Asset{kind=KIND,name="hall",id={70,1}})
+    b:=asset.Build{package_id=p.id}
+    b.outputs=make([dynamic]asset.Build_Output,context.temp_allocator)
+    append(&b.outputs,asset.Build_Output{id={70,1},kind=KIND,object=object})
+    kinds:=[]Kind_Extension{{KIND,".kit"}}
+    written,error:=documents_follow(s,&p,&b,fmt.tprintf("%s/declared",folder),nil,nil,.Keep,kinds,context.temp_allocator)
+    testing.expectf(t,error.code==.None && len(written)==1 && strings.has_suffix(written[0].path,"/declared/hall.kit") && os.exists(written[0].path),"%s %v",error.message,written[:])
+    // Without what the plugin declares, a file of its kind the registry has gives it.
+    r:asset.Registry
+    asset.registry_init(&r,folder,"",context.temp_allocator)
+    defer asset.registry_destroy(&r)
+    testing.expect_value(t,asset.registry_scan(&r),asset.Error.None)
+    written,error=documents_follow(s,&p,&b,fmt.tprintf("%s/found",folder),&r,nil,.Discard,nil,context.temp_allocator)
+    testing.expectf(t,error.code==.None && len(written)==1 && strings.has_suffix(written[0].path,".kit"),"%s %v",error.message,written[:])
+}
