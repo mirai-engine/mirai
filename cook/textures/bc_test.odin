@@ -319,3 +319,14 @@ a_bc7_texture_restores_its_tail_without_its_larger_levels :: proc(t:^testing.T) 
     }
     free_all(context.temp_allocator)
 }
+
+// The block encoder of a build is part of what a texture is built with only where it makes the
+// bytes: uncompressed texels are the same for every build, and so is the key of their import.
+@(test)
+the_encoder_counts_only_for_textures_of_blocks :: proc(t:^testing.T) {
+    for options in ([]Build_Options{{srgb=true,encoding=.Uncompressed},{encoding=.Uncompressed,speed=.Fast}}) {
+        testing.expect_value(t,settings_hash_of(options,1),settings_hash_of(options,2))
+    }
+    blocks:=Build_Options{srgb=true}
+    testing.expect(t,settings_hash_of(blocks,1)!=settings_hash_of(blocks,2),"blocks of another encoder are another texture")
+}
