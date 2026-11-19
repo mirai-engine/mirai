@@ -791,20 +791,28 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	tan_y := math.tan(math.to_radians(camera.fov_y) * 0.5) if !orthographic else 0.5 * camera.height
 	tan_x := tan_y * aspect
 	near := max(camera.near, 0.001)
-	// A view whose reach of what sways changed draws its maps again: the
-	// cache of a map that follows what sways now, or no longer, does not hold
-	// what it would.
-	sway := shadow_sway_texel(p.frame.footprint)
-	forget := fresh || b.forget || b.sway != sway
-	b.forget, b.sway = false, sway
+	forget := fresh || b.forget
+	b.forget = false
 	if forget {b.held = {}}
 	wants: [SHADOW_SLOTS]Shadow_Want
 	sun := s.sun
 	levels := 0
-	if sun.enabled && r.settings.sun_shadows && !sun.shadowless && !orthographic {
-		levels = shadow_sun_levels(&wants, sun.direction, eye, r.origin, camera.far, s.bounds_min, s.bounds_max, s.has_bounds, b.held[:SHADOW_SUN_LEVELS])
-		plan.sun = u32(levels) << 16
+	sway := shadow_sway_texel(p.frame.footprint)
+	for _ in 0 ..< 2 {
+		if sun.enabled && r.settings.sun_shadows && !sun.shadowless && !orthographic {
+			levels = shadow_sun_levels(&wants, sun.direction, eye, r.origin, camera.far, s.bounds_min, s.bounds_max, s.has_bounds, b.held[:SHADOW_SUN_LEVELS])
+			plan.sun = u32(levels) << 16
+			// The coarsest level holds every point past it as well, however far:
+			// it draws what sways at rest.
+			if levels > 0 {sway = min(sway, (wants[levels - 1].m.span.z - wants[levels - 1].m.span.x) / f32(SHADOW_MAP_SIDE))}
+		}
+		// A view whose reach of what sways changed draws its maps again: the
+		// cache of a map that follows what sways now, or no longer, does not
+		// hold what it would.
+		if forget || b.sway == sway {break}
+		forget, b.held = true, {}
 	}
+	b.sway = sway
 	// The lights that light most of the view, the most first; a light keeps
 	// its block of slots while it is chosen, and the others take free ones.
 	chosen: [SHADOW_RASTER_LIGHTS]int
@@ -1484,12 +1492,12 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 			list: Shadow_Reach_List
 			end: u32
 			// A level of the sun, whose texel is the same over it, holds none
-			// where it is no narrower than any sway or past the reach.
+			// where it is no narrower than any sway.
 			orthographic := m.kind == SHADOW_MAP_ORTHOGRAPHIC
 			texel := (m.span.z - m.span.x) / f32(max(m.rect.z, 1))
 			found := 0
 			if non_zero_resize(&kept.moving, len(s.shadow_movers)) != nil {return false}
-			if !orthographic || texel < min(s.shadow_movers_fine, b.sway) {
+			if !orthographic || texel < s.shadow_movers_fine {
 				count := len(s.shadow_movers) if kept.all else len(kept.casters)
 				for i in 0 ..< count {
 					k := i32(i) if kept.all else s.shadow_mover_of[kept.casters[i]]
