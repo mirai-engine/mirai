@@ -14,9 +14,13 @@ or interleave its own passes.
    uploaded with the next one. Then **air**: the tables of the [atmosphere](gi.md#atmosphere) that
    change with the air. Each view, at its start, redoes the row of its sky and its aerial
    perspective if its eye or the sun moved.
-2. **cull (phase 0)**, per instance and then per cluster (`cull.comp`, `cull_clusters.comp`).
-   - One thread per instance, and then one per slot of the drawn
-     [batches](scene.md#instance-batches): frustum and occlusion of its box, under the transform
+2. **cull (phase 0)**, per batch, per instance and then per cluster (`cull.comp`,
+   `cull_clusters.comp`).
+   - One thread per drawn [batch](scene.md#instance-batches): the tests of the view on its box
+     grown by its reach, and its cull distance; one that passes lists its groups of slots for
+     both phases.
+   - One thread per instance, and then one per slot of the batches listed: frustum and occlusion
+     of its box, under the transform
      of the previous frame, against the depth pyramid of the previous frame (with the previous
      camera): what moves is not hidden by where it was. One that passes delivers, in
      chunks of up to 64, the clusters of the levels the cut can take at some point of its box: a

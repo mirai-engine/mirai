@@ -326,7 +326,8 @@ instances.
     those of the scene.
 - **Instance index.** Below `frame.instance_count` it names a scene instance; from there, the slot
   of a batch instance. Every pass that reads an instance by index goes through `scene_instance`.
-- **Cull.** The same tests and the same per-cluster cut as the instances; between the fade
+- **Cull.** The same tests and the same per-cluster cut as the instances, on the box of the batch
+  once and then on those of its instances only where the box passes; between the fade
   distance and the cull one it fades with the dither pattern of its own body, which TAA blends. An
   instance whose box covers fewer than `Settings.batch_min_pixels` pixels is not rasterized, and
   fades the same from twice that: far away, foliage leaves the raster without jumps. The rays keep

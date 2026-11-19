@@ -77,7 +77,7 @@ Pass :: struct {
 	reflectance:    bool, // the G-buffer keeps what each pixel reflects
 	layered:        bool, // and the layers of its material (gbuffer.slang)
 	instance_count: u32,
-	batch_slots:    u32, // instance slots of the batches drawn, a cull thread each after the instances
+	batch_slots:    u32, // instance slots of the batches drawn, after the instances
 
 	draw, draw_translucent, draw_overlays: bool,
 	blend:   bool,       // the view runs the Blend stage of extensions
@@ -1216,8 +1216,9 @@ cull_bind :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glass:
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, s.program_draws)
 }
 
-// The two passes of a phase of the cull: by instance, which hands the
-// clusters of their cuts over in chunks, and by cluster over the chunks.
+// The passes of a phase of the cull: before phase 0, by batch, which lists
+// the slots of the batches the view draws; by instance, which hands the
+// clusters of their cuts over in chunks; and by cluster over the chunks.
 @(private)
 cull_record :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glass: rhi.Buffer, cost: rhi.Buffer = 0) {
 	r, cmd := p.r, p.cmd
