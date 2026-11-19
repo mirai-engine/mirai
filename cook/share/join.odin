@@ -48,6 +48,49 @@ Join_Desc :: struct {
     output:io.Writer,  // progress and what was kept; nil: nowhere
     pace:f64,          // seconds between two progress lines, default 1
     connect_seconds:f64, // waiting for the host, default 15
+    progress:^Join_Progress, // what it is doing, for whoever shows it; nil: none
+}
+
+Join_Phase :: enum u8 {Connecting,Snapshot,Files,Packages,Done}
+
+// What a join is doing while it runs. files and bytes: those it fetches;
+// rate: chunk bytes received per second lately; left: seconds the files
+// still need at that rate, <0 when unknown; kept: files left as the joiner
+// changed them so far.
+Join_State :: struct {
+    phase:Join_Phase,
+    files,files_done:int,
+    bytes,bytes_done:i64,
+    received:u64,
+    rate,left:f64,
+    kept:int,
+}
+
+// The state of a join, written by its thread and read by any other.
+Join_Progress :: struct {
+    lock:sync.Mutex,
+    state:Join_State,
+}
+
+join_progress_read :: proc(p:^Join_Progress) -> Join_State {
+    sync.mutex_guard(&p.lock)
+    return p.state
+}
+
+@(private)
+progress_set :: proc(d:^Join_Desc,state:Join_State) {
+    if d.progress==nil {return}
+    sync.mutex_guard(&d.progress.lock)
+    d.progress.state=state
+}
+
+@(private)
+progress_phase :: proc(d:^Join_Desc,phase:Join_Phase,report:^Join_Report=nil) {
+    if d.progress==nil {return}
+    sync.mutex_guard(&d.progress.lock)
+    d.progress.state.phase=phase
+    d.progress.state.left=-1
+    if report!=nil {d.progress.state.kept=len(report.kept)}
 }
 
 Join_Report :: struct {
@@ -92,7 +135,10 @@ join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,er
     if d.connect_seconds<=0 {d.connect_seconds=15}
     report.kept=make([dynamic]string,allocator)
     report.failed=make([dynamic]string,allocator)
+    progress_phase(&d,.Connecting)
+    defer progress_phase(&d,.Done,&report)
     if error=join_connect(&d,allocator);error!="" {return}
+    progress_phase(&d,.Snapshot)
 
     // The root first: it names the project, whose folder keeps the base.
     say(&d,"asking for the snapshot")
@@ -165,6 +211,7 @@ join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,er
     // The packages, their builds from the peers.
     if os.exists(project.path(folder,asset.PACKAGES_FILE,allocator=context.temp_allocator)) {
         say(&d,"refreshing the packages of the project")
+        progress_phase(&d,.Packages,&report)
         report.packages=join_packages(&d,folder,allocator)
     }
     return
@@ -558,6 +605,7 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
     })
     for one,at in sized {order[at]=one.k}
     say(d,"fetching %d files, %s",len(order),bytes_text(total))
+    progress_set(d,{phase=.Files,files=len(order),bytes=total,left=-1,kept=len(report.kept)})
     Active :: struct {k:int,missing:f64}
     active:=make([dynamic]Active,context.temp_allocator)
     // What arrived, which the lease of the node holds from the end on.
@@ -619,6 +667,10 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
             left:=total-done-here
             eta:=rate>0?f64(left)/rate:-1
             say(d,"%d of %d files, %s of %s, %s/s, %s left",next-len(active),len(order),bytes_text(done+here),bytes_text(total),bytes_text(i64(rate)),eta<0?"time":seconds_text(max(eta,0)))
+        }
+        if d.progress!=nil {
+            left:=total-done-here
+            progress_set(d,{phase=.Files,files=len(order),files_done=complete_count,bytes=total,bytes_done=done+here,received=node_totals(n).received,rate=rate,left=rate>0?f64(left)/rate:-1,kept=len(report.kept)})
         }
         if len(active)==0 && next==len(order) {break}
         // Nothing arrives: what is wanted fails by path, and the files after it are asked.
@@ -933,8 +985,13 @@ join_packages :: proc(d:^Join_Desc,folder:string,allocator:runtime.Allocator) ->
         now:=node_now(n)
         if now-printed<d.pace {continue}
         t:=node_totals(n)
-        if t.received!=last {say(d,"builds: %s received, %s/s",bytes_text(i64(t.received-from)),bytes_text(i64(f64(t.received-last)/(now-printed))))}
+        rate:=f64(t.received-last)/(now-printed)
+        if t.received!=last {say(d,"builds: %s received, %s/s",bytes_text(i64(t.received-from)),bytes_text(i64(rate)))}
         last,printed=t.received,now
+        if d.progress!=nil {
+            sync.mutex_guard(&d.progress.lock)
+            d.progress.state.received,d.progress.state.rate=t.received-from,rate
+        }
     }
     thread.join(t)
     thread.destroy(t)
