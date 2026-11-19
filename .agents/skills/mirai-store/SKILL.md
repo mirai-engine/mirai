@@ -65,8 +65,9 @@ derived data cache that use it decide what a ref means and what is live.
   folder by renaming it, checks it under the claim and places it from there. A completion that
   cannot finish (a damaged piece, a placement refused) gives the folder back with nothing lost,
   and the next receiver that finds it full retries.
-- A complete blob's piece table is kept beside it, written once and checked against the address
-  whenever it is read, so serving a blob never rehashes it; a damaged kept table is rebuilt.
+- A complete blob of several pieces keeps its piece table beside it, written once and checked
+  against the address whenever it is read, so serving a blob never rehashes it; a damaged kept
+  table is rebuilt. A blob of one piece keeps none: its table is its address.
 - A complete blob is a plain file of its raw bytes, never written in place: readers open it by
   path or hold it open with a `Reader`.
 - The root carries its layout version; a root of another layout is refused, never read.

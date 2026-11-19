@@ -240,11 +240,24 @@ refs_are_asked_and_listed_and_a_namespace_not_exposed_gives_nothing :: proc(t:^t
 }
 
 @(private)
-Test_Job :: struct {x:^Exchange,address:store.Hash,namespace,name:string,error:Error,found:store.Hash,done:bool}
+Test_Job :: struct {
+    x:^Exchange,
+    address:store.Hash,
+    namespace,name:string,
+    addresses:[]store.Hash, // fetch_all, or what fetch_refs found for names
+    names:[]string,
+    error:Error,
+    found:store.Hash,
+    done:bool,
+}
 
 @(private)
 test_job :: proc(j:^Test_Job) {
-    if j.namespace!="" {
+    if j.names!=nil {
+        j.error=fetch_refs(j.x,j.namespace,j.names,j.addresses)
+    } else if j.addresses!=nil {
+        j.error=fetch_all(j.x,j.addresses)
+    } else if j.namespace!="" {
         j.found,j.error=fetch_ref(j.x,j.namespace,j.name)
     } else {
         j.error=fetch(j.x,j.address)
@@ -361,14 +374,14 @@ a_wrong_size_found_after_another_process_published_the_blob_keeps_it :: proc(t:^
     server:=test_host(&w,0,.Server)
     silent:=test_scripted(t,&w,1,.Hold)
     if !testing.expect(t,test_connect(&w,silent,w.nodes[0].endpoints[0])) {return}
-    size:=3*store.PIECE_BYTES+1000
+    size:=FIRST_PIECES*store.PIECE_BYTES+1000
     data:=test_bytes(size,4)
     blob:=store.address_of_bytes(data)
     r:=&w.nodes[0]
     want(&r.x,blob)
     test_step(&w,20)
     c:=server.connection_handles[0]
-    pieces:=make([]store.Hash,4,context.temp_allocator)
+    pieces:=make([]store.Hash,FIRST_PIECES+1,context.temp_allocator)
     {
         other,_:=store.open(w.folder)
         defer store.close(&other)
@@ -385,7 +398,7 @@ a_wrong_size_found_after_another_process_published_the_blob_keeps_it :: proc(t:^
     another,_:=store.open(r.s.root)
     defer store.close(&another)
     store.put_bytes(&another,data)
-    last:=test_message({MSG_PIECE},blob[:],test_le(3,4),data[3*store.PIECE_BYTES:])
+    last:=test_message({MSG_PIECE},blob[:],test_le(FIRST_PIECES,4),data[FIRST_PIECES*store.PIECE_BYTES:])
     receive(&r.x,server,{kind=.Message,channel=u8(LANE_DATA),connection=c,data=last})
     testing.expect(t,store.has(&r.s,blob) && store.verify(&r.s,blob)==.None,"the published blob stays")
     testing.expect_value(t,test_state(&r.x,blob),State.Complete)
@@ -539,4 +552,71 @@ a_server_with_the_smallest_cap_serves_an_honest_request :: proc(t:^testing.T) {
     testing.expect(t,test_until_complete(&w,1,{blob},5),"the blob arrives")
     p,_:=peer_progress(&w.nodes[0].x,w.nodes[0].hosts[0],w.nodes[0].hosts[0].connection_handles[0])
     testing.expect(t,!p.bad,"the server keeps the requester")
+}
+
+// Small blobs wanted together on a connection in use arrive in a few round
+// trips however many they are.
+@(test)
+many_small_blobs_wanted_together_take_round_trips_that_do_not_grow_with_their_count :: proc(t:^testing.T) {
+    RTT :: 0.1
+    for count in ([]int{8,120}) {
+        w:Test_World
+        defer test_world_destroy(&w)
+        if !test_pair(t,&w,"exchange-small") {return}
+        for e in ([]int{w.nodes[0].endpoints[0],w.nodes[1].endpoints[0]}) {wire.sim_endpoint_conditions(&w.sim,e,{latency=RTT/2})}
+        // A connection that carried a transfer, past the start of its congestion window.
+        warm:=test_put(t,&w.nodes[0].s,2<<20,1000)
+        want(&w.nodes[1].x,warm)
+        testing.expect(t,test_until_complete(&w,1,{warm},30))
+        blobs:=make([]store.Hash,count,context.temp_allocator)
+        for &b,k in blobs {b=test_put(t,&w.nodes[0].s,(1+k%5)*1000,u64(k)+1)}
+        start:=w.now
+        for b in blobs {want(&w.nodes[1].x,b)}
+        testing.expectf(t,test_until_complete(&w,1,blobs,30),"%d blobs arrive",count)
+        trips:=(w.now-start)/RTT
+        testing.expectf(t,trips<4,"%d small blobs take %.1f round trips",count,trips)
+    }
+}
+
+// fetch_all and fetch_refs return once all is here, at a miss among hits, and
+// at a disconnect.
+@(test)
+the_batch_blocking_forms_return_for_a_hit_a_partial_miss_and_a_disconnect :: proc(t:^testing.T) {
+    w:Test_World
+    defer test_world_destroy(&w)
+    if !test_world(t,&w,"exchange-fetch-all",2,desc={expose=test_expose_lib}) {return}
+    test_host(&w,0,.Server)
+    client:=test_host(&w,1,.Client)
+    if !testing.expect(t,test_connect(&w,client,w.nodes[0].endpoints[0])) {return}
+    x,here:=&w.nodes[1].x,&w.nodes[1].s
+    blobs:=make([]store.Hash,40,context.temp_allocator)
+    for &b,k in blobs {b=test_put(t,&w.nodes[0].s,(k%7)*30000+1,u64(k)+1)}
+    j:=Test_Job{x=x,addresses=blobs}
+    testing.expect(t,test_fetch(&w,&j,10) && j.error==.None,"a set of hits returns")
+    for b in blobs {
+        testing.expect(t,store.has(here,b),"every blob is here")
+        _,still:=progress(x,b)
+        testing.expect(t,!still,"a fetch_all leaves no want behind")
+    }
+    // More names than query slots, so the form waits for slots to free.
+    names:=[]string{"a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t"}
+    for name,k in names {store.ref_set(&w.nodes[0].s,"lib",name,test_put(t,&w.nodes[0].s,5000*(k+1),u64(100+k)))}
+    j={x=x,namespace="lib",names=names,addresses=make([]store.Hash,len(names),context.temp_allocator)}
+    testing.expect(t,test_fetch(&w,&j,10) && j.error==.None,"a set of ref hits returns")
+    for a in j.addresses {testing.expect(t,a!={} && store.has(here,a),"each ref's blob is here")}
+    absent:=store.address_of_bytes(test_bytes(10,99))
+    fresh:=[]store.Hash{test_put(t,&w.nodes[0].s,3000,200),absent,test_put(t,&w.nodes[0].s,4000,201)}
+    j={x=x,addresses=fresh}
+    testing.expect(t,test_fetch(&w,&j,10) && j.error==.Missing,"a miss among hits returns Missing")
+    j={x=x,namespace="lib",names={"a","absent"},addresses=make([]store.Hash,2,context.temp_allocator)}
+    testing.expect(t,test_fetch(&w,&j,10) && j.error==.Missing && j.addresses[1]=={},"a ref miss returns Missing")
+    wire.sim_endpoint_conditions(&w.sim,w.nodes[0].endpoints[0],{latency=0.01,bandwidth=2e6})
+    big:=[]store.Hash{test_put(t,&w.nodes[0].s,4<<20,300),test_put(t,&w.nodes[0].s,4<<20,301)}
+    j={x=x,addresses=big}
+    testing.expect(t,test_fetch(&w,&j,20,proc(w:^Test_World) {
+        client:=w.nodes[1].hosts[0]
+        if client.connection_handles[0]==0 {return}
+        if p,ok:=peer_progress(&w.nodes[1].x,client,client.connection_handles[0]);ok && p.received>1<<20 {wire.host_disconnect(w.nodes[0].hosts[0])}
+    }) && j.error==.Missing,"a disconnect returns Missing")
+    testing.expect(t,!store.has(here,big[0]) || !store.has(here,big[1]),"the disconnect came before the blobs")
 }

@@ -54,7 +54,7 @@ exposed :: proc(x:^Exchange,namespace:string) -> bool {
 }
 
 // An answer that finds no room is dropped: a peer keeps at most
-// QUERIES_PER_PEER questions waiting, which always fit.
+// QUERY_CREDITS of questions waiting, whose answers always fit.
 @(private)
 on_ref_get :: proc(x:^Exchange,i:int,data:[]u8) {
     r:=Reader{data=data[1:],ok=true}
@@ -153,6 +153,20 @@ serve_build :: proc(x:^Exchange,i:int) -> bool {
                 return true
             }
             p.entry_size=size
+            if e.kind==.Blob && store.piece_count(size)<=FIRST_PIECES {
+                // A blob a still receiving end has only in part is lacked whole.
+                address:=e.address
+                if store.read(s,address,0,p.out[MSG_WHOLE_HEAD:][:size])!=.None {
+                    p.out_len=encode_lack(p.out,address,0,0)
+                } else {
+                    p.out[0]=MSG_WHOLE
+                    copy(p.out[1:],address[:])
+                    p.out_len=MSG_WHOLE_HEAD+int(size)
+                    p.sent+=u64(size)
+                }
+                serve_pop(p)
+                return true
+            }
             if e.kind==.Blob {
                 arena:mem.Arena
                 pieces,table_error:=store.blob_table(s,e.address,scratch_arena(x,&arena))

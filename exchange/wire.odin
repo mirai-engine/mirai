@@ -12,7 +12,8 @@ import "mirai:store"
 //   Names_Get namespace, after
 //   Names     namespace, after, more u8, count u16, entries of name and address
 // Data channel, the answers to requests in the order asked:
-//   Table     address, size u64, piece hashes
+//   Whole     address, bytes: a blob of at most FIRST_PIECES pieces
+//   Table     address, size u64, piece hashes: a larger blob
 //   Piece     address, index u32, bytes
 //   Lack      address, first u32, count u32: pieces it does not have; count 0: the blob
 //   Done      the end of the answer to a request
@@ -27,12 +28,14 @@ import "mirai:store"
 @(private) MSG_PIECE :: 2
 @(private) MSG_LACK :: 3
 @(private) MSG_DONE :: 4
+@(private) MSG_WHOLE :: 5
 
 @(private) ENTRY_BYTES :: 1+32+4+4
 @(private) MSG_REQUEST_HEAD :: 1+2
 @(private) MSG_REQUEST_MAX :: MSG_REQUEST_HEAD+REQUEST_ENTRIES*ENTRY_BYTES
 @(private) MSG_TABLE_HEAD :: 1+32+8
 @(private) MSG_PIECE_HEAD :: 1+32+4
+@(private) MSG_WHOLE_HEAD :: 1+32
 @(private) MSG_LACK_BYTES :: 1+32+4+4
 @(private) MSG_NAMES_GET_MAX :: 1+2*(1+store.NAME_MAX)
 @(private) MSG_REF_MAX :: MSG_NAMES_GET_MAX+1+32
@@ -155,6 +158,7 @@ message :: proc(x:^Exchange,i:int,lane:int,data:[]u8) {
         case MSG_PIECE: on_piece(x,i,data)
         case MSG_LACK: on_lack(x,i,data)
         case MSG_DONE: on_done(x,i,data)
+        case MSG_WHOLE: on_whole(x,i,data)
         case: peer_bad(x,i)
         }
         return
@@ -169,12 +173,12 @@ message :: proc(x:^Exchange,i:int,lane:int,data:[]u8) {
     }
 }
 
-// A message larger than this end holds: a table asked of that peer fails the
-// peer for that blob, never the want; one nobody asked for counts against the
-// peer; anything else is from a bad peer.
+// A message larger than this end holds: a table or a whole blob asked of that
+// peer fails the peer for that blob, never the want; one nobody asked for
+// counts against the peer; anything else is from a bad peer.
 @(private)
 oversized :: proc(x:^Exchange,i:int,lane:int,head:[]u8) {
-    if lane==LANE_DATA && len(head)>=MSG_TABLE_HEAD && head[0]==MSG_TABLE {
+    if lane==LANE_DATA && len(head)>=MSG_WHOLE_HEAD && (head[0]==MSG_TABLE || head[0]==MSG_WHOLE) {
         r:=Reader{data=head[1:],ok=true}
         address:=read_hash(&r)
         if w:=want_find(x,address);w>=0 && flight_of(x,i,w,FLIGHT_TABLE) {lie(x,w,i)} else {x.peers[i].refused+=1}

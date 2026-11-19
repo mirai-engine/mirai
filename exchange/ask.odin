@@ -111,7 +111,7 @@ want_fail :: proc(x:^Exchange,i:int,error:Error,store_error:store.Error) {
 @(private)
 want_unknown :: proc(x:^Exchange,i:int) {
     w:=&x.wants[i]
-    w.known,w.size,w.count,w.had,w.here,w.table_peer,w.claim=false,0,0,0,0,-1,false
+    w.known,w.size,w.count,w.had,w.here,w.table_peer=false,0,0,0,0,-1
     slice.zero(w.have)
     slice.zero(w.asked)
 }
@@ -183,7 +183,7 @@ lie :: proc(x:^Exchange,i:int,p:int) {
     bit:=u64(1)<<uint(p)
     if w.wrong&bit==0 {x.peers[p].lies+=1}
     w.wrong|=bit
-    if !w.known && w.table_peer==p {w.table_peer,w.claim=-1,false}
+    if !w.known && w.table_peer==p {w.table_peer=-1}
     peer:=&x.peers[p]
     for k in 0..<peer.flight_count {
         f:=&peer.flights[(peer.flight_head+k)%len(peer.flights)]
@@ -201,7 +201,7 @@ flight_release :: proc(x:^Exchange,p:int,f:^Flight) {
     w:=&x.wants[f.want]
     if !w.used || w.generation!=f.generation {return}
     if !w.known {
-        if f.blob && w.table_peer==p {w.table_peer,w.claim=-1,false}
+        if f.blob && w.table_peer==p {w.table_peer=-1}
         return
     }
     for n in int(f.first)..<min(int(f.first)+int(f.count),w.count) {
@@ -289,12 +289,15 @@ asking :: proc(x:^Exchange) {
 }
 
 // Asks peer i for the most important pieces nobody was asked for, up to what
-// it carries in a round trip.
+// it carries in a round trip. A blob whose size is unknown counts only
+// against the limits of a request, since most blobs are small: a batch
+// carries as many as fit.
 @(private)
 batch_send :: proc(x:^Exchange,i:int) {
     p:=&x.peers[i]
     bit:=u64(1)<<uint(i)
     budget:=batch_bytes(x,i)/store.PIECE_BYTES
+    pieces:=0 // what the request addresses, at most REQUEST_PIECES
     entries:[REQUEST_ENTRIES]Flight
     n:=0
     wants: for k in 0..<x.want_count {
@@ -302,24 +305,25 @@ batch_send :: proc(x:^Exchange,i:int) {
         w:=&x.wants[wi]
         if w.state!=.Asking || (w.wrong|w.lack)&bit!=0 {continue}
         if !w.known {
-            if w.table_peer>=0 || budget<FIRST_PIECES {continue}
+            if w.table_peer>=0 || pieces+FIRST_PIECES>REQUEST_PIECES {continue}
             entries[n]={want=wi,generation=w.generation,first=0,count=FIRST_PIECES,blob=true,heard=x.now}
             n+=1
-            budget-=FIRST_PIECES
+            pieces+=FIRST_PIECES
         } else {
             at:=0
-            for n<REQUEST_ENTRIES && budget>0 {
+            for n<REQUEST_ENTRIES && budget>0 && pieces<REQUEST_PIECES {
                 start:=next_free(w,at)
                 if start>=w.count {break}
                 end:=start+1
-                for end<w.count && end-start<budget && !bit_has(w.have,end) && !bit_has(w.asked,end) {end+=1}
+                for end<w.count && end-start<min(budget,REQUEST_PIECES-pieces) && !bit_has(w.have,end) && !bit_has(w.asked,end) {end+=1}
                 entries[n]={want=wi,generation=w.generation,first=u32(start),count=u32(end-start),heard=x.now}
                 n+=1
                 budget-=end-start
+                pieces+=end-start
                 at=end
             }
         }
-        if n==REQUEST_ENTRIES || budget<=0 {break wants}
+        if n==REQUEST_ENTRIES || budget<=0 || pieces>=REQUEST_PIECES {break wants}
     }
     if n==0 {return}
     buffer:[MSG_REQUEST_MAX]u8
@@ -357,16 +361,12 @@ on_table :: proc(x:^Exchange,i:int,data:[]u8) {
     wi:=want_find(x,address)
     if wi<0 || !flight_of(x,i,wi,FLIGHT_TABLE) {x.peers[i].refused+=1;return}
     w:=&x.wants[wi]
-    if w.state!=.Asking && w.state!=.Missing || w.known || w.claim || w.wrong&(u64(1)<<uint(i))!=0 {return}
+    if w.state!=.Asking && w.state!=.Missing || w.known || w.wrong&(u64(1)<<uint(i))!=0 {return}
     flights_heard(x,i,wi)
     if size<0 || size>x.desc.max_blob_bytes || len(data)!=MSG_TABLE_HEAD+store.piece_count(size)*size_of(store.Hash) {lie(x,wi,i);return}
+    // A blob of FIRST_PIECES pieces or fewer comes whole, never with a table.
+    if store.piece_count(size)<=FIRST_PIECES {lie(x,wi,i);return}
     pieces:=slice.reinterpret([]store.Hash,data[MSG_TABLE_HEAD:])
-    if len(pieces)==1 {
-        // A table of one piece is its own address: only its piece, in the same answer, proves it.
-        if pieces[0]!=address {lie(x,wi,i);return}
-        w.table_peer,w.claim=i,true
-        return
-    }
     switch error:=store.receive_begin(x.desc.store,address,size,pieces);error {
     case .None: table_known(x,wi,i,size)
     case .Corrupt,.Invalid_Argument: lie(x,wi,i)
@@ -385,16 +385,7 @@ on_piece :: proc(x:^Exchange,i:int,data:[]u8) {
     if wi<0 || !flight_of(x,i,wi,index) {x.peers[i].refused+=1;return}
     w:=&x.wants[wi]
     if w.state!=.Asking && w.state!=.Missing || w.wrong&(u64(1)<<uint(i))!=0 {return}
-    if !w.known {
-        if !w.claim || w.table_peer!=i || index!=0 {return}
-        flights_heard(x,i,wi)
-        if store.address_of_bytes(piece)!=address {lie(x,wi,i);return}
-        if _,error:=store.put_bytes(x.desc.store,piece);error!=.None {want_fail(x,wi,.Store,error);return}
-        x.peers[i].received+=u64(len(piece))
-        want_complete(x,wi)
-        return
-    }
-    if index>=w.count || bit_has(w.have,index) {return}
+    if !w.known || index>=w.count || bit_has(w.have,index) {return}
     flights_heard(x,i,wi)
     switch error:=store.receive_piece(x.desc.store,address,index,piece);error {
     case .None:
@@ -422,6 +413,24 @@ on_piece :: proc(x:^Exchange,i:int,data:[]u8) {
     }
 }
 
+// A blob asked with its table, whole: taken when its bytes hash to its address.
+@(private)
+on_whole :: proc(x:^Exchange,i:int,data:[]u8) {
+    r:=Reader{data=data[1:],ok=true}
+    address:=read_hash(&r)
+    if !r.ok {peer_bad(x,i);return}
+    bytes:=data[MSG_WHOLE_HEAD:]
+    wi:=want_find(x,address)
+    if wi<0 || !flight_of(x,i,wi,FLIGHT_TABLE) {x.peers[i].refused+=1;return}
+    w:=&x.wants[wi]
+    if w.state!=.Asking && w.state!=.Missing || w.known || w.wrong&(u64(1)<<uint(i))!=0 {return}
+    flights_heard(x,i,wi)
+    if len(bytes)>FIRST_PIECES*store.PIECE_BYTES || i64(len(bytes))>x.desc.max_blob_bytes || store.address_of_bytes(bytes)!=address {lie(x,wi,i);return}
+    if _,error:=store.put_bytes(x.desc.store,bytes);error!=.None {want_fail(x,wi,.Store,error);return}
+    x.peers[i].received+=u64(len(bytes))
+    want_complete(x,wi)
+}
+
 @(private)
 on_lack :: proc(x:^Exchange,i:int,data:[]u8) {
     r:=Reader{data=data[1:],ok=true}
@@ -434,7 +443,7 @@ on_lack :: proc(x:^Exchange,i:int,data:[]u8) {
     w:=&x.wants[wi]
     if w.lack==0 {w.lack_since=x.now}
     w.lack|=u64(1)<<uint(i)
-    if !w.known && w.table_peer==i {w.table_peer,w.claim=-1,false}
+    if !w.known && w.table_peer==i {w.table_peer=-1}
     x.dirty=true
 }
 
@@ -447,11 +456,6 @@ on_done :: proc(x:^Exchange,i:int,data:[]u8) {
     p.batches-=1
     for _ in 0..<n {
         f:=&p.flights[p.flight_head]
-        // A table of one piece whose piece did not come with it was a lie.
-        if f.want>=0 && f.blob {
-            w:=&x.wants[f.want]
-            if w.used && w.generation==f.generation && w.claim && w.table_peer==i {lie(x,f.want,i)}
-        }
         flight_release(x,i,f)
         p.flight_head=(p.flight_head+1)%len(p.flights)
         p.flight_count-=1
@@ -497,7 +501,7 @@ on_names :: proc(x:^Exchange,i:int,data:[]u8) {
         if !q.used || q.kind!=.Names || q.peer!=i || q.asked&bit==0 || q.answered&bit!=0 {continue}
         if string(q.namespace[:q.namespace_len])!=namespace || string(q.name[:q.name_len])!=after {continue}
         q.answered|=bit
-        x.peers[i].queries-=1
+        x.peers[i].queries-=NAMES_CREDITS
         entries:=Reader{data=data[1:],at=start,ok=true}
         used:=0
         for k in 0..<count {

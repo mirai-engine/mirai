@@ -123,7 +123,8 @@ blob_table :: proc(s:^Store,hash:Hash,allocator:=context.allocator) -> (pieces:[
     make_error:runtime.Allocator_Error
     pieces,make_error=make([]Hash,piece_count(r.size),allocator)
     if make_error!=nil {return nil,.Out_Of_Memory}
-    if table_load(s,hash,r.size,pieces)==.None {return pieces,.None}
+    // A blob of one piece keeps no table: its bytes are hashed, which costs no more than reading one.
+    if len(pieces)>1 && table_load(s,hash,r.size,pieces)==.None {return pieces,.None}
     address:Hash
     address,error=file_hash(r.file,r.size,nil,pieces)
     if error==.None && address!=hash {error=.Corrupt}
@@ -288,9 +289,11 @@ table_load :: proc(s:^Store,hash:Hash,size:i64,pieces:[]Hash) -> Error {
     return .None if address_value(size,pieces)==hash else .Corrupt
 }
 
-// Keeps the table of a complete blob; one that cannot be written is hashed again when asked for.
+// Keeps the table of a complete blob of several pieces; one that cannot be
+// written is hashed again when asked for.
 @(private)
 table_keep :: proc(s:^Store,hash:Hash,size:i64,pieces:[]Hash) {
+    if len(pieces)<2 {return}
     buffer,folder_buffer:[PATH_BYTES]u8
     path,error:=table_file(s,hash,&buffer)
     if error!=.None {return}

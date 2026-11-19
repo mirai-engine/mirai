@@ -224,7 +224,7 @@ sweep_keeps_live_young_and_undeletable_blobs :: proc(t:^testing.T) {
     young:=time.time_add(now,-BLOB_GRACE_AGE/2)
     bytes:i64
     for &hash,i in hashes {
-        data:=test_bytes(1000*(i+1),u64(i)+20)
+        data:=test_bytes(PIECE_BYTES+1000*(i+1),u64(i)+20)
         hash,_=put_bytes(&s,data)
         bytes+=i64(len(data))
         test_blob_time(t,&s,hash,young if i==0 else old)
@@ -236,7 +236,7 @@ sweep_keeps_live_young_and_undeletable_blobs :: proc(t:^testing.T) {
     total,_:=usage(&s)
     testing.expect_value(t,total,Usage{bytes=bytes,blobs=len(hashes)})
     testing.expect_value(t,remove(&s,hashes[5]),Error.None)
-    table_keep(&s,hashes[5],6000,test_table(test_bytes(6000,25)))
+    table_keep(&s,hashes[5],PIECE_BYTES+6000,test_table(test_bytes(PIECE_BYTES+6000,25)))
     test_table_time(t,&s,hashes[5],old)
     stale,fresh:=join_test(folder,"tmp/stale",0),join_test(folder,"tmp/fresh",0)
     testing.expect(t,os.write_entire_file(stale,[]u8{1})==nil && os.write_entire_file(fresh,[]u8{1})==nil)
@@ -256,7 +256,7 @@ sweep_keeps_live_young_and_undeletable_blobs :: proc(t:^testing.T) {
     }
     swept,error:=sweep(&s,{hashes[3],unknown,hashes[1]},now)
     testing.expect_value(t,error,Error.None)
-    testing.expect_value(t,swept.freed,Usage{bytes=5000+7000,blobs=2})
+    testing.expect_value(t,swept.freed,Usage{bytes=2*PIECE_BYTES+5000+7000,blobs=2})
     testing.expect_value(t,swept.skipped,1)
     for hash,i in hashes {
         testing.expectf(t,has(&s,hash)==(i<4),"blob %d",i)
@@ -265,7 +265,7 @@ sweep_keeps_live_young_and_undeletable_blobs :: proc(t:^testing.T) {
         testing.expectf(t,os.is_file(table)==(i<4 || i==6),"table %d",i)
     }
     total,_=usage(&s)
-    testing.expect_value(t,total,Usage{bytes=1000+2000+3000+4000,blobs=4})
+    testing.expect_value(t,total,Usage{bytes=4*PIECE_BYTES+1000+2000+3000+4000,blobs=4})
     _,missing_error:=receive_missing(&s,partial_hash,context.temp_allocator)
     testing.expect_value(t,missing_error,Error.None)
     testing.expect(t,!os.exists(stale) && os.exists(fresh),"sweep removes only stale temporary files")
@@ -406,6 +406,10 @@ a_complete_blob_serves_its_kept_table_and_a_reader :: proc(t:^testing.T) {
     testing.expect(t,os.write_entire_file(kept,[]u8{1,2,3})==nil)
     again,error:=blob_table(&s,hash,context.temp_allocator)
     testing.expect(t,error==.None && len(again)==len(first) && again[2]==first[2],"a damaged kept table is hashed again")
+    single,_:=put_bytes(&s,test_bytes(PIECE_BYTES,82))
+    own,own_error:=blob_table(&s,single,context.temp_allocator)
+    testing.expect(t,own_error==.None && len(own)==1 && own[0]==single,"the table of one piece is its address")
+    testing.expect(t,!os.exists(strings.concatenate({folder,"/tables/",hex(single,&name)[:2],"/",hex(single,&name)},context.temp_allocator)),"a blob of one piece keeps no table")
     r,open_error:=reader_open(&s,hash)
     testing.expect_value(t,open_error,Error.None)
     Range :: struct {offset,count:int,error:Error}
