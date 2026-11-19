@@ -129,30 +129,133 @@ round_trip_keeps_quality_at_uber_levels :: proc(t: ^testing.T) {
 	}
 }
 
+// Without mode 1 (no partitions to scan, or masked out) or without mode 6, a block still takes
+// the best mode it has.
+@(private = "file")
+SETTINGS := [?]struct {
+	mode_mask, max_partitions: u32,
+} {
+	{max(u32), MAX_PARTITIONS},
+	{max(u32), 0},
+	{1 << 6, MAX_PARTITIONS},
+	{1 << 6 | 1 << 1, 0},
+	{1 << 1 | 1 << 5, MAX_PARTITIONS},
+	{1 << 5, 0},
+}
+
 @(test)
 solid_block_decodes_within_one_step :: proc(t: ^testing.T) {
 	tables := init_for_test(t)
 	defer free(tables)
 
-	for color in ([?]Color_Rgba{{0, 0, 0, 255}, {255, 255, 255, 255}, {91, 180, 37, 255}, {200, 40, 90, 128}, {1, 2, 3, 0}}) {
-		params: Params
-		params_init(&params)
+	for setting in SETTINGS {
+		for color in ([?]Color_Rgba{{0, 0, 0, 255}, {255, 255, 255, 255}, {91, 180, 37, 255}, {120, 130, 140, 255}, {200, 40, 90, 128}, {1, 2, 3, 0}}) {
+			params: Params
+			params_init(&params)
+			params_init_linear_weights(&params)
+			params.mode_mask = setting.mode_mask
+			params.max_partitions = setting.max_partitions
 
-		source, decoded: [16]Color_Rgba
-		for i in 0 ..< 16 {
-			source[i] = color
-		}
+			source, decoded: [16]Color_Rgba
+			for i in 0 ..< 16 {
+				source[i] = color
+			}
 
-		block: [BLOCK_SIZE]u8
-		compress_block(tables, &block[0], as_bytes(&source), &params)
-		testing.expect(t, unpack_bc7(&block[0], as_bytes(&decoded)))
+			block: [BLOCK_SIZE]u8
+			compress_block(tables, &block[0], as_bytes(&source), &params)
+			testing.expect(t, unpack_bc7(&block[0], as_bytes(&decoded)))
 
-		for i in 0 ..< 16 {
-			for c in 0 ..< 4 {
-				testing.expectf(t, abs(i32(source[i][c]) - i32(decoded[i][c])) <= 1, "color %v: texel %v comp %v decoded %v", color, i, c, decoded[i][c])
+			for i in 0 ..< 16 {
+				for c in 0 ..< 4 {
+					testing.expectf(t, abs(i32(source[i][c]) - i32(decoded[i][c])) <= 1, "%v color %v: texel %v comp %v decoded %v", setting, color, i, c, decoded[i][c])
+				}
 			}
 		}
 	}
+}
+
+// Rows of cutout texels, edge-padded to a block as an image border pads them.
+@(private = "file", rodata)
+CUTOUTS := [?][4]Color_Rgba {
+	{{131, 201, 44, 0}, {192, 135, 226, 174}, {216, 34, 29, 255}, {216, 34, 29, 255}},
+	{{10, 200, 30, 0}, {10, 200, 30, 255}, {240, 20, 220, 128}, {90, 90, 90, 255}},
+	{{255, 255, 255, 255}, {0, 0, 0, 0}, {128, 64, 32, 3}, {64, 128, 250, 252}},
+	{{40, 160, 60, 255}, {44, 150, 70, 240}, {50, 140, 80, 20}, {60, 130, 90, 0}},
+}
+
+// Final's effort, linear, with and without the settings of reduce entropy.
+@(private = "file")
+final_params :: proc(reduce_entropy, perceptual: bool) -> (params: Params) {
+	params_init(&params)
+	if !perceptual {params_init_linear_weights(&params)}
+	params.uber_level = MAX_UBER_LEVEL
+	if reduce_entropy {
+		params.mode17_partition_estimation_filterbank = false
+		params.mode6_error_weight = .4
+		params.low_frequency_partition_weight = .9999
+		params.quant_mode6_endpoints = true
+		params.pbit1_weight = 1.3
+	}
+	return
+}
+
+@(test)
+cutout_blocks_keep_alpha_0_and_255 :: proc(t: ^testing.T) {
+	tables := init_for_test(t)
+	defer free(tables)
+
+	for row, index in CUTOUTS {
+		source, decoded: [16]Color_Rgba
+		for i in 0 ..< 16 {
+			source[i] = row[i % 4]
+		}
+		for setting in 0 ..< 4 {
+			params := final_params(setting & 1 != 0, setting & 2 != 0)
+			block: [BLOCK_SIZE]u8
+			compress_block(tables, &block[0], as_bytes(&source), &params)
+			testing.expect(t, unpack_bc7(&block[0], as_bytes(&decoded)))
+			for i in 0 ..< 16 {
+				a := source[i][3]
+				if a == 0 || a == 255 {
+					testing.expectf(t, decoded[i][3] == a, "cutout %v setting %v: texel %v alpha %v decodes %v", index, setting, i, a, decoded[i][3])
+				}
+			}
+		}
+	}
+}
+
+// Mode 6 of an opaque block quantizes its alpha to 255, so it stays among the modes an opaque
+// block may take.
+@(test)
+opaque_blocks_decode_opaque_and_keep_mode_6 :: proc(t: ^testing.T) {
+	tables := init_for_test(t)
+	defer free(tables)
+
+	BLOCKS :: 64
+	state := u32(0x2545f491)
+	mode6 := 0
+	for b in 0 ..< BLOCKS {
+		source, decoded: [16]Color_Rgba
+		for i in 0 ..< 16 {
+			v := next_u32(&state)
+			ramp := i32(i % 4 + i / 4) * 9 + i32(b)
+			for c in 0 ..< 3 {
+				source[i][c] = u8(clamp(ramp + i32(c) * 50 + i32((v >> (8 * uint(c))) & 7), 0, 255))
+			}
+			source[i][3] = 255
+		}
+		for setting in 0 ..< 4 {
+			params := final_params(setting & 1 != 0, setting & 2 != 0)
+			block: [BLOCK_SIZE]u8
+			compress_block(tables, &block[0], as_bytes(&source), &params)
+			testing.expect(t, unpack_bc7(&block[0], as_bytes(&decoded)))
+			for i in 0 ..< 16 {
+				testing.expectf(t, decoded[i][3] == 255, "block %v setting %v: texel %v decodes alpha %v", b, setting, i, decoded[i][3])
+			}
+			if setting == 0 && block[0] & 0x7f == 0x40 {mode6 += 1}
+		}
+	}
+	testing.expectf(t, mode6 >= BLOCKS / 8, "mode 6 in %v of %v noisy opaque blocks", mode6, BLOCKS)
 }
 
 @(test)
