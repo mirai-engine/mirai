@@ -60,7 +60,7 @@ manifest_kept :: proc(s:^store.Store,hash:store.Hash) -> bool {
 
 @(private="file")
 sample_build :: proc(p:^Package,blobs:[]store.Hash) -> Build {
-    b:=Build{package_id=p.id,key=hash_of("key"),final=true,encoders=0x0123456789abcdef}
+    b:=Build{package_id=p.id,key=hash_of("key"),final=true,compressor=COMPRESSOR_OPEN}
     b.outputs=make([dynamic]Build_Output,context.temp_allocator)
     for &a,at in p.assets {
         info,_:=kind_info(a.kind)
@@ -102,7 +102,7 @@ package_records_read_back_what_they_write :: proc(t:^testing.T) {
     if !testing.expect_value(t,build_error,Error.None) {return}
     built,built_error:=build_parse(build,context.temp_allocator)
     if !testing.expect_value(t,built_error,Error.None) {return}
-    testing.expect(t,built.package_id==b.package_id && built.key==b.key && built.final && built.encoders==b.encoders && len(built.outputs)==len(b.outputs),"the build reads back")
+    testing.expect(t,built.package_id==b.package_id && built.key==b.key && built.final && built.compressor==b.compressor && len(built.outputs)==len(b.outputs),"the build reads back")
     for o,at in built.outputs {testing.expectf(t,o==b.outputs[at],"output %d reads back",at)}
     rebuilt,_:=build_text(&built,context.temp_allocator)
     testing.expect_value(t,rebuilt,build)

@@ -226,7 +226,10 @@ first, and the store dedupes its chunks. Objects never change in place and are t
 machine: the source an asset names is relative to the package, a changed owner is a new object.
 `Written.path` is the file of a document, and an output of the cache has only its object
 (`written_open` opens either; `mirai import` prints `object <address>`). The build lists the
-object of each output, which encoders built it and whether it is Final; it is named under
+object of each output, whether it is Final and the compressor whose formats its assets use
+(`open`, which every engine decodes, or the private one's name): the import key leaves the
+encoders out, so engines with either compressor share builds, and a refresh takes one, from its
+store or a source, only when this engine decodes it, naming the package otherwise. It is named under
 `imports/<key>` when Final, else under `imports-fast/<key>`, and as the build
 this machine chose (`builds/<build_select>`), which a program without importers finds. Of two sorts
 (`asset.import_cached`):

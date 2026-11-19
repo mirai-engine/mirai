@@ -585,7 +585,7 @@ registry_lists_what_a_project_pins_without_its_sources :: proc(t:^testing.T) {
     pin :: proc(t:^testing.T,s:^store.Store,p:^Package,built:[]store.Hash,folder:string) -> Packages {
         manifest,error:=package_put(s,p)
         testing.expect_value(t,error,Error.None)
-        b:=Build{package_id=p.id,final=true}
+        b:=Build{package_id=p.id,final=true,compressor=COMPRESSOR_OPEN}
         b.outputs=make([dynamic]Build_Output,context.temp_allocator)
         for hash,at in built {
             info,_:=kind_info(p.assets[at].kind)
