@@ -61,6 +61,10 @@ struct Params_Block {
 // Of each tested bin, the triangles of each depth bucket (raster_depth_word).
 [[vk::binding(SLOT_PASS4, 0)]] RWStructuredBuffer<uint> depth_buckets : register(MIRAI_REGISTER(u, SLOT_PASS4), space0);
 [[vk::binding(SLOT_PASS5, 0)]] RWStructuredBuffer<uint> raster_entries : register(MIRAI_REGISTER(u, SLOT_PASS5), space0);
+#if defined(MIRAI_HOOK_VERTEX) && !defined(MIRAI_RASTER_SHADOW)
+// Of the view, what the vertex hook moves the instance of each visible cluster by (cull_bins.comp).
+[[vk::binding(SLOT_PASS6, 0)]] StructuredBuffer<float4> visible_moved : register(MIRAI_REGISTER(t, SLOT_PASS6), space0);
+#endif
 #include <extension_vertex.slang>
 #include "gbuffer_build.slang"
 
@@ -78,6 +82,10 @@ groupshared uint shown[SHOWN_WORDS];
 groupshared uint first_vertex;
 // A list was full before the group began: the cluster goes to the next round as it is.
 groupshared uint full;
+#if defined(MIRAI_HOOK_VERTEX) && defined(MIRAI_RASTER_SHADOW)
+// What the vertex hook moves the instance of the cluster by (gbuffer_moved).
+groupshared float4 cluster_moved;
+#endif
 
 // What a cluster writes of each list, added to what the view, or the round
 // of the maps, needs of them.
@@ -150,16 +158,25 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     if (!raster_round_pending(raster_entries[record + RASTER_ENTRY_ROUND])) return;
     Visible_Cluster entry = visible[e];
     Cluster c = cluster_at(entry.cluster);
+    Instance inst = scene_instance(entry.instance);
+#ifdef MIRAI_RASTER_SHADOW
+    bool rest = (entry.program & SHADOW_ENTRY_REST) != 0u;
+#endif
     // A list is full for good once it is passed: no vertex is placed for a
     // cluster it has no room for, which a round after takes. The last finds
     // what the cluster would write, which it counts.
     if (lane.x == 0u) {
         full = params.last == 0u && (cull_state[CULL_RASTER_VERTICES] >= params.vertex_capacity || cull_state[CULL_RASTER_TRIANGLES] >= params.triangle_capacity) ? 1u : 0u;
         if (full != 0u) cluster_left(e, 0u, 0u, INVALID);
+#if defined(MIRAI_HOOK_VERTEX) && defined(MIRAI_RASTER_SHADOW)
+        // The maps leave the vertex hook of a batch out, but where they draw
+        // one that sways as it sways.
+        bool hooked = full == 0u && !rest && instance_batched(entry.instance) && batch_sway(batch_row(batch_of(entry.instance))) > 0.0;
+        cluster_moved = hooked ? gbuffer_moved(entry.instance, inst, frame.time.x) : float4(0.0);
+#endif
     }
     GroupMemoryBarrierWithGroupSync();
     if (full != 0u) return;
-    Instance inst = scene_instance(entry.instance);
     Mesh mesh = meshes[instance_mesh(inst)];
     Cluster_Block b = visible_block(mesh, c, entry);
     uint vertex_count = cluster_vertex_count(c), triangle_count = cluster_triangle_count(c);
@@ -170,18 +187,29 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     // a page with no place in the pool draws nothing.
     Shadow_Page_Draw page;
     if (!shadow_page_draw(shadow_data, entry.program & ~SHADOW_ENTRY_REST, page)) triangle_count = 0u;
-    float4 window = page.window;
-    float2 resolution = float2(SHADOW_POOL, SHADOW_POOL);
+    // The tile of the page in the layer of what sways, its texels as many times fewer.
+    float scale = (entry.program & SHADOW_ENTRY_LAYER) != 0u ? float(1u << params.coarser) : 1.0;
+    float4 window = page.window / scale;
+    float2 resolution = float2(SHADOW_POOL, SHADOW_POOL) / scale;
     uint pool = page.pool;
-    // The maps leave the vertex hook of a batch and the colors out.
+    // The maps draw both faces of every triangle.
+    bool two_sided = true;
     Gbuffer_Cluster k = (Gbuffer_Cluster)0;
-    k.posed = (entry.program & SHADOW_ENTRY_REST) != 0u ? INVALID : mesh.posed_word;
+    k.posed = rest ? INVALID : mesh.posed_word;
     k.along = entry.along;
+#ifdef MIRAI_HOOK_VERTEX
+    k.pivot = float3(inst.world[0].w, inst.world[1].w, inst.world[2].w);
+    k.moved = cluster_moved;
+#endif
 #else
     float4 window = float4(0.0, 0.0, frame.resolution);
     float2 resolution = frame.resolution;
     uint pool = INVALID;
+    bool two_sided = (bin & RASTER_BIN_TWO_SIDED) != 0u;
     Gbuffer_Cluster k = gbuffer_cluster_of(entry.instance, inst, mesh, entry.material, entry.along);
+#ifdef MIRAI_HOOK_VERTEX
+    if (instance_batched(entry.instance)) k.moved = visible_moved[e * 2u];
+#endif
 #endif
 
     float3 worlds[VERTEX_TURNS];
@@ -208,7 +236,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
         // An instance that mirrors its mesh draws its triangles the other way round (gbuffer_corner).
         if (mirrored) corners = corners.xzy;
         if (corners.x == corners.y || corners.y == corners.z || corners.x == corners.z) continue;
-        if (!raster_triangle_shows(clips[corners.x], clips[corners.y], clips[corners.z], (bin & RASTER_BIN_TWO_SIDED) != 0u, window, resolution, params.margin)) continue;
+        if (!raster_triangle_shows(clips[corners.x], clips[corners.y], clips[corners.z], two_sided, window, resolution, params.margin)) continue;
         InterlockedOr(shown[t >> 5u], 1u << (t & 31u));
         InterlockedOr(used[corners.x >> 5u], 1u << (corners.x & 31u));
         InterlockedOr(used[corners.y >> 5u], 1u << (corners.y & 31u));

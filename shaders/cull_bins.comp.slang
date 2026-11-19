@@ -6,7 +6,10 @@
 // which each group finds from the counts of the buckets alone. Each entry
 // takes what its cluster gives every vertex and pixel of it
 // (Visible_Cluster), and the next round of the raster (raster_lists.slang)
-// takes the clusters of the phase, each with its bin and depth bucket.
+// takes the clusters of the phase, each with its bin and depth bucket. Of
+// an instance of a batch, what the vertex hook moves it by now and in the
+// frame before goes beside it, once for all its pixels in the resolve.
+#define MIRAI_BATCHES
 #include "visibility.slang"
 #include "cut.slang"
 #include "raster_lists.slang"
@@ -24,10 +27,16 @@ struct Params_Block { uint phase; uint capacity; uint pad0; uint pad1; };
 [[vk::binding(SLOT_PASS1, 0)]] StructuredBuffer<uint4> listed : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 // The same by bin.
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<Visible_Cluster> visible : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
+#ifdef MIRAI_HOOK_VERTEX
+// Of each of an instance of a batch: gbuffer_moved now, and in the frame before.
+[[vk::binding(SLOT_PASS3, 0)]] RWStructuredBuffer<float4> visible_moved : register(MIRAI_REGISTER(u, SLOT_PASS3), space0);
+#endif
 // Of each phase and tested bin, the clusters of each depth bucket, then the cursors of the buckets (cull_depth_word).
 [[vk::binding(SLOT_PASS4, 0)]] RWStructuredBuffer<uint> depth_buckets : register(MIRAI_REGISTER(u, SLOT_PASS4), space0);
 // What each entry of the visible list keeps for the passes that list its triangles, RASTER_ENTRY_WORDS each.
 [[vk::binding(SLOT_PASS5, 0)]] RWStructuredBuffer<uint> raster_entries : register(MIRAI_REGISTER(u, SLOT_PASS5), space0);
+#include <extension_vertex.slang>
+#include "gbuffer_build.slang"
 
 #define BUCKETS_PER_THREAD (2u * RASTER_DEPTH_BUCKETS / CULL_BINS_GROUP)
 // Where the clusters of each depth bucket of both tested bins of the phase start.
@@ -107,6 +116,12 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 lane : SV_GroupThreadID
     v.triangles = b.triangles;
     v.along = cluster_along(view_detail(), inst, instance_scale(inst), mesh, c, frame.cut.x);
     visible[place] = v;
+#ifdef MIRAI_HOOK_VERTEX
+    if (instance_batched(entry.x)) {
+        visible_moved[place * 2u] = gbuffer_moved(entry.x, inst, frame.time.x);
+        visible_moved[place * 2u + 1u] = gbuffer_moved(entry.x, inst, frame.time.y);
+    }
+#endif
     raster_entries[place * RASTER_ENTRY_WORDS + RASTER_ENTRY_BIN] = entry.z;
     raster_entries[place * RASTER_ENTRY_WORDS + RASTER_ENTRY_ROUND] = 0u;
 }

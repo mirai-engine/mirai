@@ -97,13 +97,24 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     Mesh mesh = meshes[instance_mesh(inst)];
     Cluster c = mesh_cluster(mesh, k);
     Shadow_Map m = shadow_map_mip(shadow_map_at(shadow_data, params.rows, map), (work.y >> SHADOW_CHUNK_MIP) & 7u);
-    if (!cluster_in_cut(shadow_map_detail(m), inst, instance_scale(inst), mesh, c, frame.cut.x)) return;
+    // What sways goes into the layer, at the detail of its texel.
+    bool layer = (work.y & SHADOW_CHUNK_LAYER) != 0u;
+    uint coarser = layer ? params.coarser : 0u;
+    if (!cluster_in_cut(shadow_map_detail(m, coarser), inst, instance_scale(inst), mesh, c, frame.cut.x)) return;
     float3 low, high;
     bool rest = (work.y & SHADOW_CHUNK_REST) != 0u;
     // The texels of its box; of a pose not known yet, those of its instance.
     float4 texels;
     if (mesh.posed_word == INVALID || rest) {
         cluster_world_box(inst, mesh, c, low, high);
+        // What the vertex hook sways stays in its box grown by how far it sways now.
+        float sway = 0.0;
+        if (!rest && instance_batched(instance)) {
+            Instance row = batch_row(batch_of(instance));
+            sway = min(batch_sway(row) * instance_scale(inst), batch_swayed(row));
+        }
+        low -= sway;
+        high += sway;
     } else {
         Posed_Bounds pose;
         if (posed_bounds(mesh, k, pose)) instance_world_box(inst, pose.low, pose.high, low, high);
@@ -124,8 +135,9 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     entry.vertices = b.vertices;
     entry.triangles = b.triangles;
     entry.page = cluster_page_word(mesh, c);
-    entry.along = cluster_along(shadow_map_detail(m), inst, instance_scale(inst), mesh, c, frame.cut.x);
-    uint bin = RASTER_BIN_TWO_SIDED | (tested ? RASTER_BIN_TESTED : 0u);
+    entry.along = cluster_along(shadow_map_detail(m, coarser), inst, instance_scale(inst), mesh, c, frame.cut.x);
+    // Both faces are drawn whatever the bin: the one-sided bins are the layer's.
+    uint bin = (layer ? 0u : RASTER_BIN_TWO_SIDED) | (tested ? RASTER_BIN_TESTED : 0u);
     uint vertices = cluster_vertex_count(c), triangles = cluster_triangle_count(c);
     for (uint y = pages.y; y <= pages.w; y++) {
         for (uint x = pages.x; x <= pages.z; x++) {
@@ -134,8 +146,8 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
             uint held = shadow_table_entry(m.rect.x, shadow_page_entry(m.rect, uint2(x, y)));
             if (params.moving == 1u && (held & SHADOW_PAGE_CACHED) != 0u && shadow_box_hidden(hiz, m, uint2(x, y), (held & SHADOW_ENTRY_POOL) - 1u, low, high)) continue;
             uint pool = (held & SHADOW_ENTRY_POOL) - 1u;
-            entry.program = shadow_page_word(map, shadow_rect_mip(m.rect), uint2(x, y)) | (rest ? SHADOW_ENTRY_REST : 0u);
-            uint units = shadow_units(uint2(x, y), shadow_page_part(pool), texels, triangles, tested, surface, float(vertices));
+            entry.program = shadow_page_word(map, shadow_rect_mip(m.rect), uint2(x, y)) | (rest ? SHADOW_ENTRY_REST : 0u) | (layer ? SHADOW_ENTRY_LAYER : 0u);
+            uint units = shadow_units(uint2(x, y), shadow_page_part(pool), texels, triangles, tested, surface, float(vertices), coarser);
             if (shadow_add(bin, entry, pool, units)) {
                 if (params.moving == 0u) {
                     InterlockedAdd(stats[0].shadow[tested ? 1u : 0u], 1u);

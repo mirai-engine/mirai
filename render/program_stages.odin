@@ -176,13 +176,20 @@ program_code_same :: proc(codes: []rhi.Shader_Code, code: ^rhi.Shader_Code) -> ^
 	return nil
 }
 
-// The description of a graphics pipeline of the renderer, by where it keeps it.
+// The description of a graphics pipeline of the renderer, by where it keeps
+// it: a stage, or a stage with constants (pipeline_of).
 @(private = "file")
 pipeline_desc_of :: proc(r: ^Renderer, target: ^rhi.Pipeline) -> (rhi.Graphics_Pipeline_Desc, bool) {
 	list := new(Pipeline_List, context.temp_allocator)
 	pipelines_list(r, list)
+	v := variant_of(r, target)
 	for item in list.items[:list.count] {
-		if item.target == target && item.graphics {return item.desc, true}
+		if !item.graphics {continue}
+		if item.target == target {return item.desc, true}
+		if v != nil && item.id == v.id && item.target == &r.pipelines[v.id] {
+			desc, _ := pipeline_desc(r, item, v.constants)
+			return desc, true
+		}
 	}
 	return {}, false
 }

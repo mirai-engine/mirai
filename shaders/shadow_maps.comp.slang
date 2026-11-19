@@ -48,10 +48,10 @@ bool instance_moves(uint instance) {
 // units (shadow_units): the texels of the part of the page drawn the box
 // covers, and the vertices of the share of its clusters whose texels lie
 // there, `vertices` each (SHADOW_WORDS_COST); and the chunks the instance
-// hands over (SHADOW_WORDS_REACH). Of a batch that sways in the map, the
-// pages of the atlas it shows in, where the cache does not hide its box
-// (SHADOW_SWAY_NOW).
-void shadow_foresee(Shadow_Map m, float4 texels, uint clusters, float vertices, bool masked, bool sways, float3 low, float3 high) {
+// hands over (SHADOW_WORDS_REACH). Of a batch that sways in the map, drawn
+// into the layer `coarser` levels coarser, the pages of the atlas it shows
+// in, where the cache does not hide its box (SHADOW_SWAY_NOW).
+void shadow_foresee(Shadow_Map m, float4 texels, uint clusters, float vertices, bool masked, bool sways, uint coarser, float3 low, float3 high) {
     uint4 span, rect = shadow_texel_pages(m, texels);
     if (!shadow_pages_span(m, span)) return;
     rect = uint4(max(rect.xy, span.xy), min(rect.zw, span.zw));
@@ -64,7 +64,7 @@ void shadow_foresee(Shadow_Map m, float4 texels, uint clusters, float vertices, 
             float2 corner = float2(uint2(x, y) * SHADOW_PAGE);
             float2 within = min(texels.zw, corner + float2(part.zw)) - max(texels.xy, corner + float2(part.xy));
             float share = saturate(max(within.x, 1.0) * max(within.y, 1.0) / (size.x * size.y));
-            uint units = shadow_units(uint2(x, y), part, texels, CLUSTER_TRIANGLES, masked, 0.0, max(float(clusters) * share, 1.0) * vertices);
+            uint units = shadow_units(uint2(x, y), part, texels, CLUSTER_TRIANGLES, masked, 0.0, max(float(clusters) * share, 1.0) * vertices, coarser);
             // Far past any bound it counts no more, below the flags of the word.
             uint word = shadow_cost_word(pool);
             if (shadow_pages[word] < SHADOW_COST_UNITS / 2u) InterlockedAdd(shadow_pages[word], min(units, SHADOW_COST_UNITS / 2u));
@@ -114,49 +114,57 @@ void main(uint3 id : SV_DispatchThreadID) {
     uint thread = id.y * SHADOW_CULL_ROW * MIRAI_GROUP_X + id.x, slot, instance;
     if (!shadow_work_instance(thread, params.moving, slot, instance)) return;
     uint map = slot;
-    float reach = 0.0, cull = 0.0;
+    float cull = 0.0, sway = 0.0, near = 0.0;
     if (instance_batched(instance)) {
         Instance row = batch_row(batch_of(instance));
         // The slots after the last instance of a batch fill its last group.
         if (instance - frame.instance_count - batch_first(row) >= batch_count(row)) return;
         if ((batch_classes(row) & RAY_SHADOWS) == 0u) return;
-        reach = batch_reach(row);
         cull = batch_cull(row);
+        sway = batch_sway(row);
+        near = batch_swayed(row);
     }
     Instance inst = scene_instance(instance);
     if ((inst.meta.w & INSTANCE_FLAG_HIDDEN) != 0u || (inst.meta.x & INSTANCE_UNSHADOWED) != 0u) return;
     // Glass casts no shadow in the maps, nor colors their light.
     if ((inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u) return;
     Shadow_Map whole = shadow_map_at(shadow_data, params.rows, map);
-    float3 low = inst.bounds_min.xyz - reach, high = inst.bounds_max.xyz + reach;
+    Mesh mesh = meshes[instance_mesh(inst)];
+    if (mesh.vertex_count == 0u || mesh.cluster_count == 0u) return;
+    // The maps leave the vertex hook out but where a batch sways: its box grows
+    // by as far as the hook sways it in the wind that blows now, which its sway
+    // in the strongest (reach) bounds and which chooses the maps it sways in.
+    float reach = sway * instance_scale(inst), now = mesh.posed_word == INVALID ? min(reach, near) : reach;
+    float3 low = inst.bounds_min.xyz - now, high = inst.bounds_max.xyz + now;
     if (!shadow_map_reaches(whole, low, high)) return;
     // Past its cull distance, as the view leaves it out (render.shadow_culled).
     if (cull > 0.0 && length(params.cull.xyz - clamp(params.cull.xyz, low, high)) > cull + params.cull.w) return;
-    Mesh mesh = meshes[instance_mesh(inst)];
-    if (mesh.vertex_count == 0u || mesh.cluster_count == 0u) return;
     for (uint mip = 0u; mip < shadow_slot_mips(map); mip++) {
         Shadow_Map m = shadow_map_mip(whole, mip);
         float4 texels;
         if (shadow_map_unseen(m, low, high) || !shadow_box_texels(m, low, high, texels) || !shadow_pages_drawn(m, texels)) continue;
-        // A batch of a deformable sways as far as its mesh says (render.batch_sway):
-        // a map past the reach of what sways, or whose texel there is wider than
-        // the sway, draws it at rest and keeps it, as what stays; the others draw
-        // it as it is, and while it sways, as what moves.
+        // A batch that sways sways as far as it says, one of a deformable that
+        // does not say anywhere (render.batch_sway): a map past the reach of
+        // what sways, or whose layer's texel there is wider than the sway,
+        // draws it at rest and keeps it, as what stays; the others draw it as
+        // it is, and while it sways, as what moves, into the layer at the
+        // detail of its texel.
         bool rest = false, sways = false;
         bool moves = instance_moves(instance);
-        if (instance_batched(instance) && mesh.posed_word != INVALID) {
-            rest = !shadow_map_sways(m, low, high, mesh.sway * instance_scale(inst), params.sway);
+        if (instance_batched(instance) && (sway > 0.0 || mesh.posed_word != INVALID)) {
+            rest = !shadow_map_sways(m, inst.bounds_min.xyz - reach, inst.bounds_max.xyz + reach, sway > 0.0 ? reach : FLT_MAX, params.sway, params.coarser);
             moves = moves && !rest;
             sways = moves;
         }
         // A slot that let go of every page draws what stays too into the atlas, in the round of what moves.
     bool whole = params.moving == 1u && (shadow_data[(params.plan >> 2u) + map].x & SHADOW_PLAN_RESET) != 0u;
         if (!whole && moves != (params.moving != 0u)) continue;
-        uint2 clusters = instance_clusters(shadow_map_detail(m), inst, mesh);
+        uint coarser = sways ? params.coarser : 0u;
+        uint2 clusters = instance_clusters(shadow_map_detail(m, coarser), inst, mesh);
         if (params.foresee != 0u) {
             // The vertices of a cluster of its mesh on the average.
             float vertices = clamp(ceil(float(mesh.vertex_count) / float(mesh.cluster_count)), 3.0, float(CLUSTER_VERTICES));
-            shadow_foresee(m, texels, clusters.y, vertices, inst.tested != 0u, sways && params.moving == 1u, low, high);
+            shadow_foresee(m, texels, clusters.y, vertices, inst.tested != 0u, sways && params.moving == 1u, coarser, low, high);
             continue;
         }
         uint count = (clusters.y + CULL_CHUNK - 1u) / CULL_CHUNK;
@@ -167,7 +175,7 @@ void main(uint3 id : SV_DispatchThreadID) {
             InterlockedAdd(stats[0].dropped[CULL_LIST_SHADOW_CHUNKS], count - kept);
             InterlockedAdd(shadow_pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_DROPPED + params.moving], count - kept);
         }
-        uint what = map | mip << SHADOW_CHUNK_MIP | (rest ? SHADOW_CHUNK_REST : 0u);
+        uint what = map | mip << SHADOW_CHUNK_MIP | (rest ? SHADOW_CHUNK_REST : 0u) | (sways ? SHADOW_CHUNK_LAYER : 0u);
         for (uint k = 0u; k < kept; k++) {
             uint first = k * CULL_CHUNK;
             chunks[base + k] = uint4(instance, what, clusters.x + first, min(CULL_CHUNK, clusters.y - first));

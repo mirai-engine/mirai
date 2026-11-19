@@ -53,6 +53,7 @@ struct Impostor_Varyings {
     [[vk::location(6)]] nointerpolation float4 world1 : TEXCOORD6;
     [[vk::location(7)]] nointerpolation float4 world2 : TEXCOORD7;
     [[vk::location(8)]] nointerpolation uint color : TEXCOORD8;     // its tint and wetness (render.batch_color)
+    [[vk::location(9)]] nointerpolation float2 lean : TEXCOORD9;    // how it leans in the wind about where it stands (impostor_lean)
 };
 
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<Impostor_Instance> impostor_instances : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
@@ -74,7 +75,7 @@ struct Impostor_Shape {
 };
 
 // A placement turned about its place so that its up leans by `lean`, radians
-// along x and z of the world.
+// along x and z of the world; by -lean, back to where it stands.
 void impostor_lean(float2 lean, inout float4 world[3], inout float4 inverse[3]) {
     float angle = length(lean);
     if (!(angle > 1e-5)) return;
@@ -94,11 +95,20 @@ void impostor_lean(float2 lean, inout float4 world[3], inout float4 inverse[3]) 
     }
 }
 
+// Where a point of an instance standing at pivot and leaned by `lean` rests.
+float3 impostor_rest(float3 place, float3 pivot, float2 lean) {
+    float4 world[3] = {float4(1.0, 0.0, 0.0, pivot.x), float4(0.0, 1.0, 0.0, pivot.y), float4(0.0, 0.0, 1.0, pivot.z)};
+    float4 inverse[3] = world;
+    impostor_lean(-lean, world, inverse);
+    return transform_point(world, place - pivot);
+}
+
 // The shape of an instance; false where nothing of it is drawn: its mesh is
 // whole there, or it is gone, or its type has no frames. It leans whole about
-// where it stands, as the top of its mesh leans in the wind there, for the
-// cull and the draw alike.
-bool impostor_shape(Impostor_Instance inst, Impostor_Row row, out Impostor_Shape s) {
+// where it stands by `lean`, as the top of its mesh leans in the wind there,
+// for the cull and the draw alike.
+bool impostor_shape(Impostor_Instance inst, Impostor_Row row, out Impostor_Shape s, out float2 lean) {
+    lean = float2(0.0);
     batch_instance_placement(inst.position + impostor_params.anchor.xyz, inst.rotation, inst.scale, s.world, s.inverse);
     float3 low, high;
     box_transformed(s.world, row.low.xyz, row.high.xyz, low, high);
@@ -107,7 +117,8 @@ bool impostor_shape(Impostor_Instance inst, Impostor_Row row, out Impostor_Shape
     if (row.far.z > 0.0) {
         float3 pivot = float3(s.world[0].w, s.world[1].w, s.world[2].w);
         float4 wind = wind_at(frame.foliage_wind.wind, pivot);
-        impostor_lean(foliage_wind_lean(wind.xyz, wind.w, 1.0, row.far.z, foliage_wave(pivot, frame.origin.xyz), frame.time.x), s.world, s.inverse);
+        lean = foliage_wind_lean(wind.xyz, wind.w, 1.0, row.far.z, foliage_wave(pivot, frame.origin.xyz), frame.time.x);
+        impostor_lean(lean, s.world, s.inverse);
     }
     s.center = transform_point(s.world, row.sphere.xyz);
     float scale = max(max(length(float3(s.world[0].x, s.world[1].x, s.world[2].x)), length(float3(s.world[0].y, s.world[1].y, s.world[2].y))), length(float3(s.world[0].z, s.world[1].z, s.world[2].z)));

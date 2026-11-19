@@ -341,7 +341,9 @@ frame and the current one:
   binds the view's depth pyramids with `pass_depth_pyramid` (this frame's, or the previous one's
   with `previous`) and tests a box with `pyramid_hides` (`include/pyramid.slang`);
   `pass_depth_pyramid_build`, between its draws, rebuilds this frame's pyramid with what it drew,
-  which its next cull and the next frame see. Materials
+  which its next cull and the next frame see. A pass whose surfaces the wind moves binds the rest
+  target with `pass_rest_write` and writes where each pixel rests with `gbuffer_rest_write`
+  ([what sways](lights.md#what-sways-in-the-maps)). Materials
   with a Surface program are drawn with their program's fragment: `program` in
   `pass_gbuffer_pipeline` gives that pipeline, `pass_material_program` says the program of a
   material and `pass_mesh_programs` those of what a mesh shows, for a draw per program in which the
@@ -548,9 +550,12 @@ Hooks:
   gate, where to read it on the other side, which side it gives to and how the directions rotate.
   `sample_probes_around` blends the two reads in that proportion: the probe field is not cut at the
   opening.
-- **Vertices** (signature in `extensions.odin`): where a vertex of a batch instance is at
-  `frame.time`; the G-buffer also calls it with the previous time for the motion vectors. It moves
-  only what is rasterized: shadows and reflections see the mesh at rest.
+- **Vertices** (signatures in `extensions.odin`), in two parts: what moves a whole batch instance
+  at `frame.time`, computed once per visible cluster (the cull, which also keeps it at the previous
+  time for the motion vectors) or per cluster of a map, and where each vertex lands from its rest
+  with what that part gave. An instance the first part leaves at zero rests and pays no vertex
+  part. It moves only what is rasterized: rays see the mesh at rest, and the maps place through it
+  only [what sways](lights.md#what-sways-in-the-maps).
 - **Lights** (`mirai_extension_light_count` and an `Extension_Light` per index, in
   `lighting.slang`): they are lights like the others. The
   [direct filter](lights.md#direct-light-of-a-view) traces their ray (and the optional second) to
@@ -575,20 +580,16 @@ their handles in a `by_world` storage and removes them in the `release` of its w
 - Each frame in which the shape changes, the extension calls `deformable_update` with its box and
   writes the current vertices in `Geometry`; a shape that stops changing makes one last pass to
   equalize current and previous. A box that does not change marks no light.
-- `sway`, given at creation, bounds how far a vertex moves from its rest. The maps of the shadows
-  whose texel is wider draw a batch of the copy at rest and keep it; finer ones draw it as it is,
-  as a caster that moves while it sways. Without it (0), the copy may be anywhere in its box and
-  every map draws it as it is.
+- A batch of the copy may say how far a vertex moves from its rest (`Batch_Desc.sway`,
+  [what sways](lights.md#what-sways-in-the-maps)); without it the copy may be anywhere in its box.
 - `pass_deformable` gives where, in vertex pool words, the vertices that the extension writes and
   the rest ones it reads are (one `Posed_Vertex` each, which its shader reads and writes with
   `posed.slang`: `posed_load`, `posed_store`), and its row of the mesh table. Vertex `i` is the `i`
   of the mesh's clusters. The rest of a vertex (its color) is in the mesh's pages: the shader
   includes `geometry.slang`, with the pools and the mesh table that `pass_pipeline` binds in
   `Geometry`, and reads it by index (`mesh_vertex_color`).
-- With `levels`, the copy keeps the source's levels of detail: `pass_deformable` counts the vertices
-  of all of them and the extension writes them; the GPU keeps taking its cut and the rays see the
-  first. `vertices_made` counts the times the vertex buffer was created again: what was written was
-  lost and has to be written again.
+- The copy is of level 0 of the source. `vertices_made` counts the times the vertex buffer was
+  created again: what was written was lost and has to be written again.
 
 ## Geometry for extensions
 
