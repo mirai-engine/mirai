@@ -760,7 +760,6 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
             }
             pieces=prefab.parts[:]
         }
-        variants:=wind_variants(t)
         amount:=sway_amount(t)
         settled:=true
         fade,cull:=mesh_distances(t,false)
@@ -781,8 +780,7 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
             low,high,known:=render.mesh_bounds(renderer,desc.mesh)
             // Metres from where its largest instance stands to its farthest point.
             size:=linalg.length(linalg.max(linalg.abs(low),linalg.abs(high)))*t.scale[1]*max(t.height[1],1)
-            // Its shadow sways only where its tip does by SHADOW_SWAY_LEAST.
-            if variants>0 && known && type_sway(t,size)>=SHADOW_SWAY_LEAST {
+            if variants:=shadow_variants(t,size);variants>0 && known {
                 part.variants=variants
                 append(&owner.winds,Wind_Key{desc.mesh,variants,amount})
             }
