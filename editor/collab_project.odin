@@ -186,6 +186,7 @@ collab_join_start :: proc(s:^Session,st:^Collab_State,code,folder:string,reopen:
 collab_project_update :: proc(s:^Session,st:^Collab_State,now:f64) {
     if st.node==nil {return}
     share.node_step(st.node,now)
+    collab_take_update(s,st)
     if st.role==.Host {
         collab_host_changes(s,st,now)
         return
@@ -243,6 +244,7 @@ collab_project_update :: proc(s:^Session,st:^Collab_State,now:f64) {
 @(private)
 collab_project_destroy :: proc(s:^Session,st:^Collab_State) {
     if st.node!=nil {share.node_close(st.node)}
+    collab_library_destroy(st)
     if st.watching {platform.watch_destroy(s.app.platform,st.watch)}
     st.watching=false
     if j:=st.join;j!=nil {

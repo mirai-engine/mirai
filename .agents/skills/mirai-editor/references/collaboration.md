@@ -69,6 +69,19 @@ Code: `collab.odin`, `collab_api.odin`, `collab_project.odin` (the project that 
 - A guest's own imports and file changes do not travel to the host as files; the asset files
   edited in the session travel as below.
 
+## Libraries of the session
+
+- Each editor of a session sees the machine libraries of the others it is connected to (a guest,
+  the host's; the host, each guest's): the packages each one's store exposes, which `exchange`
+  already serves to whoever holds the invitation. They are read on a thread
+  (`collab_library.odin`, `share.peer_library`) when the content browser or `packages.peers` shows
+  them, at most once a `COLLAB_LIBRARY_SECONDS`.
+- Adding one takes it into this machine's library first (`share.package_take`): its manifest and
+  a build this engine reads, as a join fetches builds, refreshed in a project of its own under the
+  generated folder, so nothing is reimported when its source is not here. Only then is it added
+  as a package of this machine. A peer that leaves before the build is here leaves the project and
+  the library as they were, and says so; once taken, the package stays in this machine's library.
+
 ## What travels
 
 - **The whole scene**, once on entering: what `scene.capture` writes, as one message over the

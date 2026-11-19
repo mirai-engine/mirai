@@ -612,7 +612,7 @@ ai_chat_content_build :: proc(s:^Session,width,height:f32,size:f32=0) {
         switch g.drag.kind {
         case .Asset:  ai_attachment_add(s,g.drag.asset_id)
         case .Entity: if g.drag.entity!=core.NONE {history.selection_add(s.selection,g.drag.entity);m.focus=true}
-        case .None,.Preset:
+        case .None,.Preset,.Package:
         }
         g.drag={}
     }
