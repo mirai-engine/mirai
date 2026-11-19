@@ -59,7 +59,7 @@ asset_delete_all :: proc(s:^Session,r:^asset.Registry,id:base.Asset_Id) -> (file
     append(&out,..asset_delete_files(r,id))
     file,found:=asset.registry_find(r,id)
     if !found {return out[:],{},false}
-    if pin,unpins=library_pin_of(s,r,file);!unpins || library_package_root(&pin.p)!=id {return out[:],{},false}
+    if pin,unpins=library_pin_of(s,r,file);!unpins || asset.package_root(&pin.p)!=id {return out[:],{},false}
     for &a in pin.p.assets {
         if at,known:=r.by_id[a.id];known && r.files[at].listed && !slice.contains(out[:],at) {append(&out,at)}
     }
@@ -88,7 +88,7 @@ asset_delete_refusal :: proc(s:^Session,r:^asset.Registry,file:^asset.Registry_F
         switch {
         case !found:
             return "It is listed from a package the project pins and the store at hand does not have: refresh the project, or duplicate it to have a copy of its own"
-        case library_package_root(&pin.p)!=file.id:
+        case asset.package_root(&pin.p)!=file.id:
             return fmt.tprintf("It is listed from the package %s: delete the asset that package gives, %s, which takes the package out of the project, or duplicate it to have a copy of its own",pin.p.name,library_root_named(r,&pin.p))
         }
     }

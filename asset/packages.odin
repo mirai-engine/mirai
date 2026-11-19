@@ -559,6 +559,36 @@ build_put :: proc(s:^store.Store,b:^Build) -> (object:store.Hash,error:Error) {
     return record_put(s,transmute([]u8)text)
 }
 
+// The root of a package: the prefab of a model or the scene of a source a
+// plugin imports whole, else its one asset that is no part of another (the
+// texture of an image, the sound of a sound file). Zero when it has none.
+package_root :: proc(p:^Package) -> base.Asset_Id {
+    for &a in p.assets {
+        if a.kind==KIND_SCENE && a.owner=={} {return a.id}
+    }
+    root:base.Asset_Id
+    for &a in p.assets {
+        if a.owner!={} || a.part {continue}
+        if root!={} {return {}}
+        root=a.id
+    }
+    return root
+}
+
+// The object of a build its package shows: that of its root (package_root)
+// when the build holds it, else of its first mesh, else of its first asset;
+// a model's prefab is a document of the project, not of its build. Zero: none.
+build_shown :: proc(b:^Build,p:^Package) -> store.Hash {
+    root:=package_root(p)
+    for &o in b.outputs {
+        if o.id==root {return o.object}
+    }
+    for &o in b.outputs {
+        if o.kind==KIND_MESH {return o.object}
+    }
+    return len(b.outputs)>0 ? b.outputs[0].object : {}
+}
+
 build_get :: proc(s:^store.Store,object:store.Hash,allocator:=context.allocator) -> (b:Build,error:Error) {
     text:=record_get(s,object) or_return
     return build_parse(text,allocator)

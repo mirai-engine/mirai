@@ -107,7 +107,7 @@ asset_move :: proc(s:^Session,id:base.Asset_Id,folder,name:string) -> (path,mess
     if file.listed {return asset_move_listed(s,r,file,folder,name)}
     if refusal:=asset_move_refusal(s,r,file);refusal!="" {return "",refusal}
     pin,pinned:=library_pin_of(s,r,file)
-    pinned&&=library_package_root(&pin.p)==id
+    pinned&&=asset.package_root(&pin.p)==id
     into,refused:=asset_folder_clean(r,folder)
     if refused!="" {return "",fmt.tprintf("folder: %s",refused)}
     into=strings.clone(into,context.temp_allocator)
@@ -182,7 +182,7 @@ asset_move_listed :: proc(s:^Session,r:^asset.Registry,file:^asset.Registry_File
     id:=file.id
     pin,found:=library_pin_of(s,r,file)
     if !found {return "","It is listed from a package the project pins and the store at hand does not have: refresh the project, or duplicate it to have a copy that moves"}
-    if library_package_root(&pin.p)!=id {return "",fmt.tprintf("It is listed from the package %s: move the asset that package gives, %s, which moves where the project lists the package, or duplicate it to have a copy that moves",pin.p.name,library_root_named(r,&pin.p))}
+    if asset.package_root(&pin.p)!=id {return "",fmt.tprintf("It is listed from the package %s: move the asset that package gives, %s, which moves where the project lists the package, or duplicate it to have a copy that moves",pin.p.name,library_root_named(r,&pin.p))}
     if refusal:=asset_create_refusal(s);refusal!="" {return "",refusal}
     into,refused:=asset_folder_clean(r,folder)
     if refused!="" {return "",fmt.tprintf("folder: %s",refused)}

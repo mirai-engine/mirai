@@ -732,17 +732,22 @@ browser cards and asset fields):
   ([thumbnails](../../mirai-plugins/references/previews.md#animation-thumbnails)); without it
   they show their icon.
 - **Stored.** The preview of an asset (mesh, prefab or a type of a project plugin, not that of an
-  entity, a shape or the default of a type) stays in `.mirai/thumbs/<id>-<side>.thumb`, one per
-  asset and size, with premultiplied alpha, compressed, and the key it was drawn with.
-  - The key (`thumbnail_store_key`) combines `THUMBNAIL_RENDERER`, the size, the subject without
-    the revision and the `content_hash` of the asset and of the whole dependency closure the
-    subject names, as the registry has it. Changing the asset or a dependency
-    gives another key and the preview is redrawn.
+  entity, a shape or the default of a type) is derived data of the machine's store: an object
+  under `THUMBNAIL_NAMESPACE` named by its key, with premultiplied alpha, compressed. It is drawn
+  once per machine, whatever project shows the asset, and a peer of a session gives it to the
+  others ([import](#import), Libraries).
+  - The key of an asset of a package (`thumbnail_package_key`) combines `THUMBNAIL_RENDERER`, the
+    size, the programs, the asset's object and every object of the build it is in: any machine
+    with the manifest and the build computes it without the asset. That of the project's own files
+    (`thumbnail_store_key`) takes the subject without the revision and the `content_hash` of the
+    asset and of the whole dependency closure the subject names, as the registry has it. Changing
+    the asset or a dependency gives another key and the preview is redrawn.
   - When the signature changes, a cell that already has the image of the current key is not
-    redrawn; otherwise, the file is read (up to `THUMBNAIL_LOADS` per frame, apart from drawing) and
-    it is drawn only without a file or with another key.
-  - Those of an id that the registry notes in `Registry.removed` are deleted in the next frame
-    (`thumbnails_forget`).
+    redrawn; otherwise, the store is read (up to `THUMBNAIL_LOADS` per frame, apart from drawing)
+    and it is drawn only when the store has no preview of that key.
+  - The view of a scene the editor took is no derived data: it stays in
+    `.mirai/thumbs/<id>-<side>.thumb`, and those of an id that the registry notes in
+    `Registry.removed` are deleted in the next frame (`thumbnails_forget`).
   - Raise `THUMBNAIL_RENDERER` when the same subject would give another image (studio, reduction,
     geometry or how a provider draws its image). A program's Slang source does not enter the key:
     changing it does not redraw the stored previews.
@@ -908,10 +913,16 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   it ([libraries of the session](collaboration.md#libraries-of-the-session)). A root holds the
   packages the project does not pin, in every arrangement and the search; a peer's package this
   machine has shows once, under This machine, and one whose root goes with its peer. A package
-  shows the icon of its kind, its size and what is still to fetch, and its fetch and why it failed
-  on its card; two of one name in a root take the folder their source was in. Carried onto a
-  folder of the project, or Add to project of its menu (into the folder Create makes in), it is
-  added whole; nothing else adds from a library.
+  shows its thumbnail, else the icon of its kind, its size and what is still to fetch, and its
+  fetch and why it failed on its card; the thumbnail is the stored preview of what it shows
+  (`asset.build_shown`: its root when its build holds it, else its first mesh) as the store of
+  this machine keeps it, so a texture or a material, which the browser shows from the loaded
+  asset and keeps no preview of, shows its icon; a visible card of a peer's root that lacks it
+  asks that peer by its key, a few at a time (`collab_thumbs_update`, `share.fetch_start`): a
+  peer gives one it has and makes none, and nothing of the package is fetched for it; two of one
+  name in a root take the folder their source was in. Carried onto a folder of the project, or
+  Add to project of its menu (into the folder Create makes in), it is added whole; nothing else
+  adds from a library.
 
 ## Graphics
 

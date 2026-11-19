@@ -490,7 +490,7 @@ receive_apply :: proc(x:^Exchange,r:^Receive_Slot) -> bool {
     case .Data: w.here+=i64(size)
     case .Root:
         w.total=i64(r.parsed_total)
-        if !w.walk_job {
+        if !w.walk_job && !w.measure {
             if r.walk!=nil {
                 w.walking,w.walked,w.blocked,w.depth=true,false,false,0
                 walk_graft(x,wi,r.walk)

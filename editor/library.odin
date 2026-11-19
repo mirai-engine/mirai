@@ -48,6 +48,8 @@ Library_Package :: struct {
     pinned:bool,   // the project pins it
     folder:string, // where the project lists it, when pinned
     assets:[]Library_Asset,
+    root:store.Hash,      // the object its card shows (asset.build_shown) in the build of this machine; zero: none
+    objects:[]store.Hash, // of every asset of that build, sorted
 }
 
 @(private)
@@ -109,27 +111,11 @@ library_pin_of :: proc(s:^Session,r:^asset.Registry,file:^asset.Registry_File) -
     return
 }
 
-// The root of a package: the prefab of a model or the scene of a source a
-// plugin imports whole, else its one asset that is no part of another (the
-// texture of an image, the sound of a sound file). Zero when it has none.
-@(private)
-library_package_root :: proc(p:^asset.Package) -> base.Asset_Id {
-    for &a in p.assets {
-        if a.kind==asset.KIND_SCENE && a.owner=={} {return a.id}
-    }
-    root:base.Asset_Id
-    for &a in p.assets {
-        if a.owner!={} || a.part {continue}
-        if root!={} {return {}}
-        root=a.id
-    }
-    return root
-}
 
 // Where the root of a package is in the registry, or its id when it is not there.
 @(private)
 library_root_named :: proc(r:^asset.Registry,p:^asset.Package) -> string {
-    root:=library_package_root(p)
+    root:=asset.package_root(p)
     if file,found:=asset.registry_find(r,root);found {return file.path}
     buffer:[base.ASSET_ID_TEXT]u8
     return fmt.tprintf("%s (%s)",p.name,base.asset_id_format(root,buffer[:]))
@@ -179,6 +165,7 @@ library_list :: proc(s:^Session,root:string,allocator:=context.allocator) -> (li
             }
         }
         entry.assets=assets
+        entry.root,entry.objects,_=library_build_objects(s,ref.hash,&p,{},allocator)
         append(&out,entry)
     }
     slice.sort_by(out[:],proc(a,b:Library_Package) -> bool {return a.name<b.name || a.name==b.name && a.id.x<b.id.x})
@@ -247,6 +234,8 @@ Api_Package :: struct {
     source:string `mirai:"label=Where its source was when it was ingested on this machine"`,
     pinned:bool `mirai:"label=The project pins it"`,
     folder:string `mirai:"optional,label=Of the assets, where the project lists it, when pinned"`,
+    thumbnail:string `mirai:"label=The key of the small thumbnail of its root; empty: it has no build here"`,
+    thumbnail_here:bool `mirai:"label=The store of this machine keeps that thumbnail"`,
     assets:[]Api_Package_Asset,
 }
 Api_Package_Asset :: struct {
@@ -282,7 +271,9 @@ api_packages_list :: proc(s:^Session,call:^api.Call) {
             if info,known:=asset.kind_info(a.kind);known {kind=info.name}
             assets[at]={a.id,a.name,kind,a.bytes,a.built}
         }
-        append(&out,Api_Package{p.id,p.name,p.origin,p.pinned,p.folder,assets})
+        entry:=Api_Package{id=p.id,name=p.name,source=p.origin,pinned=p.pinned,folder=p.folder,assets=assets}
+        entry.thumbnail,entry.thumbnail_here=api_thumbnail_of(s,p.root,p.objects,call.allocator)
+        append(&out,entry)
     }
     result:=api.call_result(call,Api_Packages_List_Result)
     result.store=strings.clone(s.store.root,call.allocator)
@@ -299,4 +290,38 @@ api_packages_add :: proc(s:^Session,call:^api.Call) {
     importing :: proc(s:^Session,user:rawptr) -> bool {return s.importer.running!=nil}
     api_wait(s,f64(params.seconds),nil,importing,"adding")
     api_import_status_answer(s,call)
+}
+
+// Of the build this machine chose for a package: the object of its asset id
+// (none: the one it shows, asset.build_shown) and those of all its assets,
+// sorted, as thumbnail_package_key takes them.
+@(private)
+library_build_objects :: proc(s:^Session,manifest:store.Hash,p:^asset.Package,id:base.Asset_Id,allocator:=context.temp_allocator) -> (object:store.Hash,objects:[]store.Hash,built:bool) {
+    digits:[64]u8
+    hash,ref_error:=store.ref_get(&s.store,asset.REF_BUILDS,store.hex(asset.build_select(manifest,p),&digits))
+    if ref_error!=.None {return}
+    b,error:=asset.build_get(&s.store,hash,context.temp_allocator)
+    if error!=.None || b.package_id!=p.id {return}
+    objects=make([]store.Hash,len(b.outputs),allocator)
+    if id=={} {object=asset.build_shown(&b,p)}
+    for o,k in b.outputs {
+        objects[k]=o.object
+        if id!={} && o.id==id {object=o.object}
+    }
+    slice.sort_by(objects,proc(a,b:store.Hash) -> bool {
+        a,b:=a,b
+        return string(a[:])<string(b[:])
+    })
+    return object,objects,object!={}
+}
+
+// The key of the small thumbnail of a package whose root is object, and whether this store keeps it.
+@(private)
+api_thumbnail_of :: proc(s:^Session,object:store.Hash,objects:[]store.Hash,allocator:=context.allocator) -> (name:string,here:bool) {
+    if object=={} {return}
+    key:=thumbnail_package_key(.Small,thumbnail_programs(s),object,objects)
+    buffer:[16]u8
+    name=strings.clone(thumbnail_name(key,&buffer),allocator)
+    _,error:=store.ref_get(&s.store,THUMBNAIL_NAMESPACE,name)
+    return name,error==.None
 }
