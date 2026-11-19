@@ -23,6 +23,9 @@ Format :: distinct u32
 
 ZSTD :: Format(u32('Z')|u32('S')<<8|u32('T')<<16|u32('D')<<24)
 LZ4 :: Format(u32('L')|u32('Z')<<8|u32('4')<<16|u32('H')<<24)
+// The LZ of the private implementation, also the streams Unreal packages hold. This one does not
+// decode it: Unknown_Format.
+MLZ1 :: Format(u32('M')|u32('L')<<8|u32('Z')<<16|u32('1')<<24)
 
 Error :: enum u8 {
     None,
