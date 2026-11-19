@@ -2525,6 +2525,8 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 	if s.program_draws == 0 {
 		s.program_draws = rhi.buffer_create(d, {size = POINTS_PROGRAM_CAPACITY * size_of(Gpu_Program_Draw), usage = {.Storage, .Indirect}, name = "resolve draws of programs"})
 	}
+	// The slots of the pages grow for those that found none.
+	pages_region_need(r)
 	start, most := CULL_START, CULL_MOST
 	for list in Cull_List {
 		buffer := [Cull_List]^rhi.Buffer{.Chunks = &s.chunk_buffer, .Visible = &s.visible_buffer, .Candidates = &s.cluster_candidate_buffer, .Shadow_Chunks = &s.shadow_chunks, .Shadow_Entries = &s.shadow_entries, .Raster_Vertices = &s.raster_vertices, .Raster_Triangles = &s.raster_indices}[list]

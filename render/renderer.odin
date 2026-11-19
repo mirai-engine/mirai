@@ -71,7 +71,7 @@ Settings :: struct {
 	firefly_clamp:        f32,    // the brightest a ray of a traced reflection or of glass counts, in render units (Scene.light_scale)
 	texture_max_size:     u32,    // larger images are loaded at the first mip level that fits
 	texture_pool_megabytes: u32,  // GPU memory for textures; past it they load without their largest levels (0: no limit)
-	page_pool_bytes:      u64,    // the slots of the vertex pool for the pages of streamed meshes out of their root, reserved when the first one loads (pages.odin); 0: they keep their root alone
+	page_pool_bytes:      u64,    // the most the slots of the vertex pool for the pages of streamed meshes out of their root take as they grow to what the views ask for (pages.odin); 0: they keep their root alone
 	reflections:          Reflections,
 	reflection_roughness: f32,    // surfaces at or above this roughness are not traced
 	reflection_light_budget: u32, // shadow rays at a reflected hit, each to a light or a group of them (at most LIGHT_CUT_MAX)
