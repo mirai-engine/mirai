@@ -552,7 +552,7 @@ the_kept_reach_of_the_shadow_maps_is_what_the_maps_give :: proc(t: ^testing.T) {
 				// Of a light, what lies past its range blocks none of what it lights.
 				within := slot < SHADOW_SUN_LEVELS || linalg.length(linalg.max(linalg.max(low - w.m.origin, w.m.origin - high), Vec3{})) <= w.m.far
 				if casts && within && shadow_map_reaches(w.m, low, high) && !testing.expectf(t, holds(ranges, lists[Shadow_Round.Stays], first, count), "frame %d, slot %d: a batch that casts into the map is left out", frame, slot) {return}
-				moving := s.batch.records[record].shadow_moving && casts && within && shadow_change_reaches(w.m, shadow_batch_change(s, k), view.sway)
+				moving := s.batch.records[record].shadow_moving && casts && within && shadow_change_reaches(w.m, shadow_batch_change(s, k), view.sway, shadow_coarser(view))
 				if moving && !testing.expectf(t, holds(ranges, lists[Shadow_Round.Moves], first, count), "frame %d, slot %d: a batch that moves in the map is left out of what moves", frame, slot) {return}
 			}
 		}
