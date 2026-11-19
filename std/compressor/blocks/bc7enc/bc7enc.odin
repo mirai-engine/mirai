@@ -190,8 +190,7 @@ tables_init :: proc(t: ^Tables) {
 }
 
 // Encodes 16 RGBA8 texels into a 16-byte block and returns whether alpha was encoded, which is not
-// an error code. Upstream leaves the block unwritten for an alpha block when mode_mask excludes
-// modes 5, 6 and 7.
+// an error code.
 compress_block :: proc(t: ^Tables, block: [^]u8, pixels: [^]u8, p: ^Params) -> bool {
 	colors := cast([^]Color_Rgba)pixels
 
@@ -212,32 +211,27 @@ compress_block :: proc(t: ^Tables, block: [^]u8, pixels: [^]u8, p: ^Params) -> b
 		params.weights = p.weights
 	}
 
-	if p.force_alpha {
-		alpha_block(t, block, colors, p, &params)
+	alpha := p.force_alpha
+	for i in 0 ..< 16 {
+		if colors[i][3] < 255 {alpha = true}
+	}
+	mode1 := p.max_partitions > 0 && p.mode_mask & (1 << 1) != 0
+	modes := p^
+	// Mode 6 encodes any block: it stands in when the mask leaves the block no mode.
+	if modes.mode_mask & (1 << 5 | 1 << 6 | 1 << 7) == 0 && (alpha || !mode1) {modes.mode_mask |= 1 << 6}
+	// Without mode 6 or a mode 1 that scans partitions, an opaque block takes the alpha modes.
+	if alpha || (modes.mode_mask & (1 << 6) == 0 && !mode1) {
+		alpha_block(t, block, colors, &modes, &params)
 		return true
 	}
 
-	for i in 0 ..< 16 {
-		if colors[i][3] < 255 {
-			alpha_block(t, block, colors, p, &params)
-			return true
-		}
-	}
-
-	handle_opaque_block(t, block, colors, p, &params)
-	// Mode 6 stores alpha with a p-bit it shares with color: an opaque block may decode 254.
-	decoded: [16]Color_Rgba
-	if p.mode_mask & (1 << 6) != 0 && unpack_bc7(block, &decoded[0][0]) && !alpha_extremes_kept(&decoded, colors) {
-		opaque := p^
-		opaque.mode_mask &~= 1 << 6
-		if opaque.mode_mask != 0 {handle_opaque_block(t, block, colors, &opaque, &params)}
-	}
+	handle_opaque_block(t, block, colors, &modes, &params)
 	return false
 }
 
 // A block with alpha whose texels of alpha 0 and 255 decode exactly: when the best mode does not
 // keep them, the one of least error among the modes that do. Mode 5, whose alpha endpoints have 8
-// bits and are the extremes of the block, always does.
+// bits and keep the extremes of 0 and 255 of the block, always does.
 @(private = "file")
 alpha_block :: proc(t: ^Tables, block: [^]u8, colors: [^]Color_Rgba, p: ^Params, params: ^Cell_Params) {
 	handle_alpha_block(t, block, colors, p, params)
@@ -245,6 +239,7 @@ alpha_block :: proc(t: ^Tables, block: [^]u8, colors: [^]Color_Rgba, p: ^Params,
 	if !unpack_bc7(block, &decoded[0][0]) || alpha_extremes_kept(&decoded, colors) {return}
 	best: [BLOCK_SIZE]u8
 	best_err := max(u64)
+	params.pin_alpha_extremes = true
 	for mode in ([3]u32{6, 7, 5}) {
 		if p.mode_mask & (1 << mode) == 0 {continue}
 		single := p^
