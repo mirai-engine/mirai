@@ -101,17 +101,52 @@ scene_instances_clear :: proc(s: ^Scene_State) {
 	append(&s.tlas_refs, 0)
 	s.tlas_node_count, s.glass_node_count = 1, 0
 	// What the maps of the shadows held of them is stale.
-	if s.has_bounds {occluder_add(&s.shadow_stale, OCCLUDERS_MANY, s.bounds_min, s.bounds_max)}
+	if s.has_bounds {
+		s.shadow_stale_by[.Scene] += 1
+		occluder_add(&s.shadow_stale, OCCLUDERS_MANY, s.bounds_min, s.bounds_max)
+	}
 	clear(&s.shadow_changes)
 	clear(&s.shadow_tracks)
 	clear(&s.shadow_followed)
 	s.has_bounds = false
 }
 
-// Removes only this mesh's ranges and hides the instances that named it.
+// That a mesh shows a surface other meshes show at other details, within
+// `error` metres of its space of it: an instance that takes one of them in
+// place of another changes the maps of the shadows only where their texel is
+// finer than the two errors. surface 0: of no such set. False for a handle of no mesh
+// or an error that is not a distance.
+mesh_surface :: proc(r: ^Renderer, handle: Mesh_Handle, surface: u64, error: f32) -> bool {
+	s := &r.scene
+	if int(handle) >= len(s.meshes) || s.meshes[handle].vertex_count == 0 || !(error >= 0 && error < max(f32)) {return false}
+	s.meshes[handle].surface, s.meshes[handle].surface_error = surface, error
+	return true
+}
+
+// Removes only this mesh's ranges and hides the instances that named it. One
+// of a surface (mesh_surface) that instances still name goes when the next
+// frame begins: an instance given another detail of it before then changes
+// from one to the other.
 mesh_remove :: proc(r: ^Renderer, handle: Mesh_Handle) -> bool {
-	scene_changed(&r.scene)
+	s := &r.scene
+	if int(handle) >= len(s.meshes) || s.meshes[handle].vertex_count == 0 {return false}
+	if s.meshes[handle].surface != 0 && s.meshes[handle].first_instance >= 0 {
+		for leaving in s.meshes_leaving {if leaving == handle {return true}}
+		if _, error := append(&s.meshes_leaving, handle); error == nil {return true}
+	}
+	scene_changed(s)
 	return mesh_release(r, handle)
+}
+
+// The meshes removed while instances named them, when a frame begins.
+@(private)
+meshes_leave :: proc(r: ^Renderer) {
+	s := &r.scene
+	for handle in s.meshes_leaving {
+		scene_changed(s)
+		mesh_release(r, handle)
+	}
+	clear(&s.meshes_leaving)
 }
 
 // The same without changing the light of the scene: for a pose no instance shows.

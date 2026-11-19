@@ -186,6 +186,7 @@ Occluder_Change :: struct {
 	low, high: Vec3,
 	instance:  u32, // OCCLUDERS_MANY: several, or one that is gone
 	fine:      f32, // of the maps of the shadows, those whose texel there is narrower than this alone (a sway); 0: every map
+	error:     f32, // and of them, those whose texel there is narrower than this alone: a surface shown at another detail (mesh_surface); 0: every map
 }
 Occluder_Changes :: struct {
 	boxes:       [OCCLUDER_CHANGES_MAX]Occluder_Change,
@@ -238,25 +239,25 @@ shadow_changed :: proc(s: ^Scene_State, instance: u32, low, high: Vec3) {
 		occluder_add(&s.shadow_stale, OCCLUDERS_MANY, low, high)
 		return
 	}
-	append(&s.shadow_changes, Occluder_Change{low, high, instance, 0})
+	append(&s.shadow_changes, Occluder_Change{low = low, high = high, instance = instance})
 	track.change = i32(len(s.shadow_changes))
 }
 
 // The box of an instance (OCCLUDERS_MANY: of several) joins a list of changes.
-// fine: as Occluder_Change.fine.
+// fine, error: as Occluder_Change.
 @(private)
-occluder_add :: proc "contextless" (o: ^Occluder_Changes, instance: u32, low, high: Vec3, fine := f32(0)) {
+occluder_add :: proc "contextless" (o: ^Occluder_Changes, instance: u32, low, high: Vec3, fine := f32(0), error := f32(0)) {
 	if !(low.x <= high.x && low.y <= high.y && low.z <= high.z) {return}
 	joined :: proc "contextless" (a, b: f32) -> f32 {return 0 if a == 0 || b == 0 else max(a, b)}
 	if instance != OCCLUDERS_MANY {
 		for &box in o.boxes[:o.count] {
 			if box.instance != instance {continue}
-			box.low, box.high, box.fine = linalg.min(box.low, low), linalg.max(box.high, high), joined(box.fine, fine)
+			box.low, box.high, box.fine, box.error = linalg.min(box.low, low), linalg.max(box.high, high), joined(box.fine, fine), joined(box.error, error)
 			return
 		}
 	}
 	if o.count < OCCLUDER_CHANGES_MAX {
-		o.boxes[o.count] = {low, high, instance, fine}
+		o.boxes[o.count] = {low, high, instance, fine, error}
 		o.count += 1
 		return
 	}
@@ -267,16 +268,32 @@ occluder_add :: proc "contextless" (o: ^Occluder_Changes, instance: u32, low, hi
 		if grown < growth {best, growth = i, grown}
 	}
 	box := &o.boxes[best]
-	box.low, box.high, box.instance, box.fine = linalg.min(box.low, low), linalg.max(box.high, high), OCCLUDERS_MANY, joined(box.fine, fine)
+	box.low, box.high, box.instance, box.fine, box.error = linalg.min(box.low, low), linalg.max(box.high, high), OCCLUDERS_MANY, joined(box.fine, fine), joined(box.error, error)
 }
 
 // What an instance that came or went covers in the frame it is not there.
 @(private)
 INSTANCE_ABSENT :: Gpu_Instance{meta = {0, 0, 0, INSTANCE_FLAG_HIDDEN}}
 
-// An instance that changed what it covers: the box of the frame before, then the one now.
+// An instance that changed what it covers: the box of the frame before, then
+// the one now. One that shows its surface at another detail in place (both
+// meshes of one surface, mesh_surface) changes the maps only where their
+// texel is finer than both errors.
 @(private)
 occluder_moved :: proc(s: ^Scene_State, index: u32, before, after: Gpu_Instance) {
+	was, now := int(before.meta.x & INSTANCE_MESH_MASK), int(after.meta.x & INSTANCE_MESH_MASK)
+	// What the maps test of its materials stays: none of its slots is masked, or they are the same.
+	same := before.world == after.world && before.meta.y == after.meta.y && before.meta.w == after.meta.w && (before.slot_materials == after.slot_materials || before.tested == 0 && after.tested == 0)
+	if same && was != now && was < len(s.meshes) && now < len(s.meshes) && s.meshes[was].surface != 0 && s.meshes[was].surface == s.meshes[now].surface && instance_casts(after) {
+		occluder_add(&s.occluders, index, before.bounds_min.xyz, before.bounds_max.xyz)
+		occluder_add(&s.occluders, index, after.bounds_min.xyz, after.bounds_max.xyz)
+		s.shadow_stale_by[.Levels] += 1
+		w := after.world
+		scale := max(linalg.length(Vec3{w[0].x, w[1].x, w[2].x}), linalg.length(Vec3{w[0].y, w[1].y, w[2].y}), linalg.length(Vec3{w[0].z, w[1].z, w[2].z}))
+		error := (s.meshes[was].surface_error + s.meshes[now].surface_error) * scale
+		occluder_add(&s.shadow_stale, OCCLUDERS_MANY, linalg.min(before.bounds_min.xyz, after.bounds_min.xyz), linalg.max(before.bounds_max.xyz, after.bounds_max.xyz), error = max(error, f32(1e-6)))
+		return
+	}
 	if instance_casts(before) {occluder_changed(s, index, before.bounds_min.xyz, before.bounds_max.xyz)}
 	if instance_casts(after) {occluder_changed(s, index, after.bounds_min.xyz, after.bounds_max.xyz)}
 }
@@ -522,7 +539,11 @@ Scene_State :: struct {
 	shadow_movers_version: u64, // counts the changes of the batches drawn that move in the maps (Batch_Record.shadow_moving)
 	shadow_sway_tables:   u64, // the tables of the batches those were last found in (Batch_State.tables)
 	shadow_views:         [dynamic]Shadow_View_Reach, // what the culls of the slots of each view go over, kept (Shadow_Raster.reach)
+	meshes_leaving:       [dynamic]Mesh_Handle,     // removed while instances named them, until the next frame begins (mesh_remove)
+	shadow_cull_boxes:    [dynamic]mm.Aabb,         // of the plan of a view: where instances of batches came or went past their cull distance (shadow_cull_changes)
+	shadow_cull_cells:    map[[2]i32]u32,           // and the box of each cell of SHADOW_CULL_STEP they lie in
 	shadow_stale:         Occluder_Changes,
+	shadow_stale_by:      [Shadow_Stale_Source]u32, // the boxes of what stays changed since the last frame began, by what raised them
 	// The rows of masked materials that changed what their casters cover since
 	// the maps last drew; past their room every caster is stale (shadow_stale.covers).
 	shadow_rows:          [OCCLUDER_CHANGES_MAX]u32,
@@ -586,6 +607,9 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.shadow_band_keys = make([dynamic]f32, a)
 	s.shadow_sun_boxes = make([dynamic][2]Vec3, a)
 	s.shadow_views = make([dynamic]Shadow_View_Reach, a)
+	s.shadow_cull_boxes = make([dynamic]mm.Aabb, a)
+	s.meshes_leaving = make([dynamic]Mesh_Handle, a)
+	s.shadow_cull_cells = make(map[[2]i32]u32, allocator = a)
 	s.overlays = make([dynamic]Instance_Overlays, a)
 	s.reflective = make([dynamic]Reflective_Instance, a)
 	s.materials = make([dynamic]Gpu_Material_Row, a)
@@ -1116,6 +1140,7 @@ meshes_clear :: proc(r: ^Renderer) {
 	clear(&s.vertices)
 	clear(&s.indices)
 	clear(&s.meshes)
+	clear(&s.meshes_leaving)
 	clear(&s.skinned)
 	clear(&s.displaced)
 	clear(&s.blas_nodes)
@@ -2888,6 +2913,9 @@ scene_destroy :: proc(r: ^Renderer) {
 		delete(view.mover_slots)
 	}
 	delete(s.shadow_views)
+	delete(s.shadow_cull_boxes)
+	delete(s.meshes_leaving)
+	delete(s.shadow_cull_cells)
 	delete(s.overlays)
 	delete(s.reflective)
 	delete(s.materials)

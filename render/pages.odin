@@ -421,19 +421,36 @@ mesh_stream_remove :: proc(r: ^Renderer, handle: u32, stream: ^Mesh_Stream) {
 
 // Writes the base of a page in the page table of its mesh.
 @(private)
-page_entry_write :: proc(s: ^Scene_State, m: Mesh_Record, page, base: u32) {
+page_entry_write :: proc(r: ^Renderer, m: Mesh_Record, page, base: u32) {
+	s := &r.scene
 	word := m.page_word + page * PAGE_ENTRY_WORDS
 	s.indices[word] = base
 	range_add(&s.pool_dirty[.Index], {word, 1})
 	s.geometry_dirty = true
-	// The clusters the maps of the shadows take of its instances change with the page.
-	low, high := Vec3(max(f32)), Vec3(-max(f32))
+	// The clusters the maps of the shadows take of its instances change with
+	// the page where they lie, and only in the maps whose texel there is finer
+	// than what its clusters replace by the cut (lod_error_pixels of a texel).
+	at, to, error := Vec3(max(f32)), Vec3(-max(f32)), f32(0)
+	if m.stream != nil && int(page) < len(m.stream.pages) {
+		held := m.stream.pages[page]
+		clusters := record_pooled(s, m).clusters
+		if int(held.first_cluster) + int(held.cluster_count) > len(clusters) {held.cluster_count = 0}
+		for c in clusters[held.first_cluster:][:held.cluster_count] {
+			a, z := asset.cluster_box(m.position_step, c)
+			at, to, error = linalg.min(at, a), linalg.max(to, z), max(error, c.parent_error)
+		}
+	}
+	if !(at.x <= to.x) || !(error < asset.CLUSTER_ROOT) {at, to, error = m.bounds_min, m.bounds_max, 0}
+	pixels := max(r.settings.lod_error_pixels, 1e-3)
 	for index := m.first_instance; index >= 0; index = s.instance_next[index] {
 		inst := s.instances[index]
 		if !instance_casts(inst) {continue}
-		low, high = linalg.min(low, inst.bounds_min.xyz), linalg.max(high, inst.bounds_max.xyz)
+		w := inst.world
+		scale := max(linalg.length(Vec3{w[0].x, w[1].x, w[2].x}), linalg.length(Vec3{w[0].y, w[1].y, w[2].y}), linalg.length(Vec3{w[0].z, w[1].z, w[2].z}))
+		low, high := rows_bounds(w, at, to)
+		s.shadow_stale_by[.Mesh_Pages] += 1
+		occluder_add(&s.shadow_stale, OCCLUDERS_MANY, low, high, error = error * scale / pixels if error > 0 else 0)
 	}
-	occluder_add(&s.shadow_stale, OCCLUDERS_MANY, low, high)
 }
 
 // Whether a ray cut an instance traced within RAY_CUT_KEEP frames takes clusters of a page.
@@ -456,7 +473,7 @@ page_release :: proc(r: ^Renderer, slot: u32) {
 	m := s.meshes[held.mesh]
 	stream := m.stream
 	stream.slots[held.page] = PAGE_SLOT_NONE
-	page_entry_write(s, m, held.page, GPU_NONE)
+	page_entry_write(r, m, held.page, GPU_NONE)
 	for parent in page_parents(stream, held.page) {stream.children[parent] -= 1}
 	for k in 0 ..< asset.MESH_RAY_LEVELS {
 		if stream.cuts[held.page] & (1 << u8(k)) == 0 {continue}
@@ -581,7 +598,7 @@ pages_load :: proc(r: ^Renderer, requests: []Page_Request) -> int {
 			continue
 		}
 		base := st.region + load.slot * PAGE_SLOT_WORDS
-		page_entry_write(s, m, load.page, base)
+		page_entry_write(r, m, load.page, base)
 		range_add(&s.pool_dirty[.Vertex], {base, load.stream.pages[load.page].words})
 		loaded += 1
 	}

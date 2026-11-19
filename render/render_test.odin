@@ -524,7 +524,7 @@ render_a_swaying_batch_shades_where_it_is :: proc(t: ^testing.T) {
 // A batch casts into the maps as far as the view draws it: past its cull
 // distance from the eye its shadow is gone too; the eye that comes near
 // brings it back, and the one that goes away takes it from the pages the
-// maps keep, each in the frame it moves.
+// maps keep, each in the frame it moves; nothing else is drawn again.
 @(test)
 render_a_batch_casts_no_shadow_past_its_cull_distance :: proc(t: ^testing.T) {
 	f: Cube_Fixture
@@ -561,6 +561,94 @@ render_a_batch_casts_no_shadow_past_its_cull_distance :: proc(t: ^testing.T) {
 		under, beside = floor_at(t, &f, far)
 		testing.expectf(t, beside > 40 && abs(under - beside) < 12, "round %d, the eye far again: no shadow stays of the slab, %f under it, %f beside it", k, under, beside)
 	}
+	// An eye that goes to another cell of the cull draws no page again where no
+	// instance came or went, though the box of a batch reaches past its cull
+	// distance from both: one slab near, one far past it.
+	batch_remove(r, batch)
+	pair := []Batch_Instance{batch_instance({8, 1.5, -4}, 1, {2, 0.2, 2}), batch_instance({8, 1.5, -100}, 1, {2, 0.2, 2})}
+	batch, problem = batch_set(r, 0, 0, {mesh = f.cube, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}, fade_distance = 25, cull_distance = 30}, pair)
+	if !testing.expectf(t, problem == "", "%s", problem) {return}
+	from := Camera{position = {4, 6, 4}, forward = {0, -0.6, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	to := from
+	to.position.x = 12
+	for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = from}), r.error)}
+	testing.expect(t, shadow_cull_cell(from.position, r.origin) != shadow_cull_cell(to.position, r.origin))
+	testing.expect(t, renderer_frame(r, {camera = to}), r.error)
+	rhi.device_wait_idle(f.device)
+	counts: [abi.SHADOW_COUNT_STALE + 1]u32
+	testing.expect(t, rhi.buffer_read_slice(r.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_WORDS_COUNTS) * 4, counts[:]))
+	testing.expectf(t, counts[abi.SHADOW_COUNT_STALE] == 0, "the eye left its cell and %d pages were drawn again where nothing came or went", counts[abi.SHADOW_COUNT_STALE])
+	// An eye that goes to and fro across the border of its cell, within the
+	// margin, keeps the cell: nothing comes or goes.
+	held := r.main.targets.shadow_raster.cull
+	for k in 0 ..< 8 {
+		to.position.x = 16 + (SHADOW_CULL_MARGIN * 0.5 if k % 2 == 0 else -SHADOW_CULL_MARGIN * 0.5)
+		testing.expect(t, renderer_frame(r, {camera = to}), r.error)
+		testing.expectf(t, r.main.targets.shadow_raster.cull == held, "frame %d: the eye %f m across the border took another cell", k, to.position.x - 16)
+	}
+	expect_clean(t, f.device)
+}
+
+// An instance that shows its surface at another detail (mesh_surface) draws
+// again only the pages whose texel is finer than the errors of both: none
+// under the finest texel, fewer than a mesh that changes for good between,
+// as many over the coarsest.
+@(test)
+render_a_surface_at_another_detail_draws_again_only_pages_finer_than_its_error :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	vertices, indices := cube_mesh()
+	other, added := mesh_add(r, vertices[:], indices[:])
+	if !testing.expect(t, added) {return}
+	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {200, 0.2, 200}), tint = {0.8, 0.8, 0.8}}
+	// A bar from beside the eye into the distance, which pages of fine and coarse levels hold.
+	bar := Instance_Desc{object_id = 2, mesh = f.cube, transform = trs({1.5, 0.6, -18}, {0.3, 0.5, 40}), tint = {0.5, 0.5, 0.5}}
+	sun := Sun_Desc{direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	testing.expect(t, scene_given(r, {floor, bar}, nil, sun, {sky = {0, 0, 0}}), r.error)
+	camera := Camera{position = {0, 2, 4}, forward = {0, -0.3, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 200, exposure = UNIT_EXPOSURE}
+	// The pages drawn again for what stays when the bar takes the other mesh.
+	swap :: proc(t: ^testing.T, f: ^Cube_Fixture, bar: ^Instance_Desc, other: Mesh_Handle, camera: Camera) -> u32 {
+		r := f.renderer
+		for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+		bar.mesh = other if bar.mesh == f.cube else f.cube
+		testing.expect(t, scene_update(r, 1, {bar^}), r.error)
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		rhi.device_wait_idle(f.device)
+		counts: [abi.SHADOW_COUNT_STALE + 1]u32
+		testing.expect(t, rhi.buffer_read_slice(r.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_WORDS_COUNTS) * 4, counts[:]))
+		return counts[abi.SHADOW_COUNT_STALE]
+	}
+	whole := swap(t, &f, &bar, other, camera)
+	testing.expectf(t, whole > 0, "a mesh that changes for good draws again the pages under it: %d", whole)
+	Case :: struct {error: f32, least, most: u32}
+	// Half the texel of the finest level, one between those the points read, past the coarsest.
+	cases := [?]Case{{0.5 * SHADOW_SUN_FIRST / f32(SHADOW_MAP_SIDE), 0, 0}, {0.05, 1, whole - 1}, {1e4, whole, whole}}
+	for c in cases {
+		// Half each, in the space of the mesh the bar scales by 40 at most.
+		testing.expect(t, mesh_surface(r, f.cube, 77, c.error / 80) && mesh_surface(r, other, 77, c.error / 80))
+		drawn := swap(t, &f, &bar, other, camera)
+		testing.expectf(t, drawn >= c.least && drawn <= c.most, "an error of %f m drew %d pages again, against %d for a change for good", c.error, drawn, whole)
+	}
+	// The mesh it showed removed before it takes the next, as a terrain lets
+	// go of a level: still the same surface.
+	if bar.mesh == f.cube {swap(t, &f, &bar, other, camera)}
+	next, made := mesh_add(r, vertices[:], indices[:])
+	if !testing.expect(t, made) {return}
+	testing.expect(t, mesh_surface(r, next, 77, cases[0].error / 80) && mesh_surface(r, bar.mesh, 77, cases[0].error / 80))
+	for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	testing.expect(t, mesh_remove(r, bar.mesh))
+	bar.mesh = next
+	testing.expect(t, scene_update(r, 1, {bar}), r.error)
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	rhi.device_wait_idle(f.device)
+	counts: [abi.SHADOW_COUNT_STALE + 1]u32
+	testing.expect(t, rhi.buffer_read_slice(r.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_WORDS_COUNTS) * 4, counts[:]))
+	testing.expectf(t, counts[abi.SHADOW_COUNT_STALE] == 0, "a mesh removed for the next level drew %d pages again", counts[abi.SHADOW_COUNT_STALE])
 	expect_clean(t, f.device)
 }
 

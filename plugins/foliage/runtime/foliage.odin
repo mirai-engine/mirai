@@ -166,6 +166,7 @@ Foliage_Resident :: struct {
     sways:core.Entity_Map(Resident_Sway), // the mesh entities that sway (Foliage_Sway), by entity
     sway_seen:Sway_Seen,
     sway_epoch,sway_structure,sway_zones:u64, // the batches_epoch, assets structure and zones_revision they were drawn at
+    sway_outlines:Sway_Outlines,
 }
 Foliage_Resident_Stats :: struct {builds,cells,batches,instances:u64}
 Resident_Owner :: struct {
