@@ -899,12 +899,19 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   project goes to the trash while one outside stays. None of these is undone by undo; version
   control brings `packages.mirai` back. A copy made outside the editor receives an id of its own
   on scanning ([repeated ids](../../mirai-assets/references/formats.md#registry)).
-- **Add from library.** `packages.list` lists the packages of the store with their assets (name,
-  kind, bytes, whether this machine has them built) and whether the project pins each;
-  `packages.add` pins one, or some of its assets, in a folder, as an import that runs in the
-  thread of imports and answers as `asset.import` (`sources.project_add`, `library.odin`). Add
-  from library of the menu of the content browser offers the packages and adds one whole to the
-  folder of the browser; one the project pins is shown checked and off.
+- **Libraries.** `packages.list` lists the packages of the store with their assets (name, kind,
+  bytes, whether this machine has them built) and whether the project pins each; `packages.add`
+  pins one, or some of its assets, in a folder, as an import that runs in the thread of imports
+  and answers as `asset.import` (`sources.project_add`, `library.odin`). In the browser
+  (`content_library.odin`) the libraries are roots beside the project's content, as virtual
+  folders are: This machine and, in a session, one per other editor by the name the session gives
+  it ([libraries of the session](collaboration.md#libraries-of-the-session)). A root holds the
+  packages the project does not pin, in every arrangement and the search; a peer's package this
+  machine has shows once, under This machine, and one whose root goes with its peer. A package
+  shows the icon of its kind, its size and what is still to fetch, and its fetch and why it failed
+  on its card; two of one name in a root take the folder their source was in. Carried onto a
+  folder of the project, or Add to project of its menu (into the folder Create makes in), it is
+  added whole; nothing else adds from a library.
 
 ## Graphics
 
