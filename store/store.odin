@@ -1,5 +1,6 @@
 package store
 
+import "base:intrinsics"
 import "base:runtime"
 import "core:crypto"
 import "core:os"
@@ -73,6 +74,7 @@ State :: struct {
     pack_index:map[Pack_Id]int,
     generation:Generation,
     table:Table,
+    retired:Table, // chunks of the packs of retired/ this value read, only to read what a commit still names
     refs:map[string]Ref_Value, // the newest ref frame of each name in the packs the generation does not hold
     tombs:map[Tomb_Key]struct{},
     touched:map[Hash]i64, // newest Touch of a chunk in the packs the generation does not hold
@@ -250,6 +252,26 @@ file_write :: proc(s:^Store,root,path:string,chunks:[][]u8,modified:Maybe(time.T
     return error
 }
 
+// file_write that never replaces path: taken is true when path was there.
+@(private)
+file_publish :: proc(s:^Store,path:string,chunks:[][]u8) -> (taken:bool,error:Error) {
+    temp_buffer:[PATH_BYTES]u8
+    temp,file:=temp_create(s,s.root,&temp_buffer) or_return
+    at:i64
+    for chunk in chunks {
+        if error=io_write_at(s,file,chunk,at);error!=.None {break}
+        at+=i64(len(chunk))
+    }
+    if error==.None {error=io_sync(s,file)}
+    os.close(file)
+    if error==.None {
+        if h:=hooks_of(s);h!=nil {h.renames+=1}
+        taken,error=rename_new(temp,path)
+    }
+    if error!=.None || taken {file_remove(temp)}
+    return
+}
+
 // A new file of the root's tmp folder, open to write; its path is in buffer.
 @(private)
 temp_create :: proc(s:^Store,root:string,buffer:^[PATH_BYTES]u8) -> (path:string,file:^os.File,error:Error) {
@@ -297,7 +319,7 @@ temp_name :: proc(root,prefix:string,buffer:^[PATH_BYTES]u8) -> (string,Error) {
 // Creates path, which must not exist; Invalid_Argument when it does.
 @(private)
 io_create :: proc(s:^Store,path:string) -> (^os.File,Error) {
-    if h:=hooks_of(s);h!=nil {h.creates+=1}
+    if h:=hooks_of(s);h!=nil {intrinsics.atomic_add(&h.creates,1)}
     file,error:=file_open(path,{.Read,.Write,.Create,.Excl})
     if error==.Exist {return nil,.Invalid_Argument}
     if error!=nil {return nil,os_error(error)}
@@ -306,7 +328,7 @@ io_create :: proc(s:^Store,path:string) -> (^os.File,Error) {
 
 @(private)
 io_open :: proc(s:^Store,path:string,flags:=os.File_Flags{.Read}) -> (^os.File,Error) {
-    if h:=hooks_of(s);h!=nil {h.opens+=1}
+    if h:=hooks_of(s);h!=nil {intrinsics.atomic_add(&h.opens,1)}
     file,error:=file_open(path,flags)
     if error!=nil {return nil,os_error(error)}
     return file,.None
@@ -315,12 +337,16 @@ io_open :: proc(s:^Store,path:string,flags:=os.File_Flags{.Read}) -> (^os.File,E
 @(private)
 io_write_at :: proc(s:^Store,file:^os.File,bytes:[]u8,offset:i64) -> Error {
     if h:=hooks_of(s);h!=nil {
-        h.writes+=1
+        intrinsics.atomic_add(&h.writes,1)
         if h.limited {
+            // The end this write reaches is taken from the volume at once, whatever other threads take.
             size,_:=os.file_size(file)
             grows:=max(offset+i64(len(bytes))-size,0)
-            if grows>h.space {return .No_Space}
-            h.space-=grows
+            for {
+                space:=intrinsics.atomic_load(&h.space)
+                if grows>space {return .No_Space}
+                if _,ok:=intrinsics.atomic_compare_exchange_strong(&h.space,space,space-grows);ok {break}
+            }
         }
     }
     n,error:=os.write_at(file,bytes,offset)
@@ -332,7 +358,7 @@ io_write_at :: proc(s:^Store,file:^os.File,bytes:[]u8,offset:i64) -> Error {
 @(private)
 io_sync :: proc(s:^Store,file:^os.File) -> Error {
     if h:=hooks_of(s);h!=nil {
-        h.flushes+=1
+        intrinsics.atomic_add(&h.flushes,1)
         if h.flushing!=nil {h.flushing(h.data)}
     }
     return os_error(os.sync(file))
@@ -340,7 +366,7 @@ io_sync :: proc(s:^Store,file:^os.File) -> Error {
 
 @(private)
 io_rename :: proc(s:^Store,from,to:string) -> Error {
-    if h:=hooks_of(s);h!=nil {h.renames+=1}
+    if h:=hooks_of(s);h!=nil {intrinsics.atomic_add(&h.renames,1)}
     return os_error(rename_replace(from,to))
 }
 
@@ -355,13 +381,13 @@ io_remove :: proc(s:^Store,path:string) -> Error {
     }
     removed:=file_remove(path)
     if removed!=nil {return os_error(removed)}
-    if h!=nil && h.limited {h.space+=size}
+    if h!=nil && h.limited {intrinsics.atomic_add(&h.space,size)}
     return .None
 }
 
 @(private)
 io_list :: proc(s:^Store,path:string) -> ([]os.File_Info,Error) {
-    if h:=hooks_of(s);h!=nil {h.listings+=1}
+    if h:=hooks_of(s);h!=nil {intrinsics.atomic_add(&h.listings,1)}
     entries,error:=os.read_all_directory_by_path(path,s.state.allocator)
     if error!=nil {return nil,os_error(error)}
     return entries,.None

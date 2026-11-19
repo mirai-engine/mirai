@@ -489,14 +489,14 @@ damaged_walk :: proc(s:^Store,st:^Stage,address:Hash,level,depth:int,visited:^ma
         tomb_stage(s,st,pack,location,address)
         return
     }
-    if level==0 {return}
+    if level==DATA {return}
     n,parse_error:=node_parse(bytes)
-    if parse_error!=.None || (level>0 && n.level!=level) {return}
+    if parse_error!=.None || (level>=0 && n.level!=level) {return}
     children,f:=make([]Entry,len(n.entries),context.temp_allocator)
     if f!=nil {return}
     defer delete(children,context.temp_allocator)
     copy(children,n.entries)
-    for c in children {damaged_walk(s,st,c.address,max(n.level-1,0) if n.level>0 else 0,depth+1,visited)}
+    for c in children {damaged_walk(s,st,c.address,n.level-1 if n.level>0 else DATA,depth+1,visited)}
 }
 
 // Removes the blob, complete or partial: its alias goes, and its chunks stay

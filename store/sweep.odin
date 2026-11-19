@@ -32,9 +32,19 @@ Claim_Kind :: enum u8 {Lease,Partial}
 @(private)
 CLAIM_PREFIXES :: [Claim_Kind]string{.Lease="l-",.Partial="p-"}
 
-// The points of a sweep where a test runs what other writers do meanwhile.
+// The points of a sweep, a commit and a listing where a test runs what other
+// values do meanwhile.
 @(private)
-Sweep_Step :: enum u8 {Marked,Published,Rechecked}
+Sweep_Step :: enum u8 {
+    Collected, // a sweep read the leases
+    Marked,
+    Published,
+    Rechecked,
+    Claimed,   // a sweep found the claim of a holder that ended, before taking it
+    Verified,  // a commit looked its batch up against the newest generation
+    Committed, // a commit wrote its commit frame
+    Names,     // a listing of namespaces collected them
+}
 
 Sweep_Result :: struct {
     bytes:i64,    // of the packs and partial blobs removed
@@ -79,6 +89,9 @@ Sweep :: struct {
     compacted:[]bool,       // per pack of the store
     moved:map[Hash]Moved,   // every chunk of the compacted packs, to copy back from
     copied:map[Hash]struct{},
+    revive:map[Hash]Moved,  // live chunks only a retired pack holds, copied back
+    leases:[dynamic]Lease_Info, // as the sweep read them
+    generation:u64,         // the one it publishes
     out:Sweep_Out,
     result:Sweep_Result,
 }
@@ -119,10 +132,14 @@ sweep :: proc(s:^Store,live:[]Hash,now:Maybe(time.Time)=nil) -> (result:Sweep_Re
     w.live=make(Live_Set,s.state.allocator)
     w.moved=make(map[Hash]Moved,s.state.allocator)
     w.copied=make(map[Hash]struct{},s.state.allocator)
+    w.revive=make(map[Hash]Moved,s.state.allocator)
+    w.leases=make([dynamic]Lease_Info,0,0,s.state.allocator)
     defer {
         delete(w.live)
         delete(w.moved)
         delete(w.copied)
+        delete(w.revive)
+        delete(w.leases)
         delete(w.marks_generation,s.state.allocator)
         delete(w.marks_table,s.state.allocator)
         delete(w.compacted,s.state.allocator)
@@ -132,26 +149,30 @@ sweep :: proc(s:^Store,live:[]Hash,now:Maybe(time.Time)=nil) -> (result:Sweep_Re
         clear(&state.recent)
     }
     live_add(&w.live,live) or_return
-    leases_collect(s,&w.live,at) or_return
-    // What an earlier sweep retired goes first, which frees space on a full volume.
-    retired_before:=retired_list(s) or_return
-    retired_remove(&w,retired_before)
-    os.file_info_slice_delete(retired_before,s.state.allocator)
+    leases_collect(s,&w.live,at,&w.leases) or_return
+    sweep_step(s,.Collected)
     refresh_locked(s) or_return
+    retired_load_locked(s) or_return
     clear(&state.recent)
     state.recording=true
-    dead_writers_seal(&w) or_return
+    dead_writers_find(&w) or_return
     sweep_mark(&w) or_return
     sweep_step(s,.Marked)
+    // What earlier sweeps retired and nothing waits on goes before anything is written,
+    // which frees space on a full volume.
+    retired_prune(&w,true) or_return
     sweep_compact(&w) or_return
     generation_publish(&w) or_return
+    // Another sweep published this generation: it owns it, and this one retires nothing.
+    if w.generation==0 {return w.result,.None}
     // Retired only once the generation that no longer names them is published.
     for compacted,i in w.compacted {
         if !compacted {continue}
         p:=&state.packs[i]
         from_buffer,to_buffer:[PATH_BYTES]u8
+        name:[RETIRED_NAME]u8
         from:=pack_path(s,"packs",p.id,&from_buffer) or_return
-        to:=pack_path(s,"retired",p.id,&to_buffer) or_return
+        to:=join(&to_buffer,s.root,"retired",retired_name(w.generation,p.id,&name)) or_return
         if io_rename(s,from,to)!=.None {continue}
         w.result.packs+=1
         p.gone=true
@@ -160,7 +181,7 @@ sweep :: proc(s:^Store,live:[]Hash,now:Maybe(time.Time)=nil) -> (result:Sweep_Re
     sweep_step(s,.Published)
     sweep_recheck(&w) or_return
     sweep_step(s,.Rechecked)
-    retired_delete(&w) or_return
+    retired_prune(&w,false) or_return
     generations_prune(s) or_return
     bridge_sweep(s,&w.live,at,&w.result) or_return
     tmp_prune(s,at) or_return
@@ -185,85 +206,28 @@ older_than :: proc(at,now:time.Time,age:time.Duration) -> bool {
     return at._nsec<now._nsec && u64(now._nsec)-u64(at._nsec)>u64(age)
 }
 
-// Seals at its last commit each pack still being written whose writer's lease
-// is gone; one that committed nothing is removed.
+// A pack still being written whose writer's lease is gone is dead: a sweep
+// folds what it committed and retires it, and never writes into it, since
+// its writer may still run (a lease of another machine not refreshed in
+// time): that writer finds its lease gone at its next commit and writes its
+// batch again elsewhere. The pack is read again first, for commits made up
+// to the lease's removal.
 @(private)
-dead_writers_seal :: proc(w:^Sweep) -> Error {
+dead_writers_find :: proc(w:^Sweep) -> Error {
     s:=w.s
     state:=s.state
     for i:=0;i<len(state.packs);i+=1 {
         p:=&state.packs[i]
-        if p.indexed || p.sealed || p.own || p.gone || p.damaged || p.file==nil {continue}
+        if p.indexed || p.sealed || p.own || p.gone || p.damaged || p.retired>0 || p.file==nil {continue}
         name:[2+32]u8
         copy(name[:],"w-")
         text:[64]u8
         copy(name[2:],writer_text(p.id.writer,&text))
         lease_buffer:[PATH_BYTES]u8
         if os.exists(join(&lease_buffer,s.root,"leases",string(name[:])) or_return) {continue}
-        pack_seal_dead(w,i) or_return
+        pack_load_locked(s,i) or_return
+        state.packs[i].dead=true
     }
-    return .None
-}
-
-@(private)
-pack_seal_dead :: proc(w:^Sweep,index:int) -> Error {
-    s:=w.s
-    state:=s.state
-    p:=&state.packs[index]
-    buffer:[PATH_BYTES]u8
-    path:=pack_path(s,"packs",p.id,&buffer) or_return
-    file,error:=io_open(s,path,{.Read,.Write})
-    if error==.Missing {
-        p.gone=true
-        return .None
-    }
-    if error!=.None {return error}
-    size,size_error:=os.file_size(file)
-    if size_error!=nil {
-        os.close(file)
-        return os_error(size_error)
-    }
-    frames:=make([dynamic]Own_Frame,0,0,context.temp_allocator)
-    defer delete(frames)
-    scan:Scan
-    scan.frames=make([dynamic]Scanned,0,0,context.temp_allocator)
-    scan.payloads=make([dynamic]u8,0,0,context.temp_allocator)
-    defer {
-        delete(scan.frames)
-        delete(scan.payloads)
-    }
-    scanned:=pack_scan(file,size_of(Pack_Head),size,&scan,proc(data:rawptr,scan:^Scan,time:i64) -> Error {
-        frames:=(^[dynamic]Own_Frame)(data)
-        for f in scan.frames {
-            frame:=Own_Frame{kind=f.head.kind,address=f.head.address}
-            if f.head.kind==.Chunk {
-                frame.location={offset=u64(head_data_at(f.at,f.head)),stored=f.head.stored,raw=f.head.raw,codec=f.head.codec,align=f.head.align,time=time}
-            } else {
-                frame.location={offset=u64(f.at),time=time}
-            }
-            if _,e:=append(frames,frame);e!=nil {return .Out_Of_Memory}
-        }
-        return .None
-    },&frames)
-    if scanned!=.None {
-        os.close(file)
-        return scanned
-    }
-    if scan.committed<=size_of(Pack_Head) {
-        os.close(file)
-        io_remove(s,path)
-        p.gone=true
-        return .None
-    }
-    sealed,seal_error:=pack_seal(s,file,frames[:],scan.committed,scan.last)
-    if seal_error!=.None {
-        os.close(file)
-        return seal_error
-    }
-    p=&state.packs[index]
-    if p.file!=nil {os.close(p.file)}
-    p.file=file
-    trailer_load_locked(s,index,sealed)
     return .None
 }
 
@@ -306,6 +270,11 @@ sweep_mark :: proc(w:^Sweep) -> Error {
         if k=={} {continue}
         if w.now-location_time(s,k,state.table.values[i])<i64(GRACE) {w.marks_table[i]=true}
     }
+    // What was touched within GRACE and only a retired pack holds comes back.
+    for address,touched in state.touched {
+        if w.now-touched>=i64(GRACE) {continue}
+        walk(w,address,DATA,0) or_return
+    }
     return .None
 }
 
@@ -323,53 +292,74 @@ walk_target :: proc(w:^Sweep,target:Hash) -> Error {
     return walk(w,target,-1,0)
 }
 
+// A level of a walk: a data chunk, not a node; -1 is a root of any level.
+@(private) DATA :: -2
+
+@(private)
+Marked :: enum u8 {Now,Already,Missing}
+
 // Marks a chunk and, when it is a node of the level its parent says (any for
-// a root), what it names.
+// a root), everything under it, at every level. A chunk only a retired pack
+// holds is copied back by this sweep.
 @(private)
 walk :: proc(w:^Sweep,address:Hash,level:int,depth:int) -> Error {
-    if depth>NODE_LEVEL_MAX+1 || !mark(w,address) || level==0 {return .None}
+    if depth>NODE_LEVEL_MAX+1 {return .None}
+    s:=w.s
     if w.buffers[depth]==nil {
-        b,e:=make([]u8,CHUNK_MAX,w.s.state.allocator)
+        b,e:=make([]u8,CHUNK_MAX,s.state.allocator)
         if e!=nil {return .Out_Of_Memory}
         w.buffers[depth]=b
     }
-    bytes,error:=chunk_bytes_locked(w.s,address,w.buffers[depth])
-    if error==.Out_Of_Memory {return error}
-    if error!=.None {return .None}
+    bytes:[]u8
+    switch mark(w,address) {
+    case .Already: return .None
+    case .Now:
+        if level==DATA {return .None}
+        read,error:=chunk_bytes_locked(s,address,w.buffers[depth])
+        if error==.Out_Of_Memory {return error}
+        if error!=.None {return .None}
+        bytes=read
+    case .Missing:
+        if address in w.revive {return .None}
+        pack,location,found:=retired_lookup_locked(s,address)
+        if !found {return .None}
+        read,error:=location_bytes_locked(s,pack,location,w.buffers[depth])
+        if error==.Out_Of_Memory {return error}
+        if error!=.None || address_of_bytes(read)!=address {return .None}
+        if _,e:=map_insert(&w.revive,address,Moved{pack,location});e!=nil {return .Out_Of_Memory}
+        if level==DATA {return .None}
+        bytes=read
+    }
     n,parse_error:=node_parse(bytes)
-    if parse_error!=.None || (level>0 && n.level!=level) {return .None}
+    if parse_error!=.None || (level>=0 && n.level!=level) {return .None}
     for e in n.entries {
-        if n.level==0 {
-            mark(w,e.address)
-        } else {
-            walk(w,e.address,n.level-1,depth+1) or_return
-        }
+        walk(w,e.address,n.level-1 if n.level>0 else DATA,depth+1) or_return
     }
     return .None
 }
 
-// Marks the copy a lookup finds; false when it was marked or is not stored.
+// Marks the copy a lookup finds.
 @(private)
-mark :: proc(w:^Sweep,address:Hash) -> bool {
+mark :: proc(w:^Sweep,address:Hash) -> Marked {
     state:=w.s.state
     if slot,found:=table_slot(&state.table,address);found && slot<len(w.marks_table) {
         l:=state.table.values[slot]
         if !location_dead(w.s,int(l.pack),l) {
-            if w.marks_table[slot] {return false}
+            if w.marks_table[slot] {return .Already}
             w.marks_table[slot]=true
-            return true
+            return .Now
         }
     }
     g:=&state.generation
     if i,found:=generation_find(g,address);found && i<len(w.marks_generation) {
         l:=g.locations[i]
         if !location_dead(w.s,g.map_pack[l.pack],l) {
-            if w.marks_generation[i] {return false}
+            if w.marks_generation[i] {return .Already}
             w.marks_generation[i]=true
-            return true
+            return .Now
         }
     }
-    return false
+    return .Missing
 }
 
 // The bytes of a stored chunk with the lock held, in buffer or mapped.
@@ -380,17 +370,26 @@ chunk_bytes_locked :: proc(s:^Store,address:Hash,buffer:[]u8) -> ([]u8,Error) {
     return location_bytes_locked(s,pack,location,buffer)
 }
 
+// A slice of a mapping is given only while the file still holds it; a pack
+// cut below a location is damaged.
 @(private)
 location_bytes_locked :: proc(s:^Store,pack:int,location:Location,buffer:[]u8) -> (bytes:[]u8,error:Error) {
     p:=&s.state.packs[pack]
     if p.file==nil {
         path_buffer:[PATH_BYTES]u8
-        p.file=io_open(s,pack_path(s,"packs",p.id,&path_buffer) or_return) or_return
+        p.file=io_open(s,pack_file_path(s,p,&path_buffer) or_return) or_return
     }
-    if p.sealed && p.view==nil {
+    end:=i64(location.offset)+i64(location.stored)
+    size,size_error:=os.file_size(p.file)
+    if size_error!=nil {return nil,os_error(size_error)}
+    if end>size {
+        p.damaged=true
+        return nil,.Corrupt
+    }
+    if p.sealed && p.view==nil && size>=p.size {
         if mapped,e:=file_map(p.file,p.size);e==.None {p.view=mapped}
     }
-    if p.view!=nil && i64(location.offset)+i64(location.stored)<=i64(len(p.view)) {
+    if p.view!=nil && end<=i64(len(p.view)) {
         return p.view[location.offset:][:location.stored],.None
     }
     if len(buffer)<int(location.stored) {return nil,.Invalid_Argument}
@@ -461,7 +460,7 @@ sweep_compact :: proc(w:^Sweep) -> Error {
     }
     for &p,i in state.packs {
         if !pack_foldable(&p) {continue}
-        w.compacted[i]=live[i]*2<total[i] || total[i]==0 || (small>=2 && total[i]<PACK_SMALL)
+        w.compacted[i]=p.dead || live[i]*2<total[i] || total[i]==0 || (small>=2 && total[i]<PACK_SMALL)
     }
     for l,i in g.locations {
         pack:=g.map_pack[l.pack]
@@ -485,12 +484,22 @@ sweep_compact :: proc(w:^Sweep) -> Error {
         }
         sweep_copy(w,k,pack,l) or_return
     }
+    for address,moved in w.revive {
+        if address in w.copied {continue}
+        if _,e:=map_insert(&w.copied,address,struct{}{});e!=nil {return .Out_Of_Memory}
+        buffer,e:=make([]u8,moved.location.stored,context.temp_allocator)
+        if e!=nil {return .Out_Of_Memory}
+        bytes,error:=location_bytes_locked(s,moved.pack,moved.location,buffer)
+        if error==.None && address_of_bytes(bytes)==address {error=sweep_out_add(w,address,bytes,moved.location.time)}
+        delete(buffer,context.temp_allocator)
+        if error==.Out_Of_Memory || error==.No_Space || error==.Io {return error}
+    }
     return sweep_out_seal(w)
 }
 
 @(private)
 pack_foldable :: proc(p:^Pack) -> bool {
-    return p.sealed && !p.gone && !p.damaged
+    return (p.sealed || p.dead) && !p.gone && !p.damaged && p.retired==0
 }
 
 // Copies a live chunk into the sweep's pack, keeping its time.
@@ -597,7 +606,7 @@ generation_publish :: proc(w:^Sweep) -> Error {
     oldest_active:=max(i64)
     for &p,i in state.packs {
         order[i]=-1
-        if !p.sealed && !p.gone && !p.damaged {oldest_active=min(oldest_active,p.created)}
+        if !p.sealed && !p.gone && !p.damaged && !p.dead && p.retired==0 {oldest_active=min(oldest_active,p.created)}
         if !pack_foldable(&p) || (i<len(w.compacted) && w.compacted[i]) {continue}
         order[i]=len(packs)
         if _,e:=append(&packs,Idx_Pack{writer=p.id.writer,seq=p.id.seq,size=u64(p.size),created=p.created});e!=nil {return .Out_Of_Memory}
@@ -733,7 +742,11 @@ generation_publish :: proc(w:^Sweep) -> Error {
     buffer:[PATH_BYTES]u8
     name:[GENERATION_NAME]u8
     path:=join(&buffer,s.root,"index",generation_name(head.number,&name)) or_return
-    return file_write(s,s.root,path,{bytes})
+    // Published only when no other sweep published this number: exactly one owns it.
+    taken:=file_publish(s,path,{bytes}) or_return
+    if taken {return .None}
+    w.generation=head.number
+    return .None
 }
 
 // Folds the commits other writers made since the mark: a chunk one touched,
@@ -743,7 +756,7 @@ generation_publish :: proc(w:^Sweep) -> Error {
 sweep_recheck :: proc(w:^Sweep) -> Error {
     s:=w.s
     state:=s.state
-    if len(w.moved)==0 {return .None}
+    if len(w.moved)==0 && state.retired.count==0 {return .None}
     visited:=make(map[Hash]struct{},16,context.temp_allocator)
     defer delete(visited)
     recent:=make([]Recent,len(state.recent),context.temp_allocator)
@@ -752,7 +765,7 @@ sweep_recheck :: proc(w:^Sweep) -> Error {
     restored:=0
     for r in recent {
         switch r.kind {
-        case .Touch: restored+=recheck_walk(w,r.address,0,0,&visited) or_return
+        case .Touch: restored+=recheck_walk(w,r.address,DATA,0,&visited) or_return
         case .Ref:
             text:[64]u8
             if v,found:=ref_resolve_locked(s,"",hex(r.address,&text));found {restored+=recheck_walk(w,v.address,-1,0,&visited) or_return}
@@ -763,6 +776,7 @@ sweep_recheck :: proc(w:^Sweep) -> Error {
     if restored==0 {return .None}
     sweep_out_seal(w) or_return
     for &c in w.compacted {c=false}
+    w.generation=0
     generation_publish(w) or_return
     return refresh_locked(s)
 }
@@ -780,24 +794,28 @@ recheck_walk :: proc(w:^Sweep,address:Hash,level:int,depth:int,visited:^map[Hash
     }
     bytes:[]u8
     if _,_,found:=lookup_locked(s,address);found {
-        if level==0 {return 0,.None}
+        if level==DATA {return 0,.None}
         bytes=chunk_bytes_locked(s,address,w.buffers[depth]) or_return
-    } else if moved,found:=w.moved[address];found {
+    } else {
+        moved,in_moved:=w.moved[address]
+        if !in_moved {
+            pack,location,found:=retired_lookup_locked(s,address)
+            if !found {return 0,.None}
+            moved={pack,location}
+        }
         bytes=location_bytes_locked(s,moved.pack,moved.location,w.buffers[depth]) or_return
         if address_of_bytes(bytes)!=address {return 0,.None}
         sweep_out_add(w,address,bytes,max(moved.location.time,w.now)) or_return
         restored=1
-        if level==0 {return restored,.None}
-    } else {
-        return 0,.None
+        if level==DATA {return restored,.None}
     }
     n,parse_error:=node_parse(bytes)
-    if parse_error!=.None || (level>0 && n.level!=level) {return restored,.None}
+    if parse_error!=.None || (level>=0 && n.level!=level) {return restored,.None}
     children:=make([]Entry,len(n.entries),context.temp_allocator)
     defer delete(children,context.temp_allocator)
     copy(children,n.entries)
     for e in children {
-        restored+=recheck_walk(w,e.address,max(n.level-1,0),depth+1,visited) or_return
+        restored+=recheck_walk(w,e.address,n.level-1 if n.level>0 else DATA,depth+1,visited) or_return
     }
     return restored,.None
 }
@@ -808,37 +826,54 @@ retired_list :: proc(s:^Store) -> (entries:[]os.File_Info,error:Error) {
     return io_list(s,join(&buffer,s.root,"retired") or_return)
 }
 
-// Deletes what this sweep retired when no other writer runs, which could
-// still be on its way to name it; else the next sweep does.
+// Deletes the retired packs nothing can still need. A pack retired by the
+// sweep that published generation g goes once every other writer's lease
+// carries g or later (none still commits a batch looked up before g) and
+// every other lease carries g or later or is what this sweep marked from;
+// before compaction, a pack this sweep copies back from stays.
 @(private)
-retired_delete :: proc(w:^Sweep) -> Error {
+retired_prune :: proc(w:^Sweep,before:bool) -> Error {
     s:=w.s
-    buffer:[PATH_BYTES]u8
-    leases:=io_list(s,join(&buffer,s.root,"leases") or_return) or_return
-    defer os.file_info_slice_delete(leases,s.state.allocator)
+    state:=s.state
+    scratch:=make(Live_Set,state.allocator)
+    defer delete(scratch)
+    infos:=make([dynamic]Lease_Info,0,0,state.allocator)
+    defer delete(infos)
+    leases_collect(s,&scratch,time.Time{_nsec=w.now},&infos) or_return
     own:[2+32]u8
     copy(own[:],"w-")
     text:[64]u8
-    copy(own[2:],writer_text(s.state.writer.id,&text))
-    for l in leases {
-        if strings.has_prefix(l.name,"w-") && l.name!=string(own[:]) {return .None}
-    }
-    current:=retired_list(s) or_return
-    defer os.file_info_slice_delete(current,s.state.allocator)
-    retired_remove(w,current)
-    return .None
-}
-
-@(private)
-retired_remove :: proc(w:^Sweep,entries:[]os.File_Info) {
-    for e in entries {
-        if _,ok:=pack_name_parse(e.name);!ok {continue}
-        if io_remove(w.s,e.fullpath)==.None {
+    copy(own[2:],writer_text(state.writer.id,&text))
+    entries:=retired_list(s) or_return
+    defer os.file_info_slice_delete(entries,state.allocator)
+    files: for e in entries {
+        generation,id,ok:=retired_name_parse(e.name)
+        if !ok {continue}
+        for &info in infos {
+            name:=string(info.name[:info.name_len])
+            if info.generation>=generation || name==string(own[:]) {continue}
+            if !strings.has_prefix(name,"w-") {
+                unchanged:=false
+                for &read in w.leases {
+                    if string(read.name[:read.name_len])==name && read.checksum==info.checksum {unchanged=true}
+                }
+                if unchanged {continue}
+            }
+            continue files
+        }
+        if before {
+            index:=pack_find(s,id)
+            for _,moved in w.revive {
+                if moved.pack==index {continue files}
+            }
+        }
+        if io_remove(s,e.fullpath)==.None {
             w.result.bytes+=e.size
         } else if os.exists(e.fullpath) {
             w.result.skipped+=1
         }
     }
+    return .None
 }
 
 // Removes generations older than the one before the current.
@@ -869,28 +904,37 @@ tmp_prune :: proc(s:^Store,now:time.Time) -> Error {
 }
 
 // Claims tmp/sweep/owner for this process by creating it, which takes no
-// data on a full volume; one whose holder ended, or of another machine and
-// older than TMP_STALE, is taken over.
+// data on a full volume. A claim whose holder ended, or of another machine and
+// older than TMP_STALE, is taken over by moving it away and making sure what
+// moved is the claim judged, never one another sweep made meanwhile.
+@(private)
+Sweep_Claim :: struct #packed {
+    holder:Holder,
+    nonce:[16]u8,
+}
+
 @(private)
 sweep_own :: proc(s:^Store,now:time.Time) -> Error {
     buffer:[PATH_BYTES]u8
     owner:=join(&buffer,s.root,SWEEP_FOLDER,"owner") or_return
-    holder:=holder_self()
+    self:=holder_self()
     for attempt in 0..<2 {
         file,error:=io_create(s,owner)
         if error==.None {
             // Who holds it, when there is room to say.
-            io_write_at(s,file,mem.ptr_to_bytes(&holder),0)
+            claim:=Sweep_Claim{holder=self}
+            crypto.rand_bytes(claim.nonce[:])
+            io_write_at(s,file,mem.ptr_to_bytes(&claim),0)
             os.close(file)
             return .None
         }
         if error!=.Invalid_Argument || attempt==1 {return .Io}
-        held:Holder
+        judged:Sweep_Claim
         stale:=true
         if f,e:=file_open(owner);e==nil {
             info,stat_error:=os.fstat(f,context.temp_allocator)
-            if read_exact(f,mem.ptr_to_bytes(&held),0)==.None {
-                switch holder_state(held,holder) {
+            if read_exact(f,mem.ptr_to_bytes(&judged),0)==.None {
+                switch holder_state(judged.holder,self) {
                 case .Running: stale=false
                 case .Ended:
                 case .Unknown: stale=stat_error!=nil || older_than(info.modification_time,now,TMP_STALE)
@@ -899,9 +943,27 @@ sweep_own :: proc(s:^Store,now:time.Time) -> Error {
                 stale=stat_error!=nil || older_than(info.modification_time,now,TMP_STALE)
             }
             os.close(f)
+        } else {
+            continue
         }
         if !stale {return .Io}
-        file_remove(owner)
+        sweep_step(s,.Claimed)
+        aside_buffer:[PATH_BYTES]u8
+        aside:=temp_name(s.root,"claim-",&aside_buffer) or_return
+        if rename_replace(owner,aside)!=nil {return .Io}
+        moved:Sweep_Claim
+        same:=false
+        if f,e:=file_open(aside);e==nil {
+            same=read_exact(f,mem.ptr_to_bytes(&moved),0)==.None && moved==judged
+            os.close(f)
+        }
+        if !same {
+            // Another sweep's claim: it goes back, and that sweep does the work.
+            rename_new(aside,owner)
+            file_remove(aside)
+            return .Io
+        }
+        file_remove(aside)
     }
     return .Io
 }
@@ -1042,4 +1104,115 @@ tomb_stage :: proc(s:^Store,st:^Stage,pack:int,location:Location,address:Hash) -
     id:=s.state.packs[pack].id
     payload:=Tomb_Payload{writer=id.writer,seq=id.seq,offset=location.offset}
     return stage_frame(st,.Tombstone,address,mem.ptr_to_bytes(&payload))
+}
+
+// Looks up what roots names that before did not against the newest
+// generation, everything under each, and copies back and commits what a sweep
+// retired: the generation it was checked against. What is in no pack at all
+// (a blob still on its way) is not this lease's to bring back.
+@(private)
+roots_settle :: proc(s:^Store,roots,before:[]Hash) -> (generation:u64,error:Error) {
+    if s==nil || s.state==nil {return 0,.Invalid_Argument}
+    state:=s.state
+    st:^Stage
+    defer if st!=nil {stage_free(s,st)}
+    {
+        sync.mutex_lock(&state.lock)
+        defer sync.mutex_unlock(&state.lock)
+        refresh_locked(s) or_return
+        known:=make(map[Hash]struct{},len(before),context.temp_allocator)
+        defer delete(known)
+        for b in before {map_insert(&known,b,struct{}{})}
+        visited:=make(map[Hash]struct{},16,context.temp_allocator)
+        defer delete(visited)
+        for r in roots {
+            if r in known {continue}
+            root_restore_locked(s,&st,r,&visited) or_return
+        }
+        generation=state.generation.number
+    }
+    if st==nil || len(st.frames)==0 {return generation,.None}
+    at:=time.now()._nsec
+    stage_write(s,st,at) or_return
+    commit(s,time.Time{_nsec=at}) or_return
+    return generation,.None
+}
+
+// restore_locked of a ref's target: its blob's alias when it has one, and itself.
+@(private)
+root_restore_locked :: proc(s:^Store,st:^^Stage,target:Hash,visited:^map[Hash]struct{}) -> (missing:int,error:Error) {
+    text:[64]u8
+    if v,found:=ref_resolve_locked(s,"",hex(target,&text));found {return restore_locked(s,st,v.address,-1,0,visited)}
+    return restore_locked(s,st,target,-1,0,visited)
+}
+
+// Stages into st, made when needed, what is missing under address and a
+// retired pack holds, at every level; missing counts what no pack holds.
+@(private)
+restore_locked :: proc(s:^Store,st:^^Stage,address:Hash,level,depth:int,visited:^map[Hash]struct{}) -> (missing:int,error:Error) {
+    if depth>NODE_LEVEL_MAX+1 || address in visited^ {return 0,.None}
+    if _,e:=map_insert(visited,address,struct{}{});e!=nil {return 0,.Out_Of_Memory}
+    buffer,e:=make([]u8,CHUNK_MAX,context.temp_allocator)
+    if e!=nil {return 0,.Out_Of_Memory}
+    defer delete(buffer,context.temp_allocator)
+    bytes:[]u8
+    if pack,location,found:=lookup_locked(s,address);found {
+        if level==DATA {return 0,.None}
+        read,read_error:=location_bytes_locked(s,pack,location,buffer)
+        if read_error!=.None {return 0,read_error if read_error==.Out_Of_Memory else .None}
+        bytes=read
+    } else {
+        retired_load_locked(s) or_return
+        pack,location,in_retired:=retired_lookup_locked(s,address)
+        if !in_retired {return 1,.None}
+        read,read_error:=location_bytes_locked(s,pack,location,buffer)
+        if read_error!=.None || address_of_bytes(read)!=address {return 1,.None}
+        if st^==nil {
+            st^=stage_new(s) or_return
+            stage_reset(st^)
+        }
+        stage_frame(st^,.Chunk,address,read,location.time) or_return
+        if level==DATA {return 0,.None}
+        bytes=read
+    }
+    n,parse_error:=node_parse(bytes)
+    if parse_error!=.None || (level>=0 && n.level!=level) {return 0,.None}
+    children,f:=make([]Entry,len(n.entries),context.temp_allocator)
+    if f!=nil {return 0,.Out_Of_Memory}
+    defer delete(children,context.temp_allocator)
+    copy(children,n.entries)
+    for c in children {
+        missing+=restore_locked(s,st,c.address,n.level-1 if n.level>0 else DATA,depth+1,visited) or_return
+    }
+    return missing,.None
+}
+
+// Adds the packs that hold a ref's target and everything under it.
+@(private)
+root_packs_locked :: proc(s:^Store,target:Hash,packs:^map[int]struct{},visited:^map[Hash]struct{}) {
+    text:[64]u8
+    if v,found:=ref_resolve_locked(s,"",hex(target,&text));found {tree_packs_locked(s,v.address,-1,0,packs,visited)}
+    tree_packs_locked(s,target,-1,0,packs,visited)
+}
+
+@(private)
+tree_packs_locked :: proc(s:^Store,address:Hash,level,depth:int,packs:^map[int]struct{},visited:^map[Hash]struct{}) {
+    if depth>NODE_LEVEL_MAX+1 || address in visited^ {return}
+    map_insert(visited,address,struct{}{})
+    pack,location,found:=find_locked(s,address)
+    if !found {return}
+    map_insert(packs,pack,struct{}{})
+    if level==DATA {return}
+    buffer,e:=make([]u8,CHUNK_MAX,context.temp_allocator)
+    if e!=nil {return}
+    defer delete(buffer,context.temp_allocator)
+    bytes,read_error:=location_bytes_locked(s,pack,location,buffer)
+    if read_error!=.None {return}
+    n,parse_error:=node_parse(bytes)
+    if parse_error!=.None || (level>=0 && n.level!=level) {return}
+    children,f:=make([]Entry,len(n.entries),context.temp_allocator)
+    if f!=nil {return}
+    defer delete(children,context.temp_allocator)
+    copy(children,n.entries)
+    for c in children {tree_packs_locked(s,c.address,n.level-1 if n.level>0 else DATA,depth+1,packs,visited)}
 }

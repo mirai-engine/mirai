@@ -7,6 +7,7 @@ import "core:strings"
 import "core:testing"
 import "core:thread"
 import "mirai:std/base"
+import "mirai:std/jobs"
 import "mirai:std/subprocess"
 
 // The test program is also the child of the two-process test: started with
@@ -300,3 +301,31 @@ a_root_of_another_layout_is_refused_with_how_to_go_on :: proc(t:^testing.T) {
     testing.expect(t,strings.contains(error_text(.Unsupported_Layout),"remove that folder"),"the text says how to go on")
 }
 
+
+// A large stream put on the workers of a job system is the same object, the
+// same chunks and the same tree, as one put on one thread.
+@(test)
+a_stream_put_on_workers_is_the_same_object :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"store-workers");if folder=="" {return}
+    js:jobs.Job_System
+    if !testing.expect(t,jobs.system_init(&js,{threads=3,allocator=runtime.heap_allocator()})) {return}
+    defer jobs.system_destroy(&js)
+    data:=make([]u8,(20<<20)+12345,context.temp_allocator)
+    random_fill(77,0,data)
+    one,ok:=test_store(t,strings.concatenate({folder,"/one"},context.temp_allocator));if !ok {return}
+    defer close(&one)
+    many,_:=test_store(t,strings.concatenate({folder,"/many"},context.temp_allocator))
+    defer close(&many)
+    alone,alone_error:=put(&one,data)
+    p,_:=put_begin(&many,nil,{system=&js,worker=jobs.OWNER})
+    for at:=0;at<len(data);at+=(1<<20)+7 {
+        testing.expect_value(t,put_write(&p,data[at:min(at+(1<<20)+7,len(data))]),Error.None)
+    }
+    shared,total,shared_error:=put_finish(&p)
+    testing.expect(t,alone_error==.None && shared_error==.None && total==u64(len(data)),"both puts end")
+    testing.expect(t,alone==shared,"the same object")
+    testing.expect_value(t,commit(&many),Error.None)
+    test_object_bytes(t,&many,shared,data)
+    again,_:=put(&many,data,nil,{system=&js,worker=jobs.OWNER})
+    testing.expect(t,again==shared,"put again on the workers finds every chunk")
+}
