@@ -65,15 +65,16 @@ SHADOW_SUN_LEVELS :: abi.SHADOW_SUN_MAPS
 SHADOW_MAP_ORTHOGRAPHIC :: abi.SHADOW_MAP_ORTHOGRAPHIC
 // Metres from the eye within which the maps follow what sways (the wind):
 // only the levels of the sun and the mips of the faces read within it draw a
-// caster that sways as it sways (shadow_sway_texel); the others draw it at
-// rest and keep it, whatever time the frame has left. Each level from the
-// fourth serves an octave of the distance (from 0.9 m at 1080 lines and 60
-// degrees) and, in a forest, some 16 % of the pages that sway each, the two
-// finest under 2 %. Within 4 m lie the finest five, to 3.7 m there: a third
-// of those pages, and with the small plants at rest, near half of the work,
-// a fifth of the 10 to 13 ms all of them took, some 2 ms, the share of the
-// most bound the atlas composes again each frame (SHADOW_MAPS_MOST_MS).
-SHADOW_SWAY_REACH :: f32(4)
+// caster that sways as it sways (shadow_sway_texel), into the layer of what
+// sways (SHADOW_SWAY_COARSER); the others draw it at rest and keep it,
+// whatever time the frame has left. A level serves an octave of the distance,
+// so the reach is that of the coarsest level within it.
+SHADOW_SWAY_REACH :: f32(16)
+// The levels the layer of what sways lies coarser than the pages of the atlas
+// it is composed into (Shadow_Raster.layer): a caster that sways is drawn into
+// it, at the detail of its texel, and the atlas takes the nearer of the cache
+// and the layer, so what stays is exact.
+SHADOW_SWAY_COARSER :: u32(2)
 
 // The frames after its last change an instance whose shadow changed twice
 // within them keeps moving (shadow_movers_update).
@@ -224,6 +225,8 @@ Shadow_Raster :: struct {
 	data:     rhi.Transient, // of this frame
 	cache:    rhi.Texture,   // the depth of what stays, by pages of the pool
 	atlas:    rhi.Texture,   // the cache with what moves
+	layer:    rhi.Texture,   // what sways in the pages the atlas composes, a tile of each coarser by `coarser` levels
+	coarser:  Maybe(u32),    // set before its maps are first drawn; nil: SHADOW_SWAY_COARSER
 	table:    rhi.Texture,   // an entry for each page of each slot (abi.SHADOW_PAGE_*)
 	hiz:      rhi.Texture,   // the farthest depth of the cache over blocks of each page of the pool (shadow_hiz.comp)
 	pages:    rhi.Buffer,    // abi.SHADOW_WORDS_*
@@ -551,22 +554,29 @@ shadow_sway_texel :: proc "contextless" (footprint: Vec2) -> f32 {
 	return first * math.pow(2, math.floor(math.log2(max(texel / first, 1e-6))) + 0.5)
 }
 
-// Whether a map draws a caster within a box that sways `sway` metres as it
-// sways, not at rest: its texel there is narrower than the sway, and where
-// its shadow falls, past the box from the light, narrower than `reach`
-// (shadow_sway_texel), as shadow_map_sways of shadow_maps.slang.
+// The levels the layer of what sways of a view lies coarser than its pages.
 @(private)
-shadow_map_sways :: proc "contextless" (m: Gpu_Shadow_Map, low, high: Vec3, sway, reach: f32) -> bool {
+shadow_coarser :: proc "contextless" (b: ^Shadow_Raster) -> u32 {
+	return b.coarser.? or_else SHADOW_SWAY_COARSER
+}
+
+// Whether a map draws a caster within a box that sways `sway` metres as it
+// sways, not at rest: the texel of its layer `coarser` levels coarser is
+// narrower there than the sway, and where its shadow falls, past the box from
+// the light, its own texel is narrower than `reach` (shadow_sway_texel), as
+// shadow_map_sways of shadow_maps.slang.
+@(private)
+shadow_map_sways :: proc "contextless" (m: Gpu_Shadow_Map, low, high: Vec3, sway, reach: f32, coarser: u32) -> bool {
 	finest, widest := shadow_map_finest(m, low, high)
-	return finest < sway && widest < reach
+	return finest * f32(u32(1) << coarser) < sway && widest < reach
 }
 
 // Whether a change reaches a map: its box reaches the frustum, and the map is
 // one it changes (Occluder_Change.fine) in a view whose reach of what sways
 // is `reach` (shadow_sway_texel).
 @(private)
-shadow_change_reaches :: proc "contextless" (m: Gpu_Shadow_Map, box: Occluder_Change, reach: f32) -> bool {
-	return shadow_map_reaches(m, box.low, box.high) && (box.fine == 0 || shadow_map_sways(m, box.low, box.high, box.fine, reach))
+shadow_change_reaches :: proc "contextless" (m: Gpu_Shadow_Map, box: Occluder_Change, reach: f32, coarser: u32) -> bool {
+	return shadow_map_reaches(m, box.low, box.high) && (box.fine == 0 || shadow_map_sways(m, box.low, box.high, box.fine, reach, coarser))
 }
 
 // What changed for the shadows this frame (Renderer.frame_occluders), given
@@ -1500,9 +1510,10 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 			list: Shadow_Reach_List
 			end: u32
 			// A level of the sun, whose texel is the same over it, holds none
-			// where it is no narrower than any sway.
+			// where that of its layer of what sways is no narrower than any sway.
 			orthographic := m.kind == SHADOW_MAP_ORTHOGRAPHIC
-			texel := (m.span.z - m.span.x) / f32(max(m.rect.z, 1))
+			coarser := shadow_coarser(b)
+			texel := (m.span.z - m.span.x) / f32(max(m.rect.z, 1)) * f32(u32(1) << coarser)
 			found := 0
 			if non_zero_resize(&kept.moving, len(s.shadow_movers)) != nil {return false}
 			if !orthographic || texel < s.shadow_movers_fine {
@@ -1512,7 +1523,7 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 					if k < 0 {continue}
 					mover := &s.shadow_movers[k]
 					fine := mover.change.fine
-					if fine > 0 && !shadow_map_sways(m, mover.change.low, mover.change.high, fine, b.sway) {continue}
+					if fine > 0 && !shadow_map_sways(m, mover.change.low, mover.change.high, fine, b.sway, coarser) {continue}
 					if !shadow_range_add(&kept.moves, &list, &end, mover.first, mover.count, scene_count) {return false}
 					kept.moving[found] = u32(k)
 					found += 1
@@ -1551,7 +1562,7 @@ Shadow_Params :: struct {
 	round, last, vertex_capacity, triangle_capacity: u32,
 	margin: f32,
 	sway:   f32, // shadow_sway_texel
-	_:      u32,
+	coarser: u32, // shadow_coarser
 	cull:   Vec4, // shadow_cull_eye
 }
 
@@ -1572,6 +1583,7 @@ shadow_params :: proc(p: ^Pass, plan: Shadow_Plan, round: Shadow_Round) -> Shado
 		chunk_capacity = shadow_chunk_room(p.r, &p.t.shadow_raster), entry_capacity = s.cull_capacity[.Shadow_Entries],
 		moving = u32(round), movers = plan.movers, plan = plan.plan, part = 1 if round == .Stays else 0,
 		bound = shadow_frame_units(p.r, &p.t.shadow_raster), cull = plan.cull, sway = p.t.shadow_raster.sway,
+		coarser = shadow_coarser(&p.t.shadow_raster),
 	}
 }
 
@@ -1660,20 +1672,18 @@ shadow_pages_step :: proc(p: ^Pass, steps: ^Shadow_Pages_Params, step: Shadow_Pa
 }
 
 // The depth a round culled into the cache or the atlas: of the cache, first
-// the pages it draws, cleared; of the atlas, first the pages it composes,
-// from the cache (held); then the triangles the lists of the raster hold, a
-// draw of each raster bin the cull lists into (shadow_clusters.comp).
+// the pages it draws, cleared; of the atlas, first what sways into the tiles
+// of the layer of the pages it composes, cleared, then those pages, the
+// nearer of the cache (held) and the layer; then the triangles the lists of
+// the raster hold, a draw of each raster bin the cull lists into
+// (shadow_clusters.comp): the maps draw both faces of every triangle, so of
+// the one-sided bins, those of the layer.
 @(private)
-shadow_draw :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, atlas: rhi.Texture, name: string, cache := false, held: rhi.Texture = 0) {
-	r, cmd, t := p.r, p.cmd, p.t
-	s := &r.scene
-	d := &r.shadow_buffers
-	pages := t.shadow_raster.pages
+shadow_draw :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, atlas: rhi.Texture, name: string, cache := false, held: rhi.Texture = 0, layer: rhi.Texture = 0) {
+	cmd := p.cmd
+	pages := p.t.shadow_raster.pages
 	params := params
-	pass := rhi.Render_Pass_Desc{name = name}
-	pass.depth = {texture = atlas, load = .Load, store = .Store}
-	rhi.cmd_begin_render_pass(cmd, &pass)
-	square :: proc(p: ^Pass, params: Shadow_Params, pipeline: Pipeline_Id, list, kind: u32, held: rhi.Texture) {
+	square :: proc(p: ^Pass, params: Shadow_Params, pipeline: Pipeline_Id, list, kind: u32, held, layer: rhi.Texture) {
 		r, cmd := p.r, p.cmd
 		square := params
 		square.list, square.moving = list, kind
@@ -1681,26 +1691,44 @@ shadow_draw :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, atlas: r
 		set_params(cmd, &square)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS2, held if held != 0 else r.dummy_texture)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, p.t.shadow_raster.pages)
+		if layer != 0 {rhi.cmd_bind_texture(cmd, SLOT_PASS4, layer)}
+	}
+	triangles :: proc(p: ^Pass, params: ^Shadow_Params, bins: [2]u32) {
+		r, cmd := p.r, p.cmd
+		s := &r.scene
+		for pipeline, i in ([2]Pipeline_Id{.Shadow_Map, .Shadow_Map_Tested}) {
+			rhi.cmd_bind_pipeline(cmd, r.pipelines[pipeline])
+			set_params(cmd, params)
+			rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.shadow_entries)
+			rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.raster_vertices)
+			rhi.cmd_bind_buffer(cmd, SLOT_PASS3, p.t.shadow_raster.pages)
+			rhi.cmd_bind_buffer(cmd, SLOT_PASS4, r.shadow_buffers.table)
+			rhi.cmd_bind_index_buffer(cmd, s.raster_indices)
+			rhi.cmd_draw_indexed_indirect(cmd, r.shadow_buffers.state, u64(offset_of(Gpu_Cull_State, draws)) + u64(bins[i]) * size_of(rhi.Draw_Indexed_Indirect), 1)
+		}
 	}
 	draws := u64(abi.SHADOW_WORDS_ARGS + abi.SHADOW_ARGS_DRAW) * 4
+	composed := abi.SHADOW_WORDS_JOBS + abi.SHADOW_POOL_PAGES
+	if !cache {
+		tiles := rhi.Render_Pass_Desc{name = "shadow layer"}
+		tiles.depth = {texture = layer, load = .Load, store = .Store}
+		rhi.cmd_begin_render_pass(cmd, &tiles)
+		square(p, params, .Shadow_Map_Clear, composed, 1, 0, 0)
+		rhi.cmd_draw_indirect(cmd, pages, draws + size_of(Gpu_Draw), 1)
+		triangles(p, &params, {0, RASTER_BIN_TESTED})
+		rhi.cmd_end_render_pass(cmd)
+	}
+	pass := rhi.Render_Pass_Desc{name = name}
+	pass.depth = {texture = atlas, load = .Load, store = .Store}
+	rhi.cmd_begin_render_pass(cmd, &pass)
 	if cache {
-		square(p, params, .Shadow_Map_Clear, abi.SHADOW_WORDS_JOBS, 0, 0)
+		square(p, params, .Shadow_Map_Clear, abi.SHADOW_WORDS_JOBS, 0, 0, 0)
 		rhi.cmd_draw_indirect(cmd, pages, draws, 1)
 	} else {
-		square(p, params, .Shadow_Map_Copy, abi.SHADOW_WORDS_JOBS + abi.SHADOW_POOL_PAGES, 1, held)
+		square(p, params, .Shadow_Map_Copy, composed, 1, held, layer)
 		rhi.cmd_draw_indirect(cmd, pages, draws + size_of(Gpu_Draw), 1)
 	}
-	bins := [2]u32{RASTER_BIN_TWO_SIDED, RASTER_BIN_TWO_SIDED | RASTER_BIN_TESTED}
-	for pipeline, i in ([2]Pipeline_Id{.Shadow_Map, .Shadow_Map_Tested}) {
-		rhi.cmd_bind_pipeline(cmd, r.pipelines[pipeline])
-		set_params(cmd, &params)
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.shadow_entries)
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.raster_vertices)
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, pages)
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS4, d.table)
-		rhi.cmd_bind_index_buffer(cmd, s.raster_indices)
-		rhi.cmd_draw_indexed_indirect(cmd, d.state, u64(offset_of(Gpu_Cull_State, draws)) + u64(bins[i]) * size_of(rhi.Draw_Indexed_Indirect), 1)
-	}
+	triangles(p, &params, {RASTER_BIN_TWO_SIDED, RASTER_BIN_TWO_SIDED | RASTER_BIN_TESTED})
 	rhi.cmd_end_render_pass(cmd)
 }
 
@@ -1714,6 +1742,7 @@ Shadow_Pages_Step :: enum u32 {Gate, Clear, Invalidate, Ancestors, Entries, Rank
 Shadow_Pages_Params :: struct {
 	step, frame, rows, plan, boxes, box_count, sun, pool, reach, threads, fresh, full, slots, slot_count, keep, budget, round, chunks, moves: u32,
 	sway: f32, // shadow_sway_texel
+	coarser: u32, // shadow_coarser
 }
 
 // The units each round of the maps of a view draws in a frame.
@@ -1750,6 +1779,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	}
 	good := target(r, cmd, &b.cache, SHADOW_POOL, SHADOW_POOL, .D32_Float, {.Depth_Target, .Sampled}, "shadow cache") &&
 	        target(r, cmd, &b.atlas, SHADOW_POOL, SHADOW_POOL, .D32_Float, {.Depth_Target, .Sampled}, "shadow atlas") &&
+	        target(r, cmd, &b.layer, SHADOW_POOL >> shadow_coarser(b), SHADOW_POOL >> shadow_coarser(b), .D32_Float, {.Depth_Target, .Sampled}, "shadow layer") &&
 	        target(r, cmd, &b.table, abi.SHADOW_SLOT_ENTRIES, SHADOW_SLOTS, .R32_Uint, {.Storage, .Sampled}, "shadow table")
 	pages_ok, _ := ensure_buffer(r, &b.pages, u64(abi.SHADOW_WORDS) * 4, {.Storage, .Indirect, .Transfer_Dst, .Transfer_Src}, "shadow pages")
 	state_ok, _ := ensure_buffer(r, &d.state, size_of(Gpu_Cull_State), {.Storage, .Indirect, .Transfer_Dst}, "shadow map state")
@@ -1812,6 +1842,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 		chunks = shadow_chunk_room(r, b),
 		moves = 1 if plan.whole || plan.moving_threads > 0 else 0,
 		sway = b.sway,
+		coarser = shadow_coarser(b),
 	}
 	for step in Shadow_Pages_Step {
 		if step == .Propagate || step >= .Grant {continue}
@@ -1838,7 +1869,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	params = shadow_params(p, plan, .Moves)
 	shadow_cull(p, plan, params, .Moves, &steps)
 	rhi.cmd_timestamp(cmd, "shadow atlas")
-	shadow_draw(p, plan, params, b.atlas, "shadow atlas", held = b.cache)
+	shadow_draw(p, plan, params, b.atlas, "shadow atlas", held = b.cache, layer = b.layer)
 	shadow_pages_step(p, &steps, .Propagate)
 	rhi.cmd_measure_end(cmd)
 	// What the passes after the maps marked the frame before has been read;
@@ -1856,6 +1887,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 destroy_shadow_maps :: proc(r: ^Renderer, t: ^Targets) {
 	if t.shadow_raster.cache != 0 {rhi.texture_destroy(r.device, t.shadow_raster.cache)}
 	if t.shadow_raster.atlas != 0 {rhi.texture_destroy(r.device, t.shadow_raster.atlas)}
+	if t.shadow_raster.layer != 0 {rhi.texture_destroy(r.device, t.shadow_raster.layer)}
 	if t.shadow_raster.table != 0 {rhi.texture_destroy(r.device, t.shadow_raster.table)}
 	if t.shadow_raster.hiz != 0 {rhi.texture_destroy(r.device, t.shadow_raster.hiz)}
 	if t.shadow_raster.pages != 0 {rhi.buffer_destroy(r.device, t.shadow_raster.pages)}

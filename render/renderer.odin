@@ -1637,7 +1637,7 @@ targets_textures :: proc(t: ^Targets) -> (all: [TARGET_TEXTURES]rhi.Texture) {
 	fixed := [?]rhi.Texture{
 		t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.generated,
 		t.highlight, t.highlight_depth, t.highlight_filtered, t.gi_given, t.reactive, t.aerial, t.ui_blur[0], t.ui_blur[1],
-		t.shadow_raster.cache, t.shadow_raster.atlas, t.shadow_raster.table, t.shadow_raster.hiz,
+		t.shadow_raster.cache, t.shadow_raster.atlas, t.shadow_raster.layer, t.shadow_raster.table, t.shadow_raster.hiz,
 	}
 	#assert(len(fixed) + UI_LAYER_DEPTH_CAPACITY <= TARGET_TEXTURES)
 	copy(all[:], fixed[:])

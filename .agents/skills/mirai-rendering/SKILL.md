@@ -143,8 +143,9 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   looks at no batch while none starts or stops swaying.
 - Shadows of what sways move only where they read: within a fixed reach of the eye
   (`SHADOW_SWAY_REACH`), never farther because the frame has time to spare; small plants cast at
-  rest. What the vertex hook sways has no swayed copy: rays meet it at rest, and nothing of it
-  within its sway of their origin.
+  rest. What sways is drawn a fixed number of levels coarser (`SHADOW_SWAY_COARSER`) and the atlas
+  takes the nearer of it and the cache: what stays is exact. What the vertex hook sways has no
+  swayed copy: rays meet it at rest, and nothing of it within its sway of their origin.
 - Shadows are never colored or darkened by the glass they pass, in the maps or in the rays: colored
   light through glass comes from the light, one that projects a texture.
 - What is decided per instance (its class, the row of its material with its own values) is built
