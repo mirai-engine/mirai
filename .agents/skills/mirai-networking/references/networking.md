@@ -14,13 +14,22 @@ Descriptors, defaults and statistics (`Host_Desc`, `Replication_Desc`, `Object_D
 - Values: single bits, bool, ranged integers, varuint and zigzag varint, raw floats or floats by
   range and precision, octahedral unit vectors, smallest-three quaternions, and bytes and strings
   with a length. `quantize_*`/`dequantize_*` do the conversions without a stream.
+- Bytes on a byte boundary (`bit_write_align`, `bit_read_align`) are copied whole, and
+  `bit_read_view` returns them where they lie without a copy.
 
 ## Transport
 
-`Transport` is two non-blocking procedures, `send` and `receive`; `PACKET_BYTES` is the largest
-datagram.
+`Transport` moves datagrams a batch at a time: `send` and `receive` never block, and `wait` blocks
+until a datagram arrives, `wake` is called from any thread, or a time passes. A worker needs `wait`
+and `wake`; a host the caller updates uses neither. `PACKET_BYTES` is the largest datagram. A host
+builds its datagrams in a batch of slots and hands them over when the batch fills and at the end of
+the update, and asks for as many as its command buffer has room for.
 
-- **`Udp`**: a non-blocking UDP socket from `core:net` (port 0: the system chooses). Bound to
+- **`Udp`**: a non-blocking UDP socket from `core:net` (port 0: the system chooses). A batch is one
+  call where the system has one (`sendmsg_x`/`recvmsg_x` on macOS, `sendmmsg`/`recvmmsg` on Linux)
+  and a call per datagram on Windows, behind the same signatures (`udp_send_batch`,
+  `udp_receive_batch`). `wait` polls the socket and a second one on `127.0.0.1` that `wake` sends a
+  byte to. Bound to
   `address_any6` it is dual-stack: it turns off `IPV6_V6ONLY` before the bind (`udp_dual_stack`, one
   signature per system) and receives both IPv6 and IPv4 peers. An IPv4 peer arrives as
   `::ffff:a.b.c.d` and `address_from_endpoint` returns it as IPv4; sending to it from that socket
@@ -52,7 +61,10 @@ like `replication.hysteresis`) and the values it admits.
   and updates statistics, replicas, the input buffer and the clock.
 - **Network half**: `host_update(h,now)` in the calling thread, or `worker_start(h)` in its own
   thread. It applies the frames, receives, evaluates scope, packs and sends. It never reads game
-  memory: the frame carries copies of the quantized state.
+  memory: the frame carries copies of the quantized state. Between updates the worker waits in the
+  transport until a datagram arrives, the simulation half queues a frame or empties the command
+  buffer it filled (both wake it), or something is due: at most a millisecond while a connection
+  has anything in flight, waiting or unacknowledged, else its keepalive or handshake.
 - The two halves only touch when swapping buffers under a mutex, with preallocated frames and
   command buffers. If the network falls behind, the frame keeps filling and goes out with the next
   publication (`publish_stalls`); if the command buffer has no reserve for what one datagram can
@@ -187,14 +199,21 @@ others their share.
 
 - `Unreliable` is sent once; `Sequenced` too, and a message that is still waiting is replaced by
   the next one.
-- `Reliable` is resent until its ack, delivered in order and cut into chunks as the window draws
-  them from the queue: the one fragmentation of the transport. `message_send` returns `Full` and
-  sends nothing if the message does not fit in the queue of some destination connection (it knows
-  from `Connection_Stats.queue_free` of the last `host_poll` minus what was queued since): the
-  sender retries after `host_poll`. With `sent`, a message to one connection streams: each call
-  queues what has room, and the channel takes nothing else until it is in, so a message has no
-  size limit. A message longer than `PIECE_BYTES` arrives in pieces (`Command.more`), which the
-  receiver joins; the library's own reliable channel takes only whole messages.
+- `Reliable` is a stream of its messages, each its size and its bytes, cut into chunks as each
+  datagram has room: the one fragmentation of the transport. A datagram carries the next messages
+  whole or a part of one, up to `chunk_longest` bytes, which is what is left past the longest clock
+  or inputs and an acknowledgement kept to `ACK_KEPT` bits, all a datagram spares while a lost chunk
+  waits: so a resend always fits in the next datagram. A chunk says where its bytes lie in the
+  sender's queue; the queue keeps them until the ack, so they are not copied anywhere else, and the
+  receiver keeps a chunk that comes ahead of a gap at the same place of its own. `message_send`
+  returns `Full` and sends nothing if the message does not fit in the queue of some destination
+  connection (it knows from `Connection_Stats.queue_free` of the last `host_poll` minus what was
+  queued since): the sender retries after `host_poll`. With `sent`, a message to one connection
+  streams: each call queues what has room, and the channel takes nothing else until it is in, so a
+  message has no size limit. A message up to `PIECE_BYTES` arrives whole: straight from the datagram
+  when it lies in one, joined first when it spans several. A longer one arrives in pieces as its
+  datagrams bring them (`Command.more`), which the receiver joins; the library's own reliable
+  channel takes only whole messages, no larger than it allows.
 - **Window.** The chunks a reliable channel keeps in flight grow by what the path acknowledges
   (`channel_window`, each congestion interval), so they double each round trip while they hold the
   channel back. What the connection's rate sends in a round trip and the time a loss takes to be

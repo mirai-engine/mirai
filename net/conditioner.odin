@@ -63,7 +63,7 @@ conditioner_destroy :: proc(c:^Conditioner) {
     line_destroy(&c.out,c.allocator);line_destroy(&c.back,c.allocator)
     c^={}
 }
-conditioner_transport :: proc "contextless" (c:^Conditioner) -> Transport {return {c,conditioner_send,conditioner_receive}}
+conditioner_transport :: proc "contextless" (c:^Conditioner) -> Transport {return {data=c,send=conditioner_send,receive=conditioner_receive}}
 conditioner_stats :: proc(c:^Conditioner) -> Sim_Stats {
     sync.mutex_guard(&c.lock)
     return c.stats
@@ -102,41 +102,58 @@ conditioner_hold :: proc(c:^Conditioner,line:^Delay_Line,now:f64,address:Address
 // Sends what is due.
 @(private)
 conditioner_flush :: proc(c:^Conditioner,now:f64) {
-    buffer:[PACKET_BYTES]u8
+    buffers:[16][PACKET_BYTES]u8
+    batch:[16]Datagram
     for {
-        size,to,due:=line_pop(&c.out,now,buffer[:])
-        if !due {return}
-        c.inner.send(c.inner.data,to,buffer[:size])
+        count:=0
+        for count<len(batch) {
+            size,to,due:=line_pop(&c.out,now,buffers[count][:])
+            if !due {break}
+            batch[count]={to,buffers[count][:size]}
+            count+=1
+        }
+        if count==0 {return}
+        c.inner.send(c.inner.data,batch[:count])
+        c.stats.delivered+=u64(count)
+    }
+}
+
+@(private)
+conditioner_send :: proc(data:rawptr,batch:[]Datagram) -> int {
+    c:=(^Conditioner)(data)
+    sync.mutex_guard(&c.lock)
+    now:=conditioner_now(c)
+    sent:=0
+    for datagram in batch {
+        if len(datagram.bytes)>PACKET_BYTES {continue}
+        conditioner_hold(c,&c.out,now,datagram.address,datagram.bytes,true)
+        sent+=1
+    }
+    conditioner_flush(c,now)
+    return sent
+}
+
+@(private)
+conditioner_receive :: proc(data:rawptr,batch:[]Datagram) -> int {
+    c:=(^Conditioner)(data)
+    sync.mutex_guard(&c.lock)
+    now:=conditioner_now(c)
+    conditioner_flush(c,now)
+    incoming:[16][PACKET_BYTES]u8
+    arrived:[16]Datagram
+    for {
+        for &datagram,i in arrived {datagram.bytes=incoming[i][:]}
+        count:=c.inner.receive(c.inner.data,arrived[:])
+        for datagram in arrived[:count] {conditioner_hold(c,&c.back,now,datagram.address,datagram.bytes,false)}
+        if count<len(arrived) {break}
+    }
+    for &datagram,i in batch {
+        size,from,ok:=line_pop(&c.back,now,datagram.bytes)
+        if !ok {return i}
+        datagram={from,datagram.bytes[:size]}
         c.stats.delivered+=1
     }
-}
-
-@(private)
-conditioner_send :: proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
-    c:=(^Conditioner)(data)
-    sync.mutex_guard(&c.lock)
-    if len(bytes)>PACKET_BYTES {return false}
-    now:=conditioner_now(c)
-    conditioner_hold(c,&c.out,now,to,bytes,true)
-    conditioner_flush(c,now)
-    return true
-}
-
-@(private)
-conditioner_receive :: proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
-    c:=(^Conditioner)(data)
-    sync.mutex_guard(&c.lock)
-    now:=conditioner_now(c)
-    conditioner_flush(c,now)
-    incoming:[PACKET_BYTES]u8
-    for {
-        count,sender,received:=c.inner.receive(c.inner.data,incoming[:])
-        if !received {break}
-        conditioner_hold(c,&c.back,now,sender,incoming[:count],false)
-    }
-    size,from,ok=line_pop(&c.back,now,buffer)
-    if ok {c.stats.delivered+=1}
-    return
+    return len(batch)
 }
 
 @(private)

@@ -485,17 +485,17 @@ a_long_acknowledgement_never_overflows_a_datagram :: proc(t:^testing.T) {
 Drop_Once :: struct {inner:Transport,count,drop:int}
 @(private="file")
 drop_once_transport :: proc(d:^Drop_Once) -> Transport {
-    return {d,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
+    return {data=d,send=proc(data:rawptr,batch:[]Datagram) -> int {return test_send_each(data,batch,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
         d:=(^Drop_Once)(data)
         if len(bytes)>0 && bytes[0]==u8(Packet_Type.Data) {
             d.count+=1
             if d.count==d.drop {return true}
         }
-        return d.inner.send(d.inner.data,to,bytes)
-    },proc(data:rawptr,buffer:[]u8) -> (int,Address,bool) {
+        return test_send_one(d.inner,to,bytes)
+    })},receive=proc(data:rawptr,batch:[]Datagram) -> int {return test_receive_each(data,batch,proc(data:rawptr,buffer:[]u8) -> (int,Address,bool) {
         d:=(^Drop_Once)(data)
-        return d.inner.receive(d.inner.data,buffer)
-    }}
+        return test_receive_one(d.inner,buffer)
+    })}}
 }
 
 // Thousands of tiny reliable messages held behind one lost chunk all arrive, in order, when the gap

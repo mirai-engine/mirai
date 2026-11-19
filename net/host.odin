@@ -147,6 +147,8 @@ Host_Stats :: struct {
 }
 
 @(private) FRAME_COUNT :: 4
+@(private) BATCH :: 32          // datagrams a host hands the transport, or asks of it, in one call
+@(private) RECEIVE_LIMIT :: 1024 // datagrams read in one update before it sends what they ask
 @(private) USER_CHANNELS :: 6
 @(private) MAX_CHANNELS :: 8
 
@@ -199,6 +201,7 @@ Host :: struct {
     refused:Refusal, // why host_init returned Invalid
     history:int,     // ticks of Replication_Desc.history_seconds at tick_rate
     records:int,     // of a connection: those of Replication_Desc.records and one per chunk its reliable channels hold
+    chunk_longest:int, // bytes
 
     // Simulation half.
     staging:^Frame,
@@ -239,7 +242,7 @@ Host :: struct {
     buffers:[3]Command_Buffer,
     worker:^thread.Thread,
     worker_stop:bool,
-    worker_interval:time.Duration,
+    worker_waiting:bool, // the worker is in, or about to enter, the transport's wait: the simulation half wakes it
 }
 
 @(private)
@@ -261,7 +264,14 @@ Back :: struct {
     clock_due:bool,   // the clock changed: every connection hears it now
     applied_all:[MAX_CHANNELS]u64, // bytes of the messages for every connection taken from the frames
     reserve_bytes,reserve_count:int,
-    incoming,outgoing,scratch:[PACKET_BYTES]u8,
+    // Datagrams read in one call to the transport, and those built since the last call that sent:
+    // out_count of outgoing, each one's bytes in its slot.
+    incoming:[BATCH][PACKET_BYTES]u8,
+    received:[BATCH]Datagram,
+    outgoing:[BATCH][PACKET_BYTES]u8,
+    out:[BATCH]Datagram,
+    out_count:int,
+    scratch:[PACKET_BYTES]u8,
     stats:Host_Stats,
     repl:Repl,
 }
@@ -316,7 +326,6 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
         h.channels[CHANNEL_EVENTS]={kind=.Unreliable,queue_bytes=16<<10,max_message_bytes=EVENT_MAX_BYTES+16}
     }
     h.start=time.tick_now()
-    h.worker_interval=time.Millisecond
 
     when !crypto.HAS_RAND_BYTES {return refuse(h,"security","a system that gives secure random bytes: every connection is sealed")}
     b:=&h.back
@@ -363,6 +372,7 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
             return error
         }
     }
+    h.chunk_longest=chunk_longest(h)
     if d.command_count<=0 {d.command_count=max(4096,b.reserve_count*4)}
     if d.command_bytes<=0 {d.command_bytes=max(512<<10,b.reserve_bytes*4)}
     if b.reserve_bytes>d.command_bytes/2 {host_destroy(h);return refuse(h,"command_bytes","at least twice what one datagram can turn into; 0 takes enough")}
@@ -439,6 +449,7 @@ frame_submit :: proc(h:^Host) {
         h.publish_stalls+=1
     }
     sync.mutex_unlock(&h.lock)
+    worker_wake(h)
 }
 
 // Client: starts connecting to a server at one of addresses: those of its
@@ -552,7 +563,8 @@ queue_pending :: proc(h:^Host,index,channel:int) -> u64 {
 host_poll :: proc(h:^Host) -> []Command {
     frame_submit(h)
     sync.mutex_lock(&h.lock)
-    if h.ready_full {
+    took:=h.ready_full
+    if took {
         h.inbox,h.ready=h.ready,h.inbox
         h.ready.count,h.ready.used,h.ready.released_count,h.ready.sync=0,0,0,{}
         h.ready_full=false
@@ -568,6 +580,8 @@ host_poll :: proc(h:^Host) -> []Command {
     front_copy_stats(h)
     sync.mutex_unlock(&h.lock)
     h.stats.operations_dropped,h.stats.publish_stalls=h.operations_dropped,h.publish_stalls
+    // A worker that filled its command buffer waits for this one to empty.
+    if took {worker_wake(h)}
     front_absorb(h,h.inbox)
     return h.inbox.commands[:h.inbox.count]
 }
@@ -615,13 +629,20 @@ back_update :: proc(h:^Host,now:f64) {
 
     b.secure.handshakes=h.desc.handshakes_per_update
     channels_held(h)
-    for {
-        if b.held || !command_room(h,0) {b.stats.receive_stalls+=1;break}
-        size,from,ok:=h.desc.transport.receive(h.desc.transport.data,b.incoming[:])
-        if !ok {break}
-        b.stats.packets_received+=1
-        b.stats.bytes_received+=u64(size)
-        packet_receive(h,b.incoming[:size],from)
+    for reads:=0;reads<RECEIVE_LIMIT; {
+        // As many datagrams as the command buffer has room for what they can turn into.
+        room:=b.held?0:command_room_datagrams(h)
+        if room==0 {b.stats.receive_stalls+=1;break}
+        asked:=min(room,BATCH)
+        for &datagram,i in b.received[:asked] {datagram={bytes=b.incoming[i][:]}}
+        got:=h.desc.transport.receive(h.desc.transport.data,b.received[:asked])
+        for datagram in b.received[:got] {
+            b.stats.packets_received+=1
+            b.stats.bytes_received+=u64(len(datagram.bytes))
+            packet_receive(h,datagram.bytes,datagram.address)
+        }
+        reads+=got
+        if got<asked {break}
     }
     received:=time.tick_now()
 
@@ -636,6 +657,7 @@ back_update :: proc(h:^Host,now:f64) {
     for &peer in b.peers {
         if peer.state==.Connected && peer_wants_send(h,&peer) {peer_send(h,&peer)}
     }
+    transport_flush(h)
     b.send_pending,b.clock_due=false,false
     b.stats.connections=connections
     finished:=time.tick_now()
@@ -710,6 +732,13 @@ command_room :: proc(h:^Host,extra:int) -> bool {
     out:=b.outbox
     return len(out.bytes)-out.used>=b.reserve_bytes+extra*(PIECE_BYTES+8) && len(out.commands)-out.count>=b.reserve_count+extra
 }
+// Datagrams whose commands the command buffer has room for.
+@(private)
+command_room_datagrams :: proc(h:^Host) -> int {
+    b:=&h.back
+    out:=b.outbox
+    return min((len(out.bytes)-out.used)/b.reserve_bytes,(len(out.commands)-out.count)/b.reserve_count)
+}
 
 @(private)
 command_push :: proc(h:^Host,command:Command,data:[]u8=nil,words:=0) -> ^Command {
@@ -731,24 +760,57 @@ command_push :: proc(h:^Host,command:Command,data:[]u8=nil,words:=0) -> ^Command
     return c
 }
 
-// Starts a thread that runs the network half about once per interval, so
-// receiving, packing and sending never wait for the simulation nor hold it.
-worker_start :: proc(h:^Host,interval:=time.Millisecond) -> bool {
-    if h.worker!=nil {return false}
-    h.worker_interval=interval
+// Starts a thread that runs the network half, so receiving, packing and sending never wait for the
+// simulation nor hold it. Between updates it waits in the transport until a datagram arrives, the
+// simulation hands it something (host_poll, host_publish) or the next thing it must do is due. False
+// when one runs already or the transport cannot wait.
+worker_start :: proc(h:^Host) -> bool {
+    if h.worker!=nil || h.desc.transport.wait==nil || h.desc.transport.wake==nil {return false}
     sync.atomic_store(&h.worker_stop,false)
     h.worker=thread.create_and_start_with_data(h,proc(data:rawptr) {
         h:=(^Host)(data)
+        t:=h.desc.transport
         for !sync.atomic_load(&h.worker_stop) {
             back_update(h,host_time(h))
-            time.sleep(h.worker_interval)
+            seconds:=back_due(h)
+            // Waiting is announced before the frames are looked at: a frame queued after the look
+            // finds it announced and wakes the wait.
+            sync.atomic_store(&h.worker_waiting,true)
+            sync.mutex_lock(&h.lock)
+            idle:=h.queued_count==0 && !(h.back.held && !h.ready_full)
+            sync.mutex_unlock(&h.lock)
+            if idle && seconds>0 && !sync.atomic_load(&h.worker_stop) {t.wait(t.data,seconds)}
+            sync.atomic_store(&h.worker_waiting,false)
         }
     })
     return h.worker!=nil
 }
+@(private)
+worker_wake :: proc(h:^Host) {
+    if h.worker!=nil && sync.atomic_load(&h.worker_waiting) {h.desc.transport.wake(h.desc.transport.data)}
+}
+// Seconds the network half may wait before something is due: at most a millisecond while a
+// connection has something in flight, waiting to go or to be acknowledged.
+@(private)
+back_due :: proc(h:^Host) -> f64 {
+    b:=&h.back
+    due:=h.desc.keepalive
+    for &p in b.peers {
+        switch p.state {
+        case .Free:
+        case .Requesting,.Responding: due=min(due,p.next_handshake-b.now)
+        case .Connected:
+            due=min(due,h.desc.keepalive-(b.now-p.last_send),p.last_receive+h.desc.timeout-b.now)
+            if p.ack_pending || p.sent_tail!=p.send_seq || channels_pending(&p) {due=min(due,0.001)}
+        }
+    }
+    if b.held {due=min(due,0.001)}
+    return due
+}
 worker_stop :: proc(h:^Host) {
     if h.worker==nil {return}
     sync.atomic_store(&h.worker_stop,true)
+    h.desc.transport.wake(h.desc.transport.data)
     thread.join(h.worker)
     thread.destroy(h.worker)
     h.worker=nil

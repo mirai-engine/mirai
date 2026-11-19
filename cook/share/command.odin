@@ -66,7 +66,7 @@ host_open :: proc(h:^Udp_Host,mode:wire.Mode,port:int,token:u64) -> bool {
     }
     chans:=channels()
     desc:=wire.Host_Desc{mode=mode,transport=wire.udp_transport(&h.udp),protocol_id=PROTOCOL_ID,version=VERSION,invite=token,max_connections=PEERS-1,channels=chans[:]}
-    if wire.host_init(&h.host,desc)!=.None || !wire.worker_start(&h.host,time.Millisecond) {
+    if wire.host_init(&h.host,desc)!=.None || !wire.worker_start(&h.host) {
         wire.host_destroy(&h.host)
         wire.udp_close(&h.udp)
         return false
