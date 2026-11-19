@@ -10,6 +10,7 @@ import "core:strings"
 import "mirai:render/abi"
 import "mirai:rhi"
 import "mirai:std/base"
+import mm "mirai:std/math"
 
 // Shadow maps in place of the rays of the direct light for the lights that
 // light much of the view and for the sun. Each frame, from the camera and the
@@ -756,24 +757,44 @@ shadow_culled :: proc "contextless" (low, high: Vec3, cull: f32, eye: Vec4) -> b
 }
 
 // What stays changed where the eye the maps cull from moved from `was` to
-// `now`: of each batch drawn that casts with a cull distance, one whose
-// instances may lie within it from one eye and past it from the other, the
-// part of its box within reach of either.
+// `now`: the instances of the batches that cast with a cull distance that may
+// lie within it from one eye and past it from the other, a box for each cell
+// of SHADOW_CULL_STEP they lie in (Scene_State.shadow_cull_boxes). They lie
+// about the cull distance from the eye, which the boxes of the batches merged
+// into the few boxes of what changed would not keep apart from the pages
+// near it. False without memory.
 @(private)
-shadow_cull_changes :: proc(s: ^Scene_State, stale: ^Occluder_Changes, was, now: Vec4) {
+shadow_cull_changes :: proc(r: ^Renderer, was, now: Vec4) -> bool {
+	s := &r.scene
 	farthest :: proc "contextless" (eye, low, high: Vec3) -> f32 {return linalg.length(linalg.max(linalg.abs(eye - low), linalg.abs(eye - high)))}
 	for index, k in s.batch.drawn {
-		cull := s.batch.records[index].desc.cull_distance
+		record := &s.batch.records[index]
+		cull := record.desc.cull_distance
 		low, high, casts := shadow_batch_box(s, k)
-		if !casts || cull <= 0 {continue}
+		if !casts || cull <= 0 || record.count == 0 {continue}
 		reach := cull + now.w
 		if farthest(was.xyz, low, high) <= reach && farthest(now.xyz, low, high) <= reach {continue}
 		if shadow_culled(low, high, cull, was) && shadow_culled(low, high, cull, now) {continue}
-		s.shadow_stale_by[.Cull_Cell] += 1
-		low = linalg.max(low, linalg.min(was.xyz, now.xyz) - reach)
-		high = linalg.min(high, linalg.max(was.xyz, now.xyz) + reach)
-		occluder_add(stale, OCCLUDERS_MANY, low, high)
+		// A sphere about the place of an instance that holds its box as the maps cull it.
+		mesh := s.meshes[record.desc.mesh]
+		size := (linalg.length(linalg.max(linalg.abs(mesh.bounds_min), linalg.abs(mesh.bounds_max))) + record.desc.sway) * record.scale
+		offset := batch_offset(r, record)
+		for i in 0 ..< record.count {
+			at := batch_instance_at(s, record, i).position + offset
+			a, b := linalg.length(at - was.xyz), linalg.length(at - now.xyz)
+			if max(a, b) + size <= reach || min(a, b) - size > reach {continue}
+			cell := [2]i32{i32(math.floor(at.x / SHADOW_CULL_STEP)), i32(math.floor(at.z / SHADOW_CULL_STEP))}
+			if held, ok := s.shadow_cull_cells[cell]; ok {
+				box := &s.shadow_cull_boxes[held]
+				box.min, box.max = linalg.min(box.min, at - size), linalg.max(box.max, at + size)
+				continue
+			}
+			if _, error := append(&s.shadow_cull_boxes, mm.Aabb{at - size, at + size}); error != nil {return false}
+			if _, error := map_insert(&s.shadow_cull_cells, cell, u32(len(s.shadow_cull_boxes) - 1)); error != nil {return false}
+		}
 	}
+	s.shadow_stale_by[.Cull_Cell] += u32(len(s.shadow_cull_boxes))
+	return true
 }
 
 // What the plan tells the pages of a slot this frame (shadow_pages.comp):
@@ -953,7 +974,7 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	plan.rows = (u32(len(s.lights)) + 3) / 4
 	plan.plan = plan.rows * 4 + SHADOW_SLOTS * SHADOW_MAP_ROWS * 4
 	plan.boxes = plan.plan + SHADOW_SLOTS * size_of(Shadow_Slot_Plan) / 4
-	plan.box_count = u32(stale.count + moved.count)
+	plan.box_count = u32(stale.count + moved.count + len(s.shadow_cull_boxes))
 	plan.slots = plan.boxes + plan.box_count * size_of(Shadow_Box) / 4
 	for w, slot in wants {if w.m.rect.z != 0 || plans[slot].flags & abi.SHADOW_PLAN_RESET != 0 {plan.slot_count += 1}}
 	plan.reach = plan.slots + plan.slot_count
@@ -975,6 +996,7 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	boxes := ([^]Shadow_Box)(raw_data(words[plan.boxes:]))[:plan.box_count]
 	for box, i in stale.boxes[:stale.count] {boxes[i] = {low = box.low, fine = box.fine, high = box.high}}
 	for box, i in moved.boxes[:moved.count] {boxes[stale.count + i] = {low = box.low, fine = box.fine, high = box.high, moved = 1}}
+	for box, i in s.shadow_cull_boxes {boxes[stale.count + moved.count + i] = {low = box.min, high = box.max}}
 	used := plan.slots
 	for w, slot in wants {
 		if w.m.rect.z == 0 && plans[slot].flags & abi.SHADOW_PLAN_RESET == 0 {continue}
@@ -1002,7 +1024,12 @@ shadow_plan_casters :: proc(r: ^Renderer, b: ^Shadow_Raster, eye: Vec3, forget: 
 	// where it changed, what stays changed where their instances came or went.
 	cell := shadow_cull_cell(eye, r.origin)
 	plan.cull = shadow_cull_eye(cell, r.origin)
-	if b.culled && !forget && cell != b.cull {shadow_cull_changes(s, &b.stale, shadow_cull_eye(b.cull, r.origin), plan.cull)}
+	clear(&s.shadow_cull_boxes)
+	clear(&s.shadow_cull_cells)
+	if b.culled && !forget && cell != b.cull && !shadow_cull_changes(r, shadow_cull_eye(b.cull, r.origin), plan.cull) {
+		set_error(r, "out of memory for the instances of the batches that came or went past their cull distance")
+		return false
+	}
 	b.cull, b.culled = cell, true
 	stale^, moved^ = b.stale, b.moved
 	b.stale, b.moved = {}, {}
