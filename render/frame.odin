@@ -262,6 +262,7 @@ resolve_pass :: proc(p: ^Pass, nested: bool) {
 		// A nested view counts with its cull, apart.
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, r.scratch_buffer if nested else r.stats_buffer)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.program_draws)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.visible_moved)
 		textures_feedback_bind(r, cmd)
 		resolve_programs_draw(r, cmd, &r.pipelines[id])
 	}
@@ -1106,6 +1107,7 @@ cull_bins_dispatch :: proc(r: ^Renderer, cmd: ^rhi.Command_List, phase: u32) {
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.cull_state_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.listed_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, s.visible_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.visible_moved)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS5, s.raster_entries)
 	rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, bins_dispatch)) + u64(phase) * size_of([3]u32))
