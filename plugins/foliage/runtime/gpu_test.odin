@@ -244,7 +244,8 @@ seen_at :: proc(f: ^Gpu_Fixture, pixels: []u8, camera: gpu.Camera, p: [3]f32) ->
 // degrees: its shadow on the floor falls toward -z, the leaned top 1 m along
 // -x. Near the eye (SHADOW_SWAY_REACH) the maps draw it as it sways, every
 // frame as what moves, and none of its clusters is left out where its
-// shadow lands; far away the maps keep it at rest and draw nothing again.
+// shadow lands; far away the maps keep it at rest and draw nothing again. In
+// a light wind it sways less, and the maps hand its clusters to fewer pages.
 @(test)
 a_swaying_wall_casts_its_shadow_where_it_leans_only_near_the_eye :: proc(t: ^testing.T) {
 	f := new(Gpu_Fixture)
@@ -269,6 +270,7 @@ a_swaying_wall_casts_its_shadow_where_it_leans_only_near_the_eye :: proc(t: ^tes
 		// Past every map that sways, which hold what lies within them as it sways where no point reads it.
 		{"far", {position = {-0.5, 55, -89.6}, forward = {0, -55, 87.3}, up = {0, 1, 0}, fov_y = 7, near = 0.05, far = 300, exposure = gpu.UNIT_EXPOSURE}, false},
 	}
+	strong: u32
 	for c in cases {
 		pixels, ok := view_frames(t, f, c.camera, sun, 16)
 		if !ok {return}
@@ -287,12 +289,19 @@ a_swaying_wall_casts_its_shadow_where_it_leans_only_near_the_eye :: proc(t: ^tes
 			for v, k in leaned {testing.expectf(t, v >= 0 && v * 5 < lit * 3, "%s: the shadow of the leaned wall %v m up is %d against %d lit", c.name, 1 + 0.4 * f32(k), v, lit)}
 			testing.expectf(t, rest * 4 > lit * 3, "%s: where it would rest the floor is lit: %d against %d", c.name, rest, lit)
 			testing.expectf(t, movers == 1 && maps.clusters_moving > 0 && maps.pages_drawn == 0, "%s: it moves in the maps, the cache draws nothing again: %d movers, %d clusters moving, %d pages drawn", c.name, movers, maps.clusters_moving, maps.pages_drawn)
+			strong = maps.clusters_moving
 		} else {
 			testing.expectf(t, rest >= 0 && rest * 5 < lit * 3, "%s: the shadow stands where it rests: %d against %d lit", c.name, rest, lit)
 			testing.expectf(t, leaned[4] * 4 > lit * 3, "%s: no shadow where it leans: %d against %d", c.name, leaned[4], lit)
 			testing.expectf(t, movers == 0 && maps.clusters_moving == 0 && maps.pages_drawn == 0 && maps.pages_composed == 0, "%s: the maps keep it at rest and draw nothing again: %d movers, %d clusters moving, %d pages drawn, %d composed", c.name, movers, maps.clusters_moving, maps.pages_drawn, maps.pages_composed)
 		}
 	}
+	if !wind_blow(t, f, 4) {return}
+	pixels, ok := view_frames(t, f, cases[0].camera, sun, 16)
+	if !ok {return}
+	delete(pixels)
+	light := f.renderer.stats.shadow.clusters_moving
+	testing.expectf(t, light > 0 && light < strong, "the maps hand %d clusters of it to their pages in a light wind, %d in the strongest", light, strong)
 }
 
 // A canopy of two upright leaves of one plant facing a low sun whose shadow
