@@ -14,9 +14,10 @@ import mm "mirai:std/math"
 // the same wind, while the entity is Drawn_Elsewhere. The entity stays what
 // it was: its transform, collider and picking are its own, and an outline it
 // is given is drawn around its mesh at rest.
-@(component,description="Sways the mesh of this entity in the wind as foliage sways: what stands over its origin bends toward the wind by the red of its vertex colors. The entity keeps its transform, collider and selection.")
+@(component,description="Sways the mesh of this entity in the wind as foliage sways: what stands over its origin bends toward the wind by the red of its vertex colors, and its leaves flutter on top by the red and the green. The entity keeps its transform, collider and selection.")
 Foliage_Sway :: struct {
-    wind:f32 `mirai:"min=0"`, // how much the wind moves it, as the wind of a foliage type
+    wind:f32 `mirai:"min=0"`,    // how much the wind moves it, as the wind of a foliage type
+    flutter:f32 `mirai:"min=0"`, // how much the wind flutters its leaves, as the flutter of a foliage type
 }
 
 FOLIAGE_SWAY_DEFAULT :: Foliage_Sway{wind=1}
@@ -142,13 +143,12 @@ sway_update :: proc(resident:^Foliage_Resident,t:Sway_Tables,commands:core.Comma
         return
     }
     kind:=FOLIAGE_TYPE_DEFAULT
-    kind.wind,kind.casts_shadow=sway.wind,static.shadows
-    amount:=sway_amount(kind)
+    kind.wind,kind.flutter,kind.casts_shadow=sway.wind,sway.flutter,static.shadows
     desc.flags={.Ray_Visible}
     if static.shadows {desc.flags+={.Casts_Shadow}}
     desc.layers=key.layers
     desc.object_id=u64(e)
-    desc.vertex={amount,1,0,0}
+    desc.vertex=hook_vertex(kind)
     if low,high,bounded:=render.mesh_bounds(app.renderer,desc.mesh);bounded {
         // How high its farthest point stands over its origin in the world,
         // and how far it lies from it: the hook bends what stands over it.
@@ -159,7 +159,7 @@ sway_update :: proc(resident:^Foliage_Resident,t:Sway_Tables,commands:core.Comma
             top,size=max(top,q.y),max(size,linalg.length(q))
         }
         scale:=max(abs(world.transform.scale.x),abs(world.transform.scale.y),abs(world.transform.scale.z),1e-6)
-        desc.reach=hook_reach(amount,top)
+        desc.reach=hook_reach(kind,top)
         desc.sway=shadow_sway(kind,top/scale,size)
         if desc.sway>0 {desc.wind=wind_zone_take(resident,key.zone,world.transform.position)}
     }

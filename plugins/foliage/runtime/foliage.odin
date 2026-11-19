@@ -756,7 +756,6 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
             }
             pieces=prefab.parts[:]
         }
-        amount:=sway_amount(t)
         settled:=true
         fade,cull:=mesh_distances(t,false)
         fade,cull=fade*distance,cull*distance
@@ -776,12 +775,13 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
             low,high,known:=render.mesh_bounds(renderer,desc.mesh)
             // Metres from where its largest instance stands to its farthest point.
             size:=linalg.length(linalg.max(linalg.abs(low),linalg.abs(high)))*t.scale[1]*max(t.height[1],1)
-            // The hook bends every part where bodies trampled it (y) and sways
-            // it in the wind (x); the views cull it by boxes that hold how far
-            // both move it, and the maps near the eye by how far it sways.
-            part.desc.vertex={amount,1,0,0}
+            // The hook bends every part where bodies trampled it (y), sways it
+            // in the wind (x) and flutters its leaves (z); the views cull it by
+            // boxes that hold how far all move it, and the maps near the eye by
+            // how far it sways.
+            part.desc.vertex=hook_vertex(t)
             if known {
-                part.desc.reach=hook_reach(amount,max(high.y,0)*t.scale[1]*max(t.height[1],1))
+                part.desc.reach=hook_reach(t,max(high.y,0)*t.scale[1]*max(t.height[1],1))
                 part.desc.sway=shadow_sway(t,high.y,size)
                 owner.sways||=part.desc.sway>0
             }

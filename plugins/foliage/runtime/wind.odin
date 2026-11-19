@@ -14,7 +14,9 @@ import mm "mirai:std/math"
 // with the wind where each instance stands and the phase of the gust wave
 // there, so that gusts cross a forest as they cross its grass; both bend
 // about where the plant stands as foliage_sway.slang says, and the hook bends
-// every batch of foliage where bodies trampled it (Foliage_Trample). A type
+// every batch of foliage where bodies trampled it (Foliage_Trample). On top,
+// the leaves of a type that flutters loop on their own, apart from the leaves
+// a hand away: foliage whose leaves move reads as alive. A type
 // that casts shadows and stands at least SHADOW_SWAY_HEIGHT casts them
 // swaying (Batch_Desc.sway) in the maps near the eye, as long as the wind of
 // the zone its cell stands in blows (wind_zone_at, render.batches_wind), so a
@@ -23,6 +25,7 @@ import mm "mirai:std/math"
 
 WIND_SPEED_MAX :: f32(20) // m/s: the strongest wind foliage sways with
 FOLIAGE_SWAY :: f32(0.08) // metres a plant leans per m/s of wind and 10 metres of height, before its type
+FOLIAGE_FLUTTER :: f32(0.005) // metres a leaf flutters per m/s of wind, before its type
 // Metres from where the largest instance of a type stands to its farthest
 // point below which its shadow stands at rest, whatever its wind: the shadow
 // of a small plant is small detail whose motion reads as noise on the
@@ -81,22 +84,29 @@ Gpu_Wind_Frame :: struct {
 }
 
 // Metres a point of a type moves at most, `height` metres over its place:
-// along the strongest wind, and leaned by a bender. What spreads level does
-// not move (foliage_bend).
-hook_reach :: proc "contextless" (amount,height:f32) -> f32 {return height*(WIND_SPEED_MAX*amount+BEND_LEAN_MAX)}
+// along the strongest wind with its leaves fluttering, and leaned by a
+// bender. What spreads level does not move (foliage_bend).
+hook_reach :: proc "contextless" (t:Foliage_Type,height:f32) -> f32 {return height*(WIND_SPEED_MAX*sway_amount(t)+BEND_LEAN_MAX)+WIND_SPEED_MAX*flutter_amount(t)}
 
 // Metres a point of a type moves per m/s of wind and metre of its height:
 // what its batches give the hook (Batch_Desc.vertex.x).
 sway_amount :: proc "contextless" (t:Foliage_Type) -> f32 {return t.wind*FOLIAGE_SWAY*0.1}
 
+// Metres a leaf of a type flutters per m/s of wind (Batch_Desc.vertex.z).
+flutter_amount :: proc "contextless" (t:Foliage_Type) -> f32 {return t.flutter*FOLIAGE_FLUTTER}
+
+// What the batches of a type give the hook (Batch_Desc.vertex): its sway,
+// that they are foliage, and its flutter.
+hook_vertex :: proc "contextless" (t:Foliage_Type) -> [4]f32 {return {sway_amount(t),1,flutter_amount(t),0}}
+
 // Metres in the space of a part of a type, `top` metres of it the highest
 // over its place, its farthest point `size` metres from where its largest
 // instance stands, that its shadow sways at most (Batch_Desc.sway): the most
-// a point moves at WIND_SPEED_MAX; 0 for a type that casts none, does not
-// sway, or stands lower than SHADOW_SWAY_HEIGHT.
+// a point moves at WIND_SPEED_MAX, its leaves fluttering; 0 for a type that
+// casts none, does not sway, or stands lower than SHADOW_SWAY_HEIGHT.
 shadow_sway :: proc "contextless" (t:Foliage_Type,top,size:f32) -> f32 {
     if !t.casts_shadow || !(t.wind>0) || size<SHADOW_SWAY_HEIGHT {return 0}
-    return WIND_SPEED_MAX*sway_amount(t)*max(top,0)
+    return WIND_SPEED_MAX*(sway_amount(t)*max(top,0)+flutter_amount(t))
 }
 
 // A zone of wind cells that cast swaying shadows stand in, and a place of
