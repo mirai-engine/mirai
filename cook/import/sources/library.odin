@@ -393,7 +393,7 @@ build_here :: proc(l:^Library_State,p:^asset.Package,key:store.Hash) -> (f:Found
         b,error:=asset.build_get(s,hash,l.temp)
         if error!=.None || b.package_id!=p.id || b.key!=key {continue}
         whole:=true
-        for o in b.outputs {whole&&=store.has(s,o.blob)}
+        for o in b.outputs {whole&&=asset.object_whole(s,o.object)}
         if !whole {continue}
         if at==1 && !l.options.fast_textures {
             f.fast_here=true
@@ -417,7 +417,7 @@ build_found :: proc(l:^Library_State,p:^asset.Package,manifest,key:store.Hash,ke
     b,error:=asset.build_get(s,hash,l.temp)
     if error!=.None || b.package_id!=p.id {return}
     for o in b.outputs {
-        if !store.has(s,o.blob) {return}
+        if !asset.object_whole(s,o.object) {return}
     }
     if !b.final && !l.options.fast_textures {return {fast_here=true},false}
     return {build=b,hash=hash,final=b.final},true
@@ -638,7 +638,7 @@ plugins_world :: proc(l:^Library_State) -> ^core.World_Info {
 @(private="file")
 documents_write :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,p:^asset.Package,b:^asset.Build,documents:string,report:^Library_Report) {
     changed:=importer.Changed.Discard if l.options.changed==.Discard else .Keep
-    written,error:=importer.documents_follow(l.options.store,p,b,documents,l.registry,entry.written[:],changed,l.temp)
+    written,error:=importer.documents_follow(l.options.store,p,b,documents,l.registry,entry.written[:],changed,plugin_kinds(l),l.temp)
     if error.code!=.None {
         report_line(&report.failures,"package %s: %s",p.name,error.message)
         return
@@ -651,11 +651,44 @@ documents_write :: proc(l:^Library_State,top:string,entry:^asset.Project_Package
     written_pin(l,top,entry,recorded[:],p,report)
 }
 
+// The extensions of the kinds of the active plugins of the root of the
+// library, which a new file of a document of theirs takes.
+@(private="file")
+plugin_kinds :: proc(l:^Library_State) -> []importer.Kind_Extension {
+    if l.options.root=="" {return nil}
+    p,error:=project.open(l.options.root,project.engine_root_find("",context.temp_allocator),context.temp_allocator)
+    if error.code!=.None {return nil}
+    out:=make([dynamic]importer.Kind_Extension,l.temp)
+    for index in p.active {
+        for &k in p.plugins[index].manifest.asset_kinds {
+            extension,code:=base.text_get(k.extension[:]),base.text_get(k.kind[:])
+            if extension!="" && code!="" {append(&out,importer.Kind_Extension{asset.fourcc(code),strings.clone(extension,l.temp)})}
+        }
+    }
+    return out[:]
+}
+
 // Pins in entry what the files of its documents hold as written, when it
 // differs from what it records.
 @(private="file")
 written_pin :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,written:[]asset.Package_Written,p:^asset.Package,report:^Library_Report) {
-    written:=written_list(written)
+    // A document of the package this pass did not write holds what it held, so
+    // its record stays: a model's prefab, which only a library with the game's
+    // types writes, is not forgotten by a refresh without them.
+    merged:=make([dynamic]asset.Package_Written,context.temp_allocator)
+    append(&merged,..written)
+    records: for old in entry.written {
+        for w in written {
+            if w.id==old.id {continue records}
+        }
+        for &a in p.assets {
+            if a.id==old.id {
+                append(&merged,old)
+                continue records
+            }
+        }
+    }
+    written:=written_list(merged[:])
     same:=len(written)==len(entry.written)
     for w,at in written {
         if !same {break}

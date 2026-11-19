@@ -27,7 +27,7 @@ app_assets_create :: proc(app:^App,desc:App_Desc) -> App_Error {
     for problem in problems {log.warnf("assets: %s",problem)}
     assets,error:=new(Assets,app.allocator)
     if error!=nil {return .Out_Of_Memory}
-    if !assets_init(assets,{root=root,listed=listed,package_problems=problems,cache=desc.assets_cache,renderer=app.renderer,allocator=app.allocator,mounts=mounts[:]}) {
+    if !assets_init(assets,{root=root,listed=listed,package_problems=problems,cache=desc.assets_cache,renderer=app.renderer,allocator=app.allocator,mounts=mounts[:],store_root=desc.store_root}) {
         free(assets,app.allocator)
         return .Assets_Failed
     }

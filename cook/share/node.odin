@@ -19,7 +19,7 @@ import wire "mirai:net"
 
 NAMESPACE :: "shares"      // <hash of an invitation token>: the snapshot a share offers under it
 PROTOCOL_ID :: 0x4d495348  // of the hosts of sharing: datagrams of any other application are ignored
-VERSION :: 1               // of what two peers say to each other: the snapshot and the exchange over it
+VERSION :: 2               // of what two peers say to each other: the snapshot and the exchange over it
 PEERS :: 8                 // connections of a node at once
 LEASE_SECONDS :: 60.0      // between two refreshes of the lease
 @(private) WANTS :: 512
@@ -56,6 +56,7 @@ Node :: struct {
     tick:sync.Cond,
     now:f64,
     stepped:bool, // now is a time of the owner's clock: before the first step it is not
+    waiting:int,  // threads in node_wait
     peers:[PEERS]Node_Peer,
     numbers:int,
     connected:int,
@@ -106,7 +107,7 @@ node_host :: proc(n:^Node,h:^wire.Host) -> bool {
 @(private)
 node_expose :: proc(user:rawptr,namespace:string) -> bool {
     switch namespace {
-    case NAMESPACE,asset.REF_PACKAGES,asset.REF_IMPORTS: return true
+    case NAMESPACE,asset.REF_PACKAGES,asset.REF_MANIFESTS,asset.REF_IMPORTS: return true
     }
     return strings.has_prefix(namespace,asset.REF_CACHE_PREFIX)
 }
@@ -217,8 +218,17 @@ node_now :: proc(n:^Node) -> f64 {
 node_wait :: proc(n:^Node,seconds:f64) -> bool {
     sync.mutex_guard(&n.lock)
     until:=n.now+seconds
+    n.waiting+=1
     for (!n.stepped || n.now<until) && !n.stopped {sync.cond_wait(&n.tick,&n.lock)}
+    n.waiting-=1
     return !n.stopped
+}
+
+// Whether a thread waits for the clock of the node: one that steps a clock of
+// its own advances it only then, so the work between two waits takes none of it.
+node_waiting :: proc(n:^Node) -> bool {
+    sync.mutex_guard(&n.lock)
+    return n.waiting>0
 }
 
 // Adds addresses to what the lease of the node holds.
@@ -270,14 +280,14 @@ node_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
     if namespace==asset.REF_IMPORTS {
         blobs:=make([dynamic]store.Hash,context.temp_allocator)
         for &address in addresses {
-            if address=={} || !store.has(into,address) {continue}
+            if address=={} || !asset.object_whole(into,address) {continue}
             b,build_error:=asset.build_get(into,address,context.temp_allocator)
             if build_error!=.None {
                 address={}
                 continue
             }
             for o in b.outputs {
-                append(&blobs,o.blob)
+                append(&blobs,o.object)
                 if o.thumbnail!={} {append(&blobs,o.thumbnail)}
             }
         }
@@ -286,12 +296,12 @@ node_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
             if address=={} {continue}
             b,_:=asset.build_get(into,address,context.temp_allocator)
             for o in b.outputs {
-                if !store.has(into,o.blob) || o.thumbnail!={} && !store.has(into,o.thumbnail) {address={}}
+                if !asset.object_whole(into,o.object) || o.thumbnail!={} && !asset.object_whole(into,o.thumbnail) {address={}}
             }
         }
     }
     for address,k in addresses {
-        given[k]=address!={} && store.has(into,address) && store.ref_set(into,namespace,names[k],address)==.None
+        given[k]=address!={} && asset.object_whole(into,address) && store.ref_set(into,namespace,names[k],address)==.None
     }
 }
 

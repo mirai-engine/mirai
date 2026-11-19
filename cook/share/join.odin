@@ -12,15 +12,21 @@ import "mirai:asset"
 import "mirai:cook/import/sources"
 import "mirai:exchange"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:std/jobs"
 import "mirai:store"
 import wire "mirai:net"
 
 // A join: the snapshot a host offers, its files written into a folder, and
 // the packages of the project refreshed with the peers as the source of the
-// library. The files that must be written are fetched smallest first, many at
-// once, and each is written whole through a rename as it completes; the store
-// keeps what arrived, so a join stopped and run again fetches only the rest.
+// library. The tree is fetched a depth at a time, with the base put in the
+// store first, so only the folders that changed are asked. The files that
+// must be written are fetched small first, many at once, the project's
+// manifest and start scene before the rest; each is written chunk by chunk
+// into a temporary file and renamed into place as it completes. The store
+// keeps what arrived, so a join stopped and run again fetches only the rest,
+// and a file changed here before is put in the store first, so the chunks
+// its old version shares with the new are not asked.
 //
 // A folder joined before keeps the snapshot it last took
 // (<folder>/.mirai/share/snapshot), the base of three ways: a file the host
@@ -74,7 +80,7 @@ Write :: struct {at:int,present:bool,base:store.Hash,done:bool}
 @(private)
 Remove :: struct {at:int,done:bool}
 
-@(private) MISSING_SECONDS :: 10.0 // a blob no connected peer has for this long fails the join
+@(private) MISSING_SECONDS :: 10.0 // an object no connected peer has for this long fails the join
 @(private) WINDOW :: 256           // files wanted at once
 
 join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,error:string) {
@@ -86,20 +92,19 @@ join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,er
     report.failed=make([dynamic]string,allocator)
     if error=join_connect(&d,allocator);error!="" {return}
 
-    // The snapshot: its size is checked before it is taken whole.
+    // The root first: it names the project, whose folder keeps the base.
     say(&d,"asking for the snapshot")
     address:store.Hash
     if address,error=join_offer(&d,allocator);error!="" {return}
-    bytes:[]u8
-    if bytes,error=join_blob(&d,address,SNAPSHOT_MAX_BYTES,"the snapshot",allocator);error!="" {return}
-    snap,decode_error:=snapshot_decode(bytes,allocator)
-    if decode_error!=.None {
-        error=fmt.aprintf("the host sent a snapshot this engine refuses (%v): it was not written; the host runs another version of Mirai, or is not honest",decode_error,allocator=allocator)
+    roots:=[1]store.Hash{address}
+    if error=join_fetch(&d,roots[:],"the snapshot",allocator);error!="" {return}
+    name,name_error:=snapshot_name(n.s,address,allocator)
+    if name_error!=.None {
+        error=refused(name_error,allocator)
         return
     }
-    report.files=len(snap.entries)
     folder:=d.folder
-    if folder=="" {folder=project.path(d.parent==""?".":d.parent,snap.name,allocator=context.temp_allocator)}
+    if folder=="" {folder=project.path(d.parent==""?".":d.parent,name,allocator=context.temp_allocator)}
     folder=project.path_absolute(folder,allocator)
     report.folder=folder
     if os.exists(folder) && !os.is_dir(folder) {
@@ -116,12 +121,27 @@ join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,er
         }
     }
 
-    // What changes, from the last snapshot of this folder and its files as they are.
+    // The base as a tree in the store, so what the host did not change since is
+    // not asked; then the snapshot, a depth of folders at a time.
     index:=index_load(folder,context.temp_allocator)
     last:Snapshot
     if previous,read_error:=os.read_entire_file(share_path(folder,"snapshot",context.temp_allocator),context.temp_allocator);read_error==nil {
         last,_=snapshot_decode(previous,context.temp_allocator)
     }
+    if len(last.entries)>0 {snapshot_put(n.s,&last)}
+    fetching:=Tree_Fetching{d=&d,allocator=allocator}
+    folders:=make([dynamic]store.Hash,context.temp_allocator)
+    snap,tree_error:=snapshot_read(n.s,address,{procedure=join_tree_fetch,data=&fetching},&folders,allocator)
+    if tree_error==.Unavailable && fetching.error!="" {
+        error=fetching.error
+        return
+    }
+    if tree_error!=.None {
+        error=refused(tree_error,allocator)
+        return
+    }
+    report.files=len(snap.entries)
+    node_serve(n,..folders[:])
     plan:=join_plan(&snap,&last,&index,folder,&report,allocator)
     if error=join_room(&d,&snap,&plan,folder,allocator);error!="" {return}
 
@@ -208,32 +228,59 @@ join_alive :: proc(d:^Join_Desc,allocator:runtime.Allocator) -> string {
     return ""
 }
 
-// The bytes of a blob of at most limit bytes, fetched from the peers.
+// Why a snapshot the host sent is refused.
 @(private)
-join_blob :: proc(d:^Join_Desc,address:store.Hash,limit:i64,what:string,allocator:runtime.Allocator) -> (bytes:[]u8,error:string) {
-    n:=d.node
-    if !store.has(n.s,address) {
-        exchange.want(&n.x,address,1<<20)
-        defer exchange.forget(&n.x,address)
-        missing:=-1.0
-        for {
-            p,_:=exchange.progress(&n.x,address)
-            if p.total>limit {return nil,fmt.aprintf("the host sent %s of %d bytes, more than the %d this engine takes: it was refused",what,p.total,limit,allocator=allocator)}
-            if p.state==.Complete {break}
-            if p.state==.Failed {return nil,fmt.aprintf("%s could not be kept in the store at %s (%v, %v): free space there",what,n.s.root,p.error,p.store_error,allocator=allocator)}
-            if join_missing(d,p.state,&missing) {return nil,fmt.aprintf("no connected peer has %s: the host changed it while this join ran; run the join again",what,allocator=allocator)}
-            if error=join_alive(d,allocator);error!="" {return}
-        }
-    }
-    size,size_error:=store.blob_size(n.s,address)
-    if size_error!=.None {return nil,fmt.aprintf("%s does not read from the store at %s (%v)",what,n.s.root,size_error,allocator=allocator)}
-    if size>limit {return nil,fmt.aprintf("the host sent %s of %d bytes, more than the %d this engine takes: it was refused",what,size,limit,allocator=allocator)}
-    bytes=make([]u8,int(size),allocator)
-    if read_error:=store.read(n.s,address,0,bytes);read_error!=.None {return nil,fmt.aprintf("%s does not read from the store at %s (%v)",what,n.s.root,read_error,allocator=allocator)}
-    return bytes,""
+refused :: proc(error:Snapshot_Error,allocator:runtime.Allocator) -> string {
+    return fmt.aprintf("the host sent a snapshot this engine refuses (%v): it was not written; the host runs another version of Mirai, or is not honest",error,allocator=allocator)
 }
 
-// Whether a blob stayed missing at every connected peer for MISSING_SECONDS.
+@(private)
+Tree_Fetching :: struct {d:^Join_Desc,error:string,allocator:runtime.Allocator}
+
+@(private)
+join_tree_fetch :: proc(data:rawptr,addresses:[]store.Hash) -> bool {
+    f:=(^Tree_Fetching)(data)
+    f.error=join_fetch(f.d,addresses,"the snapshot",f.allocator)
+    return f.error==""
+}
+
+// Fetches the folders of a snapshot at addresses from the peers, WINDOW at a
+// time; one whose object is larger than a folder's is refused.
+@(private)
+join_fetch :: proc(d:^Join_Desc,addresses:[]store.Hash,what:string,allocator:runtime.Allocator) -> string {
+    n:=d.node
+    Active :: struct {address:store.Hash,missing:f64}
+    active:=make([dynamic]Active,context.temp_allocator)
+    defer for a in active {exchange.forget(&n.x,a.address)}
+    next:=0
+    for next<len(addresses) || len(active)>0 {
+        for len(active)<WINDOW && next<len(addresses) {
+            if exchange.want(&n.x,addresses[next],1<<20)!=.None {break}
+            append(&active,Active{addresses[next],-1})
+            next+=1
+        }
+        for k:=0;k<len(active); {
+            a:=&active[k]
+            p,_:=exchange.progress(&n.x,a.address)
+            if p.total>LISTING_MAX {return fmt.aprintf("the host sent a folder of %s of %d bytes, more than the %d this engine takes: it was refused",what,p.total,i64(LISTING_MAX),allocator=allocator)}
+            #partial switch p.state {
+            case .Complete:
+                exchange.forget(&n.x,a.address)
+                unordered_remove(&active,k)
+                continue
+            case .Failed:
+                return fmt.aprintf("%s could not be kept in the store at %s (%v, %v): free space there",what,n.s.root,p.error,p.store_error,allocator=allocator)
+            }
+            if join_missing(d,p.state,&a.missing) {return fmt.aprintf("no connected peer has %s: the host changed it while this join ran; run the join again",what,allocator=allocator)}
+            k+=1
+        }
+        if len(active)==0 && next==len(addresses) {break}
+        if error:=join_alive(d,allocator);error!="" {return error}
+    }
+    return ""
+}
+
+// Whether an object stayed missing at every connected peer for MISSING_SECONDS.
 @(private)
 join_missing :: proc(d:^Join_Desc,state:exchange.State,since:^f64) -> bool {
     if state!=.Missing {
@@ -373,10 +420,12 @@ join_room :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,folder:string,allocator
     s:=d.node.s
     fetch,write:i64
     seen:=make(map[store.Hash]bool,context.temp_allocator)
+    // The root read once: each file then asks only what this value knows.
+    store.chunk_has(s,{})
     for w in plan.write {
         e:=&snap.entries[w.at]
         write+=e.size
-        if e.address in seen || store.has(s,e.address) {continue}
+        if e.address in seen || store.chunk_here(s,e.address) {continue}
         seen[e.address]=true
         fetch+=e.size
     }
@@ -399,43 +448,53 @@ join_room :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,folder:string,allocator
     return ""
 }
 
-// Fetches the blobs of the files to write, smallest first and WINDOW at once,
-// and writes each file as its blob completes. A file whose blob does not come
+// Fetches the objects of the files to write, WINDOW at once: the project's
+// manifest and its start scene first, then the others smallest first; each
+// file is written as its object completes. A file whose object does not come
 // is reported and the others go on; the error is what stops the whole join.
 @(private)
 join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:string,report:^Join_Report,allocator:runtime.Allocator) -> string {
     n:=d.node
     s:=n.s
-    // The writes of each address, and the addresses to fetch by size.
+    // The writes of each address, and the addresses to fetch in order.
     paths:=make(map[store.Hash][dynamic]int,context.temp_allocator)
     order:=make([dynamic]int,context.temp_allocator)
     total:i64
     for w,k in plan.write {
         e:=&snap.entries[w.at]
+        if e.size==0 {
+            one:=[1]int{k}
+            join_write(d,snap,plan,one[:],index,folder,report)
+            continue
+        }
         list,known:=&paths[e.address]
         if !known {
             paths[e.address]=make([dynamic]int,context.temp_allocator)
             list=&paths[e.address]
-            if !store.has(s,e.address) {
-                append(&order,k)
-                total+=e.size
-            }
+            append(&order,k)
+            if !store.chunk_here(s,e.address) {total+=e.size}
         }
         append(list,k)
     }
-    Sized :: struct {size:i64,k:int}
-    sized:=make([]Sized,len(order),context.temp_allocator)
-    for k,at in order {sized[at]={snap.entries[plan.write[k].at].size,k}}
-    slice.sort_by(sized,proc(a,b:Sized) -> bool {return a.size<b.size || a.size==b.size && a.k<b.k})
-    for one,at in sized {order[at]=one.k}
-    // What is here already is written first.
-    for address,list in paths {
-        if store.has(s,address) {join_write(d,snap,plan,list[:],index,folder,report)}
-    }
     if len(order)==0 {return ""}
+    scene:=join_scene(d,snap,index,folder)
+    Sized :: struct {first:bool,size:i64,k:int}
+    sized:=make([]Sized,len(order),context.temp_allocator)
+    for k,at in order {
+        e:=&snap.entries[plan.write[k].at]
+        sized[at]={e.path==project.PROJECT_FILE || e.path==scene,e.size,k}
+    }
+    slice.sort_by(sized,proc(a,b:Sized) -> bool {
+        if a.first!=b.first {return a.first}
+        return a.size<b.size || a.size==b.size && a.k<b.k
+    })
+    for one,at in sized {order[at]=one.k}
     say(d,"fetching %d files, %s",len(order),bytes_text(total))
     Active :: struct {k:int,missing:f64}
     active:=make([dynamic]Active,context.temp_allocator)
+    // What arrived, which the lease of the node holds from the end on.
+    complete:=make([dynamic]store.Hash,context.temp_allocator)
+    defer node_serve(n,..complete[:])
     next:=0
     done:i64
     started:=node_now(n)
@@ -445,7 +504,8 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
     for next<len(order) || len(active)>0 {
         for len(active)<WINDOW && next<len(order) {
             e:=&snap.entries[plan.write[order[next]].at]
-            // Smaller first: the priority falls with the place in the order.
+            join_reuse(d,snap,plan,paths[e.address][:],folder)
+            // Earlier first: the priority falls with the place in the order.
             if want_error:=exchange.want(&n.x,e.address,len(order)-next);want_error!=.None {break}
             append(&active,Active{order[next],-1})
             next+=1
@@ -459,13 +519,9 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
             ended:=true
             #partial switch p.state {
             case .Complete:
-                size,_:=store.blob_size(s,e.address)
-                if size!=e.size {
-                    for w in list {failed(report,"%s: the snapshot says %d bytes and its blob has %d: the host is not honest; it was not written",snap.entries[plan.write[w].at].path,e.size,size)}
-                } else {
-                    join_write(d,snap,plan,list,index,folder,report)
-                    report.fetched+=e.size
-                }
+                join_write(d,snap,plan,list,index,folder,report)
+                append(&complete,e.address)
+                report.fetched+=e.size
                 done+=e.size
             case .Failed:
                 for w in list {failed(report,"%s could not be kept in the store at %s (%v, %v): free space there, and run the join again",snap.entries[plan.write[w].at].path,s.root,p.error,p.store_error)}
@@ -492,8 +548,9 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
             received_at,printed=t.received,now
             left:=total-done-here
             eta:=rate>0?f64(left)/rate:-1
-            say(d,"%d of %d files, %s of %s, %s/s, %s left",next-len(active),len(order),bytes_text(done+here),bytes_text(total),bytes_text(i64(rate)),eta<0?"time":seconds_text(eta))
+            say(d,"%d of %d files, %s of %s, %s/s, %s left",next-len(active),len(order),bytes_text(done+here),bytes_text(total),bytes_text(i64(rate)),eta<0?"time":seconds_text(max(eta,0)))
         }
+        if len(active)==0 && next==len(order) {break}
         if error:=join_alive(d,allocator);error!="" {return error}
     }
     elapsed:=node_now(n)-started
@@ -501,7 +558,50 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
     return ""
 }
 
-// Writes the planned writes list of a complete blob into the folder, each
+// The path of the scene the project's manifest starts with, "" when it names
+// none: read from the folder when the file there is the host's, otherwise
+// fetched first.
+@(private)
+join_scene :: proc(d:^Join_Desc,snap:^Snapshot,index:^Index,folder:string) -> string {
+    e,found:=snapshot_find(snap,project.PROJECT_FILE)
+    if !found || e.size>1<<20 {return ""}
+    m:project.Manifest
+    path:=project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator)
+    if here,_,present:=index_address(index,project.PROJECT_FILE,path);present && here==e.address {
+        read_error:project.Error
+        if m,read_error=project.manifest_read(path);read_error.code!=.None {return ""}
+    } else {
+        roots:=[1]store.Hash{e.address}
+        if join_fetch(d,roots[:],project.PROJECT_FILE,context.temp_allocator)!="" {return ""}
+        o,open_error:=store.object_open(d.node.s,e.address)
+        if open_error!=.None {return ""}
+        defer store.object_close(&o)
+        text:=make([]u8,int(store.object_size(&o)),context.temp_allocator)
+        if store.object_read(&o,0,text)!=.None {return ""}
+        parse_error:project.Error
+        if m,parse_error=project.manifest_parse(string(text));parse_error.code!=.None {return ""}
+    }
+    scene:=base.text_get(m.start_scene[:])
+    if scene=="" {return ""}
+    return fmt.tprintf("assets/%s",scene)
+}
+
+// Puts in the store the file the joiner has of the writes of list where the
+// store lacks the base it was planned at, cut as the host's is: the chunks its
+// old version shares with the new are then not asked.
+@(private)
+join_reuse :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,list:[]int,folder:string) {
+    s:=d.node.s
+    for k in list {
+        w:=&plan.write[k]
+        if !w.present || store.chunk_here(s,w.base) {continue}
+        file_put_object(s,project.path(folder,snap.entries[w.at].path,allocator=context.temp_allocator))
+        store.commit(s)
+        return
+    }
+}
+
+// Writes the planned writes list of a complete object into the folder, each
 // whole through a rename, unless the joiner changed the file since the plan;
 // what cannot be written is reported with how to fix it.
 @(private)
@@ -526,22 +626,22 @@ join_write :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,list:[]int,index:^Inde
             failed(report,"%s is read-only: make it writable (chmod u+w on macOS and Linux, attrib -r on Windows) and run the join again",target)
             continue
         }
-        from,path_error:=store.blob_path(s,e.address,context.temp_allocator)
-        if path_error!=.None {
-            failed(report,"%s: its blob is not in the store at %s (%v): run the join again",e.path,s.root,path_error)
-            continue
-        }
         temp:=fmt.tprintf("%s/share-%d-%d",temp_folder,os.get_pid(),w.at)
         mode:=os.Permissions_Default_File
         if e.executable {mode+=os.Permissions_Execute_All}
-        if e.size==0 {
-            if write_error:=os.write_entire_file(temp,nil);write_error!=nil {
-                failed(report,"%s could not be written (%v): free space on its disk, or give this user access to %s, and run the join again",target,write_error,temp_folder)
-                continue
-            }
-        } else if copy_error:=os.copy_file(temp,from);copy_error!=nil {
+        #partial switch saved,store_error,os_error:=object_save(s,e.address,e.size,temp);saved {
+        case .None:
+        case .Size:
             os.remove(temp)
-            failed(report,"%s could not be written (%v): free space on its disk, or give this user access to %s, and run the join again",target,copy_error,temp_folder)
+            failed(report,"%s: the snapshot says %d bytes and its object has others: the host is not honest; it was not written",e.path,e.size)
+            continue
+        case .Store:
+            os.remove(temp)
+            failed(report,"%s: its object does not read from the store at %s (%v): run the join again",e.path,s.root,store_error)
+            continue
+        case:
+            os.remove(temp)
+            failed(report,"%s could not be written (%v): free space on its disk, or give this user access to %s, and run the join again",target,os_error,temp_folder)
             continue
         }
         os.change_mode(temp,mode)
@@ -565,6 +665,68 @@ join_write :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,list:[]int,index:^Inde
         report.written+=1
         w.done=true
     }
+}
+
+@(private)
+Save_Error :: enum u8 {None,Size,Store,Write}
+
+// Writes the object at address, of size bytes, into a new file at path chunk
+// by chunk at the offset of each, walking its tree one node per level: what
+// it holds does not grow with the file. Size: the object holds other bytes.
+@(private)
+object_save :: proc(s:^store.Store,address:store.Hash,size:i64,path:string) -> (error:Save_Error,store_error:store.Error,os_error:os.Error) {
+    if size==0 {
+        if os_error=os.write_entire_file(path,nil);os_error!=nil {return .Write,.None,os_error}
+        return
+    }
+    o,open_error:=store.object_open(s,address)
+    if open_error!=.None {return .Store,open_error,nil}
+    defer store.object_close(&o)
+    if store.object_size(&o)!=u64(size) {return .Size,.None,nil}
+    file,create_error:=os.open(path,{.Write,.Create,.Trunc},os.Permissions_Default_File)
+    if create_error!=nil {return .Write,.None,create_error}
+    defer os.close(file)
+    if os_error=os.truncate(file,size);os_error!=nil {return .Write,.None,os_error}
+    Frame :: struct {node:store.Node_View,next:int}
+    stack:[store.NODE_LEVEL_MAX+1]Frame
+    buffers:[store.NODE_LEVEL_MAX+1][]u8
+    defer for b in buffers {delete(b,context.temp_allocator)}
+    chunk,_:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
+    defer delete(chunk,context.temp_allocator)
+    stack[0]={node=o.root}
+    depth:=1
+    at:i64
+    for depth>0 {
+        top:=&stack[depth-1]
+        if top.next==len(top.node.entries) {
+            depth-=1
+            continue
+        }
+        e:=top.node.entries[top.next]
+        top.next+=1
+        level:=top.node.level
+        if level==0 {
+            bytes,read_error:=store.chunk_read(s,e.address,chunk)
+            if read_error!=.None {return .Store,read_error,nil}
+            if u64(len(bytes))!=e.size {return .Store,.Corrupt,nil}
+            for written:=0;written<len(bytes); {
+                n,write_error:=os.write_at(file,bytes[written:],at+i64(written))
+                if write_error!=nil {return .Write,.None,write_error}
+                written+=n
+            }
+            at+=i64(len(bytes))
+            continue
+        }
+        if buffers[level-1]==nil {buffers[level-1],_=make([]u8,store.CHUNK_MAX,context.temp_allocator)}
+        bytes,read_error:=store.chunk_read(s,e.address,buffers[level-1])
+        if read_error!=.None {return .Store,read_error,nil}
+        child,parse_error:=store.node_parse(bytes)
+        if parse_error!=.None || child.level!=level-1 || child.total!=e.size || len(child.groups)>0 || len(child.meta)>0 {return .Store,.Corrupt,nil}
+        stack[depth]={node=child}
+        depth+=1
+    }
+    if at!=size {return .Size,.None,nil}
+    return
 }
 
 // Removes what the host removed, unless the joiner changed it since the plan

@@ -36,7 +36,7 @@ Packages, all *engine-time*:
   name when the package lists several of the kind) and every other by kind and name. The caller
   writes each to the file its part gives and `output_written` takes it; `outputs_end` puts the
   manifest and the build in the store. `output_model` writes a model as parts of the import with
-  the writer of `import_write` (cooking ahead, Fast textures, taken blobs, the caches); its prefab
+  the writer of `import_write` (cooking ahead, Fast textures, taken objects, the caches); its prefab
   is a scene of the model's name that the caller writes with `prefab.model_prefab`. A part whose
   kind and name the import already gave is that asset, written once: two models that name the
   same material or texture share it. `output_input` lists a file the import reads in the package
@@ -189,9 +189,9 @@ the asset: the [package](#identity-and-reimport) is.
   (`mesh_build_hash`); for a texture, its `Build_Options` with `BUILD_VERSION` and the block
   encoders (`textures.encoders_id`); for a sound, whether it is `Stream`. Materials, skeletons and
   clips store 0. Changing a texture setting keeps the meshes, and one of the meshes, the textures.
-- What is current is a ref lookup: `import_write` takes the blob a build of the package has for a
+- What is current is a ref lookup: `import_write` takes the object a build of the package has for a
   mesh or a texture (`Written.kept`), from the build of the key of what the import is made from
-  now, else from the build this machine chose for the previous manifest, when the blob is of the
+  now, else from the build this machine chose for the previous manifest, when the object is of the
   version its kind is written in, has the `owner` decided now and its `Import_Info` is what the
   import records now: a change that does not reach it (the code of a plugin, a setting of other
   assets) neither builds nor writes it. It builds nothing ahead when the build of the key has
@@ -216,13 +216,15 @@ gives each part a random one; importing again (`Import_Options.manifest`, else t
 `origins` of this machine names for the path of the source) gives each part the asset it had. A
 manifest that does not read is an error that names it, never the defaults nor new ids.
 
-What an import writes is a blob of its build (`writer_put`), whatever the format that reads the
-source, the engine's or a plugin's; each part is written to a scratch file first, and the store
-dedupes. Blobs never change in place and are the same bytes on every machine: the source an
-asset names is relative to the package, a changed owner is a new blob. The build lists the blob of
-each output, which encoders built it and whether it is Final; it is named under `imports/<key>`
-when Final, else under `imports-fast/<key>` (never shared), and as the build this machine chose
-(`builds/<build_select>`), which a program without importers finds. Of two sorts
+What an import writes is an object of its build (`writer_put`, `asset.object_put`), whatever the
+format that reads the source, the engine's or a plugin's; each part is written to a scratch file
+first, and the store dedupes its chunks. Objects never change in place and are the same on every
+machine: the source an asset names is relative to the package, a changed owner is a new object.
+`Written.path` is the file of a document, and an output of the cache has only its object
+(`written_open` opens either; `mirai import` prints `object <address>`). The build lists the
+object of each output, which encoders built it and whether it is Final; it is named under
+`imports/<key>` when Final, else under `imports-fast/<key>` (never shared), and as the build
+this machine chose (`builds/<build_select>`), which a program without importers finds. Of two sorts
 (`asset.import_cached`):
 
 - **The cache**: meshes, textures, sounds and fonts. Nothing edits them after the import: the
@@ -263,7 +265,7 @@ nobody changed it.
   `Refuse` (the default) writes nothing and fails with `Error_Code.Changed`, naming the files and
   how to go on; `Discard` writes over them, with what its writer keeps of a person's (the body
   parts and sockets of a skeleton, the roots of clips); `Keep` leaves them as they are, imports
-  the rest and warns of each. The blobs of the build are written either way.
+  the rest and warns of each. The objects of the build are written either way.
   `discard_changes` of `asset.import`, `--discard-changes` of `mirai import` and the question of
   the editor are `Discard` (`Library_Options.changed`); a [refresh](#library) and the follow of a
   package added are `Keep`, so a build never loses an edit and still builds the package.
@@ -334,7 +336,7 @@ checkout, worktree and project of the machine, keeps manifests and builds.
   identity and the versions of what reads its origin, an engine importer or a format of the engine
   or of the plugins) is looked up in `imports` (and `imports-fast` with `fast_textures`), then asked
   of the caller's source (`cache.Source`, the same procedure value the caches of `cook/cache` take:
-  given `(imports, <keys>)` it makes each build and every blob it lists present, given `(packages,
+  given `(imports, <keys>)` it makes each build and every object it lists whole, given `(packages,
   <ids>)` the manifests; it takes many names at once, and a refresh asks every key and id it will
   need in one call before it goes package by package), then built by ingesting the origin when it
   exists on this machine. Otherwise the report says, by package name, that a machine with its source
@@ -344,7 +346,7 @@ checkout, worktree and project of the machine, keeps manifests and builds.
   imports it whole) is ingested again with the ids its manifest gives, and the project pins the new
   manifest. A document changed since it was last written is left as it is, with a warning that
   names it ([changed documents](#changed-documents)): the rest is written.
-- **It never removes** a blob, a ref or a file of a project because a source is missing, and
+- **It never removes** an object, a ref or a file of a project because a source is missing, and
   never builds without the source. What the store does not have stays listed as not built.
 - A source a plugin imports whole has a key only its importer knows: the refresh takes the build
   this machine chose for its manifest, and a machine without its source reports it.
@@ -358,7 +360,7 @@ checkout, worktree and project of the machine, keeps manifests and builds.
   one whose assets hold the file, under `--folder` (else the folder of the file); `mirai import
   --refresh <root>` refreshes a project or a plugin. Both build textures Fast and take a Fast
   build, as the editor does; `--final` requires Final. `--from <folder>`
-  naming a second store as its source (`cache.store_source`, which copies a ref with its blobs,
+  naming a second store as its source (`cache.store_source`, which copies a ref with its objects,
   as a peer gives them); an installed engine takes its `builds/` store as that source. Every
   build of a project refreshes it and its plugins with a `packages.mirai` once its target stands
   (`build.job_imports`, `imports_refresh`) with the engine's import program, which reads the
@@ -396,16 +398,18 @@ single thread and in the usual order: with or without a job system the same byte
 What matters about a built texture does not depend on its id or its path: `cook/textures/cache.odin`
 keeps it by content in the cache `textures` of the machine store (`cook/cache`), one texture per
 key whose id is the key. Every project, worktree and program of the machine shares it, and a
-machine that shares blobs with another finds what that one built.
+machine that shares the store's objects with another finds what that one built.
 
-- `cook/cache` keeps each result as a blob of `mirai:store` named by the ref
+- `cook/cache` keeps each result as an object of `mirai:store` (`asset.object_put`) named by the ref
   (`cache-<name>`, `<key>-<version>`) (`asset.cache_namespace`). The store reaches it as a value
   (`Import_Options.store`, `Cook_Desc.store`; nil, none): the editor's
   imports (the session's: `--store`, else the machine's), `mirai import` (the machine's store, or
   `--store`) and the cook of a build (that of the build: `--store`, else the machine's). Tests
   make one in a temporary folder.
 - A miss asks `Import_Options.cache_source` (a `cache.Source`) once before building: it makes the
-  blob present in the store and sets the ref, or says it has none.
+  object whole in the store and sets the ref, or says it has none. What a pass needs is looked up
+  at once (`cache.lookup`): the cook asks the source in one fetch for the textures of its pass and
+  its jobs then read the cache without asking.
 - A texture that is not kept looks for its `textures.cache_key_build` (the bytes of the image, or
   the texels the format made with their size, layers and format, and the `settings_hash`): if it is
   there, its levels are written with the id and the `Import_Info` of this import; if not, it is
@@ -421,9 +425,9 @@ machine that shares blobs with another finds what that one built.
   an RGBA8 texture by `textures.cache_key_blocks`.
 - A key names what made the blocks (`textures.encoders_id`), so machines with other encoders
   share the store without sharing results.
-- A read checks the id (key and version) and the hash of the asset: a ref whose blob is missing,
-  damaged or of another version is a miss and is built again; a blob that no longer has the bytes
-  of its address is removed so that the build replaces it.
+- A read checks the id (key and version) of the asset and reads its chunks: a ref whose object is
+  not whole here, does not read or is of another version is a miss and is built again. The store
+  checks its chunks (its scrub), not the cache.
 - A result belongs to no asset and `cook/cache` removes none: the store owns space, and what goes
   is decided by the live set given to `store.sweep`.
 - An image only its format decodes (`Imported_Image.make`, added with `importer.image_made`) is
@@ -495,8 +499,9 @@ those a mesh uses; repeated names are told apart with `name (n)`.
 
 ## What is written
 
-Every output is a blob of the build. In the folder of the documents, a new document gets a flat
-file (`<name>.mat`, `.skeleton`, `.anim` and, with `import_source`, the model's `.scene`), with a
+Every output is an object of the build. In the folder of the documents, a new document gets a flat
+file (`<name>.mat`, `.skeleton`, `.anim`, a plugin's kind with the extension its manifest declares
+and, with `import_source`, the model's `.scene`), with a
 valid file name that does not overwrite another asset; one that already existed is followed where
 it is ([identity](#identity-and-reimport)).
 Each imported asset carries the `Cooked` flag and its `Import_Info` ([cache](#import-cache)).

@@ -23,12 +23,19 @@ Written :: struct {
     id:base.Asset_Id,
     kind:asset.Fourcc,
     name:string,
-    path:string,   // its blob in the store, or for a document its file in the folder of the documents
-    blob:store.Hash,
+    path:string,   // for a document, its file in the folder of the documents; "" for an object of the store alone
+    object:store.Hash,
     source:string, // the source as imports name it
     bytes:int,
     detail:string, // what it holds, for a report: levels and colliders of a mesh, format and size of a texture
-    kept:bool,     // a blob the store had was taken: nothing was built
+    kept:bool,     // an object the store had was taken: nothing was built
+}
+
+// Opens what an import wrote: a document from its file, an output of the
+// cache from its object of s.
+written_open :: proc(s:^store.Store,w:Written,a:^asset.Asset,allocator:=context.allocator) -> asset.Error {
+    if w.path!="" {return asset.asset_load(a,w.path,allocator)}
+    return asset.asset_open_object(a,s,w.object,allocator)
 }
 
 Import_Report :: struct {
@@ -131,7 +138,7 @@ Writer :: struct {
     outputs:[dynamic]asset.Package_Asset, // what the import gives: the assets of the manifest it writes
     paths:[dynamic]string,       // the scratch file of each of outputs
     targets:[dynamic]string,     // the file of each document of outputs in the folder of the documents; "": none
-    blobs:[dynamic]store.Hash,   // the blob of each of outputs once the store took it; zero: none
+    objects:[dynamic]store.Hash, // the object of each of outputs once the store took it; zero: none
     followed:[dynamic]Followed_Skeleton, // the baselines of the skeletons taken, which clips follow onto
     scratch:string,              // the folder parts are written in before the store takes them
     version:u32,                 // import_version of what reads the source
@@ -151,7 +158,7 @@ Writer :: struct {
     error:Error,
 }
 
-// A build of the package this machine has, whose blobs an import takes.
+// A build of the package this machine has, whose objects an import takes.
 @(private)
 Candidate :: struct {
     build:asset.Build,
@@ -185,14 +192,18 @@ writer_warn :: proc(w:^Writer,format:string,args:..any) {
 record :: proc(w:^Writer,output:int,name:string,detail:="",kept:=false) {
     o:=w.outputs[output]
     path:=w.targets[output]
-    if path=="" {path,_=store.blob_path(w.options.store,w.blobs[output],context.temp_allocator)}
     size:int
-    if info,error:=os.stat(path,context.temp_allocator);error==nil {size=int(info.size)}
+    if path!="" {
+        if info,error:=os.stat(path,context.temp_allocator);error==nil {size=int(info.size)}
+    } else {
+        dependencies:=make([dynamic]base.Asset_Id,context.temp_allocator)
+        if header,error:=asset.object_header(w.options.store,w.objects[output],&dependencies);error==.None {size=int(header.total_size)}
+    }
     clone,_:=strings.clone(path,w.allocator)
     named,_:=strings.clone(name,w.allocator)
     from,_:=strings.clone(w.source,w.allocator)
     described,_:=strings.clone(detail,w.allocator)
-    append(&w.report.assets,Written{id=o.id,kind=o.kind,name=named,path=clone,blob=w.blobs[output],source=from,bytes=size,detail=described,kept=kept})
+    append(&w.report.assets,Written{id=o.id,kind=o.kind,name=named,path=clone,object=w.objects[output],source=from,bytes=size,detail=described,kept=kept})
     progress_written(w.options.progress,len(w.previous.assets))
 }
 
@@ -233,7 +244,7 @@ writer_candidates :: proc(w:^Writer) {
     if w.stored {take(w,s,asset.REF_BUILDS,store.hex(asset.build_select(w.previous_manifest,&w.previous),&digits),false)}
 }
 
-// The blob of a build of the package (writer_candidates) for the output id,
+// The object of a build of the package (writer_candidates) for the output id,
 // to take without building it: of kind in the version it is written in now,
 // with owner, and made from one of expected, which records what decides its
 // bytes beyond the key (the image of a texture and its encoders, the mesh as
@@ -246,17 +257,15 @@ writer_reuse :: proc(w:^Writer,types:^asset.Types,id:base.Asset_Id,kind:asset.Fo
     for &c in w.candidates {
         for o in c.build.outputs {
             if o.id!=id || o.kind!=kind || o.kind_version!=known.version {continue}
-            blob,path_error:=store.blob_path(w.options.store,o.blob,context.temp_allocator)
-            if path_error!=.None {continue}
-            header,recorded,imported,error:=asset.import_peek(blob,types)
+            header,recorded,imported,error:=asset.object_peek(w.options.store,o.object,types)
             if error!=.None || !imported || header.kind!=kind || header.owner!=owner || !slice.contains(expected,recorded) {continue}
-            return o.blob,recorded,true
+            return o.object,recorded,true
         }
     }
     return
 }
 
-// The blob a texture had, built from the same image with the same settings and
+// The object a texture had, built from the same image with the same settings and
 // encoders (Import_Info.settings_hash): Final, or Fast for an import of fast
 // textures while the texture cache holds no Final of it. fast: it is Fast.
 @(private="file")
@@ -344,7 +353,7 @@ texture_options :: proc(w:^Writer,job:Texture_Job) -> textures.Build_Options {
     return image_build_options({srgb=job.srgb,normal_map=job.normal_map,green_down=job.green_down,alpha_cutoff=job.alpha_cutoff,alpha_fill=job.alpha_fill,keep_precision=job.keep_precision,channels=job.channels},w.options.settings)
 }
 
-// Builds one texture of source as the asset id at path, or takes the blob it
+// Builds one texture of source as the asset id at path, or takes the object it
 // had, and puts it in the store as output; false when the image cannot be
 // turned into one (a warning says why) or the store does not take it (the
 // writer failed).
@@ -357,7 +366,7 @@ write_texture :: proc(w:^Writer,job:Texture_Job,id,owner:base.Asset_Id,path,sour
 // What building and saving a texture gave, for its writer to record.
 @(private)
 Texture_Write :: struct {
-    kept:bool,       // a blob of a build was taken (hash)
+    kept:bool,       // an object of a build was taken (hash)
     hash:store.Hash,
     fast:bool,       // its blocks are Fast
     format:asset.Texture_Format,
@@ -366,7 +375,7 @@ Texture_Write :: struct {
     saved:asset.Error,
 }
 
-// Builds and saves a texture as write_texture does, or finds the blob to take
+// Builds and saves a texture as write_texture does, or finds the object to take
 // (writer_reuse), without changing w: on worker, so that the textures of a
 // model are written on the job system at once.
 @(private)
@@ -381,8 +390,7 @@ texture_write :: proc(w:^Writer,job:Texture_Job,id,owner:base.Asset_Id,path,sour
     info:=import_info(source,job.name,job.index,job.size,job.hash,textures.settings_hash(options),job.version)
     if hash,fast,found:=texture_reuse(w,&types,job,id,owner,source);found {
         file:asset.Asset
-        blob,_:=store.blob_path(w.options.store,hash,context.temp_allocator)
-        if asset.asset_load(&file,blob,context.temp_allocator)==.None {
+        if asset.asset_open_object(&file,w.options.store,hash,context.temp_allocator)==.None {
             defer asset.asset_close(&file)
             if view,error:=asset.texture_view(&file,&types);error==.None {
                 return {kept=true,hash=hash,fast=fast,format=view.info.format,width=int(view.info.width),height=int(view.info.height),mips=len(view.mips)}
@@ -477,7 +485,7 @@ writer_init :: proc(w:^Writer,path,folder:string,options:Import_Options,report:^
     return writer_source(w,path,folder) && writer_changed(w)
 }
 
-// Whether the build of what the import is made from now has a blob in the
+// Whether the build of what the import is made from now has an object in the
 // store for every output of the cache the previous manifest lists: then
 // nothing is built ahead. It fixes what the import is made from.
 @(private)
@@ -489,7 +497,7 @@ writer_current :: proc(w:^Writer) -> bool {
         held:=false
         for &c in w.candidates {
             if !c.current {continue}
-            for o in c.build.outputs {held||=o.id==a.id && store.has(w.options.store,o.blob)}
+            for o in c.build.outputs {held||=o.id==a.id && asset.object_whole(w.options.store,o.object)}
         }
         if !held {return false}
     }
@@ -497,7 +505,7 @@ writer_current :: proc(w:^Writer) -> bool {
 }
 
 // Writes the meshes, materials, textures, skeletons and clips of a model as
-// the blobs of a build of its package (package.odin). Importing a source again
+// the objects of a build of its package (package.odin). Importing a source again
 // gives each part the asset the previous manifest lists (identity.odin); a new
 // one gets a random id. A document is also written or followed in the folder
 // of the documents (documents.odin): <name>.mat, <name>.skeleton or
@@ -761,8 +769,7 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
         if kept:=kept_meshes[i];kept!={} {
             kept_zone:=zone_begin(w.options,"mesh.kept")
             file:asset.Asset
-            blob,_:=store.blob_path(w.options.store,kept,context.temp_allocator)
-            if asset.asset_load(&file,blob,context.temp_allocator)==.None {
+            if asset.asset_open_object(&file,w.options.store,kept,context.temp_allocator)==.None {
                 view,view_error:=asset.mesh_view(&file,&w.types)
                 detail:=mesh_detail(view.levels,view.colliders,len(view.collision_points),len(view.collision_indices)) if view_error==.None else ""
                 asset.asset_close(&file)

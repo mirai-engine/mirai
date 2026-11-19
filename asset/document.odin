@@ -438,9 +438,7 @@ document_from_asset :: proc(doc:^Document,a:^Asset,allocator:=context.allocator)
             error:=column_size(doc,&column,source.rows*from.size)
             append(&target.columns,column)
             if no_column_name!=nil {error=.Out_Of_Memory}
-            decoder:^Decoder
-            if error==.None && entry.compression!=.None {decoder,error=asset_decoder(a)}
-            if error==.None {error=blob_read(&a.blob,entry,target.columns[at].data,decoder)}
+            if error==.None {error=asset_chunk_read(a,from.chunk,target.columns[at].data)}
             if error!=.None {
                 document_destroy(doc)
                 return error
