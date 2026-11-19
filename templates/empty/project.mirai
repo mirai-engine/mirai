@@ -1,5 +1,6 @@
 {
   "name": "Project",
-  "plugins": ["sample", "playtest"],
+  "start_scene": "main.scene",
+  "plugins": ["sample", "playtest", "physics", "locomotion", "spawn", "shapes", "ui_inspector"],
   "build": {"compression": "open"}
 }

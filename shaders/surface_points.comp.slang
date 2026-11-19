@@ -1,5 +1,5 @@
 #include "native.slang"
-//! per surface program only
+//! per surface program only opaque blend
 // The material points of one Surface program (points.slang) in the window of
 // the resolve: what the program gives at each, or the filter of a filter
 // point, in its record. A thread per point of its bin, or, when the scene has

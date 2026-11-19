@@ -140,15 +140,16 @@ frame_gbuffer_mesh :: proc(r: ^Renderer, mesh: Mesh_Handle, material: Material_H
 	s := &r.scene
 	if int(mesh) >= len(s.meshes) || r.gbuffer_asked == {.Reflectance, .Layers} {return}
 	row := u32(material) if material != 0 && int(material) < len(s.materials) else GPU_NONE
-	_, _, _, reflectance, layered, _, _ := instance_alpha(s, s.meshes[mesh], row, {})
-	if reflectance {r.gbuffer_asked += {.Reflectance}}
-	if layered {r.gbuffer_asked += {.Layers}}
+	a := instance_alpha(s, s.meshes[mesh], row, {})
+	if a.reflectance {r.gbuffer_asked += {.Reflectance}}
+	if a.layered {r.gbuffer_asked += {.Layers}}
 }
 
 // Tells the frame that an extension draws every cluster of level 0 of a mesh
 // of the scene, where the cull of the scene does not see it (the meshes of
 // particles): a mesh whose pages stream loads them all, and keeps them while
-// it asks. Ask in each frame that draws it.
+// it asks, and the frame lists its indices (pass_indices .Meshes). Ask in
+// each frame that draws it.
 frame_mesh_whole :: proc(r: ^Renderer, mesh: Mesh_Handle) {
 	if int(mesh) < len(r.scene.meshes) {r.scene.meshes[mesh].whole = r.frame + 1}
 }
@@ -269,10 +270,8 @@ pass_image_write :: proc(s: ^Stage_Pass, read, write: u32) -> bool {
 // order, in a pass_surface_begin with them; one of Blend into the lit image
 // with blend and into the coverage TAA reads, adding, in pass_blend_begin.
 // Gbuffer takes pass_gbuffer_pipeline instead. A compute stage that traces
-// rays declares the variant hw (//! variant) and the constant color
-// (//! constant), and its pipeline is that of the rays the renderer traces,
-// as for the stages of the engine: by hardware, and through the filters of
-// glass with colored shadows.
+// rays declares the variant hw (//! variant), and its pipeline is that of the
+// rays the renderer traces, as for the stages of the engine.
 // A graphics stage whose source marks it `//! per surface program` draws the
 // materials of a Surface program with the fragment stage of that program:
 // program names it (pass_material_program), 0 for those without one.
@@ -308,7 +307,6 @@ stage_pipeline :: proc(r: ^Renderer, desc: Stage_Pipeline_Desc) -> rhi.Pipeline 
 	if desc.stage == .Gbuffer {set_error(r, "the pipeline of the Gbuffer stage %s depends on the view: ask pass_gbuffer_pipeline in the pass", desc.shader); return 0}
 	compute := desc.stage != .Mask && desc.stage != .Blend && desc.stage != .Effect && (desc.stage != .Surface || desc.compute)
 	hardware := compute && r.hardware_rt
-	colored := compute && r.settings.colored_shadows && len(r.scene.translucent) > 0
 	program := desc.program if !compute && desc.program != GPU_NONE else 0
 	plain: rhi.Pipeline
 	if program != 0 {
@@ -316,7 +314,7 @@ stage_pipeline :: proc(r: ^Renderer, desc: Stage_Pipeline_Desc) -> rhi.Pipeline 
 		without.program = 0
 		if plain = stage_pipeline(r, without); plain == 0 {return 0}
 	}
-	key := base.name_hash(desc.shader) ~ base.name_hash(desc.fragment) * 31 ~ (u64(desc.stage) + 1) << 56 ~ u64(transmute(u8)desc.targets) << 48 ~ u64(desc.blend) << 40 ~ u64(hardware) << 39 ~ u64(colored) << 38 ~ u64(compute) << 37 ~ u64(program) * 0x9E3779B97F4A7C15
+	key := base.name_hash(desc.shader) ~ base.name_hash(desc.fragment) * 31 ~ (u64(desc.stage) + 1) << 56 ~ u64(transmute(u8)desc.targets) << 48 ~ u64(desc.blend) << 40 ~ u64(hardware) << 39 ~ u64(compute) << 37 ~ u64(program) * 0x9E3779B97F4A7C15
 	free: ^Stage_Pipeline
 	for &entry in r.stage_pipelines {
 		if entry.asked && entry.key == key {return entry.pipeline if entry.pipeline != 0 else plain}
@@ -331,9 +329,7 @@ stage_pipeline :: proc(r: ^Renderer, desc: Stage_Pipeline_Desc) -> rhi.Pipeline 
 		for variant in variants {
 			if variant == "_hw" && !hardware {continue}
 			if code := extension_shader(r, fmt.bprintf(names[0][:], "%s%s.comp", desc.shader, variant)); code != nil {
-				constants: rhi.Shader_Constants
-				if colored {constants, _ = rhi.shader_constant(code, "color")}
-				free.pipeline = rhi.pipeline_create_compute(r.device, {shader = code, constants = constants, name = desc.name})
+				free.pipeline = rhi.pipeline_create_compute(r.device, {shader = code, name = desc.name})
 				break
 			}
 		}
@@ -387,7 +383,7 @@ stage_pipelines_destroy :: proc(r: ^Renderer) {
 // do not know nested views.
 pass_nested_add :: proc(s: ^Stage_Pass, nested: Nested_View) -> u32 {
 	p := s.pass
-	if p.view == nil || !p.r.frame_layout.nested || p.nested_count >= NESTED_VIEW_CAPACITY || p.r.pipelines[.Gbuffer_Nested] == 0 {return 0}
+	if p.view == nil || !p.r.frame_layout.nested || p.nested_count >= NESTED_VIEW_CAPACITY || p.r.pipelines[.Resolve_Nested] == 0 {return 0}
 	nested := nested
 	nested.to_world = origin_transform(nested.to_world, p.r.origin)
 	nested.previous = origin_transform(nested.previous, p.r.origin)
@@ -451,9 +447,8 @@ Surface_Targets :: bit_set[Surface_Target;u8]
 // Lit, the direct light the surfaces reflect, in the lit image already. Post
 // reads what the Output stage does (stage_contract): Linear_Depth, Motion,
 // Albedo, Normal and Emission, at the size of the targets of the view.
-// Shadow_Atlas: the depth of the maps of the view; Shadow_Tint and Shadow_Glass, what the glass in
-// front of it lets through and the depth of the nearest glass, while glass colors light.
-Surface_Source :: enum u8 {Linear_Depth, Motion, Albedo, Normal, Emission, Instance, Glass_Depth, Direct, Shadow_Atlas, Shadow_Tint, Shadow_Glass}
+// Shadow_Atlas: the depth of the maps of the view.
+Surface_Source :: enum u8 {Linear_Depth, Motion, Albedo, Normal, Emission, Instance, Glass_Depth, Direct, Shadow_Atlas}
 
 // Begins the pass in which an extension draws surfaces into the G-buffer of
 // the view, in the Gbuffer stage, with the depth buffer of the view: the
@@ -469,6 +464,34 @@ pass_gbuffer_begin :: proc(s: ^Stage_Pass, name := "extension surfaces") {
 	rhi.cmd_begin_render_pass(p.cmd, &pass)
 	// The fragment of the engine reports the levels it samples, also with no scene drawn before.
 	textures_feedback_bind(p.r, p.cmd)
+}
+
+// In the Gbuffer stage, binds at SLOT_PASS0 + slot, to read with all its
+// levels, a depth pyramid of the view (include/pyramid.slang tests a box
+// against it): of each texel, the farthest linear depth drawn over it. That of
+// this frame holds what the scene drew and what pass_depth_pyramid_build took
+// since; previous, that of the frame before, what the view drew then. levels:
+// of the pyramid. False, with an empty texture bound there, in another stage
+// and while the view has none: it drew nothing, or was cut or resized.
+pass_depth_pyramid :: proc(s: ^Stage_Pass, slot: u32, previous := false) -> (levels: u32, ok: bool) {
+	if slot > SLOT_PASS9 - SLOT_PASS0 {return}
+	p := s.pass
+	ok = s.stage == .Gbuffer && (p.pyramid_previous if previous else p.t.hiz_valid)
+	rhi.cmd_bind_texture(p.cmd, SLOT_PASS0 + slot, p.t.hiz[p.previous if previous else p.current] if ok else p.r.dummy_texture)
+	return p.t.hiz_levels if ok else 0, ok
+}
+
+// In the Gbuffer stage, outside a pass of surfaces, builds the depth pyramid
+// of this frame again from the depth of the view: it then holds what the
+// passes drew since, for those after it and the frame after. False in
+// another stage, and in a view that does not draw the scene.
+pass_depth_pyramid_build :: proc(s: ^Stage_Pass) -> bool {
+	p := s.pass
+	if s.stage != .Gbuffer || !p.draw {return false}
+	rhi.cmd_timestamp(p.cmd, "depth pyramid")
+	build_depth_pyramid(p, p.t.hiz[p.current])
+	p.t.hiz_valid = true
+	return true
 }
 
 // The pipeline of the Gbuffer stage that draws with <shader>.vert of the
@@ -573,13 +596,11 @@ pass_surface_begin :: proc(s: ^Stage_Pass, targets: Surface_Targets, name := "su
 // Without instance ids, Instance reads 0 everywhere.
 pass_surface_read :: proc(s: ^Stage_Pass, slot: u32, source: Surface_Source) {
 	t := s.pass.t
-	instance := t.instance if t.instance != 0 && s.pass.r.frame_layout.instance_ids else s.pass.r.dummy_layers
+	instance := t.instance if t.instance != 0 && s.pass.r.frame_layout.instance_ids else s.pass.r.dummy_uint
 	glass := t.glass[0].depth if s.glass != .All && t.glass[0].depth != 0 else s.pass.r.dummy_texture
 	maps, dummy := s.pass.frame.sun_maps, s.pass.r.dummy_texture
 	shadows := t.shadow_raster.atlas if maps.z != 0 else dummy
-	tint := t.shadow_tint if maps.w != 0 else dummy
-	nearest := t.shadow_glass if maps.w != 0 else dummy
-	textures := [Surface_Source]rhi.Texture{.Linear_Depth = t.linear_depth, .Motion = t.motion, .Albedo = t.albedo, .Normal = t.normal, .Emission = t.emission, .Instance = instance, .Glass_Depth = glass, .Direct = t.direct, .Shadow_Atlas = shadows, .Shadow_Tint = tint, .Shadow_Glass = nearest}
+	textures := [Surface_Source]rhi.Texture{.Linear_Depth = t.linear_depth, .Motion = t.motion, .Albedo = t.albedo, .Normal = t.normal, .Emission = t.emission, .Instance = instance, .Glass_Depth = glass, .Direct = t.direct, .Shadow_Atlas = shadows}
 	if slot <= SLOT_PASS9 - SLOT_PASS0 {rhi.cmd_bind_texture(s.pass.cmd, SLOT_PASS0 + slot, textures[source])}
 }
 
@@ -588,6 +609,14 @@ pass_surface_read :: proc(s: ^Stage_Pass, slot: u32, source: Surface_Source) {
 pass_shadow_data :: proc(s: ^Stage_Pass, slot: u32) {
 	data := s.pass.r.shadow_buffers.table if s.pass.frame.sun_maps.z != 0 else s.pass.r.dummy_buffer
 	if slot <= SLOT_PASS9 - SLOT_PASS0 {rhi.cmd_bind_buffer(s.pass.cmd, SLOT_PASS0 + slot, data)}
+}
+
+// Binds the buffer of the pages of the maps of the view at SLOT_PASS0 +
+// slot, in which a pass of the Lit stage marks the pages it reads
+// (SHADOW_MARKS_SLOT of shadow_maps.slang), which the next frame draws.
+pass_shadow_marks :: proc(s: ^Stage_Pass, slot: u32) {
+	pages := s.pass.t.shadow_raster.pages if s.pass.frame.sun_maps.z != 0 else s.pass.r.dummy_buffer
+	if slot <= SLOT_PASS9 - SLOT_PASS0 {rhi.cmd_bind_buffer(s.pass.cmd, SLOT_PASS0 + slot, pages)}
 }
 
 pass_end :: proc(s: ^Stage_Pass) {rhi.cmd_end_render_pass(s.pass.cmd)}

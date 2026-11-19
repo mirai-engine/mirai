@@ -23,6 +23,11 @@ game_copies :: proc(p:^project.Project,folder,compiler:string,a:runtime.Allocato
         if from:=project.path(p.root,icon,allocator=a);os.is_file(from) {append(&copies,Copy{from,project.path(folder,icon,allocator=a),false})}
     }
     if !server {shaders_copies(&copies,p.root,folder,a)}
+    // What the lists of the renderer asked for in each scene the runs of the
+    // project opened: the game starts its lists there and goes on filling it.
+    if capacities:=project.cache_path(p.root,project.CAPACITY_CACHE,allocator=a);!server && os.is_file(capacities) {
+        append(&copies,Copy{capacities,project.cache_path(folder,project.CAPACITY_CACHE,allocator=a),false})
+    }
     when ODIN_OS==.Windows {
         // SDL3 is linked dynamically and ships with the compiler.
         odin_root,configured:=os.lookup_env("ODIN_ROOT",context.temp_allocator)
@@ -66,7 +71,7 @@ copies_run :: proc(copies:[]Copy) -> bool {
         parent:=copy.to[:strings.last_index_byte(copy.to,'/')]
         if os.make_directory_all(parent)!=nil && !os.is_dir(parent) {return false}
         if copy.folder {
-            if os.copy_directory_all(copy.to,copy.from)!=nil {return false}
+            if base.copy_directory_all(copy.to,copy.from)!=nil {return false}
         } else if os.copy_file(copy.to,copy.from)!=nil {
             return false
         }

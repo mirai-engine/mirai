@@ -123,6 +123,9 @@ Batch_Record :: struct {
 	scale:                  f32, // the largest scale of its instances
 	small:                  bool, // every instance within SMALL_INSTANCE_REACH of its centre
 	drawn:                  i32,  // its row among those drawn; -1 when it is not drawn
+	// Of one of a deformable that casts shadows: its deformable moves in the
+	// maps (Skin_State.shadow_moving), as of the last frame that drew them.
+	shadow_moving:          bool,
 }
 
 // The batches of the renderer and the tables of those drawn, which the next
@@ -147,6 +150,7 @@ Batch_State :: struct {
 	upload:          bool,                       // the rows go to the GPU with the next frame
 	epoch:           u64,                        // what meshes_clear raises: every batch is gone
 	revision:        u64,                        // raised when a batch comes, goes or is set again: what extensions that give batches values compare
+	tables:          u64,                        // counts the builds of the tables of the batches drawn
 	dropped:         int,                        // batches left out of the tables: more instance indices than BATCH_INDICES_MAX
 }
 
@@ -158,7 +162,7 @@ Batch_Hw :: struct {
 	record: u32,
 	slot:   u32,
 	mask:   u8,
-	tested: bool,
+	tested: u32, // Gpu_Instance.tested of its rows
 }
 
 @(private)
@@ -222,9 +226,8 @@ rows_bounds :: proc "contextless" (rows: [3]Vec4, low, high: Vec3) -> (Vec3, Vec
 batch_changed_near :: proc(r: ^Renderer, record: ^Batch_Record) {
 	if batch_classes(record.desc.flags, record.small) == 0 || record.count == 0 || record.world != r.world_key {return}
 	offset := batch_offset(r, record)
-	radius := linalg.length(record.bounds_max - record.bounds_min) * 0.5
-	scene_changed_near(&r.scene, (record.bounds_min + record.bounds_max) * 0.5 + offset, radius + min(LIGHT_CHANGE_REACH, LIGHT_CHANGE_SIZES * record.reach))
-	if .Casts_Shadow in record.desc.flags {occluder_changed(&r.scene, OCCLUDERS_MANY, record.bounds_min + offset, record.bounds_max + offset)}
+	scene_changed_seen(&r.scene, record.bounds_min + offset, record.bounds_max + offset, min(LIGHT_CHANGE_REACH, LIGHT_CHANGE_SIZES * record.reach))
+	if .Casts_Shadow in record.desc.flags {occluder_changed(&r.scene, OCCLUDERS_MANY, record.bounds_min + offset - record.desc.reach, record.bounds_max + offset + record.desc.reach)}
 }
 
 // Where the anchor of a batch is from the origin: what takes its instances,
@@ -488,14 +491,14 @@ batches_build :: proc(r: ^Renderer) {
 		material := u32(desc.material) if desc.material != 0 && int(desc.material) < len(s.materials) else GPU_NONE
 		slots := desc.slot_materials
 		for &row in slots {if row > u32(len(s.materials)) {row = 0}}
-		tested, _, glass, reflectance, layered, _, _ := instance_alpha(s, mesh, material, slots)
+		a := instance_alpha(s, mesh, material, slots)
 		// A batch draws no glass: blended triangles leave the G-buffer, and
 		// one all of glass is neither drawn nor traced.
-		classes := batch_classes(desc.flags, record.small) if !glass else 0
+		classes := batch_classes(desc.flags, record.small) if !a.glass else 0
 		layers := desc.layers & LAYERS_ALL if desc.layers & LAYERS_ALL != 0 else 1
 		// In no layer, no view draws them: rays alone meet a batch of Rays_Only.
 		if .Rays_Only in desc.flags {layers = 0}
-		flags := layers << INSTANCE_LAYERS_SHIFT | alpha_flags(tested, false, glass)
+		flags := layers << INSTANCE_LAYERS_SHIFT | alpha_flags({tested = a.tested, glass = a.glass})
 		record.drawn = i32(drawn)
 		append(&b.drawn, u32(index))
 		offset := batch_offset(r, &record)
@@ -509,7 +512,8 @@ batches_build :: proc(r: ^Renderer) {
 			world_inv = {desc.vertex, {offset.x, offset.y, offset.z, desc.reach}, {bits(record.colors + 1 if record.colored else 0), 0, 0, 0}},
 			// Rays meet the instances of a batch in the cut its mesh always has.
 			meta = {u32(desc.mesh) | (u32(ray_cut_always(s.meshes[desc.mesh])) << INSTANCE_RAY_SHIFT if int(desc.mesh) < len(s.meshes) else 0), material, u32(desc.object_id), flags},
-			bounds_min = {low.x, low.y, low.z, 0},
+			bounds_min = low,
+			tested = a.tested,
 			bounds_max = {high.x, high.y, high.z, 0},
 			tint = {desc.tint.x, desc.tint.y, desc.tint.z, 0},
 			emission = {0, 0, 0, 0},
@@ -517,12 +521,12 @@ batches_build :: proc(r: ^Renderer) {
 		})
 		append(&b.boxes, mm.Aabb{low, high})
 		b.bounds_min, b.bounds_max = linalg.min(b.bounds_min, low), linalg.max(b.bounds_max, high)
-		if reflectance && !glass && layers != 0 {append(&b.reflective, Reflective_Instance{drawn, layered})}
+		if a.reflectance && !a.glass && layers != 0 {append(&b.reflective, Reflective_Instance{drawn, a.layered})}
 		for _ in 0 ..< groups {append(&s.indices, drawn)}
 		if classes != 0 {
 			if record.tree_nodes > 0 {append(&b.traced, drawn)}
 			if r.hardware_rt {
-				append(&b.hw, Batch_Hw{record = u32(index), slot = b.slots, mask = u8(classes), tested = tested})
+				append(&b.hw, Batch_Hw{record = u32(index), slot = b.slots, mask = u8(classes), tested = a.tested})
 				b.hw_count += int(record.count)
 			}
 		}
@@ -532,6 +536,7 @@ batches_build :: proc(r: ^Renderer) {
 	if count > 0 {b.groups = {pool_store(&s.indices, &s.pool_free[.Index], &s.pool_dirty[.Index], group_first), count}}
 	s.geometry_dirty = true
 	b.built, b.built_instances, b.built_world = true, len(s.instances), r.world_key
+	b.tables += 1
 	b.upload = true
 	tlas_build(s)
 	s.tlas_nodes_dirty, s.tlas_refs_dirty, s.tlas_dirty = true, true, true
@@ -568,10 +573,14 @@ batches_upload :: proc(r: ^Renderer, cmd: ^rhi.Command_List, with_instances: boo
 	b.upload = false
 	return true
 }
-// The mask and the flags of an instance of the native TLAS.
+// The mask and the flags of an instance of the native TLAS: tested, the
+// slots whose materials it asks (Gpu_Instance.tested). Those its mesh tests
+// are the masked geometry of each BLAS of the mesh, which decides alone;
+// others make every triangle a candidate, and none every triangle opaque.
 @(private)
-tlas_mask_flags :: #force_inline proc "contextless" (mask: u8, tested: bool) -> u32 {
-	return u32(mask) | (rhi.TLAS_ALPHA_TESTED if tested else 0)
+tlas_mask_flags :: #force_inline proc "contextless" (mask: u8, tested, mesh_tested: u32) -> u32 {
+	if tested == 0 {return u32(mask)}
+	return u32(mask) | (rhi.TLAS_ALPHA_GEOMETRY if tested == mesh_tested else rhi.TLAS_ALPHA_TESTED)
 }
 
 // A batch rays meet, as the compute that writes the instances of the native
@@ -616,7 +625,7 @@ tlas_instances_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> int {
 		offset := batch_offset(r, record)
 		rows[k] = {
 			words = record.words, first = at, custom = first + hw.slot, blas = rhi.accel_id(d, s.meshes[record.desc.mesh].rays[ray_cut_always(s.meshes[record.desc.mesh])].blas),
-			mask_flags = tlas_mask_flags(hw.mask, hw.tested), anchor = {offset.x, offset.y, offset.z, 0},
+			mask_flags = tlas_mask_flags(hw.mask, hw.tested, s.meshes[record.desc.mesh].tested), anchor = {offset.x, offset.y, offset.z, 0},
 		}
 		at += record.count
 	}

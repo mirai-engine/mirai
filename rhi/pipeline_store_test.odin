@@ -260,24 +260,3 @@ pipeline_keys_follow_the_code_the_state_and_the_constants :: proc(t: ^testing.T)
 	vertex.vertex_constants, fragment.fragment_constants = {0}, {0}
 	testing.expect(t, pipeline_key_graphics(vertex) != pipeline_key_graphics(fragment), "a constant belongs to its stage")
 }
-
-// A shader names its constants by id, as far as a pipeline can set them.
-@(test)
-shader_constant_is_found_by_its_name :: proc(t: ^testing.T) {
-	code := Shader_Code{constants = {"color", "unlayered"}}
-	Case :: struct {name: string, found: bool, constants: Shader_Constants}
-	for c in ([]Case{{"color", true, {0}}, {"unlayered", true, {1}}, {"", false, {}}, {"Color", false, {}}, {"colo", false, {}}}) {
-		constants, found := shader_constant(&code, c.name)
-		testing.expectf(t, found == c.found && constants == c.constants, "%q", c.name)
-	}
-	_, of_none := shader_constant(nil, "color")
-	testing.expect(t, !of_none, "no shader has no constants")
-	// More names than a pipeline sets: those past the limit are not found.
-	many: [MAX_SHADER_CONSTANTS + 2]string
-	for &name, i in many {name = fmt.tprintf("c%d", i)}
-	crowded := Shader_Code{constants = many[:]}
-	last, last_found := shader_constant(&crowded, fmt.tprintf("c%d", MAX_SHADER_CONSTANTS - 1))
-	testing.expect(t, last_found && last == Shader_Constants{MAX_SHADER_CONSTANTS - 1})
-	_, past := shader_constant(&crowded, fmt.tprintf("c%d", MAX_SHADER_CONSTANTS))
-	testing.expect(t, !past, "a constant past the limit is not one a pipeline sets")
-}

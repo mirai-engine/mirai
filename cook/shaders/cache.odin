@@ -2,8 +2,10 @@ package shaders
 
 import "base:runtime"
 import "core:encoding/json"
+import "core:fmt"
 import "core:os"
 import "core:slice"
+import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:time"
@@ -28,6 +30,7 @@ Source_File :: struct {
     hash: string, // of data; "" for a path that is not a file
     compilation_hash:string, // parameter metadata does not change code or reflected layout
     macros:Extension_Features, // the macros of extensions.slang its text names
+    declarations:[]Declaration, // of the text the compilation hash is of (declarations.odin)
     found:bool,
 }
 
@@ -54,6 +57,9 @@ sources_file :: proc(s:^Sources,path:string) -> Source_File {
         file.hash=sha_of(file.data,s.allocator)
         file.compilation_hash=sha_of(compilation_source_bytes(path,file.data,context.temp_allocator),s.allocator)
         file.macros=extension_macros(string(file.data))
+        if code:=compilation_source_bytes(path,file.data,context.temp_allocator);!strings.has_suffix(path,".slang-module") && utf8.valid_string(string(code)) {
+            file.declarations=declarations_of(string(code),s.allocator)
+        }
     }
     s.files[strings.clone(path,s.allocator)]=file
     return file
@@ -229,11 +235,9 @@ import_module :: proc(line:string) -> (name:string,ok:bool) {
 // rather than risk reusing output whose dependency the scan cannot resolve.
 // sources: what the generation has read already; nil reads everything here.
 // literal: only what the literal includes and imports reach, without the
-// folders of a macro include. alpha: not the source of a program that the
-// coverage include names by its alpha (ALPHA_INCLUDE), as a fingerprint
-// counts it.
-dependencies :: proc(source:string,include_dirs:[]string,allocator:=context.allocator,sources:^Sources=nil,literal:=false,alpha:=false) -> []string {
-    Scan :: struct {found:[dynamic]string,seen:map[string]bool,roots:[]string,sources:^Sources,literal,alpha:bool}
+// folders of a macro include.
+dependencies :: proc(source:string,include_dirs:[]string,allocator:=context.allocator,sources:^Sources=nil,literal:=false) -> []string {
+    Scan :: struct {found:[dynamic]string,seen:map[string]bool,roots:[]string,sources:^Sources,literal:bool}
     // The folder of the including file comes before the search folders.
     resolve :: proc(scan:^Scan,folder,name:string) -> (path:string,ok:bool) {
         candidate:=path_clean(path_join(folder,name,allocator=context.temp_allocator),scan.found.allocator)
@@ -257,7 +261,6 @@ dependencies :: proc(source:string,include_dirs:[]string,allocator:=context.allo
         text:=string(file.data)
         for line in strings.split_lines_iterator(&text) {
             if directive,found:=include_directive(line);found {
-                if scan.alpha && strings.contains(directive,ALPHA_INCLUDE) {continue}
                 name,literal:=include_target(directive)
                 if !literal {
                     if scan.literal {continue}
@@ -278,7 +281,7 @@ dependencies :: proc(source:string,include_dirs:[]string,allocator:=context.allo
         }
     }
     local:Sources
-    scan:=Scan{found=make([dynamic]string,allocator),seen=make(map[string]bool,context.temp_allocator),sources=sources,literal=literal,alpha=alpha}
+    scan:=Scan{found=make([dynamic]string,allocator),seen=make(map[string]bool,context.temp_allocator),sources=sources,literal=literal}
     if scan.sources==nil {
         sources_init(&local,context.temp_allocator)
         scan.sources=&local
@@ -291,28 +294,73 @@ dependencies :: proc(source:string,include_dirs:[]string,allocator:=context.allo
 }
 
 // Identity of what a shader is compiled from: the configuration (compiler,
-// flags, generator contract) and the name and bytes of every dependency.
+// flags, generator contract), the name of every dependency and of each the
+// declarations the shader reaches (declarations.odin): its own source whole.
+// A dependency the scan cannot read in declarations (a binary module) is
+// taken whole.
 fingerprint :: proc(source:string,include_dirs:[]string,bases:[]Base,configuration:[]u8,allocator:=context.allocator,sources:^Sources=nil) -> string {
-    Named :: struct {name,path:string}
+    Named :: struct {name,path:string,file:Source_File}
     local:Sources
     s:=sources
     if s==nil {
         sources_init(&local,context.temp_allocator)
         s=&local
     }
-    paths:=dependencies(source,include_dirs,context.temp_allocator,s,alpha=true)
+    root:=path_clean(source,context.temp_allocator)
+    paths:=dependencies(source,include_dirs,context.temp_allocator,s)
     named:=make([]Named,len(paths),context.temp_allocator)
-    for path,i in paths {named[i]={stable_name(path,bases,context.temp_allocator),path}}
+    for path,i in paths {named[i]={stable_name(path,bases,context.temp_allocator),path,sources_file(s,path)}}
     slice.sort_by(named,proc(a,b:Named) -> bool {return a.name<b.name if a.name!=b.name else a.path<b.path})
+    // What the shader takes: the unnamed declarations and its own source, then
+    // each named one a name it takes names, until no name is new.
+    taken:=make([][]bool,len(named),context.temp_allocator)
+    by_name:=make(map[string][dynamic][2]int,context.temp_allocator)
+    reached:=make(map[string]bool,context.temp_allocator)
+    pending:=make([dynamic]string,context.temp_allocator)
+    take :: proc(taken:[][]bool,declaration:Declaration,at:[2]int,reached:^map[string]bool,pending:^[dynamic]string) {
+        if taken[at[0]][at[1]] {return}
+        taken[at[0]][at[1]]=true
+        for name in declaration.names {
+            if reached[name] {continue}
+            reached[name]=true
+            append(pending,name)
+        }
+    }
+    for entry,f in named {
+        taken[f]=make([]bool,len(entry.file.declarations),context.temp_allocator)
+        for declaration,d in entry.file.declarations {
+            if declaration.name=="" || entry.path==root {continue}
+            list:=by_name[declaration.name] or_else make([dynamic][2]int,context.temp_allocator)
+            append(&list,[2]int{f,d})
+            by_name[declaration.name]=list
+        }
+    }
+    for entry,f in named {
+        for declaration,d in entry.file.declarations {
+            if declaration.name=="" || entry.path==root {take(taken,declaration,{f,d},&reached,&pending)}
+        }
+    }
+    for len(pending)>0 {
+        name:=pop(&pending)
+        for at in by_name[name] {take(taken,named[at[0]].file.declarations[at[1]],at,&reached,&pending)}
+    }
     hash:Sha256
     sha_begin(&hash)
     sha_bytes(&hash,configuration)
     zero:=[1]u8{0}
-    for entry in named {
+    for entry,f in named {
         sha_text(&hash,entry.name)
         sha_bytes(&hash,zero[:])
-        sha_text(&hash,sources_file(s,entry.path).compilation_hash)
-        sha_bytes(&hash,zero[:])
+        if entry.file.declarations==nil {
+            sha_text(&hash,entry.file.compilation_hash)
+            sha_bytes(&hash,zero[:])
+            continue
+        }
+        for declaration,d in entry.file.declarations {
+            if !taken[f][d] {continue}
+            sha_text(&hash,declaration.hash)
+            sha_bytes(&hash,zero[:])
+        }
     }
     return sha_hex(&hash,allocator)
 }
@@ -403,10 +451,16 @@ artifacts_stage :: proc(files:[Backend][]u8,names:[Backend]string,staging:string
 // the others and never replace it:
 //
 //   stages/<digest>.json, .spv, .metal    a compiled stage: its entry and its code
+//   stages/<digest>.reflected.json        a stage compiled only to be reflected
+//                                         (reflected_only): its entry, without code
 //   reflection/<digest>.json              the Parameters of a program
 //   reflection/<digest>.attributes.json   the Attributes of a Vfx program
 //   embedded/<digest>.<edit|ship>.spv.lz, .metal.lz
 //                                         the code render embeds (embedded_pack)
+//   peaks/<key>                           the bytes the last compilation of a stage
+//                                         held at its peak, by its name (charge_of,
+//                                         job_key)
+//   compiling                             the compilations that run (ledger_update)
 //
 // Each file is written whole and renamed into place, the entry of a stage
 // last; a reader takes an entry only when every hash it names matches, and
@@ -419,14 +473,54 @@ CACHE_STAGES :: "stages"
 @(private)
 CACHE_REFLECTION :: "reflection"
 @(private)
+CACHE_PEAKS :: "peaks"
+@(private)
+CACHE_LEDGER :: "compiling"
+
+// The peaks the shared cache keeps, by key.
+@(private)
+peaks_read :: proc(shared:string,allocator:runtime.Allocator) -> map[string]i64 {
+    peaks:=make(map[string]i64,allocator)
+    folder:=path_join(shared,CACHE_PEAKS,allocator=context.temp_allocator)
+    files,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
+    if error!=nil {return peaks}
+    for file in files {
+        if strings.has_suffix(file.name,".tmp") {continue}
+        data,read_error:=os.read_entire_file(file.fullpath,context.temp_allocator)
+        if read_error!=nil {continue}
+        if bytes,parsed:=strconv.parse_i64(strings.trim_space(string(data)));parsed && bytes>0 {peaks[strings.clone(file.name,allocator)]=bytes}
+    }
+    return peaks
+}
+
+// Where the peak of a compilation of key is kept.
+@(private)
+peak_path :: proc(shared,key:string,allocator:=context.allocator) -> string {
+    return path_join(shared,CACHE_PEAKS,key,allocator=allocator)
+}
+
+@(private)
+peak_write :: proc(path:string,bytes:i64) {
+    _=write_file_atomic(path,transmute([]u8)fmt.tprintf("%d\n",bytes))
+}
+@(private)
 CODE_EXTENSIONS :: [Backend]string{.Vulkan=".spv",.Metal=".metal"}
+
+// The file of the entry of a digest for a generation of these backends: one
+// that takes no code has its own, so an entry compiled only to be reflected
+// is never taken or completed by one that takes code.
+@(private)
+cache_stage_path :: proc(shared,digest:string,backends:Backends) -> string {
+    name:=strings.concatenate({digest,REFLECTED if reflected_only(backends) else "",".json"},context.temp_allocator)
+    return path_join(shared,CACHE_STAGES,name,allocator=context.temp_allocator)
+}
 
 // The entry of a digest in the shared cache with the code of every backend
 // asked for, each file what its hash says; false otherwise.
 @(private)
 cache_stage_read :: proc(shared,digest:string,backends:Backends,allocator:=context.allocator) -> (entry:Shader,files:[Backend][]u8,ok:bool) {
     folder:=path_join(shared,CACHE_STAGES,allocator=context.temp_allocator)
-    path:=path_join(folder,strings.concatenate({digest,".json"},context.temp_allocator),allocator=context.temp_allocator)
+    path:=cache_stage_path(shared,digest,backends)
     stored,valid:=shader_read(path,allocator)
     if !valid {return}
     code,found:=artifacts_read(stored,digest,folder,backends)
@@ -444,7 +538,7 @@ cache_stage_read :: proc(shared,digest:string,backends:Backends,allocator:=conte
 cache_stage_write :: proc(shared:string,shader:Shader,files:[Backend][]u8,backends:Backends) -> bool {
     if shader.fingerprint=="" {return false}
     folder:=path_join(shared,CACHE_STAGES,allocator=context.temp_allocator)
-    path:=path_join(folder,strings.concatenate({shader.fingerprint,".json"},context.temp_allocator),allocator=context.temp_allocator)
+    path:=cache_stage_path(shared,shader.fingerprint,backends)
     entry:=shader_trim(shader,backends)
     if previous,valid:=shader_read(path,context.temp_allocator);valid && previous.fingerprint==shader.fingerprint {
         if .Vulkan not_in backends {entry.spv,entry.spv_hash=previous.spv,previous.spv_hash}
@@ -483,7 +577,7 @@ cache_prune :: proc(shared:string,now:time.Time) {
         end:=strings.index_byte(name,'.')
         return name[:end] if end>=0 else name
     }
-    for folder in ([]string{CACHE_STAGES,CACHE_REFLECTION,CACHE_EMBEDDED}) {
+    for folder in ([]string{CACHE_STAGES,CACHE_REFLECTION,CACHE_EMBEDDED,CACHE_PEAKS}) {
         files,err:=os.read_all_directory_by_path(path_join(shared,folder,allocator=context.temp_allocator),context.temp_allocator)
         if err!=nil {continue}
         newest:=make(map[string]time.Time,context.temp_allocator)

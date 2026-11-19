@@ -624,7 +624,7 @@ FfxFloat32 LoadNewLocks(FfxUInt32x2 iPxPos)
 #endif
 
 #if defined(FSR3UPSCALER_BIND_UAV_NEW_LOCKS)
-[[vk::binding(FSR3UPSCALER_BIND_UAV_NEW_LOCKS, 0)]] RWTexture2D<unorm FfxFloat32> rw_new_locks;
+[[vk::binding(FSR3UPSCALER_BIND_UAV_NEW_LOCKS, 0)]] [[vk::image_format("r8")]] RWTexture2D<unorm FfxFloat32> rw_new_locks; // Mirai: R8_UNORM
 
 FfxFloat32 LoadRwNewLocks(FfxUInt32x2 iPxPos)
 {

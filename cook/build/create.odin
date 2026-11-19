@@ -56,7 +56,7 @@ template_common_copy :: proc(template,root:string) -> bool {
     if error!=nil {return false}
     for entry in entries {
         to:=project.path(root,entry.name,allocator=context.temp_allocator)
-        if (entry.type==.Directory?os.copy_directory_all(to,entry.fullpath):os.copy_file(to,entry.fullpath))!=nil {return false}
+        if (entry.type==.Directory?base.copy_directory_all(to,entry.fullpath):os.copy_file(to,entry.fullpath))!=nil {return false}
     }
     return true
 }
@@ -74,7 +74,7 @@ project_create :: proc(template,folder,name:string,engine_root:="") -> Create_Er
         entries,error:=os.read_all_directory_by_path(root,context.temp_allocator)
         if error!=nil || len(entries)>0 {return .Folder_Not_Empty}
     }
-    if os.copy_directory_all(root,template)!=nil || !template_common_copy(template,root) {return .Copy_Failed}
+    if base.copy_directory_all(root,template)!=nil || !template_common_copy(template,root) {return .Copy_Failed}
     // What a build of the template itself left is not part of it.
     _=base.remove_all(project.folder_path(root,.Generated,context.temp_allocator))
     for layout in ([]project.Folder{.Assets,.Game,.Editor,.Plugins,.Shaders}) {

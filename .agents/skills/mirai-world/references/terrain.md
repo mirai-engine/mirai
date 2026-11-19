@@ -186,7 +186,7 @@ Levels of detail:
   paint) comes from the [maps](#materials-and-layers) of the piece, a texel per sample whatever
   its level, so changing level moves only the triangles, by at most about `LOD_PIXELS`.
 - A chunk with holes takes any level: its triangles over holes alone are left out, and one whose
-  triangles span holes and ground shows the holed material, which cuts them by its alpha.
+  triangles span holes and ground shows the holed material, which cuts them by its mask map.
 
 Collision and picking:
 
@@ -247,10 +247,11 @@ Construction and publishing:
 - **Maps** (`surface.odin`): a piece of a Heightfield publishes with its mesh generated textures
   of its region (`Surface_Maps`), a texel per sample (a node, every `2^depth` samples, from the
   coarse grid): `control`, the weights with the rules applied and the hole of the cell from each
-  texel; `normal`, of the surface over a step of one; and `paint` when the source has paint. Its
-  vertices carry where they are over them in `uv0`, in texels, and its `Material_Values` give
-  them (`piece_values`) with their size. They are made in the job that builds the piece and leave
-  with its mesh.
+  texel; `normal`, of the surface over a step of one; `paint` when the source has paint; and
+  `mask`, the holes, of a piece whose triangles span holes and ground. Its vertices carry where
+  they are over them in `uv0`, from 0 at the first texel to 1 past the last, so a texel is its
+  sample and the cell after it; its `Material_Values` give them (`piece_values`) with their size.
+  They are made in the job that builds the piece and leave with its mesh.
 - A piece of a Volume has no maps: each vertex carries in `uv0` and `uv1` the weights of the four
   layers that weigh most over the piece (its palette, a value of the piece).
 - The slot shows the source's layers material (`layers_material`): a Surface program that blends
@@ -260,12 +261,23 @@ Construction and publishing:
   generated texture of a row per layer: the places of its maps in the texture table and its
   values), made again only when what it holds changes. The values the owner gives by name do not
   pass to the chunks, and a program of its own takes its parameters from its material.
-- `Terrain_Layers` blends at each point the four layers that weigh most among the texels around
-  it, with the normal of the map; the triangles of the level do not change what it shades.
+- `Terrain_Layers` takes at each point the four layers that weigh most among the texels around it,
+  with the normal and the paint of the maps; the triangles of the level do not change what it
+  shades. The maps of a piece and the table do not stream: every reader loads them texel by texel
+  and blends the four texels around itself.
+- Of those weights two show, each less the third (`terrain_heaviest`, `terrain_blend.slang`): a
+  layer comes in and goes at no weight, so nothing pops or draws a line, and only where three
+  weigh about alike does the third show too, so the three meet without a step; a fourth never
+  shows and what barely weighs is not read. The inspection of the weights and the relief show what
+  it gives.
 - **Holes**: a piece whose triangles span holes and ground shows `LAYERS_HOLED_MATERIAL`, the same
-  program in a masked material, whose alpha is the hole of the cell under the point: only those
-  pieces pay for the alpha in raster and rays. A node takes as a hole a texel at least half holes
-  (the share of each cell of the coarse grid, `Coarse.holes`), and the cuts of its joins.
+  program in a masked material, and gives it as its [mask
+  map](../../mirai-rendering/references/materials.md#alpha) the `mask` of its maps, a texel each
+  cell, clear over a hole (`piece_mask`): only those pieces pay for the mask in raster, shadows and
+  rays, and an edit of the holes publishes it again with the piece. The map is filtered, so a
+  straight edge between a hole and ground falls on the edge of its cells and a corner rounds within
+  half a cell. A node takes as a hole a texel at least half holes (the share of each cell of the
+  coarse grid, `Coarse.holes`), and the cuts of its joins.
 - **Paint** (`paint.odin`): the color (sRGB) and roughness painted over the layers of a
   Heightfield, a sample each, `PAINT_NEUTRAL` where nothing is painted. Tint takes the color
   toward `Brush.color`, Roughness the roughness toward `target` (0.5: the layers as they are);
@@ -274,14 +286,19 @@ Construction and publishing:
   blending the two bands it lies between, the higher texel first; `variation` darkens and
   brightens it by a slow noise; `far_tiling` takes over from `tiling` where one repeat shrinks to
   a few pixels.
-- `Terrain_Layers` projects the textures from the three axes, each by how much the surface faces
-  it, sharpened: flat ground reads only the top one and a cliff those of its sides. A projection
-  that barely weighs and a layer without weight are not read, and a ray reads the dominant
-  projection. Each projection rotates its normal map over the surface (whiteout) in a frame that
-  does not mirror the texture.
+- `Terrain_Layers` projects the textures from the axes the surface faces most (biplanar mapping):
+  each by how far past the diagonal 1/sqrt(3) the surface faces it, so two at most show and the
+  second fades out at nothing where it swaps with the third; flat ground reads only the top one.
+  Only around a normal that faces the three axes alike do the two turn fast. A layer or a
+  projection that does not show is not read, nor are the maps of a layer without them, and a ray
+  reads the dominant projection. Each projection rotates its normal map over the surface
+  (whiteout) in a frame that does not mirror the texture.
+- Nothing a point reads of a layer is worked out per point: the table holds its tiling as the
+  program reads it, and the relief its own.
 - It filters with the point's footprint (`mirai_sample_texture_projected`): the mips are correct in
   raster and in rays. A layer's height is the alpha of its base color, and `height_blend` makes
-  the highest texels show where the layers blend.
+  the highest texels show where the layers blend, each height scaled by its weight
+  (`terrain_height_blend`): a layer shows about what it weighs, however high its texels.
 
 ### Volume interior
 
@@ -693,11 +710,18 @@ Construction in jobs:
 - Each job stores the data's epoch, the source, the chunk, the key (level and collider) and the
   source change it read (`Data_Source.change`); a result whose chunk changed while it ran is
   dropped and built again.
-- A piece with a collider while the world plays is published in the next `terrain_update` call
-  of the phase that asked for it, which waits for it if it did not finish: when it collides does
-  not depend on the threads, and a tick that edits shows the new chunk in the next one, with the
-  previous version in between. What only shows, and everything out of Play, is published once its
-  job ended: no frame waits for it.
+- A piece whose collider changes while the world plays is published in the next `terrain_update`
+  call of the phase that asked for it, which waits for it if it did not finish: when it collides
+  does not depend on the threads, and a tick that edits shows the new chunk in the next one, with
+  the previous version in between. A Heightfield chunk collides at level 0 whatever level it
+  shows: one built again only for its level keeps its collider and only shows. It keeps its maps
+  too, which hold every sample at any level and are read texel by texel, in one level.
+- What only shows, and everything out of Play, is published once its job ended, and no frame waits
+  for it. A call publishes those builds to the assets nearest to a view first, within
+  `PUBLISH_VERTICES` (at least one): what a view crossed at once arrives over the calls after, each
+  piece showing what it showed until then. A published build waits in its piece until it shows
+  (`pieces_show`): pieces of a Heightfield whose shared edges change show in the same call, once
+  every one of them waits with what is wanted now, so no frame shows a crack between them.
 - Built and published in the same call (urgent) is only what the simulation and the first
   frame need: a piece with a collider within `GROUND_REACH` of a simulation source
   (`scene.Simulation_Sources`: the bodies the seats drive, the marks) or of a body that moves or a
@@ -705,9 +729,11 @@ Construction in jobs:
   Heightfield shows nothing, its root, which the coarse grid of its file builds, stands in for
   what it covers and collides until that is built. Everything else arrives from jobs over the
   ticks. Loading a scene, Play, a rollback or a teleport do not leave a tick without ground under
-  a view or a body. Urgent jobs can use all the slots; the others, half.
-- Changing level, border or collider publishes the piece and the neighbors whose sides change in
-  the same call.
+  a view or a body. Urgent jobs can use all the slots; the others, half. Builds in the background
+  run on at most one worker in `WORK_BACKGROUND_SHARE`: a build cannot stop, and the jobs of a
+  frame keep the other workers. Pending pieces start chunks first, each nearest to a view first.
+- Changing level, border or collider builds again the piece and the neighbors whose sides change,
+  which show together.
 - A source is read whole in a job (`data_load_begin`): its file and its coarse data, in memory of
   its own (`Data_Source.allocator`), and `data_load_end` adds
   it to the sources. Those that a section's load names are requested while it waits for the
@@ -922,6 +948,8 @@ physics, saving, stability and world copy.
 - `chunks_without_a_collider_keep_their_triangles_on_the_cpu_only_while_the_world_does_not_play`.
 - `pipeline_test.odin`:
   `rebuilt_chunks_show_in_the_next_tick_whatever_the_threads_and_stale_results_are_let_go`,
+  `builds_that_end_together_are_published_over_calls_nearest_first_within_the_bound`,
+  `frame_jobs_keep_the_other_workers_while_many_long_terrain_builds_run`,
   `chunks_without_a_slot_for_their_collider_still_show_their_ground_and_the_nearest_collide`,
   `letting_go_of_an_excavated_zone_and_reading_it_again_keeps_its_edits`,
   `a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps_its_edits`,

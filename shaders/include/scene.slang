@@ -29,14 +29,22 @@ bool view_draws_layers(uint layers, uint flags) {
     return (layers & frame.layers & 0xffffu) != 0u && !(view_owns(flags) && (layers & (frame.layers >> 16u)) != 0u);
 }
 
-// Whether a pixel of what fades out by `fade` (0 to 1) is left out: of a 4x4
-// in an order that keeps the pixels it leaves far apart (Bayer), as many as
-// the fade. The order turns each frame through the 16 ranks (7 is coprime with
-// 16), so the TAA blends them into transparency.
+// The threshold of a cell of a 4x4, 0 to 1, in an order that keeps the
+// cells below any threshold far apart (Bayer): what fades out by `fade`
+// leaves out the cells whose threshold is below it.
 static const uint FADE_ORDER[16] = {0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u};
+float fade_threshold(uint2 cell) {
+    return (float(FADE_ORDER[(cell.y & 3u) * 4u + (cell.x & 3u)]) + 0.5) / 16.0;
+}
+// Whether a pixel of what fades out by `fade` (0 to 1) is left out. The
+// thresholds move each frame of the view by the bits of its turn reversed
+// (van der Corput): from a cut, every 2, 4, 8 or 16 frames give each pixel
+// thresholds spaced evenly over the whole range, so the frames the TAA
+// blends, from the first ones after a cut to its still history, hold as much
+// of the fade at every pixel and no pattern stays.
 bool fade_pixel_left(uint2 pixel, float fade) {
-    uint rank = (FADE_ORDER[(pixel.y & 3u) * 4u + (pixel.x & 3u)] + frame.frame_index * 7u) & 15u;
-    return (float(rank) + 0.5) / 16.0 < fade;
+    float turn = float(reversebits(frame.frame_index) >> 8u) * (1.0 / 16777216.0);
+    return frac(fade_threshold(pixel) + turn) < fade;
 }
 [[vk::binding(SLOT_LINEAR_SAMPLER, 0)]] SamplerState linear_sampler : register(MIRAI_REGISTER(s, SLOT_LINEAR_SAMPLER), space0);
 [[vk::binding(SLOT_POINT_SAMPLER, 0)]] SamplerState point_sampler : register(MIRAI_REGISTER(s, SLOT_POINT_SAMPLER), space0);
@@ -259,6 +267,29 @@ float3 sky_seen(float3 dir) {
     return sky + sun_light(frame.camera_position.xyz) * (disc + glow);
 }
 
+// The background in a direction of the world: its image (Frame.background_map),
+// turned as the sky, at the level spread picks, times its color; or its color.
+float3 background_look(float3 dir, float spread) {
+    float4 map = frame.background_map;
+    if (map.w < 0.5) return frame.background.rgb;
+    return sky_image(map, frame.background.rgb, sky_direction(dir), saturate(spread) * max(map.z - SKY_GATHER_LEVELS, 0.0));
+}
+
+// What the eye sees past the scene: the background when the frame shows one,
+// else the sky with the sun.
+float3 sky_shown(float3 dir) {
+    return frame.background.w > 0.5 ? background_look(dir, 0.0) : sky_seen(dir);
+}
+
+// What a reflection of that roughness (spread) sees of the sky: where the
+// frame shows the background there, a mirror sees it as a camera would, and a
+// rougher lobe less of it and more of the light of the sky, all of it when
+// fully rough, as what gathers light (sky_radiance).
+float3 sky_reflected(float3 dir, float spread) {
+    float3 light = sky_radiance(dir, spread);
+    return frame.background_map.y > 0.5 ? lerp(background_look(dir, spread), light, saturate(spread)) : light;
+}
+
 // How much of a pixel's specular reflection is traced instead of read from
 // the probe volume: all of it on smooth surfaces, fading to none at the limit.
 // The G-buffer keeps roughness in half floats, and a material set exactly at a
@@ -426,9 +457,19 @@ struct Material_Sample {
     Material_Layers layers;
 };
 
-uint material_of(Instance inst, uint vertex_material) {
+// The row of the instances whose slots an instance of the scene or of a
+// batch takes: its own, or that of its batch.
+uint instance_row(uint index) { return instance_batched(index) ? frame.instance_count + batch_of(index) : index; }
+
+// The slots are read from the row of the instances (instance_row), not from
+// the copy inst: an array of a copy indexed by a value is local memory once
+// for every place this is inlined.
+uint material_of(uint row, Instance inst, uint vertex_material) {
     uint slot = vertex_material >> 24;
-    if (slot > 0u && slot <= 32u && inst.slot_materials[slot-1u] != 0u) return inst.slot_materials[slot-1u] - 1u;
+    if (slot > 0u && slot <= 32u) {
+        uint given = instances[row].slot_materials[slot - 1u];
+        if (given != 0u) return given - 1u;
+    }
     return inst.meta.y != INVALID ? inst.meta.y : (vertex_material & 0xffffffu);
 }
 
@@ -480,20 +521,24 @@ T material_words<T, let N : int>(uint at) {
     }
     return reinterpret<T>(words);
 }
-// A row as an instance shows it: its own of it, and its fade.
+// How much an instance fades out by what it gives its rows (block:
+// Instance.material_values), 0 none to 1 all: its blended rows by their
+// opacity, the others by pixels (instance_fade).
+float material_values_fade(uint block) {
+#ifdef MIRAI_NO_INSTANCES
+    return 0.0;
+#else
+    return block != 0u ? asfloat(indices[block]) : 0.0;
+#endif
+}
+// A row as an instance shows it: its own of it, and the fade of a blended one.
 Material material_row(uint row, uint block) {
     uint at = material_given(block, row);
     Material m;
     if (at == 0u) m = material_row(row);
     else m = material_words<Material, MATERIAL_WORDS>(at);
     m.row = row;
-#ifndef MIRAI_NO_INSTANCES
-    if (block != 0u) {
-        float fade = asfloat(indices[block]);
-        m.opacity *= 1.0 - fade;
-        if (fade > 0.0 && m.alpha_mode == ALPHA_OPAQUE) m.alpha_mode = ALPHA_BLEND;
-    }
-#endif
+    if (m.alpha_mode == ALPHA_BLEND) m.opacity *= 1.0 - material_values_fade(block);
     return m;
 }
 // The parameters the program of a row reads at a point of an instance: those
@@ -511,22 +556,35 @@ void material_parameters(uint row, uint block, out float4 parameters[16]) {
 [[vk::binding(TEXTURE_FEEDBACK_SLOT, 0)]] RWStructuredBuffer<uint> texture_feedback_words : register(MIRAI_REGISTER(u, TEXTURE_FEEDBACK_SLOT), space0);
 #endif
 
-// While true, samples record nothing: the alpha of a program inside a
-// traversal (hit_alpha) reads its maps for whether a ray goes on, and a
-// write of each of them would keep the whole program in every traversal of
-// the stage, its colors and normals too, which no ray reads there.
+// While true, samples record nothing: a pixel of a quad that evaluates its
+// material for the derivatives of another (vis_resolve.frag).
 static bool texture_feedback_quiet = false;
+// Whether this is a helper of a quad of a fragment stage, which runs only for
+// the derivatives of the others: what it does to memory is dropped.
+bool texture_feedback_helper() {
+    __stage_switch {
+    case fragment: return IsHelperLane();
+    default: return false;
+    }
+}
 // That a texture was sampled at `level`: log2 of the texels across its width
 // a sample spans at the level it reads, less log2 of that width, which no
-// level held changes; -FLT_MAX for every level.
+// level held changes; -FLT_MAX for every level. The lanes of a wave that
+// sample one texture write once, the finest level of them.
 void texture_feedback(uint texture_index, float level) {
 #ifdef MIRAI_TEXTURE_FEEDBACK
-    if (texture_feedback_quiet) return;
+    if (texture_feedback_quiet || texture_feedback_helper()) return;
     uint entry = texture_index - TEXTURE_TABLE_RESERVED;
     if (entry >= texture_feedback_words[0] || isnan(level)) return;
     uint code = uint(clamp(floor((level - TEXTURE_FEEDBACK_LOW) * TEXTURE_FEEDBACK_STEPS), 0.0, float(TEXTURE_FEEDBACK_CODES - 1u)));
-    uint at = TEXTURE_FEEDBACK_FIRST + entry;
-    if (code < texture_feedback_words[at]) InterlockedMin(texture_feedback_words[at], code);
+    for (;;) {
+        uint first = WaveReadLaneFirst(entry);
+        if (first != entry) continue;
+        uint least = WaveActiveMin(code);
+        uint at = TEXTURE_FEEDBACK_FIRST + entry;
+        if (WaveIsFirstLane() && least < texture_feedback_words[at]) InterlockedMin(texture_feedback_words[at], least);
+        return;
+    }
 #endif
 }
 
@@ -537,21 +595,37 @@ float4 material_texel_at(uint texture_index, float2 uv, float lod) {
     texture_feedback(texture_index, lod + 0.5 * log2(size.y / size.x));
     return material_textures[mirai_nonuniform(texture_index)].SampleLevel(material_sampler, uv, lod + 0.5 * log2(size.x * size.y));
 }
-// Rasterized surfaces (MATERIAL_RASTER, fragment shaders only) filter with the
-// screen-space derivatives of uv, and `lod` is a bias.
-float4 material_texel(uint texture_index, float2 uv, float lod) {
-#ifdef MATERIAL_RASTER
+#ifdef MATERIAL_GRADIENTS
+// A surface resolved from the visibility target (vis_resolve.frag) is a
+// triangle rebuilt at a pixel: the exact screen gradients of its inputs are
+// set before its material runs, per uv set (xy along x, zw along y), and of
+// its place and its interpolated normal (along x, then along y). steady:
+// along each axis, the neighbor of the quad continues its surface, so a
+// difference across the quad is a derivative there.
+static float4 material_uv_gradients[2];
+static float3 material_world_gradients[2];
+static float3 material_normal_gradients[2];
+static bool2 material_steady;
+#endif
+// That a sample of a rasterized surface reads where uv changes by dx and dy
+// (uv units) along the pixel: the level anisotropic filtering reads, over the
+// shorter axis of the footprint or the longer one over its samples, each axis
+// the shortest a device may take of it (the larger of its two steps in texels).
+void material_texel_feedback(uint texture_index, float2 dx, float2 dy, float lod) {
 #ifdef MIRAI_TEXTURE_FEEDBACK
-    // The level anisotropic filtering reads: over the shorter axis of the
-    // footprint, or the longer one over its samples, each axis the shortest
-    // a device may take of it (the larger of its two steps in texels).
     float2 size = float2(texture_size(material_textures[mirai_nonuniform(texture_index)], 0));
-    float2 dx = abs(ddx(uv) * size), dy = abs(ddy(uv) * size);
-    float across = max(dx.x, dx.y), down = max(dy.x, dy.y);
+    float2 x = abs(dx * size), y = abs(dy * size);
+    float across = max(x.x, x.y), down = max(y.x, y.y);
     float longer = max(across, down);
     // Where the uv do not change no level is asked.
     if (longer > 0.0) texture_feedback(texture_index, log2(max(min(across, down), longer / MATERIAL_ANISOTROPY)) + lod - log2(size.x));
 #endif
+}
+// Rasterized surfaces (MATERIAL_RASTER, fragment shaders only) filter with the
+// screen-space derivatives of uv, and `lod` is a bias.
+float4 material_texel(uint texture_index, float2 uv, float lod) {
+#ifdef MATERIAL_RASTER
+    material_texel_feedback(texture_index, ddx(uv), ddy(uv), lod);
     return material_textures[mirai_nonuniform(texture_index)].SampleBias(material_sampler, uv, lod);
 #else
     return material_texel_at(texture_index, uv, lod);
@@ -571,6 +645,18 @@ float material_map_lod(Material m, uint map, float2 lod, bool ray) {
 float4 material_map_texel(Material m, uint map, uint texture_index, float2 uv0, float2 uv1, float2 lod, bool ray) {
     float2 uv = material_map_uv(m, map, uv0, uv1);
     float level = material_map_lod(m, map, lod, ray);
+#ifdef MATERIAL_GRADIENTS
+    if (!ray) {
+        // The gradients of its uv set, through the linear part of its transform, `level` a bias.
+        Material_Map_Transform transform = materials[m.row].map_transforms[map];
+        float4 g = material_uv_gradients[transform.uv_set == 1u ? 1 : 0];
+        float2 dx = float2(dot(transform.linear.xy, g.xy), dot(transform.linear.zw, g.xy));
+        float2 dy = float2(dot(transform.linear.xy, g.zw), dot(transform.linear.zw, g.zw));
+        material_texel_feedback(texture_index, dx, dy, level);
+        float scale = exp2(level);
+        return material_textures[mirai_nonuniform(texture_index)].SampleGrad(material_sampler, uv, dx * scale, dy * scale);
+    }
+#endif
     return ray ? material_texel_at(texture_index, uv, level) : material_texel(texture_index, uv, level);
 }
 // A direction of the tangent space of a map (xy, along its texture), in the
@@ -665,6 +751,48 @@ float4 mirai_sample_texture_grad(uint index, float2 uv, float2 dx, float2 dy) {
 #endif
     return material_textures[mirai_nonuniform(index)].SampleGrad(material_sampler, uv, dx, dy);
 }
+// A uv set at a point with its derivatives: of the triangle where the
+// visibility target is resolved (MATERIAL_GRADIENTS), across the quad in
+// another raster stage; in a ray, the width of its footprint in uv, which
+// `lod` (ctx.lod or ctx.lod1) is the level of.
+Mirai_Dual2 material_uv_dual(Mirai_Surface_Context ctx, float2 uv, float lod, int set) {
+    if (ctx.ray) {
+        float width = exp2(lod);
+        return mirai_dual(uv, float2(width, 0.0), float2(0.0, width));
+    }
+#ifdef MATERIAL_GRADIENTS
+    float4 g = material_uv_gradients[set];
+    return mirai_dual(uv, g.xy, g.zw);
+#elif defined(MATERIAL_RASTER)
+    return mirai_dual(uv, ddx(uv), ddy(uv));
+#else
+    return mirai_dual(uv);
+#endif
+}
+Mirai_Dual2 mirai_uv0(Mirai_Surface_Context ctx) { return material_uv_dual(ctx, ctx.uv0, ctx.lod, 0); }
+Mirai_Dual2 mirai_uv1(Mirai_Surface_Context ctx) { return material_uv_dual(ctx, ctx.uv1, ctx.lod1, 1); }
+Mirai_Dual3 mirai_vertex_normal(Mirai_Surface_Context ctx) {
+    if (ctx.ray) return mirai_dual(ctx.vertex_normal);
+#ifdef MATERIAL_GRADIENTS
+    return mirai_dual(ctx.vertex_normal, material_normal_gradients[0], material_normal_gradients[1]);
+#elif defined(MATERIAL_RASTER)
+    return mirai_dual(ctx.vertex_normal, ddx(ctx.vertex_normal), ddy(ctx.vertex_normal));
+#else
+    return mirai_dual(ctx.vertex_normal);
+#endif
+}
+float4 mirai_sample_texture(Mirai_Surface_Context ctx, uint index, Mirai_Dual2 uv) {
+    if (!material_has(index)) return float4(1.0);
+    // A ray reads the level of the widest footprint, as material_texel_at takes it.
+    if (ctx.ray) return material_texel_at(index, uv.value, log2(max(max(length(uv.dx), length(uv.dy)), 1e-30)));
+    // A raster lod is the bias of the view.
+    float scale = exp2(ctx.lod);
+    return mirai_sample_texture_grad(index, uv.value, uv.dx * scale, uv.dy * scale);
+}
+float4 mirai_load_texture(uint index, int2 texel) {
+    if (!material_has(index)) return float4(1);
+    return material_textures[mirai_nonuniform(index)].Load(int3(texel, 0));
+}
 float2 mirai_texture_size(uint index) {
     if (!material_has(index)) return float2(1);
     texture_feedback(index, -FLT_MAX);
@@ -686,6 +814,20 @@ float4 material_base_color(Material m, float2 uv0, float2 uv1, float2 lod, float
     if (material_has(m.textures[MATERIAL_MAP_BASE_COLOR])) base *= material_map_texel(m, MATERIAL_MAP_BASE_COLOR, m.textures[MATERIAL_MAP_BASE_COLOR], uv0, uv1, lod, ray);
     return base;
 }
+
+// The coverage of a masked material at a point: its opacity times the alpha
+// of its mask map, which the row holds as the base color map when the
+// material has no mask of its own. No program runs: visibility, the shadow
+// maps and rays cut by it alike. A stage that has only the uv the map reads
+// (mask_uv_set) gives it as both.
+float material_mask(Material m, float2 uv0, float2 uv1, float2 lod, bool ray) {
+    float alpha = m.opacity;
+    uint texture_index = m.textures[MATERIAL_MAP_MASK];
+    if (material_has(texture_index)) alpha *= material_map_texel(m, MATERIAL_MAP_MASK, texture_index, uv0, uv1, lod, ray).a;
+    return alpha;
+}
+// The uv set the mask map of a material row reads.
+uint mask_uv_set(uint row) { return materials[row].map_transforms[MATERIAL_MAP_MASK].uv_set; }
 
 // The layers a pass shades of those a material holds: all of them, or the
 // unlit bit alone in a pass that only sees surfaces without layers
@@ -968,6 +1110,8 @@ void material_wet_apply(inout Material_Sample s, Material m, float wet) {
 // the shared maps; the normal supplied by the caller remains its input.
 Material_Sample material_sample_finish(Material_Sample values, Material m, Mirai_Surface_Context ctx) {
     material_wet_apply(values, m, ctx.wet);
+    // A masked material covers by its mask map, whatever its program or standard model give.
+    if (m.alpha_mode == ALPHA_MASK) values.alpha = material_mask(m, ctx.uv0, ctx.uv1, float2(ctx.lod, ctx.lod1), ctx.ray);
     // The emission of the instance takes the mode of the material's.
     values.emission_relative = m.emission_mode == EMISSION_RELATIVE;
     return values;
@@ -1019,8 +1163,8 @@ float3 hit_emission(Material_Sample m) {
 #endif
 }
 
-// Coverage needs only opacity; shared roughness, emission and specular maps
-// have no effect on it. A program supplies opacity from the same context.
+// The alpha of a blended surface: its opacity, or what its program gives
+// from the same context; the other maps have no effect on it.
 float material_alpha(Material m, Mirai_Surface_Context ctx, float3 tint, float3 added_emission) {
     float3 normal = ctx.normal;
     Material_Sample values;
@@ -1041,12 +1185,13 @@ bool material_covers(Material m, float alpha) {
 
 bool material_solid(Material m) { return m.transmission > 0.0 && m.thickness > 0.0; }
 
-// What a blended surface leaves of the light that reaches it from behind.
-// Without transmission it is a coat that covers alpha of it; with it, a filter
-// of the base color at strength alpha, less what the surface reflects, under
-// what the layers of its material leave (shading_through).
-float3 surface_filter(Material m, float3 base_color, float alpha, float3 reflectance, float3 layers = float3(1.0)) {
-    return lerp(float3(1.0 - alpha), (1.0 - reflectance) * layers * lerp(float3(1.0), base_color, alpha), m.transmission);
+// What a blended surface lets through of the light that reaches it from
+// behind where it covers: its transmission of what it does not reflect, by
+// its base color, under what the layers of its material leave
+// (shading_through). Without transmission it is a coat that hides it. Where
+// it does not cover (alpha) there is no surface and the light goes on whole.
+float3 surface_through(Material m, float3 base_color, float3 reflectance, float3 layers = float3(1.0)) {
+    return m.transmission * (1.0 - reflectance) * layers * base_color;
 }
 
 // What a solid leaves of the light that crosses `path` of it.
@@ -1141,7 +1286,7 @@ float hit_lod(float3 world_edge1, float3 world_edge2, float2 uv_edge1, float2 uv
 float3 material_vertex_tint(Material m, float3 vertex_color) {
     return m.program_id != 0u ? float3(1.0) : vertex_color;
 }
-// The same color override applies to raster, ray hits and colored shadows.
+// The same color override applies to raster, ray hits and the filters of glass.
 float3 instance_color(Instance inst, Material m, float3 vertex_color) {
     return ((inst.meta.w & INSTANCE_FLAG_UNIFORM_COLOR) != 0u ? float3(1.0) : material_vertex_tint(m, vertex_color)) * inst.tint.rgb;
 }
@@ -1155,7 +1300,7 @@ float3 triangle_face(uint instance_index, uint primitive, out uint material) {
     float3 a, b, c;
     uint word;
     mesh_triangle_positions(meshes[instance_mesh(inst)], primitive, a, b, c, word);
-    material = material_of(inst, word);
+    material = material_of(instance_row(instance_index), inst, word);
     return transform_normal(inst.world_inv, cross(b - a, c - a));
 }
 
@@ -1178,11 +1323,12 @@ float3 hit_normal(uint instance_index, uint primitive, float2 bary, float3 direc
 // The filter of a blended surface from the values of its material at a
 // point, for light that crosses it: the color it filters with (its tint) and
 // what each of its faces lets through of what it does not reflect (through,
-// white without transmission). Opacity is the strength of the tint: zero
-// passes white, one passes the linear base color (black blocks).
+// white without transmission). Both hold where it covers (alpha): zero passes
+// white, one the linear base color (black blocks) less what it reflects.
 float3 blend_filter_of(Material m, Material_Sample values, out float3 through) {
-    through = m.transmission > 0.0 ? 1.0 - values.f0 * m.transmission : float3(1.0);
-    return lerp(float3(1.0), saturate(values.base_color), saturate(values.alpha));
+    float covered = saturate(values.alpha);
+    through = 1.0 - values.f0 * (m.transmission * covered);
+    return lerp(float3(1.0), saturate(values.base_color), covered);
 }
 // The same at the point of a triangle with barycentric weights w, as a ray
 // that stands for `footprint` meters of it sees it, for a material without a
@@ -1200,14 +1346,6 @@ float3 blend_filter(Instance inst, Material m, Mesh_Triangle t, float3 w, float 
     float3 normal = transform_normal(inst.world_inv, t.a.normal * w.x + t.b.normal * w.y + t.c.normal * w.z);
     Material_Sample values = material_sample(m, material_context_cone(material_context_instance(material_context(position, normal, uv, uv1, lod, true), inst, vertex_color), footprint), color, inst.emission.rgb, normal);
     return blend_filter_of(m, values, through);
-}
-
-// The same filter as the mean of an instance keeps it (glass_mean.comp), for
-// any one of its faces: a solid counts its color and what it absorbs once in
-// the two faces a ray crosses, so each face takes the square root of them.
-float3 blend_face_filter(Material m, float3 tint, float3 through) {
-    if (!material_solid(m)) return tint * through;
-    return sqrt(tint * material_absorption(m, m.thickness)) * through;
 }
 
 // footprint: width in world units of what the ray gathers at the hit. Wide
@@ -1239,7 +1377,7 @@ Hit_Point hit_point(uint instance_index, uint primitive, float2 bary, float foot
     float3 edge2 = tri.c.position - tri.a.position;
     float3 face = cross(edge1, edge2);
     h.geometric_normal = dot(face, face) > 1e-20 ? transform_normal(h.inst.world_inv, face) : h.normal;
-    h.m = material_row(material_of(h.inst, tri.material), h.inst.material_values);
+    h.m = material_row(material_of(instance_row(instance_index), h.inst, tri.material), h.inst.material_values);
     float3 world_edge1 = transform_vector(h.inst.world, edge1);
     float3 world_edge2 = transform_vector(h.inst.world, edge2);
     float2 lod = float2(hit_lod(world_edge1, world_edge2, tri.b.uv - tri.a.uv, tri.c.uv - tri.a.uv, footprint), hit_lod(world_edge1, world_edge2, tri.b.uv1 - tri.a.uv1, tri.c.uv1 - tri.a.uv1, footprint));
@@ -1290,6 +1428,9 @@ Surface surface_from_hit(Hit_Point h, bool given, Mirai_Surface program) {
     s.f90 = material.f90;
     return s;
 }
+// Whether what a material gives a point changes with nothing that says so:
+// its program reads the time. A pass that keeps what a ray found does not keep it.
+bool material_changing(Material m) { return m.program_id != 0u && materials[m.row].volume.changing != 0u; }
 Surface surface_from_triangle(uint instance_index, uint primitive, float2 bary, float footprint) {
     return surface_from_hit(hit_point(instance_index, primitive, bary, footprint), false, (Mirai_Surface)0);
 }
@@ -1358,6 +1499,23 @@ float2 probe_atlas_uv(uint index, float3 dir, uint tile, float2 atlas_size) {
 // half floats at any spacing.
 float probe_distance_limit(uint cascade) { return 1.5 * probe_spacing(cascade); }
 
+// Under the tiles of the irradiance, the atlas keeps of each probe a tile of
+// the light around a narrow lobe of each direction, with about a texel a ray:
+// the power of the cosine its rays are weighed by there, as wide as a texel,
+// and the roughness of the specular lobe that is as wide. A smoother lobe
+// reads it as it is, the most the rays of a probe tell apart; a rougher one
+// goes to the irradiance as it widens.
+#define PROBE_GLOSS_POWER 48.0
+#define PROBE_GLOSS_ROUGHNESS 0.45
+// The row of texels the tiles of the narrow lobes start at, and the first
+// texel of that of a probe from its tile of the irradiance (probe_atlas_tile):
+// they keep its row and column.
+uint probe_gloss_under() {
+    uint per_row = max(frame.volume_atlas.x, 1u);
+    return (probe_cascade_size() * probe_cascades() + per_row - 1u) / per_row * frame.volume_atlas.y;
+}
+float2 probe_gloss_origin(float2 tile, uint under) { return tile * float(PROBE_GLOSS_TILE) + float2(0.0, float(under)); }
+
 // The directions one read of the probe volume gives the light around, at
 // most: those of the diffuse lobe, the specular lobe and the coat of a point.
 #define PROBE_READS 3
@@ -1368,14 +1526,19 @@ float probe_distance_limit(uint cascade) { return 1.5 * probe_spacing(cascade); 
 // What a read of the probe volume gives the light around: at[d] for each bit
 // d of `wants`. The probes around a point and their weights depend only on the
 // point, so each direction costs only its irradiance.
+// rough[d]: the roughness of the lobe around at[d], for the lobes other than the diffuse; 1, the irradiance.
 struct Probe_Directions {
     float3 at[PROBE_READS];
+    float rough[PROBE_READS];
     uint wants;
 };
 Probe_Directions probe_directions(float3 direction) {
     Probe_Directions directions;
     [ForceUnroll]
-    for (int d = 0; d < PROBE_READS; d++) directions.at[d] = direction;
+    for (int d = 0; d < PROBE_READS; d++) {
+        directions.at[d] = direction;
+        directions.rough[d] = 1.0;
+    }
     directions.wants = 1u;
     return directions;
 }
@@ -1417,10 +1580,13 @@ float probe_cascade_read(uint cascade, float3 position, float3 normal, float3 vi
     float2 irr_size = float2(texture_size(irradiance_atlas, 0));
     float2 dist_size = float2(texture_size(distance_atlas, 0));
     float2 toward[PROBE_READS];
+    float gloss[PROBE_READS];
+    uint gloss_under = probe_gloss_under();
     float4 sum[PROBE_READS];
     [ForceUnroll]
     for (int d = 0; d < PROBE_READS; d++) {
         toward[d] = probe_wants(directions, d) ? probe_atlas_direction(directions.at[d]) : float2(0.0);
+        gloss[d] = saturate((1.0 - directions.rough[d]) / (1.0 - PROBE_GLOSS_ROUGHNESS));
         sum[d] = float4(0.0);
         light[d] = float4(0.0);
     }
@@ -1475,8 +1641,15 @@ float probe_cascade_read(uint cascade, float3 position, float3 normal, float3 vi
         [ForceUnroll]
         for (int d = 0; d < PROBE_READS; d++) {
             if (!probe_wants(directions, d)) continue;
-            float4 stored = irradiance_atlas.SampleLevel(linear_sampler, probe_atlas_texel(tile, toward[d], frame.volume_atlas.y, irr_size), 0.0);
-            float4 root = float4(probe_light_root(stored.rgb), stored.a) * weight;
+            float4 stored = gloss[d] < 1.0 ? irradiance_atlas.SampleLevel(linear_sampler, probe_atlas_texel(tile, toward[d], frame.volume_atlas.y, irr_size), 0.0) : float4(0.0);
+            float4 root = float4(probe_light_root(stored.rgb), stored.a);
+            // The diffuse lobe is the irradiance: it pays nothing of the narrow ones.
+            [branch]
+            if (d != PROBE_DIFFUSE && gloss[d] > 0.0) {
+                float4 narrow = irradiance_atlas.SampleLevel(linear_sampler, (probe_gloss_origin(tile, gloss_under) + 1.0 + toward[d] * float(PROBE_GLOSS_TILE - 2u)) / irr_size, 0.0);
+                root = lerp(root, float4(probe_light_root(narrow.rgb), narrow.a), gloss[d]);
+            }
+            root *= weight;
             sum[d] += root;
             seen_sum[d] += root * sees;
         }
@@ -1550,11 +1723,32 @@ float probe_volume_read(float3 position, float3 normal, float3 view_dir, float v
     return held;
 }
 
+// How much of the light around a point is the sky's alone: 0 inside the
+// cascades and without a volume, 1 beyond them, and between over the last
+// cells of the last one, by the centre of the cascades as one blends into the
+// next. Along an axis with too few cells to keep any of them whole that way,
+// by the cells of the cascade themselves: the cascade holds the point up to
+// its last one.
+float probe_volume_beyond(float3 position) {
+    uint cascades = probe_cascades();
+    if (cascades == 0u) return 0.0;
+    float3 counts = float3(frame.volume_counts.xyz);
+    float spacing = probe_spacing(cascades - 1u);
+    float3 rel = (position - frame.volume_cascades[cascades - 1u].xyz) / spacing;
+    float3 inside = min(rel, counts - 1.0 - rel) - 0.5;
+    if (min(inside.x, min(inside.y, inside.z)) < 0.0) return 1.0;
+    float3 half = (counts - 1.0) * 0.5;
+    float band = max(0.5, half.y - 4.5);
+    float3 from_center = half - abs(position - frame.volume_center.xyz) / spacing - 1.5;
+    float3 left = select(half >= 1.5 + 2.0 * band, from_center, inside);
+    return saturate(1.0 - min(left.x, min(left.y, left.z)) / band);
+}
+
 // Irradiance (in Lambert-normalized radiance units) arriving around each
 // direction a surface point wants, from the probe volume, or zero when no
 // cache exists (callers add their own ambient floor) or no probe holds light
-// yet; beyond the cascades, the sky's. w is the share of it that comes from
-// the sky. The normal places the lookup and weights the probes; the
+// yet; beyond the cascades, the sky's, which the last one blends into. w is
+// the share of it that comes from the sky. The normal places the lookup and weights the probes; the
 // directions are what the irradiance is read for.
 // `view_dir` points towards the eye or the origin of the ray that found the
 // point, `viewer_distance` away; below 0, the eye of the view.
@@ -1562,10 +1756,11 @@ float probe_volume_read(float3 position, float3 normal, float3 view_dir, float v
 // place beyond the gate, so the light of a point at a gate is the same on both
 // of its sides.
 void probe_volume_light(float3 position, float3 normal, float3 view_dir, float viewer_distance, Probe_Directions directions, bool surface, out float4 light[PROBE_READS]) {
-    if (probe_volume_read(position, normal, view_dir, viewer_distance, directions, surface, light) >= 0.0) return;
+    float beyond = probe_volume_read(position, normal, view_dir, viewer_distance, directions, surface, light) >= 0.0 ? probe_volume_beyond(position) : 1.0;
+    if (beyond <= 0.0) return;
     [ForceUnroll]
     for (int d = 0; d < PROBE_READS; d++) {
-        if (probe_wants(directions, d)) light[d] = float4(sky_irradiance(directions.at[d]), 1.0);
+        if (probe_wants(directions, d)) light[d] = lerp(light[d], float4(sky_irradiance(directions.at[d]), 1.0), beyond);
     }
 }
 

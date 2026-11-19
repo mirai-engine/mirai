@@ -162,8 +162,10 @@ part ([extension](../../mirai-editor/references/extensions.md#importers-of-a-plu
   [refresh](#library) of every build) loads the editor library of the project and takes the same
   providers from it with its store (`editor.import_library`, `sources.Library`), only when a
   source is read by no format of the engine or a model imports, whose prefab is written in the
-  types of the game the library has. A clone without that library built fails those sources and
-  says to build the editor.
+  types of the game the library has. `mirai import` first builds, as `mirai build editor` does,
+  the editor library of the project of what it imports while it is missing or not built from
+  the sources there are now (`build.target_state`, of the engine's sources too): a library built
+  against other engine types is never loaded.
 - `Import_Source_Provider{source}` is a source that the plugin imports whole with `Outputs`: it
   is the single source of every asset it makes (a scene, the models it reads with
   `output_model`), and the files it reads besides it are its `inputs`, like the `.bin` of a glTF.
@@ -247,6 +249,27 @@ when Final, else under `imports-fast/<key>` (never shared), and as the build thi
 - **The textures of a model** name the model as source and the image as name, with the size and
   hash of the image.
 
+### Changed documents
+
+An import never writes over a change it did not make without being told to. The project's pin
+records, for each document of a package whose file the import or the refresh writes over, the
+`content_hash` of that file's header as it last wrote it (`asset.Package_Written`): a fact of the
+project, never of the manifest. The registry already has the hash of each file, so finding what
+changed (`importer.documents_changed`) reads no document. A change of owner alone
+(`asset.detach`) is none. A material records nothing: the import follows its source only where
+nobody changed it.
+
+- `Import_Options.changed` says what an import into a project does with a changed document:
+  `Refuse` (the default) writes nothing and fails with `Error_Code.Changed`, naming the files and
+  how to go on; `Discard` writes over them, with what its writer keeps of a person's (the body
+  parts and sockets of a skeleton, the roots of clips); `Keep` leaves them as they are, imports
+  the rest and warns of each. The blobs of the build are written either way.
+  `discard_changes` of `asset.import`, `--discard-changes` of `mirai import` and the question of
+  the editor are `Discard` (`Library_Options.changed`); a [refresh](#library) and the follow of a
+  package added are `Keep`, so a build never loses an edit and still builds the package.
+- A document kept keeps what the pin recorded, so it stays changed until the changes are
+  discarded; the prefab of a model it keeps has no `prefab_path`.
+
 ### Parts
 
 The `owner` of an output says that the content browser shows it inside the model's prefab. Only
@@ -319,7 +342,8 @@ checkout, worktree and project of the machine, keeps manifests and builds.
   that. It then names the build under `builds/<build_select>` and, when that changed, follows the
   documents. A source here whose identity changed (its bytes, an input, the code of the plugin that
   imports it whole) is ingested again with the ids its manifest gives, and the project pins the new
-  manifest.
+  manifest. A document changed since it was last written is left as it is, with a warning that
+  names it ([changed documents](#changed-documents)): the rest is written.
 - **It never removes** a blob, a ref or a file of a project because a source is missing, and
   never builds without the source. What the store does not have stays listed as not built.
 - A source a plugin imports whole has a key only its importer knows: the refresh takes the build
@@ -332,7 +356,8 @@ checkout, worktree and project of the machine, keeps manifests and builds.
   the assets written every `importer.PROGRESS_EVERY`.
 - **Commands.** `mirai import <file>` ingests and adds to the project of `--project`, else the
   one whose assets hold the file, under `--folder` (else the folder of the file); `mirai import
-  --refresh <root>` refreshes a project or a plugin, `--fast` taking Fast and `--from <folder>`
+  --refresh <root>` refreshes a project or a plugin. Both build textures Fast and take a Fast
+  build, as the editor does; `--final` requires Final. `--from <folder>`
   naming a second store as its source (`cache.store_source`, which copies a ref with its blobs,
   as a peer gives them); an installed engine takes its `builds/` store as that source. Every
   build of a project refreshes it and its plugins with a `packages.mirai` once its target stands
@@ -363,7 +388,7 @@ single thread and in the usual order: with or without a job system the same byte
   when it ends. Both sum with `importer.profile_totals`: each zone under the one that contained it,
   with its seconds on the importing thread, which add up to its wall time, and what no zone
   covers.
-- The imports of a sync share `Import_Options.registry`, which finds documents by their ids: one
+- The imports of a refresh share `Import_Options.registry`, which finds documents by their ids: one
   scan of the root for all of them.
 
 ### Texture cache
@@ -386,7 +411,8 @@ machine that shares blobs with another finds what that one built.
   there, its levels are written with the id and the `Import_Info` of this import; if not, it is
   built and stored. The same image from another source, in another folder or with the settings of
   before is not compressed again. `rebuild` does not read the cache and rewrites it.
-- With `Import_Options.fast_textures` (the editor's imports) a texture of the cache takes the Final
+- With `Import_Options.fast_textures` (the editor's imports and `mirai import`) a
+  texture of the cache takes the Final
   the texture cache keeps for its key; without one it is built Fast under the key of Fast settings,
   and a texture kept Fast is written again as soon as the cache holds its Final, or by the
   [refresh](#library) of a build that cooks. `Import_Info.settings_hash` says which of the two
@@ -555,15 +581,18 @@ which animal it is.
 
 With `lods=Auto` a static mesh is stored as the cluster DAG of its level 0
 (`asset.mesh_build_dag` on top of `geom.cluster_dag_build`): groups of simplified clusters with
-their border locked and split again up to the roots, with the cuts that its distant rays trace. One
-with skin, or whose foliage is pruned, stores simplified levels after level 0 (up to `LOD_MAX` in
-total), each with its own vertices, which `asset.mesh_build` encodes as whole levels (flag
-`Levels`, `geom.cluster_levels_build`): clusters that share the sphere of the mesh, so that a view
-chooses only one ([mesh](../../mirai-assets/references/kinds.md#mesh)). With `lods=None` or a
-small mesh, level 0 alone is stored. What follows describes those whole levels; the DAG simplifies
-with the same weights and locks.
+their border locked and split again up to the roots, with the cuts that its distant rays trace. Its
+foliage is pruned in the DAG too (below). One with skin stores simplified levels after level 0 (up
+to `LOD_MAX` in total), each with its own vertices, which `asset.mesh_build` encodes as whole
+levels (flag `Levels`, `geom.cluster_levels_build`): clusters that share the sphere of the mesh, so
+that a view chooses only one ([mesh](../../mirai-assets/references/kinds.md#mesh)). With
+`lods=None`, level 0 alone is stored. What follows describes those whole levels; the
+[DAG](../../mirai-std/references/geom.md#clusters-and-dag-clusterodin-partitionodin-cluster_dagodin)
+simplifies with the same weights and locks, and crosses seams where they stop it as they do.
 
-- **Level 0.** The source's.
+- **Level 0.** The source's. Its error (`Mesh_Lod.error` of level 0) is how far the outlines of
+  its cards draw from what their masks keep; its clusters keep an own error of 0, so a view however
+  near draws it.
 - **How many.** Each level aims at `LOD_SHARE` of the triangles of the previous one; the series
   ends if a level keeps more than `LOD_KEEP` of the previous one or its error exceeds the radius of
   the mesh (that one is not stored: it would be drawn only where the whole mesh fits in a pixel),
@@ -574,7 +603,10 @@ with the same weights and locks.
   modular kit) keep touching at every level. If normal seams stop it before the target, it repeats
   with `Permissive`, protecting the vertices of a location that differ in more than the normal (uv,
   uv1, color, material, tangent sign): the outline between materials and the UV islands are not
-  crossed. `lod_inputs` builds those inputs once for the importer.
+  crossed. If that still keeps more than `LOD_KEEP` of the level before (faceted pieces, a seam on
+  every edge), it runs once more crossing every seam but the outlines between materials, with
+  `Error_Clamped`, and the error of the level counts what its attributes lose.
+  `asset.mesh_simplify_inputs` builds those inputs once for the importer.
 - **Attributes.** Every vertex of a level is a vertex of level 0 as is, with its skin and its morph
   deltas; only pruned islands move.
 - **Foliage pruning** (Cook et al., *Stochastic Simplification of Aggregate Detail*, Pixar 2007).
@@ -582,23 +614,58 @@ with the same weights and locks.
   if it has at least `ISLANDS_MIN` small islands: leaves and cards, of up to `ISLAND_MAX_TRIANGLES`
   and of `1/ISLAND_MAX_SHARE` of its triangles. Those islands are not simplified by quadrics, which
   shrink them to nothing: they are split into classes by octave of radius below the largest of
-  their submesh (up to `ISLAND_CLASSES`), and a class pruned j times keeps the first 1/2^j of its
-  islands in a fixed order (a hash of its first triangle, spread over the submesh; each level is a
-  subset of the previous one) and enlarges the remaining ones around their center to the area they
-  all had, up to `ISLAND_GROW_MAX` times their radius. The rest of the submesh (trunk, body) is
-  simplified like any other. Bushes of hundreds of triangles are not small islands: quadrics
-  simplify them with less error than pruning them. Only the levels of `lods=Auto`.
-- **How much is pruned.** Each level prunes each class as far as the error that the rest already
-  has simplified allows; if that would keep more than `LOD_KEEP` of the previous level, it allows
-  the smallest error that prunes one more class, until it does not. The leaves of a tree whose
-  trunk is simplified with little error go away when they are small, and a few large islands (a
-  vine, the large piece of a panel) stay in their class without holding back the others.
+  their submesh (up to `ISLAND_CLASSES`), in a fixed order (a hash of its first triangle, spread
+  over the submesh), and `geom.islands_reduce` prunes them
+  ([islands](../../mirai-std/references/geom.md#islands-cluster_islandsodin)): of a static mesh
+  group by group of its DAG, of a skinned one all of them at each level, which it takes as far as
+  the error that the rest already has simplified allows, and further while the level would keep
+  more than `LOD_KEEP` of the previous one. The rest of the submesh (trunk, body) is simplified
+  like any other. Bushes of hundreds of triangles are not small islands: quadrics simplify them
+  with less error than pruning them. Only the levels of `lods=Auto`.
+- **Cards cut to outlines.** A card of a masked material (see [masked cards](#masked-cards)) is
+  one island whatever its outline holds; its rungs are the outline level 0 draws and the coarser
+  ones of its cards (`Mesh_Outlines`), which it steps through before it is pruned.
 - **Error.** `Mesh_Lod.error` is how far the simplifier moved the surface of level 0 (its position
-  error, without that of the attributes), in object units; with islands, the larger of that and,
-  of each pruned class, the radius of its largest island already enlarged over `ISLAND_PIXELS`. The
-  renderer takes a level where its projection falls within `lod_error_pixels` and that of the next
-  does not ([cut](../../mirai-rendering/references/scene.md#scene-and-instances)).
+  error, and that of the attributes where it crossed seams), in object units; with islands, the
+  larger of that and of the errors of its islands. The renderer takes a level where its projection
+  falls within `lod_error_pixels` and that of the next does not
+  ([cut](../../mirai-rendering/references/scene.md#scene-and-instances)).
 - The triangles of a level are grouped by submesh of level 0, with its slot and its box.
+
+### Masked cards
+
+A masked card is drawn opaque, cut to the outline of its mask, when it is read
+(`cook/import/cutout.odin`, `cook/import/outline.odin`), for every format; no setting turns it off.
+
+- **A card** is an island of at most `ISLAND_MAX_TRIANGLES` of a submesh, however many islands it
+  has, whose material is `Mask` with a mask image, every corner of it opaque in its color, laid on
+  the image without folding over at most two periods of it (the image repeats, as the material
+  samples it). The mask of a material is the image of its mask map (`images[.Mask]`, which a format
+  that knows what a program's opacity reads bakes), or of its base color map without one, program or
+  not (`material_mask_image`). Cards of skinned and morphing meshes are cut too: a vertex of an
+  outline takes the influences (the eight strongest) and the target deltas of the corners of the
+  card triangle it lies on, weighed by where it lies.
+- **Outlines.** Of the rectangle of the image a card covers, the texels whose alpha times the
+  opacity reaches the cutoff; conservative outlines of them from `OUTLINE_FINEST` texels to a
+  convex quadrilateral, each with its measured error (the farthest texel it draws from one the mask
+  keeps). Cards on the same rectangle share them. An outline is laid on the card through its
+  triangles, one facet per flat run of them, so a bent card stays bent. A rectangle wider than
+  `OUTLINE_MASK_SIDE` is cut on cells of several texels, each kept where any of its texels is,
+  its error grown by a cell; the cut works in at most `OUTLINE_WORK_BYTES` a cell, given back as
+  it ends. Without that memory a card keeps its mask, and the model is cut whole or not at all.
+- **Leaf or cluster**, from the mask: a card whose outline needs at most `OUTLINE_TRIANGLES` to
+  draw at most `1/OUTLINE_COVERAGE` of what the mask keeps is a leaf; any other keeps its mask on
+  its tightest convex outline of up to eight corners. So does a leaf whose finest outline draws
+  past its mask more than `CUTOUT_LEAF_ERROR` of the radius of its mesh: level 0 is drawn however
+  near, and the few large cards of a houseplant would show outlines where the mask shows gaps
+  between leaves. A card whose rectangle keeps nothing is dropped. The outlines of a leaf draw at
+  most `OUTLINE_TRIANGLES` each: level 0 draws the finest of them with its error, and the
+  [levels](#levels-of-detail) the coarser ones.
+- **Materials.** Cut cards are seen from both sides (`two_sided`). A material all of whose
+  triangles became outlines is `Opaque`; one that also keeps masked triangles stays as it is and
+  lends an opaque copy, `<name> outline`, to a slot of the outlines (`CUTOUT_SLOT` added to the id
+  of the slot). The base color image of the outlines fills what the mask left empty with the color
+  of the nearest texel it keeps (`Build_Options.alpha_fill`), so no dark rim shows at their edge.
 
 ## Collision
 
@@ -706,7 +773,8 @@ heights to its units and decides the size of its terrain.
 - Slots: one per `usemtl` name in order of first appearance in the mesh, also those the MTL does
   not define; the id is the position plus one.
 - MTL: `Kd` (0.8 if missing), `Ke`, `Pr`, `Pm`, `Ns` (without `Pr`, `roughness = 1 - sqrt(Ns/1000)`,
-  as Blender exports), `d`/`Tr` (less than 1 is `blend`), `map_Kd`, `map_Ke` and
+  as Blender exports), `d`/`Tr` (less than 1 is `blend`: coverage, or with a glass `illum` (4, 6,
+  7, 9) transmission `1 − d` and `Ni` as its IOR), `map_Kd`, `map_Ke` and
   `norm`/`map_Bump`/`bump` (with `-bm` for scale), with paths relative to the OBJ. `map_Pr` and
   `map_Pm` are not read.
 
@@ -724,11 +792,11 @@ slots of the `.mesh`, one per primitive, reference them.
   `NORMAL`, `TANGENT` (with `NORMAL`), `TEXCOORD_0/1` and `COLOR_0`; triangles without area are
   discarded.
 - **Materials**: metallic-roughness with emission relative to exposure (glTF gives no unit and its
-  viewers show 1 as the display white), `alphaMode`, `KHR_texture_transform` per map and the
-  extensions transmission, ior, volume, specular, clearcoat (a white coat of IOR 1.5), diffuse
-  transmission (from the JSON: cgltf does not read it) and unlit (emits its base color). A material
-  without metallic-roughness is a rough metal; a map that asks for a missing `TEXCOORD` rejects the
-  import.
+  viewers show 1 as the display white), `alphaMode`, `doubleSided` (`two_sided`),
+  `KHR_texture_transform` per map and the extensions transmission, ior, volume, specular, clearcoat
+  (a white coat of IOR 1.5), diffuse transmission (from the JSON: cgltf does not read it) and unlit
+  (emits its base color). A material without metallic-roughness is a rough metal; a map that asks
+  for a missing `TEXCOORD` rejects the import.
   - Specular-glossiness goes through `importer.specular_glossiness`, like the Khronos converter;
     with its texture it becomes a dielectric with a warning. An index of refraction of 0, the
     compatibility mode of `KHR_materials_ior`, is converted the same way
@@ -845,10 +913,12 @@ inherits, variants, sublayers and binary files fail with a `Tool` error that say
   `UsdUVTexture` images (an input with an image leaves its factor at 1) and the mapping of a
   `UsdPrimvarReader_float2` and a `UsdTransform2d`. Metallic and roughness come from a packed image
   (roughness in `g`, metallic in `b`), occlusion from `r` and opacity from the alpha of the color;
-  `opacityThreshold > 0` is `mask` and an opacity below 1, `blend`. `clearcoat` is a white coat
-  with the surface's IOR, as MaterialX builds it. Two materials with the same name: the second is
-  named by its prim path; one without `UsdPreviewSurface` is not imported. Images that `usdcat`
-  does not resolve are searched next to the file.
+  `opacityThreshold > 0` is `mask` and an opacity below 1, `blend`: in the `transparent` mode, the
+  default, glass with transmission `1 − opacity`; in `presence`, coverage. `doubleSided`, of the
+  mesh, makes its material `two_sided` (a mesh without one gets a default material that is).
+  `clearcoat` is a white coat with the surface's IOR, as MaterialX builds it. Two materials with
+  the same name: the second is named by its prim path; one without `UsdPreviewSurface` is not
+  imported. Images that `usdcat` does not resolve are searched next to the file.
 - **Lights** UsdLux on the node of their prim, in the units of `Imported_Light`
   ([units](../../mirai-rendering/references/display.md#units)). Luminance is
   `intensity · 2^exposure · color`, times the color of `colorTemperature` if enabled, and with
@@ -907,7 +977,8 @@ this path. FBX 6 files are rejected with their version.
   roughness, normal map, occlusion and emission relative to exposure, as glTF. In Lambert and Phong
   transparency is coverage: opacity `1 − factor·color` as in the FBX SDK, and its texture counts
   if it is the base color's (its alpha). The other shaders also give specular, IOR, coat and
-  transmission, by value. Roughness and metalness, which FBX gives as single-channel images, are
+  transmission, by value. The double-sided feature ufbx reads is `two_sided`. Roughness and
+  metalness, which FBX gives as single-channel images, are
   assembled into a `.Metallic_Roughness` image (red of each to green and blue). The texture of a
   Phong that gives roughness is a gloss one and is left out; bump, sheen, subsurface, rotated
   textures and those of specular, coat and transmission leave a warning.

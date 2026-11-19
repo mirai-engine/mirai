@@ -6,6 +6,7 @@ import "core:c"
 import "core:os"
 import "core:strings"
 import "core:sys/posix"
+import "core:time"
 
 when ODIN_OS==.Darwin {
     foreign import libc "system:System"
@@ -17,27 +18,42 @@ when ODIN_OS==.Darwin {
 foreign libc {
     getpriority :: proc(which:c.int,who:u32) -> c.int ---
     setpriority :: proc(which:c.int,who:u32,priority:c.int) -> c.int ---
+    ioctl :: proc(fd:posix.FD,request:c.ulong,#c_vararg args:..rawptr) -> c.int ---
 }
 
 PRIO_PROCESS :: 0
 LOW_NICENESS :: 10
 NICENESS_MOST :: 19
 
-_start :: proc(desc:os.Process_Desc,limits:Limits) -> (process:Process,error:os.Error) {
-    process=spawn(desc,limits,false) or_return
+_start :: proc(desc:os.Process_Desc,limits:Limits,inherit:[]uintptr) -> (process:Process,error:os.Error) {
+    process=spawn(desc,limits,false,inherit) or_return
     // The watcher joins the group of the child and kills it once this process
     // is gone. Both set the group, so that it is in it whichever runs first.
+    // The watcher is forked with every descriptor of this process; start
+    // returns once it closed them all, which ends this pipe.
+    closed:[2]posix.FD
+    if posix.pipe(&closed)!=.OK {error=os.Platform_Error(posix.errno());release(&process);return}
+    for fd in closed {_=posix.fcntl(fd,.SETFD,posix.FD_CLOEXEC)}
     parent:=posix.getpid()
     watcher:=posix.fork()
     if watcher==0 {watch(posix.pid_t(process.pid),parent)}
+    posix.close(closed[1])
+    defer posix.close(closed[0])
     if watcher<0 {error=os.Platform_Error(posix.errno());release(&process);return}
+    end:u8
+    for posix.read(closed[0],cast([^]byte)&end,1)<0 && posix.errno()==.EINTR {}
     _=posix.setpgid(watcher,posix.pid_t(process.pid))
     process.tree=uintptr(watcher)
     return
 }
 
-_detached :: proc(desc:os.Process_Desc) -> (process:Process,error:os.Error) {
-    return spawn(desc,{},true)
+_detached :: proc(desc:os.Process_Desc,inherit:[]uintptr) -> (process:Process,error:os.Error) {
+    return spawn(desc,{},true,inherit)
+}
+
+// Closed on exec: only a child that names it in inherit keeps it.
+_handle_keep :: proc(handle:uintptr) -> bool {
+    return handle<=uintptr(max(i32)) && posix.fcntl(posix.FD(handle),.SETFD,posix.FD_CLOEXEC)!=-1
 }
 
 // The whole group: the child, what it started and the watcher, which only
@@ -45,6 +61,24 @@ _detached :: proc(desc:os.Process_Desc) -> (process:Process,error:os.Error) {
 _terminate :: proc(process:^Process,force:bool) -> os.Error {
     if posix.killpg(posix.pid_t(process.pid),.SIGKILL if force else .SIGTERM)!=.OK {return os.Platform_Error(posix.errno())}
     return nil
+}
+
+// Waits for the child to exit, without taking its exit. Within a timeout it
+// looks every millisecond.
+_exited :: proc(process:^Process,timeout:time.Duration) -> os.Error {
+    flags:=posix.Wait_Flags{.EXITED,.NOWAIT}
+    if timeout>=0 {flags+={.NOHANG}}
+    start:=time.tick_now()
+    for {
+        info:posix.siginfo_t
+        if posix.waitid(.P_PID,posix.id_t(process.pid),&info,flags)==-1 {
+            if errno:=posix.errno();errno!=.EINTR {return os.Platform_Error(errno)}
+            continue
+        }
+        if info.si_signo!=nil {return nil}
+        if time.tick_since(start)>=timeout {return os.General_Error.Timeout}
+        time.sleep(time.Millisecond)
+    }
 }
 
 // Ends what the child left in its group and reaps the watcher.
@@ -71,10 +105,11 @@ priority_rank :: proc() -> int {
 }
 
 // Forks and executes desc in a process group of its own, or a session of its
-// own when detached. Between fork and exec the child only makes system calls:
-// everything it needs is prepared before.
+// own when detached, keeping the descriptors of inherit open across exec.
+// Between fork and exec the child only makes system calls: everything it
+// needs is prepared before.
 @(private="file")
-spawn :: proc(desc:os.Process_Desc,limits:Limits,detached:bool) -> (process:Process,error:os.Error) {
+spawn :: proc(desc:os.Process_Desc,limits:Limits,detached:bool,inherit:[]uintptr) -> (process:Process,error:os.Error) {
     scratch:=context.temp_allocator
     program:=executable(desc.command[0],scratch) or_return
     arguments:=make([]cstring,len(desc.command)+1,scratch) or_return
@@ -107,6 +142,7 @@ spawn :: proc(desc:os.Process_Desc,limits:Limits,detached:bool) -> (process:Proc
         _=posix.sigprocmask(.SETMASK,&mask,nil)
         _=posix.signal(.SIGPIPE,transmute(proc "c" (posix.Signal))posix.SIG_DFL)
         for stream,i in streams {_=posix.dup2(stream,posix.FD(i))}
+        for fd in inherit {_=posix.fcntl(posix.FD(fd),.SETFD,c.int(0))}
         if limits.priority==.Low {_=setpriority(PRIO_PROCESS,0,priority)}
         when ODIN_OS==.Linux {
             if limits.memory>0 {
@@ -157,4 +193,11 @@ watch :: proc(group,parent:posix.pid_t) -> ! {
     parent_wait(parent)
     _=posix.killpg(group,.SIGKILL)
     posix._exit(0)
+}
+
+_cpu_used :: proc() -> time.Duration {
+    usage:posix.rusage
+    if posix.getrusage(.SELF,&usage)!=.OK {return 0}
+    span :: proc(t:posix.timeval) -> time.Duration {return time.Duration(t.tv_sec)*time.Second+time.Duration(t.tv_usec)*time.Microsecond}
+    return span(usage.ru_utime)+span(usage.ru_stime)
 }

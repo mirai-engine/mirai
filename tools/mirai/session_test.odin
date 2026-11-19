@@ -106,7 +106,7 @@ the_role_and_the_record_come_from_the_files_of_the_project :: proc(t:^testing.T)
     context.allocator=context.temp_allocator
     folder:=base.test_folder(t,"session")
     if folder=="" {return}
-    testing.expect(t,os.make_directory_all(project.path(folder,".mirai"))==nil)
+    testing.expect(t,base.make_directory_all(project.path(folder,".mirai"))==nil)
     pid:=os.get_pid()
     testing.expect(t,os.write_entire_file(project.path(folder,".mirai","api.json"),fmt.tprintf(`{{"port":7999,"pid":%d,"manual":true}}`,pid))==nil)
     editor:=Engine_Process{pid=pid,program="mirai-editor",project=folder,headless=true,read=true}
@@ -150,7 +150,7 @@ a_session_copy_takes_the_project_and_its_caches_without_the_files_of_its_editor 
     for files in ([][]string{kept,left}) {
         for file in files {
             path:=project.path(folder,file)
-            testing.expect(t,os.make_directory_all(os.dir(path))==nil)
+            testing.expect(t,base.make_directory_all(os.dir(path))==nil)
             testing.expect(t,os.write_entire_file(path,file)==nil)
         }
     }

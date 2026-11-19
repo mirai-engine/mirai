@@ -24,7 +24,7 @@
 </p>
 
 <p align="center">
-  <a href="https://discord.gg/xeq5unRgG"><img alt="Discord"
+  <a href="https://discord.gg/t2g4tbRMwP"><img alt="Discord"
     src="https://img.shields.io/badge/Discord-join-5865f2?logo=discord&logoColor=white"></a>
   <a href="https://x.com/mirai3d"><img alt="X"
     src="https://img.shields.io/badge/X-@mirai3d-000000?logo=x&logoColor=white"></a>
@@ -175,7 +175,7 @@ steps to reproduce it — or send a pull request. Bug reports, fixes, plugins an
 all welcome, from humans and agents alike: [CONTRIBUTING.md](CONTRIBUTING.md) says how, and which
 models we do not accept code from.
 
-Come say hi on [Discord](https://discord.gg/xeq5unRgG), follow [@mirai3d](https://x.com/mirai3d)
+Come say hi on [Discord](https://discord.gg/t2g4tbRMwP), follow [@mirai3d](https://x.com/mirai3d)
 on X for news, and if Mirai is useful to you,
 [sponsor its development](https://github.com/sponsors/tomaszbk).
 

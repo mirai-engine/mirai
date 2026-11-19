@@ -9,10 +9,10 @@
 // resume may append points again, which the next round evaluates.
 //
 // A ray that crosses glass with a program (a color filter) does not wait for
-// it: it takes the mean filter of the instance (Instance.glass) and appends
-// the crossing as a filter point, chained to the others of its owner. The
-// owner adds, when it resumes, what the exact filters change of what the
-// means gave (filters_correction). A crossing that does not fit keeps the mean.
+// it: it goes on and appends the crossing as a filter point, chained to the
+// others of its owner. The owner adds, when it resumes, what the exact filters
+// change (filters_correction). A crossing that does not fit takes the filter
+// of its material row.
 //
 // The buffer is words: the header, the bins of the programs (by program id:
 // count, offset, cursor and dispatch of each), then the points, their records,
@@ -33,7 +33,6 @@
 #define POINT_FILTER 1u // a glass crossing of a ray, whose filter its owner multiplies in
 #define POINT_RUN 2u    // the first filter of a ray: weight is what its filters multiply
 #define POINT_EXIT 4u   // a ray leaves a solid through it: the filter is what the face lets through
-#define POINT_FACE 8u   // of the mean of its instance (glass_mean.comp): the filter of the face both ways
 
 #ifdef POINTS_SLOT
 [[vk::binding(POINTS_SLOT, 0)]] RWStructuredBuffer<uint> material_points : register(MIRAI_REGISTER(u, POINTS_SLOT), space0);
@@ -301,7 +300,6 @@ float3 point_filter_at(Material_Point point, Hit_Point h, bool given, Mirai_Surf
     Material_Sample values = material_sample_given(h.m, h.ctx, instance_color(h.inst, h.m, h.color.rgb), h.inst.emission.rgb, normal, given, program);
     float3 through;
     float3 tint = blend_filter_of(h.m, values, through);
-    if ((point.flags & POINT_FACE) != 0u) return blend_face_filter(h.m, tint, through);
     if (!material_solid(h.m)) return tint * through;
     return (point.flags & POINT_EXIT) != 0u ? through : tint * material_absorption(h.m, h.m.thickness) * through;
 }

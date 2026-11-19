@@ -1,6 +1,7 @@
 package vfx
 
 import "core:math"
+import "core:mem"
 import "core:reflect"
 import "core:strconv"
 import "core:strings"
@@ -10,6 +11,7 @@ import "mirai:core"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
+import "mirai:std/geom"
 import mm "mirai:std/math"
 import "plugins:vfx/runtime/effect"
 
@@ -77,7 +79,7 @@ fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
 
 @(private="file")
 fixture_sync :: proc(f:^Emitters_Fixture,id:core.World_Id,time:core.Time,frame:=FRAME) {
-    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{},{})
+    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{},{})
 }
 
 @(private="file")
@@ -122,7 +124,7 @@ a_rollback_does_not_start_the_same_burst_twice :: proc(t:^testing.T) {
     clock_of(&f.clocks,e)
     f.clocks.playing=true
     clock:=clock_find(&f.clocks,e)
-    clock.resolved=emission_key({},nil,0)
+    clock.resolved=emission_key({},0)
     clock.emission={duration=0.5,longest=1,tail=1}
     clock.emission.bursts[0]={count=7}
     id:=core.World_Id{0,1}
@@ -171,7 +173,7 @@ a_frame_that_sees_an_older_copy_starts_only_what_comes_after_it :: proc(t:^testi
     e:=fixture_emitter(&f,Particle_Emitter{active=true,loop=true})
     for _ in 0..<2 {fixture_tick(&f,TICK)}
     clock:=clock_find(&f.clocks,e)
-    clock.resolved=emission_key({},nil,0)
+    clock.resolved=emission_key({},0)
     clock.emission={duration=1,rate=60,longest=1,tail=1}
     f.app.assets=nil
     for _ in 0..<30 {fixture_tick(&f,TICK)}
@@ -208,6 +210,96 @@ the_clock_and_the_shown_of_an_emitter_that_goes_are_dropped :: proc(t:^testing.T
     fixture_sync(&f,{0,1},TICK)
     testing.expect(t,clock_find(&f.clocks,kept)!=nil && clock_find(&f.clocks,gone)==nil && clock_find(&f.clocks,unplaced)==nil)
     testing.expect(t,sync_shown(&f.sync,kept)!=nil && sync_shown(&f.sync,gone)==nil && sync_shown(&f.sync,unplaced)==nil)
+}
+
+// A frame tells the GPU only of the emitters that changed: none when nothing
+// did or an asset no effect reads went, and alone the one that moved, was
+// hidden, shows another effect, got other values, started births or whose
+// effect changed. The tick resolves again only the emissions whose effect or
+// values changed. Frames that change nothing allocate nothing.
+@(test)
+a_frame_tells_only_the_emitters_that_changed :: proc(t:^testing.T) {
+    f:=new(Emitters_Fixture)
+    defer free(f)
+    if !fixture_init(t,f) {return}
+    defer fixture_destroy(f)
+    folder:=base.test_folder(t,"vfx-told")
+    types:asset.Types
+    asset.types_init(&types)
+    defer asset.types_destroy(&types)
+    path:=strings.concatenate({folder,"/other.particle"},context.temp_allocator)
+    other:=effect.PARTICLE_DEFAULTS
+    other.rate=3
+    testing.expect_value(t,effect.particle_save(path,&types,{id={7,8},info=other}),asset.Error.None)
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=folder})) {return}
+    defer host.assets_destroy(&assets)
+    f.app.assets=&assets
+    // A mesh no effect reads, as a terrain piece is.
+    positions:=[3]geom.Vec3{{0,0,0},{1,0,0},{0,1,0}}
+    indices:=[3]u32{0,1,2}
+    piece,made:=host.assets_mesh_generate(&assets,{positions=positions[:],indices=indices[:]})
+    testing.expect(t,made)
+    emitters:[5]core.Entity
+    for &e,i in emitters {e=fixture_emitter(f,Particle_Emitter{active=true,loop=true},{f32(i),0,0})}
+    EDITOR :: core.Time{}
+    frame :: proc(f:^Emitters_Fixture) {
+        fixture_tick(f,EDITOR)
+        fixture_sync(f,{0,1},EDITOR)
+    }
+    for _ in 0..<2 {frame(f)}
+    // A rate no effect has: an emission resolved again loses it.
+    SEEN :: f32(-1)
+    for &clock in f.clocks.clocks.values {clock.emission.rate=SEEN}
+    Change :: enum {None,Moved,Hidden,Retargeted,Override,Births,Released,Effect}
+    cases:=[?]struct{change:Change,emitter:int}{
+        {.None,-1},{.Moved,0},{.Hidden,1},{.Retargeted,2},{.Override,3},{.Births,4},{.Released,-1},{.Effect,2},{.None,-1},
+    }
+    for c in cases {
+        e:=emitters[max(c.emitter,0)]
+        switch c.change {
+        case .None:
+        case .Moved:
+            place:=mm.TRANSFORM_IDENTITY
+            place.position={5,5,5}
+            core.edit(&f.worlds,e)^=core.World_Transform{place,place}
+        case .Hidden: core.add(&f.hidden,e,erender.Hidden{})
+        case .Retargeted: core.edit(&f.emitters,e).particle={7,8}
+        case .Override:
+            override:Particle_Override
+            testing.expect_value(t,value_set(&override,"rate",f32(55)),Error.None)
+            core.add(&f.overrides,e,override)
+        case .Births: births_add(clock_of(&f.clocks,e),0,4,4,0)
+        case .Released: testing.expect(t,host.assets_mesh_release(&assets,piece))
+        case .Effect:
+            other.rate=9
+            testing.expect_value(t,effect.particle_save(path,&types,{id={7,8},info=other}),asset.Error.None)
+            testing.expect(t,host.assets_reload(&assets,{7,8}))
+        }
+        fixture_settle(f)
+        frame(f)
+        told:=f.sync.told[:]
+        if c.emitter<0 {
+            testing.expectf(t,len(told)==0,"%v: no emitter changed and %d were told",c.change,len(told))
+        } else {
+            testing.expectf(t,len(told)==1 && told[0]==e,"%v: only its emitter is told, not %v",c.change,told)
+        }
+        resolved:=c.change==.Retargeted || c.change==.Override || c.change==.Effect
+        for other in emitters {
+            clock:=clock_find(&f.clocks,other)
+            again:=clock.emission.rate!=SEEN
+            testing.expectf(t,again==(resolved && other==e),"%v: the emission of %v is resolved again: %v",c.change,other,again)
+            clock.emission.rate=SEEN
+        }
+    }
+    tracker:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracker,context.allocator)
+    defer mem.tracking_allocator_destroy(&tracker)
+    {
+        context.allocator=mem.tracking_allocator(&tracker)
+        for _ in 0..<4 {frame(f)}
+    }
+    testing.expect_value(t,tracker.total_allocation_count,i64(0))
 }
 
 // Frames of 1/8 s add up exactly.
@@ -569,7 +661,7 @@ done_effects_take_their_entity_with_them :: proc(t:^testing.T) {
     e:=fixture_emitter(&f,Particle_Emitter{active=true,destroy_when_done=true})
     fixture_tick(&f,TICK)
     clock:=clock_find(&f.clocks,e)
-    clock.resolved=emission_key({},nil,0)
+    clock.resolved=emission_key({},0)
     clock.emission={duration=0.1,rate=30,longest=0.1,tail=0.1}
     f.app.assets=nil
     for _ in 0..<20 {fixture_tick(&f,TICK)}
@@ -675,74 +767,6 @@ emitter_rows_are_relative_to_the_origin :: proc(t:^testing.T) {
     testing.expect_value(t,rows[0],[4]f32{2,0,0,544.5})
     testing.expect_value(t,rows[1],[4]f32{0,2,0,-3})
     testing.expect_value(t,rows[2],[4]f32{0,0,2,215.75})
-}
-
-// The lights with shadows of an emitter lie around it as far as its particles
-// may go in their life, and anywhere where they are born on a surface.
-@(test)
-emitter_lights_lie_around_it_or_anywhere :: proc(t:^testing.T) {
-    slots:[2]Pool_Slot
-    for &s in slots {
-        s.live,s.desc.info.lights,s.desc.info.light_shadows=true,4,true
-        s.desc.transform=1
-        s.desc.transform[0,3]=10
-        s.desc.previous=s.desc.transform
-        s.desc.info.lifetime,s.desc.info.speed,s.desc.info.gravity,s.desc.info.light_range={1,2},{0,3},1,5
-    }
-    slots[1].desc.info.shape=.Surface
-    fields:Gpu_Fields
-    fields.fallback.xyz={0,-10,0}
-    box,reach:=lights_box(slots[:1],fields,1.0/60)
-    // 3 m/s for 2 s, and the gravity over them.
-    far:=f32(3*2+0.5*10*2*2)
-    testing.expect_value(t,box,[2][3]f32{{10-far,-far,-far},{10+far,far,far}})
-    testing.expect_value(t,reach,5)
-    box,_=lights_box(slots[:],fields,1.0/60)
-    testing.expect_value(t,box,erender.LIGHTS_ANYWHERE)
-}
-
-// The room for the lights of the particles has two parts: an emitter takes
-// its share from the part of its kind, in the order of the slots and as many
-// as the world asked for, and one of the other kind has an empty share where
-// those before it end. particle_lights.comp finds the light i of a part at
-// the last slot whose share of the part starts at i or before.
-@(test)
-emitters_take_their_lights_from_the_part_of_the_room_of_their_kind :: proc(t:^testing.T) {
-    info:=effect.PARTICLE_DEFAULTS
-    info.lights=3
-    app:host.App
-    desc,_:=emitter_desc(info,app.assets,app.renderer,1)
-    testing.expect_value(t,desc.info.lights,u32(3))
-    info.light_range=0
-    desc,_=emitter_desc(info,app.assets,app.renderer,1)
-    testing.expect_value(t,desc.info.lights,u32(0))
-
-    Want :: struct {lights:u32,shadows,live:bool}
-    wants:=[?]Want{{3,true,true},{2,false,true},{7,true,false},{4,true,true},{5,false,true}}
-    slots:[len(wants)]Pool_Slot
-    for want,at in wants {slots[at].live,slots[at].desc.info.lights,slots[at].desc.info.light_shadows=want.live,want.lights,want.shadows}
-    asked:=lights_asked(slots[:])
-    testing.expect_value(t,asked,[2]u32{7,7})
-    taken:[2]u32
-    shares:[len(wants)][4]u32
-    for &s,at in slots {shares[at]=light_share(s.desc.info.lights if s.live else 0,s.desc.info.light_shadows,&taken,asked)}
-    testing.expect_value(t,shares,[len(wants)][4]u32{{0,3,0,0},{3,0,0,2},{3,0,2,0},{3,4,2,0},{7,0,2,5}})
-    for part in 0..<2 {
-        for i in 0..<asked[part] {
-            found:=-1
-            for share,at in shares {if share[2*part]<=i {found=at}}
-            share:=shares[max(found,0)]
-            testing.expectf(t,found>=0 && i>=share[2*part] && i<share[2*part]+share[2*part+1] && slots[found].desc.info.light_shadows==(part==0),"light %d of part %d is of slot %d",i,part,found)
-        }
-    }
-    // What is left of what the world asked for, and no more.
-    taken={}
-    testing.expect_value(t,light_share(5,true,&taken,{4,0}),[4]u32{0,4,0,0})
-    testing.expect_value(t,light_share(2,true,&taken,{4,0}),[4]u32{4,0,0,0})
-    many:[2]Pool_Slot
-    many[0].live,many[0].desc.info.lights,many[0].desc.info.light_shadows=true,erender.LIGHTS_ASKED_MAX+5,true
-    many[1].live,many[1].desc.info.lights=true,erender.LIGHTS_ASKED_MAX+5
-    testing.expect_value(t,lights_asked(many[:]),[2]u32{erender.LIGHTS_ASKED_MAX,erender.LIGHTS_ASKED_MAX})
 }
 
 // count particles born at once, age seconds before the end of the frame.

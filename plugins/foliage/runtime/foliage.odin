@@ -760,11 +760,12 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
             }
             pieces=prefab.parts[:]
         }
-        variants:=wind_variants(t)
         amount:=sway_amount(t)
+        settled:=true
         fade,cull:=mesh_distances(t,false)
         fade,cull=fade*distance,cull*distance
         for piece in pieces {
+            settled&&=render.mesh_renderer_settled(assets,piece.renderer)
             desc,ok:=render.batch_desc(assets,piece.renderer)
             if !ok {
                 core.report(problems,owner.entity,"foliage.mesh","foliage type '%s' of source %s shows mesh %s, which is not loaded; give the type a .mesh of the assets",base.text_get(t.name[:]),host.assets_name(assets,entry.id,&name),host.assets_name(assets,piece.renderer.mesh,&other))
@@ -777,7 +778,9 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
             desc.object_id=u64(owner.entity)
             part:=Part_Draw{desc=desc,placement=piece.placement,identity=piece.placement==1,amount=amount}
             low,high,known:=render.mesh_bounds(renderer,desc.mesh)
-            if variants>0 && known {
+            // Metres from where its largest instance stands to its farthest point.
+            size:=linalg.length(linalg.max(linalg.abs(low),linalg.abs(high)))*t.scale[1]*max(t.height[1],1)
+            if variants:=shadow_variants(t,size);variants>0 && known {
                 part.variants=variants
                 append(&owner.winds,Wind_Key{desc.mesh,variants,amount})
             }
@@ -785,10 +788,7 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
             // sways in the wind what does not sway in variants (x); the views
             // cull it by boxes that hold how far both move it.
             part.desc.vertex={amount if part.variants==0 && t.wind>0 else 0,1,0,0}
-            if known {
-                corner:=linalg.max(linalg.abs(low),linalg.abs(high))
-                part.desc.reach=hook_reach(part.desc.vertex.x,linalg.length(corner)*t.scale[1]*max(t.height[1],1))
-            }
+            if known {part.desc.reach=hook_reach(part.desc.vertex.x,size)}
             append(&owner.parts,part)
         }
         draw.count=len(owner.parts)-draw.first
@@ -796,7 +796,7 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
         if type_far(t) && draw.count>0 {
             parts:=owner.parts[draw.first:][:draw.count]
             key={t.mesh if t.mesh!={} else t.prefab,kind_frame(renderer,t,parts)}
-            draw.kind=kind_ensure(resident,assets,renderer,job_system,allocator,key,parts,problems,owner.entity)
+            draw.kind=kind_ensure(resident,assets,renderer,job_system,allocator,key,parts,settled,problems,owner.entity)
             if draw.kind>=0 && kind_ready(&resident.kinds[draw.kind]) {
                 draw.far=true
                 fade,cull=mesh_distances(t,true)
@@ -1360,7 +1360,7 @@ cell_crown_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held
         geom.mesh_buffer_init(&shape,context.temp_allocator)
         if !cell_crown_build(placed[:],work.crowns[:],&shape) {return}
         made:bool
-        crown,made=host.assets_mesh_generate(assets,geom.mesh_buffer_view(&shape),options={no_lods=true})
+        crown,made=host.assets_mesh_generate(assets,geom.mesh_buffer_view(&shape),options={no_lods=true,label="foliage crown"})
         if !made {return}
         append(&resident.crowns,Shared_Crown{owner.source,held.coord,key,crown,1})
     }

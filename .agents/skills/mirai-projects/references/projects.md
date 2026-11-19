@@ -73,7 +73,9 @@ keeps its default; one the struct does not have is an error.
   shows it ([asset types](../../mirai-editor/references/extensions.md#asset-types-of-a-plugin)). A
   build writes from it `kinds_gen.odin` into the package `folder` names (`runtime` without it),
   with `<STEM>_KIND`, `<STEM>_EXTENSION` and `<STEM>_VERSION` for each `.stem`; git keeps the
-  file, so the plugin tests without a build.
+  file, so the plugin tests without a build. `program_uses` says what its assets draw the
+  programs of the materials they depend on as, directly or through their meshes
+  ([program uses](../../mirai-rendering/references/shaders.md#programs-and-stages)).
 - `import_sources`: the extensions of the files the importers of a plugin read (`.umap`): a
   repository with LFS keeps them in it as it keeps the sources of the engine's formats
   ([git and assets](../../mirai-assets/references/cli.md#git)).
@@ -195,7 +197,9 @@ the `Project` owns everything it points to.
 - The caches of `.mirai/cache` (`cache_path`) and `.mirai/thumbs` cost only time if deleted: the
   [registry](../../mirai-assets/references/formats.md#registry), the
   [compressed animations](../../mirai-core/references/host.md#content) and the
-  [previews](../../mirai-editor/references/panels.md#previews) are made again.
+  [previews](../../mirai-editor/references/panels.md#previews) are made again, and the
+  [capacities](../../mirai-rendering/references/frame-graph.md#passes) of the scenes are learned
+  again, with holes the first time a list fills.
 - **A cache never makes a valid asset fail.** An entry is keyed on everything it depends on (the
   formats and versions of what wrote it), and every read checks it against the asset: one that
   does not read or does not match, as one an older build left in a copied project, is made again
@@ -513,7 +517,7 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Generate the world without building | `mirai generate [project] [--store folder]` |
 | Run the content tool of a project | `mirai content [project] [-- arguments]` |
 | Ingest a source from anywhere and add it to a project | `mirai import <file> [--project P] [--folder F] [settings]` |
-| Bring the packages a project pins to builds of this engine | `mirai import --refresh <root> [--fast] [--store folder] [--from folder]` |
+| Bring the packages a project pins to builds of this engine | `mirai import --refresh <root> [--final] [--store folder] [--from folder]` |
 | Serve a project peer to peer until stopped | `mirai share [project] [--port N] [--store S]` |
 | Receive a shared project, or update a folder joined before | `mirai join <invitation> [folder] [--address A] [--port N] [--store S]` |
 | Documents of interfaces and scenes, no editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
@@ -522,9 +526,10 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Run tests | `mirai test [<package>] [test\|file.odin...] [--list\|--failed\|--no-gpu\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
 | Headless background editor | `mirai session start\|restart\|stop\|status [project] [--release] [--copy] [--store folder]` |
 | Call the editor API | `mirai rpc <method> [key=value...\|json] [--select c] [--wait-until c=v] [--project P]` |
-| Capture without UI | `mirai capture [project] --out x.png [--reference r.png] [--repeat]` |
+| Capture without UI | `mirai capture [project] --out x.png [--camera NAME] [--reference r.png]` |
 | Validate demo image and cost | `mirai render check [project] [--views a,b] [--quality] [--release]` |
 | Measure the cost against main | `mirai bench compare [project] --base main` |
+| Fly a scene and find its hitches | `mirai bench flight [project] <flight> [--limit MS]` |
 | Compare and crop images | `mirai image diff\|mottle\|stats\|montage\|crop\|zoom\|pick ...` |
 | Measure only between measurements | `mirai measure -- <command> [arguments...]` |
 | See who is building or measuring | `mirai locks` |
@@ -536,7 +541,8 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 - Every command that builds does it in dev unless `--release` is asked for
   ([AGENTS.md](../../../../AGENTS.md#common-commands)).
 - The builds of all checkouts share a few turns by themselves; do not set `-thread-count`. Tests and
-  builds do not wait for a measurement: they run with low priority while it lasts.
+  builds do not wait for a measurement: they run with low priority while it lasts, and what reaches
+  the GPU waits for it to end ([turns](build.md#turns-between-processes)).
 - **Session against the editor:** `mirai session start`, then `mirai rpc` or `mirai capture`, and
   `mirai session stop`; after a change of project code, `build.start` loads it into the open
   session; after a change of engine code or shaders, `mirai build editor`, which hands the build
@@ -567,7 +573,11 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 - `mirai worktree new` creates `<main>/.worktrees/<name>` on a new branch and prints the `cd` and
   the first build. `.deps` and the caches (engine binaries, C libraries, shader stages) are those
   of the main checkout ([dependencies](build.md#dependencies-and-worktrees)), and so is the private
-  compressor in its `ext/` ([compressor](build.md#compressor)).
+  compressor in its `ext/` ([compressor](build.md#compressor)). Its engine shaders are generated
+  by its own tool, which its launcher builds from its sources, and its test worlds by that tool
+  when it checks or tests: the tool of another checkout generates as its own sources say. A
+  worktree from `git worktree add` needs nothing more: its first `mirai` command builds the tool,
+  which needs no generated file.
 - `mirai doctor [project]` checks the machine and the project, says how to fix each finding and
   ends with 1 if there are errors. It requires `git config core.symlinks` and `.claude/skills` as a
   symbolic link to `.agents/skills`: without it, the skills do not reach the agents (on Windows
@@ -741,7 +751,8 @@ self-contained Python (PEP 723, with the header of the existing ones) run with `
 scripts/<script>.py`, without a `.venv` in the repo. A script uses `mirai` or the editor API like
 any user and nothing in the engine depends on them; bash remains only in the launcher.
 
-- The frame cost against the base is measured by `mirai bench compare`, without pair scripts;
+- Hitches while flying a scene are measured by `mirai bench flight`, without scripts of keys;
+  the frame cost against the base is measured by `mirai bench compare`, without pair scripts;
   `scripts/bench_compare.py` is for another measurement the user asks for, whose table goes in the
   task's final report.
 - A script that measures times runs with `mirai measure -- uv run scripts/<script>.py`

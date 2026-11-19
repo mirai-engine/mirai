@@ -19,7 +19,9 @@ import "mirai:store"
 // the body parts set by hand and the sockets added to it on bones it still
 // has; a clip keeps the root set by hand while its bone is still in its
 // skeleton. Any document keeps the owner its file has, so one taken out of the
-// package stays out.
+// package stays out. Any other document, and what of a skeleton or a clip is
+// not kept, is written over: one whose file changed since it was last written
+// (documents_changed) is left as it is unless the changes are discarded.
 
 // The baseline of a skeleton the clips followed with it play on.
 Followed_Skeleton :: struct {
@@ -33,13 +35,17 @@ Followed :: struct {
     kind:asset.Fourcc,
     path:string,
     warning:string, // what of the file could not be kept; "" when all
+    hash:u64,       // what the file holds as it is left (asset.Package_Written); 0 for a material, followed field by field
+    kept:bool,      // it changed since it was last written and was left as it is
 }
 
 // Writes into folder the documents of the build b of the package p, or
 // follows those whose ids registry has where it has them. A new file is
-// named as the package names its document, under folder. What it wrote, in
-// allocator. B4: the per-project step of an ingest calls it.
-documents_follow :: proc(s:^store.Store,p:^asset.Package,b:^asset.Build,folder:string,registry:^asset.Registry,allocator:=context.allocator) -> (written:[dynamic]Followed,error:Error) {
+// named as the package names its document, under folder. recorded: what the
+// project's pin says its files held when last written; one that changed since
+// is left as it is, with a warning, unless changed is Discard. What it wrote,
+// in allocator.
+documents_follow :: proc(s:^store.Store,p:^asset.Package,b:^asset.Build,folder:string,registry:^asset.Registry,recorded:[]asset.Package_Written,changed:Changed,allocator:=context.allocator) -> (written:[dynamic]Followed,error:Error) {
     written=make([dynamic]Followed,allocator)
     types:asset.Types
     asset.types_init(&types,context.temp_allocator)
@@ -50,8 +56,17 @@ documents_follow :: proc(s:^store.Store,p:^asset.Package,b:^asset.Build,folder:s
         if blob,path_error:=store.blob_path(s,o.blob,context.temp_allocator);path_error==.None {append(&skeletons,Followed_Skeleton{o.id,blob})}
     }
     taken:=make(map[string]bool,context.temp_allocator)
-    for o in b.outputs {
+    kept:[]base.Asset_Id
+    if changed!=.Discard {kept=documents_changed(p,recorded,registry,context.temp_allocator)}
+    each: for o in b.outputs {
         if asset.import_cached(o.kind) {continue}
+        for id in kept {
+            if id!=o.id {continue}
+            file,_:=asset.registry_find(registry,id)
+            warning:=fmt.tprintf("assets/%s changed since it was last written and was left as it is: import the source of %s with discard_changes to write over it",file.path,p.name)
+            append(&written,Followed{id=o.id,kind=o.kind,path=strings.clone(asset.registry_file_path(registry,file.path,context.temp_allocator),allocator),warning=strings.clone(warning,allocator),hash=written_of(recorded,id),kept=true})
+            continue each
+        }
         blob,path_error:=store.blob_path(s,o.blob,context.temp_allocator)
         if path_error!=.None {return written,error_make(.Not_Found,"the store at %s has no blob of the document %v of the package %v: fetch it from a peer that has it",s.root,o.id,p.id,allocator=context.temp_allocator)}
         target:string
@@ -76,7 +91,8 @@ documents_follow :: proc(s:^store.Store,p:^asset.Package,b:^asset.Build,folder:s
         }
         warning,follow_error:=document_follow(&types,o.kind,blob,target,skeletons[:],registry)
         if follow_error!=.None {return written,error_make(.Write,"%s could not be written: %v",target,follow_error,allocator=context.temp_allocator)}
-        append(&written,Followed{id=o.id,kind=o.kind,path=strings.clone(target,allocator),warning=strings.clone(warning,allocator)})
+        hash:=written_hash(target) if o.kind!=asset.KIND_MATERIAL else 0
+        append(&written,Followed{id=o.id,kind=o.kind,path=strings.clone(target,allocator),warning=strings.clone(warning,allocator),hash=hash})
     }
     return written,{}
 }

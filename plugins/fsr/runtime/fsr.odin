@@ -70,7 +70,7 @@ COMPOSITION_MASK :: render.Render_Resource.Custom17
 // so that its six levels exist and every group of SPD writes inside it.
 FSR_RESOURCES :: [?]render.Render_Resource_Desc{
     {id=DILATED_MOTION,format=.RG16_Float,align=8},
-    {id=DILATED_DEPTH,format=.R16_Float,align=8},
+    {id=DILATED_DEPTH,format=.R32_Float,align=8},
     {id=RECONSTRUCTED_DEPTH,format=.R32_Uint,align=8},
     {id=FARTHEST_DEPTH,format=.R16_Float,align=8},
     {id=LUMA,format=.R16_Float,align=8,history=true},
@@ -80,7 +80,7 @@ FSR_RESOURCES :: [?]render.Render_Resource_Desc{
     {id=FARTHEST_DEPTH_MIP1,format=.R16_Float,shift=1},
     {id=SHADING_CHANGE,format=.R8_Unorm,shift=1},
     {id=DILATED_REACTIVE,format=.RGBA8_Unorm,align=8},
-    {id=NEW_LOCKS,format=.R32_Float,size=.Output,kept=true},
+    {id=NEW_LOCKS,format=.R8_Unorm,size=.Output,kept=true},
     {id=ACCUMULATION,format=.R8_Unorm,align=8,history=true},
     {id=LUMA_HISTORY,format=.RGBA16_Float,align=8,history=true},
     {id=LUMA_INSTABILITY,format=.R16_Float,align=8},

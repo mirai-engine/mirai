@@ -1,6 +1,5 @@
 package mirai_render
 
-import "core:math/linalg"
 import "core:mem"
 import "mirai:rhi"
 import "mirai:std/base"
@@ -122,78 +121,14 @@ pass_dispatch_indirect :: proc(s: ^Stage_Pass, desc: Extension_Buffer_Desc, offs
 	if entry := extension_buffer_find(s.pass.r, s.world, desc); entry != nil {rhi.cmd_dispatch_indirect(s.pass.cmd, entry.buffer, offset)}
 }
 
-// A part of the room for lights that a pass writes on the GPU each frame
-// (light_tree.odin): its lights from first_light, capacity of them, and one
-// of none after them; its nodes from root, the tree of the capacity leaves as
-// light_tree.odin lays one out, then at root + 2*capacity - 1 a leaf of the
-// light of none. A capacity of 0: the room has no such part.
-Pass_Light_Part :: struct {
-	first_light, capacity, root: u32,
-}
-
-// The room: the lights that cast shadows, whose tree starts at 1, under node
-// 0, the root of them and of the scene, which takes what its two children
-// give, as light_tree_group does; and those that do not, in a tree no
-// traversal of shadows meets. scene_root: the root of the lights of the
-// scene, or the leaf of none of the part with shadows without them.
-Pass_Lights :: struct {
-	shadows, shadowless: Pass_Light_Part,
-	scene_root:          u32,
-}
-
-// The box of lights_ask for lights a pass cannot tell where they lie.
-LIGHTS_ANYWHERE :: [2]Vec3{{-max(f32), -max(f32), -max(f32)}, {max(f32), max(f32), max(f32)}}
-
-// Asks for room for lights that a pass writes on the GPU in the Simulate
-// stage, which then light the scene as its own lights do: count that cast
-// shadows within its budgets, which lie within box and light up to reach
-// metres from where they lie (the grid of the lights holds the cells of the
-// scene they light; LIGHTS_ANYWHERE, all of them), and shadowless that light
-// whatever stands in their way and trace no rays. From the next frame, each
-// rounded up to a power of two, up to LIGHT_REGION_MAX. Ask in each frame
-// that uses it.
-lights_ask :: proc(r: ^Renderer, count, shadowless: u32, box: [2]Vec3, reach: f32) {
-	first := r.lights_asked == 0
-	r.lights_asked = max(r.lights_asked, count)
-	r.shadowless_asked = max(r.shadowless_asked, shadowless)
-	if count == 0 {return}
-	low, high := box[0], box[1]
-	if !(low.x <= high.x && low.y <= high.y && low.z <= high.z) {low, high = LIGHTS_ANYWHERE[0], LIGHTS_ANYWHERE[1]}
-	reach := reach if reach >= 0 else max(f32)
-	if first {
-		r.lights_asked_box, r.lights_asked_reach = {low, high}, reach
-		return
-	}
-	r.lights_asked_box = {linalg.min(r.lights_asked_box[0], low), linalg.max(r.lights_asked_box[1], high)}
-	r.lights_asked_reach = max(r.lights_asked_reach, reach)
-}
-
-// Binds the lights of the scene at SLOT_PASS0 + lights and the nodes of its
-// tree at SLOT_PASS0 + nodes for the dispatches that write the room, in the
-// Simulate stage. A pass that binds it writes all of it. False without room.
-pass_lights :: proc(s: ^Stage_Pass, lights, nodes: u32) -> (room: Pass_Lights, ok: bool) {
-	scene := &s.pass.r.scene
-	region := scene.light_region
-	if s.stage != .Simulate || region.lights == 0 || lights > SLOT_PASS9 - SLOT_PASS0 || nodes > SLOT_PASS9 - SLOT_PASS0 || scene.light_buffer == 0 || scene.light_tree_buffer == 0 {return}
-	cmd := s.pass.cmd
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS0 + lights, scene.light_buffer)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS0 + nodes, scene.light_tree_buffer)
-	scene.light_region_written = true
-	first := light_region_first(region)
-	scene_lights := u32(len(scene.lights))
-	room.shadows = {first_light = scene_lights, capacity = region.lights, root = 1}
-	if region.shadowless > 0 {room.shadowless = {first_light = scene_lights + region.lights + 1, capacity = region.shadowless, root = light_region_shadowless(region)}}
-	room.scene_root = first if int(first) < len(scene.light_tree) else 2 * region.lights
-	return room, true
-}
-
-// The indices a pass draws with: the six of a quad (0 1 2, 2 1 3). The
-// meshes of the scene have none: their clusters are drawn by vertex
-// (mesh_draw_range, pass_draw_indirect).
-Pass_Indices :: enum u8 {Quad}
+// The indices a pass draws with: the six of a quad (0 1 2, 2 1 3), or those
+// of the meshes drawn whole this frame (frame_mesh_whole; Gpu_Mesh.draw_first
+// says where those of a mesh start, CLUSTER_DRAW_VERTICES a cluster).
+Pass_Indices :: enum u8 {Quad, Meshes}
 
 pass_indices :: proc(s: ^Stage_Pass, indices: Pass_Indices) {
-	if s.pass.r.quad_indices != 0 {rhi.cmd_bind_index_buffer(s.pass.cmd, s.pass.r.quad_indices, 0)}
+	buffer := s.pass.r.quad_indices if indices == .Quad else s.pass.r.scene.mesh_draws
+	if buffer != 0 {rhi.cmd_bind_index_buffer(s.pass.cmd, buffer, 0)}
 }
 
 // Draws with the arguments of an indexed draw (index count, instance count,
@@ -252,14 +187,13 @@ pass_rows :: proc(s: ^Stage_Pass, slot: u32, rows: Pass_Rows) -> bool {
 	return true
 }
 
-// How a draw takes the clusters of level 0 of a mesh of the scene: the
-// vertices of the draw, CLUSTER_DRAW_VERTICES a cluster, which a vertex shader
-// reads with the mesh (geometry.slang). False for a mesh the renderer does
-// not have, or whose geometry still goes to the GPU (mesh_uploading).
-mesh_draw_range :: proc(r: ^Renderer, mesh: Mesh_Handle) -> (vertex_count: u32, ok: bool) {
+// The primitives of level 0 of a mesh (geometry.slang): CLUSTER_TRIANGLES a
+// cluster, those past its own of no area. False for a mesh the renderer
+// does not have, or whose geometry still goes to the GPU (mesh_uploading).
+mesh_primitive_count :: proc(r: ^Renderer, mesh: Mesh_Handle) -> (count: u32, ok: bool) {
 	if int(mesh) >= len(r.scene.meshes) || r.scene.meshes[mesh].vertex_count == 0 || mesh_pending(&r.scene, u32(mesh)) {return}
 	_, clusters := record_level(&r.scene, r.scene.meshes[mesh], 0)
-	return clusters * CLUSTER_DRAW_VERTICES, true
+	return clusters * CLUSTER_TRIANGLES, true
 }
 
 // Counters the passes of an extension add to on the GPU, by name: four u32

@@ -51,6 +51,10 @@ App_Desc :: struct {
     gpu_message:rhi.Message_Proc,
     gpu_loader_lock:^sync.Mutex,
     render_settings:Maybe(render.Settings),
+    // The file where the device records a GPU submission that is late
+    // (rhi.Device_Desc.late_record); what a run before left in it is read and
+    // removed at start (app_gpu_late_before). "": none.
+    gpu_late_record:string,
     ui_font_sizes:[]i32,         // point sizes of every UI context of the application; those of the editor when empty
 
     audio:Audio_Output,
@@ -163,6 +167,7 @@ App :: struct {
     step_ns:[]u64, // the time of each function of info.steps since whoever reads it last cleared it, settle included
     profiler:Profiler, // the frames someone asked to record (profile.odin)
     load_profile:Load_Profile, // what the last loads took (load_profile.odin)
+    capacities:Capacities,     // what the lists of the renderer asked for in each scene (capacities.odin)
 
     tick_dt:f32,
     max_ticks:int,
@@ -174,6 +179,8 @@ App :: struct {
     device:^rhi.Device,
     gpu_failure:[GPU_FAILURE_TEXT]u8, // what app_gpu_failure says once the device failed
     gpu_failure_length:int,
+    gpu_late_before:[rhi.WATCHDOG_REPORT_BYTES]u8, // what the record of App_Desc.gpu_late_record held at start (app_gpu_late_before)
+    gpu_late_before_length:int,
     renderer:^render.Renderer, // nil without gpu
     drawable:[2]i32,           // device pixels
     density:f32,               // device pixels per window point
@@ -568,6 +575,7 @@ app_worlds_migrate :: proc(app:^App,m:^core.World_Migration,editor:rawptr) -> bo
     if .Shared in m.places && !fits(app,app.shared,to.sizes[.Shared]) {return false}
     if .Editor in m.places && !fits(app,editor,to.sizes[.Editor]) {return false}
     app.info=to
+    if app.assets!=nil {app.assets.types.defaults=&to.schema.schema if to.schema!=nil else nil}
     if .Shared in m.places && app.shared!=nil {place_replace(app,m,.Shared,app.shared)}
     if .Editor in m.places && editor!=nil {place_replace(app,m,.Editor,editor)}
     if .World in m.places {

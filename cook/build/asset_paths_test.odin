@@ -17,7 +17,7 @@ a_path_of_an_asset_in_the_code_names_one_or_the_build_says_where :: proc(t:^test
     engine:=project.path(folder,"engine",allocator=context.temp_allocator)
     game:=project.path(folder,"project",allocator=context.temp_allocator)
     for path in ([]string{project.path(engine,"core",allocator=context.temp_allocator),project.path(game,"game",allocator=context.temp_allocator),project.path(game,"assets","pets",allocator=context.temp_allocator)}) {
-        if !testing.expect(t,os.make_directory_all(path)==nil) {return}
+        if !testing.expect(t,base.make_directory_all(path)==nil) {return}
     }
     if !testing.expect(t,os.write_entire_file(project.path(engine,"core","core.odin",allocator=context.temp_allocator),"package core\n")==nil) {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)

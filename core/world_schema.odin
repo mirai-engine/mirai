@@ -95,7 +95,7 @@ world_schema_make :: proc(info:^World_Info,allocator:=context.allocator) -> ^Wor
     }
     slice.sort_by(ws.table_hashes,proc(a,b:Table_Hash) -> bool {return a.hash<b.hash || a.hash==b.hash && a.table<b.table})
     for t,i in info.tables {
-        if !value_schema(ws,&ws.tables[i],t.info) {
+        if !value_schema(ws,&ws.tables[i],t.info,t.default) {
             world_schema_destroy(ws)
             return nil
         }
@@ -111,13 +111,13 @@ world_schema_make :: proc(info:^World_Info,allocator:=context.allocator) -> ^Wor
     }
     for s,i in info.storages {
         ws.storages[i].type=serial.TYPE_NONE
-        if s.persist && !value_schema(ws,&ws.storages[i],s.info) {
+        if s.persist && !value_schema(ws,&ws.storages[i],s.info,s.default) {
             world_schema_destroy(ws)
             return nil
         }
     }
     for r,i in info.records {
-        if !value_schema(ws,&ws.records[i],r.info) {
+        if !value_schema(ws,&ws.records[i],r.info,r.default) {
             world_schema_destroy(ws)
             return nil
         }
@@ -313,13 +313,25 @@ world_schema_destroy :: proc(ws:^World_Schema) {
 
 // False without memory; a type that is not plain data is TYPE_NONE.
 @(private="file")
-value_schema :: proc(ws:^World_Schema,v:^Value_Schema,info:^runtime.Type_Info) -> bool {
+value_schema :: proc(ws:^World_Schema,v:^Value_Schema,info:^runtime.Type_Info,default:proc(dst:rawptr)=nil) -> bool {
     v.type=serial.TYPE_NONE
     index,ok:=serial.schema_add_type_info(&ws.schema,info)
     if !ok {return true}
     v.type=index
     v.hash=serial.schema_layout_hash(&ws.schema,index)
     serial.layout_init(&v.layout,&ws.schema,index,ws.allocator)
+    // What a value of it starts as goes with the type, saved as a value is: a
+    // document written with it fills by it the fields an older one lacks.
+    if default!=nil && ws.schema.types[index].kind==.Struct {
+        size:=int(ws.schema.types[index].size)
+        value,no_value:=make([]u8,size,context.temp_allocator)
+        image,no_image:=make([]u8,size,context.temp_allocator)
+        defer {delete(value,context.temp_allocator);delete(image,context.temp_allocator)}
+        if no_value!=nil || no_image!=nil {return false}
+        default(raw_data(value))
+        serial.value_write(&v.layout,image,raw_data(value),1)
+        if !serial.schema_default_set(&ws.schema,index,image) {return false}
+    }
     offsets:=make([dynamic]u32,ws.allocator)
     if !entity_offsets(&ws.schema,index,0,&offsets) {
         delete(offsets)

@@ -6,6 +6,7 @@ import "mirai:core"
 import "mirai:host"
 import gpu "mirai:render"
 import "mirai:rhi"
+import "mirai:std/base"
 
 // What a plugin extends the renderer with. Its runtime imports neither the
 // renderer nor the RHI: all it does to a frame is here.
@@ -56,6 +57,8 @@ Gpu_Backend :: rhi.Backend
 Light_Desc :: gpu.Light_Desc
 LIGHT_POINT :: gpu.GPU_LIGHT_POINT
 LIGHT_RECT :: gpu.GPU_LIGHT_RECT
+light_shares :: gpu.light_shares // the w of the axis of a light: what of its light the probes gather and media scatter
+light_image :: gpu.light_image   // the w of the size of a light: the texture it projects, or the material whose emission a rectangle shows
 
 Render_Pipeline :: gpu.Render_Pipeline_Handle
 Render_Pipeline_Desc :: gpu.Render_Pipeline_Desc
@@ -170,6 +173,7 @@ pass_mask_begin :: gpu.pass_mask_begin
 pass_surface_begin :: gpu.pass_surface_begin
 pass_surface_read :: gpu.pass_surface_read
 pass_shadow_data :: gpu.pass_shadow_data
+pass_shadow_marks :: gpu.pass_shadow_marks
 pass_image_bind :: gpu.pass_image_bind
 pass_image_write :: gpu.pass_image_write
 pass_texture :: gpu.pass_texture
@@ -186,14 +190,9 @@ pass_draw :: gpu.pass_draw
 pass_dispatch :: gpu.pass_dispatch
 pass_timestamp :: gpu.pass_timestamp
 pass_buffer :: gpu.pass_buffer
-Pass_Lights :: gpu.Pass_Lights
-Pass_Light_Part :: gpu.Pass_Light_Part
 Table_Texture_Desc :: gpu.Table_Texture_Desc
 EXTENSION_TABLE_TEXTURE_CAPACITY :: gpu.EXTENSION_TABLE_TEXTURE_CAPACITY
 pass_table_texture_copy :: gpu.pass_table_texture_copy
-LIGHTS_ASKED_MAX :: gpu.LIGHT_REGION_MAX
-LIGHTS_ANYWHERE :: gpu.LIGHTS_ANYWHERE
-pass_lights :: gpu.pass_lights
 pass_buffer_held :: gpu.pass_buffer_held
 pass_buffer_write :: gpu.pass_buffer_write
 pass_buffer_fill :: gpu.pass_buffer_fill
@@ -206,6 +205,8 @@ pass_rows :: gpu.pass_rows
 pass_counters :: gpu.pass_counters
 pass_readback :: gpu.pass_readback
 pass_gbuffer_begin :: gpu.pass_gbuffer_begin
+pass_depth_pyramid :: gpu.pass_depth_pyramid
+pass_depth_pyramid_build :: gpu.pass_depth_pyramid_build
 // The next frame draws a mesh with a material (0: those of the mesh) in its
 // Gbuffer stage: each view keeps what they reflect and their layers.
 frame_gbuffer_mesh :: proc(renderer:^Renderer,mesh:Mesh_Handle,material:Material_Handle) {
@@ -265,12 +266,11 @@ counters :: proc(renderer:^Renderer,name:string) -> (values:[4]u32,ok:bool) {
 // Bytes a buffer of a pass may span at most on this device.
 max_storage_range :: proc(app:^host.App) -> u64 {return app.device!=nil?rhi.device_info(app.device).max_storage_range:0}
 
-// How many vertices a draw (pass_draw_indirect) gives the clusters of level 0
-// of a mesh: CLUSTER_DRAW_VERTICES a cluster, which a vertex shader reads
-// with geometry.slang. False for a mesh the renderer does not have.
-mesh_draw_range :: proc(renderer:^Renderer,mesh:Mesh_Handle) -> (vertex_count:u32,ok:bool) {
+// The primitives of level 0 of a mesh (geometry.slang): CLUSTER_TRIANGLES a
+// cluster, those past its own of no area. False for a mesh the renderer does not have.
+mesh_primitive_count :: proc(renderer:^Renderer,mesh:Mesh_Handle) -> (count:u32,ok:bool) {
     if renderer==nil {return}
-    return gpu.mesh_draw_range(renderer,mesh)
+    return gpu.mesh_primitive_count(renderer,mesh)
 }
 
 // A program of a domain in the shaders in use, by name; nil without it.
@@ -411,10 +411,12 @@ mesh_uploading :: proc(renderer:^Renderer,mesh:Mesh_Handle) -> bool {
 // A copy of a mesh whose vertices the plugin writes in its Geometry stage, in
 // each frame it asked deformable_update for. levels: it keeps the levels of
 // detail of the mesh, whose vertices the plugin writes too (pass_deformable
-// counts them); rays meet the first. A load transaction.
-deformable_create :: proc(renderer:^Renderer,source:Mesh_Handle,levels:=false) -> (Mesh_Handle,bool) {
+// counts them); rays meet the first. sway: metres in the space of the mesh it
+// moves a vertex at most from where it is at rest; 0 for anywhere in the box
+// deformable_update gives. A load transaction.
+deformable_create :: proc(renderer:^Renderer,source:Mesh_Handle,levels:=false,sway:=f32(0)) -> (Mesh_Handle,bool) {
     if renderer==nil {return 0,false}
-    return gpu.deformable_create(renderer,source,levels)
+    return gpu.deformable_create(renderer,source,levels,sway)
 }
 
 // Says that the next frame writes the vertices of a deformable, and the box
@@ -528,6 +530,22 @@ batch_desc :: proc(a:^host.Assets,static:Mesh_Renderer) -> (desc:Batch_Desc,ok:b
     return {mesh=instance.mesh,material=instance.material,slot_materials=instance.slot_materials,tint=instance.tint},true
 }
 
+// Whether the renderer draws what a Mesh_Renderer shows as its assets say:
+// its mesh loaded and each material it shows settled
+// (host.assets_material_settled), as mesh_instance takes them. What captures
+// an image of it once (an impostor) waits for that.
+mesh_renderer_settled :: proc(a:^host.Assets,static:Mesh_Renderer) -> bool {
+    if a==nil || a.renderer==nil {return true}
+    mesh:=static.mesh!={}?host.assets_mesh(a,static.mesh):host.assets_shape(a,static.shape)
+    if mesh==nil || mesh.handle==host.ASSETS_MESH_NONE {return false}
+    if mesh.slot_count==0 {return host.assets_material_settled(a,static.materials[0])}
+    for slot in 0..<mesh.slot_count {
+        material:=slot<MATERIAL_SLOTS?static.materials[slot]:base.Asset_Id{}
+        if !host.assets_material_settled(a,material!={}?material:mesh.slot_materials[slot]) {return false}
+    }
+    return true
+}
+
 Impostor_Part :: gpu.Impostor_Part
 Impostor_Images :: gpu.Impostor_Images
 IMPOSTOR_GRID_MAX :: gpu.IMPOSTOR_GRID_MAX
@@ -589,14 +607,6 @@ texture_index :: proc "contextless" (texture:Texture_Handle) -> u32 {return u32(
 // How many times the vertices of the scene were made again: what was written
 // in a deformable before is gone, and it is to be written again.
 vertices_made :: proc(renderer:^Renderer) -> u64 {return renderer!=nil?gpu.vertices_made(renderer):0}
-
-// Room for lights that a pass writes in the Simulate stage (pass_lights),
-// which light the scene as its lights do: count that cast shadows within
-// its budgets, which lie within box and light up to reach metres from where
-// they lie (LIGHTS_ANYWHERE where the pass cannot tell), and shadowless that
-// light whatever stands in their way and trace no rays. From the next frame,
-// up to LIGHTS_ASKED_MAX of each. Ask in each frame that uses it.
-lights_ask :: proc(renderer:^Renderer,count,shadowless:u32,box:[2][3]f32,reach:f32) {if renderer!=nil {gpu.lights_ask(renderer,count,shadowless,box,reach)}}
 
 // An entry of the texture table for what a camera sees, which a material
 // shows as any other color texture. Black until view_texture_draw draws it.

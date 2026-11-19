@@ -8,37 +8,59 @@ or interleave its own passes.
 ## Passes
 
 1. **upload**: skinning of the poses that changed; instances, materials, lights and their
-   [tree](lights.md#local-lights) if they changed; the `Geometry` stage of the extensions; the
-   refit of the ray structure in use and, with hardware RT, the native TLAS. What does not fit in
-   the frame's transient memory is uploaded with the next one. Then, **glass mean**: the
-   [medium filter](materials.md#medium-filter), when needed, and **air**: the tables of the
-   [atmosphere](gi.md#atmosphere) that change with the air. Each view, at its start, redoes the
-   row of its sky and its aerial perspective if its eye or the sun moved.
+   [tree](lights.md#local-lights) if they changed; the `Geometry` stage of the extensions; the refit
+   of the ray structure in use and, with hardware RT, the native TLAS; new indices of [meshes drawn
+   whole](scene.md#scene-and-instances). What does not fit in the frame's transient memory is
+   uploaded with the next one. Then **air**: the tables of the [atmosphere](gi.md#atmosphere) that
+   change with the air. Each view, at its start, redoes the row of its sky and its aerial
+   perspective if its eye or the sun moved.
 2. **cull (phase 0)**, per instance and then per cluster (`cull.comp`, `cull_clusters.comp`).
    - One thread per instance, and then one per slot of the drawn
-     [batches](scene.md#instance-batches): frustum and occlusion of its box against the depth
-     pyramid of the previous frame (with the previous camera). One that passes delivers, in
+     [batches](scene.md#instance-batches): frustum and occlusion of its box, under the transform
+     of the previous frame, against the depth pyramid of the previous frame (with the previous
+     camera): what moves is not hidden by where it was. One that passes delivers, in
      chunks of up to 64, the clusters of the levels the cut can take at some point of its box: a
      distant object whose root already suffices delivers only the root. One that is hidden stays
      a candidate for phase 1.
    - One thread per cluster of the chunks: the level cut (`cut.slang`, projected error against
-     `lod_error_pixels`), frustum, normal cone (closed meshes only) and the pyramid. A visible one
-     enters the visible list (instance, cluster) and counts in the instance count of the phase's
-     draw; one that the pyramid hides stays a candidate for phase 1. One of a material with a
-     Surface program goes to the program list, which `cull_programs.comp` distributes per program
-     with one indirect draw per program and phase.
+     `lod_error_pixels`), frustum, normal cone (of a material that is not two-sided) and the
+     pyramid. A visible one is listed with its raster bin (two-sided or not, tested or not: a
+     masked material or an instance that fades) and its Surface program, and counted in it; one
+     of a tested bin also in a depth bucket of its box. One that the pyramid hides stays a
+     candidate for phase 1. One of a material with a Surface program turns on the resolve of
+     that program. `cull_bins.comp` places the clusters of the phase in the range of their bin of
+     the visible list, those of phase 1 after those of phase 0, those of a tested bin nearest
+     first by their buckets.
    - An instance with all its blend materials is not drawn here; one with blend triangles that
      passes the tests (in any phase) turns on the glass passes with their dispatch sizes.
-3. **gbuffer**
-   - One non-indexed indirect draw per phase, 384 vertices per instance and one instance per
-     visible cluster: the vertex shader reads the cluster from the list and its triangle per
-     vertex (the triangles that do not pass collapse). Then, one per Surface program in use, with
-     its pipeline ([programs](materials.md#surface-programs-in-rays-and-raster)). The fragment
-     shader reads the material row of the cluster's slot and its textures from the table, without
-     binds per material or per object. Mask: discards below the threshold; blend: not drawn here.
-     The same on Vulkan and Metal, without mesh shaders or 64-bit atomics.
-   - The targets are encoded by `gbuffer.frag` and the passes read them only with
-     `include/gbuffer.slang` (`gbuffer_read`, `gbuffer_normal`, `gbuffer_shading`).
+3. **visibility and resolve**
+   - Before the raster of each phase, a round of compute passes lists what it draws
+     (`raster_lists.slang`): each vertex of a cluster placed once, by the function the resolve
+     places it with, and the triangles of it the raster may give a pixel: not those past a side
+     of the view, with no pixel center in their box, or seen from behind where the material is
+     not two-sided, by the margin of the grid of the device (`Device_Info.subpixel_bits`).
+   - A round takes [a share](scene.md#scene-and-instances) of the lists (`Cull_List.Raster_*`) of
+     what the view needs, also where a round of the shadow maps grew them more: a cluster with no
+     room is drawn in the round after (up to `RASTER_ROUNDS`), over the depth of those before.
+   - Each round rasters its triangles into the visibility target (`visibility.slang`: the entry of
+     the visible list and the triangle, one word a pixel) with the hardware depth: one indexed
+     indirect draw per raster bin, whose fragment reads the word of its primitive. The untested bins
+     write it alone, without discard, so hidden fragments are rejected before they run; the tested
+     ones, drawn nearest first, decide a pixel by the fade and the [mask map](materials.md#alpha)
+     alone (their vertices give the uv it reads and the row), without texture feedback. Blend: not
+     drawn here. The same on Vulkan and Metal, without mesh shaders or 64-bit atomics.
+   - After both phases, `vis_classify.frag` gives each pixel the depth of its Surface program
+     (0 for the rows) from the visible list, in a 16-bit target, and the resolve of the rows draws a
+     triangle over the view, and that of each program the cull saw the rectangle its visible
+     clusters project to, at that depth with an equal test before the fragment runs (early
+     tests: a pixel of another program is a helper): the
+     material runs once per visible pixel, with the stage of its program
+     ([programs](materials.md#surface-programs-in-rays-and-raster)). It builds the triangle again
+     with the function of the raster (`gbuffer_build.slang`), so both place it at the same bits,
+     takes its barycentrics at the pixel and the exact gradients of its inputs, reads the material
+     row the visible list gives its cluster and its textures from the table, without binds per
+     material or per object, and writes the targets with `gbuffer_output.slang`; the passes read
+     them only with `include/gbuffer.slang` (`gbuffer_read`, `gbuffer_normal`, `gbuffer_shading`).
    - A reflectance target exists only while a visible instance has an opaque material that does
      not reflect like the default one ([materials](materials.md#evaluation)), and a
      [layers](materials.md#layers-openpbr) one only while a visible one has them; without them,
@@ -55,13 +77,23 @@ or interleave its own passes.
    - Maximum depth pyramid of the frame; phase 1 retests the instances and clusters rejected by
      occlusion and draws the visible ones. An object does not appear late even if the occluder
      moves or the camera jumps.
-   - Phase 1 tests against the pyramid made with the depth of phase 0; after its G-buffer the
-     pyramid is redone with that of both phases, which is the one that phase 0 of the next frame
-     tests: what was rescued occludes from there.
-   - The cull lists (chunks, visible clusters and candidates, and the chunks and clusters of the
-     shadow maps) count what does not fit
-     (`Stats.cull_dropped`) and grow to that for the following frames: a frame can show holes
-     where a list fills for the first time, not again at that size.
+   - The pyramid is made from the depth target, several levels a dispatch: a texel covers the
+     pixels of the view under it (a level as large as it takes to cover the view), with the
+     farthest depth of them, a step farther so a surface does not hide itself. A box is tested
+     at the level where its footprint spans at most 4x4 texels. `Stats.resolved_pixels`,
+     `resolve_helpers` and `resolve_quads_again` count what the resolve shaded.
+   - Phase 1 tests against the pyramid made with the
+     depth of phase 0; after its raster the pyramid is redone with that of both phases, which is the
+     one that phase 0 of the next frame tests: what was rescued occludes from there. A pass of the
+     `Gbuffer` stage tests against it and redoes it with what it draws (`pass_depth_pyramid_build`):
+     the next frame's phase 0 sees those surfaces too, and its phase 1 rescues what only they hid.
+   - The cull lists (chunks, visible clusters and candidates, the chunks and clusters of the
+     shadow maps, and the vertices and triangles of the raster, theirs too) count what does not fit
+     (`Stats.cull_dropped`, of the view that lacked most) and grow to it for the frames after, as
+     the material points do. What they asked for in a scene (`Capacity_Marks`) is kept by its id
+     in the cache of the project, which a game ships (`host/capacities.odin`); a scene opened
+     again starts its lists there. A frame shows holes only where a list fills past what any run
+     of that scene asked for, not again at that size; a mark only grows.
    - Then, the `Simulate` extension stages (first window view, or texture view in a
      textures-only frame: what moves on the GPU against this depth, like the
      [particles](../../mirai-world/references/vfx.md)) and `Gbuffer` (each view: surfaces of an
@@ -77,17 +109,17 @@ or interleave its own passes.
      change, the shadow maps of the lights that cover much of the view and of the sun,
      `direct_rays` (one point of each 2×2 traces a sample), `direct_samples`, and `direct_points`,
      `direct_spread` and `direct_filter`, which filter the points, take them to the pixels, where
-     the sun gives its light, and add the lights that cast no shadows
-     ([GPU lights](lights.md#gpu-lights)).
+     the sun gives its light, and add the lights that cast no shadows from the
+     [lists](lights.md#lists-of-a-cell) `light_lists` makes of them for the tiles of the screen.
    - The points that trace their own rays (glass, overlays, the back side) use `direct_lighting`.
 6. **reflect**: the pixels smoother than `reflection_roughness` trace a ray from their lobe and a
    second pass filters the rays of the frame; it is omitted while no material of the table can go
    below that limit ([traced reflections](materials.md#traced-reflections)).
 7. **ddgi**: with indirect light, in the first window view, the
    [probe volume](gi.md#probe-volume) marks the probes that scene changes reach and those that
-   pixels use, chooses by priority those it traces and updates their atlases and positions. With
-   a still scene it keeps tracing in turns, with the same rays. The animated emission of a
-   Surface program does not count as a change.
+   pixels use, chooses by priority those it updates and writes their atlases and positions. With
+   a still scene it updates none but, in turns, those whose rays meet a Surface program that reads
+   the time: its hits are traced in every update of their probe.
 8. **contact**: the [contact occlusion](gi.md#contact-occlusion) traces its short rays at points
    over frames and takes them, with the probe light of each point, to the pixels.
 9. **composite**: `direct + indirect_compose + emission`
@@ -215,14 +247,15 @@ or interleave its own passes.
 `renderer_stats` reports:
 
 - GPU time of each interval between `cmd_timestamp` while someone asks for it
-  (`host.profile_request` or a recording; `rhi.timestamps_want`), and otherwise a `frame`
-  interval. Metal samples at the start and end of each encoder (the only thing Apple Silicon
-  supports): an interval goes from the first start to the last end of its encoders. The intervals
-  are on the `time.tick_now` clock, converted with a CPU and GPU clock pair sampled when they are
-  collected: Metal always, Vulkan with `VK_KHR_calibrated_timestamps` (or the EXT) in the domain
-  of `tick_now` (QPC on Windows, `CLOCK_MONOTONIC_RAW` on Linux). Without the extension, Vulkan
-  places the last timestamp of the frame at the moment it collects it: it keeps the durations but
-  arrives late;
+  (`host.profile_request` or a recording; `rhi.timestamps_want`), and otherwise a `frame` interval
+  but for those `cmd_measure_begin` and `cmd_measure_end` bound, which every frame measures (the
+  maps of the shadows, which pace their bound by them). Metal samples at the start and end of each
+  encoder (the only thing Apple Silicon supports): an interval goes from the first start to the last
+  end of its encoders. The intervals are on the `time.tick_now` clock, converted with a CPU and GPU
+  clock pair sampled when they are collected: Metal always, Vulkan with
+  `VK_KHR_calibrated_timestamps` (or the EXT) in the domain of `tick_now` (QPC on Windows,
+  `CLOCK_MONOTONIC_RAW` on Linux). Without the extension, Vulkan places the last timestamp of the
+  frame at the moment it collects it: it keeps the durations but arrives late;
 - `renderer_gpu_submissions`: a copy of the timings of each submission since
   `renderer_gpu_clear`, with the `rhi` frame it was (`rhi.frame_timings`), for whoever accounts for
   every submission of a host frame; `Stats.timings` is only the last one the GPU finished;
@@ -231,3 +264,10 @@ or interleave its own passes.
 - materials, textures, their memory, reduced textures and compression
   ([materials](materials.md#textures));
 - the counters of the [extensions](views.md#extension-stages) (`Stats.counters`).
+
+`renderer_cost_ask` and `renderer_cost` count one frame of the first view of the window by mesh and
+by material (`profile.cost` answers it). Only that frame binds the `cost` variants of the cull, of
+the raster rounds and of the cull of the maps and runs the pass that counts the pixels of the
+visibility target; every other frame runs the passes without them and pays nothing. The frame
+counted is the first one whose view culls against the pyramid of its frame before: one after a cut
+(a capture, a camera set) culls without occlusion and would count what no other frame draws.

@@ -3,6 +3,7 @@ package rhi
 
 import "base:runtime"
 import "core:sync"
+import "mirai:std/base"
 import vk "vendor:vulkan"
 
 // Buffers and textures share blocks of device memory instead of taking a
@@ -385,4 +386,46 @@ vk_memory_unbind :: proc(d: ^Device, memory: Vk_Memory) {
 vk_memory_shutdown :: proc(d: ^Device, release: bool) {
 	ask := Vk_Memory_Ask{d = d}
 	vk_memory_destroy(&d.memory, vk_memory_source(&ask), release)
+}
+
+// The resources of the device for device_memory_report, the blocks of the
+// acceleration structures by what their structures take and the room they
+// leave, and the bytes of its blocks of device memory that no resource holds
+// and of resources destroyed that wait for the frames that may use them.
+@(private)
+device_resource_list :: proc(d: ^Device, list: ^[dynamic]Resource_Entry) -> (free, deleting: u64) {
+	local :: proc "contextless" (d: ^Device, memory: Vk_Memory) -> bool {
+		return .DEVICE_LOCAL in d.memory_properties.memoryTypes[memory.type].propertyFlags
+	}
+	blocks: u64
+	buffers: for &b, i in d.buffers.items[:d.buffers.used] {
+		if !d.buffers.alive[i] || b.memory.handle == 0 {continue}
+		handle := Buffer(base.handle_make(u32(i), d.buffers.generations[i]))
+		for block in d.accel_blocks {
+			if block == handle {blocks += b.memory.size; continue buffers}
+		}
+		append(list, Resource_Entry{name = resource_name(&b.name), kind = .Buffer, bytes = b.memory.size, host = !local(d, b.memory)})
+	}
+	for &t, i in d.textures.items[:d.textures.used] {
+		if !d.textures.alive[i] || t.memory.handle == 0 {continue}
+		append(list, Resource_Entry{name = resource_name(&t.name), kind = .Texture, format = t.desc.format, bytes = t.memory.size, host = !local(d, t.memory)})
+	}
+	structures: u64
+	for &a, i in d.accels.items[:d.accels.used] {
+		if !d.accels.alive[i] {continue}
+		append(list, Resource_Entry{name = resource_name(&a.name), kind = .Accel, bytes = a.size})
+		structures += a.size
+	}
+	if blocks > structures {append(list, Resource_Entry{name = ACCEL_UNUSED_NAME, kind = .Accel, bytes = blocks - structures})}
+	for &pool, index in d.memory.pools {
+		type := index / len(Vk_Memory_Class)
+		if .DEVICE_LOCAL not_in d.memory_properties.memoryTypes[type].propertyFlags {continue}
+		held, used := arena_bytes(&pool.arena)
+		free += held - min(held, used)
+	}
+	for &f in d.frames {
+		for e in f.deletions {if e.memory.handle != 0 && local(d, e.memory) {deleting += e.memory.size}}
+	}
+	for e in d.unframed {if e.memory.handle != 0 && local(d, e.memory) {deleting += e.memory.size}}
+	return
 }

@@ -14,7 +14,8 @@ mode.
   `row` is written by the shader with the index through which it read the row; the CPU leaves it
   at zero.
 - Textures follow the channels of glTF and its extensions (tangent-space normal with +Y up) and
-  each one multiplies the value it accompanies. Row 0 is the default material.
+  each one multiplies the value it accompanies. Row 0 is the default material; the Plane shape
+  names a row of its own, the default seen from both sides (`two_sided`).
 - **Overlays** (`overlay.frag.slang`): layers over an instance's opaque base, with the same
   geometry. Alpha covers with the layer's lit surface and Additive adds its light; Multiply
   filters what is below by the layer's base color without lighting it, so it depends neither on
@@ -39,7 +40,16 @@ mode.
   `MIRAI_NO_INSTANCES`) reads none and does not bind the pool. A row holds its layer blocks
   also with their weight at zero, so a weight an instance gives takes the rest from them.
   Textures are of the row. The fade of an instance (`Instance_Material_Values.fade`) scales the
-  opacity of every row it shows and blends the opaque ones. What an instance gives counts, like
+  opacity of its blended rows; the rest of it stays opaque or masked, in the visibility target,
+  and the raster leaves out that share of its pixels with the pattern of the own body
+  (`fade_pixel_left`), whose thresholds move each frame by the reversed bits of the view's turn,
+  so that any 2, 4, 8 or 16 frames from a cut hold the fade evenly at every pixel and TAA blends
+  them into transparency: it never enters the blend passes. The maps of the shadows leave out
+  the texels below the fixed thresholds of the same pattern, which their filter softens into a
+  shadow that thins with the fade, and a ray goes through it in that share of the directions, by
+  a fixed hash of its direction (`ray_fade_left`): nothing of either changes while the fade
+  stays. Its slots are tested like masked ones; a fade of 1 the cull discards. What an instance
+  gives counts, like
   the row's, for how it is traced and drawn (`instance_alpha` reads the row as the instance
   shows it, `instance_material`): a value that changes that classes every instance again.
 
@@ -70,7 +80,8 @@ mode.
   and darkens its base color; the water film lowers the roughness toward its own, also partly over
   what does not drink. The normal reflectance stays: the film is thin. It does not touch what has
   transmission (glass, water) or what is unlit. A program reads it only to add (drops, puddles).
-- In common PBR, mask coverage reads only opacity and base color.
+- The coverage of a masked material reads only its opacity and its mask map, program or not
+  ([alpha](#alpha)).
 - The scene caches the opaque instances that require their own F0/F90; G-buffer and lighting use
   stored reflectance only while some of their boxes is in the frustum of the view or of a nested
   view ([G-buffer](frame-graph.md#passes)), and the target is allocated the first time it is
@@ -116,8 +127,11 @@ mode.
   pass, tinted, from the other side, which is lit like a Lambert with an inverted normal
   (`shading_back`, `back_irradiance`). The samples of the direct light store only the front side,
   so the back side of a pixel that transmits is lit by `direct_lighting` in the direct filter
-  with its own rays. For the GI it reflects only its diffuse part. It is a sheet without
-  volume.
+  with its own rays. Where the maps or a ray hide a light from that side, its ray goes on
+  through the thin surfaces that transmit (`LIGHTS_THROUGH`, `trace_through`), each taken as
+  letting through what the point does, and stops at anything else: a leaf under leaves keeps a
+  share that falls with each one, and none under a trunk. Only slots an instance tests (masked)
+  are crossed. For the GI it reflects only its diffuse part. It is a sheet without volume.
 - **Anisotropy.** Anisotropic GGX over the vertex tangent (MikkTSpace) rotated by `rotation` and by
   the map; the environment is read with a normal bent toward the groove (Revie 2011) and the
   traced reflections sample the anisotropic VNDF.
@@ -161,6 +175,9 @@ previews studio use it.
   for the requested lobes, and from what the rays traced. The specular uses the DFG table with
   multiple scattering and the specular occlusion of Lagarde and de Rousiers, also over the traced
   reflection.
+- The ambient occlusion of a material darkens the diffuse lobe with the light that bounces
+  within its crevices (`occlusion_bounced`, the fit of Jimenez et al. 2016): a bright surface
+  keeps more of the light around it than the occlusion alone leaves.
 
 ## Textures
 
@@ -212,17 +229,20 @@ A texture of an asset resides with the levels the GPU samples of it
 
 - **Source.** `Texture_Data.source` and `level` say which chain their levels belong to; `host` gives
   that of the `.tex`, which it reads again to give others.
-- **Feedback.** The stages that shade surfaces (`MIRAI_TEXTURE_FEEDBACK`: the G-buffer with its
-  nested views and programs, the glass layers, traced reflections, the probe rays and the material
-  points of programs) write, per texture, the finest level they read with an atomic minimum into a
-  buffer of the frame, which comes back like the page requests. A raster sample reports the level
-  anisotropic filtering reads from its uv derivatives and bias, each axis the shortest a device may
-  take: the levels kept are never coarser than what the sampler reads, and the image is that of the
-  whole texture. A ray reports the level its cone reads at the hit, so a texture seen only in a
-  reflection or by the probes loads. A sample of a program reports the level its uv and bias or
-  gradients read, as a map does; one that names its level (`mirai_sample_texture_level`) or asks
-  for the size (`mirai_texture_size`) keeps every level of the texture, since a level it names
-  counts from the largest one held.
+- **Feedback.** The stages that shade surfaces (`MIRAI_TEXTURE_FEEDBACK`: the resolve of the
+  G-buffer with its nested views and programs, the `Gbuffer` stage of extensions, the glass layers,
+  traced reflections, the probe rays and the material points of programs) write, per texture, the
+  finest level they read with an atomic minimum into a buffer of the frame, which comes back like
+  the page requests: one atomic for the lanes of a wave that sample one texture, none from a helper
+  of a quad, whose writes are dropped. A raster sample reports the level anisotropic filtering reads
+  from its uv derivatives and bias, each axis the shortest a device may take: the levels kept are
+  never coarser than what the sampler reads, and the image is that of the whole texture. A ray
+  reports the level its cone reads at the hit, so a texture seen only in a reflection or by the
+  probes loads. A sample of a program reports the level its uv and bias or gradients read, as a map
+  does; one that names its level (`mirai_sample_texture_level`) or asks for the size
+  (`mirai_texture_size`) keeps every level of the texture, since a level it names counts from the
+  largest one held. A loaded texel (`mirai_load_texture`) reports nothing: data that does not stream
+  would pay a read of the buffer at each pixel for no level.
 - **Which frames.** Those the window shows; an offscreen frame only when it waits for its textures
   (`Frame_Desc.streamed`). The stages of extensions (decals, particles), the sky and the UI do not
   report: what only they show keeps the levels it has unless the pool asks for them. Nothing asks
@@ -270,7 +290,9 @@ A texture of an asset resides with the levels the GPU samples of it
 - **MikkTSpace tangent frame.** The pixel uses the interpolated, unnormalized normal and tangent
   and the bitangent `sign * cross(normal, tangent)`, like the baker that wrote the map
   (`tangent_frame_normal` of `scene.slang`, the same in raster and in ray hits). A mirrored
-  instance inverts the sign; the back face inverts the whole frame.
+  instance inverts the sign; the far side of a surface inverts the whole frame. The side is where
+  the interpolated normal points against the viewer, not how the triangle winds, so foliage whose
+  model gives it normals of its own is lit by them on both of its faces (`fragment_turned`).
 - A mesh generated at runtime can bring its tangents per vertex
   (`Mesh_Generate_Options.tangents`), like the terrain Heightfield.
 - The tangents follow the UV that the normal map read on import; the map's transform rotates (and
@@ -278,21 +300,33 @@ A texture of an asset resides with the levels the GPU samples of it
 - A normal that ends up facing away from the camera is brought to the silhouette.
 - **Specular antialiasing.** The roughness of a pixel grows with the variation of its normal inside
   it (Tokuyoshi and Kaplanyan). The material's before widening is stored in channel B of the motion
-  target for the [traced reflections](#traced-reflections).
+  target for the [traced reflections](#traced-reflections). A point of the
+  [direct light](lights.md#direct-light-of-a-view) that stands for 2x2 pixels widens it by the
+  spread over them, so that a highlight does not come and go with the jitter.
 
 ## Alpha
 
-- **Mask (`mask`).** Alpha = `opacity` times the alpha of the color texture. Below `alpha_cutoff`
-  the fragment is discarded and the rays go through the triangle at that point: shadows, bounces
-  and reflections see the same holes. Only the instances with some mask or blend material pay for
-  that read in the traversal.
+- **Mask (`mask`).** Its coverage is `opacity` times the alpha of its mask map (`maps.mask`, a
+  texture, its uv transform and its uv set), or of its base color map when it has no mask of its
+  own; the row holds the one it reads (`gpu_material`). Below `alpha_cutoff` the fragment is
+  discarded and the rays go through the triangle at that point: the visibility target, the maps of
+  the shadows, the outlines, bounces and reflections see the same holes. No program decides it: a
+  material with a Surface program and a mask is cut by its mask map, which the assets load though
+  the program reads no map, and a program that sets alpha on a masked material is an error of the
+  material (`Coverage`, with what to do in `engine.diagnostics`). An instance gives the texture of
+  its mask by `maps.mask` in its `Material_Values`, as the terrain gives its holes. Only the
+  triangles of the slots an instance shows with a mask or blend material, and all of one that
+  fades, pay for that read (`Gpu_Instance.tested`), in the traversal and in the maps of the
+  shadows. The native BLAS of a cut holds the triangles of the slots the mesh's own rows test as
+  a geometry apart; an instance that tests other slots makes every triangle a candidate.
 - The mips of a masked texture keep the proportion of texels that pass the threshold.
-- **Blend (`blend`).** It is drawn over the lit scene. Without transmission it is a layer that
-  covers `alpha` of what is behind it: the transparency attenuates its diffuse part, not its
-  specular highlight.
-- By default it casts no shadow; [`colored_shadows`](lights.md#colored-shadow-filters) filters its
-  color in shadows. It does not enter the G-buffer nor appear as a surface in reflections or
-  bounces; the sharp reflections see it as a color filter.
+- **Blend (`blend`).** It is drawn over the lit scene and covers `alpha` of what is behind it;
+  without transmission what covers hides it. Where it covers nothing there is no surface:
+  everything it sends by itself (lobes, layers, traced reflection, emission) is weighted by
+  `alpha`, previews and an instance's fade included, and the rest of what is behind goes on whole.
+- It casts no shadow and colors no light that crosses it, in the maps or in the rays. It does not
+  enter the G-buffer nor appear as a surface in reflections or bounces; the sharp reflections see
+  it as a color filter ([glass in rays](#glass-in-rays)).
 
 ## Ray hits
 
@@ -315,12 +349,22 @@ No engine stage evaluates a Surface program except its own, compiled once per pr
 stages.
 
 - **Raster.** A program's pipeline is that of the stage with the program's fragment
-  (`program_graphics`, `program_stages.odin`). The cull distributes the visible clusters of
-  materials with a program per program (`cull_programs.comp`: count, prefix with the draw
-  arguments and distribution, over `include/bins.slang`) and the G-buffer emits one indirect draw
-  per program in use and phase. A draw of the clusters of an instance (glass layers and filter,
+  (`program_graphics`, `program_stages.odin`). The G-buffer is resolved once per visible pixel
+  from the visibility target, one draw per program the cull saw, at the depth of the program
+  (`vis_resolve.frag`, [frame graph](frame-graph.md#passes)). The maps of a row take the exact
+  gradients of the uv of the triangle. A program that carries the derivatives of what it
+  computes (`mirai_uv0` and the duals of `mirai_dual.slang`, sampled with
+  `mirai_sample_texture(ctx, index, dual_uv)`) evaluates once per pixel too. One that takes
+  derivatives across the 2x2 pixels of a quad (a plain uv it computes, `ddx`) gets them as the
+  raster would: a pixel of another program is given the triangle of a neighbor at its own
+  place, and a quad whose triangles do not continue one another (a silhouette, a seam of the
+  uv, another material) evaluates again with the triangle of each of its pixels in all four.
+  Which one a program is, the generation decides (`mirai_program_derivatives` of its include,
+  [programs](shaders.md#programs)). A draw of the clusters of an instance (glass layers and filter,
   translucents, overlays, highlight) is made once per program of its materials, which it names to
-  `gbuffer.vert` (`SLOT_DRAW`): the vertex shader collapses the clusters of the others. Thumbnails
+  `gbuffer.vert` (`SLOT_DRAW`): the vertex shader collapses the clusters of the others. The
+  highlight draws with a program's stage only its blended materials: the coverage of the others is
+  their mask map, which the stage without a program reads. Thumbnails
   and impostors name the program as the first instance of the draw; the UI splits its triangles
   into ranges by the program of the previews they show, without changing their order.
 - **Rays: material points** (`points.odin`, `include/points.slang`). A thread that finds a material
@@ -332,29 +376,26 @@ stages.
   packed. With a single program in the scene its stage traverses the whole window, without
   distributing. The pass continues over the heads (`points_resume`), which can add points for
   another round (`points_rounds`): the rounds go back and forth through the buffer, outside the
-  window that the resumption reads. Reflections, the probe volume, the indirect reference, shadows
-  and direct light traced with colored shadows, glass, its path from inside and its medium filter
-  use points.
+  window that the resumption reads. Reflections, the probe volume, the indirect reference, glass
+  and its path from inside use points.
 - The buffer grows to what a frame asked for (`POINTS_MAX` at most). A point or a head that does
   not fit takes the row of its material at that hit.
-- **Coverage in the traversal.** The alpha of a program with coverage decides whether a ray
-  continues, so it is evaluated inside the traversal, like an any-hit, from
-  `surface_coverage.slang`; nothing is traced again. The stages that trace depend on that compiled
-  alpha, not on the rest of the program ([programs and stages](shaders.md#programs-and-stages)).
-  Its samples record no texture feedback (`texture_feedback_quiet`): a write of each would keep
-  the whole program, colors and normals too, in every traversal of every stage that traces.
-- **Deferred filters.** A ray that crosses glass with a program does not wait for its filter: it
-  takes the [medium filter](#medium-filter) of the instance and adds the crossing as a filter
-  point, chained to the others of its owner (a pixel, a probe ray). The program's stage writes in
-  a filter point's record the exact filter and not the surface (`point_filter_at`): so it computes
-  only what tints and lets pass, and the owner does not rebuild the hit. On resuming, the owner adds
-  what the exact filters change from what the means gave, weighted by what each ray carried
-  (`filters_weigh`, `filters_correction`). A crossing that does not fit keeps the mean.
+- **Coverage in the traversal.** Whether a ray goes on at a masked surface is its mask map, read
+  inside the traversal like an any-hit (`hit_covers`, `material_mask`); no program runs there,
+  and the stages that trace depend on none
+  ([programs and stages](shaders.md#programs-and-stages)).
+- **Deferred filters.** The ray of a sharp reflection that crosses glass with a program does not
+  wait for its filter: it goes on and adds the crossing as a filter point, chained to the others of
+  its pixel. The program's stage writes in a filter point's record the exact filter and not the
+  surface (`point_filter_at`): so it computes only what tints and lets pass, and the owner does not
+  rebuild the hit. On resuming, the pixel adds what the exact filters change, weighted by what its
+  ray carried (`filters_weigh`, `filters_correction`). A crossing that does not fit takes the
+  filter of its material row.
 
 ### Vertex functions
 
 A Surface program that moves the vertices of what shows it declares
-`//! vertex [animated] [reach <metres>|reach <parameter>]` and
+`//! vertex [reach <metres>|reach <parameter>]` and
 `Mirai_Vertex vertex(Mirai_Vertex_Context ctx, Parameters p)` (`mirai_material.slang`), which
 gives where a vertex goes, its normal and tangent, in the space of the object
 ([declaration](shaders.md#programs)). `Pieces` (`render/testdata/pieces.slang`) is that of the
@@ -368,11 +409,10 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
   refit like a [skin](scene.md#gpu-skinning)), outlines and motion vectors read the same
   vertices. No other pass moves vertices.
 - **Only what changed runs.** A pose is written again when the transform of its instance, the rows
-  of its materials (their parameters), the values the instance gives over them or, if `animated`,
-  the time change; otherwise its stage does not run. Its previous vertices are those the frame
-  before showed, so the motion of a parameter that moves it is exact. Without `animated`, `ctx.time`
-  is
-  0. Instances without such a program pay nothing.
+  of its materials (their parameters), the values the instance gives over them or, if its function
+  vertex reads the time (`vertex.reads`, [probe](shaders.md#programs)), the time change; otherwise
+  its stage does not run. Its previous vertices are those the frame before showed, so the motion of
+  a parameter that moves it is exact. Instances without such a program pay nothing.
 - **Per instance values** are the values of the instance: a game gives a parameter to an entity
   with `Material_Values` (`material_value`), and the entities share the row.
 - **Reach.** The box of the instance (culling, the tree of instances, the light it changes) grows
@@ -391,7 +431,7 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
 - With a window, or with a surface that another process shows (the `--surface` player of a network
   Play, `App_Desc.shown`), the host creates the renderer with `pipeline_thread`
   (`pipeline_thread.odin`, a thread a core but one): when a program first gets rows in the scene
-  the pipelines of the stages its rows are drawn with on the camera (the three G-buffers, or the
+  the pipelines of the stages its rows are drawn with on the camera (the three resolves, or the
   glass layer and filter) and of its points are asked for ahead of time (`programs_ask`); the
   first draw or resolve that needs one puts it before those, and a frame does not wait for the
   driver. Until a frame finds
@@ -399,30 +439,31 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
   and their points are read as the row (the record unwritten, `point_record_given`).
 - Without either of the two (headless sessions, tests, captures) the pipeline is made where it is
   requested: what a frame draws does not depend on driver time.
-- A thumbnail, a material capture or an impostor, which are read right away, wait for the pipeline.
-  `capture` and `app_capture_world` draw one more frame if the last one drew a program as
-  its row (`renderer_pipelines_pending`, `renderer_pipelines_wait`); the editor images are drawn
-  again when pipelines arrive (`renderer_pipelines_made`).
+- A thumbnail, a material capture or an impostor, which are read right away, wait for the pipeline;
+  a thumbnail or a capture of a program not yet compiled for previews is not drawn until the editor
+  has compiled it ([program uses](shaders.md#programs-and-stages)).
+  `app_capture_world` draws one more frame if the last one drew a program as its row
+  (`renderer_pipelines_pending` counts them, `renderer_pipelines_wait`); `capture` and
+  `profile.capture` wait for all that `host.app_pending` counts
+  ([capture](../../mirai-agent-api/references/methods.md#editor-and-viewport)); the editor images
+  are drawn again when pipelines arrive (`renderer_pipelines_made`).
 - Extensions ask for a program's with `Stage_Pipeline_Desc.program` or
   `pass_gbuffer_pipeline(..., program)` and receive that of the stage without it until it is made
   ([extensions](views.md#extension-stages)).
 
 ### Program limits
 
-- The fog takes the glass's medium filter with a program: a grid cell is a volume, not a ray, and
-  one point per fog ray would be millions per frame.
 - The particle collisions (`mirai_vfx_trace`, inside a Vfx program, without rounds) see the
   vertex normal with the row's normal map, without the program's.
 - Focal tests: `material_program_shows_in_what_a_reflection_finds`,
   `material_program_shows_on_what_the_camera_sees`,
   `material_program_draws_as_its_rows_until_its_pipelines_are_made`,
   `material_program_pipelines_are_made_before_a_frame_draws_with_them`,
-  `material_textures_color_the_bounced_light`, `glass_tints_the_indirect_light_with_its_mean`,
+  `material_textures_color_the_bounced_light`,
   `material_program_moves_the_vertices_the_camera_the_rays_and_the_motion_see`,
   `gpu_a_program_moves_a_skin_after_its_skin_now_and_before` and, without GPU,
   `an_instance_whose_program_moves_vertices_shows_a_pose_of_its_own`,
-  `gi_reference_gives_the_light_of_a_white_furnace` and, for colors in shadows,
-  `material_colored_shadows_filter_textures_and_respect_blockers`.
+  `gi_reference_gives_the_light_of_a_white_furnace`.
 
 ## LOD
 
@@ -490,15 +531,15 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
   yields to that of the probe volume.
 - **Detail.** With `Detailed`, below `REFLECTION_SHARED_ROUGHNESS` the reflection shows the glass
   that its ray crosses (as a color filter) and the specular lobe of the hit; the rougher ones see
-  diffuse hits and the [medium filter](#medium-filter) of the glass they cross.
+  diffuse hits and go through glass ([glass in rays](#glass-in-rays)).
 
 ## Glass
 
 `transmission` turns a blend material into glass, with the parameters of
 `KHR_materials_transmission`, `KHR_materials_ior` and `KHR_materials_volume` (`render/glass.odin`):
 
-- **Filter.** It does not diffuse: it reflects according to its IOR and lets through the rest of
-  the light from behind multiplied by `mix(white, base color, alpha)`.
+- **Filter.** Where it covers (`alpha`) it does not diffuse: it reflects according to its IOR and
+  lets through the rest of the light from behind multiplied by its base color.
 - **Material layers.** Coat, fuzz, anisotropy, diffuse transmission and unlit are prepared with
   `shading_layers` and composed as over an opaque base (`glass_shading`, `glass_light`). The light
   from behind crosses them once (`shading_through`): the coat leaves to the view what it does not
@@ -567,34 +608,22 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
   absorbed in it; the light beams in it are those of
   [`fog`](../../mirai-plugins/references/render-plugins.md#fog).
 
-### Medium filter
+### Glass in rays
 
-The light that crosses glass is paid for with its detail only where it is seen:
+Only a sharp reflection sees the glass its ray crosses: with `Detailed` reflections, below
+`REFLECTION_SHARED_ROUGHNESS`, it multiplies what it finds by the filter of each blended face on
+its way (`trace_glass_filter`, `BLEND_FILTERS`), the texel of that face as the visible surface
+reads it, glass with a program by its [deferred filters](#surface-programs-in-rays-and-raster).
+Glass also loses what it reflects head-on at each face; a solid counts color and absorption once,
+where the ray enters. Rays are not bent. The native geometry has no duplicate candidates per
+primitive: a face does not filter twice.
 
-- **With detail**, the filter of each texel
-  ([colored shadows](lights.md#colored-shadow-filters)): the direct light of the view (its
-  samples) and the sharp reflections.
-- **With the instance's medium filter**: the rays of the probe volume, the rough reflections, the
-  scene that the glass traces behind itself, the shadow rays of what all of them find and the own
-  light of the blend surfaces. The sky light enters through a stained-glass window with its color.
-- `glass_mean.comp` writes it in `Gpu_Instance.glass`: the filter of each blend face averaged by
-  area, evaluating the same material as the visible surface; the faces with a program, from their
-  [points](#surface-programs-in-rays-and-raster). It runs in the first view of a frame that
-  uploaded the instance table, an instance with blend faces, materials or geometry, before any
-  ray, only with `colored_shadows` and glass in the scene.
-- In the traversal (`BLEND_MEANS`), a blend-only instance multiplies the ray's filter by its mean
-  without reading the triangle; a mixed one reads the triangle's material to know whether it is
-  blend. No ray reads textures or evaluates programs for that; glass with a program is corrected
-  afterwards by its [deferred filters](#surface-programs-in-rays-and-raster) where the light is
-  seen with detail.
-- A nearer hit ray also finds the glass beyond its hit if it visits it first: then it traverses
-  again up to the hit (`trace_segment`).
-- Focal test: `glass_tints_the_indirect_light_with_its_mean`, with each tracer; demo scene:
-  `church/church.scene`.
-- **Limits.** The medium filter has no drawing nor depends on the direction; a ray that exits
-  through an extension's door counts in its first segment also the glass between the door and what
-  it would have found without it; the [indirect reference](gi.md#indirect-reference) goes through
-  the glass without a filter.
+Every other ray goes through glass as if it were not there: shadow rays (`trace_visible`, which
+never visits the `RAY_GLASS` class), the rays of the probe volume, the rough reflections, the
+rays the glass traces behind itself and the fog's. Glass neither darkens nor colors the light
+that crosses it, as the [maps](lights.md#direct-light-of-a-view) hold none of it: colored light
+through a window comes from a light that projects a texture. Focal tests:
+`material_glass_casts_no_shadow_in_rays` and `glass_lets_the_indirect_light_through_uncolored`.
 
 ## Limits
 
@@ -604,5 +633,5 @@ virtual textures, subsurface, iridescence, dispersion or OpenPBR transmission ou
 - The [residency by sampling](#residency-by-sampling) does not see the refraction rays of glass nor
   the stages of extensions: a texture only they show keeps the levels it has.
 
-- Of the glass, the layers do not reach the ray filters (colored shadows, medium filter) or the exit
-  face seen from inside (`glass_inside.comp`).
+- Of the glass, the layers do not reach the filter of the sharp reflections or the exit face seen
+  from inside (`glass_inside.comp`).

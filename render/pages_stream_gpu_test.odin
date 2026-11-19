@@ -37,7 +37,8 @@ gpu_streamed_pages_load_what_a_near_view_asks_for :: proc(t: ^testing.T) {
 // The cull lists each page it asks for once, with the highest priority any
 // cluster gave it: a sheet near the eye loads the same pages behind 2,000
 // instances of another streamed mesh that ask for theirs as it does alone,
-// whatever order the GPU culled them in, and no request is dropped.
+// whatever order the GPU culled them in, and the table drops no request; the
+// pages that wait for the slots to grow load once they did.
 @(test)
 gpu_page_requests_list_each_page_once_whatever_asks_for_it :: proc(t: ^testing.T) {
 	g, ok := streamed_sheet(128)
@@ -69,7 +70,8 @@ gpu_page_requests_list_each_page_once_whatever_asks_for_it :: proc(t: ^testing.T
 		dropped: u32
 		for _ in 0 ..< 60 {
 			testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-			dropped = max(dropped, r.stats.page_requests_dropped)
+			// The pages that found no slot, of the frame, wait for the region to grow.
+			dropped = max(dropped, r.scene.pages.dropped - r.scene.pages.short)
 		}
 		stream := r.scene.meshes[near].stream
 		resident := 0
@@ -80,7 +82,7 @@ gpu_page_requests_list_each_page_once_whatever_asks_for_it :: proc(t: ^testing.T
 		} else {
 			testing.expectf(t, resident == alone, "behind the crowd the near sheet has %d pages in the pools, alone %d", resident, alone)
 		}
-		testing.expectf(t, dropped == 0, "with %d instances of the other mesh, %d requests were dropped", crowd, dropped)
+		testing.expectf(t, dropped == 0 && r.stats.page_requests_dropped == 0, "with %d instances of the other mesh, the table dropped %d requests and %d waited in the last frame", crowd, dropped, r.stats.page_requests_dropped)
 		testing.expect_value(t, rhi.device_validation_errors(device), 0)
 	}
 }

@@ -6,6 +6,7 @@ import "core:math/linalg"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
@@ -17,6 +18,7 @@ import gpu "mirai:render"
 import "mirai:rhi"
 import "mirai:rhi/shared_device"
 import "mirai:std/base"
+import mm "mirai:std/math"
 import fog "plugins:fog/runtime"
 import "plugins:vfx/runtime/effect"
 import "plugins:vfx/runtime/gridfile"
@@ -36,7 +38,7 @@ Gpu_Fixture :: struct {
 	app:        host.App,
 	sync:       Particle_Sync,
 	cube:       gpu.Mesh_Handle,
-	cube_vertices: u32, // of a draw of level 0 of the cube
+	cube_primitives: u32, // of level 0 of the cube
 	folder:     string,
 }
 
@@ -60,7 +62,7 @@ gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture, width, height: u32, set
 	cube := host.assets_shape(&f.assets, .Cube)
 	if !testing.expect(t, cube != nil) {return false}
 	f.cube = cube.handle
-	f.cube_vertices, _ = erender.mesh_draw_range(f.app.renderer, f.cube)
+	f.cube_primitives, _ = erender.mesh_primitive_count(f.app.renderer, f.cube)
 	f.sync.world = 1
 	gpu.scene_world(&f.renderer, f.sync.world)
 	return true
@@ -74,13 +76,21 @@ gpu_fixture_destroy :: proc(f: ^Gpu_Fixture) {
 	gpu.renderer_destroy(&f.renderer)
 }
 
-// The emitters of a world for the next frame, as particles_sync gives them.
-// False when one found no room.
+// The emitters of a world for the next frame, the whole list: each one is
+// put in the pool and those it does not name leave it. False when one found
+// no room.
 @(private = "file")
 frame_emitters :: proc(f: ^Gpu_Fixture, sync: ^Particle_Sync, emitters: []Emitter_Desc, dt: f32, capacity: u32 = CAPACITY) -> bool {
-	dropped, ok := pool_emitters(&sync.pool, emitters, dt, capacity, erender.max_storage_range(&f.app))
+	pool := &sync.pool
+	ok := pool_frame(pool, dt, capacity, erender.max_storage_range(&f.app), false, len(emitters) > 0)
+	for &desc in emitters {ok = pool_put(pool, &desc) && ok}
+	listed: for i := pool.order_count - 1; i >= 0; i -= 1 {
+		id := pool.slots[pool.order[i]].id
+		for desc in emitters {if desc.id == id {continue listed}}
+		pool_remove(pool, id)
+	}
 	particles_frame(sync, &f.app)
-	return ok && dropped == 0
+	return ok
 }
 
 // What the finish pass counted two frames ago.
@@ -206,8 +216,8 @@ particles_of_every_kind_draw_around_glass_without_validation_errors :: proc(t: ^
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
 	gpu.materials_set(r, {{base_color = {0.8, 0.9, 1}, opacity = 0.25, alpha_mode = .Blend, roughness = 0.1, ior = 1.5}})
-	gpu.scene_light_update(r,0,{position = {1, 2, 1}, color = {1, 0.8, 0.6}, intensity = 8 * math.PI, range = 10})
-	gpu.scene_set_environment(r,{direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true},{sky = {0.2, 0.3, 0.5}})
+	gpu.scene_light_update(r,0,{position = {1, 2, 1}, color = {1, 0.8, 0.6}, intensity = 8 * math.PI, range = 10, indirect = 1, scattering = 1})
+	gpu.scene_set_environment(r,{direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1},{sky = {0.2, 0.3, 0.5}})
 	gpu.scene_update(r,0,{
 		{object_id = 1, mesh = f.cube, transform = trs({0, -0.6, 0}, {12, 0.2, 12}), tint = {0.6, 0.6, 0.6}},
 		{object_id = 2, mesh = f.cube, transform = trs({0, 0.5, 1.2}, {3, 2, 0.05}), material = 1},
@@ -285,6 +295,77 @@ particles_keep_steady_frames_allocation_free :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect_value(t, tracker.total_allocation_count, i64(0))
+	expect_clean(t, f.device)
+}
+
+// The GPU keeps the rows of the emitters of a world that did not change: a
+// frame that changes nothing puts none in the pool and writes none, one that
+// moves an emitter writes its row alone, and every emitter keeps its
+// particles; frames that change nothing allocate nothing.
+@(test)
+particle_rows_go_to_the_gpu_only_when_their_emitter_changes :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
+	defer gpu_fixture_destroy(f)
+	w := new(Emitters_World)
+	defer free(w)
+	if !test_world_init(t, w) {return}
+	defer test_world_destroy(w)
+	w.settings = PARTICLE_SETTINGS_DEFAULT
+	r := &f.renderer
+	gpu.scene_set_environment(r, {}, {sky = {0.2, 0.3, 0.5}})
+	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	emitters: [3]core.Entity
+	for &e, i in emitters {
+		e = core.create(&w.entities)
+		place := mm.TRANSFORM_IDENTITY
+		place.position = {f32(i) - 1, 0, 0}
+		core.add(&w.emitters, e, Particle_Emitter{active = true, loop = true})
+		core.add(&w.worlds, e, core.World_Transform{place, place})
+		// A burst of 8 that the clock started; no tick starts more.
+		births_add(clock_of(&w.clocks, e), 0, 8, 8, 0)
+	}
+	test_world_settle(w)
+	reports: Particle_Reports
+	defer particle_reports_free(&reports)
+	problems: core.Problems
+	tell :: proc(f: ^Gpu_Fixture, w: ^Emitters_World, reports: ^Particle_Reports, problems: ^core.Problems) {
+		drawn: erender.Render_Sync
+		particles_sync(core.read(&w.emitters), core.read(&w.overrides), core.read(&w.worlds), core.read(&w.hidden), core.read(&w.parents), core.ref(&w.hierarchy), core.read(&w.bindings), core.read(&w.meshes), core.ref(&drawn), core.read(&w.listeners), core.read(&w.grids), core.read(&w.volumes), core.read(&w.textures), core.ref(&w.clocks), core.ref(&w.settings), &f.sync, reports, nil, nil, nil, {}, {index = 1}, {}, {dt = 1.0 / 60, alpha = 1}, {}, problems, &f.app, {}, {}, {}, {}, {})
+	}
+	for _ in 0 ..< 3 {
+		tell(f, w, &reports, &problems)
+		testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
+	}
+	pool := &f.sync.pool
+	tell(f, w, &reports, &problems)
+	testing.expect(t, pool.pending == {} && pool.dirty == {}, "a frame that changes nothing tells the GPU nothing")
+	testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
+	moved := core.edit(&w.worlds, emitters[1])
+	moved.transform.position.y, moved.previous.position.y = 1, 1
+	test_world_settle(w)
+	tell(f, w, &reports, &problems)
+	only: Slot_Bits
+	bits_add(&only, pool_slot_find(pool, u64(emitters[1])))
+	testing.expect(t, pool.pending == only && pool.dirty == only, "a frame that moves one emitter writes its row alone")
+	for _ in 0 ..< 3 {
+		testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
+		tell(f, w, &reports, &problems)
+	}
+	tracker: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&tracker, context.allocator)
+	defer mem.tracking_allocator_destroy(&tracker)
+	{
+		context.allocator = mem.tracking_allocator(&tracker)
+		for _ in 0 ..< 4 {
+			testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
+			tell(f, w, &reports, &problems)
+		}
+	}
+	testing.expect_value(t, tracker.total_allocation_count, i64(0))
+	rhi.device_wait_idle(f.device)
+	testing.expect_value(t, particles_alive(f), u32(len(emitters) * 8))
 	expect_clean(t, f.device)
 }
 
@@ -583,7 +664,7 @@ mesh_particles_face_their_velocity :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f, 128, 128, settings) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set_environment(r,{direction = {0.2, 0.4, 1}, color = {1, 1, 1}, illuminance = 4 * math.PI, enabled = true},{sky = {0.02, 0.02, 0.02}})
+	gpu.scene_set_environment(r,{direction = {0.2, 0.4, 1}, color = {1, 1, 1}, illuminance = 4 * math.PI, enabled = true, indirect = 1, scattering = 1},{sky = {0.02, 0.02, 0.02}})
 	// A box 0.1 across and 1 long, along z.
 	corners := [8][3]f32{{-0.05, -0.05, -0.5}, {0.05, -0.05, -0.5}, {0.05, 0.05, -0.5}, {-0.05, 0.05, -0.5}, {-0.05, -0.05, 0.5}, {0.05, -0.05, 0.5}, {0.05, 0.05, 0.5}, {-0.05, 0.05, 0.5}}
 	faces := [6][4]u32{{0, 3, 2, 1}, {4, 5, 6, 7}, {0, 1, 5, 4}, {2, 3, 7, 6}, {1, 2, 6, 5}, {0, 4, 7, 3}}
@@ -980,7 +1061,7 @@ particle_surface_shape_starts_particles_on_its_mesh :: proc(t: ^testing.T) {
 	shell.capacity, shell.info.lifetime, shell.info.size = 512, {5, 5}, {0.12, 0.12}
 	shell.info.shape = .Surface
 	box := trs({1.2, 0.5, 0}, {0.8, 0.8, 0.8})
-	shell.resources = test_resources(&f.sync, {kind = .Surface, mesh = f.cube, triangles = f.cube_vertices / 3, transform = box, previous = box})
+	shell.resources = test_resources(&f.sync, {kind = .Surface, mesh = f.cube, triangles = f.cube_primitives, transform = box, previous = box})
 	DT :: f32(1.0 / 60)
 	for i in 0 ..< 8 {
 		shell.spawns = test_burst(400) if i == 0 else {}
@@ -1025,7 +1106,7 @@ particle_programs_follow_a_surface_that_moves :: proc(t: ^testing.T) {
 	for i in 0 ..< 40 {
 		x := -1.5 + f32(i) * 3.0 / 39
 		clear(&f.sync.resources)
-		sticky.resources = test_resources(&f.sync, {}, {kind = .Surface, mesh = f.cube, triangles = f.cube_vertices / 3, transform = place(x), previous = place(max(x - 3.0 / 39, -1.5))})
+		sticky.resources = test_resources(&f.sync, {}, {kind = .Surface, mesh = f.cube, triangles = f.cube_primitives, transform = place(x), previous = place(max(x - 3.0 / 39, -1.5))})
 		sticky.spawns = test_burst(300) if i == 0 else {}
 		testing.expect(t, frame_emitters(f, &f.sync, {sticky}, DT))
 		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(i) * DT}), r.error)
@@ -1211,7 +1292,7 @@ particle_bones_and_surface_shapes_start_particles_on_the_posed_skin :: proc(t: ^
 	onto := test_emitter(2, {2.5, 2, 0})
 	onto.capacity, onto.info.lifetime, onto.info.size = 512, {5, 5}, {0.12, 0.12}
 	onto.info.shape = .Surface
-	onto.resources = test_resources(&f.sync, {kind = .Surface, mesh = posed, triangles = f.cube_vertices / 3, transform = identity, previous = identity})
+	onto.resources = test_resources(&f.sync, {kind = .Surface, mesh = posed, triangles = f.cube_primitives, transform = identity, previous = identity})
 	DT :: f32(1.0 / 60)
 	for i in 0 ..< 8 {
 		along.spawns = test_burst(400) if i == 0 else {}
@@ -1432,6 +1513,87 @@ particle_volumes_draw_the_medium_of_a_grid :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// A still volume lit by three lamps, with shadows and without: from the
+// frame the lamps turn on, within a few frames each cell takes what each lamp
+// gives it alone, added up (no lamp dropped, no light that leaks), and keeps
+// it from frame to frame, with no light that comes and goes.
+@(test)
+particle_volumes_take_what_each_light_gives_and_hold_it :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 64, 48, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_set_environment(r, {}, {})
+	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	// Two metres of cells of a quarter around the origin, all of them dense.
+	smoke := test_grid(f, "smoke", {8, 8, 8}, 0.25, 1, {-4, -4, -4}, Particle_Volume{density = 2, albedo = {1, 1, 1}})
+	puff := test_emitter(1, {0, 0, 0})
+	if !test_program(t, f, &puff, "Puff", Resource_Desc{kind = .Grid, first = smoke}) {return}
+	puff.program.parameters[0] = {10, 0, 0, 0}
+	lamps := [3][3]f32{{1.6, 0.5, 0}, {-1.2, 1, 1.3}, {0.3, -1.5, -1.1}}
+	DT :: f32(1.0 / 60)
+	entry := f.sync.grids.entries[smoke]
+	first := grids_base(&f.sync) + entry.light
+	cells := int(grid_cells(entry.cells))
+	// A read holds what the cells held in its first frame; the next one is
+	// READ_FRAMES later.
+	READ_FRAMES :: rhi.MAX_FRAMES_IN_FLIGHT + 2
+	READS :: 10
+	read :: proc(t: ^testing.T, f: ^Gpu_Fixture, puff: Emitter_Desc, camera: gpu.Camera, first: u32, cells: int) -> [][4]f32 {
+		world := test_frame_read(t, f, {puff}, DT, camera, 0, {world_buffer(&f.sync), {}})[0]
+		if world == nil {return nil}
+		light := make([][4]f32, cells, context.temp_allocator)
+		copy(mem.slice_to_bytes(light), world[first:][:cells * 16])
+		return light
+	}
+	// The most a cell of a differs from b, against b.
+	apart :: proc(a, b: [][4]f32) -> (worst: f32) {
+		for cell, i in b {
+			if cell.g < 1e-4 {continue}
+			worst = max(worst, linalg.max(linalg.abs(a[i].rgb - cell.rgb) / cell.rgb))
+		}
+		return
+	}
+	for shadowless in ([2]bool{false, true}) {
+		alone: [3][][4]f32
+		seen: [READS][][4]f32
+		// Each lamp alone, then the three, turned on together.
+		for run in 0 ..= 3 {
+			for len(r.scene.lights) > 0 {gpu.scene_light_remove(r, 0)}
+			for lamp, i in lamps {
+				if run < 3 && i != run {continue}
+				gpu.scene_light_update(r, u32(len(r.scene.lights)), {position = lamp, color = {1, 0.9, 0.8}, intensity = 4 * math.PI, range = 6, radius = 0.05, indirect = 1, scattering = 1, shadowless = shadowless})
+			}
+			for k in 0 ..< READS {
+				seen[k] = read(t, f, puff, camera, first, cells)
+				if seen[k] == nil {return}
+			}
+			if run < 3 {alone[run] = seen[READS - 1]}
+		}
+		sum := make([][4]f32, cells, context.temp_allocator)
+		lit := 0
+		for &cell, i in sum {
+			cell.rgb = alone[0][i].rgb + alone[1][i].rgb + alone[2][i].rgb
+			lit += int(cell.g >= 1e-4)
+		}
+		what := "without shadows" if shadowless else "with shadows"
+		testing.expectf(t, lit == cells, "%s: the lamps light %d cells of %d", what, lit, cells)
+		settled := -1
+		for k in 0 ..< READS {
+			if apart(seen[k], sum) < 0.03 {settled = 1 + k * READ_FRAMES;break}
+		}
+		testing.expectf(t, settled >= 0 && settled <= 1 + READ_FRAMES, "%s: a cell takes what each lamp gives it alone, added up, %d frames after they turn on (%.3f apart then, %.3f at last)", what, settled, apart(seen[0], sum), apart(seen[READS - 1], sum))
+		flicker: f32
+		for k in READS / 2 ..< READS {flicker = max(flicker, apart(seen[k], seen[k - 1]))}
+		testing.expectf(t, flicker < 0.01, "%s: a cell keeps its light from frame to frame, %.4f apart at most", what, flicker)
+		free_all(context.temp_allocator)
+	}
+	expect_clean(t, f.device)
+}
+
 // A stage traces the scene: from outside a cube, the face it meets and how
 // far; from inside, the back of the far face; past it, nothing.
 @(test)
@@ -1475,120 +1637,6 @@ particle_stages_trace_the_scene :: proc(t: ^testing.T) {
 		at := (u32(along) + phase.x) % 8
 		got := (cast(^[4]f32)&world[base + entry.offset + (parity * 8 + at) * 16])^
 		testing.expectf(t, abs(got.x - want.distance) < 1e-3 && got.y == want.inside && abs(got.z - want.normal) < 1e-3, "the cell from x %v met %v, not %v", f32(first.x + i32(along)) * 0.5, got.xyz, want)
-	}
-	expect_clean(t, f.device)
-}
-
-// Particles with lights whose effect asks for shadows light the floor
-// around them within their range and cast shadows: behind a cube the floor
-// stays dark, as it is past the range.
-@(test)
-particle_lights_light_the_scene_and_cast_shadows :: proc(t: ^testing.T) {
-	f := new(Gpu_Fixture)
-	defer free(f)
-	settings := test_settings()
-	settings.taa = false
-	if !gpu_fixture_init(t, f, 128, 96, settings) {return}
-	defer gpu_fixture_destroy(f)
-	r := &f.renderer
-	gpu.scene_set_environment(r,{},{})
-	gpu.scene_update(r,0,{
-		{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.5, 0.5, 0.5}},
-		{object_id = 2, mesh = f.cube, transform = trs({0.6, -0.3, 0}, {0.4, 0.4, 0.4}), tint = {0.5, 0.5, 0.5}},
-	},true)
-	camera := gpu.Camera{position = {0, 6, 0.01}, forward = {0, -6.9, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	spark := test_emitter(1, {0, 0.3, 0})
-	spark.info.lifetime, spark.info.size, spark.info.lights, spark.info.light_intensity, spark.info.light_range, spark.info.light_radius, spark.info.light_shadows = {10, 10}, {0.02, 0.02}, 4, 5, 2.5, 0.05, true
-	spark.spawns = test_burst(4)
-	DT :: f32(1.0 / 60)
-	for i in 0 ..< 6 {
-		testing.expect(t, frame_emitters(f, &f.sync, {spark}, DT))
-		spark.spawns = {}
-		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(i) * DT}), r.error)
-	}
-	rhi.device_wait_idle(f.device)
-	pixels, w, _, ok := gpu.renderer_capture(r)
-	testing.expect(t, ok, r.error)
-	if ok {
-		near := pixel(pixels, w, project(r, camera, {-1.2, -0.9, 0}))
-		shadow := pixel(pixels, w, project(r, camera, {1.2, -0.9, 0}))
-		far := pixel(pixels, w, project(r, camera, {-2.4, -0.9, 0}))
-		testing.expectf(t, near[1] > far[1] + 30, "the floor in range %v is lit, past it %v is not", near, far)
-		testing.expectf(t, near[1] > shadow[1] + 30, "the floor in range %v is lit, behind the cube %v it is not", near, shadow)
-		delete(pixels)
-	}
-	expect_clean(t, f.device)
-}
-
-// The room for more lights than the buffers of the scene hold grows them
-// before the frame uploads the tree with it: no copy past their end, which
-// left nodes of the tree unwritten and walks of it back at the root.
-@(test)
-particle_lights_grow_the_light_buffers_before_the_room_goes_up :: proc(t: ^testing.T) {
-	f := new(Gpu_Fixture)
-	defer free(f)
-	settings := test_settings()
-	settings.taa = false
-	if !gpu_fixture_init(t, f, 64, 48, settings) {return}
-	defer gpu_fixture_destroy(f)
-	r := &f.renderer
-	gpu.scene_set_environment(r,{},{})
-	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.5, 0.5, 0.5}}},true)
-	camera := gpu.Camera{position = {0, 6, 0.01}, forward = {0, -6.9, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	spark := test_emitter(1, {0, 0.3, 0})
-	spark.info.lifetime, spark.info.size, spark.info.lights, spark.info.light_intensity, spark.info.light_range, spark.info.light_radius = {10, 10}, {0.02, 0.02}, 40, 5, 2.5, 0.05
-	spark.spawns = test_burst(40)
-	for i in 0 ..< 3 {
-		testing.expect(t, frame_emitters(f, &f.sync, {spark}, 1.0 / 60))
-		spark.spawns = {}
-		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(i) / 60}), r.error)
-	}
-	rhi.device_wait_idle(f.device)
-	expect_clean(t, f.device)
-}
-
-// Particles with lights whose effect asks for none of shadows light the
-// floor in their range behind the cube too, with no ray, in the part of the
-// room of their kind, while those of another emitter that ask for shadows
-// fill the other part.
-@(test)
-particle_lights_without_shadows_light_through_what_stands_in_their_way :: proc(t: ^testing.T) {
-	f := new(Gpu_Fixture)
-	defer free(f)
-	settings := test_settings()
-	settings.taa = false
-	if !gpu_fixture_init(t, f, 128, 96, settings) {return}
-	defer gpu_fixture_destroy(f)
-	r := &f.renderer
-	gpu.scene_set_environment(r,{},{})
-	gpu.scene_update(r,0,{
-		{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.5, 0.5, 0.5}},
-		{object_id = 2, mesh = f.cube, transform = trs({0.6, -0.3, 0}, {0.4, 0.4, 0.4}), tint = {0.5, 0.5, 0.5}},
-	},true)
-	camera := gpu.Camera{position = {0, 6, 0.01}, forward = {0, -6.9, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	spark := test_emitter(1, {0, 0.3, 0})
-	spark.info.lifetime, spark.info.size, spark.info.lights, spark.info.light_intensity, spark.info.light_range, spark.info.light_radius = {10, 10}, {0.02, 0.02}, 4, 5, 2.5, 0.05
-	spark.spawns = test_burst(4)
-	away := test_emitter(2, {40, 0.3, 0})
-	away.info.lifetime, away.info.size, away.info.lights, away.info.light_intensity, away.info.light_range, away.info.light_radius, away.info.light_shadows = {10, 10}, {0.02, 0.02}, 2, 5, 2.5, 0.05, true
-	away.spawns = test_burst(2)
-	DT :: f32(1.0 / 60)
-	for i in 0 ..< 6 {
-		testing.expect(t, frame_emitters(f, &f.sync, {spark, away}, DT))
-		spark.spawns, away.spawns = {}, {}
-		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(i) * DT}), r.error)
-	}
-	testing.expect_value(t, r.scene.light_region, gpu.Light_Region{2, 4})
-	rhi.device_wait_idle(f.device)
-	pixels, w, _, ok := gpu.renderer_capture(r)
-	testing.expect(t, ok, r.error)
-	if ok {
-		near := pixel(pixels, w, project(r, camera, {-1.2, -0.9, 0}))
-		behind := pixel(pixels, w, project(r, camera, {1.2, -0.9, 0}))
-		far := pixel(pixels, w, project(r, camera, {-2.4, -0.9, 0}))
-		testing.expectf(t, near[1] > far[1] + 30, "the floor in range %v is lit, past it %v is not", near, far)
-		testing.expectf(t, behind[1] > far[1] + 30, "behind the cube %v the floor in range is lit too, past it %v is not", behind, far)
-		delete(pixels)
 	}
 	expect_clean(t, f.device)
 }
@@ -1903,7 +1951,7 @@ particle_sprites_go_behind_the_fog_of_the_view :: proc(t: ^testing.T) {
 	// Two metres of a medium that stops 1.5 of each metre and scatters nothing: it lets through e^-3.
 	medium := fog.Medium{box = {position = {0, 0, -6}, rotation = 1, scale = {6, 6, 2}}, density = 1.5}
 	state := fog.Fog_Gpu{}
-	settings_fog := fog.Fog_Settings{hidden = .Every_Frame}
+	settings_fog := fog.Fog_Settings{turns = .Every_Frame}
 	media: fog.Fog_Media
 	defer delete(media.queue.items)
 	volumes: core.Table(fog.Fog_Volume)
@@ -2010,7 +2058,7 @@ particle_passes_mark_the_intervals_the_profiler_lists :: proc(t: ^testing.T) {
 			seen[strings.clone(name, context.temp_allocator)] = max(seen[name], count)
 		}
 	}
-	for name in ([]string{"particle begin", "particle emit", "particle simulate", "particle steps", "particle finish", "particle lights", "particle sprites"}) {
+	for name in ([]string{"particle begin", "particle emit", "particle simulate", "particle steps", "particle finish", "particle sprites"}) {
 		testing.expectf(t, seen[name] == 1, "the profiler lists %q once a frame: %v", name, seen)
 	}
 	expect_clean(t, f.device)

@@ -1,7 +1,9 @@
 package mirai_render
 
 import "core:math"
+import "mirai:render/abi"
 import "core:math/linalg"
+import "core:slice"
 import "core:testing"
 import mm "mirai:std/math"
 
@@ -255,6 +257,36 @@ the_tree_of_a_traced_batch_is_built_for_rays_traced_by_software_alone :: proc(t:
 	testing.expect(t, scene_move(r, {0}, {moved}))
 	root := r.scene.tlas_nodes[0]
 	testing.expect(t, root.bounds_max.y >= 50.4 && root.bounds_min.x <= -0.5 && root.bounds_max.z >= 18, "the root holds the moved instance and the batch")
+	// The instances of the scene, the batches rays meet or both down to none
+	// and back, a frame each: the tree holds what there is, and is refit over it.
+	holds :: proc(r: ^Renderer) -> bool {
+		s := &r.scene
+		if len(s.instances) + len(s.batch.traced) == 0 {return s.tlas_nodes[0].bounds_min.x > s.tlas_nodes[0].bounds_max.x}
+		seen := 0
+		for ref in s.tlas_refs {
+			index := int(ref &~ TLAS_REF_GLASS)
+			if index >= len(s.instances) && !slice.contains(s.batch.traced[:], u32(index - len(s.instances))) {return false}
+			seen += 1
+		}
+		return seen == len(s.instances) + len(s.batch.traced)
+	}
+	cases := [?]struct {
+		name:               string,
+		instances, batches: bool, // which go to none
+	}{{"instances to none and back with batches that trace", true, false}, {"batches to none and back with instances", false, true}, {"both to none and back", true, true}}
+	for c in cases {
+		if c.instances {testing.expect(t, scene_given(r, nil, nil, {}, {}))}
+		if c.batches {testing.expect(t, batch_remove(r, handle))}
+		batches_build(r)
+		testing.expectf(t, holds(r), "%s: the tree holds what there is with none", c.name)
+		if c.instances {testing.expect(t, scene_given(r, {{object_id = 1, mesh = mesh, transform = 1, tint = 1}}, nil, {}, {}))}
+		if c.batches {handle, _ = batch_set(r, 0, 0, {mesh = mesh, flags = {.Casts_Shadow}}, instances[:])}
+		batches_build(r)
+		testing.expect(t, scene_move(r, {0}, {linalg.matrix4_translate_f32({0, 60, 0})}))
+		root = r.scene.tlas_nodes[0]
+		testing.expectf(t, holds(r) && len(r.scene.batch.traced) == 1, "%s: the tree holds what came back", c.name)
+		testing.expectf(t, root.bounds_max.y >= 60.4 && root.bounds_max.z >= 18, "%s: the root holds the moved instance and the batch", c.name)
+	}
 	testing.expect(t, batch_remove(r, handle))
 }
 
@@ -373,4 +405,156 @@ a_jump_of_the_origin_moves_the_row_of_a_batch_and_not_its_instances :: proc(t: ^
 	hit, found := batch_ray(r, 0, far + {4, 10, 0}, {0, -1, 0}, 100)
 	testing.expect(t, found && hit.instance == 1 && abs(hit.distance - 9) < 1e-3)
 	testing.expect(t, batch_remove(r, handle))
+}
+
+// What the culls of the maps of the shadows keep of what reaches each slot
+// (shadow_reach) is what the maps give found anew, frame after frame, through
+// a sequence of changes: the eye moving or jumping, the sun turning, lights
+// moving, changing range or cone or trading their slots, slots letting go of
+// their pages, batches set again, coming, going, casting or not and reaching
+// farther, batches moving and swaying, instances of the scene coming and
+// going, another world shown, a jump of the origin, the targets of a view
+// made anew and two views; and none of the casters a map reaches is left out.
+@(test)
+the_kept_reach_of_the_shadow_maps_is_what_the_maps_give :: proc(t: ^testing.T) {
+	r := new(Renderer)
+	defer free(r)
+	r.allocator = context.allocator
+	scene_init(r)
+	defer scene_destroy(r)
+	box := batch_box(r)
+	random := u32(12345)
+	next :: proc(random: ^u32, n: int) -> int {
+		random^ = random^ * 1664525 + 1013904223
+		return int(random^ >> 8) % max(n, 1)
+	}
+	instances: [12]Batch_Instance
+	place :: proc(instances: []Batch_Instance, random: ^u32) {
+		corner := Vec3{f32(next(random, 120)) - 60, f32(next(random, 4)), f32(next(random, 120)) - 60}
+		for &instance, k in instances {instance = batch_instance(corner + {f32(k % 4) * 1.5, 0, f32(k / 4) * 1.5}, 1, {1, f32(1 + next(random, 3)), 1})}
+	}
+	handles: [dynamic]Batch_Handle
+	defer delete(handles)
+	set :: proc(r: ^Renderer, handle: Batch_Handle, box: Mesh_Handle, instances: []Batch_Instance, random: ^u32) -> Batch_Handle {
+		flags := Batch_Flags{.Ray_Visible} if next(random, 5) == 0 else {.Casts_Shadow, .Ray_Visible}
+		made, _ := batch_set(r, handle, u64(1 if next(random, 6) == 0 else 0), {mesh = box, flags = flags, reach = f32(next(random, 3)) * 0.5}, instances)
+		return made
+	}
+	for _ in 0 ..< 80 {
+		place(instances[:], &random)
+		append(&handles, set(r, 0, box, instances[:next(&random, 12) + 1], &random))
+	}
+	descs: [40]Instance_Desc
+	scene :: proc(r: ^Renderer, descs: []Instance_Desc, box: Mesh_Handle, random: ^u32) {
+		count := next(random, len(descs))
+		for &desc, i in descs[:count] {desc = {object_id = u64(i + 1), mesh = box, transform = linalg.matrix4_translate_f32({f32(next(random, 80)) - 40, 1, f32(next(random, 80)) - 40}), tint = 1}}
+		scene_given(r, descs[:count], nil, {}, {})
+	}
+	scene(r, descs[:], box, &random)
+	lights: [SHADOW_RASTER_LIGHTS]Gpu_Light
+	for &l in lights {
+		l = {position_range = {f32(next(&random, 100)) - 50, 3, f32(next(&random, 100)) - 50, f32(5 + next(&random, 20))}, size = {0.1, 0, 0, 0}, direction_cone = {0, -1, 0, GPU_LIGHT_POINT}}
+	}
+	blocks: [SHADOW_RASTER_LIGHTS]int
+	for &block, k in blocks {block = k}
+	eye, toward := Vec3{0, 12, 0}, Vec3{-0.3, -1, -0.2}
+	views: [2]Shadow_Raster
+	fresh: Shadow_Raster
+	defer for &b in views {shadow_reach_release(r, &b)}
+	defer shadow_reach_release(r, &fresh)
+	for frame in 0 ..< 120 {
+		view := &views[1 if frame % 3 == 2 else 0]
+		// The changes of this frame.
+		for _ in 0 ..< 1 + next(&random, 3) {
+			switch next(&random, 14) {
+			case 0: eye += {f32(next(&random, 5)) - 2, 0, f32(next(&random, 5)) - 2}
+			case 1: eye = {f32(next(&random, 400)) - 200, 12, f32(next(&random, 400)) - 200}
+			case 2: toward = linalg.normalize(toward + {f32(next(&random, 3) - 1) * 0.2, 0, 0.1})
+			case 3: lights[next(&random, len(lights))].position_range.xz += {f32(next(&random, 9)) - 4, f32(next(&random, 9)) - 4}
+			case 4: lights[next(&random, len(lights))].position_range.w = f32(3 + next(&random, 30))
+			case 5:
+				l := &lights[next(&random, len(lights))]
+				l.direction_cone.w = GPU_LIGHT_POINT if l.direction_cone.w > -1.5 else 0.6 + 0.3 * f32(next(&random, 2))
+			case 6:
+				a, b := next(&random, len(blocks)), next(&random, len(blocks))
+				blocks[a], blocks[b] = blocks[b], blocks[a]
+			case 7:
+				at := next(&random, len(handles))
+				place(instances[:], &random)
+				handles[at] = set(r, handles[at], box, instances[:next(&random, 12) + 1], &random)
+			case 8:
+				at := next(&random, len(handles))
+				batch_remove(r, handles[at])
+				place(instances[:], &random)
+				handles[at] = set(r, 0, box, instances[:next(&random, 12) + 1], &random)
+			case 9:
+				for _ in 0 ..< 4 {
+					record := &r.scene.batch.records[next(&random, len(r.scene.batch.records))]
+					record.shadow_moving = !record.shadow_moving
+				}
+				r.scene.shadow_movers_version += 1
+			case 10: scene(r, descs[:], box, &random)
+			case 11: r.world_key = u64(next(&random, 2))
+			case 12: renderer_origin_set(r, {f32(next(&random, 3) - 1) * ORIGIN_STEP * 2, 0, 0})
+			case 13: shadow_reach_release(r, view)
+			}
+		}
+		batches_build(r)
+		low, high := scene_box(r)
+		wants: [SHADOW_SLOTS]Shadow_Want
+		plans: [SHADOW_SLOTS]Shadow_Slot_Plan
+		levels := shadow_sun_levels(&wants, toward, eye, r.origin, 3000, low, high, low.x <= high.x, view.held[:SHADOW_SUN_LEVELS])
+		for &h, k in view.held[:levels] {h = {m = wants[k].m, grid = wants[k].grid}}
+		forward := linalg.normalize(Vec3{0, -0.3, -1})
+		right := linalg.normalize(linalg.cross(forward, Vec3{0, 1, 0}))
+		up := linalg.cross(right, forward)
+		for l, light in lights {
+			faces: [abi.SHADOW_LIGHT_SLOTS]Shadow_Want
+			shadow_light_faces(&faces, l, 0.1, eye, forward, right, up, 1, 0.6, 0.1, low, high, low.x <= high.x)
+			for &w, face in faces {
+				if w.weight <= 0 {continue}
+				slot := SHADOW_SUN_LEVELS + blocks[light] * abi.SHADOW_LIGHT_SLOTS + face
+				w.m.rect = {u32(slot), 0, SHADOW_MAP_SIDE, u32(light)}
+				wants[slot] = w
+			}
+		}
+		for &p in plans {if next(&random, 8) == 0 {p.flags = abi.SHADOW_PLAN_RESET}}
+		// The reach of what sways of the view: none, near, or every map.
+		reaches := [3]f32{0, 0.02, max(f32)}
+		if next(&random, 8) == 0 {view.sway = reaches[next(&random, 3)]}
+		fresh.sway = view.sway
+		kept, anew: [SHADOW_SLOTS]Shadow_Reach
+		if !testing.expect(t, shadow_reach(r, view, wants[:], plans[:], kept[:])) {return}
+		ranges := make([][2]u32, len(r.scene.shadow_ranges), context.temp_allocator)
+		copy(ranges, r.scene.shadow_ranges[:])
+		shadow_reach_release(r, &fresh)
+		if !testing.expect(t, shadow_reach(r, &fresh, wants[:], plans[:], anew[:])) {return}
+		same := kept == anew && len(ranges) == len(r.scene.shadow_ranges) && shadow_view_reach(r, view).mover_threads == shadow_view_reach(r, &fresh).mover_threads
+		for range, i in ranges {same = same && range == r.scene.shadow_ranges[i]}
+		if !testing.expectf(t, same, "frame %d: what was kept differs from what the maps give found anew", frame) {return}
+		// None of what a map reaches is left out: the instances of each caster
+		// that reaches it lie within a range of its list.
+		holds :: proc(ranges: [][2]u32, list: Shadow_Reach_List, first, count: u32) -> bool {
+			for range, i in ranges[list.first:][:list.count] {
+				past := range.x + ((ranges[list.first + u32(i) + 1].y if u32(i) + 1 < list.count else list.threads) - range.y)
+				if first >= range.x && first + count <= past {return true}
+			}
+			return false
+		}
+		s := &r.scene
+		for w, slot in wants {
+			if w.m.rect.z == 0 {continue}
+			lists := kept[slot]
+			if len(s.instances) > 0 && !testing.expectf(t, holds(ranges, lists[Shadow_Round.Stays], 0, u32(len(s.instances))), "frame %d, slot %d: the instances of the scene are left out", frame, slot) {return}
+			for record, k in s.batch.drawn {
+				low, high, casts := shadow_batch_box(s, k)
+				first, count := shadow_batch_instances(s, k)
+				// Of a light, what lies past its range blocks none of what it lights.
+				within := slot < SHADOW_SUN_LEVELS || linalg.length(linalg.max(linalg.max(low - w.m.origin, w.m.origin - high), Vec3{})) <= w.m.far
+				if casts && within && shadow_map_reaches(w.m, low, high) && !testing.expectf(t, holds(ranges, lists[Shadow_Round.Stays], first, count), "frame %d, slot %d: a batch that casts into the map is left out", frame, slot) {return}
+				moving := s.batch.records[record].shadow_moving && casts && within && shadow_change_reaches(w.m, shadow_batch_change(s, k), view.sway)
+				if moving && !testing.expectf(t, holds(ranges, lists[Shadow_Round.Moves], first, count), "frame %d, slot %d: a batch that moves in the map is left out of what moves", frame, slot) {return}
+			}
+		}
+	}
 }

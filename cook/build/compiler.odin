@@ -48,11 +48,11 @@ compiler_memory :: proc() -> (bytes:u64,ok:bool) {
 
 // What a compiler started now may use: compiler_memory, at low priority
 // while a measurement this process is not part of runs
-// (workspace.measurement_running), so that it disturbs it as little as it can.
+// (workspace.measured), so that it disturbs it as little as it can.
 compiler_limits :: proc(root:string) -> subprocess.Limits {
     memory,_:=compiler_memory()
-    measured,_:=workspace.measurement_running(root,context.temp_allocator)
-    return {memory=memory,priority=.Low if measured else .Normal}
+    measured,_:=workspace.measured(root,false,allocator=context.temp_allocator)
+    return {memory=memory,priority=.Low if measured==.Low else .Normal}
 }
 
 @(private)
@@ -235,7 +235,6 @@ diagnostics_parse :: proc(output:string,allocator:runtime.Allocator) -> (diagnos
 }
 
 // The sources a build read, as the compiler exported them.
-@(private)
 dependencies_read :: proc(file:string,allocator:runtime.Allocator) -> (sources:[]string,ok:bool) {
     Export :: struct {source_files,load_files:[]string}
     data,error:=os.read_entire_file(file,context.temp_allocator)

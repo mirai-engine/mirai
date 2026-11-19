@@ -326,7 +326,7 @@ nav_build_input_valid :: proc "contextless" (input:Nav_Build_Input) -> bool {
     for index in input.indices {if int(index)>=len(input.vertices) {return false}}
     if len(input.triangle_areas)!=0 && len(input.triangle_areas)!=len(input.indices)/3 {return false}
     for area in input.triangle_areas {if area>NAV_AREA_MAX {return false}}
-    for volume in input.volumes {if volume.count>8 || volume.area>NAV_AREA_MAX {return false}}
+    for volume in input.volumes {if int(volume.count)>NAV_AREA_POINTS || volume.area>NAV_AREA_MAX {return false}}
     return true
 }
 

@@ -11,9 +11,21 @@ import "mirai:std/base"
 
 // Runs that create the same pipelines read back what the first compiled and
 // leave the file as it was: it does not grow run after run. A file it cannot
-// read, such as a driver blob of before, is replaced.
+// read, such as a driver blob of before, is replaced. Without a file, a device
+// keeps them in memory: a pipeline created again finds what it compiled.
 @(test)
 rhi_kept_pipelines_are_read_back_and_do_not_grow :: proc(t: ^testing.T) {
+	{
+		d := shared_device.create_or_skip(t, {on_message = rhi.message_print, app_name = "mirai pipeline store test", validation = true, upload_bytes_per_frame = 1 << 20})
+		if d == nil {return}
+		for _ in 0 ..< 2 {
+			p := rhi.pipeline_create_compute(d, {shader = rhi.test_shader("fill.comp"), name = "fill"})
+			testing.expect(t, p != 0, rhi.device_error(d))
+			rhi.pipeline_destroy(d, p)
+		}
+		testing.expectf(t, len(d.pipelines_kept.entries) == 1 && d.pipelines_kept.uses >= 2, "without a file the second pipeline finds the first in memory: %d entries, %d uses", len(d.pipelines_kept.entries), d.pipelines_kept.uses)
+		rhi.device_destroy(d)
+	}
 	folder := base.test_folder(t, "pipeline-store")
 	if folder == "" {return}
 	path := fmt.tprintf("%s/pipelines.bin", folder)

@@ -297,6 +297,7 @@ what_floats_on_the_surface_of_a_tree_floats_on_its_area :: proc(t:^testing.T) {
     defer tree_destroy(&s.tree)
     tree_node(&s.tree,-1,{kind=.Box,name="hud",layout={width=fixed(50),height=fixed(20)},float={to=.Safe,anchor=.Top_Left,pivot=.Top_Left,offset={10,10}}})
     tree_node(&s.tree,-1,{kind=.Box,name="menu",layout={width=fixed(40),height=fixed(40)},float={to=.Surface,anchor=.Center,pivot=.Center}})
+    tree_node(&s.tree,-1,{kind=.Text,name="timer",text="1:00",float={to=.Surface,anchor=.Top_Center,pivot=.Top_Center,offset={0,10}}})
     testing.expect(t,tree_instance_init(&s.instance,&s.tree,nil))
     defer tree_instance_destroy(&s.instance)
     // The right half of the window is the part of a player.
@@ -314,6 +315,9 @@ what_floats_on_the_surface_of_a_tree_floats_on_its_area :: proc(t:^testing.T) {
     test_frame(&ctx,&input,build,&s)
     testing.expect_value(t,test_rect(t,&ctx,tree_element_id(&ctx,"hud")),Rect{410,30,50,20})
     testing.expect_value(t,test_rect(t,&ctx,tree_element_id(&ctx,"menu")),Rect{580,280,40,40})
+    // What holds nothing, as a text, floats on the area too.
+    timer:=test_rect(t,&ctx,tree_element_id(&ctx,"timer"))
+    testing.expectf(t,abs(timer.x+timer.w*0.5-600)<=1 && timer.y==10,"the text hangs from the top center of the part of the player: %v",timer)
 }
 
 Test_Hero :: struct {

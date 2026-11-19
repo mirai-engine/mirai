@@ -6,9 +6,10 @@ description: Mirai world content plugins - `terrain` (heightfield and volume ter
   (footprints in snow, mud and sand), `vfx` (GPU particles, `.particle` effects, births by channel,
   grids and volumes, debugging particles), `navigation` (automatic navmesh, links, agents),
   `behavior` (AI minds, smart objects, perception, influence maps) and `shapes` (editable solids of
-  a polygon and brush entities, and splines of roads, paths and rivers). Use when sculpting or
-  painting terrain, scattering vegetation, making water, snow or particles, making enemies and NPCs
-  walk and decide, or changing any of those plugins.
+  a polygon and brush entities, splines of roads, paths and rivers, and meshes bent along a curve
+  for rails, chains, pipes and ropes). Use when sculpting or painting terrain, scattering
+  vegetation, making water, snow or particles, making enemies and NPCs walk and decide, bending a
+  mesh along a spline, or changing any of those plugins.
 ---
 
 # Mirai world
@@ -34,9 +35,8 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   [GPU pools and emitters](references/vfx.md#pools-and-emitters),
   [births and steps](references/vfx.md#births-and-steps),
   [Vfx programs](references/vfx.md#vfx-programs), [passes](references/vfx.md#passes),
-  [ribbons and trails](references/vfx.md#ribbons),
-  [mesh particles](references/vfx.md#mesh-particles) and
-  [particle lights](references/vfx.md#particle-lights)
+  [ribbons and trails](references/vfx.md#ribbons) and
+  [mesh particles](references/vfx.md#mesh-particles)
 - `vfx` in the editor (GPU effect preview, effects document, `Particle_Emitter` section,
   thumbnails, Particles card, `particle.*` methods):
   [Particle_Emitter section](references/vfx-editor.md#particle_emitter-section),
@@ -109,11 +109,11 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   [navigation](../mirai-std/references/ai.md#navigation) of `std/ai`
 - `shapes` (editable solids of a polygon and brush entities saved as source, stamps and vertex
   edits, bevels of the rims of a polygon, the derived child with mesh and collider, static or
-  dynamic; the ribbons of roads along a `volume.Spline` with a material; the
-  Shapes tool and `shapes.*`):
+  dynamic; the ribbons of roads along a `volume.Spline` with a material; a mesh bent along a
+  curve segment with `Bend` (rails, chains, pipes, ropes); the Shapes tool and `shapes.*`):
   [source and derived](references/shapes.md#source-and-derived),
   [static and dynamic](references/shapes.md#static-and-dynamic),
-  [splines](references/shapes.md#splines),
+  [splines](references/shapes.md#splines), [bends](references/shapes.md#bends),
   [editing](references/shapes.md#editing) and [Shapes tool](references/shapes.md#shapes-tool)
 - Using them from a game (volumes, mining and dig-and-break games, the demo):
   [gameplay](../mirai-gameplay/SKILL.md)
@@ -147,6 +147,11 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
 - Navigation: automatic navmesh by tiles from the collision.
 - Far-away simulation: automatic coarse simulation through the portal graph.
 - Water: Gerstner waves.
+- Particles: a particle glows by its emission and is not a light; an effect that must light its
+  surroundings carries a light on its entity. The lights of a frame are the scene's, known on the
+  CPU, so what depends on them (their lists, caches and shadow pages) is kept while they stay
+  still. Decided by the user: per-particle or GPU-written lights come back only with a measured
+  reason that holds against this.
 
 ## Verification
 

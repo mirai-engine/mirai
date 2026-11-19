@@ -15,6 +15,11 @@ Types :: struct {
     allocator:runtime.Allocator,
     error:Error,
     codecs:Codecs,                   // what the documents made with these types compress with
+    // What a value of each type starts as: a schema whose structs carry their
+    // defaults, that of the world of the program (core.World_Schema). A struct
+    // added here takes the default it has for the same Odin type, so a document
+    // written with these types carries it too. nil: none.
+    defaults:^serial.Schema,
 }
 
 types_init :: proc(types:^Types,allocator:=context.allocator) {
@@ -48,11 +53,30 @@ types_index_info :: proc(types:^Types,info:^runtime.Type_Info) -> (index:serial.
     known:bool
     index,known=types.schema.lookup[info.id]
     if !known {
+        first:=len(types.schema.types)
         index,known=serial.schema_add_type_info(&types.schema,info)
         if !known {types.error=.Invalid;return serial.TYPE_NONE,false}
+        if !types_defaults_take(types,first) {types.error=.Out_Of_Memory;return serial.TYPE_NONE,false}
     }
     if !types_update(types) {types.error=.Out_Of_Memory;return serial.TYPE_NONE,false}
     return index,true
+}
+
+// The defaults of types.defaults for the structs added from first on.
+@(private="file")
+types_defaults_take :: proc(types:^Types,first:int) -> bool {
+    from:=types.defaults
+    if from==nil {return true}
+    s:=&types.schema
+    for at in first..<len(s.types) {
+        type:=s.types[at]
+        if type.kind!=.Struct || type.id==nil {continue}
+        source,found:=from.lookup[type.id]
+        if !found {continue}
+        default:=from.types[source].default
+        if default!=nil && len(default)==int(type.size) && !serial.schema_default_set(s,serial.Type_Index(at),default) {return false}
+    }
+    return true
 }
 
 @(private)

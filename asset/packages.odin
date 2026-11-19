@@ -22,7 +22,8 @@ import "mirai:store"
 //   importer finds.
 // - Packages: the list of a project (PACKAGES_FILE, beside its manifest),
 //   versioned: the packages it uses by the hash of their manifest, the folder
-//   of its assets each is listed in and the assets it uses. Beside it, in
+//   of its assets each is listed in, the assets it uses and what its file of
+//   each document held when an import or a refresh last wrote it. Beside it, in
 //   PACKAGE_FILES, the text of each manifest it pins (package_file), so the
 //   root carries what its pins name: a store without a manifest takes it from
 //   there. The library of cook/import/sources writes both.
@@ -33,7 +34,7 @@ import "mirai:store"
 
 PACKAGES_FILE :: "packages.mirai"
 PACKAGE_FILES :: "packages" // the folder of a root, beside PACKAGES_FILE, with <package id>.mirai of each manifest it pins
-PACKAGES_VERSION :: 1
+PACKAGES_VERSION :: 2
 PACKAGE_MANIFEST_VERSION :: 1
 BUILD_MANIFEST_VERSION :: 1
 RECORD_BYTES :: 16<<20 // the most a record takes as text: a larger one is refused unread
@@ -97,6 +98,17 @@ Project_Package :: struct {
     manifest:store.Hash,
     folder:string,                 // of the assets of the project, where its assets are listed; "": the top
     assets:[dynamic]base.Asset_Id, // those the project uses, with what they depend on; none: all
+    written:[dynamic]Package_Written,
+}
+
+// A document of a package whose file in the project the import or the
+// refresh writes over: the content_hash of the header of that file as it last
+// wrote it, so a file that holds anything else was changed since. A document
+// followed field by field (a material) has none: what a person changed in it
+// stays.
+Package_Written :: struct {
+    id:base.Asset_Id,
+    hash:u64,
 }
 
 Packages :: struct {
@@ -384,6 +396,14 @@ packages_text :: proc(list:^Packages,allocator:=context.allocator) -> (text:stri
         for id,i in entry.assets {
             if i>0 {serial.text_write_raw(&w,", ")}
             id_write(&w,id)
+        }
+        serial.text_write_raw(&w,"], \"written\": [")
+        for written,i in entry.written {
+            serial.text_write_raw(&w,i>0?", {\"id\": ":"{\"id\": ")
+            id_write(&w,written.id)
+            serial.text_write_raw(&w,", \"hash\": \"")
+            serial.text_write_hex(&w,written.hash,16,false)
+            serial.text_write_raw(&w,"\"}")
         }
         serial.text_write_raw(&w,"]}")
     }
@@ -745,6 +765,12 @@ packages_valid :: proc(list:^Packages) -> bool {
                 if other==id {return false}
             }
         }
+        for written,i in entry.written {
+            if written.id=={} || written.hash==0 {return false}
+            for other in entry.written[:i] {
+                if other.id==written.id {return false}
+            }
+        }
     }
     return true
 }
@@ -981,9 +1007,10 @@ output_read :: proc(r:^serial.Text_Reader) -> (o:Build_Output,error:Error) {
 
 @(private="file")
 entry_read :: proc(r:^serial.Text_Reader,allocator:runtime.Allocator) -> (entry:Project_Package,error:Error) {
-    Field :: enum {Id,Manifest,Folder,Assets}
+    Field :: enum {Id,Manifest,Folder,Assets,Written}
     seen:bit_set[Field]
     entry.assets=make([dynamic]base.Asset_Id,allocator)
+    entry.written=make([dynamic]Package_Written,allocator)
     expect(r,'{') or_return
     for first:=true;!serial.text_accept(r,'}');first=false {
         if !first {expect(r,',') or_return}
@@ -994,6 +1021,7 @@ entry_read :: proc(r:^serial.Text_Reader,allocator:runtime.Allocator) -> (entry:
         case "manifest": field=.Manifest
         case "folder": field=.Folder
         case "assets": field=.Assets
+        case "written": field=.Written
         case: return {},.Corrupt
         }
         if field in seen {return {},.Corrupt}
@@ -1003,10 +1031,47 @@ entry_read :: proc(r:^serial.Text_Reader,allocator:runtime.Allocator) -> (entry:
         case .Manifest: entry.manifest=hash_read(r) or_return
         case .Folder: entry.folder=string_read(r,allocator) or_return
         case .Assets: ids_read(r,&entry.assets) or_return
+        case .Written:
+            expect(r,'[') or_return
+            for begun:=false;!serial.text_accept(r,']');begun=true {
+                if begun {expect(r,',') or_return}
+                written:=written_read(r) or_return
+                if _,no_room:=append(&entry.written,written);no_room!=nil {return {},.Out_Of_Memory}
+            }
         }
     }
-    if seen!={.Id,.Manifest,.Folder,.Assets} {return {},.Corrupt}
+    if seen!={.Id,.Manifest,.Folder,.Assets,.Written} {return {},.Corrupt}
     return entry,.None
+}
+
+@(private="file")
+written_read :: proc(r:^serial.Text_Reader) -> (written:Package_Written,error:Error) {
+    Field :: enum {Id,Hash}
+    seen:bit_set[Field]
+    expect(r,'{') or_return
+    for first:=true;!serial.text_accept(r,'}');first=false {
+        if !first {expect(r,',') or_return}
+        name:=key(r) or_return
+        field:Field
+        switch name {
+        case "id": field=.Id
+        case "hash": field=.Hash
+        case: return {},.Corrupt
+        }
+        if field in seen {return {},.Corrupt}
+        seen+={field}
+        switch field {
+        case .Id: written.id=id_read(r) or_return
+        case .Hash:
+            digits,ok:=serial.text_string(r)
+            if !ok || len(digits)!=16 {return {},.Corrupt}
+            parsed,parsed_ok:=base.hex_parse_u64(digits)
+            if !parsed_ok {return {},.Corrupt}
+            written.hash=parsed
+        }
+    }
+    if seen!={.Id,.Hash} {return {},.Corrupt}
+    return written,.None
 }
 
 // The text of the record the store keeps under hash, in the temp allocator.

@@ -33,9 +33,10 @@
   generation (`fixture_init(programs = true)`, `fixture_catalog` without a device), the others with
   the embedded one.
 - The math or synchronization tests check the result read back from the GPU.
-- While another session measures, `mirai test` runs at low priority and with the shared GPU a
-  test can take ten times longer, or compile its pipelines cold for minutes: its time says nothing
-  about the code. The time of a test is taken with the machine idle.
+- While another session measures, a GPU test waits for it to end and the others run at low
+  priority; with the GPU shared by other sessions a test can take ten times longer, or compile its
+  pipelines cold for minutes: its time says nothing about the code. The time of a test is taken
+  with the machine idle.
 
 ## Packages
 
@@ -218,10 +219,10 @@ While working, `--views` and `--quality`.
     build) or the folder of another checkout with its editor compiled; `--checkout` measures
     another checkout this way instead of its own, and the fields its API does not accept are
     removed.
-- **Load**: before compiling it waits, up to `--wait`, for the other `mirai-editor` and
-  `mirai-player` to close, and if it does not finish it ends saying which and how to close them
-  (`--allow-load` measures anyway). Each session warns of another engine program open and of a
-  busy GPU without the measured editor drawing: with warnings a cost is not asserted. Each view
+- **Load**: it does not wait for the other `mirai-editor` and `mirai-player`: each session warns
+  of another engine program open, and with a GPU busy while the measured editor draws nothing a
+  cost is not asserted ([turns](../../mirai-projects/references/build.md#turns-between-processes)).
+  Each view
   stores the GPU memory the editor has and what the system leaves it (`gpu_memory` of
   `engine.status`); past `RENDER_MEMORY_SHARE` of the budget, the system evicts GPU memory, the
   passes that read what was evicted cost several times more and the view warns that its cost does
@@ -229,8 +230,8 @@ While working, `--views` and `--quality`.
 - **Settings**: the editors of a check read no file of the machine
   (`project.SETTINGS_NO_MACHINE_ENV`): both builds measure what the project asks for, whatever
   preset was chosen on this computer.
-- **Quality only** (`--quality`): without `profile.capture`, without the `mirai measure` turn and
-  without waiting for the other programs, with the captures at the same frames as the full check.
+- **Quality only** (`--quality`): without `profile.capture` and without the measurement turn,
+  with the captures at the same frames as the full check.
   It asserts nothing about cost; a saved base of the full one serves it, and one of its own does
   not serve the full one.
 - **Output** (`--out`; by default `bin/render-check/<date>`): `report.json`, logs and captures. The

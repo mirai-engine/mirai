@@ -55,7 +55,7 @@ file_state :: proc(path:string) -> (state:Stamp_File) {
 
 // Identity of what a generation was asked for.
 @(private)
-request_digest :: proc(g:^Generation,sources:[]Source,odin:bool,allocator:=context.allocator) -> string {
+request_digest :: proc(g:^Generation,sources:[]Source,odin:bool,uses:[]Program_Uses_Of,every:abi.Program_Uses,allocator:=context.allocator) -> string {
     hash:Sha256
     sha_begin(&hash)
     zero:=[1]u8{0}
@@ -71,6 +71,12 @@ request_digest :: proc(g:^Generation,sources:[]Source,odin:bool,allocator:=conte
         sha_text(&hash,source.name)
         sha_bytes(&hash,zero[:])
         sha_text(&hash,path_clean(source.folder,context.temp_allocator))
+        sha_bytes(&hash,zero[:])
+    }
+    sha_text(&hash,fmt.tprint(transmute(u8)every))
+    sha_bytes(&hash,zero[:])
+    for each in uses {
+        sha_text(&hash,fmt.tprintf("%s %d",each.program,transmute(u8)each.uses))
         sha_bytes(&hash,zero[:])
     }
     return sha_hex(&hash,allocator)
@@ -130,7 +136,7 @@ stamp_write :: proc(g:^Generation,request,excluded:string,outputs:[]string,stamp
     for path,file in g.sources.files {
         if !path_inside(path,excluded) {append(&files,Stamp_Source{path,file.hash})}
     }
-    slice.sort_by(listings[:],proc(a,b:Stamp_Listing) -> bool {return a.path<b.path})
+    slice.sort_by(listings[:],proc(a,b:Stamp_Listing) -> bool {return a.path<b.path if a.path!=b.path else !a.recursive && b.recursive})
     slice.sort_by(files[:],proc(a,b:Stamp_Source) -> bool {return a.path<b.path})
     record.tools,record.outputs,record.listings,record.files=tools[:],published[:],listings[:],files[:]
     text,encoded:=serial.text_encode(record,.Pretty,context.temp_allocator)

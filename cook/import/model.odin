@@ -19,7 +19,7 @@ import mstore "mirai:store"
 
 IMPORTER_NAME :: "mirai-import"
 // Of the writer: raise it when import_write gives other bytes for the same model.
-IMPORTER_VERSION :: 11
+IMPORTER_VERSION :: 19
 
 // What Import_Info.importer_version holds: the version of the writer in the
 // low 16 bits and the one of the format the source was read with in the high
@@ -40,6 +40,7 @@ Error_Code :: enum u8 {
     Limit,       // more than an asset can hold
     Tool,        // an external tool failed or is missing
     Write,       // an asset could not be written
+    Changed,     // a document it writes over was changed since it last wrote it (Import_Options.changed)
 }
 
 // message lives in context.temp_allocator of the caller.
@@ -73,9 +74,12 @@ Import_Options :: struct {
     registry:^asset.Registry, // the scanned assets of root, which the import does not change; nil: it scans them
     world:^core.World_Info,   // the types of the game of root, which the prefab of a model is written in
     rebuild:bool,        // writes every asset, also one whose file already is the one the import would write
+    changed:Changed,     // what becomes of a document it writes over in documents that was changed since it last wrote it
+    written:[]asset.Package_Written, // what the files of its documents in documents held when it last wrote them (the project's pin)
     // A texture is built Fast unless the texture cache keeps it as Final
     // (textures.Encode_Speed): the imports of the editor, which a cook
-    // encodes again as Final. False: Final, what tools and the CLI build.
+    // encodes again as Final, and mirai import. False: Final, what a build
+    // that cooks and the package of the engine build.
     fast_textures:bool,
     // The identity of the code of the plugin that imports the source whole
     // (sources.code_identity), 0 for the engine's: part of what its outputs
@@ -89,6 +93,13 @@ Import_Options :: struct {
     worker:jobs.Worker_Ref,
     progress:^Progress, // where it says how far it is as it writes; nil: nowhere
 }
+
+// What an import does with the documents it writes over that were changed
+// since it last wrote them (documents_changed). Refuse: it writes nothing and
+// fails with Error_Code.Changed, naming them, so whoever imports decides.
+// Discard: it writes over them. Keep: it leaves them as they are, imports the
+// rest and warns of each: what an import nobody asked for (a refresh) does.
+Changed :: enum u8 {Refuse,Discard,Keep}
 
 // A zone of the import that base.profile_end ends.
 zone_begin :: #force_inline proc "contextless" (options:Import_Options,name:string) -> base.Profile_Scope {
@@ -105,6 +116,13 @@ material_map :: #force_inline proc(info:^asset.Material_Info,slot:asset.Material
     return &asset.material_maps(&info.maps)[slot]
 }
 
+// The image a material is masked by and how its map reads it: that of its
+// mask map, or of its base color map without one; -1 for none.
+material_mask_image :: proc "contextless" (m:^Imported_Material) -> (image:int,mapping:asset.Material_Map) {
+    if m.images[.Mask]>=0 || m.info.maps.mask.texture!={} {return m.images[.Mask],m.info.maps.mask}
+    return m.images[.Base_Color],m.info.maps.base_color
+}
+
 Imported_Image :: struct {
     name:string,         // file name without extension; for an embedded image, its name in the model
     path:string,         // absolute path of the file; "" when the image is inside the model
@@ -118,6 +136,7 @@ Imported_Image :: struct {
     normal_map:bool,
     green_down:bool,     // a normal map whose green points down the image: it is turned to +Y up
     alpha_cutoff:f32,    // above 0: the base color of a masked material
+    alpha_fill:f32,      // above 0: the base color of outlines cut from a mask with this cutoff (cutout.odin)
     keep_precision:bool, // its source asks for the precision of its 16 bits or floats (textures.Build_Options)
     channels:textures.Channels, // what each channel of its texture is made of (a gloss map turned into roughness); the zero value keeps them
     cooked:^Cooked_Texture, // built ahead by model_cook; nil when not
@@ -159,6 +178,7 @@ Imported_Mesh :: struct {
     bounds_min,bounds_max:[3]f32,
     // The colliders the source gives, in the space of the mesh: its collision.
     collision:Mesh_Collision,
+    outlines:Mesh_Outlines, // the coarser outlines of the cards cut from a mask
     cooked:^Cooked_Mesh, // built ahead by model_cook; nil when not
 }
 

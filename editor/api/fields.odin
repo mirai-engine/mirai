@@ -427,26 +427,33 @@ method_call :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer) -
     if (options.waits || options.wait_seconds>0) && .Read_Only not_in method.flags {
         return {INVALID_PARAMS,format_text(allocator,"%s changes things, and %s would call it again until its condition holds: call it once without %s and %s, then wait on a read-only method, such as its status method (build.status after build.start)",method.name,PARAM_WAIT_UNTIL,PARAM_WAIT_UNTIL,PARAM_WAIT_SECONDS),""},false,"",""
     }
+    if options.waits && !s.wait.allowed {
+        return {INVALID_PARAMS,format_text(allocator,"%s waits in a request of its own: send the call with %s alone, not in a batch",PARAM_WAIT_UNTIL,PARAM_WAIT_UNTIL),""},false,"",""
+    }
+    if options.waits && s.running.stopped {
+        return {CANCELLED,"the client cancelled the call while it waited for its condition",""},false,"",""
+    }
     start:=out.count
-    started:=time.tick_now()
-    limit:=options.wait_seconds>0?options.wait_seconds:WAIT_UNTIL_SECONDS
-    for {
-        mark:=base.arena_mark(&s.scratch)
-        out.count,out.overflow=start,0
-        err,ok=method_execute(s,method,rest,out)
-        if !ok || !options.waits || out.overflow>0 {break}
+    err,ok=method_execute(s,method,rest,out)
+    if ok && options.waits && out.overflow==0 {
         result:=string(out.data[start:out.count])
         value,missing:=json_at(result,options.until.path)
         if missing!="" {return {INVALID_PARAMS,format_text(allocator,"_wait_until %s: %s",options.until.text,missing),""},false,"",""}
         met,mismatch:=condition_met(options.until,value)
         if mismatch!="" {return {INVALID_PARAMS,format_text(allocator,"_wait_until %s: %s",options.until.text,mismatch),""},false,"",""}
-        if met {break}
-        if time.duration_seconds(time.tick_since(started))>limit {
+        limit:=options.wait_seconds>0?options.wait_seconds:WAIT_UNTIL_SECONDS
+        waited:=time.duration_seconds(time.tick_since(s.wait.started))
+        if !met && waited>limit {
             message:=format_text(allocator,"%s did not meet %s in %.0f s: %s is %s",method.name,options.until.text,limit,options.until.path.text,json_brief(value))
             return {TIMEOUT,message,format_text(allocator,`{{"field":%s,"value":%s}}`,serial.text_quote(options.until.path.text),wait_value_brief(allocator,value))},false,"",""
         }
-        base.arena_rewind(&s.scratch,mark)
-        if !server_pause(s) {return {CLOSED,format_text(allocator,"the editor is ending while _wait_until waits for %s",options.until.text),""},false,"",""}
+        // Not met yet: the request waits on its connection and the server
+        // answers the others until it is called again.
+        if !met {
+            s.wait.parked=true
+            server_progress(s,format_text(allocator,"waiting for %s: %.0f s",options.until.text,waited))
+            return {},false,"",""
+        }
     }
     if ok && len(options.select)>0 && out.overflow==0 {
         selected,note=fields_select(allocator,string(out.data[start:out.count]),options.select)
@@ -461,11 +468,4 @@ wait_value_brief :: proc(allocator:runtime.Allocator,value:string) -> string {
     prefix,omitted:=text_cut(value,WAIT_VALUE_BYTES)
     if omitted==0 {return value}
     return format_text(allocator,`{{"prefix":%s,"omitted_bytes":%d}}`,serial.text_quote(prefix,allocator),omitted)
-}
-
-@(private)
-server_pause :: proc(s:^Server) -> bool {
-    if s.pause!=nil {return s.pause(s,WAIT_UNTIL_PAUSE)}
-    time.sleep(time.Duration(WAIT_UNTIL_PAUSE*f64(time.Second)))
-    return true
 }

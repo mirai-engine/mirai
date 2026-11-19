@@ -8,6 +8,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:std/serial"
 import "mirai:store"
 
 // Which asset each part of a source is and where it is written. The manifest
@@ -125,6 +126,7 @@ parts_plan :: proc(w:^Writer,parts:[]Part) {
             if p.only || a.index==p.index {break}
         }
         p.id=writer_id(w)
+        written:u64
         if entry>=0 {
             w.taken[entry]=true
             a:=w.previous.assets[entry]
@@ -139,8 +141,13 @@ parts_plan :: proc(w:^Writer,parts:[]Part) {
             if w.registry!=nil {
                 if file,found:=asset.registry_find(w.registry,p.id);found && file.kind==p.kind {p.target=asset.registry_file_path(w.registry,file.path,context.temp_allocator)}
             }
-            if p.target=="" {p.target=fresh_path(w,fmt.tprintf("%s%s",asset.safe_path(p.name),p.extension))}
-            if folder:=filepath.dir(p.target);!os.is_dir(folder) {_=os.make_directory_all(folder)}
+            if _,keeping:=w.keeping[p.id];keeping {
+                // A document the import keeps as it is: its blob alone is written.
+                p.target=""
+            } else {
+                if p.target=="" {p.target=fresh_path(w,fmt.tprintf("%s%s",asset.safe_path(p.name),p.extension))}
+                if folder:=filepath.dir(p.target);!os.is_dir(folder) {_=os.make_directory_all(folder)}
+            }
         }
         p.output=len(w.outputs)
         append(&w.outputs,asset.Package_Asset{kind=p.kind,name=strings.clone(p.name,w.keep),index=p.index,id=p.id})
@@ -171,6 +178,82 @@ writer_put :: proc(w:^Writer,output:int,file:string) -> bool {
     return writer_take(w,output,hash)
 }
 
+// What the project's pin records its file of the document id held when the
+// import or the refresh last wrote it (asset.Package_Written); 0: nothing.
+written_of :: proc(written:[]asset.Package_Written,id:base.Asset_Id) -> u64 {
+    for entry in written {
+        if entry.id==id {return entry.hash}
+    }
+    return 0
+}
+
+// The documents of the package p that the import or the refresh writes over
+// and that changed since it last wrote them: the file of each in registry
+// (the assets of the project) holds other content than written records. A
+// change of owner alone (asset.detach) is no change. Their ids, in allocator.
+documents_changed :: proc(p:^asset.Package,written:[]asset.Package_Written,registry:^asset.Registry,allocator:=context.allocator) -> []base.Asset_Id {
+    changed:=make([dynamic]base.Asset_Id,allocator)
+    if registry==nil {return changed[:]}
+    for &a in p.assets {
+        recorded:=written_of(written,a.id)
+        if recorded==0 || asset.import_cached(a.kind) {continue}
+        if file,found:=asset.registry_find(registry,a.id);found && file.kind==a.kind && file.content_hash!=recorded {append(&changed,a.id)}
+    }
+    return changed[:]
+}
+
+// Applies Import_Options.changed to the documents of the import that changed
+// since it last wrote them: Refuse fails naming them, Keep leaves each as it
+// is (Writer.keeping), writing its blob alone, and warns of it.
+@(private)
+writer_changed :: proc(w:^Writer) -> bool {
+    if w.folder=="" || w.options.changed==.Discard {return true}
+    changed:=documents_changed(&w.previous,w.options.written,w.registry,context.temp_allocator)
+    if len(changed)==0 {return true}
+    names:=project.FOLDER_NAMES
+    paths:=make([]string,len(changed),context.temp_allocator)
+    for id,at in changed {
+        file,_:=asset.registry_find(w.registry,id)
+        paths[at]=fmt.tprintf("%s/%s",names[.Assets],file.path)
+    }
+    switch w.options.changed {
+    case .Refuse:
+        one:=len(changed)==1
+        return writer_fail(w,.Changed,"%s changed since %s was last imported, and importing it again writes over %s: import with discard_changes to write over %s, or leave it as it is to keep %s",
+            strings.join(paths,", ",context.temp_allocator),w.source,one?"it":"them",one?"that change":"those changes",one?"it":"them")
+    case .Keep:
+        w.keeping=make(map[base.Asset_Id]u64,context.temp_allocator)
+        for id,at in changed {
+            w.keeping[id]=written_of(w.options.written,id)
+            writer_warn(w,"%s changed since its import last wrote it and was left as it is: import %s with discard_changes to write over it",paths[at],w.source)
+        }
+    case .Discard:
+    }
+    return true
+}
+
+// What the file of a document holds: the content_hash of its header; 0 when
+// it is not an asset.
+written_hash :: proc(file:string) -> u64 {
+    head:[asset.HEADER_SIZE]u8
+    bytes,_,read_error:=serial.file_read_head(file,head[:])
+    if read_error!=.None {return 0}
+    header,header_error:=asset.header_read(bytes)
+    return header.content_hash if header_error==.None else 0
+}
+
+// Records in the report what the project's file of the document id holds as
+// the import leaves it (Import_Report.written): hash, else, for one it keeps
+// as it is, what the pin recorded. A material records nothing: it is followed
+// field by field.
+@(private)
+writer_written :: proc(w:^Writer,id:base.Asset_Id,kind:asset.Fourcc,hash:u64) {
+    if kind==asset.KIND_MATERIAL || asset.import_cached(kind) {return}
+    hash:=hash
+    if recorded,keeping:=w.keeping[id];keeping {hash=recorded}
+    if hash!=0 {append(&w.report.written,asset.Package_Written{id,hash})}
+}
+
 // Takes the blob hash as the output of the build, from the store: its owner and
 // dependencies, and its document at its target.
 @(private)
@@ -195,6 +278,9 @@ writer_take :: proc(w:^Writer,output:int,hash:store.Hash) -> bool {
         if follow_error!=.None {return save_failed(w,follow_error,target)}
         if warning!="" {writer_warn(w,"%s",warning)}
         if !existed {append(&w.created,strings.clone(target,w.keep))}
+        writer_written(w,o.id,o.kind,written_hash(target))
+    } else if _,keeping:=w.keeping[o.id];keeping {
+        writer_written(w,o.id,o.kind,0)
     }
     if o.kind==asset.KIND_SKELETON {append(&w.followed,Followed_Skeleton{o.id,strings.clone(blob,w.keep)})}
     return true

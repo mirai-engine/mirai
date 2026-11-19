@@ -37,7 +37,7 @@ template_copy :: proc(t:^testing.T,name:string) -> (root,engine:string,ok:bool) 
     }
     root=base.test_folder(t,fmt.tprintf("author-%s",name))
     if root=="" {return}
-    if !testing.expect(t,os.copy_directory_all(root,project.path(engine,"templates/game",allocator=context.temp_allocator))==nil,"the template is copied") {return}
+    if !testing.expect(t,base.copy_directory_all(root,project.path(engine,"templates/game",allocator=context.temp_allocator))==nil,"the template is copied") {return}
     return root,engine,true
 }
 
@@ -245,7 +245,7 @@ the_commands_read_write_and_check_the_document_of_an_asset :: proc(t:^testing.T)
     // by its key: a scene whose key did not move is said again from there, and one that
     // changed is checked again.
     build_folder:=project.path(root,".mirai","build",allocator=context.temp_allocator)
-    testing.expect(t,os.make_directory_all(build_folder)==nil)
+    testing.expect(t,base.make_directory_all(build_folder)==nil)
     keys:=project.path(build_folder,SCENE_KEYS_FILE,allocator=context.temp_allocator)
     on(&p,.Scene,"check")
     types:=scene_types_key(&p)

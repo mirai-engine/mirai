@@ -83,7 +83,7 @@ ray_cuts_update :: proc(r: ^Renderer, eye: Vec3) {
 		mesh := inst.meta.x & INSTANCE_MESH_MASK
 		if int(mesh) >= len(s.meshes) || inst.meta.w & INSTANCE_FLAG_HIDDEN != 0 {continue}
 		m := &s.meshes[mesh]
-		if m.ray_count <= 1 && inst.meta.x >> INSTANCE_RAY_SHIFT == 0 {continue}
+		if m.ray_count <= 1 && inst.meta.x >> INSTANCE_RAY_SHIFT & 3 == 0 {continue}
 		low, high := inst.bounds_min.xyz, inst.bounds_max.xyz
 		distance := linalg.length(eye - linalg.clamp(eye, low, high))
 		c0 := Vec3{inst.world[0].x, inst.world[1].x, inst.world[2].x}
@@ -100,8 +100,8 @@ ray_cuts_update :: proc(r: ^Renderer, eye: Vec3) {
 		always := u32(ray_cut_always(m^))
 		for cut != always && !ray_cut_traceable(m^, int(cut), r.hardware_rt) {cut = cut + 1 if always > cut else cut - 1}
 		m.rays[cut].wanted, m.rays[cut].traced = stamp, stamp
-		if cut == inst.meta.x >> INSTANCE_RAY_SHIFT {continue}
-		inst.meta.x = mesh | cut << INSTANCE_RAY_SHIFT
+		if cut == inst.meta.x >> INSTANCE_RAY_SHIFT & 3 {continue}
+		inst.meta.x = mesh | cut << INSTANCE_RAY_SHIFT | inst.meta.x & INSTANCE_UNSHADOWED
 		if abs(m.rays[cut].error - m.rays[was].error) * scale > probe_spacing_at(r.settings, distance) * 0.5 {scene_changed_box(s, low, high)}
 		instance_touch(s, u32(index))
 		s.tlas_dirty = true

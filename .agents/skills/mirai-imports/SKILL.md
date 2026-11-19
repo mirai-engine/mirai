@@ -133,7 +133,10 @@ the assets.
   be written as it is is not written (`serial.file_write_changed`).
 - **Reimporting keeps what a person changed.** A material stores what the source gave and the next
   import rewrites only that: fields changed afterwards stay, like the overrides of a prefab
-  ([materials](references/imports.md#what-is-written)).
+  ([materials](references/imports.md#what-is-written)). Any other document it writes over is
+  never written over unasked: one changed since the import wrote it stops the import, which names
+  it, and only `discard_changes` writes over it; a refresh leaves it as it is and warns
+  ([changed documents](references/imports.md#changed-documents)).
 - **What an asset was built from is its `Import_Info`**: source (size and hash), writer and format
   version, and only the settings the asset is made from. Reuse is a ref lookup: a mesh or a
   texture that a build of the package has, recording what it would be built from now, is taken;
@@ -187,9 +190,10 @@ the assets.
   `RDO_LAMBDA_DEFAULT` unless the setting `rdo_lambda` says otherwise.
 - **The editor never waits for the final encode** (`textures.Encode_Speed`): its imports take the
   Final of the texture cache, else build Fast (no RDO, low effort, `Texture_Flag.Fast`). The
-  refresh of a build that does not cook (the editor's) builds Fast too and takes Fast or Final;
-  only the refresh of a build that cooks, or of `mirai package engine`, requires Final. `mirai
-  import` and tools build Final, and so does the editor for a texture that is a document.
+  refresh of a build that does not cook (the editor's) and `mirai import` build Fast too and take
+  Fast or Final, so the command takes what the editor's import left; only the refresh of a build
+  that cooks, or of `mirai package engine` (`--final`), requires Final, and the editor builds
+  Final a texture that is a document.
 - **One algorithm, once.** Mips, color rules and block compression in `cook/textures` (the
   encoders are `compressor:blocks`); PBR conversions in `cook/import/pbr.odin`; triangulation,
   simplification, hulls and convex decomposition in `std/geom`; transforms with `std/math`.
@@ -249,6 +253,9 @@ the assets.
   package; refreshing from two empty stores writes nothing the second time) and
   `cook/import/sources/reimport_test.odin` (a refresh reads a source again with the formats of
   the plugins, and ingests a whole source again when what it is built from changes).
+- Changed documents: `an_import_does_not_write_over_a_document_changed_since_it_wrote_it` and
+  the edited case of `a_refresh_ingests_again_a_whole_source_when_what_it_is_built_from_changes`
+  (reimport tests), the question of the editor in `editor/import_api_test.odin`.
 - `cook/import/sources/cli_test.odin` needs `MIRAI_ROOT` (defined by `mirai test`); run it when
   touching `cook/import/sources/command.odin`. It imports in-process with `command`; the whole
   path (`mirai import` → `mirai-import`) needs the built engine.

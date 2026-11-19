@@ -75,8 +75,10 @@ scene_folder :: proc(s:^Session,otherwise:string) -> string {
 }
 
 // The name a person reads for the scene.
-document_title :: proc(d:^Document) -> string {
-    path:=document_path(d)
+document_title :: proc(d:^Document) -> string {return scene_title(document_path(d))}
+
+// The name a person reads for the scene of a path.
+scene_title :: proc(path:string) -> string {
     if path=="" {return "Untitled"}
     name:=filepath.base(path)
     if strings.has_suffix(name,SCENE_EXTENSION) {name=name[:len(name)-len(SCENE_EXTENSION)]}
@@ -161,6 +163,8 @@ scene_new :: proc(s:^Session,prefab:=false) {
         return
     }
     ai_document_closed(s,s.edit_world)
+    // No scene file: the lists of the renderer keep no marks for it.
+    host.capacities_open(s.app,"")
     if prefab {
         entity_make(s,w,{name="Prefab",named=true})
     } else {
@@ -322,6 +326,8 @@ modal_close :: proc(g:^Editor_Ui) {
     g.modal=.None
     g.delete_asset={}
     g.discard_path={}
+    g.import_source={}
+    clear(&g.import_changed)
 }
 
 // The answer to a question: the agents still working stop and what waited goes on.

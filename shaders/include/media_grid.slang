@@ -36,6 +36,12 @@ float media_seen_slice(Media_Grid g, float depth, bool empty) {
     return min(float(g.cells.z) + float(g.cells.w - 1u) * log2(depth / g.distance) / log2(g.reach / g.distance), float(g.cells.z + g.cells.w - 1u));
 }
 
+// The depth of slice coordinate s among all of them, back from media_seen_slice.
+float media_cell_depth(Media_Grid g, float s) {
+    if (s <= float(g.cells.z)) return media_slice_depth(g, s);
+    return g.distance * pow(g.reach / g.distance, (s - float(g.cells.z)) / float(g.cells.w - 1u));
+}
+
 // The light the media turn towards the eye from it to a depth along the ray
 // of uv, and what they let through: a cell holds them up to its far side.
 float4 media_seen(Texture3D<float4> media, Media_Grid g, float2 uv, float depth, bool empty) {

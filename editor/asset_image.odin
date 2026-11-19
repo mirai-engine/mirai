@@ -12,8 +12,8 @@ import "mirai:ui"
 
 // The light of a prefab and of the previews of the documents that show a
 // subject: a sun and a sky over the ground grid.
-PREVIEW_SUN :: gpu.Sun_Desc{direction={-erender.SUN_DIRECTION.x,erender.SUN_DIRECTION.y,-erender.SUN_DIRECTION.z},color={1,0.97,0.92},illuminance=100000,enabled=true}
-PREVIEW_ENVIRONMENT :: gpu.Environment{sky={3500,3850,4550},background={440,510,620},use_background=true,ground_grid=true}
+PREVIEW_SUN :: gpu.Sun_Desc{direction={-erender.SUN_DIRECTION.x,erender.SUN_DIRECTION.y,-erender.SUN_DIRECTION.z},color={1,0.97,0.92},illuminance=100000,enabled=true,indirect=1,scattering=1}
+PREVIEW_ENVIRONMENT :: gpu.Environment{sky={3500,3850,4550},background={440,510,620},use_background=true,background_behind=true,ground_grid=true}
 
 Asset_Image :: struct {
     key:u64, // of its entry of the texture table

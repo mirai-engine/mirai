@@ -203,21 +203,63 @@ published mesh without levels and the cluster DAG use it.
   8-bit local indices and up to `CLUSTER_MAX_VERTICES` (256: with seams, 128 triangles need more
   than 128 vertices, and the renderer draws the same corners per cluster whether full or not);
   groups of `CLUSTER_GROUP_SIZE` simplified to half with their border locked, and `Permissive` where
-  seams lock them. A group that does not go below `CLUSTER_SIMPLIFY_STUCK` is a root; its places
-  stay locked in all the levels above, because its clusters are drawn next to any of them.
+  seams lock them. A group still above `CLUSTER_SIMPLIFY_STUCK` (faceted pieces, a seam on every
+  edge) runs once more without the `Protect` of `vertex_lock`, only the outlines between submeshes
+  kept, with `Error_Clamped` and the error of its attributes in its own: what crossing the seams
+  loses reaches the cut, though never more than `CLUSTER_ERROR_EDGE_LIMIT` times the longest
+  edge of its triangles (where they are within the threshold, so is what their attributes lose;
+  its position error is never capped). A group stuck after that is a root; its places stay locked
+  in all the levels above, because its clusters are drawn next to any of them.
+- The triangles of each cluster the DAG simplifies come in the order of `meshlet_optimize` (the
+  port of `meshopt_optimizeMeshletLevel`), which names fewer vertices from far back: what the
+  coding of a page and the fetches of a pixel gain. Clusters of islands keep the order of their
+  islands, which share no vertex, and whole levels (`cluster_levels_build`) the order they are
+  given in, which decoding a level gives back.
 - **Cut contract.** Each `Cluster` carries its cull sphere and cone, `own` (sphere and error with
   which it appears: 0 at level 0) and `parent` (those of its group, shared by all its clusters;
   error `max(f32)` on a root), its group, its level and its submesh. It is drawn where `own`
   projects within the threshold and `parent` does not. The errors are of position and do not go down
-  toward the roots, and the sphere of the parent contains its own: every cut is a surface without
-  cracks.
+  toward the roots (a group that crossed seams adds that of its attributes), and the sphere of the
+  parent contains its own: every cut is a surface without cracks.
 - **Submeshes.** A cluster never crosses submeshes: each range of `Cluster_Source.ranges` is
   clustered separately, a vertex of two submeshes is `Invalid_Mesh`, and the outlines between
   submeshes protect themselves.
-- `cluster_levels_build` puts discrete levels (skinned meshes, foliage) in the same format: level k
-  is group k, its clusters share the sphere of level 0 with the error of level k as `own` and that
-  of k+1 as `parent`, and the same cut chooses a whole level.
-- Without `optimizeMeshlet` or the *sloppy* fallback of `clusterlod`: a locked group is a root.
+- `cluster_levels_build` puts discrete levels (skinned meshes) in the same format: level k is
+  group k, its clusters share the sphere of level 0 with the error of level k as `own` (0 for
+  level 0, which a view however near draws) and that of k+1 as `parent`, and the same cut chooses
+  a whole level.
+- Without the *sloppy* fallback of `clusterlod`: crossing the seams keeps the topology, and only
+  locked places stop a group, which joining cells cannot move either.
+
+## Islands (`cluster_islands.odin`)
+
+- Aggregate detail (leaves, cards) is pruned instead of simplified (Cook et al. 2007):
+  `Cluster_Source.islands`, each with its outlines (rungs, the finest first, each with its error)
+  in `island_indices`, a class and a fixed order. They make their own levels in the DAG beside the
+  rest of the mesh, which shares no place with them, and their vertices past level 0 are
+  `Cluster_Dag.made` (copies of a source vertex, moved).
+- `islands_reduce` is the one rule, for a group of the DAG and for a whole level of a skinned mesh:
+  each class first steps its islands to coarser outlines, then is halved keeping the first of its
+  order and growing the survivors about their centers to the area of level 0 they stand for; it
+  goes as far as the error given allows, then by the least more that brings it to its target of
+  triangles. The error of an island is that of its outline times its growth and, once pruned, at
+  least the farther of the largest radius of its class grown and of how far the area of a dropped
+  island moved (the sphere a survivor stands for), over `ISLAND_PIXELS`.
+- **What bounds the pruning** is that error, down to one island a class, and the cloud of the class
+  (`islands_clouds`): a survivor never grows past it, since an island larger than its plant draws
+  the plant larger and grows the box of the mesh. Sparse leaves prune to one island, overlapping
+  ones to the few that fill their cloud; the last island of a class is never dropped.
+- **Invariants.** An island is never split between clusters (clusters and groups are cut by
+  halving the box of their centers); a group keeps the rules of the cut contract (error the largest
+  of its clusters' and its own, sphere around theirs, a root where it cannot drop to
+  `CLUSTER_SIMPLIFY_STUCK`); every group draws in what it was reduced into the area it drew, and
+  adds error to its clusters' (else the cut would never draw it and the islands would grow
+  towards a level it skips); a group of one cluster is reduced too, so a far plant keeps shedding
+  leaves.
+- **Transition** (Cook et al. 2007, section 3.5). Every vertex of an island in a cluster is made
+  with where its island goes in the group: the scale to the area it draws in the next level, or 0
+  and its rank among the islands of its class the group drops (the last go first), so the renderer
+  can move it continuously from the cluster to its group.
 
 ## Approximate convex decomposition (`decompose.odin`)
 
@@ -242,8 +284,7 @@ published mesh without levels and the cluster DAG use it.
 ## Outside the package
 
 Not implemented: grid-based *sloppy* simplification, the optimal vertex placement of a collapse
-(`meshopt_simplifyWithUpdate`), cluster reordering (`optimizeMeshlet`) and oblique cut planes in the
-decomposition.
+(`meshopt_simplifyWithUpdate`) and oblique cut planes in the decomposition.
 
 ## Verification
 
@@ -265,8 +306,9 @@ decomposition.
   `simplify_of_a_sparse_part_is_that_of_the_part_alone`. When touching a port, repeat the
   byte-for-byte comparison with meshoptimizer.
 - `cluster_dag_of_a_closed_mesh_cuts_without_cracks_and_is_deterministic` (random cuts without odd
-  edges and intact group borders, also with locked groups), `cluster_levels_cut_one_whole_level`
-  and, on demo meshes,
+  edges and intact group borders, also with locked groups; the edge limit on faceted ones),
+  `meshlet_optimize_keeps_each_triangle_and_reuses_vertices_sooner`,
+  `cluster_levels_cut_one_whole_level` and, on demo meshes,
   `the_cluster_dag_of_demo_meshes_cuts_without_cracks_with_errors_that_grow` (`cook/import`).
 - `surface_edit_test.odin` and `boolean_test.odin`: run their cases in minimal and in speed when
   changing the kernel (the boolean one covers the failure of each allocation with its own temporary

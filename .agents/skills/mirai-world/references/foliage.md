@@ -157,9 +157,13 @@ to the overrides).
   again, are read again.
 - It reads again only the cells under the boxes the ground announced since it last ran
   (`Ground_Queries.changed`), or all those of a `Foliage` that moves or arrives. The cells to read
-  wait in a queue, each once, and are read `GROUND_TILES` per call, in jobs, those the editor asks
-  for first and then the nearest a source (`queue_order`, again when the sources move): a world
-  that loads much ground and many `Foliage` at once keeps responding and fills in around the
+  wait in a queue, each once, and a frame reads `GROUND_SAMPLES` samples of them over its ticks
+  and itself, in jobs that end within the call (so the ground does not change under them), those
+  the editor asks for first and then the nearest a source (`queue_order`, again when the sources
+  move); the rest wait for the next frames. While some wait, a cell that has no tile yet takes a
+  coarse one (`SAMPLES_MIN` a side) from the share `GROUND_COARSE` keeps, nearest first, so its
+  foliage shows at once and corrects when its tile is read: a world that loads much ground and
+  many `Foliage` at once keeps responding and fills in around the
   sources. When only the sources move, only the whole tiles and the sparse ones near a source are
   looked at. A grid (heights and weights) equal to the previous one
   does not raise its revision, and a frame without changes reads nothing.
@@ -206,7 +210,10 @@ to the overrides).
 
 A type with `impostor_distance` less than its `cull_distance` (or without it) has a far shape
 (`far.odin`), one per asset it shows (mesh or prefab), frame size and world (`Kind_Key`), made
-the first time a type shows it and again when the mesh changes, like any cook:
+the first time a type shows it and again when the mesh changes, like any cook. Its frames are
+drawn once what its parts show is settled (`render.mesh_renderer_settled`: the mesh loaded, no
+texture of its materials arriving and their rows with the renderer), so they show the materials
+as they stay:
 
 - **Octahedral impostor** (Brucks): `render.impostor_capture` draws with the thumbnail renderer
   `IMPOSTOR_GRID`² frames of the upper half of the sphere, unlit: base color and coverage, normal
@@ -225,12 +232,16 @@ the first time a type shows it and again when the mesh changes, like any cook:
   cell that changes writes only its block, the next draw takes the change and until then the
   buffer shows what it held; the room of a freed block is taken by the next cell that fits. In
   the `Gbuffer` stage of each view a dispatch (`foliage_impostor_cull.comp`) keeps the instances
-  of the band of their type whose sphere is in the frustum, and one indirect draw makes a quad of
-  each toward the eye, with a fragment of its own (`foliage_impostor.frag`): it blends the three
-  neighboring frames of the direction, each moved by its depth, and writes color, normal, the
-  terms of the material and the depth of the leaves (`SV_Depth`), so it is lit and shaded like
-  the scene. An instance names its row by the slot of its `Foliage` (`Resident_Owner.slot`) and
-  its type, so other `Foliage` coming and going rewrite nothing. Nested views do not draw it.
+  of the band of their type whose sphere is in the frustum and that the depth pyramid of the scene
+  does not hide, in two phases like the scene: the first draws those the pyramid of the previous
+  frame does not hide either, the pyramid is rebuilt with them, and the second draws those that
+  waited and that it shows, so they hide one another without popping. Each indirect draw makes a
+  quad of each toward the eye, with a fragment of its own (`foliage_impostor.frag`): it blends
+  the three neighboring frames of the direction, each moved by its depth, and writes color,
+  normal, the terms of the material and the depth of the leaves (`SV_Depth`), so it is lit and
+  shaded like the scene. An instance names its row by the slot of its `Foliage`
+  (`Resident_Owner.slot`) and its type, so other `Foliage` coming and going rewrite nothing.
+  Nested views do not draw it.
 - **Rays.** Per cell and type, according to the distance to the sources (`scene.resident`, with
   its hysteresis): near, the mesh batches; far, the crown (`crown_build`: the surface of the
   voxels dense in triangles, `CROWN_INSET` inside) as a `Rays_Only` batch that casts shadows if
@@ -267,25 +278,29 @@ gusts oscillate with the phase of a fixed wave of the world (`WIND_WAVE`), so ne
 together and the phase changes across a field or a forest. There are three paths with that same
 function:
 
-- **Type that casts a shadow: variants** (`wind.odin`). `wind_variants` deformable copies of each
-  mesh, with their levels (`render.deformable_create`), which `foliage_sway.comp` writes in the
-  `Geometry` stage and whose BLAS the renderer refits. They are up to `WIND_TURNS` turns about up
-  and, past them, phases of each turn (`wind_turns`): an instance takes the turn nearest its own
-  and tilts with the wind within half a step, and the phase of the band of the gust wave its place
-  is in (`wind_variant`). Raster and shadow rays see the same variant; reflections, GI and probes
-  see the rest mesh (`Ray_Visible` and `Rays_Only` batch). Sets of variants are per zone of wind:
-  a cell takes those of the `Wind` on top at the middle of its instances (`wind_zone_at`, over a
-  `volume.Index` of the zones), and each set sways with the wind of its zone, so a calm valley
-  stays calm whatever blows at the view. Where the zones are (not their values) has a revision:
-  when it changes, the cells whose zone changed are published again. The wind is held to
-  `WIND_SPEED_MAX`: the variants' box contains it, so a frame of wind changes no boxes and marks
-  no light, and the direct light is not reset by it. Without wind the variants stay still
-  without writing.
-- **Type without shadow: hook.** `foliage_vertex.slang` is the [vertex hook][hook] of its batches,
+- **Type that casts a shadow and sways much: variants** (`wind.odin`). A part whose tip sways at
+  least `SHADOW_SWAY_LEAST` at `WIND_SPEED_MAX` (`type_sway`, from its `wind` and the reach of its
+  mesh at its largest instance: trees and bushes, not grass, flowers or wheat) takes `wind_variants`
+  deformable copies of each mesh, with their levels (`render.deformable_create`), which
+  `foliage_sway.comp` writes in the `Geometry` stage and whose BLAS the renderer refits. They are up
+  to `WIND_TURNS` turns about up and, past them, phases of each turn (`wind_turns`): an instance
+  takes the turn nearest its own and tilts with the wind within half a step, and the phase of the
+  band of the gust wave its place is in (`wind_variant`). Each variant says how far it sways
+  (`wind_reach`): the shadow maps coarser than that, and those past the [reach of what sways][sway],
+  keep it at rest. Raster and shadow rays see the same variant; reflections, GI and probes see the
+  rest mesh (`Ray_Visible` and `Rays_Only` batch). Sets of variants are per zone of wind: a cell
+  takes those of the `Wind` on top at the middle of its instances (`wind_zone_at`, over a
+  `volume.Index` of the zones), and each set sways with the wind of its zone, so a calm valley stays
+  calm whatever blows at the view. Where the zones are (not their values) has a revision: when it
+  changes, the cells whose zone changed are published again. The wind is held to `WIND_SPEED_MAX`:
+  the variants' box contains it, so a frame of wind changes no boxes and marks no light, and the
+  direct light is not reset by it. Without wind the variants stay still without writing.
+- **Any other type: hook.** `foliage_vertex.slang` is the [vertex hook][hook] of its batches,
   with the wind of its place (`//! mirai frame Foliage_Wind_Frame foliage_wind`, written from the
-  `Mask` stage relative to the origin of each view) and the gust wave of its place. No ray sees it
-  move. The hook moves only the batches of foliage (`Batch_Desc.vertex.y`); `vertex.x` is the
-  sway of a type that sways in it.
+  `Mask` stage relative to the origin of each view) and the gust wave of its place. No ray and no
+  shadow map sees it move: a small plant that casts a shadow casts it at rest, in the maps and in
+  the rays, as its moving shadow would be noise on the ground. The hook moves only the batches of
+  foliage (`Batch_Desc.vertex.y`); `vertex.x` is the sway of a type that sways in it.
 - **Impostors.** The quad of an impostor leans whole about its instance's origin by the lean of
   the top of its mesh in the wind of its place (`Impostor_Row.far.z`), so the crossfade does not
   go from swaying to still.
@@ -304,6 +319,7 @@ function:
   wind and a bender move a point (`hook_reach`), and the views cull them with those grown boxes.
 
 [hook]: ../../mirai-rendering/references/views.md#extension-hooks-and-constants
+[sway]: ../../mirai-rendering/references/lights.md#what-sways-in-the-maps
 
 ## Collision
 
@@ -329,7 +345,8 @@ function:
   server meets the trees far from every player, and the navmesh, built from the static collision,
   has the same obstacles wherever the players are. A `Foliage` kept for a section that is not
   loaded (`scene.Far_Kept`) collides with nothing. Physics_Settings must hold the shapes of every
-  loaded cell; past them it is the `foliage.physics` problem.
+  loaded cell; past them it is the `foliage.physics` problem, and a cell without room keeps what
+  fit and is not built again until it, its ground or its entity changes.
 - **Instances taken out** leave with their shapes alone (`collider_remove`): the body of the cell
   stays unless it has none left, and the navmesh rebuilds only around them. One put back builds
   its cell again.

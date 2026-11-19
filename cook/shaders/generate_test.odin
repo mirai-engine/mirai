@@ -9,6 +9,7 @@ import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:std/base"
+import "mirai:std/serial"
 
 @(private="file")
 FILL :: `#include "native.slang"
@@ -125,7 +126,8 @@ mini_make :: proc(t:^testing.T,mini:^Mini) -> bool {
     os.make_directory_all(path_join(mini.root,"render",allocator=context.temp_allocator))
     os.make_directory_all(path_join(mini.root,"rhi",allocator=context.temp_allocator))
     mini.output=path_join(mini.root,"shaders/build",allocator=context.temp_allocator)
-    options.root,options.odin,options.workers=mini.root,true,2
+    // Each Surface program is drawn as an opaque material: compiled for the stages of that use.
+    options.root,options.odin,options.workers,options.every=mini.root,true,2,{.Opaque}
     mini.options=options
     return true
 }
@@ -456,13 +458,18 @@ program_reaches_only_the_stages_of_its_domain_and_a_project_gets_the_code_of_its
     testing.expect(t,mini_read(&mini,strings.concatenate({"game/",PROJECT_OUTPUT,"/post.frag",host},context.temp_allocator))!=mini_read(&mini,strings.concatenate({"shaders/build/post.frag",host},context.temp_allocator)))
 
     // Both backends, asked for: every stage is compiled again with the other,
-    // and the code of this system is the same bytes.
+    // and the code of this system is the same bytes. A stage of the rays traced
+    // by software joins them, for Vulkan alone: the generation of the engine
+    // before that of the project already gave its code on a Vulkan system,
+    // and on a Metal one only its reflection.
     shade=mini_read(&mini,strings.concatenate({"game/",PROJECT_OUTPUT,"/shade.frag",host},context.temp_allocator))
+    fixture_write(t,mini.root,"shaders/trace.comp.slang",TRACE)
     options.backends={.Vulkan,.Metal}
     both:=mini_generate(t,&mini,options)
+    traced_by_engine:=1 if HOST_BACKEND==.Vulkan else 0
     testing.expect_value(t,both.error,"")
-    testing.expect_value(t,both.compiled,7+surfaces)
-    testing.expect_value(t,both.reused,0)
+    testing.expect_value(t,both.compiled,8+surfaces-traced_by_engine)
+    testing.expect_value(t,both.reused,traced_by_engine)
     testing.expect(t,os.is_file(path_join(output,"shade.frag.metal",allocator=context.temp_allocator)) && os.is_file(path_join(output,"fill.comp.metal",allocator=context.temp_allocator)))
     testing.expect(t,mini_read(&mini,strings.concatenate({"game/",PROJECT_OUTPUT,"/shade.frag",host},context.temp_allocator))==shade,"a backend compiles the same with or without the other")
     metal:=mini_read(&mini,strings.concatenate({"game/",PROJECT_OUTPUT,"/shade.frag.metal"},context.temp_allocator))
@@ -475,16 +482,49 @@ program_reaches_only_the_stages_of_its_domain_and_a_project_gets_the_code_of_its
     base.remove_all(path_join(mini.root,".mirai/cache",CACHE_NAME,CACHE_STAGES,allocator=context.temp_allocator))
     alone:=mini_generate(t,&mini,options)
     testing.expect_value(t,alone.error,"")
-    testing.expect_value(t,alone.compiled,7+surfaces)
+    testing.expect_value(t,alone.compiled,8+surfaces)
     testing.expect(t,mini_read(&mini,"metal-only/shade.frag.metal")==metal && len(metal)>0,"Metal compiles the same without Vulkan")
     testing.expect(t,!os.exists(path_join(options.output,"shade.frag.spv",allocator=context.temp_allocator)))
     manifest:=mini_read(&mini,"metal-only/manifest.json")
     testing.expect(t,strings.contains(manifest,"\"spv\": \"\"") && strings.contains(manifest,"\"msl\": \"shade.frag.metal\"") && !strings.contains(manifest,".spv\""),"a manifest names the code it has")
     testing.expect(t,strings.contains(manifest,"\"kind\": \"Uniform_Buffer\""),"the bindings are reflected from the backend that was compiled")
+    // Metal takes no code of the stage of the rays traced by software: it is
+    // compiled only to be reflected, without the optimizer, and its entry is the
+    // one the generation that took its code wrote.
+    traced:=[2]Shader{}
+    for folder,i in ([]string{output,options.output}) {
+        for entry in manifest_read(folder,context.temp_allocator).shaders {
+            if entry.name=="trace.comp" {traced[i]=shader_trim(entry,{})}
+        }
+    }
+    taken,_:=serial.text_encode(traced[0],.Pretty,context.temp_allocator)
+    reflected,_:=serial.text_encode(traced[1],.Pretty,context.temp_allocator)
+    testing.expect(t,traced[0].name=="trace.comp" && len(traced[1].bindings)==2,"both generations have the stage")
+    testing.expect_value(t,string(reflected),string(taken))
+    testing.expect(t,!strings.contains(manifest,"trace.comp.metal"))
+    apart:=false
+    for file in files_in(path_join(mini.root,".mirai/cache",CACHE_NAME,CACHE_STAGES,allocator=context.temp_allocator)) {apart||=strings.has_suffix(file.name,REFLECTED+".json")}
+    testing.expect(t,apart,"what was compiled only to be reflected is kept apart in the shared cache")
 }
 
 @(private="file")
-SHADE_EACH :: "//! per surface program\n" + SHADE
+TRACE :: `#include "native.slang"
+//! software rays
+[[vk::binding(0, 0)]] StructuredBuffer<float> rays : register(t0, space0);
+[[vk::binding(1, 0)]] RWStructuredBuffer<float> hits : register(u1, space0);
+[shader("compute")]
+[numthreads(32, 1, 1)]
+void main(uint3 id : SV_DispatchThreadID) {
+    float distance = rays[id.x];
+    for (uint i = 0; i < 4; i++) distance *= 0.5;
+    hits[id.x] = distance;
+}
+`
+
+@(private="file")
+SHADE_EACH :: "//! per surface program opaque\n" + SHADE
+@(private="file")
+SHADE_USES :: "//! per surface program opaque glow=preview\n//! variant glow MIRAI_GLOW\n" + SHADE
 
 @(private="file")
 MOVE_EACH :: `#include "native.slang"
@@ -503,7 +543,7 @@ void main(uint3 id : SV_DispatchThreadID) {
 `
 
 @(private="file")
-SWAY_PROGRAM :: "//! mirai surface Sway\n//! vertex animated reach 0.5\nnamespace Sway {struct Parameters {float strength;}; Mirai_Vertex vertex(Mirai_Vertex_Context ctx,Parameters p) {Mirai_Vertex v=mirai_vertex_default(ctx);v.position.x+=sin(ctx.time)*clamp(p.strength,0.0,0.5);return v;} Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {return mirai_surface_default(ctx);}}\n"
+SWAY_PROGRAM :: "//! mirai surface Sway\n//! vertex reach 0.5\nnamespace Sway {struct Parameters {float strength;}; Mirai_Vertex vertex(Mirai_Vertex_Context ctx,Parameters p) {Mirai_Vertex v=mirai_vertex_default(ctx);v.position.x+=sin(ctx.time)*clamp(p.strength,0.0,0.5);return v;} Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {return mirai_surface_default(ctx);}}\n"
 
 // A stage marked per vertex program is compiled only for the Surface
 // programs with a function vertex, and has no stage of its own: one that
@@ -540,19 +580,27 @@ stage_per_vertex_program_is_compiled_only_for_the_programs_that_move_vertices ::
 }
 
 // A stage marked per Surface program: the stage of the materials without one,
-// then one for each program, which the renderer finds by name outside
-// Shader_Id. A program reaches only its own stage.
+// then one for each program built for a use it serves, which the renderer
+// finds by name outside Shader_Id. A program reaches only its own stage, and
+// only those of what it is drawn as: by the assets or by its own `//! use`.
 @(test)
 stage_per_surface_program_is_compiled_for_each_program_and_only_that_program_reaches_it :: proc(t:^testing.T) {
     mini:Mini
     if !mini_make(t,&mini) {return}
-    fixture_write(t,mini.root,"shaders/shade.frag.slang",SHADE_EACH)
-    engine:=mini_generate(t,&mini,mini.options)
+    fixture_write(t,mini.root,"shaders/shade.frag.slang",SHADE_USES)
+    drawn:=mini.options
+    drawn.every={}
+    drawn.uses={{"Grid",{.Opaque}},{"Ocean",{.Opaque,.Preview}}}
+    engine:=mini_generate(t,&mini,drawn)
     testing.expect_value(t,engine.error,"")
     if engine.error!="" {return}
     host:=HOST_CODE
-    for stage in ([]string{"shade.frag","shade__Grid.frag","shade__Ocean.frag"}) {
-        testing.expectf(t,os.is_file(path_join(mini.output,strings.concatenate({stage,host},context.temp_allocator),allocator=context.temp_allocator)),"%s%s is published",stage,host)
+    published :: proc(folder,stage,host:string) -> bool {return os.is_file(path_join(folder,strings.concatenate({stage,host},context.temp_allocator),allocator=context.temp_allocator))}
+    for stage in ([]string{"shade.frag","shade_glow.frag","shade__Grid.frag","shade__Ocean.frag","shade__Ocean_glow.frag"}) {
+        testing.expectf(t,published(mini.output,stage,host),"%s%s is published",stage,host)
+    }
+    for stage in ([]string{"shade__Grid_glow.frag","shade__Pieces.frag","shade__Pieces_glow.frag"}) {
+        testing.expectf(t,!published(mini.output,stage,host),"%s%s is not compiled: nothing draws its program so",stage,host)
     }
     table:=mini_read(&mini,"render/shaders_gen.odin")
     enum_end:=strings.index(table,"}")
@@ -562,17 +610,17 @@ stage_per_surface_program_is_compiled_for_each_program_and_only_that_program_rea
 
     project:=path_join(mini.root,"game",allocator=context.temp_allocator)
     output:=path_join(project,PROJECT_OUTPUT,allocator=context.temp_allocator)
-    fixture_write(t,project,"shaders/tint.slang",tint_program("1.0"))
-    options:=mini.options
+    fixture_write(t,project,"shaders/tint.slang",strings.concatenate({"//! use preview\n",tint_program("1.0")},context.temp_allocator))
+    options:=drawn
     options.odin=false
     options.project=project
     first:=mini_generate(t,&mini,options)
     testing.expect_value(t,first.error,"")
     testing.expect_value(t,first.compiled,1)
-    testing.expect(t,os.is_file(path_join(output,strings.concatenate({"shade__Tint.frag",host},context.temp_allocator),allocator=context.temp_allocator)),"the program of the project has its stage")
+    testing.expect(t,published(output,"shade__Tint_glow.frag",host) && !published(output,"shade__Tint.frag",host),"the program of the project has the stage of what its source declares alone")
     testing.expect(t,mini_read(&mini,strings.concatenate({"game/",PROJECT_OUTPUT,"/shade.frag",host},context.temp_allocator))==mini_read(&mini,strings.concatenate({"shaders/build/shade.frag",host},context.temp_allocator)),"the stage without a program is the engine's")
 
-    fixture_write(t,project,"shaders/tint.slang",tint_program("0.5"))
+    fixture_write(t,project,"shaders/tint.slang",strings.concatenate({"//! use preview\n",tint_program("0.5")},context.temp_allocator))
     edited:=mini_generate(t,&mini,options)
     testing.expect_value(t,edited.error,"")
     testing.expect_value(t,edited.compiled,1)

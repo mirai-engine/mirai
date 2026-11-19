@@ -17,15 +17,15 @@ import "mirai:std/subprocess"
 // installed engine adds the store of the builds of its plugins), then built
 // from its source when the source is on this machine; a package none of them
 // gives fails by name. Textures are required Final for a build that cooks
-// them and taken Fast, as the editor imports them, for one that does not
-// (fast). What the program says of each source it imports goes to the output
+// them (final) and taken Fast, as the editor imports them, for one that does
+// not. What the program says of each source it imports goes to the output
 // of this process as it says it: a large source imports for minutes.
 // message, in the temp allocator: why it failed.
-imports_refresh :: proc(program:string,roots:[]string,fast:bool,store_root:string,from:="") -> (ok:bool,message:string) {
+imports_refresh :: proc(program:string,roots:[]string,final:bool,store_root:string,from:="") -> (ok:bool,message:string) {
     if len(roots)==0 {return true,""}
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,program)
-    if fast {append(&command,"--fast")}
+    if final {append(&command,"--final")}
     if store_root!="" {append(&command,"--store",store_root)}
     if from!="" {append(&command,"--from",from)}
     for root in roots {append(&command,"--refresh",root)}

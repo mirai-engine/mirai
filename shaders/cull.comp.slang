@@ -1,4 +1,6 @@
 #include "native.slang"
+// cost: counts by mesh too (cost.slang), in the frame of a request alone.
+//! variant cost MIRAI_COST=1
 // GPU-driven culling, by instance and then by cluster, in two phases a frame:
 //  phase 0: an instance in the frustum and not hidden by last frame's depth
 //           pyramid (projected with last frame's camera) hands the clusters
@@ -15,6 +17,9 @@
 // and their cull distance.
 #include "cut.slang"
 #include "cull_common.slang"
+#ifdef MIRAI_COST
+#include "cost.slang"
+#endif
 #define MIRAI_GROUP_X 64
 #define MIRAI_GROUP_Y 1
 #define MIRAI_GROUP_Z 1
@@ -22,11 +27,37 @@
 [[vk::binding(SLOT_PASS3, 0)]] RWStructuredBuffer<uint> candidates : register(MIRAI_REGISTER(u, SLOT_PASS3), space0);
 // render.Gpu_Glass_Dispatch: zero until glass is seen.
 [[vk::binding(SLOT_PASS4, 0)]] RWStructuredBuffer<uint> glass_dispatch : register(MIRAI_REGISTER(u, SLOT_PASS4), space0);
+// What phase 0 starts the cull of a view with, before the cluster pass reads
+// it: the draws of the resolve of the Surface programs
+// (render.Gpu_Program_Draw), that of the materials without one drawn over the
+// view and those of the programs empty, over no pixel, until a cluster of
+// theirs turns them on and widens them to its box, and the counts and cursors
+// of the depth buckets of the tested bins of both phases (cull_bins.comp),
+// zero.
+[[vk::binding(SLOT_PASS6, 0)]] RWStructuredBuffer<uint> depth_buckets : register(MIRAI_REGISTER(u, SLOT_PASS6), space0);
+[[vk::binding(SLOT_PASS9, 0)]] RWStructuredBuffer<uint> program_draws : register(MIRAI_REGISTER(u, SLOT_PASS9), space0);
+
+void cull_start(uint i) {
+    uint threads = (frame.instance_count + frame.batches.x + MIRAI_GROUP_X - 1u) / MIRAI_GROUP_X * MIRAI_GROUP_X;
+    for (uint program = i; program < max(params.programs, 1u); program += threads) {
+        uint at = program * PROGRAM_DRAW_WORDS;
+        program_draws[at] = program == 0u ? 3u : 6u;
+        program_draws[at + 1u] = program == 0u ? 1u : 0u;
+        program_draws[at + 2u] = 0u;
+        program_draws[at + 3u] = program;
+        program_draws[at + 4u] = 0xffffffffu;
+        program_draws[at + 5u] = 0xffffffffu;
+        program_draws[at + 6u] = 0u;
+        program_draws[at + 7u] = 0u;
+    }
+    for (uint word = i; word < CULL_DEPTH_WORDS; word += threads) depth_buckets[word] = 0u;
+}
 
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 dispatch_id : SV_DispatchThreadID) {
     uint i = dispatch_id.x;
+    if (params.phase == 0u) cull_start(i);
     if (i >= frame.instance_count + frame.batches.x) return;
     bool batched = instance_batched(i);
     Instance row = (Instance)0;
@@ -47,12 +78,14 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     bool gone = batched && batch_faded(row, inst.bounds_min.xyz, inst.bounds_max.xyz) >= 1.0;
     bool visible = false;
     if (params.phase == 0u) {
-        // What the view draws: the instances in its layers, not of the body it leaves out, in its frustum and not all behind its clip plane.
+        // What the view draws: the instances in its layers, not of the body it leaves out nor faded out whole by their values, in its frustum and not all behind its clip plane.
         float3 clipped = lerp(inst.bounds_min.xyz, inst.bounds_max.xyz, step(float3(0.0), frame.clip_plane.xyz));
-        bool own = view_body_fade(inst.meta.w) >= 1.0;
+        bool own = max(view_body_fade(inst.meta.w), material_values_fade(inst.material_values)) >= 1.0;
         bool in_frustum = (inst.meta.w & INSTANCE_FLAG_HIDDEN) == 0u && !own && !gone && view_draws_layers(inst.meta.w >> INSTANCE_LAYERS_SHIFT, inst.meta.w)
             && dot(frame.clip_plane.xyz, clipped) + frame.clip_plane.w >= 0.0 && frustum_visible(inst.bounds_min.xyz, inst.bounds_max.xyz);
-        bool hidden = in_frustum && params.occlusion != 0u && occluded(inst.bounds_min.xyz, inst.bounds_max.xyz, frame.prev_view_proj, frame.prev_eye.xyz, frame.prev_depth_plane);
+        float3 before_low, before_high;
+        box_before(inst, inst.bounds_min.xyz, inst.bounds_max.xyz, before_low, before_high);
+        bool hidden = in_frustum && params.occlusion != 0u && occluded(before_low, before_high, frame.prev_view_proj, frame.prev_eye.xyz, frame.prev_depth_plane);
         visible = in_frustum && !hidden;
         candidates[i] = hidden ? 1u : 0u;
         if (!in_frustum && !blended) InterlockedAdd(stats[0].culled_instances, 1u);
@@ -71,6 +104,9 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     }
     if (!visible || blended) return;
     InterlockedAdd(stats[0].visible_instances, 1u);
+#ifdef MIRAI_COST
+    cost_add(instance_mesh(inst), INVALID, COST_INSTANCES, 1u);
+#endif
     InterlockedAdd(stats[0].kinds[cull_kind(batched, mesh) * 3u], 1u);
     if (params.phase != 0u) InterlockedAdd(stats[0].late[0], 1u);
     uint2 clusters = instance_clusters(view_detail(), inst, mesh);

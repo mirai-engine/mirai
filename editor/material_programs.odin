@@ -9,6 +9,7 @@ import "mirai:cook/shaders"
 import "mirai:host"
 import "mirai:project"
 import gpu "mirai:render"
+import "mirai:render/abi"
 
 // The material programs of the project are published again when a source of
 // theirs changes through the editor (an API edit, an undo, a discard): the
@@ -20,6 +21,13 @@ import gpu "mirai:render"
 // they were (gpu.renderer_shaders_idle), and the viewport shows it. The whole
 // generation replaces them when it is done. A change while a job runs cancels
 // it and starts another.
+//
+// A program is compiled only for what the assets draw it as (abi.Program_Use).
+// When the renderer draws one as something its stages were not compiled for
+// (gpu.renderer_programs_missing), the editor publishes the programs again:
+// a preview of the editor is added to what the generation compiles, and any
+// other use is taken from the files once each time they change, since an edit
+// may have made it; without one, the problem of the frame says how to have it.
 
 Programs_Publication :: struct {
     job:^build.Shaders_Job,
@@ -35,7 +43,12 @@ Programs_Publication :: struct {
     serial:u64,               // publications that ended, published or not
     failed:bool,              // the last one failed: message says why
     message:string,
+    previews:[dynamic]string, // the programs the previews of the editor drew: compiled for them too
+    tried:[dynamic]Program_Tried, // the other uses a draw missed and a publication looked for in the files
 }
+
+// A use of a program a publication looked for in the files, at their revision.
+Program_Tried :: struct {program:string,uses:abi.Program_Uses,revision:u64}
 
 // Asks for a publication of the programs of the project.
 programs_publish_request :: proc(s:^Session) {
@@ -70,7 +83,16 @@ programs_drawing :: proc(s:^Session) -> bool {
     p:=&s.build.programs
     if p.again || (p.job!=nil && p.running==0) {return true}
     if s.app.renderer==nil {return false}
-    return host.app_shaders_loading(s.app,p.running!=0?p.running:p.whole) || gpu.renderer_pipelines_pending(s.app.renderer)
+    return host.app_shaders_loading(s.app,p.running!=0?p.running:p.whole) || gpu.renderer_pipelines_pending(s.app.renderer)>0
+}
+
+// What the frames of the editor wait for now (host.App_Pending), with the
+// publication of the programs that runs or waits to run.
+view_pending :: proc(s:^Session) -> (pending:host.App_Pending) {
+    if s.app==nil || s.app.renderer==nil {return}
+    pending=host.app_pending(s.app)
+    if s.build!=nil && (s.build.programs.job!=nil || s.build.programs.again) {pending.programs+=1}
+    return
 }
 
 @(private)
@@ -98,7 +120,34 @@ programs_start :: proc(s:^Session) {
         unused:=gpu.renderer_shaders_idle(s.app.renderer)
         for id in gpu.Shader_Id {if unused[id] {append(&idle,gpu.SHADERS[id].name)}}
     }
-    p.job=build.shaders_start(p.project,first[:],idle[:])
+    p.job=build.shaders_start(p.project,first[:],idle[:],p.previews[:])
+}
+
+// What the frames drew programs as without their stages: a preview is
+// compiled from now on, and another use is looked for in the files once for
+// each revision of them.
+@(private)
+programs_missing :: proc(s:^Session) {
+    if s.app==nil || s.app.renderer==nil || s.app.assets==nil {return}
+    p:=&s.build.programs
+    revision:=s.app.assets.registry.revision
+    publish:=false
+    for miss in gpu.renderer_programs_missing(s.app.renderer) {
+        program:=gpu.program_of_id(s.app.renderer,miss.program)
+        if program==nil {continue}
+        if .Preview in miss.uses {
+            known:=false
+            for name in p.previews {known||=name==program.name}
+            if !known {append(&p.previews,strings.clone(program.name));publish=true}
+            continue
+        }
+        at:=-1
+        for each,i in p.tried {if each.program==program.name && each.uses==miss.uses {at=i}}
+        if at>=0 && p.tried[at].revision==revision {continue}
+        if at<0 {append(&p.tried,Program_Tried{strings.clone(program.name),miss.uses,revision})} else {p.tried[at].revision=revision}
+        publish=true
+    }
+    if publish {programs_publish_request(s)}
 }
 
 @(private)
@@ -117,6 +166,7 @@ programs_finish :: proc(s:^Session,failed:bool,message:string) {
 // Follows the publication; between frames.
 programs_poll :: proc(s:^Session) {
     p:=&s.build.programs
+    programs_missing(s)
     if p.job==nil {
         if p.again {programs_start(s)}
         return
@@ -175,5 +225,9 @@ programs_cancel :: proc(s:^Session) {
     }
     if p.project!=nil {project.close(p.project);free(p.project)}
     delete(p.message)
+    for name in p.previews {delete(name)}
+    delete(p.previews)
+    for each in p.tried {delete(each.program)}
+    delete(p.tried)
     p^={}
 }

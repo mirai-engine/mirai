@@ -430,8 +430,9 @@ want_piece :: proc(x:^Exchange,wi,index:int,piece:[]u8) -> store.Error {
             }
             if oldest>=0 {receiver_stop(x,oldest)}
         }
-        error:store.Error
-        w.receiver,error=store.receiver_open(x.desc.store,w.address)
+        // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+        receiver,error:=store.receiver_open(x.desc.store,w.address)
+        w.receiver=receiver
         if error!=.None {return error}
         w.receiving=true
         x.receivers+=1

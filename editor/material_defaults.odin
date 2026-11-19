@@ -1,5 +1,6 @@
 package editor
 
+import "mirai:asset"
 import "mirai:core"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -8,7 +9,7 @@ import "mirai:std/base"
 import "mirai:ui"
 
 material_parameter_value :: proc(v:^gpu.Material_Desc,program:^gpu.Program,name:u64) -> [4]f32 {
-    if standard:[4]f32;erender.material_standard_value(&v.info,name,&standard,false) {return standard}
+    if standard:[4]f32;asset.material_standard_value(&v.info,name,&standard,false) {return standard}
     if program!=nil {
         for &parameter in program.parameters {
             if base.name_hash(parameter.name)!=name {continue}

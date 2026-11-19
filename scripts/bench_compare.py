@@ -20,7 +20,6 @@ numbers of two checkouts compare.
   netpublish    entity state publication without solver, GPU or connected clients
   fade          one Material_Values.color alpha changed in a grid of --cubes cubes
   particles     four emitters of 25 000 particles a second, additive and unlit, then blended and lit
-  particlelights  four emitters of 256 particle lights each, casting shadows and then not
   terrain       hover and held sculpt on a terrain fixture supplied by --scene
   presentation  samples an already running windowed editor, without changing it
   probe         lists the entities and what a click at the center selects
@@ -495,54 +494,6 @@ def scenario_particles(b: Bench):
         engine_stop(b)
 
 
-PARTICLE_LIGHT_VARIANTS = {"shadows": True, "shadowless": False}
-
-
-def scenario_particlelights(b: Bench):
-    """Four emitters of 256 particle lights each (1024: the room of a part of
-    the GPU lights), 4 m of range over what stands around them, from the
-    camera of the measurements of particles: the GPU by pass (shadow trace,
-    shadow filter, the direct light and the particles) with their lights
-    casting shadows (light_shadows) and without, over 300 frames after 120
-    to settle."""
-    metrics, passes, parts = {}, {}, {}
-    engine_start(b, scene_extra(b))
-    try:
-        configure(b)
-        rpc(b, "camera.set", {"position": [0, 2.2, 8.5], "target": [0, 1.1, 0]})
-        emitters = []
-        for index in range(4):
-            added = rpc(b, "scene.write", merge({"preset": "particles", "name": f"Bench particle lights {index}",
-                                                 "position": [index * 1.5 - 2.25, 0.8, 0]}))
-            emitters.append(added["id"])
-        for variant, shadows in PARTICLE_LIGHT_VARIANTS.items():
-            for entity in emitters:
-                rpc(b, "particle.instance.set", {"id": entity, "values": {
-                    "rate": 512, "lifetime": [1, 1], "shape": "Sphere", "shape_size": [0.7, 0.7, 0.7],
-                    "shell": 0, "speed": [0, 0], "size": [0.04, 0.06], "gravity": 0, "blend": "Additive", "lit": False,
-                    "lights": 256, "light_intensity": 30, "light_range": 4, "light_shadows": shadows}})
-            step(b, 120)
-            summary = rpc(b, "profile.capture", {"frames": 300, "advance": True, "top": 64}, 1200)
-            frame = summary.get("frame") or {}
-            metrics[f"{variant}_gpu_ms"] = rounded(number(frame.get("gpu_ms")), 3)
-            metrics[f"{variant}_frame_ms"] = rounded(number(frame.get("p50_ms")), 3)
-            metrics[f"{variant}_cpu_ms"] = rounded(number(frame.get("cpu_ms")), 3)
-            passes[variant] = {entry["name"]: rounded(number(entry.get("mean_ms")), 4)
-                               for entry in summary.get("gpu") or [] if entry.get("name")}
-            parts[variant] = {entry["name"]: rounded(number(entry.get("self_ms")), 4)
-                              for entry in summary.get("zones") or [] if entry.get("name")}
-            status = rpc(b, "engine.status")
-            alive = 0
-            for counter in status.get("counters") or []:
-                if counter.get("name") == "particles":
-                    alive = (counter.get("values") or [0])[0]
-            metrics[f"{variant}_particles"] = int(alive or 0)
-            metrics[f"{variant}_validation_errors"] = int(status.get("validation_errors") or 0)
-        result_write(b, metrics, passes, parts)
-    finally:
-        engine_stop(b)
-
-
 def grid_side(b: Bench) -> int:
     return math.ceil(math.sqrt(b.args.cubes))
 
@@ -975,7 +926,6 @@ SCENARIOS = {
     "simulation": scenario_simulation, "physics": scenario_physics, "netpublish": scenario_netpublish,
     "fade": scenario_fade, "terrain": scenario_terrain, "presentation": scenario_presentation,
     "probe": scenario_probe, "report": scenario_report, "particles": scenario_particles,
-    "particlelights": scenario_particlelights,
 }
 
 

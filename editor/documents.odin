@@ -262,17 +262,21 @@ strip_tab :: proc(s:^Session,index:int) -> (tab:Strip_Tab) {
     tab.label=document_title(d)
     tab.pending=git_pending(s,document_file(d))
     tab.loading=index==document_loading_tab(s)
+    // Until it is read, the tab of a scene that opens is named after it.
+    if tab.loading && .Open in s.requests && open_replaces(s) {tab.label=scene_title(string(s.open_path[:s.open_length]))}
     tab.icon=d.prefab?.Prefab:.Scene
     tab.active=index==s.active_document && !scene_covered(s)
     return
 }
 
 // The tab of the scene that loads, from the frame its open was asked for
-// until it is resident: that of the scene it replaces, or the one in front
-// for a tab of its own; -1 when none loads.
+// (unless it asks first) until it is resident: that of the scene it
+// replaces, or the one in front for a tab of its own, or for the tabs a
+// restart reopens; -1 when none loads.
 @(private)
 document_loading_tab :: proc(s:^Session) -> int {
-    if s.open_shown && .Open in s.requests {
+    if s.start_documents!="" {return s.active_document}
+    if .Open in s.requests && (s.open_shown || !open_asks(s)) {
         path:=string(s.open_path[:s.open_length])
         if scene:=document_scene_tab(s);scene>=0 && !path_is_prefab(s,path) {return scene}
         return s.active_document

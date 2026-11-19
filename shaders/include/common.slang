@@ -64,7 +64,7 @@ struct Frame_Data {
     float4 sun_direction;     // xyz towards the sun, w = 0 no sun, 1 active, SUN_UNSHADOWED active and no ray goes to it
     float4 sun_color;         // rgb its illuminance over pi, render units (above the air of an atmosphere: sun_light), w = the angular radius of its disc in the sky; 0: it is not seen
     float4 sky_color;         // rgb the luminance of the sky, render units, w = the light scale: render units per nit
-    float4 background;        // rgb luminance shown where no geometry is visible, render units, w = 1 to use it instead of the sky
+    float4 background;        // rgb luminance shown where no geometry is visible, render units (with an image, what multiplies it), w = 1 to use it instead of the sky
     float4 frustum[6];        // world planes (xyz normal, w distance), inside when dot >= 0
     float4 volume_cascades[VOLUME_CASCADES_MAX]; // xyz the place of the probe at the lowest corner of each cascade, relative to the origin, w its spacing
     uint4 volume_counts;    // xyz probes of a cascade along each axis, w cascades
@@ -75,11 +75,12 @@ struct Frame_Data {
     uint light_nodes;       // of the light tree; 0: no local light
     uint instance_count;
     uint debug_view;
-    float gi_strength;
+    float indirect;         // what multiplies the light of the probe volume, or of the sky that stands for it without GI, where a view or a medium takes it (render.scene_set_indirect); the probes gather without it
     float exposure;         // the scene-linear value of one render unit, as a frame before exposed the view
     uint own;               // bits 0-7: 1 + the local slot whose body (INSTANCE_FLAG_OWNED) is the view's own, 0: none; bits 16-31: how much of it the view fades out, unorm
     uint flags;             // FRAME_FLAG_*
-    uint4 shadowless_lights; // x the root of the tree of the local lights that cast no shadows (render/light_tree.odin), 0: none; y the node after it; zw 0
+    uint shadowless_lights;  // the root of the tree of the local lights that cast no shadows (render/light_tree.odin), which ends at light_nodes; 0: none
+    uint3 pad0;
     float4 jitter;            // xy current TAA jitter in render pixels, zw previous
     float4 texturing;         // x = mip bias of rasterized material textures, y = roughness below which reflections are traced (0: none are), z = first box of a glass instance listed after the TLAS nodes, w = how many
     float4 time; // current, previous simulation time in seconds
@@ -104,6 +105,7 @@ struct Frame_Data {
     float4 sky_orientation;  // the turn of the sky, a quaternion (xyz, w): a direction of the world is one of the sky by its inverse
     float4 sky_from;         // a change of the sky on its way: rgb the luminance it changes from (render units), a how much of it still shows
     float4 sky_from_map;     // the image it changes from, as sky_map
+    float4 background_map;   // the image of the background, as sky_map, turned as the sky; y = 1 when what reflects the sky shows the background
     float4 tint;             // rgb what the image is multiplied by before the display
     Air_Data air;            // the air of an atmosphere (sky_map.y), with sun_color the light of the sun above it
     int4 origin;             // xyz what every place of the frame is relative to (render/origin.odin), in steps of ORIGIN_STEP: what it adds to a place, origin.slang
@@ -117,7 +119,8 @@ struct Frame_Data {
     uint4 moved;             // what casts shadows and changed since the frame before (occluder_changed of trace.slang): x the boxes of moved_boxes, y the lights of moved_lights, z MOVED_* bits
     float4 moved_boxes[OCCLUDER_CHANGES_MAX * 2]; // low (w: the instance, as bits; OCCLUDERS_MANY: several), then high, relative to the origin
     uint4 moved_lights[LIGHT_MOVES_MAX / 4];
-    uint4 sun_maps;          // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (sun_shadow_seen of shadow_maps.slang), 0: none; y where the rows of the maps start in their buffer; z the side of their atlas, texels, while the view drew maps, else 0; w 1 while they keep the tint of glass
+    float4 sun_shares;       // x what of the light of the sun the probes gather, y what of it media scatter (Sun_Desc.indirect and scattering); zw 0
+    uint4 sun_maps;          // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (sun_shadow_seen of shadow_maps.slang), 0: none; y where the rows of the maps start in their buffer; z the side of their atlas, texels, while the view drew maps, else 0; w 0
     uint4 sun_map_rows[SUN_MAP_ROWS];
 #ifdef MIRAI_FRAME_NESTED
     Nested_View nested[NESTED_VIEW_CAPACITY]; // nested[i - 1] for the pixels whose view index is i
@@ -175,11 +178,11 @@ struct Instance {
     float4 world_inv[3];  // rows of the world-to-object 3x4 matrix
     float4 prev_world[3];
     uint4 meta;         // x mesh (bits 0-23) and the cut rays trace it with (24-25), y material in place of the slots' (INVALID: theirs), z object id, w flags
-    float4 bounds_min;    // world space AABB
+    float3 bounds_min;    // world space AABB
+    uint tested;          // the slots of its mesh whose materials rays and the maps of the shadows ask, a bit each (render.instance_alpha)
     float4 bounds_max;
     float4 tint;          // rgb multiplies the base color
     float4 emission;      // rgb radiance added to the material's
-    float4 glass;         // rgb: what a crossing of one of its blended faces leaves of light, the mean over them (glass_mean.comp writes it after every upload); a: their area
     uint slot_materials[32]; // row+1 by source slot; zero inherits
     float wet;            // 0 dry to 1 soaked (render.scene_set_instance_wet)
     uint material_values; // 1 + the word of the index pool where the values it gives over the rows of its materials start; 0: none
@@ -190,9 +193,9 @@ uint instance_mesh(Instance inst) { return inst.meta.x & INSTANCE_MESH_MASK; }
 uint instance_ray_cut(Instance inst) { return (inst.meta.x >> INSTANCE_RAY_SHIFT) & 3u; }
 
 // A cut of a mesh rays trace (render.Gpu_Mesh_Ray): the root of its tree and
-// its first triangle by software, the table of the primitives of its BLAS
-// with hardware, and its error.
-struct Mesh_Ray { uint bvh_root; uint triangle_offset; uint table_word; float error; };
+// its first triangle by software; with hardware, the table of the primitives
+// of its BLAS and how many of them lead, the opaque geometry of the BLAS.
+struct Mesh_Ray { uint bvh_root; uint triangle_offset; uint table_word; uint table_opaque; };
 struct Mesh {
     uint cluster_word;   // its first cluster in the index pool
     uint cluster_count;
@@ -213,10 +216,13 @@ struct Mesh {
     float uv1_step;
     float lod_reach;     // how far a sphere of its levels reaches past its box
     uint bounds_word;    // of a pose: the box and the cone of the normals of each cluster it poses, as posed now (geometry.slang, posed_bounds); INVALID: none
-    uint pad0;
+    float sway;          // of a pose, how far it moves a vertex from where it is at rest, in its own space (render.deformable_create); FLT_MAX: anywhere
     float4 bounds_min;   // object space
     float4 bounds_max;
     Mesh_Ray rays[MESH_RAY_LEVELS];
+    uint draw_first;     // where its clusters start in the indices of the meshes drawn whole this frame (render/mesh_draws.odin), CLUSTER_DRAW_VERTICES each; INVALID: not there
+    uint area_word;      // the area of the triangles of each of its clusters in the index pool, square metres of its space (render.mesh_cluster_areas); INVALID: not known
+    uint pad1; uint pad2;
 };
 
 // The maps of a material (MATERIAL_MAP_* of the schema, asset.Material_Maps
@@ -259,6 +265,7 @@ struct Material {
     uint emission_mode;         // EMISSION_*
     uint program_id;            // Surface program that replaces the values above; 0 for none
     uint textures[MATERIAL_MAPS];
+    uint two_sided;             // 1: seen from behind too (asset.Material_Info.two_sided); 0: its back faces are not drawn
     uint row;                   // of the material table, where the rest of it follows
 };
 // A row of the material table. Shading code holds its Material by value; where
@@ -269,7 +276,7 @@ struct Material_Coat { float3 color; float weight; float roughness; float ior; f
 struct Material_Fuzz { float3 color; float weight; float roughness; };
 struct Material_Anisotropy { float amount; float2 rotation; }; // rotation: cosine and sine
 struct Material_Diffuse_Transmission { float3 color; float weight; };
-struct Material_Volume { float3 scatter; float pad; }; // what a solid scatters of what it stops
+struct Material_Volume { float3 scatter; uint changing; }; // what a solid scatters of what it stops; 1: what its program gives a point changes with nothing that says so (it reads the time)
 struct Material_Blocks {
     Material_Coat coat;
     Material_Fuzz fuzz;
@@ -286,16 +293,17 @@ struct Material_Row {
 
 // What the vertex shader tells the fragment shaders of an instance.
 #define RASTER_HIGHLIGHT_MASK 31u // outline level
-#define RASTER_FLAG_MIRRORED 32u  // its transform turns the winding of its triangles around
+#define RASTER_FLAG_BACK 32u      // the fragment shows the back of its triangle: its stage sets it from its facing (raster_facing)
 #define RASTER_FLAG_FADING 64u    // what fades out by the unorm16 of bits 16-31: the body the view fades out (view_body_fade), or an instance of a batch near its cull distance
+#define RASTER_FLAG_TURNED 128u   // the triangle is drawn in the order of its mesh by an instance that mirrors it: its facing is the other way (raster_facing)
 #define RASTER_FADE_SHIFT 16u
 
 struct Light {
     float4 position_range;   // xyz, w range
     float4 color_intensity;  // rgb color, w intensity
     float4 direction_cone;   // spot: xyz direction, w cos(half-angle); a rectangle: xyz the side it lights, w LIGHT_RECT; w LIGHT_POINT for the others
-    float4 size;             // x the radius of the sphere, or of the capsule, metres; y half the segment of a capsule along axis, or half the width of a rectangle; z half its height; w the material row whose emission a rectangle shows, as uint bits (0: none)
-    float4 axis;             // xyz along the segment of a capsule, or the width of a rectangle
+    float4 size;             // x the radius of the sphere, or of the capsule, metres; y half the segment of a capsule along axis, or half the width of a rectangle; z half its height, or the right of the texture a spot projects (unpack_normal of its bits); w its image as uint bits: with LIGHT_TEXTURE the entry of the texture it projects, else the material row whose emission a rectangle shows (0: none)
+    float4 axis;             // xyz along the segment of a capsule, or the width of a rectangle; w the bits of two halves: what of its light the probes gather (low) and what media scatter (high), light_shares
 };
 
 // A node of the tree of the local lights (render/light_tree.odin): a leaf is
@@ -304,12 +312,15 @@ struct Light {
 struct Light_Node {
     float4 center_radius; // xyz the center of its lights, weighed by how bright each is; w the radius of the sphere around it that holds them
     float4 power_reach;   // rgb the sum of their colors times their intensities; w how far from the center the farthest of them reaches
-    float4 cone;          // xyz the axis of the directions they face; w the half-angle around it that holds those directions, radians; PI: any
-    float emission;       // the half-angle beyond the directions they face that their light goes, radians: a spot its cone, a rectangle a quarter turn
-    float range;          // of a group, the mean of their ranges weighed by how bright each is
+    float4 cone;          // xyz the axis of the directions they face; w the half-angle around it that holds the directions they shine whole, radians; PI: any
+    uint widths;          // two 16-bit steps of PI / 65535: how far past the cone their light fades out, and how far around its own axis each shines whole (node_falloff, node_inner)
+    float range_low;      // the shortest of their ranges
+    float range_high;     // the longest of their ranges
     float spread;         // root of the mean square of how far their light lies from the center, their sizes included
     uint child;           // a leaf: its light; a group: its second child
     uint flags;           // LIGHT_NODE_*, and the number of its lights
+    float indirect;       // what of their light the probes gather, the mean of their shares weighed by how bright each is; 0 only if none of it
+    float scattering;     // what of their light media scatter, the same way
 };
 
 struct Bvh_Node {
@@ -322,19 +333,34 @@ struct Bvh_Node {
 struct Bvh_Triangle {
     float3 v0;
     uint primitive; // index within the mesh (integer, never float bits)
-    float4 v1;      // w unused
-    float4 v2;
+    float3 v1;
+    uint slot;      // of its cluster among those of the mesh
+    float4 v2;      // w unused
 };
 
 // Probe.cell.w flags: traced for its cell and seeing out of geometry; inside
-// geometry; chosen to be traced this frame (ddgi_select.comp, until ddgi_relocate.comp).
+// geometry; chosen to be traced this frame (ddgi_select.comp, until
+// ddgi_relocate.comp); what is kept of its rays is what they found from where
+// it is (probe_hits.slang); the times it moved in its cell, PROBE_MOVE each;
+// and one of its rays met what changes with nothing that says so (a program
+// that reads the time, the gate or a light of an extension), which keeps it
+// traced by turns; and the frames it waits for its next turn, 1 << this
+// field (PROBE_WAIT each), longer while its turns leave its light where it
+// was (ddgi_relocate.comp).
 #define PROBE_VALID 1
 #define PROBE_BURIED 2
 #define PROBE_CHOSEN 4
+#define PROBE_KEPT 8
+#define PROBE_MOVE 16
+#define PROBE_MOVES 0x70
+#define PROBE_PASSING 0x80
+#define PROBE_WAIT 0x100
+#define PROBE_WAITS 0xF00
 struct Probe {
     float4 offset; // xyz from the center of its cell, metres; w how near it is to the change that keeps it awake, 0 to 1 (ddgi_touch.comp)
     int4 cell;     // xyz the cell of the world it was last traced for, w PROBE_* flags
     uint4 frames;  // x when it was last traced, y last used by a pixel, z last reached by a change
+    uint4 hits;    // of what it keeps of its rays (probe_hits.slang), the update, plus one, that last traced them all (x), lit them all (y) and checked them against the changes of the scene (z)
 };
 
 // ---------------------------------------------------------------- helpers
@@ -349,30 +375,42 @@ float3 transform_normal(float4 inv[3], float3 n) {
     return normalize(inv[0].xyz * n.x + inv[1].xyz * n.y + inv[2].xyz * n.z);
 }
 
+// A corner of the polygon polygon_projected_angle sums: the edge from the
+// corner before it is summed as it comes, so no corner is kept in an array,
+// which would be local memory.
+void polygon_corner(float3 p, float3 normal, inout float3 first, inout float3 last, inout uint count, inout float sum) {
+    if (count == 0u) {
+        first = p;
+    } else {
+        float3 a = normalize(last);
+        float3 b = normalize(p);
+        float3 edge = cross(a, b);
+        float sine = length(edge);
+        if (sine > 1e-7) sum += dot(normal, edge) * (atan2(sine, dot(a, b)) / sine);
+    }
+    last = p;
+    count++;
+}
 // The solid angle of a convex polygon seen from a point, each direction
 // weighed by its cosine to normal, of the part above the horizon of normal:
 // pi when it covers that whole side. The integral along the edges of that
 // part (Arvo 1995). Corners relative to the point, in order around it.
 float polygon_projected_angle<let N : int>(float3 corners[N], float3 normal) {
-    float3 polygon[N + 1];
+    float3 first = float3(0.0);
+    float3 last = float3(0.0);
     uint count = 0u;
+    float sum = 0.0;
+    [unroll]
     for (uint i = 0u; i < uint(N); i++) {
         float3 a = corners[i];
         float3 b = corners[i + 1u < uint(N) ? i + 1u : 0u];
         float above_a = dot(normal, a);
         float above_b = dot(normal, b);
-        if (above_a >= 0.0) { polygon[count] = a; count++; }
-        if ((above_a >= 0.0) != (above_b >= 0.0)) { polygon[count] = a + (b - a) * (above_a / (above_a - above_b)); count++; }
+        if (above_a >= 0.0) polygon_corner(a, normal, first, last, count, sum);
+        if ((above_a >= 0.0) != (above_b >= 0.0)) polygon_corner(a + (b - a) * (above_a / (above_a - above_b)), normal, first, last, count, sum);
     }
     if (count < 3u) return 0.0;
-    float sum = 0.0;
-    for (uint i = 0u; i < count; i++) {
-        float3 a = normalize(polygon[i]);
-        float3 b = normalize(polygon[i + 1u < count ? i + 1u : 0u]);
-        float3 edge = cross(a, b);
-        float sine = length(edge);
-        if (sine > 1e-7) sum += dot(normal, edge) * (atan2(sine, dot(a, b)) / sine);
-    }
+    polygon_corner(first, normal, first, last, count, sum);
     return abs(sum) * 0.5;
 }
 
@@ -453,6 +491,17 @@ float half_value(uint bits) {
     if (exponent == 31u) return asfloat(sign | 0x7F800000u | (mantissa << 13u));
     return asfloat(sign | ((exponent + 112u) << 23u) | (mantissa << 13u));
 }
+
+// What of the light of a light the probes gather (x) and media scatter (y),
+// from the halves in its axis.w (render.light_shares); a pass that writes a
+// light gives them with light_shares_bits.
+float2 light_shares(Light light) {
+    uint bits = asuint(light.axis.w);
+    return float2(half_value(bits & 0xffffu), half_value(bits >> 16u));
+}
+float light_shares_bits(float indirect, float scattering) {
+    return asfloat(half_bits(max(indirect, 0.0)) | (half_bits(max(scattering, 0.0)) << 16u));
+}
 // Luma and two chroma axes, where a box around colors keeps their hue.
 float3 to_ycocg(float3 c) { return float3(dot(c, float3(0.25, 0.5, 0.25)), dot(c, float3(0.5, 0.0, -0.5)), dot(c, float3(-0.25, 0.5, -0.25))); }
 float3 from_ycocg(float3 c) { return float3(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z); }
@@ -464,8 +513,15 @@ float3 finite_or_zero(float3 v) { return (any(isnan(v)) || any(isinf(v))) ? floa
 // hold the light raised to 1/PROBE_LIGHT_GAMMA, as RTXGI: in half floats, the
 // light of a room hundreds of times dimmer than the strongest light of the
 // scene (whose light scale it is) stays out of the denormals, where it faded.
+// The encoded value is the nearest half float: the device may store a float
+// in a half by cutting it toward zero, and then a probe whose light rises by
+// less than a step of the half never takes it, and settles short. A light
+// that is not finite is none, not the largest half.
 #define PROBE_LIGHT_GAMMA 5.0
-float3 probe_light_encode(float3 light) { return pow(max(light, float3(0.0)), float3(1.0 / PROBE_LIGHT_GAMMA)); }
+float3 probe_light_encode(float3 light) {
+    float3 e = pow(max(finite_or_zero(light), float3(0.0)), float3(1.0 / PROBE_LIGHT_GAMMA));
+    return float3(half_value(half_bits(e.x)), half_value(half_bits(e.y)), half_value(half_bits(e.z)));
+}
 float3 probe_light_decode(float3 stored) { return pow(max(stored, float3(0.0)), float3(PROBE_LIGHT_GAMMA)); }
 // The square root of the irradiance a stored value stands for, which a read blends.
 float3 probe_light_root(float3 stored) { return pow(max(stored, float3(0.0)), float3(0.5 * PROBE_LIGHT_GAMMA)); }

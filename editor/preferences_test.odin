@@ -118,7 +118,7 @@ the_marks_of_the_browser_are_kept_in_the_project :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"marks")
     if folder=="" {return}
     project:=strings.concatenate({folder,"/game"},context.temp_allocator)
-    testing.expect(t,os.make_directory_all(strings.concatenate({project,"/.mirai"},context.temp_allocator))==nil)
+    testing.expect(t,base.make_directory_all(strings.concatenate({project,"/.mirai"},context.temp_allocator))==nil)
     f:=new(Preferences_Test);defer free(f)
     defer free(f.ai)
     preferences_test_open(f,folder)
@@ -143,7 +143,7 @@ the_navigation_of_the_browser_is_kept_in_the_project :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"navigation")
     if folder=="" {return}
     project:=strings.concatenate({folder,"/game"},context.temp_allocator)
-    testing.expect(t,os.make_directory_all(strings.concatenate({project,"/.mirai"},context.temp_allocator))==nil)
+    testing.expect(t,base.make_directory_all(strings.concatenate({project,"/.mirai"},context.temp_allocator))==nil)
     f:=new(Preferences_Test);defer free(f)
     defer free(f.ai)
     preferences_test_open(f,folder)
