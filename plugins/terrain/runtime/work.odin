@@ -75,10 +75,10 @@ work_ready :: proc(data:^Terrain_Data,job_system:^jobs.Job_System,allocator:runt
     if error!=nil {return false}
     slots,no_slots:=make([]^Work_Slot,count,allocator)
     if no_slots!=nil {delete(block,allocator);return false}
-    for &slot,i in block {
+    for &slot,at in block {
         chunk_mesh_init(&slot.mesh,allocator);slot.allocator=allocator
         for i in 0..<4 {slot.border.sides[i]=make([dynamic]u8,allocator);slot.border.corners[i]=make([dynamic]u8,allocator)}
-        slots[i]=&slot
+        slots[at]=&slot
     }
     data.work=slots
     return true
