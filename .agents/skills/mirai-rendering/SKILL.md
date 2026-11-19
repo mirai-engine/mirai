@@ -139,8 +139,10 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - The maps of the shadows draw only what changed, in the frame it changed: no map shows a caster
   or a light where it was in a frame before ([cache](references/lights.md#direct-light-of-a-view)),
   but a page that waits for room to follow a batch that sways, which shows the sway it last drew,
-  never a lit page or a hole. What sways obeys the bound of the frame like the rest, and its plan
-  looks at no batch while none starts or stops swaying.
+  and one that waits to take a surface at another detail or a batch past its cull distance, which
+  shows what it last drew, never a lit page or a hole. A surface shown at another detail draws
+  again only the pages whose texel is finer than its error. What sways obeys the bound of the
+  frame like the rest, and its plan looks at no batch while none starts or stops swaying.
 - Shadows of what sways move only where they read: within a fixed reach of the eye
   (`SHADOW_SWAY_REACH`), never farther because the frame has time to spare; small plants cast at
   rest. What sways is drawn a fixed number of levels coarser (`SHADOW_SWAY_COARSER`) and the atlas
