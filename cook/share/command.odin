@@ -27,7 +27,8 @@ import wire "mirai:net"
 // joins the host at that address, with the token of the invitation, in place
 // of the addresses it carries (the same machine at 127.0.0.1, or an address
 // known to reach it). The store is the machine's, or the one at --store.
-// Exit codes: 0 done, 1 failed, 2 misuse.
+// Exit codes: 0 done, 1 failed, 2 misuse, 3 incomplete (a join wrote all but
+// the files it lists, and run again once they are fixed completes them).
 
 SHARE_USAGE :: "Usage: mirai share [project] [--port N] [--store <folder>]"
 JOIN_USAGE :: "Usage: mirai join <invitation> [folder] [--address <ip:port>] [--port N] [--store <folder>]"
@@ -346,6 +347,7 @@ join_command :: proc(args:[]string,output,errors:io.Writer,library:sources.Libra
     if report.folder!="" && desc.own_offer!="" {store.ref_remove(&s,NAMESPACE,desc.own_offer)}
 
     for line in report.kept {fmt.wprintfln(output,"kept: %s",line)}
+    for line in report.failed {fmt.wprintfln(errors,"not written: %s",line)}
     if error!="" {
         fmt.wprintfln(errors,"mirai join: %s",error)
         return 1
@@ -356,6 +358,10 @@ join_command :: proc(args:[]string,output,errors:io.Writer,library:sources.Libra
     for missing in report.packages.missing {fmt.wprintfln(errors,"mirai join: %s",missing);code=1}
     fmt.wprintfln(output,"Joined into %s: %d files, %d written, %d removed, %d kept as you left them; %d packages, %d builds fetched; %s received.",
         report.folder,report.files,report.written,report.removed,len(report.kept),report.packages.packages,report.packages.fetched,bytes_text(i64(t_received)))
+    if len(report.failed)>0 {
+        fmt.wprintfln(errors,"mirai join: incomplete, %d files were not written or removed; fix what each says and run the same join again, which does only those",len(report.failed))
+        return 3
+    }
     open:=fmt.tprintf("mirai edit %s",report.folder)
     if store_root!="" {open=fmt.tprintf("%s --store %s",open,store_root)}
     fmt.wprintfln(output,"Open it with: %s",open)

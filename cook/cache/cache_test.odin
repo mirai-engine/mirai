@@ -34,14 +34,16 @@ store_at :: proc(t:^testing.T,root:string,loc:=#caller_location) -> (s:store.Sto
 
 // Copies what the store at user keeps, as a peer would give it.
 @(private="file")
-copy_fetch :: proc(user:rawptr,into:^store.Store,namespace,name:string) -> bool {
+copy_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
     from:=(^store.Store)(user)
-    hash,error:=store.ref_get(from,namespace,name)
-    if error!=.None {return false}
-    path,path_error:=store.blob_path(from,hash,context.temp_allocator)
-    if path_error!=.None {return false}
-    if put,put_error:=store.put_file(into,path);put_error!=.None || put!=hash {return false}
-    return store.ref_set(into,namespace,name,hash)==.None
+    for name,k in names {
+        hash,error:=store.ref_get(from,namespace,name)
+        if error!=.None {continue}
+        path,path_error:=store.blob_path(from,hash,context.temp_allocator)
+        if path_error!=.None {continue}
+        if put,put_error:=store.put_file(into,path);put_error!=.None || put!=hash {continue}
+        given[k]=store.ref_set(into,namespace,name,hash)==.None
+    }
 }
 
 @(private="file")

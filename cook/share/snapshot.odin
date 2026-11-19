@@ -5,6 +5,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:time"
+import importer "mirai:cook/import"
 import "mirai:project"
 import "mirai:store"
 
@@ -239,9 +240,13 @@ index_address :: proc(index:^Index,relative,path:string) -> (address:store.Hash,
     return hashed,hashed_size,true
 }
 
+// Learns the address of a file whose size and time are those of info, unless
+// it was modified too close to now (importer.SETTLED_NANOSECONDS): a change
+// within the same time would not be seen.
 @(private)
 index_learn :: proc(index:^Index,relative:string,info:os.File_Info,address:store.Hash) {
     entry:=Known{size=info.size,modified=time.to_unix_nanoseconds(info.modification_time),address=address}
+    if time.to_unix_nanoseconds(time.now())-entry.modified<=importer.SETTLED_NANOSECONDS {return}
     if _,known:=index[relative];known {
         index[relative]=entry
     } else {
@@ -292,22 +297,17 @@ snapshot_take :: proc(s:^store.Store,root,name:string,allocator:=context.allocat
                 append(&skipped,fmt.aprintf("%s: %d bytes, more than the %d a file shares: import it into the library, whose builds are shared by key, or split it",relative,info.size,i64(FILE_MAX_BYTES),allocator=allocator))
                 continue
             }
-            path:=project.path(root,relative,allocator=context.temp_allocator)
-            modified:=time.to_unix_nanoseconds(info.modification_time)
-            e:=Entry{path=strings.clone(relative,allocator),size=info.size,executable=info.mode&os.Permissions_Execute_All!={}}
-            if k,known:=index[relative];known && k.size==info.size && k.modified==modified && store.has(s,k.address) {
-                e.address=k.address
-            } else {
-                hash,put_error:=store.put_file(s,path)
-                if put_error!=.None {
-                    if put_error==.Missing {continue}
-                    append(&skipped,fmt.aprintf("%s: it could not be put in the store at %s (%v): free space there, or close what holds the file",relative,s.root,put_error,allocator=allocator))
-                    continue
-                }
-                e.address=hash
-                index_learn(&index,relative,info,hash)
-                report.put+=1
+            e,put,put_error:=entry_take(s,&index,root,relative,info,allocator)
+            if put_error!=.None {
+                if put_error==.Missing {continue}
+                append(&skipped,fmt.aprintf("%s: it could not be put in the store at %s (%v): free space there, or close what holds the file",relative,s.root,put_error,allocator=allocator))
+                continue
             }
+            if e.size>FILE_MAX_BYTES {
+                append(&skipped,fmt.aprintf("%s: %d bytes, more than the %d a file shares: import it into the library, whose builds are shared by key, or split it",relative,e.size,i64(FILE_MAX_BYTES),allocator=allocator))
+                continue
+            }
+            if put {report.put+=1}
             append(&entries,e)
             report.bytes+=e.size
         }
@@ -328,6 +328,28 @@ snapshot_take :: proc(s:^store.Store,root,name:string,allocator:=context.allocat
     }
     index_save(root,&index)
     return snap,address,report,""
+}
+
+// The entry of the file at relative under root, listed with info: its address
+// from the index when it knows the file unchanged and s has its blob, or put in
+// s now. Its size is that of what was put, which a joiner checks against the
+// blob, also when the file changed after it was listed; the index learns it
+// only when the file still has the size and time it was listed with.
+@(private)
+entry_take :: proc(s:^store.Store,index:^Index,root,relative:string,info:os.File_Info,allocator:=context.allocator) -> (e:Entry,put:bool,error:store.Error) {
+    path:=project.path(root,relative,allocator=context.temp_allocator)
+    modified:=time.to_unix_nanoseconds(info.modification_time)
+    e=Entry{path=strings.clone(relative,allocator),size=info.size,executable=info.mode&os.Permissions_Execute_All!={}}
+    if k,known:=index[relative];known && k.size==info.size && k.modified==modified && store.has(s,k.address) {
+        e.address=k.address
+        return
+    }
+    e.address=store.put_file(s,path) or_return
+    e.size=store.blob_size(s,e.address) or_return
+    if after,stat_error:=os.stat(path,context.temp_allocator);stat_error==nil && after.size==e.size && after.size==info.size && time.to_unix_nanoseconds(after.modification_time)==modified {
+        index_learn(index,relative,after,e.address)
+    }
+    return e,true,.None
 }
 
 // Writes data whole at path through a rename, making its folder.

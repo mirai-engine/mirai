@@ -8,6 +8,7 @@ import "core:strings"
 import "core:sync"
 import "core:testing"
 import "core:thread"
+import "core:time"
 import "mirai:asset"
 import "mirai:cook/import/sources"
 import "mirai:project"
@@ -170,6 +171,19 @@ file_put :: proc(root,path:string,data:[]u8,executable:=false) {
     if executable {os.change_mode(full,os.Permissions_Default_File+os.Permissions_Execute_All)}
 }
 
+// Gives the file at path a time an hour ago, as a file written long before it is read.
+@(private="file")
+settle :: proc(root,path:string) {
+    old:=time.time_add(time.now(),-time.Hour)
+    os.change_times(fmt.tprintf("%s/%s",root,path),old,old)
+}
+
+@(private="file")
+read_text :: proc(root,path:string) -> string {
+    data,error:=os.read_entire_file(fmt.tprintf("%s/%s",root,path),context.temp_allocator)
+    return error==nil?string(data):"(none)"
+}
+
 @(private="file")
 noise :: proc(size:int,seed:u64) -> []u8 {
     data:=make([]u8,size,context.temp_allocator)
@@ -276,6 +290,7 @@ the_snapshot_leaves_out_what_the_layout_says_and_round_trips :: proc(t:^testing.
     file_put(root,".gitignore",transmute([]u8)string(".mirai/\n"))
     file_put(root,".mirai/build/out.o",transmute([]u8)string("built"))
     file_put(root,".git/HEAD",transmute([]u8)string("ref: main"))
+    for path in ([]string{"project.mirai","tools/run.sh","assets/b.txt","assets/empty.txt",".gitignore"}) {settle(root,path)}
     s,open_error:=store.open(fmt.tprintf("%s/store",folder))
     if !testing.expect_value(t,open_error,store.Error.None) {return}
     defer store.close(&s)
@@ -300,6 +315,28 @@ the_snapshot_leaves_out_what_the_layout_says_and_round_trips :: proc(t:^testing.
     // Taken again with nothing changed, nothing is read into the store and the blob is the same.
     _,second,second_report,_:=snapshot_take(&s,root,"game",context.temp_allocator)
     testing.expect(t,second==address && second_report.put==0,"the index knows every file")
+
+    // A file read just after it was written is not learned: a change of the same size within the same time is read.
+    // A time in whole seconds, which every system keeps exactly.
+    moment:=time.from_nanoseconds(time.to_unix_nanoseconds(time.now())/1e9*1e9)
+    file_put(root,"assets/fresh.txt",transmute([]u8)string("one"))
+    os.change_times(fmt.tprintf("%s/assets/fresh.txt",root),moment,moment)
+    snapshot_take(&s,root,"game",context.temp_allocator)
+    file_put(root,"assets/fresh.txt",transmute([]u8)string("two"))
+    os.change_times(fmt.tprintf("%s/assets/fresh.txt",root),moment,moment)
+    later,_,_,_:=snapshot_take(&s,root,"game",context.temp_allocator)
+    fresh,_:=snapshot_find(&later,"assets/fresh.txt")
+    testing.expect(t,fresh.address==store.address_of_bytes(transmute([]u8)string("two")),"the second bytes are shared")
+
+    // A file that changed after it was listed: its entry has the size of what was put, which the joiner checks, and the index does not learn it.
+    file_put(root,"assets/growing.txt",transmute([]u8)string("abc"))
+    settle(root,"assets/growing.txt")
+    listed,_:=os.stat(fmt.tprintf("%s/assets/growing.txt",root),context.temp_allocator)
+    file_put(root,"assets/growing.txt",transmute([]u8)string("abcdef"))
+    index:=make(Index,context.temp_allocator)
+    e,put,put_error:=entry_take(&s,&index,root,"assets/growing.txt",listed,context.temp_allocator)
+    testing.expect(t,put_error==.None && put && e.size==6 && e.address==store.address_of_bytes(transmute([]u8)string("abcdef")))
+    testing.expect(t,"assets/growing.txt" not_in index,"what changed while it was read is read again next time")
 }
 
 @(test)
@@ -398,9 +435,10 @@ a_second_join_updates_the_folder_by_three_ways :: proc(t:^testing.T) {
     if !test_net(t,&w,"share-update",2) {return}
     defer test_net_destroy(&w)
     root:=fmt.tprintf("%s/host",w.folder)
-    for name in ([?]string{"host_changes","host_removes","both_change","host_removes_joiner_changes","joiner_removes_host_changes","joiner_changes","same"}) {
+    for name in ([?]string{"host_changes","host_removes","both_change","host_removes_joiner_changes","joiner_removes_host_changes","joiner_changes","same","Case_only","Case_changed"}) {
         file_put(root,fmt.tprintf("files/%s.txt",name),transmute([]u8)fmt.tprintf("%s 1",name))
     }
+    file_put(root,"Folder/inside.txt",transmute([]u8)string("inside 1"))
     if !host_offer(t,&w,root) {return}
     test_connect(&w,1,0)
     joined:=fmt.tprintf("%s/joined",w.folder)
@@ -416,6 +454,11 @@ a_second_join_updates_the_folder_by_three_ways :: proc(t:^testing.T) {
     file_put(joined,"files/host_removes_joiner_changes.txt",transmute([]u8)string("joiner 2"))
     os.remove(fmt.tprintf("%s/files/joiner_removes_host_changes.txt",joined))
     file_put(joined,"files/joiner_changes.txt",transmute([]u8)string("joiner 2"))
+    // Renames that change only the case: of a file, of a file with its bytes, of a folder.
+    os.rename(fmt.tprintf("%s/files/Case_only.txt",root),fmt.tprintf("%s/files/case_only.txt",root))
+    os.rename(fmt.tprintf("%s/files/Case_changed.txt",root),fmt.tprintf("%s/files/case_changed.txt",root))
+    file_put(root,"files/case_changed.txt",transmute([]u8)string("changed 2"))
+    os.rename(fmt.tprintf("%s/Folder",root),fmt.tprintf("%s/folder",root))
     if !host_offer(t,&w,root) {return}
     report,error:=test_join(t,&w,1,join_desc(&w,0,joined))
     if !testing.expectf(t,error=="","%s",error) {return}
@@ -431,13 +474,116 @@ a_second_join_updates_the_folder_by_three_ways :: proc(t:^testing.T) {
     testing.expect_value(t,read(joined,"joiner_removes_host_changes.txt"),"(none)")
     testing.expect_value(t,read(joined,"joiner_changes.txt"),"joiner 2")
     testing.expect_value(t,read(joined,"same.txt"),"same 1")
-    testing.expect(t,report.written==2 && report.removed==1,"the host's changes and its new file are written, its removal applied")
+    // Where case folds, a rename by case is one file renamed in place; elsewhere one removed and one written.
+    folds:=folds_case(joined)
+    testing.expectf(t,report.written==(folds?3:5) && report.removed==(folds?1:4),"the host's changes and its new file are written, its removals applied: %d, %d",report.written,report.removed)
+    names :: proc(folder:string) -> string {
+        listed,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
+        list:=make([dynamic]string,context.temp_allocator)
+        for info in listed {append(&list,info.name)}
+        return strings.join(list[:]," ",context.temp_allocator)
+    }
+    renamed :: proc(t:^testing.T,joined:string) {
+        testing.expect_value(t,read_text(joined,"files/case_only.txt"),"Case_only 1")
+        testing.expect_value(t,read_text(joined,"files/case_changed.txt"),"changed 2")
+        testing.expect_value(t,read_text(joined,"folder/inside.txt"),"inside 1")
+        listed:=fmt.tprintf("%s %s",names(fmt.tprintf("%s/files",joined)),names(joined))
+        testing.expectf(t,strings.contains(listed,"case_only.txt") && strings.contains(listed,"case_changed.txt") && strings.contains(listed,"folder") && !strings.contains(listed,"Case_") && !strings.contains(listed,"Folder"),"the names are the host's: %s",listed)
+    }
+    renamed(t,joined)
     kept:=strings.join(report.kept[:],"\n",context.temp_allocator)
     testing.expectf(t,len(report.kept)==3 && strings.contains(kept,"both_change") && strings.contains(kept,"host_removes_joiner_changes") && strings.contains(kept,"joiner_removes_host_changes"),"what both changed is reported: %s",kept)
 
     // Once more with nothing changed on either side: nothing is written, and what was kept stays kept.
     again,again_error:=test_join(t,&w,1,join_desc(&w,0,joined))
     testing.expect(t,again_error=="" && again.written==0 && again.removed==0)
+    renamed(t,joined)
+}
+
+// A join does not overwrite what the joiner changes after its plan: a file
+// made where the host adds one, a file changed that the host changed too.
+@(test)
+a_join_keeps_what_the_joiner_changes_while_it_runs :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"share-meanwhile")
+    if folder=="" {return}
+    s,open_error:=store.open(fmt.tprintf("%s/store",folder))
+    if !testing.expect_value(t,open_error,store.Error.None) {return}
+    defer store.close(&s)
+    n:Node
+    n.s=&s
+    d:=Join_Desc{node=&n}
+    joined:=fmt.tprintf("%s/joined",folder)
+    bytes :: proc(text:string) -> []u8 {return transmute([]u8)text}
+    entries:=make([]Entry,3,context.temp_allocator)
+    for name,k in ([3]string{"a","b","c"}) {
+        address,_:=store.put_bytes(&s,bytes(fmt.tprintf("host %s",name)))
+        entries[k]={path=fmt.tprintf("%s.txt",name),address=address,size=6}
+    }
+    snap:=Snapshot{name="game",entries=entries}
+    file_put(joined,"b.txt",bytes("base b"))
+    file_put(joined,"c.txt",bytes("base c"))
+    plan:Plan
+    plan.write=make([dynamic]Write,context.temp_allocator)
+    append(&plan.write,Write{at=0},Write{at=1,present=true,base=store.address_of_bytes(bytes("base b"))},Write{at=2,present=true,base=store.address_of_bytes(bytes("base c"))})
+    // After the plan, before the blobs arrive.
+    file_put(joined,"a.txt",bytes("mine a"))
+    file_put(joined,"b.txt",bytes("mine b"))
+    index:=make(Index,context.temp_allocator)
+    report:=Join_Report{kept=make([dynamic]string,context.temp_allocator),failed=make([dynamic]string,context.temp_allocator)}
+    join_write(&d,&snap,&plan,{0,1,2},&index,joined,&report)
+    testing.expect_value(t,read_text(joined,"a.txt"),"mine a")
+    testing.expect_value(t,read_text(joined,"b.txt"),"mine b")
+    testing.expect_value(t,read_text(joined,"c.txt"),"host c")
+    testing.expectf(t,report.written==1 && len(report.kept)==2 && len(report.failed)==0,"%v",report)
+    for w in plan.write {testing.expect(t,w.done,"what is kept on purpose is done")}
+}
+
+// A file that cannot be written does not stop the join: a read-only file, a
+// read-only file the host removed and a file in a read-only folder are listed
+// with how to fix them, the rest is written, and once fixed the same join
+// completes them.
+@(test)
+a_join_writes_what_it_can_and_running_it_again_completes_it :: proc(t:^testing.T) {
+    w:Test_Net
+    if !test_net(t,&w,"share-incomplete",2) {return}
+    defer test_net_destroy(&w)
+    root:=fmt.tprintf("%s/host",w.folder)
+    for name in ([?]string{"files/a.txt","files/locked.txt","files/gone.txt","shut/x.txt"}) {file_put(root,name,transmute([]u8)fmt.tprintf("%s 1",name))}
+    if !host_offer(t,&w,root) {return}
+    test_connect(&w,1,0)
+    joined:=fmt.tprintf("%s/joined",w.folder)
+    if _,error:=test_join(t,&w,1,join_desc(&w,0,joined));!testing.expectf(t,error=="","%s",error) {return}
+
+    file_put(root,"files/a.txt",transmute([]u8)string("a 2"))
+    file_put(root,"files/locked.txt",transmute([]u8)string("locked 2"))
+    os.remove(fmt.tprintf("%s/files/gone.txt",root))
+    file_put(root,"shut/new.txt",transmute([]u8)string("new"))
+    if !host_offer(t,&w,root) {return}
+    read_only:=os.Permissions_Read_All
+    os.change_mode(fmt.tprintf("%s/files/locked.txt",joined),read_only)
+    os.change_mode(fmt.tprintf("%s/files/gone.txt",joined),read_only)
+    os.change_mode(fmt.tprintf("%s/shut",joined),read_only+os.Permissions_Execute_All)
+    fix :: proc(joined:string) {
+        os.change_mode(fmt.tprintf("%s/files/locked.txt",joined),os.Permissions_Default_File)
+        os.change_mode(fmt.tprintf("%s/files/gone.txt",joined),os.Permissions_Default_File)
+        os.change_mode(fmt.tprintf("%s/shut",joined),os.Permissions_Default_Directory)
+    }
+    defer fix(joined)
+    report,error:=test_join(t,&w,1,join_desc(&w,0,joined))
+    if !testing.expectf(t,error=="","%s",error) {return}
+    testing.expect_value(t,read_text(joined,"files/a.txt"),"a 2")
+    testing.expect_value(t,read_text(joined,"files/locked.txt"),"files/locked.txt 1")
+    testing.expect_value(t,read_text(joined,"files/gone.txt"),"files/gone.txt 1")
+    testing.expect_value(t,read_text(joined,"shut/new.txt"),"(none)")
+    listed:=strings.join(report.failed[:],"\n",context.temp_allocator)
+    testing.expectf(t,len(report.failed)==3 && strings.contains(listed,"locked.txt is read-only") && strings.contains(listed,"gone.txt is read-only") && strings.contains(listed,"shut is read-only"),"each failure by path, with how to fix it: %s",listed)
+    testing.expect(t,report.written==1 && report.removed==0)
+
+    fix(joined)
+    again,again_error:=test_join(t,&w,1,join_desc(&w,0,joined))
+    if !testing.expectf(t,again_error=="","%s",again_error) {return}
+    testing.expectf(t,len(again.failed)==0 && len(again.kept)==0 && again.written==2 && again.removed==1,"%v",again)
+    same_files(t,root,joined)
 }
 
 @(test)
@@ -513,8 +659,8 @@ a_lying_size_and_an_oversized_blob_are_refused :: proc(t:^testing.T) {
     store.ref_set(s,NAMESPACE,offer_name(w.peers[0].token,&digits),snapshot)
     test_connect(&w,1,0)
     joined:=fmt.tprintf("%s/joined",w.folder)
-    _,error:=test_join(t,&w,1,join_desc(&w,0,joined))
-    testing.expectf(t,strings.contains(error,"not honest"),"%s",error)
+    lied,error:=test_join(t,&w,1,join_desc(&w,0,joined))
+    testing.expectf(t,error=="" && len(lied.failed)==1 && strings.contains(lied.failed[0],"not honest"),"%s %v",error,lied.failed)
     testing.expect(t,!os.exists(fmt.tprintf("%s/a.bin",joined)))
 
     run:=Test_Join{desc=join_desc(&w,0,joined),allocator=test_arena(t)}

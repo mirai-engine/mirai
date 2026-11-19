@@ -147,8 +147,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   the sources, known failures); `mirai check cook/build` and `mirai check
   tools/mirai` if they change. Turns: `mirai test cook/workspace` (annotation of builds, who holds a
   lock) and `mirai test std/subprocess` (low priority of a child). Sharing: `mirai test cook/share`
-  (snapshot rule, hostile snapshots, join, update by three ways, resume, a third peer), all on
-  `Sim_Network`.
+  (snapshot rule, hostile snapshots, join, update by three ways with renames by case, edits while
+  a join runs, an incomplete join run again, resume, a third peer), all on `Sim_Network`.
 - Generator or build: `mirai build editor` and `mirai build game --out <separate folder>` of the
   affected project, and the player with `--no-gpu --frames 3`.
 - User commands, by hand: `mirai new`, and `mirai build game` twice (the second says "unchanged").
