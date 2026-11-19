@@ -12,7 +12,7 @@ import "mirai:project"
 launch :: proc(args:[]string) -> int {
     root:=project_argument(args)
     path:=project.project_library(root,"editor")
-    library,error:=project_library_load(path,0)
+    library,error:=project_library_load(path)
     if error!=.None {
         fmt.eprintfln("mirai: %s",library_error_text(error,path))
         return PLAYER_USAGE
