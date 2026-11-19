@@ -297,9 +297,9 @@ views draw is the mesh at rest moved per vertex.
   rest: `foliage_sway_render` draws its mesh as a batch of one instance at its place, its rotation
   and scale exact in the `basis` of the batch (with its `Material_Values`, layers and shadows),
   while the entity is `Drawn_Elsewhere`, which a world copied for Play takes as its own, and sets
-  the batch again only where the entity's place, mesh, values, visibility or zone changed. The entity stays
-  what it was: its transform, collider and picking are its own, and an outline it is given is
-  drawn around its mesh at rest. It exists because a hand-placed plant that sways is better on its
+  the batch again only where the entity's place, mesh, values, visibility or zone changed. The
+  entity stays what it was: its transform, collider and picking are its own, and an outline it is
+  given is drawn around its mesh at rest. It exists because a hand-placed plant that sways is better on its
   own merits; nothing of it imitates another engine.
 - **Rays meet foliage at rest**: traced shadows, reflections, the indirect light and the probes.
   The traced shadow of a swaying canopy under a light no map holds stands still, and the probes
