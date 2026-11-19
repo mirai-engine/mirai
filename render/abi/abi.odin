@@ -391,6 +391,10 @@ SHADOW_KNOWN_FORESEEN      :: u32(1) << 31
 SHADOW_SWAY_FRAME          :: u32(1) << 24 - 1
 SHADOW_SWAY_SWAYS          :: u32(1) << 31
 SHADOW_SWAY_NOW            :: u32(1) << 30
+// Of a page of the pool listed for the atlas (SHADOW_WORDS_JOBS), that what
+// sways in it is all it is composed again for: while it waits for room it
+// shows what the atlas last composed there.
+SHADOW_JOB_REFRESH         :: u32(1) << 18
 // Of a word of SHADOW_WORDS_COST: a draw of the round had no room for a
 // cluster of the page; the page waits for a frame with room for it; it was
 // granted as foreseen; and its units.

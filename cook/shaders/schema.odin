@@ -294,6 +294,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"SHADOW_SWAY_FRAME",abi.SHADOW_SWAY_FRAME)
     u(&b,"SHADOW_SWAY_SWAYS",abi.SHADOW_SWAY_SWAYS)
     u(&b,"SHADOW_SWAY_NOW",abi.SHADOW_SWAY_NOW)
+    u(&b,"SHADOW_JOB_REFRESH",abi.SHADOW_JOB_REFRESH)
     u(&b,"SHADOW_COST_OVER",abi.SHADOW_COST_OVER)
     u(&b,"SHADOW_COST_WAITS",abi.SHADOW_COST_WAITS)
     u(&b,"SHADOW_COST_GUESS",abi.SHADOW_COST_GUESS)
