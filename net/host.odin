@@ -718,7 +718,7 @@ op_apply :: proc(h:^Host,frame:^Frame,op:^Op) {
         for &peer in b.peers {
             if peer.state!=.Connected || (op.handle!=0 && u64(peer_handle(h,&peer))!=op.handle) {continue}
             if op.handle!=0 {peer.channels[op.a].applied+=size}
-            channel_queue(h,&peer,int(op.a),data,total)
+            if channel_queue(h,&peer,int(op.a),data,total) {peer.flush=true}
         }
     case:
         repl_op(h,frame,op)
