@@ -106,13 +106,18 @@ hook_reach :: proc "contextless" (amount,height:f32) -> f32 {return height*(WIND
 sway_amount :: proc "contextless" (t:Foliage_Type) -> f32 {return t.wind*FOLIAGE_SWAY*0.1}
 
 // Metres the tip of a type sways at WIND_SPEED_MAX, its farthest point `size`
-// metres from where its largest instance stands: what tells the plants whose
-// shadows sway from those that cast at rest.
+// metres from where its largest instance stands.
 type_sway :: proc "contextless" (t:Foliage_Type,size:f32) -> f32 {return WIND_SPEED_MAX*sway_amount(t)*size}
 
+// The variants a part of a type sways with, its farthest point `size` metres
+// from where its largest instance stands: none where its tip sways less than
+// SHADOW_SWAY_LEAST, whose shadow stands at rest.
+shadow_variants :: proc "contextless" (t:Foliage_Type,size:f32) -> u32 {
+    return wind_variants(t) if type_sway(t,size)>=SHADOW_SWAY_LEAST else 0
+}
+
 // How many variants a type sways with: turns times phases; 0 for one that
-// sways in the hook, or not at all. One whose tip sways less than
-// SHADOW_SWAY_LEAST takes none either (types_draw).
+// sways in the hook, or not at all.
 wind_variants :: proc "contextless" (t:Foliage_Type) -> u32 {
     if !(t.wind>0) || !t.casts_shadow {return 0}
     n:=min(t.wind_variants if t.wind_variants>0 else WIND_VARIANTS,WIND_VARIANTS_MAX)
