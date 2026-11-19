@@ -604,6 +604,7 @@ shadow_movers_update :: proc(r: ^Renderer) {
 				found := false
 				for changed in rows {found ||= changed == row}
 				if !found {continue}
+				s.shadow_stale_by[.Materials] += 1
 				occluder_add(&stale, u32(index), inst.bounds_min.xyz, inst.bounds_max.xyz)
 				break
 			}
@@ -612,6 +613,7 @@ shadow_movers_update :: proc(r: ^Renderer) {
 		for index, k in s.batch.drawn {
 			if .Casts_Shadow not_in s.batch.records[index].desc.flags {continue}
 			box := s.batch.boxes[k]
+			s.shadow_stale_by[.Materials] += 1
 			occluder_add(&stale, OCCLUDERS_MANY, box.min, box.max)
 		}
 	}
@@ -619,6 +621,7 @@ shadow_movers_update :: proc(r: ^Renderer) {
 	if len(s.shadow_tracks) > len(s.instances) {base.truncate(&s.shadow_tracks, len(s.instances))}
 	for change in s.shadow_changes {
 		if int(change.instance) >= len(s.shadow_tracks) {
+			s.shadow_stale_by[.Instances] += 1
 			occluder_add(&stale, OCCLUDERS_MANY, change.low, change.high)
 			continue
 		}
@@ -635,6 +638,7 @@ shadow_movers_update :: proc(r: ^Renderer) {
 			track.frame = now
 			append(&s.shadow_followed, change.instance)
 		}
+		s.shadow_stale_by[.Instances] += 1
 		occluder_add(&stale, change.instance, change.low, change.high)
 	}
 	clear(&s.shadow_changes)
@@ -644,7 +648,10 @@ shadow_movers_update :: proc(r: ^Renderer) {
 		if int(index) < len(s.shadow_tracks) {
 			track := &s.shadow_tracks[index]
 			inst := s.instances[index]
-			if track.moving && instance_casts(inst) {occluder_add(&stale, index, inst.bounds_min.xyz, inst.bounds_max.xyz)}
+			if track.moving && instance_casts(inst) {
+				s.shadow_stale_by[.Instances] += 1
+				occluder_add(&stale, index, inst.bounds_min.xyz, inst.bounds_max.xyz)
+			}
 			track^ = {}
 		}
 		unordered_remove(&s.shadow_followed, k)
@@ -687,7 +694,10 @@ shadow_movers_update :: proc(r: ^Renderer) {
 			}
 			record.shadow_moving = moving
 		}
-		if widest > 0 {occluder_add(&stale, OCCLUDERS_MANY, low, high, widest)}
+		if widest > 0 {
+			s.shadow_stale_by[.Sway] += 1
+			occluder_add(&stale, OCCLUDERS_MANY, low, high, widest)
+		}
 		s.shadow_sway_tables = b.tables
 	}
 	if stale.count == 0 && !stale.covers && moved.count == 0 {return}
@@ -759,6 +769,7 @@ shadow_cull_changes :: proc(s: ^Scene_State, stale: ^Occluder_Changes, was, now:
 		reach := cull + now.w
 		if farthest(was.xyz, low, high) <= reach && farthest(now.xyz, low, high) <= reach {continue}
 		if shadow_culled(low, high, cull, was) && shadow_culled(low, high, cull, now) {continue}
+		s.shadow_stale_by[.Cull_Cell] += 1
 		low = linalg.max(low, linalg.min(was.xyz, now.xyz) - reach)
 		high = linalg.min(high, linalg.max(was.xyz, now.xyz) + reach)
 		occluder_add(stale, OCCLUDERS_MANY, low, high)
@@ -826,7 +837,10 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	if b.sway != sway && !forget {
 		for index, k in s.batch.drawn {
 			if batch_sway(s, &s.batch.records[index]) == 0 {continue}
-			if low, high, casts := shadow_batch_box(s, k); casts {occluder_add(&b.stale, OCCLUDERS_MANY, low, high)}
+			if low, high, casts := shadow_batch_box(s, k); casts {
+				s.shadow_stale_by[.Sway_Reach] += 1
+				occluder_add(&b.stale, OCCLUDERS_MANY, low, high)
+			}
 		}
 	}
 	b.sway = sway
@@ -1880,6 +1894,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	rhi.cmd_copy_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_WAITING) * 4, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow) + offset_of(Shadow_Stats, pages_waiting)), 4)
 	rhi.cmd_copy_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_SHORT) * 4, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow) + offset_of(Shadow_Stats, pages_short)), 4)
 	rhi.cmd_copy_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_THREADS) * 4, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow) + offset_of(Shadow_Stats, cull_threads)), 4)
+	rhi.cmd_copy_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_STALE) * 4, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow) + offset_of(Shadow_Stats, pages_stale)), 4)
 	return plan.shadow
 }
 
