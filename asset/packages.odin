@@ -4,7 +4,6 @@ import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:strings"
-import "compressor:data"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:store"
@@ -38,7 +37,7 @@ PACKAGES_FILE :: "packages.mirai"
 PACKAGE_FILES :: "packages" // the folder of a root, beside PACKAGES_FILE, with <package id>.mirai of each manifest it pins
 PACKAGES_VERSION :: 2
 PACKAGE_MANIFEST_VERSION :: 1
-BUILD_MANIFEST_VERSION :: 3
+BUILD_MANIFEST_VERSION :: 4
 RECORD_BYTES :: 16<<20 // the most a record takes as text: a larger one is refused unread
 
 // Namespaces of the refs of the records.
@@ -48,8 +47,6 @@ REF_IMPORTS :: "imports"           // <import_key>: a build with Final textures,
 REF_IMPORTS_FAST :: "imports-fast" // <import_key>: a build with Fast textures, which peers share and a cook never takes
 REF_BUILDS :: "builds"             // <build_select>: the build the refresh of this machine chose
 
-COMPRESSOR_OPEN :: "open" // the data.NAME of the open compressor, whose formats every engine decodes
-@(private="file") COMPRESSOR_NAME_MAX :: 64
 REF_CACHE_PREFIX :: "cache-"       // and the name of a folder of cook/cache: <key>-<version>
 REF_ORIGINS :: "origins"           // <origin_name>: the manifest of the package its source was ingested as on this machine
 REF_SOURCES :: "sources"           // <origin_name>: what the files of that source were when last read, never shared
@@ -95,7 +92,6 @@ Build :: struct {
     package_id:base.Asset_Id,
     key:store.Hash,  // import_key of what built it
     final:bool,      // its textures are Final, else Fast
-    compressor:string, // whose formats its assets use: COMPRESSOR_OPEN, which every engine decodes, or the name of another (data.NAME)
     outputs:[dynamic]Build_Output,
 }
 
@@ -309,8 +305,7 @@ build_text :: proc(b:^Build,allocator:=context.allocator) -> (text:string,error:
     id_write(&w,b.package_id)
     serial.text_write_raw(&w,",\n  \"key\": ")
     hash_write(&w,b.key)
-    serial.text_write_raw(&w,b.final?",\n  \"final\": true,\n  \"compressor\": ":",\n  \"final\": false,\n  \"compressor\": ")
-    serial.text_write_string(&w,b.compressor)
+    serial.text_write_raw(&w,b.final?",\n  \"final\": true":",\n  \"final\": false")
     serial.text_write_raw(&w,",\n  \"outputs\": [")
     for o,at in b.outputs {
         serial.text_write_raw(&w,at>0?",\n    {\"id\": ":"\n    {\"id\": ")
@@ -337,7 +332,7 @@ build_parse :: proc(text:string,allocator:=context.allocator) -> (b:Build,error:
     serial.text_reader_init(&r,text,context.temp_allocator)
     defer serial.text_reader_destroy(&r)
     b.outputs=make([dynamic]Build_Output,allocator)
-    Field :: enum {Version,Package,Key,Final,Compressor,Outputs}
+    Field :: enum {Version,Package,Key,Final,Outputs}
     seen:bit_set[Field]
     version:u64
     expect(&r,'{') or_return
@@ -350,7 +345,6 @@ build_parse :: proc(text:string,allocator:=context.allocator) -> (b:Build,error:
         case "package": field=.Package
         case "key": field=.Key
         case "final": field=.Final
-        case "compressor": field=.Compressor
         case "outputs": field=.Outputs
         case: return {},.Corrupt
         }
@@ -361,7 +355,6 @@ build_parse :: proc(text:string,allocator:=context.allocator) -> (b:Build,error:
         case .Package: b.package_id=id_read(&r) or_return
         case .Key: b.key=hash_read(&r) or_return
         case .Final: b.final=bool_read(&r) or_return
-        case .Compressor: b.compressor=string_read(&r,allocator) or_return
         case .Outputs:
             expect(&r,'[') or_return
             for begun:=false;!serial.text_accept(&r,']');begun=true {
@@ -373,7 +366,7 @@ build_parse :: proc(text:string,allocator:=context.allocator) -> (b:Build,error:
     }
     if !serial.text_end(&r) {return {},.Corrupt}
     if version!=BUILD_MANIFEST_VERSION {return {},.Version}
-    if seen!={.Version,.Package,.Key,.Final,.Compressor,.Outputs} {return {},.Corrupt}
+    if seen!={.Version,.Package,.Key,.Final,.Outputs} {return {},.Corrupt}
     if !build_valid(&b) {return {},.Corrupt}
     return b,.None
 }
@@ -558,17 +551,6 @@ manifest_get :: proc(s:^store.Store,hash:store.Hash) -> (text:string,error:Error
     text=record_get(s,object) or_return
     if store.address_of_bytes(transmute([]u8)text)!=hash {return "",.Hash}
     return text,.None
-}
-
-// The compressor whose formats a build writes with codecs: what a reader needs to decode it.
-build_compressor :: proc "contextless" (codecs:Codecs) -> string {
-    return data.NAME if codecs==.Best else COMPRESSOR_OPEN
-}
-
-// Whether this engine decodes the assets of b: their formats are the open
-// compressor's, or those of the compressor it was built with.
-build_readable :: proc(b:^Build) -> bool {
-    return b.compressor==COMPRESSOR_OPEN || b.compressor==data.NAME
 }
 
 // Keeps a build in the store: the address of its object, which refs name.
@@ -787,10 +769,7 @@ package_valid :: proc(p:^Package) -> bool {
 
 @(private="file")
 build_valid :: proc(b:^Build) -> bool {
-    if b.package_id=={} || b.compressor=="" || len(b.compressor)>COMPRESSOR_NAME_MAX {return false}
-    for c in transmute([]u8)b.compressor {
-        if c<'!' || c>'~' || c=='"' || c=='\\' {return false}
-    }
+    if b.package_id=={} {return false}
     for o,at in b.outputs {
         if o.id=={} || !kind_valid(o.kind) {return false}
         for other in b.outputs[:at] {

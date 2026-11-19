@@ -87,9 +87,9 @@ object_raw :: proc(data:[]u8) -> (raw:bool,error:Error) {
     switch a.blob.header.kind {
     case KIND_TEXTURE:
         if _,laid:=asset_table(&a,TEXTURE_TABLE_LAYOUTS);laid {return false,.None}
-        view:=texture_view(&a,&types) or_return
-        planes:=texture_fields_format(view.info.format) && .Fast not_in view.info.flags
-        return planes==(.Fields in view.info.flags),.None
+        info:=asset_row(&a,&types,"texture",Texture_Info) or_return
+        planes:=texture_fields_format(info.format) && .Fast not_in info.flags
+        return planes==(.Fields in info.flags),.None
     case KIND_MESH:
         pages:=table_rows(&a,&types,"pages",Mesh_Page) or_return
         page_data:=table_rows(&a,&types,"page_data",u8) or_return
