@@ -28,6 +28,7 @@ Test_Peer :: struct {
     endpoint:int, // of its server
     token:u64,    // of its server
     pumped:bool,
+    mute:bool,    // its hosts keep their connections, and its node reads and answers nothing
 }
 
 @(private="file")
@@ -97,6 +98,14 @@ test_step :: proc(w:^Test_Net) {
     wire.sim_network_advance(&w.sim,w.now)
     for &p in w.peers[:w.count] {
         if !p.pumped {continue}
+        if p.mute {
+            for h in ([2]^wire.Host{p.server,p.client}) {
+                if h==nil {continue}
+                wire.host_poll(h)
+                wire.host_update(h,w.now)
+            }
+            continue
+        }
         node_pump(&p.n,w.now)
         for h in ([2]^wire.Host{p.server,p.client}) {
             if h!=nil {wire.host_update(h,w.now)}
@@ -825,6 +834,33 @@ a_downstream_peer_cannot_substitute_the_snapshot :: proc(t:^testing.T) {
     joined:=fmt.tprintf("%s/joined",w.folder)
     if _,join_error:=test_join(t,&w,1,join_desc(&w,0,joined));!testing.expectf(t,join_error=="","%s",join_error) {return}
     same_files(t,root,joined)
+}
+
+// A host that stays connected and answers nothing, and one whose snapshot names
+// a file it does not have, end the join within a bounded time: the first with
+// why, the second with the file reported by path.
+@(test)
+a_host_that_withholds_ends_the_join_in_bounded_time :: proc(t:^testing.T) {
+    w:Test_Net
+    if !test_net(t,&w,"share-withholds",2) {return}
+    defer test_net_destroy(&w)
+    s:=&w.peers[0].s
+    here,_:=store.put(s,transmute([]u8)string("here"))
+    gone:=bytes_address(noise(1000,9))
+    withheld:=Snapshot{name="game",entries={{path="assets/gone.bin",address=gone,size=1000},{path="here.txt",address=here,size=4}}}
+    snapshot,_,_:=snapshot_put(s,&withheld)
+    digits:[64]u8
+    store.ref_set(s,NAMESPACE,offer_name(w.peers[0].token,&digits),snapshot)
+    test_connect(&w,1,0)
+    started:=w.now
+    report,error:=test_join(t,&w,1,join_desc(&w,0,fmt.tprintf("%s/joined",w.folder)))
+    testing.expectf(t,error=="" && len(report.failed)==1 && strings.contains(report.failed[0],"assets/gone.bin") && report.written==1,"%s %v",error,report.failed)
+    testing.expectf(t,w.now-started<60,"the file is reported in bounded time: %.1f s",w.now-started)
+
+    w.peers[0].mute=true
+    started=w.now
+    _,silent:=test_join(t,&w,1,join_desc(&w,0,fmt.tprintf("%s/other",w.folder)))
+    testing.expectf(t,silent!="" && w.now-started<60,"a silent host ends the join in bounded time: %.1f s, %s",w.now-started,silent)
 }
 
 // A host whose snapshot lies about the size of a file, and one whose root is

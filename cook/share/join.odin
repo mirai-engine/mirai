@@ -82,6 +82,7 @@ Write :: struct {at:int,present:bool,base:store.Hash,done:bool,refused:bool}
 Remove :: struct {at:int,done:bool,refused:bool}
 
 @(private) MISSING_SECONDS :: 10.0 // an object no connected peer has for this long fails the join
+@(private) STALL_SECONDS :: 20.0   // without a byte received or an object complete, what is wanted fails
 @(private) WINDOW :: 256           // files wanted at once
 
 join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,error:string) {
@@ -221,7 +222,7 @@ join_offer :: proc(d:^Join_Desc,allocator:runtime.Allocator) -> (address:store.H
         if !ok {return {},strings.clone("the question for the snapshot was lost",allocator)}
         switch result.state {
         case .Found: return result.address,""
-        case .Not_Found: return {},strings.clone("the host offers no project under this invitation: its share ended and another runs; ask for its new invitation",allocator)
+        case .Not_Found: return {},strings.clone("the host offers no project under this invitation, or did not answer: its share ended and another runs; ask for its new invitation",allocator)
         case .Waiting:
         }
         if error=join_alive(d,allocator);error!="" {return}
@@ -264,7 +265,8 @@ join_fetch :: proc(d:^Join_Desc,addresses:[]store.Hash,what:string,allocator:run
     Active :: struct {address:store.Hash,missing:f64}
     active:=make([dynamic]Active,context.temp_allocator)
     defer for a in active {exchange.forget(&n.x,a.address)}
-    next:=0
+    next,complete:=0,0
+    stall:Stall
     for next<len(addresses) || len(active)>0 {
         for len(active)<WINDOW && next<len(addresses) {
             if exchange.want(&n.x,addresses[next],1<<20)!=.None {break}
@@ -279,6 +281,7 @@ join_fetch :: proc(d:^Join_Desc,addresses:[]store.Hash,what:string,allocator:run
             case .Complete:
                 exchange.forget(&n.x,a.address)
                 unordered_remove(&active,k)
+                complete+=1
                 continue
             case .Failed:
                 return fmt.aprintf("%s could not be kept in the store at %s (%v, %v): free space there",what,n.s.root,p.error,p.store_error,allocator=allocator)
@@ -287,9 +290,26 @@ join_fetch :: proc(d:^Join_Desc,addresses:[]store.Hash,what:string,allocator:run
             k+=1
         }
         if len(active)==0 && next==len(addresses) {break}
+        if stalled(d,&stall,complete) {return fmt.aprintf("no connected peer sent any of %s for %.0f s: the host withholds it, or stopped; run the join again",what,STALL_SECONDS,allocator=allocator)}
         if error:=join_alive(d,allocator);error!="" {return error}
     }
     return ""
+}
+
+// Whether the join made no progress for STALL_SECONDS: no chunk byte received
+// from any peer and no object complete, whatever the peers do or withhold.
+@(private)
+Stall :: struct {at:f64,received:u64,complete:int}
+
+@(private)
+stalled :: proc(d:^Join_Desc,s:^Stall,complete:int) -> bool {
+    now:=node_now(d.node)
+    received:=node_totals(d.node).received
+    if s.at==0 || received!=s.received || complete!=s.complete {
+        s^={at=now,received=received,complete=complete}
+        return false
+    }
+    return now-s.at>=STALL_SECONDS
 }
 
 // Whether an object stayed missing at every connected peer for MISSING_SECONDS.
@@ -543,7 +563,8 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
     // What arrived, which the lease of the node holds from the end on.
     complete:=make([dynamic]store.Hash,context.temp_allocator)
     defer node_serve(n,..complete[:])
-    next:=0
+    next,complete_count:=0,0
+    stall:Stall
     done:i64
     started:=node_now(n)
     totals:=node_totals(n)
@@ -569,6 +590,7 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
             case .Complete:
                 join_write(d,snap,plan,list,index,folder,report)
                 append(&complete,e.address)
+                complete_count+=1
                 report.fetched+=e.size
                 done+=e.size
             case .Failed:
@@ -599,6 +621,17 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
             say(d,"%d of %d files, %s of %s, %s/s, %s left",next-len(active),len(order),bytes_text(done+here),bytes_text(total),bytes_text(i64(rate)),eta<0?"time":seconds_text(max(eta,0)))
         }
         if len(active)==0 && next==len(order) {break}
+        // Nothing arrives: what is wanted fails by path, and the files after it are asked.
+        if stalled(d,&stall,complete_count) {
+            for a in active {
+                e:=&snap.entries[plan.write[a.k].at]
+                for w in paths[e.address] {failed(report,"%s: no connected peer sent any of it for %.0f s: the host withholds it, or stopped; run the join again",snap.entries[plan.write[w].at].path,STALL_SECONDS)}
+                exchange.forget(&n.x,e.address)
+            }
+            clear(&active)
+            stall={}
+            continue
+        }
         if error:=join_alive(d,allocator);error!="" {return error}
     }
     elapsed:=node_now(n)-started
