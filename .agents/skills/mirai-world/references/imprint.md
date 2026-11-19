@@ -73,11 +73,6 @@ An entity with the `imprint` grid (cells of 2 to 10 cm, `follow_view`), its emit
 `Imprint_Ground` and a material with `Imprint_Surface`; the bodies with `Imprint_Stamp`. The
 `snow` scene of the `fluid-ninja` project builds them.
 
-A terrain chooses its level by the error of its heights at rest: flat, it takes coarse levels
-even near the camera and the footprints end up in triangles of tens of centimeters. With
-`Imprint_Ground` on a terrain, `Terrain_Settings.lod_distance` covers the field's region (half of
-its side plus how far the view moves away from its center) so that it is at level 0.
-
 ## Verification
 
 - `mirai test plugins/imprint/runtime`: a stamp presses less the higher it is; a step leaves

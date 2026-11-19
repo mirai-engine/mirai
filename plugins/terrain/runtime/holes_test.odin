@@ -73,10 +73,10 @@ holes_leave_no_triangles_picking_or_flat_edges_and_keep_the_collider_samples :: 
     testing.expect(t,!chunk_holed(&source,chunk_index(&source,{0,0,1})))
 }
 
-// A chunk with holes keeps its level far away: its collider has every hole,
-// and its material cuts those its coarse triangles span.
+// A hole cut at run time, far away too, is left out of its chunk, which shows
+// every sample with the material of its layers, and its collider has it.
 @(test)
-bodies_fall_through_holes_cut_at_run_time_and_far_holed_chunks_cut_them_by_their_material :: proc(t:^testing.T) {
+bodies_fall_through_holes_cut_at_run_time_and_far_chunks_leave_out_their_triangles :: proc(t:^testing.T) {
     root:=base.test_folder(t,"terrain")
     source:Source;defer source_destroy(&source)
     testing.expect(t,source_make(&source,.Heightfield,{65,1,65},1,16))
@@ -96,23 +96,17 @@ bodies_fall_through_holes_cut_at_run_time_and_far_holed_chunks_cut_them_by_their
     test_world_settle(&w.w)
     view:=core.VIEW_DEFAULT
     view.position={-30,2,-30}
-    settings:=Terrain_Settings{lod_distance=8}
+    settings:=Terrain_Settings{}
     for _ in 0..<2 {terrain_test_update(&w,&resident,&app,view=view,settings=settings)}
     far:=chunk_index(&w.data.entries[0].source,{3,0,3})
-    testing.expect(t,resident.sources[0].chunks[far].built.lod.level>0)
     _,hit:=phys.raycast({&w.state},{28.5,10,28.5},{0,-1,0})
     testing.expect(t,hit)
     dig(&w.terrain_requests,{kind=.Hole,center={28.5,0,28.5},radius=0.6},owner)
     terrain_test_update(&w,&resident,&app,view=view,settings=settings)
     chunk:=resident.sources[0].chunks[far]
-    testing.expect(t,chunk.built.lod.level>0 && chunk.shape.holed)
+    testing.expect(t,!chunk.shape.holed)
     shown:=resident.owners[0].chunks[far]
-    if static,has:=core.get(&w.statics,shown);testing.expect(t,has) {testing.expect_value(t,static.materials[0],LAYERS_HOLED_MATERIAL)}
-    // Its material takes the mask of the holes of the piece, made again with the edit.
-    if look,has:=core.get(&w.looks,shown);testing.expect(t,has) {
-        given,found:=render.material_texture_of(&look,0,base.name_hash("maps.mask"))
-        testing.expect(t,found && given!={} && given==chunk.maps.mask)
-    }
+    if static,has:=core.get(&w.statics,shown);testing.expect(t,has) {testing.expect_value(t,static.materials[0],LAYERS_MATERIAL)}
     testing.expect(t,w.data.entries[0].source.revision==2)
     _,hit=phys.raycast({&w.state},{28.5,10,28.5},{0,-1,0})
     testing.expect(t,!hit,"the collider has the hole")
@@ -122,7 +116,7 @@ bodies_fall_through_holes_cut_at_run_time_and_far_holed_chunks_cut_them_by_their
     terrain_test_update(&w,&resident,&app,view=view,settings=settings)
     _,hit=phys.raycast({&w.state},{28.5,10,28.5},{0,-1,0})
     testing.expect(t,hit)
-    testing.expect(t,resident.sources[0].chunks[far].built.lod.level>0 && !resident.sources[0].chunks[far].shape.holed && resident.sources[0].chunks[far].maps.mask=={})
+    testing.expect(t,!resident.sources[0].chunks[far].shape.holed)
     testing.expect_value(t,w.problems.count,0)
 }
 

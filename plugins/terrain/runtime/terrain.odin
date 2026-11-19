@@ -37,7 +37,6 @@ Terrain_Settings :: struct {
     chunks:u32 `mirai:"advanced"`, // pieces the terrains show, chunks and nodes of their quadtrees: past it, the farthest show coarser nodes
     samples:u32 `mirai:"advanced"`,
     requests:u32 `mirai:"advanced"`, // edits, layer changes and saves a tick can ask for, and digs it reports; past it they are dropped and reported
-    lod_distance:f32 `mirai:"unit=m"`,       // level 0 within it of the view, one level more each time it doubles (a Heightfield chunk no coarser than its error allows); 0: a Heightfield takes the coarsest level whose error covers about LOD_PIXELS of the view (others LOD_CHUNKS chunk widths); below 0: every chunk at level 0
     collision_distance:f32 `mirai:"unit=m"`, // chunks farther from the view have no collider; whatever it is, only the nearest that Physics_Settings has room for collide; 0: no distance
     resident_distance:f32 `mirai:"unit=m"`,  // chunks farther from every streaming source (scene.Streaming_Sources) let go of their mesh, collider and pages, and nodes of the quadtree show in their place; 0: every chunk stays
     displacement_distance:f32 `mirai:"unit=m"`, // Heightfield chunks at level 0 within it of the view raise the heights of the textures of their layers (Terrain_Layer.displacement); 0: none
@@ -255,7 +254,7 @@ Terrain_Resident :: struct {
     lod_simulation_count:int,
     lod_seen:[2]core.Seen, // the transforms and the colliders
     marks:u64,        // advances when what the levels or the unloaded ground are chosen from changes: a page, a source, an owner, a chunk that empties, fills or goes
-    lod_distances:[3]f32, // of Terrain_Settings then
+    lod_distances:[2]f32, // collision and resident of Terrain_Settings then
     focus:Terrain_Focus,  // then
     room:Collider_Room,
     cut:bool,               // what the owners show is to be chosen again: the cuts or what is built changed
@@ -265,7 +264,6 @@ Terrain_Resident :: struct {
     stack:[dynamic]u32,     // the nodes an owner's walk is still to look at
     near:[dynamic]Lod_Near, // the pieces the walk for colliders is still to look at, nearest first
     bodies:[dynamic][3]f32, // where the bodies that move and the characters are, in the world, at the last call
-    side_levels:[dynamic]Side_Level, // of the chunks on the shared edges, while their levels meet
     border:Piece_Border,    // of a node, while its pages are looked for
     picking:bool,           // chunks without a collider keep their triangles on the CPU: while the world does not play, for the picking of the editor
     group:u32,              // the groups pieces_show has gathered so far
@@ -281,11 +279,11 @@ Resident_Chunk :: struct {
     built,wanted:Chunk_Key, // what the mesh shows, and what the owners ask for
     distance:f32,           // to the nearest view of its owners, at the last evaluation
     reach:f32,              // its distance over the resident distance of the nearest viewer: resident up to 1
-    pixels,spacing:f32,     // of the view a metre of its error, and between its samples, covers (Owner_Node)
     resident:bool,          // a piece an owner wants, or a root of a streamed source: wanted with a mesh
     visible:bool,           // an owner shows it
     urgent:bool,            // built in the call that wants it (resident_cut): a root where nothing shows, or ground near a simulation source
     shown:bool,             // what it built is published: a mesh, or none for an empty chunk
+    bare:bool,              // its mesh shows without its levels (piece_levels): built in a call that waited for it, it is built again with them
     working:bool,           // a job builds it
     maps:Piece_Maps,        // the textures of the maps of its mesh (surface.odin)
     shape:Piece_Shape,
@@ -295,7 +293,7 @@ Resident_Chunk :: struct {
 }
 // A build of a piece published to the assets, until it shows with the
 // neighbors whose shared edges change with it.
-Staged_Piece :: struct {mesh:base.Asset_Id,maps:Piece_Maps,shape:Piece_Shape,revision:u32,built:Chunk_Key,ready:bool,shared:bool} // shared: maps are those the piece shows
+Staged_Piece :: struct {mesh:base.Asset_Id,maps:Piece_Maps,shape:Piece_Shape,revision:u32,built:Chunk_Key,ready:bool,shared:bool,bare:bool} // shared: maps are those the piece shows; bare: as Resident_Chunk.bare
 // A piece is built again when its level, its border or its collider changes.
 // border: a hash of the levels of the border of a node (Piece_Border).
 Chunk_Key :: struct {lod:Chunk_Lod,collision:bool,border:u64,join:u64} // join: what it builds from its joins (join_cut_key, Terrain_Join.hash), 0 none
@@ -304,7 +302,6 @@ Resident_Source :: struct {
     owner:core.Entity,       // the terrain whose pieces these are
     quad:Quad,
     chunks:[]Resident_Chunk, // by node: the chunks, then the nodes of the quadtree
-    levels:[]u8,             // by chunk: the level it shows or would show (Border_Levels)
     deep:[]bool,             // by chunk: it shows well within the reach of a viewer
     changed:[dynamic]u32,    // nodes published or let go since the owner last showed them
     dirty:[]bool,            // by node: in pending
@@ -343,10 +340,8 @@ Resident_Owner :: struct {
 Owner_Node :: struct {
     distance,reach:f32, // from its views and viewers, as Resident_Chunk
     ground:f32,         // from the nearest simulation source, in chunk widths: its collider is built at once within GROUND_REACH
-    pixels:f32,         // of the view a metre of its error covers
-    spacing:f32,        // of the view a metre between its samples covers, at the angle it is seen
     resident:bool,      // a chunk it needs as a chunk: near its viewers, or with a collider (resident_needed)
-    want:bool,          // a node that would open: a chunk under it is resident, or the view is nearer than its level reaches
+    want:bool,          // a node that would open: a chunk under it is resident
     open:bool,          // its children are wanted in its place
     cut:bool,           // wanted as a piece
     visible:bool,       // shown
@@ -598,28 +593,6 @@ data_version :: #force_inline proc "contextless" (entry:^Data_Source,i:int) -> u
     return i<chunks?entry.versions[i]:entry.nodes[i-chunks]
 }
 
-// After an edit of the inclusive region of samples low..high: the chunks it
-// touched measure their levels again where their pages are in memory, and
-// the errors of the nodes above grow with what changed.
-@(private)
-data_errors_edit :: proc(entry:^Data_Source,low,high:[3]int) {
-    s:=&entry.source
-    q:=&entry.quad
-    errors:=s.coarse.errors
-    if len(errors)!=quad_total(q) {return}
-    first,last:=chunk_range(s,{changed=true,low=low,high=high})
-    for z in first.z..=last.z {for x in first.x..=last.x {
-        index:=chunk_index(s,{i32(x),0,i32(z)})
-        a,b,ok:=chunk_region(s,{i32(x),0,i32(z)})
-        if index<0 || !ok || !source_region_held(s,a,b) {continue}
-        chunk_errors_measure(s,{s=s},{x,z},&errors[index])
-    }}
-    for d in 1..=q.depth {
-        for z in first.z>>uint(d)..=last.z>>uint(d) {for x in first.x>>uint(d)..=last.x>>uint(d) {
-            if node:=quad_index(q,d,{x,z});node>=0 {node_errors_measure(s,q,errors,node,{low.xz,high.xz})}
-        }}
-    }
-}
 @(private)
 data_ready :: proc(data:^Terrain_Data,settings:Terrain_Settings,allocator:=context.allocator) -> bool {
     if data.ready {return true}
@@ -799,7 +772,7 @@ terrain_release :: proc(resident:^Terrain_Resident,allocator:runtime.Allocator) 
 terrain_resident_free :: proc(resident:^Terrain_Resident) {
     for &source in resident.sources {resident_source_free(resident,&source)}
     for &owner in resident.owners {resident_owner_free(&owner)}
-    delete(resident.sources);delete(resident.owners);delete(resident.splits);delete(resident.places);delete(resident.stack);delete(resident.near);delete(resident.side_levels);delete(resident.bodies);delete(resident.members)
+    delete(resident.sources);delete(resident.owners);delete(resident.splits);delete(resident.places);delete(resident.stack);delete(resident.near);delete(resident.bodies);delete(resident.members)
     piece_border_destroy(&resident.border)
     resident^={}
 }
@@ -816,7 +789,7 @@ resident_source_free :: proc(resident:^Terrain_Resident,source:^Resident_Source)
         staged_release(resident.assets,&chunk)
     }
     if source.table!={} && resident.assets!=nil {host.assets_texture_release(resident.assets,source.table)}
-    delete(source.chunks);delete(source.levels);delete(source.deep);delete(source.changed);delete(source.dirty);delete(source.pending);delete(source.staged)
+    delete(source.chunks);delete(source.deep);delete(source.changed);delete(source.dirty);delete(source.pending);delete(source.staged)
     delete(source.join.cuts)
     source^={}
 }
@@ -829,16 +802,15 @@ resident_source :: proc(resident:^Terrain_Resident,entry:^Data_Source,e:core.Ent
     if found!=nil && found.quad==entry.quad && len(found.chunks)==count {return found}
     next:=Resident_Source{id=entry.id,owner=e,quad=entry.quad}
     allocator:=resident.assets.allocator
-    e0,e1,e2,e3,e4,e5,e6:runtime.Allocator_Error
+    e0,e2,e3,e4,e5,e6:runtime.Allocator_Error
     next.chunks,e0=make([]Resident_Chunk,count,allocator)
-    next.levels,e1=make([]u8,chunks,allocator)
     next.deep,e2=make([]bool,chunks,allocator)
     next.changed,e3=make([dynamic]u32,0,count,allocator)
     next.dirty,e4=make([]bool,count,allocator)
     next.pending,e5=make([dynamic]u32,0,count,allocator)
     next.staged,e6=make([dynamic]u32,0,count,allocator)
-    if e0!=nil || e1!=nil || e2!=nil || e3!=nil || e4!=nil || e5!=nil || e6!=nil || found==nil && append(&resident.sources,Resident_Source{})!=1 {
-        delete(next.chunks,allocator);delete(next.levels,allocator);delete(next.deep,allocator);delete(next.changed)
+    if e0!=nil || e2!=nil || e3!=nil || e4!=nil || e5!=nil || e6!=nil || found==nil && append(&resident.sources,Resident_Source{})!=1 {
+        delete(next.chunks,allocator);delete(next.deep,allocator);delete(next.changed)
         delete(next.dirty,allocator);delete(next.pending);delete(next.staged)
         source_memory(problems,e,resident.assets,entry.id)
         return nil

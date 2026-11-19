@@ -13,8 +13,11 @@ Preview_Test_World :: struct {
     chunks:core.Table(terrain.Terrain_Chunk),
 }
 
+// A chunk previews every sample with the border it shows, which a stroke
+// does not change, a hole either: only the chunks the stroke touches are
+// previewed.
 @(test)
-a_preview_shows_the_level_of_its_chunk_and_a_hole_joins_its_neighbors_at_level_0 :: proc(t:^testing.T) {
+a_preview_shows_the_border_of_its_chunk_and_a_hole_changes_no_border :: proc(t:^testing.T) {
     world:Preview_Test_World
     if !test_world_init(t,&world) {return}
     defer test_world_destroy(&world)
@@ -29,16 +32,11 @@ a_preview_shows_the_level_of_its_chunk_and_a_hole_joins_its_neighbors_at_level_0
     for &slot in stroke.preview_at {slot=-1}
     owner:=core.create(&world.entities)
     core.add(&world.terrains,owner,terrain.Terrain{source=stroke.id,revision=1})
-    // What the runtime shows: the middle chunk and the one east of it at level 2, the one west at 0, the rest at 1.
-    levels:=make([]u8,total,context.temp_allocator)
-    for &level in levels {level=1}
-    levels[terrain.chunk_index(s,{2,0,2})]=2
-    levels[terrain.chunk_index(s,{3,0,2})]=2
-    levels[terrain.chunk_index(s,{1,0,2})]=0
+    // What the runtime shows: the column x=3 beside a node east of it, whose side is coarse.
     shown:=make([]terrain.Chunk_Lod,total,context.temp_allocator)
     for index in 0..<total {
         coord:=terrain.chunk_coord(s,index)
-        shown[index]=terrain.chunk_lod_sides(s,levels,coord)
+        if coord.x==3 {shown[index].sides[1]=terrain.COARSE_LEVEL}
         e:=core.create(&world.entities)
         core.add(&world.chunks,e,terrain.Terrain_Chunk{owner=owner,coord=coord,revision=1,lod=shown[index]})
     }
@@ -48,8 +46,6 @@ a_preview_shows_the_level_of_its_chunk_and_a_hole_joins_its_neighbors_at_level_0
         if at<0 {return {},false}
         return stroke.previews[at],true
     }
-
-    // A stroke on a chunk at level 2 previews it at level 2, with the sides its neighbors show.
     raise:=terrain.source_edit(s,{kind=.Raise,center={11,0,3},radius=1,amount=0.5})
     if !testing.expect(t,raise.changed) {return}
     stroke_changed(stroke,raise)
@@ -57,10 +53,7 @@ a_preview_shows_the_level_of_its_chunk_and_a_hole_joins_its_neighbors_at_level_0
     east,found:=preview_of(stroke,{3,0,2})
     testing.expect(t,found && east.dirty)
     testing.expect_value(t,east.lod,shown[terrain.chunk_index(s,{3,0,2})])
-    testing.expect_value(t,east.lod.level,u8(2))
     testing.expect_value(t,len(stroke.previews),1)
-
-    // A hole puts its chunk at level 0, and each neighbor whose side toward it was coarser is previewed with that side at 0.
     hole:=terrain.source_edit(s,{kind=.Hole,center={3,0,3},radius=1})
     if !testing.expect(t,hole.changed) {return}
     stroke_changed(stroke,hole)
@@ -68,18 +61,8 @@ a_preview_shows_the_level_of_its_chunk_and_a_hole_joins_its_neighbors_at_level_0
     middle,has_middle:=preview_of(stroke,{2,0,2})
     testing.expect(t,has_middle)
     testing.expect_value(t,middle.lod,terrain.Chunk_Lod{})
-    east,_=preview_of(stroke,{3,0,2})
-    testing.expect_value(t,east.lod.level,u8(2))
-    testing.expect_value(t,east.lod.sides[0],u8(0))
-    north,has_north:=preview_of(stroke,{2,0,1})
-    testing.expect(t,has_north && north.dirty)
-    testing.expect_value(t,north.lod.level,u8(1))
-    testing.expect_value(t,north.lod.sides[3],u8(0))
-    south,has_south:=preview_of(stroke,{2,0,3})
-    testing.expect(t,has_south && south.lod.sides[2]==0)
-    // The chunk west of it was at level 0 already: its side does not change.
+    _,has_north:=preview_of(stroke,{2,0,1})
     _,has_west:=preview_of(stroke,{1,0,2})
-    testing.expect(t,!has_west)
-    _,far:=preview_of(stroke,{0,0,0})
-    testing.expect(t,!far)
+    testing.expect(t,!has_north && !has_west)
+    testing.expect_value(t,len(stroke.previews),2)
 }
