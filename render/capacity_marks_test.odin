@@ -48,3 +48,28 @@ a_scene_seen_again_starts_its_lists_at_its_marks_and_drops_nothing :: proc(t: ^t
 		testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 	}
 }
+
+// A list that has a most holds no more, its slack included, even when a mark
+// asks for more than it (one kept from older code).
+@(test)
+a_list_of_the_cull_never_passes_its_most :: proc(t: ^testing.T) {
+	settings := DEFAULT_SETTINGS
+	settings.gi_enabled, settings.taa = false, false
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	marks: Capacity_Marks
+	marks.cull[.Shadow_Entries] = SHADOW_ENTRIES_MOST
+	marks.cull[.Shadow_Chunks] = SHADOW_CHUNKS_MOST * 7 / 4
+	renderer_capacity_marks_set(r, marks)
+	camera := Camera{position = {0, 5, 5}, forward = {0, -0.7, -0.7}, up = {0, 0.7, -0.7}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	for _ in 0 ..< 2 {
+		if !testing.expect(t, renderer_frame(r, {camera = camera}), r.error) {return}
+	}
+	most := CULL_MOST
+	for list in ([]Cull_List{.Shadow_Entries, .Shadow_Chunks}) {
+		testing.expectf(t, r.scene.cull_capacity[list] > 0 && r.scene.cull_capacity[list] <= most[list], "%v holds %d, its most is %d", list, r.scene.cull_capacity[list], most[list])
+	}
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}

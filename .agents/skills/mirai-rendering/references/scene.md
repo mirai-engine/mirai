@@ -87,10 +87,15 @@
   `Mesh_Stream` its pages, their compressed blocks and the parents of each page, and whoever
   registered it can release its geometry. What is made in memory without `page_data` always has
   all its pages.
-  - **Slots.** The first streamed mesh reserves once, through `pool_room`, a region of the vertex
-    pool of `Settings.page_pool_bytes` in slots of `MESH_PAGE_WORDS` words. The CPU copy of a slot
-    is the decoded block of its page, and it is published like any dirty range. Without memory for
-    the region there is no streaming: those meshes draw their root and `Stats.problem` says so.
+  - **Slots.** The first streamed mesh makes a region of the vertex pool in slots of
+    `MESH_PAGE_WORDS` words, as many as its pages out of the root up to `PAGE_SLOTS_START`. After
+    a frame whose pages found no slot the region grows, between frames, to a power of two that
+    holds them, never past `Settings.page_pool_bytes` nor the pages out of the root of the
+    streamed meshes: a new range of the pool takes the pages in slots with their entries, and the
+    old range goes free; no other geometry moves. The CPU copy of a slot is the decoded block of
+    its page, and it is published like any dirty range. Without memory for the region there is no
+    streaming: those meshes draw their root and `Stats.problem` says so; without memory to grow
+    it, it stays as it is.
   - **Cull rule.** For a streamed mesh `cull_clusters` draws a cluster if its page is there, the
     error of its parent is not within the threshold, and its own is or the page of its children
     (`child_page`) is not there; in that case it requests that page with the pixels of its error,
@@ -114,8 +119,8 @@
     frames, has no loaded children, is not a parent of the one loading and is not in a ray cut
     that an instance traces: the first eviction of a frame sorts those slots by stamp once.
     Releasing it leaves its entry at `GPU_NONE`. A stable frame does not allocate.
-  - If for `PAGE_SHORT_FRAMES` consecutive frames requests are left without room, `Stats.problem`
-    says `page_pool_bytes` is lacking.
+  - If for `PAGE_SHORT_FRAMES` consecutive frames requests are left without room once the region
+    cannot grow, `Stats.problem` says `page_pool_bytes` or the GPU memory is lacking.
 - **Clusters.** A mesh arrives in the clusters of `.mesh` v6
   ([format](../../mirai-assets/references/kinds.md)): up to 128 triangles of one slot with their
   own vertices, local u8 indices and position and UV on power-of-two grids of the mesh, so two

@@ -24,6 +24,10 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   device memory, never the small heap the CPU sees of a discrete GPU (BAR); with device memory
   full a resource goes to system memory instead of being refused, counted in
   `device_stats().host_memory` and reported in the renderer's `Stats.problem`.
+- **Names.** A resource keeps the name of its description, which names it in the graphics
+  debuggers and in `device_memory_report`: what each buffer, texture and acceleration structure
+  holds, grouped by name, against `device_memory`. A resource is made with a name; the report
+  shows one without it by its kind.
 - **New contents.** A new buffer reads zero on both backends; the texels of a new texture are
   undefined until something writes them (`Buffer_Desc`, `Texture_Desc`). On Vulkan a range held
   another resource before, so the device zeroes a buffer of `GPU` memory with a fill in the next

@@ -20,6 +20,7 @@ Mtl_Buffer :: struct {
 	mapped: rawptr,
 	usage:  Buffer_Usage,
 	kind:   Memory,
+	name:   Resource_Name,
 }
 
 Mtl_Texture :: struct {
@@ -31,6 +32,7 @@ Mtl_Texture :: struct {
 	swapchain: bool, // handle is the current drawable texture, not owned
 	surface:   rawptr, // the IOSurface of a shared texture, owned
 	table:     Table_Refs,
+	name:      Resource_Name,
 }
 
 Mtl_Slot :: struct {
@@ -84,6 +86,7 @@ Mtl_Accel :: struct {
 	compact_slot:      i32,
 	compact_frame:     u64,
 	compact_immediate: bool,
+	name:              Resource_Name,
 }
 
 Mtl_Frame :: struct {

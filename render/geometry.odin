@@ -506,7 +506,7 @@ mesh_register :: proc(r: ^Renderer, g: asset.Mesh_Geometry, given_words: []u32, 
 	streamed := len(g.page_data) > 0 && g.root_page > 0
 	stored := g.root_page if streamed else 0
 	// The region of the slots comes first: the room of the mesh is past it.
-	if streamed {pages_region_ensure(r)}
+	if streamed {pages_region_ensure(r, g.root_page)}
 	if !mesh_room(r, g, stored, len(slot_words), given) {
 		s.refused.meshes += 1
 		s.refused.triangles += u64(triangles)
