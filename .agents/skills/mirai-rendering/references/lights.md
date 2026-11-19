@@ -359,9 +359,8 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   changed cover (`SHADOW_WORDS_PART`): what else lies in a wide page is not drawn again. A
   surface shown at another detail changes only the pages whose texel there is finer than its
   error: a page of a streamed mesh, by the error of what its clusters replace over the error a
-  texel takes in the cut (`lod_error_pixels`), in the box of its clusters; an instance that takes
-  another mesh of its surface (`mesh_surface`: the pieces of a terrain at their levels), by the
-  errors of both. Such a page, and one where instances of a batch came or went past their cull
+  texel takes in the cut (`lod_error_pixels`), in the box of its clusters. Such a page, and one
+  where instances of a batch came or went past their cull
   distance, keeps what the atlas showed until the cache drew it again and the atlas composed it
   (`SHADOW_PAGE_SOFT`): a page that waits for that shows the frame before, not a coarser page. The
   atlas (`Shadow_Raster.atlas`), what the passes read, composes the cache and what moves again

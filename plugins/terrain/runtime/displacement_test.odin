@@ -12,13 +12,11 @@ displaced_chunks_split_less_far_away_and_meet_at_the_coarser_detail :: proc(t:^t
     testing.expect_value(t,displaced_detail(3,30,32),u8(1))
     s:Source;defer source_destroy(&s)
     lod_seam_source(t,&s)
-    counts:=chunk_counts(&s)
-    levels:=make([]u8,counts.x*counts.z);defer delete(levels)
     near,far:Chunk_Mesh
     chunk_mesh_init(&near);defer chunk_mesh_destroy(&near)
     chunk_mesh_init(&far);defer chunk_mesh_destroy(&far)
-    testing.expect(t,chunk_detail_build(&s,{0,0,0},chunk_lod_sides(&s,levels,{0,0,0}),3,{0,1,0,0},&near))
-    testing.expect(t,chunk_detail_build(&s,{1,0,0},chunk_lod_sides(&s,levels,{1,0,0}),1,{1,0,0,0},&far))
+    testing.expect(t,chunk_detail_build(&s,{0,0,0},{},3,{0,1,0,0},&near))
+    testing.expect(t,chunk_detail_build(&s,{1,0,0},{},1,{1,0,0,0},&far))
     chunk_in_terrain(&near);chunk_in_terrain(&far)
     _,high,_:=chunk_region(&s,{0,0,0})
     side:=source_point(&s,high).x
@@ -41,9 +39,7 @@ displaced_chunks_split_their_cells_on_the_collider_and_join_their_neighbors :: p
     hole:=source_point(&s,{5,0,6})+{s.cell*0.5,0,s.cell*0.5}
     testing.expect(t,source_edit(&s,{kind=.Hole,center=hole,radius=0.2}).changed)
     testing.expect(t,source_hole(&s,5,6))
-    counts:=chunk_counts(&s)
-    levels:=make([]u8,counts.x*counts.z);defer delete(levels)
-    lod:=chunk_lod_sides(&s,levels,{0,0,0})
+    lod:=Chunk_Lod{}
     DETAIL :: 2
     mesh:Chunk_Mesh;chunk_mesh_init(&mesh);defer chunk_mesh_destroy(&mesh)
     testing.expect(t,chunk_detail_build(&s,{0,0,0},lod,DETAIL,{0,DETAIL,0,0},&mesh))
@@ -70,7 +66,7 @@ displaced_chunks_split_their_cells_on_the_collider_and_join_their_neighbors :: p
     testing.expect_value(t,east,cells<<DETAIL+1)
     // The chunk beside it at level 0 builds the same vertices along their side.
     neighbor:Chunk_Mesh;chunk_mesh_init(&neighbor);defer chunk_mesh_destroy(&neighbor)
-    testing.expect(t,chunk_build(&s,{0,0,1},&neighbor,false,chunk_lod_sides(&s,levels,{0,0,1})))
+    testing.expect(t,chunk_build(&s,{0,0,1},&neighbor,false))
     chunk_in_terrain(&neighbor)
     shared:=0
     for p in neighbor.geometry.positions {
