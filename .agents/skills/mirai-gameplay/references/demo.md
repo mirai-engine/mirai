@@ -34,6 +34,8 @@ badge and the hum); `mirai content <project>` runs it. It does not go into the g
 - `cook.mirai`: the prefabs and materials that only code picks by path.
 - `render_check.mirai`: the fixed views that `mirai render check` measures
   ([render check](../../mirai-rendering/references/verification.md#render-check)).
+- `captures.mirai`: the named cameras, and `tests/flights/`: the flights of
+  `mirai bench flight` ([profiling](../../mirai-agent-api/references/methods.md#profiling)).
 - `game/` and `assets/`, with the art sources beside what they make.
 
 Scenes:
@@ -65,7 +67,7 @@ Scenes:
 - **`physics`**: gallery of 23 stations.
 - **`vfx`**: gallery of the `vfx` plugin (`game/vfx_gallery.odin`), five exhibits that the camera
   tours in Play (left and right, Home the overview) with their title and explanation in the HUD:
-  particle lights with shadow, particles from the skin and bones of Mirai walking, impacts that the
+  embers that glow, particles from the skin and bones of Mirai walking, impacts that the
   game gives to a channel (E fires a burst), a smoke column in a 3D grid with `Particle_Volume`
   (`shaders/smoke_plume.slang`) and sprite materials. The effects translated from Unreal are in
   the imported-maps project, not in the demo. The `fluids` plugin lives in its own repository,
@@ -86,8 +88,8 @@ Scenes:
 - **`lights`** and **`night`**: many point lights without a sun, for the cost and noise of direct
   light; without spawn points, in Play they are seen from their camera.
 - **`church`**: nave with volumetric fog (`fog` plugin) and stained glass windows that a sun crosses
-  and draws in the haze and on the floor
-  ([glass in the light](../../mirai-rendering/references/materials.md#medium-filter)). Its haze is
+  uncolored and draws in the haze and on the floor
+  ([glass in rays](../../mirai-rendering/references/materials.md#glass-in-rays)). Its haze is
   even because the render check takes as boiling what changes in a still view; **`church_fog`** is
   the same nave with the haze in wisps that move on their own through the beams.
 - **`portal_chamber`**: the [portal game](#portal-game).

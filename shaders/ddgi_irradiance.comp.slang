@@ -30,10 +30,21 @@
 // by more than its noise, or PROBE_SETTLED, is traced again next frame with
 // the probes beside it, which read it: what its rays meet is still settling,
 // and a probe new to its cell is traced twice. One whose light stays is left
-// alone until a change reaches it, or one beside it moves. A probe that sees the inside of geometry with
+// alone until a change reaches it, or one beside it moves. One whose light
+// moved by no more than half of PROBE_SETTLED, or by less than the view can
+// show (PROBE_UNSEEN, exposed), and no change keeps awake, says so to
+// ddgi_relocate.comp (CHOSEN_STILL), as one buried does: a turn by time that
+// leaves it there lets it wait longer for the next. Measured against what it
+// would take, not against what the blend wrote, a probe still approaching
+// its light keeps its turns. What moves one whose rays meet what changes by
+// itself (CHOSEN_PASSING) is followed by its turns: it wakes neither itself,
+// unless a change keeps it awake or it is new, nor the probes beside it that
+// take turns of their own, so that the time does not keep waking the volume.
+// A probe that sees the inside of geometry with
 // more than a quarter of its rays keeps what it held, if it held the light of
 // this cell: something moved over it.
 #define PROBES_WRITABLE
+#define CHOSEN_WRITABLE
 #include "probe_update.slang"
 #include "probe_tile.slang"
 #define TILE 8
@@ -41,6 +52,9 @@
 #define MIRAI_GROUP_Y TILE
 #define MIRAI_GROUP_Z 1
 #define PROBE_SETTLED 0.01
+// A move of the light of a probe, in exposed scene-linear units, below what
+// the view shows: a third of the smallest step of an 8-bit display.
+#define PROBE_UNSEEN 1e-4
 // How many times its noise the light of a probe must move to be a change, the
 // share of the new light a move within it takes, and how fast the noise
 // follows what the probe measures.
@@ -63,6 +77,11 @@
 [[vk::binding(SLOT_PASS3, 0)]] Texture2D<float4> kept : register(MIRAI_REGISTER(t, SLOT_PASS3), space0);
 
 groupshared float4 tile_values[TILE][TILE];
+// The tile of the light around the narrow lobes: more texels than threads, so a
+// thread takes every one a group of threads apart, by its index.
+#define GLOSS int(PROBE_GLOSS_TILE)
+#define THREADS (MIRAI_GROUP_X * MIRAI_GROUP_Y)
+groupshared float4 gloss_values[GLOSS * GLOSS];
 #define MAX_RAYS 256
 groupshared float4 ray_values[MAX_RAYS];
 groupshared float3 ray_dirs[MAX_RAYS];
@@ -72,6 +91,15 @@ groupshared uint backfaces;
 groupshared uint tile_light;
 groupshared uint tile_moved;
 groupshared uint tile_peak;
+
+// The light a texel takes: `blend` of the way from what it held (`stored`,
+// as the atlas keeps it, and decoded) to `fresh`, or all the way in each
+// channel where that step is less than the half float of the atlas holds:
+// there the probe would stay short of its light for good.
+float4 probe_blend(float4 stored, float4 before, float4 fresh, float blend) {
+    float4 blended = lerp(before, fresh, blend);
+    return float4(select(probe_light_encode(blended.rgb) == stored.rgb, fresh.rgb, blended.rgb), blended.a);
+}
 
 // What a probe next to this one along the grid, `step` away, holds in
 // direction `dir` (interior texel `local` of its tile), with its share of the
@@ -119,8 +147,9 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
     for (uint r = local_index; r < rays; r += (MIRAI_GROUP_X * MIRAI_GROUP_Y)) {
         float4 ray_value = ray_data.Load(int3(int2(r, slot), 0));
         ray_values[r] = float4(probe_light_decode(ray_value.rgb), ray_value.a);
-        ray_dirs[r] = probe_ray_direction(probe, r, params.rays_per_probe);
-        if (ray_values[r].a < 0.0) InterlockedAdd(backfaces, 1u);
+        // A ray that met the inside of geometry has no direction: no texel weighs it.
+        ray_dirs[r] = ray_value.a < 0.0 ? float3(0.0) : probe_ray_direction(probe, r, params.rays_per_probe);
+        if (ray_value.a < 0.0) InterlockedAdd(backfaces, 1u);
     }
     GroupMemoryBarrierWithGroupSync();
     uint cascade;
@@ -128,6 +157,8 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
     Probe state = probes[probe];
     bool held = probe_holds(state, cell);
     bool buried = backfaces * 4u > rays;
+    // Buried, it keeps what it had.
+    if (buried && local_index == 0u) chosen[chosen_traced(slot)] |= CHOSEN_STILL;
     if (buried && held) return;
     int2 local = int2(local_id.xy);
     uint per_row = frame.volume_atlas.x;
@@ -136,6 +167,24 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
     float light = 0.0, moved = 0.0;
     float4 stored = irradiance[origin + local];
     float4 before = float4(probe_light_decode(stored.rgb), stored.a);
+    int2 gloss_origin = int2(probe_gloss_origin(float2(origin / TILE), probe_gloss_under()));
+    int across = GLOSS - 2;
+    for (int j = int(local_index); j < across * across; j += THREADS) {
+        int2 inside = int2(j % across, j / across);
+        float3 lobe_dir = oct_decode(((float2(inside) + 0.5) / float(across)) * 2.0 - 1.0);
+        float4 narrow_sum = float4(0.0);
+        float narrow_weight = 0.0;
+        for (uint r = 0u; r < rays; r++) {
+            // Past this cosine a ray weighs nothing against those of the lobe.
+            float along = dot(lobe_dir, ray_dirs[r]);
+            if (along < 0.8) continue;
+            float4 sample_value = ray_values[r];
+            float n = pow(along, PROBE_GLOSS_POWER);
+            narrow_sum += float4(sample_value.rgb, sample_value.a >= params.max_distance ? 1.0 : 0.0) * n;
+            narrow_weight += n;
+        }
+        gloss_values[(inside.y + 1) * GLOSS + inside.x + 1] = narrow_weight > 1e-6 ? float4(finite_or_zero(narrow_sum.rgb / narrow_weight), narrow_sum.a / narrow_weight) : float4(0.0);
+    }
     if (interior) {
         float2 oct = ((float2(local - 1) + 0.5) / float(TILE - 2)) * 2.0 - 1.0;
         float3 texel_dir = oct_decode(oct);
@@ -143,9 +192,9 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
         float4 sum = float4(0.0);
         float weight_sum = 0.0;
         for (uint r = 0u; r < rays; r++) {
+            float w = dot(texel_dir, ray_dirs[r]);
+            if (!(w > 0.0)) continue;
             float4 sample_value = ray_values[r];
-            if (sample_value.a < 0.0) continue;
-            float w = max(0.0, dot(texel_dir, ray_dirs[r]));
             sum += float4(sample_value.rgb, sample_value.a >= params.max_distance ? 1.0 : 0.0) * w;
             weight_sum += w;
         }
@@ -179,15 +228,30 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
     // Kept awake by a change of the scene, not by its own light moving (frame + 1).
     bool marked = state.frames.z > params.frame_number;
     bool change = !held || marked || share > max(PROBE_SETTLED, PROBE_NOISE_CHANGE * noise);
-    if (interior) tile_values[local.y][local.x] = lerp(before, tile_values[local.y][local.x], change ? 1.0 : PROBE_BLEND);
+    if (interior && !change) tile_values[local.y][local.x] = probe_blend(stored, before, tile_values[local.y][local.x], PROBE_BLEND);
+    for (int j = int(local_index); j < across * across; j += THREADS) {
+        int2 at = int2(j % across, j / across) + 1;
+        float4 held_narrow = irradiance[gloss_origin + at];
+        if (!change) gloss_values[at.y * GLOSS + at.x] = probe_blend(held_narrow, float4(probe_light_decode(held_narrow.rgb), held_narrow.a), gloss_values[at.y * GLOSS + at.x], PROBE_BLEND);
+    }
     GroupMemoryBarrierWithGroupSync();
     int2 source = interior ? local : probe_tile_interior(local, TILE);
     float4 value = tile_values[source.y][source.x];
     irradiance[origin + local] = float4(probe_light_encode(value.rgb), value.a);
+    for (int k = int(local_index); k < GLOSS * GLOSS; k += THREADS) {
+        int2 at = int2(k % GLOSS, k / GLOSS);
+        int2 from = probe_tile_interior(at, GLOSS);
+        float4 gloss = gloss_values[from.y * GLOSS + from.x];
+        irradiance[gloss_origin + at] = float4(probe_light_encode(gloss.rgb), gloss.a);
+    }
     if (local_index != 0u || buried) return;
     if (held && !marked) probes[probe].frames.w = asuint(lerp(noise, share, PROBE_NOISE_RATE));
+    // The mean move of a texel, exposed.
+    float seen = float(tile_moved) * 0.001 * peak / float((TILE - 2) * (TILE - 2)) * frame.exposure;
+    if (held && !marked && (share <= 0.5 * PROBE_SETTLED || seen <= PROBE_UNSEEN)) chosen[chosen_traced(slot)] |= CHOSEN_STILL;
     if (held && share <= max(PROBE_SETTLED, PROBE_NOISE_CHANGE * noise)) return;
-    probes[probe].frames.z = max(probes[probe].frames.z, params.frame_number + 1u);
+    bool passing = (chosen[chosen_traced(slot)] & CHOSEN_PASSING) != 0u;
+    if (!passing || !held || marked) probes[probe].frames.z = max(probes[probe].frames.z, params.frame_number + 1u);
     // What the probes beside it read of it moved: they are traced again next
     // frame, and a change spreads through the volume while it moves them.
     int3 corner = probe_corner_cell(cascade);
@@ -196,7 +260,8 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
         int3 other_cell = cell + steps[k];
         if (any(other_cell < corner) || any(other_cell >= corner + int3(frame.volume_counts.xyz))) continue;
         uint other = probe_slot(cascade, other_cell);
-        if (!probe_holds(probes[other], other_cell)) continue;
+        Probe beside = probes[other];
+        if (!probe_holds(beside, other_cell) || (passing && (beside.cell.w & PROBE_PASSING) != 0)) continue;
         InterlockedMax(probes[other].frames.z, params.frame_number + 1u);
     }
 }

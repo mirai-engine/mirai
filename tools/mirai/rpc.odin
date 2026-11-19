@@ -14,7 +14,6 @@ import "mirai:std/serial"
 
 RPC_USAGE :: "rpc <method> [key=value...|json|-|--file F] [--select FIELDS] [--wait-until CONDITION] | rpc describe [plugin|method|prefix|method...] [--project P|--port N] [--timeout S] [--client NAME]"
 
-RPC_ENDING_WAIT :: 3*time.Second // how long an editor that stopped listening may go on counting as alive
 RPC_RESTART_PAUSE :: 250*time.Millisecond // between the calls of a --wait-until whose editor restarts
 RPC_WAIT_MARGIN_MS :: 5000 // a --wait-until reads the answer past its limit: the server says what it last saw
 
@@ -151,27 +150,17 @@ connection_opens :: proc(connection:Connection,method:string) -> bool {
 
 // The editor a call of method goes to, opening the session of its project
 // when it has none and the method may; err says why there is none to call.
+// An editor that ended without closing is not replaced: what made it end (a
+// GPU in trouble) would meet the next one.
 connection_ready :: proc(connection:Connection,method:string) -> (editor:Connection_Editor,err:api.Error) {
     editor=connection_editor(connection)
     if editor.port==0 && connection_opens(connection,method) {
+        if ended:=session_ended(connection.project);ended!="" {err={api.UNREACHABLE,ended,""};return}
         if err=connection_session_start(connection);err.code!=0 {return}
         editor=connection_editor(connection)
     }
     if editor.port==0 {err={api.UNREACHABLE,no_editor_text(connection.project),""}}
     return
-}
-
-// Whether a call of method found nobody listening because its editor is
-// ending: a killed process still counts as alive for a moment after it closed
-// its port. Then connection_ready opens another session and the call is made again.
-connection_ended :: proc(connection:Connection,method:string,err:api.Error) -> bool {
-    if err.code!=api.UNREACHABLE || !connection_opens(connection,method) {return false}
-    start:=time.tick_now()
-    for connection_editor(connection).port!=0 {
-        if time.tick_since(start)>=RPC_ENDING_WAIT {return false}
-        time.sleep(100*time.Millisecond)
-    }
-    return true
 }
 
 // Starts the headless session of the project of connection, saying so on
@@ -187,16 +176,21 @@ connection_session_start :: proc(connection:Connection) -> api.Error {
     return {}
 }
 
-// One call, in the editor connection_ready gives it.
+// One call, in the editor connection_ready gives it. One that does not
+// answer fails with what happened to it: no other editor is opened for it.
 rpc_call_waiting :: proc(connection:Connection,method,params:string,id:int) -> (result:string,err:api.Error,called:bool) {
-    for retried:=false;;retried=true {
-        editor:Connection_Editor
-        editor,err=connection_ready(connection,method)
-        if err.code!=0 {return}
-        watch:=connection_watch(connection,editor,fmt.tprintf("mirai rpc %s",method))
-        result,err,called=api.rpc_call(editor.port,method,params,id,connection.timeout_ms,context.allocator,connection_task(connection,editor.port),connection.client,watch,workspace.measurement(context.temp_allocator))
-        if called || retried || !connection_ended(connection,method,err) {return}
+    editor:Connection_Editor
+    editor,err=connection_ready(connection,method)
+    if err.code!=0 {return}
+    watch:=connection_watch(connection,editor,fmt.tprintf("mirai rpc %s",method))
+    if measured,holder:=workspace.measured(connection.root,true,allocator=context.temp_allocator);measured==.Wait {
+        fmt.eprintfln("mirai rpc: a measurement is running (%s); a call that draws waits in the session until it ends",holder)
     }
+    result,err,called=api.rpc_call(editor.port,method,params,id,connection.timeout_ms,context.allocator,connection_task(connection,editor.port),connection.client,watch,workspace.measurement(context.temp_allocator))
+    if !called && err.code==api.UNREACHABLE {
+        if ended:=session_ended(connection.project!=""?connection.project:connection.near);ended!="" {err.message=ended}
+    }
+    return
 }
 
 // A call of mirai rpc and what it asks of the result: FIELDS and CONDITION as
@@ -248,6 +242,8 @@ rpc_request_call :: proc(connection:Connection,request:Rpc_Request,params:string
         attempt.timeout_ms=remaining+RPC_WAIT_MARGIN_MS
         result,err,called=rpc_call_waiting(attempt,request.method,rpc_params_reserved(request,params,remaining),id)
         if called || !(err.code==api.CLOSED || restarting && err.code==api.UNREACHABLE) {return}
+        // One that restarts comes back under its port file; one that ended does not.
+        if ended:=session_ended(connection.project!=""?connection.project:connection.near);ended!="" {return "",{api.UNREACHABLE,ended,""},false}
         restarting,attempt.named=true,false
         time.sleep(RPC_RESTART_PAUSE)
     }

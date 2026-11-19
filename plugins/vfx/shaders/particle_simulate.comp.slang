@@ -69,10 +69,10 @@ void event_push(uint slot, uint trigger, float3 position, float3 velocity, uint 
 }
 
 // Tells the game of a particle whose emitter's reports name what happened to
-// it: an entry of the reports channel (vfx.REPORTS_CHANNEL), whose copy of the
-// frame program.w names.
+// it: an entry of the reports channel (vfx.REPORTS_CHANNEL), in the copy the
+// frame writes.
 void particle_report(uint slot, uint kind, float3 position, float3 velocity, float3 normal) {
-    uint2 reports = particle_emitters[slot].program.zw;
+    uint2 reports = uint2(particle_emitters[slot].program.z, particle_frame_reports());
     if (reports.x != kind || reports.y == INVALID) return;
     uint entry;
     particle_world_bytes.InterlockedAdd(reports.y, 1u, entry);
@@ -127,7 +127,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     uint4 range = particle_emitters[slot].range;
     // A slot of a range that went, or that another emitter took since.
     if ((range.w & PARTICLE_FLAG_ACTIVE) == 0u || index < range.x || index >= range.x + range.y) { particles[index].lifetime = 0.0; return; }
-    float4 clock = particle_emitters[slot].step;
+    float4 clock = particle_frame_step();
     bool paused = (range.w & PARTICLE_FLAG_PAUSED) != 0u;
     float step = paused ? 0.0 : clock.y;
     // The seconds of the step it lived: one born in it, less.
@@ -209,7 +209,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         if (frame.sun_direction.w > 0.5) {
             float wrap = 0.5 + 0.5 * dot(view, frame.sun_direction.xyz);
             float3 from = v.position + frame.sun_direction.xyz * (radius + 0.02);
-            light += sun_light(v.position) * lerp(0.6, 1.0, wrap) * trace_transmission(from, frame.sun_direction.xyz, sun_reach(from, frame.sun_direction.xyz), false);
+            light += sun_light(v.position) * lerp(0.6, 1.0, wrap) * float(trace_visible(from, frame.sun_direction.xyz, sun_reach(from, frame.sun_direction.xyz), false));
         }
         Shading around = shading_diffuse(v.position, float3(0.0), float3(1.0));
         light += local_lighting(around, 0.0) + shadowless_lighting(around, 0.0);

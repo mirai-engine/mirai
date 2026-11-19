@@ -90,8 +90,15 @@ Api_Status :: struct {
     instances,visible_instances,lights:int,
     tlas_instances:int `mirai:"label=Entries of the structure rays walk"`,
     visible_triangles:int `mirai:"label=Of the instances that passed culling two frames ago"`,
+    raster_vertices:int `mirai:"label=Vertices the raster of the visibility target drew of them, 16 bytes each"`,
+    raster_triangles:int `mirai:"label=Triangles it drew of them, those that may show, 16 bytes each"`,
+    raster_deferred:int `mirai:"label=Clusters a round of it left to the next, their lists full; 0 once the lists hold a frame"`,
     visible_kinds:Api_Visible_Kinds `mirai:"label=What passed culling two frames ago, by kind of instance"`,
     probes_traced:int `mirai:"label=Two frames ago"`,
+    probe_rays_traced:int `mirai:"label=Rays those probes traced: of the ones that keep nothing of their rays or that a change crossed"`,
+    probe_hits_lit:int `mirai:"label=Hits they took the direct light of"`,
+    light_lists:Api_Light_Lists `mirai:"label=The lists of the lights without shadows of the tiles of the last view two frames ago"`,
+    shadow_maps:Api_Shadow_Maps `mirai:"label=What the shadow maps of the views of a frame drew, two frames ago"`,
     gpu_timings:[API_TIMINGS]Api_Timing `mirai:"trim,label=By pass in the order of the frame"`,
     counters:[API_COUNTERS]Api_Counter `mirai:"trim,label=What the passes of extensions counted two frames ago by name"`,
     functions:[API_FUNCTIONS]Api_Timing `mirai:"trim,label=The costliest functions of the loops per frame since the last status; settle included"`,
@@ -105,6 +112,7 @@ Api_Status :: struct {
     assets:Api_Assets, // loaded now, and how many what no world names unloaded so far
     textures:Api_Textures,
     geometry:Api_Geometry,
+    pending:host.App_Pending `mirai:"label=What the frames draw stand-ins for because it is still being made; a capture and a measurement wait until all of it is 0"`,
     ticks_dropped:u64,
     extras_dropped:u64 `mirai:"label=What libraries asked to draw in a frame that did not fit and was not drawn (panels, lines, UI layers and textures, views, probes), since the editor started; it should stay 0"`,
     build:Build_Phase,
@@ -125,7 +133,27 @@ Api_Visible_Kinds :: struct {
     single:Api_Visible `mirai:"label=Instances of the scene whose mesh has one level: terrain pieces and other meshes made at run time"`,
     batches:Api_Visible `mirai:"label=Instances of batches"`,
     late:Api_Visible `mirai:"label=Of all of them, what phase 1 of the occlusion drew: the pyramid of the frame showed it after the one of the frame before hid it"`,
-    dropped:[len(gpu.Cull_List)]int `mirai:"label=Chunks, visible clusters, occlusion candidates and clusters of Surface programs past the capacities of the lists of the cull, which grow for the frames after"`,
+    dropped:[len(gpu.Cull_List)]int `mirai:"label=Chunks, visible clusters, occlusion candidates, chunks and clusters of the shadow maps, and vertices and triangles of the visibility raster past the capacities of the lists of the cull, which grow for the frames after"`,
+}
+
+Api_Light_Lists :: struct {
+    cells:int `mirai:"label=Tiles with a surface in them"`,
+    entries:int `mirai:"label=Lights and groups in all of them"`,
+    longest:int `mirai:"label=Of the longest list"`,
+    walked:int `mirai:"label=Tiles with more to list than a list holds, whose pixels walk the tree of the lights each by itself"`,
+}
+
+Api_Shadow_Maps :: struct {
+    clusters:int `mirai:"label=The clusters the cache drew, once for each page they cover"`,
+    clusters_masked:int `mirai:"label=Of them, of masked materials"`,
+    clusters_moving:int `mirai:"label=The clusters of what moves the atlas drew over the cache"`,
+    clusters_over:int `mirai:"label=Clusters a draw had no room for within the clusters of a frame; their pages wait"`,
+    pages_drawn:int `mirai:"label=Pages the cache drew again"`,
+    pages_composed:int `mirai:"label=Pages the atlas composed again"`,
+    pages_asked:int `mirai:"label=Pages newly asked for"`,
+    pages_left:int `mirai:"label=Of them, left out of the pool"`,
+    pages_waiting:int `mirai:"label=Pages not drawn whole this frame, which wait for the frames after"`,
+    pages_short:int `mirai:"label=Pages the clusters of a frame grow for: read with no page drawn to hold their points, or waiting in a still view"`,
 }
 
 Api_Textures :: struct {
@@ -298,7 +326,7 @@ Api_Editor_Camera :: struct {
 }
 Api_Editor_Interactions :: struct {
     captured_by:string `mirai:"label=What holds the pointer in the viewport: look pan select or gizmo; empty when nothing does"`,
-    modal:string `mirai:"label=The dialog that blocks the editor: confirm shortcuts settings delete_asset or git_discard; empty when none does"`,
+    modal:string `mirai:"label=The dialog that blocks the editor: confirm shortcuts settings delete_asset git_discard or import_changes; empty when none does"`,
     popups:int `mirai:"label=Popups open"`,
     editing_text:bool `mirai:"label=Whether a text field takes the keys"`,
     dialog_pending:bool `mirai:"label=Whether a file dialog of the system waits for an answer"`,
@@ -526,6 +554,7 @@ api_status :: proc(s:^Session,call:^api.Call) {
         r.tlas_instances=int(stats.tlas_instances)
         for counter,i in stats.counters[:min(len(stats.counters),API_COUNTERS)] {r.counters[i]={counter.name,counter.values}}
         r.visible_triangles=int(stats.visible_triangles)
+        r.raster_vertices,r.raster_triangles,r.raster_deferred=int(stats.raster_vertices),int(stats.raster_triangles),int(stats.raster_deferred)
         for kind,k in ([3]^Api_Visible{&r.visible_kinds.levels,&r.visible_kinds.single,&r.visible_kinds.batches}) {
             from:=stats.visible_kinds[gpu.Visible_Kind_Id(k)]
             kind^={int(from.instances),int(from.clusters),int(from.triangles)}
@@ -535,6 +564,10 @@ api_status :: proc(s:^Session,call:^api.Call) {
         for dropped,k in stats.cull_dropped {r.visible_kinds.dropped[k]=int(dropped)}
         r.gpu_ms,r.ev100=stats.gpu_ms,stats.ev100
         r.probes_traced=int(stats.probes_traced)
+        r.probe_rays_traced,r.probe_hits_lit=int(stats.probe_rays_traced),int(stats.probe_hits_lit)
+        r.light_lists={int(stats.light_lists.cells),int(stats.light_lists.entries),int(stats.light_lists.longest),int(stats.light_lists.walked)}
+        sh:=stats.shadow
+        r.shadow_maps={int(sh.clusters),int(sh.clusters_masked),int(sh.clusters_moving),int(sh.clusters_over),int(sh.pages_drawn),int(sh.pages_composed),int(sh.pages_asked),int(sh.pages_left),int(sh.pages_waiting),int(sh.pages_short)}
         r.textures.bytes,r.textures.view_bytes=stats.texture_bytes,stats.view_target_bytes
         r.textures.pending,r.textures.reduced=int(stats.textures_pending),int(stats.textures_reduced)
         r.geometry={
@@ -563,6 +596,7 @@ api_status :: proc(s:^Session,call:^api.Call) {
         r.assets={a.stats.meshes,a.stats.textures,a.stats.materials,a.stats.scenes,a.stats.unloads}
         r.textures.streamed=a.stats.streamed
     }
+    r.pending=view_pending(s)
     r.ui_dropped=s.gui.dropped
     r.build,r.build_errors=s.build.phase,len(s.build.diagnostics)
     if len(s.build.diagnostics)>0 {base.text_set(r.build_message[:],s.build.diagnostics[0].message)}
@@ -1509,7 +1543,7 @@ built_loading :: proc(s:^Session,user:rawptr) -> bool {
     if build_running(s,nil) {return true}
     if s.app.renderer==nil {return false}
     host.app_shaders_poll(s.app)
-    return host.app_shaders_loading(s.app,(^u64)(user)^) || gpu.renderer_pipelines_pending(s.app.renderer)
+    return host.app_shaders_loading(s.app,(^u64)(user)^) || gpu.renderer_pipelines_pending(s.app.renderer)>0
 }
 
 @(private)

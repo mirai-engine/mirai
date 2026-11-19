@@ -141,6 +141,27 @@ the_collision_of_the_nearest_cells_is_built_first_within_its_budget :: proc(t:^t
     budget={instances=1}
     {complete,enough:=physics_owner_build(&fp,&w,&collision,7,&s,{scale={1,1,1},rotation=1},types[:],nil,false,nil,&near,&budget);testing.expect(t,complete && enough)}
     testing.expect(t,!budget.waiting && budget.instances==1,"a stable call builds nothing")
+    // A simulation with room for one tree: the cells without room are full,
+    // keep what fit and are not built again while nothing changes.
+    full:physics.Physics_State
+    if !testing.expect(t,physics.test_state_make(&full,{shapes=1})) {return}
+    defer physics.state_destroy(&full)
+    crowded:Foliage_Physics
+    defer core.value_free(&crowded,type_info_of(Foliage_Physics))
+    for _ in 0..<3 {
+        budget={instances=1}
+        physics_owner_build(&crowded,&full,&collision,7,&s,{scale={1,1,1},rotation=1},types[:],nil,false,nil,&near,&budget)
+    }
+    testing.expect(t,crowded.stats.shapes==1 && crowded.cells[0].full && crowded.cells[1].full && !crowded.cells[2].full)
+    made:=crowded.stats
+    budget={instances=1}
+    {complete,enough:=physics_owner_build(&crowded,&full,&collision,7,&s,{scale={1,1,1},rotation=1},types[:],nil,false,nil,&near,&budget);testing.expect(t,!complete && enough,"full cells keep the Foliage incomplete")}
+    testing.expect(t,!budget.waiting && budget.instances==1 && crowded.stats==made,"a stable call builds no full cell again")
+    // A full cell that changes is built again.
+    s.cells[0].version=100
+    budget={instances=1}
+    physics_owner_build(&crowded,&full,&collision,7,&s,{scale={1,1,1},rotation=1},types[:],nil,false,nil,&near,&budget)
+    testing.expect(t,budget.instances==0 && crowded.cells[0].version==100)
 }
 
 @(private)

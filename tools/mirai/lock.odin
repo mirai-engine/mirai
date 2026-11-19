@@ -39,31 +39,46 @@ build_wait_notice :: proc(holder:string) {
 
 @(private="file")
 build_lock_measured :: proc(root:string) {
-    if measured,measurer:=workspace.measurement_running(root,context.temp_allocator);measured {
-        fmt.eprintfln("mirai: a measurement is running (%s); building at low priority",measurer!=""?measurer:"another process")
+    if measured,measurer:=workspace.measured(root,false,allocator=context.temp_allocator);measured==.Low {
+        fmt.eprintfln("mirai: a measurement is running (%s); building at low priority",measurer)
     }
 }
 
-// Takes the measurement lock: waits for another measurement and then for the
-// compilations that run, so that what follows runs alone. Not held when this
-// process is part of a measurement already.
+// Takes the measurement lock: waits for another measurement, then for the
+// compilations and the GPU work of others that run (workspace.measure_try),
+// so that what follows runs alone. Not held when this process is part of a
+// measurement that holds it already. Taken only for what is timed.
 measure_lock :: proc(root,what:string) -> workspace.Lock {
-    if workspace.measuring() {return {}}
     holder:=workspace.measure_holder(fmt.tprintf("mirai %s in %s",what,root))
-    lock,_:=workspace.lock_acquire(workspace.lock_path(root,workspace.MEASURE_LOCK,context.temp_allocator),holder,proc(holder:string) {
-        fmt.eprintfln("mirai: waiting for another measurement to finish (%s)",holder!=""?holder:"another process")
-    })
-    workspace.builds_wait(root,proc(holder:string) {
-        fmt.eprintfln("mirai: waiting for the builds to finish before measuring (%s)",holder!=""?holder:"another process")
+    lock,_,_,_:=workspace.measure_try(root,holder,workspace.MEASURE_WAIT_ALL,notice=proc(why:workspace.Measure_Wait,holder:string) {
+        #partial switch why {
+        case .Measurement: fmt.eprintfln("mirai: waiting for another measurement to finish (%s)",holder)
+        case .Build:       fmt.eprintfln("mirai: waiting for the builds to finish before measuring (%s)",holder)
+        case .Gpu:         fmt.eprintfln("mirai: waiting for the GPU work in flight to finish before measuring (%s)",holder)
+        }
     })
     return lock
+}
+
+// Says this process is part of the measurement it takes or is part of
+// already: what it starts from now on, as the editors it measures, is too.
+measure_env_set :: proc() {
+    if !workspace.measuring() {_=os.set_env(workspace.MEASURE_ENV,fmt.tprintf("%d",os.get_pid()))}
+}
+
+// What else loads the GPU while a measurement draws nothing
+// (workspace.gpu_load), printed by the command that measures.
+measure_load_say :: proc(command,when_:string,own:=[]int{}) {
+    warnings:=make([dynamic]string,context.temp_allocator)
+    workspace.gpu_load(&warnings,own,when_,true)
+    for warning in warnings {fmt.eprintfln("mirai %s: %s",command,warning)}
 }
 
 LOCKS_USAGE :: "locks"
 
 // mirai locks: who holds each lock the checkouts of the repository share,
-// those of compilations and measurements among them, and since when; and
-// which compilation took its turn last.
+// those of compilations and measurements among them, and since when; the
+// turns of the GPU together; and which compilation took its turn last.
 cmd_locks :: proc(root:string,args:[]string) -> int {
     if len(args)>0 {return argument_unknown("locks",args[0])}
     folder:=workspace.cache_folder(root,"locks",context.temp_allocator)
@@ -71,7 +86,9 @@ cmd_locks :: proc(root:string,args:[]string) -> int {
     append(&names,workspace.BUILD_LOCK,workspace.MEASURE_LOCK)
     if entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator);error==nil {
         for entry in entries {
-            if strings.has_suffix(entry.name,".lock") && !slice.contains(names[:],entry.name) {append(&names,entry.name)}
+            if !strings.has_suffix(entry.name,".lock") || slice.contains(names[:],entry.name) {continue}
+            if entry.name==workspace.GPU_ADMISSION_LOCK || strings.has_prefix(entry.name,"gpu-") {continue}
+            append(&names,entry.name)
         }
     }
     slice.sort(names[2:])
@@ -89,6 +106,7 @@ cmd_locks :: proc(root:string,args:[]string) -> int {
         if since!={} {fmt.printf(", for %s",duration_text(time.diff(since,now)))}
         fmt.println()
     }
+    gpu_turns_print(root)
     note:=workspace.lock_path(root,workspace.BUILD_NOTE,context.temp_allocator)
     if info,error:=os.stat(note,context.temp_allocator);error==nil {
         last,_:=os.read_entire_file(note,context.temp_allocator)
@@ -110,23 +128,26 @@ duration_text :: proc(duration:time.Duration) -> string {
 MEASURE_USAGE :: "measure [--] <command> [arguments...]"
 
 // mirai measure: runs a command that measures time alone among the
-// checkouts, with its children: they are part of the measurement
-// (workspace.MEASURE_ENV), so their compilations take turns as usual and
-// nothing of theirs waits for it.
+// checkouts, with its children, holding the measurement for as long as it
+// runs: they are part of the measurement (workspace.MEASURE_ENV), so their
+// compilations take turns as usual and nothing of theirs waits for it. What
+// else loads the GPU is said before and after it.
 cmd_measure :: proc(root:string,args:[]string) -> int {
     command:=args
     if len(command)>0 && command[0]=="--" {command=command[1:]}
     if len(command)==0 {fmt.eprintfln("Usage: mirai %s",MEASURE_USAGE);return 2}
     if len(command)==len(args) && !positional(command[0]) {return argument_unknown("measure",command[0])}
-    lock:=measure_lock(root,fmt.tprintf("measure %s",strings.join(command," ",context.temp_allocator)))
-    defer workspace.lock_release(&lock)
-    if !workspace.measuring() {_=os.set_env(workspace.MEASURE_ENV,fmt.tprintf("%d",os.get_pid()))}
     resolved,found:=script_command(command)
     if !found {return 127}
+    lock:=measure_lock(root,fmt.tprintf("measure %s",strings.join(command," ",context.temp_allocator)))
+    defer workspace.lock_release(&lock)
+    measure_env_set()
+    measure_load_say("measure","before the command")
     process,error:=subprocess.start({command=resolved,stdin=os.stdin,stdout=os.stdout,stderr=os.stderr})
     if error!=nil {fmt.eprintfln("mirai measure: could not run %s: %v",command[0],error);return 127}
     state,wait_error:=subprocess.wait(&process)
     if wait_error!=nil {fmt.eprintfln("mirai measure: %s: %v",command[0],wait_error);return 127}
+    measure_load_say("measure","after the command")
     return state.exit_code
 }
 

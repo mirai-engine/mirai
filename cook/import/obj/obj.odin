@@ -31,6 +31,8 @@ Obj_Material :: struct {
     info:asset.Material_Info,
     paths:[asset.Material_Map_Kind]string,
     row:int,
+    glass:bool, // illum 4, 6, 7 or 9: what it dissolves lets the light through and keeps its highlight
+    ior:f32,    // Ni, which only glass refracts with
 }
 
 @(private="file")
@@ -119,6 +121,12 @@ read_mtl :: proc(r:^importer.Reader,path:string,materials:^map[string]Obj_Materi
             if !ok || n-n!=0 {continue}
             m.info.opacity=clamp(n if fields[0]=="d" else 1-n,0,1)
             if m.info.opacity<1 {m.info.alpha_mode=.Blend}
+        case "illum":
+            n,ok:=strconv.parse_int(fields[1])
+            if ok {m.glass=n==4 || n==6 || n==7 || n==9}
+        case "Ni":
+            n,ok:=strconv.parse_f32(fields[1])
+            if ok && importer.ior_valid(n) {m.ior=n}
         case "Ns":
             // Blender writes Ns = 1000 * (1 - roughness)^2 for the materials it exports without Pr.
             n,ok:=strconv.parse_f32(fields[1])
@@ -143,6 +151,11 @@ obj_material_row :: proc(r:^importer.Reader,materials:^map[string]Obj_Material,n
     m,known:=materials[name]
     if !known {return -1}
     if m.row>=0 {return m.row}
+    // Glass is there whole: Mirai's opacity is how much of a surface is there.
+    if m.glass && m.info.opacity<1 {
+        m.info.transmission,m.info.opacity=1-m.info.opacity,1
+        if m.ior>0 {m.info.ior=m.ior}
+    }
     images:[asset.Material_Map_Kind]int
     for &image in images {image=-1}
     for path,slot in m.paths {

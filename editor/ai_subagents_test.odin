@@ -694,7 +694,7 @@ the_memory_index_catches_what_is_edited_outside_the_editor :: proc(t:^testing.T)
         return count
     }
     folder:=ai_memory_topics_folder(&f.s)
-    testing.expect(t,os.make_directory_all(folder)==nil)
+    testing.expect(t,base.make_directory_all(folder)==nil)
     file:=project.path(folder,"art.md",allocator=context.temp_allocator)
     testing.expect(t,os.write_entire_file(file,"walls are brick")==nil)
     ai_memory_scan(&f.s)
@@ -819,7 +819,7 @@ a_handoff_says_what_the_context_before_it_left :: proc(t:^testing.T) {
 }
 
 @(test)
-reopening_starts_a_clean_context_unless_a_build_restarted_the_editor :: proc(t:^testing.T) {
+reopening_starts_a_clean_context_unless_a_build_restarted_the_editor_and_then_the_chats_go_on :: proc(t:^testing.T) {
     f:=fixture_open(t,"reopen")
     if f==nil {return}
     defer fixture_close(f)
@@ -866,7 +866,8 @@ reopening_starts_a_clean_context_unless_a_build_restarted_the_editor :: proc(t:^
         reopened_lines=loaded.transcript.count
     }
     set_native(f,main)
-    testing.expect_value(t,ai_store.meta_set(&m.store,AI_META_WORKING_AGENTS,""),"")
+    testing.expect_value(t,ai_store.meta_set(&m.store,AI_META_INTERRUPTED_AGENTS,""),"")
+    ai_working_agents_save(&f.s,m)
     ai_resume_native_mark(&f.s)
     {
         restored,_:=open(f)
@@ -876,6 +877,15 @@ reopening_starts_a_clean_context_unless_a_build_restarted_the_editor :: proc(t:^
         testing.expect_value(t,string(loaded.conversation.native_session[:loaded.conversation.native_session_len]),"native-1")
         testing.expect_value(t,base.text_get(loaded.stable_native[:]),"native-1")
         testing.expect_value(t,loaded.transcript.count,reopened_lines)
+        // The subagent a Build restarted the editor on goes on by itself, in its next turn.
+        working:=ai_task_find(restored,agent.id)
+        if !testing.expect(t,working!=nil) {return}
+        note,_:=ai_transcript_line(&working.transcript,working.transcript.count-1)
+        testing.expect_value(t,note,AI_BUILD_RESUMED_NOTE)
+        testing.expect_value(t,working.held,1)
+        testing.expect(t,restored.deliveries_due,"its turn starts as a delivery once nothing holds it")
+        deliveries,_:=ai_store.deliveries(&restored.store,working.conversation.id)
+        testing.expect(t,len(deliveries)==1 && deliveries[0].text==AI_BUILD_RESUME)
     }
     value,_:=ai_store.meta_get(&m.store,AI_META_RESUME_NATIVE)
     testing.expect_value(t,value,"")

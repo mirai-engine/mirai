@@ -68,6 +68,7 @@ ai_initialize :: proc(s:^Session) {
     if message:=ai_store.open(&m.store,s.project_root);message!="" {notify(s,message);return}
     ai_memory_scan(s)
     if message:=ai_history_refresh(m);message!="" {notify(s,message)}
+    resume:=ai_build_restart_take(s,m)
     if saved:=ai_store.main_conversation(&m.store);saved!=nil {
         conversation:=saved^
         if task:=ai_conversation_restore(s,&conversation);task!=nil {
@@ -75,10 +76,10 @@ ai_initialize :: proc(s:^Session) {
             m.stick=true
             base.text_set(m.agent[:],base.text_get(task.agent[:]))
             ai_held_count(&m.store,task)
-            ai_main_reopen(s,m,task)
+            ai_main_reopen(s,m,task,resume)
         }
     }
-    ai_agents_interrupted_restore(s,m)
+    ai_agents_interrupted_restore(s,m,resume!="")
 }
 
 // The messages a chat kept for its next turn when the editor closed.
@@ -157,7 +158,7 @@ ai_conversation_restore :: proc(s:^Session,conversation:^ai_store.Conversation) 
         }
         base.text_format(task.name[:],"%d-%d",task.id,sequence)
         // The message of the turn, from the chat when its folder lost it.
-        if path:=ai_task_path(s,task,AI_FILE_MESSAGE);!os.exists(path) && os.make_directory_all(ai_task_path(s,task,""))==nil {
+        if path:=ai_task_path(s,task,AI_FILE_MESSAGE);!os.exists(path) && base.make_directory_all(ai_task_path(s,task,""))==nil {
             b:=strings.builder_make(context.temp_allocator)
             for i in max(first,0)..=latest {
                 text,_:=ai_transcript_line(&task.transcript,i)
@@ -465,6 +466,10 @@ ai_send_task_prompt :: proc(s:^Session,worker:^Ai_Worker,task:^Ai_Task) {
 
 ai_model_choices :: proc(s:^Session,provider:Ai_Provider,value:json.Value) {
     m:=s.ai
+    before,count_before:=m.models[provider],m.model_counts[provider]
+    defer if m.connections[provider].agent==.Claude && (m.model_counts[provider]!=count_before || m.models[provider]!=before) && !ai_agents_write(m) {
+        notify(s,"The models the agent offered could not be saved")
+    }
     options,_:=acp.at(value,"configOptions").(json.Array)
     for option in options {
         if acp.text(acp.at(option,"category"))!="model" {continue}

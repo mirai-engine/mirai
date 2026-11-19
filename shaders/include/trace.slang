@@ -7,40 +7,22 @@
 #define MIRAI_TRACE_SLANG
 #include "scene.slang"
 #include "points.slang"
-// The alpha of the Surface programs that change it (cook/shaders): a ray
-// decides at a masked surface whether it goes on, inside its traversal.
-#include <surface_coverage.slang>
 
-// Colored shadows filter their rays through glass; a pass can ask for the
-// same filters for rays of its own. MIRAI_COLORED_SHADOWS and
-// MIRAI_GLASS_MEANS are constants of the stages that declare them
-// (`//! constant`): declared, the stage has what they need; true in a
-// pipeline, its rays do it.
-#if defined(MIRAI_COLORED_SHADOWS) && !defined(MIRAI_RAY_FILTERS)
-#define MIRAI_RAY_FILTERS
-#endif
-
-#if defined(MIRAI_RAY_FILTERS) || defined(MIRAI_GLASS_MEANS)
+// A sharp reflection sees the glass its ray crosses as the color filter it is
+// (MIRAI_RAY_FILTERS, trace_glass_filter). Shadow rays never meet glass: they
+// pass it as if it were not there, as the maps of the shadows do.
+#ifdef MIRAI_RAY_FILTERS
 // Product of the filters a ray went through, and where it goes. A product
 // does not depend on its order, so one traversal collects the filters as it
 // finds them.
 static float3 ray_filter;
 static float3 ray_filter_direction;
-static float ray_filter_distance; // where along the ray its first filter was
-static float ray_filter_far;      // and its farthest one
-// Metres across the ray stands for, as a beam of that width meets the glass
-// face on: the glass is read at the level of what the beam covers of it.
-static float ray_filter_footprint = 0.0;
-#endif
 
-// A pass whose owners resume over the points of a batch (points.slang) defers
-// the filters of glass with a program: a crossing takes the mean of its
-// instance and is appended as a filter point of the run of its ray; the run
-// is weighed once the ray's share of what the owner gathers is known
-// (filters_weigh), and filters_correction adds what the exact filters change.
-// Elsewhere, glass with a program filters by its mean.
-#if defined(MIRAI_RAY_FILTERS) && defined(MIRAI_DEFER_FILTERS)
-#define MIRAI_FILTER_POINTS
+// The filters of glass with a program wait for it (points.slang): a crossing
+// lets the ray on as it is and is appended as a filter point of the run of its
+// ray; the run is weighed once the ray's share of what the owner gathers is
+// known (filters_weigh), and filters_correction adds what the exact filters
+// change. A crossing that does not fit takes the filter of its material row.
 static uint filter_chain = INVALID;     // the filter points of the owner, newest first
 static uint filter_run = INVALID;       // the first of those of the ray being traced
 static float3 ray_filter_fixed = float3(1.0); // what of the filters of that ray waits for no point
@@ -56,13 +38,6 @@ void filters_weigh(float3 weight) {
     if (filter_run != INVALID) point_weigh(filter_run, weight * ray_filter_fixed);
     filter_run = INVALID;
 }
-// A ray stopped by something solid lets nothing through: its run changes nothing.
-void filters_blocked() { filter_run = INVALID; }
-// A pass with colored shadows defers those of its shadow rays: each one is a
-// run, weighed by the light it carries (direct_lighting, reference_lighting).
-#ifdef MIRAI_COLORED_SHADOWS
-#define MIRAI_SHADOW_FILTER_POINTS
-#endif
 // A crossing of glass with a program as a filter point, chained to the
 // owner's; false when the batch is full.
 bool filter_defer(uint instance_index, uint primitive, float2 bary, float t, Material m, bool exit) {
@@ -80,50 +55,31 @@ bool filter_defer(uint instance_index, uint primitive, float2 bary, float t, Mat
     filter_chain = index;
     return true;
 }
-// The exact filter of a filter point, from what its program gave there, and
-// the mean its ray took in its place.
-float3 filter_of_point(uint index, Material_Point point, out float3 mean) {
-    mean = scene_instance(point.instance).glass.rgb;
-    return point_filter(index, point);
-}
-// What the exact filters of a chain change of what their means gave the
-// owner: for each run, its weight times the product of its exact filters less
-// that of their means.
+// What the exact filters of a chain change of what the owner got while they
+// waited: for each run, its weight times the product of its exact filters
+// less one.
 float3 filters_correction(uint chain) {
     float3 sum = float3(0.0);
     float3 exact = float3(1.0);
-    float3 mean = float3(1.0);
     uint index = chain;
     for (uint step = 0u; step < points_capacity() && index != INVALID; step++) {
         Material_Point point = point_load(index);
-        float3 taken;
-        exact *= filter_of_point(index, point, taken);
-        mean *= taken;
+        exact *= point_filter(index, point);
         if ((point.flags & POINT_RUN) != 0u) {
-            sum += point_weight(index) * (exact - mean);
+            sum += point_weight(index) * (exact - 1.0);
             exact = float3(1.0);
-            mean = float3(1.0);
         }
         index = point.next;
     }
     return sum;
 }
-#endif
 
-#ifdef MIRAI_RAY_FILTERS
-// The color filter of a blended surface without a program for a ray that
-// carries light (blend_filter). Glass also keeps what it reflects, and a
-// solid counts its color and what it absorbs once, where the ray enters it.
-// Rays are not bent.
+// The color filter of a blended surface by its material row (blend_filter).
+// Glass also keeps what it reflects, and a solid counts its color and what it
+// absorbs once, where the ray enters it. Rays are not bent.
 float3 hit_transmission(Instance inst, Material m, Mesh_Triangle tri, float2 bary, float t, bool exit) {
     float3 through;
-    float footprint = max(t * 0.001, 1e-4);
-    if (ray_filter_footprint > 0.0) {
-        // A beam that crosses the glass at a slant covers more of it.
-        float3 face = normalize(transform_normal(inst.world_inv, cross(tri.b.position - tri.a.position, tri.c.position - tri.a.position)));
-        footprint = max(footprint, ray_filter_footprint / max(abs(dot(face, ray_filter_direction)), 0.2));
-    }
-    float3 tint = blend_filter(inst, m, tri, float3(1.0 - bary.x - bary.y, bary.x, bary.y), footprint, through);
+    float3 tint = blend_filter(inst, m, tri, float3(1.0 - bary.x - bary.y, bary.x, bary.y), max(t * 0.001, 1e-4), through);
     if (!material_solid(m)) return tint * through;
     return exit ? through : tint * material_absorption(m, m.thickness) * through;
 }
@@ -133,53 +89,44 @@ float3 hit_transmission(Instance inst, Material m, Mesh_Triangle tri, float2 bar
 #define BLEND_PASSES  0u // it goes through them
 #define BLEND_STOPS   1u // they are surfaces like any other
 #define BLEND_FILTERS 2u // each one multiplies ray_filter and lets the ray on
-#define BLEND_MEANS   3u // each one multiplies ray_filter by the mean of its instance (Instance.glass) and lets the ray on
+// With either: each thin surface that lets light through (diffuse
+// transmission) multiplies ray_through by ray_through_each and lets the ray
+// on, until nothing is left of it (trace_through).
+#define BLEND_THIN 4u
+static float3 ray_through = float3(1.0);
+static float3 ray_through_each = float3(1.0);
+static uint ray_through_crossed = 0u;
 
-#ifdef MIRAI_GLASS_MEANS
-// A blended surface met at t by a ray that takes the mean of its instance.
-// The ray goes on whatever is left of its light: a closest hit must not stop
-// at the glass.
-bool hit_mean(Instance inst, float t) {
-    ray_filter *= inst.glass.rgb;
-    ray_filter_far = max(ray_filter_far, t);
-    return false;
-}
-#endif
-
-// The alpha a masked material gives a ray at a point: its maps, or the alpha
-// of its program (surface_coverage.slang), which is that of the default
-// material when the program does not change it.
-// The program records no texture feedback (texture_feedback_quiet), so only
-// what its alpha reads stays of it; the hit the ray stops at is shaded, and
-// samples, as it is.
-float hit_alpha(Instance inst, Material m, Mesh_Triangle tri, float3 weights, float2 uv, float2 uv1, float2 lod, float t) {
-    if (m.program_id == 0u) return material_base_color(m, uv, uv1, lod, float3(1), true).a;
-    float3 normal = transform_normal(inst.world_inv, tri.a.normal * weights.x + tri.b.normal * weights.y + tri.c.normal * weights.z);
-    normal = material_ray_normal(m, inst, normal, weights, tri, uv, uv1, lod);
-    float3 position = transform_point(inst.world, tri.a.position * weights.x + tri.b.position * weights.y + tri.c.position * weights.z);
-    float4 vertex_color = tri.a.color * weights.x + tri.b.color * weights.y + tri.c.color * weights.z;
-    Mirai_Surface_Context ctx = material_context_cone(material_context_instance(material_context(position, normal, uv, uv1, lod, true), inst, vertex_color), t * 0.004);
-    ctx.material = m.row;
-    float alpha;
-    float4 parameters[16];
-    material_parameters(m.row, inst.material_values, parameters);
-    texture_feedback_quiet = true;
-    bool given = mirai_program_alpha(m.program_id, parameters, ctx, alpha);
-    texture_feedback_quiet = false;
-    return given ? alpha : MATERIAL_DEFAULT_OPACITY;
+// Whether a ray of trace_through goes on through a covered surface of
+// material m: a thin surface that lets light through leaves it
+// ray_through_each of what reaches it.
+bool thin_passes(Material m) {
+    if ((m.layers & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) == 0u || (m.layers & MATERIAL_LAYER_UNLIT) != 0u) return false;
+    ray_through *= ray_through_each;
+    ray_through_crossed++;
+    return max(ray_through.r, max(ray_through.g, ray_through.b)) >= 1e-3;
 }
 
-// What a ray that finds this triangle at distance t does: stop, or go through
-// a hole of a masked material or a blended one. Only instances flagged as
-// alpha tested ask.
-bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, uint blend) {
+// Whether a ray along `direction`, in the space of an instance that fades out
+// by `fade`, goes through it: a share of the directions as large as the fade,
+// by a fixed hash of the direction, so a ray meets the same at every face it
+// crosses and a ray traced again the same way meets the same.
+bool ray_fade_left(uint instance_index, float3 direction, float fade) {
+    uint2 cell = uint2((oct_encode(direction) * 0.5 + 0.5) * 127.0 + 0.5);
+    return float(hash_u32(hash_u32(instance_index) ^ (cell.x | cell.y << 7u)) >> 8u) * (1.0 / 16777216.0) < fade;
+}
+
+// What a ray that finds this triangle at distance t, along `direction` in
+// the space of the instance, does: stop, or go through a hole of a masked
+// material, a blended one or what its fade leaves out (ray_fade_left), or
+// with BLEND_THIN a thin surface that lets light through (thin_passes). Only
+// the triangles of the slots an instance tests ask (Instance.tested).
+bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, float3 direction, uint blend) {
+    bool thin = (blend & BLEND_THIN) != 0u;
+    blend &= ~BLEND_THIN;
     Instance inst = scene_instance(instance_index);
-#ifdef MIRAI_GLASS_MEANS
-    // All glass: its mean, without reading the triangle.
-    if (blend == BLEND_MEANS && (inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u) return hit_mean(inst, t);
-#endif
     Mesh mesh = meshes[instance_mesh(inst)];
-    Material m = material_row(material_of(inst, mesh_primitive_material(mesh, primitive)), inst.material_values);
+    Material m = material_row(material_of(instance_row(instance_index), inst, mesh_primitive_material(mesh, primitive)), inst.material_values);
     if (m.alpha_mode == ALPHA_BLEND) {
 #ifdef MIRAI_RAY_FILTERS
         if (blend == BLEND_FILTERS) {
@@ -187,37 +134,29 @@ bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, uint 
             // The ray leaves a solid where its face looks along it.
             float3 face = transform_normal(inst.world_inv, cross(tri.b.position - tri.a.position, tri.c.position - tri.a.position));
             bool exit = dot(face, ray_filter_direction) >= 0.0;
-            float3 filter;
-#ifdef MIRAI_FILTER_POINTS
-            if (m.program_id != 0u && filter_defer(instance_index, primitive, bary, t, m, exit)) {
-                filter = inst.glass.rgb;
-            } else
-#endif
-            {
-                filter = m.program_id != 0u ? inst.glass.rgb : hit_transmission(inst, m, tri, bary, t, exit);
-#ifdef MIRAI_FILTER_POINTS
+            if (m.program_id == 0u || !filter_defer(instance_index, primitive, bary, t, m, exit)) {
+                float3 filter = hit_transmission(inst, m, tri, bary, t, exit);
                 ray_filter_fixed *= filter;
-#endif
+                ray_filter *= filter;
             }
-            ray_filter *= filter;
-            ray_filter_distance = min(ray_filter_distance, t);
             return max(ray_filter.r, max(ray_filter.g, ray_filter.b)) < 1e-3;
         }
 #endif
-#ifdef MIRAI_GLASS_MEANS
-        if (blend == BLEND_MEANS) return hit_mean(inst, t);
-#endif
         return blend == BLEND_STOPS;
     }
-    if (m.alpha_mode == ALPHA_OPAQUE) return true;
-    Mesh_Triangle tri = mesh_triangle(inst, mesh, primitive);
-    float3 weights = float3(1.0 - bary.x - bary.y, bary.x, bary.y);
-    float3 edge1 = transform_vector(inst.world, tri.b.position - tri.a.position);
-    float3 edge2 = transform_vector(inst.world, tri.c.position - tri.a.position);
-    float2 lod = float2(hit_lod(edge1, edge2, tri.b.uv - tri.a.uv, tri.c.uv - tri.a.uv, t * 0.004), hit_lod(edge1, edge2, tri.b.uv1 - tri.a.uv1, tri.c.uv1 - tri.a.uv1, t * 0.004));
-    float2 uv = tri.a.uv * weights.x + tri.b.uv * weights.y + tri.c.uv * weights.z;
-    float2 uv1 = tri.a.uv1 * weights.x + tri.b.uv1 * weights.y + tri.c.uv1 * weights.z;
-    return material_covers(m, hit_alpha(inst, m, tri, weights, uv, uv1, lod, t));
+    float fade = material_values_fade(inst.material_values);
+    if (fade > 0.0 && ray_fade_left(instance_index, direction, fade)) return false;
+    if (m.alpha_mode != ALPHA_OPAQUE) {
+        Mesh_Triangle tri = mesh_triangle(inst, mesh, primitive);
+        float3 weights = float3(1.0 - bary.x - bary.y, bary.x, bary.y);
+        float3 edge1 = transform_vector(inst.world, tri.b.position - tri.a.position);
+        float3 edge2 = transform_vector(inst.world, tri.c.position - tri.a.position);
+        float2 lod = float2(hit_lod(edge1, edge2, tri.b.uv - tri.a.uv, tri.c.uv - tri.a.uv, t * 0.004), hit_lod(edge1, edge2, tri.b.uv1 - tri.a.uv1, tri.c.uv1 - tri.a.uv1, t * 0.004));
+        float2 uv = tri.a.uv * weights.x + tri.b.uv * weights.y + tri.c.uv * weights.z;
+        float2 uv1 = tri.a.uv1 * weights.x + tri.b.uv1 * weights.y + tri.c.uv1 * weights.z;
+        if (!material_covers(m, material_mask(m, uv, uv1, lod, true))) return false;
+    }
+    return !thin || !thin_passes(m);
 }
 
 
@@ -250,25 +189,28 @@ struct Hit {
 #ifdef MIRAI_HW_RT
 [[vk::binding(SLOT_TLAS, 0)]] RaytracingAccelerationStructure scene_tlas : register(MIRAI_REGISTER(t, SLOT_TLAS), space0);
 
-// The cluster and the triangle of a primitive of the BLAS of the cut an
-// instance is traced with: the BLAS lists the triangles of the cut, and its
-// table in the index pool names where each comes from.
-uint hw_primitive(uint instance_index, uint primitive) {
+// The cluster and the triangle of a primitive of a geometry of the BLAS of
+// the cut an instance is traced with: the BLAS lists the triangles of the
+// cut, the opaque ones and then the masked ones, and its table in the index
+// pool names where each comes from.
+uint hw_primitive(uint instance_index, uint geometry, uint primitive) {
     uint mesh_word = scene_mesh_word(instance_index);
-    return indices[meshes[mesh_word & INSTANCE_MESH_MASK].rays[(mesh_word >> INSTANCE_RAY_SHIFT) & 3u].table_word + primitive];
+    Mesh_Ray ray = meshes[mesh_word & INSTANCE_MESH_MASK].rays[(mesh_word >> INSTANCE_RAY_SHIFT) & 3u];
+    return indices[ray.table_word + (geometry != 0u ? ray.table_opaque : 0u) + primitive];
 }
 
 Hit trace_ray_impl(float3 origin, float3 direction, float t_min, float t_max, bool any_hit, uint blend, uint classes) {
     RayQuery<RAY_FLAG_NONE> query;
     uint flags = any_hit ? RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH : 0u;
     RayDesc ray_desc; ray_desc.Origin = origin; ray_desc.TMin = t_min; ray_desc.Direction = direction; ray_desc.TMax = t_max; query.TraceRayInline(scene_tlas, flags, classes, ray_desc);
-    // Opaque instances commit their hits by themselves; the triangles of an
-    // alpha tested one come here as candidates.
+    // Opaque triangles commit their hits by themselves; the masked ones of
+    // an instance that tests the slots of its mesh, and all those of one that
+    // tests others, come here as candidates.
     while (query.Proceed()) {
         if (query.CandidateType() != CANDIDATE_NON_OPAQUE_TRIANGLE) continue;
         uint instance = uint(query.CandidateInstanceID());
-        if (hit_covers(instance, hw_primitive(instance, uint(query.CandidatePrimitiveIndex())),
-                query.CandidateTriangleBarycentrics(), query.CandidateTriangleRayT(), blend)) {
+        if (hit_covers(instance, hw_primitive(instance, uint(query.CandidateGeometryIndex()), uint(query.CandidatePrimitiveIndex())),
+                query.CandidateTriangleBarycentrics(), query.CandidateTriangleRayT(), query.CandidateObjectRayDirection(), blend)) {
             query.CommitNonOpaqueTriangleHit();
         }
     }
@@ -280,7 +222,7 @@ Hit trace_ray_impl(float3 origin, float3 direction, float t_min, float t_max, bo
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
         hit.t = query.CommittedRayT();
         hit.instance = uint(query.CommittedInstanceID());
-        hit.primitive = hw_primitive(hit.instance, uint(query.CommittedPrimitiveIndex()));
+        hit.primitive = hw_primitive(hit.instance, uint(query.CommittedGeometryIndex()), uint(query.CommittedPrimitiveIndex()));
         hit.bary = query.CommittedTriangleBarycentrics();
     }
     return hit;
@@ -349,8 +291,9 @@ bool ray_triangle(float3 origin, float3 dir, Bvh_Triangle tri, float t_min, floa
 // Walks the BVH of the cut of a mesh an instance is traced with in object
 // space: mesh_word is the meta.x of the instance, its mesh and its cut. hit.t
 // is groupshared with the caller, so the world-space closest hit shrinks every
-// subsequent box test. A primitive is its cluster and its triangle.
-bool trace_blas(uint mesh_word, float3 origin, float3 dir, float t_min, inout Hit hit, uint instance_index, bool any_hit, bool alpha_tested, uint blend) {
+// subsequent box test. A primitive is its cluster and its triangle. tested:
+// the slots whose triangles ask their material (Instance.tested).
+bool trace_blas(uint mesh_word, float3 origin, float3 dir, float t_min, inout Hit hit, uint instance_index, bool any_hit, uint tested, uint blend) {
     Mesh_Ray ray = meshes[mesh_word & INSTANCE_MESH_MASK].rays[(mesh_word >> INSTANCE_RAY_SHIFT) & 3u];
     float3 inv_dir = safe_inverse(dir);
     uint stack[TRACE_STACK];
@@ -365,7 +308,7 @@ bool trace_blas(uint mesh_word, float3 origin, float3 dir, float t_min, inout Hi
                 float t;
                 float2 bary;
                 if (ray_triangle(origin, dir, tri, t_min, hit.t, t, bary)) {
-                    if (alpha_tested && !hit_covers(instance_index, tri.primitive, bary, t, blend)) continue;
+                    if (((tested >> tri.slot) & 1u) != 0u && !hit_covers(instance_index, tri.primitive, bary, t, dir, blend)) continue;
                     hit.t = t;
                     hit.bary = bary;
                     hit.primitive = tri.primitive;
@@ -412,7 +355,6 @@ bool trace_batch(uint batch, float3 origin, float3 direction, float t_min, inout
     uint words = batch_records(row);
     uint order = batch_order(row);
     uint first = frame.instance_count + batch_first(row);
-    bool tested = (row.meta.w & INSTANCE_FLAG_ALPHA_TESTED) != 0u;
     float3 inv_dir = safe_inverse(direction);
     uint stack[TRACE_STACK];
     uint top = 0u;
@@ -427,7 +369,7 @@ bool trace_batch(uint batch, float3 origin, float3 direction, float t_min, inout
                 uint local = indices[order + node.left_first + i];
                 float4 world[3], inverse[3];
                 batch_placement(words + local * BATCH_WORDS, float3(0.0), world, inverse);
-                if (trace_blas(row.meta.x, transform_point(inverse, origin), transform_vector(inverse, direction), t_min, hit, first + local, any_hit, tested, blend)) {
+                if (trace_blas(row.meta.x, transform_point(inverse, origin), transform_vector(inverse, direction), t_min, hit, first + local, any_hit, row.tested, blend)) {
                     found = true;
                     if (any_hit) return true;
                 }
@@ -488,12 +430,14 @@ Hit trace_ray_impl(float3 origin, float3 direction, float t_min, float t_max, bo
                 }
                 Instance inst = instances[instance_index];
                 if ((inst.meta.w & INSTANCE_FLAG_HIDDEN) != 0u) continue;
-                if ((inst.meta.w & INSTANCE_FLAG_SMALL) != 0u && (classes & RAY_SMALL) == 0u) continue;
+                // Its class, as render.ray_class gives it: one of glass the reference let in.
+                bool unshadowed = (inst.meta.x & INSTANCE_UNSHADOWED) != 0u && (ref & TLAS_REF_GLASS) == 0u;
+                if (unshadowed ? (classes & RAY_UNSHADOWED) == 0u : ((inst.meta.w & INSTANCE_FLAG_SMALL) != 0u && (classes & RAY_SMALL) == 0u)) continue;
                 // The object-space direction is not renormalized, so t stays in
                 // world units across instances.
                 float3 o = transform_point(inst.world_inv, origin);
                 float3 d = transform_vector(inst.world_inv, direction);
-                if (trace_blas(inst.meta.x, o, d, t_min, hit, instance_index, any_hit, (inst.meta.w & INSTANCE_FLAG_ALPHA_TESTED) != 0u, blend) && any_hit) return hit;
+                if (trace_blas(inst.meta.x, o, d, t_min, hit, instance_index, any_hit, inst.tested, blend) && any_hit) return hit;
             }
             if (top == 0u) break;
             node_index = stack[--top];
@@ -540,7 +484,7 @@ Hit trace_instance(uint instance_index, float3 origin, float3 direction) {
     hit.instance = INVALID;
     hit.primitive = INVALID;
     hit.bary = float2(0.0);
-    trace_blas(inst.meta.x, o, d, 0.0, hit, instance_index, false, false, BLEND_STOPS);
+    trace_blas(inst.meta.x, o, d, 0.0, hit, instance_index, false, 0u, BLEND_STOPS);
     if (hit.instance == INVALID) hit.t = -1.0;
     return hit;
 #endif
@@ -564,62 +508,22 @@ struct Ray_Path {
     float3 origin;    // of the stretch it arrived along: beyond the gate it went through, if any
     float3 direction; // it arrived with
     float gate;       // how far along it the gate of an extension it went through was; negative: none
-    float3 glass;     // what the glass it crossed leaves of the light that comes back along it
 };
 
-// The rays of the indirect light, and the shadow rays of what they find, cross
-// glass as the mean filter of its instance (MIRAI_GLASS_MEANS): its detail
-// averages away after a diffuse bounce. Without it they go through glass.
-#ifdef MIRAI_GLASS_MEANS
-#define RAY_CROSSES (MIRAI_GLASS_MEANS ? (RAY_SEEN | RAY_GLASS) : RAY_SEEN)
-#define RAY_CROSSING (MIRAI_GLASS_MEANS ? BLEND_MEANS : BLEND_PASSES)
-#else
-#define RAY_CROSSES RAY_SEEN
-#define RAY_CROSSING BLEND_PASSES
-#endif
-
-// The nearest surface along a ray from `from` to `reach`, and in path.glass
-// what the glass before it leaves of light. A closest hit meets the glass
-// before it but also, until it finds the surface, glass beyond it: then the
-// ray goes again only as far as the surface, which leaves that glass out.
-// Both share one traversal in the source.
-Hit trace_segment(float3 from, float3 direction, float t_min, float reach, bool any_hit, inout Ray_Path path) {
-    Hit hit;
-    for (uint attempt = 0u; attempt < 2u; attempt++) {
-#ifdef MIRAI_GLASS_MEANS
-        ray_filter = float3(1.0);
-        ray_filter_far = 0.0;
-#endif
-        Hit found = trace_ray_impl(from, direction, t_min, reach, any_hit, RAY_CROSSING, RAY_CROSSES);
-        if (attempt == 0u) hit = found;
-#ifdef MIRAI_GLASS_MEANS
-        if (MIRAI_GLASS_MEANS) {
-            if (attempt == 0u && hit.instance != INVALID && ray_filter_far > hit.t) {
-                reach = hit.t;
-                continue;
-            }
-            path.glass *= ray_filter;
-        }
-#endif
-        break;
-    }
-    return hit;
-}
-
 // The nearest surface along a ray, which goes on beyond a gate of an extension
-// it meets first: hit.t is the whole way. The segments share one traversal in
-// the source, since a second call would be a second copy of it in every stage.
-Hit trace_ray(float3 origin, float3 direction, float t_min, float t_max, bool any_hit, out Ray_Path path) {
+// it meets first: hit.t is the whole way. Glass it goes through. The segments
+// share one traversal in the source, since a second call would be a second
+// copy of it in every stage.
+Hit trace_ray(float3 origin, float3 direction, float t_min, float t_max, bool any_hit, out Ray_Path path, uint blend = BLEND_PASSES) {
     path.origin = origin;
     path.direction = direction;
     path.gate = -1.0;
-    path.glass = float3(1.0);
 #ifdef MIRAI_HOOK_RAY
     Hit hit;
     float3 from = origin;
     float travelled = 0.0;
     for (uint segment = 0u; segment < 2u; segment++) {
-        hit = trace_segment(from, path.direction, t_min, t_max - travelled, any_hit, path);
+        hit = trace_ray_impl(from, path.direction, t_min, t_max - travelled, any_hit, blend, RAY_SEEN);
         if (segment != 0u) break;
         float t;
         float3 next_origin, next_direction;
@@ -634,7 +538,7 @@ Hit trace_ray(float3 origin, float3 direction, float t_min, float t_max, bool an
     if (hit.instance != INVALID) hit.t += travelled;
     return hit;
 #else
-    return trace_segment(origin, direction, t_min, t_max, any_hit, path);
+    return trace_ray_impl(origin, direction, t_min, t_max, any_hit, blend, RAY_SEEN);
 #endif
 }
 Hit trace_ray(float3 origin, float3 direction, float t_min, float t_max, bool any_hit) {
@@ -642,13 +546,47 @@ Hit trace_ray(float3 origin, float3 direction, float t_min, float t_max, bool an
     return trace_ray(origin, direction, t_min, t_max, any_hit, path);
 }
 
-bool trace_visible(float3 origin, float3 direction, float t_max) {
+// A surface along a ray that is not a thin surface that lets light through,
+// which it goes past as trace_through does, losing nothing.
+Hit trace_past_thin(float3 origin, float3 direction, float t_max, out Ray_Path path) {
+    ray_through = float3(1.0);
+    ray_through_each = float3(1.0);
+    return trace_ray(origin, direction, 0.0, t_max, true, path, BLEND_PASSES | BLEND_THIN);
+}
+
+// Whether light gets from origin to t_max along direction: the shadow ray of
+// both tracing providers, the terminating query, which never visits glass.
+// gated: a gate of an extension the ray would leave through stops it; false
+// for the ray of a light that comes through one.
+bool trace_visible(float3 origin, float3 direction, float t_max, bool gated = true) {
     if (t_max <= 0.0) return true;
 #ifdef MIRAI_HOOK_RAY
     float gate;
-    if (ray_gated(origin, direction, t_max, gate)) return false;
+    if (gated && ray_gated(origin, direction, t_max, gate)) return false;
 #endif
     return trace_ray_impl(origin, direction, 0.0, t_max, true, BLEND_PASSES, RAY_SHADOWS).instance == INVALID;
+}
+
+// What of the light along the shadow ray of trace_visible gets to origin when
+// each thin surface that lets light through (diffuse transmission) leaves
+// `each` of what reaches it: 1 where nothing is in the way, 0 where anything
+// else is, and how many of them it crossed. Light that went through a leaf
+// leaves it diffuse; under a canopy the leaves above cover the sky of a point
+// and send it about that share. Only the slots an instance tests (masked,
+// fading) are crossed: the others stop the ray.
+float3 trace_through(float3 origin, float3 direction, float t_max, float3 each, out uint crossed) {
+    crossed = 0u;
+    if (t_max <= 0.0) return float3(1.0);
+#ifdef MIRAI_HOOK_RAY
+    float gate;
+    if (ray_gated(origin, direction, t_max, gate)) return float3(0.0);
+#endif
+    ray_through = float3(1.0);
+    ray_through_each = each;
+    ray_through_crossed = 0u;
+    bool stopped = trace_ray_impl(origin, direction, 0.0, t_max, true, BLEND_PASSES | BLEND_THIN, RAY_SHADOWS).instance != INVALID;
+    crossed = ray_through_crossed;
+    return stopped ? float3(0.0) : ray_through;
 }
 
 #ifdef MIRAI_RAY_FILTERS
@@ -673,7 +611,7 @@ float3 trace_glass_filter(float3 origin, float3 direction, float t_max) {
             Bvh_Node box = tlas_nodes[first + i];
             if (ray_box(origin, inv_dir, box.bounds_min, box.bounds_max, 0.0, t_max) == FLT_MAX) continue;
             Instance inst = instances[box.left_first];
-            if (trace_blas(inst.meta.x, transform_point(inst.world_inv, origin), transform_vector(inst.world_inv, direction), 0.0, hit, box.left_first, true, true, BLEND_FILTERS)) break;
+            if (trace_blas(inst.meta.x, transform_point(inst.world_inv, origin), transform_vector(inst.world_inv, direction), 0.0, hit, box.left_first, true, inst.tested, BLEND_FILTERS)) break;
         }
         return ray_filter;
     }
@@ -683,92 +621,13 @@ float3 trace_glass_filter(float3 origin, float3 direction, float t_max) {
 }
 #endif
 
-// Shadow transport is common to both tracing providers. Without colored
-// shadows it is the terminating boolean query, which never visits glass. With
-// them the same query also meets the blended surfaces, which multiply the
-// filter of the ray and let it on; a solid surface, or a filter that leaves
-// no light, ends it. Where only the mean of the glass is seen
-// (MIRAI_GLASS_MEANS without colored shadows: the lights of what the rays of
-// the indirect light find), each blended surface multiplies it by the mean of
-// its instance. gated: a gate of an extension the ray would leave through
-// stops it; false for the ray of a light that comes through one.
-float3 trace_transmission(float3 origin, float3 direction, float t_max, bool gated = true) {
-    if (t_max <= 0.0) return float3(1.0);
-#ifdef MIRAI_HOOK_RAY
-    float gate;
-    if (gated && ray_gated(origin, direction, t_max, gate)) return float3(0.0);
-#endif
-#if defined(MIRAI_COLORED_SHADOWS) || defined(MIRAI_GLASS_MEANS)
-    // One traversal in the source, whatever the constants of the pipeline make of it.
-    uint blend = BLEND_PASSES;
-    uint classes = RAY_SHADOWS;
-#ifdef MIRAI_GLASS_MEANS
-    if (MIRAI_GLASS_MEANS) {
-        blend = BLEND_MEANS;
-        classes = RAY_SHADOWS | RAY_GLASS;
-    }
-#endif
-#ifdef MIRAI_COLORED_SHADOWS
-    if (MIRAI_COLORED_SHADOWS) {
-        blend = BLEND_FILTERS;
-        classes = RAY_SHADOWS | RAY_GLASS;
-        ray_filter_direction = direction;
-    }
-#endif
-    ray_filter = float3(1.0);
-    bool blocked = trace_ray_impl(origin, direction, 0.0, t_max, true, blend, classes).instance != INVALID;
-#if defined(MIRAI_COLORED_SHADOWS) && defined(MIRAI_FILTER_POINTS)
-    if (MIRAI_COLORED_SHADOWS && blocked) filters_blocked();
-#endif
-    return blocked ? float3(0.0) : ray_filter;
-#else
-    return trace_ray_impl(origin, direction, 0.0, t_max, true, BLEND_PASSES, RAY_SHADOWS).instance == INVALID ? float3(1.0) : float3(0.0);
-#endif
-}
-
-// The same transport, how far along the ray light was first lost: to the
-// surface that stopped it or to its first filter (FLT_MAX: nowhere), and the
-// instance that stopped it (INVALID: none, or a gate). The query stops at the
-// first surface it finds, not the nearest.
-float3 trace_transmission_blocker(float3 origin, float3 direction, float t_max, out float blocker, out uint stopper, bool gated = true) {
-    blocker = FLT_MAX;
-    stopper = INVALID;
-    if (t_max <= 0.0) return float3(1.0);
-#ifdef MIRAI_HOOK_RAY
-    float gate;
-    if (gated && ray_gated(origin, direction, t_max, gate)) { blocker = gate; return float3(0.0); }
-#endif
-#ifndef MIRAI_COLORED_SHADOWS
-    Hit hit = trace_ray_impl(origin, direction, 0.0, t_max, true, BLEND_PASSES, RAY_SHADOWS);
-    if (hit.instance == INVALID) return float3(1.0);
-    blocker = hit.t;
-    stopper = hit.instance;
-    return float3(0.0);
-#else
-    // One traversal in the source: without colored shadows in the pipeline no
-    // filter is met, and the filter and its distance stay as they start.
-    ray_filter = float3(1.0);
-    ray_filter_direction = direction;
-    ray_filter_distance = FLT_MAX;
-    Hit hit = trace_ray_impl(origin, direction, 0.0, t_max, true, MIRAI_COLORED_SHADOWS ? BLEND_FILTERS : BLEND_PASSES, MIRAI_COLORED_SHADOWS ? (RAY_SHADOWS | RAY_GLASS) : RAY_SHADOWS);
-    blocker = ray_filter_distance;
-    if (hit.instance == INVALID) return ray_filter;
-    blocker = min(blocker, hit.t);
-    stopper = hit.instance;
-#ifdef MIRAI_FILTER_POINTS
-    if (MIRAI_COLORED_SHADOWS) filters_blocked();
-#endif
-    return float3(0.0);
-#endif
-}
-
 // Whether a shadow ray from origin, `reach` along direction, met what casts
 // shadows and changed since the frame before (render.Occluder_Changes, in
 // frame.moved): stopped by an instance that changed, or where one of a box
 // that stands for several is; not stopped, through a box where one was or is,
 // where its shadow left or came. stopper: the instance that stopped it at
-// `stopped` (trace_transmission_blocker); INVALID for one that went through,
-// or of which that is not known. Without changes it reads nothing else.
+// `stopped`; INVALID for one that went through, or of which that is not
+// known. Without changes it reads nothing else.
 bool occluder_changed(float3 origin, float3 direction, float reach, uint stopper, float stopped) {
     uint count = frame.moved.x;
     if (count == 0u) return false;

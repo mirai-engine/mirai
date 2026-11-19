@@ -42,6 +42,7 @@ mtl_format :: proc "contextless" (f: Format) -> MTL.PixelFormat {
 	case .BC7_Srgb:      return .BC7_RGBAUnorm_sRGB
 	case .BC6H_Ufloat:   return .BC6H_RGBUfloat
 	case .RGBA16_Unorm:  return .RGBA16Unorm
+	case .D16_Unorm:     return .Depth16Unorm
 	}
 	return .Invalid
 }
@@ -62,6 +63,7 @@ mtl_create_buffer :: proc(d: ^Device, desc: Buffer_Desc) -> Buffer {
 	case .Staging:  options += {.CPUCacheModeWriteCombined} // shared storage: the memory of an Apple GPU is that of the host
 	}
 	b := Mtl_Buffer{size = size, length = length, usage = desc.usage, kind = desc.memory}
+	resource_name_set(&b.name, desc.name)
 	b.handle = MTL.Device_newBufferWithLength(d.device, NS.UInteger(length), options)
 	if b.handle == nil {set_error(d, "newBufferWithLength(%d) failed for %s", length, desc.name); return 0}
 	if desc.memory != .GPU {
@@ -105,6 +107,7 @@ texture_create :: proc(d: ^Device, desc: Texture_Desc) -> Texture {
 	if !device_room(d, &d.textures, "textures") {return 0}
 	t := Mtl_Texture{desc = desc}
 	t.desc.name = ""
+	resource_name_set(&t.name, desc.name)
 	t.desc.mip_levels = max(desc.mip_levels, 1)
 	t.desc.layers = layers
 	t.format = mtl_format(desc.format)
@@ -229,6 +232,7 @@ mtl_texture_on_surface :: proc(d: ^Device, desc: Texture_Desc, surface: rawptr) 
 	if !device_room(d, &d.textures, "textures") {CF.Release(surface); return 0}
 	t := Mtl_Texture{desc = desc, surface = surface}
 	t.desc.name = ""
+	resource_name_set(&t.name, desc.name)
 	t.desc.mip_levels = 1
 	t.format = mtl_format(desc.format)
 	usage: MTL.TextureUsage
@@ -429,7 +433,7 @@ mtl_merge_bindings :: proc(d: ^Device, p: ^Mtl_Pipeline, codes: ..^Shader_Code) 
 			slot.used = true
 			slot.kind = b.kind
 			slot.stages += {code.stage}
-			p.slot_mask |= 1 << b.slot
+			p.slot_mask += {int(b.slot)}
 		}
 	}
 	return true
@@ -715,4 +719,29 @@ texture_read :: proc(d: ^Device, texture: Texture, out: []u8) -> bool {
 	if !immediate_end(d, cmd) {return false}
 	mem.copy(raw_data(out), buffer_mapped(d, staging), int(size))
 	return true
+}
+
+// The resources of the device for device_memory_report, the heaps of the
+// acceleration structures by what their structures take and the room they
+// leave. Metal keeps no blocks for the others and releases what waits for its
+// frames by itself: free and deleting are 0.
+@(private)
+device_resource_list :: proc(d: ^Device, list: ^[dynamic]Resource_Entry) -> (free, deleting: u64) {
+	for &b, i in d.buffers.items[:d.buffers.used] {
+		if !d.buffers.alive[i] || b.handle == nil {continue}
+		append(list, Resource_Entry{name = resource_name(&b.name), kind = .Buffer, bytes = u64(MTL.Resource_allocatedSize(b.handle))})
+	}
+	for &t, i in d.textures.items[:d.textures.used] {
+		if !d.textures.alive[i] || t.handle == nil || t.swapchain {continue}
+		append(list, Resource_Entry{name = resource_name(&t.name), kind = .Texture, format = t.desc.format, bytes = u64(MTL.Resource_allocatedSize(t.handle))})
+	}
+	structures: u64
+	for &a, i in d.accels.items[:d.accels.used] {
+		if !d.accels.alive[i] {continue}
+		append(list, Resource_Entry{name = resource_name(&a.name), kind = .Accel, bytes = a.size})
+		structures += a.size
+	}
+	heaps, _ := arena_bytes(&d.accel_arena)
+	if heaps > structures {append(list, Resource_Entry{name = ACCEL_UNUSED_NAME, kind = .Accel, bytes = heaps - structures})}
+	return
 }

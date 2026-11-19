@@ -26,7 +26,7 @@ a_test_executable_is_current_by_the_content_of_what_its_build_read :: proc(t:^te
         return project.path(..all[:],allocator=context.temp_allocator)
     }
     for folder in ([]string{"pkg","lib","bin"}) {
-        if !testing.expect(t,os.make_directory_all(file(root,folder))==nil) {return}
+        if !testing.expect(t,base.make_directory_all(file(root,folder))==nil) {return}
     }
     compiler:=file(root,"bin","odin")
     sources:=[]string{file(root,"pkg","a.odin"),file(root,"pkg","a_test.odin"),file(root,"lib","lib.odin")}
@@ -41,7 +41,7 @@ a_test_executable_is_current_by_the_content_of_what_its_build_read :: proc(t:^te
     planned:=test_build_plan(root,compiler,file(root,"pkg"),executable,flags)
     if !testing.expect(t,len(planned.command)>0,"without an executable it compiles") {return}
     // What the compiler would leave.
-    if !testing.expect(t,os.make_directory_all(file(root,"tests"))==nil) {return}
+    if !testing.expect(t,base.make_directory_all(file(root,"tests"))==nil) {return}
     if !testing.expect(t,os.write_entire_file(planned.compile.staged,"executable")==nil) {return}
     export:=struct {source_files,load_files:[]string}{source_files=sources}
     data,_:=json.marshal(export)
@@ -78,7 +78,7 @@ a_test_executable_runs_in_the_root_and_reports_its_tests :: proc(t:^testing.T) {
     root:=base.test_folder(t,"test-run")
     if root=="" {return}
     folder:=project.path(root,"project","game")
-    if !testing.expect(t,os.make_directory_all(folder)==nil) {return}
+    if !testing.expect(t,base.make_directory_all(folder)==nil) {return}
     if !testing.expect(t,os.write_entire_file(project.path(root,"marker.txt"),"here")==nil) {return}
     source:=`package game
 
@@ -126,10 +126,10 @@ the_code_of_a_project_compiles_into_libraries_without_its_tests :: proc(t:^testi
     files:=[?]string{"game/game.odin","game/game_test.odin","game/testdata/fixture.odin","game/sub/sub.odin","assets/script.odin","editor/tool.odin"}
     for file in files {
         path:=project.path(root,file)
-        if !testing.expect(t,os.make_directory_all(path[:strings.last_index_byte(path,'/')])==nil) {return}
+        if !testing.expect(t,base.make_directory_all(path[:strings.last_index_byte(path,'/')])==nil) {return}
         if !testing.expect(t,os.write_entire_file(path,"package x\n")==nil) {return}
     }
-    if !testing.expect(t,os.make_directory_all(project.path(engine,"plugins"))==nil) {return}
+    if !testing.expect(t,base.make_directory_all(project.path(engine,"plugins"))==nil) {return}
     p:=project.Project{root=root,engine_root=engine}
     libraries:=plugin_libraries(&p,true)
     if !testing.expect_value(t,len(libraries),2) {return}

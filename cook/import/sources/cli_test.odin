@@ -182,3 +182,34 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
     broken:=import_run(kept,fmt.tprintf("%s/broken.obj",folder))
     testing.expect(t,broken.code==1 && strings.contains(broken.err,"outside"),broken.err)
 }
+
+// mirai import takes what the editor's import left of the same source: an
+// image the editor ingested with Fast textures, with no Final in the store,
+// is current for the command, which builds nothing again. Final
+// is what --final asks for, and builds them again.
+@(test)
+mirai_import_takes_what_the_import_of_the_editor_left :: proc(t:^testing.T) {
+    root_folder,folder:=test_project(t,"cli-fast")
+    if folder=="" {return}
+    context.user_ptr=prefab.import_world(t)
+    kept:=fmt.tprintf("%s/store",root_folder)
+    s:=test_store(t,kept)
+    if s==nil {return}
+    bricks:=copy_in(root_folder,DEMO,"surfaces/bricks/bricks_color.png")
+    // As the editor imports it: Fast, with the use it gives an image by its name.
+    settings:=importer.Import_Settings{image=image_use(bricks)}
+    report,_,error:=project_ingest(root_folder,bricks,"",{store=s,root=root_folder,plugins=test_library,fast_textures=true},&settings,context.temp_allocator)
+    if !testing.expectf(t,error.code==.None && !report.final,"%s",error.message) {return}
+    Case :: struct {source:string,args:[]string,built:bool}
+    cases:=[]Case{
+        {bricks,{},false},
+        {bricks,{"--final"},true},
+    }
+    for c in cases {
+        args:=make([dynamic]string,context.temp_allocator)
+        append(&args,c.source)
+        append(&args,..c.args)
+        done:=import_run(kept,..args[:])
+        testing.expectf(t,done.code==0 && (len(reported_paths(done.out))>0)==c.built,"%s %v: %s%s",c.source,c.args,done.out,done.err)
+    }
+}

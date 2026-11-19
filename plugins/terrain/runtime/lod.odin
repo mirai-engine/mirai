@@ -154,8 +154,8 @@ piece_vertex :: proc(s:^Source,mesh:^Chunk_Mesh,p:Piece,lines:^Piece_Lines,at:[2
     case coarse:                         position,normal=coarse_vertex(s,x,z,step,p.edges)
     case:                                position,normal=heightfield_vertex(s,x,z,step,p.edges)
     }
-    // Where it is over the maps of the piece, in texels.
-    uv:=[2]f32{f32(at.x),f32(at.y)}/f32(max(p.spacing,1)<<p.detail)
+    // Where it is over the maps of the piece, in texels, over their size.
+    uv:=[2]f32{f32(at.x),f32(at.y)}/f32(max(p.spacing,1)<<p.detail)/[2]f32{f32(max(mesh.maps.size.x,1)),f32(max(mesh.maps.size.y,1))}
     m:=&mesh.geometry
     index=u32(len(m.positions))
     if append(&m.positions,position)!=1 || append(&m.normals,normal)!=1 || append(&m.uvs,uv)!=1 || append(&mesh.uv1s,[2]f32{})!=1 {return}

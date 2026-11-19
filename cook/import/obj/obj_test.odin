@@ -108,19 +108,20 @@ f 1/1 3/3 4/4
 transparency_and_blender_roughness_follow_the_mtl_conventions :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"obj-alpha")
     if folder=="" {return}
-    write_text(folder,"m.mtl","newmtl glass\nTr 0.75\nNs 1000\nnewmtl exact\nNs 1000\nPr 0.3\nd 1\n")
-    path:=write_text(folder,"m.obj","mtllib m.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl glass\nf 1 2 3\nusemtl exact\nf 1 2 3\nusemtl absent\nf 1 2 3\n")
+    write_text(folder,"m.mtl","newmtl glass\nTr 0.75\nNs 1000\nnewmtl exact\nNs 1000\nPr 0.3\nd 1\nnewmtl pane\nillum 4\nd 0.2\nNi 1.45\n")
+    path:=write_text(folder,"m.obj","mtllib m.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl glass\nf 1 2 3\nusemtl exact\nf 1 2 3\nusemtl absent\nf 1 2 3\nusemtl pane\nf 1 2 3\n")
     model,ok:=import_ok(t,path)
     if !ok {return}
     defer importer.model_destroy(&model)
-    testing.expect_value(t,len(model.materials),2)
-    glass,exact:=model.materials[0],model.materials[1]
+    testing.expect_value(t,len(model.materials),3)
+    glass,exact,pane:=model.materials[0],model.materials[1],model.materials[2]
     testing.expect(t,glass.info.alpha_mode==.Blend && abs(glass.info.opacity-0.25)<1e-5 && abs(glass.info.roughness-0)<1e-5,"Tr is the opposite of d; Ns without Pr is Blender's roughness")
     testing.expect(t,exact.info.alpha_mode==.Opaque && abs(exact.info.roughness-0.3)<1e-5,"Pr wins over Ns")
+    testing.expect(t,pane.info.alpha_mode==.Blend && pane.info.opacity==1 && abs(pane.info.transmission-0.8)<1e-5 && abs(pane.info.ior-1.45)<1e-5,"a glass illumination model is glass there whole, which lets through what it dissolves")
     mesh:=&model.meshes[0]
-    testing.expect_value(t,len(mesh.slots),3)
+    testing.expect_value(t,len(mesh.slots),4)
     testing.expect(t,mesh.slots[2].label=="absent" && mesh.slots[2].material==-1,"a material the MTL does not define still gets a slot")
-    testing.expect_value(t,len(mesh.submeshes),3)
+    testing.expect_value(t,len(mesh.submeshes),4)
     testing.expect(t,mesh.submeshes[1].slot==1 && mesh.submeshes[1].first_index==3)
 }
 

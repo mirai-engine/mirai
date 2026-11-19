@@ -29,7 +29,7 @@ a_fade_is_given_to_its_instance_alone_without_a_row_or_an_allocation :: proc(t:^
     for e,i in entities {
         pose:=mm.TRANSFORM_IDENTITY;pose.position.x=f32(i)*2-1
         core.add(&w.worlds,e,core.World_Transform{pose,pose})
-        core.add(&w.meshes,e,Mesh_Renderer{shape=.Cube})
+        core.add(&w.meshes,e,MESH_RENDERER_DEFAULT)
         core.add(&w.values,e,Material_Values{color=i==0?[4]f32{1,0,0,1}:{0,1,0,1},emission=i==0?[3]f32{3,0,0}:{0,3,0}})
     }
     test_world_settle(&w)
@@ -37,7 +37,10 @@ a_fade_is_given_to_its_instance_alone_without_a_row_or_an_allocation :: proc(t:^
         host.app_camera_set(app,host.camera_from_view(w.view),w.view.cut,w.view.carried)
         world_sync(w,sync,app)
     }
+    // An opaque entity fades by the pixels of its raster and stays opaque:
+    // never blended nor glass to rays, which test it while it fades.
     alphas:=[9]f32{1,0.5,0,1,0.75,0.25,0.5,0,1}
+    whole:=0
     for alpha,pass in alphas {
         core.edit(&w.values,entities[0]).color.a=alpha
         host.app_frame_begin(app)
@@ -45,23 +48,17 @@ a_fade_is_given_to_its_instance_alone_without_a_row_or_an_allocation :: proc(t:^
         if pass>0 {
             touched:=app.renderer.scene.touched[0]
             testing.expect(t,touched&1!=0 && touched&2==0 && len(sync.made)==0,"the instance whose opacity changed goes alone, and is not made again")
-            if pass==5 || pass==6 || pass==7 {testing.expect(t,!app.renderer.scene.tlas_dirty && !app.renderer.scene.tlas_nodes_dirty && !app.renderer.scene.tlas_refs_dirty)}
+            if (alpha<1)==(alphas[pass-1]<1) {testing.expect(t,!app.renderer.scene.tlas_dirty && !app.renderer.scene.tlas_nodes_dirty && !app.renderer.scene.tlas_refs_dirty,"another fade changes nothing rays trace")}
         }
-        testing.expect_value(t,len(app.renderer.scene.translucent),alpha<1?1:0)
+        testing.expect_value(t,len(app.renderer.scene.translucent),0)
         // A unit cube is small (gpu.SMALL_INSTANCE_REACH): opaque, it meets the rays of that class.
         hw:=app.renderer.scene.hw_instances[0].mask_flags
-        testing.expect_value(t,hw&0xff,u32(alpha<1?gpu.RAY_GLASS:gpu.RAY_SMALL))
+        testing.expect_value(t,hw&0xff,u32(gpu.RAY_SMALL))
         testing.expect_value(t,hw&rhi.TLAS_ALPHA_TESTED!=0,alpha<1)
         testing.expect_value(t,sync.drawn.entities[0],entities[0])
         testing.expect_value(t,sync.drawn.entities[1],entities[1])
         host.app_frame_end(app)
-        // The frame takes the tree of the instances as the updates left it, which rays traced by software walk.
-        if !app.renderer.hardware_rt {
-            testing.expect_value(t,app.renderer.scene.glass_node_count,alpha<1?1:0)
-            for reference in app.renderer.scene.tlas_refs {
-                if reference&~gpu.TLAS_REF_GLASS==0 {testing.expect_value(t,reference&gpu.TLAS_REF_GLASS!=0,alpha<1)}
-            }
-        }
+        if !app.renderer.hardware_rt {testing.expect_value(t,app.renderer.scene.glass_node_count,0)}
         pixels,_,_,captured:=host.app_capture_pixels(app)
         if !testing.expect(t,captured) {delete(pixels);return}
         red,green:=0,0
@@ -71,10 +68,41 @@ a_fade_is_given_to_its_instance_alone_without_a_row_or_an_allocation :: proc(t:^
             // ACES 2.0 takes a bright pure green toward white: it stays the strongest channel by half.
             if int(color[1])>20 && 2*int(color[1])>3*max(int(color[0]),int(color[2])) {green+=1}
         }
-        testing.expectf(t,alpha==0?red==0:red>100,"alpha %f draws the fading entity (%d red pixels)",alpha,red)
+        // Without TAA the pattern shows: the share of the pixels of the entity that are drawn is its alpha.
+        if pass==0 {whole=red}
+        testing.expectf(t,whole>100 && abs(f32(red)-alpha*f32(whole))<=0.1*f32(whole),"alpha %f draws that share of the %d pixels of the fading entity, not %d",alpha,whole,red)
         testing.expect(t,green>100,"the unchanged entity remains visible")
         delete(pixels)
     }
+    // The pattern moves each frame: from a cut, 8 frames draw every pixel of
+    // a half-faded entity in 4 of them, which the TAA blends evenly.
+    {
+        core.edit(&w.values,entities[0]).color.a=0.5
+        counts:map[int]int;defer delete(counts)
+        for frame in 0..<8 {
+            w.view.cut=frame==0
+            host.app_frame_begin(app)
+            draw(&sync,app,&w)
+            host.app_frame_end(app)
+            pixels,_,_,captured:=host.app_capture_pixels(app)
+            if !testing.expect(t,captured) {delete(pixels);return}
+            for at in 0..<len(pixels)/4 {
+                color:=pixels[at*4:][:3]
+                if int(color[0])>20 && int(color[0])>2*max(int(color[1]),int(color[2])) {counts[at]+=1}
+            }
+            delete(pixels)
+        }
+        w.view.cut=false
+        uneven:=0
+        for _,count in counts {if count!=4 {uneven+=1}}
+        testing.expectf(t,len(counts)>100 && uneven==0,"%d of the %d pixels of the entity are drawn in other than half of the frames",uneven,len(counts))
+    }
+    // The pipelines the frames above asked for ahead of time arrive as loads:
+    // they are in place, and in the store, before the frames that are counted.
+    gpu.renderer_pipelines_wait(app.renderer,all=true)
+    host.app_frame_begin(app)
+    draw(&sync,app,&w)
+    host.app_frame_end(app)
     material_rows:=len(app.assets.material_descs)
     allocations:=tracking.total_allocation_count
     for pass in 0..<32 {
@@ -92,7 +120,7 @@ a_fade_is_given_to_its_instance_alone_without_a_row_or_an_allocation :: proc(t:^
     host.app_frame_end(app)
     testing.expect_value(t,len(app.renderer.scene.instances),1)
     testing.expect_value(t,sync.drawn.entities[0],entities[0])
-    core.add(&w.meshes,entities[1],Mesh_Renderer{shape=.Cube});test_world_settle(&w)
+    core.add(&w.meshes,entities[1],MESH_RENDERER_DEFAULT);test_world_settle(&w)
     host.app_frame_begin(app)
     draw(&sync,app,&w)
     host.app_frame_end(app)

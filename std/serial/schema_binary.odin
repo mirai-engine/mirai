@@ -1,5 +1,6 @@
 package serial
 
+import "base:runtime"
 import "core:slice"
 import "core:strings"
 import "mirai:std/base"
@@ -37,6 +38,9 @@ Schema_Error :: enum u8 {
 // A struct that, or one of whose fields, had other names: its record and those of its fields
 // end with them (was=). A schema without renames is written as before there were any.
 @(private="file") RENAMED :: 0x80
+// In the size of a struct: its record ends with its default, size bytes (Type.default). A schema
+// without defaults is written as before there were any.
+@(private="file") DEFAULTED :: u64(1)<<32
 @(private="file") HAS_MIN :: 1
 @(private="file") HAS_MAX :: 2
 @(private="file") HAS_STEP :: 4
@@ -60,13 +64,15 @@ schema_write :: proc(w:^Writer,s:^Schema) {
             if names {slice.fill(renamed[type.first:][:type.count],true)}
         }
         write_u8(w,u8(type.kind)|u8(type.named)<<4|u8(type.by_name?BY_NAME:0)|u8(names?RENAMED:0))
-        write_varint(w,u64(type.size))
+        defaulted:=type.kind==.Struct && len(type.default)==int(type.size)
+        write_varint(w,u64(type.size)|(DEFAULTED if defaulted else 0))
         write_varint(w,u64(type.align))
         write_string(w,type.name)
         write_varint(w,type.count>0 && type.kind!=.Array?u64(type.first):0)
         write_varint(w,u64(type.count))
         write_varint(w,type.elem==TYPE_NONE?0:u64(type.elem)+1)
         if names {write_string(w,type.was)}
+        if defaulted {write_bytes(w,type.default)}
     }
     for field,at in s.fields {
         present:=u8(0)
@@ -125,11 +131,21 @@ schema_read_tables :: proc(r:^Reader,s:^Schema) -> Schema_Error {
         kind_byte:=read_u8(r)
         kind,named:=kind_byte&0x0F,kind_byte>>4&0x03
         size,align:=read_varint(r),read_varint(r)
+        defaulted:=size&DEFAULTED!=0
+        size&~=DEFAULTED
         name:=read_string(r)
         first,count,elem:=read_varint(r),read_varint(r),read_varint(r)
         names:=kind_byte&RENAMED!=0
         was:=names?read_string(r):""
         if r.failed {return .Truncated}
+        if defaulted && (kind!=u8(Type_Kind.Struct) || size>SCHEMA_MAX_SIZE) {return .Invalid_Type}
+        default:=defaulted?read_bytes(r,int(size)):nil
+        if r.failed {return .Truncated}
+        if defaulted {
+            copied,no_default:=slice.clone(default,s.allocator)
+            if no_default!=nil {return .Out_Of_Memory}
+            type.default=copied
+        }
         if kind>u8(max(Type_Kind)) || named>u8(max(Named_Kind)) || names && kind!=u8(Type_Kind.Struct) || size>u64(max(u32)) || align>SCHEMA_MAX_ALIGN || first>u64(max(u32)) || count>u64(max(u32)) || elem>u64(TYPE_NONE) {return .Invalid_Type}
         if names {
             if first+count>u64(field_count) {return .Invalid_Field}
@@ -316,11 +332,14 @@ schema_import :: proc(link:^Schema_Import,type:Type_Index) -> Type_Index {
     hash:=link.src_hashes[type]
     for candidate,index in dst.types {
         if candidate.kind==source.kind && candidate.name_hash==source.name_hash && candidate.name==source.name && link.dst_hashes[index]==hash {
+            // The same layout: what it starts as, if the destination did not say.
+            if candidate.default==nil && source.default!=nil && !schema_default_set(dst,Type_Index(index),source.default) {return TYPE_NONE}
             link.remap[type]=Type_Index(index)
             return Type_Index(index)
         }
     }
     copied:=source
+    copied.default=nil
     #partial switch source.kind {
     case .Struct:
         fields,error:=make([dynamic]Field,0,int(source.count),context.temp_allocator)
@@ -356,8 +375,10 @@ schema_import :: proc(link:^Schema_Import,type:Type_Index) -> Type_Index {
         if copied.elem==TYPE_NONE {return TYPE_NONE}
     }
     copied.name,copied.was=schema_string(dst,source.name),schema_string(dst,source.was)
+    no_default:runtime.Allocator_Error
+    if source.default!=nil {copied.default,no_default=slice.clone(source.default,dst.allocator)}
     index:=Type_Index(len(dst.types))
-    if len(copied.name)!=len(source.name) || len(copied.was)!=len(source.was) || reserve(&dst.types,len(dst.types)+1)!=nil {
+    if len(copied.name)!=len(source.name) || len(copied.was)!=len(source.was) || no_default!=nil || reserve(&dst.types,len(dst.types)+1)!=nil {
         schema_type_drop(dst,copied)
         return TYPE_NONE
     }
@@ -379,8 +400,10 @@ schema_clone :: proc(dst:^Schema,src:^Schema,allocator:=context.allocator) -> Sc
     for type in src.types {
         copied:=type
         copied.name,copied.was=schema_string(dst,type.name),schema_string(dst,type.was)
+        no_default:runtime.Allocator_Error
+        if type.default!=nil {copied.default,no_default=slice.clone(type.default,dst.allocator)}
         append(&dst.types,copied)
-        whole&&=len(copied.name)==len(type.name) && len(copied.was)==len(type.was)
+        whole&&=len(copied.name)==len(type.name) && len(copied.was)==len(type.was) && no_default==nil
     }
     for field in src.fields {
         copied:=field

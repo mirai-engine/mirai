@@ -3,6 +3,7 @@ package mirai_render
 import "mirai:asset"
 import mm "mirai:std/math"
 import "mirai:render/abi"
+import "mirai:rhi"
 
 // CPU mirrors of shaders/include/common.slang. The generated shaders_gen.odin
 // asserts the size and the offset of each field of those it shares, as Slang
@@ -21,7 +22,7 @@ Gpu_Frame :: struct {
 	sun_direction:   Vec4, // w = 0: no sun; 1: active; SUN_UNSHADOWED: active, and no ray goes to it
 	sun_color:       Vec4, // above the air of an atmosphere; w = the angular radius of its disc in the sky, radians; 0: it is not seen
 	sky_color:       Vec4, // rgb the luminance of the sky, render units; w the light scale, render units per nit
-	background:      Vec4, // w = 1: solid background instead of the sky
+	background:      Vec4, // rgb shown where no geometry is visible, render units (with an image, what multiplies it); w = 1: instead of the sky
 	frustum:         [6]Vec4,
 	volume_cascades: [VOLUME_CASCADES_MAX]Vec4, // xyz the place of the probe at the lowest corner of each cascade, relative to the origin, w its spacing
 	volume_counts:   [4]u32, // xyz probes of a cascade along each axis, w cascades
@@ -32,11 +33,12 @@ Gpu_Frame :: struct {
 	light_nodes:     u32,
 	instance_count:  u32,
 	debug_view:      u32,
-	gi_strength:     f32,
+	indirect:        f32,  // what multiplies the light of the probe volume, or of the sky without GI, where a view or a medium takes it (scene_set_indirect)
 	exposure:        f32,  // the scene-linear value of one render unit, as a frame before exposed the view
 	own:             u32,  // bits 0-7: 1 + the local slot whose body (INSTANCE_FLAG_OWNED) is the view's own, 0: none; bits 16-31: how much of it the view fades out, unorm
 	flags:           u32,
-	shadowless_lights: [4]u32, // x the root of the tree of the local lights that cast no shadows (light_region_frame), 0: none; y the node after it; zw 0
+	shadowless_lights: u32, // the root of the tree of the local lights that cast no shadows, which ends at light_nodes; 0: none (light_tree_shadowless)
+	pad0:            [3]u32,
 	jitter:          Vec4, // xy current jitter (render pixels), zw previous
 	texturing:       Vec4, // x mip bias of rasterized material textures, y traced reflection roughness, zw where the boxes of the glass instances are listed after the TLAS nodes and how many
 	time: Vec4, // current seconds, previous seconds, frame dt, reserved
@@ -56,6 +58,7 @@ Gpu_Frame :: struct {
 	sky_orientation:  Vec4, // the turn of the sky, a quaternion (xyz, w)
 	sky_from:         Vec4, // rgb the luminance a change of the sky comes from (render units), a how much of it still shows
 	sky_from_map:     Vec4, // the image it comes from, as sky_map
+	background_map:   Vec4, // the image of the background, as sky_map; y = 1 when what reflects the sky shows the background
 	tint:             Vec4, // rgb what the image is multiplied by before the display
 	air:              Gpu_Air, // the air of an atmosphere (sky_map.y), with sun_color the light of the sun above it
 	origin:           [4]i32, // xyz what every place of the frame is relative to (origin.odin), in steps of ORIGIN_STEP
@@ -69,7 +72,8 @@ Gpu_Frame :: struct {
 	moved:            [4]u32, // what casts shadows and changed since the frame before (Occluder_Changes): x the boxes of moved_boxes, y the lights of moved_lights, z MOVED_* bits
 	moved_boxes:      [OCCLUDER_CHANGES_MAX][2]Vec4, // low (w: the instance, as bits; OCCLUDERS_MANY: several) and high, relative to the origin
 	moved_lights:     [LIGHT_MOVES_MAX / 4][4]u32,
-	sun_maps:         [4]u32, // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (shadow_maps_pass), 0: none; y where the rows of the maps start in their buffer; z the side of their atlas, texels, while the view drew maps, else 0; w 1 while they keep the tint of glass
+	sun_shares:       Vec4, // x what of the light of the sun the probes gather, y what of it media scatter (Sun_Desc.indirect and scattering); zw 0
+	sun_maps:         [4]u32, // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (shadow_maps_pass), 0: none; y where the rows of the maps start in their buffer; z the side of their atlas, texels, while the view drew maps, else 0; w 0
 	sun_map_rows:     [abi.SUN_MAP_ROWS][4]u32,
 }
 SUN_UNSHADOWED   :: abi.SUN_UNSHADOWED
@@ -122,6 +126,7 @@ VERTEX_WORDS :: abi.VERTEX_WORDS
 CLUSTER_TRIANGLES :: asset.CLUSTER_TRIANGLES
 // The vertices a draw gives every cluster: the corners of as many triangles as one has.
 CLUSTER_DRAW_VERTICES :: abi.CLUSTER_DRAW_VERTICES
+DRAW_VERTEX_BITS :: abi.DRAW_VERTEX_BITS
 // A level of a mesh in the index pool (asset.Mesh_Level): its first cluster,
 // how many, their triangles, their error and that of what replaces them.
 LEVEL_WORDS :: abi.LEVEL_WORDS
@@ -142,11 +147,11 @@ Gpu_Instance :: struct {
 	world_inv:  [3]Vec4,
 	prev_world: [3]Vec4,
 	meta:       [4]u32, // mesh (INSTANCE_MESH_MASK) and the cut rays trace it with (INSTANCE_RAY_SHIFT), material in place of the slots' (GPU_NONE: theirs), object id (low bits), flags
-	bounds_min: Vec4,
+	bounds_min: Vec3,
+	tested:     u32, // the slots of its mesh whose materials rays and the maps of the shadows ask, a bit each (instance_alpha)
 	bounds_max: Vec4,
 	tint:       Vec4,
 	emission:   Vec4,
-	glass:      Vec4, // written on the GPU by glass_mean.comp after every upload (glass_means_record)
 	slot_materials: [32]u32,
 	wet:        f32,    // 0 dry to 1 soaked, which the materials read (scene_set_instance_wet)
 	material_values: u32, // 1 + the word of the index pool where what it gives over the rows of its materials starts (Instance_Material_Values); 0: nothing
@@ -159,6 +164,10 @@ GPU_NONE :: max(u32)
 // Gpu_Mesh.rays: 0 is level 0.
 INSTANCE_MESH_MASK :: abi.INSTANCE_MESH_MASK
 INSTANCE_RAY_SHIFT :: abi.INSTANCE_RAY_SHIFT
+// meta.x bit 26: the instance casts no shadow (Instance_Desc.shadowless). It
+// is of the RAY_UNSHADOWED class, or RAY_GLASS if all glass, which no shadow
+// ray meets, and no map of the shadows draws it.
+INSTANCE_UNSHADOWED :: abi.INSTANCE_UNSHADOWED
 INSTANCE_FLAG_HIDDEN :: abi.INSTANCE_FLAG_HIDDEN
 // Hidden only because it cannot be drawn yet: its transform has no inverse
 // (a zero scale, or not finite) or the geometry of its mesh still goes to the
@@ -211,17 +220,16 @@ RAY_SOLID :: abi.RAY_SOLID
 RAY_GLASS :: abi.RAY_GLASS
 RAY_SMALL :: abi.RAY_SMALL // the solid instances of INSTANCE_FLAG_SMALL
 RAY_SHADOW_ONLY :: abi.RAY_SHADOW_ONLY // the instances of a batch that casts shadows and that other rays do not see
-RAY_UNSHADOWED :: abi.RAY_UNSHADOWED // the instances of a batch that rays see and that casts no shadow
+RAY_UNSHADOWED :: abi.RAY_UNSHADOWED // what rays see and casts no shadow: the instances of a batch without Casts_Shadow, and those of INSTANCE_UNSHADOWED
 // Set in the reference of a RAY_GLASS instance in the software TLAS.
 TLAS_REF_GLASS :: abi.TLAS_REF_GLASS
 
 // A cut of a mesh rays trace: the root of its tree and its first triangle
 // (Gpu_Bvh_Triangle) by software; with hardware, where the clusters and
-// triangles of the primitives of its BLAS are listed in the index pool. error:
-// that of the cut, in the space of the mesh; 0 for level 0.
+// triangles of the primitives of its BLAS are listed in the index pool, and
+// how many of them lead, the opaque geometry of the BLAS (blas_inputs_add).
 Gpu_Mesh_Ray :: struct {
-	bvh_root, triangle_offset, table_word: u32,
-	error: f32,
+	bvh_root, triangle_offset, table_word, table_opaque: u32,
 }
 
 Gpu_Mesh :: struct {
@@ -244,10 +252,13 @@ Gpu_Mesh :: struct {
 	uv1_step:        f32,
 	lod_reach:       f32, // how far a sphere of its levels reaches past its box, in its space
 	bounds_word:     u32, // of a pose: the box and the cone of the normals of each cluster it poses, POSED_BOUNDS_WORDS each in the vertex pool, as the skin writes them; GPU_NONE: none
-	pad0:            u32,
+	sway:            f32, // of a pose, how far it moves a vertex from where it is at rest, in its own space (deformable_create); max(f32): anywhere
 	bounds_min:      Vec4,
 	bounds_max:      Vec4,
 	rays:            [asset.MESH_RAY_LEVELS]Gpu_Mesh_Ray,
+	draw_first:      u32, // where its clusters start in the indices of the meshes drawn whole this frame (mesh_draws.odin); GPU_NONE: not there
+	area_word:       u32, // the area of the triangles of each of its clusters in the index pool, f32 square metres of its space; GPU_NONE: not known
+	pad1, pad2:      u32,
 }
 // Level 0 is closed: a cluster of it seen from behind the cone of its normals is hidden.
 MESH_FLAG_CLOSED :: abi.MESH_FLAG_CLOSED
@@ -262,6 +273,11 @@ MESH_FLAG_COLORS :: abi.MESH_FLAG_COLORS
 // Its pages out of the root come and go in slots (pages.odin): the cull
 // draws what is in the pools and asks for what it lacks.
 MESH_FLAG_STREAMED :: abi.MESH_FLAG_STREAMED
+// Its vertices carry where their islands go as the cut moves between a
+// cluster and its group (asset.Island_Vertex, a stream of two words a vertex
+// after the surfaces): the raster grows and shrinks them so a level of
+// foliage changes without a pop.
+MESH_FLAG_ISLANDS :: abi.MESH_FLAG_ISLANDS
 
 // What an instance gives over the rows of its materials, which the shaders
 // read where they read one of those rows at a point of it. It costs the
@@ -279,7 +295,7 @@ Instance_Material_Value :: struct {
 }
 Instance_Material_Values :: struct {
 	count:   u32,
-	fade:    f32, // how much of every row it fades out, 0 none to 1 all: an opaque row it fades blends
+	fade:    f32, // how much of the instance it fades out, 0 none to 1 all: the opacity of its blended rows, by a pattern the rest
 	entries: [INSTANCE_VALUES_MAX]Instance_Material_Value,
 }
 #assert(offset_of(Instance_Material_Values, entries) == abi.INSTANCE_VALUES_HEADER * size_of(u32))
@@ -313,6 +329,7 @@ Gpu_Material :: struct {
 	emission_mode:        u32, // asset.Emission_Mode
 	program_id:           u32,
 	textures:             [asset.Material_Map_Kind]u32,
+	two_sided:            u32, // 1: seen from behind too, its normal turned to the viewer; 0: its back faces are not drawn
 	row:                  u32, // shaders write the index they fetched it by; the CPU leaves it zero
 }
 
@@ -339,8 +356,8 @@ Gpu_Material_Diffuse_Transmission :: struct {
 }
 // What a solid of glass scatters of what it stops (asset.Material_Info.scatter_color).
 Gpu_Material_Volume :: struct {
-	scatter: Vec3,
-	_:       f32,
+	scatter:  Vec3,
+	changing: u32, // 1: what its program gives a point changes with nothing that says so (it reads the time, abi.Program.reads): no pass keeps what a ray found of it
 }
 
 Gpu_Material_Blocks :: struct {
@@ -367,11 +384,12 @@ Gpu_Light :: struct {
 	position_range:  Vec4,
 	color_intensity: Vec4,
 	direction_cone:  Vec4, // spot: direction and cos(half-angle); a rectangle: the side it lights, w = GPU_LIGHT_RECT; w = GPU_LIGHT_POINT for the others
-	size:            Vec4, // x the radius of the sphere or the capsule, metres; y half the segment of a capsule, or half the width of a rectangle; z half its height; w the bits of the material row whose emission a rectangle shows (0: none)
-	axis:            Vec4, // xyz along the segment of a capsule, or the width of a rectangle
+	size:            Vec4, // x the radius of the sphere or the capsule, metres; y half the segment of a capsule, or half the width of a rectangle; z half its height, or the bits of the right of the texture a spot projects (math.normal_pack); w the bits of its image (light_image): the texture it projects, or the material row whose emission a rectangle shows (0: none)
+	axis:            Vec4, // xyz along the segment of a capsule, or the width of a rectangle; w the shares of its light (light_shares)
 }
 GPU_LIGHT_POINT :: abi.GPU_LIGHT_POINT
 GPU_LIGHT_RECT :: abi.GPU_LIGHT_RECT
+GPU_LIGHT_TEXTURE :: abi.GPU_LIGHT_TEXTURE
 
 Gpu_Bvh_Node :: struct {
 	bounds_min: Vec3,
@@ -383,13 +401,16 @@ Gpu_Bvh_Node :: struct {
 Gpu_Bvh_Triangle :: struct {
 	v0:        Vec3,
 	primitive: u32, // index within the mesh
-	v1, v2:    Vec4, // corners whole, so that one two triangles share is the same in both; w unused
+	v1:        Vec3, // corners whole, so that one two triangles share is the same in both
+	slot:      u32,  // of its cluster among those of the mesh
+	v2:        Vec4, // w unused
 }
 
 Gpu_Probe :: struct {
 	offset: Vec4,   // xyz from the center of its cell, metres; w how near it is to the change that keeps it awake, 0 to 1 (ddgi_touch.comp)
 	cell:   [4]i32, // xyz the cell of the world it was last traced for, w PROBE_* flags
 	frames: [4]u32, // x when it was last traced, y last used by a pixel, z last reached by a change
+	hits:   [4]u32, // of what it keeps of its rays (probe_hits.slang), the update, plus one, that last traced them all (x), lit them all (y) and checked them against the changes of the scene (z)
 }
 
 // The arguments of a draw indirect without indices, as Vulkan and Metal read them.
@@ -398,29 +419,79 @@ Gpu_Draw :: struct {
 }
 #assert(size_of(Gpu_Draw) == 16)
 
-// What the cull passes of a view count, in words of the buffer of its state.
-// The draws of its two phases go first: an instance of a draw is a visible
-// cluster, and those of phase 1 follow those of phase 0 in the visible list.
-Gpu_Cull_State :: struct {
-	draws:            [2]Gpu_Draw,
-	chunk_dispatch:   [3]u32, // groups of the cluster pass over the chunks: x, y, 1
-	chunk_count:      u32,
-	candidate_dispatch: [3]u32, // groups of the pass of phase 1 over the clusters phase 0 found hidden
-	candidate_count:  u32,
-	dropped:          [Cull_List]u32, // past the capacities of the lists of the cull
+// An entry of the visible list (Visible_Cluster of visibility.slang).
+Gpu_Visible_Cluster :: struct {
+	instance, cluster_word, program, material: u32,
+	vertices, triangles, page_word: u32,
+	along: f32,
 }
-#assert(size_of(Gpu_Cull_State) == 88)
+#assert(size_of(Gpu_Visible_Cluster) == 32)
 
-// What the cull of the clusters the maps of the shadows draw counts
-// (shadow_cull.slang): the draws of those that hide whole, of those of masked
-// materials and of those of glass, the groups of its cluster pass over the
-// chunks and how many chunks its instance pass handed over.
-Gpu_Shadow_State :: struct {
-	draws:            [SHADOW_DRAWS]Gpu_Draw,
-	cluster_dispatch: [3]u32,
-	chunk_count:      u32,
+// The resolve draw of a Surface program (vis_resolve.vert): its draw, and the
+// rectangle of the pixels its clusters cover, from the lowest x and y to past
+// the highest (cull_clusters.comp).
+Gpu_Program_Draw :: struct {
+	draw: Gpu_Draw,
+	rect: [4]u32,
 }
-#assert(size_of(Gpu_Shadow_State) == 64)
+#assert(size_of(Gpu_Program_Draw) == 32)
+
+// What the cull passes of a view count, in words of the buffer of its state
+// (CULL_* of render/abi). The draws of each round and raster bin go first:
+// each draws the triangles the round listed of its clusters
+// (raster_lists.slang). The clusters of phase 1 follow those of phase 0 in
+// the visible list. A cull of the maps of the shadows keeps its own
+// (Shadow_Buffers.state): its chunks, the clusters it listed (listed[0]), the
+// units they take and the round of the raster that draws them.
+Gpu_Cull_State :: struct {
+	draws:              [abi.RASTER_ROUNDS][RASTER_BINS]rhi.Draw_Indexed_Indirect,
+	chunk_dispatch:     [3]u32, // groups of the cluster pass over the chunks: x, y, 1
+	chunk_count:        u32,
+	candidate_dispatch: [3]u32, // groups of the pass of phase 1 over the clusters phase 0 found hidden
+	candidate_count:    u32,
+	listed:             [2]u32, // clusters each phase listed, past the capacity too
+	bins_dispatch:      [2][3]u32, // groups of the pass that places the clusters of each phase in their bins
+	bin_counts:         [2][RASTER_BINS]u32,
+	bin_cursors:        [2][RASTER_BINS]u32,
+	raster_dispatch:    [3]u32, // groups of the passes that list the triangles of a round, a group a cluster: x, y, 1
+	raster_first:       u32,    // the entry of the visible list the first of them takes
+	raster_count:       u32,    // and how many they take
+	raster_pending:     [2]u32, // the first entry the next round takes, and one past its last
+	raster_vertices:    u32,    // the vertices the round wrote
+	raster_triangles:   u32,    // the triangles it listed
+	raster_counts:      [RASTER_BINS]u32,
+	raster_cursors:     [RASTER_BINS]u32,
+	dropped:            [Cull_List]u32, // past the capacities of the lists of the cull
+	raster_need:        [2]u32, // the vertices and the triangles the rounds of the view wrote and its last left out
+	shadow_taken:       u32,
+}
+#assert(offset_of(Gpu_Cull_State, shadow_taken) == abi.CULL_SHADOW_TAKEN * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, dropped) == abi.CULL_DROPPED * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, raster_need) == abi.CULL_RASTER_NEED * size_of(u32))
+#assert(size_of(rhi.Draw_Indexed_Indirect) == abi.CULL_DRAW_WORDS * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, raster_dispatch) == abi.CULL_RASTER_DISPATCH * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, raster_first) == abi.CULL_RASTER_FIRST * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, raster_count) == abi.CULL_RASTER_COUNT * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, raster_pending) == abi.CULL_RASTER_PENDING * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, raster_vertices) == abi.CULL_RASTER_VERTICES * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, raster_triangles) == abi.CULL_RASTER_TRIANGLES * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, raster_counts) == abi.CULL_RASTER_COUNTS * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, raster_cursors) == abi.CULL_RASTER_CURSORS * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, draws) == abi.CULL_DRAWS * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, chunk_dispatch) == abi.CULL_CHUNK_DISPATCH * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, chunk_count) == abi.CULL_CHUNK_COUNT * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, candidate_dispatch) == abi.CULL_CANDIDATE_DISPATCH * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, candidate_count) == abi.CULL_CANDIDATE_COUNT * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, listed) == abi.CULL_LISTED * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, bins_dispatch) == abi.CULL_BINS_DISPATCH * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, bin_counts) == abi.CULL_BIN_COUNTS * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, bin_cursors) == abi.CULL_BIN_CURSORS * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, dropped) == abi.CULL_DROPPED * size_of(u32))
+RASTER_BINS :: abi.RASTER_BINS
+RASTER_DEPTH_BUCKETS :: abi.RASTER_DEPTH_BUCKETS
+DEPTH_PYRAMID_BATCH :: abi.DEPTH_PYRAMID_BATCH
+RASTER_BIN_TWO_SIDED :: abi.RASTER_BIN_TWO_SIDED
+RASTER_BIN_TESTED :: abi.RASTER_BIN_TESTED
 
 Gpu_Cull_Stats :: struct {
 	visible_instances, visible_triangles, culled_instances, occluded_instances: u32,
@@ -429,6 +500,36 @@ Gpu_Cull_Stats :: struct {
 	kinds: [3]Visible_Kind, // by Visible_Kind_Id
 	late:  Visible_Kind,    // what phase 1 drew: instances and clusters the pyramid of the frame showed after all
 	dropped: [Cull_List]u32, // past the capacities of the lists of the cull, which grow from them
+	raster: [3]u32, // for the raster of the visibility target: the vertices written, the triangles listed, and the clusters a round left to the next for lack of room
+	resolved: [3]u32, // of the resolve (vis_resolve.frag): pixels shaded, helper lanes of their quads, quads evaluated again
+	probe_rays: [2]u32, // the rays the probes traced and the hits they lit, copied at the end of the frame from the list of the probe volume
+	lists: Light_List_Stats, // of the lists of the lights without shadows (light_lists.comp)
+	raster_need: [2]u32, // the most vertices and triangles the view would hold in a round of the raster (Gpu_Cull_State.raster_need)
+	shadow: Shadow_Stats,
+	// Of dropped and raster_need, the most any view of the frame counted
+	// (cull_stats_fold.comp), which the lists grow from, and of shadow the sum
+	// of its views. The rest counts a view: the next clears it.
+	most_dropped:     [Cull_List]u32,
+	most_raster_need: [2]u32,
+	views_shadow:     Shadow_Stats,
+	shadow_need:      [2]u32, // the most vertices and triangles a round of the maps of the frame would hold in the lists of the raster
+}
+#assert(len(Cull_List) == 7)
+// What the maps of the shadows of a view drew in a frame: the clusters
+// the cache drew, once for each page they cover, those of them of masked
+// materials apart, and the triangles of those and of what the atlas drew;
+// the clusters the atlas drew over it; the
+// pages the cache drew and the atlas composed, those newly asked for, those
+// of them the pool left out and those not drawn whole this frame, which wait
+// for the frames after; the clusters the draws had no room for in the frame
+// (SHADOW_FRAME_UNITS), whose pages wait too; the pages the bound of the
+// frame grows for (abi.SHADOW_COUNT_SHORT); the units of raster work the
+// cache and the atlas drew (abi.SHADOW_UNIT_TEXELS); and of the triangles,
+// the vertices the lists of the raster placed for those that cover a texel
+// of their page, and those triangles (raster_lists.slang); and the threads
+// its culls by instance ran (abi.SHADOW_COUNT_THREADS).
+Shadow_Stats :: struct {
+	clusters, clusters_masked, triangles, clusters_moving, pages_drawn, pages_composed, pages_asked, pages_left, pages_waiting, clusters_over, pages_short, units, units_moving, raster_vertices, raster_triangles, cull_threads: u32,
 }
 // Instances, clusters and triangles that passed the cull of a frame, of one kind.
 Visible_Kind :: struct {instances, clusters, triangles: u32}
@@ -454,12 +555,37 @@ gbuffer_normal_decode :: proc "contextless" (texel: Vec4) -> (normal: Vec3, roug
 
 // The lists of the cull of a view: chunks of the instance pass, visible
 // clusters of both phases, and clusters phase 0 found hidden; and of the cull
-// of its maps of the shadows, its chunks and the clusters the maps draw, of 16
-// bytes each (shadow_cull.slang). What does not
+// of its maps of the shadows, its chunks and the clusters the maps draw into
+// each page, entries as those of the visible list (shadow_cull.slang). What does not
 // fit is dropped and counted (Gpu_Cull_State.dropped, Gpu_Cull_Stats.dropped),
-// and the renderer grows the list for the frames after: a frame may show
-// holes where a list first overflows, never again at that size.
-// Programs: the visible clusters of materials with a Surface program
-// (Scene_State.program_bins), which the G-buffer draws by program.
-Cull_List :: enum {Chunks, Visible, Candidates, Programs, Shadow_Chunks, Shadow_Entries}
-CULL_START :: [Cull_List]u32{.Chunks = 1 << 16, .Visible = 1 << 18, .Candidates = 1 << 16, .Programs = 1 << 14, .Shadow_Chunks = 1 << 14, .Shadow_Entries = 1 << 18}
+// and the renderer grows the list for the frames after, and the host keeps
+// what it asked for by scene (Capacity_Marks): a frame may show holes where a
+// list first overflows in a scene, never again at that size. The visible
+// clusters are listed twice: as the cull finds them, and by raster bin. The
+// last two are what the raster of the visibility target draws of them
+// (raster_lists.slang): the vertices of the triangles that show, of
+// RASTER_VERTEX_WORDS, and those triangles, three indices and a word each.
+// They hold a round, not a frame: a cluster that finds no room in them is
+// listed and drawn in the round after, so a view shows a hole only when it
+// needs more than abi.RASTER_ROUNDS times what they hold, and they ask for
+// what all the rounds of a frame wrote, to hold it in one. A round of the maps
+// draws through them too, after the rounds of its view, and asks for what it
+// wrote and left out (Gpu_Cull_Stats.shadow_need): it is the only one of its
+// cull.
+Cull_List :: enum {Chunks, Visible, Candidates, Shadow_Chunks, Shadow_Entries, Raster_Vertices, Raster_Triangles}
+CULL_START :: [Cull_List]u32{.Chunks = 1 << 16, .Visible = 1 << 18, .Candidates = 1 << 16, .Shadow_Chunks = 1 << 14, .Shadow_Entries = 1 << 18, .Raster_Vertices = 1 << 20, .Raster_Triangles = 1 << 20}
+// The most entries a list holds, its slack included: what a mark or a frame
+// asks for past it is taken at it.
+CULL_MOST :: [Cull_List]u32{.Chunks = CULL_MARK_MAX, .Visible = CULL_MARK_MAX, .Candidates = CULL_MARK_MAX, .Shadow_Chunks = SHADOW_CHUNKS_MOST, .Shadow_Entries = SHADOW_ENTRIES_MOST, .Raster_Vertices = CULL_MARK_MAX, .Raster_Triangles = CULL_MARK_MAX}
+// The lists of the raster of the visibility target hold a third of what the
+// view that needs most writes (RASTER_LIST_SHARE), and grow by an eighth past
+// it (RASTER_LIST_SLACK: a view whose need creeps up by less takes no new
+// buffers); the rounds of a view take the rest. Four rounds of a third hold
+// a view whole but for the room a list leaves past its last cluster.
+RASTER_LIST_SHARE :: 3
+RASTER_LIST_SLACK :: 8
+#assert(abi.RASTER_ROUNDS > RASTER_LIST_SHARE)
+// The indices of the meshes drawn whole (Scene_State.mesh_draws) at first: 8 MB,
+// 5,461 clusters, all the levels of a mesh of about 250,000 triangles, or as
+// many glass, overlaid, highlighted and particle meshes as a frame draws.
+MESH_DRAWS_START :: u32(1) << 21

@@ -13,9 +13,10 @@ graphics_rows_are_the_tagged_fields_of_the_settings_of_the_machine :: proc(t:^te
     s:=Session{info=&info}
     defer free_all(context.temp_allocator)
     rows:=graphics_rows_of(&s)
-    if !testing.expect_value(t,len(rows),15) {return}
+    if !testing.expect_value(t,len(rows),14) {return}
     Case :: struct {label:string, change:proc(g:^erender.Graphics_Settings), choice:string, rate:bool}
     cases:=[?]Case{
+        {"Resolution",proc(g:^erender.Graphics_Settings) {g.resolution=0},"Native",false},
         {"Resolution",proc(g:^erender.Graphics_Settings) {g.resolution=1440},"1440",false},
         {"Resolution",proc(g:^erender.Graphics_Settings) {g.resolution=600},"",false},
         {"Antialiasing",proc(g:^erender.Graphics_Settings) {g.antialiasing={0='o',1='f',2='f'}},"Off",false},
@@ -23,7 +24,6 @@ graphics_rows_are_the_tagged_fields_of_the_settings_of_the_machine :: proc(t:^te
         {"Light samples",proc(g:^erender.Graphics_Settings) {g.light_samples=31},"31",false},
         {"Light samples",proc(g:^erender.Graphics_Settings) {g.light_samples=20},"",false},
         {"Light resolution",proc(g:^erender.Graphics_Settings) {g.light_half_resolution=false},"Full",false},
-        {"Glass shadows",proc(g:^erender.Graphics_Settings) {g.glass_shadows=true},"Colored",false},
         {"Glass layers",proc(g:^erender.Graphics_Settings) {g.glass_layers=2},"2",false},
         {"Textures",proc(g:^erender.Graphics_Settings) {g.textures=.Ultra},"8K",false},
         {"Reflections",proc(g:^erender.Graphics_Settings) {g.reflections=.Traced},"Traced",false},

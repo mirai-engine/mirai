@@ -24,6 +24,10 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   device memory, never the small heap the CPU sees of a discrete GPU (BAR); with device memory
   full a resource goes to system memory instead of being refused, counted in
   `device_stats().host_memory` and reported in the renderer's `Stats.problem`.
+- **Names.** A resource keeps the name of its description, which names it in the graphics
+  debuggers and in `device_memory_report`: what each buffer, texture and acceleration structure
+  holds, grouped by name, against `device_memory`. A resource is made with a name; the report
+  shows one without it by its kind.
 - **New contents.** A new buffer reads zero on both backends; the texels of a new texture are
   undefined until something writes them (`Buffer_Desc`, `Texture_Desc`). On Vulkan a range held
   another resource before, so the device zeroes a buffer of `GPU` memory with a fill in the next
@@ -90,6 +94,40 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   provoke the reaction without resetting the machine's GPU, and the text says so
   (`provoked by device_lose`). What the application does afterwards:
   [host](../../mirai-core/references/host.md#gpu-that-stops-working).
+
+## GPU watchdog
+
+- **On for what no person watches.** `MIRAI_GPU_WATCHDOG_MS=<limit>` (`WATCHDOG_VARIABLE`), read
+  when a device is made, arms it for every process that makes one: editor, player and tests. The
+  tools set it to `WATCHDOG_UNWATCHED_MS` for the programs they start that no person watches (the
+  sessions, the captures, the measurements, the GPU tests, an editor an agent opens), unless it is
+  set already; the editor or the game a person opens with a window from a terminal has no limit:
+  valid scenes wait long for the GPU (first frames that build acceleration structures, a slow
+  device). A value that is not a whole number above 0 refuses the device and says so.
+- **What it does.** Each frame and immediate list signals the timeline (Vulkan) or a shared event
+  (Metal) when it ends (`watchdog_sent`). One thread waits for the GPU and records what ended;
+  another fires on the CPU clock alone, so a driver call that hangs does not keep it from firing.
+  When the oldest submission has not ended `limit` ms after it went, the process writes one line
+  on stderr (frame, wait, where the marks say the GPU stopped and the passes the frame recorded,
+  by their `cmd_timestamp` names) and ends at once with `WATCHDOG_EXIT_CODE`: `TerminateProcess`
+  or `_exit`, never the exit that runs the driver's own teardown. A failure the API reported
+  disarms it: that is the host's.
+- **The record of a late submission.** With `Device_Desc.late_record`, a submission still running
+  `late_ms` after it went is written to that file and flushed to disk at once, watched or not; the
+  file goes when the submission finishes or the API reports the failure. A file that is left names
+  the submission a session never saw finish (a screen that froze, a machine that reset): the host
+  reads and removes it when it starts, and the editor (in the project's `.mirai`) and the player
+  (in its user folder) report it.
+- **What the report knows.** The passes come from what the CPU recorded (`Frame_Passes`), on every
+  device and whether or not the frame takes timings. Where the GPU stopped among them only a
+  device with `stop_place` says: Metal marks no progress, and a command buffer names the encoder
+  that faulted only once it reports an error, never while it hangs.
+- **What it protects against.** Ending the process drops the work it queued, and the system takes
+  the GPU back from what it runs: Windows suspends the contexts of the process, a preemption with no
+  grace period. A single draw or dispatch the GPU cannot preempt within the display driver's
+  timeout (2 s) still ends in an engine reset (`LiveKernelEvent 141`); only bounding each
+  draw and dispatch avoids that. A limit well under 2 s ends a long backlog of work and a frame
+  whose passes add up past it.
 
 ## Frames and presentation
 
@@ -265,6 +303,8 @@ For a renderer that generates frames (`rhi/present.odin`):
   returns every entry it was ever given and grows without end. Blobs are stored as chunks cut by
   their content, each once: a driver repeats in every blob what they all share (NVIDIA a
   dictionary of megabytes).
+- Without a path the store lives in memory only: every renderer of one device (the GPU tests of a
+  process, which share theirs) compiles each pipeline once, whatever the driver's own cache keeps.
 - The file belongs to one device, driver and cache UUID, and is read whole or not at all: another
   device, another version or a file that does not read back exactly is ignored and replaced.
 - It is rewritten in one rename once the time the pipelines added since the last write took to

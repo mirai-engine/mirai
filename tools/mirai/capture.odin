@@ -8,12 +8,14 @@ import "mirai:cook/image"
 import "mirai:project"
 import "mirai:std/serial"
 
-CAPTURE_USAGE :: "capture [project] [--out x.png] [--scene S] [--camera-entity NAME | --position x,y,z --target x,y,z] [--fov F] [--size WxH] [--frames N] [--view MODE] [--reference ref.png] [--threshold SSIM] [--repeat] [--release]\n       capture [project] --plan [--views a,b] [--references DIR] [--write] [--repeat] [--release]"
+CAPTURE_USAGE :: "capture [project] [--out x.png] [--camera NAME | --scene S [--camera-entity NAME | --position x,y,z --target x,y,z] [--fov F]] [--size WxH] [--frames N] [--view MODE] [--reference ref.png] [--threshold SSIM] [--repeat] [--release]\n       capture [project] --plan [--views a,b] [--references DIR] [--write] [--repeat] [--release]"
 
 // mirai capture: one image of the world of a project as the editor draws it,
 // without its UI, from a camera of the scene or a pose, with the validation
 // errors and the console of the editor, and the statistics of the image
-// against a reference when there is one. It uses the session of the project
+// against a reference when there is one. --camera takes a view of
+// CAPTURE_PLAN_FILE by its name: its scene, its camera, and the size and the
+// frames of the plan unless given. It uses the session of the project
 // (mirai session), or opens one for the capture and closes it. Exit 1 with
 // validation errors or when the image does not reach --threshold (SSIM).
 // Each capture starts the clock of the window at zero, so a scene loaded and
@@ -26,6 +28,8 @@ CAPTURE_USAGE :: "capture [project] [--out x.png] [--scene S] [--camera-entity N
 // a threshold above their SSIM compares noise.
 REPEAT_SSIM :: 0.999
 
+// The views of CAPTURE_PLAN_FILE are the named cameras of the project, which
+// captures, mirai bench flight and the people who look at a scene share.
 // --plan: the views of CAPTURE_PLAN_FILE of the project, each captured from
 // its scene loaded anew, with the validation errors it brought, against its
 // reference in --references (bin/references of the project) by the SSIM of
@@ -49,11 +53,11 @@ Capture_View :: struct {
 }
 cmd_capture :: proc(root:string,args:[]string) -> int {
     mode,args:=build_mode_take(args)
-    folder,out,scene,entity,view,reference:=".","","","","",""
+    folder,out,scene,entity,view,reference,named:=".","","","","","",""
     position,target:string
     fov,threshold:f64=0,-1
     width,height,frames:=0,0,64
-    repeat,plan,write:=false,false,false
+    repeat,plan,write,frames_given:=false,false,false,false
     views,references:string
     usage :: proc() -> int {fmt.eprintfln("Usage: mirai %s",CAPTURE_USAGE);return 2}
     for i:=0;i<len(args);i+=1 {
@@ -61,6 +65,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
         switch args[i] {
         case "--out":           out,ok=option_next(args,&i)
         case "--scene":         scene,ok=option_next(args,&i)
+        case "--camera":        named,ok=option_next(args,&i)
         case "--camera-entity": entity,ok=option_next(args,&i)
         case "--position":      position,ok=option_next(args,&i)
         case "--target":        target,ok=option_next(args,&i)
@@ -76,6 +81,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
             text:string
             text,ok=option_next(args,&i)
             frames,ok=strconv.parse_int(text,10)
+            frames_given=true
         case "--size":
             text:string
             text,ok=option_next(args,&i)
@@ -93,9 +99,10 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
         if !ok {return usage()}
     }
     if plan {
-        if out!="" || scene!="" || entity!="" || position!="" || reference!="" || view!="" {fmt.eprintln("mirai capture: --plan takes its views from captures.mirai: leave out --out, --scene, the camera, --view and --reference");return 2}
+        if out!="" || scene!="" || named!="" || entity!="" || position!="" || reference!="" || view!="" {fmt.eprintln("mirai capture: --plan takes its views from captures.mirai: leave out --out, --scene, the camera, --view and --reference");return 2}
         return capture_plan(root,folder,mode,views,references,write,repeat)
     }
+    if named!="" && (scene!="" || entity!="" || position!="" || target!="" || fov>0) {fmt.eprintln("mirai capture: --camera names a view of captures.mirai with its scene and its camera: leave out --scene, --camera-entity, --position, --target and --fov");return 2}
     if (position=="")!=(target=="") {fmt.eprintln("mirai capture: --position and --target go together");return 2}
     if entity!="" && position!="" {fmt.eprintln("mirai capture: --camera-entity or --position/--target, not both");return 2}
     if !os.is_file(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator)) {
@@ -103,6 +110,18 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
         return 2
     }
     folder=project.path_absolute(folder)
+    // A named camera: its scene, its pose, and the framing of the plan.
+    named_pose:Camera_Pose
+    if named!="" {
+        cameras,problem:=capture_views_load(folder)
+        found:Capture_View
+        if problem=="" {found,problem=capture_view_find(cameras,named)}
+        if problem!="" {fmt.eprintfln("mirai capture: %s",problem);return 2}
+        scene=found.scene
+        if len(found.position)==3 {named_pose={{found.position[0],found.position[1],found.position[2]},{found.target[0],found.target[1],found.target[2]},found.fov}}
+        if width==0 && height==0 {width,height=cameras.plan.size.x,cameras.plan.size.y}
+        if !frames_given && cameras.plan.frames>0 {frames=cameras.plan.frames}
+    }
     out=out!=""?project.path_absolute(out):project.path(folder,".mirai/captures/capture.png")
 
     file,reused,code:=session_borrow(root,folder,mode,"capture")
@@ -128,6 +147,10 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
         t,t_ok:=vector_parse(target)
         if !p_ok || !t_ok {fmt.eprintln("mirai capture: --position and --target are x,y,z");return 2}
         pose={p,t,fov}
+        camera=pose
+    }
+    if named_pose.position!=named_pose.target {
+        pose=named_pose
         camera=pose
     }
     if camera!=nil {
@@ -240,6 +263,45 @@ vector_parse :: proc(text:string) -> (vector:[3]f64,ok:bool) {
     return vector,true
 }
 
+// The named cameras of a project: its CAPTURE_PLAN_FILE, where it is.
+Capture_Views :: struct {
+    path:string,
+    plan:Capture_Plan,
+}
+
+// The plan of the project at folder; problem says what is wrong with it and how to fix it.
+capture_views_load :: proc(folder:string) -> (cameras:Capture_Views,problem:string) {
+    cameras.path,_=strings.replace_all(project.path(folder,CAPTURE_PLAN_FILE,allocator=context.temp_allocator),"\\","/")
+    data,read_error:=os.read_entire_file(cameras.path,context.allocator)
+    if read_error!=nil {return cameras,fmt.tprintf("%s is missing: it holds the named cameras of the project, each with its scene, its camera and the threshold of its reference",cameras.path)}
+    problem=capture_views_parse(string(data),&cameras)
+    return
+}
+
+// The plan in text, checked as capture_views_load does.
+capture_views_parse :: proc(text:string,cameras:^Capture_Views) -> (problem:string) {
+    if decoded:=serial.text_decode(text,&cameras.plan);decoded!="" {return fmt.tprintf("%s: %s: it is JSON with size, frames and views",cameras.path,decoded)}
+    for v,i in cameras.plan.views {
+        if v.name=="" || v.scene=="" || len(v.position)!=len(v.target) || len(v.position)!=0 && len(v.position)!=3 || !(v.threshold>0 && v.threshold<=1) {
+            return fmt.tprintf("%s: view %d: each view has a name, a scene, a threshold above 0 up to 1, and position and target of three numbers each, or neither",cameras.path,i+1)
+        }
+        for w in cameras.plan.views[:i] {
+            if w.name==v.name {return fmt.tprintf("%s: two views are named '%s': a name picks one camera",cameras.path,v.name)}
+        }
+    }
+    return ""
+}
+
+// The view of cameras named name; problem names those there are.
+capture_view_find :: proc(cameras:Capture_Views,name:string) -> (view:Capture_View,problem:string) {
+    names:=make([]string,len(cameras.plan.views),context.temp_allocator)
+    for v,i in cameras.plan.views {
+        if v.name==name {return v,""}
+        names[i]=v.name
+    }
+    return {},fmt.tprintf("%s has no view '%s'; its views are %s",cameras.path,name,strings.join(names,", ",context.temp_allocator))
+}
+
 // The views of the plan of a project, each against its reference (--plan).
 @(private="file")
 capture_plan :: proc(root,folder:string,mode:Build_Mode,views,references:string,write,repeat:bool) -> int {
@@ -248,27 +310,17 @@ capture_plan :: proc(root,folder:string,mode:Build_Mode,views,references:string,
         return 2
     }
     folder:=project.path_absolute(folder)
-    path:=project.path(folder,CAPTURE_PLAN_FILE,allocator=context.temp_allocator)
-    data,read_error:=os.read_entire_file(path,context.allocator)
-    if read_error!=nil {fmt.eprintfln("mirai capture: %s is missing: the views --plan captures",path);return 2}
-    plan:Capture_Plan
-    if problem:=serial.text_decode(string(data),&plan);problem!="" {fmt.eprintfln("mirai capture: %s is not JSON with size, frames and views",path);return 2}
+    cameras,problem:=capture_views_load(folder)
+    if problem!="" {fmt.eprintfln("mirai capture: %s",problem);return 2}
+    plan:=cameras.plan
     if views!="" {
         kept:=make([dynamic]Capture_View)
         for name in strings.split(views,",",context.temp_allocator) {
-            found:=false
-            for v in plan.views {
-                if v.name==name {append(&kept,v);found=true}
-            }
-            if !found {fmt.eprintfln("mirai capture: %s has no view '%s'",path,name);return 2}
+            v,missing:=capture_view_find(cameras,name)
+            if missing!="" {fmt.eprintfln("mirai capture: %s",missing);return 2}
+            append(&kept,v)
         }
         plan.views=kept[:]
-    }
-    for v in plan.views {
-        if v.name=="" || v.scene=="" || len(v.position)!=len(v.target) || len(v.position)!=0 && len(v.position)!=3 || !(v.threshold>0 && v.threshold<=1) {
-            fmt.eprintfln("mirai capture: %s: each view has a name, a scene, a threshold above 0 up to 1, and position and target of three numbers each, or neither",path)
-            return 2
-        }
     }
     references:=references
     if references=="" {references=project.path(folder,"bin/references",allocator=context.temp_allocator)}

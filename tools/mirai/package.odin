@@ -103,10 +103,10 @@ cmd_package :: proc(root:string,args:[]string) -> int {
     if odin_version=="" {fmt.eprintfln("mirai package: could not copy the compiler of %s",compiler);return 1}
     if !package_slang(slang,join(out,".deps","slang")) {fmt.eprintfln("mirai package: could not copy %s",slang);return 1}
     if !package_spirv(spirv[:],join(out,".deps",PACKAGE_SPIRV)) {fmt.eprintln("mirai package: could not copy the tools of SPIR-V");return 1}
-    if sdl!="" && os.copy_directory_all(join(out,".deps",sdl),join(deps,sdl))!=nil {fmt.eprintfln("mirai package: could not copy %s/%s",deps,sdl);return 1}
+    if sdl!="" && base.copy_directory_all(join(out,".deps",sdl),join(deps,sdl))!=nil {fmt.eprintfln("mirai package: could not copy %s/%s",deps,sdl);return 1}
 
     // The tool, built for speed: it is what people run.
-    if os.make_directory_all(join(out,"bin"))!=nil {fmt.eprintfln("mirai package: could not write to %s",out);return 1}
+    if base.make_directory_all(join(out,"bin"))!=nil {fmt.eprintfln("mirai package: could not write to %s",out);return 1}
     sources:=join(root,"bin",fmt.aprintf(".package-%d.sources.json",os.get_pid()))
     defer os.remove(sources)
     command:=tool_command(root,"tools/mirai","-o:speed",join(out,"bin",fmt.aprintf("mirai%s",project.EXECUTABLE_SUFFIX)),sources)
@@ -129,7 +129,7 @@ cmd_package :: proc(root:string,args:[]string) -> int {
         if os.is_file(join(out,"plugins",plugin.name,asset.PACKAGES_FILE)) {append(&pinned,join(out,"plugins",plugin.name))}
     }
     program:=build.engine_paths(out,.Release,context.temp_allocator).import_program
-    if ok,message:=build.imports_refresh(program,pinned[:],false,store_root);!ok {
+    if ok,message:=build.imports_refresh(program,pinned[:],true,store_root);!ok {
         fmt.eprintfln("mirai package: the packages of the plugins have no Final builds: %s",message)
         return 1
     }
@@ -179,7 +179,7 @@ package_sources :: proc(root,out:string) -> bool {
     for generated in PACKAGE_GENERATED {
         from:=join(root,generated)
         if os.is_dir(from) {
-            if os.copy_directory_all(join(out,generated),from)!=nil {fmt.eprintfln("mirai package: could not copy %s",from);return false}
+            if base.copy_directory_all(join(out,generated),from)!=nil {fmt.eprintfln("mirai package: could not copy %s",from);return false}
         } else if !package_copy(from,join(out,generated)) {
             return false
         }
@@ -231,7 +231,7 @@ package_binaries :: proc(from,to:string) -> bool {
         if strings.has_suffix(entry.name,".obj") || strings.has_suffix(entry.name,".o") || strings.has_suffix(entry.name,".exp") || strings.has_suffix(entry.name,".ilk") {continue}
         if os.copy_file(join(to,entry.name),entry.fullpath)!=nil {return false}
     }
-    return os.copy_directory_all(join(to,"decl"),join(from,"decl"))==nil
+    return base.copy_directory_all(join(to,"decl"),join(from,"decl"))==nil
 }
 
 // Copies the folder of the compiler without what projects do not use and,
@@ -248,14 +248,14 @@ package_odin :: proc(compiler,to:string) -> string {
         for name in skipped {if entry.name==name {continue copy}}
         target:=join(to,entry.name)
         if entry.type==.Directory {
-            if os.copy_directory_all(target,entry.fullpath)!=nil {return ""}
+            if base.copy_directory_all(target,entry.fullpath)!=nil {return ""}
         } else if os.copy_file(target,entry.fullpath)!=nil {
             return ""
         }
     }
     odin_root,_:=os.lookup_env("ODIN_ROOT",context.temp_allocator)
     if odin_root!="" && !project.path_same(odin_root,folder) && os.is_dir(join(odin_root,"vendor")) {
-        if os.copy_directory_all(join(to,"vendor"),join(odin_root,"vendor"))!=nil {return ""}
+        if base.copy_directory_all(join(to,"vendor"),join(odin_root,"vendor"))!=nil {return ""}
     }
     _,said,_,run_error:=subprocess.exec({command={compiler,"version"}},context.temp_allocator)
     fields:=strings.fields(string(said),context.temp_allocator)
@@ -273,7 +273,7 @@ package_slang :: proc(from,to:string) -> bool {
         if entry.type!=.Directory {
             if os.copy_file(target,entry.fullpath)!=nil {return false}
         } else if entry.name=="bin" || entry.name=="lib" || strings.has_prefix(strings.to_lower(entry.name,context.temp_allocator),"licenses") || entry.name=="third-party-notices" {
-            if os.copy_directory_all(target,entry.fullpath)!=nil {return false}
+            if base.copy_directory_all(target,entry.fullpath)!=nil {return false}
         }
     }
     return true
@@ -323,7 +323,7 @@ package_plugins :: proc(out,store_root:string) -> bool {
     for optimization in ([2]project.Optimization{.Minimal,.Speed}) {
         scratch:=join(out,".mirai","tmp",fmt.tprintf("plugins-%v",optimization))
         _=base.remove_all(scratch)
-        if os.make_directory_all(scratch)!=nil {fmt.eprintfln("mirai package: could not write to %s",scratch);return false}
+        if base.make_directory_all(scratch)!=nil {fmt.eprintfln("mirai package: could not write to %s",scratch);return false}
         m.build.optimization=optimization
         if error:=project.manifest_write(join(scratch,project.PROJECT_FILE),&m);error.code!=.None {fmt.eprintfln("mirai package: %s",project_error_text(scratch,error));return false}
         p,error:=project.open(scratch,out)

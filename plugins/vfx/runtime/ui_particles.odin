@@ -30,11 +30,11 @@ UI_Effect :: struct {
     shown:Emitter_Shown,
 }
 
-// The emitters of the effects the UI showed in this frame, after those of the
-// world; those it did not show go. Past UI_EFFECT_CAPACITY, the last asked
-// for are left out.
+// The emitters of the effects the UI showed in this frame, put in the pool of
+// the world; those it did not show go with their particles. Past
+// UI_EFFECT_CAPACITY, the last asked for are left out.
 @(private)
-ui_effects_sync :: proc(p:^UI_Particles,requests:[]gui.UI_Effect,assets:^host.Assets,renderer:^erender.Renderer,dt:f32,shaders:u64,descs:^[dynamic]Emitter_Desc) {
+ui_effects_sync :: proc(p:^UI_Particles,requests:[]gui.UI_Effect,assets:^host.Assets,renderer:^erender.Renderer,dt:f32,shaders:u64,pool:^Pool) {
     each: for request in requests {
         for &effect in p.effects[:p.count] {
             if effect.key!=request.key {continue}
@@ -48,6 +48,8 @@ ui_effects_sync :: proc(p:^UI_Particles,requests:[]gui.UI_Effect,assets:^host.As
     }
     for i:=p.count-1;i>=0;i-=1 {
         if p.effects[i].asked {continue}
+        pool_remove(pool,p.effects[i].shown.desc.id)
+        pool_remove(pool,p.effects[i].shown.sub_desc.id)
         p.effects[i]=p.effects[p.count-1]
         p.count-=1
     }
@@ -60,10 +62,10 @@ ui_effects_sync :: proc(p:^UI_Particles,requests:[]gui.UI_Effect,assets:^host.As
         if shown.resolved!=key {
             ready:=shown_resolve(shown,a,renderer,effect.effect,nil,{base.hash_combine(effect.key,0x75695f7061727469),base.hash_combine(effect.key,0x75695f7375625f70)},nil)
             shown.resolved=ready?key:0
-            // Alone in its texture: nothing to collide with, fade into, light or be lit by.
+            // Alone in its texture: nothing to collide with, fade into or be lit by.
             for d in ([2]^Emitter_Desc{&shown.desc,&shown.sub_desc}) {
-                d.view,d.revision=effect.view,shown.resolved
-                d.info.lit,d.info.emission_mode,d.info.collision,d.info.soft,d.info.lights=false,.Relative,.None,0,0
+                d.view=effect.view
+                d.info.lit,d.info.emission_mode,d.info.collision,d.info.soft=false,.Relative,.None,0
             }
         }
         if clock.resolved!=key {
@@ -79,12 +81,12 @@ ui_effects_sync :: proc(p:^UI_Particles,requests:[]gui.UI_Effect,assets:^host.As
             sub:=shown.sub_desc
             sub.transform,sub.previous=mm.Mat4(1),mm.Mat4(1)
             sub.generation=shown.generation
-            append(descs,sub)
+            pool_put(pool,&sub)
         }
         desc:=shown.desc
         desc.transform,desc.previous=mm.Mat4(1),mm.Mat4(1)
         desc.spawns=births_since(clock,&shown.started)
         desc.generation=shown.generation
-        append(descs,desc)
+        pool_put(pool,&desc)
     }
 }

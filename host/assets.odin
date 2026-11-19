@@ -37,6 +37,7 @@ ASSETS_START :: 4096
 ASSETS_DEFAULT_ERRORS :: 256
 ASSETS_ROWS_DIRTY :: 256 // material rows that go to the renderer one by one between two assets_commit
 ASSETS_MESH_NONE :: render.Mesh_Handle(max(u32))
+ASSETS_LABEL_BYTES :: 32 // of what a mesh made at run time is (Mesh_Generate_Options.label)
 
 Assets_Desc :: struct {
     root:string,               // folder of the asset registry
@@ -60,6 +61,7 @@ Assets_Problem :: enum u8 {
     Unsupported, // a texture larger than the device takes even at its smallest level, an array or a cube where a 2D image is sampled, a program the shaders do not have
     Rejected,    // the renderer did not take it: Renderer.error says why
     Capacity,    // no room for another asset of its kind
+    Coverage,    // a masked material whose Surface program sets alpha: a mask map (maps.mask) cuts it, never its program
 }
 
 Assets_Error :: struct {
@@ -80,6 +82,7 @@ Assets_Mesh :: struct {
     morphs:u32,     // morph targets its file holds
     failed:bool,    // the stand-in of an asset that did not load
     generated:bool, // made by assets_mesh_generate: it has no file
+    label:[ASSETS_LABEL_BYTES]u8, // of a generated one: what it is, as its maker said
     arriving:bool,  // what draws it asked for it and a job reads it (Assets.arrivals): no handle yet
     collision:geom.Mesh,
     disabled_edges:[]u8,
@@ -110,6 +113,7 @@ Mesh_Generate_Options :: struct {
     hull_sizes:[]u32,
     tangents:[][4]f32, // one per vertex, with the sign of the bitangent in w, as MikkTSpace gives them; empty: MikkTSpace's over the uvs
     render_geometry:^Mesh_Render_Geometry, // what assets_render_geometry_make made of the mesh ahead; nil: made here
+    label:string, // what the mesh is, for whoever names it ("terrain chunk"); the entity that shows it says whose. Cut to ASSETS_LABEL_BYTES
 }
 
 // What the renderer takes of a mesh made at run time: its clusters, as
@@ -608,7 +612,19 @@ assets_shape :: proc(a:^Assets,shape:Shape) -> ^Assets_Mesh {
     defer assets_render_geometry_destroy(&made)
     added:=false
     if mesh:=geom.mesh_buffer_view(&buffer);assets_render_geometry(mesh,mesh.normals,nil,0,&made,assets_limits(a)) {
-        entry.handle,added=assets_render_geometry_add(a,&made,nil)
+        // A plane is a sheet: without a material of its own it shows the
+        // default one from both sides.
+        words:[1]u32
+        if shape==.Plane {
+            if row,taken:=assets_row_take(a);taken {
+                a.material_descs[row-1]=render.DEFAULT_MATERIAL
+                a.material_descs[row-1].two_sided=true
+                a.row_marks[row-1]=ASSETS_ROW_ASSET
+                assets_row_changed(a,row)
+                words[0]=row|1<<24
+            }
+        }
+        entry.handle,added=render.mesh_add_geometry(a.renderer,made.geometry,words[:],&made.ahead)
     }
     if !added {
         entry.handle,entry.failed=ASSETS_MESH_NONE,true
@@ -802,6 +818,7 @@ assets_mesh_generate :: proc(a:^Assets,mesh:geom.Mesh,slot_materials:[]base.Asse
         return
     }
     entry:=Assets_Mesh{handle=ASSETS_MESH_NONE,vertex_count=u32(count),index_count=u32(len(mesh.indices)),slot_count=u32(slots),generated=true}
+    base.text_set(entry.label[:],options.label)
     success:=false
     defer if !success {assets_generated_free(&entry,a.allocator)}
     if options.collision {
@@ -916,8 +933,9 @@ assets_render_geometry_rays :: proc(out:^Mesh_Render_Geometry,limits:Assets_Limi
 // rays (assets_render_geometry_make, or asset.mesh_build_far and
 // assets_render_geometry_rays into the arena of made): a far mesh, of one slot
 // of the default material, without collision. Like assets_mesh_generate it
-// lives until assets_mesh_release. A transaction: between frames.
-assets_mesh_publish :: proc(a:^Assets,made:^Mesh_Render_Geometry) -> (id:base.Asset_Id,ok:bool) {
+// lives until assets_mesh_release; label says what it is, as for
+// assets_mesh_generate. A transaction: between frames.
+assets_mesh_publish :: proc(a:^Assets,made:^Mesh_Render_Geometry,label:="") -> (id:base.Asset_Id,ok:bool) {
     g:=made.geometry
     if len(g.clusters)==0 || len(g.levels)==0 || made.slots>1 {return}
     if len(a.free_meshes)==0 && !base.region_grow(&a.regions[0],&a.meshes) {
@@ -925,6 +943,7 @@ assets_mesh_publish :: proc(a:^Assets,made:^Mesh_Render_Geometry) -> (id:base.As
         return
     }
     entry:=Assets_Mesh{handle=ASSETS_MESH_NONE,index_count=g.levels[0].triangle_count*3,generated=true}
+    base.text_set(entry.label[:],label)
     for c in g.clusters[:g.levels[0].cluster_count] {entry.vertex_count+=asset.cluster_vertex_count(c)}
     entry.bounds_min,entry.bounds_max=g.bounds_min,g.bounds_max
     if a.renderer!=nil {
@@ -1048,6 +1067,15 @@ assets_mesh_generated :: proc(a:^Assets,id:base.Asset_Id) -> bool {
     if a==nil {return false}
     ref,known:=a.index[id]
     return known && ref.kind==.Mesh && a.meshes[ref.index].generated
+}
+
+// What a mesh made at run time is, as its maker said; "" for one it did not
+// say, or for one of a file.
+assets_mesh_label :: proc(a:^Assets,id:base.Asset_Id) -> string {
+    if a==nil {return ""}
+    ref,known:=a.index[id]
+    if !known || ref.kind!=.Mesh || !a.meshes[ref.index].generated {return ""}
+    return base.text_get(a.meshes[ref.index].label[:])
 }
 
 // The box of a mesh loaded from its file, without loading it: false for one
@@ -1376,12 +1404,13 @@ assets_arrivals_settle :: proc(a:^Assets) -> (changed:bool) {
 // A texture made at run time from RGBA8 pixels, rows from the top, with an
 // id of its own that an image of the UI or a material shows as it shows a
 // texture asset: an image a game read itself, as the thumbnail of a save.
-// srgb: it is color. Its levels are made here, and the pixels can go once it
-// returns. It lives until assets_texture_release; each id is a version that
-// is never used again. A transaction: between frames. False, with nothing
-// made, for a size of zero or pixels that do not hold width by height, and
-// without room for another texture.
-assets_texture_generate :: proc(a:^Assets,pixels:[]u8,width,height:int,srgb:=true,name:="generated texture") -> (id:base.Asset_Id,ok:bool) {
+// srgb: it is color. Its levels are made here (texels: level 0 alone, for one
+// read texel by texel), and the pixels can go once it returns. It lives until
+// assets_texture_release; each id is a version that is never used again. A
+// transaction: between frames. False, with nothing made, for a size of zero
+// or pixels that do not hold width by height, and without room for another
+// texture.
+assets_texture_generate :: proc(a:^Assets,pixels:[]u8,width,height:int,srgb:=true,name:="generated texture",texels:=false) -> (id:base.Asset_Id,ok:bool) {
     if width<=0 || height<=0 || len(pixels)!=width*height*4 {return}
     a.generated_next+=1
     id={ASSETS_GENERATED_TAG,a.generated_next}
@@ -1390,7 +1419,7 @@ assets_texture_generate :: proc(a:^Assets,pixels:[]u8,width,height:int,srgb:=tru
     made:=Assets_Texture{width=u32(width),height=u32(height),layers=1,format=.RGBA8,flags=srgb?{.Srgb}:{},generated=true}
     if a.renderer!=nil {
         added:bool
-        if made.handle,added=render.texture_add(a.renderer,{pixels=pixels,width=width,height=height,srgb=srgb,name=name});!added {
+        if made.handle,added=render.texture_add(a.renderer,{pixels=pixels,width=width,height=height,srgb=srgb,texels=texels,name=name});!added {
             entry^={}
             append(&a.free_textures,a.index[id].index)
             delete_key(&a.index,id)
@@ -1483,8 +1512,10 @@ program_value :: proc(a:^Assets,program:^render.Program,params:^[16]render.Vec4,
 }
 
 // The row of the renderer for a material, loading its textures. A Surface
-// program replaces the standard model: of its maps only the normal map is
-// read, unless it builds on that model (render.Program.standard). A texture that failed is only shown as base color.
+// program replaces the standard model: of its maps only the normal map and the
+// mask are read (the base color map of a masked material without a mask of its
+// own is its mask), unless it builds on that model (render.Program.standard).
+// A texture that failed is only shown as base color.
 @(private="file")
 assets_material_desc :: proc(a:^Assets,material:^Assets_Material,id:base.Asset_Id) -> render.Material_Desc {
     desc:=render.Material_Desc{info=material.info}
@@ -1494,12 +1525,14 @@ assets_material_desc :: proc(a:^Assets,material:^Assets_Material,id:base.Asset_I
     if program==nil && material.info.program[0]!=0 && a.renderer!=nil && assets_material_program(a,material,.Postprocess)==nil {
         assets_fail(a,id,.Material,.Unsupported)
     }
+    masks_by_color:=desc.alpha_mode==.Mask && desc.maps.mask.texture=={}
     for source,which in asset.material_maps(&desc.maps) {
-        if program!=nil && which!=.Normal && !program.standard {continue}
+        if program!=nil && which!=.Normal && which!=.Mask && !(which==.Base_Color && masks_by_color) && !program.standard {continue}
         texture:=assets_texture_shown(a,source.texture,&waiting)
         if texture!=nil && (!texture.failed || which==.Base_Color) {desc.textures[which]=texture.handle}
     }
     if program!=nil {
+        if program.coverage && desc.alpha_mode==.Mask {assets_fail(a,id,.Material,.Coverage)}
         desc.program_id=program.id
         desc.custom_params=render.program_defaults(program)
         assets_program_parameters(a,program,&desc.custom_params,assets_material_parameters(a,material),0,&waiting)
@@ -1840,6 +1873,20 @@ assets_material_row :: proc(a:^Assets,id:base.Asset_Id) -> u32 {
     return material!=nil?material.row:0
 }
 
+// Whether the renderer draws a material loaded before as its file says: no
+// texture it shows is still arriving and its row went with assets_commit.
+// What captures an image of it once (an impostor) waits for that. One that
+// failed is drawn as it will stay; one never asked for is not drawn. True
+// without a renderer: nothing is drawn.
+assets_material_settled :: proc(a:^Assets,id:base.Asset_Id) -> bool {
+    if id=={} || a.renderer==nil {return true}
+    ref,known:=a.index[id]
+    if !known || ref.kind!=.Material {return false}
+    material:=&a.materials[ref.index]
+    if material.failed {return true}
+    return !material.waiting && !a.materials_dirty && !slice.contains(a.rows_dirty[:],material.row)
+}
+
 // --------------------------------------------------------------- derived rows
 
 @(private="file")
@@ -2088,12 +2135,12 @@ assets_reload :: proc(a:^Assets,id:base.Asset_Id) -> bool {
 
 // The shaders of the renderer were replaced: every material finds its
 // program and the offsets of its parameters in the new catalog, and one
-// whose program was missing is no longer in the list of errors unless it
-// still is. a.revision advances.
+// whose program was missing or set its alpha is no longer in the list of
+// errors unless it still does. a.revision advances.
 assets_programs_refresh :: proc(a:^Assets) {
     if a.renderer==nil {return}
     #reverse for problem,i in a.errors {
-        if problem.kind==.Material && problem.problem==.Unsupported {ordered_remove(&a.errors,i)}
+        if problem.kind==.Material && (problem.problem==.Unsupported || problem.problem==.Coverage) {ordered_remove(&a.errors,i)}
     }
     assets_materials_refresh(a)
     a.revision+=1
@@ -2293,7 +2340,9 @@ assets_unload :: proc(a:^Assets,gone:[]base.Asset_Id) -> int {
     a.stats.unloads+=len(gone)
     a.materials_dirty=true
     a.revision+=1
-    assets_structure_changed(a)
+    // Each by its id: what no scope reached, which a consumer holding other
+    // assets passes over.
+    for id in gone {assets_structure_changed(a,id)}
     assets_commit(a)
     return len(gone)
 }

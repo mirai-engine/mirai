@@ -40,6 +40,7 @@ ANIMATION_CACHE :: "animations" // in it: compressed .anim libraries, by asset a
 COLLISION_CACHE :: "collision"  // in it: the convex pieces of meshes, by their content
 FAR_CACHE :: "far"             // in it: the far meshes of scenes the editor made, by what they are made of (asset.far_key)
 FAR_PREFIX :: "mirai-far"      // where the registry of a project that is not cooked mounts the far cache
+CAPACITY_CACHE :: "capacities" // a file: what the lists of the renderer asked for in each scene (host/capacities.odin); a game ships the one of its project
 THUMBNAIL_FOLDER :: "thumbs"   // beside it: the previews of the editor
 
 Plugin :: struct {

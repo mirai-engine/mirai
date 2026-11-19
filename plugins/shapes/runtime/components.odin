@@ -27,7 +27,8 @@ import mm "mirai:std/math"
 //
 // A volume.Spline with a material is drawn the same way, on a derived child: a
 // ribbon along its path that follows the ground across (ribbon.odin). It does
-// not collide.
+// not collide. So is the mesh of an entity with a Bend, bent along its curve
+// (bend.odin), while the entity itself is Drawn_Elsewhere.
 
 SHAPE_POINTS :: 512
 SHAPE_LOOPS :: 16
@@ -82,10 +83,10 @@ SHAPE_DEFAULT :: Shape{
     points={0={-0.5,-0.5},1={0.5,-0.5},2={0.5,0.5},3={-0.5,0.5}},
 }
 
-// On the child entity that draws and collides a shape, or draws the ribbon of a
-// spline. It has no core.Id: a scene never saves it, and the step makes it
-// again from its source.
-@(component,derived,description="The derived child that draws and collides the Shape of its parent, or draws the ribbon of its Spline: made again from that source, never saved.")
+// On the child entity that draws and collides a shape or a bent mesh, or
+// draws the ribbon of a spline. It has no core.Id: a scene never saves it, and
+// the step makes it again from its source.
+@(component,derived,description="The derived child that draws and collides the Shape or the bent mesh of its parent, or draws the ribbon of its Spline: made again from that source, never saved.")
 Shape_Part :: struct {}
 
 Stamp_Kind :: enum u8 {

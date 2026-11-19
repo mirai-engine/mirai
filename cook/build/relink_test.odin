@@ -31,7 +31,7 @@ a_change_inside_a_procedure_links_what_links_against_it_again :: proc(t:^testing
     engine,game:=fixture_write(t,folder,files)
     p,error:=project.open(game,engine)
     if !testing.expectf(t,error.code==.None,"the project opens: %v",error) {return}
-    testing.expect(t,os.make_directory_all(engine_paths(engine,.Dev).decl)==nil)
+    testing.expect(t,base.make_directory_all(engine_paths(engine,.Dev).decl)==nil)
 
     Built :: struct {compiled,relinked:int,middle:string,base:string}
     build :: proc(t:^testing.T,p:^project.Project,compiler,prefix:string) -> (built:Built,ok:bool) {

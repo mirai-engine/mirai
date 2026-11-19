@@ -187,10 +187,11 @@ emitter_capacity :: proc(info:^effect.Particle_Info) -> u32 {
     return u32(clamp(total*1.25+16,16,f32(1<<20)))
 }
 
-// What the emission of a clock was resolved from: the effect, the revision of
-// the assets and the stamp of the values of the entity.
-emission_key :: proc(particle:base.Asset_Id,a:^host.Assets,stamp:u64) -> u64 {
-    return base.hash_combine(base.hash_combine(base.hash_combine(particle[0],particle[1]),a!=nil?a.revision:0),stamp)|1
+// What the emission of a clock was resolved from: the effect and the stamp of
+// the values of the entity. What the effect reads of the assets is followed by
+// effect, in Particle_Clocks.effects.
+emission_key :: proc(particle:base.Asset_Id,stamp:u64) -> u64 {
+    return base.hash_combine(base.hash_combine(particle[0],particle[1]),stamp)|1
 }
 
 // The stamp of the row of an entity, 0 without one: it moves when the row is

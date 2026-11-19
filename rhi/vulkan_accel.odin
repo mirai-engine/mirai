@@ -20,8 +20,10 @@ VK_INSTANCE_CULL_DISABLE :: 0x1
 VK_INSTANCE_FORCE_OPAQUE :: 0x4
 VK_INSTANCE_FORCE_NO_OPAQUE :: 0x8
 
+// The geometries of a BLAS, the opaque triangles and then the masked ones,
+// either left out when it has none, and the range of each.
 @(private)
-vk_blas_geometry :: proc(vb, ib: ^Vk_Buffer, desc: Blas_Desc) -> vk.AccelerationStructureGeometryKHR {
+vk_blas_geometry :: proc(vb, ib: ^Vk_Buffer, desc: Blas_Desc) -> (geometries: [2]vk.AccelerationStructureGeometryKHR, ranges: [2]vk.AccelerationStructureBuildRangeInfoKHR, count: u32) {
 	triangles := vk.AccelerationStructureGeometryTrianglesDataKHR{
 		sType = .ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
 		vertexFormat = .R32G32B32_SFLOAT,
@@ -31,11 +33,20 @@ vk_blas_geometry :: proc(vb, ib: ^Vk_Buffer, desc: Blas_Desc) -> vk.Acceleration
 	}
 	triangles.vertexData.deviceAddress = vk.DeviceAddress(vb.address + desc.vertex_offset)
 	triangles.indexData.deviceAddress = vk.DeviceAddress(ib.address + desc.index_offset)
-	// A ray query that collects the filters of blended triangles needs each
-	// candidate reported once.
-	geometry := vk.AccelerationStructureGeometryKHR{sType = .ACCELERATION_STRUCTURE_GEOMETRY_KHR, geometryType = .TRIANGLES, flags = {.OPAQUE, .NO_DUPLICATE_ANY_HIT_INVOCATION}}
-	geometry.geometry.triangles = triangles
-	return geometry
+	opaque := desc.triangle_count - min(desc.masked_count, desc.triangle_count)
+	parts := [2]u32{opaque, desc.triangle_count - opaque}
+	for part, k in parts {
+		if part == 0 {continue}
+		// A ray query that collects the filters of blended triangles needs each
+		// candidate reported once.
+		geometry := vk.AccelerationStructureGeometryKHR{sType = .ACCELERATION_STRUCTURE_GEOMETRY_KHR, geometryType = .TRIANGLES, flags = {.NO_DUPLICATE_ANY_HIT_INVOCATION}}
+		if k == 0 {geometry.flags += {.OPAQUE}}
+		geometry.geometry.triangles = triangles
+		geometries[count] = geometry
+		ranges[count] = {primitiveCount = part, primitiveOffset = opaque * 12 if k == 1 else 0}
+		count += 1
+	}
+	return
 }
 
 @(private)
@@ -98,6 +109,8 @@ vk_create_accel :: proc(d: ^Device, type: vk.AccelerationStructureTypeKHR, sizes
 	b := pool_get(&d.buffers, base.Handle(buffer))
 	info := vk.AccelerationStructureCreateInfoKHR{sType = .ACCELERATION_STRUCTURE_CREATE_INFO_KHR, buffer = b.handle, offset = vk.DeviceSize(offset), size = sizes.accelerationStructureSize, type = type}
 	a := Vk_Accel{buffer = buffer, block = i32(block + 1), offset = offset, size = size, top_level = type == .TOP_LEVEL, blas = blas, max_instances = max_instances, scratch_size = u64(max(sizes.buildScratchSize,sizes.updateScratchSize))}
+	a.blas.name = ""
+	resource_name_set(&a.name, name)
 	if !vk_check(d, d.dvk.CreateAccelerationStructureKHR(d.handle, &info, nil, &a.handle), "vkCreateAccelerationStructureKHR") {
 		if arena_give(&d.accel_arena, block, offset, size) {append(&d.accel_empty, block)}
 		return 0
@@ -117,15 +130,19 @@ blas_create :: proc(d: ^Device, desc: Blas_Desc) -> Accel {
 		set_error(d, "BLAS %s needs Accel_Input vertex and index buffers", desc.name)
 		return 0
 	}
-	geometry := vk_blas_geometry(vb, ib, desc)
+	if desc.masked_count > desc.triangle_count {
+		set_error(d, "BLAS %s has %d masked triangles of %d: give at most triangle_count", desc.name, desc.masked_count, desc.triangle_count)
+		return 0
+	}
+	geometries, ranges, geometry_count := vk_blas_geometry(vb, ib, desc)
 	build := vk.AccelerationStructureBuildGeometryInfoKHR{
 		sType = .ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR, type = .BOTTOM_LEVEL,
-		flags = {.PREFER_FAST_TRACE}, mode = .BUILD, geometryCount = 1, pGeometries = &geometry,
+		flags = {.PREFER_FAST_TRACE}, mode = .BUILD, geometryCount = geometry_count, pGeometries = &geometries[0],
 	}
 	if desc.deformable {build.flags+={.ALLOW_UPDATE}} else if desc.compact {build.flags+={.ALLOW_COMPACTION}}
 	sizes := vk.AccelerationStructureBuildSizesInfoKHR{sType = .ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR}
-	count := desc.triangle_count
-	d.dvk.GetAccelerationStructureBuildSizesKHR(d.handle, .DEVICE, &build, &count, &sizes)
+	counts := [2]u32{ranges[0].primitiveCount, ranges[1].primitiveCount}
+	d.dvk.GetAccelerationStructureBuildSizesKHR(d.handle, .DEVICE, &build, &counts[0], &sizes)
 	return vk_create_accel(d, .BOTTOM_LEVEL, sizes, desc, 0, desc.name)
 }
 
@@ -192,20 +209,19 @@ cmd_build_blas :: proc(c: ^Command_List, accel: Accel, rebuild := false) {
 	cmd_barrier_buffer(c, d.scratch, .Accel_Build_Write)
 	cmd_barrier_buffer(c, a.buffer, .Accel_Build_Write)
 	vk_flush_barriers(c)
-	geometry := vk_blas_geometry(vb, ib, a.blas)
+	geometries, ranges, geometry_count := vk_blas_geometry(vb, ib, a.blas)
 	build := vk.AccelerationStructureBuildGeometryInfoKHR{
 		sType = .ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR, type = .BOTTOM_LEVEL,
-		flags = {.PREFER_FAST_TRACE}, mode = .BUILD, geometryCount = 1, pGeometries = &geometry,
+		flags = {.PREFER_FAST_TRACE}, mode = .BUILD, geometryCount = geometry_count, pGeometries = &geometries[0],
 		dstAccelerationStructure = a.handle,
 	}
 	build.scratchData.deviceAddress = vk.DeviceAddress(scratch)
-	range := vk.AccelerationStructureBuildRangeInfoKHR{primitiveCount = a.blas.triangle_count}
 	if a.blas.deformable {
 		build.flags+={.ALLOW_UPDATE}
 		if a.built && !rebuild {build.mode=.UPDATE;build.srcAccelerationStructure=a.handle}
 	} else if a.blas.compact {build.flags+={.ALLOW_COMPACTION}}
-	ranges := cast([^]vk.AccelerationStructureBuildRangeInfoKHR)&range
-	d.dvk.CmdBuildAccelerationStructuresKHR(c.cmd, 1, &build, &ranges)
+	range_list := cast([^]vk.AccelerationStructureBuildRangeInfoKHR)&ranges[0]
+	d.dvk.CmdBuildAccelerationStructuresKHR(c.cmd, 1, &build, &range_list)
 	a.built = true
 	if a.blas.compact && !a.blas.deformable {vk_compact_size_write(c, a)}
 }
@@ -318,6 +334,7 @@ cmd_build_tlas :: proc(c: ^Command_List, accel: Accel, instances: Buffer, offset
 	(cast(^Tlas_Table_Header)table.ptr)^ = {
 		count = count, layout = TLAS_LAYOUT_ROWS, stride = size_of(Vk_As_Instance) / 4, first = u32(offset / size_of(Tlas_Instance)), ids = u32(ids),
 		opaque = u32(VK_INSTANCE_CULL_DISABLE | VK_INSTANCE_FORCE_OPAQUE) << 24, tested = u32(VK_INSTANCE_CULL_DISABLE | VK_INSTANCE_FORCE_NO_OPAQUE) << 24,
+		geometry = u32(VK_INSTANCE_CULL_DISABLE) << 24,
 	}
 	values := (cast([^]u64)(uintptr(table.ptr) + size_of(Tlas_Table_Header)))[:ids]
 	values[0] = 0

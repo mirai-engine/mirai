@@ -75,6 +75,23 @@ transitions_that_interrupt_each_other_give_up_the_time_the_one_before_left_undon
     testing.expectf(t,durations[0]==.2 && durations[1]==.2 && abs(durations[2]-.05)<1e-6 && durations[3]==.2,"durations %v",durations)
 }
 
+// Each bone closes over its own time, and one given a negative time keeps what the transition it
+// interrupts had left.
+@(test)
+each_bone_closes_over_its_own_time_or_the_time_left_of_the_one_it_interrupts :: proc(t:^testing.T) {
+    pose:=[2]math.Transform{math.TRANSFORM_IDENTITY,math.TRANSFORM_IDENTITY};moved:=pose;moved[0].position.x=1;moved[1].position.x=1
+    bones:[2]Inertial_Bone;state:Inertial_State;out:[2]math.Transform
+    durations:=[2]f32{.1,.3}
+    testing.expect(t,inertial_capture(&state,bones[:],nil,{previous=moved[:],current=moved[:],target=pose[:],durations=durations[:],duration=.1}) && state.duration==.3)
+    testing.expect(t,inertial_advance(&state,.15) && inertial_pose_apply(state,bones[:],pose[:],out[:]))
+    testing.expectf(t,out[0].position.x==0 && out[1].position.x>.1,"the first bone ends at .1 s and the second goes on: %v",out)
+    durations={-1,.2}
+    testing.expect(t,inertial_capture(&state,bones[:],nil,{previous=moved[:],current=moved[:],target=pose[:],durations=durations[:],duration=.2}))
+    testing.expectf(t,abs(bones[0].end.x-.15)<1e-6 && bones[1].end.x==.2 && state.duration==.2,"the first keeps the .15 s left, the second takes .2 s: %v %v",bones,state)
+    durations={.1,f32(0h7fc00000)}
+    testing.expect(t,!inertial_capture(&state,bones[:],nil,{previous=moved[:],current=moved[:],target=pose[:],durations=durations[:],duration=.2}) && !inertial_capture(&state,bones[:],nil,{previous=moved[:],current=moved[:],target=pose[:],durations=durations[:1],duration=.2}))
+}
+
 @(test)
 inertial_zero_duration_zero_dt_masks_and_short_buffers_have_defined_results :: proc(t:^testing.T) {
     current:=[1]math.Transform{math.TRANSFORM_IDENTITY};current[0].position.x=4

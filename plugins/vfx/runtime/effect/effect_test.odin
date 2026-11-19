@@ -63,43 +63,6 @@ an_effect_of_another_version_asks_to_be_written_again :: proc(t:^testing.T) {
     testing.expect_value(t,error,asset.Error.Version)
 }
 
-// The lights of an effect cast shadows only when it asks: not by default;
-// one that asks keeps it, and an instance can ask on its own. An effect that
-// does not store a field of its version is refused.
-@(test)
-particle_lights_cast_shadows_only_when_the_effect_asks :: proc(t:^testing.T) {
-    testing.expect(t,!PARTICLE_DEFAULTS.light_shadows)
-    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    path:=fmt.tprintf("%s/shadows.particle",base.test_folder(t,"effect"))
-    Before :: struct {rate:f32,lights:u32,light_intensity:f32,light_range:f32}
-    before:=Before{rate=30,lights=4,light_intensity=10,light_range=2}
-    doc:asset.Document
-    asset.document_init(&doc,PARTICLE_KIND,{1,2})
-    doc.kind_version=PARTICLE_VERSION
-    _,error:=asset.document_put_row(&doc,&types,"particle",&before)
-    testing.expect_value(t,error,asset.Error.None)
-    testing.expect_value(t,asset.document_save(&doc,path),asset.Error.None)
-    asset.document_destroy(&doc)
-    {
-        a:asset.Asset
-        testing.expect_value(t,asset.asset_load(&a,path),asset.Error.None)
-        defer asset.asset_close(&a)
-        _,view_error:=particle_view(&a,&types)
-        testing.expect_value(t,view_error,asset.Error.Version)
-        testing.expect_value(t,a.lacking,[2]string{"particle","duration"})
-    }
-    info:=PARTICLE_DEFAULTS
-    info.lights,info.light_shadows=4,true
-    testing.expect_value(t,particle_save(path,&types,{id={1,2},info=info}),asset.Error.None)
-    a:asset.Asset
-    testing.expect_value(t,asset.asset_load(&a,path),asset.Error.None)
-    defer asset.asset_close(&a)
-    view,view_error:=particle_view(&a,&types)
-    testing.expect(t,view_error==.None && view.info.light_shadows)
-    value,found:=particle_value_at("light_shadows")
-    testing.expect(t,found && value.kind==.Bool && value.offset==offset_of(Particle_Info,light_shadows))
-}
-
 @(test)
 invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
     Case :: struct {change:proc(p:^Particle_Info),field:string}
@@ -115,6 +78,7 @@ invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
         {proc(p:^Particle_Info) {p.render,p.sort,p.meshes[0],p.meshes[2]=.Mesh,true,{1,2},{3,4}},"sort"},
         {proc(p:^Particle_Info) {p.mesh_weights[1]=-1},"mesh_weights"},
         {proc(p:^Particle_Info) {p.facing=Particle_Facing(5)},"facing"},
+        {proc(p:^Particle_Info) {p.lifetime={0,0}},"lifetime"},
     }
     for c in cases {
         info:=PARTICLE_DEFAULTS
@@ -125,6 +89,10 @@ invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
     }
     info:=PARTICLE_DEFAULTS
     testing.expect_value(t,particle_validate({info=info}).message,"")
+    // Some particles of a range may die as they are born.
+    info.lifetime={0,2}
+    testing.expect_value(t,particle_validate({info=info}).message,"")
+    info.lifetime=PARTICLE_DEFAULTS.lifetime
 
     parameters:[2]Particle_Parameter
     base.text_set(parameters[0].name[:],"count")

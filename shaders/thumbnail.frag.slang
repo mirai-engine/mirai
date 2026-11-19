@@ -1,4 +1,4 @@
-//! per surface program
+//! per surface program preview impostor=impostor
 //! variant values MIRAI_THUMBNAIL_VALUES
 // impostor: the frames of an impostor (render.impostor_capture).
 //! variant impostor MIRAI_THUMBNAIL_IMPOSTOR
@@ -80,9 +80,9 @@ Thumbnail_Values thumbnail_values(Raster_Input raster, Fragment surface) {
 
 [shader("fragment")]
 #if defined(MIRAI_THUMBNAIL_VALUES) || defined(MIRAI_THUMBNAIL_IMPOSTOR)
-Stage_Output main(Stage_Input input) {
+Stage_Output main(Stage_Input input, bool front_facing : SV_IsFrontFace) {
 #else
-float4 main(Stage_Input input) : SV_Target0 {
+float4 main(Stage_Input input, bool front_facing : SV_IsFrontFace) : SV_Target0 {
 #endif
     Raster_Input raster;
     raster.in_normal = input.normal;
@@ -99,9 +99,10 @@ float4 main(Stage_Input input) : SV_Target0 {
     raster.in_prev_clip = float4(0);
     raster.in_instance = INVALID;
     raster.in_surface = 0u;
+    raster = raster_facing(raster, front_facing);
     Fragment surface = fragment_evaluate(raster);
     if (!material_covers(surface.material, surface.values.alpha) && surface.material.alpha_mode != ALPHA_BLEND) discard;
-    float alpha = surface.material.alpha_mode == ALPHA_BLEND ? saturate(surface.values.alpha) : 1.0;
+    float alpha = preview_alpha(surface.material, surface.values);
     if (alpha < 0.05) discard;
 #ifdef MIRAI_THUMBNAIL_IMPOSTOR
     // Far away a blended surface is drawn as covering or not.

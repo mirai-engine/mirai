@@ -47,6 +47,9 @@ Import_Report :: struct {
     prefab_path:string,
     prefab_info:asset.Import_Info,
     settings:Import_Settings, // what the source was imported with: what its package keeps
+    // What the project's file of each document the import writes over in
+    // Import_Options.documents holds as it leaves it: the pin records it.
+    written:[dynamic]asset.Package_Written,
     // The package the import wrote: its id, the hash of its manifest, its
     // build, the key of the build and whether its textures are Final.
     package_id:base.Asset_Id,
@@ -67,6 +70,7 @@ report_destroy :: proc(report:^Import_Report) {
     delete(report.assets)
     delete(report.warnings)
     delete(report.programs)
+    delete(report.written)
     delete(report.mesh_ids,report.allocator)
     delete(report.material_ids,report.allocator)
     delete(report.image_ids,report.allocator)
@@ -81,15 +85,17 @@ report_init :: proc(report:^Import_Report,allocator:=context.allocator) {
     report.assets.allocator=allocator
     report.warnings.allocator=allocator
     report.programs.allocator=allocator
+    report.written.allocator=allocator
 }
 
-// Moves what src lists (assets, warnings and programs) to the end of dst and
+// Moves what src lists (assets, warnings, programs and what was written) to the end of dst and
 // destroys src; both live in the same allocator.
 report_take :: proc(dst,src:^Import_Report) {
     append(&dst.assets,..src.assets[:])
     append(&dst.warnings,..src.warnings[:])
     append(&dst.programs,..src.programs[:])
-    clear(&src.assets);clear(&src.warnings);clear(&src.programs)
+    append(&dst.written,..src.written[:])
+    clear(&src.assets);clear(&src.warnings);clear(&src.programs);clear(&src.written)
     report_destroy(src)
 }
 
@@ -138,6 +144,7 @@ Writer :: struct {
     owner:base.Asset_Id,         // of the parts: the prefab of a model
     whole:bool,                  // writes a model for Outputs: its prefab and clips are parts by their names
     given:int,                   // of outputs, those a part of the same kind and name is (parts_plan)
+    keeping:map[base.Asset_Id]u64, // the documents changed since the import wrote them that it leaves as they are (Changed.Keep), with what the pin recorded of each
     rng:base.Rng,
     allocator:mem.Allocator,
     keep:mem.Allocator,          // what lives as long as the writer: the temp allocator it began in
@@ -325,6 +332,7 @@ Texture_Job :: struct {
     hash:u64,
     srgb,normal_map,green_down,keep_precision:bool,
     alpha_cutoff:f32,
+    alpha_fill:f32,
     channels:textures.Channels,
     index:int,
     version:u32,
@@ -333,7 +341,7 @@ Texture_Job :: struct {
 
 @(private)
 texture_options :: proc(w:^Writer,job:Texture_Job) -> textures.Build_Options {
-    return image_build_options({srgb=job.srgb,normal_map=job.normal_map,green_down=job.green_down,alpha_cutoff=job.alpha_cutoff,keep_precision=job.keep_precision,channels=job.channels},w.options.settings)
+    return image_build_options({srgb=job.srgb,normal_map=job.normal_map,green_down=job.green_down,alpha_cutoff=job.alpha_cutoff,alpha_fill=job.alpha_fill,keep_precision=job.keep_precision,channels=job.channels},w.options.settings)
 }
 
 // Builds one texture of source as the asset id at path, or takes the blob it
@@ -466,7 +474,7 @@ writer_init :: proc(w:^Writer,path,folder:string,options:Import_Options,report:^
     asset.types_init(&w.types)
     w.types.codecs=asset.project_codecs(options.root,project.engine_root_find("",context.temp_allocator))
     zone(options,"import.scan")
-    return writer_source(w,path,folder)
+    return writer_source(w,path,folder) && writer_changed(w)
 }
 
 // Whether the build of what the import is made from now has a blob in the
@@ -532,7 +540,8 @@ import_write :: proc(model:^Imported_Model,options:Import_Options={},allocator:=
 // which is not written again. When the model has nodes, its prefab is the
 // scene of its name, the owner of its meshes and skeletons: the caller writes
 // it at prefab_path (cook/prefab.model_prefab) and records it
-// (output_written), unless prefab_path is "" (o gave it already). The report
+// (output_written), unless prefab_path is "" (o gave it already, or the import
+// keeps it as it is). The report
 // gives, in allocator, the ids by row as that of import_write and the prefab;
 // what is written, the warnings and the programs of the model go to the
 // report of o. The files the model was read from are inputs of the import
@@ -625,13 +634,15 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
         prefab:=[1]Part{{kind=asset.KIND_SCENE,name=name,extension=".scene",only=!w.whole}}
         parts_plan(w,prefab[:])
         w.owner=prefab[0].id
+        _,keeping:=w.keeping[w.owner]
+        if keeping && !w.whole {writer_written(w,w.owner,asset.KIND_SCENE,0)}
         w.report.prefab,w.report.prefab_path=w.owner,strings.clone(prefab[0].path if w.whole else prefab[0].target,w.allocator)
         w.report.prefab_info=import_info(source,name,0,model.source_size,model.source_hash,0,model.version)
     }
 
     jobs:=make([dynamic]Texture_Job,context.temp_allocator)
     for image,i in model.images {
-        job:=Texture_Job{name=image.name,srgb=image.srgb,normal_map=image.normal_map,green_down=image.green_down,keep_precision=image.keep_precision,alpha_cutoff=image.alpha_cutoff,channels=image.channels,index=i,version=model.version,cooked=image.cooked}
+        job:=Texture_Job{name=image.name,srgb=image.srgb,normal_map=image.normal_map,green_down=image.green_down,keep_precision=image.keep_precision,alpha_cutoff=image.alpha_cutoff,alpha_fill=image.alpha_fill,channels=image.channels,index=i,version=model.version,cooked=image.cooked}
         if image.path!="" {
             data,read_error:=read_whole(image.path)
             if read_error!=.None {

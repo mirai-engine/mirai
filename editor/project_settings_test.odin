@@ -40,7 +40,7 @@ project_set_writes_project_mirai_only_when_all_of_it_is_valid :: proc(t:^testing
     folder:=base.test_folder(t,"editor-project")
     if folder=="" {return}
     root:=project.path(folder,"game",allocator=context.temp_allocator)
-    testing.expect(t,os.make_directory_all(project.path(root,"assets/scenes",allocator=context.temp_allocator))==nil)
+    testing.expect(t,base.make_directory_all(project.path(root,"assets/scenes",allocator=context.temp_allocator))==nil)
     m:=project.manifest_default("Game")
     file:=project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator)
     testing.expect_value(t,project.manifest_write(file,&m).code,project.Error_Code.None)

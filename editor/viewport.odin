@@ -764,7 +764,7 @@ placement_commit :: proc(s:^Session,w:core.World_Ref,d:Drag,hit:Pick,select:bool
         }
     } else if d.kind==.Asset {
         // Through component_add, so a plugin gives it what goes with a mesh (the colliders of its source).
-        shown:=erender.Mesh_Renderer{mesh=d.asset_id}
+        shown:=erender.Mesh_Renderer{mesh=d.asset_id,shape=.None,shadows=true}
         component_add(s,e,component_table(s,"Mesh_Renderer"),&shown)
     }
     if select {history.selection_set(s.selection,{e})}

@@ -201,7 +201,7 @@ ai_scene_figures_render_as_transient_geometry_and_reuse_descriptors :: proc(t:^t
     renderer:=app.renderer
     instances:=[2]gpu.Instance_Desc{instance,other.instance}
     for &shown in instances {shown.highlight=0}
-    gpu.scene_set_environment(renderer,{direction={0.3,0.8,0.6},color={1,1,1},illuminance=math.PI,enabled=true},{background={},use_background=true})
+    gpu.scene_set_environment(renderer,{direction={0.3,0.8,0.6},color={1,1,1},illuminance=math.PI,enabled=true,indirect=1,scattering=1},{background={},use_background=true})
     gpu.scene_update(renderer,0,instances[:],true)
     camera:=gpu.Camera{position={0.375,0.5,2.4},forward={0,-0.05,-2.4},up={0,1,0},fov_y=45,near=0.05,far=100}
     // The textures of its materials arrive in jobs over frames, as the editor's frames take them.

@@ -177,8 +177,10 @@ a_piece_shows_the_weights_and_normals_of_every_sample_at_any_level :: proc(t:^te
     testing.expect(t,weights_float(Weights(coarse.maps.control[5+9*4]))[1]>0.99,"the path shows at level 2")
     n:=heightfield_normal(&height,3,4,1)
     testing.expect_value(t,coarse.maps.normal[3+9*4],normal_bytes(n))
+    // uv0 runs over the maps from 0 to 1: times their size, the texel of its sample, a metre each here.
     for p,i in coarse.geometry.positions {
-        testing.expect(t,abs(coarse.geometry.uvs[i].x-p.x)<1e-4 && abs(coarse.geometry.uvs[i].y-p.z)<1e-4,"uv0 is the place over the maps")
+        at:=coarse.geometry.uvs[i]*[2]f32{f32(coarse.maps.size.x),f32(coarse.maps.size.y)}
+        testing.expect(t,abs(at.x-p.x)<1e-4 && abs(at.y-p.z)<1e-4,"uv0 is the place over the maps")
     }
     // A steep rule covers what is painted, in the maps.
     steep:=height.layers[2]
@@ -263,10 +265,13 @@ the_table_of_the_layers_holds_each_layer_where_the_program_reads_it :: proc(t:^t
         at:=4*(texel+LAYERS_TEXELS*layer)
         return u32(pixels[at])|u32(pixels[at+1])<<8|u32(pixels[at+2])<<16|u32(pixels[at+3])<<24
     }
+    // Its tiling as the program reads it: repeats a metre, near and far, and
+    // where far takes over.
     for i in 0..<6 {
         testing.expect_value(t,word(pixels,i,0),max(u32))
-        testing.expect_value(t,transmute(f32)word(pixels,i,4),f32(i+1))
-        testing.expect_value(t,transmute(f32)word(pixels,i,5),f32(10*i))
+        testing.expect_value(t,transmute(f32)word(pixels,i,4),1/f32(i+1))
+        testing.expect_value(t,transmute(f32)word(pixels,i,5),i==0?0:1/f32(10*i))
+        testing.expect(t,abs(transmute(f32)word(pixels,i,7)-(math.log2(f32(FAR_PIXELS)/f32(i+1))+1))<1e-5)
         testing.expect_value(t,pixels[4*(3+LAYERS_TEXELS*i)+2],u8(128))
     }
 }

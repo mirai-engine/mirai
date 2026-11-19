@@ -105,11 +105,11 @@ a_plugin_library_is_linked_against_an_import_library_made_ahead :: proc(t:^testi
         folder:=base.test_folder(t,"plugin-spaces")
         if folder=="" {return}
         sources:=project.path(folder,"a folder","plugins")
-        testing.expect(t,os.make_directory_all(project.path(sources,"thing/runtime"))==nil)
+        testing.expect(t,base.make_directory_all(project.path(sources,"thing/runtime"))==nil)
         testing.expect(t,os.write_entire_file(project.path(sources,"thing/runtime/answer.odin"),"package thing\n\nanswer :: proc() -> i32 {return 42}\n")==nil)
         lib:=Plugin_Library{name="thing",path="thing/runtime",packages={"thing/runtime"},root=sources,file="plugin-thing-runtime-minimal-00000001",
             stage=project.path(folder,"a folder","minimal","stage-thing-runtime"),linked=project.path(folder,"a folder","lib","plugin-thing-runtime-minimal-00000001.lib")}
-        testing.expect(t,os.make_directory_all(project.path(folder,"a folder","lib"))==nil)
+        testing.expect(t,base.make_directory_all(project.path(folder,"a folder","lib"))==nil)
         if failed:=plugin_library_prepare(&lib,nil);!testing.expectf(t,len(failed)==0,"%v",failed) {return}
         testing.expect_value(t,import_libraries_make(compiler,{{plugin_definition(&lib),lib.linked}}),"")
         import_library,read:=os.read_entire_file(lib.linked,context.temp_allocator)
@@ -196,7 +196,7 @@ a_part_with_folders_is_one_library_that_the_shared_cache_keeps :: proc(t:^testin
     if !testing.expect_value(t,len(libraries),1) {return}
     testing.expect_value(t,len(libraries[0].packages),2)
     testing.expect(t,slice.contains(libraries[0].packages,"thing/runtime") && slice.contains(libraries[0].packages,"thing/runtime/sim"))
-    testing.expect(t,os.make_directory_all(engine_paths(engine,.Dev).decl)==nil)
+    testing.expect(t,base.make_directory_all(engine_paths(engine,.Dev).decl)==nil)
 
     job:=plugin_job(&p,compiler)
     defer virtual.arena_destroy(&job.arena)
@@ -215,7 +215,7 @@ a_part_with_folders_is_one_library_that_the_shared_cache_keeps :: proc(t:^testin
 
     // A program that imports the packages through the declarations links against the library.
     program:=project.path(folder,"program")
-    testing.expect(t,os.make_directory_all(program)==nil)
+    testing.expect(t,base.make_directory_all(program)==nil)
     testing.expect(t,os.write_entire_file(project.path(program,"main.odin"),"package main\n\nimport \"core:os\"\nimport thing \"plugins:thing/runtime\"\nimport \"plugins:thing/runtime/sim\"\n\nmain :: proc() {os.exit(int(thing.doubled(2))-int(sim.answer())+21)}\n")==nil)
     executable:=project.path(plugins_libraries_folder(p.root),strings.concatenate({"split",project.EXECUTABLE_SUFFIX}))
     command:=make([dynamic]string)
@@ -364,7 +364,7 @@ a_plugin_step_receives_a_params_struct_through_its_library :: proc(t:^testing.T)
     if !testing.expectf(t,job.result.status==.Running,"the library builds: %v %s",job.result.diagnostics,job.result.text) {return}
 
     program:=project.path(folder,"program")
-    testing.expect(t,os.make_directory_all(program)==nil)
+    testing.expect(t,base.make_directory_all(program)==nil)
     testing.expect(t,os.write_entire_file(project.path(program,"main.odin"),"package main\n\nimport \"core:os\"\nimport \"mirai:core\"\nimport thing \"plugins:thing/runtime\"\n\nmain :: proc() {\n    probes:core.Table(core.Probe)\n    asks:core.Asks\n    thing.thing_probe(core.Prober{probes=&probes,asks=&asks})\n    os.exit(int(probes.values[1].value)+int(asks.count))\n}\n")==nil)
     executable:=project.path(plugins_libraries_folder(p.root),strings.concatenate({"params",project.EXECUTABLE_SUFFIX}))
     command:=make([dynamic]string)
@@ -418,7 +418,7 @@ an_any_of_a_type_of_what_links_against_a_library_formats_where_it_is_called :: p
     if !testing.expectf(t,library_error==nil && built_library.exit_code==0,"the library does not build:\n%s",string(library_errors)) {return}
 
     program:=project.path(folder,"program")
-    testing.expect(t,os.make_directory_all(program)==nil)
+    testing.expect(t,base.make_directory_all(program)==nil)
     main_text:="package main\n\nimport \"core:os\"\nimport \"mirai:thing\"\n\nKind :: enum u8 {Fire,Cancel,Section}\nRequest :: struct {kind:Kind,at:i32}\n\nmain :: proc() {\n    buffer:[128]u8\n    text:=thing.report(buffer[:],\"a %v of %v, %d\",Kind.Cancel,Request{.Section,7},thing.count(41))\n    os.write(os.stdout,transmute([]u8)text)\n}\n"
     testing.expect(t,os.write_entire_file(project.path(program,"main.odin"),main_text)==nil)
     executable:=project.path(out,strings.concatenate({"program",project.EXECUTABLE_SUFFIX}))
@@ -458,7 +458,7 @@ a_plugin_library_compiles_once_those_it_links_against_are_published :: proc(t:^t
     engine,game:=fixture_write(t,folder,files)
     p,error:=project.open(game,engine)
     if !testing.expectf(t,error.code==.None,"the project opens: %v",error) {return}
-    testing.expect(t,os.make_directory_all(engine_paths(engine,.Dev).decl)==nil)
+    testing.expect(t,base.make_directory_all(engine_paths(engine,.Dev).decl)==nil)
 
     job:=plugin_job(&p,compiler)
     defer virtual.arena_destroy(&job.arena)

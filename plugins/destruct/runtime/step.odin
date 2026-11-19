@@ -216,6 +216,7 @@ reconcile :: proc(c:^Ctx,e:core.Entity,remake:bool) {
     entry.slots=interior+1
     entry.generated=generated
     entry.materials=static.materials
+    entry.shadows=static.shadows
     if interior<render.MATERIAL_SLOTS && d.interior=={} {entry.materials[interior]=static.materials[0]}
     if entry.prepared==nil || entry.prepared.key!=key {
         if !prepare_start(c.assets,c.job_system,entry,d,static,scale,interior) {
@@ -322,6 +323,7 @@ cache_recover :: proc(c:^Ctx,e:core.Entity,d:Destructible,static:render.Mesh_Ren
         entry.slots=interior+1
         entry.generated=generated
         entry.materials=static.materials
+        entry.shadows=static.shadows
         if !prepare_start(c.assets,c.job_system,entry,d,static,scale,interior) {st.failed=true;return}
     }
     st.waiting=prepared_pending(entry.prepared)
@@ -425,7 +427,7 @@ group_sync :: proc(c:^Ctx,owner:core.Entity,entry:^Entry,group:^Scratch_Group) {
         }
         row.members=hash
         if row.mesh!={} {
-            core.add(c.meshes,group.entity,render.Mesh_Renderer{mesh=row.mesh,materials=entry.materials})
+            core.add(c.meshes,group.entity,render.Mesh_Renderer{mesh=row.mesh,shape=.None,materials=entry.materials,shadows=entry.shadows})
         } else if core.has(c.meshes,group.entity) {
             core.remove(c.meshes,group.entity)
         }

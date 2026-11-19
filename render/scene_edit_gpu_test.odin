@@ -116,7 +116,7 @@ shared_grid_instances_keep_all_quadrants_after_scene_rebuild_and_preview_retirem
 @(test)
 removed_meshes_and_textures_leave_the_image_of_a_scene_without_them :: proc(t: ^testing.T) {
 	camera := Camera{position = {3, 5, 6}, forward = {-3, -4.5, -6}, up = {0, 1, 0}, fov_y = 50, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	sun := Sun_Desc{direction = {0.4, 0.8, 0.3}, color = {1, 1, 1}, illuminance = 2 * math.PI, enabled = true}
+	sun := Sun_Desc{direction = {0.4, 0.8, 0.3}, color = {1, 1, 1}, illuminance = 2 * math.PI, enabled = true, indirect = 1, scattering = 1}
 	environment := Environment{sky = {0.2, 0.25, 0.3}}
 	images: [2][]u8
 	defer for image in images {delete(image)}
@@ -147,6 +147,10 @@ removed_meshes_and_textures_leave_the_image_of_a_scene_without_them :: proc(t: ^
 			scene_given(r, []Instance_Desc{{object_id = 1, mesh = meshes[0], transform = Mat4(1), tint = {1, 1, 1}}, {object_id = 2, mesh = meshes[1], transform = Mat4(1), tint = {1, 1, 1}}, {object_id = 3, mesh = meshes[2], transform = Mat4(1), tint = {1, 1, 1}}}, nil, sun, environment)
 			testing.expect(t, fixture_frame(&f, {camera=camera}), r.error)
 			kept:=r.scene.meshes[meshes[2]]
+			// The next publication frees the inputs of the BLAS the frame built (hardware rays).
+			for &ray in kept.rays[:kept.ray_count] {
+				if ray.blas != 0 {ray.input_vertex, ray.input_vertices, ray.input_index, ray.input_indices = 0, 0, 0, 0}
+			}
 			testing.expect(t, mesh_remove(r, meshes[1]))
 			vertices,indices:=edit_grid(64,10)
 			large,added:=edit_add(r,vertices[:],indices[:],{0,1})

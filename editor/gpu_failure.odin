@@ -14,6 +14,11 @@ import "mirai:platform"
 
 GPU_FAILURE_AGAIN_NS :: u64(60_000_000_000)
 
+// The record of a GPU submission of the editor that is late, in the .mirai
+// folder of the project (host.App_Desc.gpu_late_record): one a session left
+// is reported by the next one.
+GPU_LATE_RECORD :: "gpu_late.txt"
+
 Gpu_Failure_Reaction :: enum u8 {None, Restarted, Ended}
 
 @(private)
@@ -34,9 +39,15 @@ gpu_failure_react :: proc(s:^Session) {
     s.quit=true
 }
 
-// What a failure of the GPU left of the editor before this one, which it started.
+// What a failure of the GPU left of the editor before this one, which it
+// started, and a submission to the GPU that the last session of the project
+// never saw finish (a screen that froze, a machine that reset).
 @(private)
 gpu_failure_notify :: proc(s:^Session) {
+    if late:=host.app_gpu_late_before(s.app);late!="" {
+        log.warnf("the last session of this project stopped on the GPU and never saw it finish: %s",late)
+        notify(s,"The last session stopped on the GPU: the console names the frame and its passes")
+    }
     if s.gpu_lost_before=="" {return}
     log.warnf("the editor started again because the GPU of the one before stopped working: %s",s.gpu_lost_before)
     notify(s,"The editor started again because the GPU stopped working")

@@ -24,6 +24,7 @@ Vk_Buffer :: struct {
 	write:    Access,          // last write not yet superseded (None = clean)
 	reads:    bit_set[Access], // reads made visible since that write
 	fresh:    bool,            // of GPU memory, waiting in Device.fresh for the fill that zeroes it
+	name:     Resource_Name,
 }
 
 // The hazard state of a mip of a texture; its layers share it.
@@ -46,6 +47,7 @@ Vk_Texture :: struct {
 	swapchain:   bool,
 	shared:      uintptr, // the handle a shared texture exports, held while it lives (a file descriptor plus one, or a HANDLE)
 	table:       Table_Refs,
+	name:        Resource_Name,
 }
 
 Slot_Info :: struct {
@@ -60,7 +62,6 @@ Vk_Pipeline :: struct {
 	descriptor_pool: vk.DescriptorPool, // of copies of the texture table it outgrew
 	bind_point: vk.PipelineBindPoint,
 	slots:      [MAX_BINDING_SLOTS]Slot_Info,
-	slot_mask:  u32,
 	uses_table: bool, // the layout has the texture table as set 1
 	name_bytes: [PIPELINE_NAME_BYTES]u8, // a copy of its name: what it was made from may go before it (vk_pipeline_name)
 	name_length: u8,
@@ -84,6 +85,7 @@ Vk_Accel :: struct {
 	compact_slot:      i32,
 	compact_frame:     u64,
 	compact_immediate: bool,
+	name:              Resource_Name,
 }
 
 // Raw objects whose destruction waits until the frame slot that may still use
@@ -122,8 +124,8 @@ Vk_Frame :: struct {
 	queries:      vk.QueryPool,
 	passes:       bool, // the frame writes the timestamps of cmd_timestamp: timestamps_want was on when it began
 	query_count:  u32,
-	query_names:  [MAX_TIMESTAMPS]string,
-	query_bytes:  [MAX_TIMESTAMPS][MAX_TIMESTAMP_NAME_BYTES]u8, // the names, which a caller may build in the frame
+	recorded:     Frame_Passes, // its cmd_timestamp marks, which name its queries when it has passes
+	measured:     Frame_Passes, // without passes, its cmd_measure_begin marks and "frame" for each cmd_measure_end
 	image_index:  u32,
 	acquired:     bool,
 	paced:        bool, // the frame draws into a pair of the presenter
@@ -243,7 +245,7 @@ Device :: struct {
 	table_taken:       []u32, // as long as the table: what a copy takes
 	table_limit:       int,   // the most entries the table grows to on this device
 	table_default:     Texture,
-	pipelines_kept:    Pipeline_Store, // with a path, read when created and written as it grows and when destroyed
+	pipelines_kept:    Pipeline_Store, // what every renderer of the device compiled; with a path, read when created and written as it grows and when destroyed
 	store_path:        [512]u8,
 	store_path_len:    int,
 	timings:           [MAX_TIMESTAMPS]Gpu_Timing,
@@ -275,6 +277,7 @@ Device :: struct {
 	lose_provoked:     bool,
 	refuse:            Pipeline_Refusal,
 	presenter:         Presenter,
+	watchdog:          Watchdog,
 	present:           Vk_Present,
 	queue_lock:        sync.Mutex, // the presenter submits and presents from its thread too
 	pipeline_lock:     sync.Mutex, // pipelines are made on other threads too: guards their pool
@@ -389,7 +392,7 @@ device_create :: proc(desc: Device_Desc) -> (device: ^Device, error: string) {
 	d.allocator = allocator
 	d.capacities = device_capacities(desc.capacities)
 	d.on_message, d.message_user = desc.on_message, desc.message_user
-	ok := vk_create_pools(d) && vk_create_device(d, desc)
+	ok := vk_create_pools(d) && vk_create_device(d, desc) && watchdog_start(d, desc)
 	if !ok {
 		error = strings.clone(d.error, context.temp_allocator)
 		device_destroy(d)
@@ -725,6 +728,7 @@ vk_pick_physical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	d.info.uniform_alignment = u64(d.properties.limits.minUniformBufferOffsetAlignment)
 	d.info.storage_alignment = u64(d.properties.limits.minStorageBufferOffsetAlignment)
 	d.info.max_storage_range = u64(d.properties.limits.maxStorageBufferRange)
+	d.info.subpixel_bits = d.properties.limits.subPixelPrecisionBits
 	for heap in d.memory_properties.memoryHeaps[:d.memory_properties.memoryHeapCount] {
 		if .DEVICE_LOCAL in heap.flags {d.info.memory = max(d.info.memory, u64(heap.size))}
 	}
@@ -782,6 +786,11 @@ vk_create_logical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 		set_error(d, "device lacks dynamic rendering, synchronization2, timeline semaphores, multi draw indirect or indirect first instance")
 		return false
 	}
+	// A fragment stage reads which primitive of its draw it is of (SV_PrimitiveID), which SPIR-V has under this feature.
+	if !supported.features.geometryShader {
+		set_error(d, "device lacks the geometry shader feature, which gives a fragment stage the primitive of its draw")
+		return false
+	}
 	// The texture table is indexed per pixel and per ray hit.
 	limits := &d.properties.limits
 	if !v12.scalarBlockLayout {
@@ -802,7 +811,8 @@ vk_create_logical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	rt_env := env_flag("MIRAI_RT")
 	ray_query := rt_exts_present && bool(rq_features.rayQuery) && bool(as_features.accelerationStructure) && bool(v12.bufferDeviceAddress) && desc.allow_hardware_ray_tracing && rt_env != "software" && rt_env != "0"
 
-	enable_v13 := vk.PhysicalDeviceVulkan13Features{sType = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, dynamicRendering = true, synchronization2 = true, maintenance4 = v13.maintenance4}
+	// Demote to helper: what a fragment stage asks of whether it is a helper of its quad (IsHelperLane).
+	enable_v13 := vk.PhysicalDeviceVulkan13Features{sType = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, dynamicRendering = true, synchronization2 = true, maintenance4 = v13.maintenance4, shaderDemoteToHelperInvocation = v13.shaderDemoteToHelperInvocation}
 	enable_v12 := vk.PhysicalDeviceVulkan12Features{
 		sType = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, pNext = &enable_v13,
 		timelineSemaphore = true,
@@ -822,6 +832,7 @@ vk_create_logical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	core_features := vk.PhysicalDeviceFeatures{
 		multiDrawIndirect = true,
 		drawIndirectFirstInstance = true,
+		geometryShader = true,
 		samplerAnisotropy = supported.features.samplerAnisotropy,
 		textureCompressionBC = supported.features.textureCompressionBC,
 		imageCubeArray = supported.features.imageCubeArray,
@@ -893,11 +904,9 @@ vk_create_logical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	}
 	// A path that does not fit, cut, would name another file: nothing is kept.
 	if len(desc.pipeline_cache_path) <= len(d.store_path) {d.store_path_len = copy(d.store_path[:], desc.pipeline_cache_path)}
-	if d.store_path_len > 0 {
-		p := d.properties
-		pipeline_store_init(&d.pipelines_kept, {vendor = p.vendorID, device = p.deviceID, driver = p.driverVersion, uuid = p.pipelineCacheUUID}, allocator = d.allocator)
-		pipeline_store_load(&d.pipelines_kept, desc.pipeline_cache_path)
-	}
+	p := d.properties
+	pipeline_store_init(&d.pipelines_kept, {vendor = p.vendorID, device = p.deviceID, driver = p.driverVersion, uuid = p.pipelineCacheUUID}, allocator = d.allocator)
+	if d.store_path_len > 0 {pipeline_store_load(&d.pipelines_kept, desc.pipeline_cache_path)}
 	return true
 }
 
@@ -951,6 +960,7 @@ device_destroy :: proc(d: ^Device) {
 	if d.handle != nil && !d.waited_out {
 		// A lost device returns at once; one device_lose failed still runs what it was given.
 		if !vk_idle(d) {d.dvk.DeviceWaitIdle(d.handle)}
+		watchdog_stop(d)
 		vk_destroy_swapchain(d)
 		for &f in d.frames {
 			if f.upload != 0 {buffer_destroy(d, f.upload)}
@@ -1016,6 +1026,7 @@ device_destroy :: proc(d: ^Device) {
 	pool_destroy(&d.samplers, d.allocator)
 	pool_destroy(&d.pipelines, d.allocator)
 	pool_destroy(&d.accels, d.allocator)
+	watchdog_stop(d)
 	free(d, d.allocator)
 }
 
@@ -1214,7 +1225,9 @@ vk_collect_timestamps :: proc(d: ^Device, f: ^Vk_Frame) {
 	for i in 0 ..< d.timing_count {
 		start_ns := tick_of(values[i], gpu, now, d.timestamp_bits, d.info.timestamp_period_ns)
 		end_ns := max(tick_of(values[i + 1], gpu, now, d.timestamp_bits, d.info.timestamp_period_ns), start_ns)
-		name := string(d.timing_bytes[i][:copy(d.timing_bytes[i][:], f.query_names[i])])
+		// Without passes the frame is one interval but for those it measured.
+		label := f.recorded.names[i] if f.passes else ("frame" if i == 0 || i > int(f.measured.count) else f.measured.names[i - 1])
+		name := string(d.timing_bytes[i][:copy(d.timing_bytes[i][:], label)])
 		d.timings[i] = {name = name, ms = f32(f64(end_ns - start_ns) / 1e6), start_ns = start_ns, end_ns = end_ns}
 	}
 }
@@ -1273,12 +1286,13 @@ frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: boo
 	d.dvk.BeginCommandBuffer(f.cmd, &begin)
 	vk_list_reset(&f.list)
 	f.marks.serial, f.marks.sent, f.marks.count, f.marks.named = u32(d.frame_number) + 1, false, 0, 0
+	f.recorded.count, f.measured.count = 0, 0
 	f.passes = false
 	if f.queries != 0 {
 		d.dvk.CmdResetQueryPool(f.cmd, f.queries, 0, MAX_TIMESTAMPS)
 		f.passes = d.timestamps_wanted
 		// Without passes the frame is one interval, from here to frame_end.
-		if !f.passes {vk_timestamp_write(f, "frame")}
+		if !f.passes {vk_timestamp_write(f)}
 	}
 	vk_zero_fresh(&f.list)
 	d.in_frame = true
@@ -1297,7 +1311,7 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 		for texture in pr.pairs[pr.pair].textures {cmd_barrier_texture(cmd, texture, .Transfer_Read)}
 	}
 	vk_flush_barriers(cmd)
-	if f.queries != 0 && !f.passes {vk_timestamp_write(f, "")}
+	if f.queries != 0 && !f.passes {vk_timestamp_write(f)}
 	vk_mark(cmd, .End)
 	d.dvk.EndCommandBuffer(f.cmd)
 
@@ -1333,6 +1347,7 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	sync.mutex_lock(&d.queue_lock)
 	submitted := d.dvk.QueueSubmit2(d.queue, 1, &submit, 0)
 	f.marks.sent = submitted == .SUCCESS && !unreported
+	if submitted == .SUCCESS {watchdog_sent(d, d.timeline_value, d.frame_number, d.slot)}
 	ok := vk_check(d, submitted, "vkQueueSubmit2")
 	f.signal_value = d.timeline_value
 	f.number, f.submitted = d.frame_number, submitted == .SUCCESS
@@ -1434,16 +1449,20 @@ vk_immediate_end :: proc(d: ^Device, cmd: ^Command_List, wait: bool) -> bool {
 	if cmd.in_render_pass {cmd_end_render_pass(cmd)}
 	vk_flush_barriers(cmd)
 	d.dvk.EndCommandBuffer(cmd.cmd)
-	info := vk.CommandBufferSubmitInfo{sType = .COMMAND_BUFFER_SUBMIT_INFO, commandBuffer = cmd.cmd}
-	submit := vk.SubmitInfo2{sType = .SUBMIT_INFO_2, commandBufferInfoCount = 1, pCommandBufferInfos = &info}
 	if d.failure != .None {return false}
+	// On the timeline too, which the waits for the GPU and its watchdog read.
+	d.timeline_value += 1
+	info := vk.CommandBufferSubmitInfo{sType = .COMMAND_BUFFER_SUBMIT_INFO, commandBuffer = cmd.cmd}
+	signal := vk.SemaphoreSubmitInfo{sType = .SEMAPHORE_SUBMIT_INFO, semaphore = d.timeline, value = d.timeline_value, stageMask = {.ALL_COMMANDS}}
+	submit := vk.SubmitInfo2{sType = .SUBMIT_INFO_2, commandBufferInfoCount = 1, pCommandBufferInfos = &info, signalSemaphoreInfoCount = 1, pSignalSemaphoreInfos = &signal}
 	at := d.immediate_at
 	fence := d.immediate_fences[at]
 	d.dvk.ResetFences(d.handle, 1, &fence)
 	sync.mutex_lock(&d.queue_lock)
 	submitted := vk_check(d, d.dvk.QueueSubmit2(d.queue, 1, &submit, fence), "immediate submit")
 	sync.mutex_unlock(&d.queue_lock)
-	if !submitted {return false}
+	if !submitted {d.timeline_value -= 1; return false}
+	watchdog_sent(d, d.timeline_value, d.frame_number, -1)
 	if wait {
 		if !vk_waited(d, d.dvk.WaitForFences(d.handle, 1, &fence, true, GPU_WAIT_LIMIT_NS), "immediate wait") {return false}
 	} else {

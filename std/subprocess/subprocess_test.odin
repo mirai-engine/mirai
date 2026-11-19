@@ -59,6 +59,19 @@ probe_run :: proc "contextless" () {
         megabytes,_:=strconv.parse_int(os.args[3])
         _,refused:=make([]byte,megabytes<<20)
         os.write_string(os.stdout,"refused" if refused!=nil else "allocated")
+    case "hold":
+        // Writes every page of what it allocates and holds it until its stdin ends.
+        megabytes,_:=strconv.parse_int(os.args[3])
+        held,refused:=make([]byte,megabytes<<20)
+        if refused!=nil {os.exit(1)}
+        for i:=0;i<len(held);i+=4096 {held[i]=1}
+        os.write_string(os.stdout,"held")
+        buffer:[64]byte
+        for {
+            count,error:=os.read(os.stdin,buffer[:])
+            if error!=nil || count==0 {break}
+        }
+        code=int(held[len(held)-4096])
     case "priority":
         os.write_string(os.stdout,fmt.tprintf("%d",priority_rank()))
     case "stdin":
@@ -115,6 +128,29 @@ a_memory_limit_bounds_what_the_child_allocates :: proc(t:^testing.T) {
     _,stdout,_,error=exec({command=probe_command("allocate","512")},context.temp_allocator)
     testing.expectf(t,error==nil,"exec: %v",error)
     testing.expect_value(t,string(stdout),"allocated")
+}
+
+// What a child holds reads while it runs, and its peak stays once it exited.
+@(test)
+the_memory_a_child_holds_reads_while_it_runs_and_its_peak_after_it_exits :: proc(t:^testing.T) {
+    HELD :: 256<<20
+    process,error:=start({command=probe_command("hold","256")},pipes=.Separate)
+    if !testing.expectf(t,error==nil,"start: %v",error) {return}
+    defer release(&process)
+    said:[4]byte
+    count:=0
+    for count<len(said) {
+        read,read_error:=os.read(process.stdout,said[count:])
+        if read_error!=nil || read<=0 {break}
+        count+=read
+    }
+    testing.expect_value(t,string(said[:count]),"held")
+    now,running,known:=memory_held(process.pid)
+    testing.expectf(t,known && now>=HELD && running>=now,"while it runs: %d now and %d at its peak, of %d",now,running,HELD)
+    stdin_close(&process)
+    state,wait_error:=wait(&process)
+    testing.expectf(t,wait_error==nil && state.exited && state.exit_code==1,"wait: %v %v",wait_error,state)
+    testing.expectf(t,process.peak>=HELD,"peak once it exited: %d of %d",process.peak,HELD)
 }
 
 // A low child runs below a child started without a priority, which runs as
@@ -327,11 +363,44 @@ children_hold_no_pipe_of_this_process :: proc(t:^testing.T) {
         os.close(writer)
         testing.expectf(t,error==nil,"%s: %v",kind,error)
         if error==nil {
-            ready,poll_error:=os.pipe_has_data(reader)
+            ready,poll_error:=pipe_has_data(reader)
             testing.expectf(t,poll_error==.Broken_Pipe && !ready,"%s: a child holds the write end (%v)",kind,poll_error)
         }
         os.close(reader)
         os.close(child_in_writer)
+        release(&process)
+    }
+}
+
+// A handle named in inherit stays open in the child after this process
+// closes its own, as long as the child runs, and only there.
+@(test)
+a_child_holds_the_handles_it_inherits_while_it_runs :: proc(t:^testing.T) {
+    for kind in ([]string{"start","detached"}) {
+        reader,writer,pipe_error:=os.pipe()
+        testing.expect(t,pipe_error==nil)
+        if pipe_error!=nil {return}
+        child_in,child_in_writer,in_error:=os.pipe()
+        testing.expect(t,in_error==nil)
+        if in_error!=nil {os.close(reader);os.close(writer);return}
+        inherit:=[]uintptr{os.fd(writer)}
+        process:Process
+        error:os.Error
+        if kind=="start" {process,error=start({command=probe_command("stdin"),stdin=child_in},inherit=inherit)} else {process,error=detached({command=probe_command("stdin"),stdin=child_in},inherit)}
+        os.close(child_in)
+        os.close(writer)
+        testing.expectf(t,error==nil,"%s: %v",kind,error)
+        if error==nil {
+            _,poll_error:=pipe_has_data(reader)
+            testing.expectf(t,poll_error==nil,"%s: the child does not hold the write end (%v)",kind,poll_error)
+            os.close(child_in_writer)
+            child_in_writer=nil
+            _,_=wait(&process)
+            _,poll_error=pipe_has_data(reader)
+            testing.expectf(t,poll_error==.Broken_Pipe,"%s: the write end outlived the child (%v)",kind,poll_error)
+        }
+        os.close(reader)
+        if child_in_writer!=nil {os.close(child_in_writer)}
         release(&process)
     }
 }

@@ -35,8 +35,12 @@ Procedures:
   scene and lose what they were doing; a guest leaves the session (`scene_switch_interrupts`,
   `scene_switch_others`). The API (`editor.document`) does not ask.
 - `document_open_tab`, `document_activate`: open or activate the document's world between frames.
-  A scene the person opens is read at the end of the frame after the one that asked: that frame
-  already draws its tab with the beating dot, which stays until the load is resident.
+  A scene the person opens is read at the end of the frame after the one that asked: from the
+  frame that asked, its tab, named after it, carries the beating dot, and the line at the bottom
+  of the window where toasts show says what it waits for (reading, what arrives, what compiles),
+  until the load is resident. The start scene and the tabs of a restart of a window a person
+  looks at open the same way, after the first frame: the window never waits hidden for a scene.
+  Headless, hidden or with `--frames`, the scene is open when the editor starts.
 - `document_close`: activates the tab and closes it; the file already holds what the document had.
 - File dialogs are the system's (`platform.dialog_show`), one at a time. In collaboration a guest
   writes nothing and does not open another scene without leaving the session

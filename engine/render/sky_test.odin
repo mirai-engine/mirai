@@ -2,6 +2,7 @@ package render
 
 import "core:testing"
 import "mirai:core"
+import "mirai:std/base"
 
 // Turning a sky on turns off the one that was on, and over its seconds it
 // blends from it: the renderer gets the mix, with the turn of its entity.
@@ -35,7 +36,7 @@ a_sky_turned_on_blends_from_the_one_that_was_on :: proc(t:^testing.T) {
     turn:=quaternion128(quaternion(w=0,x=0,y=1,z=0))
     core.add(&w.worlds,night,core.World_Transform{transform={rotation=turn,scale=1}})
     test_world_settle(&w)
-    environment:=sky_environment(e,sky,found,false,core.read(&w.worlds),nil)
+    environment:=sky_environment(e,sky,found,false,core.read(&w.worlds),nil,nil)
     testing.expect_value(t,environment.sky,[3]f32{2,2,3})
     testing.expect_value(t,environment.sky_from,[3]f32{1000,1000,1000})
     testing.expect_value(t,environment.sky_from_weight,f32(0.5))
@@ -45,14 +46,41 @@ a_sky_turned_on_blends_from_the_one_that_was_on :: proc(t:^testing.T) {
     activate(&w.requests,core.create(&w.entities))
     environment_activate(&w.requests,&w.skies,&w.suns,{dt=0},&problems)
     testing.expect_value(t,problems.count,1)
-    none:=sky_environment(core.NONE,{},false,false,core.read(&w.worlds),nil)
+    none:=sky_environment(core.NONE,{},false,false,core.read(&w.worlds),nil,nil)
     testing.expect(t,none.sky=={} && none.use_background && none.background=={})
 
     // The air shows only when a sun lights it, and then nothing shows behind it.
-    lit:=sky_environment(e,SKY_DEFAULT,true,true,core.read(&w.worlds),nil)
+    lit:=sky_environment(e,SKY_DEFAULT,true,true,core.read(&w.worlds),nil,nil)
     testing.expect(t,lit.sky_atmosphere && !lit.use_background)
-    unlit:=sky_environment(e,SKY_DEFAULT,true,false,core.read(&w.worlds),nil)
+    unlit:=sky_environment(e,SKY_DEFAULT,true,false,core.read(&w.worlds),nil,nil)
     testing.expect(t,!unlit.sky_atmosphere && unlit.use_background && unlit.sky==SKY_DEFAULT.luminance)
+}
+
+// The background shows in place of the sky with use_background, unless a lit
+// atmosphere is what shows; the sky lights as without it. A background image
+// without use_background never shows: a problem that says how to fix it.
+@(test)
+a_sky_background_shows_with_use_background_and_reports_an_image_that_cannot :: proc(t:^testing.T) {
+    w:Render_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    e:=core.create(&w.entities)
+    painted:=base.Asset_Id{1,2}
+    Case::struct {name:string,sky:Sky,sunlit,shown,problem:bool}
+    cases:=[]Case{
+        {name="a color",sky={luminance={900,900,900},background={10,20,30},use_background=true},shown=true},
+        {name="an image",sky={luminance={900,900,900},background={400,400,400},background_image=painted,use_background=true},shown=true},
+        {name="an image under a lit atmosphere",sky={luminance={900,900,900},background_image=painted,use_background=true,atmosphere=true},sunlit=true},
+        {name="an image under an unlit atmosphere",sky={luminance={900,900,900},background_image=painted,use_background=true,atmosphere=true},shown=true},
+        {name="an image without use_background",sky={luminance={900,900,900},background_image=painted},problem=true},
+    }
+    for c in cases {
+        problems:core.Problems
+        environment:=sky_environment(e,c.sky,true,c.sunlit,core.read(&w.worlds),nil,&problems)
+        testing.expectf(t,environment.use_background==c.shown,"%s: the background shows: %v",c.name,environment.use_background)
+        testing.expectf(t,environment.sky==c.sky.luminance && environment.background==c.sky.background,"%s: the sky lights as without a background",c.name)
+        testing.expectf(t,(core.problem_find(&problems,e,"render.sky_background")!=nil)==c.problem,"%s: a problem: %d",c.name,problems.count)
+    }
 }
 
 // Turning a sky on writes only how it arrives: what drives its change, its

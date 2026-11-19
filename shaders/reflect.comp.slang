@@ -2,8 +2,6 @@
 // The camera looks along its rays: they show a relative emission (hit_emission).
 #define MIRAI_HITS_SHOW_RELATIVE_EMISSION 1
 //! variant hw MIRAI_HW_RT=1
-// color: with colored shadows, the rays cross glass as the mean of its instance (trace.slang).
-//! constant color MIRAI_GLASS_MEANS
 // unlayered: while no instance of the scene has layers (gbuffer.slang, scene.slang).
 //! constant unlayered MIRAI_GBUFFER_NO_LAYERS
 #define MIRAI_MATERIAL_NO_LAYERS MIRAI_GBUFFER_NO_LAYERS
@@ -22,12 +20,11 @@
 // same: what a frame shows depends on that frame alone (reflect_resolve.comp).
 //
 // The lights of a hit take their shadows from the maps of the view where these
-// hold it, and the glass on the way from the tint the maps keep of it; the
-// others trace their shadow rays.
+// hold it; the others trace their shadow rays.
 //
 // A reflection sharp enough for it to show (params.detail_below) also has the
 // glass its ray crosses, as the color filter it is, and the gloss of what it
-// finds; the others, the mean filter of that glass.
+// finds; the others go through that glass.
 //
 // A hit on a material with a program waits for it (points.slang): the cell
 // keeps what the glass on the way leaves and how far the hit is, and the
@@ -37,10 +34,8 @@
 // It reports the levels it samples of each texture (texture_feedback in scene.slang).
 #define MIRAI_TEXTURE_FEEDBACK
 #define POINTS_SLOT SLOT_POINTS
-#define MIRAI_DEFER_FILTERS
 #define MIRAI_LIGHT_MAPS
 #define SUN_SHADOW_SLOT SLOT_PASS5
-#define SHADOW_TINT_SLOT SLOT_PASS7
 #define SHADOW_DATA_SLOT SLOT_PASS8
 #include "lighting.slang"
 #include "glass.slang"
@@ -168,7 +163,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         Material medium = (Material)0;
         if (inside) {
             Instance solid = scene_instance(params.medium - 1u);
-            medium = material_row(material_of(solid, 0u), solid.material_values);
+            medium = material_row(material_of(instance_row(params.medium - 1u), solid, 0u), solid.material_values);
             reach = min(reach, material_reach(medium, REFLECT_MEDIUM_CUT));
         }
         Ray_Path path;
@@ -181,21 +176,19 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
             solid = material_absorption(medium, distance);
             glow = solid_scatter(medium, params.medium - 1u, origin, dir, distance, SOLID_TOP_UNKNOWN);
         }
-        // The glass the ray crosses on its way: with its detail in a sharp
-        // reflection, up to the gate of an extension it leaves through, and as its
-        // mean in the others and in one reflected inside the solid the camera is
-        // in, whose way stays in the solid up to what it meets.
+        // The glass the ray crosses on its way, with its detail, in a sharp
+        // reflection, up to the gate of an extension it leaves through; not in
+        // the others nor in one reflected inside the solid the camera is in,
+        // whose way stays in the solid up to what it meets.
         bool filtered = detailed && !inside && (frame.flags & FRAME_FLAG_GLASS) != 0u;
+        through = solid;
         if (filtered) {
             filters_begin();
-            through = trace_glass_filter(origin, dir, path.gate >= 0.0 ? path.gate : distance);
-        } else {
-            through = path.glass;
+            through *= trace_glass_filter(origin, dir, path.gate >= 0.0 ? path.gate : distance);
         }
-        through *= solid;
         uint owner = uint(cell.x) | (uint(cell.y) << 16u);
         if (hit.instance == INVALID) {
-            float3 sky = ended ? float3(0.0) : sky_radiance(path.direction, roughness);
+            float3 sky = ended ? float3(0.0) : sky_reflected(path.direction, roughness);
             if (filtered) filters_weigh(sky);
             if (filter_chain != INVALID && head_append(point_head(INVALID, filter_chain, owner))) {
                 out_radiance[cell] = float4(finite_or_zero(sky * through + glow), distance);

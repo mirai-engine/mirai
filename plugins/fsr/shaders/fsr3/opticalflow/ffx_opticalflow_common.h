@@ -66,20 +66,13 @@ FfxUInt32 Sad(FfxUInt32 a, FfxUInt32 b)
 
 FfxUInt32x4 QSad(FfxUInt32 a0, FfxUInt32 a1, FfxUInt32 b)
 {
-    FfxUInt32x4 sad;
-    sad.x = Sad(a0, b);
-
-    a0 = (a0 >> 8) | ((a1 & 0xffu) << 24);
-    a1 >>= 8;
-    sad.y = Sad(a0, b);
-
-    a0 = (a0 >> 8) | ((a1 & 0xffu) << 24);
-    a1 >>= 8;
-    sad.z = Sad(a0, b);
-
-    a0 = (a0 >> 8) | ((a1 & 0xffu) << 24);
-    sad.w = Sad(a0, b);
-    return sad;
+    // Mirai: the same four sums with each byte unpacked once, instead of the two words shifted
+    // and unpacked again for each sum.
+    FfxInt32x4 q = FfxInt32x4(FfxUInt32x4(b, b >> 8, b >> 16, b >> 24) & 0xffu);
+    FfxInt32x4 lo = FfxInt32x4(FfxUInt32x4(a0, a0 >> 8, a0 >> 16, a0 >> 24) & 0xffu);
+    FfxInt32x3 hi = FfxInt32x3(FfxUInt32x3(a1, a1 >> 8, a1 >> 16) & 0xffu);
+    FfxInt32x4 sad = abs(lo - q.x) + abs(FfxInt32x4(lo.yzw, hi.x) - q.y) + abs(FfxInt32x4(lo.zw, hi.xy) - q.z) + abs(FfxInt32x4(lo.w, hi) - q.w);
+    return FfxUInt32x4(sad);
 }
 
 #endif //!defined(FFX_OPTICALFLOW_COMMON_H)

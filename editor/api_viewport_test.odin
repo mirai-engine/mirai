@@ -26,7 +26,7 @@ view_viewport_returns_the_requested_message_snapshot_without_recapturing :: proc
     requests:=[2]string{"12-0","12-2"}
     for request,index in requests {
         folder:=project.path(root,fmt.tprintf(".mirai/ai/%s",request),allocator=context.temp_allocator)
-        testing.expect(t,os.make_directory_all(folder)==nil)
+        testing.expect(t,base.make_directory_all(folder)==nil)
         testing.expect(t,os.write_entire_file(project.path(folder,AI_FILE_IMAGE,allocator=context.temp_allocator),saved[index])==nil)
     }
     s:=Session{project_root=root}

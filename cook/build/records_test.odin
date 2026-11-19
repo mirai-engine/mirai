@@ -26,7 +26,7 @@ records_fixture :: proc(t:^testing.T,f:^Records_Fixture,game_source:string,edito
     f.assets=project.path(root,"assets",allocator=context.temp_allocator)
     folders:=[]string{project.path(engine,"core",allocator=context.temp_allocator),f.game,project.path(root,"editor",allocator=context.temp_allocator),f.assets}
     for path in folders {
-        if !testing.expect(t,os.make_directory_all(path)==nil) {return false}
+        if !testing.expect(t,base.make_directory_all(path)==nil) {return false}
     }
     core_source:=`package core
 Record :: struct($T:typeid) {table:[2]u64,row:u64}

@@ -65,12 +65,13 @@ Sky_Look :: struct {
     atmosphere:bool,                  // the air of the sky lit by the sun, as Sky.atmosphere
 }
 
-@(component,single,replicated,description="The light of the sky and what shows behind the scene. Its image turns with the entity. The world uses one at a time: turning one on turns off the one that was on; without one, no light comes from the sky and the background is black.")
+@(component,single,replicated,description="The light of the sky and what shows behind the scene. Its images turn with the entity. With use_background the camera, mirrors and glass see the background while the sky lights the scene; a lit atmosphere shows itself instead. The world uses one at a time: turning one on turns off the one that was on; without one, no light comes from the sky and the background is black.")
 Sky :: struct {
     luminance:[3]f32 `mirai:"color,section=Light"`, // nits; with an image, what multiplies its values
     image:base.Asset_Id,              // the whole sky, twice as wide as tall, its horizon across its middle; none: a gradient of luminance
-    background:[3]f32 `mirai:"color,section=Background"`, // the luminance behind the scene, nits
-    use_background:bool,
+    background:[3]f32 `mirai:"color,section=Background"`, // nits; with an image, what multiplies its values
+    background_image:base.Asset_Id,   // what shows behind in place of the sky, as image is; none: background alone
+    use_background:bool,              // the camera and what reflects the sky see the background; the sky still lights the scene
     atmosphere:bool `mirai:"section=Light"`, // the air lit by the Sun, in place of luminance and image: the sky, the light of the sun and the haze of what is far follow its direction and its illuminance, so a day is turning the sun
     air:Air `mirai:"section=Air"`,           // of the atmosphere
     from:Sky_Look `mirai:"section=Change"`, // what a change on its way comes from
@@ -174,30 +175,38 @@ sky_look_now :: proc(sky:Sky) -> Sky_Look {
 }
 
 // What the renderer draws of the sky on: luminance, image and the turn of
-// its entity, mixed with what it arrives or changes from. Without one, black.
-sky_environment :: proc(e:core.Entity,sky:Sky,found,sunlit:bool,worlds:^core.Table(core.World_Transform,$A),a:^host.Assets) -> gpu.Environment {
+// its entity, mixed with what it arrives or changes from, and its background.
+// Without one, black. A background image without use_background would never
+// show: it is a problem, and the sky shows.
+sky_environment :: proc(e:core.Entity,sky:Sky,found,sunlit:bool,worlds:^core.Table(core.World_Transform,$A),a:^host.Assets,problems:^core.Problems) -> gpu.Environment {
     if !found {return {use_background=true}}
-    // The air shows only when lit, and then nothing shows behind it.
+    if sky.background_image!={} && !sky.use_background {
+        core.report(problems,e,"render.sky_background","the Sky has a background_image but not use_background, so the image never shows; turn use_background on, or clear background_image")
+    }
+    // The air shows only when lit, and then it is what is seen and reflected: no background stands for it.
     atmosphere:=sky.atmosphere && sunlit
     environment:=gpu.Environment{sky=sky.luminance,background=sky.background,use_background=sky.use_background && !atmosphere}
     if world,ok:=core.get(worlds,e);ok {environment.sky_orientation=world.rotation}
-    environment.sky_texture=sky_texture(a,sky.image)
+    environment.sky_texture=image_texture(a,sky.image)
+    if environment.use_background {environment.background_texture=image_texture(a,sky.background_image)}
     environment.sky_atmosphere=atmosphere
     environment.air=air_metres(sky.air)
     switch {
     case sky.arrival>0:
-        environment.sky_from,environment.sky_from_texture,environment.sky_from_weight=sky.arrival_from.luminance,sky_texture(a,sky.arrival_from.image),min(sky.arrival,1)
+        environment.sky_from,environment.sky_from_texture,environment.sky_from_weight=sky.arrival_from.luminance,image_texture(a,sky.arrival_from.image),min(sky.arrival,1)
         environment.sky_from_atmosphere=sky.arrival_from.atmosphere
     case sky.fade>0:
-        environment.sky_from,environment.sky_from_texture,environment.sky_from_weight=sky.from.luminance,sky_texture(a,sky.from.image),min(sky.fade,1)
+        environment.sky_from,environment.sky_from_texture,environment.sky_from_weight=sky.from.luminance,image_texture(a,sky.from.image),min(sky.fade,1)
         environment.sky_from_atmosphere=sky.from.atmosphere
     }
     return environment
 }
 
+// The texture of an image asset, loaded if it was not: 0 for none, for one
+// that does not load and without assets.
 @(private)
-sky_texture :: proc(a:^host.Assets,image:base.Asset_Id) -> gpu.Texture_Handle {
-    if image=={} {return 0}
+image_texture :: proc(a:^host.Assets,image:base.Asset_Id) -> gpu.Texture_Handle {
+    if image=={} || a==nil {return 0}
     if texture:=host.assets_texture_image(a,image);texture!=nil && !texture.failed {return texture.handle}
     return 0
 }

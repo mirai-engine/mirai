@@ -29,44 +29,26 @@
 #define min16int2 int2
 #define min16int3 int3
 #define min16int4 int4
-// Slang converts f32tof16 and f16tof32 through 16-bit types: the bits of a
-// half float in 32-bit integers instead, rounded to the nearest even.
+// Slang converts f32tof16 and f16tof32 through 16-bit types: the conversions
+// of the device between two floats and the halves in a 32-bit integer instead.
 #define f32tof16 mirai_f32tof16
 #define f16tof32 mirai_f16tof32
-uint mirai_f32tof16(float value) {
-    uint f = asuint(value);
-    uint sign = (f >> 16) & 0x8000u;
-    uint a = f & 0x7fffffffu;
-    if (a >= 0x7f800000u) return sign | (a > 0x7f800000u ? 0x7e00u : 0x7c00u);
-    if (a >= 0x477ff000u) return sign | 0x7c00u;
-    uint h, rest, halfway;
-    if (a < 0x38800000u) {
-        if (a < 0x33000000u) return sign;
-        uint shift = 126u - (a >> 23);
-        uint m = (a & 0x7fffffu) | 0x800000u;
-        h = m >> shift;
-        rest = m & ((1u << shift) - 1u);
-        halfway = 1u << (shift - 1u);
-    } else {
-        h = (a - 0x38000000u) >> 13;
-        rest = a & 0x1fffu;
-        halfway = 0x1000u;
-    }
-    if (rest > halfway || (rest == halfway && (h & 1u) != 0u)) h += 1u;
-    return sign | h;
+uint mirai_pack_half2(float2 value) {
+    return spirv_asm {
+        result:$$uint = OpExtInst glsl450 PackHalf2x16 $value
+    };
 }
-uint2 mirai_f32tof16(float2 value) {return uint2(mirai_f32tof16(value.x), mirai_f32tof16(value.y));}
-float mirai_f16tof32(uint value) {
-    uint sign = (value & 0x8000u) << 16;
-    uint e = (value >> 10) & 0x1fu;
-    uint m = value & 0x3ffu;
-    if (e == 0u) {
-        float small = float(m) * 5.9604644775390625e-8;
-        return sign != 0u ? -small : small;
-    }
-    if (e == 31u) return asfloat(sign | 0x7f800000u | (m << 13));
-    return asfloat(sign | ((e + 112u) << 23) | (m << 13));
+float2 mirai_unpack_half2(uint halves) {
+    return spirv_asm {
+        result:$$float2 = OpExtInst glsl450 UnpackHalf2x16 $halves
+    };
 }
-float2 mirai_f16tof32(uint2 value) {return float2(mirai_f16tof32(value.x), mirai_f16tof32(value.y));}
+uint mirai_f32tof16(float value) {return mirai_pack_half2(float2(value, 0));}
+uint2 mirai_f32tof16(float2 value) {
+    uint halves = mirai_pack_half2(value);
+    return uint2(halves & 0xffffu, halves >> 16);
+}
+float mirai_f16tof32(uint value) {return mirai_unpack_half2(value & 0xffffu).x;}
+float2 mirai_f16tof32(uint2 value) {return mirai_unpack_half2((value.x & 0xffffu) | (value.y << 16));}
 
 #endif

@@ -14,9 +14,10 @@ import "mirai:render/abi"
 // not every page (asset.Mesh_Info.root_page) keeps its root in its block of
 // the vertex pool and the others out of it: their entries start GPU_NONE. The renderer
 // keeps its pages and their compressed blocks (Mesh_Stream), and a region of
-// the vertex pool of Settings.page_pool_bytes, reserved once when the first
-// such mesh comes, holds the pages the views ask for in slots of
-// PAGE_SLOT_WORDS words. The CPU copy of a slot is the decoded block of its
+// the vertex pool, made when the first such mesh comes, holds the pages the
+// views ask for in slots of PAGE_SLOT_WORDS words. It grows to what the views
+// ask for, within Settings.page_pool_bytes and the pages out of the root of
+// the streamed meshes. The CPU copy of a slot is the decoded block of its
 // page, which the publication uploads as any other range.
 //
 // The cull (cull_clusters.comp) asks for the page of the children of a
@@ -46,6 +47,8 @@ PAGE_SHORT_FRAMES :: 120
 PAGE_SLOT_NONE :: max(u32)
 // The most slots a region takes: its words stay within the u32 words of the pool.
 PAGE_SLOTS_MAX :: 16384
+// The slots of a new region at most: a frame whose pages find no slot grows it.
+PAGE_SLOTS_START :: 64
 
 // A page the cull asks for: the mesh, the page, the most pixels the error of a
 // cluster drawn in place of its children spans, and its key in the table of
@@ -105,7 +108,9 @@ Page_Load :: struct {
 Pages_State :: struct {
 	region:           u32, // the first word of the slots in the vertex pool
 	slot_count:       u32, // 0: no region
-	tried, refused:   bool, // the region was asked for, and the GPU had no memory for it
+	refused:          bool, // the GPU had no memory for the region or for its growth: it grows no more
+	pages_out:        u32, // out of the root, of the streamed meshes: the most slots they take
+	short:            u32, // pages that found no slot since the region last grew for them
 	slots:            []Page_Slot,
 	free:             [dynamic]u32,
 	requests:         [dynamic]Page_Request,
@@ -148,47 +153,110 @@ page_parents_resident :: proc "contextless" (stream: ^Mesh_Stream, page: u32) ->
 	return true
 }
 
-// The region of the slots, reserved once, and the tables and GPU buffers of
-// the streaming. False without it: then streamed meshes keep their root alone.
+// The region of the slots, made at the first streamed mesh with room for
+// PAGE_SLOTS_START of its pages at most (pages: those out of its root), and
+// the tables and GPU buffers of the streaming. False without it: then
+// streamed meshes keep their root alone.
 @(private)
-pages_region_ensure :: proc(r: ^Renderer) -> bool {
+pages_region_ensure :: proc(r: ^Renderer, pages: u32) -> bool {
+	st := &r.scene.pages
+	if st.slot_count > 0 || st.refused {return st.slot_count > 0}
+	return pages_region_grow(r, min(pages_slots_most(r, pages), PAGE_SLOTS_START))
+}
+
+// The most slots the region grows to: those of Settings.page_pool_bytes, and
+// no more than the pages out of the root of the streamed meshes, with more of
+// one that comes.
+@(private)
+pages_slots_most :: proc "contextless" (r: ^Renderer, more: u32 = 0) -> u32 {
+	return u32(min(r.settings.page_pool_bytes / (PAGE_SLOT_WORDS * 4), PAGE_SLOTS_MAX, u64(r.scene.pages.pages_out) + u64(more)))
+}
+
+// Between frames, after one whose pages found no slot: the region grows to a
+// power of two that holds them too, within pages_slots_most.
+@(private)
+pages_region_need :: proc(r: ^Renderer) {
+	st := &r.scene.pages
+	short := st.short
+	st.short = 0
+	if short == 0 || st.slot_count == 0 || st.refused {return}
+	most := pages_slots_most(r)
+	slots := st.slot_count
+	for slots < most && slots < st.slot_count + short {slots *= 2}
+	pages_region_grow(r, min(slots, most))
+}
+
+// The region with room for slots pages in place of the one there is: a range
+// of the vertex pool where pool_take finds one, into which the pages in slots
+// move with their entries, and the range before goes free. The other
+// geometry stays where it is. A load, or the frame after one whose pages
+// found no slot: false without memory, and the region stays as it was and
+// grows no more.
+@(private)
+pages_region_grow :: proc(r: ^Renderer, slots: u32) -> bool {
 	s := &r.scene
 	st := &s.pages
-	if st.tried {return st.slot_count > 0}
-	st.tried = true
-	slots := u32(min(r.settings.page_pool_bytes / (PAGE_SLOT_WORDS * 4), PAGE_SLOTS_MAX))
-	if slots == 0 {return false}
-	words := int(slots) * PAGE_SLOT_WORDS
+	old := st.slot_count
+	if slots <= old {return old > 0}
 	a := r.allocator
-	ok := false
+	words := slots * PAGE_SLOT_WORDS
+	grown: []Page_Slot
+	stamps: rhi.Buffer
+	readbacks: [rhi.MAX_FRAMES_IN_FLIGHT]rhi.Buffer
+	region: u32
+	taken, ok := false, false
 	defer if !ok {
-		pages_buffers_destroy(r)
-		delete(st.slots, a);delete(st.free);delete(st.requests);delete(st.victims)
-		st.slots, st.free, st.requests, st.victims = nil, nil, nil, nil
+		delete(grown, a)
+		if d := r.device; d != nil {
+			if stamps != 0 {rhi.buffer_destroy(d, stamps)}
+			for b in readbacks {if b != 0 {rhi.buffer_destroy(d, b)}}
+		}
+		if taken {pool_release(&s.vertices, &s.pool_free[.Vertex], region, words)}
+		if old == 0 {pages_buffers_destroy(r)}
 		st.refused = true
 	}
-	if !pool_room(r, .Vertex, words) {return false}
 	error: mem.Allocator_Error
-	if st.slots, error = make([]Page_Slot, slots, a); error != nil {return false}
-	if st.free, error = make([dynamic]u32, 0, slots, a); error != nil {return false}
-	if st.requests, error = make([dynamic]Page_Request, 0, PAGE_REQUEST_START, a); error != nil {return false}
-	if st.victims, error = make([dynamic]Page_Victim, 0, slots, a); error != nil {return false}
+	if grown, error = make([]Page_Slot, slots, a); error != nil {return false}
+	if st.free.allocator.procedure == nil {st.free.allocator = a}
+	if st.victims.allocator.procedure == nil {st.victims.allocator = a}
+	if st.requests.allocator.procedure == nil {st.requests.allocator = a}
+	if reserve(&st.free, int(slots)) != nil || reserve(&st.victims, int(slots)) != nil || reserve(&st.requests, PAGE_REQUEST_START) != nil {return false}
 	if d := r.device; d != nil {
-		st.stamp_buffer = rhi.buffer_create(d, {size = u64(slots) * 4, usage = {.Storage}, name = "page stamps"})
-		if st.stamp_buffer == 0 || !page_table_make(r, PAGE_REQUEST_START) {return false}
-		for &b in st.stamp_readback {
+		if st.request_capacity == 0 && !page_table_make(r, PAGE_REQUEST_START) {return false}
+		stamps = rhi.buffer_create(d, {size = u64(slots) * 4, usage = {.Storage}, name = "page stamps"})
+		if stamps == 0 {return false}
+		for &b in readbacks {
 			b = rhi.buffer_create(d, {size = u64(slots) * 4, memory = .Readback, name = "page stamps readback"})
 			if b == 0 {return false}
 		}
 	}
-	at := len(s.vertices)
 	// A slot holds nothing until a page loads into it.
-	if !pool_reserve(&s.vertices, words) || non_zero_resize(&s.vertices, at + words) != nil {return false}
-	st.region, st.slot_count = u32(at), slots
-	for &slot in st.slots {slot = {mesh = GPU_NONE}}
-	for k := slots; k > 0; k -= 1 {append(&st.free, k - 1)}
+	if region, taken = pool_take(&s.vertices, &s.pool_free[.Vertex], words); !taken || !pool_room(r, .Vertex, 0) {return false}
+	for held, k in st.slots {
+		grown[k] = held
+		if held.mesh == GPU_NONE {continue}
+		m := s.meshes[held.mesh]
+		size := m.stream.pages[held.page].words
+		base := region + u32(k) * PAGE_SLOT_WORDS
+		copy(s.vertices[base:][:size], s.vertices[st.region + u32(k) * PAGE_SLOT_WORDS:][:size])
+		range_add(&s.pool_dirty[.Vertex], {base, size})
+		word := m.page_word + held.page * PAGE_ENTRY_WORDS
+		s.indices[word] = base
+		range_add(&s.pool_dirty[.Index], {word, 1})
+	}
+	if old > 0 {pool_release(&s.vertices, &s.pool_free[.Vertex], st.region, old * PAGE_SLOT_WORDS)}
+	for &slot in grown[old:] {slot = {mesh = GPU_NONE}}
+	for k := slots; k > old; k -= 1 {append(&st.free, k - 1)}
+	delete(st.slots, a)
+	st.slots, st.region, st.slot_count = grown, region, slots
+	if d := r.device; d != nil {
+		if st.stamp_buffer != 0 {rhi.buffer_destroy(d, st.stamp_buffer)}
+		for b in st.stamp_readback {if b != 0 {rhi.buffer_destroy(d, b)}}
+		st.stamp_buffer, st.stamp_readback = stamps, readbacks
+	}
 	st.stamps_clear = true
 	st.readback_frame = {}
+	st.victims_sorted = false
 	s.geometry_dirty = true
 	ok = true
 	return true
@@ -295,7 +363,8 @@ mesh_stream_build :: proc(g: asset.Mesh_Geometry, rays: ^Mesh_Rays, a: mem.Alloc
 @(private)
 mesh_stream_start :: proc(r: ^Renderer, stream: ^Mesh_Stream) -> bool {
 	st := &r.scene.pages
-	pages_region_ensure(r)
+	pages_region_ensure(r, stream.root)
+	st.pages_out += stream.root
 	if st.scratch.words == nil {
 		words, error := make([]u32, asset.MESH_PAGE_WORDS, r.allocator)
 		if error != nil {return false}
@@ -339,6 +408,7 @@ mesh_stream_free :: proc(stream: ^Mesh_Stream) {
 @(private)
 mesh_stream_remove :: proc(r: ^Renderer, handle: u32, stream: ^Mesh_Stream) {
 	st := &r.scene.pages
+	st.pages_out -= min(st.pages_out, stream.root)
 	for slot in stream.slots[:stream.root] {
 		if slot == PAGE_SLOT_NONE {continue}
 		st.slots[slot] = {mesh = GPU_NONE}
@@ -360,10 +430,10 @@ page_entry_write :: proc(s: ^Scene_State, m: Mesh_Record, page, base: u32) {
 	low, high := Vec3(max(f32)), Vec3(-max(f32))
 	for index := m.first_instance; index >= 0; index = s.instance_next[index] {
 		inst := s.instances[index]
-		if inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED) != 0 {continue}
+		if !instance_casts(inst) {continue}
 		low, high = linalg.min(low, inst.bounds_min.xyz), linalg.max(high, inst.bounds_max.xyz)
 	}
-	occluder_add(&s.paged, OCCLUDERS_MANY, low, high)
+	occluder_add(&s.shadow_stale, OCCLUDERS_MANY, low, high)
 }
 
 // Whether a ray cut an instance traced within RAY_CUT_KEEP frames takes clusters of a page.
@@ -493,6 +563,7 @@ pages_load :: proc(r: ^Renderer, requests: []Page_Request) -> int {
 		slot, found := page_slot_take(r, stream, page)
 		if !found {
 			st.dropped += u32(len(wanted) - at)
+			st.short += u32(len(wanted) - at)
 			break
 		}
 		page_assign(r, stream, page, slot)
@@ -677,11 +748,15 @@ pages_stats :: proc(r: ^Renderer, s: ^Stats) {
 pages_problem :: proc(r: ^Renderer) -> string {
 	st := &r.scene.pages
 	MB :: f64(1 << 20)
-	if st.refused {
-		return fmt.bprintf(st.problem_buffer[:], "the GPU has no memory for the %.0f MB of page slots (Settings.page_pool_bytes): streamed meshes draw their root pages alone, coarse near the eye. A smaller page_pool_bytes fits", f64(r.settings.page_pool_bytes) / MB)
+	if st.refused && st.slot_count == 0 {
+		return fmt.bprintf(st.problem_buffer[:], "the GPU has no memory for the page slots: streamed meshes draw their root pages alone, coarse near the eye. Fewer sections loaded at once (Streaming_Settings) leave room")
 	}
 	if st.short_frames >= PAGE_SHORT_FRAMES {
-		return fmt.bprintf(st.problem_buffer[:], "the %d page slots (%.0f MB) are short of what the views ask for: %d pages waited in the last frame and meshes near the eye stay coarser. A larger Settings.page_pool_bytes, or a larger lod_error_pixels, avoids it", st.slot_count, f64(u64(st.slot_count) * PAGE_SLOT_WORDS * 4) / MB, st.dropped)
+		held := f64(u64(st.slot_count) * PAGE_SLOT_WORDS * 4) / MB
+		if st.refused {
+			return fmt.bprintf(st.problem_buffer[:], "the %d page slots (%.0f MB) are short of what the views ask for and the GPU has no memory to grow them: %d pages waited in the last frame and meshes near the eye stay coarser. A larger lod_error_pixels avoids it", st.slot_count, held, st.dropped)
+		}
+		return fmt.bprintf(st.problem_buffer[:], "the %d page slots (%.0f MB) are short of what the views ask for: %d pages waited in the last frame and meshes near the eye stay coarser. A larger Settings.page_pool_bytes, or a larger lod_error_pixels, avoids it", st.slot_count, held, st.dropped)
 	}
 	return ""
 }

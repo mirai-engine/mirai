@@ -18,7 +18,8 @@ TEST_LIST_USAGE :: "test <package> [file.odin...] --list [--no-gpu]"
 // names and by the files that declare them; neither is all of it. nothing:
 // there is no test of it to run, so it is not built. owner: the project it
 // belongs to; empty for a package of the engine.
-Test_Package :: struct {path,folder,owner:string,names,files:[dynamic]string,nothing:bool}
+// gpu: a test it runs reaches the device of the GPU tests.
+Test_Package :: struct {path,folder,owner:string,names,files:[dynamic]string,nothing,gpu:bool}
 
 // What compiling and running the tests took. turn: waiting for other
 // compilations. built, current: test executables compiled, and found as their
@@ -125,7 +126,18 @@ cmd_test :: proc(root:string,args:[]string) -> int {
         if p.nothing {continue}
         if len(packages)>1 {fmt.printfln("== %s",p.path)}
         options:=build.Test_Options{names=p.names[:],timeout=timeout,quiet=quiet}
-        lock,measuring:=test_measure_begin(root,p.path,benchmark,&options)
+        // The GPU first and the measurement after it: what holds the
+        // measurement never waits for room on the GPU, and while this waits
+        // for the measurement its turn says it is idle (workspace.measure_try).
+        turn:workspace.Lock
+        if p.gpu {
+            turned:bool
+            if turn,_,turned=gpu_turn(root,"",fmt.tprintf("test %s",p.path),limit=timeout,own=p.owner);!turned {
+                append(&failed,p.path)
+                continue
+            }
+        }
+        lock,measuring:=test_measure_begin(root,p.path,benchmark,p.gpu,&options)
         ran:=time.tick_now()
         ok:bool
         names:[]string
@@ -134,12 +146,14 @@ cmd_test :: proc(root:string,args:[]string) -> int {
         } else if test_build_say(p.path,builds[i]) {
             ok,names=test_execute(root,p.path,&builds[i],options)
         } else {
-            test_measure_end(&lock,measuring)
+            workspace.lock_release(&turn)
+            test_measure_end(&lock,measuring,p.path)
             append(&failed,p.path)
             continue
         }
         times.run+=time.tick_since(ran)
-        test_measure_end(&lock,measuring)
+        workspace.lock_release(&turn)
+        test_measure_end(&lock,measuring,p.path)
         // A run that ended badly without naming a failed test leaves the list of before.
         if ok || len(names)>0 {test_failed_save(test_executable(root,p),p.names[:],names)}
         if len(names)>0 {fmt.eprintfln("mirai test: to run only the ones that failed: mirai test %s --failed",p.path)}
@@ -179,25 +193,30 @@ test_executable :: proc(root:string,p:Test_Package) -> string {
 }
 
 // A benchmark is a measurement: it runs alone among the checkouts
-// (measure_lock), with this process part of it. Tests that are no benchmark
-// do not wait for one: while one runs they run at low priority.
+// (measure_lock), with this process part of it, and says what else loads
+// the GPU. Tests that are no benchmark do not take one: those that reach the
+// GPU (gpu) wait for the one that runs to end before they take their turn of
+// the GPU (gpu_turn), and a measurement waits for them; the others run at low
+// priority while it runs.
 @(private="file")
-test_measure_begin :: proc(root,path:string,benchmark:bool,options:^build.Test_Options) -> (lock:workspace.Lock,measuring:bool) {
+test_measure_begin :: proc(root,path:string,benchmark,gpu:bool,options:^build.Test_Options) -> (lock:workspace.Lock,measuring:bool) {
     if !benchmark || workspace.measuring() {
-        if measured,measurer:=workspace.measurement_running(root,context.temp_allocator);measured {
-            fmt.eprintfln("mirai test: a measurement is running (%s); the tests run at low priority",measurer!=""?measurer:"another process")
+        if measured,measurer:=workspace.measured(root,false,allocator=context.temp_allocator);measured==.Low && !gpu {
+            fmt.eprintfln("mirai test: a measurement is running (%s); the tests run at low priority",measurer)
             options.priority=.Low
         }
         return
     }
     lock=measure_lock(root,fmt.tprintf("test %s",path))
     _=os.set_env(workspace.MEASURE_ENV,fmt.tprintf("%d",os.get_pid()))
+    measure_load_say("test",fmt.tprintf("before the benchmark of %s",path))
     return lock,true
 }
 
 @(private="file")
-test_measure_end :: proc(lock:^workspace.Lock,measuring:bool) {
+test_measure_end :: proc(lock:^workspace.Lock,measuring:bool,path:string) {
     if !measuring {return}
+    measure_load_say("test",fmt.tprintf("after the benchmark of %s",path))
     os.unset_env(workspace.MEASURE_ENV)
     workspace.lock_release(lock)
 }
@@ -423,7 +442,7 @@ test_list :: proc(packages:[]Test_Package,no_gpu:bool) -> int {
 test_names_check :: proc(root:string,packages:[]Test_Package,failed_only,no_gpu:bool) -> bool {
     ok:=true
     for &p in packages {
-        declared:=test_declared(p.folder,device=no_gpu)
+        declared:=test_declared(p.folder,device=true)
         names:=make([dynamic]string,context.temp_allocator)
         for test in declared {
             if test.here {append(&names,test.name)}
@@ -476,6 +495,10 @@ test_names_check :: proc(root:string,packages:[]Test_Package,failed_only,no_gpu:
         if len(device)==0 || p.nothing {continue}
         asked:=make(map[string]bool,context.temp_allocator)
         for name in p.names {asked[build.test_bare(name)]=true}
+        if !no_gpu {
+            for test in declared {p.gpu||=test.here && test.device && (len(asked)==0 || test.name in asked)}
+            continue
+        }
         kept:=make([dynamic]string)
         left:=0
         for test in declared {

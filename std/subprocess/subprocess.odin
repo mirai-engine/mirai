@@ -7,11 +7,12 @@ import "core:strings"
 import "core:time"
 
 // Child processes that open no window and inherit no handle of this process
-// but their streams. A child and every process it starts end as one tree:
-// with this process however it ends, on terminate and release, and once wait
-// sees the child exit. Only a detached child leaves it. Windows holds the tree
-// in a job object that kills it as its handle closes; POSIX in a process group
-// with a watcher that kills the group once this process is gone.
+// but their streams and those named in inherit. A child and every process it
+// starts end as one tree: with this process however it ends, on terminate and
+// release, and once wait sees the child exit. Only a detached child leaves
+// it. Windows holds the tree in a job object that kills it as its handle
+// closes; POSIX in a process group with a watcher that kills the group once
+// this process is gone.
 
 // A child and its tree. The zero value is no process. wait, terminate and
 // release take it by pointer: it keeps the exit once wait saw it.
@@ -22,6 +23,7 @@ Process :: struct {
     // The ends of the pipes this process holds, nil for a stream that is not one.
     stdin,stdout,stderr:^os.File,
     state:os.Process_State, // the exit, once state.exited
+    peak:i64, // once state.exited, the most memory the child held at once (memory_held); 0 when the system did not say
 }
 
 // Pipes that start gives back: stdout and stderr each, or both through
@@ -47,9 +49,12 @@ Priority :: enum u8 {Normal,Low}
 // it a pipe. The error is .Invalid_Command for an empty command or program,
 // an argument with a NUL byte or an env entry without a name. env replaces
 // the environment of this process; of a name given twice, the last one wins.
-start :: proc(desc:os.Process_Desc,limits:=Limits{},pipes:=Pipes.None) -> (process:Process,error:os.Error) {
+// inherit: handles of this process (file descriptors on POSIX) the child
+// holds too, with the same values, so that what they lock stays locked while
+// it runs; no other child gets them.
+start :: proc(desc:os.Process_Desc,limits:=Limits{},pipes:=Pipes.None,inherit:=[]uintptr{}) -> (process:Process,error:os.Error) {
     if !desc_valid(desc.command,desc.env) {return {},.Invalid_Command}
-    if pipes==.None {return _start(desc,limits)}
+    if pipes==.None {return _start(desc,limits,inherit)}
     // The ends the child gets close here once it has them.
     child:=desc
     theirs:[3]^os.File
@@ -69,18 +74,21 @@ start :: proc(desc:os.Process_Desc,limits:=Limits{},pipes:=Pipes.None) -> (proce
         process.stderr,child.stderr=os.pipe() or_return
         theirs[2]=child.stderr
     }
-    started:=_start(child,limits) or_return
+    started:=_start(child,limits,inherit) or_return
     started.stdin,started.stdout,started.stderr=process.stdin,process.stdout,process.stderr
     return started,nil
 }
 
-// Like os.process_wait, and the state stays in process. Once the child
-// exited, what it left running is ended. A timeout that passes is the error
-// .Timeout.
+// Like os.process_wait, and the state stays in process, with the peak of its
+// memory. Once the child exited, what it left running is ended. A timeout
+// that passes is the error .Timeout.
 wait :: proc(process:^Process,timeout:=os.TIMEOUT_INFINITE) -> (state:os.Process_State,error:os.Error) {
     if process.pid==0 {return {},.Not_Exist}
     if process.state.exited {return process.state,nil}
-    state=os.process_wait({pid=process.pid,handle=process.handle},timeout) or_return
+    // The exit is taken only after its peak is read: the system forgets it then.
+    _exited(process,timeout) or_return
+    process.peak=_exit_peak(process)
+    state=os.process_wait({pid=process.pid,handle=process.handle},0) or_return
     process.state,process.handle=state,0
     _tree_close(process)
     return
@@ -111,7 +119,7 @@ read :: proc(process:^Process,stream:Stream,buffer:[]byte) -> (count:int,open:bo
     file:=&process.stdout if stream==.Stdout else &process.stderr
     if file^==nil {return 0,false}
     for count<len(buffer) {
-        ready,error:=os.pipe_has_data(file^)
+        ready,error:=pipe_has_data(file^)
         if error==nil && !ready {return count,true}
         read:=0
         if error==nil {read,error=os.read(file^,buffer[count:])}
@@ -123,6 +131,19 @@ read :: proc(process:^Process,stream:Stream,buffer:[]byte) -> (count:int,open:bo
         count+=read
     }
     return count,true
+}
+
+// Like os.pipe_has_data: whether reading the pipe returns at once with data,
+// and .Broken_Pipe once its write end is closed and nothing is left to read.
+pipe_has_data :: proc(file:^os.File) -> (ready:bool,error:os.Error) {
+    ready,error=os.pipe_has_data(file)
+    when ODIN_OS==.Darwin {
+        // pipe_hup_with_in: macOS polls a pipe whose write end is closed as
+        // readable also when it is empty, and os.pipe_has_data looks at that
+        // before the hang-up (not yet reported upstream).
+        if ready && pipe_unread(file)==0 {return false,.Broken_Pipe}
+    }
+    return
 }
 
 // The pipe never gets more than this in one write: on Windows it holds 4 KB
@@ -165,6 +186,18 @@ process_alive :: proc(pid:int) -> bool {
     if wait_error==os.General_Error.Timeout {process_close(process)}
     return !state.exited
 }
+
+// The memory the process with that pid holds now and the most it has held at
+// once, in bytes: its working set on Windows, its resident set on Linux and
+// its footprint on macOS. ok is false when it is gone or the system does not
+// say.
+memory_held :: proc(pid:int) -> (now,peak:i64,ok:bool) {
+    if pid<=0 {return}
+    return _memory_held(pid)
+}
+
+// The processor time this process has used, in user and in kernel mode.
+cpu_used :: proc() -> time.Duration {return _cpu_used()}
 
 // Runs the command to its end and returns what it wrote to stdout and to
 // stderr, in allocator, also when error is not nil. The stdout and stderr
@@ -210,10 +243,17 @@ exec :: proc(desc:os.Process_Desc,allocator:runtime.Allocator,limits:=Limits{},e
 // Starts a child that outlives this process, out of any tree: on POSIX in a
 // session of its own, on Windows with a console of its own without a window
 // and out of the job of this process when the job allows it. It holds no
-// other handle of this process.
-detached :: proc(desc:os.Process_Desc) -> (process:Process,error:os.Error) {
+// other handle of this process but those of inherit, as start does.
+detached :: proc(desc:os.Process_Desc,inherit:=[]uintptr{}) -> (process:Process,error:os.Error) {
     if !desc_valid(desc.command,desc.env) {return {},.Invalid_Command}
-    return _detached(desc)
+    return _detached(desc,inherit)
+}
+
+// Keeps a handle this process inherited (start, detached) from the children
+// it starts but those that name it in inherit. false when it is no handle of
+// this process.
+handle_keep :: proc(handle:uintptr) -> bool {
+    return _handle_keep(handle)
 }
 
 @(private)

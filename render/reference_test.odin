@@ -64,18 +64,15 @@ reference_lights_record :: proc(s: ^Stage_Pass, user: rawptr) {
 	r, cmd, t := p.r, p.cmd, p.t
 	pipeline := stage_pipeline(r, {stage = .Custom, shader = "reference_lights", name = "reference lights"})
 	if pipeline == 0 {return}
-	Params :: struct {sun_radius: f32, pad0, pad1, pad2, resume, pad3, pad4, pad5: u32}
+	Params :: struct {sun_radius: f32, pad0, pad1, pad2: u32}
 	params := Params{sun_radius = r.settings.sun_radius}
-	batch := shadows_colored(r) && points_begin(p, filters = true)
 	rhi.cmd_bind_pipeline(cmd, pipeline)
 	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.albedo)
-	points_bind(p)
 	rhi.cmd_dispatch(cmd, groups(t.width * t.height, REFERENCE_LIGHTS_GROUP))
-	points_rounds(p, batch, pipeline, &params, 1)
 }
 
 @(private = "file")

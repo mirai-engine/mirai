@@ -68,7 +68,7 @@ Displaced :: struct {
 
 // terrain_displace.comp.slang
 @(private)
-Gpu_Displace_Layer :: struct {color:u32,tiling,blend,displacement:f32}
+Gpu_Displace_Layer :: struct {color:u32,scale,height_blend,displacement:f32}
 @(private)
 Gpu_Displace :: struct {
     written,rest,count,mesh:u32,
@@ -228,7 +228,7 @@ terrain_displace :: proc(
         mesh,ok:=chunk_publish(assets,&d.building,false)
         if !ok {continue}
         m:=&d.building.maps
-        control,made:=host.assets_texture_generate(assets,mem.slice_to_bytes(m.control[:]),m.size.x,m.size.y,false,"terrain displaced control")
+        control,made:=host.assets_texture_generate(assets,mem.slice_to_bytes(m.control[:]),m.size.x,m.size.y,false,"terrain displaced control",texels=true)
         if !made {host.assets_mesh_release(assets,mesh);continue}
         item.mesh,item.control,item.size,item.change,item.built,item.fine=mesh,control,m.size,entry.versions[index],item.detail,item.want
     }
@@ -337,7 +337,7 @@ displace_params :: proc(a:^host.Assets,s:^Source,item:^Displaced,finest:u8,ancho
             maps:=asset.material_maps(&material.info.maps)
             if texture:=host.assets_texture(a,maps[.Base_Color].texture);texture!=nil && !texture.failed && texture.handle!=0 {color=render.texture_index(texture.handle)}
         }
-        p.layers[i]={color,layer.tiling,layer.height_blend,layer.displacement}
+        p.layers[i]={color,layer_scale(layer.tiling),layer.height_blend,layer.displacement}
     }
     return
 }

@@ -4,7 +4,8 @@ import "mirai:rhi"
 import "mirai:render/abi"
 
 // The modes of inspection of a view: a buffer or a part of the light shown
-// instead of the lit image, without exposure or display transform. Composite
+// instead of the lit image, without display transform; the light, exposed as
+// the view is. Composite
 // shows those it has at hand; debug_views.comp, after it, the buffers of other
 // passes. An extension shows one of its own in the Inspect stage of the view.
 

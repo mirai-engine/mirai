@@ -199,7 +199,7 @@ normals_texture_coordinates_and_materials_of_usd_meshes :: proc(t:^testing.T) {
     if wall==nil || leaf==nil || pane==nil || plain==nil {return}
     for node in model.nodes {testing.expect(t,node.name!="Paint" && node.name!="Surface" && node.name!="Color","materials and their shaders are not nodes")}
     testing.expect_value(t,len(model.materials),3)
-    testing.expect_value(t,len(model.warnings),0)
+    testing.expectf(t,len(model.warnings)==1 && contains(model.warnings[0],"Glass"),"only the tinted glass is told it filters by its color: %v",model.warnings)
     directory:=model.source[:strings.last_index_byte(model.source,'/')]
 
     testing.expect_value(t,triangle_count(wall),2)
@@ -234,6 +234,7 @@ normals_texture_coordinates_and_materials_of_usd_meshes :: proc(t:^testing.T) {
     cutout:=&model.materials[leaf.slots[0].material]
     testing.expect_value(t,cutout.name,"Leaf")
     testing.expect(t,cutout.info.alpha_mode==.Mask && abs(cutout.info.alpha_cutoff-0.3)<1e-5 && cutout.info.opacity==1,"opacityThreshold cuts by the alpha of the diffuse image")
+    testing.expect(t,cutout.info.two_sided && !paint.info.two_sided,"doubleSided of a mesh makes its material two-sided; a mesh that says nothing leaves it one-sided")
     leaf_color,packed:=cutout.images[.Base_Color],cutout.images[.Metallic_Roughness]
     testing.expect(t,leaf_color>=0 && packed>=0 && cutout.images[.Occlusion]==packed && cutout.info.roughness==1 && cutout.info.metallic==1,"roughness in green and metallic in blue of one image are the packed map; occlusion in its red shares it")
     if leaf_color>=0 && packed>=0 {
@@ -251,7 +252,7 @@ normals_texture_coordinates_and_materials_of_usd_meshes :: proc(t:^testing.T) {
     glass:=&model.materials[pane.slots[0].material]
     testing.expect_value(t,glass.name,"Glass")
     testing.expect(t,close_to(glass.info.base_color,{0.2,0.4,0.6}),"an input connected to an input of its material takes that value")
-    testing.expect(t,glass.info.alpha_mode==.Blend && abs(glass.info.opacity-0.5)<1e-5,"an opacity below 1 blends")
+    testing.expect(t,glass.info.alpha_mode==.Blend && glass.info.opacity==1 && abs(glass.info.transmission-0.5)<1e-5,"an opacity below 1 in the transparent mode is glass that lets the rest through")
     testing.expect(t,abs(glass.info.roughness-0.5)<1e-5 && glass.info.metallic==0,"a separate roughness map is left out and the input keeps the default of UsdPreviewSurface")
     for image in glass.images {testing.expect(t,image<0)}
     for image in model.images {testing.expect(t,!contains(image.path,"glass_roughness"),"a map that is left out has no image")}
@@ -285,6 +286,7 @@ def Xform "A"
      displayName = "Metallic"
     )
     float inputs:opacity = 0.25
+    uniform token inputs:opacityMode = "presence"
     float inputs:opacityThreshold = 0
     float inputs:roughness = 0.7
     float inputs:roughness.connect = </A/Mat/Graph/Rough.outputs:g>
@@ -389,7 +391,7 @@ usd_material_networks_resolve_through_graphs_and_bindings :: proc(t:^testing.T) 
     packed,glow:=first.images[.Metallic_Roughness],first.images[.Emission]
     testing.expect(t,packed>=0 && strings.has_suffix(model.images[packed].path,"/maps/rough.png") && first.info.roughness==1 && abs(first.info.metallic-0.5)<1e-5,"roughness alone in the green of an image is the packed map, next to a constant metallic")
     testing.expect(t,glow>=0 && model.images[glow].srgb && first.info.emission=={1,1,1},"a textured emission leaves its factor at 1")
-    testing.expect(t,first.info.alpha_mode==.Blend && abs(first.info.opacity-0.25)<1e-5,"an opacityThreshold of 0 does not mask")
+    testing.expect(t,first.info.alpha_mode==.Blend && abs(first.info.opacity-0.25)<1e-5 && first.info.transmission==0,"an opacityThreshold of 0 does not mask, and in presence opacity is how much of the surface is there")
     second:=&model.materials[own.slots[0].material]
     testing.expect_value(t,second.name,"/B/Mat")
     testing.expect(t,abs(second.info.roughness-0.5)<1e-5 && second.info.metallic==0,"metallic and roughness in different images cannot be packed: both keep their defaults")

@@ -660,7 +660,7 @@ hostile_nav_input :: proc(h:^base.Hostile,vertices:^[dynamic]math.Vec3,indices:^
     case 1: append(indices,u32(len(vertices)+base.hostile_int(h,3)))
     case 2: if len(areas)>0 {pop(areas)} else {append(areas,1)}
     case 3: if len(areas)>0 {areas[base.hostile_int(h,len(areas))]=NAV_AREA_MAX+1}
-    case 4: if len(volumes)>0 {volumes[0].count=9+u8(base.hostile_int(h,200))}
+    case 4: if len(volumes)>0 {volumes[0].count=NAV_AREA_POINTS+1+u8(base.hostile_int(h,255-NAV_AREA_POINTS))}
     case 5: if len(volumes)>0 {volumes[0].area=NAV_AREA_MAX+1+u8(base.hostile_int(h,100))}
     }
     return {vertices=vertices[:],indices=indices[:],triangle_areas=areas[:],volumes=volumes[:]}

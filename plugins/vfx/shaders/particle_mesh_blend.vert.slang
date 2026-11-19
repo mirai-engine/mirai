@@ -35,13 +35,13 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     Stage_Output output = (Stage_Output)0;
     Particle_Emitter e = particle_emitters[params.emitter];
     Mesh mesh = meshes[params.mesh];
-    Cluster c = mesh_cluster(mesh, vertex_id / CLUSTER_DRAW_VERTICES);
-    uint corner = vertex_id % CLUSTER_DRAW_VERTICES;
-    if (corner >= cluster_triangle_count(c) * 3u || !cluster_resident(mesh, c)) {
+    // Indexed as particle_mesh.vert.
+    Cluster c = mesh_cluster(mesh, vertex_id >> DRAW_VERTEX_BITS);
+    if (!cluster_resident(mesh, c)) {
         output.position = float4(2.0, 2.0, 2.0, 1.0);
         return output;
     }
-    Mesh_Point v = cluster_point(mesh, c, cluster_corner(mesh, c, corner));
+    Mesh_Point v = cluster_point(mesh, c, vertex_id & ((1u << DRAW_VERTEX_BITS) - 1u));
     // The first instance of the draw is where the run of its mesh starts in the list.
     uint index = particle_drawn(params.emitter, instance_id);
     Particle p = particles[index];

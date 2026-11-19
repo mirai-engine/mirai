@@ -71,7 +71,7 @@ Action_Definition :: struct {
     name,clip:[64]u8 `mirai:"text"`,
     layer:[64]u8 `mirai:"text,optional"`, // the layer of the set it plays in; empty: the whole body
     root_motion:Root_Motion_Policy `mirai:"optional"`,
-    fade_in,fade_out:f32 `mirai:"optional,min=0,unit=s"`,
+    fade_in,fade_out:f32 `mirai:"optional,min=0,unit=s"`, // seconds the pose blends from the one shown when it starts and when it ends; 0 cuts
     weight:f32 `mirai:"optional,min=0,max=1"`,
     speed:f32 `mirai:"optional,min=0"`,
     priority:i16 `mirai:"optional"`,
@@ -287,7 +287,7 @@ stack_parameters :: proc(runtime:^Action_Runtime,characters:^Character_Assets,pl
 }
 
 // Whether the action named name plays on the entity, from the tick it is asked for until it ends or is
-// interrupted (not while it fades out): its time in its clip, in seconds, and the base.name_hash of its
+// interrupted: its time in its clip, in seconds, and the base.name_hash of its
 // section (0 without sections), as Animation_Event gives them.
 action_playing :: proc(runtime:core.Ref(Action_Runtime),entity:core.Entity,name:string) -> (time:f32,section:u64,ok:bool) {
     state:=action_state(runtime.ptr,entity);if state==nil || state.plan<0 || int(state.plan)>=len(runtime.plans) {return}
@@ -542,10 +542,11 @@ stack_asks :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animation,co
     plan:=action_plan(runtime,state.entity)
     count:=len(plan.profile.layers)+1 if plan!=nil && content!=nil else 0
     if count<int(state.stack) {for &layer in state.layers[count:state.stack] {layer={}}}
+    state.blend={}
     if count==0 && state.stack==0 {return}
     state.stack=u8(count);state.asked={}
     // The root motion of a layer counts from where its clip is now.
-    for &layer in state.layers[:state.stack] {layer.from,layer.carried=layer.fader.current.time,ROOT_DELTA_DEFAULT}
+    for &layer in state.layers[:state.stack] {layer.from,layer.carried=layer.time if layer.space!=0 else layer.player.time,ROOT_DELTA_DEFAULT}
     if plan==nil || content==nil {return}
     for &layer,i in plan.profile.layers {
         ask:=plan.layers[i]
@@ -585,11 +586,10 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
         silent:=len(events.items) if driven && (slot.drive_seek || slot.drive<slot.elapsed) else -1
         if !planned && !slot.finishing {action_end(runtime,active,&slot,true,playback,events,problems)}
         layer:=&state.layers[i]
-        // A finishing slot hands its layer back to what it plays by itself over the fade out of its
-        // action, whatever its actions asset has become, and its root motion fades out with it.
+        // A finishing slot hands its layer back to what it plays by itself, which blends from the
+        // action over its fade out whatever its actions asset has become.
         if slot.finishing {
-            state.asked[i].fade=slot.fade_out
-            if state.asked[i].clip==0 && state.asked[i].space==0 {state.asked[i].weight=0}
+            action_hand_back(state,i,&slot,slot.fade_out)
             continue
         }
         definition:=&profile.actions[slot.action]
@@ -626,8 +626,7 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
         if !valid {
             core.report(problems,state.entity,"animation.action_clip","action '%s' stopped: %s; fix the action with animation.action.set",base.text_get(definition.name[:]),cause)
             action_end(runtime,active,&slot,true,playback,events,problems)
-            state.asked[i].fade=definition.fade_out
-            if standing.clip==0 && standing.space==0 {state.asked[i].weight=0}
+            action_hand_back(state,i,&slot,definition.fade_out)
             continue
         }
         layer.root_motion,layer.body,layer.body_vertical=definition.root_motion,definition.body_move,definition.body_vertical
@@ -646,10 +645,11 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
             action_windows(runtime,active,&slot,content,handle,slot.time,slot.time,playback,events,problems,true)
         }
         if slot.starting || layer.clip!=asked.clip {
-            lib.fader_play(&layer.fader,handle,speed,definition.fade_in if layer.clip!=0 && layer.space==0 else 0)
-            layer.clip,layer.space,layer.leaf_count,layer.from=asked.clip,0,0,layer.fader.current.time;slot.starting=false
+            stack_blend(state,i,definition.fade_in)
+            layer.player=lib.player_make(handle,speed)
+            layer.clip,layer.space,layer.leaf_count,layer.from=asked.clip,0,0,0;slot.starting=false
         }
-        current:=&layer.fader.current
+        current:=&layer.player
         if slot.seeking {current.time,layer.from=slot.time,slot.time;current.fresh=true;current.done=false;slot.seeking=false}
         current.speed=speed
         slot.player=current^;slot.from=slot.time
@@ -699,11 +699,7 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
                 current.time,current.fresh,current.done,layer.from=target,false,false,target;remaining=0
             } else {remaining=(target-slot.time)/speed}
         }
-        target:=definition.weight
-        step:=dt/definition.fade_in if definition.fade_in>0 else 1
-        effective:=target if abs(target-layer.weight)<=step else layer.weight+(step if target>layer.weight else -step)
-        incoming:=layer.fader;incoming.elapsed+=dt
-        event_weight:=effective*animation.weight*lib.fader_current_weight(incoming)
+        event_weight:=definition.weight*animation.weight
         action_name:=base.name_hash(base.text_get(definition.name[:]))
         event_span,event_elapsed:=remaining,f32(0)
         for pass in 0..<ACTION_PASSES {
@@ -747,9 +743,9 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
             base.truncate(&events.items,silent)
             slot.from,slot.continuous,layer.from,layer.carried=slot.time,false,slot.time,ROOT_DELTA_DEFAULT
             // Sought past its end it is over: nothing of it shows.
-            if slot.finishing {asked.weight,asked.fade=0,0}
+            if slot.finishing {asked.weight,asked.fade=0,0;stack_blend(state,i,0)}
         }
-        // One that ends in this tick plays its last part at its weight, and fades out from the next.
+        // One that ends in this tick plays its last part at its weight, and hands its layer back in the next.
         current.speed=0
         slot.to=slot.time
         state.asked[i]=asked
@@ -757,7 +753,17 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
 }
 actions_layer_finish :: proc(runtime:^Action_Runtime,state:^Playing) {
     active:=action_state(runtime,state.entity);if active==nil {return}
-    for slot,i in active.slots {if slot.active && state.layers[i].fader.current.clip==slot.player.clip {state.layers[i].fader.current.speed=slot.speed}}
+    for slot,i in active.slots {if slot.active && state.layers[i].player.clip==slot.player.clip {state.layers[i].player.speed=slot.speed}}
+}
+// Hands slot i of the stack of state, whose action ended, back to what its layer plays by itself:
+// what shows of the action blends from it over fade seconds, and the layer moves the root no more.
+@(private)
+action_hand_back :: proc(state:^Playing,i:int,slot:^Action_Playing,fade:f32) {
+    asked,layer:=&state.asked[i],&state.layers[i]
+    asked.fade=fade
+    if asked.clip==0 && asked.space==0 {asked.weight=0}
+    if layer.weight>0 && layer.player.clip==slot.player.clip {stack_blend(state,i,fade)}
+    layer.root_motion,layer.body,layer.body_vertical=.None,.None,false
 }
 action_player :: proc(runtime:^Action_Runtime,entity:core.Entity,clip:u64,content:^host.Content_Animation=nil,animation:base.Asset_Id={}) -> (player:lib.Player,ok:bool) {
     state:=action_state(runtime,entity);if state==nil || state.plan<0 || int(state.plan)>=len(runtime.plans) {return}
@@ -780,7 +786,7 @@ action_clock :: proc(runtime:^Action_Runtime,state:^Playing,content:^host.Conten
     root:=clip_root(content,slot.player.clip);root.in_place=state.layers[leading].root_motion==.In_Place
     return {player=slot.player,from=slot.from,to=slot.to,root=root,weight=share,active=slot.continuous && !slot.finishing}
 }
-// Frees the slots whose action has faded out of its layer.
+// Frees the slots whose action has left its layer.
 actions_finish :: proc(runtime:^Action_Runtime,playback:^Playback,dt:f32) {
     if !finite(dt) || dt<0 {return}
     for &active in runtime.states {
@@ -790,9 +796,7 @@ actions_finish :: proc(runtime:^Action_Runtime,playback:^Playback,dt:f32) {
         for &slot,i in active.slots {
             if !slot.active || !slot.finishing {continue}
             layer:=state.layers[i]
-            fading:=layer.weight>0 && layer.fader.current.clip==slot.player.clip
-            for outgoing in layer.fader.outgoing[:layer.fader.outgoing_count] {fading ||= layer.weight>0 && outgoing.player.clip==slot.player.clip}
-            if !fading {slot={}}
+            if !(layer.weight>0 && layer.player.clip==slot.player.clip) {slot={}}
         }
     }
 }

@@ -36,7 +36,7 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   [checks and tests](references/projects.md#checks-and-tests).
 - Dependencies, `.deps` and the cache between worktrees, `cook/workspace`:
   [dependencies and worktrees](references/build.md#dependencies-and-worktrees).
-- Turns between processes, build and measurement locks and implicit Vulkan layers:
+- Turns between processes, build, measurement and GPU locks and implicit Vulkan layers:
   [turns](references/build.md#turns-between-processes) and
   [layers](references/build.md#implicit-vulkan-layers).
 - Sharing a project peer to peer (`cook/share`, `mirai share` and `mirai join`), its snapshot and
@@ -66,6 +66,12 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 4. To ship, `mirai build game` and review the cooking report, above all the roots that only code
    refers to (`cook.mirai`).
 
+### Measure
+
+- What measures time takes the measurement turn through its command (`bench`, `render check`,
+  `bench flight`, a benchmark of `mirai test`, `profile.capture`); an outside program that measures
+  (another engine, a stress tool) runs under `mirai measure --`.
+
 ### Change `project` or `cook/build`
 
 1. A new manifest field goes into the struct, with its default in `manifest_default` and its check
@@ -80,11 +86,20 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 ## Invariants
 
 - `project` imports only `std/*`: the editor, the player and the tools use it.
+- The GPU is used in parallel under its memory budget and held for others only while a
+  measurement times: then what would put work on it and is not part of the measurement waits for
+  it, and the measurement first waits for the GPU work in flight but not for sessions kept open,
+  whose load it reports ([turns](references/build.md#turns-between-processes)).
+- A measurement holds `measure.lock` only while it times. The GPU turn comes first and the
+  measurement after it: what holds the measurement never waits for room on the GPU, and what
+  waits for the measurement says its turn is idle meanwhile.
 - `tools/mirai` and everything it imports, counting its `_test.odin` files (the compiler reads them
   too), do not reach `render`, `host`, `platform`, `editor` or `engine/*`: the tool writes
-  `render/shaders_gen.odin` and has to compile with those old tables to regenerate them. A value
-  that `render` and `cook` share is declared in `render/abi`, which reads no generated table and
-  the tool imports. It is guarded by `the_tool_imports_no_package_of_the_engine`.
+  `render/shaders_gen.odin` and the test worlds, so it builds where they are missing or stale (a
+  new checkout, a merge) and only then generates them. A value that `render` and `cook` share is
+  declared in `render/abi`, which reads no generated table and the tool imports; a component of
+  the engine the cook reads from an asset, by the names of its fields. A rebuild of the tool that
+  read one of those packages warns, and `the_tool_reads_no_package_of_the_engine` fails.
 - The generator reads syntax (`core:odin/parser`) and writes text. The generated packages are the
   only source of what goes into each binary: `gen/game` imports `host` and the libraries, nothing
   from the editor; `gen/editor` only exports `mirai_project_info`.
@@ -146,7 +161,10 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   `core:testing`) and `mirai test tools/mirai` (ACP installer, C library cache, tests that declare
   the sources, known failures); `mirai check cook/build` and `mirai check
   tools/mirai` if they change. Turns: `mirai test cook/workspace` (annotation of builds, who holds a
-  lock) and `mirai test std/subprocess` (low priority of a child). Sharing: `mirai test cook/share`
+  lock, GPU turns by the room of the card, a person and a measurement) and `mirai test
+  std/subprocess` (low priority of a child, handles it inherits). GPU turns with real editors:
+  two sessions at once on a heavy scene both run or the second waits naming the first, and
+  killing the editor of one frees its turn (`mirai locks`). Sharing: `mirai test cook/share`
   (snapshot rule, hostile snapshots, join, update by three ways with renames by case, edits while
   a join runs, an incomplete join run again, resume, a third peer), all on `Sim_Network`.
 - Generator or build: `mirai build editor` and `mirai build game --out <separate folder>` of the

@@ -7,7 +7,14 @@
   queries answer. Both return instance, primitive, distance and barycentrics; the surface
   attributes are rebuilt from the same geometry pool.
 - Diffuse indirect comes from the [probe volume](#probe-volume), with all the bounces, darkened at
-  contact by the [contact occlusion](#contact-occlusion). Nothing in the indirect samples
+  contact by the [contact occlusion](#contact-occlusion).
+- **Scale of the indirect light.** The hits of the probes take each light by its `indirect` share
+  (`LIGHTS_BOUNCED` of `direct_lighting`, [shares](lights.md#local-lights)), so that a share
+  scales all the bounces of that light. `scene_set_indirect` (the `Bounce_Light` of the world)
+  multiplies what the probe volume gives, or the sky that stands for it without GI, where a view
+  takes it (diffuse and specular, the probes read by reflection hits) and where media take it;
+  the probes gather without it, so it shows in the frame it changes. It is of the world: the
+  light of a `View_Volume` would change as the camera moves. Nothing in the indirect samples
   directions or lights per frame: what the scene does not change gives the same every frame, and
   there is no boiling for a filter to hide.
 
@@ -40,8 +47,10 @@ Each technique states its status; what is listed as prepared is not implemented.
   - Blend-only instances are a separate ray class that the other rays do not visit.
   - [Batches](scene.md#instance-batches) that only cast shadow or are only seen have their own
     classes (`RAY_SHADOW_ONLY`, `RAY_UNSHADOWED`), requested by the shadow rays (`RAY_SHADOWS`) and
-    those that see surfaces (`RAY_SEEN`). In software, a TLAS reference after the instances is a
-    batch, whose instance tree leads to the BLAS of its mesh.
+    those that see surfaces (`RAY_SEEN`). An instance
+    [without shadows](scene.md#scene-and-instances) that is not all glass is `RAY_UNSHADOWED`. In
+    software, a TLAS reference after the instances is a batch, whose instance tree leads to the
+    BLAS of its mesh.
 - **Only the structure of the tracer in use.** With hardware RT a mesh has its native BLAS and no
   software BVH (`rays[k].bvh_node_count` 0). When switching to software,
   `renderer_apply_settings` builds the one of each mesh that lacks it (one pose, from its bind
@@ -92,8 +101,8 @@ Each technique states its status; what is listed as prepared is not implemented.
   the light sees; everything on a general change). The probes it reaches are traced at once and
   stay awake `PROBE_AWAKE` while the light travels through the bounces.
 - **Blackout.** A change of more than half of the light that reaches the volume is a general
-  change that warms the volume over `GI_BLACKOUT_FRAMES`: the later light is seen in the frames
-  in which it passes (`render/blackout.odin`).
+  change that warms the volume with `GI_BLACKOUT_UPDATES` updates over the frames after: the later
+  light is seen in the frames in which it passes (`render/blackout.odin`).
 
 ## Contact occlusion
 
@@ -104,6 +113,9 @@ other and do not see the corner of a table or the floor under a wardrobe.
   hemisphere of their normal in the world, which also see what is off screen or behind something
   nearer to the eye; the nearest occludes more, so that the edge fades. Every frame traces every
   point.
+- The rays go past the thin surfaces that transmit (`trace_past_thin`): such a surface sends
+  on what reaches its other side, and the probes, which see it from both sides, already hold the
+  light under a canopy of them. A two-sided one has no inside for the probes either.
 - The rays leave the surface by the bias of its distance (`view_bias`), as far as its place is
   known from the eye; where that bias takes the whole reach of the rays nothing occludes the
   point, which is wider than what could stand that near it.
@@ -119,6 +131,10 @@ other and do not see the corner of a table or the floor under a wardrobe.
   side.
 - The irradiance of the volume is multiplied by it: the indirect shadow is sharp at contact
   and opens with distance, which is what the volume gives far away.
+- **Beyond the volume.** The rays of a point beyond the cascades go as far as rays go and each
+  one that meets something counts whole: they leave of the sky's light what the point sees of
+  the sky. A cave past the volume does not take the light of an open sky; what bounces there is
+  not gathered.
 - **Small things.** An instance smaller than `SMALL_INSTANCE_REACH` is of the ray class
   `RAY_SMALL`: contact occlusion, reflections and direct light see it, and the volume rays
   (`MIRAI_TRACE_NO_SMALL`) do not. What moves at that size does not change the volume light: its
@@ -143,9 +159,40 @@ other and do not see the corner of a table or the floor under a wardrobe.
 - Each probe traces `probe_rays` spherical Fibonacci rays rotated by its cell, the same every
   time. Their hits trace the direct light and take the bounces from the volume: each trace adds
   one.
+- **Kept hits** (`Probe_Hits`, `probe_hits.slang`). A probe that holds a slot keeps what each of
+  its rays found: where it ended, what the surface reflects and lets through, and the light it
+  emits and reflects of the lights, apart from the bounces. An update traces a ray again only
+  where what it may meet changed and lights its hit again only where its lights did; of the
+  others it reads the bounces again around what is kept, which is also what an update that
+  traces gives. With nothing changed a probe traces nothing.
+  - What changed is a list the renderer keeps of the last changes of the scene
+    (`probe_changes_list`), which a probe checks from its last update on when it is chosen: the
+    boxes of what moved, came, went, took another pose or shows something else (a ray whose way
+    to what it met crosses one is traced), the spheres of the lights that changed (a hit inside
+    one is lit), and the boxes of what casts shadows with the sun and with each light that
+    reaches them (a hit whose way to that light crosses one is lit). A probe updated before the
+    oldest change the list still has traces all its rays.
+  - A change of the lights everywhere (the sun, the sky, a blackout, the light scale) lights
+    every hit again when its probe is chosen, and one of what rays meet everywhere (meshes that
+    go, materials past what the scene lists, another world) traces every ray. A texture that
+    goes changes what rays meet only around what shows a material that reads it, since the next
+    texture may take its handle: one no material names (the image of a view) changes nothing.
+  - What changes with nothing that says so is not kept from one update to the next: the hit of
+    a Surface program that reads the time of its context (`abi.Program.reads`), a ray that
+    went through the gate of an extension, and the light of a hit a light of an extension
+    reaches. What a program gives by the view (`screen`, `depth`) stays as the ray found it,
+    as does how wet an object is, until its ray is traced again.
+  - The hits take `PROBE_HIT_WORDS` words a ray, in slots made with the volume: one for each
+    probe while they fit `PROBE_HITS_BYTES`. Past it the probes share them
+    (`probe_slots.slang`): one takes a slot when it is chosen, free or of a probe not chosen
+    for a while, and one without a slot traces all its rays, so the probes updated often (those
+    a change keeps awake, those the pixels use) keep theirs. Those of a world that is not shown
+    are not kept: its probes trace their rays when it returns.
 - A change of its light is followed in full. Between traces it measures how much its light moves
   while the bounces it reads settle (`Probe.frames.w`): a movement within that approaches it
-  little by little; only a larger one traces it again.
+  little by little, and reaches it: a step the half floats of the atlas cannot hold takes the
+  light whole, and every light is stored as its nearest half (`probe_light_encode`), since a
+  device may cut a float toward zero when it stores it and a probe would settle short.
 - **Filter between neighbors.** Each texel also takes what the neighboring probes store in that
   direction, where they see what this one would see: the point the neighbor sees lies in that
   direction and the distance of the probe itself ends there, unless one of the two is open (it
@@ -153,17 +200,35 @@ other and do not see the corner of a table or the floor under a wardrobe.
   `ddgi_keep.comp` copies each probe after its trace, never from the tile being written. A probe
   awakened by a change filters the same as a settled one.
 - **Priority** (`ddgi_select.comp`, `probe_budget` per frame): first the probes that do not store
-  the light of their cell; then those that a change keeps awake, first those nearest to it
-  relative to its reach (what a change changes most is near), or their own light; then the one
-  that has gone longest without being traced relative to how much pixels use it
-  (`ddgi_mark.comp`), fine cascades first. A probe whose light moves more than its noise
-  (`ddgi_irradiance.comp`) wakes its six neighbors for the next frame, so that a change spreads
-  with its bounces. The probes waiting by turns take a small share of the budget at most, and
-  keep tracing in turns with the scene still: since the rays are the same, a settled probe gives
-  what it gave. A sky that changes without stopping (a sunset with an atmosphere) is followed in
-  turns, with stains of the previous light until it stops.
+  the light of their cell and that a pixel reads this frame; then those that a change keeps
+  awake, first those nearest to it relative to its reach (what a change changes most is near),
+  or their own light. What is left of the budget goes to the new probes no pixel reads, with
+  all their rays, a share at most while the volume moves and all of it once it stops, and,
+  a share at most, by turns to the one that has gone longest
+  without being traced relative to how much pixels use it (`ddgi_mark.comp`), fine cascades
+  first: a volume that moves with the camera gathers first what the view shows. A probe whose
+  light moves more than its noise (`ddgi_irradiance.comp`) wakes its six neighbors for the next
+  frame, so that a change spreads with its bounces. With the scene still a settled probe gives
+  what it gave, and none is traced but, by turns within that share, those that need it: one
+  whose rays met what changes with nothing that says so (`PROBE_PASSING`: a program that reads
+  the time, the gate or a light of an extension) and one a change everywhere left behind. A sky
+  that changes without stopping (a sunset with an atmosphere) is followed in turns, with stains
+  of the previous light until it stops.
+- **The time costs what it changes.** A `PROBE_PASSING` probe is gathered by turns only as much
+  as its light moves: after a turn that leaves it within half of the settled share, or below
+  what the view shows exposed, it waits for the next twice as long as it waited for that one, up
+  to `1 << PROBE_WAIT_MOST` frames (the most before a light that starts moving is followed), and
+  keeps its slot of hits that long; a turn that moves it brings it back to every turn. What
+  moves it is followed by its turns: it wakes neither itself nor the neighbors that take turns
+  of their own, so the time never keeps the volume awake. In a world shown anew the new probes
+  no pixel reads are gathered first, as those read.
 - **Relocation** within its cell: a probe inside a wall comes out and one stuck to a surface
-  moves away. A covered one keeps the light it had; one that never had it gives nothing.
+  moves away. A covered one keeps the light it had; one that never had it gives nothing. One that
+  moved is traced again from where it is, first if it moved far, as one whose light moves if not.
+  A probe moves only in an update that traced one of its rays, and a few times at most in its
+  cell until what its rays meet changes: one that can never be far enough from every surface, or
+  out of what buries it, would move with every update, never keep its hits and be traced before
+  every other probe in every frame.
 - **Reading** (`probe_cascade_read`): DDGI weights (wrapped cosine, Chebyshev without a floor),
   square-root blend (`probe_light_root` of what is stored), bias toward the normal and toward the
   eye that shrinks near the eye or the ray origin. A probe behind the plane of a surface does not
@@ -175,22 +240,26 @@ other and do not see the corner of a table or the floor under a wardrobe.
   (`volume_center`), which moves little by little, and not from the cascade, which jumps one cell
   at a time: measured from the cascade, the light of a bench changed abruptly when advancing.
   Every view (nested, texture, split screen) measures from that center, not from its eye. Where
-  the fine one stores nothing, the next one; beyond, the sky. With a small `probe_grid` the floor
-  already reads a cascade whose probes see through thin walls.
+  the fine one stores nothing, the next one. The last one blends into the light of the sky the
+  same way (`probe_volume_beyond`), and beyond the cascades the light around a point is the
+  sky's, as much of it as the point sees ([contact occlusion](#contact-occlusion)). With a small
+  `probe_grid` the floor already reads a cascade whose probes see through thin walls.
 - `sample_probes_around` gives the light around several directions of a point (normal, specular
   lobe and coat) with a single choice of probes and weights; `sample_probes` reads one.
-- **Specular from the probes.** Each texel of the irradiance atlas also keeps the share of its
-  light that comes from the sky (its rays that meet nothing; beyond the cascades, all of it). A
-  specular lobe takes that share as the sky itself as sharp as its roughness (`probe_specular`),
-  not as the blur of a hemisphere, and a rough lobe keeps what the probes hold: with reflections
-  `Off` a mirror under an open sky shows the sky as without GI, and under a roof it does not.
+- **Specular from the probes.** Under the tiles of the irradiance the atlas keeps of each probe
+  a finer tile (`PROBE_GLOSS_TILE`) of the light around a narrow lobe of each direction
+  (`PROBE_GLOSS_POWER`), with about a texel a ray: what its rays tell apart. The lobes of the
+  specular and of the coat read it, going to the irradiance as they get rougher than it, so with
+  reflections `Off` a smooth metal shows what is around it blurred, not the mean of a
+  hemisphere, at no ray of its own. Each texel of both tiles also keeps the share
+  of its light that comes from the sky (its rays that meet nothing; beyond the cascades, all of
+  it), which a lobe takes as the sky itself as sharp as its roughness (`probe_specular`): a
+  mirror under an open sky shows the sky as without GI, and under a roof it does not.
 
 ## Glass in the indirect
 
-With `colored_shadows` and glass in the scene, the volume rays and the shadow rays of what they
-find cross the glass with the [medium filter](materials.md#medium-filter) of each instance
-(`Ray_Path.glass`): the sky light enters through a stained-glass window with its color. Without
-the option, the rays go through it without a filter.
+The volume rays and the shadow rays of what they find go through glass: the sky light enters
+through a stained-glass window uncolored ([glass in rays](materials.md#glass-in-rays)).
 
 ## Light of each world
 
@@ -206,13 +275,16 @@ keeps `Renderer_Desc.worlds` (edit and play).
   kept of it with `world_light_forget`: when it returns it starts without light and warms up.
 - Each view starts another history and takes its exposure at once
   ([exposure](display.md#exposure)); the next frame keeps the `delta_time` of the previous one.
-- **Warm-up.** The frame that shows a world without light (and the one that follows
-  `renderer_reset_history`) updates the volume `GI_WARM_UPDATES` times, like Lumen's
-  `ForceFullUpdate`, each with up to `PROBE_WARM_BUDGET` probes and one more bounce: the light of
-  its first frame ends up close to the settled one. A blackout spreads it over a few frames, so as
-  not to stall the game. A change of the layout of the probes (`renderer_apply_settings`) leaves
-  every world without light: probes that start from nothing and are traced a few a frame settle
-  dark where their rays met what had no light yet, and nothing wakes them.
+- **Warm-up.** The frames that show a world without light (and those after
+  `renderer_reset_history`) gather it with `GI_WARM_UPDATES` updates over `PROBE_WARM_BUDGET`
+  probes each, every probe in turn and one more bounce, taken over the frames after within the
+  budget of each (`ddgi_warm_frames`); a blackout does the same with `GI_BLACKOUT_UPDATES`. No
+  frame, the first of a world either, updates the volume more than once or traces more than the
+  budget of a frame: a first frame that traced many updates at once outlasted the time a driver
+  gives a submission while the GPU was shared. A change of the layout of the probes
+  (`renderer_apply_settings`) leaves every world without light: probes that start from nothing and
+  are traced a few a frame settle dark where their rays met what had no light yet, and nothing
+  wakes them.
 - **New scale.** A change of light scale carries the histories and the irradiance atlases to it in
   the next frame (`history_scale.comp`); nothing starts over. A light thousands of times stronger
   than the others, even if it reaches nothing, leaves that of the room intact: the atlases and
@@ -279,8 +351,25 @@ for what is seen and for every ray that finds nothing.
   that of its penumbra; radiance bounded by `SUN_DISC_MAX`) and its halo when the `Sun` has
   `disc`. The background of each view and what is seen through glass use it; the rays that gather
   light and the reflections do not, to which the sun arrives as light and specular highlight.
-- With `use_background`, or in the prefab editor background, the solid color replaces the seen sky
-  and the disc; the sky light keeps coming from `sky_radiance`.
+- **Background.** With `use_background` the background is what a camera sees past the scene: the
+  color `background` (nits), or `background_image` times it, an image of the same kind as `image`
+  that turns with it (`Gpu_Frame.background` and `background_map`). The sky keeps lighting: it is
+  a painted sky with light the game controls.
+  - The view (`sky_shown`, without the disc) and the reflections (`sky_reflected`: the traced ones
+    that miss, the sky share of `probe_specular` and the specular and coat lobes without probes)
+    see it; a lobe of roughness r takes `r` of it from the sky's light, so a mirror shows the
+    background and a fully rough surface is lit as without it. Glass shows it through the image
+    behind and in its lobes.
+  - The sky's light (`sky_radiance`, `sky_irradiance`): the probe rays and what they gather, the
+    diffuse light without GI, the glow of media and the fog, the meter (background pixels do not
+    count) and the indirect reference.
+  - A lit atmosphere is what is seen and reflected and the haze over the far scene, so no
+    background stands for it; the background shows while no `Sun` lights the air.
+  - It is not part of a change of the sky (`from`, `arrival`). `background_image` without
+    `use_background` never shows: the problem `render.sky_background`.
+  - The studio of the previews, thumbnails and the prefab editor (`background_behind`) and the
+    editor's `renderer_set_backdrop` show their background only behind: their reflections show the
+    light that shapes what they show.
 - The sun light at a place comes only from `sun_light(position)`: `Gpu_Frame.sun_color` is that of
   above the air when the sky is an atmosphere.
 

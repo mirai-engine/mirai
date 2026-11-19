@@ -191,7 +191,7 @@ a_package_with_no_test_to_run_is_not_built :: proc(t:^testing.T) {
         {"gpu","gpu_test.odin","package gpu\n\n@(test)\ndraws :: proc(t:^testing.T) {device:=shared_device.take_or_skip(t)}\n"},
     }
     for source in sources {
-        testing.expect(t,os.make_directory_all(join(root,source[0]))==nil)
+        testing.expect(t,base.make_directory_all(join(root,source[0]))==nil)
         testing.expect(t,os.write_entire_file(join(root,source[0],source[1]),source[2])==nil)
     }
     cases:=[?]struct{folder,name:string,no_gpu,ok,nothing:bool}{
@@ -236,7 +236,7 @@ the_failed_tests_are_those_of_before_that_did_not_run_and_those_that_failed_now 
 a_package_is_found_relative_to_the_working_folder :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     folder:=project.path_absolute(fmt.tprintf("mirai-package-%d",os.get_pid()),context.temp_allocator)
-    testing.expect(t,os.make_directory_all(folder)==nil)
+    testing.expect(t,base.make_directory_all(folder)==nil)
     defer base.remove_all(folder)
     testing.expect(t,os.write_entire_file(fmt.tprintf("%s/a.odin",folder),`package a`)==nil)
     testing.expect_value(t,package_folder("/nowhere",os.base(folder)),folder)

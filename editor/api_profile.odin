@@ -24,13 +24,13 @@ PROFILE_LOAD_TOP :: 8     // slowest assets and loop functions of each load in p
 
 Api_Profile_Capture_Params :: struct {
     frames:int `mirai:"optional,min=1,max=3600,label=Frames to record"`,
-    advance:bool `mirai:"optional,label=Run the frames inside the call and answer with the summary; first it runs frames until they stop getting faster, unless those that ran just before already did, since a GPU that idled starts at a lower clock. false records the frames the loop runs next (of a window or engine.step or editor.input or play.step) and answers at once: profile.summary answers once they ran"`,
+    advance:bool `mirai:"optional,label=Run the frames inside the call and answer with the summary; first it waits until nothing they draw is being made, and runs frames until they stop getting faster, unless those that ran just before already did, since a GPU that idled starts at a lower clock. false records the frames the loop runs next (of a window or engine.step or editor.input or play.step) and answers at once: profile.summary answers once they ran"`,
     dt:f32 `mirai:"optional,min=0.0001,max=0.25,unit=s,label=Of each frame a manual editor runs"`,
     label:[32]u8 `mirai:"optional,text,label=Name to tell the capture by"`,
     top:int `mirai:"optional,min=1,max=64,clamp,label=Zones and GPU passes in the summary"`,
-    wait:int `mirai:"optional,min=0,max=900,unit=s,label=With advance: how long to queue for a compilation or another measurement that runs; past it the call fails"`,
+    wait:int `mirai:"optional,min=0,max=900,unit=s,label=With advance: how long to queue for a compilation or another measurement that runs and for what the frames draw to be made (the pending of engine.status); past it the call fails"`,
     memory:bool `mirai:"optional,label=Also sample the memory at the end of each frame, in a zone memory of the frame: what the tables and storages of the World hold (the one Play runs, else the scene's), the process and the GPU"`,
-    allow_limited:bool `mirai:"optional,label=Measure with VSync or a frame limit or graphics validation on; the call refuses otherwise and says how to turn them off. The summary says comparable:false"`,
+    allow_limited:bool `mirai:"optional,label=Measure with VSync or a frame limit or graphics validation on, or without advance while the frames draw stand-ins for what is being made; the call refuses otherwise and says how to turn them off. The summary says comparable:false"`,
 }
 Api_Profile_Id_Params :: struct {
     id:int `mirai:"optional,min=0,label=Capture; 0 is the last one"`,
@@ -267,6 +267,10 @@ profile_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="profile.compare",summary="Two captures: whether they were measured alike and, zone by zone and pass by pass, what changed the most.",params=type_info_of(Api_Profile_Compare_Params),result=type_info_of(Api_Profile_Compare),defaults=&compare_default,flags={.Read_Only},run=api_profile_compare})
     load_default:=Api_Profile_Load_Params{top=PROFILE_LOAD_TOP}
     api_register(s,st,{name="profile.load",summary="Where the seconds of the last load of the document, of Play and of a section went: phase by phase, by kind of asset with the slowest, the loop functions meanwhile and what it waited for until a frame drew with all of it resident; Loading until then.",params=type_info_of(Api_Profile_Load_Params),result=type_info_of(Api_Profile_Loads),defaults=&load_default,flags={.Read_Only},run=api_profile_load})
+    cost_default:=Api_Profile_Cost_Params{top=10,dt=HEADLESS_DT}
+    api_register(s,st,{name="profile.cost",summary="What one frame of the viewport costs by mesh and by material: the instances, clusters, triangles and pixels the view drew of each and what the maps of the shadows drew, the costliest first.",params=type_info_of(Api_Profile_Cost_Params),result=type_info_of(Api_Profile_Cost),defaults=&cost_default,flags={.Draws,.As_User},run=api_profile_cost})
+    gpu_memory_default:=Api_Profile_Gpu_Memory_Params{top=24}
+    api_register(s,st,{name="profile.gpu_memory",summary="Where the memory of the GPU goes: every buffer, texture and acceleration structure the device holds, grouped by the name it was made with and the largest first, against what the driver says the editor holds.",params=type_info_of(Api_Profile_Gpu_Memory_Params),result=type_info_of(Api_Profile_Gpu_Memory),defaults=&gpu_memory_default,flags={.Read_Only},run=api_profile_gpu_memory})
     api_register(s,st,{name="profile.export",summary="Writes a capture as a Chrome trace (JSON) for Perfetto, chrome://tracing or Spall.",params=type_info_of(Api_Profile_Export_Params),result=type_info_of(Api_Profile_Export),run=api_profile_export})
 }
 
@@ -289,33 +293,59 @@ api_profile_get :: proc(s:^Session,call:^api.Call,id:int) -> ^Profile_Capture {
 @(private)
 api_profile_capture :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Profile_Capture_Params)
+    started:=time.tick_now()
     if !p.allow_limited {
         conditions:Profile_Conditions
         {
             context.allocator=context.temp_allocator
             conditions=profile_conditions(s)
         }
-        if refusal:=profile_refusal(profile_limits(conditions));refusal!="" {api.call_fail(call,api.SERVER_ERROR,refusal);return}
+        limits:=profile_limits(conditions)
+        // What is being made is waited for below.
+        if p.advance {limits-={.Pending}}
+        if refusal:=profile_refusal(limits);refusal!="" {api.call_fail(call,api.SERVER_ERROR,refusal);return}
     }
-    // Frames that run here run alone among the checkouts, or not at all: in
-    // the turn this takes, or in that of the measurement the caller is part of.
+    // The frames that settle draw as any call that draws: not while another
+    // measurement runs. The frames it times run alone among the checkouts, or
+    // not at all: in the turn this takes only for them, or in that of the
+    // measurement the caller is part of.
+    wait:=time.Duration(p.wait)*time.Second
     measure:workspace.Lock
     defer workspace.lock_release(&measure)
-    if p.advance && s.engine_root!="" {
-        ok,compiling:bool
-        holder:string
-        measure,ok,holder,compiling=workspace.measure_try(s.engine_root,workspace.measure_holder(fmt.tprintf("profile.capture in %s",s.project_root)),time.Duration(p.wait)*time.Second,call.measure)
-        if holder=="" {holder="another process"}
-        what:=compiling?"A compilation":"Another measurement"
-        if !ok {api.call_failf(call,api.SERVER_ERROR,"%s runs (%s) and did not end within wait (%d s); mirai locks says who holds its turn, and the call can be made again when it ends",what,holder,p.wait);return}
+    if st:=api_state(s);p.advance && st!=nil && st.manual && !st.person {
+        if ok,holder:=gpu_work_begin(s,call.measure,max(wait,time.Nanosecond));!ok {
+            api.call_failf(call,api.SERVER_ERROR,"Another measurement runs (%s) and did not end within wait (%d s); mirai locks says who holds its turn, and the call can be made again when it ends",holder,p.wait)
+            return
+        }
     }
     // While another capture records, profile_begin refuses: no frames run into it.
     profile_collect(s)
     warmup,settled:=0,true
-    if p.advance && s.profiles.recording==0 {warmup,settled=profile_settle(s,p.dt)}
+    if p.advance && s.profiles.recording==0 {
+        if ok,_:=api_view_wait(s,call,p.dt,started,wait);!ok {return}
+        warmup,settled=profile_settle(s,p.dt)
+        // What the frames of the warmup found being made.
+        if ok,_:=api_view_wait(s,call,p.dt,started,wait);!ok {return}
+    }
+    loaded:=make([dynamic]string,context.temp_allocator)
+    if p.advance && s.engine_root!="" {
+        // While it waits for the turn its GPU turn says it is idle (measure_try).
+        ok:bool
+        holder:string
+        why:workspace.Measure_Wait
+        measure,ok,holder,why=workspace.measure_try(s.engine_root,workspace.measure_holder(fmt.tprintf("profile.capture in %s",s.project_root)),max(wait-time.tick_since(started),0),call.measure)
+        if !ok {
+            what:=why==.Build?"A compilation":why==.Gpu?"GPU work of another process":"Another measurement"
+            api.call_failf(call,api.SERVER_ERROR,"%s runs (%s) and did not end within wait (%d s); mirai locks says who holds its turn, and the call can be made again when it ends",what,holder,p.wait)
+            return
+        }
+        // What else loads the GPU, said by the measurement that holds the turn.
+        if measure.held {workspace.gpu_load(&loaded,{os.get_pid()},"Before the frames",true)}
+    }
     c,error:=profile_begin(s,p.frames,base.text_get(p.label[:]),p.memory)
     if c==nil {api.call_fail(call,api.SERVER_ERROR,error);return}
     c.warmup,c.unsettled=warmup,!settled
+    profile_loaded_set(c,loaded[:])
     if !p.advance {
         api.call_result(call,Api_Profile_Summary)^={id=c.id,label=c.label,state=.Recording,frames_requested=p.frames}
         return
@@ -475,7 +505,7 @@ profile_worst :: proc(c:^Profile_Capture,count:int) -> []int {
     return profile_largest(totals,count)
 }
 
-Profile_Limit :: enum u8 {Vsync,Frame_Limit,Validation}
+Profile_Limit :: enum u8 {Vsync,Frame_Limit,Validation,Pending}
 Profile_Limits :: bit_set[Profile_Limit;u8]
 
 // What keeps the frame time of a capture from being the cost of its frames:
@@ -511,6 +541,7 @@ profile_limits :: proc(k:Profile_Conditions) -> (limits:Profile_Limits) {
     if !k.headless && k.vsync {limits+={.Vsync}}
     if !k.headless && k.frame_limit>0 {limits+={.Frame_Limit}}
     if k.validation {limits+={.Validation}}
+    if k.pending!={} {limits+={.Pending}}
     return
 }
 
@@ -521,6 +552,7 @@ profile_refusal :: proc(limits:Profile_Limits) -> string {
     if .Vsync in limits {append(&lifts,`VSync is on: settings.set {"settings":{"Graphics_Settings":{"vsync":false}}} turns it off`)}
     if .Frame_Limit in limits {append(&lifts,`frames are limited: settings.set {"settings":{"Graphics_Settings":{"frame_limit":0}}} lifts the limit`)}
     if .Validation in limits {append(&lifts,"graphics API validation is on: open the editor without --validation")}
+    if .Pending in limits {append(&lifts,"the frames draw stand-ins for what is still being made, the pending of engine.status: advance waits for it, or wait until it is 0")}
     return fmt.tprintf("The frame time would not be the cost of the frame: %s. A headless editor (mirai session start) paces nothing; allow_limited:true measures anyway, with comparable:false",strings.join(lifts[:],"; ",context.temp_allocator))
 }
 
@@ -534,10 +566,12 @@ profile_notes :: proc(c:^Profile_Capture,out:Api_Profile_Summary) -> []string {
         append(&notes,fmt.tprintf("The engine is built with -o:%s: times are not those of a release; mirai build engine --release builds it at Speed before measuring",strings.to_lower(k.optimization)))
     }
     if k.write_checks {append(&notes,"MIRAI_CHECK_WRITES is on: every function of the loops checks what it writes")}
+    append(&notes,..c.loaded)
     if k.validation {append(&notes,"Graphics API validation is on: CPU and GPU times are inflated; measure without it")}
     if k.headless && !k.manual {append(&notes,"Headless: no display, so pacing and vsync do not apply")}
     if k.manual {append(&notes,"Manual editor: frames run on request, so the wait between them is left out and a frame time is the work of that frame")}
     if k.backend=="" {append(&notes,"No GPU: render and gpu are empty")}
+    if k.pending!={} {append(&notes,fmt.tprintf("The frames drew stand-ins for %s: neither the times nor what was drawn are those of the scene",api_pending_text(k.pending)))}
     if c.unsettled {
         append(&notes,fmt.tprintf("The frames were still getting faster after %d frames (%v) run to let the GPU reach its clock: another program loads it or the scene gets cheaper as it runs; a second capture says whether the time holds",c.warmup,PROFILE_SETTLE_MAX))
     } else if c.warmup>0 {
@@ -757,7 +791,7 @@ profile_compare :: proc(a,b:^Profile_Capture,top:int) -> (out:Api_Profile_Compar
 
     notes:=make([dynamic]string)
     if apart {append(&notes,"Measured in different conditions: a change in time can be the conditions and not the code. Record both alike")}
-    if limited {append(&notes,"A capture was measured with VSync, a frame limit or graphics validation (allow_limited): its frame time is not the cost; cpu_ms and the zones still compare")}
+    if limited {append(&notes,"A capture was measured with VSync, a frame limit, graphics validation or stand-ins for what was being made (allow_limited): its frame time is not the cost; cpu_ms and the zones still compare")}
     if len(a.frames)<30 || len(b.frames)<30 {append(&notes,"Fewer than 30 frames in a capture: differences of a few percent are noise")}
     out.notes=notes[:]
     return
