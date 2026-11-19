@@ -47,7 +47,8 @@ Sweep_Step :: enum u8 {
 }
 
 Sweep_Result :: struct {
-    bytes:i64,    // of the packs removed
+    bytes:i64,    // of the packs removed and closed: freed, unless another process holds them
+    held:i64,     // of the packs removed that this value lent and keeps open: freed when it closes
     chunks:int,   // dead chunks dropped
     packs:int,    // packs retired
     skipped:int,  // files that would not delete, left for the next sweep
@@ -831,14 +832,21 @@ retired_prune :: proc(w:^Sweep,before:bool) -> Error {
             }
             continue files
         }
+        index:=pack_find(s,id)
         if before {
-            index:=pack_find(s,id)
             for _,moved in w.revive {
                 if moved.pack==index {continue files}
             }
         }
+        p:^Pack=&state.packs[index] if index>=0 else nil
+        if p!=nil && !p.lent {pack_close(p)}
         if io_remove(s,e.fullpath)==.None {
-            w.result.bytes+=e.size
+            if p!=nil && p.lent && (p.view!=nil || p.file!=nil) {
+                w.result.held+=e.size
+            } else {
+                w.result.bytes+=e.size
+                if p!=nil {p.pruned=true}
+            }
         } else if os.exists(e.fullpath) {
             w.result.skipped+=1
         }

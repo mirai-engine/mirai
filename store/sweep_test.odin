@@ -140,6 +140,41 @@ a_pack_that_will_not_delete_is_skipped_and_counted :: proc(t:^testing.T) {
     testing.expect_value(t,len(left),0)
 }
 
+// A pack a sweep deletes that the sweeping value lent to a caller stays mapped
+// and is reported held, not freed; one it never lent is closed and freed, and
+// another value that never lent it closes it when it reads the new generation.
+@(test)
+a_deleted_pack_this_value_lent_is_held_not_freed :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"store-held");if folder=="" {return}
+    now:=time.now()
+    SIZE :: 300<<10
+    for lent in ([]bool{false,true}) {
+        root:=fmt.tprintf("%s/%v",folder,lent)
+        data:=test_bytes(SIZE,2)
+        address:=test_dead_object(t,root,data,time.time_add(now,-2*GRACE))
+        s,ok:=test_store(t,root);if !ok {return}
+        defer close(&s)
+        watcher,_:=test_store(t,root)
+        defer close(&watcher)
+        if lent {test_object_bytes(t,&s,address,data)}
+        swept,error:=sweep(&s,nil,now)
+        testing.expect_value(t,error,Error.None)
+        testing.expectf(t,swept.packs==1 && swept.skipped==0,"lent %v: the pack is retired and deleted",lent)
+        p:=&s.state.packs[0]
+        if lent {
+            testing.expect(t,swept.held>=SIZE && swept.bytes<SIZE,"a lent pack is held")
+            testing.expect(t,p.view!=nil,"and stays mapped")
+        } else {
+            testing.expect(t,swept.bytes>=SIZE && swept.held==0,"a pack never lent is freed")
+            testing.expect(t,p.view==nil && p.file==nil,"and closed")
+        }
+        testing.expect(t,!chunk_has(&watcher,address),"the watcher reads the new generation")
+        for &q in watcher.state.packs {
+            testing.expectf(t,!q.gone || (q.view==nil && q.file==nil),"lent %v: the watcher closes what is gone",lent)
+        }
+    }
+}
+
 // A full volume is No_Space, and a sweep still frees it: what an earlier
 // sweep retired goes before anything is written.
 @(test)

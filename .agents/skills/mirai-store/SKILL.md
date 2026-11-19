@@ -105,6 +105,10 @@ derived data cache that use it decide what a ref means and what is live.
   beyond the file's size now: a pack cut below a chunk is damaged, an error.
 - A full volume is `No_Space`, never `Io`; a pack that will not delete (one a process maps on
   Windows) is skipped, counted and deleted by a later sweep.
+- Slices of a mapping handed to a caller have no lifetime, so a pack a value lent stays mapped
+  until it closes: a sweep reports what it deleted that its value lent as held, apart from what it
+  freed, and a value closes the gone packs it never lent when it reads a new generation. What
+  other processes map is invisible to it and stays on disk until they close it.
 - The store never decides what is live: refs, leases and what its caller names are, and what was
   written or touched within `GRACE`. A process that uses addresses holds a lease that names its
   machine, pid and process start: on that machine it holds while the process runs, whatever the
