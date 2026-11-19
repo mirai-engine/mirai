@@ -27,21 +27,20 @@ import "mirai:std/base"
 @(private) SWEEP_FOLDER :: "tmp/sweep"
 
 @(private)
-Claim_Kind :: enum u8 {Lease,Partial}
+Claim_Kind :: enum u8 {Lease}
 
 @(private)
-CLAIM_PREFIXES :: [Claim_Kind]string{.Lease="l-",.Partial="p-"}
+CLAIM_PREFIXES :: [Claim_Kind]string{.Lease="l-"}
 
 // The points of a sweep where a test runs what other writers do meanwhile.
 @(private)
 Sweep_Step :: enum u8 {Marked,Published,Rechecked}
 
 Sweep_Result :: struct {
-    bytes:i64,    // of the packs and partial blobs removed
+    bytes:i64,    // of the packs removed
     blobs:int,    // blobs no longer named
     chunks:int,   // dead chunks dropped
     packs:int,    // packs retired
-    partials:int, // partial blobs removed
     skipped:int,  // files that would not delete, left for the next sweep
 }
 
@@ -862,7 +861,7 @@ tmp_prune :: proc(s:^Store,now:time.Time) -> Error {
     entries:=io_list(s,join(&buffer,s.root,"tmp") or_return) or_return
     defer os.file_info_slice_delete(entries,s.state.allocator)
     for entry in entries {
-        if entry.name=="sweep" || entry.name=="partial" || entry.name=="blobs" || !older_than(entry.modification_time,now,TMP_STALE) {continue}
+        if entry.name=="sweep" || entry.name=="blobs" || !older_than(entry.modification_time,now,TMP_STALE) {continue}
         base.remove_all(entry.fullpath)
     }
     return .None
@@ -962,10 +961,6 @@ claims_settle :: proc(s:^Store,now:time.Time) -> Error {
         case .Lease:
             if !name_valid(name) {continue}
             origin,origin_error=join(&origin_buffer,s.root,"leases",name)
-        case .Partial:
-            hash,ok:=parse_hex(name)
-            if !ok {continue}
-            origin,origin_error=partial_folder(s,hash,&origin_buffer)
         }
         if origin_error!=.None {continue}
         sweep_restore(origin,entry.fullpath)

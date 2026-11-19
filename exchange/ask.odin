@@ -203,7 +203,7 @@ settle :: proc(x:^Exchange) {
             x.settling-=1
             lie(x,i,w.alias_peer)
             want_begin(x,i)
-        case .Missing,.Not_Here_Yet,.Invalid_Argument,.Wrong_Size,.Unsupported_Layout:
+        case .Missing,.Invalid_Argument,.Wrong_Size,.Unsupported_Layout:
             w.settling=false
             x.settling-=1
             want_begin(x,i)
@@ -221,7 +221,7 @@ settle :: proc(x:^Exchange) {
         switch committed {
         case .None: want_complete(x,i)
         case .Missing: want_begin(x,i) // a chunk a sweep dropped beside the batch
-        case .Corrupt,.Not_Here_Yet,.Invalid_Argument,.Wrong_Size,.Unsupported_Layout,.Io,.No_Space,.Out_Of_Memory:
+        case .Corrupt,.Invalid_Argument,.Wrong_Size,.Unsupported_Layout,.Io,.No_Space,.Out_Of_Memory:
             want_fail(x,i,.Store,committed)
         }
     }

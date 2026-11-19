@@ -6,6 +6,7 @@ import "core:strings"
 import "core:sync"
 import "core:testing"
 import "core:thread"
+import "mirai:platform"
 import "mirai:store"
 import wire "mirai:net"
 
@@ -699,4 +700,65 @@ the_batch_blocking_forms_return_for_a_hit_a_partial_miss_and_a_disconnect :: pro
         if p,ok:=peer_progress(&w.nodes[1].x,client,client.connection_handles[0]);ok && p.received>1<<20 {wire.host_disconnect(w.nodes[0].hosts[0])}
     }) && j.error==.Missing,"a disconnect returns Missing")
     testing.expect(t,!store.has(here,big[0]) || !store.has(here,big[1]),"the disconnect came before the blobs")
+}
+
+// An object of ten gigabytes moves with the memory of each side bounded by
+// its window, not by the object: its leaves are a pool of distinct chunks, each
+// used many times in an order that makes every leaf node differ, so the walk
+// covers every entry while the disks hold only the pool.
+@(test)
+a_ten_gigabyte_object_moves_within_bounded_memory :: proc(t:^testing.T) {
+    SIZE :: u64(10_000_000_000)
+    POOL :: 8192
+    CHUNK :: 64<<10
+    w:Test_World
+    defer test_world_destroy(&w)
+    if !test_pair(t,&w,"exchange-large") {return}
+    s:=&w.nodes[0].s
+    pool:=make([]store.Hash,POOL)
+    defer delete(pool)
+    for &a,k in pool {
+        bytes:=test_bytes(CHUNK,u64(k)+1)
+        a=store.address_of_bytes(bytes)
+        testing.expect_value(t,store.chunk_put(s,a,bytes),store.Error.None)
+        free_all(context.temp_allocator)
+    }
+    tree:store.Tree
+    store.tree_init(&tree,{procedure=proc(data:rawptr,kind:store.Chunk_Kind,address:store.Hash,bytes:[]u8) -> store.Error {
+        return store.chunk_put((^store.Store)(data),address,bytes)
+    },data=s})
+    defer store.tree_destroy(&tree)
+    store.tree_group(&tree,0,0)
+    for p:=u64(0);p*CHUNK<SIZE;p+=1 {
+        size:=min(u64(CHUNK),SIZE-p*CHUNK)
+        h:=p*0x9e3779b97f4a7c15
+        h~=h>>29
+        a:=pool[h%POOL]
+        if size<CHUNK {
+            tail:=test_bytes(int(size),99)
+            a=store.address_of_bytes(tail)
+            store.chunk_put(s,a,tail)
+        }
+        if !testing.expect_value(t,store.tree_put_leaf(&tree,a,size),store.Error.None) {return}
+    }
+    root,total,error:=store.tree_finish(&tree)
+    testing.expect(t,error==.None && total==SIZE,"the object is built")
+    testing.expect_value(t,store.commit(s),store.Error.None)
+    free_all(context.temp_allocator)
+    base:=platform.process_memory().private
+    peak:=base
+    x:=&w.nodes[1].x
+    want(x,root)
+    for step:=0;w.now<600 && test_state(x,root)!=.Complete;step+=1 {
+        test_step(&w)
+        if step%100==0 {
+            peak=max(peak,platform.process_memory().private)
+            free_all(context.temp_allocator)
+        }
+    }
+    p,_:=progress(x,root)
+    testing.expectf(t,p.state==.Complete && p.total==i64(SIZE),"the object arrives: %v",p)
+    got:=test_peer(&w.nodes[1])
+    fmt.printfln("10 GB object: %d bytes received, peak growth %d bytes on both sides together",got.received,peak-base)
+    testing.expectf(t,base==0 || peak-base<=64<<20,"peak growth %d bytes",peak-base)
 }

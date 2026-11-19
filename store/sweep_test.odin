@@ -224,7 +224,7 @@ what_is_put_again_is_refreshed_after_a_quarter_of_grace :: proc(t:^testing.T) {
     defer close(&s)
     start:=time.now()
     at :: proc(start:time.Time,part:f64) -> time.Time {return time.time_add(start,time.Duration(part*f64(GRACE)))}
-    blob:=test_bytes(PIECE_BYTES+1,100)
+    blob:=test_bytes(CHUNK_MAX+1,100)
     object:=test_bytes(30000,101)
     hash,_:=put_bytes(&s,blob,start)
     address,_:=put(&s,object,start)
@@ -319,41 +319,14 @@ fresh_leases_keep_their_current_addresses :: proc(t:^testing.T) {
     for hash,i in hashes {testing.expectf(t,has(&s,hash)==(i==1),"blob %d",i)}
 }
 
-// Partial blobs that no lease names and that took no piece for a day go, and
-// so does what a sweep that stopped left claimed, as it would have.
+// What a sweep that stopped left claimed comes back, and stale temporary
+// files go.
 @(test)
-sweep_removes_old_partials_and_settles_what_a_stopped_sweep_claimed :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"store-partials");if folder=="" {return}
+sweep_settles_what_a_stopped_sweep_claimed :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"store-claims");if folder=="" {return}
     s,ok:=test_store(t,folder);if !ok {return}
     defer close(&s)
     now:=time.now()
-    old:=time.time_add(now,-2*PARTIAL_GRACE_AGE)
-    Case :: struct {live,old,claimed,kept:bool}
-    cases:=[]Case{
-        {old=true,kept=false},
-        {old=false,kept=true},
-        {live=true,old=true,kept=true},
-        {old=true,claimed=true,kept=false}, // a completion that ended without finishing
-    }
-    live:[dynamic]Hash
-    live.allocator=context.temp_allocator
-    hashes:=make([]Hash,len(cases),context.temp_allocator)
-    for c,k in cases {
-        data:=test_bytes(2*PIECE_BYTES+k,u64(400+k))
-        hashes[k]=test_address(data)
-        testing.expect_value(t,receive_begin(&s,hashes[k],i64(len(data)),test_table(data)),Error.None)
-        testing.expect_value(t,receive_piece(&s,hashes[k],1,test_piece(data,1)),Error.None)
-        buffer:[PATH_BYTES]u8
-        partial,_:=partial_folder(&s,hashes[k],&buffer)
-        if c.old {test_set_time(t,strings.concatenate({partial,"/have"},context.temp_allocator),old)}
-        if c.claimed {
-            claimed_buffer:[PATH_BYTES]u8
-            claimed,_:=claimed_folder(&s,hashes[k],&claimed_buffer)
-            testing.expect(t,os.rename(partial,claimed)==nil)
-            test_set_time(t,claimed,time.time_add(now,-2*TMP_STALE))
-        }
-        if c.live {append(&live,hashes[k])}
-    }
     lease,lease_error:=lease_open(&s,"holder",{},now)
     if !testing.expect_value(t,lease_error,Error.None) {return}
     defer lease_release(&lease)
@@ -363,14 +336,8 @@ sweep_removes_old_partials_and_settles_what_a_stopped_sweep_claimed :: proc(t:^t
     stale,fresh:=join_test(folder,"tmp/stale",0),join_test(folder,"tmp/fresh",0)
     testing.expect(t,os.write_entire_file(stale,[]u8{1})==nil && os.write_entire_file(fresh,[]u8{1})==nil)
     test_set_time(t,stale,time.time_add(now,-2*TMP_STALE))
-
-    swept,error:=sweep(&s,live[:],now)
+    _,error:=sweep(&s,nil,now)
     testing.expect_value(t,error,Error.None)
-    testing.expect_value(t,swept.partials,2)
-    for c,k in cases {
-        _,missing_error:=receive_missing(&s,hashes[k],context.temp_allocator)
-        testing.expectf(t,(missing_error==.None)==c.kept,"partial %d is kept %v",k,c.kept)
-    }
     testing.expect(t,os.is_file(lease_file),"a claimed lease comes back")
     claims,_:=os.read_all_directory_by_path(strings.concatenate({folder,"/tmp/sweep"},context.temp_allocator),context.temp_allocator)
     testing.expect_value(t,len(claims),0)

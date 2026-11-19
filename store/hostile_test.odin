@@ -34,32 +34,22 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     s,error:=open(folder,allocator)
     if !testing.expect_value(t,error,Error.None) {return}
     h:=base.Hostile{state=42}
-    data:=test_bytes(3*PIECE_BYTES+9,5)
-    hash:=test_address(data)
-    pieces:=test_table(data)
-    random:=make([]u8,PIECE_BYTES+3,context.temp_allocator)
+    data:=test_bytes(3*CHUNK_MAX+9,5)
+    hash,_:=put_bytes(&s,data)
+    random:=make([]u8,CHUNK_MAX+3,context.temp_allocator)
     for _ in 0..<64 {
-        size:=i64(base.hostile_int(&h,6*PIECE_BYTES))-PIECE_BYTES
-        table:=make([]Hash,base.hostile_int(&h,8),context.temp_allocator)
-        for &entry in table {
-            for &b in entry {b=u8(base.hostile_next(&h))}
-        }
         target:Hash
         for &b in target {b=u8(base.hostile_next(&h))}
-        e:=receive_begin(&s,target,size,table)
-        testing.expectf(t,e==.Corrupt || e==.Invalid_Argument,"a random table: %v",e)
-    }
-    testing.expect_value(t,receive_begin(&s,hash,i64(len(data)),pieces),Error.None)
-    for _ in 0..<64 {
-        index:=base.hostile_int(&h,10)-3
-        piece:=random[:base.hostile_int(&h,len(random))]
-        for &b in piece {b=u8(base.hostile_next(&h))}
-        e:=receive_piece(&s,hash,index,piece)
-        testing.expectf(t,e==.Corrupt || e==.Invalid_Argument,"a random piece %d: %v",index,e)
+        chunk:=random[:base.hostile_int(&h,len(random))]
+        e:=chunk_put(&s,target,chunk)
+        testing.expectf(t,e==(.Invalid_Argument if len(chunk)==0 || len(chunk)>CHUNK_MAX else .None),"a chunk of %d bytes: %v",len(chunk),e)
+        alias_error:=blob_alias(&s,target,target)
+        testing.expectf(t,alias_error!=.None,"a random object is no blob: %v",alias_error)
     }
     unknown:Hash
     unknown[5]=9
-    testing.expect_value(t,receive_piece(&s,unknown,0,data[:10]),Error.Missing)
+    testing.expect_value(t,chunk_check(&s,unknown),Error.Missing)
+    testing.expect_value(t,blob_alias(&s,hash,unknown),Error.Missing)
     testing.expect_value(t,read(&s,unknown,0,random[:1]),Error.Missing)
     testing.expect_value(t,verify(&s,unknown),Error.Missing)
     _,size_error:=blob_size(&s,unknown)
@@ -69,30 +59,11 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     testing.expect_value(t,read(&s,hash,max(i64),random[:1]),Error.Invalid_Argument)
 
     // A blob whose chunk is damaged on disk.
-    stored,_:=put_bytes(&s,data[:PIECE_BYTES+5])
-    testing.expect(t,test_damage(&s,data[:PIECE_BYTES+5],PIECE_BYTES+1),"the damage lands in a pack")
+    damaged:=test_bytes(CHUNK_MAX+5,6)
+    stored,_:=put_bytes(&s,damaged)
+    testing.expect(t,test_damage(&s,damaged,CHUNK_MAX+1),"the damage lands in a pack")
     testing.expect_value(t,verify(&s,stored),Error.Corrupt)
     testing.expect(t,!has(&s,stored),"a damaged blob goes")
-    _,damaged_table_error:=blob_table(&s,stored,context.temp_allocator)
-    testing.expect_value(t,damaged_table_error,Error.Missing)
-    testing.expect(t,os.write_entire_file(path_in(folder,"tmp","partial",hex_of(hash),"table"),[]u8{1,2,3})==nil)
-    testing.expect_value(t,receive_piece(&s,hash,0,test_piece(data,0)),Error.Corrupt)
-    _,missing_error:=receive_missing(&s,hash,context.temp_allocator)
-    testing.expect_value(t,missing_error,Error.Corrupt)
-    testing.expect_value(t,read(&s,hash,0,random[:1]),Error.Corrupt)
-    testing.expect_value(t,receive_begin(&s,hash,i64(len(data)),pieces),Error.None)
-    _,missing_error=receive_missing(&s,hash,context.temp_allocator)
-    testing.expect_value(t,missing_error,Error.None)
-
-    // A marked piece whose bytes on disk do not match its table entry.
-    testing.expect_value(t,receive_piece(&s,hash,1,test_piece(data,1)),Error.None)
-    partial_data:=path_in(folder,"tmp","partial",hex_of(hash),"data")
-    on_disk,_:=os.read_entire_file(partial_data,context.temp_allocator)
-    on_disk[PIECE_BYTES+7]~=1
-    testing.expect(t,os.write_entire_file(partial_data,on_disk)==nil)
-    testing.expect_value(t,read(&s,hash,PIECE_BYTES,random[:10]),Error.Not_Here_Yet)
-    missing_list,_:=receive_missing(&s,hash,context.temp_allocator)
-    testing.expect(t,len(missing_list)==len(pieces) && missing_list[1]==1,"a piece that does not match is missing again")
 
     // Refs.
     for name in ([]string{"","."," ..","..","a/b","a\\b","A","con","com1.txt","x.","a b",strings.repeat("x",NAME_MAX+1,context.temp_allocator)}) {
@@ -127,19 +98,13 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     // Memory that runs out.
     out:=s
     out.allocator=failing_allocator()
-    _,table_error:=blob_table(&s,test_address(data[:PIECE_BYTES]),out.allocator)
-    testing.expect_value(t,table_error,Error.Missing)
     good,_:=put_bytes(&s,data[:10])
-    _,table_error=blob_table(&s,good,out.allocator)
-    testing.expect_value(t,table_error,Error.Out_Of_Memory)
-    _,missing_error=receive_missing(&s,hash,out.allocator)
-    testing.expect_value(t,missing_error,Error.Out_Of_Memory)
     _,path_error:=blob_path(&s,good,out.allocator)
     testing.expect_value(t,path_error,Error.Out_Of_Memory)
     _,list_error:=ref_list(&s,"ns",out.allocator)
     testing.expect_value(t,list_error,Error.Out_Of_Memory)
     other,_:=put_bytes(&s,data[:20])
-    testing.expect_value(t,receive_begin(&out,test_address(data[:PIECE_BYTES+1]),PIECE_BYTES+1,test_table(data[:PIECE_BYTES+1])),Error.None)
+    testing.expect_value(t,chunk_put(&out,test_address(data[:CHUNK_MAX]),data[:CHUNK_MAX]),Error.None)
     testing.expect(t,has(&s,other))
     _,open_error:=open(path_in(folder,"other"),failing_allocator())
     testing.expect_value(t,open_error,Error.Out_Of_Memory)
@@ -155,12 +120,6 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     testing.expect_value(t,long_error,Error.Invalid_Argument)
     _,empty_error:=open("")
     testing.expect_value(t,empty_error,Error.Invalid_Argument)
-}
-
-@(private="file")
-hex_of :: proc(hash:Hash) -> string {
-    buffer:=new([64]u8,context.temp_allocator)
-    return hex(hash,buffer)
 }
 
 // Packs and index generations of any origin are refused without a crash:
