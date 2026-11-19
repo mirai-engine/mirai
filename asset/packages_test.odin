@@ -283,7 +283,7 @@ package_records_refuse_hostile_text :: proc(t:^testing.T) {
         {.Build,swap(valid[.Build],`"kind_version": `,`"kind_version": 70000`),.Corrupt},
         {.Build,swap(valid[.Build],`"final": true`,`"final": 1`),.Corrupt},
         {.Build,swap(valid[.Build],`"package": `,`"package": "00000000000000000000000000000000", "x": `),.Corrupt},
-        {.Build,`{"version": 1}`,.Corrupt},
+        {.Build,`{"version": 2}`,.Corrupt},
         {.Packages,fmt.tprintf(`{{"version": 2, "packages": [{{"id": %s, "manifest": "nothex", "folder": "", "assets": [], "written": []}}]}}`,id),.Corrupt},
         {.Packages,fmt.tprintf(`{{"version": 2, "packages": [{{"id": %s, "manifest": "%s", "folder": "a/../b", "assets": [], "written": []}}]}}`,id,strings.repeat("0",64,context.temp_allocator)),.Corrupt},
         {.Packages,fmt.tprintf(`{{"version": 2, "packages": [{{"id": %s, "manifest": "%s", "folder": "", "assets": [%s, %s], "written": []}}]}}`,id,strings.repeat("0",64,context.temp_allocator),id,id),.Corrupt},
