@@ -170,6 +170,7 @@ psnr :: proc(format:asset.Texture_Format,blocks,pixels:[]u8,size,channels:int) -
 the_rdo_lambda_trades_error_for_files_that_compress_smaller :: proc(t:^testing.T) {
     SIZE :: 128
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    types.codecs=.Open // the files a cook ships, which RDO makes smaller
     folder:=base.test_folder(t,"rdo")
     if folder=="" {return}
     pixels:=smooth_image(SIZE,true);defer delete(pixels)

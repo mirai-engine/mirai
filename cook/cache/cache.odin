@@ -33,8 +33,8 @@ Cache :: struct {
 }
 
 // The layout of what a result is: raised when results are kept otherwise, so a
-// result of another layout is never read. 2: an object of the store.
-RESULTS_VERSION :: 2
+// result of another layout is never read. 3: an object of the store, as Codecs.None writes it.
+RESULTS_VERSION :: 3
 
 // The id of the file of key, built by version.
 id :: proc "contextless" (key,version:u64) -> base.Asset_Id {return {key,version}}

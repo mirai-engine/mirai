@@ -201,7 +201,7 @@ grid_away_map :: proc(g:^Grid($T),file:string,valid:proc "contextless" (value:T)
     if !page_reader_init(&read,context.temp_allocator) {return false}
     defer page_reader_destroy(&read,context.temp_allocator)
     writer:Page_Writer
-    if !page_writer_init(&writer,context.temp_allocator) {return false}
+    if !page_writer_init(&writer,context.temp_allocator,.Open) {return false}
     defer page_writer_destroy(&writer)
     scratch,error:=make([]T,PAGE_VALUES,context.temp_allocator)
     if error!=nil {return false}
@@ -251,7 +251,7 @@ grid_page_leave :: proc(g:^Grid($T),slot:int,allocator:runtime.Allocator) -> boo
             page.fill,block^=page.values[0],{}
         } else {
             writer:Page_Writer
-            if !page_writer_init(&writer,context.temp_allocator) {return false}
+            if !page_writer_init(&writer,context.temp_allocator,.Open) {return false}
             defer page_writer_destroy(&writer)
             extent,_:=grid_page_extent(g,grid_id(g,slot))
             encoded,ok:=page_encode(&writer,page.values,extent.x,false)
