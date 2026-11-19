@@ -189,8 +189,15 @@ share_command :: proc(args:[]string,output,errors:io.Writer) -> int {
     packages,_:=asset.root_packages(root,s.root,context.temp_allocator)
     for problem in packages.problems {fmt.wprintfln(errors,"warning: a joiner will not get it: %s",problem)}
 
+    // The exchange's jobs, owned by this thread, which pumps.
+    exchange_jobs:jobs.Job_System
+    if !jobs.system_init(&exchange_jobs,{threads=jobs.THREADS_AUTO,allocator=runtime.heap_allocator()}) {
+        fmt.wprintln(errors,"mirai share: the threads of the exchange could not be started")
+        return 1
+    }
+    defer jobs.system_destroy(&exchange_jobs)
     n:=new(Node,context.temp_allocator)
-    if node_init(n,&s,runtime.heap_allocator())!=.None {
+    if node_init(n,&s,runtime.heap_allocator(),{system=&exchange_jobs,worker=jobs.OWNER})!=.None {
         fmt.wprintln(errors,"mirai share: no memory for the exchange")
         return 1
     }
@@ -299,8 +306,15 @@ join_command :: proc(args:[]string,output,errors:io.Writer,library:sources.Libra
     }
     defer jobs.system_destroy(&js)
 
+    // The exchange's jobs, owned by the thread that pumps; the join's own are for its imports.
+    exchange_jobs:jobs.Job_System
+    if !jobs.system_init(&exchange_jobs,{threads=jobs.THREADS_AUTO,allocator=runtime.heap_allocator()}) {
+        fmt.wprintln(errors,"mirai join: the threads of the exchange could not be started")
+        return 1
+    }
+    defer jobs.system_destroy(&exchange_jobs)
     n:=new(Node,context.temp_allocator)
-    if node_init(n,&s,runtime.heap_allocator())!=.None {
+    if node_init(n,&s,runtime.heap_allocator(),{system=&exchange_jobs,worker=jobs.OWNER})!=.None {
         fmt.wprintln(errors,"mirai join: no memory for the exchange")
         return 1
     }
