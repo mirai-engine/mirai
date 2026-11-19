@@ -1555,7 +1555,14 @@ render_a_swaying_batch_keeps_its_pages_under_the_bound :: proc(t: ^testing.T) {
 			}
 			testing.expectf(t, waiting == 0, "%s: under a bound of %d the pages still wait", c.name, bound)
 		} else {
-			for _ in 0 ..< 8 {frame(t, r, f.cube, &sway, camera)}
+			// Until the cache draws nothing again and the table stays.
+			for k := 0; k < 64; k += 1 {
+				frame(t, r, f.cube, &sway, camera)
+				drawn, _, _ := shadow_counts(r)
+				testing.expect(t, rhi.texture_read(f.device, b.table, mem.slice_to_bytes(entries)))
+				if drawn == 0 && slice.equal(entries, before) {break}
+				copy(before, entries)
+			}
 		}
 		frame(t, r, f.cube, &sway, camera)
 		testing.expect(t, rhi.texture_read(f.device, b.table, mem.slice_to_bytes(before)))
@@ -1728,11 +1735,13 @@ render_a_swaying_batch_follows_its_sway_only_near_the_eye :: proc(t: ^testing.T)
 			// Between where the edge of the slab is swayed one way and the other;
 			// well inside and well outside of its shadow; across the edges of
 			// the shadow of the still post; along the shadows of both posts from
-			// their faces at 0.3 m, a millimetre apart.
+			// a pixel past their faces at 0.3 m, whose pixel the face may take, a
+			// millimetre apart.
 			at := make([dynamic]Vec3, context.temp_allocator)
 			append(&at, floor_at(0.5, 1.2), floor_at(0.1, 1.2), floor_at(0.9, 1.2))
 			for i in 0 ..< 200 {append(&at, floor_at(1.2 + f32(i) * 0.004, 0.8))}
-			for side in ([2]f32{1.6, -1.6}) {for i in 0 ..< 200 {append(&at, floor_at(side, 0.3 + f32(i) * 0.001))}}
+			face := 0.3 + pixel_at(linalg.length(c.eye - {1.6, 0, 0.3}))
+			for side in ([2]f32{1.6, -1.6}) {for i in 0 ..< 200 {append(&at, floor_at(side, face + f32(i) * 0.001))}}
 			// Inside the shadow of the slab whichever way it sways, by more than
 			// its penumbra and a texel of the layer.
 			inside := len(at)
@@ -1770,10 +1779,10 @@ render_a_swaying_batch_follows_its_sway_only_near_the_eye :: proc(t: ^testing.T)
 					gaps: [2]f32
 					for &gap, side in gaps {
 						gap = 0.2
-						for v, i in now[203 + 200 * side:][:200] {if v < 0.5 * lit {gap = f32(i) * 0.001; break}}
+						for v, i in now[203 + 200 * side:][:200] {if v < 0.5 * lit {gap = face + f32(i) * 0.001 - 0.3; break}}
 					}
 					bound := f32(u32(1) << (coarser - 1)) * 2 * pixel_at(linalg.length(c.eye - {-1.6, 0, 0.3})) + pixel_at(linalg.length(c.eye - {-1.6, 0, 0.3}))
-					if k == 7 {log.infof("%d levels coarser: the floor at the base of the swaying post is lit %.1f mm, at the still one %.1f mm (half a texel of the layer and a pixel: %.1f mm)", coarser, 1000 * gaps[1], 1000 * gaps[0], 1000 * bound)}
+					if k == 7 {log.infof("%d levels coarser: the swaying post shades the floor from %.1f mm past its face, the still one from %.1f mm (half a texel of the layer and a pixel: %.1f mm)", coarser, 1000 * gaps[1], 1000 * gaps[0], 1000 * bound)}
 					testing.expectf(t, gaps[1] <= gaps[0] + bound, "%d levels coarser, frame %d: the floor is lit %f m from the base of the swaying post, %f m from that of the still one, more than %f apart", coarser, k, gaps[1], gaps[0], bound)
 					changed, outside, farther := sway_atlas_against_cache(t, r, boxes)
 					testing.expectf(t, changed > 0 && outside == 0 && farther == 0, "%d levels coarser, frame %d: of %d texels of the atlas not the cache, %d lie away from what sways and %d are farther", coarser, k, changed, outside, farther)
@@ -1857,6 +1866,7 @@ render_a_swaying_forest_composes_again_only_what_is_near :: proc(t: ^testing.T) 
 		FRAMES :: 30
 		composed, refreshed, waiting, units, ms, bound: f64
 		worst_age, most_units := u32(0), u32(0)
+		each: [FRAMES]f64
 		for k in 0 ..< 2 * FRAMES {
 			sway.x = -sway.x
 			low, high, _ := mesh_bounds(r, f.cube)
@@ -1874,6 +1884,7 @@ render_a_swaying_forest_composes_again_only_what_is_near :: proc(t: ^testing.T) 
 			waiting += f64(stats.pages_waiting)
 			units += f64(stats.units + stats.units_moving)
 			ms += maps
+			each[k - FRAMES] = maps
 			bound += f64(shadow_frame_units(r, b))
 			worst_age, most_units = max(worst_age, worst), max(most_units, stats.units_moving)
 			testing.expectf(t, listed == again && worst <= 1, "%d levels coarser, frame %d: %d of the %d pages that sway were composed again, the oldest %d frames ago", coarser, k, again, listed, worst)
@@ -1886,7 +1897,8 @@ render_a_swaying_forest_composes_again_only_what_is_near :: proc(t: ^testing.T) 
 		covered := 0
 		for v in layer {if v > 0 {covered += 1}}
 		delete(layer)
-		log.infof("a swaying forest, its layer %d levels coarser: %.1f pages composed a frame, %.1f of them for what sways alone, %.1f waiting; %.0f units of a bound of %.0f, %d at most for what moves; %d texels of the layer covered; the rounds of the maps %.3f ms; a page that sways waited %d frames at most", coarser, composed / FRAMES, refreshed / FRAMES, waiting / FRAMES, units / FRAMES, bound / FRAMES, most_units, covered, ms / FRAMES, worst_age)
+		slice.sort(each[:])
+		log.infof("a swaying forest, its layer %d levels coarser: %.1f pages composed a frame, %.1f of them for what sways alone, %.1f waiting; %.0f units of a bound of %.0f, %d at most for what moves; %d texels of the layer covered; the rounds of the maps %.3f ms, %.3f in the middle frame; a page that sways waited %d frames at most", coarser, composed / FRAMES, refreshed / FRAMES, waiting / FRAMES, units / FRAMES, bound / FRAMES, most_units, covered, ms / FRAMES, each[FRAMES / 2], worst_age)
 		testing.expectf(t, units * 2 <= bound, "%d levels coarser: the maps drew %.0f units a frame, a bound of %.0f", coarser, units / FRAMES, bound / FRAMES)
 		expect_clean(t, f.device)
 		rhi.timestamps_want(f.device, false)
