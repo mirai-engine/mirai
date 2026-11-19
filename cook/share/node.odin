@@ -34,7 +34,7 @@ Event :: struct {
     kind:Event_Kind,
     peer:int,                     // a number given in order of arrival
     reason:wire.Disconnect_Reason, // Left
-    sent,received:u64,            // piece bytes with that peer, Left
+    sent,received:u64,            // chunk bytes with that peer, Left
 }
 
 @(private)
@@ -190,7 +190,7 @@ node_events :: proc(n:^Node,buffer:[]Event) -> []Event {
 
 Node_Totals :: struct {connected:int,sent,received:u64,send_rate,receive_rate:f64}
 
-// Piece bytes sent and received with every peer since the node began, and the rates now.
+// Chunk bytes sent and received with every peer since the node began, and the rates now.
 node_totals :: proc(n:^Node) -> (t:Node_Totals) {
     sync.mutex_guard(&n.lock)
     t.connected,t.sent,t.received=n.connected,n.sent_gone,n.received_gone

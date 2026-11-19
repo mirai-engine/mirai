@@ -1,96 +1,109 @@
-# Exchange: blobs and refs between peers
+# Exchange: objects and refs between peers
 
-`exchange` (layer 3) moves the blobs and refs of a `store` between peers over the connections of
-`net` hosts its owner already runs. It imports `store` and `net` and nothing engine-time, so a
-headless peer and the editor link the same code. Its messages are in `exchange/wire.odin`.
+`exchange` (layer 3) moves the chunks of a `store`'s objects and its refs between peers over the
+connections of `net` hosts its owner already runs. It imports `store` and `net` and nothing
+engine-time, so a headless peer and the editor link the same code. Its messages (protocol 3) are
+in `exchange/wire.odin`.
 
 ## What the owner calls
 
 - `channels()` gives the two reliable channels the exchange needs; the owner puts them in the
   `Host_Desc.channels` of every host at the same index and passes that index as `Desc.channel`.
-- `init` sizes every buffer from the `Desc`; `Desc.max_blob_bytes` decides the largest table, and a
-  table of that size is held per peer to send and to receive.
+- `init` sizes every buffer and table from the `Desc`; nothing is sized by an object, so an object
+  of any size moves.
 - Per host poll: `peer_add` on `Connected`, `peer_remove` on `Disconnected`, `receive` on every
   `Message` (it says whether the message was its own). Then `update(now)` before `host_update`.
 - A connection is given from its start: a message that began before `peer_add` is not read from
   its middle, so a restarted exchange takes new connections.
-- `want` (asking again raises the priority), `forget`, `progress`, `peer_progress`; `ref_ask`,
-  `names_ask`, `query_result`, `query_end`.
-- `want_addresses` gives the addresses of every want, in progress or kept: the owner puts them in
-  its store lease so a sweep keeps them; the exchange holds no lease.
-- `fetch` and `fetch_ref` block a job thread until the blob is complete in the store, or return
-  `Missing` once no connected peer has it; the owner keeps pumping meanwhile, since every procedure
-  takes the exchange's lock. `fetch_all` and `fetch_refs` do the same for a set, asked together:
-  a caller that needs many blobs or refs waits on the set, since each blocking call costs at least
-  a round trip. Success is what the store says now: a kept want whose blob was swept
-  is asked again. `destroy` wakes every waiter with `Closed` and frees once none is left.
+- `want` takes an object's root or, until the consumers hold objects, a blob's address; asking
+  again raises the priority. `forget`, `progress`, `peer_progress`; `ref_ask`, `names_ask`,
+  `query_result`, `query_end`.
+- `want_addresses` gives every want, in progress or kept, as its root once known: the owner puts
+  them in its store lease so a sweep keeps them and everything already received under them; the
+  exchange holds no lease.
+- `fetch` and `fetch_ref` block a job thread until what they name is complete in the store, or
+  return `Missing` once no connected peer has it; the owner keeps pumping meanwhile, since every
+  procedure takes the exchange's lock. `fetch_all` and `fetch_refs` do the same for a set, asked
+  together: a caller that needs many objects or refs waits on the set, since each blocking call
+  costs at least a round trip. Success is what the store says now: a kept want whose object was
+  swept is asked again. `destroy` wakes every waiter with `Closed` and frees once none is left.
 
 ## Invariants
 
-- Requests are stateless, by address and runs of pieces; there is no session or fetch id. Any peer
-  that has the pieces answers, also from a blob it is still receiving (`store.read` and
-  `store.blob_table` work on partial blobs).
-- A blob is asked with its first `FIRST_PIECES` pieces. A blob of no more comes back whole, taken
-  once its bytes hash to its address, so it needs no table and no partial blob; a larger one
-  comes back as its size, its table and those pieces, and a table of `FIRST_PIECES` pieces or
-  fewer is a lie. Adjacent pieces nobody was asked for go as one run. A request is bounded by
-  `REQUEST_ENTRIES` and `REQUEST_BYTES`.
+- Asks are stateless, by chunk address with a byte budget; there is no session or fetch id. Any
+  peer that holds a chunk answers, also one still receiving the object, and a chunk is atomic, so
+  a peer has it or lacks it. The answer to an entry is its chunk, then its descendants depth first
+  while their bytes fit the budget, stopping at the first one missing; then `Done` ends the ask.
+- The receiver walks the tree of each want over what its store holds and asks only what it lacks:
+  a chunk already stored is never asked, so a changed object costs its new chunks and the nodes
+  above them. A root not here is asked with `ROOT_BUDGET`, so a small object comes whole in one
+  round trip; the chunks and nodes the walk finds missing are asked with no budget, since the
+  receiver may hold what is under them. A missing node stops the walk of its want until it
+  arrives, and the next missing nodes are asked meanwhile.
 - Priority belongs to the receiver: it asks for the most important wants first and nothing about
-  priority goes on the wire beyond the order of the entries. At most `BATCHES` requests are in
-  flight per peer, each sized to what the peer delivers in a round trip, so they keep twice that
-  outstanding without queueing a low priority want ahead of a later high one. A blob whose size is
-  not known yet counts only against the limits of a request, since most blobs are small: a
-  request carries as many of them as fit.
-- Pieces are spread among the connected peers that do not lack the blob; a peer that lacks it is
-  not asked again for a while, and a want with no peer left to ask is `Missing`, asked again when
-  a peer joins. What a peer was asked stays reserved to it only while it makes progress on that
-  want; otherwise it goes to others, that peer is not asked for the want for a while, and its late
-  answers release nothing a second time.
-- A request addresses at most `MAX_BLOB_BYTES` and never depends on the server's own cap: a blob
-  above the server's `max_blob_bytes` is answered as lacking.
-- A peer whose copy is damaged never serves the damage: the store finds it when it reads the piece,
-  removes the blob and the peer lacks it, so it is not taken for a liar and fetches it again.
-- Serving holds the blob being served open per peer, and receiving holds the partial files of up
-  to `RECEIVERS` wants open, closing the one that took no piece for longest.
-- Nothing unverified reaches a reader: tables and pieces go through `receive_begin` and
-  `receive_piece`. A table or piece is taken only from the peer it was asked of; anything else
-  counts against that peer. A table that does not match its address, claims a size this end does
-  not hold, or a piece that does not match its table, marks that peer wrong for that blob, never
-  the want; a true last piece that proves the size wrong (`Wrong_Size`) marks whoever gave the
-  table, and the store drops only the partial blob. A whole blob that does not hash to its address
-  marks the peer that sent it. Marks are per peer and leave with it, never passing to the next
-  peer in its slot.
+  priority goes on the wire beyond the order of the entries. At most `BATCHES` asks are in flight
+  per peer, each sized to what the peer delivers in a round trip, so they keep twice that
+  outstanding without queueing a low priority want ahead of a later high one. A root not here
+  counts only against the entries of an ask, since most objects are small. A want keeps at most
+  `WALK_AHEAD` chunks found and not asked, so many wants share the table of needs.
+- Chunks are spread among the connected peers; a peer that lacks one is not asked for it again for
+  a while, and a want that no peer can be asked for, or one of whose chunks no peer has, is
+  `Missing`, asked again when a peer joins. What a peer was asked stays reserved to it only while
+  it makes progress on that want; otherwise it goes to others, that peer is not asked for the
+  want for a while, and its late answers release nothing a second time.
+- Nothing is checked on serve. Nothing unverified reaches the store: a chunk is taken only as the
+  answer to an entry asked of that peer or as a descendant of the entry it is answering within its
+  budget, and only once it hashes to the address the ask or its parent named. A node is parsed and
+  checked against its parent's level and entry before its entries are asked. A chunk that fails
+  its address is reported with `Bad` and marks that peer wrong for that want, never the want; the
+  peer checks its copy and tombstones it if damaged, so it lacks it from then on and fetches it
+  again when it wants it. A tree whose chunks make their addresses but do not hold together fails
+  the want, since every peer would send the same. Marks are per peer and leave with it, never
+  passing to the next peer in its slot.
+- A want is complete only after the commit that holds its last chunk: received chunks join the
+  store's batch and the exchange commits once for the wants that finished, at most every
+  `COMMIT_SECONDS`, and every `COMMIT_IDLE` for what arrived meanwhile, so a restarted receiver
+  walks again from what it committed without asking for it.
+- Blobs, until the consumers hold objects: a peer asked for an address that is no chunk it holds
+  but a blob's alias answers with `Alias` and that object's root; the receiver walks it and names
+  it a blob only once its bytes hash to the blob's address, else the peer that named the root
+  lied. A blob of one chunk is that chunk, whose address is the blob's, and is put whole.
 - What a peer exposes is the owner's `Desc.expose`; without one no namespace is read. Names come
   sorted, a page at a time after the last one seen.
-- Hostile input: a malformed message, a request beyond the limits or an answer nobody could have
-  asked for in that form marks the peer bad, and it is neither asked nor served again; a well formed
-  message about something not asked for is ignored. A request that does not fit the room for
-  `BATCHES` requests is refused, and answers to questions find room only while the asker keeps a
-  few waiting, so a peer cannot make another send without bound. A question its owner ended stays
-  until every peer asked answered or left, so late answers return their credits.
-- Serving and receiving do not allocate after `init`, except listing a namespace, for which the
-  store reads its root.
+- Hostile input: a malformed message, an ask beyond the limits, descendants past a budget or an
+  answer nobody could have asked for in that form marks the peer bad, and it is neither asked nor
+  served again; a well formed message about something not asked for is ignored. An ask that does
+  not fit the room for `BATCHES` asks is refused, and answers to questions find room only while
+  the asker keeps a few waiting, so a peer cannot make another send without bound. A question its
+  owner ended stays until every peer asked answered or left, so late answers return their credits.
+- Serving and receiving do not allocate in the exchange after `init`, except listing a namespace,
+  for which the store reads its root. Reading, hashing and appending run on the pump thread.
 
 ## Verification
 
 - `mirai check exchange` and `mirai test exchange` (no GPU): every test runs peers on `net`'s
-  `Sim_Network` in virtual time with temporary stores.
+  `Sim_Network` in virtual time with temporary stores. The rate over UDP on loopback is the opt-in
+  `objects_over_udp_loopback` with `-define:EXCHANGE_BENCHMARK=true`. The memory bound of
+  `a_ten_gigabyte_object_moves_within_bounded_memory` is the process's footprint, checked when it
+  runs alone with `-define:ODIN_TEST_THREADS=1`.
 - Focal tests:
-  `blobs_around_the_piece_boundaries_and_a_large_one_arrive_verified_under_loss_and_jitter`,
+  `objects_and_blobs_of_every_size_arrive_verified_under_loss_and_jitter`,
   `a_high_priority_want_asked_later_completes_before_a_large_low_one`,
   `a_transfer_resumes_after_the_connection_drops_and_after_the_store_reopens`,
-  `a_liar_in_the_table_a_piece_or_the_size_is_marked_and_the_blob_still_arrives`,
-  `a_peer_still_receiving_a_blob_serves_its_pieces_to_a_third`,
-  `a_damaged_blob_is_lacked_removed_and_fetched_again`,
+  `a_liar_is_marked_and_the_object_still_arrives`,
+  `a_receivers_bad_makes_the_server_repair_or_lack`,
+  `a_peer_still_receiving_an_object_serves_its_chunks_to_a_third`,
   `refs_are_asked_and_listed_and_a_namespace_not_exposed_gives_nothing`,
   `the_blocking_form_returns_for_a_hit_a_miss_and_a_disconnect`,
   `the_batch_blocking_forms_return_for_a_hit_a_partial_miss_and_a_disconnect`,
-  `many_small_blobs_wanted_together_take_round_trips_that_do_not_grow_with_their_count`,
+  `many_small_objects_wanted_together_take_round_trips_that_do_not_grow_with_their_count`,
+  `a_one_byte_insert_sends_only_the_new_chunks`,
+  `a_ten_gigabyte_object_moves_within_bounded_memory`,
   `hostile_messages_are_refused_without_a_crash`,
+  `hostile_trees_fail_the_want_without_a_crash`, `a_peer_past_the_budget_of_an_ask_is_bad`,
   `a_game_channel_keeps_its_delay_small_during_a_transfer`,
-  `a_wrong_size_found_after_another_process_published_the_blob_keeps_it`,
   `a_peer_that_holds_a_want_without_progress_loses_it`,
   `a_peer_in_a_freed_slot_is_not_blamed_for_its_predecessor`,
   `late_ref_answers_return_their_credits`,
-  `a_late_done_does_not_release_what_another_peer_was_asked`, `destroy_wakes_a_waiting_fetch` and
-  `a_server_with_the_smallest_cap_serves_an_honest_request`.
+  `a_late_done_does_not_release_what_another_peer_was_asked` and
+  `destroy_wakes_a_waiting_fetch`.
