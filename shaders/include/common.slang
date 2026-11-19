@@ -216,7 +216,7 @@ struct Mesh {
     float uv1_step;
     float lod_reach;     // how far a sphere of its levels reaches past its box
     uint bounds_word;    // of a pose: the box and the cone of the normals of each cluster it poses, as posed now (geometry.slang, posed_bounds); INVALID: none
-    float sway;          // of a pose, how far it moves a vertex from where it is at rest, in its own space (render.deformable_create); FLT_MAX: anywhere
+    uint pad0;
     float4 bounds_min;   // object space
     float4 bounds_max;
     Mesh_Ray rays[MESH_RAY_LEVELS];

@@ -300,7 +300,7 @@ the_plan_of_the_shadow_maps_costs_little_while_everything_sways :: proc(t: ^test
 	meshes: [MESHES]Mesh_Handle
 	for &mesh in meshes {
 		made: bool
-		mesh, made = deformable_create(r, source, false, 0.3)
+		mesh, made = deformable_create(r, source)
 		testing.expect(t, made)
 	}
 	instances := make([]Batch_Instance, INSTANCES)
@@ -309,7 +309,7 @@ the_plan_of_the_shadow_maps_costs_little_while_everything_sways :: proc(t: ^test
 		cell, kind := b / KINDS, b % KINDS
 		corner := Vec3{f32(cell % SIDE) * 24 - 480, 0, f32(cell / SIDE) * 24 - 480}
 		for &instance, k in instances {instance = batch_instance(corner + {f32(k % 12) * 2 + f32(kind) * 0.3, 0.5, f32(k / 12) * 2.5}, 1, {1, 2 if kind < 2 else 0.5, 1})}
-		_, problem := batch_set(r, 0, 0, {mesh = meshes[b % MESHES], flags = {.Casts_Shadow, .Ray_Visible}, cull_distance = 150 if kind >= 3 else 0}, instances)
+		_, problem := batch_set(r, 0, 0, {mesh = meshes[b % MESHES], flags = {.Casts_Shadow, .Ray_Visible}, cull_distance = 150 if kind >= 3 else 0, sway = 0.3}, instances)
 		testing.expect(t, problem == "", problem)
 	}
 	batches_build(r)

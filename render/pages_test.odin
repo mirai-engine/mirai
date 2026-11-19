@@ -127,7 +127,7 @@ meshes_removed_added_and_posed_keep_reading_their_own_pages :: proc(t: ^testing.
 	pages_read_back(t, r, handles[0], grids[0])
 	pages_read_back(t, r, handles[2], grids[2])
 	pages_read_back(t, r, reused, small)
-	pose, made := deformable_create(r, handles[2], true)
+	pose, made := deformable_create(r, handles[2])
 	if !testing.expect(t, made) {return}
 	posed := s.meshes[pose]
 	for page in record_pooled(s, posed).pages {

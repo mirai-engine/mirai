@@ -505,16 +505,25 @@ shadow_map_reaches :: proc "contextless" (m: Gpu_Shadow_Map, low, high: Vec3) ->
 	return side(lo, hi, {1, 0, -m.span.x}) && side(lo, hi, {-1, 0, m.span.z}) && side(lo, hi, {0, 1, -m.span.y}) && side(lo, hi, {0, -1, m.span.w})
 }
 
-// Of a batch that casts shadows with a deformable: how far its instances
-// sway, metres of the world (the texel of a map below which it moves there);
-// 0 for any other batch.
+// Of a batch that casts shadows and sways (Batch_Desc.sway) or is of a
+// deformable: how far its instances sway, metres of the world (the texel of
+// a map below which it moves there), anywhere for a deformable that does not
+// say; 0 for any other batch.
 @(private)
 batch_sway :: proc(s: ^Scene_State, record: ^Batch_Record) -> (fine: f32) {
 	if .Casts_Shadow not_in record.desc.flags || int(record.desc.mesh) >= len(s.meshes) {return}
+	if record.desc.sway > 0 {return max(record.desc.sway * record.scale, 1e-6)}
 	skin := s.meshes[record.desc.mesh].skin
-	if skin == nil || !skin.external {return}
-	fine = skin.sway * record.scale if skin.sway > 0 else max(f32)
-	return max(fine, 1e-6)
+	return max(f32) if skin != nil && skin.external else 0
+}
+
+// Whether a batch that casts shadows moves in the maps now: the vertices of
+// its deformable change, or the wind it sways in blows.
+@(private)
+batch_moving :: proc(s: ^Scene_State, record: ^Batch_Record) -> bool {
+	skin := s.meshes[record.desc.mesh].skin
+	if skin != nil && skin.external {return skin.shadow_moving}
+	return batch_near(&s.batch, record) > 0
 }
 
 // The narrowest and the widest texel of a map over a box of the world,
@@ -630,20 +639,21 @@ shadow_movers_update :: proc(r: ^Renderer) {
 		}
 		unordered_remove(&s.shadow_followed, k)
 	}
-	// A deformable whose vertices change (the wind) changes the batches of it
-	// that cast as an instance does, in the maps whose texel is narrower than
-	// how far it sways alone: the others draw it at rest and keep it. It is
-	// followed as a whole, so a frame where every batch sways looks at the
-	// deformables alone: the batches change where one starts or stops, or the
-	// tables were built again (Scene_State.shadow_movers_version). What
-	// stays changes where the batches of one that starts or stops lie, all
-	// of them in one box, so that a wind that starts everywhere takes few.
-	touched := false
+	// A batch that sways while its wind blows, or whose deformable's vertices
+	// change, changes as an instance does, in the maps whose texel is
+	// narrower than how far it sways alone: the others draw it at rest and
+	// keep it. A frame where every batch sways looks at none: the batches
+	// change where a wind or a deformable starts or stops, or the tables were
+	// built again (Scene_State.shadow_movers_version). What stays changes
+	// where those that start or stop lie, all of them in one box, so that a
+	// wind that starts everywhere takes few.
+	b := &s.batch
+	touched := b.winds_changed
+	b.winds_changed = false
 	for handle in s.skinned {
 		skin := s.meshes[handle].skin
 		if skin == nil || !skin.external {continue}
 		skin.shadow_touched = false
-		skin.shadow_low, skin.shadow_high, skin.shadow_fine = Vec3(max(f32)), Vec3(-max(f32)), 0
 		if skin.dirty {
 			if skin.shadow_frame == 0 || !skin.shadow_moving {skin.shadow_touched = true}
 			skin.shadow_moving = skin.shadow_frame != 0
@@ -654,24 +664,20 @@ shadow_movers_update :: proc(r: ^Renderer) {
 		}
 		touched ||= skin.shadow_touched
 	}
-	b := &s.batch
 	if touched || s.shadow_sway_tables != b.tables {
+		low, high, widest := Vec3(max(f32)), Vec3(-max(f32)), f32(0)
 		for index, k in b.drawn {
 			record := &b.records[index]
 			fine := batch_sway(s, record)
-			skin := s.meshes[record.desc.mesh].skin if fine != 0 else nil
-			moving := skin != nil && skin.shadow_moving
-			if skin != nil && skin.shadow_touched {
-				skin.shadow_low, skin.shadow_high = linalg.min(skin.shadow_low, b.boxes[k].min), linalg.max(skin.shadow_high, b.boxes[k].max)
-				skin.shadow_fine = max(skin.shadow_fine, fine)
+			moving := fine != 0 && batch_moving(s, record)
+			skin := s.meshes[record.desc.mesh].skin
+			if moving != record.shadow_moving || fine != 0 && skin != nil && skin.shadow_touched {
+				s.shadow_movers_version += 1
+				low, high, widest = linalg.min(low, b.boxes[k].min), linalg.max(high, b.boxes[k].max), max(widest, fine)
 			}
-			if moving != record.shadow_moving {s.shadow_movers_version += 1}
 			record.shadow_moving = moving
 		}
-		for handle in s.skinned {
-			skin := s.meshes[handle].skin
-			if skin != nil && skin.shadow_touched {occluder_add(&stale, OCCLUDERS_MANY, skin.shadow_low, skin.shadow_high, skin.shadow_fine)}
-		}
+		if widest > 0 {occluder_add(&stale, OCCLUDERS_MANY, low, high, widest)}
 		s.shadow_sway_tables = b.tables
 	}
 	if stale.count == 0 && !stale.covers && moved.count == 0 {return}

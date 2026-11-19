@@ -408,15 +408,12 @@ mesh_uploading :: proc(renderer:^Renderer,mesh:Mesh_Handle) -> bool {
     return renderer!=nil && gpu.mesh_uploading(renderer,mesh)
 }
 
-// A copy of a mesh whose vertices the plugin writes in its Geometry stage, in
-// each frame it asked deformable_update for. levels: it keeps the levels of
-// detail of the mesh, whose vertices the plugin writes too (pass_deformable
-// counts them); rays meet the first. sway: metres in the space of the mesh it
-// moves a vertex at most from where it is at rest; 0 for anywhere in the box
-// deformable_update gives. A load transaction.
-deformable_create :: proc(renderer:^Renderer,source:Mesh_Handle,levels:=false,sway:=f32(0)) -> (Mesh_Handle,bool) {
+// A copy of level 0 of a mesh whose vertices the plugin writes in its
+// Geometry stage, in each frame it asked deformable_update for. A load
+// transaction.
+deformable_create :: proc(renderer:^Renderer,source:Mesh_Handle) -> (Mesh_Handle,bool) {
     if renderer==nil {return 0,false}
-    return gpu.deformable_create(renderer,source,levels,sway)
+    return gpu.deformable_create(renderer,source)
 }
 
 // Says that the next frame writes the vertices of a deformable, and the box
@@ -493,6 +490,12 @@ batch_set :: proc(renderer:^Renderer,world:core.World_Id,handle:Batch_Handle,des
 // False for a handle that names no batch.
 batch_remove :: proc(renderer:^Renderer,handle:Batch_Handle) -> bool {
     return renderer!=nil && gpu.batch_remove(renderer,handle)
+}
+
+// How much of their sway (Batch_Desc.sway) the batches that sway in `wind`
+// take now, 0 (still) to 1. False for a share out of that range.
+batches_wind :: proc(renderer:^Renderer,wind:u32,share:f32) -> bool {
+    return renderer!=nil && gpu.batches_wind(renderer,wind,share)
 }
 
 // Changes when the renderer forgets every batch, along with every mesh (a
