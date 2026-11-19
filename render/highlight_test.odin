@@ -41,3 +41,17 @@ outline_levels_of_the_game_rank_below_the_editor :: proc(t: ^testing.T) {
 	testing.expect(t, highlight_rank(u32(outline_level(1))) > highlight_rank(u32(outline_level(2))))
 	testing.expect_value(t, highlight_rank(u32(outline_level(OUTLINE_STYLES))), u32(1))
 }
+
+// A level of the editor shows something only with a radius and a coat or a
+// color that is not transparent; every style of the game shows.
+@(test)
+the_levels_that_show_follow_their_styles :: proc(t: ^testing.T) {
+	r := new(Renderer)
+	defer free(r)
+	r.highlight = {colors = {0 = {1, 0, 0, 1}, 2 = {1, 0, 0, 1}}, fill = {1 = 0.5}, width = 3}
+	game: Highlight_Levels
+	for level in HIGHLIGHT_LEVELS + 1 ..= HIGHLIGHT_LEVELS + OUTLINE_STYLES {game += {level}}
+	testing.expect_value(t, highlight_levels_shown(r), game + {1, 2, 3})
+	r.highlight.width = 0
+	testing.expect_value(t, highlight_levels_shown(r), game)
+}
