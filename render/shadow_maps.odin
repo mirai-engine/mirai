@@ -1422,14 +1422,15 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 			kept.m, kept.tables, kept.cull, kept.threads = m, batch.tables, key, list.threads
 		}
 		// The batches that move and change the map: of the casters it holds,
-		// those that move, where their sway is wider than its texel.
+		// which reach it, those that move, where their sway is wider than its
+		// texel.
 		if kept.movers != s.shadow_movers_found {
 			if kept.movers != 0 {forget(s, view, kept)}
 			list: Shadow_Reach_List
 			end: u32
 			add :: proc(s: ^Scene_State, view: ^Shadow_View_Reach, kept: ^Shadow_Reached, list: ^Shadow_Reach_List, end: ^u32, k: i32, scene_count: u32) -> bool {
 				mover := s.shadow_movers[k]
-				if !shadow_change_reaches(kept.m, mover.change) {return true}
+				if mover.change.fine > 0 && !(shadow_map_finest(kept.m, mover.change.low, mover.change.high) < mover.change.fine) {return true}
 				if !shadow_range_add(&kept.moves, list, end, mover.first, mover.count, scene_count) {return false}
 				if _, err := append(&kept.moving, u32(k)); err != nil {return false}
 				if view.mover_slots[k] == 0 {view.mover_threads += mover.count}
