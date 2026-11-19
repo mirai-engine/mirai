@@ -109,13 +109,14 @@ float2 shadow_map_texels(Shadow_Map m, float3 low, float3 high) {
 }
 
 // Whether a map draws a caster within a box that sways `sway` metres as it
-// sways, not at rest (render.shadow_map_sways): its texel there is narrower
-// than the sway, and where its shadow falls, past the box from the light,
-// narrower than `reach`, the texel the view takes of a point at the reach of
-// what sways in the maps (render.shadow_sway_texel).
-bool shadow_map_sways(Shadow_Map m, float3 low, float3 high, float sway, float reach) {
+// sways, not at rest (render.shadow_map_sways): the texel of its layer
+// `coarser` levels coarser is narrower there than the sway, and where its
+// shadow falls, past the box from the light, its own texel is narrower than
+// `reach`, the texel the view takes of a point at the reach of what sways in
+// the maps (render.shadow_sway_texel).
+bool shadow_map_sways(Shadow_Map m, float3 low, float3 high, float sway, float reach, uint coarser) {
     float2 texels = shadow_map_texels(m, low, high);
-    return texels.x < sway && texels.y < reach;
+    return texels.x * float(1u << coarser) < sway && texels.y < reach;
 }
 
 // Whether a box of the world reaches into the frustum of a map.
