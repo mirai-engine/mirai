@@ -1135,7 +1135,11 @@ The methods read the source the editor has.
 [Collaboration](../../mirai-editor/references/collaboration.md). In `peers` of `collab.status`,
 `playing` says that editor is in a Play or Simulate of its own and `serving`, that it serves a
 networked game; `unsent` lists the asset files changed in the session that the others do not have
-because they are too large to travel. an invalid code is `-32602`.
+because they are too large to travel. an invalid code is `-32602`. `collab.join` takes an optional
+`folder` (the open project when empty) and returns at once; `join` of `collab.status` follows how
+that folder is brought to the host's project, phase by phase, and lists after it what was kept,
+not written and the packages no peer has a build of; `project`, the chunk bytes the session moved
+and the peers that went bad.
 
 ## Project panels
 

@@ -121,6 +121,8 @@ Projects :: struct {
     starts:bool,
     starting:bool,  // the build starts once the dialog of the opening was drawn
     start_frame:u64,
+    join:[64]u8,    // the invitation of a session the editor started on it joins (collab_project.odin)
+    join_name:[COLLAB_NAME_BYTES]u8, // and the name it joins with
 }
 
 // Shows the screen, with the list as the file of the engine has it now.
@@ -378,7 +380,8 @@ projects_poll :: proc(s:^Session) {
         p.install=nil
         p.starting,p.start_frame=true,s.frame
     }
-    if p!=nil && p.starting && s.frame>p.start_frame+1 {projects_build_start(s)}
+    // Without a window no dialog is waited for: a manual editor draws no frame by itself.
+    if p!=nil && p.starting && (s.frame>p.start_frame+1 || s.headless) {projects_build_start(s)}
     if p==nil || p.job==nil {return}
     if p.shaders!=nil && !build.shaders_poll(p.shaders) {return}
     if !build.job_poll(p.job) {return}
@@ -424,6 +427,10 @@ projects_start :: proc(s:^Session) -> bool {
         if remote:=strings.trim_space(string(p.remote[:p.remote_length]));remote!="" {append(&command,"--git-remote",remote)}
     }
     for arg in s.args {append(&command,arg)}
+    if code:=base.text_get(p.join[:]);code!="" {
+        append(&command,"--join",code)
+        if name:=base.text_get(p.join_name[:]);name!="" {append(&command,"--name",name)}
+    }
     turn:=gpu_turn_pass(s,&command)
     preferences_save(s)
     started,error:=subprocess.start({command=command[:],stdin=os.stdin,stdout=os.stdout,stderr=os.stderr},inherit=turn)

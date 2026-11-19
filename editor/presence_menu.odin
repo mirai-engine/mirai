@@ -123,7 +123,7 @@ presence_menu_items :: proc(s:^Session,menu:Presence_Menu) {
         case peer.playing: state=" plays alone"
         }
         header(ctx,fmt.tprintf("%s%s",name,state))
-        posed:=peer.has_pose && wire.host_time(&st.host)-peer.seen<=COLLAB_PRESENCE_SEEN
+        posed:=peer.has_pose && collab_now(st)-peer.seen<=COLLAB_PRESENCE_SEEN
         if ui.menu_item(ctx,ui.id(ctx,"go"),"Go to",{icon=.Target,disabled=!posed || !editing}) {
             forward,_,_:=orbit_basis(peer.orbit)
             presence_go_to(s,orbit_position(peer.orbit),presence_yaw(forward))
@@ -139,7 +139,7 @@ presence_menu_items :: proc(s:^Session,menu:Presence_Menu) {
     case .Remote_Agent:
         st:=collab_state(s)
         if st==nil || st.phase!=.Joined {ui.popup_close(ctx);return}
-        agents:=collab_remote_agents(s.ai,st,menu.peer,wire.host_time(&st.host))
+        agents:=collab_remote_agents(s.ai,st,menu.peer,collab_now(st))
         if menu.agent>=len(agents) {ui.popup_close(ctx);return}
         agent:=agents[menu.agent]
         header(ctx,fmt.tprintf("%s of %s",string(agent.name[:agent.name_length]),collab_peer_name(s,menu.peer)))
@@ -186,7 +186,7 @@ collab_peer_at :: proc(s:^Session,point:[2]f32) -> (peer:int,rect:ui.Rect,found:
     if st==nil || st.phase!=.Joined || s.mode!=.Edit {return}
     _,_,high,loaded:=presence_mesh(s.app.assets)
     if !loaded {return}
-    now:=wire.host_time(&st.host)
+    now:=collab_now(st)
     for &other,i in st.peers {
         if i==int(st.self) || !other.used || !other.has_pose || now-other.seen>COLLAB_PRESENCE_SEEN {continue}
         r,shown:=presence_glyph_rect(s,presence_shown(&st.figures[i],orbit_position(other.orbit))+{0,high.y,0},s.viewport.view_projection)
