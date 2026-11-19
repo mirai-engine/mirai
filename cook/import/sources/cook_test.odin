@@ -192,7 +192,8 @@ a_refresh_takes_the_builds_of_a_second_store_without_their_sources :: proc(t:^te
 
 // A build whose assets use the formats of a compressor this engine lacks is as
 // if it were not there, in the store or at a source: the refresh says so by
-// package and takes nothing.
+// package and takes nothing, and with the source it ingests again without
+// taking any of its objects into the build it publishes.
 @(test)
 a_build_this_engine_cannot_decode_is_not_taken :: proc(t:^testing.T) {
     top:=base.test_folder(t,"refresh-unreadable")
@@ -210,10 +211,21 @@ a_build_this_engine_cannot_decode_is_not_taken :: proc(t:^testing.T) {
     added:=project_add(plugin,report.manifest,"",nil,options,context.temp_allocator)
     testing.expectf(t,len(added.failures)==0 && len(added.missing)==0,"%v",added)
     testing.expect(t,os.remove(brush)==nil)
-    // Its build as an engine with another compressor writes it.
+    // Its build as an engine with another compressor writes it: other objects of the same assets.
     b,build_error:=asset.build_get(host,report.build,context.temp_allocator)
     if !testing.expect_value(t,build_error,asset.Error.None) {return}
     b.compressor="private-codec"
+    others:=make(map[store.Hash]bool,context.temp_allocator)
+    for &o in b.outputs {
+        bytes,file_error:=asset.object_file(host,o.object,context.temp_allocator)
+        if !testing.expect_value(t,file_error,asset.Error.None) {return}
+        stored,repack_error:=asset.document_repack(bytes,.Fast,.None,context.temp_allocator)
+        if !testing.expect_value(t,repack_error,asset.Error.None) {return}
+        object,put_error:=asset.object_put(host,stored)
+        if !testing.expect_value(t,put_error,asset.Error.None) || !testing.expect(t,object!=o.object,"the other object differs") {return}
+        o.object=object
+        others[object]=true
+    }
     other,_:=asset.build_put(host,&b)
     digits:[64]u8
     key:=store.hex(report.key,&digits)
@@ -226,6 +238,14 @@ a_build_this_engine_cannot_decode_is_not_taken :: proc(t:^testing.T) {
         testing.expectf(t,refreshed.fetched==0 && len(refreshed.missing)==1 && strings.contains(refreshed.missing[0],"package soft"),"%v",refreshed)
         testing.expectf(t,peer==1 || (len(refreshed.missing)==1 && strings.contains(refreshed.missing[0],"private-codec")),"%v",refreshed)
     }
+    testing.expect(t,os.write_entire_file(brush,png_bytes(8,8,{40,200,40}))==nil)
+    again:=project_refresh(plugin,{store=host,root=plugin},context.temp_allocator)
+    testing.expectf(t,len(again.missing)==0 && len(again.failures)==0,"%v",again)
+    rebuilt,ref_error:=store.ref_get(host,asset.REF_IMPORTS if report.final else asset.REF_IMPORTS_FAST,key)
+    if !testing.expect_value(t,ref_error,store.Error.None) {return}
+    published,_:=asset.build_get(host,rebuilt,context.temp_allocator)
+    testing.expect_value(t,published.compressor,asset.COMPRESSOR_OPEN)
+    for o in published.outputs {testing.expect(t,!others[o.object],"no object of the build of the other compressor is taken")}
 }
 
 // A source of builds that holds only a Fast build of a package: the refresh
