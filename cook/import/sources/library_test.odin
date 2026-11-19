@@ -8,13 +8,13 @@ import "core:sync"
 import "core:testing"
 import "core:thread"
 import "mirai:asset"
+import "mirai:cook/cache"
 import "mirai:cook/prefab"
 import importer "mirai:cook/import"
 import "mirai:std/base"
 import "mirai:store"
 
 // The files under folder, by their paths under it, in the temp allocator.
-@(private="file")
 files_of :: proc(folder:string) -> map[string]bool {
     files:=make(map[string]bool,context.temp_allocator)
     todo:=make([dynamic]string,context.temp_allocator)
@@ -30,7 +30,6 @@ files_of :: proc(folder:string) -> map[string]bool {
 }
 
 // Copies the files under from to the same paths under to.
-@(private="file")
 folder_copy :: proc(from,to:string) {
     for file in files_of(from) {
         target:=fmt.tprintf("%s%s",to,file)
@@ -132,7 +131,7 @@ a_peer_without_sources_lists_and_loads_and_nothing_is_removed_or_built :: proc(t
 
     // With a store that has them, the builds are fetched: listed where the project lists them, loaded.
     fetching:=alone
-    fetching.source=copy_source(here)
+    fetching.source=cache.store_source(here)
     fetched:=project_refresh(peer,fetching,context.temp_allocator)
     testing.expectf(t,fetched.fetched==2 && fetched.ingested==0,"%v",fetched)
     if !report_clean(t,fetched) {return}
@@ -356,6 +355,58 @@ a_copy_of_a_root_with_its_sources_and_an_empty_store_builds_the_same :: proc(t:^
     testing.expect(t,len(left.packages)==1 && left.packages[0].id==pinned.packages[1].id,"the other stays pinned")
     testing.expect(t,!os.exists(asset.package_file(bare,pinned.packages[0].id)),"unpinning removes its manifest")
     testing.expect(t,os.exists(asset.package_file(bare,pinned.packages[1].id)))
+}
+
+// Following packages into a project writes the same bytes from any empty
+// store, and a refresh that would write what is there writes nothing: no
+// document, prefab or record of the root is written again.
+@(test)
+refreshing_from_two_empty_stores_writes_the_same_root_once :: proc(t:^testing.T) {
+    top:=base.test_folder(t,"library-idempotent")
+    if top=="" {return}
+    context.user_ptr=prefab.import_world(t)
+    game:=fmt.tprintf("%s/game",top)
+    props:=fmt.tprintf("%s/assets/props",game)
+    os.make_directory_all(props)
+    box:=box_source(props,"box.gltf","Wood","Paint")
+    sign:=fmt.tprintf("%s/sign.png",props)
+    _=os.write_entire_file(sign,png_bytes(8,8,{200,40,40}))
+    first:=test_store(t,fmt.tprintf("%s/first",top))
+    if first==nil {return}
+    options:=Library_Options{store=first,root=game,plugins=test_library}
+    for source in ([2]string{box,sign}) {
+        _,added,error:=project_ingest(game,source,"props",options,allocator=context.temp_allocator)
+        if !testing.expectf(t,error.code==.None,"%s",error.message) || !report_clean(t,added) {return}
+    }
+    File :: struct {bytes:string,inode:u128}
+    state :: proc(root:string) -> map[string]File {
+        out:=make(map[string]File,context.temp_allocator)
+        for file in files_of(root) {
+            path:=fmt.tprintf("%s%s",root,file)
+            data,_:=os.read_entire_file(path,context.temp_allocator)
+            info,_:=os.stat(path,context.temp_allocator)
+            out[file]={string(data),info.inode}
+        }
+        return out
+    }
+    ingested:=state(game)
+    testing.expect(t,len(ingested)>4,"the sources, their documents, the prefab and the records")
+    for at in 0..<2 {
+        s:=test_store(t,fmt.tprintf("%s/empty%d",top,at))
+        if s==nil {return}
+        again:=options
+        again.store=s
+        refreshed:=project_refresh(game,again,context.temp_allocator)
+        testing.expectf(t,refreshed.ingested==2,"%v",refreshed)
+        if !report_clean(t,refreshed) {return}
+        now:=state(game)
+        testing.expect_value(t,len(now),len(ingested))
+        for file,was in ingested {
+            is:=now[file]
+            testing.expectf(t,is.bytes==was.bytes,"refresh %d: %s has the bytes it had",at,file)
+            testing.expectf(t,is.inode==was.inode,"refresh %d: %s is not written again",at,file)
+        }
+    }
 }
 
 // What a project's packages.mirai or the store says that is not a record of

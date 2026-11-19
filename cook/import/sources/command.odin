@@ -3,11 +3,13 @@ package sources
 import "base:runtime"
 import "core:fmt"
 import "core:io"
+import "core:os"
 import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
 import "core:time"
 import "mirai:asset"
+import "mirai:cook/cache"
 import importer "mirai:cook/import"
 import "mirai:cook/textures"
 import "mirai:project"
@@ -38,7 +40,11 @@ import "mirai:store"
 // source on this machine; a package nothing here gives is a failure that names
 // it. --fast builds textures Fast, as the editor imports them, unless the
 // texture cache keeps them Final, and takes a Fast build: what a build that
-// does not cook takes. The store is that of the machine, or the one at --store.
+// does not cook takes. --from <folder> names a second store a build this
+// store lacks is copied from before it is built (cache.store_source), as a
+// peer gives it; an installed engine takes the store of the builds of its
+// plugins (project.ENGINE_STORE) unless another is given. The store is that
+// of the machine, or the one at --store.
 // The report goes to output, one asset per line: id, kind, bytes and path, and
 // under it, indented, what the asset holds; then the package and the
 // warnings. How far a long import is goes to errors while it runs, and a
@@ -51,7 +57,7 @@ import "mirai:store"
 // Exit codes: 0 done, 1 failed, 2 misuse.
 
 @(private="file")
-IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--project <root>] [--folder <folder>] [--rebuild] [--fast] [--store <folder>] [--profile] [--release] | mirai import --refresh <root> [--refresh <root>...] [--fast] [--store <folder>] [--release]"
+IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--project <root>] [--folder <folder>] [--rebuild] [--fast] [--store <folder>] [--profile] [--release] | mirai import --refresh <root> [--refresh <root>...] [--fast] [--store <folder>] [--from <folder>] [--release]"
 
 // library reads the formats and the importers of whole sources the plugins of
 // a project add and the types of its game (in the import program of the
@@ -65,6 +71,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     foldered:bool
     profiled:bool
     store_root:string // of the store whose caches keep what imports build; "": that of the machine
+    from_root:string  // of --from
     // What the options change of the settings the source has.
     Change :: enum {Textures,Rdo_Lambda,Image,Alpha_Coverage,Lods,Parts,Front,Rig,Rig_Crotch,Rig_Neck,Skeleton}
     given:importer.Import_Settings
@@ -109,6 +116,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
                 changed+={.Alpha_Coverage}
             }
         case "--store": store_root,ok=value(args,&at)
+        case "--from": from_root,ok=value(args,&at)
         case "--profile": profiled=true
         case "--rebuild": options.rebuild=true
         case "--fast": options.fast_textures=true
@@ -189,8 +197,23 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     if options.store==nil {fmt.wprintln(errors,"mirai import: this machine has no folder of user data for its store: pass one with --store");return 1}
     if len(roots)>0 {
         if file!="" || root!="" || foldered || changed!={} {fmt.wprintln(errors,IMPORT_USAGE);return 2}
+        if from_root=="" {
+            if engine:=project.engine_root_find("",context.temp_allocator);project.engine_installed(engine) {
+                if bundled:=project.path(engine,project.ENGINE_STORE,allocator=context.temp_allocator);os.is_dir(bundled) {from_root=bundled}
+            }
+        }
+        from:store.Store
+        if from_root!="" {
+            opened:store.Error
+            if from,opened=store.open(from_root,context.temp_allocator);opened!=.None {
+                fmt.wprintfln(errors,"mirai import: the store at %s could not be opened (%v): pass another with --from",from_root,opened)
+                return 1
+            }
+            library_options.source=cache.store_source(&from)
+        }
         return refresh_command(roots[:],library_options,output,errors)
     }
+    if from_root!="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
     if file=="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
     origin:=importer.path_key(file)
     // The project it is added to, and where under its assets.

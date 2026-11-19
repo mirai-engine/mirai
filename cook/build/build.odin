@@ -78,7 +78,7 @@ Desc :: struct {
     action:Action,               // Check and Test: of the Editor target
     test_package:string,         // Test: the folder of the package, absolute
     test:Test_Options,           // Test: how its executable runs
-    store_root:string,           // the machine store the packages of the project list from, for the paths of assets its code writes; "": the machine's
+    store_root:string,           // the store the packages of the project and its plugins are refreshed in and listed from; "": the machine's (store.default_root)
     allocator:runtime.Allocator, // of the job. Unset: context.allocator
 }
 
@@ -115,6 +115,7 @@ Job :: struct {
     engine:Engine_Mode,
     imports:[]string,           // Build: the roots whose sources it imports once the target stands (imports_roots)
     import_program:string,      // Build: that of the engine of the project's defines, which imports them
+    store_root:string,          // Desc.store_root, or the machine's
     compiler:string,
     flags:[]string,             // what identifies the build besides its sources
     staged:string,              // what the compiler writes
@@ -126,7 +127,7 @@ Job :: struct {
     copies:[]Copy,              // Game: what goes next to the executable
     settings:string,            // Game: its settings file: those of the engine and of the project merged, since it ships without the engine
     cook:Cook_Desc,             // Game: the assets it ships; without assets, a project that has none
-    store:store.Store,          // Game: the machine store, whose caches cook.store names; unopened: none
+    store:store.Store,          // Game: the store of store_root, which cook.store names; unopened: none
     plugin_assets:[dynamic]project.Asset_Folder, // Game: the folders of assets of its active plugins, in cook.plugins
     development:[dynamic]string, // Game: the folders of the active development plugins, which it must not reach
     plugins:[]Plugin_Library,    // the plugin libraries the target links (plugins.odin)
@@ -222,13 +223,14 @@ job_start :: proc(desc:Desc) -> ^Job {
         }
     }
     job.engine=desc.engine
+    job.store_root=strings.clone(desc.store_root!=""?desc.store_root:store.default_root(context.temp_allocator),a)
     if desc.action==.Build {
         roots:=imports_roots(p)
         job.imports=make([]string,len(roots),a)
         for root,i in roots {job.imports[i]=strings.clone(root,a)}
         job.import_program=project_engine(p,desc.engine,a).import_program
     }
-    generated,written:=generated_write(p,desc.target,desc.store_root)
+    generated,written:=generated_write(p,desc.target,job.store_root)
     if !written {
         if len(generated.errors)>0 {
             job.result.text=strings.join(generated.errors,"\n",a)
@@ -265,8 +267,8 @@ job_start :: proc(desc:Desc) -> ^Job {
         if assets:=project.folder_path(p.root,.Assets,a);os.is_dir(assets) {
             job.cook={assets=assets,output=project.folder_path(folder,.Assets,a),manifest=project.path(p.root,COOK_FILE,allocator=a),collision_cache=project.content_cache_path(p.root,project.COLLISION_CACHE,allocator=a),root=p.root,server=desc.server,quick=desc.dev,keys=project.path(job.work,fmt.tprintf("%s.cook",name),allocator=a),allocator=a}
             job.cook.codecs=asset.project_codecs(p.root,p.engine_root)
-            if store_root:=store.default_root(context.temp_allocator);store_root!="" {
-                if opened,error:=store.open(store_root,a);error==.None {
+            if job.store_root!="" {
+                if opened,error:=store.open(job.store_root,a);error==.None {
                     job.store=opened
                     job.cook.store=&job.store
                 }
@@ -887,14 +889,14 @@ job_run :: proc(desc:Desc) -> ^Job {
     return job
 }
 
-// What the imports of the project keep outside version control, from its
-// sources, once the target stands: the library of its editor, built, has the
-// formats its plugins add. False, with the job failed, when a source did not
-// import.
+// The packages of the project and its plugins brought to builds this engine
+// reads, once the target stands: the library of its editor, built, has the
+// formats its plugins add. A build that cooks requires Final textures. False,
+// with the job failed, when a package has no build and could not get one.
 @(private)
 job_imports :: proc(job:^Job) -> bool {
     if len(job.imports)==0 {return true}
-    ok,message:=imports_refresh(job.import_program,job.imports,fast=job.cook.assets=="")
+    ok,message:=imports_refresh(job.import_program,job.imports,job.cook.assets=="",job.store_root)
     if !ok {
         job.result.text=strings.clone(message,virtual.arena_allocator(&job.arena))
         job_fail(job,.Import_Failed)

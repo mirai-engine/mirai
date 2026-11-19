@@ -90,6 +90,7 @@ Build_Run :: struct {
     thread:^thread.Thread,
     project_root,engine_root,folder,test_package:string,
     runs:string,               // the folder of the binaries of the engine this editor runs
+    store_root:string,         // of the store of the session
     names:[]string,
     action:build.Action,
     target:build.Target,
@@ -118,6 +119,7 @@ build_run_start :: proc(s:^Session,action:build.Action,target:build.Target,folde
     r:=new(Build_Run,a)
     r.project_root,r.engine_root,r.runs=strings.clone(s.project_root,a),strings.clone(s.engine_root,a),strings.clone(engine_folder_here(s),a)
     r.folder,r.test_package=strings.clone(folder,a),strings.clone(test_package,a)
+    r.store_root=strings.clone(s.store.root,a)
     r.names=make([]string,len(names),a)
     for name,i in names {r.names[i]=strings.clone(name,a)}
     r.action,r.target,r.seconds,r.started=action,target,seconds,time.tick_now()
@@ -161,7 +163,7 @@ build_run :: proc(r:^Build_Run) {
             if r.shaders.result.status==.Failed {return}
         }
     }
-    r.job=build.job_start({project=&p,target=r.target,action=r.action,output=r.folder,test_package=r.test_package,test={names=r.names,quiet=true},dev=r.target==.Editor && build.ENGINE_MODE_HERE==.Dev,engine=build.ENGINE_MODE_HERE,runs=r.runs})
+    r.job=build.job_start({project=&p,target=r.target,action=r.action,output=r.folder,test_package=r.test_package,test={names=r.names,quiet=true},dev=r.target==.Editor && build.ENGINE_MODE_HERE==.Dev,engine=build.ENGINE_MODE_HERE,runs=r.runs,store_root=r.store_root})
     for {
         ended:=build.job_poll(r.job)
         if r.shaders!=nil {ended=build.shaders_poll(r.shaders) && ended}

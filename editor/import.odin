@@ -547,14 +547,20 @@ Import_Library_Held :: struct {
 // the project at root add, prepared with the store s, and the types of its
 // game, from the library of its editor (sources.Library): what the import
 // program of the engine refreshes and imports its sources with.
-import_library :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> sources.Library_Imports {
+import_library :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> (imports:sources.Library_Imports) {
     path:=project.project_library(root,"editor",context.temp_allocator)
-    if !os.is_file(path) {return {problem="the project has no built editor library, where the importers of its plugins and the types of its game are: mirai build editor builds it"}}
+    if !os.is_file(path) {
+        imports.problem="the project has no built editor library, where the importers of its plugins and the types of its game are: mirai build editor builds it"
+        return
+    }
     held:=new(Import_Library_Held,allocator)
     held.allocator=allocator
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
     library,error:=host.project_library_load(path,0)
-    if error!=.None {return {problem=host.library_error_text(error,path)}}
+    if error!=.None {
+        imports.problem=host.library_error_text(error,path)
+        return
+    }
     held.library=library
     found:[PROVIDER_CAPACITY]Import_Format_Provider
     held.providers=slice.clone(found[:provided_in(&held.library.info,found[:])],allocator)
@@ -574,7 +580,11 @@ import_library :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> so
         held.wholes[i]={claims=provider.source.claims,run=provider.source.run,code=plugin_code(root,engine,plugins[i])}
         if provider.source.prepare!=nil {held.wholes[i].state=provider.source.prepare(s,root,&held.library.info,allocator)}
     }
-    return {formats=held.formats,wholes=held.wholes,world=&held.library.info,state=held,release=proc(state:rawptr) {
+    imports.formats=held.formats
+    imports.wholes=held.wholes
+    imports.world=&held.library.info
+    imports.state=held
+    imports.release=proc(state:rawptr) {
         held:=(^Import_Library_Held)(state)
         for provider,i in held.providers {
             if provider.prepare!=nil && provider.release!=nil {provider.release(held.formats[i].data,held.allocator)}
@@ -583,7 +593,8 @@ import_library :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> so
             if source.prepare!=nil && source.release!=nil {source.release(held.wholes[i].state,held.allocator)}
         }
         host.project_library_unload(&held.library)
-    }}
+    }
+    return
 }
 
 // The importer of a plugin that claims source whole, with the identity of

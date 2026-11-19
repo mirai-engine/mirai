@@ -15,7 +15,7 @@ import "mirai:std/serial"
 import "mirai:std/subprocess"
 import "mirai:std/base"
 
-SESSION_USAGE :: "session start|restart|stop|status|sync [project] [paths of sync] [--release] [--no-build] [--copy] [--force] [--orphans] [--timeout S] [editor arguments]"
+SESSION_USAGE :: "session start|restart|stop|status|sync [project] [paths of sync] [--release] [--no-build] [--copy] [--force] [--orphans] [--timeout S] [--store folder] [editor arguments]"
 
 SESSION_FILE :: api.SESSION_FILE
 Session_Record :: api.Session_Record
@@ -95,6 +95,11 @@ session_options :: proc(arguments:[]string) -> (options:Session_Options,problem:
             if !valid || value<=0 {return {},"--timeout is a number of seconds"}
             options.timeout=value
             i+=1
+        // The build and the editor take it, absolute: the editor runs in the engine.
+        case "--store":
+            if i+1>=len(args) || args[i+1]=="" || !positional(args[i+1]) {return {},"--store needs the folder of a store"}
+            append(&editor_args,"--store",project.path_absolute(args[i+1],context.temp_allocator))
+            i+=1
         case: append(&editor_args,args[i])
         }
     }
@@ -138,12 +143,15 @@ process_end :: proc(pid:int,wait:time.Duration) {
 
 // The session of the project that answers, or one opened for a command, which
 // closes it when reused is false; code is not 0 after saying why there is none.
-session_borrow :: proc(root,folder:string,mode:Build_Mode,command:string) -> (file:api.Port_File,reused:bool,code:int) {
+session_borrow :: proc(root,folder:string,mode:Build_Mode,command:string,store_root:="") -> (file:api.Port_File,reused:bool,code:int) {
     alive:bool
     file,alive=session_find(folder)
     reused=alive && session_answers(file.port)
     if reused && !session_reusable(root,folder,mode,file,command) {return file,reused,1}
-    if !reused {file,code=session_open(root,folder,mode,false,180,{})}
+    if !reused {
+        given:=[2]string{"--store",store_root}
+        file,code=session_open(root,folder,mode,false,180,given[:] if store_root!="" else nil)
+    }
     return
 }
 
@@ -257,7 +265,11 @@ session_open :: proc(root,folder:string,mode:Build_Mode,no_build:bool,timeout:in
     // The build can close and open the session of the project itself, so it
     // goes before the lock; what is opened meanwhile is found under it.
     if !no_build {
-        if built,_,_:=build_project(root,.Editor,{folder},mode);built!=0 {return {},built}
+        store_root:string
+        for arg,i in editor_args {
+            if arg=="--store" && i+1<len(editor_args) {store_root=editor_args[i+1]}
+        }
+        if built,_,_:=build_project(root,.Editor,{folder},mode,store_root=store_root);built!=0 {return {},built}
     }
     // Two at once would open two editors: the second waits and finds the first.
     lock,_:=workspace.lock_acquire(project.path(folder,".mirai","session.lock",allocator=context.temp_allocator),fmt.tprintf("pid %d, mirai session in %s",os.get_pid(),folder),proc(holder:string) {
