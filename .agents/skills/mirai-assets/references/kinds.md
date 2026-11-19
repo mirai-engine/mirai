@@ -33,7 +33,8 @@ model that consumes it (hulls, hierarchy and limits) belongs to
   cracks open. The normal is octahedral and the tangent a signed angle
   (`math.tangent_angle_pack`); `uv1` and `color` are separate streams, only with `Has_Uv1` and
   `Has_Colors`. Every bulk column goes compressed, except `page_data`, which is compressed page
-  by page, each page coded or as its raw words, whichever is smaller (`coded_bytes`, 0 for raw).
+  by page, each page coded or as its raw words, whichever is smaller (`coded_bytes`, 0 for raw);
+  written without a compressor (`Codecs.None`) a page is coded whenever it codes.
 - Clusters go in pages (`Mesh_Page`): whole groups (the clusters that share a parent) of a single
   level, contiguous, up to `MESH_PAGE_WORDS`; a DAG group never crosses two pages. Their clusters,
   vertices and triangle words are contiguous ranges of the mesh's, from the finest to the coarsest.
@@ -118,15 +119,17 @@ per bone.
 - **Levels, smallest first.** `texels` holds the levels from the smallest to level 0, compressed:
   `texture_open` reads a texture without its texels and `texture_decode` from a level decodes only
   the pieces of the stream that hold that level and the smaller ones (`texture_view` decodes all);
-  `texture_mip` gives the bytes of a level, empty for one before `first`. Written with `Best`
-  codecs, a texture of 16-byte blocks `cook/textures` writes stores the layouts the compressor has
-  for it (`compressor:blocks`), which restore only whole: one of its tail (the levels of side
+  `texture_mip` gives the bytes of a level, empty for one before `first`. Written by a cook with
+  `Best` codecs, a texture of 16-byte blocks stores the layouts the compressor has for it
+  (`compressor:blocks`), which restore only whole: one of its tail (the levels of side
   `TEXTURE_TAIL` or less, which every read takes) and one of its larger levels; one per level
   compresses larger.
-- **Planes of fields.** A BC1, BC3 or BC5 texture whose blocks are not `Fast` and that is
-  compressed stores each level as planes of the fields of its blocks (`Fields`: endpoints and
-  indices apart, `asset/texture_fields.odin`) when that stream is smaller, which the writer decides
-  per texture compressing both with the profile `Fast` of its codecs; the read joins them back.
+- **Planes of fields.** A BC1, BC3 or BC5 texture whose blocks are not `Fast` stores each level as
+  planes of the fields of its blocks (`Fields`: endpoints and indices apart,
+  `asset/texture_fields.odin`): written without a compressor (`Codecs.None`) always, since they
+  compress smaller where the bytes rest; written compressed when that stream is smaller, which the
+  writer decides per texture compressing both with the profile `Fast` of its codecs. The read joins
+  them back.
 - `Srgb` says it is color: stored with the sRGB curve in `RGBA8`, `BC1`, `BC3` and `BC7`, linear in
   the others.
 - **Layers.** `layers` is the number of images of each level (one if the file does not store it):
