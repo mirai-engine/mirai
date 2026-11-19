@@ -499,7 +499,7 @@ level_run :: proc(state:rawptr,source:string,options:importer.Import_Options,all
     bytes,_:=os.read_entire_file(source,context.temp_allocator)
     model_path:=fmt.tprintf("%s/%s",filepath.dir(source),string(bytes[len("LEVEL "):]))
     o:importer.Outputs
-    if error=importer.outputs_begin(&o,source,"",u64(len(bytes)),base.hash64(bytes),importer.import_version((^Level_Importer)(state).version),options,LEVEL_IMPORTER,allocator);error.code!=.None {return}
+    if error=importer.outputs_begin(&o,source,filepath.stem(source),u64(len(bytes)),base.hash64(bytes),importer.import_version((^Level_Importer)(state).version),options,LEVEL_IMPORTER,allocator);error.code!=.None {return}
     model:importer.Imported_Model
     if error=importer.output_input(&o,model_path);error.code==.None {model,error=importer.import_model(model_path,FORMATS[:],options)}
     defer importer.model_destroy(&model)
@@ -589,6 +589,47 @@ a_refresh_ingests_again_a_whole_source_when_what_it_is_built_from_changes :: pro
     list,_,_:=asset.packages_load(root,context.temp_allocator)
     again,_:=asset.package_get(s,list.packages[0].manifest,context.temp_allocator)
     testing.expect(t,list.packages[0].manifest!=first.manifest && len(again.assets)==len(p.assets) && again.assets[0].id==p.assets[0].id,"the level keeps its assets, pinned anew")
+}
+
+// Each of two sources a plugin imports whole from one folder, from outside the
+// project or from its assets, writes its documents in the folder of its own
+// name under the one it is added to.
+@(test)
+the_documents_of_a_whole_source_go_to_its_own_folder :: proc(t:^testing.T) {
+    root,assets:=test_project(t,"whole-documents")
+    if root=="" {return}
+    state:=Level_Importer{kit=2}
+    context.user_ptr=&state
+    leveling :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> Library_Imports {
+        wholes:=make([]Whole_Source,1,allocator)
+        level:=(^Level_Importer)(context.user_ptr)
+        wholes[0]={name=LEVEL_IMPORTER,version=level.version,claims=level_claims,run=level_run,state=level,code=level.code}
+        return {wholes=wholes}
+    }
+    s:=test_store(t,fmt.tprintf("%s/store",root))
+    if s==nil {return}
+    options:=Library_Options{store=s,root=root,plugins=leveling,fast_textures=true}
+    Case :: struct {sources,folder:string}
+    for c in ([]Case{{fmt.tprintf("%s-outside",root),"levels"},{fmt.tprintf("%s/maps",assets),"maps"}}) {
+        os.make_directory_all(c.sources)
+        box_source(c.sources,"crate.gltf","Wood","Paint")
+        for name in ([]string{"hall","yard"}) {
+            source:=write_text(c.sources,fmt.tprintf("%s.level",name),"LEVEL crate.gltf")
+            report,added,error:=project_ingest(root,source,c.folder,options,allocator=context.temp_allocator)
+            if !testing.expectf(t,error.code==.None && len(added.failures)==0,"%s: %s %v",source,error.message,added) {return}
+            r:asset.Registry
+            asset.registry_init(&r,assets,"",context.temp_allocator)
+            testing.expect_value(t,asset.registry_scan(&r),asset.Error.None)
+            documents:=0
+            for w in report.assets {
+                file,found:=asset.registry_find(&r,w.id)
+                if !found {continue}
+                documents+=1
+                testing.expectf(t,strings.has_prefix(file.path,fmt.tprintf("%s/%s/",c.folder,name)),"%s: %s",source,file.path)
+            }
+            testing.expectf(t,documents>=2,"%s wrote its kit and its materials: %v",source,report.assets)
+        }
+    }
 }
 
 // A store that holds the build of a source a plugin imports whole, and not

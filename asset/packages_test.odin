@@ -21,7 +21,7 @@ ids :: proc(list:..base.Asset_Id) -> [dynamic]base.Asset_Id {
 
 @(private="file")
 sample_package :: proc() -> Package {
-    p:=Package{id={1,1},name="crate \"kit\"/ü",origin={path="C:/Downloads/Kit\\crate.glb",importer="gltf"},identity=hash_of("crate"),settings=`{"lods": "None", "nested": {"a": [1, 2]}}`}
+    p:=Package{id={1,1},name="crate \"kit\"/ü",documents="kit/crate",origin={path="C:/Downloads/Kit\\crate.glb",importer="gltf"},identity=hash_of("crate"),settings=`{"lods": "None", "nested": {"a": [1, 2]}}`}
     p.inputs=make([dynamic]string,context.temp_allocator)
     append(&p.inputs,"crate.bin","textures/wood.png")
     p.assets=make([dynamic]Package_Asset,context.temp_allocator)
@@ -277,6 +277,7 @@ package_records_refuse_hostile_text :: proc(t:^testing.T) {
         {.Package,swap(valid[.Package],`"id": "00000000000000070000000000000007"`,`"id": "00000000000000050000000000000005"`),.Corrupt},
         {.Package,swap(valid[.Package],`"version": 1`,`"version": 1, "version": 1`),.Corrupt},
         {.Package,swap(valid[.Package],`"version": 1`,`"version": 1, "extra": 1`),.Corrupt},
+        {.Package,swap(valid[.Package],`"documents": "kit/crate"`,`"documents": "kit/../../crate"`),.Corrupt},
         {.Package,swap(valid[.Package],`"kind": "TEX"`,`"kind": "TOOLONG"`),.Corrupt},
         {.Package,swap(valid[.Package],`"index": 1`,`"index": -1`),.Corrupt},
         {.Package,swap(valid[.Package],`"part": true`,`"part": true, "part": false`),.Corrupt},

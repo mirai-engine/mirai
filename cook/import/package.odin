@@ -249,7 +249,7 @@ output_id :: proc(s:^store.Store,path:string,kind:asset.Fourcc,name:string) -> (
 writer_publish :: proc(w:^Writer,name,importer:string) -> bool {
     s:=w.options.store
     writer_identity(w)
-    p:=asset.Package{id=w.package_id,name=name,identity=w.identity,inputs=w.inputs,assets=w.outputs}
+    p:=asset.Package{id=w.package_id,name=name,documents=w.documents,identity=w.identity,inputs=w.inputs,assets=w.outputs}
     p.origin={path=origin_of(w.origin),folder=os.is_dir(w.path),importer=importer}
     if settings:=settings_text(w.report.settings,context.temp_allocator);settings!="{}" {p.settings=settings}
     slice.sort(p.inputs[:])
