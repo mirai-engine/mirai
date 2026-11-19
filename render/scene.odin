@@ -509,6 +509,7 @@ Scene_State :: struct {
 	shadow_sun_tables:    u64,
 	shadow_sun_axes:      [3]Vec3,
 	shadow_movers:        [dynamic]Shadow_Mover,
+	shadow_mover_bits:    [dynamic]u32, // a bit for each instance that moves in the maps, of the scene then of the batches drawn (Shadow_Plan.movers words)
 	shadow_views:         [dynamic]Shadow_View_Reach, // what the culls of what stays of the slots of each view go over, kept (Shadow_Raster.reach)
 	shadow_stale:         Occluder_Changes,
 	// The rows of masked materials that changed what their casters cover since
@@ -561,6 +562,7 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.shadow_ranges = make([dynamic][2]u32, a)
 	s.shadow_casters = make([dynamic]Shadow_Caster, a)
 	s.shadow_movers = make([dynamic]Shadow_Mover, a)
+	s.shadow_mover_bits = make([dynamic]u32, a)
 	s.shadow_order = make([dynamic]u32, a)
 	s.shadow_all = make([dynamic][2]u32, a)
 	s.shadow_merge = make([dynamic]u32, a)
@@ -2846,6 +2848,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	delete(s.shadow_ranges)
 	delete(s.shadow_casters)
 	delete(s.shadow_movers)
+	delete(s.shadow_mover_bits)
 	delete(s.shadow_order)
 	delete(s.shadow_all)
 	delete(s.shadow_merge)
