@@ -128,6 +128,9 @@ the assets.
   named by `(cache-<name>, <key>-<version>)`, found by any program or machine that shares blobs;
   a miss asks the caller's `cache.Source` before building, and `cook/cache` removes nothing: the
   store owns space ([texture cache](references/imports.md#texture-cache)).
+- **Following a package is a pure function of the package, its build and the game's types**:
+  two refreshes on any machine give the same bytes, and a document, prefab or record that would
+  be written as it is is not written (`serial.file_write_changed`).
 - **Reimporting keeps what a person changed.** A material stores what the source gave and the next
   import rewrites only that: fields changed afterwards stay, like the overrides of a prefab
   ([materials](references/imports.md#what-is-written)).
@@ -243,7 +246,7 @@ the assets.
   also when only Fast is here and Final is required; hostile `packages.mirai` and manifests are
   reported; two ingests of one source at once import it once; a copy of a root with its sources
   and an empty store builds the same ids, manifests and blobs, and without them reports each
-  package) and
+  package; refreshing from two empty stores writes nothing the second time) and
   `cook/import/sources/reimport_test.odin` (a refresh reads a source again with the formats of
   the plugins, and ingests a whole source again when what it is built from changes).
 - `cook/import/sources/cli_test.odin` needs `MIRAI_ROOT` (defined by `mirai test`); run it when
