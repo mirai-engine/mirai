@@ -47,6 +47,7 @@ Peer_Package :: struct {
     id:base.Asset_Id,
     manifest:store.Hash,
     name:string,
+    origin:string, // where its source was on the machine that ingested it, which tells apart two of one name
     kinds:[]asset.Fourcc,
     assets:int,
     bytes:i64,
@@ -79,7 +80,7 @@ peer_library :: proc(n:^Node,peer:Peer,allocator:=context.allocator) -> (list:[]
     for b in builds {
         if !asset.object_whole(s,b.address) {continue}
         build,build_error:=asset.build_get(s,b.address,context.temp_allocator)
-        if build_error!=.None || !asset.build_readable(&build) {continue}
+        if build_error!=.None {continue}
         // Final over Fast.
         if had,known:=chosen[build.package_id];known && had.final {continue}
         chosen[build.package_id]=build
@@ -95,10 +96,14 @@ peer_library :: proc(n:^Node,peer:Peer,allocator:=context.allocator) -> (list:[]
             for k in kinds {known||=k==a.kind}
             if !known {append(&kinds,a.kind)}
         }
-        entry:=Peer_Package{id=p.id,manifest=named.address,name=strings.clone(p.name,allocator),kinds=kinds[:],assets=len(p.assets),bytes=-1}
+        entry:=Peer_Package{id=p.id,manifest=named.address,name=strings.clone(p.name,allocator),origin=strings.clone(p.origin.path,allocator),kinds=kinds[:],assets=len(p.assets),bytes=-1}
+        // Whether it is here is read before the sizes are asked, which may bring a small object whole.
         if b,built:=chosen[p.id];built {
-            entry.built=true
-            for o in b.outputs {append(&sizes,o.object)}
+            entry.built,entry.here=true,true
+            for o in b.outputs {
+                append(&sizes,o.object)
+                entry.here&&=asset.object_whole(s,o.object)
+            }
         }
         append(&out,entry)
     }
@@ -106,13 +111,11 @@ peer_library :: proc(n:^Node,peer:Peer,allocator:=context.allocator) -> (list:[]
     for &entry in out {
         b,built:=chosen[entry.id]
         if !built {continue}
-        entry.here=true
         total:i64
         for o in b.outputs {
             size,sized:=known[o.object]
-            if !sized {total=-1;entry.here=false;break}
+            if !sized {total=-1;break}
             total+=size
-            entry.here&&=asset.object_whole(s,o.object)
         }
         entry.bytes=total
     }

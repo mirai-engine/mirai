@@ -20,7 +20,8 @@ import "mirai:ui"
 // editor, the project or a plugin, pins of them in its packages.mirai.
 // Importing ingests a source where it is and pins its package (import.odin);
 // packages.list lists the packages of the library with their assets, and
-// packages.add, or Add from library of the content browser, pins one or some
+// packages.add, or a package of a library root of the content browser carried
+// onto a folder (content_library.odin), pins one or some
 // of its assets in a folder of the project, as an import that runs in its
 // thread. Deleting the root of a package unpins it and moving it moves where
 // the package is listed (asset_delete.odin, asset_move.odin); none of them
@@ -56,15 +57,6 @@ Library_Asset :: struct {
     kind:asset.Fourcc,
     bytes:i64, // of its file in the build of this machine; 0 when not built
     built:bool,
-}
-
-// What Add from library shows of a package: its name, cut to fit.
-@(private)
-Library_Shown :: struct {
-    id:base.Asset_Id,
-    name:[64]u8,
-    name_length:int,
-    pinned:bool,
 }
 
 // Lists again what the packages of root list, from the store of the session,
@@ -307,32 +299,4 @@ api_packages_add :: proc(s:^Session,call:^api.Call) {
     importing :: proc(s:^Session,user:rawptr) -> bool {return s.importer.running!=nil}
     api_wait(s,f64(params.seconds),nil,importing,"adding")
     api_import_status_answer(s,call)
-}
-
-// The packages of the library as Add from library of the content browser
-// offers them: each adds the whole package to the folder the browser is in.
-// Read again each time the menu opens.
-@(private)
-content_library_items :: proc(s:^Session) {
-    ctx:=s.gui.ctx
-    im:=s.importer
-    if s.frame>im.library_frame+1 || im.library_frame==0 {
-        clear(&im.library)
-        packages,_:=library_list(s,s.project_root,context.temp_allocator)
-        for &p in packages {
-            shown:=Library_Shown{id=p.id,pinned=p.pinned}
-            shown.name_length=copy(shown.name[:],p.name)
-            append(&im.library,shown)
-        }
-    }
-    im.library_frame=s.frame
-    if len(im.library)==0 {
-        ui.menu_item(ctx,ui.id(ctx,"library_none"),"No packages",{disabled=true})
-        return
-    }
-    for &shown,at in im.library {
-        if !ui.menu_item(ctx,ui.id(ctx,"library_package",at+1),string(shown.name[:shown.name_length]),{checked=shown.pinned,disabled=shown.pinned}) {continue}
-        buffer:[base.ASSET_ID_TEXT]u8
-        if problem:=library_add(s,base.asset_id_format(shown.id,buffer[:]),nil,import_place(s));problem!="" {notify(s,problem)}
-    }
 }
