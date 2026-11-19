@@ -464,7 +464,9 @@ Gpu_Cull_State :: struct {
 	dropped:            [Cull_List]u32, // past the capacities of the lists of the cull
 	raster_need:        [2]u32, // the vertices and the triangles the rounds of the view wrote and its last left out
 	shadow_taken:       u32,
+	instance_dispatch:  [3]u32, // groups of the cull by instance: of the instances of the scene, then of the batches listed
 }
+#assert(offset_of(Gpu_Cull_State, instance_dispatch) == abi.CULL_INSTANCE_DISPATCH * size_of(u32))
 #assert(offset_of(Gpu_Cull_State, shadow_taken) == abi.CULL_SHADOW_TAKEN * size_of(u32))
 #assert(offset_of(Gpu_Cull_State, dropped) == abi.CULL_DROPPED * size_of(u32))
 #assert(offset_of(Gpu_Cull_State, raster_need) == abi.CULL_RASTER_NEED * size_of(u32))
