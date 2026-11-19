@@ -270,7 +270,7 @@ prepare_views :: proc(r:^Renderer,views:[]Frame_View,alone:=false) -> bool {
         width,height:=u32(view.rect.z),u32(view.rect.w)
         if t.output_width!=width || t.output_height!=height || t.width!=render_extent(width,scale) || t.height!=render_extent(height,scale) {
             rhi.device_wait_idle(r.device)
-            destroy_targets(r,t)
+            destroy_targets(r,t,shadows=true)
         }
         if t.ldr==0 && !create_targets(r,state,width,height,scale) {return false}
         if !ensure_glass_targets(r,t) {return false}

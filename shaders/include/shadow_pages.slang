@@ -2,7 +2,8 @@
 // a map lies in a slot, its mips each a square of pages half as wide as the
 // one before (SHADOW_MAP_PAGES the finest, a level of the sun its finest
 // alone), whose pages lie where the table of the pages says in the pool of
-// the view, its cache and its atlas, both SHADOW_POOL texels a side. An entry
+// the view, its cache and its atlas, SHADOW_POOL texels wide, its rows of
+// pages as many as the view needs (Frame.sun_maps.z texels tall). An entry
 // of the table is the page of the pool + 1 that holds a page (0: none) with
 // SHADOW_PAGE_CACHED and SHADOW_PAGE_COMPOSED while it is drawn, how many
 // levels or mips coarser the nearest page drawn this frame lies where it is
@@ -12,7 +13,6 @@
 #define MIRAI_SHADOW_PAGES_SLANG
 
 #define SHADOW_PAGE_READY (SHADOW_PAGE_CACHED | SHADOW_PAGE_COMPOSED)
-#define SHADOW_POOL_ROW (SHADOW_POOL / SHADOW_PAGE)
 #define SHADOW_ENTRY_POOL 0xFFFFu
 // Of a page of the pool listed for the atlas to copy, that the cache holds it this frame.
 #define SHADOW_JOB_HELD 0x10000u

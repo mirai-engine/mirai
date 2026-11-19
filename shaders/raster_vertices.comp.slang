@@ -190,7 +190,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     // The tile of the page in the layer of what sways, its texels as many times fewer.
     float scale = (entry.program & SHADOW_ENTRY_LAYER) != 0u ? float(1u << params.coarser) : 1.0;
     float4 window = page.window / scale;
-    float2 resolution = float2(SHADOW_POOL, SHADOW_POOL) / scale;
+    float2 resolution = float2(SHADOW_POOL, frame.sun_maps.z) / scale;
     uint pool = page.pool;
     // The maps draw both faces of every triangle.
     bool two_sided = true;
