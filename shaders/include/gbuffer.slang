@@ -13,7 +13,7 @@
 // surface_specular (pixel_reflectance), and while an instance with layers is
 // in sight, the layers target gbuffer_layers_target, and while a batch gives
 // the vertex hook values (FRAME_FLAG_SWAY), the rest target pixel_rests,
-// which vis_resolve.frag writes apart (pixel_rest). The linear depth keeps
+// which rest.comp writes after the resolve (pixel_rest). The linear depth keeps
 // its own decoders (depth_* of common.slang).
 #ifndef MIRAI_GBUFFER_SLANG
 #define MIRAI_GBUFFER_SLANG
@@ -166,7 +166,7 @@ float3 pixel_rest(int2 p, float depth) {
 }
 #ifdef GBUFFER_REST_OUT
 // The rest target, for a pass that draws pixels the vertex hook or a wind
-// moved (vis_resolve.frag, and an extension through pass_rest_write).
+// moved (rest.comp, and an extension through pass_rest_write).
 [[vk::binding(GBUFFER_REST_OUT, 0)]] [[vk::image_format("rg32ui")]] RWTexture2D<uint2> gbuffer_rest_out : register(MIRAI_REGISTER(u, GBUFFER_REST_OUT), space0);
 // What pixel p shows, of linear depth `depth` as the G-buffer holds it, was
 // moved by `moved` from where it rests.

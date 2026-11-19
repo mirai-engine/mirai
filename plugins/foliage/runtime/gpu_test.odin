@@ -382,7 +382,7 @@ canopy_cost :: proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera) -> (reso
 	for _ in 0 ..< 40 {
 		if !testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera}), f.renderer.error) {return}
 		for timing in gpu.renderer_stats(&f.renderer).timings {
-			if timing.name == "resolve" {resolve += f64(timing.ms)}
+			if timing.name == "resolve" || timing.name == "rest" {resolve += f64(timing.ms)}
 			for name in LIGHTING {if timing.name == name {lighting += f64(timing.ms)}}
 		}
 	}

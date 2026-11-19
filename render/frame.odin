@@ -264,11 +264,25 @@ resolve_pass :: proc(p: ^Pass, nested: bool) {
 		// A nested view counts with its cull, apart.
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, r.scratch_buffer if nested else r.stats_buffer)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.program_draws)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.rest if t.rest != 0 else r.dummy_rest)
 		textures_feedback_bind(r, cmd)
 		resolve_programs_draw(r, cmd, &r.pipelines[id])
 	}
 	rhi.cmd_end_render_pass(cmd)
+}
+
+// Where the vertex hook moved each pixel from where it rests (rest.comp),
+// after the resolve of the view, while a batch gives the hook values.
+@(private)
+rest_pass :: proc(p: ^Pass) {
+	r, cmd, t := p.r, p.cmd, p.t
+	if !p.draw || t.rest == 0 || p.frame.flags & FRAME_FLAG_SWAY == 0 {return}
+	rhi.cmd_timestamp(cmd, "rest")
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Rest])
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, r.scene.visible_buffer)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.visibility)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.linear_depth)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.rest)
+	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
 }
 
 // The resolve of the materials without a program, then that of each Surface
@@ -1318,6 +1332,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	if p.cost != 0 && p.draw {cost_pixels(p)}
 	rhi.cmd_timestamp(cmd, "resolve")
 	resolve_pass(p, false)
+	rest_pass(p)
 	if p.first && stage_asked(r, .Simulate) {stage_run(p, .Simulate)}
 	if stage_asked(r, .Gbuffer) {stage_run(p, .Gbuffer)}
 
