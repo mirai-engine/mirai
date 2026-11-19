@@ -131,6 +131,49 @@ alias_commit :: proc(s:^Store,blob,root:Hash,at:i64) -> Error {
     return commit(s,time.Time{_nsec=at})
 }
 
+// The root of a complete blob's object, from its alias as this value knows
+// it, without reading the root again: what a peer serves for a blob address.
+blob_root :: proc(s:^Store,blob:Hash) -> (root:Hash,found:bool) {
+    if s==nil || s.state==nil {return {},false}
+    sync.mutex_lock(&s.state.lock)
+    defer sync.mutex_unlock(&s.state.lock)
+    root,_,found=alias_locked(s,blob)
+    return
+}
+
+// Names a received object as a blob once its bytes hash to the blob's
+// address (Corrupt otherwise): the alias goes into the batch, after the
+// chunks it reaches, and commit makes it visible.
+blob_alias :: proc(s:^Store,blob,root:Hash,now:Maybe(time.Time)=nil) -> Error {
+    if s==nil || s.state==nil {return .Invalid_Argument}
+    o:=object_open(s,root) or_return
+    hasher:blake3.Hasher
+    buffer,e:=make([]u8,1<<20,context.temp_allocator)
+    if e!=nil {
+        object_close(&o)
+        return .Out_Of_Memory
+    }
+    size:=object_size(&o)
+    for at:=u64(0);at<size; {
+        part:=buffer[:min(u64(len(buffer)),size-at)]
+        if read_error:=object_read(&o,at,part);read_error!=.None {
+            object_close(&o)
+            delete(buffer,context.temp_allocator)
+            return read_error
+        }
+        blake3.update(&hasher,part)
+        at+=u64(len(part))
+    }
+    object_close(&o)
+    delete(buffer,context.temp_allocator)
+    if Hash(blake3.final(&hasher))!=blob {return .Corrupt}
+    at:=(now.? or_else time.now())._nsec
+    st:=stage_take(s) or_return
+    defer stage_give(s,st)
+    alias_stage(st,blob,root,at) or_return
+    return stage_write(s,st,at)
+}
+
 // Puts the file at path, read once.
 put_file :: proc(s:^Store,path:string,now:Maybe(time.Time)=nil) -> (hash:Hash,error:Error) {
     if s==nil || s.state==nil {return {},.Invalid_Argument}

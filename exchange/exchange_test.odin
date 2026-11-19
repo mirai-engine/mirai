@@ -2,7 +2,6 @@ package exchange
 
 import "core:fmt"
 import "core:os"
-import "core:slice"
 import "core:strings"
 import "core:sync"
 import "core:testing"
@@ -19,6 +18,7 @@ test_pair :: proc(t:^testing.T,w:^Test_World,name:string,game:=false) -> bool {
     return testing.expect(t,server!=nil && client!=nil && test_connect(w,client,w.nodes[0].endpoints[0]),"the peers connect")
 }
 
+// A blob: an object and its alias, committed.
 @(private)
 test_put :: proc(t:^testing.T,s:^store.Store,size:int,seed:u64) -> store.Hash {
     hash,error:=store.put_bytes(s,test_bytes(size,seed))
@@ -26,29 +26,66 @@ test_put :: proc(t:^testing.T,s:^store.Store,size:int,seed:u64) -> store.Hash {
     return hash
 }
 
+// An object of bytes, committed: its root.
+@(private)
+test_object :: proc(t:^testing.T,s:^store.Store,data:[]u8) -> store.Hash {
+    root,error:=store.put(s,data)
+    testing.expect_value(t,error,store.Error.None)
+    testing.expect_value(t,store.commit(s),store.Error.None)
+    return root
+}
+
+// The bytes of an object read back from a store.
+@(private)
+test_read :: proc(s:^store.Store,root:store.Hash) -> ([]u8,bool) {
+    o,error:=store.object_open(s,root)
+    if error!=.None {return nil,false}
+    defer store.object_close(&o)
+    data:=make([]u8,int(store.object_size(&o)),context.temp_allocator)
+    return data,store.object_read(&o,0,data)==.None
+}
+
+@(private)
+test_peer :: proc(n:^Test_Node,host:=0) -> Peer_Progress {
+    h:=n.hosts[host]
+    for c in h.connection_handles {
+        if c==0 {continue}
+        p,_:=peer_progress(&n.x,h,c)
+        return p
+    }
+    return {}
+}
+
 @(test)
-blobs_around_the_piece_boundaries_and_a_large_one_arrive_verified_under_loss_and_jitter :: proc(t:^testing.T) {
+objects_and_blobs_of_every_size_arrive_verified_under_loss_and_jitter :: proc(t:^testing.T) {
     w:Test_World
     defer test_world_destroy(&w)
     if !test_pair(t,&w,"exchange-loss") {return}
-    P:=store.PIECE_BYTES
-    sizes:=[]int{0,1,P-1,P,P+1,2*P,3*P+17,6<<20}
-    addresses:=make([]store.Hash,len(sizes),context.temp_allocator)
-    for size,k in sizes {addresses[k]=test_put(t,&w.nodes[0].s,size,u64(k)+1)}
+    M:=store.CHUNK_MAX
+    sizes:=[]int{0,1,store.CHUNK_MIN-1,M,M+1,3*M+17,6<<20}
+    addresses:=make([]store.Hash,2*len(sizes),context.temp_allocator)
+    for size,k in sizes {
+        addresses[2*k]=test_put(t,&w.nodes[0].s,size,u64(k)+1)
+        addresses[2*k+1]=test_object(t,&w.nodes[0].s,test_bytes(size,u64(k)+100))
+    }
     for e in w.nodes[0].endpoints[:1] {wire.sim_endpoint_conditions(&w.sim,e,{latency=0.02,jitter=0.005,loss=0.05})}
     wire.sim_endpoint_conditions(&w.sim,w.nodes[1].endpoints[0],{latency=0.02,jitter=0.005,loss=0.05})
     for a in addresses {testing.expect_value(t,want(&w.nodes[1].x,a),Error.None)}
-    testing.expect(t,test_until_complete(&w,1,addresses,60),"every blob arrives")
-    for a,k in addresses {
-        testing.expect_value(t,store.verify(&w.nodes[1].s,a),store.Error.None)
-        back:=make([]u8,sizes[k],context.temp_allocator)
-        testing.expect_value(t,store.read(&w.nodes[1].s,a,0,back),store.Error.None)
-        testing.expect(t,string(back)==string(test_bytes(sizes[k],u64(k)+1)),"the blob reads back its bytes")
-        p,_:=progress(&w.nodes[1].x,a)
-        testing.expect(t,p.state==.Complete && p.here==i64(sizes[k]) && p.total==i64(sizes[k]),"progress counts the whole blob")
+    testing.expect(t,test_until_complete(&w,1,addresses,60),"everything arrives")
+    s:=&w.nodes[1].s
+    for size,k in sizes {
+        blob:=addresses[2*k]
+        testing.expect_value(t,store.verify(s,blob),store.Error.None)
+        back:=make([]u8,size,context.temp_allocator)
+        testing.expect_value(t,store.read(s,blob,0,back),store.Error.None)
+        testing.expect(t,string(back)==string(test_bytes(size,u64(k)+1)),"the blob reads back its bytes")
+        p,_:=progress(&w.nodes[1].x,blob)
+        testing.expect(t,p.state==.Complete && p.here==i64(size) && p.total==i64(size),"progress counts the whole blob")
+        data,ok:=test_read(s,addresses[2*k+1])
+        testing.expect(t,ok && string(data)==string(test_bytes(size,u64(k)+100)),"the object reads back its bytes")
     }
-    rate,_:=peer_progress(&w.nodes[1].x,w.nodes[1].hosts[0],w.nodes[1].hosts[0].connection_handles[0])
-    testing.expect(t,rate.received>=6<<20 && rate.receive_rate>0,"the peer's rate is measured")
+    rate:=test_peer(&w.nodes[1])
+    testing.expect(t,rate.received>=12<<20 && rate.receive_rate>0,"the peer's rate is measured")
 }
 
 // What matters most is asked first: a small want asked after a large one and
@@ -58,8 +95,8 @@ a_high_priority_want_asked_later_completes_before_a_large_low_one :: proc(t:^tes
     w:Test_World
     defer test_world_destroy(&w)
     if !test_pair(t,&w,"exchange-priority") {return}
-    large:=test_put(t,&w.nodes[0].s,24<<20,1)
-    small:=test_put(t,&w.nodes[0].s,300<<10,2)
+    large:=test_object(t,&w.nodes[0].s,test_bytes(24<<20,1))
+    small:=test_object(t,&w.nodes[0].s,test_bytes(300<<10,2))
     wire.sim_endpoint_conditions(&w.sim,w.nodes[0].endpoints[0],{latency=0.01,bandwidth=4e6})
     x:=&w.nodes[1].x
     want(x,large)
@@ -84,28 +121,28 @@ a_transfer_resumes_after_the_connection_drops_and_after_the_store_reopens :: pro
     wire.sim_endpoint_conditions(&w.sim,w.nodes[0].endpoints[0],{latency=0.01,bandwidth=4e6})
     server,client:=w.nodes[0].hosts[0],w.nodes[1].hosts[0]
     x:=&w.nodes[1].x
-    blob:=test_put(t,&w.nodes[0].s,8<<20,3)
-    want(x,blob)
+    first:=test_object(t,&w.nodes[0].s,test_bytes(8<<20,3))
+    want(x,first)
     test_step(&w,600)
-    before,_:=progress(x,blob)
-    testing.expect(t,before.here>0 && before.here<before.total,"part of the blob is here")
+    before,_:=progress(x,first)
+    testing.expect(t,before.here>0 && before.here<before.total,"part of the object is here")
     wire.host_disconnect(server,server.connection_handles[0])
     for _ in 0..<2000 {
         test_step(&w)
         if client.connection_handles[0]==0 {break}
     }
     test_step(&w,100)
-    kept,_:=progress(x,blob)
+    kept,_:=progress(x,first)
     testing.expect(t,kept.state==.Missing && kept.here>=before.here,"with no peer the want is missing and keeps what arrived")
     testing.expect(t,test_connect(&w,client,w.nodes[0].endpoints[0]),"the peers connect again")
-    testing.expect(t,test_until_complete(&w,1,{blob},30),"the blob completes after the connection returns")
-    testing.expect_value(t,store.verify(&w.nodes[1].s,blob),store.Error.None)
+    testing.expect(t,test_until_complete(&w,1,{first},30),"the object completes after the connection returns")
 
-    second:=test_put(t,&w.nodes[0].s,8<<20,4)
+    TOTAL :: 8<<20
+    second:=test_object(t,&w.nodes[0].s,test_bytes(TOTAL,4))
     want(x,second)
-    test_step(&w,600)
+    test_step(&w,1500)
     part,_:=progress(x,second)
-    testing.expect(t,part.here>0 && part.here<part.total,"part of the second blob is here")
+    testing.expect(t,part.here>0 && part.here<part.total,"part of the second object is here")
     // The receiving process ends and starts again: a new store value, exchange and connection.
     n:=&w.nodes[1]
     test_node_close(n)
@@ -117,19 +154,24 @@ a_transfer_resumes_after_the_connection_drops_and_after_the_store_reopens :: pro
     if !testing.expect(t,test_node_open(&w,1),"the store reopens") {return}
     testing.expect(t,test_connect(&w,client,w.nodes[0].endpoints[0]),"the peers connect again")
     want(&n.x,second)
+    test_step(&w)
     resumed,_:=progress(&n.x,second)
-    testing.expect(t,resumed.here>=part.here,"the reopened store resumes from the pieces it has")
-    testing.expect(t,test_until_complete(&w,1,{second},30),"the second blob completes")
-    got,_:=peer_progress(&n.x,client,client.connection_handles[0])
-    testing.expectf(t,got.received<=u64(8<<20)-u64(part.here)+u64(4*store.PIECE_BYTES),"after the reopen %d bytes arrive of the %d missing",got.received,(8<<20)-part.here)
+    testing.expectf(t,resumed.here>0,"the reopened store resumes from the chunks it committed: %d of %d before",resumed.here,part.here)
+    testing.expect(t,test_until_complete(&w,1,{second},30),"the second object completes")
+    got:=test_peer(n)
+    data,_:=test_read(&n.s,second)
+    testing.expect(t,string(data)==string(test_bytes(TOTAL,4)),"and reads back its bytes")
+    // What it had is not asked again: the data it lacked and the nodes above it.
+    testing.expectf(t,got.received<=u64(TOTAL-resumed.here)+u64(store.CHUNK_MAX),"after the reopen %d bytes arrive of the %d missing",got.received,TOTAL-resumed.here)
 }
 
 // Two sources, one of which lies; it is asked first, so its lie is met. A
-// table of one piece for a blob of several, or one larger than the receiver
-// holds, fails the liar for the blob, never the honest peer or the want.
+// chunk that fails its address, or a blob's alias to another object or to no
+// node, marks the liar for the want, never the honest peer, and the want
+// still completes.
 @(test)
-a_liar_in_the_table_a_piece_or_the_size_is_marked_and_the_blob_still_arrives :: proc(t:^testing.T) {
-    for lie in ([]Test_Lie{.Table,.Piece,.Size,.Single,.Huge}) {
+a_liar_is_marked_and_the_object_still_arrives :: proc(t:^testing.T) {
+    for lie in ([]Test_Lie{.Bytes,.Alias,.Nonsense}) {
         w:Test_World
         defer test_world_destroy(&w)
         if !test_world(t,&w,"exchange-liar",3) {return}
@@ -137,34 +179,26 @@ a_liar_in_the_table_a_piece_or_the_size_is_marked_and_the_blob_still_arrives :: 
         liar:=test_host(&w,1,.Client)
         honest:=test_host(&w,2,.Client)
         w.nodes[1].script,w.nodes[1].lie,w.nodes[1].source=test_liar,lie,&w.nodes[1].s
-        size:=5*store.PIECE_BYTES+1000
+        size:=3*store.CHUNK_MAX+1000
         blob:=test_put(t,&w.nodes[1].s,size,9)
+        w.nodes[1].other=test_object(t,&w.nodes[1].s,test_bytes(size,10))
         test_put(t,&w.nodes[2].s,size,9)
         if !testing.expect(t,test_connect(&w,liar,w.nodes[0].endpoints[0]) && test_connect(&w,honest,w.nodes[0].endpoints[0])) {return}
         r:=&w.nodes[0]
         want(&r.x,blob)
         testing.expectf(t,test_until_complete(&w,0,{blob},20),"%v: the blob arrives",lie)
         testing.expect_value(t,store.verify(&r.s,blob),store.Error.None)
-        server:=r.hosts[0]
-        lies:=[2]int{}
-        for c in server.connection_handles {
-            if c==0 {continue}
-            p,_:=peer_progress(&r.x,server,c)
-            lies[0 if p.lies>0 else 1]+=1
-        }
-        testing.expectf(t,lies=={1,1},"%v: the liar is marked and the honest peer is not: %v",lie,lies)
+        testing.expectf(t,test_received_by(&r.x,r.hosts[0])=={1,1},"%v: the liar is marked and the honest peer is not",lie)
     }
 }
 
-// Flips the byte at at of a blob's bytes where a pack of the store at root
-// holds it, and drops the file blob_path wrote, as damage on the disk would
-// leave them; false when no pack holds those bytes.
+// Flips the byte at at of an object's bytes where a pack of the store at root
+// holds it, as damage on the disk would leave it; false when no pack holds
+// those bytes.
 @(private="file")
-pack_damage :: proc(root:string,blob:[]u8,at:int,hash:store.Hash) -> bool {
+pack_damage :: proc(root:string,data:[]u8,at:int) -> bool {
     start:=max(at-32,0)
-    needle:=blob[start:min(start+64,len(blob))]
-    digits:[64]u8
-    os.remove(fmt.tprintf("%s/tmp/blobs/%s",root,store.hex(hash,&digits)))
+    needle:=data[start:min(start+64,len(data))]
     entries,_:=os.read_all_directory_by_path(fmt.tprintf("%s/packs",root),context.temp_allocator)
     for e in entries {
         bytes,read_error:=os.read_entire_file(e.fullpath,context.temp_allocator)
@@ -181,42 +215,44 @@ pack_damage :: proc(root:string,blob:[]u8,at:int,hash:store.Hash) -> bool {
     return false
 }
 
-// A peer whose copy of a blob was damaged on its disk serves none of the
-// damage: it lacks the blob, is not taken for a liar, and drops it so that
-// it can fetch it again.
+// A peer whose copy of a chunk was damaged on its disk serves it, since nothing
+// is checked on serve; the receiver reports it, the peer checks its copy and
+// tombstones it, so it lacks it from then on and fetches it again.
 @(test)
-a_damaged_blob_is_lacked_removed_and_fetched_again :: proc(t:^testing.T) {
-    for size in ([2]int{2*store.PIECE_BYTES+9,6*store.PIECE_BYTES+1000}) {
-        w:Test_World
-        defer test_world_destroy(&w)
-        if !test_world(t,&w,"exchange-damaged",3) {return}
-        test_host(&w,0,.Server)
-        damaged:=test_host(&w,1,.Client)
-        honest:=test_host(&w,2,.Client)
-        blob:=test_put(t,&w.nodes[1].s,size,11)
-        test_put(t,&w.nodes[2].s,size,11)
-        testing.expect(t,pack_damage(w.nodes[1].s.root,test_bytes(size,11),size-5,blob),"the damage lands in a pack")
-        if !testing.expect(t,test_connect(&w,damaged,w.nodes[0].endpoints[0]) && test_connect(&w,honest,w.nodes[0].endpoints[0])) {return}
-        r:=&w.nodes[0]
-        want(&r.x,blob)
-        testing.expectf(t,test_until_complete(&w,0,{blob},20),"%d: the blob arrives",size)
-        testing.expect_value(t,store.verify(&r.s,blob),store.Error.None)
-        server:=r.hosts[0]
-        for c in server.connection_handles {
-            if c==0 {continue}
-            p,_:=peer_progress(&r.x,server,c)
-            testing.expectf(t,p.lies==0 && !p.bad,"%d: nobody is taken for a liar",size)
-        }
-        testing.expect(t,!store.has(&w.nodes[1].s,blob),"the damaged copy is removed")
-        want(&w.nodes[1].x,blob)
-        testing.expect(t,test_until_complete(&w,1,{blob},20),"and fetched again")
-        testing.expect_value(t,store.verify(&w.nodes[1].s,blob),store.Error.None)
-    }
+a_receivers_bad_makes_the_server_repair_or_lack :: proc(t:^testing.T) {
+    w:Test_World
+    defer test_world_destroy(&w)
+    if !test_world(t,&w,"exchange-damaged",3) {return}
+    test_host(&w,0,.Server)
+    damaged:=test_host(&w,1,.Client)
+    honest:=test_host(&w,2,.Client)
+    size:=3*store.CHUNK_MAX+1000
+    data:=test_bytes(size,11)
+    root:=test_object(t,&w.nodes[1].s,data)
+    test_object(t,&w.nodes[2].s,data)
+    testing.expect(t,pack_damage(w.nodes[1].s.root,data,size-5),"the damage lands in a pack")
+    if !testing.expect(t,test_connect(&w,damaged,w.nodes[0].endpoints[0])) {return}
+    r:=&w.nodes[0]
+    want(&r.x,root)
+    test_step(&w,500)
+    testing.expect(t,!test_here(r,root),"the damaged chunk is not taken")
+    if !testing.expect(t,test_connect(&w,honest,w.nodes[0].endpoints[0])) {return}
+    testing.expect(t,test_until_complete(&w,0,{root},20),"the honest peer completes the object")
+    back,_:=test_read(&r.s,root)
+    testing.expect(t,string(back)==string(data),"which reads back its bytes")
+    o,_:=store.object_open(&w.nodes[1].s,root)
+    copy_ok:=store.object_read(&o,0,make([]u8,size,context.temp_allocator))
+    store.object_close(&o)
+    testing.expect(t,copy_ok!=.None,"the damaged copy is tombstoned: the peer no longer reads it")
+    want(&w.nodes[1].x,root)
+    testing.expect(t,test_until_complete(&w,1,{root},20),"and fetches it again")
+    again,_:=test_read(&w.nodes[1].s,root)
+    testing.expect(t,string(again)==string(data),"whole")
 }
 
-// A peer serves the pieces it has of a blob it is still receiving.
+// A peer serves the chunks it has of an object it is still receiving.
 @(test)
-a_peer_still_receiving_a_blob_serves_its_pieces_to_a_third :: proc(t:^testing.T) {
+a_peer_still_receiving_an_object_serves_its_chunks_to_a_third :: proc(t:^testing.T) {
     w:Test_World
     defer test_world_destroy(&w)
     if !test_world(t,&w,"exchange-relay",3) {return}
@@ -226,17 +262,18 @@ a_peer_still_receiving_a_blob_serves_its_pieces_to_a_third :: proc(t:^testing.T)
     c_client:=test_host(&w,2,.Client)
     if !testing.expect(t,test_connect(&w,b_client,w.nodes[0].endpoints[0]) && test_connect(&w,c_client,w.nodes[1].endpoints[1])) {return}
     wire.sim_endpoint_conditions(&w.sim,w.nodes[0].endpoints[0],{latency=0.01,bandwidth=2e6})
-    blob:=test_put(t,&w.nodes[0].s,6<<20,5)
-    want(&w.nodes[1].x,blob)
-    want(&w.nodes[2].x,blob)
+    root:=test_object(t,&w.nodes[0].s,test_bytes(6<<20,5))
+    want(&w.nodes[1].x,root)
+    want(&w.nodes[2].x,root)
     relayed:=false
-    for w.now<60 && !store.has(&w.nodes[2].s,blob) {
+    for w.now<60 && !test_here(&w.nodes[2],root) {
         test_step(&w)
-        c,_:=progress(&w.nodes[2].x,blob)
-        if c.here>0 && !store.has(&w.nodes[1].s,blob) {relayed=true}
+        c,_:=progress(&w.nodes[2].x,root)
+        if c.here>0 && !test_here(&w.nodes[1],root) {relayed=true}
     }
-    testing.expect(t,relayed,"the third peer receives pieces before the relay has the whole blob")
-    testing.expect(t,store.has(&w.nodes[2].s,blob) && store.verify(&w.nodes[2].s,blob)==.None,"the third peer completes the blob")
+    testing.expect(t,relayed,"the third peer receives chunks before the relay has the whole object")
+    data,ok:=test_read(&w.nodes[2].s,root)
+    testing.expect(t,ok && string(data)==string(test_bytes(6<<20,5)),"the third peer completes the object")
 }
 
 @(private)
@@ -384,7 +421,7 @@ the_blocking_form_returns_for_a_hit_a_miss_and_a_disconnect :: proc(t:^testing.T
     testing.expect(t,!store.has(&w.nodes[1].s,big),"the disconnect came before the blob")
 }
 
-// A 60 Hz unreliable message from the source keeps its delay small while blobs stream.
+// A 60 Hz unreliable message from the source keeps its delay small while objects stream.
 @(test)
 a_game_channel_keeps_its_delay_small_during_a_transfer :: proc(t:^testing.T) {
     w:Test_World
@@ -393,14 +430,14 @@ a_game_channel_keeps_its_delay_small_during_a_transfer :: proc(t:^testing.T) {
     latency:=0.02
     wire.sim_endpoint_conditions(&w.sim,w.nodes[0].endpoints[0],{latency=latency,bandwidth=12.5e6})
     wire.sim_endpoint_conditions(&w.sim,w.nodes[1].endpoints[0],{latency=latency})
-    blobs:=make([]store.Hash,6,context.temp_allocator)
-    for &b,k in blobs {b=test_put(t,&w.nodes[0].s,8<<20,u64(k)+1)}
-    for b in blobs {want(&w.nodes[1].x,b)}
+    roots:=make([]store.Hash,6,context.temp_allocator)
+    for &b,k in roots {b=test_object(t,&w.nodes[0].s,test_bytes(8<<20,u64(k)+1))}
+    for b in roots {want(&w.nodes[1].x,b)}
     g:=&w.nodes[1].game
     g.latency,g.since=latency,w.now+1
     w.nodes[0].game.since=g.since
-    complete:=test_until_complete(&w,1,blobs,30)
-    testing.expect(t,complete,"the blobs arrive")
+    complete:=test_until_complete(&w,1,roots,30)
+    testing.expect(t,complete,"the objects arrive")
     sent:=w.nodes[0].game.sent
     testing.expectf(t,g.got>=sent*9/10 && sent>100,"%d of %d game messages arrive",g.got,sent)
     mean:=g.mean/f64(max(g.got,1))
@@ -425,48 +462,8 @@ test_received_by :: proc(x:^Exchange,h:^wire.Host) -> (lies:[2]int) {
     return
 }
 
-// The true last piece proves a begun size wrong after another process
-// published the blob: the published blob stays.
-@(test)
-a_wrong_size_found_after_another_process_published_the_blob_keeps_it :: proc(t:^testing.T) {
-    w:Test_World
-    defer test_world_destroy(&w)
-    if !test_world(t,&w,"exchange-published",2) {return}
-    server:=test_host(&w,0,.Server)
-    silent:=test_scripted(t,&w,1,.Hold)
-    if !testing.expect(t,test_connect(&w,silent,w.nodes[0].endpoints[0])) {return}
-    size:=FIRST_PIECES*store.PIECE_BYTES+1000
-    data:=test_bytes(size,4)
-    blob:=store.address_of_bytes(data)
-    r:=&w.nodes[0]
-    want(&r.x,blob)
-    test_step(&w,20)
-    c:=server.connection_handles[0]
-    pieces:=make([]store.Hash,FIRST_PIECES+1,context.temp_allocator)
-    {
-        other,_:=store.open(w.folder)
-        defer store.close(&other)
-        store.put_bytes(&other,data)
-        table,_:=store.blob_table(&other,blob,context.temp_allocator)
-        copy(pieces,table)
-        store.remove(&other,blob)
-    }
-    told:=test_message({MSG_TABLE},blob[:],test_le(u64(size-100),8),slice.to_bytes(pieces))
-    receive(&r.x,server,{kind=.Message,channel=u8(LANE_DATA),connection=c,data=told})
-    test_step(&w,20)
-    p,_:=progress(&r.x,blob)
-    testing.expect(t,p.total==i64(size-100),"the told size is begun")
-    another,_:=store.open(r.s.root)
-    defer store.close(&another)
-    store.put_bytes(&another,data)
-    last:=test_message({MSG_PIECE},blob[:],test_le(FIRST_PIECES,4),data[FIRST_PIECES*store.PIECE_BYTES:])
-    receive(&r.x,server,{kind=.Message,channel=u8(LANE_DATA),connection=c,data=last})
-    testing.expect(t,store.has(&r.s,blob) && store.verify(&r.s,blob)==.None,"the published blob stays")
-    testing.expect_value(t,test_state(&r.x,blob),State.Complete)
-}
-
-// A peer that reserved a want and then sends only unrelated data loses the
-// reservation, and the honest peer serves the blob.
+// A peer that was asked a want and then sends only unrelated data loses the
+// reservation, and the honest peer serves the object.
 @(test)
 a_peer_that_holds_a_want_without_progress_loses_it :: proc(t:^testing.T) {
     w:Test_World
@@ -475,41 +472,40 @@ a_peer_that_holds_a_want_without_progress_loses_it :: proc(t:^testing.T) {
     test_host(&w,0,.Server)
     holder:=test_scripted(t,&w,1,.Hold)
     honest:=test_host(&w,2,.Client)
-    blob:=test_put(t,&w.nodes[2].s,2*store.PIECE_BYTES+7,6)
+    root:=test_object(t,&w.nodes[2].s,test_bytes(2*store.CHUNK_MAX+7,6))
     if !testing.expect(t,test_connect(&w,holder,w.nodes[0].endpoints[0]) && test_connect(&w,honest,w.nodes[0].endpoints[0])) {return}
-    want(&w.nodes[0].x,blob)
-    testing.expect(t,test_until_complete(&w,0,{blob},15),"the honest peer serves the blob once the reservation lapses")
+    want(&w.nodes[0].x,root)
+    testing.expect(t,test_until_complete(&w,0,{root},15),"the honest peer serves the object once the reservation lapses")
 }
 
 // What a peer was marked for leaves with it: the next peer in its slot is not
-// blamed for the size the first one gave.
+// blamed for the chunks the first one damaged.
 @(test)
 a_peer_in_a_freed_slot_is_not_blamed_for_its_predecessor :: proc(t:^testing.T) {
     w:Test_World
     defer test_world_destroy(&w)
     if !test_world(t,&w,"exchange-slot",3) {return}
     server:=test_host(&w,0,.Server)
-    liar:=test_scripted(t,&w,1,.Size_First)
+    liar:=test_scripted(t,&w,1,.Bytes)
     honest:=test_host(&w,2,.Client)
-    size:=4*store.PIECE_BYTES+1000
-    blob:=test_put(t,&w.nodes[1].s,size,8)
-    test_put(t,&w.nodes[2].s,size,8)
+    data:=test_bytes(4*store.CHUNK_MAX+1000,8)
+    root:=test_object(t,&w.nodes[1].s,data)
+    test_object(t,&w.nodes[2].s,data)
     if !testing.expect(t,test_connect(&w,liar,w.nodes[0].endpoints[0])) {return}
     r:=&w.nodes[0]
-    want(&r.x,blob)
+    want(&r.x,root)
     for _ in 0..<2000 {
         test_step(&w)
-        if p,_:=progress(&r.x,blob);p.total>0 && p.here==i64(size-store.PIECE_BYTES) {break}
+        if test_received_by(&r.x,server)[0]==1 {break}
     }
-    p,_:=progress(&r.x,blob)
-    testing.expect(t,p.total==i64(size-100),"the liar's size is begun with every piece but the last")
+    testing.expect_value(t,test_received_by(&r.x,server),[2]int{1,0})
     wire.host_disconnect(liar)
     for _ in 0..<2000 {
         test_step(&w)
         if server.connection_handles[0]==0 && server.connection_handles[1]==0 {break}
     }
     if !testing.expect(t,test_connect(&w,honest,w.nodes[0].endpoints[0])) {return}
-    testing.expect(t,test_until_complete(&w,0,{blob},20),"the honest peer in the freed slot completes the blob")
+    testing.expect(t,test_until_complete(&w,0,{root},20),"the honest peer in the freed slot completes the object")
     testing.expect_value(t,test_received_by(&r.x,server),[2]int{0,1})
 }
 
@@ -552,8 +548,22 @@ late_ref_answers_return_their_credits :: proc(t:^testing.T) {
     testing.expect(t,found,"the slow peer is asked and names it")
 }
 
+// The bytes of every chunk of an object in a store: what serving it once sends.
+@(private)
+test_object_bytes :: proc(s:^store.Store,root:store.Hash) -> (total:u64) {
+    buffer:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
+    bytes,error:=store.chunk_read(s,root,buffer)
+    if error!=.None {return}
+    total=u64(len(bytes))
+    n,_:=store.node_parse(bytes)
+    held:=make([]store.Entry,len(n.entries),context.temp_allocator)
+    copy(held,n.entries)
+    for e in held {total+=n.level==0?e.size:test_object_bytes(s,e.address)}
+    return
+}
+
 // After a peer's flight lapses and its want goes to another, its late Done
-// does not free what the other was asked: no piece is served twice.
+// does not free what the other was asked: no chunk is served twice.
 @(test)
 a_late_done_does_not_release_what_another_peer_was_asked :: proc(t:^testing.T) {
     w:Test_World
@@ -562,15 +572,14 @@ a_late_done_does_not_release_what_another_peer_was_asked :: proc(t:^testing.T) {
     test_host(&w,0,.Server)
     late:=test_scripted(t,&w,1,.Late_Done)
     honest:=test_host(&w,2,.Client)
-    // Two pieces, both asked with the table: the honest peer has a request free when the late Done comes.
-    size:=2*store.PIECE_BYTES
-    blob:=test_put(t,&w.nodes[2].s,size,3)
+    root:=test_object(t,&w.nodes[2].s,test_bytes(2*store.CHUNK_MAX,3))
     if !testing.expect(t,test_connect(&w,late,w.nodes[0].endpoints[0]) && test_connect(&w,honest,w.nodes[0].endpoints[0])) {return}
     wire.sim_endpoint_conditions(&w.sim,w.nodes[2].endpoints[0],{latency=0.01,bandwidth=0.5e6})
-    want(&w.nodes[0].x,blob)
-    testing.expect(t,test_until_complete(&w,0,{blob},30),"the honest peer serves the blob")
+    want(&w.nodes[0].x,root)
+    testing.expect(t,test_until_complete(&w,0,{root},30),"the honest peer serves the object")
     served,_:=peer_progress(&w.nodes[2].x,honest,honest.connection_handles[0])
-    testing.expectf(t,served.sent==u64(size),"the honest peer serves %d bytes of %d",served.sent,size)
+    whole:=test_object_bytes(&w.nodes[2].s,root)
+    testing.expectf(t,served.sent==whole,"the honest peer serves %d bytes of %d",served.sent,whole)
     testing.expectf(t,w.nodes[1].requests==1,"the late peer is asked %d times",w.nodes[1].requests)
 }
 
@@ -596,47 +605,57 @@ destroy_wakes_a_waiting_fetch :: proc(t:^testing.T) {
     testing.expect_value(t,j.error,Error.Closed)
 }
 
-// A server whose largest blob is one piece still answers a request for a
-// blob's table and first pieces.
-@(test)
-a_server_with_the_smallest_cap_serves_an_honest_request :: proc(t:^testing.T) {
-    w:Test_World
-    defer test_world_destroy(&w)
-    if !test_world(t,&w,"exchange-cap",2) {return}
-    test_node_close(&w.nodes[0])
-    if !testing.expect(t,test_node_open(&w,0,{max_blob_bytes=store.PIECE_BYTES})) {return}
-    test_host(&w,0,.Server)
-    client:=test_host(&w,1,.Client)
-    if !testing.expect(t,test_connect(&w,client,w.nodes[0].endpoints[0])) {return}
-    blob:=test_put(t,&w.nodes[0].s,1000,2)
-    want(&w.nodes[1].x,blob)
-    testing.expect(t,test_until_complete(&w,1,{blob},5),"the blob arrives")
-    p,_:=peer_progress(&w.nodes[0].x,w.nodes[0].hosts[0],w.nodes[0].hosts[0].connection_handles[0])
-    testing.expect(t,!p.bad,"the server keeps the requester")
+// A connection that carried a transfer, past the start of its congestion
+// window, at a round trip of rtt.
+@(private)
+test_warm_pair :: proc(t:^testing.T,w:^Test_World,name:string,rtt:f64) -> bool {
+    if !test_pair(t,w,name) {return false}
+    for e in ([]int{w.nodes[0].endpoints[0],w.nodes[1].endpoints[0]}) {wire.sim_endpoint_conditions(&w.sim,e,{latency=rtt/2})}
+    warm:=test_object(t,&w.nodes[0].s,test_bytes(2<<20,1000))
+    want(&w.nodes[1].x,warm)
+    return testing.expect(t,test_until_complete(w,1,{warm},30),"the warming object arrives")
 }
 
-// Small blobs wanted together on a connection in use arrive in a few round
-// trips however many they are.
+// Small objects wanted together on a connection in use arrive in a few round
+// trips however many they are, and one alone in one.
 @(test)
-many_small_blobs_wanted_together_take_round_trips_that_do_not_grow_with_their_count :: proc(t:^testing.T) {
+many_small_objects_wanted_together_take_round_trips_that_do_not_grow_with_their_count :: proc(t:^testing.T) {
     RTT :: 0.1
-    for count in ([]int{8,120}) {
+    for count in ([]int{1,8,120,250}) {
         w:Test_World
         defer test_world_destroy(&w)
-        if !test_pair(t,&w,"exchange-small") {return}
-        for e in ([]int{w.nodes[0].endpoints[0],w.nodes[1].endpoints[0]}) {wire.sim_endpoint_conditions(&w.sim,e,{latency=RTT/2})}
-        // A connection that carried a transfer, past the start of its congestion window.
-        warm:=test_put(t,&w.nodes[0].s,2<<20,1000)
-        want(&w.nodes[1].x,warm)
-        testing.expect(t,test_until_complete(&w,1,{warm},30))
-        blobs:=make([]store.Hash,count,context.temp_allocator)
-        for &b,k in blobs {b=test_put(t,&w.nodes[0].s,(1+k%5)*1000,u64(k)+1)}
+        if !test_warm_pair(t,&w,"exchange-small",RTT) {return}
+        roots:=make([]store.Hash,count,context.temp_allocator)
+        for &b,k in roots {b=test_object(t,&w.nodes[0].s,test_bytes((1+k%5)*1000,u64(k)+1))}
         start:=w.now
-        for b in blobs {want(&w.nodes[1].x,b)}
-        testing.expectf(t,test_until_complete(&w,1,blobs,30),"%d blobs arrive",count)
+        for b in roots {want(&w.nodes[1].x,b)}
+        testing.expectf(t,test_until_complete(&w,1,roots,30),"%d objects arrive",count)
         trips:=(w.now-start)/RTT
-        testing.expectf(t,trips<4,"%d small blobs take %.1f round trips",count,trips)
+        testing.expectf(t,trips<(count==1?1.2:4),"%d small objects take %.2f round trips",count,trips)
     }
+}
+
+// An object changed by one byte inserted sends only its new chunks and the
+// nodes above them.
+@(test)
+a_one_byte_insert_sends_only_the_new_chunks :: proc(t:^testing.T) {
+    SIZE :: 200<<20
+    w:Test_World
+    defer test_world_destroy(&w)
+    if !test_pair(t,&w,"exchange-insert") {return}
+    data:=test_bytes(SIZE+1,77)
+    before:=data[:SIZE]
+    test_object(t,&w.nodes[1].s,before)
+    copy(data[SIZE/2+1:],before[SIZE/2:])
+    data[SIZE/2]=0x5a
+    after:=test_object(t,&w.nodes[0].s,data)
+    want(&w.nodes[1].x,after)
+    testing.expect(t,test_until_complete(&w,1,{after},60),"the changed object arrives")
+    got:=test_peer(&w.nodes[1])
+    fmt.printfln("a one-byte insert in %d bytes: %d bytes received",SIZE,got.received)
+    testing.expectf(t,got.received<=512<<10,"%d bytes received",got.received)
+    back,_:=test_read(&w.nodes[1].s,after)
+    testing.expect(t,string(back)==string(data),"it reads back its bytes")
 }
 
 // fetch_all and fetch_refs return once all is here, at a miss among hits, and
@@ -653,7 +672,7 @@ the_batch_blocking_forms_return_for_a_hit_a_partial_miss_and_a_disconnect :: pro
     blobs:=make([]store.Hash,40,context.temp_allocator)
     for &b,k in blobs {b=test_put(t,&w.nodes[0].s,(k%7)*30000+1,u64(k)+1)}
     j:=Test_Job{x=x,addresses=blobs}
-    testing.expect(t,test_fetch(&w,&j,10) && j.error==.None,"a set of hits returns")
+    testing.expectf(t,test_fetch(&w,&j,10) && j.error==.None,"a set of hits returns: %v",j.error)
     for b in blobs {
         testing.expect(t,store.has(here,b),"every blob is here")
         _,still:=progress(x,b)
