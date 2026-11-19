@@ -491,8 +491,8 @@ the_kept_reach_of_the_shadow_maps_is_what_the_maps_give :: proc(t: ^testing.T) {
 				for _ in 0 ..< 4 {
 					record := &r.scene.batch.records[next(&random, len(r.scene.batch.records))]
 					record.shadow_moving = !record.shadow_moving
-					if next(&random, 2) == 0 {record.shadow_swayed = u64(frame)}
 				}
+				r.scene.shadow_movers_version += 1
 			case 10: scene(r, descs[:], box, &random)
 			case 11: r.world_key = u64(next(&random, 2))
 			case 12: renderer_origin_set(r, {f32(next(&random, 3) - 1) * ORIGIN_STEP * 2, 0, 0})
@@ -519,15 +519,13 @@ the_kept_reach_of_the_shadow_maps_is_what_the_maps_give :: proc(t: ^testing.T) {
 			}
 		}
 		for &p in plans {if next(&random, 8) == 0 {p.flags = abi.SHADOW_PLAN_RESET}}
-		for &swayed in view.swayed {if next(&random, 4) == 0 {swayed = u64(next(&random, frame + 1))}}
-		fresh.swayed = view.swayed
 		kept, anew: [SHADOW_SLOTS]Shadow_Reach
 		if !testing.expect(t, shadow_reach(r, view, wants[:], plans[:], kept[:])) {return}
 		ranges := make([][2]u32, len(r.scene.shadow_ranges), context.temp_allocator)
 		copy(ranges, r.scene.shadow_ranges[:])
 		shadow_reach_release(r, &fresh)
 		if !testing.expect(t, shadow_reach(r, &fresh, wants[:], plans[:], anew[:])) {return}
-		same := kept == anew && len(ranges) == len(r.scene.shadow_ranges)
+		same := kept == anew && len(ranges) == len(r.scene.shadow_ranges) && shadow_view_reach(r, view).mover_threads == shadow_view_reach(r, &fresh).mover_threads
 		for range, i in ranges {same = same && range == r.scene.shadow_ranges[i]}
 		if !testing.expectf(t, same, "frame %d: what was kept differs from what the maps give found anew", frame) {return}
 		// None of what a map reaches is left out: the instances of each caster
@@ -552,8 +550,6 @@ the_kept_reach_of_the_shadow_maps_is_what_the_maps_give :: proc(t: ^testing.T) {
 				if casts && within && shadow_map_reaches(w.m, low, high) && !testing.expectf(t, holds(ranges, lists[Shadow_Round.Stays], first, count), "frame %d, slot %d: a batch that casts into the map is left out", frame, slot) {return}
 				moving := s.batch.records[record].shadow_moving && casts && within && shadow_change_reaches(w.m, shadow_batch_change(s, k))
 				if moving && !testing.expectf(t, holds(ranges, lists[Shadow_Round.Moves], first, count), "frame %d, slot %d: a batch that moves in the map is left out of what moves", frame, slot) {return}
-				swayed := moving && plans[slot].flags & abi.SHADOW_PLAN_RESET == 0 && s.batch.records[record].shadow_swayed > view.swayed[slot]
-				if swayed && !testing.expectf(t, holds(ranges, lists[SHADOW_REACH_SWAY], first, count), "frame %d, slot %d: a batch that swayed is left out of what swayed", frame, slot) {return}
 			}
 		}
 	}

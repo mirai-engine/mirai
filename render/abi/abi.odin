@@ -196,8 +196,7 @@ LIGHT_LIST_WORDS           :: 128
 // boxes of what changed (SHADOW_BOX_ROWS each), the slots in use, a word each,
 // what the culls by instance of each slot go over (SHADOW_REACH_WORDS), the
 // ranges of instances they go over (the first instance, then the thread of
-// its list it takes from, two words each), and the slots the marks of what
-// swayed go over (as SHADOW_WORDS_SLOTS). The constants of a view hold the
+// its list it takes from, two words each). The constants of a view hold the
 // rows of the levels of the sun, SUN_MAP_ROWS.
 SHADOW_MAP_ROWS            :: 6
 SHADOW_LIGHT_FACES         :: 16
@@ -251,16 +250,10 @@ SHADOW_ENTRY_HELD          :: 24
 SHADOW_PLAN_RESET          :: u32(1)
 SHADOW_PLAN_STALE          :: u32(2)
 SHADOW_PLAN_NET            :: u32(4)
-// Of the pass by instance of the cull of the maps (shadow_cull.slang
-// Params_Block.foresee): it marks, before the entries of the pages, the pages
-// of each slot in use (`list` words of the buffer of the maps, `maps` of them)
-// that the instances of the batches that swayed cover, in the maps finer than
-// their sway: where what moves changed.
-SHADOW_CULL_SWAY           :: u32(2)
 // What the culls by instance of a slot go over (render.Shadow_Reach): of what
-// stays, of what moves and of the batches that swayed, each its first range,
-// how many and the threads of them in all.
-SHADOW_REACH_LISTS         :: 3
+// stays and of what moves, each its first range, how many and the threads of
+// them in all.
+SHADOW_REACH_LISTS         :: 2
 SHADOW_REACH_WORDS         :: 3 * SHADOW_REACH_LISTS
 // Of a slot a cull by instance goes over (SHADOW_WORDS_SLOTS): the slot, and
 // from bit SHADOW_WORK_SHIFT the thread of the dispatch its own start at; the
@@ -280,7 +273,10 @@ SHADOW_HIZ_MIPS            :: 5
 // the atlas took to compose it the last time (0: not known), the chunks the
 // cull by instance of the cache and of the atlas foresaw it hands over for
 // it; of the cache and of the atlas, what their draws took of the units the
-// cull by instance foresaw, in 1/SHADOW_SCALE_ONE (0: as much);
+// cull by instance foresaw, in 1/SHADOW_SCALE_ONE (0: as much); of each page
+// of the pool, the frame the atlas last composed it and whether it holds a
+// batch that sways there (SHADOW_SWAY_*); of each slot, the frames in a row
+// the cull by instance of the cache and of the atlas left it out;
 // and a bit for each entry of each slot (SHADOW_MASK_WORDS a slot)
 // that a pass after the maps read this frame, for the next; then what each
 // frame writes again: a bit for each entry that points read, where what stays
@@ -316,7 +312,9 @@ SHADOW_WORDS_BAND          :: SHADOW_WORDS_AGE + SHADOW_POOL_PAGES
 SHADOW_WORDS_KNOWN         :: SHADOW_WORDS_BAND + SHADOW_POOL_PAGES
 SHADOW_WORDS_REACH         :: SHADOW_WORDS_KNOWN + 2 * SHADOW_POOL_PAGES
 SHADOW_WORDS_SCALE         :: SHADOW_WORDS_REACH + 2 * SHADOW_POOL_PAGES
-SHADOW_WORDS_LATE          :: SHADOW_WORDS_SCALE + 4
+SHADOW_WORDS_SWAY          :: SHADOW_WORDS_SCALE + 4
+SHADOW_WORDS_SKIPPED       :: SHADOW_WORDS_SWAY + SHADOW_POOL_PAGES
+SHADOW_WORDS_LATE          :: SHADOW_WORDS_SKIPPED + 2 * SHADOW_SLOTS
 SHADOW_WORDS_NEEDED        :: SHADOW_WORDS_LATE + SHADOW_MASKS
 SHADOW_WORDS_STALE         :: SHADOW_WORDS_NEEDED + SHADOW_MASKS
 SHADOW_WORDS_MOVED         :: SHADOW_WORDS_STALE + SHADOW_MASKS
@@ -359,8 +357,8 @@ SHADOW_RANK_GROUPS         :: (SHADOW_RANK_WORDS + SHADOW_RANK_GROUP - 1) / SHAD
 // The counts: pages the cache draws, the atlas composes, asked for, of the
 // pool that can be given (free, then those no point read, the oldest read
 // first), of them free, asked for and left out; the threads the culls by
-// instance and the marks of what swayed ran; pages the cache or the
-// atlas did not draw whole this frame, which wait for the frames after; and
+// instance ran; pages the cache or the atlas did not draw whole this frame,
+// which wait for the frames after; and
 // the pages the bound of a frame grows for: those points read where no page
 // drawn holds them, and in a still view those that wait.
 SHADOW_COUNT_DRAWN         :: 0
@@ -375,6 +373,7 @@ SHADOW_COUNT_FORESEEN      :: 8 // two: of the pages the cache and the atlas gra
 SHADOW_COUNT_MEASURED      :: 10 // two: and what they took
 SHADOW_COUNT_SHORT         :: 12
 SHADOW_COUNT_DROPPED       :: 13 // two: chunks the cull of the cache and of the atlas had no room for
+SHADOW_COUNT_REFRESHED     :: 15 // pages the atlas composed again for what sways in them alone
 SHADOW_SCALE_ONE           :: 256
 // Of a page of the pool drawn in bands (SHADOW_WORDS_BAND): the rows of it the
 // cache holds from its top, from bit SHADOW_BAND_SHIFT how many times the page
@@ -384,6 +383,18 @@ SHADOW_BAND_SHIFT          :: 8
 SHADOW_BAND_STUCK          :: u32(1) << 16
 // Of a word of SHADOW_WORDS_KNOWN: what it holds was foreseen, not measured.
 SHADOW_KNOWN_FORESEEN      :: u32(1) << 31
+// Of a word of SHADOW_WORDS_SWAY: the frame the atlas last composed the page
+// (Params_Block.frame of shadow_pages.comp, its low bits); what the atlas
+// composed there holds a batch that sways in the map (a map whose texel there
+// is narrower than its sway), which the atlas composes again while it is read,
+// as often as the bound leaves room; and the cull of this frame found one there.
+SHADOW_SWAY_FRAME          :: u32(1) << 24 - 1
+SHADOW_SWAY_SWAYS          :: u32(1) << 31
+SHADOW_SWAY_NOW            :: u32(1) << 30
+// Of a page of the pool listed for the atlas (SHADOW_WORDS_JOBS), that what
+// sways in it is all it is composed again for: while it waits for room it
+// shows what the atlas last composed there.
+SHADOW_JOB_REFRESH         :: u32(1) << 18
 // Of a word of SHADOW_WORDS_COST: a draw of the round had no room for a
 // cluster of the page; the page waits for a frame with room for it; it was
 // granted as foreseen; and its units.

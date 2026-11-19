@@ -10,8 +10,8 @@
 // reach, ranges: the words of the buffer of the maps what the culls by
 // instance of each slot go over and their ranges of instances start at
 // (render.Shadow_Reach); list: the word the slots a cull by instance goes
-// over start at, of the buffer of the pages, or of the buffer of the maps for
-// the marks of what swayed (SHADOW_WORK_SHIFT); masks: the word the pages the
+// over start at, of the buffer of the pages (SHADOW_WORK_SHIFT); masks: the
+// word the pages the
 // round draws start at, a bit for each entry of the table of each slot
 // (SHADOW_MASK_WORDS a slot);
 // rows: of the words of the lights in the buffer of the maps; chunk_capacity,
@@ -20,21 +20,20 @@
 // (render.shadow_maps_pass), 0 that of those that stay, whose pages span
 // SHADOW_WORDS_BOUNDS for the round; movers:
 // words of the bits of what moves, the instances of the scene then the
-// batches drawn; threads: of the marks of what swayed, for the count;
+// batches drawn;
 // plan: the word of the buffer of the maps the plans of the slots start at;
 // part: 1 while
 // the round draws of each page the texels SHADOW_WORDS_PART names alone (the
 // cache, of a page it held the part where what stays changed, or the band of
 // a page drawn over frames); bound: the units the draws of the round take
 // in a frame (render.SHADOW_FRAME_UNITS); foresee: 1 while the pass by
-// instance only foresees what each page takes, before the pages are granted,
-// 2 while it marks where the batches that sway moved (SHADOW_CULL_SWAY);
+// instance only foresees what each page takes, before the pages are granted;
 // round, last, vertex_capacity, triangle_capacity, margin: those of the round
 // of the lists of the raster that draws them (raster_vertices.comp).
 struct Params_Block {
     uint reach; uint ranges; uint rows; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers;
-    uint threads; uint masks; uint plan; uint part; uint bound; uint foresee;
-    uint round; uint last; uint vertex_capacity; uint triangle_capacity; float margin; uint pad0;
+    uint masks; uint plan; uint part; uint bound; uint foresee;
+    uint round; uint last; uint vertex_capacity; uint triangle_capacity; float margin; uint pad0; uint pad1;
     // The eye the instances of a batch past its cull distance are left out
     // from, and how much farther than it (render.shadow_cull_eye).
     float4 cull;

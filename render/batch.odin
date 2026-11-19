@@ -123,12 +123,8 @@ Batch_Record :: struct {
 	scale:                  f32, // the largest scale of its instances
 	small:                  bool, // every instance within SMALL_INSTANCE_REACH of its centre
 	drawn:                  i32,  // its row among those drawn; -1 when it is not drawn
-	// Of one of a deformable that casts shadows, as an instance is followed
-	// (Shadow_Track): the frame its vertices last changed in, and whether they
-	// changed again within SHADOW_MOVER_FRAMES (shadow_movers_update), and the
-	// last frame they changed in while it moved, whose pages its instances mark.
-	shadow_frame:           u64,
-	shadow_swayed:          u64,
+	// Of one of a deformable that casts shadows: its deformable moves in the
+	// maps (Skin_State.shadow_moving), as of the last frame that drew them.
 	shadow_moving:          bool,
 }
 
