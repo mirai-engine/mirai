@@ -128,9 +128,11 @@ void main(uint3 id : SV_DispatchThreadID) {
     // Glass casts no shadow in the maps, nor colors their light.
     if ((inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u) return;
     Shadow_Map whole = shadow_map_at(shadow_data, params.rows, map);
-    // The maps leave the vertex hook out but where a batch sways: its box grows by that sway alone.
-    float reach = sway * instance_scale(inst);
-    float3 low = inst.bounds_min.xyz - reach, high = inst.bounds_max.xyz + reach;
+    // The maps leave the vertex hook out but where a batch sways: its box grows
+    // by as far as it sways in the wind that blows now, which its sway in the
+    // strongest (reach) bounds and which chooses the maps it sways in.
+    float reach = sway * instance_scale(inst), now = instance_batched(instance) ? min(reach, batch_near(batch_row(batch_of(instance)))) : 0.0;
+    float3 low = inst.bounds_min.xyz - now, high = inst.bounds_max.xyz + now;
     if (!shadow_map_reaches(whole, low, high)) return;
     // Past its cull distance, as the view leaves it out (render.shadow_culled).
     if (cull > 0.0 && length(params.cull.xyz - clamp(params.cull.xyz, low, high)) > cull + params.cull.w) return;
@@ -149,7 +151,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         bool rest = false, sways = false;
         bool moves = instance_moves(instance);
         if (instance_batched(instance) && (sway > 0.0 || mesh.posed_word != INVALID)) {
-            rest = !shadow_map_sways(m, low, high, sway > 0.0 ? reach : FLT_MAX, params.sway, params.coarser);
+            rest = !shadow_map_sways(m, inst.bounds_min.xyz - reach, inst.bounds_max.xyz + reach, sway > 0.0 ? reach : FLT_MAX, params.sway, params.coarser);
             moves = moves && !rest;
             sways = moves;
         }
