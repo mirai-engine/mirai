@@ -55,8 +55,10 @@ Terrain_Data :: struct {
     registry:u64, // the revision of the registry of the assets when the stamps were last compared
     stats:Terrain_Data_Stats,
     // The jobs that read these sources, which go with them when the World is
-    // swapped; what changes or frees the sources waits for them first.
-    work:[]Work_Slot,
+    // swapped; what changes or frees the sources waits for them first. Behind
+    // pointers, as loads: what a job writes is not read with the storage
+    // until work_take takes it.
+    work:[]^Work_Slot,
     jobs:^jobs.Job_System, // that runs them; nil: each runs where it is made
     loads:[dynamic]^Source_Load, // the sources read in jobs, until they join entries
     unread:[dynamic]base.Asset_Id, // sources a load could not read: none waits for them until the registry changes
@@ -258,7 +260,7 @@ Terrain_Resident :: struct {
     room:Collider_Room,
     cut:bool,               // what the owners show is to be chosen again: the cuts or what is built changed
     splits:[dynamic]Split,  // the nodes an evaluation looks at: the order of the budget and of the colliders
-    places:[dynamic]Lod_Place, // of each owner: what resident_lod sees it from
+    places:[dynamic]Lod_Place, // of each owner: what resident_lod sees it from, empty outside it, whose sources may go after it
     lod_pass:u32,           // the evaluations of levels so far: the one that last looked at a node (Owner_Node.visit)
     stack:[dynamic]u32,     // the nodes an owner's walk is still to look at
     near:[dynamic]Lod_Near, // the pieces the walk for colliders is still to look at, nearest first

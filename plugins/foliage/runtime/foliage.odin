@@ -163,6 +163,9 @@ Foliage_Resident :: struct {
     detail:[2]f32, // what the cells were built with (FOLIAGE_DETAIL): the share of the points of the types without collision, and of the distances
     work:Build_Work,
     stats:Foliage_Resident_Stats,
+    sways:core.Entity_Map(Resident_Sway), // the mesh entities that sway (Foliage_Sway), by entity
+    sway_seen:Sway_Seen,
+    sway_epoch,sway_structure,sway_zones:u64, // the batches_epoch, assets structure and zones_revision they were drawn at
 }
 Foliage_Resident_Stats :: struct {builds,cells,batches,instances:u64}
 Resident_Owner :: struct {
@@ -293,11 +296,10 @@ Build_Work :: struct {
 }
 
 // A cell expanded in a job (cells_expand), with room taken beforehand for
-// the most it shows.
+// the most it shows. It holds only what it owns: the ground and the removed
+// instances it reads are those of the call.
 Cell_Expansion :: struct {
     index:u32, // of the cell in its source
-    ground:Ground_Cell,
-    removed:[]u64,
     placed:[dynamic]Placed,
     orphans:[dynamic]int,
     scratch:Expand_Scratch,
@@ -364,6 +366,7 @@ resident_sweep :: proc(resident:^Foliage_Resident,all:=false) {
     for i:=len(resident.winds)-1;i>=0;i-=1 {
         used:=false
         if !all {for &owner in resident.owners {used||=wind_zone_used(resident.winds[i].zone,&owner)}}
+        used||=!all && sway_zone_used(resident,resident.winds[i].zone)
         if !used {unordered_remove(&resident.winds,i)}
     }
 }
@@ -372,6 +375,7 @@ foliage_resident_free :: proc(resident:^Foliage_Resident) {
     for &owner in resident.owners {resident_owner_free(resident,&owner)}
     clear(&resident.owners)
     resident_sweep(resident,true)
+    sways_free(resident)
     if resident.app!=nil {
         for name in ([]string{IMPOSTOR_BUFFER,IMPOSTOR_VISIBLE,IMPOSTOR_DRAW}) {render.buffer_release(resident.app.renderer,resident.world,name)}
     }
@@ -1059,21 +1063,22 @@ cells_expand :: proc(work:^Build_Work,s:^Source,ground:^Ground_Owner,gone:^Remov
         cell:=&s.cells[order.index]
         instances,points:=cell_bound(s,cell,thin)
         e.index=order.index
-        e.ground,_=ground_cell(ground,cell.coord)
-        e.removed,_=removed_cell(gone,cell.coord)
         e.ready=expansion_room(e,instances,points,len(cell.overrides),allocator)
         count+=1
     }
-    Expanding :: struct {s:^Source,cells:[]Cell_Expansion,thin:f32,allocator:runtime.Allocator}
+    Expanding :: struct {s:^Source,cells:[]Cell_Expansion,ground:^Ground_Owner,gone:^Removed_Owner,thin:f32,allocator:runtime.Allocator}
     expand :: proc(x:^Expanding,first,last:int,worker:int) {
         // What an expansion grows comes from the allocator the threads share.
         context.allocator=x.allocator
         for &e in x.cells[first:last] {
             clear(&e.placed);clear(&e.orphans)
-            e.built=e.ready && cell_expand(x.s,&x.s.cells[e.index],e.ground,&e.placed,&e.orphans,&e.scratch,e.removed,x.thin)
+            cell:=&x.s.cells[e.index]
+            ground,_:=ground_cell(x.ground,cell.coord)
+            removed,_:=removed_cell(x.gone,cell.coord)
+            e.built=e.ready && cell_expand(x.s,cell,ground,&e.placed,&e.orphans,&e.scratch,removed,x.thin)
         }
     }
-    expanding:=Expanding{s,work.expansions[:count],thin,allocator}
+    expanding:=Expanding{s,work.expansions[:count],ground,gone,thin,allocator}
     if job_system!=nil && jobs.worker_count(job_system)>1 && count>1 {
         jobs.parallel_for(job_system,jobs.OWNER,count,1,expand,&expanding)
     } else {expand(&expanding,0,count,jobs.OWNER)}

@@ -440,9 +440,9 @@ works_take :: proc(c:^Chunk_Tables,data:^Terrain_Data,resident:^Terrain_Resident
     Held :: struct {slot:int,distance:f32}
     held:[WORK_SLOTS_MAX]Held
     count,spent:=0,0
-    for &slot,i in data.work {
-        if !work_due(data,&slot,phase) {continue}
-        if slot.kind!=.Build || slot.urgent || slot.waits {spent+=work_take(c,data,resident,&slot,physics,problems,terrains);continue}
+    for slot,i in data.work {
+        if !work_due(data,slot,phase) {continue}
+        if slot.kind!=.Build || slot.urgent || slot.waits {spent+=work_take(c,data,resident,slot,physics,problems,terrains);continue}
         // One whose piece is gone only lets go: first.
         source:=slot.epoch==data.epoch?resident_source_find(resident,slot.id,slot.owner):nil
         distance:=f32(-1)
@@ -453,7 +453,7 @@ works_take :: proc(c:^Chunk_Tables,data:^Terrain_Data,resident:^Terrain_Resident
     slice.sort_by(held[:count],proc(a,b:Held) -> bool {return a.distance<b.distance || a.distance==b.distance && a.slot<b.slot})
     took:=false
     for h in held[:count] {
-        slot:=&data.work[h.slot]
+        slot:=data.work[h.slot]
         if took && spent+len(slot.mesh.geometry.positions)>PUBLISH_VERTICES {break}
         spent+=work_take(c,data,resident,slot,physics,problems,terrains,show=false)
         took=true
@@ -1075,7 +1075,7 @@ terrain_update :: proc(
             data_pending_spread(data,resident)
             for &source in resident.sources {if entry:=data_find(data,source.id);entry!=nil {terrain_schedule(data,resident,entry,&source,frame.phase,stream,problems,terrains,&urgent_left)}}
             took:=false
-            for &slot in data.work {
+            for slot in data.work {
                 if slot.kind==.None {continue}
                 // A build that became urgent while it ran is taken now too.
                 if !slot.urgent {
@@ -1083,7 +1083,7 @@ terrain_update :: proc(
                     if source==nil || slot.index>=len(source.chunks) || !source.chunks[slot.index].urgent {continue}
                 }
                 if jobs.pending(&slot.counter) {jobs.wait(data.jobs,jobs.OWNER,&slot.counter)}
-                work_take(&c,data,resident,&slot,physics,problems,terrains)
+                work_take(&c,data,resident,slot,physics,problems,terrains)
                 took=true
             }
             resident_cut(resident,data,worlds)
@@ -1133,9 +1133,9 @@ terrain_update :: proc(
         // Every job waits: removing the entry moves the last one, whose results are taken first.
         work_wait(data,nil)
         last:=&data.entries[len(data.entries)-1].source
-        for &slot in data.work {
+        for slot in data.work {
             if slot.kind==.None {continue}
-            if slot.source==&entry.source {work_release(&slot)} else if slot.source==last {work_take(&c,data,resident,&slot,physics,problems,terrains)}
+            if slot.source==&entry.source {work_release(slot)} else if slot.source==last {work_take(&c,data,resident,slot,physics,problems,terrains)}
         }
         for j:=len(resident.sources)-1;j>=0;j-=1 {
             if resident.sources[j].id!=entry.id {continue}
