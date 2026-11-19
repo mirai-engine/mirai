@@ -190,8 +190,7 @@ tables_init :: proc(t: ^Tables) {
 }
 
 // Encodes 16 RGBA8 texels into a 16-byte block and returns whether alpha was encoded, which is not
-// an error code. Upstream leaves the block unwritten for an alpha block when mode_mask excludes
-// modes 5, 6 and 7.
+// an error code.
 compress_block :: proc(t: ^Tables, block: [^]u8, pixels: [^]u8, p: ^Params) -> bool {
 	colors := cast([^]Color_Rgba)pixels
 
@@ -212,21 +211,21 @@ compress_block :: proc(t: ^Tables, block: [^]u8, pixels: [^]u8, p: ^Params) -> b
 		params.weights = p.weights
 	}
 
+	alpha := p.force_alpha
+	for i in 0 ..< 16 {
+		if colors[i][3] < 255 {alpha = true}
+	}
+	mode1 := p.max_partitions > 0 && p.mode_mask & (1 << 1) != 0
+	modes := p^
+	// Mode 6 encodes any block: it stands in when the mask leaves the block no mode.
+	if modes.mode_mask & (1 << 5 | 1 << 6 | 1 << 7) == 0 && (alpha || !mode1) {modes.mode_mask |= 1 << 6}
 	// Without mode 6 or a mode 1 that scans partitions, an opaque block takes the alpha modes.
-	opaque_modes := p.mode_mask & (1 << 6) != 0 || (p.max_partitions > 0 && p.mode_mask & (1 << 1) != 0)
-	if p.force_alpha || !opaque_modes {
-		alpha_block(t, block, colors, p, &params)
+	if alpha || (modes.mode_mask & (1 << 6) == 0 && !mode1) {
+		alpha_block(t, block, colors, &modes, &params)
 		return true
 	}
 
-	for i in 0 ..< 16 {
-		if colors[i][3] < 255 {
-			alpha_block(t, block, colors, p, &params)
-			return true
-		}
-	}
-
-	handle_opaque_block(t, block, colors, p, &params)
+	handle_opaque_block(t, block, colors, &modes, &params)
 	return false
 }
 
