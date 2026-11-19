@@ -589,69 +589,6 @@ render_a_batch_casts_no_shadow_past_its_cull_distance :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
-// An instance that shows its surface at another detail (mesh_surface) draws
-// again only the pages whose texel is finer than the errors of both: none
-// under the finest texel, fewer than a mesh that changes for good between,
-// as many over the coarsest.
-@(test)
-render_a_surface_at_another_detail_draws_again_only_pages_finer_than_its_error :: proc(t: ^testing.T) {
-	f: Cube_Fixture
-	settings := test_settings()
-	settings.gi_enabled = false
-	settings.taa = false
-	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
-	defer fixture_destroy(&f)
-	r := f.renderer
-	vertices, indices := cube_mesh()
-	other, added := mesh_add(r, vertices[:], indices[:])
-	if !testing.expect(t, added) {return}
-	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {200, 0.2, 200}), tint = {0.8, 0.8, 0.8}}
-	// A bar from beside the eye into the distance, which pages of fine and coarse levels hold.
-	bar := Instance_Desc{object_id = 2, mesh = f.cube, transform = trs({1.5, 0.6, -18}, {0.3, 0.5, 40}), tint = {0.5, 0.5, 0.5}}
-	sun := Sun_Desc{direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true, indirect = 1, scattering = 1}
-	testing.expect(t, scene_given(r, {floor, bar}, nil, sun, {sky = {0, 0, 0}}), r.error)
-	camera := Camera{position = {0, 2, 4}, forward = {0, -0.3, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 200, exposure = UNIT_EXPOSURE}
-	// The pages drawn again for what stays when the bar takes the other mesh.
-	swap :: proc(t: ^testing.T, f: ^Cube_Fixture, bar: ^Instance_Desc, other: Mesh_Handle, camera: Camera) -> u32 {
-		r := f.renderer
-		for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
-		bar.mesh = other if bar.mesh == f.cube else f.cube
-		testing.expect(t, scene_update(r, 1, {bar^}), r.error)
-		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-		rhi.device_wait_idle(f.device)
-		counts: [abi.SHADOW_COUNT_STALE + 1]u32
-		testing.expect(t, rhi.buffer_read_slice(r.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_WORDS_COUNTS) * 4, counts[:]))
-		return counts[abi.SHADOW_COUNT_STALE]
-	}
-	whole := swap(t, &f, &bar, other, camera)
-	testing.expectf(t, whole > 0, "a mesh that changes for good draws again the pages under it: %d", whole)
-	Case :: struct {error: f32, least, most: u32}
-	// Half the texel of the finest level, one between those the points read, past the coarsest.
-	cases := [?]Case{{0.5 * SHADOW_SUN_FIRST / f32(SHADOW_MAP_SIDE), 0, 0}, {0.05, 1, whole - 1}, {1e4, whole, whole}}
-	for c in cases {
-		// Half each, in the space of the mesh the bar scales by 40 at most.
-		testing.expect(t, mesh_surface(r, f.cube, 77, c.error / 80) && mesh_surface(r, other, 77, c.error / 80))
-		drawn := swap(t, &f, &bar, other, camera)
-		testing.expectf(t, drawn >= c.least && drawn <= c.most, "an error of %f m drew %d pages again, against %d for a change for good", c.error, drawn, whole)
-	}
-	// The mesh it showed removed before it takes the next, as a terrain lets
-	// go of a level: still the same surface.
-	if bar.mesh == f.cube {swap(t, &f, &bar, other, camera)}
-	next, made := mesh_add(r, vertices[:], indices[:])
-	if !testing.expect(t, made) {return}
-	testing.expect(t, mesh_surface(r, next, 77, cases[0].error / 80) && mesh_surface(r, bar.mesh, 77, cases[0].error / 80))
-	for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
-	testing.expect(t, mesh_remove(r, bar.mesh))
-	bar.mesh = next
-	testing.expect(t, scene_update(r, 1, {bar}), r.error)
-	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-	rhi.device_wait_idle(f.device)
-	counts: [abi.SHADOW_COUNT_STALE + 1]u32
-	testing.expect(t, rhi.buffer_read_slice(r.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_WORDS_COUNTS) * 4, counts[:]))
-	testing.expectf(t, counts[abi.SHADOW_COUNT_STALE] == 0, "a mesh removed for the next level drew %d pages again", counts[abi.SHADOW_COUNT_STALE])
-	expect_clean(t, f.device)
-}
-
 // A cascade of the sun the eye moves by whole texels keeps what it held where
 // it still holds it and draws what came in: the image is the one of maps
 // drawn whole.
@@ -866,6 +803,86 @@ render_a_full_pool_keeps_the_pages_of_a_jitter_cycle :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// The pool of a view follows the pixels it renders: a view drawn into a small
+// texture takes a smaller one than the window. The window grown keeps every
+// page of the pool where it was with what its cache held; shrunk, it makes its
+// pool anew and shows what it showed at that size before.
+@(test)
+render_the_pool_of_a_view_follows_its_size :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 640, 360, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	instances: [10]Instance_Desc
+	instances[0] = {object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {120, 0.2, 120}), tint = {0.8, 0.8, 0.8}}
+	for k in 1 ..< len(instances) {
+		instances[k] = {object_id = u64(k + 1), mesh = f.cube, transform = trs({f32(k % 3) * 2.3 - 2.3, 0.8, f32(k / 3) * 2.1 - 3}, {0.3, 1.6, 0.3}), tint = {0.5, 0.5, 0.5}}
+	}
+	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+	testing.expect(t, scene_given(r, instances[:], nil, sun, {sky = {0, 0, 0}}))
+	camera := Camera{position = {0, 5, 7}, forward = {0, -5, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	image, made := view_texture_add(r, 64, 64, "small view")
+	testing.expect(t, made, r.error)
+	views := []Frame_View{{camera = camera, texture = image, rect = {0, 0, 64, 64}}, {camera = camera, rect = {0, 0, 640, 360}}}
+	for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = camera, views = views}), r.error)}
+	b := &r.main.targets.shadow_raster
+	small := texture_view_find(r, image)
+	testing.expect(t, small != nil && small.targets.shadow_raster.rows != 0, "the small view draws maps")
+	if small == nil {return}
+	pages :: proc(t: ^Targets) -> u32 {return shadow_pool_pages(t.width, t.height)}
+	for view in ([?]^Targets{&r.main.targets, &small.targets}) {
+		rows := view.shadow_raster.rows
+		testing.expectf(t, rows * abi.SHADOW_POOL_ROW == pages(view) && rhi.texture_desc(r.device, view.shadow_raster.cache).height == rows * SHADOW_PAGE, "a pool of %d rows for %dx%d pixels", rows, view.width, view.height)
+	}
+	testing.expectf(t, small.targets.shadow_raster.rows < b.rows, "the small view takes %d rows, the window %d", small.targets.shadow_raster.rows, b.rows)
+	read :: proc(t: ^testing.T, f: ^Cube_Fixture) -> []u8 {
+		rhi.device_wait_idle(f.device)
+		pixels, _, _, ok := golden_capture(f.renderer)
+		testing.expect(t, ok, f.renderer.error)
+		return pixels
+	}
+	before := read(t, &f)
+	defer delete(before)
+	rows := b.rows
+	held := make([]u32, rows * abi.SHADOW_POOL_ROW)
+	cache := make([]f32, SHADOW_POOL * rows * SHADOW_PAGE)
+	defer {delete(held); delete(cache)}
+	testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_OWNER) * 4, held) && rhi.texture_read(r.device, b.cache, mem.slice_to_bytes(cache)))
+	renderer_resize(r, 960, 540)
+	views[1].rect = {0, 0, 960, 540}
+	testing.expect(t, renderer_frame(r, {camera = camera, views = views}), r.error)
+	rhi.device_wait_idle(f.device)
+	testing.expectf(t, b.rows > rows && b.rows * abi.SHADOW_POOL_ROW == pages(&r.main.targets), "the window grown takes %d rows, %d before", b.rows, rows)
+	kept := make([]u32, len(held))
+	grown := make([]f32, SHADOW_POOL * b.rows * SHADOW_PAGE)
+	defer {delete(kept); delete(grown)}
+	testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_OWNER) * 4, kept) && rhi.texture_read(r.device, b.cache, mem.slice_to_bytes(grown)))
+	moved, lost := 0, 0
+	for owner, pool in held {
+		if owner == 0 {continue}
+		if kept[pool] != owner {moved += 1; continue}
+		corner := [2]int{pool % int(abi.SHADOW_POOL_ROW), pool / int(abi.SHADOW_POOL_ROW)} * int(SHADOW_PAGE)
+		for y in corner.y ..< corner.y + int(SHADOW_PAGE) {
+			at := y * int(SHADOW_POOL) + corner.x
+			if !slice.equal(cache[at:][:SHADOW_PAGE], grown[at:][:SHADOW_PAGE]) {lost += 1; break}
+		}
+	}
+	testing.expectf(t, moved == 0 && lost == 0, "as the pool grows %d pages left their places and %d lost what the cache held", moved, lost)
+	renderer_resize(r, 640, 360)
+	views[1].rect = {0, 0, 640, 360}
+	for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = camera, views = views}), r.error)}
+	testing.expectf(t, b.rows == rows, "the window shrunk back takes %d rows, %d before", b.rows, rows)
+	after := read(t, &f)
+	defer delete(after)
+	differ := 0
+	for v, k in before {if k < len(after) && abs(int(v) - int(after[k])) > 2 {differ += 1}}
+	testing.expectf(t, len(before) == len(after) && differ * 1000 <= len(before), "%d of %d values differ from those at that size before", differ, len(before))
+	expect_clean(t, f.device)
+}
+
 // The GPU time the rounds of the maps took in the frame frame_timings last
 // gave back, milliseconds, as the bound reads it (shadow_bound_update).
 @(private = "file")
@@ -902,7 +919,7 @@ shadow_pages_against :: proc(r: ^Renderer, casters: []Page_Casters, smallest: f3
 	b := &r.main.targets.shadow_raster
 	rhi.device_wait_idle(r.device)
 	table := make([]u32, abi.SHADOW_SLOT_ENTRIES * SHADOW_SLOTS)
-	atlas := make([]f32, SHADOW_POOL * SHADOW_POOL)
+	atlas := make([]f32, int(SHADOW_POOL * b.rows * SHADOW_PAGE))
 	// Of each texel of the atlas, the nearest along the light a triangle that
 	// covers its center lies, and a triangle that may cover it.
 	sure := make([]f32, len(atlas))
@@ -1700,8 +1717,8 @@ sway_atlas_against_cache :: proc(t: ^testing.T, r: ^Renderer, boxes: [][2]Vec3) 
 	b := &r.main.targets.shadow_raster
 	rhi.device_wait_idle(r.device)
 	table := make([]u32, abi.SHADOW_SLOT_ENTRIES * SHADOW_SLOTS)
-	atlas := make([]f32, SHADOW_POOL * SHADOW_POOL)
-	cache := make([]f32, SHADOW_POOL * SHADOW_POOL)
+	atlas := make([]f32, int(SHADOW_POOL * b.rows * SHADOW_PAGE))
+	cache := make([]f32, int(SHADOW_POOL * b.rows * SHADOW_PAGE))
 	defer {delete(table);delete(atlas);delete(cache)}
 	if !testing.expect(t, rhi.texture_read(r.device, b.table, mem.slice_to_bytes(table)) && rhi.texture_read(r.device, b.atlas, mem.slice_to_bytes(atlas)) && rhi.texture_read(r.device, b.cache, mem.slice_to_bytes(cache))) {return -1, -1, -1}
 	grow := f32(u32(1) << shadow_coarser(b)) + 1
@@ -1979,8 +1996,7 @@ render_a_swaying_forest_composes_again_only_what_is_near :: proc(t: ^testing.T) 
 		}
 		// The texels of the layer what sways covers in the last frame.
 		rhi.device_wait_idle(f.device)
-		side := SHADOW_POOL >> coarser
-		layer := make([]f32, side * side)
+		layer := make([]f32, int((SHADOW_POOL >> coarser) * ((b.rows * SHADOW_PAGE) >> coarser)))
 		testing.expect(t, rhi.texture_read(f.device, b.layer, mem.slice_to_bytes(layer)))
 		covered := 0
 		for v in layer {if v > 0 {covered += 1}}

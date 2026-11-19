@@ -270,7 +270,12 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   it twice as wide, and the grid of the pages and texels of every level lies on the world, not on
   the origin of the frame. `shadow_pages.comp` gives each marked page a page of the pool of the view
   through the table of the pages (`Shadow_Raster.table`, at `SLOT_SHADOW_TABLE`), in the same frame,
-  so a page first read is drawn before it is read. Of every page read, the page of each of the two
+  so a page first read is drawn before it is read. The pool of each view holds the band of pages
+  each level of the sun reads of ground out to the horizon, whatever its size, and pages for the
+  pixels it renders (`shadow_pool_pages`), in whole rows of the atlas and at most
+  `SHADOW_POOL_PAGES`, so a view drawn into a small texture takes a smaller one; a view made again
+  at another size keeps its maps: a pool grown keeps each page where it was with what it held, one
+  shrunk is made anew. Of every page read, the page of each of the two
   coarser levels or mips that holds it and the eight around that one are asked for too
   (`Ancestors`). Pages are given in one order every frame: the safety net first (the 2x2 pages of
   each level of the sun nearest the eye, the coarsest page of each face), then from the coarsest
@@ -359,9 +364,8 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   changed cover (`SHADOW_WORDS_PART`): what else lies in a wide page is not drawn again. A
   surface shown at another detail changes only the pages whose texel there is finer than its
   error: a page of a streamed mesh, by the error of what its clusters replace over the error a
-  texel takes in the cut (`lod_error_pixels`), in the box of its clusters; an instance that takes
-  another mesh of its surface (`mesh_surface`: the pieces of a terrain at their levels), by the
-  errors of both. Such a page, and one where instances of a batch came or went past their cull
+  texel takes in the cut (`lod_error_pixels`), in the box of its clusters. Such a page, and one
+  where instances of a batch came or went past their cull
   distance, keeps what the atlas showed until the cache drew it again and the atlas composed it
   (`SHADOW_PAGE_SOFT`): a page that waits for that shows the frame before, not a coarser page. The
   atlas (`Shadow_Raster.atlas`), what the passes read, composes the cache and what moves again

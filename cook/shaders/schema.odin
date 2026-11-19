@@ -216,6 +216,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"SHADOW_MAP_SIDE",abi.SHADOW_MAP_SIDE)
     u(&b,"SHADOW_MIPS",abi.SHADOW_MIPS)
     u(&b,"SHADOW_POOL",abi.SHADOW_POOL)
+    u(&b,"SHADOW_POOL_ROW",abi.SHADOW_POOL_ROW)
     u(&b,"SHADOW_SUN_MAPS",abi.SHADOW_SUN_MAPS)
     u(&b,"SHADOW_LIGHT_SLOTS",abi.SHADOW_LIGHT_SLOTS)
     u(&b,"SHADOW_SLOTS",abi.SHADOW_SLOTS)

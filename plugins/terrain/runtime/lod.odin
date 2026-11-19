@@ -1,24 +1,22 @@
 package terrain
 
-import "core:math"
-
-// Levels of detail of the pieces of a Heightfield: level k shows every
-// 2^k-th sample. Each side of a piece (a chunk, or a node of the quadtree) is
-// built at the level of its border (Border_Levels), the finer of the two
-// chunks it joins, so every piece that shares it builds the same vertices
-// along it and no crack opens between them; a strip of triangles joins that
-// side to the inner grid of the piece. A Volume has none: its nodes show in
-// the levels of their clusters.
+// Levels of the pieces of a Heightfield: level k shows every 2^k-th sample.
+// A chunk shows every sample, and a node of the quadtree its region from the
+// coarse grid at the level of its depth (node_lod_min); both are published
+// with the cluster levels the renderer makes of any mesh, as the nodes of a
+// Volume are, so the view and each map of the shadows choose their detail and
+// the mesh of a piece does not change while they move. Each side of a piece
+// is built at the level of its border (Border_Levels), so every piece that
+// shares it builds the same vertices along it, which its cluster levels keep
+// (Chunk_Mesh.locked), and no crack opens between them at any mix of levels;
+// a strip of triangles joins that side to the inner grid of the piece.
 LOD_LEVELS_MAX :: 7
-// A chunk changes level only once its distance passes the boundary by this factor.
+// A chunk takes or lets go of a collider only once its distance passes the boundary by this factor.
 LOD_HYSTERESIS :: f32(1.1)
-// Without Terrain_Settings.lod_distance, level 0 reaches this many chunk widths.
-LOD_CHUNKS :: 4
 
-// The level of a Heightfield chunk, of its sides (-X,+X,-Z,+Z) and of its
-// corners (-X-Z, +X-Z, -X+Z, +X+Z), the points of the chunk grid where they
-// meet. Of a node of the quadtree, the level of its inner grid and the finest
-// of each side.
+// The level of the inner grid of a piece of a Heightfield, of its sides
+// (-X,+X,-Z,+Z) and of its corners (-X-Z, +X-Z, -X+Z, +X+Z), the points of the
+// chunk grid where they meet; of a node, the finest of each side.
 Chunk_Lod :: struct {level:u8,sides:[4]u8,corners:[4]u8}
 
 // The coarsest level of a chunk: that which still leaves a sample inside it
@@ -27,40 +25,15 @@ chunk_lod_max :: proc "contextless" (s:^Source,coord:[3]i32) -> u8 {
     level:=0
     low,high,valid:=chunk_region(s,coord)
     if !valid {return 0}
-    // A Volume has no levels of its own: its nodes show what is far.
     if s.kind==.Volume {return 0}
     size:=min(high.x-low.x,high.z-low.z)
     for level<LOD_LEVELS_MAX && 2<<uint(level+1)<=size {level+=1}
     return u8(level)
 }
 
-// The level for a distance: 0 below base, one more each time it doubles.
-// The current level stays while the distance is within LOD_HYSTERESIS of it.
-lod_level :: proc "contextless" (distance,base:f32,maximum,current:u8) -> u8 {
-    at :: proc "contextless" (distance,base:f32) -> int {
-        if !(distance>=base) {return 0}
-        return int(math.log2(distance/base))+1
-    }
-    near,far:=at(distance/LOD_HYSTERESIS,base),at(distance*LOD_HYSTERESIS,base)
-    level:=int(current)
-    if level<near || level>far {level=at(distance,base)}
-    return u8(clamp(level,0,int(maximum)))
-}
-
-// The sides and corners of a Heightfield chunk take the finer level of the
-// chunks that share them; levels holds the level of every chunk of the
-// source. A Volume chunk has none.
-chunk_lod_sides :: proc "contextless" (s:^Source,levels:[]u8,coord:[3]i32) -> (lod:Chunk_Lod) {
-    if s.kind!=.Heightfield {return}
-    n:=chunk_counts(s)
-    b:=Border_Levels{counts={n.x,n.z},levels=levels}
-    return chunk_lod_border(&b,levels[chunk_index(s,coord)],{int(coord.x),int(coord.z)})
-}
-
-// The Chunk_Lod of the Heightfield chunk at coord of the chunk grid, at its
-// level, with its border.
-chunk_lod_border :: proc "contextless" (b:^Border_Levels,level:u8,coord:[2]int) -> (lod:Chunk_Lod) {
-    lod.level=level
+// The Chunk_Lod of the Heightfield chunk at coord of the chunk grid: every
+// sample, with its border.
+chunk_lod_border :: proc "contextless" (b:^Border_Levels,coord:[2]int) -> (lod:Chunk_Lod) {
     lod.sides={border_vertical(b,coord.x,coord.y),border_vertical(b,coord.x+1,coord.y),border_horizontal(b,coord.y,coord.x),border_horizontal(b,coord.y+1,coord.x)}
     lod.corners={border_corner(b,coord.x,coord.y),border_corner(b,coord.x+1,coord.y),border_corner(b,coord.x,coord.y+1),border_corner(b,coord.x+1,coord.y+1)}
     return
@@ -158,7 +131,7 @@ piece_vertex :: proc(s:^Source,mesh:^Chunk_Mesh,p:Piece,lines:^Piece_Lines,at:[2
     uv:=[2]f32{f32(at.x),f32(at.y)}/f32(max(p.spacing,1)<<p.detail)/[2]f32{f32(max(mesh.maps.size.x,1)),f32(max(mesh.maps.size.y,1))}
     m:=&mesh.geometry
     index=u32(len(m.positions))
-    if append(&m.positions,position)!=1 || append(&m.normals,normal)!=1 || append(&m.uvs,uv)!=1 || append(&mesh.uv1s,[2]f32{})!=1 {return}
+    if append(&m.positions,position)!=1 || append(&m.normals,normal)!=1 || append(&m.uvs,uv)!=1 || append(&mesh.uv1s,[2]f32{})!=1 || append(&mesh.locked,side>=0)!=1 {return}
     mesh.remap[slot]=i32(index)
     return index,true
 }

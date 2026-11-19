@@ -671,8 +671,8 @@ cmd_copy_texture_to_buffer :: proc(c: ^Command_List, src: Texture, dst: Buffer, 
 	)
 }
 
-// Copies `mips` mips of a texture from src_mip into those of another from
-// dst_mip, every layer, with its bytes as they are: nothing converts between
+// Copies `mips` mips of a texture from src_mip into the corner of those of
+// another from dst_mip, every layer, with its bytes as they are: nothing converts between
 // the sRGB encodings of the two. What it copies between: texture_copy_problem;
 // neither is the image of the swapchain.
 cmd_copy_texture :: proc(c: ^Command_List, src: Texture, dst: Texture, src_mip: u32 = 0, dst_mip: u32 = 0, mips: u32 = 1) {

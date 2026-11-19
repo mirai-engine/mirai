@@ -220,12 +220,15 @@ SHADOW_MIPS                :: 7
 SHADOW_SUN_MAPS            :: 18
 SUN_MAP_ROWS               :: SHADOW_SUN_MAPS * SHADOW_MAP_ROWS
 // The maps of a view lie in slots, each of the pages of its mips, of which the
-// pages points read lie in a pool, the atlas, whose side is SHADOW_POOL
-// texels: the levels of the sun (the finest mip alone), then
+// pages points read lie in a pool, the atlas, SHADOW_POOL texels wide and as
+// many rows of pages tall as the view needs (render.shadow_pool_pages), up to
+// SHADOW_POOL_PAGES, which the buffer of the pages holds and the steps sort in
+// one group: the levels of the sun (the finest mip alone), then
 // SHADOW_LIGHT_SLOTS for each light rasterized (the faces of its cube, then
 // the one along a spot).
 SHADOW_POOL                :: u32(4096)
-SHADOW_POOL_PAGES          :: (SHADOW_POOL / SHADOW_PAGE) * (SHADOW_POOL / SHADOW_PAGE)
+SHADOW_POOL_ROW            :: SHADOW_POOL / SHADOW_PAGE
+SHADOW_POOL_PAGES          :: u32(2048)
 SHADOW_LIGHT_SLOTS         :: 7
 SHADOW_RASTER_LIGHTS       :: 32
 SHADOW_SLOTS               :: SHADOW_SUN_MAPS + SHADOW_RASTER_LIGHTS * SHADOW_LIGHT_SLOTS
@@ -364,7 +367,10 @@ SHADOW_RANK_FIRST          :: SHADOW_SUN_MAPS * SHADOW_SUN_WORDS + SHADOW_LOCAL_
 SHADOW_RANK_WORDS          :: 2 * SHADOW_RANK_FIRST - SHADOW_LOCAL_SLOTS + SHADOW_LOCAL_SLOTS * SHADOW_MASK_WORDS
 SHADOW_RANK_GROUP          :: 256
 SHADOW_RANK_GROUPS         :: (SHADOW_RANK_WORDS + SHADOW_RANK_GROUP - 1) / SHADOW_RANK_GROUP
-#assert(SHADOW_RANK_GROUPS <= SHADOW_RANK_GROUP && SHADOW_POOL_PAGES <= 1024 && SHADOW_SLOTS < 256 && SHADOW_RANK_WORDS < 0xFFFF)
+#assert(SHADOW_RANK_GROUPS <= SHADOW_RANK_GROUP && SHADOW_SLOTS < 256 && SHADOW_RANK_WORDS < 0xFFFF)
+// The keys the steps sort the pool by hold a page of it in 11 bits, and a
+// group sorts them all in its memory, 32 KB at most on every GPU the engine runs on.
+#assert(SHADOW_POOL_PAGES <= 2048 && SHADOW_POOL_PAGES & (SHADOW_POOL_PAGES - 1) == 0 && SHADOW_POOL_PAGES % SHADOW_POOL_ROW == 0)
 // The counts: pages the cache draws, the atlas composes, asked for, of the
 // pool that can be given (free, then those no point read, the oldest read
 // first), of them free, asked for and left out; the threads the culls by
