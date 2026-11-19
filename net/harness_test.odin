@@ -61,6 +61,16 @@ test_host :: proc(w:^Test_World,desc:Host_Desc) -> ^Host {
     w.count+=1
     return host
 }
+// The key of a share, made from a number, and what the code of its invitation carries.
+@(private)
+test_key :: proc(n:u64) -> Invite_Key {
+    private:Key
+    state:=n
+    for &b in private {b=u8(base.splitmix_next(&state))}
+    return invite_key_from(&private,n)
+}
+@(private)
+test_invited :: proc(key:Invite_Key) -> Invite_Key {return {public=key.public,secret=key.secret}}
 @(private)
 test_step :: proc(w:^Test_World,steps:=1) {
     for _ in 0..<steps {

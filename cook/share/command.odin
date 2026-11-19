@@ -24,7 +24,7 @@ import wire "mirai:net"
 // holds the invitation. join connects with an invitation, writes the project
 // into a folder and refreshes its packages from the peers; while it runs it
 // serves what it has to others, with an invitation of its own. --address
-// joins the host at that address, with the token of the invitation, in place
+// joins the host at that address, with the key of the invitation, in place
 // of the addresses it carries (the same machine at 127.0.0.1, or an address
 // known to reach it). The store is the machine's, or the one at --store.
 // Exit codes: 0 done, 1 failed, 2 misuse, 3 incomplete (a join wrote all but
@@ -52,12 +52,12 @@ Udp_Host :: struct {
     host:wire.Host,
     mapping:wire.Port_Mapping,
     mapping_on,open:bool,
-    token:u64,
+    key:wire.Invite_Key, // of the invitation: of this share for a server, what the code carries for a client
     port:int,
 }
 
 @(private)
-host_open :: proc(h:^Udp_Host,mode:wire.Mode,port:int,token:u64) -> bool {
+host_open :: proc(h:^Udp_Host,mode:wire.Mode,port:int,key:wire.Invite_Key) -> bool {
     // The addresses of an invitation are IPv4.
     if mode==.Client {
         if !wire.udp_open(&h.udp,wire.address_ip4(0,0,0,0,0)) {return false}
@@ -65,13 +65,13 @@ host_open :: proc(h:^Udp_Host,mode:wire.Mode,port:int,token:u64) -> bool {
         return false
     }
     chans:=channels()
-    desc:=wire.Host_Desc{mode=mode,transport=wire.udp_transport(&h.udp),protocol_id=PROTOCOL_ID,version=VERSION,invite=token,max_connections=PEERS-1,channels=chans[:]}
+    desc:=wire.Host_Desc{mode=mode,transport=wire.udp_transport(&h.udp),protocol_id=PROTOCOL_ID,version=VERSION,invite=key,max_connections=PEERS-1,channels=chans[:]}
     if wire.host_init(&h.host,desc)!=.None || !wire.worker_start(&h.host) {
         wire.host_destroy(&h.host)
         wire.udp_close(&h.udp)
         return false
     }
-    h.open,h.token,h.port=true,token,int(h.udp.address.port)
+    h.open,h.key,h.port=true,key,int(h.udp.address.port)
     if mode==.Server {h.mapping_on=wire.mapping_start(&h.mapping,u16(h.port))}
     return true
 }
@@ -98,7 +98,7 @@ invitation_of :: proc(h:^Udp_Host,wait:bool) -> (code:string,mapped:bool,ready:b
         for wire.mapping_poll(&h.mapping).phase==.Pending && time.duration_seconds(time.tick_since(started))<MAPPING_SECONDS {time.sleep(20*time.Millisecond)}
     }
     if h.mapping_on && wire.mapping_poll(&h.mapping).phase==.Pending {return "",false,false}
-    invitation:=wire.invite_make(h.token,h.port,h.mapping_on?&h.mapping:nil)
+    invitation:=wire.invite_make(h.key,h.port,h.mapping_on?&h.mapping:nil)
     return wire.invite_encode(invitation,context.allocator),invitation.public.kind!=.None,true
 }
 
@@ -202,10 +202,10 @@ share_command :: proc(args:[]string,output,errors:io.Writer) -> int {
         return 1
     }
     defer node_destroy(n)
-    token,made:=wire.invite_token()
+    key,made:=wire.invite_key()
     if !made {fmt.wprintln(errors,"mirai share: this system gives no secure random bytes to seal the connections with");return 1}
     h:=new(Udp_Host,context.temp_allocator)
-    if !host_open(h,.Server,port>=0?port:PORT,token) {
+    if !host_open(h,.Server,port>=0?port:PORT,key) {
         fmt.wprintfln(errors,"mirai share: no UDP port could be opened%s: give another with --port",port>0?fmt.tprintf(" at %d",port):"")
         return 1
     }
@@ -215,7 +215,7 @@ share_command :: proc(args:[]string,output,errors:io.Writer) -> int {
     library_served(&s,root,&served)
     node_serve(n,..served[:])
     digits:[64]u8
-    offer:=offer_name(token,&digits)
+    offer:=offer_name(key.secret,&digits)
     offer_set(&s,root,offer,address)
 
     code,mapped,_:=invitation_of(h,true)
@@ -290,9 +290,9 @@ join_command :: proc(args:[]string,output,errors:io.Writer,library:sources.Libra
         if ok {fmt.wprintln(errors,JOIN_USAGE)}
         return 2
     }
-    invitation,valid:=wire.invite_decode(positional[0])
-    if !valid {
-        fmt.wprintfln(errors,"mirai join: '%s' is not an invitation of Mirai: copy again the whole code the share printed (35 characters, by groups of four)",positional[0])
+    invitation,refused:=wire.invite_decode(positional[0])
+    if refused!=.None {
+        fmt.wprintfln(errors,"mirai join: '%s' is not an invitation of this Mirai: %s",positional[0],wire.invite_error_text(refused))
         return 1
     }
     folder:=len(positional)>1?positional[1]:""
@@ -319,9 +319,9 @@ join_command :: proc(args:[]string,output,errors:io.Writer,library:sources.Libra
         return 1
     }
     client,server:=new(Udp_Host,context.temp_allocator),new(Udp_Host,context.temp_allocator)
-    own,made:=wire.invite_token()
+    own,made:=wire.invite_key()
     if !made {fmt.wprintln(errors,"mirai join: this system gives no secure random bytes to seal the connections with");return 1}
-    if !host_open(client,.Client,0,invitation.token) {
+    if !host_open(client,.Client,0,invitation.key) {
         fmt.wprintln(errors,"mirai join: no UDP port could be opened: close what holds them, or let this program use the network")
         node_destroy(n)
         return 1
@@ -352,7 +352,7 @@ join_command :: proc(args:[]string,output,errors:io.Writer,library:sources.Libra
     if t==nil {fmt.wprintln(errors,"mirai join: no thread for the network");return 1}
     digits,own_digits:[64]u8
     desc:=Join_Desc{
-        node=n,offer=offer_name(invitation.token,&digits),own_offer=server.open?offer_name(own,&own_digits):"",
+        node=n,offer=offer_name(invitation.key.secret,&digits),own_offer=server.open?offer_name(own.secret,&own_digits):"",
         folder=folder,library=library,worker={system=&js,worker=jobs.OWNER},output=output,
     }
     report,error:=join(desc,context.temp_allocator)

@@ -10,7 +10,7 @@ import "mirai:std/base"
 CHANNELS :: []Channel_Desc{{kind=.Reliable,queue_bytes=64<<10},{kind=.Unreliable},{kind=.Sequenced}}
 
 @(test)
-client_connects_through_the_challenge_and_both_ends_report_it :: proc(t:^testing.T) {
+client_connects_and_both_ends_report_it :: proc(t:^testing.T) {
     w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
     server:=test_host(&w,{mode=.Server,channels=CHANNELS})
     client:=test_host(&w,{mode=.Client,channels=CHANNELS})
@@ -35,8 +35,9 @@ client_connects_through_the_challenge_and_both_ends_report_it :: proc(t:^testing
 @(test)
 a_client_goes_on_with_the_candidate_that_accepts :: proc(t:^testing.T) {
     Case :: struct {lan,public:Address,decoy:Host_Desc,want:Disconnect_Reason}
-    other_version:=Host_Desc{mode=.Server,channels=CHANNELS,invite=0x5a5a,version=3}
-    other_invite:=Host_Desc{mode=.Server,channels=CHANNELS,invite=0x6b6b,version=2}
+    key:=test_key(0x5a5a)
+    other_version:=Host_Desc{mode=.Server,channels=CHANNELS,invite=key,version=3}
+    other_invite:=Host_Desc{mode=.Server,channels=CHANNELS,invite=test_key(0x6b6b),version=2}
     for c in ([]Case{
         {address_memory(0),address_memory(5),other_version,.None},
         {address_memory(5),address_memory(0),other_version,.None},
@@ -46,9 +47,9 @@ a_client_goes_on_with_the_candidate_that_accepts :: proc(t:^testing.T) {
     }) {
         w:Test_World;test_world_init(&w,3)
         defer test_world_destroy(&w)
-        server:=test_host(&w,{mode=.Server,channels=CHANNELS,invite=0x5a5a,version=2})
+        server:=test_host(&w,{mode=.Server,channels=CHANNELS,invite=key,version=2})
         test_host(&w,c.decoy)
-        client:=test_host(&w,{mode=.Client,channels=CHANNELS,invite=0x5a5a,version=2,connect_timeout=1})
+        client:=test_host(&w,{mode=.Client,channels=CHANNELS,invite=test_invited(key),version=2,connect_timeout=1})
         testing.expect_value(t,host_connect(client,c.lan,c.public),Error.None)
         on_server,on_client:Connection
         reason:Disconnect_Reason
@@ -84,6 +85,9 @@ a_client_goes_on_with_the_candidate_that_accepts :: proc(t:^testing.T) {
     testing.expect_value(t,host_connect(client,address_memory(1),address_memory(2),address_memory(3)),Error.Invalid)
 }
 
+// Without an invitation a server answers a Hello with its key and a cookie of
+// the sender's address, smaller than the Hello, and keeps nothing; an Initiate
+// whose cookie was not made for its address gets no answer and makes nothing.
 @(test)
 handshake_gives_a_spoofed_address_nothing_to_amplify_or_allocate :: proc(t:^testing.T) {
     w:Test_World;test_world_init(&w,3);defer test_world_destroy(&w)
@@ -92,28 +96,31 @@ handshake_gives_a_spoofed_address_nothing_to_amplify_or_allocate :: proc(t:^test
     buffer:[PACKET_BYTES]u8
     writer:serial.Bit_Writer
 
-    buffer[0]=u8(Packet_Type.Request)
+    buffer[0]=u8(Packet_Type.Hello)
     serial.bit_writer_init(&writer,buffer[1:])
     serial.bit_write(&writer,0x1234,64)
-    request:=test_handshake(buffer[:],&writer,server.back.key,HANDSHAKE_BYTES)
-    test_send_one(forger,address_memory(0),request)
-    test_send_one(forger,address_memory(0),request[:HANDSHAKE_BYTES-1])
+    hello:=test_handshake(buffer[:],&writer,server.back.key,HANDSHAKE_BYTES)
+    test_send_one(forger,address_memory(0),hello)
+    test_send_one(forger,address_memory(0),hello[:HANDSHAKE_BYTES-1])
     test_step(&w,2)
     answer:[PACKET_BYTES]u8
     size,_,ok:=test_receive_one(forger,answer[:])
-    testing.expect(t,ok && size*3<HANDSHAKE_BYTES)
+    testing.expect(t,ok && size<HANDSHAKE_BYTES)
     _,_,again:=test_receive_one(forger,answer[:])
     testing.expect(t,!again)
-    testing.expect_value(t,Packet_Type(answer[0]),Packet_Type.Challenge)
+    testing.expect_value(t,Packet_Type(answer[0]),Packet_Type.Key)
+    for peer in server.back.peers {testing.expect_value(t,peer.state,Peer_State.Free)}
 
-    // A response whose cookie was not issued to this address gets no answer.
-    buffer[0]=u8(Packet_Type.Response)
-    serial.bit_writer_init(&writer,buffer[1:])
-    serial.bit_write(&writer,0x1234,64)
-    serial.bit_write(&writer,u64(w.now*1000),64)
-    serial.bit_write(&writer,0xdeadbeef,64)
-    serial.bit_write(&writer,host_protocol_hash(server),64)
-    test_send_one(forger,address_memory(0),test_handshake(buffer[:],&writer,server.back.key,HANDSHAKE_BYTES))
+    // An Initiate whose cookie was not issued to this address gets no answer.
+    buffer={}
+    buffer[0]=u8(Packet_Type.Initiate)
+    stamp,cookie:=u64(w.now*1000),u64(0xdeadbeef)
+    mem.copy(&buffer[1],&answer[1],8)
+    mem.copy(&buffer[21],&stamp,8)
+    mem.copy(&buffer[29],&cookie,8)
+    initiate:=buffer[:HANDSHAKE_BYTES]
+    checksum_write(initiate,server.back.key)
+    test_send_one(forger,address_memory(0),initiate)
     test_step(&w,2)
     _,_,answered:=test_receive_one(forger,answer[:])
     testing.expect(t,!answered)
@@ -331,8 +338,10 @@ unreliable_messages_arrive_at_most_once_and_sequenced_ones_keep_only_the_latest 
     testing.expect(t,received>250 && received<380)
 
     sim_endpoint_conditions(&w.sim,1,{})
-    test_step(&w,10)
-    host_poll(server)
+    for _ in 0..<10 {
+        test_step(&w)
+        host_poll(server)
+    }
     for i in 0..<5 {
         value:=u32(100+i)
         message_send(client,on_client,2,mem.ptr_to_bytes(&value))
