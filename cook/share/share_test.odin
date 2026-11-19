@@ -1228,6 +1228,9 @@ a_peers_library_is_listed_and_a_package_of_it_taken_and_pinned :: proc(t:^testin
     if !testing.expectf(t,r.error=="" && len(r.list)==1,"%s: %d",r.error,len(r.list)) {return}
     listed:=r.list[0]
     testing.expectf(t,listed.manifest==manifest && listed.name=="chime" && listed.built && !listed.here && listed.bytes>0 && len(listed.kinds)==1,"the package is listed with what it holds: %v",listed)
+    testing.expect(t,listed.root!={} && len(listed.objects)==1 && listed.objects[0]==listed.root,"with the objects of its build")
+    received:=node_totals(&w.peers[1].n).received
+    testing.expectf(t,received<u64(listed.bytes),"listing fetches none of what the objects hold: %d bytes for %d",received,listed.bytes)
 
     r.manifest=manifest
     test_run(t,&w,1,proc(data:rawptr) {
@@ -1279,4 +1282,40 @@ a_peer_that_leaves_mid_take_leaves_nothing_taken :: proc(t:^testing.T) {
     _,ref_error:=store.ref_get(&w.peers[1].s,asset.REF_PACKAGES,base.asset_id_format(p.id,buffer[:]))
     testing.expect(t,ref_error!=.None,"nothing taken into the library")
     testing.expect(t,!os.exists(fmt.tprintf("%s/%s",r.root,asset.PACKAGES_FILE)),"no project changed")
+}
+
+// Derived data a peer has (a thumbnail, by its key) is fetched from it and
+// kept here under the same ref; one it lacks is Absent, and nothing is made
+// for it on either side.
+@(test)
+a_peer_gives_derived_data_it_has_and_nothing_it_lacks :: proc(t:^testing.T) {
+    w:Test_Net
+    if !test_net(t,&w,"share-derived",2) {return}
+    defer test_net_destroy(&w)
+    NAMESPACE_THUMBS :: asset.REF_CACHE_PREFIX+"test-thumbnails"
+    image:=noise(4096,5)
+    address,put_error:=store.put(&w.peers[0].s,image)
+    if !testing.expect_value(t,put_error,store.Error.None) {return}
+    testing.expect_value(t,store.ref_set(&w.peers[0].s,NAMESPACE_THUMBS,"00000000000000a1",address),store.Error.None)
+    test_connect(&w,1,0)
+    n:=&w.peers[1].n
+    for steps:=0;node_totals(n).connected==0 && steps<10000;steps+=1 {test_step(&w)}
+    buffer:[PEERS]Peer
+    peers:=node_peers(n,buffer[:])
+    if !testing.expect_value(t,len(peers),1) {return}
+    Case :: struct {name:string,then:Fetch_State}
+    for c in ([]Case{{"00000000000000a1",.Done},{"00000000000000b2",.Absent}}) {
+        f:=fetch_start(n,peers[0],NAMESPACE_THUMBS,c.name)
+        for steps:=0;f.state==.Asking || f.state==.Fetching;steps+=1 {
+            if !testing.expect(t,steps<200_000,"the fetch ends") {fetch_end(n,&f);break}
+            test_step(&w)
+            fetch_poll(n,&f)
+        }
+        testing.expect_value(t,f.state,c.then)
+        here,ref_error:=store.ref_get(&w.peers[1].s,NAMESPACE_THUMBS,c.name)
+        testing.expect_value(t,ref_error==.None,c.then==.Done)
+        if c.then==.Done {testing.expect(t,here==address && asset.object_whole(&w.peers[1].s,address))}
+        _,lacking:=store.ref_get(&w.peers[0].s,NAMESPACE_THUMBS,c.name)
+        testing.expect_value(t,lacking==.None,c.then==.Done)
+    }
 }

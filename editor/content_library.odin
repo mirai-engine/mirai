@@ -9,6 +9,7 @@ import "core:sync"
 import "mirai:asset"
 import "mirai:cook/share"
 import "mirai:std/base"
+import "mirai:store"
 import "mirai:ui"
 
 // The libraries in the content browser: beside the project's own content, a
@@ -37,7 +38,18 @@ Content_Package :: struct {
     bytes:i64,      // of its build; -1: unknown
     here:bool,      // this machine has its build: nothing has to be fetched
     built:bool,     // a build of it this engine reads is here or at its peer
+    shown:store.Hash,     // the object of its root in that build, which its card shows; zero: none
+    objects:[]store.Hash, // of every asset of that build, sorted: with shown, the key of its thumbnail
 }
+
+// A thumbnail of a card in the atlas (slot), or one the store did not have when it was looked for (slot -1).
+@(private)
+Content_Thumb :: struct {key:u64,slot:i32,frame:u64}
+CONTENT_THUMBS :: 64
+CONTENT_THUMB_RECHECK :: 30 // frames before a store that lacked a thumbnail is looked at again
+
+// A thumbnail a visible card of a peer's root lacks, which the session asks that peer for.
+Content_Thumb_Want :: struct {key:u64,peer:int}
 
 // What a peer's library gave, as the listing takes it.
 Content_Peer_Listing :: struct {
@@ -79,6 +91,7 @@ content_library_listing :: proc(local:[]Library_Package,peers:[]Content_Peer_Lis
             entry.here&&=a.built
         }
         entry.built=entry.here
+        entry.shown,entry.objects=p.root,slice.clone(p.objects,allocator)
         append(&origins,Origin{len(packages),p.origin})
         append(&packages,entry)
     }
@@ -89,6 +102,7 @@ content_library_listing :: proc(local:[]Library_Package,peers:[]Content_Peer_Lis
             if pinned[p.id] || here[p.id] {continue}
             entry:=Content_Package{root=root,id=p.id,name=strings.clone(p.name,allocator),assets=p.assets,bytes=p.bytes,here=p.here,built=p.built}
             if len(p.kinds)>0 {entry.kind=p.kinds[0]}
+            entry.shown,entry.objects=p.root,slice.clone(p.objects,allocator)
             append(&origins,Origin{len(packages),p.origin})
             append(&packages,entry)
         }
@@ -247,13 +261,16 @@ content_package_item :: proc(s:^Session,card:Content_Card,group:u64,cell:f32,dep
     selected:=c.package_selected==p.id && c.package_root==p.root
     icon,color:=asset_icon(s,p.kind)
     state,failed,why:=content_package_state(s,p)
+    quad:=content_package_thumbnail(s,p,20 if depth>=0 || c.view.mode==.List else cell)
     ink:=ui.tone(ctx,"danger_soft") if failed else ui.tone(ctx,"text_muted")
     if depth>=0 || c.view.mode==.List {
         box:=asset_row_box(ctx,id,CONTENT_INSET+f32(max(depth,0))*CONTENT_TREE_INDENT,selected,it.hot,content_keyboard(ctx,it))
         if depth>=0 {box.width,box.gap=ui.fixed(cell),CONTENT_TREE_GAP}
         if ui.box(ctx,box) {
             if depth>=0 {ui.spacer(ctx,CONTENT_TREE_ARROW,1)}
-            if ui.box(ctx,{width=ui.fixed(20),height=ui.fixed(20),align_x=.Center,align_y=.Center}) {ui.icon(ctx,icon,color,14)}
+            if ui.box(ctx,{width=ui.fixed(20),height=ui.fixed(20),align_x=.Center,align_y=.Center,radius=2,clip_x=true,clip_y=true}) {
+                if quad.kind!=.Solid {ui.image(ctx,{quad=quad,width=ui.GROW,height=ui.GROW})} else {ui.icon(ctx,icon,color,14)}
+            }
             ui.label(ctx,card.name,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=ui.FONT_MEDIUM if selected else 0)
             ui.spacer(ctx,-1,1)
             if state!="" {ui.label(ctx,state,ui.metric(ctx,"font_small"),ink)}
@@ -263,7 +280,7 @@ content_package_item :: proc(s:^Session,card:Content_Card,group:u64,cell:f32,dep
         names:=u8(2)
         if ui.box(ctx,asset_card_box(ctx,id,c.view,cell,selected,content_keyboard(ctx,it),names)) {
             stroke,stroke_width:=asset_frame_edge(ctx,it.hot,selected)
-            asset_frame(s,cell,CONTENT_FRAME,stroke,stroke_width,{},icon,color,p.kind)
+            asset_frame(s,cell,CONTENT_FRAME,stroke,stroke_width,quad,icon,color,p.kind)
             if content_shows_names(c.view) {content_name(ctx,card.name,selected,cell,names)}
             if content_package_peer(s,p)>=0 || failed {
                 if ui.box(ctx,{width=ui.FIT,height=ui.FIT,padding={4,1,4,1},radius=2,fill=ui.tone(ctx,"panel"),float={to=.Parent,anchor=.Top_Right,pivot=.Top_Right,offset={-3,3}}}) {
@@ -334,4 +351,48 @@ content_package_add :: proc(s:^Session,library:i32,id:base.Asset_Id,folder:strin
     text:=base.asset_id_format(id,buffer[:])
     problem:=library==0 ? library_add(s,text,nil,folder) : collab_library_add(s,int(library-1),text,folder)
     if problem!="" {notify(s,problem)}
+}
+
+// The thumbnail of the card of a package at points: in the atlas, else from
+// the store of this machine, read a few a frame; a card of a peer's root that
+// the store lacks asks the session for it (Content.thumb_wants), which asks
+// that peer. Nothing is drawn for a card, and nothing of the package fetched.
+@(private)
+content_package_thumbnail :: proc(s:^Session,p:^Content_Package,points:f32) -> ui.Quad {
+    c:=s.content
+    if p.shown=={} || s.store.root=="" {return {}}
+    level:=Thumbnail_Level.Large if points*max(s.app.density,1)>THUMBNAIL_SIZE else .Small
+    key:=thumbnail_package_key(level,thumbnail_programs(s),p.shown,p.objects)
+    held:^Content_Thumb
+    oldest:=0
+    for &t,at in c.thumbs {
+        if t.key==key {held=&t;break}
+        if t.frame<c.thumbs[oldest].frame {oldest=at}
+    }
+    if held!=nil && held.slot>=0 {
+        held.frame=s.frame
+        if quad:=thumbnail_image_quad(s,int(held.slot),key);quad.kind!=.Solid {return quad}
+        held.slot=-1
+    }
+    if held!=nil && held.slot<0 && s.frame<held.frame+CONTENT_THUMB_RECHECK {return {}}
+    if held==nil {
+        held=&c.thumbs[oldest]
+        held^={key=key,slot=-1}
+    }
+    held.frame=s.frame
+    if th:=s.thumbnails;th!=nil {
+        if th.loaded!=s.frame {th.loaded,th.loads=s.frame,0}
+        if th.loads>=THUMBNAIL_LOADS {
+            held.frame=0 // its turn comes in another frame
+            return {}
+        }
+        th.loads+=1
+        sides:=THUMBNAIL_SIDES
+        if thumbnail_store_load(&s.store,sides[level],key,&th.file,&th.image) {
+            held.slot=i32(thumbnail_image_put(s,key,level,th.image[:]))
+            return thumbnail_image_quad(s,int(held.slot),key)
+        }
+    }
+    if peer:=content_package_peer(s,p);peer>=0 && len(c.thumb_wants)<CONTENT_THUMBS {append(&c.thumb_wants,Content_Thumb_Want{key,peer})}
+    return {}
 }

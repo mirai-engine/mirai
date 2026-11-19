@@ -211,9 +211,68 @@ collab_take_update :: proc(s:^Session,st:^Collab_State) {
     if st.libraries!=nil {st.libraries.at=-COLLAB_LIBRARY_SECONDS}
 }
 
+COLLAB_THUMB_FETCHES :: 4 // thumbnails asked of peers at once
+
+// A thumbnail a visible card lacks, asked of the peer whose root shows it.
+@(private)
+Collab_Thumb :: struct {
+    used:bool,
+    key:u64,
+    name:[16]u8,
+    fetch:share.Fetch,
+}
+
+// The thumbnails the visible cards of peers' roots lack, asked a few at a
+// time of those peers by their keys; one a peer has not is not asked again.
+@(private)
+collab_thumbs_update :: proc(s:^Session,st:^Collab_State) {
+    for &t in st.thumbs {
+        if !t.used {continue}
+        #partial switch share.fetch_poll(st.node,&t.fetch) {
+        case .Done:
+            t.used=false
+            // The card reads it from the store in its next frame.
+            if c:=s.content;c!=nil {
+                for &held in c.thumbs {
+                    if held.key==t.key {held.frame=0}
+                }
+            }
+        case .Absent:
+            st.thumbs_absent[t.key]={}
+            t.used=false
+        }
+    }
+    c:=s.content
+    if c==nil || st.phase!=.Joined {return}
+    peers:[COLLAB_PEERS]Collab_Library
+    count:=collab_library_peers(st,peers[:])
+    wants: for want in c.thumb_wants {
+        if want.key in st.thumbs_absent {continue}
+        free:=-1
+        for &t,at in st.thumbs {
+            if t.used && t.key==want.key {continue wants}
+            if !t.used && free<0 {free=at}
+        }
+        if free<0 {break}
+        for &peer in peers[:count] {
+            if peer.peer!=want.peer {continue}
+            t:=&st.thumbs[free]
+            t^={used=true,key=want.key}
+            t.fetch=share.fetch_start(st.node,peer.node,THUMBNAIL_NAMESPACE,thumbnail_name(want.key,&t.name))
+            break
+        }
+    }
+}
+
 // Stops what reads and takes from the peers; the node was closed, so they end at once.
 @(private)
 collab_library_destroy :: proc(st:^Collab_State) {
+    for &t in st.thumbs {
+        if t.used {share.fetch_end(st.node,&t.fetch)}
+        t.used=false
+    }
+    delete(st.thumbs_absent)
+    st.thumbs_absent=nil
     if st.libraries!=nil {collab_libraries_free(st.libraries)}
     if st.reading!=nil {collab_libraries_free(st.reading)}
     if st.take!=nil {collab_take_free(st.take)}
@@ -236,6 +295,8 @@ Api_Peer_Package :: struct {
     built:bool `mirai:"label=The peer has a build of it this engine reads"`,
     here:bool `mirai:"label=This machine has it with that build: adding it fetches nothing"`,
     pinned:bool `mirai:"label=The project pins it"`,
+    thumbnail:string `mirai:"label=The key of the small thumbnail of its root, which the peer is asked for"`,
+    thumbnail_here:bool `mirai:"label=The store of this machine keeps that thumbnail"`,
 }
 
 Api_Peer_Library :: struct {
@@ -297,6 +358,7 @@ api_packages_peers_answer :: proc(s:^Session,call:^api.Call) {
                         if info,known:=asset.kind_info(kind);known {kinds[i]=strings.clone(info.name,a)}
                     }
                     packages[k]={id=p.id,name=strings.clone(p.name,a),kinds=kinds,assets=p.assets,bytes=p.bytes,built=p.built,here=p.here,pinned=pinned[p.id]}
+                    packages[k].thumbnail,packages[k].thumbnail_here=api_thumbnail_of(s,p.root,p.objects,a)
                 }
                 entry.packages=packages
                 append(&out,entry)

@@ -383,6 +383,8 @@ Content :: struct {
     package_root:int,
     package_menu:base.Asset_Id,    // the package whose card opened its menu, of the library package_menu_library
     package_menu_library:i32,
+    thumbs:[CONTENT_THUMBS]Content_Thumb,  // the thumbnails of the cards of packages (content_library.odin)
+    thumb_wants:[dynamic]Content_Thumb_Want, // what the visible cards of peers' roots lack, asked between frames
 }
 
 CONTENT_DEFAULT :: Content{view=CONTENT_VIEW_DEFAULT}
@@ -2729,6 +2731,7 @@ content_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_W
         if c.created!={} {content_created(s,&a.registry)}
         if c.reveal!={} {content_reveal_open(c,&a.registry)}
         content_libraries_update(s,c)
+        clear(&c.thumb_wants)
         // A root whose peer left goes, and the browser with it.
         if c.at.virtual==.Library && content_library_root_of(c,c.at.library)<0 {content_enter(c,.None,reset=true)}
         lines:=content_lines(c,&a.registry,width,opened,scene_kinds[:],&ctx.font,ui.metric(ctx,"font_small"))
