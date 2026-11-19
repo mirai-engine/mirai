@@ -276,9 +276,11 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   each level of the sun nearest the eye, the coarsest page of each face), then from the coarsest
   level or mip to the finest; past the pool the finest are left out (`SHADOW_COUNT_LEFT`), the same
   every frame. A page keeps its place while no point reads it, until another needs it: free pages
-  first, then those unread the longest; one read within a cycle of the jitter of the view gives its
-  place only to a page of a level that ranks sooner, so that where the pool is full a page the
-  points of one frame miss and those of the next read is not drawn again. What stays changing under
+  first, then those unread the longest; one read within a cycle of the jitter of a still view, or
+  the frame before by one that moves, gives its place only to a page of a level that ranks sooner,
+  so that where the pool is full a page the points of one frame miss and those of the next read is
+  not drawn again, and a view that moves does not keep the pages it left behind before those it
+  reads. What stays changing under
   a page still marks it stale, so a page read is always of this frame. Where a page is not drawn its
   entry names the nearest coarser level or mip drawn there (`SHADOW_ENTRY_COARSER`), which a tap
   reads. A point is held by the nearest page, its own or up to two levels or mips coarser
@@ -370,11 +372,13 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   `SHADOW_MOVER_FRAMES` moves (each followed on its own, however many,
   `Scene_State.shadow_changes`): the cache leaves it out once, and the atlas draws it in the pages
   its moves cover until it stays that long and joins the cache again; a mover that stands still
-  costs nothing. While the eye stays in its cell no instance of a batch comes or goes past its cull
-  distance; where it leaves it, what stays changed where instances of a batch may have come or
-  gone, in a box for each cell of the world they lie in, apart from the few boxes of what changed:
-  merged, those far boxes would take the pages near the eye along (`shadow_cull_changes`). What
-  sways moves so only near the eye ([what sways](#what-sways-in-the-maps)).
+  costs nothing. While the eye stays in its cell, or within a margin past it
+  (`SHADOW_CULL_MARGIN`, so that an eye going to and fro across a border takes no other), no
+  instance of a batch comes or goes past its cull distance; where it leaves it, what stays changed
+  where instances of a batch may have come or gone, in a box for each cell of the world they lie
+  in, apart from the few boxes of what changed: merged, those far boxes would take the pages near
+  the eye along (`shadow_cull_changes`). What sways moves so only near the eye
+  ([what sways](#what-sways-in-the-maps)).
   A light or a level of the sun that moves or turns lets go of its pages and draws those read whole
   into the atlas alone that frame, and the cache the next still frame; an origin jump lets go of
   every page.
