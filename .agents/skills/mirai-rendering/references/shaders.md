@@ -76,6 +76,14 @@
   it, and the stamp follows the Odin source. The same test forbids a plugin's `.slang` from
   defining a name its Odin declares.
 - The resources of a stage stay within the `rhi` limits.
+- **Local memory.** The passes inline every call into the entry point, and an array indexed by a
+  value is local memory once for each place its function is inlined; a driver keeps the local
+  memory of the largest stage it made for every thread the GPU holds, outside the blocks of the
+  device (`outside_bytes` of `profile.gpu_memory`). So an array several calls of a stage use is a
+  `static` of its include, one per thread, which the calls take in turn and none nests (the walks
+  and cuts of the lights); an array of a struct copy is read from its buffer, not from the copy
+  (`material_of`); and what can be summed as it comes is not kept in an array
+  (`polygon_projected_angle`).
 - **Constants and variants.** What a pass chooses of a stage is a constant:
   `//! constant <name> <DEFINE>` makes `DEFINE` a boolean the code reads as `if (DEFINE)`, false
   unless the pipeline sets it ([rhi](rhi.md#shader-constants)), and the driver folds it. One code
