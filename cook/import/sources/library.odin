@@ -346,13 +346,15 @@ reader_of :: proc(l:^Library_State,origin:string) -> (r:Source_Reader,ok:bool) {
     return r,r.kind!=.None
 }
 
-// The key of the build of p this engine reads (asset.import_key): the
+// The key of the build of p this engine reads (importer.build_key): the
 // versions of the engine with that of what reads its origin, an engine
-// importer or a format of the engine or of the plugins. False for a source a
-// plugin imports whole, whose version only its importer knows.
+// importer, a format of the engine or of the plugins, or the importer of a
+// plugin that imports it whole, with the code of that plugin. False when none
+// of those is the one its manifest records.
 @(private="file")
 package_key :: proc(l:^Library_State,p:^asset.Package) -> (key:store.Hash,ok:bool) {
     version:u32
+    code:u64
     switch p.origin.importer {
     case "image","sound","font","prompts":
         version=importer.import_version(0)
@@ -366,11 +368,13 @@ package_key :: proc(l:^Library_State,p:^asset.Package) -> (key:store.Hash,ok:boo
             for format in l.formats {
                 if format.name==p.origin.importer {version,found=importer.import_version(format.version),true}
             }
+            for whole in l.plugins.wholes {
+                if !found && whole.name!="" && whole.name==p.origin.importer {version,code,found=importer.import_version(whole.version),whole.code,true}
+            }
         }
         if !found {return}
     }
-    versions:=importer.import_versions(version)
-    return asset.import_key(p.identity,versions[:])
+    return importer.build_key(p.identity,version,code),true
 }
 
 @(private="file")
@@ -406,9 +410,10 @@ build_here :: proc(l:^Library_State,p:^asset.Package,key:store.Hash) -> (f:Found
     return
 }
 
-// The build of p this engine reads here: by its key, or for a source a plugin
-// imports whole, whose key only its importer knows, the one this machine
-// chose for its manifest (asset.REF_BUILDS) when it is whole.
+// The build of p this engine reads here: by its key, or for a source whose
+// importer this library lacks (a plugin that imports it whole and is not
+// read), the one this machine chose for its manifest (asset.REF_BUILDS) when
+// it is whole.
 @(private="file")
 build_found :: proc(l:^Library_State,p:^asset.Package,manifest,key:store.Hash,keyed:bool) -> (f:Found,ok:bool) {
     if keyed {return build_here(l,p,key)}
@@ -622,7 +627,7 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
         }
         switch {
         case !keyed:
-            report_line(&report.missing,"package %s: a plugin imports it whole, and only a machine with its source (%s) can build it: ingest it there with this engine",p.name,p.origin.path)
+            report_line(&report.missing,"package %s: no plugin of the project imports it as %q, so its build cannot be found by key: activate the plugin that imports it, or ingest its source (%s) with this engine",p.name,p.origin.importer,p.origin.path)
         case f.fast_here:
             report_line(&report.missing,"package %s: only a build with Fast textures is here, and Final is required: a machine with its source (%s) must ingest it with this engine, or a peer that has its Final build (import key %s) must give it",p.name,p.origin.path,store.hex(key,&digits))
         case:

@@ -263,7 +263,8 @@ the assets.
   and an empty store builds the same ids, manifests and objects, and without them reports each
   package; refreshing from two empty stores writes nothing the second time) and
   `cook/import/sources/reimport_test.odin` (a refresh reads a source again with the formats of
-  the plugins, and ingests a whole source again when what it is built from changes).
+  the plugins, ingests a whole source again when what it is built from changes, and finds the
+  build of a whole source by key without the source, missing it for another importer).
 - Changed documents: `an_import_does_not_write_over_a_document_changed_since_it_wrote_it` and
   the edited case of `a_refresh_ingests_again_a_whole_source_when_what_it_is_built_from_changes`
   (reimport tests), the question of the editor in `editor/import_api_test.odin`.

@@ -14,6 +14,7 @@ import "core:time"
 import stbi "vendor:stb/image"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:cook/cache"
 import importer "mirai:cook/import"
 import "mirai:cook/prefab"
 import "mirai:cook/import/gltf"
@@ -486,8 +487,9 @@ a_refresh_reads_a_source_again_with_the_formats_of_the_plugins :: proc(t:^testin
 // A source a plugin imports whole: "LEVEL <file>", a level of the glTF at
 // that file beside it, which it reads and writes as a model of its import,
 // and with kit a document of the kind KIT of that version. code: the
-// identity of the code of its plugin.
-@(private="file") Level_Importer :: struct {runs:int,code:u64,kit:u16}
+// identity of the code of its plugin; version: that of its format.
+@(private="file") Level_Importer :: struct {runs:int,code:u64,kit:u16,version:u16}
+@(private="file") LEVEL_IMPORTER :: "Levels"
 @(private="file") KIT :: asset.Fourcc(u32('K')|u32('I')<<8|u32('T')<<16|u32('S')<<24)
 @(private="file")
 level_claims :: proc(path:string,head:[]u8) -> bool {return strings.has_prefix(string(head),"LEVEL ")}
@@ -497,7 +499,7 @@ level_run :: proc(state:rawptr,source:string,options:importer.Import_Options,all
     bytes,_:=os.read_entire_file(source,context.temp_allocator)
     model_path:=fmt.tprintf("%s/%s",filepath.dir(source),string(bytes[len("LEVEL "):]))
     o:importer.Outputs
-    if error=importer.outputs_begin(&o,source,"",u64(len(bytes)),base.hash64(bytes),importer.import_version(0),options,allocator=allocator);error.code!=.None {return}
+    if error=importer.outputs_begin(&o,source,"",u64(len(bytes)),base.hash64(bytes),importer.import_version((^Level_Importer)(state).version),options,LEVEL_IMPORTER,allocator);error.code!=.None {return}
     model:importer.Imported_Model
     if error=importer.output_input(&o,model_path);error.code==.None {model,error=importer.import_model(model_path,FORMATS[:],options)}
     defer importer.model_destroy(&model)
@@ -536,7 +538,8 @@ a_refresh_ingests_again_a_whole_source_when_what_it_is_built_from_changes :: pro
     context.user_ptr=&state
     leveling :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> Library_Imports {
         wholes:=make([]Whole_Source,1,allocator)
-        wholes[0]={claims=level_claims,run=level_run,state=context.user_ptr,code=(^Level_Importer)(context.user_ptr).code}
+        level:=(^Level_Importer)(context.user_ptr)
+        wholes[0]={name=LEVEL_IMPORTER,version=level.version,claims=level_claims,run=level_run,state=level,code=level.code}
         return {wholes=wholes}
     }
     options:=Library_Options{store=s,root=root,plugins=leveling,fast_textures=true}
@@ -586,6 +589,56 @@ a_refresh_ingests_again_a_whole_source_when_what_it_is_built_from_changes :: pro
     list,_,_:=asset.packages_load(root,context.temp_allocator)
     again,_:=asset.package_get(s,list.packages[0].manifest,context.temp_allocator)
     testing.expect(t,list.packages[0].manifest!=first.manifest && len(again.assets)==len(p.assets) && again.assets[0].id==p.assets[0].id,"the level keeps its assets, pinned anew")
+}
+
+// A store that holds the build of a source a plugin imports whole, and not
+// the source, takes it by key from another store, lists and loads it, and
+// imports nothing; another version or code of the importer misses that build.
+@(test)
+a_whole_source_build_is_found_by_key_without_its_source :: proc(t:^testing.T) {
+    root,assets:=test_project(t,"whole-by-key")
+    if root=="" {return}
+    props:=fmt.tprintf("%s/props",assets)
+    os.make_directory_all(props)
+    box_source(props,"crate.gltf","Wood","Paint")
+    level:=write_text(assets,"hall.level","LEVEL props/crate.gltf")
+    state:=Level_Importer{version=1}
+    context.user_ptr=&state
+    leveling :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> Library_Imports {
+        wholes:=make([]Whole_Source,1,allocator)
+        level:=(^Level_Importer)(context.user_ptr)
+        wholes[0]={name=LEVEL_IMPORTER,version=level.version,claims=level_claims,run=level_run,state=level,code=level.code}
+        return {wholes=wholes}
+    }
+    s:=test_store(t,fmt.tprintf("%s-host",root))
+    if s==nil {return}
+    first,error:=ingest(level,{store=s,root=root,plugins=leveling},allocator=context.temp_allocator)
+    if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
+    added:=project_add(root,first.manifest,"",nil,{store=s,root=root,plugins=leveling},context.temp_allocator)
+    if !testing.expectf(t,len(added.failures)==0 && len(added.missing)==0,"%v",added) {return}
+    peer:=fmt.tprintf("%s-peer",root)
+    folder_copy(root,peer)
+    testing.expect(t,os.remove(fmt.tprintf("%s/assets/hall.level",peer))==nil)
+    runs:=state.runs
+    Case :: struct {version:u16,code:u64,found:bool}
+    for c,k in ([]Case{{1,0,true},{2,0,false},{1,5,false}}) {
+        state.version,state.code=c.version,c.code
+        here:=test_store(t,fmt.tprintf("%s-store-%d",root,k))
+        if here==nil {return}
+        refreshed:=project_refresh(peer,{store=here,root=peer,plugins=leveling,source=cache.store_source(s)},context.temp_allocator)
+        testing.expect(t,state.runs==runs && refreshed.ingested==0,"nothing is imported")
+        if !c.found {
+            testing.expectf(t,refreshed.fetched==0 && len(refreshed.missing)==1,"%v: another importer misses the build: %v",c,refreshed)
+            continue
+        }
+        testing.expectf(t,refreshed.fetched==1 && len(refreshed.missing)==0 && len(refreshed.failures)==0,"%v",refreshed)
+        listed,list_error:=asset.root_packages_in(here,peer,context.temp_allocator)
+        testing.expectf(t,list_error==.None && len(listed.problems)==0 && len(listed.listed)>0,"%v",listed)
+        for l in listed.listed {
+            a:asset.Asset
+            if testing.expectf(t,asset.asset_open_object(&a,here,l.object,context.temp_allocator)==.None,"%s loads",l.path) {asset.asset_close(&a)}
+        }
+    }
 }
 
 // The code of a plugin is its Odin sources and those of the plugins it holds,
