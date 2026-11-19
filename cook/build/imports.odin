@@ -20,7 +20,9 @@ import "mirai:std/subprocess"
 // them (final) and taken Fast, as the editor imports them, for one that does
 // not. What the program says of each source it imports goes to the output
 // of this process as it says it: a large source imports for minutes.
-// message, in the temp allocator: why it failed.
+// message, in the temp allocator: why it failed, with the source and the
+// reason the program gave, or, when it ended without saying (a crash, a
+// signal), how it ended and the source it was importing.
 imports_refresh :: proc(program:string,roots:[]string,final:bool,store_root:string,from:="") -> (ok:bool,message:string) {
     if len(roots)==0 {return true,""}
     command:=make([dynamic]string,context.temp_allocator)
@@ -29,10 +31,24 @@ imports_refresh :: proc(program:string,roots:[]string,final:bool,store_root:stri
     if store_root!="" {append(&command,"--store",store_root)}
     if from!="" {append(&command,"--from",from)}
     for root in roots {append(&command,"--refresh",root)}
-    state,_,errors,error:=subprocess.exec({command=command[:]},context.temp_allocator,echo=os.to_writer(os.stdout))
+    state,said,errors,error:=subprocess.exec({command=command[:]},context.temp_allocator,echo=os.to_writer(os.stdout))
     if error!=nil {return false,fmt.tprintf("the import program could not run: %v",error)}
-    if state.exit_code!=0 {return false,strings.trim_space(string(errors))}
-    return true,""
+    if state.exit_code==0 && state.success {return true,""}
+    return false,imports_failure(state,string(said),string(errors))
+}
+
+// Why the import program failed: what it said on its error output, else how
+// it ended and the last source it said it was importing.
+@(private)
+imports_failure :: proc(state:os.Process_State,said,errors:string) -> string {
+    if text:=strings.trim_space(errors);text!="" {return text}
+    ended:=fmt.tprintf("the import program ended with exit code %d",state.exit_code)
+    if !state.success {ended=fmt.tprintf("the import program crashed or was killed (code %d)",state.exit_code)}
+    lines:=strings.split_lines(said,context.temp_allocator)
+    #reverse for line in lines {
+        if strings.has_prefix(line,"importing ") {return fmt.tprintf("%s while %s, without saying why: run the import again (mirai import --refresh) to see it",ended,line)}
+    }
+    return fmt.tprintf("%s before importing any source, without saying why: run the import again (mirai import --refresh) to see it",ended)
 }
 
 // The roots of a project whose packages its builds refresh: the project and
