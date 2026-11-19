@@ -519,7 +519,7 @@ api_trampoline :: proc(call:^api.Call) {
     event(entry.session,st.person?"command":"api",call.method.name)
     if missing:=git_missing(entry.session);missing!="" && api_call_edits(call) && !strings.has_prefix(call.method.name,"git.") {
         api.call_fail(call,api.SERVER_ERROR,missing)
-    } else if !api_measured_wait(entry.session,call) {
+    } else if !api_measured_wait(entry.session,st,call) {
         // It failed saying for whom it waited.
     } else if st.in_call>1 || st.person || api_disk_sync(entry.session,call) {
         entry.run(entry.session,call)
@@ -555,8 +555,7 @@ api_trampoline :: proc(call:^api.Call) {
 // (gpu_work_begin): its frames would be timed with it. false, with the call
 // failed, when the caller cancelled it first.
 @(private)
-api_measured_wait :: proc(s:^Session,call:^api.Call) -> bool {
-    st:=api_state(s)
+api_measured_wait :: proc(s:^Session,st:^Api_State,call:^api.Call) -> bool {
     // A call a frame of another one runs is drawn in that one's turn.
     if !st.manual || st.person || st.stepping || call.method.flags&{.Draws,.As_User}=={} {return true}
     ok,holder:=gpu_work_begin(s,call.measure,0)
