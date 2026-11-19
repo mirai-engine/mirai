@@ -4,7 +4,7 @@
 #define FOLIAGE_SWAY_SLANG
 #include "origin.slang"
 #define FOLIAGE_WAVE float2(0.37, 0.71) // radians a metre along x and z of the world of the gust wave
-#define FOLIAGE_FLUTTER_RATE 1.0 // cycles a second a leaf flutters at
+#define FOLIAGE_FLUTTER_RATE 1.5 // cycles a second a leaf flutters at
 #define FOLIAGE_FLUTTER_WAVE float3(4.1, 3.3, 3.7) // radians a metre of the plant: leaves a hand apart flutter apart
 
 // The phase of the gust wave at a place relative to an origin, radians: what
