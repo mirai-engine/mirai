@@ -670,7 +670,8 @@ an_impostor_another_hides_is_not_drawn_and_shows_when_it_moves :: proc(t: ^testi
 			render.frame_pass(&f.renderer, .Gbuffer, foliage_impostors_record, &f.resident)
 			render.frame_pass(&f.renderer, .Gbuffer, impostor_draws_read)
 			floor := gpu.Instance_Desc{object_id = 1, mesh = f.cube, transform = mm.transform_matrix({{0, -0.5, 0}, mm.QUAT_IDENTITY, {40, 1, 40}}), tint = {0.05, 0.05, 0.05}}
-			gpu.scene_set_environment(&f.renderer, {direction = {0.3, -1, -0.6}, color = {1, 1, 1}, illuminance = 3}, {sky = {0.4, 0.5, 0.6}})
+			// A sun that lights them from the first frame, whatever probes the light of the sky has reached.
+			gpu.scene_set_environment(&f.renderer, {direction = {-0.3, 1, 0.6}, color = {1, 1, 1}, illuminance = 3, enabled = true}, {sky = {0.4, 0.5, 0.6}})
 			testing.expect(t, gpu.scene_update(&f.renderer, 0, {floor}, true), f.renderer.error)
 			testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera}), f.renderer.error)
 		}
