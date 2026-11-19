@@ -1588,7 +1588,8 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 hardware_ray_tracing_active :: proc(r: ^Renderer) -> bool {return r.hardware_rt}
 
 // The color a view shows behind the scene whatever the environment of the
-// scene says, as an editor does; the sky keeps lighting the scene.
+// scene says, as an editor does; the sky keeps lighting the scene and what
+// reflects it.
 renderer_set_backdrop :: proc(r: ^Renderer, color: Vec3, enabled: bool = true) {
 	r.backdrop, r.has_backdrop = color, enabled
 }

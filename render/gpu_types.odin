@@ -22,7 +22,7 @@ Gpu_Frame :: struct {
 	sun_direction:   Vec4, // w = 0: no sun; 1: active; SUN_UNSHADOWED: active, and no ray goes to it
 	sun_color:       Vec4, // above the air of an atmosphere; w = the angular radius of its disc in the sky, radians; 0: it is not seen
 	sky_color:       Vec4, // rgb the luminance of the sky, render units; w the light scale, render units per nit
-	background:      Vec4, // w = 1: solid background instead of the sky
+	background:      Vec4, // rgb shown where no geometry is visible, render units (with an image, what multiplies it); w = 1: instead of the sky
 	frustum:         [6]Vec4,
 	volume_cascades: [VOLUME_CASCADES_MAX]Vec4, // xyz the place of the probe at the lowest corner of each cascade, relative to the origin, w its spacing
 	volume_counts:   [4]u32, // xyz probes of a cascade along each axis, w cascades
@@ -58,6 +58,7 @@ Gpu_Frame :: struct {
 	sky_orientation:  Vec4, // the turn of the sky, a quaternion (xyz, w)
 	sky_from:         Vec4, // rgb the luminance a change of the sky comes from (render units), a how much of it still shows
 	sky_from_map:     Vec4, // the image it comes from, as sky_map
+	background_map:   Vec4, // the image of the background, as sky_map; y = 1 when what reflects the sky shows the background
 	tint:             Vec4, // rgb what the image is multiplied by before the display
 	air:              Gpu_Air, // the air of an atmosphere (sky_map.y), with sun_color the light of the sun above it
 	origin:           [4]i32, // xyz what every place of the frame is relative to (origin.odin), in steps of ORIGIN_STEP

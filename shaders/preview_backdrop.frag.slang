@@ -11,6 +11,6 @@ struct Stage_Input {
 
 [shader("fragment")]
 float4 main(Stage_Input input) : SV_Target0 {
-    float3 sky = frame.background.w > 0.5 ? frame.background.rgb : sky_seen(view_direction(input.in_uv));
+    float3 sky = sky_shown(view_direction(input.in_uv));
     return float4(preview_encode(ground_grid_background(sky, input.in_uv) * frame.exposure), 1.0);
 }
