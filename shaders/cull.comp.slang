@@ -12,9 +12,10 @@
 // cut can take somewhere in its box. A far object whose root already does
 // hands its root alone. An instance with blended triangles that passes these
 // tests turns on the glass passes, which run with dispatch sizes this pass
-// writes: glass behind a wall costs nothing. The instances of the batches
-// (scene.slang) follow those of the scene, a thread each, with the same tests
-// and their cull distance.
+// writes: glass behind a wall costs nothing. Before phase 0 a pass tests
+// each batch (scene.slang) once by its box, with the same tests and its cull
+// distance; the groups of slots of those that pass follow the instances of
+// the scene in the dispatch of both phases, a thread a slot.
 #include "cut.slang"
 #include "cull_common.slang"
 #ifdef MIRAI_COST
@@ -38,7 +39,7 @@
 [[vk::binding(SLOT_PASS9, 0)]] RWStructuredBuffer<uint> program_draws : register(MIRAI_REGISTER(u, SLOT_PASS9), space0);
 
 void cull_start(uint i) {
-    uint threads = (frame.instance_count + frame.batches.x + MIRAI_GROUP_X - 1u) / MIRAI_GROUP_X * MIRAI_GROUP_X;
+    uint threads = (max(frame.batches.z, 1u) + MIRAI_GROUP_X - 1u) / MIRAI_GROUP_X * MIRAI_GROUP_X;
     for (uint program = i; program < max(params.programs, 1u); program += threads) {
         uint at = program * PROGRAM_DRAW_WORDS;
         program_draws[at] = program == 0u ? 3u : 6u;
@@ -53,12 +54,51 @@ void cull_start(uint i) {
     for (uint word = i; word < CULL_DEPTH_WORDS; word += threads) depth_buckets[word] = 0u;
 }
 
+// What the view draws of what has that box: in its layers, not of the body it
+// leaves out nor faded out whole by its values or, of a batch, by its
+// distance and size (batch_faded of its row), in its frustum and not all
+// behind its clip plane. The box of a batch holds those of its instances:
+// where it fails, every instance fails.
+bool view_draws_box(Instance inst, bool batched, Instance row, float3 low, float3 high) {
+    float3 clipped = lerp(low, high, step(float3(0.0), frame.clip_plane.xyz));
+    bool own = max(view_body_fade(inst.meta.w), material_values_fade(inst.material_values)) >= 1.0;
+    bool gone = batched && batch_faded(row, low, high) >= 1.0;
+    return (inst.meta.w & INSTANCE_FLAG_HIDDEN) == 0u && !own && !gone && view_draws_layers(inst.meta.w >> INSTANCE_LAYERS_SHIFT, inst.meta.w)
+        && dot(frame.clip_plane.xyz, clipped) + frame.clip_plane.w >= 0.0 && frustum_visible(low, high);
+}
+
+// The groups of slots of the batches listed, after the candidates of the
+// instances and the slots: a word each, the group among those of the batches.
+uint batch_listed(uint k) { return frame.instance_count + frame.batches.x + k; }
+
+// The pass before phase 0, a thread a batch drawn: one the view draws lists
+// its groups of slots after the groups of the instances of the scene in the
+// dispatch of both phases (CULL_INSTANCE_DISPATCH).
+void cull_batch(uint b) {
+    if (b >= frame.batches.z) return;
+    Instance row = batch_row(b);
+    float reach = batch_reach(row);
+    if (!view_draws_box(row, true, row, row.bounds_min.xyz - reach, row.bounds_max.xyz + reach)) {
+        if ((row.meta.w & INSTANCE_FLAG_BLENDED) == 0u) InterlockedAdd(stats[0].culled_instances, batch_count(row));
+        return;
+    }
+    uint count = (batch_count(row) + BATCH_GROUP - 1u) / BATCH_GROUP, at;
+    InterlockedAdd(cull_state[CULL_INSTANCE_DISPATCH], count, at);
+    at -= (frame.instance_count + MIRAI_GROUP_X - 1u) / MIRAI_GROUP_X;
+    for (uint g = 0u; g < count; g++) candidates[batch_listed(at + g)] = batch_first(row) / BATCH_GROUP + g;
+}
+
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
-void main(uint3 dispatch_id : SV_DispatchThreadID) {
-    uint i = dispatch_id.x;
-    if (params.phase == 0u) cull_start(i);
-    if (i >= frame.instance_count + frame.batches.x) return;
+void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group_id : SV_GroupID, uint3 lane : SV_GroupThreadID) {
+    if (params.phase == CULL_PHASE_BATCHES) {
+        cull_start(dispatch_id.x);
+        cull_batch(dispatch_id.x);
+        return;
+    }
+    uint i = dispatch_id.x, scene_groups = (frame.instance_count + MIRAI_GROUP_X - 1u) / MIRAI_GROUP_X;
+    if (group_id.x >= scene_groups) i = frame.instance_count + candidates[batch_listed(group_id.x - scene_groups)] * BATCH_GROUP + lane.x;
+    else if (i >= frame.instance_count) return;
     bool batched = instance_batched(i);
     Instance row = (Instance)0;
     if (batched) {
@@ -75,14 +115,9 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     }
     // A blended instance has nothing for the G-buffer: its own passes draw it.
     bool blended = (inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u;
-    bool gone = batched && batch_faded(row, inst.bounds_min.xyz, inst.bounds_max.xyz) >= 1.0;
     bool visible = false;
     if (params.phase == 0u) {
-        // What the view draws: the instances in its layers, not of the body it leaves out nor faded out whole by their values, in its frustum and not all behind its clip plane.
-        float3 clipped = lerp(inst.bounds_min.xyz, inst.bounds_max.xyz, step(float3(0.0), frame.clip_plane.xyz));
-        bool own = max(view_body_fade(inst.meta.w), material_values_fade(inst.material_values)) >= 1.0;
-        bool in_frustum = (inst.meta.w & INSTANCE_FLAG_HIDDEN) == 0u && !own && !gone && view_draws_layers(inst.meta.w >> INSTANCE_LAYERS_SHIFT, inst.meta.w)
-            && dot(frame.clip_plane.xyz, clipped) + frame.clip_plane.w >= 0.0 && frustum_visible(inst.bounds_min.xyz, inst.bounds_max.xyz);
+        bool in_frustum = view_draws_box(inst, batched, row, inst.bounds_min.xyz, inst.bounds_max.xyz);
         float3 before_low, before_high;
         box_before(inst, inst.bounds_min.xyz, inst.bounds_max.xyz, before_low, before_high);
         bool hidden = in_frustum && params.occlusion != 0u && occluded(before_low, before_high, frame.prev_view_proj, frame.prev_eye.xyz, frame.prev_depth_plane);
