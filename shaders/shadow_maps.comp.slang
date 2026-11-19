@@ -122,7 +122,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         if ((batch_classes(row) & RAY_SHADOWS) == 0u) return;
         cull = batch_cull(row);
         sway = batch_sway(row);
-        near = batch_near(row);
+        near = batch_swayed(row);
     }
     Instance inst = scene_instance(instance);
     if ((inst.meta.w & INSTANCE_FLAG_HIDDEN) != 0u || (inst.meta.x & INSTANCE_UNSHADOWED) != 0u) return;

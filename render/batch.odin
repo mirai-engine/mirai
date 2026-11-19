@@ -411,17 +411,33 @@ batch_set :: proc(r: ^Renderer, handle: Batch_Handle, world: u64, desc: Batch_De
 
 // Says how much of their sway the batches that sway in `wind` take now
 // (Batch_Desc.sway): 0, still, to 1, the most; the vertex hook sways them as
-// the wind is, and this says to the maps whether they move. A frame that drew
-// the maps does not look at the batches again while each share stays above 0
-// or at 0. Grows the winds known: a load transaction for a wind not given
-// before.
+// the wind is, and this says to the maps whether they move and how far. A
+// frame that drew the maps does not look at the batches again while each
+// share stays above 0 or at 0. Grows the winds known: a load transaction for
+// a wind not given before.
 batches_wind :: proc(r: ^Renderer, wind: u32, share: f32) -> bool {
 	b := &r.scene.batch
 	if !(share >= 0) || !(share <= 1) || wind >= BATCH_INDICES_MAX {return false}
 	if int(wind) >= len(b.winds) && resize(&b.winds, int(wind) + 1) != nil {return false}
+	if b.winds[wind] == share {return true}
 	if (b.winds[wind] > 0) != (share > 0) {b.winds_changed = true}
 	b.winds[wind] = share
+	for index, k in b.drawn {
+		record := &b.records[index]
+		if record.desc.sway > 0 && record.desc.wind == wind {
+			b.rows[k].world_inv[2].y = batch_swayed(b, record)
+			b.upload = true
+		}
+	}
 	return true
+}
+
+// Metres of the world the largest instance of a batch sways as its wind
+// blows now: what the maps grow its boxes by.
+@(private)
+batch_swayed :: proc "contextless" (b: ^Batch_State, record: ^Batch_Record) -> f32 {
+	if !(record.desc.sway > 0) || int(record.desc.wind) >= len(b.winds) {return 0}
+	return record.desc.sway * record.scale * b.winds[record.desc.wind]
 }
 
 // Whether a batch sways in the maps now: it says how far, and its wind blows.
@@ -545,7 +561,7 @@ batches_build :: proc(r: ^Renderer) {
 				{bits(record.order), desc.fade_distance, desc.cull_distance, desc.sway},
 				{0, 0, 0, bits(classes)},
 			},
-			world_inv = {desc.vertex, {offset.x, offset.y, offset.z, desc.reach}, {bits(record.colors + 1 if record.colored else 0), 0, 0, 0}},
+			world_inv = {desc.vertex, {offset.x, offset.y, offset.z, desc.reach}, {bits(record.colors + 1 if record.colored else 0), batch_swayed(b, &record), 0, 0}},
 			// Rays meet the instances of a batch in the cut its mesh always has.
 			meta = {u32(desc.mesh) | (u32(ray_cut_always(s.meshes[desc.mesh])) << INSTANCE_RAY_SHIFT if int(desc.mesh) < len(s.meshes) else 0), material, u32(desc.object_id), flags},
 			bounds_min = low,
