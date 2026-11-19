@@ -39,6 +39,7 @@ MAX_BLOB_BYTES :: 1<<40   // the largest max_blob_bytes, and what a request may 
 @(private) LACK_RETRY :: 2.0    // s a peer that lacked a blob is not asked for it again
 @(private) STALL_SECONDS :: 5.0 // s a peer keeps what it was asked of a want without progress on it, before others are asked
 @(private) RATE_SECONDS :: 1.0  // time constant of the smoothed rates
+@(private) RECEIVERS :: 8       // blobs held open while their pieces arrive
 @(private) REQUEST_PIECES :: REQUEST_BYTES/store.PIECE_BYTES
 @(private) MAX_PIECES :: MAX_BLOB_BYTES/store.PIECE_BYTES
 
@@ -123,6 +124,9 @@ Want :: struct {
     misses:u32,     // times it went Missing
     have,asked:[]u64,
     here:i64,
+    receiver:store.Receiver, // open while its pieces arrive
+    receiving:bool,
+    written:u64, // x.sequence when it last took a piece
 }
 
 @(private)
@@ -161,6 +165,8 @@ Peer :: struct {
     lack_first,lack_count:u32,
     out:[]u8,
     out_len,out_sent:int,
+    reader:store.Reader, // the blob being served, while there is one
+    reading:bool,
     control:[]u8,
     control_start,control_end:int,
     // Receiving, per lane: a message that arrives in pieces.
@@ -203,6 +209,7 @@ Exchange :: struct {
     wants:[]Want,
     order:[]int, // wants in use, most important first
     want_count:int,
+    receivers:int, // wants with their receiver open
     sequence:u64,
     peers:[]Peer,
     queries:[]Query_Slot,
@@ -271,8 +278,12 @@ destroy :: proc(x:^Exchange) {
     sync.cond_broadcast(&x.changed)
     for x.waiting>0 {sync.cond_wait(&x.changed,&x.lock)}
     sync.mutex_unlock(&x.lock)
-    for w in x.wants {delete(w.have,x.allocator);delete(w.asked,x.allocator)}
-    for p in x.peers {
+    for &w in x.wants {
+        if w.receiving {store.receiver_close(&w.receiver)}
+        delete(w.have,x.allocator);delete(w.asked,x.allocator)
+    }
+    for &p in x.peers {
+        if p.reading {store.reader_close(&p.reader)}
         delete(p.flights,x.allocator);delete(p.serve,x.allocator);delete(p.out,x.allocator);delete(p.control,x.allocator)
         for a in p.assembly {delete(a,x.allocator)}
     }
@@ -328,6 +339,7 @@ peer_find :: proc(x:^Exchange,h:^wire.Host,connection:wire.Connection) -> int {
 
 @(private)
 peer_reset :: proc(p:^Peer) {
+    serve_stop(p)
     keep:=Peer{flights=p.flights,serve=p.serve,out=p.out,control=p.control,assembly=p.assembly}
     p^=keep
 }
@@ -366,6 +378,7 @@ peer_bad :: proc(x:^Exchange,i:int) {
     }
     p.bad=true
     p.serve_count,p.out_len,p.out_sent,p.started=0,0,0,false
+    serve_stop(p)
     x.dirty=true
 }
 

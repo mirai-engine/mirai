@@ -429,4 +429,22 @@ a_complete_blob_serves_its_kept_table_and_a_reader :: proc(t:^testing.T) {
     testing.expect(t,os.is_file(received_kept),"a received blob keeps the table it was checked with")
     testing.expect_value(t,remove(&s,hash),Error.None)
     testing.expect(t,!os.is_file(kept))
+
+    // A piece of a complete blob that no longer matches proves the file
+    // damaged: it is never returned, and the blob goes so it can come again.
+    for size in ([2]int{PIECE_BYTES-3,3*PIECE_BYTES+4}) {
+        good:=test_bytes(size,83)
+        damaged_hash,_:=put_bytes(&s,good)
+        path,_:=blob_path(&s,damaged_hash,context.temp_allocator)
+        bad:=make([]u8,size,context.temp_allocator)
+        copy(bad,good)
+        bad[size-2]~=0x40
+        testing.expect(t,os.write_entire_file(path,bad)==nil)
+        back:=make([]u8,size,context.temp_allocator)
+        if size>PIECE_BYTES {testing.expect_value(t,read(&s,damaged_hash,0,back[:PIECE_BYTES/2]),Error.None)}
+        testing.expect_value(t,read(&s,damaged_hash,0,back),Error.Corrupt)
+        testing.expectf(t,!has(&s,damaged_hash),"a damaged blob of %d bytes is removed",size)
+        again,_:=put_bytes(&s,good)
+        testing.expect(t,again==damaged_hash && read(&s,again,0,back)==.None && string(back)==string(good),"and put again")
+    }
 }

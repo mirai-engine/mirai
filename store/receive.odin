@@ -34,6 +34,7 @@ Partial_File :: enum {Data,Have}
 Claim :: struct {
     buffer:[PATH_BYTES]u8,
     partial:string, // partial/<address>.claimed; "" when nothing is claimed
+    size:i64,       // of the blob, once checked
     published,discard:bool,
 }
 
@@ -48,19 +49,20 @@ receive_begin :: proc(s:^Store,hash:Hash,size:i64,pieces:[]Hash,now:Maybe(time.T
     if s==nil || s.root=="" {return .Invalid_Argument}
     if size<0 || len(pieces)!=piece_count(size) || len(pieces)==1 {return .Invalid_Argument}
     if address_value(size,pieces)!=hash {return .Corrupt}
-    refreshed:=blob_refresh(s,hash,now.? or_else time.now())
+    refreshed:=blob_refresh(s,hash,size,now.? or_else time.now())
     if refreshed==.None {
         partial_discard(s,hash)
         return .None
     }
-    if refreshed!=.Missing {return refreshed}
+    if refreshed!=.Missing && refreshed!=.Wrong_Size {return refreshed}
     if size==0 {
         _,error:=put_bytes(s,nil,now)
         return error
     }
     existing,existing_error:=partial_open(s,hash,{.Data,.Have})
     if existing_error==.None {
-        full,full_error:=partial_full(&existing)
+        from:=0
+        full,full_error:=partial_full(&existing,&from)
         partial_close(&existing)
         if full_error!=.None {return full_error}
         if !full {return .None}
@@ -72,7 +74,7 @@ receive_begin :: proc(s:^Store,hash:Hash,size:i64,pieces:[]Hash,now:Maybe(time.T
     folder:=partial_folder(s,hash,&folder_buffer) or_return
     made:=temp_folder(s.root,"receive-",&made_buffer) or_return
     error:=partial_write(made,size,pieces)
-    if error==.None && os.rename(made,folder)!=nil {
+    if error==.None && rename_folder(made,folder)!=nil {
         error=.None if os.is_directory(folder) else .Io
     }
     base.remove_all(made)
@@ -86,11 +88,45 @@ receive_begin :: proc(s:^Store,hash:Hash,size:i64,pieces:[]Hash,now:Maybe(time.T
 // folder is discarded (never a complete blob) to begin again with the size
 // the piece gives.
 receive_piece :: proc(s:^Store,hash:Hash,index:int,piece:[]u8,now:Maybe(time.Time)=nil) -> Error {
-    if s==nil || s.root=="" {return .Invalid_Argument}
-    p,error:=partial_open(s,hash,{.Data,.Have})
-    if error==.Missing {return complete_piece(s,hash,index,piece)}
-    if error!=.None {return error}
-    defer partial_close(&p)
+    r:=receiver_open(s,hash) or_return
+    defer receiver_close(&r)
+    return receiver_piece(&r,index,piece,now)
+}
+
+// A blob being received held open for its pieces; its owner closes it.
+// Completion and a wrong size close its files, and the next piece opens
+// them again or finds the blob complete.
+Receiver :: struct {
+    s:^Store,
+    hash:Hash,
+    p:Partial,
+    marked:int, // the pieces before it are marked
+}
+
+receiver_open :: proc(s:^Store,hash:Hash) -> (r:Receiver,error:Error) {
+    if s==nil || s.root=="" {return {},.Invalid_Argument}
+    r.s,r.hash=s,hash
+    r.p,error=partial_open(s,hash,{.Data,.Have})
+    if error==.Missing && has(s,hash) {error=.None}
+    return r,error
+}
+
+receiver_close :: proc(r:^Receiver) {
+    partial_close(&r.p)
+    r.marked=0
+}
+
+receiver_piece :: proc(r:^Receiver,index:int,piece:[]u8,now:Maybe(time.Time)=nil) -> Error {
+    if r.s==nil {return .Invalid_Argument}
+    s,hash:=r.s,r.hash
+    if r.p.table==nil {
+        error:Error
+        r.p,error=partial_open(s,hash,{.Data,.Have})
+        r.marked=0
+        if error==.Missing {return complete_piece(s,hash,index,piece)}
+        if error!=.None {return error}
+    }
+    p:=&r.p
     if index<0 || index>=p.count || len(piece)==0 || len(piece)>PIECE_BYTES {return .Invalid_Argument}
     expected:Hash
     read_exact(p.table,expected[:],TABLE_HEADER+i64(index)*size_of(Hash)) or_return
@@ -99,7 +135,7 @@ receive_piece :: proc(s:^Store,hash:Hash,index:int,piece:[]u8,now:Maybe(time.Tim
         // The table does not bind the length of the last piece; the piece does.
         proven:=i64(index)*PIECE_BYTES+i64(len(piece))
         if piece_value(piece,index,proven)!=expected {return .Invalid_Argument}
-        partial_close(&p)
+        receiver_close(r)
         partial_discard(s,hash)
         return .Wrong_Size
     }
@@ -107,9 +143,9 @@ receive_piece :: proc(s:^Store,hash:Hash,index:int,piece:[]u8,now:Maybe(time.Tim
     if _,write_error:=os.write_at(p.data,piece,i64(index)*PIECE_BYTES);write_error!=nil {return os_error(write_error)}
     mark:=[1]u8{1}
     if _,write_error:=os.write_at(p.have,mark[:],i64(index));write_error!=nil {return os_error(write_error)}
-    full:=partial_full(&p) or_return
-    partial_close(&p)
+    full:=partial_full(p,&r.marked) or_return
     if !full {return .None}
+    receiver_close(r)
     return partial_finish(s,hash,now)
 }
 
@@ -158,13 +194,23 @@ claimed_folder :: proc(s:^Store,hash:Hash,buffer:^[PATH_BYTES]u8) -> (string,Err
     return join(buffer,s.root,"partial",string(name[:]))
 }
 
+// What fails closes what it opened and gives nothing.
 @(private)
-partial_open_at :: proc(folder:string,files:bit_set[Partial_File]) -> (p:Partial,error:Error) {
+partial_open_at :: proc(folder:string,files:bit_set[Partial_File]) -> (Partial,Error) {
+    p,error:=partial_files(folder,files)
+    if error!=.None {
+        partial_close(&p)
+        return {},error
+    }
+    return p,.None
+}
+
+@(private)
+partial_files :: proc(folder:string,files:bit_set[Partial_File]) -> (p:Partial,error:Error) {
     buffer:[PATH_BYTES]u8
     open_error:os.Error
-    p.table,open_error=os.open(join(&buffer,folder,"table") or_return)
+    p.table,open_error=file_open(join(&buffer,folder,"table") or_return)
     if open_error!=nil {return {},os_error(open_error)}
-    defer if error!=.None {partial_close(&p)}
     header:[TABLE_HEADER]u8
     read_exact(p.table,header[:],0) or_return
     for i in 0..<TABLE_HEADER {p.size|=i64(header[i])<<(8*uint(i))}
@@ -174,11 +220,11 @@ partial_open_at :: proc(folder:string,files:bit_set[Partial_File]) -> (p:Partial
     if size_error!=nil {return p,os_error(size_error)}
     if table_size!=TABLE_HEADER+i64(p.count)*size_of(Hash) {return p,.Corrupt}
     if .Data in files {
-        p.data,open_error=os.open(join(&buffer,folder,"data") or_return,{.Read,.Write})
+        p.data,open_error=file_open(join(&buffer,folder,"data") or_return,{.Read,.Write})
         if open_error!=nil {return p,os_error(open_error)}
     }
     if .Have in files {
-        p.have,open_error=os.open(join(&buffer,folder,"have") or_return,{.Read,.Write})
+        p.have,open_error=file_open(join(&buffer,folder,"have") or_return,{.Read,.Write})
         if open_error!=nil {return p,os_error(open_error)}
         have_size,have_error:=os.file_size(p.have)
         if have_error!=nil {return p,os_error(have_error)}
@@ -200,30 +246,32 @@ partial_write :: proc(folder:string,size:i64,pieces:[]Hash) -> Error {
     buffer:[PATH_BYTES]u8
     header:[TABLE_HEADER]u8
     for i in 0..<TABLE_HEADER {header[i]=u8(u64(size)>>(8*uint(i)))}
-    table,table_error:=os.open(join(&buffer,folder,"table") or_return,{.Write,.Create,.Trunc})
+    table,table_error:=file_open(join(&buffer,folder,"table") or_return,{.Write,.Create,.Trunc})
     if table_error!=nil {return os_error(table_error)}
-    _,header_error:=os.write(table,header[:])
-    _,pieces_error:=os.write(table,mem.slice_to_bytes(pieces))
+    written:=file_append(table,{header[:],mem.slice_to_bytes(pieces)})
     os.close(table)
-    if header_error!=nil || pieces_error!=nil {return .Io}
-    data,data_error:=os.open(join(&buffer,folder,"data") or_return,{.Write,.Create,.Trunc})
+    written or_return
+    data,data_error:=file_open(join(&buffer,folder,"data") or_return,{.Write,.Create,.Trunc})
     if data_error!=nil {return os_error(data_error)}
     os.close(data)
-    have,have_error:=os.open(join(&buffer,folder,"have") or_return,{.Write,.Create,.Trunc})
+    have,have_error:=file_open(join(&buffer,folder,"have") or_return,{.Write,.Create,.Trunc})
     if have_error!=nil {return os_error(have_error)}
     truncate_error:=os.truncate(have,i64(len(pieces)))
     os.close(have)
     return os_error(truncate_error)
 }
 
+// Whether every piece is marked, reading the marks from from on, which
+// moves past those found marked.
 @(private)
-partial_full :: proc(p:^Partial) -> (full:bool,error:Error) {
+partial_full :: proc(p:^Partial,from:^int) -> (full:bool,error:Error) {
     marks:[4096]u8
-    for at:=0;at<p.count;at+=len(marks) {
-        chunk:=marks[:min(len(marks),p.count-at)]
-        read_exact(p.have,chunk,i64(at)) or_return
+    for from^<p.count {
+        chunk:=marks[:min(len(marks),p.count-from^)]
+        read_exact(p.have,chunk,i64(from^)) or_return
         for mark in chunk {
             if mark==0 {return false,.None}
+            from^+=1
         }
     }
     return true,.None
@@ -254,12 +302,12 @@ partial_claim :: proc(s:^Store,hash:Hash,c:^Claim,now:time.Time) -> Error {
     if !os.is_directory(from) {
         at,time_error:=os.modification_time_by_path(claimed)
         if time_error==nil && older_than(at,now,TMP_STALE) {
-            os.rename(claimed,from)
+            rename_folder(claimed,from)
         }
         if !os.is_directory(from) {return .Missing}
     }
     os.change_times(from,now,now)
-    if os.rename(from,claimed)!=nil {return .Missing}
+    if rename_folder(from,claimed)!=nil {return .Missing}
     c.partial=claimed
     return .None
 }
@@ -274,7 +322,8 @@ claim_verify :: proc(s:^Store,hash:Hash,c:^Claim) -> (complete:bool,error:Error)
     if error==.Corrupt {c.discard=true}
     if error!=.None {return false,error}
     defer partial_close(&p)
-    full:=partial_full(&p) or_return
+    from:=0
+    full:=partial_full(&p,&from) or_return
     if !full {return false,.None}
     pieces,make_error:=make([]Hash,p.count,s.allocator)
     if make_error!=nil {return false,.Out_Of_Memory}
@@ -283,7 +332,7 @@ claim_verify :: proc(s:^Store,hash:Hash,c:^Claim) -> (complete:bool,error:Error)
     buffer:[PIECE_BYTES]u8=---
     damaged:=false
     for index in 0..<p.count {
-        _,_,good:=partial_piece(&p,index,&buffer) or_return
+        _,_,good:=partial_piece(&p,index,buffer[:]) or_return
         if !good {damaged=true}
     }
     address:=address_value(p.size,pieces)
@@ -293,19 +342,24 @@ claim_verify :: proc(s:^Store,hash:Hash,c:^Claim) -> (complete:bool,error:Error)
         c.discard=true
         return false,.Corrupt
     }
-    return !damaged,.None
+    if damaged {return false,.None}
+    c.size=p.size
+    // The checked bytes reach the disk before their name: after a crash a
+    // complete blob is never one whose pieces were still in memory.
+    os_error(os.sync(p.data)) or_return
+    return true,.None
 }
 
 // Moves the checked data into the blob's place, and its table to the kept tables.
 @(private)
 claim_publish :: proc(s:^Store,hash:Hash,c:^Claim,now:Maybe(time.Time)=nil) -> Error {
     buffer,table_buffer,kept_buffer,folder_buffer:[PATH_BYTES]u8
-    placed:=blob_place(s,join(&buffer,c.partial,"data") or_return,hash,now) or_return
+    placed:=blob_place(s,join(&buffer,c.partial,"data") or_return,hash,c.size,now) or_return
     c.published=true
     if !placed {return .None}
     name:[64]u8
     if folder_make(join(&folder_buffer,s.root,"tables",hex(hash,&name)[:2]) or_return)==.None {
-        os.rename(join(&table_buffer,c.partial,"table") or_return,table_file(s,hash,&kept_buffer) or_return)
+        rename_replace(join(&table_buffer,c.partial,"table") or_return,table_file(s,hash,&kept_buffer) or_return)
     }
     return .None
 }
@@ -317,7 +371,7 @@ claim_end :: proc(s:^Store,hash:Hash,c:^Claim) {
     if c.partial=="" {return}
     if !c.published && !c.discard {
         back_buffer:[PATH_BYTES]u8
-        if back,error:=partial_folder(s,hash,&back_buffer);error==.None && os.rename(c.partial,back)==nil {
+        if back,error:=partial_folder(s,hash,&back_buffer);error==.None && rename_folder(c.partial,back)==nil {
             c.partial=""
             return
         }
@@ -329,7 +383,7 @@ claim_end :: proc(s:^Store,hash:Hash,c:^Claim) {
 // Reads piece index of a partial blob and checks it against its table entry;
 // a piece that does not match has its mark cleared.
 @(private)
-partial_piece :: proc(p:^Partial,index:int,buffer:^[PIECE_BYTES]u8) -> (entry:Hash,piece:[]u8,good:bool,error:Error) {
+partial_piece :: proc(p:^Partial,index:int,buffer:[]u8) -> (entry:Hash,piece:[]u8,good:bool,error:Error) {
     read_exact(p.table,entry[:],TABLE_HEADER+i64(index)*size_of(Hash)) or_return
     piece=buffer[:piece_size(p.size,index)]
     got:=read_exact(p.data,piece,i64(index)*PIECE_BYTES)
@@ -394,32 +448,8 @@ folder_discard :: proc(s:^Store,folder:string) -> Error {
     if !os.is_directory(folder) {return .Missing}
     made:=temp_folder(s.root,"discard-",&made_buffer) or_return
     moved:=join(&moved_buffer,made,"blob") or_return
-    renamed:=os.rename(folder,moved)
+    renamed:=rename_folder(folder,moved)
     base.remove_all(made)
     if renamed!=nil {return .Missing if !os.is_directory(folder) else .Io}
-    return .None
-}
-
-// The range of a blob being received, when all its pieces are here and match the table.
-@(private)
-read_partial :: proc(s:^Store,hash:Hash,offset:i64,buffer:[]u8) -> Error {
-    p:=partial_open(s,hash,{.Data,.Have}) or_return
-    defer partial_close(&p)
-    if offset>p.size || i64(len(buffer))>p.size-offset {return .Invalid_Argument}
-    if len(buffer)==0 {return .None}
-    first:=int(offset/PIECE_BYTES)
-    last:=int((offset+i64(len(buffer))-1)/PIECE_BYTES)
-    piece_buffer:[PIECE_BYTES]u8=---
-    for index in first..=last {
-        mark:[1]u8
-        read_exact(p.have,mark[:],i64(index)) or_return
-        if mark[0]==0 {return .Not_Here_Yet}
-        _,piece,good:=partial_piece(&p,index,&piece_buffer) or_return
-        if !good {return .Not_Here_Yet}
-        start:=i64(index)*PIECE_BYTES
-        from:=max(offset,start)
-        to:=min(offset+i64(len(buffer)),start+i64(len(piece)))
-        copy(buffer[from-offset:to-offset],piece[from-start:to-start])
-    }
     return .None
 }

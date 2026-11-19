@@ -48,6 +48,10 @@ headless peer and the editor link the same code. Its messages are in `exchange/w
   answers release nothing a second time.
 - A request addresses at most `MAX_BLOB_BYTES` and never depends on the server's own cap: a blob
   above the server's `max_blob_bytes` is answered as lacking.
+- A peer whose copy is damaged never serves the damage: the store finds it when it reads the piece,
+  removes the blob and the peer lacks it, so it is not taken for a liar and fetches it again.
+- Serving holds the blob being served open per peer, and receiving holds the partial files of up
+  to `RECEIVERS` wants open, closing the one that took no piece for longest.
 - Nothing unverified reaches a reader: tables and pieces go through `receive_begin` and
   `receive_piece`. A table or piece is taken only from the peer it was asked of; anything else
   counts against that peer. A table that does not match its address, claims a size this end does
@@ -77,6 +81,7 @@ headless peer and the editor link the same code. Its messages are in `exchange/w
   `a_transfer_resumes_after_the_connection_drops_and_after_the_store_reopens`,
   `a_liar_in_the_table_a_piece_or_the_size_is_marked_and_the_blob_still_arrives`,
   `a_peer_still_receiving_a_blob_serves_its_pieces_to_a_third`,
+  `a_damaged_blob_is_lacked_removed_and_fetched_again`,
   `refs_are_asked_and_listed_and_a_namespace_not_exposed_gives_nothing`,
   `the_blocking_form_returns_for_a_hit_a_miss_and_a_disconnect`,
   `the_batch_blocking_forms_return_for_a_hit_a_partial_miss_and_a_disconnect`,

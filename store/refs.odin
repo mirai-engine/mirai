@@ -14,7 +14,7 @@ Ref :: struct {
 ref_get :: proc(s:^Store,namespace,name:string) -> (hash:Hash,error:Error) {
     buffer:[PATH_BYTES]u8
     path:=ref_file(s,namespace,name,&buffer) or_return
-    file,open_error:=os.open(path)
+    file,open_error:=file_open(path)
     if open_error!=nil {return {},os_error(open_error)}
     defer os.close(file)
     return ref_parse(file)
@@ -32,7 +32,7 @@ ref_set :: proc(s:^Store,namespace,name:string,hash:Hash) -> Error {
 ref_remove :: proc(s:^Store,namespace,name:string) -> Error {
     buffer:[PATH_BYTES]u8
     path:=ref_file(s,namespace,name,&buffer) or_return
-    return os_error(os.remove(path))
+    return os_error(file_remove(path))
 }
 
 // The refs of a namespace; an unknown namespace has none. ref_list_delete frees them.
@@ -49,7 +49,7 @@ ref_list :: proc(s:^Store,namespace:string,allocator:=context.allocator) -> (ref
     n:=0
     for entry in entries {
         if entry.type!=.Regular || !name_valid(entry.name) {continue}
-        file,open_error:=os.open(entry.fullpath)
+        file,open_error:=file_open(entry.fullpath)
         if open_error==.Not_Exist {continue}
         error=os_error(open_error)
         hash:Hash
@@ -69,6 +69,36 @@ ref_list :: proc(s:^Store,namespace:string,allocator:=context.allocator) -> (ref
         n+=1
     }
     return list[:n],.None
+}
+
+// The namespaces that hold refs; ref_namespaces_delete frees them.
+ref_namespaces :: proc(s:^Store,allocator:=context.allocator) -> (namespaces:[]string,error:Error) {
+    buffer:[PATH_BYTES]u8
+    folder:=join(&buffer,s.root,"refs") or_return
+    entries,read_error:=os.read_all_directory_by_path(folder,s.allocator)
+    if read_error==.Not_Exist {return nil,.None}
+    if read_error!=nil {return nil,os_error(read_error)}
+    defer os.file_info_slice_delete(entries,s.allocator)
+    list,make_error:=make([]string,len(entries),allocator)
+    if make_error!=nil {return nil,.Out_Of_Memory}
+    n:=0
+    for entry in entries {
+        if entry.type!=.Directory || !name_valid(entry.name) {continue}
+        name,name_error:=make([]u8,len(entry.name),allocator)
+        if name_error!=nil {
+            ref_namespaces_delete(list[:n],allocator)
+            return nil,.Out_Of_Memory
+        }
+        copy(name,entry.name)
+        list[n]=string(name)
+        n+=1
+    }
+    return list[:n],.None
+}
+
+ref_namespaces_delete :: proc(list:[]string,allocator:=context.allocator) {
+    for name in list {delete(name,allocator)}
+    delete(list,allocator)
 }
 
 ref_list_delete :: proc(list:[]Ref,allocator:=context.allocator) {

@@ -18,11 +18,13 @@ derived data cache that use it decide what a ref means and what is live.
 ## Map
 
 - Address, pieces and hex: `store/address.odin`.
-- Root, layout version, errors and atomic writes: `store/store.odin`.
+- Root, layout version, errors and atomic writes: `store/store.odin`; what differs per system
+  (sharing on Windows, a full volume, whether a process runs): `store/system_*.odin`.
 - Complete blobs, their kept tables and readers: `store/blobs.odin`.
 - Receiving a blob piece by piece and range reads of a partial one: `store/receive.odin`.
 - Refs and their names: `store/refs.odin`.
-- Usage and sweep: `store/space.odin`.
+- Usage and sweep: `store/space.odin`; leases: `store/leases.odin`. The sweep a long-running
+  owner calls, with what is live on the machine: `asset.store_sweep` (`asset/collect.odin`).
 - Moving blobs and refs between peers (`exchange`): what its owner calls →
   [exchange](references/exchange.md#what-the-owner-calls), its rules →
   [invariants](references/exchange.md#invariants), its tests →
@@ -69,17 +71,35 @@ derived data cache that use it decide what a ref means and what is live.
   against the address whenever it is read, so serving a blob never rehashes it; a damaged kept
   table is rebuilt. A blob of one piece keeps none: its table is its address.
 - A complete blob is a plain file of its raw bytes, never written in place: readers open it by
-  path or hold it open with a `Reader`.
+  path or hold it open with a `Reader`. A put or a completion that finds a file of another size in
+  its place replaces it; a full check of what is there would read the whole file on every put, so
+  content is checked where bytes are read anyway.
+- `read`, a `Reader` and serving check every piece of a complete blob against its kept table
+  (checked against the address when the reader opens): a piece that does not match proves the file
+  damaged, is never returned, and the blob is removed so it is fetched or put again.
+- The bytes of a received blob reach the disk before it is published, as those of a put do.
+- A receiver holds a blob's partial files open across its pieces and reads the marks only from the
+  first one it has not seen marked.
 - The root carries its layout version; a root of another layout is refused, never read.
 - The store never decides what is live: sweep removes the complete blobs outside the set it is
-  given plus the addresses of every fresh lease, and partial blobs only go through remove.
+  given plus the addresses of every lease that holds, and the partial blobs outside them that took
+  no piece for `PARTIAL_GRACE_AGE`. `asset.store_sweep` gives it every ref of every namespace and
+  the outputs of the builds they name; nothing in the store sweeps on its own.
+- A sweep judges what it claims in `tmp/sweep`, made with the root, so it frees space on a full
+  volume; a sweep that stopped leaves its claims there, and the next one removes those old enough
+  and gives back the rest. A full volume is `No_Space`, never `Io`.
 - A sweep is safe beside writers of other processes: it never removes a blob younger than the
   grace age, a put of a blob already here refreshes its time, and the sweep claims an old blob by
   renaming it away before it judges its age again, giving it back if a put refreshed it. A put that
   succeeds is never lost to a sweep; a reader may find a blob missing for the instant of a claim,
   which is a miss like any other. A blob that will not delete is skipped and counted.
-- A process that uses blobs holds a lease, a file it refreshes while it runs; a lease that stops
-  being refreshed stops protecting.
+- A process that uses blobs holds a lease that names its machine, pid and process start: on that
+  machine it holds while the process runs, whatever the clock or a suspend did, and stops at once
+  when the process ends. A lease of another machine on a shared root holds while it is younger
+  than `LEASE_MAX_AGE`.
+- On Windows every file of the store is opened sharing delete, and replacing or removing one uses
+  POSIX semantics, so a reader, another process or an antivirus holding it does not stop it;
+  sharing violations are retried briefly.
 - Ref namespaces and names are lowercase ASCII, digits, `.`, `_` and `-`, so a ref is the same
   file on every system.
 - No input terminates the process: damaged or truncated files of the root, random tables and
@@ -91,5 +111,6 @@ derived data cache that use it decide what a ref means and what is live.
 - Focal tests: `address_is_the_same_through_put_bytes_put_file_and_receiving` (sizes around the
   piece boundaries), `receiving_resumes_after_reopening_and_reads_the_pieces_it_has`,
   `two_stores_on_one_root_put_and_receive_from_several_threads`,
-  `completion_publishes_only_the_bytes_it_checked`,
+  `completion_publishes_only_the_bytes_it_checked`, `fresh_leases_keep_their_current_addresses`,
+  `sweep_removes_old_partials_and_settles_what_a_stopped_sweep_claimed`,
   `a_failed_placement_loses_nothing_and_is_retried` and `hostile_inputs_return_errors`.

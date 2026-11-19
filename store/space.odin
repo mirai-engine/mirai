@@ -8,11 +8,21 @@ import "mirai:std/base"
 BLOB_GRACE_AGE :: time.Hour
 BLOB_REFRESH_AGE :: BLOB_GRACE_AGE/4
 
+PARTIAL_GRACE_AGE :: 24*time.Hour // a blob being received that no lease names and that took no piece for this long is removed
+
 @(private)
 TMP_STALE :: time.Hour
 
+// Where a sweep claims what it judges, made with the root so that a full
+// volume leaves a sweep room to work: tmp/sweep/<kind>-<name>.
 @(private)
-SWEEP_PREFIX :: "sweep-"
+SWEEP_FOLDER :: "tmp/sweep"
+
+@(private)
+Claim_Kind :: enum u8 {Blob,Table,Lease,Partial}
+
+@(private)
+CLAIM_PREFIXES :: [Claim_Kind]string{.Blob="b-",.Table="t-",.Lease="l-",.Partial="p-"}
 
 Usage :: struct {
     bytes:i64,
@@ -20,7 +30,8 @@ Usage :: struct {
 }
 
 Sweep_Result :: struct {
-    using freed:Usage,
+    using freed:Usage, // complete blobs, and the bytes of partial ones
+    partials:int,      // partial blobs removed
     skipped:int,
 }
 
@@ -48,6 +59,7 @@ usage :: proc(s:^Store) -> (total:Usage,error:Error) {
 sweep :: proc(s:^Store,live:[]Hash,now:Maybe(time.Time)=nil) -> (result:Sweep_Result,error:Error) {
     if s==nil || s.root=="" {return {},.Invalid_Argument}
     at:=now.? or_else time.now()
+    claims_settle(s,at) or_return
     set,make_error:=make(Live_Set,len(live),s.allocator)
     if make_error!=nil {return {},.Out_Of_Memory}
     defer delete(set)
@@ -59,6 +71,8 @@ sweep :: proc(s:^Store,live:[]Hash,now:Maybe(time.Time)=nil) -> (result:Sweep_Re
     state.tables=true
     error=blobs_walk(s,"tables",sweep_entry,&state)
     if error!=.None {return state.result,error}
+    error=partials_sweep(&state)
+    if error!=.None {return state.result,error}
 
     buffer:[PATH_BYTES]u8
     tmp:=join(&buffer,s.root,"tmp") or_return
@@ -66,16 +80,8 @@ sweep :: proc(s:^Store,live:[]Hash,now:Maybe(time.Time)=nil) -> (result:Sweep_Re
     if read_error!=nil {return state.result,os_error(read_error)}
     defer os.file_info_slice_delete(entries,s.allocator)
     for entry in entries {
-        if !older_than(entry.modification_time,at,TMP_STALE) {continue}
-        if entry.type==.Directory && strings.has_prefix(entry.name,SWEEP_PREFIX) {
-            claimed,path_error:=join(&buffer,entry.fullpath,"file")
-            if path_error!=.None {continue}
-            modified,stat_error:=regular_time(s,claimed)
-            if stat_error==.None && older_than(modified,at,BLOB_GRACE_AGE) {os.remove(claimed)}
-            os.remove(entry.fullpath)
-        } else {
-            base.remove_all(entry.fullpath)
-        }
+        if entry.name=="sweep" || !older_than(entry.modification_time,at,TMP_STALE) {continue}
+        base.remove_all(entry.fullpath)
     }
     return state.result,.None
 }
@@ -94,12 +100,12 @@ sweep_entry :: proc(user:rawptr,file:os.File_Info,hash:Hash) {
     if hash in state.live || !older_than(file.modification_time,state.now,BLOB_GRACE_AGE) {return}
     if state.tables && has(state.s,hash) {return}
     buffer:[PATH_BYTES]u8
-    claimed,error:=sweep_claim(state.s,file.fullpath,&buffer)
+    name:[64]u8
+    claimed,error:=sweep_claim(state.s,file.fullpath,.Table if state.tables else .Blob,hex(hash,&name),&buffer)
     if error!=.None {
         if !state.tables {state.result.skipped+=1}
         return
     }
-    defer os.remove(os.dir(claimed))
     keep:=state.tables && has(state.s,hash)
     removed,finish_error:=sweep_finish(state.s,file.fullpath,claimed,state.now,keep)
     if state.tables {return}
@@ -110,37 +116,115 @@ sweep_entry :: proc(user:rawptr,file:os.File_Info,hash:Hash) {
     }
 }
 
+// Removes the partial blobs outside the live set whose marks took no piece
+// for PARTIAL_GRACE_AGE, and gives back the claimed folder of a completion
+// that ended without finishing.
+@(private)
+partials_sweep :: proc(state:^Sweep) -> Error {
+    s:=state.s
+    buffer:[PATH_BYTES]u8
+    folder:=join(&buffer,s.root,"partial") or_return
+    entries,read_error:=os.read_all_directory_by_path(folder,s.allocator)
+    if read_error!=nil {return os_error(read_error)}
+    defer os.file_info_slice_delete(entries,s.allocator)
+    for entry in entries {
+        if entry.type!=.Directory {continue}
+        name:=entry.name
+        claimed:=strings.has_suffix(name,CLAIMED)
+        if claimed {name=name[:len(name)-len(CLAIMED)]}
+        hash,ok:=parse_hex(name)
+        if !ok || hash in state.live {continue}
+        path:=entry.fullpath
+        back_buffer:[PATH_BYTES]u8
+        if claimed {
+            if !older_than(entry.modification_time,state.now,TMP_STALE) {continue}
+            path=partial_folder(s,hash,&back_buffer) or_continue
+            if rename_folder(entry.fullpath,path)!=nil {continue}
+        }
+        if !partial_old(s,path,state.now) {continue}
+        claim_buffer:[PATH_BYTES]u8
+        held,claim_error:=sweep_claim(s,path,.Partial,name,&claim_buffer)
+        if claim_error!=.None {
+            state.result.skipped+=1
+            continue
+        }
+        if !partial_old(s,held,state.now) {
+            sweep_restore(path,held)
+            continue
+        }
+        data_buffer:[PATH_BYTES]u8
+        bytes:i64
+        if data,data_error:=join(&data_buffer,held,"data");data_error==.None {
+            if info,stat_error:=os.lstat(data,s.allocator);stat_error==nil {
+                bytes=info.size
+                os.file_info_delete(info,s.allocator)
+            }
+        }
+        if base.remove_all(held)!=nil {
+            state.result.skipped+=1
+            continue
+        }
+        state.result.bytes+=bytes
+        state.result.partials+=1
+    }
+    return .None
+}
+
+// Whether the marks of the partial folder took no piece for PARTIAL_GRACE_AGE.
+@(private)
+partial_old :: proc(s:^Store,folder:string,now:time.Time) -> bool {
+    buffer:[PATH_BYTES]u8
+    have,error:=join(&buffer,folder,"have")
+    if error!=.None {return false}
+    info,stat_error:=os.lstat(have,s.allocator)
+    if stat_error!=nil {
+        // A folder without marks is a begin that never finished: judged by its own time.
+        folder_info,folder_error:=os.lstat(folder,s.allocator)
+        if folder_error!=nil {return false}
+        defer os.file_info_delete(folder_info,s.allocator)
+        return older_than(folder_info.modification_time,now,PARTIAL_GRACE_AGE)
+    }
+    defer os.file_info_delete(info,s.allocator)
+    return older_than(info.modification_time,now,PARTIAL_GRACE_AGE)
+}
+
 @(private)
 older_than :: proc(at,now:time.Time,age:time.Duration) -> bool {
     return at._nsec<now._nsec && u64(now._nsec)-u64(at._nsec)>u64(age)
 }
 
+// The time and size of the regular file at path.
 @(private)
-regular_time :: proc(s:^Store,path:string) -> (time.Time,Error) {
-    info,error:=os.lstat(path,s.allocator)
-    if error!=nil {return {},os_error(error)}
+regular_info :: proc(s:^Store,path:string) -> (at:time.Time,size:i64,error:Error) {
+    info,stat_error:=os.lstat(path,s.allocator)
+    if stat_error!=nil {return {},0,os_error(stat_error)}
     defer os.file_info_delete(info,s.allocator)
-    if info.type!=.Regular {return {},.Io}
-    return info.modification_time,.None
+    if info.type!=.Regular {return {},0,.Io}
+    return info.modification_time,info.size,.None
 }
 
-// The directory dates the claim independently of the file moved into it.
+// Moves path to tmp/sweep/<kind>-<name>, never over another claim: the
+// sweep judges it there, away from writers. Nothing is created, so a full
+// volume does not stop it.
 @(private)
-sweep_claim :: proc(s:^Store,path:string,claim_buffer:^[PATH_BYTES]u8) ->
+sweep_claim :: proc(s:^Store,path:string,kind:Claim_Kind,name:string,claim_buffer:^[PATH_BYTES]u8) ->
     (claimed:string,error:Error) {
-    folder_buffer:[PATH_BYTES]u8
-    folder:=temp_folder(s.root,SWEEP_PREFIX,&folder_buffer) or_return
-    claimed,error=join(claim_buffer,folder,"file")
-    if error==.None {error=os_error(os.rename(path,claimed))}
-    if error!=.None {os.remove(folder);return "",error}
+    prefixes:=CLAIM_PREFIXES
+    entry:[2+NAME_MAX]u8
+    if len(name)>NAME_MAX {return "",.Invalid_Argument}
+    copy(entry[:],prefixes[kind])
+    copy(entry[2:],name)
+    claimed=join(claim_buffer,s.root,SWEEP_FOLDER,string(entry[:2+len(name)])) or_return
+    exists:=rename_new(path,claimed) or_return
+    if exists {return "",.Io}
     return claimed,.None
 }
 
 @(private)
 sweep_finish :: proc(s:^Store,path,claimed:string,now:time.Time,keep:=false) -> (bool,Error) {
-    at,error:=regular_time(s,claimed)
+    at,_,error:=regular_info(s,claimed)
     if error==.None && !keep && older_than(at,now,BLOB_GRACE_AGE) {
-        error=os_error(os.remove(claimed))
+        error=os_error(file_remove(claimed))
         if error==.None {return true,.None}
     }
     restored:=sweep_restore(path,claimed)
@@ -150,7 +234,63 @@ sweep_finish :: proc(s:^Store,path,claimed:string,now:time.Time,keep:=false) -> 
 @(private)
 sweep_restore :: proc(path,claimed:string) -> Error {
     exists:=rename_new(claimed,path) or_return
-    if exists {return os_error(os.remove(claimed))}
+    if exists {
+        if os.is_directory(claimed) {return os_error(base.remove_all(claimed))}
+        return os_error(file_remove(claimed))
+    }
+    return .None
+}
+
+// Settles what a sweep that stopped left claimed: blobs and tables old
+// enough are removed, as that sweep would have, and the rest goes back.
+@(private)
+claims_settle :: proc(s:^Store,now:time.Time) -> Error {
+    buffer:[PATH_BYTES]u8
+    folder:=join(&buffer,s.root,SWEEP_FOLDER) or_return
+    entries,read_error:=os.read_all_directory_by_path(folder,s.allocator)
+    if read_error!=nil {return os_error(read_error)}
+    defer os.file_info_slice_delete(entries,s.allocator)
+    prefixes:=CLAIM_PREFIXES
+    for entry in entries {
+        if len(entry.name)<3 {continue}
+        kind,found:=Claim_Kind(0),false
+        for prefix,k in prefixes {
+            if strings.has_prefix(entry.name,prefix) {kind,found=k,true}
+        }
+        if !found {continue}
+        name:=entry.name[2:]
+        origin_buffer:[PATH_BYTES]u8
+        origin:string
+        origin_error:Error
+        switch kind {
+        case .Blob,.Table:
+            hash,ok:=parse_hex(name)
+            if !ok {continue}
+            if kind==.Blob {
+                origin,origin_error=blob_file(s,hash,&origin_buffer)
+            } else {
+                origin,origin_error=table_file(s,hash,&origin_buffer)
+            }
+            if origin_error==.None && older_than(entry.modification_time,now,BLOB_GRACE_AGE) {
+                file_remove(entry.fullpath)
+                continue
+            }
+        case .Lease:
+            if !name_valid(name) {continue}
+            origin,origin_error=join(&origin_buffer,s.root,"leases",name)
+        case .Partial:
+            hash,ok:=parse_hex(name)
+            if !ok {continue}
+            origin,origin_error=partial_folder(s,hash,&origin_buffer)
+        }
+        if origin_error!=.None {continue}
+        if kind==.Blob || kind==.Table {
+            name_buffer:[64]u8
+            folder_buffer:[PATH_BYTES]u8
+            if shard,shard_error:=join(&folder_buffer,s.root,"blobs" if kind==.Blob else "tables",hex(parse_hex(name) or_else {},&name_buffer)[:2]);shard_error==.None {folder_make(shard)}
+        }
+        sweep_restore(origin,entry.fullpath)
+    }
     return .None
 }
 
