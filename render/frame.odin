@@ -567,8 +567,9 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     alone:=frame.offscreen && len(frame.views)>0
     for view in frame.views {if view.texture==0 {alone=false}}
     prepared_ok:=(r.main.targets.ldr!=0 || create_targets(r,&r.main,r.window_width,r.window_height,window_render_scale(r,f32(r.window_height)),true)) &&
-                 prepare_views(r,frame.views,alone) && (r.view_count>0 || ensure_glass_targets(r,&r.main.targets)) &&
+                 prepare_views(r,frame.views,alone) && (r.view_count>0 || (alone || frame.ui_only || scene_targets(r,&r.main)) && ensure_glass_targets(r,&r.main.targets)) &&
                  (frame.ui_only || air_tables_ensure(r) && points_prepare(r))
+    if prepared_ok && r.view_count>0 {main_scene_release(r)}
     // A window whose pipeline generates frames shows them through the presenter of the device.
     if prepared_ok && !frame.offscreen {
         _,main_plan:=view_plan(r,0,true)

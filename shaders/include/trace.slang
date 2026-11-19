@@ -126,7 +126,7 @@ bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, float
     blend &= ~BLEND_THIN;
     Instance inst = scene_instance(instance_index);
     Mesh mesh = meshes[instance_mesh(inst)];
-    Material m = material_row(material_of(inst, mesh_primitive_material(mesh, primitive)), inst.material_values);
+    Material m = material_row(material_of(instance_row(instance_index), inst, mesh_primitive_material(mesh, primitive)), inst.material_values);
     if (m.alpha_mode == ALPHA_BLEND) {
 #ifdef MIRAI_RAY_FILTERS
         if (blend == BLEND_FILTERS) {
