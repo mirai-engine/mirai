@@ -1,13 +1,19 @@
 package editor
 
+import "core:fmt"
 import vmem "core:mem/virtual"
 import "core:strings"
 import "core:testing"
 import "core:time"
+import "mirai:core"
 import "mirai:editor/api"
+import erender "mirai:engine/render"
+import "mirai:editor/history"
 import "mirai:host"
 import gpu "mirai:render"
 import "mirai:std/base"
+import "mirai:std/geom"
+import "mirai:std/serial"
 
 @(private="file")
 MS :: i64(1_000_000)
@@ -355,7 +361,7 @@ the_answers_of_the_profile_methods_have_the_shape_they_declare :: proc(t:^testin
 profile_cost_answers_the_costliest_first :: proc(t:^testing.T) {
     meshes:=[]gpu.Cost_Row{{},{instances=1,triangles=10,pixels=5},{instances=2,triangles=4,shadow_triangles=30},{instances=1,triangles=2}}
     materials:=[]gpu.Cost_Row{{triangles=10,pixels=5},{},{triangles=1,pixels=9},{triangles=30,pixels=5}}
-    out:=profile_cost_answer(nil,{frame=7,meshes=meshes,materials=materials},2,context.temp_allocator)
+    out:=profile_cost_answer(nil,{},{frame=7,meshes=meshes,materials=materials},2,context.temp_allocator)
     testing.expect_value(t,out.frame,7)
     testing.expect(t,out.total.instances==4 && out.total.triangles==16 && out.total.shadow_triangles==30 && out.total.pixels==5)
     if testing.expect_value(t,len(out.meshes),2) {
@@ -364,6 +370,70 @@ profile_cost_answers_the_costliest_first :: proc(t:^testing.T) {
     if testing.expect_value(t,len(out.materials),2) {
         testing.expect(t,out.materials[0].asset=="material row 2" && out.materials[1].asset=="material row 3")
     }
-    all:=profile_cost_answer(nil,{meshes=meshes,materials=materials},64,context.temp_allocator)
+    all:=profile_cost_answer(nil,{},{meshes=meshes,materials=materials},64,context.temp_allocator)
     testing.expect(t,len(all.meshes)==3 && len(all.materials)==3 && all.materials[2].asset=="the default material")
+}
+
+// profile.cost runs frames as the user would: the camera the user flies with
+// the pointer goes on flying through them, as it does through engine.step.
+@(test)
+profile_cost_leaves_the_camera_flying :: proc(t:^testing.T) {
+    world:Simulation_Test_World
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    edits:history.Edits
+    selection:history.Selection
+    viewport:Viewport
+    gui:Editor_Ui
+    app:host.App
+    s:=Session{info=test_world_info(&world),edit_world=&world,edits=&edits,selection=&selection,viewport=&viewport,gui=&gui,app=&app}
+    history.edits_reset(&edits,edited_world(&s))
+    defer history.edits_free(&edits)
+    defer delete(selection.entities)
+    commands:Api
+    if !test_commands_open(t,&s,&commands) {return}
+    defer test_commands_close(&s)
+    state:=api_state(&s)
+    out:serial.Writer
+    serial.writer_init(&out)
+    defer serial.writer_destroy(&out)
+    for name in ([]string{"profile.cost","engine.step"}) {
+        viewport.capture,edits.open=.Look,true
+        method:=api.method_find(&state.server,name)
+        if !testing.expectf(t,method!=nil,"%s is registered",name) {continue}
+        base.arena_reset(&state.server.scratch)
+        serial.writer_reset(&out)
+        api.method_execute(&state.server,method,"{}",&out)
+        testing.expectf(t,viewport.capture==.Look,"%s let go of the camera the pointer flies",name)
+    }
+    edits.open=false
+}
+
+// A mesh made at run time has no file: profile.cost names it by what its
+// maker says it is and by the entity that shows it, the nearest one with a
+// name over it, and that one by its handle.
+@(test)
+profile_cost_names_a_generated_mesh_by_what_it_is_and_whose :: proc(t:^testing.T) {
+    f:=new(Spatial_Fixture);defer free(f)
+    if !spatial_open(t,f) {return}
+    defer spatial_close(f)
+    positions:=[3]geom.Vec3{{0,0,0},{1,0,0},{0,0,1}}
+    indices:=[3]u32{0,1,2}
+    chunk,made:=host.assets_mesh_generate(&f.assets,{positions=positions[:],indices=indices[:]},options={no_lods=true,label="terrain chunk"})
+    alone,made_alone:=host.assets_mesh_generate(&f.assets,{positions=positions[:],indices=indices[:]},options={no_lods=true})
+    if !testing.expect(t,made && made_alone) {return}
+    // Without a renderer they have no handle: these stand for theirs.
+    f.assets.meshes[f.assets.index[chunk].index].handle=1
+    f.assets.meshes[f.assets.index[alone].index].handle=2
+    e:=core.create(&f.w.entities)
+    core.add(&f.w.meshes,e,erender.Mesh_Renderer{mesh=chunk})
+    core.add(&f.w.parents,e,core.Parent{entity=f.lid})
+    w:=core.world_ref(&f.w,&f.info)
+    core.settle(&f.info,&f.w,nil)
+    rows:=[]gpu.Cost_Row{{},{instances=1,triangles=4},{instances=1,triangles=2}}
+    out:=profile_cost_answer(&f.assets,w,{meshes=rows},8,context.temp_allocator)
+    if !testing.expect_value(t,len(out.meshes),2) {return}
+    testing.expect_value(t,out.meshes[0].asset,fmt.tprintf("terrain chunk of Crate/Lid (entity handle 0x%016x)",u64(e)))
+    text:[base.ASSET_ID_TEXT]u8
+    testing.expect_value(t,out.meshes[1].asset,fmt.tprintf("generated mesh %s, shown by no entity",base.asset_id_format(alone,text[:])))
 }
