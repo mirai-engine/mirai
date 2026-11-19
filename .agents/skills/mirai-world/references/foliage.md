@@ -43,8 +43,7 @@ ranges of each cell.
 
 - A type has a stable `id` that is never reused and names a `.mesh` (with the materials of its
   slots that it changes, or those of the mesh) or a prefab, without converting them.
-  `impostor_distance` (0: none) gives it a [far shape](#far-impostor-and-crown) and
-  `wind_variants` (0: `WIND_VARIANTS`) the [wind variants](#wind) of one that casts a shadow.
+  `impostor_distance` (0: none) gives it a [far shape](#far-impostor-and-crown).
   `offset` sinks or raises it and `rule` says where it stands ([layers](#layers-of-a-cell)). A file
   without those fields reads them as zero: no offset and with the rule off.
 - A manual instance has an `id` of its own, from 1, unique in the source and never given again
@@ -180,10 +179,10 @@ to the overrides).
   a prefab that they show changes. A stable frame publishes nothing.
 - The instances of a cell are grouped by type in one pass (`placed_group`, by count).
 - The type gives mesh and materials (`render.batch_desc`), the distances, the ray flags and in
-  `Batch_Desc.vertex.x` the hook's sway (`sway_amount`); `object_id` is the entity. Each batch has
-  a role (`Batch_Role`): the mesh, a wind variant, the rest mesh for the rays that do not see the
-  variants, or the crown. `resident_batch_find` returns it and `role_instance` translates the
-  instance of a variant to its order in the type, for the picker.
+  `Batch_Desc.vertex.x` the hook's sway (`sway_amount`), and in `sway` and `wind` its swaying
+  shadow ([wind](#wind)); `object_id` is the entity. Each batch has a role (`Batch_Role`): the mesh
+  or the crown, which `resident_batch_find` returns; instance `k` of a batch is the `k`-th of its
+  type in the cell, for the picker.
 - **Type built from a prefab** (no mesh): each `Mesh_Renderer` of the prefab that is on and not
   hidden, with its transform from the root (`prefab_parts`; the root's place is that of the
   instance), is a batch per cell, type and part with the composed transforms (`part_instance`).
@@ -274,33 +273,29 @@ The wind is the `Wind` of [volume](../../mirai-gameplay/references/libraries.md#
 bends about its instance's origin, as `foliage_sway.slang` says: what stands over the origin turns
 toward the wind by `sway_amount` radians per m/s, by the red of its vertex color (white: all), and
 what spreads level does not move, so stalks keep their length and wide bushes do not slide. The
-gusts oscillate with the phase of a fixed wave of the world (`WIND_WAVE`), so neighbours sway
-together and the phase changes across a field or a forest. There are three paths with that same
-function:
+gusts oscillate with the phase of a fixed wave of the world (`FOLIAGE_WAVE`), so neighbours sway
+together and the phase changes across a field or a forest. Every type sways in the
+[vertex hook][hook] of its batches (`foliage_vertex.slang`), with the wind of its place
+(`//! mirai frame Foliage_Wind_Frame foliage_wind`, written from the `Mask` stage relative to the
+origin of each view) and the gust wave of its place; the hook moves only the batches of foliage
+(`Batch_Desc.vertex.y`), by the sway of the type (`vertex.x`). No copy of a mesh sways: what the
+views draw is the mesh at rest moved per vertex.
 
-- **Type that casts a shadow and sways much: variants** (`wind.odin`). A part whose tip sways at
-  least `SHADOW_SWAY_LEAST` at `WIND_SPEED_MAX` (`type_sway`, from its `wind` and the reach of its
-  mesh at its largest instance: trees and bushes, not grass, flowers or wheat) takes `wind_variants`
-  deformable copies of each mesh, with their levels (`render.deformable_create`), which
-  `foliage_sway.comp` writes in the `Geometry` stage and whose BLAS the renderer refits. They are up
-  to `WIND_TURNS` turns about up and, past them, phases of each turn (`wind_turns`): an instance
-  takes the turn nearest its own and tilts with the wind within half a step, and the phase of the
-  band of the gust wave its place is in (`wind_variant`). Each variant says how far it sways
-  (`wind_reach`): the shadow maps coarser than that, and those past the [reach of what sways][sway],
-  keep it at rest. Raster and shadow rays see the same variant; reflections, GI and probes see the
-  rest mesh (`Ray_Visible` and `Rays_Only` batch). Sets of variants are per zone of wind: a cell
-  takes those of the `Wind` on top at the middle of its instances (`wind_zone_at`, over a
-  `volume.Index` of the zones), and each set sways with the wind of its zone, so a calm valley stays
-  calm whatever blows at the view. Where the zones are (not their values) has a revision: when it
-  changes, the cells whose zone changed are published again. The wind is held to `WIND_SPEED_MAX`:
-  the variants' box contains it, so a frame of wind changes no boxes and marks no light, and the
-  direct light is not reset by it. Without wind the variants stay still without writing.
-- **Any other type: hook.** `foliage_vertex.slang` is the [vertex hook][hook] of its batches,
-  with the wind of its place (`//! mirai frame Foliage_Wind_Frame foliage_wind`, written from the
-  `Mask` stage relative to the origin of each view) and the gust wave of its place. No ray and no
-  shadow map sees it move: a small plant that casts a shadow casts it at rest, in the maps and in
-  the rays, as its moving shadow would be noise on the ground. The hook moves only the batches of
-  foliage (`Batch_Desc.vertex.y`); `vertex.x` is the sway of a type that sways in it.
+- **Shadows.** A type that casts a shadow and stands at least `SHADOW_SWAY_HEIGHT` from where its
+  largest instance stands to its farthest point casts a swaying one (`shadow_sway`): its batches
+  say how far its top moves in the strongest wind (`Batch_Desc.sway`) and the wind they sway in
+  (`Batch_Desc.wind`, the zone of wind of the cell plus one), and the maps near the eye place it
+  through the same hook ([what sways][sway]). A smaller plant casts at rest whatever its wind:
+  its moving shadow would be noise on the ground. Each frame, `foliage_wind` gives the renderer
+  how much of their sway the batches of each zone take (`batches_wind`: the speed of the wind of
+  the zone along the ground over `WIND_SPEED_MAX`), so a calm valley stays calm whatever blows at
+  the view. A cell takes the zone of the `Wind` on top at the middle of its instances
+  (`wind_zone_at`, over a `volume.Index` of the zones); where the zones are (not their values) has
+  a revision, and the cells whose zone changed are published again.
+- **Rays meet foliage at rest**: traced shadows, reflections, the indirect light and the probes.
+  The traced shadow of a swaying canopy under a light no map holds stands still, and the probes
+  see it at rest; a ray from a swayed leaf does not meet its own leaf at rest (the near distance
+  of [batches](../../mirai-rendering/references/scene.md#instance-batches)).
 - **Impostors.** The quad of an impostor leans whole about its instance's origin by the lean of
   the top of its mesh in the wind of its place (`Impostor_Row.far.z`), so the crossfade does not
   go from swaying to still.
@@ -312,9 +307,8 @@ function:
   texel keeping the strongest lean and the height of what leaned it.
   What it trampled stays after it leaves and stands back up by 1/e every `TRAMPLE_RECOVER`
   seconds; the field is written only while it changes. The hook reads it for every batch of
-  foliage, variants included, by the red of the vertex color, unless what leaned it passed far
-  above or below the plant; the motion vectors read the field of the frame before. Rays see the
-  variants of a type with shadow unbent where it is trampled. Radius and lean have a cap
+  foliage by the red of the vertex color, unless what leaned it passed far above or below the
+  plant; the motion vectors read the field of the frame before. Radius and lean have a cap
   (`BEND_RADIUS_MAX`, `BEND_LEAN_MAX`): the batches carry in `Batch_Desc.reach` the most that the
   wind and a bender move a point (`hook_reach`), and the views cull them with those grown boxes.
 
@@ -517,12 +511,14 @@ the registry's memory as a file of the undo step that creates it.
   `the_crown_of_a_cell_covers_its_trees_with_fewer_triangles_than_theirs`,
   `what_the_renderer_forgets_takes_the_crowns_and_far_forms_with_it`), impostors
   (`a_cell_writes_only_its_block_of_impostors`) and wind
-  (`an_instance_sways_with_the_variant_of_its_turn_and_downwind`,
-  `the_instance_of_a_variant_is_found_among_those_of_its_type`), trampling
+  (`a_type_casts_swaying_shadows_by_its_size`), trampling
   (`every_bender_tramples_the_foliage_and_it_stands_back_up_over_time`), zones of wind
-  (`the_variants_of_a_calm_valley_stay_still_whatever_blows_at_the_view`); on the GPU, with
-  validation: `a_stalk_leans_away_from_where_a_bender_trampled_the_field` and
-  `a_variant_leans_downwind_about_its_place`.
+  (`the_shadows_of_a_calm_valley_stay_still_whatever_blows_at_the_view`); on the GPU, with
+  validation: `a_stalk_leans_away_from_where_a_bender_trampled_the_field`,
+  `a_swaying_wall_casts_its_shadow_where_it_leans_only_near_the_eye`,
+  `a_swaying_canopy_under_a_traced_light_meets_no_leaf_of_its_own_at_rest`,
+  `a_swaying_kind_builds_no_geometry_and_leaves_the_probes_still` and
+  `a_swaying_kind_is_culled_by_cluster`.
 - Ids of the manual ones: `a_manual_instance_keeps_its_id_through_the_edits_of_its_cell`.
 - Resident cap: `past_their_budget_the_nearest_cells_stay_resident`.
 - Streaming: `the_cells_near_the_sources_are_found_by_rows_and_every_one_they_keep`,
@@ -564,8 +560,7 @@ the registry's memory as a file of the undo step that creates it.
   Gestures (strokes, clicks, the gizmo) are tested by the user.
 - `mirai test render` (CPU): `impostor_frames_cover_the_upper_hemisphere_and_fold_back`,
   `impostor_frames_spread_their_color_into_what_they_do_not_cover`,
-  `a_batch_only_rays_meet_is_in_no_layer_and_the_picker_does_not_find_it` and
-  `a_deformable_with_levels_keeps_the_levels_of_its_source_in_its_own_vertices`; GPU:
+  `a_batch_only_rays_meet_is_in_no_layer_and_the_picker_does_not_find_it`; GPU:
   `gpu_impostor_frames_keep_the_surface_of_their_material`.
 - What is seen (batches, fade into the impostor, wind, crown shadows) is verified in the editor of
   a project that enables the plugin (alien-planet), with GPU validation: the tests of the
