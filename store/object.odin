@@ -24,7 +24,7 @@ Put :: struct {
     now:i64,
     worker:jobs.Worker_Ref,
     batches:^Put_Batches,
-    codec:u8,    // of stored, the frame of the chunk chunk_put is given
+    codec:u8,    // of stored, the frame of the chunk chunk_put_frame is given
     stored:[]u8,
 }
 
@@ -324,17 +324,31 @@ chunk_here :: proc(s:^Store,address:Hash) -> bool {
 }
 
 // Appends a chunk whose bytes its caller checked against address, unless it
-// is stored, into the batch; commit makes it visible to other values. With a
-// codec, stored is the frame those bytes came in (a peer's), kept as it is
-// when this value decodes that codec.
-chunk_put :: proc(s:^Store,address:Hash,bytes:[]u8,now:Maybe(time.Time)=nil,codec:=u8(CODEC_NONE),stored:=[]u8{}) -> Error {
+// is stored, into the batch; commit makes it visible to other values.
+chunk_put :: proc(s:^Store,address:Hash,bytes:[]u8,now:Maybe(time.Time)=nil) -> Error {
     if s==nil || s.state==nil || len(bytes)==0 || len(bytes)>CHUNK_MAX {return .Invalid_Argument}
-    if codec!=CODEC_NONE && !sizes_valid(codec,u32(len(stored)),u32(len(bytes))) {return .Invalid_Argument}
+    at:=(now.? or_else time.now())._nsec
+    st:=stage_take(s) or_return
+    defer stage_give(s,st)
+    p:=Put{s=s,stage=st,now=at}
+    put_chunk(&p,address,bytes) or_return
+    stage_write(s,st,at) or_return
+    return batch_check(s,at)
+}
+
+// Appends a chunk that came as a frame of codec (a peer's), kept as it came:
+// stored is decoded into all of raw, the chunk's size, and checked against
+// address first, so a frame of other bytes is Corrupt and nothing is kept.
+// Missing for a codec this value does not decode. raw holds the chunk after.
+chunk_put_frame :: proc(s:^Store,address:Hash,codec:u8,stored,raw:[]u8,now:Maybe(time.Time)=nil) -> Error {
+    if s==nil || s.state==nil || codec==CODEC_NONE || !sizes_valid(codec,u32(len(stored)),u32(len(raw))) {return .Invalid_Argument}
+    chunk_decode(s,codec,stored,raw) or_return
+    if address_of_bytes(raw)!=address {return .Corrupt}
     at:=(now.? or_else time.now())._nsec
     st:=stage_take(s) or_return
     defer stage_give(s,st)
     p:=Put{s=s,stage=st,now=at,codec=codec,stored=stored}
-    put_chunk(&p,address,bytes) or_return
+    put_chunk(&p,address,raw) or_return
     stage_write(s,st,at) or_return
     return batch_check(s,at)
 }

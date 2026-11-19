@@ -177,8 +177,24 @@ receive_job :: proc(data:rawptr,worker:int) {
     defer sync.atomic_store(&r.done,true)
     bytes:=r.bytes[:r.size]
     stored:=r.bytes[r.size:][:r.stored]
+    s:=r.x.desc.store
+    // A frame is kept as it came only once the store decoded it and checked it against the
+    // address: one decode on the way of a chunk asked, two for a descendant that came before its
+    // parent was parsed.
+    put:=false
+    if r.codec!=store.CODEC_NONE && r.need>=0 {
+        switch e:=store.chunk_put_frame(s,r.address,r.codec,stored,bytes);e {
+        case .None: put=true
+        case .Corrupt,.Missing,.Invalid_Argument:
+            r.result=.Mismatch
+            return
+        case .Io,.No_Space,.Out_Of_Memory,.Unsupported_Layout:
+            r.error,r.result=e,.Failed
+            return
+        }
+    }
     if r.result!=.Checked {
-        if r.codec!=store.CODEC_NONE && store.chunk_decode(r.x.desc.store,r.codec,stored,bytes)!=.None {
+        if r.codec!=store.CODEC_NONE && !put && store.chunk_decode(s,r.codec,stored,bytes)!=.None {
             r.result=.Mismatch
             return
         }
@@ -211,9 +227,11 @@ receive_job :: proc(data:rawptr,worker:int) {
             return
         }
     }
-    if r.error=store.chunk_put(r.x.desc.store,r.address,bytes,codec=r.codec,stored=stored);r.error!=.None {
-        r.result=.Failed
-        return
+    if !put {
+        if r.error=store.chunk_put(s,r.address,bytes);r.error!=.None {
+            r.result=.Failed
+            return
+        }
     }
     r.result=.Stored
     if r.kind!=.Data && r.walk!=nil {
