@@ -107,8 +107,10 @@ void table_set(uint slot, uint entry, uint e) { if (shadow_place_valid(slot, ent
 // place for from the pages that rank no sooner; budget: the units the draws
 // of the cache, and those of the atlas, take in a frame (shadow_units); round: 0 the
 // cache, 1 the atlas, for Grant and Settle; chunks: what the list of the
-// chunks of the cull holds (render.Cull_List.Shadow_Chunks).
-struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; uint box_count; uint sun; uint pool; uint reach; uint threads; uint fresh; uint full; uint slots; uint slot_count; uint keep; uint budget; uint round; uint chunks; uint pad1; uint pad2; };
+// chunks of the cull holds (render.Cull_List.Shadow_Chunks); moves: the
+// round of what moves runs this frame (something moves in a map, or a slot
+// lets go of every page).
+struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; uint box_count; uint sun; uint pool; uint reach; uint threads; uint fresh; uint full; uint slots; uint slot_count; uint keep; uint budget; uint round; uint chunks; uint moves; uint pad; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> shadow_data : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<uint> pages : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
@@ -540,7 +542,9 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             if (draw) listed(ROUND_STAYS, slot, entry, page, pool | kept);
             if (draw && pages[SHADOW_WORDS_KNOWN + pool] == 0u) listed(ROUND_FORESEE, slot, entry, page, pool);
             if (draw || (e & SHADOW_PAGE_COMPOSED) == 0u) listed(ROUND_MOVES, slot, entry, page, pool | SHADOW_JOB_HELD | kept);
-            else if ((pages[SHADOW_WORDS_SWAY + pool] & SHADOW_SWAY_SWAYS) != 0u) listed(ROUND_MOVES, slot, entry, page, pool | SHADOW_JOB_HELD | SHADOW_JOB_REFRESH);
+            else if ((pages[SHADOW_WORDS_SWAY + pool] & SHADOW_SWAY_SWAYS) != 0u && params.moves != 0u) listed(ROUND_MOVES, slot, entry, page, pool | SHADOW_JOB_HELD | SHADOW_JOB_REFRESH);
+            // Where nothing moves, nothing sways in it.
+            if (params.moves == 0u) pages[SHADOW_WORDS_SWAY + pool] &= ~SHADOW_SWAY_SWAYS;
             e |= SHADOW_PAGE_READY;
         }
         table_set(slot, entry, e);

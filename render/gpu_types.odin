@@ -526,7 +526,7 @@ Gpu_Cull_Stats :: struct {
 // cache and the atlas drew (abi.SHADOW_UNIT_TEXELS); and of the triangles,
 // the vertices the lists of the raster placed for those that cover a texel
 // of their page, and those triangles (raster_lists.slang); and the threads
-// its culls by instance and its marks of what swayed ran (abi.SHADOW_COUNT_THREADS).
+// its culls by instance ran (abi.SHADOW_COUNT_THREADS).
 Shadow_Stats :: struct {
 	clusters, clusters_masked, triangles, clusters_moving, pages_drawn, pages_composed, pages_asked, pages_left, pages_waiting, clusters_over, pages_short, units, units_moving, raster_vertices, raster_triangles, cull_threads: u32,
 }

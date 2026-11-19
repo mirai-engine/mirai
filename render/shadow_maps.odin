@@ -598,12 +598,15 @@ shadow_movers_update :: proc(r: ^Renderer) {
 	// how far it sways alone: the others draw it at rest and keep it. It is
 	// followed as a whole, so a frame where every batch sways looks at the
 	// deformables alone: the batches change where one starts or stops, or the
-	// tables were built again (Scene_State.shadow_movers_version).
+	// tables were built again (Scene_State.shadow_movers_version). What
+	// stays changes where the batches of one that starts or stops lie, all
+	// of them in one box, so that a wind that starts everywhere takes few.
 	touched := false
 	for handle in s.skinned {
 		skin := s.meshes[handle].skin
 		if skin == nil || !skin.external {continue}
 		skin.shadow_touched = false
+		skin.shadow_low, skin.shadow_high, skin.shadow_fine = Vec3(max(f32)), Vec3(-max(f32)), 0
 		if skin.dirty {
 			if skin.shadow_frame == 0 || !skin.shadow_moving {skin.shadow_touched = true}
 			skin.shadow_moving = skin.shadow_frame != 0
@@ -621,9 +624,16 @@ shadow_movers_update :: proc(r: ^Renderer) {
 			fine := batch_sway(s, record)
 			skin := s.meshes[record.desc.mesh].skin if fine != 0 else nil
 			moving := skin != nil && skin.shadow_moving
-			if skin != nil && skin.shadow_touched {occluder_add(&stale, OCCLUDERS_MANY, b.boxes[k].min, b.boxes[k].max, fine)}
+			if skin != nil && skin.shadow_touched {
+				skin.shadow_low, skin.shadow_high = linalg.min(skin.shadow_low, b.boxes[k].min), linalg.max(skin.shadow_high, b.boxes[k].max)
+				skin.shadow_fine = max(skin.shadow_fine, fine)
+			}
 			if moving != record.shadow_moving {s.shadow_movers_version += 1}
 			record.shadow_moving = moving
+		}
+		for handle in s.skinned {
+			skin := s.meshes[handle].skin
+			if skin != nil && skin.shadow_touched {occluder_add(&stale, OCCLUDERS_MANY, skin.shadow_low, skin.shadow_high, skin.shadow_fine)}
 		}
 		s.shadow_sway_tables = b.tables
 	}
@@ -1474,10 +1484,10 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 // shadow_cull.slang Params_Block.
 @(private)
 Shadow_Params :: struct {
-	reach, ranges, rows, chunk_capacity, entry_capacity, list, moving, movers, threads, masks, plan, part, bound, foresee: u32,
+	reach, ranges, rows, chunk_capacity, entry_capacity, list, moving, movers, masks, plan, part, bound, foresee: u32,
 	round, last, vertex_capacity, triangle_capacity: u32,
 	margin: f32,
-	_:      u32,
+	_:      [2]u32,
 	cull:   Vec4, // shadow_cull_eye
 }
 
@@ -1637,7 +1647,7 @@ Shadow_Pages_Step :: enum u32 {Gate, Clear, Invalidate, Ancestors, Entries, Rank
 
 // shadow_pages.comp Params_Block.
 @(private)
-Shadow_Pages_Params :: struct {step, frame, rows, plan, boxes, box_count, sun, pool, reach, threads, fresh, full, slots, slot_count, keep, budget, round, chunks, pad1, pad2: u32}
+Shadow_Pages_Params :: struct {step, frame, rows, plan, boxes, box_count, sun, pool, reach, threads, fresh, full, slots, slot_count, keep, budget, round, chunks, moves, pad: u32}
 
 // The units each round of the maps of a view draws in a frame.
 @(private)
@@ -1733,6 +1743,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 		keep = max(p.jitter_phases, 1),
 		budget = shadow_frame_units(r, b),
 		chunks = shadow_chunk_room(r, b),
+		moves = 1 if plan.whole || plan.moving_threads > 0 else 0,
 	}
 	for step in Shadow_Pages_Step {
 		if step == .Propagate || step >= .Grant {continue}

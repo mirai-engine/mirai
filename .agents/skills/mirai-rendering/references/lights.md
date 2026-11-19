@@ -315,11 +315,12 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   instances of the scene and the batches whose box reaches its map (`shadow_reach`), found again on
   the CPU only where the map or the batches changed, so a batch outside a map costs nothing there;
   that of what moves over the movers that reach it, all of what reaches it only where the slot let
-  go of its pages; each cull by instance of a frame (the foresight before `Grant` included, and the
-  marks of what swayed) goes over the slots with pages listed, the coarsest first, while their
-  threads fit as many as the bound has units, one slot at least (`Finish`, `SHADOW_WORDS_SLOTS`),
-  and the pages of the slots past it wait. A round hands the cull by cluster a chunk for each
-  `SHADOW_CHUNK_UNITS` units of the bound at most, and the lists of the clusters it hands to the
+  go of its pages; each cull by instance of a frame (the foresight before `Grant` included) goes
+  over the slots with pages listed, those it left out the most frames in a row first, then the
+  coarsest, while their threads fit as many as the bound has units, one slot at least (`Finish`,
+  `SHADOW_WORDS_SLOTS`, `SHADOW_WORDS_SKIPPED`), and the pages of the slots past it wait. A round
+  hands the cull by cluster a chunk for each `SHADOW_CHUNK_UNITS` units of the bound at most, and
+  the lists of the clusters it hands to the
   draws hold what the bound draws; the grant fits the chunks its pages are foreseen to hand over
   (`SHADOW_WORDS_REACH`), and where they find no room no page of the round is drawn whole and they
   wait. Before the cull by cluster, `Grant` gives the pages, those whose points read them drawn the
@@ -331,7 +332,13 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   cache that takes more than half the bound is drawn in bands of its rows over frames
   (`SHADOW_WORDS_BAND`), which grow back as the bound grows; a page of the atlas that came is
   granted only where its quota leaves the pages kept room to take more the frame after, so a page
-  composed while what moves in it moves is composed every frame. A page is foreseen once and keeps
+  composed while what moves in it moves is composed every frame. Then the pages of the atlas
+  composed again for what sways in them alone (`SHADOW_JOB_REFRESH`), filling the share as those
+  kept: the longest since the atlas last composed them first, those of a level or mip four times
+  finer a frame sooner (`refresh_order`), so none waits longer than the others take to be composed
+  once and a few frames more, and those nearest the eye, larger on the screen, come a little more
+  often; one that waits shows what the atlas last composed there, the sway of a frame before, and
+  the atlas does not copy the cache into it. A page is foreseen once and keeps
   it until drawn, and the culls after the grant go over the slots and spans of the pages granted
   alone: a page that waits costs no instance. A page left over, one that waits and one whose band is
   not its last are not ready that frame (`Settle`): their points read the nearest coarser page
@@ -359,11 +366,16 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   costs nothing. While the eye stays in its cell no instance of a batch comes or goes past its cull
   distance; where it leaves it, what stays changed in the part of each batch whose instances may
   have come or gone (`shadow_cull_changes`). A batch of a deformable that sways (the wind) moves so
-  in the maps whose texel is narrower than its sway, in the pages the boxes of its instances cover
-  (`SHADOW_CULL_SWAY`), not all those of its box; the others draw it at rest and keep it. A light
-  or a level of the sun that moves or turns lets go of its pages and draws those read whole into
-  the atlas alone that frame, and the cache the next still frame; an origin jump lets go of every
-  page.
+  in the maps whose texel is narrower than its sway; the others draw it at rest and keep it. The
+  deformable is followed whole: its batches start and stop moving with it, what stays changes in
+  one box of them all, and the plan finds the batches that move of each slot again only where one
+  starts or stops or the tables or the casters the slot holds change. A page of the atlas holds
+  what sways where the cull of what moves found an instance of such a batch there that the cache
+  does not hide (`SHADOW_SWAY_*`), as of the last time it composed it; while the points read it, it
+  is composed again as the bound leaves room (above), and the steps run each frame while one does.
+  A light or a level of the sun that moves or turns lets go of its pages and draws those read whole
+  into the atlas alone that frame, and the cache the next still frame; an origin jump lets go of
+  every page.
 - **Reading the maps.** A map holds a point only within its face and range, and samples tell
   elsewhere. A tap compares a blocker with the plane of the surface of the point where the tap
   falls, less twice what the plane rises from there to the middle of its texel (scaled to the texel

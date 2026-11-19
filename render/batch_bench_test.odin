@@ -327,8 +327,10 @@ the_plan_of_the_shadow_maps_costs_little_while_everything_sways :: proc(t: ^test
 		bench_shadow_wants(r, b, eye, low, high, &wants)
 		start := time.tick_now()
 		shadow_movers_update(r)
+		mid := time.tick_since(start)
 		shadow_plan_casters(r, b, eye, false, wants[:], plans[:], &plan, reach[:], &stale, &moved)
 		took := time.tick_since(start)
+		if sways && took > 1e6 {fmt.printfln("DBG movers %.3f ms, casters %.3f ms", time.duration_milliseconds(mid), time.duration_milliseconds(took - mid))}
 		for mesh in meshes {r.scene.meshes[mesh].skin.dirty = false}
 		r.frame += 1
 		b.frame += 1
