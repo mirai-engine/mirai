@@ -1245,8 +1245,10 @@ render_a_table_holds_no_page_past_its_pool :: proc(t: ^testing.T) {
 
 // A frame asked for counts what each mesh and each material of the view cost
 // it: the instances, clusters and triangles the view drew, the pixels each
-// owns and what the maps of the sun drew of it; a mesh out of the view costs
-// the view nothing, and the frames after it count nothing again.
+// owns and what the maps of the sun drew of it; a mesh out of the view or
+// behind a wall costs the view nothing, also when the frame after the request
+// is a cut that culls without the pyramid of its frame before, and the frames
+// after the one counted count nothing again.
 @(test)
 render_a_frame_asked_for_counts_its_cost_by_mesh_and_material :: proc(t: ^testing.T) {
 	f: Cube_Fixture
@@ -1263,7 +1265,8 @@ render_a_frame_asked_for_counts_its_cost_by_mesh_and_material :: proc(t: ^testin
 	red_cube, red_added := mesh_add(r, red_vertices[:], red_indices[:])
 	vertices, indices := cube_mesh()
 	apart, apart_added := mesh_add(r, vertices[:], indices[:])
-	if !testing.expect(t, red_added && apart_added, r.error) {return}
+	hidden, hidden_added := mesh_add(r, vertices[:], indices[:])
+	if !testing.expect(t, red_added && apart_added && hidden_added, r.error) {return}
 	_, refused := renderer_cost(r)
 	testing.expect(t, !refused, "a count nobody asked for")
 	instances := []Instance_Desc{
@@ -1272,15 +1275,18 @@ render_a_frame_asked_for_counts_its_cost_by_mesh_and_material :: proc(t: ^testin
 		{object_id = 3, mesh = red_cube, transform = trs({0, 0.5, 0}, 1), tint = 1},
 		{object_id = 4, mesh = red_cube, transform = trs({1.5, 0.5, 0}, 1), tint = 1},
 		{object_id = 5, mesh = apart, transform = trs({0, 0.5, 60}, 1), tint = 1},
+		{object_id = 6, mesh = f.cube, transform = trs({-3.45, 1, -2.5}, {4, 4, 0.2}), tint = 1},
+		{object_id = 7, mesh = hidden, transform = trs({-4, 0.5, -4}, 1), tint = 1},
 	}
 	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
 	testing.expect(t, scene_given(r, instances, nil, sun, {sky = {0.3, 0.4, 0.6}}))
 	camera := Camera{position = {0, 4, 7}, forward = {0, -4, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	if !testing.expect_value(t, renderer_cost_ask(r), "") {return}
+	testing.expect(t, renderer_frame(r, {camera = camera, camera_cut = true}), r.error)
 	// The maps of a still view keep what they drew: the frame counted draws them whole again.
 	b := &r.main.targets.shadow_raster
 	b.budget, b.forget = 1 << 20, true
-	if !testing.expect_value(t, renderer_cost_ask(r), "") {return}
 	cost: Cost
 	ready := false
 	for _ in 0 ..< 8 {
@@ -1289,10 +1295,11 @@ render_a_frame_asked_for_counts_its_cost_by_mesh_and_material :: proc(t: ^testin
 	}
 	if !testing.expect(t, ready, "the count of the frame asked for never came") {return}
 	testing.expect(t, len(cost.meshes) == len(r.scene.meshes) && len(cost.materials) == len(r.scene.materials))
-	floor, cubes, away := cost.meshes[f.cube], cost.meshes[red_cube], cost.meshes[apart]
-	testing.expect_value(t, floor.instances, 1)
+	floor, cubes, away, behind := cost.meshes[f.cube], cost.meshes[red_cube], cost.meshes[apart], cost.meshes[hidden]
+	testing.expect_value(t, floor.instances, 2)
 	testing.expect_value(t, cubes.instances, 3)
 	testing.expect_value(t, away, Cost_Row{})
+	testing.expectf(t, behind.instances == 0 && behind.clusters == 0 && behind.pixels == 0, "the view drew the cube behind the wall: %v", behind)
 	for row, name in ([2]Cost_Row{floor, cubes}) {
 		testing.expectf(t, row.clusters > 0 && row.raster_triangles > 0 && row.triangles >= row.raster_triangles && row.pixels > 0, "mesh %d: %v", name, row)
 	}

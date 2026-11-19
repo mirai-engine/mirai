@@ -268,4 +268,6 @@ or interleave its own passes.
 `renderer_cost_ask` and `renderer_cost` count one frame of the first view of the window by mesh and
 by material (`profile.cost` answers it). Only that frame binds the `cost` variants of the cull, of
 the raster rounds and of the cull of the maps and runs the pass that counts the pixels of the
-visibility target; every other frame runs the passes without them and pays nothing.
+visibility target; every other frame runs the passes without them and pays nothing. The frame
+counted is the first one whose view culls against the pyramid of its frame before: one after a cut
+(a capture, a camera set) culls without occlusion and would count what no other frame draws.

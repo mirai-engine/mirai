@@ -808,7 +808,7 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
     if generate && !ensure_generated_target(r,&state.targets) {return false}
     extension_textures_release(r,state)
     p:=Pass{r=r,cmd=cmd,view=state,t=&state.targets,camera=view.camera,slot=slot,first=first,index=index,plan=plan,texture=view.texture!=0,offscreen=frame.offscreen,inspection=view.inspection,wide=view.texture!=0?view.wide:.None}
-    p.cost=cost_take(r,first,view.texture!=0)
+    p.cost=cost_take(r,first,view.texture!=0,state.targets.hiz_valid)
     p.current=int(state.frames%2)
     p.previous=1-p.current
     zone=render_zone_begin(r,"view constants")

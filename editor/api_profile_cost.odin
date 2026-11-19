@@ -4,7 +4,9 @@ import "core:fmt"
 import "core:slice"
 import "core:strings"
 import "core:time"
+import "mirai:core"
 import "mirai:editor/api"
+import erender "mirai:engine/render"
 import "mirai:host"
 import gpu "mirai:render"
 import "mirai:std/base"
@@ -48,7 +50,7 @@ api_profile_cost :: proc(s:^Session,call:^api.Call) {
     for _ in 0..<PROFILE_COST_FRAMES {
         if api_frames(s,1,p.dt)==0 {break}
         if cost,ready:=gpu.renderer_cost(r);ready {
-            api.call_result(call,Api_Profile_Cost)^=profile_cost_answer(s.app.assets,cost,p.top,call.allocator)
+            api.call_result(call,Api_Profile_Cost)^=profile_cost_answer(s.app.assets,shown_world(s),cost,p.top,call.allocator)
             return
         }
     }
@@ -56,14 +58,15 @@ api_profile_cost :: proc(s:^Session,call:^api.Call) {
 }
 
 // The answer of a count: its rows named by the assets of a (nil: by handle),
+// a mesh made at run time by what it is and the entity of w that shows it,
 // the costliest top of each.
-profile_cost_answer :: proc(a:^host.Assets,cost:gpu.Cost,top:int,allocator:=context.allocator) -> (out:Api_Profile_Cost) {
+profile_cost_answer :: proc(a:^host.Assets,w:core.World_Ref,cost:gpu.Cost,top:int,allocator:=context.allocator) -> (out:Api_Profile_Cost) {
     context.allocator=allocator
     Named :: struct {row:gpu.Cost_Row,name:string}
     row_of :: proc(row:gpu.Cost_Row,name:string) -> Api_Profile_Cost_Row {
         return {strings.clone(name),int(row.instances),int(row.clusters),int(row.triangles),int(row.raster_triangles),int(row.pixels),int(row.shadow_clusters),int(row.shadow_triangles),int(row.shadow_units),int(row.shadow_over)}
     }
-    mesh_names,material_names:=profile_cost_names(a,len(cost.meshes),len(cost.materials))
+    mesh_names,material_names:=profile_cost_names(a,w,len(cost.meshes),len(cost.materials))
     meshes:=make([dynamic]Named,context.temp_allocator)
     total:gpu.Cost_Row
     for row,handle in cost.meshes {
@@ -97,19 +100,33 @@ profile_cost_answer :: proc(a:^host.Assets,cost:gpu.Cost,top:int,allocator:=cont
 }
 
 // The asset of each mesh handle and each material row of a, in the temporary
-// allocator; "" where none is known.
+// allocator; "" where none is known. A mesh made at run time has no file: it
+// is named by what its maker said it is and by the entity of w that shows it.
 @(private="file")
-profile_cost_names :: proc(a:^host.Assets,meshes,materials:int) -> (mesh_names,material_names:[]string) {
+profile_cost_names :: proc(a:^host.Assets,w:core.World_Ref,meshes,materials:int) -> (mesh_names,material_names:[]string) {
     mesh_names=make([]string,meshes,context.temp_allocator)
     material_names=make([]string,materials,context.temp_allocator)
     if materials>0 {material_names[0]="the default material"}
     if a==nil {return}
+    shown:=make(map[base.Asset_Id]core.Entity,context.temp_allocator)
+    if w.info!=nil {
+        if renderers:=core.world_table_of(w,erender.Mesh_Renderer);renderers!=nil {
+            for value,row in renderers.values[:core.count(renderers)] {
+                if value.mesh!={} && host.assets_mesh_generated(a,value.mesh) && value.mesh not_in shown {shown[value.mesh]=renderers.entities[row]}
+            }
+        }
+    }
     for id,ref in a.index {
         text:[base.ASSET_ID_TEXT]u8
         #partial switch ref.kind {
         case .Mesh:
             handle:=int(a.meshes[ref.index].handle)
-            if handle<meshes {mesh_names[handle]=strings.clone(host.assets_name(a,id,&text),context.temp_allocator)}
+            if handle>=meshes {continue}
+            if a.meshes[ref.index].generated {
+                mesh_names[handle]=profile_cost_generated_name(a,w,id,shown[id] or_else core.NONE)
+                continue
+            }
+            mesh_names[handle]=strings.clone(host.assets_name(a,id,&text),context.temp_allocator)
         case .Material:
             row:=int(a.materials[ref.index].row)
             if row>0 && row<materials {material_names[row]=strings.clone(host.assets_name(a,id,&text),context.temp_allocator)}
@@ -121,4 +138,23 @@ profile_cost_names :: proc(a:^host.Assets,meshes,materials:int) -> (mesh_names,m
         if handle<meshes && mesh_names[handle]=="" {mesh_names[handle]=fmt.tprintf("the shape %v",shape)}
     }
     return
+}
+
+// "terrain chunk of Landscape/Terrain (entity 0x...)": what a mesh made at
+// run time is, the nearest entity with a name over the one that shows it and
+// that one, which scene.inspect takes; with no entity, its id.
+@(private="file")
+profile_cost_generated_name :: proc(a:^host.Assets,w:core.World_Ref,id:base.Asset_Id,e:core.Entity) -> string {
+    what:=host.assets_mesh_label(a,id)
+    if what=="" {what="generated mesh"}
+    if e==core.NONE {
+        text:[base.ASSET_ID_TEXT]u8
+        return fmt.tprintf("%s %s, shown by no entity",what,base.asset_id_format(id,text[:]))
+    }
+    owner:=e
+    for owner!=core.NONE && entity_name(w,owner)=="" {owner=entity_parent(w,owner)}
+    entity_id:=api_entity_id(w,e)
+    shown:=fmt.tprintf("id 0x%016x",u64(entity_id)) if entity_id!=0 else fmt.tprintf("handle 0x%016x",u64(e))
+    if owner==core.NONE {return fmt.tprintf("%s of the entity with %s",what,shown)}
+    return fmt.tprintf("%s of %s (entity %s)",what,api_entity_path(w,owner),shown)
 }
