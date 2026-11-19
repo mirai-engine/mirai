@@ -268,7 +268,7 @@ profile_api_register :: proc(s:^Session,st:^Api_State) {
     load_default:=Api_Profile_Load_Params{top=PROFILE_LOAD_TOP}
     api_register(s,st,{name="profile.load",summary="Where the seconds of the last load of the document, of Play and of a section went: phase by phase, by kind of asset with the slowest, the loop functions meanwhile and what it waited for until a frame drew with all of it resident; Loading until then.",params=type_info_of(Api_Profile_Load_Params),result=type_info_of(Api_Profile_Loads),defaults=&load_default,flags={.Read_Only},run=api_profile_load})
     cost_default:=Api_Profile_Cost_Params{top=10,dt=HEADLESS_DT}
-    api_register(s,st,{name="profile.cost",summary="What one frame of the viewport costs by mesh and by material: the instances, clusters, triangles and pixels the view drew of each and what the maps of the shadows drew, the costliest first.",params=type_info_of(Api_Profile_Cost_Params),result=type_info_of(Api_Profile_Cost),defaults=&cost_default,run=api_profile_cost})
+    api_register(s,st,{name="profile.cost",summary="What one frame of the viewport costs by mesh and by material: the instances, clusters, triangles and pixels the view drew of each and what the maps of the shadows drew, the costliest first.",params=type_info_of(Api_Profile_Cost_Params),result=type_info_of(Api_Profile_Cost),defaults=&cost_default,flags={.Draws,.As_User},run=api_profile_cost})
     api_register(s,st,{name="profile.export",summary="Writes a capture as a Chrome trace (JSON) for Perfetto, chrome://tracing or Spall.",params=type_info_of(Api_Profile_Export_Params),result=type_info_of(Api_Profile_Export),run=api_profile_export})
 }
 

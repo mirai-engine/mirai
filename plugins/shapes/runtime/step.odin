@@ -538,7 +538,7 @@ install :: proc(u:^Update,b:^Shape_Build) {
     if b.cut_first {
         core.report(u.problems,b.entity,"shapes.first_brush","a brush of the Solid that cuts or intersects comes before the first one that adds and has nothing to work on, so it is left out: order the children so a brush that adds comes first, or give the Solid a polygon")
     }
-    options:=host.Mesh_Generate_Options{no_lods=true,collision=b.collides}
+    options:=host.Mesh_Generate_Options{no_lods=true,collision=b.collides,label="bent mesh" if b.bent else "shape"}
     if !b.collides {
     } else if b.bent {
         if len(b.geometry.collision.indices)>0 {options.collision_mesh=geom.mesh_buffer_view(&b.geometry.collision)}

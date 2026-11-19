@@ -1362,7 +1362,7 @@ cell_crown_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held
         geom.mesh_buffer_init(&shape,context.temp_allocator)
         if !cell_crown_build(placed[:],work.crowns[:],&shape) {return}
         made:bool
-        crown,made=host.assets_mesh_generate(assets,geom.mesh_buffer_view(&shape),options={no_lods=true})
+        crown,made=host.assets_mesh_generate(assets,geom.mesh_buffer_view(&shape),options={no_lods=true,label="foliage crown"})
         if !made {return}
         append(&resident.crowns,Shared_Crown{owner.source,held.coord,key,crown,1})
     }

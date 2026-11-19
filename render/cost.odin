@@ -4,7 +4,8 @@ import "mirai:rhi"
 import "mirai:render/abi"
 
 // What a frame of the first view of the window costs by mesh and by material,
-// counted only in the frame after a request (renderer_cost_ask): the variants
+// counted only in the first frame after a request (renderer_cost_ask) that
+// culls it against the pyramid of the frame before: the variants
 // `cost` of the cull, of the raster rounds and of the cull of the maps add to
 // it where they count the totals of the frame (cost.slang), and a pass over
 // the visibility target counts its pixels. A frame nobody asked about runs
@@ -57,8 +58,8 @@ Cost_State :: struct {
 @(private)
 COST_PIPELINES :: [?]Pipeline_Id{.Cull_Cost, .Raster_Vertices_Cost, .Raster_Vertices_Shadow_Cost, .Shadow_Clusters_Cost, .Cost_Pixels}
 
-// Asks the next frame that draws a view of the window to count what it costs
-// by mesh and by material; renderer_cost gives the count some frames later.
+// Asks the next frame that draws a view of the window, culled against the
+// pyramid of its frame before, to count what it costs by mesh and by material; renderer_cost gives the count some frames later.
 // A transaction that may allocate: its buffers hold a row for each mesh and
 // material of the scene. One asked while another is pending is that one.
 renderer_cost_ask :: proc(r: ^Renderer) -> (problem: string) {
@@ -110,11 +111,14 @@ cost_begin :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 	return c.counting
 }
 
-// The buffer the first view of the window that draws counts into; 0 for the others.
+// The buffer the first view of the window that draws counts into; 0 for the
+// others. A view whose cull has no pyramid of its frame before (pyramid: its
+// first frame, or one after a cut such as a capture or a camera set) culls
+// without occlusion this once: the frames after it count what it costs.
 @(private)
-cost_take :: proc(r: ^Renderer, first, texture: bool) -> rhi.Buffer {
+cost_take :: proc(r: ^Renderer, first, texture, pyramid: bool) -> rhi.Buffer {
 	c := &r.cost
-	if !c.counting || !first || texture {return 0}
+	if !c.counting || !first || texture || !pyramid {return 0}
 	c.counting, c.taken = false, true
 	return c.buffer
 }

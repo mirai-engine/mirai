@@ -259,7 +259,7 @@ kind_finish :: proc(assets:^host.Assets,renderer:^render.Renderer,allocator:runt
     }
     if bake.meshed && assets!=nil {
         shape:=&bake.crown
-        kind.crown,_=host.assets_mesh_publish(assets,&bake.made)
+        kind.crown,_=host.assets_mesh_publish(assets,&bake.made,"far foliage crown")
         positions,positions_error:=make([][3]f32,len(shape.positions),allocator)
         indices,indices_error:=make([]u32,len(shape.indices),allocator)
         if positions_error!=nil || indices_error!=nil {
