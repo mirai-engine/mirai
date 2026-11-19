@@ -120,7 +120,9 @@ GRAPHICS_REFLECTION_LIGHTS :: u32(8)
 // The most samples of the direct light of a pixel: past it the image of a thousand lights does not change.
 GRAPHICS_LIGHT_SAMPLES_MAX :: 31
 GRAPHICS_TEXTURE_SIZES :: [Textures]u32{.Low=1024,.Medium=2048,.High=4096,.Ultra=8192}
-GRAPHICS_DETAIL_PIXELS :: [Detail]f32{.Low=4,.Medium=2,.High=1,.Ultra=0.5} // of error on the screen before a mesh takes a simpler level
+// Of error on the screen before a mesh takes a simpler level. Under a pixel
+// most triangles cover the centre of none, so the finest stops at one.
+GRAPHICS_DETAIL_PIXELS :: [Detail]f32{.Low=4,.Medium=3,.High=2,.Ultra=1}
 // Of the memory of the device, what textures take; the rest is for the targets, the scene and its structures.
 GRAPHICS_TEXTURE_POOL_SHARE :: 0.4
 GRAPHICS_TEXTURE_POOL_MIN :: u32(256)

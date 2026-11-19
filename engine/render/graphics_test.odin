@@ -136,7 +136,7 @@ textures_and_detail_set_the_limits_of_the_renderer_and_the_pool_follows_the_memo
     g.textures,g.detail=.Low,.Ultra
     s:=graphics_render_settings(gpu.DEFAULT_SETTINGS,g,{type=.Discrete,memory=8<<30})
     testing.expect_value(t,s.texture_max_size,u32(1024))
-    testing.expect_value(t,s.lod_error_pixels,f32(0.5))
+    testing.expect_value(t,s.lod_error_pixels,GRAPHICS_DETAIL_PIXELS[.Ultra])
     testing.expect_value(t,s.texture_pool_megabytes,u32(3276))
     small:=graphics_render_settings(gpu.DEFAULT_SETTINGS,g,{type=.Integrated,memory=256<<20})
     testing.expect_value(t,small.texture_pool_megabytes,GRAPHICS_TEXTURE_POOL_MIN)
