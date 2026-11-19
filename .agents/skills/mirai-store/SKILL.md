@@ -18,6 +18,9 @@ derived data cache that use it decide what a ref means and what is live.
 ## Map
 
 - Address, pieces and hex: `store/address.odin`.
+- Cutting bytes into chunks (content-defined and at a native asset's cut points):
+  `store/chunk.odin`; node records, building an object's tree into a sink and resolving a byte
+  or a group offset to a leaf: `store/node.odin`.
 - Root, layout version, errors and atomic writes: `store/store.odin`; what differs per system
   (sharing on Windows, a full volume, whether a process runs): `store/system_*.odin`.
 - Complete blobs, their kept tables and readers: `store/blobs.odin`.
@@ -102,6 +105,31 @@ derived data cache that use it decide what a ref means and what is live.
   sharing violations are retried briefly.
 - Ref namespaces and names are lowercase ASCII, digits, `.`, `_` and `-`, so a ref is the same
   file on every system.
+- A chunk is 1 to `CHUNK_MAX` bytes named by the standard BLAKE3 of its bytes. External bytes are
+  cut with FastCDC 2020, normalized at level 1 (`CHUNK_MIN`, `CHUNK_AVG`, `CHUNK_MAX`); the cut
+  function and its gear table are part of the layout, since changing either changes every
+  address. A cut is decided only with `CHUNK_MAX` bytes ahead or at the end, so a stream fed in
+  any split cuts as the whole does, holding two `CHUNK_MAX` windows and allocating nothing per
+  chunk.
+- A container chunk of a native asset is cut where its writer says, never on content:
+  consecutive pieces merge up to `CHUNK_MAX`, and a larger piece is cut at `CHUNK_MAX` offsets
+  from its start, its remainder merging with the pieces after it.
+- An object is a tree of nodes over its chunks, and its address is its root node's. A node is a
+  chunk: a `Node` record, its entries (address and data bytes under it), and in the root only its
+  groups (runs of leaves, one per container chunk; a plain file has one) and meta, which the
+  store does not read. Every object has a root, also an empty one. Each node has one encoding:
+  reserved bytes are zero and the parser checks every count, size and sum against the bytes, the
+  level against `NODE_LEVEL_MAX`, and each child against its parent's level and entry, so hostile
+  nodes return `Corrupt` and a walk is bounded by the root's level.
+- Nodes are grouped with content-defined boundaries over their entries' addresses: an entry whose
+  first four bytes, as a little-endian u32, are below `2^32 / NODE_ENTRIES_TARGET` is the last of
+  its node once the node holds `NODE_ENTRIES_MIN` entries, and the entry `NODE_ENTRIES_MAX` always
+  is, so an edit rewrites one node per level. The level that ends as one node is the root; when
+  the groups and meta do not fit beside its entries, a root of one entry goes above it. A builder
+  holds one open node per level and hands every chunk, data before the nodes naming it and the
+  root last, to the sink its caller gives.
+- A byte of an object is found by descending with the entries' sizes; a group gives leaf
+  indices, so where it begins is counted over the level-0 nodes before it.
 - No input terminates the process: damaged or truncated files of the root, random tables and
   pieces, out-of-range indices and memory that runs out return an `Error`.
 
@@ -113,4 +141,7 @@ derived data cache that use it decide what a ref means and what is live.
   `two_stores_on_one_root_put_and_receive_from_several_threads`,
   `completion_publishes_only_the_bytes_it_checked`, `fresh_leases_keep_their_current_addresses`,
   `sweep_removes_old_partials_and_settles_what_a_stopped_sweep_claimed`,
-  `a_failed_placement_loses_nothing_and_is_retried` and `hostile_inputs_return_errors`.
+  `a_failed_placement_loses_nothing_and_is_retried` and `hostile_inputs_return_errors`; for
+  chunks and nodes `chunks_are_the_same_streamed_in_any_split_and_whole`,
+  `an_edit_changes_two_data_chunks_and_one_node_per_level`, `hostile_nodes_return_errors` and
+  `groups_resolve_at_every_boundary`.
