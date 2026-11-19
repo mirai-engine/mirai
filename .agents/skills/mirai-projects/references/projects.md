@@ -640,6 +640,12 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
   The join puts the base's tree in the store before it asks, so what the host did not change since
   is not asked, and a file to replace whose base the store lost is put from the folder first, cut
   as the host's, so the chunks both versions share are not asked either.
+- **Links.** A join never follows a link (a symbolic link, or a junction on Windows) inside its
+  folder: a file whose path passes through one, the file itself included, is neither written nor
+  removed but reported by path, with the link to replace, and so is the whole join when the
+  generated folder's state goes through one. Each path is checked when the join plans it and
+  again just before its rename or removal. The folder itself may be a link: it is the place the
+  joiner named.
 - **Case.** A join probes whether the folder's file system folds case (APFS, NTFS). There paths
   compare in lower case, so a host's rename that changes only case is the same file: it is
   renamed in place, folders first, and never removed. Elsewhere it is a removal and a new file.
