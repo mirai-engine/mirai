@@ -781,12 +781,19 @@ shadow_cull_changes :: proc(r: ^Renderer, was, now: Vec4) -> bool {
 		sway := record.desc.sway * record.scale
 		size := linalg.length(linalg.max(linalg.abs(mesh.bounds_min), linalg.abs(mesh.bounds_max))) * record.scale + sway
 		offset := batch_offset(r, record)
+		// Squared, from the place in the pool alone: most instances lie far from the cull distance.
+		inside, outside := max(reach - size, 0), reach + size
+		inside, outside = inside * inside, outside * outside
+		from, to := was.xyz - offset, now.xyz - offset
 		for i in 0 ..< record.count {
+			p := s.indices[record.words + i * BATCH_WORDS:][:3]
+			x, y, z := transmute(f32)p[0], transmute(f32)p[1], transmute(f32)p[2]
+			a := (x - from.x) * (x - from.x) + (y - from.y) * (y - from.y) + (z - from.z) * (z - from.z)
+			b := (x - to.x) * (x - to.x) + (y - to.y) * (y - to.y) + (z - to.z) * (z - to.z)
+			if a <= inside && b <= inside || a > outside && b > outside {continue}
 			instance := batch_instance_at(s, record, i)
 			instance.position += offset
 			at := instance.position
-			a, b := linalg.length(at - was.xyz), linalg.length(at - now.xyz)
-			if max(a, b) + size <= reach || min(a, b) - size > reach {continue}
 			low, high := rows_bounds(batch_instance_rows(instance), mesh.bounds_min, mesh.bounds_max)
 			low, high = low - sway, high + sway
 			if shadow_culled(low, high, cull, was) == shadow_culled(low, high, cull, now) {continue}
