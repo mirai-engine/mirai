@@ -493,10 +493,13 @@ bool light_node_opens(Light_Node node, uint at) {
 
 static const float EMITTER_LIGHT_SIZES = 2.0;
 
+// The groups a walk down the tree of the lights has yet to open, of a
+// thread: one for every walk down it, which none nests (light_walk).
+static uint light_pending[LIGHT_TREE_DEPTH];
+
 // One of the lights of the tree from root lies inside the box from low to
 // high, at most `extent` from its center each way.
 bool light_stands_for_under(uint root, float3 low, float3 high, float extent) {
-    uint pending[LIGHT_TREE_DEPTH];
     uint depth = 0u;
     uint at = root;
     [loop]
@@ -508,7 +511,7 @@ bool light_stands_for_under(uint root, float3 low, float3 high, float extent) {
                 Light light = lights[node.child];
                 if (all(light.position_range.xyz >= low) && all(light.position_range.xyz <= high) && extent <= EMITTER_LIGHT_SIZES * light_extent(light)) return true;
             } else if (depth < LIGHT_TREE_DEPTH && light_node_opens(node, at)) {
-                pending[depth] = node.child;
+                light_pending[depth] = node.child;
                 depth++;
                 at++;
                 continue;
@@ -516,7 +519,7 @@ bool light_stands_for_under(uint root, float3 low, float3 high, float extent) {
         }
         if (depth == 0u) break;
         depth--;
-        at = pending[depth];
+        at = light_pending[depth];
     }
     return false;
 }
@@ -587,46 +590,49 @@ struct Light_Walk {
     bool ordered;
     bool cut; // it had more to open than it could
 };
-Light_Walk light_walk_begin(bool ordered) {
-    Light_Walk walk;
-    walk.held = 0u;
-    walk.visits = 0u;
-    walk.ordered = ordered;
-    walk.cut = false;
-    return walk;
+// The walk of a thread, which every call that walks takes in turn: none
+// nests. The arrays of a function are local memory once for each place it is
+// inlined, and a driver keeps the local memory of the largest stage for every
+// thread the GPU holds, so the walks and cuts of a stage share theirs.
+static Light_Walk light_walk;
+void light_walk_begin(bool ordered) {
+    light_walk.held = 0u;
+    light_walk.visits = 0u;
+    light_walk.ordered = ordered;
+    light_walk.cut = false;
 }
-void light_walk_hold(inout Light_Walk walk, uint at, float weight, float need) {
-    if (walk.held >= LIGHT_WALK_HELD) {
-        walk.cut = true;
+void light_walk_hold(uint at, float weight, float need) {
+    if (light_walk.held >= LIGHT_WALK_HELD) {
+        light_walk.cut = true;
         return;
     }
-    walk.at[walk.held] = at;
-    walk.weight[walk.held] = weight;
-    walk.need[walk.held] = need;
-    walk.held++;
+    light_walk.at[light_walk.held] = at;
+    light_walk.weight[light_walk.held] = weight;
+    light_walk.need[light_walk.held] = need;
+    light_walk.held++;
 }
 // Takes the group to open next out of the walk: false when none is left or
 // opening it would pass LIGHT_WALK_MAX visits.
-bool light_walk_next(inout Light_Walk walk, out uint at, out float weight) {
+bool light_walk_next(out uint at, out float weight) {
     at = 0u;
     weight = 0.0;
-    if (walk.held == 0u) return false;
-    if (walk.visits + 2u > LIGHT_WALK_MAX) {
-        walk.cut = true;
+    if (light_walk.held == 0u) return false;
+    if (light_walk.visits + 2u > LIGHT_WALK_MAX) {
+        light_walk.cut = true;
         return false;
     }
-    uint neediest = walk.held - 1u;
-    if (walk.ordered) {
-        for (uint i = 0u; i + 1u < walk.held; i++) {
-            if (walk.need[i] > walk.need[neediest]) neediest = i;
+    uint neediest = light_walk.held - 1u;
+    if (light_walk.ordered) {
+        for (uint i = 0u; i + 1u < light_walk.held; i++) {
+            if (light_walk.need[i] > light_walk.need[neediest]) neediest = i;
         }
     }
-    at = walk.at[neediest];
-    weight = walk.weight[neediest];
-    walk.held--;
-    walk.at[neediest] = walk.at[walk.held];
-    walk.weight[neediest] = walk.weight[walk.held];
-    walk.need[neediest] = walk.need[walk.held];
+    at = light_walk.at[neediest];
+    weight = light_walk.weight[neediest];
+    light_walk.held--;
+    light_walk.at[neediest] = light_walk.at[light_walk.held];
+    light_walk.weight[neediest] = light_walk.weight[light_walk.held];
+    light_walk.need[neediest] = light_walk.need[light_walk.held];
     return true;
 }
 
@@ -657,29 +663,29 @@ float estimate_node(Light_Node node, float3 position, float3 normal, uint share,
     float distance;
     return luminance(node_contribution(node, position, normal, direction, distance)) * ((1.0 - opened) * node_share(node, share));
 }
-float estimate_visit(inout Light_Walk walk, uint at, float weight, float3 position, float3 normal, uint share) {
-    walk.visits++;
+float estimate_visit(uint at, float weight, float3 position, float3 normal, uint share) {
+    light_walk.visits++;
     Light_Node node = light_nodes[at];
     float opened, distance_squared;
     float total = weight * estimate_node(node, position, normal, share, false, opened, distance_squared);
-    if (opened > 0.0 && light_node_opens(node, at)) light_walk_hold(walk, at, weight * opened, walk.ordered ? weight * opened * node_need(node, distance_squared, position, normal, share) : 0.0);
+    if (opened > 0.0 && light_node_opens(node, at)) light_walk_hold(at, weight * opened, light_walk.ordered ? weight * opened * node_need(node, distance_squared, position, normal, share) : 0.0);
     return total;
 }
-float lights_estimate_walk(inout Light_Walk walk, float3 position, float3 normal, uint root, uint share) {
-    float total = estimate_visit(walk, root, 1.0, position, normal, share);
+float lights_estimate_walk(float3 position, float3 normal, uint root, uint share) {
+    float total = estimate_visit(root, 1.0, position, normal, share);
     uint at;
     float weight;
     [loop]
-    while (light_walk_next(walk, at, weight)) {
-        total += estimate_visit(walk, at + 1u, weight, position, normal, share);
-        total += estimate_visit(walk, light_nodes[at].child, weight, position, normal, share);
+    while (light_walk_next(at, weight)) {
+        total += estimate_visit(at + 1u, weight, position, normal, share);
+        total += estimate_visit(light_nodes[at].child, weight, position, normal, share);
     }
-    if (!walk.ordered) return total;
-    for (uint i = 0u; i < walk.held; i++) {
-        Light_Node node = light_nodes[walk.at[i]];
+    if (!light_walk.ordered) return total;
+    for (uint i = 0u; i < light_walk.held; i++) {
+        Light_Node node = light_nodes[light_walk.at[i]];
         float3 direction;
         float distance;
-        total += luminance(node_contribution(node, position, normal, direction, distance)) * (walk.weight[i] * node_share(node, share));
+        total += luminance(node_contribution(node, position, normal, direction, distance)) * (light_walk.weight[i] * node_share(node, share));
     }
     return total;
 }
@@ -688,9 +694,9 @@ float lights_estimate(float3 position, float3 normal, uint root = 0u, uint share
     // One walk in the code: the second, in order, only after one cut short.
     [loop]
     for (uint ordered = 0u; ordered < 2u; ordered++) {
-        Light_Walk walk = light_walk_begin(ordered != 0u);
-        total = lights_estimate_walk(walk, position, normal, root, share);
-        if (!walk.cut) break;
+        light_walk_begin(ordered != 0u);
+        total = lights_estimate_walk(position, normal, root, share);
+        if (!light_walk.cut) break;
     }
     return total;
 }
@@ -738,28 +744,28 @@ float3 local_node(Light_Node node, Shading s, float total, uint share, bool stan
     if (!stands) opened = max(opened, smoothstep(LIGHTS_GROUPED, LIGHTS_OPENED, doubt / total));
     return radiance * ((1.0 - opened) * shared);
 }
-float3 local_visit(inout Light_Walk walk, uint at, float weight, Shading s, float total, uint share) {
-    walk.visits++;
+float3 local_visit(uint at, float weight, Shading s, float total, uint share) {
+    light_walk.visits++;
     Light_Node node = light_nodes[at];
     float opened, distance_squared;
     float3 radiance = weight * local_node(node, s, total, share, false, opened, distance_squared);
-    if (opened > 0.0 && light_node_opens(node, at)) light_walk_hold(walk, at, weight * opened, walk.ordered ? weight * opened * node_need(node, distance_squared, s.position, s.normal, share) : 0.0);
+    if (opened > 0.0 && light_node_opens(node, at)) light_walk_hold(at, weight * opened, light_walk.ordered ? weight * opened * node_need(node, distance_squared, s.position, s.normal, share) : 0.0);
     return radiance;
 }
-float3 local_lighting_walk(inout Light_Walk walk, Shading s, float total, uint root, uint share) {
-    float3 result = local_visit(walk, root, 1.0, s, total, share);
+float3 local_lighting_walk(Shading s, float total, uint root, uint share) {
+    float3 result = local_visit(root, 1.0, s, total, share);
     uint at;
     float weight;
     [loop]
-    while (light_walk_next(walk, at, weight)) {
-        result += local_visit(walk, at + 1u, weight, s, total, share);
-        result += local_visit(walk, light_nodes[at].child, weight, s, total, share);
+    while (light_walk_next(at, weight)) {
+        result += local_visit(at + 1u, weight, s, total, share);
+        result += local_visit(light_nodes[at].child, weight, s, total, share);
     }
-    if (!walk.ordered) return result;
-    for (uint i = 0u; i < walk.held; i++) {
-        Light_Node node = light_nodes[walk.at[i]];
+    if (!light_walk.ordered) return result;
+    for (uint i = 0u; i < light_walk.held; i++) {
+        Light_Node node = light_nodes[light_walk.at[i]];
         float doubt;
-        result += group_radiance(node, s, doubt) * (walk.weight[i] * node_share(node, share));
+        result += group_radiance(node, s, doubt) * (light_walk.weight[i] * node_share(node, share));
     }
     return result;
 }
@@ -768,9 +774,9 @@ float3 local_lighting_of(Shading s, float total, uint root, uint share) {
     float3 result = float3(0.0);
     [loop]
     for (uint ordered = 0u; ordered < 2u; ordered++) {
-        Light_Walk walk = light_walk_begin(ordered != 0u);
-        result = local_lighting_walk(walk, s, total, root, share);
-        if (!walk.cut) break;
+        light_walk_begin(ordered != 0u);
+        result = local_lighting_walk(s, total, root, share);
+        if (!light_walk.cut) break;
     }
     return result;
 }
@@ -814,12 +820,15 @@ float cut_need(uint index, float3 position, float3 normal, uint share) {
 // opens to its children while there is room. Every light that reaches the
 // point is under one of the nodes, and a leaf among them is a light alone.
 // `share`: only lights that give some of that share of their light.
-uint light_cut(float3 position, float3 normal, uint budget, inout uint cut[LIGHT_CUT_MAX], uint share = LIGHT_SHARE_ALL) {
+// The nodes of the last cut of a thread (light_cut) and, while it is made,
+// how much each needs to open (cut_need): one cut at a time (light_walk).
+static uint light_cut_nodes[LIGHT_CUT_MAX];
+static float light_cut_needs[LIGHT_CUT_MAX];
+uint light_cut(float3 position, float3 normal, uint budget, uint share = LIGHT_SHARE_ALL) {
     budget = min(budget, LIGHT_CUT_MAX);
     if (frame.light_nodes == 0u || budget == 0u) return 0u;
     uint count = 0u;
     {
-        uint pending[LIGHT_TREE_DEPTH];
         uint depth = 0u;
         uint at = 0u;
         // Lights known to reach the point: those of a group wholly within
@@ -847,7 +856,7 @@ uint light_cut(float3 position, float3 normal, uint budget, inout uint cut[LIGHT
                         float3 first = light_nodes[at + 1u].center_radius.xyz - position;
                         float3 second = light_nodes[node.child].center_radius.xyz - position;
                         bool near_first = dot(first, first) <= dot(second, second);
-                        pending[depth] = near_first ? node.child : at + 1u;
+                        light_pending[depth] = near_first ? node.child : at + 1u;
                         depth++;
                         at = near_first ? at + 1u : node.child;
                         continue;
@@ -857,53 +866,52 @@ uint light_cut(float3 position, float3 normal, uint budget, inout uint cut[LIGHT
                     fits = false;
                     break;
                 }
-                cut[count] = at;
+                light_cut_nodes[count] = at;
                 count++;
             }
             if (depth == 0u) break;
             depth--;
-            at = pending[depth];
+            at = light_pending[depth];
         }
         if (fits) return count;
     }
     // More lights reach the point than the budget: groups stand for them,
     // half as many, their rays spread over their lights by the blocks.
     budget = max(budget / 2u, 1u);
-    float need[LIGHT_CUT_MAX];
     float root = cut_need(0u, position, normal, share);
     if (root < -1.5) return 0u;
-    cut[0] = 0u;
-    need[0] = root;
+    light_cut_nodes[0] = 0u;
+    light_cut_needs[0] = root;
     count = 1u;
     [loop]
     while (true) {
         uint neediest = LIGHT_CUT_MAX;
         float most = -0.5;
         for (uint i = 0u; i < count; i++) {
-            if (need[i] > most) {
-                most = need[i];
+            if (light_cut_needs[i] > most) {
+                most = light_cut_needs[i];
                 neediest = i;
             }
         }
         if (neediest == LIGHT_CUT_MAX) break;
-        uint first = cut[neediest] + 1u;
-        uint second = light_nodes[cut[neediest]].child;
+        uint first = light_cut_nodes[neediest] + 1u;
+        uint second = light_nodes[light_cut_nodes[neediest]].child;
         float a = cut_need(first, position, normal, share);
         float b = cut_need(second, position, normal, share);
         if (a > -1.5 && b > -1.5) {
             if (count >= budget) break;
-            cut[neediest] = first;
-            need[neediest] = a;
-            cut[count] = second;
-            need[count] = b;
+            light_cut_nodes[neediest] = first;
+            light_cut_needs[neediest] = a;
+            light_cut_nodes[count] = second;
+            light_cut_needs[count] = b;
             count++;
         } else if (a > -1.5 || b > -1.5) {
-            cut[neediest] = a > -1.5 ? first : second;
-            need[neediest] = max(a, b);
+            light_cut_nodes[neediest] = a > -1.5 ? first : second;
+            light_cut_needs[neediest] = max(a, b);
         } else {
             count--;
-            cut[neediest] = cut[count];
-            need[neediest] = need[count];
+            light_cut_nodes[neediest] = light_cut_nodes[count];
+            light_cut_needs[neediest] = light_cut_needs[count];
         }
     }
     return count;
@@ -1144,12 +1152,11 @@ bool lights_changed(float3 position, float3 normal, float bias, uint budget, uin
     if (lights_moved_near(position)) return true;
     if (frame.moved.x == 0u) return false;
     uint share = (which & LIGHTS_BOUNCED) != 0u ? LIGHT_SHARE_BOUNCED : (which & LIGHTS_SCATTERED) != 0u ? LIGHT_SHARE_SCATTERED : LIGHT_SHARE_ALL;
-    uint cut[LIGHT_CUT_MAX];
-    uint count = light_cut(position, normal, budget, cut, share);
+    uint count = light_cut(position, normal, budget, share);
     for (uint i = 0u; i < count; i++) {
         float3 direction;
         float reach;
-        cut_ray(cut[i], position, normal, share, direction, reach);
+        cut_ray(light_cut_nodes[i], position, normal, share, direction, reach);
         if (occluder_changed(origin, direction, reach, INVALID, FLT_MAX)) return true;
     }
     return false;
@@ -1172,11 +1179,10 @@ bool lights_changed(float3 position, float3 normal, float bias, uint budget, uin
 // would be another copy of it in every stage.
 float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 extension_point, inout bool changed) {
     float3 origin = offset_origin(s.position, s.normal, bias);
-    uint cut[LIGHT_CUT_MAX];
     uint share = (which & LIGHTS_BOUNCED) != 0u ? LIGHT_SHARE_BOUNCED : (which & LIGHTS_SCATTERED) != 0u ? LIGHT_SHARE_SCATTERED : LIGHT_SHARE_ALL;
     bool changes = (which & LIGHTS_CHANGES) != 0u;
     float sun_share = share == LIGHT_SHARE_BOUNCED ? frame.sun_shares.x : share == LIGHT_SHARE_SCATTERED ? frame.sun_shares.y : 1.0;
-    uint local_items = (which & LIGHTS_LOCAL) != 0u ? light_cut(s.position, s.normal, budget, cut, share) : 0u;
+    uint local_items = (which & LIGHTS_LOCAL) != 0u ? light_cut(s.position, s.normal, budget, share) : 0u;
     uint items = 1u + local_items;
 #ifdef MIRAI_HOOK_LIGHTS
     if ((which & LIGHTS_EXTENSION) != 0u) items += mirai_extension_light_count();
@@ -1203,11 +1209,11 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
             mapped = sun_shadow_seen(s.position, s.normal, s.across);
 #endif
         } else if (item <= local_items) {
-            Light_Node node = light_nodes[cut[item - 1u]];
+            Light_Node node = light_nodes[light_cut_nodes[item - 1u]];
             float distance;
             radiance = node_radiance(node, s, direction, distance) * node_share(node, share);
             if (luminance(radiance) <= light_cutoff()) continue;
-            uint aimed = cut_ray(cut[item - 1u], s.position, s.normal, share, direction, reach);
+            uint aimed = cut_ray(light_cut_nodes[item - 1u], s.position, s.normal, share, direction, reach);
             if (changes) changed = changed || occluder_changed(origin, direction, reach, INVALID, FLT_MAX);
 #ifdef MIRAI_LIGHT_MAPS
             mapped = light_shadow_seen(aimed, s.position, s.normal, light_extent(lights[aimed]), s.across);

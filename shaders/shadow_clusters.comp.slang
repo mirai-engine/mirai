@@ -120,7 +120,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     Visible_Cluster entry;
     entry.instance = instance;
     entry.cluster = mesh_cluster_word(mesh, k);
-    entry.material = material_of(inst, cluster_material(mesh, c));
+    entry.material = material_of(instance_row(instance), inst, cluster_material(mesh, c));
     entry.vertices = b.vertices;
     entry.triangles = b.triangles;
     entry.page = cluster_page_word(mesh, c);
