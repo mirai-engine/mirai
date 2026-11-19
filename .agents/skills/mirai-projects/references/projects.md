@@ -659,6 +659,9 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
   the same join again does only those.
 - **Peers.** While a join runs it serves what it has, with an invitation of its own, so a third
   machine joins from either. After a join, `mirai share` in the folder serves it too.
+- **Editors.** A collaboration session of the editor carries its project with this same node and
+  join over its own connections
+  ([the project](../../mirai-editor/references/collaboration.md#the-project)).
 - Reaching a host is the invitation's: on another network one side needs a router that maps a port;
   the failures say so, as they say an invitation whose share ended, another version of Mirai, a
   store of another layout, a disk without room and a package no connected peer has a build of.

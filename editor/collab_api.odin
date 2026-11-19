@@ -1,6 +1,8 @@
 package editor
 
 import "core:fmt"
+import "core:sync"
+import "mirai:cook/share"
 import "mirai:editor/api"
 import "mirai:platform"
 import "mirai:std/base"
@@ -16,6 +18,36 @@ Api_Collab_Host_Params :: struct {
 Api_Collab_Join_Params :: struct {
     invite:[64]u8 `mirai:"text,label=The code of the invitation of the host (like R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT)"`,
     name:[COLLAB_NAME_BYTES]u8 `mirai:"text,optional"`,
+    folder:[512]u8 `mirai:"text,optional,label=Where the host's project goes: empty or the open project, updated by three ways; another folder, new or joined before, is opened once it has the files and joins the session from there"`,
+}
+
+Api_Collab_Project :: struct {
+    peers:int `mirai:"label=Connections the project moves over"`,
+    sent,received:u64 `mirai:"label=Chunk bytes sent to and received from the others"`,
+    send_rate,receive_rate:f64 `mirai:"label=Bytes per second now"`,
+    bad:int `mirai:"label=Peers that sent what no peer sends: neither asked nor served since"`,
+    refused:u64 `mirai:"label=Their messages refused"`,
+}
+
+Api_Collab_Line :: struct {text:[COLLAB_LINE_BYTES]u8 `mirai:"text"`}
+
+Api_Collab_Join :: struct {
+    phase:share.Join_Phase `mirai:"label=Connecting, Snapshot (asking for the project), Files, Packages (their builds from the peers), Done"`,
+    folder:[512]u8 `mirai:"text,label=Where the files of the host go"`,
+    opening:bool `mirai:"label=The folder is being built to open it: the editor started on it joins the session"`,
+    files,files_done:int `mirai:"label=Files to fetch, and fetched"`,
+    bytes,bytes_done:i64 `mirai:"label=Bytes of the files to fetch, and here"`,
+    received:u64 `mirai:"label=Chunk bytes received in the phase"`,
+    rate:f64 `mirai:"label=Bytes received per second lately"`,
+    left:f64 `mirai:"label=Seconds the files still need at that rate; -1: unknown"`,
+    written,removed:int `mirai:"label=Files written and removed, once the files are done"`,
+    kept:[COLLAB_LINES]Api_Collab_Line `mirai:"label=Files left as this editor changed them, each with why; the first of kept_count"`,
+    kept_count:int,
+    failed:[COLLAB_LINES]Api_Collab_Line `mirai:"label=Files not written or removed, each with why and how to fix it; the first of failed_count"`,
+    failed_count:int,
+    missing:[COLLAB_LINES]Api_Collab_Line `mirai:"label=Packages no connected peer has a build of and no source here gives, by name; the first of missing_count"`,
+    missing_count:int,
+    error:[256]u8 `mirai:"text,label=Why the join stopped"`,
 }
 
 Api_Collab_Peer :: struct {
@@ -43,13 +75,15 @@ Api_Collab_Status :: struct {
     count:int,
     unsent:[COLLAB_UNSENT]Api_Collab_Unsent `mirai:"label=The first unsent_count are files changed in the session that the others do not have"`,
     unsent_count:int,
+    join:Api_Collab_Join `mirai:"label=A guest: how its folder is brought to the host's snapshot before it enters the scene"`,
+    project:Api_Collab_Project `mirai:"label=What the session moved of the project and its builds"`,
     sent_edits,received_edits,sent_ops,received_ops:u64,
 }
 
 @(private)
 collab_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="collab.host",summary="Shares the scene: other editors connect to this one with the code of the invitation it gives.",params=type_info_of(Api_Collab_Host_Params),result=type_info_of(Api_Collab_Status),run=api_collab_host})
-    api_register(s,st,{name="collab.join",summary="Enters the session of another editor; the scene is replaced by its scene. Returns before the scene arrives: poll collab.status until phase is Joined.",params=type_info_of(Api_Collab_Join_Params),result=type_info_of(Api_Collab_Status),flags={.Destructive},run=api_collab_join})
+    api_register(s,st,{name="collab.join",summary="Enters the session of another editor: first a folder is brought to the host's project (its files, then the builds of its packages from the peers), then the scene is replaced by its scene. Returns at once: poll collab.status until phase is Joined; its join says how far the folder is.",params=type_info_of(Api_Collab_Join_Params),result=type_info_of(Api_Collab_Status),flags={.Destructive},run=api_collab_join})
     api_register(s,st,{name="collab.leave",summary="Ends the session; the scene stays as it is.",result=type_info_of(Api_Collab_Status),flags={.Idempotent},run=api_collab_leave})
     api_register(s,st,{name="collab.status",summary="The session this editor shares or joined: who is in it and how others join it.",result=type_info_of(Api_Collab_Status),flags={.Read_Only},run=api_collab_status})
 }
@@ -80,13 +114,49 @@ api_collab_result :: proc(s:^Session,call:^api.Call) {
         r.unsent_count+=1
     }
     r.sent_edits,r.received_edits,r.sent_ops,r.received_ops=st.sent_edits,st.received_edits,st.sent_ops,st.received_ops
+    if j:=st.join;j!=nil {api_collab_join_result(j,&r.join)}
+    if st.node!=nil {
+        t:=share.node_totals(st.node)
+        r.project={peers=t.connected,sent=t.sent,received=t.received,send_rate=t.send_rate,receive_rate=t.receive_rate,bad=t.bad,refused=t.refused}
+    }
+}
+
+@(private)
+api_collab_join_result :: proc(j:^Collab_Join,r:^Api_Collab_Join) {
+    state:=share.join_progress_read(&j.progress)
+    r.phase,r.opening=state.phase,j.opening
+    base.text_set(r.folder[:],j.folder)
+    r.files,r.files_done,r.bytes,r.bytes_done=state.files,state.files_done,state.bytes,state.bytes_done
+    r.received,r.rate,r.left=state.received,state.rate,state.left
+    r.kept_count=state.kept
+    // The report is the thread's until it is done.
+    if !sync.atomic_load(&j.done) {return}
+    lines :: proc(into:[]Api_Collab_Line,count:^int,from:[]string) {
+        count^=len(from)
+        for line,k in from[:min(len(from),len(into))] {base.text_set(into[k].text[:],line)}
+    }
+    r.written,r.removed=j.report.written,j.report.removed
+    lines(r.kept[:],&r.kept_count,j.report.kept[:])
+    lines(r.failed[:],&r.failed_count,j.report.failed[:])
+    lines(r.missing[:],&r.missing_count,j.report.packages.missing[:])
+    base.text_set(r.error[:],j.error)
+}
+
+// The text of an error of collab.host or collab.join, with the problem of the project.
+@(private)
+collab_error_say :: proc(s:^Session,error:Collab_Error) -> string {
+    if error==.Project {
+        c:=collab_of(s)
+        return fmt.tprintf("%s: %s",collab_error_text(error),base.text_get(c.problem[:]))
+    }
+    return collab_error_text(error)
 }
 
 @(private)
 api_collab_host :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Collab_Host_Params)
     if error:=collab_host(s,params.port,base.text_get(params.name[:]));error!=.None {
-        api.call_fail(call,api.SERVER_ERROR,collab_error_text(error))
+        api.call_fail(call,api.SERVER_ERROR,collab_error_say(s,error))
         return
     }
     api_collab_result(s,call)
@@ -95,8 +165,8 @@ api_collab_host :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_collab_join :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Collab_Join_Params)
-    if error:=collab_join(s,base.text_get(params.invite[:]),base.text_get(params.name[:]));error!=.None {
-        api.call_fail(call,error==.Invite?api.INVALID_PARAMS:api.SERVER_ERROR,collab_error_text(error))
+    if error:=collab_join(s,base.text_get(params.invite[:]),base.text_get(params.name[:]),base.text_get(params.folder[:]));error!=.None {
+        api.call_fail(call,error==.Invite?api.INVALID_PARAMS:api.SERVER_ERROR,collab_error_say(s,error))
         return
     }
     api_collab_result(s,call)
@@ -197,7 +267,7 @@ share_build :: proc(s:^Session) {
                 if share_row(ctx,"Invitation") {ui.text_field(ctx,shell_id(g,"share_address"),c.join[:],&c.join_length,{height=24,size=11,placeholder="R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT",live=true,keep_caret=true})}
             }
             if c.error!=.None {
-                if share_row(ctx,"Error") {ui.label(ctx,collab_error_text(c.error),ui.metric(ctx,"font_label"),ui.tone(ctx,"danger_soft"),0)}
+                if share_row(ctx,"Error") {ui.text(ctx,collab_error_say(s,c.error),ui.prose(ctx,ui.metric(ctx,"font_label"),ui.tone(ctx,"danger_soft")))}
             }
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(26),gap=8,align_y=.Center}) {
                 busy:=s.mode!=.Edit
@@ -212,16 +282,19 @@ share_build :: proc(s:^Session) {
             c.error=.None
             #partial switch st.phase {
             case .Connecting: ui.label(ctx,"Connecting...",10.5,ui.tone(ctx,"text_muted"),0)
+            case .Updating:   ui.label(ctx,collab_join_text(st.join),10.5,ui.tone(ctx,"text_muted"),0)
             case .Syncing:    ui.label(ctx,"Receiving the scene...",10.5,ui.tone(ctx,"text_muted"),0)
             case .Ended:
-                if share_row(ctx,"Reason") {ui.label(ctx,st.reason,10.5,ui.tone(ctx,"text"),0)}
+                if share_row(ctx,"Reason") {ui.text(ctx,st.reason,ui.prose(ctx,10.5,ui.tone(ctx,"text")))}
             }
+            share_join_lines(s,st)
             if st.role==.Host {
                 // One code joins from anywhere: a guest asks at both of its addresses.
                 share_code(s,"share_copy","Code",string(st.code[:st.code_length]),"Opening the port on the router...")
             }
+            // A guest knows who is in the session from the roster, which comes after its Hello.
             for &peer,i in st.peers {
-                if !peer.used {continue}
+                if !peer.used || st.role==.Guest && st.phase<.Syncing {continue}
                 if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=9,align_y=.Center}) {
                     if ui.box(ctx,{width=ui.fixed(9),height=ui.fixed(9),fill=collab_color(i),radius=4.5}) {}
                     name:=string(peer.name[:peer.name_length])
@@ -236,4 +309,19 @@ share_build :: proc(s:^Session) {
             if ui.button(ctx,shell_id(g,"share_leave"),{label=label,variant="accent",width=-1,height=ui.metric(ctx,"control"),size=11,center=true}).clicked {collab_leave(s)}
         }
     }
+}
+
+// What a guest's join left as it was and could not do: the files it kept, those it could
+// not write and the packages no peer has a build of.
+@(private)
+share_join_lines :: proc(s:^Session,st:^Collab_State) {
+    j:=st.join
+    if j==nil || !j.finished {return}
+    ctx:=s.gui.ctx
+    muted:=ui.prose(ctx,ui.metric(ctx,"font_label"),ui.tone(ctx,"text_muted"))
+    danger:=ui.prose(ctx,ui.metric(ctx,"font_label"),ui.tone(ctx,"danger_soft"))
+    for line in j.report.kept[:min(len(j.report.kept),COLLAB_LINES)] {ui.text(ctx,line,muted)}
+    if len(j.report.kept)>COLLAB_LINES {ui.text(ctx,fmt.tprintf("%d more kept",len(j.report.kept)-COLLAB_LINES),muted)}
+    for line in j.report.failed[:min(len(j.report.failed),COLLAB_LINES)] {ui.text(ctx,line,danger)}
+    for line in j.report.packages.missing[:min(len(j.report.packages.missing),COLLAB_LINES)] {ui.text(ctx,line,danger)}
 }

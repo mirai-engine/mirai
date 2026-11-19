@@ -111,7 +111,8 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   variants and Apply to base, in
   [variants](references/prefabs.md#variants).
 - **Shared session and the host's networked game**:
-  [entering and leaving](references/collaboration.md#entering-and-leaving),
+  [entering and leaving](references/collaboration.md#entering-and-leaving), the project and its
+  builds that travel with the session ([the project](references/collaboration.md#the-project)),
   [the host's networked games](references/collaboration.md#the-hosts-networked-games) and
   [where each one plays](references/collaboration.md#where-each-one-plays).
 - **Figure of agents and editors, glyph menu, Follow, palette, pings, the editor's own assets
@@ -328,6 +329,9 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   (the program a material document reads, its picks for the next message, the values of a
   variant); their view in an open editor, `editor.document` (`Open` with the asset's path) and
   `capture` with the UI.
+- The project a session carries: `editor/collab_share_test.odin` (a guest with an empty folder
+  ends with the host's files, packages built and scene; a guest's own edit is kept and listed),
+  over `Sim_Network` in virtual time with temporary stores.
 - Build and reload, networked Play (`templates/game`) and collaboration
   (`--share`/`--join`) are checked by API in an open editor. Images:
   [rendering](../mirai-rendering/SKILL.md#verification); protocol:

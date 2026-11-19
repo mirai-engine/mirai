@@ -177,7 +177,7 @@ collab_agent_at :: proc(s:^Session,point:[2]f32) -> (peer,agent:int,rect:ui.Rect
     if st==nil || st.phase!=.Joined || s.mode!=.Edit {return}
     _,low,high,loaded:=presence_mesh(s.app.assets)
     if !loaded {return}
-    now:=wire.host_time(&st.host)
+    now:=collab_now(st)
     for i in 0..<COLLAB_PEERS {
         for &a,k in collab_remote_agents(s.ai,st,i,now) {
             r,shown:=presence_glyph_rect(s,presence_shown(&st.agent_figures[i][k],a.anchor+{0,-low.y,0})+{0,high.y,0},s.viewport.view_projection)

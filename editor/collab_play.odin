@@ -17,7 +17,7 @@ import "mirai:std/serial"
 collab_host_seen :: proc(st:^Collab_State) -> bool {
     if st==nil || st.role!=.Guest || st.phase!=.Joined {return false}
     host:=&st.peers[0]
-    return host.used && host.has_pose && wire.host_time(&st.host)-host.seen<=COLLAB_PRESENCE_SEEN
+    return host.used && host.has_pose && collab_now(st)-host.seen<=COLLAB_PRESENCE_SEEN
 }
 
 // A guest: whether it is in a session, and whether it hears the host now.
