@@ -156,8 +156,8 @@ a_source_from_outside_is_pinned_listed_moved_and_unpinned_without_copies :: proc
     if !found {file,found=asset.registry_find_path(r,"props/sign.tex")}
     if !testing.expectf(t,found && file.listed,"the texture is listed from the package: %v",r.listed) {return}
     id:=file.id
-    blob:=asset.registry_file_path(r,file.path,context.temp_allocator)
-    testing.expectf(t,strings.has_prefix(blob,s.store.root),"%s is a blob of the store",blob)
+    object,built:=asset.registry_listed_object(r,file.path)
+    testing.expect(t,built && store.chunk_has(&s.store,object),"the texture is an object of the store")
     testing.expectf(t,len(library_test_files(project.path(l.root,"assets",allocator=context.temp_allocator)))==0,"nothing is copied into the assets")
     after,_:=os.read_entire_file(source,context.temp_allocator)
     testing.expect(t,string(before)==string(after),"the source is as it was")
@@ -178,7 +178,7 @@ a_source_from_outside_is_pinned_listed_moved_and_unpinned_without_copies :: proc
     testing.expect_value(t,len(library_test_pins(l.root)),0)
     _,listed:=asset.registry_find(r,id)
     testing.expect(t,!listed,"what it listed left the project")
-    testing.expect(t,os.is_file(blob),"the blob stays in the store")
+    testing.expect(t,store.chunk_has(&s.store,object),"the object stays in the store")
     testing.expect(t,os.is_file(source),"the source outside the project stays")
 }
 
