@@ -704,8 +704,8 @@ shadow_movers_update :: proc(r: ^Renderer) {
 	if stale.count == 0 && !stale.covers && moved.count == 0 {return}
 	give :: proc "contextless" (to: ^Shadow_Raster, stale, moved: ^Occluder_Changes) {
 		to.stale.covers ||= stale.covers
-		for box in stale.boxes[:stale.count] {occluder_add(&to.stale, box.instance, box.low, box.high, box.fine)}
-		for box in moved.boxes[:moved.count] {occluder_add(&to.moved, box.instance, box.low, box.high, box.fine)}
+		for box in stale.boxes[:stale.count] {occluder_add(&to.stale, box.instance, box.low, box.high, box.fine, box.error)}
+		for box in moved.boxes[:moved.count] {occluder_add(&to.moved, box.instance, box.low, box.high, box.fine, box.error)}
 	}
 	give(&r.main.targets.shadow_raster, &stale, &moved)
 	for &view in r.views {give(&view.targets.shadow_raster, &stale, &moved)}
@@ -781,12 +781,19 @@ shadow_cull_changes :: proc(r: ^Renderer, was, now: Vec4) -> bool {
 		sway := record.desc.sway * record.scale
 		size := linalg.length(linalg.max(linalg.abs(mesh.bounds_min), linalg.abs(mesh.bounds_max))) * record.scale + sway
 		offset := batch_offset(r, record)
+		// Squared, from the place in the pool alone: most instances lie far from the cull distance.
+		inside, outside := max(reach - size, 0), reach + size
+		inside, outside = inside * inside, outside * outside
+		from, to := was.xyz - offset, now.xyz - offset
 		for i in 0 ..< record.count {
+			p := s.indices[record.words + i * BATCH_WORDS:][:3]
+			x, y, z := transmute(f32)p[0], transmute(f32)p[1], transmute(f32)p[2]
+			a := (x - from.x) * (x - from.x) + (y - from.y) * (y - from.y) + (z - from.z) * (z - from.z)
+			b := (x - to.x) * (x - to.x) + (y - to.y) * (y - to.y) + (z - to.z) * (z - to.z)
+			if a <= inside && b <= inside || a > outside && b > outside {continue}
 			instance := batch_instance_at(s, record, i)
 			instance.position += offset
 			at := instance.position
-			a, b := linalg.length(at - was.xyz), linalg.length(at - now.xyz)
-			if max(a, b) + size <= reach || min(a, b) - size > reach {continue}
 			low, high := rows_bounds(batch_instance_rows(instance), mesh.bounds_min, mesh.bounds_max)
 			low, high = low - sway, high + sway
 			if shadow_culled(low, high, cull, was) == shadow_culled(low, high, cull, now) {continue}
@@ -817,13 +824,17 @@ Shadow_Slot_Plan :: struct {
 }
 
 // A box of what changed for the maps (Occluder_Change), as the pages read it:
-// fine, then whether what moves changed there rather than what stays.
+// fine; whether what moves changed there (1) rather than what stays, and of
+// that whether the atlas may show what it held while the cache draws it again
+// (2); and error.
 @(private)
 Shadow_Box :: struct {
 	low:   Vec3,
 	fine:  f32,
 	high:  Vec3,
 	moved: u32,
+	error: f32,
+	_:     [3]u32,
 }
 
 // The maps of this frame: which lights, their faces and the levels of the
@@ -1001,9 +1012,11 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 		words[light] |= (SHADOW_SUN_LEVELS + block * abi.SHADOW_LIGHT_SLOTS + 1) | 1 << (SHADOW_LIGHT_FACES + (u32(slot) - SHADOW_SUN_LEVELS) % abi.SHADOW_LIGHT_SLOTS)
 	}
 	boxes := ([^]Shadow_Box)(raw_data(words[plan.boxes:]))[:plan.box_count]
-	for box, i in stale.boxes[:stale.count] {boxes[i] = {low = box.low, fine = box.fine, high = box.high}}
-	for box, i in moved.boxes[:moved.count] {boxes[stale.count + i] = {low = box.low, fine = box.fine, high = box.high, moved = 1}}
-	for box, i in s.shadow_cull_boxes {boxes[stale.count + moved.count + i] = {low = box.min, high = box.max}}
+	// What changed by less than a texel shows, and what came or went past its
+	// cull distance, the atlas may show as it was while the cache draws it again.
+	for box, i in stale.boxes[:stale.count] {boxes[i] = {low = box.low, fine = box.fine, high = box.high, moved = 2 if box.error > 0 else 0, error = box.error}}
+	for box, i in moved.boxes[:moved.count] {boxes[stale.count + i] = {low = box.low, fine = box.fine, high = box.high, moved = 1, error = box.error}}
+	for box, i in s.shadow_cull_boxes {boxes[stale.count + moved.count + i] = {low = box.min, high = box.max, moved = 2}}
 	used := plan.slots
 	for w, slot in wants {
 		if w.m.rect.z == 0 && plans[slot].flags & abi.SHADOW_PLAN_RESET == 0 {continue}
