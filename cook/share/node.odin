@@ -107,7 +107,7 @@ node_host :: proc(n:^Node,h:^wire.Host) -> bool {
 @(private)
 node_expose :: proc(user:rawptr,namespace:string) -> bool {
     switch namespace {
-    case NAMESPACE,asset.REF_PACKAGES,asset.REF_IMPORTS: return true
+    case NAMESPACE,asset.REF_PACKAGES,asset.REF_MANIFESTS,asset.REF_IMPORTS: return true
     }
     return strings.has_prefix(namespace,asset.REF_CACHE_PREFIX)
 }
@@ -280,7 +280,7 @@ node_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
     if namespace==asset.REF_IMPORTS {
         blobs:=make([dynamic]store.Hash,context.temp_allocator)
         for &address in addresses {
-            if address=={} || !store.has(into,address) {continue}
+            if address=={} || !asset.object_whole(into,address) {continue}
             b,build_error:=asset.build_get(into,address,context.temp_allocator)
             if build_error!=.None {
                 address={}
@@ -301,7 +301,7 @@ node_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
         }
     }
     for address,k in addresses {
-        given[k]=address!={} && store.has(into,address) && store.ref_set(into,namespace,names[k],address)==.None
+        given[k]=address!={} && asset.object_whole(into,address) && store.ref_set(into,namespace,names[k],address)==.None
     }
 }
 
