@@ -466,6 +466,15 @@ pass_gbuffer_begin :: proc(s: ^Stage_Pass, name := "extension surfaces") {
 	textures_feedback_bind(p.r, p.cmd)
 }
 
+// In the Gbuffer stage, binds at SLOT_PASS0 + slot the rest target of the
+// view, for a pass whose surfaces the vertex hook or a wind moves to say
+// where each of their pixels rests (gbuffer_rest_write of gbuffer.slang):
+// what rays and the maps at rest meet is tested from there.
+pass_rest_write :: proc(s: ^Stage_Pass, slot: u32) {
+	p := s.pass
+	if slot <= SLOT_PASS9 - SLOT_PASS0 {rhi.cmd_bind_texture(p.cmd, SLOT_PASS0 + slot, p.t.rest if p.t.rest != 0 else p.r.dummy_rest)}
+}
+
 // In the Gbuffer stage, binds at SLOT_PASS0 + slot, to read with all its
 // levels, a depth pyramid of the view (include/pyramid.slang tests a box
 // against it): of each texel, the farthest linear depth drawn over it. That of

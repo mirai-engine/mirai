@@ -35,7 +35,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     Pixel pixel = pixel_at(p, (float2(p) + 0.5) * frame.inv_resolution, depth);
     float4 normal = gbuffer_normal_roughness(p);
     Shading s = shading_surface(pixel.position, normal.xyz, -pixel.view, float3(0.0), 0.0, normal.w);
-    Indirect light = indirect_lobes(pixel.position, normal.xyz, -pixel.view, s, INDIRECT_DIFFUSE | INDIRECT_SPECULAR, 1.0);
+    // Read where the point rests: the probes see what rests around it.
+    Indirect light = indirect_lobes(pixel.position - pixel_rest(p, depth), normal.xyz, -pixel.view, s, INDIRECT_DIFFUSE | INDIRECT_SPECULAR, 1.0);
     out_irradiance[q] = float4(light.irradiance, 1.0);
     out_specular[q] = float4(light.radiance, 1.0);
 }

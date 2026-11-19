@@ -164,6 +164,16 @@ float3 pixel_rest(int2 p, float depth) {
     uint2 v = pixel_rests.Load(int3(p, 0));
     return v.y == asuint(depth) ? rest_unpack(v.x) : float3(0.0);
 }
+#ifdef GBUFFER_REST_OUT
+// The rest target, for a pass that draws pixels the vertex hook or a wind
+// moved (vis_resolve.frag, and an extension through pass_rest_write).
+[[vk::binding(GBUFFER_REST_OUT, 0)]] [[vk::image_format("rg32ui")]] RWTexture2D<uint2> gbuffer_rest_out : register(MIRAI_REGISTER(u, GBUFFER_REST_OUT), space0);
+// What pixel p shows, of linear depth `depth` as the G-buffer holds it, was
+// moved by `moved` from where it rests.
+void gbuffer_rest_write(int2 p, float3 moved, float depth) {
+    if ((frame.flags & FRAME_FLAG_SWAY) != 0u) gbuffer_rest_out[p] = uint2(rest_pack(moved), asuint(depth));
+}
+#endif
 
 #ifdef GBUFFER_NORMAL
 [[vk::binding(GBUFFER_NORMAL, 0)]] Texture2D<float4> gbuffer_normal_target : register(MIRAI_REGISTER(t, GBUFFER_NORMAL), space0);

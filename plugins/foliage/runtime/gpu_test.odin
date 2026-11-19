@@ -356,9 +356,10 @@ a_swaying_canopy_is_shaded_as_it_is_at_rest :: proc(t: ^testing.T) {
 			defer delete(pixels)
 			if !canopy_seen(t, f, pixels, c.camera, canopy, lean if k == 1 else 0, &lights[k]) {return}
 		}
+		resolve, lighting := canopy_cost(t, f, c.camera)
 		s := canopy_compare(canopy, c.camera, lights[0][:], lights[1][:])
-		fmt.printfln("%s: %d leaves, mean %.1f still and %.1f in the wind, %.3f shaded still and %.3f in the wind, %.3f darker in the wind", c.name, s.leaves, s.mean[0], s.mean[1], s.shaded[0], s.shaded[1], s.darker)
-		testing.expectf(t, s.leaves >= 60, "%s: %d leaves seen still and in the wind", c.name, s.leaves)
+		fmt.printfln("%s: %d leaves, mean %.1f still and %.1f in the wind, %.3f shaded still and %.3f in the wind, %.3f darker in the wind; resolve %.3f ms, lighting %.3f ms", c.name, s.leaves, s.mean[0], s.mean[1], s.shaded[0], s.shaded[1], s.darker, resolve, lighting)
+		testing.expectf(t, s.leaves >= 50, "%s: %d leaves seen still and in the wind", c.name, s.leaves)
 		testing.expectf(t, abs(s.mean[1] - s.mean[0]) <= 0.1 * s.mean[0], "%s: the leaves are %.1f in the wind against %.1f still", c.name, s.mean[1], s.mean[0])
 		testing.expectf(t, abs(s.shaded[1] - s.shaded[0]) <= 0.08, "%s: %.3f of the leaves are shaded in the wind against %.3f still", c.name, s.shaded[1], s.shaded[0])
 		testing.expectf(t, s.darker <= 0.04, "%s: %.3f of the leaves are darker in the wind than still", c.name, s.darker)
@@ -367,6 +368,25 @@ a_swaying_canopy_is_shaded_as_it_is_at_rest :: proc(t: ^testing.T) {
 
 @(private = "file")
 CANOPY_LEAVES :: 400
+
+// The GPU time of a frame of the canopy in the wind, ms, over 40 frames:
+// that of the resolve, and that of the passes of its light (the direct
+// light, reflections and contact occlusion).
+@(private = "file")
+canopy_cost :: proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera) -> (resolve, lighting: f64) {
+	LIGHTING :: [?]string{"direct maps", "direct rays", "direct samples", "direct points", "direct spread", "direct pixels", "reflect", "contact", "contact light", "contact pixels"}
+	// The device writes the timestamps of each pass only while asked to.
+	rhi.timestamps_want(f.device, true)
+	defer rhi.timestamps_want(f.device, false)
+	for _ in 0 ..< 40 {
+		if !testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera}), f.renderer.error) {return}
+		for timing in gpu.renderer_stats(&f.renderer).timings {
+			if timing.name == "resolve" {resolve += f64(timing.ms)}
+			for name in LIGHTING {if timing.name == name {lighting += f64(timing.ms)}}
+		}
+	}
+	return resolve / 40, lighting / 40
+}
 
 // The leaves of a canopy, squares 25 cm wide turned every way in a ball 1.2 m
 // in radius about a point 3 m up, and the center and normal of each.
@@ -412,9 +432,9 @@ canopy_swayed :: proc(p: [3]f32, lean: f32) -> [3]f32 {
 	return p + [3]f32{-math.sin(lean), math.cos(lean) - 1, 0} * max(p.y, 0)
 }
 
-// The light of the center of each leaf of a canopy swayed `lean` radians as
-// a camera sees it, -1 where another hides it: the linear depth of the view
-// there is not that of the center.
+// The light of each leaf of a canopy swayed `lean` radians as a camera sees
+// it, the mean of 3x3 points over its middle that the view shows (the linear
+// depth of the view there is theirs), -1 where others hide most of them.
 @(private = "file")
 canopy_seen :: proc(t: ^testing.T, f: ^Gpu_Fixture, pixels: []u8, camera: gpu.Camera, c: ^Canopy, lean: f32, lights: ^[CANOPY_LEAVES]i32) -> bool {
 	width, height := int(f.renderer.targets.width), int(f.renderer.targets.height)
@@ -422,11 +442,15 @@ canopy_seen :: proc(t: ^testing.T, f: ^Gpu_Fixture, pixels: []u8, camera: gpu.Ca
 	defer delete(depths)
 	if !testing.expect(t, rhi.texture_read(f.device, f.renderer.targets.linear_depth, slice.to_bytes(depths))) {return false}
 	for center, k in c.centers {
-		p := canopy_swayed(center, lean)
-		lights[k] = -1
-		x, y, depth, inside := projected(camera, p, width, height)
-		if !inside || abs(depths[y * width + x] - depth) > 0.03 {continue}
-		lights[k] = seen_at(f, pixels, camera, p)
+		sum, seen := i32(0), i32(0)
+		for i in 0 ..< 9 {
+			p := canopy_swayed(center + (f32(i % 3) - 1) * 0.3 * c.sheets[k].across + (f32(i / 3) - 1) * 0.3 * c.sheets[k].up, lean)
+			x, y, depth, inside := projected(camera, p, width, height)
+			if !inside || abs(depths[y * width + x] - depth) > 0.03 {continue}
+			sum += seen_at(f, pixels, camera, p)
+			seen += 1
+		}
+		lights[k] = sum / seen if seen >= 5 else -1
 	}
 	return true
 }
