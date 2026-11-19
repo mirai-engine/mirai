@@ -118,14 +118,14 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     unleased,_:=put_bytes(&s,data[:31],now)
     test_blob_time(t,&s,unleased,time.time_add(now,-2*BLOB_GRACE_AGE))
     truncated:=path_in(folder,"leases","truncated")
-    testing.expect_value(t,lease_write(folder,truncated,{unleased,hash},now),Error.None)
+    testing.expect_value(t,lease_write(folder,truncated,holder_self(),{unleased,hash},now),Error.None)
     valid,valid_error:=os.read_entire_file(truncated,context.temp_allocator)
     if !testing.expect(t,valid_error==nil && len(valid)>size_of(Hash)) {return}
     testing.expect(t,os.write_entire_file(truncated,valid[:len(valid)-size_of(Hash)])==nil)
     random_lease:=path_in(folder,"leases","random")
     testing.expect(t,os.write_entire_file(random_lease,test_bytes(len(valid),42))==nil)
     oversized:=path_in(folder,"leases","oversized")
-    lease_bytes:=make([]u8,len(LEASE_MAGIC)+(LEASE_MAX_HASHES+2)*size_of(Hash),
+    lease_bytes:=make([]u8,LEASE_HEADER+(LEASE_MAX_HASHES+1)*size_of(Hash),
         context.temp_allocator)
     copy(lease_bytes,valid)
     testing.expect(t,os.write_entire_file(oversized,lease_bytes)==nil)

@@ -127,15 +127,38 @@ serve_pump :: proc(x:^Exchange,i:int) {
             if p.out_sent<p.out_len {return}
             p.out_len,p.out_sent=0,0
         }
-        if !serve_build(x,i) {return}
+        if !serve_build(x,i) {
+            serve_stop(p)
+            return
+        }
     }
 }
 
+// Closes the blob a peer was served.
+@(private)
+serve_stop :: proc(p:^Peer) {
+    if !p.reading {return}
+    store.reader_close(&p.reader)
+    p.reading=false
+}
+
+// The blob of address held open for peer p, or why it is not served.
+@(private)
+serve_open :: proc(x:^Exchange,p:^Peer,address:store.Hash) -> store.Error {
+    if p.reading && p.reader.hash==address {return .None}
+    serve_stop(p)
+    error:store.Error
+    p.reader,error=store.reader_open(x.desc.store,address)
+    p.reading=error==.None
+    return error
+}
+
 // Writes the next answer of peer i into its out buffer; false when there is none.
+// A piece of a complete blob that fails its check is never sent: the store
+// removes the blob, so it is fetched again, and the rest of it is lacked.
 @(private)
 serve_build :: proc(x:^Exchange,i:int) -> bool {
     p:=&x.peers[i]
-    s:=x.desc.store
     for p.serve_count>0 {
         e:=p.serve[p.serve_head]
         if e.kind==.Done {
@@ -146,8 +169,9 @@ serve_build :: proc(x:^Exchange,i:int) -> bool {
         }
         if !p.started {
             p.started,p.cursor,p.lack_count=true,e.first,0
-            size,error:=store.blob_size(s,e.address)
-            if error!=.None || size>x.desc.max_blob_bytes {
+            size:=i64(-1)
+            if serve_open(x,p,e.address)==.None {size=store.reader_size(&p.reader)}
+            if size<0 || size>x.desc.max_blob_bytes {
                 p.out_len=encode_lack(p.out,e.address,e.first,e.kind==.Blob?0:e.count)
                 serve_pop(p)
                 return true
@@ -156,7 +180,7 @@ serve_build :: proc(x:^Exchange,i:int) -> bool {
             if e.kind==.Blob && store.piece_count(size)<=FIRST_PIECES {
                 // A blob a still receiving end has only in part is lacked whole.
                 address:=e.address
-                if store.read(s,address,0,p.out[MSG_WHOLE_HEAD:][:size])!=.None {
+                if store.reader_read(&p.reader,0,p.out[MSG_WHOLE_HEAD:][:size])!=.None {
                     p.out_len=encode_lack(p.out,address,0,0)
                 } else {
                     p.out[0]=MSG_WHOLE
@@ -169,7 +193,7 @@ serve_build :: proc(x:^Exchange,i:int) -> bool {
             }
             if e.kind==.Blob {
                 arena:mem.Arena
-                pieces,table_error:=store.blob_table(s,e.address,scratch_arena(x,&arena))
+                pieces,table_error:=store.reader_table(&p.reader,scratch_arena(x,&arena))
                 if table_error!=.None || len(pieces)!=store.piece_count(size) {
                     p.out_len=encode_lack(p.out,e.address,0,0)
                     serve_pop(p)
@@ -189,8 +213,9 @@ serve_build :: proc(x:^Exchange,i:int) -> bool {
         for p.cursor<end {
             index:=p.cursor
             bytes:=store.piece_size(p.entry_size,int(index))
-            piece:=p.out[MSG_PIECE_HEAD:][:bytes]
-            if store.read(s,e.address,i64(index)*store.PIECE_BYTES,piece)==.None {
+            error:=store.Error.Missing
+            if p.reading {_,error=store.reader_piece(&p.reader,int(index),p.out[MSG_PIECE_HEAD:][:bytes])}
+            if error==.None {
                 if p.lack_count>0 {
                     // The piece is read again once the lack before it is out.
                     p.out_len=encode_lack(p.out,e.address,p.lack_first,p.lack_count)
@@ -203,6 +228,7 @@ serve_build :: proc(x:^Exchange,i:int) -> bool {
                 p.sent+=u64(bytes)
                 return true
             }
+            if error!=.Not_Here_Yet {serve_stop(p)}
             if p.lack_count==0 {p.lack_first=index}
             p.lack_count+=1
             p.cursor+=1

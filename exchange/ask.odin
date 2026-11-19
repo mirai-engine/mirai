@@ -65,6 +65,7 @@ want_begin :: proc(x:^Exchange,i:int) {
 
 @(private)
 want_release :: proc(x:^Exchange,i:int) {
+    receiver_stop(x,i)
     x.wants[i].used=false
     for k in 0..<x.want_count {
         if x.order[k]!=i {continue}
@@ -93,6 +94,7 @@ want_before :: proc(x:^Exchange,a,b:int) -> bool {
 
 @(private)
 want_complete :: proc(x:^Exchange,i:int) {
+    receiver_stop(x,i)
     w:=&x.wants[i]
     w.state=.Complete
     if size,error:=store.blob_size(x.desc.store,w.address);error==.None {w.size,w.here=size,size}
@@ -102,6 +104,7 @@ want_complete :: proc(x:^Exchange,i:int) {
 
 @(private)
 want_fail :: proc(x:^Exchange,i:int,error:Error,store_error:store.Error) {
+    receiver_stop(x,i)
     w:=&x.wants[i]
     w.state,w.error,w.store_error=.Failed,error,store_error
     x.dirty=true
@@ -110,6 +113,7 @@ want_fail :: proc(x:^Exchange,i:int,error:Error,store_error:store.Error) {
 // Back to asking for the table, with nothing of the blob kept.
 @(private)
 want_unknown :: proc(x:^Exchange,i:int) {
+    receiver_stop(x,i)
     w:=&x.wants[i]
     w.known,w.size,w.count,w.had,w.here,w.table_peer=false,0,0,0,0,-1
     slice.zero(w.have)
@@ -370,7 +374,7 @@ on_table :: proc(x:^Exchange,i:int,data:[]u8) {
     switch error:=store.receive_begin(x.desc.store,address,size,pieces);error {
     case .None: table_known(x,wi,i,size)
     case .Corrupt,.Invalid_Argument: lie(x,wi,i)
-    case .Missing,.Not_Here_Yet,.Wrong_Size,.Out_Of_Memory,.Io,.Unsupported_Layout: want_fail(x,wi,.Store,error)
+    case .Missing,.Not_Here_Yet,.Wrong_Size,.Out_Of_Memory,.Io,.No_Space,.Unsupported_Layout: want_fail(x,wi,.Store,error)
     }
 }
 
@@ -387,7 +391,7 @@ on_piece :: proc(x:^Exchange,i:int,data:[]u8) {
     if w.state!=.Asking && w.state!=.Missing || w.wrong&(u64(1)<<uint(i))!=0 {return}
     if !w.known || index>=w.count || bit_has(w.have,index) {return}
     flights_heard(x,i,wi)
-    switch error:=store.receive_piece(x.desc.store,address,index,piece);error {
+    switch error:=want_piece(x,wi,index,piece);error {
     case .None:
         bit_on(w.have,index)
         bit_on(w.asked,index)
@@ -408,9 +412,43 @@ on_piece :: proc(x:^Exchange,i:int,data:[]u8) {
         x.dirty=true
     case .Missing:
         if store.has(x.desc.store,address) {want_complete(x,wi)} else {want_unknown(x,wi)}
-    case .Not_Here_Yet,.Out_Of_Memory,.Io,.Unsupported_Layout:
+    case .Not_Here_Yet,.Out_Of_Memory,.Io,.No_Space,.Unsupported_Layout:
         want_fail(x,wi,.Store,error)
     }
+}
+
+// Keeps a piece of want wi through its receiver, which it opens, closing the
+// one that took no piece for longest when RECEIVERS are open.
+@(private)
+want_piece :: proc(x:^Exchange,wi,index:int,piece:[]u8) -> store.Error {
+    w:=&x.wants[wi]
+    if !w.receiving {
+        if x.receivers>=RECEIVERS {
+            oldest:=-1
+            for &v,k in x.wants {
+                if v.used && v.receiving && (oldest<0 || v.written<x.wants[oldest].written) {oldest=k}
+            }
+            if oldest>=0 {receiver_stop(x,oldest)}
+        }
+        error:store.Error
+        w.receiver,error=store.receiver_open(x.desc.store,w.address)
+        if error!=.None {return error}
+        w.receiving=true
+        x.receivers+=1
+    }
+    w.written=x.sequence
+    x.sequence+=1
+    return store.receiver_piece(&w.receiver,index,piece)
+}
+
+@(private)
+receiver_stop :: proc(x:^Exchange,i:int) {
+    w:=&x.wants[i]
+    if !w.receiving {return}
+    store.receiver_close(&w.receiver)
+    w.receiver={}
+    w.receiving=false
+    x.receivers-=1
 }
 
 // A blob asked with its table, whole: taken when its bytes hash to its address.
