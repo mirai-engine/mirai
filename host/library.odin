@@ -3,6 +3,7 @@ package host
 import "base:intrinsics"
 import "core:dynlib"
 import "core:fmt"
+import "core:math/rand"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
@@ -26,11 +27,11 @@ PROJECT_INFO_SYMBOL :: "mirai_project_info"
 
 Library_Error :: enum u8 {None,Missing,Copy_Failed,Load_Failed,Not_A_Project,Out_Of_Memory,Other_Tables}
 
-// Loads the library at path as its generation-th copy of this process.
-project_library_load :: proc(path:string,generation:int,allocator:=context.allocator) -> (library:Project_Library,error:Library_Error) {
+// Loads the library at path from a copy of its own.
+project_library_load :: proc(path:string,allocator:=context.allocator) -> (library:Project_Library,error:Library_Error) {
     // The libraries of the engine's plugins the library links sit in a folder beside it.
     library_dependencies_where(project.path(path[:max(strings.last_index_byte(path,'/'),0)],project.PLUGIN_LIBRARIES,allocator=context.temp_allocator))
-    library.handle,library.copy=library_copy_load(path,generation,generation==0,allocator) or_return
+    library.handle,library.copy=library_copy_load(path,allocator) or_return
     address,found:=dynlib.symbol_address(library.handle,PROJECT_INFO_SYMBOL)
     if !found {
         project_library_unload(&library,allocator)
@@ -41,12 +42,11 @@ project_library_load :: proc(path:string,generation:int,allocator:=context.alloc
     return library,.None
 }
 
-@(private="file")
-library_copy_load :: proc(path:string,generation:int,sweep:bool,allocator:=context.allocator) -> (handle:dynlib.Library,copy:string,error:Library_Error) {
+@(private)
+library_copy_load :: proc(path:string,allocator:=context.allocator) -> (handle:dynlib.Library,copy:string,error:Library_Error) {
     if !os.is_file(path) {return nil,"",.Missing}
-    copy=library_copy_name(path,generation,sweep,allocator)
+    copy=library_copy_name(path,allocator)
     if copy=="" {return nil,"",.Out_Of_Memory}
-    _=os.remove(copy)
     if os.copy_file(copy,path)!=nil {
         delete(copy,allocator)
         return nil,"",.Copy_Failed
@@ -73,11 +73,11 @@ LIBRARY_LOADED_PREFIX :: "@rpath/" when ODIN_OS==.Darwin else ""
 // kept in data, threads and whatever is on a stack go on in the code they
 // started in. Other_Tables, with nothing changed, when a package does not
 // export what the running one does: its declarations are others.
-engine_library_swap :: proc(folder,file:string,packages:[]string,generation:int,allocator:=context.allocator) -> (library:Project_Library,error:Library_Error) {
+engine_library_swap :: proc(folder,file:string,packages:[]string,allocator:=context.allocator) -> (library:Project_Library,error:Library_Error) {
     name:=project.library_file(file,context.temp_allocator)
     running,found:=dynlib.load_library(strings.concatenate({LIBRARY_LOADED_PREFIX,name},context.temp_allocator))
     if !found {return {},.Load_Failed}
-    library.handle,library.copy=library_copy_load(project.path(folder,name,allocator=context.temp_allocator),generation,true,allocator) or_return
+    library.handle,library.copy=library_copy_load(project.path(folder,name,allocator=context.temp_allocator),allocator) or_return
     tables:=make([dynamic][2][]rawptr,0,len(packages),context.temp_allocator)
     for path in packages {
         dotted,_:=strings.replace_all(path,"/",".",context.temp_allocator)
@@ -129,28 +129,30 @@ library_error_text :: proc(error:Library_Error,path:string) -> string {
     return ""
 }
 
-// <folder>/<name>-live-<pid>-<generation><ext>. With sweep, the copies a
-// process that ended left behind are removed first. "" without memory for it.
-@(private="file")
-library_copy_name :: proc(path:string,generation:int,sweep:bool,allocator:=context.allocator) -> string {
+// <folder>/<name>-live-<pid>-<random><ext>, a name no other load takes:
+// Windows can neither remove nor write over a copy that is loaded, and a
+// process may load one library more than once (the editor and its imports).
+// The copies a process that ended left behind are removed first. "" without
+// memory for it.
+@(private)
+library_copy_name :: proc(path:string,allocator:=context.allocator) -> string {
     folder:=filepath.dir(path)
     file:=filepath.base(path)
     extension:=filepath.ext(file)
     stem:=strings.trim_suffix(file,extension)
-    if sweep {
-        prefix:=fmt.tprintf("%s-live-",stem)
-        entries,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
-        // The copy of another process that runs is in use: several players of
-        // a project start at once (a server and its clients), and so do editors.
-        alive,_:=os.process_list(context.temp_allocator)
-        for entry in entries {
-            if !strings.has_prefix(entry.name,prefix) {continue}
-            owner,_,_:=strings.partition(entry.name[len(prefix):],"-")
-            if pid,numeric:=strconv.parse_int(owner,10);numeric && pid!=os.get_pid() && slice.contains(alive,pid) {continue}
-            _=os.remove(entry.fullpath)
-        }
+    prefix:=fmt.tprintf("%s-live-",stem)
+    entries,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
+    // The copy of another process that runs is in use: several players of
+    // a project start at once (a server and its clients), and so do editors.
+    // Those of this process go when they are unloaded.
+    alive,_:=os.process_list(context.temp_allocator)
+    for entry in entries {
+        if !strings.has_prefix(entry.name,prefix) {continue}
+        owner,_,_:=strings.partition(entry.name[len(prefix):],"-")
+        if pid,numeric:=strconv.parse_int(owner,10);numeric && (pid==os.get_pid() || slice.contains(alive,pid)) {continue}
+        _=os.remove(entry.fullpath)
     }
-    name,error:=strings.clone(fmt.tprintf("%s/%s-live-%d-%d%s",folder,stem,os.get_pid(),generation,extension),allocator)
+    name,error:=strings.clone(fmt.tprintf("%s/%s-live-%d-%016x%s",folder,stem,os.get_pid(),rand.uint64(),extension),allocator)
     if error!=nil {return ""}
     return name
 }

@@ -626,7 +626,7 @@ import_library :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> (i
     held:=new(Import_Library_Held,allocator)
     held.allocator=allocator
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-    library,error:=host.project_library_load(path,0)
+    library,error:=host.project_library_load(path)
     if error!=.None {
         imports.problem=host.library_error_text(error,path)
         return
