@@ -137,6 +137,7 @@ Peer :: struct {
     reack,reack_next:u64,
     reack_seq,reack_next_seq:u16,
     recv_any,ack_pending,has_rtt:bool,
+    flush:bool,     // the owner queued messages: they go as the tokens allow, not once a tick
     ack_chunks:int, // datagrams with reliable chunks received since this end last sent
     recv_time:f64,     // when the newest datagram received arrived
     last_arrival:u64,  // the datagram acknowledged that arrived last, which the other end takes its RTT from
@@ -1016,7 +1017,10 @@ peer_wants_send :: proc(h:^Host,p:^Peer) -> bool {
     idle:=b.now-p.last_send
     if b.send_pending || b.clock_due {return true}
     if idle>=h.desc.keepalive || (p.ack_pending && (idle>=ACK_DELAY || p.ack_chunks>=ACK_EVERY)) {return true}
-    if idle>=1/f64(h.desc.tick_rate) && channels_pending(p) {return true}
+    if p.flush || idle>=1/f64(h.desc.tick_rate) {
+        if channels_pending(p) {return true}
+        p.flush=false
+    }
     if u16(p.send_seq-p.sent_tail)<RECORD_WINDOW && min(p.tokens+(b.now-p.token_time)*p.rate,send_burst(h,p.rate))>=PACKET_BYTES && channels_streaming(p) {return true}
     return p.sent_tail!=p.send_seq && idle>=clamp(p.rtt*2+p.rtt_variance*4,0.1,1)
 }
