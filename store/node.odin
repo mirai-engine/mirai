@@ -27,21 +27,23 @@ Entry :: struct #packed {
 }
 
 // A run of the root's leaf order: container chunk (tag, index) is the leaves
-// [first, first+count). A plain file has one group; the store reads neither
-// tag, index, align nor meta.
+// [first, first+count), whose bytes begin at offset in the object. The groups
+// of a root follow each other from leaf 0 and byte 0, and a plain file has
+// one; the store reads neither tag, index, align nor meta.
 Group :: struct #packed {
     tag:u32,
     index:u32,
     first:u32,
     count:u32,
+    offset:u64,
     align:u8,
-    reserved:[3]u8,
+    reserved:[7]u8,
 }
 
-#assert(size_of(Node)==24 && size_of(Entry)==40 && size_of(Group)==20)
+#assert(size_of(Node)==24 && size_of(Entry)==40 && size_of(Group)==32)
 
 NODE_MAGIC :: u32('M')|u32('N')<<8|u32('O')<<16|u32('D')<<24
-NODE_VERSION :: 1
+NODE_VERSION :: 2
 NODE_ENTRIES_MIN :: 64
 NODE_ENTRIES_TARGET :: 1024
 NODE_ENTRIES_MAX :: (CHUNK_MAX-size_of(Node))/size_of(Entry)
@@ -93,10 +95,8 @@ node_close :: proc "contextless" (bytes:[]u8,level,count:int,groups:[]Group,meta
     copy(bytes[at:],meta)
 }
 
-// Parses the bytes of a node, of any origin: every count, size and sum is
-// checked, and reserved bytes are zero, so each node has one encoding. That
-// groups run inside the leaves of a root above level 0 is checked where they
-// are resolved.
+// Parses the bytes of a node, of any origin: every count, size, sum and group
+// is checked, and reserved bytes are zero, so each node has one encoding.
 node_parse :: proc "contextless" (bytes:[]u8) -> (n:Node_View,error:Error) {
     if len(bytes)<size_of(Node) || len(bytes)>CHUNK_MAX {return {},.Corrupt}
     head:=(^Node)(raw_data(bytes))^
@@ -116,13 +116,38 @@ node_parse :: proc "contextless" (bytes:[]u8) -> (n:Node_View,error:Error) {
         total+=e.size
     }
     if total!=head.total || (len(n.entries)==0 && n.level!=0) {return {},.Corrupt}
-    end:u64
-    for g in n.groups {
-        if g.reserved!={} || u64(g.first)<end || u64(g.first)+u64(g.count)>u64(max(u32)) {return {},.Corrupt}
-        end=u64(g.first)+u64(g.count)
-    }
-    if n.level==0 && end>u64(len(n.entries)) {return {},.Corrupt}
+    if !groups_valid(n) {return {},.Corrupt}
     return n,.None
+}
+
+// Groups follow each other from leaf 0 and byte 0, each offset where its
+// first leaf begins: exactly, by the entries of a node of level 0; above it,
+// as far as leaves of 1 to CHUNK_MAX bytes allow, up to the node's total.
+@(private)
+groups_valid :: proc "contextless" (n:Node_View) -> bool {
+    leaf,offset:u64
+    for g,i in n.groups {
+        if g.reserved!={} || u64(g.first)!=leaf || u64(g.first)+u64(g.count)>u64(max(u32)) {return false}
+        if g.offset!=offset && !(n.level>0 && i>0 && g.offset>offset) {return false}
+        if i>0 && n.level>0 {
+            previous:=n.groups[i-1]
+            bytes:=g.offset-previous.offset
+            if bytes<u64(previous.count) || bytes>u64(previous.count)*CHUNK_MAX {return false}
+        }
+        if n.level==0 {
+            if leaf+u64(g.count)>u64(len(n.entries)) {return false}
+            for e in n.entries[leaf:][:g.count] {offset+=e.size}
+        } else {
+            offset=g.offset
+        }
+        leaf+=u64(g.count)
+    }
+    if len(n.groups)==0 {return true}
+    last:=n.groups[len(n.groups)-1]
+    if n.level==0 {return leaf==u64(len(n.entries))}
+    if last.offset>n.total {return false}
+    bytes:=n.total-last.offset
+    return bytes>=u64(last.count) && bytes<=u64(last.count)*CHUNK_MAX
 }
 
 Chunk_Kind :: enum u8 {Data,Node}
@@ -145,6 +170,7 @@ Tree :: struct {
     levels:[NODE_LEVEL_MAX+1]Tree_Level,
     depth:int, // levels that have received an entry
     leaves:u64,
+    bytes:u64,  // of the leaves so far
     groups:[dynamic]Group,
     failed:Error,
     allocator:runtime.Allocator,
@@ -175,7 +201,7 @@ tree_destroy :: proc(t:^Tree) {
 // Starts a new object, keeping the buffers.
 tree_reset :: proc(t:^Tree) {
     for &l in t.levels {l.count,l.total,l.ended=0,0,false}
-    t.depth,t.leaves,t.failed=0,0,.None
+    t.depth,t.leaves,t.bytes,t.failed=0,0,0,.None
     clear(&t.groups)
 }
 
@@ -187,7 +213,7 @@ tree_group :: proc(t:^Tree,tag,index:u32,align:u8=0) -> Error {
         last:=&t.groups[len(t.groups)-1]
         last.count=u32(t.leaves-u64(last.first))
     }
-    if _,e:=append(&t.groups,Group{tag=tag,index=index,first=u32(t.leaves),align=align});e!=nil {return tree_fail(t,.Out_Of_Memory)}
+    if _,e:=append(&t.groups,Group{tag=tag,index=index,first=u32(t.leaves),offset=t.bytes,align=align});e!=nil {return tree_fail(t,.Out_Of_Memory)}
     return .None
 }
 
@@ -206,6 +232,7 @@ tree_put_leaf :: proc(t:^Tree,address:Hash,size:u64) -> Error {
     if t.failed!=.None {return t.failed}
     if t.leaves>=u64(max(u32)) {return tree_fail(t,.Invalid_Argument)}
     t.leaves+=1
+    t.bytes+=size
     return tree_push(t,0,{address=address,size=size})
 }
 
@@ -362,46 +389,15 @@ tree_locate :: proc(source:Node_Source,root:Hash,offset:u64) -> (leaf:Leaf,error
     return tree_descend(source,n,offset)
 }
 
-// The leaf that holds byte offset of group of the object at root. Where the
-// group begins is found by counting the leaves before its first one, which
-// reads every node of level 0 before it.
+// The leaf that holds byte offset of group of the object at root, descending
+// from where the group begins with the sizes of the entries.
 group_locate :: proc(source:Node_Source,root:Hash,group:int,offset:u64) -> (leaf:Leaf,error:Error) {
     n:=node_fetch(source,root) or_return
     if group<0 || group>=len(n.groups) {return {},.Invalid_Argument}
-    g:=n.groups[group]
-    start:=leaf_offset(source,n,u64(g.first)) or_return
-    end:=leaf_offset(source,n,u64(g.first)+u64(g.count)) or_return
+    start:=n.groups[group].offset
+    end:=group+1<len(n.groups)?n.groups[group+1].offset:n.total
     if offset>=end-start {return {},.Invalid_Argument}
     return tree_descend(source,n,start+offset)
-}
-
-// The byte offset where leaf index begins in the tree under n; the total at
-// the end of the leaves.
-leaf_offset :: proc(source:Node_Source,n:Node_View,index:u64) -> (offset:u64,error:Error) {
-    remaining:=index
-    done:=leaf_walk(source,n,&remaining,&offset) or_return
-    if !done {return 0,.Corrupt}
-    return offset,.None
-}
-
-@(private)
-leaf_walk :: proc(source:Node_Source,n:Node_View,remaining,offset:^u64) -> (done:bool,error:Error) {
-    if n.level==0 {
-        if remaining^>u64(len(n.entries)) {
-            remaining^-=u64(len(n.entries))
-            offset^+=n.total
-            return false,.None
-        }
-        for e in n.entries[:remaining^] {offset^+=e.size}
-        remaining^=0
-        return true,.None
-    }
-    for e in n.entries {
-        if remaining^==0 {return true,.None}
-        child:=node_child(source,n,e) or_return
-        if leaf_walk(source,child,remaining,offset) or_return {return true,.None}
-    }
-    return remaining^==0,.None
 }
 
 @(private)

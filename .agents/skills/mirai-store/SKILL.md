@@ -128,8 +128,10 @@ derived data cache that use it decide what a ref means and what is live.
   the groups and meta do not fit beside its entries, a root of one entry goes above it. A builder
   holds one open node per level and hands every chunk, data before the nodes naming it and the
   root last, to the sink its caller gives.
-- A byte of an object is found by descending with the entries' sizes; a group gives leaf
-  indices, so where it begins is counted over the level-0 nodes before it.
+- A root's groups follow each other from leaf 0 and byte 0, each with the leaf and the byte where
+  it begins; the parser checks the offsets exactly against a level-0 root's entries and, above
+  it, against what leaves of 1 to `CHUNK_MAX` bytes allow up to the total. A byte of an object,
+  or of a group from its offset, is found by descending with the entries' sizes.
 - No input terminates the process: damaged or truncated files of the root, random tables and
   pieces, out-of-range indices and memory that runs out return an `Error`.
 
