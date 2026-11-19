@@ -187,6 +187,16 @@ node_event :: proc(n:^Node,e:Event) {
     n.event_count+=1
 }
 
+// The connection of the client host of the node: to the host its join connects to.
+@(private)
+node_host_peer :: proc(n:^Node) -> (h:^wire.Host,connection:wire.Connection,ok:bool) {
+    sync.mutex_guard(&n.lock)
+    for p in n.peers {
+        if p.used && p.host.desc.mode==.Client {return p.host,p.connection,true}
+    }
+    return
+}
+
 // The events since the last call, oldest first, into buffer.
 node_events :: proc(n:^Node,buffer:[]Event) -> []Event {
     sync.mutex_guard(&n.lock)

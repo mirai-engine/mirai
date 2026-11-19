@@ -68,7 +68,9 @@ in `exchange/wire.odin`.
 - A want names an object by its root, which is always a node: a root that hashes right but is no
   node fails the want, since every peer would send the same.
 - What a peer exposes is the owner's `Desc.expose`; without one no namespace is read. Names come
-  sorted, a page at a time after the last one seen.
+  sorted, a page at a time after the last one seen. A ref is asked of every connected peer, or of
+  one when only that peer may say it (the snapshot of an invitation, from the host it names):
+  refs name content, and only content is verified by address.
 - Hostile input: a malformed message, an ask beyond the limits, descendants past a budget or an
   answer nobody could have asked for in that form marks the peer bad, and it is neither asked nor
   served again; a well formed message about something not asked for is ignored. An ask that does

@@ -741,10 +741,16 @@ want_addresses :: proc(x:^Exchange,buffer:[]store.Hash) -> []store.Hash {
     return buffer[:n]
 }
 
-// Asks every connected peer for the address namespace and name name.
-ref_ask :: proc(x:^Exchange,namespace,name:string) -> (Query,Error) {
+// Asks every connected peer for the address namespace and name name, or only
+// the peer of h and connection when h is given: what only that peer may say,
+// as the snapshot an invitation names.
+ref_ask :: proc(x:^Exchange,namespace,name:string,h:^wire.Host=nil,connection:=wire.Connection{}) -> (Query,Error) {
     sync.mutex_guard(&x.lock)
-    return query_add(x,.Ref,namespace,name,-1)
+    peer:=-1
+    if h!=nil {
+        if peer=peer_find(x,h,connection);peer<0 {return {},.Invalid}
+    }
+    return query_add(x,.Ref,namespace,name,peer)
 }
 
 // Asks a peer for the names of a namespace after after, at most NAMES_PER_REPLY.
@@ -811,7 +817,7 @@ queries_send :: proc(x:^Exchange) {
         if !q.used || q.ended || q.state!=.Waiting {continue}
         namespace,name:=string(q.namespace[:q.namespace_len]),string(q.name[:q.name_len])
         targets:=connected
-        if q.kind==.Names {targets=q.peer<0?0:connected&(u64(1)<<uint(q.peer))}
+        if q.peer>=0 {targets=connected&(u64(1)<<uint(q.peer))}
         for &p,i in x.peers {
             bit:=u64(1)<<uint(i)
             cost:=q.kind==.Ref?1:NAMES_CREDITS

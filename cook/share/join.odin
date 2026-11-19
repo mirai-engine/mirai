@@ -206,11 +206,14 @@ refusal :: proc(reason:wire.Disconnect_Reason,allocator:=context.allocator) -> s
     return strings.clone("the host did not answer. Either its share has ended (an invitation lasts while the share that printed it runs: ask for a new one), or it cannot be reached from here: on another network one side needs a router that maps a port (UPnP, NAT-PMP or PCP) and the host must give the code it prints once its router answered; a firewall must let UDP through",allocator)
 }
 
-// The address of the snapshot the host offers.
+// The address of the snapshot the host offers, asked of the host alone: a
+// peer that joined from this one could name another.
 @(private)
 join_offer :: proc(d:^Join_Desc,allocator:runtime.Allocator) -> (address:store.Hash,error:string) {
     n:=d.node
-    q,ask_error:=exchange.ref_ask(&n.x,NAMESPACE,d.offer)
+    host,connection,connected:=node_host_peer(n)
+    if !connected {return {},refusal(.Timeout,allocator)}
+    q,ask_error:=exchange.ref_ask(&n.x,NAMESPACE,d.offer,host,connection)
     if ask_error!=.None {return {},fmt.aprintf("the snapshot could not be asked for (%v)",ask_error,allocator=allocator)}
     defer exchange.query_end(&n.x,q)
     for {
