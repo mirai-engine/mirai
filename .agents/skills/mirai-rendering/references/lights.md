@@ -375,9 +375,10 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   costs nothing. While the eye stays in its cell, or within a margin past it
   (`SHADOW_CULL_MARGIN`, so that an eye going to and fro across a border takes no other), no
   instance of a batch comes or goes past its cull distance; where it leaves it, what stays changed
-  where instances of a batch may have come or gone, in a box for each cell of the world they lie in, apart from the few boxes of what changed:
-  merged, those far boxes would take the pages near the eye along (`shadow_cull_changes`). What
-  sways moves so only near the eye ([what sways](#what-sways-in-the-maps)).
+  where instances of a batch may have come or gone, in a box for each cell of the world they lie
+  in, apart from the few boxes of what changed: merged, those far boxes would take the pages near
+  the eye along (`shadow_cull_changes`). What sways moves so only near the eye
+  ([what sways](#what-sways-in-the-maps)).
   A light or a level of the sun that moves or turns lets go of its pages and draws those read whole
   into the atlas alone that frame, and the cache the next still frame; an origin jump lets go of
   every page.
