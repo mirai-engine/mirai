@@ -12,9 +12,10 @@ import "mirai:store"
 //
 // - Package: what one ingest of a source made, an object of the store pinned
 //   by the BLAKE3 of its text, which the ref REF_MANIFESTS/<that hash> names.
-//   Its id, where the source was, what the source and its settings are
-//   (identity) and each asset with its id. Nothing in it depends on the
-//   version of the engine. The import that ingests the source writes it and
+//   Its id, the folder its new documents go in under that of a project,
+//   where the source was, what the source and its settings are (identity)
+//   and each asset with its id. Nothing in it depends on the version of the
+//   engine. The import that ingests the source writes it and
 //   names it with the ref REF_PACKAGES/<id>.
 // - Build: the object of each asset of one build of a package. The import that
 //   builds it writes it, names it with REF_IMPORTS/<import_key> (Final) or
@@ -73,6 +74,7 @@ Package_Asset :: struct {
 Package :: struct {
     id:base.Asset_Id,
     name:string,
+    documents:string,         // under the folder of a project it is added to, where its new documents go; "": in it
     origin:Package_Origin,
     identity:store.Hash,      // of the bytes of the source and its inputs, its settings and the code of the plugin that reads it
     settings:string,          // the text of the settings object; "" without one
@@ -188,6 +190,10 @@ package_text :: proc(p:^Package,allocator:=context.allocator) -> (text:string,er
     id_write(&w,p.id)
     serial.text_write_raw(&w,",\n  \"name\": ")
     serial.text_write_string(&w,p.name)
+    if p.documents!="" {
+        serial.text_write_raw(&w,",\n  \"documents\": ")
+        serial.text_write_string(&w,p.documents)
+    }
     serial.text_write_raw(&w,",\n  \"origin\": {\"path\": ")
     serial.text_write_string(&w,p.origin.path)
     serial.text_write_raw(&w,p.origin.folder?", \"folder\": true, \"importer\": ":", \"folder\": false, \"importer\": ")
@@ -239,7 +245,7 @@ package_parse :: proc(text:string,allocator:=context.allocator) -> (p:Package,er
     defer serial.text_reader_destroy(&r)
     p.inputs=make([dynamic]string,allocator)
     p.assets=make([dynamic]Package_Asset,allocator)
-    Field :: enum {Version,Id,Name,Origin,Identity,Settings,Inputs,Assets}
+    Field :: enum {Version,Id,Name,Documents,Origin,Identity,Settings,Inputs,Assets}
     seen:bit_set[Field]
     version:u64
     expect(&r,'{') or_return
@@ -251,6 +257,7 @@ package_parse :: proc(text:string,allocator:=context.allocator) -> (p:Package,er
         case "version": field=.Version
         case "id": field=.Id
         case "name": field=.Name
+        case "documents": field=.Documents
         case "origin": field=.Origin
         case "identity": field=.Identity
         case "settings": field=.Settings
@@ -264,6 +271,7 @@ package_parse :: proc(text:string,allocator:=context.allocator) -> (p:Package,er
         case .Version: version=count_read(&r,max(u64)) or_return
         case .Id: p.id=id_read(&r) or_return
         case .Name: p.name=string_read(&r,allocator) or_return
+        case .Documents: p.documents=string_read(&r,allocator) or_return
         case .Origin: p.origin=origin_read(&r,allocator) or_return
         case .Identity: p.identity=hash_read(&r) or_return
         case .Settings:
@@ -289,7 +297,7 @@ package_parse :: proc(text:string,allocator:=context.allocator) -> (p:Package,er
     }
     if !serial.text_end(&r) {return {},.Corrupt}
     if version!=PACKAGE_MANIFEST_VERSION {return {},.Version}
-    if seen!={.Version,.Id,.Name,.Origin,.Identity,.Inputs,.Assets} && seen!={.Version,.Id,.Name,.Origin,.Identity,.Settings,.Inputs,.Assets} {return {},.Corrupt}
+    if seen-{.Documents,.Settings}!={.Version,.Id,.Name,.Origin,.Identity,.Inputs,.Assets} {return {},.Corrupt}
     if !package_valid(&p) {return {},.Corrupt}
     return p,.None
 }
@@ -785,7 +793,7 @@ folder_valid :: proc(folder:string) -> bool {
 
 @(private="file")
 package_valid :: proc(p:^Package) -> bool {
-    if p.id=={} || p.settings!="" && !object_valid(p.settings) {return false}
+    if p.id=={} || !folder_valid(p.documents) || p.settings!="" && !object_valid(p.settings) {return false}
     for &a,at in p.assets {
         if a.id=={} || a.id==p.id || !kind_valid(a.kind) || a.index<0 || a.index>int(max(i32)) || a.part && !import_cached(a.kind) {return false}
         for &other in p.assets[:at] {
