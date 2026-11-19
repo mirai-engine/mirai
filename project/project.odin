@@ -21,6 +21,9 @@ FOLDER_NAMES :: [Folder]string{
     .Assets="assets",.Game="game",.Editor="editor",
     .Plugins="plugins",.Shaders="shaders",.Panels="panels",.Generated=".mirai",
 }
+// Folders at the top of a project that keep the history of version control,
+// not the project: like the generated folder, they are not its own files.
+VERSION_CONTROL_FOLDERS :: [?]string{".git",".hg",".svn",".jj"}
 PART_NAMES :: [Plugin_Part]string{.Runtime="runtime",.Editor="editor",.Shaders="shaders",.Assets="assets",.Recipes="recipes",.Cook="cook"}
 
 // What build.compression names besides the default, the best compressor of the engine.
@@ -333,6 +336,20 @@ cache_path :: proc(root:string,parts:..string,allocator:=context.allocator) -> s
         strings.write_string(&b,part)
     }
     return strings.to_string(b)
+}
+
+// Whether a path relative to the root of a project, with forward slashes, is
+// one of its own files: not under its generated folder, which each machine
+// makes, nor under the folder of a version control system.
+own_path :: proc(relative:string) -> bool {
+    top:=relative
+    if slash:=strings.index_byte(relative,'/');slash>=0 {top=relative[:slash]}
+    names:=FOLDER_NAMES
+    if path_same(top,names[.Generated]) {return false}
+    for folder in VERSION_CONTROL_FOLDERS {
+        if path_same(top,folder) {return false}
+    }
+    return top!=""
 }
 
 folder_path :: proc(root:string,folder:Folder,allocator:=context.allocator) -> string {

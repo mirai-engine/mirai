@@ -361,7 +361,9 @@ Numbered layers; a package only imports lower layers.
   `cook/install` (a project's plugins that come from git, and the catalog). The importers are
   `cook/import` (core, no formats), one package per format (`cook/import/obj`, `gltf`, `usd`, `fbx`,
   which reads with the C library of `third_party/ufbx`) and `cook/import/sources` (the table of
-  formats and `import_source`, on top of `cook/prefab`). `cook/author` is what an interface or a
+  formats and `import_source`, on top of `cook/prefab`). `cook/share` shares a project peer to
+  peer: its snapshot, and its packages refreshed through the library from `exchange` peers.
+  `cook/author` is what an interface or a
   scene is authored with as a nested document, between its text and the file of the asset, on top of
   `asset`, `ui`, `core`, `host` and `engine/*`: the editor's `ui.*` methods and `mirai ui` and
   `mirai scene` go through it, and the presets an entity is made from are there.

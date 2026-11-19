@@ -1,0 +1,292 @@
+package share
+
+import "base:runtime"
+import "core:crypto"
+import "core:fmt"
+import "core:strings"
+import "core:sync"
+import "mirai:asset"
+import "mirai:cook/cache"
+import "mirai:exchange"
+import "mirai:store"
+import wire "mirai:net"
+
+// A peer of a shared project: a store, the exchange over the hosts of its
+// owner (a server others join, the client of a join), the lease that keeps
+// what it serves and fetches from a sweep, and what it saw of its peers.
+// Whoever owns it calls node_pump once per step; a join runs on another
+// thread and reads the clock and waits through the node.
+
+NAMESPACE :: "shares"      // <hash of an invitation token>: the snapshot a share offers under it
+PROTOCOL_ID :: 0x4d495348  // of the hosts of sharing: datagrams of any other application are ignored
+VERSION :: 1               // of what two peers say to each other: the snapshot and the exchange over it
+PEERS :: 8                 // connections of a node at once
+LEASE_SECONDS :: 60.0      // between two refreshes of the lease
+@(private) WANTS :: 512
+@(private) EVENTS :: 64
+
+// What the hosts of a node carry: the channels of the exchange, from the first.
+channels :: proc() -> [exchange.CHANNELS]wire.Channel_Desc {return exchange.channels()}
+
+Event_Kind :: enum u8 {Joined,Left}
+
+Event :: struct {
+    kind:Event_Kind,
+    peer:int,                     // a number given in order of arrival
+    reason:wire.Disconnect_Reason, // Left
+    sent,received:u64,            // piece bytes with that peer, Left
+}
+
+@(private)
+Node_Peer :: struct {
+    used:bool,
+    host:^wire.Host,
+    connection:wire.Connection,
+    number:int,
+}
+
+Node :: struct {
+    s:^store.Store,
+    x:exchange.Exchange,
+    hosts:[2]^wire.Host,
+    host_count:int,
+    allocator:runtime.Allocator,
+    // Between the pump and the thread that joins.
+    lock:sync.Mutex,
+    tick:sync.Cond,
+    now:f64,
+    peers:[PEERS]Node_Peer,
+    numbers:int,
+    connected:int,
+    client_reason:wire.Disconnect_Reason, // why the client host was refused or dropped
+    client_joined:bool,
+    events:[EVENTS]Event,
+    event_head,event_count:int,
+    sent_gone,received_gone:u64, // of peers that left
+    served:[dynamic]store.Hash,  // what the lease holds besides the wants
+    lease:store.Lease,
+    leased:bool,
+    lease_at:f64,
+    lease_due:bool,
+    stopped:bool,
+}
+
+node_init :: proc(n:^Node,s:^store.Store,allocator:=context.allocator) -> exchange.Error {
+    n^={s=s,allocator=allocator}
+    n.served=make([dynamic]store.Hash,allocator)
+    return exchange.init(&n.x,{store=s,channel=0,peers=PEERS,wants=WANTS,max_blob_bytes=FILE_MAX_BYTES,expose=node_expose,expose_user=n,allocator=allocator})
+}
+
+node_destroy :: proc(n:^Node) {
+    node_stop(n)
+    exchange.destroy(&n.x)
+    if n.leased {store.lease_release(&n.lease)}
+    delete(n.served)
+}
+
+// Wakes whoever waits on the node, which waits no more: a join running ends.
+node_stop :: proc(n:^Node) {
+    sync.mutex_guard(&n.lock)
+    n.stopped=true
+    sync.cond_broadcast(&n.tick)
+}
+
+// Adds a host whose channels start with those of channels(); the node polls it.
+node_host :: proc(n:^Node,h:^wire.Host) -> bool {
+    if n.host_count==len(n.hosts) {return false}
+    n.hosts[n.host_count]=h
+    n.host_count+=1
+    return true
+}
+
+// What peers may read: the snapshots offered, the manifests of packages, their
+// shared builds and the results of cook/cache. Never the Fast builds, the
+// choices or the origins of this machine.
+@(private)
+node_expose :: proc(user:rawptr,namespace:string) -> bool {
+    switch namespace {
+    case NAMESPACE,asset.REF_PACKAGES,asset.REF_IMPORTS: return true
+    }
+    return strings.has_prefix(namespace,asset.REF_CACHE_PREFIX)
+}
+
+// One step: every host polled, the exchange updated at now (seconds, never
+// back), the lease refreshed when due, and whoever waits on the node woken.
+node_pump :: proc(n:^Node,now:f64) {
+    for h in n.hosts[:n.host_count] {
+        for command in wire.host_poll(h) {
+            #partial switch command.kind {
+            case .Connected: node_joined(n,h,command.connection)
+            case .Disconnected: node_left(n,h,command.connection,command.reason)
+            case .Message: exchange.receive(&n.x,h,command)
+            }
+        }
+    }
+    exchange.update(&n.x,now)
+    sync.mutex_lock(&n.lock)
+    n.now=now
+    due:=n.lease_due || now-n.lease_at>=LEASE_SECONDS
+    sync.cond_broadcast(&n.tick)
+    sync.mutex_unlock(&n.lock)
+    if due {node_lease(n,now)}
+}
+
+@(private)
+node_joined :: proc(n:^Node,h:^wire.Host,connection:wire.Connection) {
+    if exchange.peer_add(&n.x,h,connection)!=.None {
+        wire.host_disconnect(h,connection,.Capacity)
+        return
+    }
+    sync.mutex_guard(&n.lock)
+    for &p in n.peers {
+        if p.used {continue}
+        n.numbers+=1
+        p={used=true,host=h,connection=connection,number=n.numbers}
+        n.connected+=1
+        if h.desc.mode==.Client {n.client_joined=true}
+        node_event(n,{kind=.Joined,peer=p.number})
+        return
+    }
+}
+
+@(private)
+node_left :: proc(n:^Node,h:^wire.Host,connection:wire.Connection,reason:wire.Disconnect_Reason) {
+    progress,known:=exchange.peer_progress(&n.x,h,connection)
+    exchange.peer_remove(&n.x,h,connection)
+    sync.mutex_guard(&n.lock)
+    if h.desc.mode==.Client {n.client_reason=reason}
+    if !known {return}
+    n.sent_gone+=progress.sent
+    n.received_gone+=progress.received
+    for &p in n.peers {
+        if !p.used || p.host!=h || p.connection!=connection {continue}
+        node_event(n,{kind=.Left,peer=p.number,reason=reason,sent=progress.sent,received=progress.received})
+        p={}
+        n.connected-=1
+    }
+}
+
+@(private)
+node_event :: proc(n:^Node,e:Event) {
+    if n.event_count==EVENTS {
+        n.event_head=(n.event_head+1)%EVENTS
+        n.event_count-=1
+    }
+    n.events[(n.event_head+n.event_count)%EVENTS]=e
+    n.event_count+=1
+}
+
+// The events since the last call, oldest first, into buffer.
+node_events :: proc(n:^Node,buffer:[]Event) -> []Event {
+    sync.mutex_guard(&n.lock)
+    count:=min(n.event_count,len(buffer))
+    for k in 0..<count {buffer[k]=n.events[(n.event_head+k)%EVENTS]}
+    n.event_head=(n.event_head+count)%EVENTS
+    n.event_count-=count
+    return buffer[:count]
+}
+
+Node_Totals :: struct {connected:int,sent,received:u64,send_rate,receive_rate:f64}
+
+// Piece bytes sent and received with every peer since the node began, and the rates now.
+node_totals :: proc(n:^Node) -> (t:Node_Totals) {
+    sync.mutex_guard(&n.lock)
+    t.connected,t.sent,t.received=n.connected,n.sent_gone,n.received_gone
+    for p in n.peers {
+        if !p.used {continue}
+        if progress,ok:=exchange.peer_progress(&n.x,p.host,p.connection);ok {
+            t.sent+=progress.sent
+            t.received+=progress.received
+            t.send_rate+=progress.send_rate
+            t.receive_rate+=progress.receive_rate
+        }
+    }
+    return
+}
+
+// The clock of the node: that of its last step.
+node_now :: proc(n:^Node) -> f64 {
+    sync.mutex_guard(&n.lock)
+    return n.now
+}
+
+// Waits until the node stepped to at least now+seconds; false once it stopped.
+node_wait :: proc(n:^Node,seconds:f64) -> bool {
+    sync.mutex_guard(&n.lock)
+    until:=n.now+seconds
+    for n.now<until && !n.stopped {sync.cond_wait(&n.tick,&n.lock)}
+    return !n.stopped
+}
+
+// Adds addresses to what the lease of the node holds.
+node_serve :: proc(n:^Node,addresses:..store.Hash) {
+    sync.mutex_guard(&n.lock)
+    append(&n.served,..addresses)
+    n.lease_due=true
+}
+
+@(private)
+node_lease :: proc(n:^Node,now:f64) {
+    wants:[WANTS]store.Hash
+    wanted:=exchange.want_addresses(&n.x,wants[:])
+    sync.mutex_lock(&n.lock)
+    live:=make([]store.Hash,len(n.served)+len(wanted),context.temp_allocator)
+    copy(live,n.served[:])
+    copy(live[len(n.served):],wanted)
+    n.lease_at,n.lease_due=now,false
+    sync.mutex_unlock(&n.lock)
+    if len(live)>store.LEASE_MAX_HASHES {live=live[:store.LEASE_MAX_HASHES]}
+    if n.leased {
+        store.lease_update(&n.lease,live)
+        return
+    }
+    random:[8]u8
+    crypto.rand_bytes(random[:])
+    name:=fmt.tprintf("share-%x",random[:])
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    if lease,error:=store.lease_open(n.s,name,live);error==.None {
+        n.lease=lease
+        n.leased=true
+    }
+}
+
+// The source a refresh of the library asks: a ref of the peers with its blob,
+// and for a build every blob it lists, made complete in the store before the
+// ref is set there. For a thread other than the pump's.
+node_source :: proc(n:^Node) -> cache.Source {
+    return {fetch=node_fetch,user=n}
+}
+
+@(private)
+node_fetch :: proc(user:rawptr,into:^store.Store,namespace,name:string) -> bool {
+    n:=(^Node)(user)
+    if into!=n.s {return false}
+    address,error:=exchange.fetch_ref(&n.x,namespace,name)
+    if error!=.None {return false}
+    defer exchange.forget(&n.x,address)
+    if namespace==asset.REF_IMPORTS {
+        b,build_error:=asset.build_get(into,address,context.temp_allocator)
+        if build_error!=.None {return false}
+        blobs:=make([dynamic]store.Hash,context.temp_allocator)
+        for o in b.outputs {
+            append(&blobs,o.blob)
+            if o.thumbnail!={} {append(&blobs,o.thumbnail)}
+        }
+        // A window of wants ahead of the one waited on, so the peers send them together.
+        AHEAD :: 64
+        defer for blob in blobs {exchange.forget(&n.x,blob)}
+        for blob,at in blobs {
+            for ahead in blobs[at:min(at+AHEAD,len(blobs))] {exchange.want(&n.x,ahead)}
+            if exchange.fetch(&n.x,blob)!=.None {return false}
+        }
+    }
+    return store.ref_set(into,namespace,name,address)==.None
+}
+
+// The name of the snapshot a share offers under its invitation token: a hash of
+// the token, so the names peers list reveal no token.
+offer_name :: proc(token:u64,buffer:^[64]u8) -> string {
+    bytes:[8]u8
+    for k in 0..<8 {bytes[k]=u8(token>>(8*uint(k)))}
+    return store.hex(store.address_of_bytes(bytes[:]),buffer)
+}

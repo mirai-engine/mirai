@@ -4,10 +4,11 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   `cook/build` (generated world, engine binaries, libraries and shipped game, project shaders,
   fingerprint, cooking and engine-time exclusion), `cook/workspace` (worktrees, dependencies, shared
   cache and locks), the installed engine (`mirai package engine`, binary package and release
-  workflow), the `tools/mirai` commands, the external scripts and the `templates`. Use when changing
+  workflow), sharing a project peer to peer (`cook/share`, `mirai share`, `mirai join`), the
+  `tools/mirai` commands, the external scripts and the `templates`. Use when changing
   a manifest, the layout or how a project or the engine is generated, compiled or distributed, when
-  investigating why something does not compile or what went into the game, or when taking reference
-  frames or sound from a YouTube or X video.
+  investigating why something does not compile or what went into the game, when sending a project
+  to another machine, or when taking reference frames or sound from a YouTube or X video.
 ---
 
 # Mirai projects and build
@@ -38,6 +39,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 - Turns between processes, build and measurement locks and implicit Vulkan layers:
   [turns](references/build.md#turns-between-processes) and
   [layers](references/build.md#implicit-vulkan-layers).
+- Sharing a project peer to peer (`cook/share`, `mirai share` and `mirai join`), its snapshot and
+  updating a folder joined before: [sharing](references/projects.md#sharing-a-project).
 - `mirai` launcher, `mirai worktree` and `mirai doctor`:
   [tool and machine](references/projects.md#tool-and-machine).
 - `mirai` subcommands (their usage, with `mirai <command>` without arguments):
@@ -143,7 +146,9 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   `core:testing`) and `mirai test tools/mirai` (ACP installer, C library cache, tests that declare
   the sources, known failures); `mirai check cook/build` and `mirai check
   tools/mirai` if they change. Turns: `mirai test cook/workspace` (annotation of builds, who holds a
-  lock) and `mirai test std/subprocess` (low priority of a child).
+  lock) and `mirai test std/subprocess` (low priority of a child). Sharing: `mirai test cook/share`
+  (snapshot rule, hostile snapshots, join, update by three ways, resume, a third peer), all on
+  `Sim_Network`.
 - Generator or build: `mirai build editor` and `mirai build game --out <separate folder>` of the
   affected project, and the player with `--no-gpu --frames 3`.
 - User commands, by hand: `mirai new`, and `mirai build game` twice (the second says "unchanged").
