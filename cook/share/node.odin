@@ -56,6 +56,7 @@ Node :: struct {
     tick:sync.Cond,
     now:f64,
     stepped:bool, // now is a time of the owner's clock: before the first step it is not
+    waiting:int,  // threads in node_wait
     peers:[PEERS]Node_Peer,
     numbers:int,
     connected:int,
@@ -217,8 +218,17 @@ node_now :: proc(n:^Node) -> f64 {
 node_wait :: proc(n:^Node,seconds:f64) -> bool {
     sync.mutex_guard(&n.lock)
     until:=n.now+seconds
+    n.waiting+=1
     for (!n.stepped || n.now<until) && !n.stopped {sync.cond_wait(&n.tick,&n.lock)}
+    n.waiting-=1
     return !n.stopped
+}
+
+// Whether a thread waits for the clock of the node: one that steps a clock of
+// its own advances it only then, so the work between two waits takes none of it.
+node_waiting :: proc(n:^Node) -> bool {
+    sync.mutex_guard(&n.lock)
+    return n.waiting>0
 }
 
 // Adds addresses to what the lease of the node holds.

@@ -127,10 +127,10 @@ test_arena :: proc(t:^testing.T) -> mem.Allocator {
 }
 
 // Runs a join of peer k on a thread while the network steps, at most 600
-// virtual seconds. stop_bytes: in the step its node has received that many
-// piece bytes, peer k leaves (its client disconnects and it is pumped no
-// more) and its join is stopped, so nothing arrives after the stop whenever
-// the thread of the join notices it.
+// virtual seconds of its waits. stop_bytes: in the step its node has
+// received that many chunk bytes, peer k leaves (its client disconnects and
+// it is pumped no more) and its join is stopped, so nothing arrives after
+// the stop whenever the thread of the join notices it.
 @(private="file")
 test_join :: proc(t:^testing.T,w:^Test_Net,k:int,desc:Join_Desc,stop_bytes:u64=0) -> (report:Join_Report,error:string) {
     run:=Test_Join{desc=desc}
@@ -143,9 +143,16 @@ test_join :: proc(t:^testing.T,w:^Test_Net,k:int,desc:Join_Desc,stop_bytes:u64=0
         free_all(context.temp_allocator)
         sync.atomic_store(&r.done,true)
     },init_context=context)
-    for steps:=0;!sync.atomic_load(&run.done);steps+=1 {
+    for steps:=0;!sync.atomic_load(&run.done); {
+        // The clock moves only while the join waits for it: its work between
+        // two waits takes no virtual time, however long it takes for real.
+        if w.peers[k].pumped && !node_waiting(run.desc.node) {
+            thread.yield()
+            continue
+        }
         test_step(w)
-        if steps>600_000 {
+        steps+=1
+        if steps==600_000 {
             testing.expect(t,false,"the join did not end in 600 virtual seconds")
             node_stop(run.desc.node)
         }
