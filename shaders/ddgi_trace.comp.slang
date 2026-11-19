@@ -187,8 +187,9 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
             hit.flags = HIT_SURFACE;
             if (any(s.emission > float3(0.0))) hit.flags |= HIT_FIXED;
             light = !globe;
+            // The inside of a surface takes nothing of its program.
+            if (passing || material_changing(material)) hit.flags |= HIT_PASSING;
         }
-        if (passing || material_changing(material)) hit.flags |= HIT_PASSING;
     }
     bool gated = gate >= 0.0;
     if (gated) hit.flags |= HIT_PASSING;

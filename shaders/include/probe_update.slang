@@ -36,11 +36,13 @@ struct Params_Block {
 // Where the list says whether a probe of the chosen, by its place in it,
 // traced a ray this update (CHOSEN_TRACED), whether what one of its rays may
 // meet changed (CHOSEN_CROSSED) and whether one met what changes with nothing
-// that says so (CHOSEN_PASSING, PROBE_PASSING), and where it counts the rays
-// traced and the hits lit.
+// that says so (CHOSEN_PASSING, PROBE_PASSING), whether its light stayed
+// within half of what is a change (CHOSEN_STILL, ddgi_irradiance.comp), and
+// where it counts the rays traced and the hits lit.
 #define CHOSEN_TRACED 1u
 #define CHOSEN_CROSSED 2u
 #define CHOSEN_PASSING 4u
+#define CHOSEN_STILL 8u
 uint chosen_traced(uint slot) { return 1u + params.room + slot; }
 uint chosen_rays() { return 1u + 2u * params.room; }
 uint chosen_lit() { return 2u + 2u * params.room; }
