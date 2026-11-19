@@ -796,6 +796,37 @@ a_third_peer_joins_from_the_second :: proc(t:^testing.T) {
     testing.expectf(t,len(report.packages.missing)==0 && report.packages.fetched==1,"%v",report.packages)
 }
 
+// A peer that joined from the joiner and names another snapshot under the
+// host's invitation, answering before the host does, is not asked: the
+// snapshot of an invitation comes only from the host it connects to.
+@(test)
+a_downstream_peer_cannot_substitute_the_snapshot :: proc(t:^testing.T) {
+    w:Test_Net
+    if !test_net(t,&w,"share-substitute",3) {return}
+    defer test_net_destroy(&w)
+    root:=fmt.tprintf("%s/host",w.folder)
+    file_put(root,"project.mirai",transmute([]u8)string("{}\n"))
+    file_put(root,"assets/real.txt",transmute([]u8)string("real"))
+    if !host_offer(t,&w,root) {return}
+    fake:=fmt.tprintf("%s/fake",w.folder)
+    file_put(fake,"project.mirai",transmute([]u8)string("{}\n"))
+    file_put(fake,"assets/fake.txt",transmute([]u8)string("fake"))
+    folders:=make([dynamic]store.Hash,context.temp_allocator)
+    snap,address,_,error:=snapshot_take(&w.peers[2].s,fake,"game",&folders,allocator=context.temp_allocator)
+    if !testing.expectf(t,error=="","%s",error) {return}
+    digits:[64]u8
+    store.ref_set(&w.peers[2].s,NAMESPACE,offer_name(w.peers[0].token,&digits),address)
+    node_serve(&w.peers[2].n,..folders[:])
+    for e in snap.entries {node_serve(&w.peers[2].n,e.address)}
+    // The downstream peer is connected to the joiner first, and the host answers late.
+    test_connect(&w,2,1)
+    wire.sim_endpoint_conditions(&w.sim,w.peers[0].endpoint,{latency=0.2})
+    test_connect(&w,1,0)
+    joined:=fmt.tprintf("%s/joined",w.folder)
+    if _,join_error:=test_join(t,&w,1,join_desc(&w,0,joined));!testing.expectf(t,join_error=="","%s",join_error) {return}
+    same_files(t,root,joined)
+}
+
 // A host whose snapshot lies about the size of a file, and one whose root is
 // larger than a folder can be, are refused without writing anything.
 @(test)

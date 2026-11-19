@@ -617,7 +617,9 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
   `cook/cache` results: the owner exposes the whole machine library to whoever holds the
   invitation, never the choices, the origins or the sources of the machine. A lease holds the
   snapshot, its folders and files and the builds the project pins.
-- **Join.** `mirai join` fetches the tree a depth of folders at a time, refusing one whose names
+- **Join.** `mirai join` asks for the snapshot of the invitation only the host it connects to,
+  so a peer that joined from the joiner cannot name another; folders and files come from any
+  peer, verified by address. It fetches the tree a depth of folders at a time, refusing one whose names
   could leave the folder, are absolute, name a device, repeat or collide where case is folded,
   whose folders nest beyond the bound, hold more entries or bytes than a folder can or declare
   files and sizes they do not hold (so the files read never exceed the bound, also from a folder
