@@ -19,6 +19,7 @@ struct Tlas_Batch {
     uint pad1;
     uint pad2;
     float4 anchor;   // xyz: what its instances are relative to, relative to the origin
+    float4 basis[3]; // the rotation and scale its instances take, w of the first 1 while it has one (render.batch_basis_rows)
 };
 // jobs: the batches; first: the first instance of the TLAS a batch writes; total: the instances after it.
 struct Params_Block { uint jobs; uint first; uint total; uint pad; };
@@ -46,6 +47,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     float4 world[3];
     float4 inverse[3];
     batch_instance_placement(p, indices[words + 3u], uint2(indices[words + 4u], indices[words + 5u]), world, inverse);
+    batch_basis_placement(p, b.basis, world, inverse);
     uint to = i * 16u;
     for (uint row = 0u; row < 3u; row++) {
         instances[to + row * 4u] = asuint(world[row].x);

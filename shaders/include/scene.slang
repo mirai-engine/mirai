@@ -365,6 +365,7 @@ float3 batch_anchor(Instance row) { return row.world_inv[1].xyz; }   // what its
 float batch_reach(Instance row) { return row.world_inv[1].w; }       // metres the vertex hook moves a point of its instances at most
 uint batch_colors(Instance row) { return asuint(row.world_inv[2].x); } // 1 + the word of the color of its first instance in the pool; 0: none
 float batch_swayed(Instance row) { return row.world_inv[2].y; }      // metres of the world its largest instance sways as its wind blows now (render.batch_swayed)
+// Its prev_world: the basis its instances take (batch_basis_placement), zero without one.
 
 // The transform of the instance of a batch whose words start at `words`,
 // moved by the anchor of its batch, and its inverse.
@@ -406,7 +407,9 @@ Instance scene_instance(uint index) {
         inst.tint.rgb *= float3(float(c & 255u), float((c >> 8u) & 255u), float((c >> 16u) & 255u)) / 255.0;
         inst.wet = float(c >> 24u) / 255.0;
     }
+    float4 basis[3] = inst.prev_world;
     batch_placement(batch_records(inst) + k * BATCH_WORDS, batch_anchor(inst), inst.world, inst.world_inv);
+    batch_basis_placement(float3(inst.world[0].w, inst.world[1].w, inst.world[2].w), basis, inst.world, inst.world_inv);
     inst.prev_world = inst.world;
     float3 low, high;
     transformed_bounds(inst.world, meshes[instance_mesh(inst)], low, high);

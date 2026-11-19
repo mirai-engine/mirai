@@ -79,10 +79,10 @@ gpu_fixture_destroy :: proc(f: ^Gpu_Fixture) {
 }
 
 // Frames from a camera with the field the benders of the world trample and
-// the wind of the resident, a floor and the sun shining along `sun`, and the
-// pixels of the last.
+// the wind of the resident, a floor and the sun shining along `sun`, at
+// `time` seconds, and the pixels of the last.
 @(private = "file")
-view_frames :: proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera, sun: [3]f32, frames: int, illuminance := f32(3)) -> (pixels: []u8, ok: bool) {
+view_frames :: proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera, sun: [3]f32, frames: int, illuminance := f32(3), time := f32(0)) -> (pixels: []u8, ok: bool) {
 	for _ in 0 ..< frames {
 		test_world_settle(&f.world)
 		trample_draw(&f.resident, core.read(&f.world.benders), core.read(&f.world.volumes), core.read(&f.world.worlds), core.FRAME_TIME_DEFAULT, {}, &f.renderer)
@@ -91,7 +91,7 @@ view_frames :: proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera, sun: [3]
 		floor := gpu.Instance_Desc{object_id = 1, mesh = f.cube, transform = mm.transform_matrix({{0, -0.5, 0}, mm.QUAT_IDENTITY, {600, 1, 600}}), tint = {0.05, 0.05, 0.05}}
 		gpu.scene_set_environment(&f.renderer, {direction = -sun, color = {1, 1, 1}, illuminance = illuminance, indirect = 1, scattering = 1, enabled = illuminance > 0}, {sky = {0.4, 0.5, 0.6}})
 		testing.expect(t, gpu.scene_update(&f.renderer, 0, {floor}, true), f.renderer.error)
-		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera}), f.renderer.error)
+		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = time}), f.renderer.error)
 	}
 	rhi.device_wait_idle(f.device)
 	pixels, _, _, ok = gpu.renderer_capture(&f.renderer)
@@ -129,7 +129,7 @@ a_stalk_leans_away_from_where_a_bender_trampled_the_field :: proc(t: ^testing.T)
 	if !gpu_fixture_init(t, f) {return}
 	defer gpu_fixture_destroy(f)
 	// A white stalk 4 m tall standing at the origin, its place at its middle.
-	desc := render.Batch_Desc{mesh = f.cube, tint = 1, vertex = {0, 1, 0, 0}, reach = hook_reach(0, 2)}
+	desc := render.Batch_Desc{mesh = f.cube, tint = 1, vertex = {0, 1, 0, 0}, reach = hook_reach({}, 2)}
 	stalk, problem := render.batch_set(&f.renderer, f.resident.world, 0, desc, {render.batch_instance({0, 2, 0}, 1, {0.4, 4, 0.4})})
 	if !testing.expect(t, problem == "", problem) {return}
 	standing, ok := stalk_frames(t, f)
@@ -180,10 +180,10 @@ wind_blow :: proc(t: ^testing.T, f: ^Gpu_Fixture, speed: f32) -> bool {
 }
 
 // A mesh of sheets, each a grid of cells by cells quads two-sided in the
-// material of the mesh: a corner and its two sides, white, its vertices all
-// swaying (red 1).
+// material of the mesh: a corner and its two sides, of the vertex color of
+// the sheet (white when none), white swaying and fluttering all.
 @(private = "file")
-Sheet :: struct {corner, across, up: [3]f32, cells: int}
+Sheet :: struct {corner, across, up: [3]f32, cells: int, color: u32}
 
 @(private = "file")
 sheets_mesh :: proc(t: ^testing.T, f: ^Gpu_Fixture, sheets: []Sheet) -> (mesh: gpu.Mesh_Handle, ok: bool) {
@@ -196,7 +196,7 @@ sheets_mesh :: proc(t: ^testing.T, f: ^Gpu_Fixture, sheets: []Sheet) -> (mesh: g
 		for j in 0 ..= n {
 			for i in 0 ..= n {
 				at := sheet.corner + sheet.across * f32(i) / f32(n) + sheet.up * f32(j) / f32(n)
-				append(&vertices, asset.Vertex{position = at, normal = mm.normal_pack(normal), color = 0xffffffff, tangent = mm.tangent_pack(linalg.normalize(sheet.across), 1), uv = {f32(i) / f32(n), f32(j) / f32(n)}})
+				append(&vertices, asset.Vertex{position = at, normal = mm.normal_pack(normal), color = sheet.color if sheet.color != 0 else 0xffffffff, tangent = mm.tangent_pack(linalg.normalize(sheet.across), 1), uv = {f32(i) / f32(n), f32(j) / f32(n)}})
 			}
 		}
 		for j in 0 ..< u32(n) {
@@ -208,7 +208,9 @@ sheets_mesh :: proc(t: ^testing.T, f: ^Gpu_Fixture, sheets: []Sheet) -> (mesh: g
 	}
 	levels := [1]asset.Level_Source{{0, u32(len(indices)), 0}}
 	g: asset.Mesh_Geometry
-	if !testing.expect(t, asset.mesh_build({vertices = vertices[:]}, indices[:], levels[:], &g, context.temp_allocator)) {return}
+	colored := false
+	for sheet in sheets {colored ||= sheet.color != 0}
+	if !testing.expect(t, asset.mesh_build({vertices = vertices[:], flags = colored ? {.Has_Colors} : {}}, indices[:], levels[:], &g, context.temp_allocator)) {return}
 	return gpu.mesh_add_geometry(&f.renderer, g, {0})
 }
 
@@ -219,8 +221,7 @@ swaying_desc :: proc(f: ^Gpu_Fixture, mesh: gpu.Mesh_Handle, wind, size: f32) ->
 	kind := FOLIAGE_TYPE_DEFAULT
 	kind.wind, kind.casts_shadow, kind.scale, kind.height = wind, true, {1, 1}, {1, 1}
 	_, high, _ := render.mesh_bounds(&f.renderer, mesh)
-	amount := sway_amount(kind)
-	return {mesh = mesh, tint = 1, flags = {.Casts_Shadow, .Ray_Visible}, vertex = {amount, 1, 0, 0}, reach = hook_reach(amount, high.y), sway = shadow_sway(kind, high.y, size)}
+	return {mesh = mesh, tint = 1, flags = {.Casts_Shadow, .Ray_Visible}, vertex = hook_vertex(kind), reach = hook_reach(kind, high.y), sway = shadow_sway(kind, high.y, size)}
 }
 
 // Where a point of the world lands on an image of a camera `width` by
@@ -506,6 +507,74 @@ canopy_compare :: proc(c: ^Canopy, camera: gpu.Camera, still, windy: []i32) -> (
 	return
 }
 
+// In the wind, the leaves of a kind that flutters (green 1) move on their own
+// while what it holds still (green 0) stands where it rests, and nothing of a
+// kind that does not flutter moves; neither sways (wind 0), so all that moves
+// is the flutter. What the hook moves an instance by is computed for it once,
+// the same for each of its clusters the view draws.
+@(test)
+a_kind_that_flutters_moves_its_leaves_on_their_own_and_one_that_does_not_stands :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f) {return}
+	defer gpu_fixture_destroy(f)
+	plant, made := sheets_mesh(t, f, {{corner = {-1.6, 0.2, 0}, across = {1, 0, 0}, up = {0, 2, 0}, cells = 24}, {corner = {0.6, 0.2, 0}, across = {1, 0, 0}, up = {0, 2, 0}, cells = 24, color = 0xffff00ff}})
+	if !made {return}
+	_, high, _ := render.mesh_bounds(&f.renderer, plant)
+	places := [2]f32{-2.2, 2.2}
+	for place, k in places {
+		kind := FOLIAGE_TYPE_DEFAULT
+		kind.wind, kind.flutter = 0, 4 if k == 0 else 0
+		desc := render.Batch_Desc{mesh = plant, tint = 1, vertex = hook_vertex(kind), reach = hook_reach(kind, high.y)}
+		_, problem := render.batch_set(&f.renderer, f.resident.world, 0, desc, {render.batch_instance({place, 0, 0}, 1, 1)})
+		if !testing.expect(t, problem == "", problem) {return}
+	}
+	if !wind_blow(t, f, 12) {return}
+	camera := gpu.Camera{position = {0, 1.2, 7}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 50, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	// The light settles first: what differs then is what moved.
+	warm, warmed := view_frames(t, f, camera, {0.3, -1, -0.4}, 48)
+	if !warmed {return}
+	delete(warm)
+	frames: [2][]u8
+	for &pixels, k in frames {
+		ok: bool
+		pixels, ok = view_frames(t, f, camera, {0.3, -1, -0.4}, 2, time = 0.3 * f32(k))
+		if !ok {return}
+	}
+	defer for p in frames {delete(p)}
+	// How many pixels differ between the two times over each sheet and 0.3 m about it.
+	changed: [2][2]int
+	for place, kind in places {
+		for sheet in 0 ..< 2 {
+			left := place + (sheet == 0 ? -1.9 : 0.3)
+			x0, y0, _, _ := projected(camera, {left, 2.5, 0}, WIDTH, HEIGHT)
+			x1, y1, _, _ := projected(camera, {left + 1.6, 0, 0}, WIDTH, HEIGHT)
+			for y in max(y0, 0) ..< min(y1, HEIGHT) {
+				for x in max(x0, 0) ..< min(x1, WIDTH) {
+					a, b := frames[0][(y * WIDTH + x) * 4:][:3], frames[1][(y * WIDTH + x) * 4:][:3]
+					if differs({i32(a[0]), i32(a[1]), i32(a[2])}, {i32(b[0]), i32(b[1]), i32(b[2])}) {changed[kind][sheet] += 1}
+				}
+			}
+		}
+	}
+	testing.expectf(t, changed[0][0] > 10, "the leaves of the kind that flutters move: %d pixels", changed[0][0])
+	testing.expectf(t, changed[0][1] == 0 && changed[1] == {}, "what holds still stands: %d pixels of its stem, %v of the kind that does not flutter", changed[0][1], changed[1])
+	// Of the clusters drawn, those of the instance that flutters all carry one value.
+	visible := int(f.renderer.stats.visible_clusters)
+	moved := make([][2][4]f32, visible)
+	defer delete(moved)
+	if !testing.expect(t, visible > 0 && rhi.buffer_read_slice(f.device, f.renderer.scene.visible_moved, 0, moved), "the clusters drawn are read back") {return}
+	fluttering: int
+	first: [4]f32
+	for m in moved {
+		if !(m[0].z > 0) {continue}
+		if fluttering == 0 {first = m[0]}
+		testing.expectf(t, m[0] == first, "a cluster of the instance moves by %v, another by %v", m[0], first)
+		fluttering += 1
+	}
+	testing.expectf(t, fluttering > 1, "%d clusters of the instance that flutters are drawn", fluttering)
+}
+
 // No swayed copy of a mesh is made: the geometry of the renderer is the same
 // with and without wind, and a still view in the wind traces no more probes
 // than one without, as the rays meet foliage at rest.
@@ -753,5 +822,57 @@ a_mesh_entity_that_sways_is_drawn_once_as_it_stands_and_casts_its_swaying_shadow
 	sway_step(f, &w, problems)
 	batches, _ = gpu.batch_count(&f.renderer)
 	testing.expect(t, batches == 0 && !core.has(&w.elsewhere, e), "without the component its own mesh draws it again")
+	testing.expect_value(t, problems.count, 0)
+}
+
+// A world that runs a copy of the edited one (Play) draws the swaying
+// entities it copied with their Drawn_Elsewhere, each once; what it destroys
+// takes its batch, what it spawns gets one, and freeing it leaves only the
+// batches of the edited world, one for each swaying entity there is.
+@(test)
+a_world_copied_for_play_draws_its_swaying_entities_once_and_leaves_nothing :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f) {return}
+	defer gpu_fixture_destroy(f)
+	defer sways_free(&f.resident)
+	w: Sway_World
+	if !test_world_init(t, &w) {return}
+	defer test_world_destroy(&w)
+	problems := new(core.Problems)
+	defer free(problems)
+	sway_add :: proc(w: ^Sway_World, x: f32) -> core.Entity {
+		e := core.create(&w.entities)
+		place := mm.TRANSFORM_IDENTITY
+		place.position.x = x
+		core.add(&w.meshes, e, render.Mesh_Renderer{shape = .Cube, shadows = true})
+		core.add(&w.worlds, e, core.World_Transform{place, place})
+		core.add(&w.sways, e, FOLIAGE_SWAY_DEFAULT)
+		test_world_settle(w)
+		return e
+	}
+	count :: proc(f: ^Gpu_Fixture) -> int {batches, _ := gpu.batch_count(&f.renderer);return batches}
+	tree, bush := sway_add(&w, 0), sway_add(&w, 3)
+	sway_step(f, &w, problems)
+	testing.expect_value(t, count(f), 2)
+	play := new(Foliage_Resident)
+	defer free(play)
+	play.app, play.world = &f.app, {index = 2}
+	step :: proc(f: ^Gpu_Fixture, w: ^Sway_World, r: ^Foliage_Resident, problems: ^core.Problems) {
+		foliage_sway_render(r, core.read(&w.sways), core.read(&w.meshes), core.read(&w.values), core.read(&w.worlds), core.read(&w.hidden), core.read(&w.parents), core.read(&w.layers), core.read(&w.elsewhere), core.read(&w.highlights), core.read(&w.outlines), core.commands(w, test_world_info(w)), r.world, &f.app, problems)
+		test_world_settle(w)
+	}
+	step(f, &w, play, problems)
+	testing.expectf(t, count(f) == 4 && len(play.sways.entities) == 2, "the copy draws both it copied with their Drawn_Elsewhere: %d batches", count(f))
+	core.destroy(&w.entities, bush)
+	test_world_settle(&w)
+	flower := sway_add(&w, 6)
+	step(f, &w, play, problems)
+	testing.expectf(t, len(play.sways.entities) == 2 && core.entity_map_get(&play.sways, bush) == nil && core.entity_map_get(&play.sways, flower) != nil, "the copy drops what it destroyed and draws what it spawned")
+	testing.expect(t, core.has(&w.elsewhere, flower) && core.has(&w.elsewhere, tree))
+	app := f.app
+	foliage_release(play, &app)
+	sway_step(f, &w, problems)
+	testing.expectf(t, count(f) == 2 && len(f.resident.sways.entities) == 2, "freed, the copy leaves the batches of the edited world alone, one each: %d", count(f))
 	testing.expect_value(t, problems.count, 0)
 }
