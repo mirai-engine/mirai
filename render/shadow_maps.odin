@@ -797,20 +797,21 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	wants: [SHADOW_SLOTS]Shadow_Want
 	sun := s.sun
 	levels := 0
+	if sun.enabled && r.settings.sun_shadows && !sun.shadowless && !orthographic {
+		levels = shadow_sun_levels(&wants, sun.direction, eye, r.origin, camera.far, s.bounds_min, s.bounds_max, s.has_bounds, b.held[:SHADOW_SUN_LEVELS])
+		plan.sun = u32(levels) << 16
+	}
+	// The coarsest level of the sun holds every point past it as well, however
+	// far: it draws what sways at rest.
 	sway := shadow_sway_texel(p.frame.footprint)
-	for _ in 0 ..< 2 {
-		if sun.enabled && r.settings.sun_shadows && !sun.shadowless && !orthographic {
-			levels = shadow_sun_levels(&wants, sun.direction, eye, r.origin, camera.far, s.bounds_min, s.bounds_max, s.has_bounds, b.held[:SHADOW_SUN_LEVELS])
-			plan.sun = u32(levels) << 16
-			// The coarsest level holds every point past it as well, however far:
-			// it draws what sways at rest.
-			if levels > 0 {sway = min(sway, (wants[levels - 1].m.span.z - wants[levels - 1].m.span.x) / f32(SHADOW_MAP_SIDE))}
+	if levels > 0 {sway = min(sway, (wants[levels - 1].m.span.z - wants[levels - 1].m.span.x) / f32(SHADOW_MAP_SIDE))}
+	// A view whose reach of what sways changed draws what sways again where it
+	// lies: a map that follows it now, or no longer, does not hold it as it would.
+	if b.sway != sway && !forget {
+		for index, k in s.batch.drawn {
+			if batch_sway(s, &s.batch.records[index]) == 0 {continue}
+			if low, high, casts := shadow_batch_box(s, k); casts {occluder_add(&b.stale, OCCLUDERS_MANY, low, high)}
 		}
-		// A view whose reach of what sways changed draws its maps again: the
-		// cache of a map that follows what sways now, or no longer, does not
-		// hold what it would.
-		if forget || b.sway == sway {break}
-		forget, b.held = true, {}
 	}
 	b.sway = sway
 	// The lights that light most of the view, the most first; a light keeps
