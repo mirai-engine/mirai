@@ -745,6 +745,9 @@ browser cards and asset fields):
   - When the signature changes, a cell that already has the image of the current key is not
     redrawn; otherwise, the store is read (up to `THUMBNAIL_LOADS` per frame, apart from drawing)
     and it is drawn only when the store has no preview of that key.
+  - A texture's preview is read on the processor from the largest of its levels that fits the
+    cell, decoded alone (`thumbnail_texture_image`); a material's is the sphere of the studio
+    wearing it. Both are stored previews like the others: the browser draws nothing else.
   - The view of a scene the editor took is no derived data: it stays in
     `.mirai/thumbs/<id>-<side>.thumb`, and those of an id that the registry notes in
     `Registry.removed` are deleted in the next frame (`thumbnails_forget`).
@@ -915,9 +918,10 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   machine has shows once, under This machine, and one whose root goes with its peer. A package
   shows its thumbnail, else the icon of its kind, its size and what is still to fetch, and its
   fetch and why it failed on its card; the thumbnail is the stored preview of what it shows
-  (`asset.build_shown`: its root when its build holds it, else its first mesh) as the store of
-  this machine keeps it, so a texture or a material, which the browser shows from the loaded
-  asset and keeps no preview of, shows its icon; a visible card of a peer's root that lacks it
+  (`asset.build_shown`: its root when its build holds it, else its first mesh). A card of This
+  machine whose store lacks it makes it as the project's content does: the packages the project
+  does not pin are listed by id under `LIBRARY_MOUNT`, a folder no path of the project reaches,
+  and only the visible cards make theirs, one a frame; a visible card of a peer's root that lacks it
   asks that peer by its key, a few at a time (`collab_thumbs_update`, `share.fetch_start`): a
   peer gives one it has and makes none, and nothing of the package is fetched for it; two of one
   name in a root take the folder their source was in. Carried onto a folder of the project, or

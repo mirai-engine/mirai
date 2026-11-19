@@ -2,6 +2,7 @@ package editor
 
 import "core:fmt"
 import "core:hash"
+import "core:math"
 import "core:mem"
 import "core:os"
 import "core:slice"
@@ -224,7 +225,8 @@ thumbnail_key :: proc(named:[]byte) -> u64 {
 preview_request :: proc(s:^Session,key:u64,subject:^Thumbnail_Subject,points:f32,stored:base.Asset_Id={}) -> ui.Quad {
     p:=s.thumbnails
     a:=s.app.assets
-    if key==0 || a==nil || a.renderer==nil {return {}}
+    // A texture is read on the processor; the others are drawn.
+    if key==0 || a==nil || a.renderer==nil && subject.provider!=asset.KIND_TEXTURE {return {}}
     level:=Thumbnail_Level.Large if points*max(s.app.density,1)>THUMBNAIL_SIZE else .Small
     key:=key
     if level==.Large {key=thumbnail_key(mem.ptr_to_bytes(&key))}
@@ -283,6 +285,17 @@ preview_request :: proc(s:^Session,key:u64,subject:^Thumbnail_Subject,points:f32
         return thumbnail_quad(cell,slot)
     }
     if p.drawn==frame+1 {return thumbnail_quad(cell,slot)}
+    if subject.provider==asset.KIND_TEXTURE {
+        // Read on the processor from its smallest levels, not drawn.
+        p.drawn=frame+1
+        cell.signature,cell.stored=signature,0
+        resize(&p.image,side*side*4)
+        texture:base.Asset_Id
+        mem.copy(&texture,&subject.data[0],size_of(texture))
+        cell.ready=thumbnail_texture_image(s,texture,side,p.image[:])
+        thumbnail_drawn(s,slot,side,wanted)
+        return thumbnail_quad(cell,slot)
+    }
     if provider,found:=thumbnail_provider(s,subject.provider);subject.provider!=0 && found && provider.image!=nil {
         // Drawn between frames: the cell shows what it had until then.
         if p.picture.key!=0 {return thumbnail_quad(cell,slot)}
@@ -570,7 +583,12 @@ thumbnail_key_of :: proc(s:^Session,id:base.Asset_Id,subject:Thumbnail_Subject,l
     programs:=thumbnail_programs(s)
     if file,found:=asset.registry_find(r,id);found && file.listed && !subject.captured {
         if pin,pinned:=library_pin_of(s,r,file);pinned {
-            object,objects,built:=library_build_objects(s,pin.entry.manifest,&pin.p,id)
+            object,objects,_,built:=library_build_objects(s,pin.entry.manifest,&pin.p,id)
+            if built {return thumbnail_package_key(level,programs,object,objects)}
+        }
+        // An output of this machine's library that no root pins (content_library.odin mounts them).
+        if manifest,p,known:=library_package_of_output(s,r,id);known {
+            object,objects,_,built:=library_build_objects(s,manifest,&p,id)
             if built {return thumbnail_package_key(level,programs,object,objects)}
         }
     }
@@ -767,6 +785,65 @@ preview_geometry :: proc(s:^Session,shape:host.Shape,mesh:base.Asset_Id,points:f
     subject:=Thumbnail_Subject{mesh={mesh=mesh,shape=mesh=={}?shape:.None},tint={color=mesh=={}?THUMBNAIL_SHAPE_TINT:{1,1,1,1}}}
     named:=[3]u64{mesh[0],mesh[1],u64(subject.mesh.shape)}
     return preview_request(s,thumbnail_key(mem.ptr_to_bytes(&named)),&subject,points,mesh)
+}
+
+// The stored preview of a material: the sphere of the studio wearing it.
+@(private)
+preview_material :: proc(s:^Session,material:base.Asset_Id,points:f32=0) -> ui.Quad {
+    subject:=Thumbnail_Subject{mesh={shape=.Sphere},tint={color={1,1,1,1}}}
+    subject.mesh.materials[0]=material
+    named:=[3]u64{material[0],material[1],0x6d6174}
+    return preview_request(s,thumbnail_key(mem.ptr_to_bytes(&named)),&subject,points,material)
+}
+
+// The stored preview of a texture: its smallest levels that cover the cell,
+// read on the processor (thumbnail_texture_image), never the whole texture.
+@(private)
+preview_texture :: proc(s:^Session,texture:base.Asset_Id,points:f32=0) -> ui.Quad {
+    subject:=Thumbnail_Subject{provider=asset.KIND_TEXTURE}
+    id:=texture
+    copy(subject.data[:],mem.ptr_to_bytes(&id))
+    named:=[3]u64{texture[0],texture[1],0x746578}
+    return preview_request(s,thumbnail_key(mem.ptr_to_bytes(&named)),&subject,points,texture)
+}
+
+// The image of a texture at side*side, premultiplied display colors, from the
+// largest of its levels no larger than side (or its smallest), decoded alone.
+@(private)
+thumbnail_texture_image :: proc(s:^Session,texture:base.Asset_Id,side:int,out:[]u8) -> bool {
+    a:=s.app.assets
+    file,found:=asset.registry_find(&a.registry,texture)
+    if !found {return false}
+    bytes,read_error:=asset.registry_read(&a.registry,file.path,context.temp_allocator)
+    if read_error!=.None {return false}
+    opened:asset.Asset
+    if asset.asset_open(&opened,bytes)!=.None {return false}
+    defer asset.asset_close(&opened)
+    view,view_error:=asset.texture_open(&opened,&a.types)
+    if view_error!=.None || len(view.mips)==0 {return false}
+    level:=len(view.mips)-1
+    for mip,at in view.mips {
+        if int(max(mip.width,mip.height))<=side {level=at;break}
+    }
+    if asset.texture_decode(&opened,&a.types,&view,level)!=.None {return false}
+    mip:=view.mips[level]
+    width,height:=int(mip.width),int(mip.height)
+    texels:=make([][4]f32,width*height,context.temp_allocator)
+    if !asset.texture_level_linear(view.info.format,view.info.flags,asset.texture_layer(view,level,0),width,height,texels) {return false}
+    srgb:=.Srgb in view.info.flags
+    for y in 0..<side {
+        for x in 0..<side {
+            t:=texels[min(y*height/side,height-1)*width+min(x*width/side,width-1)]
+            alpha:=clamp(t.w,0,1)
+            for c in 0..<3 {
+                v:=clamp(t[c],0,1)
+                if srgb {v=v<=0.0031308?v*12.92:1.055*math.pow(v,1/2.4)-0.055}
+                out[(y*side+x)*4+c]=u8(clamp(v*alpha,0,1)*255+0.5)
+            }
+            out[(y*side+x)*4+3]=u8(alpha*255+0.5)
+        }
+    }
+    return true
 }
 
 // The preview of an entity: its own geometry as it shows it. Nothing for one without a mesh.

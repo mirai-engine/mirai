@@ -6,8 +6,11 @@ import "base:runtime"
 import "core:slice"
 import "core:strings"
 import "core:sync"
+import "core:os"
 import "mirai:asset"
 import "mirai:cook/share"
+import "mirai:host"
+import "mirai:project"
 import "mirai:std/base"
 import "mirai:store"
 import "mirai:ui"
@@ -39,6 +42,7 @@ Content_Package :: struct {
     here:bool,      // this machine has its build: nothing has to be fetched
     built:bool,     // a build of it this engine reads is here or at its peer
     shown:store.Hash,     // the object of its root in that build, which its card shows; zero: none
+    shown_id:base.Asset_Id, // this machine's: the asset of that object, which the library mount lists
     objects:[]store.Hash, // of every asset of that build, sorted: with shown, the key of its thumbnail
 }
 
@@ -65,6 +69,8 @@ Content_Libraries :: struct {
     roots:[dynamic]Content_Library_Root,
     packages:[dynamic]Content_Package,
     key:[4]u64,
+    mounted:bool,     // LIBRARY_MOUNT lists the packages of mounted_key
+    mounted_key:u64,
 }
 
 // The roots and their packages from this machine's library, the packages the
@@ -91,7 +97,7 @@ content_library_listing :: proc(local:[]Library_Package,peers:[]Content_Peer_Lis
             entry.here&&=a.built
         }
         entry.built=entry.here
-        entry.shown,entry.objects=p.root,slice.clone(p.objects,allocator)
+        entry.shown,entry.shown_id,entry.objects=p.root,p.shown,slice.clone(p.objects,allocator)
         append(&origins,Origin{len(packages),p.origin})
         append(&packages,entry)
     }
@@ -177,6 +183,7 @@ content_libraries_update :: proc(s:^Session,c:^Content) {
     }
     roots,packages:=content_library_listing(local,listings[:],s.store.root!="",allocator)
     l.roots,l.packages=roots,packages
+    library_mount_update(s,local)
     c.revision+=1
 }
 
@@ -361,6 +368,16 @@ content_package_add :: proc(s:^Session,library:i32,id:base.Asset_Id,folder:strin
 content_package_thumbnail :: proc(s:^Session,p:^Content_Package,points:f32) -> ui.Quad {
     c:=s.content
     if p.shown=={} || s.store.root=="" {return {}}
+    // One of this machine: the preview its asset has, which the browser draws
+    // and keeps as it does for the project's (the library mount lists it).
+    if content_package_peer(s,p)<0 {
+        if a:=s.app.assets;a!=nil {
+            if file,found:=asset.registry_find(&a.registry,p.shown_id);found {
+                _,_,quad:=content_preview(s,file,points)
+                return quad
+            }
+        }
+    }
     level:=Thumbnail_Level.Large if points*max(s.app.density,1)>THUMBNAIL_SIZE else .Small
     key:=thumbnail_package_key(level,thumbnail_programs(s),p.shown,p.objects)
     held:^Content_Thumb
@@ -395,4 +412,41 @@ content_package_thumbnail :: proc(s:^Session,p:^Content_Package,points:f32) -> u
     }
     if peer:=content_package_peer(s,p);peer>=0 && len(c.thumb_wants)<CONTENT_THUMBS {append(&c.thumb_wants,Content_Thumb_Want{key,peer})}
     return {}
+}
+
+LIBRARY_MOUNT :: ".library" // the outputs of this machine's packages the project does not pin, listed by id alone
+
+// Lists under LIBRARY_MOUNT the outputs of the packages of this machine's
+// library the project does not pin, so a card of This machine draws its
+// preview as the project's content does, without the package entering the
+// project: a path under a folder that starts with a dot is none the browser,
+// the lists or a path of the project reaches. Only when they change.
+@(private)
+library_mount_update :: proc(s:^Session,local:[]Library_Package) {
+    a:=s.app.assets
+    if a==nil || s.store.root=="" || s.project_root=="" {return}
+    list:asset.Packages
+    list.packages=make([dynamic]asset.Project_Package,context.temp_allocator)
+    key:u64
+    for &p in local {
+        if p.pinned {continue}
+        buffer:[base.ASSET_ID_TEXT]u8
+        append(&list.packages,asset.Project_Package{id=p.id,manifest=p.manifest,folder=strings.clone(base.asset_id_format(p.id,buffer[:]),context.temp_allocator)})
+        m:=p.manifest
+        key=base.hash_combine(key,base.hash64(m[:]))
+    }
+    l:=&s.content.libraries
+    if l.mounted && key==l.mounted_key {return}
+    r:=&a.registry
+    mounted:=false
+    for mount in r.mounts {mounted||=mount.prefix==LIBRARY_MOUNT}
+    if !mounted {
+        folder:=project.path(project.folder_path(s.project_root,.Generated,context.temp_allocator),"library",allocator=context.temp_allocator)
+        if os.make_directory_all(folder)!=nil && !os.is_dir(folder) {return}
+        if !asset.registry_mount(r,folder,LIBRARY_MOUNT) {return}
+    }
+    resolved,error:=asset.packages_resolve(&s.store,"",&list,context.temp_allocator)
+    if error!=.None || !asset.registry_listed_set(r,LIBRARY_MOUNT,resolved.listed[:]) {return}
+    l.mounted,l.mounted_key=true,key
+    host.assets_scan(a)
 }
