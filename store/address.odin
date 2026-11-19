@@ -1,5 +1,6 @@
 package store
 
+import "core:mem"
 import "core:os"
 import "mirai:std/blake3"
 
@@ -31,7 +32,7 @@ address_of_bytes :: proc "contextless" (data:[]u8) -> Hash {
 // The address of the file at path, read once piece by piece; its piece table
 // is held with allocator.
 address_of_file :: proc(path:string,allocator:=context.allocator) -> (hash:Hash,size:i64,error:Error) {
-    file,open_error:=os.open(path)
+    file,open_error:=file_open(path)
     if open_error!=nil {return {},0,os_error(open_error)}
     defer os.close(file)
     file_size,size_error:=os.file_size(file)
@@ -143,4 +144,63 @@ read_exact :: proc(file:^os.File,buffer:[]u8,offset:i64) -> Error {
         }
     }
     return .None
+}
+
+// Corrupt unless file holds, after its size header, the piece table of a blob
+// of size whose address is hash; read in runs, never whole.
+@(private)
+table_check :: proc(file:^os.File,size:i64,hash:Hash) -> Error {
+    count:=piece_count(size)
+    table_size,size_error:=os.file_size(file)
+    if size_error!=nil {return os_error(size_error)}
+    if count<2 || table_size!=TABLE_HEADER+i64(count)*size_of(Hash) {return .Corrupt}
+    header:[TABLE_HEADER]u8
+    read_exact(file,header[:],0) or_return
+    if header!=table_header(size) {return .Corrupt}
+    root:blake3.Root
+    run:[TABLE_RUN]Hash=---
+    for at:=0;at<count;at+=TABLE_RUN {
+        entries:=run[:min(TABLE_RUN,count-at)]
+        read_exact(file,mem.slice_to_bytes(entries),TABLE_HEADER+i64(at)*size_of(Hash)) or_return
+        for entry in entries {blake3.root_push(&root,blake3.Hash(entry))}
+    }
+    address,ok:=blake3.root_final(&root,u64(size))
+    return .None if ok && Hash(address)==hash else .Corrupt
+}
+
+// Hashes the size bytes of data piece by piece and appends each piece value
+// to table, a run at a time; Corrupt when they do not make hash.
+@(private)
+table_hash :: proc(data:^os.File,size:i64,table:^os.File,hash:Hash) -> Error {
+    count:=piece_count(size)
+    if count<2 {return .Invalid_Argument}
+    root:blake3.Root
+    run:[TABLE_RUN]Hash=---
+    buffer:[PIECE_BYTES]u8=---
+    for at:=0;at<count;at+=TABLE_RUN {
+        entries:=run[:min(TABLE_RUN,count-at)]
+        for &entry,k in entries {
+            index:=at+k
+            piece:=buffer[:piece_size(size,index)]
+            read_exact(data,piece,i64(index)*PIECE_BYTES) or_return
+            entry=piece_value(piece,index,size)
+            blake3.root_push(&root,blake3.Hash(entry))
+        }
+        file_append(table,{mem.slice_to_bytes(entries)}) or_return
+    }
+    after:[1]u8
+    if n,_:=os.read_at(data,after[:],size);n>0 {return .Corrupt}
+    address,ok:=blake3.root_final(&root,u64(size))
+    return .None if ok && Hash(address)==hash else .Corrupt
+}
+
+@(private)
+TABLE_RUN :: 2048 // entries of a table read or written at once
+
+// The address of parts given one after another, as if they were one run of bytes.
+@(private)
+address_of_parts :: proc "contextless" (parts:[]([]u8)) -> Hash {
+    hasher:blake3.Hasher
+    for part in parts {blake3.update(&hasher,part)}
+    return Hash(blake3.final(&hasher))
 }

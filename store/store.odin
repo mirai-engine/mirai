@@ -26,6 +26,7 @@ Error :: enum u8 {
     Invalid_Argument,
     Out_Of_Memory,
     Io,
+    No_Space,           // the volume is full, or the user's quota is spent: a sweep or freeing space there lets it go on
     Unsupported_Layout, // a root written by another layout of the store
 }
 
@@ -44,7 +45,7 @@ open :: proc(root:string,allocator:=context.allocator) -> (s:Store,error:Error) 
     }
     buffer:[PATH_BYTES]u8
     folder_make(trimmed) or_return
-    for folder in ([6]string{"blobs","tables","partial","refs","leases","tmp"}) {
+    for folder in ([7]string{"blobs","tables","partial","refs","leases","tmp",SWEEP_FOLDER}) {
         folder_make(join(&buffer,trimmed,folder) or_return) or_return
     }
     layout_check(trimmed) or_return
@@ -79,7 +80,7 @@ default_root :: proc(allocator:=context.allocator) -> string {
 layout_check :: proc(root:string) -> Error {
     buffer:[PATH_BYTES]u8
     path:=join(&buffer,root,"layout") or_return
-    file,open_error:=os.open(path)
+    file,open_error:=file_open(path)
     if open_error==nil {
         defer os.close(file)
         read:[len(LAYOUT)+1]u8
@@ -127,7 +128,7 @@ os_error :: proc(error:os.Error) -> Error {
     case os.General_Error:
         if e==.Not_Exist {return .Missing}
     }
-    return .Io
+    return .No_Space if no_space(error) else .Io
 }
 
 // Writes chunks to a file of the root's tmp folder and renames it to path,
@@ -136,29 +137,27 @@ os_error :: proc(error:os.Error) -> Error {
 file_write :: proc(root,path:string,chunks:[][]u8,modified:Maybe(time.Time)=nil) -> Error {
     temp_buffer:[PATH_BYTES]u8
     temp,file:=temp_create(root,&temp_buffer) or_return
-    write_error:Error
-    for chunk in chunks {
-        if write_error==.None {
-            n,error:=os.write(file,chunk)
-            write_error=os_error(error)
-            if error==nil && n!=len(chunk) {write_error=.Io}
-        }
-    }
-    sync_error:=os.sync(file)
+    error:=file_fill(file,chunks)
     os.close(file)
-    if write_error!=.None || sync_error!=nil {
-        os.remove(temp)
-        return write_error if write_error!=.None else .Io
-    }
-    if at,ok:=modified.?;ok {
-        if time_error:=os.change_times(temp,at,at);time_error!=nil {
-            os.remove(temp)
-            return os_error(time_error)
-        }
-    }
-    if os.rename(temp,path)!=nil {
-        os.remove(temp)
-        return .Io
+    if at,ok:=modified.?;ok && error==.None {error=os_error(os.change_times(temp,at,at))}
+    if error==.None {error=os_error(rename_replace(temp,path))}
+    if error!=.None {file_remove(temp)}
+    return error
+}
+
+// Writes chunks one after another and syncs them.
+@(private)
+file_fill :: proc(file:^os.File,chunks:[][]u8) -> Error {
+    file_append(file,chunks) or_return
+    return os_error(os.sync(file))
+}
+
+@(private)
+file_append :: proc(file:^os.File,chunks:[][]u8) -> Error {
+    for chunk in chunks {
+        n,error:=os.write(file,chunk)
+        if error!=nil {return os_error(error)}
+        if n!=len(chunk) {return .Io}
     }
     return .None
 }
@@ -168,7 +167,7 @@ file_write :: proc(root,path:string,chunks:[][]u8,modified:Maybe(time.Time)=nil)
 temp_create :: proc(root:string,buffer:^[PATH_BYTES]u8) -> (path:string,file:^os.File,error:Error) {
     for _ in 0..<TEMP_ATTEMPTS {
         path=temp_name(root,"write-",buffer) or_return
-        created,create_error:=os.open(path,{.Read,.Write,.Create,.Excl})
+        created,create_error:=file_open(path,{.Read,.Write,.Create,.Excl})
         if create_error==nil {return path,created,.None}
         if create_error!=.Exist {return "",nil,os_error(create_error)}
     }
