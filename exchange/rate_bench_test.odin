@@ -1,12 +1,14 @@
 package exchange
 
 import "core:fmt"
+import "core:os"
 import "core:sync"
 import "core:sys/posix"
 import "core:testing"
 import "core:thread"
 import "core:time"
 import "mirai:std/base"
+import "mirai:std/jobs"
 import "mirai:store"
 import wire "mirai:net"
 
@@ -28,7 +30,7 @@ objects_over_udp_loopback :: proc(t:^testing.T) {
             s=opened
         }
         defer for &s in stores {store.close(&s)}
-        large:=[1]store.Hash{bench_large(&stores[0],2<<30)}
+        large:=[1]store.Hash{bench_large(&stores[0],2<<30 if #config(EXCHANGE_BENCHMARK_LARGE,true) else 1<<20)}
         small:=make([]store.Hash,5000)
         defer delete(small)
         small_bytes:=0
@@ -43,7 +45,7 @@ objects_over_udp_loopback :: proc(t:^testing.T) {
             _=k
         }
         store.commit(&stores[0])
-        bench_case(t,stores[:],large[:],2<<30,"large")
+        if #config(EXCHANGE_BENCHMARK_LARGE,true) {bench_case(t,stores[:],large[:],2<<30,"large")}
         bench_case(t,stores[:],small,small_bytes,"small")
     }
 }
@@ -74,6 +76,7 @@ Bench_Side :: struct {
     stop:^bool,
     done:bool,
     cpu:f64,
+    jobs_cpu:f64, // of the job threads of its pump
 }
 
 @(private="file")
@@ -116,6 +119,7 @@ bench_case :: proc(t:^testing.T,stores:[]store.Store,wants:[]store.Hash,bytes:in
     stop:=false
     sides:=[2]Bench_Side{{x=&exchanges[0],host=hosts[0],stop=&stop},{x=&exchanges[1],host=hosts[1],wants=wants,stop=&stop}}
     worker_before:=[2]f64{bench_thread_cpu(hosts[0].worker),bench_thread_cpu(hosts[1].worker)}
+    fmt.println("BENCH_START");os.flush(os.stdout)
     started:=time.tick_now()
     threads:[2]^thread.Thread
     for &side,i in sides {threads[i]=thread.create_and_start_with_data(&side,proc(data:rawptr) {bench_pump((^Bench_Side)(data))})}
@@ -126,8 +130,12 @@ bench_case :: proc(t:^testing.T,stores:[]store.Store,wants:[]store.Hash,bytes:in
     for th in threads {thread.join(th);thread.destroy(th)}
     wire.worker_stop(hosts[0]);wire.worker_stop(hosts[1])
     gib:=f64(bytes)/f64(1<<30)
-    fmt.printfln("EXCHANGE_RATE,case=%s,objects=%d,MiB=%d,seconds=%.2f,MiB_per_s=%.1f,objects_per_s=%.0f,sender_cpu_s_per_GiB=%.2f,receiver_cpu_s_per_GiB=%.2f,sender_pump_s=%.2f,sender_worker_s=%.2f,receiver_pump_s=%.2f,receiver_worker_s=%.2f",
-        name,len(wants),bytes>>20,seconds,f64(bytes)/f64(1<<20)/seconds,f64(len(wants))/seconds,(sides[0].cpu+worker[0])/gib,(sides[1].cpu+worker[1])/gib,sides[0].cpu,worker[0],sides[1].cpu,worker[1])
+    // The exchange's own CPU: its pump and its jobs; the worker is net's.
+    fmt.printfln("EXCHANGE_RATE,case=%s,objects=%d,MiB=%d,seconds=%.2f,MiB_per_s=%.1f,objects_per_s=%.0f,sender_cpu_s_per_GiB=%.2f,receiver_cpu_s_per_GiB=%.2f,sender_exchange_s_per_GiB=%.2f,receiver_exchange_s_per_GiB=%.2f,sender_net_worker_s_per_GiB=%.2f,receiver_net_worker_s_per_GiB=%.2f,sender_pump_s=%.2f,sender_jobs_s=%.2f,receiver_pump_s=%.2f,receiver_jobs_s=%.2f",
+        name,len(wants),bytes>>20,seconds,f64(bytes)/f64(1<<20)/seconds,f64(len(wants))/seconds,
+        (sides[0].cpu+sides[0].jobs_cpu+worker[0])/gib,(sides[1].cpu+sides[1].jobs_cpu+worker[1])/gib,
+        (sides[0].cpu+sides[0].jobs_cpu)/gib,(sides[1].cpu+sides[1].jobs_cpu)/gib,worker[0]/gib,worker[1]/gib,
+        sides[0].cpu,sides[0].jobs_cpu,sides[1].cpu,sides[1].jobs_cpu)
     testing.expectf(t,sides[1].done,"%s: everything arrives",name)
 }
 
@@ -135,7 +143,19 @@ bench_case :: proc(t:^testing.T,stores:[]store.Store,wants:[]store.Hash,bytes:in
 // wants its objects and stops once all are complete.
 @(private="file")
 bench_pump :: proc(s:^Bench_Side) {
-    defer s.cpu=bench_own_cpu()
+    // The pump owns the job system its exchange hands reading, hashing and storing to.
+    js:jobs.Job_System
+    jobs.system_init(&js,{threads=#config(BENCH_THREADS,2)})
+    s.x.desc.worker={system=&js,worker=jobs.OWNER}
+    defer {
+        sync.mutex_lock(&s.x.lock)
+        work_wait_all(s.x)
+        s.x.desc.worker={}
+        sync.mutex_unlock(&s.x.lock)
+        for &w in js.workers[1:] {s.jobs_cpu+=bench_thread_cpu(w.thread)}
+        jobs.system_destroy(&js)
+        s.cpu=bench_own_cpu()
+    }
     for w in s.wants {want(s.x,w)}
     start:=time.tick_now()
     next:=0
