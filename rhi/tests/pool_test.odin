@@ -80,6 +80,57 @@ rhi_device_reports_what_is_alive :: proc(t:^testing.T) {
     testing.expect_value(t,rhi.device_validation_errors(d),0)
 }
 
+// The memory report lists each resource by the name it was made with, grouped
+// by name, with what it holds; their sum is what the device took for them, and
+// what the driver says the process holds is no less.
+@(test)
+rhi_memory_report_names_what_holds_the_memory :: proc(t:^testing.T) {
+    d:=small_device(t,{})
+    if d==nil {return}
+    defer rhi.device_destroy(d)
+    groups:=make([]rhi.Memory_Group,512,context.temp_allocator)
+    before,ok:=rhi.device_memory_report(d,groups)
+    if !testing.expect(t,ok) {return}
+    BUFFER_BYTES::u64(1)<<20
+    texture_desc:=rhi.Texture_Desc{width=256,height=128,mip_levels=3,format=.RGBA16_Float,usage={.Sampled},name="report texture"}
+    buffer:=rhi.buffer_create(d,{size=BUFFER_BYTES,usage={.Storage},name="report buffer"})
+    textures:=[2]rhi.Texture{rhi.texture_create(d,texture_desc),rhi.texture_create(d,texture_desc)}
+    readback:=rhi.buffer_create(d,{size=64<<10,memory=.Readback,name="report readback"})
+    unnamed:=rhi.buffer_create(d,{size=BUFFER_BYTES,usage={.Storage}})
+    testing.expect(t,buffer!=0 && textures[0]!=0 && textures[1]!=0 && readback!=0 && unnamed!=0,rhi.device_error(d))
+    after:rhi.Memory_Report
+    after,ok=rhi.device_memory_report(d,groups)
+    if !testing.expect(t,ok) {return}
+    find::proc(r:rhi.Memory_Report,name:string,kind:rhi.Resource_Kind) -> (rhi.Memory_Group,bool) {
+        for g in r.groups {if g.name==name && g.kind==kind {return g,true}}
+        return {},false
+    }
+    made:u64
+    b,found_buffer:=find(after,"report buffer",.Buffer)
+    testing.expectf(t,found_buffer && b.count==1 && b.bytes>=BUFFER_BYTES && b.bytes<2*BUFFER_BYTES && b.host_bytes==0,"the buffer holds its bytes in device memory: %v",b)
+    made+=b.bytes
+    tex,found_textures:=find(after,"report texture",.Texture)
+    testing.expectf(t,found_textures && tex.count==2 && tex.format==.RGBA16_Float && tex.bytes>=2*rhi.texture_desc_bytes(texture_desc),"the two textures of one name are one group with their format: %v",tex)
+    made+=tex.bytes
+    r,found_readback:=find(after,"report readback",.Buffer)
+    testing.expectf(t,found_readback && r.count==1 && r.bytes+r.host_bytes>=64<<10,"the readback holds its bytes: %v",r)
+    made+=r.bytes
+    u,found_unnamed:=find(after,"unnamed buffer",.Buffer)
+    testing.expectf(t,found_unnamed && u.bytes>=BUFFER_BYTES && after.unnamed_bytes-before.unnamed_bytes==u.bytes,"a buffer made without a name shows by its kind: %v",u)
+    made+=u.bytes
+    testing.expectf(t,after.resource_bytes-before.resource_bytes==made,"the resources made add what their groups hold: %d of %d",after.resource_bytes-before.resource_bytes,made)
+    total:u64
+    for g in after.groups {total+=g.bytes}
+    testing.expectf(t,total+after.others.bytes==after.resource_bytes && after.held_bytes==after.resource_bytes+after.free_bytes+after.deleting_bytes,"the groups sum to the resources: %d and %d",total+after.others.bytes,after.resource_bytes)
+    testing.expectf(t,after.driver_bytes==0 || after.driver_bytes>=after.held_bytes,"the driver holds no less than the device took: %d of %d",after.driver_bytes,after.held_bytes)
+    rhi.buffer_destroy(d,buffer);rhi.buffer_destroy(d,readback);rhi.buffer_destroy(d,unnamed)
+    for texture in textures {rhi.texture_destroy(d,texture)}
+    gone,_:=rhi.device_memory_report(d,groups)
+    _,still:=find(gone,"report buffer",.Buffer)
+    testing.expectf(t,!still && gone.resource_bytes==before.resource_bytes,"destroyed, they hold nothing: %d of %d",gone.resource_bytes,before.resource_bytes)
+    testing.expect_value(t,rhi.device_validation_errors(d),0)
+}
+
 // More small resources than the memory allocations a Vulkan driver has to
 // give at once (4096): they share the memory of a few, each keeps what was
 // written to it, and the device makes them all.

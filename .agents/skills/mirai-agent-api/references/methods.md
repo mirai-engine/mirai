@@ -316,6 +316,12 @@ the GPU passes and the conditions of the measurement. The editor keeps the last 
   frame of the scene and the call fails. Its frames are frames of the user: held keys and a
   camera flown with the pointer go on through them. A mesh made at run time is named by what its
   maker says it is and by the entity that shows it.
+- `profile.gpu_memory` answers where the memory of the GPU goes, without running a frame: every
+  buffer, texture and acceleration structure of the device grouped by the name it was made with
+  (one made without a name, by its kind), the largest first. `held_bytes` (what the resources
+  hold, the room of the blocks none holds and what waits for deletion) compares with
+  `driver_bytes`, what the driver says the editor holds; `outside_bytes` is the driver's own part
+  past it (pipelines, descriptors, the images of the window).
 
 Reading a load:
 
