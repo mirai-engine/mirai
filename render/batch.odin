@@ -238,7 +238,8 @@ batch_changed_near :: proc(r: ^Renderer, record: ^Batch_Record) {
 	if batch_classes(record.desc.flags, record.small) == 0 || record.count == 0 || record.world != r.world_key {return}
 	offset := batch_offset(r, record)
 	scene_changed_seen(&r.scene, record.bounds_min + offset, record.bounds_max + offset, min(LIGHT_CHANGE_REACH, LIGHT_CHANGE_SIZES * record.reach))
-	if .Casts_Shadow in record.desc.flags {occluder_changed(&r.scene, OCCLUDERS_MANY, record.bounds_min + offset - record.desc.reach, record.bounds_max + offset + record.desc.reach)}
+	sway := record.desc.sway * record.scale
+	if .Casts_Shadow in record.desc.flags {occluder_changed(&r.scene, OCCLUDERS_MANY, record.bounds_min + offset - sway, record.bounds_max + offset + sway)}
 }
 
 // Where the anchor of a batch is from the origin: what takes its instances,
@@ -418,7 +419,8 @@ batches_wind :: proc(r: ^Renderer, wind: u32, share: f32) -> bool {
 	if !(share >= 0) || !(share <= 1) || wind >= BATCH_INDICES_MAX {return false}
 	if int(wind) >= len(b.winds) && resize(&b.winds, int(wind) + 1) != nil {return false}
 	if b.winds[wind] == share {return true}
-	b.winds_changed ||= (b.winds[wind] > 0) != (share > 0)
+	// The native TLAS holds the instances of a batch that sways now as candidates (batch_tlas_flags).
+	if (b.winds[wind] > 0) != (share > 0) {b.winds_changed, r.scene.tlas_dirty = true, true}
 	b.winds[wind] = share
 	for index, k in b.drawn {
 		record := &b.records[index]

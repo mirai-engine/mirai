@@ -1039,7 +1039,8 @@ shadow_slot_rank :: proc "contextless" (slot: int) -> int {return SHADOW_SUN_LEV
 shadow_batch_box :: proc(s: ^Scene_State, k: int) -> (low, high: Vec3, casts: bool) {
 	record := &s.batch.records[s.batch.drawn[k]]
 	box := s.batch.boxes[k]
-	reach := record.desc.reach
+	// The maps leave the vertex hook out but where a batch sways.
+	reach := record.desc.sway * record.scale
 	casts = .Casts_Shadow in record.desc.flags && transmute(u32)s.batch.rows[k].world[2].w != 0
 	return box.min - reach, box.max + reach, casts
 }

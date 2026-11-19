@@ -272,11 +272,12 @@ bench_shadow_wants :: proc(r: ^Renderer, b: ^Shadow_Raster, eye, low, high: Vec3
 
 // What the plan of the maps of a view costs the CPU of a frame while the wind
 // sways a dense foliage scene: 8000 batches of 114 instances (912,000) over a
-// kilometre, of 40 deformables that sway 0.3 m, two kinds of five with a cull
-// distance of 150 m, 18 levels of the sun and 32 lights of six faces near the
-// eye; the frames right after the wind starts, then still and flying frames
-// while everything sways. What it moves (shadow_movers_update) and what the
-// plan finds of the casters (shadow_plan_casters).
+// kilometre, of 40 meshes that sway 0.3 m in the hook, two kinds of five with
+// a cull distance of 150 m, 18 levels of the sun and 32 lights of six faces
+// near the eye; the frames right after the wind starts, then still and
+// flying frames while everything sways, and a jump of the camera across the
+// forest. What it moves (shadow_movers_update) and what the plan finds of the
+// casters (shadow_plan_casters); no mesh is made.
 @(test)
 the_plan_of_the_shadow_maps_costs_little_while_everything_sways :: proc(t: ^testing.T) {
 	when !BATCH_BENCHMARK {return}
@@ -291,7 +292,6 @@ the_plan_of_the_shadow_maps_costs_little_while_everything_sways :: proc(t: ^test
 		v.color = {1, 1, 1}
 	}
 	indices := [36]u32{0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5}
-	source, _ := mesh_add(r, vertices[:], indices[:])
 	MESHES :: 40
 	KINDS :: 5
 	SIDE :: 40
@@ -299,9 +299,9 @@ the_plan_of_the_shadow_maps_costs_little_while_everything_sways :: proc(t: ^test
 	INSTANCES :: 114
 	meshes: [MESHES]Mesh_Handle
 	for &mesh in meshes {
-		made: bool
-		mesh, made = deformable_create(r, source)
-		testing.expect(t, made)
+		added: bool
+		mesh, added = mesh_add(r, vertices[:], indices[:])
+		testing.expect(t, added)
 	}
 	instances := make([]Batch_Instance, INSTANCES)
 	defer delete(instances)
@@ -318,7 +318,7 @@ the_plan_of_the_shadow_maps_costs_little_while_everything_sways :: proc(t: ^test
 	b := &r.main.targets.shadow_raster
 	defer shadow_reach_release(r, b)
 	frame :: proc(r: ^Renderer, b: ^Shadow_Raster, meshes: []Mesh_Handle, eye, low, high: Vec3, sways: bool) -> time.Duration {
-		if sways {for mesh in meshes {deformable_update(r, mesh, {-0.8, -0.8, -0.8}, {0.8, 0.8, 0.8})}}
+		batches_wind(r, 0, 0.5 if sways else 0)
 		wants: [SHADOW_SLOTS]Shadow_Want
 		plans: [SHADOW_SLOTS]Shadow_Slot_Plan
 		reach: [SHADOW_SLOTS]Shadow_Reach
@@ -330,7 +330,6 @@ the_plan_of_the_shadow_maps_costs_little_while_everything_sways :: proc(t: ^test
 		mid := time.tick_since(start)
 		shadow_plan_casters(r, b, eye, false, wants[:], plans[:], &plan, reach[:], &stale, &moved)
 		took := time.tick_since(start)
-		for mesh in meshes {r.scene.meshes[mesh].skin.dirty = false}
 		r.frame += 1
 		b.frame += 1
 		return took
@@ -361,5 +360,15 @@ the_plan_of_the_shadow_maps_costs_little_while_everything_sways :: proc(t: ^test
 		flying += took
 		most = max(most, took)
 	}
-	fmt.printfln("shadow plan, %d batches x %d swaying: before the wind %.3f ms still, %.3f ms flying (%.3f at most); the first frames of the wind %.3f ms at most; swaying, still %.3f ms, flying %.3f ms a frame and %.3f at most (where the eye crosses a cell of the cull)", BATCHES, INSTANCES, time.duration_milliseconds(still_before), time.duration_milliseconds(flying_before) / ROUNDS, time.duration_milliseconds(most_before), time.duration_milliseconds(first), time.duration_milliseconds(still) / ROUNDS, time.duration_milliseconds(flying) / ROUNDS, time.duration_milliseconds(most))
+	// The camera jumps across the forest while it sways.
+	meshes_before := len(r.scene.meshes)
+	jump: time.Duration
+	for k in 0 ..< 4 {
+		eye = {f32(k % 2) * 400 - 200, 12, f32(k / 2) * 400 - 200}
+		jump = max(jump, frame(r, b, meshes[:], eye, low, high, true))
+		for _ in 0 ..< 3 {frame(r, b, meshes[:], eye, low, high, true)}
+	}
+	testing.expectf(t, len(r.scene.meshes) == meshes_before, "a jump in the wind makes no mesh: %d of %d", len(r.scene.meshes), meshes_before)
+	testing.expectf(t, time.duration_milliseconds(jump) < 5, "the frame of a jump in the wind plans in %.3f ms", time.duration_milliseconds(jump))
+	fmt.printfln("shadow plan, %d batches x %d swaying: before the wind %.3f ms still, %.3f ms flying (%.3f at most); the first frames of the wind %.3f ms at most; swaying, still %.3f ms, flying %.3f ms a frame and %.3f at most (where the eye crosses a cell of the cull); a jump %.3f ms at most", BATCHES, INSTANCES, time.duration_milliseconds(still_before), time.duration_milliseconds(flying_before) / ROUNDS, time.duration_milliseconds(most_before), time.duration_milliseconds(first), time.duration_milliseconds(still) / ROUNDS, time.duration_milliseconds(flying) / ROUNDS, time.duration_milliseconds(most), time.duration_milliseconds(jump))
 }
