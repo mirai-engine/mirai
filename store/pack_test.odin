@@ -160,33 +160,34 @@ source_id :: proc(bytes:[]u8) -> Pack_Id {
     return {writer=head.writer}
 }
 
-// While a batch's frames reach the disk no other value sees its ref; once
-// commit returns, every value does.
+// A commit flushes once and what its flush made durable holds the commit: a
+// machine that loses power right after commit returns keeps the ref and the
+// object it names.
 @(test)
-a_ref_is_never_visible_before_what_it_names_is_durable :: proc(t:^testing.T) {
+a_commit_that_returns_is_durable :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"store-durable");if folder=="" {return}
     writer,ok:=test_store(t,folder);if !ok {return}
     defer close(&writer)
-    reader,_:=test_store(t,folder)
-    defer close(&reader)
     data:=test_bytes(200<<10,3)
     address,put_error:=put(&writer,data)
     testing.expect_value(t,put_error,Error.None)
-    Seen :: struct {t:^testing.T,reader:^Store,address:Hash,flushes:int}
-    seen:=Seen{t,&reader,address,0}
+    Seen :: struct {writer:^Store,flushes:int,durable:i64}
+    seen:=Seen{writer=&writer}
     hooks:=Hooks{data=&seen,flushing=proc(data:rawptr) {
         seen:=(^Seen)(data)
         seen.flushes+=1
-        _,error:=ref_get(seen.reader,"durable","object")
-        testing.expect_value(seen.t,error,Error.Missing)
-        testing.expect(seen.t,!chunk_has(seen.reader,seen.address),"the object is not seen while it is flushed")
+        seen.durable,_=os.file_size(seen.writer.state.writer.file)
     }}
     writer.state.hooks=&hooks
     testing.expect_value(t,ref_set(&writer,"durable","object",address),Error.None)
     writer.state.hooks=nil
     testing.expect_value(t,seen.flushes,1)
+    // Power is lost: what the last flush did not cover is gone.
+    testing.expect(t,os.truncate(writer.state.writer.file,seen.durable)==nil)
+    reader,_:=test_store(t,folder)
+    defer close(&reader)
     got,error:=ref_get(&reader,"durable","object")
-    testing.expect(t,error==.None && got==address,"once committed the ref is seen")
+    testing.expect(t,error==.None && got==address,"the committed ref survives")
     test_object_bytes(t,&reader,address,data)
 }
 
