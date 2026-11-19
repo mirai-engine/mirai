@@ -619,8 +619,8 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
   snapshot, its folders and files and the builds the project pins.
 - **Join.** `mirai join` asks for the snapshot of the invitation only the host it connects to,
   so a peer that joined from the joiner cannot name another; folders and files come from any
-  peer, verified by address. It fetches the tree a depth of folders at a time, refusing one whose names
-  could leave the folder, are absolute, name a device, repeat or collide where case is folded,
+  peer, verified by address. It fetches the tree a depth of folders at a time, refusing one whose
+  names could leave the folder, are absolute, name a device, repeat or collide where case is folded,
   whose folders nest beyond the bound, hold more entries or bytes than a folder can or declare
   files and sizes they do not hold (so the files read never exceed the bound, also from a folder
   repeated under many names); checks that the disks have room; fetches the files, the project's
@@ -631,8 +631,8 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
   key, and a source in the folder is imported, in the quality an editor imports, only when no
   peer gives a build of it. A join ends within a bounded time without progress whatever a peer
   does or withholds: what is wanted while no chunk byte arrives and no object completes for a
-  while fails, reported by path, and the files after it are asked. A build that cooks refreshes requiring Final, so a Fast build a join
-  took never ships. A refresh asks the source for every
+  while fails, reported by path, and the files after it are asked. A build that cooks refreshes
+  requiring Final, so a Fast build a join took never ships. A refresh asks the source for every
   manifest and build it lacks in one batch before it goes package by package, so it waits for the
   peers about once, not once per package. It prints progress at a steady pace and, at the end,
   how to open the project. The store keeps what arrived: a join stopped and run again fetches only
