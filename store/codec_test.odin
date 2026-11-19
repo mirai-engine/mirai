@@ -178,11 +178,101 @@ hostile_chunk_frames_are_refused :: proc(t:^testing.T) {
     chunk:=test_compressible(1000,6)
     stored:=chunk[:10]
     address:=address_of_bytes(chunk)
-    testing.expect_value(t,chunk_put(&s,address,chunk,codec=CODECS_MAX,stored=stored),Error.Invalid_Argument)
-    testing.expect_value(t,chunk_put(&s,address,chunk,codec=1,stored=chunk),Error.Invalid_Argument)
-    testing.expect_value(t,chunk_put(&s,address,chunk,codec=1),Error.Invalid_Argument)
+    raw:=make([]u8,len(chunk),context.temp_allocator)
+    testing.expect_value(t,chunk_put_frame(&s,address,CODECS_MAX,stored,raw),Error.Invalid_Argument)
+    testing.expect_value(t,chunk_put_frame(&s,address,1,chunk,raw),Error.Invalid_Argument)
+    testing.expect_value(t,chunk_put_frame(&s,address,CODEC_NONE,stored,raw),Error.Invalid_Argument)
+    // A valid frame of other bytes, offered for this address, is refused and nothing is kept.
+    other:=test_compressible(len(chunk),9)
+    e:data.Encoder
+    data.encoder_init(&e)
+    defer data.encoder_destroy(&e)
+    encoded:=make([]u8,data.bound(len(other)),context.temp_allocator)
+    size,_:=data.encode(&e,.Fast,other,encoded)
+    testing.expect_value(t,chunk_put_frame(&s,address,1,encoded[:size],raw),Error.Corrupt)
+    testing.expect_value(t,commit(&s),Error.None)
+    _,read_error:=chunk_read(&s,address,make([]u8,CHUNK_MAX,context.temp_allocator))
+    testing.expect_value(t,read_error,Error.Missing)
+    mine:=make([]u8,data.bound(len(chunk)),context.temp_allocator)
+    mine_size,_:=data.encode(&e,.Fast,chunk,mine)
+    testing.expect_value(t,chunk_put_frame(&s,address,1,mine[:mine_size],raw),Error.None)
+    back,back_error:=chunk_read(&s,address,make([]u8,CHUNK_MAX,context.temp_allocator))
+    testing.expect(t,back_error==.None && string(back)==string(chunk),"its own frame is kept")
     // A peer's frame that does not decode to the bytes is never kept as it is.
     bad:=make([]u8,len(stored),context.temp_allocator)
     testing.expect_value(t,chunk_decode(&s,1,bad,make([]u8,len(chunk),context.temp_allocator)),Error.Corrupt)
     testing.expect_value(t,chunk_decode(&s,TEST_CODEC,bad,make([]u8,len(chunk),context.temp_allocator)),Error.Missing)
+}
+
+// A small object stored with a codec the other build lacks, swept into a generation, then put
+// again by this build and swept with both packs sealed: compaction keeps a copy every build
+// reads, the generation indexes it, and once the retired packs go both builds read the object.
+@(test)
+a_sweep_of_copies_of_two_codecs_keeps_one_every_build_reads :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"store-codec-sweep");if folder=="" {return}
+    data:=test_compressible(5000,7)
+    root:Hash
+    {
+        other,ok:=test_store(t,folder);if !ok {return}
+        testing.expect_value(t,codec_hook(&other,test_codec_hook()),Error.None)
+        root,_=test_put(&other,data)
+        testing.expect_value(t,ref_set(&other,"keep","data",root),Error.None)
+        _,first:=sweep(&other,nil)
+        testing.expect_value(t,first,Error.None)
+        close(&other)
+    }
+    {
+        here,ok:=test_store(t,folder);if !ok {return}
+        again,_:=test_put(&here,data)
+        testing.expect_value(t,again,root)
+        close(&here) // seals its pack
+    }
+    {
+        here,ok:=test_store(t,folder);if !ok {return}
+        for _ in 0..<2 {
+            _,error:=sweep(&here,nil)
+            testing.expect_value(t,error,Error.None)
+        }
+        close(&here)
+    }
+    retired,_:=os.read_all_directory_by_path(strings.concatenate({folder,"/retired"},context.temp_allocator),context.temp_allocator)
+    testing.expect_value(t,len(retired),0)
+    fresh,fresh_ok:=test_store(t,folder);if !fresh_ok {return}
+    defer close(&fresh)
+    testing.expect(t,test_holds(&fresh,root,data),"a build that lacks the other codec reads it")
+    hooked,hooked_ok:=test_store(t,folder);if !hooked_ok {return}
+    defer close(&hooked)
+    codec_hook(&hooked,test_codec_hook())
+    testing.expect(t,test_holds(&hooked,root,data),"the other build reads it")
+}
+
+// A build that lacks the codec of an object's leaves holds the object whole all the same: a ref
+// and a lease it sets on it keep it, and a sweep keeps it, though it reads and serves none of
+// those leaves.
+@(test)
+a_ref_on_an_object_of_a_codec_this_build_lacks_is_kept :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"store-codec-ref");if folder=="" {return}
+    data:=test_compressible(3*CHUNK_MAX,8)
+    root:Hash
+    {
+        other,ok:=test_store(t,folder);if !ok {return}
+        testing.expect_value(t,codec_hook(&other,test_codec_hook()),Error.None)
+        root,_=test_put(&other,data)
+        testing.expect_value(t,ref_set(&other,"other","data",root),Error.None)
+        _,error:=sweep(&other,nil)
+        testing.expect_value(t,error,Error.None)
+        close(&other)
+    }
+    here,ok:=test_store(t,folder);if !ok {return}
+    defer close(&here)
+    testing.expect_value(t,ref_set(&here,"keep","data",root),Error.None)
+    lease,lease_error:=lease_open(&here,"reader",{root})
+    testing.expect_value(t,lease_error,Error.None)
+    defer lease_release(&lease)
+    _,sweep_error:=sweep(&here,nil)
+    testing.expect_value(t,sweep_error,Error.None)
+    hooked,hooked_ok:=test_store(t,folder);if !hooked_ok {return}
+    defer close(&hooked)
+    codec_hook(&hooked,test_codec_hook())
+    testing.expect(t,test_holds(&hooked,root,data),"the object stays whole for the build that reads it")
 }
