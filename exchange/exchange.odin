@@ -124,6 +124,7 @@ Walk_Frame :: struct {address:store.Hash,index:int}
 Want :: struct {
     address:store.Hash, // the root of its object
     used,wanted:bool,
+    measure:bool,    // only its root is asked, for its size: nothing under it is walked or asked
     waiters:int,
     generation:u32,
     priority:int,
@@ -591,8 +592,17 @@ signal :: proc(x:^Exchange) {
 // its priority. A want stays until forget, also once complete.
 want :: proc(x:^Exchange,address:store.Hash,priority:=0) -> Error {
     sync.mutex_guard(&x.lock)
-    i,error:=want_add(x,address,priority)
+    i,error:=want_add(x,address,priority,measure=false)
     if error==.None {x.wants[i].wanted=true}
+    return error
+}
+
+// Asks only for the root of an object, without anything under it: progress
+// gives its total once the root is here. For the size of an object nobody
+// wants yet; forget it once known. A want of the whole object takes it over.
+measure :: proc(x:^Exchange,address:store.Hash) -> Error {
+    sync.mutex_guard(&x.lock)
+    _,error:=want_add(x,address,0,measure=true)
     return error
 }
 

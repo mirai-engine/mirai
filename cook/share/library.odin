@@ -50,6 +50,9 @@ Peer_Package :: struct {
     origin:string, // where its source was on the machine that ingested it, which tells apart two of one name
     kinds:[]asset.Fourcc,
     assets:int,
+    root:store.Hash,      // the object its card shows (asset.build_shown) in the build it has; zero: none
+    objects:[]store.Hash, // of every asset of that build, sorted
+
     bytes:i64,
     built,here:bool,
 }
@@ -100,10 +103,18 @@ peer_library :: proc(n:^Node,peer:Peer,allocator:=context.allocator) -> (list:[]
         // Whether it is here is read before the sizes are asked, which may bring a small object whole.
         if b,built:=chosen[p.id];built {
             entry.built,entry.here=true,true
-            for o in b.outputs {
+            objects:=make([]store.Hash,len(b.outputs),allocator)
+            entry.root=asset.build_shown(&b,&p)
+            for o,k in b.outputs {
                 append(&sizes,o.object)
                 entry.here&&=asset.object_whole(s,o.object)
+                objects[k]=o.object
             }
+            slice.sort_by(objects,proc(a,b:store.Hash) -> bool {
+                a,b:=a,b
+                return string(a[:])<string(b[:])
+            })
+            entry.objects=objects
         }
         append(&out,entry)
     }
@@ -174,7 +185,7 @@ node_peer_alive :: proc(n:^Node,peer:Peer) -> bool {
 }
 
 // The size of each object of addresses: here, or as its root says once it
-// arrives from a peer; the objects are not fetched whole. Those whose root no
+// arrives from a peer (exchange.measure): nothing else of the object is fetched. Those whose root no
 // peer sends within SIZE_SECONDS are left out.
 @(private)
 objects_sizes :: proc(n:^Node,addresses:[]store.Hash) -> map[store.Hash]i64 {
@@ -187,7 +198,8 @@ objects_sizes :: proc(n:^Node,addresses:[]store.Hash) -> map[store.Hash]i64 {
             store.object_close(&o)
             continue
         }
-        if exchange.want(&n.x,address,0)==.None {append(&asking,address)}
+        // Its root alone: none of what the object holds is fetched to know its size.
+        if exchange.measure(&n.x,address)==.None {append(&asking,address)}
     }
     defer for address in asking {exchange.forget(&n.x,address)}
     started:=node_now(n)
@@ -256,4 +268,75 @@ package_built :: proc(s:^store.Store,manifest:store.Hash,p:^asset.Package) -> bo
         if !asset.object_whole(s,o.object) {return false}
     }
     return true
+}
+
+// A ref one peer names, and the small object it names, fetched without
+// waiting: for derived data a peer has or lacks (a thumbnail), never asked of
+// another peer, and never made on request. fetch_poll steps it from the thread
+// that pumps; a peer that leaves ends it as Absent.
+Fetch_State :: enum u8 {Asking,Fetching,Done,Absent}
+
+Fetch :: struct {
+    peer:Peer,
+    namespace,name:string, // held by the caller while it fetches
+    query:exchange.Query,
+    address:store.Hash,
+    state:Fetch_State,
+}
+
+fetch_start :: proc(n:^Node,peer:Peer,namespace,name:string) -> (f:Fetch) {
+    f={peer=peer,namespace=namespace,name=name}
+    if _,error:=store.ref_get(n.s,namespace,name);error==.None {
+        f.state=.Done
+        return
+    }
+    q,error:=exchange.ref_ask(&n.x,namespace,name,peer.host,peer.connection)
+    if error!=.None {f.state=.Absent;return}
+    f.query=q
+    return
+}
+
+// One step of a fetch: the answer of the peer, then the object, which this
+// store keeps under the same ref once it is here.
+fetch_poll :: proc(n:^Node,f:^Fetch) -> Fetch_State {
+    switch f.state {
+    case .Done,.Absent:
+    case .Asking:
+        r,ok:=exchange.query_result(&n.x,f.query)
+        if !ok || r.state==.Not_Found || r.state==.Waiting && !node_peer_alive(n,f.peer) {
+            if ok {exchange.query_end(&n.x,f.query)}
+            f.state=.Absent
+            break
+        }
+        if r.state==.Waiting {break}
+        f.address=r.address
+        exchange.query_end(&n.x,f.query)
+        if exchange.want(&n.x,f.address,1<<20)!=.None {f.state=.Absent;break}
+        f.state=.Fetching
+    case .Fetching:
+        p,_:=exchange.progress(&n.x,f.address)
+        #partial switch p.state {
+        case .Complete:
+            exchange.forget(&n.x,f.address)
+            f.state=store.ref_set(n.s,f.namespace,f.name,f.address)==.None?.Done:.Absent
+        case .Failed,.Missing:
+            exchange.forget(&n.x,f.address)
+            f.state=.Absent
+        case:
+            if !node_peer_alive(n,f.peer) {
+                exchange.forget(&n.x,f.address)
+                f.state=.Absent
+            }
+        }
+    }
+    return f.state
+}
+
+// Lets go of a fetch that did not end.
+fetch_end :: proc(n:^Node,f:^Fetch) {
+    #partial switch f.state {
+    case .Asking: exchange.query_end(&n.x,f.query)
+    case .Fetching: exchange.forget(&n.x,f.address)
+    }
+    f.state=.Absent
 }

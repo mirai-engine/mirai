@@ -20,9 +20,15 @@ want_find :: proc(x:^Exchange,address:store.Hash) -> int {
 }
 
 @(private)
-want_add :: proc(x:^Exchange,address:store.Hash,priority:int) -> (int,Error) {
+want_add :: proc(x:^Exchange,address:store.Hash,priority:int,measure:=false) -> (int,Error) {
     if i:=want_find(x,address);i>=0 {
         w:=&x.wants[i]
+        // A want of the whole object takes over one that only measured it.
+        if w.measure && !measure {
+            w.measure=false
+            want_begin(x,i)
+            x.dirty=true
+        }
         if priority>w.priority {
             w.priority=priority
             order_place(x,i)
@@ -37,7 +43,7 @@ want_add :: proc(x:^Exchange,address:store.Hash,priority:int) -> (int,Error) {
     for &w,i in x.wants {
         if w.used {continue}
         generation:=w.generation+1
-        w={used=true,generation=generation,address=address,priority=priority,order=x.sequence,first=-1,last=-1,total=-1}
+        w={used=true,measure=measure,generation=generation,address=address,priority=priority,order=x.sequence,first=-1,last=-1,total=-1}
         x.sequence+=1
         x.want_slots[want_slot(x,address)]=i32(i)
         x.order[x.want_count]=i
@@ -71,7 +77,8 @@ want_begin :: proc(x:^Exchange,i:int) {
     w.settling,w.committing=false,false
     order_place(x,i)
     if store.chunk_here(x.desc.store,w.address) {
-        want_walk_root(x,i)
+        // Its owner reads the size of a root here from the store.
+        if !w.measure {want_walk_root(x,i)}
         return
     }
     need_add(x,i,.Root,w.address,0,0)
@@ -448,7 +455,7 @@ batch_send :: proc(x:^Exchange,i:int) {
             if need.peer>=0 || need.arriving || need.lack&bit!=0 {continue}
             cost,left:=0,0
             switch need.kind {
-            case .Root: left=ROOT_BUDGET
+            case .Root: left=0 if w.measure else ROOT_BUDGET
             case .Node: cost=NODE_ESTIMATE
             case .Data: cost=int(need.size)
             }

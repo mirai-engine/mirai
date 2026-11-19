@@ -15,6 +15,7 @@ import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 import "mirai:std/serial"
+import "mirai:store"
 import "mirai:ui"
 
 // Thumbnails of geometry: images with premultiplied alpha that the renderer
@@ -26,13 +27,19 @@ import "mirai:ui"
 // content browser at its largest at a density of 2. One is drawn per frame,
 // and the icon stands in until it is there.
 //
-// The preview of an asset of the project is kept in the thumbs folder of its
-// caches, a file per asset and size, under a key of what it is drawn from:
-// the content of the asset and of everything it needs, as the registry has
-// it, the shaders the renderer runs and THUMBNAIL_RENDERER. A file with
-// another key is a preview to draw again, as when the asset or one of its
-// dependencies changes, or a program does. Up to
-// THUMBNAIL_LOADS are read per frame, besides the one drawn.
+// The preview of an asset is derived data of the machine's store: an object
+// under THUMBNAIL_NAMESPACE named by a key of what it is drawn from, so it is
+// drawn once per machine and a peer of a session gives it to another
+// (content_library.odin). The key of an asset of a package is that of its
+// object and of every object of the build it is in (thumbnail_package_key),
+// which any machine that has the manifest and the build computes without the
+// asset's bytes; that of an asset of the project's own files is the content of
+// the asset and of everything it needs, as the registry has it
+// (thumbnail_store_key). Both take the shaders the renderer runs and
+// THUMBNAIL_RENDERER: a change of either is a preview to draw again. Up to
+// THUMBNAIL_LOADS are read per frame, besides the one drawn. The view of a
+// scene the editor took is no derived data: it stays in the thumbs folder of
+// the project (thumbnail_subjects.odin).
 
 Thumbnail_Level :: enum u8 {Small,Large}
 
@@ -56,6 +63,7 @@ THUMBNAIL_LOADS :: 8
 THUMBNAIL_FILE_MAGIC :: u32('M')|u32('T')<<8|u32('H')<<16|u32('B')<<24
 THUMBNAIL_FILE_VERSION :: 3
 THUMBNAIL_FILE_HEADER :: 24 // magic, version, key, side and the bytes of the stream of the image after it
+THUMBNAIL_NAMESPACE :: asset.REF_CACHE_PREFIX+"thumbnails" // <key as 16 hexadecimal digits>: the preview, as its file holds it
 
 // A stored preview as its file holds it, and the coders of its image.
 Thumbnail_File :: struct {
@@ -115,10 +123,10 @@ Thumbnail_Cell :: struct {
     signature:u64, // of what its image was drawn from
     seen:u64,      // the last frame it was asked for
     ready:bool,    // false: its subject had nothing to draw
-    stored:u64,    // the key in the thumbs folder of the image it holds; 0: none
+    stored:u64,    // the key in the store of the image it holds; 0: none
     wanted:u64,    // the key there of the subject whose signature is checked
     checked:u64,
-    absent:u64,    // a key the thumbs folder did not have
+    absent:u64,    // a key the store did not have
 }
 
 @(storage)
@@ -126,7 +134,7 @@ Thumbnails :: struct {
     pixels:[dynamic]u8,   // the atlas; allocated with the first preview
     readback:[dynamic]u8, // what the renderer drew, before it is reduced
     image:[dynamic]u8,    // the preview being drawn
-    file:Thumbnail_File,  // a preview of the thumbs folder, as its file holds it
+    file:Thumbnail_File,  // a preview as the store or the thumbs folder holds it
     loads:int,            // previews looked for there in the frame loaded
     loaded:u64,
     cells:[THUMBNAIL_CELLS]Thumbnail_Cell,
@@ -150,7 +158,7 @@ Thumbnails :: struct {
 Thumbnail_Picture :: struct {
     slot:int,
     key,signature:u64, // of the cell when it asked; key 0: none asks
-    wanted:u64,        // its key in the thumbs folder; 0: not kept there
+    wanted:u64,        // its key in the store; 0: not kept there
     stored:base.Asset_Id,
     subject:Thumbnail_Subject,
 }
@@ -248,12 +256,11 @@ preview_request :: proc(s:^Session,key:u64,subject:^Thumbnail_Subject,points:f32
     cell:=&p.cells[slot]
     cell.seen=frame
     if cell.signature==signature || s.edits.open {return thumbnail_quad(cell,slot)}
-    folder:=thumbnail_folder(s) if stored!={} else ""
-    if folder!="" && cell.checked!=signature {
-        programs:=base.hash_combine(base.hash64(transmute([]u8)string(gpu.SHADERS_INTERFACE)),s.app.shaders.identity)
-        cell.wanted,cell.checked=thumbnail_store_key(&a.registry,stored,subject^,level,programs),signature
+    kept:=stored!={} && s.store.root!=""
+    if kept && cell.checked!=signature {
+        cell.wanted,cell.checked=thumbnail_key_of(s,stored,subject^,level),signature
     }
-    wanted:=cell.wanted if folder!="" else 0
+    wanted:=cell.wanted if kept else 0
     sides:=THUMBNAIL_SIDES
     side:=sides[level]
     if wanted!=0 && cell.stored==wanted && cell.ready {
@@ -264,7 +271,7 @@ preview_request :: proc(s:^Session,key:u64,subject:^Thumbnail_Subject,points:f32
     if wanted!=0 && cell.absent!=wanted {
         if p.loads>=THUMBNAIL_LOADS {return thumbnail_quad(cell,slot)}
         p.loads+=1
-        if thumbnail_load(folder,stored,side,wanted,&p.file,&p.image) {
+        if thumbnail_store_load(&s.store,side,wanted,&p.file,&p.image) {
             thumbnail_put(p,slot,p.image[:])
             cell.signature,cell.stored,cell.ready=signature,wanted,true
             return thumbnail_quad(cell,slot)
@@ -288,7 +295,7 @@ preview_request :: proc(s:^Session,key:u64,subject:^Thumbnail_Subject,points:f32
     cell.signature,cell.stored=signature,0
     resize(&p.image,side*side*4)
     cell.ready=preview_render(s,subject,level,p.image[:])
-    thumbnail_drawn(p,slot,side,folder,stored,wanted)
+    thumbnail_drawn(s,slot,side,wanted)
     return thumbnail_quad(cell,slot)
 }
 
@@ -307,7 +314,7 @@ preview_load_turn :: proc(s:^Session,id:base.Asset_Id) -> bool {
 }
 
 // The image of the cell its provider asked to draw between frames
-// (Thumbnail_Picture), kept in the thumbs folder. Between frames.
+// (Thumbnail_Picture), kept in the store. Between frames.
 @(private)
 thumbnail_picture_draw :: proc(s:^Session) {
     p:=s.thumbnails
@@ -323,17 +330,18 @@ thumbnail_picture_draw :: proc(s:^Session) {
     resize(&p.image,side*side*4)
     cell.stored=0
     cell.ready=provider.image(s,&picture.subject,side,p.image[:])
-    thumbnail_drawn(p,picture.slot,side,thumbnail_folder(s) if picture.wanted!=0 else "",picture.stored,picture.wanted)
+    thumbnail_drawn(s,picture.slot,side,picture.wanted)
 }
 
 // Puts the image of side pixels just drawn into its cell, a blank one when
-// nothing covered it, and keeps it in the thumbs folder under wanted.
+// nothing covered it, and keeps it in the store under wanted.
 @(private="file")
-thumbnail_drawn :: proc(p:^Thumbnails,slot,side:int,folder:string,stored:base.Asset_Id,wanted:u64) {
+thumbnail_drawn :: proc(s:^Session,slot,side:int,wanted:u64) {
+    p:=s.thumbnails
     cell:=&p.cells[slot]
     if !cell.ready {mem.zero_slice(p.image[:])}
     thumbnail_put(p,slot,p.image[:])
-    if cell.ready && wanted!=0 && folder!="" && thumbnail_save(folder,stored,side,wanted,p.image[:],&p.file) {cell.stored=wanted}
+    if cell.ready && wanted!=0 && s.store.root!="" && thumbnail_store_save(&s.store,side,wanted,p.image[:],&p.file) {cell.stored=wanted}
 }
 
 @(private="file")
@@ -428,7 +436,7 @@ thumbnail_file :: proc(folder:string,id:base.Asset_Id,side:int) -> string {
     return fmt.tprintf("%s/%s-%d.thumb",folder,base.asset_id_format(id,buffer[:]),side)
 }
 
-// The previews of assets that no file is any more leave the thumbs folder,
+// The views of scenes that no file is any more leave the thumbs folder,
 // as the registry notes them (Registry.removed): deleted, also while the editor
 // was closed, or another asset now. One that changed keeps its file, which its
 // next drawing overwrites.
@@ -436,12 +444,12 @@ thumbnail_file :: proc(folder:string,id:base.Asset_Id,side:int) -> string {
 thumbnails_forget :: proc(s:^Session) {
     a:=s.app.assets
     if a==nil || len(a.registry.removed)==0 {return}
-    if folder:=thumbnail_folder(s);folder!="" {thumbnail_store_forget(folder,a.registry.removed[:])}
+    if folder:=thumbnail_folder(s);folder!="" {thumbnail_views_forget(folder,a.registry.removed[:])}
     clear(&a.registry.removed)
 }
 
 @(private)
-thumbnail_store_forget :: proc(folder:string,ids:[]base.Asset_Id) {
+thumbnail_views_forget :: proc(folder:string,ids:[]base.Asset_Id) {
     sides:=THUMBNAIL_SIDES
     for id in ids {
         for side in sides {os.remove(thumbnail_file(folder,id,side))}
@@ -455,7 +463,15 @@ thumbnail_load :: proc(folder:string,id:base.Asset_Id,side:int,key:u64,file:^Thu
     pixels:=side*side*4
     resize(&file.bytes,THUMBNAIL_FILE_HEADER+asset.pack_bound(pixels))
     head,size,error:=serial.file_read_head(thumbnail_file(folder,id,side),file.bytes[:])
-    if error!=.None || size!=i64(len(head)) || len(head)<THUMBNAIL_FILE_HEADER {return false}
+    if error!=.None || size!=i64(len(head)) {return false}
+    return thumbnail_decode(head,side,key,file,image)
+}
+
+// The image of the bytes of a preview of side under key; false when they hold another.
+@(private)
+thumbnail_decode :: proc(head:[]u8,side:int,key:u64,file:^Thumbnail_File,image:^[dynamic]u8) -> bool {
+    pixels:=side*side*4
+    if len(head)<THUMBNAIL_FILE_HEADER {return false}
     r:=serial.reader_init(head)
     if serial.read_u32(&r)!=THUMBNAIL_FILE_MAGIC || serial.read_u32(&r)!=THUMBNAIL_FILE_VERSION || serial.read_u64(&r)!=key || serial.read_u32(&r)!=u32(side) {return false}
     packed:=int(serial.read_u32(&r))
@@ -468,11 +484,20 @@ thumbnail_load :: proc(folder:string,id:base.Asset_Id,side:int,key:u64,file:^Thu
 // Keeps the preview of an asset under key; false when it cannot be written.
 @(private)
 thumbnail_save :: proc(folder:string,id:base.Asset_Id,side:int,key:u64,image:[]u8,file:^Thumbnail_File) -> bool {
-    if len(image)!=side*side*4 {return false}
-    if file.encoder.data==nil && asset.stream_encoder_init(&file.encoder)!=.None {return false}
+    bytes:=thumbnail_encode(side,key,image,file)
+    if bytes==nil {return false}
+    if !os.is_dir(folder) && os.make_directory_all(folder)!=nil {return false}
+    return serial.file_write_atomic(thumbnail_file(folder,id,side),bytes)==.None
+}
+
+// The bytes of a preview of side under key, in file.bytes; nil when it cannot be packed.
+@(private)
+thumbnail_encode :: proc(side:int,key:u64,image:[]u8,file:^Thumbnail_File) -> []u8 {
+    if len(image)!=side*side*4 {return nil}
+    if file.encoder.data==nil && asset.stream_encoder_init(&file.encoder)!=.None {return nil}
     resize(&file.bytes,THUMBNAIL_FILE_HEADER+asset.pack_bound(len(image)))
     packed,error:=asset.pack(&file.encoder,.Fast,.Open,image,file.bytes[THUMBNAIL_FILE_HEADER:])
-    if error!=.None {return false}
+    if error!=.None {return nil}
     w:serial.Writer
     serial.writer_init(&w,allocator=context.temp_allocator)
     serial.write_u32(&w,THUMBNAIL_FILE_MAGIC)
@@ -481,8 +506,75 @@ thumbnail_save :: proc(folder:string,id:base.Asset_Id,side:int,key:u64,image:[]u
     serial.write_u32(&w,u32(side))
     serial.write_u32(&w,u32(packed))
     copy(file.bytes[:THUMBNAIL_FILE_HEADER],serial.writer_bytes(&w))
-    if !os.is_dir(folder) && os.make_directory_all(folder)!=nil {return false}
-    return serial.file_write_atomic(thumbnail_file(folder,id,side),file.bytes[:THUMBNAIL_FILE_HEADER+packed])==.None
+    return file.bytes[:THUMBNAIL_FILE_HEADER+packed]
+}
+
+// The name of the preview of key in THUMBNAIL_NAMESPACE.
+thumbnail_name :: proc(key:u64,buffer:^[16]u8) -> string {
+    digits:=transmute([]u8)string("0123456789abcdef")
+    DIGITS:=digits
+    for k in 0..<16 {buffer[k]=DIGITS[(key>>(4*uint(15-k)))&15]}
+    return string(buffer[:])
+}
+
+// The preview of side the store keeps under key, into image: false when it has none.
+@(private)
+thumbnail_store_load :: proc(s:^store.Store,side:int,key:u64,file:^Thumbnail_File,image:^[dynamic]u8) -> bool {
+    if s==nil || s.root=="" || key==0 {return false}
+    buffer:[16]u8
+    address,ref_error:=store.ref_get(s,THUMBNAIL_NAMESPACE,thumbnail_name(key,&buffer))
+    if ref_error!=.None {return false}
+    o,open_error:=store.object_open(s,address)
+    if open_error!=.None {return false}
+    defer store.object_close(&o)
+    size:=int(store.object_size(&o))
+    if size>THUMBNAIL_FILE_HEADER+asset.pack_bound(side*side*4) {return false}
+    resize(&file.bytes,size)
+    if store.object_read(&o,0,file.bytes[:])!=.None {return false}
+    return thumbnail_decode(file.bytes[:],side,key,file,image)
+}
+
+// Keeps the preview of side in the store under key; false when it cannot.
+@(private)
+thumbnail_store_save :: proc(s:^store.Store,side:int,key:u64,image:[]u8,file:^Thumbnail_File) -> bool {
+    bytes:=thumbnail_encode(side,key,image,file)
+    if bytes==nil || key==0 {return false}
+    address,error:=store.put(s,bytes)
+    if error!=.None {return false}
+    buffer:[16]u8
+    return store.ref_set(s,THUMBNAIL_NAMESPACE,thumbnail_name(key,&buffer),address)==.None
+}
+
+// The key of the preview of an asset of a package at level: its object and
+// every object of the build it is in (objects), with the shaders and the
+// renderer. Any machine with the manifest and the build has them, not the asset.
+thumbnail_package_key :: proc(level:Thumbnail_Level,programs:u64,object:store.Hash,objects:[]store.Hash) -> u64 {
+    object:=object
+    key:=base.hash_combine(base.hash_combine(base.hash_combine(THUMBNAIL_RENDERER,u64(level)),programs),0x706b67)
+    key=base.hash_combine(key,base.hash64(object[:]))
+    for &o in objects {key=base.hash_combine(key,base.hash64(o[:]))}
+    return key|1
+}
+
+// The programs previews are drawn with, as their keys take them.
+@(private)
+thumbnail_programs :: proc(s:^Session) -> u64 {
+    return base.hash_combine(base.hash64(transmute([]u8)string(gpu.SHADERS_INTERFACE)),s.app.shaders.identity)
+}
+
+// The key of the stored preview of an asset: of a package, by its objects;
+// of the project's own files, by what the registry has of it.
+@(private)
+thumbnail_key_of :: proc(s:^Session,id:base.Asset_Id,subject:Thumbnail_Subject,level:Thumbnail_Level) -> u64 {
+    r:=&s.app.assets.registry
+    programs:=thumbnail_programs(s)
+    if file,found:=asset.registry_find(r,id);found && file.listed && !subject.captured {
+        if pin,pinned:=library_pin_of(s,r,file);pinned {
+            object,objects,built:=library_build_objects(s,pin.entry.manifest,&pin.p,id)
+            if built {return thumbnail_package_key(level,programs,object,objects)}
+        }
+    }
+    return thumbnail_store_key(r,id,subject,level,programs)
 }
 
 // The image of a cell in the atlas, which goes to the renderer with the next flush.

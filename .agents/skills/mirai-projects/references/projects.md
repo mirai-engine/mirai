@@ -34,7 +34,7 @@ Targets, jobs, fingerprint, project shaders, cooking and shipped game (`cook/bui
     cache/          machine caches (asset registry, textures, built meshes, compressed .anim)
     share/          what sharing keeps on this machine: the last snapshot joined, the index of
                     the files and the name of the offer (sharing a project, below)
-    thumbs/         asset previews of the editor
+    thumbs/         views of scenes the editor took
 ```
 
 The first-party plugins are in `<engine>/plugins/<name>/` with the same shape; the engine binaries,

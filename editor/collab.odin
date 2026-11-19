@@ -219,6 +219,8 @@ Collab_State :: struct {
     libraries:^Collab_Libraries, // of the other editors, as last read (collab_library.odin)
     reading:^Collab_Libraries,   // and as being read again
     take:^Collab_Take,           // a package of one of them being taken
+    thumbs:[COLLAB_THUMB_FETCHES]Collab_Thumb, // thumbnails asked of them
+    thumbs_absent:map[u64]struct{},            // keys a peer had no thumbnail of
     // A guest: an update asked for, and those done.
     update_due:bool,
     updates:int,
