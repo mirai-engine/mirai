@@ -40,7 +40,8 @@ copy_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
 @(private="file")
 object_of :: proc(s:^store.Store,key,version:u64) -> store.Hash {
     namespace:[store.NAME_MAX]u8
-    hash,_:=store.ref_get(s,asset.cache_namespace(NAME,&namespace),fmt.tprintf("%016x-%016x",key,version))
+    name:[REF_BYTES]u8
+    hash,_:=store.ref_get(s,asset.cache_namespace(NAME,&namespace),ref_name(key,version,&name))
     return hash
 }
 
@@ -76,7 +77,8 @@ a_result_is_found_by_its_ref_through_any_store_of_its_root_and_a_source_fills_a_
 
     // A ref whose object is not here is a miss, and keeping the result again mends it.
     namespace:[store.NAME_MAX]u8
-    testing.expect_value(t,store.ref_set(&writer,asset.cache_namespace(NAME,&namespace),fmt.tprintf("%016x-%016x",u64(KEY),u64(VERSION)),store.address_of_bytes(transmute([]u8)string("absent"))),store.Error.None)
+    name:[REF_BYTES]u8
+    testing.expect_value(t,store.ref_set(&writer,asset.cache_namespace(NAME,&namespace),ref_name(KEY,VERSION,&name),store.address_of_bytes(transmute([]u8)string("absent"))),store.Error.None)
     testing.expect(t,!load({store=&reader},NAME,KEY,VERSION,&file) && !has({store=&reader},NAME,KEY,VERSION))
     testing.expect(t,put({store=&writer},NAME,KEY,VERSION,result_bytes(&types,KEY,VERSION,1)))
     if testing.expect(t,load({store=&reader},NAME,KEY,VERSION,&file,context.temp_allocator)) {asset.asset_close(&file)}

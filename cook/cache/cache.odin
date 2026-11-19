@@ -1,6 +1,7 @@
 package cache
 
 import "core:fmt"
+import "core:strings"
 import "mirai:asset"
 import "mirai:std/base"
 import "mirai:store"
@@ -10,7 +11,7 @@ import "mirai:store"
 // another machine that shares the store's objects with this one. A result is
 // the file of an asset, kept as an object (asset.object_put), whose id is its
 // key and the version of what built it; the ref (cache-<name>,
-// <key>-<version>) names it (asset.cache_namespace), so a builder that gives
+// <key>-<version>) names it (asset.cache_namespace, ref_name), so a builder that gives
 // other bytes misses every earlier result. A ref whose object is not here
 // whole or does not read is a miss. The store owns space and checks its
 // chunks (its scrub): the cache removes nothing.
@@ -30,6 +31,10 @@ Cache :: struct {
     store:^store.Store, // nil: nothing is kept
     source:Source,
 }
+
+// The layout of what a result is: raised when results are kept otherwise, so a
+// result of another layout is never read. 2: an object of the store.
+RESULTS_VERSION :: 2
 
 // The id of the file of key, built by version.
 id :: proc "contextless" (key,version:u64) -> base.Asset_Id {return {key,version}}
@@ -71,7 +76,8 @@ lookup :: proc(c:Cache,name:string,keys:[]u64,version:u64,here:[]bool) {
     lacking:=make([dynamic]string,context.temp_allocator)
     at:=make([dynamic]int,context.temp_allocator)
     for key,k in keys {
-        ref:=fmt.tprintf("%016x-%016x",key,version)
+        name_buffer:[REF_BYTES]u8
+        ref:=strings.clone(ref_name(key,version,&name_buffer),context.temp_allocator)
         if here[k]=has_here(c.store,namespace,ref);here[k] {continue}
         if _,no_room:=append(&lacking,ref);no_room!=nil {return}
         if _,no_room:=append(&at,k);no_room!=nil {return}
@@ -106,7 +112,13 @@ names :: proc(c:Cache,name:string,key,version:u64,namespace_buffer:^[store.NAME_
     if c.store==nil || name=="" {return}
     namespace=asset.cache_namespace(name,namespace_buffer)
     if !store.name_valid(namespace) {return}
-    return namespace,fmt.bprintf(ref_buffer[:],"%016x-%016x",key,version),true
+    return namespace,ref_name(key,version,ref_buffer),true
+}
+
+// <key>-<version>, the version combined with RESULTS_VERSION.
+@(private)
+ref_name :: proc(key,version:u64,buffer:^[REF_BYTES]u8) -> string {
+    return fmt.bprintf(buffer[:],"%016x-%016x",key,base.hash_combine(version,RESULTS_VERSION))
 }
 
 @(private)
