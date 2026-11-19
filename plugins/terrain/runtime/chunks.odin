@@ -25,7 +25,7 @@ Chunk_Mesh :: struct {
     materials:[dynamic]base.Asset_Id, // what the cells of a Heightfield collider show
     surfaces:[dynamic]u8, // of each of those cells, its index in materials; none with one material
     samples:[dynamic]f32, // of a Volume: the window of samples a build reads
-    locked:[dynamic]bool, // of a node of a Volume, by vertex: on a side of its region another piece shares, where its levels keep it
+    locked:[dynamic]bool, // by vertex: on a side of its region, which another piece may share, where its levels keep it
     render:host.Mesh_Render_Geometry, // what the renderer takes of geometry, made by the job that built it
     render_ready:bool,                // render is that of geometry as it is
     grid:bool,                        // of the samples of a Heightfield: its tangents follow its grid and its collider is a heightfield
@@ -118,7 +118,7 @@ chunk_region :: proc "contextless" (s:^Source,coord:[3]i32) -> (low,high:[3]int,
 }
 
 // lod: the level of the chunk and of what it shares. The collider keeps
-// level 0, whatever the level shown. The chunk is in its own space
+// every sample, whatever the level shown. The chunk is in its own space
 // (chunk_place): its entity stands at mesh.origin of its terrain.
 chunk_build :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=true,lod:=Chunk_Lod{},join:=Chunk_Join{}) -> bool {
     chunk_build_terrain(s,coord,mesh,collision,lod,join) or_return
@@ -129,7 +129,7 @@ chunk_build :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=true,lod:
 // The visible mesh of node index of the tree (above the chunks), in its own
 // space, without collider. A Heightfield node shows its region at lod.level
 // from the coarse grid, joined by its border. A Volume node is the surface of
-// its chunks as they build it, welded into one mesh: the vertices on the
+// its chunks as they build it, welded into one mesh. The vertices on the
 // sides of its region that another piece shares are locked, so the levels
 // the renderer makes of it meet whatever is beside it.
 node_build :: proc(s:^Source,q:^Quad,index:int,lod:Chunk_Lod,border:^Piece_Border,mesh:^Chunk_Mesh,join:=Chunk_Join{}) -> bool {
@@ -245,11 +245,12 @@ chunk_build_terrain :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=t
         count:=columns*rows
         edges:=join.edges
         if !surface_maps_build(s,low.xz,high.xz,1,false,join.cuts,&mesh.maps,&edges) {return false}
-        if resize(&m.positions,count)!=nil || resize(&m.normals,count)!=nil || resize(&m.uvs,count)!=nil || resize(&mesh.uv1s,count)!=nil || resize(&m.indices,(columns-1)*(rows-1)*6)!=nil {return false}
+        if resize(&m.positions,count)!=nil || resize(&m.normals,count)!=nil || resize(&m.uvs,count)!=nil || resize(&mesh.uv1s,count)!=nil || resize(&mesh.locked,count)!=nil || resize(&m.indices,(columns-1)*(rows-1)*6)!=nil {return false}
         for row in 0..<rows {for column in 0..<columns {
             at:=row*columns+column
             m.positions[at],m.normals[at]=heightfield_vertex(s,low.x+column,low.z+row,1,&edges)
             m.uvs[at],mesh.uv1s[at]={f32(column)/f32(columns),f32(row)/f32(rows)},{}
+            mesh.locked[at]=row==0 || column==0 || row==rows-1 || column==columns-1
         }}
         next:=0
         for row in 0..<rows-1 {for column in 0..<columns-1 {
@@ -348,10 +349,10 @@ detail_vertex :: proc "contextless" (s:^Source,at,step:[2]int,detail:u8,edges:^[
     return
 }
 
-// Makes the geometry the renderer takes of a chunk built, where it was
+// Makes the geometry the renderer takes of a piece built, where it was
 // built: chunk_publish then only gives it the rows of its materials. levels:
-// in the clusters the renderer draws at the detail the view asks for, as a
-// node of a Volume is, its locked vertices kept where they are. Any thread.
+// in the clusters the renderer draws at the detail each view and map of the
+// shadows asks for, its locked vertices kept where they are. Any thread.
 chunk_render_prepare :: proc(mesh:^Chunk_Mesh,limits:host.Assets_Limits,levels:=false) -> bool {
     if len(mesh.geometry.indices)==0 {return false}
     tangents:[][4]f32
@@ -516,16 +517,11 @@ chunk_heightfield_borders :: proc(s:^Source,low,high:[3]int,mesh:^Chunk_Mesh,cut
     return true
 }
 
-// A piece as one of the builds of its levels: the surface they show alike,
-// 0 for none, and how far it lies from that surface at most, metres.
-Piece_Surface :: struct {id:u64,error:f32}
-
 // picking keeps the triangles on the CPU without a collider: the editor picks
 // a chunk far from the view by them. levels: as chunk_render_prepare made it.
-// surface: piece_surface.
-chunk_publish :: proc(a:^host.Assets,mesh:^Chunk_Mesh,collision:=true,picking:=false,levels:=false,surface:=Piece_Surface{}) -> (id:base.Asset_Id,ok:bool) {
+chunk_publish :: proc(a:^host.Assets,mesh:^Chunk_Mesh,collision:=true,picking:=false,levels:=false) -> (id:base.Asset_Id,ok:bool) {
     if len(mesh.geometry.indices)==0 {return {},true}
-    options:=host.Mesh_Generate_Options{no_lods=!levels || !mesh.render_ready,collision=collision || picking,disabled_edges=mesh.disabled_edges[:],label="terrain chunk",surface=surface.id,surface_error=surface.error}
+    options:=host.Mesh_Generate_Options{no_lods=!levels || !mesh.render_ready,collision=collision || picking,disabled_edges=mesh.disabled_edges[:],label="terrain chunk"}
     if mesh.render_ready {
         options.render_geometry=&mesh.render
     } else if mesh.grid {

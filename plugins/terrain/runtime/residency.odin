@@ -17,12 +17,6 @@ import mm "mirai:std/math"
 // samples (Border_Levels). Its pages came while it went from 1 to this.
 @(private) DEEP_REACH :: 1/scene.RESIDENT_KEEP
 
-// Without Terrain_Settings.lod_distance, level 0 reaches LOD_CHUNKS chunk widths.
-@(private)
-lod_base :: proc "contextless" (s:^Source,settings:Terrain_Settings) -> f32 {
-    return settings.lod_distance>0?settings.lod_distance:f32(LOD_CHUNKS)*f32(s.chunk_cells)*s.cell
-}
-
 @(private)
 split_before :: proc(a,b:Split) -> bool {
     if a.near!=b.near {return a.near<b.near}
@@ -35,10 +29,9 @@ split_before :: proc(a,b:Split) -> bool {
 // Chooses what each terrain wants of its source and how each piece is built,
 // from the distances of its views and its streaming sources, and marks the
 // pieces whose mesh shows something else. Each terrain walks its tree from
-// its roots and goes down only where a chunk under a node may be near a
-// viewer or take a collider, or where the view is nearer than the finest
-// level of a node reaches: what it looks at follows what is near and seen,
-// not how many nodes it has. Within Terrain_Settings.chunks, the nearest open
+// its roots and goes down only where a chunk under a node may be needed
+// (resident_needed): what it looks at follows what is near, not how many
+// nodes it has. Within Terrain_Settings.chunks, the nearest open
 // first, so past it the farthest show coarser nodes and nothing goes. Runs
 // when a view or the transform of a terrain moves, or the sources, the
 // colliders or the chunks change; while pieces wait to be built, again once a
@@ -64,7 +57,7 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
         offset:=view.position-resident.lod_views[v]
         still&&=linalg.dot(offset,offset)<LOD_MOVE*LOD_MOVE
     }
-    distances:=[3]f32{settings.lod_distance,settings.collision_distance,settings.resident_distance}
+    distances:=[2]f32{settings.collision_distance,settings.resident_distance}
     // Where the brush is chooses pieces; what its stroke changed does not.
     brush:=Terrain_Focus{source=focus.source,center=focus.center,radius=focus.radius}
     if !pending && !moved && !grounds_moved && stamp==resident.lod_stamp && distances==resident.lod_distances && brush==resident.focus && still {return}
@@ -102,11 +95,8 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
         place:=&resident.places[o]
         if place.s==nil {continue}
         entry:=data_find(data,owner.source)
-        s:=place.s
         q:=place.q
         chunks:=q.first[1]
-        base:=lod_base(s,settings)
-        by_error:=lod_by_error(entry,settings)
         roots+=q.counts[q.depth].x*q.counts[q.depth].y*q.tall[q.depth]
         slice.sort(owner.visit[:])
         for at in owner.visit {
@@ -118,7 +108,6 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
                 if child<0 || owner.nodes[child].visit!=pass {continue}
                 if child<chunks?owner.nodes[child].resident:owner.nodes[child].want {node.want=true;break}
             }
-            if !node.want {node.want=node_finer(s,q,i,node,settings,stream,by_error,base)}
             if node.want {append(&resident.splits,Split{node.reach,node.distance,-i32(quad_depth(q,i)),u32(o),u32(i)})}
         }
         // What would open has its children looked at: one of them may show in its place.
@@ -159,8 +148,7 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
         }
     }
     resident_colliders(resident,data,terrains,c,settings,physics,looked)
-    // How each terrain builds what it wants: the levels of its chunks, then
-    // those along the edges it shares, then each piece.
+    // How each terrain builds what it wants: which chunks are deep, then each piece.
     for &owner,o in resident.owners {
         place:=&resident.places[o]
         entry:=data_find(data,owner.source)
@@ -180,27 +168,28 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
             chunk.wanted.collision=(node.cut || standing) && node.collide
             if int(i)<chunks {source.deep[i]=node.cut && (!stream || node.reach<=DEEP_REACH)}
         }
-        // A Volume has no levels of its own: its nodes show what is far.
         if s.kind!=.Heightfield {continue}
-        // The borders of a node read the chunks along its edges.
+        // The borders of a node read the chunks along its edges: under it, none is deep.
         count:=len(owner.visit)
         for k in 0..<count {
             i:=int(owner.visit[k])
             if i<chunks || !owner.nodes[i].cut {continue}
             a,b:=quad_chunks(q,i)
+            edge :: proc(owner:^Resident_Owner,place:^Lod_Place,source:^Resident_Source,j:int,pass:u32,count:int,stream:bool) {
+                visit_add(owner,place,j,pass,count,stream)
+                if j>=0 {source.deep[j]=false}
+            }
             for x in a.x..<b.x {
-                visit_add(&owner,place,chunk_index(s,{i32(x),0,i32(a.y)}),pass,views.count,stream)
-                visit_add(&owner,place,chunk_index(s,{i32(x),0,i32(b.y-1)}),pass,views.count,stream)
+                edge(&owner,place,source,chunk_index(s,{i32(x),0,i32(a.y)}),pass,views.count,stream)
+                edge(&owner,place,source,chunk_index(s,{i32(x),0,i32(b.y-1)}),pass,views.count,stream)
             }
             for z in a.y..<b.y {
-                visit_add(&owner,place,chunk_index(s,{i32(a.x),0,i32(z)}),pass,views.count,stream)
-                visit_add(&owner,place,chunk_index(s,{i32(b.x-1),0,i32(z)}),pass,views.count,stream)
+                edge(&owner,place,source,chunk_index(s,{i32(a.x),0,i32(z)}),pass,views.count,stream)
+                edge(&owner,place,source,chunk_index(s,{i32(b.x-1),0,i32(z)}),pass,views.count,stream)
             }
         }
         slice.sort(owner.visit[:])
-        heightfield_levels(entry,source,&owner,settings,lod_by_error(entry,settings),lod_base(s,settings),pass,&resident.stack)
     }
-    owners_levels_meet(resident,data)
     visited:=0
     for &owner in resident.owners {visited+=len(owner.visit)}
     resident.stats.visited=u32(visited)
@@ -212,8 +201,6 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
         s:=&entry.source
         q:=&source.quad
         chunks:=q.first[1]
-        base:=lod_base(s,settings)
-        by_error:=lod_by_error(entry,settings)
         border:=resident_border(resident,source)
         for at in owner.visit {
             i:=int(at)
@@ -226,7 +213,7 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
             key.border=0
             if i<chunks {
                 coord:=chunk_coord(s,i)
-                key.lod=chunk_lod_border(&border,source.levels[i],{int(coord.x),int(coord.z)})
+                key.lod=chunk_lod_border(&border,{int(coord.x),int(coord.z)})
                 key.join=join_cut_key(s,source.join.cuts[:],i)
                 if source.join.ground!={} && join_band_chunk(s,i,key.lod.level) {key.join=source.join.hash}
                 if s.kind==.Heightfield {
@@ -234,14 +221,7 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
                     key.join~=edge_key(resident,data,&owner,s,low.xz,high.xz)
                 }
             } else {
-                minimum,maximum:=node_lod_min(s,q,i),node_lod_max(s,q,i)
-                level:=chunk.wanted.lod.level
-                switch {
-                case settings.lod_distance<0: level=minimum
-                case by_error: level=lod_level_error(entry.source.coarse.errors,q,i,minimum,maximum,chunk.pixels,chunk.spacing,s.cell,level)
-                case: level=lod_level(chunk.distance,base,maximum,level)
-                }
-                key.lod=Chunk_Lod{level=clamp(level,minimum,maximum)}
+                key.lod=Chunk_Lod{level=node_lod_min(s,q,i)}
                 // A node of a joined Volume blends the ground under its chunks of the band as they do.
                 key.join=source.join.ground!={}?source.join.hash:0
                 if s.kind==.Heightfield {
@@ -283,48 +263,6 @@ visit_add :: proc(owner:^Resident_Owner,place:^Lod_Place,i:int,pass:u32,count:in
 @(private)
 visit_add_up :: proc(owner:^Resident_Owner,place:^Lod_Place,i:int,pass:u32,count:int,stream:bool) {
     for at:=i;at>=0 && owner.nodes[at].visit!=pass;at=quad_parent(place.q,at) {visit_add(owner,place,at,pass,count,stream)}
-}
-
-// Whether the finest level of node i is too coarse for the view, and its
-// children are finer: it would open for them. The chunks of a streamed
-// Heightfield need their pages: only their residency opens to them. A node of
-// a Volume shows every sample at the levels of its clusters: only a chunk
-// under it opens it.
-@(private)
-node_finer :: proc "contextless" (s:^Source,q:^Quad,i:int,node:^Owner_Node,settings:Terrain_Settings,stream,by_error:bool,base:f32) -> bool {
-    if i<q.first[1] {return false}
-    minimum:=node_lod_min(s,q,i)
-    if !(node_lod_min(s,q,quad_children(q,i)[0])<minimum && (quad_depth(q,i)>1 || !stream)) {return false}
-    switch {
-    case settings.lod_distance<0: return true
-    case by_error:
-        slack:=f32(node.open?1/LOD_HYSTERESIS:1)
-        return lod_error(s.coarse.errors,q,i,int(minimum))*node.pixels>LOD_PIXELS*slack && lod_spacing_level(node.spacing/slack,s.cell)<minimum
-    case minimum>0:
-        reach:=lod_base(s,settings)*f32(u64(1)<<uint(minimum-1))
-        _=base
-        return node.distance<reach/LOD_HYSTERESIS || node.open && node.distance<reach*LOD_HYSTERESIS
-    }
-    return false
-}
-
-// Whether a node under node i may be finer for the view than its own finest
-// level: its error at that level bounded by the largest under i
-// (Lod_Errors.below), its spacing and distance by those of i, which is nearer.
-@(private)
-node_finer_below :: proc "contextless" (s:^Source,q:^Quad,i:int,node:^Owner_Node,settings:Terrain_Settings,stream,by_error:bool) -> bool {
-    child:=quad_children(q,i)[0]
-    if child<q.first[1] || stream && quad_depth(q,child)<=1 {return false}
-    finest:=node_lod_min(s,q,child)
-    switch {
-    case settings.lod_distance<0: return true
-    case by_error:
-        if i>=len(s.coarse.errors) {return true}
-        return s.coarse.errors[i].below*node.pixels*LOD_HYSTERESIS>LOD_PIXELS && lod_spacing_level(node.spacing*LOD_HYSTERESIS,s.cell)<finest
-    case finest>0:
-        return node.distance<lod_base(s,settings)*f32(u64(1)<<uint(finest-1))*LOD_HYSTERESIS
-    }
-    return false
 }
 
 // How far the chunks that take a collider reach, by the kind of their
@@ -419,15 +357,13 @@ collider_reach :: proc(resident:^Terrain_Resident,settings:Terrain_Settings,c:^C
 
 // The walk of an owner from its roots: it goes down where a chunk under a
 // node may be near a viewer or take a collider, where the brush of the editor
-// is, where the view is nearer than the finest level of a node reaches, and
-// below what was open, until it closes.
+// is, everywhere over a Heightfield that does not stream, and below what was
+// open, until it closes.
 @(private)
 owner_walk :: proc(resident:^Terrain_Resident,data:^Terrain_Data,owner:^Resident_Owner,place:^Lod_Place,settings:Terrain_Settings,reach:Collider_Reach,focus:Terrain_Focus,pass:u32,count:int,stream:bool) {
     entry:=data_find(data,owner.source)
     if entry==nil {return}
     s,q:=place.s,place.q
-    base:=lod_base(s,settings)
-    by_error:=lod_by_error(entry,settings)
     kind:=collider_slot(s.kind)
     stack:=&resident.stack
     clear(stack)
@@ -437,10 +373,11 @@ owner_walk :: proc(resident:^Terrain_Resident,data:^Terrain_Data,owner:^Resident
         visit_add(owner,place,i,pass,count,stream)
         if i<q.first[1] {continue}
         node:=&owner.nodes[i]
-        down:=settings.lod_distance<0 || node.open
+        down:=node.open
         switch {
         case down:
         case stream: down=node.reach<=scene.RESIDENT_KEEP
+        case s.kind==.Heightfield: down=true
         case place.solid: down=collider_resident(reach,kind,node.distance,true)
         }
         if !down && focus.radius>0 && focus.source==owner.source {
@@ -448,7 +385,6 @@ owner_walk :: proc(resident:^Terrain_Resident,data:^Terrain_Data,owner:^Resident
             d:=[2]f32{max(low.x-focus.center.x,0,focus.center.x-high.x),max(low.z-focus.center.z,0,focus.center.z-high.z)}
             down=d.x*d.x+d.y*d.y<=focus.radius*focus.radius
         }
-        if !down {down=node_finer(s,q,i,node,settings,stream,by_error,base) || node_finer_below(s,q,i,node,settings,stream,by_error)}
         if down {for child in quad_children(q,i) {if child>=0 {append(stack,u32(child))}}}
     }
 }
@@ -518,7 +454,7 @@ resident_cut :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
         source:=entry!=nil?resident_source_find(resident,owner.source,owner.entity):nil
         if source==nil || len(source.chunks)!=len(entry.dirty) || len(owner.nodes)!=len(source.chunks) {continue}
         for i in owner.visit {source.chunks[i].urgent=false}
-        stream:=resident.lod_distances[2]>0
+        stream:=resident.lod_distances[1]>0
         owner_cut(&owner,source,stream)
         chunks:=owner.quad.first[1]
         roots:=owner.quad.first[owner.quad.depth]
@@ -648,7 +584,6 @@ Lod_Place :: struct {
     chunks:[]Resident_Chunk,
     solid:bool, // its chunks take colliders
     views:[LOD_VIEWS][3]f32,
-    pixels:[LOD_VIEWS]f32,
     scale:f32,
     near:scene.Sources_Near,
     ground:scene.Sources_Near, // the simulation sources, a chunk width their reach
@@ -674,7 +609,6 @@ lod_places :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.Ta
         place.scale=max(linalg.length(placed[0].xyz),linalg.length(placed[1].xyz),linalg.length(placed[2].xyz))
         for view,v in views.items[:views.count] {
             place.views[v]=(inverse*[4]f32{view.position.x,view.position.y,view.position.z,1}).xyz
-            place.pixels[v]=view_pixels(view)
         }
         if stream {place.near=scene.sources_near(sources.ptr,placed,resident_distance)}
         place.ground=scene.sources_near_of(simulated,placed,entry.source.cell*f32(entry.source.chunk_cells)*place.scale)
@@ -684,28 +618,19 @@ lod_places :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.Ta
 }
 
 // What node i of an owner is from its views and viewers: the distance of the
-// nearest view, the pixels and spacing of the view that sees it finest.
+// nearest view.
 @(private)
 node_measure :: proc "contextless" (owner:^Resident_Owner,place:^Lod_Place,i,count:int,stream:bool) {
     node:=&owner.nodes[i]
     s,q:=place.s,place.q
     low,high:=node_box(s,q,s.coarse.ranges,i)
-    nearest,pixels,spacing:=max(f32),f32(0),f32(0)
-    for local,v in place.views[:count] {
-        at:=scene.box_distance(low,high,local)
-        nearest=min(nearest,at)
-        // Errors are in the space of the source, as at.
-        seen:=place.pixels[v]/max(at,1e-3)
-        pixels=max(pixels,seen)
-        // Seen at a grazing angle, its spacing shrinks along the view.
-        spacing=max(spacing,seen*math.sqrt(clamp((local.y-high.y)/max(at,1e-3),LOD_GRAZING,1)))
-    }
+    nearest:=max(f32)
+    for local in place.views[:count] {nearest=min(nearest,scene.box_distance(low,high,local))}
     node.distance=nearest*place.scale
     node.reach=stream?scene.box_near(&place.near,low,high):0
     node.ground=scene.box_near(&place.ground,low,high)
-    node.pixels,node.spacing=pixels,spacing
     chunk:=&place.chunks[i]
-    chunk.distance,chunk.reach,chunk.pixels,chunk.spacing=node.distance,node.reach,node.pixels,node.spacing
+    chunk.distance,chunk.reach=node.distance,node.reach
 }
 
 @(private)
@@ -767,80 +692,11 @@ chunk_box :: proc "contextless" (s:^Source,origin:[3]f32,i:int,heights:[2]f32) -
     return
 }
 
-// A level whose error covers about this many pixels of the view is fine enough.
-LOD_PIXELS :: f32(1)
-// Nor finer than vertices this many pixels apart: detail between the samples
-// a pixel covers does not show, whatever its error.
-LOD_SPACING_PIXELS :: f32(2)
-// The spacing a view at a grazing angle sees shrinks with the square root of
-// the sine of that angle, the mean of its two axes; never below this sine.
-LOD_GRAZING :: f32(0.05)
-// Without a view of its own size: that of 900 pixels high at 60 degrees.
-@(private) LOD_VIEW_PIXELS :: f32(779.4229)
-
-// The pixels of the view a metre one radian away covers: its height over the
-// field of view.
-@(private)
-view_pixels :: proc "contextless" (view:core.View) -> f32 {
-    if view.size.y>0 && view.fov>0 && view.projection==.Perspective {return view.size.y/(2*math.tan(view.fov*0.5))}
-    return LOD_VIEW_PIXELS
-}
-
-// Whether the levels of a source are chosen by the error they show
-// (Terrain_Settings.lod_distance 0, a Heightfield, which measures them).
-@(private)
-lod_by_error :: #force_inline proc "contextless" (entry:^Data_Source,settings:Terrain_Settings) -> bool {
-    return settings.lod_distance==0 && len(entry.source.coarse.errors)==quad_total(&entry.quad)
-}
-
-// The coarsest level of piece i between minimum and maximum whose error
-// covers at most LOD_PIXELS where a metre of it covers pixels; the current
-// one stays while it is within LOD_HYSTERESIS of that.
-@(private)
-lod_level_error :: proc "contextless" (errors:[]Lod_Errors,q:^Quad,i:int,minimum,maximum:u8,pixels,spacing,cell:f32,current:u8) -> u8 {
-    // The coarsest level whose error fits, and that no finer than the spacing, at a slack.
-    choose :: proc "contextless" (errors:[]Lod_Errors,q:^Quad,i:int,minimum,maximum:u8,pixels,spacing,cell,slack:f32) -> u8 {
-        level:=minimum
-        for level<maximum && lod_error(errors,q,i,int(level+1))*pixels<=LOD_PIXELS*slack {level+=1}
-        return max(level,min(lod_spacing_level(spacing/slack,cell),maximum))
-    }
-    level:=choose(errors,q,i,minimum,maximum,pixels,spacing,cell,1)
-    finest,coarsest:=choose(errors,q,i,minimum,maximum,pixels,spacing,cell,1/LOD_HYSTERESIS),choose(errors,q,i,minimum,maximum,pixels,spacing,cell,LOD_HYSTERESIS)
-    if current>=finest && current<=coarsest {level=current}
-    return level
-}
-
-// Makes the chunks of a Heightfield finer until two that touch, across a
-// side or a corner, are one level apart at most: a border sews a chunk only
-// to a neighbor of the next level, whose interior lies near its samples. A
-// Volume needs none: each face of its chunks is built at its neighbor's level.
-// Each level ends as the least of every level plus how many chunks away it
-// is, counting a corner as one: two sweeps, each taking the neighbors it
-// already passed, give it.
-@(private)
-lod_levels_balance :: proc "contextless" (s:^Source,levels:[]u8) {
-    n:=chunk_counts(s)
-    if n.y!=1 || n.x*n.z!=len(levels) {return}
-    w,h:=n.x,n.z
-    take :: #force_inline proc "contextless" (levels:[]u8,w,h,x,z:int,level:^u8) {
-        if x>=0 && z>=0 && x<w && z<h {level^=min(level^,levels[x+w*z]+1)}
-    }
-    for z in 0..<h {for x in 0..<w {
-        level:=&levels[x+w*z]
-        take(levels,w,h,x-1,z,level)
-        for dx in -1..=1 {take(levels,w,h,x+dx,z-1,level)}
-    }}
-    for z:=h-1;z>=0;z-=1 {for x:=w-1;x>=0;x-=1 {
-        level:=&levels[x+w*z]
-        take(levels,w,h,x+1,z,level)
-        for dx in -1..=1 {take(levels,w,h,x+dx,z+1,level)}
-    }}
-}
-
-// The chunks each terrain needs as chunks, whatever the view asks of them:
-// those near its viewers when it streams; otherwise, of a solid terrain,
-// those that take a collider (collider_reach); and those under the brush of
-// the editor. The walk looked at every chunk that may be one.
+// The chunks each terrain needs as chunks: those near its viewers when it
+// streams; otherwise every chunk of a Heightfield, whose nodes come from its
+// coarse grid, and of a solid Volume, whose nodes show every sample, those
+// that take a collider (collider_reach); and those under the brush of the
+// editor. The walk looked at every chunk that may be one.
 @(private)
 resident_needed :: proc(resident:^Terrain_Resident,settings:Terrain_Settings,reach:Collider_Reach,focus:=Terrain_Focus{}) {
     stream:=settings.resident_distance>0
@@ -857,6 +713,7 @@ resident_needed :: proc(resident:^Terrain_Resident,settings:Terrain_Settings,rea
             node:=&owner.nodes[i]
             switch {
             case stream: node.resident=scene.resident(node.reach,node.resident)
+            case s.kind==.Heightfield: node.resident=true
             case: node.resident=place.solid && collider_resident(reach,kind,node.distance,node.resident)
             }
             // The chunks under the brush of the editor.
@@ -866,63 +723,6 @@ resident_needed :: proc(resident:^Terrain_Resident,settings:Terrain_Settings,rea
                 if d.x*d.x+d.y*d.y<=focus.radius*focus.radius {node.resident=true}
             }
         }
-    }
-}
-
-// The level of each chunk of a Heightfield an evaluation looked at: the
-// coarsest its error lets the view see, or by its distance, made finer where
-// it meets a finer neighbor (levels_balance_sparse). A chunk joined to a
-// Volume stays at level 0, where the Volume meets its samples; one with holes
-// takes any level, its material cutting what its triangles span
-// (Surface_Maps.holed), but under a program of the source, which cuts none.
-@(private)
-heightfield_levels :: proc(entry:^Data_Source,source:^Resident_Source,owner:^Resident_Owner,settings:Terrain_Settings,by_error:bool,base:f32,pass:u32,work:^[dynamic]u32) {
-    s:=&entry.source
-    q:=&source.quad
-    for at in owner.visit {
-        i:=int(at)
-        if i>=q.first[1] {break}
-        chunk:=&source.chunks[i]
-        level:=&source.levels[i]
-        next:=u8(0)
-        joined:=source.join.ground!={} && join_side_chunk(s,i) || join_cut_key(s,source.join.cuts[:],i)!=0
-        // A program of the source cuts no holes: its chunks with holes keep them in their triangles.
-        if settings.lod_distance>=0 && !joined && !(s.layers_material!={} && chunk_holed(s,i)) {
-            maximum:=chunk_lod_max(s,chunk_coord(s,i))
-            next=lod_level_error(entry.source.coarse.errors,q,i,0,maximum,chunk.pixels,chunk.spacing,s.cell,level^)
-            // The distance makes a chunk coarser only as far as its error lets it be.
-            if !by_error {
-                distant:=lod_level(chunk.distance,base,maximum,level^)
-                next=len(entry.source.coarse.errors)==quad_total(q)?min(distant,next):distant
-            }
-        }
-        level^=next
-    }
-    levels_balance_sparse(s,owner,source.levels,pass,work)
-}
-
-// As lod_levels_balance, over the chunks the last evaluation looked at: each
-// ends as the least of every level plus how many of those chunks away it is,
-// a corner counting as one. A chunk lowered lowers its neighbors in turn.
-@(private)
-levels_balance_sparse :: proc(s:^Source,owner:^Resident_Owner,levels:[]u8,pass:u32,work:^[dynamic]u32) {
-    n:=chunk_counts(s)
-    if n.y!=1 || n.x*n.z!=len(levels) {return}
-    clear(work)
-    for i in owner.visit {
-        if int(i)>=len(levels) {break}
-        append(work,i)
-    }
-    for len(work)>0 {
-        i:=int(pop(work))
-        x,z:=i%n.x,i/n.x
-        for dz in -1..=1 {for dx in -1..=1 {
-            if dx==0 && dz==0 || x+dx<0 || z+dz<0 || x+dx>=n.x || z+dz>=n.z {continue}
-            j:=x+dx+n.x*(z+dz)
-            if owner.nodes[j].visit!=pass || levels[j]<=levels[i]+1 {continue}
-            levels[j]=levels[i]+1
-            append(work,u32(j))
-        }}
     }
 }
 
@@ -939,13 +739,4 @@ collider_room :: proc(c:^Chunk_Tables,physics:phys.Physics_Settings) -> (room:[2
         if slot:=collider_room_slot(collider.kind);slot>=0 {room[slot]-=1}
     }
     return
-}
-
-// The finest level whose samples, cell apart at level 0, stand LOD_SPACING_PIXELS
-// apart where a metre covers pixels.
-@(private)
-lod_spacing_level :: proc "contextless" (pixels,cell:f32) -> u8 {
-    apart:=cell*pixels
-    if !(apart>0) {return 0}
-    return u8(clamp(math.ceil(math.log2(LOD_SPACING_PIXELS/apart)),0,f32(LOD_ERRORS-1)))
 }

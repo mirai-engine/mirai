@@ -434,7 +434,7 @@ a_brush_reads_the_scale_of_its_terrain_across_and_up :: proc(t:^testing.T) {
     testing.expect(t,abs(real(box.rotation*turned.rotation)-1)<1e-5)
 }
 
-terrain_test_update :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=TERRAIN_TEST_SETTINGS,locals:=core.Ref(camera.Camera_Views){}) {
+terrain_test_update :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=Terrain_Settings{},locals:=core.Ref(camera.Camera_Views){}) {
     // A tick, and those that take what its jobs built: a rebuilt chunk shows in the tick after it changed,
     // and what no simulation source needs at once comes from jobs over the ticks after.
     terrain_test_tick(w,resident,app,time,view,settings,locals)
@@ -455,7 +455,7 @@ piece_depth :: proc(w:^Terrain_Test_World,hit:phys.Hit) -> int {
     return is_piece?int(piece.depth):-1
 }
 
-terrain_test_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=TERRAIN_TEST_SETTINGS,locals:=core.Ref(camera.Camera_Views){}) {
+terrain_test_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=Terrain_Settings{},locals:=core.Ref(camera.Camera_Views){}) {
     if w.settings=={} {w.settings={bodies=64,shapes=64,contacts=64,joints=1,characters=1,hulls=1,meshes=64,heightfields=64}}
     test_step(&w.terrain,core.commands_of(test_world_ref(&w.w)),resident,app,&w.problems,settings,view=view,locals=locals)
     test_world_settle(&w.w)
@@ -552,7 +552,8 @@ terrain_runtime_publishes_only_dirty_chunks_and_copies_play_and_rollback_with_co
     testing.expect_value(t,marker.revision,u32(1))
     testing.expect_value(t,len(w.chunks.values),16)
     testing.expect_value(t,len(w.colliders.values),16)
-    testing.expect_value(t,resident.stats.built,u64(16))
+    // Each built at once without its levels, for its collider, then with them.
+    testing.expect_value(t,resident.stats.built,u64(32))
     testing.expect_value(t,w.data.stats.loads,u64(1))
     before:[16]base.Asset_Id
     for chunk,i in resident.sources[0].chunks[:resident.sources[0].quad.first[1]] {before[i]=chunk.mesh}
@@ -561,7 +562,7 @@ terrain_runtime_publishes_only_dirty_chunks_and_copies_play_and_rollback_with_co
     changed:=0
     for chunk,i in resident.sources[0].chunks[:resident.sources[0].quad.first[1]] {if chunk.mesh!=before[i] {changed+=1}}
     testing.expect_value(t,changed,1)
-    testing.expect_value(t,resident.stats.built,u64(17))
+    testing.expect_value(t,resident.stats.built,u64(34))
     hit,hit_ok:=phys.raycast({&w.state},{4,20,14},{0,-1,0})
     testing.expect(t,hit_ok && abs(hit.point.y-5)<1e-4)
     disk:Source;defer source_destroy(&disk)

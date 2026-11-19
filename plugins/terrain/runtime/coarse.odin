@@ -12,7 +12,7 @@ import "mirai:std/jobs"
 // needs no page: its heights, the weights of its layers and what is painted
 // every COARSE samples and at its last row and column, the share of each of
 // its cells that is holes, and of each piece of its quadtree the heights its
-// samples reach and the errors of its levels. Between the points of the grid
+// samples reach. Between the points of the grid
 // a point takes the bilinear blend of the four around it (coarse_height). The
 // nodes of the quadtree are built from it, and every border whose level
 // reaches COARSE_LEVEL, so that the pieces that share a border build it alike
@@ -30,7 +30,6 @@ Coarse :: struct {
     holes:Grid(u8),      // of each cell, by its lowest point (the last row and column hold none): from 0 none to 255 all holes; none while the source has no holes
     paint:Grid(Paint),   // none while the source has no paint
     ranges:[][2]f32,     // of each piece, chunks first: the lowest and highest of its samples
-    errors:[]Lod_Errors, // of each piece
 }
 
 coarse_count :: #force_inline proc "contextless" (samples:int) -> int {return (samples-1+COARSE-1)/COARSE+1}
@@ -39,7 +38,7 @@ coarse_position :: #force_inline proc "contextless" (i,samples:int) -> int {retu
 @(private)
 coarse_destroy :: proc(c:^Coarse,allocator:runtime.Allocator) {
     grid_destroy(&c.heights,allocator);grid_destroy(&c.weights,allocator);grid_destroy(&c.holes,allocator);grid_destroy(&c.paint,allocator)
-    delete(c.ranges,allocator);delete(c.errors,allocator)
+    delete(c.ranges,allocator)
     c^={}
 }
 
@@ -55,7 +54,7 @@ coarse_copy :: proc(dst,src:^Coarse,allocator:runtime.Allocator) -> bool {
         return true
     }
     if !grid_copy(&dst.heights,&src.heights,allocator) || !grid_copy(&dst.weights,&src.weights,allocator) || !grid_copy(&dst.holes,&src.holes,allocator) || !grid_copy(&dst.paint,&src.paint,allocator) {return false}
-    if !same(&dst.ranges,src.ranges,allocator) || !same(&dst.errors,src.errors,allocator) {return false}
+    if !same(&dst.ranges,src.ranges,allocator) {return false}
     dst.size=src.size
     return true
 }
@@ -63,7 +62,7 @@ coarse_copy :: proc(dst,src:^Coarse,allocator:runtime.Allocator) -> bool {
 // Whether a Heightfield holds its coarse data, read from its file or measured.
 coarse_ready :: proc "contextless" (s:^Source) -> bool {
     q:=quad_of(s)
-    return s.kind==.Heightfield && !grid_none(&s.coarse.heights) && len(s.coarse.errors)==quad_total(&q)
+    return s.kind==.Heightfield && !grid_none(&s.coarse.heights) && len(s.coarse.ranges)==quad_total(&q)
 }
 
 // The tables of the coarse data in a .terrain: the points of the grid, row
@@ -94,9 +93,8 @@ coarse_put :: proc(document:^asset.Document,types:^asset.Types,c:^Coarse) -> ass
     asset.document_column_put(document,types,grid,"holes",holes,{},.Stream) or_return
     asset.document_column_put(document,types,grid,"paint",paint,{},.Stream) or_return
     pieces:=asset.document_table_add(document,PIECES_TABLE) or_return
-    asset.document_resize(document,pieces,len(c.errors)) or_return
+    asset.document_resize(document,pieces,len(c.ranges)) or_return
     asset.document_column_put(document,types,pieces,"ranges",c.ranges,{},.Stream) or_return
-    asset.document_column_put(document,types,pieces,"errors",c.errors,{},.Stream) or_return
     return .None
 }
 
@@ -111,17 +109,12 @@ coarse_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types) -> bool {
     heights,e0:=asset.asset_rows(file,types,COARSE_TABLE,"heights",f32)
     weights,e1:=asset.asset_rows(file,types,COARSE_TABLE,"weights",Weights)
     ranges,e2:=asset.asset_rows(file,types,PIECES_TABLE,"ranges",[2]f32)
-    errors,e3:=asset.asset_rows(file,types,PIECES_TABLE,"errors",Lod_Errors)
     holes,e4:=asset.asset_rows(file,types,COARSE_TABLE,"holes",u8)
     paint,e5:=asset.asset_rows(file,types,COARSE_TABLE,"paint",Paint)
-    if e0!=.None || e1!=.None || e2!=.None || e3!=.None || e4!=.None || e5!=.None {return false}
-    if len(heights)!=size.x*size.y || len(weights)!=len(heights) || len(holes)!=len(heights) || len(paint)!=len(heights) || len(ranges)!=quad_total(&q) || len(errors)!=len(ranges) {return false}
+    if e0!=.None || e1!=.None || e2!=.None || e4!=.None || e5!=.None {return false}
+    if len(heights)!=size.x*size.y || len(weights)!=len(heights) || len(holes)!=len(heights) || len(paint)!=len(heights) || len(ranges)!=quad_total(&q) {return false}
     if !values_within(heights,HEIGHT_LIMIT) || !page_valid(weights,weights_full) {return false}
     for range in ranges {if !(range.x>=-HEIGHT_LIMIT && range.x<=range.y && range.y<=HEIGHT_LIMIT) {return false}}
-    for &e in errors {
-        if !(e.coarse>=0 && e.coarse<=2*HEIGHT_LIMIT) || !(e.below>=0 && e.below<=4*HEIGHT_LIMIT) {return false}
-        for level in e.levels {if !(level>=0 && level<=2*HEIGHT_LIMIT) {return false}}
-    }
     next:=Coarse{size=size}
     ok:=false
     defer if !ok {coarse_destroy(&next,s.allocator)}
@@ -137,7 +130,6 @@ coarse_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types) -> bool {
     }}
     error:runtime.Allocator_Error
     if next.ranges,error=slice.clone(ranges,s.allocator);error!=nil {return false}
-    if next.errors,error=slice.clone(errors,s.allocator);error!=nil {return false}
     coarse_destroy(&s.coarse,s.allocator)
     s.coarse=next
     ok=true
@@ -290,21 +282,9 @@ coarse_page :: proc(g:^Grid($T),i:int,file:string,read:^Page_Reader,scratch:[]T)
     return scratch[:count],{},true
 }
 
-// How far each level of a piece is from the samples it covers, in metres
-// along Y: what decides the level a view sees it at (lod_pixels). Of a
-// chunk, its levels from its samples, and how far they are from the coarse
-// grid; of a node, its levels from the coarse grid and that distance of its chunks.
-LOD_ERRORS :: LOD_LEVELS_MAX+QUAD_DEPTH_MAX+1
-Lod_Errors :: struct {
-    levels:[LOD_ERRORS]f32,
-    coarse:f32,
-    below:f32, // of a node: the largest error a node under it shows at its finest level, what a walk from the roots goes down for (resident_lod)
-}
-
 // Measures the coarse data of a Heightfield from every sample, reading the
 // pages in their blocks by rows of chunks: the grid, and of each chunk the
-// lowest and highest of its samples and the errors of its levels, then those
-// of the nodes. The rows of chunks run in jobs of js when there is one: each
+// lowest and highest of its samples, then those of the nodes. The rows of chunks run in jobs of js when there is one: each
 // reads its own pages and writes its chunks and the lines of the coarse grid
 // in its rows. False, s as it was, when a page cannot be read or without
 // memory.
@@ -320,8 +300,7 @@ source_coarse_build :: proc(s:^Source,js:^jobs.Job_System=nil,worker:=jobs.OWNER
     if !coarse_grid(&next.heights,size,s.allocator) {return false}
     error:runtime.Allocator_Error
     if next.ranges,error=make([][2]f32,quad_total(&q),s.allocator);error!=nil {return false}
-    if next.errors,error=make([]Lod_Errors,quad_total(&q),s.allocator);error!=nil {return false}
-    rows:=Coarse_Rows{s=s,next=&next,ranges=next.ranges[:chunks],errors=next.errors[:chunks],js=js}
+    rows:=Coarse_Rows{s=s,next=&next,ranges=next.ranges[:chunks],js=js}
     count:=chunk_counts(s).z
     if js!=nil && jobs.worker_count(js)>1 && count>1 {jobs.parallel_for(js,worker,count,1,coarse_rows,&rows)} else {coarse_rows(&rows,0,count,worker)}
     if intrinsics.atomic_load(&rows.failed) {return false}
@@ -332,12 +311,10 @@ source_coarse_build :: proc(s:^Source,js:^jobs.Job_System=nil,worker:=jobs.OWNER
     coarse_destroy(&s.coarse,s.allocator)
     s.coarse=next
     ok=true
-    // The nodes from the chunks up: their errors read the coarse grid of s.
     for d in 1..=q.depth {for i in q.first[d]..<q.first[d+1] {
         range:=[2]f32{max(f32),-max(f32)}
         for c in quad_children(&q,i) {if c>=0 {range={min(range.x,s.coarse.ranges[c].x),max(range.y,s.coarse.ranges[c].y)}}}
         s.coarse.ranges[i]=range
-        node_errors_measure(s,&q,s.coarse.errors,i)
     }}
     return true
 }
@@ -347,7 +324,6 @@ Coarse_Rows :: struct {
     s:^Source,
     next:^Coarse,
     ranges:[][2]f32,
-    errors:[]Lod_Errors,
     js:^jobs.Job_System,
     failed:bool, // a page could not be read, or there was no memory
 }
@@ -359,7 +335,6 @@ Coarse_Chunks :: struct {
     view:Sample_View,
     cz:int,
     ranges:[][2]f32,
-    errors:[]Lod_Errors,
 }
 
 @(private)
@@ -378,14 +353,13 @@ coarse_chunks :: proc(row:^Coarse_Chunks,first,last:int,worker:int) {
             for z in low..=high {for x in x_low..=x_high {h:=sample_at(row.view,x,z);range={min(range.x,h),max(range.y,h)}}}
             row.ranges[index]=range
         }
-        if index<len(row.errors) {chunk_errors_measure(s,row.view,{cx,cz},&row.errors[index])}
     }
 }
 
 // Rows first..<last of chunks of source_coarse_build.
 @(private)
 coarse_rows :: proc(rows:^Coarse_Rows,first,last:int,worker:int) {
-    s,next,ranges,errors:=rows.s,rows.next,rows.ranges,rows.errors
+    s,next,ranges:=rows.s,rows.next,rows.ranges
     nx,nz:=int(s.samples.x),int(s.samples.z)
     size:=next.size
     cells:=int(s.chunk_cells)
@@ -417,7 +391,7 @@ coarse_rows :: proc(rows:^Coarse_Rows,first,last:int,worker:int) {
             for i in 0..<size.x {grid_set(&next.heights,i,j,sample(band,nx,b0,coarse_position(i,nx),z))}
         }
         // Its chunks, in jobs too: a row holds many.
-        chunks:=Coarse_Chunks{s=s,view={band=band,nx=nx,b0=b0},cz=cz,ranges=ranges,errors=errors}
+        chunks:=Coarse_Chunks{s=s,view={band=band,nx=nx,b0=b0},cz=cz,ranges=ranges}
         if rows.js!=nil && jobs.worker_count(rows.js)>1 {jobs.parallel_for(rows.js,worker,counts.x,1,coarse_chunks,&chunks)} else {coarse_chunks(&chunks,0,counts.x,worker)}
     }
 }
@@ -584,98 +558,4 @@ Sample_View :: struct {
 sample_at :: #force_inline proc "contextless" (v:Sample_View,x,z:int) -> f32 {
     if v.band!=nil {return v.band[(z-v.b0)*v.nx+x]}
     return grid_get(&v.s.field,x,z)
-}
-
-// The errors of chunk coord of a Heightfield: each level, the bilinear blend
-// of its lines against every sample; and the coarse grid against every sample.
-@(private)
-chunk_errors_measure :: proc(s:^Source,v:Sample_View,coord:[2]int,e:^Lod_Errors) {
-    nx,nz:=int(s.samples.x),int(s.samples.z)
-    cells:=int(s.chunk_cells)
-    low:=coord*cells
-    high:=[2]int{min(low.x+cells,nx-1),min(low.y+cells,nz-1)}
-    e^={}
-    blend :: #force_inline proc "contextless" (v:Sample_View,x0,x1,z0,z1:int,u,w:f32) -> f32 {
-        a,b:=sample_at(v,x0,z0),sample_at(v,x1,z0)
-        c,d:=sample_at(v,x0,z1),sample_at(v,x1,z1)
-        return (a*(1-u)+b*u)*(1-w)+(c*(1-u)+d*u)*w
-    }
-    for level in 1..=int(chunk_lod_max(s,{i32(coord.x),0,i32(coord.y)})) {
-        step:=1<<uint(level)
-        worst:=f32(0)
-        for z in low.y..=high.y {
-            z0:=low.y+(z-low.y)/step*step;z1:=min(z0+step,high.y)
-            w:=z1>z0?f32(z-z0)/f32(z1-z0):0
-            for x in low.x..=high.x {
-                x0:=low.x+(x-low.x)/step*step;x1:=min(x0+step,high.x)
-                u:=x1>x0?f32(x-x0)/f32(x1-x0):0
-                worst=max(worst,abs(sample_at(v,x,z)-blend(v,x0,x1,z0,z1,u,w)))
-            }
-        }
-        e.levels[level]=worst
-    }
-    for z in low.y..=high.y {
-        j,w:=coarse_cell(z,nz)
-        for x in low.x..=high.x {
-            i,u:=coarse_cell(x,nx)
-            e.coarse=max(e.coarse,abs(sample_at(v,x,z)-blend(v,coarse_position(i,nx),coarse_position(i+1,nx),coarse_position(j,nz),coarse_position(j+1,nz),u,w)))
-        }
-    }
-    lod_errors_monotonic(e)
-}
-
-@(private)
-lod_errors_monotonic :: proc "contextless" (e:^Lod_Errors) {
-    for level in 1..<LOD_ERRORS {e.levels[level]=max(e.levels[level],e.levels[level-1])}
-}
-
-// The error of a level of piece i: a node adds how far its chunks are from
-// the coarse grid it is built from.
-lod_error :: #force_inline proc "contextless" (errors:[]Lod_Errors,q:^Quad,i,level:int) -> f32 {
-    if i>=len(errors) {return max(f32)}
-    e:=&errors[i]
-    level:=min(level,LOD_ERRORS-1)
-    return i<q.first[1]?e.levels[level]:e.levels[level]+e.coarse
-}
-
-// The errors of node i of a Heightfield: each level of its lines over the
-// coarse grid against the coarse grid, and how far its chunks are from it.
-// Within an inclusive region of samples (an edit), they only grow there.
-@(private)
-node_errors_measure :: proc(s:^Source,q:^Quad,errors:[]Lod_Errors,i:int,within:=[2][2]int{{min(int),min(int)},{max(int),max(int)}}) {
-    nx,nz:=int(s.samples.x),int(s.samples.z)
-    low,high:=quad_region(s,q,i)
-    whole:=within[0].x==min(int)
-    e:=&errors[i]
-    if whole {e^={}}
-    e.coarse,e.below=0,0
-    for child in quad_children(q,i) {
-        if child<0 {continue}
-        e.coarse=max(e.coarse,errors[child].coarse)
-        if child>=q.first[1] {e.below=max(e.below,errors[child].below,lod_error(errors,q,child,int(node_lod_min(s,q,child))))}
-    }
-    for level in int(node_lod_min(s,q,i))..=min(int(node_lod_max(s,q,i)),LOD_ERRORS-1) {
-        step:=1<<uint(level)
-        worst:=e.levels[level]
-        // The points of the coarse grid in its region alone.
-        for j:=min((low.y+COARSE-1)/COARSE,s.coarse.size.y-1);j<s.coarse.size.y;j+=1 {
-            z:=coarse_position(j,nz)
-            if z>high.y {break}
-            if z<low.y || !whole && (z<within[0].y-step || z>within[1].y+step) {continue}
-            z0:=low.y+(z-low.y)/step*step;z1:=min(z0+step,high.y)
-            w:=z1>z0?f32(z-z0)/f32(z1-z0):0
-            for k:=min((low.x+COARSE-1)/COARSE,s.coarse.size.x-1);k<s.coarse.size.x;k+=1 {
-                x:=coarse_position(k,nx)
-                if x>high.x {break}
-                if x<low.x || !whole && (x<within[0].x-step || x>within[1].x+step) {continue}
-                x0:=low.x+(x-low.x)/step*step;x1:=min(x0+step,high.x)
-                u:=x1>x0?f32(x-x0)/f32(x1-x0):0
-                a,b:=coarse_height(s,x0,z0),coarse_height(s,x1,z0)
-                c,d:=coarse_height(s,x0,z1),coarse_height(s,x1,z1)
-                worst=max(worst,abs(coarse_value(s,k,j)-((a*(1-u)+b*u)*(1-w)+(c*(1-u)+d*u)*w)))
-            }
-        }
-        e.levels[level]=worst
-    }
-    lod_errors_monotonic(e)
 }

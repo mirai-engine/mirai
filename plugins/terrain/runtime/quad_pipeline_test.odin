@@ -32,7 +32,7 @@ quad_viewer :: proc(w:^Terrain_Test_World,position:[3]f32) {
 }
 
 @(private="file")
-quad_settle :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,settings:Terrain_Settings,view:=core.View{},ticks:=32) {
+quad_settle :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,settings:Terrain_Settings,view:=core.View{},ticks:=64) {
     for _ in 0..<ticks {
         quad_tick(w,resident,app,settings,view)
         idle:=!work_busy(&w.data,nil)
@@ -229,7 +229,7 @@ sixty_four_terrains_of_one_source_stream_without_holes_caps_or_allocations :: pr
     settings:=Terrain_Settings{resident_distance=60}
     viewer:=[3]f32{448,0,448}
     quad_viewer(&w,viewer)
-    quad_settle(&w,&resident,&app,settings,ticks=64)
+    quad_settle(&w,&resident,&app,settings,ticks=512)
     testing.expect_value(t,len(w.data.entries),1)
     testing.expect_value(t,len(resident.owners),64)
     pieces,roots:=0,0
@@ -261,49 +261,8 @@ sixty_four_terrains_of_one_source_stream_without_holes_caps_or_allocations :: pr
     }
 }
 
-// A node chosen by its error opens and closes within LOD_HYSTERESIS of its
-// spacing too: wherever the view stops, from near to far, choosing the levels
-// again keeps what was chosen, and a still view builds nothing. Chunks of 63
-// cells, as imported landscapes have, do not line up with the pages.
-@(test)
-a_still_view_builds_nothing_once_settled_at_any_distance_for_chunks_of_odd_cells :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"terrain")
-    id:=base.Asset_Id{333,334}
-    samples:=253
-    {
-        source:Source;testing.expect(t,source_make(&source,.Heightfield,{samples,1,samples},1,63));defer source_destroy(&source)
-        for z in 0..<samples {for x in 0..<samples {testing.expect(t,source_set(&source,{x,0,z},10*math.sin(f32(x)*0.37)*math.cos(f32(z)*0.29)))}}
-        source.revision=1
-        types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-        testing.expect_value(t,source_save(&source,fmt.tprintf("%s/source.terrain",root),id,&types),asset.Error.None)
-    }
-    assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=1024}));defer host.assets_destroy(&assets)
-    app:=host.App{assets=&assets,allocator=context.allocator}
-    w:Terrain_Test_World
-    if !terrain_test_world_init(t,&w) {return}
-    defer terrain_test_world_free(&w)
-    resident:Terrain_Resident;defer terrain_resident_free(&resident)
-    // Without colliders no chunk is needed: the error and the spacing alone open the nodes.
-    core.edit(&w.terrains,quad_owner(&w,id)).solid=false
-    view:=core.VIEW_DEFAULT
-    view.size={1440,900}
-    opened,closed:=false,false
-    for height:=f32(100);height<4000;height*=1.03 {
-        view.position={0,height,0}
-        quad_settle(&w,&resident,&app,{},view)
-        built:=resident.stats.built
-        // Whatever else asks for the levels again, as other pieces arriving do.
-        for _ in 0..<4 {resident.marks+=1;quad_tick(&w,&resident,&app,{},view)}
-        testing.expectf(t,resident.stats.built==built,"%v m above: %d pieces built with the view still",height,resident.stats.built-built)
-        o:=&resident.owners[0]
-        if o.nodes[o.quad.first[1]].open {opened=true} else {closed=true}
-    }
-    testing.expect(t,opened && closed,"the sweep crosses the distance where the nodes close")
-    testing.expect_value(t,w.problems.count,0)
-}
-
-// Choosing what a terrain shows walks its tree from the roots and goes down
-// only where it is near or seen finer: a large terrain seen from above one
+// Choosing what a streamed terrain shows walks its tree from the roots and
+// goes down only where it is near: a large terrain with its viewer at one
 // corner looks at a small part of its nodes, wherever the corner is.
 @(test)
 choosing_the_pieces_of_a_large_terrain_looks_at_what_is_near_not_at_every_node :: proc(t:^testing.T) {
@@ -328,11 +287,13 @@ choosing_the_pieces_of_a_large_terrain_looks_at_what_is_near_not_at_every_node :
     view.size={1440,900}
     nodes:=0
     looked:[2]u32
+    settings:=Terrain_Settings{resident_distance=40}
     for corner,k in ([2][3]f32{{-500,20,-500},{480,20,470}}) {
         view.position=corner
-        quad_settle(&w,&resident,&app,{},view)
+        quad_viewer(&w,corner)
+        quad_settle(&w,&resident,&app,settings,view)
         // Chosen again once what the corner before showed has gone.
-        for _ in 0..<2 {resident.marks+=1;quad_tick(&w,&resident,&app,{},view)}
+        for _ in 0..<2 {resident.marks+=1;quad_tick(&w,&resident,&app,settings,view)}
         looked[k]=resident.stats.visited
         nodes=len(resident.owners[0].nodes)
         holes,overlaps:=quad_coverage(&resident.owners[0])

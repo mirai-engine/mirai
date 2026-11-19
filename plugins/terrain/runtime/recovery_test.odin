@@ -78,8 +78,8 @@ incomplete_terrain_chunks_are_reconstructed_without_ghosts_or_changes_to_authors
         terrain_test_update(&w,&resident,&app)
         testing.expect_value(t,w.data.epoch,epoch)
         testing.expect_value(t,resident.epoch,epoch)
-        // A new author of the source builds its own pieces.
-        testing.expect_value(t,resident.stats.built,damage==.Author?built+4:built)
+        // A new author of the source builds its own pieces, at once without their levels and then with them.
+        testing.expect_value(t,resident.stats.built,damage==.Author?built+8:built)
         testing.expect_value(t,w.data.stats.loads,loads)
         expected:=damage==.Owner?0:damage==.Author?8:4
         testing.expect_value(t,len(w.chunks.values),expected)
