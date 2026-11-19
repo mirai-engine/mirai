@@ -16,6 +16,7 @@ import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
+import "mirai:std/serial"
 import "mirai:store"
 
 // The library of the machine: the packages its store keeps (asset/packages.odin)
@@ -238,20 +239,39 @@ project_refresh :: proc(root:string,options:Library_Options,allocator:=context.a
 // Pins entry in the packages.mirai of the project at root, in place of the
 // entry of the same package, and writes beside it the text of the manifest
 // that s keeps under entry.manifest (asset.package_file). It and
-// project_unpin are the only writers of those files.
+// project_unpin are the only writers of those files. A pin lands whole or
+// leaves the root as it was: a list that does not save puts the manifest's
+// file back.
 project_pin :: proc(root:string,s:^store.Store,entry:asset.Project_Package) -> asset.Error {
     entry:=entry
     list,_,error:=asset.packages_load(root,context.temp_allocator)
     if error!=.None {return error}
-    asset.package_file_save(s,root,&entry) or_return
+    replaced:=false
     for &other in list.packages {
-        if other.id==entry.id {
-            other=entry
-            return asset.packages_save(root,&list)
-        }
+        if other.id!=entry.id {continue}
+        other=entry
+        replaced=true
     }
-    if _,no_room:=append(&list.packages,entry);no_room!=nil {return .Out_Of_Memory}
-    return asset.packages_save(root,&list)
+    if !replaced {
+        if _,no_room:=append(&list.packages,entry);no_room!=nil {return .Out_Of_Memory}
+    }
+    // What refuses the list refuses it before a file changes.
+    asset.packages_text(&list,context.temp_allocator) or_return
+    path:=asset.package_file(root,entry.id)
+    folder:=os.dir(path)
+    had_folder:=os.is_dir(folder)
+    before,read_error:=serial.file_read(path,context.temp_allocator,limit=asset.RECORD_BYTES)
+    if read_error!=.None && read_error!=.Not_Found {return .IO}
+    asset.package_file_save(s,root,&entry) or_return
+    saved:=asset.packages_save(root,&list)
+    if saved==.None {return .None}
+    if read_error==.None {
+        serial.file_write_atomic(path,before)
+    } else {
+        os.remove(path)
+        if !had_folder {os.remove(folder)}
+    }
+    return saved
 }
 
 // Removes the package id from the packages.mirai of the project at root, and
