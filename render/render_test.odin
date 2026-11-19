@@ -487,10 +487,10 @@ render_a_swaying_batch_shades_where_it_is :: proc(t: ^testing.T) {
 	for wide in ([]bool{true, false}) {
 		// Wide: it sways up to 0.6 m, wider than any texel; narrow, it says it
 		// sways a tenth of a millimetre, narrower than every texel, and the maps keep it at rest.
-		mesh, made := deformable_create(r, f.cube, false, 0.6 if wide else 0.0001)
+		mesh, made := deformable_create(r, f.cube)
 		if !testing.expect(t, made) {return}
 		defer mesh_remove(r, mesh)
-		batch, problem := batch_set(r, 0, 0, {mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}}, {batch_instance({0, 1, 0}, 1, {1, 0.2, 1})})
+		batch, problem := batch_set(r, 0, 0, {mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}, sway = 0.6 if wide else 0.0001}, {batch_instance({0, 1, 0}, 1, {1, 0.2, 1})})
 		if !testing.expectf(t, problem == "", "%s", problem) {return}
 		defer batch_remove(r, batch)
 		sway := Sway{mesh = mesh}
@@ -1505,7 +1505,7 @@ render_a_swaying_batch_keeps_its_pages_under_the_bound :: proc(t: ^testing.T) {
 		testing.expect(t, scene_given(r, {floor}, nil, sun, {sky = {0, 0, 0}}))
 		// Near enough that the maps follow what sways (SHADOW_SWAY_REACH).
 		camera := Camera{position = {0, 3, 0.001}, forward = {0, -3, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-		mesh, made := deformable_create(r, f.cube, false, 0.3)
+		mesh, made := deformable_create(r, f.cube)
 		if !testing.expect(t, made) {fixture_destroy(&f); return}
 		// Groups of four posts, the floor between them still: two 2.4 m apart,
 		// or 64 on a grid of 1.2 m.
@@ -1514,7 +1514,7 @@ render_a_swaying_batch_keeps_its_pages_under_the_bound :: proc(t: ^testing.T) {
 			corner := Vec3{f32(g) * 2.4 - 1.6, 0.6, -0.4} if len(groups) == 2 else Vec3{f32(g % 8) * 1.2 - 4.6, 0.6, f32(g / 8) * 1.2 - 4.6}
 			for &instance, k in group {instance = batch_instance(corner + {f32(k % 2) * 0.8, 0, f32(k / 2) * 0.8}, 1, {0.3, 1.2, 0.3})}
 		}
-		desc := Batch_Desc{mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}}
+		desc := Batch_Desc{mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}, sway = 0.3}
 		handles := make([]Batch_Handle, c.batches)
 		problem: string
 		if c.batches == 1 {
@@ -1616,10 +1616,10 @@ render_a_swaying_batch_follows_its_sway_only_near_the_eye :: proc(t: ^testing.T)
 	// From above and behind the slab: its shadow falls 1.2 m towards +z.
 	sun := Sun_Desc{direction = {0, 1, -0.8}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
 	testing.expect(t, scene_given(r, {floor}, nil, sun, {sky = {0, 0, 0}}), r.error)
-	mesh, made := deformable_create(r, f.cube, false, 0.3)
+	mesh, made := deformable_create(r, f.cube)
 	if !testing.expect(t, made) {return}
 	defer mesh_remove(r, mesh)
-	batch, problem := batch_set(r, 0, 0, {mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}}, {batch_instance({0, 1.5, 0}, 1, {1, 0.2, 1})})
+	batch, problem := batch_set(r, 0, 0, {mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}, sway = 0.3}, {batch_instance({0, 1.5, 0}, 1, {1, 0.2, 1})})
 	if !testing.expectf(t, problem == "", "%s", problem) {return}
 	defer batch_remove(r, batch)
 	looking :: proc(at: Vec3) -> Camera {
@@ -1722,7 +1722,7 @@ render_a_swaying_forest_composes_again_only_what_is_near :: proc(t: ^testing.T) 
 	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {600, 0.2, 600}), tint = {0.8, 0.8, 0.8}}
 	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
 	testing.expect(t, scene_given(r, {floor}, nil, sun, {sky = {0, 0, 0}}), r.error)
-	mesh, made := deformable_create(r, f.cube, false, 0.4)
+	mesh, made := deformable_create(r, f.cube)
 	if !testing.expect(t, made) {return}
 	defer mesh_remove(r, mesh)
 	// Posts 3 m tall every 1.5 m over 60 m, a batch for each cell of 7.5 m.
@@ -1736,7 +1736,7 @@ render_a_swaying_forest_composes_again_only_what_is_near :: proc(t: ^testing.T) 
 			post = batch_instance(at, 1, {0.6, 3, 0.6})
 		}
 		problem: string
-		h, problem = batch_set(r, 0, 0, {mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}}, posts[:])
+		h, problem = batch_set(r, 0, 0, {mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}, sway = 0.4}, posts[:])
 		if !testing.expectf(t, problem == "", "%s", problem) {return}
 	}
 	camera := Camera{position = {0, 1.7, 0}, forward = {0, -0.35, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 200, exposure = UNIT_EXPOSURE}

@@ -4,11 +4,11 @@ import "core:testing"
 import "mirai:asset"
 import mm "mirai:std/math"
 
-// A deformable that keeps the levels of its source poses every vertex of
-// its clusters three times (current, previous and rest) after its own copy of
-// them; one without them poses those of level 0 alone and stays there.
+// A deformable poses the vertices of level 0 of its source three times
+// (current, previous and rest) after its own copy of its clusters, and stays
+// at level 0.
 @(test)
-a_deformable_with_levels_keeps_the_levels_of_its_source_in_its_own_vertices :: proc(t: ^testing.T) {
+a_deformable_poses_level_0_of_its_source_in_its_own_vertices :: proc(t: ^testing.T) {
 	r:=new(Renderer);defer free(r)
 	r.allocator = context.allocator
 	scene_init(r)
@@ -35,23 +35,18 @@ a_deformable_with_levels_keeps_the_levels_of_its_source_in_its_own_vertices :: p
 	if !testing.expect(t, added) {return}
 	original := r.scene.meshes[source]
 	testing.expect_value(t, original.level_count, 2)
-	with, made := deformable_create(r, source, true)
+	pose, made := deformable_create(r, source)
 	if !testing.expect(t, made) {return}
-	mesh := r.scene.meshes[with]
-	count := original.vertex_count
-	testing.expect_value(t, mesh.level_count, original.level_count)
-	testing.expect(t, mesh.flags & MESH_FLAG_LEVEL0 == 0 && mesh.vertices_posed == count)
+	mesh := r.scene.meshes[pose]
+	count, _ := level0_vertices(&r.scene, original)
+	testing.expect(t, mesh.flags & MESH_FLAG_LEVEL0 != 0 && mesh.vertices_posed == count && count < original.vertex_count)
 	testing.expect_value(t, mesh.vertex_span, original.vertex_span + 3 * count * POSED_WORDS + original.cluster_count * POSED_BOUNDS_WORDS)
 	testing.expect_value(t, mesh.index_span, original.index_span)
-	written, rest, posed, row, known := deformable_vertices(r, with)
-	testing.expect_value(t, row, u32(with))
+	written, rest, posed, row, known := deformable_vertices(r, pose)
+	testing.expect_value(t, row, u32(pose))
 	testing.expect(t, known && posed == count && written == mesh.posed_word && rest == written + 2 * count * POSED_WORDS)
 	testing.expect_value(t, gpu_mesh(mesh).previous_word, written + count * POSED_WORDS)
-	without, _ := deformable_create(r, source)
-	plain := r.scene.meshes[without]
-	level0, _ := level0_vertices(&r.scene, original)
-	testing.expect(t, plain.flags & MESH_FLAG_LEVEL0 != 0 && plain.vertices_posed == level0 && level0 < count)
-	testing.expect(t, mesh_remove(r, with) && mesh_remove(r, without))
+	testing.expect(t, mesh_remove(r, pose))
 }
 
 // An instance whose material program moves vertices shows a pose of its own

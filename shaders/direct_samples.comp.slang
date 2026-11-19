@@ -152,7 +152,8 @@ float direct_hit(float3 o, float3 w, float reach, uint2 mask) {
             hit.instance = INVALID;
             hit.primitive = INVALID;
             hit.bary = float2(0.0);
-            if (trace_blas(list_mesh[i], transform_point(inverse, o), transform_vector(inverse, w), 0.0, hit, list_ids[i], true, list_tested[i], BLEND_PASSES)) return hit.t;
+            float near = instance_batched(list_ids[i]) ? batch_near(batch_row(batch_of(list_ids[i]))) : 0.0;
+            if (trace_blas(list_mesh[i], transform_point(inverse, o), transform_vector(inverse, w), near, hit, list_ids[i], true, list_tested[i], BLEND_PASSES)) return hit.t;
         }
     }
     return -1.0;

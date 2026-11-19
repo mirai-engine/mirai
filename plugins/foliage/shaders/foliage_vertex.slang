@@ -2,10 +2,11 @@
 // How a vertex of an instance of a batch of foliage moves (params.y 1; the
 // batches of anything else are left alone): bent about the place of its
 // instance, by the red of its vertex color, by the wind where it stands with
-// the phase of the gust wave there, if its batch sways in the hook (params.x,
-// the sway of its type: Batch_Desc.vertex; a type without shadows, which no
-// ray meets swaying), and by the field of trampled foliage, which leans every
+// the phase of the gust wave there, by the sway of its type (params.x:
+// Batch_Desc.vertex), and by the field of trampled foliage, which leans every
 // batch of foliage away from where bodies passed (foliage.Foliage_Trample).
+// The maps of the shadows near the eye place a swaying caster through it too;
+// no ray meets it swaying.
 #include "foliage_sway.slang"
 
 // The lean the field keeps at a plant standing at pivot, radians along x and

@@ -114,20 +114,22 @@ void main(uint3 id : SV_DispatchThreadID) {
     uint thread = id.y * SHADOW_CULL_ROW * MIRAI_GROUP_X + id.x, slot, instance;
     if (!shadow_work_instance(thread, params.moving, slot, instance)) return;
     uint map = slot;
-    float reach = 0.0, cull = 0.0;
+    float cull = 0.0, sway = 0.0;
     if (instance_batched(instance)) {
         Instance row = batch_row(batch_of(instance));
         // The slots after the last instance of a batch fill its last group.
         if (instance - frame.instance_count - batch_first(row) >= batch_count(row)) return;
         if ((batch_classes(row) & RAY_SHADOWS) == 0u) return;
-        reach = batch_reach(row);
         cull = batch_cull(row);
+        sway = batch_sway(row);
     }
     Instance inst = scene_instance(instance);
     if ((inst.meta.w & INSTANCE_FLAG_HIDDEN) != 0u || (inst.meta.x & INSTANCE_UNSHADOWED) != 0u) return;
     // Glass casts no shadow in the maps, nor colors their light.
     if ((inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u) return;
     Shadow_Map whole = shadow_map_at(shadow_data, params.rows, map);
+    // The maps leave the vertex hook out but where a batch sways: its box grows by that sway alone.
+    float reach = sway * instance_scale(inst);
     float3 low = inst.bounds_min.xyz - reach, high = inst.bounds_max.xyz + reach;
     if (!shadow_map_reaches(whole, low, high)) return;
     // Past its cull distance, as the view leaves it out (render.shadow_culled).
@@ -138,14 +140,15 @@ void main(uint3 id : SV_DispatchThreadID) {
         Shadow_Map m = shadow_map_mip(whole, mip);
         float4 texels;
         if (shadow_map_unseen(m, low, high) || !shadow_box_texels(m, low, high, texels) || !shadow_pages_drawn(m, texels)) continue;
-        // A batch of a deformable sways as far as its mesh says (render.batch_sway):
-        // a map past the reach of what sways, or whose texel there is wider than
-        // the sway, draws it at rest and keeps it, as what stays; the others draw
-        // it as it is, and while it sways, as what moves.
+        // A batch that sways sways as far as it says, one of a deformable that
+        // does not say anywhere (render.batch_sway): a map past the reach of
+        // what sways, or whose texel there is wider than the sway, draws it at
+        // rest and keeps it, as what stays; the others draw it as it is, and
+        // while it sways, as what moves.
         bool rest = false, sways = false;
         bool moves = instance_moves(instance);
-        if (instance_batched(instance) && mesh.posed_word != INVALID) {
-            rest = !shadow_map_sways(m, low, high, mesh.sway * instance_scale(inst), params.sway);
+        if (instance_batched(instance) && (sway > 0.0 || mesh.posed_word != INVALID)) {
+            rest = !shadow_map_sways(m, low, high, sway > 0.0 ? reach : FLT_MAX, params.sway);
             moves = moves && !rest;
             sways = moves;
         }

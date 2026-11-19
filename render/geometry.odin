@@ -769,7 +769,6 @@ gpu_mesh :: proc(m: Mesh_Record) -> Gpu_Mesh {
 		part_word = m.part_word, part_layers = m.skin.part_layers if m.skin != nil else 0, flags = m.flags, slab_axes = m.slab_axes,
 		position_step = m.position_step, uv_step = m.uv_step, uv1_step = m.uv1_step, lod_reach = m.lod_reach,
 		bounds_min = {m.bounds_min.x, m.bounds_min.y, m.bounds_min.z, 0}, bounds_max = {m.bounds_max.x, m.bounds_max.y, m.bounds_max.z, 0},
-		sway = m.skin.sway if m.skin != nil && m.skin.sway > 0 else max(f32),
 		draw_first = m.draw_first if m.draw_listed else GPU_NONE,
 		area_word = m.area_word if m.area_word != 0 else GPU_NONE,
 	}

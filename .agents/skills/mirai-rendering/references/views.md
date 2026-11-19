@@ -575,20 +575,16 @@ their handles in a `by_world` storage and removes them in the `release` of its w
 - Each frame in which the shape changes, the extension calls `deformable_update` with its box and
   writes the current vertices in `Geometry`; a shape that stops changing makes one last pass to
   equalize current and previous. A box that does not change marks no light.
-- `sway`, given at creation, bounds how far a vertex moves from its rest. The maps of the shadows
-  whose texel is wider draw a batch of the copy at rest and keep it; finer ones draw it as it is,
-  as a caster that moves while it sways. Without it (0), the copy may be anywhere in its box and
-  every map draws it as it is.
+- A batch of the copy may say how far a vertex moves from its rest (`Batch_Desc.sway`,
+  [what sways](lights.md#what-sways-in-the-maps)); without it the copy may be anywhere in its box.
 - `pass_deformable` gives where, in vertex pool words, the vertices that the extension writes and
   the rest ones it reads are (one `Posed_Vertex` each, which its shader reads and writes with
   `posed.slang`: `posed_load`, `posed_store`), and its row of the mesh table. Vertex `i` is the `i`
   of the mesh's clusters. The rest of a vertex (its color) is in the mesh's pages: the shader
   includes `geometry.slang`, with the pools and the mesh table that `pass_pipeline` binds in
   `Geometry`, and reads it by index (`mesh_vertex_color`).
-- With `levels`, the copy keeps the source's levels of detail: `pass_deformable` counts the vertices
-  of all of them and the extension writes them; the GPU keeps taking its cut and the rays see the
-  first. `vertices_made` counts the times the vertex buffer was created again: what was written was
-  lost and has to be written again.
+- The copy is of level 0 of the source. `vertices_made` counts the times the vertex buffer was
+  created again: what was written was lost and has to be written again.
 
 ## Geometry for extensions
 
