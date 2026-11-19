@@ -59,6 +59,10 @@ Batch_Desc :: struct {
 	sway:           f32,
 	wind:           u32,  // of one of the hook that sways, the wind it sways in
 	object_id:      u64,  // what its instances give as object id
+	// The rotation and scale every instance takes in place of its own, as
+	// given, not packed: a batch of one drawn exactly where a transform of the
+	// world says. Zero: each instance its own.
+	basis:          matrix[3, 3]f32,
 }
 
 // An instance of a batch as the GPU reads it, 24 bytes: where it is, its
@@ -91,6 +95,25 @@ batch_instance_rows :: proc "contextless" (b: Batch_Instance) -> [3]Vec4 {
 		{m[1, 0] * scale.x, m[1, 1] * scale.y, m[1, 2] * scale.z, b.position.y},
 		{m[2, 0] * scale.x, m[2, 1] * scale.y, m[2, 2] * scale.z, b.position.z},
 	}
+}
+
+// The transform of instance b of a batch of desc: its own, or its position
+// with the basis of the batch.
+batch_rows :: proc "contextless" (desc: ^Batch_Desc, b: Batch_Instance) -> [3]Vec4 {
+	rows := batch_instance_rows(b)
+	if desc.basis == {} {return rows}
+	for &row, i in rows {row.xyz = {desc.basis[i, 0], desc.basis[i, 1], desc.basis[i, 2]}}
+	return rows
+}
+
+// The rows of the basis of a batch as its row of the instance table keeps
+// them (batch_basis of scene.slang): w of the first is 1 while it has one.
+@(private)
+batch_basis_rows :: proc "contextless" (desc: ^Batch_Desc) -> (rows: [3]Vec4) {
+	if desc.basis == {} {return}
+	for &row, i in rows {row = {desc.basis[i, 0], desc.basis[i, 1], desc.basis[i, 2], 0}}
+	rows[0].w = 1
+	return
 }
 
 // What an instance of a batch shows of its own (batch_set): a tint, which
@@ -277,7 +300,7 @@ batch_tree_build :: proc(r: ^Renderer, record: ^Batch_Record) {
 	if items_error != nil {set_error(r, "batch tree of %d instances: out of memory", record.count);return}
 	defer delete(items, r.allocator)
 	for &item, k in items {
-		a, z := rows_bounds(batch_instance_rows(batch_instance_at(s, record, u32(k))), mesh.bounds_min, mesh.bounds_max)
+		a, z := rows_bounds(batch_rows(&record.desc, batch_instance_at(s, record, u32(k))), mesh.bounds_min, mesh.bounds_max)
 		item = {a, z}
 	}
 	nodes := make([dynamic]Gpu_Bvh_Node, 0, 0, r.allocator)
@@ -340,6 +363,10 @@ batch_set :: proc(r: ^Renderer, handle: Batch_Handle, world: u64, desc: Batch_De
 		return handle, "batch_set: no ray meets a batch of Rays_Only and no view draws it; give it Casts_Shadow or Ray_Visible, or take Rays_Only out"
 	}
 	for value in desc.vertex {if !finite(value) {return handle, "batch_set: a number of Batch_Desc.vertex is not finite"}}
+	if desc.basis != {} {
+		determinant := linalg.determinant(desc.basis)
+		if !finite(determinant) || abs(determinant) < 1e-12 {return handle, "batch_set: Batch_Desc.basis is not finite or flattens its instances; give a rotation times a scale above 0, or zero for none"}
+	}
 	if !finite(desc.reach) || desc.reach < 0 {return handle, "batch_set: Batch_Desc.reach is negative or not finite; give the metres the vertex hook moves a point at most, or 0"}
 	if !finite(desc.sway) || desc.sway < 0 {return handle, "batch_set: Batch_Desc.sway is negative or not finite; give the metres the vertex hook sways a point at most in its wind, or 0"}
 	for instance, i in instances {
@@ -381,11 +408,12 @@ batch_set :: proc(r: ^Renderer, handle: Batch_Handle, world: u64, desc: Batch_De
 	for given in instances {
 		instance := given
 		instance.position = origin_point(given.position, record.anchor)
-		a, z := rows_bounds(batch_instance_rows(instance), mesh.bounds_min, mesh.bounds_max)
+		rows := batch_rows(&record.desc, instance)
+		a, z := rows_bounds(rows, mesh.bounds_min, mesh.bounds_max)
 		low, high = linalg.min(low, a), linalg.max(high, z)
 		reach := linalg.length(z - a) * 0.5
 		record.reach = max(record.reach, reach)
-		_, scale := batch_instance_unpack(given)
+		scale := Vec3{linalg.length(Vec3{rows[0].x, rows[1].x, rows[2].x}), linalg.length(Vec3{rows[0].y, rows[1].y, rows[2].y}), linalg.length(Vec3{rows[0].z, rows[1].z, rows[2].z})}
 		record.scale = max(record.scale, scale.x, scale.y, scale.z)
 		record.small &&= reach <= SMALL_INSTANCE_REACH
 		words := transmute([BATCH_WORDS]u32)instance
@@ -562,6 +590,7 @@ batches_build :: proc(r: ^Renderer) {
 				{0, 0, 0, bits(classes)},
 			},
 			world_inv = {desc.vertex, {offset.x, offset.y, offset.z, desc.reach}, {bits(record.colors + 1 if record.colored else 0), batch_swayed(b, &record), 0, 0}},
+			prev_world = batch_basis_rows(desc),
 			// Rays meet the instances of a batch in the cut its mesh always has.
 			meta = {u32(desc.mesh) | (u32(ray_cut_always(s.meshes[desc.mesh])) << INSTANCE_RAY_SHIFT if int(desc.mesh) < len(s.meshes) else 0), material, u32(desc.object_id), flags},
 			bounds_min = low,
@@ -642,8 +671,9 @@ Gpu_Tlas_Batch :: struct {
 	words, first, custom, blas, mask_flags: u32,
 	pad:                                    [3]u32,
 	anchor:                                 Vec4,
+	basis:                                  [3]Vec4, // batch_basis_rows
 }
-#assert(size_of(Gpu_Tlas_Batch) == 48)
+#assert(size_of(Gpu_Tlas_Batch) == 96)
 @(private)
 Tlas_Batches_Params :: struct {jobs, first, total, pad: u32}
 
@@ -678,6 +708,7 @@ tlas_instances_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> int {
 		rows[k] = {
 			words = record.words, first = at, custom = first + hw.slot, blas = rhi.accel_id(d, s.meshes[record.desc.mesh].rays[ray_cut_always(s.meshes[record.desc.mesh])].blas),
 			mask_flags = tlas_mask_flags(hw.mask, hw.tested, s.meshes[record.desc.mesh].tested), anchor = {offset.x, offset.y, offset.z, 0},
+			basis = batch_basis_rows(&record.desc),
 		}
 		at += record.count
 	}
@@ -741,7 +772,7 @@ batch_ray :: proc(r: ^Renderer, world: u64, origin, direction: Vec3, max_distanc
 		if t, crossed := mm.ray_aabb_fast(origin, inverse, {record.bounds_min, record.bounds_max}, nearest); !crossed || t > nearest {continue}
 		mesh := s.meshes[record.desc.mesh]
 		for k in 0 ..< record.count {
-			rows := batch_instance_rows(batch_instance_at(s, &record, k))
+			rows := batch_rows(&record.desc, batch_instance_at(s, &record, k))
 			low, high := rows_bounds(rows, mesh.bounds_min, mesh.bounds_max)
 			if t, crossed := mm.ray_aabb_fast(origin, inverse, {low, high}, nearest); !crossed || t > nearest {continue}
 			m := Mat4{rows[0].x, rows[0].y, rows[0].z, rows[0].w, rows[1].x, rows[1].y, rows[1].z, rows[1].w, rows[2].x, rows[2].y, rows[2].z, rows[2].w, 0, 0, 0, 1}

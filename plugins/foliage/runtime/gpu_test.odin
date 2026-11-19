@@ -755,3 +755,55 @@ a_mesh_entity_that_sways_is_drawn_once_as_it_stands_and_casts_its_swaying_shadow
 	testing.expect(t, batches == 0 && !core.has(&w.elsewhere, e), "without the component its own mesh draws it again")
 	testing.expect_value(t, problems.count, 0)
 }
+
+// A world that runs a copy of the edited one (Play) draws the swaying
+// entities it copied with their Drawn_Elsewhere, each once; what it destroys
+// takes its batch, what it spawns gets one, and freeing it leaves only the
+// batches of the edited world, one for each swaying entity there is.
+@(test)
+a_world_copied_for_play_draws_its_swaying_entities_once_and_leaves_nothing :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f) {return}
+	defer gpu_fixture_destroy(f)
+	defer sways_free(&f.resident)
+	w: Sway_World
+	if !test_world_init(t, &w) {return}
+	defer test_world_destroy(&w)
+	problems := new(core.Problems)
+	defer free(problems)
+	sway_add :: proc(w: ^Sway_World, x: f32) -> core.Entity {
+		e := core.create(&w.entities)
+		place := mm.TRANSFORM_IDENTITY
+		place.position.x = x
+		core.add(&w.meshes, e, render.Mesh_Renderer{shape = .Cube, shadows = true})
+		core.add(&w.worlds, e, core.World_Transform{place, place})
+		core.add(&w.sways, e, FOLIAGE_SWAY_DEFAULT)
+		test_world_settle(w)
+		return e
+	}
+	count :: proc(f: ^Gpu_Fixture) -> int {batches, _ := gpu.batch_count(&f.renderer);return batches}
+	tree, bush := sway_add(&w, 0), sway_add(&w, 3)
+	sway_step(f, &w, problems)
+	testing.expect_value(t, count(f), 2)
+	play := new(Foliage_Resident)
+	defer free(play)
+	play.app, play.world = &f.app, {index = 2}
+	step :: proc(f: ^Gpu_Fixture, w: ^Sway_World, r: ^Foliage_Resident, problems: ^core.Problems) {
+		foliage_sway_render(r, core.read(&w.sways), core.read(&w.meshes), core.read(&w.values), core.read(&w.worlds), core.read(&w.hidden), core.read(&w.parents), core.read(&w.layers), core.read(&w.elsewhere), core.read(&w.highlights), core.read(&w.outlines), core.commands(w, test_world_info(w)), r.world, &f.app, problems)
+		test_world_settle(w)
+	}
+	step(f, &w, play, problems)
+	testing.expectf(t, count(f) == 4 && len(play.sways.entities) == 2, "the copy draws both it copied with their Drawn_Elsewhere: %d batches", count(f))
+	core.destroy(&w.entities, bush)
+	test_world_settle(&w)
+	flower := sway_add(&w, 6)
+	step(f, &w, play, problems)
+	testing.expectf(t, len(play.sways.entities) == 2 && core.entity_map_get(&play.sways, bush) == nil && core.entity_map_get(&play.sways, flower) != nil, "the copy drops what it destroyed and draws what it spawned")
+	testing.expect(t, core.has(&w.elsewhere, flower) && core.has(&w.elsewhere, tree))
+	app := f.app
+	foliage_release(play, &app)
+	sway_step(f, &w, problems)
+	testing.expectf(t, count(f) == 2 && len(f.resident.sways.entities) == 2, "freed, the copy leaves the batches of the edited world alone, one each: %d", count(f))
+	testing.expect_value(t, problems.count, 0)
+}
