@@ -293,7 +293,9 @@ instances.
   [vertex hook](views.md#extension-hooks-and-constants)), `reach` (the most that hook moves a
   point, in meters: the boxes of its instances and clusters with which the views clip grow by
   that), `sway` and `wind` (how far it sways in the maps near the eye and the wind that sways it,
-  [what sways](lights.md#what-sways-in-the-maps)) and `object_id`. `batches_wind` says how much of
+  [what sways](lights.md#what-sways-in-the-maps)), `object_id` and `basis` (a rotation and scale
+  every instance takes whole in place of its packed one, kept in the row of the batch: a batch of
+  one is drawn, traced and picked exactly where a transform of the world says). `batches_wind` says how much of
   its sway each wind gives now; a pixel the hook moved is lit from where it rests
   ([what sways](lights.md#what-sways-in-the-maps)). `engine/render.batch_desc` builds
   it from a `Mesh_Renderer`. The material rows it derives (fade, override) live as long as the
@@ -351,8 +353,8 @@ instances.
   instances of the batches; those that are only drawn cost nothing there.
 - Tests: `mirai test render` with `batch_test.odin` (CPU), `batch_bench_test.odin`
   (`-define:BATCH_BENCHMARK=true`) and, on GPU,
-  `a_batch_casts_the_shadows_and_shows_in_the_reflections_of_its_instances`
-  (`batch_trace_test.odin`), which compares a batch with the same scene instances with each
+  `a_batch_casts_the_shadows_and_shows_in_the_reflections_of_its_instances` and
+  `a_batch_with_a_basis_is_drawn_where_its_transform_says` (`batch_trace_test.odin`), which compares a batch with the same scene instances with each
   tracer.
 
 ## Meshes and textures one at a time
