@@ -211,14 +211,58 @@ nav_erode :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid) -> Nav_Build_Status {
             }
         }
     }
+    // The chamfer leaves 0 on a boundary, 2 or 3 one step or one diagonal of
+    // its steps away and at least 4 further: a radius of one cell removes the
+    // boundary, one of two cells also the spans one step from it.
+    if g.radius==1 {
+        for d,i in s.dist {if d==0 {s.area[i]=NAV_AREA_BLOCKED}}
+        return .Built
+    }
+    if g.radius==2 {
+        for z in 0..<side {
+            for x in 0..<side {
+                first:=int(s.cells[x+z*side])
+                for i in first..<int(s.cells[x+z*side+1]) {
+                    if s.dist[i]==0 {nav_block_next_to(s,side,x,z,i-first)}
+                }
+            }
+        }
+        return .Built
+    }
     nav_chamfer(s,g,s.dist[:])
     threshold:=int(g.radius)*2
     for d,i in s.dist {if int(d)<threshold {s.area[i]=NAV_AREA_BLOCKED}}
     return .Built
 }
 
+// Blocks span k of column (x, z) and the spans from which a step of
+// nav_chamfer reaches it: those linked to it along a direction, and those
+// linked to one of them along the direction after.
+@(private)
+nav_block_next_to :: #force_inline proc "contextless" (s:^Nav_Build_Scratch,side,x,z,k:int) {
+    s.area[int(s.cells[x+z*side])+k]=NAV_AREA_BLOCKED
+    if k>=NAV_NOT_CONNECTED {return}
+    for turn in 0..<4 {
+        ax,az:=x-nav_dx(turn),z-nav_dz(turn)
+        if ax<0 || az<0 || ax>=side || az>=side {continue}
+        a_first:=int(s.cells[ax+az*side])
+        for a in a_first..<int(s.cells[ax+az*side+1]) {
+            if nav_con(s.compact[a],turn)!=k {continue}
+            s.area[a]=NAV_AREA_BLOCKED
+            if a-a_first>=NAV_NOT_CONNECTED {continue}
+            dir:=(turn+1)&3
+            bx,bz:=ax-nav_dx(dir),az-nav_dz(dir)
+            if bx<0 || bz<0 || bx>=side || bz>=side {continue}
+            for i in int(s.cells[bx+bz*side])..<int(s.cells[bx+bz*side+1]) {
+                if nav_con(s.compact[i],dir)==a-a_first {s.area[i]=NAV_AREA_BLOCKED}
+            }
+        }
+    }
+}
+
 // Marks the area of each volume on the spans whose column center lies inside
 // it and whose floor lies between its heights, in order: later volumes win.
+// Each row of columns is filled between pairs of the crossings of its edges.
 @(private)
 nav_mark_volumes :: proc "contextless" (s:^Nav_Build_Scratch,g:^Nav_Grid,volumes:[]Nav_Area_Volume) {
     side:=i64(g.side)
@@ -241,31 +285,57 @@ nav_mark_volumes :: proc "contextless" (s:^Nav_Build_Scratch,g:^Nav_Grid,volumes
         z0:=nav_floor(f64(low.y)/f64(g.cs)-f64(g.corner.y),-1,side)
         z1:=nav_floor(f64(high.y)/f64(g.cs)-f64(g.corner.y),-1,side)
         if x1<0 || z1<0 || x0>=side || z0>=side {continue}
+        x0,x1=max(x0,0),min(x1,side-1)
         bottom:=nav_floor(f64(volume.min_y)/f64(g.ch)-g.base,-1,NAV_SPAN_MAX+1)
         top:=nav_floor(f64(volume.max_y)/f64(g.ch)-g.base,-1,NAV_SPAN_MAX+1)
+        crossings:[NAV_AREA_POINTS]f32
         for z in max(z0,0)..=min(z1,side-1) {
-            for x in max(x0,0)..=min(x1,side-1) {
-                c:=int(x+z*side)
-                if s.cells[c]==s.cells[c+1] {continue}
-                center:=[2]f32{(f32(g.corner.x+i32(x))+0.5)*g.cs,(f32(g.corner.y+i32(z))+0.5)*g.cs}
-                if !nav_point_in_polygon(points[:count],center) {continue}
-                for i in int(s.cells[c])..<int(s.cells[c+1]) {
-                    y:=i64(s.compact[i].y)
-                    if s.area[i]!=NAV_AREA_BLOCKED && y>=bottom && y<=top {s.area[i]=volume.area}
+            n:=nav_row_crossings(points[:count],(f32(g.corner.y+i32(z))+0.5)*g.cs,&crossings)
+            for k:=0;k+1<n;k+=2 {
+                first:=nav_first_column(g,crossings[k],x0,x1)
+                end:=nav_first_column(g,crossings[k+1],first,x1)
+                for x in first..<end {
+                    c:=int(x+z*side)
+                    for i in int(s.cells[c])..<int(s.cells[c+1]) {
+                        y:=i64(s.compact[i].y)
+                        if s.area[i]!=NAV_AREA_BLOCKED && y>=bottom && y<=top {s.area[i]=volume.area}
+                    }
                 }
             }
         }
     }
 }
 
+// The x at which the edges of the polygon cross the row z = row, in order. A
+// point of the row lies inside (by the even-odd rule) when an odd number of
+// crossings are at or before its x. An edge crosses when its ends lie on
+// either side of the row, a row through a vertex counting it above, and its x
+// is computed the same for every point of the row; one that is no number
+// counts as before every point.
 @(private)
-nav_point_in_polygon :: proc "contextless" (points:[][2]f32,p:[2]f32) -> bool {
-    inside:=false
+nav_row_crossings :: proc "contextless" (points:[][2]f32,row:f32,crossings:^[NAV_AREA_POINTS]f32) -> int {
+    n:=0
     j:=len(points)-1
     for i in 0..<len(points) {
         a,b:=points[i],points[j]
-        if (a.y>p.y)!=(b.y>p.y) && p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x {inside=!inside}
         j=i
+        if (a.y>row)==(b.y>row) {continue}
+        x:=(b.x-a.x)*(row-a.y)/(b.y-a.y)+a.x
+        if x!=x {x=-max(f32)}
+        k:=n
+        for ;k>0 && crossings[k-1]>x;k-=1 {crossings[k]=crossings[k-1]}
+        crossings[k]=x
+        n+=1
     }
-    return inside
+    return n
+}
+
+// The first column in [low, high] whose center is at or after x, high+1 when none.
+@(private)
+nav_first_column :: #force_inline proc "contextless" (g:^Nav_Grid,x:f32,low,high:i64) -> i64 {
+    center :: #force_inline proc "contextless" (g:^Nav_Grid,column:i64) -> f32 {return (f32(g.corner.x+i32(column))+0.5)*g.cs}
+    column:=nav_ceil(f64(x)/f64(g.cs)-f64(g.corner.x)-0.5,low,high+1)
+    for column>low && center(g,column-1)>=x {column-=1}
+    for column<=high && center(g,column)<x {column+=1}
+    return column
 }

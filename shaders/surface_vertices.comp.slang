@@ -61,7 +61,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     Mesh mesh = meshes[params.mesh];
     Cluster c = mesh_cluster(mesh, group.x);
     Instance inst = instances[params.instance];
-    uint row = material_of(inst, cluster_material(mesh, c));
+    uint row = material_of(params.instance, inst, cluster_material(mesh, c));
     if (materials[row].shared.program_id != params.program) return;
     bool posed = params.input != INVALID;
     float4 parameters[16];

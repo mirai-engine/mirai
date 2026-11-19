@@ -31,20 +31,23 @@ import "mirai:store"
 // options given; ingesting again without options gives the same assets, and
 // a source whose package is current is not imported again, unless --rebuild.
 // --rdo-lambda 0 encodes the blocks of textures for the least error and a
-// higher lambda for smaller files. An image ingested for the first time
-// without --srgb, --data or --normal holds what its name says (image_use).
-// Only models and images have settings.
+// higher lambda for smaller files. A document the import writes over in the
+// project that changed since it last wrote it stops the import, which names
+// it, unless --discard-changes; a refresh leaves it as it is and warns. An
+// image ingested for the first time without --srgb, --data or --normal holds
+// what its name says (image_use). Only models and images have settings.
 // --refresh <root>, once per project or plugin, instead brings every package
 // its packages.mirai pins to a build this engine reads (project_refresh): what
 // a checkout needs before it runs. It removes nothing and builds only from a
 // source on this machine; a package nothing here gives is a failure that names
-// it. --fast builds textures Fast, as the editor imports them, unless the
-// texture cache keeps them Final, and takes a Fast build: what a build that
-// does not cook takes. --from <folder> names a second store a build this
-// store lacks is copied from before it is built (cache.store_source), as a
-// peer gives it; an installed engine takes the store of the builds of its
-// plugins (project.ENGINE_STORE) unless another is given. The store is that
-// of the machine, or the one at --store.
+// it. Textures are built Fast, as the editor imports them, unless the texture
+// cache keeps them Final, and a Fast build is taken; --final builds them Final
+// and takes only a Final build: what a build that cooks and the package of the
+// engine take. --from <folder> names a second store a build this store lacks
+// is copied from before it is built (cache.store_source), as a peer gives it;
+// an installed engine takes the store of the builds of its plugins
+// (project.ENGINE_STORE) unless another is given. The store is that of the
+// machine, or the one at --store.
 // The report goes to output, one asset per line: id, kind, bytes and path, and
 // under it, indented, what the asset holds; then the package and the
 // warnings. How far a long import is goes to errors while it runs, and a
@@ -57,14 +60,14 @@ import "mirai:store"
 // Exit codes: 0 done, 1 failed, 2 misuse.
 
 @(private="file")
-IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--project <root>] [--folder <folder>] [--rebuild] [--fast] [--store <folder>] [--profile] [--release] | mirai import --refresh <root> [--refresh <root>...] [--fast] [--store <folder>] [--from <folder>] [--release]"
+IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--project <root>] [--folder <folder>] [--rebuild] [--discard-changes] [--final] [--store <folder>] [--profile] [--release] | mirai import --refresh <root> [--refresh <root>...] [--final] [--store <folder>] [--from <folder>] [--release]"
 
 // library reads the formats and the importers of whole sources the plugins of
 // a project add and the types of its game (in the import program of the
 // engine, editor.import_library).
 command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> int {
     file:string
-    options:importer.Import_Options
+    options:=importer.Import_Options{fast_textures=true}
     roots:=make([dynamic]string,context.temp_allocator) // of --refresh
     root:string   // of --project
     folder:string // of --folder
@@ -119,7 +122,8 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
         case "--from": from_root,ok=value(args,&at)
         case "--profile": profiled=true
         case "--rebuild": options.rebuild=true
-        case "--fast": options.fast_textures=true
+        case "--discard-changes": options.changed=.Discard
+        case "--final": options.fast_textures=false
         case "--uncompressed": given.textures=.Uncompressed;changed+={.Textures}
         case "--blocks": given.textures=.Blocks;changed+={.Textures}
         case "--srgb","--normal","--normal-green-down","--data":
@@ -193,10 +197,10 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
         }
         options.store=&kept
     }
-    library_options:=Library_Options{store=options.store,fast_textures=options.fast_textures,rebuild=options.rebuild,plugins=library,worker=options.worker}
+    library_options:=Library_Options{store=options.store,fast_textures=options.fast_textures,rebuild=options.rebuild,changed=options.changed,plugins=library,worker=options.worker}
     if options.store==nil {fmt.wprintln(errors,"mirai import: this machine has no folder of user data for its store: pass one with --store");return 1}
     if len(roots)>0 {
-        if file!="" || root!="" || foldered || changed!={} {fmt.wprintln(errors,IMPORT_USAGE);return 2}
+        if file!="" || root!="" || foldered || changed!={} || options.changed!=.Refuse {fmt.wprintln(errors,IMPORT_USAGE);return 2}
         if from_root=="" {
             if engine:=project.engine_root_find("",context.temp_allocator);project.engine_installed(engine) {
                 if bundled:=project.path(engine,project.ENGINE_STORE,allocator=context.temp_allocator);os.is_dir(bundled) {from_root=bundled}

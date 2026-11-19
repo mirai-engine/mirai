@@ -1,6 +1,7 @@
 package ai
 
 import "base:runtime"
+import cmath "core:math"
 import "core:mem"
 import "core:slice"
 import "core:testing"
@@ -573,7 +574,7 @@ invalid_configs_and_inputs_are_rejected :: proc(t:^testing.T) {
     testing.expect_value(t,nav_build_tile(test_config(),{},input,&scratch,&data),Nav_Build_Status.Invalid)
     input.triangle_areas={1,NAV_AREA_MAX+1}
     testing.expect_value(t,nav_build_tile(test_config(),{},input,&scratch,&data),Nav_Build_Status.Invalid)
-    volumes:=[1]Nav_Area_Volume{{count=9,area=1}}
+    volumes:=[1]Nav_Area_Volume{{count=NAV_AREA_POINTS+1,area=1}}
     input=test_input(&m,volumes[:])
     testing.expect_value(t,nav_build_tile(test_config(),{},input,&scratch,&data),Nav_Build_Status.Invalid)
     volumes[0]={count=4,area=NAV_AREA_MAX+1}
@@ -730,7 +731,7 @@ a_tile_built_again_from_its_field_is_the_one_its_triangles_give :: proc(t:^testi
     testing.expect(t,!cloned)
     nav_tile_field_free(&zero)
     nav_tile_field_free(nil)
-    bad:=[?]Nav_Area_Volume{{count=9}}
+    bad:=[?]Nav_Area_Volume{{count=NAV_AREA_POINTS+1}}
     testing.expect_value(t,nav_build_tile_again(config,{},&field,bad[:],&scratch,&out),Nav_Build_Status.Invalid)
     forge :: proc(t:^testing.T,config:Nav_Build_Config,field:^Nav_Tile_Field,scratch:^Nav_Build_Scratch,what:string,change:proc(f:^Nav_Tile_Field)) {
         forged,ok:=nav_tile_field_clone(field)
@@ -780,4 +781,246 @@ a_tile_built_again_from_its_field_is_the_one_its_triangles_give :: proc(t:^testi
         nav_tile_data_free(&out)
         nav_tile_field_free(&damaged)
     }
+}
+
+// What the volumes and the erosion did before they went by rows and by
+// neighbors: a test of each column center against the polygon, and the
+// chamfer distance for every radius.
+@(private="file")
+test_point_in_polygon :: proc(points:[][2]f32,p:[2]f32) -> bool {
+    inside:=false
+    j:=len(points)-1
+    for i in 0..<len(points) {
+        a,b:=points[i],points[j]
+        if (a.y>p.y)!=(b.y>p.y) && p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x {inside=!inside}
+        j=i
+    }
+    return inside
+}
+
+@(private="file")
+test_mark_volumes :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid,volumes:[]Nav_Area_Volume,area:[]u8) {
+    side:=i64(g.side)
+    for volume in volumes {
+        count:=min(int(volume.count),NAV_AREA_POINTS)
+        if count<3 || !nav_finite(volume.min_y) || !nav_finite(volume.max_y) {continue}
+        points:[NAV_AREA_POINTS][2]f32
+        low,high:=[2]f32{max(f32),max(f32)},[2]f32{-max(f32),-max(f32)}
+        finite:=true
+        for k in 0..<count {
+            p:=volume.points[k]-g.origin
+            if !nav_finite(p.x) || !nav_finite(p.y) {finite=false;break}
+            points[k]=p
+            low={min(low.x,p.x),min(low.y,p.y)}
+            high={max(high.x,p.x),max(high.y,p.y)}
+        }
+        if !finite {continue}
+        x0:=nav_floor(f64(low.x)/f64(g.cs)-f64(g.corner.x),-1,side)
+        x1:=nav_floor(f64(high.x)/f64(g.cs)-f64(g.corner.x),-1,side)
+        z0:=nav_floor(f64(low.y)/f64(g.cs)-f64(g.corner.y),-1,side)
+        z1:=nav_floor(f64(high.y)/f64(g.cs)-f64(g.corner.y),-1,side)
+        if x1<0 || z1<0 || x0>=side || z0>=side {continue}
+        bottom:=nav_floor(f64(volume.min_y)/f64(g.ch)-g.base,-1,NAV_SPAN_MAX+1)
+        top:=nav_floor(f64(volume.max_y)/f64(g.ch)-g.base,-1,NAV_SPAN_MAX+1)
+        for z in max(z0,0)..=min(z1,side-1) {
+            for x in max(x0,0)..=min(x1,side-1) {
+                c:=int(x+z*side)
+                center:=[2]f32{(f32(g.corner.x+i32(x))+0.5)*g.cs,(f32(g.corner.y+i32(z))+0.5)*g.cs}
+                if !test_point_in_polygon(points[:count],center) {continue}
+                for i in int(s.cells[c])..<int(s.cells[c+1]) {
+                    y:=i64(s.compact[i].y)
+                    if area[i]!=NAV_AREA_BLOCKED && y>=bottom && y<=top {area[i]=volume.area}
+                }
+            }
+        }
+    }
+}
+
+@(private="file")
+test_erode :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid,area:[]u8,dist:[]u16) {
+    if g.radius<=0 {return}
+    side:=int(g.side)
+    for z in 0..<side {
+        for x in 0..<side {
+            for i in int(s.cells[x+z*side])..<int(s.cells[x+z*side+1]) {
+                dist[i]=0
+                if area[i]==NAV_AREA_BLOCKED {continue}
+                walkable:=0
+                for dir in 0..<4 {
+                    con:=nav_con(s.compact[i],dir)
+                    if con!=NAV_NOT_CONNECTED && area[nav_neighbor(s,side,x,z,dir,con)]!=NAV_AREA_BLOCKED {walkable+=1}
+                }
+                if walkable==4 {dist[i]=0xffff}
+            }
+        }
+    }
+    nav_chamfer(s,g,dist)
+    for d,i in dist {if int(d)<int(g.radius)*2 {area[i]=NAV_AREA_BLOCKED}}
+}
+
+// The volumes mark, and the radius erodes, the spans the test of each column
+// center and the chamfer distance give: over random grounds of one to three
+// floors with steps, boxes and holes, for radii of 0 to 5 cells, with
+// volumes convex, concave, crossing themselves, flat, of one point, through
+// the centers of the cells, partly or wholly out of the tile, whose edges
+// overflow, with heights between floors, upside down or not finite, and with
+// points that are no number.
+@(test)
+volumes_and_erosion_give_what_each_column_and_the_distance_give :: proc(t:^testing.T) {
+    nan:=transmute(f32)u32(0x7fc00000)
+    inf:=transmute(f32)u32(0x7f800000)
+    rng:=math.rng_make(31)
+    scratch:Nav_Build_Scratch
+    nav_build_scratch_init(&scratch)
+    defer nav_build_scratch_destroy(&scratch)
+    expected,marked_areas:[dynamic]u8
+    defer {delete(expected);delete(marked_areas)}
+    dist:[dynamic]u16
+    defer delete(dist)
+    volumes:[dynamic]Nav_Area_Volume
+    defer delete(volumes)
+    radii:[6]int
+    layered,marked:=0,0
+    sizes:=[?]f32{0.15,0.25,0.125,0.3,0.5}
+    for round in 0..<48 {
+        config:=test_config()
+        config.tile_size=i32(math.random_int(&rng,6,40))
+        config.cell_size=sizes[round%len(sizes)]
+        config.cell_height=0.1
+        config.agent_radius=config.cell_size*f32(round%6)
+        config.agent_height=1
+        config.agent_climb=0.3
+        config.origin={f32(math.random_int(&rng,-50,50)),0,f32(math.random_int(&rng,-50,50))*0.5}
+        coord:=[2]i32{i32(math.random_int(&rng,-2,3)),i32(math.random_int(&rng,-2,3))}
+        rect:=math.aabb_expand(nav_tile_rect(config,coord),nav_build_margin(config))
+        low,size:=[2]f32{rect.min.x,rect.min.z},[2]f32{rect.max.x-rect.min.x,rect.max.z-rect.min.z}
+        m:Test_Mesh
+        defer test_mesh_destroy(&m)
+        // A ground of steps, some higher than a climb, with holes; boxes; floors over it.
+        STEPS :: 8
+        for z in 0..<STEPS {
+            for x in 0..<STEPS {
+                if math.random_int(&rng,0,12)==0 {continue}
+                a:=low+{f32(x),f32(z)}*size/STEPS
+                b:=a+size/STEPS
+                test_plane(&m,a.x,a.y,b.x,b.y,f32(math.random_int(&rng,0,4))*0.2)
+            }
+        }
+        for _ in 0..<math.random_int(&rng,0,6) {
+            p:=low+{math.random_f32(&rng),math.random_f32(&rng)}*size
+            test_box(&m,{p.x,0,p.y},{p.x+math.random_range(&rng,0.2,1.5),math.random_range(&rng,0.1,2),p.y+math.random_range(&rng,0.2,1.5)})
+        }
+        for k in 0..<math.random_int(&rng,0,3) {
+            z:=low.y+math.random_f32(&rng)*size.y
+            test_plane(&m,low.x-1,z,low.x+size.x+1,z+math.random_range(&rng,0.5,size.y),1.6+f32(k)*1.4)
+        }
+        data:Nav_Tile_Data
+        field:Nav_Tile_Field
+        status:=nav_build_tile(config,coord,test_input(&m),&scratch,&data,field=&field)
+        nav_tile_data_free(&data)
+        defer nav_tile_field_free(&field)
+        if status!=.Built || len(field.spans)==0 {continue}
+        g,ok:=nav_build_grid(config,coord)
+        if !testing.expect(t,ok) {continue}
+        g.base=field.base
+        s:=&scratch
+        nav_resize(&s.cells,len(field.cells))
+        nav_resize(&s.compact,len(field.spans))
+        nav_resize(&s.area,len(field.areas))
+        copy(s.cells[:],field.cells)
+        copy(s.compact[:],field.spans)
+        nav_link_compact(s,&g)
+        if len(field.spans)>len(field.cells)-1 {layered+=1}
+        resize(&expected,len(field.areas))
+        resize(&dist,len(field.areas))
+        // The center of a cell of the grid in world space, for corners on it.
+        center :: proc(g:^Nav_Grid,x,z:int) -> [2]f32 {
+            return g.origin+{(f32(g.corner.x+i32(x))+0.5)*g.cs,(f32(g.corner.y+i32(z))+0.5)*g.cs}
+        }
+        clear(&volumes)
+        side:=int(g.side)
+        for k in 0..<40 {
+            v:Nav_Area_Volume
+            count:=math.random_int(&rng,3,NAV_AREA_POINTS+1) if k%5==0 else math.random_int(&rng,3,9)
+            mid:=low+{math.random_range(&rng,-0.3,1.3),math.random_range(&rng,-0.3,1.3)}*size
+            reach:=math.random_range(&rng,0.1,1)*size.x
+            switch k%10 {
+            case 0,1: // convex, either way round
+                turn:=f32(1 if k%2==0 else -1)
+                for p in 0..<count {
+                    a:=turn*f32(p)/f32(count)*2*math.PI
+                    v.points[p]=mid+{cmath.cos(a)*reach,cmath.sin(a)*reach*0.6}
+                }
+            case 2: // concave: a star
+                for p in 0..<count {
+                    a:=f32(p)/f32(count)*2*math.PI
+                    r:=reach*(1 if p%2==0 else 0.3)
+                    v.points[p]=mid+{cmath.cos(a)*r,cmath.sin(a)*r}
+                }
+            case 3: // crossing itself
+                for p in 0..<count {v.points[p]=mid+{math.random_range(&rng,-1,1),math.random_range(&rng,-1,1)}*reach}
+            case 4: // flat: on a line, along a row or a column, or one point
+                d:=[2]f32{math.random_range(&rng,-1,1),math.random_range(&rng,-1,1)}
+                if k/10==0 {d.y=0} else if k/10==1 {d.x=0}
+                for p in 0..<count {v.points[p]=mid+d*reach*f32(p%3) if k/10!=3 else mid}
+            case 5,6: // corners on the centers of the cells: rows and columns through vertices
+                x,z:=math.random_int(&rng,-2,side+2),math.random_int(&rng,-2,side+2)
+                for p in 0..<count {
+                    v.points[p]=center(&g,x+math.random_int(&rng,-6,7),z+math.random_int(&rng,-6,7)) if p%2==0 else center(&g,x,z+math.random_int(&rng,-6,7))
+                }
+            case 7: // over all of the tile and much further
+                for p in 0..<count {
+                    a:=f32(p)/f32(count)*2*math.PI
+                    v.points[p]=mid+{cmath.cos(a),cmath.sin(a)}*size.x*4
+                }
+            case 8: // edges whose differences overflow
+                for p in 0..<count {
+                    v.points[p]={max(f32)*math.random_range(&rng,-1,1),mid.y+math.random_range(&rng,-1,1)*reach}
+                    if p%3==0 {v.points[p]={mid.x+math.random_range(&rng,-1,1)*reach,max(f32)*math.random_range(&rng,-1,1)}}
+                }
+            case 9: // what is no number, or too few points, or more than there are
+                for p in 0..<count {v.points[p]=mid+{math.random_range(&rng,-1,1),math.random_range(&rng,-1,1)}*reach}
+                switch k/10 {
+                case 0: v.points[math.random_int(&rng,0,count)].x=nan
+                case 1: count=math.random_int(&rng,0,3)
+                case 2: count=255
+                case 3: v.points[0].y=inf
+                }
+            }
+            v.count=u8(count)
+            v.area=u8(math.random_int(&rng,0,int(NAV_AREA_MAX)+1))
+            v.min_y=math.random_range(&rng,-1,2)
+            v.max_y=v.min_y+math.random_range(&rng,-0.5,3)
+            switch math.random_int(&rng,0,12) {
+            case 0: v.min_y=nan
+            case 1: v.max_y=-inf
+            case 2: v.min_y,v.max_y=-max(f32),max(f32)
+            }
+            append(&volumes,v)
+        }
+        // Each volume alone, then all of them in order.
+        for k in 0..=len(volumes) {
+            set:=volumes[k:k+1] if k<len(volumes) else volumes[:]
+            copy(s.area[:],field.areas)
+            copy(expected[:],field.areas)
+            nav_mark_volumes(s,&g,set)
+            test_mark_volumes(s,&g,set,expected[:])
+            if !testing.expectf(t,slice.equal(s.area[:],expected[:]),"round %d, volume %d: the rows mark other spans than the centers",round,k) {return}
+            if !slice.equal(s.area[:],field.areas) {marked+=1}
+        }
+        resize(&marked_areas,len(s.area))
+        copy(marked_areas[:],s.area[:])
+        for radius in 0..<6 {
+            g.radius=i32(radius)
+            copy(s.area[:],marked_areas[:])
+            copy(expected[:],marked_areas[:])
+            testing.expect_value(t,nav_erode(s,&g),Nav_Build_Status.Built)
+            test_erode(s,&g,expected[:],dist[:])
+            if !testing.expectf(t,slice.equal(s.area[:],expected[:]),"round %d, radius %d: the erosion removes other spans than the distance",round,radius) {return}
+            if !slice.equal(s.area[:],marked_areas[:]) {radii[radius]+=1}
+        }
+    }
+    // The rounds reached what they are for.
+    testing.expectf(t,layered>0 && marked>100,"%d rounds with floors over each other, %d marks that changed spans",layered,marked)
+    for n,radius in radii[1:] {testing.expectf(t,n>0,"no round eroded with a radius of %d",radius+1)}
 }

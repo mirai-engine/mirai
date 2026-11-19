@@ -1,6 +1,7 @@
 #ifndef MIRAI_MATERIAL_CONTRACT
 #define MIRAI_MATERIAL_CONTRACT
 #include "origin.slang"
+#include "mirai_dual.slang"
 // Shared authoring contract: programs never own render passes or native handles.
 struct Mirai_Surface_Context {
     float3 world_position; // relative to the origin of the render, which follows the eye far from the centre of the world
@@ -76,8 +77,8 @@ float3 mirai_object_scale(Mirai_Surface_Context ctx) { return float3(length(ctx.
 // A vertex of what shows a Surface program that moves vertices (`//! vertex`),
 // as its function vertex receives it: where the vertex is at rest, or as its
 // skin poses it, in the space of the object, with what the mesh gives it, and
-// the object in the world as Mirai_Surface_Context has it. time and
-// previous_time are 0 unless the program says `//! vertex animated`.
+// the object in the world as Mirai_Surface_Context has it. A function that
+// reads the time moves the vertices again every frame.
 struct Mirai_Vertex_Context {
     float3 position;
     float3 normal;        // unit
@@ -195,8 +196,16 @@ struct Mirai_Outline {
     float depth; // distance along the view of the outlined surface
     bool behind; // another surface is in front of it
 };
+// The place of the point with how far it moves to the next pixel along x
+// and along y (in a ray, across the width of its cone): position_dx and
+// position_dy as a dual (mirai_dual.slang).
+Mirai_Dual3 mirai_world_position(Mirai_Surface_Context ctx) { return mirai_dual(ctx.world_position, ctx.position_dx, ctx.position_dy); }
 #ifdef MIRAI_MATERIAL_REFLECTION
 Mirai_Surface mirai_surface_default(Mirai_Surface_Context ctx) {Mirai_Surface s=(Mirai_Surface)0;s.normal=ctx.normal;return s;}
+Mirai_Dual2 mirai_uv0(Mirai_Surface_Context ctx) {return mirai_dual(ctx.uv0);}
+Mirai_Dual2 mirai_uv1(Mirai_Surface_Context ctx) {return mirai_dual(ctx.uv1);}
+Mirai_Dual3 mirai_vertex_normal(Mirai_Surface_Context ctx) {return mirai_dual(ctx.vertex_normal);}
+float4 mirai_sample_texture(Mirai_Surface_Context ctx, uint index, Mirai_Dual2 uv) {return float4(1);}
 Mirai_Surface mirai_surface_standard(Mirai_Surface_Context ctx) {return mirai_surface_default(ctx);}
 float4 mirai_sample_texture(Mirai_Surface_Context ctx, uint index, float2 uv, float lod) {return float4(1);}
 float4 mirai_sample_texture(Mirai_PostProcess_Context ctx, uint index, float2 uv, float lod) {return float4(1);}
@@ -204,11 +213,28 @@ float4 mirai_sample_texture_level(uint index, float2 uv, float level) {return fl
 float4 mirai_sample_texture_grad(uint index, float2 uv, float2 dx, float2 dy) {return float4(1);}
 float4 mirai_sample_texture_projected(Mirai_Surface_Context ctx, uint index, float3 u, float3 v, float metres) {return float4(1);}
 float2 mirai_texture_size(uint index) {return float2(1);}
+float4 mirai_load_texture(uint index, int2 texel) {return float4(1);}
 float4 mirai_scene_color(Mirai_PostProcess_Context ctx, float2 uv) {return ctx.color;}
 float mirai_scene_depth(Mirai_PostProcess_Context ctx, float2 uv) {return ctx.depth;}
 float3 mirai_scene_normal(Mirai_PostProcess_Context ctx, float2 uv) {return ctx.normal;}
 Mirai_Outline mirai_outline(Mirai_PostProcess_Context ctx, float2 uv) {return (Mirai_Outline)0;}
 #else
+// The uv of the mesh at the point (of its first and its second set) and its
+// interpolated normal, facing as ctx.vertex_normal does, with how much each
+// changes to the next pixel along x and along y: exact in raster; in a ray,
+// as wide as its cone, the same along both. What a program computes from
+// them through the arithmetic of mirai_dual.slang carries its derivatives.
+Mirai_Dual2 mirai_uv0(Mirai_Surface_Context ctx);
+Mirai_Dual2 mirai_uv1(Mirai_Surface_Context ctx);
+Mirai_Dual3 mirai_vertex_normal(Mirai_Surface_Context ctx);
+// A texture at a uv with its derivatives, filtered by them with the bias of
+// the view (in a ray, by the widest of them): it takes no derivative across
+// the pixels of a quad and samples the same in any branch. A program that
+// samples only so, or by mirai_sample_texture_projected, _level or _grad, and
+// takes no ddx, ddy or fwidth of its own, is resolved once per pixel.
+float4 mirai_sample_texture(Mirai_Surface_Context ctx, uint index, Mirai_Dual2 uv);
+// A texture at a plain uv: filtered by the derivatives of uv across the
+// pixels of a quad, lod a bias (in a ray, the level of the footprint).
 float4 mirai_sample_texture(Mirai_Surface_Context ctx, uint index, float2 uv, float lod);
 float4 mirai_sample_texture(Mirai_PostProcess_Context ctx, uint index, float2 uv, float lod);
 float4 mirai_sample_texture_level(uint index, float2 uv, float level);
@@ -220,6 +246,9 @@ float4 mirai_sample_texture_projected(Mirai_Surface_Context ctx, uint index, flo
 // The texels of a texture across and down at its finest resident level: the
 // whole texture, since a program keeps every level of its textures.
 float2 mirai_texture_size(uint index);
+// A texel of the level 0 of a texture that does not stream, as a plugin writes
+// its data (a map of weights, a table), unfiltered: no residency follows it.
+float4 mirai_load_texture(uint index, int2 texel);
 // What an effect reads at any uv of the image, 0 to 1 from the top left
 // corner, as ctx holds it for its own pixel.
 float4 mirai_scene_color(Mirai_PostProcess_Context ctx, float2 uv);

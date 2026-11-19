@@ -32,7 +32,7 @@ import "mirai:std/serial"
 // Names what the generator produces from a given source and compiler. It is
 // part of every fingerprint: raise it when the outputs change for a reason the
 // fingerprints do not see (another flag is already seen, as are the tools).
-GENERATOR_CONTRACT :: "mirai-shaders/7"
+GENERATOR_CONTRACT :: "mirai-shaders/8"
 
 // The folders of the engine every stage includes, under its root: the shaders
 // of the renderer and those engine/render gives the plugins that extend it.
@@ -77,8 +77,13 @@ SLANG_OPTIMIZATION :: []string{
     "--merge-blocks","--simplify-instructions","--compact-ids",
     "-X.",
 }
+// A stage no backend takes the code of is compiled only to be reflected
+// (reflected_only): Slang reflects the source, which no pass of spirv-opt changes.
 @(private)
-SPIRV_FLAGS :: []string{"-target","spirv","-profile","sm_6_5","-fvk-use-scalar-layout","-capability","spirv_1_5"}
+SLANG_REFLECTION :: []string{"-O0"}
+@(private)
+// Demote to helper: a fragment stage asks whether it is a helper of its quad (IsHelperLane).
+SPIRV_FLAGS :: []string{"-target","spirv","-profile","sm_6_5","-fvk-use-scalar-layout","-capability","spirv_1_5+spvDemoteToHelperInvocationEXT"}
 @(private)
 VALIDATE_FLAGS :: []string{"--target-env","vulkan1.2","--scalar-block-layout"}
 // Numeric names avoid Metal keywords such as the DDGI resource ray_data.
@@ -110,7 +115,7 @@ Options :: struct {
     cache:   string, // the stamp of the last generation into output; "": .mirai/shader-cache of the project, or of the engine without one
     odin:    bool,   // also compile the shaders of the RHI tests and write the Odin tables of render and rhi; never for a project
     ship:    bool,   // with odin: the code render embeds is encoded for an executable to ship, which takes longer (EMBED_SHIP)
-    workers: int,    // compilations at once; 0: one per logical processor
+    workers: int,    // the most compilations at once, each when the memory has room for it; 0: one per logical processor
     tools:   [Tool]string, // "": looked up with tool_find
     backends:Backends, // {}: HOST_BACKEND, the one this system runs
     first:   []string, // stages compiled before the others, by their names in the manifest ("thumbnail.frag"), with those of each program of them
@@ -118,7 +123,12 @@ Options :: struct {
     idle:    []string, // stages compiled after the others, by their names in the manifest: those whose code the one who loads the generation does not run now
     active_output:string, // "": none. Once every stage but the idle ones compiles, a generation that loads alone is written there: the catalog and those stages of this one, the idle ones as the output has them. Not without an idle stage
     progress:^Progress, // nil: none. One for each generation
+    uses:    []Program_Uses_Of, // what the assets draw Surface programs as (build.program_uses), besides what their sources declare
+    every:   abi.Program_Uses,  // uses of every Surface program: the tests of a package draw theirs every way
 }
+
+// What a Surface program is drawn as by the assets of a project.
+Program_Uses_Of :: struct {program:string,uses:abi.Program_Uses}
 
 // What the thread that started a generation follows of it, and how it stops it.
 Progress :: struct {
@@ -153,10 +163,13 @@ Result :: struct {
     slowest:[SLOWEST]Stage_Time, // the stages that took longest to compile, longest first; seconds 0 past the last
     reflection:f64,      // seconds the reflection of the programs took
     compiling:f64,       // seconds the stages compiled took, added up
+    cpu:     f64,        // seconds of processor time of every compiler and tool the generation ran
+    stages_cpu:f64,      // of that, of Slang compiling the stages
+    at_once: int,        // the most compilations that ran at once
 }
 
 // What a stage took to compile, in seconds.
-Stage_Time :: struct {name:string,seconds:f64}
+Stage_Time :: struct {name:string,seconds,cpu:f64} // cpu: of Slang compiling it
 SLOWEST :: 8
 
 result_destroy :: proc(result:^Result,allocator:=context.allocator) {
@@ -198,13 +211,16 @@ Generation :: struct {
     identity:     string, // of what its engine stages share with the engine (engine_interface), as the manifest names it
     catalog:      string, // its fingerprint
     vfx:          []string, // the Vfx programs: a stage marked `//! per vfx program` is compiled once for each
-    surface:      []string, // the Surface programs: a stage marked `//! per surface program` is compiled once for each
+    surface:      []string, // the Surface programs: a stage marked `//! per surface program <uses>` is compiled for each built for one of those uses
+    surface_uses: []abi.Program_Uses, // by surface: what each is built for
     vertex:       []string, // those of them with a function vertex: a stage marked `//! per vertex program` is compiled once for each
     staging:      string,
     warnings:     strings.Builder,
     layouts:      []Shared_Layout, // of the structs shaders share with the CPU, from the probe
     copies:       []Base,          // the folders of programs staged under include/programs (path), by the folder they copy (label)
     warnings_lock:sync.Mutex,
+    peaks:        map[string]i64, // what the compilations held at their peak the last time, by key (peaks_read)
+    ledger:       string, // the compilations that run in every process (CACHE_LEDGER)
 }
 
 @(private)
@@ -228,7 +244,10 @@ Job :: struct {
     has_engine:bool,
     result:   Shader,
     reused:   bool,
-    seconds:  f64, // what compiling it took
+    seconds:  f64, // what compiling it took, without waiting for memory
+    turn:     int, // its place in order, from 1: of the compilations that wait for memory, the earliest goes first
+    waited:   time.Duration, // what it waited for memory
+    cpu:      time.Duration, // the processor time Slang took to compile it
     error:    string,
     diagnostics:[]Diagnostic,
 }
@@ -469,6 +488,37 @@ metal_normalize :: proc(source:string,allocator:=context.allocator) -> []u8 {
     return builder.buf[:]
 }
 
+// The compilations of the reflection of the programs share one peak.
+@(private)
+PROGRAMS_KEY :: "programs"
+
+// What a compilation of the generation is charged, and where its peak is kept.
+@(private)
+compilation_memory :: proc(g:^Generation,key:string,allocator:=context.temp_allocator,job:^Job=nil) -> Memory {
+    memory:=Memory{charge=charge_of(g.peaks,key),ledger=g.ledger,record=peak_path(g.shared,key,allocator)}
+    if job!=nil {memory.turn,memory.waited,memory.cpu=job.turn,&job.waited,&job.cpu}
+    return memory
+}
+
+// Whether the generation takes no code of a stage of these backends: its
+// SPIR-V serves only to reflect it (Metal and a stage of the rays traced by
+// software). It is compiled without the optimizer (SLANG_REFLECTION), so what
+// it leaves in the shared cache, its entry and its peak, is kept apart
+// (REFLECTED) from what a compilation that gives code leaves.
+@(private)
+reflected_only :: proc(backends:Backends) -> bool {return backends=={}}
+
+// What the shared cache adds to the name of what a stage compiled only to be
+// reflected leaves in it.
+@(private)
+REFLECTED :: ".reflected"
+
+// The key of the peak of the compilation of a job.
+@(private)
+job_key :: proc(job:^Job) -> string {
+    return strings.concatenate({job.name,REFLECTED},context.temp_allocator) if reflected_only(job.backends) else job.name
+}
+
 @(private)
 job_fail :: proc(job:^Job,allocator:runtime.Allocator,format:string,args:..any) {
     job.error=fmt.aprintf(format,..args,allocator=allocator)
@@ -534,14 +584,18 @@ job_run :: proc(g:^Generation,job:^Job,allocator:runtime.Allocator) {
         command:=make([dynamic]string,context.temp_allocator)
         append(&command,g.tools[.Slangc],job.source)
         append(&command,..SLANG_FLAGS)
-        if job.reduced {append(&command,"-O1")} else {append(&command,..SLANG_OPTIMIZATION)}
+        switch {
+        case reflected_only(job.backends): append(&command,..SLANG_REFLECTION)
+        case job.reduced: append(&command,"-O1")
+        case: append(&command,..SLANG_OPTIMIZATION)
+        }
         append(&command,SLANG_DIAGNOSTICS_FLAG)
         append(&command,"-stage",stage)
         for directory in job.includes {append(&command,"-I",directory)}
         for define in job.defines {append(&command,strings.concatenate({"-D",define},context.temp_allocator))}
         append(&command,..SPIRV_FLAGS)
         append(&command,"-o",output,"-reflection-json",reflection)
-        said,compiled:=tool_run(g.runner,command[:],context.temp_allocator)
+        said,compiled:=slang_run(g.runner,command[:],context.temp_allocator,compilation_memory(g,job_key(job),job=job))
         diagnostics:=slang_diagnostics(said,context.temp_allocator)
         diagnostics_place(diagnostics,g.copies,{g.project,g.root},context.temp_allocator)
         if !compiled {
@@ -716,16 +770,17 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
         // generation): it is that of the materials without a program, unless the source
         // says it has none (`//! per surface program only`). One per vertex program is compiled
         // only for the Surface programs with a function vertex, with their include.
-        Of :: struct {name,folder:string}
-        per_surface:=strings.contains(text,"//! per surface program")
+        // A stage of a Surface program is compiled for those built for one of the uses its variant serves.
+        Of :: struct {name,folder:string,uses:abi.Program_Uses}
+        per_surface,surface_only,surface_problem:=surface_stage_marked(text)
         per_vertex:=strings.contains(text,"//! per vertex program")
-        only:=per_vertex || strings.contains(text,"//! per surface program only")
+        only:=per_vertex || surface_only
         programs:=make([dynamic]Of,context.temp_allocator)
-        if collected!=.Programs && !only {append(&programs,Of{"",""})}
+        if collected!=.Programs && !only {append(&programs,Of{"","",{}})}
         if collected!=.Plain {
-            if strings.contains(text,"//! per vfx program") {for name in g.vfx {append(&programs,Of{name,VFX_FOLDER})}}
-            if per_surface {for name in g.surface {append(&programs,Of{name,SURFACE_FOLDER})}}
-            if per_vertex {for name in g.vertex {append(&programs,Of{name,SURFACE_FOLDER})}}
+            if strings.contains(text,"//! per vfx program") {for name in g.vfx {append(&programs,Of{name,VFX_FOLDER,{}})}}
+            if per_surface {for name,i in g.surface {append(&programs,Of{name,SURFACE_FOLDER,g.surface_uses[i]})}}
+            if per_vertex {for name in g.vertex {append(&programs,Of{name,SURFACE_FOLDER,{}})}}
         }
         declared:=constants(text,allocator)
         problem:=constants_problem(declared,allocator)
@@ -736,6 +791,7 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
             constant_defines[id]=fmt.aprintf("%s="+CONSTANT_SYMBOL,constant.define,id,allocator=allocator)
         }
         for program in programs do for variant in variants(text,allocator) {
+            if per_surface && program.folder==SURFACE_FOLDER && surface_problem=="" && surface_variant_uses(text,variant.name)&program.uses=={} {continue}
             named:=stem if program.name=="" else fmt.tprintf("%s__%s",stem,program.name)
             name:=fmt.aprintf("%s%s%s%s",named,"_" if variant.name!="" else "",variant.name,suffixes[stage],allocator=allocator)
             itself:=name if program.name=="" else fmt.aprintf("%s%s%s%s",stem,"_" if variant.name!="" else "",variant.name,suffixes[stage],allocator=allocator)
@@ -752,6 +808,7 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
             job:=Job{source=source,name=name,stage=itself,defines=defines[:],constants=constant_names,includes=includes,bases=g.bases,out=out,staging=staging,reduced=shader_reduced(name),backends=g.backends}
             if software_rays(text,variant) {job.backends-={.Metal}}
             if problem!="" {job.error=fmt.aprintf("%s: %s",name,problem,allocator=allocator)}
+            if surface_problem!="" {job.error=fmt.aprintf("%s: %s",name,surface_problem,allocator=allocator)}
             for &built in engine {
                 if built.name!=name {continue}
                 // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
@@ -768,6 +825,75 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
         }
     }
     return first,len(jobs)-first
+}
+
+// The words of the `//! per surface program` line of a source, after it.
+@(private)
+surface_stage_words :: proc(text:string) -> (words:[]string,marked:bool) {
+    MARK :: "//! per surface program"
+    rest:=text
+    for line in strings.split_lines_iterator(&rest) {
+        if !strings.has_prefix(line,MARK) {continue}
+        return strings.fields(line[len(MARK):],context.temp_allocator),true
+    }
+    return
+}
+
+// Whether a source is compiled for each Surface program built for one of its
+// uses (`//! per surface program [only] <use|variant=use>...`); only: it has
+// no stage of its own. problem: why the line cannot be compiled.
+@(private)
+surface_stage_marked :: proc(text:string) -> (marked,only:bool,problem:string) {
+    words:[]string
+    if words,marked=surface_stage_words(text);!marked {return}
+    names:=abi.PROGRAM_USE_NAMES
+    named:=false
+    for word in words {
+        if word=="only" {only=true;continue}
+        use:=word[strings.index_byte(word,'=')+1:]
+        if _,known:=abi.program_use_named(use);!known {
+            return marked,only,fmt.tprintf("`//! per surface program` names %s, which is no use: the uses are %s",use,strings.join(slice.enumerated_array(&names),", ",context.temp_allocator))
+        }
+        named=true
+    }
+    if !named {problem=fmt.tprintf("`//! per surface program` names none of the uses it serves (%s): a program is compiled only for those",strings.join(slice.enumerated_array(&names),", ",context.temp_allocator))}
+    return
+}
+
+// The uses a variant of a source marked `//! per surface program` serves:
+// those its line names as <variant>=<use>, or else those it names alone.
+@(private)
+surface_variant_uses :: proc(text,variant:string) -> abi.Program_Uses {
+    words,_:=surface_stage_words(text)
+    plain,own:abi.Program_Uses
+    for word in words {
+        equals:=strings.index_byte(word,'=')
+        use,known:=abi.program_use_named(word[equals+1:])
+        if !known {continue}
+        if equals<0 {plain+={use}} else if word[:equals]==variant {own+={use}}
+    }
+    return own if own!={} else plain
+}
+
+// The stages of these folders compiled for each Surface program built for
+// one of their uses, by name without a program, with the uses each serves.
+@(private)
+surface_stages :: proc(files:^Sources,folders:[]string,allocator:runtime.Allocator) -> []abi.Surface_Stage {
+    found:=make([dynamic]abi.Surface_Stage,allocator)
+    suffixes:=STAGE_SUFFIXES
+    for folder in folders {
+        for source in sources_in(files,folder,".slang",context.temp_allocator) {
+            stem,stage,is_stage:=stage_of(path_name(source))
+            if !is_stage {continue}
+            text:=string(sources_file(files,source).data)
+            if marked,_,problem:=surface_stage_marked(text);!marked || problem!="" {continue}
+            for variant in variants(text,context.temp_allocator) {
+                name:=fmt.aprintf("%s%s%s%s",stem,"_" if variant.name!="" else "",variant.name,suffixes[stage],allocator=allocator)
+                append(&found,abi.Surface_Stage{name,surface_variant_uses(text,variant.name)})
+            }
+        }
+    }
+    return found[:]
 }
 
 // Each stage is compiled against an extensions.slang with only the features
@@ -841,8 +967,10 @@ jobs_tailor :: proc(g:^Generation,extensions:Extensions,staging:string,allocator
 }
 
 // The jobs by when they run: the first stages, the others that are not idle,
-// the idle ones and the tests. In each the costliest go first, by the bytes
-// of the code of the stage the last time: the generation ends sooner.
+// the idle ones and the tests. In each the largest go first, by the peak of
+// their memory the last time, and one never compiled before them: they are
+// the longest too, and the small ones fill the room beside them instead of
+// the large ones ending the generation alone.
 @(private)
 jobs_order :: proc(g:^Generation,allocator:runtime.Allocator) -> []int {
     Ranked :: struct {job:int,cost:i64}
@@ -855,7 +983,7 @@ jobs_order :: proc(g:^Generation,allocator:runtime.Allocator) -> []int {
         return 3
     }
     ranked:=make([]Ranked,len(g.jobs),context.temp_allocator)
-    for &job,i in g.jobs {ranked[i]={i,job_cost(g,&job)}}
+    for &job,i in g.jobs {ranked[i]={i,g.peaks[job_key(&job)] or_else max(i64)}}
     slice.stable_sort_by(ranked,proc(a,b:Ranked) -> bool {return a.cost>b.cost})
     order:=make([]int,len(g.jobs),allocator)
     at:=0
@@ -865,19 +993,6 @@ jobs_order :: proc(g:^Generation,allocator:runtime.Allocator) -> []int {
         }
     }
     return order
-}
-
-// The bytes of the code of a stage as the output, or the build of the engine,
-// has it; the most for one that neither has.
-@(private)
-job_cost :: proc(g:^Generation,job:^Job) -> i64 {
-    entry,folder:=job.prior,job.out
-    if !job.has_prior {entry,folder=job.engine,g.engine_build}
-    name:=entry.spv if .Vulkan in job.backends else entry.msl
-    if !job.has_prior && !job.has_engine || folder=="" || name=="" {return max(i64)}
-    info,error:=os.stat(path_join(folder,name,allocator=context.temp_allocator),context.temp_allocator)
-    if error!=nil {return max(i64)}
-    return info.size
 }
 
 // The stages a job system compiles, in their order: each worker keeps what it
@@ -899,8 +1014,9 @@ stages_run :: proc(work:^Stages_Work,first,last:int,worker:int) {
         if runner_cancelled(g.runner) {return}
         job:=&g.jobs[g.order[at]]
         started:=time.tick_now()
+        job.turn=at+1
         job_run(g,job,allocator)
-        job.seconds=time.duration_seconds(time.tick_since(started))
+        job.seconds=time.duration_seconds(time.tick_since(started)-job.waited)
         if job.first && sync.atomic_sub(&g.first_left,1)==1 && g.first_output!="" {early_write(g,g.first_output,&g.progress.first,false)}
         if job.active && sync.atomic_sub(&g.active_left,1)==1 && g.active_output!="" {early_write(g,g.active_output,&g.progress.active,true)}
     }
@@ -1059,7 +1175,7 @@ generation_setup :: proc(g:^Generation,options:Options,scratch:runtime.Allocator
             return odin,"",fmt.aprintf("%s not found: %s",names[tool],hint,allocator=scratch)
         }
     }
-    return odin,request_digest(g,options.sources,odin,scratch),""
+    return odin,request_digest(g,options.sources,odin,options.uses,options.every,scratch),""
 }
 
 // The strings of the result are in `scratch`, as is everything the generation holds.
@@ -1097,6 +1213,8 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     } else {
         g.tools[.Slangc],g.version=compiler,compiler_version
     }
+    runner_compiler(g.runner,scratch)
+    defer runner_close(g.runner)
     workers:=min(options.workers if options.workers>0 else max(os.get_processor_core_count(),1),RUNNER_CAPACITY)
     // A generation asked to ship goes on when the code it embeds was not encoded so.
     if stamp,is_current:=stamp_current(g,request,scratch);is_current && (stamp.shipped || !options.ship || !odin) {
@@ -1106,6 +1224,11 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
         return
     }
     strings.builder_init(&g.warnings,scratch)
+    g.peaks,g.ledger=peaks_read(g.shared,scratch),path_join(g.shared,CACHE_LEDGER,allocator=scratch)
+    {
+        sync.guard(&g.runner.lock)
+        g.runner.most=0
+    }
     optimizer,optimizer_ran:=tool_run(g.runner,{g.tools[.Spirv_Opt],"--version"},scratch)
     cross,cross_ran:=tool_run(g.runner,{g.tools[.Spirv_Cross],"--revision"},scratch)
     if !optimizer_ran || !cross_ran {fail(&result,allocator,"could not run spirv-opt and spirv-cross");return}
@@ -1129,7 +1252,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     for source in options.sources {append(&copies,Base{path_clean(source.folder,scratch),path_join(programs_folder,"plugins",source.name,allocator=scratch)})}
     g.copies=copies[:]
     reflection_started:=time.tick_now()
-    catalog,catalog_error:=programs_generate(g.runner,g.root,g.project,staging,g.tools[.Slangc],g.version,path_join(g.shared,CACHE_REFLECTION,allocator=scratch),options.sources,scratch,&g.sources,workers)
+    catalog,catalog_error:=programs_generate(g.runner,g.root,g.project,staging,g.tools[.Slangc],g.version,path_join(g.shared,CACHE_REFLECTION,allocator=scratch),options.sources,scratch,&g.sources,workers,compilation_memory(g,PROGRAMS_KEY,scratch),options.uses,options.every)
     if catalog_error!="" {
         diagnostics_place(result.diagnostics,g.copies,{g.project,g.root},scratch)
         fail(&result,allocator,"%s",len(result.diagnostics)>0?diagnostics_text(result.diagnostics,scratch):catalog_error)
@@ -1159,13 +1282,14 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     }
     append(&bases,Base{"engine",g.root})
     g.includes,g.bases=includes[:],bases[:]
-    g.catalog,g.vfx,g.surface,g.vertex=catalog.fingerprint,catalog.vfx,catalog.surface,catalog.vertex
+    g.catalog,g.vfx,g.surface,g.surface_uses,g.vertex=catalog.fingerprint,catalog.vfx,catalog.surface,catalog.surface_uses,catalog.vertex
     // The tools after Slang shape the Metal output of a shader, not what a
     // generation shares with the engine: they are of each shader's digest.
     {
         hash:Sha256
         sha_begin(&hash)
-        for text in ([]string{GENERATOR_CONTRACT,g.version,g.metal_tools,abi_text(),material_schema(),shared_constants()}) {sha_text(&hash,text);sha_text(&hash,"\n")}
+        // The schema and the shared constants are includes of the stages, which take what they name of them.
+        for text in ([]string{GENERATOR_CONTRACT,g.version,g.metal_tools,abi_text()}) {sha_text(&hash,text);sha_text(&hash,"\n")}
         for flags in ([][]string{SLANG_FLAGS,SLANG_OPTIMIZATION,SPIRV_FLAGS,VALIDATE_FLAGS,OPTIMIZE_FLAGS,METAL_FLAGS}) {sha_text(&hash,strings.join(flags," ",context.temp_allocator));sha_text(&hash,"\n")}
         g.configuration=transmute([]u8)sha_hex(&hash,scratch)
     }
@@ -1223,7 +1347,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
         for directory in g.includes {append(&command,"-I",directory)}
         append(&command,..SPIRV_FLAGS)
         append(&command,"-o",path_join(staging,"layouts_probe.spv",allocator=scratch),"-reflection-json",reflection)
-        output,ran:=tool_run(g.runner,command[:],scratch)
+        output,ran:=slang_run(g.runner,command[:],scratch)
         data,readable:=read_json(reflection,scratch)
         if !ran || !readable {fail(&result,allocator,"could not compile the probe of the shared structs: %s",output);return}
         g.layouts=layouts_reflected(data,scratch)
@@ -1244,6 +1368,11 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
         job_system.parallel_for(&js,job_system.OWNER,len(g.order),1,stages_run,&work)
     }
     result.warnings=strings.clone(strings.to_string(g.warnings),allocator)
+    {
+        sync.guard(&g.runner.lock)
+        result.at_once=g.runner.most
+        result.cpu=time.duration_seconds(g.runner.cpu)
+    }
     if runner_cancelled(g.runner) {fail(&result,allocator,"the generation was cancelled");return}
     for job in g.jobs {
         if job.error!="" {fail(&result,allocator,"%s",job.error);result.diagnostics=diagnostics_clone(job.diagnostics,allocator);return}
@@ -1251,12 +1380,13 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
         if job.reused {result.reused+=1;continue}
         result.compiled+=1
         result.compiling+=job.seconds
+        result.stages_cpu+=time.duration_seconds(job.cpu)
         // Kept longest first.
         at:=SLOWEST
         for at>0 && result.slowest[at-1].seconds<job.seconds {at-=1}
         if at==SLOWEST {continue}
         copy(result.slowest[at+1:],result.slowest[at:SLOWEST-1])
-        result.slowest[at]={job.name,job.seconds}
+        result.slowest[at]={job.name,job.seconds,time.duration_seconds(job.cpu)}
     }
 
     for job,i in extension_jobs {
@@ -1327,7 +1457,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     result.shaders,result.tests,result.programs=shader_count+program_count+extension_count,test_count,len(catalog.programs)
     result.engine=strings.clone(identity,allocator)
     append(&outputs,manifest_path,path_join(g.output,abi.SHADER_CATALOG,allocator=scratch))
-    for name in ([]string{SURFACE_INCLUDE,SURFACE_COVERAGE_INCLUDE,POSTPROCESS_INCLUDE,VFX_INCLUDE,UI_INCLUDE,EXTENSIONS_INCLUDE,HOOKS_INCLUDE,SCHEMA_INCLUDE,CONSTANTS_INCLUDE}) {append(&outputs,path_join(out_include,name,allocator=scratch))}
+    for name in ([]string{SURFACE_INCLUDE,POSTPROCESS_INCLUDE,VFX_INCLUDE,UI_INCLUDE,EXTENSIONS_INCLUDE,HOOKS_INCLUDE,SCHEMA_INCLUDE,CONSTANTS_INCLUDE}) {append(&outputs,path_join(out_include,name,allocator=scratch))}
     for job,at in g.jobs {
         folder:=tests_out if at>=test_first && at<test_first+test_count else g.output
         for name in ([]string{job.result.spv,job.result.msl}) {

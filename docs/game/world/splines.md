@@ -1,4 +1,4 @@
-# Splines: roads, paths and rivers
+# Splines: roads, paths, rivers and bent meshes
 
 A road, a path and a river are one thing: a `Spline` (`engine/volume`), a line of points that
 lies on the ground. What it is comes from what its entity has, as a `Volume` is a region and
@@ -46,11 +46,31 @@ $P scene.write '{"entities":[
   terrain follows it by itself, in a layer of its own: a road that moves gives back the ground
   where it was, and undoing the move undoes its bed.
 
+## A mesh along a curve
+
+A rail, a chain, a pipe or a rope is a mesh bent along a curve: a `Bend` (plugin `shapes`) on an
+entity with the `Mesh_Renderer` of the straight mesh. Its curve goes from `start` to `end`, in
+the frame of the entity, leaving and reaching them along their tangents (the longer, the further
+it keeps their direction); `forward` is the axis of the mesh that runs along it and `mesh_up` the
+one that goes along `up`. Roll, scale and offset change from their start to their end values. A
+long rail is several entities, the end and end tangent of each the start of the next.
+
+```sh
+$P scene.write '{"entities":[{"name":"Rail","components":{
+  "Mesh_Renderer":{"mesh":"props/rail/Rail.mesh"},
+  "Bend":{"end":[4,0,-4],"start_tangent":[0,0,-6.6],"end_tangent":[6.6,0,0]},
+  "Collider":{"kind":"External"}}}]}'
+```
+
+- What collides is bent too when its `Collider` is `External`; another kind that reads the mesh
+  would collide with it straight, and says so in the problem `shapes.bend_collider`.
+
 ## Pitfalls that fail silently
 
 - A spline of one point, or a point without width: no road is drawn, the problem
   `shapes.invalid`; no river is made, the problem `physics.fluid_path`.
 - A spline without a material and without a `Fluid` draws nothing: it is a route for code.
-- A spline on an entity that also has a `Shape` is not drawn: the problem `shapes.both`.
+- A spline or a `Bend` on an entity that also has a `Shape` is not drawn: the problem
+  `shapes.both`.
 - A spline with its entity far under or over the terrain still lies on it: the entity places
   only where it is seen from above.

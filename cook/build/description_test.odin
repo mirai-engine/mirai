@@ -14,7 +14,7 @@ component_descriptions_preserve_quoted_text_in_both_generated_worlds :: proc(t:^
     engine:=project.path(folder,"engine",allocator=context.temp_allocator)
     game:=project.path(folder,"project",allocator=context.temp_allocator)
     for path in ([]string{project.path(engine,"core",allocator=context.temp_allocator),project.path(game,"game",allocator=context.temp_allocator)}) {
-        if !testing.expect(t,os.make_directory_all(path)==nil) {return}
+        if !testing.expect(t,base.make_directory_all(path)==nil) {return}
     }
     source:=`package core
 @(component, description="Uses a \"pose\".\nShared rig.")
@@ -55,7 +55,7 @@ a_tag_that_is_not_one_is_an_error_of_the_build :: proc(t:^testing.T) {
     engine:=project.path(folder,"engine",allocator=context.temp_allocator)
     game:=project.path(folder,"project",allocator=context.temp_allocator)
     for path in ([]string{project.path(engine,"core",allocator=context.temp_allocator),project.path(game,"game",allocator=context.temp_allocator)}) {
-        if !testing.expect(t,os.make_directory_all(path)==nil) {return}
+        if !testing.expect(t,base.make_directory_all(path)==nil) {return}
     }
     source:="package core\n@(component)\nTagged :: struct {\n    reach:f32 `mirai:\"min=0,unit=m,label=How far, in a line\"`,\n    speed:f32 `mirai:\"min=0,unti=m/s\"`,\n}\nPlain :: struct {inner:struct {limit:f32 `mirai:\"max=high\"`}}\n"
     testing.expect(t,os.write_entire_file(project.path(engine,"core","data.odin",allocator=context.temp_allocator),source)==nil)
@@ -84,7 +84,7 @@ settings_are_of_the_project_or_of_the_machine :: proc(t:^testing.T) {
     engine:=project.path(folder,"engine",allocator=context.temp_allocator)
     game:=project.path(folder,"project",allocator=context.temp_allocator)
     for path in ([]string{project.path(engine,"core",allocator=context.temp_allocator),project.path(game,"game",allocator=context.temp_allocator)}) {
-        if !testing.expect(t,os.make_directory_all(path)==nil) {return}
+        if !testing.expect(t,base.make_directory_all(path)==nil) {return}
     }
     file:=project.path(engine,"core","data.odin",allocator=context.temp_allocator)
     source:=`package core

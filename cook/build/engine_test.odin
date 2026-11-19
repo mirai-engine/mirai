@@ -98,7 +98,7 @@ an_installed_engine_builds_nothing_and_says_what_it_lacks :: proc(t:^testing.T) 
     testing.expect_value(t,result.failure,Failure.Engine_Incomplete)
     testing.expect(t,!engine_current(root,.Release))
     paths:=engine_paths(root,.Dev)
-    testing.expect(t,os.make_directory_all(paths.decl)==nil)
+    testing.expect(t,base.make_directory_all(paths.decl)==nil)
     files:=make([dynamic]string,context.temp_allocator)
     for library in engine_libraries(ENGINE_MODE_INSTALLED) {
         file,linked:=engine_library_files(paths,library)
@@ -126,9 +126,7 @@ an_installed_engine_builds_nothing_and_says_what_it_lacks :: proc(t:^testing.T) 
 @(private="file")
 source_write :: proc(t:^testing.T,root,package_path,file,text:string) {
     folder:=project.path(root,package_path,allocator=context.temp_allocator)
-    // Making a folder that is already there is .Exist on POSIX and no error on
-    // Windows: what counts is that the folder is there.
-    if error:=os.make_directory_all(folder);error!=nil && !os.is_dir(folder) {testing.expect(t,false,package_path);return}
+    if !testing.expect(t,base.make_directory_all(folder)==nil,package_path) {return}
     testing.expect(t,os.write_entire_file(project.path(folder,file,allocator=context.temp_allocator),text)==nil,file)
 }
 
@@ -197,7 +195,7 @@ declare_says_whether_a_declaration_changed :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"declare")
     if folder=="" {return}
     source:=project.path(folder,"engine","core","thing.odin")
-    testing.expect(t,os.make_directory_all(os.dir(source))==nil)
+    testing.expect(t,base.make_directory_all(os.dir(source))==nil)
     write :: proc(t:^testing.T,path,text:string) {testing.expect(t,os.write_entire_file(path,text)==nil)}
     write(t,source,"package core\n\nvalue :: proc(x:int) -> int {return x+1}\n")
     desc:=Declare_Desc{root=project.path(folder,"engine"),packages={"core"},binary="mirai",library=project.path(folder,"out","thing.lib"),stage=project.path(folder,"out","stage"),decl=project.path(folder,"out","decl")}
@@ -340,7 +338,7 @@ declarations_keep_the_procedures_and_tables_private_to_a_file_that_inline_ones_u
     if folder=="" {return}
     for name in ([]string{"a","b"}) {
         source:=project.path(folder,"engine","thing",strings.concatenate({name,".odin"}))
-        testing.expect(t,os.make_directory_all(os.dir(source))==nil)
+        testing.expect(t,base.make_directory_all(os.dir(source))==nil)
         text:=fmt.tprintf("package thing\n\n@(private=\"file\")\nhelper :: proc(x:int) -> int {{return x*2}}\n\n@(private=\"file\",rodata)\nTABLE := [2]int{{3,4}}\n\n@(private=\"file\",default_calling_convention=\"none\")\nforeign _ {{\n    @(link_name=\"llvm.ctpop.i64\")\n    popcount :: proc(x:i64) -> i64 ---\n}}\n\n%s :: #force_inline proc(x:int) -> int {{return helper(x)+TABLE[x&1]+int(popcount(i64(x)))}}\n",name)
         testing.expect(t,os.write_entire_file(source,text)==nil)
     }
@@ -365,8 +363,8 @@ declarations_load_their_files_relative_to_their_folder :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"declare")
     if folder=="" {return}
     source:=project.path(folder,"engine","thing","thing.odin")
-    testing.expect(t,os.make_directory_all(os.dir(source))==nil)
-    testing.expect(t,os.make_directory_all(project.path(folder,"engine","assets"))==nil)
+    testing.expect(t,base.make_directory_all(os.dir(source))==nil)
+    testing.expect(t,base.make_directory_all(project.path(folder,"engine","assets"))==nil)
     testing.expect(t,os.write_entire_file(project.path(folder,"engine","assets","data.txt"),"data")==nil)
     testing.expect(t,os.write_entire_file(source,"package thing\n\nDATA :: #load(\"../assets/data.txt\")\n")==nil)
     desc:=Declare_Desc{root=project.path(folder,"engine"),packages={"thing"},binary="mirai",library=project.path(folder,"out","thing.lib"),stage=project.path(folder,"out","stage"),decl=project.path(folder,"out","decl")}
@@ -758,7 +756,7 @@ a_library_of_the_engine_is_shared_by_what_it_is_built_from :: proc(t:^testing.T)
     library:=libraries[0]
     built:=Library_Stamp{sources=1,tools=2}
     paths:=engine_paths(first,.Dev)
-    testing.expect(t,os.make_directory_all(paths.folder)==nil)
+    testing.expect(t,base.make_directory_all(paths.folder)==nil)
     for name in engine_cache_files(library) {
         if name!="" {testing.expect(t,os.write_entire_file(project.path(paths.folder,name),name)==nil)}
     }
@@ -770,7 +768,7 @@ a_library_of_the_engine_is_shared_by_what_it_is_built_from :: proc(t:^testing.T)
     testing.expect(t,base.remove_all(first)==nil)
 
     restored:=engine_paths(second,.Dev)
-    testing.expect(t,os.make_directory_all(restored.folder)==nil)
+    testing.expect(t,base.make_directory_all(restored.folder)==nil)
     testing.expect(t,!engine_cache_take(project.path(folder,"cache","none"),restored,library),"an entry the cache does not have is not taken")
     if !testing.expect(t,engine_cache_take(entry,restored,library)) {return}
     // What links against it is made from its declarations, not kept.
@@ -894,7 +892,7 @@ a_source_without_a_package_clause_names_its_file :: proc(t:^testing.T) {
     if folder=="" {return}
     engine,game:=project.path(folder,"engine"),project.path(folder,"project")
     write :: proc(t:^testing.T,path,text:string) {
-        testing.expect(t,os.make_directory_all(os.dir(path))==nil)
+        testing.expect(t,base.make_directory_all(os.dir(path))==nil)
         testing.expect(t,os.write_entire_file(path,text)==nil)
     }
     write(t,project.path(engine,"core","core.odin"),"package core\n\nvalue :: proc() -> int {return 1}\n")

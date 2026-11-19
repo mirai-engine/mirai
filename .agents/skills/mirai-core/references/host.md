@@ -486,7 +486,8 @@ row.
   Without a renderer, a texture the registry lacks is not a failure: nobody shows it, and a
   dedicated server is cooked without textures.
 - **Counters.** `revision` advances with each reload or unload; `structure`, when scene instances
-  must be revised, with bounded history; `appearance` numbers the rounds of derived rows.
+  must be revised, with bounded history: a change names its asset (an unload, each one it unloaded)
+  and one without an id refreshes every consumer; `appearance` numbers the rounds of derived rows.
 - **Scope and unloading.** `Assets_Scope` is whoever uses what is loaded (up to 16).
   `world_asset_ids` finds by type every `base.Asset_Id` of the tables and storages of a world (with
   `shared` and its id, also of its `by_world` storages), in structs, arrays, enumerated arrays,

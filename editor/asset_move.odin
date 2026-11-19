@@ -359,7 +359,7 @@ asset_folder_duplicate :: proc(s:^Session,from:string,folder:Maybe(string)=nil,n
         append(&files,strings.clone(file.path,context.temp_allocator))
     }
     target:=asset.registry_file_path(r,path,context.temp_allocator)
-    if os.make_directory_all(target)!=nil {return "",fmt.tprintf("%s could not be made",path)}
+    if base.make_directory_all(target)!=nil {return "",fmt.tprintf("%s could not be made",path)}
     for folder in r.folders {
         if asset_path_inside(folder,source) {_=os.make_directory_all(asset.registry_file_path(r,strings.concatenate({path,folder[len(source):]},context.temp_allocator),context.temp_allocator))}
     }

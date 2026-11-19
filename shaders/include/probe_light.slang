@@ -52,10 +52,11 @@ bool indirect_cached() { return (frame.flags & FRAME_FLAG_GI) != 0u && frame.vol
 
 // The irradiance around the normal of a point that the view gets from what
 // holds the light around: the probe volume, or without it the sky, which
-// nothing then shadows but the ambient occlusion of the material.
+// nothing then shadows but the ambient occlusion of the material; either by
+// frame.indirect.
 float3 indirect_irradiance(float3 position, float3 normal, float3 view_dir, bool surface = true) {
-    if (!indirect_cached()) return sky_irradiance(normal);
-    return sample_probes_towards(position, normal, view_dir, normal, -1.0, surface) * frame.gi_strength;
+    if (!indirect_cached()) return sky_irradiance(normal) * frame.indirect;
+    return sample_probes_towards(position, normal, view_dir, normal, -1.0, surface) * frame.indirect;
 }
 
 // What a specular lobe of that roughness gathers around `direction` from what
@@ -64,7 +65,7 @@ float3 indirect_irradiance(float3 position, float3 normal, float3 view_dir, bool
 // sharp as the lobe, as without the probes; a rough lobe keeps what they hold.
 float3 probe_specular(float4 around, float3 direction, float roughness) {
     float sky = around.w * (1.0 - roughness);
-    return sky > 0.0 ? lerp(around.rgb, sky_radiance(direction, roughness), sky) : around.rgb;
+    return sky > 0.0 ? lerp(around.rgb, sky_reflected(direction, roughness), sky) : around.rgb;
 }
 
 // What indirect_lobes reads: the light around the normal, and around the
@@ -74,8 +75,8 @@ float3 probe_specular(float4 around, float3 direction, float roughness) {
 #define INDIRECT_COAT (1u << PROBE_COAT)
 
 // The light around a point of shading `s` for the lobes in `wants`, from one
-// read of the probe volume, or without it from the sky; zero for the others.
-// A point that lets light through also gets the irradiance around its other
+// read of the probe volume, or without it from the sky, by frame.indirect;
+// zero for the others. A point that lets light through also gets the irradiance around its other
 // side.
 Indirect indirect_lobes(float3 position, float3 normal, float3 view_dir, Shading s, uint wants, float occlusion) {
     Indirect light = indirect_make(float3(0.0), float3(0.0), occlusion);
@@ -86,18 +87,21 @@ Indirect indirect_lobes(float3 position, float3 normal, float3 view_dir, Shading
     directions.at[PROBE_DIFFUSE] = normal;
     directions.at[PROBE_SPECULAR] = (wants & INDIRECT_SPECULAR) != 0u ? dominant_direction(s) : normal;
     directions.at[PROBE_COAT] = (wants & INDIRECT_COAT) != 0u ? coat_dominant_direction(s) : normal;
+    directions.rough[PROBE_DIFFUSE] = 1.0;
+    directions.rough[PROBE_SPECULAR] = s.roughness;
+    directions.rough[PROBE_COAT] = s.coat_roughness;
     directions.wants = wants;
     if (!indirect_cached()) {
-        if ((wants & INDIRECT_DIFFUSE) != 0u) light.irradiance = sky_irradiance(normal);
-        if ((wants & INDIRECT_SPECULAR) != 0u) light.radiance = sky_radiance(directions.at[PROBE_SPECULAR], s.roughness);
-        if ((wants & INDIRECT_COAT) != 0u) light.coat_radiance = sky_radiance(directions.at[PROBE_COAT], s.coat_roughness);
+        if ((wants & INDIRECT_DIFFUSE) != 0u) light.irradiance = sky_irradiance(normal) * frame.indirect;
+        if ((wants & INDIRECT_SPECULAR) != 0u) light.radiance = sky_reflected(directions.at[PROBE_SPECULAR], s.roughness) * frame.indirect;
+        if ((wants & INDIRECT_COAT) != 0u) light.coat_radiance = sky_reflected(directions.at[PROBE_COAT], s.coat_roughness) * frame.indirect;
         return light;
     }
     float4 around[PROBE_READS];
     sample_probes_around(position, normal, view_dir, directions, around);
-    light.irradiance = around[PROBE_DIFFUSE].rgb * frame.gi_strength;
-    light.radiance = probe_specular(around[PROBE_SPECULAR], directions.at[PROBE_SPECULAR], s.roughness) * frame.gi_strength;
-    light.coat_radiance = probe_specular(around[PROBE_COAT], directions.at[PROBE_COAT], s.coat_roughness) * frame.gi_strength;
+    light.irradiance = around[PROBE_DIFFUSE].rgb * frame.indirect;
+    light.radiance = probe_specular(around[PROBE_SPECULAR], directions.at[PROBE_SPECULAR], s.roughness) * frame.indirect;
+    light.coat_radiance = probe_specular(around[PROBE_COAT], directions.at[PROBE_COAT], s.coat_roughness) * frame.indirect;
     return light;
 }
 

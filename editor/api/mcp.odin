@@ -41,6 +41,7 @@ mcp_dispatch :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) {
     case "ping": raw(w,"{}");return {},true
     case "tools/list": return mcp_tools_list(s,req,w)
     case "tools/call": return mcp_tools_call(s,req,w)
+    case "notifications/cancelled": wait_cancel(s,req.params);return {},true
     }
     return {METHOD_NOT_FOUND,format_text(base.arena_allocator(&s.scratch),"unknown method %q",shorten(req.method)),""},false
 }
@@ -183,6 +184,7 @@ mcp_tools_call :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) 
     serial.writer_reset(&s.stage)
     running_begin(s,req)
     err,ok,selected,note:=method_call(s,method,arguments,&s.stage)
+    if s.wait.parked {return {},true}
     if s.running.stopped {err,ok={CANCELLED,"the client cancelled the call: it stopped at a safe point and what it did before stands",""},false}
     if ok && s.stage.overflow>0 {
         s.stats.oversized+=1

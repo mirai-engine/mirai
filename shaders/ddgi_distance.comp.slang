@@ -2,7 +2,8 @@
 // Mean and mean squared hit distance per direction (the Chebyshev test of the
 // interpolation) of each probe chosen this frame, into its 14x14 tile and a
 // border. Like the irradiance, traced whole; kept by a probe that sees the
-// inside of geometry and held the light of its cell.
+// inside of geometry and held the light of its cell, and by one that traced
+// no ray this update: its rays end where they did.
 #include "probe_update.slang"
 #include "probe_tile.slang"
 #define TILE 16
@@ -25,6 +26,7 @@ groupshared uint backfaces;
 void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint local_index : SV_GroupIndex) {
     uint slot = group_id.x;
     if (slot >= chosen[0]) return;
+    if ((chosen[chosen_traced(slot)] & CHOSEN_TRACED) == 0u) return;
     uint probe = chosen[1u + slot];
     uint rays = min(params.rays_per_probe, uint(MAX_RAYS));
     if (local_index == 0u) backfaces = 0u;

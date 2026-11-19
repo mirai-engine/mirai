@@ -301,10 +301,17 @@ Components that describe the scene and `render_sync`, which carries it to the re
   ([turned off](../../mirai-core/references/core.md#disabled-entities)).
 - **`Drawn_Elsewhere`**: its mesh is drawn by another library (the pieces of a broken
   destructible).
+- **`Mesh_Renderer`**, with its initial value in `MESH_RENDERER_DEFAULT`: with `shadows` off it is
+  seen and stops no light
+  ([without shadows](../../mirai-rendering/references/scene.md#scene-and-instances)).
 - **Lights**: `Sun`, `Point_Light`, `Spot_Light` and `Rect_Light`, with their initial values in
   `SUN_DEFAULT`, `POINT_LIGHT_DEFAULT`, `SPOT_LIGHT_DEFAULT` and `RECT_LIGHT_DEFAULT`. All four
   shine toward -Z of their entity, as a camera looks; their units are those of
-  `KHR_lights_punctual` ([units](../../mirai-rendering/references/display.md#units)).
+  `KHR_lights_punctual` ([units](../../mirai-rendering/references/display.md#units)). Each one's
+  `indirect` multiplies the part of its light that bounces and `scattering` the part a fog
+  scatters, 1 by default; what it lights directly does not change. With `shadows` off (on by
+  default) nothing stops its light
+  ([local lights](../../mirai-rendering/references/lights.md#local-lights)).
   - `Sun`: `color`, `illuminance` (lux) and `disc` (seen in the sky). It is
     `@(component,single)` ([one at a time](../../mirai-core/references/generator.md#attributes)):
     turning one on turns off the one that was on, and the renderer uses the one that is on if it is
@@ -316,15 +323,20 @@ Components that describe the scene and `render_sync`, which carries it to the re
   - `Point_Light`: `color`, `intensity` (candelas), `range` and `radius`: a sphere of `radius`
     meters times the entity's scale; stretched along an axis it is a capsule along it.
   - `Spot_Light`: that of `Point_Light` and `angle`, the half cone from 1° to 89°; it fades out in
-    its last fifth.
+    its last fifth. Its `texture` and that of a `Rect_Light` multiply its color where they fall
+    ([projected textures](../../mirai-rendering/references/lights.md#local-lights)).
   - `Rect_Light`: `color`, `luminance` (nits of its face) and `range`. It is the entity's unit
     square (x by y according to its scale). Its size opens its shadows and widens its glow; a
     larger one gives more light. Inside its lamp it does not shade it. See [local
     lights](../../mirai-rendering/references/lights.md#local-lights).
+- **`Bounce_Light`** (`@(component,single)`): `scale` multiplies all the indirect light of the
+  world, that of every light, the sky and emission; without one it is 1. It is of the world and
+  not of a `View_Volume`: the light does not change as the camera moves
+  ([GI](../../mirai-rendering/references/gi.md#lighting-techniques-and-optimization)).
 - **`Light_Emission`**: on the entity of a `Rect_Light` with a mesh, its light takes across its
   width the color of the emission of the material with which the mesh is drawn in `slot` (also the
   one a plugin sets, like the screen of `monitors`), with its texture as on the -Z face of a Cube;
-  its luminance remains `luminance`.
+  its luminance remains `luminance`. A `texture` of the `Rect_Light` shows in its place.
 - **`Camera`**: `fov`, `near`, `active`, projection. Which camera the game sees is chosen by
   `engine/camera` through the focused seat and its body, and written in the `View_Camera` storage;
   without a choice, the last camera with `active`. There are no priorities. While passing from one
@@ -343,8 +355,10 @@ Components that describe the scene and `render_sync`, which carries it to the re
   - `luminance` (nits) and `image` (the whole sky, which `luminance` multiplies; the rotation of its
     entity turns it), or `atmosphere`: the air of `air` (Earth by default) lit by the sun that is
     on, which follows its direction and its illuminance and veils the distance.
-    `background` and `use_background`: what is seen behind. Exposure is not the sky's but that of
-    the `View_Volume` where each view is.
+    `use_background` with `background` (nits) and `background_image` (which `background`
+    multiplies): what the camera and mirrors see in place of the sky, which keeps lighting
+    ([background](../../mirai-rendering/references/gi.md#sky-and-sun)). Exposure is not the sky's
+    but that of the `View_Volume` where each view is.
   - **A change on its way** (a day cycle, weather) is state of the component, which the game, an
     animation or a cinematic writes: `from` (what it was) and `fade`, how much of that is still
     seen, from 1 to 0. The renderer draws the blend; it is saved and replicated.

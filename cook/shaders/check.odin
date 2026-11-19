@@ -68,7 +68,7 @@ FOREIGN :: [?][2]string{
 // What a program of each domain calls besides its own functions.
 @(private="file")
 MIRAI_API :: [Program_Domain]string{
-    .Surface="Slang intrinsics, the functions of the program and mirai_sample_texture(ctx, index, uv, lod), mirai_sample_texture_level(index, uv, level), mirai_sample_texture_grad(index, uv, dx, dy), mirai_surface_default(ctx), mirai_surface_standard(ctx), mirai_surface_mix(a, b, mask), mirai_noise(ctx, metres), mirai_sample_triplanar(ctx, index, metres, sharpness) and mirai_height_blend(first, second, mask, contrast)",
+    .Surface="Slang intrinsics, the functions of the program and mirai_sample_texture(ctx, index, uv, lod), mirai_sample_texture(ctx, index, dual_uv), mirai_uv0(ctx), mirai_uv1(ctx), mirai_world_position(ctx), mirai_vertex_normal(ctx), the Mirai_Dual arithmetic of mirai_dual.slang, mirai_sample_texture_level(index, uv, level), mirai_sample_texture_grad(index, uv, dx, dy), mirai_surface_default(ctx), mirai_surface_standard(ctx), mirai_surface_mix(a, b, mask), mirai_noise(ctx, metres), mirai_sample_triplanar(ctx, index, metres, sharpness) and mirai_height_blend(first, second, mask, contrast)",
     .Postprocess="Slang intrinsics, the functions of the program and mirai_scene_color(ctx, uv), mirai_scene_depth(ctx, uv), mirai_scene_normal(ctx, uv), mirai_outline(ctx, uv), mirai_sample_texture(ctx, index, uv, lod) and mirai_sample_texture_level(index, uv, level)",
     .Vfx="Slang intrinsics, the functions of the program and mirai_vfx_random(seed) and mirai_vfx_texture(index, uv, level)",
     .Ui="Slang intrinsics, the functions of the program and mirai_sample_texture_level(index, uv, level)",
@@ -517,7 +517,7 @@ Check_Compile :: struct {
 // On a job of its own: its output is in the heap and the caller frees it.
 @(private="file")
 check_compile_run :: proc(job:^Check_Compile) {
-    job.output,job.ok=tool_run(job.runner,job.command,runtime.heap_allocator())
+    job.output,job.ok=slang_run(job.runner,job.command,runtime.heap_allocator())
 }
 
 // Where the program is copied for the compilations: under the label of the
@@ -573,6 +573,8 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
         }
     }
     runner:Runner
+    runner_compiler(&runner,context.temp_allocator)
+    defer runner_close(&runner)
     if accepted,_,problem:=slang_ensure(options.root,slangc,options.tools,&runner,context.temp_allocator);problem!="" {
         result.error=strings.clone(problem,allocator)
         return

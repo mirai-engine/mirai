@@ -113,11 +113,11 @@ session_log_path :: proc(folder:string) -> string {
 }
 
 // Starts an editor that outlives this process, writing stdout and stderr to
-// log, which it truncates.
-detached_logged :: proc(command:[]string,log,working_dir:string) -> (process:subprocess.Process,error:os.Error) {
+// log, which it truncates; it holds the handles of inherit too.
+detached_logged :: proc(command:[]string,log,working_dir:string,inherit:=[]uintptr{}) -> (process:subprocess.Process,error:os.Error) {
     file:=os.open(log,{.Write,.Create,.Trunc}) or_return
     defer os.close(file)
-    return subprocess.detached({command=command,working_dir=working_dir,stdout=file,stderr=file})
+    return subprocess.detached({command=command,working_dir=working_dir,stdout=file,stderr=file},inherit)
 }
 
 // The port file of the editor of the project at folder, when its process is alive.
@@ -143,16 +143,48 @@ process_end :: proc(pid:int,wait:time.Duration) {
 
 // The session of the project that answers, or one opened for a command, which
 // closes it when reused is false; code is not 0 after saying why there is none.
+// What the command draws in a session it reuses waits, saying for whom, for a
+// measurement it is no part of to end (workspace.measurement_wait), as
+// opening one waits for its turn of the GPU.
 session_borrow :: proc(root,folder:string,mode:Build_Mode,command:string,store_root:="") -> (file:api.Port_File,reused:bool,code:int) {
     alive:bool
     file,alive=session_find(folder)
     reused=alive && session_answers(file.port)
     if reused && !session_reusable(root,folder,mode,file,command) {return file,reused,1}
+    if reused {
+        workspace.measurement_wait(root,notice=proc(holder:string) {
+            fmt.eprintfln("mirai: waiting for a measurement to finish before drawing in the session (%s)",holder)
+        })
+    }
     if !reused {
+        if ended:=session_ended(folder);ended!="" {
+            fmt.eprintfln("mirai %s: %s",command,ended)
+            return file,false,1
+        }
         given:=[2]string{"--store",store_root}
         file,code=session_open(root,folder,mode,false,180,given[:] if store_root!="" else nil)
     }
     return
+}
+
+// Why no command opens another editor of the project at folder on its own:
+// the editor its port file names ended without removing it (it crashed, was
+// killed or ended itself, as the GPU watchdog does), with what its log says
+// last. "" when the file names none or one that runs.
+session_ended :: proc(folder:string) -> string {
+    if folder=="" {return ""}
+    file,alive:=session_find(folder)
+    if alive || file.pid==0 {return ""}
+    said:=""
+    if file.manual {
+        log:=session_log_path(folder)
+        data,_:=os.read_entire_file(log,context.temp_allocator)
+        if last:=strings.trim_space(string(data));last!="" {
+            if at:=strings.last_index_byte(last,'\n');at>=0 {last=strings.trim_space(last[at+1:])}
+            said=fmt.tprintf("; its log (%s) ends with: %s",log,last)
+        }
+    }
+    return fmt.tprintf("the editor of %s (pid %d) ended without closing%s; no command opens another by itself: mirai session start %s does, once what ended it is known",folder,file.pid,said,folder)
 }
 
 // One call of a command to its session; what fails goes to stderr.
@@ -191,7 +223,7 @@ session_port_remove :: proc(folder:string,pid:int) {
 
 @(private="file")
 session_print :: proc(folder:string,file:api.Port_File) {
-    fmt.printfln(`{{"project": %q, "port": %d, "pid": %d, "log": %q}}`,folder,file.port,file.pid,session_log_path(folder))
+    fmt.printfln(`{{"project": %q, "port": %d, "pid": %d, "device": %q, "log": %q}}`,folder,file.port,file.pid,file.device,session_log_path(folder))
 }
 
 @(private="file")
@@ -282,15 +314,33 @@ session_open :: proc(root,folder:string,mode:Build_Mode,no_build:bool,timeout:in
     log:=session_log_path(folder)
     engine:=build.engine_mode_resolve(root,mode)
     editor_args:=session_api_args(editor_args)
+    turn:workspace.Lock
+    charge:i64
+    if !slice.contains(editor_args,"--no-gpu") {
+        turned:bool
+        if turn,charge,turned=gpu_turn(root,folder,fmt.tprintf("session start %s",folder),limit=time.Duration(timeout)*time.Second);!turned {return {},1}
+    }
+    defer workspace.lock_release(&turn)
     command:=make([dynamic]string)
     append(&command,project_engine_paths(root,folder,engine).editor_program,"--project",folder,"--headless")
     append(&command,..editor_args)
-    process,error:=detached_logged(command[:],log,root)
+    append(&command,..gpu_turn_args(&turn))
+    process,error:=detached_logged(command[:],log,root,gpu_turn_inherit(&turn))
     if error!=nil {fmt.eprintfln("mirai session: could not open %s: %v",command[0],error);return {},1}
+    gpu_turn_hand_over(&turn,process,fmt.tprintf("the session of %s",folder),charge)
     session_record_write(folder,{process.pid,editor_args})
     deadline:=time.tick_now()
     for time.duration_seconds(time.tick_since(deadline))<f64(timeout) {
-        if found,alive:=session_find(folder);alive && session_answers(found.port) {return found,0}
+        if found,alive:=session_find(folder);alive && session_answers(found.port) {
+            card,known:=workspace.gpu_card(root)
+            preferred,_:=os.lookup_env("MIRAI_GPU",context.temp_allocator)
+            if problem:=workspace.gpu_off_card(card,known,found.device,preferred);problem!="" {
+                session_close(folder,found,true)
+                fmt.eprintfln("mirai session: the editor was closed: %s",problem)
+                return {},1
+            }
+            return found,0
+        }
         if state,_:=subprocess.wait(&process,0);state.exited {
             fmt.eprintfln("mirai session: the editor exited before opening the API (exit code %d); its log:",state.exit_code)
             session_log_tail(log)

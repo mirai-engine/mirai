@@ -14,7 +14,9 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - GPU contract, resources, bindings and presentation (`rhi/`) →
   [rhi](references/rhi.md#rhi-contract); device validation and its errors →
   [device](references/rhi.md#device); device loss (`device_failure`, `device_lose`, waits with a
-  limit) → [loss](references/rhi.md#device-loss), and what the application and the editor do →
+  limit) → [loss](references/rhi.md#device-loss), the process that ends itself before the driver
+  resets the GPU (`MIRAI_GPU_WATCHDOG_MS`) → [watchdog](references/rhi.md#gpu-watchdog), and
+  what the application and the editor do →
   [host](../mirai-core/references/host.md#gpu-that-stops-working)
 - Shader generation (`cook/shaders/`, `mirai shaders`, `mirai setup slang`) →
   [shaders](references/shaders.md#shader-toolchain)
@@ -70,11 +72,14 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   [layers](references/materials.md#layers-openpbr),
   [normal maps](references/materials.md#normal-maps-and-specular-antialiasing)
 - Traced reflections and glass → [reflections](references/materials.md#traced-reflections),
-  [glass](references/materials.md#glass); which rays see the glass detail and which its medium
-  color → [medium filter](references/materials.md#medium-filter)
-- Local lights, shadows, colored shadows → [lights](references/lights.md#local-lights);
+  [glass](references/materials.md#glass); which rays see glass and which go through it →
+  [glass in rays](references/materials.md#glass-in-rays)
+- Local lights, shadows → [lights](references/lights.md#local-lights);
   direct light of a view (grid, samples, shadow maps) →
-  [direct light](references/lights.md#direct-light-of-a-view)
+  [direct light](references/lights.md#direct-light-of-a-view); their pages, what a frame draws of
+  them at most, a still view, the cache and reading them →
+  [pages](references/lights.md#pages-of-the-shadow-maps); what sways (the wind) and the reach its
+  shadows follow it within → [what sways](references/lights.md#what-sways-in-the-maps)
 - GI, BVH, probe volume, sky →
   [GI](references/gi.md#lighting-techniques-and-optimization); contact occlusion, small instances
   outside the volume → [contact](references/gi.md#contact-occlusion)
@@ -88,7 +93,7 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - Physical units of lights, sky and emission, light scale, exposure (EV100, auto, manual) →
   [display](references/display.md#units); display transform (Neutral or ACES 2.0, 3D LUT, HDR) →
   [display](references/display.md#display-transform)
-- Scene resolution (`Settings.resolution`) and a preset's target of lines →
+- Scene resolution (`Settings.resolution`, 1080 lines unless chosen) →
   [resolution](references/settings.md#scene-resolution)
 - `render.Settings` → [settings](references/settings.md#settings); inspection modes of a view
   (`View_Inspection`, `Debug_View`) → [modes](references/settings.md#inspection-modes)
@@ -120,15 +125,27 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   `rhi`; a plugin's, in its own code), and the shaders get it generated
   ([shared constants](references/shaders.md#compilation)): no `.slang` source writes its value.
 - The graphics API is the own `rhi` over Vulkan and Metal; wgpu is not used.
-- Each shader stage compiles in its own `slangc` process, even if other stages have the same
-  defines.
+- Each shader stage compiles in a compile request of its own, from the command line of slangc,
+  in compilers that load Slang once and outlive it (`mirai shaders compiler`), even if other
+  stages have the same defines.
+- A Surface program is compiled only for what it is drawn as (`abi.Program_Use`): what the assets
+  of the project draw it as, what its source declares and, in the editor, the previews it shows.
+  A draw it was not compiled for is a problem of the frame that says how to declare it.
 - What a pass chooses of a stage is a constant of its pipelines, not another compilation; a
   variant is only for what the stage declares to the device
   ([constants and variants](references/shaders.md#compilation)).
 - The engine has no Surface program: those of the tests are in `render/testdata/`.
 - A view's direct light costs its samples, not its lights: no pixel traces or reads one per light.
 - The maps of the shadows draw only what changed, in the frame it changed: no map shows a caster
-  or a light where it was in a frame before ([cache](references/lights.md#direct-light-of-a-view)).
+  or a light where it was in a frame before ([cache](references/lights.md#direct-light-of-a-view)),
+  but a page that waits for room to follow a batch that sways, which shows the sway it last drew,
+  never a lit page or a hole. What sways obeys the bound of the frame like the rest, and its plan
+  looks at no batch while none starts or stops swaying.
+- Shadows of what sways move only where they read: within a fixed reach of the eye
+  (`SHADOW_SWAY_REACH`), never farther because the frame has time to spare; small plants cast at
+  rest.
+- Shadows are never colored or darkened by the glass they pass, in the maps or in the rays: colored
+  light through glass comes from the light, one that projects a texture.
 - What is decided per instance (its class, the row of its material with its own values) is built
   on the CPU when the instance is given: no stage builds it again per pixel or per hit.
 - A graphics option keeps a choice, and a preset a step above another, only where the image
@@ -170,6 +187,9 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - What is drawn over the finished image enters through `Frame_Desc` and does not change what a
   frame that does not use it records.
 - The skinning palette already includes the inverse bind: the renderer does not apply it again.
+- Colored light through a window comes from a light that projects a texture
+  ([lights](references/lights.md#local-lights)); a light's color at a point comes only from
+  `light_contribution`.
 - Every light enters in render units in a single place ([units](references/display.md#units)): no
   shader adds constant light or reads an intensity without converting.
 - The light that arrives around a point is composed only with `indirect_compose`. The sun's at a
@@ -184,8 +204,13 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   its scene is given; without it, what the scene is given is only an edit.
 - No engine stage evaluates a Surface program except its own (`//! per surface program`): raster
   uses the program's pipeline (`program_graphics`) and rays ask for it through the material points
-  (`points.slang`); the traversal evaluates only the alpha of programs with coverage. A frame does
-  not wait for a pipeline to be created: it draws the program as its row until it has it.
+  (`points.slang`). A frame does not wait for a pipeline to be created: it draws the program as
+  its row until it has it.
+- A masked material is cut by its mask map alone: no visibility raster, shadow map or traversal
+  runs a program for coverage ([alpha](references/materials.md#alpha)).
+- The material of opaque scene geometry runs once per visible pixel: its clusters are rasterized
+  into the visibility target and resolved per program; no forward path draws them into the
+  G-buffer. Back faces are drawn only of two-sided materials.
 - The passes read the G-buffer only with `include/gbuffer.slang`. A material's layers are prepared
   only with `shading_layers`, and direct and indirect light compose them the same.
 - A scene's image reaches the display only through the display LUT (`display_encode`); previews,

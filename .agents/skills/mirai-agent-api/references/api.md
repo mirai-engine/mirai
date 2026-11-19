@@ -98,6 +98,10 @@ named by `.mirai/session.json` (pid, mode and arguments) and `api.json`; its log
   step ended. `--force` ends an editor that does not answer. Of a copy, it deletes the copy. Every
   edit is written to its file, so what is only to be tried or verified is done on a copy
   (`start --copy`; [AGENTS.md](../../../../AGENTS.md#verification)).
+- Every editor a command opens holds a GPU turn while it runs
+  ([turns](../../mirai-projects/references/build.md#turns-between-processes)): `start` may wait,
+  naming who holds the card. A session without calls for `api.SESSION_IDLE` closes itself; the
+  next `rpc` or `capture` opens it again.
 - **Orphans**: editors that run from the checkout's `.mirai/engine/` and that the `api.json` of
   their project does not name. `status` (0 if the session responds) lists them and
   `stop --orphans [project]` closes the headless ones, never one with a window.
@@ -123,6 +127,12 @@ and, below `REPEAT_SSIM`, it warns that a higher threshold compares noise. `--vi
 `editor.view_mode.list` and when done restores the one the session had; `collision` is not visible
 because the capture carries no lines. `--frames 0` waits for the textures to stream in as
 `capture` does; the frames it draws by default are exact, so two runs draw the same.
+
+The views of `captures.mirai` are the project's **named cameras**, the one home of the views that
+captures, [flights](methods.md#profiling) and people share: `--camera NAME` captures one with
+its scene, its camera and the plan's size and frames (unless `--size` or `--frames` say others).
+A new camera needed by a capture or a flight is added there, with its threshold, never kept in a
+script.
 
 `mirai capture [project] --plan` captures each view of the project's `captures.mirai` (size,
 frames and, per view, scene, camera and `threshold`) from its scene loaded again and compares it
@@ -215,7 +225,12 @@ mirai rpc describe [plugin|method|prefix|method...] [--project P|--port N]
 - `--project P` takes the port from its `api.json` and, when the project has no editor open,
   starts its headless dev session as `mirai session start` does and then makes the call,
   saying so on stderr; a method that only makes sense with an editor already open
-  (`RPC_NEEDS_OPEN_EDITOR`) never starts one and fails without an editor. Without `--project` or
+  (`RPC_NEEDS_OPEN_EDITOR`) never starts one and fails without an editor. An editor that ended
+  without closing (its port file names a process that is gone: it crashed, was killed or ended
+  itself, as the [GPU watchdog](../../mirai-rendering/references/rhi.md#gpu-watchdog) does) and
+  one that stops answering are never replaced: the call, `mirai mcp`, `capture`, `record` and
+  `play test` fail with its pid and the last line of its log, and only `mirai session start`
+  opens another. Without `--project` or
   `--port`, the port is that of `MIRAI_API_PORT` or the editor of the project at or above the
   current folder, failing when it has none and never starting one; the default port only outside
   any project.
@@ -238,8 +253,12 @@ mirai rpc describe [plugin|method|prefix|method...] [--project P|--port N]
 The server handles the reserved params. Every method takes `_select` (`"a.b,c[0].d"`), which
 answers only those fields, as an object by their paths. A read-only method (`read_only` in
 `engine.describe`) also takes `_wait_until` (`"phase=Built"`), which calls the method again until
-the condition holds, the editor going on meanwhile, for at most `api.WAIT_UNTIL_SECONDS`, or the
-`_wait_seconds` that `--timeout` sends. A method that changes things refuses both with `-32602`,
+the condition holds, for at most `api.WAIT_UNTIL_SECONDS`, or the `_wait_seconds` that `--timeout`
+sends. The request waits on its connection, not in the server: between its calls the editor goes
+on and answers every other client, so an agent that waits for its subagents never holds them up,
+and its turn records the wait as one step. It waits only in a request of its own: in a batch it is
+`-32602`. A `notifications/cancelled` of its `tools/call` answers it at once with `-32094`. A
+method that changes things refuses both with `-32602`,
 as each call would change them again: it is called once, and the wait goes on a read-only method,
 such as its status method (`build.start`, then `build.status`). Selecting reads the result of a
 call that already ran, so a field that is not there is no error: the answer keeps the fields it

@@ -50,7 +50,10 @@ sample_build :: proc(p:^Package,blobs:[]store.Hash) -> Build {
 sample_list :: proc() -> Packages {
     list:Packages
     list.packages=make([dynamic]Project_Package,context.temp_allocator)
-    append(&list.packages,Project_Package{id={1,1},manifest=hash_of("m1"),folder="props/crate",assets=ids({3,3})},Project_Package{id={9,9},manifest=hash_of("m2"),assets=ids()})
+    crate:=Project_Package{id={1,1},manifest=hash_of("m1"),folder="props/crate",assets=ids({3,3})}
+    crate.written=make([dynamic]Package_Written,context.temp_allocator)
+    append(&crate.written,Package_Written{{3,3},0xfedcba9876543210},Package_Written{{4,4},1})
+    append(&list.packages,crate,Project_Package{id={9,9},manifest=hash_of("m2"),assets=ids()})
     return list
 }
 
@@ -86,7 +89,9 @@ package_records_read_back_what_they_write :: proc(t:^testing.T) {
     if !testing.expect_value(t,list_error,Error.None) {return}
     read,read_error:=packages_parse(listed,context.temp_allocator)
     if !testing.expect_value(t,read_error,Error.None) {return}
-    testing.expect(t,len(read.packages)==2 && read.packages[0].id==list.packages[0].id && read.packages[0].manifest==list.packages[0].manifest && read.packages[0].folder=="props/crate" && len(read.packages[0].assets)==1 && len(read.packages[1].assets)==0,"the list reads back")
+    testing.expect(t,len(read.packages)==2 && read.packages[0].id==list.packages[0].id && read.packages[0].manifest==list.packages[0].manifest && read.packages[0].folder=="props/crate" && len(read.packages[0].assets)==1 && len(read.packages[1].assets)==0 && len(read.packages[0].written)==2 && read.packages[0].written[0]==list.packages[0].written[0] && len(read.packages[1].written)==0,"the list reads back")
+    relisted,_:=packages_text(&read,context.temp_allocator)
+    testing.expect_value(t,relisted,listed)
 
     // Through the store and the file of a project.
     folder:=base.test_folder(t,"packages-records");if folder=="" {return}
@@ -257,10 +262,15 @@ package_records_refuse_hostile_text :: proc(t:^testing.T) {
         {.Build,swap(valid[.Build],`"final": true`,`"final": 1`),.Corrupt},
         {.Build,swap(valid[.Build],`"package": `,`"package": "00000000000000000000000000000000", "x": `),.Corrupt},
         {.Build,`{"version": 1}`,.Corrupt},
-        {.Packages,fmt.tprintf(`{{"version": 1, "packages": [{{"id": %s, "manifest": "nothex", "folder": "", "assets": []}}]}}`,id),.Corrupt},
-        {.Packages,fmt.tprintf(`{{"version": 1, "packages": [{{"id": %s, "manifest": "%s", "folder": "a/../b", "assets": []}}]}}`,id,strings.repeat("0",64,context.temp_allocator)),.Corrupt},
-        {.Packages,fmt.tprintf(`{{"version": 1, "packages": [{{"id": %s, "manifest": "%s", "folder": "", "assets": [%s, %s]}}]}}`,id,strings.repeat("0",64,context.temp_allocator),id,id),.Corrupt},
-        {.Packages,`{"version": 1, "packages": []} {}`,.Corrupt},
+        {.Packages,fmt.tprintf(`{{"version": 2, "packages": [{{"id": %s, "manifest": "nothex", "folder": "", "assets": [], "written": []}}]}}`,id),.Corrupt},
+        {.Packages,fmt.tprintf(`{{"version": 2, "packages": [{{"id": %s, "manifest": "%s", "folder": "a/../b", "assets": [], "written": []}}]}}`,id,strings.repeat("0",64,context.temp_allocator)),.Corrupt},
+        {.Packages,fmt.tprintf(`{{"version": 2, "packages": [{{"id": %s, "manifest": "%s", "folder": "", "assets": [%s, %s], "written": []}}]}}`,id,strings.repeat("0",64,context.temp_allocator),id,id),.Corrupt},
+        {.Packages,fmt.tprintf(`{{"version": 2, "packages": [{{"id": %s, "manifest": "%s", "folder": "", "assets": []}}]}}`,id,strings.repeat("0",64,context.temp_allocator)),.Corrupt},
+        {.Packages,fmt.tprintf(`{{"version": 2, "packages": [{{"id": %s, "manifest": "%s", "folder": "", "assets": [], "written": [{{"id": %s, "hash": "0000000000000000"}}]}}]}}`,id,strings.repeat("0",64,context.temp_allocator),id),.Corrupt},
+        {.Packages,fmt.tprintf(`{{"version": 2, "packages": [{{"id": %s, "manifest": "%s", "folder": "", "assets": [], "written": [{{"id": %s, "hash": "01"}}]}}]}}`,id,strings.repeat("0",64,context.temp_allocator),id),.Corrupt},
+        {.Packages,fmt.tprintf(`{{"version": 2, "packages": [{{"id": %s, "manifest": "%s", "folder": "", "assets": [], "written": [{{"id": %s, "hash": "0000000000000001"}}, {{"id": %s, "hash": "0000000000000002"}}]}}]}}`,id,strings.repeat("0",64,context.temp_allocator),id,id),.Corrupt},
+        {.Packages,swap(valid[.Packages],`"version": 2`,`"version": 1`),.Version},
+        {.Packages,`{"version": 2, "packages": []} {}`,.Corrupt},
         {.Packages,`{"version": 18446744073709551616, "packages": []}`,.Corrupt},
     }
     for c,at in cases {

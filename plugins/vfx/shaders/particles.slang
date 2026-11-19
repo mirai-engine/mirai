@@ -32,7 +32,7 @@ struct Particle_Emitter {
     float4 previous[3];
     uint4 range;          // first slot, capacity, births this frame, PARTICLE_FLAG_*
     uint4 random;         // seed, event target slot+1, particles per event, groups of births
-    uint4 program;        // Vfx program (0: none), first slot of the drawn lists
+    uint4 program;        // Vfx program (0: none), first slot of the drawn lists, the event its reports tell
     float4 shape;         // size, w cone half-angle
     uint4 kinds;          // shape, render, collision, event
     float4 lifetime_speed;
@@ -53,15 +53,12 @@ struct Particle_Emitter {
     float4 size_times[2];
     float4 gradient[PARTICLE_CURVE_KEYS];
     float4 gradient_times[2];
-    float4 step;          // seconds of the frame, of each step, steps, time at the end of the frame
     uint4 spawns[PARTICLE_SPAWNS]; // count, per, birth, age (bits)
     float4 spacing[2];
-    uint4 frame;          // in particle_frame: bytes to its resources and stages (INVALID: none), to the births of its channel, how many, to the births of the frame
-    float4 light;         // intensity (cd), range, radius (0: half the size of the particle)
-    uint4 lights;         // its share of the room of the frame: x the first of its lights with shadows, y how many; z, w those without
+    uint4 frame;          // in particle_frame: bytes to its resources and stages (INVALID: none), from particle_frame_births to the births of its channel, how many
     uint4 data;           // bytes of particle_data to the Attributes of its range, bytes of those of a particle, its age (bits), particles it started before the frame
     float4 mesh_weights;  // of Mesh particles: the weights of its meshes added up
-    uint4 mesh_vertices;  // and the vertices of a draw of each
+    uint4 mesh_handles;   // and the meshes, whose indices the frame lists (render.frame_mesh_whole)
 };
 
 struct Particle_State {
@@ -123,8 +120,10 @@ struct Particle_Event {
 #define PARTICLE_EVENT_CAPACITY 16384u
 #define PARTICLE_EVENTS_AT 64u // words of particle_queue before the events: their counts and dispatches
 #define PARTICLE_EVENT_WORDS 9u
-// Words of particle_queue to a draw of each mesh of each emitter (vfx.MESH_DRAWS_AT).
+// Words of particle_queue to an indexed draw of each mesh of each emitter
+// (vfx.MESH_DRAWS_AT), PARTICLE_MESH_DRAW_WORDS each.
 #define PARTICLE_MESH_DRAWS_AT (PARTICLE_EVENTS_AT + 2u * PARTICLE_EVENT_CAPACITY * PARTICLE_EVENT_WORDS)
+#define PARTICLE_MESH_DRAW_WORDS 5u
 
 // The resources of an emitter in particle_frame: the surface of its shape,
 // then those of its program, in the order it declares them.
@@ -192,6 +191,14 @@ struct Particle_Resource {
 };
 
 float4 particle_frame_row(uint at) { return asfloat(particle_frame.Load4(at)); }
+
+// What the emitters of the frame share, first in particle_frame (vfx.Gpu_Frame): the seconds
+// of the frame, of each step, the steps and the time at the end of the frame; the bytes to
+// the births of the channels; and those of particle_world_bytes to the copy of the reports
+// channel the frame writes (INVALID: none).
+float4 particle_frame_step() { return particle_frame_row(0u); }
+uint particle_frame_births() { return particle_frame.Load(16u); }
+uint particle_frame_reports() { return particle_frame.Load(20u); }
 
 // The gravity and the wind of the world in the rows of the frame (vfx.Gpu_Fields): the
 // gravity where no Gravity rules, then every Gravity and every Wind in the order they apply.

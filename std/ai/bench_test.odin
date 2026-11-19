@@ -230,6 +230,102 @@ bench_nav_build_tile :: proc(t:^testing.T) {
     log.infof("the field of the tile takes %d bytes",len(field.block))
 }
 
+// The volumes and the erosion of a tile, on the walkable spans its build kept:
+// the default cells of the navigation (0.15 m) and its human (0.3 m, two
+// cells), a wider agent, and a heavy tile of 128 cells with three floors and 64 volumes.
+@(test)
+bench_nav_volumes_and_erosion :: proc(t:^testing.T) {
+    REPEAT :: 200
+    vertices:=make([dynamic]math.Vec3);defer delete(vertices)
+    indices:=make([dynamic]u32);defer delete(indices)
+    quad :: proc(vertices:^[dynamic]math.Vec3,indices:^[dynamic]u32,a,b,c,d:math.Vec3) {
+        first:=u32(len(vertices))
+        append(vertices,a,b,c,d)
+        append(indices,first,first+1,first+2,first,first+2,first+3)
+    }
+    rng:=math.rng_make(9)
+    // Bumpy ground, boxes and two floors over it.
+    for z in 0..<40 {
+        for x in 0..<40 {
+            p:=[2]f32{f32(x)*0.5-1,f32(z)*0.5-1}
+            h :: proc(x,z:int) -> f32 {return 0.08*cmath.sin(f32(x)*0.9)+0.06*cmath.cos(f32(z)*1.3)}
+            quad(&vertices,&indices,{p.x,h(x,z),p.y},{p.x,h(x,z+1),p.y+0.5},{p.x+0.5,h(x+1,z+1),p.y+0.5},{p.x+0.5,h(x+1,z),p.y})
+        }
+    }
+    for _ in 0..<30 {
+        l:=math.Vec3{math.random_range(&rng,0,18),0,math.random_range(&rng,0,18)}
+        s:=math.Vec3{math.random_range(&rng,0.3,1.5),math.random_range(&rng,0.3,1.5),math.random_range(&rng,0.3,1.5)}
+        quad(&vertices,&indices,{l.x,s.y,l.z},{l.x,s.y,l.z+s.z},{l.x+s.x,s.y,l.z+s.z},{l.x+s.x,s.y,l.z})
+    }
+    quad(&vertices,&indices,{-1,2.5,2},{-1,2.5,8},{20,2.5,8},{20,2.5,2})
+    quad(&vertices,&indices,{-1,5,4},{-1,5,14},{20,5,14},{20,5,4})
+    volumes:=make([dynamic]Nav_Area_Volume);defer delete(volumes)
+    polygon :: proc(rng:^math.Rng,center:[2]f32,radius:f32,count:int,area:u8) -> (v:Nav_Area_Volume) {
+        for k in 0..<count {
+            a:=f32(k)/f32(count)*2*cmath.PI
+            v.points[k]=center+{cmath.cos(a),cmath.sin(a)}*radius*math.random_range(rng,0.8,1)
+        }
+        v.count,v.area,v.min_y,v.max_y=u8(count),area,-1,3
+        return
+    }
+    Case :: struct {name:string,tile:i32,radius:f32,volumes:int}
+    cases:=[?]Case{
+        {"nav_mark_volumes, 64 cells, radius 2, 5 volumes",64,0.3,5},
+        {"nav_mark_volumes, 64 cells, radius 4, 5 volumes",64,0.6,5},
+        {"nav_mark_volumes, 128 cells, radius 2, 64 vols",128,0.3,64},
+    }
+    for c in cases {
+        clear(&volumes)
+        for k in 0..<c.volumes {
+            count:=4 if k%4!=3 else 8+k%57
+            radius:=math.random_range(&rng,0.4,2) if k>0 else 12
+            center:=[2]f32{math.random_range(&rng,0,f32(c.tile)*0.15),math.random_range(&rng,0,f32(c.tile)*0.15)}
+            append(&volumes,polygon(&rng,center,radius,count,u8(k%5+2) if k%3!=0 else NAV_AREA_BLOCKED))
+        }
+        config:=Nav_Build_Config{tile_size=c.tile,cell_size=0.15,cell_height=0.1,agent_radius=c.radius,agent_height=1.8,agent_climb=0.3,agent_max_slope=0.25*cmath.PI,min_region_area=8,merge_region_area=20,max_edge_length=3,max_edge_error=0.3,detail_sample_distance=1.5,detail_max_error=0.1}
+        scratch:Nav_Build_Scratch
+        nav_build_scratch_init(&scratch)
+        defer nav_build_scratch_destroy(&scratch)
+        data:Nav_Tile_Data
+        field:Nav_Tile_Field
+        nav_build_tile(config,{},{vertices=vertices[:],indices=indices[:]},&scratch,&data,field=&field)
+        nav_tile_data_free(&data)
+        defer nav_tile_field_free(&field)
+        g,_:=nav_build_grid(config,{})
+        g.base=field.base
+        s:=&scratch
+        nav_resize(&s.cells,len(field.cells))
+        nav_resize(&s.compact,len(field.spans))
+        nav_resize(&s.area,len(field.areas))
+        copy(s.cells[:],field.cells)
+        copy(s.compact[:],field.spans)
+        nav_link_compact(s,&g)
+        b:Bench
+        for bench_round(&b) {
+            for _ in 0..<REPEAT {
+                copy(s.area[:],field.areas)
+                nav_mark_volumes(s,&g,volumes[:])
+            }
+        }
+        bench_report(c.name,&b,REPEAT,f32(len(field.spans)))
+        b={}
+        blocked:=0
+        for bench_round(&b) {
+            for _ in 0..<REPEAT {
+                copy(s.area[:],field.areas)
+                nav_erode(s,&g)
+            }
+        }
+        for a in s.area {if a==NAV_AREA_BLOCKED {blocked+=1}}
+        bench_report("  nav_erode",&b,REPEAT,f32(blocked))
+        b={}
+        for bench_round(&b) {
+            for _ in 0..<REPEAT {copy(s.area[:],field.areas)}
+        }
+        bench_report("  copy of the areas alone",&b,REPEAT)
+    }
+}
+
 // A crowd of agents at about one per 1.2 units of area (or volume), each
 // heading for the point mirrored through the center, against its 16 nearest.
 bench_avoid :: proc($N:int,name:string) {

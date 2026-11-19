@@ -4,6 +4,7 @@ import "base:intrinsics"
 import "base:runtime"
 import "core:math/linalg"
 import "core:mem"
+import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
@@ -89,9 +90,10 @@ collider_round_fits :: proc "contextless" (collider:Collider,scale:[3]f32) -> bo
 // the convex pieces of an Auto one that moves), read once, and the trees of
 // Mesh colliders at each scale. The libraries whose owned bodies collide as
 // meshes (foliage) ask it too (owned_hulls). A file is read and its
-// trees are built in jobs (a tick reads no file and builds no tree of a file):
-// the bodies that wait for them are made in a later tick. What a generated
-// mesh or a primitive gives comes from memory, in the tick that asks.
+// trees are built in jobs (a tick reads no file and builds no tree of a
+// mesh): the bodies that wait for them are made in a later tick. A generated
+// mesh is copied in the tick that asks, as it may change or go meanwhile; a
+// primitive is made then.
 // Plain shared data: no world holds it, so a rollback or a copy reads the
 // same; a tick that resimulates waits for the job instead of waiting a tick.
 @(storage,host,shared,free="collider_meshes_destroy")
@@ -117,6 +119,8 @@ Collider_Mesh :: struct {
     size,time:i64, // of the file of the mesh when it was read
     generated:bool,
     from:^Mesh_File, // of a mesh file: what its job builds from
+    copy:geom.Mesh_Buffer, // of a generated mesh: what its job builds from, and frees
+    disabled:[]u8,         // and its disabled edges
     ready:bool,      // built: written by its job
     built:sim.Mesh,
     allocator:mem.Allocator,
@@ -157,6 +161,8 @@ collider_meshes_prune :: proc(meshes:^Collider_Meshes,assets:^host.Assets) {
     for key,entry in meshes.entries {
         if entry.generated && !host.assets_mesh_generated(assets,key.mesh) {append(&gone,key)}
     }
+    // A tree of one of them may still be built.
+    if len(gone)>0 && meshes.js!=nil && jobs.pending(&meshes.counter) {jobs.wait(meshes.js,jobs.OWNER,&meshes.counter)}
     for key in gone {
         collider_mesh_free(meshes.entries[key])
         delete_key(&meshes.entries,key)
@@ -177,6 +183,8 @@ collider_meshes_destroy :: proc(meshes:^Collider_Meshes) {
 @(private="file")
 collider_mesh_free :: proc(entry:^Collider_Mesh) {
     sim.mesh_release(&entry.built,entry.allocator)
+    geom.mesh_buffer_destroy(&entry.copy)
+    delete(entry.disabled,runtime.heap_allocator())
     free(entry,runtime.heap_allocator())
 }
 
@@ -359,23 +367,26 @@ auto_kind :: proc(s:^Sync,e:core.Entity,moving:bool) -> (kind:Collider_Kind,wait
     return .Hull,false
 }
 
-// Whether a Hull, Mesh or Auto collider of an entity waits for what a job reads or builds of its mesh file:
-// its body is made, or made again, in a later tick. It asks for what is missing. An Auto one is as auto_kind
-// resolved it: still Auto, the convex pieces of its mesh.
+// Whether a Hull, Mesh or Auto collider of an entity waits for what a job reads or builds of its mesh
+// file, or for the tree a job builds of its generated mesh: its body is made, or made again, in a later
+// tick. It asks for what is missing. An Auto one is as auto_kind resolved it: still Auto, the convex
+// pieces of its mesh.
 @(private)
 collider_geometry_waits :: proc(s:^Sync,e:core.Entity,collider:Collider,scale:[3]f32) -> bool {
     if collider.kind!=.Hull && collider.kind!=.Mesh && collider.kind!=.Auto || !core.has(s.colliders,e) {return false}
     static,has_mesh:=core.get(s.statics,e)
     if !has_mesh || static.mesh=={} {return false}
     file,waiting:=mesh_file(s,static.mesh,collider.kind==.Mesh?.Mesh:.Hull,collider.kind==.Auto)
-    if waiting || file==nil || collider.kind!=.Mesh || !file.found {return waiting}
+    if waiting || collider.kind!=.Mesh {return waiting}
+    if file!=nil && !file.found || file==nil && !host.assets_mesh_generated(s.app.assets,static.mesh) {return false}
     _,waiting=mesh_cached(s,static.mesh,static.shape,scale)
     return waiting
 }
 
 // The built mesh of a Mesh collider at a scale: of a mesh file, built in a
-// job from what its job read; of a generated mesh or a primitive, made now.
-// nil when it cannot be made, or while it waits for a job: then waiting.
+// job from what its job read; of a generated mesh, built in a job from a
+// copy made now; of a primitive, made now. nil when it cannot be made, or
+// while it waits for a job: then waiting.
 @(private)
 mesh_cached :: proc(s:^Sync,mesh:base.Asset_Id,shape:host.Shape,scale:[3]f32) -> (built:^sim.Mesh,waiting:bool) {
     meshes:=s.meshes
@@ -409,8 +420,22 @@ mesh_cached :: proc(s:^Sync,mesh:base.Asset_Id,shape:host.Shape,scale:[3]f32) ->
     building:=host.load_phase_begin(s.app,.Collision,host.LOAD_NO_ZONE)
     defer host.load_phase_end(s.app,building,1)
     meshes.built+=1
-    if file!=nil {
-        entry.allocator=runtime.heap_allocator()
+    if file!=nil || generated {
+        heap:=runtime.heap_allocator()
+        entry.allocator=heap
+        if generated {
+            geom.mesh_buffer_init(&entry.copy,heap)
+            _,found:=host.assets_collision(s.app.assets,mesh,shape,.Mesh,&entry.copy)
+            disabled:=host.assets_mesh_disabled_edges(s.app.assets,mesh)
+            cloned:runtime.Allocator_Error
+            if len(disabled)>0 {entry.disabled,cloned=slice.clone(disabled,heap)}
+            // Kept empty when it cannot be built: it is not tried again for every entity that shows it.
+            if !found || cloned!=nil {
+                geom.mesh_buffer_destroy(&entry.copy)
+                entry.ready=true
+                return nil,false
+            }
+        }
         if !jobs_inline(s) {
             meshes.js=&s.app.jobs
             jobs.run(meshes.js,jobs.OWNER,.Background,collider_mesh_build,entry,&meshes.counter)
@@ -430,17 +455,21 @@ mesh_cached :: proc(s:^Sync,mesh:base.Asset_Id,shape:host.Shape,scale:[3]f32) ->
     return entry.built.triangles!=nil?&entry.built:nil,false
 }
 
-// A job: builds the tree of a Mesh collider of a mesh file at the scale of its key.
+// A job: builds the tree of a Mesh collider of a mesh file, or of the copy of
+// a generated mesh, which it frees, at the scale of its key.
 @(private="file")
 collider_mesh_build :: proc(entry:^Collider_Mesh,worker:int) {
     context.allocator=runtime.heap_allocator()
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
     defer intrinsics.atomic_store(&entry.ready,true)
     scale:=entry.scale
-    from:=entry.from.geometry
+    from:=entry.from.geometry if entry.from!=nil else entry.copy
     positions:=make([]geom.Vec3,len(from.positions),context.temp_allocator)
     for position,at in from.positions {positions[at]=position*scale}
-    if !sim.mesh_build(&entry.built,{positions,from.indices[:],nil,inside_out(scale)},entry.allocator) {entry.built={}}
+    if !sim.mesh_build(&entry.built,{positions,from.indices[:],entry.disabled,inside_out(scale)},entry.allocator) {entry.built={}}
+    geom.mesh_buffer_destroy(&entry.copy)
+    delete(entry.disabled)
+    entry.disabled=nil
 }
 
 // What a slot of geometry of the simulation was made from. Colliders made from the same (kind, mesh or

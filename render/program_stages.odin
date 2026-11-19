@@ -3,6 +3,7 @@ package mirai_render
 import "core:fmt"
 import "core:strings"
 import "mirai:asset"
+import "mirai:render/abi"
 import "mirai:rhi"
 
 // The raster stages of Surface programs (`//! per surface program`): a stage
@@ -11,12 +12,53 @@ import "mirai:rhi"
 // one. The pipeline of a program is that of the stage with the fragment stage
 // of the program, asked for ahead of time when the program first gets rows in
 // the scene (programs_ask), or when a draw first needs it (pipeline_thread.odin);
-// until it is made, the stage itself draws those materials as their rows. A
-// draw of the clusters the cull listed takes those of one program
-// (gbuffer_programs_draw); one of the clusters of an instance, the clusters
+// until it is made, the stage itself draws those materials as their rows. The
+// resolve of the visibility target draws the pixels of one program
+// (resolve_programs_draw); a draw of the clusters of an instance, the clusters
 // of the materials of one program (instance_programs_draw).
 
 PROGRAM_GRAPHICS_CAPACITY :: 4096 // pipelines of raster stages of programs at once, a power of two: past them a program draws as its rows
+PROGRAM_MISSES :: 32 // programs drawn as what their stages were not compiled for, kept until the shaders are loaded again
+
+// A Surface program a draw needed a stage of that the shaders in use do not
+// have: it was not compiled for what the draw shows it as (abi.Program_Use).
+// The draw takes the stage without the program, as before its pipeline is
+// made, and Stats.problem says how to have it.
+Program_Miss :: struct {program:u32,uses:abi.Program_Uses}
+
+// What frames drew Surface programs as without their stages since the shaders
+// were loaded: the editor generates those of its previews then.
+renderer_programs_missing :: proc(r: ^Renderer) -> []Program_Miss {return r.program_misses[:r.program_miss_count]}
+
+// A stage of a program the shaders in use lack: what it is for is kept, once,
+// with the problem of the frame.
+@(private)
+program_missing :: proc(r: ^Renderer, stage: string, program: u32) {
+	renderer_programs(r)
+	uses: abi.Program_Uses
+	for each in r.programs.surface_stages {if each.name == stage {uses = each.uses}}
+	p := program_of_id(r, program)
+	if uses == {} || p == nil || p.uses & uses != {} {return}
+	for miss in r.program_misses[:r.program_miss_count] {if miss.program == program && miss.uses == uses {return}}
+	if r.program_miss_count < PROGRAM_MISSES {
+		r.program_misses[r.program_miss_count] = {program, uses}
+		r.program_miss_count += 1
+	}
+	names := abi.PROGRAM_USE_NAMES
+	first: abi.Program_Use
+	listed := strings.builder_from_bytes(r.program_problem_names[:])
+	for use in uses {
+		if strings.builder_len(listed) == 0 {first = use} else {strings.write_string(&listed, " or ")}
+		strings.write_string(&listed, names[use])
+	}
+	r.program_problem = fmt.bprintf(r.program_problem_buffer[:], "the program %s is drawn as %s, which no asset of the project draws it as: its stage %s was not compiled, and it draws as its material until it is. Declare `//! use %s` in its source (%s), or give it a material that draws it so", p.name, strings.to_string(listed), stage, names[first], p.source)
+}
+
+// The shaders were loaded again: what they lack is looked for anew.
+@(private)
+program_misses_clear :: proc(r: ^Renderer) {
+	r.program_miss_count, r.program_problem = 0, ""
+}
 
 @(private)
 Program_Graphics :: struct {
@@ -76,7 +118,7 @@ programs_ask :: proc(r: ^Renderer) {
 	for row in s.materials {
 		if row.program_id == 0 || row.program_id == GPU_NONE {continue}
 		glass := row.alpha_mode == u32(asset.Alpha_Mode.Blend)
-		for id in ([]Pipeline_Id{.Glass_Layer, .Glass_Filter} if glass else []Pipeline_Id{.Gbuffer, .Gbuffer_Plain, .Gbuffer_Layers}) {
+		for id in ([]Pipeline_Id{.Glass_Layer, .Glass_Filter} if glass else []Pipeline_Id{.Resolve, .Resolve_Plain, .Resolve_Layers}) {
 			program_graphics(r, &r.pipelines[id], row.program_id, early = true)
 		}
 		for program in renderer_programs(r) {
@@ -164,6 +206,7 @@ program_stage :: proc(r: ^Renderer, stage: ^rhi.Shader_Code, program: u32) -> ^r
 		if code := program_shader(r, wanted); code != nil {return code}
 		if code := extension_shader(r, wanted); code != nil {return code}
 	}
+	program_missing(r, stage.name, program)
 	return nil
 }
 
@@ -196,6 +239,18 @@ pass_mesh_programs :: proc(s: ^Stage_Pass, mesh: Mesh_Handle, material: Material
 	}
 	if m.slot_count == 0 {add(programs, &count, 0)}
 	return
+}
+
+// Whether the shaders in use have, for the stage whose pipeline is in target,
+// the stage of each Surface program of rows: one drawn without it shows its row.
+@(private)
+rows_programs_staged :: proc(r: ^Renderer, target: ^rhi.Pipeline, rows: []Gpu_Material_Row) -> bool {
+	for row in rows {
+		if row.program_id == 0 || row.program_id == GPU_NONE {continue}
+		program_graphics(r, target, row.program_id, early = true)
+		if entry, found := program_graphics_entry(r, target, row.program_id); found && entry.code == nil {return false}
+	}
+	return true
 }
 
 // Draws `vertices` of a table of materials (thumbnail.vert) for a stage whose
@@ -261,21 +316,25 @@ ui_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rhi.Pipe
 // in target: those of its materials without a program with that pipeline,
 // and those of each Surface program of its materials with the stage of the
 // program. Each draw names its program to gbuffer.vert, which collapses the
-// clusters of the others.
+// clusters of the others. blended: only the program of a blended material is
+// drawn with its stage (the highlight, whose stage reads the coverage of the
+// others from their mask maps alone), as gbuffer.vert takes it.
 @(private)
-instance_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rhi.Pipeline, instance: u32, level0: bool) {
+instance_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rhi.Pipeline, instance: u32, level0: bool, blended := false) {
 	s := &r.scene
 	inst := &s.instances[instance]
 	mesh := inst.meta.x & INSTANCE_MESH_MASK
 	if int(mesh) >= len(s.meshes) {return}
 	m := &s.meshes[mesh]
-	program_of :: proc(s: ^Scene_State, inst: ^Gpu_Instance, packed: u32) -> u32 {
+	program_of :: proc(s: ^Scene_State, inst: ^Gpu_Instance, packed: u32, blended: bool) -> u32 {
 		row := instance_row(packed, inst.meta.y, &inst.slot_materials)
-		return s.materials[row].program_id if int(row) < len(s.materials) else 0
+		if int(row) >= len(s.materials) {return 0}
+		material := &s.materials[row]
+		return 0 if blended && material.alpha_mode != u32(asset.Alpha_Mode.Blend) else material.program_id
 	}
 	slots := s.indices[m.slot_word:][:m.slot_count]
 	plain := len(slots) == 0
-	for packed in slots {plain ||= program_of(s, inst, packed) == 0}
+	for packed in slots {plain ||= program_of(s, inst, packed, blended) == 0}
 	if plain {
 		rhi.cmd_bind_pipeline(cmd, target^)
 		instance_clusters_draw(r, cmd, instance, level0, 0)
@@ -285,7 +344,7 @@ instance_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rh
 	for {
 		next := max(u32)
 		for packed in slots {
-			if program := program_of(s, inst, packed); program > last && program < next {next = program}
+			if program := program_of(s, inst, packed, blended); program > last && program < next {next = program}
 		}
 		if next == max(u32) {return}
 		rhi.cmd_bind_pipeline(cmd, program_graphics(r, target, next))

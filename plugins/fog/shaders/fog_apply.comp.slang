@@ -3,13 +3,11 @@
 // The fog over the lit image (fog.fog_record): what lies behind it dimmed by
 // what it lets through, and the light it turns towards the eye added, read
 // from the grid and the slices past it at the depth of each pixel. What
-// nothing was drawn on takes them all, to the end of the view. What lies in
-// volumes that take the light of the sun is dimmed first by how much of it
-// reaches it. With glass in view it runs on each side of the nearest layer:
-// behind it, over the opaque scene, the fog from the layer on, which the glass
-// lets through; in front, over the lit glass, the fog from the eye to it.
-#define FOG_VOLUMES_SLOT SLOT_PASS3
-#include "fog_volumes.slang"
+// nothing was drawn on takes them all, to the end of the view. With glass in
+// view it runs on each side of the nearest layer: behind it, over the opaque
+// scene, the fog from the layer on, which the glass lets through; in front,
+// over the lit glass, the fog from the eye to it.
+#include "fog.slang"
 #include "depth.slang"
 #define MIRAI_GROUP_X 8
 #define MIRAI_GROUP_Y 8
@@ -49,10 +47,6 @@ void main(uint3 id : SV_DispatchThreadID) {
         float4 front = fog_seen_at(uv, layer, false);
         float through = 1.0 / max(front.a, FOG_FRONT_LEAST);
         fog_seen = float4(max(fog_seen.rgb - front.rgb, 0.0) * through, min(fog_seen.a * through, 1.0));
-    }
-    if (fog.shade != 0u && !depth_empty(depth)) {
-        float3 position = position_from_depth(uv, depth_distance(depth));
-        color.rgb *= fog_shade(position, frame.sun_direction.w > 0.5 ? frame.sun_direction.xyz : float3(0.0, 1.0, 0.0), fog_dry_at(position));
     }
     image[p] = float4(min(color.rgb * fog_seen.a + fog_seen.rgb, FOG_IMAGE_MOST), color.a);
 }

@@ -17,6 +17,7 @@ import "mirai:host"
 import gpu "mirai:render"
 import "mirai:rhi"
 import "mirai:std/base"
+import "mirai:std/jobs"
 import mm "mirai:std/math"
 
 when #config(TERRAIN_GPU,false) {
@@ -108,7 +109,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
             outlines:core.Table(render.Outline);defer core.table_destroy(&outlines)
             outline_styles:=render.OUTLINE_STYLES_DEFAULT
             lives:core.Table(render.Material_Live);defer core.table_destroy(&lives)
-            render.render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},core.read(&poses[current]),core.read(&w.statics),core.read(&w.looks),core.read(&lives),core.read(&hidden),core.read(&elsewhere),core.read(&w.parents),{},core.read(&suns),core.read(&points),core.read(&spots),core.read(&rects),core.read(&emissions),core.read(&skies),core.read(&posts),{},{},{},core.read(&highlights),core.read(&outlines),{&outline_styles},core.read(&offsets),core.read(&layers),{},{},{},{},nil)
+            render.render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},core.read(&poses[current]),core.read(&w.statics),core.read(&w.looks),core.read(&lives),core.read(&hidden),core.read(&elsewhere),core.read(&w.parents),{},core.read(&suns),core.read(&points),core.read(&spots),core.read(&rects),core.read(&emissions),core.read(&skies),{},core.read(&posts),{},{},{},core.read(&highlights),core.read(&outlines),{&outline_styles},core.read(&offsets),core.read(&layers),{},{},{},{},nil,nil)
             host.app_frame_end(app)
         }
         if pass==4 {continue}
@@ -464,6 +465,8 @@ terrain_test_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^
 
 // The physics that follows terrain_update in a tick.
 terrain_test_physics :: proc(w:^Terrain_Test_World,app:^host.App,time:core.Time={}) {
+    // The trees of the meshes the tick before asked for, built in jobs, are there for this one.
+    if m:=&w.collision_meshes;m.js!=nil && jobs.pending(&m.counter) {jobs.wait(m.js,jobs.OWNER,&m.counter)}
     phys.physics_step(&w.state,core.ref(&w.settings),&w.requests,&w.events,&w.collision_meshes,app,time,
         core.read(&w.rigids),core.read(&w.colliders),core.read(&w.characters),core.read(&w.moves),&w.joints,
         core.read(&w.statics),core.read(&w.parents),core.read(&w.names),&w.transforms,&w.bodies,core.read(&w.replicas),&w.character_states,&w.joint_states,{},nil,{},{},nil,nil,&w.problems,{},{},{},{},{},{},{},{},{},{})

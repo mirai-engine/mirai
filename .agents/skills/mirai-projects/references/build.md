@@ -98,21 +98,83 @@ and `tools/mirai`. The main checkout of a worktree is `project.shared_root(root)
   - `workspace.builds_since` says whether someone compiled since a moment, so that whoever measures
     knows whether builds happened during the measurement. The editor's builds neither take the lock
     nor are annotated.
-- What measures times runs alone among all checkouts: it takes `measure.lock` and then waits until
-  there are no builds. `mirai measure`, `mirai bench compare`, `mirai render check` (except
-  `--quality`), `mirai test` when it runs a benchmark (a `-define` whose name has `BENCH` and whose
-  value is neither `false` nor `0`) and `profile.capture` with `advance` take it; the latter waits
-  at most its `wait` and then fails saying who holds the turns
+- What measures times runs alone among all checkouts: it takes `measure.lock`, then waits until
+  there are no builds and no GPU work of others in flight (`workspace.measure_try`), and holds it
+  only while it times. `mirai measure` holds it for the life of its command; `mirai test` when it
+  runs a benchmark (a `-define` whose name has `BENCH` and whose value is neither `false` nor
+  `0`), for the run of that package after its build; `bench compare`, `bench flight` and `render
+  check` (except `--quality`), from their editors open, built and started outside it, until they
+  close; `profile.capture` with `advance`, for the frames it times after it settles, waiting at
+  most its `wait` and then failing with who holds the turn
   ([profiling](../../mirai-agent-api/references/methods.md#profiling)).
-  - Builds and tests that are not benchmarks do not wait for the measurement: each compiler
+  - Builds and tests that use no GPU do not wait for the measurement: each compiler
     (`build.compiler_limits`, also the editor's) and each test run that starts while one is
     running goes with `subprocess.Priority.Low`. The priority is decided when each process starts;
     what started earlier is not stopped.
-  - A process with `MIRAI_MEASURE` is part of a measurement: it neither takes `measure.lock` nor
-    waits for it. Whoever measures sets it for its children, and an editor opened inside them
-    inherits it. The editor of a session is no child of the command that calls it: `mirai rpc`
-    sends its `MIRAI_MEASURE` with the call, and `profile.capture` runs in that turn while the
-    lock names the same measurement.
+  - What would put work on the GPU waits for it to end, saying for whom (`workspace.measured`):
+    a GPU turn that is not a person's, a command that draws in a session it reuses (`capture`,
+    `record`, `play test`), and in a manual editor a call whose method draws or runs frames
+    (`Draws` or `As_User`) and the settling of `profile.capture`; `mirai rpc` says it waits.
+  - Each measuring command says what else loads the GPU (`workspace.gpu_load`): the other
+    programs of the engine open, sessions other agents keep open among them, which it does not
+    wait for, and a GPU busy while nothing measured draws, which makes the times not count.
+  - A process with `MIRAI_MEASURE` is part of a measurement while that one holds `measure.lock`:
+    it neither takes it nor waits for it. Whoever measures sets it for its children, and an
+    editor opened inside them inherits it, also before the measurement takes its turn. The
+    editor of a session is no child of the command that calls it: `mirai rpc` sends its
+    `MIRAI_MEASURE` with the call, and `profile.capture` runs in that turn while the lock names
+    the same measurement.
+- What opens a device of the GPU holds one of the GPU turns of the machine (`gpu-<n>.lock`, at
+  most `workspace.GPU_TURNS`) for as long as the device lives, so that what runs at once fits the
+  card. A turn is given, under `gpu.lock`, while the charges of those that hold one and its own
+  fit the card minus a part left to the desktop and to what holds no turn (`gpu_admits`); the
+  first one always. The card is what the devices opened said of their adapter (the editor and
+  `mirai doctor --probe-gpu` keep it in the cache, `gpu/card`), assumed before; whatever device
+  says it last, a card of its own memory outranks one that shares the system's, and of two of a
+  kind the smaller is kept: what is not kept is refused with why, in the log of who said it. An
+  editor is charged the peak the last session of its project held (the editor keeps it in
+  `gpu/peaks/`, which a copy of the project shares: one above the kept peak is written at once and
+  the end writes its own, which lowers it only if the driver never pressed the session against
+  its budget), a charge larger than any card before; a test run or the probe, without a project,
+  a fixed charge. While it runs an editor raises the charge of its turn to the most it held, and
+  never lowers it; `mirai locks` says when what the holders held passes the card beside its part.
+  The owner of a turn ends with its charge; the one waiting names the holders and since when,
+  like `mirai locks`, once and again when they or their charges change. It waits as long as it
+  takes, open sessions of other agents included, which close within minutes; it fails, naming
+  them, only when waiting cannot help (the room is held by the command itself, an ancestor of it
+  or the session of its project) or at the limit the command has (`mirai test --timeout`,
+  `session start --timeout`).
+  - A session opens on the adapter `session start` prints; one that opens on another adapter than
+    the card the turns account for, and that `MIRAI_GPU` does not name, is closed with why: its
+    frames and measures would mean nothing. A person's own editor opens on whatever there is.
+  - Every program of the engine a command starts takes it: `session start|restart` (also the one
+    `rpc`, `capture`, `record` and `play test` open), `edit`, `play` (but `--no-gpu`), the editors
+    of `render check` and `bench compare`, `mirai test` of a package whose tests run reach the
+    device of the GPU tests, and the probe. An editor gets its turn handed over: it inherits the
+    handle of the lock (`subprocess.start`/`detached` with `inherit`, `--gpu-turn`) and gives it to
+    the editor it starts again as, after a Build or a lost GPU, or from the launcher; the command
+    then lets go of it (`lock_hand_over`). A player and a test run hold it through the command.
+    An editor that `build editor` restarts keeps the one it has.
+  - A holder that ends frees its turn: the system closes its handle, whatever its owner file says.
+    A manual editor that holds a device and gets no call for `api.SESSION_IDLE` closes itself as
+    `engine.shutdown` closes it, so a session an agent forgot does not hold the card; the next
+    `rpc` or `capture` opens it again.
+  - A person (`edit` or `play` with a window, run from a terminal) takes a turn without waiting,
+    neither for room nor for a measurement, and counts for the others; with every turn held it
+    runs without one.
+  - While a measurement runs, no GPU turn starts but those of a person and of the measurement
+    (its process and those with `MIRAI_MEASURE`). The owner of a turn says whether its holder
+    works or is open and idle (`workspace.gpu_turn_mark`): a test, a player and an editor that
+    starts work; a manual editor is open while it waits for calls and works while one draws; the
+    editor of a person and a windowed one are open. A measurement waits for the turns that work
+    and are neither its own nor of its measurement (`workspace.gpu_work`). Every command takes
+    its GPU turns before `measure.lock` (a benchmark of `mirai test` its turn, `bench`, `bench
+    flight` and `render check` their editors), and `workspace.measure_try` says the turn of the
+    process idle while it waits, so the two never wait for each other; only what runs under
+    `mirai measure` takes a turn inside the measurement. The
+    owner of a turn of a measurement names it, and one is given beside the others of the same
+    measurement while no one else holds a turn, also beyond the card: the two editors of `bench
+    compare` run at once.
 - The self-refresh of `bin/mirai` uses one lock per checkout (`bin/.refresh.lock`): if another
   process already rebuilt it, it uses that one.
 
@@ -207,8 +269,10 @@ icon it names if it exists, `settings.mirai` with the
 [combined](projects.md#project-settings) settings, `assets/` with what was
 [cooked](#asset-cooking) of the project and of each active plugin that declares `Assets` (in
 `assets/plugins/<name>/`), `shaders/` with the manifest, the catalog and the code of this system of
-the published generation (no Slang sources; `mirai build game` generates the shaders first) and
-SDL3 if the system does not provide it.
+the published generation (no Slang sources; `mirai build game` generates the shaders first),
+SDL3 if the system does not provide it, and the
+[capacities](../../mirai-rendering/references/frame-graph.md#passes) the runs of the project
+reached in each scene, in its `.mirai/cache`, where the game goes on filling them.
 
 The copy replaces files and merges folders without deleting anything from the destination, except
 `assets/`, which ends up exactly with what was cooked, without the sources among the
@@ -298,10 +362,10 @@ reads and fills; a failure is `Cook_Failed` with `Result.cook.error` and `detail
   `content_hash` of the `.tex`
   ([texture cache](../../mirai-imports/references/imports.md#texture-cache)).
 - **Fast textures.** A texture the editor imported Fast ships Final, whatever `"textures"` says:
-  the [sync](#imported-sources) a game build that cooks starts with builds it again from its source,
-  with the id it has, and fills the texture cache, so the editor takes that Final from then on; the
-  sync of an editor build keeps textures Fast, so a session never waits for RDO. A cook that
-  finds one still Fast fails with `Source_Failed` and says so.
+  the [refresh](#imported-sources) a game build that cooks starts with builds it again from its
+  source, with the id it has, and fills the texture cache, so the editor takes that Final from then
+  on; the refresh of an editor build keeps textures Fast, so a session never waits for RDO. A
+  cook that finds one still Fast fails with `Source_Failed` and says so.
 - **Animations.** An `.anim` is written cooked: its clips sampled as the runtime plays them
   (`asset.animation_compress`, [storage](../../mirai-std/references/anim-storage.md)).
 - **Prefab instances.** A scene with a stale instance is written with its instances up

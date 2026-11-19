@@ -168,6 +168,27 @@ mesh_build_makes_clusters_of_one_slot_and_levels_of_one_sphere :: proc(t:^testin
     // A grid lies flat: its clusters are seen from both sides, and it is not closed.
     testing.expect(t,.Closed not_in g.flags)
     testing.expect(t,g.clusters[0].counts&CLUSTER_CONE!=0,"a flat cluster has the narrowest cone")
+    // Ten triangles facing up and one tilted 80 degrees from them: the cone
+    // is centered between the farthest normals, 40 degrees from each, not
+    // pulled toward the many.
+    lopsided:=make([dynamic]Vertex,context.temp_allocator)
+    for k in 0..<11 {
+        angle:=f32(80) if k==10 else 0
+        s,c:=math.sin(angle*math.RAD_PER_DEG),math.cos(angle*math.RAD_PER_DEG)
+        origin:=[3]f32{f32(k%4)*1.5,0,f32(k/4)*1.5}
+        for corner in ([3][3]f32{{0,0,0},{0,-s,c},{1,0,0}}) {
+            append(&lopsided,Vertex{position=origin+corner,normal=mm.normal_pack({0,c,s}),color=0xffffffff,tangent=mm.tangent_pack({1,0,0},1)})
+        }
+    }
+    corners:=make([]u32,len(lopsided),context.temp_allocator)
+    for &corner,i in corners {corner=u32(i)}
+    one:=[1]Level_Source{{0,u32(len(corners)),0}}
+    cone:Mesh_Geometry
+    testing.expect(t,mesh_build({vertices=lopsided[:]},corners,one[:],&cone,context.temp_allocator))
+    testing.expect_value(t,len(cone.clusters),1)
+    c:=cone.clusters[0]
+    cutoff:=f32(i32(c.counts)>>24)/127
+    testing.expectf(t,c.counts&CLUSTER_CONE!=0 && cutoff<=math.sin(f32(43)*math.RAD_PER_DEG),"the cone of a lopsided cluster spreads half the widest angle: cutoff %v",cutoff)
 }
 
 @(test)

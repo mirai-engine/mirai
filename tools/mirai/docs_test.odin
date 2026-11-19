@@ -54,7 +54,7 @@ docs_root :: proc(t:^testing.T,name:string) -> (root:string,ok:bool) {
     if root=="" {return}
     write :: proc(t:^testing.T,root,name,text:string) {
         file:=project.path(root,api.DOCS_FOLDER,name,allocator=context.temp_allocator)
-        testing.expect(t,os.make_directory_all(file[:strings.last_index_byte(file,'/')])==nil)
+        testing.expect(t,base.make_directory_all(file[:strings.last_index_byte(file,'/')])==nil)
         testing.expect(t,os.write_entire_file(file,transmute([]u8)text)==nil)
     }
     write(t,root,"core.md",DOCS_TOPIC)

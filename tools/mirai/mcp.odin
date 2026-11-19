@@ -118,16 +118,14 @@ mcp_message :: proc(bridge:^Mcp_Bridge,line:string) {
     failed:api.Error
     editor:Connection_Editor
     if method=="tools/call" {reply,answer=mcp_docs_call(bridge.root,text)}
-    for retried:=false;!answer;retried=true {
+    if !answer {
         editor,failed=connection_ready(c,called)
         if c.project=="" || editor.port!=0 {
             watch:=connection_watch(c,editor,fmt.tprintf("mirai mcp %s",method))
             reply,answer,failed=api.bridge_handle(editor.port,c.timeout_ms,text,context.temp_allocator,connection_task(c,editor.port),bridge.plugins,bridge.client,watch,{bridge,mcp_event})
-            if !retried && connection_ended(c,called,failed) {continue}
             if answer && c.project!="" && method=="initialize" {reply=mcp_lists_changes(reply)}
         }
         if failed.code!=0 {reply,answer=api.bridge_absent(text,mcp_absent(bridge.root,c,editor,failed),context.temp_allocator)}
-        break
     }
     if !answer {return}
     unlisted:=failed.code!=0 && method=="tools/list"

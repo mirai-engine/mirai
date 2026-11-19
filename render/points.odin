@@ -16,7 +16,7 @@ import "mirai:render/abi"
 
 POINTS_START :: 1 << 16 // points the buffer holds at first; it grows to what a frame asked for
 POINTS_MAX :: 1 << 21 // the most points it holds: past them a pass does without the programs
-POINTS_PROGRAM_CAPACITY :: 1024 // bins the groups of points.comp and cull_programs.comp aggregate (BINS_MAX of bins.slang)
+POINTS_PROGRAM_CAPACITY :: 1024 // bins the groups of points.comp aggregate (BINS_MAX of bins.slang), and draws of the resolve of programs
 @(private) POINTS_HEADER :: abi.POINTS_HEADER
 @(private) POINT_WORDS :: abi.POINT_WORDS
 @(private) RECORD_WORDS :: abi.RECORD_WORDS
@@ -30,7 +30,7 @@ Material_Points :: struct {
 	buffer:    rhi.Buffer,
 	capacity:  u32, // points a batch holds at once
 	programs:  u32, // bins: the largest Surface program id of the catalog, plus one
-	wanted:    u32, // the most points a batch asked for, read back: the buffer grows to it
+	wanted:    u32, // the most points a batch asked for since the marks were set (renderer_capacity_marks_set), read back: the buffer grows to it
 	readback:  [rhi.MAX_FRAMES_IN_FLIGHT]rhi.Buffer,
 	using stages: Program_Computes, // of surface_points__<program>.comp
 	started:   bool, // a batch started this frame: the next one keeps what it asked for
@@ -131,6 +131,8 @@ program_compute :: proc(r: ^Renderer, table: ^Program_Computes, program: Program
 		if code := program_shader(r, fmt.bprintf(name[:], "%s__%s.comp", stem, program.name)); code != nil {
 			table.codes[program.id] = code
 			table.asked[program.id] = pipeline_make(r, &table.pipelines[program.id], compute = {shader = code, name = code.name}, early = early)
+		} else {
+			program_missing(r, fmt.bprintf(name[:], "%s.comp", stem), program.id)
 		}
 	} else if table.pipelines[program.id] == 0 && table.codes[program.id] != nil && !early {
 		pipeline_urgent(r, &table.pipelines[program.id])
@@ -174,13 +176,11 @@ points_dispatch :: proc(p: ^Pass, mode: u32, x: u32 = 1, indirect: bool = false)
 }
 
 // Starts the batch of a pass: its threads after it append their points and
-// heads. False when the frame needs none, or for a pass whose only points are
-// the filters of glass (`filters`) when no glass has a program: the pass runs
-// without rounds.
+// heads. False when the frame needs none: the pass runs without rounds.
 @(private)
-points_begin :: proc(p: ^Pass, filters := false) -> bool {
+points_begin :: proc(p: ^Pass) -> bool {
 	m := &p.r.points
-	if !points_needed(p.r) || (filters && p.r.scene.programmed_glass == 0) {return false}
+	if !points_needed(p.r) {return false}
 	points_dispatch(p, 0)
 	m.started = true
 	return true

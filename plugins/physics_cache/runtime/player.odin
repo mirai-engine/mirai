@@ -125,7 +125,7 @@ cache_content_find :: proc(library:^Cache_Library,assets:^host.Assets,allocator:
     if fresh.error==.None {
         for &track,index in fresh.view.tracks {
             if !cache_mesh(fresh.view,u32(index),&library.geometry) {fresh.error=.Out_Of_Memory;break}
-            id,ok:=host.assets_mesh_generate(assets,geom.mesh_buffer_view(&library.geometry),track.materials[:])
+            id,ok:=host.assets_mesh_generate(assets,geom.mesh_buffer_view(&library.geometry),track.materials[:],options={label="cached simulation piece"})
             if !ok {fresh.error=.Out_Of_Memory;break}
             fresh.meshes[index]=id
         }

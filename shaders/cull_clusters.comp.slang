@@ -4,24 +4,27 @@
 //! constant candidates MIRAI_CULL_CANDIDATES
 // The clusters of the chunks the instance pass (cull.comp) handed over, a
 // group a chunk: those of the cut of the view (cut.slang) in the frustum, not
-// seen only from behind (a closed mesh) and not hidden by the depth pyramid
-// go to the visible list the draws of the phase read, an instance of a draw a
-// cluster. Phase 0 tests against last frame's pyramid and lists the clusters
-// it hides as candidates of phase 1; phase 1 against this frame's. A posed
-// mesh has no boxes of its clusters: the instance stands for them. Blended
-// clusters are the glass passes'. Those of materials with a Surface program
-// go to a list of their own, which cull_programs.comp sorts by program.
+// seen only from behind (of a material not two-sided) and not hidden by the
+// depth pyramid are listed with their raster bin (RASTER_BIN_*), which
+// cull_bins.comp sorts them by into the visible list the draws of the phase
+// read, an instance of a draw a cluster. Phase 0 tests against last frame's
+// pyramid and lists the clusters it hides as candidates of phase 1; phase 1
+// against this frame's. A posed mesh has no boxes of its clusters: the
+// instance stands for them. Blended clusters are the glass passes'. A cluster
+// of a material with a Surface program turns on the resolve of that program.
 #include "cut.slang"
 #include "cull_common.slang"
-#include "cull_programs.slang"
 #define MIRAI_GROUP_X 64
 #define MIRAI_GROUP_Y 1
 #define MIRAI_GROUP_Z 1
 
 // The clusters phase 0 found hidden: the instance and the cluster among those of its mesh.
 [[vk::binding(SLOT_PASS3, 0)]] RWStructuredBuffer<uint2> cluster_candidates : register(MIRAI_REGISTER(u, SLOT_PASS3), space0);
-// The visible clusters of both phases: the instance, and the cluster as a word of the index pool.
-[[vk::binding(SLOT_PASS6, 0)]] RWStructuredBuffer<uint2> visible : register(MIRAI_REGISTER(u, SLOT_PASS6), space0);
+// The visible clusters of both phases as the cull lists them: the instance,
+// the cluster as a word of the index pool, its raster bin and depth bucket
+// (cull_listed_word) and the Surface program its pixels are resolved by (0:
+// its row).
+[[vk::binding(SLOT_PASS6, 0)]] RWStructuredBuffer<uint4> listed : register(MIRAI_REGISTER(u, SLOT_PASS6), space0);
 // The pages of streamed meshes the cut asks for: the first word counts them,
 // the second the requests that found no entry, and from PAGE_REQUEST_FIRST a
 // table of params.pages.w entries (a power of two), each the mesh, the page,
@@ -29,8 +32,11 @@
 [[vk::binding(SLOT_PASS7, 0)]] RWStructuredBuffer<uint> page_requests : register(MIRAI_REGISTER(u, SLOT_PASS7), space0);
 // Of each slot of the pages, the stamp of the last frame that drew a cluster of the page in it.
 [[vk::binding(SLOT_PASS8, 0)]] RWStructuredBuffer<uint> page_stamps : register(MIRAI_REGISTER(u, SLOT_PASS8), space0);
-// The clusters of Surface programs (PROGRAMS_* of cull_common.slang).
-[[vk::binding(SLOT_PASS9, 0)]] RWStructuredBuffer<uint> program_bins : register(MIRAI_REGISTER(u, SLOT_PASS9), space0);
+// The draws of the resolve of each Surface program (render.Gpu_Draw): a
+// cluster of a program gives the draw of the program its instance.
+[[vk::binding(SLOT_PASS9, 0)]] RWStructuredBuffer<uint> program_draws : register(MIRAI_REGISTER(u, SLOT_PASS9), space0);
+// Of each phase and tested bin, the clusters of each depth bucket (cull_depth_word).
+[[vk::binding(SLOT_PASS4, 0)]] RWStructuredBuffer<uint> depth_buckets : register(MIRAI_REGISTER(u, SLOT_PASS4), space0);
 #define PAGE_REQUEST_WORDS 4u
 #define PAGE_REQUEST_PROBES 32u
 
@@ -68,54 +74,99 @@ void page_stamp(Mesh mesh, Cluster c) {
     if (slot < params.pages.y) page_stamps[slot] = params.pages.z;
 }
 
-// Lists a visible cluster of a material with a Surface program for
-// cull_programs.comp; false past the capacity.
-bool cluster_programmed(uint index, Mesh mesh, uint ordinal, uint phase, uint program) {
-    uint base = phase == 0u ? 0u : min(program_bins[PROGRAMS_COUNT], params.program_capacity);
-    uint slot;
-    InterlockedAdd(program_bins[PROGRAMS_COUNT + phase], 1u, slot);
-    if (base + slot >= params.program_capacity) {
-        InterlockedAdd(cull_state[CULL_DROPPED + 3u], 1u);
-        InterlockedAdd(stats[0].dropped[3], 1u);
-        return false;
-    }
-    uint at = programs_entry(base + slot, params.programs);
-    program_bins[at] = index;
-    program_bins[at + 1u] = mesh_cluster_word(mesh, ordinal);
-    program_bins[at + 2u] = program;
-    InterlockedMax(program_bins[PROGRAMS_DISPATCH + 3u * phase], slot / PROGRAMS_GROUP + 1u);
-    return true;
+// The depth bucket of a box: even in the logarithm of the depth of its
+// center from the near plane of the view to its far one.
+uint depth_bucket(float3 low, float3 high) {
+    float depth = dot(frame.depth_plane.xyz, (low + high) * 0.5) + frame.depth_plane.w;
+    float near = max(frame.camera_position.w, 1e-4), far = max(frame.camera_forward.w, near * 2.0);
+    float t = log2(clamp(depth, near, far) / near) / log2(far / near);
+    return uint(clamp(int(floor(t * float(RASTER_DEPTH_BUCKETS))), 0, int(RASTER_DEPTH_BUCKETS) - 1));
 }
 
-// Lists a visible cluster in the draw of the phase, which counts as many as
-// fit, or in the list of the clusters of Surface programs.
-void cluster_visible(uint index, Mesh mesh, uint ordinal, Cluster c) {
+// The pixels a box covers on the view, from the lowest to past the highest,
+// a pixel wider each way for the jitter of the raster; the whole view for
+// one that reaches the eye or that has none (boxed false).
+uint4 cluster_pixels(float3 low, float3 high, bool boxed) {
+    uint4 view = uint4(0u, 0u, uint2(frame.resolution));
+    if (!boxed) return view;
+    float2 lo = float2(FLT_MAX), hi = float2(-FLT_MAX);
+    for (int i = 0; i < 8; i++) {
+        float3 corner = float3((i & 1) != 0 ? high.x : low.x, (i & 2) != 0 ? high.y : low.y, (i & 4) != 0 ? high.z : low.z);
+        float4 clip = view_clip(corner);
+        if (clip.w <= 1e-6) return view;
+        float2 ndc = clip.xy / clip.w;
+        float2 pixel = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) * frame.resolution;
+        lo = min(lo, pixel);
+        hi = max(hi, pixel);
+    }
+    lo = clamp(floor(lo) - 1.0, float2(0.0), frame.resolution);
+    hi = clamp(ceil(hi) + 1.0, float2(0.0), frame.resolution);
+    return uint4(uint2(lo), uint2(hi));
+}
+
+// Lists a visible cluster of the phase with its raster bin, while the list
+// has room, and counts it in its bin; one of a tested bin, in the depth
+// bucket of its box too. The lanes of a wave take their slots and add to the
+// counts they share with an atomic each.
+void cluster_visible(uint index, Mesh mesh, uint ordinal, Cluster c, float3 low, float3 high, bool boxed) {
     uint phase = min(params.phase, 1u);
-    uint program = materials[material_of(scene_instance(index), cluster_material(mesh, c))].shared.program_id;
-    if (program != 0u && program < params.programs) {
-        if (!cluster_programmed(index, mesh, ordinal, phase, program)) return;
-    } else {
-        uint base = phase == 0u ? 0u : cull_state[CULL_DRAW0 + 1u];
-        uint room = params.visible_capacity - min(base, params.visible_capacity);
-        uint slot;
-        InterlockedAdd(cull_state[CULL_VISIBLE_COUNT + phase], 1u, slot);
-        if (slot >= room) {
-            InterlockedAdd(cull_state[CULL_DROPPED + 1u], 1u);
-            InterlockedAdd(stats[0].dropped[1], 1u);
-            return;
-        }
-        visible[base + slot] = uint2(index, mesh_cluster_word(mesh, ordinal));
-        InterlockedMax(cull_state[(phase == 0u ? CULL_DRAW0 : CULL_DRAW1) + 1u], slot + 1u);
+    Instance inst = scene_instance(index);
+    Material m = material_row(material_of(instance_row(index), inst, cluster_material(mesh, c)), inst.material_values);
+    uint base = phase == 0u ? 0u : min(cull_state[CULL_LISTED], params.visible_capacity);
+    uint first = 0u;
+    uint listing = WaveActiveCountBits(true);
+    if (WaveIsFirstLane()) InterlockedAdd(cull_state[CULL_LISTED + phase], listing, first);
+    uint slot = WaveReadLaneFirst(first) + WavePrefixCountBits(true);
+    if (base + slot >= params.visible_capacity) {
+        InterlockedAdd(cull_state[CULL_DROPPED + CULL_LIST_VISIBLE], 1u);
+        InterlockedAdd(stats[0].dropped[CULL_LIST_VISIBLE], 1u);
+        return;
+    }
+    uint bin = (m.two_sided != 0u ? RASTER_BIN_TWO_SIDED : 0u) | (m.alpha_mode == ALPHA_MASK || instance_fade(index, inst) > 0.0 ? RASTER_BIN_TESTED : 0u);
+    // A program past those the renderer has resolves as its row.
+    uint program = m.program_id < params.programs ? m.program_id : 0u;
+    uint bucket = 0u;
+    if ((bin & RASTER_BIN_TESTED) != 0u) {
+        bucket = depth_bucket(low, high);
+        InterlockedAdd(depth_buckets[cull_depth_word(phase, bin & RASTER_BIN_TWO_SIDED, bucket)], 1u);
+    }
+    listed[base + slot] = uint4(index, mesh_cluster_word(mesh, ordinal), cull_listed_word(bin, bucket), program);
+    for (uint b = 0u; b < RASTER_BINS; b++) {
+        uint binned = WaveActiveCountBits(bin == b);
+        if (WaveIsFirstLane() && binned != 0u) InterlockedAdd(cull_state[CULL_BIN_COUNTS + phase * RASTER_BINS + b], binned);
+    }
+    uint last = WaveActiveMax(slot);
+    if (WaveIsFirstLane()) InterlockedMax(cull_state[CULL_BINS_DISPATCH + 3u * phase], last / CULL_BINS_GROUP + 1u);
+    if (program != 0u) {
+        uint at = program * PROGRAM_DRAW_WORDS;
+        program_draws[at + 1u] = 1u;
+        uint4 rect = cluster_pixels(low, high, boxed);
+        InterlockedMin(program_draws[at + 4u], rect.x);
+        InterlockedMin(program_draws[at + 5u], rect.y);
+        InterlockedMax(program_draws[at + 6u], rect.z);
+        InterlockedMax(program_draws[at + 7u], rect.w);
     }
     page_stamp(mesh, c);
-    InterlockedAdd(stats[0].visible_clusters, 1u);
-    InterlockedAdd(stats[0].visible_triangles, cluster_triangle_count(c));
-    uint kind = cull_kind(instance_batched(index), mesh) * 3u;
-    InterlockedAdd(stats[0].kinds[kind + 1u], 1u);
-    InterlockedAdd(stats[0].kinds[kind + 2u], cluster_triangle_count(c));
-    if (phase != 0u) {
-        InterlockedAdd(stats[0].late[1], 1u);
-        InterlockedAdd(stats[0].late[2], cluster_triangle_count(c));
+    uint triangles = cluster_triangle_count(c);
+    uint clusters = WaveActiveCountBits(true), drawn = WaveActiveSum(triangles);
+    uint kind = cull_kind(instance_batched(index), mesh);
+    uint3 kinds_clusters, kinds_triangles;
+    for (uint k = 0u; k < 3u; k++) {
+        kinds_clusters[k] = WaveActiveCountBits(kind == k);
+        kinds_triangles[k] = WaveActiveSum(kind == k ? triangles : 0u);
+    }
+    if (WaveIsFirstLane()) {
+        InterlockedAdd(stats[0].visible_clusters, clusters);
+        InterlockedAdd(stats[0].visible_triangles, drawn);
+        for (uint k = 0u; k < 3u; k++) {
+            if (kinds_clusters[k] == 0u) continue;
+            InterlockedAdd(stats[0].kinds[k * 3u + 1u], kinds_clusters[k]);
+            InterlockedAdd(stats[0].kinds[k * 3u + 2u], kinds_triangles[k]);
+        }
+        if (phase != 0u) {
+            InterlockedAdd(stats[0].late[1], clusters);
+            InterlockedAdd(stats[0].late[2], drawn);
+        }
     }
 }
 
@@ -158,15 +209,18 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
         float scale = instance_scale(inst);
         Cluster_Cut cut = cluster_cut(view_detail(), inst, scale, mesh, c, frame.cut.x);
         if (!cut.drawn) return;
-        if (material_row(material_of(inst, cluster_material(mesh, c)), inst.material_values).alpha_mode == ALPHA_BLEND) return;
+        Material m = material_row(material_of(instance_row(index), inst, cluster_material(mesh, c)), inst.material_values);
+        if (m.alpha_mode == ALPHA_BLEND) return;
         if (boxed) {
-            bool away = posed ? pose.cone && cone_backfacing(inst, scale, mesh, pose.axis, pose.cutoff, low, high) : cluster_backfacing(inst, scale, mesh, c, low, high);
+            bool away = m.two_sided == 0u && (posed ? pose.cone && cone_backfacing(inst, scale, pose.axis, pose.cutoff, low, high) : cluster_backfacing(inst, scale, c, low, high));
             if (!frustum_visible(low, high) || away) return;
             // What the depth pyramid hides asks too: it shows once what hides it moves.
             if (!posed && cut.request) page_request(instance_mesh(inst), mesh, c.child_page, cut.pixels);
             if (params.occlusion != 0u) {
                 if (params.phase == 0u) {
-                    if (occluded(low, high, frame.prev_view_proj, frame.prev_eye.xyz, frame.prev_depth_plane)) {
+                    float3 before_low, before_high;
+                    box_before(inst, low, high, before_low, before_high);
+                    if (occluded(before_low, before_high, frame.prev_view_proj, frame.prev_eye.xyz, frame.prev_depth_plane)) {
                         uint slot;
                         InterlockedAdd(cull_state[CULL_CANDIDATE_COUNT], 1u, slot);
                         if (slot < params.candidate_capacity) {
@@ -184,5 +238,5 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
             }
         }
     }
-    cluster_visible(index, mesh, ordinal, c);
+    cluster_visible(index, mesh, ordinal, c, low, high, boxed);
 }

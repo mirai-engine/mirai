@@ -9,6 +9,7 @@ import "core:testing"
 import "core:thread"
 import "mirai:asset"
 import img "mirai:cook/image"
+import importer "mirai:cook/import"
 import "mirai:cook/import/sources"
 import "mirai:editor/api"
 import "mirai:host"
@@ -255,4 +256,60 @@ a_package_of_the_library_goes_to_a_second_project_with_the_same_blobs :: proc(t:
     s.store=opened
     testing.expect(t,!import_file(s,fmt.tprintf("%s/none.png",top),""))
     testing.expect(t,strings.contains(string(s.importer.message[:s.importer.message_length]),"does not exist"))
+}
+
+// A source whose import wrote a document of the project that changed since is
+// not imported again without a word: asset.import fails naming it and how to
+// go on, and the import of the content browser asks, with the documents that
+// changed.
+@(test)
+importing_over_a_changed_document_asks_first :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"import-changed")
+    if root=="" {return}
+    folder:=fmt.tprintf("%s/assets",root)
+    os.make_directory_all(folder)
+    assets:host.Assets
+    asset.types_init(&assets.types);defer asset.types_destroy(&assets.types)
+    asset.registry_init(&assets.registry,folder);defer asset.registry_destroy(&assets.registry)
+    hall:=base.Asset_Id{7,9}
+    scene:asset.Scene
+    if !testing.expect_value(t,asset.scene_init(&scene,&assets.types,hall,context.temp_allocator),asset.Error.None) {return}
+    _,_=asset.scene_entity_add(&scene,asset.scene_new_id(&scene),{},"Added")
+    testing.expect_value(t,asset.scene_save(&scene,fmt.tprintf("%s/hall.scene",folder)),asset.Error.None)
+    asset.scene_destroy(&scene)
+    source:=fmt.tprintf("%s/hall.gltf",folder)
+    _=os.write_entire_file(source,"{}")
+    testing.expect_value(t,asset.registry_scan(&assets.registry),asset.Error.None)
+    // The package the source was ingested as, whose scene the pin says was written as something else.
+    kept,opened:=store.open(fmt.tprintf("%s/store",root))
+    if !testing.expect_value(t,opened,store.Error.None) {return}
+    defer store.close(&kept)
+    p:=asset.Package{id={5,5},name="hall",origin={path="assets/hall.gltf",importer="gltf"}}
+    p.assets=make([dynamic]asset.Package_Asset,context.temp_allocator)
+    append(&p.assets,asset.Package_Asset{kind=asset.KIND_SCENE,name="hall",id=hall})
+    manifest,put_error:=asset.package_put(&kept,&p)
+    if !testing.expect_value(t,put_error,asset.Error.None) {return}
+    name:[64]u8
+    testing.expect_value(t,store.ref_set(&kept,asset.REF_ORIGINS,asset.origin_name(importer.path_key(source),&name),manifest),store.Error.None)
+    list:asset.Packages
+    list.packages=make([dynamic]asset.Project_Package,context.temp_allocator)
+    entry:=asset.Project_Package{id=p.id,manifest=manifest}
+    entry.written=make([dynamic]asset.Package_Written,context.temp_allocator)
+    append(&entry.written,asset.Package_Written{hall,1})
+    append(&list.packages,entry)
+    testing.expect_value(t,asset.packages_save(root,&list),asset.Error.None)
+
+    imports:Importer
+    gui:Editor_Ui
+    defer delete(gui.import_changed)
+    s:=Session{app=&host.App{assets=&assets},importer=&imports,gui=&gui,project_root=root,store=kept}
+    params:Import_Params
+    base.text_set(params.path[:],source)
+    method:=api.Method{params_id=Import_Params}
+    call:=api.Call{method=&method,params=&params,allocator=context.temp_allocator}
+    api_asset_import(&s,&call)
+    testing.expectf(t,call.failed && strings.contains(call.error.message,"hall.scene") && strings.contains(call.error.message,"discard_changes"),"%s",call.error.message)
+    testing.expect(t,gui.modal==.None,"a call asks nobody")
+    testing.expect(t,!import_file(&s,source,ask=true) && imports.running==nil,"nothing is imported")
+    testing.expect(t,gui.modal==.Import_Changes && len(gui.import_changed)==1 && gui.import_changed[0]==hall && base.text_get(gui.import_source[:])==importer.path_key(source),"the user is asked, with what changed")
 }

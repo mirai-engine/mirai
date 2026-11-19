@@ -11,8 +11,8 @@ struct Fog_Params {
     uint kept;      // the light of the frame before is there
     float distance; // metres along the view the grid reaches
     float scale;    // metres: about where slices start growing with the distance
-    float history;  // the weight of what the frames before found
-    uint hidden;    // a cell behind everything its column sees is lit one frame in this many
+    float history;  // the weight of what the frames before found, in a cell lit by its turn
+    uint turns;     // a cell whose light nothing changed is lit one frame in this many
     uint dry;       // some volume is a dry box
     uint shade;     // some volume takes the light of the sun
     uint far;       // slices past the grid
@@ -41,6 +41,7 @@ struct Fog_Volume {
     float4 medium; // rgb what it scatters in a metre, a what it stops; of a variable one, the mean
     float4 params; // x 1 over its wisp size (0: it does not vary), y anisotropy, z falloff, w the height of its base
     float4 carve;  // x priority, y FOG_CARVE_* bits, z 1/m it takes of the light of the sun that crosses it
+    float4 glow;   // rgb the luminance it gives off where it is thick, nits: for each metre of what it stops
     int4 cells[FOG_WISP_OCTAVES];    // xyz the cell of each layer of its wisps at the origin of the render now
     float4 within[FOG_WISP_OCTAVES]; // xyz where in that cell, 0 to 1
 };
@@ -50,6 +51,11 @@ struct Fog_Volume {
 // The glass of its surface takes what it stops of the view (fog.Medium.glass).
 #define FOG_CARVE_GLASS 8u
 bool fog_carve(Fog_Volume v, uint bit) { return (uint(v.carve.y) & bit) != 0u; }
+
+// What the light of a cell is given for each unit of (fog_light.comp): of a
+// medium, rgb what it scatters and a what it stops, a measure of both that
+// grows with its density. A cell sends its light times this of its medium.
+float fog_amount(float4 medium) { return luminance(medium.rgb) + medium.a; }
 
 // The grid of the view: the media of the view it integrates (media_grid.slang).
 Media_Grid fog_grid() {
@@ -62,8 +68,12 @@ Media_Grid fog_grid() {
     return g;
 }
 float fog_slice_depth(float s) { return media_slice_depth(fog_grid(), s); }
-float fog_depth_slice(float depth) { return media_depth_slice(fog_grid(), depth); }
 float fog_far_depth(uint j) { return media_far_depth(fog_grid(), j); }
+// Of the cells of the grid and those past it (fog_light.comp keeps the light of both).
+float fog_cell_depth(float s) { return media_cell_depth(fog_grid(), s); }
+
+// Metres along the view taken for without end: what a medium there lets through is none.
+static const float FOG_ENDLESS = 1e7;
 
 // fog.WISP_SIZES; what each layer adds to the wisps, which sum to 1.
 static const float FOG_WISP_SIZES[FOG_WISP_OCTAVES] = { 1.0, 0.47, 0.22 };

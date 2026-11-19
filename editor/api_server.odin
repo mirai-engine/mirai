@@ -14,6 +14,7 @@ import "mirai:editor/history"
 import "mirai:host"
 import "mirai:platform"
 import "mirai:project"
+import "mirai:rhi"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -77,6 +78,7 @@ Api_State :: struct {
     in_call:int,
     provided_calls:int, // handlers of plugins on the stack, which a swap of their library would strand
     last_call:time.Tick, // when a call arrived last: an agent that drives the editor keeps it at its rate
+    opened:time.Tick,    // when the API opened: the idle time of a manual editor before its first call
     stepping:bool,
     waiting:int,    // handlers inside api_wait: what runs meanwhile holds no world of theirs
     restart:bool,   // a Build asked to start the editor again while a call waits for it
@@ -147,6 +149,7 @@ api_open :: proc(s:^Session,port:int,manual:bool,listen:=true) -> (error:Api_Ope
     st:=new(Api_State)
     st.allocator=context.allocator
     st.manual=manual
+    st.opened=time.tick_now()
     if error:=api.server_init(&st.server,{port=port,local=!listen,name="mirai",version=API_VERSION,instructions=API_INSTRUCTIONS,docs_root=s.engine_root,max_methods=API_METHOD_CAPACITY+1,max_response=4<<20,allocator=context.allocator});error!=.None {
         free(st)
         return .Server,fmt.tprintf("the server could not start on port %d: %v",port,error)
@@ -186,7 +189,7 @@ api_port_file_path :: proc(s:^Session) -> string {
 api_port_file_write :: proc(s:^Session,port:int) {
     if !s.has_project {return}
     engine:=engine_folder_here(s)
-    file:=api.Port_File{port,os.get_pid(),s.project_root,engine,s.engine_stamp,s.library_stamp,s.headless}
+    file:=api.Port_File{port,os.get_pid(),s.project_root,engine,s.engine_stamp,s.library_stamp,s.headless,s.app!=nil && s.app.device!=nil?rhi.device_info(s.app.device).name:""}
     data,encoded:=serial.text_encode(file,.Pretty,context.temp_allocator)
     if !encoded {return}
     path:=api_port_file_path(s)
@@ -278,7 +281,7 @@ api_registrations :: proc(s:^Session,st:^Api_State) {
     api_schema_free(st)
     api_schema_build(s,st)
     st.server.assets={s,asset_text_resolve}
-    st.server.pause,st.server.transaction,st.server.user=api_server_pause,api_server_transaction,s
+    st.server.transaction,st.server.user=api_server_transaction,s
     api_plugins_set(s,st)
     api_methods_register(s,st)
     commands_register(s,st)
@@ -299,6 +302,8 @@ api_registrations :: proc(s:^Session,st:^Api_State) {
 api_idle :: proc(s:^Session) -> bool {
     st:=api_state(s)
     if st==nil || !st.manual || st.stepping {return false}
+    // Waiting for calls, it puts no work on the GPU.
+    gpu_turn_use(s,true)
     api_poll(s)
     build_poll(s)
     // No frame runs the requests here: the restart a Build asks for would wait for engine.step.
@@ -325,6 +330,23 @@ api_jobs :: proc(s:^Session) {
     if s.ai!=nil && s.has_project {ai_poll(s,s.ai)}
     events_steps(s)
     files_flush(s)
+    gpu_watch(s)
+    api_idle_close(s)
+}
+
+// A manual editor that holds a device and gets no call for api.SESSION_IDLE,
+// as one an agent forgot, closes as engine.shutdown closes it: the card does
+// not stay taken for no one, and the next command opens it again.
+@(private)
+api_idle_close :: proc(s:^Session) {
+    st:=api_state(s)
+    if st==nil || !st.manual || s.app.device==nil || s.quit {return}
+    if st.in_call>0 || st.stepping || st.waiting>0 {return}
+    since:=st.last_call if st.last_call!={} else st.opened
+    if time.tick_since(since)<api.SESSION_IDLE {return}
+    log.infof("no call for %.0f min: the editor closes and gives back its turn of the GPU; the next command that needs it opens it again",time.duration_minutes(api.SESSION_IDLE))
+    runs_stop(s)
+    s.quit=true
 }
 
 // Keeps the editor going from inside a handler until pending says false:
@@ -406,19 +428,6 @@ api_unplaced :: proc(s:^Session,user:rawptr) -> bool {
     if locals==nil || worlds==nil || !core.has(locals,e) {return false}
     placed,has:=core.get(worlds,e)
     return !has || placed.transform!=entity_world(w,e)
-}
-
-// Between two calls of _wait_until the editor goes on as a handler that waits does.
-@(private)
-api_server_pause :: proc(server:^api.Server,seconds:f64) -> bool {
-    s:=(^Session)(server.user)
-    st:=api_state(s)
-    context.temp_allocator=st.poll_temp
-    st.in_call+=1
-    defer st.in_call-=1
-    going_on :: proc(s:^Session,user:rawptr) -> bool {return !s.quit}
-    api_wait(s,seconds,nil,going_on)
-    return !s.quit
 }
 
 // What is on disk when the editor opens, against which api_disk_sync looks.
@@ -510,6 +519,8 @@ api_trampoline :: proc(call:^api.Call) {
     event(entry.session,st.person?"command":"api",call.method.name)
     if missing:=git_missing(entry.session);missing!="" && api_call_edits(call) && !strings.has_prefix(call.method.name,"git.") {
         api.call_fail(call,api.SERVER_ERROR,missing)
+    } else if !api_measured_wait(entry.session,call) {
+        // It failed saying for whom it waited.
     } else if st.in_call>1 || st.person || api_disk_sync(entry.session,call) {
         entry.run(entry.session,call)
     }
@@ -530,12 +541,27 @@ api_trampoline :: proc(call:^api.Call) {
     if task_id!=0 {task=ai_task_find(entry.session.ai,task_id)}
     if task!=nil && base.text_get(task.name[:])!=call.client_tag {task=nil}
     if external_id!=0 {task=ai_task_find(entry.session.ai,external_id)}
-    if task!=nil {ai_tool_note(entry.session,task,call.method.name,target,refs,call.failed?call.error.message:"",time.tick_since(started))}
+    // A wait is one step however many times it is called.
+    if task!=nil && !call.retry {ai_tool_note(entry.session,task,call.method.name,target,refs,call.failed?call.error.message:"",time.tick_since(started))}
     if task!=nil && !call.failed && call.method.flags&{.Read_Only,.As_User}=={} && entry.session.edits!=nil && entry.session.edits.serial!=serial_before {
         ai_review_record(entry.session,task,serial_before)
         ai_task_dirty(task)
         ai_task_persist(entry.session,task)
     }
+}
+
+// A call that draws or runs frames in a manual editor waits while a
+// measurement that neither the editor nor its caller is part of runs
+// (gpu_work_begin): its frames would be timed with it. false, with the call
+// failed, when the caller cancelled it first.
+@(private)
+api_measured_wait :: proc(s:^Session,call:^api.Call) -> bool {
+    st:=api_state(s)
+    // A call a frame of another one runs is drawn in that one's turn.
+    if !st.manual || st.person || st.stepping || call.method.flags&{.Draws,.As_User}=={} {return true}
+    ok,holder:=gpu_work_begin(s,call.measure,0)
+    if !ok {api.call_failf(call,api.CANCELLED,"The call waited for a measurement to finish (%s) and was cancelled first: it draws, and frames drawn now would be timed with it. mirai locks says who measures; call it again when it ends",holder)}
+    return ok
 }
 
 // Whether a method may edit the document: not one that only reads, runs

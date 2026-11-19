@@ -5,24 +5,26 @@ import render "mirai:engine/render"
 
 // AMD FidelityFX FSR 3.1.4 frame generation (MIT): while the graphics settings
 // ask for it (Graphics_Settings.frame_generation), the passes of
-// ffx_opticalflow.cpp and of ffxFrameInterpolationPrepare and
-// ffxFrameInterpolationDispatch of ffx_frameinterpolation.cpp, in their order,
-// come after the Output stage. From the final image of this frame and that of
-// the frame before, the motion of the game and the optical flow between both,
-// they interpolate the image the window shows between them (Generated). AMD's
+// ffx_opticalflow.cpp and of ffxFrameInterpolationDispatch of
+// ffx_frameinterpolation.cpp, in their order, come after the Output stage.
+// From the final image of this frame and that of the frame before, the motion
+// of the game and the optical flow between both, they interpolate the image
+// the window shows between them (Generated). The depth and the motion dilated
+// and the depth of the frame before are those the upscaler prepared, as
+// ffx_fsr3.cpp shares them: frame interpolation prepares none of its own. AMD's
 // HLSL is in shaders/fsr3/opticalflow and frameinterpolation; the passes bind
 // their resources at the slots their entries (shaders/fsr3_of_*.comp.slang and
 // fsr3_fi_*.comp.slang) name.
 
 Fg_Pass :: enum u8 {
     Of_Prepare_Luma,Of_Luma_Pyramid,Of_Scd_Histogram,Of_Scd_Divergence,Of_Search,Of_Filter,Of_Scale,
-    Fi_Reconstruct_And_Dilate,Fi_Setup,Fi_Reconstruct_Previous_Depth,Fi_Game_Motion_Vector_Field,Fi_Game_Vector_Field_Pyramid,
+    Fi_Setup,Fi_Reconstruct_Previous_Depth,Fi_Game_Motion_Vector_Field,Fi_Game_Vector_Field_Pyramid,
     Fi_Optical_Flow_Vector_Field,Fi_Disocclusion_Mask,Fi_Interpolation,Fi_Inpainting_Pyramid,Fi_Inpainting,Fi_Copy,
 }
 FG_SHADERS :: [Fg_Pass]string{
     .Of_Prepare_Luma="fsr3_of_prepare_luma",.Of_Luma_Pyramid="fsr3_of_luma_pyramid",.Of_Scd_Histogram="fsr3_of_scd_histogram",
     .Of_Scd_Divergence="fsr3_of_scd_divergence",.Of_Search="fsr3_of_search",.Of_Filter="fsr3_of_filter",.Of_Scale="fsr3_of_scale",
-    .Fi_Reconstruct_And_Dilate="fsr3_fi_reconstruct_and_dilate",.Fi_Setup="fsr3_fi_setup",
+    .Fi_Setup="fsr3_fi_setup",
     .Fi_Reconstruct_Previous_Depth="fsr3_fi_reconstruct_previous_depth",.Fi_Game_Motion_Vector_Field="fsr3_fi_game_motion_vector_field",
     .Fi_Game_Vector_Field_Pyramid="fsr3_fi_game_vector_field_pyramid",.Fi_Optical_Flow_Vector_Field="fsr3_fi_optical_flow_vector_field",
     .Fi_Disocclusion_Mask="fsr3_fi_disocclusion_mask",.Fi_Interpolation="fsr3_fi_interpolation",
@@ -42,19 +44,16 @@ OF_SCD_HISTOGRAM :: render.Render_Resource.Custom22
 OF_SCD_PREVIOUS_HISTOGRAM :: render.Render_Resource.Custom23
 OF_SCD_TEMP :: render.Render_Resource.Custom24
 OF_SCD_OUTPUT :: render.Render_Resource.Custom25             // the scene change of this frame and those of the frames before
-FI_DILATED_DEPTH :: render.Render_Resource.Custom26
-FI_DILATED_MOTION :: render.Render_Resource.Custom27
-FI_PREVIOUS_DEPTH :: render.Render_Resource.Custom28         // the depth of the frame before, reconstructed
-FI_INTERPOLATED_DEPTH :: render.Render_Resource.Custom29     // the depth of the frame in between, reconstructed
-FI_GAME_X :: render.Render_Resource.Custom30                 // the field of the motion of the game at the frame in between
-FI_GAME_Y :: render.Render_Resource.Custom31
-FI_FLOW_X :: render.Render_Resource.Custom32                 // the field of the optical flow at the frame in between
-FI_FLOW_Y :: render.Render_Resource.Custom33
-FI_DISOCCLUSION :: render.Render_Resource.Custom34
-FI_PYRAMID :: render.Render_Resource.Custom35                // the inpainting pyramid, of the vector field and then of the image
-FI_COUNTERS :: render.Render_Resource.Custom36               // the atomic of SPD and the frames since the last reset
-FI_PREVIOUS_SOURCE :: render.Render_Resource.Custom37        // the final image of the frame before
-FI_DISTORTION :: render.Render_Resource.Custom38             // the default distortion field: none
+FI_INTERPOLATED_DEPTH :: render.Render_Resource.Custom26     // the depth of the frame in between, reconstructed
+FI_GAME_X :: render.Render_Resource.Custom27                 // the field of the motion of the game at the frame in between
+FI_GAME_Y :: render.Render_Resource.Custom28
+FI_FLOW_X :: render.Render_Resource.Custom29                 // the field of the optical flow at the frame in between
+FI_FLOW_Y :: render.Render_Resource.Custom30
+FI_DISOCCLUSION :: render.Render_Resource.Custom31
+FI_PYRAMID :: render.Render_Resource.Custom32                // the inpainting pyramid, of the vector field and then of the image
+FI_COUNTERS :: render.Render_Resource.Custom33               // the atomic of SPD and the frames since the last reset
+FI_PREVIOUS_SOURCE :: render.Render_Resource.Custom34        // the final image of the frame before
+FI_DISTORTION :: render.Render_Resource.Custom35             // the default distortion field: none
 
 // advancedAlgorithmIterations, OpticalFlowMaxPyramidLevels and the scene
 // change histograms of ffx_opticalflow.cpp.
@@ -79,9 +78,6 @@ FG_RESOURCES :: [?]render.Render_Resource_Desc{
     {id=OF_SCD_PREVIOUS_HISTOGRAM,format=.R32_Float,size=.Fixed,width=OF_SCD_BINS,height=1,kept=true},
     {id=OF_SCD_TEMP,format=.R32_Uint,size=.Fixed,width=3,height=1,kept=true},
     {id=OF_SCD_OUTPUT,format=.R32_Uint,size=.Fixed,width=3,height=1,kept=true},
-    {id=FI_DILATED_DEPTH,format=.R32_Float,align=8},
-    {id=FI_DILATED_MOTION,format=.RG16_Float,align=8},
-    {id=FI_PREVIOUS_DEPTH,format=.R32_Uint,align=8},
     {id=FI_INTERPOLATED_DEPTH,format=.R32_Uint,align=8},
     {id=FI_GAME_X,format=.R32_Uint,align=8},
     {id=FI_GAME_Y,format=.R32_Uint,align=8},
@@ -100,12 +96,9 @@ fg_append :: proc(passes:^[dynamic]render.Render_Pass_Desc,resources:^[dynamic]r
         {.Ldr,.Read,false},{OF_INPUT,.Read,true},{OF_INPUT,.Write,false},{OF_SEARCH,.Write,false},{OF_FILTERED,.Write,false},{OF_VECTOR,.Write,false},
         {OF_SCD_HISTOGRAM,.Write,false},{OF_SCD_PREVIOUS_HISTOGRAM,.Write,false},{OF_SCD_TEMP,.Write,false},{OF_SCD_OUTPUT,.Write,false},
     }
-    @(static,rodata) prepare_uses:=[?]Use{
-        {.Motion,.Read,false},{.Depth,.Read,false},{FI_PREVIOUS_DEPTH,.Write,false},{FI_DILATED_MOTION,.Write,false},{FI_DILATED_DEPTH,.Write,false},
-    }
     @(static,rodata) fields_uses:=[?]Use{
-        {OF_SCD_OUTPUT,.Read,false},{OF_VECTOR,.Read,false},{FI_DILATED_MOTION,.Read,false},{FI_DILATED_DEPTH,.Read,false},
-        {FI_PREVIOUS_DEPTH,.Read,false},{.Ldr,.Read,false},{FI_PREVIOUS_SOURCE,.Read,false},{FI_DISTORTION,.Read,false},
+        {OF_SCD_OUTPUT,.Read,false},{OF_VECTOR,.Read,false},{DILATED_MOTION,.Read,false},{DILATED_DEPTH,.Read,false},
+        {RECONSTRUCTED_DEPTH,.Read,false},{.Ldr,.Read,false},{FI_PREVIOUS_SOURCE,.Read,false},{FI_DISTORTION,.Read,false},
         {FI_GAME_X,.Write,false},{FI_GAME_Y,.Write,false},{FI_FLOW_X,.Write,false},{FI_FLOW_Y,.Write,false},
         {FI_DISOCCLUSION,.Write,false},{FI_COUNTERS,.Write,false},{FI_INTERPOLATED_DEPTH,.Write,false},{FI_PYRAMID,.Write,false},
     }
@@ -118,7 +111,6 @@ fg_append :: proc(passes:^[dynamic]render.Render_Pass_Desc,resources:^[dynamic]r
     append(resources,..fg_resources[:])
     append(passes,
         render.Render_Pass_Desc{stage=.Custom,name="fsr3 optical flow",uses=optical_flow_uses[:],record=fg_optical_flow_record,user=state},
-        render.Render_Pass_Desc{stage=.Custom,name="fsr3 fi prepare",uses=prepare_uses[:],record=fg_prepare_record,user=state},
         render.Render_Pass_Desc{stage=.Custom,name="fsr3 fi fields",uses=fields_uses[:],record=fg_fields_record,user=state},
         render.Render_Pass_Desc{stage=.Custom,name="fsr3 fi interpolate",uses=interpolate_uses[:],record=fg_interpolate_record,user=state},
     )
@@ -301,24 +293,6 @@ fg_optical_flow_record :: proc(s:^render.Pass,user:rawptr) {
     }
 }
 
-// ffxFrameInterpolationPrepare: the depth and the motion dilated, and the
-// depth of the frame before reconstructed from them.
-@(private)
-fg_prepare_record :: proc(s:^render.Pass,user:rawptr) {
-    pipelines:=&(cast(^Fsr_Runtime)user).framegen
-    // The reversed depth reconstructed starts at the far plane.
-    render.pass_clear(s,FI_PREVIOUS_DEPTH)
-    render.pass_pipeline(s,pipelines[.Fi_Reconstruct_And_Dilate])
-    constants:=fi_constants(s)
-    if !render.pass_constants(s,0,&constants,size_of(constants)) {return}
-    render.pass_resource(s,2,.Motion)
-    render.pass_resource(s,3,.Depth)
-    render.pass_resource(s,4,FI_PREVIOUS_DEPTH)
-    render.pass_resource(s,5,FI_DILATED_MOTION)
-    render.pass_resource(s,6,FI_DILATED_DEPTH)
-    render.pass_dispatch(s,groups(s.width,8),groups(s.height,8))
-}
-
 // The passes of ffxFrameInterpolationDispatch before the interpolation: the
 // setup and, unless the history starts again, the fields of the motion of the
 // game and of the optical flow at the frame in between and its disocclusion.
@@ -341,16 +315,16 @@ fg_fields_record :: proc(s:^render.Pass,user:rawptr) {
     if !s.history {return}
 
     render.pass_pipeline(s,pipelines[.Fi_Reconstruct_Previous_Depth])
-    render.pass_resource(s,2,FI_DILATED_MOTION)
-    render.pass_resource(s,3,FI_DILATED_DEPTH)
+    render.pass_resource(s,2,DILATED_MOTION)
+    render.pass_resource(s,3,DILATED_DEPTH)
     render.pass_resource(s,4,.Ldr)
     render.pass_resource(s,5,FI_DISTORTION)
     render.pass_resource(s,6,FI_INTERPOLATED_DEPTH)
     render.pass_dispatch(s,groups_x,groups_y)
 
     render.pass_pipeline(s,pipelines[.Fi_Game_Motion_Vector_Field])
-    render.pass_resource(s,2,FI_DILATED_MOTION)
-    render.pass_resource(s,3,FI_DILATED_DEPTH)
+    render.pass_resource(s,2,DILATED_MOTION)
+    render.pass_resource(s,3,DILATED_DEPTH)
     render.pass_resource(s,4,FI_PREVIOUS_SOURCE)
     render.pass_resource(s,5,.Ldr)
     render.pass_resource(s,6,FI_DISTORTION)
@@ -373,7 +347,7 @@ fg_fields_record :: proc(s:^render.Pass,user:rawptr) {
     render.pass_pipeline(s,pipelines[.Fi_Optical_Flow_Vector_Field])
     render.pass_resource(s,2,OF_VECTOR)
     render.pass_resource(s,3,FI_GAME_X)
-    render.pass_resource(s,4,FI_DILATED_DEPTH)
+    render.pass_resource(s,4,DILATED_DEPTH)
     render.pass_resource(s,5,FI_PREVIOUS_SOURCE)
     render.pass_resource(s,6,.Ldr)
     render.pass_resource(s,7,FI_FLOW_X)
@@ -383,8 +357,8 @@ fg_fields_record :: proc(s:^render.Pass,user:rawptr) {
     render.pass_pipeline(s,pipelines[.Fi_Disocclusion_Mask])
     render.pass_resource(s,2,FI_GAME_X)
     render.pass_resource(s,3,FI_GAME_Y)
-    render.pass_resource(s,4,FI_PREVIOUS_DEPTH)
-    render.pass_resource(s,5,FI_DILATED_DEPTH)
+    render.pass_resource(s,4,RECONSTRUCTED_DEPTH)
+    render.pass_resource(s,5,DILATED_DEPTH)
     render.pass_resource(s,6,FI_INTERPOLATED_DEPTH)
     render.pass_resource(s,7,FI_PYRAMID)
     render.pass_resource(s,8,FI_DISTORTION)

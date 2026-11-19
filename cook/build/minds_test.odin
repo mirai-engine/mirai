@@ -26,7 +26,7 @@ minds_generate :: proc(t:^testing.T,core_source,game_source:string) -> (out:Gene
     game:=project.path(folder,"project",allocator=context.temp_allocator)
     sources:=[2][2]string{{project.path(engine,"core",allocator=context.temp_allocator),core_source},{project.path(game,"game",allocator=context.temp_allocator),game_source}}
     for source,i in sources {
-        if !testing.expect(t,os.make_directory_all(source[0])==nil) {return}
+        if !testing.expect(t,base.make_directory_all(source[0])==nil) {return}
         name:=i==0?"data.odin":"game.odin"
         if !testing.expect(t,os.write_entire_file(project.path(source[0],name,allocator=context.temp_allocator),source[1])==nil) {return}
     }

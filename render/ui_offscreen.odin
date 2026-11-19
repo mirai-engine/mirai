@@ -267,7 +267,7 @@ effect_views_record :: proc(p:^Pass,views:[]Effect_View) {
             scene_box={{1,1,1,0},{-1,-1,-1,0}}, // its own space, without the scene
             prev_eye={camera.position.x,camera.position.y,camera.position.z,0},
             frustum=frustum_from_eye(view_proj,camera.position),resolution=size,inv_resolution=1/size,
-            time={r.time,r.previous_time,r.delta_time,0},exposure=1,
+            time={r.time,r.previous_time,r.delta_time,0},exposure=1,indirect=1,
         }
         frame_view_constants(&f,camera,matrix_view,proj,proj,forward,size.y)
         p.constants=frame_constants(r,f)

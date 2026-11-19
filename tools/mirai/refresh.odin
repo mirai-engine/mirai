@@ -2,6 +2,7 @@ package main
 
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "mirai:cook/build"
 import "mirai:cook/workspace"
@@ -46,10 +47,7 @@ self_refresh :: proc(root:string) -> (code:int,refreshed:bool) {
             staged_sources:=fmt.aprintf("%s.sources.json",staging)
             command:=tool_command(root,"tools/mirai","-o:minimal",staging,staged_sources)
             log:=strings.builder_make(context.temp_allocator)
-            // After a merge the shader tables of render, which git does not keep, may name shaders
-            // that changed: this tool generates them again before a second try.
-            // The same goes for the test worlds of the packages it is built from, whose tests it reads.
-            if run_logged(root,command[:],&log)!=0 && (!engine_shaders(root) || !test_worlds(root,join(root,"tools","mirai")) || run_logged(root,command[:],&log)!=0) {
+            if run_logged(root,command[:],&log)!=0 {
                 os.remove(staging);os.remove(staged_sources)
                 fmt.eprintln("mirai: the sources of the tool do not build now; the existing one runs. `mirai build tools` shows the error.")
                 return
@@ -62,4 +60,30 @@ self_refresh :: proc(root:string) -> (code:int,refreshed:bool) {
     append(&again,final)
     append(&again,..os.args[1:])
     return run(root,again[:]),true
+}
+
+// The packages whose files the tool never reads: render holds the shader
+// tables it generates (render/shaders_gen.odin), and host, platform, the
+// editor and engine/* reach render or hold test worlds a check writes. A new
+// checkout lacks them and a merge leaves them stale until a tool writes them
+// again, so the tool builds without them. What render and the cook share is
+// in render/abi; a component the cook reads from an asset, by name.
+TOOL_UNREAD_PACKAGES :: [?]string{"render","host","platform","editor"}
+TOOL_UNREAD_UNDER :: "engine/"
+
+// The first file under root of a package of TOOL_UNREAD_PACKAGES or
+// TOOL_UNREAD_UNDER that the build of the tool read (sources_file, as the
+// compiler exported it), "" when none.
+tool_engine_read :: proc(root,sources_file:string) -> string {
+    sources,ok:=build.dependencies_read(sources_file,context.temp_allocator)
+    if !ok {return ""}
+    prefix:=len(strings.trim_right(root,"/\\"))+1
+    unread:=TOOL_UNREAD_PACKAGES
+    for source in sources {
+        if !path_inside(source,root) {continue}
+        file:=source[prefix:]
+        folder:=file[:max(strings.last_index_byte(file,'/'),0)]
+        if slice.contains(unread[:],folder) || strings.has_prefix(folder,TOOL_UNREAD_UNDER) {return file}
+    }
+    return ""
 }

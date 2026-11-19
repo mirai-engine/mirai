@@ -24,7 +24,7 @@ Slot_Binding :: struct {
 }
 
 @(private)
-Pass_Command_Kind :: enum u8 {Pipeline, Slot, Index, Viewport, Scissor, Draw, Draw_Indirect, Draw_Indexed_Indirect, Push_Label, Pop_Label, Timestamp}
+Pass_Command_Kind :: enum u8 {Pipeline, Slot, Index, Viewport, Scissor, Draw, Draw_Indexed, Draw_Indirect, Draw_Indexed_Indirect, Push_Label, Pop_Label, Timestamp}
 
 @(private)
 Pass_Command :: struct {
@@ -393,6 +393,9 @@ cmd_end_render_pass :: proc(c: ^Command_List) {
 		case .Draw:
 			v := command.draw.values
 			if vk_flush_bindings(c, .GRAPHICS) {d.dvk.CmdDraw(c.cmd, v.x, v.y, v.z, v.w)}
+		case .Draw_Indexed:
+			v := command.draw.values
+			if vk_flush_bindings(c, .GRAPHICS) {d.dvk.CmdDrawIndexed(c.cmd, v.x, v.y, v.z, 0, v.w)}
 		case .Draw_Indirect, .Draw_Indexed_Indirect:
 			b := pool_get(&d.buffers, base.Handle(command.draw.buffer))
 			if b == nil || !vk_flush_bindings(c, .GRAPHICS) {continue}
@@ -695,6 +698,16 @@ cmd_draw :: proc(c: ^Command_List, vertex_count: u32, instance_count: u32 = 1, f
 	vk_pass_record(c, {kind = .Draw, draw = {values = {vertex_count, instance_count, first_vertex, first_instance}}})
 }
 
+// Draws index_count indices of the bound index buffer from first_index.
+cmd_draw_indexed :: proc(c: ^Command_List, index_count: u32, instance_count: u32 = 1, first_index: u32 = 0, first_instance: u32 = 0) {
+	assert(c.in_render_pass)
+	if index_count == 0 || instance_count == 0 {return}
+	if pool_get(&c.device.buffers, base.Handle(c.index_buffer)) == nil {set_error(c.device, "indexed draw in render pass %s without an index buffer", c.pass.name); return}
+	if !vk_pass_draw(c) {return}
+	vk_pass_use(c, 0, c.index_buffer, .Index_Read)
+	vk_pass_record(c, {kind = .Draw_Indexed, draw = {values = {index_count, instance_count, first_index, first_instance}}})
+}
+
 cmd_draw_indexed_indirect :: proc(c: ^Command_List, buffer: Buffer, offset: u64, draw_count: u32, stride: u32 = size_of(Draw_Indexed_Indirect)) {
 	assert(c.in_render_pass)
 	if pool_get(&c.device.buffers, base.Handle(buffer)) == nil || draw_count == 0 {return}
@@ -856,17 +869,42 @@ cmd_timestamp :: proc(c: ^Command_List, name: string) {
 	if c.in_render_pass {vk_pass_record(c, {kind = .Timestamp, name = name})} else {vk_section(c, name)}
 }
 
+// Marks the start of an interval that frame_timings reports under this name
+// in every frame, also one that does not want timings, until cmd_measure_end:
+// what the renderer paces its own work by. Outside a render pass. In a frame
+// that wants timings it is a cmd_timestamp, which the next one ends.
+cmd_measure_begin :: proc(c: ^Command_List, name: string) {
+	if c.immediate || c.in_render_pass {return}
+	f := &c.device.frames[c.device.slot]
+	if f.passes {vk_section(c, name); return}
+	vk_measure(f, name)
+}
+
+// Ends the interval of the last cmd_measure_begin.
+cmd_measure_end :: proc(c: ^Command_List) {
+	if c.immediate || c.in_render_pass {return}
+	f := &c.device.frames[c.device.slot]
+	if !f.passes {vk_measure(f, "frame")}
+}
+
+// A timestamp of a frame without passes and the name of the interval it
+// begins, leaving one for frame_end.
+@(private)
+vk_measure :: proc(f: ^Vk_Frame, name: string) {
+	if f.queries == 0 || f.query_count + 1 >= MAX_TIMESTAMPS {return}
+	if frame_passes_add(&f.measured, name) {vk_timestamp_write(f)}
+}
+
 @(private)
 vk_section :: proc(c: ^Command_List, name: string) {
 	f := &c.device.frames[c.device.slot]
 	vk_mark(c, .Section, name)
-	if f.passes {vk_timestamp_write(f, name)}
+	if frame_passes_add(&f.recorded, name) && f.passes {vk_timestamp_write(f)}
 }
 
 @(private)
-vk_timestamp_write :: proc(f: ^Vk_Frame, name: string) {
+vk_timestamp_write :: proc(f: ^Vk_Frame) {
 	if f.queries == 0 || f.query_count >= MAX_TIMESTAMPS {return}
 	f.list.device.dvk.CmdWriteTimestamp2(f.cmd, {.ALL_COMMANDS}, f.queries, f.query_count)
-	f.query_names[f.query_count] = string(f.query_bytes[f.query_count][:copy(f.query_bytes[f.query_count][:], name)])
 	f.query_count += 1
 }

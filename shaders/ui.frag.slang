@@ -1,6 +1,6 @@
 #include "native.slang"
 #define MIRAI_NO_INSTANCES
-//! per surface program
+//! per surface program preview
 // world: a panel placed in the scene, which the scene may hide.
 //! constant world MIRAI_UI_WORLD
 
@@ -52,6 +52,7 @@ float4 material_preview(uint index, float2 coord) {
     values.emission = studio_emission(sample_emission(values, values.layers.coat_normal.z), values.emission_relative);
     float3 radiance = studio_radiance(position, n, float3(0, 0, 1), m, values);
     if (m.alpha_mode == ALPHA_MASK) coverage *= values.alpha >= m.alpha_cutoff ? 1.0 : 0.0;
+    coverage *= preview_alpha(m, values);
     return float4(studio_display(radiance), coverage);
 }
 

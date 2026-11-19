@@ -161,9 +161,9 @@ entity_surface :: proc(extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync
 
 @(private)
 surface_of :: proc(renderer:^erender.Renderer,mesh:erender.Mesh_Handle,transform:mm.Mat4) -> Resource_Desc {
-    count,ok:=erender.mesh_draw_range(renderer,mesh)
-    if !ok || count<3 {return {}}
-    return {kind=.Surface,mesh=mesh,triangles=count/3,transform=transform}
+    count,ok:=erender.mesh_primitive_count(renderer,mesh)
+    if !ok || count==0 {return {}}
+    return {kind=.Surface,mesh=mesh,triangles=count,transform=transform}
 }
 
 // The areas of the surfaces of a world, in a buffer of the renderer: each

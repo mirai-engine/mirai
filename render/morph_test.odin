@@ -62,7 +62,7 @@ gpu_morphs_move_the_bind_shape_before_the_skin_with_motion_tangents_bounds_and_b
         testing.expect(t,mesh_remove(r,source))
         palette:=[2]Mat4{Mat4(1),Mat4(1)}
         palette[1][1,1]=1.3;palette[1][0,3]=.25
-        sun:=Sun_Desc{direction={-.4,1,.3},color={1,1,1},illuminance=2*math.PI,enabled=true}
+        sun:=Sun_Desc{direction={-.4,1,.3},color={1,1,1},illuminance=2*math.PI,enabled=true,indirect=1,scattering=1}
         scene_given(r,{{object_id=1,mesh=skin,transform=Mat4(1),tint={1,.5,.2}}},nil,sun,{})
         camera:=Camera{position={3,4,6},forward={-3,-3.2,-6},up={0,1,0},fov_y=50,near=.05,far=100,exposure=UNIT_EXPOSURE}
         testing.expect(t,skin_update(r,skin,palette[:],true,{.75}))
@@ -204,7 +204,9 @@ gpu_skins_with_influences_of_every_level_pose_each_level_and_keep_its_history_an
         state:[1]Gpu_Cull_State
         visible:[1][2]u32
         testing.expect(t,rhi.buffer_read_slice(device,r.scene.cull_state_buffer,0,state[:]) && rhi.buffer_read_slice(device,r.scene.visible_buffer,0,visible[:]))
-        testing.expectf(t,state[0].draws[0].instance_count+state[0].draws[1].instance_count==1,"one cluster of one level at frame %d",frame)
+        drawn:=u32(0)
+        for phase in state[0].bin_counts {for count in phase {drawn+=count}}
+        testing.expectf(t,drawn==1,"one cluster of one level at frame %d",frame)
         testing.expectf(t,visible[0][1]==record.cluster_word+(0 if frame==0 else coarse)*CLUSTER_WORDS,"the GPU chooses among the posed levels at frame %d",frame)
         previous_palette,previous_weight=palette,weight
     }
@@ -235,7 +237,7 @@ gpu_skin_benchmark_reports_the_cost_of_posing_every_level_and_morph_targets :: p
         Variant :: struct {name:string,levels,morphs:bool}
         variants:=[3]Variant{{"level 0",false,false},{"every level",true,false},{"every level, 4 targets",true,true}}
         camera:=Camera{position={0,6,10},forward={0,-6,-10},up={0,1,0},fov_y=50,near=0.1,far=100,exposure=UNIT_EXPOSURE}
-        sun:=Sun_Desc{direction={0.5,1,0.5},color={1,1,1},illuminance=math.PI,enabled=true}
+        sun:=Sun_Desc{direction={0.5,1,0.5},color={1,1,1},illuminance=math.PI,enabled=true,indirect=1,scattering=1}
         for variant in variants {
             source,_,_:=test_mesh_add(&r,vertices,grid_indices,grid_levels)
             record:=r.scene.meshes[source]

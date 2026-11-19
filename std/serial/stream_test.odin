@@ -188,6 +188,8 @@ file_errors_name_what_failed :: proc(t:^testing.T) {
     path:=test_path("limit.bin")
     defer os.remove(path)
     testing.expect_value(t,file_write_atomic(path,buffer[:]),File_Error.None)
+    _,below_error:=file_read(fmt.tprintf("%s/below.bin",path))
+    testing.expect_value(t,below_error,File_Error.Not_Found)
     _,limit_error:=file_read(path,limit=3)
     testing.expect_value(t,limit_error,File_Error.Too_Large)
     // A write that fails leaves the file as it was.

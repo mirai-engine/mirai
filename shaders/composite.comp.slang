@@ -64,7 +64,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
             nested = true;
         }
 #endif
-        float4 sky = float4(frame.background.w > 0.5 ? frame.background.rgb : sky_seen(sky_dir), 1.0);
+        float4 sky = float4(sky_shown(sky_dir), 1.0);
         // The editor's reference grid goes behind transparency.
         float3 backdrop = nested ? sky.rgb : ground_grid_background(sky.rgb, uv);
         out_display[p] = float4(backdrop, 1.0);
@@ -80,7 +80,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     uint wants = (s.coat > 0.0 ? INDIRECT_COAT : 0u) | (gathered ? 0u : INDIRECT_SPECULAR | (given ? 0u : INDIRECT_DIFFUSE));
     Indirect light = indirect_lobes(s.position, s.normal, s.view, s, wants, g.occlusion);
     float4 around = indirect_input.Load(int3(p, 0));
-    if (given) light.irradiance = around.rgb * frame.gi_strength;
+    if (given) light.irradiance = around.rgb * frame.indirect;
     if (gathered) {
         light.irradiance = light_unpack(around.x);
         light.radiance = light_unpack(around.y);

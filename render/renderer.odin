@@ -30,6 +30,7 @@ import "core:os"
 import "core:reflect"
 import "core:sync"
 import "mirai:asset"
+import "mirai:std/base"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
 import "mirai:rhi"
@@ -53,9 +54,8 @@ Reflections :: enum u8 {
 // size alone.
 Settings :: struct {
 	gi_enabled:           bool,
-	gi_strength:          f32,
 	trace_mode:           Trace_Mode,
-	resolution:           u32,    // the lines the views of the window aim for together, as a fraction of the lines they span, never above one pixel per point nor under RENDER_SCALE_MIN of one: the cost per pixel does not grow with the output
+	resolution:           u32,    // the lines the views of the window aim for together, as a fraction of the lines they span, never above one pixel per point nor under RENDER_SCALE_MIN of one: the cost per pixel does not grow with the output; 0, native: the lines they span
 	taa:                  bool,   // temporal anti-aliasing / upscaling to the window resolution
 	lod_error_pixels:     f32,    // raster LOD switch threshold (0 = always full detail)
 	batch_min_pixels:     f32,    // an instance of a batch whose box is fewer pixels across is not rasterized, and fades out from twice that; rays still meet it. 0: every one is drawn
@@ -71,12 +71,11 @@ Settings :: struct {
 	firefly_clamp:        f32,    // the brightest a ray of a traced reflection or of glass counts, in render units (Scene.light_scale)
 	texture_max_size:     u32,    // larger images are loaded at the first mip level that fits
 	texture_pool_megabytes: u32,  // GPU memory for textures; past it they load without their largest levels (0: no limit)
-	page_pool_bytes:      u64,    // the slots of the vertex pool for the pages of streamed meshes out of their root, reserved when the first one loads (pages.odin); 0: they keep their root alone
+	page_pool_bytes:      u64,    // the most the slots of the vertex pool for the pages of streamed meshes out of their root take as they grow to what the views ask for (pages.odin); 0: they keep their root alone
 	reflections:          Reflections,
 	reflection_roughness: f32,    // surfaces at or above this roughness are not traced
 	reflection_light_budget: u32, // shadow rays at a reflected hit, each to a light or a group of them (at most LIGHT_CUT_MAX)
 	sun_shadows:           bool, // rays go to the sun; off, it lights everything it faces
-	colored_shadows:       bool, // thin RGB filters along shadow rays through blended surfaces
 	glass_layers:          u32,  // nearest blended surfaces of a pixel lit once per pixel with traced reflection and refraction (1 to GLASS_LAYERS_MAX); the ones behind are drawn forward
 	sun_radius:           f32, // angular radius of the sun, radians
 }
@@ -103,8 +102,8 @@ DEFAULT_HIGHLIGHT_STYLE :: Highlight_Style{
 }
 
 DEFAULT_SETTINGS :: Settings{
-	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, resolution = 1080, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
-	probe_spacing = 1.0, probe_grid = 16, probe_cascades = 5, probe_rays = 128, probe_budget = 512,
+	gi_enabled = true, trace_mode = .Auto, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
+	probe_spacing = 1.0, probe_grid = 16, probe_cascades = 6, probe_rays = 128, probe_budget = 640,
 	gi_max_distance = 1e4, sun_shadows = true, light_budget = 8, direct_samples = 15,
 	firefly_clamp = 20, texture_max_size = 2048,
 	texture_pool_megabytes = 1024, page_pool_bytes = 256 << 20,
@@ -122,7 +121,7 @@ REFLECTION_SHARED_ROUGHNESS :: abi.REFLECTION_SHARED_ROUGHNESS
 
 // Conservative budgets for software rasterizers (lavapipe, SwiftShader).
 CPU_DEVICE_SETTINGS :: Settings{
-	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, resolution = 360, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
+	gi_enabled = true, trace_mode = .Auto, resolution = 360, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.5, probe_grid = 12, probe_cascades = 3, probe_rays = 64, probe_budget = 64,
 	gi_max_distance = 1e4, sun_shadows = true, light_budget = 4, direct_samples = 7,
 	firefly_clamp = 20, texture_max_size = 1024,
@@ -242,6 +241,16 @@ Stats :: struct {
 	visible_kinds:     [Visible_Kind_Id]Visible_Kind, // of the frame two frames ago, by kind of instance
 	visible_late:      Visible_Kind, // of those, what phase 1 of the occlusion drew
 	cull_dropped:      [Cull_List]u32, // what passed the capacities of the lists of the cull, which then grow
+	raster_vertices:   u32, // the vertices the raster of the visibility target drew, of abi.RASTER_VERTEX_WORDS each
+	raster_triangles:  u32, // and its triangles, of those the cull found visible (visible_triangles): three indices and a word each
+	raster_deferred:   u32, // the clusters a round of it left to the next, their lists full; 0 once the lists hold a frame in a round
+	// What the resolve of the G-buffer of the last view culled shaded: each
+	// pixel of a triangle once, the lanes of their quads that ran only for
+	// derivatives, and the quads whose triangles do not continue one another
+	// that a program evaluated again, once per triangle.
+	resolved_pixels:   u32,
+	resolve_helpers:   u32,
+	resolve_quads_again: u32,
 	meshes:            u32,
 	triangles:         u64,
 	materials:         u32,
@@ -265,6 +274,8 @@ Stats :: struct {
 	probes:            u32,
 	probes_per_frame:  u32,
 	probes_traced:     u32, // in the frame two frames ago
+	probe_rays_traced: u32, // rays those probes traced: of one that keeps nothing of its rays, and those a change crossed (probe_hits.slang)
+	probe_hits_lit:    u32, // hits they took the direct light of: of those rays, and where the lights of a kept hit changed
 	rays_per_frame:    u64,
 	gpu_ms:            f32, // of the last frame the GPU finished
 	ev100:             f32, // the main view is exposed at, before its compensation: what its meter took, as read back, or what its camera gives
@@ -275,6 +286,10 @@ Stats :: struct {
 	cpu_record_ms:     f32, // uploads and the commands of every pass
 	cpu_end_ms:        f32, // rhi.frame_end: submit and present
 	generated:         bool, // the frame drew an image the window shows before its own (frame generation)
+	shadow_movers:          u32, // of the last frame: the movers the maps drew, which their caches leave out
+	shadow_marked:          u32, // of the last frame: the views whose points marked the pages of the maps they read
+	shadow:                 Shadow_Stats, // of the frame two frames ago: what the maps of its views drew
+	light_lists:            Light_List_Stats, // of the frame two frames ago: the lists of the lights without shadows of its last view
 	ui_vertices_dropped:    u32, // of the last frame: UI vertices beyond the capacity
 	ui_shapes_dropped:      u32,
 	ui_layers_dropped:      u32,
@@ -288,20 +303,26 @@ Stats :: struct {
 // One per stage: the tracer of its rays and the constants of its shaders
 // (`//! constant`) make the pipelines a frame asks for (pipeline_of).
 Pipeline_Id :: enum {
-	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Programs, Tlas_Batches, Gbuffer,
+	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Bins, Cull_Stats_Fold, Mesh_Draws, Tlas_Batches,
+	Raster_Round, Raster_Vertices, Raster_Vertices_Shadow, Raster_Starts, Raster_Triangles, // what the raster of the visibility target draws of the visible clusters, and the maps of the shadows of theirs, a round at a time (raster_lists.slang)
+	Cull_Cost, Raster_Vertices_Cost, Raster_Vertices_Shadow_Cost, Shadow_Clusters_Cost, Cost_Pixels, // the same counting by mesh and material, and the pixels each owns, in the frame of a request alone (cost.odin)
 	Light_Grid_Count, Light_Grid_Scan, Light_Grid_Fill, Light_Grid_Weights, // the passes of the grid of the lights (light_grid.comp)
+	Light_Lists, // the lists of the lights without shadows of the tiles of a view (light_lists.comp)
 	Direct_Maps, Direct_Rays, Direct_Samples, Direct_Points, Direct_Spread, Direct_Filter,
 	Ddgi_Trace, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
 	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
 	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Reflect, Translucent, Reflect_Resolve,
-	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Tint, Shadow_Map_Glass, Shadow_Map_Clear, Shadow_Map_Moved, // the cull of the maps of the shadows by instance and by cluster, their draws by what each writes, and the squares of the cache they clear or move
-	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Mean, Glass_Inside,
-	Gbuffer_Plain, // without the reflectance target: no reflective instance in the frustum
-	Gbuffer_Layers, Gbuffer_Layers_Clip, Gbuffer_Nested_Layers, // with the layers target: an instance with layers in the frustum
+	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Clear, Shadow_Map_Copy, Shadow_Mark, Shadow_Pages, Shadow_Hiz, // the cull of the maps of the shadows by instance and by cluster, the draws of the triangles their lists hold by what each writes, the pages of the cache they clear and the atlas copies, the marks of the points, the table of the pages and the farthest depth of the cache
+	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Inside,
+	// The raster of the visibility target by raster bin (RASTER_BIN_*), then the same of a view with a clip plane.
+	Visibility, Visibility_Two_Sided, Visibility_Tested, Visibility_Tested_Two_Sided,
+	Visibility_Clip, Visibility_Two_Sided_Clip, Visibility_Tested_Clip, Visibility_Tested_Two_Sided_Clip,
+	Program_Depth, // the depth of the Surface program of each pixel, which its resolve tests
+	Resolve, Resolve_Plain, Resolve_Layers, // the G-buffer from the visibility target: with the reflectance target, without it, with the layers target
+	Resolve_Nested, Resolve_Nested_Plain, Resolve_Nested_Layers, // the same of the nested views of a view
 	Ui_World, Ui_Composite, Ui_Blur, Debug_Lines,
 	Skin, Skin_Triangles, Skin_Refit,
-	Gbuffer_Clip, Gbuffer_Plain_Clip, // of a view with a clip plane
-	Gbuffer_Nested, Gbuffer_Nested_Plain, Nested_Prime, Nested_Reflectance, // of the nested views of a view
+	Nested_Prime, Nested_Reflectance, // of the nested views of a view
 	Debug_Views,
 	History_Scale,
 	Air_Transmittance, Air_Scattering, Air_Sky, Air_Aerial,
@@ -336,6 +357,8 @@ PIPELINE_VARIANTS :: 64
 // in use at once share memory. Only textures: targets_frame reads a group as a list.
 Frame_Targets :: struct {
 	depth:                   rhi.Texture,
+	visibility:              rhi.Texture, // R32 uint: the triangle nearest at each pixel (visibility.slang)
+	program_depth:           rhi.Texture, // the depth of the Surface program of each pixel, which its resolve tests (vis_classify.frag)
 	albedo:                  rhi.Texture,
 	surface:                 rhi.Texture, // evaluated F0 as sRGB, encoded F90 in alpha; made when the scene first needs it
 	layers:                  rhi.Texture, // the layers of the materials (gbuffer.slang); made when the scene first needs it
@@ -359,17 +382,13 @@ Frame_Targets :: struct {
 	using direct_targets: struct {
 		direct_blockers:         rhi.Texture, // what stopped the ray each pixel traced for its direct light (direct_rays.comp)
 		direct_samples:          rhi.Texture, // at each point (direct_points of direct_samples.slang), the light of the local lights with nothing in the way over its reflectance, and the part of it that got there
-		direct_sun:              rhi.Texture, // at each point, what the glass on the way leaves of the light of the sun, and how much of the sun gets there
+		direct_sun:              rhi.Texture, // at each point, how much of the sun gets there
 		direct_depth:            rhi.Texture, // at each point, its linear depth (0 for none) and the radii of the penumbrae of the sun and of the local lights
 		direct_points:           rhi.Texture, // what the window of the samples gives each point (direct_points.comp), its part spread over its penumbra (direct_spread.comp)
 		direct_sun_points:       rhi.Texture, // the same of the part of the sun
 		direct_spread:           rhi.Texture, // those parts spread along the rows (direct_spread.comp)
 		direct_marks:            rhi.Texture, // 1 where a sample of the direct light met what changed, for TAA
-	},
-	using shadow_targets: struct {
-		shadow_atlas:            rhi.Texture, // the cache of the maps of the view with what moves drawn over it, in a frame where something does (shadow_maps_pass)
-		shadow_tint:             rhi.Texture, // what the glass in front of it lets through of the light of each texel, while glass colors light
-		shadow_glass:            rhi.Texture, // the depth of the nearest of that glass
+		light_lists:             rhi.Texture, // the lists of the lights without shadows of the tiles of the view, made with the first of them (light_lists.odin)
 	},
 }
 
@@ -383,7 +402,6 @@ Targets :: struct {
 	taa_frames:              [2]rhi.Texture, // the frames the history of each of its pixels holds
 	taa_valid:               bool,
 	hiz:                     [2]rhi.Texture, // depth pyramids: this frame / last frame
-	hiz_width, hiz_height:   u32,
 	hiz_levels:              u32,
 	hiz_valid:               bool, // the previous pyramid holds last frame's depth
 	contact_scale:           u32, // the pixels across a point of contact_points
@@ -428,6 +446,7 @@ Renderer_Desc :: struct {
 	// rows until its pipelines are made (pipeline_thread.odin). False: they
 	// are made in the frame that first asks for them.
 	pipeline_thread:       bool,
+	profile:               ^base.Profile, // the zones of the stages of a frame go to its ring jobs.OWNER while it records; nil: none
 }
 
 // What one frame draws besides the scene.
@@ -468,6 +487,9 @@ Frame_Desc :: struct {
 	// Only the screen UI over black: what covers the scene (the editor while
 	// its viewport shows the players of a game on the network) saves drawing it.
 	ui_only: bool,
+	// The refresh of the display the frame is shown on, Hz: the time a frame
+	// paces the work that waits by; 0: 60.
+	refresh_hz: f32,
 }
 
 VIEW_CAPACITY :: abi.VIEW_CAPACITY
@@ -548,6 +570,7 @@ view_camera_cut :: proc(v:^View_State) {
 Renderer :: struct {
 	device:          ^rhi.Device,
 	allocator:       runtime.Allocator,
+	profile:         ^base.Profile, // Renderer_Desc.profile
 	settings:        Settings,
 	highlight:       Highlight_Style, // the editor's outline levels
 	outlines:        Highlight_Style, // the game's outline styles: none drawn until it sets them
@@ -558,6 +581,11 @@ Renderer :: struct {
 	pipeline_waiting: string, // the stage whose pass the frame skipped while its pipeline is made (Stats.problem)
 	pipeline_problem: string, // the variants the device refused, in pipeline_problem_buffer
 	pipeline_problem_buffer: [256]u8,
+	program_misses:  [PROGRAM_MISSES]Program_Miss, // renderer_programs_missing
+	program_miss_count: int,
+	program_problem: string, // the last program drawn as what its stages were not compiled for, in program_problem_buffer
+	program_problem_buffer: [512]u8,
+	program_problem_names: [96]u8,
 	shader_codes:    [Shader_Id]rhi.Shader_Code,
 	shader_assets:   Shader_Assets,
 	embedded:        []u8, // the code of the shaders the executable embeds, decoded when it runs them
@@ -575,6 +603,7 @@ Renderer :: struct {
 	dummy_buffer:    rhi.Buffer,
 	dummy_texture:   rhi.Texture,
 	dummy_layers:    rhi.Texture, // in place of the layers target (RGBA32 uint) while there is none
+	dummy_uint:      rhi.Texture, // in place of a one-channel uint texture (the shadow table, instance ids) while there is none
 	dfg:             rhi.Texture, // the split-sum table of the specular lobe, in the entry DFG_TEXTURE of the texture table
 	air:             Air_State,   // the tables of the air of an atmosphere (air.odin)
 	display_lut:     rhi.Texture, // the ACES 2.0 Output Transform (display.odin)
@@ -603,11 +632,12 @@ Renderer :: struct {
 	stats_buffer:    rhi.Buffer,
 	scratch_buffer:  rhi.Buffer, // what a pass writes and nobody reads
 	light_changes:        rhi.Buffer, // Scene_State.changes of the frame, for the probes
+	probe_hits:           Probe_Hits, // what the probes of ddgi keep of their rays, and the changes they check it against
 	frame_changes:        Light_Changes, // those of this frame, for the views after the first
 	frame_occluders:      Occluder_Changes, // Scene_State.occluders of this frame, for every view
-	gi_warm_spread:       u32, // frames left of the warm updates of a blackout (blackout.odin)
-	light_frame:          u64,  // counts the updates of the probes: several in the frame of gi_warm
-	gi_warm:              bool, // the next frame gathers the light of the world shown from nothing, GI_WARM_UPDATES times
+	gi_warm_spread:       u32, // frames left of warm updates: of a world shown anew or a blackout (blackout.odin)
+	light_frame:          u64,  // counts the updates of the probes, one a frame
+	gi_warm:              bool, // the frames from the next gather the light of the world shown from nothing (ddgi_warm_frames)
 	light_rescale:        f32,  // what the histories of the views and the probes hold, by it, is in the light scale of the scene (0: they are)
 	world_key:            u64,  // the world the light of ddgi is of (scene_world)
 	origin:               Vec3, // what every place the renderer keeps is relative to (origin.odin), a multiple of ORIGIN_STEP
@@ -618,13 +648,13 @@ Renderer :: struct {
 	world_switched:       bool, // the next frame follows another world: it keeps the delta time of the one before
 	kept:                 [WORLDS_MAX - 1]World_Light, // the light of the worlds not shown
 	kept_count:           int,
-	glass_stale:          bool, // Gpu_Instance.glass waits for glass_mean.comp: instances, materials or geometry went up since it last ran
 	points:               Material_Points, // where the passes of a frame need a material program evaluated (points.odin)
 	vertex_stages:        Program_Computes, // of surface_vertices__<program>.comp, which move the vertices of instances (displace.odin)
 	program_graphics:     [PROGRAM_GRAPHICS_CAPACITY]Program_Graphics, // the raster stages of Surface programs (program_stages.odin)
 	pipeline_thread:      ^Pipeline_Thread, // makes the variants of the stages, and the pipelines of programs with pipelines_async; nil: where they are asked for
 	pipelines_async:      bool, // Renderer_Desc.pipeline_thread
 	stats_readback:  [rhi.MAX_FRAMES_IN_FLIGHT]rhi.Buffer,
+	cost:            Cost_State, // the count of a frame by mesh and material a request asked for (cost.odin)
 	ui_offscreen:    Ui_Offscreen_State,
 	using main:      View_State, // the view of a frame that has one
 	views:           [VIEW_CAPACITY]View_State, // those of a frame that has several
@@ -633,7 +663,7 @@ Renderer :: struct {
 	texture_view_bytes: u64, // what their targets held of the GPU when the last frame ended (texture_views_count)
 	shared_targets:  [SHARED_TARGET_CAPACITY]Shared_Target, // the targets of a frame of the views (targets_frame)
 	shadow_buffers:  Shadow_Buffers,
-	shadow_movers:   Shadow_Movers, // the casters that move, which the caches of the maps leave out
+	shadow_bound:    Shadow_Bound, // the clusters the rounds of the maps draw in a frame (shadow_bound_update)
 	passes:          [FRAME_PASS_CAPACITY]Frame_Pass, // what extensions record in the next frame
 	pass_count:      int,
 	plans:           [RENDER_PIPELINE_CAPACITY]Render_Plan, // of the pipelines asked for
@@ -649,11 +679,7 @@ Renderer :: struct {
 	extension_buffers: [EXTENSION_BUFFER_CAPACITY]Extension_Buffer, // of pass_buffer, by world
 	counters:        Extension_Counters, // of pass_counters
 	readbacks:       [EXTENSION_READBACK_CAPACITY]Extension_Readback, // of pass_readback, by world
-	lights_asked:    u32, // of lights_ask since the last frame began, that cast shadows
-	lights_asked_box: [2]Vec3, // where they lie
-	lights_asked_reach: f32, // and how far they light from there, metres
 	gbuffer_asked:   bit_set[Gbuffer_Target], // of frame_gbuffer_mesh for the next frame
-	shadowless_asked: u32, // and that do not
 	table_textures:  [EXTENSION_TABLE_TEXTURE_CAPACITY]Extension_Table_Texture, // of pass_table_texture, by world
 	quad_indices:    rhi.Buffer, // the six of a quad, for the draws of pass_indices
 	scene:           Scene_State,
@@ -695,6 +721,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	r.allocator = desc.allocator if desc.allocator.procedure != nil else context.allocator
 	scene_ready := scene_init(r)
 	r.scene.pages.jobs = desc.jobs
+	r.profile = desc.profile
 	pipeline_thread_start(r)
 	r.pipelines_async = desc.pipeline_thread
 	textures_init(r)
@@ -716,6 +743,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	r.frame_layout = frame_layout_of(&r.shader_assets)
 	r.dummy_texture = rhi.texture_create(device, {width = 1, height = 1, format = .RGBA16_Float, usage = {.Sampled, .Storage, .Color_Target}, name = "dummy"})
 	r.dummy_layers = rhi.texture_create(device, {width = 1, height = 1, format = .RGBA32_Uint, usage = {.Sampled, .Color_Target}, name = "dummy layers"})
+	r.dummy_uint = rhi.texture_create(device, {width = 1, height = 1, format = .R32_Uint, usage = {.Sampled, .Color_Target}, name = "dummy uint"})
 	r.stats_buffer = rhi.buffer_create(device, {size = size_of(Gpu_Cull_Stats), usage = {.Storage}, name = "cull stats"})
 	r.scratch_buffer = rhi.buffer_create(device, {size = 256, usage = {.Storage}, name = "scratch"})
 	r.glass_dispatch = rhi.buffer_create(device, {size = size_of(Gpu_Glass_Dispatch), usage = {.Storage, .Indirect}, name = "glass dispatch"})
@@ -732,7 +760,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	for &b in r.ui_shape_buffers {b=rhi.buffer_create(device,{size=u64(r.ui_shape_capacity*size_of(Ui_Shape)),usage={.Storage},memory=.Upload,name="ui shapes"})}
 	r.debug_capacity = desc.debug_vertex_capacity if desc.debug_vertex_capacity > 0 else DEBUG_VERTEX_CAPACITY
 	for &b in r.debug_buffers {b = rhi.buffer_create(device, {size = u64(r.debug_capacity * size_of(Debug_Vertex)), usage = {.Storage}, memory = .Upload, name = "debug lines"})}
-	if r.ui_shape_buffers[0]==0 || r.ui_shape_buffers[1]==0 || r.ui_buffers[0] == 0 || r.ui_buffers[1] == 0 || r.debug_buffers[0] == 0 || r.debug_buffers[1] == 0 || r.linear_sampler == 0 || r.point_sampler == 0 || r.material_sampler == 0 || r.dummy_buffer == 0 || r.dummy_texture == 0 || r.dummy_layers == 0 || r.stats_buffer == 0 || r.scratch_buffer == 0 || r.glass_dispatch == 0 || r.dispatch_start == 0 || r.light_changes == 0 || !feedback {
+	if r.ui_shape_buffers[0]==0 || r.ui_shape_buffers[1]==0 || r.ui_buffers[0] == 0 || r.ui_buffers[1] == 0 || r.debug_buffers[0] == 0 || r.debug_buffers[1] == 0 || r.linear_sampler == 0 || r.point_sampler == 0 || r.material_sampler == 0 || r.dummy_buffer == 0 || r.dummy_texture == 0 || r.dummy_layers == 0 || r.dummy_uint == 0 || r.stats_buffer == 0 || r.scratch_buffer == 0 || r.glass_dispatch == 0 || r.dispatch_start == 0 || r.light_changes == 0 || !feedback {
 		set_error(r, "renderer resources: %s", rhi.device_error(device))
 		return false
 	}
@@ -786,6 +814,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 	textures_clear(r)
 	textures_destroy(r)
 	ddgi_release(r)
+	probe_hits_release(r)
 	world_light_destroy(r)
 	destroy_view_targets(r)
 	for &view in r.texture_views {view_state_destroy(r, &view)}
@@ -803,9 +832,10 @@ renderer_destroy :: proc(r: ^Renderer) {
 	for b in r.debug_buffers {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.font_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.stats_readback {if b != 0 {rhi.buffer_destroy(d, b)}}
+	cost_destroy(r)
 	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.glass_dispatch, r.dispatch_start, r.dummy_buffer, r.shadow_buffers.state, r.shadow_buffers.table}) {if b != 0 {rhi.buffer_destroy(d, b)}}
 	if r.light_changes != 0 {rhi.buffer_destroy(d, r.light_changes)}
-	for t in ([]rhi.Texture{r.dummy_texture, r.dummy_layers, r.dfg, r.display_lut, r.font, r.thumbnails}) {if t != 0 {rhi.texture_destroy(d, t)}}
+	for t in ([]rhi.Texture{r.dummy_texture, r.dummy_layers, r.dummy_uint, r.dfg, r.display_lut, r.font, r.thumbnails}) {if t != 0 {rhi.texture_destroy(d, t)}}
 	air_destroy(r)
 	if r.linear_sampler != 0 {rhi.sampler_destroy(d, r.linear_sampler)}
 	if r.point_sampler != 0 {rhi.sampler_destroy(d, r.point_sampler)}
@@ -900,12 +930,25 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	}
 	compute(list, r, .Cull, .Cull_Comp)
 	compute(list, r, .Cull_Clusters, .Cull_Clusters_Comp)
-	compute(list, r, .Cull_Programs, .Cull_Programs_Comp)
+	compute(list, r, .Cull_Bins, .Cull_Bins_Comp)
+	compute(list, r, .Cull_Stats_Fold, .Cull_Stats_Fold_Comp)
+	compute(list, r, .Mesh_Draws, .Mesh_Draws_Comp)
+	compute(list, r, .Raster_Round, .Raster_Round_Comp)
+	compute(list, r, .Raster_Vertices, .Raster_Vertices_Comp)
+	compute(list, r, .Raster_Vertices_Shadow, .Raster_Vertices_Shadow_Comp)
+	compute(list, r, .Raster_Starts, .Raster_Starts_Comp)
+	compute(list, r, .Raster_Triangles, .Raster_Triangles_Comp)
+	compute(list, r, .Cull_Cost, .Cull_Cost_Comp, required = false)
+	compute(list, r, .Raster_Vertices_Cost, .Raster_Vertices_Cost_Comp, required = false)
+	compute(list, r, .Raster_Vertices_Shadow_Cost, .Raster_Vertices_Shadow_Cost_Comp, required = false)
+	compute(list, r, .Shadow_Clusters_Cost, .Shadow_Clusters_Cost_Comp, required = false)
+	compute(list, r, .Cost_Pixels, .Cost_Pixels_Comp, required = false)
 	compute(list, r, .Tlas_Batches, .Tlas_Batches_Comp, .Hardware)
 	compute(list, r, .Light_Grid_Count, .Light_Grid_Comp)
 	compute(list, r, .Light_Grid_Scan, .Light_Grid_Scan_Comp)
 	compute(list, r, .Light_Grid_Fill, .Light_Grid_Fill_Comp)
 	compute(list, r, .Light_Grid_Weights, .Light_Grid_Weights_Comp)
+	compute(list, r, .Light_Lists, .Light_Lists_Comp)
 	compute(list, r, .Direct_Maps, .Direct_Maps_Comp)
 	traced(list, r, .Direct_Rays, .Direct_Rays_Comp, .Direct_Rays_Hw_Comp)
 	traced(list, r, .Direct_Samples, .Direct_Samples_Comp, .Direct_Samples_Hw_Comp)
@@ -935,7 +978,6 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Air_Scattering, .Air_Scattering_Comp)
 	compute(list, r, .Air_Sky, .Air_Sky_Comp)
 	compute(list, r, .Air_Aerial, .Air_Aerial_Comp)
-	compute(list, r, .Glass_Mean, .Glass_Mean_Comp)
 	compute(list, r, .Glass_Levels, .Glass_Levels_Comp)
 	compute(list, r, .Points, .Points_Comp)
 	compute(list, r, .Skin, .Skin_Comp)
@@ -944,39 +986,45 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Skin_Refit, .Skin_Refit_Comp, .Software)
 	compute(list, r, .Debug_Views, .Debug_Views_Comp, required = false)
 	ids := r.frame_layout.instance_ids
-	gbuffer := rhi.Graphics_Pipeline_Desc{
-		vertex = &r.shader_codes[.Gbuffer_Batches_Vert], fragment = &r.shader_codes[.Gbuffer_Frag],
-		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RGBA16_Float, 4 = .R32_Float, 5 = .RGBA8_Srgb}, color_count = 6,
-		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None,
-		name = "gbuffer",
+	// The raster of the visibility target: the id of the nearest triangle, by
+	// the depth test; the back faces of what is not two-sided are left out.
+	for id in Pipeline_Id.Visibility ..= Pipeline_Id.Visibility_Tested_Two_Sided_Clip {
+		at := int(id) - int(Pipeline_Id.Visibility)
+		bin, clip := at % RASTER_BINS, at >= RASTER_BINS
+		tested := bin & RASTER_BIN_TESTED != 0
+		vertices := [2][2]Shader_Id{{.Vis_Raster_Vert, .Vis_Raster_Clip_Vert}, {.Vis_Raster_Tested_Vert, .Vis_Raster_Tested_Clip_Vert}}
+		vertex := vertices[1 if tested else 0][1 if clip else 0]
+		graphics(list, r, id, {
+			vertex = &r.shader_codes[vertex], fragment = &r.shader_codes[.Vis_Raster_Tested_Frag if tested else .Vis_Raster_Frag],
+			color_formats = {0 = .R32_Uint}, color_count = 1,
+			depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater,
+			cull = .None if bin & RASTER_BIN_TWO_SIDED != 0 else .Back, name = "visibility",
+		})
 	}
-	graphics(list, r, .Gbuffer, gbuffer_ids(gbuffer, ids))
+	graphics(list, r, .Program_Depth, {
+		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Vis_Classify_Frag],
+		depth_format = .D16_Unorm, depth_test = true, depth_write = true, depth_compare = .Always, name = "program depth",
+	})
+	// The G-buffer each program resolves where the program depth is its own.
+	gbuffer := rhi.Graphics_Pipeline_Desc{
+		vertex = &r.shader_codes[.Vis_Resolve_Vert], fragment = &r.shader_codes[.Vis_Resolve_Frag],
+		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RGBA16_Float, 4 = .R32_Float, 5 = .RGBA8_Srgb}, color_count = 6,
+		depth_format = .D16_Unorm, depth_test = true, depth_write = false, depth_compare = .Equal,
+		name = "resolve",
+	}
 	plain := gbuffer
-	plain.fragment = &r.shader_codes[.Gbuffer_Plain_Frag]
-	plain.color_count = 5
-	plain.name = "gbuffer without reflectance"
-	graphics(list, r, .Gbuffer_Plain, gbuffer_ids(plain, ids))
+	plain.fragment, plain.color_count, plain.name = &r.shader_codes[.Vis_Resolve_Plain_Frag], 5, "resolve without reflectance"
 	layered := gbuffer
-	layered.fragment = &r.shader_codes[.Gbuffer_Layers_Frag]
+	layered.fragment, layered.name = &r.shader_codes[.Vis_Resolve_Layers_Frag], "resolve with layers"
 	layered.color_formats[6], layered.color_count = .RGBA32_Uint, 7
-	layered.name = "gbuffer with layers"
-	graphics(list, r, .Gbuffer_Layers, gbuffer_ids(layered, ids))
-	clipped, clipped_plain := gbuffer, plain
-	clipped.vertex, clipped_plain.vertex = &r.shader_codes[.Gbuffer_Clip_Vert], &r.shader_codes[.Gbuffer_Clip_Vert]
-	clipped.name, clipped_plain.name = "gbuffer with a clip plane", "gbuffer with a clip plane, without reflectance"
-	graphics(list, r, .Gbuffer_Clip, gbuffer_ids(clipped, ids))
-	graphics(list, r, .Gbuffer_Plain_Clip, gbuffer_ids(clipped_plain, ids))
-	clipped.fragment_constants, clipped_plain.fragment_constants = {GBUFFER_FRAG_NESTED}, {GBUFFER_FRAG_NESTED}
-	clipped.name, clipped_plain.name = "gbuffer of a nested view", "gbuffer of a nested view, without reflectance"
-	graphics(list, r, .Gbuffer_Nested, gbuffer_ids(clipped, ids))
-	graphics(list, r, .Gbuffer_Nested_Plain, gbuffer_ids(clipped_plain, ids))
-	clipped_layered := layered
-	clipped_layered.vertex = &r.shader_codes[.Gbuffer_Clip_Vert]
-	clipped_layered.name = "gbuffer with a clip plane, with layers"
-	graphics(list, r, .Gbuffer_Layers_Clip, gbuffer_ids(clipped_layered, ids))
-	clipped_layered.fragment_constants = {GBUFFER_FRAG_NESTED}
-	clipped_layered.name = "gbuffer of a nested view, with layers"
-	graphics(list, r, .Gbuffer_Nested_Layers, gbuffer_ids(clipped_layered, ids))
+	graphics(list, r, .Resolve, gbuffer_ids(gbuffer, ids))
+	graphics(list, r, .Resolve_Plain, gbuffer_ids(plain, ids))
+	graphics(list, r, .Resolve_Layers, gbuffer_ids(layered, ids))
+	for &desc in ([]^rhi.Graphics_Pipeline_Desc{&gbuffer, &plain, &layered}) {desc.fragment_constants = {VIS_RESOLVE_FRAG_NESTED}}
+	gbuffer.name, plain.name, layered.name = "resolve of a nested view", "resolve of a nested view, without reflectance", "resolve of a nested view, with layers"
+	graphics(list, r, .Resolve_Nested, gbuffer_ids(gbuffer, ids))
+	graphics(list, r, .Resolve_Nested_Plain, gbuffer_ids(plain, ids))
+	graphics(list, r, .Resolve_Nested_Layers, gbuffer_ids(layered, ids))
 	graphics(list, r, .Nested_Prime, {
 		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Nested_Prime_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, name = "nested view pixels",
@@ -1012,39 +1060,34 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	graphics(list, r, .Translucent, translucent, .Software)
 	translucent.fragment = &r.shader_codes[.Translucent_Hw_Frag]
 	graphics(list, r, .Translucent, translucent, .Hardware)
-	highlight := gbuffer
-	highlight.vertex, highlight.vertex_constants = &r.shader_codes[.Gbuffer_Vert], {GBUFFER_VERT_HIGHLIGHT}
-	highlight.fragment = &r.shader_codes[.Highlight_Frag]
-	highlight.color_formats = {0 = .RG32_Float}
-	highlight.color_count = 1
-	highlight.name = "highlight mask"
-	graphics(list, r, .Highlight, highlight)
+	graphics(list, r, .Highlight, {
+		vertex = &r.shader_codes[.Gbuffer_Vert], vertex_constants = {GBUFFER_VERT_HIGHLIGHT}, fragment = &r.shader_codes[.Highlight_Frag],
+		color_formats = {0 = .RG32_Float}, color_count = 1,
+		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None,
+		name = "highlight mask",
+	})
 	compute(list, r, .Highlight_Filter, .Highlight_Filter_Comp)
+	// The triangles the lists of the raster hold of the clusters of each page,
+	// both faces, as a shadow ray meets them.
 	graphics(list, r, .Shadow_Map, {
-		vertex = &r.shader_codes[.Shadow_Map_Vert], fragment = &r.shader_codes[.Shadow_Map_Frag],
+		vertex = &r.shader_codes[.Vis_Raster_Shadow_Vert], fragment = &r.shader_codes[.Shadow_Map_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None, name = "shadow maps",
 	})
 	graphics(list, r, .Shadow_Map_Tested, {
-		vertex = &r.shader_codes[.Shadow_Map_Tested_Vert], fragment = &r.shader_codes[.Shadow_Map_Tested_Frag],
+		vertex = &r.shader_codes[.Vis_Raster_Shadow_Tested_Vert], fragment = &r.shader_codes[.Shadow_Map_Tested_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None, name = "shadow maps of masked materials",
 	})
-	graphics(list, r, .Shadow_Map_Tint, {
-		vertex = &r.shader_codes[.Shadow_Map_Tested_Vert], fragment = &r.shader_codes[.Shadow_Map_Tint_Frag],
-		color_formats = {0 = .RGBA8_Unorm}, color_count = 1, blend = {0 = .Multiply},
-		depth_format = .D32_Float, depth_test = true, depth_write = false, depth_compare = .Greater, cull = .None, name = "shadow tint",
-	})
-	graphics(list, r, .Shadow_Map_Glass, {
-		vertex = &r.shader_codes[.Shadow_Map_Tested_Vert], fragment = &r.shader_codes[.Shadow_Map_Glass_Frag],
-		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None, name = "shadow glass",
-	})
 	graphics(list, r, .Shadow_Map_Clear, {
-		vertex = &r.shader_codes[.Shadow_Map_Square_Vert], fragment = &r.shader_codes[.Shadow_Map_Frag],
+		vertex = &r.shader_codes[.Shadow_Map_Vert], fragment = &r.shader_codes[.Shadow_Map_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, cull = .None, name = "shadow map squares",
 	})
-	graphics(list, r, .Shadow_Map_Moved, {
-		vertex = &r.shader_codes[.Shadow_Map_Square_Vert], fragment = &r.shader_codes[.Shadow_Map_Moved_Frag],
-		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, cull = .None, name = "shadow map squares moved",
+	graphics(list, r, .Shadow_Map_Copy, {
+		vertex = &r.shader_codes[.Shadow_Map_Vert], fragment = &r.shader_codes[.Shadow_Map_Copy_Frag],
+		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, cull = .None, name = "shadow map pages copied",
 	})
+	compute(list, r, .Shadow_Mark, .Shadow_Mark_Comp)
+	compute(list, r, .Shadow_Pages, .Shadow_Pages_Comp)
+	compute(list, r, .Shadow_Hiz, .Shadow_Hiz_Comp)
 	compute(list, r, .Shadow_Maps, .Shadow_Maps_Comp)
 	compute(list, r, .Shadow_Clusters, .Shadow_Clusters_Comp)
 	graphics(list, r, .Tonemap, {
@@ -1198,21 +1241,18 @@ pipeline_desc :: proc(r: ^Renderer, item: Pipeline_Make, constants: rhi.Shader_C
 }
 
 // The variants of the stages of both tracers, as items of a list: the sets of
-// the constants of each stage that traces or computes, those the settings
-// select or the others. Those of colored shadows are selected when the
-// setting is on.
+// the constants of each stage that traces or computes.
 @(private)
-variants_listed :: proc(r: ^Renderer, list: ^Pipeline_List, selected: bool) {
+variants_listed :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	stages: Pipeline_List
 	pipelines_list(r, &stages)
 	info := rhi.device_info(r.device)
 	for item in stages.items[:stages.count] {
 		if item.target == nil || item.graphics && item.rays == .Any || !pipeline_possible(info, item) {continue}
 		code := &r.shader_codes[item.shaders[1]]
-		color, colored := rhi.shader_constant(code, "color")
 		for bits in u32(1) ..< u32(1) << uint(min(len(code.constants), rhi.MAX_SHADER_CONSTANTS)) {
+			if list.count == len(list.items) {break}
 			constants := transmute(rhi.Shader_Constants)bits
-			if (!colored || !(color <= constants) || r.settings.colored_shadows) != selected || list.count == len(list.items) {continue}
 			variant := item
 			variant.target = pipeline_slot(r, item.id, .Any if item.target == &r.pipelines[item.id] else item.rays, constants)
 			if variant.target == nil {continue}
@@ -1224,16 +1264,14 @@ variants_listed :: proc(r: ^Renderer, list: ^Pipeline_List, selected: bool) {
 }
 
 // The variants of the tracer in use that are not made, asked of the pipeline
-// thread behind what frames ask for: the renderer made those the settings
-// select when it started (create_pipelines). One past the jobs of the thread
-// is asked before a later frame.
+// thread behind what frames ask for. One past the jobs of the thread is asked
+// before a later frame.
 @(private)
 pipeline_variants_ask :: proc(r: ^Renderer) {
 	r.variants_wanted = false
 	tracer := Pipeline_Rays.Hardware if r.hardware_rt else .Software
 	list: Pipeline_List
-	variants_listed(r, &list, true)
-	variants_listed(r, &list, false)
+	variants_listed(r, &list)
 	for item in list.items[:list.count] {
 		v := variant_of(r, item.target)
 		if item.rays != .Any && item.rays != tracer || v.state != .None {continue}
@@ -1256,7 +1294,7 @@ pipeline_possible :: proc(info: ^rhi.Device_Info, item: Pipeline_Make) -> bool {
 }
 
 // Makes the pipelines of r of the rays in make that it lacks and the device
-// can, with the variants the settings select, the costliest first, on a thread a core (half the logical processors):
+// can, with their variants, the costliest first, on a thread a core (half the logical processors):
 // the driver compiles each one for up to seconds. A transaction that may
 // allocate. Once r.reload_stop is set, from any thread, none more is made.
 // False when one the renderer needs is not there; those of rays traced by
@@ -1265,7 +1303,7 @@ pipeline_possible :: proc(info: ^rhi.Device_Info, item: Pipeline_Make) -> bool {
 create_pipelines :: proc(r: ^Renderer, make: bit_set[Pipeline_Rays]) -> bool {
 	list: Pipeline_List
 	pipelines_list(r, &list)
-	variants_listed(r, &list, true)
+	variants_listed(r, &list)
 	info := rhi.device_info(r.device)
 	Work :: struct {
 		r:     ^Renderer,
@@ -1396,7 +1434,7 @@ renderer_shaders_idle :: proc(r: ^Renderer) -> (idle: [Shader_Id]bool) {
 @(private)
 pipeline_uses_clip_distance :: proc(id:Pipeline_Id)->bool {
     #partial switch id {
-    case .Gbuffer_Clip,.Gbuffer_Plain_Clip,.Gbuffer_Layers_Clip,.Gbuffer_Nested,.Gbuffer_Nested_Plain,.Gbuffer_Nested_Layers,.Nested_Prime,.Nested_Reflectance: return true
+    case .Visibility_Clip,.Visibility_Two_Sided_Clip,.Visibility_Tested_Clip,.Visibility_Tested_Two_Sided_Clip,.Resolve_Nested,.Resolve_Nested_Plain,.Resolve_Nested_Layers,.Nested_Prime,.Nested_Reflectance: return true
     }
     return false
 }
@@ -1488,7 +1526,7 @@ renderer_set_thumbnails :: proc(r: ^Renderer, pixels: []u8, width, height: int, 
 // what was made with the fields that changed: histories, probes and targets
 // that do not depend on them stay.
 renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
-	if settings.resolution == 0 || settings.gi_strength < 0 || settings.probe_spacing <= 0 {return false}
+	if settings.probe_spacing <= 0 {return false}
 	if settings.probe_grid < 4 || settings.probe_grid > PROBE_GRID_MAX || settings.probe_grid % 2 != 0 || settings.probe_cascades < 1 || settings.probe_cascades > VOLUME_CASCADES_MAX {return false}
 	if !(settings.reflection_roughness >= 0 && settings.reflection_roughness <= 1) {return false}
 	if settings.light_budget > LIGHT_CUT_MAX || settings.reflection_light_budget > LIGHT_CUT_MAX || settings.glass_layers < 1 || settings.glass_layers > GLASS_LAYERS_MAX {return false}
@@ -1499,13 +1537,13 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	if old.texture_max_size != settings.texture_max_size || old.texture_pool_megabytes != settings.texture_pool_megabytes {r.textures.residency.retarget = true}
 	// The probe volume: its layout, or what its rays see of the sun.
 	volume := old.probe_spacing != settings.probe_spacing || old.probe_grid != settings.probe_grid || old.probe_cascades != settings.probe_cascades || old.probe_rays != settings.probe_rays || old.probe_budget != settings.probe_budget
-	volume ||= old.colored_shadows != settings.colored_shadows || old.sun_shadows != settings.sun_shadows
+	volume ||= old.sun_shadows != settings.sun_shadows
 	// The light the probes gather, in the volume they have.
-	gathered := old.gi_strength != settings.gi_strength || old.light_budget != settings.light_budget || old.sun_radius != settings.sun_radius
-	if volume {ddgi_release(r)} else if gathered {scene_changed(&r.scene)}
+	gathered := old.light_budget != settings.light_budget || old.sun_radius != settings.sun_radius
+	if volume {ddgi_release(r)} else if gathered {scene_relit(&r.scene)}
 	// The worlds not shown kept light gathered with the settings before.
 	if volume || gathered {world_light_destroy(r)}
-	traced := old.colored_shadows != settings.colored_shadows || old.sun_shadows != settings.sun_shadows || old.reflection_light_budget != settings.reflection_light_budget || old.reflections != settings.reflections
+	traced := old.sun_shadows != settings.sun_shadows || old.reflection_light_budget != settings.reflection_light_budget || old.reflections != settings.reflections
 	layers := old.glass_layers != settings.glass_layers
 	resolution := old.resolution != settings.resolution
 	// Targets a frame in flight may still read.
@@ -1519,7 +1557,7 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 		r.hardware_rt = hardware
 		// The poses refit only the structures the rays use: those of the others are as old as the switch.
 		// The tables of the batches list the instances of a native TLAS only while rays are traced by hardware.
-		for handle in r.scene.skinned {if skin := r.scene.meshes[handle].skin; skin != nil {skin.dirty = true}}
+		for handle in r.scene.skinned {if skin := r.scene.meshes[handle].skin; skin != nil {skin.dirty, skin.retrace = true, true}}
 		r.scene.batch.built = false
 		r.scene.tlas_off, r.scene.tlas_stale = r.hardware_rt, true
 		r.scene.instances_dirty = true
@@ -1550,7 +1588,8 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 hardware_ray_tracing_active :: proc(r: ^Renderer) -> bool {return r.hardware_rt}
 
 // The color a view shows behind the scene whatever the environment of the
-// scene says, as an editor does; the sky keeps lighting the scene.
+// scene says, as an editor does; the sky keeps lighting the scene and what
+// reflects it.
 renderer_set_backdrop :: proc(r: ^Renderer, color: Vec3, enabled: bool = true) {
 	r.backdrop, r.has_backdrop = color, enabled
 }
@@ -1598,7 +1637,7 @@ targets_textures :: proc(t: ^Targets) -> (all: [TARGET_TEXTURES]rhi.Texture) {
 	fixed := [?]rhi.Texture{
 		t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.generated,
 		t.highlight, t.highlight_depth, t.highlight_filtered, t.gi_given, t.reactive, t.aerial, t.ui_blur[0], t.ui_blur[1],
-		t.shadow_raster.cache,
+		t.shadow_raster.cache, t.shadow_raster.atlas, t.shadow_raster.table, t.shadow_raster.hiz,
 	}
 	#assert(len(fixed) + UI_LAYER_DEPTH_CAPACITY <= TARGET_TEXTURES)
 	copy(all[:], fixed[:])
@@ -1664,6 +1703,8 @@ shared_targets_release :: proc(r: ^Renderer, textures: []rhi.Texture) {
 destroy_targets :: proc(r: ^Renderer, t: ^Targets) {
 	d := r.device
 	for tex in targets_textures(t) {if tex != 0 {rhi.texture_destroy(d, tex)}}
+	if t.shadow_raster.pages != 0 {rhi.buffer_destroy(d, t.shadow_raster.pages)}
+	shadow_reach_release(r, &t.shadow_raster)
 	shared_targets_release(r, targets_frame(&t.frame))
 	destroy_glass_targets(r, t)
 	out_w, out_h := t.output_width, t.output_height
@@ -1755,7 +1796,7 @@ ensure_direct_targets :: proc(r: ^Renderer, cmd: ^rhi.Command_List, t: ^Targets,
 	width, height := (t.width + scale - 1) / scale, (t.height + scale - 1) / scale
 	ok := target(r, cmd, &t.direct_blockers, width, height, .R32_Uint, {.Sampled, .Storage}, "direct blockers", shared = true)
 	ok &&= target(r, cmd, &t.direct_samples, width, height, .RGBA16_Float, {.Sampled, .Storage}, "direct samples", shared = true)
-	ok &&= target(r, cmd, &t.direct_sun, width, height, .RGBA16_Float, {.Sampled, .Storage}, "direct sun", shared = true)
+	ok &&= target(r, cmd, &t.direct_sun, width, height, .R16_Float, {.Sampled, .Storage}, "direct sun", shared = true)
 	ok &&= target(r, cmd, &t.direct_depth, width, height, .RGBA16_Float, {.Sampled, .Storage}, "direct depth", shared = true)
 	ok &&= target(r, cmd, &t.direct_points, width, height, .RGBA16_Float, {.Sampled, .Storage}, "direct points", shared = true)
 	ok &&= target(r, cmd, &t.direct_sun_points, width, height, .R16_Float, {.Sampled, .Storage}, "direct sun points", shared = true)
@@ -1818,9 +1859,9 @@ window_render_scale :: proc(r: ^Renderer, height: f32) -> f32 {
 }
 
 // Of the device pixels of views that span `height` of them, what a target of
-// lines draws the scene at.
+// lines draws the scene at; 0 lines, native: a pixel per point.
 views_render_scale :: proc "contextless" (lines: u32, height, density: f32) -> f32 {
-	if height <= 0 {return 1 / density}
+	if height <= 0 || lines == 0 {return 1 / density}
 	return min(max(f32(lines) / height, RENDER_SCALE_MIN / density), 1 / density)
 }
 
@@ -1830,11 +1871,13 @@ RENDER_SCALE_MIN :: f32(0.25)
 @(private)
 render_extent :: proc "contextless" (output: u32, scale: f32) -> u32 {return max(u32(f32(output) * scale + 0.5), 8)}
 
-// The targets every frame of a view writes; those of an effect are made when
-// the view first runs it. width and height: what the view shows, in device
-// pixels, and scale what the scene is drawn at of them: window_render_scale
-// for a view of the window, 1 for one drawn into a texture. main: the view
-// the UI of the screen is composed on, which holds its isolated layers.
+// The targets of a view: what it shows and, but for the main view, those
+// every frame of its scene writes (scene_targets); those of an effect are
+// made when the view first runs it. width and height: what the view shows, in
+// device pixels, and scale what the scene is drawn at of them:
+// window_render_scale for a view of the window, 1 for one drawn into a
+// texture. main: the view the UI of the screen is composed on, which holds its
+// isolated layers and draws a scene only while the window has no views.
 @(private)
 create_targets :: proc(r: ^Renderer, v: ^View_State, width, height: u32, scale: f32, main := false) -> bool {
 	t := &v.targets
@@ -1845,12 +1888,28 @@ create_targets :: proc(r: ^Renderer, v: ^View_State, width, height: u32, scale: 
 	t.height = render_extent(height, scale)
 	t.half_width = max((t.width + 1) / 2, 1)
 	t.half_height = max((t.height + 1) / 2, 1)
+	t.ldr = rhi.texture_create(d, {width = t.output_width, height = t.output_height, format = .RGBA8_Unorm, usage = {.Color_Target, .Sampled, .Transfer_Src}, name = "ldr"})
+	if t.ldr == 0 {set_error(r, "render targets: %s", rhi.device_error(d)); return false}
+	if main {return ui_layer_targets(r, t.ui_layers[:], t.ui_blur[:], t.output_width, t.output_height)}
+	return scene_targets(r, v)
+}
+
+// The targets every frame of the scene of a view writes, of the sizes
+// create_targets gave it: the main view makes them the first frame it draws
+// the scene (main_scene_release).
+@(private)
+scene_targets :: proc(r: ^Renderer, v: ^View_State) -> bool {
+	t := &v.targets
+	d := r.device
+	if t.taa[0] != 0 {return true}
 	full :: proc(r: ^Renderer, t: ^Targets, texture: ^rhi.Texture, format: rhi.Format, usage: rhi.Texture_Usage, name: string) -> bool {
 		return target(r, nil, texture, t.width, t.height, format, usage, name, shared = true)
 	}
 	attachment := rhi.Texture_Usage{.Color_Target, .Sampled}
 	ok := full(r, t, &t.depth, .D32_Float, {.Depth_Target, .Sampled}, "depth") // sampled: a custom pass of a pipeline reads it
 	// sRGB keeps dark base colors free of banding in 8 bits; its alpha (metallic) stays linear.
+	ok &&= full(r, t, &t.visibility, .R32_Uint, attachment, "visibility")
+	ok &&= full(r, t, &t.program_depth, .D16_Unorm, {.Depth_Target}, "program depth")
 	ok &&= full(r, t, &t.albedo, .RGBA8_Srgb, attachment, "gbuffer albedo")
 	ok &&= full(r, t, &t.normal, .RGBA16_Float, attachment, "gbuffer normal")
 	ok &&= full(r, t, &t.emission, .RGBA16_Float, attachment, "gbuffer emission")
@@ -1862,21 +1921,37 @@ create_targets :: proc(r: ^Renderer, v: ^View_State, width, height: u32, scale: 
 	for i in 0 ..< 2 {t.taa[i] = rhi.texture_create(d, {width = t.output_width, height = t.output_height, format = .RGBA16_Float, usage = HISTORY_USAGE, name = "taa history"})}
 	for i in 0 ..< 2 {t.taa_frames[i] = rhi.texture_create(d, {width = t.output_width, height = t.output_height, format = .R16_Float, usage = HISTORY_USAGE, name = "taa frames"})}
 	t.taa_valid = false
-	t.hiz_width = max(t.width / 2, 1)
-	t.hiz_height = max(t.height / 2, 1)
+	// Level 0 covers the view in texels of 2x2 pixels, each level above it
+	// those of the one below, to a single texel (hiz.comp): levels of powers
+	// of two hold each of them.
+	side := [2]u32{1, 1}
+	for &extent, axis in side {for extent < (([2]u32{t.width, t.height}[axis] + 1) / 2) {extent *= 2}}
 	levels: u32 = 1
-	for (max(t.hiz_width, t.hiz_height) >> levels) > 0 && levels < rhi.MAX_TEXTURE_MIPS {levels += 1}
+	for (max(side.x, side.y) >> levels) > 0 && levels < rhi.MAX_TEXTURE_MIPS {levels += 1}
 	t.hiz_levels = levels
-	for i in 0 ..< 2 {t.hiz[i] = rhi.texture_create(d, {width = t.hiz_width, height = t.hiz_height, mip_levels = levels, format = .R32_Float, usage = {.Sampled, .Storage}, name = "depth pyramid"})}
+	for i in 0 ..< 2 {t.hiz[i] = rhi.texture_create(d, {width = side.x, height = side.y, mip_levels = levels, format = .R32_Float, usage = {.Sampled, .Storage}, name = "depth pyramid"})}
 	t.hiz_valid = false
-	t.ldr = rhi.texture_create(d, {width = t.output_width, height = t.output_height, format = .RGBA8_Unorm, usage = {.Color_Target, .Sampled, .Transfer_Src}, name = "ldr"})
-	if main && !ui_layer_targets(r, t.ui_layers[:], t.ui_blur[:], t.output_width, t.output_height) {return false}
 	t.reactive = rhi.texture_create(d, {width = t.width, height = t.height, format = .R8_Unorm, usage = attachment, name = "blended coverage"})
 	t.needs_clear = true
 	v.has_previous = false
-	all := []rhi.Texture{t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.reactive}
+	all := []rhi.Texture{t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.reactive}
 	for tex in all {if tex == 0 {set_error(r, "render targets: %s", rhi.device_error(d)); return false}}
 	return true
+}
+
+// While views of their own draw the window, the main view keeps only what
+// shows them and its UI: what it drew its scene with goes, histories and maps
+// of the shadows too. A transaction of the frame the views change.
+@(private)
+main_scene_release :: proc(r: ^Renderer) {
+	t := &r.main.targets
+	if t.taa[0] == 0 && t.depth == 0 {return}
+	kept := t^
+	t.ldr, t.generated, t.ui_layers, t.ui_blur = 0, 0, {}, {}
+	destroy_targets(r, t)
+	t.width, t.height, t.half_width, t.half_height = kept.width, kept.height, kept.half_width, kept.half_height
+	t.ldr, t.generated, t.ui_layers, t.ui_blur = kept.ldr, kept.generated, kept.ui_layers, kept.ui_blur
+	r.main.has_previous = false
 }
 
 @(private)

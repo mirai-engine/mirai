@@ -1,5 +1,5 @@
 // The G-buffer as the passes after the geometry read it: each target is
-// encoded by gbuffer.frag and decoded here alone. A pass defines the slots
+// encoded by gbuffer_output.slang and decoded here alone. A pass defines the slots
 // it binds the targets it reads to before it includes this:
 //   GBUFFER_ALBEDO   RGBA8 sRGB: base color, a metallic
 //   GBUFFER_NORMAL   RGBA16F: xy the shading normal (octahedral), z its
@@ -218,6 +218,7 @@ float3 gbuffer_physical_emission(int2 p) {
 Shading gbuffer_shading(Gbuffer_Pixel g, Pixel pixel) {
     Shading s = shading_surface(pixel.position, g.normal, -pixel.view, g.base_color, g.metallic, g.roughness, g.f0, g.f90);
     shading_layers(s, g.layers, g.metallic);
+    s.footprint = frame.footprint.x + frame.footprint.y * pixel.distance;
     return s;
 }
 

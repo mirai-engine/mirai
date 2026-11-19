@@ -49,7 +49,7 @@ additive_layer_curves_subtract_their_reference_clip :: proc(t:^testing.T) {
     playback:Playback;defer playback_free(&playback)
     state:=state_get(&playback,core.Entity(1));state.seen=1;playback.frame=1
     lib.fader_play(&state.fader,stand,1,0)
-    lib.fader_play(&state.layers[1].fader,happy,1,0);state.layers[1].fader.current.time=1
+    state.layers[1].player=lib.player_make(happy);state.layers[1].player.time=1
     state.layers[1].clip,state.layers[1].weight=base.name_hash("happy"),1
     cases:=[?]struct {reference:string,want:f32}{{"stand",0.2+0.8-0.2},{"",0.2+0.8-1}}
     for c in cases {
@@ -200,7 +200,7 @@ layers_play_over_the_clip_inside_their_branch_by_weight_and_fade_out :: proc(t:^
     // A synchronized layer is where the clip below it is in its cycle: walk lasts 2 s and run 1 s.
     testing.expect(t,test_layer(&state,2,"run",sync=true))
     layer_step(&playback,&state,&content,animation,&events,0.5)
-    run_time:=lib.player_time(&content.lib,state.layers[2].fader.current)
+    run_time:=lib.player_time(&content.lib,state.layers[2].player)
     testing.expect(t,abs(run_time-state.time/2)<0.0001 && abs(state.local[1].position.x-run_time*4)<0.0001)
     problems:core.Problems
     testing.expect(t,test_layer(&state,2,"missing"))
@@ -222,7 +222,7 @@ layers_play_over_the_clip_inside_their_branch_by_weight_and_fade_out :: proc(t:^
     testing.expectf(t,linalg.length(state.local[3].position-(leg+mm.Vec3{0,5,-1}))<1e-4 && state.local[2].position==arm,"leg %v from %v",state.local[3].position,leg)
     testing.expect(t,test_layer(&state,1,"wave",mode=.Additive,reference_clip="missing"))
     copy(state.local[:],state.rest[:])
-    pose_faults_report(&problems,state.entity,pose_layers(&playback,&state,&content,animation))
+    pose_faults_report(&problems,state.entity,pose_layers(&playback,&state,&content,animation,state.local[:]))
     testing.expect(t,core.problem_find(&problems,state.entity,"animation.layer_reference")!=nil && state.local[3].position==0,"a reference clip the animation does not have is reported and the layer adds nothing")
 }
 

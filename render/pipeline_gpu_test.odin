@@ -78,8 +78,8 @@ pipeline_passes_run_between_stages_over_the_resources_they_declare :: proc(t: ^t
 	floor := Mat4(1)
 	floor[0, 0], floor[1, 1], floor[2, 2], floor[1, 3] = 8, 0.1, 8, -0.55
 	instances := []Instance_Desc{{object_id = 1, mesh = cube, transform = 1, tint = {0.7, 0.4, 0.2}}, {object_id = 2, mesh = cube, transform = floor, tint = {0.6, 0.6, 0.6}}}
-	lights := []Light_Desc{{position = {1.2, 1.5, 1}, color = {1, 0.8, 0.6}, intensity = 4 * math.PI, range = 8, radius = 0.1}}
-	scene_given(r, instances, lights, {direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}, {sky = {0.2, 0.3, 0.5}})
+	lights := []Light_Desc{{position = {1.2, 1.5, 1}, color = {1, 0.8, 0.6}, intensity = 4 * math.PI, range = 8, radius = 0.1, indirect = 1, scattering = 1}}
+	scene_given(r, instances, lights, {direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0.2, 0.3, 0.5}})
 
 	shader := pass_shader()
 	pipeline := rhi.pipeline_create_compute(device, {shader = &shader, name = "test pass"})
@@ -196,23 +196,18 @@ pipeline_passes_run_between_stages_over_the_resources_they_declare :: proc(t: ^t
 	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation reported %d errors; last: %s", rhi.device_validation_errors(device), rhi.device_validation_message(device))
 }
 
-// The variants the settings select are made with the renderer, the others on
-// the pipeline thread behind what frames ask for. One the device refuses is
-// asked for once, not at every frame: the frames take the stage without its
+// The variants are made with the renderer. One the device refuses is asked
+// for once, not at every frame: the frames take the stage without its
 // constant, and Stats.problem says so.
 @(test)
-variants_are_made_as_the_settings_select_and_a_refused_one_once :: proc(t: ^testing.T) {
+variants_are_made_with_the_renderer_and_a_refused_one_once :: proc(t: ^testing.T) {
 	f: Fixture
-	settings := DEFAULT_SETTINGS
-	settings.colored_shadows = false
-	if !fixture_init(t, &f, 64, 48, settings) {return}
+	if !fixture_init(t, &f, 64, 48, DEFAULT_SETTINGS) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	tracer := Pipeline_Rays.Hardware if r.hardware_rt else .Software
 	unlayered := pipeline_slot(r, .Composite, .Any, {COMPOSITE_COMP_UNLAYERED})
 	testing.expect(t, unlayered^ != 0 && pipeline_slot(r, .Reflect, tracer, {REFLECT_COMP_UNLAYERED})^ != 0, "the renderer starts with the variants without layers")
-	renderer_pipelines_wait(r, all = true)
-	testing.expect(t, pipeline_slot(r, .Direct_Samples, tracer, {DIRECT_SAMPLES_COMP_COLOR})^ != 0 && pipeline_slot(r, .Translucent, tracer, {TRANSLUCENT_FRAG_COLOR})^ != 0, "and makes those of colored shadows, while they are off, behind the frames")
 
 	// As a change of the shaders that the driver fails to compile.
 	rhi.device_refuse_pipeline(f.device, r.shader_codes[.Composite_Comp].name, {COMPOSITE_COMP_UNLAYERED})

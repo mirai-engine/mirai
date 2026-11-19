@@ -133,7 +133,7 @@ the_session_record_follows_an_editor_that_restarts :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"restart")
     if folder=="" {return}
     path:=project.path(folder,".mirai",api.SESSION_FILE)
-    testing.expect(t,os.make_directory_all(os.dir(path))==nil)
+    testing.expect(t,base.make_directory_all(os.dir(path))==nil)
     read :: proc(path:string) -> (record:api.Session_Record) {
         data,_:=os.read_entire_file(path,context.temp_allocator)
         _=json.unmarshal(data,&record,allocator=context.temp_allocator)

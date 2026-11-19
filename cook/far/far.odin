@@ -4,6 +4,7 @@ import "core:math/linalg"
 import "core:mem"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:render/abi"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
@@ -35,9 +36,8 @@ FAR_EXTENSION :: ".far.mesh"
 @(private)
 Far_Renderer :: struct {
     mesh:base.Asset_Id,
-    materials:[FAR_MATERIAL_SLOTS]base.Asset_Id,
+    materials:[abi.MATERIAL_SLOTS]base.Asset_Id,
 }
-@(private) FAR_MATERIAL_SLOTS :: 8 // render.MATERIAL_SLOTS
 
 // The field of scene.Scene_Reference a far mesh reads, by name.
 @(private)
@@ -50,7 +50,7 @@ Far_Read :: struct {id:base.Asset_Id,hash:u64}
 // A mesh of a scene placed in it, and the materials its renderer gives its slots.
 Far_Gathered :: struct {
     mesh:base.Asset_Id,
-    materials:[FAR_MATERIAL_SLOTS]base.Asset_Id,
+    materials:[abi.MATERIAL_SLOTS]base.Asset_Id,
     placement:matrix[4,4]f32,
 }
 
@@ -161,7 +161,7 @@ far_wanted :: proc(b:^Far_Build,out:^[dynamic]base.Asset_Id) {
             continue
         }
         for slot,s in m.view.slots {
-            material:=part.materials[s] if s<FAR_MATERIAL_SLOTS else {}
+            material:=part.materials[s] if s<abi.MATERIAL_SLOTS else {}
             if material=={} {material=slot.material}
             far_ask(b,material,out)
             if info,known:=b.materials[material];known {
@@ -269,7 +269,7 @@ far_make :: proc(b:^Far_Build,out:^asset.Mesh_Geometry,allocator:mem.Allocator) 
         p:=asset.Far_Part{geometry=m.view.geometry,placement=part.placement}
         for slot,s in m.view.slots {
             if s>=asset.MESH_MAX_SLOTS {break}
-            material:=part.materials[s] if s<FAR_MATERIAL_SLOTS else {}
+            material:=part.materials[s] if s<abi.MATERIAL_SLOTS else {}
             if material=={} {material=slot.material}
             info,known:=b.materials[material]
             if !known {info=asset.MATERIAL_DEFAULTS}

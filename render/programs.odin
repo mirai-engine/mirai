@@ -28,6 +28,7 @@ Program_Vertex :: abi.Program_Vertex
 
 Program_Catalog :: struct {
     programs:[]Program,
+    surface_stages:[]abi.Surface_Stage, // the stages compiled for each Surface program built for one of their uses
     loaded:bool,
     arena:mem.Dynamic_Arena, // of what the catalog holds, in the allocator it was read with
 }
@@ -54,7 +55,7 @@ program_catalog_parse :: proc(bytes:[]u8,allocator:=context.allocator) -> (catal
         mem.dynamic_arena_destroy(a)
         return {},false
     }
-    catalog.programs=read.programs
+    catalog.programs,catalog.surface_stages=read.programs,read.surface_stages
     return catalog,true
 }
 
@@ -171,6 +172,17 @@ program_parameter_get :: proc(params:^[16]Vec4,parameter:^Program_Parameter) -> 
         }
     }
     return
+}
+
+// Whether a texture parameter of the program of a row names the texture of the table at entry.
+@(private)
+program_names_texture :: proc(r:^Renderer,row:^Gpu_Material_Row,entry:u32) -> bool {
+    program:=program_of_id(r,row.program_id) if row.program_id!=0 else nil
+    if program==nil {return false}
+    for &parameter in program.parameters {
+        if parameter.kind==.Texture && program_words(&row.custom_params,&parameter)[0]==entry {return true}
+    }
+    return false
 }
 
 // Points a texture parameter at a texture of the renderer; 0 is none.

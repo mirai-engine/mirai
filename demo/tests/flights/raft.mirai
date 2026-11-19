@@ -1,0 +1,12 @@
+{
+  "scene": "raft/raft.scene",
+  "segments": [
+    {"camera": "raft", "settle": 1200},
+    {"frames": 120},
+    {"keys": ["W"], "turn": [1.5, 0], "frames": 300},
+    {"camera": "raft_under", "keys": ["W", "Left_Shift"], "turn": [-1, 0], "frames": 300},
+    {"camera": "raft_dry_room", "settle": 1200},
+    {"keys": ["W", "A"], "turn": [0.8, 0.05], "frames": 300},
+    {"position": [40, 20, 60], "target": [0, 0, 0], "fov": 60, "keys": ["S"], "turn": [-0.6, 0], "frames": 300}
+  ]
+}

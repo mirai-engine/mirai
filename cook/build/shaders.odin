@@ -87,7 +87,7 @@ shader_sources :: proc(p:^project.Project,allocator:=context.allocator) -> (sour
 // loads alone with them. idle: stages compiled after the others; once every
 // other one is, shaders_active names a generation that loads alone with
 // them.
-shaders_start :: proc(p:^project.Project,first:[]string={},idle:[]string={},allocator:=context.allocator) -> ^Shaders_Job {
+shaders_start :: proc(p:^project.Project,first:[]string={},idle:[]string={},previews:[]string={},allocator:=context.allocator) -> ^Shaders_Job {
     job:=new(Shaders_Job,allocator)
     job.allocator=allocator
     _=virtual.arena_init_growing(&job.arena)
@@ -109,9 +109,11 @@ shaders_start :: proc(p:^project.Project,first:[]string={},idle:[]string={},allo
         return finish(job,.None,"")
     }
     if p.engine_root=="" {return finish(job,.Failed,"the root of the engine is not known")}
+    uses,problem:=shaders_uses(p,previews,a)
+    if problem!="" {return finish(job,.Failed,problem)}
     job.options={
         root=strings.clone(p.engine_root,a),project=strings.clone(p.root,a),sources=sources,output=job.result.output,
-        progress=&job.progress,
+        progress=&job.progress,uses=uses,
     }
     if len(first)>0 {
         folder,error:=os.make_directory_temp("","mirai-shaders-first-*",a)
@@ -136,11 +138,28 @@ shaders_start :: proc(p:^project.Project,first:[]string={},idle:[]string={},allo
 
 // Whether shaders_start would leave the generation of the project as it is,
 // without compiling, taking a turn or writing anything.
-shaders_current :: proc(p:^project.Project) -> bool {
+shaders_current :: proc(p:^project.Project,previews:[]string={}) -> bool {
     sources,own:=shader_sources(p,context.temp_allocator)
     output:=project.shader_generation(p.root,context.temp_allocator)
     if !own && len(sources)==0 {return !os.is_file(project.path(output,project.SHADERS_MANIFEST,allocator=context.temp_allocator))}
-    return p.engine_root!="" && shaders.current({root=p.engine_root,project=p.root,sources=sources,output=output})
+    uses,problem:=shaders_uses(p,previews,context.temp_allocator)
+    return problem=="" && p.engine_root!="" && shaders.current({root=p.engine_root,project=p.root,sources=sources,output=output,uses=uses})
+}
+
+// What the generation of a project compiles its Surface programs for: what
+// its assets draw them as (program_uses) and, for the programs named, the
+// previews of the editor, which compiles them when it first shows one.
+shaders_uses :: proc(p:^project.Project,previews:[]string,allocator:=context.allocator) -> (uses:[]shaders.Program_Uses_Of,problem:string) {
+    drawn:[]shaders.Program_Uses_Of
+    if drawn,problem=program_uses(p,context.temp_allocator);problem!="" {return nil,strings.clone(problem,allocator)}
+    list:=make([dynamic]shaders.Program_Uses_Of,0,len(drawn)+len(previews),allocator)
+    for each in drawn {append(&list,shaders.Program_Uses_Of{strings.clone(each.program,allocator),each.uses})}
+    outer: for name in previews {
+        for &each in list {if each.program==name {each.uses+={.Preview};continue outer}}
+        append(&list,shaders.Program_Uses_Of{strings.clone(name,allocator),{.Preview}})
+    }
+    slice.sort_by(list[:],proc(a,b:shaders.Program_Uses_Of) -> bool {return a.program<b.program})
+    return list[:],""
 }
 
 @(private)
