@@ -369,6 +369,7 @@ bool trace_batch(uint batch, float3 origin, float3 direction, float t_min, inout
                 uint local = indices[order + node.left_first + i];
                 float4 world[3], inverse[3];
                 batch_placement(words + local * BATCH_WORDS, float3(0.0), world, inverse);
+                batch_basis_placement(float3(world[0].w, world[1].w, world[2].w), row.prev_world, world, inverse);
                 if (trace_blas(row.meta.x, transform_point(inverse, origin), transform_vector(inverse, direction), t_min, hit, first + local, any_hit, row.tested, blend)) {
                     found = true;
                     if (any_hit) return true;

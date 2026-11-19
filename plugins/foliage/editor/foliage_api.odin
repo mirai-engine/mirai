@@ -50,6 +50,7 @@ Type_Add_Params :: struct {
     cull_distance:f32 `mirai:"optional,min=0,unit=m"`,
     impostor_distance:f32 `mirai:"optional,min=0,unit=m,label=From the eye, where its mesh gives way to its impostor and its shadows to its crown; 0: none"`,
     wind:f32 `mirai:"optional,min=0"`,
+    flutter:f32 `mirai:"optional,min=0,label=How much the wind flutters its leaves on top, by the red and the green of its vertex colors; 0: they move with it"`,
     casts_shadow:bool `mirai:"optional"`,
 }
 
@@ -75,6 +76,7 @@ Type_Set_Params :: struct {
     cull_distance:f32 `mirai:"optional,min=0,unit=m"`,
     impostor_distance:f32 `mirai:"optional,min=0,unit=m,label=From the eye, where its mesh gives way to its impostor and its shadows to its crown; 0: none"`,
     wind:f32 `mirai:"optional,min=0"`,
+    flutter:f32 `mirai:"optional,min=0,label=How much the wind flutters its leaves on top, by the red and the green of its vertex colors; 0: they move with it"`,
     casts_shadow:bool `mirai:"optional"`,
 }
 
@@ -150,7 +152,7 @@ foliage_api_register :: proc(s:^editor.Session) {
     query_defaults:=Query_Params{limit=256}
     editor.api_method_register(s,{name="foliage.create",summary="Makes a Foliage in the edited scene, with a new .foliage of no types; one step of undo takes it and its file away.",params=type_info_of(Create_Params),result=type_info_of(Foliage_Create_Result),run=api_create})
     editor.api_method_register(s,{name="foliage.type_add",summary="Adds a type of foliage that shows a mesh with the values it is given, as one step of undo; the name it answers names it in the other methods.",params=type_info_of(Type_Add_Params),result=type_info_of(Type_Result),run=api_type_add})
-    editor.api_method_register(s,{name="foliage.type_set",summary="Changes the values of a type of foliage it is given, as one step of undo; the others stay: its mesh, how dense, large, turned and leaned it is, its offset, its rule of slope, height and terrain layers, its distances, wind and shadow.",params=type_info_of(Type_Set_Params),result=type_info_of(Type_Result),run=api_type_set})
+    editor.api_method_register(s,{name="foliage.type_set",summary="Changes the values of a type of foliage it is given, as one step of undo; the others stay: its mesh, how dense, large, turned and leaned it is, its offset, its rule of slope, height and terrain layers, its distances, wind, flutter and shadow.",params=type_info_of(Type_Set_Params),result=type_info_of(Type_Result),run=api_type_set})
     editor.api_method_register(s,{name="foliage.type_remove",summary="Takes a type of foliage out with its instances, as one step of undo.",params=type_info_of(Type_Remove_Params),flags={.Destructive},result=type_info_of(Type_Result),run=api_type_remove})
     editor.api_method_register(s,{name="foliage.paint",summary="One stroke of the foliage brush from at to to (or at alone), as one step of undo: paint fills the ring to the density of each type under its rules, erase leaves erase_density of it, reapply gives the instances the scale, turn and offset of their type again, tint gives them a tint and a wetness the source keeps, generate raises the density the cells generate with under the ring to all of it, fading toward its border, and ungenerate lowers it to none.",params=type_info_of(Paint_Params),defaults=&paint_defaults,result=type_info_of(Foliage_Paint_Result),run=api_paint})
     editor.api_method_register(s,{name="foliage.place",summary="Puts one instance of a type on the surface under a point, with the scale, turn and offset of its type at random, as one step of undo.",params=type_info_of(Place_Params),result=type_info_of(Type_Result),run=api_place})
@@ -326,6 +328,7 @@ type_values :: proc(call:^api.Call,t:^foliage.Foliage_Type,p:^$T,layers:[foliage
     if editor.tool_call_given(call,"cull_distance") {t.cull_distance=p.cull_distance}
     if editor.tool_call_given(call,"impostor_distance") {t.impostor_distance=p.impostor_distance}
     if editor.tool_call_given(call,"wind") {t.wind=p.wind}
+    if editor.tool_call_given(call,"flutter") {t.flutter=p.flutter}
     if editor.tool_call_given(call,"casts_shadow") {t.casts_shadow=p.casts_shadow}
 }
 
