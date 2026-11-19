@@ -627,6 +627,54 @@ a_join_keeps_what_the_joiner_changes_while_it_runs :: proc(t:^testing.T) {
     for w in plan.write {testing.expect(t,w.done,"what is kept on purpose is done")}
 }
 
+// A join never writes or removes through a link inside its folder: a file of
+// the host's under a linked folder, a linked file it replaces and a file it
+// removed under a linked folder are refused and reported by path, and what
+// the links lead to stays as it was.
+@(test)
+a_join_never_follows_a_link_inside_its_folder :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"share-links")
+    if folder=="" {return}
+    s,open_error:=store.open(fmt.tprintf("%s/store",folder))
+    if !testing.expect_value(t,open_error,store.Error.None) {return}
+    defer store.close(&s)
+    n:Node
+    n.s=&s
+    d:=Join_Desc{node=&n}
+    joined:=fmt.tprintf("%s/joined",folder)
+    outside:=fmt.tprintf("%s/outside",folder)
+    bytes :: proc(text:string) -> []u8 {return transmute([]u8)text}
+    file_put(outside,"old.txt",bytes("old"))
+    file_put(outside,"target.txt",bytes("target"))
+    file_put(joined,"plain.txt",bytes("plain 1"))
+    if !testing.expect(t,os.symlink(outside,fmt.tprintf("%s/linked",joined))==nil,"a link can be made here") {return}
+    os.symlink(fmt.tprintf("%s/target.txt",outside),fmt.tprintf("%s/file.txt",joined))
+    entry :: proc(s:^store.Store,path,text:string) -> Entry {
+        address,_:=store.put(s,transmute([]u8)text)
+        return {path=path,address=address,size=i64(len(text))}
+    }
+    last_entries:=[]Entry{entry(&s,"file.txt","target"),entry(&s,"linked/old.txt","old"),entry(&s,"plain.txt","plain 1")}
+    snap_entries:=[]Entry{entry(&s,"file.txt","host"),entry(&s,"linked/deep/new.txt","host"),entry(&s,"plain.txt","plain 2")}
+    store.commit(&s)
+    last:=Snapshot{name="game",entries=last_entries}
+    snap:=Snapshot{name="game",entries=snap_entries}
+    index:=make(Index,context.temp_allocator)
+    report:=Join_Report{kept=make([dynamic]string,context.temp_allocator),failed=make([dynamic]string,context.temp_allocator)}
+    plan:=join_plan(&snap,&last,&index,joined,&report,context.temp_allocator)
+    list:=make([dynamic]int,context.temp_allocator)
+    for _,k in plan.write {append(&list,k)}
+    join_write(&d,&snap,&plan,list[:],&index,joined,&report)
+    join_remove(&last,&plan,&index,joined,&report)
+    testing.expect_value(t,read_text(outside,"old.txt"),"old")
+    testing.expect_value(t,read_text(outside,"target.txt"),"target")
+    testing.expect_value(t,read_text(outside,"deep/new.txt"),"(none)")
+    testing.expect_value(t,read_text(joined,"plain.txt"),"plain 2")
+    listed:=strings.join(report.failed[:],"\n",context.temp_allocator)
+    testing.expectf(t,len(report.failed)==3 && strings.contains(listed,"file.txt:") && strings.contains(listed,"linked/deep/new.txt:") && strings.contains(listed,"linked/old.txt:") && strings.contains(listed,"is a link"),"each refused by path: %s",listed)
+    testing.expect_value(t,report.written,1)
+    testing.expect_value(t,report.removed,0)
+}
+
 // A file that cannot be written does not stop the join: a read-only file, a
 // read-only file the host removed and a file in a read-only folder are listed
 // with how to fix them, the rest is written, and once fixed the same join

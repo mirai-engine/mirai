@@ -73,12 +73,13 @@ Plan :: struct {
 
 // An entry of the snapshot to write, with the file as the plan found it here:
 // absent, or with the address base. done: written, or left on purpose.
+// refused: its path passes through a link here, and it is not written.
 @(private)
-Write :: struct {at:int,present:bool,base:store.Hash,done:bool}
+Write :: struct {at:int,present:bool,base:store.Hash,done:bool,refused:bool}
 
 // An entry of the last snapshot the host removed and the joiner did not change.
 @(private)
-Remove :: struct {at:int,done:bool}
+Remove :: struct {at:int,done:bool,refused:bool}
 
 @(private) MISSING_SECONDS :: 10.0 // an object no connected peer has for this long fails the join
 @(private) WINDOW :: 256           // files wanted at once
@@ -110,6 +111,14 @@ join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,er
     if os.exists(folder) && !os.is_dir(folder) {
         error=fmt.aprintf("%s is a file: give the join a folder",folder,allocator=allocator)
         return
+    }
+    // Its state and temporary files are not written through a link either.
+    names:=project.FOLDER_NAMES
+    for part in ([2]string{"tmp",SHARE_FOLDER}) {
+        if link:=link_on(folder,fmt.tprintf("%s/%s",names[.Generated],part));link!="" {
+            error=fmt.aprintf("%s is a link, and a join never writes through a link inside its folder: replace it with a folder of its own and run the join again",link,allocator=allocator)
+            return
+        }
     }
     node_serve(n,address)
     if d.own_offer!="" {offer_set(n.s,folder,d.own_offer,address)}
@@ -305,6 +314,10 @@ join_plan :: proc(snap,last:^Snapshot,index:^Index,folder:string,report:^Join_Re
         case_follow(snap,last,&plan,index,folder)
     }
     for &e,at in snap.entries {
+        if link_refused(report,folder,e.path) {
+            append(&plan.write,Write{at=at,refused=true})
+            continue
+        }
         here,_,present:=index_address(index,e.path,project.path(folder,e.path,allocator=context.temp_allocator))
         if present && here==e.address {continue}
         base,based:=base_find(&plan,last,e.path)
@@ -325,6 +338,10 @@ join_plan :: proc(snap,last:^Snapshot,index:^Index,folder:string,report:^Join_Re
         if _,still:=snapshot_find(snap,e.path);still {continue}
         // Renamed by the host changing only its case: on this system it is the same file.
         if plan.folds && strings.to_lower(e.path,context.temp_allocator) in plan.snap_folded {continue}
+        if link_refused(report,folder,e.path) {
+            append(&plan.remove,Remove{at=at,refused=true})
+            continue
+        }
         here,_,present:=index_address(index,e.path,project.path(folder,e.path,allocator=context.temp_allocator))
         switch {
         case !present:
@@ -333,6 +350,32 @@ join_plan :: proc(snap,last:^Snapshot,index:^Index,folder:string,report:^Join_Re
         }
     }
     return
+}
+
+// The first part of relative under folder that is a link (a symbolic link, or
+// a junction on Windows), as a path; "" when none. The folder itself may be
+// one: it is the place the joiner named.
+@(private)
+link_on :: proc(folder,relative:string) -> string {
+    for at in 1..=len(relative) {
+        if at<len(relative) && relative[at]!='/' {continue}
+        path:=project.path(folder,relative[:at],allocator=context.temp_allocator)
+        info,error:=os.lstat(path,context.temp_allocator)
+        // What does not exist holds nothing below it.
+        if error!=nil {return ""}
+        if info.type==.Symlink {return path}
+    }
+    return ""
+}
+
+// Whether the path of an entry passes through a link inside folder, which a
+// join never follows: reported with how to fix it.
+@(private)
+link_refused :: proc(report:^Join_Report,folder,relative:string) -> bool {
+    link:=link_on(folder,relative)
+    if link=="" {return false}
+    failed(report,"%s: %s is a link, and a join never writes or removes through a link inside its folder: replace it with a folder or file of its own and run the join again",relative,link)
+    return true
 }
 
 // The entry of path in the last snapshot, under any case where the system folds it.
@@ -370,7 +413,7 @@ case_follow :: proc(snap,last:^Snapshot,plan:^Plan,index:^Index,folder:string) {
         at,renamed:=plan.last_folded[strings.to_lower(e.path,context.temp_allocator)]
         if !renamed {continue}
         old:=last.entries[at].path
-        if len(old)!=len(e.path) {continue}
+        if len(old)!=len(e.path) || link_on(folder,old)!="" {continue}
         start:=0
         for i in 0..=len(e.path) {
             if i<len(e.path) && e.path[i]!='/' {continue}
@@ -423,6 +466,7 @@ join_room :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,folder:string,allocator
     // The root read once: each file then asks only what this value knows.
     store.chunk_has(s,{})
     for w in plan.write {
+        if w.refused {continue}
         e:=&snap.entries[w.at]
         write+=e.size
         if e.address in seen || store.chunk_here(s,e.address) {continue}
@@ -461,6 +505,7 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
     order:=make([dynamic]int,context.temp_allocator)
     total:i64
     for w,k in plan.write {
+        if w.refused {continue}
         e:=&snap.entries[w.at]
         if e.size==0 {
             one:=[1]int{k}
@@ -620,8 +665,10 @@ join_write :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,list:[]int,index:^Inde
     }
     for k in list {
         w:=&plan.write[k]
+        if w.refused {continue}
         e:=&snap.entries[w.at]
         target:=project.path(folder,e.path,allocator=context.temp_allocator)
+        if link_refused(report,folder,e.path) {continue}
         here,_,present:=index_address(index,e.path,target)
         if present!=w.present || present && here!=w.base {
             if !present || here!=e.address {kept(report,"%s: you changed it while the join ran; yours is kept",e.path)}
@@ -660,6 +707,11 @@ join_write :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,list:[]int,index:^Inde
         if !writable(parent) {
             os.remove(temp)
             failed(report,"%s: its folder %s is read-only: give this user write access to it (chmod u+w on macOS and Linux) and run the join again",e.path,parent)
+            continue
+        }
+        // A link made inside the folder while the file was written is not followed either.
+        if link_refused(report,folder,e.path) {
+            os.remove(temp)
             continue
         }
         if rename_error:=os.rename(temp,target);rename_error!=nil {
@@ -740,8 +792,10 @@ object_save :: proc(s:^store.Store,address:store.Hash,size:i64,path:string) -> (
 @(private)
 join_remove :: proc(last:^Snapshot,plan:^Plan,index:^Index,folder:string,report:^Join_Report) {
     for &r in plan.remove {
+        if r.refused {continue}
         e:=&last.entries[r.at]
         target:=project.path(folder,e.path,allocator=context.temp_allocator)
+        if link_refused(report,folder,e.path) {continue}
         here,_,present:=index_address(index,e.path,target)
         switch {
         case !present:
