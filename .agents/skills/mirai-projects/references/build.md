@@ -139,8 +139,11 @@ and `tools/mirai`. The main checkout of a worktree is `project.shared_root(root)
   a fixed charge. While it runs an editor raises the charge of its turn to the most it held, and
   never lowers it; `mirai locks` says when what the holders held passes the card beside its part.
   The owner of a turn ends with its charge; the one waiting names the holders and since when,
-  like `mirai locks`. When only holders that stay open hold the room it needs, waiting would not
-  give it: the command fails at once, naming them and saying to close one.
+  like `mirai locks`, once and again when they or their charges change. It waits as long as it
+  takes, open sessions of other agents included, which close within minutes; it fails, naming
+  them, only when waiting cannot help (the room is held by the command itself, an ancestor of it
+  or the session of its project) or at the limit the command has (`mirai test --timeout`,
+  `session start --timeout`).
   - A session opens on the adapter `session start` prints; one that opens on another adapter than
     the card the turns account for, and that `MIRAI_GPU` does not name, is closed with why: its
     frames and measures would mean nothing. A person's own editor opens on whatever there is.

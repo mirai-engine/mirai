@@ -296,9 +296,11 @@ a_measurement_waits_for_the_gpu_work_in_flight_and_not_for_an_open_session :: pr
 }
 
 // The GPU first, the measurement after it: what would hold the measurement
-// never waits for room on the GPU, a wait for room that only what stays open
-// holds fails at once, and what waits for the measurement says its GPU turn
-// is idle meanwhile, so the measurement does not wait for it. The shapes: a
+// never waits for room on the GPU; a wait for room ends when the holders
+// close, fails at its limit when they stay, and fails at once when what holds
+// it waits for the command (its own process); and what waits for the
+// measurement says its GPU turn is idle meanwhile, so the measurement does
+// not wait for it. The shapes: a
 // test with a benchmark beside a session that holds the card and wants a
 // capture, and two sessions that hold memory and both want a capture.
 @(test)
@@ -314,17 +316,21 @@ a_measurement_and_the_memory_of_the_gpu_never_wait_for_each_other :: proc(t:^tes
         name:string,
         staged:[]Staged,
         measuring:string, // who holds the measurement; "" for none
-        charge:i64,       // >0: this process asks for a GPU turn first, as a test does
-        taken,stuck:bool,
+        charge:i64,       // >0: this process asks for a GPU turn first, as a test does, for a moment
+        closes:bool,      // meanwhile the first staged holder ends
+        taken:bool,
+        refused:Gpu_Refused,
         measure:bool,     // then it asks for the measurement, waiting a moment
         started:bool,
         why:Measure_Wait,
         idle_for:string,  // the measurer that sees no GPU work of this process while it waits
     }
     cases:=[]Case{
-        {name="a test beside a session that holds the card fails at once, without the measurement",staged={{"pid 21, the session of cave",7*GB,true}},charge=GPU_CHARGE_DEVICE,stuck=true},
-        {name="and the capture of that session starts",staged={{"pid 21, the session of cave",7*GB,true}},measure=true,started=true},
-        {name="a test whose room a test in flight holds waits for it",staged={{"pid 22, mirai test rhi",6*GB,false}},charge=2*GB},
+        {name="a test beside a session that holds the card waits, without the measurement, until it closes",staged={{"pid 21, the session of cave",7*GB,true}},charge=GPU_CHARGE_DEVICE,closes=true,taken=true},
+        {name="a session that stays makes it fail at its limit",staged={{"pid 21, the session of cave",7*GB,true}},charge=GPU_CHARGE_DEVICE,refused=.Limit},
+        {name="and the capture of that session starts meanwhile",staged={{"pid 21, the session of cave",7*GB,true}},measure=true,started=true},
+        {name="a test whose room a test in flight holds gets it when that one ends",staged={{"pid 22, mirai test rhi",6*GB,false}},charge=2*GB,closes=true,taken=true},
+        {name="room held by what waits for the command fails at once",staged={{fmt.tprintf("%s, the editor of cave",own),7*GB,true}},charge=GPU_CHARGE_DEVICE,refused=.Own},
         {name="a test with its turn waits idle for the capture that measures",staged={{fmt.tprintf("%s, mirai test render",own),GPU_CHARGE_DEVICE,false},{"pid 21, the session of cave",5*GB,true}},measuring="pid 21, profile.capture in cave",measure=true,why=.Measurement,idle_for="21"},
         {name="a session waits idle for the capture of another session",staged={{fmt.tprintf("%s, the session of a",own),3*GB,false},{"pid 31, the session of b",3*GB,true}},measuring="pid 31, profile.capture in b",measure=true,why=.Measurement,idle_for="31"},
         {name="a session waits for another session to settle, which ends by itself",staged={{fmt.tprintf("%s, the session of a",own),3*GB,true},{"pid 31, the session of b",3*GB,false}},measure=true,why=.Gpu},
@@ -339,9 +345,27 @@ a_measurement_and_the_memory_of_the_gpu_never_wait_for_each_other :: proc(t:^tes
         measure:Lock
         if c.measuring!="" {measure,_=lock_acquire(lock_path(root,MEASURE_LOCK,context.temp_allocator),c.measuring)}
         if c.charge>0 {
-            turn,taken,waiting:=gpu_try(root,"pid 1, mirai test render",c.charge)
-            testing.expectf(t,taken==c.taken && waiting.stuck==c.stuck,"%s: taken %v, stuck %v",c.name,taken,waiting.stuck)
-            lock_release(&turn)
+            Ask :: struct {root:string,charge:i64,taken:bool,refused:Gpu_Wait,took:time.Duration}
+            ask:=new(Ask)
+            ask^={root=root,charge=c.charge}
+            th:=thread.create_and_start_with_poly_data(ask,proc(ask:^Ask) {
+                start:=time.tick_now()
+                lock:Lock
+                lock,ask.taken,ask.refused=gpu_acquire(ask.root,"pid 1, mirai test render",ask.charge,limit=800*time.Millisecond)
+                ask.took=time.tick_since(start)
+                // Released by the thread whose allocator made it.
+                lock_release(&lock)
+            })
+            if c.closes {
+                time.sleep(250*time.Millisecond)
+                lock_release(&held[0])
+            }
+            thread.join(th)
+            thread.destroy(th)
+            testing.expectf(t,ask.taken==c.taken && ask.refused.refused==c.refused,"%s: taken %v, refused %v",c.name,ask.taken,ask.refused.refused)
+            if c.refused==.Own {testing.expectf(t,ask.took<500*time.Millisecond,"%s: at once, not after %v",c.name,ask.took)}
+            if c.refused!=.None {testing.expectf(t,len(ask.refused.holders)==len(c.staged),"%s: it names the holders",c.name)}
+            free(ask)
         }
         if c.measure {
             Try :: struct {root:string,ok:bool,why:Measure_Wait}

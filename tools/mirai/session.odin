@@ -308,7 +308,7 @@ session_open :: proc(root,folder:string,mode:Build_Mode,no_build:bool,timeout:in
     charge:i64
     if !slice.contains(editor_args,"--no-gpu") {
         turned:bool
-        if turn,charge,turned=gpu_turn(root,folder,fmt.tprintf("session start %s",folder));!turned {return {},1}
+        if turn,charge,turned=gpu_turn(root,folder,fmt.tprintf("session start %s",folder),limit=time.Duration(timeout)*time.Second);!turned {return {},1}
     }
     defer workspace.lock_release(&turn)
     command:=make([dynamic]string)

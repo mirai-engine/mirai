@@ -132,7 +132,7 @@ cmd_test :: proc(root:string,args:[]string) -> int {
         turn:workspace.Lock
         if p.gpu {
             turned:bool
-            if turn,_,turned=gpu_turn(root,"",fmt.tprintf("test %s",p.path));!turned {
+            if turn,_,turned=gpu_turn(root,"",fmt.tprintf("test %s",p.path),limit=timeout,own=p.owner);!turned {
                 append(&failed,p.path)
                 continue
             }
