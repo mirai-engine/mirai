@@ -2,6 +2,7 @@ package render
 
 import "core:testing"
 import "mirai:core"
+import "mirai:std/base"
 
 // Turning a sky on turns off the one that was on, and over its seconds it
 // blends from it: the renderer gets the mix, with the turn of its entity.
