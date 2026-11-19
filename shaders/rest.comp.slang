@@ -2,9 +2,9 @@
 // Where the vertex hook moved the point of each pixel of the view from where
 // it rests (the rest target of gbuffer.slang), after the resolve, while a
 // batch gives the hook values: the triangle of a pixel of a batch is built
-// again with the function of the raster (gbuffer_build.slang), with the hook
-// and without, and taken at the barycentrics of the pixel center. Every other
-// pixel moved nothing.
+// again with the function of the raster (gbuffer_build.slang), with what the
+// cull computed of the hook (cull_bins.comp) and without it, and taken at the
+// barycentrics of the pixel center. Every other pixel moved nothing.
 #define MIRAI_GROUP_X 8
 #define MIRAI_GROUP_Y 8
 #define MIRAI_GROUP_Z 1
@@ -18,6 +18,9 @@
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<uint> visibility : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 [[vk::binding(SLOT_PASS2, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS2), space0);
 #include <extension_vertex.slang>
+#ifdef MIRAI_HOOK_VERTEX
+[[vk::binding(SLOT_PASS4, 0)]] StructuredBuffer<float4> visible_moved : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
+#endif
 #include "gbuffer_build.slang"
 
 // The weights of the corners of a triangle at a pixel center, from their clip
@@ -39,13 +42,17 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 moved = float3(0.0);
     uint own = visibility.Load(int3(p, 0));
     if (own != 0u) {
-        Visible_Cluster entry = visible[visibility_entry(own)];
+        uint e = visibility_entry(own);
+        Visible_Cluster entry = visible[e];
         if (instance_batched(entry.instance)) {
             Instance inst = scene_instance(entry.instance);
             Mesh mesh = meshes[instance_mesh(inst)];
             Cluster cluster = cluster_at(entry.cluster);
             Cluster_Block block = visible_block(mesh, cluster, entry);
             Gbuffer_Cluster k = gbuffer_cluster_of(entry.instance, inst, mesh, entry.material, entry.along);
+#ifdef MIRAI_HOOK_VERTEX
+            k.moved = visible_moved[e * 2u];
+#endif
             uint corner = visibility_triangle(own) * 3u;
             Gbuffer_Corner a = gbuffer_corner_place(inst, mesh, cluster, block, k, corner);
             Gbuffer_Corner b = gbuffer_corner_place(inst, mesh, cluster, block, k, corner + 1u);

@@ -264,6 +264,7 @@ resolve_pass :: proc(p: ^Pass, nested: bool) {
 		// A nested view counts with its cull, apart.
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, r.scratch_buffer if nested else r.stats_buffer)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.program_draws)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.visible_moved)
 		textures_feedback_bind(r, cmd)
 		resolve_programs_draw(r, cmd, &r.pipelines[id])
 	}
@@ -282,6 +283,7 @@ rest_pass :: proc(p: ^Pass) {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.visibility)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.linear_depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.rest)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, r.scene.visible_moved)
 	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
 }
 
@@ -1125,6 +1127,7 @@ cull_bins_dispatch :: proc(r: ^Renderer, cmd: ^rhi.Command_List, phase: u32) {
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.cull_state_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.listed_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, s.visible_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.visible_moved)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS5, s.raster_entries)
 	rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, bins_dispatch)) + u64(phase) * size_of([3]u32))
@@ -1189,6 +1192,7 @@ raster_round_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, round: u32, la
 		vertices.triangle_capacity = min(s.raster_share[1], s.cull_capacity[.Raster_Triangles])
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Vertices_Cost if cost != 0 else .Raster_Vertices])
 		set_params(cmd, &vertices)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS6, s.visible_moved)
 	}
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, l.state)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, stats)
