@@ -7,6 +7,7 @@ import "core:sync"
 import "core:testing"
 import "core:thread"
 import "core:time"
+import "compressor:data"
 import "mirai:platform"
 import "mirai:store"
 import wire "mirai:net"
@@ -828,5 +829,62 @@ a_ten_gigabyte_object_moves_within_bounded_memory :: proc(t:^testing.T) {
     // the bound is checked with -define:ODIN_TEST_THREADS=1.
     when #config(ODIN_TEST_THREADS,0)==1 {
         testing.expectf(t,base==0 || peak-base<=64<<20,"peak growth %d bytes",peak-base)
+    }
+}
+
+// A codec no build has, as a peer built with another compressor writes its frames: Zstandard
+// under an id of its own.
+@(private="file")
+other_codec :: proc() -> store.Codec_Hook {
+    return {codec=15,encode=proc(src,dst:[]u8) -> int {
+        e:data.Encoder
+        data.encoder_init(&e)
+        defer data.encoder_destroy(&e)
+        size,error:=data.encode(&e,.Fast,src,dst)
+        return size if error==.None else 0
+    },decode=proc(src,dst:[]u8) -> bool {
+        d:data.Decoder
+        if data.decoder_init(&d)!=.None {return false}
+        defer data.decoder_destroy(&d)
+        return data.decode(&d,data.ZSTD,src,dst)==.None
+    }}
+}
+
+// Bytes that compress: runs of a few values.
+@(private="file")
+compressible :: proc(size:int,seed:u64) -> []u8 {
+    bytes:=make([]u8,size,context.temp_allocator)
+    state:=seed
+    for at:=0;at<size; {
+        state=state*6364136223846793005+1442695040888963407
+        value,run:=u8(state>>61),1+int(state>>58)
+        for k in 0..<min(run,size-at) {bytes[at+k]=value}
+        at+=run
+    }
+    return bytes
+}
+
+// Peers whose stores hold frames of different codecs exchange objects both ways: each chunk
+// travels encoded in a codec its receiver decodes (as stored, or decoded and encoded again),
+// is checked against its address once decoded, and both end with every object readable.
+@(test)
+peers_of_different_codecs_exchange_objects_both_read :: proc(t:^testing.T) {
+    w:Test_World
+    defer test_world_destroy(&w)
+    if !test_pair(t,&w,"exchange-codecs") {return}
+    other:=&w.nodes[1]
+    testing.expect_value(t,store.codec_hook(&other.s,other_codec()),store.Error.None)
+    size:=3*store.CHUNK_MAX+11
+    mine,theirs:=compressible(size,1),compressible(size,2)
+    a:=test_object(t,&w.nodes[0].s,mine)
+    b:=test_object(t,&other.s,theirs)
+    testing.expect_value(t,want(&other.x,a),Error.None)
+    testing.expect_value(t,want(&w.nodes[0].x,b),Error.None)
+    testing.expect(t,test_until_complete(&w,1,{a},30) && test_until_complete(&w,0,{b},30),"both objects arrive")
+    for n in ([]^Test_Node{&w.nodes[0],other}) {
+        got_a,whole_a:=test_read(&n.s,a)
+        got_b,whole_b:=test_read(&n.s,b)
+        testing.expect(t,whole_a && whole_b && string(got_a)==string(mine) && string(got_b)==string(theirs),"each store reads both")
+        testing.expectf(t,test_peer(n).received<u64(size),"its chunks came encoded: %d bytes for %d",test_peer(n).received,size)
     }
 }

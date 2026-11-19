@@ -20,7 +20,7 @@ import wire "mirai:net"
 
 NAMESPACE :: "shares"      // <hash of an invitation token>: the snapshot a share offers under it
 PROTOCOL_ID :: 0x4d495348  // of the hosts of sharing: datagrams of any other application are ignored
-VERSION :: 3               // of what two peers say to each other: the snapshot and the exchange over it
+VERSION :: 4               // of what two peers say to each other: the snapshot and the exchange over it
 PEERS :: 8                 // connections of a node at once
 LEASE_SECONDS :: 60.0      // between two refreshes of the lease
 @(private) WANTS :: 512
