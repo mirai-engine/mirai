@@ -581,6 +581,69 @@ render_a_batch_casts_no_shadow_past_its_cull_distance :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// An instance that shows its surface at another detail (mesh_surface) draws
+// again only the pages whose texel is finer than the errors of both: none
+// under the finest texel, fewer than a mesh that changes for good between,
+// as many over the coarsest.
+@(test)
+render_a_surface_at_another_detail_draws_again_only_pages_finer_than_its_error :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	vertices, indices := cube_mesh()
+	other, added := mesh_add(r, vertices[:], indices[:])
+	if !testing.expect(t, added) {return}
+	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {200, 0.2, 200}), tint = {0.8, 0.8, 0.8}}
+	// A bar from beside the eye into the distance, which pages of fine and coarse levels hold.
+	bar := Instance_Desc{object_id = 2, mesh = f.cube, transform = trs({1.5, 0.6, -18}, {0.3, 0.5, 40}), tint = {0.5, 0.5, 0.5}}
+	sun := Sun_Desc{direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	testing.expect(t, scene_given(r, {floor, bar}, nil, sun, {sky = {0, 0, 0}}), r.error)
+	camera := Camera{position = {0, 2, 4}, forward = {0, -0.3, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 200, exposure = UNIT_EXPOSURE}
+	// The pages drawn again for what stays when the bar takes the other mesh.
+	swap :: proc(t: ^testing.T, f: ^Cube_Fixture, bar: ^Instance_Desc, other: Mesh_Handle, camera: Camera) -> u32 {
+		r := f.renderer
+		for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+		bar.mesh = other if bar.mesh == f.cube else f.cube
+		testing.expect(t, scene_update(r, 1, {bar^}), r.error)
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		rhi.device_wait_idle(f.device)
+		counts: [abi.SHADOW_COUNT_STALE + 1]u32
+		testing.expect(t, rhi.buffer_read_slice(r.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_WORDS_COUNTS) * 4, counts[:]))
+		return counts[abi.SHADOW_COUNT_STALE]
+	}
+	whole := swap(t, &f, &bar, other, camera)
+	testing.expectf(t, whole > 0, "a mesh that changes for good draws again the pages under it: %d", whole)
+	Case :: struct {error: f32, least, most: u32}
+	// Half the texel of the finest level, one between those the points read, past the coarsest.
+	cases := [?]Case{{0.5 * SHADOW_SUN_FIRST / f32(SHADOW_MAP_SIDE), 0, 0}, {0.05, 1, whole - 1}, {1e4, whole, whole}}
+	for c in cases {
+		// Half each, in the space of the mesh the bar scales by 40 at most.
+		testing.expect(t, mesh_surface(r, f.cube, 77, c.error / 80) && mesh_surface(r, other, 77, c.error / 80))
+		drawn := swap(t, &f, &bar, other, camera)
+		testing.expectf(t, drawn >= c.least && drawn <= c.most, "an error of %f m drew %d pages again, against %d for a change for good", c.error, drawn, whole)
+	}
+	// The mesh it showed removed before it takes the next, as a terrain lets
+	// go of a level: still the same surface.
+	if bar.mesh == f.cube {swap(t, &f, &bar, other, camera)}
+	next, made := mesh_add(r, vertices[:], indices[:])
+	if !testing.expect(t, made) {return}
+	testing.expect(t, mesh_surface(r, next, 77, cases[0].error / 80) && mesh_surface(r, bar.mesh, 77, cases[0].error / 80))
+	for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	testing.expect(t, mesh_remove(r, bar.mesh))
+	bar.mesh = next
+	testing.expect(t, scene_update(r, 1, {bar}), r.error)
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	rhi.device_wait_idle(f.device)
+	counts: [abi.SHADOW_COUNT_STALE + 1]u32
+	testing.expect(t, rhi.buffer_read_slice(r.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_WORDS_COUNTS) * 4, counts[:]))
+	testing.expectf(t, counts[abi.SHADOW_COUNT_STALE] == 0, "a mesh removed for the next level drew %d pages again", counts[abi.SHADOW_COUNT_STALE])
+	expect_clean(t, f.device)
+}
+
 // A cascade of the sun the eye moves by whole texels keeps what it held where
 // it still holds it and draws what came in: the image is the one of maps
 // drawn whole.
