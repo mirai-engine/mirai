@@ -296,8 +296,9 @@ The records of the imports kept in the [machine store](../../mirai-store/SKILL.m
 (`asset/packages.odin`), three texts with a version each.
 
 - **Package manifest** (`Package`): an object, named by `manifests/<BLAKE3 of its text>`, what a
-  pin names, and by `packages/<package id>` on the machine that ingested it. The import that
-  ingests a source writes it. A root that pins it also keeps
+  pin names; `packages/<package id>` holds that BLAKE3, not an object, on the machine that
+  ingested it, so a refresh asks a source or a peer for a manifest only by `manifests/`. The
+  import that ingests a source writes it. A root that pins it also keeps
   its text, versioned, in `packages/<package id>.mirai` beside `packages.mirai`
   (`package_file`).
 - **Build manifest** (`Build`): an object that names the object of each output, named by
