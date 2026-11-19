@@ -447,8 +447,8 @@ packages_load :: proc(root:string,allocator:=context.allocator) -> (list:Package
 packages_save :: proc(root:string,list:^Packages) -> Error {
     text:=packages_text(list,context.temp_allocator) or_return
     path:=fmt.tprintf("%s/%s",root,PACKAGES_FILE)
-    if data,read_error:=os.read_entire_file(path,context.temp_allocator);read_error==nil && string(data)==text {return .None}
-    return file_error(serial.file_write_atomic(path,transmute([]u8)text))
+    _,write_error:=serial.file_write_changed(path,transmute([]u8)text)
+    return file_error(write_error)
 }
 
 // The file of root that holds the text of the manifest of the package id it
@@ -466,9 +466,9 @@ package_file_save :: proc(s:^store.Store,root:string,entry:^Project_Package) -> 
     p:=package_parse(text,context.temp_allocator) or_return
     if p.id!=entry.id {return .Corrupt}
     path:=package_file(root,entry.id)
-    if data,read_error:=os.read_entire_file(path,context.temp_allocator);read_error==nil && string(data)==text {return .None}
     if folder:=fmt.tprintf("%s/%s",root,PACKAGE_FILES);!os.is_dir(folder) && os.make_directory_all(folder)!=nil {return .IO}
-    return file_error(serial.file_write_atomic(path,transmute([]u8)text))
+    _,write_error:=serial.file_write_changed(path,transmute([]u8)text)
+    return file_error(write_error)
 }
 
 // Removes the file of root for the package id; .None also when it has none.
