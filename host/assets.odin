@@ -37,6 +37,7 @@ ASSETS_START :: 4096
 ASSETS_DEFAULT_ERRORS :: 256
 ASSETS_ROWS_DIRTY :: 256 // material rows that go to the renderer one by one between two assets_commit
 ASSETS_MESH_NONE :: render.Mesh_Handle(max(u32))
+ASSETS_LABEL_BYTES :: 32 // of what a mesh made at run time is (Mesh_Generate_Options.label)
 
 Assets_Desc :: struct {
     root:string,               // folder of the asset registry
@@ -80,6 +81,7 @@ Assets_Mesh :: struct {
     morphs:u32,     // morph targets its file holds
     failed:bool,    // the stand-in of an asset that did not load
     generated:bool, // made by assets_mesh_generate: it has no file
+    label:[ASSETS_LABEL_BYTES]u8, // of a generated one: what it is, as its maker said
     arriving:bool,  // what draws it asked for it and a job reads it (Assets.arrivals): no handle yet
     collision:geom.Mesh,
     disabled_edges:[]u8,
@@ -110,6 +112,7 @@ Mesh_Generate_Options :: struct {
     hull_sizes:[]u32,
     tangents:[][4]f32, // one per vertex, with the sign of the bitangent in w, as MikkTSpace gives them; empty: MikkTSpace's over the uvs
     render_geometry:^Mesh_Render_Geometry, // what assets_render_geometry_make made of the mesh ahead; nil: made here
+    label:string, // what the mesh is, for whoever names it ("terrain chunk"); the entity that shows it says whose. Cut to ASSETS_LABEL_BYTES
 }
 
 // What the renderer takes of a mesh made at run time: its clusters, as
@@ -793,6 +796,7 @@ assets_mesh_generate :: proc(a:^Assets,mesh:geom.Mesh,slot_materials:[]base.Asse
         return
     }
     entry:=Assets_Mesh{handle=ASSETS_MESH_NONE,vertex_count=u32(count),index_count=u32(len(mesh.indices)),slot_count=u32(slots),generated=true}
+    base.text_set(entry.label[:],options.label)
     success:=false
     defer if !success {assets_generated_free(&entry,a.allocator)}
     if options.collision {
@@ -907,8 +911,9 @@ assets_render_geometry_rays :: proc(out:^Mesh_Render_Geometry,limits:Assets_Limi
 // rays (assets_render_geometry_make, or asset.mesh_build_far and
 // assets_render_geometry_rays into the arena of made): a far mesh, of one slot
 // of the default material, without collision. Like assets_mesh_generate it
-// lives until assets_mesh_release. A transaction: between frames.
-assets_mesh_publish :: proc(a:^Assets,made:^Mesh_Render_Geometry) -> (id:base.Asset_Id,ok:bool) {
+// lives until assets_mesh_release; label says what it is, as for
+// assets_mesh_generate. A transaction: between frames.
+assets_mesh_publish :: proc(a:^Assets,made:^Mesh_Render_Geometry,label:="") -> (id:base.Asset_Id,ok:bool) {
     g:=made.geometry
     if len(g.clusters)==0 || len(g.levels)==0 || made.slots>1 {return}
     if len(a.free_meshes)==0 && !base.region_grow(&a.regions[0],&a.meshes) {
@@ -916,6 +921,7 @@ assets_mesh_publish :: proc(a:^Assets,made:^Mesh_Render_Geometry) -> (id:base.As
         return
     }
     entry:=Assets_Mesh{handle=ASSETS_MESH_NONE,index_count=g.levels[0].triangle_count*3,generated=true}
+    base.text_set(entry.label[:],label)
     for c in g.clusters[:g.levels[0].cluster_count] {entry.vertex_count+=asset.cluster_vertex_count(c)}
     entry.bounds_min,entry.bounds_max=g.bounds_min,g.bounds_max
     if a.renderer!=nil {
@@ -1039,6 +1045,15 @@ assets_mesh_generated :: proc(a:^Assets,id:base.Asset_Id) -> bool {
     if a==nil {return false}
     ref,known:=a.index[id]
     return known && ref.kind==.Mesh && a.meshes[ref.index].generated
+}
+
+// What a mesh made at run time is, as its maker said; "" for one it did not
+// say, or for one of a file.
+assets_mesh_label :: proc(a:^Assets,id:base.Asset_Id) -> string {
+    if a==nil {return ""}
+    ref,known:=a.index[id]
+    if !known || ref.kind!=.Mesh || !a.meshes[ref.index].generated {return ""}
+    return base.text_get(a.meshes[ref.index].label[:])
 }
 
 // The box of a mesh loaded from its file, without loading it: false for one

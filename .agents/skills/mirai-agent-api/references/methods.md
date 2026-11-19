@@ -313,7 +313,9 @@ the GPU passes and the conditions of the measurement. The editor keeps the last 
   triangles, the pixels it shades) and what the maps of the shadows drew. Only the frame asked for
   runs the counting variants of its passes. A still view keeps the pages of the maps it drew
   before, so its `shadow_*` are what that frame drew again; a view covered by a panel draws no
-  frame of the scene and the call fails.
+  frame of the scene and the call fails. Its frames are frames of the user: held keys and a
+  camera flown with the pointer go on through them. A mesh made at run time is named by what its
+  maker says it is and by the entity that shows it.
 
 Reading a load:
 

@@ -520,7 +520,7 @@ chunk_heightfield_borders :: proc(s:^Source,low,high:[3]int,mesh:^Chunk_Mesh,cut
 // a chunk far from the view by them. levels: as chunk_render_prepare made it.
 chunk_publish :: proc(a:^host.Assets,mesh:^Chunk_Mesh,collision:=true,picking:=false,levels:=false) -> (id:base.Asset_Id,ok:bool) {
     if len(mesh.geometry.indices)==0 {return {},true}
-    options:=host.Mesh_Generate_Options{no_lods=!levels || !mesh.render_ready,collision=collision || picking,disabled_edges=mesh.disabled_edges[:]}
+    options:=host.Mesh_Generate_Options{no_lods=!levels || !mesh.render_ready,collision=collision || picking,disabled_edges=mesh.disabled_edges[:],label="terrain chunk"}
     if mesh.render_ready {
         options.render_geometry=&mesh.render
     } else if mesh.grid {

@@ -216,7 +216,7 @@ water_render :: proc(
         // u along x and v along z: the bitangent, along +Z, is -cross(normal, tangent).
         tangents:=make([][4]f32,len(buffer.positions),context.temp_allocator)
         for &t in tangents {t={1,0,0,-1}}
-        state.surface,_=host.assets_mesh_generate(app.assets,geom.mesh_buffer_view(&buffer),options={no_lods=true,tangents=tangents})
+        state.surface,_=host.assets_mesh_generate(app.assets,geom.mesh_buffer_view(&buffer),options={no_lods=true,tangents=tangents,label="water surface"})
     }
     // A derived row lasts while the rounds of the assets keep it: a new round asks for them again.
     settings:=settings
