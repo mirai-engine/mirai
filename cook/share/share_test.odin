@@ -625,6 +625,22 @@ a_join_keeps_what_the_joiner_changes_while_it_runs :: proc(t:^testing.T) {
     testing.expect_value(t,read_text(joined,"c.txt"),"host c")
     testing.expectf(t,report.written==1 && len(report.kept)==2 && len(report.failed)==0,"%v",report)
     for w in plan.write {testing.expect(t,w.done,"what is kept on purpose is done")}
+
+    // Edited while its replacement is copied, after the check before the copy.
+    file_put(joined,"c.txt",bytes("base c"))
+    clear(&plan.write)
+    append(&plan.write,Write{at=2,present=true,base=bytes_address(bytes("base c"))})
+    Edit :: struct {joined:string}
+    edit:=Edit{joined}
+    hooks:=Join_Hooks{data=&edit,saved=proc(data:rawptr,path:string) {
+        file_put((^Edit)(data).joined,path,transmute([]u8)string("mine c"))
+    }}
+    n.hooks=&hooks
+    late:=Join_Report{kept=make([dynamic]string,context.temp_allocator),failed=make([dynamic]string,context.temp_allocator)}
+    join_write(&d,&snap,&plan,{0},&index,joined,&late)
+    n.hooks=nil
+    testing.expect_value(t,read_text(joined,"c.txt"),"mine c")
+    testing.expectf(t,late.written==0 && len(late.kept)==1 && plan.write[0].done,"%v",late)
 }
 
 // A join never writes or removes through a link inside its folder: a file of

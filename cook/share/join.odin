@@ -698,6 +698,14 @@ join_write :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,list:[]int,index:^Inde
             continue
         }
         os.change_mode(temp,mode)
+        if h:=d.node.hooks;h!=nil && h.saved!=nil {h.saved(h.data,e.path)}
+        // The copy of a large file takes time: an edit made meanwhile is kept too.
+        if again,_,still:=index_address(index,e.path,target);still!=present || still && again!=here {
+            os.remove(temp)
+            if !still || again!=e.address {kept(report,"%s: you changed it while the join ran; yours is kept",e.path)}
+            w.done=true
+            continue
+        }
         parent:=os.dir(target)
         if make_error:=os.make_directory_all(parent);make_error!=nil && !os.is_dir(parent) {
             os.remove(temp)

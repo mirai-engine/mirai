@@ -71,6 +71,14 @@ Node :: struct {
     lease_at:f64,
     lease_due:bool,
     stopped:bool,
+    hooks:^Join_Hooks,
+}
+
+// What a test does at the crash points of a join.
+@(private)
+Join_Hooks :: struct {
+    saved:proc(data:rawptr,path:string), // a file's replacement is whole in its temporary file
+    data:rawptr,
 }
 
 node_init :: proc(n:^Node,s:^store.Store,allocator:=context.allocator) -> exchange.Error {
