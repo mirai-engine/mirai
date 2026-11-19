@@ -244,7 +244,10 @@ cmd_edit :: proc(root:string,args:[]string) -> int {
     // A person at a terminal opening a window takes the GPU without waiting.
     turn:workspace.Lock
     charge:i64
-    if !slice.contains(rest,"--no-gpu") {turn,charge=gpu_turn(root,absolute,fmt.tprintf("edit %s",absolute),person=!headless && person_at_terminal())}
+    if !slice.contains(rest,"--no-gpu") {
+        turned:bool
+        if turn,charge,turned=gpu_turn(root,absolute,fmt.tprintf("edit %s",absolute),person=!headless && person_at_terminal());!turned {return 1}
+    }
     defer workspace.lock_release(&turn)
     command:=make([dynamic]string)
     append(&command,project_engine_paths(root,folder,mode).editor_program,"--project",absolute)
@@ -286,7 +289,10 @@ cmd_play :: proc(root:string,args:[]string) -> int {
     absolute:=project.path_absolute(folder)
     // The player lives as long as this command, which holds its turn.
     turn:workspace.Lock
-    if !slice.contains(rest,"--no-gpu") {turn,_=gpu_turn(root,absolute,fmt.tprintf("play %s",absolute),person=!headless && person_at_terminal())}
+    if !slice.contains(rest,"--no-gpu") {
+        turned:bool
+        if turn,_,turned=gpu_turn(root,absolute,fmt.tprintf("play %s",absolute),person=!headless && person_at_terminal());!turned {return 1}
+    }
     defer workspace.lock_release(&turn)
     command:=make([dynamic]string)
     append(&command,project_engine_paths(root,folder,mode).player_program,"--project",absolute)

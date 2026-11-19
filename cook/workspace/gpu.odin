@@ -356,6 +356,7 @@ Gpu_Wait :: struct {
     holders:[]Gpu_Holder,
     memory:i64,         // of the card, as admission took it
     memory_known:bool,
+    stuck:bool,         // the room would come only from holders that stay open: waiting does not give it
 }
 
 // Takes a turn when one is given now. what names the holder; a person takes
@@ -374,13 +375,10 @@ gpu_try :: proc(root,what:string,charge:i64,person:=false,part_of:="") -> (lock:
     defer lock_release(&admission)
     waiting.holders=gpu_holders(root,context.temp_allocator)
     waiting.memory,waiting.memory_known=gpu_memory(root)
-    charges:=make([]i64,len(waiting.holders),context.temp_allocator)
-    alone:=part_of!=""
-    for holder,i in waiting.holders {
-        charges[i]=holder.charge
-        alone&&=gpu_holder_measurement(holder.holder)==part_of
+    if !person && !gpu_room(waiting.holders,waiting.memory,charge,part_of,false) {
+        waiting.stuck=!gpu_room(waiting.holders,waiting.memory,charge,part_of,true)
+        return
     }
-    if !person && (len(waiting.holders)>=GPU_TURNS || !alone && !gpu_admits(waiting.memory,charges,charge)) {return}
     text:=gpu_holder_text(what,charge,part_of,open=person)
     for turn in 0..<GPU_TURNS {
         failed:bool
@@ -390,18 +388,36 @@ gpu_try :: proc(root,what:string,charge:i64,person:=false,part_of:="") -> (lock:
     return
 }
 
+// Whether a turn charged charge fits beside holders on a card of memory
+// bytes: a turn free and the room for it, or every holder part of the same
+// measurement (part_of). open_only: counting only the holders that stay open,
+// as if those that work had ended.
+@(private)
+gpu_room :: proc(holders:[]Gpu_Holder,memory,charge:i64,part_of:string,open_only:bool) -> bool {
+    charges:=make([dynamic]i64,context.temp_allocator)
+    alone:=part_of!=""
+    for holder in holders {
+        if open_only && !holder.open {continue}
+        append(&charges,holder.charge)
+        alone&&=gpu_holder_measurement(holder.holder)==part_of
+    }
+    return len(charges)<GPU_TURNS && (alone || gpu_admits(memory,charges[:],charge))
+}
+
 // Blocks until a turn is given and takes it (gpu_try). notice runs when what
 // it waits for changes. A person never waits: ok is false when every turn
-// file is held.
-gpu_acquire :: proc(root,what:string,charge:i64,person:=false,notice:proc(waiting:Gpu_Wait)=nil) -> (lock:Lock,ok:bool) {
+// file is held. Nor does a turn that waiting would not give (Gpu_Wait.stuck):
+// ok is false and refused says why.
+gpu_acquire :: proc(root,what:string,charge:i64,person:=false,notice:proc(waiting:Gpu_Wait)=nil) -> (lock:Lock,ok:bool,refused:Gpu_Wait) {
     told:=""
     part_of:=measurement(context.temp_allocator)
     for {
         taken:bool
         waiting:Gpu_Wait
         lock,taken,waiting=gpu_try(root,what,charge,person,part_of)
-        if taken {return lock,true}
+        if taken {return lock,true,{}}
         if person {return}
+        if waiting.stuck {return {},false,waiting}
         if waiting.measurement=="" && len(waiting.holders)==0 {return}
         b:=strings.builder_make(context.temp_allocator)
         strings.write_string(&b,waiting.measurement)
