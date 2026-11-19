@@ -15,8 +15,10 @@ import wire "mirai:net"
 // A peer of a shared project: a store, the exchange over the hosts of its
 // owner (a server others join, the client of a join), the lease that keeps
 // what it serves and fetches from a sweep, and what it saw of its peers.
-// Whoever owns it calls node_pump once per step; a join runs on another
-// thread and reads the clock and waits through the node.
+// Whoever owns it calls node_pump once per step, or, when it polls its hosts
+// itself (an editor's session, whose hosts carry its own channels too),
+// node_command for each command of a host and node_step; a join runs on
+// another thread and reads the clock and waits through the node.
 
 NAMESPACE :: "shares"      // <hash of an invitation token>: the snapshot a share offers under it
 PROTOCOL_ID :: 0x4d495348  // of the hosts of sharing: datagrams of any other application are ignored
@@ -84,10 +86,11 @@ Join_Hooks :: struct {
 
 // worker: the job system and worker of the thread that pumps, which reads,
 // hashes, stores and commits for the exchange; none: all of it runs on the pump.
-node_init :: proc(n:^Node,s:^store.Store,allocator:=context.allocator,worker:=jobs.Worker_Ref{}) -> exchange.Error {
+// channel: where the channels of channels() start in the channels of every host.
+node_init :: proc(n:^Node,s:^store.Store,allocator:=context.allocator,worker:=jobs.Worker_Ref{},channel:=0) -> exchange.Error {
     n^={s=s,allocator=allocator}
     n.served=make([dynamic]store.Hash,allocator)
-    return exchange.init(&n.x,{store=s,channel=0,peers=PEERS,wants=WANTS,expose=node_expose,expose_user=n,allocator=allocator,worker=worker})
+    return exchange.init(&n.x,{store=s,channel=channel,peers=PEERS,wants=WANTS,expose=node_expose,expose_user=n,allocator=allocator,worker=worker})
 }
 
 node_destroy :: proc(n:^Node) {
@@ -102,6 +105,18 @@ node_stop :: proc(n:^Node) {
     sync.mutex_guard(&n.lock)
     n.stopped=true
     sync.cond_broadcast(&n.tick)
+}
+
+// Stops the node and lets go of every peer, as if they all left: what a join
+// waits for from them returns at once. For an owner that ends while a join runs.
+node_close :: proc(n:^Node) {
+    node_stop(n)
+    sync.mutex_lock(&n.lock)
+    peers:=n.peers
+    sync.mutex_unlock(&n.lock)
+    for p in peers {
+        if p.used {node_left(n,p.host,p.connection,.Closed)}
+    }
 }
 
 // Adds a host whose channels start with those of channels(); the node polls it.
@@ -127,14 +142,24 @@ node_expose :: proc(user:rawptr,namespace:string) -> bool {
 // back), the lease refreshed when due, and whoever waits on the node woken.
 node_pump :: proc(n:^Node,now:f64) {
     for h in n.hosts[:n.host_count] {
-        for command in wire.host_poll(h) {
-            #partial switch command.kind {
-            case .Connected: node_joined(n,h,command.connection)
-            case .Disconnected: node_left(n,h,command.connection,command.reason)
-            case .Message: exchange.receive(&n.x,h,command)
-            }
-        }
+        for command in wire.host_poll(h) {node_command(n,h,command)}
     }
+    node_step(n,now)
+}
+
+// A command of a host its owner polled: a connection that came or went, or a
+// message, which it says was the exchange's. The owner sees every command too.
+node_command :: proc(n:^Node,h:^wire.Host,command:wire.Command) -> (own:bool) {
+    #partial switch command.kind {
+    case .Connected: node_joined(n,h,command.connection)
+    case .Disconnected: node_left(n,h,command.connection,command.reason)
+    case .Message: return exchange.receive(&n.x,h,command)
+    }
+    return false
+}
+
+// The step of node_pump after its hosts were polled.
+node_step :: proc(n:^Node,now:f64) {
     exchange.update(&n.x,now)
     sync.mutex_lock(&n.lock)
     n.now=now

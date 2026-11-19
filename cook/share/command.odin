@@ -159,35 +159,9 @@ share_command :: proc(args:[]string,output,errors:io.Writer) -> int {
         return 2
     }
     root:=project.path_absolute(len(positional)>0?positional[0]:".",context.temp_allocator)
-    manifest,manifest_error:=project.manifest_read(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator))
-    if manifest_error.code!=.None {
-        fmt.wprintfln(errors,"mirai share: %s is not a project (its %s does not read: %v): give the folder of one",root,project.PROJECT_FILE,manifest_error.code)
-        return 1
-    }
-    name:=base.text_get(manifest.name[:])
-    if !name_valid(name) {name=os.base(root)}
-    if !name_valid(name) {name="project"}
     s,opened:=store_open(store_root,errors,"share")
     if !opened {return 1}
     defer store.close(&s)
-
-    js:jobs.Job_System
-    if !jobs.system_init(&js,{threads=jobs.THREADS_AUTO,allocator=runtime.heap_allocator()}) {
-        fmt.wprintln(errors,"mirai share: the threads to read the files on could not be started")
-        return 1
-    }
-    started:=time.tick_now()
-    served:=make([dynamic]store.Hash,context.temp_allocator)
-    snap,address,taken,take_error:=snapshot_take(&s,root,name,&served,{system=&js,worker=jobs.OWNER},context.temp_allocator)
-    jobs.system_destroy(&js)
-    for line in taken.skipped {fmt.wprintfln(errors,"left out: %s",line)}
-    if take_error!="" {
-        fmt.wprintfln(errors,"mirai share: %s",take_error)
-        return 1
-    }
-    fmt.wprintfln(output,"snapshot of %s: %d files, %s (%d read into the store at %s, %s)",root,taken.files,bytes_text(taken.bytes),taken.put,s.root,seconds_text(time.duration_seconds(time.tick_since(started))))
-    packages,_:=asset.root_packages(root,s.root,context.temp_allocator)
-    for problem in packages.problems {fmt.wprintfln(errors,"warning: a joiner will not get it: %s",problem)}
 
     // The exchange's jobs, owned by this thread, which pumps.
     exchange_jobs:jobs.Job_System
@@ -204,6 +178,22 @@ share_command :: proc(args:[]string,output,errors:io.Writer) -> int {
     defer node_destroy(n)
     token,made:=wire.invite_token()
     if !made {fmt.wprintln(errors,"mirai share: this system gives no secure random bytes to seal the connections with");return 1}
+
+    js:jobs.Job_System
+    if !jobs.system_init(&js,{threads=jobs.THREADS_AUTO,allocator=runtime.heap_allocator()}) {
+        fmt.wprintln(errors,"mirai share: the threads to read the files on could not be started")
+        return 1
+    }
+    started:=time.tick_now()
+    o,offer_error:=offer(n,root,token,{system=&js,worker=jobs.OWNER},context.temp_allocator)
+    jobs.system_destroy(&js)
+    for line in o.taken.skipped {fmt.wprintfln(errors,"left out: %s",line)}
+    if offer_error!="" {
+        fmt.wprintfln(errors,"mirai share: %s",offer_error)
+        return 1
+    }
+    fmt.wprintfln(output,"snapshot of %s: %d files, %s (%d read into the store at %s, %s)",root,o.taken.files,bytes_text(o.taken.bytes),o.taken.put,s.root,seconds_text(time.duration_seconds(time.tick_since(started))))
+    for problem in o.problems {fmt.wprintfln(errors,"warning: a joiner will not get it: %s",problem)}
     h:=new(Udp_Host,context.temp_allocator)
     if !host_open(h,.Server,port>=0?port:PORT,token) {
         fmt.wprintfln(errors,"mirai share: no UDP port could be opened%s: give another with --port",port>0?fmt.tprintf(" at %d",port):"")
@@ -211,12 +201,7 @@ share_command :: proc(args:[]string,output,errors:io.Writer) -> int {
     }
     defer host_close(h)
     node_host(n,&h.host)
-    for e in snap.entries {append(&served,e.address)}
-    library_served(&s,root,&served)
-    node_serve(n,..served[:])
-    digits:[64]u8
-    offer:=offer_name(token,&digits)
-    offer_set(&s,root,offer,address)
+    name:=o.name
 
     code,mapped,_:=invitation_of(h,true)
     fmt.wprintfln(output,"Sharing %s on UDP port %d. Invitation:\n\n    %s\n\nOn the other machine: mirai join %s [folder]",name,h.port,code,code)
@@ -239,6 +224,43 @@ share_command :: proc(args:[]string,output,errors:io.Writer) -> int {
         }
         time.sleep(time.Millisecond)
     }
+}
+
+// What a host offers: the snapshot of its project, its address and name,
+// what taking it read, and the packages a joiner will not get, each why.
+Offer :: struct {
+    snapshot:Snapshot,
+    address:store.Hash,
+    name:string,
+    taken:Take_Report,
+    problems:[]string,
+}
+
+// Offers the project at root to whoever holds the invitation of token: its
+// snapshot put in the store of the node under offer_name of the token, with
+// its folders, files and what the packages it pins need held by the lease of
+// the node. Taking it again after a change offers the new snapshot. Jobs of
+// worker, when given, read the files. In allocator.
+offer :: proc(n:^Node,root:string,token:u64,worker:=jobs.Worker_Ref{},allocator:=context.allocator) -> (o:Offer,error:string) {
+    manifest,manifest_error:=project.manifest_read(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator))
+    if manifest_error.code!=.None {
+        return {},fmt.aprintf("%s is not a project (its %s does not read: %v): give the folder of one",root,project.PROJECT_FILE,manifest_error.code,allocator=allocator)
+    }
+    o.name=base.text_get(manifest.name[:])
+    if !name_valid(o.name) {o.name=os.base(root)}
+    if !name_valid(o.name) {o.name="project"}
+    o.name=strings.clone(o.name,allocator)
+    served:=make([dynamic]store.Hash,context.temp_allocator)
+    o.snapshot,o.address,o.taken,error=snapshot_take(n.s,root,o.name,&served,worker,allocator)
+    if error!="" {return}
+    packages,_:=asset.root_packages(root,n.s.root,allocator)
+    o.problems=packages.problems
+    for e in o.snapshot.entries {append(&served,e.address)}
+    library_served(n.s,root,&served)
+    node_serve(n,..served[:])
+    digits:[64]u8
+    offer_set(n.s,root,offer_name(token,&digits),o.address)
+    return
 }
 
 // What the packages the project at root pins need: their manifests and the
