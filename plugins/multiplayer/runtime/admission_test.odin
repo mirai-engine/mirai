@@ -12,7 +12,10 @@ import wire "mirai:net"
 // address names how to get in.
 @(test)
 a_client_that_cannot_join_is_told_what_to_do :: proc(t:^testing.T) {
-    code:=wire.invite_encode({lan=wire.address_loopback(9),token=7},context.temp_allocator)
+    private:wire.Key
+    private[0]=7
+    key:=wire.invite_key_from(&private,7)
+    code:=wire.invite_encode({lan=wire.address_loopback(9),key={public=key.public,secret=key.secret}},context.temp_allocator)
     typo:=transmute([]u8)strings.clone(code,context.temp_allocator)
     typo[0]=typo[0]=='Z'?'Y':'Z'
     info,described:=net_test_info(t)

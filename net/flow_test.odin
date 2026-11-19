@@ -253,13 +253,15 @@ bulk_stream :: proc(t:^testing.T,rtt:f64,loss:f32,clients:int,seconds:f64,jitter
     server:=test_host(&w,{mode=.Server,channels=BULK_CHANNELS})
     hosts:[2]^Host
     on_server:[2]Connection
+    // The path is the same from the first datagram: a round trip that grows after the first samples
+    // would read as a queue.
+    sim_endpoint_conditions(&w.sim,0,{latency=rtt/2,jitter=jitter,loss=loss,bandwidth=BULK_LINK})
+    for i in 1..=clients {sim_endpoint_conditions(&w.sim,i,{latency=rtt/2,jitter=jitter,loss=loss})}
     for i in 0..<clients {
         hosts[i]=test_host(&w,{mode=.Client,channels=BULK_CHANNELS})
         on_server[i],_=test_connect(&w,server,hosts[i])
         if !testing.expect(t,on_server[i]!=0,"the client connects") {return}
     }
-    sim_endpoint_conditions(&w.sim,0,{latency=rtt/2,jitter=jitter,loss=loss,bandwidth=BULK_LINK})
-    for i in 1..=clients {sim_endpoint_conditions(&w.sim,i,{latency=rtt/2,jitter=jitter,loss=loss})}
     sent:[2]int
     got:[2]f64
     start:=w.now

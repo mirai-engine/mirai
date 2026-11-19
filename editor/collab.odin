@@ -35,7 +35,7 @@ import "mirai:ui"
 // draw as avatars and outlines: selecting holds nothing.
 //
 // A guest joins with the code of the invitation of the host (net/invite.odin):
-// its address on its network and on its router, and the token of the session.
+// its address on its network and on its router, and the key of the session.
 
 COLLAB_PORT :: 7950
 COLLAB_VERSION :: 7 // of the messages: an editor of another one has another version of the project
@@ -52,7 +52,7 @@ COLLAB_LEAVE_WAIT :: 8*time.Millisecond // for the worker, which host_poll wakes
 COLLAB_PLAYING :: u8(1) // presence: inside a Play or a Simulate of its own
 COLLAB_SERVING :: u8(2) // presence: serves the game of a plugin, whose offer follows
 COLLAB_JOINED :: u8(4)  // presence: a guest that plays the game the host serves
-COLLAB_OFFER_BYTES :: 32 // what the presence of the host carries of the game it serves (Play_Provider.offer)
+COLLAB_OFFER_BYTES :: 64 // what the presence of the host carries of the game it serves (Play_Provider.offer)
 
 Collab_Role :: enum u8 {None,Host,Guest}
 Collab_Phase :: enum u8 {Idle,Connecting,Syncing,Joined,Ended}
@@ -72,7 +72,7 @@ collab_error_text :: proc(error:Collab_Error) -> string {
     case .None:      return ""
     case .Busy:      return "a session is open; leave it first"
     case .Playing:   return "a game is playing; stop it first"
-    case .Invite:    return "not the code of an invitation: like R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT; copy it again"
+    case .Invite:    return "not the code of an invitation of this Mirai: 87 characters by groups of four; copy it again"
     case .Transport: return "the port could not be opened"
     case .No_Assets: return "the project has no assets folder"
     case .No_Random: return "this system gives no secure random bytes to seal the session with"
@@ -162,7 +162,7 @@ Collab_State :: struct {
     mapping:wire.Port_Mapping,
     mapping_on:bool,
     port:int,
-    invite:u64,           // the token of the session
+    invite:wire.Invite_Key, // of the session: the host's, with its private key
     invitation:wire.Invitation, // a guest: of the host
     self:u8,
     peers:[COLLAB_PEERS]Collab_Peer,
@@ -175,7 +175,7 @@ Collab_State :: struct {
     by_hash:map[u64]int,
     epoch:u64,            // of the history of the document being shared
     presence_at,edit_at:f64,
-    code:[48]u8,          // the host: its invitation, as others reach it
+    code:[wire.INVITE_TEXT_BYTES]u8, // the host: its invitation, as others reach it
     code_length:int,
     sent_edits,received_edits,sent_ops,received_ops:u64,
     guest_name:[COLLAB_NAME_BYTES]u8,
@@ -199,7 +199,7 @@ Collab :: struct {
     // The fields of the Share popup.
     name:[COLLAB_NAME_BYTES]u8,
     name_length:int,
-    join:[64]u8,
+    join:[2*wire.INVITE_TEXT_BYTES]u8,
     join_length:int,
     joining:bool,
     error:Collab_Error,
@@ -332,7 +332,7 @@ collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invitation
         return nil,.Transport
     }
     desc:=wire.Host_Desc{
-        mode=role==.Host?.Server:.Client,transport=wire.udp_transport(&st.udp),protocol_id=0x4d495241,version=st.layout,invite=invitation.token,
+        mode=role==.Host?.Server:.Client,transport=wire.udp_transport(&st.udp),protocol_id=0x4d495241,version=st.layout,invite=invitation.key,
         max_connections=COLLAB_PEERS-1,channels=COLLAB_CHANNELS,
     }
     // Its network half runs on a thread of its own: an editor busy for a while
@@ -346,16 +346,16 @@ collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invitation
     collab_tables_build(s,st)
     st.epoch=s.edits.epoch
     st.port=int(st.udp.address.port)
-    st.invite=invitation.token
+    st.invite=invitation.key
     c.state=st
     return st,.None
 }
 
 // Shares the scene: guests connect to this editor.
 collab_host :: proc(s:^Session,port:int,name:string) -> Collab_Error {
-    invite,made:=wire.invite_token()
+    invite,made:=wire.invite_key()
     if !made {return .No_Random}
-    st,error:=collab_start(s,.Host,port>0?port:COLLAB_PORT,name,{token=invite})
+    st,error:=collab_start(s,.Host,port>0?port:COLLAB_PORT,name,{key=invite})
     if error!=.None {return error}
     st.phase=.Joined
     st.self=0
@@ -371,8 +371,8 @@ collab_host :: proc(s:^Session,port:int,name:string) -> Collab_Error {
 
 // Enters the session of another editor with the code of its invitation: the scene is replaced by the one of the host.
 collab_join :: proc(s:^Session,code,name:string) -> Collab_Error {
-    invitation,valid:=wire.invite_decode(code)
-    if !valid {return .Invite}
+    invitation,refused:=wire.invite_decode(code)
+    if refused!=.None {return .Invite}
     st,error:=collab_start(s,.Guest,0,name,invitation)
     if error!=.None {return error}
     if wire.host_connect(&st.host,invitation.lan,invitation.public)!=.None {

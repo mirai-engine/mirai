@@ -17,11 +17,11 @@ Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networ
   Stop (host) or Leave (guest), or `collab.leave`, and the scene stays as it is.
 - Joining **replaces** the guest's scene. Sharing and joining require `Edit`, a project with an
   assets folder and no open session (`Busy`). `COLLAB_PEERS` editors fit.
-- On sharing, the host creates a token and shows its invitation code
+- On sharing, the host makes the key of the session and shows its invitation code
   ([invitations](../../mirai-networking/references/networking.md)): the address of its network
   (`address_lan`: the one the system uses toward the internet, not a virtual adapter's), the one
   the router mapped for it ([port mapping](../../mirai-networking/references/port-mapping.md)) and
-  the token. Whoever enters without that token gets no answer and times out; the host's log shows
+  the key. Whoever enters without that key gets no answer and times out; the host's log shows
   the code each time it changes.
 - The host sees one code in Session, once the router answered: a guest asks at both addresses at
   once, so the same code joins from the host's network and from outside it. A guest's networked
@@ -116,7 +116,7 @@ Edits:
 
 - The handshake carries the world layout version: a hash of `COLLAB_VERSION` (that of the
   messages) and of names and sizes of the `World` tables.
-- If it differs, the guest stops on reading the host's challenge (`Denied_Version`: "has another
+- If it differs, the host denies the guest's first datagram (`Denied_Version`: "has another
   version of the project"). Both editors must be generated and compiled from the same project and
   engine.
 
