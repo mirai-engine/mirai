@@ -390,11 +390,13 @@ document_write :: proc(doc:^Document,w:^serial.Writer,profile:=data.Profile.Fast
     return blob_build(w,doc.kind,doc.kind_version,doc.id,doc.owner,doc.flags,chunks[:],&scratch,profile,doc.codecs,worker)
 }
 
-// Writes the document to a file, whole or not at all.
+// Writes the document to a file, whole or not at all; a file that already
+// holds its bytes is left untouched.
 document_save :: proc(doc:^Document,path:string,sync:=false,profile:=data.Profile.Fast) -> Error {
     bytes:=document_bytes(doc,doc.allocator,profile) or_return
     defer mem.free_bytes(bytes,doc.allocator)
-    return serial.file_write_atomic(path,bytes,sync)==.None?.None:.IO
+    _,error:=serial.file_write_changed(path,bytes,sync)
+    return .None if error==.None else .IO
 }
 
 // The file the document is, as bytes from allocator, aligned for its chunks.
