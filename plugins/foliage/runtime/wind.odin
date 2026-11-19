@@ -162,7 +162,7 @@ wind_zone_take :: proc(resident:^Foliage_Resident,zone:i32,at:[3]f32) -> u32 {
 // much of their sway the batches of each zone take.
 @(step="render",loops="game editor")
 foliage_wind :: proc(resident:^Foliage_Resident,winds:^core.Table(volume.Wind,.Read),volumes:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),sources:core.Ref(scene.Streaming_Sources),benders:^core.Table(Foliage_Bender,.Read),frame:core.Frame_Time,renderer:^render.Renderer) {
-    if resident==nil || len(resident.owners)==0 {return}
+    if resident==nil || len(resident.owners)==0 && len(resident.sways.entities)==0 {return}
     zones:=volume.Where{volumes,worlds,parents,sections,splines}
     resident.wind=volume.gpu_wind(winds,zones)
     at:=[3]f32{}

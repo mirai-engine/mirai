@@ -163,6 +163,9 @@ Foliage_Resident :: struct {
     detail:[2]f32, // what the cells were built with (FOLIAGE_DETAIL): the share of the points of the types without collision, and of the distances
     work:Build_Work,
     stats:Foliage_Resident_Stats,
+    sways:core.Entity_Map(Resident_Sway), // the mesh entities that sway (Foliage_Sway), by entity
+    sway_seen:Sway_Seen,
+    sway_epoch,sway_structure,sway_zones:u64, // the batches_epoch, assets structure and zones_revision they were drawn at
 }
 Foliage_Resident_Stats :: struct {builds,cells,batches,instances:u64}
 Resident_Owner :: struct {
@@ -364,6 +367,7 @@ resident_sweep :: proc(resident:^Foliage_Resident,all:=false) {
     for i:=len(resident.winds)-1;i>=0;i-=1 {
         used:=false
         if !all {for &owner in resident.owners {used||=wind_zone_used(resident.winds[i].zone,&owner)}}
+        used||=!all && sway_zone_used(resident,resident.winds[i].zone)
         if !used {unordered_remove(&resident.winds,i)}
     }
 }
@@ -372,6 +376,7 @@ foliage_resident_free :: proc(resident:^Foliage_Resident) {
     for &owner in resident.owners {resident_owner_free(resident,&owner)}
     clear(&resident.owners)
     resident_sweep(resident,true)
+    sways_free(resident)
     if resident.app!=nil {
         for name in ([]string{IMPOSTOR_BUFFER,IMPOSTOR_VISIBLE,IMPOSTOR_DRAW}) {render.buffer_release(resident.app.renderer,resident.world,name)}
     }
