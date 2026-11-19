@@ -2272,9 +2272,59 @@ render_probes_follow_time_by_what_it_changes :: proc(t: ^testing.T) {
 	}
 }
 
+// Probes whose rays meet a program that reads the time, and that wait longer
+// for their turns while it changes nothing, settle to the light the same
+// scene gives without the time: a turn that thins out leaves no probe short.
+@(test)
+render_probes_settle_to_the_same_light_with_the_time :: proc(t: ^testing.T) {
+	settled: [2][]u8
+	defer for image in settled {delete(image)}
+	for timed, k in ([2]bool{false, true}) {
+		f: Cube_Fixture
+		settings := test_settings()
+		settings.taa = false
+		settings.probe_budget = 64
+		if !cube_fixture_init(t, &f, 96, 64, settings, programs = true) {return}
+		defer fixture_destroy(&f)
+		defer expect_clean(t, f.device)
+		r := f.renderer
+		material := DEFAULT_MATERIAL
+		if timed {
+			pulse := program_find(r, "Pulse", .Surface)
+			if !testing.expect(t, pulse != nil, "the tests have the Pulse program") {return}
+			material.program_id, material.custom_params = pulse.id, program_defaults(pulse)
+		}
+		testing.expect(t, materials_set(r, {material}))
+		instances := []Instance_Desc{
+			{object_id = 1, mesh = f.cube, transform = trs({0, -0.5, 0}, {14, 0.2, 14}), tint = {0.8, 0.8, 0.8}, material = 1},
+			{object_id = 2, mesh = f.cube, transform = trs({0, 1.1, -3.5}, {14, 3, 0.2}), tint = {0.8, 0.6, 0.4}, material = 1},
+			{object_id = 3, mesh = f.cube, transform = trs({-3, 0.5, -1}, {1, 2, 1}), tint = {0.4, 0.8, 0.4}},
+		}
+		sun := Sun_Desc{direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 1, enabled = true, indirect = 1, scattering = 1}
+		scene_given(r, instances, nil, sun, {sky = {0.05, 0.05, 0.05}})
+		camera := Camera{position = {2.6, 2.2, 3}, forward = {0.4, -1.6, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+		for frame in 0 ..< 1500 {testing.expect(t, renderer_frame(r, {camera = camera, time = f32(frame) / 60, inspection = {mode = .Indirect}}), r.error)}
+		rhi.device_wait_idle(r.device)
+		image, _, _, ok := golden_capture(r)
+		if !testing.expect(t, ok, r.error) {return}
+		settled[k] = image
+	}
+	if len(settled[0]) != len(settled[1]) || len(settled[0]) == 0 {return}
+	sums: [2]f64
+	most := 0
+	for v, i in settled[0] {
+		if i % 4 == 3 {continue}
+		sums[0] += f64(v)
+		sums[1] += f64(settled[1][i])
+		most = max(most, abs(int(v) - int(settled[1][i])))
+	}
+	testing.expectf(t, abs(sums[1] / sums[0] - 1) < 0.005 && most <= 4, "the indirect light with the time is %.2f%% of that without, a pixel %d apart", sums[1] / sums[0] * 100, most)
+}
+
 // When the volume moves with the camera, the new probes a pixel reads are
 // gathered in the frame they come, and those none reads wait behind them,
-// taking at most an eighth of the budget a frame, until all are gathered.
+// taking at most an eighth of the budget a frame while it moves and all that
+// is left once it stops.
 @(test)
 render_probes_new_unread_wait_behind_those_read :: proc(t: ^testing.T) {
 	f: Cube_Fixture
@@ -2318,11 +2368,12 @@ render_probes_new_unread_wait_behind_those_read :: proc(t: ^testing.T) {
 	}
 	testing.expectf(t, read_new > 0 && read_waiting == 0, "the new probes a pixel reads are gathered in the frame they come: %d of %d wait", read_waiting, read_new)
 	testing.expectf(t, unread > share && unread_taken <= share, "the new probes none reads take at most %d of the budget: %d of %d", share, unread_taken, unread)
-	// And they all come once the urgent ones leave room for their share.
-	for _ in 0 ..< 64 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	// Once the volume stops they take all the urgent ones leave of the budget.
+	frames := (unread + int(g.budget) - 1) / int(g.budget) + 4
+	for _ in 0 ..< frames {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	stale := 0
 	for p, i in probes_read(t, r) {if p.cell.xyz != probe_slot_cell_of(g, u32(i)) {stale += 1}}
-	testing.expectf(t, stale == 0, "every new probe is gathered in the frames after: %d are not", stale)
+	testing.expectf(t, stale == 0, "every new probe is gathered within %d frames of the volume stopping: %d are not", frames, stale)
 	expect_clean(t, f.device)
 }
 

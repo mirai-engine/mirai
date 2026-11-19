@@ -190,7 +190,9 @@ other and do not see the corner of a table or the floor under a wardrobe.
     are not kept: its probes trace their rays when it returns.
 - A change of its light is followed in full. Between traces it measures how much its light moves
   while the bounces it reads settle (`Probe.frames.w`): a movement within that approaches it
-  little by little; only a larger one traces it again.
+  little by little, and reaches it: a step the half floats of the atlas cannot hold takes the
+  light whole, and every light is stored as its nearest half (`probe_light_encode`), since a
+  device may cut a float toward zero when it stores it and a probe would settle short.
 - **Filter between neighbors.** Each texel also takes what the neighboring probes store in that
   direction, where they see what this one would see: the point the neighbor sees lies in that
   direction and the distance of the probe itself ends there, unless one of the two is open (it
@@ -200,8 +202,9 @@ other and do not see the corner of a table or the floor under a wardrobe.
 - **Priority** (`ddgi_select.comp`, `probe_budget` per frame): first the probes that do not store
   the light of their cell and that a pixel reads this frame; then those that a change keeps
   awake, first those nearest to it relative to its reach (what a change changes most is near),
-  or their own light. What is left of the budget goes, a share at most to each, to the new
-  probes no pixel reads, with all their rays, and by turns to the one that has gone longest
+  or their own light. What is left of the budget goes to the new probes no pixel reads, with
+  all their rays, a share at most while the volume moves and all of it once it stops, and,
+  a share at most, by turns to the one that has gone longest
   without being traced relative to how much pixels use it (`ddgi_mark.comp`), fine cascades
   first: a volume that moves with the camera gathers first what the view shows. A probe whose
   light moves more than its noise (`ddgi_irradiance.comp`) wakes its six neighbors for the next
