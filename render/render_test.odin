@@ -902,7 +902,7 @@ shadow_pages_against :: proc(r: ^Renderer, casters: []Page_Casters, smallest: f3
 	b := &r.main.targets.shadow_raster
 	rhi.device_wait_idle(r.device)
 	table := make([]u32, abi.SHADOW_SLOT_ENTRIES * SHADOW_SLOTS)
-	atlas := make([]f32, SHADOW_POOL * SHADOW_POOL)
+	atlas := make([]f32, int(SHADOW_POOL * b.rows * SHADOW_PAGE))
 	// Of each texel of the atlas, the nearest along the light a triangle that
 	// covers its center lies, and a triangle that may cover it.
 	sure := make([]f32, len(atlas))
@@ -1700,8 +1700,8 @@ sway_atlas_against_cache :: proc(t: ^testing.T, r: ^Renderer, boxes: [][2]Vec3) 
 	b := &r.main.targets.shadow_raster
 	rhi.device_wait_idle(r.device)
 	table := make([]u32, abi.SHADOW_SLOT_ENTRIES * SHADOW_SLOTS)
-	atlas := make([]f32, SHADOW_POOL * SHADOW_POOL)
-	cache := make([]f32, SHADOW_POOL * SHADOW_POOL)
+	atlas := make([]f32, int(SHADOW_POOL * b.rows * SHADOW_PAGE))
+	cache := make([]f32, int(SHADOW_POOL * b.rows * SHADOW_PAGE))
 	defer {delete(table);delete(atlas);delete(cache)}
 	if !testing.expect(t, rhi.texture_read(r.device, b.table, mem.slice_to_bytes(table)) && rhi.texture_read(r.device, b.atlas, mem.slice_to_bytes(atlas)) && rhi.texture_read(r.device, b.cache, mem.slice_to_bytes(cache))) {return -1, -1, -1}
 	grow := f32(u32(1) << shadow_coarser(b)) + 1
@@ -1979,8 +1979,7 @@ render_a_swaying_forest_composes_again_only_what_is_near :: proc(t: ^testing.T) 
 		}
 		// The texels of the layer what sways covers in the last frame.
 		rhi.device_wait_idle(f.device)
-		side := SHADOW_POOL >> coarser
-		layer := make([]f32, side * side)
+		layer := make([]f32, int((SHADOW_POOL >> coarser) * ((b.rows * SHADOW_PAGE) >> coarser)))
 		testing.expect(t, rhi.texture_read(f.device, b.layer, mem.slice_to_bytes(layer)))
 		covered := 0
 		for v in layer {if v > 0 {covered += 1}}
