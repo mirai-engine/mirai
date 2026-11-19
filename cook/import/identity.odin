@@ -47,6 +47,7 @@ Part :: struct {
 writer_source :: proc(w:^Writer,path,folder:string) -> bool {
     w.path=path
     w.keep=context.temp_allocator
+    w.documents=strings.clone(folder,w.keep)
     w.origin=path_key(path)
     w.source=filepath.base(w.origin)
     w.inputs.allocator=context.temp_allocator
