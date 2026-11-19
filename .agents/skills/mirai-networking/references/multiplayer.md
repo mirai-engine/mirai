@@ -322,8 +322,9 @@ reason, and with `--until-empty` a server that emptied ends normally.
   `--connect <address>`. By invitation: `--server --invite` serves only who brings its code, which
   it prints and `invite_code(session)` gives once the router answered; it carries the host's
   address on its network and on its router, so the same `--connect <code>` joins from both. The
-  key of the invitation lasts while the server serves; `Open_Request.invite_key` gives one made by
-  whoever shows the code, and then the session maps nothing.
+  key of the invitation lasts while the server serves; `invite_give` hands the session one made by
+  whoever shows the code, never through a storage of the World, and then the session maps nothing.
+  The session zeroes it when it ends.
 - A server saves and loads its world with `save`; a client does not (`Unavailable`). Loading with
   clients is a [scene change](#scene-change).
 

@@ -258,8 +258,9 @@ a_server_with_an_invitation_answers_only_who_brings_it :: proc(t:^testing.T) {
 }
 
 // A replayed Initiate opens nothing: not while its connection lives, from its
-// address or another, nor after it ended. The game hears of the connection and
-// of what its first datagram carried once.
+// address or another, nor after it ended; it costs no key exchange and hears at
+// most a Retry, smaller than it. The game hears of the connection and of what
+// its first datagram carried once.
 @(test)
 a_replayed_initiate_makes_no_second_connection_and_delivers_nothing_again :: proc(t:^testing.T) {
     w:Test_World;test_world_init(&w,3);defer test_world_destroy(&w)
@@ -295,11 +296,11 @@ a_replayed_initiate_makes_no_second_connection_and_delivers_nothing_again :: pro
         packet_receive(server,buffer[:kept.initiate_size],address_memory(1))
         test_step(w,2)
     }
-    dropped:=host_stats(server).handshakes_dropped
+    exchanges:=server.back.secure.exchanges
     replay(&w,server,forger,&kept)
     watch(server,&connected,&early,&ended)
     testing.expect(t,connected==1 && early==1 && ended==0 && host_stats(server).connections==1)
-    testing.expect_value(t,host_stats(server).handshakes_dropped,dropped+2)
+    testing.expect_value(t,server.back.secure.exchanges,exchanges)
     host_disconnect(client)
     test_step(&w,4)
     watch(server,&connected,&early,&ended)
@@ -310,9 +311,12 @@ a_replayed_initiate_makes_no_second_connection_and_delivers_nothing_again :: pro
     testing.expectf(t,connected==1 && early==1 && ended==1,"%d connections, %d early messages, %d ends",connected,early,ended)
     for peer in server.back.peers {testing.expect_value(t,peer.state,Peer_State.Free)}
     answer:[PACKET_BYTES]u8
-    _,_,answered:=test_receive_one(forger,answer[:])
-    testing.expect(t,!answered)
-    testing.expect_value(t,host_stats(server).handshakes_dropped,dropped+4)
+    for {
+        size,_,answered:=test_receive_one(forger,answer[:])
+        if !answered {break}
+        testing.expect(t,Packet_Type(answer[0])==.Retry && size<kept.initiate_size)
+    }
+    testing.expect_value(t,server.back.secure.exchanges,exchanges)
 }
 
 // Until a datagram under the keys of the connection comes from an address, the
@@ -348,7 +352,7 @@ an_unconfirmed_address_never_hears_more_than_it_sent :: proc(t:^testing.T) {
         if on_server!=0 {message_send(server,on_server,0,make([]u8,600,context.temp_allocator))}
         testing.expectf(t,answers.sent[2][.Response]==copy+1 && answers.bytes[2]<=received,"copy %d: %v, %d bytes for %d",copy,answers.sent[2],answers.bytes[2],received)
     }
-    // From another address the same Initiate gets nothing.
+    // From another address the same Initiate gets a Retry at most.
     test_send_one(sim_endpoint_transport(&w.sim,3),address_memory(0),kept.initiate[:kept.initiate_size])
     gone:=false
     for _ in 0..<90 {
@@ -356,7 +360,7 @@ an_unconfirmed_address_never_hears_more_than_it_sent :: proc(t:^testing.T) {
         for command in host_poll(server) {gone||=command.kind==.Disconnected && command.connection==on_server && command.reason==.Connect_Timeout}
     }
     testing.expect(t,on_server!=0 && gone && host_stats(server).connections==0)
-    testing.expectf(t,answers_total(&answers,2)==3 && answers.bytes[2]<=received && answers_total(&answers,3)==0,"sent %v and %v",answers.sent[2],answers.sent[3])
+    testing.expectf(t,answers_total(&answers,2)==3 && answers.bytes[2]<=received && answers_total(&answers,3)==answers.sent[3][.Retry] && answers.bytes[3]<kept.initiate_size,"sent %v and %v",answers.sent[2],answers.sent[3])
 
     // Without an invitation.
     answer:[PACKET_BYTES]u8
@@ -392,7 +396,7 @@ an_unconfirmed_address_never_hears_more_than_it_sent :: proc(t:^testing.T) {
 
 // An Initiate of a sender that holds the key: header, a key e and a payload, sealed with what it makes up.
 @(private="file")
-forged_initiate :: proc(h:^Host,buffer:[]u8,salt:u64,state:^u64,e:^Key=nil) -> []u8 {
+forged_initiate :: proc(h:^Host,buffer:[]u8,salt:u64,state:^u64,e:^Key=nil,mac:=true) -> []u8 {
     buffer[0]=u8(Packet_Type.Initiate)
     for &b in buffer[1:INITIATE_HEADER] {b=0}
     for k in 0..<8 {buffer[1+k]=u8(salt>>(8*uint(k)))}
@@ -401,16 +405,22 @@ forged_initiate :: proc(h:^Host,buffer:[]u8,salt:u64,state:^u64,e:^Key=nil) -> [
     for k in 0..<8 {buffer[13+k]=u8(hash>>(8*uint(k)))}
     for &b in buffer[INITIATE_HEADER:HANDSHAKE_BYTES] {b=u8(base.splitmix_next(state))}
     if e!=nil {copy(buffer[INITIATE_HEADER:],e[:])}
+    if mac {
+        at:=HANDSHAKE_BYTES-CHECKSUM_BYTES-MAC_BYTES
+        sum:=mac_of(&h.back.secure.mac,buffer[:at])
+        copy(buffer[at:],sum[:])
+    }
     checksum_write(buffer[:HANDSHAKE_BYTES],h.back.key)
     return buffer[:HANDSHAKE_BYTES]
 }
 
-// A wrong Initiate costs its address. 100,000 of them from 1,000 addresses get
-// no answer and at most the burst and one per interval of key exchanges each,
-// and nothing is kept per guess; who brings the invitation joins meanwhile as
-// fast as with nobody guessing. Keys of small order, damaged Initiates and
-// random bytes are refused the same, never more than the budget of an update
-// at a time.
+// An Initiate without the MAC of the invitation costs no key exchange and gets
+// no answer. One with it that does not open costs its address: 100,000 of them
+// from 1,000 addresses get no answer and at most the burst and one per interval
+// of key exchanges each, and nothing is kept per guess; who brings the
+// invitation joins meanwhile as fast as with nobody guessing. Keys of small
+// order, damaged Initiates and random bytes are refused the same, never more
+// than the budget of an update at a time, and hear at most a Retry.
 @(test)
 wrong_initiates_cost_their_address_and_the_invited_join_meanwhile :: proc(t:^testing.T) {
     ADDRESSES :: 1000
@@ -434,17 +444,26 @@ wrong_initiates_cost_their_address_and_the_invited_join_meanwhile :: proc(t:^tes
         return
     }
     calm_steps:=join_steps(&w,server,calm)
-    Attack :: struct {server:^Host,state:u64}
-    attack:=Attack{server,7}
+    Attack :: struct {server:^Host,state:u64,mac:bool}
+    attack:=Attack{server,7,false}
     context.user_ptr=&attack
     forge :: proc(w:^Test_World,round:int) {
         a:=(^Attack)(context.user_ptr)
         buffer:[PACKET_BYTES]u8
         for i in 0..<ADDRESSES {
-            test_send_one(sim_endpoint_transport(&w.sim,4+i),address_memory(0),forged_initiate(a.server,buffer[:],u64(0x10000+i),&a.state))
+            test_send_one(sim_endpoint_transport(&w.sim,4+i),address_memory(0),forged_initiate(a.server,buffer[:],u64(0x10000+i),&a.state,mac=a.mac))
         }
     }
+    strangers:=server.back.secure.exchanges
+    for round in 0..<5 {
+        forge(&w,round)
+        test_step(&w)
+        host_poll(server)
+    }
+    testing.expect_value(t,server.back.secure.exchanges,strangers)
+    attack.mac=true
     before:=host_stats(server)
+    before_exchanges:=server.back.secure.exchanges
     for round in 0..<ROUNDS/2 {
         forge(&w,round)
         test_step(&w)
@@ -459,7 +478,8 @@ wrong_initiates_cost_their_address_and_the_invited_join_meanwhile :: proc(t:^tes
     test_step(&w)
     host_poll(server)
     after:=host_stats(server)
-    exchanged,put_off:=after.handshakes_dropped-before.handshakes_dropped,after.handshakes_deferred-before.handshakes_deferred
+    // The invited one's Initiate is the only one that opened.
+    exchanged,put_off:=server.back.secure.exchanges-before_exchanges-1,after.handshakes_deferred-before.handshakes_deferred
     elapsed:=f64(ROUNDS+1)*TEST_STEP
     budget:=u64(ADDRESSES*(FAILED_BURST+int(elapsed/FAILED_INTERVAL)+1))
     testing.expectf(t,exchanged+put_off==ADDRESSES*ROUNDS,"%d exchanged and %d put off of %d",exchanged,put_off,ADDRESSES*ROUNDS)
@@ -478,7 +498,7 @@ wrong_initiates_cost_their_address_and_the_invited_join_meanwhile :: proc(t:^tes
     state:=u64(23)
     buffer:[PACKET_BYTES]u8
     for round in 0..<40 {
-        start:=host_stats(hostile)
+        start:=hostile.back.secure.exchanges
         sent:=0
         smalls:=TEST_SMALL_ORDER
         for &small in smalls {
@@ -495,7 +515,7 @@ wrong_initiates_cost_their_address_and_the_invited_join_meanwhile :: proc(t:^tes
         test_send_one(forger,address_memory(3),buffer[:])
         test_step(&w)
         host_poll(hostile)
-        spent:=host_stats(hostile).handshakes_dropped-start.handshakes_dropped
+        spent:=hostile.back.secure.exchanges-start
         testing.expectf(t,spent<=2,"round %d: %d key exchanges in an update of 2",round,spent)
     }
     testing.expect_value(t,host_stats(hostile).connections,0)
@@ -504,7 +524,7 @@ wrong_initiates_cost_their_address_and_the_invited_join_meanwhile :: proc(t:^tes
     for {
         _,_,answered:=test_receive_one(forger,answer[:])
         if !answered {break}
-        testing.expect(t,false,"a hostile Initiate got an answer")
+        testing.expectf(t,Packet_Type(answer[0])==.Retry,"a hostile Initiate got %v",Packet_Type(answer[0]))
     }
 }
 
@@ -620,4 +640,127 @@ the_address_on_the_network_is_the_routed_one :: proc(t:^testing.T) {
     key:=test_key(7)
     invitation:=invite_make(key,27500)
     testing.expect(t,invitation.lan==lan && invitation.public.kind==.None && invitation.key==test_invited(key))
+}
+
+// An Initiate the server opened and then refused for want of room is never
+// taken later: replayed once a slot frees, it makes no connection.
+@(test)
+an_initiate_refused_for_room_is_never_taken_later :: proc(t:^testing.T) {
+    w:Test_World;test_world_init(&w,4);defer test_world_destroy(&w)
+    key:=test_key(41)
+    server:=test_host(&w,{mode=.Server,channels=INVITE_CHANNELS,invite=key,max_connections=1})
+    first:=test_host(&w,{mode=.Client,channels=INVITE_CHANNELS,invite=test_invited(key)})
+    second:=test_host(&w,{mode=.Client,channels=INVITE_CHANNELS,invite=test_invited(key)})
+    kept:=Answers{inner=second.desc.transport}
+    second.desc.transport=answers_transport(&kept)
+    on_server,_:=test_connect(&w,server,first)
+    testing.expect(t,on_server!=0)
+    host_connect(second,address_memory(0))
+    message_send(second,0,0,{7})
+    refused:Disconnect_Reason
+    for _ in 0..<60 {
+        test_step(&w)
+        host_poll(server)
+        for command in host_poll(second) {if command.kind==.Disconnected {refused=command.reason}}
+        if refused!=.None {break}
+    }
+    testing.expect_value(t,refused,Disconnect_Reason.Denied_Full)
+    host_disconnect(first)
+    test_step(&w,4)
+    host_poll(server)
+    testing.expect_value(t,host_stats(server).connections,0)
+    test_send_one(sim_endpoint_transport(&w.sim,3),address_memory(0),kept.initiate[:kept.initiate_size])
+    for _ in 0..<10 {
+        test_step(&w)
+        for command in host_poll(server) {testing.expect(t,command.kind!=.Connected && command.kind!=.Message)}
+    }
+    testing.expect_value(t,host_stats(server).connections,0)
+}
+
+// The header of an Initiate with its MAC and checksum made again, as its sender would.
+@(private="file")
+initiate_reseal :: proc(h:^Host,datagram:[]u8,mac:bool) {
+    at:=len(datagram)-CHECKSUM_BYTES-MAC_BYTES
+    if mac {
+        sum:=mac_of(&h.back.secure.mac,datagram[:at])
+        copy(datagram[at:],sum[:])
+    }
+    checksum_write(datagram,h.back.key)
+}
+
+// A host with an invitation says nothing to whoever cannot prove it holds the
+// invitation, not even that it is of another version: only an Initiate with the
+// MAC of its key and secret hears Denied_Version.
+@(test)
+a_server_with_an_invitation_denies_only_who_proves_it_holds_it :: proc(t:^testing.T) {
+    w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
+    server:=test_host(&w,{mode=.Server,invite=test_key(43),version=3})
+    forger:=sim_endpoint_transport(&w.sim,1)
+    state:=u64(9)
+    buffer,answer:[PACKET_BYTES]u8
+    for mac in ([2]bool{false,true}) {
+        datagram:=forged_initiate(server,buffer[:],1,&state,mac=false)
+        datagram[9]=2
+        initiate_reseal(server,datagram,mac)
+        test_send_one(forger,address_memory(0),datagram)
+        test_step(&w,2)
+        host_poll(server)
+        size,_,answered:=test_receive_one(forger,answer[:])
+        if mac {
+            testing.expect(t,answered && Packet_Type(answer[0])==.Denied && size<len(datagram))
+        } else {
+            testing.expect(t,!answered)
+        }
+    }
+    testing.expect_value(t,host_stats(server).handshakes_refused,u64(1))
+    testing.expect_value(t,server.back.secure.exchanges,u64(0))
+}
+
+// Initiates of a holder of the invitation from hundreds of spoofed addresses
+// take every key exchange of an update; the server then asks for a cookie,
+// which spoofed senders never return, and the real client, which does, joins
+// one round trip later instead of timing out.
+@(test)
+spoofed_initiates_leave_the_key_exchanges_to_a_client_that_returns_the_cookie :: proc(t:^testing.T) {
+    SPOOFED :: 300
+    w:Test_World;test_world_init(&w,SPOOFED+2);defer test_world_destroy(&w)
+    key:=test_key(47)
+    server:=test_host(&w,{mode=.Server,invite=key,handshakes_per_update=2})
+    client:=test_host(&w,{mode=.Client,invite=test_invited(key),connect_timeout=3})
+    answers:=Answers{inner=server.desc.transport}
+    server.desc.transport=answers_transport(&answers)
+    state:=u64(13)
+    buffer:[PACKET_BYTES]u8
+    host_connect(client,address_memory(0))
+    joined,ended:=-1,false
+    for step in 0..<120 {
+        for i in 0..<SPOOFED {test_send_one(sim_endpoint_transport(&w.sim,2+i),address_memory(0),forged_initiate(server,buffer[:],u64(i),&state))}
+        test_step(&w)
+        host_poll(server)
+        for command in host_poll(client) {
+            if command.kind==.Connected {joined=step}
+            if command.kind==.Disconnected {ended=true}
+        }
+        if joined>=0 || ended {break}
+    }
+    testing.expectf(t,joined>=0 && joined<20,"the client joined at step %d (ended: %v)",joined,ended)
+    testing.expect(t,answers.sent[1][.Retry]>=1 && answers.bytes[1]<PACKET_BYTES)
+}
+
+// A full filter of Initiates, or one that holds a client's e by mistake, costs
+// that client one round trip: it gets a Retry and joins with another e.
+@(test)
+a_full_filter_of_initiates_costs_a_round_trip_and_drops_no_one :: proc(t:^testing.T) {
+    for full in ([2]bool{true,false}) {
+        w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
+        key:=test_key(53)
+        server:=test_host(&w,{mode=.Server,invite=key})
+        client:=test_host(&w,{mode=.Client,invite=test_invited(key)})
+        answers:=Answers{inner=server.desc.transport}
+        server.desc.transport=answers_transport(&answers)
+        lasting:=&server.back.secure
+        if full {lasting.seen_count[SEEN_LASTING]=SEEN_LIMIT} else {for &word in lasting.seen[SEEN_LASTING] {word=max(u64)}}
+        on_server,on_client:=test_connect(&w,server,client,60)
+        testing.expectf(t,on_server!=0 && on_client!=0 && answers.sent[1][.Retry]>=1,"full %v: joined %v, %v",full,on_client!=0,answers.sent[1])
+    }
 }

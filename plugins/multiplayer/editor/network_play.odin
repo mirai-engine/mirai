@@ -1,5 +1,6 @@
 package multiplayer_editor
 
+import "core:crypto"
 import "core:encoding/endian"
 import "core:fmt"
 import "core:log"
@@ -56,7 +57,7 @@ Net_Play :: struct {
     role:Net_Play_Role,
     serial:u32,     // of the game: the offer of the host says which one it serves
     port:int,       // of the server
-    invite:wire.Invite_Key, // of the invitation of the server: of this game, with its private key
+    invite:wire.Invite_Key, // what the code of the invitation of the server carries: its private key is only in the session of the server
     scene_ready:bool,
     mapping:wire.Port_Mapping, // of the port of the server on the router, while the session is shared
     mapping_on:bool,
@@ -142,13 +143,12 @@ serve :: proc(s:^editor.Session,n:^Net_Play) -> string {
     }
     port,refused:=net_play_port(s)
     if port==0 {return refused}
-    invite,made:=wire.invite_key()
-    if !made {return "The game could not start: this system gives no secure random bytes to seal the network with"}
+    when !crypto.HAS_RAND_BYTES {return "The game could not start: this system gives no secure random bytes to seal the network with"}
     players:=clamp(local_players(s),1,editor.PLAYER_PROCESSES)
     if s.play_players!=nil {s.play_players.players=players}
     n.party.online=clamp(n.party.online,0,editor.PLAYER_PROCESSES-players)
     n.party.ping=clamp(n.party.ping,0,1000)
-    n.role,n.port,n.serial,n.invite=.Server,port,u32(platform.clock_ns()>>10)|1,invite
+    n.role,n.port,n.serial=.Server,port,u32(platform.clock_ns()>>10)|1
     n.scene_ready=true
     n.reason={}
     n.phase=n.party.online>0?.Waiting:.Running
@@ -269,7 +269,8 @@ net_play_served_end :: proc(s:^editor.Session) {
 net_play_begin :: proc(s:^editor.Session,r:^editor.Run) {
     n:=net_play_of(s)
     if !net_play_serving(n) {return}
-    session_open(editor.run_ref(s,r),{server=true,port=n.port,invite=true,invite_key=n.invite})
+    session_open(editor.run_ref(s,r),{server=true,port=n.port,invite=true})
+    n.invite=serve_invited(s,r)
 }
 
 // Between frames: what the players wait for, then the processes and what they print.
@@ -449,10 +450,9 @@ net_play_turn :: proc(s:^editor.Session,owner,players,online,ping:int) -> string
     if r==nil {return "The game could not start"}
     port,refused:=net_play_port(s)
     if port==0 {return refused}
-    key,made:=wire.invite_key()
-    if !made {return "The game could not start: this system gives no secure random bytes to seal the network with"}
-    session_open(editor.run_ref(s,r),{server=true,port=port,invite=true,invite_key=key,timeout=NET_PLAY_STEPPED_TIMEOUT})
-    code:=wire.invite_encode({lan=wire.address_loopback(port),key={public=key.public,secret=key.secret}},context.temp_allocator)
+    when !crypto.HAS_RAND_BYTES {return "The game could not start: this system gives no secure random bytes to seal the network with"}
+    session_open(editor.run_ref(s,r),{server=true,port=port,invite=true,timeout=NET_PLAY_STEPPED_TIMEOUT})
+    code:=wire.invite_encode({lan=wire.address_loopback(port),key=serve_invited(s,r)},context.temp_allocator)
     for player in 1..=online {
         client:=editor.run_create(s,owner,player)
         if client==nil {return "There is no room for another run"}
@@ -463,6 +463,18 @@ net_play_turn :: proc(s:^editor.Session,owner,players,online,ping:int) -> string
     }
     log.infof("network game of an agent: a run serves on port %d with %d online",port,online)
     return ""
+}
+
+// The server of run r serves with the key of an invitation made here, which goes
+// straight to its session, never to a storage of a World; what its code carries.
+@(private)
+serve_invited :: proc(s:^editor.Session,r:^editor.Run) -> (carried:wire.Invite_Key) {
+    key,made:=wire.invite_key()
+    defer crypto.zero_explicit(&key,size_of(key))
+    session:=host.app_world_storage(s.app,r.world,multiplayer.Net_Session)
+    if !made || session==nil {return}
+    multiplayer.invite_give(session,key)
+    return {public=key.public,secret=key.secret}
 }
 
 // What a run opens on the network before its first frame.

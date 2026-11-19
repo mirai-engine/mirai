@@ -95,26 +95,38 @@ like `replication.hysteresis`) and the values it admits.
     address, the salt and the time, keeping nothing) gets the Initiate, which returns the cookie
     and mixes a zero secret. That is one round trip before data, and the same handshake: the client
     takes `s` from the Key, so only an active attacker on the path could pose as the server.
-- **Replays and early data.** The server keeps the key `e` of every Initiate it accepted in a Bloom
-  filter of two generations: with an invitation it lasts as long as `s`, without one a generation
-  turns every `COOKIE_SECONDS`, as long as a cookie is good. A copy that comes later, from any
-  address, while its connection lives or after it ended, opens nothing: no second connection, no
-  early data delivered again, nothing kept. A copy from the address of a connection still waiting
-  for its client gets the stored Response again. So the early data is applied once and may carry
-  anything the client queues; what needs the server's answer is sent after `Connected`. The
-  server's own traffic waits for the client: until a datagram under the keys comes from its
-  address, that address hears only the Response, one for each copy of the Initiate, and the
-  Disconnect of a game that closes the connection. The game of the
-  server hears `Connected` and the early data at once; a connection whose client never answers
-  ends with `Connect_Timeout` after `connect_timeout`, without a word to its address.
+- **The MAC of the invitation.** An Initiate ends in an HMAC-SHA256 under a key derived from `s`
+  and the secret: a host with an invitation answers nothing, not even a denial, to one without it,
+  and it costs no key exchange. Without an invitation `s` comes in the Key and the MAC filters only
+  strays.
+- **Replays and early data.** The server keeps the key `e` of every Initiate it opened in Bloom
+  filters, whether it then accepts or refuses it: those without a cookie in one that lasts as long
+  as `s`, those with one in two generations that turn every `COOKIE_SECONDS`, as long as a cookie
+  is good. A copy that comes later, from any address, while its connection lives or after it ended,
+  opens nothing: no second connection, no early data delivered again, no key exchange. A copy from
+  the address of a connection still waiting for its client gets the stored Response again. So the
+  early data is applied once and may carry anything the client queues; what needs the server's
+  answer is sent after `Connected`. The server's own traffic waits for the client: until a datagram
+  under the keys comes from its address, that address hears only the Response, one for each copy
+  of the Initiate, and the Disconnect of a game that closes the connection. The game of the server
+  hears `Connected` and the early data at once; a connection whose client never answers ends with
+  `Connect_Timeout` after `connect_timeout`, without a word to its address.
+- **Retry.** Each filter takes at most `SEEN_LIMIT`, which keeps a false positive under one in
+  10^4. An Initiate the filter holds, one without a cookie when that filter is full, and, for
+  `BUSY_SECONDS` after an update ran out of key exchanges, any without a cookie, gets a Retry: a
+  cookie of its address, smaller than the Initiate. The client seals the same datagram 0 again with
+  the cookie and a new `e`. Spoofed senders never return the cookie, so the exchanges go to those
+  who do; a filled filter or a flood costs a client one round trip, never its connection, and an
+  unloaded server keeps none. A generation that is full puts off what comes until it turns.
 - **Amplification and work.** The Hello and the Initiate are padded to `HANDSHAKE_BYTES`, more than
   any answer to them: an unconfirmed address never hears more than it sent. A server answers no
   Hello when it has an invitation. An Initiate costs at most one X25519 exchange before it opens,
-  and two more when it does, `handshakes_per_update` at a time per update. Denials go after the
-  Initiate opened (`Denied_Protocol`, `Denied_Full`), except `Denied_Version`, read from the header;
-  they count in `handshakes_refused`, and what gets no answer in `handshakes_dropped`.
-  - A wrong Initiate costs its address (the IP without the port, an IPv6 /64): a few back to back,
-    then one per interval; what comes sooner is put off before the key exchange
+  and two more when it does, `handshakes_per_update` at a time per update. Denials go to an
+  Initiate with the MAC: `Denied_Version` read from the header, `Denied_Protocol` and `Denied_Full`
+  after it opened; they count in `handshakes_refused`, and what gets no answer in
+  `handshakes_dropped`.
+  - A wrong Initiate with the MAC costs its address (the IP without the port, an IPv6 /64): a few
+    back to back, then one per interval; what comes sooner is put off before the key exchange
     (`handshakes_deferred`). The allowance is a token bucket kept as one time per address in a
     fixed table of sets; a full set gives its slot that frees soonest to the newcomer, so a crowd
     of guessers never shuts out who brings the invitation.
