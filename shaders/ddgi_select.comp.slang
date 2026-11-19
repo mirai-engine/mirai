@@ -5,8 +5,8 @@
 // then one a change keeps awake (params.awake frames after it reached it, the
 // nearer to it the sooner, or the next frame while its light moves). Of what
 // is left of the budget, the new probes no pixel reads take PROBE_WAITING_SHARE
-// at most while the volume moves and all of it once it stops, and as much
-// as that share again keeps tracing by turns, the longest untraced against how much
+// at most while the volume moves (once it stops they come first, as those
+// read), and as much as that share again keeps tracing by turns, the longest untraced against how much
 // pixels use it, finer cascades first, while nothing changes, only the probes
 // that need it: one whose rays met what changes with nothing that says so
 // (PROBE_PASSING), once it has waited 1 << its PROBE_WAITS frames, and one
@@ -83,8 +83,10 @@ uint probe_bucket(uint index) {
     bool in_use = params.frame_number - probe.frames.y < PROBE_IN_USE;
     // What the slot was last read for is of the cell it held before.
     bool new_cell = !all(probe.cell.xyz == cell);
-    // The updates that gather a world shown anew take them all first.
-    bool read = params.whole != 0u || (new_cell ? probe.frames.y == params.frame_number : in_use);
+    // While the volume stands still, and in the updates that gather a world
+    // shown anew, the new ones all come first: those beside them that hold
+    // light, woken as each comes, are traced once after they all came.
+    bool read = params.whole != 0u || params.moving == 0u || (new_cell ? probe.frames.y == params.frame_number : in_use);
     if (new_cell || probe.frames.x == 0u) return read ? 0u : PROBE_NEW_UNREAD;
     if (probe.frames.z > probe.frames.x) {
         // Awake only because its own light moves: the last of the awake ones.
@@ -110,15 +112,14 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         if (bucket != NO_BUCKET) InterlockedAdd(histogram[bucket], 1u);
     } else if (params.mode == 1u) {
         if (index != 0u) return;
-        // The urgent ones take what they need; the new no pixel reads take a
-        // share while the volume moves and what is left once it stops, and the
-        // waiting a share, or all that is left in a whole update.
+        // The urgent ones take what they need; the new no pixel reads while
+        // the volume moves and the waiting take a share each, or all that is
+        // left in a whole update.
         uint share = params.whole != 0u ? params.budget : max(params.budget / PROBE_WAITING_SHARE, 1u);
         uint left = params.budget;
         uint waiting = share;
         for (uint b = 0u; b < PROBE_BUCKETS; b++) {
-            uint unread = params.moving != 0u ? share : left;
-            uint most = b < PROBE_NEW_UNREAD ? left : min(left, b == PROBE_NEW_UNREAD ? unread : waiting);
+            uint most = b < PROBE_NEW_UNREAD ? left : min(left, b == PROBE_NEW_UNREAD ? share : waiting);
             uint take = min(histogram[b], most);
             histogram[PROBE_BUCKETS + b] = take;
             left -= take;
