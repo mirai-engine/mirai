@@ -1,5 +1,6 @@
 package scene
 
+import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
@@ -291,7 +292,7 @@ a_scene_loads_in_phases_and_replaces_the_world_at_its_end :: proc(t:^testing.T) 
 }
 
 // The bytes of a scene with a lamp on each of count entities, whose lamps
-// do not decompress when broken: what a load reads after it made the
+// are a stream that does not decode when broken: what a load reads after it made the
 // entities. The content hash follows the bytes.
 @(private="file")
 scene_test_lamps :: proc(t:^testing.T,types:^asset.Types,id:base.Asset_Id,count:int,range:f32,broken:bool) -> []u8 {
@@ -306,13 +307,18 @@ scene_test_lamps :: proc(t:^testing.T,types:^asset.Types,id:base.Asset_Id,count:
     file:asset.Asset
     if !testing.expect(t,asset.asset_open(&file,data,context.temp_allocator)==.None) {return nil}
     view,_:=asset.scene_view(&file,types)
-    entry:asset.Chunk_Entry
+    chunk:=-1
     for &component in view.components {
-        if component.name=="Scene_Test_Lamp" {entry=asset.blob_chunk(&file.blob,component.table.columns[1].chunk)}
+        if component.name=="Scene_Test_Lamp" {chunk=component.table.columns[1].chunk}
     }
+    entry:asset.Chunk_Entry
+    if chunk>=0 {entry=asset.blob_chunk(&file.blob,chunk)}
     asset.asset_close(&file)
-    if !testing.expect_value(t,entry.compression,asset.Compression.Stream) {return nil}
+    // Stored as they are, the bytes are made a stream that does not decode: the directory says so.
+    if !testing.expect(t,chunk>=0 && entry.compression==.None && entry.size>=64) {return nil}
     mem.set(&data[entry.offset],0xff,int(entry.size))
+    entry.compression=.Stream
+    intrinsics.unaligned_store((^asset.Chunk_Entry)(&data[asset.HEADER_SIZE+chunk*asset.CHUNK_ENTRY_SIZE]),entry)
     (cast(^asset.Header)raw_data(data)).content_hash=asset.blob_hash(data)
     return data
 }

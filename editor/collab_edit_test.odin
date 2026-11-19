@@ -1,5 +1,6 @@
 package editor
 
+import "base:intrinsics"
 import "core:fmt"
 import "core:mem"
 import "core:strings"
@@ -88,19 +89,26 @@ a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^tes
     }
     good,error:=asset.scene_bytes(&host_scene,context.temp_allocator)
     if !testing.expect_value(t,error,asset.Error.None) {return}
-    // The transforms of the broken copy do not decompress.
+    // The transforms of the broken copy are a stream that does not decode: its directory says so
+    // of the bytes, stored as they are, of their chunk. The load meets it when it reads the
+    // components, as it met a stream a compressor wrote.
     broken:=make([]u8,len(good),context.temp_allocator)
     copy(broken,good)
     file:asset.Asset
     if !testing.expect_value(t,asset.asset_open(&file,broken),asset.Error.None) {return}
     view,_:=asset.scene_view(&file,&assets.types)
-    entry:asset.Chunk_Entry
+    chunk:=-1
     for &component in view.components {
-        if component.name=="Transform" {entry=asset.blob_chunk(&file.blob,component.table.columns[1].chunk)}
+        if component.name=="Transform" {chunk=component.table.columns[1].chunk}
     }
+    entry:asset.Chunk_Entry
+    if chunk>=0 {entry=asset.blob_chunk(&file.blob,chunk)}
     asset.asset_close(&file)
-    if !testing.expect_value(t,entry.compression,asset.Compression.Stream) {return}
+    if !testing.expect(t,chunk>=0) {return}
+    if !testing.expect(t,entry.compression==.None && entry.size>=64) {return}
     mem.set(&broken[entry.offset],0xff,int(entry.size))
+    entry.compression=.Stream
+    intrinsics.unaligned_store((^asset.Chunk_Entry)(&broken[asset.HEADER_SIZE+chunk*asset.CHUNK_ENTRY_SIZE]),entry)
 
     world:=cast(^Play_Test_World)f.data
     testing.expect(t,!collab_snapshot_load(&f.s,st,broken))
