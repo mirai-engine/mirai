@@ -523,6 +523,7 @@ Scene_State :: struct {
 	shadow_sway_tables:   u64, // the tables of the batches those were last found in (Batch_State.tables)
 	shadow_views:         [dynamic]Shadow_View_Reach, // what the culls of the slots of each view go over, kept (Shadow_Raster.reach)
 	shadow_stale:         Occluder_Changes,
+	shadow_stale_by:      [Shadow_Stale_Source]u32, // the boxes of what stays changed since the last frame began, by what raised them
 	// The rows of masked materials that changed what their casters cover since
 	// the maps last drew; past their room every caster is stale (shadow_stale.covers).
 	shadow_rows:          [OCCLUDER_CHANGES_MAX]u32,
