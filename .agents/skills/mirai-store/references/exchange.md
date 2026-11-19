@@ -69,7 +69,7 @@ headless peer and the editor link the same code. Its messages are in `exchange/w
   few waiting, so a peer cannot make another send without bound. A question its owner ended stays
   until every peer asked answered or left, so late answers return their credits.
 - Serving and receiving do not allocate after `init`, except listing a namespace, for which the
-  store reads a folder.
+  store reads its root.
 
 ## Verification
 
