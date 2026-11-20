@@ -70,7 +70,8 @@ host_open :: proc(h:^Udp_Host,mode:wire.Mode,port:int,key:wire.Invite_Key) -> bo
         wire.udp_close(&h.udp)
         return false
     }
-    h.open,h.key,h.port=true,key,int(h.udp.address.port)
+    h.key=key
+    h.open,h.port=true,int(h.udp.address.port)
     if mode==.Server {h.mapping_on=wire.mapping_start(&h.mapping,u16(h.port))}
     return true
 }

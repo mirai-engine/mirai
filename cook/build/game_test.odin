@@ -3,6 +3,7 @@ package build
 import "core:odin/ast"
 import "core:odin/parser"
 import "core:odin/tokenizer"
+import "core:mem/virtual"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -111,11 +112,18 @@ a_game_ships_the_settings_of_the_engine_and_of_its_project_merged :: proc(t:^tes
     if !testing.expect_value(t,open_error.code,project.Error_Code.None) {return}
 
     ship:=project.path(folder,"ship",allocator=context.temp_allocator)
-    job:=Job{published=project.path(ship,"game.exe",allocator=context.temp_allocator),copies=game_copies(&p,ship,"odin",context.temp_allocator)}
+    job:=Job{
+        root=p.root,engine_root=p.engine_root,
+        published=project.path(ship,"game.exe",allocator=context.temp_allocator),
+        copies=game_copies(&p,ship,"odin",context.temp_allocator),
+    }
+    if !testing.expect(t,virtual.arena_init_growing(&job.arena)==nil) {return}
+    defer virtual.arena_destroy(&job.arena)
     merge_error:project.Error
     job.settings,merge_error,_=project.settings_merge(p.root,p.engine_root,{"Graphics"},context.temp_allocator)
     testing.expect_value(t,merge_error.code,project.Error_Code.None)
-    testing.expect_value(t,job_ship(&job),Failure.None)
+    failure:=job_ship(&job)
+    if !testing.expectf(t,failure==.None,"%v: %s",failure,job.result.text) {return}
     data,read_error:=os.read_entire_file(project.path(ship,project.SETTINGS_FILE,allocator=context.temp_allocator),context.temp_allocator)
     shipped:=string(data)
     testing.expect(t,read_error==nil && strings.contains(shipped,`"vsync": false`) && strings.contains(shipped,`"scale": 2`),shipped)

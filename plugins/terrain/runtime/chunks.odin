@@ -230,7 +230,9 @@ chunk_build_terrain :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=t
         if surface {
             if geom.isosurface(grid,low,high,m)!=.None {return false}
             if !geom.mesh_weld(geom.mesh_buffer_view(m),0,&mesh.welded) {return false}
-            mesh.geometry,mesh.welded=mesh.welded,mesh.geometry
+            previous:=mesh.geometry
+            mesh.geometry=mesh.welded
+            mesh.welded=previous
             if collision && !chunk_volume_edges(s,grid,low,high,mesh,m) {return false}
         }
         return volume_palette(s,mesh)

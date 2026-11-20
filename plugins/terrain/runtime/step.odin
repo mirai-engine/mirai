@@ -655,7 +655,8 @@ resident_layers_override :: proc(resident:^Terrain_Resident,source:^Resident_Sou
     a:=resident.assets
     stamp:=[2]u64{a.revision,a.structure}
     if source.override_info.layer_count!=s.layer_count || source.override_info.layers!=s.layers || source.override_assets!=stamp {
-        source.override_info.layer_count,source.override_info.layers,source.override_assets=s.layer_count,s.layers,stamp
+        source.override_info.layers=s.layers
+        source.override_info.layer_count,source.override_assets=s.layer_count,stamp
         // The assets change as pieces come and go: a texture of the same table stays.
         pixels:[4*LAYERS_TEXELS*LAYERS_MAX]u8
         layers_table(a,s,pixels[:4*LAYERS_TEXELS*int(s.layer_count)])

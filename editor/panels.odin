@@ -290,7 +290,8 @@ panel_from_file :: proc(file:^Panel_File,p:^Project_Panel) -> string {
 panel_target_of :: proc(t:^Panel_Target,row:bool,heading,component,setting:string,field:[PANEL_FIELD_BYTES]u8,entity:base.Entity_Id,match:string) -> string {
     match:=strings.trim_space(match)
     if match=="null" {match=""}
-    t.field,t.entity=field,entity
+    t.field=field
+    t.entity=entity
     kinds:=int(heading!="")+int(component!="")+int(setting!="")
     if kinds!=1 {return row?"a row has one of heading, component or setting":"a set has one of component or setting"}
     if match!="" && !strings.has_prefix(match,"{") {return `where is an object of the fields an entity must have: {"<field>": <value>}`}
@@ -324,7 +325,8 @@ panel_file_of :: proc(p:^Project_Panel,allocator:=context.temp_allocator) -> (fi
         for &set,k in b.sets[:b.set_count] {
             shown:=&file.buttons[i].sets[k]
             target(&set.place,&shown.component,&shown.setting)
-            shown.field,shown.entity=set.field,set.entity
+            shown.field=set.field
+            shown.entity=set.entity
             shown.match=serial.Json(strings.clone(base.text_get(set.match[:]),allocator))
             shown.value=serial.Json(strings.clone(base.text_get(set.value[:]),allocator))
         }
@@ -337,7 +339,8 @@ panel_file_of :: proc(p:^Project_Panel,allocator:=context.temp_allocator) -> (fi
             continue
         }
         target(&row.place,&shown.component,&shown.setting)
-        shown.field,shown.entity,shown.label=row.field,row.entity,row.label
+        shown.field=row.field
+        shown.entity,shown.label=row.entity,row.label
         shown.match=serial.Json(strings.clone(base.text_get(row.match[:]),allocator))
     }
     return

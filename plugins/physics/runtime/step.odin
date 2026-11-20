@@ -125,7 +125,8 @@ physics_step :: proc(
     defer host.load_report(app,.Physics,s.waiting)
     s.collision=settings_or_default(collision.ptr)
     if state.collision!=s.collision^ {
-        state.collision,s.collision_changed=s.collision^,true
+        state.collision=s.collision^
+        s.collision_changed=true
         state.synced=0
     }
     if s.collision_changed || !state.pushes_set {

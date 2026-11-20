@@ -271,7 +271,9 @@ layout_begin :: proc(t:^Layout_Tree,size:[2]f32,ppu:f32) {
     // frame of new runs; what the second held and no frame since asked for is
     // forgotten.
     if g:=&t.measures[0];g.count>=len(g.entries)/2 || g.word_count>=len(g.words)/2 || g.char_count>=len(g.chars)/2 {
-        t.measures[0],t.measures[1]=t.measures[1],t.measures[0]
+        previous:=t.measures[0]
+        t.measures[0]=t.measures[1]
+        t.measures[1]=previous
         g.generation+=1
         if g.generation==0 {mem.zero_slice(g.generations);g.generation=1}
         g.count,g.word_count,g.char_count=0,0,0

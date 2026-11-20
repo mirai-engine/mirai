@@ -113,7 +113,7 @@ records_text_compact :: proc(r:^Records) {
 records_tidy :: proc(r:^Records) {
     records_keys_sort(r)
     records_collect(r)
-    slice.stable_sort_by(r.token_uses[:],proc(a,b:ui.Tree_Token_Use) -> bool {
+    base.stable_sort_by(r.token_uses[:],proc(a,b:ui.Tree_Token_Use) -> bool {
         if a.style!=b.style {return a.style<b.style}
         if a.states!=b.states {return transmute(u8)a.states<transmute(u8)b.states}
         if a.variant!=b.variant {
@@ -139,7 +139,10 @@ records_settle :: proc(r:^Records,imports:[]ui.Tree_Data) {
             if info.from==0 && info.extends[0]==0 {continue}
             if row>=len(linked.styles) {continue}
             r.styles[row]=linked.styles[row]
-            if row<len(linked.style_infos) {info.layout,info.layout_keys,info.blur=linked.style_infos[row].layout,linked.style_infos[row].layout_keys,linked.style_infos[row].blur}
+            if row<len(linked.style_infos) {
+                info.layout=linked.style_infos[row].layout
+                info.layout_keys,info.blur=linked.style_infos[row].layout_keys,linked.style_infos[row].blur
+            }
             for i:=len(r.variants)-1;i>=0;i-=1 {
                 v:=&r.variants[i]
                 if int(v.style)==row && (info.from!=0 || v.inherited) {ordered_remove(&r.variants,i)}

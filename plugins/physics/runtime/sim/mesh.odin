@@ -549,7 +549,7 @@ collector_finish :: proc(collector:^Triangle_Collector,speculative:f32,out:^[1+E
     }
     clusters:=collector.clusters[:collector.count]
     for i in 1..<len(clusters) {
-        for j:=i;j>0 && clusters[j].deepest<clusters[j-1].deepest;j-=1 {clusters[j],clusters[j-1]=clusters[j-1],clusters[j]}
+        for j:=i;j>0 && clusters[j].deepest<clusters[j-1].deepest;j-=1 {slice.swap(clusters,j,j-1)}
     }
     count:=0
     for &cluster in clusters {

@@ -190,7 +190,9 @@ providers :: proc(s:^Session) -> ^Providers {
     if p.library==s.library_generation+1 {return p}
     p^={library=s.library_generation+1}
     p.simulation,p.simulates=provided(s,Simulation_Provider)
-    p.play,p.plays=provided(s,Play_Provider)
+    play,plays:=provided(s,Play_Provider)
+    p.play=play
+    p.plays=plays
     p.route,p.routes=provided(s,Route_Provider)
     p.body_count=provided_all(s,p.bodies[:])
     p.inspector_count=provided_all(s,p.inspectors[:])

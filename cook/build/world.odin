@@ -920,7 +920,7 @@ names_settle :: proc(g:^Generator) {
         append(&kept,value)
     }
     // Together by type, in the order they are declared.
-    slice.stable_sort_by(kept[:],proc(a,b:Named_Value) -> bool {return a.type.key<b.type.key})
+    base.stable_sort_by(kept[:],proc(a,b:Named_Value) -> bool {return a.type.key<b.type.key})
     g.named_values=kept
 }
 

@@ -580,9 +580,15 @@ characters_move_task :: proc(data:rawptr,first,last,worker:int) {
         launched:=state.effect!=.None && lift>dot(body.linear_velocity,up) && lift>LAND_SPEED
         was_standing:=.Standing in state.ground
         if state.effect!=.None || w.grounds_stale || .Stale in state.ground {
-            cs.found,cs.ground=character_probe(w,ch,body,up,max(-lift*dt,0))
+            found,ground:=character_probe(w,ch,body,up,max(-lift*dt,0))
+            cs.found=found
+            cs.ground=ground
             character_ground_keep(&state,cs.found)
-        } else {cs.found,cs.ground=character_ground_now(w,&state)}
+        } else {
+            found,ground:=character_ground_now(w,&state)
+            cs.found=found
+            cs.ground=ground
+        }
         state.effect,state.effect_velocity=.None,{}
         ground:=cs.found
         cs.standing=false

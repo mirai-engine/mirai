@@ -134,7 +134,7 @@ shape_stroke_to :: proc(st:^Shape_Stroke,p:geom.Vec2) -> (changed:bool) {
     // The path left the sleeve: the last point kept becomes a corner.
     if !sweep_union(st,&st.closed,st.corner,st.end,&st.scratch) {return false}
     if !stroke_area(st,&st.scratch,st.end,p) {return false}
-    st.closed,st.scratch=st.scratch,st.closed
+    slice.ptr_swap_non_overlapping(&st.closed,&st.scratch,size_of(geom.Polygon_Set))
     corner:=st.end
     from=dvec(p)-dvec(corner)
     distance=math.sqrt(from.x*from.x+from.y*from.y)
@@ -173,7 +173,7 @@ angle_wrap :: proc "contextless" (a:f64) -> f64 {
 @(private)
 stroke_area :: proc(st:^Shape_Stroke,base:^geom.Polygon_Set,a,b:geom.Vec2) -> bool {
     if !sweep_union(st,base,a,b,&st.next) {return false}
-    st.area,st.next=st.next,st.area
+    slice.ptr_swap_non_overlapping(&st.area,&st.next,size_of(geom.Polygon_Set))
     return true
 }
 

@@ -42,7 +42,10 @@ tree_layout_patch :: proc "contextless" (node,v:^Tree_Node) {
 
 @(private)
 tree_node_patch :: proc "contextless" (node:^Tree_Node,fields:Node_Fields,v:^Tree_Node) {
-    if .Text in fields {node.text,node.fields=v.text,v.fields}
+    if .Text in fields {
+        node.text=v.text
+        node.fields=v.fields
+    }
     if .Style in fields {node.style=v.style}
     if .Layout in fields {tree_layout_patch(node,v)}
     if .Float in fields {node.float=v.float}

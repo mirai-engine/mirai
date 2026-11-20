@@ -116,8 +116,10 @@ collab_offer_run :: proc(o:^Collab_Offer) {
         threads=max(os.get_processor_core_count()-2,0),allocator=runtime.heap_allocator(),
     })
     if threaded {worker={system=&js,worker=jobs.OWNER}}
-    o.result,o.error=share.offer(o.node,o.store,o.root,o.secret,worker,allocator,
+    result,error:=share.offer(o.node,o.store,o.root,o.secret,worker,allocator,
         kind=.Live,cancel=&o.cancel)
+    o.result=result
+    o.error=error
     if threaded {jobs.system_destroy(&js)}
 }
 
@@ -264,7 +266,9 @@ collab_join_start :: proc(s:^Session,st:^Collab_State,folder:string,reopen:bool,
         // A core stays with the editor, which keeps drawing.
         threaded:=jobs.system_init(&js,{threads=max(os.get_processor_core_count()-2,0),allocator=runtime.heap_allocator()})
         if threaded {j.desc.worker={system=&js,worker=jobs.OWNER}}
-        j.report,j.error=share.join(j.desc,j.allocator)
+        report,error:=share.join(j.desc,j.allocator)
+        j.report=report
+        j.error=error
         j.desc.worker={}
         if threaded {jobs.system_destroy(&js)}
         sync.atomic_store(&j.done,true)

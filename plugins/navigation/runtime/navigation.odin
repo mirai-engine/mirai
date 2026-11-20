@@ -345,7 +345,9 @@ navigation_copy_kept :: proc(dst,src:^Navigation) -> bool {
     if dst==src {return true}
     of:=meshes_of(src)
     if of[0]==0 || meshes_of(dst)!=of || dst.count!=src.count {return navigation_copy(dst,src)}
-    dst.settings,dst.stats,dst.ready,dst.revision=src.settings,src.stats,src.ready,src.revision
+    dst.settings=src.settings
+    dst.stats=src.stats
+    dst.ready,dst.revision=src.ready,src.revision
     dst.kept[2]=src.revision
     for i in 0..<src.count {
         if !class_copy(&dst.classes[i],&src.classes[i]) {
@@ -360,7 +362,8 @@ navigation_copy_kept :: proc(dst,src:^Navigation) -> bool {
 // no build of the copy is on its way, so what was building waits to build.
 @(private)
 class_copy :: proc(to,from:^Class_Mesh) -> bool {
-    to.class,to.filter,to.config,to.volume_config=from.class,from.filter,from.config,from.volume_config
+    to.class=from.class
+    to.filter,to.config,to.volume_config=from.filter,from.config,from.volume_config
     to.pending,to.ready,to.loading,to.linking,to.instant_ready=0,0,0,0,0
     if len(to.marks.keys)!=len(from.marks.keys) {
         base.hash_map_destroy(&to.marks)

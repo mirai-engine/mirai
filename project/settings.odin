@@ -99,7 +99,7 @@ settings_under :: proc(layer:Settings_Layer) -> (under:Settings_Layers) {
 // Reads the sections of text into the settings they name. A file may hold
 // fields the settings no longer have, and they are left out; strict, for
 // what a person or an agent writes now, makes them an error.
-settings_parse :: proc(text:string,settings:[]Setting,strict:=false) -> Error {
+settings_parse :: proc(text:string,settings:[]Setting,strict:=false) -> (result:Error) {
     r:serial.Text_Reader
     serial.text_reader_init(&r,text,context.temp_allocator)
     defer serial.text_reader_destroy(&r)
@@ -107,7 +107,7 @@ settings_parse :: proc(text:string,settings:[]Setting,strict:=false) -> Error {
         line,column:=serial.text_position(text,r.error.offset)
         return {code=.Text,text=r.error.code,line=line,column=column,detail=serial.text_error_message(&r,allocator=context.temp_allocator)}
     }
-    return {}
+    return
 }
 
 // The version a file of the machine says it is; 0 when it says none.
@@ -126,10 +126,10 @@ settings_version_of :: proc(text:string) -> u64 {
 
 // A missing file leaves the settings as they are, and so does a file of the
 // machine of another version.
-settings_read :: proc(path:string,settings:[]Setting,versioned:=false) -> Error {
+settings_read :: proc(path:string,settings:[]Setting,versioned:=false) -> (result:Error) {
     data,file_error:=serial.file_read(path,context.temp_allocator)
-    if file_error!=.None {return {code=file_error==.Not_Found?.None:.Read_Failed}}
-    if versioned && settings_version_of(string(data))!=SETTINGS_VERSION {return {}}
+    if file_error!=.None {result.code=file_error==.Not_Found?.None:.Read_Failed;return}
+    if versioned && settings_version_of(string(data))!=SETTINGS_VERSION {return}
     return settings_parse(string(data),settings)
 }
 

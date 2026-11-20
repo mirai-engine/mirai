@@ -216,10 +216,10 @@ plugins_discover :: proc(folder:string,origin:Origin,out:^[dynamic]Plugin,alloca
 }
 
 @(private)
-plugins_discover_in :: proc(folder:string,origin:Origin,companions:bool,out:^[dynamic]Plugin,allocator:=context.allocator) -> Error {
-    if !os.is_dir(folder) {return {}}
+plugins_discover_in :: proc(folder:string,origin:Origin,companions:bool,out:^[dynamic]Plugin,allocator:=context.allocator) -> (result:Error) {
+    if !os.is_dir(folder) {return}
     entries,read_error:=os.read_all_directory_by_path(folder,context.temp_allocator)
-    if read_error!=nil {return {}}
+    if read_error!=nil {return}
     slice.sort_by(entries,proc(a,b:os.File_Info) -> bool {return a.name<b.name})
     part_names:=PART_NAMES
     for entry in entries {
@@ -245,7 +245,7 @@ plugins_discover_in :: proc(folder:string,origin:Origin,companions:bool,out:^[dy
             if error:=plugins_discover_in(path(folder,entry.name,PLUGIN_COMPANIONS,allocator=context.temp_allocator),origin,false,out,allocator);error.code!=.None {return error}
         }
     }
-    return {}
+    return
 }
 
 // The plugins to build and load for the names wanted: those and everything
@@ -254,8 +254,8 @@ plugins_discover_in :: proc(folder:string,origin:Origin,companions:bool,out:^[dy
 plugins_order :: proc(plugins:[]Plugin,wanted:[]string,allocator:=context.allocator) -> (order:[]int,error:Error) {
     Visit :: enum u8 {None,Open,Done}
     Walk :: struct {plugins:[]Plugin,state:[]Visit,order:[dynamic]int}
-    visit :: proc(walk:^Walk,index:int) -> Error {
-        if walk.state[index]==.Done {return {}}
+    visit :: proc(walk:^Walk,index:int) -> (result:Error) {
+        if walk.state[index]==.Done {return}
         walk.state[index]=.Open
         plugin:=&walk.plugins[index]
         for &entry in plugin.manifest.dependencies {
@@ -275,7 +275,7 @@ plugins_order :: proc(plugins:[]Plugin,wanted:[]string,allocator:=context.alloca
         }
         walk.state[index]=.Done
         append(&walk.order,index)
-        return {}
+        return
     }
     listed,allocation:=make([dynamic]int,0,len(plugins),allocator)
     if allocation!=nil {return nil,{code=.Out_Of_Memory}}
