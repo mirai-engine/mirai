@@ -53,16 +53,22 @@ sources_file :: proc(s:^Sources,path:string) -> Source_File {
     if file,known:=s.files[path];known {return file}
     file:Source_File
     file.data,file.found=source_bytes(path,s.allocator)
-    if file.found {
-        file.hash=sha_of(file.data,s.allocator)
-        file.compilation_hash=sha_of(compilation_source_bytes(path,file.data,context.temp_allocator),s.allocator)
-        file.macros=extension_macros(string(file.data))
-        if code:=compilation_source_bytes(path,file.data,context.temp_allocator);!strings.has_suffix(path,".slang-module") && utf8.valid_string(string(code)) {
-            file.declarations=declarations_of(string(code),s.allocator)
-        }
-    }
+    if file.found {file=source_record(path,file.data,s.allocator)}
     s.files[strings.clone(path,s.allocator)]=file
     return file
+}
+
+@(private)
+source_record :: proc(path:string,data:[]u8,allocator:runtime.Allocator) -> (file:Source_File) {
+    file.data,file.found=data,true
+    file.hash=sha_of(data,allocator)
+    code:=compilation_source_bytes(path,data,context.temp_allocator)
+    file.compilation_hash=sha_of(code,allocator)
+    file.macros=extension_macros(string(data))
+    if !strings.has_suffix(path,".slang-module") && utf8.valid_string(string(code)) {
+        file.declarations=declarations_of(string(code),allocator)
+    }
+    return
 }
 
 // Only complete parameter annotations in line comments are authoring data.
@@ -236,8 +242,18 @@ import_module :: proc(line:string) -> (name:string,ok:bool) {
 // sources: what the generation has read already; nil reads everything here.
 // literal: only what the literal includes and imports reach, without the
 // folders of a macro include.
-dependencies :: proc(source:string,include_dirs:[]string,allocator:=context.allocator,sources:^Sources=nil,literal:=false) -> []string {
-    Scan :: struct {found:[dynamic]string,seen:map[string]bool,roots:[]string,sources:^Sources,literal:bool}
+dependencies :: proc(
+    source:string,include_dirs:[]string,allocator:=context.allocator,sources:^Sources=nil,
+    literal:=false,inline_text:string="",
+) -> []string {
+    Scan :: struct {
+        found:[dynamic]string,
+        seen:map[string]bool,
+        roots:[]string,
+        sources:^Sources,
+        literal:bool,
+        root,text:string,
+    }
     // The folder of the including file comes before the search folders.
     resolve :: proc(scan:^Scan,folder,name:string) -> (path:string,ok:bool) {
         candidate:=path_clean(path_join(folder,name,allocator=context.temp_allocator),scan.found.allocator)
@@ -253,7 +269,12 @@ dependencies :: proc(source:string,include_dirs:[]string,allocator:=context.allo
         scan.seen[path]=true
         append(&scan.found,path)
         if strings.has_suffix(path,".slang-module") {return}
-        file:=sources_file(scan.sources,path)
+        file:Source_File
+        if path==scan.root && scan.text!="" {
+            file={found=true,data=transmute([]u8)scan.text}
+        } else {
+            file=sources_file(scan.sources,path)
+        }
         // The search folders of a macro include can hold binary assets too:
         // their bytes are hashed, and Slang rejects the invalid sources it uses.
         if !file.found || !utf8.valid_string(string(file.data)) {return}
@@ -289,7 +310,8 @@ dependencies :: proc(source:string,include_dirs:[]string,allocator:=context.allo
     roots:=make([]string,len(include_dirs),context.temp_allocator)
     for directory,i in include_dirs {roots[i]=path_clean(directory,context.temp_allocator)}
     scan.roots=roots
-    visit(&scan,path_clean(source,allocator))
+    scan.root,scan.text=path_clean(source,allocator),inline_text
+    visit(&scan,scan.root)
     return scan.found[:]
 }
 
@@ -298,7 +320,10 @@ dependencies :: proc(source:string,include_dirs:[]string,allocator:=context.allo
 // declarations the shader reaches (declarations.odin): its own source whole.
 // A dependency the scan cannot read in declarations (a binary module) is
 // taken whole.
-fingerprint :: proc(source:string,include_dirs:[]string,bases:[]Base,configuration:[]u8,allocator:=context.allocator,sources:^Sources=nil) -> string {
+fingerprint :: proc(
+    source:string,include_dirs:[]string,bases:[]Base,configuration:[]u8,
+    allocator:=context.allocator,sources:^Sources=nil,inline_text:string="",whole:=false,
+) -> string {
     Named :: struct {name,path:string,file:Source_File}
     local:Sources
     s:=sources
@@ -307,10 +332,32 @@ fingerprint :: proc(source:string,include_dirs:[]string,bases:[]Base,configurati
         s=&local
     }
     root:=path_clean(source,context.temp_allocator)
-    paths:=dependencies(source,include_dirs,context.temp_allocator,s)
+    paths:=dependencies(root,include_dirs,context.temp_allocator,s,inline_text=inline_text)
     named:=make([]Named,len(paths),context.temp_allocator)
-    for path,i in paths {named[i]={stable_name(path,bases,context.temp_allocator),path,sources_file(s,path)}}
+    for path,i in paths {
+        file:Source_File
+        if path==root && inline_text!="" {
+            file=source_record(root,transmute([]u8)inline_text,context.temp_allocator)
+        } else {
+            file=sources_file(s,path)
+        }
+        named[i]={stable_name(path,bases,context.temp_allocator),path,file}
+    }
     slice.sort_by(named,proc(a,b:Named) -> bool {return a.name<b.name if a.name!=b.name else a.path<b.path})
+    hash:Sha256
+    sha_begin(&hash)
+    sha_bytes(&hash,configuration)
+    zero:=[1]u8{0}
+    // Inline generated sources may declare fields or types inside includes.
+    if whole || inline_text!="" {
+        for entry in named {
+            sha_text(&hash,entry.name)
+            sha_bytes(&hash,zero[:])
+            sha_text(&hash,entry.file.compilation_hash)
+            sha_bytes(&hash,zero[:])
+        }
+        return sha_hex(&hash,allocator)
+    }
     // What the shader takes: the unnamed declarations and its own source, then
     // each named one a name it takes names, until no name is new.
     taken:=make([][]bool,len(named),context.temp_allocator)
@@ -344,10 +391,6 @@ fingerprint :: proc(source:string,include_dirs:[]string,bases:[]Base,configurati
         name:=pop(&pending)
         for at in by_name[name] {take(taken,named[at[0]].file.declarations[at[1]],at,&reached,&pending)}
     }
-    hash:Sha256
-    sha_begin(&hash)
-    sha_bytes(&hash,configuration)
-    zero:=[1]u8{0}
     for entry,f in named {
         sha_text(&hash,entry.name)
         sha_bytes(&hash,zero[:])
