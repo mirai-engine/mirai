@@ -34,15 +34,19 @@ entity relates to another through a slot (`core.Entity`): `Screen.camera`, `Port
 
 ## Decals
 
-`Decal` puts a color or an image on the surfaces inside the box of its entity (its sides are the
-scale), through its local Y axis.
+`Decal` projects color, emission and optional material properties onto the surfaces inside the
+box of its entity (its sides are the scale), along its local Y axis.
 
-- No geometry: `decals_render` gathers the visible decals sorted by `order` and requests a
-  `Surface` pass that draws the box of each one. The fragment finds the pixel's surface by its
-  depth and blends base color and emission into the G-buffer (`Alpha_Color`: the target's alpha,
-  which carries metallic or occlusion, does not change). Since it enters before lighting, the
-  decal receives light, shadows and reflections from the surface; normal, roughness and metallic
-  do not change.
+- The color's alpha, the color image's alpha and the angle fade control the opacity of every
+  channel. Enable each scalar override to blend roughness or metallic toward its value. A normal
+  map uses red along local X and green along local Z, projected onto the receiver's shading
+  normal. The lower orders are applied first and angle fade uses the original surface normal.
+- The `Surface` stage reconstructs the receiver from the view's resolved depth. Color and
+  emission alone blend directly from the boxes. With material properties, a dispatch gathers
+  the decals intersecting each tile and composes them in order, blending normals in world
+  space. A second write packs the result into the G-buffer before lighting, including the
+  roughness used to trace base reflections and the stored reflectance when present.
+  On a fully metallic receiver, reducing metallic uses the default dielectric reflectance.
 - The mip level comes from the pixel's footprint (`frame.footprint`) and the box's texels per
   meter: the derivatives of a reconstructed position break at every edge.
 - It is not drawn over pixels of nested views or over glass.

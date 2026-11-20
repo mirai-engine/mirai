@@ -194,6 +194,7 @@ stage_pass :: proc(p: ^Pass, stage: Frame_Stage) -> (s: Stage_Pass) {
 	if p.view != nil {
 		s.width, s.height, s.eye, s.view_projection, s.camera = p.t.width, p.t.height, p.frame.eye, p.unjittered, p.camera
 		s.output_width, s.output_height, s.delta_time = p.t.output_width, p.t.output_height, p.r.delta_time
+		s.jitter = p.jitter
 	}
 	return
 }
@@ -346,7 +347,10 @@ stage_pipeline :: proc(r: ^Renderer, desc: Stage_Pipeline_Desc) -> rhi.Pipeline 
 			made.color_formats, made.color_count, made.blend = {0 = .RGBA16_Float, 1 = .R8_Unorm}, 2, {0 = desc.blend, 1 = .Additive}
 			made.depth_format, made.depth_test, made.depth_compare = .D32_Float, true, .Greater
 		} else {
-			formats := [Surface_Target]rhi.Format{.Albedo = .RGBA8_Srgb, .Normal = .RGBA16_Float, .Emission = .RGBA16_Float}
+			formats := [Surface_Target]rhi.Format{
+				.Albedo = .RGBA8_Srgb, .Normal = .RGBA16_Float, .Emission = .RGBA16_Float,
+				.Motion = .RGBA16_Float, .Reflectance = .RGBA8_Srgb,
+			}
 			for format, target in formats {
 				if target not_in desc.targets {continue}
 				made.color_formats[made.color_count], made.blend[made.color_count] = format, desc.blend
@@ -433,8 +437,15 @@ pass_mask_begin :: proc(s: ^Stage_Pass, name := "nested view mask") {
 
 // The targets of the G-buffer that say what a surface is: base color with
 // metallic in alpha, normal with roughness, emission with occlusion.
-Surface_Target :: enum u8 {Albedo, Normal, Emission}
+Surface_Target :: enum u8 {Albedo, Normal, Emission, Motion, Reflectance}
 Surface_Targets :: bit_set[Surface_Target;u8]
+
+pass_surface_targets :: proc(s: ^Stage_Pass) -> Surface_Targets {
+	if s.stage != .Surface {return {}}
+	targets := Surface_Targets{.Albedo, .Normal, .Emission, .Motion}
+	if s.pass.frame.flags & FRAME_FLAG_REFLECTANCE != 0 {targets += {.Reflectance}}
+	return targets
+}
 
 // What a pass over the surfaces of a view, or one of its Simulate, Blend,
 // Post or Inspect stages, may read of it: its linear depth, its motion, the surfaces
@@ -589,7 +600,10 @@ pass_blend_begin :: proc(s: ^Stage_Pass, name := "blended") {
 pass_surface_begin :: proc(s: ^Stage_Pass, targets: Surface_Targets, name := "surfaces") {
 	p := s.pass
 	t := p.t
-	textures := [Surface_Target]rhi.Texture{.Albedo = t.albedo, .Normal = t.normal, .Emission = t.emission}
+	textures := [Surface_Target]rhi.Texture{
+		.Albedo = t.albedo, .Normal = t.normal, .Emission = t.emission,
+		.Motion = t.motion, .Reflectance = t.surface,
+	}
 	rhi.cmd_timestamp(p.cmd, name)
 	pass := rhi.Render_Pass_Desc{name = name}
 	for texture, target in textures {
@@ -713,6 +727,7 @@ Pass_Texture_Desc :: struct {
 	name:                 string,
 	format:               rhi.Format, // RGBA8_Unorm, or of 16 or 32 bit floats or uints
 	width, height, depth: u32,        // depth 0 or 1: a 2D texture
+	layers:               u32,       // more than one: a 2D array
 	history:              bool,       // two copies that take turns: the one of this frame and the one of the frame before
 	mips:                 u8,         // of a 2D texture; 0 or 1: one, RENDER_MIPS_ALL: down to one texel
 }
@@ -744,11 +759,16 @@ pass_texture :: proc(s: ^Stage_Pass, slot: u32, desc: Pass_Texture_Desc, previou
 	p := s.pass
 	view := p.view
 	if view == nil || slot > SLOT_PASS9 - SLOT_PASS0 || previous && !desc.history || !custom_format_valid(desc.format) {return}
-	if desc.width == 0 || desc.height == 0 || desc.width > 16384 || desc.height > 16384 || desc.depth > 2048 || desc.depth > 1 && desc.mips > 1 {return}
+	if desc.width == 0 || desc.height == 0 || desc.width > 16384 || desc.height > 16384 ||
+	   desc.depth > 2048 || desc.depth > 1 && (desc.mips > 1 || desc.layers > 1) {return}
 	mips := mip_count(desc.width, desc.height) if desc.mips == RENDER_MIPS_ALL else min(u32(max(desc.mips, 1)), mip_count(desc.width, desc.height))
 	if mip >= i32(mips) {return}
 	key := base.name_hash(desc.name) | 1
-	want := rhi.Texture_Desc{width = desc.width, height = desc.height, depth = desc.depth if desc.depth > 1 else 0, mip_levels = mips, format = desc.format, usage = {.Sampled, .Storage}, name = "extension texture"}
+	want := rhi.Texture_Desc{
+		width = desc.width, height = desc.height, depth = desc.depth if desc.depth > 1 else 0,
+		layers = desc.layers, mip_levels = mips, format = desc.format,
+		usage = {.Sampled, .Storage}, name = "extension texture",
+	}
 	entry, free: ^Extension_Texture
 	for &place in view.extension_textures {
 		if place.key == key {entry = &place; break}
@@ -756,7 +776,9 @@ pass_texture :: proc(s: ^Stage_Pass, slot: u32, desc: Pass_Texture_Desc, previou
 	}
 	if entry != nil {
 		made := entry.desc
-		if made.width != want.width || made.height != want.height || made.depth != want.depth || made.mip_levels != want.mip_levels || made.format != want.format || entry.history != desc.history {
+		if made.width != want.width || made.height != want.height || made.depth != want.depth ||
+		   made.layers != want.layers || made.mip_levels != want.mip_levels ||
+		   made.format != want.format || entry.history != desc.history {
 			extension_texture_free(p.r, entry)
 			free = entry
 			entry = nil

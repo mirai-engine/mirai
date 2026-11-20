@@ -1,12 +1,8 @@
 #include "native.slang"
-// A decal over the surfaces inside its box, before they are lit: it blends
-// its color into their base color and its emission into theirs, and leaves
-// what else they are (normal, roughness, metallic) as it is. The surface of a
-// pixel is found from its depth, so the box needs no geometry of what it
-// covers.
 #include "decal.slang"
 
-[[vk::binding(SLOT_PASS1, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
+[[vk::binding(SLOT_PASS1, 0)]]
+Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 #define GBUFFER_NORMAL SLOT_PASS2
 #include "gbuffer.slang"
 #include "pixel.slang"
@@ -34,19 +30,10 @@ Stage_Output main(Stage_Input input, float4 pixel : SV_Position) {
     Pixel surface = pixel_at(p, uv, depth);
     float3 local = transform_point(d.to_box, surface.position);
     if (any(abs(local) > float3(0.5))) discard;
-    float4 color = d.color;
-    if (material_has(d.texture)) {
-        // The level whose texels are as wide as the pixel is on the surface:
-        // derivatives of a position found from the depth break at every edge.
-        float level = log2(max((frame.footprint.x + frame.footprint.y * depth) * d.density, 1.0));
-        color *= material_textures[mirai_nonuniform(d.texture)].SampleLevel(material_sampler, local.xz + 0.5, level);
-    }
-    // The decal lies across the y axis of its box and fades where the surface turns away from it.
-    float3 axis = normalize(float3(d.to_world[0].y, d.to_world[1].y, d.to_world[2].y));
-    float facing = abs(dot(gbuffer_normal(p), axis));
-    float alpha = saturate(color.a) * (d.emission.a > 0.0 ? smoothstep(0.0, d.emission.a, facing) : 1.0);
+    float footprint = frame.footprint.x + frame.footprint.y * depth;
+    float4 color = decal_color(d, local.xz + 0.5, footprint, gbuffer_normal(p));
     Stage_Output output;
-    output.out_albedo = float4(saturate(color.rgb), alpha);
-    output.out_emission = float4(render_units(d.emission.rgb), alpha);
+    output.out_albedo = color;
+    output.out_emission = float4(render_units(d.emission.rgb), color.a);
     return output;
 }
