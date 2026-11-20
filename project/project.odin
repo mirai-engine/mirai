@@ -56,12 +56,14 @@ Project :: struct {
     engine_root:string, // same; empty when there is no engine checkout
     manifest:Manifest,
     plugins:[]Plugin,   // every plugin found: the ones of the project, then the ones of the engine, each sorted by name
-    active:[]int,       // into plugins: the ones the project names and their dependencies, dependencies first
+    active:[]int,       // into plugins: selected plugins and those they activate, dependencies first
 }
 
-// Reads project.mirai of the folder, finds the plugins under its plugins/
-// and under <engine_root>/plugins/, and orders the active ones.
-open :: proc(root:string,engine_root:="",allocator:=context.allocator) -> (p:Project,error:Error) {
+// Opens the project and orders its active plugins. An engine build may also select
+// every engine plugin with any of the requested parts.
+open :: proc(
+    root:string,engine_root:="",allocator:=context.allocator,engine_plugin_parts:Plugin_Parts={},
+) -> (p:Project,error:Error) {
     p.allocator=allocator
     p.root=path_absolute(root,allocator)
     if engine_root!="" {p.engine_root=path_absolute(engine_root,allocator)}
@@ -97,6 +99,13 @@ open :: proc(root:string,engine_root:="",allocator:=context.allocator) -> (p:Pro
             return
         }
         append(&wanted,text)
+    }
+    if engine_plugin_parts!={} {
+        for &plugin in found {
+            if plugin.origin!=.Engine || plugin.manifest.automatic ||
+                plugin.manifest.parts & engine_plugin_parts=={} {continue}
+            append(&wanted,base.text_get(plugin.manifest.name[:]))
+        }
     }
     if compression:=base.text_get(p.manifest.build.compression[:]);compression!="" && compression!=COMPRESSION_NONE && compression!=COMPRESSION_OPEN {
         error=error_about(.Compression_Invalid,compression)
