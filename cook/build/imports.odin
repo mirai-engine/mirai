@@ -68,13 +68,16 @@ imports_poll :: proc(refresh:^Import_Refresh,wait:bool) -> (done,ok:bool,message
     buffer:[4096]byte
     quiet:=true
     for stream in subprocess.Stream {
-        count,_:=subprocess.read(&refresh.process,stream,buffer[:])
-        if count==0 {continue}
-        quiet=false
-        if _,error:=append(&refresh.output[stream],..buffer[:count]);error!=nil {
-            return true,false,"there is not enough memory for the import program's output"
+        for _ in 0..<64 {
+            count,open:=subprocess.read(&refresh.process,stream,buffer[:])
+            if count==0 {break}
+            quiet=false
+            if _,error:=append(&refresh.output[stream],..buffer[:count]);error!=nil {
+                return true,false,"there is not enough memory for the import program's output"
+            }
+            if stream==.Stdout {_,_=os.write(os.stdout,buffer[:count])}
+            if !open {break}
         }
-        if stream==.Stdout {_,_=os.write(os.stdout,buffer[:count])}
     }
     state,error:=subprocess.wait(&refresh.process,0)
     if error!=nil && error!=os.General_Error.Timeout {
@@ -84,7 +87,7 @@ imports_poll :: proc(refresh:^Import_Refresh,wait:bool) -> (done,ok:bool,message
         if state.exit_code==0 && state.success {return true,true,""}
         return true,false,imports_failure(state,string(refresh.output[.Stdout][:]),string(refresh.output[.Stderr][:]))
     }
-    if wait && quiet {time.sleep(time.Millisecond)}
+    if wait && quiet && !state.exited {time.sleep(time.Millisecond)}
     return false,false,""
 }
 

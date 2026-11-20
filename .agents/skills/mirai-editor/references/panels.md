@@ -439,13 +439,13 @@ which does not change size so that few projects do not leave a large empty windo
   at the right of the search, Enter or a double click open it. A row without a folder is neither
   chosen nor opened. The choice is lost if the search hides it, on removing a row or on showing the
   screen again.
-- **Opening** builds the project's editor library and refreshes its packages, then starts the
-  editor on it with the same arguments. The beating dot and Cancel appear on the project's row
-  in the launcher, or in a dialog for a project opened with Open folder, a new project, or a switch
-  from another project. The build starts in the frame after this progress appears. The launcher
-  ends; the editor of a project ends as on exit, asking only if agents work, and cancelling
-  leaves the project unopened. Closed, the process waits for the editor it started, which writes in
-  its same terminal: `mirai edit` ends with the last editor.
+- **Opening** builds the project's editor library, refreshes its packages and generates its
+  shaders on a background thread, then starts the editor on it with the same arguments. The
+  beating dot and Cancel appear on the project's row in the launcher, or in a dialog for a project
+  opened with Open folder, a new project, or a switch from another project. Cancelling stops the
+  build without blocking a frame and leaves the project unopened. The launcher ends; the editor of
+  a project ends as on exit, asking only if agents work. Closed, the process waits for the editor
+  it started, which writes in its same terminal: `mirai edit` ends with the last editor.
 - **New project**, or a template of the list, shows the form with that template; Create copies it
   (`build.project_create`) and opens it; the new editor starts with `--git-init` and makes the
   repository, with the remote and Git LFS the form says.

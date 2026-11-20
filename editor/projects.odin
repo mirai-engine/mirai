@@ -107,21 +107,18 @@ Projects :: struct {
     link_count:int,
     plugins_scroll:[2]f32,
     add_scroll:f32,                     // of the catalog in the popup of Add plugin
-    // The project being opened: built here, then started.
+    // The project being opened: built on a background thread, then started.
     opening:[project.RECENT_PATH]u8,
     git_init:bool,  // the editor started on it makes its repository with git, lfs and remote
     install:^install.Job, // its plugins from git, before the build
     from_git:bool,        // this opening started with install: the dialog shows its step
-    job:^build.Job,
-    shaders:^build.Shaders_Job,
-    built:^project.Project,
+    run:^Build_Run,       // the editor build, package refresh and shaders running off the UI thread
+    cancelling:bool,      // user asked to cancel; projects_poll cleans up without blocking a frame
     error:[1024]u8,
     error_length:int,
     next:bool,      // built: this editor starts it when it ends
     started:subprocess.Process, // the editor started on it, which this process waits for once it closes
     starts:bool,
-    starting:bool,  // the build starts once the dialog of the opening was drawn
-    start_frame:u64,
     join:[wire.INVITE_TEXT_BYTES+1]u8, // the session the editor started on this project joins
     join_name:[COLLAB_NAME_BYTES]u8, // and the name it joins with
 }
@@ -320,6 +317,7 @@ projects_open :: proc(s:^Session,folder:string,git_init:=false,steps:[]install.S
     base.text_set(p.opening[:],absolute)
     p.git_init=git_init
     p.error_length=0
+    p.cancelling=false
     p.from_git=len(steps)>0 || install.sync_needed(absolute)
     if p.from_git {
         all:=make([dynamic]install.Step,context.temp_allocator)
@@ -328,32 +326,27 @@ projects_open :: proc(s:^Session,folder:string,git_init:=false,steps:[]install.S
         p.install=install.job_start(absolute,s.engine_root,all[:])
         return ""
     }
-    // The dialog of the opening is drawn first: generating the world of the project takes a while.
-    p.starting,p.start_frame=true,s.frame
-    return ""
+    return projects_build_start(s)
 }
 
-// A project is being opened: its plugins installing, about to be built or building.
-projects_opening :: proc(p:^Projects) -> bool {return p.starting || p.job!=nil || p.install!=nil}
+// A project is being opened: its plugins installing or its build thread running.
+projects_opening :: proc(p:^Projects) -> bool {return p.run!=nil || p.install!=nil}
 
-// Opens the project and starts its build, once the dialog of the opening is on the screen.
+// Starts the project's build, refresh and shaders on a background thread.
 @(private)
-projects_build_start :: proc(s:^Session) {
+projects_build_start :: proc(s:^Session) -> string {
     p:=s.projects
-    p.starting=false
     absolute:=base.text_get(p.opening[:])
-    built:=new(project.Project)
-    opened,error:=project.open(absolute,s.engine_root)
-    if error.code!=.None {
-        free(built)
-        p.error_length=copy(p.error[:],fmt.tprintf("%s is not a project: %s",absolute,project_open_error_text(error)))
-        notify(s,string(p.error[:p.error_length]))
-        return
+    r:=build_run_spawn(absolute,s.engine_root,engine_folder_here(s),s.store.root,"","",nil,.Build,.Editor,0)
+    if r==nil {
+        text:="No thread could be started for it"
+        p.error_length=copy(p.error[:],text)
+        notify(s,text)
+        return text
     }
-    built^=opened
-    p.built=built
-    p.job=build.job_start({project=built,target=.Editor,dev=build.ENGINE_MODE_HERE==.Dev,engine=build.ENGINE_MODE_HERE,runs=engine_folder_here(s),store_root=s.store.root})
+    p.run=r
     log.infof("building %s to open it",absolute)
+    return ""
 }
 
 @(private)
@@ -367,30 +360,42 @@ project_open_error_text :: proc(error:project.Error) -> string {
 // Follows the build of the project being opened; between frames.
 projects_poll :: proc(s:^Session) {
     p:=s.projects
+    if p==nil {return}
     // A plugin that could not be installed is said; the project opens without it.
-    if p!=nil && p.install!=nil && install.job_poll(p.install) {
-        if !p.install.ok {
-            p.error_length=copy(p.error[:],p.install.message)
-            log.errorf("the plugins of %s: %s",base.text_get(p.opening[:]),p.install.message)
-            notify(s,string(p.error[:p.error_length]))
-        } else if p.install.message!="" {
-            log.info(p.install.message)
-        }
+    if p.install!=nil && install.job_poll(p.install) {
+        ok,message:=p.install.ok,strings.clone(p.install.message,context.temp_allocator)
         install.job_destroy(p.install)
         p.install=nil
-        p.starting,p.start_frame=true,s.frame
+        if p.cancelling {
+            p.cancelling=false
+            return
+        }
+        if !ok {
+            p.error_length=copy(p.error[:],message)
+            log.errorf("the plugins of %s: %s",base.text_get(p.opening[:]),message)
+            notify(s,string(p.error[:p.error_length]))
+        } else if message!="" {
+            log.info(message)
+        }
+        projects_build_start(s)
     }
-    // Without a window no dialog is waited for: a manual editor draws no frame by itself.
-    if p!=nil && p.starting && (s.frame>p.start_frame+1 || s.headless) {projects_build_start(s)}
-    if p==nil || p.job==nil {return}
-    if !build.job_poll(p.job) {return}
-    result:=&p.job.result
-    failed:=result.status==.Failed
-    if !failed {
-        if p.shaders==nil {p.shaders=build.shaders_start(p.built,store_root=s.store.root)}
-        if !build.shaders_poll(p.shaders) {return}
+    if p.run==nil || !build_run_poll(p.run) {return}
+    r:=p.run
+    p.run=nil
+    defer build_run_destroy(r)
+    if p.cancelling {
+        p.cancelling=false
+        return
     }
-    if failed {
+    if !r.opened {
+        text:=r.open_error if r.open_error!="" else fmt.tprintf("%s could not be opened",base.text_get(p.opening[:]))
+        p.error_length=copy(p.error[:],text)
+        notify(s,string(p.error[:p.error_length]))
+        return
+    }
+    if r.job==nil {return}
+    result:=&r.job.result
+    if result.status==.Failed {
         text:=result.text
         for d in result.diagnostics {
             if d.severity==.Error {text=fmt.tprintf("%s(%d:%d) %s",d.file,d.line,d.column,d.message);break}
@@ -398,13 +403,8 @@ projects_poll :: proc(s:^Session) {
         if text=="" {text=fmt.tprintf("The build failed: %v",result.failure)}
         p.error_length=copy(p.error[:],text)
         log.errorf("%s could not be built: %s",base.text_get(p.opening[:]),text)
+        return
     }
-    build.job_destroy(p.job)
-    build.shaders_destroy(p.shaders)
-    project.close(p.built)
-    free(p.built)
-    p.job,p.shaders,p.built=nil,nil,nil
-    if failed {return}
     if p.launcher {
         if projects_start(s) {s.quit=true}
         return
@@ -461,21 +461,28 @@ projects_next_cancel :: proc(s:^Session) {
     if p:=s.projects;p!=nil {p.next=false}
 }
 
-// Stops the build of a project being opened: when the editor ends.
+// Asks the opening build to stop without blocking a frame.
+@(private)
+projects_cancel_request :: proc(s:^Session) {
+    p:=s.projects
+    if p==nil || !projects_opening(p) {return}
+    p.cancelling=true
+    build_run_cancel(p.run)
+    if p.run!=nil && build_run_poll(p.run) {
+        build_run_destroy(p.run)
+        p.run=nil
+        if p.install==nil {p.cancelling=false}
+    }
+}
+
+// Stops the build of a project being opened and waits for its threads: when the editor ends.
 projects_cancel :: proc(s:^Session) {
     p:=s.projects
     if p==nil {return}
-    if p.job!=nil {build.job_destroy(p.job)}
-    if p.shaders!=nil {build.shaders_destroy(p.shaders)}
+    build_run_destroy(p.run)
     // Waits for the git it runs: a clone ends on its own.
     install.job_destroy(p.install)
-    p.install=nil
-    if p.built!=nil {
-        project.close(p.built)
-        free(p.built)
-    }
-    p.job,p.shaders,p.built=nil,nil,nil
-    p.starting=false
+    p.run,p.install,p.cancelling=nil,nil,false
 }
 
 // Creates a project from the dialog and opens it.
@@ -656,9 +663,16 @@ projects_opening_row :: proc(p:^Projects) -> int {
 // What the opening of a project is doing, as its row says it.
 @(private)
 projects_doing :: proc(p:^Projects) -> string {
-    if p.starting {return "Generating the world"}
-    if build.job_importing(p.job) {return "Refreshing assets"}
-    if p.shaders!=nil && p.shaders.result.status==.Running {return "Building the shaders"}
+    if p.cancelling {return "Cancelling"}
+    if p.install!=nil {return "Installing plugins"}
+    if p.run!=nil {
+        switch build_run_stage(p.run) {
+        case .Preparing: return "Generating the world"
+        case .Building:  return "Building the editor"
+        case .Importing: return "Refreshing assets"
+        case .Shaders:   return "Building the shaders"
+        }
+    }
     return "Building the editor"
 }
 
@@ -792,7 +806,7 @@ projects_row :: proc(s:^Session,index:int,row:^Projects_Row,folder:string,busy,o
         if opening {
             pulse_dot(ctx,MARK_ARM,true)
             ui.label(ctx,projects_doing(s.projects),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
-            if ui.button(ctx,ui.id(ctx,"project_cancel"),{label="Cancel",variant="field",height=28,size=ui.metric(ctx,"font_small")}).clicked {projects_cancel(s)}
+            if ui.button(ctx,ui.id(ctx,"project_cancel"),{label="Cancel",variant="field",height=28,size=ui.metric(ctx,"font_small"),disabled=p.cancelling}).clicked {projects_cancel_request(s)}
         } else {
             chip,chip_color,chip_fill:="",ui.tone(ctx,"text_muted"),ui.tone(ctx,"card")
             switch {
@@ -850,16 +864,16 @@ projects_loading_build :: proc(s:^Session) {
     folder:=base.text_get(p.opening[:])
     name:=filepath.base(folder)
     Step :: enum u8 {Pending,Current,Done}
-    steps:=[4]string{"Installing the plugins from Git","Generating the world","Building the editor","Building the shaders"}
-    states:=[4]Step{.Current,.Pending,.Pending,.Pending}
-    if build.job_importing(p.job) {steps[2]="Refreshing assets"}
-    if p.install==nil {
-        states[0],states[1]=.Done,.Current
-    }
-    if p.install==nil && !p.starting {
-        states[1]=.Done
-        states[2]=.Current if p.job!=nil && p.job.result.status==.Running else .Done
-        if p.shaders!=nil {states[3]=.Current if p.shaders.result.status==.Running else .Done}
+    steps:=[5]string{"Installing the plugins from Git","Generating the world","Building the editor","Refreshing assets","Building the shaders"}
+    states:=[5]Step{.Pending,.Pending,.Pending,.Pending,.Pending}
+    if p.install!=nil {
+        states[0]=.Current
+    } else if p.run!=nil {
+        states[0]=.Done
+        active:=int(build_run_stage(p.run))+1
+        for i in 1..<len(states) {
+            states[i]=.Done if i<active else (.Current if i==active else .Pending)
+        }
     }
     if ui.modal(ctx,shell_id(g,"projects_loading"),{width=420,padding=-1}) {
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {
@@ -888,7 +902,7 @@ projects_loading_build :: proc(s:^Session) {
             }
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"divider")}) {}
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={20,12,20,12},align_x=.End,fill=ui.tone(ctx,"panel"),corners={0,0,ui.metric(ctx,"radius_panel"),ui.metric(ctx,"radius_panel")}}) {
-                if ui.button(ctx,shell_id(g,"projects_loading_cancel"),{label="Cancel",variant="field",width=90,height=ui.metric(ctx,"control"),center=true}).clicked {projects_cancel(s)}
+                if ui.button(ctx,shell_id(g,"projects_loading_cancel"),{label="Cancel",variant="field",width=90,height=ui.metric(ctx,"control"),center=true,disabled=p.cancelling}).clicked {projects_cancel_request(s)}
             }
         }
     }

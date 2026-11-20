@@ -1,12 +1,15 @@
 package editor
 
+import "base:intrinsics"
 import "core:fmt"
 import "core:os"
 import "core:slice"
+import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:asset"
 import img "mirai:cook/image"
+import "mirai:cook/install"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -137,4 +140,55 @@ projects_show_their_thumbnail_or_the_view_of_their_start_scene :: proc(t:^testin
             testing.expect_value(t,[4]u8{image[at*4],image[at*4+1],image[at*4+2],image[at*4+3]},[4]u8{100,50,0,128})
         }
     }
+}
+
+@(test)
+projects_open_runs_off_the_frame_and_reports_stages_and_cancel :: proc(t:^testing.T) {
+    // Stage labels match each phase of the background opening.
+    run:Build_Run
+    p:=Projects{run=&run}
+    Case :: struct {stage:Build_Stage,label:string}
+    for c in ([]Case{{.Preparing,"Generating the world"},{.Building,"Building the editor"},{.Importing,"Refreshing assets"},{.Shaders,"Building the shaders"}}) {
+        intrinsics.atomic_store(&run.stage,c.stage)
+        testing.expect_value(t,projects_doing(&p),c.label)
+    }
+    p.cancelling=true
+    testing.expect_value(t,projects_doing(&p),"Cancelling")
+    p.cancelling=false
+    stub:install.Job
+    p.install=&stub
+    testing.expect_value(t,projects_doing(&p),"Installing plugins")
+    p={}
+
+    // Opening a project with a broken manifest runs on the build thread and reports its error on poll.
+    folder:=base.test_folder(t,"projects-open")
+    if folder=="" {return}
+    root:=project.path_absolute(folder,context.temp_allocator)
+    engine:=project.path(root,"engine",allocator=context.temp_allocator)
+    bad:=project.path(root,"bad",allocator=context.temp_allocator)
+    if !testing.expect(t,base.make_directory_all(engine)==nil && base.make_directory_all(bad)==nil) {return}
+    if !testing.expect(t,os.write_entire_file(project.path(bad,project.PROJECT_FILE,allocator=context.temp_allocator),"{invalid")==nil) {return}
+    s:=Session{projects=&p,engine_root=engine}
+    defer projects_cancel(&s)
+    testing.expect_value(t,projects_open(&s,bad),"")
+    testing.expect(t,projects_opening(&p) && p.run!=nil,"opening starts immediately on a background thread")
+    started:=time.tick_now()
+    for projects_opening(&p) && time.tick_since(started)<10*time.Second {
+        projects_poll(&s)
+        time.sleep(time.Millisecond)
+    }
+    testing.expect(t,!projects_opening(&p))
+    testing.expect(t,!p.next)
+    testing.expectf(t,strings.contains(string(p.error[:p.error_length]),"is not a project"),"manifest error reported: %q",string(p.error[:p.error_length]))
+
+    // Cancelling an opening request does not start the project.
+    p.error_length=0
+    testing.expect_value(t,projects_open(&s,bad),"")
+    projects_cancel_request(&s)
+    started=time.tick_now()
+    for projects_opening(&p) && time.tick_since(started)<10*time.Second {
+        projects_poll(&s)
+        time.sleep(time.Millisecond)
+    }
+    testing.expect(t,!projects_opening(&p) && !p.cancelling && !p.next)
 }

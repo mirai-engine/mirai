@@ -81,11 +81,20 @@ build_start :: proc(s:^Session,target:=build.Target.Editor,folder:="") -> bool {
     return true
 }
 
+// What a build thread is doing now, read atomically by the UI.
+Build_Stage :: enum u8 {
+    Preparing, // opening the project, generating the world, planning plugin libraries
+    Building,  // compiling the editor/game or checking/testing
+    Importing, // refreshing asset packages with the import program
+    Shaders,   // generating project shaders
+}
+
 // A build, a check of the code or a run of the tests of a package, in the one
 // thread a project builds in: opening the project, generating its world,
 // hashing its plugin libraries and the test executable take seconds that no
 // frame waits for. The editor reads it only once done is set and the thread
-// joined (build_poll); a check or a run of the tests stays until the next one.
+// joined (build_poll, projects_poll); a check or a run of the tests stays until
+// the next one.
 Build_Run :: struct {
     thread:^thread.Thread,
     project_root,engine_root,folder,test_package:string,
@@ -97,9 +106,72 @@ Build_Run :: struct {
     seconds:f64,               // how long it may run before it is stopped; 0: no limit
     started:time.Tick,
     opened:bool,               // the project opened
+    open_error:string,         // why project.open failed, if !opened
     shaders:^build.Shaders_Job,
     job:^build.Job,
+    stage:Build_Stage,         // atomic
     done,cancel:bool,          // atomic
+}
+
+// Starts a build, check or test run on its own thread and returns at once;
+// nil when the thread could not be started.
+@(private)
+build_run_spawn :: proc(project_root,engine_root,runs,store_root,folder,test_package:string,names:[]string,action:build.Action,target:build.Target,seconds:f64) -> ^Build_Run {
+    a:=runtime.heap_allocator()
+    r:=new(Build_Run,a)
+    r.project_root,r.engine_root,r.runs=strings.clone(project_root,a),strings.clone(engine_root,a),strings.clone(runs,a)
+    r.folder,r.test_package=strings.clone(folder,a),strings.clone(test_package,a)
+    r.store_root=strings.clone(store_root,a)
+    r.names=make([]string,len(names),a)
+    for name,i in names {r.names[i]=strings.clone(name,a)}
+    r.action,r.target,r.seconds,r.started=action,target,seconds,time.tick_now()
+    r.thread=thread.create_and_start_with_poly_data(r,build_run)
+    if r.thread==nil {
+        build_run_destroy(r)
+        return nil
+    }
+    return r
+}
+
+@(private)
+build_run_stage :: proc(r:^Build_Run) -> Build_Stage {
+    if r==nil {return .Building}
+    return intrinsics.atomic_load(&r.stage)
+}
+
+@(private)
+build_run_cancel :: proc(r:^Build_Run) {
+    if r!=nil {intrinsics.atomic_store(&r.cancel,true)}
+}
+
+// Joins the thread of r once it finished. True when the run is over.
+@(private)
+build_run_poll :: proc(r:^Build_Run) -> bool {
+    if r==nil {return true}
+    if r.thread==nil {return true}
+    if !intrinsics.atomic_load(&r.done) {return false}
+    thread.join(r.thread)
+    thread.destroy(r.thread)
+    r.thread=nil
+    return true
+}
+
+// Stops r, waits for its thread to finish and frees all it holds.
+@(private)
+build_run_destroy :: proc(r:^Build_Run) {
+    if r==nil {return}
+    if r.thread!=nil {
+        intrinsics.atomic_store(&r.cancel,true)
+        thread.join(r.thread)
+        thread.destroy(r.thread)
+    }
+    a:=runtime.heap_allocator()
+    build.job_destroy(r.job)
+    build.shaders_destroy(r.shaders)
+    for name in r.names {delete(name,a)}
+    delete(r.names,a)
+    delete(r.project_root,a);delete(r.engine_root,a);delete(r.runs,a);delete(r.store_root,a);delete(r.folder,a);delete(r.test_package,a);delete(r.open_error,a)
+    free(r,a)
 }
 
 // Starts a build of the editor or of the game into folder, a check of the
@@ -115,14 +187,8 @@ build_run_start :: proc(s:^Session,action:build.Action,target:build.Target,folde
         if _,message:=install.sync(s.project_root,context.temp_allocator);message!="" {notify(s,message)}
     }
     build_run_free(b)
-    a:=runtime.heap_allocator()
-    r:=new(Build_Run,a)
-    r.project_root,r.engine_root,r.runs=strings.clone(s.project_root,a),strings.clone(s.engine_root,a),strings.clone(engine_folder_here(s),a)
-    r.folder,r.test_package=strings.clone(folder,a),strings.clone(test_package,a)
-    r.store_root=strings.clone(s.store.root,a)
-    r.names=make([]string,len(names),a)
-    for name,i in names {r.names[i]=strings.clone(name,a)}
-    r.action,r.target,r.seconds,r.started=action,target,seconds,time.tick_now()
+    r:=build_run_spawn(s.project_root,s.engine_root,engine_folder_here(s),s.store.root,folder,test_package,names,action,target,seconds)
+    if r==nil {return "No thread could be started for it"}
     b.run=r
     if action==.Build {
         build_results_free(b)
@@ -131,12 +197,6 @@ build_run_start :: proc(s:^Session,action:build.Action,target:build.Target,folde
         b.phase=.Running
         b.started=r.started
     }
-    r.thread=thread.create_and_start_with_poly_data(r,build_run)
-    if r.thread==nil {
-        build_run_free(b)
-        if action==.Build {b.phase=.Idle}
-        return "No thread could be started for it"
-    }
     return ""
 }
 
@@ -144,27 +204,40 @@ build_run_start :: proc(s:^Session,action:build.Action,target:build.Target,folde
 @(private)
 build_run :: proc(r:^Build_Run) {
     context.allocator=runtime.heap_allocator()
+    defer runtime.default_temp_allocator_destroy(&runtime.global_default_temp_allocator_data)
     defer intrinsics.atomic_store(&r.done,true)
-    p,error:=project.open(r.project_root,r.engine_root)
-    if error.code!=.None {return}
-    defer project.close(&p)
-    r.opened=true
     stopped :: proc(r:^Build_Run) -> bool {
         return intrinsics.atomic_load(&r.cancel) || r.seconds>0 && time.duration_seconds(time.tick_since(r.started))>r.seconds
     }
+    p,error:=project.open(r.project_root,r.engine_root)
+    if error.code!=.None {
+        r.open_error=fmt.aprintf("%s is not a project: %s",r.project_root,project_open_error_text(error))
+        return
+    }
+    defer project.close(&p)
+    r.opened=true
+    if stopped(r) {return}
     r.job=build.job_start({project=&p,target=r.target,action=r.action,output=r.folder,test_package=r.test_package,test={names=r.names,quiet=true},dev=r.target==.Editor && build.ENGINE_MODE_HERE==.Dev,engine=build.ENGINE_MODE_HERE,runs=r.runs,store_root=r.store_root})
-    for !build.job_poll(r.job) {
+    for {
+        intrinsics.atomic_store(&r.stage,Build_Stage.Importing if build.job_importing(r.job) else .Building)
         if stopped(r) {
             build.job_cancel(r.job)
             return
         }
+        if build.job_poll(r.job) {break}
         free_all(context.temp_allocator)
         time.sleep(10*time.Millisecond)
     }
     if r.action==.Build && r.target==.Editor && r.job.result.status!=.Failed && !stopped(r) {
+        intrinsics.atomic_store(&r.stage,Build_Stage.Shaders)
         r.shaders=build.shaders_start(&p,store_root=r.store_root)
         for !build.shaders_poll(r.shaders) {
-            if stopped(r) {build.shaders_cancel(r.shaders);return}
+            if stopped(r) {
+                build.shaders_cancel(r.shaders)
+                build.shaders_wait(r.shaders)
+                return
+            }
+            free_all(context.temp_allocator)
             time.sleep(10*time.Millisecond)
         }
     }
@@ -174,11 +247,8 @@ build_run :: proc(r:^Build_Run) {
 @(private)
 build_run_join :: proc(b:^Build_State) -> bool {
     r:=b.run
-    if r==nil || r.thread==nil || !intrinsics.atomic_load(&r.done) {return false}
-    thread.join(r.thread)
-    thread.destroy(r.thread)
-    r.thread=nil
-    return true
+    if r==nil || r.thread==nil {return false}
+    return build_run_poll(r)
 }
 
 // Whether a build, a check or a run of the tests runs.
@@ -199,18 +269,7 @@ build_run_free :: proc(b:^Build_State) {
     r:=b.run
     if r==nil {return}
     b.run=nil
-    if r.thread!=nil {
-        intrinsics.atomic_store(&r.cancel,true)
-        thread.join(r.thread)
-        thread.destroy(r.thread)
-    }
-    a:=runtime.heap_allocator()
-    build.job_destroy(r.job)
-    build.shaders_destroy(r.shaders)
-    for name in r.names {delete(name,a)}
-    delete(r.names,a)
-    delete(r.project_root,a);delete(r.engine_root,a);delete(r.runs,a);delete(r.folder,a);delete(r.test_package,a)
-    free(r,a)
+    build_run_destroy(r)
 }
 
 // Takes what a run left once its thread ended, and the game player.start
@@ -228,7 +287,7 @@ build_poll :: proc(s:^Session) {
     b.seconds=time.duration_seconds(time.tick_since(b.started))
     if !r.opened {
         b.phase,b.failure=.Failed,.Generate
-        b.text=strings.clone("The project could not be opened")
+        b.text=strings.clone(r.open_error if r.open_error!="" else "The project could not be opened")
         notify(s,"The project could not be opened")
         b.play={}
         return
@@ -253,11 +312,8 @@ build_poll :: proc(s:^Session) {
         }
     }
     if r.job==nil {
-        // The shaders of a game failed: it is not built.
-        b.phase=.Failed
-        b.failure=.Shaders
-        bottom_toggle_open(s.gui,.Build)
-        notify(s,"The shaders of the game could not be generated")
+        b.phase,b.failure=.Failed,.Cancelled
+        b.play={}
         return
     }
     result:=&r.job.result

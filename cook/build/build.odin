@@ -562,6 +562,7 @@ job_project_start :: proc(job:^Job) -> ^Job {
                     return job
                 }
                 if present {
+                    job.project_stands=false
                     return job_imports(job,.Up_To_Date)
                 }
                 // What the library compiles to is what its last compile
@@ -912,6 +913,7 @@ job_importing :: proc(job:^Job) -> bool {
 // The import program reads the formats of the project's published editor library.
 @(private)
 job_imports :: proc(job:^Job,compiled:Status) -> ^Job {
+    job.compiled_status=compiled
     if len(job.imports)==0 {return job_target_done(job,compiled)}
     args:=imports_command(job.import_program,job.imports,job.cook.assets!="",job.store_root)
     allocator:=virtual.arena_allocator(&job.arena)
@@ -919,7 +921,6 @@ job_imports :: proc(job:^Job,compiled:Status) -> ^Job {
         job.result.text=fmt.aprintf("the import program could not run: %v",error,allocator=allocator)
         return job_fail(job,.Import_Failed)
     }
-    job.compiled_status=compiled
     return job
 }
 
@@ -969,7 +970,7 @@ job_files_remove :: proc(job:^Job) {
     if error!=nil {return}
     names:=TARGET_NAMES
     target:=strings.concatenate({names[job.target],"-"},context.temp_allocator)
-    built:=job.result.status==.Built
+    built:=job.result.status==.Built || job.compiled_status==.Built
     for entry in entries {
         if !strings.has_prefix(entry.name,target) {continue}
         remove:bool
@@ -1048,6 +1049,7 @@ job_finish :: proc(job:^Job,compile:^Compile,exit_code:int) {
             link_record_remove(job.link_file)
         }
     }
+    job.compiled_status=.Built
     job_files_remove(job)
     objects_sweep(job.root,link_records(job.root))
     job_imports(job,.Built)
