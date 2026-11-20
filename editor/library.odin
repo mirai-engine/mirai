@@ -190,19 +190,36 @@ library_add :: proc(s:^Session,named:string,ids:[]string,folder:string) -> strin
     if refused!="" {return fmt.tprintf("folder: %s",refused)}
     root,rest,rooted:=import_root_of(s,r,clean)
     if !rooted {return fmt.tprintf("folder: %s is a folder of the editor or the engine: give a folder of the project or of a plugin",clean)}
-    packages,problem:=library_list(s,root.root,context.temp_allocator)
-    if problem!="" {return problem}
+    if s.store.root=="" {return "The editor has no store: start it with --store <folder>"}
     wanted:=strings.trim_space(named)
     if wanted=="" {return "name: give the id or the name of a package, as packages.list lists them"}
-    chosen:=-1
+    p:asset.Package
+    manifest:store.Hash
     id,is_id:=serial.text_parse_asset_id(wanted)
-    for &p,at in packages {
-        if !(is_id && p.id==id || !is_id && p.name==wanted) {continue}
-        if chosen>=0 {return fmt.tprintf("name: more than one package is named %q: give its id, as packages.list lists them",wanted)}
-        chosen=at
+    if is_id {
+        text:[base.ASSET_ID_TEXT]u8
+        hash,ref_error:=store.ref_get(&s.store,asset.REF_PACKAGES,base.asset_id_format(id,text[:]))
+        if ref_error==.None {
+            candidate,error:=asset.package_get(&s.store,hash,context.temp_allocator)
+            if error==.None && candidate.id==id {p,manifest=candidate,hash}
+        }
+    } else {
+        refs,error:=store.ref_list(&s.store,asset.REF_PACKAGES,context.temp_allocator)
+        if error!=.None && error!=.Missing {
+            return fmt.tprintf("The packages of %s could not be read (%v)",s.store.root,error)
+        }
+        for ref in refs {
+            candidate,read_error:=asset.package_get(&s.store,ref.hash,context.temp_allocator)
+            if read_error!=.None || candidate.name!=wanted {continue}
+            if manifest!={} {
+                return fmt.tprintf("name: more than one package is named %q: give its id, as packages.list lists them",wanted)
+            }
+            p,manifest=candidate,ref.hash
+        }
     }
-    if chosen<0 {return fmt.tprintf("name: the library at %s has no package %q: packages.list lists them, and asset.import ingests a source",s.store.root,wanted)}
-    p:=&packages[chosen]
+    if manifest=={} {
+        return fmt.tprintf("name: the library at %s has no package %q: packages.list lists them, and asset.import ingests a source",s.store.root,wanted)
+    }
     used:=make([dynamic]base.Asset_Id,0,len(ids),context.temp_allocator)
     for text in ids {
         asset_id,parsed:=serial.text_parse_asset_id(strings.trim_space(text))
@@ -213,7 +230,7 @@ library_add :: proc(s:^Session,named:string,ids:[]string,folder:string) -> strin
     }
     allocator:=runtime.heap_allocator()
     job:=new(Import_Job,allocator)
-    job^={allocator=allocator,manifest=p.manifest,started=time.tick_now()}
+    job^={allocator=allocator,manifest=manifest,started=time.tick_now()}
     job.store=s.store
     job.source=strings.clone(p.name,allocator)
     job.root,job.prefix,job.folder=strings.clone(root.root,allocator),strings.clone(root.prefix,allocator),strings.clone(rest,allocator)
