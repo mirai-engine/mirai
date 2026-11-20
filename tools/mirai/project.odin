@@ -356,7 +356,8 @@ play_arguments :: proc(args:[]string) -> []string {
 
 // Builds a target of a project. shaders_failed: the generation of its shaders
 // failed and the library was built with the ones it had.
-build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_Mode,server:=false,store_root:="") -> (code:int,output:string,shaders_failed:bool) {
+build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_Mode,server:=false,store_root:="",refresh_skip:=false,stream:^os.File=nil) -> (code:int,output:string,shaders_failed:bool) {
+    out_stream:=stream!=nil?stream:os.stdout
     folder,out:=".",""
     named:=false
     for i:=0;i<len(args);i+=1 {
@@ -373,7 +374,7 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
     if install.sync_needed(folder) {
         changed,message:=install.sync(folder,context.temp_allocator)
         if message!="" {fmt.eprintfln("mirai build: %s",message)}
-        if changed>0 {fmt.printfln("%d plugins from Git moved to their commit.",changed)}
+        if changed>0 {fmt.fprintfln(out_stream,"%d plugins from Git moved to their commit.",changed)}
     }
     p,error:=project.open(folder,root)
     if error.code!=.None {
@@ -387,26 +388,27 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
     // A game needs them only to import the sources of its project.
     engine_current:=target==.Game && len(build.imports_roots(&p))==0 || build.engine_current(root,engine,paths.defines)
     // A project with sources goes on: its build imports what changed among them before it finds the library current.
-    if target!=.Game && engine_current && len(build.imports_roots(&p))==0 &&
+    if target!=.Game && engine_current && (refresh_skip || len(build.imports_roots(&p))==0) &&
         library_current(root,&p,target,engine,mode==.Dev,store_root) {
-        _=engine_report({status=.Up_To_Date,mode=engine,folder=paths.folder},root)
+        _=engine_report({status=.Up_To_Date,mode=engine,folder=paths.folder},root,out_stream)
         if os.is_file(project.path(project.shader_generation(p.root,context.temp_allocator),project.SHADERS_MANIFEST,allocator=context.temp_allocator)) {
-            fmt.printfln("%s unchanged.",project.shader_generation(p.root,context.temp_allocator))
+            fmt.fprintfln(out_stream,"%s unchanged.",project.shader_generation(p.root,context.temp_allocator))
         }
         output=build.target_output(&p,target,"",context.allocator)
-        fmt.printfln("%s unchanged.",output)
+        fmt.fprintfln(out_stream,"%s unchanged.",output)
         session_take(p.root,paths)
         return 0,output,false
     }
     if !engine_current {engine_release(p.root,paths.folder,"build")}
-    code,output,shaders_failed=build_project_run(root,&p,target,out,mode,paths,engine_current,server,store_root)
+    code,output,shaders_failed=build_project_run(root,&p,target,out,mode,paths,engine_current,server,store_root,refresh_skip,out_stream)
     if code==0 && target!=.Game {session_take(p.root,paths)}
     return
 }
 
 // What build_project does once it has to compile, in its turn.
 @(private="file")
-build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out:string,mode:Build_Mode,engine:build.Engine_Paths,engine_current:bool,server:=false,store_root:="") -> (code:int,output:string,shaders_failed:bool) {
+build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out:string,mode:Build_Mode,engine:build.Engine_Paths,engine_current:bool,server:=false,store_root:="",refresh_skip:=false,out_stream:^os.File=nil) -> (code:int,output:string,shaders_failed:bool) {
+    stream:=out_stream!=nil?out_stream:os.stdout
     lock:=build_lock(root,fmt.tprintf("build %v %s",target,p.root),{p.root})
     defer workspace.lock_release(&lock)
     // ui links the FreeType library, the importer that of ufbx and the editor that of SQLite.
@@ -414,27 +416,27 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
     // The libraries of a project are built against the binaries of the engine;
     // the game, against its sources, with the importer of those binaries.
     if !engine_current {
-        if code:=engine_report(build.engine_build({engine_root=root,mode=engine.mode,defines=engine.defines}),root);code!=0 {return code,"",false}
+        if code:=engine_report(build.engine_build({engine_root=root,mode=engine.mode,defines=engine.defines}),root,stream);code!=0 {return code,"",false}
     } else if target!=.Game {
-        _=engine_report({status=.Up_To_Date,mode=engine.mode,folder=engine.folder},root)
+        _=engine_report({status=.Up_To_Date,mode=engine.mode,folder=engine.folder},root,stream)
     } else if !engine_shaders(root,turn_held=true) {
         return 1,"",false
     }
     rebuilt:bool
     {
-        job:=build.job_run({project=p,target=target,output=out,server=server,dev=mode==.Dev,engine=engine.mode,store_root=store_root})
+        job:=build.job_run({project=p,target=target,output=out,server=server,dev=mode==.Dev,engine=engine.mode,store_root=store_root,refresh_skip=refresh_skip})
         defer build.job_destroy(job)
         result:=&job.result
         for diagnostic in result.diagnostics {
             fmt.eprintfln("%s(%d:%d) %s: %s",diagnostic.file,diagnostic.line,diagnostic.column,diagnostic.severity==.Error?"Error":"Warning",diagnostic.message)
         }
-        if compiled:=result.plugins_built-result.plugins_restored-result.plugins_relinked;compiled>0 {fmt.printfln("%s: %d plugin libraries built.",build.plugins_libraries_folder(p.root),compiled)}
-        if result.plugins_relinked>0 {fmt.printfln("%s: %d plugin libraries linked again.",build.plugins_libraries_folder(p.root),result.plugins_relinked)}
-        if result.plugins_restored>0 {fmt.printfln("%s: %d plugin libraries copied from the shared cache.",build.plugins_libraries_folder(p.root),result.plugins_restored)}
+        if compiled:=result.plugins_built-result.plugins_restored-result.plugins_relinked;compiled>0 {fmt.fprintfln(stream,"%s: %d plugin libraries built.",build.plugins_libraries_folder(p.root),compiled)}
+        if result.plugins_relinked>0 {fmt.fprintfln(stream,"%s: %d plugin libraries linked again.",build.plugins_libraries_folder(p.root),result.plugins_relinked)}
+        if result.plugins_restored>0 {fmt.fprintfln(stream,"%s: %d plugin libraries copied from the shared cache.",build.plugins_libraries_folder(p.root),result.plugins_restored)}
         switch result.status {
         case .Running:
-        case .Built:      fmt.printfln("%s ready (%.1f s%s).",result.output,result.seconds,result.relinked?", linked again":"")
-        case .Up_To_Date: fmt.printfln("%s unchanged.",result.output)
+        case .Built:      fmt.fprintfln(stream,"%s ready (%.1f s%s).",result.output,result.seconds,result.relinked?", linked again":"")
+        case .Up_To_Date: fmt.fprintfln(stream,"%s unchanged.",result.output)
         case .Failed:
             if result.failure==.Shaders {shaders_failed=true}
             if result.text!="" {fmt.eprintln(result.text)}
@@ -471,8 +473,8 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         defer build.shaders_destroy(generation)
         switch generation.result.status {
         case .Running,.None,.Cancelled:
-        case .Up_To_Date: fmt.printfln("%s unchanged.",generation.result.output)
-        case .Built:      fmt.printfln("%s ready (%.1f s): %d material programs, %d stages compiled and %d reused.",generation.result.output,generation.result.seconds,generation.result.programs,generation.result.compiled,generation.result.reused)
+        case .Up_To_Date: fmt.fprintfln(stream,"%s unchanged.",generation.result.output)
+        case .Built:      fmt.fprintfln(stream,"%s ready (%.1f s): %d material programs, %d stages compiled and %d reused.",generation.result.output,generation.result.seconds,generation.result.programs,generation.result.compiled,generation.result.reused)
         case .Failed:
             shaders_failed=true
             fmt.eprintfln("mirai build: could not generate the shaders of the project: %s",generation.result.message)
