@@ -44,15 +44,16 @@
 #define MIRAI_GROUP_Y 8
 #define MIRAI_GROUP_Z 1
 
-// cached_below: a pixel that reflects less than this share of what its ray
-// finds takes the light of the hit from the probe volume (glass, which
-// reflects a few percent away from grazing angles). material_roughness: the
-// roughness by which a pixel decides how to trace is the one of its material
-// (g_motion.b) rather than the one specular antialiasing widened (a layer of
-// glass has only the latter). resume: a thread for each head of the round of
-// the batch, instead of each cell. medium: the instance plus one of the solid
-// the camera is in, 0 none.
-struct Params_Block { uint light_budget; float max_distance; float firefly_clamp; float pixel_spread; uint block; float roughness_from; float roughness_to; float cached_below; float detail_below; uint stored_reflectance; uint material_roughness; uint pad0; uint resume; uint medium; uint pad1; uint pad2; };
+// origin: first cell in the bounded glass dispatch, or zero for opaque.
+// medium: the instance plus one of the solid the camera is in, zero outside.
+struct Params_Block {
+    uint light_budget;
+    float max_distance, firefly_clamp, pixel_spread;
+    uint block;
+    float roughness_from, roughness_to, cached_below, detail_below;
+    uint stored_reflectance, glass, pad, resume, medium;
+    uint2 origin;
+};
 
 // A reflection inside the solid the camera is in ends where the solid lets
 // this share of its light through: past it, what the ray would meet does not show.
@@ -104,19 +105,24 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         direction = unpack_normal(head.aux[0]);
         how = head.aux[1];
     } else {
-        cell = int2(dispatch_id.xy);
+        cell = int2(dispatch_id.xy + params.origin);
         int2 size = int2(frame.resolution);
         int2 p = cell * int(params.block);
         if (any(((p) >= (size)))) return;
         if (params.block > 1u) p = min(p + reflect_block_pixel(cell), size - 1);
         float depth = g_depth.Load(int3(p, 0)).r;
-        // A layer of glass always keeps its reflectance; the opaque G-buffer, when the scene needs it.
-        Gbuffer_Pixel g = gbuffer_read(p, params.stored_reflectance != 0u);
-        float roughness = (params.material_roughness != 0u ? g_motion.Load(int3(p, 0)).b : g.roughness) + ROUGHNESS_ROUNDING;
-        if (depth_empty(depth) || reflection_weight(roughness) <= 0.0 || roughness < params.roughness_from || roughness >= params.roughness_to) {
+        if (depth_empty(depth)) {
             out_radiance[cell] = float4(0.0, 0.0, 0.0, -1.0);
             return;
         }
+        float4 normal = gbuffer_normal_texel(p);
+        float roughness = (params.glass != 0u ? normal.z : g_motion.Load(int3(p, 0)).b) + ROUGHNESS_ROUNDING;
+        if (reflection_weight(roughness) <= 0.0
+            || roughness < params.roughness_from || roughness >= params.roughness_to) {
+            out_radiance[cell] = float4(0.0, 0.0, 0.0, -1.0);
+            return;
+        }
+        Gbuffer_Pixel g = gbuffer_read(p, params.stored_reflectance != 0u, normal);
         float2 uv = (float2(p) + 0.5) * frame.inv_resolution;
         Pixel pixel = pixel_at(p, uv, depth);
         float3 position = pixel.position;
@@ -147,7 +153,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         }
         // Its ray leaves from where the point rests: what it meets rests there.
         float3 origin = offset_origin(position - pixel_rest(p, depth), n, view_bias(pixel.distance));
-        bool detailed = roughness < params.detail_below;
         float3 fresnel;
         if (coat) {
             float ratio = (g.layers.coat_ior - 1.0) / (g.layers.coat_ior + 1.0);
@@ -160,6 +165,9 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         // it, all of it beyond the critical angle: a whole reflection, through the solid.
         bool inside = (g.bits & GBUFFER_GLASS_EXIT) != 0u && params.medium != 0u;
         if (inside) reflectance = 1.0;
+        bool cached = reflectance < params.cached_below
+            && (frame.flags & FRAME_FLAG_GI) != 0u && frame.volume_atlas.w != 0u;
+        bool detailed = roughness < params.detail_below && !cached;
         float reach = params.max_distance;
         Material medium = (Material)0;
         if (inside) {
@@ -198,7 +206,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
             out_radiance[cell] = float4(firefly_clamped(sky * through + glow), distance);
             return;
         }
-        bool cached = reflectance < params.cached_below && (frame.flags & FRAME_FLAG_GI) != 0u && frame.volume_atlas.w != 0u;
         how = (detailed ? SHADE_DETAILED : 0u) | (cached ? SHADE_CACHED : 0u);
         direction = path.direction;
         // The footprint of the pixel carried along the ray, wider on rougher
@@ -222,7 +229,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         s = surface_from_hit(found, false, (Mirai_Surface)0);
     }
     float3 radiance;
-    if ((how & SHADE_DETAILED) != 0u) radiance = shade_hit_glossy(s, direction, distance, params.light_budget, (how & SHADE_CACHED) == 0u);
+    if ((how & SHADE_DETAILED) != 0u) radiance = shade_hit_glossy(s, direction, distance, params.light_budget);
     else if ((how & SHADE_CACHED) != 0u) radiance = shade_hit_cached(s, direction, distance);
     else radiance = shade_hit(s, direction, distance, params.light_budget);
     // A hit shaded here past glass with a program: the exact filters are added once they are known.

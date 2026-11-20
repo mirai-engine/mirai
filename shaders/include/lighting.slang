@@ -1323,11 +1323,8 @@ float3 shade_hit_cached(Surface s, float3 ray_dir, float hit_distance) {
 }
 
 // The radiance of a hit as the glossy surface it is, for a reflection sharp
-// enough to show the difference: its specular lobe reflects the lights and
-// what the probe volume holds around its mirror direction, where shade_hit
-// folds it into a diffuse albedo. Without `lights` the direct light comes
-// from the probe volume too, as in shade_hit_cached.
-float3 shade_hit_glossy(Surface s, float3 ray_dir, float hit_distance, uint light_budget, bool lights) {
+// enough to reflect lights and probes in its specular lobe.
+float3 shade_hit_glossy(Surface s, float3 ray_dir, float hit_distance, uint light_budget) {
     float3 n = hit_normal(s, ray_dir);
     float3 radiance = s.emission;
     Shading point = surface_shading(s, n, -ray_dir);
@@ -1339,10 +1336,10 @@ float3 shade_hit_glossy(Surface s, float3 ray_dir, float hit_distance, uint ligh
     float facing = smoothstep(0.02, 0.15, dot(n, -ray_dir));
     lit.f0 *= facing;
     lit.f90 *= facing;
-    if (lights) radiance += direct_lighting(lit, hit_bias(hit_distance), light_budget);
+    radiance += direct_lighting(lit, hit_bias(hit_distance), light_budget);
     if (shading_transmits(point)) {
         Shading back = shading_back(point);
-        if (lights) radiance += direct_lighting(back, hit_bias(hit_distance), light_budget, LIGHTS_ALL | LIGHTS_THROUGH);
+        radiance += direct_lighting(back, hit_bias(hit_distance), light_budget, LIGHTS_ALL | LIGHTS_THROUGH);
         radiance += point.transmit * (sample_probes(s.position, -n, -ray_dir, hit_distance) * frame.indirect);
     }
     // What a surface that reflects little would add is not worth the lookup;

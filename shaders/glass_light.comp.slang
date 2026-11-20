@@ -27,7 +27,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     uint2 ids = layer_ids.Load(int3(p, 0));
     Material m = material_row(ids.x, material_values_of(ids.y));
     Glass g = glass_of(p, uv, depth, layer_albedo.Load(int3(p, 0)), normal, layer_emission.Load(int3(p, 0)));
-    float traced = params.traced != 0u ? reflection_weight(g.roughness) : 0.0;
-    float3 reflected = traced > 0.0 ? reflection.Load(int3(p, 0)).rgb : float3(0.0);
-    out_color[p] = float4(finite_or_zero(glass_light(g, glass_shading(m, g), reflected, traced, 0.0, params.light_budget)), 1.0);
+    float traced = params.traced != 0u ? reflection_weight(g.roughness + ROUGHNESS_ROUNDING) : 0.0;
+    float4 reflected = traced > 0.0 ? reflection.Load(int3(p, 0)) : float4(0.0);
+    if (reflected.a == 0.0) traced = 0.0;
+    out_color[p] = float4(finite_or_zero(glass_light(g, glass_shading(m, g), reflected.rgb, traced, 0.0, params.light_budget)), 1.0);
 }

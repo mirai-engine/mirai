@@ -139,12 +139,12 @@ or interleave its own passes.
     and collapses the others, so they cover what the G-buffer drew; they test depth equal without
     writing it and do not enter the BVH/TLAS
     ([overlays](../../mirai-core/references/host.md#loaded-assets)).
-11. **translucent**: the nearest blend surfaces of each pixel form the `glass_layers` layers in a
-    small G-buffer; those behind are drawn forward, back to front. Both rasters draw visible
-    blend instances in bounded passes that preserve color, depth and the order of the pairs.
+11. **translucent**: the nearest transmissive surfaces form the glass layers. Non-transmissive
+    blends draw forward back to front between them, and overflow glass filters in the same order;
+    each raster splits passes to stay within the command bound.
 12. **glass**: lights each layer once per pixel, from the farthest to the nearest
-    ([glass](materials.md#glass)). It runs with the dispatch sizes of the cull: none while all the
-    glass is hidden.
+    ([glass](materials.md#glass)). The cull can suppress shading dispatches when no blended
+    instance passes. Glass reflections use the projected bounds of glass that can trace.
     - The `Blend` stage of the extensions (the particle sprites): what is left behind the nearest
       layer after the layer raster, the rest after the glass; without glass in view, a batch after
       composite.

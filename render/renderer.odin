@@ -317,13 +317,15 @@ Pipeline_Id :: enum {
 	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Bins, Cull_Stats_Fold, Mesh_Draws, Tlas_Batches,
 	Raster_Round, Raster_Vertices, Raster_Vertices_Shadow, Raster_Starts, Raster_Triangles, // what the raster of the visibility target draws of the visible clusters, and the maps of the shadows of theirs, a round at a time (raster_lists.slang)
 	Cull_Cost, Raster_Vertices_Cost, Raster_Vertices_Shadow_Cost, Shadow_Clusters_Cost,
-	Cost_Pixels, Translucent_Cost,
+	Cost_Pixels, Translucent_Cost, Glass_Overflow_Cost,
 	Light_Grid_Count, Light_Grid_Scan, Light_Grid_Fill, Light_Grid_Weights, // the passes of the grid of the lights (light_grid.comp)
 	Light_Lists, // the lists of the lights without shadows of the tiles of a view (light_lists.comp)
 	Direct_Maps, Direct_Rays, Direct_Samples, Direct_Points, Direct_Spread, Direct_Filter,
 	Ddgi_Trace, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
 	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
-	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Reflect, Translucent, Reflect_Resolve,
+	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values,
+	Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Reflect, Reflect_Resolve,
+	Translucent, Glass_Overflow,
 	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Clear, Shadow_Map_Copy, Shadow_Mark, Shadow_Pages, Shadow_Pages_Sort, Shadow_Hiz, // the cull of the maps of the shadows by instance and by cluster, the draws of the triangles their lists hold by what each writes, the pages of the cache they clear and the atlas copies, the marks of the points, the table of the pages (the steps that sort the pool apart) and the farthest depth of the cache
 	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Inside,
 	// The raster of the visibility target by raster bin (RASTER_BIN_*), then the same of a view with a clip plane.
@@ -435,7 +437,6 @@ Targets :: struct {
 	glass_scene:             rhi.Texture, // copy of the scene a glass layer is drawn over, for the layer to read, and its levels to blur it (glass_levels.comp)
 	glass_reflections:       rhi.Texture, // the traced reflections of the nearest layer of glass, filtered
 	glass_valid:             bool,
-	glass_needs_clear:       bool,
 	direct_scale:            u32, // the pixels across a point of the direct targets
 	reactive:                rhi.Texture, // the share of each pixel the Blend stage drew over: TAA keeps less of its history there
 	reactive_drawn:          bool,        // the Blend stage drew in reactive since it was last cleared
@@ -557,7 +558,7 @@ View_State :: struct {
 	generated:bool, // the frame being recorded generated the image shown before its own (Targets.generated)
 	frames:u64, // it was drawn: the turn of its histories
 	turn:u64,   // frames drawn since its last discontinuity (view_camera_cut): the turn of its jitter and of the pixels that share a ray, so what follows a cut does not depend on what was drawn before it
-	glass_dispatch:rhi.Buffer, // Gpu_Glass_Dispatch of the frame being recorded
+	glass_dispatch:rhi.Buffer, // indirect dispatch of the glass shading passes
 	dispatch_start:rhi.Buffer, // {0,1,1,0}: copied over an indirect dispatch whose groups in x the GPU counts, to start it each frame
 	prev_depth_plane:Vec4,
 	texture:Texture_Handle, // of a view drawn into a texture
@@ -770,7 +771,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	r.dummy_rest = rhi.texture_create(device, {width = 1, height = 1, format = .RG32_Uint, usage = {.Sampled, .Storage}, name = "dummy rest"})
 	r.stats_buffer = rhi.buffer_create(device, {size = size_of(Gpu_Cull_Stats), usage = {.Storage}, name = "cull stats"})
 	r.scratch_buffer = rhi.buffer_create(device, {size = 256, usage = {.Storage}, name = "scratch"})
-	r.glass_dispatch = rhi.buffer_create(device, {size = size_of(Gpu_Glass_Dispatch), usage = {.Storage, .Indirect}, name = "glass dispatch"})
+	r.glass_dispatch = rhi.buffer_create(device, {size = 16, usage = {.Storage, .Indirect}, name = "glass dispatch"})
 	r.dispatch_start = rhi.buffer_create(device, {size = 16, usage = {.Storage}, name = "dispatch start"})
 	r.light_changes = rhi.buffer_create(device, {size = LIGHT_CHANGES_MAX * size_of(Vec4), usage = {.Storage}, name = "light changes"})
 	feedback := textures_feedback_reserve(r, rhi.TEXTURE_TABLE_FIRST)
@@ -1077,19 +1078,22 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	translucent := rhi.Graphics_Pipeline_Desc{
 		vertex = &r.shader_codes[.Gbuffer_Vert], fragment = &r.shader_codes[.Glass_Filter_Frag],
 		color_formats = {0 = .RGBA16_Float}, color_count = 1, blend = {0 = .Multiply},
-		depth_format = .D32_Float, depth_test = true, depth_write = false, depth_compare = .Less, cull = .None,
-		name = "translucent",
+		cull = .None, name = "translucent",
 	}
 	graphics(list, r, .Glass_Filter, translucent)
-	translucent.fragment = &r.shader_codes[.Translucent_Frag]
-	translucent.blend = {0 = .Additive}
-	graphics(list, r, .Translucent, translucent, .Software)
-	translucent.fragment = &r.shader_codes[.Translucent_Hw_Frag]
-	graphics(list, r, .Translucent, translucent, .Hardware)
-	translucent.fragment = &r.shader_codes[.Translucent_Cost_Frag]
-	graphics(list, r, .Translucent_Cost, translucent, .Software, required = false)
-	translucent.fragment = &r.shader_codes[.Translucent_Hw_Cost_Frag]
-	graphics(list, r, .Translucent_Cost, translucent, .Hardware, required = false)
+	for hardware in ([]bool{false, true}) {
+		mask := Pipeline_Rays.Hardware if hardware else Pipeline_Rays.Software
+		translucent.fragment = &r.shader_codes[.Translucent_Hw_Frag if hardware else .Translucent_Frag]
+		translucent.blend = {0 = .Additive}
+		graphics(list, r, .Glass_Overflow, translucent, mask)
+		translucent.blend = {0 = .Premultiplied}
+		graphics(list, r, .Translucent, translucent, mask)
+		translucent.fragment = &r.shader_codes[.Translucent_Hw_Cost_Frag if hardware else .Translucent_Cost_Frag]
+		translucent.blend = {0 = .Additive}
+		graphics(list, r, .Glass_Overflow_Cost, translucent, mask, required = false)
+		translucent.blend = {0 = .Premultiplied}
+		graphics(list, r, .Translucent_Cost, translucent, mask, required = false)
+	}
 	graphics(list, r, .Highlight, {
 		vertex = &r.shader_codes[.Gbuffer_Vert], vertex_constants = {GBUFFER_VERT_HIGHLIGHT}, fragment = &r.shader_codes[.Highlight_Frag],
 		color_formats = {0 = .RG32_Float}, color_count = 1,
@@ -1874,7 +1878,6 @@ ensure_direct_targets :: proc(r: ^Renderer, cmd: ^rhi.Command_List, t: ^Targets,
 // and what the filter makes of them.
 @(private)
 ensure_reflect_targets :: proc(r: ^Renderer, cmd: ^rhi.Command_List, t: ^Targets) -> bool {
-	if t.reflect_raw != 0 {return true}
 	ok := target(r, cmd, &t.reflect_raw, t.width, t.height, .RGBA16_Float, {.Sampled, .Storage}, "reflection rays", shared = true)
 	ok &&= target(r, cmd, &t.reflect_shared, t.half_width, t.half_height, .RGBA16_Float, HISTORY_USAGE, "shared reflection rays", shared = true)
 	ok &&= target(r, cmd, &t.reflections, t.width, t.height, .RGBA16_Float, HISTORY_USAGE, "reflections", true, true)

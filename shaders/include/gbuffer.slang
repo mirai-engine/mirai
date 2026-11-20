@@ -177,10 +177,11 @@ void gbuffer_rest_write(int2 p, float3 moved, float depth) {
 
 #ifdef GBUFFER_NORMAL
 [[vk::binding(GBUFFER_NORMAL, 0)]] Texture2D<float4> gbuffer_normal_target : register(MIRAI_REGISTER(t, GBUFFER_NORMAL), space0);
-float3 gbuffer_normal(int2 p) { return gbuffer_normal_unpack(gbuffer_normal_target.Load(int3(p, 0))); }
+float4 gbuffer_normal_texel(int2 p) { return gbuffer_normal_target.Load(int3(p, 0)); }
+float3 gbuffer_normal(int2 p) { return gbuffer_normal_unpack(gbuffer_normal_texel(p)); }
 // The shading normal in xyz and its roughness in w.
 float4 gbuffer_normal_roughness(int2 p) {
-    float4 texel = gbuffer_normal_target.Load(int3(p, 0));
+    float4 texel = gbuffer_normal_texel(p);
     return float4(gbuffer_normal_unpack(texel), texel.z);
 }
 #endif
@@ -208,10 +209,9 @@ struct Gbuffer_Pixel {
 #if defined(GBUFFER_ALBEDO) && defined(GBUFFER_NORMAL)
 // stored: the reflectance target holds what each pixel reflects. Without
 // GBUFFER_EMISSION, the pixel has no emission and no occlusion.
-Gbuffer_Pixel gbuffer_read(int2 p, bool stored) {
+Gbuffer_Pixel gbuffer_read(int2 p, bool stored, float4 normal) {
     Gbuffer_Pixel g;
     float4 albedo = gbuffer_albedo_target.Load(int3(p, 0));
-    float4 normal = gbuffer_normal_target.Load(int3(p, 0));
     g.base_color = albedo.rgb;
     g.metallic = albedo.a;
     g.normal = gbuffer_normal_unpack(normal);
@@ -231,7 +231,7 @@ Gbuffer_Pixel gbuffer_read(int2 p, bool stored) {
 #endif
     return g;
 }
-Gbuffer_Pixel gbuffer_read(int2 p) { return gbuffer_read(p, (frame.flags & FRAME_FLAG_REFLECTANCE) != 0u); }
+Gbuffer_Pixel gbuffer_read(int2 p) { return gbuffer_read(p, (frame.flags & FRAME_FLAG_REFLECTANCE) != 0u, gbuffer_normal_texel(p)); }
 #endif
 
 // The emission of a pixel that shows in the image but lights nothing and is

@@ -8,7 +8,10 @@
 // runs them.
 #ifndef MIRAI_COST_SLANG
 #define MIRAI_COST_SLANG
-[[vk::binding(SLOT_PASS8, 0)]] RWStructuredBuffer<uint> cost : register(MIRAI_REGISTER(u, SLOT_PASS8), space0);
+#ifndef COST_SLOT
+#define COST_SLOT SLOT_PASS8
+#endif
+[[vk::binding(COST_SLOT, 0)]] RWStructuredBuffer<uint> cost : register(MIRAI_REGISTER(u, COST_SLOT), space0);
 
 // The row of a mesh, and of a material; INVALID past those of the count.
 uint cost_mesh_row(uint mesh) { return mesh < cost[0] ? mesh : INVALID; }

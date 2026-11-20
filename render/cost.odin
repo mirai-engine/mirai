@@ -70,7 +70,7 @@ renderer_cost_ask :: proc(r: ^Renderer) -> (problem: string) {
 	for id in COST_PIPELINES {
 		if r.pipelines[id] == 0 {return "the device did not make the pipelines that count the cost of a frame; a newer GPU driver may make them"}
 	}
-	if pipeline_of(r, .Translucent_Cost)^ == 0 {
+	if pipeline_of(r, .Translucent_Cost)^ == 0 || pipeline_of(r, .Glass_Overflow_Cost)^ == 0 {
 		return "the device did not make the pipeline that counts forward translucency"
 	}
 	meshes, materials := u32(len(r.scene.meshes)), u32(len(r.scene.materials))
@@ -155,14 +155,18 @@ cost_pixels :: proc(p: ^Pass) {
 }
 
 @(private)
-glass_forward_pipelines :: proc(p: ^Pass) -> [2]^rhi.Pipeline {
+translucent_forward_pipelines :: proc(p: ^Pass, overflow: bool) -> (targets: [3]^rhi.Pipeline) {
 	r := p.r
-	id := Pipeline_Id.Translucent
-	if p.cost != 0 {
-		id = .Translucent_Cost
-		rhi.cmd_bind_buffer(p.cmd, SLOT_PASS8, p.cost)
+	counting := p.cost != 0
+	if counting {rhi.cmd_bind_buffer(p.cmd, SLOT_PASS7, p.cost)}
+	if overflow {
+		targets[0] = &r.pipelines[.Glass_Filter]
+		targets[1] = pipeline_of(r, .Glass_Overflow_Cost if counting else .Glass_Overflow)
 	}
-	return {&r.pipelines[.Glass_Filter], pipeline_of(r, id)}
+	if p.draw_forward {
+		targets[2] = pipeline_of(r, .Translucent_Cost if counting else .Translucent)
+	}
+	return
 }
 
 @(private)

@@ -129,13 +129,10 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group_id : SV_GroupID, 
         visible = candidate && !(params.occlusion != 0u && occluded(inst.bounds_min.xyz, inst.bounds_max.xyz, frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane));
         if (candidate && !visible && !blended) InterlockedAdd(stats[0].occluded_instances, 1u);
     }
-    if (visible && !batched && (inst.meta.w & INSTANCE_FLAG_TRANSLUCENT) != 0u) {
+    if (visible && !batched && params.glass_groups.x != 0u && (inst.meta.w & INSTANCE_FLAG_TRANSLUCENT) != 0u) {
         InterlockedMax(glass_dispatch[0], params.glass_groups.x);
         InterlockedMax(glass_dispatch[1], params.glass_groups.y);
         InterlockedMax(glass_dispatch[2], 1u);
-        InterlockedMax(glass_dispatch[3], params.glass_groups.z);
-        InterlockedMax(glass_dispatch[4], params.glass_groups.w);
-        InterlockedMax(glass_dispatch[5], 1u);
     }
     if (!visible || blended) return;
     InterlockedAdd(stats[0].visible_instances, 1u);

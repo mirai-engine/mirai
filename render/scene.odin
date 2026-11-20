@@ -146,6 +146,8 @@ Environment :: struct {
 Translucent :: struct {
 	instance: u32,
 	distance: f32,
+	glass_roughness: f32, // a lower bound before textures, programs and antialiasing
+	forward, glass: bool,
 	solid:    bool, // a blended material of it has a medium (material_solid): the camera can be in it
 	layered:  bool, // a blended material of it has layers: the glass layers keep them in a target
 }
@@ -787,7 +789,7 @@ material_store :: proc(s: ^Scene_State, row: u32, value: Gpu_Material_Row, chang
 			s.shadow_stale.covers = true
 		}
 	}
-	changes.smoothest ||= material_smoothness(value) < s.smoothest || material_smoothness(held^) == s.smoothest
+	changes.smoothest ||= material_smoothness(value.shared) < s.smoothest || material_smoothness(held.shared) == s.smoothest
 	if held.program_id != value.program_id || held.alpha_mode != value.alpha_mode {
 		program_rows_count(s, held^, false)
 		program_rows_count(s, value, true)
@@ -886,6 +888,8 @@ Material_Class :: struct {
 	alpha_mode, program_id, layers: u32,
 	specular_color:                 Vec3,
 	specular_factor, ior:           f32,
+	transmissive, solid:            bool,
+	glass_roughness:                f32,
 	specular, specular_colored:     u32,
 }
 
@@ -894,6 +898,8 @@ material_class :: proc "contextless" (row: Gpu_Material_Row) -> Material_Class {
 	return {
 		alpha_mode = row.alpha_mode, program_id = row.program_id, layers = row.layers,
 		specular_color = row.specular_color, specular_factor = row.specular_factor, ior = row.ior,
+		transmissive = row.transmission > 0, solid = row.transmission > 0 && row.thickness > 0,
+		glass_roughness = material_smoothness(row.shared) if row.transmission > 0 else 1,
 		specular = row.textures[.Specular], specular_colored = row.textures[.Specular_Color],
 	}
 }
@@ -911,7 +917,7 @@ materials_reach :: proc(r: ^Renderer, row: u32) -> bool {
 	for int(row) >= len(s.materials) {
 		value := gpu_material(r, DEFAULT_MATERIAL)
 		append(&s.materials, value)
-		s.smoothest = min(s.smoothest, material_smoothness(value))
+		s.smoothest = min(s.smoothest, material_smoothness(value.shared))
 		s.materials_dirty = true
 	}
 	return true
@@ -920,7 +926,7 @@ materials_reach :: proc(r: ^Renderer, row: u32) -> bool {
 // The lowest roughness a row can have: a roughness texture or a Surface
 // program can make a mirror regardless of the roughness stored in it.
 @(private = "file")
-material_smoothness :: proc "contextless" (row: Gpu_Material_Row) -> f32 {
+material_smoothness :: proc "contextless" (row: Gpu_Material) -> f32 {
 	return 0 if row.program_id != 0 || row.textures[.Metallic_Roughness] != GPU_NONE else row.roughness
 }
 
@@ -930,7 +936,7 @@ materials_changed :: proc(s: ^Scene_State, changes: Material_Changes) {
 	if changes.lit_count > MATERIAL_LIT_ROWS {scene_changed(s)} else if changes.lit_count > 0 {materials_lit(s, changes.lit[:changes.lit_count])}
 	if changes.smoothest {
 		s.smoothest = 1
-		for m in s.materials {s.smoothest = min(s.smoothest, material_smoothness(m))}
+		for m in s.materials {s.smoothest = min(s.smoothest, material_smoothness(m.shared))}
 	}
 	// The alpha mode of a material decides how its instances are traced and drawn,
 	// and its program whether they move their vertices.
@@ -968,6 +974,7 @@ instances_classify :: proc(s: ^Scene_State) {
 		if int(inst.meta.x & INSTANCE_MESH_MASK) >= len(s.meshes) {continue}
 		mesh := s.meshes[inst.meta.x & INSTANCE_MESH_MASK]
 		a := instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
+		a.translucent.instance = u32(i)
 		if a.shown_opaque != 0 {
 			palette := inst.slot_materials
 			for packed, k in s.indices[mesh.slot_word:][:mesh.slot_count] {
@@ -988,7 +995,7 @@ instances_classify :: proc(s: ^Scene_State) {
 			s.instances_dirty = true
 			s.tlas_dirty = true
 		}
-		if a.blended && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.translucent, Translucent{instance = u32(i), solid = a.solid, layered = a.glass_layered})}
+		if a.blended && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.translucent, a.translucent)}
 	}
 	overlay_count_update(s)
 	tlas_refs_classify(s)
@@ -1022,13 +1029,13 @@ tlas_refs_classify :: proc(s: ^Scene_State) {
 // blended; glass: all of them; reflectance: one of its opaque materials
 // reflects other than the default dielectric, which the albedo and metallic
 // of the G-buffer give by themselves; layered: one of its opaque materials
-// has layers; solid: one of its blended ones has a thickness; glass_layered:
-// one of its blended ones has layers. shown_opaque: a bit for each slot
+// has layers. shown_opaque: a bit for each slot
 // whose row is a blended one with a program that its values show otherwise.
 @(private)
 Instance_Alpha :: struct {
 	tested, shown_opaque: u32,
-	blended, glass, reflectance, layered, solid, glass_layered: bool,
+	blended, glass, reflectance, layered: bool,
+	translucent: Translucent,
 }
 
 // material is the row that replaces those of the mesh, or GPU_NONE; given:
@@ -1038,6 +1045,7 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
     palette:=slots
     defaults:=asset.MATERIAL_DEFAULTS
     a.glass = mesh.slot_count > 0
+    a.translucent.glass_roughness = max(f32)
     // A fade leaves out, by a pattern, what rays and the maps of the shadows meet of every row.
     faded:=instance_values_fade(s,given)>0
     for packed, k in s.indices[mesh.slot_word:][:mesh.slot_count] {
@@ -1050,10 +1058,14 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
             departs:=values.program_id!=0 || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior
             if m != .Blend && (departs || values.textures[.Specular]!=GPU_NONE || values.textures[.Specular_Color]!=GPU_NONE) {a.reflectance=true}
             lit:=transmute(asset.Material_Layers)values.layers-{.Unlit}
-            if card(lit)>0 {
-                if m == .Blend {a.glass_layered=true} else {a.layered=true}
-            }
-            if m == .Blend {a.solid ||= values.transmission > 0 && values.thickness > 0}
+            if m == .Blend {
+                if values.transmission > 0 {
+                    a.translucent.glass = true
+                    a.translucent.solid ||= values.thickness > 0
+                    a.translucent.layered ||= lit != {}
+                    a.translucent.glass_roughness = min(a.translucent.glass_roughness, material_smoothness(values))
+                } else {a.translucent.forward = true}
+            } else {a.layered ||= lit != {}}
         }
         if m != .Opaque || faded {a.tested |= 1 << u32(k)}
         a.blended ||= m == .Blend
@@ -2040,10 +2052,11 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		values_given := desc.material_values
 		if instance_material_values_give(r, &s.instances[index], &values_given) && instance_material_values_glow(s, s.instances[index].material_values) {instance_changed_near(s, &s.instances[index], true)}
 		a := instance_alpha(s, mesh, material, slot_materials, s.instances[index].material_values)
+		a.translucent.instance = index
 		flags |= alpha_flags(a)
 		s.instances[index].meta.w, s.instances[index].tested = flags, a.tested
 		if a.reflectance && !hidden {append(&s.reflective, Reflective_Instance{index, a.layered})}
-		if a.blended && !hidden {append(&s.translucent, Translucent{instance = index, solid = a.solid, layered = a.glass_layered})}
+		if a.blended && !hidden {append(&s.translucent, a.translucent)}
 		head:=s.meshes[desc.mesh].first_instance
 		s.instance_next[index],s.instance_prev[index]=head,-1
 		if head>=0 {s.instance_prev[head]=i32(index)}

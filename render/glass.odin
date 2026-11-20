@@ -7,18 +7,8 @@ import "mirai:asset"
 import "mirai:rhi"
 import mm "mirai:std/math"
 
-// Blended surfaces. The nearest ones of each pixel are layers: a small
-// G-buffer each, lit by a compute pass once per pixel with what glass needs
-// (traced reflection, refraction, shadowed lights). The surfaces behind the
-// layers are drawn forward and back to front: each one filters the scene
-// behind it and adds its own light, with the probe volume for its reflection.
-
 GLASS_LAYERS_MAX :: 2
-// Below this reflectance a reflection of glass lights what it shows from the
-// probe volume instead of tracing shadow rays there.
 GLASS_CACHED_REFLECTANCE :: f32(0.25)
-// Below this reflectance (glass seen within about 50 degrees of face on) a
-// reflection of glass traces one turn of its block in four.
 
 Glass_Layer :: struct {
 	albedo:   rhi.Texture, // rgb base color, a metallic
@@ -33,55 +23,34 @@ Glass_Layer :: struct {
 @(private)
 glass_layer_count :: proc "contextless" (r: ^Renderer) -> int {return int(clamp(r.settings.glass_layers, 1, GLASS_LAYERS_MAX))}
 
-// Whether some blended instance of the scene has a material with layers.
-@(private)
-glass_layered :: proc(s: ^Scene_State) -> bool {
-	for entry in s.translucent {if entry.layered {return true}}
-	return false
-}
-
-// The targets of the layers exist from the first frame that draws a blended
-// surface: a scene without any never pays for them. Their layers targets,
-// from the first frame whose scene has a blended material with layers.
 @(private)
 ensure_glass_targets :: proc(r: ^Renderer, t: ^Targets) -> bool {
-	layers := glass_layer_count(r)
-	if len(r.scene.translucent) == 0 {return true}
-	d := r.device
-	full :: proc(d: ^rhi.Device, t: ^Targets, format: rhi.Format, usage: rhi.Texture_Usage, name: string) -> rhi.Texture {
-		return rhi.texture_create(d, {width = t.width, height = t.height, format = format, usage = usage, name = name})
+	present, layered := false, false
+	for entry in r.scene.translucent {
+		present ||= entry.glass
+		layered ||= entry.layered
 	}
+	if !present {return true}
 	attachment := rhi.Texture_Usage{.Color_Target, .Sampled}
-	layered := glass_layered(&r.scene)
-	if t.glass_scene != 0 {
-		if t.glass[0].layers != 0 || !layered {return true}
-		ok := true
-		for &layer in t.glass[:layers] {
-			layer.layers = full(d, t, .RGBA32_Uint, attachment, "glass material layers")
-			ok &&= layer.layers != 0
+	for &layer in t.glass[:glass_layer_count(r)] {
+		if !target(r, nil, &layer.albedo, t.width, t.height, .RGBA8_Srgb, attachment, "glass albedo") ||
+		   !target(r, nil, &layer.normal, t.width, t.height, .RGBA16_Float, attachment, "glass normal") ||
+		   !target(r, nil, &layer.emission, t.width, t.height, .RGBA16_Float, attachment, "glass emission") ||
+		   !target(r, nil, &layer.ids, t.width, t.height, .RG32_Uint, attachment, "glass ids") ||
+		   !target(r, nil, &layer.depth, t.width, t.height, .R32_Float, attachment, "glass depth") ||
+		   !target(r, nil, &layer.surface, t.width, t.height, .RGBA8_Srgb, attachment, "glass surface") ||
+		   layered && !target(r, nil, &layer.layers, t.width, t.height, .RGBA32_Uint, attachment, "glass material layers") {
+			return false
 		}
-		if !ok {set_error(r, "glass layers targets: %s", rhi.device_error(d))}
-		return ok
 	}
-	ok := true
-	for &layer in t.glass[:layers] {
-		layer.albedo = full(d, t, .RGBA8_Srgb, attachment, "glass albedo")
-		layer.normal = full(d, t, .RGBA16_Float, attachment, "glass normal")
-		layer.emission = full(d, t, .RGBA16_Float, attachment, "glass emission")
-		layer.ids = full(d, t, .RG32_Uint, attachment, "glass ids")
-		layer.depth = full(d, t, .R32_Float, attachment, "glass depth")
-		layer.surface = full(d, t, .RGBA8_Srgb, attachment, "glass surface")
-		if layered {layer.layers = full(d, t, .RGBA32_Uint, attachment, "glass material layers")}
-		ok &&= layer.albedo != 0 && layer.normal != 0 && layer.emission != 0 && layer.ids != 0 && layer.depth != 0 && layer.surface != 0 && (layer.layers != 0 || !layered)
+	if t.glass_scene == 0 {
+		t.glass_scene = rhi.texture_create(r.device, {
+			width = t.width, height = t.height, format = .RGBA16_Float, usage = HISTORY_USAGE,
+			mip_levels = glass_scene_levels(t), name = "glass scene",
+		})
+		if t.glass_scene == 0 {set_error(r, "glass scene: %s", rhi.device_error(r.device)); return false}
 	}
-	t.glass_zbuffer = full(d, t, .D32_Float, {.Depth_Target}, "glass z")
-	t.glass_scene = rhi.texture_create(d, {width = t.width, height = t.height, format = .RGBA16_Float, usage = {.Sampled, .Storage, .Color_Target}, mip_levels = glass_scene_levels(t), name = "glass scene"})
-	t.glass_reflections = full(d, t, .RGBA16_Float, {.Sampled, .Storage, .Color_Target}, "glass reflections")
-	t.glass_valid = false
-	t.glass_needs_clear = true
-	ok &&= t.glass_zbuffer != 0 && t.glass_scene != 0 && t.glass_reflections != 0
-	if !ok {set_error(r, "glass targets: %s", rhi.device_error(d))}
-	return ok
+	return target(r, nil, &t.glass_zbuffer, t.width, t.height, .D32_Float, {.Depth_Target}, "glass z")
 }
 
 // Every texture of the glass of a view, made or not.
@@ -153,14 +122,38 @@ glass_visible :: proc(s: ^Scene_State, frame: ^Gpu_Frame) -> []Translucent {
 	return visible
 }
 
+@(private)
+translucency_in_frustum :: proc(p: ^Pass, f: ^Gpu_Frame) {
+	settings := &p.r.settings
+	size := f.resolution
+	lo, hi := Vec2{1, 1}, Vec2{}
+	p.translucent = glass_visible(&p.r.scene, f)
+	for entry in p.translucent {
+		inst := &p.r.scene.instances[entry.instance]
+		bounds := mm.Aabb{inst.bounds_min.xyz, inst.bounds_max.xyz}
+		p.draw_forward ||= entry.forward
+		p.draw_glass ||= entry.glass
+		p.glass_material_layers ||= entry.layered
+		if settings.reflections != .Off && entry.glass_roughness < settings.reflection_roughness {
+			rect := projected_box(bounds, f.view_proj, f.camera_position.xyz)
+			lo, hi = linalg.min(lo, rect.xy), linalg.max(hi, rect.zw)
+		}
+	}
+	if lo.x < hi.x && lo.y < hi.y {
+		p.glass_reflect_bounds = {
+			u32(max(math.floor(lo.x * size.x) - 1, 0)), u32(max(math.floor(lo.y * size.y) - 1, 0)),
+			u32(min(math.ceil(hi.x * size.x) + 1, size.x)), u32(min(math.ceil(hi.y * size.y) + 1, size.y)),
+		}
+	}
+}
+
 // A draw of one program binds its pipeline and draw constants, then draws.
-// Each material slot can supply one program. Split between complete instances
-// so the forward pair always filters and lights in the same order.
+// Split between complete instances so the command count stays within the pass bound.
 @(private = "file")
-glass_raster :: proc(p: ^Pass, pass: ^rhi.Render_Pass_Desc, targets: []^rhi.Pipeline) {
+glass_raster :: proc(p: ^Pass, pass: ^rhi.Render_Pass_Desc, target: ^rhi.Pipeline) {
 	r, cmd := p.r, p.cmd
 	s := &r.scene
-	#assert(3 * asset.MESH_MAX_SLOTS * 2 <= rhi.MAX_RENDER_PASS_COMMANDS)
+	#assert(3 * asset.MESH_MAX_SLOTS <= rhi.MAX_RENDER_PASS_COMMANDS)
 	plain := rhi.frame_alloc(r.device, 4 * size_of(u32))
 	if plain.ptr == nil {return}
 	(^[4]u32)(plain.ptr)^ = {}
@@ -168,8 +161,9 @@ glass_raster :: proc(p: ^Pass, pass: ^rhi.Render_Pass_Desc, targets: []^rhi.Pipe
 	rhi.cmd_begin_render_pass(cmd, pass)
 	commands := 0
 	for entry in p.translucent {
+		if !entry.glass {continue}
 		mesh := s.instances[entry.instance].meta.x & INSTANCE_MESH_MASK
-		needed := 3 * int(max(s.meshes[mesh].slot_count, 1)) * len(targets)
+		needed := 3 * int(max(s.meshes[mesh].slot_count, 1))
 		if commands + needed > rhi.MAX_RENDER_PASS_COMMANDS {
 			rhi.cmd_end_render_pass(cmd)
 			for &color in pass.colors[:pass.color_count] {color.load = .Load}
@@ -177,31 +171,21 @@ glass_raster :: proc(p: ^Pass, pass: ^rhi.Render_Pass_Desc, targets: []^rhi.Pipe
 			rhi.cmd_begin_render_pass(cmd, pass)
 			commands = 0
 		}
-		for target in targets {
-			instance_programs_draw(r, cmd, target, entry.instance, false, plain_constants = plain)
-		}
+		instance_programs_draw(r, cmd, target, entry.instance, false, plain_constants = plain)
 		commands += needed
 	}
 	rhi.cmd_end_render_pass(cmd)
 }
 
-// The blended instances over the composited scene in t.display, in two
-// steps: glass_layers rasterizes the nearest surfaces of each pixel, and
-// glass_shade draws the ones behind them and lights the layers. Their
-// fragments and the glass pass trace shadow rays and read the probe volume,
-// so everything the deferred passes read is declared here. The compute
-// passes run with the dispatch sizes the cull pass wrote: none while every
-// blended instance is hidden.
 @(private)
 glass_layers :: proc(p: ^Pass) {
-	r, cmd, t, camera := p.r, p.cmd, p.t, p.camera
-	layers := glass_layer_count(r)
-	p.glass_medium = glass_medium(r, camera.position)
-	rhi.cmd_timestamp(cmd, "glass layers")
-	for k in 0 ..< layers {
+	r, cmd, t := p.r, p.cmd, p.t
+	p.glass_medium = glass_medium(r, p.camera.position)
+	rhi.cmd_timestamp(cmd, "translucent")
+	for k in 0 ..< glass_layer_count(r) {
 		layer := t.glass[k]
 		nearer := t.glass[k - 1].depth if k > 0 else r.dummy_texture
-		layered := glass_layers_held(r, layer)
+		layered := p.glass_material_layers
 		pass := rhi.Render_Pass_Desc{color_count = 7 if layered else 6, name = "glass layer"}
 		for target, i in ([7]rhi.Texture{layer.albedo, layer.normal, layer.emission, layer.ids, layer.depth, layer.surface, layer.layers}) {
 			if i < int(pass.color_count) {pass.colors[i] = {texture = target, load = .Clear, store = .Store}}
@@ -214,42 +198,76 @@ glass_layers :: proc(p: ^Pass) {
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.linear_depth)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, nearer)
 		textures_feedback_bind(r, cmd)
-		glass_raster(p, &pass, {target})
+		glass_raster(p, &pass, target)
 	}
 }
 
 @(private)
-glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
+translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overflow := false) {
+	if !p.draw_forward && !overflow {return}
 	r, cmd, t := p.r, p.cmd, p.t
-	settings := &r.settings
-	layers := glass_layer_count(r)
-	{
-		// The depth buffer of the last layer rejects that layer and what is in
-		// front of it before a fragment runs: only the surfaces behind are shaded.
-		last := t.glass[layers - 1].depth
-		rhi.cmd_timestamp(cmd, "translucent")
-		pass := rhi.Render_Pass_Desc{color_count = 1, name = "translucent"}
-		pass.colors[0] = {texture = t.display, load = .Load, store = .Store}
-		pass.depth = {texture = t.glass_zbuffer, load = .Load, store = .Store}
-		Params :: struct {light_budget, pad0, pad1, pad2: u32}
-		params := Params{light_budget = settings.light_budget}
-		set_params(cmd, &params)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS0, last)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
-		targets := glass_forward_pipelines(p)
-		glass_raster(p, &pass, targets[:])
+	s := &r.scene
+	#assert((3 * asset.MESH_MAX_SLOTS + 1) * 3 <= rhi.MAX_RENDER_PASS_COMMANDS)
+	plain := rhi.frame_alloc(r.device, 4 * size_of(u32))
+	if plain.ptr == nil {return}
+	(^[4]u32)(plain.ptr)^ = {}
+	pass := rhi.Render_Pass_Desc{color_count = 1, name = "translucent forward"}
+	pass.colors[0] = {texture = t.display, load = .Load, store = .Store}
+	Params :: struct {light_budget, near_layer, far_layer, overflow: u32}
+	params := Params{
+		light_budget = r.settings.light_budget,
+		near_layer = 1 if near_layer != 0 else 0, far_layer = 1 if far_layer != 0 else 0,
 	}
+	bind_light_maps(p, p.frame.sun_maps.z != 0)
+	textures_feedback_bind(r, cmd)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS0, texture_or_dummy(r, near_layer))
+	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS2, texture_or_dummy(r, far_layer))
+	targets := translucent_forward_pipelines(p, overflow)
+	rhi.cmd_bind_index_buffer(cmd, s.mesh_draws)
+	rhi.cmd_begin_render_pass(cmd, &pass)
+	commands := 0
+	for entry in p.translucent {
+		draws := 0
+		for target, i in targets {
+			if target != nil && (i < 2 ? entry.glass : entry.forward) {draws += 1}
+		}
+		if draws == 0 {continue}
+		mesh := s.instances[entry.instance].meta.x & INSTANCE_MESH_MASK
+		needed := (3 * int(max(s.meshes[mesh].slot_count, 1)) + 1) * draws
+		if commands + needed > rhi.MAX_RENDER_PASS_COMMANDS {
+			rhi.cmd_end_render_pass(cmd)
+			rhi.cmd_begin_render_pass(cmd, &pass)
+			commands = 0
+		}
+		for target, i in targets {
+			if target == nil || (i < 2 ? !entry.glass : !entry.forward) {continue}
+			params.overflow = 1 if i < 2 else 0
+			set_params(cmd, &params)
+			instance_programs_draw(r, cmd, target, entry.instance, false, plain_constants = plain)
+		}
+		commands += needed
+	}
+	rhi.cmd_end_render_pass(cmd)
+}
 
-	traced := trace_reflections
+@(private)
+glass_shade :: proc(p: ^Pass) -> bool {
+	r, cmd, t := p.r, p.cmd, p.t
+	layers := glass_layer_count(r)
+	translucent_forward(p, t.glass[layers - 1].depth, 0, true)
+	traced := p.glass_reflect_bounds != {}
 	if traced {
+		if !ensure_reflect_targets(r, cmd, t) ||
+		   !target(r, cmd, &t.glass_reflections, t.width, t.height, .RGBA16_Float, HISTORY_USAGE,
+		           "glass reflections", clear = true) {
+			return false
+		}
 		rhi.cmd_timestamp(cmd, "glass reflect")
-		first := t.glass[0]
-		rhi.cmd_bind_texture(cmd, SLOT_SURFACE, first.surface)
-		glass_bind_layers(p, first)
-		// Glass reflects a few percent of what its ray finds: Traced shares a
-		// ray per block of 2x2 pixels at any roughness.
-		reflect_pass(p, first.normal, first.depth, first.albedo, t.glass_reflections, true, 0, GLASS_CACHED_REFLECTANCE, true)
-		rhi.cmd_bind_texture(cmd, SLOT_SURFACE, t.surface if t.surface != 0 else r.dummy_texture)
+		rhi.cmd_bind_texture(cmd, SLOT_SURFACE, t.glass[0].surface)
+		glass_bind_layers(p, t.glass[0])
+		traced = reflect_pass(p, glass = true)
+		rhi.cmd_bind_texture(cmd, SLOT_SURFACE, texture_or_dummy(r, t.surface))
 	}
 	t.glass_valid = traced
 
@@ -259,6 +277,7 @@ glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 	light := pipeline_of(r, .Glass_Light)^
 	maps := p.frame.sun_maps.z != 0
 	for k := layers - 1; k >= 0; k -= 1 {
+		if k < layers - 1 {translucent_forward(p, t.glass[k].depth, t.glass[k + 1].depth)}
 		rhi.cmd_bind_pipeline(cmd, pipeline)
 		glass_layer_bind(p, k)
 		// The layer reads the scene from a copy and writes over its own pixels: its own light
@@ -284,6 +303,7 @@ glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 		rhi.cmd_dispatch_indirect(cmd, p.view.glass_dispatch, 0)
 	}
 	rhi.cmd_bind_texture(cmd, SLOT_LAYERS, t.layers if t.layers != 0 else r.dummy_layers)
+	return true
 }
 
 // The levels of the copy of the scene behind a layer: down to the one the
@@ -322,21 +342,9 @@ glass_params :: proc(p: ^Pass) -> Glass_Params {
 	return {light_budget = settings.light_budget, max_distance = settings.gi_max_distance, medium = p.glass_medium, near_top = GLASS_MEDIUM_NEAR}
 }
 
-// Whether a layer of glass keeps the layers of its materials in its target:
-// while some blended instance of the scene has them.
-@(private)
-glass_layers_held :: proc(r: ^Renderer, layer: Glass_Layer) -> bool {return layer.layers != 0 && glass_layered(&r.scene)}
-
-// The layers target of a layer of glass in place of the G-buffer's, from
-// which the passes that read the layer read its layers (gbuffer_layers).
 @(private = "file")
 glass_bind_layers :: proc(p: ^Pass, layer: Glass_Layer) {
-	r, cmd := p.r, p.cmd
-	if !glass_layers_held(r, layer) {
-		rhi.cmd_bind_texture(cmd, SLOT_LAYERS, r.dummy_layers)
-		return
-	}
-	rhi.cmd_bind_texture(cmd, SLOT_LAYERS, layer.layers)
+	rhi.cmd_bind_texture(p.cmd, SLOT_LAYERS, layer.layers if p.glass_material_layers else p.r.dummy_layers)
 }
 
 // What the glass passes read of layer k.
@@ -351,7 +359,7 @@ glass_layer_bind :: proc(p: ^Pass, k: int) {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, layer.emission)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, layer.ids)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS4, layer.depth)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.glass_reflections)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS6, texture_or_dummy(p.r, t.glass_reflections))
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, t.linear_depth)
 }
 

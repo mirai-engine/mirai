@@ -184,36 +184,10 @@ Sheet_Seen sheet_through(Material m, Glass g, float2 uv) {
     return seen;
 }
 
-// The way of the view through a solid and out of it, without rays: it goes on
-// bent as it went in, and shows the scene where it meets it on screen
-// (screen_crossing). Behind what stands in front of the layer, or off the
-// screen, it shows what the pixel shows straight through.
-#define WALK_OPEN 1u // a sheet, which the view does not leave (sheet_through)
-
-struct Glass_Walk {
-    uint flags;      // WALK_OPEN
-    float3 origin;
-    float3 direction;
-    float path;      // how far it went inside before origin
-    float3 radiance; // what it shows
-};
-
-Glass_Walk walk_start(float3 origin, float3 direction, uint flags) {
-    Glass_Walk w;
-    w.flags = flags;
-    w.origin = origin;
-    w.direction = direction;
-    w.path = 0.0;
-    w.radiance = float3(0.0);
-    return w;
-}
-
-// What a walk shows, behind the layer. depth: of the layer, which rough glass
-// blurs the scene behind by; uv: of the pixel.
-void walk_show(inout Glass_Walk w, float depth, float roughness, float2 uv) {
+float3 scene_distorted(float3 origin, float3 direction, float depth, float roughness, float2 uv) {
     float2 at;
-    if (!screen_crossing(w.origin, w.direction, depth, at)) at = uv;
-    w.radiance = scene_through(at, depth, roughness);
+    if (!screen_crossing(origin, direction, depth, at)) at = uv;
+    return scene_through(at, depth, roughness);
 }
 #endif
 
