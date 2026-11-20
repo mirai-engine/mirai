@@ -185,7 +185,7 @@ Material_Info :: struct {
     diffuse_transmission:Material_Diffuse_Transmission,
     unlit:bool, // it reflects no light and shows its emission alone; base color and opacity still cover
     maps:Material_Maps,
-    program:[MATERIAL_NAME_BYTES]u8 `mirai:"text"`, // "" is the standard model
+    program:[MATERIAL_NAME_BYTES]u8 `mirai:"text"`, // generated program id, authored name, or ""
 }
 
 Parameter_Kind :: enum u8 {Float,Int,Uint,Bool,Texture}

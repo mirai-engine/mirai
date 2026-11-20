@@ -387,7 +387,8 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
     // A game needs them only to import the sources of its project.
     engine_current:=target==.Game && len(build.imports_roots(&p))==0 || build.engine_current(root,engine,paths.defines)
     // A project with sources goes on: its build imports what changed among them before it finds the library current.
-    if target!=.Game && engine_current && len(build.imports_roots(&p))==0 && library_current(root,&p,target,engine,mode==.Dev) {
+    if target!=.Game && engine_current && len(build.imports_roots(&p))==0 &&
+        library_current(root,&p,target,engine,mode==.Dev,store_root) {
         _=engine_report({status=.Up_To_Date,mode=engine,folder=paths.folder},root)
         if os.is_file(project.path(project.shader_generation(p.root,context.temp_allocator),project.SHADERS_MANIFEST,allocator=context.temp_allocator)) {
             fmt.printfln("%s unchanged.",project.shader_generation(p.root,context.temp_allocator))
@@ -419,9 +420,8 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
     } else if !engine_shaders(root,turn_held=true) {
         return 1,"",false
     }
-    // The generation first: a game ships the one that is published, and a dedicated server none.
-    if !server {
-        generation:=build.shaders_run(p)
+    if target==.Editor {
+        generation:=build.shaders_run(p,store_root=store_root)
         defer build.shaders_destroy(generation)
         switch generation.result.status {
         case .Running,.None,.Cancelled:
@@ -430,7 +430,6 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         case .Failed:
             shaders_failed=true
             fmt.eprintfln("mirai build: could not generate the shaders of the project: %s",generation.result.message)
-            if target==.Game {return 1,"",true}
         }
         if generation.result.status!=.Failed && generation.result.message!="" {fmt.eprintln(generation.result.message)}
     }
@@ -450,6 +449,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         case .Built:      fmt.printfln("%s ready (%.1f s%s).",result.output,result.seconds,result.relinked?", linked again":"")
         case .Up_To_Date: fmt.printfln("%s unchanged.",result.output)
         case .Failed:
+            if result.failure==.Shaders {shaders_failed=true}
             if result.text!="" {fmt.eprintln(result.text)}
             switch result.failure {
             case .None,.Compile,.Shaders,.Tests:
@@ -518,8 +518,9 @@ project_engine_paths :: proc(root,folder:string,mode:Build_Mode) -> build.Engine
 // compile nothing: the C libraries, the shaders of the project and the
 // library stand. What has nothing to compile takes no turn.
 @(private="file")
-library_current :: proc(root:string,p:^project.Project,target:build.Target,engine:Build_Mode,dev:bool) -> bool {
-    return c_libraries_current(root) && build.shaders_current(p) && build.target_state(p,target,"",dev,engine)==.Current
+library_current :: proc(root:string,p:^project.Project,target:build.Target,engine:Build_Mode,dev:bool,store_root:string) -> bool {
+    return c_libraries_current(root) && build.shaders_current(p,store_root=store_root) &&
+        build.target_state(p,target,"",dev,engine)==.Current
 }
 
 // The value after args[index^], advancing the index past it; false at their end.

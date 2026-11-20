@@ -41,7 +41,7 @@ written_open :: proc(s:^store.Store,w:Written,a:^asset.Asset,allocator:=context.
 Import_Report :: struct {
     assets:[dynamic]Written,
     warnings:[dynamic]string,
-    programs:[dynamic]string, // the Surface programs written to the shaders of the project, their files: the editor publishes them
+    programs:[dynamic]string, // programs the editor publishes after importing
     // The asset of each mesh, material and image of the model, by row; zero for an image that was not written.
     mesh_ids,material_ids,image_ids,skeleton_ids:[]base.Asset_Id,
     animation_id:base.Asset_Id,
@@ -123,6 +123,7 @@ Writer :: struct {
     options:Import_Options,
     folder:string,               // where new documents go: under the folder of the documents; "": none are written there
     documents:string,            // under the folder of the documents, where new ones go (asset.Package.documents)
+    catalog_path:string,
     registry:^asset.Registry,    // the assets of the root, where documents are found by id; nil without a folder of the documents
     types:asset.Types,
     report:^Import_Report,

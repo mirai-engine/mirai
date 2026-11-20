@@ -1,6 +1,7 @@
 package build
 
 import "base:runtime"
+import "core:mem/virtual"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -27,7 +28,6 @@ game_copies :: proc(p:^project.Project,folder,compiler:string,a:runtime.Allocato
             append(&copies,Copy{from=from,to=project.path(folder,icon,allocator=a)})
         }
     }
-    if !server {shaders_copies(&copies,p.root,folder,a)}
     // What the lists of the renderer asked for in each scene the runs of the
     // project opened: the game starts its lists there and goes on filling it.
     if capacities:=project.cache_path(p.root,project.CAPACITY_CACHE,allocator=a);!server && os.is_file(capacities) {
@@ -43,8 +43,22 @@ game_copies :: proc(p:^project.Project,folder,compiler:string,a:runtime.Allocato
 // settings, and the assets of the project, cooked.
 @(private)
 job_ship :: proc(job:^Job) -> Failure {
-    if !copies_run(job.copies) {return .Copy_Failed}
     folder:=job.published[:strings.last_index_byte(job.published,'/')]
+    if !job.server {
+        p,error:=project.open(job.root,job.engine_root,context.temp_allocator)
+        if error.code!=.None {return .Shaders}
+        defer project.close(&p)
+        generation:=shaders_run(&p,store_root=job.store_root)
+        defer shaders_destroy(generation)
+        if generation.result.status==.Failed {
+            job.result.text=strings.clone(generation.result.message,virtual.arena_allocator(&job.arena))
+            return .Shaders
+        }
+        copies:=make([dynamic]Copy,context.temp_allocator)
+        shaders_copies(&copies,job.root,folder,context.temp_allocator)
+        if !copies_run(copies[:]) {return .Copy_Failed}
+    }
+    if !copies_run(job.copies) {return .Copy_Failed}
     if os.write_entire_file(project.path(folder,project.SETTINGS_FILE,allocator=context.temp_allocator),job.settings)!=nil {return .Copy_Failed}
     if job.cook.assets=="" {return .None}
     job.result.cook=cook_assets(job.cook)

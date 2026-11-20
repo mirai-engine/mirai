@@ -1,6 +1,7 @@
 package build
 
 import "base:runtime"
+import "core:fmt"
 import "core:mem/virtual"
 import "core:os"
 import "core:slice"
@@ -8,9 +9,11 @@ import "core:strings"
 import "core:sync"
 import "core:thread"
 import "core:time"
+import "mirai:asset"
 import "mirai:cook/shaders"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:store"
 
 // The shader generation of a project: the shaders of the engine compiled
 // with the Slang programs under <project>/shaders and under the shaders/ of
@@ -46,6 +49,7 @@ Shaders_Job :: struct {
     allocator:runtime.Allocator,
     arena:virtual.Arena,
     options:shaders.Options,
+    store_root:string,
     worker:^thread.Thread,
     done:bool, // atomic
     tick:time.Tick,
@@ -87,7 +91,10 @@ shader_sources :: proc(p:^project.Project,allocator:=context.allocator) -> (sour
 // loads alone with them. idle: stages compiled after the others; once every
 // other one is, shaders_active names a generation that loads alone with
 // them.
-shaders_start :: proc(p:^project.Project,first:[]string={},idle:[]string={},previews:[]string={},allocator:=context.allocator) -> ^Shaders_Job {
+shaders_start :: proc(
+    p:^project.Project,first:[]string={},idle:[]string={},previews:[]string={},
+    allocator:=context.allocator,store_root:="",
+) -> ^Shaders_Job {
     job:=new(Shaders_Job,allocator)
     job.allocator=allocator
     _=virtual.arena_init_growing(&job.arena)
@@ -102,15 +109,16 @@ shaders_start :: proc(p:^project.Project,first:[]string={},idle:[]string={},prev
         return job
     }
     sources,own:=shader_sources(p,a)
-    if !own && len(sources)==0 {
+    uses,problem:=shaders_uses(p,previews,a)
+    if problem!="" {return finish(job,.Failed,problem)}
+    if !own && len(sources)==0 && !shaders_have_generated(uses) {
         if os.is_file(project.path(job.result.output,project.SHADERS_MANIFEST,allocator=context.temp_allocator)) {
             if base.remove_all(job.result.output)!=nil {return finish(job,.Failed,"the generation of an earlier build could not be removed")}
         }
         return finish(job,.None,"")
     }
     if p.engine_root=="" {return finish(job,.Failed,"the root of the engine is not known")}
-    uses,problem:=shaders_uses(p,previews,a)
-    if problem!="" {return finish(job,.Failed,problem)}
+    job.store_root=strings.clone(store_root,a)
     job.options={
         root=strings.clone(p.engine_root,a),project=strings.clone(p.root,a),sources=sources,output=job.result.output,
         progress=&job.progress,uses=uses,
@@ -138,12 +146,56 @@ shaders_start :: proc(p:^project.Project,first:[]string={},idle:[]string={},prev
 
 // Whether shaders_start would leave the generation of the project as it is,
 // without compiling, taking a turn or writing anything.
-shaders_current :: proc(p:^project.Project,previews:[]string={}) -> bool {
+shaders_current :: proc(p:^project.Project,previews:[]string={},store_root:="") -> bool {
     sources,own:=shader_sources(p,context.temp_allocator)
     output:=project.shader_generation(p.root,context.temp_allocator)
-    if !own && len(sources)==0 {return !os.is_file(project.path(output,project.SHADERS_MANIFEST,allocator=context.temp_allocator))}
     uses,problem:=shaders_uses(p,previews,context.temp_allocator)
-    return problem=="" && p.engine_root!="" && shaders.current({root=p.engine_root,project=p.root,sources=sources,output=output,uses=uses})
+    if problem!="" {return false}
+    if !own && len(sources)==0 && !shaders_have_generated(uses) {
+        return !os.is_file(project.path(output,project.SHADERS_MANIFEST,allocator=context.temp_allocator))
+    }
+    generated,reason:=shaders_generated(uses,store_root,context.temp_allocator)
+    return reason=="" && p.engine_root!="" && shaders.current({
+        root=p.engine_root,project=p.root,sources=sources,output=output,uses=uses,
+        generated=generated,
+    })
+}
+
+@(private="file")
+shaders_have_generated :: proc(uses:[]shaders.Program_Uses_Of) -> bool {
+    for use in uses {
+        if strings.has_prefix(use.program,asset.GENERATED_PROGRAM_PREFIX) {return true}
+    }
+    return false
+}
+
+shaders_generated :: proc(
+    uses:[]shaders.Program_Uses_Of,store_root:string,allocator:=context.allocator,
+) -> (generated:[]shaders.Generated_Surface,problem:string) {
+    if !shaders_have_generated(uses) {return}
+    s,open_error:=store.open(store_root if store_root!="" else
+        store.default_root(context.temp_allocator),context.temp_allocator)
+    if open_error!=.None {
+        return nil,fmt.aprintf("the shader source store could not be opened (%v)",
+            open_error,allocator=allocator)
+    }
+    defer store.close(&s)
+    found:=make([dynamic]shaders.Generated_Surface,allocator)
+    for use in uses {
+        if !strings.has_prefix(use.program,asset.GENERATED_PROGRAM_PREFIX) {continue}
+        address,ok:=asset.generated_program_address(use.program)
+        if !ok {
+            return nil,fmt.aprintf("invalid generated Surface program id %s: import its source again",
+                use.program,allocator=allocator)
+        }
+        source,read_error:=asset.record_get(&s,address)
+        if read_error!=.None {
+            return nil,fmt.aprintf("generated Surface program %s is unavailable (%v): fetch or rebuild its package",
+                use.program,read_error,allocator=allocator)
+        }
+        append(&found,shaders.Generated_Surface{id=use.program,text=strings.clone(source,allocator)})
+    }
+    return found[:],""
 }
 
 // What the generation of a project compiles its Surface programs for: what
@@ -165,8 +217,16 @@ shaders_uses :: proc(p:^project.Project,previews:[]string,allocator:=context.all
 @(private)
 shaders_work :: proc(job:^Shaders_Job) {
     a:=virtual.arena_allocator(&job.arena)
-    result:=shaders.generate(job.options,a)
     r:=&job.result
+    generated,problem:=shaders_generated(job.options.uses,job.store_root,a)
+    if problem!="" {
+        r.status,r.message=.Failed,problem
+        r.seconds=time.duration_seconds(time.tick_since(job.tick))
+        sync.atomic_store(&job.done,true)
+        return
+    }
+    job.options.generated=generated
+    result:=shaders.generate(job.options,a)
     r.programs,r.compiled,r.reused=result.programs,result.compiled,result.reused
     if result.cancelled {
         r.status,r.message=.Cancelled,result.error
@@ -226,8 +286,8 @@ shaders_join :: proc(job:^Shaders_Job) {
 }
 
 // The whole generation, waiting for it.
-shaders_run :: proc(p:^project.Project,allocator:=context.allocator) -> ^Shaders_Job {
-    job:=shaders_start(p,allocator=allocator)
+shaders_run :: proc(p:^project.Project,allocator:=context.allocator,store_root:="") -> ^Shaders_Job {
+    job:=shaders_start(p,allocator=allocator,store_root=store_root)
     shaders_wait(job)
     return job
 }

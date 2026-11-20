@@ -352,6 +352,15 @@ import_added_report :: proc(job:^Import_Job) {
     p,error:=asset.package_get(&job.store,job.manifest,context.temp_allocator)
     if error!=.None {return}
     job.report.package_id,job.report.manifest=p.id,job.manifest
+    digits:[64]u8
+    if hash,e:=store.ref_get(&job.store,asset.REF_BUILDS,
+        store.hex(asset.build_select(job.manifest,&p),&digits));e==.None {
+        if b,read_error:=asset.build_get(&job.store,hash,context.temp_allocator);read_error==.None {
+            for program in b.programs {
+                append(&job.report.programs,asset.generated_program_id(program,job.allocator))
+            }
+        }
+    }
     for &a in p.assets {
         if len(job.assets)>0 && !slice.contains(job.assets,a.id) {continue}
         append(&job.report.assets,importer.Written{id=a.id,kind=a.kind})

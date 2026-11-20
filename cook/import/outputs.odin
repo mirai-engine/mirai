@@ -142,6 +142,14 @@ output_warn :: proc(o:^Outputs,format:string,args:..any) {
     append(&o.report.warnings,fmt.aprintf(format,..args,allocator=o.report.allocator))
 }
 
+output_catalog_path :: proc(o:^Outputs,path:string) -> Error {
+    if !asset.folder_valid(path) {
+        return error_make(.Malformed,"the library folder %q must be relative and use forward slashes",path)
+    }
+    o.w.catalog_path=strings.clone(path,o.w.keep)
+    return {}
+}
+
 output_program :: proc(o:^Outputs,source:string) -> (address:store.Hash,error:Error) {
     caller:=context.temp_allocator
     context.temp_allocator=base.dynamic_arena_allocator(&o.scratch)
@@ -154,11 +162,13 @@ output_program :: proc(o:^Outputs,source:string) -> (address:store.Hash,error:Er
         return {},error_make(.Write,"could not store the generated Surface source (%v)",
             put_error,allocator=caller)
     }
+    if hash in o.w.programs {return hash,{}}
     if o.w.programs==nil {o.w.programs=make(map[store.Hash]struct{},o.w.keep)}
     if _,no_room:=map_insert(&o.w.programs,hash,struct{}{});no_room!=nil {
         return {},error_make(.Write,"could not record the generated Surface source in the build",
             allocator=caller)
     }
+    append(&o.report.programs,asset.generated_program_id(hash,o.report.allocator))
     return hash,{}
 }
 
