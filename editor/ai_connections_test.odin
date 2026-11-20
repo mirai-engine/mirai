@@ -107,7 +107,15 @@ esac
         ai_connections_open(&s)
         ai_connections_test_frame(&s)
         testing.expect(t,m.installer.pid!=0 && m.connection_ui.screen==.Overview && m.connection_ui.advanced)
-        testing.expect(t,ai_chat_test_paint(&ctx,"Check for updates").icon==ui.icon_user(u8(User_Icon.Waiting)))
+        waiting:=false
+        for paint,i in ctx.paints[:ctx.paint_count] {
+            if paint.text=="Check for updates" && i>0 {
+                icon:=ctx.paints[i-1]
+                waiting=icon.kind==.Icon && icon.icon==ui.icon_user(u8(User_Icon.Waiting))
+                break
+            }
+        }
+        testing.expect(t,waiting,"the update button shows its waiting icon")
         until:=platform.clock_seconds()+5
         for m.installer.pid!=0 && platform.clock_seconds()<until {ai_install_poll(&s);platform.sleep_coarse(1_000_000)}
         testing.expect(t,m.installer.pid==0 && m.connection_ui.screen==.Overview && m.connection_ui.advanced)

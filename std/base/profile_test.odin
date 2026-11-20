@@ -11,6 +11,10 @@ profile_read_since_drains_each_zone_once_and_counts_what_was_lost :: proc(t:^tes
 
     for _ in 0..<3 {profile_end(profile_begin(&p,1,"a"))}
     count,next,lost:=profile_read_since(&p,1,0,out[:])
+    when !PROFILE_COMPILED {
+        testing.expect(t,count==0 && next==0 && lost==0,"disabled zones leave the ring empty")
+        return
+    }
     testing.expect_value(t,count,3)
     testing.expect_value(t,next,u64(3))
     testing.expect_value(t,lost,u64(0))

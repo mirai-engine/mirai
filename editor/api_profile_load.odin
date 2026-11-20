@@ -77,7 +77,7 @@ api_profile_load :: proc(s:^Session,call:^api.Call) {
         kind:=(^Asked)(user).kind
         for one in host.Load_Kind {
             if kind!=.All && int(kind)-1!=int(one) {continue}
-            if summary,found:=host.load_summary(s.app,one,1);found && summary.state==.Loading {return true}
+            if s.app.load_profile.records[one].state==.Loading {return true}
         }
         return false
     }
