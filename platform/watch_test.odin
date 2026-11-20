@@ -318,20 +318,6 @@ paths_of_the_system_exist :: proc(t:^testing.T) {
     testing.expect(t,ok && os.is_dir(executable),executable)
     temporary,temporary_ok:=path_temporary_folder(context.temp_allocator)
     testing.expect(t,temporary_ok && os.is_dir(temporary),temporary)
-    name:=fmt.tprintf("platform-test-%d",os.get_pid())
-    data,data_ok:=path_user_data_folder("Mirai Tests",name,context.temp_allocator)
-    testing.expect(t,data_ok && os.is_dir(data),data)
-    testing.expect(t,strings.has_suffix(data,name) && strings.contains(data,"Mirai Tests"))
-    // Asking again finds the same folder.
-    again,again_ok:=path_user_data_folder("Mirai Tests",name,context.temp_allocator)
-    testing.expect(t,again_ok && again==data)
-    testing.expect(t,os.remove(data)==nil)
-    testing.expect(t,os.remove(filepath.dir(data))==nil || os.is_dir(filepath.dir(data)))
-    plain,plain_ok:=path_user_data_folder("",name,context.temp_allocator)
-    testing.expect(t,plain_ok && os.is_dir(plain) && !strings.contains(plain,"Mirai Tests"))
-    testing.expect(t,os.remove(plain)==nil)
-    _,empty_ok:=path_user_data_folder("Mirai Tests","",context.temp_allocator)
-    testing.expect(t,!empty_ok)
 }
 
 PLATFORM_BENCHMARK :: #config(PLATFORM_BENCHMARK,false)

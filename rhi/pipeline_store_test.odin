@@ -43,6 +43,15 @@ test_run :: proc(path: string, keys: []u64, size := 1000, limit := PIPELINE_STOR
 	return
 }
 
+// What a run that reads the store of path finds there, without changing it.
+@(private = "file")
+test_state :: proc(path: string, device := TEST_DEVICE) -> Pipeline_Store_State {
+	s: Pipeline_Store
+	pipeline_store_init(&s, device)
+	defer pipeline_store_destroy(&s)
+	return pipeline_store_load(&s, path)
+}
+
 @(private = "file")
 test_has :: proc(found: []u64, key: u64) -> bool {
 	for k in found {if k == key {return true}}
@@ -92,6 +101,7 @@ pipeline_store_drops_what_runs_no_longer_use :: proc(t: ^testing.T) {
 	folder := base.test_folder(t, "pipeline-store")
 	if folder == "" {return}
 	path := fmt.tprintf("%s/pipelines.bin", folder)
+	testing.expect_value(t, test_state(path), Pipeline_Store_State.Missing)
 	test_run(path, {1, 2})
 	for _ in 0 ..< PIPELINE_STORE_RUNS {test_run(path, {1})}
 	last := test_run(path, {1, 2})
@@ -99,6 +109,8 @@ pipeline_store_drops_what_runs_no_longer_use :: proc(t: ^testing.T) {
 	testing.expect(t, !test_has(last[:], 2), "a key no run used for PIPELINE_STORE_RUNS runs left")
 	other := TEST_DEVICE
 	other.driver += 1
+	testing.expect_value(t, test_state(path), Pipeline_Store_State.Read)
+	testing.expect_value(t, test_state(path, other), Pipeline_Store_State.Other_Device)
 	testing.expect_value(t, len(test_run(path, {1}, device = other)), 0)
 	testing.expect_value(t, len(test_run(path, {1})), 0)
 }
@@ -151,6 +163,7 @@ pipeline_store_replaces_a_file_it_cannot_read :: proc(t: ^testing.T) {
 	}
 	for c in cases {
 		testing.expect_value(t, os.write_entire_file(path, c.data), nil)
+		testing.expectf(t, test_state(path) == .Unreadable, "%s: it is told unreadable", c.name)
 		testing.expectf(t, len(test_run(path, {1, 2}, size = 64)) == 0, "%s: nothing is taken from it", c.name)
 		testing.expectf(t, len(test_run(path, {1, 2}, size = 64)) == 2, "%s: the next run reads the file that replaced it", c.name)
 	}

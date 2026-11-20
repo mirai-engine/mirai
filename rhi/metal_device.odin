@@ -577,6 +577,9 @@ mtl_table_resident :: proc(d: ^Device) {
 	}
 }
 
+// Metal keeps no pipelines across runs (Device_Desc.pipeline_cache_path): nothing to write.
+device_pipelines_keep :: proc(d: ^Device) {}
+
 device_destroy :: proc(d: ^Device) {
 	if d == nil {return}
 	NS.scoped_autoreleasepool()

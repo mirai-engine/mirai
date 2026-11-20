@@ -10,6 +10,7 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:engine/scene"
 import "mirai:host"
+import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "base:runtime"
@@ -239,7 +240,7 @@ folder_set :: proc(state:^Save_State,allocator:runtime.Allocator,path:string) ->
 folder :: proc(state:^Save_State,app:^host.App) -> string {
     if state.resolved {return state.folder}
     state.resolved=true
-    user:=host.app_user_folder(app.root,context.temp_allocator)
+    user:=project.user_folder(app.root,context.temp_allocator)
     if user=="" {return ""}
     joined,error:=filepath.join({user,FOLDER},app.allocator)
     // Asked again: there is one, and no memory for its name now.

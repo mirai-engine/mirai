@@ -201,3 +201,31 @@ pipelines_a_frame_does_not_ask_for_make_room :: proc(t: ^testing.T) {
 	_, error := renderer_pipeline(r, {passes = standard_pipeline_passes(.Light)[:4]})
 	testing.expect(t, strings.contains(error, "places are in use"), error)
 }
+
+// What a frame needs goes first, then what is asked ahead of time, then the
+// speculative jobs from the cheapest; the first thread leaves speculative jobs
+// to the others unless a frame needs one.
+@(test)
+pipeline_jobs_go_by_need_then_cheapest_speculative :: proc(t: ^testing.T) {
+	Case :: struct {name: string, jobs: []Pipeline_Job, first: bool, next: int}
+	ahead := Pipeline_Job{state = .Asked, cost = 900}
+	needed := Pipeline_Job{state = .Asked, urgent = true, cost = 900}
+	costly := Pipeline_Job{state = .Asked, speculative = true, cost = 500}
+	cheap := Pipeline_Job{state = .Asked, speculative = true, cost = 100}
+	needed_costly := costly
+	needed_costly.urgent = true
+	making := cheap
+	making.state = .Making
+	cases := []Case{
+		{"nothing asked", {{}, making}, false, -1},
+		{"a frame needs it", {ahead, costly, needed}, false, 2},
+		{"asked ahead of time before speculative", {costly, cheap, ahead}, false, 2},
+		{"the cheapest speculative", {costly, cheap, costly}, false, 1},
+		{"the first thread takes no speculative", {costly, cheap}, true, -1},
+		{"unless a frame needs it", {cheap, needed_costly}, true, 1},
+		{"the first thread still takes what is asked ahead", {cheap, ahead}, true, 1},
+	}
+	for c in cases {
+		testing.expectf(t, pipeline_job_next(c.jobs, c.first) == c.next, "%s: %d, not %d", c.name, pipeline_job_next(c.jobs, c.first), c.next)
+	}
+}

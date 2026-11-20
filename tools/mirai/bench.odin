@@ -110,7 +110,8 @@ Bench_Report :: struct {
 cmd_bench :: proc(root:string,args:[]string) -> int {
     if len(args)>0 && args[0]=="compare" {return bench_compare(root,args[1:])}
     if len(args)>0 && args[0]=="flight" {return bench_flight(root,args[1:])}
-    fmt.eprintfln("Usage: mirai %s\n       mirai %s",BENCH_USAGE,BENCH_FLIGHT_USAGE)
+    if len(args)>0 && args[0]=="pipelines" {return bench_pipelines(root,args[1:])}
+    fmt.eprintfln("Usage: mirai %s\n       mirai %s\n       mirai %s",BENCH_USAGE,BENCH_FLIGHT_USAGE,BENCH_PIPELINES_USAGE)
     return 2
 }
 

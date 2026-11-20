@@ -107,13 +107,15 @@ pipeline_store_clear :: proc(s: ^Pipeline_Store) {
 // Reads the store of path, after removing what processes that ended left of
 // their writes. A file that is missing, too large, of another device or
 // version, or that does not read back exactly leaves the store empty: the next
-// save replaces it.
-pipeline_store_load :: proc(s: ^Pipeline_Store, path: string) {
+// save replaces it. Says which of those it found.
+pipeline_store_load :: proc(s: ^Pipeline_Store, path: string) -> Pipeline_Store_State {
 	serial.file_remove_stale(path)
 	s.stamp = pipeline_file_stamp(path, s.allocator)
 	data, error := serial.file_read(path, s.allocator, limit = i64(s.limit))
-	if error != .None || data == nil {return}
-	if !pipeline_store_decode(s, data) {delete(data, s.allocator)}
+	if error != .None || data == nil {return .Missing if s.stamp == {} else .Unreadable}
+	state := pipeline_store_decode(s, data)
+	if state != .Read {delete(data, s.allocator)}
+	return state
 }
 
 @(private = "file")
@@ -125,19 +127,19 @@ pipeline_file_stamp :: proc(path: string, allocator: runtime.Allocator) -> [2]i6
 }
 
 // Takes data as the file of the store when it is valid for its device.
-pipeline_store_decode :: proc(s: ^Pipeline_Store, data: []u8) -> bool {
-	if len(data) < STORE_HEADER || len(data) > s.limit {return false}
-	if store_read_u32(data, 0) != PIPELINE_STORE_MAGIC || store_read_u32(data, 4) != PIPELINE_STORE_VERSION {return false}
+pipeline_store_decode :: proc(s: ^Pipeline_Store, data: []u8) -> Pipeline_Store_State {
+	if len(data) < STORE_HEADER || len(data) > s.limit {return .Unreadable}
+	if store_read_u32(data, 0) != PIPELINE_STORE_MAGIC || store_read_u32(data, 4) != PIPELINE_STORE_VERSION {return .Unreadable}
 	device := Pipeline_Device{vendor = store_read_u32(data, 8), device = store_read_u32(data, 12), driver = store_read_u32(data, 16)}
 	copy(device.uuid[:], data[32:48])
-	if device != s.device {return false}
+	if device != s.device {return .Other_Device}
 	chunk_count, entry_count := int(store_read_u32(data, 20)), int(store_read_u32(data, 24))
-	if chunk_count > (len(data) - STORE_HEADER) / CHUNK_HEADER || entry_count > (len(data) - STORE_HEADER) / ENTRY_HEADER {return false}
+	if chunk_count > (len(data) - STORE_HEADER) / CHUNK_HEADER || entry_count > (len(data) - STORE_HEADER) / ENTRY_HEADER {return .Unreadable}
 	pipeline_store_clear(s)
-	if !pipeline_store_decode_into(s, data, chunk_count, entry_count) {pipeline_store_clear(s); return false}
+	if !pipeline_store_decode_into(s, data, chunk_count, entry_count) {pipeline_store_clear(s); return .Unreadable}
 	delete(s.file, s.allocator)
 	s.file = data
-	return true
+	return .Read
 }
 
 @(private = "file")

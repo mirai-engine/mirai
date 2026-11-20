@@ -29,6 +29,8 @@ import "core:math/linalg"
 import "core:os"
 import "core:reflect"
 import "core:sync"
+import "core:thread"
+import "core:time"
 import "mirai:asset"
 import "mirai:std/base"
 import "mirai:std/jobs"
@@ -78,6 +80,7 @@ Settings :: struct {
 	sun_shadows:           bool, // rays go to the sun; off, it lights everything it faces
 	glass_layers:          u32,  // nearest blended surfaces of a pixel lit once per pixel with traced reflection and refraction (1 to GLASS_LAYERS_MAX); the ones behind are drawn forward
 	sun_radius:           f32, // angular radius of the sun, radians
+	pipelines_first:      bool, // a frame waits for the pipelines asked for, those asked ahead of time too, instead of drawing without them while they are made
 }
 
 // Outlines drawn after tonemapping around instances with an outline level:
@@ -458,6 +461,12 @@ Renderer_Desc :: struct {
 	// are made in the frame that first asks for them.
 	pipeline_thread:       bool,
 	profile:               ^base.Profile, // the zones of the stages of a frame go to its ring jobs.OWNER while it records; nil: none
+	// While the pipelines it starts with are made (from seconds to minutes when
+	// the driver has none of them compiled), called on the calling thread about
+	// ten times a second with how many are. nil: renderer_init makes them on
+	// the calling thread too.
+	on_pipelines:          proc(user: rawptr, made, total: int),
+	on_pipelines_user:     rawptr,
 }
 
 // What one frame draws besides the scene.
@@ -472,6 +481,8 @@ Frame_Detail :: struct {
 }
 
 Frame_Desc :: struct {
+	pipeline_wait:      proc(user: rawptr) -> bool, // polls the window while waiting, false on close
+	pipeline_wait_user: rawptr,
 	camera: Camera,
 	detail: Frame_Detail,
 	camera_cut:bool,
@@ -796,7 +807,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 			return false
 		}
 	}
-	if !create_pipelines(r, {.Any, tracer_wanted(r, r.settings)}) || !pipelines_init(r) || !dfg_build(r) || !display_build(r, DISPLAY_SDR) {return false}
+	if !create_pipelines(r, {.Any, tracer_wanted(r, r.settings)}, desc.on_pipelines, desc.on_pipelines_user) || !pipelines_init(r) || !dfg_build(r) || !display_build(r, DISPLAY_SDR) {return false}
 	hardware, made := tracer_settle(r, r.settings, retry = false)
 	if !made {return false}
 	r.hardware_rt = hardware
@@ -1296,7 +1307,7 @@ pipeline_variants_ask :: proc(r: ^Renderer) {
 		v := variant_of(r, item.target)
 		if item.rays != .Any && item.rays != tracer || v.state != .None {continue}
 		graphics, compute := pipeline_desc(r, item)
-		if pipeline_make(r, item.target, graphics, compute, early = true) {v.state = .Asked} else {r.variants_wanted = true}
+		if pipeline_make(r, item.target, graphics, compute, early = true, speculative = true) {v.state = .Asked} else {r.variants_wanted = true}
 	}
 }
 
@@ -1317,10 +1328,12 @@ pipeline_possible :: proc(info: ^rhi.Device_Info, item: Pipeline_Make) -> bool {
 // can, with their variants, the costliest first, on a thread a core (half the logical processors):
 // the driver compiles each one for up to seconds. A transaction that may
 // allocate. Once r.reload_stop is set, from any thread, none more is made.
-// False when one the renderer needs is not there; those of rays traced by
-// hardware are not needed (tracer_missing).
+// With progress they are made on a thread of their own while the calling one
+// reports how many are (Renderer_Desc.on_pipelines). False when one the
+// renderer needs is not there; those of rays traced by hardware are not needed
+// (tracer_missing).
 @(private)
-create_pipelines :: proc(r: ^Renderer, make: bit_set[Pipeline_Rays]) -> bool {
+create_pipelines :: proc(r: ^Renderer, make: bit_set[Pipeline_Rays], progress: proc(user: rawptr, made, total: int) = nil, progress_user: rawptr = nil) -> bool {
 	list: Pipeline_List
 	pipelines_list(r, &list)
 	variants_listed(r, &list)
@@ -1330,6 +1343,8 @@ create_pipelines :: proc(r: ^Renderer, make: bit_set[Pipeline_Rays]) -> bool {
 		list:  ^Pipeline_List,
 		order: [len(Pipeline_List{}.items)]int,
 		count: int,
+		made:  int, // atomic
+		done:  sync.Sema,
 	}
 	work := Work{r = r, list = &list}
 	for &item, i in list.items[:list.count] {
@@ -1356,15 +1371,30 @@ create_pipelines :: proc(r: ^Renderer, make: bit_set[Pipeline_Rays]) -> bool {
 			item := &work.list.items[work.order[at]]
 			graphics, compute := pipeline_desc(r, item^)
 			pipeline_make(r, item.target, graphics, compute, now = true)
+			sync.atomic_add(&work.made, 1)
 		}
 	}
-	// A system of its own: a reload makes them on a thread that is not the owner of r.jobs.
-	js: jobs.Job_System
-	if jobs.system_init(&js, {threads = clamp(os.get_processor_core_count() / 2, 1, min(PIPELINE_THREADS_MAX, max(work.count, 1))) - 1}) {
-		jobs.parallel_for(&js, jobs.OWNER, work.count, 1, run, &work)
-		jobs.system_destroy(&js)
+	// A system of its own, owned by the thread that runs it: a reload makes
+	// them on a thread that is not the owner of r.jobs.
+	run_all :: proc(work: ^Work) {
+		defer sync.sema_post(&work.done, 1)
+		js: jobs.Job_System
+		if jobs.system_init(&js, {threads = clamp(os.get_processor_core_count() / 2, 1, min(PIPELINE_THREADS_MAX, max(work.count, 1))) - 1}) {
+			jobs.parallel_for(&js, jobs.OWNER, work.count, 1, run, work)
+			jobs.system_destroy(&js)
+		} else {
+			run(work, 0, work.count, jobs.OWNER)
+		}
+	}
+	maker := thread.create_and_start_with_poly_data(&work, run_all) if progress != nil && work.count > 0 else nil
+	if maker == nil {
+		run_all(&work)
 	} else {
-		run(&work, 0, work.count, jobs.OWNER)
+		for !sync.sema_wait_with_timeout(&work.done, PIPELINE_POLL_INTERVAL) {
+			progress(progress_user, sync.atomic_load(&work.made), work.count)
+		}
+		thread.join(maker)
+		thread.destroy(maker)
 	}
 	for item in list.items[:list.count] {
 		if item.rays == .Hardware || item.rays not_in make || !item.required || !pipeline_possible(info, item) || item.target == nil || item.target^ != 0 {continue}
@@ -1377,6 +1407,9 @@ create_pipelines :: proc(r: ^Renderer, make: bit_set[Pipeline_Rays]) -> bool {
 // Threads that make the pipelines of a renderer at most, with the one that asks.
 @(private)
 PIPELINE_THREADS_MAX :: 16
+
+@(private)
+PIPELINE_POLL_INTERVAL :: 100 * time.Millisecond
 
 @(private)
 pipeline_name :: proc(r: ^Renderer, item: Pipeline_Make) -> string {

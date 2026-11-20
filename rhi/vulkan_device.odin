@@ -906,7 +906,7 @@ vk_create_logical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	if len(desc.pipeline_cache_path) <= len(d.store_path) {d.store_path_len = copy(d.store_path[:], desc.pipeline_cache_path)}
 	p := d.properties
 	pipeline_store_init(&d.pipelines_kept, {vendor = p.vendorID, device = p.deviceID, driver = p.driverVersion, uuid = p.pipelineCacheUUID}, allocator = d.allocator)
-	if d.store_path_len > 0 {pipeline_store_load(&d.pipelines_kept, desc.pipeline_cache_path)}
+	if d.store_path_len > 0 {d.stats.pipeline_store = pipeline_store_load(&d.pipelines_kept, desc.pipeline_cache_path)}
 	return true
 }
 
@@ -950,6 +950,15 @@ vk_create_frames :: proc(d: ^Device, desc: Device_Desc) -> bool {
 		if !vk_check(d, d.dvk.CreateFence(d.handle, &fence_info, nil, &fence), "immediate fence") {return false}
 	}
 	return true
+}
+
+// Writes the pipelines kept across runs now, after a write another thread is
+// making: what was compiled survives a process that ends without destroying
+// the device. Without a path, nothing.
+device_pipelines_keep :: proc(d: ^Device) {
+	if d == nil || d.store_path_len == 0 {return}
+	path := string(d.store_path[:d.store_path_len])
+	for !pipeline_store_save(&d.pipelines_kept, path) && sync.atomic_load(&d.pipelines_kept.saving) {time.sleep(10 * time.Millisecond)}
 }
 
 device_destroy :: proc(d: ^Device) {
@@ -1614,6 +1623,9 @@ vk_recreate_swapchain :: proc(d: ^Device) -> bool {
 	sc.color_space = chosen.colorSpace
 	sc.extent = extent
 	sc.copyable = .TRANSFER_DST in caps.supportedUsageFlags
+	usage := Texture_Usage{.Color_Target}
+	if sc.copyable {usage += {.Transfer_Dst}}
+	if .TRANSFER_SRC in caps.supportedUsageFlags {usage += {.Transfer_Src}}
 	count: u32
 	d.dvk.GetSwapchainImagesKHR(d.handle, sc.handle, &count, nil)
 	images := make([]vk.Image, count, context.temp_allocator)
@@ -1628,7 +1640,7 @@ vk_recreate_swapchain :: proc(d: ^Device) -> bool {
 		d.dvk.CreateImageView(d.handle, &view_info, nil, &view)
 		t := Vk_Texture{
 			image = image, view = view, vk_format = chosen.format, aspect = {.COLOR}, swapchain = true,
-			desc = {width = extent.width, height = extent.height, mip_levels = 1, format = sc.format, usage = {.Color_Target, .Transfer_Dst, .Transfer_Src}},
+			desc = {width = extent.width, height = extent.height, mip_levels = 1, format = sc.format, usage = usage},
 		}
 		append(&sc.images, Texture(pool_add(&d.textures, t)))
 		semaphore_info := vk.SemaphoreCreateInfo{sType = .SEMAPHORE_CREATE_INFO}

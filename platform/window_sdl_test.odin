@@ -117,6 +117,11 @@ sdl_window_reports_its_state_and_translates_events :: proc(t:^testing.T) {
     tick:=input_tick_take(p)
     testing.expect(t,tick.keys_pressed==Keys{.W,.Enter,.Q} && tick.keys_released==Keys{.W} && tick.mouse_pressed==Mouse_Buttons{.Right})
     testing.expect_value(t,tick.mouse_delta,[2]f32{10,5})
+    // While no frame is drawn, window_wait gathers the events too and tells of a close.
+    testing.expect(t,!window_wait(p))
+    event={};event.window={type=.WINDOW_CLOSE_REQUESTED}
+    push(t,&event)
+    testing.expect(t,window_wait(p))
     // QUIT asks the application to close the same way the window does.
     event={};event.quit={type=.QUIT}
     push(t,&event)

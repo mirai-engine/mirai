@@ -14,7 +14,7 @@ this machine (machine settings only, shared by every project); `settings.mirai` 
 top layer that sets a field wins. A file stores only what differs from the layers below. The
 machine and player files start with `"version"`: one of another version is left unread and the next
 save writes it anew, with no migration. The player's options and rebinds live in the project's user
-data folder (`host.app_user_folder`).
+data folder (`project.user_folder`).
 
 ```json
 {

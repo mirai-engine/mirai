@@ -771,6 +771,39 @@ text_width :: proc "contextless" (font:^Font,text:string,size:f32,f:int=0) -> f3
     return max(current,largest)
 }
 
+// Paints one line of text into coverage (R8, width*height texels) on the CPU,
+// the pen from x on the baseline y, in device pixels: each glyph at the face
+// nearest size at the density of the font, the coverage of the atlas kept
+// where it is the larger. For what shows text before the GPU can draw it.
+text_paint :: proc(font:^Font,text:string,size:f32,coverage:[]u8,width,height:int,x,y:f32,f:int=0) {
+    if font==nil || !font.ready || width<=0 || height<=0 || len(coverage)/width<height {return}
+    if math.is_nan(x) || math.is_inf(x) || math.is_nan(y) || math.is_inf(y) || abs(x)>1e6 || abs(y)>1e6 {return}
+    face:=font_face(font,f,size*font.density)
+    if face==nil {return}
+    pen:=text_pen(font,size,f)
+    at:=x
+    for character in text {
+        kern,advance:=text_pen_step(&pen,character)
+        at+=kern*font.density
+        if index:=font_index(font,f,character);index>=0 {
+            g:=face.glyphs[index]
+            left,top:=int(math.floor(at+g.bounds.x+0.5)),int(math.floor(y+g.bounds.y+0.5))
+            u,v:=int(g.uv.x*f32(font.width)+0.5),int(g.uv.y*f32(font.height)+0.5)
+            for row in 0..<int(g.bounds.h) {
+                ty,sy:=top+row,v+row
+                if ty<0 || ty>=height || sy<0 || sy>=font.height {continue}
+                for column in 0..<int(g.bounds.w) {
+                    tx,sx:=left+column,u+column
+                    if tx<0 || tx>=width || sx<0 || sx>=font.width {continue}
+                    texel:=&coverage[ty*width+tx]
+                    texel^=max(texel^,font.pixels[sy*font.width+sx])
+                }
+            }
+        }
+        at+=advance*font.density
+    }
+}
+
 Text_Wrap :: enum u8 {None,Words}
 
 // Sizes between the top of one line of text and the top of the next: the

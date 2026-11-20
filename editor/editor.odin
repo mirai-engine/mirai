@@ -616,6 +616,7 @@ close :: proc(s:^Session) -> int {
     session_destroy(s)
     host.app_world_free(app,edit_world)
     host.app_editor_free(app,editor_world)
+    host.app_quit_compiling(app,code)
     host.app_destroy(app)
     return code
 }
