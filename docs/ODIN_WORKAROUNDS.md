@@ -27,11 +27,21 @@ Entries are for Odin `dev-2026-11`.
 | `process_alive` (`std/subprocess/subprocess.odin`): takes a handle 0 for a process that is not there | odin-lang/Odin#8091 | `os.process_open` of the pid of an ended process returns an error |
 | `base.dynamic_arena_allocator` (`std/base/alloc.odin`): every `Dynamic_Arena` of the engine uses it instead of `mem.dynamic_arena_allocator` | odin-lang/Odin#8103 | `dynamic_arena_without_memory_keeps_refusing` of `std/base` passes with `mem.dynamic_arena_allocator` |
 | `registry_scan` (`asset/registry.odin`): walks with `os.read_directory_iterator` and destroys each iterator | odin-lang/Odin#8112 | after `os.walker_walk` and `os.walker_destroy` over `W/D/maps`, `W/D` can be renamed on Windows; go back to the walker and run `mirai test editor a_folder_moves_and_copies_with_all_it_holds` |
+| `files_fingerprint` (`editor/build.odin`) | [#8112][find-close] | [Check](#directory-listing) |
 | `base.remove_all` (`std/base/remove_all.odin`): every folder of the engine and its tests is removed with it instead of `os.remove_all`, whose Windows version calls `SHFileOperationW`; the shell raises first-chance C++ exceptions inside it, and the vectored handler of `core:testing` stops the test for any of them ("Signal caught: Unknown"), or kills the runner when the cleanup of a stopped test runs on the main thread | none | `os.remove_all` on Windows walks the folder with `DeleteFileW` and `RemoveDirectoryW`, and `core:testing` on Windows lets an exception that a handler of the program catches go by; go back to `os.remove_all` and run the editor tests of `ai_subagents_test.odin` and `sections_test.odin` together |
 | `base.make_directory_all` (`std/base/folders.odin`): takes `.Exist` for a folder that is already there as made, where a caller checks the result; the other callers accept `.Exist` with `os.is_dir` | odin-lang/Odin#8473 | on macOS and Linux, `os.make_directory_all` of a folder that is already there returns nil, as on Windows; go back to `os.make_directory_all` and run `mirai test std/base` |
 | `base.copy_directory_all` (`std/base/folders.odin`): every folder the engine and its tests copy; on macOS `os.copy_directory_all` hands the folder to `copyfile` with `COPYFILE_RECURSIVE`, which copies the source itself into a destination that is already there | odin-lang/Odin#8474 | on macOS, `os.copy_directory_all(dst, src)` with `dst` already a folder leaves `src/a.txt` at `dst/a.txt`; go back to it and run `mirai test cook/author` |
 | `file_share_delete` (`store/system_windows.odin`): the store opens its files with its own `CreateFileW` sharing read, write and delete, and replaces and removes them with POSIX semantics; `os.open` on Windows shares only read and write, so a file someone holds open can be neither renamed over nor removed | none (patch and repro in `bin/store/odin-share-delete.md`, not published) | `os.open` of a file on Windows passes `FILE_SHARE_DELETE`, and `os.rename` over it while another handle from `os.open` holds it succeeds; go back to `os.open` in `file_open` and run `mirai test store` on Windows |
 | `constant_field_compare` (`engine/render/graphics_test.odin`): compares a field of a constant through `testing.expect_value` | [odin-lang/Odin#8321](https://github.com/odin-lang/Odin/issues/8321) | with `A :: struct {x:f32, e:E}` and `C :: A{x=1}`, `C.e == .Off` (a field the literal leaves out compared with `==`) is true; today it folds to false |
+
+[find-close]: https://github.com/odin-lang/Odin/commit/1960f68520388ff918ba571f25b5309d2c71731a
+
+### Directory listing
+
+`files_fingerprint` reads metadata first because the Windows iterator closes a null handle for
+regular files. With the upstream fix, verify that `os.read_all_directory_by_path` on a regular
+file returns `.Invalid_Dir` without an access violation. Read metadata after a failed listing
+and run `mirai test editor project_code_fingerprint_tracks_the_manifest_file --no-gpu`.
 
 ## Slang and SPIRV
 
