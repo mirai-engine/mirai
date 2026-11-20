@@ -131,8 +131,8 @@ a_cave_deeper_than_the_old_limit_is_dug_saved_read_by_pages_and_dug_again :: pro
     data,error:=source_bytes(&s,id,&types)
     if !testing.expect_value(t,error,asset.Error.None) {return}
     defer delete(data)
-    // It holds the pages a surface crosses, as they are: what compresses them is the store.
-    testing.expectf(t,len(data)<dense && len(data)<with_values*PAGE_BYTES_MAX+dense/64,"its file takes %d bytes for %d pages of values, of the %d of every sample",len(data),with_values,dense)
+    // Its pages code their distances from the plane of their neighbors: no compressor is needed.
+    testing.expectf(t,len(data)<dense/128,"its file takes %d bytes of the %d of every sample",len(data),dense)
     testing.expect_value(t,source_save(&s,path,id,&types),asset.Error.None)
     front:asset.Asset
     if !testing.expect_value(t,asset.asset_load_front(&front,path),asset.Error.None) {return}

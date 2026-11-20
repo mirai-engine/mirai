@@ -27,8 +27,8 @@ coded_pages_keep_heights_within_half_a_step_and_other_values_exactly :: proc(t:^
     for c in cases {
         n:=c.count
         for k in 0..<n {values[k]=c.height(k%c.width,k/c.width,random(&seed))}
-        page:=page_code(values[:n],c.width,true,coded[:])
-        testing.expect_value(t,len(page),PAGE_HEADER+4*n)
+        extent:=[3]int{c.width,1,n/c.width}
+        page:=page_code(values[:n],extent,true,coded[:])
         testing.expect(t,page_uncode(page,mem.slice_to_bytes(decoded[:n])),c.name)
         worst:f32
         for k in 0..<n {
@@ -38,29 +38,90 @@ coded_pages_keep_heights_within_half_a_step_and_other_values_exactly :: proc(t:^
         // Past 2^14 m an f32 is coarser than the step and keeps its own value.
         testing.expectf(t,worst<=HEIGHT_STEP/2,"%s: %v m away",c.name,worst)
         // What a file holds is saved again as it is.
-        testing.expect(t,string(page_code(decoded[:n],c.width,true,recoded[:]))==string(page),c.name)
-        testing.expect(t,page_on_lattice(decoded[:n]),c.name)
+        testing.expect(t,string(page_code(decoded[:n],extent,true,recoded[:]))==string(page),c.name)
+        _,on:=page_lattice(decoded[:n])
+        testing.expect(t,on,c.name)
         // Without quantizing, a page comes back bit for bit, on the lattice or not.
         for source in ([2][]f32{values[:n],decoded[:n]}) {
-            testing.expect(t,page_uncode(page_code(source,c.width,false,recoded[:]),mem.slice_to_bytes(again[:n])),c.name)
+            testing.expect(t,page_uncode(page_code(source,extent,false,recoded[:]),mem.slice_to_bytes(again[:n])),c.name)
             testing.expect(t,mem.compare(mem.slice_to_bytes(again[:n]),mem.slice_to_bytes(source))==0,c.name)
         }
     }
-    // Values of other grids come back as they were.
-    weights:[PAGE_VALUES]Weights
-    for &w,k in weights {w=Weights(u32(k)*0x9e3779b1)}
-    out:[PAGE_VALUES]Weights
-    testing.expect(t,page_uncode(page_code(weights[:],PAGE,true,coded[:]),mem.slice_to_bytes(out[:])))
-    testing.expect(t,out==weights)
+    // Distances of a Volume, on no lattice, come back bit for bit, in whole blocks and at its far edges.
+    for extent in ([][3]int{{BLOCK,BLOCK,BLOCK},{1,BLOCK,3},{BLOCK,2,1}}) {
+        n:=extent.x*extent.y*extent.z
+        for k in 0..<n {
+            p:=[3]f32{f32(k%extent.x),f32(k/extent.x%extent.y),f32(k/(extent.x*extent.y))}
+            values[k]=clamp(math.sqrt(p.x*p.x+p.y*p.y*0.7+p.z*p.z)-9.3,-SDF_BAND_CELLS,SDF_BAND_CELLS)
+        }
+        page:=page_code(values[:n],extent,false,coded[:])
+        testing.expectf(t,page_uncode(page,mem.slice_to_bytes(again[:n])) && mem.compare(mem.slice_to_bytes(again[:n]),mem.slice_to_bytes(values[:n]))==0,"distances %v",extent)
+        if n==PAGE_VALUES {testing.expectf(t,len(page)<n*size_of(f32)/2,"a block of distances codes in %d bytes",len(page))}
+    }
+    // Values of other grids come back as they were, those that code and those that do not.
+    weights,out:[PAGE_VALUES]Weights
+    for pattern in 0..<2 {
+        for &w,k in weights {
+            seed=seed*1664525+1013904223
+            w=pattern==0?Weights(seed~seed>>15):WEIGHTS_FIRST+Weights(k/700)
+        }
+        page:=page_code(weights[:],{PAGE,1,PAGE},true,coded[:])
+        testing.expect(t,page_uncode(page,mem.slice_to_bytes(out[:])) && out==weights)
+        testing.expect_value(t,Page_Code(page[0]),pattern==0?Page_Code.Values:Page_Code.Bytes)
+    }
+    holes,holes_out:[PAGE_VALUES]u8
+    paint,paint_out:[PAGE_VALUES]Paint
+    for k in 0..<PAGE_VALUES {holes[k],paint[k]=u8(k%PAGE>40),{u8(k),200,u8(k/PAGE),128}}
+    testing.expect(t,page_uncode(page_code(holes[:],{PAGE,1,PAGE},false,coded[:]),holes_out[:]) && holes_out==holes)
+    testing.expect(t,page_uncode(page_code(paint[:],{PAGE,1,PAGE},false,coded[:]),mem.slice_to_bytes(paint_out[:])) && paint_out==paint)
     // A page of another size, code or layout is refused.
-    page:=page_code(values[:PAGE],PAGE,true,coded[:])
+    page:=page_code(values[:PAGE],{PAGE,1,1},true,coded[:])
     testing.expect(t,!page_uncode(page,mem.slice_to_bytes(decoded[:PAGE-1])))
     bad:[PAGE_HEADER+4*PAGE]u8
+    copy(bad[:],page)
+    testing.expect(t,!page_uncode(bad[:],mem.slice_to_bytes(decoded[:PAGE])),"a coded page as long as its values")
     for edit in ([3][2]int{{0,9},{1,3},{2,0}}) {
         copy(bad[:],page)
         bad[edit[0]]=u8(edit[1])
-        testing.expect(t,!page_uncode(bad[:],mem.slice_to_bytes(decoded[:PAGE])))
+        testing.expect(t,!page_uncode(bad[:len(page)],mem.slice_to_bytes(decoded[:PAGE])))
     }
+}
+
+// Pages of any bytes, as a file or a peer may send them, decode into their room or are refused.
+@(test)
+hostile_pages_decode_within_their_room_or_are_refused :: proc(t:^testing.T) {
+    seed:=u64(0x9e3779b97f4a7c15)
+    next :: proc(seed:^u64) -> u64 {
+        seed^~=seed^<<13;seed^~=seed^>>7;seed^~=seed^<<17
+        return seed^
+    }
+    bytes:[PAGE_BYTES_MAX]u8
+    out:[PAGE_VALUES*4+16]u8
+    refused:=0
+    sizes:=[3]int{1,2,4}
+    counts:=[3]int{PAGE_VALUES,BLOCK*BLOCK*3,PAGE}
+    for round in 0..<600 {
+        size,n:=sizes[round%3],counts[round/3%3]
+        length:=PAGE_HEADER+int(next(&seed)%u64(n*size))
+        for &b in bytes[:length] {b=u8(next(&seed))}
+        bytes[0]=u8(round%4)
+        bytes[1]=u8(size)
+        bytes[2],bytes[3]=u8(round%2==0?PAGE:BLOCK),u8(round%2==0?PAGE:BLOCK)
+        if n%(int(bytes[2])*int(bytes[3]))!=0 {bytes[3]=1}
+        out[n*size]=0xa5
+        if !page_uncode(bytes[:length],out[:n*size]) {refused+=1}
+        testing.expect(t,out[n*size]==0xa5,"nothing is written past its room")
+    }
+    testing.expect(t,refused>0)
+    // A real page cut short or with bytes after it.
+    values:[PAGE_VALUES]f32
+    for &v,k in values {v=f32(k%PAGE)*0.37+f32(k/PAGE)*0.11}
+    coded:[PAGE_BYTES_MAX]u8
+    page:=page_code(values[:],{PAGE,1,PAGE},false,coded[:])
+    for length in ([]int{0,PAGE_HEADER,len(page)/2,len(page)+64}) {
+        _=page_uncode(coded[:length],out[:PAGE_VALUES*4])
+    }
+    testing.expect(t,!page_uncode(coded[:PAGE_HEADER-1],out[:PAGE_VALUES*4]))
 }
 
 @(test)

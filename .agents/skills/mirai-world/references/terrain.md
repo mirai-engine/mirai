@@ -96,8 +96,8 @@ Chunks:
   slot when a brush, an import or a read first gives it values, and `grid_settle` gives back the
   slabs and tables a brush leaves with one value. An X/Z grid holds every page, in id order.
 - **In the file**, a `<grid>_pages` table holds runs (`Page_Run`) in the order of the directory:
-  many pages of one fill value, or one page with the place, the sizes and the XXH3 hash of its
-  compressed block in `<grid>_blocks`, stored uncompressed, so each page is read alone, by file
+  many pages of one fill value, or one page with the place, the size and the XXH3 hash of its
+  coded block in `<grid>_blocks`, which no compressor touches, so each page is read alone, by file
   range ([residency](#jobs-publishing-and-residency)). The runs depend on the values, not on what a
   grid happens to hold: two sources with the same samples write the same file.
 - **Coarse data** of a Heightfield ([tree](#tree-and-nodes)) is in the file too, in records the
@@ -110,13 +110,18 @@ Chunks:
 - **Edit layers** of a Heightfield are more X/Z grids, `edit<n>_pages` and `edit<n>_blocks`, with
   the weights under the splines in `edit_under_pages`: authoring data the game reads but never
   composes ([tool](#tool)).
-- **Page coding** (`page_code.odin`): before the codec a page goes in byte planes, or, f32 values on
-  multiples of `HEIGHT_STEP`, as the zigzag distance in steps from the plane of each sample's
-  neighbors left, above and above-left, in byte planes. Saving puts heights on that lattice, at
-  most half a step away; a height read from a file is saved again as it is, so edits and saves do
-  not drift. Memory keeps what the brushes wrote: a page that leaves memory and the pages the
-  network sends keep every value bit for bit. One coding serves the file, those blocks and the
-  network.
+- **Page coding** (`page_code.odin`): a page is its own compressor, so a project file stays
+  compact as it is, deltas of version control stay small and the store adds nothing. Each value
+  goes as its distance from the plane through the neighbors before it along each axis of the page
+  (f32 in steps of `HEIGHT_STEP`, an f32 off the lattice also with how far its bits are from its
+  step; other values byte by byte), through an adaptive binary range coder in integers alone: the
+  same values give the same bytes on every machine and build, and a page decodes without another.
+  A page the coder would not make smaller keeps its values as they are. Saving a Heightfield puts
+  heights on that lattice, at most half a step away; a height read from a file is saved again as
+  it is, so edits and saves do not drift. Memory keeps what the brushes wrote: a page that leaves
+  memory and the pages the network sends keep every value bit for bit. One coding serves the file,
+  those blocks and the network, and a decoder refuses a page whose bytes do not end with its
+  values.
 - **A single-value page stores no values**, in memory, in the file or in copies: an all-air or
   all-solid block past the band. It takes values of its own when a brush or an import writes it,
   and a Volume brush leaves without values the blocks that it leaves with a single value
@@ -463,8 +468,8 @@ Preview and confirmation:
   outside the history) and only afterwards publishes the step, the revisions and the removal of the
   operand in the undo step. If building or writing fails, the head goes back to what it was and
   scene, confirmed file and history, including redo, remain.
-- The head stores the compressed block of each page it wrote with the hash of its values
-  (`source_bytes(...,keep=true)`): writing the file again only compresses the pages that changed.
+- The head stores the coded block of each page it wrote with the hash of its values
+  (`source_bytes(...,keep=true)`): writing the file again only codes the pages that changed.
 - The undo step stores the owners' revisions, not the file. `terrain_sync` takes the head to the
   revision restored by the steps and puts it in the registry, which the flush writes; one equal to
   the disk's is no change.
@@ -804,7 +809,7 @@ Residency by distance:
   resident chunk, or a node of a Volume being built, needs them with the halo that its
   construction and its collider read (`chunk_pages_region`, `node_pages_region`); it releases
   them when none reads them and no job reads the source. A page with edits is first stored in a
-  compressed block of its own and comes back with them: unloading and reloading a dug zone keeps the
+  coded block of its own and comes back with them: unloading and reloading a dug zone keeps the
   changes. A node whose border reads samples waits for the pages of that border. A Volume's
   weights come and go with its distances, block by block.
 - The residency of the pages is that of the chunks, which is the shared one of `scene`: the terrain
@@ -918,7 +923,8 @@ physics, saving, stability and world copy.
   `bench_terrain_volume_memory` (`-define:TERRAIN_BENCH=true`) prints, in bytes, what a Volume
   holds against every sample of its box, its file and what a viewer keeps resident.
 - Page coding (`page_code_test.odin`):
-  `coded_pages_keep_heights_within_half_a_step_and_other_values_exactly` and
+  `coded_pages_keep_heights_within_half_a_step_and_other_values_exactly`,
+  `hostile_pages_decode_within_their_room_or_are_refused` and
   `saved_heights_stay_where_the_file_put_them_through_edits_and_saves`.
 - Join (`join_test.odin`):
   `a_joined_volume_meets_the_ground_on_the_sides_of_its_box_without_a_seam` and
