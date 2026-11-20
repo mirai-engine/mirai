@@ -56,6 +56,8 @@ Store :: struct {
     root:string, // owned, without a trailing separator
     allocator:runtime.Allocator, // of root
     state:^State,
+    read_index:Maybe(Error),
+    retired_scanned:bool,
 }
 
 // What a Store value knows of its root, shared by its copies and guarded by
@@ -144,6 +146,7 @@ open :: proc(root:string,allocator:=context.allocator) -> (s:Store,error:Error) 
 
 // Commits what this value wrote, seals its pack and lets the root go.
 close :: proc(s:^Store) {
+    if s!=nil && s.read_index!=nil {s^={};return}
     if s==nil || s.state==nil {
         if s!=nil {s^={}}
         return

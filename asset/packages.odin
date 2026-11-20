@@ -768,6 +768,9 @@ packages_resolve :: proc(s:^store.Store,root:string,list:^Packages,allocator:=co
     resolved.listed=make([dynamic]Package_Listed,allocator)
     resolved.problems=make([dynamic]Package_Problem,allocator)
     resolved.packages=make([dynamic]Resolved_Package,allocator)
+    if len(list.packages)==0 {return}
+    index:=store.read_index(s)
+    s:=&index
     names:=make([dynamic]string,context.temp_allocator)
     for &entry in list.packages {
         p,manifest_error:=package_load(s,root,&entry,context.temp_allocator)

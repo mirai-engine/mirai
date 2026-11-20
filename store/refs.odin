@@ -21,13 +21,12 @@ ref_get :: proc(s:^Store,namespace,name:string) -> (hash:Hash,error:Error) {
     if s==nil || s.state==nil || !name_valid(namespace) || !name_valid(name) {return {},.Invalid_Argument}
     sync.mutex_lock(&s.state.lock)
     defer sync.mutex_unlock(&s.state.lock)
+    read_index_locked(s) or_return
     return ref_get_locked(s,namespace,name)
 }
 
 @(private)
 ref_get_locked :: proc(s:^Store,namespace,name:string) -> (hash:Hash,error:Error) {
-    // Another value may have set it since: the root is read again first.
-    refresh_locked(s) or_return
     if v,found:=ref_resolve_locked(s,namespace,name);found {return v.address,.None}
     return {},.Missing
 }
@@ -42,7 +41,8 @@ ref_set :: proc(s:^Store,namespace,name:string,hash:Hash,now:Maybe(time.Time)=ni
 ref_remove :: proc(s:^Store,namespace,name:string,now:Maybe(time.Time)=nil) -> Error {
     if s==nil || s.state==nil || !name_valid(namespace) || !name_valid(name) {return .Invalid_Argument}
     sync.mutex_lock(&s.state.lock)
-    _,error:=ref_get_locked(s,namespace,name)
+    error:=refresh_locked(s)
+    if error==.None {_,error=ref_get_locked(s,namespace,name)}
     sync.mutex_unlock(&s.state.lock)
     if error!=.None {return error}
     return ref_frame_commit(s,namespace,name,{},now)
@@ -75,7 +75,7 @@ ref_list :: proc(s:^Store,namespace:string,allocator:=context.allocator) -> (ref
     if s==nil || s.state==nil || !name_valid(namespace) {return nil,.Invalid_Argument}
     sync.mutex_lock(&s.state.lock)
     defer sync.mutex_unlock(&s.state.lock)
-    refresh_locked(s) or_return
+    read_index_locked(s) or_return
     return ref_list_locked(s,namespace,allocator)
 }
 
@@ -121,7 +121,7 @@ ref_namespaces :: proc(s:^Store,allocator:=context.allocator) -> (namespaces:[]s
     if s==nil || s.state==nil {return nil,.Invalid_Argument}
     sync.mutex_lock(&s.state.lock)
     defer sync.mutex_unlock(&s.state.lock)
-    refresh_locked(s) or_return
+    read_index_locked(s) or_return
     state:=s.state
     seen:=make([dynamic]string,0,0,context.temp_allocator)
     defer delete(seen)

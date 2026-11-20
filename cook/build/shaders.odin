@@ -197,6 +197,7 @@ shaders_generated :: proc(
             open_error,allocator=allocator)
     }
     defer store.close(&s)
+    index:=store.read_index(&s,refresh=false)
     wanted:=make(map[store.Hash]bool,context.temp_allocator)
     for use in uses {
         if !strings.has_prefix(use.program,asset.GENERATED_PROGRAM_PREFIX) {continue}
@@ -214,13 +215,13 @@ shaders_generated :: proc(
                 root,pins_error,allocator=allocator)
         }
         for &pin in pins.packages {
-            p,manifest_error:=asset.package_load(&s,root,&pin,context.temp_allocator)
+            p,manifest_error:=asset.package_load(&index,root,&pin,context.temp_allocator)
             if manifest_error!=.None {continue}
             digits:[64]u8
             key:=store.hex(asset.build_select(pin.manifest,&p),&digits)
-            built,ref_error:=store.ref_get(&s,asset.REF_BUILDS,key)
+            built,ref_error:=store.ref_get(&index,asset.REF_BUILDS,key)
             if ref_error!=.None {continue}
-            b,build_error:=asset.build_get(&s,built,context.temp_allocator)
+            b,build_error:=asset.build_get(&index,built,context.temp_allocator)
             if build_error!=.None || b.package_id!=pin.id {continue}
             for address in b.programs {wanted[address]=true}
         }
@@ -228,7 +229,7 @@ shaders_generated :: proc(
     found:=make([dynamic]shaders.Generated_Program,0,len(wanted),allocator)
     for address in wanted {
         id:=asset.generated_program_id(address,allocator)
-        source,read_error:=asset.record_get(&s,address)
+        source,read_error:=asset.record_get(&index,address)
         if read_error!=.None {
             return nil,fmt.aprintf("generated program %s is unavailable (%v): fetch or rebuild its package",
                 id,read_error,allocator=allocator)

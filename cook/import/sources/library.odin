@@ -349,6 +349,8 @@ project_refresh :: proc(root:string,options:Library_Options,allocator:=context.a
     }
     report.packages=len(list.packages)
     if len(list.packages)==0 {return}
+    index:=store.read_index(options.store)
+    l.index=&index
     project_follow_begin(&l,top)
     refresh_prefetch(&l,top,list.packages[:])
     for &entry,at in list.packages {
@@ -439,6 +441,7 @@ project_unpin :: proc(root:string,id:base.Asset_Id) -> (removed:bool,error:asset
 @(private="file")
 Library_State :: struct {
     options:Library_Options,
+    index:^store.Store,            // the Store index for all reads in a project refresh
     scratch:mem.Dynamic_Arena,
     temp:mem.Allocator,
     plugins:Library_Imports,
@@ -475,6 +478,11 @@ library_begin :: proc(l:^Library_State,options:Library_Options,allocator:mem.All
 library_end :: proc(l:^Library_State) {
     if l.plugins.release!=nil {l.plugins.release(l.plugins.state)}
     mem.dynamic_arena_destroy(&l.scratch)
+}
+
+@(private="file")
+library_index :: proc(l:^Library_State) -> ^store.Store {
+    return l.index if l.index!=nil else l.options.store
 }
 
 // The formats, the whole importers and the game types of the plugins of the
@@ -569,7 +577,7 @@ Found :: struct {
 // manifest says it is.
 @(private="file")
 build_here :: proc(l:^Library_State,p:^asset.Package,key:store.Hash) -> (f:Found,ok:bool) {
-    s:=l.options.store
+    s:=library_index(l)
     digits:[64]u8
     name:=store.hex(key,&digits)
     for namespace,at in ([2]string{asset.REF_IMPORTS,asset.REF_IMPORTS_FAST}) {
@@ -594,7 +602,7 @@ build_here :: proc(l:^Library_State,p:^asset.Package,key:store.Hash) -> (f:Found
 @(private="file")
 build_found :: proc(l:^Library_State,p:^asset.Package,manifest,key:store.Hash,keyed:bool) -> (f:Found,ok:bool) {
     if keyed {return build_here(l,p,key)}
-    s:=l.options.store
+    s:=library_index(l)
     digits:[64]u8
     hash,ref_error:=store.ref_get(s,asset.REF_BUILDS,store.hex(asset.build_select(manifest,p),&digits))
     if ref_error!=.None {return}
@@ -662,7 +670,7 @@ build_given :: proc(l:^Library_State,key:string) -> bool {
 @(private="file")
 refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Package) {
     if l.options.source.fetch==nil {return}
-    s:=l.options.store
+    s:=library_index(l)
     lacking:=make([dynamic]string,l.temp)
     for entry in entries {
         entry:=entry
@@ -760,6 +768,7 @@ library_ingest :: proc(l:^Library_State,path:string,manifest:store.Hash,settings
 @(private="file")
 package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,report:^Library_Report,follow:bool,known:^asset.Package=nil) {
     s:=l.options.store
+    index:=library_index(l)
     entry:=entry
     digits,id_text:[64]u8
     id_name:=base.asset_id_format(entry.id,id_text[:32])
@@ -769,9 +778,9 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
         p=known^
     } else {
         manifest_root:=top if !l.adding else ""
-        p,error=asset.package_load(s,manifest_root,&entry,l.temp)
+        p,error=asset.package_load(index,manifest_root,&entry,l.temp)
         if error==.Not_Found && fetch(l,asset.REF_MANIFESTS,store.hex(entry.manifest,&digits)) {
-            p,error=asset.package_load(s,manifest_root,&entry,l.temp)
+            p,error=asset.package_load(index,manifest_root,&entry,l.temp)
         }
     }
     #partial switch error {
@@ -848,7 +857,7 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
         }
         return
     }
-    previous,_:=store.ref_get(s,asset.REF_BUILDS,select)
+    previous,_:=store.ref_get(index,asset.REF_BUILDS,select)
     if previous!=f.hash {
         if ref_error:=store.ref_set(s,asset.REF_BUILDS,select,f.hash);ref_error!=.None {
             report_line(&report.failures,"package %s: the ref %s/%s could not be set in the store at %s: %v",p.name,asset.REF_BUILDS,select,s.root,ref_error)
@@ -988,7 +997,7 @@ source_changed :: proc(l:^Library_State,p:^asset.Package,source:string) -> bool 
     if !valid {return false}
     code:u64
     if r,known:=reader_of(l,source);known && r.claimed {code=r.whole.code}
-    hashes:=importer.source_hashes_load(l.options.store,source,l.temp)
+    hashes:=importer.source_hashes_load(library_index(l),source,l.temp)
     defer importer.source_hashes_save(l.options.store,source,&hashes)
     return importer.identity_of(p.id,source,p.inputs[:],settings,code,&hashes)!=p.identity
 }
