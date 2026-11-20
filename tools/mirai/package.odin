@@ -310,23 +310,13 @@ package_plugins :: proc(out,store_root:string) -> bool {
     compiler,found:=workspace.deps_compiler(out,context.temp_allocator)
     if !found {fmt.eprintfln("mirai package: %s has no compiler",out);return false}
     m:=project.manifest_default("plugins")
-    named:=0
-    entries,_:=os.read_all_directory_by_path(join(out,"plugins"),context.temp_allocator)
-    for entry in entries {
-        if entry.type!=.Directory {continue}
-        plugin,error:=project.plugin_read(join(entry.fullpath,project.PLUGIN_FILE))
-        if error.code!=.None || plugin.automatic || plugin.parts & {.Runtime,.Editor}=={} {continue}
-        if named==len(m.plugins) {fmt.eprintfln("mirai package: more than %d plugins to build",len(m.plugins));return false}
-        m.plugins[named]=plugin.name
-        named+=1
-    }
     for optimization in ([2]project.Optimization{.Minimal,.Speed}) {
         scratch:=join(out,".mirai","tmp",fmt.tprintf("plugins-%v",optimization))
         _=base.remove_all(scratch)
         if base.make_directory_all(scratch)!=nil {fmt.eprintfln("mirai package: could not write to %s",scratch);return false}
         m.build.optimization=optimization
         if error:=project.manifest_write(join(scratch,project.PROJECT_FILE),&m);error.code!=.None {fmt.eprintfln("mirai package: %s",project_error_text(scratch,error));return false}
-        p,error:=project.open(scratch,out)
+        p,error:=project.open(scratch,out,engine_plugin_parts={.Runtime,.Editor})
         if error.code!=.None {fmt.eprintfln("mirai package: %s",project_error_text(scratch,error));return false}
         defer project.close(&p)
         job:=build.job_run({project=&p,target=.Editor,compiler=compiler,engine=build.ENGINE_MODE_INSTALLED,store_root=store_root})
