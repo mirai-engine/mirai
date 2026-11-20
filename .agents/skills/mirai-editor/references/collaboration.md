@@ -31,9 +31,9 @@ Code: `collab.odin`, `collab_api.odin`, `collab_project.odin` (the project that 
 - **Rejoining.** Each editor has an id (`Collab.client`, in the Hello): one that enters again while
   the host holds its previous connection takes its place and its color, and that connection is
   closed with what it had selected. Whoever leaves the session's list retains nothing.
-- `collab.join` returns before the scene arrives: query `collab.status` until `Joined`. The phases
-  are `Collab_Phase`, with the reason for the end; `Updating` is the guest bringing its folder to
-  the host's project ([the project](#the-project)).
+- `collab.host` and `collab.join` return while the project is being prepared. Query `collab.status`
+  for the host's invitation or the guest's `Joined` phase. `Ended` gives the reason the session
+  stopped. In `Updating`, the host prepares its first offer or the guest brings its folder to it.
 
 ## The project
 
@@ -43,10 +43,10 @@ Code: `collab.odin`, `collab_api.odin`, `collab_project.odin` (the project that 
   Live edits go to the editors admitted to the scene. An editor presented with an invitation
   from `mirai share` reads the offer before writing any files and tells the user to run
   `mirai join`.
-- **Hosting** takes the snapshot of the project into the editor's store and offers it under the
-  session's key, with the builds its packages pin; the whole library of that store is exposed to
-  whoever holds the invitation, as in `mirai share`. A lease of the session holds what it serves
-  and what it fetches.
+- **Hosting** takes the snapshot on a worker and offers it under the session's key, with the
+  builds its packages pin. The invitation becomes available after the snapshot is published and
+  router mapping is resolved. The store's library is exposed to whoever holds the invitation,
+  as in `mirai share`. Session leases hold what it serves and what it fetches.
 - **Joining** first runs the join of `cook/share` (phase `Updating`), and only then says Hello and
   receives the scene. Into the open project (Session > Join, or `collab.join` without `folder`) it
   is the three-way update: a file both changed stays the guest's and is listed as kept, never
@@ -60,8 +60,9 @@ Code: `collab.odin`, `collab_api.odin`, `collab_project.odin` (the project that 
 - **What the host changes during the session** (an import, a saved asset, a source file, a file
   moved or removed, a package build it now pins) reaches the joined guests: the host watches its
   folder, and once its files have been quiet for `COLLAB_OFFER_QUIET` it takes the snapshot again,
-  at most once a `COLLAB_OFFER_EVERY`; when it differs it offers it under the same key and sends
-  `Project` through the session. A guest that gets it runs the same join into its open project,
+  at most once a `COLLAB_OFFER_EVERY`. The previous offer stays available while its replacement
+  is prepared. When it differs the host sends `Project` through the session. A guest that gets
+  it runs the same join into its open project,
   as soon as the update it runs ends: only what differs is fetched, and the three-way rule keeps
   and lists what it changed. What it wrote reloads as any file changed on disk; its packages are
   listed again. A guest's document has no file of its own, so the scene file the host writes does

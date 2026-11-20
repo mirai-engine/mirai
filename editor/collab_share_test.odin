@@ -123,6 +123,9 @@ share_step :: proc(n:^Share_Net) {
 @(private="file")
 share_until_ready :: proc(t:^testing.T,n:^Share_Net,updates:=0,ended:=false) -> bool {
     for steps:=0;steps<600_000; {
+        if host:=collab_state(&n.host.s);host!=nil && host.offer!=nil {
+            thread.join(host.offer.thread)
+        }
         st:=collab_state(&n.guest.s)
         if !testing.expect(t,st!=nil) {return false}
         if st.phase==.Ended {return ended || testing.expectf(t,false,"the session ended: %s",st.reason)}
@@ -140,13 +143,32 @@ share_until_ready :: proc(t:^testing.T,n:^Share_Net,updates:=0,ended:=false) -> 
     return testing.expect(t,false,"the guest did not join in 600 virtual seconds")
 }
 
+@(private="file")
+share_start_host :: proc(t:^testing.T,n:^Share_Net,endpoint:int) -> bool {
+    context.temp_allocator=mem.arena_allocator(&n.frame)
+    transport:=wire.sim_endpoint_transport(&n.sim,endpoint)
+    error:=collab_host(&n.host.s,0,"Ana",transport)
+    if !testing.expectf(t,error==.None,"%s",collab_error_text(error)) {return false}
+    st:=collab_state(&n.host.s)
+    if !testing.expect_value(t,st.phase,Collab_Phase.Updating) {return false}
+    testing.expect_value(t,st.code_length,0)
+    digits:[64]u8
+    _,pending:=store.ref_get(&n.host.s.store,share.NAMESPACE,
+        share.offer_name(st.invite.secret,&digits))
+    testing.expect_value(t,pending,store.Error.Missing)
+    share_step(n)
+    if !testing.expect(t,st.offer!=nil) {return false}
+    thread.join(st.offer.thread)
+    share_step(n)
+    return testing.expectf(t,st.phase==.Joined,"the host did not offer its project: %s",st.reason)
+}
+
 // The host shares, the guest joins with the code of its invitation at the host's place on the
 // network; each session on endpoints of its own, which nothing of an earlier one reaches.
 @(private="file")
 share_join :: proc(t:^testing.T,n:^Share_Net,first:=0,folder:="") -> bool {
-    // Called between frames, as the API is.
     context.temp_allocator=mem.arena_allocator(&n.frame)
-    if error:=collab_host(&n.host.s,0,"Ana",wire.sim_endpoint_transport(&n.sim,first));!testing.expectf(t,error==.None,"%s",collab_error_say(&n.host.s,error)) {return false}
+    if !share_start_host(t,n,first) {return false}
     code:=wire.invite_encode(wire.invite_make(collab_state(&n.host.s).invite,COLLAB_PORT),context.temp_allocator)
     error:=collab_join(&n.guest.s,code,"Ben",folder,at=wire.address_memory(first),
         transport=wire.sim_endpoint_transport(&n.sim,first+1))
@@ -276,8 +298,7 @@ the_command_joins_an_editors_project_without_entering_its_scene :: proc(t:^testi
     defer {share_end_destroy(guest);share_end_destroy(host);wire.sim_network_destroy(&n.sim);delete(n.frame_bytes)}
     if !ok {return}
     if _,made:=share_host_project(t,n);!made {return}
-    error:=collab_host(&host.s,0,"Ana",wire.sim_endpoint_transport(&n.sim,0))
-    if !testing.expect_value(t,error,Collab_Error.None) {return}
+    if !share_start_host(t,n,0) {return}
     st:=collab_state(&host.s)
     cli:=new(Share_Cli);defer free(cli)
     key:=wire.Invite_Key{public=st.invite.public,secret=st.invite.secret}
@@ -338,20 +359,21 @@ an_editor_refuses_a_files_only_invitation_before_writing :: proc(t:^testing.T) {
     defer {share_end_destroy(guest);share_end_destroy(host);wire.sim_network_destroy(&n.sim);delete(n.frame_bytes)}
     if !ok {return}
     if _,made:=share_host_project(t,n);!made {return}
-    error:=collab_host(&host.s,0,"Ana",wire.sim_endpoint_transport(&n.sim,2))
-    if !testing.expect_value(t,error,Collab_Error.None) {return}
+    if !share_start_host(t,n,2) {return}
     live:=collab_state(&host.s).invite
     cli:=new(Share_Cli);defer free(cli)
     key,made:=wire.invite_key()
     if !testing.expect(t,made) || !share_cli_init(t,n,cli,&host.s.store,.Server,key,0) {return}
     defer share_cli_destroy(n)
     testing.expect(t,key!=live,"each host has its own invitation key")
-    if _,problem:=share.offer(&cli.node,host.root,key.secret,allocator=context.temp_allocator);!testing.expect_value(t,problem,"") {return}
+    _,problem:=share.offer(&cli.node,&host.s.store,host.root,key.secret,
+        allocator=context.temp_allocator)
+    if !testing.expect_value(t,problem,"") {return}
     digits:[64]u8
     _,offer_error:=store.ref_get(&host.s.store,share.NAMESPACE,share.offer_name(live.secret,&digits))
     testing.expect_value(t,offer_error,store.Error.None)
     code:=wire.invite_encode(wire.invite_make(key,COLLAB_PORT),context.temp_allocator)
-    error=collab_join(&guest.s,code,"Ben",at=wire.address_memory(0),
+    error:=collab_join(&guest.s,code,"Ben",at=wire.address_memory(0),
         transport=wire.sim_endpoint_transport(&n.sim,1))
     if !testing.expect_value(t,error,Collab_Error.None) {return}
     if !share_until_ready(t,n,ended=true) {return}
