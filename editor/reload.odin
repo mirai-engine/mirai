@@ -47,7 +47,7 @@ library_reload :: proc(s:^Session) -> Library_Reload {
     tool_preview_cancel(s)
     path:=project.project_library(s.project_root,"editor")
     s.library_generation+=1
-    library,error:=host.project_library_load(path,s.library_generation)
+    library,error:=host.project_library_load(path)
     if error!=.None {
         log.errorf("%s",host.library_error_text(error,path))
         return .Restart
@@ -86,7 +86,7 @@ engine_take :: proc(s:^Session) -> (taken,goes_on:bool) {
     names:=strings.builder_make(context.temp_allocator)
     for library in libraries {
         s.library_generation+=1
-        loaded,error:=host.engine_library_swap(folder,library.file,library.packages,s.library_generation)
+        loaded,error:=host.engine_library_swap(folder,library.file,library.packages)
         if error!=.None {
             restart=host.library_error_text(error,library.file)
             break
