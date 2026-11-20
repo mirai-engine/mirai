@@ -1502,7 +1502,10 @@ material_values_over :: proc(o:^Material_Values,over:^Material_Values) {
     o.emission+=over.emission
     for name,i in over.names[:min(int(over.count),len(over.names))] {material_value(o,name,over.values[i],int(over.slots[i]))}
     for name,i in over.texture_names[:min(int(over.texture_count),len(over.texture_names))] {material_texture(o,name,int(over.texture_slots[i]),over.textures[i])}
-    if over.own_overlays {o.own_overlays,o.overlay_count,o.overlays=true,over.overlay_count,over.overlays}
+    if over.own_overlays {
+        o.overlays=over.overlays
+        o.own_overlays,o.overlay_count=true,over.overlay_count
+    }
 }
 
 // Puts the values and the textures an entity gives a slot over those of its

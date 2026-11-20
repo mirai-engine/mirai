@@ -211,12 +211,12 @@ manifest_parse :: proc(text:string) -> (m:Manifest,error:Error) {
 
 // Sets over m the fields a JSON object has, as a file would: what it does not
 // name stays. Unchanged when the result does not validate.
-manifest_merge :: proc(m:^Manifest,text:string) -> Error {
+manifest_merge :: proc(m:^Manifest,text:string) -> (result:Error) {
     next:=m^
     if error:=value_parse(text,&next,Manifest);error.code!=.None {return error}
     if error:=manifest_validate(&next);error.code!=.None {return error}
     m^=next
-    return {}
+    return
 }
 
 manifest_read :: proc(path:string) -> (m:Manifest,error:Error) {
@@ -234,15 +234,15 @@ manifest_write :: proc(path:string,m:^Manifest) -> Error {
     return {code=serial.file_write_atomic(path,transmute([]u8)text)==.None?.None:.Write_Failed}
 }
 
-manifest_validate :: proc(m:^Manifest) -> Error {
-    if base.text_len(m.name[:])==0 {return {code=.Name_Missing}}
+manifest_validate :: proc(m:^Manifest) -> (result:Error) {
+    if base.text_len(m.name[:])==0 {result.code=.Name_Missing;return}
     if version:=base.text_get(m.version[:]);!version_valid(version) {return error_about(.Version_Invalid,version)}
     if identifier:=base.text_get(m.identifier[:]);identifier!="" && !identifier_valid(identifier) {return error_about(.Identifier_Invalid,identifier)}
     if icon:=base.text_get(m.icon[:]);icon!="" && !png_path_valid(icon) {return error_about(.Icon_Invalid,icon)}
     if thumbnail:=base.text_get(m.thumbnail[:]);thumbnail!="" && !png_path_valid(thumbnail) {return error_about(.Thumbnail_Invalid,thumbnail)}
     if error:=names_validate(m.plugins[:],"");error.code!=.None {return error}
     scene:=base.text_get(m.start_scene[:])
-    if !relative_path_valid(scene) {return {code=.Scene_Invalid}}
+    if !relative_path_valid(scene) {result.code=.Scene_Invalid;return}
     if executable:=base.text_get(m.build.executable[:]);executable!="" && !file_name_valid(executable) {
         return error_about(.Executable_Invalid,executable)
     }
@@ -250,12 +250,12 @@ manifest_validate :: proc(m:^Manifest) -> Error {
         if text:=base.text_get(define[:]);text!="" && !define_valid(text) {return error_about(.Define_Invalid,text)}
     }
     for side in ([2]i32{m.window.width,m.window.height}) {
-        if side<1 || side>MAX_WINDOW_SIDE {return {code=.Window_Invalid}}
+        if side<1 || side>MAX_WINDOW_SIDE {result.code=.Window_Invalid;return}
     }
     for &source,i in m.sources {
         name:=base.text_get(source.name[:])
         if name=="" {
-            if base.text_len(source.url[:])>0 || base.text_len(source.commit[:])>0 {return {code=.Name_Missing}}
+            if base.text_len(source.url[:])>0 || base.text_len(source.commit[:])>0 {result.code=.Name_Missing;return}
             continue
         }
         if !name_valid(name) {return error_about(.Name_Invalid,name)}
@@ -264,7 +264,7 @@ manifest_validate :: proc(m:^Manifest) -> Error {
         }
         if base.text_len(source.url[:])==0 || !commit_valid(base.text_get(source.commit[:])) {return error_about(.Source_Invalid,name)}
     }
-    return {}
+    return
 }
 
 // The source of the plugin named name, or nil when it does not come from git.
@@ -305,9 +305,9 @@ plugin_write :: proc(path:string,m:^Plugin_Manifest) -> Error {
     return {code=serial.file_write_atomic(path,transmute([]u8)text)==.None?.None:.Write_Failed}
 }
 
-plugin_validate :: proc(m:^Plugin_Manifest) -> Error {
+plugin_validate :: proc(m:^Plugin_Manifest) -> (result:Error) {
     name:=base.text_get(m.name[:])
-    if name=="" {return {code=.Name_Missing}}
+    if name=="" {result.code=.Name_Missing;return}
     if !name_valid(name) {return error_about(.Name_Invalid,name)}
     if version:=base.text_get(m.version[:]);!version_valid(version) {return error_about(.Version_Invalid,version)}
     low,high:=base.text_get(m.engine.min[:]),base.text_get(m.engine.max[:])
@@ -353,12 +353,12 @@ plugin_validate :: proc(m:^Plugin_Manifest) -> Error {
         }
         if alone {return error_about(.Automatic_Alone,name)}
     }
-    return {}
+    return
 }
 
 // Whether a plugin works with a version of the engine: .Engine_Old or
 // .Engine_New with the end of its range that leaves the engine out.
-plugin_engine_check :: proc(m:^Plugin_Manifest,engine:=ENGINE_VERSION) -> Error {
+plugin_engine_check :: proc(m:^Plugin_Manifest,engine:=ENGINE_VERSION) -> (result:Error) {
     current,_,_:=version_parse(engine)
     if low:=base.text_get(m.engine.min[:]);low!="" {
         if version,_,ok:=version_parse(low);ok && version_compare(current,version,3)<0 {return error_about(.Engine_Old,low)}
@@ -366,7 +366,7 @@ plugin_engine_check :: proc(m:^Plugin_Manifest,engine:=ENGINE_VERSION) -> Error 
     if high:=base.text_get(m.engine.max[:]);high!="" {
         if version,parts,ok:=version_parse(high);ok && version_compare(current,version,parts)>0 {return error_about(.Engine_New,high)}
     }
-    return {}
+    return
 }
 
 // One to three numbers separated by dots; parts is how many there are.
@@ -492,7 +492,7 @@ error_about :: proc(code:Error_Code,subject:string) -> (error:Error) {
 }
 
 @(private)
-names_validate :: proc(names:[]Name,self:string) -> Error {
+names_validate :: proc(names:[]Name,self:string) -> (result:Error) {
     for &entry,i in names {
         name:=base.text_get(entry[:])
         if name=="" {continue}
@@ -502,7 +502,7 @@ names_validate :: proc(names:[]Name,self:string) -> Error {
             if base.text_get(other[:])==name {return error_about(.Name_Repeated,name)}
         }
     }
-    return {}
+    return
 }
 
 @(private)
@@ -591,7 +591,7 @@ value_text :: proc(value:rawptr,T:typeid,allocator:=context.allocator) -> string
 }
 
 @(private)
-value_parse :: proc(text:string,value:rawptr,T:typeid) -> Error {
+value_parse :: proc(text:string,value:rawptr,T:typeid) -> (result:Error) {
     schema:serial.Schema
     serial.schema_init(&schema,context.temp_allocator)
     defer serial.schema_destroy(&schema)
@@ -604,7 +604,7 @@ value_parse :: proc(text:string,value:rawptr,T:typeid) -> Error {
         line,column:=serial.text_position(text,r.error.offset)
         return {code=.Text,text=r.error.code,line=line,column=column,detail=serial.text_error_message(&r,allocator=context.temp_allocator)}
     }
-    return {}
+    return
 }
 
 // A text field holding an array of texts: the list of names std/serial would

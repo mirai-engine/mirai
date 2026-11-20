@@ -179,7 +179,8 @@ records_type_read :: proc(app:^App,path:string,entry:^Record_File) -> bool {
     file:asset.Asset
     view:=records_open(app,path,&file) or_return
     defer asset.asset_close(&file)
-    entry.type,entry.declares=view.info.type,view.info.declares
+    entry.type=view.info.type
+    entry.declares=view.info.declares
     return true
 }
 

@@ -189,8 +189,8 @@ places_run :: proc(
 }
 
 // What the querier walks and crosses, for the Path measure: as navigation moves it.
-place_filter :: proc(navigation:core.Ref(nav.Navigation),querier:core.Entity,paths:^core.Table(nav.Nav_Path,$A),agents:^core.Table(nav.Nav_Agent,$B),characters:^core.Table(phys.Character,$E),walks:^core.Table(locomotion.Walk,$C),swims:^core.Table(locomotion.Swim,$D),physics:core.Ref(phys.Physics_State)) -> ai.Nav_Filter {
-    if navigation.ptr==nil || !navigation.ready || navigation.count==0 {return {}}
+place_filter :: proc(navigation:core.Ref(nav.Navigation),querier:core.Entity,paths:^core.Table(nav.Nav_Path,$A),agents:^core.Table(nav.Nav_Agent,$B),characters:^core.Table(phys.Character,$E),walks:^core.Table(locomotion.Walk,$C),swims:^core.Table(locomotion.Swim,$D),physics:core.Ref(phys.Physics_State)) -> (result:ai.Nav_Filter) {
+    if navigation.ptr==nil || !navigation.ready || navigation.count==0 {return}
     class:=0
     if p,found:=core.get(paths,querier);found && p.class>=0 && int(p.class)<navigation.count {class=int(p.class)}
     agent,_:=core.get(agents,querier)

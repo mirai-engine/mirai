@@ -102,7 +102,10 @@ frame_layout_of :: proc(assets:^Shader_Assets) -> Frame_Layout {
     for extension,i in frame.extensions {
         // The name lives as long as the catalog of the generation: find it there.
         at:=strings.index(string(assets.catalog),extension.name)
-        if extension.name=="" || at<0 || extension.offset<core || extension.size<=0 || extension.offset+extension.size>size {return {size=size_of(Gpu_Frame)}}
+        if extension.name=="" || at<0 || extension.offset<core || extension.size<=0 || extension.offset+extension.size>size {
+            layout={size=size_of(Gpu_Frame)}
+            return layout
+        }
         layout.extensions[i]={string(assets.catalog[at:][:len(extension.name)]),extension.offset,extension.size}
     }
     layout.size,layout.nested,layout.instance_ids,layout.extension_count=size,frame.nested,frame.instance_ids,len(frame.extensions)
@@ -319,7 +322,8 @@ renderer_publish_shader_reload :: proc(r:^Renderer,assets:^Shader_Assets,candida
     program_catalog_destroy(&r.programs)
     program_misses_clear(r)
     r.shader_codes=candidate.shader_codes;r.pipelines=candidate.pipelines;r.overlay_pipelines=candidate.overlay_pipelines
-    r.variants,r.variant_count=candidate.variants,candidate.variant_count
+    r.variants=candidate.variants
+    r.variant_count=candidate.variant_count
     r.overlay_hw_pipelines=candidate.overlay_hw_pipelines
     candidate.pipelines={};candidate.overlay_pipelines={};candidate.overlay_hw_pipelines={};candidate.variant_count=0
     if !scene {return true}

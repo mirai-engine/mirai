@@ -399,7 +399,8 @@ batch_set :: proc(r: ^Renderer, handle: Batch_Handle, world: u64, desc: Batch_De
 		batch_release(s, record)
 	}
 	record := &b.records[index]
-	record.used, record.gone, record.world, record.desc, record.count = true, false, world, desc, u32(len(instances))
+	record.desc = desc
+	record.used, record.gone, record.world, record.count = true, false, world, u32(len(instances))
 	record.colored = len(colors) > 0
 	record.bounds_min, record.bounds_max, record.reach, record.small, record.scale = {}, {}, 0, true, 0
 	// The anchor: the multiple of ORIGIN_STEP nearest the middle of their positions.

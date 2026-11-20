@@ -389,7 +389,8 @@ navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,collision:^
                 continue
             }
             c:=&n.classes[n.count]
-            c.class,c.filter=class,filter
+            c.class=class
+            c.filter=filter
             c.volume_config=volume_config(class)
             if !ai.nav_volume_init(&c.volume,{voxel=c.volume_config.voxel,layers=c.volume_config.layers,max_zones=min(tiles,ai.NAV_VOLUME_SLOT_MAX)}) || !class_marks_init(c,tiles) {
                 navigation_free(n)
@@ -404,7 +405,8 @@ navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,collision:^
             continue
         }
         c:=&n.classes[n.count]
-        c.class,c.filter=class,filter
+        c.class=class
+        c.filter=filter
         c.config=class_config(settings,class)
         width:=f32(c.config.tile_size)*c.config.cell_size
         if !ai.nav_mesh_init(&c.mesh,{tile_width=width,climb=class.climb,max_tiles=tiles,max_links=links}) || !class_marks_init(c,tiles) {
@@ -1103,7 +1105,8 @@ gather :: proc(build:^Build,class:int,c:^Class_Mesh,b:^Navigation_Builds,physics
         if field,ok:=ai.nav_tile_field_clone(&kept.field);ok {
             b.fields_clock+=1
             kept.used=b.fields_clock
-            build.field,build.from_field,build.geometry=field,true,kept.geometry
+            build.field=field
+            build.from_field,build.geometry=true,kept.geometry
             clear(&build.vertices)
             clear(&build.indices)
             complete,enough=true,true
@@ -1342,7 +1345,8 @@ sections_update :: proc(n:^Navigation,b:^Navigation_Builds,limits:Limits,fresh:b
         for box in s.away[:s.away_count] {if box==old {still=true;break}}
         if !still {mark_box(n,old,limits)}
     }
-    b.away,b.away_count=s.away,s.away_count
+    b.away=s.away
+    b.away_count=s.away_count
     if s.away_count==0 {return}
     gone:=make([dynamic]u64,context.temp_allocator)
     for i in 0..<n.count {

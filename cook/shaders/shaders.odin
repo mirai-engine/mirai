@@ -1081,7 +1081,7 @@ manifest_text :: proc(g:^Generation,shaders,programs,extensions,tests:[]Shader) 
 @(private)
 manifest_read :: proc(folder:string,allocator:runtime.Allocator) -> (manifest:abi.Shader_Manifest) {
     data,error:=os.read_entire_file(path_join(folder,abi.SHADER_MANIFEST,allocator=context.temp_allocator),context.temp_allocator)
-    if error!=nil || serial.text_decode(string(data),&manifest,allocator)!="" {return {}}
+    if error!=nil || serial.text_decode(string(data),&manifest,allocator)!="" {manifest={};return}
     return
 }
 

@@ -1832,7 +1832,8 @@ assets_prepare :: proc(prepared:^Assets_Prepared,limits:Assets_Limits,types:^ass
             prepared.problem,prepared.detail=.Corrupt,view_error
             return
         }
-        prepared.material,prepared.ok=view,true
+        prepared.material=view
+        prepared.ok=true
     }
 }
 
@@ -1969,7 +1970,8 @@ assets_material_set :: proc(a:^Assets,id:base.Asset_Id,info:asset.Material_Info,
         if resize(&a.parameters,len(a.parameters)+int(count))!=nil {return false}
         material.first_parameter,material.parameter_room=u32(len(a.parameters))-count,count
     }
-    material.info,material.parameter_count=info,count
+    material.info=info
+    material.parameter_count=count
     copy(assets_material_parameters(a,material),parameters)
     assets_material_row_update(a,material)
     if a.stats.derived>0 {assets_structure_changed(a,id)}

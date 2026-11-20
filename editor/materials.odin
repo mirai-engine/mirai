@@ -171,7 +171,8 @@ value_key :: proc "contextless" (e:core.Entity,slot:int,name:u64,axis:int=0) -> 
 // What an entity shows of its materials: its Material_Values, the default without them.
 entity_material_values :: proc(w:core.World_Ref,e:core.Entity) -> erender.Material_Values {
     if values,ok:=entity_get(w,e,erender.Material_Values);ok {return values}
-    return erender.MATERIAL_VALUES_DEFAULT
+    defaults:=erender.MATERIAL_VALUES_DEFAULT
+    return defaults
 }
 
 @(private)
@@ -908,7 +909,10 @@ material_base :: proc(s:^Session,id:base.Asset_Id) -> ^asset.Material_Info {
         b^={material=id,content=record.content_hash}
         file:asset.Asset
         if view,read:=material_open(s,id,&file);read {
-            if view.imported!=nil {b.info,b.imported=view.imported^,true}
+            if view.imported!=nil {
+                b.info=view.imported^
+                b.imported=true
+            }
             asset.asset_close(&file)
         }
     }

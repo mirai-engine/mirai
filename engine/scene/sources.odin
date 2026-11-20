@@ -143,8 +143,8 @@ Sources_Near :: struct {
     count:int,
 }
 
-sources_near :: proc "contextless" (sources:^Streaming_Sources,placed:mm.Mat4,reach:f32) -> Sources_Near {
-    if sources==nil {return {}}
+sources_near :: proc "contextless" (sources:^Streaming_Sources,placed:mm.Mat4,reach:f32) -> (result:Sources_Near) {
+    if sources==nil {return}
     return sources_near_of(sources.items[:clamp(sources.count,0,SOURCES_MAX)],placed,reach)
 }
 

@@ -100,7 +100,8 @@ nav_medium_accept :: proc(q:^Nav_Medium_Query,slot:u32,edge:Edge) {
 nav_medium_path_begin :: proc(q:^Nav_Medium_Query,mesh:^Nav_Mesh,volume:^Nav_Volume,filter:^Nav_Filter,links:[]Nav_Space_Link,extents:math.Vec3,start_ref,end_ref:Nav_Ref,start,end:math.Vec3) -> Search_Status {
     q.mesh,q.volume,q.count=nil,nil,0
     if len(q.points)==0 || mesh==nil || volume==nil || filter==nil || !nav_point_finite(start) || !nav_point_finite(end) {return .Invalid}
-    q.mesh,q.volume,q.filter=mesh,volume,filter^
+    q.filter=filter^
+    q.mesh,q.volume=mesh,volume
     if !nav_medium_valid(q,start_ref) || !nav_medium_valid(q,end_ref) {q.mesh,q.volume=nil,nil;return .Invalid}
     for c in links {
         if q.count>=NAV_QUERY_SPACE_LINKS {break}

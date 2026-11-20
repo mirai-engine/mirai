@@ -310,7 +310,10 @@ widget_walk :: proc(used:[]ui.Tree_Component,from,target:base.Asset_Id,uses:Widg
 // True when it reached target, with the chain left as it was.
 widget_walk_down :: proc(w:^Widget_Walk,used:[]ui.Tree_Component) -> bool {
     broke :: proc(w:^Widget_Walk,component:ui.Tree_Component,cycle:bool) {
-        if w.broken.widget=={} {w.broken,w.cycle=component,cycle}
+        if w.broken.widget=={} {
+            w.broken=component
+            w.cycle=cycle
+        }
     }
     for component in used {
         id:=component.widget

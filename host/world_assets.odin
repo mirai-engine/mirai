@@ -382,13 +382,13 @@ marks_plans_make :: proc(m:^Assets_Marks,info:^core.World_Info,allocator:mem.All
     }
     ok:=true
     for &t,at in info.tables {
-        made:bool
-        m.tables[at],made=ids_plan(t.info,allocator)
+        plan,made:=ids_plan(t.info,allocator)
+        m.tables[at]=plan
         ok&&=made
     }
     for &s,at in info.storages {
-        made:bool
-        m.storages[at],made=ids_plan(s.info,allocator)
+        plan,made:=ids_plan(s.info,allocator)
+        m.storages[at]=plan
         ok&&=made
     }
     if !ok {

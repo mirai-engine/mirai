@@ -177,7 +177,10 @@ net_input_take :: proc(session:^Net_Session,seats:^core.Table(input.Seat),time:c
     if seat==nil {return}
     c:=&session.client
     c.delayed=seat^
-    if !time.resimulating {seat.actions,seat.held,seat.rearm,seat.fed=c.fed_seat.actions,c.fed_seat.held,c.fed_seat.rearm,c.fed_seat.fed}
+    if !time.resimulating {
+        seat.actions=c.fed_seat.actions
+        seat.held,seat.rearm,seat.fed=c.fed_seat.held,c.fed_seat.rearm,c.fed_seat.fed
+    }
 }
 
 @(step="fixed",loops="game",stage="input",after="input_seats")
@@ -192,7 +195,8 @@ net_input_delay :: proc(session:^Net_Session,seats:^core.Table(input.Seat),bindi
         if !ok {core.report(problems,core.NONE,"net.input_axes","more than %d axis actions of the seat that drives were away from zero in one tick, and the server got only the first %d; give the actions that move together fewer axes, or make some of them buttons",input.REMOTE_AXES,input.REMOTE_AXES)}
         c.taken[int(tick)%len(c.taken)]={tick+1,sent,u8(wire.clock_state(&session.host).input_delay)}
     }
-    seat.actions,seat.held,seat.rearm,seat.fed=c.delayed.actions,c.delayed.held,c.delayed.rearm,c.delayed.fed
+    seat.actions=c.delayed.actions
+    seat.held,seat.rearm,seat.fed=c.delayed.held,c.delayed.rearm,c.delayed.fed
     now:=c.taken[int(tick)%len(c.taken)]
     from:=tick-u32(now.tick==tick+1?now.delay:0)
     taken:=c.taken[int(from)%len(c.taken)]

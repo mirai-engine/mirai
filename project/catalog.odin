@@ -35,7 +35,7 @@ Catalog :: struct {
 }
 
 // The file of the plugin name.
-catalog_entry_parse :: proc(name,text:string,entry:^Catalog_Entry) -> Error {
+catalog_entry_parse :: proc(name,text:string,entry:^Catalog_Entry) -> (result:Error) {
     entry^={}
     if !name_valid(name) {return error_about(.Name_Invalid,name)}
     base.text_set(entry.name[:],name)
@@ -44,7 +44,7 @@ catalog_entry_parse :: proc(name,text:string,entry:^Catalog_Entry) -> Error {
         return error
     }
     if base.text_len(entry.url[:])==0 || !commit_valid(base.text_get(entry.commit[:])) {return error_about(.Source_Invalid,name)}
-    return {}
+    return
 }
 
 catalog_icon :: proc(folder,name:string,allocator:=context.allocator) -> string {
@@ -56,13 +56,13 @@ catalog_entry_text :: proc(entry:^Catalog_Entry,allocator:=context.allocator) ->
 // Reads the catalog in the checkout folder: the .json files of its
 // CATALOG_PLUGINS. Not_Found: there is no checkout; without the folder of
 // the plugins there are none yet.
-catalog_read :: proc(folder:string,c:^Catalog) -> Error {
+catalog_read :: proc(folder:string,c:^Catalog) -> (result:Error) {
     c^={}
-    if !os.is_dir(folder) {return {code=.Not_Found}}
+    if !os.is_dir(folder) {result.code=.Not_Found;return}
     plugins:=path(folder,CATALOG_PLUGINS,allocator=context.temp_allocator)
-    if !os.is_dir(plugins) {return {}}
+    if !os.is_dir(plugins) {return}
     entries,read_error:=os.read_all_directory_by_path(plugins,context.temp_allocator)
-    if read_error!=nil {return {code=.Read_Failed}}
+    if read_error!=nil {result.code=.Read_Failed;return}
     slice.sort_by(entries,proc(a,b:os.File_Info) -> bool {return a.name<b.name})
     count:=0
     for entry in entries {
@@ -74,7 +74,7 @@ catalog_read :: proc(folder:string,c:^Catalog) -> Error {
         if error:=catalog_entry_parse(name,string(data),&c.plugins[count]);error.code!=.None {return error}
         count+=1
     }
-    return {}
+    return
 }
 
 catalog_count :: proc(c:^Catalog) -> int {

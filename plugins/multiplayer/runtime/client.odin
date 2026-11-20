@@ -1457,7 +1457,9 @@ client_rollback :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,target:u32
     for &x in c.replicas[:c.replica_high] {
         x.corrected=false
         if x.object==0 || x.mode!=.Predicted {continue}
-        x.before,x.corrected=replica_now(s,w,&x)
+        before,corrected:=replica_now(s,w,&x)
+        x.before=before
+        x.corrected=corrected
     }
     present_input:core.Input
     if input!=nil {present_input=input^}

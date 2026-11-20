@@ -321,7 +321,7 @@ solid_build :: proc(s:^Shape,brushes:[]Brush,g:^Shape_Geometry) -> Shape_Error {
         }
         error:=geom.mesh_boolean(geom.mesh_buffer_view(&g.mesh),geom.mesh_buffer_view(&g.brush),b.op,&g.work)
         if error!=.None {return .Geometry}
-        g.mesh,g.work=g.work,g.mesh
+        slice.ptr_swap_non_overlapping(&g.mesh,&g.work,size_of(geom.Mesh_Buffer))
         have=len(g.mesh.indices)>0
     }
     if !have {return .Empty}

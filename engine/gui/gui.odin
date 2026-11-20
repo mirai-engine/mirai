@@ -552,7 +552,8 @@ frame_begin :: proc(
     asked_check(gui,app,problems)
     gui.frame+=1
     gui.pausing=false
-    gui.settings,gui.preferences=settings,preferences
+    gui.settings=settings
+    gui.preferences=preferences
     gui.prompts=base.hash64(mem.slice_to_bytes(gui.settings.prompt_images[:]),base.hash64(mem.ptr_to_bytes(&gui.settings.prompts)))
     for &s in gui.surfaces {s.open,s.skipped=false,false}
     clear(&gui.plan)

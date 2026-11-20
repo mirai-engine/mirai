@@ -4,7 +4,6 @@ import "base:runtime"
 import "core:hash"
 import "core:math"
 import "core:mem"
-import "core:slice"
 import "core:strings"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -200,7 +199,7 @@ tree_rule_add :: proc(tree:^Widget_Tree,variant:Style_Variant) -> bool {
 @(private)
 tree_rules_order :: proc(tree:^Widget_Tree) {
     rules:=tree.variants[:tree.variant_count]
-    slice.stable_sort_by(rules,proc(a,b:Style_Variant) -> bool {
+    base.stable_sort_by(rules,proc(a,b:Style_Variant) -> bool {
         return a.style<b.style || a.style==b.style && style_rule_order(a.states,a.variant)<style_rule_order(b.states,b.variant)
     })
     for &r in tree.style_rules {r={}}
@@ -672,7 +671,8 @@ tree_build :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instance,desc:T
         bar_changed=was.action!=found.action || string(was.text[:was.length])!=string(found.text[:found.length])
     }
     if bar_changed {b.animating=true}
-    instance.bar,instance.bar_count=instance.bar_next,instance.bar_next_count
+    instance.bar=instance.bar_next
+    instance.bar_count=instance.bar_next_count
     if ctx.drag.id!=0 && ctx.drag.owner==ctx.owner {b.animating=true}
     return {count=b.count,dropped=b.dropped,present=b.built>0,animating=b.animating}
 }
