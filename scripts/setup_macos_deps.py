@@ -51,12 +51,41 @@ def brew_prefix(formula: str) -> Path:
     return Path(result.stdout.strip())
 
 
-def dependencies(binary: Path) -> list[str]:
-    """What a binary loads, as its load commands name it; a library's own id is not."""
-    lines = run("otool", "-L", binary).splitlines()[1:]
-    names = [line.strip().split(" (")[0] for line in lines if line.strip()]
-    own = run("otool", "-D", binary).splitlines()[1:]
-    return [name for name in names if name not in own]
+def load_commands(binary: Path) -> tuple[list[str], list[str]]:
+    libraries, rpaths = [], []
+    command = ""
+    for line in run("otool", "-arch", "arm64", "-l", binary).splitlines():
+        key, _, value = line.strip().partition(" ")
+        if key == "cmd":
+            command = value
+        elif command == "LC_RPATH" and key == "path":
+            rpaths.append(value.rsplit(" (offset ", 1)[0])
+        elif key == "name" and command in (
+            "LC_LOAD_DYLIB", "LC_LOAD_WEAK_DYLIB", "LC_LAZY_LOAD_DYLIB",
+            "LC_LOAD_UPWARD_DYLIB", "LC_REEXPORT_DYLIB",
+        ):
+            libraries.append(value.rsplit(" (offset ", 1)[0])
+    return libraries, rpaths
+
+
+def load_path(name: str, loader: Path, executable: Path) -> Path:
+    prefix, _, relative = name.partition("/")
+    if prefix == "@loader_path":
+        return loader.parent / relative
+    if prefix == "@executable_path":
+        return executable.parent / relative
+    return Path(name)
+
+
+def resolve_library(name: str, loader: Path, executable: Path, rpaths: tuple[Path, ...]) -> Path:
+    if name.startswith("@rpath/"):
+        candidates = (path / name.removeprefix("@rpath/") for path in rpaths)
+    else:
+        candidates = (load_path(name, loader, executable),)
+    for path in candidates:
+        if path.is_file():
+            return path.resolve()
+    fail(f"{loader} loads {name}, which could not be found")
 
 
 def place(source: Path, target: Path):
@@ -90,42 +119,53 @@ def sdl3():
 
 
 def spirv_tools():
-    target = DEPS / "spirv-tools"
-    shutil.rmtree(target, ignore_errors=True)
-    target.mkdir(parents=True)
-    pending = []
+    images: dict[str, tuple[Path, dict[str, str]]] = {}
     for tool in TOOLS:
         found = shutil.which(tool)
         if found is None:
             fail(f"{tool} is missing from PATH: brew install {' '.join(FORMULAS)}")
-        binary = target / tool
-        place(Path(found), binary)
-        run("install_name_tool", "-add_rpath", "@executable_path", binary)
-        pending.append(binary)
-    bundled = set()
-    while pending:
-        binary = pending.pop()
-        for name in dependencies(binary):
-            if name.startswith(SYSTEM) or name.startswith("@"):
+        executable = Path(found).resolve()
+        seen = set()
+        pending = [(executable, tool, ())]
+        while pending:
+            source, file, inherited = pending.pop()
+            original, rewrites = images.setdefault(file, (source, {}))
+            if original != source:
+                fail(f"{file} resolves to both {original} and {source}")
+            if file in seen:
                 continue
-            file = Path(name).name
-            # mirai package engine carries, beside each tool, the libraries of SPIR-V of its folder.
-            if "spirv" not in file.lower():
-                fail(f"{binary.name} loads {name}, which is not a library of SPIR-V and a package would not carry")
-            run("install_name_tool", "-change", name, f"@rpath/{file}", binary)
-            if file not in bundled:
-                bundled.add(file)
-                library = target / file
-                place(Path(name), library)
-                run("install_name_tool", "-id", f"@rpath/{file}", library)
-                run("install_name_tool", "-add_rpath", "@loader_path", library)
-                pending.append(library)
+            seen.add(file)
+            names, run_paths = load_commands(source)
+            rpaths = tuple(load_path(path, source, executable) for path in run_paths) + inherited
+            for name in names:
+                if name.startswith(SYSTEM):
+                    continue
+                library = Path(name).name
+                if "spirv" not in library.lower():
+                    fail(f"{source.name} loads {name}, which the SPIR-V bundle cannot carry")
+                dependency = resolve_library(name, source, executable, rpaths)
+                rewrites[name] = f"@loader_path/{library}"
+                pending.append((dependency, library, rpaths))
+
+    target = DEPS / "spirv-tools"
+    shutil.rmtree(target, ignore_errors=True)
+    target.mkdir(parents=True)
+    for file, (source, rewrites) in images.items():
+        binary = target / file
+        place(source, binary)
+        changes = [] if file in TOOLS else ["-id", f"@rpath/{file}"]
+        for name, portable in rewrites.items():
+            if name != portable:
+                changes.extend(["-change", name, portable])
+        if changes:
+            run("install_name_tool", *changes, binary)
         sign(binary)
     for formula in ("spirv-tools", "spirv-cross"):
         notice = brew_prefix(formula) / "LICENSE"
         if notice.is_file():
             shutil.copyfile(notice, target / f"LICENSE-{formula}")
-    print(f"{', '.join(TOOLS)} in {target}" + (f" with {', '.join(sorted(bundled))}" if bundled else ""))
+    bundled = sorted(images.keys() - set(TOOLS))
+    print(f"{', '.join(TOOLS)} in {target}" + (f" with {', '.join(bundled)}" if bundled else ""))
 
 
 def main():
