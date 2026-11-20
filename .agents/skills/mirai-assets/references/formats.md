@@ -304,8 +304,10 @@ The records of the imports kept in the [machine store](../../mirai-store/SKILL.m
   ingested it, so a refresh asks a source or a peer for a manifest only by `manifests/`. The
   import that ingests a source writes it. A root that pins it also keeps
   its text, versioned, in `packages/<package id>.mirai` beside `packages.mirai`
-  (`package_file`).
-- **Build manifest** (`Build`): an object that names the object of each output, named by
+  (`package_file`). An importer's catalog path groups the package in the store browser.
+  It does not set the project's asset destination or the identity of the source.
+- **Build manifest** (`Build`): an object that names each output and the generated program sources
+  it needs, named by
   `imports/<import_key>` (Final) or `imports-fast/<import_key>` by the import that builds it, and by
   `builds/<build_select>` by the refresh of a project that chose it.
 - **Project list** (`Packages`): `packages.mirai` beside `project.mirai`, versioned. The library
@@ -314,6 +316,9 @@ The records of the imports kept in the [machine store](../../mirai-store/SKILL.m
 - **A project pins the manifest, never a build.** The manifest holds what the source is (its
   `identity`), where it was (`origin`, a hint) and each asset with its id, and nothing that
   depends on the engine version: an engine that changes a version leaves the list as it is.
+- **A generated program is a store object.** Its identifier includes the address of its source.
+  Store copies, peer fetches and sweep reach it through the build manifest. The project generates
+  its compiled stages using its active shader sources and the requested backend.
 - **A root carries the manifests it pins.** The address a pin names is that of its manifest
   file's bytes, so a clone or a copy of the root, with an empty store, has every id and setting;
   only builds need the store, a source or a peer. `package_load` takes a manifest the store
