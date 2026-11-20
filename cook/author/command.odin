@@ -148,7 +148,7 @@ project_library_open :: proc(p:^Project) {
         p.untyped=strings.clone("the project has no built library, where the types of its game are: "+BUILD_FIX)
         return
     }
-    library,error:=host.project_library_load(path,0)
+    library,error:=host.project_library_load(path)
     if error!=.None {
         p.untyped=fmt.aprintf("%s; %s again",host.library_error_text(error,path),BUILD_FIX)
         return

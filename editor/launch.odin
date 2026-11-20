@@ -25,7 +25,7 @@ launch :: proc(args:[]string,frame:proc(s:^Session) -> bool) -> int {
         } else {fmt.eprintfln("mirai: could not create the crash report folder: %v",error)}
     }
     path:=project.project_library(root,"editor")
-    library,error:=host.project_library_load(path,0)
+    library,error:=host.project_library_load(path)
     if error!=.None {
         fmt.eprintfln("mirai: %s",host.library_error_text(error,path))
         return 2

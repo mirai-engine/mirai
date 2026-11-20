@@ -2,7 +2,6 @@ package store
 
 import "core:mem"
 import "core:os"
-import "core:strings"
 import "core:time"
 
 LEASE_MAX_AGE :: 5*time.Minute // of a lease whose holder cannot be asked: one of another machine on a shared root
@@ -226,7 +225,8 @@ lease_collect :: proc(s:^Store,live:^Live_Set,path:string,now:time.Time,self:Hol
     checksum:=address_of_parts({who,seen,payload})
     if mem.compare(checksum[:],header[len(LEASE_MAGIC)+size_of(Holder)+8:][:size_of(Hash)])!=0 {return false,.None}
     if read!=nil {
-        name:=path[strings.last_index_byte(path,'/')+1:]
+        // A listing joins the name with the separator of the system: a backslash on Windows.
+        _,name:=os.split_path(path)
         read.name_len=copy(read.name[:],name)
         read.generation=u64((^u64le)(raw_data(seen))^)
         read.checksum=checksum
