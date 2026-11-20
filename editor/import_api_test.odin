@@ -2,6 +2,7 @@ package editor
 
 import "base:intrinsics"
 import "core:fmt"
+import "core:mem"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
@@ -11,6 +12,7 @@ import "mirai:asset"
 import img "mirai:cook/image"
 import importer "mirai:cook/import"
 import "mirai:cook/import/sources"
+import "mirai:core"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:project"
@@ -131,6 +133,52 @@ library_test_source :: proc(t:^testing.T,folder:string) -> string {
     os.make_directory_all(filepath.dir(path))
     testing.expect_value(t,img.image_write(path,{pixels=pixels,width=8,height=8}),img.Error.None)
     return path
+}
+
+@(test)
+a_whole_source_reports_its_root_scene_after_writing_other_scenes :: proc(t:^testing.T) {
+    top:=base.test_folder(t,"editor-map")
+    l:=new(Library_Test,context.temp_allocator)
+    if top=="" || !library_test_open(t,l,"editor-map-game",fmt.tprintf("%s/store",top)) {return}
+    defer library_test_close(l)
+    source:=fmt.tprintf("%s/Cave.map",top)
+    if !testing.expect_value(t,os.write_entire_file(source,"a cave map"),nil) {return}
+
+    Provider :: struct {provider:Import_Source_Provider}
+    claims :: proc(path:string,head:[]u8) -> bool {return string(head)=="a cave map"}
+    run :: proc(state:rawptr,source:string,options:importer.Import_Options,allocator:mem.Allocator) -> (
+        report:importer.Import_Report,scene:string,error:importer.Error,
+    ) {
+        outputs:importer.Outputs
+        bytes,_:=os.read_entire_file(source,context.temp_allocator)
+        error=importer.outputs_begin(&outputs,source,"Cave",u64(len(bytes)),base.hash64(bytes),
+            importer.import_version(1),options,"Test map",allocator)
+        if error.code!=.None {return}
+        cave,cave_path,_:=importer.output_root(&outputs,asset.KIND_SCENE,"Cave",".scene")
+        lamp,lamp_path:=importer.output_part(&outputs,asset.KIND_SCENE,"Lamp",0,".scene")
+        defer if error.code!=.None && outputs.source!="" {importer.outputs_end(&outputs,true)}
+        types:asset.Types
+        asset.types_init(&types,context.temp_allocator)
+        for item in ([2]struct{id:base.Asset_Id,name,path:string}{
+            {lamp,"Lamp",lamp_path},{cave,"Cave",cave_path},
+        }) {
+            doc:asset.Scene
+            if asset.scene_init(&doc,&types,item.id,context.temp_allocator)!=.None ||
+               asset.scene_save(&doc,item.path)!=.None {
+                return {}, "", importer.error_make(.Write,"could not write %s",item.name)
+            }
+            if error=importer.output_written(&outputs,item.id,item.name);error.code!=.None {return}
+        }
+        report,error=importer.outputs_end(&outputs,false,allocator)
+        return
+    }
+    storage:=core.Storage_Info{place=.Editor,info=type_info_of(Provider),default=proc(dst:rawptr) {
+        (^Provider)(dst).provider={source={name="Test map",version=1,claims=claims,run=run}}
+    }}
+    info:=core.World_Info{storages={storage}}
+    l.s.info=&info
+    if !testing.expect(t,import_file(&l.s,source,"maps")) || !library_test_end(t,l) {return}
+    testing.expect_value(t,base.text_get(l.importer.status.scene[:]),"maps/Cave/Cave.scene")
 }
 
 // Importing a source from outside the project ingests it where it is and
