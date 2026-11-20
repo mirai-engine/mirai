@@ -103,6 +103,14 @@ adding_another_asset_keeps_the_existing_pin_and_its_dependencies :: proc(t:^test
     if !testing.expect(t,wood!={} && paint!={} && texture!={}) {return}
     // This project can follow the cached build even after the original source has gone.
     if !testing.expect(t,os.rename(downloads,fmt.tprintf("%s/moved",top))==nil) {return}
+    missing_store:=test_store(t,fmt.tprintf("%s/missing-store",top))
+    if missing_store==nil {return}
+    missing_manifest,put_error:=asset.package_put(missing_store,&pkg)
+    if !testing.expect_value(t,put_error,asset.Error.None) {return}
+    missing:=project_add(game,missing_manifest,"parts",{wood},{store=missing_store},context.temp_allocator)
+    testing.expect(t,len(missing.missing)==1 && !os.exists(asset.package_file(game,pkg.id)),
+        "a package whose build is missing does not change the pin")
+    testing.expect(t,!os.exists(fmt.tprintf("%s/%s",game,asset.PACKAGES_FILE)))
     if !report_clean(t,project_add(game,report.manifest,"parts",[]base.Asset_Id{wood},options,context.temp_allocator)) {return}
     r:asset.Registry
     asset.registry_init(&r,fmt.tprintf("%s/assets",game),"",context.temp_allocator)
