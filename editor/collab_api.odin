@@ -17,7 +17,7 @@ Api_Collab_Host_Params :: struct {
 }
 
 Api_Collab_Join_Params :: struct {
-    invite:[2*wire.INVITE_TEXT_BYTES]u8 `mirai:"text,label=The code of the invitation of the host (like 1R2M-0253-BDK5-G0W8-7DDP-ERX1-4HQA-72WY-3G7Z-9TCN-6G4Z-H69R-53KS-D1YS-JQ3K-6666-YHZK-J1MS-WDVS-Q5ZM-MZ0N-BE4)"`,
+    invite:[wire.INVITE_TEXT_BYTES+1]u8 `mirai:"text,label=The host's invitation code"`,
     name:[COLLAB_NAME_BYTES]u8 `mirai:"text,optional"`,
     folder:[512]u8 `mirai:"text,optional,label=Where the host's project goes: empty or the open project, updated by three ways; another folder, new or joined before, is opened once it has the files and joins the session from there"`,
 }
@@ -288,7 +288,11 @@ share_build :: proc(s:^Session) {
         case st==nil || st.role==.None:
             if share_row(ctx,"Name") {ui.text_field(ctx,shell_id(g,"share_name"),c.name[:],&c.name_length,{height=24,size=11,live=true,keep_caret=true})}
             if c.joining {
-                if share_row(ctx,"Invitation") {ui.text_field(ctx,shell_id(g,"share_address"),c.join[:],&c.join_length,{height=24,size=11,placeholder="1R2M-0253-BDK5-G0W8-7DDP-ERX1-4HQA-72WY-3G7Z-9TCN-6G4Z-H69R-53KS-D1YS-JQ3K-6666-YHZK-J1MS-WDVS-Q5ZM-MZ0N-BE4",live=true,keep_caret=true})}
+                if share_row(ctx,"Invitation") {
+                    ui.text_field(ctx,shell_id(g,"share_address"),c.join[:],&c.join_length,{
+                        height=24,size=11,placeholder="Paste invitation",live=true,keep_caret=true,
+                    })
+                }
             }
             if c.error!=.None {
                 if share_row(ctx,"Error") {ui.text(ctx,collab_error_say(s,c.error),ui.prose(ctx,ui.metric(ctx,"font_label"),ui.tone(ctx,"danger_soft")))}

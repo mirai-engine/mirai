@@ -248,7 +248,11 @@ session_start :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,settings:^Ne
     case .None:
     case .Transport_Failed:
         if wanted.server {session_fail(s,app.allocator,fmt.tprintf("could not open the UDP port %d: is another server on it?",port))}
-        else {session_fail(s,app.allocator,fmt.tprintf("\"%s\" is neither an invitation nor an address: give the code its host shows, 87 characters by groups of four (copy it again if a character changed), or an address like 1.2.3.4:27500 or [::1]:27500",connect))}
+        else {
+            session_fail(s,app.allocator,
+                "Invalid invitation or address. If you have an invitation, copy it again from the host. " +
+                "You can also enter an address like 1.2.3.4:27500 or [::1]:27500")
+        }
     case .Protocol_Failed:
         if refusal:=base.text_get(s.refusal[:]);refusal!="" {
             session_fail(s,app.allocator,fmt.tprintf("the libraries do not describe a network protocol: %s",refusal))
@@ -808,7 +812,9 @@ launch_read :: proc(s:^Net_Session,app:^host.App) -> bool {
     }
     if at,on:=host.launch_flag(launch,"--connect");on {
         text,given:=host.launch_value(launch,at)
-        if !given || len(text)>=len(wanted.connect) {return fail("--connect takes the code of an invitation (1R2M-0253-BDK5-G0W8-7DDP-ERX1-4HQA-72WY-3G7Z-9TCN-6G4Z-H69R-53KS-D1YS-JQ3K-6666-YHZK-J1MS-WDVS-Q5ZM-MZ0N-BE4) or the address of a server without one (1.2.3.4:27500)")}
+        if !given || len(text)>=len(wanted.connect) {
+            return fail("--connect takes the host's invitation code or an address like 1.2.3.4:27500")
+        }
         base.text_set(wanted.connect[:],text)
     }
     if wanted.server && wanted.connect[0]!=0 {return fail("--server or --dedicated and --connect do not go together: a player serves the game or joins one")}
