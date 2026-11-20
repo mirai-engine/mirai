@@ -62,7 +62,7 @@ test_world :: proc(t:^testing.T,w:^Test_World,name:string,nodes:int,game:=false,
     if w.folder=="" {return false}
     if !testing.expect(t,jobs.system_init(&w.js,{threads=2})) {return false}
     wire.sim_network_init(&w.sim,{seed=7,endpoints=8,packets=1<<16})
-    ours:=channels()
+    ours:=CHANNEL_DESCS
     if game {
         w.channels=make([]wire.Channel_Desc,3,context.temp_allocator)
         w.channels[0]={kind=.Unreliable}

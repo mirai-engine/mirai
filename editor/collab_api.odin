@@ -30,6 +30,14 @@ Api_Collab_Project :: struct {
     refused:u64 `mirai:"label=Their messages refused"`,
 }
 
+Api_Collab_Transport :: struct {
+    connections:int,
+    packets_sent,packets_received:u64,
+    packets_invalid:u64 `mirai:"label=Datagrams with a wrong size, checksum or contents"`,
+    handshakes_refused:u64 `mirai:"label=Handshakes answered with a denial"`,
+    handshakes_dropped:u64 `mirai:"label=Handshakes ignored, including invalid invitations"`,
+}
+
 Api_Collab_Line :: struct {text:[COLLAB_LINE_BYTES]u8 `mirai:"text"`}
 
 Api_Collab_Join :: struct {
@@ -78,6 +86,7 @@ Api_Collab_Status :: struct {
     unsent_count:int,
     join:Api_Collab_Join `mirai:"label=A guest: how its folder is brought to the host's snapshot before it enters the scene"`,
     project:Api_Collab_Project `mirai:"label=What the session moved of the project and its builds"`,
+    transport:Api_Collab_Transport `mirai:"label=Datagrams and handshakes of the local session socket"`,
     offers:int `mirai:"label=The host: new snapshots of its project offered during the session, each once its files changed and were quiet"`,
     updates:int `mirai:"label=A guest: updates of its folder to a new snapshot of the host done in the session; join says the last"`,
     sent_edits,received_edits,sent_ops,received_ops:u64,
@@ -101,7 +110,7 @@ api_collab_result :: proc(s:^Session,call:^api.Call) {
     base.text_set(r.reason[:],st.reason)
     r.port=st.port
     for &peer,i in st.peers {
-        if !peer.used {continue}
+        if !peer.used || st.role==.Host && !peer.joined {continue}
         r.peers[r.count]={id=u8(i),joined=peer.joined || i==0,self=i==int(st.self),playing=peer.playing,serving=peer.serving,in_game=peer.in_game}
         if i==int(st.self) {
             r.peers[r.count].playing=run_find(s,0)!=nil
@@ -119,6 +128,13 @@ api_collab_result :: proc(s:^Session,call:^api.Call) {
     r.sent_edits,r.received_edits,r.sent_ops,r.received_ops=st.sent_edits,st.received_edits,st.sent_ops,st.received_ops
     if j:=st.join;j!=nil {api_collab_join_result(j,&r.join)}
     r.offers,r.updates=st.offers,st.updates
+    stats:=wire.host_stats(&st.host)
+    r.transport={
+        connections=stats.connections,
+        packets_sent=stats.packets_sent,packets_received=stats.packets_received,
+        packets_invalid=stats.packets_invalid,
+        handshakes_refused=stats.handshakes_refused,handshakes_dropped=stats.handshakes_dropped,
+    }
     if st.node!=nil {
         t:=share.node_totals(st.node)
         r.project={peers=t.connected,sent=t.sent,received=t.received,send_rate=t.send_rate,receive_rate=t.receive_rate,bad=t.bad,refused=t.refused}
@@ -206,7 +222,7 @@ share_button :: proc(s:^Session,height:f32) {
     if active {
         count:=0
         for peer in st.peers {
-            if peer.used {count+=1}
+            if peer.used && (st.role!=.Host || peer.joined) {count+=1}
         }
         tip=fmt.tprintf("Session, %d editors",count)
     }
@@ -305,6 +321,7 @@ share_build :: proc(s:^Session) {
             // A guest knows who is in the session from the roster, which comes after its Hello.
             for &peer,i in st.peers {
                 if !peer.used || st.role==.Guest && st.phase<.Syncing {continue}
+                if st.role==.Host && !peer.joined {continue}
                 if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=9,align_y=.Center}) {
                     if ui.box(ctx,{width=ui.fixed(9),height=ui.fixed(9),fill=collab_color(i),radius=4.5}) {}
                     name:=string(peer.name[:peer.name_length])

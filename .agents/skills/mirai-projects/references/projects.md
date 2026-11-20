@@ -612,13 +612,15 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
 - **Share.** `mirai share` takes the snapshot, opens a server host with its port mapped as
   [collaboration](../../mirai-editor/references/collaboration.md) does, prints one invitation
   once the router answered, and serves until it is stopped (Ctrl+C), printing who comes and goes
-  and how much went out. The snapshot is the ref `shares/<hash of the invitation's secret>`, so a
-  joiner finds it by the code and the names peers list reveal no secret. Peers read the namespaces
+  and how much went out. The ref `shares/<hash of the invitation's secret>` holds the offer with its
+  snapshot and whether the host has a live scene. A joiner finds it by the code and the names
+  peers list reveal no secret. Peers read the namespaces
   of snapshots, package manifests, builds (Final and Fast, each under its own namespace), the build
   the machine chose for each manifest and `cook/cache` results: the owner exposes the whole machine
   library to whoever holds the invitation, never the origins or the sources of the machine. A
   lease holds the snapshot, its folders and files and the builds the project pins.
-- **Join.** `mirai join` asks for the snapshot of the invitation only the host it connects to,
+- **Join.** `mirai join` accepts invitations from a command-line share or a live editor. It asks
+  for the offer of the invitation only from the host it connects to,
   so a peer that joined from the joiner cannot name another; folders and files come from any
   peer, verified by address. It fetches the tree a depth of folders at a time, refusing one whose
   names could leave the folder, are absolute, name a device, repeat or collide where case is folded,

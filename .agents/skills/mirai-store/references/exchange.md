@@ -7,7 +7,7 @@ in `exchange/wire.odin`.
 
 ## What the owner calls
 
-- `channels()` gives the two reliable channels the exchange needs; the owner puts them in the
+- `CHANNEL_DESCS` gives the two reliable channels the exchange needs; the owner puts them in the
   `Host_Desc.channels` of every host at the same index and passes that index as `Desc.channel`.
 - `init` sizes every buffer, table and job slot from the `Desc`; nothing is sized by an object, so
   an object of any size moves. `Desc.worker` is the job system and worker of the thread that
