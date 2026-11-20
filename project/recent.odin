@@ -33,17 +33,17 @@ recent_file :: proc(engine_root:string,allocator:=context.allocator) -> string {
 }
 
 // What the file of the engine has; a missing file is an empty list.
-recent_read :: proc(engine_root:string,recent:^Recent_Projects) -> Error {
+recent_read :: proc(engine_root:string,recent:^Recent_Projects) -> (result:Error) {
     recent^={}
     file:=recent_file(engine_root,context.temp_allocator)
-    if file=="" {return {}}
+    if file=="" {return}
     settings:=recent_setting(recent)
     return settings_read(file,settings[:])
 }
 
-recent_write :: proc(engine_root:string,recent:^Recent_Projects) -> Error {
+recent_write :: proc(engine_root:string,recent:^Recent_Projects) -> (result:Error) {
     file:=recent_file(engine_root,context.temp_allocator)
-    if file=="" {return {code=.Write_Failed}}
+    if file=="" {result.code=.Write_Failed;return}
     settings:=recent_setting(recent)
     below:=Recent_Projects{}
     under:=recent_setting(&below)

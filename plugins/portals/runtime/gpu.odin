@@ -74,8 +74,12 @@ light_keep :: proc(state:^Portals_Gpu,weights:^[PORTAL_LIGHT_CAPACITY]f32,weight
     for at>0 && weights[at-1]<weight {at-=1}
     if at>=PORTAL_LIGHT_CAPACITY {return}
     count=min(count+1,PORTAL_LIGHT_CAPACITY)
-    for i:=count-1;i>at;i-=1 {weights[i],state.constants.lights[i]=weights[i-1],state.constants.lights[i-1]}
-    weights[at],state.constants.lights[at]=weight,light
+    for i:=count-1;i>at;i-=1 {
+        weights[i]=weights[i-1]
+        state.constants.lights[i]=state.constants.lights[i-1]
+    }
+    weights[at]=weight
+    state.constants.lights[at]=light
     state.constants.light_count=u32(count)
 }
 
@@ -97,7 +101,8 @@ portals_render :: proc(
     layers:^core.Table(erender.Layers,.Read),highlights:^core.Table(erender.Highlight,.Read),outlines:^core.Table(erender.Outline,.Read),
     hidden:^core.Table(erender.Hidden,.Read),parents:^core.Table(core.Parent,.Read),assets:^host.Assets,renderer:^erender.Renderer,extras:^host.Frame_Extras,frame:core.Frame_Time,
 ) {
-    state.last,state.last_count=state.gates,state.count
+    state.last=state.gates
+    state.last_count=state.count
     state.count=0
     if renderer==nil || assets==nil || core.count(portals)==0 {return}
     // 0 while the shaders in use have no portals: the bodies of the mirrors reflect by themselves.

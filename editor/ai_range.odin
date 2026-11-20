@@ -34,8 +34,8 @@ Ai_Context_Range :: struct {
     path,name:string,
 }
 
-ai_context_range :: proc(r:^Ai_Range) -> Ai_Context_Range {
-    if r.to<=r.from {return {}}
+ai_context_range :: proc(r:^Ai_Range) -> (result:Ai_Context_Range) {
+    if r.to<=r.from {return}
     kind:=[Ai_Range_Kind]string{.Play="play",.Asset="asset",.Clip="clip"}
     return {kind[r.kind],r.from,r.to,r.run,r.rate,base.text_get(r.path[:]),base.text_get(r.name[:])}
 }

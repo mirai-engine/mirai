@@ -48,7 +48,8 @@ views_update :: proc(gui:^Gui,app:^host.App,players,focus:int) {
         if p==0 {slot=clamp(focus,0,players-1)}
         if !split || slot>=players {continue}
         r:=host.app_player_rect(app,slot,players)
-        view.camera,view.index,view.known=app.local_cameras[slot],slot,p>0
+        view.camera=app.local_cameras[slot]
+        view.index,view.known=slot,p>0
         view.rect=[4]f32{f32(r.x),f32(r.y),f32(r.z),f32(r.w)}/max(app.density,0.01)
         if p>0 {view.panels=u8(p)}
     }

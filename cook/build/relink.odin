@@ -154,16 +154,28 @@ link_command_rename :: proc(command:string,names:map[string]string,allocator:=co
     return strings.to_string(b)
 }
 
-// What runs the command of a linker as the compiler wrote it: on Windows the
-// line of a process, split as CommandLineToArgvW does; elsewhere a line of
-// the shell.
+// Odin starts the linker directly. On POSIX its command line uses double quotes
+// to group arguments and leaves shell metacharacters literal.
 link_command_args :: proc(command:string,allocator:=context.allocator) -> []string {
     when ODIN_OS==.Windows {
         return command_line_split(command,allocator)
     } else {
-        args:=make([]string,3,allocator)
-        args[0],args[1],args[2]="sh","-c",strings.clone(command,allocator)
-        return args
+        separator :: proc(c:byte) -> bool {return c==' ' || c=='\t' || c=='\r' || c=='\n'}
+        args:=make([dynamic]string,allocator)
+        i:=0
+        for i<len(command) {
+            for i<len(command) && separator(command[i]) {i+=1}
+            if i==len(command) {break}
+            arg:=strings.builder_make(allocator)
+            quoted:=false
+            for ;i<len(command);i+=1 {
+                c:=command[i]
+                if !quoted && separator(c) {break}
+                if c=='"' {quoted=!quoted} else {strings.write_byte(&arg,c)}
+            }
+            append(&args,strings.to_string(arg))
+        }
+        return args[:]
     }
 }
 

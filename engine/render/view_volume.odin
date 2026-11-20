@@ -107,5 +107,6 @@ view_postprocess_sync :: proc(assets:^host.Assets,renderer:^Renderer,slot:int,la
     if last.layers==layers && last.revision==a.revision && last.structure==a.structure && r.view_postprocesses[slot]==last.given {return}
     last.given=postprocess_effects(a,layers)
     gpu.renderer_set_view_postprocesses(r,slot,last.given)
-    last.layers,last.revision,last.structure=layers,a.revision,a.structure
+    last.layers=layers
+    last.revision,last.structure=a.revision,a.structure
 }

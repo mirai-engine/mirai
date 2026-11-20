@@ -463,7 +463,8 @@ terrain_data_copy :: proc(dst,src:^Terrain_Data) -> bool {
     for &entry,i in src.entries {
         target:=&dst.entries[i]
         if !data_source_copy(&target.source,&entry.source) || !data_chunks_copy(target,&entry) {return false}
-        target.id,target.stamp,target.change,target.ground=entry.id,entry.stamp,entry.change,entry.ground
+        target.ground=entry.ground
+        target.id,target.stamp,target.change=entry.id,entry.stamp,entry.change
         dst.samples+=u32(source_cost(&target.source))
     }
     epoch:=max(dst.epoch,src.epoch)+1;if epoch==0 {epoch=1}

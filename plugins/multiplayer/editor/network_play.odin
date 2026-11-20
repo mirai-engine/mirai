@@ -68,12 +68,13 @@ Net_Play :: struct {
 Multiplayer_Play :: struct {provider:editor.Play_Provider}
 
 multiplayer_play_default :: proc() -> Multiplayer_Play {
-    return {provider={
+    play:=Multiplayer_Play{provider={
         start=net_play_start,
         menu=net_play_menu,active=net_play_active,stop=net_play_stop,label=net_play_label,poll=net_play_poll,
         play_begin=net_play_begin,play_end=net_play_served_end,pump=net_play_pump,turn=net_play_turn,
         offer=net_play_offer,game=net_play_game,host_menu=net_play_host_menu,joined=net_play_joined,scene_arrived=net_play_scene_arrived,
     }}
+    return play
 }
 
 @(storage)

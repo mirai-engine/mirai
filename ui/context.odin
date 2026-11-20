@@ -301,7 +301,8 @@ context_init :: proc(ctx:^Context,desc:Context_Desc) -> bool {
     if desc.no_font {
         ctx.font={allocator=a,density=desc.density if desc.density>0 else 1}
     } else if desc.font!=nil && desc.font.ready {
-        ctx.font,ctx.font_owner=desc.font^,desc.font
+        ctx.font=desc.font^
+        ctx.font_owner=desc.font
         ctx.font_ask,ctx.font_user=desc.font_ask,desc.font_user
     } else if !font_init(&ctx.font,desc.fonts,desc.font_sizes,desc.density,a) {
         context_destroy(ctx);return false
@@ -626,8 +627,8 @@ frame_close :: proc(ctx:^Context) {
 }
 
 // An empty Frame when no frame was begun.
-frame_end :: proc(ctx:^Context) -> Frame {
-    if !ctx.in_frame {ctx.stats.layout_errors+=1;return {}}
+frame_end :: proc(ctx:^Context) -> (result:Frame) {
+    if !ctx.in_frame {ctx.stats.layout_errors+=1;return}
     frame_close(ctx)
     popup_frame_end(ctx)
     if ctx.tooltip!="" && ctx.popup.count==0 && !ctx.modal_open {tooltip_build(ctx)}

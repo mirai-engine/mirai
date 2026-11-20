@@ -38,7 +38,7 @@ Params :: struct {
 }
 
 params_default :: proc() -> Params {
-    return {
+    params:=Params{
         bc7_uber_level=6,
         bc7enc_max_partitions_to_scan=bc7enc.MAX_PARTITIONS,
         bc45_channel1=1,
@@ -59,6 +59,7 @@ params_default :: proc() -> Params {
         bc345_search_rad=5,
         bc345_mode_mask=rgbcx.BC4_USE_ALL_MODES,
     }
+    return params
 }
 
 @(private="file") MIN_RDO_CHUNKED_BLOCKS :: 4096

@@ -44,17 +44,17 @@ Api_Filmstrip :: struct {
 // Writes to path a filmstrip of the ticks a run keeps around one, played again
 // on the World of the run, which is put back after; what it answers as JSON,
 // or "" after failing the call.
-api_filmstrip_around :: proc(s:^Session,call:^api.Call,r:^Run,tick:u64,path:string) -> Api_Capture_Result {
-    if s.app==nil || s.app.renderer==nil {api.call_fail(call,api.SERVER_ERROR,"A filmstrip needs a GPU");return {}}
-    if reason:=history_reason(s,r);reason!="" {api.call_fail(call,api.SERVER_ERROR,reason);return {}}
+api_filmstrip_around :: proc(s:^Session,call:^api.Call,r:^Run,tick:u64,path:string) -> (result:Api_Capture_Result) {
+    if s.app==nil || s.app.renderer==nil {api.call_fail(call,api.SERVER_ERROR,"A filmstrip needs a GPU");return}
+    if reason:=history_reason(s,r);reason!="" {api.call_fail(call,api.SERVER_ERROR,reason);return}
     h:=r.history
     oldest,newest,_,_,_:=history_span(h)
     from:=tick>oldest+FILMSTRIP_PAST_AROUND?tick-FILMSTRIP_PAST_AROUND:oldest
     to:=min(tick+FILMSTRIP_PAST_AROUND,newest)
     first:=history_frame_for(h,from)
-    if first==0 {api_history_older(call,h,from);return {}}
+    if first==0 {api_history_older(call,h,from);return}
     file,writable:=api_output_file(s,call,path,call.allocator)
-    if !writable {return {}}
+    if !writable {return}
     span:=to>from?to-from:0
     every:=max(span/(FILMSTRIP_PAST_CELLS-1),1)
     strip:=new(Api_Filmstrip,call.allocator)
@@ -63,7 +63,7 @@ api_filmstrip_around :: proc(s:^Session,call:^api.Call,r:^Run,tick:u64,path:stri
     strip.cells=make([]Api_Filmstrip_Cell,strip.count,call.allocator)
     defer img.sheet_destroy(&strip.sheet)
     saved,copied:=history_save(s,r)
-    if !copied {api.call_fail(call,api.SERVER_ERROR,"No memory for a copy of the World to play its past on; the game stays as it is");return {}}
+    if !copied {api.call_fail(call,api.SERVER_ERROR,"No memory for a copy of the World to play its past on; the game stays as it is");return}
     problem:string
     {
         kept:=extras_mark(s.app)
@@ -71,10 +71,10 @@ api_filmstrip_around :: proc(s:^Session,call:^api.Call,r:^Run,tick:u64,path:stri
         problem=api_filmstrip_past_cells(s,r,strip,first,to,every)
     }
     history_restore(s,r,&saved)
-    if problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return {}}
+    if problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
     sheet:=strip.sheet
     strip.sheet={}
-    if problem:=api_png_write(s,file,sheet.image.pixels,sheet.image.width,sheet.image.height);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return {}}
+    if problem:=api_png_write(s,file,sheet.image.pixels,sheet.image.width,sheet.image.height);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
     return api_filmstrip_result(file,sheet,strip.cells[:strip.taken],false,call.allocator,strip.counted)
 }
 

@@ -535,7 +535,10 @@ type_panel :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,ass
     source:=&tool.edit.source
     t,_:=foliage.source_type(source,tool.type)
     if t==nil {return}
-    if tool.held_type!=t.id || !tool.held_dirty {tool.held,tool.held_type=t^,t.id}
+    if tool.held_type!=t.id || !tool.held_dirty {
+        tool.held=t^
+        tool.held_type=t.id
+    }
     defaults:=foliage.FOLIAGE_TYPE_DEFAULT
     h:=editor.Held_Values{key=u64(PANEL_SCOPE)<<32|u64(t.id),info=type_info_of(foliage.Foliage_Type),value=&tool.held,defaults=&defaults}
     fields:=[?]string{"name","mesh","prefab","materials","density","radius","scale","height","yaw","tilt","align","offset","rule","fade_distance","cull_distance","impostor_distance","wind","flutter","casts_shadow","ray_visible","collision","size"}
@@ -558,7 +561,8 @@ head_type :: proc(tool:^Foliage_Tool,id:u32) -> foliage.Foliage_Type {
     if head:=editor.revision_head(&tool.history,tool.edit.id,tool.edit.revision);head!=nil {
         if t,_:=foliage.source_type(head,id);t!=nil {return t^}
     }
-    return foliage.FOLIAGE_TYPE_DEFAULT
+    defaults:=foliage.FOLIAGE_TYPE_DEFAULT
+    return defaults
 }
 
 // A type that shows a mesh, painted by the brush, as a step.

@@ -155,7 +155,8 @@ joint_reconcile :: proc(s:^Sync,states:^core.Table(Joint_State),e:core.Entity,jo
             break_force=joint.break_force,break_torque=joint.break_torque,user_data=u64(e),linear=joint.linear,angular=joint.angular,
         }
         l.joint=sim.joint_create(w,desc)
-        l.applied,l.a,l.b,l.local=joint,body_a,body_b,local
+        l.applied=joint
+        l.a,l.b,l.local=body_a,body_b,local
         l.refused=l.joint=={}
         if l.refused {
             core.report(s.problems,e,"physics.joints","its Joint was refused by the simulation: the %d joints of Physics_Settings.joints are in use; raise joints, or remove joints (Joint_State.error is Capacity)",w.desc.joint_capacity)

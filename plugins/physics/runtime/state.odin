@@ -589,7 +589,9 @@ state_copy_as :: proc(dst,src:^Physics_State,kept:bool) -> (written:int,ok:bool)
     if !array_copy(&dst.pieces,src.pieces[:]) || !array_copy(&dst.proxies,src.proxies[:]) || !core.entity_map_copy(&dst.held,&src.held) {return}
     clear(&dst.visited)
     dst.touched_all=true
-    dst.world_body,dst.pass,dst.stats,dst.collision,dst.targets_seen,dst.rows_seen=src.world_body,src.pass,src.stats,src.collision,src.targets_seen,src.rows_seen
+    dst.world_body,dst.pass,dst.stats,dst.targets_seen=src.world_body,src.pass,src.stats,src.targets_seen
+    dst.collision=src.collision
+    dst.rows_seen=src.rows_seen
     dst.forwarded={}
     if !src.ready {
         if dst.ready {sim.world_destroy(&dst.world)}
@@ -673,7 +675,9 @@ slot_stamp :: proc(state:^Physics_State,stamps:[]u64,slot:int) {
 state_swap :: proc(a,b:^Physics_State) {
     if a==b {return}
     epoch:=max(a.epoch,b.epoch)+1;if epoch==0 {epoch=1}
-    a^,b^=b^,a^
+    previous:=a^
+    a^=b^
+    b^=previous
     a.epoch,b.epoch=epoch,epoch
     // A world put back from its history through a staged copy goes on with the timeline of the history.
     if a.ready && b.ready {

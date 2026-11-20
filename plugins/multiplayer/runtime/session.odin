@@ -302,8 +302,9 @@ session_open :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,port:int) -> 
         s.port=int(s.udp.address.port)
         if s.wanted.invite {
             if s.invite=={} {
-                made:bool
-                if s.invite,made=wire.invite_key();!made {
+                invite,made:=wire.invite_key()
+                s.invite=invite
+                if !made {
                     session_destroy(s)
                     return .Host_Failed,{field="invite",range="a system that gives secure random bytes"}
                 }
@@ -315,7 +316,8 @@ session_open :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,port:int) -> 
         invitation,refused:=wire.invite_decode(connect)
         target=invitation.lan
         if refused==.None {
-            also,s.invite=invitation.public,invitation.key
+            also=invitation.public
+            s.invite=invitation.key
         } else {
             parsed:bool
             if target,parsed=wire.address_parse(connect);!parsed {return .Transport_Failed,{}}

@@ -203,7 +203,8 @@ air_frame :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, a.written)
 	rhi.cmd_dispatch(cmd, AIR_SCATTERING_SIZE, AIR_SCATTERING_SIZE)
 	air_table_copy(r, cmd, a.scattering)
-	a.air, a.built = air, true
+	a.air = air
+	a.built = true
 	for &row in a.rows {row.held = false}
 	return true
 }

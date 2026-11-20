@@ -152,7 +152,8 @@ nav_path_begin :: proc(q:^Nav_Query,mesh:^Nav_Mesh,start_ref,end_ref:Nav_Ref,sta
     _,first:=nav_poly_of(mesh,start_ref)
     _,last:=nav_poly_of(mesh,end_ref)
     if first==nil || last==nil {return .Invalid}
-    q.mesh,q.filter,q.toward=mesh,filter^,false
+    q.filter=filter^
+    q.mesh,q.toward=mesh,false
     q.start,q.end,q.start_ref,q.end_ref=start,end,start_ref,end_ref
     q.accepted=start
     status:=search_begin(&q.search,u64(start_ref),u64(end_ref),q,nav_space_heuristic)
@@ -232,7 +233,8 @@ nav_costs_begin :: proc(q:^Nav_Query,mesh:^Nav_Mesh,ref:Nav_Ref,point:math.Vec3,
     q.mesh=nil
     if len(q.points)==0 || mesh==nil || filter==nil || !nav_point_finite(point) {return false}
     if _,poly:=nav_poly_of(mesh,ref);poly==nil {return false}
-    q.mesh,q.filter,q.toward=mesh,filter^,toward
+    q.filter=filter^
+    q.mesh,q.toward=mesh,toward
     q.start,q.end,q.start_ref,q.end_ref=point,point,ref,0
     search_begin(&q.search,u64(ref),0,q,nav_around_heuristic)
     if slot,ok:=search_find(&q.search,u64(ref));ok {q.points[slot]=point}
@@ -966,7 +968,8 @@ nav_around :: proc(q:^Nav_Query,mesh:^Nav_Mesh,start_ref:Nav_Ref,center:math.Vec
     q.mesh=nil
     if len(q.points)==0 || filter==nil || !nav_point_finite(center) || !(radius>=0) || !(radius<=1e9) {return false}
     if _,poly:=nav_poly_of(mesh,start_ref);poly==nil {return false}
-    q.mesh,q.filter,q.toward=mesh,filter^,false
+    q.filter=filter^
+    q.mesh,q.toward=mesh,false
     q.end_ref=0
     status:=search_begin(&q.search,u64(start_ref),0,q,nav_around_heuristic)
     if slot,ok:=search_find(&q.search,u64(start_ref));ok {q.points[slot]=center}

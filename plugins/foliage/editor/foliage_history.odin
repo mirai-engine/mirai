@@ -134,9 +134,18 @@ swap_cell :: proc(entry:^Cell_Swap,head:^foliage.Source) {
     at:=cell_lower(head.cells[:],entry.coord)
     found:=at<len(head.cells) && head.cells[at].coord==entry.coord
     switch {
-    case found && entry.present: entry.cell,head.cells[at]=head.cells[at],entry.cell
-    case found:                  entry.cell,entry.present=head.cells[at],true;ordered_remove(&head.cells,at)
-    case entry.present:          inject_at(&head.cells,at,entry.cell);entry.cell,entry.present={},false
+    case found && entry.present:
+        previous:=entry.cell
+        entry.cell=head.cells[at]
+        head.cells[at]=previous
+    case found:
+        entry.cell=head.cells[at]
+        entry.present=true
+        ordered_remove(&head.cells,at)
+    case entry.present:
+        inject_at(&head.cells,at,entry.cell)
+        entry.cell={}
+        entry.present=false
     }
 }
 

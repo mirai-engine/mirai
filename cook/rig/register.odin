@@ -484,7 +484,10 @@ pose_make :: proc(nb:int) -> Pose {
 @(private="file")
 rodrigues :: proc(r:Vec) -> Mat {
     angle:=linalg.length(r)
-    if angle<1e-12 {return IDENTITY}
+    if angle<1e-12 {
+        identity:=IDENTITY
+        return identity
+    }
     k:=r/angle
     K:=Mat{0,-k.z,k.y, k.z,0,-k.x, -k.y,k.x,0}
     return IDENTITY+math.sin(angle)*K+(1-math.cos(angle))*(K*K)

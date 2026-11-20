@@ -379,7 +379,8 @@ continuous_continue :: proc(w:^World,index:i32,start:f32) {
     if s:=length2(om);s>max_angular*max_angular {om*=max_angular/cmath.sqrt(s)}
     sweep:=Sweep{body.local_center,body.center,body.center+v*rest,body.rotation,q_integrate(body.rotation,om*rest)}
     entry:=&c.bodies[index]
-    entry.sweep,entry.start,entry.fraction=sweep,start,1
+    entry.sweep=sweep
+    entry.start,entry.fraction=start,1
     continuous_place(w,index,sweep_transform(sweep,1))
     for s:=body.shape_list;s>=0;s=w.shapes[s].next {
         c.bounds[s]=continuous_bound(w,&w.shapes[s],body,sweep)

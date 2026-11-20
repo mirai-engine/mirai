@@ -206,7 +206,10 @@ terrain_interior_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.W
     ctx:=s.gui.ctx
     stroke:=&tool.stroke
     of:=Interior_Of{stroke.id,stroke.revision}
-    if tool.interior_of!=of {tool.interior,tool.interior_of=stroke.source.interior,of}
+    if tool.interior_of!=of {
+        tool.interior=stroke.source.interior
+        tool.interior_of=of
+    }
     kit.section(ctx,"Interior","",80)
     defaults:terrain.Interior
     held:=editor.Held_Values{key=u64(PANEL_SCOPE)<<32|0x300,info=type_info_of(terrain.Interior),value=&tool.interior,defaults=&defaults}

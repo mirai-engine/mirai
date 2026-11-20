@@ -197,7 +197,10 @@ document_column :: proc(data:^asset.Asset,view:^asset.Scene_View,types:^asset.Ty
         if asset.scene_component_read(data,&component,&types.schema,index,mem.slice_to_bytes(read),mem.ptr_to_bytes(default) if default!=nil else nil)!=.None {return}
         values=make([]T,len(view.ids),context.temp_allocator)
         has=make([]bool,len(view.ids),context.temp_allocator)
-        for row,i in component.entities {values[row],has[row]=read[i],true}
+        for row,i in component.entities {
+            values[row]=read[i]
+            has[row]=true
+        }
         return
     }
     return
