@@ -193,10 +193,10 @@ Root_Files :: struct {packs:[]string,generation,indexed:string}
 func_files :: proc(root:string) -> (files:Root_Files) {
     packs:=make([dynamic]string,context.temp_allocator)
     entries,_:=os.read_all_directory_by_path(strings.concatenate({root,"/packs"},context.temp_allocator),context.temp_allocator)
-    for e in entries {append(&packs,e.fullpath)}
+    for e in entries {append(&packs,path_in(root,"packs",e.name))}
     files.packs=packs[:]
     index,_:=os.read_all_directory_by_path(strings.concatenate({root,"/index"},context.temp_allocator),context.temp_allocator)
-    for e in index {files.generation=e.fullpath}
+    for e in index {files.generation=path_in(root,"index",e.name)}
     if files.generation!="" {
         bytes,_:=os.read_entire_file(files.generation,context.temp_allocator)
         g:=(^Idx_Head)(raw_data(bytes))
