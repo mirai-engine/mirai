@@ -332,10 +332,15 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
     job.plugin_published=make([]bool,len(job.plugins),a)
     job.plugin_limit=compilers_at_once()
     job.link_limit=links_at_once()
-    decl:=plugins_decl(p.root,plugins_mode(p,desc.dev),context.temp_allocator)
-    if os.make_directory_all(decl)!=nil && !os.is_dir(decl) {return .Write_Failed}
-    libraries:=plugins_libraries_folder(p.root,context.temp_allocator)
-    if os.make_directory_all(libraries)!=nil && !os.is_dir(libraries) {return .Write_Failed}
+    mode:=plugins_mode(p,desc.dev)
+    folders:=[3]string{
+        plugins_decl(p.root,mode,context.temp_allocator),
+        project_decl(p.root,mode,context.temp_allocator),
+        plugins_libraries_folder(p.root,context.temp_allocator),
+    }
+    for folder in folders {
+        if os.make_directory_all(folder)!=nil && !os.is_dir(folder) {return .Write_Failed}
+    }
     if len(job.plugins)==0 {return .None}
     job.plugin_flags=plugin_flags(p,desc.dev,a)
     job.plugin_cache=!p.manifest.build.debug
