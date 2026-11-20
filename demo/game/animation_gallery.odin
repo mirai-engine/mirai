@@ -329,8 +329,9 @@ gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.
         }
         going,_:=core.get(moving,entity)
         rig:=anim.modifier_rig(modifiers.ptr,entity)
-        feet:=anim.modifier_profile(modifiers.ptr,sets.ptr,entity).grounding
-        if len(feet.legs)>0 {feet=anim.modifier_grounding(modifiers.ptr,rig,feet)}
+        profile:=anim.modifier_profile(modifiers.ptr,sets.ptr,entity)
+        feet:anim.Foot_Grounding
+        if profile!=nil && len(profile.grounding.legs)>0 {feet=anim.modifier_grounding(modifiers.ptr,rig,profile.grounding)}
         if character,exists:=core.get(characters,entity);exists {
             if item.grounded && !character.standing && going.linear.y>.1 {item.diagnostics.jumps+=1}
             if !item.grounded && character.standing && item.age>.2 {item.diagnostics.landings+=1}

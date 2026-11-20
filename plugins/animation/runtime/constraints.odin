@@ -132,11 +132,13 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
     if len(playing_pose(state,.Local))==0 {return}
     skeleton:=playing_skeleton(state)
     rig:=modifier_rig(runtime,state.entity)
+    empty_pose:Pose_Profile
     pose:=modifier_pose(rig,characters)
+    if pose==nil {pose=&empty_pose}
     problems:=inputs.problems
     // A rig that takes the sampled pose of another takes it through the chains of its set, or by
     // the names of their bones.
-    chained:=rig!=nil && rigs_retarget(state,playback,runtime,rig,pose,problems)
+    chained:=rig!=nil && rigs_retarget(state,playback,runtime,rig,pose^,problems)
     // A root bound to the entity keeps, on the channels its base keeps in place, where the owner of
     // its Transform put it after the pose was sampled.
     if state.root.in_place {if bone,reference,ok:=animation_root_reference(state,state.root,playing_pose(state,.Local),transforms);ok && bone==0 {playing_pose(state,.Local)[0]=reference}}
@@ -157,7 +159,7 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
         }
     }
     followed:=state.leader!=core.NONE && !chained && leader_follow(state,playback,inputs,transforms,parents,parent_world)
-    curve_poses_apply(state,playback,runtime,rig,pose,followed,problems)
+    curve_poses_apply(state,playback,runtime,rig,pose^,followed,problems)
     if !lib.pose_world(skeleton.parents,playing_pose(state,.Local),playing_pose(state,.World),parent_world) {pose_problem(problems,state.entity);return}
     if motion!=nil {
         if instance:=motion_instance(motion,state.entity);instance!=nil {
@@ -239,7 +241,7 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
         diagnostic.reached=diagnostic.angular_error<=.001
         diagnostic.valid=true
     }
-    rigs_apply(state,runtime,rig,pose,inputs,transforms,parents,parent_world,dt,playback)
+    rigs_apply(state,runtime,rig,pose^,inputs,transforms,parents,parent_world,dt,playback)
     limited:=false
     for &config,at in pose.limits {
         weight,enabled:=modifier_weight(&modifier_states(rig,.Limit)[at],runtime.time)

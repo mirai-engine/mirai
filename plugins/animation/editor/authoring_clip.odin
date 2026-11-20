@@ -180,7 +180,8 @@ authoring_clip_set :: proc(s:^editor.Session,call:^api.Call) {
     view,ok:=authoring_clip_open(s,call,p.asset,&file);if !ok {return}
     index,found:=authoring_clip_index(call,view,base.text_get(p.clip[:]));if !found {return}
     clips,prepared:=authoring_clip_descs(view,call);if !prepared {return}
-    clips[index].name,clips[index].root=base.text_get(p.name[:]),p.root
+    clips[index].name=base.text_get(p.name[:])
+    clips[index].root=p.root
     authoring_clip_save(s,call,file,p.asset,view,clips)
 }
 

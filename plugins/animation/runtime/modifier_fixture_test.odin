@@ -32,12 +32,18 @@ test_rigs_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,characters:^Cha
     inputs:Constraint_Inputs,transforms:^core.Table(core.Transform),
     parents:^core.Table(core.Parent,.Read),root:mm.Transform,dt:f32,playback:^Playback=nil) -> bool {
     rig:=modifier_rig(runtime,state.entity)
-    return rigs_apply(state,runtime,rig,modifier_pose(rig,characters),inputs,transforms,parents,root,dt,playback)
+    empty:Pose_Profile
+    pose:=modifier_pose(rig,characters)
+    if pose==nil {pose=&empty}
+    return rigs_apply(state,runtime,rig,pose^,inputs,transforms,parents,root,dt,playback)
 }
 
 @(private)
 test_rigs_retarget :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Runtime,
     characters:^Character_Assets,problems:^core.Problems) -> bool {
     rig:=modifier_rig(runtime,state.entity)
-    return rigs_retarget(state,playback,runtime,rig,modifier_pose(rig,characters),problems)
+    empty:Pose_Profile
+    pose:=modifier_pose(rig,characters)
+    if pose==nil {pose=&empty}
+    return rigs_retarget(state,playback,runtime,rig,pose^,problems)
 }

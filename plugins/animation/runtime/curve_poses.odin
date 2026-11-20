@@ -316,7 +316,7 @@ curve_materials_apply :: proc(runtime:^Modifier_Runtime,characters:^Character_As
     if playing==nil {return}
     rig:=modifier_rig(runtime,playing.entity)
     pose:=modifier_pose(rig,characters)
-    if len(pose.curve_materials)==0 {return}
+    if pose==nil || len(pose.curve_materials)==0 {return}
     live:=core.staged(lives,entity)
     curves:=playing_curves(playing)
     for &config,row in pose.curve_materials {

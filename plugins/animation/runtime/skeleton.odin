@@ -336,7 +336,8 @@ skeleton_bind :: proc(playback:^Playback,state:^Playing,content:^Skeleton_Conten
     state.bindings,next.bindings=next.bindings,nil
     state.pose_slab,next.pose_slab=next.pose_slab,nil
     state.pose_count=next.pose_count
-    state.mirror_plane,state.body=topology.plane,topology.body
+    state.mirror_plane=topology.plane
+    state.body=topology.body
     state.skeleton=content.id;state.skeleton_revision=content.revision
     playback.binding_revision+=1;state.bound=playback.binding_revision
     state.pose_ready=false

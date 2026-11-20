@@ -68,7 +68,11 @@ preview_trace_sources_prepare :: proc(call:^api.Call,trace:^Preview_Trace,cache:
         if trace.source_count>=len(trace.sources) {authoring_failure(call,"trace.sources","Capacity","at most 64 animation sources","too many sources","The preview metadata exceeds its source capacity",api.SERVER_ERROR);return false}
         source:=&trace.sources[trace.source_count]
         error:=host.assets_file(assets,id,asset.KIND_ANIMATION,&source.file)
-        if error==.None {source.view,error=asset.animation_view(&source.file,&assets.types)}
+        if error==.None {
+            view:asset.Animation_View
+            view,error=asset.animation_view(&source.file,&assets.types)
+            if error==.None {source.view=view}
+        }
         if error!=.None {asset.asset_close(&source.file);authoring_failure(call,"trace.sources","Invalid_Asset","readable animation source metadata","source load failed","The preview could not read its animation source metadata",api.SERVER_ERROR);return false}
         source.id=id;trace.source_count+=1
     }
@@ -76,21 +80,29 @@ preview_trace_sources_prepare :: proc(call:^api.Call,trace:^Preview_Trace,cache:
     return true
 }
 @(private)
-preview_trace_source_view :: proc(trace:^Preview_Trace,id:base.Asset_Id) -> asset.Animation_View {
-    if id=={} || id==trace.primary {return trace.view}
-    for source in trace.sources[:trace.source_count] {if source.id==id {return source.view}}
-    return {}
+preview_trace_source_view :: proc(trace:^Preview_Trace,id:base.Asset_Id) -> ^asset.Animation_View {
+    if id=={} || id==trace.primary {return &trace.view}
+    for &source in trace.sources[:trace.source_count] {if source.id==id {return &source.view}}
+    return nil
 }
 
 @(private)
-preview_clip_name :: proc(view:asset.Animation_View,hash:u64) -> [64]u8 {for &clip in view.clips {if base.name_hash(base.text_get(clip.name[:]))==hash {return clip.name}};return {}}
-@(private)
-preview_marker_name :: proc(view:asset.Animation_View,hash:u64) -> [64]u8 {for &marker in view.markers {if base.name_hash(base.text_get(marker.name[:]))==hash {return marker.name}};return {}}
-@(private)
-preview_curve_name :: proc(trace:^Preview_Trace,hash:u64) -> [asset.NODE_PATH_CAPACITY]u8 {
-    for &track in trace.view.tracks {if base.name_hash(base.text_get(track.target[:]))==hash {return track.target}}
-    for source in trace.sources[:trace.source_count] {for &track in source.view.tracks {if base.name_hash(base.text_get(track.target[:]))==hash {return track.target}}}
+preview_clip_name :: proc(view:^asset.Animation_View,hash:u64) -> [64]u8 {
+    if view==nil {return {}}
+    for &clip in view.clips {if base.name_hash(base.text_get(clip.name[:]))==hash {return clip.name}}
     return {}
+}
+@(private)
+preview_marker_name :: proc(view:^asset.Animation_View,hash:u64) -> [64]u8 {
+    if view==nil {return {}}
+    for &marker in view.markers {if base.name_hash(base.text_get(marker.name[:]))==hash {return marker.name}}
+    return {}
+}
+@(private)
+preview_curve_name :: proc(trace:^Preview_Trace,hash:u64) -> string {
+    for &track in trace.view.tracks {if base.name_hash(base.text_get(track.target[:]))==hash {return base.text_get(track.target[:])}}
+    for &source in trace.sources[:trace.source_count] {for &track in source.view.tracks {if base.name_hash(base.text_get(track.target[:]))==hash {return base.text_get(track.target[:])}}}
+    return ""
 }
 // What the matching of an entity plays, with the names of its clip and mode; false for an entity
 // that plays no locomotion of a .character.
@@ -175,7 +187,11 @@ preview_trace_frame :: proc(call:^api.Call,trace:^Preview_Trace,world:core.World
     }}
     r.events,r.events_total=marks[:],u32(total)
     r.curves,r.curves_total=make([]Preview_Curve_Result,min(len(state.curves),PREVIEW_TRACE_ROWS),call.allocator),u32(len(state.curves))
-    for &value,i in r.curves {curve:=state.curves[i];value={target=preview_curve_name(trace,curve.target),target_hash=curve.target,property=curve.property,slot=curve.slot,value=curve.value,weight=curve.weight}}
+    for &value,i in r.curves {
+        curve:=state.curves[i]
+        value={target_hash=curve.target,property=curve.property,slot=curve.slot,value=curve.value,weight=curve.weight}
+        base.text_set(value.target[:],preview_curve_name(trace,curve.target))
+    }
     r.root_delta,r.root_enabled={state.motion.translation,state.motion.rotation},state.root_enabled
     diagnostics:=Preview_Diagnostics{program=state.program.error,skipped=playback.stats.skipped}
     if modifiers:=core.world_storage_of(world,anim.Modifier_Runtime);modifiers!=nil {diagnostics.modifiers_last_request_error=anim.modifier_request_error(modifiers,entity)}
