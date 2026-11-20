@@ -394,6 +394,40 @@ layout_write :: proc(path,layout_fingerprint:string,layout:Layout) {
     write_file_atomic(path,text)
 }
 
+@(private)
+Program_Content :: struct {
+    path,text:string,
+    includes:[]string, // of inline text, in the same order as its draw stage
+}
+
+@(private)
+program_content_write :: proc(b:^strings.Builder,content:Program_Content) {
+    if content.text=="" {
+        fmt.sbprintf(b,"#include \"%s\"\n",content.path)
+    } else {
+        strings.write_string(b,content.text)
+        strings.write_byte(b,'\n')
+    }
+}
+
+@(private)
+reflection_include_dirs :: proc(
+    command:^[dynamic]string,root,copied,source_folder:string,plugins:[]string,
+    content:Program_Content,
+) {
+    if content.includes!=nil {
+        for folder in content.includes {append(command,"-I",folder)}
+        return
+    }
+    for folder in ENGINE_INCLUDES {
+        append(command,"-I",path_join(root,folder,allocator=context.temp_allocator))
+    }
+    append(command,"-I",path_parent(copied),
+        "-I",path_join(copied,"builtin",allocator=context.temp_allocator),
+        "-I",path_join(copied,"project",allocator=context.temp_allocator),"-I",source_folder)
+    for folder in plugins {append(command,"-I",folder)}
+}
+
 // The layouts of the structs of a program, Name::Parameters and, with
 // attributes, Name::Attributes, as Slang reflects them in uniform buffers of
 // one compilation. vfx: the program is of the Vfx domain, which has its own
@@ -405,7 +439,11 @@ layout_write :: proc(path,layout_fingerprint:string,layout:Layout) {
 // copied: the programs as the generation copies them, below the include
 // folder that holds the constants they share with the CPU.
 @(private)
-layout_reflect :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_path,name,temporary:string,allocator:=context.allocator,attributes:=false,vfx:=false,prelude:="",said:^[]Diagnostic=nil,plugins:[]string=nil,memory:=Memory{}) -> (layouts:[2]Layout,error:string,compile_error:bool) {
+layout_reflect :: proc(
+    runner:^Runner,slangc,root,copied,source_folder,name,temporary:string,content:Program_Content,
+    allocator:=context.allocator,attributes:=false,vfx:=false,prelude:="",said:^[]Diagnostic=nil,
+    plugins:[]string=nil,memory:=Memory{},
+) -> (layouts:[2]Layout,error:string,compile_error:bool) {
     TYPES :: [2]string{"Parameters","Attributes"}
     types:=TYPES
     count:=2 if attributes else 1
@@ -413,20 +451,19 @@ layout_reflect :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_
     reflected:=path_join(temporary,fmt.tprintf("%s.json",name),allocator=context.temp_allocator)
     text:=strings.builder_make(context.temp_allocator)
     strings.write_string(&text,"#define MIRAI_VFX_REFLECTION 1\n#include \"mirai_vfx.slang\"\n" if vfx else "#define MIRAI_MATERIAL_REFLECTION 1\n#include \"mirai_material.slang\"\n")
-    fmt.sbprintf(&text,"%s#include \"%s\"\n",prelude,compiled_path)
+    strings.write_string(&text,prelude)
+    program_content_write(&text,content)
     for i in 0..<count {fmt.sbprintf(&text,"[[vk::binding(%d,0)]] ConstantBuffer<%s::%s> mirai_reflect_%d;\n",i,name,types[i],i)}
     fmt.sbprintf(&text,"[[vk::binding(%d,0)]] RWStructuredBuffer<uint> mirai_result;\n",count)
     strings.write_string(&text,"[shader(\"compute\")][numthreads(1,1,1)] void reflect_main(uint3 id:SV_DispatchThreadID) {mirai_result[id.x]=id.x;}\n")
     if !write_file(wrapper,text.buf[:]) {return {},strings.clone("could not write the reflection program",allocator),false}
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,slangc,wrapper)
-    for folder in ENGINE_INCLUDES {append(&command,"-I",path_join(root,folder,allocator=context.temp_allocator))}
+    reflection_include_dirs(&command,root,copied,source_folder,plugins,content)
     append(&command,
-        "-I",path_parent(copied),"-I",path_join(copied,"builtin",allocator=context.temp_allocator),
-        "-I",path_join(copied,"project",allocator=context.temp_allocator),"-I",source_folder,"-entry","reflect_main","-target","spirv","-profile","spirv_1_5",
+        "-entry","reflect_main","-target","spirv","-profile","spirv_1_5",
         "-reflection-json",reflected,"-o",path_join(temporary,fmt.tprintf("%s.spv",name),allocator=context.temp_allocator),SLANG_DIAGNOSTICS_FLAG,
     )
-    for folder in plugins {append(&command,"-I",folder)}
     output,ran:=slang_run(runner,command[:],context.temp_allocator,memory)
     if !ran {
         diagnostics:=slang_diagnostics(output,allocator)
@@ -661,9 +698,12 @@ vfx_program_include :: proc(name,prelude,relative:string,parameters,attributes:L
 
 // The source and the loader of a Surface program.
 @(private)
-surface_program_source :: proc(b:^strings.Builder,name,relative:string,parameters:Layout) {
-    fmt.sbprintf(b,"#ifndef MIRAI_PROGRAM_%s\n#define MIRAI_PROGRAM_%s\n#include \"programs/%s\"\n",name,name,relative)
-    program_loader(b,name,parameters)
+surface_program_source :: proc(
+    b:^strings.Builder,name,namespace:string,content:Program_Content,parameters:Layout,
+) {
+    fmt.sbprintf(b,"#ifndef MIRAI_PROGRAM_%s\n#define MIRAI_PROGRAM_%s\n",name,name)
+    program_content_write(b,content)
+    program_loader(b,namespace,parameters)
     strings.write_string(b,"#endif\n")
 }
 
@@ -674,15 +714,21 @@ surface_program_source :: proc(b:^strings.Builder,name,relative:string,parameter
 // stages marked `//! per vertex program`. derivatives: its evaluation takes
 // derivatives across the pixels of a quad (surface_probe).
 @(private)
-surface_program_include :: proc(name,relative:string,parameters:Layout,vertex:=false,derivatives:=true) -> string {
+surface_program_include :: proc(
+    name,namespace:string,content:Program_Content,parameters:Layout,vertex:=false,derivatives:=true,
+) -> string {
     own:=strings.builder_make(context.temp_allocator)
     strings.write_string(&own,"// Generated by mirai shaders. DO NOT EDIT. The stages a source marks `//! per surface program`\n// are compiled once for each Surface program, with the include of that program alone.\n")
     strings.write_string(&own,"#ifndef MIRAI_SURFACE_PROGRAMS\n#define MIRAI_SURFACE_PROGRAMS\n#include \"mirai_material.slang\"\n")
     fmt.sbprintf(&own,"static const bool mirai_program_derivatives = %v;\n",derivatives)
-    surface_program_source(&own,name,relative,parameters)
-    fmt.sbprintf(&own,"bool mirai_evaluate_program(uint id,float4 packed[16],Mirai_Surface_Context ctx,inout Mirai_Surface value) {{value=%s::evaluate(ctx,mirai_load_%s(packed));return true;}}\n",name,name)
+    surface_program_source(&own,name,namespace,content,parameters)
+    fmt.sbprintf(&own,"bool mirai_evaluate_program(uint id,float4 packed[16],"+
+        "Mirai_Surface_Context ctx,inout Mirai_Surface value) "+
+        "{{value=%s::evaluate(ctx,mirai_load_%s(packed));return true;}}\n",namespace,namespace)
     if vertex {
-        fmt.sbprintf(&own,"bool mirai_vertex_program(uint id,float4 packed[16],Mirai_Vertex_Context ctx,inout Mirai_Vertex value) {{value=%s::vertex(ctx,mirai_load_%s(packed));return true;}}\n",name,name)
+        fmt.sbprintf(&own,"bool mirai_vertex_program(uint id,float4 packed[16],"+
+            "Mirai_Vertex_Context ctx,inout Mirai_Vertex value) "+
+            "{{value=%s::vertex(ctx,mirai_load_%s(packed));return true;}}\n",namespace,namespace)
     } else {
         strings.write_string(&own,NO_VERTEX_PROGRAM)
     }
@@ -708,7 +754,10 @@ PROBE_BINDING :: 100 // past those of what a program includes
 // sets it is an error of the material (a mask map cuts it); a blended one
 // shows it. ok: the compiler ran; the reflection says why when it did not.
 @(private)
-alpha_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_path,name,temporary:string,plugins:[]string=nil,memory:=Memory{}) -> (coverage:bool,ok:bool) {
+alpha_probe :: proc(
+    runner:^Runner,slangc,root,copied,source_folder,name,temporary:string,content:Program_Content,
+    plugins:[]string=nil,memory:=Memory{},
+) -> (coverage:bool,ok:bool) {
     wrapper:=path_join(temporary,fmt.tprintf("%s.alpha.slang",name),allocator=context.temp_allocator)
     compiled:=path_join(temporary,fmt.tprintf("%s.alpha.spv",name),allocator=context.temp_allocator)
     text:=strings.builder_make(context.temp_allocator)
@@ -734,16 +783,14 @@ alpha_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_pat
     strings.write_string(&text,"float mirai_scene_depth(Mirai_PostProcess_Context ctx,float2 uv) {return mirai_probe_value(7u,2u,uv).x;}\n")
     strings.write_string(&text,"float3 mirai_scene_normal(Mirai_PostProcess_Context ctx,float2 uv) {return mirai_probe_value(7u,3u,uv).xyz;}\n")
     strings.write_string(&text,"Mirai_Outline mirai_outline(Mirai_PostProcess_Context ctx,float2 uv) {return (Mirai_Outline)0;}\n")
-    fmt.sbprintf(&text,"#include \"%s\"\n",compiled_path)
+    program_content_write(&text,content)
     fmt.sbprintf(&text,"[[vk::binding(%d,0)]] ConstantBuffer<%s::Parameters> mirai_probe_parameters;\n",PROBE_BINDING+3,name)
     // A fragment stage, where a program may take derivatives of its own.
     fmt.sbprintf(&text,"[shader(\"fragment\")] float4 probe_main() : SV_Target {{mirai_probe_alpha[0]=%s::evaluate(mirai_probe_contexts[0],mirai_probe_parameters).alpha;return float4(0.0);}}\n",name)
     if !write_file(wrapper,text.buf[:]) {return}
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,slangc,wrapper)
-    for folder in ENGINE_INCLUDES {append(&command,"-I",path_join(root,folder,allocator=context.temp_allocator))}
-    append(&command,"-I",path_parent(copied),"-I",path_join(copied,"builtin",allocator=context.temp_allocator),"-I",path_join(copied,"project",allocator=context.temp_allocator),"-I",source_folder)
-    for folder in plugins {append(&command,"-I",folder)}
+    reflection_include_dirs(&command,root,copied,source_folder,plugins,content)
     append(&command,"-entry","probe_main","-o",compiled,"-warnings-disable","40100,41035")
     append(&command,..SPIRV_FLAGS)
     append(&command,..SLANG_OPTIMIZATION)
@@ -775,7 +822,10 @@ PROBE_READ_NAMES :: [abi.Program_Read]string{.Time="time",.View="view",.Place="p
 // a buffer of its own, which the optimized code still reads where the
 // program does. ok: the compiler ran.
 @(private)
-surface_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_path,name,temporary:string,vertex:bool,plugins:[]string=nil,memory:=Memory{}) -> (derivatives:bool,reads,vertex_reads:abi.Program_Reads,ok:bool) {
+surface_probe :: proc(
+    runner:^Runner,slangc,root,copied,source_folder,name,temporary:string,content:Program_Content,
+    vertex:bool,plugins:[]string=nil,memory:=Memory{},
+) -> (derivatives:bool,reads,vertex_reads:abi.Program_Reads,ok:bool) {
     wrapper:=path_join(temporary,fmt.tprintf("%s.probe.slang",name),allocator=context.temp_allocator)
     compiled:=path_join(temporary,fmt.tprintf("%s.probe.spv",name),allocator=context.temp_allocator)
     text:=strings.builder_make(context.temp_allocator)
@@ -820,7 +870,7 @@ surface_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_p
     strings.write_string(&text,"float mirai_scene_depth(Mirai_PostProcess_Context ctx,float2 uv) {return ctx.depth;}\n")
     strings.write_string(&text,"float3 mirai_scene_normal(Mirai_PostProcess_Context ctx,float2 uv) {return ctx.normal;}\n")
     strings.write_string(&text,"Mirai_Outline mirai_outline(Mirai_PostProcess_Context ctx,float2 uv) {return (Mirai_Outline)0;}\n")
-    fmt.sbprintf(&text,"#include \"%s\"\n",compiled_path)
+    program_content_write(&text,content)
     fmt.sbprintf(&text,"[[vk::binding(%d,0)]] ConstantBuffer<%s::Parameters> mirai_probe_parameters;\n",PROBE_BINDING+4,name)
     fmt.sbprintf(&text,"[shader(\"fragment\")] float4 probe_main() : SV_Target {{mirai_probe_surfaces[0]=%s::evaluate(mirai_probe_surface_context(),mirai_probe_parameters);",name)
     if vertex {fmt.sbprintf(&text,"mirai_probe_vertices[0]=%s::vertex(mirai_probe_vertex_context(),mirai_probe_parameters);",name)}
@@ -828,9 +878,7 @@ surface_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_p
     if !write_file(wrapper,text.buf[:]) {return}
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,slangc,wrapper)
-    for folder in ENGINE_INCLUDES {append(&command,"-I",path_join(root,folder,allocator=context.temp_allocator))}
-    append(&command,"-I",path_parent(copied),"-I",path_join(copied,"builtin",allocator=context.temp_allocator),"-I",path_join(copied,"project",allocator=context.temp_allocator),"-I",source_folder)
-    for folder in plugins {append(&command,"-I",folder)}
+    reflection_include_dirs(&command,root,copied,source_folder,plugins,content)
     append(&command,"-entry","probe_main","-o",compiled,"-warnings-disable","40100,41035")
     append(&command,..SPIRV_FLAGS)
     append(&command,..SLANG_OPTIMIZATION)
@@ -996,6 +1044,7 @@ dispatchers_write :: proc(d:^Dispatchers,include:string) -> (failed:string) {
 @(private)
 Program_Entry :: struct {
     path,text,domain,name:string,
+    generated:       bool,
     vfx:             bool,
     said:            Program_Directives,
     metadata:        map[string]json.Object,
@@ -1023,7 +1072,7 @@ Program_Reflection :: struct {
     entries:[]Program_Entry,
     runner:^Runner,
     slangc,root,copied,temporary:string,
-    plugins:[]string,
+    plugins,active:[]string,
     memory:Memory, // of each of its compilations
 }
 
@@ -1044,10 +1093,15 @@ programs_reflect :: proc(r:^Program_Reflection,workers:int) {
             // A folder of its own: two sources may declare one name.
             temporary:=path_join(r.temporary,fmt.tprintf("%d",at),allocator=context.temp_allocator)
             os.make_directory_all(temporary)
-            compiled_path:=path_join(r.copied,e.relative,allocator=context.temp_allocator)
+            copied_source:=path_join(r.copied,e.relative,allocator=context.temp_allocator)
+            content:=Program_Content{path=copied_source}
+            if e.generated {content={text=e.text,includes=r.active}}
             if !e.probed && e.error=="" {
-                coverage,ran:=alpha_probe(r.runner,r.slangc,r.root,r.copied,e.folder,compiled_path,e.name,temporary,r.plugins,r.memory)
-                derivatives,reads,vertex_reads,derived:=surface_probe(r.runner,r.slangc,r.root,r.copied,e.folder,compiled_path,e.name,temporary,e.said.vertex!=nil,r.plugins,r.memory)
+                coverage,ran:=alpha_probe(r.runner,r.slangc,r.root,r.copied,e.folder,
+                    e.said.name,temporary,content,r.plugins,r.memory)
+                derivatives,reads,vertex_reads,derived:=surface_probe(r.runner,r.slangc,r.root,
+                    r.copied,e.folder,e.said.name,temporary,content,e.said.vertex!=nil,
+                    r.plugins,r.memory)
                 if ran {e.coverage=coverage}
                 // Without its probe a program counts as taking derivatives and reading everything.
                 e.derivatives,e.reads,e.vertex_reads=true,~abi.Program_Reads{},~abi.Program_Reads{}
@@ -1059,7 +1113,9 @@ programs_reflect :: proc(r:^Program_Reflection,workers:int) {
                 }
             }
             if e.cached {continue}
-            layouts,problem,compile_error:=layout_reflect(r.runner,r.slangc,r.root,r.copied,e.folder,compiled_path,e.name,temporary,allocator,attributes=e.vfx,vfx=e.vfx,prelude=e.prelude,plugins=r.plugins,memory=r.memory)
+            layouts,problem,compile_error:=layout_reflect(r.runner,r.slangc,r.root,r.copied,
+                e.folder,e.said.name,temporary,content,allocator,attributes=e.vfx,vfx=e.vfx,
+                prelude=e.prelude,plugins=r.plugins,memory=r.memory)
             if problem!="" {
                 e.error=problem
                 // The same sources do not compile the next time either.
@@ -1082,6 +1138,21 @@ programs_reflect :: proc(r:^Program_Reflection,workers:int) {
 }
 
 // Builds the catalog of the built-in programs and those of a project into
+@(private)
+active_include_dirs :: proc(
+    files:^Sources,root,project,include:string,sources:[]Source,allocator:runtime.Allocator,
+) -> []string {
+    dirs:=make([dynamic]string,allocator)
+    append(&dirs,include)
+    for folder in ENGINE_INCLUDES {append(&dirs,path_join(root,folder,allocator=allocator))}
+    if project!="" {append(&dirs,path_join(project,"shaders",allocator=allocator))}
+    for source in sources {
+        folder:=path_clean(source.folder,allocator)
+        if sources_listing(files,folder,true).hash!="" {append(&dirs,folder)}
+    }
+    return dirs[:]
+}
+
 // `output`: catalog.json, the includes of the dispatchers, of the schema and
 // of the shared constants, and a copy of every program source under
 // include/programs, so the generation compiles without the project. The reflection of a program is kept in the folder
@@ -1091,7 +1162,11 @@ programs_reflect :: proc(r:^Program_Reflection,workers:int) {
 // generation has read already; nil reads everything here. A program of a
 // project or of a plugin that fails is left out and named in the catalog; one
 // of the engine that fails is an error. All results are in `allocator`.
-programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cache:string,sources:[]Source={},allocator:=context.allocator,files:^Sources=nil,workers:=1,memory:=Memory{},uses:[]Program_Uses_Of=nil,every:=abi.Program_Uses{}) -> (catalog:Catalog,error:string) {
+programs_generate :: proc(
+    runner:^Runner,root,project,output,slangc,version,cache:string,sources:[]Source={},
+    allocator:=context.allocator,files:^Sources=nil,workers:=1,memory:=Memory{},
+    uses:[]Program_Uses_Of=nil,every:=abi.Program_Uses{},generated:[]Generated_Surface=nil,
+) -> (catalog:Catalog,error:string) {
     local:Sources
     files:=files
     if files==nil {
@@ -1122,8 +1197,11 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
     if owned_problem!="" {return {},owned_problem}
     if os.exists(copied) {base.remove_all(copied)}
     if failed:=copy_sources(files,materials,path_join(copied,"builtin",allocator=context.temp_allocator));failed!="" {return {},fmt.aprintf("could not copy the programs of the engine: %s",failed,allocator=allocator)}
-    paths:=make([dynamic]string,context.temp_allocator)
-    append(&paths,..sources_in(files,materials,".slang",context.temp_allocator))
+    Input :: struct {path:string,generated:Generated_Surface}
+    inputs:=make([dynamic]Input,context.temp_allocator)
+    for path in sources_in(files,materials,".slang",context.temp_allocator) {
+        append(&inputs,Input{path=path})
+    }
     hash:Sha256
     sha_begin(&hash)
     sha_text(&hash,version)
@@ -1132,12 +1210,27 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
     for entry in folders {
         if failed:=copy_sources(files,entry.folder,path_join(copied,entry.label,allocator=context.temp_allocator));failed!="" {return {},fmt.aprintf("could not copy the programs of %s: %s",entry.folder,failed,allocator=allocator)}
         for path in sources_below(files,entry.folder) {
-            if strings.has_suffix(path,".slang") {append(&paths,path)}
+            if strings.has_suffix(path,".slang") {append(&inputs,Input{path=path})}
             relative,_:=path_relative(path,entry.folder)
             sha_text(&hash,entry.label)
             sha_text(&hash,relative)
             sha_bytes(&hash,sources_file(files,path).data)
         }
+    }
+    generated_ids:=make(map[string]bool,context.temp_allocator)
+    for source in generated {
+        if !identifier_valid(source.id) || source.text=="" {
+            return {},fmt.aprintf("%s: generated Surface requires an identifier and text",
+                source.id,allocator=allocator)
+        }
+        key:=strings.to_lower(source.id,context.temp_allocator)
+        if key=="pbr" || generated_ids[key] {
+            return {},fmt.aprintf("duplicate or reserved generated Surface identifier %s",
+                source.id,allocator=allocator)
+        }
+        generated_ids[key]=true
+        name:=fmt.tprintf("generated_%s.slang",source.id)
+        append(&inputs,Input{path_join(include,name,allocator=context.temp_allocator),source})
     }
     temporary,temporary_error:=os.make_directory_temp("","mirai-material-reflection-*",context.temp_allocator)
     if temporary_error!=nil {return {},strings.clone("could not create the temporary reflection folder",allocator)}
@@ -1162,15 +1255,38 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
     // What each program declares, then the layouts the cache lacks, reflected at once, then the
     // catalog in the order of the sources.
     entries:=make([dynamic]Program_Entry,context.temp_allocator)
-    for path in paths {
-        source:=sources_file(files,path)
-        if !source.found {return {},fmt.aprintf("could not read %s",path,allocator=allocator)}
-        text:=string(source.data)
+    active:=active_include_dirs(files,root,project,include,sources,context.temp_allocator)
+    generated_bases:=make([dynamic]Base,context.temp_allocator)
+    append(&generated_bases,Base{"generated/include",include})
+    append(&generated_bases,..bases[:])
+    for input in inputs {
+        path,text:=input.path,input.generated.text
+        is_generated:=input.generated.id!=""
+        if !is_generated {
+            source:=sources_file(files,path)
+            if !source.found {return {},fmt.aprintf("could not read %s",path,allocator=allocator)}
+            text=string(source.data)
+        }
         said:=program_directives(text)
-        // Shared modules and includes have no entry contract of their own.
-        if said.name=="" {continue}
         name:=said.name
-        e:=Program_Entry{path=path,text=text,domain=said.domain,name=name,vfx=said.domain=="vfx",said=said}
+        if is_generated {
+            name=input.generated.id
+            if said.domain!="surface" {
+                return {},fmt.aprintf("%s: generated source must declare a Surface program",
+                    name,allocator=allocator)
+            }
+        } else {
+            // Shared modules and includes have no entry contract of their own.
+            if name=="" {continue}
+            authored_key:=""
+            if len(generated_ids)>0 {authored_key=strings.to_lower(name,context.temp_allocator)}
+            if generated_ids[authored_key] {
+                return {},fmt.aprintf("generated Surface identifier %s conflicts with %s",
+                    name,path,allocator=allocator)
+            }
+        }
+        e:=Program_Entry{path=path,text=text,domain=said.domain,name=name,
+            generated=is_generated,vfx=said.domain=="vfx",said=said}
         e.metadata=make(map[string]json.Object,context.temp_allocator)
         for each in said.metadata {
             field,value:=each[0],each[1]
@@ -1188,25 +1304,35 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
             if entry.stages,entry.problem=program_stages(name,said.stages[:],entry.resources,allocator);entry.problem!="" {continue}
             entry.prelude=vfx_prelude(name,entry.resources)
         }
-        // Include paths are kept in the staged copy; names are validated identifiers.
-        if inside,is_builtin:=path_relative(path,materials);is_builtin {
-            entry.relative=strings.concatenate({"builtin/",inside},allocator)
-        } else {
-            for folder in folders {
-                if !path_inside(path,folder.folder) {continue}
-                inside,_=path_relative(path,folder.folder)
-                entry.relative=strings.concatenate({folder.label,"/",inside},allocator)
-                break
+        roots,labels,inline_text:=active,generated_bases[:],text
+        if !is_generated {
+            // Authored sources are compiled from the staged copy.
+            if inside,is_builtin:=path_relative(path,materials);is_builtin {
+                entry.relative=strings.concatenate({"builtin/",inside},allocator)
+            } else {
+                for folder in folders {
+                    if !path_inside(path,folder.folder) {continue}
+                    inside,_=path_relative(path,folder.folder)
+                    entry.relative=strings.concatenate({folder.label,"/",inside},allocator)
+                    break
+                }
             }
+            entry.folder=path_parent(path)
+            include_dirs:=make([dynamic]string,context.temp_allocator)
+            for folder in ENGINE_INCLUDES {
+                append(&include_dirs,path_join(root,folder,allocator=context.temp_allocator))
+            }
+            append(&include_dirs,materials)
+            for folder in folders {append(&include_dirs,folder.folder)}
+            append(&include_dirs,entry.folder)
+            roots,labels,inline_text=include_dirs[:],bases[:],""
         }
-        entry.folder=path_parent(path)
-        include_dirs:=make([dynamic]string,context.temp_allocator)
-        for folder in ENGINE_INCLUDES {append(&include_dirs,path_join(root,folder,allocator=context.temp_allocator))}
-        append(&include_dirs,materials)
-        for folder in folders {append(&include_dirs,folder.folder)}
-        append(&include_dirs,entry.folder)
-        dependency:=fingerprint(path,include_dirs[:],bases[:],configuration,context.temp_allocator,files)
-        contract:=fingerprint(path_join(shared,"mirai_vfx.slang" if entry.vfx else "mirai_material.slang",allocator=context.temp_allocator),include_dirs[:],bases[:],configuration,context.temp_allocator,files)
+        dependency:=fingerprint(path,roots,labels,configuration,context.temp_allocator,files,
+            inline_text=inline_text)
+        library:=path_join(shared,"mirai_vfx.slang" if entry.vfx else "mirai_material.slang",
+            allocator=context.temp_allocator)
+        contract:=fingerprint(library,roots,labels,configuration,context.temp_allocator,files,
+            whole=is_generated)
         entry.fingerprint=sha_of(transmute([]u8)strings.concatenate({dependency,contract},context.temp_allocator),context.temp_allocator)
         entry.caches[0]=path_join(cache,strings.concatenate({entry.fingerprint,".json"},context.temp_allocator),allocator=context.temp_allocator)
         entry.caches[1]=path_join(cache,strings.concatenate({entry.fingerprint,".attributes.json"},context.temp_allocator),allocator=context.temp_allocator)
@@ -1245,7 +1371,8 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
             }
         }
     }
-    reflection:=Program_Reflection{entries=entries[:],runner=runner,slangc=slangc,root=root,copied=copied,temporary=temporary,plugins=plugin_folders[:],memory=memory}
+    reflection:=Program_Reflection{entries=entries[:],runner=runner,slangc=slangc,root=root,
+        copied=copied,temporary=temporary,plugins=plugin_folders[:],active=active,memory=memory}
     programs_reflect(&reflection,workers)
     defer for &e in entries {virtual.arena_destroy(&e.arena)}
     broken:=make([dynamic]string,context.temp_allocator)
@@ -1259,6 +1386,7 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
         if taken {append(&refused,fmt.aprintf("duplicate/reserved program name %s",name,allocator=allocator));continue}
         if e.metadata_problem!="" {append(&refused,e.metadata_problem);continue}
         metadata:=e.metadata
+        if e.generated {sha_text(&hash,name);sha_text(&hash,"\n")}
         sha_bytes(&hash,text_bytes)
         if e.problem!="" {append(&refused,e.problem);continue}
         resources,stages,prelude,relative:=e.resources,e.stages,e.prelude,e.relative
@@ -1331,7 +1459,13 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
             if of==.Surface {
                 folder:=path_join(include,SURFACE_FOLDER,name,allocator=context.temp_allocator)
                 os.make_directory_all(folder)
-                if !write_file(path_join(folder,SURFACE_INCLUDE,allocator=context.temp_allocator),transmute([]u8)surface_program_include(name,relative,layout,vertex.declared,e.derivatives)) {
+                authored_path:=strings.concatenate({"programs/",relative},context.temp_allocator)
+                content:=Program_Content{path=authored_path}
+                if e.generated {content={text=e.text}}
+                wrapper:=surface_program_include(name,e.said.name,content,layout,
+                    vertex.declared,e.derivatives)
+                filename:=path_join(folder,SURFACE_INCLUDE,allocator=context.temp_allocator)
+                if !write_file(filename,transmute([]u8)wrapper) {
                     append(&refused,fmt.aprintf("%s: could not write its %s",name,SURFACE_INCLUDE,allocator=allocator))
                     continue
                 }

@@ -104,6 +104,12 @@ Source :: struct {
     folder:string,
 }
 
+// Immutable Surface text with a catalog identifier independent of its Slang namespace.
+// Include paths resolve in the active shader folders. The catalog has no editable source path.
+Generated_Surface :: struct {
+    id,text:string,
+}
+
 // Where the generation of a project is published unless Options.output says otherwise.
 PROJECT_OUTPUT :: ".mirai/shaders"
 
@@ -111,6 +117,7 @@ Options :: struct {
     root:    string, // the engine: shaders/, render/, rhi/ and the tools under .deps/
     project: string, // its shaders/ programs join the catalog; "" generates for the engine alone
     sources: []Source, // more folders of programs, after those of the project
+    generated:[]Generated_Surface, // input text, whose includes use the active shader folders
     output:  string, // "": <project>/.mirai/shaders, or <root>/shaders/build without a project
     cache:   string, // the stamp of the last generation into output; "": .mirai/shader-cache of the project, or of the engine without one
     odin:    bool,   // also compile the shaders of the RHI tests and write the Odin tables of render and rhi; never for a project
@@ -194,6 +201,7 @@ Generation :: struct {
     version:      string, // of Slang
     metal_tools:  string, // of spirv-opt and SPIRV-Cross
     configuration:[]u8,
+    generated:    map[string]bool,
     includes:     []string,
     bases:        []Base,
     features:     Extension_Features, // what the extensions.slang of the generation defines
@@ -233,6 +241,7 @@ Job :: struct {
     active:   bool, // a stage of the engine or of an extension that is not idle: Options.active_output waits for it
     defines:  []string, // of its variant, then each of its constants as the constant of native.slang it reads
     constants:[]string, // the names of its constants, by id
+    generated: bool, // fingerprint the complete sources of an inline Surface stage
     includes: []string, // those of the generation, or before them a folder with the extensions.slang of the stage
     bases:    []Base,
     out,staging:string,
@@ -537,7 +546,8 @@ job_run :: proc(g:^Generation,job:^Job,allocator:runtime.Allocator) {
     append(&configuration,..g.configuration)
     append(&configuration,..transmute([]u8)strings.join(job.defines,"\n",context.temp_allocator))
     if job.reduced {append(&configuration,"-O1")}
-    digest:=fingerprint(job.source,job.includes,job.bases,configuration[:],allocator,&g.sources)
+    digest:=fingerprint(job.source,job.includes,job.bases,configuration[:],allocator,&g.sources,
+        whole=job.generated)
     backends:=job.backends
     vulkan,metal:=.Vulkan in backends,.Metal in backends
     spv_name:=strings.concatenate({name,".spv"},allocator) if vulkan else ""
@@ -806,6 +816,7 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
             append(&defines,..variant.defines)
             append(&defines,..constant_defines)
             job:=Job{source=source,name=name,stage=itself,defines=defines[:],constants=constant_names,includes=includes,bases=g.bases,out=out,staging=staging,reduced=shader_reduced(name),backends=g.backends}
+            job.generated=program.folder==SURFACE_FOLDER && g.generated[program.name]
             if software_rays(text,variant) {job.backends-={.Metal}}
             if problem!="" {job.error=fmt.aprintf("%s: %s",name,problem,allocator=allocator)}
             if surface_problem!="" {job.error=fmt.aprintf("%s: %s",name,surface_problem,allocator=allocator)}
@@ -1158,6 +1169,11 @@ generation_setup :: proc(g:^Generation,options:Options,scratch:runtime.Allocator
     }
     if engine_build:=path_join(g.root,"shaders/build",allocator=scratch);g.output!=engine_build {g.engine_build=engine_build}
     odin=options.odin && g.project=="" && len(options.sources)==0
+    if len(options.generated)>0 {
+        if g.project=="" {return odin,"","generated Surface programs require a project"}
+        g.generated=make(map[string]bool,scratch)
+        for source in options.generated {g.generated[source.id]=true}
+    }
     g.backends=options.backends if options.backends!={} else Backends{HOST_BACKEND}
     switch {
     case options.cache!="": g.cache=path_clean(options.cache,scratch)
@@ -1175,7 +1191,9 @@ generation_setup :: proc(g:^Generation,options:Options,scratch:runtime.Allocator
             return odin,"",fmt.aprintf("%s not found: %s",names[tool],hint,allocator=scratch)
         }
     }
-    return odin,request_digest(g,options.sources,odin,options.uses,options.every,scratch),""
+    request=request_digest(g,options.sources,odin,options.uses,options.every,scratch,
+        options.generated)
+    return odin,request,""
 }
 
 // The strings of the result are in `scratch`, as is everything the generation holds.
@@ -1252,7 +1270,10 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     for source in options.sources {append(&copies,Base{path_clean(source.folder,scratch),path_join(programs_folder,"plugins",source.name,allocator=scratch)})}
     g.copies=copies[:]
     reflection_started:=time.tick_now()
-    catalog,catalog_error:=programs_generate(g.runner,g.root,g.project,staging,g.tools[.Slangc],g.version,path_join(g.shared,CACHE_REFLECTION,allocator=scratch),options.sources,scratch,&g.sources,workers,compilation_memory(g,PROGRAMS_KEY,scratch),options.uses,options.every)
+    reflection_cache:=path_join(g.shared,CACHE_REFLECTION,allocator=scratch)
+    catalog,catalog_error:=programs_generate(g.runner,g.root,g.project,staging,g.tools[.Slangc],
+        g.version,reflection_cache,options.sources,scratch,&g.sources,workers,
+        compilation_memory(g,PROGRAMS_KEY,scratch),options.uses,options.every,options.generated)
     if catalog_error!="" {
         diagnostics_place(result.diagnostics,g.copies,{g.project,g.root},scratch)
         fail(&result,allocator,"%s",len(result.diagnostics)>0?diagnostics_text(result.diagnostics,scratch):catalog_error)
@@ -1265,23 +1286,18 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     result.refused=strings.join(catalog.refused,"\n",allocator)
     g.features=extensions_features(extensions)
     if !write_file(path_join(staging,abi.SHADER_CATALOG,allocator=scratch),catalog_text(catalog)) {fail(&result,allocator,"could not write %s",abi.SHADER_CATALOG);return}
-    includes:=make([dynamic]string,scratch)
-    append(&includes,path_join(staging,"include",allocator=scratch))
-    for folder in ENGINE_INCLUDES {append(&includes,path_join(g.root,folder,allocator=scratch))}
+    include:=path_join(staging,"include",allocator=scratch)
+    includes:=active_include_dirs(&g.sources,g.root,g.project,include,options.sources,scratch)
     bases:=make([dynamic]Base,scratch)
     append(&bases,Base{"generated",staging})
-    if g.project!="" {
-        append(&includes,path_join(g.project,"shaders",allocator=scratch))
-        append(&bases,Base{"project",g.project})
-    }
+    if g.project!="" {append(&bases,Base{"project",g.project})}
     for source in options.sources {
         folder:=path_clean(source.folder,scratch)
-        if !os.is_directory(folder) {continue}
-        append(&includes,folder)
+        if sources_listing(&g.sources,folder,true).hash=="" {continue}
         append(&bases,Base{strings.concatenate({"plugins/",source.name},scratch),folder})
     }
     append(&bases,Base{"engine",g.root})
-    g.includes,g.bases=includes[:],bases[:]
+    g.includes,g.bases=includes,bases[:]
     g.catalog,g.vfx,g.surface,g.surface_uses,g.vertex=catalog.fingerprint,catalog.vfx,catalog.surface,catalog.surface_uses,catalog.vertex
     // The tools after Slang shape the Metal output of a shader, not what a
     // generation shares with the engine: they are of each shader's digest.

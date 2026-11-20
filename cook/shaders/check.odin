@@ -637,7 +637,9 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
         said:[]Diagnostic
         problem:string
         layouts:[2]Layout
-        layouts,problem,_=layout_reflect(&runner,slangc,options.root,copied,folder,copy_path,name,temporary,context.temp_allocator,attributes=with_attributes,vfx=c.domain==.Vfx,prelude=prelude,said=&said,plugins=plugins[:])
+        layouts,problem,_=layout_reflect(&runner,slangc,options.root,copied,folder,name,temporary,
+            Program_Content{path=copy_path},context.temp_allocator,attributes=with_attributes,
+            vfx=c.domain==.Vfx,prelude=prelude,said=&said,plugins=plugins[:])
         layout,attributes=layouts[0],layouts[1]
         reflected=problem==""
         if !reflected {

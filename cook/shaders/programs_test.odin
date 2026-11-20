@@ -77,6 +77,115 @@ program_named :: proc(catalog:Catalog,name:string) -> (abi.Program,bool) {
 }
 
 @(test)
+generated_surfaces_with_one_namespace_compile_by_identifier :: proc(t:^testing.T) {
+    f:Programs_Fixture
+    if !programs_fixture(t,&f) {return}
+    defer runner_close(&f.runner)
+    a:=`//! mirai surface Shared
+//! use opaque
+namespace Shared {
+struct Parameters {
+#include "active_fields.slang"
+};
+Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
+    Mirai_Surface s=(Mirai_Surface)0;
+    s.base_color=float3(p.signal);
+    return s;
+}
+}
+`
+    b:=`//! mirai surface Shared
+//! use opaque
+namespace Shared {
+struct Parameters {float3 color;};
+Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
+    Mirai_Surface s=(Mirai_Surface)0;
+    s.base_color=p.color;
+    return s;
+}
+}
+`
+    fixture_write(t,f.project,"shaders/surface.frag.slang",`//! per surface program only opaque
+#include "surface_programs.slang"
+[shader("fragment")]
+float4 main() : SV_Target {
+    float4 packed[16];
+    packed[0]=float4(0.25,0.5,1.0,0.0);
+    Mirai_Surface value=(Mirai_Surface)0;
+    mirai_evaluate_program(0,packed,(Mirai_Surface_Context)0,value);
+    return float4(value.base_color,1.0);
+}
+`)
+    fixture_write(t,f.project,"provider/active_fields.slang","float signal;\n")
+    provider:=path_join(f.project,"provider",allocator=context.temp_allocator)
+    inputs:=[]Generated_Surface{{"generated_a",a},{"generated_b",b}}
+    sources:=[]Source{{"provider",provider}}
+    root:=path_clean(ENGINE_ROOT,context.temp_allocator)
+    include:=path_join(f.output,"include",allocator=context.temp_allocator)
+    val,found:=tool_find(root,.Spirv_Val,context.temp_allocator)
+    if !found {log.warn("spirv-val is not installed");return}
+    stage_folder:=path_join(f.project,"shaders",allocator=context.temp_allocator)
+    identities:[2]string
+    for round in 0..<2 {
+        catalog,problem:=programs_generate(&f.runner,root,f.project,f.output,f.slangc,f.version,
+            f.cache,sources,allocator=context.temp_allocator,generated=inputs)
+        testing.expect(t,problem=="" && len(catalog.refused)==0,
+            strings.join(catalog.refused," | ",context.temp_allocator) if problem=="" else problem)
+        if problem!="" || len(catalog.refused)>0 {return}
+        stage_cache:=path_join(f.project,"cache",allocator=context.temp_allocator)
+        g:=Generation{root=root,project=f.project,runner=&f.runner,backends={.Vulkan},
+            tests_folder=stage_folder,shared=stage_cache}
+        g.tools[.Slangc],g.tools[.Spirv_Val]=f.slangc,val
+        g.surface,g.surface_uses=catalog.surface,catalog.surface_uses
+        g.generated=make(map[string]bool,context.temp_allocator)
+        for input in inputs {g.generated[input.id]=true}
+        sources_init(&g.sources,context.temp_allocator)
+        g.includes=active_include_dirs(&g.sources,root,f.project,include,sources,
+            context.temp_allocator)
+        strings.builder_init(&g.warnings,context.temp_allocator)
+        stages:=make([dynamic]Job,context.temp_allocator)
+        jobs_collect(&g,&stages,stage_folder,f.output,f.output,nil,context.temp_allocator,
+            collected=.Programs)
+        testing.expect_value(t,len(stages),len(inputs))
+        if len(stages)!=len(inputs) {return}
+        hashes:[2]string
+        for input,i in inputs {
+            program,found:=program_named(catalog,input.id)
+            testing.expect(t,found,input.id)
+            if !found {return}
+            testing.expect(t,program.source=="" && program.reads=={},input.id)
+            testing.expect_value(t,len(program.parameters),round+1 if i==0 else 1)
+            if len(program.parameters)>0 {
+                testing.expect_value(t,program.parameters[0].name,"signal" if i==0 else "color")
+            }
+            job:=&stages[i]
+            testing.expect(t,job.generated,job.name)
+            testing.expect_value(t,job.name,fmt.tprintf("surface__%s.frag",input.id))
+            job_run(&g,job,context.temp_allocator)
+            testing.expect(t,job.error=="" && job.result.staged,job.error)
+            if job.error!="" || !job.result.staged {return}
+            key:=job.result.fingerprint
+            hashes[i]=job.result.spv_hash
+            if round==0 {
+                identities[i]=key
+            } else {
+                testing.expect(t,(key!=identities[i])==(i==0),input.id)
+                testing.expect(t,job.reused==(i==1),input.id)
+            }
+        }
+        testing.expect(t,hashes[0]!=hashes[1],"the stages draw different outputs")
+        testing.expect(t,!os.exists(path_join(f.project,"shaders/generated_a.slang",
+            allocator=context.temp_allocator)))
+        testing.expect(t,!os.exists(path_join(include,"generated_generated_a.slang",
+            allocator=context.temp_allocator)))
+        if round==0 {
+            fields:="float signal;\nfloat added;\n"
+            fixture_write(t,f.project,"provider/active_fields.slang",fields)
+        }
+    }
+}
+
+@(test)
 programs_reflect_typed_parameters_defaults_and_portable_includes :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
