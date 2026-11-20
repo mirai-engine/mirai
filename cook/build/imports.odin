@@ -27,8 +27,11 @@ import "mirai:std/subprocess"
 // signal), how it ended and the source it was importing.
 imports_refresh :: proc(program:string,roots:[]string,final:bool,store_root:string,from:="") -> (ok:bool,message:string) {
     if len(roots)==0 {return true,""}
-    refresh,error:=imports_start(imports_command(program,roots,final,store_root,from),context.temp_allocator)
-    if error!=nil {return false,fmt.tprintf("the import program could not run: %v",error)}
+    refresh:Import_Refresh
+    command:=imports_command(program,roots,final,store_root,from)
+    if error:=imports_start(&refresh,command,context.temp_allocator);error!=nil {
+        return false,fmt.tprintf("the import program could not run: %v",error)
+    }
     defer subprocess.release(&refresh.process)
     for {
         if done,ok,message:=imports_poll(&refresh,true);done {return ok,message}
@@ -53,11 +56,11 @@ imports_command :: proc(program:string,roots:[]string,final:bool,store_root:stri
 }
 
 @(private)
-imports_start :: proc(command:[]string,allocator:runtime.Allocator) -> (refresh:Import_Refresh,error:os.Error) {
+imports_start :: proc(refresh:^Import_Refresh,command:[]string,allocator:runtime.Allocator) -> os.Error {
     refresh.process=subprocess.start({command=command},pipes=.Separate) or_return
     subprocess.stdin_close(&refresh.process)
     for &text in refresh.output {text=make([dynamic]byte,allocator)}
-    return
+    return nil
 }
 
 @(private)
