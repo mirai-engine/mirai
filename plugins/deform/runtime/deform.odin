@@ -144,7 +144,8 @@ deform_render :: proc(
                     bounds_min,bounds_max=center-radius,center+radius
                 }
                 if erender.deformable_update(app.renderer,shaped.mesh,bounds_min,bounds_max) {
-                    shaped.params,shaped.pipeline,shaped.made=params,pipeline,made
+                    shaped.params=params
+                    shaped.pipeline,shaped.made=pipeline,made
                     params.rest=u32(at)
                     state.jobs[state.job_count]=params
                     state.job_count+=1

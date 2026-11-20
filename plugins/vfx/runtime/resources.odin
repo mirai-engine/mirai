@@ -142,7 +142,7 @@ first_over :: proc "contextless" (needs:^Program_Needs) -> int {
 // it), where the renderer draws it. Without the scene of its world in the
 // renderer, its Mesh_Renderer where it is.
 @(private)
-entity_surface :: proc(extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync,meshes:^core.Table(erender.Mesh_Renderer,$A),worlds:^core.Table(core.World_Transform,$B),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,e:core.Entity) -> Resource_Desc {
+entity_surface :: proc(extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync,meshes:^core.Table(erender.Mesh_Renderer,$A),worlds:^core.Table(core.World_Transform,$B),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,e:core.Entity) -> (result:Resource_Desc) {
     if drawn!=nil && drawn.world==id {
         for &extra in extras {
             if extra.replace_source && extra.object_id==u64(e) {return surface_of(renderer,extra.mesh,extra.transform)}
@@ -153,16 +153,16 @@ entity_surface :: proc(extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync
     }
     shown,has_mesh:=core.get(meshes,e)
     world,placed:=core.get(worlds,e)
-    if !has_mesh || !placed {return {}}
+    if !has_mesh || !placed {return}
     entry:=shown.mesh!={}?host.assets_mesh(assets,shown.mesh):host.assets_shape(assets,shown.shape)
-    if entry==nil {return {}}
+    if entry==nil {return}
     return surface_of(renderer,entry.handle,mm.transform_matrix(world.transform))
 }
 
 @(private)
-surface_of :: proc(renderer:^erender.Renderer,mesh:erender.Mesh_Handle,transform:mm.Mat4) -> Resource_Desc {
+surface_of :: proc(renderer:^erender.Renderer,mesh:erender.Mesh_Handle,transform:mm.Mat4) -> (result:Resource_Desc) {
     count,ok:=erender.mesh_primitive_count(renderer,mesh)
-    if !ok || count==0 {return {}}
+    if !ok || count==0 {return}
     return {kind=.Surface,mesh=mesh,triangles=count,transform=transform}
 }
 

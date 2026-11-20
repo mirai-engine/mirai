@@ -456,12 +456,14 @@ scene_apply_at :: proc(a:^Scene_Apply,root:Node) -> bool {
     }
     for &d in decls {
         if d.preset!="" {
-            known:bool
-            if d.recipe,known=a.presets[d.preset];!known {
+            recipe,known:=a.presets[d.preset]
+            if !known {
                 problem:string
-                if d.recipe,problem=a.preset(a.user,d.preset,reading.allocator);problem!="" {reading_failf(reading,"%s.preset: %s",d.path,problem);return false}
-                a.presets[d.preset]=d.recipe
+                recipe,problem=a.preset(a.user,d.preset,reading.allocator)
+                if problem!="" {reading_failf(reading,"%s.preset: %s",d.path,problem);return false}
+                a.presets[d.preset]=recipe
             }
+            d.recipe=recipe
         }
         if d.prefab!="" {d.given=scene_prefab_read(reading,d.prefab,d.path) or_return}
         if d.node==0 {continue}

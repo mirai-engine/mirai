@@ -179,7 +179,10 @@ sky_look_now :: proc(sky:Sky) -> Sky_Look {
 // Without one, black. A background image without use_background would never
 // show: it is a problem, and the sky shows.
 sky_environment :: proc(e:core.Entity,sky:Sky,found,sunlit:bool,worlds:^core.Table(core.World_Transform,$A),a:^host.Assets,problems:^core.Problems) -> gpu.Environment {
-    if !found {return {use_background=true}}
+    if !found {
+        empty:=gpu.Environment{use_background=true}
+        return empty
+    }
     if sky.background_image!={} && !sky.use_background {
         core.report(problems,e,"render.sky_background","the Sky has a background_image but not use_background, so the image never shows; turn use_background on, or clear background_image")
     }

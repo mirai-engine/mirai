@@ -1,5 +1,7 @@
 package base
 
+import "core:slice"
+
 // Radix sort of integer keys that carry an index to whatever they order
 // (draws, entities, pairs). Stable, linear in the number of items, and it
 // allocates nothing: the caller supplies a scratch array of the same length.
@@ -49,4 +51,29 @@ radix_sort_items :: proc "contextless" (items,scratch:[]$T,$DIGITS:int) {
         source,target=target,source
     }
     if raw_data(source)!=raw_data(items) {copy(items,source)}
+}
+
+// Stably orders large values by sorting their indices. Odin's in-place
+// stable sort swaps the values with an aggregate store (odin-lang/Odin#7937).
+stable_sort_by :: proc(data:[]$T,less:proc(T,T) -> bool) {
+    if len(data)<2 {return}
+    order,error:=make([]int,len(data),context.temp_allocator)
+    if error!=nil {
+        for i in 1..<len(data) {
+            at:=i
+            for at>0 && less(data[i],data[at-1]) {at-=1}
+            if at<i {slice.rotate_right(data[at:i+1],1)}
+        }
+        return
+    }
+    defer delete(order,context.temp_allocator)
+    for &index,i in order {index=i}
+    Compare :: struct {data:[]T,less:proc(T,T) -> bool}
+    compare:=Compare{data,less}
+    slice.sort_by_with_data(order,proc(i,j:int,user:rawptr) -> bool {
+        c:=(^Compare)(user)
+        a,b:=&c.data[i],&c.data[j]
+        return c.less(a^,b^) || (i<j && !c.less(b^,a^))
+    },&compare)
+    slice.sort_from_permutation_indices(data,order)
 }

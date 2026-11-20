@@ -58,7 +58,9 @@ scene_world :: proc(r: ^Renderer, world: u64, fresh := false) {
 	}
 	if slot >= 0 {
 		w := &r.kept[slot]
-		w.ddgi, r.ddgi = r.ddgi, w.ddgi
+		previous := w.ddgi
+		w.ddgi = r.ddgi
+		r.ddgi = previous
 		// What is kept of the rays of the probes is of the volume that leaves.
 		r.ddgi.seen_everywhere = u32(r.light_frame) + 1
 		// Its probes are in the scale before one the next frame was to bring them to.

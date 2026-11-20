@@ -149,11 +149,11 @@ bones_pose :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,rig:^Bone_Rig,
 // skin; without the scene of its world in the renderer, its Mesh_Renderer
 // where it is, in its bind pose.
 @(private)
-entity_bones :: proc(sync:^Particle_Sync,drawn:^erender.Render_Sync,meshes:^core.Table(erender.Mesh_Renderer,$A),worlds:^core.Table(core.World_Transform,$B),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,e:core.Entity) -> Resource_Desc {
+entity_bones :: proc(sync:^Particle_Sync,drawn:^erender.Render_Sync,meshes:^core.Table(erender.Mesh_Renderer,$A),worlds:^core.Table(core.World_Transform,$B),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,e:core.Entity) -> (result:Resource_Desc) {
     shown,has_mesh:=core.get(meshes,e)
-    if !has_mesh {return {}}
+    if !has_mesh {return}
     rig:=bone_rig(&sync.rigs,assets,shown.mesh)
-    if rig==nil {return {}}
+    if rig==nil {return}
     if drawn!=nil && drawn.world==id {
         // The mesh its instance shows is its skin, when a library poses it.
         if at:=core.entity_map_index(&drawn.drawn,e);at>=0 {
@@ -161,13 +161,13 @@ entity_bones :: proc(sync:^Particle_Sync,drawn:^erender.Render_Sync,meshes:^core
         }
     }
     world,placed:=core.get(worlds,e)
-    if !placed {return {}}
+    if !placed {return}
     return bones_of(sync,renderer,rig,0,mm.transform_matrix(world.transform),false)
 }
 
 @(private)
-bones_of :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,rig:^Bone_Rig,skin:erender.Mesh_Handle,transform:mm.Mat4,posed:bool) -> Resource_Desc {
+bones_of :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,rig:^Bone_Rig,skin:erender.Mesh_Handle,transform:mm.Mat4,posed:bool) -> (result:Resource_Desc) {
     first,count,ok:=bones_pose(sync,renderer,rig,skin,posed)
-    if !ok {return {}}
+    if !ok {return}
     return {kind=.Bones,first=first,count=count,transform=transform}
 }

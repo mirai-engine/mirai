@@ -84,7 +84,8 @@ autosave_watch :: proc(work:^Save_Work,game:^Save_Game,settings:Save_Settings,ro
     }
     due||=turned && settings.autosave_section && work.sections_seen
     work.sections_seen||=count>0
-    work.sections,work.section_count=on,count
+    work.sections=on
+    work.section_count=count
     return due
 }
 

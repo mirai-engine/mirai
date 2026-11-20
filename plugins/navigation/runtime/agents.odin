@@ -1194,7 +1194,8 @@ follow_tree :: proc(a:^Navigation_Agents,p:^Nav_Path,r:^Nav_Route,e:core.Entity,
     }
     if free>=0 {
         tree:=&a.trees[free]
-        tree.target,tree.class,tree.first,tree.built,tree.filter,tree.idle=p.target,p.class,e,false,filter^,0
+        tree.filter=filter^
+        tree.target,tree.class,tree.first,tree.built,tree.idle=p.target,p.class,e,false,0
     }
     return -1
 }

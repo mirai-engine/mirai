@@ -191,7 +191,10 @@ scene_column :: proc(file:^asset.Asset,view:^asset.Scene_View,types:^asset.Types
         values=make([]T,len(view.ids),context.temp_allocator)
         has=make([]bool,len(view.ids),context.temp_allocator)
         for row,i in component.entities {
-            if int(row)<len(view.ids) {values[row],has[row]=read[i],true}
+            if int(row)<len(view.ids) {
+                values[row]=read[i]
+                has[row]=true
+            }
         }
         return
     }

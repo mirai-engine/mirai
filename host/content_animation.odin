@@ -177,7 +177,8 @@ content_animation_finish :: proc(app:^App,entry:^Content_Animation,job:bool) {
     content_animation_cache_write(app.animation_cache,load)
     content_animation_free(c,entry)
     built:=&load.built
-    entry.lib,entry.clip_count,entry.markers=built.lib,built.clip_count,built.markers
+    entry.lib=built.lib
+    entry.clip_count,entry.markers=built.clip_count,built.markers
     entry.names,entry.roots,entry.morphs,entry.fields=built.names,built.roots,built.morphs,built.fields
     built^={}
     if first {content_loaded(c,entry,true)} else {content_reloaded(c,entry)}

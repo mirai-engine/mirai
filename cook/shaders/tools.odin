@@ -354,7 +354,8 @@ tool_start :: proc(runner:^Runner,command:[]string,charge:i64,allocator:runtime.
             started,start_error:=subprocess.start({command=command},pipes=.Merged)
             if start_error!=nil {return {},strings.concatenate({"could not run ",command[0]},allocator)}
             made:=new(Compiler,runtime.heap_allocator())
-            made.process,made.reader.file,made.busy=started,started.stdout,true
+            made.process=started
+            made.reader.file,made.busy=started.stdout,true
             runner.compilers[runner.compiler_count]=made
             runner.compiler_count+=1
             compiler^=made

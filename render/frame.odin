@@ -533,7 +533,8 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     // What the extensions asked of this frame lasts for it alone.
     defer {
         r.pass_count=0;r.main_pipeline=0;r.gbuffer_asked={}
-        r.antialiasing_offered,r.antialiasing_offered_count=r.antialiasing,r.antialiasing_count
+        r.antialiasing_offered=r.antialiasing
+        r.antialiasing_offered_count=r.antialiasing_count
         r.antialiasing_count=0
     }
     r.previous_time,r.time=r.time,frame.time
@@ -560,7 +561,10 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     base.profile_end(zone)
     if !framed {return false}
     // What changed for the shadows reaches the views of a frame that draws the scene.
-    if !frame.ui_only {r.frame_occluders,r.scene.occluders=r.scene.occluders,{}}
+    if !frame.ui_only {
+        r.frame_occluders=r.scene.occluders
+        r.scene.occluders={}
+    }
     zone=render_zone_begin(r,"batches")
     batches_build(r)
     base.profile_end(zone)
