@@ -102,7 +102,8 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   [enemies with minds](references/behavior.md#enemies-with-minds),
   [smart objects](references/behavior.md#smart-objects),
   [influence maps](references/behavior.md#influence-maps),
-  [perception](references/behavior.md#perception), [places](references/behavior.md#places) and
+  [perception](references/behavior.md#perception), [places](references/behavior.md#places),
+  [game steps](references/behavior.md#game-steps) and
   [API](references/behavior.md#api)
 - The library under navigation and minds (A*, tiled navmesh, avoidance, the `Mind` loop and its
   actions): [minds](../mirai-std/references/ai.md#decisions-minds-mindodin) and

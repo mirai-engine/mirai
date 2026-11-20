@@ -26,7 +26,7 @@ reservations) belongs to
   procedures of a mind reach it through `ai.Mind_Context.user`, and `ctx.holder` is the agent
   (`agent(a)`). So the helpers take only the action or the think: `move_act`, `chase_act` (follows
   its target and the new one when it changes), `patrol_act`, `path_status`, `agent_path`,
-  `smart_offer`, `smart_nearest`, `offer_act`, `cross_act`. An action shows what it does with
+  `offer_act`, `cross_act`. An action shows what it does with
   `anim.play` and `anim.look`, taking `^anim.Animation_Requests` as any other parameter.
 - An agent thinks less often the farther it is from the
   [simulation sources](../../mirai-gameplay/references/libraries.md#sources-and-residency) (the
@@ -52,16 +52,11 @@ which writes them (`demo/game/ai_arena.odin`). What the agent knows lives in its
 what it perceives; `think` only reads and proposes, and the actions write.
 
 - **Patrol, chase and attack** (zombie, guard): `Patrol` or `Wander` always with a low score,
-  `Chase` with a higher one if it remembers someone (`ai.memory_best` of its `Perception`) and
+  `Chase` with a higher one if it remembers someone (`perception_best`) and
   `Attack` with the highest if it is close. Walking is `move_act`; chasing, `chase_act`;
   attacking, `ai.after`. A patrol is a `Patrol` that names the entity of a `volume.Spline`, never
-  points of its own: `patrol_act` walks it while the mind patrols, and `patrols_walk` walks the
-  agents with a `Patrol` and no `Mind_Agent`. Each starts at the point after the span of the curve
-  nearest the agent (`volume.spline_nearest`), so one pushed off its way goes back to it; it
-  walks point to point and moves on when navigation arrives or fails; it asks again when the
-  path moves; a path of one point is a post. Its progress (`next`, `back`) is in the `Patrol`, so
-  an interrupted back and forth keeps its direction. `Patrol` is shared: every mind step writes
-  it.
+  points of its own. `patrol_act` walks it while the mind patrols. The same waypoint helpers
+  drive [automatic and scripted patrols](#game-steps).
 - **Hordes with tokens:** the attack takes a token of the target on entering (`ai.token_take(a,
   target, N)`) and `think` proposes it only if there is room (`ai.reserve_free`); the others
   propose surrounding it (`chase_act` at a greater distance) until one is released. The token is
@@ -87,14 +82,14 @@ what it perceives; `think` only reads and proposes, and the actions write.
   declares as `USE_*`), where the one who uses it stands (in the object's frame), which way it
   faces there (a yaw: a seat cannot pitch or roll), where it comes from (`enter`, from `at`), how
   many at a time, how many times, the cooldown after each use, the teams that can take it and the
-  abilities (`Nav_Agent.abilities`) that it requires. One slot per entity: many seats are many
-  entities, never one object with many slots or several ways in for one seat.
+  abilities (`Nav_Agent.abilities`) that it requires. Use one offer per independently reservable
+  position or use.
 - An offer is open to a user (`smart_offer`) if it was not spent, is not in cooldown, is of its
   team and its abilities, and he holds it, there is room, or a holder of a lower priority
   (`Smart_User.priority`) has not started to use it. They are found among what the agent
-  perceives (`smart_offer` of the subject), near a point (`smart_nearest`, which looks at each
-  object) or with a place query of layout `Offers` (open at the query's `priority`), scored like
-  the others.
+  perceives (`smart_offer` of the subject), near a point (`smart_nearest`) or with a place query of
+  layout `Offers` (open at the query's `priority`). Lookups by use visit only that use's offers;
+  the runtime rebuilds the index when the object table changes.
 - The action that uses it reserves it for its whole life (`smart_claim`, in `Claims` with the
   attack tokens) and the mind releases it in its `Exit`. A claim of a higher priority displaces
   one not in use; one in use (`ai.claim_use`) is never displaced, and the one displaced is not
@@ -104,26 +99,23 @@ what it perceives; `think` only reads and proposes, and the actions write.
   offer is gone, closed to it or taken before; whoever spends it says so with `smart_used`, and
   `smart_update` (`fixed`, `react`, `server`), sole writer of `Smart_State`, counts the use and
   starts the cooldown.
-- `Claims` belongs to the world and is written by the steps of the minds (`ctx.reservations`);
-  the place queries read it through `Smart_View`.
 - A link that the game crosses (a kind of its own or one of `Nav_Agent.manual`) with an offer on
-  its entity: the agent waits at its start in `Crossing`; `cross_act` reserves the offer, waits
+  its entity: the agent waits at its start in `Crossing`; `cross_act` reserves an offer directly
+  on `Nav_Path.link_entity`, waits
   its turn, puts it on the other side (`core.place`) and notifies navigation, and finishes when
   navigation takes it from there.
 
 ## Influence maps
 
-- `influence_update` (`fixed`, `input`, `server`, after perception) maintains `Influence` over
-  `ai.Influence_Grid`, with what `Behavior_Settings` says: the cell size (0 turns the maps off),
-  the cells per side and the center. A world with nobody to stamp the maps or to read them (no
-  `Perceivable`, `Perceiver`, `Mind_Agent` or querier of places) has none: the step returns before
-  making them and frees the ones it had.
+- Set `Behavior_Settings.influence_enabled` to use influence and cover maps. Disabling it frees
+  the grids and skips cover rays. The cell size, map size and center place the grid in the world.
 - One layer for each of the first `INFLUENCE_TEAMS` teams: each pass stamps its `Perceivable`s
   and the influence spreads `influence_falloff` less per meter. `influence_cells` cells are
   processed per tick.
 - Cover is measured with physics rays, `influence_rays` per tick: the ground of each cell from
   above and eight directions at the height of a body; first around each `Perceivable`, in turns,
-  and then over the whole map.
+  and then over the whole map. `Behavior_Settings.sight_layers` selects the blockers for both
+  the ground and cover rays.
 - `influence_at(maps, point, teams)` is the threat (the teams the agent fears) or the allies
   (its own); `cover_at` says how covered a point is from another. Place queries measure them with
   `Influence` and `Cover`.
@@ -150,7 +142,8 @@ what it perceives; `think` only reads and proposes, and the actions write.
 - Each perceiver looks only at the `Perceivable`s around it: those of the tick are put in a
   [grid](../../mirai-std/references/spatial.md#grid-uniform-grid-and-spatial-hash) over the ground
   (`Sight`, of the application) and each takes those within its range, in the order of their table,
-  so the turns of the rays and what a full memory keeps do not depend on the grid.
+  so the turns of the rays and what a full memory keeps do not depend on the grid. The grid and
+  candidate scratch are reserved together at the perceivable table's capacity.
 - With nobody to look at or hear and nothing remembered, the tick looks at no perceiver. The same
   holds for the place queries without a request and for the smart objects whose tables did not
   change.
@@ -184,6 +177,27 @@ what it perceives; `think` only reads and proposes, and the actions write.
   several queries of an agent that wait, only the last is answered.
 - `places_run` (`fixed`, `react`, `server`) resolves in arrival order `Behavior_Settings.queries`
   per tick and is the sole writer of `Place_Result`.
+
+## Game steps
+
+- Bind `^core.Table(behavior.Perception,.Read)` and use `perceived` or `perception_best` for
+  observations. The read-only view from `perceived` lasts until the table settles.
+  `Perceiver.sight_layers` and `Place_Test.sight_layers` choose which collision layers block
+  sight. A zero mask uses the solid collision default, including every layer and excluding sensors.
+- Bind `^behavior.Claims` from a fixed server step and use `attack_token` or `smart_key` to
+  identify a slot. A claim covers the current tick and its lease in additional ticks. Call
+  `claim_renew` before it expires, `claim_use` when a holder becomes non-displaceable, and
+  `claim_release` when it is done. Minds and steps share the same reservations and priorities.
+  A step binds `Smart_Offers` and combines it with its reference to `Claims` in a `Smart_View`.
+  A mind uses `mind_smart_view`. Both bind `^behavior.Smart_Uses` to spend a use.
+- Bind `^behavior.Place_Requests` to submit a query and read `Place_Result` with `place_result`.
+  Keep the returned request number in the game state to correlate the completed answer. Zero
+  means the request could not be queued.
+- For a game-driven patrol, bind `^core.Table(behavior.Patrol)` and the spline and transform
+  tables. `patrol_begin` joins the nearest span, `patrol_waypoint` reads the current goal and
+  `patrol_advance` moves the cursor when the game arrives or skips a waypoint. The cursor
+  retains its direction across interruptions. Enable `Patrol.automatic` to give navigation
+  control of the patrol.
 
 ## API
 
@@ -219,7 +233,8 @@ what it perceives; `think` only reads and proposes, and the actions write.
   (`a_query_explains_each_candidate_and_the_test_that_vetoed_it`), a place
   target that is destroyed, the offers by team, ability, capacity, uses and cooldown, the way in
   and the facing of `offer_act` and the claim of a higher priority before use, and the
-  influence maps without allocating.
+  opt-in influence, custom visibility layers, allocation-free steady sight, link-owned
+  offers and services driven by a plain step.
   `mirai test plugins/multiplayer/runtime
   a_mind_decides_on_the_server_and_the_client_plays_what_it_plays`: a mind in a session, the
   action it plays played on the client within the delay it shows the server by, and the snapshot

@@ -4,5 +4,8 @@
   },
   "Graphics_Settings": {
     "glass_layers": 2
+  },
+  "Behavior_Settings": {
+    "influence_enabled": true
   }
 }

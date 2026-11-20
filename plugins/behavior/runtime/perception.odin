@@ -44,8 +44,13 @@ Perceiver :: struct {
     forget:f32 `mirai:"min=0,unit=s"`,         // after it stops perceiving something
     aware:f32 `mirai:"min=0,unit=m"`,          // of its eyes, within which it sees all around; 0: only its cone
     notices:Teams,
+    sight_layers:phys.Collision_Layers,        // zero uses SIGHT_LAYERS_DEFAULT
 }
-PERCEIVER_DEFAULT :: Perceiver{sight=20,angle=1.0472,eyes=1.6,hearing=1,forget=8,notices=Teams(0xffffffff)}
+SIGHT_LAYERS_DEFAULT :: phys.COLLISION_LAYERS_ALL
+PERCEIVER_DEFAULT :: Perceiver{
+    sight=20,angle=1.0472,eyes=1.6,hearing=1,forget=8,
+    notices=Teams(0xffffffff),sight_layers=SIGHT_LAYERS_DEFAULT,
+}
 
 @(component,description="Can be seen by Perceivers that notice its team, at the height of its point above its origin.")
 Perceivable :: struct {
@@ -61,12 +66,34 @@ Perception :: struct {
     next:u32 `mirai:"transient,hidden"`, // row of the Perceivable it looks at first in its next turn
 }
 
+// The observations of a perceiver, read-only until the table settles.
+perceived :: proc "contextless" (perceptions:^core.Table(Perception,$A),observer:core.Entity) -> []ai.Observation {
+    if perceptions==nil {return nil}
+    row:=core.row_of(perceptions,observer)
+    if row<0 {return nil}
+    memory:=&perceptions.values[row].memory
+    return memory.items[:clamp(memory.count,0,ai.PERCEPTION_CAPACITY)]
+}
+
+perception_best :: proc "contextless" (
+    perceptions:^core.Table(Perception,$A),observer:core.Entity,from:mm.Vec3,
+) -> (ai.Observation,bool) {
+    if perceptions!=nil {
+        if row:=core.row_of(perceptions,observer);row>=0 {
+            return ai.memory_best(&perceptions.values[row].memory,from)
+        }
+    }
+    return {},false
+}
+
 // The work of perception, of the queries of places, of the influence maps and
 // of the minds in a tick, for all the agents, and where the maps are.
 @(storage,setting)
 Behavior_Settings :: struct {
     rays:i32 `mirai:"min=0,advanced"`,    // of sight
     queries:i32 `mirai:"min=0,advanced"`, // of places
+    influence_enabled:bool,
+    sight_layers:phys.Collision_Layers, // for influence cover; zero uses SIGHT_LAYERS_DEFAULT
     influence_cell:f32 `mirai:"min=0,unit=m"`,     // across a cell of the influence maps; 0: no maps
     influence_size:i32 `mirai:"min=0,max=1024"`,   // cells on a side
     influence_center:[3]f32 `mirai:"unit=m"`,      // of the maps; its height is where the ground of a cell is looked for from above
@@ -78,7 +105,7 @@ Behavior_Settings :: struct {
     think_slowest:f32 `mirai:"min=0,unit=s"`, // between two decisions of an agent at most
 }
 BEHAVIOR_SETTINGS_DEFAULT :: Behavior_Settings{
-    rays=256,queries=4,
+    rays=256,queries=4,sight_layers=SIGHT_LAYERS_DEFAULT,
     influence_cell=2,influence_size=128,influence_cells=8192,influence_rays=90,influence_falloff=0.15,influence_blend=0.6,
     think_near=80,think_slowest=0.5,
 }
@@ -134,13 +161,28 @@ SIGHT_KEEP :: f32(1.1) // times its sight and angle within which a perceiver kee
 @(storage,host,by_world,free="sight_free")
 Sight :: struct {
     grid:spatial.Grid,
-    rows:[dynamic]u32, // of the Perceivables around a perceiver, in the order of their table
+    rows:[]u32,
 }
 
 sight_free :: proc(s:^Sight) {
+    delete(s.rows,s.grid.allocator)
     spatial.grid_destroy(&s.grid)
-    delete(s.rows)
     s^={}
+}
+
+@(private)
+sight_prepare :: proc(s:^Sight,capacity:int) -> bool {
+    if capacity<=len(s.rows) {return true}
+    new_grid:spatial.Grid
+    if !spatial.grid_init(&new_grid,{cell_size=SIGHT_CELL,buckets=capacity*2,item_capacity=capacity}) {
+        return false
+    }
+    rows,err:=make([]u32,capacity,new_grid.allocator)
+    if err!=nil {spatial.grid_destroy(&new_grid);return false}
+    sight_free(s)
+    s.grid=new_grid
+    s.rows=rows
+    return true
 }
 
 @(step="fixed",stage="input",server)
@@ -171,9 +213,13 @@ perception_update :: proc(
     far:=nav.nav_far_decide(time) && fars!=nil && len(perceivers.entities)>count
     // Without rays nobody looks, and all remember as time goes.
     sighted:=rays>0
-    if (far || sighted && count>0) && !sight_gather(sight,perceivables,worlds,fars,far) {
-        core.report(problems,core.NONE,"behavior.memory","No memory to look for the %d Perceivables around each perceiver: nobody sees in this tick; free memory",len(perceivables.entities))
-        sighted,rays,far=false,0,false
+    if far || sighted && count>0 {
+        if sight_prepare(sight,cap(perceivables.entities)) {
+            sight_gather(sight,perceivables,worlds,fars,far)
+        } else {
+            core.report(problems,core.NONE,"behavior.memory","No memory to look for the %d Perceivables around each perceiver: nobody sees in this tick; free memory",len(perceivables.entities))
+            sighted,rays,far=false,0,false
+        }
     }
     if far {perceive_far(perceivers,perceptions,perceivables,worlds,fars,sight,heard,events,turns,entities.ptr,time)}
     if count==0 {return}
@@ -192,6 +238,7 @@ perception_update :: proc(
         forward:=mm.quat_forward(pose.rotation)
         cut:=false
         if rays>0 {
+            filter:=sight_filter(p.sight_layers)
             // On from where the rays stopped its last turn, in the order of their table.
             around:=sight_around(sight,eye,p.sight*SIGHT_KEEP,core.count(perceivables))
             start:=0
@@ -211,7 +258,7 @@ perception_update :: proc(
                 to:=point-eye
                 distance:=linalg.length(to)
                 if distance>1e-4 {
-                    if hit,blocked:=phys.raycast(physics,eye,to/distance,distance,e);blocked && hit.entity!=subject {continue}
+                    if hit,blocked:=phys.raycast(physics,eye,to/distance,distance,e,filter);blocked && hit.entity!=subject {continue}
                 }
                 if ai.memory_perceive(&mine.memory,u64(subject),at.position,.Sight,1,time.tick)==.New {
                     core.push(&events.queue,Perception_Event{kind=.Noticed,perceiver=e,subject=subject,sense=.Sight,position=at.position})
@@ -234,6 +281,11 @@ sight_rays :: #force_inline proc "contextless" (settings:core.Ref(Behavior_Setti
 }
 
 @(private)
+sight_filter :: proc "contextless" (layers:phys.Collision_Layers) -> phys.Query_Filter {
+    return phys.query_hits(SIGHT_LAYERS_DEFAULT if layers==0 else layers)
+}
+
+@(private)
 remembering_count :: #force_inline proc "contextless" (turns:^Perceiving,before,after:bool) {
     if after && !before {turns.remembering+=1}
     if before && !after && turns.remembering>0 {turns.remembering-=1}
@@ -241,17 +293,10 @@ remembering_count :: #force_inline proc "contextless" (turns:^Perceiving,before,
 
 // Puts the Perceivables that are on, and with `far` those that are far
 // (nav.Nav_Far) too, in the grid by where they stand, each with its row.
-// False without memory for them.
 @(private)
-sight_gather :: proc(s:^Sight,perceivables:^core.Table(Perceivable,$A),worlds:^core.Table(core.World_Transform,$B),fars:^core.Table(nav.Nav_Far,$C),far:bool) -> bool {
+sight_gather :: proc(s:^Sight,perceivables:^core.Table(Perceivable,$A),worlds:^core.Table(core.World_Transform,$B),fars:^core.Table(nav.Nav_Far,$C),far:bool) {
     on:=core.count(perceivables)
     rows:=len(perceivables.entities) if far else on
-    if rows>len(s.grid.items) {
-        capacity:=64
-        for capacity<rows {capacity*=2}
-        spatial.grid_destroy(&s.grid)
-        if !spatial.grid_init(&s.grid,{cell_size=SIGHT_CELL,buckets=capacity*2,item_capacity=capacity}) {return false}
-    }
     spatial.grid_clear(&s.grid)
     for row in 0..<rows {
         e:=perceivables.entities[row]
@@ -260,7 +305,6 @@ sight_gather :: proc(s:^Sight,perceivables:^core.Table(Perceivable,$A),worlds:^c
         if !ok {continue}
         spatial.grid_insert(&s.grid,sight_box(at.position,0),u64(row))
     }
-    return true
 }
 
 // The box of the grid around a point on the ground: all its cells are of one height.
@@ -274,19 +318,23 @@ sight_box :: #force_inline proc "contextless" (at:mm.Vec3,reach:f32) -> mm.Aabb 
 // the turns of the rays and what a full memory keeps follow that order.
 @(private)
 sight_around :: proc(s:^Sight,eye:mm.Vec3,reach:f32,limit:int) -> []u32 {
-    clear(&s.rows)
+    count:=0
     query:=spatial.grid_query(&s.grid,sight_box(eye,abs(reach)))
     for {
         _,row,ok:=spatial.grid_query_next(&query)
         if !ok {break}
-        if int(row)<limit && append(&s.rows,u32(row))==0 {break}
+        if int(row)>=limit {continue}
+        s.rows[count]=u32(row)
+        count+=1
     }
-    slice.sort(s.rows[:])
-    return s.rows[:]
+    slice.sort(s.rows[:count])
+    return s.rows[:count]
 }
 
 @(private)
-far_of :: proc(fars:^core.Table(nav.Nav_Far,$A),e:core.Entity) -> bool {return core.raw_find(core.raw(fars),type_info_of(nav.Nav_Far),e)!=nil}
+far_of :: proc "contextless" (fars:^core.Table(nav.Nav_Far,$A),e:core.Entity) -> bool {
+    return fars!=nil && core.raw_row(core.raw(fars),e)>=0
+}
 
 // What the perceivers far from the players perceive, at the ticks their
 // brains decide in: what they notice in their cone and range, on or far
@@ -298,9 +346,10 @@ perceive_far :: proc(perceivers:^core.Table(Perceiver,$A),perceptions:^core.Tabl
         e:=perceivers.entities[row]
         if !far_of(fars,e) {continue}
         p:=perceivers.values[row]
-        mine:=cast(^Perception)core.raw_edit(core.raw(perceptions),type_info_of(Perception),e)
+        memory_row:=core.raw_row(core.raw(perceptions),e)
         pose,placed:=core.get(worlds,e)
-        if mine==nil || !placed {continue}
+        if memory_row<0 || !placed {continue}
+        mine:=core.edit_at(perceptions,memory_row)
         remembered:=mine.memory.count>0
         eye:=pose.position+mm.Vec3{0,p.eyes,0}
         forward:=mm.quat_forward(pose.rotation)
@@ -386,7 +435,8 @@ sight_why :: proc(perceivers:^core.Table(Perceiver,$A),perceptions:^core.Table(P
     if mine,found:=core.get(perceptions,perceiver);found {memory=mine.memory}
     why.reason=sight_reach(&memory,subject,p,eye,forward,point)
     if why.reason!=.Seen && why.reason!=.Aware || far || !(why.distance>1e-4) {return}
-    if hit,blocked:=phys.raycast(physics,eye,to/why.distance,why.distance,perceiver);blocked && hit.entity!=subject {
+    filter:=sight_filter(p.sight_layers)
+    if hit,blocked:=phys.raycast(physics,eye,to/why.distance,why.distance,perceiver,filter);blocked && hit.entity!=subject {
         why.reason,why.blocker=.Blocked,hit.entity
     }
     return
