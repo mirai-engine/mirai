@@ -307,27 +307,27 @@ a_pack_cut_below_a_chunk_reads_as_an_error :: proc(t:^testing.T) {
     pack:string
     {
         s,ok:=test_store(t,folder);if !ok {return}
+        defer close(&s)
         address,_=put(&s,data)
-        commit(&s)
+        _,sweep_error:=sweep(&s,nil)
+        if !testing.expect_value(t,sweep_error,Error.None) {return}
+        indexed,_,found:=lookup_locked(&s,address)
+        if !testing.expect(t,found && s.state.packs[indexed].indexed) {return}
         buffer:[PATH_BYTES]u8
-        pack,_=pack_path(&s,"packs",s.state.packs[s.state.writer.pack].id,&buffer)
+        pack,_=pack_path(&s,"packs",s.state.packs[indexed].id,&buffer)
         pack=strings.clone(pack,context.temp_allocator)
-        close(&s)
     }
-    reader,_:=test_store(t,folder)
+    reader,ok:=test_store(t,folder);if !ok {return}
     defer close(&reader)
-    test_object_bytes(t,&reader,address,data)
+    if !testing.expect(t,chunk_here(&reader,address)) {return}
     file,open_error:=os.open(pack,{.Read,.Write})
     if !testing.expect(t,open_error==nil) {return}
-    testing.expect(t,os.truncate(file,4096)==nil)
+    truncate_error:=os.truncate(file,size_of(Pack_Head))
     os.close(file)
-    o,error:=object_open(&reader,address)
-    if error==.None {
-        back:=make([]u8,len(data),context.temp_allocator)
-        error=object_read(&o,0,back)
-        object_close(&o)
-    }
-    testing.expect(t,error!=.None,"a cut pack is an error")
+    if !testing.expect_value(t,truncate_error,os.Error(nil)) {return}
+    object,error:=object_open(&reader,address)
+    if error==.None {object_close(&object)}
+    testing.expect_value(t,error,Error.Corrupt)
 }
 
 // A generation published while namespaces are listed leaves the names
