@@ -433,13 +433,19 @@ import_poll :: proc(s:^Session) {
     s.importer.imports+=1
     status.ok=true
     for warning in report.warnings {append(&s.importer.warnings,strings.clone(warning))}
+    scene_id:base.Asset_Id
+    if job.claimed && len(report.assets)>0 {
+        if p,error:=asset.package_get(&job.store,report.manifest,context.temp_allocator);error==.None {
+            scene_id=asset.package_root(&p)
+        }
+    }
     scene:=""
     for entry in report.assets {
         path:=entry.path
         if a!=nil {
             if file,found:=asset.registry_find(&a.registry,entry.id);found {path=file.path}
         }
-        if job.claimed && entry.kind==asset.KIND_SCENE && scene=="" {scene=path}
+        if entry.id==scene_id && entry.kind==asset.KIND_SCENE {scene=path}
         append(&s.importer.written,Import_Written{id=entry.id,kind=entry.kind,kept=entry.kept,path=strings.clone(path)})
     }
     switch {
