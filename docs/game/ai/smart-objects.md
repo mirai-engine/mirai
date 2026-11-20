@@ -3,7 +3,7 @@
 Every mind reads the smart objects already: the helpers below take only the `think` or the action
 of [a mind](mind.md). What else an action uses it receives as a parameter:
 `uses:^behavior.Smart_Uses`, `places:^behavior.Place_Requests`,
-`results:^core.Table(behavior.Place_Result,.Read)`, `links:^core.Table(nav.Nav_Link,.Read)`,
+`results:^core.Table(behavior.Place_Result,.Read)`, `routes:core.Ref(nav.Navigation_Agents)`,
 `placer:core.Placer` to move the agent.
 
 ## An object that offers a use
@@ -53,18 +53,21 @@ get_ammo :: proc(a:^ai.Act(Act), uses:^behavior.Smart_Uses) -> ai.Status {
 
 A `nav.Nav_Link` whose kind the game declares (`LINK_VAULT :: nav.Nav_Link_Kind(7)`; the agent
 lists it in `Nav_Agent.manual`) plus a `Smart_Object` offer on the same entity. When the agent
-reaches it, its `Nav_Path` is `Crossing` with `manual`: propose the crossing above everything else.
+reaches it, its `Nav_Path` is `Crossing` with `manual` and names the link entity. Set the
+link's capacity to one for an exclusive crossing. For a custom animated crossing, enable
+passthrough, move the character with the animation or a pose target, and call
+`nav.nav_crossing_done` when it reaches the other end.
 
 ```odin
 if p, ok := behavior.agent_path(t); ok && p.state == .Crossing && p.manual && p.kind == LINK_VAULT {
     ai.propose(t, .Vault, 1)
 }
 @(act="Vault")
-vault :: proc(a:^ai.Act(Act),links:^core.Table(nav.Nav_Link,.Read),placer:core.Placer)
+vault :: proc(a:^ai.Act(Act),routes:core.Ref(nav.Navigation_Agents),placer:core.Placer)
               -> ai.Status {
-    if ai.entering(a) {ai.commit(a, 1)} // one agent at a time
+    if ai.entering(a) {ai.commit(a, 1)}
     user := behavior.Smart_User{entity=behavior.agent(a), team=TEAM_ENEMY}
-    return behavior.cross_act(a, links, placer, USE_VAULT, user, 0.6)
+    return behavior.cross_act(a, routes, placer, USE_VAULT, user, 0.6)
 }
 ```
 
