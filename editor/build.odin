@@ -140,8 +140,7 @@ build_run_start :: proc(s:^Session,action:build.Action,target:build.Target,folde
     return ""
 }
 
-// The run, in its thread: the shaders of a build first (those of a game,
-// before the game), then its job, polled until both end or it is stopped.
+// The build and its imported packages, then the editor's shader generation.
 @(private)
 build_run :: proc(r:^Build_Run) {
     context.allocator=runtime.heap_allocator()
@@ -153,20 +152,21 @@ build_run :: proc(r:^Build_Run) {
     stopped :: proc(r:^Build_Run) -> bool {
         return intrinsics.atomic_load(&r.cancel) || r.seconds>0 && time.duration_seconds(time.tick_since(r.started))>r.seconds
     }
-    if r.action==.Build && r.target==.Editor {
-        r.shaders=build.shaders_start(&p,store_root=r.store_root)
-    }
     r.job=build.job_start({project=&p,target=r.target,action=r.action,output=r.folder,test_package=r.test_package,test={names=r.names,quiet=true},dev=r.target==.Editor && build.ENGINE_MODE_HERE==.Dev,engine=build.ENGINE_MODE_HERE,runs=r.runs,store_root=r.store_root})
-    for {
-        ended:=build.job_poll(r.job)
-        if r.shaders!=nil {ended=build.shaders_poll(r.shaders) && ended}
-        if ended {break}
+    for !build.job_poll(r.job) {
         if stopped(r) {
             build.job_cancel(r.job)
-            break
+            return
         }
         free_all(context.temp_allocator)
         time.sleep(10*time.Millisecond)
+    }
+    if r.action==.Build && r.target==.Editor && r.job.result.status!=.Failed && !stopped(r) {
+        r.shaders=build.shaders_start(&p,store_root=r.store_root)
+        for !build.shaders_poll(r.shaders) {
+            if stopped(r) {build.shaders_cancel(r.shaders);return}
+            time.sleep(10*time.Millisecond)
+        }
     }
 }
 

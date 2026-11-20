@@ -420,19 +420,6 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
     } else if !engine_shaders(root,turn_held=true) {
         return 1,"",false
     }
-    if target==.Editor {
-        generation:=build.shaders_run(p,store_root=store_root)
-        defer build.shaders_destroy(generation)
-        switch generation.result.status {
-        case .Running,.None,.Cancelled:
-        case .Up_To_Date: fmt.printfln("%s unchanged.",generation.result.output)
-        case .Built:      fmt.printfln("%s ready (%.1f s): %d material programs, %d stages compiled and %d reused.",generation.result.output,generation.result.seconds,generation.result.programs,generation.result.compiled,generation.result.reused)
-        case .Failed:
-            shaders_failed=true
-            fmt.eprintfln("mirai build: could not generate the shaders of the project: %s",generation.result.message)
-        }
-        if generation.result.status!=.Failed && generation.result.message!="" {fmt.eprintln(generation.result.message)}
-    }
     rebuilt:bool
     {
         job:=build.job_run({project=p,target=target,output=out,server=server,dev=mode==.Dev,engine=engine.mode,store_root=store_root})
@@ -478,6 +465,19 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         if target==.Game && !shipped_report(job) {return 1,"",shaders_failed}
         output=strings.clone(result.output)
         rebuilt=result.status==.Built
+    }
+    if target==.Editor {
+        generation:=build.shaders_run(p,store_root=store_root)
+        defer build.shaders_destroy(generation)
+        switch generation.result.status {
+        case .Running,.None,.Cancelled:
+        case .Up_To_Date: fmt.printfln("%s unchanged.",generation.result.output)
+        case .Built:      fmt.printfln("%s ready (%.1f s): %d material programs, %d stages compiled and %d reused.",generation.result.output,generation.result.seconds,generation.result.programs,generation.result.compiled,generation.result.reused)
+        case .Failed:
+            shaders_failed=true
+            fmt.eprintfln("mirai build: could not generate the shaders of the project: %s",generation.result.message)
+        }
+        if generation.result.status!=.Failed && generation.result.message!="" {fmt.eprintln(generation.result.message)}
     }
     if target==.Editor && rebuilt && !editor_methods_register(root,p.root,engine) {return 1,"",shaders_failed}
     return 0,output,shaders_failed

@@ -213,7 +213,7 @@ collab_take_update :: proc(s:^Session,st:^Collab_State) {
         return
     }
     buffer:[base.ASSET_ID_TEXT]u8
-    if problem:=library_add(s,base.asset_id_format(t.id,buffer[:]),t.assets,t.folder);problem!="" {
+    if problem:=library_add(s,base.asset_id_format(t.id,buffer[:]),t.assets,t.folder,offered=t.manifest);problem!="" {
         t.error=strings.clone(problem,t.allocator)
         notify(s,fmt.tprintf("%s is in this machine's library now but was not added: %s",name,problem))
     }
@@ -332,6 +332,7 @@ Api_Packages_Peers_Result :: struct {
 Api_Packages_Peer_Add_Params :: struct {
     peer:int `mirai:"min=0,max=7,label=The editor whose library has it, as packages.peers lists it"`,
     name:string `mirai:"label=The package: its id or its name, as packages.peers lists them"`,
+    assets:[]string `mirai:"optional,label=Asset ids to add with their dependencies; none adds all"`,
     folder:string `mirai:"optional,label=The folder under the asset folder it is listed in; none: the root of the assets"`,
     seconds:int `mirai:"optional,min=1,max=7200,unit=s,label=How long it waits for the end of the add; past that it answers adding and the add goes on"`,
 }
@@ -405,7 +406,7 @@ api_packages_peers :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_packages_peer_add :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Packages_Peer_Add_Params)
-    if problem:=collab_library_add(s,params.peer,params.name,params.folder);problem!="" {
+    if problem:=collab_library_add(s,params.peer,params.name,params.folder,params.assets);problem!="" {
         api.call_fail(call,api.INVALID_PARAMS,problem)
         return
     }

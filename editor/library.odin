@@ -183,7 +183,7 @@ library_list :: proc(s:^Session,root:string,allocator:=context.allocator) -> (li
 // it the assets of ids, to the folder of the assets, as an import that runs
 // (import_poll ends it). What failed, as how to fix it; "" when it started.
 @(private)
-library_add :: proc(s:^Session,named:string,ids:[]string,folder:string) -> string {
+library_add :: proc(s:^Session,named:string,ids:[]string,folder:string,offered:=store.Hash{}) -> string {
     r:=files_registry(s)
     if r==nil {return "The project has no assets folder to add into"}
     if busy:=import_busy(s);busy!="" {return busy}
@@ -198,9 +198,12 @@ library_add :: proc(s:^Session,named:string,ids:[]string,folder:string) -> strin
     manifest:store.Hash
     id,is_id:=serial.text_parse_asset_id(wanted)
     if is_id {
-        text:[base.ASSET_ID_TEXT]u8
-        hash,ref_error:=store.ref_get(&s.store,asset.REF_PACKAGES,base.asset_id_format(id,text[:]))
-        if ref_error==.None {
+        hash:=offered
+        if hash=={} {
+            text:[base.ASSET_ID_TEXT]u8
+            hash,_=store.ref_get(&s.store,asset.REF_PACKAGES,base.asset_id_format(id,text[:]))
+        }
+        if hash!={} {
             candidate,error:=asset.package_get(&s.store,hash,context.temp_allocator)
             if error==.None && candidate.id==id {p,manifest=candidate,hash}
         }

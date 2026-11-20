@@ -35,7 +35,7 @@ Content_Package :: struct {
     root:int,       // of Content_Libraries.roots
     id:base.Asset_Id,
     name:string,
-    folder:string,  // the parent of its importer-supplied document folder
+    folder,path:string,  // catalog folder and path in the browser
     label:string,   // its name, with where its source was when another of the root has that name
     kind:asset.Fourcc, // of its first asset
     assets:[]Library_Asset,
@@ -139,6 +139,11 @@ content_library_listing :: proc(local:[]Library_Package,peers:[]Content_Peer_Lis
         where_from:=origin_folder(origins[i].origin)
         if folder_shared || where_from=="" {where_from=origins[i].origin}
         if where_from!="" {a.label=fmt.aprintf("%s (%s)",a.name,where_from,allocator=allocator)}
+    }
+    for &p in packages {
+        name:=asset.safe_name(p.label)
+        p.path=strings.clone(name,allocator) if p.folder=="" else
+            strings.concatenate({p.folder,"/",name},allocator)
     }
     // In each root by label, as the browser lists files by name.
     slice.sort_by(packages[:],proc(a,b:Content_Package) -> bool {return a.root<b.root || a.root==b.root && a.label<b.label})
@@ -260,9 +265,7 @@ content_package_entries :: proc(c:^Content,root:int,filter:string) -> []Content_
     entries:=make([dynamic]Content_Entry,context.temp_allocator)
     for &p,k in c.libraries.packages {
         if p.root!=root || !content_package_matches(c,&p,filter) {continue}
-        name:=asset.safe_name(p.label)
-        path:=name if p.folder=="" else fmt.tprintf("%s/%s",p.folder,name)
-        append(&entries,Content_Entry{path,i32(k)})
+        append(&entries,Content_Entry{p.path,i32(k)})
     }
     slice.sort_by(entries[:],proc(a,b:Content_Entry) -> bool {return a.path<b.path || a.path==b.path && a.index<b.index})
     return entries[:]
