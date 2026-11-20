@@ -915,9 +915,7 @@ job_imports :: proc(job:^Job,compiled:Status) -> ^Job {
     if len(job.imports)==0 {return job_target_done(job,compiled)}
     args:=imports_command(job.import_program,job.imports,job.cook.assets!="",job.store_root)
     allocator:=virtual.arena_allocator(&job.arena)
-    error:os.Error
-    job.refresh,error=imports_start(args,allocator)
-    if error!=nil {
+    if error:=imports_start(&job.refresh,args,allocator);error!=nil {
         job.result.text=fmt.aprintf("the import program could not run: %v",error,allocator=allocator)
         return job_fail(job,.Import_Failed)
     }
