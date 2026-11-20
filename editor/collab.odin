@@ -1,5 +1,6 @@
 package editor
 
+import "base:runtime"
 import "core:crypto"
 import "core:fmt"
 import "core:log"
@@ -41,18 +42,15 @@ import "mirai:ui"
 // A guest joins with the code of the invitation of the host (net/invite.odin):
 // its address on its network and on its router, and the key of the session.
 
-COLLAB_PORT :: 7950
+COLLAB_PORT :: share.PORT
 COLLAB_VERSION :: 8 // of the messages: an editor of another one has another version of the project
-COLLAB_PEERS :: 8 // the host and seven guests
+COLLAB_PEERS :: share.PEERS
 COLLAB_NAME_BYTES :: 32
 COLLAB_SELECTION :: 16
 COLLAB_PRESENCE_INTERVAL :: 1.0/12
 COLLAB_EDIT_INTERVAL :: 1.0/30
 COLLAB_PRESENCE_SEEN :: 3.0 // seconds
 COLLAB_MESSAGE_BYTES :: 1<<30 // what one message may hold: a peer that sends more is cut off
-// Of the hosts of a session, whatever the project: a guest of another one still gets its files,
-// and its Hello says whether it can enter the scene.
-COLLAB_WIRE :: u32(COLLAB_VERSION)<<8 | u32(share.VERSION)
 COLLAB_HELLO_TIMEOUT :: 10.0
 COLLAB_LEAVE_WAIT :: 8*time.Millisecond // for the worker, which host_poll wakes, to send the goodbye
 COLLAB_PLAYING :: u8(1) // presence: inside a Play or a Simulate of its own
@@ -374,14 +372,11 @@ collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invitation
         free(st)
         return nil,.Transport
     }
-    channels:=collab_channels()
-    desc:=wire.Host_Desc{
-        mode=role==.Host?.Server:.Client,transport=st.virtual?transport:wire.udp_transport(&st.udp),protocol_id=0x4d495241,version=COLLAB_WIRE,invite=invitation.key,
-        max_connections=COLLAB_PEERS-1,channels=channels[:],
-    }
+    mode:=wire.Mode.Server if role==.Host else .Client
+    link:=transport if st.virtual else wire.udp_transport(&st.udp)
     // Its network half runs on a thread of its own: an editor busy for a while
     // (generating the world of a game) keeps answering, and the session lives.
-    if wire.host_init(&st.host,desc)!=.None || !st.virtual && !wire.worker_start(&st.host) {
+    if share.host_init(&st.host,mode,link,invitation.key)!=.None || !st.virtual && !wire.worker_start(&st.host) {
         wire.host_destroy(&st.host)
         if !st.virtual {wire.udp_close(&st.udp)}
         free(st)
@@ -454,7 +449,13 @@ collab_leave :: proc(s:^Session) {
     if st==nil || st.role==.None {return}
     if st.phase!=.Ended {
         bye:=[1]u8{u8(Collab_Message.Reject)}
-        if st.role==.Host {wire.message_send(&st.host,0,0,bye[:])}
+        if st.role==.Host {
+            for &peer,i in st.peers {
+                if i!=0 && peer.joined {
+                    wire.message_send(&st.host,peer.connection,share.CONTROL_CHANNEL,bye[:])
+                }
+            }
+        }
         wire.host_disconnect(&st.host,0,.Closed)
         wire.host_poll(&st.host)
         // The worker sends them before the host goes.
@@ -486,6 +487,7 @@ collab_destroy :: proc(s:^Session) {
     for &peer in st.peers {collab_peer_free(&peer)}
     for path in st.files_out {delete(path)}
     delete(st.files_out)
+    delete(st.reason,runtime.heap_allocator())
     collab_tables_free(st)
     history.journal_reading(s.edits,false)
     for &tab in s.documents {history.journal_reading(&tab.edits,false)}
@@ -497,8 +499,9 @@ collab_destroy :: proc(s:^Session) {
 
 @(private)
 collab_end :: proc(st:^Collab_State,reason:string) {
+    if st.phase==.Ended {return}
     st.phase=.Ended
-    st.reason=reason
+    st.reason=strings.clone(reason,runtime.heap_allocator())
     // A join that runs ends at its next wait.
     if st.node!=nil {share.node_stop(st.node)}
 }
@@ -549,7 +552,7 @@ collab_peer_free :: proc(peer:^Collab_Peer) {
 collab_flush :: proc(st:^Collab_State,peer:^Collab_Peer) {
     for peer.head<len(peer.out) {
         message:=peer.out[peer.head]
-        if wire.message_send(&st.host,peer.connection,0,message,&peer.sent)!=.None || peer.sent<len(message) {break}
+        if wire.message_send(&st.host,peer.connection,share.CONTROL_CHANNEL,message,&peer.sent)!=.None || peer.sent<len(message) {break}
         delete(message)
         peer.head+=1
         peer.sent=0
@@ -568,7 +571,7 @@ collab_broadcast :: proc(st:^Collab_State,bytes:[]u8,except:int=-1) {
         return
     }
     for &peer,i in st.peers {
-        if i==0 || !peer.used || i==except {continue}
+        if i==0 || !peer.used || !peer.joined || i==except {continue}
         collab_queue(&peer,bytes)
     }
 }
@@ -785,11 +788,7 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         collab_edits_send(s,st)
         collab_edit_apply(s,st,data,own)
         // The host sends what a guest edited to everybody, the sender included.
-        if st.role==.Host {
-            for &peer,i in st.peers {
-                if i!=0 && peer.used {collab_queue(&peer,data)}
-            }
-        }
+        if st.role==.Host {collab_broadcast(st,data)}
         st.received_edits+=1
     case .Presence:
         id:=int(serial.read_u8(&r))
@@ -822,7 +821,9 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         }
         if st.role==.Host {
             for &other,i in st.peers {
-                if i!=0 && i!=from && other.used && other.joined {wire.message_send(&st.host,other.connection,1,data)}
+                if i!=0 && i!=from && other.used && other.joined {
+                    wire.message_send(&st.host,other.connection,share.PRESENCE_CHANNEL,data)
+                }
             }
         }
     case .Roster:
@@ -905,7 +906,7 @@ collab_roster_send :: proc(st:^Collab_State) {
         serial.write_string(&w,string(peer.name[:peer.name_length]))
     }
     for &peer,i in st.peers {
-        if i!=0 && peer.used {collab_queue(&peer,serial.writer_bytes(&w))}
+        if i!=0 && peer.used && peer.joined {collab_queue(&peer,serial.writer_bytes(&w))}
     }
 }
 
@@ -1382,11 +1383,13 @@ collab_presence_send :: proc(s:^Session,st:^Collab_State) {
     }
     bytes:=serial.writer_bytes(&w)
     if st.role==.Guest {
-        wire.message_send(&st.host,0,1,bytes)
+        wire.message_send(&st.host,0,share.PRESENCE_CHANNEL,bytes)
         return
     }
     for &peer,i in st.peers {
-        if i!=0 && peer.used && peer.joined {wire.message_send(&st.host,peer.connection,1,bytes)}
+        if i!=0 && peer.used && peer.joined {
+            wire.message_send(&st.host,peer.connection,share.PRESENCE_CHANNEL,bytes)
+        }
     }
 }
 

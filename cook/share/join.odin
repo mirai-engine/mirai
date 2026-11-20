@@ -39,7 +39,7 @@ import wire "mirai:net"
 
 Join_Desc :: struct {
     node:^Node,
-    offer:string,      // the name of the snapshot under NAMESPACE the host offers (offer_name of the secret of its invitation)
+    offer:string,      // the name of the host's offer under NAMESPACE
     own_offer:string,  // the name this node offers it under to others; "": none
     folder:string,     // where the project goes; "": a new folder by its name under parent
     parent:string,     // "": the current folder
@@ -49,6 +49,7 @@ Join_Desc :: struct {
     pace:f64,          // seconds between two progress lines, default 1
     connect_seconds:f64, // waiting for the host, default 15
     progress:^Join_Progress, // what it is doing, for whoever shows it; nil: none
+    require_live:bool, // the editor joins a live session
 }
 
 Join_Phase :: enum u8 {Connecting,Snapshot,Files,Packages,Done}
@@ -168,7 +169,11 @@ join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,er
         }
     }
     node_serve(n,address)
-    if d.own_offer!="" {offer_set(n.s,folder,d.own_offer,address)}
+    if d.own_offer!="" {
+        if put_error:=offer_set(n.s,folder,d.own_offer,address);put_error!=.None {
+            return report,fmt.aprintf("the project offer could not be kept in the store (%v)",put_error,allocator=allocator)
+        }
+    }
     // What a join stopped in the middle of a write left.
     temp_folder:=project.path(project.folder_path(folder,.Generated,context.temp_allocator),"tmp",allocator=context.temp_allocator)
     if left,list_error:=os.read_all_directory_by_path(temp_folder,context.temp_allocator);list_error==nil {
@@ -254,8 +259,7 @@ refusal :: proc(reason:wire.Disconnect_Reason,allocator:=context.allocator) -> s
     return strings.clone("the host did not answer. Either its share has ended (an invitation lasts while the share that printed it runs: ask for a new one), or it cannot be reached from here: on another network one side needs a router that maps a port (UPnP, NAT-PMP or PCP) and the host must give the code it prints once its router answered; a firewall must let UDP through",allocator)
 }
 
-// The address of the snapshot the host offers, asked of the host alone: a
-// peer that joined from this one could name another.
+// The snapshot and kind of offer, asked of the host's authenticated connection.
 @(private)
 join_offer :: proc(d:^Join_Desc,allocator:runtime.Allocator) -> (address:store.Hash,error:string) {
     n:=d.node
@@ -268,7 +272,17 @@ join_offer :: proc(d:^Join_Desc,allocator:runtime.Allocator) -> (address:store.H
         result,ok:=exchange.query_result(&n.x,q)
         if !ok {return {},strings.clone("the question for the snapshot was lost",allocator)}
         switch result.state {
-        case .Found: return result.address,""
+        case .Found:
+            roots:=[1]store.Hash{result.address}
+            if error=join_fetch(d,roots[:],"the project offer",allocator,OFFER_BYTES);error!="" {return}
+            address,kind,read_error:=offer_read(n.s,result.address)
+            if read_error!=.None {
+                return {},fmt.aprintf("the project offer is invalid (%v)",read_error,allocator=allocator)
+            }
+            if d.require_live && kind!=.Live {
+                return {},strings.clone("this invitation shares files. Use mirai join.",allocator)
+            }
+            return address,""
         case .Not_Found: return {},strings.clone("the host offers no project under this invitation, or did not answer: its share ended and another runs; ask for its new invitation",allocator)
         case .Waiting:
         }
@@ -307,7 +321,7 @@ join_tree_fetch :: proc(data:rawptr,addresses:[]store.Hash) -> bool {
 // Fetches the folders of a snapshot at addresses from the peers, WINDOW at a
 // time; one whose object is larger than a folder's is refused.
 @(private)
-join_fetch :: proc(d:^Join_Desc,addresses:[]store.Hash,what:string,allocator:runtime.Allocator) -> string {
+join_fetch :: proc(d:^Join_Desc,addresses:[]store.Hash,what:string,allocator:runtime.Allocator,limit:=i64(LISTING_MAX)) -> string {
     n:=d.node
     Active :: struct {address:store.Hash,missing:f64}
     active:=make([dynamic]Active,context.temp_allocator)
@@ -323,7 +337,9 @@ join_fetch :: proc(d:^Join_Desc,addresses:[]store.Hash,what:string,allocator:run
         for k:=0;k<len(active); {
             a:=&active[k]
             p,_:=exchange.progress(&n.x,a.address)
-            if p.total>LISTING_MAX {return fmt.aprintf("the host sent a folder of %s of %d bytes, more than the %d this engine takes: it was refused",what,p.total,i64(LISTING_MAX),allocator=allocator)}
+            if p.total>limit {
+                return fmt.aprintf("the host sent %s of %d bytes, more than the %d this engine takes",what,p.total,limit,allocator=allocator)
+            }
             #partial switch p.state {
             case .Complete:
                 exchange.forget(&n.x,a.address)
@@ -998,15 +1014,35 @@ join_packages :: proc(d:^Join_Desc,folder:string,allocator:runtime.Allocator) ->
     return work.report
 }
 
-// Sets the ref under which this node offers the snapshot at address, in place
-// of the one it offered for folder before.
-offer_set :: proc(s:^store.Store,folder,name:string,address:store.Hash) {
-    file:=share_path(folder,"offer",context.temp_allocator)
+Offer_Kind :: enum u8 {Project,Live}
+@(private) OFFER_BYTES :: len(store.Hash{})+1
+
+@(private)
+offer_read :: proc(s:^store.Store,object:store.Hash) -> (address:store.Hash,kind:Offer_Kind,error:store.Error) {
+    o:=store.object_open(s,object) or_return
+    defer store.object_close(&o)
+    if store.object_size(&o)!=OFFER_BYTES {return {},{},.Corrupt}
+    bytes:[OFFER_BYTES]u8
+    store.object_read(&o,0,bytes[:]) or_return
+    copy(address[:],bytes[1:])
+    if bytes[0]>u8(Offer_Kind.Live) || address=={} {return {},{},.Corrupt}
+    return address,Offer_Kind(bytes[0]),.None
+}
+
+// The offer of this kind replaces the previous one of the folder.
+offer_set :: proc(s:^store.Store,folder,name:string,address:store.Hash,kind:=Offer_Kind.Project) -> store.Error {
+    address:=address
+    bytes:[OFFER_BYTES]u8
+    bytes[0]=u8(kind)
+    copy(bytes[1:],address[:])
+    object:=store.put(s,bytes[:]) or_return
+    store.ref_set(s,NAMESPACE,name,object) or_return
+    file:=share_path(folder,"live-offer" if kind==.Live else "offer",context.temp_allocator)
     if previous,error:=os.read_entire_file(file,context.temp_allocator);error==nil && string(previous)!=name && store.name_valid(string(previous)) {
         store.ref_remove(s,NAMESPACE,string(previous))
     }
-    store.ref_set(s,NAMESPACE,name,address)
     file_save(file,transmute([]u8)name)
+    return .None
 }
 
 bytes_text :: proc(bytes:i64) -> string {

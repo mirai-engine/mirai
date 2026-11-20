@@ -1,5 +1,6 @@
 package editor
 
+import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:os"
@@ -60,6 +61,35 @@ Share_Net :: struct {
     host,guest:^Share_End,
     frame:mem.Arena,
     frame_bytes:[]u8,
+    cli:^Share_Cli,
+}
+
+@(private="file")
+Share_Cli :: struct {
+    host:wire.Host,
+    node:share.Node,
+}
+
+@(private="file")
+share_cli_init :: proc(t:^testing.T,n:^Share_Net,cli:^Share_Cli,s:^store.Store,mode:wire.Mode,key:wire.Invite_Key,endpoint:int) -> bool {
+    transport:=wire.sim_endpoint_transport(&n.sim,endpoint)
+    error:=share.host_init(&cli.host,mode,transport,key)
+    if !testing.expect_value(t,error,wire.Error.None) {wire.host_destroy(&cli.host);return false}
+    if !testing.expect_value(t,share.node_init(&cli.node,s),.None) {
+        share.node_destroy(&cli.node)
+        wire.host_destroy(&cli.host)
+        return false
+    }
+    share.node_host(&cli.node,&cli.host)
+    n.cli=cli
+    return true
+}
+
+@(private="file")
+share_cli_destroy :: proc(n:^Share_Net) {
+    if n.cli==nil {return}
+    share.node_destroy(&n.cli.node)
+    wire.host_destroy(&n.cli.host)
 }
 
 // One millisecond of the network: each editor updates its session as a frame
@@ -77,6 +107,10 @@ share_step :: proc(n:^Share_Net) {
         if st:=collab_state(&e.s);st!=nil {wire.host_update(&st.host,n.now)}
         prefab_fixture_step(&e.f)
     }
+    if cli:=n.cli;cli!=nil {
+        share.node_pump(&cli.node,n.now)
+        wire.host_update(&cli.host,n.now)
+    }
     // As the end of a frame, and the next one writing over that memory: what the thread of a
     // join holds is its own.
     free_all(context.temp_allocator)
@@ -86,13 +120,15 @@ share_step :: proc(n:^Share_Net) {
 // Steps until the guest is in the scene, opening the project or its session ended.
 // The clock moves only while its join waits for it, as a join of cook/share runs in its tests.
 @(private="file")
-share_until_ready :: proc(t:^testing.T,n:^Share_Net,updates:=0) -> bool {
+share_until_ready :: proc(t:^testing.T,n:^Share_Net,updates:=0,ended:=false) -> bool {
     for steps:=0;steps<600_000; {
         st:=collab_state(&n.guest.s)
         if !testing.expect(t,st!=nil) {return false}
-        if st.phase==.Joined && st.updates>=updates && (updates==0 || st.join.finished) {return true}
+        if st.phase==.Ended {return ended || testing.expectf(t,false,"the session ended: %s",st.reason)}
+        if st.phase==.Joined && st.updates>=updates && (updates==0 || st.join.finished) {
+            return !ended || testing.expect(t,false,"the guest entered the scene")
+        }
         if st.join!=nil && st.join.opening {return true}
-        if st.phase==.Ended {return testing.expectf(t,false,"the session ended: %s",st.reason)}
         if j:=st.join;j!=nil && !j.finished && !sync.atomic_load(&j.done) && !share.node_waiting(st.node) {
             thread.yield()
             continue
@@ -228,6 +264,86 @@ a_guest_opening_a_joined_project_keeps_the_invitation :: proc(t:^testing.T) {
     invitation,error:=wire.invite_decode(base.text_get(projects.join[:]))
     testing.expect_value(t,error,wire.Invite_Error.None)
     testing.expect_value(t,invitation,st.invitation)
+}
+
+@(test)
+the_command_joins_an_editors_project_without_entering_its_scene :: proc(t:^testing.T) {
+    n:=new(Share_Net);defer free(n)
+    host,guest:=new(Share_End),new(Share_End)
+    defer {free(host);free(guest)}
+    ok:=share_net_init(t,n,host,guest,"collab-share-cli")
+    defer {share_end_destroy(guest);share_end_destroy(host);wire.sim_network_destroy(&n.sim);delete(n.frame_bytes)}
+    if !ok {return}
+    if _,made:=share_host_project(t,n);!made {return}
+    error:=collab_host(&host.s,0,"Ana",wire.sim_endpoint_transport(&n.sim,0))
+    if !testing.expect_value(t,error,Collab_Error.None) {return}
+    st:=collab_state(&host.s)
+    cli:=new(Share_Cli);defer free(cli)
+    key:=wire.Invite_Key{public=st.invite.public,secret=st.invite.secret}
+    if !share_cli_init(t,n,cli,&guest.s.store,.Client,key,1) {return}
+    defer share_cli_destroy(n)
+    if !testing.expect_value(t,wire.host_connect(&cli.host,wire.address_memory(0)),.None) {return}
+
+    Run :: struct {desc:share.Join_Desc,done:bool,fetched:int,error:[512]u8}
+    digits:[64]u8
+    run:=Run{desc={node=&cli.node,offer=share.offer_name(key.secret,&digits),folder=guest.root}}
+    th:=thread.create_and_start_with_poly_data(&run,proc(r:^Run) {
+        defer runtime.default_temp_allocator_destroy(&runtime.global_default_temp_allocator_data)
+        arena:mem.Dynamic_Arena
+        mem.dynamic_arena_init(&arena,context.allocator,context.allocator)
+        defer mem.dynamic_arena_destroy(&arena)
+        report,problem:=share.join(r.desc,base.dynamic_arena_allocator(&arena))
+        r.fetched=report.packages.fetched
+        base.text_set(r.error[:],problem)
+        sync.atomic_store(&r.done,true)
+    })
+    if !testing.expect(t,th!=nil) {return}
+    for steps:=0;!sync.atomic_load(&run.done); {
+        if !share.node_waiting(&cli.node) {thread.yield();continue}
+        share_step(n)
+        steps+=1
+        if steps==600_000 {share.node_stop(&cli.node)}
+    }
+    thread.join(th)
+    thread.destroy(th)
+    testing.expect_value(t,base.text_get(run.error[:]),"")
+    testing.expect_value(t,run.fetched,1)
+    testing.expect_value(t,share_text(guest.root,"assets/notes.txt"),"host 1\n")
+    testing.expect(t,st.peers[1].used && !st.peers[1].joined)
+    collab_broadcast(st,[]u8{u8(Collab_Message.Edit)})
+    testing.expect(t,len(st.peers[1].out)==0,"a download receives no live edits")
+}
+
+@(test)
+an_editor_refuses_a_files_only_invitation_before_writing :: proc(t:^testing.T) {
+    n:=new(Share_Net);defer free(n)
+    host,guest:=new(Share_End),new(Share_End)
+    defer {free(host);free(guest)}
+    ok:=share_net_init(t,n,host,guest,"collab-share-files-only")
+    defer {share_end_destroy(guest);share_end_destroy(host);wire.sim_network_destroy(&n.sim);delete(n.frame_bytes)}
+    if !ok {return}
+    if _,made:=share_host_project(t,n);!made {return}
+    error:=collab_host(&host.s,0,"Ana",wire.sim_endpoint_transport(&n.sim,2))
+    if !testing.expect_value(t,error,Collab_Error.None) {return}
+    live:=collab_state(&host.s).invite
+    cli:=new(Share_Cli);defer free(cli)
+    key,made:=wire.invite_key()
+    if !testing.expect(t,made) || !share_cli_init(t,n,cli,&host.s.store,.Server,key,0) {return}
+    defer share_cli_destroy(n)
+    testing.expect(t,key!=live,"each host has its own invitation key")
+    if _,problem:=share.offer(&cli.node,host.root,key.secret,allocator=context.temp_allocator);!testing.expect_value(t,problem,"") {return}
+    digits:[64]u8
+    _,offer_error:=store.ref_get(&host.s.store,share.NAMESPACE,share.offer_name(live.secret,&digits))
+    testing.expect_value(t,offer_error,store.Error.None)
+    code:=wire.invite_encode(wire.invite_make(key,COLLAB_PORT),context.temp_allocator)
+    error=collab_join(&guest.s,code,"Ben",at=wire.address_memory(0),
+        transport=wire.sim_endpoint_transport(&n.sim,1))
+    if !testing.expect_value(t,error,Collab_Error.None) {return}
+    if !share_until_ready(t,n,ended=true) {return}
+    st:=collab_state(&guest.s)
+    testing.expect(t,strings.contains(st.reason,"Use mirai join"),st.reason)
+    testing.expect(t,!os.exists(fmt.tprintf("%s/project.mirai",guest.root)))
+    testing.expect(t,!os.exists(fmt.tprintf("%s/%s",guest.root,asset.PACKAGES_FILE)))
 }
 
 // A file the guest changed and the host changed too stays the guest's, and
