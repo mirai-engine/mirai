@@ -376,13 +376,13 @@ nav_remove_vertex :: proc(s:^Nav_Build_Scratch,remove:u16) -> bool {
         if !matched {break}
     }
     n:=len(s.hole)
-    if !nav_resize(&s.tverts,n) || !nav_resize(&s.indices,n) || !nav_resize(&s.tris,n*3) {return false}
+    if !nav_resize(&s.raw,n) || !nav_resize(&s.indices,n) || !nav_resize(&s.tris,n*3) {return false}
     for h,i in s.hole {
         v:=s.mesh_verts[h[0]]
-        s.tverts[i]={i32(v.x),i32(v.y),i32(v.z),0}
+        s.raw[i]={i32(v.x),i32(v.y),i32(v.z),0}
         s.indices[i]=u32(i)
     }
-    triangles:=abs(nav_triangulate(s.tverts[:],s.indices[:n],s.tris[:]))
+    triangles:=abs(nav_triangulate(s.raw[:],s.indices[:n],s.tris[:]))
     clear(&s.merge)
     for t in 0..<triangles {
         a,b,c:=s.tris[t*3],s.tris[t*3+1],s.tris[t*3+2]
@@ -402,10 +402,11 @@ nav_remove_vertex :: proc(s:^Nav_Build_Scratch,remove:u16) -> bool {
 // Links each edge to the polygon that shares it.
 @(private="file")
 nav_link_polys :: proc(s:^Nav_Build_Scratch) -> bool {
+    first_edge,next_edge:=&s.ints,&s.vertex_next
     vertex_count:=len(s.mesh_verts)
-    if !nav_resize(&s.first_edge,vertex_count) {return false}
-    for &f in s.first_edge {f=-1}
-    clear(&s.next_edge)
+    if !nav_resize(first_edge,vertex_count) {return false}
+    for &f in first_edge {f=-1}
+    clear(next_edge)
     clear(&s.mesh_edges)
     for p,i in s.polys {
         n:=int(p.count)
@@ -413,8 +414,8 @@ nav_link_polys :: proc(s:^Nav_Build_Scratch) -> bool {
             v0,v1:=p.vertices[j],p.vertices[(j+1)%n]
             if v0>=v1 {continue}
             if _,error:=append(&s.mesh_edges,Nav_Mesh_Edge{{v0,v1},{u16(i),u16(i)},{u16(j),0}});error!=nil {return false}
-            if _,error:=append(&s.next_edge,s.first_edge[v0]);error!=nil {return false}
-            s.first_edge[v0]=i32(len(s.mesh_edges)-1)
+            if _,error:=append(next_edge,first_edge[v0]);error!=nil {return false}
+            first_edge[v0]=i32(len(s.mesh_edges)-1)
         }
     }
     for p,i in s.polys {
@@ -422,7 +423,7 @@ nav_link_polys :: proc(s:^Nav_Build_Scratch) -> bool {
         for j in 0..<n {
             v0,v1:=p.vertices[j],p.vertices[(j+1)%n]
             if v0<=v1 {continue}
-            for e:=s.first_edge[v1];e>=0;e=s.next_edge[e] {
+            for e:=first_edge[v1];e>=0;e=next_edge[e] {
                 edge:=&s.mesh_edges[e]
                 if edge.vert[1]==v0 && edge.poly[0]==edge.poly[1] {
                     edge.poly[1]=u16(i)

@@ -283,10 +283,12 @@ nav_merge_holes :: proc(s:^Nav_Build_Scratch) -> bool {
         if _,error:=append(&s.holes,hole);error!=nil {return false}
     }
     if len(s.holes)==0 {return true}
-    if !nav_resize(&s.outlines,regions) {return false}
-    for &o in s.outlines {o=-1}
+    if !nav_resize(&s.ints,regions) {return false}
+    for &o in s.ints {o=-1}
     for c,i in s.contours {
-        if s.outlines[c.region]<0 && nav_contour_area(nav_contour_verts(s,c))>=0 {s.outlines[c.region]=i32(i)}
+        if s.ints[c.region]<0 && nav_contour_area(nav_contour_verts(s,c))>=0 {
+            s.ints[c.region]=i32(i)
+        }
     }
     slice.sort_by(s.holes[:],proc(a,b:Nav_Hole) -> bool {
         if a.region!=b.region {return a.region<b.region}
@@ -296,7 +298,7 @@ nav_merge_holes :: proc(s:^Nav_Build_Scratch) -> bool {
     })
     for h in 0..<len(s.holes) {
         hole:=s.holes[h]
-        outline_index:=s.outlines[hole.region]
+        outline_index:=s.ints[hole.region]
         if outline_index<0 {continue}
         group_end:=h
         for group_end<len(s.holes) && s.holes[group_end].region==hole.region {group_end+=1}

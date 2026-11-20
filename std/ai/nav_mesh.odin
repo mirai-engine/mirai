@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:math/linalg"
 import "mirai:std/base"
 import math "mirai:std/math"
+import "mirai:std/spatial"
 
 // A navigation mesh: tiles on a square grid over XZ, each built apart
 // (nav_build_tile, nav_tile_from_triangles) and added, replaced or removed at
@@ -47,6 +48,7 @@ Nav_Tile :: struct {
     data:Nav_Tile_Data,
     salt:u32,
     next_free:i32,
+    link_head:u32, // endpoint index plus one
     used:bool,
 }
 
@@ -57,7 +59,7 @@ NAV_CONNECTION_ARRIVAL :: u8(0xfe)
 // border of the tile into the polygon of the next tile, or onto a link.
 Nav_Connection :: struct {
     to:Nav_Ref,
-    next:u32,     // the next connection of the same polygon, index+1; 0 ends
+    next,prev:u32, // connections of the same polygon, index+1; 0 ends
     edge:u8,      // the edge it leaves through; NAV_CONNECTION_LINK onto a link; NAV_CONNECTION_ARRIVAL: no way out, a one-way link ends here
     low,high:u8,  // the part of the edge it covers, in 255ths from the first vertex of the edge
 }
@@ -81,13 +83,22 @@ Nav_Link_Desc :: struct {
     owner:u64,      // who made it: an entity, or the tile whose border generated it
 }
 
+@(private)
+Nav_Link_End_Index :: struct {
+    tile_next,tile_prev:u32,
+    connection:u32,
+    proxy:i32,
+}
+
 Nav_Link :: struct {
     desc:Nav_Link_Desc,
     start_poly,end_poly:Nav_Ref, // where its ends rest; 0 while the surface there is missing
     start_point,end_point:math.Vec3, // on the surface
+    ends:[2]Nav_Link_End_Index,
+    owner_next,owner_prev:u32, // link slot plus one
     salt:u32,
     next_free:i32,
-    used:bool,
+    used,enabled:bool,
 }
 
 Nav_Mesh_Desc :: struct {
@@ -111,7 +122,9 @@ Nav_Mesh :: struct {
     free_connection:u32,       // index+1
     links:[]Nav_Link,
     free_link:i32,
-    revision:u64,              // changes whenever a tile or a link is added or removed
+    link_owners:base.Hash_Map(u32),
+    link_reaches:spatial.Dynamic_Tree, // endpoint snap ranges in tile coordinates
+    revision:u64,              // changes when a tile or link is edited
     failed:u64,                // connections refused for lack of room
     allocator:runtime.Allocator,
 }
@@ -129,6 +142,14 @@ nav_mesh_init :: proc(mesh:^Nav_Mesh,desc:Nav_Mesh_Desc) -> bool {
     mesh.links,e2=make([]Nav_Link,desc.max_links,allocator)
     mesh.connections,e3=make([]Nav_Connection,connections,allocator)
     if e1!=nil || e2!=nil || e3!=nil || !base.hash_map_init(&mesh.lookup,desc.max_tiles,allocator) {nav_mesh_destroy(mesh);return false}
+    if desc.max_links>0 {
+        tree:=spatial.Dynamic_Tree_Desc{proxy_capacity=desc.max_links*2,allocator=allocator}
+        if !base.hash_map_init(&mesh.link_owners,desc.max_links,allocator) ||
+            !spatial.dynamic_tree_init(&mesh.link_reaches,tree) {
+            nav_mesh_destroy(mesh)
+            return false
+        }
+    }
     mesh.origin,mesh.tile_width,mesh.climb=desc.origin,desc.tile_width,desc.climb
     for &tile,i in mesh.tiles {tile.next_free=i32(i+1) if i+1<len(mesh.tiles) else -1;tile.salt=1}
     for &link,i in mesh.links {link.next_free=i32(i+1) if i+1<len(mesh.links) else -1;link.salt=1}
@@ -142,6 +163,8 @@ nav_mesh_destroy :: proc(mesh:^Nav_Mesh) {
         for &tile in mesh.tiles {if tile.used {nav_tile_data_free(&tile.data)}}
         delete(mesh.tiles,mesh.allocator);delete(mesh.links,mesh.allocator);delete(mesh.connections,mesh.allocator)
         base.hash_map_destroy(&mesh.lookup)
+        base.hash_map_destroy(&mesh.link_owners)
+        spatial.dynamic_tree_destroy(&mesh.link_reaches)
     }
     mesh^={}
 }
@@ -180,7 +203,7 @@ nav_poly_of :: proc "contextless" (mesh:^Nav_Mesh,ref:Nav_Ref) -> (tile:^Nav_Til
 }
 // The link a reference names, or nil.
 nav_link_of :: proc "contextless" (mesh:^Nav_Mesh,ref:Nav_Ref) -> ^Nav_Link {
-    if !nav_ref_is_link(ref) {return nil}
+    if mesh==nil || !nav_ref_is_link(ref) {return nil}
     slot:=nav_ref_slot(ref)
     if int(slot)>=len(mesh.links) {return nil}
     link:=&mesh.links[slot]
@@ -230,26 +253,32 @@ nav_connection_give :: proc "contextless" (mesh:^Nav_Mesh,index:u32) {
 }
 // Adds a connection at the head of the chain of a polygon.
 @(private)
-nav_connect :: proc "contextless" (mesh:^Nav_Mesh,tile:^Nav_Tile,poly:int,c:Nav_Connection) -> bool {
+nav_connect :: proc "contextless" (mesh:^Nav_Mesh,tile:^Nav_Tile,poly:int,c:Nav_Connection) -> u32 {
     index:=nav_connection_take(mesh)
-    if index==0 {return false}
+    if index==0 {return 0}
+    head:=&tile.data.poly_links[poly]
     mesh.connections[index-1]=c
-    mesh.connections[index-1].next=tile.data.poly_links[poly]
-    tile.data.poly_links[poly]=index
-    return true
+    mesh.connections[index-1].next=head^
+    if head^!=0 {mesh.connections[head^-1].prev=index}
+    head^=index
+    return index
 }
-// Removes from the chains of every polygon of a tile the connections whose
-// target the predicate accepts.
 @(private)
-nav_disconnect :: proc "contextless" (mesh:^Nav_Mesh,tile:^Nav_Tile,target:Nav_Ref,by_slot:bool) {
+nav_connection_unlink :: proc "contextless" (mesh:^Nav_Mesh,head:^u32,index:u32) {
+    c:=mesh.connections[index-1]
+    if c.next!=0 {mesh.connections[c.next-1].prev=c.prev}
+    if c.prev!=0 {mesh.connections[c.prev-1].next=c.next} else {head^=c.next}
+    nav_connection_give(mesh,index)
+}
+@(private)
+nav_disconnect_tile :: proc "contextless" (mesh:^Nav_Mesh,tile:^Nav_Tile,slot:u32) {
     for &head in tile.data.poly_links {
-        previous:=&head
-        for previous^!=0 {
-            index:=previous^
+        for index:=head;index!=0; {
             c:=mesh.connections[index-1]
-            gone:=c.to==target
-            if by_slot {gone=!nav_ref_is_link(c.to) && !nav_ref_is_link(target) && nav_ref_slot(c.to)==nav_ref_slot(target)}
-            if gone {previous^=c.next;nav_connection_give(mesh,index)} else {previous=&mesh.connections[index-1].next}
+            if !nav_ref_is_link(c.to) && nav_ref_slot(c.to)==slot {
+                nav_connection_unlink(mesh,&head,index)
+            }
+            index=c.next
         }
     }
 }
@@ -291,8 +320,12 @@ nav_mesh_add_tile :: proc(mesh:^Nav_Mesh,data:Nav_Tile_Data) -> bool {
         nav_connect_side(mesh,tile,other,side)
         nav_connect_side(mesh,other,tile,nav_side_opposite(side))
     }
-    for &link,i in mesh.links {
-        if link.used && (link.start_poly==0 || link.end_poly==0) {nav_link_rest(mesh,u32(i))}
+    coord:=math.Vec3{f32(data.coord.x),0.5,f32(data.coord.y)}
+    reaches:=spatial.dynamic_tree_query(&mesh.link_reaches,{coord,coord})
+    for _,id in spatial.tree_query_next(&reaches) {
+        link:=&mesh.links[id/2]
+        ref:=link.start_poly if id%2==0 else link.end_poly
+        if ref==0 {nav_link_rest(mesh,u32(id/2))}
     }
     mesh.revision+=1
     return true
@@ -304,18 +337,12 @@ nav_mesh_remove_tile :: proc(mesh:^Nav_Mesh,coord:[2]i32) -> bool {
     slot,found:=base.hash_map_get(&mesh.lookup,nav_coord_key(coord))
     if !found {return false}
     tile:=&mesh.tiles[slot]
-    probe:=nav_ref_make(tile.salt,slot,0)
     offsets:=NAV_SIDE_OFFSET
     for side in Nav_Side {
         other:=nav_mesh_tile_at(mesh,coord+offsets[side])
-        if other!=nil {nav_disconnect(mesh,other,probe,true)}
+        if other!=nil {nav_disconnect_tile(mesh,other,slot)}
     }
-    for &link,i in mesh.links {
-        if !link.used {continue}
-        on_start:=link.start_poly!=0 && nav_ref_slot(link.start_poly)==slot
-        on_end:=link.end_poly!=0 && nav_ref_slot(link.end_poly)==slot
-        if on_start || on_end {nav_link_lift(mesh,u32(i))}
-    }
+    for tile.link_head!=0 {nav_link_lift(mesh,(tile.link_head-1)/2)}
     for &head in tile.data.poly_links {
         for head!=0 {
             index:=head
@@ -380,27 +407,51 @@ nav_connect_side :: proc "contextless" (mesh:^Nav_Mesh,tile,other:^Nav_Tile,side
 }
 
 // Adds a link. It rests on the surface at each end as soon as the tiles there
-// exist. 0 when no slot is left or the description is not finite.
-nav_mesh_add_link :: proc "contextless" (mesh:^Nav_Mesh,desc:Nav_Link_Desc) -> Nav_Ref {
-    for v in ([2]math.Vec3{desc.start,desc.end}) {for x in v {if !(abs(x)<=1e9) {return 0}}}
-    if !(desc.radius>=0) || !(desc.cost>=0) || desc.area>NAV_AREA_MAX {return 0}
+// exist. 0 when no slot is left or the description is invalid.
+nav_mesh_add_link :: proc(mesh:^Nav_Mesh,desc:Nav_Link_Desc,enabled:bool=true) -> Nav_Ref {
+    if !nav_point_finite(desc.start) || !nav_point_finite(desc.end) {return 0}
+    if !(desc.radius>=0) || !(desc.radius<=1e9) || !(desc.cost>=0) ||
+        !(desc.cost<=max(f32)) || desc.area>NAV_AREA_MAX {return 0}
     if mesh.free_link<0 || len(mesh.links)==0 {return 0}
+    head,_:=base.hash_map_insert(&mesh.link_owners,desc.owner)
+    if head==nil {return 0}
     slot:=u32(mesh.free_link)
     link:=&mesh.links[slot]
     mesh.free_link=link.next_free
-    link.desc=desc
-    link.used=true
-    link.next_free=-1
-    link.start_poly,link.end_poly=0,0
+    link^=Nav_Link{desc=desc,salt=link.salt,used=true,enabled=enabled,owner_next=head^}
+    if head^!=0 {mesh.links[head^-1].owner_prev=slot+1}
+    head^=slot+1
+    for point,side in ([2]math.Vec3{desc.start,desc.end}) {
+        box:=nav_link_box(mesh,link,point)
+        tiles:=nav_box_polys(mesh,box)
+        link.ends[side].proxy=spatial.NULL_NODE
+        if tiles.done {continue}
+        lo:=math.Vec3{f32(tiles.low.x),0,f32(tiles.low.y)}
+        // Give collinear tile ranges nonzero surface area when the tree groups them.
+        hi:=math.Vec3{f32(tiles.high.x),1,f32(tiles.high.y)}
+        link.ends[side].proxy,_=spatial.dynamic_tree_insert(
+            &mesh.link_reaches,{lo,hi},u64(slot)*2+u64(side),
+        )
+    }
     nav_link_rest(mesh,slot)
     mesh.revision+=1
     return nav_ref_link(link.salt,slot,false)
 }
-nav_mesh_remove_link :: proc "contextless" (mesh:^Nav_Mesh,ref:Nav_Ref) -> bool {
+
+nav_mesh_remove_link :: proc(mesh:^Nav_Mesh,ref:Nav_Ref) -> bool {
     link:=nav_link_of(mesh,ref)
     if link==nil {return false}
     slot:=nav_ref_slot(ref)
     nav_link_lift(mesh,slot)
+    for end in link.ends {spatial.dynamic_tree_remove(&mesh.link_reaches,end.proxy)}
+    if link.owner_next!=0 {mesh.links[link.owner_next-1].owner_prev=link.owner_prev}
+    if link.owner_prev!=0 {
+        mesh.links[link.owner_prev-1].owner_next=link.owner_next
+    } else if link.owner_next!=0 {
+        base.hash_map_ptr(&mesh.link_owners,link.desc.owner)^=link.owner_next
+    } else {
+        base.hash_map_remove(&mesh.link_owners,link.desc.owner)
+    }
     link.used=false
     link.salt=(link.salt+1)&NAV_SALT_MASK
     if link.salt==0 {link.salt=1}
@@ -409,51 +460,120 @@ nav_mesh_remove_link :: proc "contextless" (mesh:^Nav_Mesh,ref:Nav_Ref) -> bool 
     mesh.revision+=1
     return true
 }
+
 // Removes every link of an owner; how many.
-nav_mesh_remove_links_of :: proc "contextless" (mesh:^Nav_Mesh,owner:u64) -> (removed:int) {
-    for &link,i in mesh.links {
-        if link.used && link.desc.owner==owner {
-            nav_mesh_remove_link(mesh,nav_ref_link(link.salt,u32(i),false))
-            removed+=1
-        }
+nav_mesh_remove_links_of :: proc(mesh:^Nav_Mesh,owner:u64) -> (removed:int) {
+    head,_:=base.hash_map_get(&mesh.link_owners,owner)
+    for head!=0 {
+        slot:=head-1
+        link:=&mesh.links[slot]
+        head=link.owner_next
+        nav_mesh_remove_link(mesh,nav_ref_link(link.salt,slot,false))
+        removed+=1
     }
     return
 }
 
-// Rests the ends of a link on the surface where they are missing, and
-// connects it from its start (and its end if it goes both ways) once both
-// rest. A one-way link is known at its end too, as an arrival: a search
-// toward a point walks the links against their way.
+// Toggles both directions of a live link without changing its reference or attachments.
+nav_mesh_link_set_enabled :: proc "contextless" (mesh:^Nav_Mesh,ref:Nav_Ref,enabled:bool) -> bool {
+    link:=nav_link_of(mesh,ref)
+    if link==nil {return false}
+    if link.enabled!=enabled {
+        link.enabled=enabled
+        mesh.revision+=1
+    }
+    return true
+}
+
+// The owner of a live link in either direction, including when it is disabled.
+nav_mesh_link_owner :: proc "contextless" (mesh:^Nav_Mesh,ref:Nav_Ref) -> (owner:u64,ok:bool) {
+    link:=nav_link_of(mesh,ref)
+    if link==nil {return}
+    return link.desc.owner,true
+}
+
+@(private)
+nav_link_box :: proc "contextless" (mesh:^Nav_Mesh,link:^Nav_Link,point:math.Vec3) -> math.Aabb {
+    reach:=link.desc.radius if link.desc.radius>0 else mesh.tile_width/64
+    extents:=math.Vec3{reach,max(reach,mesh.climb*2),reach}
+    return {point-extents,point+extents}
+}
+
+@(private)
+nav_link_end_index :: proc "contextless" (mesh:^Nav_Mesh,id:u32) -> ^Nav_Link_End_Index {
+    return &mesh.links[(id-1)/2].ends[(id-1)%2]
+}
+
+// Places a missing endpoint and indexes it even while its other end has no surface.
+@(private)
+nav_link_place :: proc "contextless" (
+    mesh:^Nav_Mesh,slot:u32,side:int,point:math.Vec3,
+) -> (Nav_Ref,math.Vec3) {
+    link:=&mesh.links[slot]
+    reach:=nav_link_box(mesh,link,point)
+    ref,at,_:=nav_find_nearest_in_box(mesh,point,reach,nil)
+    if ref!=0 {
+        head:=&mesh.tiles[nav_ref_slot(ref)].link_head
+        id:=slot*2+u32(side)+1
+        link.ends[side].tile_next=head^
+        if head^!=0 {nav_link_end_index(mesh,head^).tile_prev=id}
+        head^=id
+    }
+    return ref,at
+}
+
+// A one-way link is known at its end as an arrival for searches against its way.
 @(private)
 nav_link_rest :: proc "contextless" (mesh:^Nav_Mesh,slot:u32) {
     link:=&mesh.links[slot]
-    reach:=link.desc.radius if link.desc.radius>0 else mesh.tile_width/64
-    extents:=math.Vec3{reach,max(reach,mesh.climb*2),reach}
-    if link.start_poly==0 {link.start_poly,link.start_point,_=nav_find_nearest_any(mesh,link.desc.start,extents)}
-    if link.end_poly==0 {link.end_poly,link.end_point,_=nav_find_nearest_any(mesh,link.desc.end,extents)}
-    if link.start_poly==0 || link.end_poly==0 {return}
-    if tile,_:=nav_poly_of(mesh,link.start_poly);tile!=nil {
-        nav_connect(mesh,tile,int(nav_ref_index(link.start_poly)),{to=nav_ref_link(link.salt,slot,false),edge=NAV_CONNECTION_LINK})
+    if link.start_poly!=0 && link.end_poly!=0 {return}
+    if link.start_poly==0 {
+        link.start_poly,link.start_point=nav_link_place(mesh,slot,0,link.desc.start)
     }
-    if tile,_:=nav_poly_of(mesh,link.end_poly);tile!=nil {
-        if link.desc.two_way {
-            nav_connect(mesh,tile,int(nav_ref_index(link.end_poly)),{to=nav_ref_link(link.salt,slot,true),edge=NAV_CONNECTION_LINK})
-        } else {
-            nav_connect(mesh,tile,int(nav_ref_index(link.end_poly)),{to=nav_ref_link(link.salt,slot,false),edge=NAV_CONNECTION_ARRIVAL})
-        }
+    if link.end_poly==0 {link.end_poly,link.end_point=nav_link_place(mesh,slot,1,link.desc.end)}
+    if link.start_poly==0 || link.end_poly==0 {return}
+    for ref,side in ([2]Nav_Ref{link.start_poly,link.end_poly}) {
+        tile:=&mesh.tiles[nav_ref_slot(ref)]
+        reverse:=side==1 && link.desc.two_way
+        edge:=NAV_CONNECTION_ARRIVAL if side==1 && !reverse else NAV_CONNECTION_LINK
+        link.ends[side].connection=nav_connect(mesh,tile,int(nav_ref_index(ref)),{
+            to=nav_ref_link(link.salt,slot,reverse),edge=edge,
+        })
     }
 }
-// Takes a link off the surface: it no longer leads anywhere until it rests again.
+
 @(private)
 nav_link_lift :: proc "contextless" (mesh:^Nav_Mesh,slot:u32) {
     link:=&mesh.links[slot]
-    if tile,_:=nav_poly_of(mesh,link.start_poly);tile!=nil {nav_disconnect(mesh,tile,nav_ref_link(link.salt,slot,false),false)}
-    if tile,_:=nav_poly_of(mesh,link.end_poly);tile!=nil {
-        // Its way back, or its arrival.
-        nav_disconnect(mesh,tile,nav_ref_link(link.salt,slot,true),false)
-        nav_disconnect(mesh,tile,nav_ref_link(link.salt,slot,false),false)
+    for ref,side in ([2]Nav_Ref{link.start_poly,link.end_poly}) {
+        if ref==0 {continue}
+        tile:=&mesh.tiles[nav_ref_slot(ref)]
+        end:=&link.ends[side]
+        if end.connection!=0 {
+            nav_connection_unlink(mesh,&tile.data.poly_links[nav_ref_index(ref)],end.connection)
+            end.connection=0
+        }
+        if end.tile_next!=0 {nav_link_end_index(mesh,end.tile_next).tile_prev=end.tile_prev}
+        if end.tile_prev!=0 {
+            nav_link_end_index(mesh,end.tile_prev).tile_next=end.tile_next
+        } else {
+            tile.link_head=end.tile_next
+        }
+        end.tile_next,end.tile_prev=0,0
     }
     link.start_poly,link.end_poly=0,0
+}
+
+@(private)
+nav_link_active :: #force_inline proc "contextless" (link:^Nav_Link) -> bool {
+    return link!=nil && link.enabled && link.start_poly!=0 && link.end_poly!=0
+}
+
+@(private)
+nav_path_ref_walkable :: proc "contextless" (mesh:^Nav_Mesh,ref:Nav_Ref) -> bool {
+    if nav_ref_is_link(ref) {return nav_link_active(nav_link_of(mesh,ref))}
+    _,poly:=nav_poly_of(mesh,ref)
+    return poly!=nil
 }
 
 // The ends of a node seen as a step of a path. For a polygon both are its
@@ -496,7 +616,7 @@ nav_steps_next :: proc "contextless" (it:^Nav_Steps) -> (step:Nav_Step,ok:bool) 
     if nav_ref_is_link(it.from) {
         it.done=true
         link:=nav_link_of(it.mesh,it.from)
-        if link==nil {return}
+        if !nav_link_active(link) {return}
         _,_,_,to:=nav_link_ends(link,it.from)
         if to==0 {return}
         return {to=to,edge=NAV_CONNECTION_LINK,high=255},true
@@ -512,6 +632,7 @@ nav_steps_next :: proc "contextless" (it:^Nav_Steps) -> (step:Nav_Step,ok:bool) 
         c:=it.mesh.connections[it.chain-1]
         it.chain=c.next
         if c.edge==NAV_CONNECTION_ARRIVAL && !it.arrivals {continue}
+        if nav_ref_is_link(c.to) && !nav_link_active(nav_link_of(it.mesh,c.to)) {continue}
         return {to=c.to,edge=c.edge,low=c.low,high=c.high},true
     }
     it.done=true
@@ -525,13 +646,13 @@ nav_steps_next :: proc "contextless" (it:^Nav_Steps) -> (step:Nav_Step,ok:bool) 
 nav_portal_points :: proc "contextless" (mesh:^Nav_Mesh,from,to:Nav_Ref) -> (left,right:math.Vec3,ok:bool) {
     if nav_ref_is_link(to) {
         link:=nav_link_of(mesh,to)
-        if link==nil {return}
+        if !nav_link_active(link) {return}
         start,_,_,_:=nav_link_ends(link,to)
         return start,start,true
     }
     if nav_ref_is_link(from) {
         link:=nav_link_of(mesh,from)
-        if link==nil {return}
+        if !nav_link_active(link) {return}
         _,end,_,_:=nav_link_ends(link,from)
         return end,end,true
     }
@@ -556,6 +677,7 @@ nav_portal_points :: proc "contextless" (mesh:^Nav_Mesh,from,to:Nav_Ref) -> (lef
 
 // Whether an agent that can do `can` may cross the link.
 nav_link_crossable :: proc "contextless" (link:^Nav_Link,can:Nav_Need) -> bool {
+    if !nav_link_active(link) {return false}
     need:=link.desc.need
     return need.up<=can.up && need.across<=can.across && need.down<=can.down && need.abilities&~can.abilities==0
 }
@@ -641,8 +763,15 @@ nav_find_nearest_any :: proc "contextless" (mesh:^Nav_Mesh,point,extents:math.Ve
 nav_find_nearest :: proc "contextless" (mesh:^Nav_Mesh,point,extents:math.Vec3,filter:^Nav_Filter) -> (ref:Nav_Ref,nearest:math.Vec3,ok:bool) {
     for x in point {if !(abs(x)<=1e9) {return}}
     for x in extents {if !(x>=0) || !(x<=1e9) {return}}
+    return nav_find_nearest_in_box(mesh,point,{point-extents,point+extents},filter)
+}
+
+@(private)
+nav_find_nearest_in_box :: proc "contextless" (
+    mesh:^Nav_Mesh,point:math.Vec3,box:math.Aabb,filter:^Nav_Filter,
+) -> (ref:Nav_Ref,nearest:math.Vec3,ok:bool) {
     best:=f32(max(f32))
-    it:=nav_box_polys(mesh,{point-extents,point+extents})
+    it:=nav_box_polys(mesh,box)
     for r in nav_box_polys_next(&it) {
         if filter!=nil && !nav_filter_passes(filter,it.tile.data.polys[nav_ref_index(r)].area) {continue}
         closest,over:=nav_closest_point_on_poly(mesh,r,point)
@@ -851,9 +980,22 @@ nav_tile_data_clone :: proc(data:^Nav_Tile_Data,allocator:=context.allocator) ->
 // was: references into src are valid in dst. A transaction: false without
 // memory, leaving dst empty.
 nav_mesh_copy :: proc(dst,src:^Nav_Mesh,allocator:=context.allocator) -> bool {
+    if dst==src {return true}
     nav_mesh_destroy(dst)
     if len(src.tiles)==0 {return true}
     if !nav_mesh_init(dst,{origin=src.origin,tile_width=src.tile_width,climb=src.climb,max_tiles=len(src.tiles),max_links=len(src.links),max_connections=len(src.connections),allocator=allocator}) {return false}
+    if len(src.links)>0 {
+        nodes,stamps:=dst.link_reaches.nodes,dst.link_reaches.stamps
+        copy(nodes,src.link_reaches.nodes)
+        copy(stamps,src.link_reaches.stamps)
+        dst.link_reaches=src.link_reaches
+        dst.link_reaches.nodes,dst.link_reaches.stamps=nodes,stamps
+        dst.link_reaches.allocator=allocator
+        copy(dst.link_owners.keys,src.link_owners.keys)
+        copy(dst.link_owners.values,src.link_owners.values)
+        dst.link_owners.usage=src.link_owners.usage
+        dst.link_owners.has_zero=src.link_owners.has_zero
+    }
     copy(dst.links,src.links)
     copy(dst.connections,src.connections)
     dst.free_tile,dst.free_link,dst.free_connection=src.free_tile,src.free_link,src.free_connection

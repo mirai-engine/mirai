@@ -25,8 +25,9 @@ Nav_Region :: struct {
 // link, blurred once; returns the largest distance before the blur.
 @(private="file")
 nav_build_distance :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid) -> (largest:u16,ok:bool) {
+    raw,blurred:=&s.work,&s.dist
     n:=len(s.compact)
-    if !nav_resize(&s.dist,n) || !nav_resize(&s.work,n) {return}
+    if !nav_resize(raw,n) || !nav_resize(blurred,n) {return}
     side:=int(g.side)
     for z in 0..<side {
         for x in 0..<side {
@@ -36,18 +37,18 @@ nav_build_distance :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid) -> (largest:u16,ok:
                     con:=nav_con(s.compact[i],dir)
                     if con!=NAV_NOT_CONNECTED && s.area[nav_neighbor(s,side,x,z,dir,con)]==s.area[i] {same+=1}
                 }
-                s.dist[i]=0xffff if same==4 else 0
+                raw[i]=0xffff if same==4 else 0
             }
         }
     }
-    nav_chamfer(s,g,s.dist[:])
-    for d in s.dist {largest=max(largest,d)}
+    nav_chamfer(s,g,raw[:])
+    for d in raw {largest=max(largest,d)}
     for z in 0..<side {
         for x in 0..<side {
             for i in int(s.cells[x+z*side])..<int(s.cells[x+z*side+1]) {
-                center:=int(s.dist[i])
+                center:=int(raw[i])
                 if center<=2 {
-                    s.work[i]=u16(center)
+                    blurred[i]=u16(center)
                     continue
                 }
                 sum:=center
@@ -59,16 +60,19 @@ nav_build_distance :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid) -> (largest:u16,ok:
                     }
                     ax,az:=x+nav_dx(dir),z+nav_dz(dir)
                     a:=int(s.cells[ax+az*side])+con
-                    sum+=int(s.dist[a])
+                    sum+=int(raw[a])
                     turn:=(dir+1)&3
                     con2:=nav_con(s.compact[a],turn)
-                    sum+=int(s.dist[nav_neighbor(s,side,ax,az,turn,con2)]) if con2!=NAV_NOT_CONNECTED else center
+                    if con2!=NAV_NOT_CONNECTED {
+                        sum+=int(raw[nav_neighbor(s,side,ax,az,turn,con2)])
+                    } else {
+                        sum+=center
+                    }
                 }
-                s.work[i]=u16((sum+5)/9)
+                blurred[i]=u16((sum+5)/9)
             }
         }
     }
-    s.dist,s.work=s.work,s.dist
     return largest,true
 }
 
@@ -77,7 +81,7 @@ nav_build_regions :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid) -> Nav_Build_Status 
     largest,ok:=nav_build_distance(s,g)
     if !ok {return .Out_Of_Memory}
     n:=len(s.compact)
-    if !nav_resize(&s.region,n) || !nav_resize(&s.region_dist,n) {return .Out_Of_Memory}
+    if !nav_resize(&s.region,n) || !nav_resize(&s.work,n) {return .Out_Of_Memory}
     side:=int(g.side)
     id:=u16(1)
     border:=min(int(g.border),side)
@@ -174,9 +178,9 @@ nav_expand_regions :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid,iterations:int,level
                 if con==NAV_NOT_CONNECTED {continue}
                 a:=nav_neighbor(s,side,int(e.x),int(e.z),dir,con)
                 if s.area[a]!=s.area[i] {continue}
-                if s.region[a]>0 && s.region[a]&NAV_BORDER_REGION==0 && int(s.region_dist[a])+2<best {
+                if s.region[a]>0 && s.region[a]&NAV_BORDER_REGION==0 && int(s.work[a])+2<best {
                     region=s.region[a]
-                    best=int(s.region_dist[a])+2
+                    best=int(s.work[a])+2
                 }
             }
             if region!=0 {
@@ -188,7 +192,7 @@ nav_expand_regions :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid,iterations:int,level
         }
         for d in s.dirty {
             s.region[d.index]=d.region
-            s.region_dist[d.index]=d.dist
+            s.work[d.index]=d.dist
         }
         if failed==len(stack) {break}
         if level>0 {
@@ -208,7 +212,7 @@ nav_flood_region :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid,start:Nav_Level_Entry,
     clear(&s.stack)
     if _,error:=append(&s.stack,start);error!=nil {return}
     s.region[start.index]=id
-    s.region_dist[start.index]=0
+    s.work[start.index]=0
     low:=level-2 if level>=2 else 0
     count:=0
     for len(s.stack)>0 {
@@ -244,7 +248,7 @@ nav_flood_region :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid,start:Nav_Level_Entry,
             a:=int(s.cells[ax+az*side])+con
             if s.area[a]!=area || s.dist[a]<low || s.region[a]!=0 {continue}
             s.region[a]=id
-            s.region_dist[a]=0
+            s.work[a]=0
             if _,error:=append(&s.stack,Nav_Level_Entry{i32(ax),i32(az),i32(a)});error!=nil {return}
         }
     }
