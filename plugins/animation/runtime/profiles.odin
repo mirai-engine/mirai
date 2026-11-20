@@ -158,12 +158,14 @@ modifier_rig_remove :: proc(runtime:^Modifier_Runtime,row:int) {
 }
 
 @(private)
-modifier_pose :: proc(rig:^Modifier_Rig,characters:^Character_Assets) -> Pose_Profile {
+modifier_pose :: proc(rig:^Modifier_Rig,characters:^Character_Assets) -> ^Pose_Profile {
     if rig==nil || characters==nil || rig.character<=0 ||
-        int(rig.character)>len(characters.contents) {return {}}
+        int(rig.character)>len(characters.contents) {return nil}
     content:=&characters.contents[rig.character-1]
-    return content.set.pose if content.valid && content.id==rig.asset &&
-        content.revision==rig.revision else Pose_Profile{}
+    if content.valid && content.id==rig.asset && content.revision==rig.revision {
+        return &content.set.pose
+    }
+    return nil
 }
 
 @(private)
@@ -268,7 +270,7 @@ modifier_grounding :: proc(runtime:^Modifier_Runtime,rig:^Modifier_Rig,profile:F
     return config
 }
 
-modifier_profile :: proc(runtime:^Modifier_Runtime,characters:^Character_Assets,entity:core.Entity) -> Pose_Profile {
+modifier_profile :: proc(runtime:^Modifier_Runtime,characters:^Character_Assets,entity:core.Entity) -> ^Pose_Profile {
     return modifier_pose(modifier_rig(runtime,entity),characters)
 }
 

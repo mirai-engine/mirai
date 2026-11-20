@@ -144,8 +144,8 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
         if !preview_trace_sources_prepare(call,&trace,sources,state,content,s.app.assets) {return false}
         for curve in state.curves {
             name:=preview_curve_name(&trace,curve.target)
-            if name[0]==0 {authoring_failure(call,"curves","Missing_Name","a source name for each composed curve",fmt.tprintf("%x",curve.target),"A curve name could not be resolved");return false}
-            if !pose_bake_track(call,&tracks,base.text_get(name[:]),curve.property,curve.slot,frames) {return false}
+            if name=="" {authoring_failure(call,"curves","Missing_Name","a source name for each composed curve",fmt.tprintf("%x",curve.target),"A curve name could not be resolved");return false}
+            if !pose_bake_track(call,&tracks,name,curve.property,curve.slot,frames) {return false}
         }
         modifiers:=core.world_storage_of(world,anim.Modifier_Runtime)
         characters:=core.world_storage_of(core.world_ref(s.app.shared,world.info,.Shared),anim.Character_Assets)

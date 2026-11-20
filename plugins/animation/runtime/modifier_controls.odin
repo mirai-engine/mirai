@@ -205,7 +205,8 @@ modifier_take :: proc(runtime:^Modifier_Runtime,characters:^Character_Assets,req
         effector:=0
         if slot<0 {error=.Missing_Operation}
         else if request.goal {
-            effector=modifier_effector_slot(modifier_pose(rig,characters),request.kind,slot,request.effector)
+            pose:=modifier_pose(rig,characters)
+            effector=modifier_effector_slot(pose^,request.kind,slot,request.effector) if pose!=nil else -1
             if effector<0 {error=.Missing_Effector}
         }
         if error!=.None {
@@ -225,8 +226,10 @@ modifier_take :: proc(runtime:^Modifier_Runtime,characters:^Character_Assets,req
             }
             if request.kind==.Look && request.fade>0 && request.enabled && start>0 && control.base_enabled {
                 pose:=modifier_pose(rig,characters)
-                previous:=modifier_target(rig,.Look,slot,&pose.look[slot].target)
-                if previous!=request.target {rig.look_states[slot].from=previous;turning=true}
+                if pose!=nil {
+                    previous:=modifier_target(rig,.Look,slot,&pose.look[slot].target)
+                    if previous!=request.target {rig.look_states[slot].from=previous;turning=true}
+                }
             }
             rig.overrides[int(control.first_override)+effector]=request
             if request.fade==0 || request.kind==.Grounding {
