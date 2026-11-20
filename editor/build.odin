@@ -153,15 +153,8 @@ build_run :: proc(r:^Build_Run) {
     stopped :: proc(r:^Build_Run) -> bool {
         return intrinsics.atomic_load(&r.cancel) || r.seconds>0 && time.duration_seconds(time.tick_since(r.started))>r.seconds
     }
-    if r.action==.Build {
-        r.shaders=build.shaders_start(&p)
-        if r.target==.Game {
-            for !build.shaders_poll(r.shaders) {
-                if stopped(r) {return}
-                time.sleep(10*time.Millisecond)
-            }
-            if r.shaders.result.status==.Failed {return}
-        }
+    if r.action==.Build && r.target==.Editor {
+        r.shaders=build.shaders_start(&p,store_root=r.store_root)
     }
     r.job=build.job_start({project=&p,target=r.target,action=r.action,output=r.folder,test_package=r.test_package,test={names=r.names,quiet=true},dev=r.target==.Editor && build.ENGINE_MODE_HERE==.Dev,engine=build.ENGINE_MODE_HERE,runs=r.runs,store_root=r.store_root})
     for {

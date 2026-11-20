@@ -74,6 +74,7 @@ Package_Asset :: struct {
 Package :: struct {
     id:base.Asset_Id,
     name:string,
+    catalog_path:string,      // relative folder in the library of the store
     documents:string,         // under the folder of a project it is added to, where its new documents go; "": in it
     origin:Package_Origin,
     identity:store.Hash,      // of the bytes of the source and its inputs, its settings and the code of the plugin that reads it
@@ -192,6 +193,10 @@ package_text :: proc(p:^Package,allocator:=context.allocator) -> (text:string,er
     id_write(&w,p.id)
     serial.text_write_raw(&w,",\n  \"name\": ")
     serial.text_write_string(&w,p.name)
+    if p.catalog_path!="" {
+        serial.text_write_raw(&w,",\n  \"catalog_path\": ")
+        serial.text_write_string(&w,p.catalog_path)
+    }
     if p.documents!="" {
         serial.text_write_raw(&w,",\n  \"documents\": ")
         serial.text_write_string(&w,p.documents)
@@ -247,7 +252,7 @@ package_parse :: proc(text:string,allocator:=context.allocator) -> (p:Package,er
     defer serial.text_reader_destroy(&r)
     p.inputs=make([dynamic]string,allocator)
     p.assets=make([dynamic]Package_Asset,allocator)
-    Field :: enum {Version,Id,Name,Documents,Origin,Identity,Settings,Inputs,Assets}
+    Field :: enum {Version,Id,Name,Catalog_Path,Documents,Origin,Identity,Settings,Inputs,Assets}
     seen:bit_set[Field]
     version:u64
     expect(&r,'{') or_return
@@ -259,6 +264,7 @@ package_parse :: proc(text:string,allocator:=context.allocator) -> (p:Package,er
         case "version": field=.Version
         case "id": field=.Id
         case "name": field=.Name
+        case "catalog_path": field=.Catalog_Path
         case "documents": field=.Documents
         case "origin": field=.Origin
         case "identity": field=.Identity
@@ -273,6 +279,7 @@ package_parse :: proc(text:string,allocator:=context.allocator) -> (p:Package,er
         case .Version: version=count_read(&r,max(u64)) or_return
         case .Id: p.id=id_read(&r) or_return
         case .Name: p.name=string_read(&r,allocator) or_return
+        case .Catalog_Path: p.catalog_path=string_read(&r,allocator) or_return
         case .Documents: p.documents=string_read(&r,allocator) or_return
         case .Origin: p.origin=origin_read(&r,allocator) or_return
         case .Identity: p.identity=hash_read(&r) or_return
@@ -299,7 +306,7 @@ package_parse :: proc(text:string,allocator:=context.allocator) -> (p:Package,er
     }
     if !serial.text_end(&r) {return {},.Corrupt}
     if version!=PACKAGE_MANIFEST_VERSION {return {},.Version}
-    if seen-{.Documents,.Settings}!={.Version,.Id,.Name,.Origin,.Identity,.Inputs,.Assets} {return {},.Corrupt}
+    if seen-{.Catalog_Path,.Documents,.Settings}!={.Version,.Id,.Name,.Origin,.Identity,.Inputs,.Assets} {return {},.Corrupt}
     if !package_valid(&p) {return {},.Corrupt}
     return p,.None
 }
@@ -835,7 +842,6 @@ listed_path :: proc(folder,name:string,index:int,repeated:bool,extension:string)
 }
 
 // A folder under another one: relative, with forward slashes, never out of it.
-@(private)
 folder_valid :: proc(folder:string) -> bool {
     if folder=="" {return true}
     if folder[0]=='/' || strings.contains_any(folder,"\\:") {return false}
@@ -848,7 +854,8 @@ folder_valid :: proc(folder:string) -> bool {
 
 @(private="file")
 package_valid :: proc(p:^Package) -> bool {
-    if p.id=={} || !folder_valid(p.documents) || p.settings!="" && !object_valid(p.settings) {return false}
+    if p.id=={} || !folder_valid(p.documents) || !folder_valid(p.catalog_path) ||
+        p.settings!="" && !object_valid(p.settings) {return false}
     for &a,at in p.assets {
         if a.id=={} || a.id==p.id || !kind_valid(a.kind) || a.index<0 || a.index>int(max(i32)) || a.part && !import_cached(a.kind) {return false}
         for &other in p.assets[:at] {

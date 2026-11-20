@@ -32,13 +32,15 @@ the_outputs_of_a_source_are_the_assets_its_package_lists :: proc(t:^testing.T) {
     if root=="" {return}
     source:=fmt.tprintf("%s/level.map",assets)
     bytes:="a level"
-    PROGRAM :: "//! surface stone\nnamespace stone {}\n"
+    PROGRAM :: "//! mirai surface stone\nnamespace stone {}\n"
     testing.expect(t,os.write_entire_file(source,bytes)==nil)
     Pass :: struct {scene,floor:base.Asset_Id,materials:[2]base.Asset_Id,floor_blob:store.Hash,report:Import_Report,warnings:int}
     pass :: proc(t:^testing.T,s:^store.Store,root,source,bytes:string,names:[]string,failed:=false) -> (p:Pass,ok:bool) {
         o:Outputs
         error:=outputs_begin(&o,source,"level",u64(len(bytes)),base.hash64(transmute([]u8)bytes),import_version(0),{store=s,root=root,documents=fmt.tprintf("%s/assets",root)},allocator=context.temp_allocator)
         if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
+        testing.expect_value(t,output_catalog_path(&o,"levels/../escape").code,Error_Code.Malformed)
+        testing.expect_value(t,output_catalog_path(&o,"Caves/Levels").code,Error_Code.None)
         program,program_error:=output_program(&o,PROGRAM)
         repeated,repeat_error:=output_program(&o,PROGRAM)
         testing.expect(t,program_error.code==.None && repeat_error.code==.None && program==repeated)
@@ -81,8 +83,12 @@ the_outputs_of_a_source_are_the_assets_its_package_lists :: proc(t:^testing.T) {
     testing.expect(t,first.scene!={} && first.floor!={} && first.materials[0]!={} && first.materials[0]!=first.materials[1])
     manifest,build,read:=test_package(t,s,first.report)
     if !read {return}
+    testing.expect(t,manifest.catalog_path=="Caves/Levels" && manifest.documents=="level")
     if testing.expect_value(t,len(build.programs),1) {
-        text,read_error:=asset.record_get(s,build.programs[0])
+        program:=asset.generated_program_id(build.programs[0],context.temp_allocator)
+        address,decoded:=asset.generated_program_address(program)
+        testing.expect(t,decoded && address==build.programs[0] && len(program)<asset.MATERIAL_NAME_BYTES)
+        text,read_error:=asset.record_get(s,address)
         testing.expect(t,read_error==.None && text==PROGRAM)
     }
     testing.expect(t,len(manifest.assets)==4 && len(build.outputs)==3,"the scene planned is listed; what was written is built")

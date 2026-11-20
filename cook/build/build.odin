@@ -126,6 +126,7 @@ Job :: struct {
     stream_files:[2]string,     // the error and the output streams of the compiler of the target
     sources_staged,sources_file,stamp_file:string,
     copies:[]Copy,              // Game: what goes next to the executable
+    server:bool,
     settings:string,            // Game: its settings file: those of the engine and of the project merged, since it ships without the engine
     cook:Cook_Desc,             // Game: the assets it ships; without assets, a project that has none
     store:store.Store,          // Game: the store of store_root, which cook.store names; unopened: none
@@ -252,6 +253,7 @@ job_start :: proc(desc:Desc) -> ^Job {
     else if found,ok:=compiler_find(p.engine_root,a);ok {job.compiler=found}
     else {return job_fail(job,.Compiler_Missing)}
     if desc.target==.Game {
+        job.server=desc.server
         folder:=job.published[:strings.last_index_byte(job.published,'/')]
         settings_error:project.Error
         layer:project.Settings_Layer

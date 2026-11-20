@@ -120,7 +120,7 @@ programs_start :: proc(s:^Session) {
         unused:=gpu.renderer_shaders_idle(s.app.renderer)
         for id in gpu.Shader_Id {if unused[id] {append(&idle,gpu.SHADERS[id].name)}}
     }
-    p.job=build.shaders_start(p.project,first[:],idle[:],p.previews[:])
+    p.job=build.shaders_start(p.project,first[:],idle[:],p.previews[:],store_root=s.store.root)
 }
 
 // What the frames drew programs as without their stages: a preview is

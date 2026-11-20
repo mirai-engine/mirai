@@ -13,10 +13,12 @@ import "mirai:std/serial"
 
 SHADERS_EDITOR_MS :: 610_000 // the 600 s build.start waits by default, and the answer
 
-SHADERS_USAGE :: "shaders [--project <path> [--whole]] [--output <path>] [--no-odin] [--cache <path>] [--workers <n>] [--backends vulkan|metal|all] | shaders check <program.slang> [--project <path>]"
+SHADERS_USAGE :: "shaders [--project <path> [--whole] [--store <path>]] [--output <path>] [--no-odin] [--cache <path>] [--workers <n>] [--backends vulkan|metal|all] | shaders check <program.slang> [--project <path>]"
 
 cmd_shaders :: proc(root:string,args:[]string) -> int {
     if len(args)>0 && args[0]=="check" {return shaders_check(root,args[1:])}
+    store_root,args,store_ok:=store_take(args)
+    if !store_ok {fmt.eprintln("mirai shaders: --store needs a path");return 2}
     options:=shaders.Options{root=root,odin=true}
     whole:=false
     for i:=0;i<len(args);i+=1 {
@@ -57,9 +59,12 @@ cmd_shaders :: proc(root:string,args:[]string) -> int {
         opened,sources,uses,ok:=project_shader_sources(options.project,root,"mirai shaders")
         if !ok {return 1}
         options.project,options.sources,options.uses=opened,sources,uses
-        if !whole && options.output=="" && options.cache=="" && options.backends=={} {
+        if !whole && store_root=="" && options.output=="" && options.cache=="" && options.backends=={} {
             if file,alive:=session_find(opened);alive {return shaders_publish_editor(opened,file.port)}
         }
+        generated,problem:=build.shaders_generated(uses,store_root,context.temp_allocator)
+        if problem!="" {fmt.eprintfln("mirai shaders: %s",problem);return 1}
+        options.generated=generated
     }
     result:=shaders.generate(options)
     defer shaders.result_destroy(&result)
