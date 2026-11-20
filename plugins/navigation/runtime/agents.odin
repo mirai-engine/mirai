@@ -15,7 +15,7 @@ import phys "plugins:physics/runtime"
 
 // Agents: characters that walk where they are asked. Each tick an agent
 // moves the start of its corridor to where it stands, heads for the next
-// corner, steps aside from the agents around it and writes the Move_Input
+// corner, steps aside from the agents around it and writes the Locomotion_Drive
 // of its body, which its locomotion turns into steps. At the start of a link
 // it crosses it: Jump and Drop by a ballistic launch that lands on its end,
 // Climb and Ladder along it; Door and the kinds of a game, and every kind an
@@ -95,7 +95,7 @@ Nav_Path :: struct {
     time:f32 `mirai:"transient,hidden,unit=s"`,  // in the crossing; since the last plan while following
     velocity:[3]f32 `mirai:"transient,hidden,unit=m/s"`, // wanted, before avoiding the others
     replans:u32 `mirai:"readonly,transient"`,
-    halted:bool `mirai:"transient,hidden"`, // its Move_Input was stopped when it stopped moving
+    steering:bool `mirai:"transient,hidden"`,
     partner:i8 `mirai:"readonly,transient"`, // the class of the other space it crosses into; -1: none
     medium:bool `mirai:"transient,hidden"`,  // its corridor ends where it crosses into the other space, from `from` to `to`
     through:bool `mirai:"transient,hidden"`, // its corridor ends at the portal into a section away: there it goes far
@@ -277,7 +277,7 @@ agent_filter :: proc "contextless" (n:^Navigation,class:int,agent:Nav_Agent,walk
 @(step="fixed",stage="apply",server)
 navigation_agents :: proc(
     n:core.Ref(Navigation),a:^Navigation_Agents,agents:^core.Table(Nav_Agent,.Read),paths:^core.Table(Nav_Path),
-    requests:^Nav_Requests,events:^Nav_Events,inputs:^core.Table(input.Move_Input),seats:^core.Table(input.Seat,.Read),
+    requests:^Nav_Requests,events:^Nav_Events,drives:^core.Table(locomotion.Locomotion_Drive),seats:^core.Table(input.Seat,.Read),
     characters:^core.Table(phys.Character,.Read),loco_states:^core.Table(locomotion.Locomotion_State,.Read),colliders:^core.Table(phys.Collider,.Read),walks:^core.Table(locomotion.Walk,.Read),flights:^core.Table(locomotion.Fly,.Read),swims:^core.Table(locomotion.Swim,.Read),
     grounds:^core.Table(phys.Character_State,.Read),motions:^core.Table(core.Motion,.Read),worlds:^core.Table(core.World_Transform,.Read),
     obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),loco:^locomotion.Locomotion_Requests,physics:core.Ref(phys.Physics_State),builds:core.Ref(Navigation_Builds),fars:^core.Table(Nav_Far),
@@ -310,7 +310,7 @@ navigation_agents :: proc(
             p.state,p.looking=.Idle,false
             p.velocity={}
             p.corridor.count=0
-            if mi:=core.edit(inputs,asked.entity);mi!=nil {mi.move,mi.velocity={},false}
+            if p.steering {core.remove(drives,asked.entity);p.steering=false}
         case .Look_At:
             p.look,p.looking=asked.point,true
         case .Look_Along:
@@ -487,8 +487,8 @@ navigation_agents :: proc(
     sections:=&builds.ptr.sections if builds.ptr!=nil else nil
     agents_search(n.ptr,a,builds.ptr,paths,agents,characters,grounds,colliders,walks,swims,worlds,physics,sections,budget,time.dt,events,problems)
     agents_avoid(n.ptr,a,paths,sources.ptr,time.dt,problems)
-    crossings.count=agents_steer(n.ptr,agents,paths,inputs,seats,grounds,worlds)
-    agents_far(n,builds,a,agents,paths,fars,roamings,disabled,walks,flights,swims,colliders,worlds,placer,bodies,events,time)
+    crossings.count=agents_steer(n.ptr,agents,paths,drives,seats,grounds,worlds)
+    agents_far(n,builds,a,agents,paths,drives,fars,roamings,disabled,walks,flights,swims,colliders,worlds,placer,bodies,events,time)
 }
 
 @(private)
@@ -1164,63 +1164,44 @@ ground_box :: #force_inline proc "contextless" (at:mm.Vec3,reach:f32) -> mm.Aabb
     return {{at.x-reach,NAV_AGENT_CELL*0.5,at.z-reach},{at.x+reach,NAV_AGENT_CELL*0.5,at.z+reach}}
 }
 
-// Writes the Move_Input of every agent no seat drives, and of a seated one
-// while it goes: its velocity, which its mover takes up to its top speed (the
-// velocity that steps aside is the one it moves at), looking where it goes or
-// at what it looks at, also standing; its body turns there at its own rate.
-// One that flies or swims looks level and climbs or dives. The seat of a seated one
-// wrote its Move_Input earlier in the tick, with its buttons and the turn of
-// the ground. How many agents cross a link.
 @(private)
-agents_steer :: proc(n:^Navigation,agents:^core.Table(Nav_Agent,.Read),paths:^core.Table(Nav_Path),inputs:^core.Table(input.Move_Input),seats:^core.Table(input.Seat,.Read),grounds:^core.Table(phys.Character_State,.Read),worlds:^core.Table(core.World_Transform,.Read)) -> (crossing:u32) {
+agents_steer :: proc(n:^Navigation,agents:^core.Table(Nav_Agent,.Read),paths:^core.Table(Nav_Path),drives:^core.Table(locomotion.Locomotion_Drive),seats:^core.Table(input.Seat,.Read),grounds:^core.Table(phys.Character_State,.Read),worlds:^core.Table(core.World_Transform,.Read)) -> (crossing:u32) {
     for row in 0..<core.count(paths) {
         e:=core.entity_at(paths,row)
         p:=core.edit_at(paths,row)
+        agent,exists:=core.get(agents,e)
         if p.state==.Crossing {crossing+=1}
-        driven:=false
-        if input.seat_of(seats,e)!=core.NONE {
-            agent,_:=core.get(agents,e)
-            // Its seat moves it, not navigation: it asks nothing of the body (nor walks in place).
-            if !agent.seated {p.velocity={};continue}
-            driven=true
-        }
-        mi:=core.edit(inputs,e)
-        if mi==nil {continue}
-        pose,_:=core.get(worlds,e)
-        if !agent_goes(p^) {
-            // Once, when it stops: whatever writes it next is not navigation, but where it looks.
-            if !p.halted {
-                if !driven {mi.move,mi.velocity={},false}
-                p.halted=true
-            }
-            if p.looking && !driven {agent_look(mi,p^,pose.position)}
+        seated:=input.seat_of(seats,e)!=core.NONE
+        goes:=agent_goes(p^)
+        if !exists || seated && (!agent.seated || !goes) || !goes && !p.looking {
+            if seated && !agent.seated {p.velocity={}}
+            if p.steering {core.remove(drives,e);p.steering=false}
             continue
         }
-        p.halted=false
-        ground,_:=core.get(grounds,e)
-        if !driven {mi.look_yaw=mm.angle_wrap(mi.look_yaw+ground.ground_turn)}
+        pose,_:=core.get(worlds,e)
+        next:=locomotion.Locomotion_Drive{look_yaw=mm.yaw_of_direction(mm.quat_forward(pose.rotation))}
+        if previous,has:=core.get(drives,e);p.steering && has {
+            ground,_:=core.get(grounds,e)
+            next.look_yaw=mm.angle_wrap(previous.look_yaw+ground.ground_turn)
+        }
         flat:=mm.Vec3{p.velocity.x,0,p.velocity.z}
         speed:=linalg.length(flat)
         if p.looking {
-            agent_look(mi,p^,pose.position)
-        } else if speed>0.05 {mi.look_yaw=mm.yaw_of_direction(flat)}
-        mi.velocity=true
-        if p.class>=0 && int(p.class)<n.count && class_in_volume(n,int(p.class)) {
-            mi.look_pitch=0
-            mi.move=p.velocity
-            continue
+            to:=p.look-pose.position
+            to.y=0
+            if linalg.length(to)>1e-3 {next.look_yaw=mm.yaw_of_direction(to)}
+        } else if speed>0.05 {next.look_yaw=mm.yaw_of_direction(flat)}
+        if goes {
+            if p.class>=0 && int(p.class)<n.count && class_in_volume(n,int(p.class)) {
+                next.velocity=p.velocity
+            } else if speed>1e-4 && !(p.state==.Crossing && !p.medium) {
+                next.velocity=flat
+            }
         }
-        mi.move=flat
-        if speed<=1e-4 || p.state==.Crossing && !p.medium {mi.move={}}
+        locomotion.drive(drives,e,next)
+        p.steering=true
     }
     return
-}
-
-@(private)
-agent_look :: #force_inline proc "contextless" (mi:^input.Move_Input,p:Nav_Path,position:mm.Vec3) {
-    to:=p.look-position
-    to.y=0
-    if linalg.length(to)>1e-3 {mi.look_yaw=mm.yaw_of_direction(to)}
 }
 
 // Drives the characters that cross a link of the engine: the launch of a

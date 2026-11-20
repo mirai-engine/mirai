@@ -48,7 +48,7 @@ proxy_remove :: proc(state:^Physics_State,e:core.Entity) {
             sim.body_set_type(&state.world,body,h.type_before)
         }
         if sim.joint_valid(&state.world,h.pull) {sim.joint_destroy(&state.world,h.pull)}
-        h^={entity=e}
+        h^={}
     }
     for &joint in state.joints.values {
         if joint.a!=body && joint.b!=body {continue}

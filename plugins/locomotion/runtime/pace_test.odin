@@ -2,6 +2,7 @@ package locomotion
 
 import "core:testing"
 import "mirai:core"
+import input "mirai:engine/input"
 import phys "plugins:physics/runtime"
 
 @(private="file")
@@ -13,6 +14,7 @@ paced_init :: proc(t:^testing.T,f:^Loco_Test) -> (walkers:[2]core.Entity,ok:bool
     if !loco_test_init(t,f,{0,0,0}) {return}
     walkers={f.e,loco_test_walker(f,{4,0,0})}
     core.add(&f.paces,walkers[0],core.OWN_PACE_DEFAULT)
+    core.add(&f.inputs,walkers[1],input.Move_Input{})
     return walkers,true
 }
 

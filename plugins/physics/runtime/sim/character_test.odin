@@ -724,3 +724,20 @@ the_up_turns_toward_the_opposite_of_gravity_at_its_speed_about_the_feet :: proc(
     testing.expectf(t,length(center-(feet+target*1.05))<1e-3,"the capsule turned about the feet: %v",center)
     testing.expect_value(t,character_state(&w,still).up_frame,QUAT_IDENTITY)
 }
+
+@(test)
+reach_boost_accelerates_along_a_wall_with_bounded_force_into_it :: proc(t:^testing.T) {
+    world:World
+    if !testing.expect(t,test_character_world(&world)) {return}
+    defer world_destroy(&world)
+    world_set_gravity(&world,{})
+    test_static_box(&world,{.5,3,10},{1.5,0,0})
+    character:=test_character(&world,{.7,0,0})
+    move:=Character_Move{air={{8,0,8},3200},flags={.Airborne,.No_Gravity,.Reach_Drive}}
+    character_set_move(&world,character,move)
+    world_step(&world,1.0/60)
+    solver:=world.step.characters[0]
+    testing.expect(t,solver.drive_limit>move.air.force*world.step.h)
+    testing.expect(t,solver.drive_impulse.x<=move.air.force*world.step.h+1e-3)
+    testing.expect(t,character_velocity(&world,character).z>5)
+}
