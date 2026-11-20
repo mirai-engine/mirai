@@ -2,6 +2,8 @@ package mirai_render
 
 import "core:math"
 import "core:math/linalg"
+import "core:slice"
+import "mirai:asset"
 import "mirai:rhi"
 import mm "mirai:std/math"
 
@@ -101,13 +103,6 @@ destroy_glass_targets :: proc(r: ^Renderer, t: ^Targets) {
 	t.glass_valid = false
 }
 
-// Of the stage whose pipeline is target^, by the programs of its materials.
-@(private = "file")
-draw_translucent :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rhi.Pipeline, entry: Translucent) {
-	// The clusters of the cut the view takes, as the G-buffer: glass gets coarser with distance too.
-	instance_programs_draw(r, cmd, target, entry.instance, false)
-}
-
 // m over the top of a solid within which the pixels of a view near it decide whether they start in it
 // (glass_pass.slang Params_Block.near_top).
 GLASS_MEDIUM_NEAR :: f32(0.25)
@@ -130,47 +125,79 @@ glass_medium :: proc(r: ^Renderer, camera: Vec3) -> (medium: u32) {
 	return
 }
 
-// Whether a blended instance can be on screen at all. The cull pass tests
-// occlusion too and sizes the compute passes; this spares the rest.
+// Partitions the scene list in place. Only the visible prefix is sorted and drawn.
 @(private)
-glass_in_frustum :: proc(r: ^Renderer, planes: [6]Vec4) -> bool {
-	frustum := transmute(mm.Frustum)planes
-	for entry in r.scene.translucent {
-		inst := &r.scene.instances[entry.instance]
-		if mm.frustum_overlaps_aabb(frustum, {inst.bounds_min.xyz, inst.bounds_max.xyz}) {return true}
+glass_visible :: proc(s: ^Scene_State, frame: ^Gpu_Frame) -> []Translucent {
+	frustum := transmute(mm.Frustum)frame.frustum
+	count := 0
+	for &entry, i in s.translucent {
+		inst := &s.instances[entry.instance]
+		flags := inst.meta.w
+		layers := flags >> INSTANCE_LAYERS_SHIFT
+		owner := frame.own & 0xff
+		own := owner != 0 && flags & INSTANCE_FLAG_OWNED != 0 &&
+		       (flags >> INSTANCE_OWNER_SHIFT) & 3 == owner - 1
+		if layers & frame.layers & LAYERS_ALL == 0 ||
+		   own && (layers & (frame.layers >> 16) != 0 || frame.own >> 16 == 65535) ||
+		   instance_values_fade(s, inst.material_values) >= 1 {continue}
+		if !mm.frustum_overlaps_aabb(frustum, {inst.bounds_min.xyz, inst.bounds_max.xyz}) {continue}
+		offset := (inst.bounds_min.xyz + inst.bounds_max.xyz) * 0.5 - frame.camera_position.xyz
+		entry.distance = linalg.dot(offset, offset)
+		s.translucent[count], s.translucent[i] = s.translucent[i], s.translucent[count]
+		count += 1
 	}
-	return false
+	visible := s.translucent[:count]
+	slice.sort_by(visible, proc(a, b: Translucent) -> bool {
+		return a.distance > b.distance || a.distance == b.distance && a.instance < b.instance
+	})
+	return visible
+}
+
+// A draw of one program binds its pipeline and draw constants, then draws.
+// Each material slot can supply one program. Split between complete instances
+// so the forward pair always filters and lights in the same order.
+@(private = "file")
+glass_raster :: proc(p: ^Pass, pass: ^rhi.Render_Pass_Desc, targets: []^rhi.Pipeline) {
+	r, cmd := p.r, p.cmd
+	s := &r.scene
+	#assert(3 * asset.MESH_MAX_SLOTS * 2 <= rhi.MAX_RENDER_PASS_COMMANDS)
+	plain := rhi.frame_alloc(r.device, 4 * size_of(u32))
+	if plain.ptr == nil {return}
+	(^[4]u32)(plain.ptr)^ = {}
+	rhi.cmd_bind_index_buffer(cmd, s.mesh_draws)
+	rhi.cmd_begin_render_pass(cmd, pass)
+	commands := 0
+	for entry in p.translucent {
+		mesh := s.instances[entry.instance].meta.x & INSTANCE_MESH_MASK
+		needed := 3 * int(max(s.meshes[mesh].slot_count, 1)) * len(targets)
+		if commands + needed > rhi.MAX_RENDER_PASS_COMMANDS {
+			rhi.cmd_end_render_pass(cmd)
+			for &color in pass.colors[:pass.color_count] {color.load = .Load}
+			pass.depth.load = .Load
+			rhi.cmd_begin_render_pass(cmd, pass)
+			commands = 0
+		}
+		for target in targets {
+			instance_programs_draw(r, cmd, target, entry.instance, false, plain_constants = plain)
+		}
+		commands += needed
+	}
+	rhi.cmd_end_render_pass(cmd)
 }
 
 // The blended instances over the composited scene in t.display, in two
 // steps: glass_layers rasterizes the nearest surfaces of each pixel, and
 // glass_shade draws the ones behind them and lights the layers. Their
 // fragments and the glass pass trace shadow rays and read the probe volume,
-// so everything the deferred passes read is declared here. Drawn from the CPU
-// in full detail: the order matters and there are few of them. The compute
+// so everything the deferred passes read is declared here. The compute
 // passes run with the dispatch sizes the cull pass wrote: none while every
 // blended instance is hidden.
 @(private)
 glass_layers :: proc(p: ^Pass) {
 	r, cmd, t, camera := p.r, p.cmd, p.t, p.camera
-	s := &r.scene
 	layers := glass_layer_count(r)
-	for &entry in s.translucent {
-		inst := s.instances[entry.instance]
-		center := (inst.bounds_min.xyz + inst.bounds_max.xyz) * 0.5
-		entry.distance = linalg.length(center - camera.position)
-	}
-	for i in 1 ..< len(s.translucent) {
-		entry := s.translucent[i]
-		j := i
-		for j > 0 && s.translucent[j - 1].distance < entry.distance {
-			s.translucent[j] = s.translucent[j - 1]
-			j -= 1
-		}
-		s.translucent[j] = entry
-	}
 	p.glass_medium = glass_medium(r, camera.position)
-	rhi.cmd_timestamp(cmd, "translucent")
+	rhi.cmd_timestamp(cmd, "glass layers")
 	for k in 0 ..< layers {
 		layer := t.glass[k]
 		nearer := t.glass[k - 1].depth if k > 0 else r.dummy_texture
@@ -180,47 +207,37 @@ glass_layers :: proc(p: ^Pass) {
 			if i < int(pass.color_count) {pass.colors[i] = {texture = target, load = .Clear, store = .Store}}
 		}
 		pass.depth = {texture = t.glass_zbuffer, load = .Clear, store = .Store, clear = 0}
-		rhi.cmd_begin_render_pass(cmd, &pass)
 		Params :: struct {peeled, medium, pad1, pad2: u32}
 		params := Params{peeled = u32(k), medium = p.glass_medium}
 		target := &r.pipelines[.Glass_Layer_Layers if layered else .Glass_Layer]
-		rhi.cmd_bind_pipeline(cmd, target^)
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.linear_depth)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, nearer)
 		textures_feedback_bind(r, cmd)
-		for entry in s.translucent {draw_translucent(r, cmd, target, entry)}
-		rhi.cmd_end_render_pass(cmd)
+		glass_raster(p, &pass, {target})
 	}
 }
 
 @(private)
 glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 	r, cmd, t := p.r, p.cmd, p.t
-	s := &r.scene
 	settings := &r.settings
 	layers := glass_layer_count(r)
 	{
 		// The depth buffer of the last layer rejects that layer and what is in
 		// front of it before a fragment runs: only the surfaces behind are shaded.
 		last := t.glass[layers - 1].depth
+		rhi.cmd_timestamp(cmd, "translucent")
 		pass := rhi.Render_Pass_Desc{color_count = 1, name = "translucent"}
 		pass.colors[0] = {texture = t.display, load = .Load, store = .Store}
-		pass.depth = {texture = t.glass_zbuffer, load = .Load, store = .Dont_Care}
-		rhi.cmd_begin_render_pass(cmd, &pass)
+		pass.depth = {texture = t.glass_zbuffer, load = .Load, store = .Store}
 		Params :: struct {light_budget, pad0, pad1, pad2: u32}
 		params := Params{light_budget = settings.light_budget}
-		targets := [2]^rhi.Pipeline{&r.pipelines[.Glass_Filter], pipeline_of(r, .Translucent)}
-		for entry in s.translucent {
-			for target in targets {
-				rhi.cmd_bind_pipeline(cmd, target^)
-				set_params(cmd, &params)
-				rhi.cmd_bind_texture(cmd, SLOT_PASS0, last)
-				rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
-				draw_translucent(r, cmd, target, entry)
-			}
-		}
-		rhi.cmd_end_render_pass(cmd)
+		set_params(cmd, &params)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS0, last)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
+		targets := glass_forward_pipelines(p)
+		glass_raster(p, &pass, targets[:])
 	}
 
 	traced := trace_reflections

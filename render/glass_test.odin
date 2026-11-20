@@ -602,6 +602,87 @@ glass_behind_a_wall_shows_the_frame_the_wall_goes :: proc(t: ^testing.T) {
 }
 
 @(test)
+glass_passes_preserve_the_image_past_the_command_budget :: proc(t: ^testing.T) {
+	f: Fixture
+	settings := glass_settings()
+	settings.glass_layers = 2
+	settings.reflections = .Off
+	if !fixture_init(t, &f, 32, 24, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	if !testing.expect(t, materials_set(r, {
+		glass_material({1, 0.8, 0.8}, 0.2),
+		glass_material({0.4, 1, 0.8}, 0.5),
+		glass_material({0.8, 0.4, 1}, 0.7),
+	}), r.error) {return}
+	sheet := sheet_mesh(r)
+	camera := Camera{position = {0, 0, 6}, forward = {0, 0, -1}, up = {0, 1, 0},
+		fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	FILLERS :: 6000
+	instances := make([]Instance_Desc, FILLERS + 5, context.temp_allocator)
+	for z, i in ([4]f32{3, 2, 1, -1}) {
+		instances[i] = {object_id = u64(i + 1), mesh = sheet, material = Material_Handle(i % 3 + 1),
+			transform = standing({0, 0, z}, 2, 2), tint = 1}
+	}
+	for &inst, i in instances[4:] {
+		inst = {object_id = u64(i + 5), mesh = sheet, material = 1,
+			transform = standing({2, 0, 0}, 0.01, 0.01), tint = 1}
+	}
+	instances[len(instances) - 1].transform = standing({100, 0, 0}, 1, 1)
+	env := Environment{background = {0.4, 0.4, 0.4}, use_background = true}
+	if !testing.expect(t, scene_given(r, instances[:4], nil, SUN, env), r.error) {return}
+	expected := shown(t, &f, camera, {}, count = 1)
+	if !testing.expect(t, scene_given(r, instances, nil, SUN, env), r.error) {return}
+	actual := shown(t, &f, camera, {}, count = 1)
+	delta := actual - expected
+	testing.expectf(t, max(abs(delta.x), abs(delta.y), abs(delta.z)) < 0.002,
+		"split glass passes changed the center pixel: %v, expected %v", actual, expected)
+	testing.expect_value(t, rhi.device_error(f.device), "")
+	view, projection, _ := camera_matrices(camera, 32.0 / 24.0)
+	frame := Gpu_Frame{frustum = frustum_from_eye(projection * matrix_from_eye(view), camera.position),
+		camera_position = {0, 0, 6, camera.near}, layers = LAYERS_ALL}
+	testing.expect_value(t, len(glass_visible(&r.scene, &frame)), FILLERS + 4)
+}
+
+@(test)
+glass_cost_counts_only_forward_fragments_by_mesh_and_material :: proc(t: ^testing.T) {
+	f: Fixture
+	settings := glass_settings()
+	settings.glass_layers = 2
+	settings.reflections = .Off
+	if !fixture_init(t, &f, 32, 24, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	glass := glass_material({0.8, 0.6, 0.4}, 0.5)
+	if !testing.expect(t, materials_set(r, {glass, glass, glass, glass}), r.error) {return}
+	sheet := sheet_mesh(r)
+	camera := Camera{position = {0, 0, 6}, forward = {0, 0, -1}, up = {0, 1, 0},
+		fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	instances: [5]Instance_Desc
+	for z, i in ([5]f32{3, 2, 1, 0, 0}) {
+		x := f32(100) if i == 4 else 0
+		instances[i] = {object_id = u64(i + 1), mesh = sheet, material = Material_Handle(min(i, 3) + 1),
+			transform = standing({x, 0, z}, 20, 20), tint = 1}
+	}
+	if !testing.expect(t, scene_given(r, instances[:], nil, SUN, {}), r.error) {return}
+	if !testing.expect(t, renderer_frame(r, {camera = camera}), r.error) {return}
+	if !testing.expect_value(t, renderer_cost_ask(r), "") {return}
+	cost: Cost
+	ready := false
+	for _ in 0 ..< 8 {
+		if !testing.expect(t, renderer_frame(r, {camera = camera}), r.error) {return}
+		if cost, ready = renderer_cost(r); ready {break}
+	}
+	if !testing.expect(t, ready, "the forward fragment count never came") {return}
+	pixels := r.targets.width * r.targets.height
+	for row, i in cost.materials[1:5] {
+		testing.expect_value(t, row.pixels, 0)
+		testing.expect_value(t, row.translucent_fragments, pixels if i >= 2 else 0)
+	}
+	testing.expect_value(t, cost.meshes[sheet].translucent_fragments, 2 * pixels)
+}
+
+@(test)
 glass_frames_stay_allocation_free :: proc(t: ^testing.T) {
 	f: Fixture
 	settings := glass_settings()

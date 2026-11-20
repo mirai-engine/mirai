@@ -327,7 +327,8 @@ ui_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rhi.Pipe
 // drawn with its stage (the highlight, whose stage reads the coverage of the
 // others from their mask maps alone), as gbuffer.vert takes it.
 @(private)
-instance_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rhi.Pipeline, instance: u32, level0: bool, blended := false) {
+instance_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rhi.Pipeline,
+	instance: u32, level0: bool, blended := false, plain_constants: rhi.Transient = {}) {
 	s := &r.scene
 	inst := &s.instances[instance]
 	mesh := inst.meta.x & INSTANCE_MESH_MASK
@@ -344,7 +345,7 @@ instance_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rh
 	for packed in slots {plain ||= program_of(s, inst, packed, blended) == 0}
 	if plain {
 		rhi.cmd_bind_pipeline(cmd, target^)
-		instance_clusters_draw(r, cmd, instance, level0, 0)
+		instance_clusters_draw(r, cmd, instance, level0, 0, plain_constants)
 	}
 	// The programs of its materials, in order of id, each once.
 	last := u32(0)

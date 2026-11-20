@@ -1,8 +1,9 @@
 // The count of a frame of a view by mesh and by material (render/cost.odin):
 // the variants `cost` of the cull and the raster add to it where they count
-// the totals of the frame (cull_stats.slang), and cost_pixels.comp the pixels
-// of the visibility target. Its first words say how many rows of meshes and
-// of materials it has (COST_FIRST_ROW); a row is COST_ROW_WORDS, a word for
+// the totals of the frame (cull_stats.slang), cost_pixels.comp the pixels
+// of the visibility target, and translucent.frag the forward fragments.
+// Its first words say how many rows it has of meshes and of materials
+// (COST_FIRST_ROW); a row is COST_ROW_WORDS, a word for
 // each count (COST_*), those of the meshes first. Only the frame of a request
 // runs them.
 #ifndef MIRAI_COST_SLANG

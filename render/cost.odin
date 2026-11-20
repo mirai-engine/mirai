@@ -7,9 +7,9 @@ import "mirai:render/abi"
 // counted only in the first frame after a request (renderer_cost_ask) that
 // culls it against the pyramid of the frame before: the variants
 // `cost` of the cull, of the raster rounds and of the cull of the maps add to
-// it where they count the totals of the frame (cost.slang), and a pass over
-// the visibility target counts its pixels. A frame nobody asked about runs
-// the stages without them.
+// it where they count the totals of the frame (cost.slang). The visibility
+// target supplies opaque pixels and the forward light pass counts translucent
+// fragments. Only the requested frame runs these counts.
 Cost_Row :: struct {
 	instances:        u32, // that passed the cull of the view; of a mesh alone
 	clusters:         u32, // the view listed for its raster
@@ -20,6 +20,7 @@ Cost_Row :: struct {
 	shadow_triangles: u32, // the raster of the maps drew of them
 	shadow_units:     u32, // of raster work they took (abi.SHADOW_UNIT_TEXELS)
 	shadow_over:      u32, // clusters left over the bound of the frame or the room of the lists: their pages wait
+	translucent_fragments: u32, // behind the peeled layers, once per filter and light pair
 }
 #assert(size_of(Cost_Row) == abi.COST_ROW_WORDS * size_of(u32))
 #assert(offset_of(Cost_Row, instances) == abi.COST_INSTANCES * size_of(u32))
@@ -31,6 +32,7 @@ Cost_Row :: struct {
 #assert(offset_of(Cost_Row, shadow_triangles) == abi.COST_SHADOW_TRIANGLES * size_of(u32))
 #assert(offset_of(Cost_Row, shadow_units) == abi.COST_SHADOW_UNITS * size_of(u32))
 #assert(offset_of(Cost_Row, shadow_over) == abi.COST_SHADOW_OVER * size_of(u32))
+#assert(offset_of(Cost_Row, translucent_fragments) == abi.COST_TRANSLUCENT_FRAGMENTS * size_of(u32))
 
 // A count: a row for each Mesh_Handle and each Material_Handle the scene had
 // when it was asked for.
@@ -67,6 +69,9 @@ renderer_cost_ask :: proc(r: ^Renderer) -> (problem: string) {
 	if c.phase == .Asked || c.phase == .Recorded {return ""}
 	for id in COST_PIPELINES {
 		if r.pipelines[id] == 0 {return "the device did not make the pipelines that count the cost of a frame; a newer GPU driver may make them"}
+	}
+	if pipeline_of(r, .Translucent_Cost)^ == 0 {
+		return "the device did not make the pipeline that counts forward translucency"
 	}
 	meshes, materials := u32(len(r.scene.meshes)), u32(len(r.scene.materials))
 	if meshes == 0 {return "the scene has no meshes to count: give the renderer a scene first"}
@@ -147,6 +152,17 @@ cost_pixels :: proc(p: ^Pass) {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.visibility)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS8, p.cost)
 	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
+}
+
+@(private)
+glass_forward_pipelines :: proc(p: ^Pass) -> [2]^rhi.Pipeline {
+	r := p.r
+	id := Pipeline_Id.Translucent
+	if p.cost != 0 {
+		id = .Translucent_Cost
+		rhi.cmd_bind_buffer(p.cmd, SLOT_PASS8, p.cost)
+	}
+	return {&r.pipelines[.Glass_Filter], pipeline_of(r, id)}
 }
 
 @(private)

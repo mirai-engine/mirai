@@ -310,7 +310,8 @@ the GPU passes and the conditions of the measurement. The editor keeps the last 
   editor that needs frames (`engine.step`).
 - `profile.cost` asks the renderer to count one frame of the viewport by mesh and by material and
   runs frames until the count comes back: what the view drew of each (instances, clusters,
-  triangles, the pixels it shades) and what the maps of the shadows drew. Only the frame asked for
+  triangles, opaque pixels, and forward translucent fragments) and what the maps of the shadows
+  drew. Only the frame asked for
   runs the counting variants of its passes. A still view keeps the pages of the maps it drew
   before, so its `shadow_*` are what that frame drew again; a view covered by a panel draws no
   frame of the scene and the call fails. Its frames are frames of the user: held keys and a

@@ -31,6 +31,7 @@ overlay_pass :: proc(p:^Pass) {
     pass:=rhi.Render_Pass_Desc{color_count=1,name="surface overlays"}
     pass.colors[0]={texture=t.display,load=.Load,store=.Store}
     pass.depth={texture=t.depth,load=.Load,store=.Store}
+    rhi.cmd_bind_index_buffer(cmd,s.mesh_draws)
     rhi.cmd_begin_render_pass(cmd,&pass)
     Params :: struct {material,blend,light_budget,pad:u32}
     for layers,index in s.overlays {

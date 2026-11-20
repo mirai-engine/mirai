@@ -81,6 +81,7 @@ Pass :: struct {
 	batch_slots:    u32, // instance slots of the batches drawn, after the instances
 
 	draw, draw_translucent, draw_overlays: bool,
+	translucent: []Translucent, // visible prefix of the scene list for this view
 	blend:   bool,       // the view runs the Blend stage of extensions
 	blended: bool,       // a pass of it began: TAA reads the coverage it drew
 	glass:   Glass_Side, // of the Lit or Blend stage being recorded
@@ -322,16 +323,20 @@ resolve_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, id: Pipeline
 // the vertices of those out of the cut of the view collapsed, and those of
 // materials of another program than `program` (SLOT_DRAW).
 @(private)
-instance_clusters_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, instance: u32, level0: bool, program: u32) {
+instance_clusters_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, instance: u32, level0: bool,
+	program: u32, plain: rhi.Transient = {}) {
 	s := &r.scene
 	mesh := s.instances[instance].meta.x & INSTANCE_MESH_MASK
 	// A streamed mesh draws the finest its pools hold, which may be coarser than level 0.
 	streamed := int(mesh) < len(s.meshes) && s.meshes[mesh].stream != nil
 	first, count, ok := mesh_draws_range(s, mesh, level0 && !streamed)
 	if !ok {return}
-	drawn := [4]u32{program, 0, 0, 0}
-	rhi.cmd_set_constants(cmd, SLOT_DRAW, &drawn, size_of(drawn))
-	rhi.cmd_bind_index_buffer(cmd, s.mesh_draws)
+	if program == 0 && plain.buffer != 0 {
+		rhi.cmd_bind_transient(cmd, SLOT_DRAW, plain)
+	} else {
+		drawn := [4]u32{program, 0, 0, 0}
+		rhi.cmd_set_constants(cmd, SLOT_DRAW, &drawn, size_of(drawn))
+	}
 	rhi.cmd_draw_indexed(cmd, count, 1, first, instance)
 }
 
@@ -345,6 +350,7 @@ highlight_pass :: proc(p: ^Pass) {
 	pass := rhi.Render_Pass_Desc{color_count = 1, name = "highlight mask"}
 	pass.colors[0] = {texture = t.highlight, load = .Clear, store = .Store}
 	pass.depth = {texture = t.highlight_depth, load = .Clear, store = .Dont_Care, clear = 0}
+	rhi.cmd_bind_index_buffer(cmd, s.mesh_draws)
 	rhi.cmd_begin_render_pass(cmd, &pass)
 	for inst, index in s.instances {
 		if !highlight_drawn(inst.meta.w) {continue}
@@ -1066,7 +1072,8 @@ view_begin :: proc(p: ^Pass) -> bool {
 	p.draw = p.instance_count + p.batch_slots > 0 && s.index_buffer != 0
 	// Modes of inspection show the opaque scene alone.
 	transparency := .Transparency in p.plan.stages && !view_inspected(p.inspection)
-	p.draw_translucent = p.draw && transparency && glass_in_frustum(r, f.frustum)
+	if p.draw && transparency {p.translucent = glass_visible(s, &f)}
+	p.draw_translucent = len(p.translucent) > 0
 	p.draw_overlays = p.draw && transparency && s.overlay_count>0
 	p.blend = transparency && stage_asked(r, .Blend)
 	return true

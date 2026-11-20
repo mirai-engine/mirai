@@ -584,7 +584,7 @@ RASTER_ENTRY_USED      :: 8
 // COST_ROW_WORDS for each mesh and after them one for each material, a word
 // for each count (render.Cost_Row).
 COST_FIRST_ROW        :: 4
-COST_ROW_WORDS        :: 9
+COST_ROW_WORDS        :: 10
 COST_INSTANCES        :: 0
 COST_CLUSTERS         :: 1
 COST_TRIANGLES        :: 2
@@ -594,6 +594,7 @@ COST_SHADOW_CLUSTERS  :: 5
 COST_SHADOW_TRIANGLES :: 6
 COST_SHADOW_UNITS     :: 7
 COST_SHADOW_OVER      :: 8
+COST_TRANSLUCENT_FRAGMENTS :: 9
 
 // What an instance gives over the rows of its materials, in the index pool:
 // how many rows it shows otherwise than the table holds them, how much it

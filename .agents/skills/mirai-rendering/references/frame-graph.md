@@ -140,8 +140,8 @@ or interleave its own passes.
     writing it and do not enter the BVH/TLAS
     ([overlays](../../mirai-core/references/host.md#loaded-assets)).
 11. **translucent**: the nearest blend surfaces of each pixel form the `glass_layers` layers in a
-    small G-buffer; those behind are drawn forward, back to front, and filter what they have
-    behind. It is omitted if none is in view.
+    small G-buffer; those behind are drawn forward, back to front. Both rasters draw visible
+    blend instances in bounded passes that preserve color, depth and the order of the pairs.
 12. **glass**: lights each layer once per pixel, from the farthest to the nearest
     ([glass](materials.md#glass)). It runs with the dispatch sizes of the cull: none while all the
     glass is hidden.
@@ -271,7 +271,8 @@ or interleave its own passes.
 
 `renderer_cost_ask` and `renderer_cost` count one frame of the first view of the window by mesh and
 by material (`profile.cost` answers it). Only that frame binds the `cost` variants of the cull, of
-the raster rounds and of the cull of the maps and runs the pass that counts the pixels of the
-visibility target; every other frame runs the passes without them and pays nothing. The frame
+the raster rounds and of the cull of the maps. It counts opaque pixels from the visibility
+target and forward fragments behind the glass layers once per filter and light pair. The frame
 counted is the first one whose view culls against the pyramid of its frame before: one after a cut
 (a capture, a camera set) culls without occlusion and would count what no other frame draws.
+GPU timings report `glass layers` for the peels and `translucent` for the forward raster.
