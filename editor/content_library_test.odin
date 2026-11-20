@@ -31,7 +31,7 @@ content_libraries_are_roots_of_what_the_project_does_not_hold :: proc(t:^testing
     ana:=[]share.Peer_Package{
         {id={1,1},name="robot",origin="/home/ana/robot.glb",kinds=kinds,bytes=300,built=true,here=true},
         {id={1,3},name="crate",kinds=kinds,bytes=300,built=true},
-        {id={2,1},name="spotlight",documents="rooms/lamp",origin="/home/ana/lamp.glb",kinds=kinds,assets=lamp_assets,bytes=2048,built=true},
+        {id={2,1},name="spotlight",documents="Crystal_Cave/Maps/lamp",origin="/home/ana/lamp.glb",kinds=kinds,assets=lamp_assets,bytes=2048,built=true},
         {id={2,2},name="tree",origin="/home/ana/trees/oak/tree.glb",kinds=kinds,bytes=4096,built=true},
         {id={2,3},name="tree",origin="/home/ana/trees/pine/tree.glb",kinds=kinds,bytes=4096,built=true},
     }
@@ -45,7 +45,7 @@ content_libraries_are_roots_of_what_the_project_does_not_hold :: proc(t:^testing
     c.libraries.roots,c.libraries.packages=content_library_listing(local,peers,allocator=context.temp_allocator)
     testing.expect(t,len(c.libraries.roots)==3 && c.libraries.roots[0].peer==-1 && c.libraries.roots[1].name=="Ana" && c.libraries.roots[2].peer==2)
     PROJECT :: " [Castle] .[Props] ..barrel ..crate ..torch ..wall .[Towers] ..big .gate [Levels] .one rock"
-    LIBRARIES :: "[This machine] .bell .robot (chars) .robot (props) [Ana] .lamp .tree (oak) .tree (pine) [Ben] .rock"
+    LIBRARIES :: "[This machine] .bell .robot (chars) .robot (props) [Ana] .[Crystal_Cave] ..[Maps] ...lamp .tree (oak) .tree (pine) [Ben] .rock"
     testing.expect_value(t,content_test_show(&c,&registry),CONTENT_TEST_MARKS+LIBRARIES+PROJECT)
     for &p in c.libraries.packages {
         if p.name=="lamp" {testing.expect(t,!p.here && p.bytes==2048 && p.root==1,"a package of a peer has to be fetched")}
@@ -59,11 +59,15 @@ content_libraries_are_roots_of_what_the_project_does_not_hold :: proc(t:^testing
     c.view.arrangement=.Cards
     c.filter_length=0
     content_enter(&c,.Library,library=2)
-    testing.expect_value(t,content_test_show(&c,&registry),"#lamp,#tree (oak),#tree (pine)")
+    testing.expect_value(t,content_test_show(&c,&registry),"#Crystal_Cave,#tree (oak),#tree (pine)")
     c.filter_length=copy(c.filter[:],"pine")
     testing.expect_value(t,content_test_show(&c,&registry),"#tree (pine)")
     c.filter_length=0
-    content_enter(&c,.Library,library=2,package_id={2,1})
+    content_enter(&c,.Library,"Crystal_Cave",library=2)
+    testing.expect_value(t,content_test_show(&c,&registry),"#Maps")
+    content_enter(&c,.Library,"Crystal_Cave/Maps",library=2)
+    testing.expect_value(t,content_test_show(&c,&registry),"#lamp")
+    content_enter(&c,.Library,"Crystal_Cave/Maps",library=2,package_id={2,1})
     content_test_show(&c,&registry)
     testing.expect(t,len(c.cards)==2 && c.cards[0].name=="shade" && c.cards[0].pack_asset>0)
     c.filter_length=copy(c.filter[:],"glass")
@@ -72,12 +76,13 @@ content_libraries_are_roots_of_what_the_project_does_not_hold :: proc(t:^testing
     c.filter_length=0
     // A selected peer asset can move the package into This machine without closing its folder.
     taken:=[]Library_Asset{{id={3,1},name="shade",kind=asset.KIND_MATERIAL,pinned=true},{id={3,2},name="glass",kind=asset.KIND_TEXTURE}}
-    following:=[]Library_Package{{id={2,1},name="spotlight",documents="rooms/lamp",assets=taken,pinned=true}}
+    following:=[]Library_Package{{id={2,1},name="spotlight",documents="Crystal_Cave/Maps/lamp",assets=taken,pinned=true}}
     c.libraries.roots,c.libraries.packages=content_library_listing(following,peers,allocator=context.temp_allocator)
     content_library_restore(&c)
     c.revision+=1
     content_test_show(&c,&registry)
     testing.expect(t,c.at.library==0 && c.at.package_id==base.Asset_Id{2,1} && len(c.cards)==2)
+    testing.expect_value(t,string(c.at.folder[:c.at.length]),"Crystal_Cave/Maps")
     for p in c.libraries.packages {
         if p.id==c.at.package_id {testing.expect(t,p.assets[0].pinned && !p.assets[1].pinned)}
     }

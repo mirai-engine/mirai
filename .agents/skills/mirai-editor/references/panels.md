@@ -914,10 +914,10 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   (`content_library.odin`) the libraries are roots beside the project's content, as virtual
   folders are: This machine and, in a session, one per other editor by the name the session gives
   it ([libraries of the session](collaboration.md#libraries-of-the-session)). Packages with
-  assets still to add appear as folders in every arrangement and in search. A folder takes the
-  name of the package's document folder, if it has one, or the name of the package. Opening one
-  shows each asset, including those already in the project. A peer's package this machine has
-  appears once, under This machine. A package shows its thumbnail or a folder icon, its size and
+  assets still to add appear as folders in every arrangement and in search. A folder takes its
+  path from the package's document folder, if it has one, or uses the name of the package.
+  Opening one shows each asset, including those already in the project. A peer's package this
+  machine has appears once, under This machine. A package shows its thumbnail, its size and
   what is still to fetch, and any fetch problem. The thumbnail is its stored preview
   (`asset.build_shown`: its root when its build holds it, else its first mesh). A card of This
   machine whose store lacks it makes it as the project's content does: the packages the project
