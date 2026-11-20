@@ -161,19 +161,21 @@ library_list :: proc(s:^Session,root:string,allocator:=context.allocator) -> (li
         if built,ref_error:=store.ref_get(&s.store,asset.REF_BUILDS,store.hex(asset.build_select(ref.hash,&p),&digits));ref_error==.None {
             if b,build_error:=asset.build_get(&s.store,built,context.temp_allocator);build_error==.None && b.package_id==p.id {
                 for o in b.outputs {outputs[o.id]=o}
+                entry.root,entry.objects,entry.shown=library_build_preview(&b,&p,{},allocator)
             }
         }
         assets:=make([]Library_Asset,len(p.assets),allocator)
         for &a,at in p.assets {
             assets[at]={id=a.id,name=a.name,kind=a.kind,pinned=at<len(selected) && selected[at]}
-            if o,found:=outputs[a.id];found && o.kind==a.kind && asset.object_whole(&s.store,o.object) {
+            o,found:=outputs[a.id]
+            if found && o.kind==a.kind && asset.object_whole(&s.store,o.object,refresh=false) {
                 assets[at].built=true
-                dependencies:=make([dynamic]base.Asset_Id,context.temp_allocator)
-                if header,header_error:=asset.object_header(&s.store,o.object,&dependencies);header_error==.None {assets[at].bytes=i64(header.total_size)}
+                if header,error:=asset.object_header(&s.store,o.object);error==.None {
+                    assets[at].bytes=i64(header.total_size)
+                }
             }
         }
         entry.assets=assets
-        entry.root,entry.objects,entry.shown,_=library_build_objects(s,ref.hash,&p,{},allocator)
         append(&out,entry)
     }
     slice.sort_by(out[:],proc(a,b:Library_Package) -> bool {return a.name<b.name || a.name==b.name && a.id.x<b.id.x})
@@ -380,9 +382,16 @@ library_build_objects :: proc(s:^Session,manifest:store.Hash,p:^asset.Package,id
     if ref_error!=.None {return}
     b,error:=asset.build_get(&s.store,hash,context.temp_allocator)
     if error!=.None || b.package_id!=p.id {return}
+    object,objects,shown=library_build_preview(&b,p,id,allocator)
+    return object,objects,shown,object!={}
+}
+
+@(private)
+library_build_preview :: proc(b:^asset.Build,p:^asset.Package,id:base.Asset_Id,
+    allocator:runtime.Allocator) -> (object:store.Hash,objects:[]store.Hash,shown:base.Asset_Id) {
     objects=make([]store.Hash,len(b.outputs),allocator)
     shown=id
-    if id=={} {object,shown=asset.build_shown(&b,p)}
+    if id=={} {object,shown=asset.build_shown(b,p)}
     for o,k in b.outputs {
         objects[k]=o.object
         if id!={} && o.id==id {object=o.object}
@@ -391,7 +400,7 @@ library_build_objects :: proc(s:^Session,manifest:store.Hash,p:^asset.Package,id
         a,b:=a,b
         return string(a[:])<string(b[:])
     })
-    return object,objects,shown,object!={}
+    return
 }
 
 // The key of the small thumbnail of a package whose root is object, and whether this store keeps it.

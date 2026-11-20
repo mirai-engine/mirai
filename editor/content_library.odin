@@ -691,5 +691,5 @@ library_mount_update :: proc(s:^Session,local:[]Library_Package) {
     resolved,error:=asset.packages_resolve(&s.store,"",&list,context.temp_allocator)
     if error!=.None || !asset.registry_listed_set(r,LIBRARY_MOUNT,resolved.listed[:]) {return}
     l.mounted,l.mounted_key=true,key
-    host.assets_scan(a)
+    if host.assets_scan(a) {l.key[0]=r.revision}
 }
