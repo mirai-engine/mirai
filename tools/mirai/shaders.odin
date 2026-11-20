@@ -56,13 +56,13 @@ cmd_shaders :: proc(root:string,args:[]string) -> int {
         return 1
     }
     if options.project!="" {
-        opened,sources,uses,ok:=project_shader_sources(options.project,root,"mirai shaders")
+        opened,sources,uses,roots,ok:=project_shader_sources(options.project,root,"mirai shaders")
         if !ok {return 1}
         options.project,options.sources,options.uses=opened,sources,uses
         if !whole && store_root=="" && options.output=="" && options.cache=="" && options.backends=={} {
             if file,alive:=session_find(opened);alive {return shaders_publish_editor(opened,file.port)}
         }
-        generated,problem:=build.shaders_generated(uses,store_root,context.temp_allocator)
+        generated,problem:=build.shaders_generated(uses,store_root,roots,context.temp_allocator)
         if problem!="" {fmt.eprintfln("mirai shaders: %s",problem);return 1}
         options.generated=generated
     }
@@ -103,13 +103,17 @@ shaders_publish_editor :: proc(folder:string,port:int) -> int {
 // shaders/ (build.shader_sources) and what its assets draw its programs as (build.shaders_uses);
 // ok is false, after saying why, when it does not open.
 @(private="file")
-project_shader_sources :: proc(folder,root,who:string) -> (project_root:string,sources:[]shaders.Source,uses:[]shaders.Program_Uses_Of,ok:bool) {
+project_shader_sources :: proc(folder,root,who:string) -> (
+    project_root:string,sources:[]shaders.Source,uses:[]shaders.Program_Uses_Of,
+    roots:[]string,ok:bool,
+) {
     p,error:=project.open(folder,root,context.temp_allocator)
     if error.code!=.None {fmt.eprintfln("%s: could not open the project %s",who,folder);return}
     sources,_=build.shader_sources(&p,context.temp_allocator)
     problem:string
     if uses,problem=build.shaders_uses(&p,nil,context.temp_allocator);problem!="" {fmt.eprintfln("%s: %s",who,problem);return}
-    return p.root,sources,uses,true
+    roots=build.shaders_package_roots(&p,context.temp_allocator)
+    return p.root,sources,uses,roots,true
 }
 
 // Checks a program as material.program.check does: the rules of the check and
@@ -130,7 +134,7 @@ shaders_check :: proc(root:string,args:[]string) -> int {
     options:=shaders.Check_Options{root=root,path=path}
     if folder!="" {
         ok:bool
-        options.project,options.sources,_,ok=project_shader_sources(folder,root,"mirai shaders check")
+        options.project,options.sources,_,_,ok=project_shader_sources(folder,root,"mirai shaders check")
         if !ok {return 1}
     }
     result:=shaders.program_check(options)

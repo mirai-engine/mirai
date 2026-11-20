@@ -154,18 +154,18 @@ output_program :: proc(o:^Outputs,source:string) -> (address:store.Hash,error:Er
     caller:=context.temp_allocator
     context.temp_allocator=base.dynamic_arena_allocator(&o.scratch)
     if len(source)==0 || o.w.options.store==nil {
-        return {},error_make(.Malformed,"a generated Surface program needs source and a store",
+        return {},error_make(.Malformed,"a generated program needs source and a store",
             allocator=caller)
     }
     hash,put_error:=asset.record_put(o.w.options.store,transmute([]u8)source)
     if put_error!=.None {
-        return {},error_make(.Write,"could not store the generated Surface source (%v)",
+        return {},error_make(.Write,"could not store the generated source (%v)",
             put_error,allocator=caller)
     }
     if hash in o.w.programs {return hash,{}}
     if o.w.programs==nil {o.w.programs=make(map[store.Hash]struct{},o.w.keep)}
     if _,no_room:=map_insert(&o.w.programs,hash,struct{}{});no_room!=nil {
-        return {},error_make(.Write,"could not record the generated Surface source in the build",
+        return {},error_make(.Write,"could not record the generated source in the build",
             allocator=caller)
     }
     append(&o.report.programs,asset.generated_program_id(hash,o.report.allocator))
