@@ -396,15 +396,17 @@ shaders_fingerprint :: proc(root:string) -> u64 {
 @(private="file")
 files_fingerprint :: proc(path,extension:string,hash:^u64,depth:int) {
     if depth>12 {return}
-    entries,error:=os.read_all_directory_by_path(path,context.temp_allocator)
-    if error!=nil {
-        if info,stat_error:=os.stat(path,context.temp_allocator);stat_error==nil && info.type!=.Directory {
-            file:=base.name_hash(path)
-            file=base.hash_combine(file,u64(info.size))
-            hash^+=base.hash_combine(file,u64(time.time_to_unix_nano(info.modification_time)))
+    if depth==0 {
+        // Odin's Windows iterator closes a null handle on regular files (odin-lang/Odin#8112).
+        info,error:=os.stat(path,context.temp_allocator)
+        if error!=nil {return}
+        if info.type!=.Directory {
+            hash^+=file_fingerprint(path,info.size,info.modification_time)
+            return
         }
-        return
     }
+    entries,error:=os.read_all_directory_by_path(path,context.temp_allocator)
+    if error!=nil {return}
     for entry in entries {
         if entry.name=="" || entry.name[0]=='.' {continue}
         if entry.type==.Directory {
@@ -412,10 +414,14 @@ files_fingerprint :: proc(path,extension:string,hash:^u64,depth:int) {
             continue
         }
         if !strings.has_suffix(entry.name,extension) {continue}
-        file:=base.name_hash(entry.fullpath)
-        file=base.hash_combine(file,u64(entry.size))
-        hash^+=base.hash_combine(file,u64(time.time_to_unix_nano(entry.modification_time)))
+        hash^+=file_fingerprint(entry.fullpath,entry.size,entry.modification_time)
     }
+}
+
+@(private="file")
+file_fingerprint :: proc(path:string,size:i64,modified:time.Time) -> u64 {
+    file:=base.hash_combine(base.name_hash(path),u64(size))
+    return base.hash_combine(file,u64(time.time_to_unix_nano(modified)))
 }
 
 // The declarations the code of the project compiles against, its public

@@ -8,6 +8,19 @@ import "mirai:cook/build"
 import "mirai:project"
 import "mirai:std/base"
 
+@(test)
+project_code_fingerprint_tracks_the_manifest_file :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"fingerprint")
+    if root=="" {return}
+    absent:=code_fingerprint(root)
+    manifest:=project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator)
+    if !testing.expect_value(t,os.write_entire_file(manifest,`{"name": "Probe"}`),nil) {return}
+    original:=code_fingerprint(root)
+    testing.expect(t,original!=absent)
+    if !testing.expect_value(t,os.write_entire_file(manifest,`{"name": "Revised"}`),nil) {return}
+    testing.expect(t,code_fingerprint(root)!=original)
+}
+
 // A run of the tests, as every build action, holds no frame: it starts while
 // its job opens the project, plans and compiles in the one build thread, one at a time, against the libraries this editor builds
 // and loads whatever the manifest optimizes for.
