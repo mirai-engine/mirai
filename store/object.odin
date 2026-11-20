@@ -307,7 +307,7 @@ chunk_has :: proc(s:^Store,address:Hash) -> bool {
     sync.mutex_lock(&s.state.lock)
     defer sync.mutex_unlock(&s.state.lock)
     // Another value may have tombstoned it, or a sweep dropped it: the root is read again first.
-    if refresh_locked(s)!=.None {return false}
+    if read_index_locked(s)!=.None {return false}
     _,_,found:=lookup_locked(s,address)
     return found
 }
@@ -447,8 +447,9 @@ chunk_locate :: proc(s:^Store,address:Hash) -> (file:^os.File,view:[]u8,location
     state:=s.state
     sync.mutex_lock(&state.lock)
     defer sync.mutex_unlock(&state.lock)
+    if error:=s.read_index.? or_else Error.None;error!=.None {return nil,nil,{},error}
     for attempt in 0..<2 {
-        pack,found_location,found:=find_locked(s,address)
+        pack,found_location,found:=find_locked(s,address,use_index=s.read_index!=nil)
         location=found_location
         if !found {return nil,nil,{},.Missing}
         p:=&state.packs[pack]
@@ -460,6 +461,7 @@ chunk_locate :: proc(s:^Store,address:Hash) -> (file:^os.File,view:[]u8,location
                 // Retired by a sweep since this value read the generation.
                 if p.retired==0 {p.gone=true}
                 refresh_locked(s) or_return
+                s.retired_scanned=false
                 continue
             }
             if open_error!=.None {return nil,nil,{},open_error}

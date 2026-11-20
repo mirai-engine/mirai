@@ -40,7 +40,8 @@ root_packages :: proc(root,store_root:string,allocator:=context.allocator) -> (r
         return {problems=problems[:]},.None
     }
     defer store.close(&s)
-    return packages_listed(&s,root,&list,problems,allocator)
+    index:=store.read_index(&s,refresh=false)
+    return packages_listed(&index,root,&list,problems,allocator)
 }
 
 // root_packages against the store s, already open; a root without the list
@@ -48,7 +49,8 @@ root_packages :: proc(root,store_root:string,allocator:=context.allocator) -> (r
 root_packages_in :: proc(s:^store.Store,root:string,allocator:=context.allocator) -> (resolved:Root_Packages,error:Error) {
     list,problems,listed:=packages_list(root,allocator) or_return
     if !listed {return {problems=problems[:]},.None}
-    return packages_listed(s,root,&list,problems,allocator)
+    index:=store.read_index(s)
+    return packages_listed(&index,root,&list,problems,allocator)
 }
 
 // The list at root, with a problem when it does not read; listed: it names packages.

@@ -158,7 +158,9 @@ load_here :: proc(s:^store.Store,namespace,ref:string,key,version:u64,file:^asse
 store_source :: proc(from:^store.Store) -> Source {
     fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
         from:=(^store.Store)(user)
-        for name,k in names {given[k]=copy_ref(from,into,namespace,name)}
+        source:=store.read_index(from)
+        target:=store.read_index(into)
+        for name,k in names {given[k]=copy_ref(&source,&target,namespace,name)}
     }
     copy_ref :: proc(from,into:^store.Store,namespace,name:string) -> bool {
         object,error:=store.ref_get(from,namespace,name)

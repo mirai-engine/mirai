@@ -92,6 +92,9 @@ derived data cache that use it decide what a ref means and what is live.
   state of a value, shared by its copies and the threads that use it, lives on the heap: it
   outlives the calls and crosses threads, so the allocator a store is opened with, also an
   arena, serves only its root and what a call returns.
+- A read pass that looks up many refs or objects borrows the store with `read_index`. It reads
+  the root once, or uses the index from `open` when the owner just opened it. The borrow shares
+  the owner's index, so it sees local writes and must end before the owner closes the store.
 - Only a sweep writes a generation, one sweep at a time by the claim it creates in `tmp/sweep`; a
   claim of a holder that ended is taken by moving it aside and checking it is the one judged, and
   a generation is published only where none of that number is, so exactly one sweep owns it. It

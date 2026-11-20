@@ -156,6 +156,10 @@ packages_resolve_lists_the_objects_of_what_a_project_uses :: proc(t:^testing.T) 
     folder:=base.test_folder(t,"packages-resolve");if folder=="" {return}
     s,open_error:=store.open(fmt.tprintf("%s/store",folder),context.temp_allocator)
     if !testing.expect_value(t,open_error,store.Error.None) {return}
+    defer store.close(&s)
+    reader,read_error:=store.open(s.root,context.temp_allocator)
+    if !testing.expect_value(t,read_error,store.Error.None) {return}
+    defer store.close(&reader)
     types:Types;types_init(&types);defer types_destroy(&types)
     mesh,texture:=texture_object(t,&s,&types,{3,3}),texture_object(t,&s,&types,{5,5})
     p:=sample_package()
@@ -187,7 +191,7 @@ packages_resolve_lists_the_objects_of_what_a_project_uses :: proc(t:^testing.T) 
         Project_Package{id={40,40},manifest=hash_of("absent")},
         Project_Package{id=broken.id,manifest=broken_manifest},
     )
-    resolved,error:=packages_resolve(&s,"",&list,context.temp_allocator)
+    resolved,error:=packages_resolve(&reader,"",&list,context.temp_allocator)
     if !testing.expect_value(t,error,Error.None) {return}
     Want :: struct {id:base.Asset_Id,path:string,object:store.Hash,state:Listed_State,header:base.Asset_Id}
     wanted:=[]Want{

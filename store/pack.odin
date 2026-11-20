@@ -140,7 +140,8 @@ Writer :: struct {
     named:[dynamic]Hash,
     own:[dynamic]Own_Frame, // of the open pack, for its trailer
     broken:Error,
-    lease:Lease,
+    holder:Holder,
+    lease_generation:u64,
     leased:bool,
 }
 
@@ -418,18 +419,13 @@ writer_ready_locked :: proc(s:^Store) -> Error {
     if w.open {return .None}
     if w.id==({}) {
         crypto.rand_bytes(w.id[:])
-        name:[2+32]u8
-        copy(name[:],"w-")
-        text:[64]u8
-        copy(name[2:],writer_text(w.id,&text))
         // Lookups of the batch made against an older generation wait on it.
         seen:=s.state.generation.number
         if len(w.deduped)>0 {seen=min(seen,w.generation)}
-        w.lease={store=s,holder=holder_self(),generation=seen}
-        w.lease.name_len=copy(w.lease.name[:],string(name[:]))
+        w.holder,w.lease_generation=holder_self(),seen
         lease_buffer:[PATH_BYTES]u8
-        path:=lease_path(&w.lease,&lease_buffer) or_return
-        if error:=lease_write(s,path,w.lease.holder,w.lease.generation,nil,time.now());error!=.None {
+        path:=writer_lease_path(s,&lease_buffer) or_return
+        if error:=lease_write(s,path,w.holder,seen,nil,time.now());error!=.None {
             w.id={}
             return error
         }
@@ -445,6 +441,15 @@ writer_text :: proc(id:[16]u8,buffer:^[64]u8) -> string {
     id:=id
     copy(whole[:],id[:])
     return hex(whole,buffer)[:32]
+}
+
+@(private)
+writer_lease_path :: proc(s:^Store,buffer:^[PATH_BYTES]u8) -> (string,Error) {
+    name:[2+32]u8
+    text:[64]u8
+    copy(name[:],"w-")
+    copy(name[2:],writer_text(s.state.writer.id,&text))
+    return join(buffer,s.root,"leases",string(name[:]))
 }
 
 @(private)
@@ -686,9 +691,8 @@ foreign_flush_locked :: proc(s:^Store) -> Error {
 writer_alive_locked :: proc(s:^Store,now:i64) -> bool {
     w:=&s.state.writer
     if !w.leased {return true}
-    w.lease.store=s
     buffer:[PATH_BYTES]u8
-    path,error:=lease_path(&w.lease,&buffer)
+    path,error:=writer_lease_path(s,&buffer)
     if error!=.None {return true}
     info,stat_error:=os.stat(path,context.temp_allocator)
     if stat_error!=nil {return false}
@@ -747,12 +751,11 @@ writer_ack_locked :: proc(s:^Store) {
     w:=&state.writer
     if !w.leased || w.frames>0 || w.inflight>0 || len(w.deduped)>0 || len(w.named)>0 {return}
     generation:=state.generation.number
-    if generation<=w.lease.generation {return}
-    w.lease.store=s
+    if generation<=w.lease_generation {return}
     buffer:[PATH_BYTES]u8
-    path,error:=lease_path(&w.lease,&buffer)
+    path,error:=writer_lease_path(s,&buffer)
     if error!=.None {return}
-    if lease_write(s,path,w.lease.holder,generation,nil,time.now())==.None {w.lease.generation=generation}
+    if lease_write(s,path,w.holder,generation,nil,time.now())==.None {w.lease_generation=generation}
 }
 
 // Commits, seals the pack and begins the next one.
@@ -809,8 +812,8 @@ writer_close_locked :: proc(s:^Store) {
         writer_seal_locked(s)
     }
     if w.leased {
-        w.lease.store=s
-        lease_release(&w.lease)
+        buffer:[PATH_BYTES]u8
+        if path,error:=writer_lease_path(s,&buffer);error==.None {file_remove(path)}
         w.leased=false
     }
 }

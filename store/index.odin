@@ -5,6 +5,7 @@ import "core:hash/xxhash"
 import "core:mem"
 import "core:os"
 import "core:strings"
+import "core:sync"
 
 // What a Store value knows of its root: the newest index generation, mapped,
 // and for every pack it does not hold, the pack's chunks in one table and its
@@ -398,6 +399,25 @@ generation_ref :: proc "contextless" (g:^Generation,namespace,name:string) -> (I
     return {},false
 }
 
+// Borrows the Store for a read pass. Use refresh=false just after open.
+// Local writes and refreshes through the owner are visible to the borrow.
+read_index :: proc(s:^Store,refresh:=true) -> Store {
+    if s==nil || s.state==nil {return {}}
+    sync.mutex_lock(&s.state.lock)
+    defer sync.mutex_unlock(&s.state.lock)
+    index:=s^
+    if index.read_index==nil {
+        index.read_index=refresh_locked(s) if refresh else Error.None
+    }
+    return index
+}
+
+@(private)
+read_index_locked :: proc(s:^Store) -> Error {
+    if error,known:=s.read_index.?;known {return error}
+    return refresh_locked(s)
+}
+
 // Reads the root again: a newer generation, packs not seen, and new commits
 // of packs still being written by others.
 @(private)
@@ -761,14 +781,19 @@ location_dead :: proc(s:^Store,pack:int,location:Location) -> bool {
 
 // lookup_locked, reading the root again once when it misses.
 @(private)
-find_locked :: proc(s:^Store,address:Hash,readable:=true) -> (pack:int,location:Location,found:bool) {
+find_locked :: proc(s:^Store,address:Hash,readable:=true,use_index:=false) -> (pack:int,location:Location,found:bool) {
     pack,location,found=lookup_locked(s,address,readable)
     if found {return}
-    if refresh_locked(s)!=.None {return}
-    pack,location,found=lookup_locked(s,address,readable)
-    if found {return}
+    if !use_index {
+        if refresh_locked(s)!=.None {return}
+        pack,location,found=lookup_locked(s,address,readable)
+        if found {return}
+    }
     // A chunk a sweep retired that a commit still names is read where it went.
-    if retired_load_locked(s)!=.None {return}
+    if !use_index || !s.retired_scanned {
+        if use_index {s.retired_scanned=true}
+        if retired_load_locked(s)!=.None {return}
+    }
     pack,location,found=retired_lookup_locked(s,address)
     if found && readable && !codec_readable(s,location.codec) {return -1,{},false}
     return
