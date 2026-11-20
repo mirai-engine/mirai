@@ -101,7 +101,7 @@ USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] [--hidd
   --api-port    port of the agent API (JSON-RPC and MCP); 7940 if missing, or a free one when it is taken; 0: a free one, never 7940
   --no-api      without the agent API
   --share       shares the scene with other editors; port 7950 if missing. Prints the invitation code
-  --join        joins the session of another editor with the code of its invitation (1R2M-0253-BDK5-G0W8-7DDP-ERX1-4HQA-72WY-3G7Z-9TCN-6G4Z-H69R-53KS-D1YS-JQ3K-6666-YHZK-J1MS-WDVS-Q5ZM-MZ0N-BE4)
+  --join        joins the session of another editor with its invitation code
   --name        name in the shared session
   --project     project folder; the current one if missing
   --scene       scene to open: a file or a path relative to the assets folder
