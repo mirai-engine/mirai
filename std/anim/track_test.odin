@@ -154,3 +154,26 @@ library_in_zero_state_and_with_invalid_handles_is_safe :: proc(t:^testing.T) {
     defer library_destroy(&full)
     testing.expect_value(t,clip_data(&full,3),Clip_Data{})
 }
+
+@(test)
+clip_name_index_keeps_first_handles_in_hash_order :: proc(t:^testing.T) {
+    library:Library
+    if !testing.expect(t,library_init(&library,{max_keys=1,max_tracks=1,max_clips=257})) {
+        return
+    }
+    defer library_destroy(&library)
+    for i in 0..<256 {
+        hash:=u64((i*137)%256)
+        handle,error:=clip_add(&library,{name=hash})
+        testing.expect(t,error==.None && handle==Clip(i+1))
+    }
+    _,duplicate:=clip_add(&library,{name=0})
+    testing.expect_value(t,duplicate,Clip_Error.None)
+    testing.expect_value(t,library.named_clips,256)
+    for handle,i in library.clip_names[:library.named_clips] {
+        testing.expect_value(t,clip_data(&library,handle).name,u64(i))
+        testing.expect_value(t,clip_find(&library,u64(i)),handle)
+    }
+    testing.expect_value(t,clip_find(&library,0),Clip(1))
+    testing.expect_value(t,clip_find(&library,max(u64)),Clip(0))
+}

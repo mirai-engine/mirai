@@ -82,10 +82,10 @@ selected_clip_root_metadata_drives_extraction_and_in_place_without_a_rebuilt_tab
     extra:Test_Storages;defer test_storages_free(&extra)
     for stage in 0..<5 {
         switch stage {
-        case 1: animation_clip(core.edit(&w.animations,actor),"run",fade=0,loop=false)
+        case 1: play_clip(&w.requests,actor,"run",fade=0,loop=false)
         case 2: core.edit(&w.animations,actor).root_motion=.None
-        case 3: value:=core.edit(&w.animations,actor);value.root_motion=.In_Place;animation_clip(value,"walk",fade=0,loop=false)
-        case 4: animation_clip(core.edit(&w.animations,actor),"wave",fade=1,loop=false)
+        case 3: value:=core.edit(&w.animations,actor);value.root_motion=.In_Place;play_clip(&w.requests,actor,"walk",fade=0,loop=false)
+        case 4: play_clip(&w.requests,actor,"wave",fade=1,loop=false)
         }
         test_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),&w.playback,&app,{dt=.25,playing=true},{},&skeletons,&problems,&extra)
         state:=&w.playback.states[0]

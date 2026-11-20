@@ -38,7 +38,8 @@ mirai_matching_selects_a_walking_clip :: proc(t:^testing.T) {
         entity:=core.entity_at(gallery,0)
         speed:=core.at(gallery,0).speed
         anim.match_goal(&f.requests,{rig=entity,mode=u16(mode),velocity={0,0,-speed},desired={0,0,-speed},facing={0,0,-1},acceleration=20,braking=20})
-        anim.animation_sample(core.read(&f.animations),progress,&f.played,core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),core.read(&f.remotes),&f.requests,&f.events,&f.modifiers,&f.playback,graphs,&f.skeletons,&f.app,time,{},problems,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+        anim.animation_prepare(core.read(&f.animations),core.read(&f.attachments),core.read(&f.meshes),core.read(&f.sources),&f.modifiers,&f.playback,graphs,&f.skeletons,&f.app,problems)
+        anim.animation_sample(core.read(&f.animations),progress,&f.played,&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.remotes),&f.requests,&f.events,&f.modifiers,&f.playback,graphs,&f.skeletons,&f.app,time,{},problems,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
         return anim.animation_match(&f.playback,core.entity_at(gallery,0))
     }
     // The rig binds its skeleton in its first ticks; then its database says how fast each clip walks.
@@ -125,7 +126,8 @@ mirai_starting_to_its_side_turns_no_bone_faster_than_its_walk :: proc(t:^testing
         anim.match_goal(&f.requests,{rig=actor,mode=u16(locomotion.MODE_WALKING),velocity=velocity^,desired=wish,facing=linalg.normalize0(wish) if wish!={} else mm.quat_forward(rotation),acceleration=20,braking=20,turn_rate=8.7})
         along:=playing.travel if playing.travel!={} else mm.FORWARD
         anim.motion_locomotion(&f.requests,{rig=actor,velocity={playing.velocity.x,0,playing.velocity.z},source_velocity=mm.quat_rotate(rotation,along*playing.speed),weight=1,enabled=matching && !playing.forced && playing.speed>0})
-        anim.animation_sample(core.read(&f.animations),progress,&f.played,core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),core.read(&f.remotes),&f.requests,&f.events,&f.modifiers,&f.playback,graphs,&f.skeletons,&f.app,time,{},problems,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+        anim.animation_prepare(core.read(&f.animations),core.read(&f.attachments),core.read(&f.meshes),core.read(&f.sources),&f.modifiers,&f.playback,graphs,&f.skeletons,&f.app,problems)
+        anim.animation_sample(core.read(&f.animations),progress,&f.played,&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.remotes),&f.requests,&f.events,&f.modifiers,&f.playback,graphs,&f.skeletons,&f.app,time,{},problems,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
         anim.animation_advance(&f.transforms,core.read(&f.parents),core.read(&f.worlds),&f.requests,&f.modifiers,&f.playback,constraints,grounding,{},{},time,core.ref(&f.skeletons),problems,&f.motion,graphs,{},{},core.CLOCK_DEFAULT,nil)
         pose,posed:=anim.pose_space(&f.playback,actor,context.temp_allocator)
         if !posed {return}

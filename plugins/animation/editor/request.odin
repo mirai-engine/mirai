@@ -133,8 +133,9 @@ request :: proc(s:^editor.Session,call:^api.Call) {
     if s.mode==.Edit && !edit_end(s,call,w,true) {return}
     r:=api.call_result(call,Request_Result)
     r.id,r.applied=editor.api_entity_id(w,e),applied[:]
-    if value,has:=editor.entity_get(w,e,anim.Animation);has {r.playing=value.playing}
-    if time,_,_,has:=anim.animation_progress(core.world_storage_of(w,anim.Playback),e);has {r.time=time}
+    playback:=core.world_storage_of(w,anim.Playback)
+    r.playing=anim.animation_playing(playback,e)
+    if time,_,_,has:=anim.animation_progress(playback,e);has {r.time=time}
 }
 
 @(private)
@@ -159,11 +160,12 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
     animation,present:=editor.entity_get(world,entity,anim.Animation)
     needs:=count>0 || actions>0 || authoring_field_present(call,"locomote") || authoring_field_present(call,"gesture") || authoring_field_present(call,"distance") || authoring_field_present(call,"stop") || authoring_field_present(call,"seek")
     if needs && !present {authoring_failure(call,"entity","Missing_Component","an Animation component","missing component","The entity plays nothing",fix="Assign playback with animation.play or animation.character.setup");return false}
-    changed:=false
     when intrinsics.type_has_field(T,"stop") {
-        if authoring_field_present(call,"stop") && p.stop {animation.playing=false;changed=true;request_note(applied,"Stop","")}
+        if authoring_field_present(call,"stop") && p.stop {
+            anim.animation_command(core.world_storage_of(world,anim.Animation_Requests),entity,.Pause)
+            request_note(applied,"Stop","")
+        }
     }
-    if changed {core.add(core.world_table_of(world,anim.Animation),entity,animation);core.world_settle(world)}
     for &parameter in p.parameters[:count] {
         name:=base.text_get(parameter.name[:])
         if !program_parameter_check(s,call,animation,name,parameter.value) {return false}
@@ -177,7 +179,7 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
         if authoring_field_present(call,"seek") {
             requested:=core.world_storage_of(world,anim.Animation_Requests)
             waiting:=len(requested.timeline.items)
-            anim.animation_seek(requested,entity,p.seek)
+            anim.animation_command(requested,entity,.Seek,p.seek)
             if len(requested.timeline.items)==waiting {authoring_failure(call,"seek","Request_Failed","a finite nonnegative time and available seek queue",fmt.tprintf("%v",p.seek),"The seek could not be queued",api.SERVER_ERROR);return false}
             request_note(applied,"Seek","",p.seek)
         }
@@ -440,7 +442,7 @@ preview_run :: proc(s:^editor.Session,call:^api.Call,named:[]u8,p:^$T,time:f32,t
     world:=core.world_ref(clone,s.info)
     if !request_source_check(s,call,world,e) || !request_apply(s,call,world,e,p,ticks,nil) {return false}
     requests:=core.world_storage_of(world,anim.Animation_Requests)
-    if requests!=nil {anim.animation_seek(requests,e,time)}
+    if requests!=nil {anim.animation_command(requests,e,.Seek,time)}
     if requests==nil || !anim.animation_evaluate(world,s.app,0) {authoring_failure(call,"preview","Evaluation_Failed","an evaluable copy of the world","initial evaluation failed","The copy could not be evaluated",api.SERVER_ERROR);return false}
     if !each(s,call,world,e,0,data) {return false}
     for tick in 1..=ticks {

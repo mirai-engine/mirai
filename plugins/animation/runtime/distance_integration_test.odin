@@ -50,7 +50,7 @@ distance_tick_preserves_physical_fade_clocks_root_metadata_and_manual_warp_overr
     animation_distance(&requests,actor,base.name_hash("walk"),.8)
     step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&extra,&requests,&events,&playback,&app,&skeletons,&motion,&motion_assets,.1,&problems)
     testing.expect(t,abs(state.time-.8)<1e-5 && abs(state.motion.translation.x-.7)<1e-5 && len(events.items)==1)
-    animation_clip(core.edit_at(&animations,0),"run",fade=1,loop=false)
+    play_clip(&requests,actor,"run",fade=1,loop=false)
     step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&extra,&requests,&events,&playback,&app,&skeletons,&motion,&motion_assets,.1,&problems)
     animation_distance(&requests,actor,base.name_hash("run"),.8)
     step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&extra,&requests,&events,&playback,&app,&skeletons,&motion,&motion_assets,.1,&problems)

@@ -224,7 +224,7 @@ a_library_that_compresses_in_a_job_keeps_what_plays_until_it_is_ready :: proc(t:
     for id,i in ([2]base.Asset_Id{CLIPS,SET}) {
         keys:=[2]lib.Keyframe{{time=0},{time=1,value={1 if i==0 else -1,0,0,0}}}
         tracks:=[1]asset.Animation_Track_Desc{{target="hip",property=.Position,keys=keys[:]}}
-        clips:=[1]asset.Animation_Clip_Desc{{name="walk",tracks=tracks[:]}}
+        clips:=[2]asset.Animation_Clip_Desc{{name="walk",tracks=tracks[:]},{name="pull",tracks=tracks[:]}}
         if !testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/%d.anim",directory,i),&types,{id=id,clips=clips[:]}),asset.Error.None) {return}
     }
     sources_of_match:=[1]Match_Source{{loop=true,modes=1}};base.text_set(sources_of_match[0].clip[:],"walk")
@@ -262,15 +262,25 @@ a_library_that_compresses_in_a_job_keeps_what_plays_until_it_is_ready :: proc(t:
     }
     extra:Test_Storages;defer test_storages_free(&extra)
     s:=Swap_Test{&w,&app,&skeletons,&problems,&graphs,&sources,&extra}
-    if !testing.expect(t,host.content_animation_wait(&app,CLIPS)!=nil) {return}
-    // Its only problem, once it is bound: it has no feet to search by.
-    only_unmatched :: proc(problems:^core.Problems,actor:core.Entity) -> bool {return problems.count==0 || problems.count==1 && core.problem_find(problems,actor,"animation.match_database")!=nil}
+    // A request made as the rig spawns waits for its first clip library.
     play(&w.requests,actor,"slash")
     tick(s)
-    if !testing.expect(t,only_unmatched(&problems,actor) && len(w.playback.states)==1 && len(w.playback.states[0].local)==2 && len(w.actions.states)==1 && w.actions.states[0].slots[1].active) {return}
+    testing.expect(t,host.content_animation_pending(&app,CLIPS) && len(w.requests.plays.items)==1)
+    testing.expect(t,problems.count==0 && len(w.events.items)==0)
+    if !testing.expect(t,host.content_animation_wait(&app,CLIPS)!=nil) {return}
+    tick(s)
+    only_unmatched :: proc(problems:^core.Problems,actor:core.Entity) -> bool {
+        return problems.count==0 || problems.count==1 &&
+            core.problem_find(problems,actor,"animation.match_database")!=nil
+    }
+    if !testing.expect(t,only_unmatched(&problems,actor) && len(w.playback.states)==1 &&
+        len(w.playback.states[0].local)==2 && len(w.actions.states)==1 &&
+        w.actions.states[0].slots[1].active && len(w.requests.plays.items)==0) {return}
     before:=w.playback.states[0].local[1].position.x
     core.free(&w.animations,actor).library=SET
+    play(&w.requests,actor,"slash",next_clip="pull")
     tick(s)
+    testing.expect_value(t,len(w.requests.plays.items),1)
     testing.expect(t,host.content_animation_pending(&app,SET),"the set compresses in a job")
     testing.expect(t,only_unmatched(&problems,actor))
     testing.expect(t,w.playback.states[0].local[1].position.x>before+.05,"it plays on what it played")
@@ -279,7 +289,19 @@ a_library_that_compresses_in_a_job_keeps_what_plays_until_it_is_ready :: proc(t:
     if !testing.expect(t,host.content_animation_wait(&app,SET)!=nil) {return}
     tick(s)
     testing.expect(t,only_unmatched(&problems,actor))
+    testing.expect_value(t,len(w.requests.plays.items),0)
     joined:=source_ids(&sources,&w.playback.states[0])
     testing.expect(t,len(joined)==2 && joined[0]==SET,"the set plays once it is ready")
     testing.expect(t,w.actions.states[0].slots[1].active,"with the action")
+    for _ in 0..<12 {tick(s)}
+    ended,followed:=false,false
+    for event in w.events.items {
+        if event.kind==.Ended && event.action==base.name_hash("slash") {
+            ended=event.clip==base.name_hash("walk") && event.animation==CLIPS
+        }
+        if event.kind==.Started && event.clip==base.name_hash("pull") {
+            followed=ended && event.animation==CLIPS
+        }
+    }
+    testing.expect(t,ended && followed,"the action ends before the next clip starts")
 }

@@ -76,7 +76,7 @@ authoring_pose_bake :: proc(s:^editor.Session,call:^api.Call) {
     if !request_source_check(s,call,world,entity) || !request_apply(s,call,world,entity,preview,preview.ticks,nil) {return}
     requests:=core.world_storage_of(world,anim.Animation_Requests)
     if requests==nil {authoring_failure(call,"bake","Evaluation_Failed","an available animation request queue","missing or full queue","The bake could not seek to its initial pose",api.SERVER_ERROR);return}
-    anim.animation_seek(requests,entity,p.start)
+    anim.animation_command(requests,entity,.Seek,p.start)
     if !pose_bake_evaluate(call,world,s.app,0) {return}
     doc:asset.Document;defer asset.document_destroy(&doc)
     if !pose_bake_sample(s,call,world,entity,p,preview,&doc,output_id,existing) {return}
