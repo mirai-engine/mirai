@@ -355,10 +355,11 @@ frame and the current one:
   chosen by `pass_nested_faces`: those the view sees head-on, the nearest first, until full.
 - **`Surface`**: each view, after the nested G-buffers and before lighting.
   `pass_surface_begin(pass, {.Albedo, .Emission})` opens a pass over the requested targets until
-  `pass_end`; linear depth, motion and those not requested stay as reads
-  (`pass_surface_read(pass, slot, .Linear_Depth)`). Before that pass it can dispatch a compute
-  (`stage_pipeline` with `compute`) that reads the G-buffer with `pass_surface_read` and writes a
-  texture of the view, which the pass reads afterwards with `pass_texture_sample`.
+  `pass_end`; linear depth and the targets outside that pass stay as reads
+  (`pass_surface_read(pass, slot, .Linear_Depth)`). `pass_surface_targets` includes the view's
+  motion target and its stored reflectance when the view uses it. Before a draw, a compute
+  (`stage_pipeline` with `compute`) can read the G-buffer with `pass_surface_read` and write
+  a texture of the view, which the pass reads afterwards with `pass_texture_sample`.
 - **`Lit`**: each view, after composite and before the `Blend` stage and TAA, except in a view with
   an inspection mode. It dispatches over the lit opaque image, which `pass_image_bind(pass, slot)`
   binds to read and write (`rgba16f`, render units before exposure), and reads the G-buffer with
@@ -434,7 +435,8 @@ frame and the current one:
 - **View textures.** `pass_texture(pass, slot, Pass_Texture_Desc{name, format, width, height, depth,
   history}, previous)` binds in `SLOT_PASS0 + slot` a texture that the view keeps between frames
   for the extension, in any stage with a view:
-  - 2D, or 3D with `depth` greater than 1, in a format that a compute writes; a 2D with `mips` has
+  - 2D, a 2D array with `layers` greater than 1, or 3D with `depth` greater than 1, in a format
+    that a compute writes; a 2D texture with `mips` has
     levels (`RENDER_MIPS_ALL`: down to one texel), and `mip` binds one to write it or, with -1, all
     to read them, like `pass_resource`;
   - `name` distinguishes it from the others of the view; requesting it with another format, size

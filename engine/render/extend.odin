@@ -34,6 +34,7 @@ Pass_Rows :: gpu.Pass_Rows
 Pass_Indices :: gpu.Pass_Indices
 Glass_Side :: gpu.Glass_Side
 Surface_Source :: gpu.Surface_Source
+Surface_Targets :: gpu.Surface_Targets
 Blend_Mode :: rhi.Blend_Mode
 Program :: gpu.Program
 Program_Domain :: gpu.Program_Domain
@@ -171,6 +172,7 @@ pass_extension_data :: gpu.pass_extension_data
 pass_nested_add :: gpu.pass_nested_add
 pass_mask_begin :: gpu.pass_mask_begin
 pass_surface_begin :: gpu.pass_surface_begin
+pass_surface_targets :: gpu.pass_surface_targets
 pass_surface_read :: gpu.pass_surface_read
 pass_shadow_data :: gpu.pass_shadow_data
 pass_shadow_marks :: gpu.pass_shadow_marks
