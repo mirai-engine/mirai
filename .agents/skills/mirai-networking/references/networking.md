@@ -162,15 +162,13 @@ like `replication.hysteresis`) and the values it admits.
   and times out with `Connect_Timeout`.
 - **Invitation codes** (`net/invite.odin`): the host says where it is, as ICE gathers a host and a
   reflexive candidate: `invite_make` takes its address on its network (`address_lan`) and, once
-  the router mapped its port, the mapped one; `invite_encode` writes the version of the layout,
-  both addresses, `s` and the secret with a CRC-15 in Crockford base32 by groups of four, tolerant
-  of case, separators and confusable characters, and the client passes both addresses of
-  `invite_decode` to `host_connect`. `invite_decode` says why a text is no code (`Invite_Error`,
-  `invite_error_text`): a code of the earlier format, of another version, a character changed or two
-  swapped, or a key of small order. Everything stands at 128 bits but the secret, 64 bits that only
-  whoever learned `s` without the code could guess, online, at the rate each address is allowed. On
-  the host's network the LAN address answers; from outside, the mapped one; a router that does not
-  loop its public address back does not matter, and the client asks no other address.
+  the router mapped its port, the mapped one. `invite_encode` writes the version, both IPv4
+  endpoint slots, the full public key and secret, and a CRC-16. An absent endpoint is all zeroes.
+  The code is case-sensitive, canonical unpadded Base64url. The client takes both addresses from
+  `invite_decode` and passes them to `host_connect`. The checksum catches copying errors, while
+  the host's handshake authenticates the secret. Guessing the secret requires the public key and
+  a live attempt within the host's rate limit. On the host's network the LAN address answers.
+  From outside, the mapped one answers. The client asks only these addresses.
 - **Acks.** Each data datagram carries its sequence, the last one received and which of the ones
   before it arrived, from what the other end might not have resolved when reading the last ack this
   end received (`ack_known`), capped by `ACK_WINDOW`, as runs of arrived and missing datagrams in

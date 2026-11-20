@@ -1,5 +1,8 @@
 package mirai_net
 
+import "core:encoding/base64"
+import "core:encoding/endian"
+import "core:hash"
 import "core:log"
 import "core:strings"
 import "core:testing"
@@ -21,99 +24,117 @@ TEST_SMALL_ORDER :: [?]Key{
     {0=0xee,1..<31=0xff,31=0x7f},
 }
 
-// The characters of a code of any version and contents, without dashes.
 @(private="file")
-code_of :: proc(version:u64,invitation:Invitation) -> string {
-    invitation:=invitation
-    alphabet:=INVITE_ALPHABET
-    bits:[(INVITE_DATA_BITS+INVITE_CHECK_BITS+7)/8]u8
-    at:=0
-    invite_put(bits[:],&at,version,INVITE_VERSION_BITS)
-    for address in ([2]Address{invitation.lan,invitation.public}) {
-        address:=address
-        for b in address.ip[:4] {invite_put(bits[:],&at,u64(b),8)}
-        invite_put(bits[:],&at,u64(address.port),16)
-    }
-    for b in invitation.key.public[:31] {invite_put(bits[:],&at,u64(b),8)}
-    invite_put(bits[:],&at,u64(invitation.key.public[31]),7)
-    invite_put(bits[:],&at,invitation.key.secret,64)
-    invite_put(bits[:],&at,u64(invite_check(bits[:],INVITE_DATA_BITS)),INVITE_CHECK_BITS)
-    text:=make([]u8,INVITE_CHARACTERS,context.temp_allocator)
-    at=0
-    for &c in text {c=alphabet[invite_get(bits[:],&at,5)]}
-    return string(text)
+invite_with_checksum :: proc(record:^[INVITE_RECORD_BYTES]u8) -> string {
+    check:=hash.crc16_ccitt_0x1021(record[:INVITE_CHECK_AT])
+    endian.unchecked_put_u16be(record[INVITE_CHECK_AT:],check)
+    code,_:=base64.encode(record[:],base64.ENC_URL_TABLE,context.temp_allocator,{.No_Padding})
+    return code
 }
 
 @(test)
-invitation_codes_round_trip_and_refuse_typos_old_codes_and_bad_keys :: proc(t:^testing.T) {
+invitation_codes_round_trip_and_refuse_noncanonical_or_invalid_records :: proc(t:^testing.T) {
     lan,public:=address_ip4(192,168,1,20,27500),address_ip4(203,0,113,7,41000)
     key:=test_invited(test_key(0xa1b2c3d4e5f60718))
-    for invitation in ([]Invitation{{lan,public,key},{lan,{},{public=key.public,secret=1}},{{},public,{public=key.public,secret=max(u64)}}}) {
+    known:=Invitation{lan,public,{
+        public={
+            0x85,0x20,0xf0,0x09,0x89,0x30,0xa7,0x54,0x74,0x8b,0x7d,0xdc,0xb4,0x3e,0xf7,0x5a,
+            0x0d,0xbf,0x3a,0x0d,0x26,0x38,0x1a,0xf4,0xeb,0xa4,0xa9,0x8e,0xaa,0x9b,0x4e,0x6a,
+        },
+        secret=0xa1b2c3d4e5f60718,
+    }}
+    KNOWN_CODE :: "AsCoARRrbMsAcQegKIUg8AmJMKdUdIt93LQ-91oNvzoNJjga9OukqY6qm05qobLD1OX2BxjoLQ"
+    testing.expect_value(t,invite_encode(known,context.temp_allocator),KNOWN_CODE)
+    known_decoded,known_error:=invite_decode(KNOWN_CODE)
+    testing.expect_value(t,known_error,Invite_Error.None)
+    testing.expect_value(t,known_decoded,known)
+
+    alphabet:=base64.ENC_URL_TABLE
+    for invitation in ([]Invitation{
+        {lan,public,key},{lan,{},{public=key.public,secret=1}},{{},public,{public=key.public,secret=max(u64)}},
+    }) {
         code:=invite_encode(invitation,context.temp_allocator)
-        testing.expect_value(t,len(code),INVITE_CHARACTERS+(INVITE_CHARACTERS-1)/INVITE_GROUP)
+        if !testing.expect_value(t,len(code),INVITE_TEXT_BYTES) {return}
         got,error:=invite_decode(code)
         testing.expectf(t,error==.None && got==invitation,"%v gave %s, read as %v (%v)",invitation,code,got,error)
-        // Lowercase, spaces and the letters that look like digits are the same code.
-        loose,_:=strings.replace_all(strings.to_lower(code,context.temp_allocator),"-"," ",context.temp_allocator)
-        loose,_=strings.replace_all(loose,"0","o",context.temp_allocator)
-        loose,_=strings.replace_all(loose,"1","l",context.temp_allocator)
-        got,error=invite_decode(loose)
-        testing.expect(t,error==.None && got==invitation)
-        // Any character changed to any other, or two neighbors swapped, is no code.
+        absent:=invitation
+        if absent.public.kind==.None {
+            absent.public.port=1
+            absent.public.ip[0]=2
+            testing.expect_value(t,invite_encode(absent,context.temp_allocator),code)
+        }
+
         changed:=transmute([]u8)strings.clone(code,context.temp_allocator)
         for i in 0..<len(code) {
-            if code[i]=='-' {continue}
-            for c in transmute([]u8)string(INVITE_ALPHABET) {
+            for c,symbol in alphabet {
                 if c==code[i] {continue}
                 changed[i]=c
                 _,wrong:=invite_decode(string(changed))
-                testing.expectf(t,wrong==.Check,"%s read as %v",string(changed),wrong)
+                expected:=i==len(code)-1 && symbol&15!=0?Invite_Error.Character:Invite_Error.Check
+                testing.expectf(t,wrong==expected,"%s read as %v",string(changed),wrong)
             }
             changed[i]=code[i]
-            next:=i+1<len(code) && code[i+1]=='-'?i+2:i+1
-            if next>=len(code) || code[next]==code[i] {continue}
-            changed[i],changed[next]=code[next],code[i]
-            _,swapped:=invite_decode(string(changed))
-            testing.expectf(t,swapped==.Check,"%s read as %v",string(changed),swapped)
-            changed[i],changed[next]=code[i],code[next]
         }
-        for text in ([]string{code[:len(code)-1],strings.concatenate({code,"0"},context.temp_allocator),""}) {
+        for i in 0..<len(code)-1 {
+            if code[i]==code[i+1] {continue}
+            changed[i],changed[i+1]=code[i+1],code[i]
+            _,swapped:=invite_decode(string(changed))
+            testing.expectf(t,swapped==.Check || swapped==.Character,"%s read as %v",string(changed),swapped)
+            changed[i],changed[i+1]=code[i],code[i+1]
+        }
+        for c in ([7]u8{'=','+','/',' ','\t','\n',0}) {
+            changed[1]=c
+            _,wrong:=invite_decode(string(changed))
+            testing.expect_value(t,wrong,Invite_Error.Character)
+        }
+        for text in ([]string{code[:len(code)-1],strings.concatenate({code,"=="},context.temp_allocator),""}) {
             _,wrong:=invite_decode(text)
             testing.expectf(t,wrong==.Length,"%q read as %v",text,wrong)
         }
     }
-    // A code of the earlier format, without the key, and one of another layout say so.
-    _,old:=invite_decode("R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT")
-    testing.expect_value(t,old,Invite_Error.Old)
-    _,other:=invite_decode(code_of(INVITE_VERSION+1,{lan,public,key}))
-    testing.expect_value(t,other,Invite_Error.Version)
-    _,odd:=invite_decode("R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT#")
-    testing.expect_value(t,odd,Invite_Error.Character)
-    // A key of small order, a zero secret or no address is no invitation, written or read.
-    smalls:=TEST_SMALL_ORDER
-    for small in smalls {
+
+    invitation:=Invitation{lan,public,key}
+    code:=invite_encode(invitation,context.temp_allocator)
+    record:[INVITE_RECORD_BYTES]u8
+    _,err:=base64.decode_into_buf(record[:],code,base64.DEC_URL_TABLE,{.Strict,.No_Padding})
+    if !testing.expect(t,err==nil) {return}
+    for invalid in ([]struct{at,count:int,value:u8,error:Invite_Error}{
+        {0,1,INVITE_VERSION+1,.Version},
+        {1,2*INVITE_ENDPOINT_BYTES,0,.Invalid},
+        {5,2,0,.Invalid},
+        {INVITE_SECRET_AT,8,0,.Invalid},
+        {INVITE_SECRET_AT-1,1,key.public[KEY_BYTES-1]|0x80,.Invalid},
+    }) {
+        wrong:=record
+        for &b in wrong[invalid.at:invalid.at+invalid.count] {b=invalid.value}
+        _,refused:=invite_decode(invite_with_checksum(&wrong))
+        testing.expect_value(t,refused,invalid.error)
+    }
+    for small in TEST_SMALL_ORDER {
         bad:=Invitation{lan,public,{public=small,secret=7}}
-        bad.key.public[31]&=0x7f
         testing.expectf(t,!key_usable(&bad.key.public),"%v is usable",small)
         testing.expect(t,invite_encode(bad,context.temp_allocator)=="")
-        _,refused:=invite_decode(code_of(INVITE_VERSION,bad))
+        wrong:=record
+        copy(wrong[INVITE_KEY_AT:INVITE_SECRET_AT],bad.key.public[:])
+        _,refused:=invite_decode(invite_with_checksum(&wrong))
         testing.expectf(t,refused==.Invalid,"a code with the key %v read as %v",small,refused)
     }
-    for bad in ([]Invitation{{lan,public,{public=key.public}},{{},{},key}}) {
-        _,refused:=invite_decode(code_of(INVITE_VERSION,bad))
-        testing.expect_value(t,refused,Invite_Error.Invalid)
-    }
     wide:=Address{kind=.IP6,port=7950,ip={0=0x20,1=0x01,15=1}}
-    for invitation in ([]Invitation{{lan,public,{public=key.public}},{{},{},key},{wide,{},key},{lan,{kind=.IP4,ip={0=1,1=2,2=3,3=4}},key},{address_memory(1),{},key}}) {
-        testing.expectf(t,invite_encode(invitation,context.temp_allocator)=="","%v makes a code",invitation)
+    high_bit:=key
+    high_bit.public[KEY_BYTES-1]|=0x80
+    for bad in ([]Invitation{
+        {lan,public,{public=key.public}},{{},{},key},{wide,{},key},{lan,{kind=.IP4,ip={0=1,1=2,2=3,3=4}},key},
+        {address_memory(1),{},key},{lan,public,high_bit},
+    }) {
+        testing.expectf(t,invite_encode(bad,context.temp_allocator)=="","%v makes a code",bad)
     }
-    // Random text of the right length and alphabet is refused or read, never more.
     state:=u64(17)
     for _ in 0..<2000 {
-        text:=make([]u8,INVITE_CHARACTERS,context.temp_allocator)
-        alphabet:=INVITE_ALPHABET
-        for &c in text {c=alphabet[base.splitmix_next(&state)%32]}
-        if got,error:=invite_decode(string(text));error==.None {testing.expect(t,got.key.secret!=0 && key_usable(&got.key.public))}
+        text:[INVITE_TEXT_BYTES]u8
+        for &c in text {c=alphabet[base.splitmix_next(&state)%len(alphabet)]}
+        if got,error:=invite_decode(string(text[:]));error==.None {
+            testing.expect(t,invite_encode(got,context.temp_allocator)==string(text[:]))
+        }
     }
     for error in Invite_Error {testing.expect(t,(error==.None)==(invite_error_text(error)==""))}
     // Every key is new, and a host refuses the key of a share made otherwise.
