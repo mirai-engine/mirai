@@ -8,7 +8,6 @@ import vk "vendor:vulkan"
 MAX_PENDING_IMAGE_BARRIERS :: 32
 // What a render pass records before it goes out: its commands and the
 // resources its draws use (pass_end).
-PASS_COMMAND_CAPACITY :: 16384
 PASS_RESOURCE_CAPACITY :: 256
 
 Slot_Binding :: struct {
@@ -70,7 +69,7 @@ Command_List :: struct {
 	pass_pipeline:   Pipeline, // the bindings when the pass began, from which its commands replay
 	pass_slots:      [MAX_BINDING_SLOTS]Slot_Binding,
 	pass_dirty:      bool,
-	commands:        []Pass_Command, // PASS_COMMAND_CAPACITY, made with the device
+	commands:        []Pass_Command, // MAX_RENDER_PASS_COMMANDS, made with the device
 	command_count:   int,
 	uses:            [PASS_RESOURCE_CAPACITY]Pass_Use,
 	use_count:       int,

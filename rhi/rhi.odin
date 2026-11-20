@@ -58,6 +58,7 @@ MAX_BINDING_SLOTS    :: 38 // Shared texture slots precede the texture table.
 MAX_BUFFER_BINDING_SLOTS :: 30 // Metal buffer index 30, its last, holds the texture table.
 MAX_SAMPLER_BINDING_SLOTS :: 16
 MAX_COLOR_TARGETS    :: 8
+MAX_RENDER_PASS_COMMANDS :: 16384 // portable recording budget for passes with unbounded draw counts
 MAX_TEXTURE_MIPS     :: 14
 // Vulkan has the table in descriptor sets of their own, of a variable count
 // whose upper bound the device limits give; Metal in argument buffers (Tier 2)

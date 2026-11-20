@@ -26,7 +26,8 @@ Api_Profile_Cost_Row :: struct {
     clusters:int `mirai:"label=The view listed for its raster"`,
     triangles:int `mirai:"label=Of those clusters"`,
     raster_triangles:int `mirai:"label=Of them the raster drew: those that may cover a pixel"`,
-    pixels:int `mirai:"label=Of the image of the view it owns: what its material shades"`,
+    pixels:int `mirai:"label=Opaque pixels its material shades"`,
+    translucent_fragments:int `mirai:"label=Fragments behind the glass layers, once per pair"`,
     shadow_clusters:int `mirai:"label=The maps of the shadows drew, once for each page they cover"`,
     shadow_triangles:int `mirai:"label=The raster of the maps drew of them"`,
     shadow_units:int `mirai:"label=Of raster work they took in the maps"`,
@@ -36,7 +37,7 @@ Api_Profile_Cost :: struct {
     frame:u64 `mirai:"label=Of the renderer, that drew what it counts"`,
     total:Api_Profile_Cost_Row `mirai:"label=Of every mesh"`,
     meshes:[]Api_Profile_Cost_Row `mirai:"label=The costliest first, by the triangles the view and the maps drew; none that cost nothing"`,
-    materials:[]Api_Profile_Cost_Row `mirai:"label=The costliest first, by the pixels they shade and then the triangles drawn; none that cost nothing"`,
+    materials:[]Api_Profile_Cost_Row `mirai:"label=In order of fragment then triangle cost"`,
     notes:[]string `mirai:"label=How to read it"`,
 }
 
@@ -64,7 +65,13 @@ profile_cost_answer :: proc(a:^host.Assets,w:core.World_Ref,cost:gpu.Cost,top:in
     context.allocator=allocator
     Named :: struct {row:gpu.Cost_Row,name:string}
     row_of :: proc(row:gpu.Cost_Row,name:string) -> Api_Profile_Cost_Row {
-        return {strings.clone(name),int(row.instances),int(row.clusters),int(row.triangles),int(row.raster_triangles),int(row.pixels),int(row.shadow_clusters),int(row.shadow_triangles),int(row.shadow_units),int(row.shadow_over)}
+        return {
+            asset=strings.clone(name),instances=int(row.instances),clusters=int(row.clusters),
+            triangles=int(row.triangles),raster_triangles=int(row.raster_triangles),
+            pixels=int(row.pixels),translucent_fragments=int(row.translucent_fragments),
+            shadow_clusters=int(row.shadow_clusters),shadow_triangles=int(row.shadow_triangles),
+            shadow_units=int(row.shadow_units),shadow_over=int(row.shadow_over),
+        }
     }
     mesh_names,material_names:=profile_cost_names(a,w,len(cost.meshes),len(cost.materials))
     meshes:=make([dynamic]Named,context.temp_allocator)
@@ -74,6 +81,7 @@ profile_cost_answer :: proc(a:^host.Assets,w:core.World_Ref,cost:gpu.Cost,top:in
         append(&meshes,Named{row,mesh_names[handle] if mesh_names[handle]!="" else fmt.tprintf("mesh %d",handle)})
         total.instances+=row.instances;total.clusters+=row.clusters;total.triangles+=row.triangles
         total.raster_triangles+=row.raster_triangles;total.pixels+=row.pixels
+        total.translucent_fragments+=row.translucent_fragments
         total.shadow_clusters+=row.shadow_clusters;total.shadow_triangles+=row.shadow_triangles
         total.shadow_units+=row.shadow_units;total.shadow_over+=row.shadow_over
     }
@@ -82,9 +90,15 @@ profile_cost_answer :: proc(a:^host.Assets,w:core.World_Ref,cost:gpu.Cost,top:in
         if row=={} {continue}
         append(&materials,Named{row,material_names[index] if material_names[index]!="" else fmt.tprintf("material row %d",index)})
     }
-    slice.sort_by(meshes[:],proc(x,y:Named) -> bool {return u64(x.row.triangles)+u64(x.row.shadow_triangles)>u64(y.row.triangles)+u64(y.row.shadow_triangles)})
+    slice.sort_by(meshes[:],proc(x,y:Named) -> bool {
+        a:=u64(x.row.triangles)+u64(x.row.shadow_triangles)
+        b:=u64(y.row.triangles)+u64(y.row.shadow_triangles)
+        return a>b || a==b && x.row.translucent_fragments>y.row.translucent_fragments
+    })
     slice.sort_by(materials[:],proc(x,y:Named) -> bool {
-        if x.row.pixels!=y.row.pixels {return x.row.pixels>y.row.pixels}
+        a:=u64(x.row.pixels)+u64(x.row.translucent_fragments)
+        b:=u64(y.row.pixels)+u64(y.row.translucent_fragments)
+        if a!=b {return a>b}
         return u64(x.row.triangles)+u64(x.row.shadow_triangles)>u64(y.row.triangles)+u64(y.row.shadow_triangles)
     })
     out.frame,out.total=cost.frame,row_of(total,"")

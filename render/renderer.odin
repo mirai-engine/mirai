@@ -313,7 +313,8 @@ Stats :: struct {
 Pipeline_Id :: enum {
 	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Bins, Cull_Stats_Fold, Mesh_Draws, Tlas_Batches,
 	Raster_Round, Raster_Vertices, Raster_Vertices_Shadow, Raster_Starts, Raster_Triangles, // what the raster of the visibility target draws of the visible clusters, and the maps of the shadows of theirs, a round at a time (raster_lists.slang)
-	Cull_Cost, Raster_Vertices_Cost, Raster_Vertices_Shadow_Cost, Shadow_Clusters_Cost, Cost_Pixels, // the same counting by mesh and material, and the pixels each owns, in the frame of a request alone (cost.odin)
+	Cull_Cost, Raster_Vertices_Cost, Raster_Vertices_Shadow_Cost, Shadow_Clusters_Cost,
+	Cost_Pixels, Translucent_Cost,
 	Light_Grid_Count, Light_Grid_Scan, Light_Grid_Fill, Light_Grid_Weights, // the passes of the grid of the lights (light_grid.comp)
 	Light_Lists, // the lists of the lights without shadows of the tiles of a view (light_lists.comp)
 	Direct_Maps, Direct_Rays, Direct_Samples, Direct_Points, Direct_Spread, Direct_Filter,
@@ -935,10 +936,11 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		compute(list, r, id, software, .Software, twin = true)
 		compute(list, r, id, hardware, .Hardware, twin = true)
 	}
-	graphics :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, desc: rhi.Graphics_Pipeline_Desc, rays := Pipeline_Rays.Any) {
+	graphics :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id,
+		desc: rhi.Graphics_Pipeline_Desc, rays := Pipeline_Rays.Any, required := true) {
 		clip := pipeline_uses_clip_distance(id)
 		pipeline_listed(list, {id = id, target = pipeline_slot(r, id, rays), shaders = {shader_of(r, desc.vertex), shader_of(r, desc.fragment)}, rays = rays,
-			clip = clip, required = id != .Blit && !clip, graphics = true, desc = desc})
+			clip = clip, required = required && id != .Blit && !clip, graphics = true, desc = desc})
 	}
 	compute(list, r, .Cull, .Cull_Comp)
 	compute(list, r, .Cull_Clusters, .Cull_Clusters_Comp)
@@ -1073,6 +1075,10 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	graphics(list, r, .Translucent, translucent, .Software)
 	translucent.fragment = &r.shader_codes[.Translucent_Hw_Frag]
 	graphics(list, r, .Translucent, translucent, .Hardware)
+	translucent.fragment = &r.shader_codes[.Translucent_Cost_Frag]
+	graphics(list, r, .Translucent_Cost, translucent, .Software, required = false)
+	translucent.fragment = &r.shader_codes[.Translucent_Hw_Cost_Frag]
+	graphics(list, r, .Translucent_Cost, translucent, .Hardware, required = false)
 	graphics(list, r, .Highlight, {
 		vertex = &r.shader_codes[.Gbuffer_Vert], vertex_constants = {GBUFFER_VERT_HIGHLIGHT}, fragment = &r.shader_codes[.Highlight_Frag],
 		color_formats = {0 = .RG32_Float}, color_count = 1,

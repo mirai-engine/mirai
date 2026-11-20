@@ -413,11 +413,11 @@ vk_create_pools :: proc(d: ^Device) -> bool {
 		err: runtime.Allocator_Error
 		f.deletions, err = make([dynamic]Vk_Deferred, 0, c.deletions, d.allocator)
 		ok &&= err == nil
-		f.list.commands, err = make([]Pass_Command, PASS_COMMAND_CAPACITY, d.allocator)
+		f.list.commands, err = make([]Pass_Command, MAX_RENDER_PASS_COMMANDS, d.allocator)
 		ok &&= err == nil
 	}
 	commands_error, unframed_error: runtime.Allocator_Error
-	d.immediate.commands, commands_error = make([]Pass_Command, PASS_COMMAND_CAPACITY, d.allocator)
+	d.immediate.commands, commands_error = make([]Pass_Command, MAX_RENDER_PASS_COMMANDS, d.allocator)
 	d.unframed, unframed_error = make([dynamic]Vk_Deferred, 0, c.deletions, d.allocator)
 	ok &&= commands_error == nil && unframed_error == nil
 	images_error, present_error: runtime.Allocator_Error

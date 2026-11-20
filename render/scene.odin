@@ -352,7 +352,7 @@ Scene_State :: struct {
 	pool_free:           [Mesh_Pool][dynamic]Pool_Range,
 	pool_dirty:          [Mesh_Pool][dynamic]Pool_Range,
 	mesh_dirty:          [dynamic]Pool_Range,
-	translucent:          [dynamic]Translucent, // sorted back to front every frame
+	translucent:          [dynamic]Translucent, // each view puts its visible instances first
 	geometry_dirty:       bool,
 	vertices_made:        u64, // times the vertex buffer was made again: what an extension wrote in it is gone
 	vertex_buffer:        rhi.Buffer,
