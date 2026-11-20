@@ -121,11 +121,11 @@ rig_shapes_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constra
         }
         if !found {modifier_request_rejected(runtime,state.entity,.Missing_Target);rig_problem(inputs.problems,state.entity,.Spline_IK,&config,.Target);valid=false;continue}
         count:=int(binding.count)
-        solved:=lib.skeleton_spline_ik(skeleton,state.local[:],state.world[:],binding.bones[:count],settings,binding.points[:count],binding.lengths[:count-1],config.weight,root_transform)
+        solved:=lib.skeleton_spline_ik(skeleton,playing_pose(state,.Local),playing_pose(state,.World),binding.bones[:count],settings,binding.points[:count],binding.lengths[:count-1],config.weight,root_transform)
         binding.diagnostic.valid=solved
         if !solved {rig_problem(inputs.problems,state.entity,.Spline_IK,&config,.Solve)}
         if solved {
-            binding.diagnostic.residual=linalg.length(state.world[binding.bones[count-1]].position-settings.controls[3])
+            binding.diagnostic.residual=linalg.length(playing_pose(state,.World)[binding.bones[count-1]].position-settings.controls[3])
             binding.diagnostic.reached=binding.diagnostic.residual<=.001
         }
         valid &&=solved
@@ -144,7 +144,7 @@ rig_shapes_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constra
         }
         if !config.enabled || config.weight<=0 {continue}
         // The driver as the animation posed it, before other operations moved it.
-        rotation:=state.sampled[binding.driver].rotation if len(state.sampled)==len(state.local) else state.local[binding.driver].rotation
+        rotation:=playing_pose(state,.Sampled)[binding.driver].rotation if len(playing_pose(state,.Sampled))==len(playing_pose(state,.Local)) else playing_pose(state,.Local)[binding.driver].rotation
         solved:=lib.pose_sample_weights(rotation,binding.rotations[:config.sample_count],binding.weights[:config.sample_count])
         if !solved {rig_problem(inputs.problems,state.entity,.Corrective,&config,.Solve);valid=false;continue}
         delta:mm.Transform
@@ -161,11 +161,11 @@ rig_shapes_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constra
         if !finite(binding.value) {rig_problem(inputs.problems,state.entity,.Corrective,&config,.Solve);valid=false;binding.value=0;continue}
         if config.apply_pose {
             delta.rotation=linalg.normalize0(delta.rotation)
-            local:=&state.local[binding.bone]
+            local:=&playing_pose(state,.Local)[binding.bone]
             local.position+=delta.position*config.weight
             local.rotation=linalg.normalize0(local.rotation*mm.quat_slerp(1,delta.rotation,config.weight))
             local.scale*=mm.Vec3{1,1,1}+(delta.scale-mm.Vec3{1,1,1})*config.weight
-            solved=lib.pose_world(skeleton.parents,state.local[:],state.world[:],root_transform)
+            solved=lib.pose_world(skeleton.parents,playing_pose(state,.Local),playing_pose(state,.World),root_transform)
             if !solved {rig_problem(inputs.problems,state.entity,.Corrective,&config,.Solve)}
         }
         binding.diagnostic.valid,binding.diagnostic.reached=solved,solved

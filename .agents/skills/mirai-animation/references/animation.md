@@ -362,10 +362,9 @@ empty takes that of the set or `library`.
   its bindings are built and shared by the states bound alike to that content: clips and layers
   blend by bone ([by bone](../../mirai-std/references/anim.md#blending-poseodin)), never by the
   name of a target, for rigs and for the entities an `Animation` moves by name alike.
-- `Animation_Progress` is written only by `animation_sample` while the game runs: a stored save
-  restores the selected base clip and its clock before applying new requests.
-- The runtimes of modifiers, constraints, grounding, field tracks, actions, motion and budget are
-  copied for Play and rollback.
+- `Playback` materializes `Animation_Progress` when a game slot is captured. Loading a slot restores
+  the selected base clip and its clock before applying new requests.
+- The modifier, field track, action, motion and budget storages are copied for Play and rollback.
 - Definitions of skeletons and sets, and programs, live in application caches, like `Skin_Runtime`;
   `Skin_Instances` stores the GPU meshes that each world deforms and `animation_skin_release`
   releases them when that world is freed.

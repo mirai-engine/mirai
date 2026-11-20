@@ -33,10 +33,10 @@ rotation_limits_blend_from_the_input_pose_and_leave_zero_weight_unchanged :: pro
     playback:Playback;cache:Animation_Constraints;defer constraints_free(&cache)
     problems:core.Problems
     constraints_apply(&state,&playback,{limits=core.read(&w.modifiers.limits),problems=&problems},&cache,&w.transforms,core.read(&w.parents),0)
-    testing.expect(t,abs(mm.quat_angle(state.local[1].rotation,mm.QUAT_IDENTITY)-.6)<.001)
-    state.local[1]=pose[1];core.edit(&w.modifiers.limits,rig).weight=0
+    testing.expect(t,abs(mm.quat_angle(playing_pose(&state,.Local)[1].rotation,mm.QUAT_IDENTITY)-.6)<.001)
+    playing_pose(&state,.Local)[1]=pose[1];core.edit(&w.modifiers.limits,rig).weight=0
     constraints_apply(&state,&playback,{limits=core.read(&w.modifiers.limits),problems=&problems},&cache,&w.transforms,core.read(&w.parents),0)
-    testing.expect_value(t,state.local[1],pose[1])
+    testing.expect_value(t,playing_pose(&state,.Local)[1],pose[1])
     testing.expect_value(t,problems.count,0)
 }
 
@@ -102,17 +102,17 @@ taking_a_sampled_pose_ignores_actor_wrapper_placement_and_keeps_the_destination_
     playback.rows[core.entity_index(source_entity)],playback.rows[core.entity_index(target_entity)]=1,2
     source:=&playback.states[0];target:=&playback.states[1]
     source.targets[0],source.bindings[0].target,source.aliases[0]=0,0,0;target.targets[0],target.bindings[0].target,target.aliases[0]=0,0,0
-    source.sampled[0].position={9,0,0};source.sampled[0].rotation=mm.quat_axis_angle({0,1,0},0.8)
-    source.sampled[1].rotation=mm.quat_axis_angle({0,0,1},0.3)
-    target.local[0].position={12,0,0};target.local[0].rotation=mm.quat_axis_angle({0,1,0},-0.7)
-    actor:=target.local[0]
+    playing_pose(source,.Sampled)[0].position={9,0,0};playing_pose(source,.Sampled)[0].rotation=mm.quat_axis_angle({0,1,0},0.8)
+    playing_pose(source,.Sampled)[1].rotation=mm.quat_axis_angle({0,0,1},0.3)
+    playing_pose(target,.Local)[0].position={12,0,0};playing_pose(target,.Local)[0].rotation=mm.quat_axis_angle({0,1,0},-0.7)
+    actor:=playing_pose(target,.Local)[0]
     constraint_take_sampled(target,source)
     cache:Animation_Constraints;defer constraints_free(&cache)
     problems:core.Problems
     constraints_apply(target,&playback,{problems=&problems},&cache,&w.transforms,core.read(&w.parents),0.1)
-    testing.expect_value(t,target.local[0],actor)
-    testing.expect(t,mm.quat_angle(target.local[1].rotation,source.sampled[1].rotation)<0.001)
-    testing.expect_value(t,target.local[1].position,mm.Vec3{0,2,0})
+    testing.expect_value(t,playing_pose(target,.Local)[0],actor)
+    testing.expect(t,mm.quat_angle(playing_pose(target,.Local)[1].rotation,playing_pose(source,.Sampled)[1].rotation)<0.001)
+    testing.expect_value(t,playing_pose(target,.Local)[1].position,mm.Vec3{0,2,0})
     testing.expect_value(t,problems.count,0)
 }
 
@@ -122,8 +122,10 @@ constraint_fixture_state :: proc(entity:core.Entity,locals:[]mm.Transform) -> Pl
     for value,i in locals {
         target:=base.name_hash(fmt.tprintf("%d",i+10))
         append(&state.parents,i32(i)-1);append(&state.targets,target);append(&state.aliases,target);append(&state.rest,value)
-        append(&state.local,value);append(&state.sampled,value);append(&state.world,mm.TRANSFORM_IDENTITY)
-        append(&state.bindings,Binding{target=target,entity=entity,rest=value,parent=i32(i)-1})
+        index:=state.pose_count
+        playing_pose_resize(&state,index+1)
+        playing_pose(&state,.Local)[index]=value;playing_pose(&state,.Sampled)[index]=value;playing_pose(&state,.World)[index]=mm.TRANSFORM_IDENTITY;
+        append(&state.bindings,Binding{target=target,entity=entity,parent=i32(i)-1})
     }
     return state
 }
@@ -157,14 +159,14 @@ taking_a_sampled_pose_pairs_dense_skeletons_by_name_then_path_and_preserves_acto
     playback.rows[core.entity_index(source_entity)],playback.rows[core.entity_index(target_entity)]=1,2
     testing.expect(t,skeleton_bind(&playback,source,&source_content,nil,&w.transforms))
     testing.expect(t,skeleton_bind(&playback,target,&target_content,nil,&w.transforms))
-    copy(source.sampled[:],source.rest[:])
-    source.sampled[0].position={9,0,0};source.sampled[0].rotation=mm.quat_axis_angle({0,1,0},.8)
-    source.sampled[1].position.x=.4;source.sampled[2].position.y=1.25
-    source.sampled[2].rotation=mm.quat_axis_angle({0,0,1},.15)
-    source.sampled[3].rotation=mm.quat_axis_angle({0,0,1},.4)
-    source.local[3].rotation=mm.quat_axis_angle({0,0,1},1.2)
-    target.local[0].position={12,0,0};target.local[0].rotation=mm.quat_axis_angle({0,1,0},-.7)
-    actor:=target.local[0]
+    copy(playing_pose(source,.Sampled),playing_topology(source).rest[:])
+    playing_pose(source,.Sampled)[0].position={9,0,0};playing_pose(source,.Sampled)[0].rotation=mm.quat_axis_angle({0,1,0},.8)
+    playing_pose(source,.Sampled)[1].position.x=.4;playing_pose(source,.Sampled)[2].position.y=1.25
+    playing_pose(source,.Sampled)[2].rotation=mm.quat_axis_angle({0,0,1},.15)
+    playing_pose(source,.Sampled)[3].rotation=mm.quat_axis_angle({0,0,1},.4)
+    playing_pose(source,.Local)[3].rotation=mm.quat_axis_angle({0,0,1},1.2)
+    playing_pose(target,.Local)[0].position={12,0,0};playing_pose(target,.Local)[0].rotation=mm.quat_axis_angle({0,1,0},-.7)
+    actor:=playing_pose(target,.Local)[0]
     constraint_take_sampled(target,source)
     cache:Animation_Constraints;defer constraints_free(&cache)
     problems:core.Problems
@@ -172,13 +174,13 @@ taking_a_sampled_pose_pairs_dense_skeletons_by_name_then_path_and_preserves_acto
     constraints_apply(target,&playback,inputs,&cache,&w.transforms,core.read(&w.parents),0.1)
     // The hand of the target repeats its name: its path pairs it.
     for mapped,i in ([7]i32{-1,1,2,-1,3,4,-1}) {testing.expect_value(t,target.follow[i].leader,mapped)}
-    testing.expect_value(t,target.local[0],actor)
-    testing.expect_value(t,target.local[1].position,mm.Vec3{.4,0,0})
-    testing.expect_value(t,target.local[2].position,mm.Vec3{0,2.5,0})
-    testing.expect_value(t,target.local[4].position,mm.Vec3{1,0,0})
-    testing.expect_value(t,target.local[3],target.rest[3]);testing.expect_value(t,target.local[6],target.rest[6])
-    testing.expect(t,mm.quat_angle(target.local[4].rotation,source.sampled[3].rotation)<.001)
-    testing.expect_value(t,target.world[1],mm.transform_compose(actor,target.local[1]))
+    testing.expect_value(t,playing_pose(target,.Local)[0],actor)
+    testing.expect_value(t,playing_pose(target,.Local)[1].position,mm.Vec3{.4,0,0})
+    testing.expect_value(t,playing_pose(target,.Local)[2].position,mm.Vec3{0,2.5,0})
+    testing.expect_value(t,playing_pose(target,.Local)[4].position,mm.Vec3{1,0,0})
+    testing.expect_value(t,playing_pose(target,.Local)[3],playing_topology(target).rest[3]);testing.expect_value(t,playing_pose(target,.Local)[6],playing_topology(target).rest[6])
+    testing.expect(t,mm.quat_angle(playing_pose(target,.Local)[4].rotation,playing_pose(source,.Sampled)[3].rotation)<.001)
+    testing.expect_value(t,playing_pose(target,.World)[1],mm.transform_compose(actor,playing_pose(target,.Local)[1]))
     testing.expect_value(t,w.entities.alive,2)
     failure:=Runtime_Allocation_Failure{owner=context.allocator,remaining=0}
     saved_context:=context
@@ -187,15 +189,18 @@ taking_a_sampled_pose_pairs_dense_skeletons_by_name_then_path_and_preserves_acto
     context=saved_context
     testing.expect_value(t,failure.calls,0)
     testing.expect_value(t,problems.count,0)
-    // Skeletons that share no name nor path keep the pose of the target and say why.
-    names:=make([]u64,len(source.aliases));defer delete(names);copy(names,source.aliases[:])
-    paths:=make([]u64,len(source.targets));defer delete(paths);copy(paths,source.targets[:])
-    for i in 1..<len(source.aliases) {source.aliases[i],source.targets[i]=u64(i),u64(i)}
-    source.bound+=1
+    // A rebind to a skeleton with no names or paths in common keeps the target pose.
+    names:=source_bones
+    for &bone,i in source_bones {
+        bone.target=u64(i)+1
+        bone.name={}
+    }
+    testing.expect(t,skeleton_bind(&playback,source,&source_content,nil,&w.transforms))
     constraints_apply(target,&playback,inputs,&cache,&w.transforms,core.read(&w.parents),0.1)
     testing.expect(t,problems.count==1 && core.problem_find(&problems,target_entity,"animation.follow_bones")!=nil)
-    copy(source.aliases[:],names);copy(source.targets[:],paths)
-    source.bound+=1
+    source_bones=names
+    testing.expect(t,skeleton_bind(&playback,source,&source_content,nil,&w.transforms))
+    copy(playing_pose(source,.Sampled),playing_topology(source).rest[:])
     constraints_apply(target,&playback,inputs,&cache,&w.transforms,core.read(&w.parents),0.1)
     testing.expect_value(t,problems.count,1)
     for mapped,i in ([7]i32{-1,1,2,-1,3,4,-1}) {testing.expect_value(t,target.follow[i].leader,mapped)}
@@ -214,8 +219,8 @@ bone_constraints_solve_world_targets_under_rotated_uneven_parents_and_respect_so
     core.add(&w.transforms,parent,core.from_math(external));core.add(&w.transforms,rig,core.from_math(locals[0]));core.add(&w.transforms,socket,core.TRANSFORM_IDENTITY)
     core.add(&w.parents,rig,{entity=parent})
     test_world_settle(&w)
-    lib.skeleton_world(playing_skeleton(&state),state.local[:],state.world[:],external)
-    target:=state.world[0].position+mm.Vec3{1,1,0}
+    lib.skeleton_world(playing_skeleton(&state),playing_pose(&state,.Local),playing_pose(&state,.World),external)
+    target:=playing_pose(&state,.World)[0].position+mm.Vec3{1,1,0}
     config:=IK_CONSTRAINT_DEFAULT;config.rig=rig;config.root,config.joint,config.end=bone_ref("10"),bone_ref("11"),bone_ref("12");config.target=spatial_point(target);config.pole=target+mm.Vec3{0,0,2}
     core.add(&w.modifiers.ik,helper,config)
     socket_config:=BONE_BINDING_DEFAULT;socket_config.rig=rig;socket_config.bone=bone_ref("12");socket_config.offset.position={0,0,0.2}
@@ -227,9 +232,9 @@ bone_constraints_solve_world_targets_under_rotated_uneven_parents_and_respect_so
     inputs:=Constraint_Inputs{ik=core.read(&w.modifiers.ik),sockets=core.read(&w.modifiers.sockets),problems=&problems}
     constraints_apply(&state,&playback,inputs,&cache,&w.transforms,core.read(&w.parents),0.1)
     testing.expect_value(t,problems.count,0)
-    testing.expect(t,linalg.length(state.world[2].position-target)<0.001)
+    testing.expect(t,linalg.length(playing_pose(&state,.World)[2].position-target)<0.001)
     attached,_:=core.get(&w.transforms,socket)
-    expected,_:=lib.skeleton_socket(state.world[:],2,socket_config.offset)
+    expected,_:=lib.skeleton_socket(playing_pose(&state,.World),2,socket_config.offset)
     testing.expect(t,linalg.length(attached.position-expected.position)<0.001)
     resize(&w.transforms.owners,core.entity_index(socket)+1);w.transforms.owners[core.entity_index(socket)]={core.entity_generation(socket),1}
     core.edit(&w.modifiers.ik,helper).target.position+=mm.Vec3{0.2,0,0}
@@ -258,14 +263,14 @@ taking_a_sampled_pose_reads_the_pose_the_source_sampled_and_preserves_target_len
     resize(&playback.rows,core.entity_index(b)+1)
     playback.rows[core.entity_index(a)],playback.rows[core.entity_index(b)]=1,2
     source:=&playback.states[0];target:=&playback.states[1]
-    source.sampled[0].rotation=mm.quat_axis_angle({0,0,1},0.5)
-    source.local[0].rotation=mm.quat_axis_angle({0,0,1},1.5)
+    playing_pose(source,.Sampled)[0].rotation=mm.quat_axis_angle({0,0,1},0.5)
+    playing_pose(source,.Local)[0].rotation=mm.quat_axis_angle({0,0,1},1.5)
     constraint_take_sampled(target,source)
     cache:Animation_Constraints;defer constraints_free(&cache)
     problems:core.Problems
     constraints_apply(target,&playback,{problems=&problems},&cache,&w.transforms,core.read(&w.parents),0.1)
-    testing.expect(t,mm.quat_angle(target.local[0].rotation,source.sampled[0].rotation)<0.001)
-    testing.expect_value(t,target.local[1].position,mm.Vec3{2,0,0})
+    testing.expect(t,mm.quat_angle(playing_pose(target,.Local)[0].rotation,playing_pose(source,.Sampled)[0].rotation)<0.001)
+    testing.expect_value(t,playing_pose(target,.Local)[1].position,mm.Vec3{2,0,0})
     testing.expect_value(t,problems.count,0)
     saved_context:=context
     context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()

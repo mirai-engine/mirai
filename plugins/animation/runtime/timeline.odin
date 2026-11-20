@@ -29,7 +29,7 @@ Animation_Command :: struct {
     fade:f32,
     weight:f32,
     loop:Maybe(bool),
-    restart,additive,pending:bool,
+    restart,additive,pending,handled:bool,
 }
 
 // Controls the current clip. Play can select a clip and restart it; Resume preserves its time.
@@ -164,7 +164,7 @@ clip_control :: proc(state:^Playing,animation:^Animation,commands:[]Animation_Co
     for &asked in commands {
         if asked.entity!=state.entity {continue}
         if pending {asked.pending=true;continue}
-        if !running && asked.command!=.Seek {asked.entity=core.NONE;continue}
+        if !running && asked.command!=.Seek {asked.handled=true;continue}
         matching:=false
         if asked.clip!=0 {
             id:=animation_character(app.assets,animation^)
@@ -205,7 +205,7 @@ clip_control :: proc(state:^Playing,animation:^Animation,commands:[]Animation_Co
         if slot<0 {
             core.report(problems,state.entity,"animation.clip_layer",
                 "this clip request names a layer the character does not have; name a layer of its set")
-            asked.entity=core.NONE
+            asked.handled=true
             continue
         }
         if asked.clip!=0 && selection.asset=={} && clip_handle(content,selection)==0 &&
@@ -217,7 +217,7 @@ clip_control :: proc(state:^Playing,animation:^Animation,commands:[]Animation_Co
             state.source_plan=prior
             core.report(problems,state.entity,"animation.clip_command",
                 "the clip request cannot find its source or clip; name an .anim when several sources share the name")
-            asked.entity=core.NONE
+            asked.handled=true
             continue
         }
         if overlay && asked.clip!=0 {
@@ -226,16 +226,16 @@ clip_control :: proc(state:^Playing,animation:^Animation,commands:[]Animation_Co
                 state.source_plan=prior
                 core.report(problems,state.entity,"animation.clip_layer_busy",
                     "the clip cannot take a layer with an active action; wait for the action to end")
-                asked.entity=core.NONE
+                asked.handled=true
                 continue
             }
         }
-        if overlay && asked.clip==0 && state.overlay.slot==0 {asked.entity=core.NONE;continue}
+        if overlay && asked.clip==0 && state.overlay.slot==0 {asked.handled=true;continue}
         if overlay && asked.layer!=0 && asked.clip==0 && int(state.overlay.slot)!=slot+1 {
-            asked.entity=core.NONE
+            asked.handled=true
             continue
         }
-        asked.entity=core.NONE
+        asked.handled=true
         seek:=f32(-1)
         restart:=false
         if value,given:=asked.speed.?;given {speed=value}
@@ -283,7 +283,7 @@ clip_commands_finish :: proc(commands:^core.Queue(Animation_Command),running:boo
     problems:^core.Problems) {
     kept:=0
     for asked in commands.items {
-        if asked.entity==core.NONE {continue}
+        if asked.handled {continue}
         if asked.pending {
             commands.items[kept]=asked;commands.items[kept].pending=false;kept+=1
         } else if running && asked.command!=.Seek {

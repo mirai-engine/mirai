@@ -294,7 +294,7 @@ animation_skin :: proc(
         if !rigid && modifiers.ptr!=nil && !curve_materials_apply(modifiers.ptr,pose,int(source.slot_count),lives,entity) {
             core.report(problems,entity,"animation.curve_material","the curve materials of the .character of the rig of this entity set more than %d material values, so some are not drawn; move fewer values, or fewer slots",erender.MATERIAL_VALUES_CAPACITY)
         }
-        bones:=len(pose.local) if !rigid else 0
+        bones:=len(playing_pose(pose,.Local)) if !rigid else 0
         // Not drawn in the last frame (new, or shown again): it shows the pose and the weights of the
         // tick, not an interpolation from those of a tick it was not drawn in, as the rest pose of a
         // weapon that is shown the tick its action starts.
@@ -313,7 +313,7 @@ animation_skin :: proc(
                 part_palette,part_error:=make([]mm.Mat4,len(rig.joints),allocator)
                 if in_error!=nil || part_error!=nil {delete(in_part);delete(part_palette);skin_instance_free(renderer,instance);memory_problem(problems,entity,"its skinned mesh");continue}
                 for joint,j in rig.joints {
-                    for at:=int(joint.node)+1;at>=0 && at<len(pose.parents);at=int(pose.parents[at]) {
+                    for at:=int(joint.node)+1;at>=0 && at<len(playing_topology(pose).parents);at=int(playing_topology(pose).parents[at]) {
                         if at==part-1 {in_part[j]=true;break}
                     }
                 }
@@ -358,7 +358,7 @@ animation_skin :: proc(
                 policy:=ANIMATION_BUDGET_DEFAULT
                 if policies!=nil {if value,present:=core.get(policies,owner);present {policy=value}}
                 work_index=len(state.work)
-                append(&state.work,Pose_Palette_Work{parents=pose.parents[:],previous=pose.previous[:],current=pose.local[:],local=instance.local,world=instance.world,joints=rig.joints,palette=instance.palette,basis=basis,inverse=inverse,alpha=1 if exact else alpha,bone_offset=1,enabled=true})
+                append(&state.work,Pose_Palette_Work{parents=playing_topology(pose).parents[:],previous=playing_pose(pose,.Previous),current=playing_pose(pose,.Local),local=instance.local,world=instance.world,joints=rig.joints,palette=instance.palette,basis=basis,inverse=inverse,alpha=1 if exact else alpha,bone_offset=1,enabled=true})
                 append(&state.updates,Skin_Update{slot=slot,drawn=drawn,basis=basis,exact=pose.changed+1 if exact else 0})
                 // How large its bounds show in the view of the frame: without a view, as large as it gets.
                 pixels:=math.INF_F32

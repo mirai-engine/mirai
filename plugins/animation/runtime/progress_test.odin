@@ -27,10 +27,17 @@ a_loaded_clip_seeks_the_progress_its_entity_kept :: proc(t:^testing.T) {
     state.clip,state.time=0,1.5
     state.playing,state.speed=true,-1
     state.selection={clip=base.name_hash("run"),fade=.25,loop=true}
-    progress_write(&w.progress,&w.animations,&w.playback)
+    testing.expect(t,core.world_prepare_save(test_world_ref(&w)))
     test_world_settle(&w)
     kept,found:=core.get(&w.progress,e)
     testing.expect(t,found && kept.time==1.5)
+    version:=core.version(&w.progress)
+    state.time=2
+    testing.expect_value(t,core.version(&w.progress),version)
+    testing.expect(t,core.world_prepare_save(test_world_ref(&w)))
+    test_world_settle(&w)
+    latest,_:=core.get(&w.progress,e)
+    testing.expect_value(t,latest.time,f32(2))
 
     playback_free(&w.playback)
     state=state_get(&w.playback,e)
@@ -40,7 +47,7 @@ a_loaded_clip_seeks_the_progress_its_entity_kept :: proc(t:^testing.T) {
     testing.expect(t,state.selection.clip==base.name_hash("run") && animation.loop && animation.fade==.25)
 
     core.remove(&w.animations,e);test_world_settle(&w)
-    progress_write(&w.progress,&w.animations,&w.playback)
+    testing.expect(t,core.world_prepare_save(test_world_ref(&w)))
     test_world_settle(&w)
     testing.expect(t,!core.has(&w.progress,e))
 }

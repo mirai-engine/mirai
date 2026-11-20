@@ -1,6 +1,7 @@
 package anim
 
 import "core:mem"
+import "core:slice"
 import "mirai:asset"
 import "mirai:core"
 import erender "mirai:engine/render"
@@ -57,9 +58,9 @@ pose_profile_check :: proc(profile:Pose_Profile) -> bool {
         if !profile_bone(value.bone) || !profile_vector(value.axis) || !finite(value.max_swing) || !finite(value.min_twist) || !finite(value.max_twist) || value.min_twist>value.max_twist || !profile_weight(value.weight) {return false}
         if !profile_rotation(value.reference) {return false}
     }
-    if value:=profile.grounding;value.count>0 {
+    if value:=profile.grounding;len(value.legs)>0 {
         if !grounding_config_valid(value) || !profile_bone(value.body) {return false}
-        for leg in value.legs[:value.count] {if !profile_bone(leg.hip) || !profile_bone(leg.knee) || !profile_bone(leg.foot) || !profile_bone(leg.contact_bone) {return false}}
+        for leg in value.legs {if !profile_bone(leg.hip) || !profile_bone(leg.knee) || !profile_bone(leg.foot) || !profile_bone(leg.contact_bone) {return false}}
     }
     return rig_profiles_check(profile) && curve_poses_check(profile)
 }
@@ -82,8 +83,7 @@ Modifier_Goal :: struct {
     kind:Modifier_Kind,
     slot:u16,
     effector:u8,
-    name:[256]u8,
-    effector_name:[64]u8,
+    name,effector_name:u64,
     target:Spatial_Target,
     position:mm.Vec3,
     weight,fade:f32,
@@ -92,7 +92,7 @@ Modifier_Goal :: struct {
 modifier_goal :: proc(requests:^Animation_Requests,goal:Modifier_Goal) {
     if requests==nil {return}
     goal:=goal
-    if !blend_text_valid(goal.name[:],true) || !blend_text_valid(goal.effector_name[:],true) || goal.kind in MODIFIER_TARGETED && !spatial_target_valid(goal.target) ||
+    if goal.kind in MODIFIER_TARGETED && !spatial_target_valid(goal.target) ||
         goal.rig==core.NONE || goal.slot>=POSE_CONSTRAINTS || goal.kind==.Grounding && goal.slot!=0 || goal.kind==.Multi_IK && int(goal.effector)>=RIG_EFFECTORS || goal.kind==.Spline_IK && int(goal.effector)>=len(SPLINE_CONTROLS) || goal.kind>max(Modifier_Kind) || !profile_vector(goal.position) || !profile_weight(goal.weight) || !finite(goal.fade) || goal.fade<0 {
         core.refuse(&requests.goals)
         return
@@ -102,6 +102,8 @@ modifier_goal :: proc(requests:^Animation_Requests,goal:Modifier_Goal) {
 
 @(storage,free="modifier_runtime_free")
 Modifier_Runtime :: struct {
+    constraints:Animation_Constraints,
+    grounded:Grounding_Runtime,
     ik:core.Table(IK_Constraint),
     look:core.Table(Look_Constraint),
     limits:core.Table(Rotation_Constraint),
@@ -131,6 +133,7 @@ Modifier_Runtime :: struct {
     geometry:u64,
     inputs:[6]u64,
     revisions:[dynamic]u64,
+    profiles:[dynamic]u64,
     goals:[dynamic]Modifier_Goal,
     controls:[dynamic]Modifier_Control_State,
     fades:[dynamic]u32,
@@ -138,11 +141,14 @@ Modifier_Runtime :: struct {
     request_error_rig:core.Entity,
 }
 modifier_runtime_free :: proc(runtime:^Modifier_Runtime) {
+    constraints_free(&runtime.constraints);grounding_free(&runtime.grounded)
     core.table_destroy(&runtime.spline_ik);core.table_destroy(&runtime.correctives);core.table_destroy(&runtime.follow)
     core.table_destroy(&runtime.curve_poses);core.table_destroy(&runtime.curve_drives);core.table_destroy(&runtime.curve_materials);delete(runtime.curve_pose_states);delete(runtime.curve_drive_states);delete(runtime.curve_material_states);delete(runtime.curve_full)
     for &binding in runtime.spline_states {rig_binding_free(&binding)};delete(runtime.spline_states)
     for &binding in runtime.follow_states {rig_binding_free(&binding)};delete(runtime.follow_states)
     delete(runtime.corrective_states)
+    for &config in runtime.multi_ik.values {delete(config.joints,runtime.multi_ik.values.allocator);delete(config.effectors,runtime.multi_ik.values.allocator)}
+    for &config in runtime.grounding.values {delete(config.legs,runtime.grounding.values.allocator)}
     core.table_destroy(&runtime.chain_ik);core.table_destroy(&runtime.twist);core.table_destroy(&runtime.springs);core.table_destroy(&runtime.multi_ik);core.table_destroy(&runtime.retarget_chains)
     for &binding in runtime.chain_states {rig_binding_free(&binding)};delete(runtime.chain_states)
     for &binding in runtime.twist_states {rig_binding_free(&binding)};delete(runtime.twist_states)
@@ -151,14 +157,31 @@ modifier_runtime_free :: proc(runtime:^Modifier_Runtime) {
     for &binding in runtime.retarget_chain_states {rig_binding_free(&binding)};delete(runtime.retarget_chain_states)
     core.table_destroy(&runtime.ik);core.table_destroy(&runtime.look);core.table_destroy(&runtime.limits)
     core.table_destroy(&runtime.grounding);core.table_destroy(&runtime.sockets)
-    delete(runtime.goals);delete(runtime.revisions);delete(runtime.controls);delete(runtime.fades);runtime^={}
+    delete(runtime.goals);delete(runtime.revisions);delete(runtime.profiles);delete(runtime.controls);delete(runtime.fades);runtime^={}
 }
 
 @(private)
 modifier_append :: proc(table:^core.Table($T),entity:core.Entity,value:T) -> bool {
     count:=len(table.values)
     if existing:=core.row_of(table,entity);existing>=0 && existing!=count-1 {return false}
-    return core.table_append(table,entity,value)
+    when T==Multi_IK_Constraint || T==Foot_Grounding {
+        value:=value
+        allocator:=table.values.allocator if table.values.allocator.procedure!=nil else context.allocator
+        error:mem.Allocator_Error
+        when T==Multi_IK_Constraint {
+            value.joints,error=slice.clone(value.joints,allocator)
+            if error!=nil {return false}
+            value.effectors,error=slice.clone(value.effectors,allocator)
+            if error!=nil {delete(value.joints,allocator);return false}
+        } else {
+            value.legs,error=slice.clone(value.legs,allocator)
+            if error!=nil {return false}
+        }
+        if core.table_append(table,entity,value) {return true}
+        when T==Multi_IK_Constraint {delete(value.joints,allocator);delete(value.effectors,allocator)}
+        else {delete(value.legs,allocator)}
+        return false
+    } else {return core.table_append(table,entity,value)}
 }
 
 // The modifiers of the .character of each animated entity, laid out again when an Animation, an
@@ -185,16 +208,17 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:^core.Table(Animat
     for row in 0..<core.count(animations) {
         id:=animation_character(loaded,animations.values[row]);revision:u64
         if id=={} {continue}
-        if content:=character_content(characters,loaded,allocator,id);content!=nil {revision=character_key(core.entity_at(animations,row),id,content.revision)} else if allocation_failed(characters,id) {memory_problem(problems,core.entity_at(animations,row),"its .character");return false}
-        compare_revision(runtime,&revision_row,revision,&revisions_changed)
-    }
-    for &rig in playback.rigs {
-        revision:u64
-        if content:=skeleton_content(skeletons,loaded,allocator,rig.skeleton);content!=nil {revision=content.revision} else if allocation_failed(skeletons,rig.skeleton) {memory_problem(problems,rig.entity,"its skeleton");return false}
+        if content:=character_content(characters,loaded,allocator,id);content!=nil {
+            if !has_modifiers(content.set.pose) {continue}
+            revision=character_key(core.entity_at(animations,row),id,content.revision)
+        } else if allocation_failed(characters,id) {memory_problem(problems,core.entity_at(animations,row),"its .character");return false}
         compare_revision(runtime,&revision_row,revision,&revisions_changed)
     }
     revisions_changed ||= revision_row!=len(runtime.revisions)
-    if !revisions_changed && runtime.inputs.xyzw==headers.xyzw && runtime.inputs[4]!=0 && (core.count(attachments)==0 || runtime.inputs[4]==headers[4]) {runtime.inputs=headers;return true}
+    has_attachments:=core.count(attachments)>0
+    attachments_changed:=runtime.inputs[1]!=headers[1] || runtime.inputs[2]!=headers[2] ||
+        has_attachments && (runtime.inputs[3]!=headers[3] || runtime.inputs[4]!=headers[4])
+    if !revisions_changed && !attachments_changed && runtime.inputs[4]!=0 {runtime.inputs=headers;return true}
     next:=Modifier_Runtime{geometry=runtime.geometry+1,inputs=headers};defer modifier_runtime_free(&next)
     if reserve(&next.revisions,revision_row)!=nil {memory_problem(problems,core.NONE,"the modifiers of the rigs, so none applies");return false}
     next.ik.version,next.look.version,next.limits.version=runtime.ik.version+1,runtime.look.version+1,runtime.limits.version+1
@@ -206,8 +230,9 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:^core.Table(Animat
         id:=animation_character(loaded,animations.values[row])
         if id=={} {continue}
         entity:=core.entity_at(animations,row)
-        content:=character_content(characters,loaded,allocator,id);append(&next.revisions,character_key(entity,id,content.revision) if content!=nil else 0)
+        content:=character_content(characters,loaded,allocator,id)
         if content==nil {
+            append(&next.revisions,u64(0))
             if allocation_failed(characters,id) {memory_problem(problems,entity,"its .character");return false}
             error:=content_error(characters.contents[:],id)
             character_pending ||= error==.Not_Here
@@ -217,19 +242,23 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:^core.Table(Animat
             continue
         }
         pose:=content.set.pose
+        if !has_modifiers(pose) {continue}
+        revision:=character_key(entity,id,content.revision)
+        append(&next.revisions,revision)
+        index:=core.entity_index(entity)
+        if index>=len(next.profiles) && !program_array_resize(&next.profiles,index+1) {
+            memory_problem(problems,entity,"its .character");return false
+        }
+        next.profiles[index]=revision
         add :: proc(table:^core.Table($T),entity:core.Entity,rows:[]T) -> bool {
             for value in rows {value:=value;value.rig=entity;if !modifier_append(table,entity,value) {return false}}
             return true
         }
-        appended:=add(&next.ik,entity,pose.ik) && add(&next.look,entity,pose.look) && add(&next.limits,entity,pose.limits) && (pose.grounding.count==0 || modifier_append(&next.grounding,entity,pose.grounding)) &&
+        appended:=add(&next.ik,entity,pose.ik) && add(&next.look,entity,pose.look) && add(&next.limits,entity,pose.limits) && (len(pose.grounding.legs)==0 || modifier_append(&next.grounding,entity,pose.grounding)) &&
             add(&next.chain_ik,entity,pose.chain_ik) && add(&next.twist,entity,pose.twist) && add(&next.springs,entity,pose.springs) && add(&next.multi_ik,entity,pose.multi_ik) &&
             add(&next.retarget_chains,entity,pose.retarget_chains) && add(&next.spline_ik,entity,pose.spline_ik) && add(&next.correctives,entity,pose.correctives) && add(&next.follow,entity,pose.follow) &&
             add(&next.curve_poses,entity,pose.curve_poses) && add(&next.curve_drives,entity,pose.curve_drives) && add(&next.curve_materials,entity,pose.curve_materials)
         if !appended {memory_problem(problems,entity,"its .character");return false}
-    }
-    for &rig in playback.rigs {
-        content:=skeleton_content(skeletons,loaded,allocator,rig.skeleton);append(&next.revisions,content.revision if content!=nil else 0)
-        if content==nil && allocation_failed(skeletons,rig.skeleton) {memory_problem(problems,rig.entity,"its skeleton");return false}
     }
     for row in 0..<core.count(attachments) {
         entity:=core.entity_at(attachments,row);config:=core.at(attachments,row)
@@ -272,6 +301,9 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:^core.Table(Animat
         }
     }
     if !modifier_controls_prepare(&next,runtime) || reserve(&runtime.goals,len(next.controls))!=nil {memory_problem(problems,core.NONE,"the controls of the modifiers, so none applies");return false}
+    if !modifier_keep_bindings(runtime,&next) {memory_problem(problems,core.NONE,"the modifier state");return false}
+    next.constraints=runtime.constraints;runtime.constraints={}
+    next.grounded=runtime.grounded;runtime.grounded={}
     // A goal stays with its operation; one whose slot now names another goes.
     #reverse for goal,i in runtime.goals {if !modifier_same_goal(runtime,&next,goal) {unordered_remove(&runtime.goals,i)}}
     if character_pending {next.inputs[4]=0}
@@ -286,6 +318,40 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:^core.Table(Animat
         modifier_apply_goal(runtime,goal,problems)
     }
     for &control in runtime.controls {modifier_control_apply(runtime,&control)}
+    return true
+}
+
+@(private)
+has_modifiers :: proc(pose:Pose_Profile) -> bool {
+    return len(pose.ik)+len(pose.look)+len(pose.limits)+len(pose.grounding.legs)+
+        len(pose.chain_ik)+len(pose.twist)+len(pose.springs)+len(pose.multi_ik)+
+        len(pose.retarget_chains)+len(pose.spline_ik)+len(pose.correctives)+len(pose.follow)+
+        len(pose.curve_poses)+len(pose.curve_drives)+len(pose.curve_materials)>0
+}
+
+@(private)
+modifier_keep_bindings :: proc(previous,next:^Modifier_Runtime) -> bool {
+    room :: proc(old,next:^[dynamic]$B,configs:^core.Table($C)) -> bool {
+        return len(old^)==0 || len(configs.values)==0 || program_array_resize(next,len(configs.values))
+    }
+    if !room(&previous.spring_states,&next.spring_states,&next.springs) ||
+        !room(&previous.follow_states,&next.follow_states,&next.follow) {return false}
+    move :: proc(old,next:^[dynamic]$B,configs:^core.Table($C),previous,current:^Modifier_Runtime) {
+        if len(next^)==0 {return}
+        for &binding in old {
+            if !binding.ready {continue}
+            index:=core.entity_index(binding.rig)
+            if index>=len(previous.profiles) || index>=len(current.profiles) ||
+                previous.profiles[index]!=current.profiles[index] {continue}
+            row:=rig_slot_row(configs,binding.rig,binding.diagnostic.slot)
+            if row<0 {continue}
+            next^[row]=binding
+            next^[row].geometry=current.geometry
+            binding={}
+        }
+    }
+    move(&previous.spring_states,&next.spring_states,&next.springs,previous,next)
+    move(&previous.follow_states,&next.follow_states,&next.follow,previous,next)
     return true
 }
 
@@ -331,7 +397,7 @@ modifier_apply_goal :: proc(runtime:^Modifier_Runtime,goal:Modifier_Goal,problem
             }
         }
     case .Grounding:
-        if row:=rig_slot_row(&runtime.grounding,goal.rig,goal.slot);row>=0 {value:=&runtime.grounding.values[row];if value.global_contact!=goal.weight || value.enabled!=active {out:=core.edit_at(&runtime.grounding,row);out.global_contact,out.enabled=goal.weight,active}}
+        if row:=rig_slot_row(&runtime.grounding,goal.rig,goal.slot);row>=0 {value:=&runtime.grounding.values[row];if value.global_contact!=goal.weight || value.enabled!=active {out:=&runtime.grounding.values[row];out.global_contact,out.enabled=goal.weight,active}}
     case .Limit:
         if row:=rig_slot_row(&runtime.limits,goal.rig,goal.slot);row>=0 {value:=&runtime.limits.values[row];if value.enabled!=active || value.weight!=scaled {out:=core.edit_at(&runtime.limits,row);out.enabled,out.weight=active,scaled}}
     case .Chain_IK,.Twist,.Spring,.Multi_IK,.Chain_Retarget,.Spline_IK,.Corrective,.Follow:
@@ -343,7 +409,7 @@ modifier_take :: proc(runtime:^Modifier_Runtime,requests:^Animation_Requests,pro
         goal:=goal
         if error:=modifier_goal_resolve(runtime,&goal);error!=.None {
             modifier_request_rejected(runtime,goal.rig,error)
-            modifier_name_problem(problems,goal.rig,goal.kind,goal.name[:],goal.effector_name[:],error)
+            modifier_name_problem(problems,goal.rig,goal.kind,goal.name,goal.effector_name,error)
             continue
         }
         if modifier_control_state(runtime,goal.rig,goal.kind,goal.slot)==nil {
@@ -375,7 +441,7 @@ animation_prepare :: proc(animations:^core.Table(Animation,.Read),
 }
 
 @(step="fixed",loops="game editor",stage="simulate")
-animation_sample :: proc(animations:^core.Table(Animation,.Read),progress:^core.Table(Animation_Progress),
+animation_sample :: proc(animations:^core.Table(Animation,.Read),progress:^core.Table(Animation_Progress,.Read),
     played:^core.Table(Animation_Played),transforms:^core.Table(core.Transform),
     parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),
     names:^core.Table(core.Name,.Read),targets:^core.Table(Animation_Target,.Read),
@@ -387,13 +453,19 @@ animation_sample :: proc(animations:^core.Table(Animation,.Read),progress:^core.
     budget:Animation_Budget_Config) {
     if !playback.prepared {playback.frame+=1;return}
     modifier_take(runtime,requests,problems,0)
-    animation_tick(animations,transforms,parents,hierarchy,names,requests,events,targets,playback,app,time,frame,skeletons,problems,characters,actions,motion,content_sources,remotes,played,paces,clock,budget,core.read(progress))
-    if time.playing {progress_write(progress,animations,playback)}
+    animation_tick(animations,transforms,parents,hierarchy,names,requests,events,targets,playback,app,time,frame,skeletons,problems,characters,actions,motion,content_sources,remotes,played,paces,clock,budget,progress)
+}
+
+playback_save_prepare :: proc(playback:^Playback,world:core.World_Ref) -> bool {
+    if playback.previewed {return true}
+    progress:=core.world_table_of(world,Animation_Progress)
+    animations:=core.world_table_of(world,Animation)
+    return progress==nil || animations==nil || progress_write(progress,animations,playback)
 }
 
 // Where each clip is, for a saved game; an entity that lost its Animation loses it.
 @(private)
-progress_write :: proc(progress:^core.Table(Animation_Progress),animations:^core.Table(Animation,$A),playback:^Playback) {
+progress_write :: proc(progress:^core.Table(Animation_Progress),animations:^core.Table(Animation,$A),playback:^Playback) -> bool {
     for row in 0..<core.count(progress) {
         if e:=core.entity_at(progress,row);!core.has(animations,e) {core.remove(progress,e)}
     }
@@ -404,17 +476,18 @@ progress_write :: proc(progress:^core.Table(Animation_Progress),animations:^core
         state:=constraint_playing(playback,e)
         now:=Animation_Progress{time=clip_time,selection=state.selection,speed=state.speed,playing=state.playing}
         if at:=core.row_of(progress,e);at<0 {
-            core.add(progress,e,now)
+            if !core.add(progress,e,now) {return false}
         } else if core.at(progress,at)!=now {
             core.edit_at(progress,at)^=now
         }
     }
+    return true
 }
 
 @(step="fixed",loops="game editor",stage="react",after="animation_sample animation_fields")
-animation_advance :: proc(transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read),worlds:^core.Table(core.World_Transform,.Read),requests:^Animation_Requests,runtime:^Modifier_Runtime,playback:^Playback,constraints:^Animation_Constraints,grounding:^Grounding_Runtime,world:core.World_Ref,queries:core.Ref(core.World_Queries),time:core.Time,skeletons:core.Ref(Skeleton_Assets),problems:^core.Problems,motion:^Motion_Runtime,characters:^Character_Assets,verticals:^core.Table(core.Vertical,.Read),paces:^core.Table(core.Own_Pace,.Read),clock:core.Clock,places:^core.Places) {
+animation_advance :: proc(transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read),worlds:^core.Table(core.World_Transform,.Read),requests:^Animation_Requests,runtime:^Modifier_Runtime,playback:^Playback,world:core.World_Ref,queries:core.Ref(core.World_Queries),time:core.Time,skeletons:core.Ref(Skeleton_Assets),problems:^core.Problems,motion:^Motion_Runtime,characters:^Character_Assets,verticals:^core.Table(core.Vertical,.Read),paces:^core.Table(core.Own_Pace,.Read),clock:core.Clock,places:^core.Places) {
     modifier_take(runtime,requests,problems,time.dt)
     inputs:=Constraint_Inputs{core.read(&runtime.ik),core.read(&runtime.look),core.read(&runtime.limits),core.read(&runtime.sockets),worlds,runtime.geometry,skeletons.ptr,problems}
     ground_inputs:=Grounding_Inputs{core.read(&runtime.grounding),core.world_query(world,queries),core.read(transforms),parents,runtime.geometry,problems,verticals}
-    animation_finish(playback,inputs,constraints,transforms,parents,time.dt,grounding,ground_inputs,runtime,motion,characters,core.take(&requests.final_poses),paces,clock,places)
+    animation_finish(playback,inputs,&runtime.constraints,transforms,parents,time.dt,&runtime.grounded,ground_inputs,runtime,motion,characters,core.take(&requests.final_poses),paces,clock,places)
 }

@@ -284,7 +284,7 @@ gallery_ik_target :: proc(item:Animation_Gallery) -> mm.Vec3 {
 }
 
 @(step="fixed",stage="react")
-gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.Table(core.Transform),characters:^core.Table(phys.Character_State,.Read),moving:^core.Table(core.Motion,.Read),events:core.Ref(anim.Animation_Events),playback:core.Ref(anim.Playback),grounding:core.Ref(anim.Grounding_Runtime),modifiers:core.Ref(anim.Modifier_Runtime),time:core.Time,panel:^Gallery_UI) {
+gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.Table(core.Transform),characters:^core.Table(phys.Character_State,.Read),moving:^core.Table(core.Motion,.Read),events:core.Ref(anim.Animation_Events),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime),time:core.Time,panel:^Gallery_UI) {
     if !time.playing {return}
     feet:=&modifiers.grounding
     commands:=panel.commands[:panel.count]
@@ -339,30 +339,30 @@ gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.
                 if config,present:=core.get(feet,entity);present && config.global_contact!=0 {item.diagnostics.airborne_contact_violations+=1}
             }
         }
-        for &record in grounding.records {
+        for &record in modifiers.grounded.records {
             if record.rig!=entity || record.count<=0 {continue}
             for target,i in record.targets[:record.count] {
                 for &pose in playback.states {
                     if pose.entity!=entity || !pose.pose_ready {continue}
                     bone:=record.bones[i][2]
-                    if bone<0 || bone>=len(pose.world) {continue}
+                    if bone<0 || bone>=len(anim.playing_pose(&pose,.World)) {continue}
                     if record.mode==.Animated && !record.placements[i].anchor.active {
                         if config,present:=core.get(feet,entity);present {
                             leg:=config.legs[i]
                             offset:=leg.contact_offset if leg.contact_bone!={} else leg.sole_height
-                            clearance:=linalg.dot(record.previous[i].position-pose.world[0].position,linalg.normalize0(config.up))-offset
+                            clearance:=linalg.dot(record.previous[i].position-anim.playing_pose(&pose,.World)[0].position,linalg.normalize0(config.up))-offset
                             if config.global_contact>=.8 && leg.contact>=.8 && clearance>.06 {item.diagnostics.swing_samples+=1;item.diagnostics.leg_swing_samples[i]+=1}
                         }
                     }
                     if target.weight<.8 {continue}
                     item.diagnostics.foot_samples+=1
-                    item.diagnostics.foot_error_max=max(item.diagnostics.foot_error_max,linalg.length(pose.world[bone].position-target.position))
+                    item.diagnostics.foot_error_max=max(item.diagnostics.foot_error_max,linalg.length(anim.playing_pose(&pose,.World)[bone].position-target.position))
                     locked:=!record.legs[i].swinging && record.legs[i].anchor.active && record.legs[i].weight>=.99 if record.mode==.Procedural else record.placements[i].anchor.active && record.placements[i].weight>=.99
                     if locked && target.weight>=.99 {
-                        error:=linalg.length(pose.world[bone].position-target.position)
+                        error:=linalg.length(anim.playing_pose(&pose,.World)[bone].position-target.position)
                         item.diagnostics.stable_foot_samples+=1;item.diagnostics.stable_foot_error_max=max(item.diagnostics.stable_foot_error_max,error)
                         item.diagnostics.leg_stable_samples[i]+=1;item.diagnostics.leg_stable_error_max[i]=max(item.diagnostics.leg_stable_error_max[i],error)
-                        rotation_error:=mm.quat_angle(pose.world[bone].rotation,record.rotations[i])
+                        rotation_error:=mm.quat_angle(anim.playing_pose(&pose,.World)[bone].rotation,record.rotations[i])
                         item.diagnostics.stable_foot_rotation_error_max=max(item.diagnostics.stable_foot_rotation_error_max,rotation_error)
                         item.diagnostics.leg_stable_rotation_error_max[i]=max(item.diagnostics.leg_stable_rotation_error_max[i],rotation_error)
                     }

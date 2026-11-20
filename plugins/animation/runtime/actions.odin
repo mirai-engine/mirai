@@ -651,7 +651,7 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
         if definition.root_motion!=.None && valid {
             // The stack has one root: an action moves the root bone of its base.
             root:=clip_root(content,handle)
-            if !(root.translation || root.rotation) || root.bone=={} || bone_resolve(state,root.bone)<0 {valid,cause=false,"it has root motion and its clip has none, or its root bone is not in this rig"} else if (state.root.translation || state.root.rotation) && state.root.bone!=root.bone {valid,cause=false,"its root bone is not the one the base of the Animation moves"}
+            if !(root.translation || root.rotation) || root.bone==0 || bone_find(state,root.bone)<0 {valid,cause=false,"it has root motion and its clip has none, or its root bone is not in this rig"} else if (state.root.translation || state.root.rotation) && state.root.bone!=root.bone {valid,cause=false,"its root bone is not the one the base of the Animation moves"}
         }
         for &section,k in profile.sections {
             if section.action!=u16(slot.action) {continue}

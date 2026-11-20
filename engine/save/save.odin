@@ -454,6 +454,8 @@ capture :: proc(w:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator
     if ids==nil {return .Failed}
     es:=core.world_entities(w)
     core.world_settle(w)
+    if !core.world_prepare_save(w) {return .Failed}
+    core.world_settle(w)
 
     present:=make([]bool,core.entities_capacity(es),context.temp_allocator)
     for &t in w.info.tables {

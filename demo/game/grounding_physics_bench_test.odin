@@ -16,11 +16,11 @@ when #config(MIRAI_BENCH,false) {
 @(private="file")
 grounding_bench_fixture :: proc(f:^Grounding_Fixture,t:^testing.T,bones,legs:int,mode:anim.Grounding_Mode) -> bool {
     grounding_fixture_init(f,t,.12 if legs==2 else f32(0))
-    if legs==8 {grounding_spider_step_fixture(f,t);f.state.local[0].position={-.8,-.05,0}}
+    if legs==8 {grounding_spider_step_fixture(f,t);anim.playing_pose(&f.state,.Local)[0].position={-.8,-.05,0}}
     count:=len(f.state.parents)
     parents:[26]i32;targets:[26]u64;poses:[26]mm.Transform
     order,inverse:[26]int
-    copy(parents[:],f.state.parents[:]);copy(targets[:],f.state.targets[:]);copy(poses[:],f.state.local[:])
+    copy(parents[:],f.state.parents[:]);copy(targets[:],f.state.targets[:]);copy(poses[:],anim.playing_pose(&f.state,.Local)[:])
     order[0],order[1]=0,1
     for leg in 0..<legs {for joint in 0..<3 {order[2+joint*legs+leg]=2+leg*3+joint}}
     for old,i in order[:count] {inverse[old]=i}
@@ -28,16 +28,16 @@ grounding_bench_fixture :: proc(f:^Grounding_Fixture,t:^testing.T,bones,legs:int
         parent:=parents[old]
         f.state.parents[i]=i32(inverse[parent]) if parent>=0 else -1
         f.state.targets[i]=targets[old]
-        f.state.rest[i],f.state.local[i]=poses[old],poses[old]
+        f.state.rest[i],anim.playing_pose(&f.state,.Local)[i]=poses[old],poses[old]
     }
     for bone in count..<bones {
         parent:=(bone-count)%count
         pose:=mm.Transform{{.013,f32(bone%3)*.009,-.007},mm.quat_axis_angle({0,1,0},f32(bone%5)*.03),{1.01,.97,1.02}}
         append(&f.state.parents,i32(parent));append(&f.state.targets,base.name_hash(fmt.tprintf("detail.%d",bone)))
-        append(&f.state.rest,pose);append(&f.state.local,pose);append(&f.state.world,pose)
+        append(&f.state.rest,pose);anim.playing_pose_resize(&f.state,len(f.state.rest));anim.playing_pose(&f.state,.Local)[len(f.state.rest)-1]=pose;anim.playing_pose(&f.state,.World)[len(f.state.rest)-1]=pose
     }
     core.edit(&f.configs,f.rig).mode=mode
-    return lib.pose_world(f.state.parents[:],f.state.local[:],f.state.world[:])
+    return lib.pose_world(f.state.parents[:],anim.playing_pose(&f.state,.Local)[:],anim.playing_pose(&f.state,.World)[:])
 }
 
 @(private="file")
@@ -67,33 +67,33 @@ bench_grounding_pose_recomposition_scaling :: proc(t:^testing.T) {
                 if !testing.expect(t,grounding_bench_fixture(&f,t,bones,legs,mode)) {grounding_fixture_free(&f);return}
                 defer grounding_fixture_free(&f)
                 source_local,source_world:[256]mm.Transform
-                copy(source_local[:],f.state.local[:]);copy(source_world[:],f.state.world[:])
+                copy(source_local[:],anim.playing_pose(&f.state,.Local)[:]);copy(source_world[:],anim.playing_pose(&f.state,.World)[:])
                 inputs:=grounding_fixture_inputs(&f)
                 for _ in 0..<32 {
-                    copy(f.state.local[:],source_local[:bones]);copy(f.state.world[:],source_world[:bones])
+                    copy(anim.playing_pose(&f.state,.Local)[:],source_local[:bones]);copy(anim.playing_pose(&f.state,.World)[:],source_world[:bones])
                     if !testing.expect(t,anim.grounding_apply(&f.state,&f.cache,inputs,1.0/60)) {return}
                 }
-                copy(f.state.local[:],source_local[:bones]);copy(f.state.world[:],source_world[:bones])
+                copy(anim.playing_pose(&f.state,.Local)[:],source_local[:bones]);copy(anim.playing_pose(&f.state,.World)[:],source_world[:bones])
                 if !testing.expect(t,anim.grounding_apply(&f.state,&f.cache,inputs,0)) {return}
-                expected_local:=grounding_bench_pose_hash(f.state.local[:])
-                expected_world:=grounding_bench_pose_hash(f.state.world[:])
+                expected_local:=grounding_bench_pose_hash(anim.playing_pose(&f.state,.Local)[:])
+                expected_world:=grounding_bench_pose_hash(anim.playing_pose(&f.state,.World)[:])
                 allocations:=track.total_allocation_count
                 best:=max(time.Duration);stable:=true;sink:f32
                 saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
                 for _ in 0..<5 {
                     start:=time.tick_now()
                     for _ in 0..<REPEATS {
-                        copy(f.state.local[:],source_local[:bones]);copy(f.state.world[:],source_world[:bones])
+                        copy(anim.playing_pose(&f.state,.Local)[:],source_local[:bones]);copy(anim.playing_pose(&f.state,.World)[:],source_world[:bones])
                         stable &&=anim.grounding_apply(&f.state,&f.cache,inputs,0)
-                        sink+=f.state.world[bones-1].position.y
+                        sink+=anim.playing_pose(&f.state,.World)[bones-1].position.y
                     }
                     best=min(best,time.tick_since(start))
                 }
                 context=saved
                 testing.expect(t,stable && f.problems.count==0)
                 testing.expect_value(t,track.total_allocation_count,allocations)
-                testing.expect_value(t,grounding_bench_pose_hash(f.state.local[:]),expected_local)
-                testing.expect_value(t,grounding_bench_pose_hash(f.state.world[:]),expected_world)
+                testing.expect_value(t,grounding_bench_pose_hash(anim.playing_pose(&f.state,.Local)[:]),expected_local)
+                testing.expect_value(t,grounding_bench_pose_hash(anim.playing_pose(&f.state,.World)[:]),expected_world)
                 log.infof("grounding: %d bones / %d legs / %v: %.2f ns/tick, local=%x world=%x check=%v",bones,legs,mode,f64(time.duration_nanoseconds(best))/REPEATS,expected_local,expected_world,sink)
             }
         }

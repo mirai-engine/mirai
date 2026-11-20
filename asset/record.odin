@@ -186,12 +186,13 @@ asset_decoder :: proc(a:^Asset) -> (decoder:^Decoder,error:Error) {
     return decoder,.None
 }
 
-@(private)
+// Allocates a buffer that is released when the asset closes.
 asset_alloc :: proc(a:^Asset,size:int,alignment:int) -> (block:[]u8,error:Error) {
+    if a==nil || size<0 || alignment<=0 || alignment&(alignment-1)!=0 {return nil,.Invalid}
     if size==0 {return nil,.None}
     bytes,alloc_error:=mem.alloc_bytes_non_zeroed(size,max(alignment,16),a.allocator)
     if alloc_error!=nil {return nil,.Out_Of_Memory}
-    append(&a.owned,bytes)
+    if append(&a.owned,bytes)!=1 {delete(bytes,a.allocator);return nil,.Out_Of_Memory}
     return bytes,.None
 }
 

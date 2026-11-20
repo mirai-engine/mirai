@@ -112,7 +112,7 @@ mirai_animation :: proc(o:^Out,model:^importer.Imported_Model) -> (id:base.Asset
 @(private)
 mirai_feet :: proc(model:^importer.Imported_Model) -> anim.Foot_Grounding {
     // Its body and legs are those of the body of its skeleton.
-    feet:=anim.FOOT_GROUNDING_DEFAULT;feet.count=2
+    feet:=anim.FOOT_GROUNDING_DEFAULT;feet.legs=make([]anim.Grounded_Leg,2,context.temp_allocator)
     feet.global_contact=0;feet.max_rise=.15;feet.trace_above=.55;feet.trace_below=.9;feet.blend_time=.08
     bones:=model.skeletons[0].bones
     rest:=make([]mm.Transform,len(bones),context.temp_allocator)

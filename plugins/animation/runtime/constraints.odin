@@ -62,7 +62,7 @@ Bone_Binding :: struct {
 }
 BONE_BINDING_DEFAULT :: Bone_Binding{offset=mm.TRANSFORM_IDENTITY,enabled=true}
 
-Root_Motion :: struct {bone:Bone_Ref,translation,rotation,in_place:bool}
+Root_Motion :: struct {bone:u64,translation,rotation,in_place:bool}
 ROOT_MOTION_DEFAULT :: Root_Motion{translation=true,rotation=true,in_place=true}
 
 Root_Delta :: struct {
@@ -92,7 +92,6 @@ Constraint_Rig :: struct {
     generation:u32,
 }
 
-@(storage,free="constraints_free")
 Animation_Constraints :: struct {
     rigs:[dynamic]Constraint_Rig,
     stamps:[4]u64,
@@ -101,9 +100,7 @@ Animation_Constraints :: struct {
 
 root_motion_sample :: proc(library:^lib.Library,fader:lib.Fader,config:Root_Motion,dt:f32,target:u64=0,current_dt:f32=-1) -> Root_Delta {
     target:=target
-    hash,valid:=bone_ref_hash(config.bone)
-    if !valid {return ROOT_DELTA_DEFAULT}
-    if target==0 {target=hash}
+    if target==0 {target=config.bone}
     position,rotation:=lib.fader_root_motion(library,fader,target,dt,current_dt)
     return {position if config.translation else mm.Vec3{},rotation if config.rotation else mm.Quat(1)}
 }
@@ -114,7 +111,7 @@ constraint_count :: proc "contextless" (rows:^core.Table($T,$A)) -> int {return 
 constraint_stamp :: proc "contextless" (rows:^core.Table($T,$A)) -> u64 {return core.version(rows)+core.layout(rows)+1 if rows!=nil else 0}
 @(private)
 constraint_bone :: proc "contextless" (state:^Playing,target:u64) -> int {
-    for name,i in state.targets {if name==target {return i}}
+    for name,i in playing_topology(state).targets {if name==target {return i}}
     return -1
 }
 @(private)
@@ -200,7 +197,7 @@ constraint_problem :: proc(problems:^core.Problems,e:core.Entity,kind:Modifier_K
 }
 
 constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_Inputs,cache:^Animation_Constraints,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read),dt:f32,grounding:^Grounding_Runtime=nil,ground_inputs:Grounding_Inputs={},rig_runtime:^Modifier_Runtime=nil,motion:^Motion_Runtime=nil,characters:^Character_Assets=nil,final_poses:[]Pose_Request=nil) {
-    if len(state.local)==0 || !constraints_prepare(cache,inputs) {return}
+    if len(playing_pose(state,.Local))==0 || !constraints_prepare(cache,inputs) {return}
     skeleton:=playing_skeleton(state)
     index:=core.entity_index(state.entity)
     rig:^Constraint_Rig
@@ -212,7 +209,7 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
     chained:=rig_runtime!=nil && rigs_retarget(state,playback,rig_runtime,problems)
     // A root bound to the entity keeps, on the channels its base keeps in place, where the owner of
     // its Transform put it after the pose was sampled.
-    if state.root.in_place {if bone,reference,ok:=animation_root_reference(state,state.root,state.local[:],transforms);ok && bone==0 {state.local[0]=reference}}
+    if state.root.in_place {if bone,reference,ok:=animation_root_reference(state,state.root,playing_pose(state,.Local),transforms);ok && bone==0 {playing_pose(state,.Local)[0]=reference}}
     parent_world:=mm.TRANSFORM_IDENTITY
     if parents!=nil {
         if parent,ok:=core.get(parents,state.entity);ok && parent.entity!=core.NONE {
@@ -231,7 +228,7 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
     }
     followed:=state.leader!=core.NONE && !chained && leader_follow(state,playback,inputs,transforms,parents,parent_world)
     curve_poses_apply(state,playback,rig_runtime,followed,problems)
-    if !lib.pose_world(skeleton.parents,state.local[:],state.world[:],parent_world) {pose_problem(problems,state.entity);return}
+    if !lib.pose_world(skeleton.parents,playing_pose(state,.Local),playing_pose(state,.World),parent_world) {pose_problem(problems,state.entity);return}
     if motion!=nil {
         if instance:=motion_instance(motion,state.entity);instance!=nil {
             actor,ok:=constraint_world(transforms,parents,inputs.worlds,state.entity)
@@ -251,18 +248,18 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
         root,joint,end:=rig.bones[0][at][0],rig.bones[0][at][1],rig.bones[0][at][2]
         target,ok:=spatial_target_sample(config.target,&rig.targets[0][at],playback,inputs.skeletons,transforms,parents,inputs.worlds)
         if !ok {constraint_problem(problems,state.entity,.IK,at,.Target);if rig_runtime!=nil {modifier_request_rejected(rig_runtime,state.entity,.Missing_Target)};continue}
-        held:=state.local[end].rotation if end>=0 && end<len(state.local) else 1
-        if !lib.skeleton_ik(skeleton,state.local[:],state.world[:],root,joint,end,target.position,config.pole,config.weight,parent_world,config.reach) {constraint_problem(problems,state.entity,.IK,at,.Solve);continue}
+        held:=playing_pose(state,.Local)[end].rotation if end>=0 && end<len(playing_pose(state,.Local)) else 1
+        if !lib.skeleton_ik(skeleton,playing_pose(state,.Local),playing_pose(state,.World),root,joint,end,target.position,config.pole,config.weight,parent_world,config.reach) {constraint_problem(problems,state.entity,.IK,at,.Solve);continue}
         if config.hold!=.World {
-            if config.hold==.Joint {state.local[end].rotation=mm.quat_slerp(state.local[end].rotation,held,config.weight)} else {
-                parent:=state.parents[end]
-                rotation:=mm.quat_slerp(state.world[end].rotation,target.rotation,config.weight)
-                state.local[end].rotation=conj(state.world[parent].rotation if parent>=0 else parent_world.rotation)*rotation
+            if config.hold==.Joint {playing_pose(state,.Local)[end].rotation=mm.quat_slerp(playing_pose(state,.Local)[end].rotation,held,config.weight)} else {
+                parent:=playing_topology(state).parents[end]
+                rotation:=mm.quat_slerp(playing_pose(state,.World)[end].rotation,target.rotation,config.weight)
+                playing_pose(state,.Local)[end].rotation=conj(playing_pose(state,.World)[parent].rotation if parent>=0 else parent_world.rotation)*rotation
             }
-            if !lib.pose_world(skeleton.parents,state.local[:],state.world[:],parent_world) {pose_problem(problems,state.entity);continue}
+            if !lib.pose_world(skeleton.parents,playing_pose(state,.Local),playing_pose(state,.World),parent_world) {pose_problem(problems,state.entity);continue}
         }
-        diagnostic.residual=linalg.length(state.world[end].position-target.position)
-        diagnostic.angular_error=mm.quat_angle(state.world[end].rotation,target.rotation) if config.hold==.Target else 0
+        diagnostic.residual=linalg.length(playing_pose(state,.World)[end].position-target.position)
+        diagnostic.angular_error=mm.quat_angle(playing_pose(state,.World)[end].rotation,target.rotation) if config.hold==.Target else 0
         diagnostic.reached=diagnostic.residual<=.001 && diagnostic.angular_error<=.001
         diagnostic.valid=true
     }
@@ -278,19 +275,19 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
             binding:Spatial_Target_Binding
             if from,found:=spatial_target_sample(config.from,&binding,playback,inputs.skeletons,transforms,parents,inputs.worlds);found {target.position=mm.lerp(target.position,from.position,config.turning)}
         }
-        direction:=target.position-state.world[bone].position
+        direction:=target.position-playing_pose(state,.World)[bone].position
         rotation:mm.Quat;valid:bool
-        if config.use_up {rotation,valid=lib.aim_at(state.world[bone].rotation,config.forward,direction,config.up,config.world_up,config.max_angle,config.weight,config.offset)} else {rotation,valid=lib.look_at(state.world[bone].rotation,config.forward,direction,config.max_angle,config.weight,config.offset)}
+        if config.use_up {rotation,valid=lib.aim_at(playing_pose(state,.World)[bone].rotation,config.forward,direction,config.up,config.world_up,config.max_angle,config.weight,config.offset)} else {rotation,valid=lib.look_at(playing_pose(state,.World)[bone].rotation,config.forward,direction,config.max_angle,config.weight,config.offset)}
         if !valid {
             core.report(problems,state.entity,"animation.constraint_solve","Look %d of the .character of this rig cannot aim: its forward or up axis is zero or not finite, or its target is where the bone is or nearer the bone than its offset; give it axes and a target beyond its offset",at)
             continue
         }
-        parent:=state.parents[bone]
-        state.local[bone].rotation=conj(state.world[parent].rotation if parent>=0 else parent_world.rotation)*rotation
-        if !lib.pose_world(skeleton.parents,state.local[:],state.world[:],parent_world) {pose_problem(problems,state.entity);continue}
+        parent:=playing_topology(state).parents[bone]
+        playing_pose(state,.Local)[bone].rotation=conj(playing_pose(state,.World)[parent].rotation if parent>=0 else parent_world.rotation)*rotation
+        if !lib.pose_world(skeleton.parents,playing_pose(state,.Local),playing_pose(state,.World),parent_world) {pose_problem(problems,state.entity);continue}
         // The residual is how far the aim passes from the target, at its distance.
-        aim:=mm.quat_rotate(state.world[bone].rotation,linalg.normalize0(config.forward))
-        sight:=target.position-mm.transform_point(state.world[bone],config.offset)
+        aim:=mm.quat_rotate(playing_pose(state,.World)[bone].rotation,linalg.normalize0(config.forward))
+        sight:=target.position-mm.transform_point(playing_pose(state,.World)[bone],config.offset)
         diagnostic.angular_error=math.atan2(linalg.length(linalg.cross(aim,sight)),linalg.dot(aim,sight))
         diagnostic.residual=linalg.length(sight-aim*linalg.length(sight))
         diagnostic.reached=diagnostic.angular_error<=.001
@@ -303,21 +300,21 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
         if !config.enabled || config.weight<=0 {continue}
         bone:=rig.bones[2][at][0]
         if bone<0 {constraint_problem(problems,state.entity,.Limit,at,.Bind,config.bone);continue}
-        rotation,ok:=lib.rotation_limit(state.local[bone].rotation,config.reference,{config.axis,config.max_swing,config.min_twist,config.max_twist})
+        rotation,ok:=lib.rotation_limit(playing_pose(state,.Local)[bone].rotation,config.reference,{config.axis,config.max_swing,config.min_twist,config.max_twist})
         if ok {
-            state.local[bone].rotation=mm.quat_slerp(state.local[bone].rotation,rotation,config.weight);limited=true
+            playing_pose(state,.Local)[bone].rotation=mm.quat_slerp(playing_pose(state,.Local)[bone].rotation,rotation,config.weight);limited=true
         } else {
             core.report(problems,state.entity,"animation.constraint_solve","Limit %d of the .character of this rig cannot limit bone '%s': its axis is zero or not finite, or min_twist is above max_twist; fix it in the .character",at,base.text_get(config.bone.path[:]))
         }
     }
-    if limited && !lib.pose_world(skeleton.parents,state.local[:],state.world[:],parent_world) {pose_problem(problems,state.entity);return}
+    if limited && !lib.pose_world(skeleton.parents,playing_pose(state,.Local),playing_pose(state,.World),parent_world) {pose_problem(problems,state.entity);return}
     final_pose_apply(state,playback,parent_world,final_poses,problems)
     for row,at in rig.rows[3] {
         config:=core.at(inputs.sockets,row)
         if !config.enabled {continue}
         entity:=core.entity_at(inputs.sockets,row)
         bone:=rig.bones[3][at][0]
-        transform,ok:=lib.skeleton_socket(state.world[:],bone,config.offset)
+        transform,ok:=lib.skeleton_socket(playing_pose(state,.World),bone,config.offset)
         if !ok {
             core.report(problems,entity,"animation.socket_bone","this Bone_Attachment hangs from bone '%s', which the skeleton of rig 0x%016x does not have; name a bone or socket of that skeleton",base.text_get(config.bone.path[:]),u64(state.entity))
             continue
@@ -325,7 +322,7 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
         if parents!=nil {
             if parent,found:=core.get(parents,entity);found && parent.entity!=core.NONE {
                 socket_parent,parent_ok:=constraint_world(transforms,parents,inputs.worlds,parent.entity)
-                for binding,j in state.bindings {if binding.entity==parent.entity {socket_parent=state.world[j];parent_ok=true;break}}
+                for binding,j in state.bindings {if binding.entity==parent.entity {socket_parent=playing_pose(state,.World)[j];parent_ok=true;break}}
                 if !parent_ok {
                     core.report(problems,entity,"animation.socket_parent","this Bone_Attachment cannot be placed: its parent 0x%016x or one above it has no Transform; give them one",u64(parent.entity))
                     continue
@@ -345,7 +342,7 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
             continue
         }
         output^=core.from_math(transform)
-        for binding,j in state.bindings {if binding.entity==entity {state.local[j]=transform;lib.pose_world(skeleton.parents,state.local[:],state.world[:],parent_world);break}}
+        for binding,j in state.bindings {if binding.entity==entity {playing_pose(state,.Local)[j]=transform;lib.pose_world(skeleton.parents,playing_pose(state,.Local),playing_pose(state,.World),parent_world);break}}
     }
 }
 
@@ -353,8 +350,8 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
 // pinned to its reference (root_reference); the other channels are those of pose.
 animation_root_reference :: proc(state:^Playing,root:Root_Motion,pose:[]mm.Transform,transforms:^core.Table(core.Transform,$A)) -> (bone:int,reference:mm.Transform,ok:bool) {
     if state==nil {return -1,mm.TRANSFORM_IDENTITY,false}
-    bone=bone_resolve(state,root.bone)
-    if bone<0 || bone>=len(pose) || bone>=len(state.rest) {return -1,mm.TRANSFORM_IDENTITY,false}
+    bone=bone_find(state,root.bone)
+    if bone<0 || bone>=len(pose) || bone>=len(playing_topology(state).rest) {return -1,mm.TRANSFORM_IDENTITY,false}
     reference=pose[bone]
     if !root.in_place {return bone,reference,true}
     pinned:=root_reference(state,bone,transforms)

@@ -19,6 +19,20 @@ import "mirai:std/serial"
 import stbi "vendor:stb/image"
 
 @(private)
+@(component)
+Capture_Value :: struct {value:u32}
+
+@(storage,save_prepare="capture_value_prepare")
+Capture_Source :: struct {entity:core.Entity,value:u32,reject:bool}
+
+capture_value_prepare :: proc(source:^Capture_Source,world:core.World_Ref) -> bool {
+    if source.reject {return false}
+    if source.entity==core.NONE {return true}
+    table:=core.world_table_of(world,Capture_Value)
+    return table!=nil && core.add(table,source.entity,{source.value})
+}
+
+@(private)
 @(test_world)
 Save_Test_World :: struct {
     using world:Test_World,
@@ -33,6 +47,8 @@ Save_Test_World :: struct {
     hierarchy:core.Hierarchy,
     root:scene.Scene_Root,
     time:core.Time,
+    capture_source:Capture_Source,
+    capture_values:core.Table(Capture_Value),
 }
 
 // The layout of the World and an application that makes it.
@@ -226,6 +242,29 @@ a_server_saves_what_a_client_simulates_without_the_marks_of_the_session :: proc(
     testing.expect_value(t,core.count(&w.targets),0)
     testing.expect_value(t,w.root.scene,level)
     testing.expect_value(t,w.root.changes,u32(4))
+}
+
+@(test)
+a_slot_capture_prepares_its_saved_components_and_can_be_refused :: proc(t:^testing.T) {
+    f:Save_Test
+    if !save_test_init(t,&f) {return}
+    defer save_test_destroy(&f)
+    w:=f.w
+    e:=core.create(&w.entities)
+    core.add(&w.ids,e,{1})
+    core.add(&w.transforms,e,core.TRANSFORM_IDENTITY)
+    w.capture_source={entity=e,value=21,reject=true}
+    ref:=host.app_world_ref(&f.app,w)
+    out:serial.Writer
+    serial.writer_init(&out)
+    defer serial.writer_destroy(&out)
+    testing.expect_value(t,capture(ref,nil,context.allocator,&out),Error.Failed)
+    testing.expect(t,out.count==0 && !core.has(&w.capture_values,e))
+    w.capture_source.reject=false
+    if !testing.expect_value(t,capture(ref,nil,context.allocator,&out),Error.None) {return}
+    testing.expect_value(t,restore(ref,&f.app,serial.writer_bytes(&out)),Error.None)
+    saved,found:=core.get(&w.capture_values,core.entity_of(&w.entities,1))
+    testing.expect(t,found && saved.value==21 && w.capture_source=={})
 }
 
 // A world of the application with its folder of slots, served frame by frame.

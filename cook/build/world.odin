@@ -34,7 +34,7 @@ import "mirai:std/serial"
 // and the game/ of the project go into World and Shared; the editor and the
 // editor/ of plugins and of the project into Editor_World.
 
-CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,diff,free,replicated,setting,description,queue,keep,persist,single,far,derived,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw,mind,act,was,test_world,editor"
+CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,diff,free,replicated,setting,description,queue,keep,persist,save_prepare,single,far,derived,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw,mind,act,was,test_world,editor"
 
 PHASES :: [7]string{"input","fixed","frame","late","ui","render","release"}
 UI_PHASE :: 4 // where the interfaces are built: the engine and the editor draw in it, a game shows .ui documents
@@ -643,6 +643,10 @@ type_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,decl:^ast.Value_Decl,
     }
     if t.persist && (t.kind!=.Storage || t.place!=.World || t.queue || len(t.logs)>0 || t.setting!=.None || t.copy=="false" || t.reset!="") {
         append(&g.errors,fmt.aprintf("%s: %s says persist: the progress of the player is a plain @(storage,persist) of a library; not a component, a storage of the application, a queue, events, a setting, nor one that resets or is not copied",t.where_,name))
+        return nil
+    }
+    if t.save_prepare!="" && (t.kind!=.Storage || t.place!=.World || t.queue || t.setting!=.None) {
+        append(&g.errors,fmt.aprintf("%s: %s says save_prepare: declare it on a state storage of the World",t.where_,name))
         return nil
     }
     if (t.copy_kept!="" || t.diff!="") && (t.kind!=.Storage || t.place!=.World || t.copy=="false") {
@@ -2465,6 +2469,11 @@ type_procs_write :: proc(w:^strings.Builder,t:^Type,c:string) {
     if t.diff!="" {
         fmt.sbprintf(w,"diff_%s :: proc(a,b:rawptr,buf:[]byte) -> string {{return %s(cast(^%s)a,cast(^%s)b,buf)}}\n",t.field,ref(t.pkg,t.diff),type,type)
         fmt.sbprintf(&list,"%sdiff=diff_%s",strings.builder_len(list)>0?",":"",t.field)
+    }
+    if t.save_prepare!="" {
+        fmt.sbprintf(w,"save_prepare_%s :: proc(value:rawptr,world:%sWorld_Ref) -> bool {{return %s(cast(^%s)value,world)}}\n",
+            t.field,c,ref(t.pkg,t.save_prepare),type)
+        fmt.sbprintf(&list,"%ssave_prepare=save_prepare_%s",strings.builder_len(list)>0?",":"",t.field)
     }
     t.procs=strings.to_string(list)
 }

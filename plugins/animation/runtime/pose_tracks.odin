@@ -24,6 +24,7 @@ Track_Map :: struct {
 
 // What one job blends the clips of a rig in, with room for the bindings of the largest.
 Pose_Scratch :: struct {
+    pose:[dynamic]mm.Transform,
     bones:[dynamic]lib.Bone_Blend,  // by binding
     references:[dynamic]i32,        // three a binding: its tracks of the reference clip of an additive layer
     rig_rotations:[dynamic]mm.Quat, // of a layer blended in the space of the rig: the base, the layer and the blend, by binding
@@ -128,7 +129,7 @@ pose_scratch_prepare :: proc(playback:^Playback,workers,bones:int) -> bool {
     n:=playback.bones_peak
     for &scratch in playback.scratch {
         if len(scratch.bones)>=n {continue}
-        if resize(&scratch.references,3*n)!=nil || resize(&scratch.rig_rotations,3*n)!=nil || resize(&scratch.bones,n)!=nil {return false}
+        if resize(&scratch.pose,3*n)!=nil || resize(&scratch.references,3*n)!=nil || resize(&scratch.rig_rotations,3*n)!=nil || resize(&scratch.bones,n)!=nil {return false}
     }
     return true
 }
@@ -172,7 +173,12 @@ pose_row :: proc(playback:^Playback,row:^Pose_Row,transforms:^core.Table(core.Tr
     state:=&playback.states[row.state]
     content:=&playback.work_contents[row.content-1]
     row.faults=pose_compose(playback,state,content,row.animation,row.programmed,row.dt,core.read(transforms),worker)
-    if row.animation.mirror && !playing_mirror(state,state.local[:]) {row.faults.mirror=true}
+    if row.animation.mirror {
+        if worker<0 || worker>=len(playback.scratch) ||
+            !playing_mirror(state,playing_pose(state,.Local),playback.scratch[worker].pose[:]) {
+            row.faults.mirror=true
+        }
+    }
 }
 
 // The pose and curves of the base and the stack of state, through the inertia of what its slots
@@ -186,24 +192,22 @@ pose_compose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Ani
     if inertia.frame+1!=playback.frame {inertia.kept,inertia.state=0,{}}
     // A blend measures how the pose its slots changed to moves: that pose a tick before is the base
     // then under the layers where their clips were.
-    capture:=state.stack>0 && stack_blending(state.blend) && inertia.kept>0 && dt>0 && len(inertia.before)==len(state.local)
+    _,_,before,_:=inertia_poses(inertia)
+    capture:=state.stack>0 && stack_blending(state.blend) && inertia.kept>0 && dt>0 && len(before)==len(playing_pose(state,.Local))
     if programmed {
         runtime:=&state.program
         if !program_pose(playback,state,content,animation,&runtime.output,worker) {faults.program=true;return}
-        capture &&=runtime.history_dt>0 && len(runtime.history)==len(state.local)
-        if capture {copy(inertia.before[:],runtime.history[:])}
+        capture=false
         if root:=runtime.root;runtime.has_root && root.in_place {
-            if bone,reference,ok:=animation_root_reference(state,root,state.local[:],transforms);ok {state.local[bone]=reference}
-            if capture {if bone,reference,ok:=animation_root_reference(state,root,inertia.before[:],transforms);ok {inertia.before[bone]=reference}}
+            if bone,reference,ok:=animation_root_reference(state,root,playing_pose(state,.Local),transforms);ok {playing_pose(state,.Local)[bone]=reference}
         }
-        if capture {pose_layers(playback,state,content,animation,inertia.before[:],transforms,worker,previous=true)}
-        faults=pose_layers(playback,state,content,animation,state.local[:],transforms,worker)
+        faults=pose_layers(playback,state,content,animation,playing_pose(state,.Local),transforms,worker)
         sample_layer_curves(state,content,animation)
     } else {
         if capture {
-            copy(inertia.before[:],state.local[:])
-            capture=pose_base(playback,state,content,animation,transforms,state.prev_fader,inertia.before[:],worker)
-            if capture {pose_layers(playback,state,content,animation,inertia.before[:],transforms,worker,previous=true)}
+            copy(before,playing_pose(state,.Local))
+            capture=pose_base(playback,state,content,animation,transforms,state.prev_fader,before,worker)
+            if capture {pose_layers(playback,state,content,animation,before,transforms,worker,previous=true)}
         }
         faults=pose_sample(playback,state,content,animation,transforms,worker)
         sample_curves(state,content,animation.weight,animation)
@@ -227,13 +231,13 @@ stack_blending :: proc "contextless" (blend:Stack_Blend) -> bool {
 @(private)
 stack_root_inertia :: proc(state:^Playing,frame:u64,dt:f32) {
     root:=&state.inertia.root
-    if state.stack==0 || !(dt>0) {return}
+    if state.stack==0 && !state.program.ready || !(dt>0) {return}
     velocity :: proc(delta:Root_Delta,dt:f32) -> [2]mm.Vec3 {
         turn:=delta.rotation;if real(turn)<0 {turn=-turn}
         return {delta.translation/dt,lib.quat_log(turn)/dt}
     }
-    shortest:f32
-    cut:=false
+    shortest:=max(0,state.program.transition)
+    cut:=state.program.transition<0
     for i in 0..<int(state.stack) {
         if state.asked[i].over!={} {continue}
         if state.blend.cuts&(u16(1)<<u16(i))!=0 {cut=true}
@@ -253,19 +257,37 @@ stack_root_inertia :: proc(state:^Playing,frame:u64,dt:f32) {
     root.velocity,root.shown,root.frame=velocity(state.motion,dt),state.root_enabled,frame
 }
 
+@(private)
+inertia_poses :: proc "contextless" (inertia:^Stack_Inertia) -> (shown,shown_before,before,older:[]mm.Transform) {
+    n:=len(inertia.poses)/4
+    shown,shown_before=inertia.poses[:n],inertia.poses[n:2*n]
+    if inertia.flipped {shown,shown_before=shown_before,shown}
+    return shown,shown_before,inertia.poses[2*n:3*n],inertia.poses[3*n:]
+}
+
+@(private)
+inertia_curves :: proc "contextless" (inertia:^Stack_Inertia) -> (shown,shown_before:[]Curve_Output) {
+    n:=len(inertia.history)/2
+    shown,shown_before=inertia.history[:n],inertia.history[n:]
+    if inertia.flipped {return shown_before,shown}
+    return
+}
+
 // Room for the inertia of the stack of state, made on the owner thread before its pose: what it
 // showed is forgotten when its bones or its curves change. False when memory ran out.
 @(private)
 stack_inertia_prepare :: proc(state:^Playing) -> bool {
     inertia:=&state.inertia
-    if state.stack==0 {inertia.kept,inertia.state=0,{};return true}
+    if state.stack==0 && !state.program.ready {inertia.kept,inertia.state=0,{};return true}
     n:=len(state.bindings);c:=len(state.curves)
-    same:=len(inertia.shown)==n && len(inertia.shown_curves)==c && inertia.bound==state.bound
-    for curve,k in inertia.shown_curves[:min(c,len(inertia.shown_curves))] {same &&=curve.target==state.curves[k].target && curve.property==state.curves[k].property && curve.slot==state.curves[k].slot}
+    shown,_:=inertia_curves(inertia)
+    same:=len(inertia.poses)==n*4 && len(shown)==c && inertia.bound==state.bound
+    for curve,k in shown[:min(c,len(shown))] {same &&=curve_same(curve,state.curves[k])}
     if !same {inertia.kept,inertia.state=0,{}}
     inertia.bound=state.bound
-    return program_array_resize(&inertia.shown,n) && program_array_resize(&inertia.shown_before,n) && program_array_resize(&inertia.before,n) && program_array_resize(&inertia.older,n) && program_array_resize(&inertia.bones,n) && program_array_resize(&inertia.durations,n) &&
-        program_array_resize(&inertia.shown_curves,c) && program_array_resize(&inertia.shown_curves_before,c) && program_array_resize(&inertia.curves,c*5) && program_array_resize(&inertia.values,c*15)
+    return program_array_resize(&inertia.poses,n*4) && program_array_resize(&inertia.history,c*2) &&
+        program_array_resize(&inertia.bones,n) && program_array_resize(&inertia.durations,n) &&
+        program_array_resize(&inertia.curves,c*5) && program_array_resize(&inertia.values,c*15)
 }
 
 // The pose and curves of the stack of state through its inertia, dt seconds after the tick it
@@ -275,16 +297,20 @@ stack_inertia_prepare :: proc(state:^Playing) -> bool {
 // shortest of the tick; a slot that cuts takes off the offsets of what it moves. What it shows is
 // kept for the next tick. A pose or curve that is not finite ends the blend.
 @(private)
-stack_inertia_apply :: proc(state:^Playing,dt:f32,before:bool) {
-    inertia:=&state.inertia;n:=len(state.local);c:=len(state.curves)
-    if state.stack==0 || len(inertia.shown)!=n || len(inertia.bones)!=n || len(inertia.durations)!=n || len(inertia.shown_curves)!=c || len(inertia.values)!=c*15 {return}
+stack_inertia_apply :: proc(state:^Playing,dt:f32,previous_target:bool) {
+    inertia:=&state.inertia;n:=len(playing_pose(state,.Local));c:=len(state.curves)
+    if !state.program.ready && state.stack==0 || len(inertia.poses)!=n*4 || len(inertia.bones)!=n || len(inertia.durations)!=n || len(inertia.history)!=c*2 || len(inertia.values)!=c*15 {return}
+    shown,shown_before,before,older:=inertia_poses(inertia)
+    curves,curves_before:=inertia_curves(inertia)
     blend:=state.blend
     values:=inertia.values[:];old,now,target:=values[:c*5],values[c*5:c*10],values[c*10:]
-    if blend.slots!=0 && inertia.kept>0 {
-        if stack_blending(blend) {
+    transition:=state.program.transition
+    if transition<0 {inertia.state={};inertia.kept=0;mem.zero_slice(inertia.bones[:]);mem.zero_slice(inertia.curves[:])}
+    if (transition>0 || blend.slots!=0) && inertia.kept>0 {
+        if transition>0 || stack_blending(blend) {
             durations:=inertia.durations[:]
-            for &duration in durations {duration=-1}
-            shortest:=max(f32)
+            for &duration in durations {duration=transition if transition>0 else -1}
+            shortest:=transition if transition>0 else max(f32)
             for asked,i in blend.durations[:state.stack] {
                 if asked<=0 {continue}
                 shortest=min(shortest,asked)
@@ -293,11 +319,11 @@ stack_inertia_apply :: proc(state:^Playing,dt:f32,before:bool) {
                 }
             }
             history:=inertia.kept>1
-            curves_flatten(inertia.shown_curves[:],now);curves_flatten(inertia.shown_curves_before[:] if history else inertia.shown_curves[:],old);curves_flatten(state.curves[:],target)
-            input:=lib.Inertial_Input{previous=inertia.shown_before[:] if history else inertia.shown[:],current=inertia.shown[:],target=state.local[:],previous_curves=old,current_curves=now,target_curves=target,durations=durations,dt=inertia.dt if history else 0,duration=shortest}
-            if before {
-                pose_extrapolate_back(inertia.before[:],state.local[:],inertia.older[:],input.dt/dt)
-                input.target,input.target_previous=inertia.before[:],inertia.older[:]
+            curves_flatten(curves,now);curves_flatten(curves_before if history else curves,old);curves_flatten(state.curves[:],target)
+            input:=lib.Inertial_Input{previous=shown_before if history else shown,current=shown,target=playing_pose(state,.Local),previous_curves=old,current_curves=now,target_curves=target,durations=durations,dt=inertia.dt if history else 0,duration=shortest}
+            if previous_target {
+                pose_extrapolate_back(before,playing_pose(state,.Local),older,input.dt/dt)
+                input.target,input.target_previous=before,older
             }
             if !lib.inertial_capture(&inertia.state,inertia.bones[:],inertia.curves[:],input) {inertia.state={}}
             // A bone no clip moves, or a channel of it, stays where the pose puts it.
@@ -318,16 +344,16 @@ stack_inertia_apply :: proc(state:^Playing,dt:f32,before:bool) {
     }
     if inertia.state.active {
         curves_flatten(state.curves[:],target)
-        if !lib.inertial_advance(&inertia.state,dt) || !lib.inertial_pose_apply(inertia.state,inertia.bones[:],state.local[:],state.local[:]) || !lib.inertial_curves_apply(inertia.state,inertia.curves[:],target,target) {inertia.state={}} else {
+        if !lib.inertial_advance(&inertia.state,0 if transition>0 && inertia.kept>0 else dt) || !lib.inertial_pose_apply(inertia.state,inertia.bones[:],playing_pose(state,.Local),playing_pose(state,.Local)) || !lib.inertial_curves_apply(inertia.state,inertia.curves[:],target,target) {inertia.state={}} else {
             for &curve,k in state.curves {for &v,j in curve.value {v=target[k*5+j]};curve.weight=mm.saturate(target[k*5+4])}
         }
     }
     if dt>0 && inertia.kept>0 {
-        inertia.shown,inertia.shown_before=inertia.shown_before,inertia.shown
-        inertia.shown_curves,inertia.shown_curves_before=inertia.shown_curves_before,inertia.shown_curves
+        inertia.flipped=!inertia.flipped
+        shown,curves=shown_before,curves_before
         inertia.dt,inertia.kept=dt,2
     }
-    copy(inertia.shown[:],state.local[:]);copy(inertia.shown_curves[:],state.curves[:])
+    copy(shown,playing_pose(state,.Local));copy(curves,state.curves[:])
     inertia.kept=max(inertia.kept,1)
 }
 

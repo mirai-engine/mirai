@@ -116,9 +116,9 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
     for rig,i in roots {
         pose:=state_get(&w.playback,rig)
         if !testing.expect(t,pose!=nil && skeleton_bind(&w.playback,pose,definition,nil,&w.transforms)) {return}
-        pose.local[2].position.y=f32(i)+0.5
-        copy(pose.previous[:],pose.local[:]);pose.pose_ready=true
-        testing.expect_value(t,len(pose.local),3)
+        playing_pose(pose,.Local)[2].position.y=f32(i)+0.5
+        copy(playing_pose(pose,.Previous),playing_pose(pose,.Local));pose.pose_ready=true
+        testing.expect_value(t,len(playing_pose(pose,.Local)),3)
         testing.expect(t,pose.bindings[1].entity==core.NONE && pose.bindings[2].entity==core.NONE)
     }
     tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,w:^Skin_World,problems:^core.Problems,posed:^erender.Posed_Meshes,time:core.Time={},frame:=core.FRAME_TIME_DEFAULT) {
@@ -146,13 +146,13 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
     for root,i in roots {
         pose:=constraint_playing(&w.playback,root)
         pose.changed=w.playback.frame
-        pose.local[0].rotation=mm.quat_axis_angle({0,0,1},0.3)
-        pose.local[0].scale={1.3,0.8,-1.1}
-        pose.previous[0]=pose.local[0]
-        pose.local[2].position.y+=1
+        playing_pose(pose,.Local)[0].rotation=mm.quat_axis_angle({0,0,1},0.3)
+        playing_pose(pose,.Local)[0].scale={1.3,0.8,-1.1}
+        playing_pose(pose,.Previous)[0]=playing_pose(pose,.Local)[0]
+        playing_pose(pose,.Local)[2].position.y+=1
         for entity in ([2]core.Entity{root,draws[i]}) {
             placed:=core.edit(&w.worlds,entity)
-            placed.transform,placed.previous=pose.local[0],pose.local[0]
+            placed.transform,placed.previous=playing_pose(pose,.Local)[0],playing_pose(pose,.Local)[0]
         }
     }
     for alpha in ([4]f32{0,0.25,0.75,1}) {
@@ -183,7 +183,7 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
     core.add(&w.hidden,draws[0],{});test_world_settle(&w)
     tick(&app,&cache,&state,&w,&problems,&posed,{playing=true},{alpha=0.5})
     testing.expect(t,core.entity_map_get(&state.instances,draws[0])==nil)
-    shown:=constraint_playing(&w.playback,roots[0]);shown.previous[2]=shown.local[2];shown.local[2].position.y+=1;shown.changed=w.playback.frame
+    shown:=constraint_playing(&w.playback,roots[0]);playing_pose(shown,.Previous)[2]=playing_pose(shown,.Local)[2];playing_pose(shown,.Local)[2].position.y+=1;shown.changed=w.playback.frame
     core.remove(&w.hidden,draws[0]);test_world_settle(&w)
     for alpha in ([2]f32{0,0.5}) {
         tick(&app,&cache,&state,&w,&problems,&posed,{playing=true},{alpha=alpha})
@@ -263,8 +263,8 @@ a_skin_part_collapses_the_vertices_of_its_bone_into_it :: proc(t:^testing.T) {
     if !testing.expect(t,definition!=nil) {return}
     pose:=state_get(&w.playback,rig)
     if !testing.expect(t,pose!=nil && skeleton_bind(&w.playback,pose,definition,nil,&w.transforms)) {return}
-    pose.local[2].position={0.5,2,0}
-    copy(pose.previous[:],pose.local[:]);pose.pose_ready=true
+    playing_pose(pose,.Local)[2].position={0.5,2,0}
+    copy(playing_pose(pose,.Previous),playing_pose(pose,.Local));pose.pose_ready=true
     animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),&cache,&state,app.assets,app.renderer,&posed,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=&w.playback},{},&problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,core.read(&w.parts),{},{})
     skin_shown(&app,&posed,core.read(&w.meshes),core.read(&w.worlds),core.read(&w.offsets),core.read(&w.parents),core.FRAME_TIME_DEFAULT)
     testing.expect_value(t,problems.count,0)
@@ -318,8 +318,6 @@ Skin_Loop_World :: struct {
     requests:Animation_Requests,
     events:Animation_Events,
     playback:Playback,
-    constraints:Animation_Constraints,
-    grounding:Grounding_Runtime,
     modifiers:Modifier_Runtime,
     actions:Action_Runtime,
     motion:Motion_Runtime,
@@ -382,8 +380,8 @@ the_automatic_period_leaves_the_simulation_as_it_is :: proc(t:^testing.T) {
         for _ in 0..<ticks {
             time:=core.Time{tick=w.playback.frame,dt=1.0/60,playing=true}
             animation_prepare(core.read(&w.animations),core.read(&w.attachments),core.read(&w.meshes),core.read(&w.skins),&w.modifiers,&w.playback,characters,skeletons,app,problems)
-            animation_sample(core.read(&w.animations),&w.progress,&w.played,&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,characters,skeletons,app,time,{},problems,&w.actions,&w.motion,sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
-            animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifiers,&w.playback,&w.constraints,&w.grounding,{},{},time,{ptr=skeletons},problems,&w.motion,characters,{},{},core.CLOCK_DEFAULT,nil)
+            animation_sample(core.read(&w.animations),core.read(&w.progress),&w.played,&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,characters,skeletons,app,time,{},problems,&w.actions,&w.motion,sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
+            animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifiers,&w.playback,{},{},time,{ptr=skeletons},problems,&w.motion,characters,{},{},core.CLOCK_DEFAULT,nil)
             animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),cache,state,app.assets,app.renderer,posed,&app.jobs,app.allocator,time,{dt=1.0/60,alpha=1},{ptr=&w.playback},{},problems,{},&w.budget,ANIMATION_BUDGET_CONFIG_DEFAULT,core.read(&w.parts),{},{ptr=view})
         }
     }
@@ -402,7 +400,7 @@ the_automatic_period_leaves_the_simulation_as_it_is :: proc(t:^testing.T) {
     testing.expect(t,same(w.transforms.values[:],near.transforms.values[:]) && same(w.progress.values[:],near.progress.values[:]) && same(w.played.values[:],near.played.values[:]) && same(w.events.items[:],near.events.items[:]),"the tables of the simulation")
     if !testing.expect(t,len(w.playback.states)==1 && len(near.playback.states)==1) {return}
     a,b:=&w.playback.states[0],&near.playback.states[0]
-    testing.expect(t,!same(a.local[1:],a.rest[1:]),"the clip moves the rig")
-    testing.expect(t,same(a.local[:],b.local[:]) && same(a.sampled[:],b.sampled[:]) && same(a.previous[:],b.previous[:]) && a.time==b.time && a.changed==b.changed && w.playback.frame==near.playback.frame,"the poses")
+    testing.expect(t,!same(playing_pose(a,.Local)[1:],a.rest[1:]),"the clip moves the rig")
+    testing.expect(t,same(playing_pose(a,.Local),playing_pose(b,.Local)) && same(playing_pose(a,.Sampled),playing_pose(b,.Sampled)) && same(playing_pose(a,.Previous),playing_pose(b,.Previous)) && a.time==b.time && a.changed==b.changed && w.playback.frame==near.playback.frame,"the poses")
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
 }
