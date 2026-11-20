@@ -184,7 +184,7 @@ share_command :: proc(args:[]string,output,errors:io.Writer) -> int {
         return 1
     }
     started:=time.tick_now()
-    o,offer_error:=offer(n,root,key.secret,{system=&js,worker=jobs.OWNER},context.temp_allocator)
+    o,offer_error:=offer(n,&s,root,key.secret,{system=&js,worker=jobs.OWNER},context.temp_allocator)
     jobs.system_destroy(&js)
     for line in o.taken.skipped {fmt.wprintfln(errors,"left out: %s",line)}
     if offer_error!="" {
@@ -207,11 +207,17 @@ share_command :: proc(args:[]string,output,errors:io.Writer) -> int {
     if !mapped {fmt.wprintfln(output,"The router mapped no port, so only machines on this network can join; from another network, the joiner's router must map one, or this one must allow UPnP, NAT-PMP or PCP.")}
     fmt.wprintln(output,"Stop with Ctrl+C.")
     events:[EVENTS]Event
-    status_at:=0.0
+    status_at,lease_at:=0.0,0.0
     last:Node_Totals
     for {
         now:=wire.host_time(&h.host)
         node_pump(n,now)
+        if now-lease_at>=LEASE_SECONDS {
+            lease_at=now
+            if error:=offer_refresh(n);error!=.None {
+                fmt.wprintfln(errors,"mirai share: the project lease could not be refreshed:",error)
+            }
+        }
         for e in node_events(n,events[:]) {event_print(output,e,node_totals(n).connected)}
         if now-status_at>=STATUS_SECONDS {
             status_at=now
@@ -236,12 +242,20 @@ Offer :: struct {
 }
 
 // Offers the project at root to whoever holds the invitation of secret: its
-// snapshot put in the store of the node under offer_name of the secret, with
+// snapshot put in s, at the same root as the node, under offer_name of the secret, with
 // its folders, files and what the packages it pins need held by the lease of
 // the node. Taking it again after a change offers the new snapshot, and a
 // joined peer that joins again gets only what differs. Jobs of
-// worker, when given, read the files. In allocator.
-offer :: proc(n:^Node,root:string,secret:u64,worker:=jobs.Worker_Ref{},allocator:=context.allocator,kind:=Offer_Kind.Project) -> (o:Offer,error:string) {
+// worker, when given, read the files. In allocator. No concurrent offer or offer_refresh of n.
+// Keep s open through node_destroy.
+offer :: proc(
+    n:^Node,s:^store.Store,root:string,secret:u64,worker:=jobs.Worker_Ref{},
+    allocator:=context.allocator,kind:=Offer_Kind.Project,cancel:^bool=nil,
+) -> (o:Offer,error:string) {
+    if n==nil || n.s==nil || s==nil || s.root=="" || s.root!=n.s.root {
+        return {},"the project offer must use the store the node serves"
+    }
+    if offer_cancelled(cancel) {return {},OFFER_CANCELLED}
     manifest,manifest_error:=project.manifest_read(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator))
     if manifest_error.code!=.None {
         return {},fmt.aprintf("%s is not a project (its %s does not read: %v): give the folder of one",root,project.PROJECT_FILE,manifest_error.code,allocator=allocator)
@@ -251,32 +265,45 @@ offer :: proc(n:^Node,root:string,secret:u64,worker:=jobs.Worker_Ref{},allocator
     if !name_valid(o.name) {o.name="project"}
     o.name=strings.clone(o.name,allocator)
     served:=make([dynamic]store.Hash,context.temp_allocator)
-    o.snapshot,o.address,o.taken,error=snapshot_take(n.s,root,o.name,&served,worker,allocator)
+    o.snapshot,o.address,o.taken,error=snapshot_take(s,root,o.name,&served,worker,allocator,cancel)
     if error!="" {return}
-    packages,_:=asset.root_packages(root,n.s.root,allocator)
+    packages,_:=asset.root_packages_in(s,root,allocator)
     o.problems=packages.problems
     for e in o.snapshot.entries {append(&served,e.address)}
-    library_served(n.s,root,&served)
-    // An offer taken again replaces what the lease held for the one before.
-    sync.mutex_lock(&n.lock)
-    clear(&n.served)
-    sync.mutex_unlock(&n.lock)
-    node_serve(n,..served[:])
+    library_served(s,root,&served,cancel)
+    if offer_cancelled(cancel) {return {},OFFER_CANCELLED}
+    lease,lease_error:=node_lease_open(s,served[:])
+    if lease_error!=.None {
+        return {},fmt.aprintf("the project lease could not be kept (%v)",
+            lease_error,allocator=allocator)
+    }
+    defer if lease.store!=nil {store.lease_release(&lease)}
+    if offer_cancelled(cancel) {return {},OFFER_CANCELLED}
     digits:[64]u8
-    if put_error:=offer_set(n.s,root,offer_name(secret,&digits),o.address,kind);put_error!=.None {
+    if put_error:=offer_set(s,root,offer_name(secret,&digits),o.address,kind);put_error!=.None {
         return {},fmt.aprintf("the project offer could not be kept in the store (%v)",put_error,allocator=allocator)
     }
+    if n.offer_lease.store!=nil {store.lease_release(&n.offer_lease)}
+    n.offer_lease=lease
+    lease={}
     return
+}
+
+// Refresh the published offer on the thread that owns it, while it is still offered.
+offer_refresh :: proc(n:^Node) -> store.Error {
+    if n==nil || n.offer_lease.store==nil {return .Invalid_Argument}
+    return store.lease_update(&n.offer_lease,n.offer_lease.live)
 }
 
 // What the packages the project at root pins need: their manifests and the
 // builds this machine chose for them, with every blob they list.
 @(private)
-library_served :: proc(s:^store.Store,root:string,served:^[dynamic]store.Hash) {
+library_served :: proc(s:^store.Store,root:string,served:^[dynamic]store.Hash,cancel:^bool) {
     list,_,error:=asset.packages_load(root,context.temp_allocator)
     if error!=.None {return}
     digits:[64]u8
     for &entry in list.packages {
+        if offer_cancelled(cancel) {return}
         append(served,entry.manifest)
         p,package_error:=asset.package_load(s,root,&entry,context.temp_allocator)
         if package_error!=.None {continue}
