@@ -8,24 +8,23 @@ import "core:testing"
 import "compressor:data"
 import "mirai:std/base"
 
-// A codec no build has, as a build with another compressor writes: Zstandard under an id of
-// its own.
+// A codec no build has, as a build with another compressor writes.
 @(private)
 TEST_CODEC :: 15
 
 @(private)
-test_codec_hook :: proc() -> Codec_Hook {
-    return {codec=TEST_CODEC,encode=proc(src,dst:[]u8) -> int {
+test_codec_hook :: proc(codec:u8=TEST_CODEC) -> Codec_Hook {
+    return {codec=codec,encode=proc(src,dst:[]u8) -> int {
         e:data.Encoder
         data.encoder_init(&e)
         defer data.encoder_destroy(&e)
-        size,error:=data.encode(&e,.Fast,src,dst)
+        size,error:=data.encode(&e,.Fast,src,dst,open=true)
         return size if error==.None else 0
     },decode=proc(src,dst:[]u8) -> bool {
         d:data.Decoder
         if data.decoder_init(&d)!=.None {return false}
         defer data.decoder_destroy(&d)
-        return data.decode(&d,data.ZSTD,src,dst)==.None
+        return data.decode(&d,data.format(.Fast,open=true),src,dst)==.None
     }}
 }
 
@@ -146,21 +145,22 @@ a_damaged_encoded_frame_is_a_damaged_chunk :: proc(t:^testing.T) {
 // Chunk frames whose codec or sizes lie are refused as damage, whatever their check.
 @(test)
 hostile_chunk_frames_are_refused :: proc(t:^testing.T) {
+    open_codec:=codec_of(data.format(.Fast,open=true))
     Case :: struct {codec:u8,stored,raw:u32,valid:bool}
     cases:=[]Case{
         {CODEC_NONE,100,100,true},
-        {1,100,200,true},
+        {open_codec,100,200,true},
         {TEST_CODEC,100,200,true}, // a codec no build here has: valid, and not read
         {CODECS_MAX,100,200,false},
         {255,100,200,false},
         {CODEC_NONE,100,101,false},
-        {1,200,200,false},          // encoded no smaller
-        {1,200,100,false},
-        {1,100,CHUNK_MAX+1,false},
-        {1,0,100,false},
-        {1,max(u32),max(u32),false},
+        {open_codec,200,200,false}, // encoded no smaller
+        {open_codec,200,100,false},
+        {open_codec,100,CHUNK_MAX+1,false},
+        {open_codec,0,100,false},
+        {open_codec,max(u32),max(u32),false},
         {CODEC_NONE,CHUNK_MAX+1,CHUNK_MAX+1,false},
-        {1,1,max(u32),false},
+        {open_codec,1,max(u32),false},
     }
     for c in cases {
         head:=Frame_Head{kind=.Chunk,codec=c.codec,align=ALIGN_SMALL,stored=c.stored,raw=c.raw}
@@ -168,7 +168,7 @@ hostile_chunk_frames_are_refused :: proc(t:^testing.T) {
         testing.expectf(t,head_valid(&head)==c.valid,"%v",c)
     }
     for kind in ([]Frame_Kind{.Ref,.Touch,.Tombstone,.Commit}) {
-        head:=Frame_Head{kind=kind,codec=1,align=ALIGN_FRAME}
+        head:=Frame_Head{kind=kind,codec=open_codec,align=ALIGN_FRAME}
         head.check=hash.crc32(mem.ptr_to_bytes(&head)[:44])
         testing.expectf(t,!head_valid(&head),"a %v frame has no codec",kind)
     }
@@ -180,7 +180,7 @@ hostile_chunk_frames_are_refused :: proc(t:^testing.T) {
     address:=address_of_bytes(chunk)
     raw:=make([]u8,len(chunk),context.temp_allocator)
     testing.expect_value(t,chunk_put_frame(&s,address,CODECS_MAX,stored,raw),Error.Invalid_Argument)
-    testing.expect_value(t,chunk_put_frame(&s,address,1,chunk,raw),Error.Invalid_Argument)
+    testing.expect_value(t,chunk_put_frame(&s,address,open_codec,chunk,raw),Error.Invalid_Argument)
     testing.expect_value(t,chunk_put_frame(&s,address,CODEC_NONE,stored,raw),Error.Invalid_Argument)
     // A valid frame of other bytes, offered for this address, is refused and nothing is kept.
     other:=test_compressible(len(chunk),9)
@@ -188,20 +188,23 @@ hostile_chunk_frames_are_refused :: proc(t:^testing.T) {
     data.encoder_init(&e)
     defer data.encoder_destroy(&e)
     encoded:=make([]u8,data.bound(len(other)),context.temp_allocator)
-    size,_:=data.encode(&e,.Fast,other,encoded)
-    testing.expect_value(t,chunk_put_frame(&s,address,1,encoded[:size],raw),Error.Corrupt)
+    size,encode_error:=data.encode(&e,.Fast,other,encoded,open=true)
+    if !testing.expect_value(t,encode_error,data.Error.None) {return}
+    testing.expect_value(t,chunk_put_frame(&s,address,open_codec,encoded[:size],raw),Error.Corrupt)
     testing.expect_value(t,commit(&s),Error.None)
     _,read_error:=chunk_read(&s,address,make([]u8,CHUNK_MAX,context.temp_allocator))
     testing.expect_value(t,read_error,Error.Missing)
     mine:=make([]u8,data.bound(len(chunk)),context.temp_allocator)
-    mine_size,_:=data.encode(&e,.Fast,chunk,mine)
-    testing.expect_value(t,chunk_put_frame(&s,address,1,mine[:mine_size],raw),Error.None)
+    mine_size,mine_error:=data.encode(&e,.Fast,chunk,mine,open=true)
+    if !testing.expect_value(t,mine_error,data.Error.None) {return}
+    testing.expect_value(t,chunk_put_frame(&s,address,open_codec,mine[:mine_size],raw),Error.None)
     back,back_error:=chunk_read(&s,address,make([]u8,CHUNK_MAX,context.temp_allocator))
     testing.expect(t,back_error==.None && string(back)==string(chunk),"its own frame is kept")
     // A peer's frame that does not decode to the bytes is never kept as it is.
     bad:=make([]u8,len(stored),context.temp_allocator)
-    testing.expect_value(t,chunk_decode(&s,1,bad,make([]u8,len(chunk),context.temp_allocator)),Error.Corrupt)
-    testing.expect_value(t,chunk_decode(&s,TEST_CODEC,bad,make([]u8,len(chunk),context.temp_allocator)),Error.Missing)
+    decoded:=make([]u8,len(chunk),context.temp_allocator)
+    testing.expect_value(t,chunk_decode(&s,open_codec,bad,decoded),Error.Corrupt)
+    testing.expect_value(t,chunk_decode(&s,TEST_CODEC,bad,decoded),Error.Missing)
 }
 
 // A small object stored with a codec the other build lacks, swept into a generation, then put
@@ -210,6 +213,7 @@ hostile_chunk_frames_are_refused :: proc(t:^testing.T) {
 @(test)
 a_sweep_of_copies_of_two_codecs_keeps_one_every_build_reads :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"store-codec-sweep");if folder=="" {return}
+    open_codec:=codec_of(data.format(.Fast,open=true))
     data:=test_compressible(5000,7)
     root:Hash
     {
@@ -223,6 +227,7 @@ a_sweep_of_copies_of_two_codecs_keeps_one_every_build_reads :: proc(t:^testing.T
     }
     {
         here,ok:=test_store(t,folder);if !ok {return}
+        testing.expect_value(t,codec_hook(&here,test_codec_hook(open_codec)),Error.None)
         again,_:=test_put(&here,data)
         testing.expect_value(t,again,root)
         close(&here) // seals its pack
