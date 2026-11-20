@@ -925,10 +925,12 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   and only the visible cards make theirs, one a frame; a visible card of a peer's root that lacks it
   asks that peer by its key, a few at a time (`collab_thumbs_update`, `share.fetch_start`): a
   peer gives one it has and makes none, and nothing of the package is fetched for it; two of one
-  name in a root take the folder their source was in. The + adds a folder whole or an asset with
-  its dependencies, into the folder Create makes in. Add to project in the menu does the same;
-  dragging a package folder onto a project folder adds it whole. Further additions keep the
-  project's existing selection and destination.
+  name in a root take the folder their source was in. The + on a catalog folder adds every
+  package under it, including those hidden by search, preserving the folder and its descendants.
+  The + on a package adds it whole, and the + on an asset adds it with its dependencies. All
+  three add into the folder Create makes in. The package menu offers the same action for packages
+  and assets. Drag a package folder onto a project folder to add it whole. Further additions
+  keep the project's existing selection and destination.
 
 ## Graphics
 

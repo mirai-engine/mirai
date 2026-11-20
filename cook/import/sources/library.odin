@@ -16,7 +16,6 @@ import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
-import "mirai:std/serial"
 import "mirai:store"
 
 // The library of the machine: the packages its store keeps (asset/packages.odin)
@@ -151,6 +150,9 @@ project_add :: proc(root:string,manifest:store.Hash,folder:string,assets:[]base.
         }
         if !slice.contains(entry.assets[:],id) {append(&entry.assets,id)}
     }
+    lock,locked:=project_pin_lock(top)
+    if !locked {project_pin_lock_report(&report,top);return}
+    defer workspace.lock_release(&lock)
     previous,_,pin_read_error:=asset.packages_load(top,context.temp_allocator)
     if pin_read_error!=.None {
         report_line(&report.failures,"%s: %s could not be read (%v): restore it, then add the package again",top,asset.PACKAGES_FILE,pin_read_error)
@@ -179,6 +181,99 @@ project_add :: proc(root:string,manifest:store.Hash,folder:string,assets:[]base.
     return
 }
 
+Package_Add :: struct {manifest:store.Hash,folder:string}
+
+project_add_many :: proc(root:string,requests:[]Package_Add,options:Library_Options,allocator:=context.allocator) -> (report:Library_Report) {
+    report_begin(&report,allocator)
+    if len(requests)==0 {return}
+    if options.store==nil {
+        report_line(&report.failures,"%s: the library needs a store to add these packages",root)
+        return
+    }
+    l:Library_State
+    library_begin(&l,options,allocator)
+    defer library_end(&l)
+    context.temp_allocator=l.temp
+    top:=project.path_absolute(root,l.temp)
+    if l.options.root=="" {l.options.root=top}
+    l.adding=true
+    l.preparing=true
+    l.prepared=make([dynamic]Prepared_Add,l.temp)
+    seen:=make(map[base.Asset_Id]store.Hash,l.temp)
+    if l.options.source.fetch!=nil {
+        lacking:=make([dynamic]string,l.temp)
+        for request in requests {
+            digits:[64]u8
+            name:=store.hex(request.manifest,&digits)
+            if object,error:=store.ref_get(options.store,asset.REF_MANIFESTS,name);error!=.None || !store.chunk_has(options.store,object) {
+                append(&lacking,strings.clone(name,l.temp))
+            }
+        }
+        fetch_many(&l,asset.REF_MANIFESTS,lacking[:])
+    }
+    for request in requests {
+        if !asset.folder_valid(request.folder) {
+            report_line(&report.failures,"%s: a folder is relative to the assets, with forward slashes, and never leaves them",request.folder)
+            return
+        }
+        p,error:=asset.package_get(options.store,request.manifest,l.temp)
+        digits:[64]u8
+        if error==.Not_Found && fetch(&l,asset.REF_MANIFESTS,store.hex(request.manifest,&digits)) {
+            p,error=asset.package_get(options.store,request.manifest,l.temp)
+        }
+        if error!=.None {
+            report_line(&report.missing,"the store has no readable package manifest %s (%v): ingest its source, or fetch it from a peer that has it",store.hex(request.manifest,&digits),error)
+            return
+        }
+        if old,present:=seen[p.id];present {
+            if old==request.manifest {continue}
+            report_line(&report.failures,"package %s: this selection contains more than one manifest of the package",p.name)
+            return
+        }
+        seen[p.id]=request.manifest
+        package_refresh(&l,top,{id=p.id,manifest=request.manifest,folder=request.folder},&report,true,&p)
+    }
+    if len(report.missing)>0 || len(report.failures)>0 {return}
+
+    lock,locked:=project_pin_lock(top)
+    if !locked {project_pin_lock_report(&report,top);return}
+    defer workspace.lock_release(&lock)
+    previous,_,read_error:=asset.packages_load(top,l.temp)
+    if read_error!=.None {
+        report_line(&report.failures,"%s/%s could not be read (%v): restore it, then add the packages again",top,asset.PACKAGES_FILE,read_error)
+        return
+    }
+    pinned:=make(map[base.Asset_Id]int,l.temp)
+    for &entry,at in previous.packages {pinned[entry.id]=at}
+    project_follow_begin(&l,top)
+    l.pins=make([dynamic]asset.Project_Package,l.temp)
+    l.backups=importer.document_backups_begin()
+    committed:=false
+    defer {
+        path,backup:=importer.document_backups_finish(&l.backups,committed)
+        if path!="" {
+            report_line(&report.failures,"%s could not be restored after the failed addition (backup: %s)",path,backup)
+        }
+    }
+    for &prepared in l.prepared {
+        entry:=prepared.entry
+        if at,known:=pinned[entry.id];known {
+            entry.folder,entry.written=previous.packages[at].folder,previous.packages[at].written
+        }
+        destination:=documents_folder(l.assets,entry.folder)
+        documents_write(&l,top,&entry,&prepared.pkg,&prepared.build,destination,&report)
+        if len(report.failures)>0 {return}
+        if prepared.prefab {warn_missing_prefab(&l,&prepared.pkg,&report)}
+    }
+    if error:=project_pin_many(top,options.store,&previous,l.pins[:],&l.backups);error!=.None {
+        report_line(&report.failures,"%s/%s could not be written (%v): check the project's files and try again",top,asset.PACKAGES_FILE,error)
+        return
+    }
+    committed=true
+    report.packages=len(l.pins)
+    return
+}
+
 // Ingests the source at origin as ingest does and pins its package in the
 // project at root under folder, with what the project used of it before: one
 // import, which for a model writes its documents and its prefab there. The
@@ -191,6 +286,11 @@ project_ingest :: proc(root,origin,folder:string,options:Library_Options,setting
     caller:=context.temp_allocator
     context.temp_allocator=l.temp
     top:=project.path_absolute(root,context.temp_allocator)
+    lock,locked:=project_pin_lock(top)
+    if !locked {
+        return {},added,importer.error_make(.Write,"%s/%s could not be locked: check that the project is writable",top,asset.PACKAGES_FILE,allocator=caller)
+    }
+    defer workspace.lock_release(&lock)
     project_follow_begin(&l,top)
     entry:=asset.Project_Package{folder=folder}
     documents:=l.assets if folder=="" else fmt.tprintf("%s/%s",l.assets,folder)
@@ -211,7 +311,7 @@ project_ingest :: proc(root,origin,folder:string,options:Library_Options,setting
     if entry.id!=report.package_id {entry.assets,entry.written={},{}}
     entry.id,entry.manifest=report.package_id,report.manifest
     if model {entry.written=written_list(report.written[:])}
-    if pin_error:=project_pin(top,options.store,entry);pin_error!=.None {
+    if pin_error:=project_pin_locked(top,options.store,entry);pin_error!=.None {
         report_line(&added.failures,"%s: %s could not be written (%v): a folder is relative to the assets, with forward slashes, and never leaves them",top,asset.PACKAGES_FILE,pin_error)
         return
     }
@@ -239,6 +339,9 @@ project_refresh :: proc(root:string,options:Library_Options,allocator:=context.a
     defer library_end(&l)
     context.temp_allocator=l.temp
     top:=project.path_absolute(root,context.temp_allocator)
+    lock,locked:=project_pin_lock(top)
+    if !locked {project_pin_lock_report(&report,top);return}
+    defer workspace.lock_release(&lock)
     list,_,error:=asset.packages_load(top,context.temp_allocator)
     if error!=.None {
         report_line(&report.failures,"%s/%s does not read (%v): fix it from its history; nothing was refreshed",top,asset.PACKAGES_FILE,error)
@@ -262,41 +365,65 @@ project_refresh :: proc(root:string,options:Library_Options,allocator:=context.a
 // leaves the root as it was: a list that does not save puts the manifest's
 // file back.
 project_pin :: proc(root:string,s:^store.Store,entry:asset.Project_Package) -> asset.Error {
-    entry:=entry
-    list,_,error:=asset.packages_load(root,context.temp_allocator)
-    if error!=.None {return error}
-    replaced:=false
-    for &other in list.packages {
-        if other.id!=entry.id {continue}
-        other=entry
-        replaced=true
+    lock,locked:=project_pin_lock(root,wait=false)
+    if !locked {return .IO}
+    defer workspace.lock_release(&lock)
+    return project_pin_locked(root,s,entry)
+}
+
+@(private="file")
+project_pin_locked :: proc(root:string,s:^store.Store,entry:asset.Project_Package) -> (error:asset.Error) {
+    list,_,read_error:=asset.packages_load(root,context.temp_allocator)
+    if read_error!=.None {return read_error}
+    backups:=importer.document_backups_begin()
+    defer {
+        path,_:=importer.document_backups_finish(&backups,error==.None)
+        if path!="" {error=.IO}
     }
-    if !replaced {
-        if _,no_room:=append(&list.packages,entry);no_room!=nil {return .Out_Of_Memory}
+    return project_pin_many(root,s,&list,[]asset.Project_Package{entry},&backups)
+}
+
+@(private="file")
+project_pin_lock :: proc(root:string,wait:=true) -> (workspace.Lock,bool) {
+    path:=fmt.tprintf("%s/.mirai/locks/pins",root)
+    what:="mirai project packages"
+    if wait {return workspace.lock_acquire(path,what)}
+    lock,taken,_,_:=workspace.lock_take(path,what)
+    return lock,taken
+}
+
+@(private="file")
+project_pin_lock_report :: proc(report:^Library_Report,root:string) {
+    report_line(&report.failures,"%s/%s could not be locked: check that the project is writable",root,asset.PACKAGES_FILE)
+}
+
+@(private="file")
+project_pin_many :: proc(root:string,s:^store.Store,list:^asset.Packages,entries:[]asset.Project_Package,backups:^importer.Document_Backups) -> asset.Error {
+    indices:=make(map[base.Asset_Id]int,context.temp_allocator)
+    for &entry,at in list.packages {indices[entry.id]=at}
+    for entry in entries {
+        if at,replaced:=indices[entry.id];replaced {
+            list.packages[at]=entry
+        } else {
+            indices[entry.id]=len(list.packages)
+            if _,no_room:=append(&list.packages,entry);no_room!=nil {return .Out_Of_Memory}
+        }
     }
-    // What refuses the list refuses it before a file changes.
-    asset.packages_text(&list,context.temp_allocator) or_return
-    path:=asset.package_file(root,entry.id)
-    folder:=os.dir(path)
-    had_folder:=os.is_dir(folder)
-    before,read_error:=serial.file_read(path,context.temp_allocator,limit=asset.RECORD_BYTES)
-    if read_error!=.None && read_error!=.Not_Found {return .IO}
-    asset.package_file_save(s,root,&entry) or_return
-    saved:=asset.packages_save(root,&list)
-    if saved==.None {return .None}
-    if read_error==.None {
-        serial.file_write_atomic(path,before)
-    } else {
-        os.remove(path)
-        if !had_folder {os.remove(folder)}
+    asset.packages_text(list,context.temp_allocator) or_return
+    for &entry in entries {
+        importer.document_backup(backups,asset.package_file(root,entry.id)) or_return
+        asset.package_file_save(s,root,&entry) or_return
     }
-    return saved
+    return asset.packages_save(root,list)
 }
 
 // Removes the package id from the packages.mirai of the project at root, and
 // the file of its manifest; what the store keeps of it stays. False with
 // nothing to remove.
 project_unpin :: proc(root:string,id:base.Asset_Id) -> (removed:bool,error:asset.Error) {
+    lock,locked:=project_pin_lock(root,wait=false)
+    if !locked {return false,.IO}
+    defer workspace.lock_release(&lock)
     list,_:=asset.packages_load(root,context.temp_allocator) or_return
     for &other,at in list.packages {
         if other.id!=id {continue}
@@ -321,6 +448,18 @@ Library_State :: struct {
     registry:^asset.Registry,      // its assets, scanned once
     asked:map[string]bool,         // "<namespace>/<name>" asked of the source, and whether it gave it
     adding:bool,
+    preparing:bool,
+    prepared:[dynamic]Prepared_Add,
+    pins:[dynamic]asset.Project_Package,
+    backups:importer.Document_Backups,
+}
+
+@(private="file")
+Prepared_Add :: struct {
+    entry:asset.Project_Package,
+    pkg:asset.Package,
+    build:asset.Build,
+    prefab:bool,
 }
 
 @(private="file")
@@ -619,16 +758,21 @@ library_ingest :: proc(l:^Library_State,path:string,manifest:store.Hash,settings
 // One package a project pins, brought to a build this engine reads and
 // followed into the project: when its build changed, or always with follow.
 @(private="file")
-package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,report:^Library_Report,follow:bool) {
+package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,report:^Library_Report,follow:bool,known:^asset.Package=nil) {
     s:=l.options.store
     entry:=entry
     digits,id_text:[64]u8
     id_name:=base.asset_id_format(entry.id,id_text[:32])
-    manifest_root:=top if !l.adding else ""
-    p,error:=asset.package_load(s,manifest_root,&entry,l.temp)
-    // The manifest the pin names, by the hash of its text: the ref that names its object.
-    if error==.Not_Found && fetch(l,asset.REF_MANIFESTS,store.hex(entry.manifest,&digits)) {
+    p:asset.Package
+    error:asset.Error
+    if known!=nil {
+        p=known^
+    } else {
+        manifest_root:=top if !l.adding else ""
         p,error=asset.package_load(s,manifest_root,&entry,l.temp)
+        if error==.Not_Found && fetch(l,asset.REF_MANIFESTS,store.hex(entry.manifest,&digits)) {
+            p,error=asset.package_load(s,manifest_root,&entry,l.temp)
+        }
     }
     #partial switch error {
     case .None:
@@ -643,8 +787,8 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
         return
     }
     source:=importer.origin_path(p.origin.path,top)
-    origin_here:=source!="" && !importer.unsafe_path(source) && os.exists(source)
-    documents:=l.assets if entry.folder=="" else fmt.tprintf("%s/%s",l.assets,entry.folder)
+    origin_here:=!l.preparing && source!="" && !importer.unsafe_path(source) && os.exists(source)
+    documents:=documents_folder(l.assets,entry.folder)
     prefab:=model_prefab_of(l,&p)
     if prefab && len(entry.assets)>0 {
         selected,_,selection_error:=asset.package_selection(&p,entry.assets[:],l.temp)
@@ -711,6 +855,12 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
             return
         }
     }
+    if l.preparing {
+        if _,error:=append(&l.prepared,Prepared_Add{entry,p,f.build,prefab});error!=nil {
+            report_line(&report.failures,"package %s: out of memory preparing the addition",p.name)
+        }
+        return
+    }
     if !follow && previous==f.hash && !chosen_given {return}
     // A model's prefab is written from its source in the game's types: the import does it, with the documents.
     if prefab && origin_here && plugins_world(l)!=nil {
@@ -718,10 +868,18 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
         return
     }
     documents_write(l,top,&entry,&p,&f.build,documents,report)
-    if prefab && follow {
-        if _,has:=asset.registry_find(l.registry,prefab_id(&p));!has {
-            report_line(&report.warnings,"package %s: its prefab is written from its source (%s) in the types of the game: add it on a machine that has the source, with the project's editor built",p.name,p.origin.path)
-        }
+    if prefab && follow {warn_missing_prefab(l,&p,report)}
+}
+
+@(private="file")
+documents_folder :: proc(assets,folder:string) -> string {
+    return assets if folder=="" else fmt.tprintf("%s/%s",assets,folder)
+}
+
+@(private="file")
+warn_missing_prefab :: proc(l:^Library_State,p:^asset.Package,report:^Library_Report) {
+    if _,has:=asset.registry_find(l.registry,prefab_id(p));!has {
+        report_line(&report.warnings,"package %s: its prefab is written from its source (%s) in the types of the game: add it individually on a machine that has the source, with the project's editor built",p.name,p.origin.path)
     }
 }
 
@@ -751,7 +909,8 @@ documents_write :: proc(l:^Library_State,top:string,entry:^asset.Project_Package
             if used[o.id] {append(&build.outputs,o)}
         }
     }
-    written,error:=importer.documents_follow(l.options.store,p,&build,documents,l.registry,entry.written[:],changed,plugin_kinds(l),l.temp)
+    backups:=&l.backups if l.preparing else nil
+    written,error:=importer.documents_follow(l.options.store,p,&build,documents,l.registry,entry.written[:],changed,plugin_kinds(l),l.temp,backups=backups)
     if error.code!=.None {
         report_line(&report.failures,"package %s: %s",p.name,error.message)
         return
@@ -809,7 +968,13 @@ written_pin :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,wri
     }
     if same && !l.adding {return}
     entry.written=written
-    if pin_error:=project_pin(top,l.options.store,entry^);pin_error!=.None {
+    if l.preparing {
+        if _,error:=append(&l.pins,entry^);error!=nil {
+            report_line(&report.failures,"package %s: out of memory recording the addition",p.name)
+        }
+        return
+    }
+    if pin_error:=project_pin_locked(top,l.options.store,entry^);pin_error!=.None {
         report_line(&report.failures,"package %s: %s/%s could not be written: %v",p.name,top,asset.PACKAGES_FILE,pin_error)
     }
 }
@@ -849,7 +1014,7 @@ reingest :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,p:^ass
     if written.manifest!=entry.manifest {
         entry.manifest=written.manifest
         if !l.adding {
-            if pin_error:=project_pin(top,l.options.store,entry^);pin_error!=.None {
+            if pin_error:=project_pin_locked(top,l.options.store,entry^);pin_error!=.None {
                 report_line(&report.failures,"package %s: %s/%s could not be written: %v",p.name,top,asset.PACKAGES_FILE,pin_error)
                 return
             }

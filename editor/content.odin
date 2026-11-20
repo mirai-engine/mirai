@@ -2093,12 +2093,14 @@ content_folder_cell :: proc(s:^Session,card:Content_Card,id:ui.Id,cell:f32,names
     c:=s.content
     ctx:=s.gui.ctx
     it=ui.interact(ctx,id,{.Focusable})
-    icon:=content_folder_icon(.None if card.virtual==.Library && card.folder!="" else card.virtual)
+    library_folder:=card.virtual==.Library && card.folder!=""
+    icon:=content_folder_icon(.None if library_folder else card.virtual)
     keyboard:=content_keyboard(ctx,it)
     if c.view.mode==.List {
         if ui.box(ctx,asset_row_box(ctx,id,CONTENT_INSET,marked,it.hot,keyboard)) {
             ui.icon(ctx,icon,ui.tone(ctx,"text_muted"),16)
             ui.label(ctx,card.name,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0)
+            if library_folder {content_library_folder_button(s,id,card.library,card.folder)}
         }
         return
     }
@@ -2114,6 +2116,11 @@ content_folder_cell :: proc(s:^Session,card:Content_Card,id:ui.Id,cell:f32,names
                 ui.icon(ctx,icon,ui.tone(ctx,"text_muted"),cell*0.44)
             }
             if !shown {ui.label(ctx,card.name,ui.metric(ctx,"font_caption"),ui.tone(ctx,"text"),cell-4,center=true)}
+            if library_folder {
+                if ui.box(ctx,content_library_badge(ctx)) {
+                    content_library_folder_button(s,id,card.library,card.folder)
+                }
+            }
         }
         if shown {content_name(ctx,card.name,false,cell,names,ink=ui.tone(ctx,"text"))}
     }
@@ -2147,6 +2154,7 @@ content_header :: proc(s:^Session,line:Content_Line,id:ui.Id,width:f32,marked:bo
             if cover.kind!=.Solid {ui.image(ctx,{quad=cover,width=ui.GROW,height=ui.GROW})} else {ui.icon(ctx,icon,color,14)}
         }
         ui.label(ctx,line.name,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=ui.FONT_MEDIUM)
+        if line.virtual==.Library && line.path!="" {content_library_folder_button(s,id,line.library,line.path)}
     }
     if it.hot {ui.tooltip(ctx,line.path if line.virtual==.None else line.name)}
     return it

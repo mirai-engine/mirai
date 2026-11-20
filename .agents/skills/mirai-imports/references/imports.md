@@ -327,15 +327,18 @@ checkout, worktree and project of the machine, keeps manifests and builds.
   reads is not imported again: the report names its package and lists no assets. Two processes
   or worktrees that ingest one origin take turns with a lock per origin (`cook/workspace`, under
   `<store>/locks/`), and the second finds the work done.
-- **`project_add(root, manifest, folder, assets, options)`** pins a package in the project
-  (`project_pin`, which with `project_unpin` is the only writer of `packages.mirai` and of the
-  manifest files beside it) and follows it there; `project_ingest` ingests a source and pins its
-  package in one import. **Following** writes
+- **`project_add(root, manifest, folder, assets, options)`** pins a package in the project and
+  follows it there; `project_ingest` ingests a source and pins its package in one import.
+  **Following** writes
   or follows its documents under `folder` of the assets: from the baselines of its build
   (`documents_follow`), and for a model whose source is here and whose game types the library
   of the project's editor gives, by importing it with that folder, which also writes its prefab
   (`prefab.model_prefab`). Without the source or those types a model's prefab cannot be written,
   and the report says so.
+- **Adding a Store folder** resolves the exact manifests and their builds before following the
+  documents, and keeps the destination of an existing pin when adding its remaining assets.
+  It publishes all pins together in `packages.mirai`. A write failure restores the previous
+  manifests and documents. Adding, ingesting and refreshing share one write lock per project.
 - **`project_refresh(root, options)`** takes each package the project pins to a build this engine
   reads. A manifest the store lacks comes from the root's file of it, else from the caller's source;
   so a clone with its sources and an empty store ingests every package again with the same ids,

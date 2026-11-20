@@ -4,10 +4,12 @@ import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:sync"
 import "core:thread"
 import "mirai:asset"
+import "mirai:cook/import/sources"
 import "mirai:cook/share"
 import "mirai:editor/api"
 import "mirai:std/base"
@@ -49,12 +51,12 @@ Collab_Take :: struct {
     thread:^thread.Thread,
     done:bool,
     node:^share.Node,
-    manifest:store.Hash,
+    additions:[]sources.Package_Add,
     id:base.Asset_Id,
     name:[64]u8,
     root:string,
     folder:string,
-    assets:[]string,
+    assets:[]base.Asset_Id,
     error:string,
     received:u64, // of the node when it began
     arena:mem.Dynamic_Arena,
@@ -159,27 +161,48 @@ collab_library_find :: proc(s:^Session,st:^Collab_State,peer:int,named:string) -
 @(private)
 collab_library_add :: proc(s:^Session,peer:int,named,folder:string,ids:[]string=nil) -> string {
     st:=collab_state(s)
-    if st==nil || st.node==nil || st.phase!=.Joined {return "this editor is in no session: the libraries of others are those of the editors of a session (collab.host or collab.join)"}
-    if st.take!=nil && (st.take.thread!=nil || !sync.atomic_load(&st.take.done)) {return "a package of a peer is being added: wait for it, as packages.peers says"}
-    if busy:=import_busy(s);busy!="" {return busy}
+    if problem:=collab_take_problem(s,st);problem!="" {return problem}
+    _,rest,target_error:=library_add_target(s,folder)
+    if target_error!="" {return target_error}
     p,problem:=collab_library_find(s,st,peer,named)
     if problem!="" {return problem}
+    used:=make([dynamic]base.Asset_Id,0,len(ids),context.temp_allocator)
     for text in ids {
         id,parsed:=serial.text_parse_asset_id(strings.trim_space(text))
         known:=false
         for a in p.assets {known||=parsed && a.id==id}
         if !known {return fmt.tprintf("assets: %q is no asset of the package %s",text,p.name)}
+        if !slice.contains(used[:],id) {append(&used,id)}
     }
+    requests:=[1]sources.Package_Add{{manifest=p.manifest,folder=rest}}
+    return collab_take_start(s,p.name,folder,requests[:],used[:],p.id)
+}
+
+@(private)
+collab_take_problem :: proc(s:^Session,st:^Collab_State) -> string {
+    if st==nil || st.node==nil || st.phase!=.Joined {
+        return "this editor is in no session: the libraries of others are those of the editors of a session (collab.host or collab.join)"
+    }
+    if st.take!=nil && (st.take.thread!=nil || !sync.atomic_load(&st.take.done)) {
+        return "packages of a peer are being added: wait for them, as packages.peers says"
+    }
+    return import_busy(s)
+}
+
+@(private)
+collab_take_start :: proc(s:^Session,name,folder:string,requests:[]sources.Package_Add,ids:[]base.Asset_Id,id:=base.Asset_Id{}) -> string {
+    st:=collab_state(s)
+    if problem:=collab_take_problem(s,st);problem!="" {return problem}
     if st.take!=nil {collab_take_free(st.take)}
     t:=new(Collab_Take)
     mem.dynamic_arena_init(&t.arena,runtime.heap_allocator(),runtime.heap_allocator())
     t.allocator=base.dynamic_arena_allocator(&t.arena)
-    t.node,t.manifest,t.id=st.node,p.manifest,p.id
-    base.text_set(t.name[:],p.name)
+    t.node,t.id=st.node,id
+    t.additions=library_add_clone(requests,t.allocator)
+    base.text_set(t.name[:],name)
     t.root=strings.clone(s.project_root,t.allocator)
     t.folder=strings.clone(folder,t.allocator)
-    t.assets=make([]string,len(ids),t.allocator)
-    for text,at in ids {t.assets[at]=strings.clone(text,t.allocator)}
+    t.assets=slice.clone(ids,t.allocator)
     t.received=share.node_totals(st.node).received
     st.take=t
     t.thread=thread.create_and_start_with_poly_data(t,proc(t:^Collab_Take) {
@@ -188,13 +211,20 @@ collab_library_add :: proc(s:^Session,peer:int,named,folder:string,ids:[]string=
         threaded:=jobs.system_init(&js,{threads=max(os.get_processor_core_count()-2,0),allocator=runtime.heap_allocator()})
         worker:=jobs.Worker_Ref{}
         if threaded {worker={system=&js,worker=jobs.OWNER}}
-        t.error=strings.clone(share.package_take(t.node,t.manifest,t.root,import_library,worker),t.allocator)
+        for entry in t.additions {
+            if problem:=share.package_take(t.node,entry.manifest,t.root,import_library,worker);problem!="" {
+                t.error=strings.clone(problem,t.allocator)
+                break
+            }
+            free_all(context.temp_allocator)
+        }
         if threaded {jobs.system_destroy(&js)}
         sync.atomic_store(&t.done,true)
     })
     if t.thread==nil {
         sync.atomic_store(&t.done,true)
-        t.error="no thread could be started to fetch it"
+        t.error="no thread could be started to fetch the packages"
+        return t.error
     }
     return ""
 }
@@ -207,15 +237,17 @@ collab_take_update :: proc(s:^Session,st:^Collab_State) {
     thread.join(t.thread)
     thread.destroy(t.thread)
     t.thread=nil
+    if st.libraries!=nil {st.libraries.at=-COLLAB_LIBRARY_SECONDS}
     name:=base.text_get(t.name[:])
     if t.error!="" {
         notify(s,fmt.tprintf("%s was not added: %s",name,t.error))
         return
     }
-    buffer:[base.ASSET_ID_TEXT]u8
-    if problem:=library_add(s,base.asset_id_format(t.id,buffer[:]),t.assets,t.folder,offered=t.manifest);problem!="" {
+    root,_,problem:=library_add_target(s,t.folder)
+    if problem=="" {problem=library_add_start(s,root,name,t.additions,t.assets,group=t.id=={})}
+    if problem!="" {
         t.error=strings.clone(problem,t.allocator)
-        notify(s,fmt.tprintf("%s is in this machine's library now but was not added: %s",name,problem))
+        notify(s,fmt.tprintf("%s could not be added to the project: %s",name,problem))
     }
     // Read again: it is here now.
     if st.libraries!=nil {st.libraries.at=-COLLAB_LIBRARY_SECONDS}

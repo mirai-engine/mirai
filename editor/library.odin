@@ -3,6 +3,7 @@ package editor
 import "base:runtime"
 import "core:fmt"
 import "core:log"
+import "core:mem"
 import "core:slice"
 import "core:strings"
 import "core:time"
@@ -179,30 +180,35 @@ library_list :: proc(s:^Session,root:string,allocator:=context.allocator) -> (li
     return out[:],""
 }
 
-// Starts adding the package of the library named (its id or its name), or of
-// it the assets of ids, to the folder of the assets, as an import that runs
-// (import_poll ends it). What failed, as how to fix it; "" when it started.
 @(private)
-library_add :: proc(s:^Session,named:string,ids:[]string,folder:string,offered:=store.Hash{}) -> string {
+library_add_target :: proc(s:^Session,folder:string) -> (root:Library_Root,rest,problem:string) {
     r:=files_registry(s)
-    if r==nil {return "The project has no assets folder to add into"}
-    if busy:=import_busy(s);busy!="" {return busy}
+    if r==nil {return {},"","The project has no assets folder to add into"}
+    if busy:=import_busy(s);busy!="" {return {},"",busy}
     clean,refused:=asset_folder_clean(r,folder)
-    if refused!="" {return fmt.tprintf("folder: %s",refused)}
-    root,rest,rooted:=import_root_of(s,r,clean)
-    if !rooted {return fmt.tprintf("folder: %s is a folder of the editor or the engine: give a folder of the project or of a plugin",clean)}
-    if s.store.root=="" {return "The editor has no store: start it with --store <folder>"}
+    if refused!="" {return {},"",fmt.tprintf("folder: %s",refused)}
+    rooted:bool
+    root,rest,rooted=import_root_of(s,r,clean)
+    if !rooted {
+        return {},"",fmt.tprintf("folder: %s is a folder of the editor or the engine: give a folder of the project or of a plugin",clean)
+    }
+    if s.store.root=="" {return {},"","The editor has no store: start it with --store <folder>"}
+    return
+}
+
+// Starts adding a named package or the selected assets of it.
+@(private)
+library_add :: proc(s:^Session,named:string,ids:[]string,folder:string) -> string {
+    root,rest,problem:=library_add_target(s,folder)
+    if problem!="" {return problem}
     wanted:=strings.trim_space(named)
     if wanted=="" {return "name: give the id or the name of a package, as packages.list lists them"}
     p:asset.Package
     manifest:store.Hash
     id,is_id:=serial.text_parse_asset_id(wanted)
     if is_id {
-        hash:=offered
-        if hash=={} {
-            text:[base.ASSET_ID_TEXT]u8
-            hash,_=store.ref_get(&s.store,asset.REF_PACKAGES,base.asset_id_format(id,text[:]))
-        }
+        text:[base.ASSET_ID_TEXT]u8
+        hash,_:=store.ref_get(&s.store,asset.REF_PACKAGES,base.asset_id_format(id,text[:]))
         if hash!={} {
             candidate,error:=asset.package_get(&s.store,hash,context.temp_allocator)
             if error==.None && candidate.id==id {p,manifest=candidate,hash}
@@ -232,17 +238,62 @@ library_add :: proc(s:^Session,named:string,ids:[]string,folder:string,offered:=
         if !known {return fmt.tprintf("assets: %q is no asset of the package %s: give the ids packages.list lists for it, or none for all",text,p.name)}
         if !slice.contains(used[:],asset_id) {append(&used,asset_id)}
     }
+    requests:=[1]sources.Package_Add{{manifest=manifest,folder=rest}}
+    return library_add_start(s,root,p.name,requests[:],used[:])
+}
+
+@(private)
+library_add_start :: proc(s:^Session,root:Library_Root,name:string,requests:[]sources.Package_Add,assets:[]base.Asset_Id,group:=false) -> string {
     allocator:=runtime.heap_allocator()
     job:=new(Import_Job,allocator)
-    job^={allocator=allocator,manifest=manifest,started=time.tick_now()}
+    job^={allocator=allocator,started=time.tick_now(),group_add=group}
     job.store=s.store
-    job.source=strings.clone(p.name,allocator)
-    job.root,job.prefix,job.folder=strings.clone(root.root,allocator),strings.clone(root.prefix,allocator),strings.clone(rest,allocator)
-    job.assets=slice.clone(used[:],allocator)
+    job.source=strings.clone(name,allocator)
+    job.root,job.prefix=strings.clone(root.root,allocator),strings.clone(root.prefix,allocator)
+    job.additions=library_add_clone(requests,allocator)
+    job.assets=slice.clone(assets,allocator)
     import_plugins_prepare(s,job,true,{},0)
-    import_job_start(s,job,"Adding %s",p.name)
-    if job.thread==nil {return string(s.importer.message[:s.importer.message_length])}
+    if !import_job_start(s,job,"Adding %s",name) {
+        return string(s.importer.message[:s.importer.message_length])
+    }
     return ""
+}
+
+@(private)
+library_add_clone :: proc(requests:[]sources.Package_Add,allocator:mem.Allocator) -> []sources.Package_Add {
+    added:=slice.clone(requests,allocator)
+    for &entry in added {entry.folder=strings.clone(entry.folder,allocator)}
+    return added
+}
+
+@(private)
+content_packages_add :: proc(s:^Session,library:i32,ids:[]base.Asset_Id,folder:string,name:="Folder") {
+    if len(ids)==0 {return}
+    root,rest,problem:=library_add_target(s,folder)
+    if problem!="" {notify(s,problem);return}
+    listing:=&s.content.libraries
+    library_root:=content_library_root_of(s.content,library)
+    by_id:=make(map[base.Asset_Id]^Content_Package,context.temp_allocator)
+    for &p in listing.packages {
+        if p.root==library_root {by_id[p.id]=&p}
+    }
+    requests:=make([]sources.Package_Add,len(ids),context.temp_allocator)
+    for id,i in ids {
+        p:=by_id[id]
+        if p==nil || p.manifest=={} {
+            notify(s,"The library changed. Open the folder again.")
+            return
+        }
+        path:=p.folder
+        if rest!="" {path=fmt.tprintf("%s/%s",rest,p.folder)}
+        requests[i]={manifest=p.manifest,folder=path}
+    }
+    if library==0 {
+        problem=library_add_start(s,root,name,requests,nil,group=true)
+    } else {
+        problem=collab_take_start(s,name,folder,requests,nil)
+    }
+    if problem!="" {notify(s,problem)}
 }
 
 // ---------------------------------------------------------------- packages.list, packages.add

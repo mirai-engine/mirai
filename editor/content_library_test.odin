@@ -1,6 +1,7 @@
 package editor
 
 import "core:fmt"
+import "core:slice"
 import "core:testing"
 import "mirai:asset"
 import "mirai:cook/share"
@@ -102,6 +103,67 @@ content_libraries_are_roots_of_what_the_project_does_not_hold :: proc(t:^testing
     c.restore=true
     content_test_show(&c,&registry)
     testing.expect(t,c.at.virtual==.None,"the root of a peer that left is not where the browser stays")
+}
+
+@(test)
+content_library_folder_add_includes_all_descendants_while_searching :: proc(t:^testing.T) {
+    public:=[]share.Peer_Package{
+        {id={1,1},name="scene",catalog_path="Crystal Cave"},
+        {id={1,2},name="lamp",catalog_path="Crystal Cave/Props"},
+        {id={1,3},name="rail",catalog_path="Crystal Cave/Props/Rails"},
+        {id={1,4},name="wood",catalog_path="Crystal Cave/Props Extra"},
+        {id={1,5},name="tree",catalog_path="Crystal Cave Extra"},
+    }
+    other:=[]share.Peer_Package{{id={2,1},name="scene",catalog_path="Crystal Cave"}}
+    peers:=[]Content_Peer_Listing{{peer=1,name="Ana",list=public},{peer=2,name="Ben",list=other}}
+    c:=CONTENT_DEFAULT
+    defer core.value_free(&c,type_info_of(Content))
+    c.libraries.roots,c.libraries.packages=content_library_listing(nil,peers,false,context.temp_allocator)
+    c.filter_length=copy(c.filter[:],"lamp")
+    testing.expect_value(t,len(content_package_entries(&c,0,string(c.filter[:c.filter_length]))),1)
+    testing.expect(t,slice.equal(content_library_folder_packages(&c,2,"Crystal Cave"),
+        []base.Asset_Id{{1,2},{1,3},{1,1},{1,4}}))
+    testing.expect(t,slice.equal(content_library_folder_packages(&c,2,"Crystal Cave/Props"),
+        []base.Asset_Id{{1,2},{1,3}}))
+    testing.expect(t,slice.equal(content_library_folder_packages(&c,3,"Crystal Cave"),[]base.Asset_Id{{2,1}}))
+    testing.expect(t,len(content_library_folder_packages(&c,2,""))==0)
+    testing.expect(t,len(content_library_folder_packages(&c,4,"Crystal Cave"))==0)
+
+    ctx:ui.Context
+    if !testing.expect(t,test_ui_init(&ctx,{})) {return}
+    defer ui.context_destroy(&ctx)
+    assets:=host.Assets{registry=content_test_registry(),indexed=true}
+    defer content_test_registry_free(&assets.registry)
+    app:=host.App{assets=&assets}
+    g:=Editor_Ui{ctx=&ctx}
+    selection:history.Selection
+    info:core.World_Info
+    session:=Session{app=&app,gui=&g,content=&c,selection=&selection,info=&info,headless=true}
+    c.libraries.ready,c.libraries.key=true,{assets.registry.revision,0,c.library_revision,0}
+    c.filter_length=0
+    folder:="Crystal Cave"
+    group:=content_library_folder_group(0,folder)
+    row:=ui.id_derive(&ctx,100,"content_folder",int(group))
+    add:=ui.id_derive(&ctx,row,"content_library_folder_add",int(content_library_folder_group(2,folder)))
+    root:=ui.id_derive(&ctx,100,"content_folder",int(content_library_group(0)))
+    content_test_still(&session)
+    _,found:=ui.widget_rect(&ctx,root)
+    testing.expect(t,found)
+    root_add:=ui.id_derive(&ctx,root,"content_library_folder_add",int(content_library_folder_group(2,"")))
+    _,found=ui.widget_rect(&ctx,root_add)
+    testing.expect(t,!found,"peer roots are not folders to add")
+    content_test_click(t,&session,add)
+    testing.expect(t,!content_folded(&c,group),"the busy folder action does not fold the row")
+
+    c.view.arrangement=.Cards
+    content_enter(&c,.Library,library=2)
+    modes:=[]Content_Mode{.Grid,.List}
+    for mode in modes {
+        c.view.mode=mode
+        content_test_still(&session)
+        content_test_click(t,&session,add)
+        testing.expect(t,c.at.length==0,"the busy folder action does not open the folder")
+    }
 }
 
 // A card of a peer's root asks for its thumbnail only while it is in sight:

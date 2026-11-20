@@ -64,14 +64,15 @@ Importer :: struct {
 }
 
 // An import in a thread of its own: of a source (source), or the add of a
-// package of the library (manifest). Its memory is that of allocator, which
+// packages of the library (additions). Its memory is that of allocator, which
 // any thread can call.
 Import_Job :: struct {
     thread:^thread.Thread,
     source:string,        // the source, or the name of the package added
     root,folder:string,   // the project or plugin it is pinned in, and the folder of its assets it is listed in
     prefix:string,        // of that root in the registry: "" for the project
-    manifest:store.Hash,  // of the package added; zero for a source
+    additions:[]sources.Package_Add, // empty for a source
+    group_add:bool,
     assets:[]base.Asset_Id, // of the package added, those it uses; none: all
     settings:importer.Import_Settings,
     settled:bool,         // settings replace those its package keeps
@@ -257,8 +258,7 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
     }
     import_plugins_prepare(s,job,kind==.Model,whole if claimed else {},code)
     job.options.changed=.Discard if discard else .Refuse
-    import_job_start(s,job,"Importing %s",name)
-    return job.thread!=nil
+    return import_job_start(s,job,"Importing %s",name)
 }
 
 // The formats and the whole importers of the plugins job imports with, with
@@ -293,17 +293,18 @@ import_plugins_prepare :: proc(s:^Session,job:^Import_Job,models:bool,whole:Sour
 // Starts the thread of job, which is the import that runs once started; it
 // is freed when it cannot start, with the reason shown.
 @(private)
-import_job_start :: proc(s:^Session,job:^Import_Job,format:string,args:..any) {
+import_job_start :: proc(s:^Session,job:^Import_Job,format:string,args:..any) -> bool {
     job.thread=thread.create_and_start_with_poly_data(job,import_run)
     if job.thread==nil {
         import_say(s,"%s: no thread could be started to import it",filepath.base(job.source))
         import_job_free(job)
-        return
+        return false
     }
     s.importer.running=job
     s.importer.status={importing=true}
     base.text_set(s.importer.status.path[:],job.source)
     import_say(s,format,..args)
+    return true
 }
 
 // The import of job, in its thread: a job system of its own cooks on the
@@ -324,10 +325,13 @@ import_run :: proc(job:^Import_Job) {
     }
     added:sources.Library_Report
     error:importer.Error
-    if job.manifest!={} {
-        added=sources.project_add(job.root,job.manifest,job.folder,job.assets,job.options,job.allocator)
-        import_added_report(job)
-    } else {
+    switch {
+    case job.group_add:
+        added=sources.project_add_many(job.root,job.additions,job.options,job.allocator)
+    case len(job.additions)>0:
+        entry:=job.additions[0]
+        added=sources.project_add(job.root,entry.manifest,entry.folder,job.assets,job.options,job.allocator)
+    case:
         settings:=&job.settings if job.settled else nil
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
         report,ingested,ingest_error:=sources.project_ingest(job.root,job.source,job.folder,job.options,settings,job.allocator)
@@ -339,6 +343,7 @@ import_run :: proc(job:^Import_Job) {
     if error.code==.None && len(added.failures)+len(added.missing)>0 {
         error={.Write,strings.join(len(added.failures)>0?added.failures[:]:added.missing[:],"; ",context.temp_allocator)}
     }
+    if error.code==.None && len(job.additions)>0 {import_added_report(job)}
     for warning in added.warnings {append(&job.report.warnings,strings.clone(warning,job.allocator))}
     if error.code!=.None {job.error={error.code,strings.clone(error.message,job.allocator)}}
     job.seconds=time.duration_seconds(time.tick_since(job.started))
@@ -349,21 +354,33 @@ import_run :: proc(job:^Import_Job) {
 @(private)
 import_added_report :: proc(job:^Import_Job) {
     importer.report_init(&job.report,job.allocator)
-    p,error:=asset.package_get(&job.store,job.manifest,context.temp_allocator)
+    a:=context.temp_allocator
+    list,_,error:=asset.packages_load(job.root,a)
     if error!=.None {return}
-    job.report.package_id,job.report.manifest=p.id,job.manifest
+    pins:=make(map[base.Asset_Id]store.Hash,a)
+    for &entry in list.packages {pins[entry.id]=entry.manifest}
     digits:[64]u8
-    if hash,e:=store.ref_get(&job.store,asset.REF_BUILDS,
-        store.hex(asset.build_select(job.manifest,&p),&digits));e==.None {
-        if b,read_error:=asset.build_get(&job.store,hash,context.temp_allocator);read_error==.None {
-            for program in b.programs {
-                append(&job.report.programs,asset.generated_program_id(program,job.allocator))
+    for entry in job.additions {
+        p,read_error:=asset.package_get(&job.store,entry.manifest,a)
+        if read_error!=.None {continue}
+        manifest,found:=pins[p.id]
+        if !found {continue}
+        if manifest!=entry.manifest {
+            if p,read_error=asset.package_get(&job.store,manifest,a);read_error!=.None {continue}
+        }
+        if hash,e:=store.ref_get(&job.store,asset.REF_BUILDS,
+            store.hex(asset.build_select(manifest,&p),&digits));e==.None {
+            if b,build_error:=asset.build_get(&job.store,hash,a);build_error==.None {
+                for program in b.programs {
+                    append(&job.report.programs,asset.generated_program_id(program,job.allocator))
+                }
             }
         }
-    }
-    for &a in p.assets {
-        if len(job.assets)>0 && !slice.contains(job.assets,a.id) {continue}
-        append(&job.report.assets,importer.Written{id=a.id,kind=a.kind})
+        selected,_,select_error:=asset.package_selection(&p,job.assets,a)
+        if select_error!=.None {continue}
+        for &entry,i in p.assets {
+            if selected[i] {append(&job.report.assets,importer.Written{id=entry.id,kind=entry.kind})}
+        }
     }
 }
 
@@ -374,6 +391,8 @@ import_job_free :: proc(job:^Import_Job) {
     importer.report_destroy(&job.report)
     delete(job.source,allocator)
     delete(job.root,allocator);delete(job.prefix,allocator);delete(job.folder,allocator)
+    for entry in job.additions {delete(entry.folder,allocator)}
+    delete(job.additions,allocator)
     delete(job.assets,allocator)
     for provider in job.plugin_formats {
         if provider.prepare!=nil && provider.release!=nil {provider.release(provider.format.data,allocator)}
@@ -461,7 +480,7 @@ import_poll :: proc(s:^Session) {
     case scene!="":
         base.text_set(status.scene[:],scene)
         import_say(s,"Imported %s: the scene %s and %d assets, %d warnings, in %.1f s",name,scene,len(report.assets)-1,len(report.warnings),job.seconds)
-    case job.manifest!={}:
+    case len(job.additions)>0:
         import_say(s,"Added %s: %d assets",name,len(report.assets))
     case:
         import_say(s,"Imported %s: %d assets",name,len(report.assets))

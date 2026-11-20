@@ -45,6 +45,67 @@ Followed :: struct {
     kept:bool,      // it changed since it was last written and was left as it is
 }
 
+Document_Backups :: struct {
+    entries:[dynamic]Document_Backup,
+    seen:map[string]bool,
+    folders:map[string]string,
+}
+
+@(private="file")
+Document_Backup :: struct {path,backup:string}
+
+document_backups_begin :: proc() -> Document_Backups {
+    return {
+        entries=make([dynamic]Document_Backup,context.temp_allocator),
+        seen=make(map[string]bool,context.temp_allocator),
+        folders=make(map[string]string,context.temp_allocator),
+    }
+}
+
+document_backup :: proc(b:^Document_Backups,path:string) -> asset.Error {
+    if b==nil {return .None}
+    if b.seen[path] {return .None}
+    if reserve(&b.seen,len(b.seen)+1)!=nil {return .Out_Of_Memory}
+    backup:string
+    _,stat_error:=os.stat(path,context.temp_allocator)
+    if stat_error==nil {
+        parent:=filepath.dir(path)
+        folder:=b.folders[parent]
+        if folder=="" {
+            if reserve(&b.folders,len(b.folders)+1)!=nil {return .Out_Of_Memory}
+            dir,dir_error:=os.make_directory_temp(parent,".mirai-restore-",context.temp_allocator)
+            if dir_error!=nil {return .IO}
+            folder=dir
+            b.folders[parent]=dir
+        }
+        backup=fmt.tprintf("%s/%d",folder,len(b.entries))
+        if os.copy_file(backup,path)!=nil {return .IO}
+    } else if stat_error!=.Not_Exist {return .IO}
+    if _,error:=append(&b.entries,Document_Backup{path,backup});error!=nil {return .Out_Of_Memory}
+    b.seen[path]=true
+    return .None
+}
+
+// On a failed restore, keep the backup for recovery and report where it is.
+document_backups_finish :: proc(b:^Document_Backups,committed:bool) -> (path,backup:string) {
+    if !committed {
+        for at:=len(b.entries)-1;at>=0;at-=1 {
+            entry:=b.entries[at]
+            if entry.backup!="" {
+                if os.rename(entry.backup,entry.path)==nil {continue}
+            } else {
+                error:=os.remove(entry.path)
+                if error==nil || error==.Not_Exist {continue}
+            }
+            if path=="" {path,backup=entry.path,entry.backup}
+        }
+    }
+    if path=="" {
+        for _,folder in b.folders {_=os.remove_all(folder)}
+    }
+    return
+}
+
 // Writes into folder the documents of the build b of the package p, or
 // follows those whose ids registry has where it has them. A new file is
 // named as the package names its document, under the folder of its documents
@@ -53,7 +114,7 @@ Followed :: struct {
 // with a warning, unless changed is Discard. What it wrote, in allocator.
 // kinds: the extensions of the kinds of the plugins of the project, which a new
 // file of one of their documents takes.
-documents_follow :: proc(s:^store.Store,p:^asset.Package,b:^asset.Build,folder:string,registry:^asset.Registry,recorded:[]asset.Package_Written,changed:Changed,kinds:[]Kind_Extension={},allocator:=context.allocator) -> (written:[dynamic]Followed,error:Error) {
+documents_follow :: proc(s:^store.Store,p:^asset.Package,b:^asset.Build,folder:string,registry:^asset.Registry,recorded:[]asset.Package_Written,changed:Changed,kinds:[]Kind_Extension={},allocator:=context.allocator,backups:^Document_Backups=nil) -> (written:[dynamic]Followed,error:Error) {
     written=make([dynamic]Followed,allocator)
     types:asset.Types
     asset.types_init(&types,context.temp_allocator)
@@ -97,6 +158,9 @@ documents_follow :: proc(s:^store.Store,p:^asset.Package,b:^asset.Build,folder:s
                 break
             }
             if under:=filepath.dir(target);!os.is_dir(under) {_=os.make_directory_all(under)}
+        }
+        if backup_error:=document_backup(backups,target);backup_error!=.None {
+            return written,error_make(.Write,"%s could not be backed up before writing: %v",target,backup_error,allocator=context.temp_allocator)
         }
         warning,follow_error:=document_follow(&types,o.kind,baseline,target,skeletons[:],registry)
         if follow_error!=.None {return written,error_make(.Write,"%s could not be written: %v",target,follow_error,allocator=context.temp_allocator)}
