@@ -352,7 +352,6 @@ projects_build_start :: proc(s:^Session) {
     }
     built^=opened
     p.built=built
-    p.shaders=build.shaders_start(built,store_root=s.store.root)
     p.job=build.job_start({project=built,target=.Editor,dev=build.ENGINE_MODE_HERE==.Dev,engine=build.ENGINE_MODE_HERE,runs=engine_folder_here(s),store_root=s.store.root})
     log.infof("building %s to open it",absolute)
 }
@@ -384,10 +383,13 @@ projects_poll :: proc(s:^Session) {
     // Without a window no dialog is waited for: a manual editor draws no frame by itself.
     if p!=nil && p.starting && (s.frame>p.start_frame+1 || s.headless) {projects_build_start(s)}
     if p==nil || p.job==nil {return}
-    if p.shaders!=nil && !build.shaders_poll(p.shaders) {return}
     if !build.job_poll(p.job) {return}
     result:=&p.job.result
     failed:=result.status==.Failed
+    if !failed {
+        if p.shaders==nil {p.shaders=build.shaders_start(p.built,store_root=s.store.root)}
+        if !build.shaders_poll(p.shaders) {return}
+    }
     if failed {
         text:=result.text
         for d in result.diagnostics {
