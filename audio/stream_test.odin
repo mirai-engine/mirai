@@ -5,7 +5,7 @@ import "core:sync"
 import "core:testing"
 import "core:thread"
 
-@(private="file") TONE_LONG :: #load("testdata/tone_long.ogg") // 2 s of 330 Hz at 32 kHz, mono, amplitude 0.4
+@(private) TONE_LONG :: #load("testdata/tone_long.ogg") // 2 s, 330 Hz, 32 kHz, mono, amplitude 0.4
 
 // A stereo f32 WAV whose frame i holds test_ramp(i) on the left and its opposite on the right.
 @(private="file")
@@ -52,17 +52,6 @@ stream_plays_exactly_what_its_file_holds :: proc(t:^testing.T) {
     for i in 0..<300 {
         if !test_near(t,out[i*2],test_ramp(i)*0.5,0) {break}
     }
-    // One voice at a time.
-    testing.expect_value(t,voice_play(m,sound),Voice(0))
-    testing.expect_value(t,mixer_stats(m).streams_busy,u64(1))
-    // Stopped, it is free again once an update has seen it end.
-    voice_stop(m,voice)
-    testing.expect_value(t,voice_play(m,sound),Voice(0))
-    play_along(m,CHUNK_FRAMES)
-    voice=voice_play(m,sound)
-    testing.expect(t,voice!=0)
-    out=play_along(m,10)
-    test_near(t,out[0],test_ramp(0),0)
 }
 
 @(test)
@@ -153,17 +142,87 @@ resampled_ogg_stream_sounds_like_the_same_file_played_from_memory :: proc(t:^tes
 }
 
 @(test)
-streams_are_limited_and_their_place_is_freed_with_the_sound :: proc(t:^testing.T) {
-    m:=test_mixer(t,{stream_capacity=1,voice_capacity=1})
+an_ogg_stream_can_crossfade_with_itself :: proc(t:^testing.T) {
+    m:=test_mixer(t,{stream_frames=2048})
+    defer mixer_destroy(m)
+    reference:=test_mixer(t)
+    defer mixer_destroy(reference)
+    stream,error:=sound_stream(m,TONE_LONG)
+    if !testing.expect_value(t,error,Error.None) {return}
+    sound,load_error:=sound_load(reference,TONE_LONG)
+    if !testing.expect_value(t,load_error,Error.None) {return}
+    desc:=VOICE_DEFAULT
+    desc.volume=0.25
+    outgoing:=voice_play(m,stream,desc)
+    original:=voice_play(reference,sound,desc)
+    _=play_along(m,2400)
+    _=play_along(reference,2400)
+    testing.expect(t,voice_stop(m,outgoing,0.05) && voice_stop(reference,original,0.05))
+    desc.offset=0.25
+    desc.fade_in=0.05
+    asks:=0
+    allocator:=m.allocator
+    m.allocator=test_no_allocator(&asks)
+    incoming:=voice_play(m,stream,desc)
+    m.allocator=allocator
+    if !testing.expect(t,incoming!=0 && incoming!=outgoing) {return}
+    testing.expect_value(t,asks,0)
+    voice_play(reference,sound,desc)
+    got:=play_along(m,480)
+    want:=play_along(reference,480)
+    testing.expect_value(t,mixer_stats(m).voices_active,2)
+    tail:=play_along(m,4800)
+    want_tail:=play_along(reference,4800)
+    for sample,i in got {
+        if !test_near(t,sample,want[i]) {break}
+    }
+    for sample,i in tail {
+        if !test_near(t,sample,want_tail[i]) {break}
+    }
+    testing.expect(t,!voice_valid(m,outgoing) && voice_valid(m,incoming))
+    testing.expect_value(t,mixer_stats(m).underruns,u64(0))
+    testing.expect_value(t,mixer_stats(m).streams_busy,u64(0))
+}
+
+@(test)
+cached_streams_take_feeds_only_while_playing :: proc(t:^testing.T) {
+    m:=test_mixer(t,{stream_frames=1024})
+    defer mixer_destroy(m)
+    feeds:=m.free_stream_count
+    if !testing.expect(t,feeds>4 && voices_free(m)>feeds) {return}
+    file:=ramp_wav(4000)
+    sounds:=make([]Sound,feeds+1,context.temp_allocator)
+    for &sound in sounds {
+        error:Error
+        sound,error=sound_stream(m,file)
+        if !testing.expect_value(t,error,Error.None) {return}
+    }
+    desc:=VOICE_DEFAULT
+    desc.volume=1/f32(feeds)
+    for sound in sounds[:feeds] {
+        if !testing.expect(t,voice_play(m,sound,desc)!=0) {return}
+    }
+    extra:=sounds[feeds]
+    testing.expect_value(t,voice_play(m,extra,desc),Voice(0))
+    testing.expect_value(t,mixer_stats(m).streams_busy,u64(1))
+    out:=play_along(m,1600)
+    testing.expect_value(t,mixer_stats(m).voices_active,feeds)
+    testing.expect_value(t,mixer_stats(m).underruns,u64(0))
+    test_near(t,out[len(out)-2],test_ramp(1599))
+    sound_destroy(m,sounds[0])
+    play_along(m,CHUNK_FRAMES)
+    testing.expect(t,voice_play(m,extra,desc)!=0)
+    testing.expect(t,!sound_valid(m,sounds[0]))
+    for sound in sounds[1:] {testing.expect(t,sound_valid(m,sound))}
+}
+
+@(test)
+a_streaming_voice_is_protected_from_stealing :: proc(t:^testing.T) {
+    m:=test_mixer(t,{stream_capacity=1,voice_capacity=1,stream_frames=1024})
     defer mixer_destroy(m)
     file:=ramp_wav(4000)
     first,error:=sound_stream(m,file)
     testing.expect_value(t,error,Error.None)
-    _,error=sound_stream(m,file)
-    testing.expect_value(t,error,Error.Capacity_Exhausted)
-    _,error=sound_stream(m,{1,2,3})
-    testing.expect_value(t,error,Error.Capacity_Exhausted)
-    // The voice of a stream is not stolen, whatever the priority of the newcomer.
     voice:=voice_play(m,first)
     desc:=VOICE_DEFAULT
     desc.priority=255
@@ -178,10 +237,6 @@ streams_are_limited_and_their_place_is_freed_with_the_sound :: proc(t:^testing.T
     testing.expect_value(t,second_error,Error.None)
     testing.expect(t,voice_play(m,second)!=0)
     _,error=sound_stream(m,{'O','g','g','S',1,2,3})
-    testing.expect_value(t,error,Error.Capacity_Exhausted)
-    sound_destroy(m,second)
-    play_along(m,CHUNK_FRAMES)
-    _,error=sound_stream(m,{'O','g','g','S',1,2,3})
     testing.expect_value(t,error,Error.Invalid_Data)
     _,error=sound_stream(m,{1,2,3})
     testing.expect_value(t,error,Error.Invalid_Data)
@@ -194,7 +249,7 @@ Render_Thread :: struct {m:^Mixer,stop:bool,chunks:int,peak:f32}
 // afterwards no voice, feed or sound is lost and nothing was left playing.
 @(test)
 audio_thread_and_game_thread_share_a_mixer_without_locks :: proc(t:^testing.T) {
-    m:=test_mixer(t,{voice_capacity=16,stream_frames=2048,decoder_thread=true})
+    m:=test_mixer(t,{voice_capacity=16,stream_capacity=4,stream_frames=2048,decoder_thread=true})
     defer mixer_destroy(m)
     state:=Render_Thread{m=m}
     render :: proc(state:^Render_Thread) {
@@ -215,10 +270,11 @@ audio_thread_and_game_thread_share_a_mixer_without_locks :: proc(t:^testing.T) {
     for &sample,i in samples {sample=i16(i%101-50)}
     encoded,_:=lossless_encode(samples,2,22050,context.temp_allocator)
     sounds[2],_=sound_load(m,encoded)
-    stream,_:=sound_stream(m,ramp_wav(9000))
+    file:=ramp_wav(9000)
+    stream:Sound
     bus,_:=bus_create(m)
     voices:[64]Voice
-    music:Voice
+    music:[2]Voice
     played:=0
     for round in 0..<20000 {
         slot:=round%len(voices)
@@ -230,6 +286,8 @@ audio_thread_and_game_thread_share_a_mixer_without_locks :: proc(t:^testing.T) {
             // A sound comes and goes while its voices play.
             sound_destroy(m,sounds[3])
             sounds[3],_=sound_create(m,make([]f32,512,context.temp_allocator),1,RATE)
+            sound_destroy(m,stream)
+            stream,_=sound_stream(m,file)
         }
         voice:=voice_play(m,sounds[round%4],desc)
         if voice!=0 {voices[slot]=voice;played+=1}
@@ -237,27 +295,33 @@ audio_thread_and_game_thread_share_a_mixer_without_locks :: proc(t:^testing.T) {
         voice_set_pan(m,voices[(slot+11)%len(voices)],-0.5)
         if round%5==0 {voice_stop(m,voices[(slot+3)%len(voices)],0.001)}
         if round%11==0 {voice_set_paused(m,voices[(slot+5)%len(voices)],round%22==0)}
-        if !voice_valid(m,music) {
-            desc.volume=0.0001;desc.loop=round%2==0;desc.spatial=false;desc.pitch=1
-            music=voice_play(m,stream,desc)
+        for &voice in music {
+            if !voice_valid(m,voice) {
+                desc.volume=0.0001;desc.loop=round%2==0;desc.spatial=false;desc.pitch=1
+                voice=voice_play(m,stream,desc)
+            }
         }
         listener_set(m,{f32(round%3),0,0},1)
         bus_set_volume(m,bus,0.5)
         if round%4==0 {mixer_update(m)}
-        if round%64==0 {thread.yield()}
+        if round%64==0 {
+            before:=sync.atomic_load(&state.chunks)
+            for sync.atomic_load(&state.chunks)==before {thread.yield()}
+        }
     }
     testing.expect(t,played>1000)
     // Everything is stopped and the audio thread is given the time to say so.
     for attempt:=0;attempt<2000;attempt+=1 {
         for voice in voices {voice_stop(m,voice)}
-        voice_stop(m,music)
+        for voice in music {voice_stop(m,voice)}
         for &shadow,i in m.shadows {
             if shadow.active {command_push(m,{kind=.Voice_Stop,index=u32(i),generation=shadow.generation})}
         }
         before:=sync.atomic_load(&state.chunks)
         for sync.atomic_load(&state.chunks)<before+3 {thread.yield()}
         mixer_update(m)
-        if m.free_count==len(m.shadows) && m.free_feed_count==m.pool_feeds && feed_phase(&m.feeds[m.pool_feeds])==.Free {break}
+        if m.free_count==len(m.shadows) && m.free_feed_count==m.pool_feeds &&
+           m.free_stream_count==len(m.feeds)-m.pool_feeds {break}
     }
     sync.atomic_store(&state.stop,true)
     thread.join(worker)
@@ -268,6 +332,6 @@ audio_thread_and_game_thread_share_a_mixer_without_locks :: proc(t:^testing.T) {
     testing.expect(t,state.peak<4,"The mix went far above what the voices could add up to")
     testing.expect(t,!math.is_nan(state.peak))
     // No voice plays the stream any more, and every sound slot but the live ones is free.
-    testing.expect_value(t,feed_phase(&m.feeds[m.pool_feeds]),Feed_Phase.Free)
+    testing.expect_value(t,m.free_stream_count,len(m.feeds)-m.pool_feeds)
     testing.expect_value(t,mixer_stats(m).sounds,5)
 }

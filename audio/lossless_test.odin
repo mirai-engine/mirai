@@ -3,8 +3,6 @@ package mirai_audio
 import "core:fmt"
 import "core:testing"
 
-@(private="file") TONE_LONG :: #load("testdata/tone_long.ogg") // 2 s of 330 Hz at 32 kHz, mono
-
 // A xorshift: numbers that repeat from run to run.
 @(private="file")
 next :: proc(state:^u64,n:int) -> int {
@@ -164,6 +162,11 @@ lossless_voices_and_their_offsets_play_the_whole_decode :: proc(t:^testing.T) {
         // What stays in memory is the file, not its decode.
         if mode!=.Stream {testing.expect_value(t,mixer_stats(m).sound_bytes,len(file))}
         voice:=voice_play(m,sound)
+        if mode==.Stream {
+            // Loading a larger decoder workspace leaves the playing lossless decoder intact.
+            _,load_error:=sound_stream(m,TONE_LONG)
+            testing.expect_value(t,load_error,Error.None)
+        }
         same(t,fmt.tprint(mode,"from the beginning"),play(m,FRAMES),whole.samples,0,FRAMES)
         play(m,CHUNK_FRAMES*2)
         testing.expect(t,!voice_valid(m,voice))

@@ -1,6 +1,7 @@
 package mirai_audio
 
 import "base:runtime"
+import "core:mem"
 import "core:strconv"
 import "core:strings"
 import "vendor:stb/vorbis"
@@ -37,20 +38,27 @@ ogg_whole_pages :: proc "contextless" (bytes:[]u8) -> (size:int) {
     }
 }
 
-// Opens a decoder that takes all its memory from one block of the allocator.
+@(private)
+vorbis_open_into :: proc(file,memory:[]u8) -> (decoder:^vorbis.vorbis,code:vorbis.Error) {
+    block:=vorbis.vorbis_alloc{raw_data(memory),i32(len(memory))}
+    decoder=vorbis.open_memory(raw_data(file),i32(len(file)),&code,&block)
+    return
+}
+
+// Opens checked pages with a decoder that takes all its memory from one allocation.
 // The decoder does not say how much it needs before it is open: the block
 // starts at 256 KiB and grows while the decoder runs out of it.
 @(private)
 vorbis_open :: proc(file:[]u8,allocator:runtime.Allocator) -> (decoder:^vorbis.vorbis,memory:[]u8,error:Error) {
-    file:=file[:ogg_whole_pages(file)]
     if len(file)==0 || len(file)>int(max(i32)) {return nil,nil,.Invalid_Data}
     size:=256*1024
     for _ in 0..<6 {
         failed:runtime.Allocator_Error
-        if memory,failed=make([]u8,size,allocator);failed!=nil {return nil,nil,.Out_Of_Memory}
-        block:=vorbis.vorbis_alloc{raw_data(memory),i32(len(memory))}
+        if memory,failed=mem.alloc_bytes_non_zeroed(size,align_of(u64),allocator);failed!=nil {
+            return nil,nil,.Out_Of_Memory
+        }
         code:vorbis.Error
-        decoder=vorbis.open_memory(raw_data(file),i32(len(file)),&code,&block)
+        decoder,code=vorbis_open_into(file,memory)
         if decoder!=nil {
             info:=vorbis.get_info(decoder)
             if info.channels>=1 && info.channels<=2 && info.sample_rate>0 {return decoder,memory,.None}
@@ -67,7 +75,7 @@ vorbis_open :: proc(file:[]u8,allocator:runtime.Allocator) -> (decoder:^vorbis.v
 }
 
 vorbis_decode :: proc(file:[]u8,allocator:runtime.Allocator) -> (pcm:Pcm,error:Error) {
-    decoder,memory:=vorbis_open(file,allocator) or_return
+    decoder,memory:=vorbis_open(file[:ogg_whole_pages(file)],allocator) or_return
     defer {vorbis.close(decoder);delete(memory,allocator)}
     info:=vorbis.get_info(decoder)
     channels:=int(info.channels)

@@ -606,16 +606,20 @@ oldest_voice_of_the_lowest_priority_is_stolen :: proc(t:^testing.T) {
 
 @(test)
 full_command_queue_refuses_instead_of_blocking :: proc(t:^testing.T) {
-    m:=test_mixer(t,{command_capacity=4})
+    m:=test_mixer(t,{command_capacity=4,stream_capacity=1})
     defer mixer_destroy(m)
     sound:=test_stereo(t,m,64,proc(i:int) -> f32 {return 0.25})
+    stream,error:=sound_stream(m,TONE_LONG)
+    if !testing.expect_value(t,error,Error.None) {return}
     voices:[4]Voice
     for &voice in voices {
         voice=voice_play(m,sound)
         testing.expect(t,voice!=0)
     }
     // The audio thread has not run: the queue is full.
-    testing.expect_value(t,voice_play(m,sound),Voice(0))
+    before:=mixer_stats(m).sound_bytes
+    testing.expect_value(t,voice_play(m,stream),Voice(0))
+    testing.expect_value(t,mixer_stats(m).sound_bytes,before)
     testing.expect(t,!voice_set_volume(m,voices[0],0.5))
     testing.expect(t,!bus_set_volume(m,BUS_MASTER,0.5))
     testing.expect(t,!listener_set(m,{},1))
@@ -623,8 +627,7 @@ full_command_queue_refuses_instead_of_blocking :: proc(t:^testing.T) {
     testing.expect_value(t,bus_volume(m,BUS_MASTER),f32(1))
     out:=test_render(m,1)
     test_near(t,out[0],1,0)
-    // The slot of the voice that was not played is still free.
-    testing.expect(t,voice_play(m,sound)!=0)
+    testing.expect(t,voice_play(m,stream)!=0)
     testing.expect(t,voice_set_volume(m,voices[0],0.5))
 }
 
@@ -776,7 +779,16 @@ mixer_that_runs_out_of_memory_leaves_nothing_behind :: proc(t:^testing.T) {
             wav:=[?]i16le{1,2,3,4}
             _,sound_error=sound_load(m,test_wav(1,2,RATE,16,(cast([^]u8)&wav[0])[:8]))
             testing.expect_value(t,sound_error,Error.Out_Of_Memory)
+            lossless,encode_error:=lossless_encode({1,2,3,4},2,RATE,context.temp_allocator)
+            testing.expect_value(t,encode_error,Error.None)
+            state.allowed=state.asked+1
+            _,sound_error=sound_stream(m,lossless)
+            testing.expect_value(t,sound_error,Error.Out_Of_Memory)
             testing.expect_value(t,mixer_stats(m).sounds,0)
+            state.allowed=max(int)
+            stream,retry_error:=sound_stream(m,lossless)
+            testing.expect_value(t,retry_error,Error.None)
+            testing.expect(t,voice_play(m,stream)!=0 && voice_play(m,stream)!=0)
             mixer_destroy(m)
             created=true
             break
