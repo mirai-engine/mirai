@@ -6,8 +6,8 @@ import "mirai:store"
 // Sweeps the machine's store: the one procedure a long-running owner of it
 // (a share, an editor) calls now and then. What stays is what live names
 // (what the owner holds open), what every fresh lease names, every ref of
-// every namespace, and the outputs and thumbnails of the builds those refs
-// name. A project reaches its pins through these refs while it is refreshed
+// every namespace, and the output, thumbnail and program objects of their builds.
+// A project reaches its pins through these refs while it is refreshed
 // (REF_BUILDS, REF_PACKAGES), and its root carries the text of each manifest
 // it pins (PACKAGE_FILES), so a manifest swept is taken from there again.
 store_sweep :: proc(s:^store.Store,live:[]store.Hash,now:Maybe(time.Time)=nil) -> (result:store.Sweep_Result,error:store.Error) {
