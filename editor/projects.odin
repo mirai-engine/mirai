@@ -657,6 +657,7 @@ projects_opening_row :: proc(p:^Projects) -> int {
 @(private)
 projects_doing :: proc(p:^Projects) -> string {
     if p.starting {return "Generating the world"}
+    if build.job_importing(p.job) {return "Refreshing assets"}
     if p.shaders!=nil && p.shaders.result.status==.Running {return "Building the shaders"}
     return "Building the editor"
 }
@@ -840,8 +841,7 @@ projects_template_card :: proc(s:^Session,index:int,disabled,chosen,tall:bool) -
     return it
 }
 
-// The steps of opening a project the list does not show: generating its
-// world, then building its editor and its shaders at once.
+// The steps of opening a project the list does not show.
 @(private)
 projects_loading_build :: proc(s:^Session) {
     p:=s.projects
@@ -852,13 +852,14 @@ projects_loading_build :: proc(s:^Session) {
     Step :: enum u8 {Pending,Current,Done}
     steps:=[4]string{"Installing the plugins from Git","Generating the world","Building the editor","Building the shaders"}
     states:=[4]Step{.Current,.Pending,.Pending,.Pending}
+    if build.job_importing(p.job) {steps[2]="Refreshing assets"}
     if p.install==nil {
         states[0],states[1]=.Done,.Current
     }
     if p.install==nil && !p.starting {
         states[1]=.Done
         states[2]=.Current if p.job!=nil && p.job.result.status==.Running else .Done
-        states[3]=.Current if p.shaders!=nil && p.shaders.result.status==.Running else .Done
+        if p.shaders!=nil {states[3]=.Current if p.shaders.result.status==.Running else .Done}
     }
     if ui.modal(ctx,shell_id(g,"projects_loading"),{width=420,padding=-1}) {
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {
