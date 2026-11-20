@@ -24,14 +24,9 @@ cmd_import :: proc(root:string,args:[]string) -> int {
     mode,rest:=build_mode_take(args)
     mode=build.engine_mode_resolve(root,mode)
     for folder in import_libraries_stale(root,rest,mode) {
-        fmt.eprintfln("mirai import: the editor library of %s was not built from the sources there are now: building it as mirai build editor does",folder)
-        self,error:=os.get_executable_path(context.temp_allocator)
-        if error!=nil {fmt.eprintfln("mirai import: mirai build editor \"%s\" builds it",folder);return 1}
-        command:=make([dynamic]string,context.temp_allocator)
-        append(&command,self,"build","editor",folder)
-        if mode==.Release {append(&command,"--release")}
-        if store_root,_,named:=store_take(rest);named && store_root!="" {append(&command,"--store",store_root)}
-        if code:=run_with(root,command[:],os.stderr);code!=0 {return code}
+        fmt.eprintfln("mirai import: the editor library of %s was not built from the sources there are now: building it without refreshing packages",folder)
+        store_root,_,_:=store_take(rest)
+        if code,_,_:=build_project(root,.Editor,{folder},mode,store_root=store_root,refresh_skip=true,stream=os.stderr);code!=0 {return code}
     }
     if !c_libraries_current(root) || !build.engine_current(root,mode) {
         lock:=build_lock(root,"import")
