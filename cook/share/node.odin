@@ -361,18 +361,14 @@ node_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
                 address={}
                 continue
             }
-            for o in b.outputs {
-                append(&objects,o.object)
-                if o.thumbnail!={} {append(&objects,o.thumbnail)}
-            }
+            roots:=asset.Build_Objects{build=&b,with_thumbnails=true}
+            for root in asset.build_object_next(&roots) {append(&objects,root)}
         }
         objects_fetch(&n.x,objects[:])
         for &address in addresses {
             if address=={} {continue}
-            b,_:=asset.build_get(into,address,context.temp_allocator)
-            for o in b.outputs {
-                if !asset.object_whole(into,o.object) || o.thumbnail!={} && !asset.object_whole(into,o.thumbnail) {address={}}
-            }
+            b,build_error:=asset.build_get(into,address,context.temp_allocator)
+            if build_error!=.None || !asset.build_whole(into,&b,true) {address={}}
         }
     }
     for address,k in addresses {

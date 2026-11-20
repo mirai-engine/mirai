@@ -32,12 +32,16 @@ the_outputs_of_a_source_are_the_assets_its_package_lists :: proc(t:^testing.T) {
     if root=="" {return}
     source:=fmt.tprintf("%s/level.map",assets)
     bytes:="a level"
+    PROGRAM :: "//! surface stone\nnamespace stone {}\n"
     testing.expect(t,os.write_entire_file(source,bytes)==nil)
     Pass :: struct {scene,floor:base.Asset_Id,materials:[2]base.Asset_Id,floor_blob:store.Hash,report:Import_Report,warnings:int}
     pass :: proc(t:^testing.T,s:^store.Store,root,source,bytes:string,names:[]string,failed:=false) -> (p:Pass,ok:bool) {
         o:Outputs
         error:=outputs_begin(&o,source,"level",u64(len(bytes)),base.hash64(transmute([]u8)bytes),import_version(0),{store=s,root=root,documents=fmt.tprintf("%s/assets",root)},allocator=context.temp_allocator)
         if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
+        program,program_error:=output_program(&o,PROGRAM)
+        repeated,repeat_error:=output_program(&o,PROGRAM)
+        testing.expect(t,program_error.code==.None && repeat_error.code==.None && program==repeated)
         root_error:Error
         p.scene,_,root_error=output_root(&o,asset.KIND_SCENE,"level",".scene")
         testing.expect_value(t,root_error.code,Error_Code.None)
@@ -77,6 +81,10 @@ the_outputs_of_a_source_are_the_assets_its_package_lists :: proc(t:^testing.T) {
     testing.expect(t,first.scene!={} && first.floor!={} && first.materials[0]!={} && first.materials[0]!=first.materials[1])
     manifest,build,read:=test_package(t,s,first.report)
     if !read {return}
+    if testing.expect_value(t,len(build.programs),1) {
+        text,read_error:=asset.record_get(s,build.programs[0])
+        testing.expect(t,read_error==.None && text==PROGRAM)
+    }
     testing.expect(t,len(manifest.assets)==4 && len(build.outputs)==3,"the scene planned is listed; what was written is built")
     for o in build.outputs {
         listed:=false

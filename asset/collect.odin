@@ -23,10 +23,8 @@ store_sweep :: proc(s:^store.Store,live:[]store.Hash,now:Maybe(time.Time)=nil) -
             // A build that does not read keeps only itself.
             b,build_error:=build_get(s,ref.hash,context.temp_allocator)
             if build_error!=.None {continue}
-            for o in b.outputs {
-                append(&held,o.object)
-                if o.thumbnail!={} {append(&held,o.thumbnail)}
-            }
+            objects:=Build_Objects{build=&b,with_thumbnails=true}
+            for address in build_object_next(&objects) {append(&held,address)}
         }
     }
     return store.sweep(s,held[:],now)

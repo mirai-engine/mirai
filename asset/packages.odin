@@ -38,7 +38,7 @@ PACKAGES_FILE :: "packages.mirai"
 PACKAGE_FILES :: "packages" // the folder of a root, beside PACKAGES_FILE, with <package id>.mirai of each manifest it pins
 PACKAGES_VERSION :: 2
 PACKAGE_MANIFEST_VERSION :: 1
-BUILD_MANIFEST_VERSION :: 4
+BUILD_MANIFEST_VERSION :: 5
 RECORD_BYTES :: 16<<20 // the most a record takes as text: a larger one is refused unread
 
 // Namespaces of the refs of the records.
@@ -95,6 +95,7 @@ Build :: struct {
     key:store.Hash,  // import_key of what built it
     final:bool,      // its textures are Final, else Fast
     outputs:[dynamic]Build_Output,
+    programs:[dynamic]store.Hash, // generated Surface source objects, sorted by address
 }
 
 Project_Package :: struct {
@@ -142,8 +143,9 @@ import_key :: proc(identity:store.Hash,versions:[]u64) -> (key:store.Hash,ok:boo
 // without importers finds it by the same name.
 build_select :: proc(manifest:store.Hash,p:^Package) -> store.Hash {
     TAG :: "mirai build select"
-    bytes:[len(TAG)+size_of(store.Hash)+6*len(KINDS)]u8
+    bytes:[len(TAG)+size_of(store.Hash)+2+6*len(KINDS)]u8
     n:=copy(bytes[:],TAG)
+    n+=word_put(bytes[n:],BUILD_MANIFEST_VERSION,2)
     manifest:=manifest
     n+=copy(bytes[n:],manifest[:])
     for info in KINDS {
@@ -330,7 +332,12 @@ build_text :: proc(b:^Build,allocator:=context.allocator) -> (text:string,error:
         }
         serial.text_write_raw(&w,"}")
     }
-    serial.text_write_raw(&w,len(b.outputs)>0?"\n  ]\n}\n":"]\n}\n")
+    serial.text_write_raw(&w,len(b.outputs)>0?"\n  ],\n  \"programs\": [":"],\n  \"programs\": [")
+    for program,at in b.programs {
+        if at>0 {serial.text_write_raw(&w,", ")}
+        hash_write(&w,program)
+    }
+    serial.text_write_raw(&w,"]\n}\n")
     return writer_text(&w)
 }
 
@@ -340,7 +347,8 @@ build_parse :: proc(text:string,allocator:=context.allocator) -> (b:Build,error:
     serial.text_reader_init(&r,text,context.temp_allocator)
     defer serial.text_reader_destroy(&r)
     b.outputs=make([dynamic]Build_Output,allocator)
-    Field :: enum {Version,Package,Key,Final,Outputs}
+    b.programs.allocator=allocator
+    Field :: enum {Version,Package,Key,Final,Outputs,Programs}
     seen:bit_set[Field]
     version:u64
     expect(&r,'{') or_return
@@ -354,6 +362,7 @@ build_parse :: proc(text:string,allocator:=context.allocator) -> (b:Build,error:
         case "key": field=.Key
         case "final": field=.Final
         case "outputs": field=.Outputs
+        case "programs": field=.Programs
         case: return {},.Corrupt
         }
         if field in seen {return {},.Corrupt}
@@ -370,11 +379,18 @@ build_parse :: proc(text:string,allocator:=context.allocator) -> (b:Build,error:
                 o:=output_read(&r) or_return
                 if _,no_room:=append(&b.outputs,o);no_room!=nil {return {},.Out_Of_Memory}
             }
+        case .Programs:
+            expect(&r,'[') or_return
+            for begun:=false;!serial.text_accept(&r,']');begun=true {
+                if begun {expect(&r,',') or_return}
+                program:=hash_read(&r) or_return
+                if _,no_room:=append(&b.programs,program);no_room!=nil {return {},.Out_Of_Memory}
+            }
         }
     }
     if !serial.text_end(&r) {return {},.Corrupt}
     if version!=BUILD_MANIFEST_VERSION {return {},.Version}
-    if seen!={.Version,.Package,.Key,.Final,.Outputs} {return {},.Corrupt}
+    if seen!={.Version,.Package,.Key,.Final,.Outputs,.Programs} {return {},.Corrupt}
     if !build_valid(&b) {return {},.Corrupt}
     return b,.None
 }
@@ -603,6 +619,45 @@ build_get :: proc(s:^store.Store,object:store.Hash,allocator:=context.allocator)
     return build_parse(text,allocator)
 }
 
+Build_Objects :: struct {
+    build:^Build,
+    output,program:int,
+    thumbnail:bool,
+    with_thumbnails:bool,
+}
+
+build_object_next :: proc(it:^Build_Objects) -> (address:store.Hash,ok:bool) {
+    b:=it.build
+    if it.output<len(b.outputs) {
+        o:=b.outputs[it.output]
+        if it.thumbnail {
+            it.thumbnail=false
+            it.output+=1
+            return o.thumbnail,true
+        }
+        it.thumbnail=it.with_thumbnails && o.thumbnail!={}
+        if !it.thumbnail {it.output+=1}
+        return o.object,true
+    }
+    if it.program>=len(b.programs) {return}
+    address=b.programs[it.program]
+    it.program+=1
+    return address,true
+}
+
+build_whole :: proc(s:^store.Store,b:^Build,with_thumbnails:=false) -> bool {
+    it:=Build_Objects{build=b,with_thumbnails=with_thumbnails}
+    for address in build_object_next(&it) {
+        if !object_whole(s,address) {return false}
+    }
+    return true
+}
+
+program_address_less :: proc(a,b:store.Hash) -> bool {
+    a,b:=a,b
+    return string(a[:])<string(b[:])
+}
+
 // Puts the text of a record as an object, without committing: the ref that names it commits it.
 record_put :: proc(s:^store.Store,text:[]u8) -> (object:store.Hash,error:Error) {
     if len(text)>RECORD_BYTES {return {},.Too_Large}
@@ -814,6 +869,9 @@ build_valid :: proc(b:^Build) -> bool {
         for other in b.outputs[:at] {
             if other.id==o.id {return false}
         }
+    }
+    for program,at in b.programs {
+        if program=={} || at>0 && !program_address_less(b.programs[at-1],program) {return false}
     }
     return true
 }

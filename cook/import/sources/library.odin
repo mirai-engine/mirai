@@ -419,9 +419,7 @@ build_here :: proc(l:^Library_State,p:^asset.Package,key:store.Hash) -> (f:Found
         if ref_error!=.None {continue}
         b,error:=asset.build_get(s,hash,l.temp)
         if error!=.None || b.package_id!=p.id || b.key!=key || b.final!=(at==0) {continue}
-        whole:=true
-        for o in b.outputs {whole&&=asset.object_whole(s,o.object)}
-        if !whole {continue}
+        if !asset.build_whole(s,&b) {continue}
         if at==1 && !l.options.fast_textures {
             f.fast_here=true
             continue
@@ -444,9 +442,7 @@ build_found :: proc(l:^Library_State,p:^asset.Package,manifest,key:store.Hash,ke
     if ref_error!=.None {return}
     b,error:=asset.build_get(s,hash,l.temp)
     if error!=.None || b.package_id!=p.id {return}
-    for o in b.outputs {
-        if !asset.object_whole(s,o.object) {return}
-    }
+    if !asset.build_whole(s,&b) {return}
     if !b.final && !l.options.fast_textures {return {fast_here=true},false}
     return {build=b,hash=hash,final=b.final},true
 }

@@ -1284,6 +1284,22 @@ a_peers_library_is_listed_and_a_package_of_it_taken_and_pinned :: proc(t:^testin
     defer test_net_destroy(&w)
     manifest,made:=library_sound(t,&w,4800)
     if !made {return}
+    origin:=&w.peers[0].s
+    p,package_error:=asset.package_get(origin,manifest,context.temp_allocator)
+    if !testing.expect_value(t,package_error,asset.Error.None) {return}
+    digits:[64]u8
+    selected:=store.hex(asset.build_select(manifest,&p),&digits)
+    hash,build_ref_error:=store.ref_get(origin,asset.REF_BUILDS,selected)
+    if !testing.expect_value(t,build_ref_error,store.Error.None) {return}
+    b,build_error:=asset.build_get(origin,hash,context.temp_allocator)
+    if !testing.expect_value(t,build_error,asset.Error.None) {return}
+    program,source_error:=asset.record_put(origin,noise(4096,22))
+    if !testing.expect_value(t,source_error,asset.Error.None) {return}
+    append(&b.programs,program)
+    hash,build_error=asset.build_put(origin,&b)
+    if !testing.expect_value(t,build_error,asset.Error.None) {return}
+    name:=store.hex(b.key,&digits)
+    testing.expect_value(t,store.ref_set(origin,asset.REF_IMPORTS,name,hash),store.Error.None)
     test_connect(&w,1,0)
     r:=Library_Run{w=&w,root=fmt.tprintf("%s/guest",w.folder)}
     os.make_directory_all(r.root)
@@ -1303,6 +1319,7 @@ a_peers_library_is_listed_and_a_package_of_it_taken_and_pinned :: proc(t:^testin
     },&r)
     if !testing.expectf(t,r.error=="","%s",r.error) {return}
     s:=&w.peers[1].s
+    testing.expect(t,asset.object_whole(s,program),"the build's generated source reached the peer")
     added:=sources.project_add(r.root,manifest,"sounds",nil,{store=s,fast_textures=true},context.temp_allocator)
     testing.expectf(t,len(added.failures)==0 && len(added.missing)==0 && added.fetched==0 && added.ingested==0,"pinned from this machine's library: %v",added)
     pinned,_:=asset.root_packages(r.root,s.root,context.temp_allocator)
