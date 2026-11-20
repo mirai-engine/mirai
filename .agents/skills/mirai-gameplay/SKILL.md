@@ -90,10 +90,10 @@ the same attributes and no private paths. Declaration and parameter binding:
 5. Stage of `fixed` ([order](../mirai-core/references/generator.md#order)): gameplay goes in
    `intent` without saying so. Before it, in `begin` and `input`: the network, the seats and their
    actions, spawns, who drives what, and the `Move_Input` of whoever drives a seat; after it, in
-   `apply`: the camera of the focused player, spawns and the sampled animation; and in `simulate`:
-   locomotion and physics.
-   - What corrects the sampled pose before physics (`animation_motor_drive`) goes in
-     `stage="apply"`: reading `anim.Playback` puts it after `animation_sample`.
+   `apply`: the camera of the focused player, spawns and animation preparation.
+   In `simulate`, physics feeds the current body motion to animation sampling.
+   - A controller that feeds physics from animation (`animation_motor_drive`) runs in
+     `stage="apply"` and reads the pose sampled on the preceding tick.
    - A game that reacts to contacts or damage of the tick goes in `stage="react"`; what it pushes
      to `Destruct_Requests` there breaks in the same tick.
    - What only the server or a single-player game decides carries `server` instead of asking

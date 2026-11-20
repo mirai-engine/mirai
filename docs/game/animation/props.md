@@ -33,16 +33,14 @@ The target of each track says what it drives, by text:
 anim.animation_command(requests,door,.Play)              // opens: from its start, in the next tick
 anim.animation_command(requests,door,.Resume,speed=-1)   // closes from where it is
 anim.animation_command(requests,door,.Pause)             // .Stop rewinds and waits
-anim.animation_seek(requests,door,0.5)                   // jumps there, skipping markers
+anim.animation_command(requests,door,.Seek,time=0.5)      // skips earlier markers
 ```
 
-- The commands are the same for a door, a lift and a cutscene, from any step. `Animation.playing`
-  and `speed` in the scene only say whether it starts by itself, and at what speed; once the world
-  plays, only commands change it. `anim.animation_playing(playback.ptr,door)` says what it does now.
-- Another clip of the same `.anim` is `anim.animation_clip(core.edit(animations,e),"close")`: it
-  cross-fades into it from its start and plays as the last command said.
-- What plays over the clip (a wave over the arm, a mix by a value, an action) is a layer or an
-  action of a `.character` over that `.anim`, as for a character: [actions.md](actions.md).
+- The component supplies the initial clip and playback settings. In Play, the clip commands
+  change those settings, and `anim.animation_playing(playback.ptr,door)` reads the current clock.
+- `anim.play_clip(requests,door,"close",fade=.2,restart=true)` cross-fades into another clip.
+- `Animation_Events` reports when the clip starts, reaches its end or is interrupted.
+- `play_clip` can also play over the base pose. See [actions.md](actions.md) for layered play.
 
 ## Read progress, curves and markers
 
@@ -106,7 +104,7 @@ if d,ok:=anim.animation_root_delta(playback.ptr,e);ok {
 }
 ```
 
-- Run it in a `fixed` step of the stage of `animation_sample`, `@(step="fixed",stage="apply")`:
+- Run it in a `fixed` step of the stage of `animation_sample`, `@(step="fixed",stage="simulate")`:
   reading `anim.Playback` puts it after the sampling.
 - A body owned by physics is never written directly: ask physics, or use `body_move`.
 - A seek gives no displacement, and every source blended must share the root bone or the
@@ -114,7 +112,6 @@ if d,ok:=anim.animation_root_delta(playback.ptr,e);ok {
 
 ## Pitfalls
 
-- `animation_clip` keeps the entity's `loop`; pass `loop=false` for a one-shot and test `ended`
-  only for a clip that does not loop.
+- Pass `loop=false` for a one-shot and use its Ended event or check `animation_progress`.
 - A clip name the asset lacks is a problem of the entity, not an error at the call.
 - Changing `Animation.library` restarts the locomotion of the set; it replaces clips by name.

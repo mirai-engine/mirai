@@ -319,7 +319,7 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
         bone:=rig.bones[3][at][0]
         transform,ok:=lib.skeleton_socket(state.world[:],bone,config.offset)
         if !ok {
-            core.report(problems,entity,"animation.socket_bone","this Bone_Attachment hangs from socket bone '%s', which the skeleton of rig 0x%016x does not have; name a socket of that skeleton",base.text_get(config.bone.path[:]),u64(state.entity))
+            core.report(problems,entity,"animation.socket_bone","this Bone_Attachment hangs from bone '%s', which the skeleton of rig 0x%016x does not have; name a bone or socket of that skeleton",base.text_get(config.bone.path[:]),u64(state.entity))
             continue
         }
         if parents!=nil {

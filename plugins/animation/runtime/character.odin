@@ -198,7 +198,7 @@ character_content :: proc(cache:^Character_Assets,assets:^host.Assets,allocator:
     error:=asset.Error.Not_Found
     if found {error=character_read(&next,assets,allocator,id)}
     if error!=.None {character_content_release(&next)}
-    if error==.Out_Of_Memory {content.error,content.checked=error,0;return nil}
+    if error==.Out_Of_Memory || error==.Not_Here {content.error,content.checked=error,0;return nil}
     revision:=content.revision
     character_content_release(content)
     content^=next

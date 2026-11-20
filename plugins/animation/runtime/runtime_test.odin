@@ -179,7 +179,7 @@ layers_play_over_the_clip_inside_their_branch_by_weight_and_fade_out :: proc(t:^
     testing.expect(t,tracks_bind(&playback,&state,&content))
     events:Animation_Events;defer delete(events.items)
     animation:=ANIMATION_DEFAULT
-    testing.expect(t,animation_clip(&animation,"walk",fade=0))
+    base.text_set(animation.clip[:],"walk");animation.fade=0
     layer_step(&playback,&state,&content,animation,&events,1)
     testing.expect(t,abs(state.local[1].position.x-1)<0.0001 && abs(state.local[3].position.z-1)<0.0001 && state.local[2].position==0)
     // Over the branch of hip: arm rises, leg keeps walking, hip keeps what wave does not move.
@@ -206,11 +206,6 @@ layers_play_over_the_clip_inside_their_branch_by_weight_and_fade_out :: proc(t:^
     testing.expect(t,test_layer(&state,2,"missing"))
     copy(state.local[:],state.rest[:]);advance(&playback,&state,&content,animation,&events,0.1,nil);layers_advance(&playback,&state,&content,animation,&events,0.1,&problems)
     testing.expect(t,core.problem_find(&problems,state.entity,"animation.layer_clip")!=nil,"a layer whose clip the animation lacks is a problem of its entity")
-    before:=animation
-    long:="a clip whose name is longer than the sixty four bytes that the component can hold"
-    zero:f32
-    testing.expect(t,!animation_clip(&animation,long) && !animation_clip(&animation,"wave",fade=zero/zero) && !animation_clip(nil,"wave"))
-    testing.expect_value(t,animation,before)
     // An additive layer over a reference clip adds what its clip changes from the pose of that
     // clip at reference: wave over walk at 1 s lifts the leg 5 and takes it back the 1 walk has
     // there; the arm, which walk does not move, changes from wave's own pose, by nothing.
@@ -271,7 +266,8 @@ a_layer_fades_in_along_its_branch_over_its_depth :: proc(t:^testing.T) {
     edges:[2]f32
     for depth,i in ([2]u8{0,3}) {
         animation:=ANIMATION_DEFAULT
-        testing.expect(t,animation_clip(&animation,"still",fade=0) && test_layer(&state,1,"bend",over="spine_1",depth=depth))
+        base.text_set(animation.clip[:],"still");animation.fade=0
+        testing.expect(t,test_layer(&state,1,"bend",over="spine_1",depth=depth))
         layer_step(&playback,&state,&content,animation,&events,0)
         changes:[5]f32
         for b in 1..=4 {changes[b]=mm.quat_angle(state.local[b].rotation,1)}
@@ -299,28 +295,20 @@ a_layer_in_the_space_of_the_rig_keeps_its_clip_whatever_the_base_turns_above :: 
     for mesh,i in ([2]bool{false,true}) {
         // The base turns the hip sideways; the layer holds hip and arm straight, over the arm alone.
         animation:=ANIMATION_DEFAULT
-        testing.expect(t,animation_clip(&animation,"turn",fade=0) && test_layer(&state,1,"pose",over="arm",mesh_space=mesh))
+        base.text_set(animation.clip[:],"turn");animation.fade=0
+        testing.expect(t,test_layer(&state,1,"pose",over="arm",mesh_space=mesh))
         layer_step(&playback,&state,&content,animation,&events,0)
         turns[i]=mm.quat_angle(state.local[1].rotation*state.local[2].rotation,1)
         testing.expect(t,mm.quat_angle(state.local[1].rotation,side)<1e-4)
         // The base leans the spine; an aim offset adds its aim up over it.
-        testing.expect(t,animation_clip(&animation,"lean",fade=0) && test_layer(&state,1,"aim_up",mode=.Additive,reference_clip="aim_center",mesh_space=mesh))
+        base.text_set(animation.clip[:],"lean")
+        testing.expect(t,test_layer(&state,1,"aim_up",mode=.Additive,reference_clip="aim_center",mesh_space=mesh))
         layer_step(&playback,&state,&content,animation,&events,0)
         muzzle:=mm.quat_rotate(state.local[1].rotation*state.local[2].rotation,mm.FORWARD)
         errors[i]=linalg.angle_between(muzzle,mm.quat_rotate(up,mm.FORWARD))
     }
     testing.expectf(t,abs(turns[0]-mm.PI/2)<1e-4 && turns[1]<1e-4,"in its own space the arm turns with the hip, in the space of the rig it stays straight: %v",turns)
     testing.expectf(t,errors[0]>.15 && errors[1]<1e-4,"the aim error of the muzzle over a lean of 15 degrees: %v in its own space, %v in the space of the rig",errors[0],errors[1])
-}
-
-@(test)
-animation_clip_sets_the_clip_of_the_component :: proc(t:^testing.T) {
-    animation:=ANIMATION_DEFAULT
-    animation.playing=false
-    testing.expect(t,animation_clip(&animation,"jump",fade=0.08,loop=false))
-    testing.expect(t,base.text_get(animation.clip[:])=="jump" && !animation.playing && !animation.loop && animation.fade==0.08 && animation.speed==1)
-    testing.expect(t,animation_clip(&animation,"walk"))
-    testing.expect(t,base.text_get(animation.clip[:])=="walk" && !animation.loop && animation.fade==0.08)
 }
 
 @(private)

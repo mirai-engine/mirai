@@ -12,12 +12,13 @@ import "base:runtime"
 
 POSE_CONSTRAINTS :: 256
 
-@(component,description="Attaches this entity to a named socket in another entity's skeleton, with an additional local offset.")
+@(component,description="Attaches this entity to a named bone or socket in another entity's skeleton, with an additional local offset.")
 Bone_Attachment :: struct {
     rig:core.Entity,
     socket:[64]u8 `mirai:"text"`,
     offset:mm.Transform,
     enabled:bool,
+    bone:Bone_Ref `mirai:"optional"`,
 }
 BONE_ATTACHMENT_DEFAULT :: Bone_Attachment{offset=mm.TRANSFORM_IDENTITY,enabled=true}
 
@@ -162,15 +163,19 @@ modifier_append :: proc(table:^core.Table($T),entity:core.Entity,value:T) -> boo
 
 // The modifiers of the .character of each animated entity, laid out again when an Animation, an
 // attachment, a rig or an asset changes.
-modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:^core.Table(Animation,$A),attachments:^core.Table(Bone_Attachment,$B),characters:^Character_Assets,skeletons:^Skeleton_Assets,playback:^Playback,loaded:^host.Assets,allocator:mem.Allocator,problems:^core.Problems) -> bool {
+modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:^core.Table(Animation,$A),attachments:^core.Table(Bone_Attachment,$B),characters:^Character_Assets,skeletons:^Skeleton_Assets,playback:^Playback,loaded:^host.Assets,allocator:mem.Allocator,problems:^core.Problems,meshes:^core.Table(erender.Mesh_Renderer,.Read)=nil) -> bool {
     allocation_failed :: proc(cache:^$T,id:base.Asset_Id) -> bool {
         if cache==nil || id=={} {return false}
-        for content in cache.contents {if content.id==id {return content.checked==0}}
+        for content in cache.contents {if content.id==id {return content.checked==0 && content.error!=.Not_Here}}
         return true
     }
     // The sets the animations name are found by their ids, entities and revisions, so a change of
     // another field of an Animation lays nothing out again.
-    headers:=[6]u64{core.layout(animations),core.version(attachments),core.layout(attachments),playback.rigs_stamp,assets_stamp(loaded),core.version(animations)}
+    revision:=assets_stamp(loaded)
+    if meshes!=nil {
+        revision=base.hash_combine(revision,base.hash_combine(loaded.structure,core.version(meshes)))
+    }
+    headers:=[6]u64{core.layout(animations),core.version(attachments),core.layout(attachments),playback.rigs_stamp,revision,core.version(animations)}
     if runtime.inputs==headers {return true}
     revisions_changed:=false;revision_row:=0
     compare_revision :: proc(runtime:^Modifier_Runtime,row:^int,revision:u64,changed:^bool) {
@@ -189,13 +194,14 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:^core.Table(Animat
         compare_revision(runtime,&revision_row,revision,&revisions_changed)
     }
     revisions_changed ||= revision_row!=len(runtime.revisions)
-    if !revisions_changed && runtime.inputs.xyzw==headers.xyzw {runtime.inputs=headers;return true}
+    if !revisions_changed && runtime.inputs.xyzw==headers.xyzw && runtime.inputs[4]!=0 && (core.count(attachments)==0 || runtime.inputs[4]==headers[4]) {runtime.inputs=headers;return true}
     next:=Modifier_Runtime{geometry=runtime.geometry+1,inputs=headers};defer modifier_runtime_free(&next)
     if reserve(&next.revisions,revision_row)!=nil {memory_problem(problems,core.NONE,"the modifiers of the rigs, so none applies");return false}
     next.ik.version,next.look.version,next.limits.version=runtime.ik.version+1,runtime.look.version+1,runtime.limits.version+1
     next.grounding.version,next.sockets.version=runtime.grounding.version+1,runtime.sockets.version+1
     next.ik.layout,next.look.layout,next.limits.layout=runtime.ik.layout+1,runtime.look.layout+1,runtime.limits.layout+1
     next.grounding.layout,next.sockets.layout=runtime.grounding.layout+1,runtime.sockets.layout+1
+    character_pending:=false
     for row in 0..<core.count(animations) {
         id:=animation_character(loaded,animations.values[row])
         if id=={} {continue}
@@ -203,7 +209,11 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:^core.Table(Animat
         content:=character_content(characters,loaded,allocator,id);append(&next.revisions,character_key(entity,id,content.revision) if content!=nil else 0)
         if content==nil {
             if allocation_failed(characters,id) {memory_problem(problems,entity,"its .character");return false}
-            asset_problem(problems,entity,loaded,"animation.character","Animation.asset",id,content_error(characters.contents[:],id))
+            error:=content_error(characters.contents[:],id)
+            character_pending ||= error==.Not_Here
+            if error!=.Not_Here {
+                asset_problem(problems,entity,loaded,"animation.character","Animation.asset",id,error)
+            }
             continue
         }
         pose:=content.set.pose
@@ -228,10 +238,26 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:^core.Table(Animat
         rigged:=false
         for rig in playback.rigs {if rig.entity==config.rig {rigged=true;definition=skeleton_content(skeletons,loaded,allocator,rig.skeleton);if definition==nil && allocation_failed(skeletons,rig.skeleton) {memory_problem(problems,rig.entity,"its skeleton");return false};break}}
         if !rigged {
+            if meshes!=nil {
+                if renderer,has:=core.get(meshes,config.rig);has && renderer.mesh!={} {
+                    mesh:=host.assets_mesh_shown(loaded,renderer.mesh)
+                    if mesh==nil || mesh.arriving ||
+                        mesh.failed && !host.assets_loaded(loaded,renderer.mesh) {continue}
+                }
+            }
             core.report(problems,entity,"animation.attachment_rig","this Bone_Attachment hangs from entity 0x%016x, which shows no mesh with a skeleton; name an entity whose Mesh_Renderer shows a skinned mesh",u64(config.rig))
             continue
         }
         if definition==nil {continue}
+        if config.bone!={} {
+            if config.socket[0]!=0 || !profile_bone(config.bone) {
+                core.report(problems,entity,"animation.attachment_target","this Bone_Attachment needs one valid bone or socket of its rig; set one and clear the other")
+                continue
+            }
+            value:=Bone_Binding{rig=config.rig,bone=config.bone,offset=config.offset,enabled=true}
+            if !modifier_append(&next.sockets,entity,value) {memory_problem(problems,entity,"its attachment");return false}
+            continue
+        }
         attached:=false
         for socket in definition.sockets {
             if socket.name!=config.socket {continue}
@@ -248,6 +274,7 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:^core.Table(Animat
     if !modifier_controls_prepare(&next,runtime) || reserve(&runtime.goals,len(next.controls))!=nil {memory_problem(problems,core.NONE,"the controls of the modifiers, so none applies");return false}
     // A goal stays with its operation; one whose slot now names another goes.
     #reverse for goal,i in runtime.goals {if !modifier_same_goal(runtime,&next,goal) {unordered_remove(&runtime.goals,i)}}
+    if character_pending {next.inputs[4]=0}
     next.goals=runtime.goals;runtime.goals=nil
     request_error,request_error_rig:=runtime.request_error,runtime.request_error_rig
     modifier_runtime_free(runtime);runtime^=next;next={}
@@ -333,27 +360,35 @@ modifier_take :: proc(runtime:^Modifier_Runtime,requests:^Animation_Requests,pro
 }
 
 @(step="fixed",loops="game editor",stage="apply")
-animation_sample :: proc(animations:^core.Table(Animation,.Read),progress:^core.Table(Animation_Progress),played:^core.Table(Animation_Played),attachments:^core.Table(Bone_Attachment,.Read),transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),names:^core.Table(core.Name,.Read),targets:^core.Table(Animation_Target,.Read),meshes:^core.Table(erender.Mesh_Renderer,.Read),sources:^core.Table(Pose_Source,.Read),remotes:^core.Table(core.Remote,.Read),requests:^Animation_Requests,events:^Animation_Events,runtime:^Modifier_Runtime,playback:^Playback,characters:^Character_Assets,skeletons:^Skeleton_Assets,app:^host.App,time:core.Time,frame:core.Frame_Time,problems:^core.Problems,actions:^Action_Runtime,motion:^Motion_Runtime,content_sources:^Source_Assets,paces:^core.Table(core.Own_Pace,.Read),clock:core.Clock,budget:Animation_Budget_Config) {
-    if app.assets==nil {playback.frame+=1;return}
-    if !rigs_update(playback,meshes,sources,app.assets) {memory_problem(problems,core.NONE,"the list of rigs, so nothing is animated in this tick");playback.frame+=1;return}
-    if !modifier_prepare(runtime,animations,attachments,characters,skeletons,playback,app.assets,app.allocator,problems) {playback.frame+=1;return}
-    modifier_take(runtime,requests,problems,0)
-    if time.playing {progress_resume(progress,playback,requests)}
-    animation_tick(animations,transforms,parents,hierarchy,names,requests,events,targets,playback,app,time,frame,skeletons,problems,characters,actions,motion,content_sources,remotes,played,paces,clock,budget)
-    if time.playing {progress_write(progress,animations,playback)}
+animation_prepare :: proc(animations:^core.Table(Animation,.Read),
+    attachments:^core.Table(Bone_Attachment,.Read),meshes:^core.Table(erender.Mesh_Renderer,.Read),
+    sources:^core.Table(Pose_Source,.Read),runtime:^Modifier_Runtime,playback:^Playback,
+    characters:^Character_Assets,skeletons:^Skeleton_Assets,app:^host.App,problems:^core.Problems) {
+    playback.prepared=false
+    if app.assets==nil {return}
+    if !rigs_update(playback,meshes,sources,app.assets,attachments) {
+        memory_problem(problems,core.NONE,"the list of rigs, so nothing is animated in this tick")
+        return
+    }
+    playback.prepared=modifier_prepare(runtime,animations,attachments,characters,skeletons,playback,
+        app.assets,app.allocator,problems,meshes)
 }
 
-// A clip that a loaded game left somewhere starts there: Playback starts
-// again with the World, and an entity it has no state for seeks its progress.
-@(private)
-progress_resume :: proc(progress:^core.Table(Animation_Progress),playback:^Playback,requests:^Animation_Requests) {
-    for row in 0..<core.count(progress) {
-        e:=core.entity_at(progress,row)
-        if constraint_playing(playback,e)!=nil {continue}
-        kept:=core.at(progress,row)
-        if kept.playing {animation_command(requests,e,.Resume,speed=kept.speed)} else {animation_command(requests,e,.Pause)}
-        animation_seek(requests,e,kept.time)
-    }
+@(step="fixed",loops="game editor",stage="simulate")
+animation_sample :: proc(animations:^core.Table(Animation,.Read),progress:^core.Table(Animation_Progress),
+    played:^core.Table(Animation_Played),transforms:^core.Table(core.Transform),
+    parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),
+    names:^core.Table(core.Name,.Read),targets:^core.Table(Animation_Target,.Read),
+    remotes:^core.Table(core.Remote,.Read),requests:^Animation_Requests,events:^Animation_Events,
+    runtime:^Modifier_Runtime,playback:^Playback,characters:^Character_Assets,
+    skeletons:^Skeleton_Assets,app:^host.App,time:core.Time,frame:core.Frame_Time,
+    problems:^core.Problems,actions:^Action_Runtime,motion:^Motion_Runtime,
+    content_sources:^Source_Assets,paces:^core.Table(core.Own_Pace,.Read),clock:core.Clock,
+    budget:Animation_Budget_Config) {
+    if !playback.prepared {playback.frame+=1;return}
+    modifier_take(runtime,requests,problems,0)
+    animation_tick(animations,transforms,parents,hierarchy,names,requests,events,targets,playback,app,time,frame,skeletons,problems,characters,actions,motion,content_sources,remotes,played,paces,clock,budget,core.read(progress))
+    if time.playing {progress_write(progress,animations,playback)}
 }
 
 // Where each clip is, for a saved game; an entity that lost its Animation loses it.
@@ -367,7 +402,7 @@ progress_write :: proc(progress:^core.Table(Animation_Progress),animations:^core
         clip_time,_,_,ok:=animation_progress(playback,e)
         if !ok {continue}
         state:=constraint_playing(playback,e)
-        now:=Animation_Progress{time=clip_time,speed=state.speed,playing=state.playing}
+        now:=Animation_Progress{time=clip_time,selection=state.selection,speed=state.speed,playing=state.playing}
         if at:=core.row_of(progress,e);at<0 {
             core.add(progress,e,now)
         } else if core.at(progress,at)!=now {
@@ -376,7 +411,7 @@ progress_write :: proc(progress:^core.Table(Animation_Progress),animations:^core
     }
 }
 
-@(step="fixed",loops="game editor",stage="react")
+@(step="fixed",loops="game editor",stage="react",after="animation_sample animation_fields")
 animation_advance :: proc(transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read),worlds:^core.Table(core.World_Transform,.Read),requests:^Animation_Requests,runtime:^Modifier_Runtime,playback:^Playback,constraints:^Animation_Constraints,grounding:^Grounding_Runtime,world:core.World_Ref,queries:core.Ref(core.World_Queries),time:core.Time,skeletons:core.Ref(Skeleton_Assets),problems:^core.Problems,motion:^Motion_Runtime,characters:^Character_Assets,verticals:^core.Table(core.Vertical,.Read),paces:^core.Table(core.Own_Pace,.Read),clock:core.Clock,places:^core.Places) {
     modifier_take(runtime,requests,problems,time.dt)
     inputs:=Constraint_Inputs{core.read(&runtime.ik),core.read(&runtime.look),core.read(&runtime.limits),core.read(&runtime.sockets),worlds,runtime.geometry,skeletons.ptr,problems}

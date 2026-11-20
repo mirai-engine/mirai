@@ -142,17 +142,17 @@ poses_by_track_match_the_pose_each_track_gives_by_name :: proc(t:^testing.T) {
     events:Animation_Events;defer delete(events.items)
 
     animation:=ANIMATION_DEFAULT;animation.weight=.8;animation.fade=.4
-    testing.expect(t,animation_clip(&animation,"walk"))
+    base.text_set(animation.clip[:],"walk")
     expected:[len(targets)]mm.Transform
     faults:Pose_Faults
     layered:=false
     for step in 0..<12 {
         switch step {
-        case 2: testing.expect(t,animation_clip(&animation,"run"))
+        case 2: base.text_set(animation.clip[:],"run")
         case 3: testing.expect(t,test_layer(&state,1,"wave",over="spine",weight=.6,fade=.2))
         case 4: testing.expect(t,test_layer(&state,2,"lean",weight=.7,fade=.15,mode=.Additive,reference=.5,reference_clip="walk"))
         case 5: testing.expect(t,test_layer(&state,3,"run",over="hip",weight=.5,fade=0,mode=.Additive,reference=.25))
-        case 7: testing.expect(t,animation_clip(&animation,"walk") && test_layer(&state,1,"lean",over="spine",weight=.9,fade=.3))
+        case 7: base.text_set(animation.clip[:],"walk");testing.expect(t,test_layer(&state,1,"lean",over="spine",weight=.9,fade=.3))
         case 9: testing.expect(t,test_layer_stop(&state,2,.2))
         }
         copy(state.local[:],state.rest[:])

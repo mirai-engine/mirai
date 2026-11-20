@@ -99,7 +99,7 @@ tracks_rate :: proc(s:^editor.Session) -> f32 {
 
 @(private)
 tracks_seek :: proc(w:core.World_Ref,entity:core.Entity,seconds:f32) {
-    if requests:=core.world_storage_of(w,anim.Animation_Requests);requests!=nil && entity!=core.NONE {anim.animation_seek(requests,entity,seconds)}
+    if requests:=core.world_storage_of(w,anim.Animation_Requests);requests!=nil && entity!=core.NONE {anim.animation_command(requests,entity,.Seek,seconds)}
 }
 
 // The clip the tool shows, from the .anim as the registry has it now: the file opens again when

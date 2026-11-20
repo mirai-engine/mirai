@@ -72,7 +72,8 @@ for Play/Simulation. `animation_sample` serves them.
   defers until its section ends and Deny refuses. `stop` ends an action by the same policy. The
   slots are independent: an action in a layer plays whatever the whole body does.
 - `play` with a section of an action that plays moves it there, closing and reopening windows,
-  without starting it again.
+  without starting it again. `next_clip` plays a clip of the same source in the action’s slot on
+  the tick after the action reaches its natural end.
 - **Driven.** `play_at` puts the action the seconds since its start its driver gives (a timeline):
   forward it plays there, through its sections, telling what it crosses; sought or back it starts
   over from where it started and goes there telling nothing, as a seek of a clip. It starts at its
@@ -159,9 +160,8 @@ Discovery and memory:
   `animation_body_motion` gives the share of the root delta of the tick that those layers have,
   not what the base keeps, mirrored and warped with the root, with the mix of the one with the
   most share. With physics, `animation_physics` makes it a one-tick layered move of that mix for
-  its `Character`, in the body's own time and across its up unless `body_vertical`, which the body
-  reaches in that tick, except while it mantles (the climb has its own). A game does not convert
-  root motion itself, and passes no locomotion mode.
+  its `Character` in the following physics step. The move follows the body's own time and stays
+  across its up unless `body_vertical` is enabled. Mantling uses its climb delta.
 - `action_clock` gives the `Motion_Clock` of the layer that leads the root when it has at least half
   of it, for [motion warping](animation-motion.md). A discontinuous jump of section, or an action
   that ends or cancels while fading its root, suspends the warp without applying a window of the

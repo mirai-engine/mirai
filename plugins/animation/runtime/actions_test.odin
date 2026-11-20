@@ -379,7 +379,7 @@ the_preview_of_the_editor_does_not_travel_into_a_play :: proc(t:^testing.T) {
         testing.expect(t,tick(edit,&cache,&app,&content,&events,false))
     }
     testing.expect(t,edit.actions.states[0].slots[0].active && abs(edit.actions.states[0].slots[0].time-1.05)<1e-5,"the scrub drove the attack")
-    play_at(&edit.requests,entity,"attack",.3,true);animation_seek(&edit.requests,entity,.3)
+    play_at(&edit.requests,entity,"attack",.3,true);animation_command(&edit.requests,entity,.Seek,.3)
     testing.expect(t,core.count(&edit.played)==0 && core.count(&edit.progress)==0,"the scrub wrote nothing a save keeps")
     // Play starts from a copy of the edited world.
     play:=new(Preview_World);defer free(play)
@@ -765,7 +765,8 @@ an_action_and_a_look_over_an_idle_body_fade_in_and_back_to_rest :: proc(t:^testi
     tick :: proc(w:^Played_World,problems:^core.Problems,app:^host.App,characters:^Character_Assets,skeletons:^Skeleton_Assets,sources:^Source_Assets,body:core.Entity) -> f32 {
         before,_:=core.get(core.read(&w.transforms),body)
         time:=core.Time{dt=DT,playing=true}
-        animation_sample(core.read(&w.animations),&w.progress,&w.played,core.read(&w.attachments),&w.transforms,core.read(&w.parents),{},core.read(&w.names),core.read(&w.targets),core.read(&w.meshes),core.read(&w.sources),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,characters,skeletons,app,time,{},problems,&w.actions,&w.motion,sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
+        animation_prepare(core.read(&w.animations),core.read(&w.attachments),core.read(&w.meshes),core.read(&w.sources),&w.modifiers,&w.playback,characters,skeletons,app,problems)
+        animation_sample(core.read(&w.animations),&w.progress,&w.played,&w.transforms,core.read(&w.parents),{},core.read(&w.names),core.read(&w.targets),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,characters,skeletons,app,time,{},problems,&w.actions,&w.motion,sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
         test_world_settle(w)
         animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifiers,&w.playback,&w.constraints,&w.grounding,{},{},time,core.ref(skeletons),problems,&w.motion,characters,{},{},core.CLOCK_DEFAULT,nil)
         test_world_settle(w)
