@@ -110,7 +110,7 @@ api_collab_result :: proc(s:^Session,call:^api.Call) {
     base.text_set(r.reason[:],st.reason)
     r.port=st.port
     for &peer,i in st.peers {
-        if !peer.used || st.role==.Host && !peer.joined {continue}
+        if !peer.used || st.role==.Host && !collab_editor_peer(&peer) {continue}
         r.peers[r.count]={id=u8(i),joined=peer.joined || i==0,self=i==int(st.self),playing=peer.playing,serving=peer.serving,in_game=peer.in_game}
         if i==int(st.self) {
             r.peers[r.count].playing=run_find(s,0)!=nil
@@ -221,8 +221,8 @@ share_button :: proc(s:^Session,height:f32) {
     tip:="Session"
     if active {
         count:=0
-        for peer in st.peers {
-            if peer.used && (st.role!=.Host || peer.joined) {count+=1}
+        for &peer in st.peers {
+            if peer.used && (st.role!=.Host || collab_editor_peer(&peer)) {count+=1}
         }
         tip=fmt.tprintf("Session, %d editors",count)
     }
@@ -321,7 +321,7 @@ share_build :: proc(s:^Session) {
             // A guest knows who is in the session from the roster, which comes after its Hello.
             for &peer,i in st.peers {
                 if !peer.used || st.role==.Guest && st.phase<.Syncing {continue}
-                if st.role==.Host && !peer.joined {continue}
+                if st.role==.Host && !collab_editor_peer(&peer) {continue}
                 if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=9,align_y=.Center}) {
                     if ui.box(ctx,{width=ui.fixed(9),height=ui.fixed(9),fill=collab_color(i),radius=4.5}) {}
                     name:=string(peer.name[:peer.name_length])

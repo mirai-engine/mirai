@@ -15,6 +15,7 @@ import "mirai:core"
 import "mirai:editor/history"
 import wire "mirai:net"
 import "mirai:std/base"
+import "mirai:std/serial"
 import "mirai:store"
 
 // An editor of a session over a simulated network: its project at its root,
@@ -309,9 +310,23 @@ the_command_joins_an_editors_project_without_entering_its_scene :: proc(t:^testi
     testing.expect_value(t,base.text_get(run.error[:]),"")
     testing.expect_value(t,run.fetched,1)
     testing.expect_value(t,share_text(guest.root,"assets/notes.txt"),"host 1\n")
-    testing.expect(t,st.peers[1].used && !st.peers[1].joined)
-    collab_broadcast(st,[]u8{u8(Collab_Message.Edit)})
-    testing.expect(t,len(st.peers[1].out)==0,"a download receives no live edits")
+    peer:=&st.peers[1]
+    collab_receive(&host.s,st,1,[]u8{u8(Collab_Message.Ready)},n.now)
+    testing.expect(t,peer.used && !peer.joined)
+    edit:=[]u8{u8(Collab_Message.Edit)}
+    collab_broadcast(st,edit)
+    testing.expect(t,len(peer.out)==0,"a download receives no live edits")
+
+    hello:serial.Writer
+    collab_begin(&hello,.Hello)
+    serial.write_scalar(&hello,st.layout)
+    serial.write_string(&hello,"Ben")
+    serial.write_scalar(&hello,u64(1))
+    collab_receive(&host.s,st,1,serial.writer_bytes(&hello),n.now)
+    pending:=len(peer.out)
+    if !testing.expect(t,pending>0 && !peer.joined) {return}
+    collab_broadcast(st,edit)
+    testing.expect_value(t,len(peer.out),pending+1)
 }
 
 @(test)
