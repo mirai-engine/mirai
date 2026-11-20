@@ -65,9 +65,7 @@ host_open :: proc(h:^Udp_Host,mode:wire.Mode,port:int,key:wire.Invite_Key) -> bo
     } else if !wire.udp_open(&h.udp,wire.address_any6(port)) && !wire.udp_open(&h.udp,wire.address_any6(0)) {
         return false
     }
-    chans:=channels()
-    desc:=wire.Host_Desc{mode=mode,transport=wire.udp_transport(&h.udp),protocol_id=PROTOCOL_ID,version=VERSION,invite=key,max_connections=PEERS-1,channels=chans[:]}
-    if wire.host_init(&h.host,desc)!=.None || !wire.worker_start(&h.host) {
+    if host_init(&h.host,mode,wire.udp_transport(&h.udp),key)!=.None || !wire.worker_start(&h.host) {
         wire.host_destroy(&h.host)
         wire.udp_close(&h.udp)
         return false
@@ -243,7 +241,7 @@ Offer :: struct {
 // the node. Taking it again after a change offers the new snapshot, and a
 // joined peer that joins again gets only what differs. Jobs of
 // worker, when given, read the files. In allocator.
-offer :: proc(n:^Node,root:string,secret:u64,worker:=jobs.Worker_Ref{},allocator:=context.allocator) -> (o:Offer,error:string) {
+offer :: proc(n:^Node,root:string,secret:u64,worker:=jobs.Worker_Ref{},allocator:=context.allocator,kind:=Offer_Kind.Project) -> (o:Offer,error:string) {
     manifest,manifest_error:=project.manifest_read(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator))
     if manifest_error.code!=.None {
         return {},fmt.aprintf("%s is not a project (its %s does not read: %v): give the folder of one",root,project.PROJECT_FILE,manifest_error.code,allocator=allocator)
@@ -265,7 +263,9 @@ offer :: proc(n:^Node,root:string,secret:u64,worker:=jobs.Worker_Ref{},allocator
     sync.mutex_unlock(&n.lock)
     node_serve(n,..served[:])
     digits:[64]u8
-    offer_set(n.s,root,offer_name(secret,&digits),o.address)
+    if put_error:=offer_set(n.s,root,offer_name(secret,&digits),o.address,kind);put_error!=.None {
+        return {},fmt.aprintf("the project offer could not be kept in the store (%v)",put_error,allocator=allocator)
+    }
     return
 }
 

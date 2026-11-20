@@ -68,8 +68,7 @@ test_host :: proc(w:^Test_Net,mode:wire.Mode,key:wire.Invite_Key,endpoint:^int=n
     h:=new(wire.Host)
     at:=w.endpoints
     w.endpoints+=1
-    chans:=channels()
-    wire.host_init(h,{mode=mode,transport=wire.sim_endpoint_transport(&w.sim,at),channels=chans[:],protocol_id=PROTOCOL_ID,version=VERSION,invite=key,seed=u64(200+at),max_connections=PEERS-1})
+    host_init(h,mode,wire.sim_endpoint_transport(&w.sim,at),key,seed=u64(200+at))
     if endpoint!=nil {endpoint^=at}
     return h
 }
@@ -299,7 +298,7 @@ host_offer :: proc(t:^testing.T,w:^Test_Net,root:string) -> bool {
     snap,address,_,error:=snapshot_take(s,root,"game",&folders,allocator=context.temp_allocator)
     if !testing.expectf(t,error=="","%s",error) {return false}
     digits:[64]u8
-    offer_set(s,root,offer_name(w.peers[0].key.secret,&digits),address)
+    if !testing.expect_value(t,offer_set(s,root,offer_name(w.peers[0].key.secret,&digits),address),.None) {return false}
     node_serve(&w.peers[0].n,..folders[:])
     for e in snap.entries {node_serve(&w.peers[0].n,e.address)}
     return true
@@ -827,7 +826,7 @@ a_downstream_peer_cannot_substitute_the_snapshot :: proc(t:^testing.T) {
     snap,address,_,error:=snapshot_take(&w.peers[2].s,fake,"game",&folders,allocator=context.temp_allocator)
     if !testing.expectf(t,error=="","%s",error) {return}
     digits:[64]u8
-    store.ref_set(&w.peers[2].s,NAMESPACE,offer_name(w.peers[0].key.secret,&digits),address)
+    if !testing.expect_value(t,offer_set(&w.peers[2].s,fake,offer_name(w.peers[0].key.secret,&digits),address),.None) {return}
     node_serve(&w.peers[2].n,..folders[:])
     for e in snap.entries {node_serve(&w.peers[2].n,e.address)}
     // The downstream peer is connected to the joiner first, and the host answers late.
@@ -853,7 +852,7 @@ a_host_that_withholds_ends_the_join_in_bounded_time :: proc(t:^testing.T) {
     withheld:=Snapshot{name="game",entries={{path="assets/gone.bin",address=gone,size=1000},{path="here.txt",address=here,size=4}}}
     snapshot,_,_:=snapshot_put(s,&withheld)
     digits:[64]u8
-    store.ref_set(s,NAMESPACE,offer_name(w.peers[0].key.secret,&digits),snapshot)
+    if !testing.expect_value(t,offer_set(s,w.folder,offer_name(w.peers[0].key.secret,&digits),snapshot),.None) {return}
     test_connect(&w,1,0)
     started:=w.now
     report,error:=test_join(t,&w,1,join_desc(&w,0,fmt.tprintf("%s/joined",w.folder)))
@@ -878,7 +877,7 @@ a_lying_size_and_an_oversized_folder_are_refused :: proc(t:^testing.T) {
     lying:=Snapshot{name="game",entries={{path="a.bin",address=address,size=100}}}
     snapshot,_,_:=snapshot_put(s,&lying)
     digits:[64]u8
-    store.ref_set(s,NAMESPACE,offer_name(w.peers[0].key.secret,&digits),snapshot)
+    if !testing.expect_value(t,offer_set(s,w.folder,offer_name(w.peers[0].key.secret,&digits),snapshot),.None) {return}
     test_connect(&w,1,0)
     joined:=fmt.tprintf("%s/joined",w.folder)
     lied,error:=test_join(t,&w,1,join_desc(&w,0,joined))
@@ -891,7 +890,7 @@ a_lying_size_and_an_oversized_folder_are_refused :: proc(t:^testing.T) {
     meta:=fmt.tprintf("%s%cgame",SNAPSHOT_MAGIC,rune(4))
     large,_,_:=store.put_finish(&p,transmute([]u8)meta)
     store.commit(s)
-    store.ref_set(s,NAMESPACE,offer_name(w.peers[0].key.secret,&digits),large)
+    if !testing.expect_value(t,offer_set(s,w.folder,offer_name(w.peers[0].key.secret,&digits),large),.None) {return}
     _,refused:=test_join(t,&w,1,join_desc(&w,0,fmt.tprintf("%s/other",w.folder)))
     testing.expectf(t,strings.contains(refused,"more than"),"%s",refused)
     testing.expectf(t,node_totals(&w.peers[1].n).received<4<<20,"the folder was refused before it came: %d bytes",node_totals(&w.peers[1].n).received)

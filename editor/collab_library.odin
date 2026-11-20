@@ -68,6 +68,7 @@ collab_library_peers :: proc(st:^Collab_State,into:[]Collab_Library) -> int {
     for p in share.node_peers(st.node,buffer[:]) {
         for &peer,i in st.peers {
             if i==int(st.self) || !peer.used || peer.connection!=p.connection {continue}
+            if st.role==.Host && !collab_editor_peer(&peer) {continue}
             if count<len(into) {into[count]={peer=i,node=p};count+=1}
         }
     }

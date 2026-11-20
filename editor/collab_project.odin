@@ -23,7 +23,6 @@ import "mirai:store"
 // cook/share: its open project, by three ways, or a folder it names, which it
 // opens once the join is done and joins the session again from there.
 
-COLLAB_EXCHANGE_CHANNEL :: 2 // where the channels of the exchange start
 COLLAB_LINES :: 8            // kept, failed and missing lines collab.status gives
 COLLAB_LINE_BYTES :: 200
 // What the host changes during the session reaches the guests: once its files
@@ -33,16 +32,6 @@ COLLAB_LINE_BYTES :: 200
 COLLAB_OFFER_QUIET :: 0.5 // seconds
 COLLAB_OFFER_EVERY :: 2.0 // seconds
 @(private) COLLAB_WATCH_BUDGET :: 512
-
-@(private)
-collab_channels :: proc() -> (channels:[COLLAB_EXCHANGE_CHANNEL+2]wire.Channel_Desc) {
-    channels[0]={kind=.Reliable,queue_bytes=256<<10}
-    channels[1]={kind=.Unreliable}
-    exchange_channels:=share.channels()
-    channels[COLLAB_EXCHANGE_CHANNEL]=exchange_channels[0]
-    channels[COLLAB_EXCHANGE_CHANNEL+1]=exchange_channels[1]
-    return
-}
 
 // A guest's join: on a thread of its own, which waits for the steps of the node.
 @(private)
@@ -77,7 +66,7 @@ collab_node_start :: proc(s:^Session,st:^Collab_State) -> bool {
         st.node_jobs=nil
     }
     st.node=new(share.Node)
-    if share.node_init(st.node,&s.store,runtime.heap_allocator(),worker,COLLAB_EXCHANGE_CHANNEL)!=.None {
+    if share.node_init(st.node,&s.store,runtime.heap_allocator(),worker)!=.None {
         free(st.node)
         st.node=nil
         return false
@@ -94,7 +83,7 @@ collab_project_offer :: proc(s:^Session,st:^Collab_State) -> (problem:string) {
     defer if threaded {jobs.system_destroy(&js)}
     worker:=jobs.Worker_Ref{}
     if threaded {worker={system=&js,worker=jobs.OWNER}}
-    o,error:=share.offer(st.node,s.project_root,st.invite.secret,worker,context.temp_allocator)
+    o,error:=share.offer(st.node,s.project_root,st.invite.secret,worker,context.temp_allocator,kind=.Live)
     for line in o.taken.skipped {log.warnf("the session does not carry it: %s",line)}
     for line in o.problems {log.warnf("a guest will not get it: %s",line)}
     if error=="" {st.offered=o.address}
@@ -159,7 +148,10 @@ collab_join_start :: proc(s:^Session,st:^Collab_State,folder:string,reopen:bool,
     j.allocator=base.dynamic_arena_allocator(&j.arena)
     j.folder=fmt.aprint(folder,allocator=j.allocator)
     j.reopen=reopen
-    j.desc={node=st.node,offer=share.offer_name(st.invite.secret,&j.digits),folder=j.folder,progress=&j.progress,connect_seconds=COLLAB_HELLO_TIMEOUT}
+    j.desc={
+        node=st.node,offer=share.offer_name(st.invite.secret,&j.digits),
+        folder=j.folder,progress=&j.progress,connect_seconds=COLLAB_HELLO_TIMEOUT,require_live=true,
+    }
     // The importers of the project's plugins, built from the files that arrived, to find its builds by key.
     j.desc.library=import_library_built
     st.join=j
