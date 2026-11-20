@@ -159,7 +159,7 @@ pose_bake_samples_final_constraints_curves_markers_root_and_exact_partial_endpoi
     before:=f.world.transforms.values[1]
     result=authoring_test_execute(a,"bake",`{"entity":"0000000000000011","path":"final.anim","clip":"Baked","start":0.2,"end":0.57,"rate":10,"goals":[{"kind":"IK","name":"joint4","target":{"position":[1,1,0]}}]}`)
     if !testing.expect(t,result.code==0,result.message) {return}
-    testing.expect(t,f.world.transforms.values[1]==before && len(f.world.playback.states)==0 && len(f.world.requests.goals.items)==0)
+    testing.expect(t,f.world.transforms.values[1]==before && len(f.world.playback.states)==0 && len(f.world.requests.modifiers.items)==0)
     file:asset.Asset;testing.expect_value(t,authoring_test_load(a,"final.anim",&file),asset.Error.None);defer asset.asset_close(&file)
     output,error:=asset.animation_view(&file,&a.assets.types);if !testing.expect_value(t,error,asset.Error.None) {return}
     testing.expect(t,len(output.clips)==1 && output.clips[0].root==root && len(file.dependencies)==0)
@@ -234,7 +234,7 @@ pose_bake_creates_editable_tracks_from_an_unanimated_skeleton_and_exports_final_
     vertices:=[3]asset.Vertex{{position={0,0,0},color=0xffffffff},{position={1,0,0},color=0xffffffff},{position={0,1,0},color=0xffffffff}};skin:[3]asset.Skin_Vertex;for &vertex in skin {vertex.weights[0]=255}
     target:=asset.Morph_Target{weight=.2,count=1};base.text_set(target.name[:],"Smile")
     testing.expect_value(t,source_mesh_save(fmt.tprintf("%s/rig.mesh",a.root),&a.assets.types,{id=mesh_id,skeleton=skeleton_id,joints={{node=0,inverse_bind=1}}},{vertices=vertices[:],skin=skin[:],morphs={target},morph_deltas={{vertex=0,position={.1,0,0}}}},{0,1,2}),asset.Error.None)
-    follow:=anim.FOLLOW_CONSTRAINT_DEFAULT;follow.bone=anim.bone_ref("joint2");follow.target=anim.spatial_point({.3,1,0});base.text_set(follow.name[:],"hand")
+    follow:=anim.FOLLOW_CONSTRAINT_DEFAULT;follow.bone=anim.bone_ref("joint2");follow.target=anim.spatial_definition_point({.3,1,0});base.text_set(follow.name[:],"hand")
     corrective:=anim.POSE_CORRECTIVE_DEFAULT;corrective.driver=anim.bone_ref("joint1");corrective.apply_pose=false;corrective.sample_count=1;corrective.samples[0]=anim.POSE_CORRECTIVE_SAMPLE_DEFAULT;corrective.samples[0].curve_value=.3;base.text_set(corrective.curve[:],"Smile");base.text_set(corrective.name[:],"face")
     // A .character without clips: only its modifiers.
     set:=anim.character_set_make({});set.pose={follow={follow},correctives={corrective}}

@@ -22,9 +22,8 @@ the preview.
   ([modifier authoring](animation-authoring.md#skeletons-sockets-and-profiles)).
 - The rig is the entity that plays the set. There is one grounding definition per set and an
   independent state per rig.
-- The global contact is modified with `Modifier_Goal{kind=.Grounding}` requests;
-  `Modifier_Control{kind=.Grounding}` changes influence or activation with an independent fade,
-  without touching that contact.
+- A named Grounding request through `modifier` sets global contact when `goal` is true.
+  An influence request fades weight or activation independently.
 - Each leg is a direct chain of three internal bones, hip, knee and foot, with its toe as the
   contact: the first two legs are those of the body of the skeleton (`@hip_l`, `@knee_l`,
   `@foot_l`, `@toe_l` and their right side); a `Bone_Ref` in `hip`, `knee`, `foot` or
@@ -197,8 +196,8 @@ and lack of memory.
 - `grounding_queries_real_slopes_places_both_feet_and_releases_when_jumping`
 - `grounding_procedural_pose_follows_platform_replays_clones_and_allocates_nothing_when_stable`
 - `eight_legged_grounding_walks_without_animation_clips_or_per_leg_entities`
-- `grounding_prepared_hierarchies_rebind_atomically_repack_rigs_and_replay_copied_worlds`
-- `grounding_configuration_retires_removed_rigs_and_retries_out_of_memory`
+- `grounding_rebinds_its_hierarchy_without_touching_another_rig_and_replays_copied_state`
+- `grounding_configuration_retries_out_of_memory_and_rejects_invalid_bones`
 
 With their own flags:
 

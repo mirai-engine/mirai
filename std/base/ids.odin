@@ -12,8 +12,8 @@ Asset_Id :: distinct [2]u64
 
 // Stable identity of a name (component, field, event, method): FNV-1a 64.
 // Everything saved or replicated refers to names through this hash.
-name_hash :: proc "contextless" (name:string) -> u64 {
-    hash:=HASH_SEED
+name_hash :: proc "contextless" (name:string,seed:=HASH_SEED) -> u64 {
+    hash:=seed
     for i in 0..<len(name) {
         hash~=u64(name[i])
         hash*=0x100000001b3

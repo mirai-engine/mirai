@@ -83,7 +83,7 @@ a_program_blends_its_clips_with_curves_and_root_motion_under_the_layers_without_
     testing.expect_value(t,len(events.items),2)
     for event in events.items {testing.expect(t,event.entity==state.entity && event.kind==.Marker && event.name==base.name_hash("step") && event.action==0)}
     transforms:core.Table(core.Transform);defer core.table_destroy(&transforms)
-    constraints:Animation_Constraints;defer constraints_free(&constraints)
+    constraints:Modifier_Runtime;defer modifier_runtime_free(&constraints)
     state.program.root.in_place=true
     if bone,reference,pinned:=animation_root_reference(state,state.program.root,playing_pose(state,.Local),(^core.Table(core.Transform))(nil));pinned {playing_pose(state,.Local)[bone]=reference}
     testing.expect_value(t,playing_pose(state,.Local)[1].position,mm.Vec3{})

@@ -107,7 +107,7 @@ track_parts :: proc(target:string) -> (node,component,field:string) {
 // that path or else its name. False for an entity the clip does not reach.
 track_name :: proc(w:core.World_Ref,animated,e:core.Entity) -> (name:string,ok:bool) {
     target,explicit:=editor.entity_get(w,e,anim.Animation_Target)
-    path:=fmt.tprintf("%s",base.text_get(target.path[:]))
+    path:=anim.animation_target_path(w,e,target)
     if e==animated {return path if explicit else "",true}
     if explicit && target.animation==animated {return path if path!="" else editor.entity_name(w,e),true}
     if explicit && target.animation!=core.NONE || editor.entity_has(w,e,anim.Animation) {return}

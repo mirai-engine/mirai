@@ -341,7 +341,8 @@ preview :: proc(s:^editor.Session,call:^api.Call) {
         if int(r.total)<=int(p.offset) || len(poses)>=int(p.limit) {continue}
         id,_:=core.get(ids,entity)
         target,_:=core.get(targets,entity)
-        row:=Preview_Pose_Result{id=id.value,path=target.path,position=value.position,scale=value.scale,rotation={value.rotation.x,value.rotation.y,value.rotation.z,value.rotation.w}}
+        row:=Preview_Pose_Result{id=id.value,position=value.position,scale=value.scale,rotation={value.rotation.x,value.rotation.y,value.rotation.z,value.rotation.w}}
+        base.text_set(row.path[:],anim.animation_target_path(world,entity,target))
         base.text_set(row.name[:],core.name_get(names,entity))
         append(&poses,row)
     }

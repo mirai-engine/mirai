@@ -34,6 +34,7 @@ ANIMATION_NAME_CAPACITY :: 64
 // The path of a node or bone below the entity that plays, with its zero: a
 // track target, a skeleton bone, a root bone.
 NODE_PATH_CAPACITY :: 512
+ANIMATION_INLINE_PATH :: 96
 ANIMATION_MAX_CLIPS :: 1024
 ANIMATION_MAX_TRACKS :: 65536
 ANIMATION_MAX_KEYS :: 1<<24

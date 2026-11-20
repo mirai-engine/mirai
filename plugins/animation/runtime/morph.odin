@@ -197,7 +197,7 @@ morph_source :: proc(entity:core.Entity,config:Morph_Weights,animations:^core.Ta
 // Binds the targets of a rig to the entries of Morph_Weights and to the
 // names of their curves; weights start at the mesh's when its rig changed.
 @(private)
-morph_bind :: proc(state:^Morph_Playing,rig:^Skin_Rig,config:Morph_Weights,path:string,stamp:u64) -> bool {
+morph_bind :: proc(state:^Morph_Playing,rig:^Skin_Rig,config:Morph_Weights,path_hash:u64,stamp:u64) -> bool {
     config:=config
     count:=len(rig.morphs)
     fresh:=len(state.current)!=count || state.mesh!=rig.id || state.revision!=rig.revision
@@ -207,7 +207,6 @@ morph_bind :: proc(state:^Morph_Playing,rig:^Skin_Rig,config:Morph_Weights,path:
         state.error=.Out_Of_Memory
         return false
     }
-    path_hash:=base.name_hash(path)
     renamed:=fresh || state.path!=path_hash
     state.error,state.unknown=morph_weights_check(config,rig.morphs)
     for &target,t in rig.morphs {
@@ -217,14 +216,12 @@ morph_bind :: proc(state:^Morph_Playing,rig:^Skin_Rig,config:Morph_Weights,path:
         state.entries[t]=-1
         if state.error!=.Invalid_Weights {for entry,i in config.names {if entry==key {state.entries[t]=i8(i);break}}}
         if renamed {
-            curve:[256+8+64]u8
-            n:=copy(curve[:],path);n+=copy(curve[n:],"/@morph/");n+=copy(curve[n:],name)
-            state.tracks[t]=base.name_hash(string(curve[:n]))
+            state.tracks[t]=base.name_hash(name,base.name_hash("/@morph/",path_hash))
         }
         if fresh {state.current[t],state.previous[t]=target.weight,target.weight}
     }
     if renamed {state.curve_count=-1}
-    state.mesh,state.revision,state.stamp,state.path,state.by_name=rig.id,rig.revision,stamp,path_hash,path==""
+    state.mesh,state.revision,state.stamp,state.path,state.by_name=rig.id,rig.revision,stamp,path_hash,path_hash==base.HASH_SEED
     return true
 }
 
@@ -278,9 +275,9 @@ animation_morph :: proc(
         config:Morph_Weights
         stamp:u64
         if row:=core.row_of(configs,playing.entity);row>=0 {config=core.at(configs,row);stamp=core.stamp(configs,row)+1}
-        path:=base.text_get(config.path[:])
-        if path=="" {if target,has:=core.get(targets,playing.entity);has {path=base.text_get(target.path[:])}}
-        if playing.stamp!=stamp || playing.mesh!=rig.id || playing.revision!=rig.revision || playing.path!=base.name_hash(path) {
+        path:=base.name_hash(base.text_get(config.path[:]))
+        if path==base.HASH_SEED {if target,has:=core.get(targets,playing.entity);has {path=animation_target_hash(target)}}
+        if playing.stamp!=stamp || playing.mesh!=rig.id || playing.revision!=rig.revision || playing.path!=path {
             if !morph_bind(&playing,rig,config,path,stamp) {playing.stamp=0;morph_problem(problems,playing.entity,playing.error,playing.unknown);continue}
             if playing.error!=.None {morph_problem(problems,playing.entity,playing.error,playing.unknown)}
         }

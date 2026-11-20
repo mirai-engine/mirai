@@ -210,12 +210,12 @@ zombie_chase :: proc(a:^ai.Act(Zombie_Act),w:Arena) -> ai.Status {
 @(act="Bite")
 zombie_bite :: proc(a:^ai.Act(Zombie_Act),w:Arena,state:^Arena_State,requests:^anim.Animation_Requests) -> ai.Status {
     e:=behavior.agent(a)
-    if a.phase==.Exit {anim.look(requests,e,anim.spatial_point({}),0);return .Success}
+    if a.phase==.Exit {anim.look(requests,e,anim.spatial_point({}),0,"Body");return .Success}
     if a.phase==.Enter {
         subject,_,_:=arena_seen(w,e)
         if subject==core.NONE || !ai.token_take(a,u64(subject),ZOMBIE_BITERS) {return .Failure}
         state.bites+=1
-        anim.look(requests,e,anim.spatial_entity(subject))
+        anim.look(requests,e,anim.spatial_entity(subject),name="Body")
         anim.play(requests,e,"Bite")
     }
     return ai.after(a,0.8)

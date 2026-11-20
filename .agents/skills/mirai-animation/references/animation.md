@@ -86,12 +86,9 @@ Bones and modifiers:
 - A target is a [`Spatial_Target`](animation-rigs.md#spatial-targets). No operation gives
   physical balance or self-collision of the character.
 
-Targets and controls:
+Targets and influence share the named `modifier` request in `Animation_Requests`
+([rigs](animation-rigs.md#requests-and-diagnostics)).
 
-- `modifier_goal` changes the target of an operation of an instance through `Animation_Requests`;
-  `modifier_control` regulates an independent influence multiplier, with a smoothstep fade from the
-  current influence. They are chosen by name or slot
-  ([rigs](animation-rigs.md#requests-and-diagnostics)).
 - A control keeps targets, poles, hits, strengths and contact. Deactivating fades to zero and then
   turns the solver off (grounding releases its supports); zero weight with `enabled` keeps the state
   and the input pose; repeating the same control does not restart the fade.
@@ -100,7 +97,7 @@ Targets and controls:
 - The queues reject non-finite values and excess capacity. Stable requests and fades do not
   allocate, do not resolve bones again and do not walk the controls of other rigs.
 - An OOM when loading or reloading sets or skeletons keeps the previous runtime, does not
-  publish empty tables and retries.
+  publish partial rig state and retries.
 
 ### Following a rig of another skeleton
 

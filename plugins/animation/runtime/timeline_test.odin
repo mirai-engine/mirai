@@ -80,8 +80,8 @@ timeline_tick :: proc(w:^Timeline_World,app:^host.App,problems:^core.Problems,dt
     extra:Test_Storages;defer test_storages_free(&extra)
     test_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),&w.playback,app,time,{},nil,problems,&extra)
     animation_fields(test_world_ref(w),core.ref(&w.playback),&w.fields,{},app,problems)
-    constraints:Animation_Constraints;defer constraints_free(&constraints)
-    animation_finish(&w.playback,{problems=problems},&constraints,&w.transforms,&w.parents,dt,nil,{},places=&w.places)
+    constraints:Modifier_Runtime;defer modifier_runtime_free(&constraints)
+    animation_finish(&w.playback,{problems=problems},&constraints,&w.transforms,&w.parents,dt,places=&w.places)
     test_world_settle(w)
 }
 

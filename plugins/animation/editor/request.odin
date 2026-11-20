@@ -215,12 +215,12 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
     for &control,i in p.controls[:controls] {
         file:Authoring_File;defer asset.asset_close(&file.file)
         profile,_,ok:=program_modifier_profile(s,call,world,entity,&file);if !ok {return false}
-        slot,valid:=program_modifier_slot(call,profile,control.kind,control.name[:]);if !valid {return false}
+        _,valid:=program_modifier_slot(call,profile,control.kind,control.name[:]);if !valid {return false}
         if !finite(control.weight) || control.weight<0 || control.weight>1 {authoring_failure(call,fmt.tprintf("controls[%d].weight",i),"Range","a finite number in [0,1]",fmt.tprintf("%g",control.weight),"The control weight is invalid");return false}
         if !finite(control.fade) || control.fade<0 {authoring_failure(call,fmt.tprintf("controls[%d].fade",i),"Range","finite nonnegative seconds",fmt.tprintf("%g",control.fade),"The control fade is invalid");return false}
-        waiting:=len(modifiers.controls.items)
-        anim.modifier_control(modifiers,{rig=entity,kind=control.kind,slot=slot,name=base.name_hash(base.text_get(control.name[:])),weight=control.weight,enabled=control.enabled,fade=control.fade})
-        if len(modifiers.controls.items)==waiting {authoring_failure(call,"controls","Capacity","space in Animation_Requests.controls","full or unavailable","The control could not be queued",api.SERVER_ERROR);return false}
+        waiting:=len(modifiers.modifiers.items)
+        anim.modifier(modifiers,{rig=entity,kind=control.kind,weight=control.weight,enabled=control.enabled,fade=control.fade},base.text_get(control.name[:]))
+        if len(modifiers.modifiers.items)==waiting {authoring_failure(call,"controls","Capacity","space in Animation_Requests.modifiers","full or unavailable","The control could not be queued",api.SERVER_ERROR);return false}
         request_note(applied,"Control",base.text_get(control.name[:]),control.weight)
     }
     if goals>0 {
@@ -230,9 +230,9 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
             profile,_,ok:=program_modifier_profile(s,call,world,entity,&file);if !ok {return false}
             raw,_:=authoring_json_element(text,i,call.allocator)
             value,valid:=program_modifier_goal_value(s,call,world,entity,profile,&goal,raw,fmt.tprintf("goals[%d]",i));if !valid {return false}
-            waiting:=len(modifiers.goals.items)
-            anim.modifier_goal(modifiers,value)
-            if len(modifiers.goals.items)==waiting {authoring_failure(call,"goals","Capacity","space in Animation_Requests.goals","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
+            waiting:=len(modifiers.modifiers.items)
+            anim.modifier(modifiers,value)
+            if len(modifiers.modifiers.items)==waiting {authoring_failure(call,"goals","Capacity","space in Animation_Requests.modifiers","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
             request_note(applied,"Goal",base.text_get(p.goals[i].name[:]))
         }
     }
@@ -363,16 +363,16 @@ request_aim :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity
     requests:=core.world_storage_of(world,anim.Animation_Requests)
     // Asking for it turns on an operation the .character keeps off until asked; off, it lets go
     // from where it aims.
-    value:=anim.Modifier_Goal{rig=entity,kind=kind,slot=slot,target=anim.spatial_point({}),fade=fade}
+    value:=anim.Modifier_Request{rig=entity,kind=kind,name=base.name_hash(base.text_get(definition.name[:])),target=anim.spatial_point({}),fade=fade,goal=true}
     if !off {
         goal:=Preview_Goal{kind=.Look if kind==.Look else .IK,name=definition.name,target=target}
         valid:bool
         if value,valid=program_modifier_goal_value(s,call,world,entity,profile,&goal,raw,path);!valid {return false}
         value.weight,value.enabled,value.fade=weight,true,fade
     }
-    waiting:=len(requests.goals.items)
-    anim.modifier_goal(requests,value)
-    if len(requests.goals.items)==waiting {authoring_failure(call,path,"Capacity","space in Animation_Requests.goals","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
+    waiting:=len(requests.modifiers.items)
+    anim.modifier(requests,value)
+    if len(requests.modifiers.items)==waiting {authoring_failure(call,path,"Capacity","space in Animation_Requests.modifiers","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
     request_note(applied,"Look" if kind==.Look else "Reach",base.text_get(definition.name[:]),0 if off else weight)
     return true
 }
@@ -381,7 +381,7 @@ request_aim :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity
 // the only one of the kind.
 @(private)
 request_operation :: proc(s:^editor.Session,world:core.World_Ref,entity:core.Entity,profile:anim.Pose_Profile,kind:anim.Modifier_Kind,part:lib.Body_Part) -> (slot:u16,found:bool) {
-    count:=program_modifier_count(profile,kind)
+    count:=anim.modifier_count(profile,kind)
     if count==0 {return}
     bone:=request_body_bone(s,world,entity,part)
     label:=anim.bone_ref_part(part)

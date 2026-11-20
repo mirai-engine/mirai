@@ -381,7 +381,7 @@ root_warp_reaches_a_bone_or_socket_of_another_rig_from_the_pose_it_sampled_in_th
     w:Motion_Warp_World
     if !test_world_init(t,&w) {return}
     defer test_world_destroy(&w)
-    testing.expect(t,modifier_append(&w.worlds,other,core.World_Transform{transform={{10,0,0},1,{1,1,1}}}))
+    testing.expect(t,core.table_append(&w.worlds,other,core.World_Transform{transform={{10,0,0},1,{1,1,1}}}))
     sockets:=make([]asset.Skeleton_Socket,1)
     base.text_set(sockets[0].name[:],"grip");base.text_set(sockets[0].bone[:],"joint3");sockets[0].offset=mm.TRANSFORM_IDENTITY;sockets[0].offset.position={0,.2,0}
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)

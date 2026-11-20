@@ -69,12 +69,13 @@ bench_grounding_pose_recomposition_scaling :: proc(t:^testing.T) {
                 source_local,source_world:[256]mm.Transform
                 copy(source_local[:],anim.playing_pose(&f.state,.Local)[:]);copy(source_world[:],anim.playing_pose(&f.state,.World)[:])
                 inputs:=grounding_fixture_inputs(&f)
+                config,_:=core.get(&f.configs,f.state.entity)
                 for _ in 0..<32 {
                     copy(anim.playing_pose(&f.state,.Local)[:],source_local[:bones]);copy(anim.playing_pose(&f.state,.World)[:],source_world[:bones])
-                    if !testing.expect(t,anim.grounding_apply(&f.state,&f.cache,inputs,1.0/60)) {return}
+                    if !testing.expect(t,anim.grounding_apply(&f.state,&f.cache,&config,inputs,1.0/60)) {return}
                 }
                 copy(anim.playing_pose(&f.state,.Local)[:],source_local[:bones]);copy(anim.playing_pose(&f.state,.World)[:],source_world[:bones])
-                if !testing.expect(t,anim.grounding_apply(&f.state,&f.cache,inputs,0)) {return}
+                if !testing.expect(t,anim.grounding_apply(&f.state,&f.cache,&config,inputs,0)) {return}
                 expected_local:=grounding_bench_pose_hash(anim.playing_pose(&f.state,.Local)[:])
                 expected_world:=grounding_bench_pose_hash(anim.playing_pose(&f.state,.World)[:])
                 allocations:=track.total_allocation_count
@@ -84,7 +85,7 @@ bench_grounding_pose_recomposition_scaling :: proc(t:^testing.T) {
                     start:=time.tick_now()
                     for _ in 0..<REPEATS {
                         copy(anim.playing_pose(&f.state,.Local)[:],source_local[:bones]);copy(anim.playing_pose(&f.state,.World)[:],source_world[:bones])
-                        stable &&=anim.grounding_apply(&f.state,&f.cache,inputs,0)
+                        stable &&=anim.grounding_apply(&f.state,&f.cache,&config,inputs,0)
                         sink+=anim.playing_pose(&f.state,.World)[bones-1].position.y
                     }
                     best=min(best,time.tick_since(start))

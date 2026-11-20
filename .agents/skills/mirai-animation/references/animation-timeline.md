@@ -18,6 +18,7 @@ On an entity that poses no skeleton, each track of the clip is bound by the text
 - **An entity anywhere**: one whose `Animation_Target.animation` names the animated entity, called
   by its `path` (its `Name` when the path is empty). The reference is an `Entity` field: scenes,
   prefabs and saves remap it. An entity has one `Animation_Target`: one clip moves it.
+  Long imported paths keep their text in an `Animation_Path` row and bind by its hash.
 - **A field**: a Float or Vector track whose target ends in `@field/<Component>.<field>`
   (`asset.animation_field_target`), after the path of its entity
   (`Lamp/@field/Point_Light.intensity`) or alone for the animated entity. The field is a path of
