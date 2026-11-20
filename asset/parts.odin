@@ -78,8 +78,7 @@ object_put :: proc(s:^store.Store,original:[]u8) -> (address:store.Hash,error:Er
 }
 
 // Whether a file is as a write with Codecs.None makes it: no chunk is a
-// stream, every block of a table of blocks and every page of a mesh is stored
-// as it is, and a texture has no layouts and the planes the kind chooses.
+// stream, every page of a mesh is stored as it is, and a texture has no layouts and the planes the kind chooses.
 @(private="file")
 object_raw :: proc(data:[]u8) -> (raw:bool,error:Error) {
     a:Asset
@@ -103,19 +102,6 @@ object_raw :: proc(data:[]u8) -> (raw:bool,error:Error) {
         for page in pages {
             if u64(page.data_offset)+u64(page.data_bytes)>u64(len(page_data)) {return false,.Corrupt}
             if page.data_bytes>0 && !pack_matches(page_data[page.data_offset:][:page.data_bytes],.Fast,.None) {return false,.None}
-        }
-    }
-    for &table in a.tables {
-        if !strings.has_suffix(table.name,"_pages") || len(table.columns)!=1 || table.columns[0].size!=size_of(Block_Record) {continue}
-        blocks_table,found:=asset_table(&a,strings.concatenate({table.name[:len(table.name)-len("_pages")],"_blocks"},context.temp_allocator))
-        if !found || len(blocks_table.columns)!=1 {continue}
-        records:=asset_column_data(&a,&table,0) or_return
-        blocks:=asset_column_data(&a,blocks_table,0) or_return
-        for at:=0;at+size_of(Block_Record)<=len(records);at+=size_of(Block_Record) {
-            record:=intrinsics.unaligned_load((^Block_Record)(raw_data(records[at:])))
-            if record.size==0 {continue}
-            if record.offset>u64(len(blocks)) || record.size>u64(len(blocks))-record.offset {return false,.Corrupt}
-            if !pack_matches(blocks[record.offset:][:record.size],.Fast,.None) {return false,.None}
         }
     }
     return true,.None

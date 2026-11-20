@@ -488,7 +488,10 @@ a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps
         near:=[3]f32{-50,0,-50}
         source_place(&w,near)
         settings:=Terrain_Settings{resident_distance=30}
-        for _ in 0..<8 {pipeline_tick(&w,&resident,&app,settings)}
+        for _ in 0..<8 {
+            work_wait(&w.data,nil)
+            pipeline_tick(&w,&resident,&app,settings)
+        }
         s:=&w.data.entries[0].source
         testing.expect(t,source_paged(s),"a Volume on disk is read by blocks")
         resident_chunks:=len(w.chunks.values)

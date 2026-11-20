@@ -96,53 +96,6 @@ a_document_writes_with_what_the_types_it_was_made_with_say :: proc(t:^testing.T)
     free_all(context.temp_allocator)
 }
 
-// A cook writes again each block of a table of blocks as its profile of what streams says; a
-// record whose block lies outside the table is refused.
-@(test)
-a_cook_compresses_again_the_blocks_a_document_reads_alone :: proc(t:^testing.T) {
-    types:Types
-    types_init(&types,context.temp_allocator)
-    decoder:Stream_Decoder
-    testing.expect_value(t,stream_decoder_init(&decoder),Error.None)
-    defer stream_decoder_destroy(&decoder)
-    encoder:Stream_Encoder
-    testing.expect_value(t,stream_encoder_init(&encoder),Error.None)
-    defer stream_encoder_destroy(&encoder)
-    raw:=make([]u8,2000,context.temp_allocator)
-    for &b,i in raw {b=u8(i/100)}
-    block:=make([]u8,pack_bound(len(raw)),context.temp_allocator)
-    size,packed:=pack(&encoder,.Fast,.Open,raw,block)
-    testing.expect_value(t,packed,Error.None)
-    write :: proc(types:^Types,record:Block_Record,block:[]u8) -> []u8 {
-        doc:Document
-        document_init(&doc,fourcc("TEST"),{1,2},context.temp_allocator)
-        records:=[1]Block_Record{record}
-        document_put(&doc,types,"grid_pages",records[:])
-        document_put(&doc,types,"grid_blocks",block,{.Bulk},.None)
-        bytes,_:=document_bytes(&doc,context.temp_allocator)
-        return bytes
-    }
-    record:=Block_Record{count=1,size=u64(size),hash=base.hash64(block[:size]),raw=u32(len(raw))}
-    cooked,error:=document_repack(write(&types,record,block[:size]),.Ultra,.Open,context.temp_allocator)
-    testing.expect_value(t,error,Error.None)
-    a:Asset
-    testing.expect_value(t,asset_open(&a,cooked,context.temp_allocator),Error.None)
-    defer asset_close(&a)
-    records,rows:=asset_rows(&a,&types,"grid_pages","",Block_Record)
-    testing.expect_value(t,rows,Error.None)
-    blocks,bytes:=asset_rows(&a,&types,"grid_blocks","",u8)
-    testing.expect_value(t,bytes,Error.None)
-    stored:=blocks[records[0].offset:][:records[0].size]
-    testing.expect_value(t,records[0].hash,base.hash64(stored))
-    testing.expect(t,pack_matches(stored,.Speed,.Open),"a block streams: the profile Speed")
-    out:=make([]u8,len(raw),context.temp_allocator)
-    testing.expect_value(t,unpack(&decoder,stored,out),Error.None)
-    testing.expect(t,string(out)==string(raw))
-    record.size+=1
-    _,outside:=document_repack(write(&types,record,block[:size]),.Ultra,.Open,context.temp_allocator)
-    testing.expect_value(t,outside,Error.Corrupt)
-}
-
 // A project is compressed with nothing, the open compressor, or by default the best its engine
 // has: the private one only where the engine has it in ext/. A folder without a project is open.
 @(test)

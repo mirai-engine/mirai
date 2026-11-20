@@ -750,9 +750,7 @@ grid_put_document :: proc(document:^asset.Document,types:^asset.Types,g:^Grid($T
     reader:Page_Reader
     if !page_reader_init(&reader,allocator) {return .Out_Of_Memory}
     defer page_reader_destroy(&reader,allocator)
-    writer:Page_Writer
-    if !page_writer_init(&writer,allocator,types.codecs) {return .Out_Of_Memory}
-    defer page_writer_destroy(&writer)
+    coded:[PAGE_BYTES_MAX]u8=---
     decoded,decoded_error:=make([]T,PAGE_VALUES,allocator)
     if decoded_error!=nil {return .Out_Of_Memory}
     defer delete(decoded,allocator)
@@ -781,10 +779,9 @@ grid_put_document :: proc(document:^asset.Document,types:^asset.Types,g:^Grid($T
         extent,count:=grid_page_extent(g,id)
         if g.paged && values==nil && g.blocks[slot].size>0 {
             read,read_ok:=page_block_read(g.blocks[slot],file,reader.block)
-            if !read_ok || !page_decode(read,g.blocks[slot].hash,mem.slice_to_bytes(decoded[:count]),&reader.decoder,reader.coded) {return .IO}
+            if !read_ok || !page_decode(read,g.blocks[slot].hash,mem.slice_to_bytes(decoded[:count])) {return .IO}
             values=decoded[:count]
-            // A block another write compressed otherwise is compressed again.
-            if (!quantize || g.blocks[slot].own==nil) && asset.pack_matches(read,.Fast,types.codecs) {block=read}
+            if !quantize || g.blocks[slot].own==nil {block=read}
         }
         fill:=page.fill
         when T==f32 {
@@ -812,8 +809,7 @@ grid_put_document :: proc(document:^asset.Document,types:^asset.Types,g:^Grid($T
             raw:=base.hash64(mem.slice_to_bytes(values))
             kept:=&g.encoded[slot]
             if kept.block==nil || kept.raw!=raw {
-                encoded,ok:=page_encode(&writer,values,extent.x,quantize)
-                if !ok {return .Out_Of_Memory}
+                encoded:=page_code(values,extent,quantize,coded[:])
                 delete(kept.block,allocator)
                 copied,error:=make([]u8,len(encoded),allocator)
                 if error!=nil {kept^={};return .Out_Of_Memory}
@@ -822,11 +818,8 @@ grid_put_document :: proc(document:^asset.Document,types:^asset.Types,g:^Grid($T
             }
             block=kept.block
         }
-        if block==nil {
-            ok:bool
-            if block,ok=page_encode(&writer,values,extent.x,quantize);!ok {return .Out_Of_Memory}
-        }
-        if _,error:=append(&runs,Page_Run{count=1,fill=fill_bits(fill),size=u64(len(block)),offset=u64(len(blocks)),hash=base.hash64(block),raw=u32(PAGE_HEADER+count*size_of(T))});error!=nil {return .Out_Of_Memory}
+        if block==nil {block=page_code(values,extent,quantize,coded[:])}
+        if _,error:=append(&runs,Page_Run{count=1,fill=fill_bits(fill),size=u64(len(block)),offset=u64(len(blocks)),hash=base.hash64(block)});error!=nil {return .Out_Of_Memory}
         if append(&blocks,..block)!=len(block) {return .Out_Of_Memory}
     }
     asset.document_put(document,types,pages_name,runs[:]) or_return
@@ -926,7 +919,7 @@ grid_read_document :: proc(g:^Grid($T),file:^asset.Asset,types:^asset.Types,size
     total:=u64(0)
     for run in runs {
         if run.count==0 || !valid(fill_of(T,run.fill)) {return false}
-        if run.size!=0 && (run.count!=1 || run.offset>stored || run.size>stored-run.offset || run.size>u64(asset.pack_bound(PAGE_BYTES_MAX))) {return false}
+        if run.size!=0 && (run.count!=1 || run.offset>stored || run.size>stored-run.offset || run.size>PAGE_BYTES_MAX) {return false}
         total+=u64(run.count)
     }
     if total!=u64(counts.x)*u64(counts.y)*u64(counts.z) {return false}
@@ -942,17 +935,11 @@ grid_read_document :: proc(g:^Grid($T),file:^asset.Asset,types:^asset.Types,size
     defer if !ok {grid_destroy(&next,allocator)}
     next.paged=paged
     if paged && !next.sparse && resize(&next.blocks,len(next.pages))!=nil {return false}
-    coded:[]u8
-    error:runtime.Allocator_Error
-    if !paged {
-        if coded,error=make([]u8,PAGE_BYTES_MAX,allocator);error!=nil {return false}
-    }
-    defer delete(coded,allocator)
     Reading :: struct($T:typeid) {
         g:^Grid(T),
         file:^asset.Asset,
         cursor:Run_Cursor,
-        blocks,coded:[]u8,
+        blocks:[]u8,
         offset:u64, // of the column of blocks in the file
         valid:proc "contextless" (value:T) -> bool,
         allocator:runtime.Allocator,
@@ -972,12 +959,11 @@ grid_read_document :: proc(g:^Grid($T),file:^asset.Asset,types:^asset.Types,size
         page,made:=shared_make(T,count,r.allocator)
         if !made {return false}
         g.pages[slot].values=page
-        decoder,decoder_error:=asset.asset_decoder(r.file)
-        if decoder_error!=.None || !page_decode(r.blocks[run.offset:][:run.size],run.hash,mem.slice_to_bytes(page),&decoder.stream,r.coded) {return false}
+        if !page_decode(r.blocks[run.offset:][:run.size],run.hash,mem.slice_to_bytes(page)) {return false}
         for value in page {if !r.valid(value) {return false}}
         return true
     }
-    r:=Reading(T){g=&next,file=file,cursor={runs=runs,left=u64(runs[0].count)},blocks=blocks,coded=coded,offset=entry.offset,valid=valid,allocator=allocator}
+    r:=Reading(T){g=&next,file=file,cursor={runs=runs,left=u64(runs[0].count)},blocks=blocks,offset=entry.offset,valid=valid,allocator=allocator}
     if !next.sparse {
         for slot in 0..<len(next.pages) {if !page_take(&r,slot,slot) {return false}}
     } else {

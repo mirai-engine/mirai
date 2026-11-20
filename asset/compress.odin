@@ -240,59 +240,14 @@ pack_matches :: proc "contextless" (block:[]u8,profile:data.Profile,codecs:Codec
 }
 
 // A run of pages of a table of `<name>_pages` over the bytes of the table `<name>_blocks`: what a
-// kind of asset stores in blocks it reads alone, and that a cook compresses again as its project
-// says. count pages that hold fill alone, or one page with its block.
+// kind of asset stores in blocks it reads alone, coded by the kind itself, which no compressor
+// touches. count pages that hold fill alone, or one page with its block.
 Block_Record :: struct {
     count:u32,
     fill:u32,
     offset:u64,
     size:u64,  // of the block; 0: none
     hash:u64,  // base.hash64 of the block
-    raw:u32,   // of the block once decoded
-}
-
-// The blocks of the block tables of a document compressed again as the profile of what streams
-// and codecs say.
-@(private)
-document_blocks_repack :: proc(doc:^Document,profile:data.Profile,codecs:Codecs) -> Error {
-    PAGES :: "_pages"
-    for &table in doc.tables {
-        if !strings.has_suffix(table.name,PAGES) || len(table.columns)!=1 || table.columns[0].size!=size_of(Block_Record) {continue}
-        blocks_name:=strings.concatenate({table.name[:len(table.name)-len(PAGES)],"_blocks"},context.temp_allocator)
-        blocks_table,found:=document_table(doc,blocks_name)
-        if !found || len(doc.tables[blocks_table].columns)!=1 || doc.tables[blocks_table].columns[0].size!=1 {continue}
-        records:=mem.slice_data_cast([]Block_Record,table.columns[0].data)
-        old:=doc.tables[blocks_table].columns[0].data
-        largest:=0
-        for record in records {
-            if record.size==0 {continue}
-            if record.offset>u64(len(old)) || record.size>u64(len(old))-record.offset || int(record.raw)>=PACK_MAX {return .Corrupt}
-            largest=max(largest,int(record.raw))
-        }
-        if largest==0 {continue}
-        streamed:=profile_streamed(profile)
-        encoder:Stream_Encoder
-        stream_encoder_init(&encoder,context.temp_allocator) or_return
-        defer stream_encoder_destroy(&encoder)
-        decoder:Stream_Decoder
-        stream_decoder_init(&decoder,context.temp_allocator) or_return
-        defer stream_decoder_destroy(&decoder)
-        raw:=make([]u8,largest,context.temp_allocator)
-        blocks:=make([dynamic]u8,0,len(old),context.temp_allocator)
-        if raw==nil || blocks==nil {return .Out_Of_Memory}
-        for &record in records {
-            if record.size==0 {continue}
-            at:=len(blocks)
-            unpack(&decoder,old[record.offset:][:record.size],raw[:record.raw]) or_return
-            if resize(&blocks,at+pack_bound(int(record.raw)))!=nil {return .Out_Of_Memory}
-            size:=pack(&encoder,streamed,codecs,raw[:record.raw],blocks[at:]) or_return
-            resize(&blocks,at+size)
-            record.offset,record.size,record.hash=u64(at),u64(size),base.hash64(blocks[at:])
-        }
-        document_resize(doc,blocks_table,len(blocks)) or_return
-        copy(doc.tables[blocks_table].columns[0].data,blocks[:])
-    }
-    return .None
 }
 
 // A stream into all of dst, which is its decoded size.

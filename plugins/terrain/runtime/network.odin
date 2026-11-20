@@ -522,11 +522,9 @@ terrain_page_bytes :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Gri
     read :: proc(g:^Grid($T),i:int,file:string,out:[]u8) -> (size:int,fill:u32,ok:bool) {
         if grid_none(g) || i<0 || i>=g.counts.x*g.counts.y*g.counts.z {return}
         page:=grid_page(g,i)
-        extent,count:=grid_page_extent(g,i)
-        size=PAGE_HEADER+count*size_of(T)
         if page.values!=nil {
-            page_code(page.values,extent.x,false,out)
-            return size,0,true
+            extent,_:=grid_page_extent(g,i)
+            return len(page_code(page.values,extent,false,out)),0,true
         }
         if !grid_absent(g,i) {
             value:=page.fill
@@ -534,14 +532,11 @@ terrain_page_bytes :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Gri
             mem.copy_non_overlapping(&bits,&value,size_of(T))
             return 0,bits,true
         }
-        read:Page_Reader
-        read_ok:=page_reader_init(&read,context.temp_allocator)
-        defer page_reader_destroy(&read,context.temp_allocator)
-        if !read_ok {return}
         held:=grid_block(g,i)
-        block,block_ok:=page_block_read(held,file,read.block)
-        if !block_ok || !page_unpack(block,held.hash,out[:size],&read.decoder) {return}
-        return size,0,true
+        block,block_ok:=page_block_read(held,file,out)
+        if !block_ok || base.hash64(block)!=held.hash {return}
+        if raw_data(block)!=raw_data(out) {copy(out,block)}
+        return len(block),0,true
     }
     switch kind {
     case .Field:   return read(&s.field,i,s.file,out)
