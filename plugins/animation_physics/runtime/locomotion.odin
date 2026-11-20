@@ -18,7 +18,7 @@ import phys "plugins:physics/runtime"
 // speed of the root of its pose. A game writes no code for locomotion; the clips and their modes
 // are in the .character.
 @(step="fixed")
-animation_locomotion :: proc(characters:^core.Table(phys.Character,.Read),states:^core.Table(locomotion.Locomotion_State,.Read),found:^core.Table(phys.Character_State,.Read),animations:^core.Table(anim.Animation,.Read),motions:^core.Table(core.Motion,.Read),inputs:^core.Table(inp.Move_Input,.Read),walk_actions:inp.Input_Of(locomotion.Walk_Action),walks:^core.Table(locomotion.Walk,.Read),tacticals:^core.Table(locomotion.Tactical_Sprint,.Read),flights:^core.Table(locomotion.Fly,.Read),swims:^core.Table(locomotion.Swim,.Read),worlds:^core.Table(core.World_Transform,.Read),playback:core.Ref(anim.Playback),physics:core.Ref(phys.Physics_State),requests:^anim.Animation_Requests,problems:^core.Problems) {
+animation_locomotion :: proc(characters:^core.Table(phys.Character,.Read),states:^core.Table(locomotion.Locomotion_State,.Read),found:^core.Table(phys.Character_State,.Read),animations:^core.Table(anim.Animation,.Read),motions:^core.Table(core.Motion,.Read),inputs:^core.Table(inp.Move_Input,.Read),drives:^core.Table(locomotion.Locomotion_Drive,.Read),parkours:^core.Table(locomotion.Parkour_State,.Read),walk_actions:inp.Input_Of(locomotion.Walk_Action),walks:^core.Table(locomotion.Walk,.Read),tacticals:^core.Table(locomotion.Tactical_Sprint,.Read),flights:^core.Table(locomotion.Fly,.Read),swims:^core.Table(locomotion.Swim,.Read),worlds:^core.Table(core.World_Transform,.Read),playback:core.Ref(anim.Playback),physics:core.Ref(phys.Physics_State),requests:^anim.Animation_Requests,problems:^core.Problems) {
     for row in 0..<core.count(states) {
         entity:=core.entity_at(states,row)
         animation,animated:=core.get(animations,entity)
@@ -26,7 +26,11 @@ animation_locomotion :: proc(characters:^core.Table(phys.Character,.Read),states
         character:=core.at(states,row)
         body,_:=core.get(characters,entity)
         going,_:=core.get(motions,entity)
-        asked,_:=core.get(inputs,entity)
+        seat,seated:=core.get(inputs,entity)
+        drive,driven:=core.get(drives,entity)
+        asked:=locomotion.resolve_input(seat,drive,driven)
+        if !seated && !driven {asked.look_yaw=character.yaw}
+        parkour,_:=core.get(parkours,entity)
         input:=locomotion.move_facing(asked,character.yaw,mm.QUAT_IDENTITY)
         placed,_:=core.get(worlds,entity)
         facing:=mm.quat_forward(mm.quat_axis_angle({0,1,0},asked.look_yaw))
@@ -38,20 +42,20 @@ animation_locomotion :: proc(characters:^core.Table(phys.Character,.Read),states
         }
         switch character.mode {
         case locomotion.MODE_SWIMMING:
-            if swim,ok:=core.get(swims,entity);ok {goal.desired,goal.acceleration,goal.braking=locomotion.move_wish(input,mm.QUAT_IDENTITY,swim.speed)*swim.speed,swim.acceleration,swim.acceleration}
+            if swim,ok:=core.get(swims,entity);ok {goal.desired,goal.acceleration,goal.braking=locomotion.move_wish(input,mm.QUAT_IDENTITY,swim.speed*character.speed_scale)*swim.speed*character.speed_scale,swim.acceleration,swim.acceleration}
         case locomotion.MODE_FLYING:
-            if fly,ok:=core.get(flights,entity);ok {goal.desired,goal.acceleration,goal.braking=locomotion.move_wish(input,mm.QUAT_IDENTITY,fly.speed)*fly.speed,fly.acceleration,fly.acceleration}
+            if fly,ok:=core.get(flights,entity);ok {goal.desired,goal.acceleration,goal.braking=locomotion.move_wish(input,mm.QUAT_IDENTITY,fly.speed*character.speed_scale)*fly.speed*character.speed_scale,fly.acceleration,fly.acceleration}
         case locomotion.MODE_SLIDING,locomotion.MODE_MANTLING:
             // The slide keeps its course and the climb its way: what the body does is what it asks.
             if walk,ok:=core.get(walks,entity);ok {goal.desired,goal.acceleration,goal.braking={going.linear.x,0,going.linear.z},walk.acceleration,walk.braking}
             // The clip of the climb warps onto where it ends (mantle.odin).
-            if character.mode==locomotion.MODE_MANTLING && matching {anim.motion_target(requests,entity,MANTLE_WINDOW,mantle_target(character,placed.rotation))}
+            if character.mode==locomotion.MODE_MANTLING && matching {anim.motion_target(requests,entity,MANTLE_WINDOW,mantle_target(parkour,placed.rotation))}
         case:
             if walk,ok:=core.get(walks,entity);ok {
                 sprinting:=input.buttons&inp.action_bit(inp.action_of(walk_actions,.Sprint))!=0
                 boost:f32=1
-                if tactical,has:=core.get(tacticals,entity);has {boost,_=locomotion.tactical_boost(character,tactical)}
-                speed:=locomotion.walk_speed(walk,input,sprinting,character.mode==locomotion.MODE_CROUCHING,boost)
+                if tactical,has:=core.get(tacticals,entity);has {boost,_=locomotion.tactical_boost(parkour,tactical)}
+                speed:=locomotion.walk_speed(walk,input,sprinting,character.mode==locomotion.MODE_CROUCHING,boost)*character.speed_scale
                 goal.desired,goal.acceleration,goal.braking=walk_goal(walk,character.mode==locomotion.MODE_FALLING,locomotion.move_wish(input,mm.QUAT_IDENTITY,speed),going.linear,speed)
             }
         }

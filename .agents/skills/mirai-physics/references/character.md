@@ -73,6 +73,10 @@ The same `world_step` serves the server, the predicting client and resimulation.
   feet, which are the origin of the body. What the character can climb passes under it without
   touching it; what touches it is an obstacle.
 - It has no friction: traction comes from the ground constraint.
+- A ghosted move disables the capsule filter and holds the character at rest. Leaving that
+  mode restores the configured filter and lets the character find its ground again.
+- A reach drive can accelerate faster along unobstructed directions. Its impulse into walls
+  is limited by traction, and its impulse into dynamics by the character push limit.
 - The three angular axes are locked (it stays upright inside the solver), its rotation is
   `up_frame` times the turn of the move's `yaw` (`character_rotation`): its -Z faces the heading
   that the yaw gives to a look. It carries the `Character` flag.

@@ -22,6 +22,7 @@ World_State :: struct {
     piece_high,piece_free,piece_count:i32,
     bond_high,bond_free,bond_count:i32,
     push_rule_count:i32,
+    character_push_force:f32,
     hit_shapes:i32,    // live shapes that raise hits
     grounds_stale:b32, // a body or shape changed since the characters last found their ground
     twin_count:i32,
@@ -233,11 +234,12 @@ world_set_gravity :: proc(w:^World,gravity:Vec3) -> bool {
 
 // Replaces the push rules of the world. False, changing nothing, for more than PUSH_RULE_CAPACITY rules,
 // a rule without layers on a side or a force that is not positive and finite.
-world_set_push_rules :: proc(w:^World,rules:[]Push_Rule) -> bool {
-    if len(rules)>PUSH_RULE_CAPACITY {return false}
+world_set_push_rules :: proc(w:^World,rules:[]Push_Rule,character_force:f32=0) -> bool {
+    if !(character_force>=0 && character_force<=max(f32)) || len(rules)>PUSH_RULE_CAPACITY {return false}
     for rule in rules {
         if rule.a==0 || rule.b==0 || !(rule.force>0 && rule.force<=max(f32)) {return false}
     }
+    w.character_push_force=character_force
     w.push_rules={}
     copy(w.push_rules[:],rules)
     w.push_rule_count=i32(len(rules))

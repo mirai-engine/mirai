@@ -196,6 +196,8 @@ differs from its defaults:
   value makes `Trigger` a sensor that sees all.
 - `pushes`: pairs of categories whose dynamics yield to each other with at most `force`
   ([push rules](physics.md#contact-rules)) and pass through each other, like teammates or a crowd.
+  Character pairs yield by default. A matching category rule takes precedence over the character
+  cap. A zero character cap gives rigid contact to pairs without a category rule.
 - `surfaces`: per material, the friction and restitution of the cells that show it, given to the
   simulation as surface rules with the push rules. A wrong entry is `physics.collision_surface` and
   is left out.
@@ -428,44 +430,25 @@ entity of the joint:
 
 ## Locomotion
 
-The first-party `locomotion` plugin (`plugins/locomotion/runtime`: `locomotion.odin` and
-`moves.odin`; it depends on `physics`, never the other way) walks, jumps, falls, flies and swims the
-`Character` of an entity that has the component of a mode (`Walk`, `Fly`, `Swim`) through its
-`input.Move_Input` ([engine/input](../../mirai-gameplay/references/control.md)), which the seat
-(through `engine/camera`), the game, an AI or the network writes. A walker is `Character` +
-`Walk`. It drives the character only through the facade of physics: it writes `Character_Move`,
-reads `Character_State`, `core.Motion`, `gravity_of_entity` and `look_yaw_of`, and looks for ledges
-with `character_capsule`
-and the queries (`sweep`, `raycast`, `overlap_capsule`); like every other plugin it may not import
-the solver. A game with bodies and no walkers leaves the plugin out.
+The first-party `locomotion` plugin walks, jumps, falls, flies and swims a `Character`
+with motion-mode components. A walker is `Character` + capsule `Collider` + `Walk`.
+Locomotion uses the physics facade and writes the drive for the solver. A game with bodies and
+no walkers can leave the plugin out.
 
-- Authored and run-time state are apart: `Character` (the body, and the `turn_speed` at which
-  locomotion turns it toward its look, which the animation reads too) and the mode components are
-  written only by an author. `Locomotion_State` holds what changes while it plays (the mode it is
-  in, the yaw it faces, jump,
-  coyote, layered movements, the gravity asked with `set_gravity_scale`), every field `transient`,
-  so a scene never holds one and the editor offers none, with `locomotion_step` its only writer.
-  The mode components and the state are `replicated`: each end runs the same locomotion from the
-  same state.
-- The mode a character starts in is not authored: walking (falling until it stands) with a
-  `Walk`, else swimming with a `Swim`, else flying with a `Fly`; a game that starts it otherwise
-  asks `set_mode`. A `Character` without any of them is not moved by locomotion.
-- `Move_Input`, `Locomotion_State` and `Character_Move` do not go in prefabs or scenes:
-  `locomotion_step` adds them while the character plays. The network replicates the `Move_Input`
-  if the body has it when its object is created, at the end of the tick: a character that a client
-  drives appears before the `simulate` stage (as `spawn` does), not through a `react` or `end`
-  command.
-- `locomotion_step` (`fixed`, `simulate` stage: after whoever writes the `Move_Input`, before
-  `physics_prepare`) takes the requests and writes every tick the `Character_Move` of each
-  `Character` with a mode with `locomotion_move`, a pure function of the input, the state, the
-  `Character_State` that the previous step left, the frame of its
-  [vertical](character.md#the-vertical), the velocity of `core.Motion` and gravity. The look turns
-  around the up of that frame; ground, jump and air are measured along it. It writes the two
-  drives: the step chooses the ground or air one according to the support it finds, so leaving an
-  edge already moves as in the air even if locomotion saw it supported. The force of each drive is
-  raised to what reaches its velocity within the tick (`drives_reach`): the acceleration of the
-  mode decides how fast the character gets there, and `Character.traction_force` only how hard it
-  holds its drive against what pushes it.
+- The authored body and mode components keep their configuration in play. `Locomotion_State`
+  carries the active mode, jump, layered movement and runtime controls. Only characters with
+  parkour capabilities carry `Parkour_State`.
+- The starting mode follows the available components. A character falls with `Walk`, swims with
+  `Swim` or flies with `Fly`, in that order. A game can ask for another mode.
+- `locomotion_prepare` takes requests and reconciles derived rows. Locomotion rows follow the
+  character and its modes. Physics rows follow the character and its capsule.
+- `locomotion_step` applies placements before driving characters. Any placement invalidates the
+  previous ground and sets the body's heading. An at-rest placement also clears movement history
+  and layered moves. The speed and suspension controls persist through placement.
+- The drive uses the previous ground, fluid, motion and frame of the
+  [vertical](character.md#the-vertical). The solver chooses the ground or air drive according to
+  the support it finds. The mode sets the acceleration. Available traction limits the part
+  of the drive pushing into an obstacle.
   - Walking (with `Walk`): velocity over the ground plane relative to it, with acceleration or
     braking. Holding the `sprint` action (or always, with `Walk.sprint_default`, Fortnite's
     "Sprint by Default"; the action then only asks for a `Tactical_Sprint`) raises the top speed
@@ -477,13 +460,13 @@ the solver. A game with bodies and no walkers leaves the plugin out.
     tick tops the speed up back to the one it jumped with (as Unreal's `JumpMaxHoldTime`), until it
     is let go or something stops the rise; a ledge jump is not lengthened.
   - Tactical sprint (with `Tactical_Sprint`, `moves.odin`): sprinting forward on the
-    ground with `min_energy` starts it (`Locomotion_State.sprint_active`, energy left by
+    ground with `min_energy` starts it (`Parkour_State.sprint_active`, energy left by
     `tactical_energy`). Its top speed and jump speed grow exponentially to their multipliers over
     `speed_ramp` and `jump_ramp` (`tactical_boost`), which also the animation bridge reads; the
     acceleration multiplier acts only on the ground. Energy is spent per second (not in the air with
     `pause_falling`), per jump and per slide start, and comes back `recharge_delay` after it was
     last spent. It ends without energy, going down in the air past `fall_grace`
-    (`Locomotion_State.fall_time`: a jump still rising does not count), crouched, sliding or out of
+    (`Parkour_State.fall_time`: a jump still rising does not count), crouched, sliding or out of
     walking and falling, as soon as sprint is let go, or after `grace` with sprint held and the move
     off forward; back within `grace` it keeps its ramp.
     Without energy it sprints as `Walk` says.
@@ -562,15 +545,14 @@ the world ([own pace](../../mirai-core/references/core.md#core-storages)).
 
 ### What drives it
 
-- Whoever drives a `Character` writes its `Move_Input`: the seat through `camera_drive` of
-  `engine/camera` ([driving](../../mirai-gameplay/references/control.md#driving)), an AI or the game
-  for one no seat drives, the network for a replica. `move` is in the world, a share of the top
-  speed of its mode or, with `velocity`, m/s up to it (`move_wish`); `look_yaw` is where it is
-  asked to face and `look_pitch` where it looks.
-- `locomotion_step` turns the yaw the body faces (`Locomotion_State.yaw`) toward `look_yaw` at
-  `Character.turn_speed` of own time (0: at once), plus the `ground_turn` of what it stands on; the
-  modes read the move in the axes of that yaw (`move_facing`), and its `Character_Move.yaw` is it.
-  No driver turns the body itself.
+- A player seat writes `Move_Input` through `camera_drive`
+  ([driving](../../mirai-gameplay/references/control.md#driving)). AI and scripts can write a
+  world-space velocity and facing through `locomotion.drive`, including on the spawn tick.
+  Steering takes precedence over the seat's movement and facing and preserves its buttons.
+  The mode bounds the speed. Locomotion turns the body toward the requested facing.
+- `set_speed_scale` multiplies the mode's top speed until changed. It starts at one and accepts
+  zero. `set_suspended` holds the character at rest with no drive, gravity or collision, so
+  animation can place it with `core.place` and resume simulation afterward.
 - A player's sensitivity is the scale of their `look` bindings. `move` and `look` belong to
   `engine/input` (`Move_Action`, `Look_Action`) and `jump`, `sprint` and `crouch` to `locomotion`
   (`Walk_Action`) ([actions](../../mirai-gameplay/references/control.md#actions)). If
@@ -618,8 +600,8 @@ null normal. Without simulation (`!ready`) it returns nothing.
   `Box` that translates without turning (cameras, thick bullets, checking whether a character fits).
 - `sweep_all(...)`: like `raycast_all` for the translating shape.
 - `overlap_sphere`, `overlap_box`, `overlap_capsule`, `overlap_cylinder -> (count, complete)`:
-  entities that touch the volume, each once. `complete` is false if more than `OVERLAP_CAPACITY`
-  (256) shapes touch it or more entities than fit.
+  entities that touch the volume, each once. Ignore an entity with the same argument as a cast.
+  `complete` is false if the distinct entities exceed the result buffer or `OVERLAP_CAPACITY`.
 - `closest_point(physics, point, max, ignore, filter) -> (Closest, ok)`: the nearest point of what
   blocks, with entity, collider, normal toward the point and distance.
 - `body_bounds(physics, entity) -> (box, ok)`: the box of the shapes of the body, without the copies
@@ -652,11 +634,11 @@ Static collision, to gather the level (a navmesh), without allocating:
 
 Filters:
 
-- `QUERY_FILTER_DEFAULT` hits every collider that collides with something, without sensors.
-  `query_hits(layers,overlaps)` hits what belongs to those categories as a collider that collided
-  with them would: a camera ray that passes through glass does not include its category.
-  `Query_Filter{objects=layers}` also sees sensors and shapes that collide with nothing
-  (explosions, damage zones); `Query_Filter{filter=collision_filter(...)}` queries as that collider.
+- `query_hits(layers)` selects solid hits from named categories. Pass `include_sensors=true`
+  to also report nonblocking hits. A query for only a sensor category reports that category in
+  overlap queries and lists of cast hits. Closest casts return the first blocker.
+- `Query_Filter{filter=collision_filter(...)}` uses a particular collider's channel instead
+  of the all-category source used by `query_hits`.
 - What looks at the world without knowing physics (a camera arm, the feet of
   [grounding](../../mirai-animation/references/animation-grounding.md)) uses the `core` contract
   `World_Queries`/`world_query`, which `physics_prepare` fills with `query_of`. Without the plugin

@@ -4,15 +4,13 @@ import cmath "core:math"
 import "mirai:std/spatial"
 import math "mirai:std/math"
 
-// What a query sees. By channel, with `objects` zero, the query is one more shape of `filter`: a shape
-// meets it with the weaker answer of the two, as a pair of shapes does. By object type it sees the shapes
-// of the layers in `objects`, whatever they answer, and all of them block it.
+// One collision channel, with optional reporting of nonblocking hits.
 Query_Filter :: struct {
     filter:Filter,
     ignore_body:Body_Handle,
-    objects:Collision_Layers,
-    overlaps:bool, // also report the shapes that only overlap the query: in a list of hits, those before the first that blocks
-    debris:bool,   // also report debris bodies
+    ignore_user_data:u64,
+    include_sensors:bool,
+    debris:bool,
 }
 QUERY_FILTER_DEFAULT :: Query_Filter{filter=FILTER_DEFAULT}
 
@@ -31,25 +29,21 @@ Closest_Hit :: struct {
 
 // How a query meets a shape of filter `target`, before looking at its body.
 query_filter_response :: #force_inline proc "contextless" (filter:Query_Filter,target:Filter) -> Response {
-    if filter.objects!=0 {
-        if filter.filter.group!=0 && filter.filter.group==target.group {return .Ignore}
-        return target.layers&filter.objects!=0?.Block:.Ignore
-    }
     response:=filter_response(filter.filter,target)
-    return response==.Overlap && !filter.overlaps?.Ignore:response
+    return response==.Overlap && !filter.include_sensors?.Ignore:response
 }
 
 @(private)
 query_response :: #force_inline proc "contextless" (w:^World,shape:^Shape,filter:Query_Filter) -> Response {
     if !filter.debris && .Debris in w.bodies[shape.body].flags {return .Ignore}
     if filter.ignore_body!={} && body_handle(w,shape.body)==filter.ignore_body {return .Ignore}
+    if filter.ignore_user_data!=0 && w.bodies[shape.body].user_data==filter.ignore_user_data {return .Ignore}
     return query_filter_response(filter,shape.filter)
 }
 
-// The hits after the first that blocks are dropped; by object type nothing blocks a list.
+// The hits after the first that blocks are dropped.
 @(private)
-hits_cut :: proc "contextless" (hits:[]Ray_Hit,count:int,filter:Query_Filter) -> int {
-    if filter.objects!=0 {return count}
+hits_cut :: proc "contextless" (hits:[]Ray_Hit,count:int) -> int {
     for hit,i in hits[:count] {if !hit.overlap {return i+1}}
     return count
 }
@@ -305,11 +299,11 @@ ray_cast :: proc(w:^World,origin,translation:Vec3,filter:Query_Filter,mode:Ray_M
             case .All:
                 hits_insert(hits,&count,result)
                 if count>0 && count==len(hits) {ray.max_fraction=hits[count-1].fraction}
-                if response==.Block && filter.objects==0 {ray.max_fraction=min(ray.max_fraction,t)}
+                if response==.Block {ray.max_fraction=min(ray.max_fraction,t)}
             }
         }
     }
-    return mode==.All?hits_cut(hits,count,filter):count
+    return mode==.All?hits_cut(hits,count):count
 }
 
 // First shape hit by the segment from `origin` to `origin+translation`.
@@ -322,8 +316,7 @@ ray_cast_closest :: proc(w:^World,origin,translation:Vec3,filter:=QUERY_FILTER_D
 ray_cast_any :: proc(w:^World,origin,translation:Vec3,filter:=QUERY_FILTER_DEFAULT) -> bool {
     return ray_cast(w,origin,translation,filter,.Any,nil)>0
 }
-// The shapes hit by the segment, nearest first, written to `hits`: by channel up to the first that blocks,
-// by object type all of them. When there are more than fit, the nearest are kept. Returns how many were written.
+// Hits, nearest first, up to the first blocker. When more than fit, the nearest are kept.
 ray_cast_all :: proc(w:^World,origin,translation:Vec3,hits:[]Ray_Hit,filter:=QUERY_FILTER_DEFAULT) -> int {
     return ray_cast(w,origin,translation,filter,.All,hits)
 }
@@ -478,7 +471,7 @@ shape_cast :: proc(w:^World,geometry:Geometry,transform:Transform,translation:Ve
             if all {
                 hits_insert(hits,&count,result)
                 if count==len(hits) {sweep.max_fraction=hits[count-1].fraction}
-                if response==.Block && filter.objects==0 {sweep.max_fraction=min(sweep.max_fraction,out.fraction)}
+                if response==.Block {sweep.max_fraction=min(sweep.max_fraction,out.fraction)}
             } else if count==0 || result.fraction<hits[0].fraction {
                 hits[0]=result
                 count=1
@@ -486,7 +479,7 @@ shape_cast :: proc(w:^World,geometry:Geometry,transform:Transform,translation:Ve
             }
         }
     }
-    return all?hits_cut(hits,count,filter):count
+    return all?hits_cut(hits,count):count
 }
 
 // First shape touched by a sphere, capsule, box, cylinder or hull that moves by `translation` without rotating.
@@ -531,23 +524,34 @@ shape_distance_local :: proc(w:^World,shape:^Shape,proxy:Proxy,xf:Transform,limi
 // Shapes that overlap a sphere, capsule, box, cylinder or hull placed at `transform`, written to `out`.
 // Returns how many overlap, which can exceed what fits.
 overlap_shape :: proc(w:^World,geometry:Geometry,transform:Transform,out:[]Shape_Handle,filter:=QUERY_FILTER_DEFAULT) -> int {
+    results:=struct{out:[]Shape_Handle,count:int}{out=out}
+    write :: proc(user:rawptr,shape:Shape_Handle,_:Body_Handle) -> bool {
+        r:=cast(^struct{out:[]Shape_Handle,count:int})user
+        if r.count<len(r.out) {r.out[r.count]=shape}
+        r.count+=1
+        return true
+    }
+    overlap_shape_each(w,geometry,transform,filter,&results,write)
+    return results.count
+}
+
+// Visits each shape touching the volume. False when the visitor stops the search.
+overlap_shape_each :: proc(w:^World,geometry:Geometry,transform:Transform,filter:Query_Filter,user:rawptr,visit:proc(rawptr,Shape_Handle,Body_Handle)->bool) -> bool {
     storage:[8]Vec3=---
     proxy,ok:=query_proxy(w,geometry,&storage)
-    if !ok {return 0}
+    if !ok {return true}
     xf_query:=Transform{transform.p,q_normalize(transform.q)}
     box:=proxy_aabb(proxy,xf_query)
-    count:=0
     for &tree in w.trees {
         query:=spatial.dynamic_tree_query(&tree,box)
-        for _,user in spatial.tree_query_next(&query) {
-            shape:=&w.shapes[user]
+        for _,slot in spatial.tree_query_next(&query) {
+            shape:=&w.shapes[slot]
             if query_response(w,shape,filter)==.Ignore || !math.aabb_overlaps(shape.aabb,box) {continue}
             if _,touching:=shape_distance_local(w,shape,proxy,xf_inv_mul(shape_transform_of(w,shape),xf_query),0);!touching {continue}
-            if count<len(out) {out[count]=shape_handle(w,i32(user))}
-            count+=1
+            if !visit(user,shape_handle(w,i32(slot)),body_handle(w,shape.body)) {return false}
         }
     }
-    return count
+    return true
 }
 
 // Shapes whose boxes overlap a world box, written to `out`. Returns how many overlap.

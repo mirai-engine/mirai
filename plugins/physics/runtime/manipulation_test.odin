@@ -10,6 +10,7 @@ import mm "mirai:std/math"
 Physics_Test_World :: struct {
     using world:Test_World,
     using physics:Test_Physics,
+    body_places:core.Places,
 }
 
 @(private)
@@ -46,7 +47,10 @@ physics_test_step :: proc(f:^Physics_Test,dt:f32=1.0/60) {
 
 // physics_step alone, on the rows as they are.
 @(private)
-physics_test_run :: proc(f:^Physics_Test,dt:f32) {test_step(&f.physics,&f.host,dt)}
+physics_test_run :: proc(f:^Physics_Test,dt:f32) {
+    physics_places(&f.body_places,&f.requests,core.ref(&f.state),core.read(&f.rigids),core.read(&f.characters))
+    test_step(&f.physics,&f.host,dt)
+}
 
 @(private)
 physics_test_box :: proc(f:^Physics_Test,position,half:[3]f32,rigid:Maybe(Rigid_Body)=nil) -> core.Entity {
@@ -204,7 +208,7 @@ a_released_body_keeps_its_velocity_and_nothing_is_held :: proc(t:^testing.T) {
         testing.expect_value(t,sim.body_type(&f.state.world,body),sim.Body_Type.Dynamic)
         testing.expectf(t,abs(sim.body_linear_velocity(&f.state.world,body).x-before.x)<0.01,"follow %v: velocity was lost",follow)
         physics_test_step(&f)
-        testing.expectf(t,len(f.state.held)==0 && f.state.world.joint_count==0,"follow %v: %d held and %d joints are left",follow,len(f.state.held),f.state.world.joint_count)
+        testing.expectf(t,len(f.state.held.values)==0 && f.state.world.joint_count==0,"follow %v: %d held and %d joints are left",follow,len(f.state.held.values),f.state.world.joint_count)
     }
 }
 

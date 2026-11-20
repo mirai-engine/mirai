@@ -27,7 +27,7 @@ Physics_Collision_Inspect_Result :: struct {
 
 @(private)
 api_collision_register :: proc(s:^editor.Session) {
-    editor.api_method_register(s,{name="physics.collision.inspect",summary="The collision categories and presets the code declares, the pushes between categories and the entries of Collision_Settings no code declares. Read the names here before editing collision: scene.write gives a Collider its preset by name, or with preset Custom its sensor and the lists of names belongs and collides, and a Query_Filter the list hits.",result=type_info_of(Physics_Collision_Inspect_Result),flags={.Read_Only},run=api_collision_settings_list})
+    editor.api_method_register(s,{name="physics.collision.inspect",summary="The collision categories and presets the code declares, the pushes between categories and the entries of Collision_Settings no code declares. Read the names here before editing collision: scene.write gives a Collider its preset by name, or with preset Custom its sensor and the lists of names belongs and collides, and a Query_Filter its filter.block category list.",result=type_info_of(Physics_Collision_Inspect_Result),flags={.Read_Only},run=api_collision_settings_list})
 }
 
 @(private)
