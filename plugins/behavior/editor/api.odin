@@ -43,6 +43,7 @@ Query_Params :: struct {
     priority:u8 `mirai:"optional,label=The claim priority the querier takes the offers of the layout Offers at"`,
     from:editor.Api_Entity_Text `mirai:"text,entity,optional,label=Whom the tests measure from; omitted: the querier"`,
     nearer:bool `mirai:"optional,label=Prefer places nearer to the querier"`,
+    sight_layers:phys.Collision_Layers `mirai:"optional,label=Collision layers that block sight"`,
     hidden:bool `mirai:"optional,label=Prefer places 'from' does not see (cover by a ray)"`,
     seen:bool `mirai:"optional,label=Prefer places 'from' sees"`,
     covered:bool `mirai:"optional,label=Prefer places the influence maps measure as covered from 'from'"`,
@@ -347,7 +348,7 @@ influence :: proc(s:^editor.Session,call:^api.Call) {
     maps:=influence_of(s,world)
     r:=api.call_result(call,Influence_Result)
     if maps==nil || !ai.influence_ready(&maps.grid) {
-        r.note="no influence maps: they are made in Play or Simulate, when Behavior_Settings.influence_cell is above 0"
+        r.note="no influence maps: they are made in Play or Simulate, when Behavior_Settings.influence_enabled is on and influence_cell is above 0"
         return
     }
     if _,inside:=ai.influence_cell(&maps.grid,p.point);!inside {
@@ -394,8 +395,8 @@ query :: proc(s:^editor.Session,call:^api.Call) {
     falling:=ai.Response{kind=.Linear,slope=-1,shift_y=1}
     rising:=ai.Response{kind=.Linear,slope=1}
     if p.nearer {add(&q,{measure=.Distance,from=.Querier,min=0,max=q.outer*2,response=falling})}
-    if p.hidden {add(&q,{measure=.Visible,from=from,target=from_entity,min=0,max=1,response=falling})}
-    if p.seen {add(&q,{measure=.Visible,from=from,target=from_entity,min=0,max=1,response=rising})}
+    if p.hidden {add(&q,{measure=.Visible,from=from,target=from_entity,sight_layers=p.sight_layers,min=0,max=1,response=falling})}
+    if p.seen {add(&q,{measure=.Visible,from=from,target=from_entity,sight_layers=p.sight_layers,min=0,max=1,response=rising})}
     if p.covered {add(&q,{measure=.Cover,from=from,target=from_entity,min=0,max=1,response={kind=.Linear,slope=0.9,shift_y=0.1}})}
     if p.reachable {add(&q,{measure=.Path,from=.Querier,min=0,max=q.outer*4,response=falling})}
     if p.threat!=0 {add(&q,{measure=.Influence,teams=p.threat,min=0,max=2,response=falling})}
@@ -429,7 +430,20 @@ query :: proc(s:^editor.Session,call:^api.Call) {
     agents_read:=agents if agents!=nil else &empty_agents
     time:core.Time
     if t:=core.world_storage_of(world,core.Time);t!=nil {time=t^}
-    smart:=behavior.Smart_View{objects=core.read(objects if objects!=nil else &empty_objects),states=core.read(states if states!=nil else &empty_states),worlds=core.read(worlds),claims=core.ref(core.world_storage_of(world,behavior.Claims)),time=time}
+    objects_read:=core.read(objects if objects!=nil else &empty_objects)
+    index:behavior.Smart_Index
+    defer behavior.smart_index_free(&index)
+    if q.layout==.Offers && !behavior.smart_index_update(&index,objects_read) {
+        api.call_fail(call,api.SERVER_ERROR,"no memory to index smart offers: free memory and ask again")
+        return
+    }
+    smart:=behavior.Smart_View{
+        offers={
+            objects=objects_read,index=core.ref(&index),worlds=core.read(worlds),time=time,
+            states=core.read(states if states!=nil else &empty_states),
+        },
+        claims=core.ref(core.world_storage_of(world,behavior.Claims)),
+    }
     characters:=core.world_table_of(world,phys.Character)
     empty_characters:core.Table(phys.Character)
     filter:=behavior.place_filter(core.ref(navigation),e,paths_read,agents_read,characters if characters!=nil else &empty_characters,walks if walks!=nil else &empty_walks,swims if swims!=nil else &empty_swims,core.ref(physics))
