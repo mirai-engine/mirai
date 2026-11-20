@@ -70,17 +70,19 @@ Multi_IK_Effector :: struct {
 }
 MULTI_IK_EFFECTOR_DEFAULT :: Multi_IK_Effector{target=SPATIAL_TARGET_DEFAULT,position_weight=1}
 Multi_IK_Constraint :: struct {
+    using definition:Multi_IK_Definition,
+    joints:[]Multi_IK_Joint,
+    effectors:[]Multi_IK_Effector,
+}
+Multi_IK_Definition :: struct {
     rig:core.Entity `mirai:"transient"`,
     name:[64]u8 `mirai:"text"`,
     root:Bone_Ref,
-    joint_count,effector_count:u8,
-    joints:[RIG_CHAIN_BONES]Multi_IK_Joint,
-    effectors:[RIG_EFFECTORS]Multi_IK_Effector,
     settings:lib.Multi_IK,
     weight:f32,
     enabled:bool,
 }
-MULTI_IK_CONSTRAINT_DEFAULT :: Multi_IK_Constraint{settings=lib.MULTI_IK_DEFAULT,weight=1,enabled=true}
+MULTI_IK_CONSTRAINT_DEFAULT :: Multi_IK_Constraint{definition={settings=lib.MULTI_IK_DEFAULT,weight=1,enabled=true}}
 
 Chain_Retarget_Constraint :: struct {
     rig:core.Entity `mirai:"transient"`,
@@ -193,14 +195,14 @@ rig_profiles_check :: proc(profile:Pose_Profile) -> bool {
     }
     for &value,i in profile.multi_ik {
         s:=value.settings
-        if !rig_named_valid(value.name[:]) || !profile_bone(value.root) || value.joint_count==0 || int(value.joint_count)>RIG_CHAIN_BONES || value.effector_count==0 || int(value.effector_count)>RIG_EFFECTORS || !profile_weight(value.weight) || s.root_policy>max(lib.Multi_IK_Root_Policy) || s.iterations<1 || s.iterations>256 || !finite(s.tolerance) || s.tolerance<0 || !profile_weight(s.root_stiffness) || !finite(s.max_root_translation) || s.max_root_translation<0 || !profile_weight(s.relaxation) || s.relaxation==0 {return false}
+        if !rig_named_valid(value.name[:]) || !profile_bone(value.root) || len(value.joints)==0 || len(value.joints)>RIG_CHAIN_BONES || len(value.effectors)==0 || len(value.effectors)>RIG_EFFECTORS || !profile_weight(value.weight) || s.root_policy>max(lib.Multi_IK_Root_Policy) || s.iterations<1 || s.iterations>256 || !finite(s.tolerance) || s.tolerance<0 || !profile_weight(s.root_stiffness) || !finite(s.max_root_translation) || s.max_root_translation<0 || !profile_weight(s.relaxation) || s.relaxation==0 {return false}
         if !finite(s.angular_tolerance) || s.angular_tolerance<0 {return false}
-        for &joint,j in value.joints[:value.joint_count] {
+        for &joint,j in value.joints {
             if !profile_bone(joint.bone) || !profile_weight(joint.stiffness) || !profile_weight(joint.preferred_weight) || !profile_rotation(joint.preferred) {return false}
             if _,ok:=lib.joint_limit_axes(1,1,1,joint.limits);!ok || !profile_rotation(joint.frame) {return false}
             for other in value.joints[:j] {if joint.bone==other.bone {return false}}
         }
-        for &effector,j in value.effectors[:value.effector_count] {
+        for &effector,j in value.effectors {
             if !rig_named_valid(effector.name[:]) || !profile_bone(effector.bone) || !spatial_target_valid(effector.target,false) || !profile_weight(effector.position_weight) || !profile_weight(effector.rotation_weight) {return false}
             for other in value.effectors[:j] {if effector.name==other.name {return false}}
         }
@@ -292,7 +294,7 @@ rigs_chains_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constr
         target,ok:=spatial_target_sample(config.target,&binding.target,playback,inputs.skeletons,transforms,parents,inputs.worlds)
         if !ok {modifier_request_rejected(runtime,state.entity,.Missing_Target);rig_problem(inputs.problems,state.entity,.Chain_IK,&config,.Target);valid=false;continue}
         count:=int(binding.count)
-        result,solved:=lib.skeleton_chain_ik(skeleton,state.local[:],state.world[:],binding.bones[:count],config.limits[:config.limit_count],{target=target.position,pole=config.pole,use_pole=config.use_pole,iterations=int(config.iterations),tolerance=config.tolerance},binding.points[:count],binding.solved[:count],binding.lengths[:count-1],config.weight,root_transform,config.reach)
+        result,solved:=lib.skeleton_chain_ik(skeleton,playing_pose(state,.Local),playing_pose(state,.World),binding.bones[:count],config.limits[:config.limit_count],{target=target.position,pole=config.pole,use_pole=config.use_pole,iterations=int(config.iterations),tolerance=config.tolerance},binding.points[:count],binding.solved[:count],binding.lengths[:count-1],config.weight,root_transform,config.reach)
         binding.diagnostic.residual,binding.diagnostic.iterations,binding.diagnostic.reached,binding.diagnostic.valid=result.error,result.iterations,result.reached,solved
         if !solved {rig_problem(inputs.problems,state.entity,.Chain_IK,&config,.Solve)}
         valid &&=solved
@@ -301,39 +303,39 @@ rigs_chains_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constr
         row:=multi_first+slot
         binding:=&runtime.multi_states[row];current_slot:=u16(slot)
         binding.diagnostic.valid=false
-        if config.joint_count==0 || int(config.joint_count)>RIG_CHAIN_BONES || config.effector_count==0 || int(config.effector_count)>RIG_EFFECTORS {rig_problem(inputs.problems,state.entity,.Multi_IK,&config,.Bind);valid=false;continue}
+        if len(config.joints)==0 || len(config.joints)>RIG_CHAIN_BONES || len(config.effectors)==0 || len(config.effectors)>RIG_EFFECTORS {rig_problem(inputs.problems,state.entity,.Multi_IK,&config,.Bind);valid=false;continue}
         if !rig_binding_current(binding,state,runtime.geometry) {
             binding.ready=false;binding.root=i32(bone_resolve(state,config.root));bound:=binding.root>=0
-            for joint,i in config.joints[:config.joint_count] {
+            for joint,i in config.joints {
                 bone:=bone_resolve(state,joint.bone);bound &&=bone>=0
                 binding.joints[i]={bone=i32(bone),stiffness=joint.stiffness,preferred=joint.preferred,preferred_weight=joint.preferred_weight,frame=joint.frame,limits=joint.limits}
             }
-            for effector,i in config.effectors[:config.effector_count] {bone:=bone_resolve(state,effector.bone);bound &&=bone>=0;binding.effectors[i].bone=i32(bone)}
+            for effector,i in config.effectors {bone:=bone_resolve(state,effector.bone);bound &&=bone>=0;binding.effectors[i].bone=i32(bone)}
             if !bound {rig_problem(inputs.problems,state.entity,.Multi_IK,&config,.Bind);valid=false;continue}
-            if resize(&binding.backup,len(state.local))!=nil || resize(&binding.links,len(state.local))!=nil {memory_problem(inputs.problems,state.entity,"a Multi IK of its .character");valid=false;continue}
+            if resize(&binding.backup,len(playing_pose(state,.Local)))!=nil || resize(&binding.links,len(playing_pose(state,.Local)))!=nil {memory_problem(inputs.problems,state.entity,"a Multi IK of its .character");valid=false;continue}
             if _,linked:=lib.pose_hierarchy_prepare(skeleton.parents,binding.links[:]);!linked {rig_problem(inputs.problems,state.entity,.Multi_IK,&config,.Bind);valid=false;continue}
             rig_binding_publish(binding,state,runtime.geometry,.Multi_IK,current_slot)
         }
         if !config.enabled || config.weight<=0 {continue}
         targets_valid:=true
-        for &effector,i in config.effectors[:config.effector_count] {
+        for &effector,i in config.effectors {
             target,ok:=spatial_target_sample(effector.target,&binding.targets[i],playback,inputs.skeletons,transforms,parents,inputs.worlds);targets_valid &&=ok
             bone:=binding.effectors[i].bone
             binding.effectors[i]={bone=bone,position=target.position,rotation=target.rotation,position_weight=effector.position_weight,rotation_weight=effector.rotation_weight}
         }
         if !targets_valid {modifier_request_rejected(runtime,state.entity,.Missing_Target);rig_problem(inputs.problems,state.entity,.Multi_IK,&config,.Target);valid=false;continue}
-        copy(binding.backup[:],state.local[:]);settings:=config.settings;settings.root=binding.root
-        result,solved:=lib.multi_ik(skeleton,{skeleton.parents,binding.links[:]},state.local[:],state.world[:],binding.joints[:config.joint_count],binding.effectors[:config.effector_count],settings,binding.residuals[:config.effector_count],root_transform)
+        copy(binding.backup[:],playing_pose(state,.Local));settings:=config.settings;settings.root=binding.root
+        result,solved:=lib.multi_ik(skeleton,{skeleton.parents,binding.links[:]},playing_pose(state,.Local),playing_pose(state,.World),binding.joints[:len(config.joints)],binding.effectors[:len(config.effectors)],settings,binding.residuals[:len(config.effectors)],root_transform)
         if solved && config.weight!=1 {
-            for &local,i in state.local {local=mm.transform_interpolate(binding.backup[i],local,config.weight)}
-            solved=lib.pose_world(skeleton.parents,state.local[:],state.world[:],root_transform)
+            for &local,i in playing_pose(state,.Local) {local=mm.transform_interpolate(binding.backup[i],local,config.weight)}
+            solved=lib.pose_world(skeleton.parents,playing_pose(state,.Local),playing_pose(state,.World),root_transform)
             result.residual,result.angular_error=0,0
-            for effector in binding.effectors[:config.effector_count] {
-                result.residual=max(result.residual,linalg.length(state.world[effector.bone].position-effector.position)*effector.position_weight)
-                result.angular_error=max(result.angular_error,mm.quat_angle(state.world[effector.bone].rotation,effector.rotation)*effector.rotation_weight)
+            for effector in binding.effectors[:len(config.effectors)] {
+                result.residual=max(result.residual,linalg.length(playing_pose(state,.World)[effector.bone].position-effector.position)*effector.position_weight)
+                result.angular_error=max(result.angular_error,mm.quat_angle(playing_pose(state,.World)[effector.bone].rotation,effector.rotation)*effector.rotation_weight)
             }
             result.reached=result.residual<=settings.tolerance && result.angular_error<=settings.angular_tolerance
-        } else if !solved {copy(state.local[:],binding.backup[:]);lib.skeleton_world(skeleton,state.local[:],state.world[:],root_transform)}
+        } else if !solved {copy(playing_pose(state,.Local),binding.backup[:]);lib.skeleton_world(skeleton,playing_pose(state,.Local),playing_pose(state,.World),root_transform)}
         binding.diagnostic.residual,binding.diagnostic.iterations,binding.diagnostic.reached,binding.diagnostic.valid=result.residual,result.iterations,result.reached,solved
         binding.diagnostic.angular_error=result.angular_error
         if !solved {rig_problem(inputs.problems,state.entity,.Multi_IK,&config,.Solve)}
@@ -353,7 +355,7 @@ rigs_chains_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constr
         }
         if !config.enabled || config.weight<=0 {continue}
         count:=int(binding.count)
-        solved:=lib.skeleton_twist(skeleton,state.local[:],state.world[:],binding.source_index,binding.bones[:count],binding.amounts[:count],config.axis,config.reference,binding.original[:count],config.weight,root_transform)
+        solved:=lib.skeleton_twist(skeleton,playing_pose(state,.Local),playing_pose(state,.World),binding.source_index,binding.bones[:count],binding.amounts[:count],config.axis,config.reference,binding.original[:count],config.weight,root_transform)
         if !solved {rig_problem(inputs.problems,state.entity,.Twist,&config,.Solve)}
         binding.diagnostic.valid=solved;valid &&=solved
     }
@@ -368,11 +370,11 @@ rigs_chains_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constr
             binding.count=u8(count);binding.springs={};rig_binding_publish(binding,state,runtime.geometry,.Spring,current_slot)
         }
         if !config.enabled || config.weight<=0 {if binding.springs[0].ready {binding.springs={}};continue}
-        if !lib.skeleton_world(skeleton,state.local[:],state.world[:],root_transform) {rig_problem(inputs.problems,state.entity,.Spring,&config,.Solve);valid=false;continue}
+        if !lib.skeleton_world(skeleton,playing_pose(state,.Local),playing_pose(state,.World),root_transform) {rig_problem(inputs.problems,state.entity,.Spring,&config,.Solve);valid=false;continue}
         count:=int(binding.count)
-        for bone,i in binding.bones[:count] {binding.points[i]=state.world[bone].position;if i>0 {binding.lengths[i-1]=linalg.length(binding.points[i]-binding.points[i-1])}}
+        for bone,i in binding.bones[:count] {binding.points[i]=playing_pose(state,.World)[bone].position;if i>0 {binding.lengths[i-1]=linalg.length(binding.points[i]-binding.points[i-1])}}
         result,solved:=lib.spring_chain_update(binding.points[:count],binding.lengths[:count-1],config.limits[:config.limit_count],config.collisions[:config.collision_count],config.settings,dt,binding.springs[:count],binding.solved[:count])
-        if solved {solved=lib.skeleton_chain_from_points(skeleton,state.local[:],state.world[:],binding.bones[:count],binding.solved[:count],config.weight,root_transform)}
+        if solved {solved=lib.skeleton_chain_from_points(skeleton,playing_pose(state,.Local),playing_pose(state,.World),binding.bones[:count],binding.solved[:count],config.weight,root_transform)}
         binding.diagnostic.residual,binding.diagnostic.iterations,binding.diagnostic.valid=result.residual,result.substeps,solved
         if !solved {rig_problem(inputs.problems,state.entity,.Spring,&config,.Solve)}
         valid &&=solved
@@ -393,15 +395,15 @@ rigs_retarget :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Runtim
         binding.diagnostic.valid=false
         if !config.enabled || config.weight<=0 {continue}
         source:=constraint_playing(playback,state.leader) if state.stage==.Sampled else nil
-        if source==nil || source==state || len(source.sampled)!=len(source.rest) {rig_problem(problems,state.entity,.Chain_Retarget,&config,.Source,state.leader);continue}
+        if source==nil || source==state || len(playing_pose(source,.Sampled))!=len(playing_topology(source).rest) {rig_problem(problems,state.entity,.Chain_Retarget,&config,.Source,state.leader);continue}
         if !rig_binding_current(binding,state,runtime.geometry) || binding.source!=source.entity || binding.source_bound!=source.bound || binding.source_generation!=source.generation {
             binding.ready=false
             count,ok:=rig_chain_bind(state,config.target_root,config.target_end,binding.bones[:]);source_count,source_ok:=rig_chain_bind(source,config.source_root,config.source_end,binding.source_bones[:])
             if !ok || !source_ok {rig_problem(problems,state.entity,.Chain_Retarget,&config,.Bind);continue}
-            if resize(&binding.source_rest,len(source.rest))!=nil || resize(&binding.source_pose,len(source.rest))!=nil || resize(&binding.source_world,len(source.rest))!=nil || resize(&binding.target_rest,len(state.rest))!=nil || resize(&binding.target_world,len(state.rest))!=nil {memory_problem(problems,state.entity,"a Chain Retarget of its .character");continue}
-            copy(binding.source_rest[:],source.rest[:]);copy(binding.target_rest[:],state.rest[:])
-            binding.source_wrapper=source.bindings[0].target==0 && source.parents[0]<0 && binding.source_bones[0]!=0
-            binding.target_wrapper=state.bindings[0].target==0 && state.parents[0]<0 && binding.bones[0]!=0
+            if resize(&binding.source_rest,len(playing_topology(source).rest))!=nil || resize(&binding.source_pose,len(playing_topology(source).rest))!=nil || resize(&binding.source_world,len(playing_topology(source).rest))!=nil || resize(&binding.target_rest,len(playing_topology(state).rest))!=nil || resize(&binding.target_world,len(playing_topology(state).rest))!=nil {memory_problem(problems,state.entity,"a Chain Retarget of its .character");continue}
+            copy(binding.source_rest[:],playing_topology(source).rest[:]);copy(binding.target_rest[:],playing_topology(state).rest[:])
+            binding.source_wrapper=source.bindings[0].target==0 && playing_topology(source).parents[0]<0 && binding.source_bones[0]!=0
+            binding.target_wrapper=state.bindings[0].target==0 && playing_topology(state).parents[0]<0 && binding.bones[0]!=0
             if binding.source_wrapper {binding.source_rest[0]=mm.TRANSFORM_IDENTITY}
             if binding.target_wrapper {binding.target_rest[0]=mm.TRANSFORM_IDENTITY}
             source_skeleton,target_skeleton:=playing_skeleton(source),playing_skeleton(state)
@@ -410,12 +412,12 @@ rigs_retarget :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Runtim
             binding.count,binding.source_count=u8(count),u8(source_count);binding.source,binding.source_bound,binding.source_generation=source.entity,source.bound,source.generation
             rig_binding_publish(binding,state,runtime.geometry,.Chain_Retarget,current_slot)
         }
-        copy(binding.source_pose[:],source.sampled[:]);if binding.source_wrapper {binding.source_pose[0]=mm.TRANSFORM_IDENTITY}
+        copy(binding.source_pose[:],playing_pose(source,.Sampled));if binding.source_wrapper {binding.source_pose[0]=mm.TRANSFORM_IDENTITY}
         source_skeleton:=playing_skeleton(source);source_skeleton.rest=binding.source_rest[:]
         if !lib.skeleton_world(source_skeleton,binding.source_pose[:],binding.source_world[:]) {rig_problem(problems,state.entity,.Chain_Retarget,&config,.Solve);continue}
-        actor:=state.local[0];if binding.target_wrapper {state.local[0]=mm.TRANSFORM_IDENTITY}
-        solved:=lib.chain_retarget_pose(playing_skeleton(state),binding.mappings[:binding.count],binding.source_world[:],state.local[:],state.world[:],config.weight)
-        if binding.target_wrapper {state.local[0]=actor}
+        actor:=playing_pose(state,.Local)[0];if binding.target_wrapper {playing_pose(state,.Local)[0]=mm.TRANSFORM_IDENTITY}
+        solved:=lib.chain_retarget_pose(playing_skeleton(state),binding.mappings[:binding.count],binding.source_world[:],playing_pose(state,.Local),playing_pose(state,.World),config.weight)
+        if binding.target_wrapper {playing_pose(state,.Local)[0]=actor}
         if !solved {rig_problem(problems,state.entity,.Chain_Retarget,&config,.Solve)}
         binding.diagnostic.valid=solved
     }
@@ -434,11 +436,11 @@ rigs_apply_goal :: proc(runtime:^Modifier_Runtime,goal:Modifier_Goal,weight:f32,
     case .Multi_IK:
         if row:=rig_slot_row(&runtime.multi_ik,goal.rig,goal.slot);row>=0 {
             config:=&runtime.multi_ik.values[row]
-            if int(goal.effector)>=int(config.effector_count) {
-                core.report(problems,goal.rig,"animation.modifier_effector","a goal for effector %d of Multi IK '%s' was refused: it has %d effectors; name one of them",goal.effector,base.text_get(config.name[:]),config.effector_count)
+            if int(goal.effector)>=len(config.effectors) {
+                core.report(problems,goal.rig,"animation.modifier_effector","a goal for effector %d of Multi IK '%s' was refused: it has %d effectors; name one of them",goal.effector,base.text_get(config.name[:]),len(config.effectors))
                 return
             }
-            out:=core.edit_at(&runtime.multi_ik,row)
+            out:=&runtime.multi_ik.values[row]
             out.effectors[goal.effector].target=goal.target
             out.weight,out.enabled=weight,enabled
         }
@@ -477,12 +479,18 @@ modifier_operation_name :: proc(value:^$T) -> string {
     else {return base.text_get(value.name[:])}
 }
 
-modifier_named_slot :: proc(runtime:^Modifier_Runtime,rig:core.Entity,kind:Modifier_Kind,name:string) -> (slot:u16,ok:bool) {
-    if runtime==nil || name=="" {return}
-    find :: proc(table:^core.Table($T),rig:core.Entity,name:string) -> (slot:u16,ok:bool) {
+modifier_named_slot :: proc(runtime:^Modifier_Runtime,rig:core.Entity,kind:Modifier_Kind,name:string) -> (u16,bool) {
+    if name=="" {return 0,false}
+    return modifier_named_key(runtime,rig,kind,base.name_hash(name))
+}
+
+@(private)
+modifier_named_key :: proc(runtime:^Modifier_Runtime,rig:core.Entity,kind:Modifier_Kind,name:u64) -> (slot:u16,ok:bool) {
+    if runtime==nil || name==0 {return}
+    find :: proc(table:^core.Table($T),rig:core.Entity,name:u64) -> (slot:u16,ok:bool) {
         first,end:=rig_rows(table,rig)
         for &value,index in table.values[first:end] {
-            if modifier_operation_name(&value)!=name {continue}
+            if base.name_hash(modifier_operation_name(&value))!=name {continue}
             if ok {return 0,false}
             slot,ok=u16(index),true
         }
@@ -506,15 +514,19 @@ modifier_named_slot :: proc(runtime:^Modifier_Runtime,rig:core.Entity,kind:Modif
 }
 
 multi_ik_effector_named :: proc(config:^Multi_IK_Constraint,name:string) -> (u8,bool) {
-    if config==nil || name=="" || int(config.effector_count)>RIG_EFFECTORS {return 0,false}
-    for &effector,i in config.effectors[:config.effector_count] {if base.text_get(effector.name[:])==name {return u8(i),true}}
+    if config==nil || name=="" || len(config.effectors)>RIG_EFFECTORS {return 0,false}
+    for &effector,i in config.effectors {if base.text_get(effector.name[:])==name {return u8(i),true}}
     return 0,false
 }
-modifier_effector_named :: proc(runtime:^Modifier_Runtime,rig:core.Entity,slot:u16,name:string) -> (u8,bool) {
+@(private)
+modifier_effector_named :: proc(runtime:^Modifier_Runtime,rig:core.Entity,slot:u16,name:u64) -> (u8,bool) {
     if runtime==nil {return 0,false}
     row:=rig_slot_row(&runtime.multi_ik,rig,slot)
     if row<0 {return 0,false}
-    return multi_ik_effector_named(&runtime.multi_ik.values[row],name)
+    for &effector,i in runtime.multi_ik.values[row].effectors {
+        if base.name_hash(base.text_get(effector.name[:]))==name {return u8(i),true}
+    }
+    return 0,false
 }
 
 // A goal for an operation by name: it keeps finding it by name when the
@@ -523,11 +535,11 @@ modifier_goal_named :: proc(requests:^Animation_Requests,runtime:^Modifier_Runti
     if requests==nil {return}
     slot,ok:=modifier_named_slot(runtime,goal.rig,goal.kind,name);if !ok {core.refuse(&requests.goals);return}
     goal:=goal;goal.slot=slot
-    if !base.text_set(goal.name[:],name) {core.refuse(&requests.goals);return}
+    goal.name=base.name_hash(name)
     if goal.kind==.Multi_IK {
         row:=rig_slot_row(&runtime.multi_ik,goal.rig,slot)
-        if row<0 || goal.effector>=runtime.multi_ik.values[row].effector_count {core.refuse(&requests.goals);return}
-        goal.effector_name=runtime.multi_ik.values[row].effectors[goal.effector].name
+        if row<0 || int(goal.effector)>=len(runtime.multi_ik.values[row].effectors) {core.refuse(&requests.goals);return}
+        goal.effector_name=base.name_hash(base.text_get(runtime.multi_ik.values[row].effectors[goal.effector].name[:]))
     }
     modifier_goal(requests,goal)
 }
@@ -535,7 +547,7 @@ modifier_control_named :: proc(requests:^Animation_Requests,runtime:^Modifier_Ru
     if requests==nil {return}
     slot,ok:=modifier_named_slot(runtime,control.rig,control.kind,name);if !ok {core.refuse(&requests.controls);return}
     control:=control;control.slot=slot
-    if !base.text_set(control.name[:],name) {core.refuse(&requests.controls);return}
+    control.name=base.name_hash(name)
     modifier_control(requests,control)
 }
 // IK and Look are solved by the constraints of the rig, which keep their diagnostics.

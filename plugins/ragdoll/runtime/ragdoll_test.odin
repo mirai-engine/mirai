@@ -90,7 +90,9 @@ ragdoll_fixture_init :: proc(t:^testing.T,f:^Ragdoll_Fixture) -> bool {
     append(&state.targets,base.name_hash("actor"),base.name_hash("upper"),base.name_hash("lower"))
     append(&state.aliases,base.name_hash("actor"),base.name_hash("upper"),base.name_hash("lower"))
     append(&state.rest,mm.TRANSFORM_IDENTITY,mm.Transform{{0,2,0},1,{1,1,1}},mm.Transform{{0,-1,0},1,{1,1,1}})
-    append(&state.local,..state.rest[:]);append(&state.sampled,..state.rest[:]);resize(&state.world,3)
+    if !anim.playing_pose_resize(&state,len(state.rest)) {anim.playing_free(&state);return false}
+    copy(anim.playing_pose(&state,.Local),state.rest[:])
+    copy(anim.playing_pose(&state,.Sampled),state.rest[:])
     append(&f.playback.states,state)
     resize(&f.playback.rows,core.entity_index(f.rig)+1);f.playback.rows[core.entity_index(f.rig)]=1
     ragdoll_fixture_settle(f)
@@ -120,7 +122,7 @@ ragdolls_follow_current_animation_preserve_handoff_velocity_and_drive_real_joint
     if !ragdoll_fixture_init(t,&f) {return}
     defer ragdoll_fixture_free(&f)
     ragdoll_fixture_step(&f)
-    f.playback.states[0].sampled[1].position.x=.1
+    anim.playing_pose(&f.playback.states[0],.Sampled)[1].position.x=.1
     ragdoll_fixture_step(&f)
     upper,_:=core.get(&f.transforms,f.upper)
     testing.expect(t,abs(upper.position.x-.1)<.001)
@@ -134,12 +136,12 @@ ragdolls_follow_current_animation_preserve_handoff_velocity_and_drive_real_joint
     for pose in f.poses.final_poses.items {testing.expect(t,pose.binding.revision==1 && pose.binding.index>=1)}
     clear(&f.poses.final_poses.items)
     core.edit(&f.configs,f.rig).mode=.Driven
-    f.playback.states[0].sampled[2].rotation=mm.quat_axis_angle({0,0,1},.4)
+    anim.playing_pose(&f.playback.states[0],.Sampled)[2].rotation=mm.quat_axis_angle({0,0,1},.4)
     for tick in 0..<120 {clear(&f.poses.final_poses.items);ragdoll_fixture_step(&f)}
     child,_:=core.get(&f.transforms,f.lower)
     upper,_=core.get(&f.transforms,f.upper)
     relative:=mm.quat_inverse(upper.rotation)*child.rotation
-    testing.expect(t,mm.quat_angle(relative,f.playback.states[0].sampled[2].rotation)<.08)
+    testing.expect(t,mm.quat_angle(relative,anim.playing_pose(&f.playback.states[0],.Sampled)[2].rotation)<.08)
     driven,_:=core.get(&f.joints,f.joint)
     testing.expect(t,.Position in driven.angular[2].drive && driven.angular[2].motion==.Limited)
     core.edit(&f.configs,f.rig).hertz=0
@@ -192,7 +194,7 @@ physical_animation_uses_current_auto_frames_and_reuses_world_buffers :: proc(t:^
     core.edit(&f.joints,f.joint).b_frame=false
     turn:=mm.quat_axis_angle({0,1,0},.4)
     core.edit(&f.transforms,f.lower).rotation=turn
-    f.playback.states[0].sampled[2].rotation=turn
+    anim.playing_pose(&f.playback.states[0],.Sampled)[2].rotation=turn
     ragdoll_fixture_step(&f)
     joint,_:=core.get(&f.joints,f.joint)
     testing.expect(t,.Position in joint.angular[0].drive && abs(joint.angular[1].position)<.001)

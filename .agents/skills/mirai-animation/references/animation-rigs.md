@@ -107,16 +107,14 @@ chain, a topology that is too long or an incompatible target is a bind failure o
   root motion, the follow of a leader, curve drives and curve poses, grounding, IK/look-at, Chain
   IK, Multi IK, twist, springs, Spline IK, correctives, Follow and, at the end, limits and
   attachments.
-- `Modifier_Runtime` stores tables, bindings and spring state; `core.value_copy` copies it for Play
-  and rollback and the assets stay shared. The rows are not components nor another owner of
-  transforms.
+- `Modifier_Runtime` owns the modifier tables, the constraints and grounding state, and their
+  bindings. Each world copy owns its own state. The authored character asset is shared.
 - Each solver has its own plain state struct with the common header `Rig_Binding` and only its
   indices and scratch: Chain IK does not reserve Multi IK joints.
 - Preparation stamps configurations, attachments, `Animation`, rigs and the registry revision:
-  without changes it walks nothing. A write of `Animation` looks only at `source` and `retarget` of
-  the stamped rows; a registry revision compares the definitions used. It rebuilds only if something
-  relevant changed and, without memory, keeps what was published. A test that simulates a reload by
-  touching a cache also bumps `host.Assets.revision`.
+  a stable tick reuses the current layout. Changing an unrelated animation without modifiers or
+  attachments leaves the layout and solver state alone. When the layout changes, unchanged springs
+  and Follow operations retain their state.
 - The operations of a rig are a contiguous block in each table, pointed to by the generational index
   of `core.Table`: evaluating, naming and diagnosing walks only that block. A rig without operations
   prepares no scratch.
@@ -140,10 +138,9 @@ chain, a topology that is too long or an incompatible target is a bind failure o
   effectors and the last request error; `diagnostics` adds fade and solver. API contract:
   [control](animation-authoring.md#per-instance-control-and-preview).
 - `animation_rig_diagnostic` gives validity, residual (in springs, length error), angular error,
-  iterations and `reached`; twist and retarget give only validity. IK and Look store it in
-  `Animation_Constraints`, which resolves it: in Look, the angular error of the aim and as residual
-  how far it passes from the target at its distance. An unreachable effector does not make a
-  numerically good evaluation invalid.
+  iterations and `reached`; twist and retarget give only validity. Look reports the angular error
+  of the aim and how far it passes from the target at its distance. An unreachable effector can
+  still give a valid evaluation.
 
 ## Bake
 

@@ -488,12 +488,12 @@ action_root_projection_preserves_each_base_and_action_contribution_and_validates
     for policy in ([?]Root_Motion_Policy{.In_Place,.Extract}) {
         actions.plans[0].profile.actions[0].root_motion=policy;actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=-1};state.layers={}
         description:=ANIMATION_DEFAULT;description.asset=state.asset;state.clip=0
-        state.root={bone=bone_ref("hip"),translation=true,in_place=true} if policy==.Extract else {}
+        state.root={bone=base.name_hash("hip"),translation=true,in_place=true} if policy==.Extract else {}
         stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.25,nil,&content,&playback,&events,nil,1);layers_advance(&playback,&state,&content,description,&events,.25,nil);actions_layer_finish(&actions,&state)
-        copy(state.local[:],state.rest[:]);state.local[1].position.x=1 if policy==.In_Place else 0
-        pose_layers(&playback,&state,&content,description,state.local[:])
+        copy(playing_pose(&state,.Local),state.rest[:]);playing_pose(&state,.Local)[1].position.x=1 if policy==.In_Place else 0
+        pose_layers(&playback,&state,&content,description,playing_pose(&state,.Local))
         expected:f32=.5 if policy==.In_Place else .125
-        testing.expectf(t,state.layers[0].root_motion==policy && abs(state.local[1].position.x-expected)<1e-5,"%v: %v",policy,state.local[1].position)
+        testing.expectf(t,state.layers[0].root_motion==policy && abs(playing_pose(&state,.Local)[1].position.x-expected)<1e-5,"%v: %v",policy,playing_pose(&state,.Local)[1].position)
         actions.states[0].slots[0].finishing=true
         description=ANIMATION_DEFAULT;description.asset=state.asset;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content,&playback,&events,nil,1)
         testing.expect(t,state.layers[0].root_motion==.None && state.blend.slots==1,"a finishing action hands its layer back, which moves the root no more")
@@ -501,7 +501,7 @@ action_root_projection_preserves_each_base_and_action_contribution_and_validates
     // The stack has one root bone: an action whose clip moves another than the base is stopped.
     state.layers={};actions.states[0].slots={};actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=-1};actions.states[0].slots[1]={active=true,starting=true,seeking=true,action=1,section=-1}
     content.roots[2]=content.roots[0];base.text_set(content.roots[2].bone[:],"spine")
-    state.root={bone=bone_ref("hip"),translation=true}
+    state.root={bone=base.name_hash("hip"),translation=true}
     problems:core.Problems
     description:=ANIMATION_DEFAULT;description.asset=state.asset;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,&problems,&content,&playback,&events,nil,1)
     testing.expect(t,problems.count==1 && core.problem_find(&problems,state.entity,"animation.action_clip")!=nil && !actions.states[0].slots[0].finishing && actions.states[0].slots[1].finishing)
@@ -724,7 +724,7 @@ Played_World :: struct {
     meshes:core.Table(erender.Mesh_Renderer),sources:core.Table(Pose_Source),animations:core.Table(Animation),targets:core.Table(Animation_Target),
     progress:core.Table(Animation_Progress),attachments:core.Table(Bone_Attachment),worlds:core.Table(core.World_Transform),
     played:core.Table(Animation_Played),remotes:core.Table(core.Remote),
-    requests:Animation_Requests,events:Animation_Events,playback:Playback,constraints:Animation_Constraints,grounding:Grounding_Runtime,
+    requests:Animation_Requests,events:Animation_Events,playback:Playback,
     modifiers:Modifier_Runtime,actions:Action_Runtime,motion:Motion_Runtime,
 }
 
@@ -766,9 +766,9 @@ an_action_and_a_look_over_an_idle_body_fade_in_and_back_to_rest :: proc(t:^testi
         before,_:=core.get(core.read(&w.transforms),body)
         time:=core.Time{dt=DT,playing=true}
         animation_prepare(core.read(&w.animations),core.read(&w.attachments),core.read(&w.meshes),core.read(&w.sources),&w.modifiers,&w.playback,characters,skeletons,app,problems)
-        animation_sample(core.read(&w.animations),&w.progress,&w.played,&w.transforms,core.read(&w.parents),{},core.read(&w.names),core.read(&w.targets),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,characters,skeletons,app,time,{},problems,&w.actions,&w.motion,sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
+        animation_sample(core.read(&w.animations),core.read(&w.progress),&w.played,&w.transforms,core.read(&w.parents),{},core.read(&w.names),core.read(&w.targets),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,characters,skeletons,app,time,{},problems,&w.actions,&w.motion,sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
         test_world_settle(w)
-        animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifiers,&w.playback,&w.constraints,&w.grounding,{},{},time,core.ref(skeletons),problems,&w.motion,characters,{},{},core.CLOCK_DEFAULT,nil)
+        animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifiers,&w.playback,{},{},time,core.ref(skeletons),problems,&w.motion,characters,{},{},core.CLOCK_DEFAULT,nil)
         test_world_settle(w)
         after,_:=core.get(core.read(&w.transforms),body)
         return mm.quat_angle(before.rotation,after.rotation)/DT

@@ -31,7 +31,8 @@ Preview_Match_Result :: struct {
 }
 Preview_Pose_Result :: struct {id:base.Entity_Id,path:[asset.NODE_PATH_CAPACITY]u8 `mirai:"text"`,name:[64]u8 `mirai:"text"`,position,scale:mm.Vec3,rotation:[4]f32}
 Preview_Leaf_Source :: enum u8 {Base,Program,Layer}
-Preview_Leaf_Result :: struct {clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id,source:Preview_Leaf_Source,key:u32,group:u16,layer:u8,outgoing:bool,weight,time,phase,duration:f32,sync_mode:anim.Sync_Mode}
+Preview_Sync :: enum u8 {Independent,Markers,Weighted}
+Preview_Leaf_Result :: struct {clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id,source:Preview_Leaf_Source,key:u32,group:u16,layer:u8,outgoing:bool,weight,time,phase,duration:f32,sync_mode:Preview_Sync}
 // An event of Animation_Events in the tick. Marker: marker of clip; the others are of action, and
 // name is its section, or for Span_Begin and Span_End its window.
 Preview_Marker_Result :: struct {kind:anim.Animation_Event_Kind,action,name:[64]u8 `mirai:"text,optional"`,clip,marker:[64]u8 `mirai:"text,optional"`,animation:base.Asset_Id,clip_hash,marker_hash:u64,time,weight:f32,source:u32,group:u16}
@@ -112,7 +113,7 @@ preview_match :: proc(world:core.World_Ref,app:^host.App,entity:core.Entity) -> 
 preview_program :: proc(call:^api.Call,world:core.World_Ref,app:^host.App,state:^anim.Playing,animation:anim.Animation) -> (r:Preview_Program_Result) {
     r.asset=animation.asset
     if state==nil {return}
-    runtime:=&state.program;r.ready,r.error,r.fade_remaining=runtime.ready,runtime.error,max(0,runtime.fade-runtime.elapsed)
+    runtime:=&state.program;r.ready,r.error,r.fade_remaining=runtime.ready,runtime.error,max(0,state.inertia.state.duration-state.inertia.state.elapsed)
     parameters:=make([]anim.Stack_Parameter_Info,anim.STACK_PARAMETERS*2,call.allocator)
     characters:=core.world_storage_of(core.world_ref(app.shared,world.info,.Shared),anim.Character_Assets)
     r.parameters=parameters[:anim.stack_parameters(core.world_storage_of(world,anim.Action_Runtime),characters,core.world_storage_of(world,anim.Playback),state.entity,parameters)]
@@ -120,7 +121,7 @@ preview_program :: proc(call:^api.Call,world:core.World_Ref,app:^host.App,state:
     return
 }
 @(private)
-preview_leaf :: proc(cache:^anim.Source_Assets,state:^anim.Playing,content:^host.Content_Animation,player:lib.Player,source:Preview_Leaf_Source,key:u32,group:u16,layer:u8,outgoing:bool,weight:f32,mode:anim.Sync_Mode) -> Preview_Leaf_Result {
+preview_leaf :: proc(cache:^anim.Source_Assets,state:^anim.Playing,content:^host.Content_Animation,player:lib.Player,source:Preview_Leaf_Source,key:u32,group:u16,layer:u8,outgoing:bool,weight:f32,mode:Preview_Sync) -> Preview_Leaf_Result {
     value:=Preview_Leaf_Result{source=source,key=key,group=group,layer=layer,outgoing=outgoing,weight=weight,sync_mode=mode}
     if content!=nil && lib.clip_valid(&content.lib,player.clip) {value.clip=anim.source_clip_label(content,player.clip);value.animation=anim.source_clip_source(cache,state,player.clip);value.time=lib.player_time(&content.lib,player);value.phase=lib.player_normalized(&content.lib,player);value.duration=lib.clip_duration(&content.lib,player.clip)}
     return value
@@ -138,11 +139,11 @@ preview_trace_frame :: proc(call:^api.Call,trace:^Preview_Trace,world:core.World
     total:=0
     if state.program.ready {
         runtime:=&state.program;output:=&runtime.output
-        for &group,g in output.groups[:output.count] {for leaf in group.leaves[:group.count] {
+        for leaf in output.leaves[:output.count] {
             total+=1;if len(leaves)>=PREVIEW_TRACE_ROWS {continue};player:lib.Player
             for slot in runtime.players {if slot.key==leaf.key {player=slot.player;break}}
-            append(&leaves,preview_leaf(sources,state,content,player,.Program,leaf.key,u16(g),0,false,leaf.weight*group.weight*description.weight,group.mode))
-        }}
+            append(&leaves,preview_leaf(sources,state,content,player,.Program,leaf.key,0,0,false,leaf.weight*description.weight,.Weighted if output.normalized else .Markers if leaf.sync else .Independent))
+        }
     } else if state.clip>=0 {total+=1;append(&leaves,preview_leaf(sources,state,content,state.fader.current,.Base,0,0,0,false,lib.fader_current_weight(state.fader)*description.weight,.Independent))
         for outgoing in state.fader.outgoing[:state.fader.outgoing_count] {total+=1;if len(leaves)>=PREVIEW_TRACE_ROWS {continue};append(&leaves,preview_leaf(sources,state,content,outgoing.player,.Base,0,0,0,true,lib.fade_out_weight(outgoing)*description.weight,.Independent))}
     }

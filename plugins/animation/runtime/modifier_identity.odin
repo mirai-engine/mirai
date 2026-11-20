@@ -1,7 +1,6 @@
 package anim
 
 import "mirai:core"
-import "mirai:std/base"
 
 // Why the last goal or control of a rig was refused: its operation or
 // effector no longer has that name, or its target cannot be found.
@@ -48,18 +47,18 @@ modifier_same_goal :: proc(previous,next:^Modifier_Runtime,goal:Modifier_Goal) -
     old_row,new_row:=rig_slot_row(&previous.multi_ik,goal.rig,goal.slot),rig_slot_row(&next.multi_ik,goal.rig,goal.slot)
     if old_row<0 || new_row<0 {return false}
     old,current:=&previous.multi_ik.values[old_row],&next.multi_ik.values[new_row]
-    return goal.effector<old.effector_count && goal.effector<current.effector_count && int(goal.effector)<RIG_EFFECTORS && old.effectors[goal.effector].name==current.effectors[goal.effector].name
+    return int(goal.effector)<len(old.effectors) && int(goal.effector)<len(current.effectors) && int(goal.effector)<RIG_EFFECTORS && old.effectors[goal.effector].name==current.effectors[goal.effector].name
 }
 
 // A goal by name takes the slot and effector of that name in the .character the rig plays now.
 @(private)
 modifier_goal_resolve :: proc(runtime:^Modifier_Runtime,goal:^Modifier_Goal) -> Modifier_Request_Error {
-    if goal.name[0]==0 {return .None}
-    slot,found:=modifier_named_slot(runtime,goal.rig,goal.kind,base.text_get(goal.name[:]))
+    if goal.name==0 {return .None}
+    slot,found:=modifier_named_key(runtime,goal.rig,goal.kind,goal.name)
     if !found {return .Missing_Operation}
     goal.slot=slot
-    if goal.kind==.Multi_IK && goal.effector_name[0]!=0 {
-        effector,present:=modifier_effector_named(runtime,goal.rig,slot,base.text_get(goal.effector_name[:]))
+    if goal.kind==.Multi_IK && goal.effector_name!=0 {
+        effector,present:=modifier_effector_named(runtime,goal.rig,slot,goal.effector_name)
         if !present {return .Missing_Effector}
         goal.effector=effector
     }
@@ -76,12 +75,12 @@ modifier_request_rejected :: proc(runtime:^Modifier_Runtime,rig:core.Entity,erro
 // Reports a goal or control by name that names no operation, or no effector,
 // of the .character the rig plays now.
 @(private)
-modifier_name_problem :: proc(problems:^core.Problems,rig:core.Entity,kind:Modifier_Kind,name,effector:[]u8,error:Modifier_Request_Error) {
+modifier_name_problem :: proc(problems:^core.Problems,rig:core.Entity,kind:Modifier_Kind,name,effector:u64,error:Modifier_Request_Error) {
     #partial switch error {
     case .Missing_Operation:
-        core.report(problems,rig,"animation.modifier_name","a goal or control for %v '%s' was refused: the .character of this rig has no %v with that name; name one it has (animation.inspect lists them)",kind,base.text_get(name),kind)
+        core.report(problems,rig,"animation.modifier_name","a goal or control for %v 0x%016x was refused: the .character of this rig has no %v with that name; name one it has (animation.inspect lists them)",kind,name,kind)
     case .Missing_Effector:
-        core.report(problems,rig,"animation.modifier_effector","a goal for effector '%s' of %v '%s' was refused: it has no effector with that name; name one it has",base.text_get(effector),kind,base.text_get(name))
+        core.report(problems,rig,"animation.modifier_effector","a goal for effector 0x%016x of %v 0x%016x was refused: it has no effector with that name; name one it has",effector,kind,name)
     }
 }
 

@@ -115,19 +115,19 @@ spline_ik_and_correctives_replay_goals_and_curves_without_stable_allocations :: 
     state:=rig_test_state(rig,4,.5);defer playing_free(&state)
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
     corrective:=rig_shapes_corrective()
-    state.sampled[2].rotation=corrective.samples[1].rotation
+    playing_pose(&state,.Sampled)[2].rotation=corrective.samples[1].rotation
     testing.expect(t,modifier_append(&modifiers.spline_ik,rig,rig_shapes_spline({{0,0,0},{.4,.5,0},{.4,1,0},{0,1.5,0}})) && modifier_append(&modifiers.correctives,rig,corrective))
     testing.expect(t,modifier_controls_prepare(&modifiers,&Modifier_Runtime{}))
     testing.expect(t,rigs_apply(&state,&modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
-    expected:=state.world[4]
-    testing.expect(t,abs(state.local[3].scale.x-1.5)<1e-5 && abs(animation_corrective_curve(&modifiers,rig,base.name_hash("bulge"))-1)<1e-5)
+    expected:=playing_pose(&state,.World)[4]
+    testing.expect(t,abs(playing_pose(&state,.Local)[3].scale.x-1.5)<1e-5 && abs(animation_corrective_curve(&modifiers,rig,base.name_hash("bulge"))-1)<1e-5)
     copied:Modifier_Runtime;core.value_copy(&copied,&modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copied)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
     for _ in 0..<32 {
-        copy(state.local[:],state.rest[:])
+        copy(playing_pose(&state,.Local),state.rest[:])
         stable &&=rigs_apply(&state,&copied,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)
-        stable &&=linalg.length(state.world[4].position-expected.position)<1e-5 && animation_corrective_curve(&copied,rig,base.name_hash("bulge"))==1
+        stable &&=linalg.length(playing_pose(&state,.World)[4].position-expected.position)<1e-5 && animation_corrective_curve(&copied,rig,base.name_hash("bulge"))==1
     }
     context=saved
     testing.expect(t,stable)
@@ -136,16 +136,16 @@ spline_ik_and_correctives_replay_goals_and_curves_without_stable_allocations :: 
     rigs_apply_goal(&modifiers,{rig=rig,kind=.Spline_IK,slot=slot,effector=3,target=spatial_point({1,2,0})},1,true,nil)
     testing.expect_value(t,modifiers.spline_ik.values[0].controls[3].position,mm.Vec3{1,2,0})
     modifiers.correctives.values[0].enabled=false
-    copy(state.local[:],state.rest[:])
+    copy(playing_pose(&state,.Local),state.rest[:])
     testing.expect(t,rigs_apply(&state,&modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60) && animation_corrective_curve(&modifiers,rig,base.name_hash("bulge"))==0)
     // Out of reach the chain lies along the curve, and says so.
     for point,i in ([4]mm.Vec3{{0,0,0},{0,1,0},{0,2,0},{0,20,0}}) {modifiers.spline_ik.values[0].controls[i]=spatial_point(point)}
-    copy(state.local[:],state.rest[:])
+    copy(playing_pose(&state,.Local),state.rest[:])
     testing.expect(t,rigs_apply(&state,&modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
     diagnostic,available:=animation_rig_diagnostic(&modifiers,rig,.Spline_IK,0)
     testing.expect(t,available && diagnostic.valid && !diagnostic.reached && diagnostic.residual>1)
     for point,i in ([4]mm.Vec3{{0,0,0},{0,.5,0},{0,1,0},{0,1.5,0}}) {modifiers.spline_ik.values[0].controls[i]=spatial_point(point)}
-    copy(state.local[:],state.rest[:])
+    copy(playing_pose(&state,.Local),state.rest[:])
     testing.expect(t,rigs_apply(&state,&modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
     diagnostic,available=animation_rig_diagnostic(&modifiers,rig,.Spline_IK,0)
     testing.expect(t,available && diagnostic.valid && diagnostic.reached && diagnostic.residual<=.001)
@@ -157,7 +157,7 @@ corrective_curves_drive_the_morph_target_of_their_name :: proc(t:^testing.T) {
     state:=rig_test_state(rig,4,.5);defer playing_free(&state)
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
     corrective:=rig_shapes_corrective();corrective.apply_pose=false
-    state.sampled[2].rotation=corrective.samples[1].rotation
+    playing_pose(&state,.Sampled)[2].rotation=corrective.samples[1].rotation
     testing.expect(t,modifier_append(&modifiers.correctives,rig,corrective) && rigs_apply(&state,&modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
     targets:=[2]asset.Morph_Target{{weight=.25},{weight=.5}}
     base.text_set(targets[0].name[:],"bulge");base.text_set(targets[1].name[:],"blink")
@@ -172,7 +172,7 @@ spatial_bone_and_socket_targets_read_the_sampled_pose_and_keep_their_binding :: 
     source:=core.entity_make(1,1)
     playback:=Playback{frame=3};defer playback_free(&playback)
     append(&playback.states,rig_test_state(source,3,.5));resize(&playback.rows,2);playback.rows[1]=1
-    state:=&playback.states[0];state.seen=3;state.skeleton={4,5};state.sampled[0].position={1000,0,0};state.world[3].position={999,999,999}
+    state:=&playback.states[0];state.seen=3;state.skeleton={4,5};playing_pose(state,.Sampled)[0].position={1000,0,0};playing_pose(state,.World)[3].position={999,999,999}
     worlds:core.Table(core.World_Transform);defer core.table_destroy(&worlds)
     testing.expect(t,modifier_append(&worlds,source,core.World_Transform{transform={{20,0,0},1,{1,1,1}}}))
     sockets:=make([]asset.Skeleton_Socket,1)
@@ -208,21 +208,21 @@ follow_switches_spaces_without_a_jump_and_keeps_its_channel_masks :: proc(t:^tes
     testing.expect(t,modifier_append(&modifiers.follow,rig,follow))
     inputs:=Constraint_Inputs{worlds=core.read(&worlds)}
     testing.expect(t,rigs_apply(&state,&modifiers,inputs,nil,{},mm.TRANSFORM_IDENTITY,0))
-    before:=state.world[3]
+    before:=playing_pose(&state,.World)[3]
     testing.expect(t,linalg.length(before.position-mm.Vec3{3,2,0})<1e-5)
     modifiers.follow.values[0].keep_world=true
     modifiers.follow.values[0].target=spatial_entity(anchor)
-    copy(state.local[:],state.rest[:])
+    copy(playing_pose(&state,.Local),state.rest[:])
     testing.expect(t,rigs_apply(&state,&modifiers,inputs,nil,{},mm.TRANSFORM_IDENTITY,0))
-    testing.expect(t,linalg.length(state.world[3].position-before.position)<1e-5,"keep_world: no jump when the target changes")
+    testing.expect(t,linalg.length(playing_pose(&state,.World)[3].position-before.position)<1e-5,"keep_world: no jump when the target changes")
     worlds.values[0].position.x+=1
-    copy(state.local[:],state.rest[:])
+    copy(playing_pose(&state,.Local),state.rest[:])
     testing.expect(t,rigs_apply(&state,&modifiers,inputs,nil,{},mm.TRANSFORM_IDENTITY,0))
-    testing.expect(t,linalg.length(state.world[3].position-before.position-mm.Vec3{1,0,0})<1e-5)
+    testing.expect(t,linalg.length(playing_pose(&state,.World)[3].position-before.position-mm.Vec3{1,0,0})<1e-5)
     modifiers.follow.values[0].position=false
-    copy(state.local[:],state.rest[:])
+    copy(playing_pose(&state,.Local),state.rest[:])
     testing.expect(t,rigs_apply(&state,&modifiers,inputs,nil,{},mm.TRANSFORM_IDENTITY,0))
-    testing.expect(t,linalg.length(state.world[3].position-mm.Vec3{0,1,0})<1e-5)
+    testing.expect(t,linalg.length(playing_pose(&state,.World)[3].position-mm.Vec3{0,1,0})<1e-5)
 }
 
 @(test)
@@ -241,30 +241,30 @@ ik_holds_the_rotation_it_is_asked_and_look_keeps_its_up_axis :: proc(t:^testing.
     transforms:core.Table(core.Transform);defer core.table_destroy(&transforms)
     constraints_apply(&state,&playback,{ik=core.read(&iks),problems=&problems},&cache,&transforms,{},0)
     testing.expect_value(t,problems.count,0)
-    testing.expect(t,linalg.length(state.world[3].position-ik.target.position)<1e-4 && mm.quat_angle(state.world[3].rotation,turn)<1e-4)
+    testing.expect(t,linalg.length(playing_pose(&state,.World)[3].position-ik.target.position)<1e-4 && mm.quat_angle(playing_pose(&state,.World)[3].rotation,turn)<1e-4)
     bent:=mm.quat_axis_angle({0,0,1},.4)
     for hold in IK_Hold {
         if hold==.Target {continue}
-        copy(state.local[:],state.rest[:]);state.local[3].rotation=bent
+        copy(playing_pose(&state,.Local),state.rest[:]);playing_pose(&state,.Local)[3].rotation=bent
         core.edit_at(&iks,0).hold=hold;cache.stamps={}
-        testing.expect(t,lib.pose_world(state.parents[:],state.local[:],state.world[:]))
-        held:=state.world[3].rotation
+        testing.expect(t,lib.pose_world(state.parents[:],playing_pose(&state,.Local),playing_pose(&state,.World)))
+        held:=playing_pose(&state,.World)[3].rotation
         constraints_apply(&state,&playback,{ik=core.read(&iks),problems=&problems},&cache,&transforms,{},0)
-        testing.expect(t,linalg.length(state.world[3].position-ik.target.position)<1e-4,"the end reaches whatever it holds")
-        kept:=mm.quat_angle(state.local[3].rotation,bent) if hold==.Joint else mm.quat_angle(state.world[3].rotation,held)
+        testing.expect(t,linalg.length(playing_pose(&state,.World)[3].position-ik.target.position)<1e-4,"the end reaches whatever it holds")
+        kept:=mm.quat_angle(playing_pose(&state,.Local)[3].rotation,bent) if hold==.Joint else mm.quat_angle(playing_pose(&state,.World)[3].rotation,held)
         testing.expect(t,kept<1e-4,"Joint keeps the rotation of the end relative to the joint; World, in the world")
     }
     look:=LOOK_CONSTRAINT_DEFAULT;look.rig=rig;look.bone=bone_ref("joint3")
     look.target=spatial_point({0,.75,-5});look.forward,look.up,look.world_up,look.use_up={0,0,-1},{1,0,0},{0,1,0},true
     testing.expect(t,modifier_append(&looks,helper,look))
-    copy(state.local[:],state.rest[:])
+    copy(playing_pose(&state,.Local),state.rest[:])
     cache.stamps={}
     constraints_apply(&state,&playback,{look=core.read(&looks),problems=&problems},&cache,&transforms,{},0)
     testing.expect_value(t,problems.count,0)
-    aimed:=linalg.normalize(look.target.position-state.world[3].position)
-    up:=mm.quat_rotate(state.world[3].rotation,{1,0,0})
+    aimed:=linalg.normalize(look.target.position-playing_pose(&state,.World)[3].position)
+    up:=mm.quat_rotate(playing_pose(&state,.World)[3].rotation,{1,0,0})
     wanted:=linalg.normalize(look.world_up-aimed*linalg.dot(look.world_up,aimed))
-    testing.expect(t,linalg.dot(mm.quat_rotate(state.world[3].rotation,look.forward),aimed)>.9999 && linalg.dot(up,wanted)>.9999,"the bone aims and its up axis turns to world_up around the aim")
+    testing.expect(t,linalg.dot(mm.quat_rotate(playing_pose(&state,.World)[3].rotation,look.forward),aimed)>.9999 && linalg.dot(up,wanted)>.9999,"the bone aims and its up axis turns to world_up around the aim")
 }
 
 @(private)
@@ -285,7 +285,7 @@ named_modifier_goals_follow_their_operation_through_a_reordered_profile :: proc(
     head,eyes:=LOOK_CONSTRAINT_DEFAULT,LOOK_CONSTRAINT_DEFAULT
     head.bone,eyes.bone=bone_ref("head"),bone_ref("eyes")
     hands:=MULTI_IK_CONSTRAINT_DEFAULT;base.text_set(hands.name[:],"hands");hands.root=bone_ref("joint1")
-    hands.joint_count,hands.effector_count=1,2;hands.joints[0]=MULTI_IK_JOINT_DEFAULT;hands.joints[0].bone=hands.root
+    hands.joints=make([]Multi_IK_Joint,1,context.temp_allocator);hands.effectors=make([]Multi_IK_Effector,2,context.temp_allocator);hands.joints[0]=MULTI_IK_JOINT_DEFAULT;hands.joints[0].bone=hands.root
     for &effector,i in hands.effectors[:2] {effector=MULTI_IK_EFFECTOR_DEFAULT;effector.bone=bone_ref("joint2" if i==0 else "joint3");base.text_set(effector.name[:],"Left" if i==0 else "Right")}
     id:=base.Asset_Id{817,819}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -329,7 +329,7 @@ named_modifier_goals_follow_their_operation_through_a_reordered_profile :: proc(
     controls:Animation_Requests;defer delete(controls.controls.items)
     modifier_goal_named(&w.requests,&w.modifiers,{rig=rig,kind=.Multi_IK,effector=1,target=spatial_point({}),weight=1,enabled=true},"hands")
     modifier_control_named(&controls,&w.modifiers,{rig=rig,kind=.Look,weight=0},"head")
-    hands.effector_count=1
+    hands.effectors=hands.effectors[:1]
     test_character_save(t,directory,"rig",&types,id,{pose={look={eyes},multi_ik={hands}}})
     record.time+=1;assets.revision+=1
     if !testing.expect(t,prepare(&w,&profiles,&skeletons,&app)) {return}

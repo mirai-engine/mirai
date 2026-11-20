@@ -26,7 +26,7 @@ rigs_without_operations_evaluate_with_null_allocators_and_leave_solver_scratch_e
     context=saved
     testing.expect(t,stable && problems.count==0)
     testing.expect(t,len(modifiers.chain_states)==0 && len(modifiers.twist_states)==0 && len(modifiers.spring_states)==0 && len(modifiers.multi_states)==0 && len(modifiers.retarget_chain_states)==0)
-    for value,i in state.local {testing.expect_value(t,value,state.rest[i])}
+    for value,i in playing_pose(&state,.Local) {testing.expect_value(t,value,state.rest[i])}
 }
 
 @(test)
@@ -37,7 +37,7 @@ rig_operations_preserve_local_slots_generations_and_copied_state_with_dense_rang
     playback:Playback;defer playback_free(&playback)
     source_entity:=core.entity_make(7,1)
     append(&playback.states,rig_test_state(source_entity,3,1));resize(&playback.rows,8);playback.rows[7]=1
-    playback.states[0].sampled[2].rotation=mm.quat_axis_angle({0,0,1},.2)
+    playing_pose(&playback.states[0],.Sampled)[2].rotation=mm.quat_axis_angle({0,0,1},.2)
     kinds:=[?]Modifier_Kind{.Chain_IK,.Twist,.Spring,.Multi_IK,.Chain_Retarget}
     for i in 0..<3 {
         entity:=core.entity_make(i+1,1);append(&states,rig_test_state(entity,5,.5))
@@ -55,7 +55,7 @@ rig_operations_preserve_local_slots_generations_and_copied_state_with_dense_rang
             spring.rig,spring.root,spring.end,spring.enabled=entity,chain.root,chain.end,false
             base.text_set(spring.name[:],name)
             multi:=MULTI_IK_CONSTRAINT_DEFAULT
-            multi.rig,multi.root,multi.enabled=entity,chain.root,false;multi.joint_count,multi.effector_count=1,1
+            multi.rig,multi.root,multi.enabled=entity,chain.root,false;multi.joints=make([]Multi_IK_Joint,1,context.temp_allocator);multi.effectors=make([]Multi_IK_Effector,1,context.temp_allocator)
             multi.joints[0]=MULTI_IK_JOINT_DEFAULT;multi.joints[0].bone=chain.root
             multi.effectors[0]=MULTI_IK_EFFECTOR_DEFAULT;multi.effectors[0].bone=chain.end
             base.text_set(multi.name[:],name)
@@ -93,12 +93,12 @@ rig_operations_preserve_local_slots_generations_and_copied_state_with_dense_rang
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
     for _ in 0..<16 {
-        copy(states[1].local[:],states[1].rest[:]);copy(copied_state.local[:],copied_state.rest[:])
+        copy(playing_pose(&states[1],.Local),states[1].rest[:]);copy(playing_pose(&copied_state,.Local),copied_state.rest[:])
         stable &&=rigs_retarget(&states[1],&playback,&modifiers,&problems) && rigs_retarget(&copied_state,&playback,&copied,&problems)
         stable &&=rigs_apply(&states[1],&modifiers,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60) && rigs_apply(&copied_state,&copied,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60)
     }
     context=saved;testing.expect(t,stable && problems.count==0)
-    for local,i in states[1].local {testing.expect_value(t,local,copied_state.local[i])}
+    for local,i in playing_pose(&states[1],.Local) {testing.expect_value(t,local,playing_pose(&copied_state,.Local)[i])}
     count,version,layout:=len(modifiers.chain_ik.values),modifiers.chain_ik.version,modifiers.chain_ik.layout
     testing.expect(t,!modifier_append(&modifiers.chain_ik,states[0].entity,modifiers.chain_ik.values[0]))
     testing.expect(t,len(modifiers.chain_ik.values)==count && modifiers.chain_ik.version==version && modifiers.chain_ik.layout==layout)
@@ -120,12 +120,12 @@ rig_operations_preserve_local_slots_generations_and_copied_state_with_dense_rang
 multi_ik_full_and_partial_weights_preserve_solver_pose_and_diagnostics :: proc(t:^testing.T) {
     for weight in ([?]f32{1,.35}) {
         rig:=core.entity_make(1,1);state:=rig_test_state(rig,63,.25);defer playing_free(&state)
-        state.local[6].rotation=mm.quat_axis_angle({1,0,0},.1)
-        copy(state.sampled[:],state.local[:])
+        playing_pose(&state,.Local)[6].rotation=mm.quat_axis_angle({1,0,0},.1)
+        copy(playing_pose(&state,.Sampled),playing_pose(&state,.Local))
         reference:Playing;core.value_copy(&reference,&state,type_info_of(Playing));defer playing_free(&reference)
         modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
         multi:=MULTI_IK_CONSTRAINT_DEFAULT;multi.rig,multi.root,multi.weight=rig,bone_ref("joint1"),weight
-        multi.joint_count,multi.effector_count=3,1;multi.settings.iterations=4
+        multi.joints=make([]Multi_IK_Joint,3,context.temp_allocator);multi.effectors=make([]Multi_IK_Effector,1,context.temp_allocator);multi.settings.iterations=4
         for &joint,i in multi.joints[:3] {joint=MULTI_IK_JOINT_DEFAULT;joint.bone=bone_ref(fmt.tprintf("joint%d",i+1))}
         multi.effectors[0]=MULTI_IK_EFFECTOR_DEFAULT;multi.effectors[0].bone=bone_ref("joint4");multi.effectors[0].target=spatial_point({.3,.5,0})
         testing.expect(t,modifier_append(&modifiers.multi_ik,rig,multi))
@@ -134,16 +134,16 @@ multi_ik_full_and_partial_weights_preserve_solver_pose_and_diagnostics :: proc(t
         effectors[0]={bone=4,position=multi.effectors[0].target.position,rotation=1,position_weight=1}
         settings:=multi.settings;settings.root=1
         links:[64]lib.Pose_Link;hierarchy,_:=lib.pose_hierarchy_prepare(reference.parents[:],links[:])
-        result,valid:=lib.multi_ik(playing_skeleton(&reference),hierarchy,reference.local[:],reference.world[:],joints[:],effectors[:],settings,residuals[:])
+        result,valid:=lib.multi_ik(playing_skeleton(&reference),hierarchy,playing_pose(&reference,.Local),playing_pose(&reference,.World),joints[:],effectors[:],settings,residuals[:])
         if !testing.expect(t,valid && rigs_apply(&state,&modifiers,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60)) {return}
         if weight!=1 {
-            for &local,i in reference.local {local=mm.transform_interpolate(reference.sampled[i],local,weight)}
-            testing.expect(t,lib.skeleton_world(playing_skeleton(&reference),reference.local[:],reference.world[:]))
-            result.residual=linalg.length(reference.world[4].position-effectors[0].position)
+            for &local,i in playing_pose(&reference,.Local) {local=mm.transform_interpolate(playing_pose(&reference,.Sampled)[i],local,weight)}
+            testing.expect(t,lib.skeleton_world(playing_skeleton(&reference),playing_pose(&reference,.Local),playing_pose(&reference,.World)))
+            result.residual=linalg.length(playing_pose(&reference,.World)[4].position-effectors[0].position)
             result.angular_error=0
             result.reached=result.residual<=settings.tolerance
         }
-        for local,i in state.local {testing.expect_value(t,local,reference.local[i]);testing.expect_value(t,state.world[i],reference.world[i])}
+        for local,i in playing_pose(&state,.Local) {testing.expect_value(t,local,playing_pose(&reference,.Local)[i]);testing.expect_value(t,playing_pose(&state,.World)[i],playing_pose(&reference,.World)[i])}
         diagnostic,found:=animation_rig_diagnostic(&modifiers,rig,.Multi_IK,0)
         testing.expect(t,found && diagnostic.valid && diagnostic.residual==result.residual && diagnostic.angular_error==result.angular_error && diagnostic.iterations==result.iterations && diagnostic.reached==result.reached)
     }
@@ -207,8 +207,10 @@ rig_test_state :: proc(entity:core.Entity,count:int,step:f32) -> Playing {
         target:=base.name_hash(fmt.tprintf("joint%d",i)) if i>0 else 0
         rest:=mm.TRANSFORM_IDENTITY;if i>1 {rest.position.y=step}
         append(&state.parents,parent);append(&state.targets,target);append(&state.aliases,target)
-        append(&state.rest,rest);append(&state.local,rest);append(&state.sampled,rest);append(&state.previous,rest);append(&state.world,rest)
-        append(&state.bindings,Binding{target=target,rest=rest,parent=parent})
+        index:=state.pose_count
+        playing_pose_resize(&state,index+1)
+        append(&state.rest,rest);playing_pose(&state,.Local)[index]=rest;playing_pose(&state,.Sampled)[index]=rest;playing_pose(&state,.Previous)[index]=rest;playing_pose(&state,.World)[index]=rest;
+        append(&state.bindings,Binding{target=target,parent=parent})
     }
     return state
 }
@@ -218,7 +220,7 @@ rig_profiles_roundtrip_typed_operations_and_reject_invalid_capacities :: proc(t:
     chain:=CHAIN_IK_CONSTRAINT_DEFAULT;base.text_set(chain.name[:],"arm");chain.root,chain.end=bone_ref("joint1"),bone_ref("joint4")
     twist:=TWIST_CONSTRAINT_DEFAULT;base.text_set(twist.name[:],"roll");twist.source,twist.root,twist.end=bone_ref("joint5"),bone_ref("joint1"),bone_ref("joint4")
     spring:=SPRING_CONSTRAINT_DEFAULT;base.text_set(spring.name[:],"tail");spring.root,spring.end=chain.root,chain.end
-    multi:=MULTI_IK_CONSTRAINT_DEFAULT;base.text_set(multi.name[:],"body");multi.root=chain.root;multi.joint_count,multi.effector_count=1,1
+    multi:=MULTI_IK_CONSTRAINT_DEFAULT;base.text_set(multi.name[:],"body");multi.root=chain.root;multi.joints=make([]Multi_IK_Joint,1,context.temp_allocator);multi.effectors=make([]Multi_IK_Effector,1,context.temp_allocator)
     multi.joints[0]=MULTI_IK_JOINT_DEFAULT;multi.joints[0].bone=chain.root
     multi.effectors[0]=MULTI_IK_EFFECTOR_DEFAULT;base.text_set(multi.effectors[0].name[:],"hand");multi.effectors[0].bone=chain.end
     retarget:=CHAIN_RETARGET_CONSTRAINT_DEFAULT;base.text_set(retarget.name[:],"arm_transfer");retarget.source_root,retarget.source_end,retarget.target_root,retarget.target_end=chain.root,chain.end,chain.root,chain.end
@@ -231,7 +233,7 @@ rig_profiles_roundtrip_typed_operations_and_reject_invalid_capacities :: proc(t:
     set,error:=character_view(&file,&types);testing.expect_value(t,error,asset.Error.None);view:=set.pose
     testing.expect(t,len(view.chain_ik)==1 && len(view.multi_ik)==1 && len(view.retarget_chains)==1)
     testing.expect_value(t,view.springs[0],spring)
-    invalid:=multi;invalid.effector_count=RIG_EFFECTORS+1
+    invalid:=multi;invalid.effectors=make([]Multi_IK_Effector,RIG_EFFECTORS+1,context.temp_allocator)
     testing.expect(t,!pose_profile_check({multi_ik={invalid}}))
     invalid=multi;invalid.joints[0].preferred=0;testing.expect(t,!pose_profile_check({multi_ik={invalid}}))
     spring.collision_count=RIG_COLLISIONS+1;testing.expect(t,!pose_profile_check({springs={spring}}))
@@ -277,7 +279,7 @@ chain_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls
     core.edit_at(&modifiers.chain_ik,0).enabled=false
     spring:=SPRING_CONSTRAINT_DEFAULT;base.text_set(spring.name[:],"tail");spring.rig,spring.root,spring.end=rig,chain.root,chain.end;spring.settings.gravity={};spring.settings.force={2,0,0}
     testing.expect(t,modifier_append(&modifiers.springs,rig,spring))
-    copy(state.local[:],state.rest[:]);testing.expect(t,rigs_apply(&state,&modifiers,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
+    copy(playing_pose(&state,.Local),state.rest[:]);testing.expect(t,rigs_apply(&state,&modifiers,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
     copied:Modifier_Runtime;core.value_copy(&copied,&modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copied)
     copied_state:Playing;core.value_copy(&copied_state,&state,type_info_of(Playing));defer playing_free(&copied_state)
     empty:Modifier_Runtime;testing.expect(t,modifier_controls_prepare(&modifiers,&empty))
@@ -289,13 +291,13 @@ chain_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
     for _ in 0..<120 {
-        copy(state.local[:],state.rest[:]);copy(copied_state.local[:],copied_state.rest[:])
+        copy(playing_pose(&state,.Local),state.rest[:]);copy(playing_pose(&copied_state,.Local),copied_state.rest[:])
         stable &&=rigs_apply(&state,&modifiers,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60)
         stable &&=rigs_apply(&copied_state,&copied,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60)
     }
     context=saved
     testing.expect(t,stable && problems.count==0)
-    for value,i in state.local {testing.expect_value(t,value,copied_state.local[i])}
+    for value,i in playing_pose(&state,.Local) {testing.expect_value(t,value,playing_pose(&copied_state,.Local)[i])}
     testing.expect_value(t,modifiers.spring_states[0].springs,copied.spring_states[0].springs)
     state.bound+=1;state.targets[4]=base.name_hash("replaced")
     testing.expect(t,rigs_apply(&state,&modifiers,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,0))
@@ -311,22 +313,22 @@ semantic_retarget_bindings_ignore_actor_placement_and_replay_without_allocations
     playback:Playback;defer playback_free(&playback)
     append(&playback.states,rig_test_state(source_id,3,1));append(&playback.states,rig_test_state(target_id,5,.5));resize(&playback.rows,3);playback.rows[1],playback.rows[2]=1,2
     source,target:=&playback.states[0],&playback.states[1]
-    source.local[0].position={100,0,0};source.sampled[0]=source.local[0];source.sampled[2].rotation=mm.quat_axis_angle({0,0,1},.8)
-    target.local[0].position={-20,3,0};actor:=target.local[0]
+    playing_pose(source,.Local)[0].position={100,0,0};playing_pose(source,.Sampled)[0]=playing_pose(source,.Local)[0];playing_pose(source,.Sampled)[2].rotation=mm.quat_axis_angle({0,0,1},.8)
+    playing_pose(target,.Local)[0].position={-20,3,0};actor:=playing_pose(target,.Local)[0]
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
     target.leader,target.stage=source_id,.Sampled
     chain:=CHAIN_RETARGET_CONSTRAINT_DEFAULT;base.text_set(chain.name[:],"arm");chain.rig=target_id
     chain.source_root,chain.source_end,chain.target_root,chain.target_end=bone_ref("joint1"),bone_ref("joint3"),bone_ref("joint1"),bone_ref("joint5")
     testing.expect(t,modifier_append(&modifiers.retarget_chains,target_id,chain))
     testing.expect(t,rigs_retarget(target,&playback,&modifiers,&problems))
-    testing.expect_value(t,target.local[0],actor)
-    for value,i in target.local {if i>0 {testing.expect_value(t,value.position,target.rest[i].position)}}
-    testing.expect(t,linalg.dot(target.local[2].rotation,mm.Quat(1))<.9999)
+    testing.expect_value(t,playing_pose(target,.Local)[0],actor)
+    for value,i in playing_pose(target,.Local) {if i>0 {testing.expect_value(t,value.position,target.rest[i].position)}}
+    testing.expect(t,linalg.dot(playing_pose(target,.Local)[2].rotation,mm.Quat(1))<.9999)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
-    for _ in 0..<120 {copy(target.local[:],target.rest[:]);target.local[0]=actor;stable &&=rigs_retarget(target,&playback,&modifiers,&problems)}
+    for _ in 0..<120 {copy(playing_pose(target,.Local),target.rest[:]);playing_pose(target,.Local)[0]=actor;stable &&=rigs_retarget(target,&playback,&modifiers,&problems)}
     context=saved
-    testing.expect(t,stable && problems.count==0 && target.local[0]==actor)
+    testing.expect(t,stable && problems.count==0 && playing_pose(target,.Local)[0]==actor)
 }
 
 @(test)
@@ -336,7 +338,7 @@ rig_goal_persistence_keeps_independent_effectors_and_accepts_chain_retarget_goal
     if !test_world_init(t,&w) {return}
     defer test_world_destroy(&w)
     body,transfer:=core.create(&w.entities),core.create(&w.entities)
-    multi:=MULTI_IK_CONSTRAINT_DEFAULT;multi.rig=body;multi.effector_count=2
+    multi:=MULTI_IK_CONSTRAINT_DEFAULT;multi.rig=body;multi.effectors=make([]Multi_IK_Effector,int(2),context.temp_allocator)
     multi.effectors[0],multi.effectors[1]=MULTI_IK_EFFECTOR_DEFAULT,MULTI_IK_EFFECTOR_DEFAULT
     testing.expect(t,modifier_append(&w.modifiers.multi_ik,body,multi))
     chain:=CHAIN_RETARGET_CONSTRAINT_DEFAULT;chain.rig=transfer
@@ -365,7 +367,7 @@ rig_goal_persistence_keeps_independent_effectors_and_accepts_chain_retarget_goal
 multi_ik_modifiers_accept_named_goals_keep_effectors_independent_and_clone_solver_scratch :: proc(t:^testing.T) {
     rig:=core.entity_make(1,1);state:=rig_test_state(rig,4,1);defer playing_free(&state)
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
-    multi:=MULTI_IK_CONSTRAINT_DEFAULT;base.text_set(multi.name[:],"body");multi.rig,multi.root=rig,bone_ref("joint1");multi.joint_count,multi.effector_count=3,1;multi.settings.iterations=128
+    multi:=MULTI_IK_CONSTRAINT_DEFAULT;base.text_set(multi.name[:],"body");multi.rig,multi.root=rig,bone_ref("joint1");multi.joints=make([]Multi_IK_Joint,3,context.temp_allocator);multi.effectors=make([]Multi_IK_Effector,1,context.temp_allocator);multi.settings.iterations=128
     for &joint,i in multi.joints[:3] {joint=MULTI_IK_JOINT_DEFAULT;joint.bone=bone_ref(fmt.tprintf("joint%d",i+1))}
     multi.effectors[0]=MULTI_IK_EFFECTOR_DEFAULT;base.text_set(multi.effectors[0].name[:],"hand");multi.effectors[0].bone=bone_ref("joint4");multi.effectors[0].target=spatial_point({1.2,1.7,0})
     testing.expect(t,modifier_append(&modifiers.multi_ik,rig,multi))
@@ -376,20 +378,20 @@ multi_ik_modifiers_accept_named_goals_keep_effectors_independent_and_clone_solve
     modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Multi_IK,target=spatial_point({.5,1.8,0}),weight=1,enabled=true},"body")
     for goal in core.take(&requests.goals) {modifier_apply_goal(&modifiers,goal,nil)}
     testing.expect_value(t,modifiers.multi_ik.values[0].effectors[0].target.position,mm.Vec3{.5,1.8,0})
-    copy(state.local[:],state.rest[:]);testing.expect(t,rigs_apply(&state,&modifiers,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
+    copy(playing_pose(&state,.Local),state.rest[:]);testing.expect(t,rigs_apply(&state,&modifiers,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
     copied:Modifier_Runtime;core.value_copy(&copied,&modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copied)
     copied_state:Playing;core.value_copy(&copied_state,&state,type_info_of(Playing));defer playing_free(&copied_state)
     testing.expect(t,raw_data(copied.multi_states[0].backup)!=raw_data(modifiers.multi_states[0].backup))
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
     for _ in 0..<60 {
-        copy(state.local[:],state.rest[:]);copy(copied_state.local[:],copied_state.rest[:])
+        copy(playing_pose(&state,.Local),state.rest[:]);copy(playing_pose(&copied_state,.Local),copied_state.rest[:])
         stable &&=rigs_apply(&state,&modifiers,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60)
         stable &&=rigs_apply(&copied_state,&copied,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60)
     }
     context=saved
     testing.expect(t,stable)
-    for pose,i in state.local {testing.expect_value(t,pose,copied_state.local[i])}
+    for pose,i in playing_pose(&state,.Local) {testing.expect_value(t,pose,playing_pose(&copied_state,.Local)[i])}
     testing.expect_value(t,modifiers.multi_states[0].diagnostic,copied.multi_states[0].diagnostic)
 }
 
@@ -420,15 +422,15 @@ look_and_ik_publish_their_residual_and_whether_they_reach_in_the_constraints_of_
     testing.expect(t,!beyond && !elsewhere)
     // With an offset (eyes above the bone) the ray from the offset passes through the target.
     core.edit_at(&looks,0).offset={0,.2,-.1}
-    copy(state.local[:],state.rest[:]);constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0)
+    copy(playing_pose(&state,.Local),state.rest[:]);constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0)
     aimed,_=animation_rig_diagnostic(nil,rig,.Look,0,&cache)
     testing.expect(t,problems.count==0 && aimed.valid && aimed.reached && aimed.residual<1e-3,"the eyes aim at the target")
     core.edit_at(&looks,0).target=spatial_point({5,1,0});core.edit_at(&looks,0).max_angle=.2
-    copy(state.local[:],state.rest[:]);constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0)
+    copy(playing_pose(&state,.Local),state.rest[:]);constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0)
     aimed,_=animation_rig_diagnostic(nil,rig,.Look,0,&cache)
     testing.expect(t,problems.count==0 && aimed.valid && !aimed.reached && aimed.angular_error>1 && aimed.residual>1,"a look held by max_angle says how far it misses")
     core.edit_at(&looks,0).enabled=false
-    copy(state.local[:],state.rest[:]);constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0)
+    copy(playing_pose(&state,.Local),state.rest[:]);constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0)
     aimed,_=animation_rig_diagnostic(nil,rig,.Look,0,&cache)
     testing.expect(t,!aimed.valid)
 }
@@ -446,14 +448,14 @@ the_sampled_pose_of_a_rig_is_the_one_before_its_rig_operations :: proc(t:^testin
     inputs:=Constraint_Inputs{problems=&problems}
     reaching,still:Modifier_Runtime;defer {modifier_runtime_free(&reaching);modifier_runtime_free(&still)}
     multi:=MULTI_IK_CONSTRAINT_DEFAULT;multi.rig,multi.root=rig,bone_ref("joint1")
-    multi.joint_count,multi.effector_count=3,1;multi.settings.iterations=4
+    multi.joints=make([]Multi_IK_Joint,3,context.temp_allocator);multi.effectors=make([]Multi_IK_Effector,1,context.temp_allocator);multi.settings.iterations=4
     for &joint,i in multi.joints[:3] {joint=MULTI_IK_JOINT_DEFAULT;joint.bone=bone_ref(fmt.tprintf("joint%d",i+1))}
     multi.effectors[0]=MULTI_IK_EFFECTOR_DEFAULT;multi.effectors[0].bone=bone_ref("joint3");multi.effectors[0].target=spatial_point({.4,.5,0})
     testing.expect(t,modifier_append(&reaching.multi_ik,rig,multi))
     // The end of a tick of this rig: the sampled pose, then its modifiers.
     tick :: proc(playback:^Playback,state:^Playing,inputs:Constraint_Inputs,cache:^Animation_Constraints,transforms:^core.Table(core.Transform),modifiers:^Modifier_Runtime) {
-        state.sampled[2].rotation=mm.quat_axis_angle({0,0,1},.3)
-        copy(state.local[:],state.sampled[:])
+        playing_pose(state,.Sampled)[2].rotation=mm.quat_axis_angle({0,0,1},.3)
+        copy(playing_pose(state,.Local),playing_pose(state,.Sampled))
         constraints_apply(state,playback,inputs,cache,transforms,{},1.0/60,rig_runtime=modifiers)
         state.pose_ready=true
     }

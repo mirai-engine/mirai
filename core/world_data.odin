@@ -44,6 +44,16 @@ storage_copy :: proc(s:^Storage_Info,dst,src:rawptr,kept:bool) -> bool {
     return true
 }
 
+// Materializes the components that storages keep for a saved world.
+world_prepare_save :: proc(world:World_Ref) -> bool {
+    if world.place!=.World || world.info==nil || world.data==nil {return false}
+    for &storage in world.info.storages {
+        if storage.place!=.World || storage.procs.save_prepare==nil {continue}
+        if !storage.procs.save_prepare(storage_of(world.data,&storage),world) {return false}
+    }
+    return true
+}
+
 // Starts the struct of a place: its tables empty and its storages at their
 // defaults. False without memory, with a struct that world_destroy frees.
 world_init :: proc(info:^World_Info,place:Place,data:rawptr,allocator:runtime.Allocator) -> bool {

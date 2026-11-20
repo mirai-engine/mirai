@@ -201,7 +201,6 @@ Match_Playing :: struct {
     travel,travel_from,travel_to:mm.Vec3,
     travel_age:f32,
     searches,jumps:u32,
-    goal:i32,      // 1 + the index of its goal among those of this tick; 0: none
     landing_modes:u32, // event_modes of its database
     recent:lib.Match_Recent, // rows it left
     trail:lib.Match_Trail,   // where the root of the pose went
@@ -241,7 +240,7 @@ match_swapped :: proc "contextless" (kept:Match_Playing) -> Match_Playing {
 @(private)
 match_database_key :: proc(library:^host.Content_Animation,state:^Playing,source:base.Asset_Id) -> [7]u64 {
     shape:=state.skeleton
-    if shape=={} {for target in state.targets {shape[0]=base.hash_combine(shape[0],target)}}
+    if shape=={} {for target in playing_topology(state).targets {shape[0]=base.hash_combine(shape[0],target)}}
     return {library.id[0],library.id[1],u64(library.generation),shape[0],shape[1],state.skeleton_revision,source[0]~source[1]}
 }
 
@@ -261,7 +260,7 @@ animation_match_database :: proc(matches:^Character_Assets,library:^host.Content
 // skeleton loads it.
 @(private)
 match_database :: proc(content:^Character_Content,library:^host.Content_Animation,state:^Playing,source:base.Asset_Id,allocator:mem.Allocator) -> (^lib.Match_Database,lib.Match_Build_Error,Match_Fault,Match_Span_Fault) {
-    if library==nil || len(state.parents)<2 || len(state.rest)!=len(state.parents) {return nil,.Invalid,{},{}}
+    if library==nil || len(playing_topology(state).parents)<2 || len(playing_topology(state).rest)!=len(playing_topology(state).parents) {return nil,.Invalid,{},{}}
     key:=match_database_key(library,state,source)
     for &built in content.databases {if built.key==key {return &built.database if built.error==.None else nil,built.error,built.fault,built.span}}
     context.allocator=allocator
@@ -293,7 +292,7 @@ match_database :: proc(content:^Character_Content,library:^host.Content_Animatio
             handles[k]=handle+lib.Clip(library.clip_count if clip.loop else 0)
         }
         if !found {break}
-        if clip.mirror!=.Off && len(state.mirror_pairs)!=len(state.parents) {found=false;built.fault={kind=.Mirror,source=i32(i)};break}
+        if clip.mirror!=.Off && len(playing_topology(state).mirror_pairs)!=len(playing_topology(state).parents) {found=false;built.fault={kind=.Mirror,source=i32(i)};break}
         rates:=[2]f32{clip.min_rate,clip.max_rate}
         for mirror in ([2]bool{false,true}) {
             if mirror && clip.mirror==.Off || !mirror && clip.mirror==.Only {continue}
@@ -304,12 +303,12 @@ match_database :: proc(content:^Character_Content,library:^host.Content_Animatio
         }
     }
     if found {
-        rest,rest_error:=make([]mm.Transform,len(state.rest));defer delete(rest)
+        rest,rest_error:=make([]mm.Transform,len(playing_topology(state).rest));defer delete(rest)
         if rest_error!=nil {built.error=.Out_Of_Memory} else {
-            copy(rest,state.rest[:]);rest[0]=mm.TRANSFORM_IDENTITY
+            copy(rest,playing_topology(state).rest[:]);rest[0]=mm.TRANSFORM_IDENTITY
             body:=lib.body_map_empty();body.up={0,1,0}
             for bone,part in state.body {if bone>0 {body.bones[part]=bone}}
-            rig:=lib.Match_Rig{skeleton={parents=state.parents[:],names=state.targets[:],rest=rest},body=body,left_foot=i32(bones[0]),right_foot=i32(bones[1]),hips=i32(bones[2]),pairs=state.mirror_pairs[:],corrections=state.mirror_corrections[:],plane=state.mirror_plane}
+            rig:=lib.Match_Rig{skeleton={parents=playing_topology(state).parents[:],names=playing_topology(state).targets[:],rest=rest},body=body,left_foot=i32(bones[0]),right_foot=i32(bones[1]),hips=i32(bones[2]),pairs=playing_topology(state).mirror_pairs[:],corrections=playing_topology(state).mirror_corrections[:],plane=state.mirror_plane}
             weights:=lib.Match_Weights{.Foot_Position=info.foot_position,.Foot_Velocity=info.foot_velocity,.Hip_Velocity=info.hip_velocity,.Body_Velocity=info.body_velocity,.Trajectory_Position=info.trajectory_position,.Trajectory_Direction=info.trajectory_direction}
             // Each clip names its landing with a marker of its own: every one of that name.
             event:=make([dynamic]u32,context.temp_allocator)
@@ -344,10 +343,10 @@ match_database :: proc(content:^Character_Content,library:^host.Content_Animatio
 @(private)
 match_lag_apply :: proc(state:^Playing,placed:mm.Transform) {
     lag:=state.program.match.lag
-    if lag=={} || len(state.bindings)!=len(state.parents) {return}
+    if lag=={} || len(state.bindings)!=len(playing_topology(state).parents) {return}
     local:=mm.transform_inverse_vector(placed,lag)
     if !finite(local.x) || !finite(local.y) || !finite(local.z) {return}
-    for parent,b in state.parents {if parent==0 && b>0 && state.bindings[b].target!=0 {state.local[b].position+=local}}
+    for parent,b in playing_topology(state).parents {if parent==0 && b>0 && state.bindings[b].target!=0 {playing_pose(state,.Local)[b].position+=local}}
 }
 
 // Chooses the clip and time the rig plays in this tick and writes them as a program of one clip.
@@ -355,8 +354,8 @@ match_lag_apply :: proc(state:^Playing,placed:mm.Transform) {
 @(private)
 match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Content,library:^host.Content_Animation,source:base.Asset_Id,dt:f32,goals:[]Match_Goal,facing:mm.Vec3,assets:^host.Assets,allocator:runtime.Allocator,problems:^core.Problems) -> bool {
     runtime:=&state.program;m:=&runtime.match;info:=content.set.match.info
-    goal:Match_Goal;has_goal:=false
-    for value in goals {if value.rig==state.entity {goal,has_goal=value,true}}
+    goal:Match_Goal;has_goal:=len(goals)>0
+    if has_goal {goal=goals[len(goals)-1]}
     mode:=goal.mode if has_goal else m.mode
     db,built,fault,span_fault:=match_database(content,library,state,source,allocator)
     if db!=nil && span_fault.kind!=.None {
@@ -373,7 +372,7 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
         }
     }
     // A rig binds its skeleton after its first program: until then it plays the first clip.
-    if db==nil && len(state.parents)>=2 {
+    if db==nil && len(playing_topology(state).parents)>=2 {
         name:[base.ASSET_ID_TEXT]u8;path:=host.assets_name(assets,content.id,&name)
         names:[MATCH_BLEND]string
         if fault.kind!=.None && int(fault.source)<len(content.set.match.clips) {names,_=match_source_clips(&content.set.match.clips[fault.source])}
@@ -484,8 +483,9 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
                 // Nothing of the database plays (the first search, a swapped library, a mode its
                 // clip does not serve): the feet the rig has and how they move with the body.
                 request.rate=1
-                if runtime.kept && runtime.history_dt>0 {
-                    request.query,_=lib.match_query_pose(db,state.parents[:],state.body[.Foot_L],state.body[.Foot_R],state.body[.Pelvis],runtime.current[:],runtime.history[:],runtime.history_dt,mm.quat_rotate(mm.quat_inverse(lib.match_yaw(facing)),velocity))
+                if state.inertia.kept>1 && state.inertia.dt>0 {
+                    shown,previous,_,_:=inertia_poses(&state.inertia)
+                    request.query,_=lib.match_query_pose(db,playing_topology(state).parents[:],state.body[.Foot_L],state.body[.Foot_R],state.body[.Pelvis],shown,previous,state.inertia.dt,mm.quat_rotate(mm.quat_inverse(lib.match_yaw(facing)),velocity))
                 }
             }
             request.filter_stationary,request.moving=filter_stationary,moving
@@ -571,31 +571,21 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
         if m.travel_age<info.blend {m.travel_age+=dt}
     }
     output^={asset=source,count=1,mirror=db!=nil && m.range>=0 && int(m.range)<len(db.ranges) && db.ranges[m.range].mirror}
-    group:=&output.groups[0]
-    group.weight,group.root_weight,group.mode,group.key=1,1,.Independent,1
-    group.count=1;group.leaves[0]={clip=m.clip,weight=1,speed=m.rate,loop=m.loop,start=max(start,0)}
-    // A blended sample plays its clips together at its weights, in phase.
+    output.leaves[0]={clip=m.clip,weight=1,speed=m.rate,loop=m.loop,start=max(start,0)}
     if db!=nil && m.range>=0 && int(m.range)<len(db.ranges) && db.ranges[m.range].weights!={0=1} {
         r:=db.ranges[m.range]
-        group.count,group.mode=0,.Weighted
-        // Each clip starts at the share of its own duration the row is at.
+        output.count,output.normalized=0,true
         share:=max(start,0)*r.rate/f32(r.count-1)
         for clip,k in r.clips {
             if r.weights[k]<=0 {continue}
-            group.leaves[group.count]={clip=lib.clip_data(&library.lib,clip).name,key=u32(k)+1,weight=r.weights[k],speed=m.rate,loop=true,sync=true,start=share*lib.clip_duration(&library.lib,clip)}
-            group.count+=1
+            output.leaves[output.count]={clip=lib.clip_data(&library.lib,clip).name,key=u32(k)+1,weight=r.weights[k],speed=m.rate,loop=true,sync=true,start=share*lib.clip_duration(&library.lib,clip)}
+            output.count+=1
         }
     }
+    runtime.transition=0
     if start>=0 {
         runtime.epoch+=1
-        if previous!=0 && fade>0 && len(state.local)>0 {
-            if len(runtime.from)!=len(state.local) && resize(&runtime.from,len(state.local))!=nil {runtime.error=.Out_Of_Memory;return false}
-            copy(runtime.from[:],runtime.current[:] if len(runtime.current)==len(state.local) && runtime.history_dt>0 else state.local[:])
-            if !program_curves_prepare(runtime,len(state.curves)) {runtime.error=.Out_Of_Memory;return false}
-            copy(runtime.from_curves[:],runtime.prior_curves[:] if len(runtime.prior_curves)==len(state.curves) else state.curves[:])
-            runtime.elapsed,runtime.fade=0,fade
-            runtime.capture=true
-        }
+        runtime.transition=fade if previous!=0 && fade>0 else -1
     }
     return true
 }
