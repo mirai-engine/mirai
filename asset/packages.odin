@@ -96,7 +96,7 @@ Build :: struct {
     key:store.Hash,  // import_key of what built it
     final:bool,      // its textures are Final, else Fast
     outputs:[dynamic]Build_Output,
-    programs:[dynamic]store.Hash, // generated Surface source objects, sorted by address
+    programs:[dynamic]store.Hash, // generated source objects, sorted by address
 }
 
 Project_Package :: struct {

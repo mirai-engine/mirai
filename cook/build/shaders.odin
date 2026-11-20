@@ -50,6 +50,8 @@ Shaders_Job :: struct {
     arena:virtual.Arena,
     options:shaders.Options,
     store_root:string,
+    package_roots:[]string,
+    own:bool,
     worker:^thread.Thread,
     done:bool, // atomic
     tick:time.Tick,
@@ -109,9 +111,11 @@ shaders_start :: proc(
         return job
     }
     sources,own:=shader_sources(p,a)
+    job.package_roots=shaders_package_roots(p,a)
+    job.own=own
     uses,problem:=shaders_uses(p,previews,a)
     if problem!="" {return finish(job,.Failed,problem)}
-    if !own && len(sources)==0 && !shaders_have_generated(uses) {
+    if !own && len(sources)==0 && len(job.package_roots)==0 && !shaders_have_generated(uses) {
         if os.is_file(project.path(job.result.output,project.SHADERS_MANIFEST,allocator=context.temp_allocator)) {
             if base.remove_all(job.result.output)!=nil {return finish(job,.Failed,"the generation of an earlier build could not be removed")}
         }
@@ -151,11 +155,13 @@ shaders_current :: proc(p:^project.Project,previews:[]string={},store_root:="") 
     output:=project.shader_generation(p.root,context.temp_allocator)
     uses,problem:=shaders_uses(p,previews,context.temp_allocator)
     if problem!="" {return false}
-    if !own && len(sources)==0 && !shaders_have_generated(uses) {
+    roots:=shaders_package_roots(p,context.temp_allocator)
+    generated,reason:=shaders_generated(uses,store_root,roots,context.temp_allocator)
+    if reason!="" {return false}
+    if !own && len(sources)==0 && len(generated)==0 {
         return !os.is_file(project.path(output,project.SHADERS_MANIFEST,allocator=context.temp_allocator))
     }
-    generated,reason:=shaders_generated(uses,store_root,context.temp_allocator)
-    return reason=="" && p.engine_root!="" && shaders.current({
+    return p.engine_root!="" && shaders.current({
         root=p.engine_root,project=p.root,sources=sources,output=output,uses=uses,
         generated=generated,
     })
@@ -169,10 +175,21 @@ shaders_have_generated :: proc(uses:[]shaders.Program_Uses_Of) -> bool {
     return false
 }
 
+shaders_package_roots :: proc(p:^project.Project,allocator:=context.allocator) -> []string {
+    roots:=make([dynamic]string,allocator)
+    for folder in project.asset_folders(p,context.temp_allocator) {
+        pins:=project.path(folder.root,asset.PACKAGES_FILE,allocator=context.temp_allocator)
+        if !os.is_file(pins) || slice.contains(roots[:],folder.root) {continue}
+        append(&roots,strings.clone(folder.root,allocator))
+    }
+    return roots[:]
+}
+
 shaders_generated :: proc(
-    uses:[]shaders.Program_Uses_Of,store_root:string,allocator:=context.allocator,
-) -> (generated:[]shaders.Generated_Surface,problem:string) {
-    if !shaders_have_generated(uses) {return}
+    uses:[]shaders.Program_Uses_Of,store_root:string,package_roots:[]string,
+    allocator:=context.allocator,
+) -> (generated:[]shaders.Generated_Program,problem:string) {
+    if len(package_roots)==0 && !shaders_have_generated(uses) {return}
     s,open_error:=store.open(store_root if store_root!="" else
         store.default_root(context.temp_allocator),context.temp_allocator)
     if open_error!=.None {
@@ -180,21 +197,45 @@ shaders_generated :: proc(
             open_error,allocator=allocator)
     }
     defer store.close(&s)
-    found:=make([dynamic]shaders.Generated_Surface,allocator)
+    wanted:=make(map[store.Hash]bool,context.temp_allocator)
     for use in uses {
         if !strings.has_prefix(use.program,asset.GENERATED_PROGRAM_PREFIX) {continue}
         address,ok:=asset.generated_program_address(use.program)
         if !ok {
-            return nil,fmt.aprintf("invalid generated Surface program id %s: import its source again",
+            return nil,fmt.aprintf("invalid generated program id %s: import its source again",
                 use.program,allocator=allocator)
         }
+        wanted[address]=true
+    }
+    for root in package_roots {
+        pins,_,pins_error:=asset.packages_load(root,context.temp_allocator)
+        if pins_error!=.None {
+            return nil,fmt.aprintf("could not read the package pins of %s (%v)",
+                root,pins_error,allocator=allocator)
+        }
+        for &pin in pins.packages {
+            p,manifest_error:=asset.package_load(&s,root,&pin,context.temp_allocator)
+            if manifest_error!=.None {continue}
+            digits:[64]u8
+            key:=store.hex(asset.build_select(pin.manifest,&p),&digits)
+            built,ref_error:=store.ref_get(&s,asset.REF_BUILDS,key)
+            if ref_error!=.None {continue}
+            b,build_error:=asset.build_get(&s,built,context.temp_allocator)
+            if build_error!=.None || b.package_id!=pin.id {continue}
+            for address in b.programs {wanted[address]=true}
+        }
+    }
+    found:=make([dynamic]shaders.Generated_Program,0,len(wanted),allocator)
+    for address in wanted {
+        id:=asset.generated_program_id(address,allocator)
         source,read_error:=asset.record_get(&s,address)
         if read_error!=.None {
-            return nil,fmt.aprintf("generated Surface program %s is unavailable (%v): fetch or rebuild its package",
-                use.program,read_error,allocator=allocator)
+            return nil,fmt.aprintf("generated program %s is unavailable (%v): fetch or rebuild its package",
+                id,read_error,allocator=allocator)
         }
-        append(&found,shaders.Generated_Surface{id=use.program,text=strings.clone(source,allocator)})
+        append(&found,shaders.Generated_Program{id=id,text=strings.clone(source,allocator)})
     }
+    slice.sort_by(found[:],proc(a,b:shaders.Generated_Program) -> bool {return a.id<b.id})
     return found[:],""
 }
 
@@ -218,11 +259,19 @@ shaders_uses :: proc(p:^project.Project,previews:[]string,allocator:=context.all
 shaders_work :: proc(job:^Shaders_Job) {
     a:=virtual.arena_allocator(&job.arena)
     r:=&job.result
-    generated,problem:=shaders_generated(job.options.uses,job.store_root,a)
+    defer sync.atomic_store(&job.done,true)
+    defer r.seconds=time.duration_seconds(time.tick_since(job.tick))
+    generated,problem:=shaders_generated(job.options.uses,job.store_root,job.package_roots,a)
     if problem!="" {
         r.status,r.message=.Failed,problem
-        r.seconds=time.duration_seconds(time.tick_since(job.tick))
-        sync.atomic_store(&job.done,true)
+        return
+    }
+    if !job.own && len(job.options.sources)==0 && len(generated)==0 {
+        r.status=.None
+        manifest:=project.path(r.output,project.SHADERS_MANIFEST,allocator=context.temp_allocator)
+        if os.is_file(manifest) && base.remove_all(r.output)!=nil {
+            r.status,r.message=.Failed,"the generation of an earlier build could not be removed"
+        }
         return
     }
     job.options.generated=generated
@@ -237,8 +286,6 @@ shaders_work :: proc(job:^Shaders_Job) {
         r.message=strings.trim_space(result.warnings)
         r.refused=result.refused
     }
-    r.seconds=time.duration_seconds(time.tick_since(job.tick))
-    sync.atomic_store(&job.done,true)
 }
 
 // The folder of the generation of the first stages once they compiled, while

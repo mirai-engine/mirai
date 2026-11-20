@@ -3,9 +3,11 @@ package build
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:asset"
 import "mirai:cook/shaders"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:store"
 
 @(private="file")
 shaders_write :: proc(t:^testing.T,parts:..string,text:="") {
@@ -117,6 +119,39 @@ shaders_that_cannot_be_generated_say_why_and_leave_what_was_published :: proc(t:
     shaders_destroy(job)
     manifest,_:=os.read_entire_file(project.path(root,".mirai/shaders/manifest.json",allocator=context.temp_allocator),context.temp_allocator)
     testing.expect_value(t,string(manifest),"{}")
+}
+
+@(test)
+generated_sources_follow_the_pinned_build_without_material_uses :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"build-generated-source")
+    if root=="" {return}
+    s,open_error:=store.open(project.path(root,"store",allocator=context.temp_allocator),
+        context.temp_allocator)
+    if !testing.expect_value(t,open_error,store.Error.None) {return}
+    defer store.close(&s)
+    SOURCE :: "//! mirai vfx Sparks\nnamespace Sparks {}\n"
+    address,put_error:=asset.record_put(&s,transmute([]u8)string(SOURCE))
+    if !testing.expect_value(t,put_error,asset.Error.None) {return}
+    p:=asset.Package{id={1,2},name="Sparks"}
+    manifest,manifest_error:=asset.package_put(&s,&p)
+    if !testing.expect_value(t,manifest_error,asset.Error.None) {return}
+    b:=asset.Build{package_id=p.id,final=true}
+    b.programs.allocator=context.temp_allocator
+    append(&b.programs,address)
+    hash,build_error:=asset.build_put(&s,&b)
+    if !testing.expect_value(t,build_error,asset.Error.None) {return}
+    digits:[64]u8
+    selected:=store.hex(asset.build_select(manifest,&p),&digits)
+    testing.expect_value(t,store.ref_set(&s,asset.REF_BUILDS,selected,hash),store.Error.None)
+    list:asset.Packages
+    list.packages.allocator=context.temp_allocator
+    append(&list.packages,asset.Project_Package{id=p.id,manifest=manifest})
+    if !testing.expect_value(t,asset.packages_save(root,&list),asset.Error.None) {return}
+
+    programs,problem:=shaders_generated(nil,s.root,{root},context.temp_allocator)
+    if !testing.expectf(t,problem=="" && len(programs)==1,"%s",problem) {return}
+    testing.expect_value(t,programs[0].id,asset.generated_program_id(address,context.temp_allocator))
+    testing.expect_value(t,programs[0].text,SOURCE)
 }
 
 @(test)
