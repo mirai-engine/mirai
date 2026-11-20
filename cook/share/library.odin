@@ -102,14 +102,14 @@ peer_library :: proc(n:^Node,peer:Peer,allocator:=context.allocator) -> (list:[]
         entry:=Peer_Package{id=p.id,manifest=named.address,name=strings.clone(p.name,allocator),origin=strings.clone(p.origin.path,allocator),kinds=kinds[:],assets=len(p.assets),bytes=-1}
         // Whether it is here is read before the sizes are asked, which may bring a small object whole.
         if b,built:=chosen[p.id];built {
-            entry.built,entry.here=true,true
+            entry.built,entry.here=true,asset.build_whole(s,&b)
             objects:=make([]store.Hash,len(b.outputs),allocator)
             entry.root,_=asset.build_shown(&b,&p)
             for o,k in b.outputs {
                 append(&sizes,o.object)
-                entry.here&&=asset.object_whole(s,o.object)
                 objects[k]=o.object
             }
+            append(&sizes,..b.programs[:])
             slice.sort_by(objects,proc(a,b:store.Hash) -> bool {
                 a,b:=a,b
                 return string(a[:])<string(b[:])
@@ -123,8 +123,9 @@ peer_library :: proc(n:^Node,peer:Peer,allocator:=context.allocator) -> (list:[]
         b,built:=chosen[entry.id]
         if !built {continue}
         total:i64
-        for o in b.outputs {
-            size,sized:=known[o.object]
+        objects:=asset.Build_Objects{build=&b}
+        for address in asset.build_object_next(&objects) {
+            size,sized:=known[address]
             if !sized {total=-1;break}
             total+=size
         }
@@ -264,10 +265,7 @@ package_built :: proc(s:^store.Store,manifest:store.Hash,p:^asset.Package) -> bo
     if ref_error!=.None {return false}
     b,error:=asset.build_get(s,hash,context.temp_allocator)
     if error!=.None {return false}
-    for o in b.outputs {
-        if !asset.object_whole(s,o.object) {return false}
-    }
-    return true
+    return asset.build_whole(s,&b)
 }
 
 // A ref one peer names, and the small object it names, fetched without

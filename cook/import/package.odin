@@ -260,6 +260,9 @@ writer_publish :: proc(w:^Writer,name,importer:string) -> bool {
         info,_:=asset.kind_info(output.kind)
         append(&b.outputs,asset.Build_Output{id=output.id,kind=output.kind,kind_version=info.version,object=w.objects[at]})
     }
+    b.programs=make([dynamic]store.Hash,0,len(w.programs),context.temp_allocator)
+    for program in w.programs {append(&b.programs,program)}
+    slice.sort_by(b.programs[:],asset.program_address_less)
     manifest,manifest_error:=asset.package_put(s,&p)
     if manifest_error!=.None {return writer_fail(w,.Write,"the manifest of the package of %s could not be put in the store at %s: %v",w.path,s.root,manifest_error)}
     build,build_error:=asset.build_put(s,&b)
@@ -299,7 +302,7 @@ writer_identity :: proc(w:^Writer) {
 // source is not.
 build_key :: proc(identity:store.Hash,version:u32,code:u64) -> store.Hash {
     versions:=import_versions(version)
-    all:=[4]u64{versions[0],versions[1],versions[2],code}
-    key,_:=asset.import_key(identity,all[:3 if code==0 else 4])
+    all:=[5]u64{versions[0],versions[1],versions[2],asset.BUILD_MANIFEST_VERSION,code}
+    key,_:=asset.import_key(identity,all[:4 if code==0 else 5])
     return key
 }

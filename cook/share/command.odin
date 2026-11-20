@@ -312,10 +312,8 @@ library_served :: proc(s:^store.Store,root:string,served:^[dynamic]store.Hash,ca
         append(served,hash)
         b,build_error:=asset.build_get(s,hash,context.temp_allocator)
         if build_error!=.None {continue}
-        for o in b.outputs {
-            append(served,o.object)
-            if o.thumbnail!={} {append(served,o.thumbnail)}
-        }
+        objects:=asset.Build_Objects{build=&b,with_thumbnails=true}
+        for address in asset.build_object_next(&objects) {append(served,address)}
     }
 }
 

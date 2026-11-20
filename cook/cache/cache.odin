@@ -166,9 +166,9 @@ store_source :: proc(from:^store.Store) -> Source {
         if namespace==asset.REF_IMPORTS || namespace==asset.REF_IMPORTS_FAST || namespace==asset.REF_BUILDS {
             b,build_error:=asset.build_get(from,object,context.temp_allocator)
             if build_error!=.None {return false}
-            for o in b.outputs {
-                if object_copy(from,into,o.object)!=.None {return false}
-                if o.thumbnail!={} && object_copy(from,into,o.thumbnail)!=.None {return false}
+            objects:=asset.Build_Objects{build=&b,with_thumbnails=true}
+            for address in asset.build_object_next(&objects) {
+                if object_copy(from,into,address)!=.None {return false}
             }
         }
         return store.ref_set(into,namespace,name,object)==.None

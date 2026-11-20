@@ -98,12 +98,15 @@ package_records_read_back_what_they_write :: proc(t:^testing.T) {
     testing.expect_value(t,again,text)
 
     b:=sample_build(&p,{hash_of("a"),hash_of("b")})
+    b.programs.allocator=context.temp_allocator
+    append(&b.programs,hash_of("surface"))
     build,build_error:=build_text(&b,context.temp_allocator)
     if !testing.expect_value(t,build_error,Error.None) {return}
     built,built_error:=build_parse(build,context.temp_allocator)
     if !testing.expect_value(t,built_error,Error.None) {return}
     testing.expect(t,built.package_id==b.package_id && built.key==b.key && built.final && len(built.outputs)==len(b.outputs),"the build reads back")
     for o,at in built.outputs {testing.expectf(t,o==b.outputs[at],"output %d reads back",at)}
+    testing.expect(t,len(built.programs)==1 && built.programs[0]==b.programs[0])
     rebuilt,_:=build_text(&built,context.temp_allocator)
     testing.expect_value(t,rebuilt,build)
 
@@ -412,6 +415,9 @@ store_sweep_keeps_what_refs_and_builds_reach :: proc(t:^testing.T) {
     blobs:=[2]store.Hash{mesh,texture}
     b:=sample_build(&p,blobs[:])
     for &o in b.outputs {o.thumbnail={}}
+    program:=put(&s,"surface",old)
+    b.programs.allocator=context.temp_allocator
+    append(&b.programs,program)
     build,_:=build_put(&s,&b)
     digits:[64]u8
     store.ref_set(&s,REF_IMPORTS,store.hex(hash_of("key"),&digits),build)
@@ -420,7 +426,9 @@ store_sweep_keeps_what_refs_and_builds_reach :: proc(t:^testing.T) {
     swept,error:=store_sweep(&s,{held},now)
     testing.expect_value(t,error,store.Error.None)
     testing.expect(t,swept.chunks>0)
-    for hash in ([]store.Hash{mesh,texture,held,cached,build}) {testing.expect(t,object_whole(&s,hash))}
+    for hash in ([]store.Hash{mesh,texture,held,cached,program,build}) {
+        testing.expect(t,object_whole(&s,hash))
+    }
     testing.expect(t,manifest_kept(&s,manifest))
     testing.expect(t,!store.chunk_has(&s,loose),"what nothing reaches goes")
 }

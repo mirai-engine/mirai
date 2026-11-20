@@ -6,6 +6,7 @@ import "core:path/filepath"
 import "core:strings"
 import "mirai:asset"
 import "mirai:std/base"
+import "mirai:store"
 
 // The assets of an import that is not that of one model: the scene of a
 // level, the source a plugin imports whole with the models it reads
@@ -139,6 +140,26 @@ output_written :: proc(o:^Outputs,id:base.Asset_Id,name:string,detail:="") -> Er
 
 output_warn :: proc(o:^Outputs,format:string,args:..any) {
     append(&o.report.warnings,fmt.aprintf(format,..args,allocator=o.report.allocator))
+}
+
+output_program :: proc(o:^Outputs,source:string) -> (address:store.Hash,error:Error) {
+    caller:=context.temp_allocator
+    context.temp_allocator=base.dynamic_arena_allocator(&o.scratch)
+    if len(source)==0 || o.w.options.store==nil {
+        return {},error_make(.Malformed,"a generated Surface program needs source and a store",
+            allocator=caller)
+    }
+    hash,put_error:=asset.record_put(o.w.options.store,transmute([]u8)source)
+    if put_error!=.None {
+        return {},error_make(.Write,"could not store the generated Surface source (%v)",
+            put_error,allocator=caller)
+    }
+    if o.w.programs==nil {o.w.programs=make(map[store.Hash]struct{},o.w.keep)}
+    if _,no_room:=map_insert(&o.w.programs,hash,struct{}{});no_room!=nil {
+        return {},error_make(.Write,"could not record the generated Surface source in the build",
+            allocator=caller)
+    }
+    return hash,{}
 }
 
 // Whether the store has every output of the cache of the package, built from

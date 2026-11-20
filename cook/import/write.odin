@@ -140,6 +140,7 @@ Writer :: struct {
     paths:[dynamic]string,       // the scratch file of each of outputs
     targets:[dynamic]string,     // the file of each document of outputs in the folder of the documents; "": none
     objects:[dynamic]store.Hash, // the object of each of outputs once the store took it; zero: none
+    programs:map[store.Hash]struct{},
     followed:[dynamic]Followed_Skeleton, // the baselines of the skeletons taken, which clips follow onto
     scratch:string,              // the folder parts are written in before the store takes them
     version:u32,                 // import_version of what reads the source
