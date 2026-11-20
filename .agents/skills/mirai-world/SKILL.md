@@ -144,7 +144,8 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   the ground (`core.Ground_Queries`, which terrain gives) and births of effects (`core.Births`,
   which vfx takes).
 - AI over the network: the minds decide on the server.
-- Navigation: automatic navmesh by tiles from the collision.
+- Navigation builds tiles from collision. Authored surface links keep their owners when toggled,
+  and each agent has one navigation-owned corridor separate from its path status.
 - Far-away simulation: automatic coarse simulation through the portal graph.
 - Water: Gerstner waves.
 - Particles: a particle glows by its emission and is not a light; an effect that must light its
