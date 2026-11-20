@@ -31,7 +31,7 @@ content_libraries_are_roots_of_what_the_project_does_not_hold :: proc(t:^testing
     ana:=[]share.Peer_Package{
         {id={1,1},name="robot",origin="/home/ana/robot.glb",kinds=kinds,bytes=300,built=true,here=true},
         {id={1,3},name="crate",kinds=kinds,bytes=300,built=true},
-        {id={2,1},name="spotlight",documents="Crystal_Cave/Maps/lamp",origin="/home/ana/lamp.glb",kinds=kinds,assets=lamp_assets,bytes=2048,built=true},
+        {id={2,1},name="lamp",catalog_path="Crystal_Cave/Maps",origin="/home/ana/lamp.glb",kinds=kinds,assets=lamp_assets,bytes=2048,built=true},
         {id={2,2},name="tree",origin="/home/ana/trees/oak/tree.glb",kinds=kinds,bytes=4096,built=true},
         {id={2,3},name="tree",origin="/home/ana/trees/pine/tree.glb",kinds=kinds,bytes=4096,built=true},
     }
@@ -76,7 +76,7 @@ content_libraries_are_roots_of_what_the_project_does_not_hold :: proc(t:^testing
     c.filter_length=0
     // A selected peer asset can move the package into This machine without closing its folder.
     taken:=[]Library_Asset{{id={3,1},name="shade",kind=asset.KIND_MATERIAL,pinned=true},{id={3,2},name="glass",kind=asset.KIND_TEXTURE}}
-    following:=[]Library_Package{{id={2,1},name="spotlight",documents="Crystal_Cave/Maps/lamp",assets=taken,pinned=true}}
+    following:=[]Library_Package{{id={2,1},name="lamp",catalog_path="Crystal_Cave/Maps",assets=taken,pinned=true}}
     c.libraries.roots,c.libraries.packages=content_library_listing(following,peers,allocator=context.temp_allocator)
     content_library_restore(&c)
     c.revision+=1

@@ -44,7 +44,7 @@ Library_Pin :: struct {
 Library_Package :: struct {
     id:base.Asset_Id,
     manifest:store.Hash,
-    name,origin,documents:string,
+    name,origin,catalog_path:string,
     pinned:bool,   // the project pins it
     folder:string, // where the project lists it, when pinned
     assets:[]Library_Asset,
@@ -146,7 +146,8 @@ library_list :: proc(s:^Session,root:string,allocator:=context.allocator) -> (li
     for ref in refs {
         p,read_error:=asset.package_get(&s.store,ref.hash,allocator)
         if read_error!=.None {continue}
-        entry:=Library_Package{id=p.id,manifest=ref.hash,name=p.name,origin=p.origin.path,documents=p.documents}
+        entry:=Library_Package{id=p.id,manifest=ref.hash,name=p.name,
+            origin=p.origin.path,catalog_path=p.catalog_path}
         selected:[]bool
         for &pinned in pins.packages {
             if pinned.id!=p.id {continue}
