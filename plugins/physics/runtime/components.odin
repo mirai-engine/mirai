@@ -277,3 +277,9 @@ joint_drive_pose :: proc "contextless" (joint:^Joint,translation:[3]f32,rotation
     joint^=next
     return .None
 }
+
+// A character needs the capsule of its own Collider.
+character_owner :: proc "contextless" (characters:^core.Table(Character,.Read),colliders:^core.Table(Collider,.Read),e:core.Entity) -> bool {
+    collider,has:=core.get(colliders,e)
+    return has && collider.kind==.Capsule && core.has(characters,e)
+}

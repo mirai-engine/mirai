@@ -212,7 +212,6 @@ draw_collision :: proc(lines:^erender.Debug_Lines,view:^Nav_View,physics:^phys.P
     in_mesh:=make(map[core.Entity]struct{},context.temp_allocator)
     for e in view.owners[:in_count/3] {in_mesh[e]={}}
     everything:=phys.QUERY_FILTER_DEFAULT
-    everything.objects=phys.COLLISION_LAYERS_ALL
     _,index_count,complete:=phys.static_triangles(core.ref(physics),box,view.triangles[:],view.indices[:],everything,view.owners[:])
     for i in 0..<index_count/3 {
         color:=COLLISION_IN_COLOR if view.owners[i] in in_mesh else COLLISION_OUT_COLOR

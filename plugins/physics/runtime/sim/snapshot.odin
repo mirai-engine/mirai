@@ -92,6 +92,9 @@ world_state_copy :: proc(dst,src:^World) -> (written:int,ok:bool) {
     }
     for pool in Pool {written+=base.chunks_copy(copies[pool][:counts[pool]],dst.stamps[pool],src.stamps[pool],slots[pool],whole)}
     dst.state=src.state
+    dst.character_push_force=src.character_push_force
+    dst.push_rule_count=src.push_rule_count
+    dst.push_rules=src.push_rules
     revision:=max(dst.revision,src.revision)+1
     dst.revision,src.revision=revision,revision
     // Its next copy takes them.

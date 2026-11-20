@@ -50,7 +50,7 @@ character_landing :: proc(physics:core.Ref(Physics_State),e:core.Entity) -> (tim
 
 @(private)
 landing_on_arc :: proc(w:^sim.World,h:sim.Character_Handle) -> (time,speed:f32,ok:bool) {
-    if !sim.character_valid(w,h) {return}
+    if !sim.character_valid(w,h) || .Ghosted in sim.character_move(w,h).flags {return}
     desc:=sim.character_desc(w,h)
     body:=sim.character_body(w,h)
     gravity:=sim.body_gravity(w,body)*desc.gravity_scale

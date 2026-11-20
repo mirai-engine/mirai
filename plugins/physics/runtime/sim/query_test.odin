@@ -87,7 +87,12 @@ ray_cast_all_returns_the_nearest_hits_in_order_up_to_the_first_that_blocks :: pr
     hits:[8]Ray_Hit
     testing.expect_value(t,ray_cast_all(&w,{-5,0,0},{30,0,0},hits[:]),1)
     testing.expect_value(t,hits[0].body,bodies[5])
-    every:=Query_Filter{objects=0xffffffff}
+    for body in bodies[1:] {
+        shapes:[1]Shape_Handle
+        body_shapes(&w,body,shapes[:])
+        shape_set_filter(&w,shapes[0],{layers=1,overlap=0xffffffff})
+    }
+    every:=Query_Filter{filter=FILTER_DEFAULT,include_sensors=true}
     count:=ray_cast_all(&w,{-5,0,0},{30,0,0},hits[:],every)
     testing.expect_value(t,count,6)
     for i in 0..<6 {
@@ -100,11 +105,11 @@ ray_cast_all_returns_the_nearest_hits_in_order_up_to_the_first_that_blocks :: pr
     testing.expect_value(t,hits[2].body,bodies[3])
     testing.expect_value(t,ray_cast_all(&w,{-5,0,0},{30,0,0},nil),0)
     closest,ok:=ray_cast_closest(&w,{-5,0,0},{30,0,0})
-    testing.expect(t,ok && closest.body==bodies[5])
+    testing.expect(t,ok && closest.body==bodies[0])
 }
 
 @(test)
-query_filters_select_channels_object_types_bodies_and_overlaps :: proc(t:^testing.T) {
+query_filters_select_channels_bodies_and_overlaps :: proc(t:^testing.T) {
     w:World
     testing.expect(t,test_world(&w))
     defer world_destroy(&w)
@@ -122,23 +127,25 @@ query_filters_select_channels_object_types_bodies_and_overlaps :: proc(t:^testin
     only_first:=Query_Filter{filter={layers=1,block=1}}
     hit,_=ray_cast_closest(&w,{0,0,0},{10,0,0},only_first)
     testing.expect_value(t,hit.body,far)
-    only_first.overlaps=true
+    only_first.include_sensors=true
     hit,_=ray_cast_closest(&w,{0,0,0},{10,0,0},only_first)
     testing.expect_value(t,hit.body,far)
     hits:[4]Ray_Hit
     testing.expect_value(t,ray_cast_all(&w,{0,0,0},{10,0,0},hits[:],only_first),2)
     testing.expect(t,hits[0].body==trigger && hits[0].overlap && hits[1].body==far && !hits[1].overlap)
-    testing.expect_value(t,ray_cast_all(&w,{0,0,0},{10,0,0},hits[:],{filter=FILTER_DEFAULT,overlaps=true}),1)
+    testing.expect_value(t,ray_cast_all(&w,{0,0,0},{10,0,0},hits[:],{filter=FILTER_DEFAULT,include_sensors=true}),1)
     hit,_=ray_cast_closest(&w,{0,0,0},{10,0,0},{filter=FILTER_DEFAULT,ignore_body=near})
     testing.expect_value(t,hit.body,far)
     testing.expect(t,!ray_cast_any(&w,{0,0,0},{10,0,0},{filter={layers=1,block=4}}))
-    hit,_=ray_cast_closest(&w,{0,0,0},{10,0,0},{objects=1})
-    testing.expect_value(t,hit.body,trigger)
-    testing.expect_value(t,ray_cast_all(&w,{0,0,0},{10,0,0},hits[:],{objects=3}),3)
+    sensors:=only_first
+    sensors.ignore_body=far
+    testing.expect_value(t,ray_cast_all(&w,{0,0,0},{10,0,0},hits[:],sensors),1)
+    testing.expect(t,hits[0].body==trigger && hits[0].overlap)
+    testing.expect(t,!ray_cast_any(&w,{0,0,0},{10,0,0},sensors))
     out:[4]Shape_Handle
     testing.expect_value(t,overlap_aabb(&w,{{-1,-1,-1},{7,1,1}},out[:]),2)
-    testing.expect_value(t,overlap_aabb(&w,{{-1,-1,-1},{7,1,1}},out[:],{filter=FILTER_DEFAULT,overlaps=true}),3)
-    testing.expect_value(t,overlap_aabb(&w,{{-1,-1,-1},{7,1,1}},out[:],{objects=2}),1)
+    testing.expect_value(t,overlap_aabb(&w,{{-1,-1,-1},{7,1,1}},out[:],{filter=FILTER_DEFAULT,include_sensors=true}),3)
+    testing.expect_value(t,overlap_aabb(&w,{{-1,-1,-1},{7,1,1}},out[:],{filter={layers=1,block=2}}),1)
     testing.expect_value(t,overlap_aabb(&w,{{-1,-1,-1},{7,1,1}},out[:1]),2)
 }
 
@@ -236,7 +243,10 @@ shape_casts_stop_at_first_contact :: proc(t:^testing.T) {
     expect_near(t,hit.fraction,(4-0.5)/20,2e-3)
     hits:[4]Ray_Hit
     testing.expect_value(t,shape_cast_all(&w,Capsule{0.25,0.5},{{0,3,0},QUAT_IDENTITY},{20,0,0},hits[:]),1)
-    count:=shape_cast_all(&w,Capsule{0.25,0.5},{{0,3,0},QUAT_IDENTITY},{20,0,0},hits[:],{objects=0xffffffff})
+    shapes:[1]Shape_Handle
+    body_shapes(&w,ball,shapes[:])
+    shape_set_filter(&w,shapes[0],{layers=1,overlap=0xffffffff})
+    count:=shape_cast_all(&w,Capsule{0.25,0.5},{{0,3,0},QUAT_IDENTITY},{20,0,0},hits[:],{filter=FILTER_DEFAULT,include_sensors=true})
     testing.expect_value(t,count,2)
     testing.expect(t,hits[0].body==ball && hits[1].body==wall)
     expect_near(t,hits[1].fraction,(9.5-0.25)/20,2e-3)

@@ -60,6 +60,7 @@ Net_Test_Tables :: struct {
     request:Session_Request,
     network:core.Network,
     places:core.Pose_Target_Places,
+    body_places:core.Places,
     root:scene.Scene_Root,
     scene_requests:scene.Scene_Requests,
     scene_results:scene.Scene_Results,
@@ -173,9 +174,10 @@ net_test_physics :: proc(w:^$W,shared:^Net_Test_Shared,app:^host.App) {
         w.force.total+=value.force
         phys.apply_force(&w.requests,w.values.entities[index],{value.force,0,0})
     }
+    phys.physics_places(&w.body_places,&w.requests,core.ref(&w.state),core.read(&w.rigids),core.read(&w.characters))
     // Its characters have no Character_Move: they stand where they are.
     phys.physics_step(&w.state,core.ref(&w.settings),&w.requests,&w.events,&shared.colliders,app,w.time,
-        core.read(&w.rigids),core.read(&w.colliders),core.read(&w.characters),core.read(&w.moves),&w.joints,
+        core.read(&w.rigids),core.read(&w.colliders),core.read(&w.characters),&w.moves,&w.joints,
         core.read(&w.statics),core.read(&w.parents),core.read(&w.names),&w.transforms,&w.bodies,core.read(&w.replicas),
         &w.character_states,&w.joint_states,{},nil,{},core.ref(&w.sync_check),&w.simulation_hash,nil,nil,
         core.read(&w.gravities),core.read(&w.volumes),core.read(&w.worlds),{},{},core.ref(&w.hierarchy),{},{},{},{})
@@ -380,7 +382,7 @@ authoritative_components_replay_at_their_ticks_with_real_physics :: proc(t:^test
             expected.values.values[0].force=7
             local,_:=core.get(&third.transforms,e)
             motion,_:=core.get(&third.bodies,e)
-            core.push(&expected.requests.queue,phys.Body_Request{entity=e,kind=.Teleport,position=local.position,rotation=local.rotation})
+            core.place({&expected.transforms,core.read(&expected.parents),&expected.body_places,nil},e,local.position,local.rotation)
             phys.set_velocity(&expected.requests,e,motion.linear,motion.angular)
         }
     }
@@ -936,7 +938,7 @@ replicated_joint_waits_for_its_target_and_preserves_authoritative_frames_on_reta
     defer {host.app_world_scratch_free(&app);delete(app.worlds)}
     net_test_physics(&world,&shared,&app)
     testing.expect_value(t,world.state.world.joint_count,i32(1))
-    core.push(&world.requests.queue,phys.Body_Request{entity=source,kind=.Teleport,position={0,1,0},rotation=quaternion(w=.70710677,x=0,y=.70710677,z=0)})
+    core.place({&world.transforms,core.read(&world.parents),&world.body_places,nil},source,{0,1,0},quaternion(w=.70710677,x=0,y=.70710677,z=0))
     net_test_physics(&world,&shared,&app)
     ref:=core.world_ref(&world,&info)
     network:wire.Sim_Network

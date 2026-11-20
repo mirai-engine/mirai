@@ -124,8 +124,8 @@ Animation_Gallery_Diagnostics :: struct {
 
 // The bodies of the gallery that walk on their own go back and forth along the walkway; the jumper
 // jumps its obstacle. One that fell or wandered off goes back to its station.
-@(step="fixed")
-gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),inputs:^core.Table(inp.Move_Input),walks:^core.Table(locomotion.Walk,.Read),worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer,seats:^core.Table(inp.Seat,.Read),walk_actions:inp.Input_Of(locomotion.Walk_Action),time:core.Time) {
+@(step="fixed",stage="apply",after="animation_motor_drive")
+gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),drives:^core.Table(locomotion.Locomotion_Drive),walks:^core.Table(locomotion.Walk,.Read),worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer,seats:^core.Table(inp.Seat,.Read),walk_actions:inp.Input_Of(locomotion.Walk_Action),time:core.Time) {
     for row in 0..<core.count(gallery) {
         entity:=core.entity_at(gallery,row)
         item:=core.at(gallery,row)
@@ -140,33 +140,32 @@ gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),inputs:
             // While it turns toward its next goal its motor is off: it stands and faces that way.
             if item.kind==.Warp {
                 if warp:=gallery_warp(item,time.dt);warp.turn {
-                    if input:=core.edit(inputs,entity);input!=nil {
-                        // Half a turn in a bit less than the time it has, so that it faces its goal before it strides.
-                        desired:=f32(math.PI) if warp.direction>0 else 0
-                        input.move,input.buttons={},{}
-                        input.look_yaw=mm.angle_wrap(mm.angle_approach(mm.yaw_of_direction(mm.quat_forward(placed.rotation)),desired,1.25*math.PI/GALLERY_WARP_TURN*time.dt))
-                    }
+                    // Half a turn in a bit less than the time it has, so that it faces its goal before it strides.
+                    desired:=f32(math.PI) if warp.direction>0 else 0
+                    look:=mm.angle_wrap(mm.angle_approach(mm.yaw_of_direction(mm.quat_forward(placed.rotation)),desired,1.25*math.PI/GALLERY_WARP_TURN*time.dt))
+                    locomotion.drive(drives,entity,{look_yaw=look})
                 }
             }
             continue
         case .Walker,.Jumper,.Spider:
         case: continue
         }
-        if inp.seat_of(seats,entity)!=core.NONE {continue}
-        input:=core.edit(inputs,entity)
+        if inp.seat_of(seats,entity)!=core.NONE {core.remove(drives,entity);continue}
         config,configured:=core.get(walks,entity)
-        if input==nil || !configured {continue}
-        input.move,input.buttons={},{}
+        if !configured {continue}
+        input:=locomotion.Locomotion_Drive{look_yaw=mm.yaw_of_direction(mm.quat_forward(placed.rotation))}
         target:=item.origin
         target.z+=1.25 if int(item.age/3)%2==0 else -1.25
         delta:=target.z-placed.position.z
         wish:mm.Vec3
         // The jumper walks faster, so that its jump carries it over its obstacle.
-        if config.max_speed>0 && abs(delta)>.08 {wish.z=clamp(delta*2,-1,1)*(GALLERY_JUMPER_SPEED if item.kind==.Jumper else 1)/max(config.max_speed,1)}
-        gallery_move(input,wish)
+        if config.max_speed>0 && abs(delta)>.08 {wish.z=clamp(delta*2,-1,1)*(GALLERY_JUMPER_SPEED if item.kind==.Jumper else 1)}
+        input.velocity=wish
+        if linalg.length(wish)>.001 {input.look_yaw=mm.yaw_of_direction(wish)}
         // The jumper takes off just before the obstacle at its origin when it walks toward it.
         ahead:=(item.origin.z-placed.position.z)*math.sign(delta)
         if item.kind==.Jumper && ahead>.7 && ahead<1.05 {input.buttons|=inp.action_bit(inp.action_of(walk_actions,.Jump))}
+        locomotion.drive(drives,entity,input)
         if placed.position.y< -2 || linalg.length((placed.position-item.origin).xz)>4 {core.place(placer,entity,home,at_rest=true)}
     }
 }

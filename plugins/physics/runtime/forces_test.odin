@@ -169,7 +169,7 @@ a_force_field_pushes_in_the_volume_of_its_entity :: proc(t:^testing.T) {
     turn:=mm.quat_axis_angle({0,1,0},0.5*mm.PI)
     lift,idle:=core.create(&w.entities),core.create(&w.entities)
     config:=FORCE_FIELD_DEFAULT
-    config.force,config.along,config.blend,config.falloff_range,config.filter.objects=10,{0,0,-2},1,{0.5,1},4
+    config.force,config.along,config.blend,config.falloff_range,config.filter.filter.block=10,{0,0,-2},1,{0.5,1},4
     core.add(&w.fields,lift,config)
     core.add(&w.volumes,lift,volume.box({1,2,3}))
     core.add(&w.worlds,lift,core.World_Transform{transform={{3,4,5},turn,{2,1,0.5}}})
@@ -185,7 +185,7 @@ a_force_field_pushes_in_the_volume_of_its_entity :: proc(t:^testing.T) {
     testing.expect(t,request.area==volume.box({1,2,3}) && request.blend==1)
     testing.expect(t,request.position==[3]f32{3,4,5} && request.rotation==turn && request.scale==[3]f32{2,1,0.5})
     testing.expectf(t,linalg.length(request.linear-[3]f32{-1,0,0})<1e-5,"its forward, a quarter turn to the left: %v",request.linear)
-    testing.expect(t,request.strength==10 && request.falloff_range==Weight_Range{0.5,1} && request.filter.objects==4)
+    testing.expect(t,request.strength==10 && request.falloff_range==Weight_Range{0.5,1} && request.filter.filter.block==4)
     core.queue_clear(&w.requests.queue)
     step(&w,{playing=false,dt=0.25})
     testing.expect_value(t,len(w.requests.queue.items),0)

@@ -19,7 +19,7 @@ Strain_Field :: struct {
     filter:phys.Query_Filter,
 }
 
-STRAIN_FIELD_DEFAULT :: Strain_Field{filter={objects=phys.COLLISION_LAYERS_ALL}}
+STRAIN_FIELD_DEFAULT :: Strain_Field{filter=phys.QUERY_FILTER_DEFAULT}
 
 // The server decides what breaks: a client asks for no strain.
 @(step="fixed",stage="simulate",before="physics_prepare")
