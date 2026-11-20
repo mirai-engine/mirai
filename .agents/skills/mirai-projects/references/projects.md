@@ -462,9 +462,9 @@ release of the tag; run by hand, it leaves the packages as artifacts.
   generated. `build tools`, `worktree`, `package`, `bench`, `render` and `shaders` without
   `--project` ask for a checkout.
 - **Plugins.** The package brings in its cache the libraries of the engine plugins for projects
-  without `defines` or `debug`, in `minimal` and `speed`, compiled by the already packaged engine
-  with a project that activates them all. The compiler of an installed engine counts in the
-  fingerprints by its size and `engine.mirai`, not by its date, which changes on decompression
+  without `defines` or `debug`, in `minimal` and `speed`. The packaged engine compiles the
+  libraries of the runtime and editor parts selected from its plugin catalog. An installed
+  engine fingerprints its compiler by size and `engine.mirai` because decompression changes its date
   ([fingerprint](build.md#fingerprint)). With other flags they are compiled and stay in the cache.
 - **Machine state.** Settings, recent projects, preferences, caches and locks stay in
   `<package>/.mirai`, as in a checkout: the package is portable and is decompressed into a
