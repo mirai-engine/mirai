@@ -484,6 +484,30 @@ a_first_party_plugin_of_the_engine_is_found :: proc(t:^testing.T) {
 }
 
 @(test)
+packaging_selects_engine_plugin_parts_beyond_the_manifest_limit :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"project")
+    engine:=path(root,"engine",allocator=context.temp_allocator)
+    plugins:=path(engine,"plugins",allocator=context.temp_allocator)
+    test_project(t,root)
+    test_plugin(t,path(root,"plugins",allocator=context.temp_allocator),"local")
+    test_plugin(t,plugins,"assets",parts={.Assets})
+
+    needed:=[MAX_PLUGINS+1]string{}
+    for &name,i in needed {
+        name=fmt.tprintf("plugin_%d",i)
+        test_plugin(t,plugins,name,parts={.Editor} if i==0 else {.Runtime})
+    }
+    p,error:=open(root,engine,engine_plugin_parts={.Runtime,.Editor})
+    defer close(&p)
+    testing.expect_value(t,error.code,Error_Code.None)
+    testing.expect_value(t,len(p.active),len(needed))
+    for name in needed {
+        index,found:=plugin_find(p.plugins,name)
+        testing.expect(t,found && slice.contains(p.active,index),name)
+    }
+}
+
+@(test)
 plugins_that_cannot_be_ordered_or_found_are_errors :: proc(t:^testing.T) {
     root:=base.test_folder(t,"project")
     plugins:=folder_path(root,.Plugins,context.temp_allocator)
