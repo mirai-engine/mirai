@@ -45,7 +45,7 @@ gallery_manual :: proc(manual:bool,entity:core.Entity,commands:[]Gallery_Command
     return result
 }
 
-gallery_playback_commands :: proc(commands:[]Gallery_Command,animations:^core.Table(anim.Animation),requests:^anim.Animation_Requests,playback:^anim.Playback) {
+gallery_playback_commands :: proc(commands:[]Gallery_Command,requests:^anim.Animation_Requests,playback:^anim.Playback) {
     for &command in commands {
         e:=command.entity
         #partial switch command.kind {
@@ -54,9 +54,11 @@ gallery_playback_commands :: proc(commands:[]Gallery_Command,animations:^core.Ta
         case .Automatic: if command.enabled {anim.animation_command(requests,e,.Resume)}
         case .Playing: anim.animation_command(requests,e,.Resume if command.enabled else .Pause)
         case .Restart: anim.animation_command(requests,e,.Play)
-        case .Seek: anim.animation_seek(requests,e,command.value)
-        case .Rate: if anim.animation_playing(playback,e) {anim.animation_command(requests,e,.Resume,speed=command.value)}
-        case .Clip: anim.animation_clip(core.edit(animations,e),base.text_get(command.name[:]))
+        case .Seek: anim.animation_command(requests,e,.Seek,command.value)
+        case .Rate:
+            command_kind:=anim.Timeline_Command.Resume if anim.animation_playing(playback,e) else .Pause
+            anim.animation_command(requests,e,command_kind,speed=command.value)
+        case .Clip: anim.play_clip(requests,e,base.text_get(command.name[:]))
         }
     }
 }

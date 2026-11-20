@@ -202,8 +202,8 @@ Adapt the source's data to these features instead of rebuilding its runtime:
   share that moves the body. Every layer that moves the root moves the root bone of the base.
 - **What `play` starts replicates by itself:** the end that decides an entity records each action
   it asks in `Animation_Played`, and the others play it from the tick it started.
-- `Animation.playing` and `speed` only start a clip by itself; once the world plays, commands play,
-  pause, stop, seek and reverse it.
+- The `Animation` clip and playback fields give the initial clip and clock. The clip request
+  queue owns those settings in Play and retains requests while their sources load.
 - The runtime does not allocate in a stable frame; the buffers of the program are reserved at load
   and released when it is retired. The database of a set is built at load, per library and
   skeleton, within its memory cap.

@@ -53,18 +53,20 @@ a shot and one on another actor an action.
 
 ## Commands
 
-`Animation_Requests.timeline` is the one queue that plays, pauses, resumes, stops, reverses and
-seeks a clip: `animation_command(requests, entity, command, time, speed)` and `animation_seek`.
-`animation_sample` takes them. `Play` starts from the start (the end, backwards) at `speed`;
-`Resume` goes on at `speed` from where it is; `Stop` returns to the start and waits; `Seek` jumps
-without firing the markers it skips.
+The clip commands in `Animation_Requests` own playback in Play. Set the initial clip and clock
+on `Animation`. Use `play_clip` to select a clip and `animation_command` to control its clock.
+Play with `restart` starts over, Resume keeps the current time, and Seek skips the markers before
+the destination. Stop rewinds the base clip or releases the requested overlay.
 
-- `Animation.playing` and `speed` say only how the clip starts when its entity starts to play;
-  from then on its playback keeps whether it plays and at what speed, and only commands change
-  them. `animation_playing` says what the clip does, and `Animation_Progress` keeps time, speed and
-  whether it plays for a saved game, which `progress_resume` asks back with commands.
-- The editor, which does not play, takes only `Seek`: its previews seek.
-- A command for an entity that plays nothing is the problem `animation.command`.
+- Ad-hoc clips over matched locomotion, clips assigned to a named layer, and additive clips use
+  the stack. The entity has one ad-hoc overlay, which hands its slot back when it ends. Named
+  actions keep their priority rules.
+- A one-shot with `next_clip` starts that clip from the same source on the tick after it ends.
+- Raw clips report Started, Ended and Interrupted in the same queue as their markers. Events
+  name the original clip and .anim even in a joined library. The action hash is present for named
+  actions.
+- `Animation_Progress` preserves the base clip, clock and time in a save. The editor takes Seek
+  for its preview, and Play starts from the component or saved progress.
 
 ## Verification
 

@@ -34,12 +34,12 @@ game_showcase :: proc(
         if marker.kind==.Marker && marker.name==base.name_hash("top") {arrivals+=1}
     }
     lift:=core.entity_named(names,SHOWCASE_LIFT)
-    animation,animated:=core.get(animations,lift)
+    animated:=core.has(animations,lift)
     lift_time,_,_,has_progress:=anim.animation_progress(playback.ptr,lift)
     for &showcase in core.writable(shown) {
         showcase.trips+=arrivals
         if !animated {continue}
-        showcase.running=animation.playing
+        showcase.running=anim.animation_playing(playback.ptr,lift)
         if has_progress {showcase.charge=1-abs(lift_time/SHOWCASE_RIDE_SECONDS*2-1)}
     }
 }
