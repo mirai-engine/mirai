@@ -54,6 +54,7 @@ Collab_Take :: struct {
     name:[64]u8,
     root:string,
     folder:string,
+    assets:[]string,
     error:string,
     received:u64, // of the node when it began
     arena:mem.Dynamic_Arena,
@@ -156,13 +157,19 @@ collab_library_find :: proc(s:^Session,st:^Collab_State,peer:int,named:string) -
 // Takes a package of a peer's library into this machine's, then adds it to
 // folder as one of this machine's library is added. What failed, as how to fix it.
 @(private)
-collab_library_add :: proc(s:^Session,peer:int,named,folder:string) -> string {
+collab_library_add :: proc(s:^Session,peer:int,named,folder:string,ids:[]string=nil) -> string {
     st:=collab_state(s)
     if st==nil || st.node==nil || st.phase!=.Joined {return "this editor is in no session: the libraries of others are those of the editors of a session (collab.host or collab.join)"}
-    if st.take!=nil && !sync.atomic_load(&st.take.done) {return "a package of a peer is being added: wait for it, as packages.peers says"}
+    if st.take!=nil && (st.take.thread!=nil || !sync.atomic_load(&st.take.done)) {return "a package of a peer is being added: wait for it, as packages.peers says"}
     if busy:=import_busy(s);busy!="" {return busy}
     p,problem:=collab_library_find(s,st,peer,named)
     if problem!="" {return problem}
+    for text in ids {
+        id,parsed:=serial.text_parse_asset_id(strings.trim_space(text))
+        known:=false
+        for a in p.assets {known||=parsed && a.id==id}
+        if !known {return fmt.tprintf("assets: %q is no asset of the package %s",text,p.name)}
+    }
     if st.take!=nil {collab_take_free(st.take)}
     t:=new(Collab_Take)
     mem.dynamic_arena_init(&t.arena,runtime.heap_allocator(),runtime.heap_allocator())
@@ -171,6 +178,8 @@ collab_library_add :: proc(s:^Session,peer:int,named,folder:string) -> string {
     base.text_set(t.name[:],p.name)
     t.root=strings.clone(s.project_root,t.allocator)
     t.folder=strings.clone(folder,t.allocator)
+    t.assets=make([]string,len(ids),t.allocator)
+    for text,at in ids {t.assets[at]=strings.clone(text,t.allocator)}
     t.received=share.node_totals(st.node).received
     st.take=t
     t.thread=thread.create_and_start_with_poly_data(t,proc(t:^Collab_Take) {
@@ -204,7 +213,7 @@ collab_take_update :: proc(s:^Session,st:^Collab_State) {
         return
     }
     buffer:[base.ASSET_ID_TEXT]u8
-    if problem:=library_add(s,base.asset_id_format(t.id,buffer[:]),nil,t.folder);problem!="" {
+    if problem:=library_add(s,base.asset_id_format(t.id,buffer[:]),t.assets,t.folder);problem!="" {
         t.error=strings.clone(problem,t.allocator)
         notify(s,fmt.tprintf("%s is in this machine's library now but was not added: %s",name,problem))
     }
@@ -358,7 +367,7 @@ api_packages_peers_answer :: proc(s:^Session,call:^api.Call) {
                         kinds[i]="other"
                         if info,known:=asset.kind_info(kind);known {kinds[i]=strings.clone(info.name,a)}
                     }
-                    packages[k]={id=p.id,name=strings.clone(p.name,a),kinds=kinds,assets=p.assets,bytes=p.bytes,built=p.built,here=p.here,pinned=pinned[p.id]}
+                    packages[k]={id=p.id,name=strings.clone(p.name,a),kinds=kinds,assets=len(p.assets),bytes=p.bytes,built=p.built,here=p.here,pinned=pinned[p.id]}
                     packages[k].thumbnail,packages[k].thumbnail_here=api_thumbnail_of(s,p.root,p.objects,a)
                 }
                 entry.packages=packages

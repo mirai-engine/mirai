@@ -80,8 +80,9 @@ Code: `collab.odin`, `collab_api.odin`, `collab_project.odin` (the project that 
 - Adding one takes it into this machine's library first (`share.package_take`): its manifest and
   a build this engine reads, as a join fetches builds, refreshed in a project of its own under the
   generated folder, so nothing is reimported when its source is not here. Only then is it added
-  as a package of this machine. A peer that leaves before the build is here leaves the project and
-  the library as they were, and says so; once taken, the package stays in this machine's library.
+  as a package of this machine. Adding an asset pins that asset and its dependencies in the
+  project. The complete build remains in this machine's library for further additions.
+  A peer that leaves before the build is here leaves the project and the library as they were.
 
 ## What travels
 

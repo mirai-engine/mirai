@@ -1304,11 +1304,24 @@ a_peers_library_is_listed_and_a_package_of_it_taken_and_pinned :: proc(t:^testin
     r:=Library_Run{w=&w,root=fmt.tprintf("%s/guest",w.folder)}
     os.make_directory_all(r.root)
     library_list_run(t,&w,&r)
-    defer {for p in r.list {delete(p.name);delete(p.kinds)};delete(r.list)}
+    list_free :: proc(list:[]Peer_Package) {
+        for p in list {
+            for a in p.assets {delete(a.name)}
+            delete(p.assets)
+            delete(p.name)
+            delete(p.origin)
+            delete(p.documents)
+            delete(p.kinds)
+            delete(p.objects)
+        }
+        delete(list)
+    }
+    defer list_free(r.list)
     if !testing.expectf(t,r.error=="" && len(r.list)==1,"%s: %d",r.error,len(r.list)) {return}
     listed:=r.list[0]
     testing.expectf(t,listed.manifest==manifest && listed.name=="chime" && listed.built && !listed.here && listed.bytes>0 && len(listed.kinds)==1,"the package is listed with what it holds: %v",listed)
     testing.expect(t,listed.root!={} && len(listed.objects)==1 && listed.objects[0]==listed.root,"with the objects of its build")
+    if !testing.expect(t,len(listed.assets)==1 && listed.assets[0].id!={} && listed.assets[0].kind==asset.KIND_SOUND) {return}
     received:=node_totals(&w.peers[1].n).received
     testing.expectf(t,received<u64(listed.bytes),"listing fetches none of what the objects hold: %d bytes for %d",received,listed.bytes)
 
@@ -1320,7 +1333,7 @@ a_peers_library_is_listed_and_a_package_of_it_taken_and_pinned :: proc(t:^testin
     if !testing.expectf(t,r.error=="","%s",r.error) {return}
     s:=&w.peers[1].s
     testing.expect(t,asset.object_whole(s,program),"the build's generated source reached the peer")
-    added:=sources.project_add(r.root,manifest,"sounds",nil,{store=s,fast_textures=true},context.temp_allocator)
+    added:=sources.project_add(r.root,manifest,"sounds",[]base.Asset_Id{listed.assets[0].id},{store=s,fast_textures=true},context.temp_allocator)
     testing.expectf(t,len(added.failures)==0 && len(added.missing)==0 && added.fetched==0 && added.ingested==0,"pinned from this machine's library: %v",added)
     pinned,_:=asset.root_packages(r.root,s.root,context.temp_allocator)
     testing.expectf(t,len(pinned.problems)==0 && len(pinned.listed)>0,"%v",pinned)
@@ -1332,8 +1345,7 @@ a_peers_library_is_listed_and_a_package_of_it_taken_and_pinned :: proc(t:^testin
     kept,ref_error:=store.ref_get(s,asset.REF_PACKAGES,base.asset_id_format(listed.id,buffer[:]))
     testing.expect(t,ref_error==.None && kept==manifest,"it stays in the library of this machine")
 
-    for p in r.list {delete(p.name);delete(p.kinds)}
-    delete(r.list)
+    list_free(r.list)
     r.list=nil
     library_list_run(t,&w,&r)
     testing.expect(t,r.error=="" && len(r.list)==1 && r.list[0].here,"listed again, it is here")

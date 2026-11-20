@@ -913,20 +913,22 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   and answers as `asset.import` (`sources.project_add`, `library.odin`). In the browser
   (`content_library.odin`) the libraries are roots beside the project's content, as virtual
   folders are: This machine and, in a session, one per other editor by the name the session gives
-  it ([libraries of the session](collaboration.md#libraries-of-the-session)). A root holds the
-  packages the project does not pin, in every arrangement and the search; a peer's package this
-  machine has shows once, under This machine, and one whose root goes with its peer. A package
-  shows its thumbnail, else the icon of its kind, its size and what is still to fetch, and its
-  fetch and why it failed on its card; the thumbnail is the stored preview of what it shows
+  it ([libraries of the session](collaboration.md#libraries-of-the-session)). Packages with
+  assets still to add appear as folders in every arrangement and in search. A folder takes the
+  name of the package's document folder, if it has one, or the name of the package. Opening one
+  shows each asset, including those already in the project. A peer's package this machine has
+  appears once, under This machine. A package shows its thumbnail or a folder icon, its size and
+  what is still to fetch, and any fetch problem. The thumbnail is its stored preview
   (`asset.build_shown`: its root when its build holds it, else its first mesh). A card of This
   machine whose store lacks it makes it as the project's content does: the packages the project
   does not pin are listed by id under `LIBRARY_MOUNT`, a folder no path of the project reaches,
   and only the visible cards make theirs, one a frame; a visible card of a peer's root that lacks it
   asks that peer by its key, a few at a time (`collab_thumbs_update`, `share.fetch_start`): a
   peer gives one it has and makes none, and nothing of the package is fetched for it; two of one
-  name in a root take the folder their source was in. Carried onto a folder of the project, or
-  Add to project of its menu (into the folder Create makes in), it is added whole; nothing else
-  adds from a library.
+  name in a root take the folder their source was in. The + adds a folder whole or an asset with
+  its dependencies, into the folder Create makes in. Add to project in the menu does the same;
+  dragging a package folder onto a project folder adds it whole. Further additions keep the
+  project's existing selection and destination.
 
 ## Graphics
 
