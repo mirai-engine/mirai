@@ -90,6 +90,7 @@ Node :: struct {
     lease_due:bool,
     stopped:bool,
     hooks:^Join_Hooks,
+    offer_lease:store.Lease, // owned by the thread that offers the project
 }
 
 // What a test does at the crash points of a join.
@@ -114,6 +115,7 @@ node_destroy :: proc(n:^Node) {
     node_stop(n)
     exchange.destroy(&n.x)
     if n.leased {store.lease_release(&n.lease)}
+    if n.offer_lease.store!=nil {store.lease_release(&n.offer_lease)}
     delete(n.served)
 }
 
@@ -322,14 +324,18 @@ node_lease :: proc(n:^Node,now:f64) {
         store.lease_update(&n.lease,live)
         return
     }
-    random:[8]u8
-    crypto.rand_bytes(random[:])
-    name:=fmt.tprintf("share-%x",random[:])
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-    if lease,error:=store.lease_open(n.s,name,live);error==.None {
+    if lease,error:=node_lease_open(n.s,live);error==.None {
         n.lease=lease
         n.leased=true
     }
+}
+
+@(private)
+node_lease_open :: proc(s:^store.Store,live:[]store.Hash) -> (store.Lease,store.Error) {
+    random:[8]u8
+    crypto.rand_bytes(random[:])
+    return store.lease_open(s,fmt.tprintf("share-%016x",transmute(u64)random),live)
 }
 
 // The source a refresh of the library asks: refs of the peers with their

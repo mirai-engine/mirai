@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:log"
 import "core:mem"
 import "core:os"
+import "core:strings"
 import "core:sync"
 import "core:thread"
 import "mirai:cook/share"
@@ -52,6 +53,19 @@ Collab_Join :: struct {
     finished:bool,  // the end of the join was taken on the editor's thread
 }
 
+@(private)
+Collab_Offer :: struct {
+    node:^share.Node,
+    store:^store.Store,
+    root,store_root:string,
+    secret:u64,
+    refresh,cancel,done:bool,
+    thread:^thread.Thread,
+    arena:mem.Dynamic_Arena,
+    result:share.Offer,
+    error:string,
+}
+
 // The node of a session over its host: what this editor serves and fetches.
 @(private)
 collab_node_start :: proc(s:^Session,st:^Collab_State) -> bool {
@@ -74,20 +88,67 @@ collab_node_start :: proc(s:^Session,st:^Collab_State) -> bool {
     return true
 }
 
-// The host offers its project under the token of the session: its snapshot,
-// with what its packages need, held by the lease of the node.
 @(private)
-collab_project_offer :: proc(s:^Session,st:^Collab_State) -> (problem:string) {
+collab_offer_run :: proc(o:^Collab_Offer) {
+    defer sync.atomic_store(&o.done,true)
+    defer runtime.default_temp_allocator_destroy(&runtime.global_default_temp_allocator_data)
+    if sync.atomic_load(&o.cancel) {return}
+    allocator:=base.dynamic_arena_allocator(&o.arena)
+    if o.refresh {
+        if error:=share.offer_refresh(o.node);error!=.None {
+            o.error=fmt.aprintf("the project lease could not be refreshed (%v)",
+                error,allocator=allocator)
+        }
+        return
+    }
+    if o.store.root=="" {
+        opened,error:=store.open(o.store_root,runtime.heap_allocator())
+        if error!=.None {
+            o.error=fmt.aprintf("the store at %s could not be opened (%v)",
+                o.store_root,error,allocator=allocator)
+            return
+        }
+        o.store^=opened
+    }
     js:jobs.Job_System
-    threaded:=jobs.system_init(&js,{threads=jobs.THREADS_AUTO,allocator=runtime.heap_allocator()})
-    defer if threaded {jobs.system_destroy(&js)}
     worker:=jobs.Worker_Ref{}
+    threaded:=jobs.system_init(&js,{
+        threads=max(os.get_processor_core_count()-2,0),allocator=runtime.heap_allocator(),
+    })
     if threaded {worker={system=&js,worker=jobs.OWNER}}
-    o,error:=share.offer(st.node,s.project_root,st.invite.secret,worker,context.temp_allocator,kind=.Live)
-    for line in o.taken.skipped {log.warnf("the session does not carry it: %s",line)}
-    for line in o.problems {log.warnf("a guest will not get it: %s",line)}
-    if error=="" {st.offered=o.address}
-    return error
+    o.result,o.error=share.offer(o.node,o.store,o.root,o.secret,worker,allocator,
+        kind=.Live,cancel=&o.cancel)
+    if threaded {jobs.system_destroy(&js)}
+}
+
+@(private)
+collab_offer_free :: proc(o:^Collab_Offer) {
+    if o.thread!=nil {
+        sync.atomic_store(&o.cancel,true)
+        thread.join(o.thread)
+        thread.destroy(o.thread)
+    }
+    mem.dynamic_arena_destroy(&o.arena)
+    free(o)
+}
+
+// The host offers its project under the token of the session, on a thread of its own.
+@(private)
+collab_offer_start :: proc(s:^Session,st:^Collab_State,now:f64,refresh:bool) -> bool {
+    o:=new(Collab_Offer)
+    mem.dynamic_arena_init(&o.arena,runtime.heap_allocator(),runtime.heap_allocator())
+    o.root=strings.clone(s.project_root,base.dynamic_arena_allocator(&o.arena))
+    o.node,o.secret,o.store,o.store_root=st.node,st.invite.secret,&st.offer_store,s.store.root
+    o.refresh=refresh
+    o.thread=thread.create_and_start_with_poly_data(o,collab_offer_run)
+    if o.thread==nil {
+        collab_offer_free(o)
+        return false
+    }
+    st.offer=o
+    if !refresh {st.changed_at=0}
+    st.offered_at=now
+    return true
 }
 
 // The host watches the files of its project; without a platform (a test) it is told with collab_project_touched.
@@ -105,31 +166,72 @@ collab_watch_start :: proc(s:^Session,st:^Collab_State) {
 // A file of the host's project changed: the next quiet moment offers the snapshot again.
 collab_project_touched :: proc(s:^Session) {
     st:=collab_state(s)
-    if st!=nil && st.role==.Host && st.phase==.Joined {st.changed_at=max(collab_now(st),1e-9)}
+    if st!=nil && st.role==.Host && st.phase!=.Ended {st.changed_at=max(collab_now(st),1e-9)}
 }
 
-// The host: what changed in its folder, and a new snapshot offered to the guests when it differs.
+// Publish a completed project snapshot, then start a new one once the files are quiet.
 @(private)
 collab_host_changes :: proc(s:^Session,st:^Collab_State,now:f64) {
+    watch_ready:=true
     if st.watching {
         events:[64]platform.Watch_Event
-        count,_:=platform.watch_poll(s.app.platform,st.watch,COLLAB_WATCH_BUDGET,events[:])
+        count:int
+        count,watch_ready=platform.watch_poll(s.app.platform,st.watch,COLLAB_WATCH_BUDGET,events[:])
         for e in events[:count] {
             if project.own_path(e.path) {st.changed_at=now;break}
         }
     }
-    if st.changed_at==0 || now-st.changed_at<COLLAB_OFFER_QUIET || now-st.offered_at<COLLAB_OFFER_EVERY {return}
-    st.changed_at,st.offered_at=0,now
-    before:=st.offered
-    if problem:=collab_project_offer(s,st);problem!="" {
-        log.warnf("the project could not be offered again: %s",problem)
+    first:=st.phase==.Updating
+    if o:=st.offer;o!=nil {
+        if !sync.atomic_load(&o.done) {return}
+        st.offer=nil
+        defer collab_offer_free(o)
+        if o.refresh {
+            if o.error!="" {log.warn(o.error)}
+            return
+        }
+        for line in o.result.taken.skipped {log.warnf("the session does not carry it: %s",line)}
+        for line in o.result.problems {log.warnf("a guest will not get it: %s",line)}
+        if o.error!="" {
+            collab_offer_failed(st,o.error)
+            return
+        }
+        if o.result.address==st.offered {return}
+        st.offered=o.result.address
+        if first {
+            collab_host_ready(s,st)
+            return
+        }
+        st.offers+=1
+        m:=[1]u8{u8(Collab_Message.Project)}
+        for &peer,i in st.peers {
+            if i!=0 && peer.used && peer.joined {collab_queue(&peer,m[:])}
+        }
         return
     }
-    if st.offered==before {return}
-    st.offers+=1
-    m:=[1]u8{u8(Collab_Message.Project)}
-    for &peer,i in st.peers {
-        if i!=0 && peer.used && peer.joined {collab_queue(&peer,m[:])}
+    // Record the original file times before an initial offer starts reading those files.
+    ready:=watch_ready if first else st.changed_at!=0 && now-st.changed_at>=COLLAB_OFFER_QUIET &&
+        now-st.offered_at>=COLLAB_OFFER_EVERY
+    refresh:=!ready && !first && now-st.offered_at>=share.LEASE_SECONDS
+    if (ready || refresh) && !collab_offer_start(s,st,now,refresh) {
+        st.offered_at=now
+        if refresh {
+            log.warn("the project lease could not be refreshed: no thread could be started")
+            return
+        }
+        st.changed_at=0
+        collab_offer_failed(st,"no thread could be started to read the project")
+    }
+}
+
+@(private)
+collab_offer_failed :: proc(st:^Collab_State,problem:string) {
+    if st.phase==.Updating {
+        reason:=fmt.tprintf("the project could not be offered: %s",problem)
+        log.error(reason)
+        collab_end(st,reason)
+    } else {
+        log.warnf("the project could not be offered again: %s",problem)
     }
 }
 
@@ -235,6 +337,10 @@ collab_project_update :: proc(s:^Session,st:^Collab_State,now:f64) {
 // Stops the join, which ends at its next wait, and frees the node.
 @(private)
 collab_project_destroy :: proc(s:^Session,st:^Collab_State) {
+    if o:=st.offer;o!=nil {
+        collab_offer_free(o)
+        st.offer=nil
+    }
     if st.node!=nil {share.node_close(st.node)}
     collab_library_destroy(st)
     if st.watching {platform.watch_destroy(s.app.platform,st.watch)}
@@ -244,14 +350,16 @@ collab_project_destroy :: proc(s:^Session,st:^Collab_State) {
         st.join=nil
     }
     if st.node!=nil {
-        if st.role==.Host && s.store.root!="" {
+        if st.offer_store.root!="" {
             digits:[64]u8
-            store.ref_remove(&s.store,share.NAMESPACE,share.offer_name(st.invite.secret,&digits))
+            name:=share.offer_name(st.invite.secret,&digits)
+            store.ref_remove(&st.offer_store,share.NAMESPACE,name)
         }
         share.node_destroy(st.node)
         free(st.node)
         st.node=nil
     }
+    if st.offer_store.root!="" {store.close(&st.offer_store)}
     if st.node_jobs!=nil {
         jobs.system_destroy(st.node_jobs)
         free(st.node_jobs)
