@@ -103,7 +103,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     for rig in roots {
         pose:=state_get(&w.playback,rig)
         if !testing.expect(t,pose!=nil && skeleton_bind(&w.playback,pose,definition,nil,&w.transforms)) {return}
-        copy(pose.previous[:],pose.local[:]);pose.pose_ready=true
+        copy(playing_pose(pose,.Previous),playing_pose(pose,.Local));pose.pose_ready=true
     }
     tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,w:^Bind_Pose_World,problems:^core.Problems,posed:^erender.Posed_Meshes,modifiers:^Modifier_Runtime=nil) {
         clear(&app.extras.instances)
@@ -124,8 +124,8 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
 
     // A pose that leaves the bind makes the copy of that rig alone.
     pose:=constraint_playing(&w.playback,roots[0])
-    pose.local[1].position.y=0.5
-    copy(pose.previous[:],pose.local[:])
+    playing_pose(pose,.Local)[1].position.y=0.5
+    copy(playing_pose(pose,.Previous),playing_pose(pose,.Local))
     pose.changed+=1
     tick(&app,&cache,&state,&w,&problems,&posed)
     testing.expect_value(t,measure(renderer,"one rig posed"),1)

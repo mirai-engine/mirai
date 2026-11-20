@@ -35,9 +35,7 @@ Cinematic_World :: struct {
     fields:anim.Field_Playback,
     requests:anim.Animation_Requests,
     events:anim.Animation_Events,
-    constraints:anim.Animation_Constraints,
     modifier_runtime:anim.Modifier_Runtime,
-    grounding:anim.Grounding_Runtime,
     actions:anim.Action_Runtime,
     motion:anim.Motion_Runtime,
     played:core.Table(anim.Animation_Played),
@@ -137,10 +135,10 @@ fixture_tick :: proc(f:^Cinematic_Fixture,tick:u64,dt:f32,playing:=true,acting:p
     anim.animation_requests_serve(&f.requests,anim.ANIMATION_SETTINGS_DEFAULT,&f.problems,&f.playback,&f.actions,time)
     cam.camera_select(core.ref(&f.entities),core.read(&f.cameras),&f.shown,&f.camera_requests,core.read(&f.activations),core.read(&f.follows),core.read(&f.parents),core.read(&f.seats),core.ref(&f.seat_state),&f.problems)
     anim.animation_prepare(core.read(&f.animations),core.read(&f.attachments),core.read(&f.meshes),core.read(&f.sources),&f.modifier_runtime,&f.playback,&f.characters,&f.skeletons,&f.app,&f.problems)
-    anim.animation_sample(core.read(&f.animations),&f.progress,&f.played,&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.remotes),&f.requests,&f.events,&f.modifier_runtime,&f.playback,&f.characters,&f.skeletons,&f.app,time,{},&f.problems,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+    anim.animation_sample(core.read(&f.animations),core.read(&f.progress),&f.played,&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.remotes),&f.requests,&f.events,&f.modifier_runtime,&f.playback,&f.characters,&f.skeletons,&f.app,time,{},&f.problems,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
     test_world_settle(&f.w)
     anim.animation_fields(test_world_ref(&f.w),core.ref(&f.playback),&f.fields,core.ref(&f.content_sources),&f.app,&f.problems)
-    anim.animation_advance(&f.transforms,core.read(&f.parents),{},&f.requests,&f.modifier_runtime,&f.playback,&f.constraints,&f.grounding,{},{},time,core.ref(&f.skeletons),&f.problems,&f.motion,&f.characters,{},{},core.CLOCK_DEFAULT,nil)
+    anim.animation_advance(&f.transforms,core.read(&f.parents),{},&f.requests,&f.modifier_runtime,&f.playback,{},{},time,core.ref(&f.skeletons),&f.problems,&f.motion,&f.characters,{},{},core.CLOCK_DEFAULT,nil)
     if acting!=nil {acting(f)}
     cinematic_advance(core.ref(&f.entities),&f.cinematics,core.read(&f.cameras),core.read(&f.animations),core.ref(&f.playback),core.ref(&f.content_sources),&f.app,core.ref(&f.actions),&f.requests,core.ref(&f.shown),core.ref(&f.seat_state),&f.camera_requests,&f.seat_requests,core.read(&f.seats),time,core.read(&f.remotes),&f.problems)
     test_world_settle(&f.w)

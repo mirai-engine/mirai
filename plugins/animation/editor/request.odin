@@ -219,7 +219,7 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
         if !finite(control.weight) || control.weight<0 || control.weight>1 {authoring_failure(call,fmt.tprintf("controls[%d].weight",i),"Range","a finite number in [0,1]",fmt.tprintf("%g",control.weight),"The control weight is invalid");return false}
         if !finite(control.fade) || control.fade<0 {authoring_failure(call,fmt.tprintf("controls[%d].fade",i),"Range","finite nonnegative seconds",fmt.tprintf("%g",control.fade),"The control fade is invalid");return false}
         waiting:=len(modifiers.controls.items)
-        anim.modifier_control(modifiers,{rig=entity,kind=control.kind,slot=slot,name=control.name,weight=control.weight,enabled=control.enabled,fade=control.fade})
+        anim.modifier_control(modifiers,{rig=entity,kind=control.kind,slot=slot,name=base.name_hash(base.text_get(control.name[:])),weight=control.weight,enabled=control.enabled,fade=control.fade})
         if len(modifiers.controls.items)==waiting {authoring_failure(call,"controls","Capacity","space in Animation_Requests.controls","full or unavailable","The control could not be queued",api.SERVER_ERROR);return false}
         request_note(applied,"Control",base.text_get(control.name[:]),control.weight)
     }
@@ -233,7 +233,7 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
             waiting:=len(modifiers.goals.items)
             anim.modifier_goal(modifiers,value)
             if len(modifiers.goals.items)==waiting {authoring_failure(call,"goals","Capacity","space in Animation_Requests.goals","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
-            request_note(applied,"Goal",base.text_get(goal.name[:]))
+            request_note(applied,"Goal",base.text_get(p.goals[i].name[:]))
         }
     }
     if authoring_field_present(call,"look") {

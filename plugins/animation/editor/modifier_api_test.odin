@@ -12,7 +12,7 @@ import mm "mirai:std/math"
 import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
-@(private) @(test_world) Grounding_Inspect_World :: struct {using world:Test_World,grounding:anim.Grounding_Runtime,playback:anim.Playback}
+@(private) @(test_world) Grounding_Inspect_World :: struct {using world:Test_World,modifiers:anim.Modifier_Runtime,playback:anim.Playback}
 
 @(test)
 grounding_inspection_derives_final_pose_errors_and_reports_blocked_legs_without_cached_residuals :: proc(t:^testing.T) {
@@ -21,24 +21,26 @@ grounding_inspection_derives_final_pose_errors_and_reports_blocked_legs_without_
     defer test_world_destroy(&world)
     ref:=test_world_ref(&world)
     entity:=core.Entity(1)
-    local:=make([dynamic]mm.Transform,3);for &value in local {value=mm.TRANSFORM_IDENTITY}
-    append(&world.playback.states,anim.Playing{entity=entity,world=local,pose_ready=true})
+    state:=anim.Playing{entity=entity,pose_ready=true}
+    if !testing.expect(t,anim.playing_pose_resize(&state,3)) {return}
+    for &value in anim.playing_pose(&state,.World) {value=mm.TRANSFORM_IDENTITY}
+    append(&world.playback.states,state)
     record:=anim.Grounding_Record{rig=entity,count=1,mode=.Procedural,initialized=true}
     record.bones[0]={0,1,2};record.targets[0]={position={0,0,0},weight=1};record.rotations[0]=mm.QUAT_IDENTITY
-    append(&world.grounding.records,record)
+    append(&world.modifiers.grounded.records,record)
     config:=anim.FOOT_GROUNDING_DEFAULT
     result:=program_grounding_diagnostic(ref,entity,0,config)
     testing.expect(t,result.valid && result.reached && result.residual==0 && result.blocked_legs==0)
-    world.playback.states[0].world[2].position={0,.02,0}
-    world.playback.states[0].world[2].rotation=mm.quat_axis_angle({0,1,0},.2)
+    anim.playing_pose(&world.playback.states[0],.World)[2].position={0,.02,0}
+    anim.playing_pose(&world.playback.states[0],.World)[2].rotation=mm.quat_axis_angle({0,1,0},.2)
     result=program_grounding_diagnostic(ref,entity,0,config)
     testing.expect(t,result.valid && !result.reached && abs(result.residual-.02)<1e-6 && abs(result.angular_error-.2)<1e-5)
-    world.playback.states[0].world[2]=mm.TRANSFORM_IDENTITY;world.grounding.records[0].blocked=1
+    anim.playing_pose(&world.playback.states[0],.World)[2]=mm.TRANSFORM_IDENTITY;world.modifiers.grounded.records[0].blocked=1
     result=program_grounding_diagnostic(ref,entity,0,config)
     testing.expect(t,result.valid && !result.reached && result.residual==0 && result.blocked_legs==1)
-    world.grounding.records[0].blocked=0;world.grounding.records[0].bones[0][2]=3
+    world.modifiers.grounded.records[0].blocked=0;world.modifiers.grounded.records[0].bones[0][2]=3
     testing.expect(t,!program_grounding_diagnostic(ref,entity,0,config).valid)
-    world.grounding.records[0].bones[0][2]=2;world.grounding.records[0].targets[0].weight=0
+    world.modifiers.grounded.records[0].bones[0][2]=2;world.modifiers.grounded.records[0].targets[0].weight=0
     testing.expect(t,!program_grounding_diagnostic(ref,entity,0,config).valid)
     testing.expect(t,!program_grounding_diagnostic(ref,entity,1,config).valid)
 }
@@ -50,7 +52,7 @@ rig_modifier_api_discovers_named_operations_effectors_and_retarget_chains_of_the
     chain:=anim.CHAIN_IK_CONSTRAINT_DEFAULT;base.text_set(chain.name[:],"arm");chain.root,chain.end=anim.bone_ref("a"),anim.bone_ref("c")
     spring:=anim.SPRING_CONSTRAINT_DEFAULT;base.text_set(spring.name[:],"tail");spring.root,spring.end=chain.root,chain.end
     twist:=anim.TWIST_CONSTRAINT_DEFAULT;base.text_set(twist.name[:],"roll");twist.source,twist.root,twist.end=anim.bone_ref("d"),chain.root,chain.end
-    multi:=anim.MULTI_IK_CONSTRAINT_DEFAULT;base.text_set(multi.name[:],"body");multi.root=chain.root;multi.joint_count,multi.effector_count=1,2
+    multi:=anim.MULTI_IK_CONSTRAINT_DEFAULT;base.text_set(multi.name[:],"body");multi.root=chain.root;multi.joints=make([]anim.Multi_IK_Joint,1,context.temp_allocator);multi.effectors=make([]anim.Multi_IK_Effector,2,context.temp_allocator)
     multi.joints[0]=anim.MULTI_IK_JOINT_DEFAULT;multi.joints[0].bone=chain.root
     for &effector in multi.effectors[:2] {effector=anim.MULTI_IK_EFFECTOR_DEFAULT;effector.bone=chain.end}
     base.text_set(multi.effectors[0].name[:],"left");base.text_set(multi.effectors[1].name[:],"right")

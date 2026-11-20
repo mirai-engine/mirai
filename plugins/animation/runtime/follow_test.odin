@@ -25,8 +25,10 @@ follow_rig :: proc(playback:^Playback,entity:core.Entity,skeleton:u64,names:[]st
         }
         target:=base.name_hash(strings.to_string(path)) if i>0 else 0
         append(&state.parents,parents[i]);append(&state.targets,target);append(&state.aliases,base.name_hash(name) if i>0 else 0)
-        append(&state.rest,rest[i]);append(&state.local,rest[i]);append(&state.sampled,rest[i]);append(&state.world,rest[i]);append(&state.previous,rest[i])
-        append(&state.bindings,Binding{target=target,entity=entity if i==0 else core.NONE,rest=rest[i],parent=parents[i]})
+        index:=state.pose_count
+        playing_pose_resize(&state,index+1)
+        append(&state.rest,rest[i]);playing_pose(&state,.Local)[index]=rest[i];playing_pose(&state,.Sampled)[index]=rest[i];playing_pose(&state,.World)[index]=rest[i];playing_pose(&state,.Previous)[index]=rest[i];
+        append(&state.bindings,Binding{target=target,entity=entity if i==0 else core.NONE,parent=parents[i]})
     }
     index:=int(core.entity_index(entity))
     if index>=len(playback.rows) {resize(&playback.rows,index+1)}
@@ -64,15 +66,15 @@ a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without
     follow_rig(&playback,head,2,{"","root","neck","head","jaw","eye_l"},{-1,0,1,2,3,3},{head_place,step,{{0,.8,0},1,{1,1,1}},step,jaw_rest,step})
     leader,follower:=constraint_playing(&playback,body),constraint_playing(&playback,head)
     follower.leader=body
-    leader.local[3].rotation=mm.quat_axis_angle({0,0,1},.3)
-    leader.local[4].rotation=mm.quat_axis_angle({1,0,0},.2)
-    leader.local[5].rotation=mm.quat_axis_angle({0,1,0},.4)
+    playing_pose(leader,.Local)[3].rotation=mm.quat_axis_angle({0,0,1},.3)
+    playing_pose(leader,.Local)[4].rotation=mm.quat_axis_angle({1,0,0},.2)
+    playing_pose(leader,.Local)[5].rotation=mm.quat_axis_angle({0,1,0},.4)
     jaw_own:=mm.quat_axis_angle({0,1,0},.1)
-    follower.local[4].rotation=jaw_own
+    playing_pose(follower,.Local)[4].rotation=jaw_own
     append(&leader.curves,Curve_Output{target=base.name_hash("jawOpen"),property=.Float,value={.5,0,0,0},weight=1})
     append(&follower.curves,Curve_Output{target=base.name_hash("jawOpen"),property=.Float,value={.1,0,0,0},weight=1})
     append(&follower.curves,Curve_Output{target=base.name_hash("blink"),property=.Float,value={1,0,0,0},weight=1})
-    head_sampled:[6]mm.Transform;copy(head_sampled[:],follower.local[:])
+    head_sampled:[6]mm.Transform;copy(head_sampled[:],playing_pose(follower,.Local))
 
     // A capture curve drives the curve of a pose of the face, which opens the jaw.
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
@@ -89,18 +91,18 @@ a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without
     tick :: proc(playback:^Playback,cache:^Animation_Constraints,modifiers:^Modifier_Runtime,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent),problems:^core.Problems,sampled:[]mm.Transform,head:core.Entity) {
         playback.frame+=1
         for &state in playback.states {state.seen=playback.frame}
-        copy(constraint_playing(playback,head).local[:],sampled)
+        copy(playing_pose(constraint_playing(playback,head),.Local),sampled)
         animation_finish(playback,{problems=problems},cache,transforms,parents,1.0/60,nil,{},modifiers)
     }
     check :: proc(t:^testing.T,playback:^Playback,body,head:core.Entity,body_place,holder_place:mm.Transform,jaw:mm.Quat) -> bool {
         leader,follower:=constraint_playing(playback,body),constraint_playing(playback,head)
         body_world,head_world:[7]mm.Transform
-        if !lib.pose_world(leader.parents[:],leader.local[:],body_world[:]) || !lib.pose_world(follower.parents[:],follower.local[:],head_world[:6],holder_place) {return false}
+        if !lib.pose_world(leader.parents[:],playing_pose(leader,.Local),body_world[:]) || !lib.pose_world(follower.parents[:],playing_pose(follower,.Local),head_world[:6],holder_place) {return false}
         same:=true
         for pair in ([3][2]int{{1,1},{2,4},{3,5}}) {
             same &&=linalg.length(head_world[pair[0]].position-body_world[pair[1]].position)<1e-4 && mm.quat_angle(head_world[pair[0]].rotation,body_world[pair[1]].rotation)<1e-3
         }
-        same &&=mm.quat_angle(follower.local[4].rotation,jaw)<1e-4 && follower.local[4].position==mm.Vec3{0,-.05,.05}
+        same &&=mm.quat_angle(playing_pose(follower,.Local)[4].rotation,jaw)<1e-4 && playing_pose(follower,.Local)[4].position==mm.Vec3{0,-.05,.05}
         same &&=animation_curve(playback,head,"jawOpen")==.5 && animation_curve(playback,head,"blink")==1 && animation_curve(playback,head,"jaw_open_pose")==1
         return same
     }
@@ -121,10 +123,10 @@ a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without
     // Half the drive opens half the jaw; a disabled pose leaves the jaw its own turn.
     modifiers.curve_drives.values[0].scale=.5
     tick(&playback,&cache,&modifiers,&w.transforms,&w.parents,&problems,head_sampled[:],head)
-    testing.expect(t,abs(mm.quat_angle(follower.local[4].rotation,jaw_own)-.15)<1e-3)
+    testing.expect(t,abs(mm.quat_angle(playing_pose(follower,.Local)[4].rotation,jaw_own)-.15)<1e-3)
     modifiers.curve_poses.values[0].enabled=false
     tick(&playback,&cache,&modifiers,&w.transforms,&w.parents,&problems,head_sampled[:],head)
-    testing.expect(t,mm.quat_angle(follower.local[4].rotation,jaw_own)<1e-5)
+    testing.expect(t,mm.quat_angle(playing_pose(follower,.Local)[4].rotation,jaw_own)<1e-5)
     modifiers.curve_poses.values[0].enabled=true
 
     // A pose of a bone the head lacks, a body that is not finite, a head that follows
@@ -135,10 +137,10 @@ a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without
     testing.expect(t,follow_problem(&problems,head,"animation.curve_pose_bone"))
     modifiers.curve_poses.values[0].bone=bone_ref("jaw");modifiers.geometry+=1
     nan:=f32(0);nan/=nan
-    held:=leader.local[5];leader.local[5].position.x=nan
+    held:=playing_pose(leader,.Local)[5];playing_pose(leader,.Local)[5].position.x=nan
     tick(&playback,&cache,&modifiers,&w.transforms,&w.parents,&problems,head_sampled[:],head)
-    testing.expect(t,follow_problem(&problems,head,"animation.follow_pose") && lib.pose_world(follower.parents[:],follower.local[:],follower.world[:]))
-    leader.local[5]=held
+    testing.expect(t,follow_problem(&problems,head,"animation.follow_pose") && lib.pose_world(follower.parents[:],playing_pose(follower,.Local),playing_pose(follower,.World)[:]))
+    playing_pose(leader,.Local)[5]=held
     leader.leader=head
     tick(&playback,&cache,&modifiers,&w.transforms,&w.parents,&problems,head_sampled[:],head)
     testing.expect(t,follow_problem(&problems,head,"animation.follow_rig") || follow_problem(&problems,body,"animation.follow_rig"),"a loop of rigs that follow each other")
@@ -199,25 +201,25 @@ curve_drives_combine_clamp_and_replace_and_full_poses_blend_before_additive_ones
     testing.expect(t,slice.is_sorted_by(state.driven[:],curve_order),"the curves drives write are laid out in order")
     // lid: (1*{1,0,0} + .9*{0,1,0}) / 1.9, then .4 along Z.
     expected:=mm.Vec3{1/1.9,.9/1.9,.4}
-    testing.expectf(t,linalg.length(state.local[3].position-expected)<1e-4,"full poses normalized, then the additive one: %v",state.local[3].position)
+    testing.expectf(t,linalg.length(playing_pose(state,.Local)[3].position-expected)<1e-4,"full poses normalized, then the additive one: %v",playing_pose(state,.Local)[3].position)
     testing.expect(t,modifiers.curve_full[3]=={},"the sums start over")
 
     // The rows of the poses in another order (a new profile) give the same pose, and
     // laying the curves out again within their room reserves nothing.
-    state.local[3]=step
+    playing_pose(state,.Local)[3]=step
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     laid:=raw_data(state.driven)
     modifiers.curve_poses.values[0],modifiers.curve_poses.values[2]=modifiers.curve_poses.values[2],modifiers.curve_poses.values[0]
     modifiers.geometry+=1
     stable:=curve_poses_apply(state,&playback,&modifiers,false,&problems)
     context=saved
-    testing.expect(t,stable && raw_data(state.driven)==laid && abs(value(&playback,face,"jaw_close")-.4)<1e-5 && linalg.length(state.local[3].position-expected)<1e-4)
+    testing.expect(t,stable && raw_data(state.driven)==laid && abs(value(&playback,face,"jaw_close")-.4)<1e-5 && linalg.length(playing_pose(state,.Local)[3].position-expected)<1e-4)
 
     // A curve renamed in place lays the curves out again: smileR is gone, so smile is
     // the least of smileL and nothing.
     for &curve in state.curves {if curve.target==base.name_hash("smileR") {curve.target=base.name_hash("browUp")}}
     slice.sort_by(state.curves[:],curve_order)
-    state.local[3]=step
+    playing_pose(state,.Local)[3]=step
     testing.expect(t,curve_poses_apply(state,&playback,&modifiers,false,&problems))
     testing.expect(t,abs(value(&playback,face,"browUp")-.9)<1e-5 && abs(value(&playback,face,"smile"))<1e-5 && abs(value(&playback,face,"jaw_close")-.4)<1e-5)
 }

@@ -194,7 +194,7 @@ modifier_goal_api_resolves_targets_in_the_running_world_accepts_the_origin_and_k
     look:=anim.LOOK_CONSTRAINT_DEFAULT;look.bone=anim.bone_ref("head");look.weight=.4
     other:=look;other.bone=anim.bone_ref("eyes")
     // Grounding over the legs of the body of the skeleton.
-    grounding:=anim.FOOT_GROUNDING_DEFAULT;grounding.count=2;grounding.legs[0],grounding.legs[1]=anim.GROUNDED_LEG_DEFAULT,anim.GROUNDED_LEG_DEFAULT
+    grounding:=anim.FOOT_GROUNDING_DEFAULT;grounding.legs=make([]anim.Grounded_Leg,2,context.temp_allocator);grounding.legs[0],grounding.legs[1]=anim.GROUNDED_LEG_DEFAULT,anim.GROUNDED_LEG_DEFAULT
     set:=anim.character_set_make({});set.pose={ik={ik},look={other,look},grounding=grounding}
     testing.expect_value(t,anim.character_save(fmt.tprintf("%s/goals.character",f.root),&f.assets.types,pose_id,set),asset.Error.None)
     testing.expect(t,host.assets_scan(&f.assets))

@@ -38,8 +38,6 @@ Rig_World :: struct {
     requests:Animation_Requests,
     events:Animation_Events,
     playback:Playback,
-    constraints:Animation_Constraints,
-    grounding:Grounding_Runtime,
     modifiers:Modifier_Runtime,
     actions:Action_Runtime,
     motion:Motion_Runtime,
@@ -80,7 +78,7 @@ rig_test_advance :: proc(f:^Rig_Test,app:^host.App,time:core.Time,frame:core.Fra
     m:=&f.modifiers
     inputs:=Constraint_Inputs{core.read(&m.ik),core.read(&m.look),core.read(&m.limits),core.read(&m.sockets),core.read(&f.worlds),0,&f.cache,&f.problems}
     ground_inputs:=Grounding_Inputs{core.read(&m.grounding),{},core.read(&f.transforms),core.read(&f.parents),0,&f.problems,{}}
-    animation_finish(&f.playback,inputs,&f.constraints,&f.transforms,&f.parents,time.dt,&f.grounding,ground_inputs,final_poses=core.take(&f.requests.final_poses))
+    animation_finish(&f.playback,inputs,&m.constraints,&f.transforms,&f.parents,time.dt,&m.grounded,ground_inputs,final_poses=core.take(&f.requests.final_poses))
 }
 
 // A skeleton of three bones in a column, a mesh bound to it and a clip that turns the upper bone a quarter.
@@ -114,6 +112,28 @@ skeleton_content_follows_a_skeleton_held_in_the_memory_of_the_registry :: proc(t
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     content:=skeleton_content(&skeletons,app.assets,app.allocator,skeleton_id)
     if !testing.expect(t,content!=nil && len(content.bones)==3) {return}
+    w:Rig_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    one,two:=core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.transforms,one,core.TRANSFORM_IDENTITY)
+    core.add(&w.transforms,two,core.TRANSFORM_IDENTITY)
+    test_world_settle(&w)
+    state_get(&w.playback,one)
+    state_get(&w.playback,two)
+    first,second:=constraint_playing(&w.playback,one),constraint_playing(&w.playback,two)
+    if !testing.expect(t,skeleton_bind(&w.playback,first,content,nil,&w.transforms) &&
+        skeleton_bind(&w.playback,second,content,nil,&w.transforms)) {return}
+    testing.expect(t,raw_data(playing_topology(first).parents)==raw_data(playing_topology(second).parents) &&
+        raw_data(playing_topology(first).rest)==raw_data(playing_topology(second).rest))
+    clone:Playback;defer playback_free(&clone)
+    if !testing.expect(t,playback_copy(&clone,&w.playback)) {return}
+    copied:=constraint_playing(&clone,one)
+    testing.expect(t,playing_topology(copied)==playing_topology(first))
+    for slot in Pose_Buffer {
+        testing.expect(t,raw_data(playing_pose(first,slot))!=raw_data(playing_pose(second,slot)) &&
+            raw_data(playing_pose(first,slot))!=raw_data(playing_pose(copied,slot)))
+    }
     path:=fmt.tprintf("%s/rig.skeleton",directory)
     disk,_:=os.read_entire_file(path,context.temp_allocator)
     bone:=asset.Skeleton_Bone{parent=-1,rotation=1,scale={1,1,1},target=base.name_hash("alone")}
@@ -127,6 +147,7 @@ skeleton_content_follows_a_skeleton_held_in_the_memory_of_the_registry :: proc(t
     testing.expect_value(t,asset.registry_memory_set(&assets.registry,"rig.skeleton",bytes),asset.Error.None)
     content=skeleton_content(&skeletons,app.assets,app.allocator,skeleton_id)
     testing.expect(t,content!=nil && len(content.bones)==1 && base.text_get(content.bones[0].name[:])=="alone")
+    testing.expect_value(t,len(playing_topology(copied).parents),4)
     after,_:=os.read_entire_file(path,context.temp_allocator)
     testing.expect(t,assets.revision==revision && string(after)==string(disk))
     {dropped,_:=asset.registry_memory_drop(&assets.registry,"rig.skeleton");testing.expect(t,dropped)}
@@ -193,7 +214,7 @@ skeleton_without_clips_evaluates_named_ik_and_pose_requests_without_bone_entitie
     }
     testing.expect_value(t,len(w.playback.rigs),1)
     testing.expect_value(t,len(w.playback.states),1)
-    testing.expect_value(t,len(w.playback.states[0].local),4)
+    testing.expect_value(t,len(playing_pose(&w.playback.states[0],.Local)),4)
     testing.expect_value(t,len(w.transforms.values),1)
     testing.expect_value(t,w.entities.alive,2)
     for binding in w.playback.states[0].bindings[1:] {testing.expect_value(t,binding.entity,core.NONE)}
@@ -205,7 +226,7 @@ skeleton_without_clips_evaluates_named_ik_and_pose_requests_without_bone_entitie
     authored:=mm.Transform{position={0,2,0},rotation=mm.quat_axis_angle({0,1,0},0.4),scale={1,1,1}}
     animation_pose(&w.requests,rig,bone_ref("upper"),authored)
     rig_test_advance(&w,&app,{dt=1.0/60,playing=true})
-    testing.expect_value(t,state.local[1],authored)
+    testing.expect_value(t,playing_pose(state,.Local)[1],authored)
     testing.expect_value(t,w.problems.count,0)
     bound:=state.bound
     core.edit(&w.modifiers.ik,helper).enabled=true
@@ -260,14 +281,14 @@ preview_plays_the_clip_in_the_editor_and_returns_to_its_start_when_it_stops :: p
     upper:=mm.Quat(1)
     time :: proc(w:^Rig_Test,rig:core.Entity) -> f32 {clip_time,_,_,_:=animation_progress(&w.playback,rig);return clip_time}
     for _ in 0..<2 {rig_test_advance(&w,&app,editor,preview)}
-    testing.expect(t,time(&w,rig)==0 && w.playback.states[0].local[1].rotation==upper)
+    testing.expect(t,time(&w,rig)==0 && playing_pose(&w.playback.states[0],.Local)[1].rotation==upper)
     core.edit(&w.animations,rig).preview=true
     rig_test_advance(&w,&app,editor,preview);rig_test_advance(&w,&app,editor,preview)
     testing.expect(t,abs(time(&w,rig)-0.5)<0.0001)
-    testing.expect(t,abs(mm.quat_angle(w.playback.states[0].local[1].rotation,upper)-mm.PI*0.25)<0.001)
+    testing.expect(t,abs(mm.quat_angle(playing_pose(&w.playback.states[0],.Local)[1].rotation,upper)-mm.PI*0.25)<0.001)
     core.edit(&w.animations,rig).preview=false
     rig_test_advance(&w,&app,editor,preview)
-    testing.expect(t,time(&w,rig)==0 && mm.quat_angle(w.playback.states[0].local[1].rotation,upper)<0.0001)
+    testing.expect(t,time(&w,rig)==0 && mm.quat_angle(playing_pose(&w.playback.states[0],.Local)[1].rotation,upper)<0.0001)
     rig_test_advance(&w,&app,{dt=0.25,playing=true})
     testing.expect(t,abs(time(&w,rig)-0.25)<0.0001)
     testing.expect_value(t,w.problems.count,0)
@@ -361,21 +382,21 @@ shared_profiles_accept_multiple_goals_at_the_origin_and_evaluate_without_stable_
     cache:=&w.characters
     step :: proc(w:^Rig_Test,app:^host.App,cache:^Character_Assets) {
         animation_prepare(core.read(&w.animations),core.read(&w.attachments),core.read(&w.meshes),core.read(&w.skins),&w.modifiers,&w.playback,cache,&w.cache,app,&w.problems)
-        animation_sample(core.read(&w.animations),&w.progress,&w.played,&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,cache,&w.cache,app,{dt=1.0/60,playing=true},{},&w.problems,&w.actions,&w.motion,&w.sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
-        animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifiers,&w.playback,&w.constraints,&w.grounding,{},{},{dt=1.0/60,playing=true},{},&w.problems,&w.motion,cache,{},{},core.CLOCK_DEFAULT,nil)
+        animation_sample(core.read(&w.animations),core.read(&w.progress),&w.played,&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,cache,&w.cache,app,{dt=1.0/60,playing=true},{},&w.problems,&w.actions,&w.motion,&w.sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
+        animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifiers,&w.playback,{},{},{dt=1.0/60,playing=true},{},&w.problems,&w.motion,cache,{},{},core.CLOCK_DEFAULT,nil)
     }
     modifier_goal(&w.requests,{rig=rig,kind=.Look,target=spatial_point({}),weight=1,enabled=true})
     modifier_goal(&w.requests,{rig=rig,kind=.IK,slot=1,target=spatial_point({.75,.2,0}),weight=1,enabled=true})
     step(&w,&app,cache)
     testing.expect_value(t,len(w.modifiers.ik.values),2)
-    testing.expect_value(t,len(w.playback.states[0].local),4)
+    testing.expect_value(t,len(playing_pose(&w.playback.states[0],.Local)),4)
     testing.expect_value(t,w.modifiers.look.values[0].target.position,mm.Vec3{})
     testing.expect_value(t,w.modifiers.ik.values[1].target.position,mm.Vec3{.75,.2,0})
     testing.expect_value(t,w.problems.count,0)
     copy:Modifier_Runtime;core.value_copy(&copy,&w.modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copy)
     testing.expect(t,raw_data(copy.ik.values)!=raw_data(w.modifiers.ik.values) && raw_data(copy.goals)!=raw_data(w.modifiers.goals))
     before:=w.playback.binding_revision
-    geometry:=w.constraints.revision
+    geometry:=w.modifiers.constraints.revision
     version:=w.modifiers.ik.version
     modifier_goal(&w.requests,{rig=rig,kind=.IK,slot=1,target=spatial_point({.6,.2,0}),weight=1,enabled=true})
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
@@ -384,7 +405,7 @@ shared_profiles_accept_multiple_goals_at_the_origin_and_evaluate_without_stable_
     testing.expect_value(t,w.playback.binding_revision,before)
     testing.expect_value(t,w.modifiers.ik.values[1].target.position,mm.Vec3{.6,.2,0})
     testing.expect(t,w.modifiers.ik.version>version)
-    testing.expect_value(t,w.constraints.revision,geometry)
+    testing.expect_value(t,w.modifiers.constraints.revision,geometry)
     modifier_control(&w.requests,{rig=rig,kind=.Look,weight=.25,enabled=true,fade=.1})
     modifier_control(&w.requests,{rig=rig,kind=.IK,slot=1,weight=1,enabled=false,fade=.1})
     saved=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
@@ -396,7 +417,7 @@ shared_profiles_accept_multiple_goals_at_the_origin_and_evaluate_without_stable_
     testing.expect_value(t,w.modifiers.look.values[0].weight,f32(.25))
     testing.expect_value(t,w.modifiers.look.values[0].target.position,mm.Vec3{})
     testing.expect_value(t,w.playback.binding_revision,before)
-    testing.expect_value(t,w.constraints.revision,geometry)
+    testing.expect_value(t,w.modifiers.constraints.revision,geometry)
     testing.expect_value(t,w.problems.count,0)
     testing.expect_value(t,w.playback.states[0].skeleton,skeleton)
     core.remove(&w.animations,rig);rig_test_settle(&w)
@@ -658,8 +679,8 @@ layers_play_over_a_region_of_the_body_without_stable_allocations :: proc(t:^test
         if iteration>1 {testing.expect_value(t,failure.calls,0)}
         if !testing.expect_value(t,len(w.playback.states),1) {return}
         state:=&w.playback.states[0]
-        testing.expect(t,abs(mm.quat_angle(state.local[left].rotation,state.rest[left].rotation)-.5)<0.001)
-        testing.expect(t,mm.quat_angle(state.local[right].rotation,state.rest[right].rotation)<0.0001)
+        testing.expect(t,abs(mm.quat_angle(playing_pose(state,.Local)[left].rotation,playing_topology(state).rest[left].rotation)-.5)<0.001)
+        testing.expect(t,mm.quat_angle(playing_pose(state,.Local)[right].rotation,playing_topology(state).rest[right].rotation)<0.0001)
     }
     testing.expect_value(t,w.problems.count,0)
 }
@@ -678,7 +699,7 @@ body_labels_of_a_skeleton_without_body_say_how_to_give_it_one :: proc(t:^testing
     state:=&w.playback.states[0]
     testing.expect_value(t,bone_resolve(state,bone_ref("@hand_l")),-1)
     testing.expect_value(t,bone_resolve(state,bone_ref("hand_l")),figure_bone(bones,"hand_l"))
-    testing.expect(t,len(state.regions)==0 && state.body=={})
+    testing.expect(t,len(playing_topology(state).regions)==0 && state.body=={})
     animation_pose(&w.requests,rig,bone_ref("@hand_l"),core.to_math(core.TRANSFORM_IDENTITY))
     rig_test_advance(&w,&app,{dt=1.0/60,playing=true})
     problems:=core.problems_list(&w.problems)
@@ -741,8 +762,8 @@ rig_poses_do_not_depend_on_how_their_jobs_are_split :: proc(t:^testing.T) {
     }
     step :: proc(w:^Rig_Test,app:^host.App,budget:Animation_Budget_Config) {
         animation_prepare(core.read(&w.animations),core.read(&w.attachments),core.read(&w.meshes),core.read(&w.skins),&w.modifiers,&w.playback,&w.characters,&w.cache,app,&w.problems)
-        animation_sample(core.read(&w.animations),&w.progress,&w.played,&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,&w.characters,&w.cache,app,{dt=1.0/60,playing=true},{},&w.problems,&w.actions,&w.motion,&w.sources,{},core.CLOCK_DEFAULT,budget)
-        animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifiers,&w.playback,&w.constraints,&w.grounding,{},{},{dt=1.0/60,playing=true},{},&w.problems,&w.motion,&w.characters,{},{},core.CLOCK_DEFAULT,nil)
+        animation_sample(core.read(&w.animations),core.read(&w.progress),&w.played,&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,&w.characters,&w.cache,app,{dt=1.0/60,playing=true},{},&w.problems,&w.actions,&w.motion,&w.sources,{},core.CLOCK_DEFAULT,budget)
+        animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifiers,&w.playback,{},{},{dt=1.0/60,playing=true},{},&w.problems,&w.motion,&w.characters,{},{},core.CLOCK_DEFAULT,nil)
     }
     same,moved:=true,false
     for tick in 0..<10 {
@@ -754,11 +775,11 @@ rig_poses_do_not_depend_on_how_their_jobs_are_split :: proc(t:^testing.T) {
         context=saved
         for rig in rigs {
             owner:=constraint_playing(&worlds[0].playback,rig)
-            if !testing.expect(t,owner!=nil && len(owner.sampled)==4) {return}
-            moved||=owner.sampled[2]!=owner.rest[2]
+            if !testing.expect(t,owner!=nil && len(playing_pose(owner,.Sampled))==4) {return}
+            moved||=playing_pose(owner,.Sampled)[2]!=playing_topology(owner).rest[2]
             for &w in worlds[1:] {
                 other:=constraint_playing(&w.playback,rig)
-                same&&=other!=nil && slice.equal(other.sampled[:],owner.sampled[:]) && slice.equal(other.local[:],owner.local[:]) && other.motion==owner.motion
+                same&&=other!=nil && slice.equal(playing_pose(other,.Sampled),playing_pose(owner,.Sampled)) && slice.equal(playing_pose(other,.Local),playing_pose(owner,.Local)) && other.motion==owner.motion
             }
         }
     }
@@ -815,7 +836,7 @@ attached_rigs_finish_after_their_host_even_when_sampled_first :: proc(t:^testing
         if !testing.expect(t,len(w.playback.states)==2 &&
             w.playback.states[0].entity==child) {return}
         attached:=&w.playback.states[0]
-        testing.expect_value(t,attached.world[0].position,pose.position)
+        testing.expect_value(t,playing_pose(attached,.World)[0].position,pose.position)
     }
     testing.expect_value(t,w.problems.count,0)
 }

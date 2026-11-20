@@ -17,7 +17,7 @@ the preview.
 
 - Start from `FOOT_GROUNDING_DEFAULT` and `GROUNDED_LEG_DEFAULT`; the zero value is safe but does
   not configure a valid gait.
-- Up to 16 legs; `count` sets how many entries of `legs` are evaluated.
+- The grounding leg table contains the legs the rig evaluates. An empty table disables grounding.
 - The definition is edited in the Grounding table of the set
   ([modifier authoring](animation-authoring.md#skeletons-sockets-and-profiles)).
 - The rig is the entity that plays the set. There is one grounding definition per set and an
@@ -182,10 +182,8 @@ Body:
 - A support stores the id that the ground gives to its support (with physics, the generational
   handle of the body) and point and normal in its space: it follows platforms, also when landing a
   step. A retired body stops being a support. Colliders are not deformed from the visual pose.
-- `Grounding_Runtime` belongs to the world and is copied with it; its records are plain and the
-  topology of each binding lives in its own buffer, without views or pointers. Changing the binding
-  or the set of configurations prepares again in a transaction; changing weights or strengths reuses
-  the memory. Removing a component compacts its links; a lack of memory keeps the previous state.
+- Grounding state belongs to the modifier runtime and is copied with the world. Changed bindings
+  prepare their bone links in a transaction. Changing weights or contact strengths reuses them.
 - Rig problems: `animation.grounding_config`, `grounding_bones`, `grounding_solve` (with the leg and
   the step) and `animation.memory`.
 

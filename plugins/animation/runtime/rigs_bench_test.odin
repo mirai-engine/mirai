@@ -28,9 +28,9 @@ bench_rig_dispatch_and_multi_ik_scaling :: proc(t:^testing.T) {
                 for operation in 0..<(2 if variant==1 else 1) {
                     multi:=MULTI_IK_CONSTRAINT_DEFAULT
                     multi.rig,multi.root=entity,bone_ref("joint1")
-                    multi.joint_count,multi.effector_count=3,1;multi.settings.iterations=4
+                    multi.joints=make([]Multi_IK_Joint,3,context.temp_allocator);multi.effectors=make([]Multi_IK_Effector,1,context.temp_allocator);multi.settings.iterations=4
                     multi.enabled=variant==2
-                    for &joint,j in multi.joints[:multi.joint_count] {joint=MULTI_IK_JOINT_DEFAULT;joint.bone=bone_ref(fmt.tprintf("joint%d",j+1))}
+                    for &joint,j in multi.joints {joint=MULTI_IK_JOINT_DEFAULT;joint.bone=bone_ref(fmt.tprintf("joint%d",j+1))}
                     multi.effectors[0]=MULTI_IK_EFFECTOR_DEFAULT
                     multi.effectors[0].bone,multi.effectors[0].target=bone_ref("joint4"),spatial_point({.3,.5,0})
                     base.text_set(multi.name[:],fmt.tprintf("body%d",operation))
@@ -66,10 +66,10 @@ bench_rig_dispatch_and_multi_ik_scaling :: proc(t:^testing.T) {
                 start:=time.tick_now()
                 for _ in 0..<repeats {
                     for &state in states {
-                        if variant==2 {copy(state.local[:],state.rest[:])}
+                        if variant==2 {copy(playing_pose(state,.Local),state.rest[:])}
                         stable &&=rigs_retarget(&state,&playback,&modifiers,&problems)
                         stable &&=rigs_apply(&state,&modifiers,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)
-                        sink+=state.local[4].rotation.z
+                        sink+=playing_pose(state,.Local)[4].rotation.z
                     }
                 }
                 best=min(best,time.tick_since(start))

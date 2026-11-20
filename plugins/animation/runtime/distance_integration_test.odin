@@ -77,7 +77,7 @@ a_distance_request_takes_the_clip_of_a_program_to_its_time_without_allocations :
     testing.expect(t,tracks_bind(&playback,&state,&content))
     built:=program_test_output(program_test_leaf("walk",0));output:=&built
     animation:=ANIMATION_DEFAULT;animation.loop=false;animation.root_motion=.Extract
-    testing.expect(t,program_buffers(&state,&content) && program_players(&state,output,&content,animation,&events,&playback,.1,-1,nil))
+    testing.expect(t,curves_prepare(&state,&content) && program_players(&state,output,&content,animation,&events,&playback,.1,-1,nil))
     testing.expect(t,program_pose(&playback,&state,&content,animation,output))
     request:=Animation_Distance_Request{entity=state.entity,clip=base.name_hash("walk"),time=.8}
     testing.expect_value(t,distance_request_check(&state,&content,request),Distance_Error.None)

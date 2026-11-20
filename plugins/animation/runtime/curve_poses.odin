@@ -225,7 +225,7 @@ curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Ru
         if drive_first<drive_end && len(runtime.curve_drive_states)!=len(runtime.curve_drives.values) && resize(&runtime.curve_drive_states,len(runtime.curve_drives.values))!=nil ||
            pose_first<pose_end && len(runtime.curve_pose_states)!=len(runtime.curve_poses.values) && resize(&runtime.curve_pose_states,len(runtime.curve_poses.values))!=nil ||
            material_first<material_end && len(runtime.curve_material_states)!=len(runtime.curve_materials.values) && resize(&runtime.curve_material_states,len(runtime.curve_materials.values))!=nil ||
-           pose_first<pose_end && len(runtime.curve_full)<len(state.local) && resize(&runtime.curve_full,len(state.local))!=nil {
+           pose_first<pose_end && len(runtime.curve_full)<len(playing_pose(state,.Local)) && resize(&runtime.curve_full,len(playing_pose(state,.Local)))!=nil {
             memory_problem(problems,state.entity,"the curve poses and drives of its .character");state.driven_ready=false;return false
         }
     }
@@ -291,7 +291,7 @@ curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Ru
             binding.slot=-1
             binding.rig,binding.bound,binding.generation,binding.geometry,binding.ready=state.entity,state.bound,state.generation,runtime.geometry,true
         }
-        if binding.bone<=0 || int(binding.bone)>=len(state.local) {
+        if binding.bone<=0 || int(binding.bone)>=len(playing_pose(state,.Local)) {
             core.report(problems,state.entity,"animation.curve_pose_bone","a curve pose of the .character of this rig, of curve '%s', names bone '%s', which its skeleton does not have, so it does not move; %s",base.text_get(config.curve[:]),base.text_get(config.bone.path[:]),bone_fix(config.bone))
             valid=false
             continue
@@ -309,10 +309,10 @@ curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Ru
     // Each bone that poses moved takes them once, and its sum starts over.
     for row in pose_first..<pose_end {
         bone:=runtime.curve_pose_states[row].bone
-        if bone<=0 || int(bone)>=len(state.local) {continue}
+        if bone<=0 || int(bone)>=len(playing_pose(state,.Local)) {continue}
         sum:=&runtime.curve_full[bone]
         if !(sum.weight>0) && !sum.added {continue}
-        if !lib.pose_accumulated_apply(&state.local[bone],sum^) {
+        if !lib.pose_accumulated_apply(&playing_pose(state,.Local)[bone],sum^) {
             core.report(problems,state.entity,"animation.curve_pose_value","the curve poses of a bone of this rig sum to a pose that is not finite, so they do not move it; check the curves of its animation (animation.inspect)")
             valid=false
         }

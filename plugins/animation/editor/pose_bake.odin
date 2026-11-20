@@ -56,7 +56,7 @@ pose_bake_root :: proc(call:^api.Call,world:core.World_Ref,state:^anim.Playing,r
     transforms:=core.world_table_of(world,core.Transform)
     active:=state.root;has_root:=active.translation || active.rotation
     if has_root && (active.translation || active.rotation) {
-        bone,_,ok:=anim.animation_root_reference(state,active,state.sampled[:],transforms)
+        bone,_,ok:=anim.animation_root_reference(state,active,anim.playing_pose(state,.Sampled)[:],transforms)
         if !ok || bone>=len(origin) {authoring_failure(call,"root_motion","Missing_Bone","a resolved root bone","unbound root","The effective root could not be baked");return {},false}
         if root.ready && root.bone!=bone {authoring_failure(call,"root_motion","Changed_Root","one root bone throughout the bake","a different effective root","Split this range where its root bone changes");return {},false}
         if !root.ready {root.root=active;root.bone,root.turned,root.ready=bone,1,true}
@@ -65,9 +65,9 @@ pose_bake_root :: proc(call:^api.Call,world:core.World_Ref,state:^anim.Playing,r
     if !root.ready {return mm.TRANSFORM_IDENTITY,true}
     if state.root_enabled {root.moved+=state.motion.translation;root.turned=linalg.normalize0(root.turned*state.motion.rotation)}
     reference_root:=root.root;reference_root.in_place=active.in_place if has_root else false
-    _,reference,valid:=anim.animation_root_reference(state,reference_root,state.sampled[:],transforms)
+    _,reference,valid:=anim.animation_root_reference(state,reference_root,anim.playing_pose(state,.Sampled)[:],transforms)
     if !valid {return {},false}
-    correction,relative:=mm.transform_relative(state.local[root.bone],reference)
+    correction,relative:=mm.transform_relative(anim.playing_pose(state,.Local)[root.bone],reference)
     if !relative {authoring_failure(call,"root_motion","Invalid_Reference","an invertible root reference","zero scale","The root correction could not be baked");return {},false}
     basis:=reference
     if mode==.Preserve {
@@ -75,7 +75,7 @@ pose_bake_root :: proc(call:^api.Call,world:core.World_Ref,state:^anim.Playing,r
         if root.root.rotation {basis.rotation=linalg.normalize0(origin[root.bone].rotation*root.turned)}
     } else {
         reference_root.in_place=true
-        _,basis,valid=anim.animation_root_reference(state,reference_root,state.sampled[:],transforms)
+        _,basis,valid=anim.animation_root_reference(state,reference_root,anim.playing_pose(state,.Sampled)[:],transforms)
         if !valid {return {},false}
     }
     return mm.transform_compose(basis,correction),true
@@ -107,8 +107,8 @@ pose_bake_morph_tracks :: proc(call:^api.Call,world:core.World_Ref,app:^host.App
 pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity,p:^Pose_Bake_Params,preview:^Preview_Params,doc:^asset.Document,id:base.Asset_Id,existing:asset.Animation_View) -> bool {
     state:=pose_bake_state(world,entity)
     if state==nil {authoring_failure(call,"bake","Unbound_Pose","a ready pose after evaluation","unbound rig","The requested instance has no final pose to bake");return false}
-    origin,error:=make([]mm.Transform,len(state.sampled),call.allocator)
-    if error!=nil {authoring_failure(call,"bake","Out_Of_Memory","memory for the sampled root reference","allocation failed","The bake could not be prepared",api.SERVER_ERROR);return false};copy(origin,state.sampled[:])
+    origin,error:=make([]mm.Transform,len(anim.playing_pose(state,.Sampled)),call.allocator)
+    if error!=nil {authoring_failure(call,"bake","Out_Of_Memory","memory for the sampled root reference","allocation failed","The bake could not be prepared",api.SERVER_ERROR);return false};copy(origin,anim.playing_pose(state,.Sampled)[:])
     sources:=core.world_storage_of(core.world_ref(s.app.shared,world.info,.Shared),anim.Source_Assets)
     trace:Preview_Trace;defer preview_trace_sources_close(&trace)
     source_file:Authoring_File;defer asset.asset_close(&source_file.file)
@@ -154,7 +154,7 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
         for &track in tracks {
             value:mm.Vec4
             if track.bone>=0 {
-                local:=baked_root if root.ready && track.bone==root.bone else state.local[track.bone]
+                local:=baked_root if root.ready && track.bone==root.bone else anim.playing_pose(state,.Local)[track.bone]
                 #partial switch track.desc.property {case .Position:value={local.position.x,local.position.y,local.position.z,0};case .Rotation:value=lib.quat_vec4(local.rotation);case .Scale:value={local.scale.x,local.scale.y,local.scale.z,0}}
             } else if track.morph!=core.NONE {
                 morph,ready:=anim.animation_morph_state(core.world_storage_of(world,anim.Morph_Playback),track.morph)
