@@ -32,7 +32,7 @@ root_warp_skips_idle_without_channels_and_retries_after_a_transient_root_error :
     testing.expect(t,motion_apply_root(&motion,&cache,app.assets,app.allocator,&state,{1,2},&content,mm.TRANSFORM_IDENTITY,.25) && motion.instances[0].error==.None && state.motion==before)
     clock:=Motion_Clock{player=lib.player_make(1),from=0,to=.25,root={translation=true},weight=1,active=true}
     testing.expect(t,!motion_apply_root(&motion,&cache,app.assets,app.allocator,&state,{1,2},&content,mm.TRANSFORM_IDENTITY,.25,clock=clock) && motion.instances[0].error==.Unbound_Bone)
-    clock.root.bone=bone_ref("hip")
+    clock.root.bone=base.name_hash("hip")
     testing.expect(t,motion_apply_root(&motion,&cache,app.assets,app.allocator,&state,{1,2},&content,mm.TRANSFORM_IDENTITY,.25,clock=clock) && motion.instances[0].error==.None && motion.instances[0].window==0)
 }
 
@@ -209,7 +209,7 @@ root_warp_uses_action_clocks_handles_rotating_window_prefixes_and_respects_zero_
     target:=mm.transform_compose(actor,{position={3,2,1},rotation=mm.quat_axis_angle({1,0,0},1),scale={1,1,1}})
     requests:Animation_Requests;defer delete(requests.warps.items);defer delete(requests.locomotion.items)
     motion_target(&requests,state.entity,"ledge",spatial_world(target));motion_take_requests(&motion,&requests,nil)
-    clock:=Motion_Clock{player=lib.player_make(clip),from=0,to=2,root={bone=bone_ref("hip"),translation=true,rotation=true},weight=1,active=true}
+    clock:=Motion_Clock{player=lib.player_make(clip),from=0,to=2,root={bone=base.name_hash("hip"),translation=true,rotation=true},weight=1,active=true}
     state.motion={translation={2,0,0},rotation=last}
     testing.expect(t,motion_apply_root(&motion,&cache,app.assets,app.allocator,&state,{1,2},&content,actor,2,false,clock))
     endpoint:=mm.transform_compose(actor,{position=state.motion.translation,rotation=state.motion.rotation,scale={1,1,1}})
@@ -232,7 +232,9 @@ pose_warp_runtime_binds_the_bones_of_the_body_preserves_source_knee_planes_reuse
     rest[0]=actor;rest[1].position={0,2,0};rest[3].position={0,-.8,.3};rest[4].position={0,-.7,.4};rest[5].position={0,1,0}
     for name,i in names {
         target:=base.name_hash(name) if i>0 else 0
-        append(&state.parents,parents[i]);append(&state.targets,target);append(&state.aliases,target);append(&state.rest,rest[i]);append(&state.local,rest[i]);append(&state.world,rest[i])
+        index:=state.pose_count
+        playing_pose_resize(&state,index+1)
+        append(&state.parents,parents[i]);append(&state.targets,target);append(&state.aliases,target);append(&state.rest,rest[i]);playing_pose(&state,.Local)[index]=rest[i];playing_pose(&state,.World)[index]=rest[i];
     }
     // Its pelvis, spine and leg are those of the body of its skeleton.
     state.body[.Pelvis],state.body[.Hip_L],state.body[.Knee_L],state.body[.Foot_L],state.body[.Neck]=1,2,3,4,6
@@ -247,18 +249,18 @@ pose_warp_runtime_binds_the_bones_of_the_body_preserves_source_knee_planes_reuse
     ok:=true
     source:=motion.instances[0].locomotion.source_velocity
     motion.instances[0].locomotion.velocity=source
-    copy(state.local[:],rest[:]);ok &&=motion_apply_pose(&motion,&state,{3,4},actor,mm.TRANSFORM_IDENTITY,&cache,nil,1.0/60)
-    identity:=true;for bone,i in state.local {identity &&=bone==rest[i]}
+    copy(playing_pose(&state,.Local),rest[:]);ok &&=motion_apply_pose(&motion,&state,{3,4},actor,mm.TRANSFORM_IDENTITY,&cache,nil,1.0/60)
+    identity:=true;for bone,i in playing_pose(&state,.Local) {identity &&=bone==rest[i]}
     motion.instances[0].locomotion.velocity=goal.velocity
-    for _ in 0..<120 {copy(state.local[:],rest[:]);ok &&=motion_apply_pose(&motion,&state,{3,4},actor,mm.TRANSFORM_IDENTITY,&cache,nil,1.0/60)}
-    final:=state.local[1];spine:=state.world[5];upper:=linalg.length(state.world[3].position-state.world[2].position);lower:=linalg.length(state.world[4].position-state.world[3].position)
-    motion.instances[0].locomotion.weight=0;copy(state.local[:],rest[:]);ok &&=motion_apply_pose(&motion,&state,{3,4},actor,mm.TRANSFORM_IDENTITY,&cache,nil,1.0/60)
-    unwarped:=state.local[1]==rest[1]
+    for _ in 0..<120 {copy(playing_pose(&state,.Local),rest[:]);ok &&=motion_apply_pose(&motion,&state,{3,4},actor,mm.TRANSFORM_IDENTITY,&cache,nil,1.0/60)}
+    final:=playing_pose(&state,.Local)[1];spine:=playing_pose(&state,.World)[5];upper:=linalg.length(playing_pose(&state,.World)[3].position-playing_pose(&state,.World)[2].position);lower:=linalg.length(playing_pose(&state,.World)[4].position-playing_pose(&state,.World)[3].position)
+    motion.instances[0].locomotion.weight=0;copy(playing_pose(&state,.Local),rest[:]);ok &&=motion_apply_pose(&motion,&state,{3,4},actor,mm.TRANSFORM_IDENTITY,&cache,nil,1.0/60)
+    unwarped:=playing_pose(&state,.Local)[1]==rest[1]
     // A body that nearly stops leaves the pose nearly as the clip has it, as one that stops does:
     // the warp fades out with the speed instead of shrinking the stride to its minimum.
     motion.instances[0].locomotion.weight=1;motion.instances[0].locomotion.velocity=goal.velocity*.003
-    copy(state.local[:],rest[:]);ok &&=motion_apply_pose(&motion,&state,{3,4},actor,mm.TRANSFORM_IDENTITY,&cache,nil,1.0/60)
-    nearly:=true;for bone,i in state.local {nearly &&=mm.quat_angle(bone.rotation,rest[i].rotation)<1e-2 && linalg.length(bone.position-rest[i].position)<1e-2}
+    copy(playing_pose(&state,.Local),rest[:]);ok &&=motion_apply_pose(&motion,&state,{3,4},actor,mm.TRANSFORM_IDENTITY,&cache,nil,1.0/60)
+    nearly:=true;for bone,i in playing_pose(&state,.Local) {nearly &&=mm.quat_angle(bone.rotation,rest[i].rotation)<1e-2 && linalg.length(bone.position-rest[i].position)<1e-2}
     context=saved
     testing.expect(t,nearly,"a body at 5 mm/s keeps the pose of the clip")
     testing.expect(t,ok && identity && final.rotation!=rest[1].rotation && mm.quat_angle(spine.rotation,actor.rotation)<1e-5 && unwarped)

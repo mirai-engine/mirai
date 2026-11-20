@@ -71,9 +71,9 @@ inspectors_read_every_definition_kind_and_the_parts_of_an_instance :: proc(t:^te
     // and the world adds where the entity stands.
     bones:=body_test_figure()
     state:=anim.Playing{entity=f.rig,skeleton=base.Asset_Id{840,2},pose_ready=true}
-    resize(&state.parents,len(bones)+1);resize(&state.local,len(bones)+1)
-    state.parents[0],state.local[0]=-1,mm.TRANSFORM_IDENTITY
-    for bone,i in bones {state.parents[i+1]=bone.parent+1;state.local[i+1]={position=bone.translation,rotation=1,scale={1,1,1}}}
+    resize(&state.parents,len(bones)+1);anim.playing_pose_resize(&state,len(bones)+1)
+    state.parents[0],anim.playing_pose(&state,.Local)[0]=-1,mm.TRANSFORM_IDENTITY
+    for bone,i in bones {state.parents[i+1]=bone.parent+1;anim.playing_pose(&state,.Local)[i+1]={position=bone.translation,rotation=1,scale={1,1,1}}}
     append(&f.world.playback.states,state)
     row:=core.entity_index(f.rig);resize(&f.world.playback.rows,row+1);f.world.playback.rows[row]=1
     core.add(&f.world.transforms,f.rig,core.from_math(mm.Transform{position={10,0,0},rotation=1,scale={1,1,1}}));core.settle(&f.info,&f.world,nil)

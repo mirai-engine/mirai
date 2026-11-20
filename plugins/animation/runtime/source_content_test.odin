@@ -56,9 +56,9 @@ multiple_animation_sources_keep_duplicate_clip_names_curves_markers_root_and_act
     playback:Playback;events:Animation_Events;defer {playback_free(&playback);delete(events.items)}
     testing.expect(t,tracks_bind(&playback,&state,combined))
     animation:=ANIMATION_DEFAULT;animation.loop=false;animation.root_motion=.Extract
-    testing.expect(t,program_buffers(&state,combined) && program_players(&state,output,combined,animation,&events,&playback,.5,-1,nil) && program_pose(&playback,&state,combined,animation,output))
+    testing.expect(t,curves_prepare(&state,combined) && program_players(&state,output,combined,animation,&events,&playback,.5,-1,nil) && program_pose(&playback,&state,combined,animation,output))
     source_markers_resolve(&cache,&state,events.items[:])
-    testing.expect(t,abs(state.local[1].position.x-1.5)<.001 && abs(state.motion.translation.x-1.5)<.001)
+    testing.expect(t,abs(playing_pose(&state,.Local)[1].position.x-1.5)<.001 && abs(state.motion.translation.x-1.5)<.001)
     found:bool
     for curve in state.curves {if curve.target==base.name_hash("Smile") {found=abs(curve.value.x-.5)<.001}}
     testing.expect(t,found && len(events.items)==2 && events.items[0].clip==base.name_hash("Walk") && events.items[1].clip==base.name_hash("Walk"))
@@ -202,11 +202,11 @@ an_animation_that_compresses_in_a_job_plays_once_it_is_ready_without_problems ::
         testing.expect_value(t,problems.count,0)
         if ready==1 {break}
         testing.expect(t,host.content_animation_pending(&app,id),"it compresses in a job")
-        testing.expect(t,len(w.playback.states)==0 || len(w.playback.states[0].local)==0,"it waits")
+        testing.expect(t,len(w.playback.states)==0 || len(playing_pose(&w.playback.states[0],.Local))==0,"it waits")
         if !testing.expect(t,host.content_animation_wait(&app,id)!=nil) {return}
     }
-    if testing.expect(t,len(w.playback.states)==1 && len(w.playback.states[0].local)==2) {
-        testing.expect(t,abs(w.playback.states[0].local[1].position.x-.25)<1e-4,"the tick after it is ready plays it")
+    if testing.expect(t,len(w.playback.states)==1 && len(playing_pose(&w.playback.states[0],.Local))==2) {
+        testing.expect(t,abs(playing_pose(&w.playback.states[0],.Local)[1].position.x-.25)<1e-4,"the tick after it is ready plays it")
     }
 }
 
@@ -274,16 +274,16 @@ a_library_that_compresses_in_a_job_keeps_what_plays_until_it_is_ready :: proc(t:
             core.problem_find(problems,actor,"animation.match_database")!=nil
     }
     if !testing.expect(t,only_unmatched(&problems,actor) && len(w.playback.states)==1 &&
-        len(w.playback.states[0].local)==2 && len(w.actions.states)==1 &&
+        len(playing_pose(&w.playback.states[0],.Local))==2 && len(w.actions.states)==1 &&
         w.actions.states[0].slots[1].active && len(w.requests.plays.items)==0) {return}
-    before:=w.playback.states[0].local[1].position.x
+    before:=playing_pose(&w.playback.states[0],.Local)[1].position.x
     core.free(&w.animations,actor).library=SET
     play(&w.requests,actor,"slash",next_clip="pull")
     tick(s)
     testing.expect_value(t,len(w.requests.plays.items),1)
     testing.expect(t,host.content_animation_pending(&app,SET),"the set compresses in a job")
     testing.expect(t,only_unmatched(&problems,actor))
-    testing.expect(t,w.playback.states[0].local[1].position.x>before+.05,"it plays on what it played")
+    testing.expect(t,playing_pose(&w.playback.states[0],.Local)[1].position.x>before+.05,"it plays on what it played")
     testing.expect(t,w.actions.states[0].slots[1].active && !w.actions.states[0].slots[1].finishing,"the action it plays goes on")
     testing.expect(t,len(source_ids(&sources,&w.playback.states[0]))==0)
     if !testing.expect(t,host.content_animation_wait(&app,SET)!=nil) {return}

@@ -109,6 +109,7 @@ Storage_Procs :: struct {
     swap:proc(a,b:rawptr),                  // swap="f"
     diff:proc(a,b:rawptr,buf:[]byte) -> string, // diff="f": where two values differ, written into buf; empty when they do not
     free:proc(value:rawptr),                // free="f"
+    save_prepare:proc(value:rawptr,world:World_Ref) -> bool,
     reset:proc(value:rawptr),               // reset="f": what clearing the World does to it
 }
 

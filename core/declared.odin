@@ -23,6 +23,7 @@ Declared :: struct {
     swap:string,
     diff:string,      // where two values differ, as text
     free:string,      // releases what the storage holds; value_free otherwise
+    save_prepare:string, // materializes saved components from this storage
     reset:string,     // gives a storage of the World its start when the World is cleared
     lock_names:string, // the components whose rows a row of this one owns, as written: separated by spaces
     description:string,
@@ -111,6 +112,7 @@ declared_read :: proc(d:^Declared,options:map[string]string,editor:bool) -> (inv
     d.diff=options["diff"] or_else ""
     d.free=options["free"] or_else ""
     d.reset=options["reset"] or_else ""
+    d.save_prepare=options["save_prepare"] or_else ""
     d.lock_names=options["locks"] or_else ""
     d.description=options["description"] or_else ""
     d.place=editor?.Editor:(d.host?.Shared:.World)

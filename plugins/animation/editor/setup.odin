@@ -371,6 +371,8 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     if .Foot_Ik in want {
         // Its legs and body are those of the body of the skeleton: their bones stay empty.
         feet:=anim.FOOT_GROUNDING_DEFAULT
+        feet.legs=make([]anim.Grounded_Leg,2,call.allocator)
+        count:=0
         feet.up=up
         feet.max_rise=.15;feet.trace_above=.55;feet.trace_below=.9;feet.blend_time=.08
         for side in 0..<2 {
@@ -382,9 +384,9 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
             leg.sole_height=max(0,linalg.dot(foot.position,up))
             if body.bones[parts[3]]>=0 {leg.contact_offset=max(0,linalg.dot(world[body.bones[parts[3]]].position,up))}
             leg.pole_offset={};leg.max_distance=.55;leg.contact_height=.04
-            feet.legs[side]=leg;feet.count+=1
+            feet.legs[side]=leg;count+=1
         }
-        if feet.count==2 && body.bones[.Pelvis]>=0 {
+        if count==2 && body.bones[.Pelvis]>=0 {
             grounding=feet
             say(&capabilities[.Foot_Ik],.Ready,"the feet stand on the ground under them, with physics colliders","")
         } else {say(&capabilities[.Foot_Ik],.Missing,"the body has no pelvis or not both legs","Set pelvis, and hip, knee and foot of both legs with skeleton.body.set")}

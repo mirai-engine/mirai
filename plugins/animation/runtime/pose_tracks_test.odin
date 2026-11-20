@@ -75,7 +75,7 @@ reference_pose :: proc(state:^Playing,library:^lib.Library,animation:Animation,o
     for outgoing in state.fader.outgoing[:state.fader.outgoing_count] {players[count]=outgoing.player;players[count].weight=lib.fade_out_weight(outgoing);count+=1}
     weight:=mm.saturate(animation.weight)
     for binding,b in state.bindings {
-        rest:=binding.rest
+        rest:=state.rest[b]
         channels:=named_blend(library,binding.target,players[:count])
         if c:=channels[0];c.weight>0 {out[b].position=rest.position+(c.sum.xyz/c.weight-rest.position)*(mm.saturate(c.weight)*weight)}
         if c:=channels[1];c.weight>0 {out[b].rotation=mm.quat_slerp(rest.rotation,linalg.normalize0(lib.vec4_quat(c.sum)),mm.saturate(c.weight)*weight)}
@@ -132,10 +132,10 @@ poses_by_track_match_the_pose_each_track_gives_by_name :: proc(t:^testing.T) {
     parents:=[?]i32{-1,0,1,2,1,1}
     for target,i in targets {
         rest:=mm.Transform{position={f32(i),.5,-1},rotation=mm.quat_axis_angle({0,1,0},.3*f32(i)),scale={1,1.5,.75}}
-        append(&state.bindings,Binding{target=target,entity=core.NONE,driven=targeted(&content.lib,target),rest=rest,parent=parents[i]})
+        append(&state.bindings,Binding{target=target,entity=core.NONE,driven=targeted(&content.lib,target),parent=parents[i]})
         append(&state.parents,parents[i]);append(&state.targets,target);append(&state.rest,rest)
     }
-    resize(&state.local,len(targets))
+    playing_pose_resize(&state,len(targets))
     playback:Playback;defer playback_free(&playback)
     if !testing.expect(t,tracks_bind(&playback,&state,&content)) {return}
     testing.expect_value(t,len(playback.track_maps[state.tracks-1].twins),1)
@@ -155,19 +155,19 @@ poses_by_track_match_the_pose_each_track_gives_by_name :: proc(t:^testing.T) {
         case 7: base.text_set(animation.clip[:],"walk");testing.expect(t,test_layer(&state,1,"lean",over="spine",weight=.9,fade=.3))
         case 9: testing.expect(t,test_layer_stop(&state,2,.2))
         }
-        copy(state.local[:],state.rest[:])
+        copy(playing_pose(&state,.Local),state.rest[:])
         advance(&playback,&state,&content,animation,&events,.1,nil)
         layers_advance(&playback,&state,&content,animation,&events,.1,nil)
         result:=pose_sample(&playback,&state,&content,animation,{})
         faults.memory||=result.memory;faults.layer_reference|=result.layer_reference
         reference_pose(&state,&content.lib,animation,expected[:])
         for value,b in expected {
-            got:=state.local[b]
+            got:=playing_pose(&state,.Local)[b]
             testing.expectf(t,linalg.length(got.position-value.position)<1e-5 && linalg.length(got.scale-value.scale)<1e-5 && mm.quat_angle(got.rotation,value.rotation)<1e-4,"step %d, bone %d: %v, by name %v",step,b,got,value)
         }
         layered||=state.fader.outgoing_count>0 && state.layers[1].weight>0 && state.layers[2].weight>0 && state.layers[3].weight>0
     }
     testing.expect_value(t,faults,Pose_Faults{})
     testing.expect(t,layered,"the component cross-fades under its three layers")
-    testing.expect(t,state.local[4].position!=state.rest[4].position && state.local[5].position!=state.rest[5].position,"bindings of one target are both moved")
+    testing.expect(t,playing_pose(&state,.Local)[4].position!=state.rest[4].position && playing_pose(&state,.Local)[5].position!=state.rest[5].position,"bindings of one target are both moved")
 }

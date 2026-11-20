@@ -30,7 +30,7 @@ bone_references_reject_overflow_embedded_zero_and_unterminated_storage_without_t
     testing.expect_value(t,len(requests.poses.items),0)
     testing.expect_value(t,requests.poses.refused,1)
     library:lib.Library
-    testing.expect_value(t,root_motion_sample(&library,{},Root_Motion{bone=invalid,translation=true},1),ROOT_DELTA_DEFAULT)
+    testing.expect_value(t,root_motion_sample(&library,{},Root_Motion{translation=true},1),ROOT_DELTA_DEFAULT)
 }
 
 @(private)
@@ -64,7 +64,7 @@ recreated_skeletons_get_distinct_bindings_and_replace_constraint_and_grounding_b
     state:=state_get(&playback,rig)
     testing.expect(t,skeleton_bind(&playback,state,&definition,nil,&w.transforms))
     first:=state.bound
-    config:=FOOT_GROUNDING_DEFAULT;config.count=1;config.adjust_body=false
+    config:=FOOT_GROUNDING_DEFAULT;config.legs=make([]Grounded_Leg,1,context.temp_allocator);config.adjust_body=false
     config.legs[0]=GROUNDED_LEG_DEFAULT;config.legs[0].hip=bone_ref("hip");config.legs[0].knee=bone_ref("knee");config.legs[0].foot=bone_ref("foot")
     grounding:Grounding_Runtime;defer grounding_free(&grounding)
     append(&grounding.records,Grounding_Record{});append(&grounding.hierarchies,Grounding_Hierarchy{})
@@ -91,7 +91,7 @@ recreated_skeletons_get_distinct_bindings_and_replace_constraint_and_grounding_b
     testing.expect_value(t,record.bones[0],[3]int{2,3,4})
     testing.expect(t,constraints_bind(state,inputs,&constraints))
     testing.expect_value(t,constraints.bones[0][0],[3]int{2,3,4})
-    testing.expect_value(t,len(state.previous),len(state.local))
+    testing.expect_value(t,len(playing_pose(state,.Previous)),len(playing_pose(state,.Local)))
 }
 
 @(test)

@@ -31,24 +31,27 @@ mirai_character_walk_binds_and_changes_its_leg_pose :: proc(t:^testing.T) {
     core.add(&transforms,state.entity,core.TRANSFORM_IDENTITY);core.table_settle(&transforms,&entities)
     definition:=anim.Skeleton_Content{id=skeleton_file.blob.header.id,revision=1,bones=skel.bones}
     if !testing.expect(t,anim.skeleton_bind(&playback,&state,&definition,nil,&transforms)) {return}
-    tracks:=make([]lib.Bone_Tracks,len(state.local));defer delete(tracks)
+    local:=anim.playing_pose(&state,.Local)
+    world:=anim.playing_pose(&state,.World)
+    references:=anim.playing_skeleton(&state).rest
+    tracks:=make([]lib.Bone_Tracks,len(local));defer delete(tracks)
     if !testing.expect(t,lib.skeleton_bind(&library,clip,anim.playing_skeleton(&state),tracks)) {return}
     leg:=anim.bone_resolve(&state,anim.bone_ref("LeftUpLeg"))
     if !testing.expect(t,leg>=0) {return}
-    if !testing.expect(t,lib.skeleton_sample(&library,tracks,state.rest[:],0,state.local[:])) {return}
-    first:=state.local[leg].rotation
-    if !testing.expect(t,lib.skeleton_sample(&library,tracks,state.rest[:],.35,state.local[:])) {return}
-    second:=state.local[leg].rotation
+    if !testing.expect(t,lib.skeleton_sample(&library,tracks,references,0,local)) {return}
+    first:=local[leg].rotation
+    if !testing.expect(t,lib.skeleton_sample(&library,tracks,references,.35,local)) {return}
+    second:=local[leg].rotation
     testing.expectf(t,abs(first.x-second.x)+abs(first.y-second.y)+abs(first.z-second.z)+abs(first.w-second.w)>.01,"walk should move the left leg")
     feet:=[4]int{anim.bone_resolve(&state,anim.bone_ref("LeftFoot")),anim.bone_resolve(&state,anim.bone_ref("LeftToeBase")),anim.bone_resolve(&state,anim.bone_ref("RightFoot")),anim.bone_resolve(&state,anim.bone_ref("RightToeBase"))}
     for foot in feet {if !testing.expect(t,foot>=0) {return}}
-    rest:=make([]mm.Transform,len(state.rest),context.temp_allocator)
-    if !testing.expect(t,lib.skeleton_world(anim.playing_skeleton(&state),state.rest[:],rest)) {return}
+    rest:=make([]mm.Transform,len(references),context.temp_allocator)
+    if !testing.expect(t,lib.skeleton_world(anim.playing_skeleton(&state),references,rest)) {return}
     for frame in 0..<60 {
         at:=lib.clip_duration(&library,clip)*f32(frame)/60
-        if !testing.expect(t,lib.skeleton_sample(&library,tracks,state.rest[:],at,state.local[:]) && lib.skeleton_world(anim.playing_skeleton(&state),state.local[:],state.world[:])) {return}
+        if !testing.expect(t,lib.skeleton_sample(&library,tracks,references,at,local) && lib.skeleton_world(anim.playing_skeleton(&state),local,world)) {return}
         clearance:=max(f32)
-        for foot in feet {clearance=min(clearance,state.world[foot].position.y-rest[foot].position.y)}
+        for foot in feet {clearance=min(clearance,world[foot].position.y-rest[foot].position.y)}
         testing.expectf(t,abs(clearance)<.015,"foot clearance %.3f m at %.3f s",clearance,at)
     }
 }

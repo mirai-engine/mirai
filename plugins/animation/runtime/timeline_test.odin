@@ -35,7 +35,6 @@ Timeline_World :: struct {
     events:Animation_Events,
     playback:Playback,
     fields:Field_Playback,
-    constraints:Animation_Constraints,
 }
 
 @(private="file")
@@ -81,7 +80,8 @@ timeline_tick :: proc(w:^Timeline_World,app:^host.App,problems:^core.Problems,dt
     extra:Test_Storages;defer test_storages_free(&extra)
     test_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),&w.playback,app,time,{},nil,problems,&extra)
     animation_fields(test_world_ref(w),core.ref(&w.playback),&w.fields,{},app,problems)
-    animation_finish(&w.playback,{problems=problems},&w.constraints,&w.transforms,&w.parents,dt,nil,{},places=&w.places)
+    constraints:Animation_Constraints;defer constraints_free(&constraints)
+    animation_finish(&w.playback,{problems=problems},&constraints,&w.transforms,&w.parents,dt,nil,{},places=&w.places)
     test_world_settle(w)
 }
 
@@ -307,8 +307,8 @@ a_character_plays_an_explicit_additive_clip_over_its_base :: proc(t:^testing.T) 
     test_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),
         core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),&w.playback,&app,
         {dt=.25,playing=true},{},nil,&problems,&extra)
-    if !testing.expect(t,len(w.playback.states)==1 && len(w.playback.states[0].local)>0) {return}
-    testing.expect_value(t,w.playback.states[0].local[0].position,[3]f32{2,1,0})
+    if !testing.expect(t,len(w.playback.states)==1 && len(playing_pose(&w.playback.states[0],.Local))>0) {return}
+    testing.expect_value(t,playing_pose(&w.playback.states[0],.Local)[0].position,[3]f32{2,1,0})
     for event in w.events.items {
         if event.kind==.Started && event.clip==base.name_hash("rise") {
             testing.expect(t,event.animation==gesture && event.action==0)

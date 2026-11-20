@@ -106,7 +106,7 @@ spatial_target_sample :: proc(target:Spatial_Target,binding:^Spatial_Target_Bind
     }
     if playback==nil {return mm.TRANSFORM_IDENTITY,false}
     source:=constraint_playing(playback,target.entity)
-    if source==nil || source.seen!=(frame if frame!=0 else playback.frame) || len(source.sampled)!=len(source.parents) {return mm.TRANSFORM_IDENTITY,false}
+    if source==nil || source.seen!=(frame if frame!=0 else playback.frame) || len(playing_pose(source,.Sampled))!=len(playing_topology(source).parents) {return mm.TRANSFORM_IDENTITY,false}
     if !binding.ready || !spatial_same_reference(binding.target,target) || binding.revision!=source.bound || binding.skeleton_revision!=source.skeleton_revision {
         binding.ready=false
         clear(&binding.path)
@@ -119,9 +119,9 @@ spatial_target_sample :: proc(target:Spatial_Target,binding:^Spatial_Target_Bind
                 break
             }
         }
-        if bone<0 || reserve(&binding.path,len(source.parents))!=nil {return mm.TRANSFORM_IDENTITY,false}
-        for index:=bone;index>=0;index=int(source.parents[index]) {
-            if index>=len(source.parents) || source.parents[index]>=i32(index) {return mm.TRANSFORM_IDENTITY,false}
+        if bone<0 || reserve(&binding.path,len(playing_topology(source).parents))!=nil {return mm.TRANSFORM_IDENTITY,false}
+        for index:=bone;index>=0;index=int(playing_topology(source).parents[index]) {
+            if index>=len(playing_topology(source).parents) || playing_topology(source).parents[index]>=i32(index) {return mm.TRANSFORM_IDENTITY,false}
             append(&binding.path,i32(index))
         }
         // One store per value until odin-lang/Odin#7937.
@@ -134,7 +134,7 @@ spatial_target_sample :: proc(target:Spatial_Target,binding:^Spatial_Target_Bind
             actor,found:=constraint_world(transforms,parents,core.read(worlds),source.entity)
             if !found {return mm.TRANSFORM_IDENTITY,false}
             result=actor
-        } else {result=mm.transform_compose(result,source.sampled[index])}
+        } else {result=mm.transform_compose(result,playing_pose(source,.Sampled)[index])}
     }
     result=mm.transform_compose(mm.transform_compose(result,binding.socket),spatial_offset(target))
     return result,spatial_transform_valid(result)
@@ -166,7 +166,7 @@ follow_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constraint_
     first,end:=rig_rows(&runtime.follow,state.entity)
     if first==end {return true}
     if len(runtime.follow_states)!=len(runtime.follow.values) && resize(&runtime.follow_states,len(runtime.follow.values))!=nil {memory_problem(inputs.problems,state.entity,"the Follow operations of its .character");return false}
-    if !lib.pose_world(state.parents[:],state.local[:],state.world[:],root_transform) {pose_problem(inputs.problems,state.entity);return false}
+    if !lib.pose_world(playing_topology(state).parents[:],playing_pose(state,.Local),playing_pose(state,.World),root_transform) {pose_problem(inputs.problems,state.entity);return false}
     valid:=true
     for &config,slot in runtime.follow.values[first:end] {
         binding:=&runtime.follow_states[first+slot]
@@ -179,7 +179,7 @@ follow_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constraint_
         }
         if !config.enabled || config.weight<=0 {continue}
         changed:=!binding.target.ready || !spatial_same_reference(binding.target.target,config.target)
-        kept:=state.world[binding.bone]
+        kept:=playing_pose(state,.World)[binding.bone]
         if changed && binding.space_ready && config.keep_world {
             previous,found:=spatial_target_sample(binding.target.target,&binding.target,playback,inputs.skeletons,transforms,parents,inputs.worlds)
             if !found {rig_problem(inputs.problems,state.entity,.Follow,&config,.Target);valid=false;continue}
@@ -193,14 +193,14 @@ follow_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constraint_
             binding.space_ready=true
         }
         desired:=mm.transform_compose(target,binding.offset)
-        original:=state.world[binding.bone]
+        original:=playing_pose(state,.World)[binding.bone]
         if !config.position {desired.position=original.position}
         if !config.rotation {desired.rotation=original.rotation}
         if !config.scale {desired.scale=original.scale}
-        parent:=state.parents[binding.bone]
-        local,relative:=mm.transform_relative(mm.transform_interpolate(original,desired,config.weight),state.world[parent] if parent>=0 else root_transform)
+        parent:=playing_topology(state).parents[binding.bone]
+        local,relative:=mm.transform_relative(mm.transform_interpolate(original,desired,config.weight),playing_pose(state,.World)[parent] if parent>=0 else root_transform)
         solved:=relative
-        if solved {state.local[binding.bone]=local;solved=lib.pose_world(state.parents[:],state.local[:],state.world[:],root_transform)}
+        if solved {playing_pose(state,.Local)[binding.bone]=local;solved=lib.pose_world(playing_topology(state).parents[:],playing_pose(state,.Local),playing_pose(state,.World),root_transform)}
         binding.diagnostic.valid,binding.diagnostic.reached=solved,solved
         if !solved {rig_problem(inputs.problems,state.entity,.Follow,&config,.Solve)}
         valid &&=solved

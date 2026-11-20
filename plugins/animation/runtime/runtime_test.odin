@@ -76,8 +76,10 @@ direct_clip_weights_preserve_zero_full_and_partial_trs_without_allocations :: pr
     }})
     if !testing.expect(t,clip!=0) {return}
     state:=Playing{clip=0};defer playing_free(&state)
-    append(&state.bindings,Binding{target=target,driven={.Position,.Rotation,.Scale},rest=rest})
-    append(&state.local,rest)
+    append(&state.bindings,Binding{target=target,driven={.Position,.Rotation,.Scale}})
+    append(&state.rest,rest)
+    playing_pose_resize(&state,1)
+    playing_pose(&state,.Local)[0]=rest
     lib.fader_play(&state.fader,clip)
     playback:Playback;defer playback_free(&playback)
     if !testing.expect(t,tracks_bind(&playback,&state,&content)) {return}
@@ -90,8 +92,8 @@ direct_clip_weights_preserve_zero_full_and_partial_trs_without_allocations :: pr
         pose_sample(&playback,&state,&content,animation,{})
         expected:=mm.transform_interpolate(rest,posed,source_weight*weight)
         expected.rotation=mm.quat_slerp(rest.rotation,posed.rotation,source_weight*weight)
-        for i in 0..<3 {matched &&=abs(state.local[0].position[i]-expected.position[i])<1e-5 && abs(state.local[0].scale[i]-expected.scale[i])<1e-5}
-        matched &&=mm.quat_angle(state.local[0].rotation,expected.rotation)<1e-5
+        for i in 0..<3 {matched &&=abs(playing_pose(&state,.Local)[0].position[i]-expected.position[i])<1e-5 && abs(playing_pose(&state,.Local)[0].scale[i]-expected.scale[i])<1e-5}
+        matched &&=mm.quat_angle(playing_pose(&state,.Local)[0].rotation,expected.rotation)<1e-5
     }}
     context=saved
     testing.expect(t,matched)
@@ -155,16 +157,16 @@ layer_fixture :: proc(t:^testing.T,content:^host.Content_Animation) -> Playing {
     targets:=[4]u64{0,hip,arm,leg}
     parents:=[4]i32{-1,0,1,0}
     for target,i in targets {
-        append(&state.bindings,Binding{target=target,entity=core.NONE,driven={.Position},rest=mm.TRANSFORM_IDENTITY,parent=parents[i]})
+        append(&state.bindings,Binding{target=target,entity=core.NONE,driven={.Position},parent=parents[i]})
         append(&state.parents,parents[i]);append(&state.targets,target);append(&state.rest,mm.TRANSFORM_IDENTITY)
     }
-    resize(&state.local,4);resize(&state.world,4)
+    playing_pose_resize(&state,4)
     return state
 }
 
 @(private="file")
 layer_step :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,events:^Animation_Events,dt:f32) {
-    copy(state.local[:],state.rest[:])
+    copy(playing_pose(state,.Local),state.rest[:])
     advance(playback,state,content,animation,events,dt,nil)
     layers_advance(playback,state,content,animation,events,dt,nil)
     pose_sample(playback,state,content,animation,{})
@@ -181,44 +183,44 @@ layers_play_over_the_clip_inside_their_branch_by_weight_and_fade_out :: proc(t:^
     animation:=ANIMATION_DEFAULT
     base.text_set(animation.clip[:],"walk");animation.fade=0
     layer_step(&playback,&state,&content,animation,&events,1)
-    testing.expect(t,abs(state.local[1].position.x-1)<0.0001 && abs(state.local[3].position.z-1)<0.0001 && state.local[2].position==0)
+    testing.expect(t,abs(playing_pose(&state,.Local)[1].position.x-1)<0.0001 && abs(playing_pose(&state,.Local)[3].position.z-1)<0.0001 && playing_pose(&state,.Local)[2].position==0)
     // Over the branch of hip: arm rises, leg keeps walking, hip keeps what wave does not move.
     testing.expect(t,test_layer(&state,1,"wave",over="hip"))
     layer_step(&playback,&state,&content,animation,&events,0)
-    testing.expect(t,state.local[2].position==mm.Vec3{0,1,0} && state.local[3].position.y==0 && abs(state.local[1].position.x-1)<0.0001)
+    testing.expect(t,playing_pose(&state,.Local)[2].position==mm.Vec3{0,1,0} && playing_pose(&state,.Local)[3].position.y==0 && abs(playing_pose(&state,.Local)[1].position.x-1)<0.0001)
     testing.expect(t,test_layer(&state,1,"wave"))
     layer_step(&playback,&state,&content,animation,&events,0)
-    testing.expect_value(t,state.local[3].position,mm.Vec3{0,5,0})
+    testing.expect_value(t,playing_pose(&state,.Local)[3].position,mm.Vec3{0,5,0})
     testing.expect(t,test_layer_weight(&state,1,0.5))
     layer_step(&playback,&state,&content,animation,&events,0)
-    testing.expect(t,abs(state.local[3].position.y-2.5)<0.0001 && abs(state.local[3].position.z-0.5)<0.0001)
+    testing.expect(t,abs(playing_pose(&state,.Local)[3].position.y-2.5)<0.0001 && abs(playing_pose(&state,.Local)[3].position.z-0.5)<0.0001)
     testing.expect(t,test_layer_stop(&state,1,0.5))
     layer_step(&playback,&state,&content,animation,&events,0.1)
-    testing.expect(t,abs(state.layers[1].weight-0.3)<0.0001 && abs(state.local[3].position.y-1.5)<0.0001)
+    testing.expect(t,abs(state.layers[1].weight-0.3)<0.0001 && abs(playing_pose(&state,.Local)[3].position.y-1.5)<0.0001)
     layer_step(&playback,&state,&content,animation,&events,1)
-    testing.expect(t,state.layers[1]==Layer_Playing{} && state.local[3].position.y==0)
+    testing.expect(t,state.layers[1]==Layer_Playing{} && playing_pose(&state,.Local)[3].position.y==0)
     // A synchronized layer is where the clip below it is in its cycle: walk lasts 2 s and run 1 s.
     testing.expect(t,test_layer(&state,2,"run",sync=true))
     layer_step(&playback,&state,&content,animation,&events,0.5)
     run_time:=lib.player_time(&content.lib,state.layers[2].player)
-    testing.expect(t,abs(run_time-state.time/2)<0.0001 && abs(state.local[1].position.x-run_time*4)<0.0001)
+    testing.expect(t,abs(run_time-state.time/2)<0.0001 && abs(playing_pose(&state,.Local)[1].position.x-run_time*4)<0.0001)
     problems:core.Problems
     testing.expect(t,test_layer(&state,2,"missing"))
-    copy(state.local[:],state.rest[:]);advance(&playback,&state,&content,animation,&events,0.1,nil);layers_advance(&playback,&state,&content,animation,&events,0.1,&problems)
+    copy(playing_pose(&state,.Local),state.rest[:]);advance(&playback,&state,&content,animation,&events,0.1,nil);layers_advance(&playback,&state,&content,animation,&events,0.1,&problems)
     testing.expect(t,core.problem_find(&problems,state.entity,"animation.layer_clip")!=nil,"a layer whose clip the animation lacks is a problem of its entity")
     // An additive layer over a reference clip adds what its clip changes from the pose of that
     // clip at reference: wave over walk at 1 s lifts the leg 5 and takes it back the 1 walk has
     // there; the arm, which walk does not move, changes from wave's own pose, by nothing.
     state.asked,state.layers={},{}
     layer_step(&playback,&state,&content,animation,&events,0)
-    leg,arm:=state.local[3].position,state.local[2].position
+    leg,arm:=playing_pose(&state,.Local)[3].position,playing_pose(&state,.Local)[2].position
     testing.expect(t,test_layer(&state,1,"wave",mode=.Additive,reference=1,reference_clip="walk"))
     layer_step(&playback,&state,&content,animation,&events,0)
-    testing.expectf(t,linalg.length(state.local[3].position-(leg+mm.Vec3{0,5,-1}))<1e-4 && state.local[2].position==arm,"leg %v from %v",state.local[3].position,leg)
+    testing.expectf(t,linalg.length(playing_pose(&state,.Local)[3].position-(leg+mm.Vec3{0,5,-1}))<1e-4 && playing_pose(&state,.Local)[2].position==arm,"leg %v from %v",playing_pose(&state,.Local)[3].position,leg)
     testing.expect(t,test_layer(&state,1,"wave",mode=.Additive,reference_clip="missing"))
-    copy(state.local[:],state.rest[:])
-    pose_faults_report(&problems,state.entity,pose_layers(&playback,&state,&content,animation,state.local[:]))
-    testing.expect(t,core.problem_find(&problems,state.entity,"animation.layer_reference")!=nil && state.local[3].position==0,"a reference clip the animation does not have is reported and the layer adds nothing")
+    copy(playing_pose(&state,.Local),state.rest[:])
+    pose_faults_report(&problems,state.entity,pose_layers(&playback,&state,&content,animation,playing_pose(&state,.Local)))
+    testing.expect(t,core.problem_find(&problems,state.entity,"animation.layer_reference")!=nil && playing_pose(&state,.Local)[3].position==0,"a reference clip the animation does not have is reported and the layer adds nothing")
 }
 
 // A chain of bones below the entity, each the parent of the next, at rest where its parent is,
@@ -244,10 +246,10 @@ chain_fixture :: proc(t:^testing.T,content:^host.Content_Animation,bones:[]strin
     state=Playing{entity=core.entity_make(1,1),clip=-1}
     for i in 0..=len(bones) {
         target:=base.name_hash(bones[i-1]) if i>0 else 0;parent:=i32(i-1)
-        append(&state.bindings,Binding{target=target,entity=core.NONE,driven={.Position,.Rotation},rest=mm.TRANSFORM_IDENTITY,parent=parent})
+        append(&state.bindings,Binding{target=target,entity=core.NONE,driven={.Position,.Rotation},parent=parent})
         append(&state.parents,parent);append(&state.targets,target);append(&state.rest,mm.TRANSFORM_IDENTITY)
     }
-    resize(&state.local,len(bones)+1);resize(&state.world,len(bones)+1)
+    playing_pose_resize(&state,len(bones)+1)
     return
 }
 
@@ -270,7 +272,7 @@ a_layer_fades_in_along_its_branch_over_its_depth :: proc(t:^testing.T) {
         testing.expect(t,test_layer(&state,1,"bend",over="spine_1",depth=depth))
         layer_step(&playback,&state,&content,animation,&events,0)
         changes:[5]f32
-        for b in 1..=4 {changes[b]=mm.quat_angle(state.local[b].rotation,1)}
+        for b in 1..=4 {changes[b]=mm.quat_angle(playing_pose(&state,.Local)[b].rotation,1)}
         for b in 2..=4 {edges[i]=max(edges[i],abs(changes[b]-changes[b-1]))}
         testing.expectf(t,changes[1]<1e-5 && abs(changes[4]-mm.PI/6)<1e-4,"depth %d: the pelvis keeps the base and the last spine bone takes the layer: %v",depth,changes)
     }
@@ -298,13 +300,13 @@ a_layer_in_the_space_of_the_rig_keeps_its_clip_whatever_the_base_turns_above :: 
         base.text_set(animation.clip[:],"turn");animation.fade=0
         testing.expect(t,test_layer(&state,1,"pose",over="arm",mesh_space=mesh))
         layer_step(&playback,&state,&content,animation,&events,0)
-        turns[i]=mm.quat_angle(state.local[1].rotation*state.local[2].rotation,1)
-        testing.expect(t,mm.quat_angle(state.local[1].rotation,side)<1e-4)
+        turns[i]=mm.quat_angle(playing_pose(&state,.Local)[1].rotation*playing_pose(&state,.Local)[2].rotation,1)
+        testing.expect(t,mm.quat_angle(playing_pose(&state,.Local)[1].rotation,side)<1e-4)
         // The base leans the spine; an aim offset adds its aim up over it.
         base.text_set(animation.clip[:],"lean")
         testing.expect(t,test_layer(&state,1,"aim_up",mode=.Additive,reference_clip="aim_center",mesh_space=mesh))
         layer_step(&playback,&state,&content,animation,&events,0)
-        muzzle:=mm.quat_rotate(state.local[1].rotation*state.local[2].rotation,mm.FORWARD)
+        muzzle:=mm.quat_rotate(playing_pose(&state,.Local)[1].rotation*playing_pose(&state,.Local)[2].rotation,mm.FORWARD)
         errors[i]=linalg.angle_between(muzzle,mm.quat_rotate(up,mm.FORWARD))
     }
     testing.expectf(t,abs(turns[0]-mm.PI/2)<1e-4 && turns[1]<1e-4,"in its own space the arm turns with the hip, in the space of the rig it stays straight: %v",turns)
@@ -374,7 +376,7 @@ animation_bind_is_transactional_when_allocations_fail_and_stops_at_nested_player
         context=saved_context
         if ok {succeeded=true;break}
         testing.expect_value(t,raw_data(state.bindings),old_pointer)
-        testing.expect_value(t,len(state.local),2)
+        testing.expect_value(t,len(playing_pose(&state,.Local)),2)
         testing.expect_value(t,state.rest[1],old_rest)
     }
     testing.expect(t,succeeded)
@@ -383,7 +385,7 @@ animation_bind_is_transactional_when_allocations_fail_and_stops_at_nested_player
     append(&w.playback.rigs,Rig{entity=nested,skeleton={1,2}})
     testing.expect(t,bind(&w.playback,&state,&content,core.ref(&w.hierarchy),&w.transforms,&w.names,&w.targets,&w.animations,nil))
     testing.expect_value(t,len(state.bindings),2)
-    testing.expect_value(t,len(state.previous),len(state.local))
+    testing.expect_value(t,len(playing_pose(&state,.Previous)),len(playing_pose(&state,.Local)))
     saved_context:=context
     context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     failed:Playback

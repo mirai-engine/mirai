@@ -1,13 +1,12 @@
 package anim
 
 import "mirai:core"
-import "mirai:std/base"
 
 Modifier_Control :: struct {
     rig:core.Entity,
     kind:Modifier_Kind,
     slot:u16,
-    name:[256]u8, // the operation by name instead of slot: found again when the .character is read again
+    name:u64, // the operation by name instead of slot: found again when the .character is read again
     weight:f32,
     enabled:bool,
     fade:f32,
@@ -27,7 +26,7 @@ Modifier_Control_State :: struct {
 modifier_control :: proc(requests:^Animation_Requests,control:Modifier_Control) {
     if requests==nil {return}
     control:=control
-    if !blend_text_valid(control.name[:],true) || control.rig==core.NONE || control.kind>max(Modifier_Kind) || control.slot>=POSE_CONSTRAINTS || control.kind==.Grounding && control.slot!=0 || !profile_weight(control.weight) || !finite(control.fade) || control.fade<0 {
+    if control.rig==core.NONE || control.kind>max(Modifier_Kind) || control.slot>=POSE_CONSTRAINTS || control.kind==.Grounding && control.slot!=0 || !profile_weight(control.weight) || !finite(control.fade) || control.fade<0 {
         core.refuse(&requests.controls)
         return
     }
@@ -101,12 +100,12 @@ modifier_control_apply :: proc(runtime:^Modifier_Runtime,state:^Modifier_Control
         turning:=f32(0)
         if state.turning && state.elapsed<state.duration {alpha:=state.elapsed/state.duration;turning=1-alpha*alpha*(3-2*alpha)}
         if state.row>=0 && state.row<len(runtime.look.values) && runtime.look.values[state.row].turning!=turning {core.edit_at(&runtime.look,state.row).turning=turning}
-    case .Grounding: apply(&runtime.grounding,state.row,weight,enabled)
+    case .Grounding: runtime.grounding.values[state.row].weight,runtime.grounding.values[state.row].enabled=weight,enabled
     case .Limit: apply(&runtime.limits,state.row,weight,enabled)
     case .Chain_IK: apply(&runtime.chain_ik,state.row,weight,enabled)
     case .Twist: apply(&runtime.twist,state.row,weight,enabled)
     case .Spring: apply(&runtime.springs,state.row,weight,enabled)
-    case .Multi_IK: apply(&runtime.multi_ik,state.row,weight,enabled)
+    case .Multi_IK: runtime.multi_ik.values[state.row].weight,runtime.multi_ik.values[state.row].enabled=weight,enabled
     case .Chain_Retarget: apply(&runtime.retarget_chains,state.row,weight,enabled)
     case .Spline_IK: apply(&runtime.spline_ik,state.row,weight,enabled)
     case .Corrective: apply(&runtime.correctives,state.row,weight,enabled)
@@ -144,11 +143,11 @@ modifier_controls_take :: proc(runtime:^Modifier_Runtime,requests:^Animation_Req
     if requests==nil {return}
     for control in core.take(&requests.controls) {
         control:=control
-        if control.name[0]!=0 {
-            slot,found:=modifier_named_slot(runtime,control.rig,control.kind,base.text_get(control.name[:]))
+        if control.name!=0 {
+            slot,found:=modifier_named_key(runtime,control.rig,control.kind,control.name)
             if !found {
                 modifier_request_rejected(runtime,control.rig,.Missing_Operation)
-                modifier_name_problem(problems,control.rig,control.kind,control.name[:],nil,.Missing_Operation)
+                modifier_name_problem(problems,control.rig,control.kind,control.name,0,.Missing_Operation)
                 continue
             }
             control.slot=slot

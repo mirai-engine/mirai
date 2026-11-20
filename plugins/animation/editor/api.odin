@@ -326,8 +326,8 @@ preview :: proc(s:^editor.Session,call:^api.Call) {
             start:=min(int(p.offset),len(content.bones));end:=min(start+int(p.limit),len(content.bones))
             for &bone,i in content.bones[start:end] {
                 index:=start+i+1
-                if index>=len(state.local) {break}
-                value:=state.local[index]
+                if index>=len(anim.playing_pose(&state,.Local)) {break}
+                value:=anim.playing_pose(&state,.Local)[index]
                 append(&poses,Preview_Pose_Result{path=bone.path,name=bone.name,position=value.position,scale=value.scale,rotation={value.rotation.x,value.rotation.y,value.rotation.z,value.rotation.w}})
             }
             break

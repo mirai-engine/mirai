@@ -49,7 +49,7 @@ authoring_profile_register :: proc(s:^editor.Session) {
 @(private)
 // The modifiers of a .character: the rows of each table and a page of the rows of one.
 character_modifiers :: proc(call:^api.Call,profile:anim.Pose_Profile,table:Profile_Table,offset,limit:u32,r:^Asset_Inspect_Result) {
-    r.counts={u32(len(profile.ik)),u32(len(profile.look)),u32(len(profile.limits)),u32(1 if profile.grounding.count>0 else 0),u32(len(profile.chain_ik)),u32(len(profile.twist)),u32(len(profile.springs)),u32(len(profile.multi_ik)),u32(len(profile.retarget_chains)),u32(len(profile.spline_ik)),u32(len(profile.correctives)),u32(len(profile.follow)),u32(len(profile.curve_poses)),u32(len(profile.curve_drives)),u32(len(profile.curve_materials))}
+    r.counts={u32(len(profile.ik)),u32(len(profile.look)),u32(len(profile.limits)),u32(1 if len(profile.grounding.legs)>0 else 0),u32(len(profile.chain_ik)),u32(len(profile.twist)),u32(len(profile.springs)),u32(len(profile.multi_ik)),u32(len(profile.retarget_chains)),u32(len(profile.spline_ik)),u32(len(profile.correctives)),u32(len(profile.follow)),u32(len(profile.curve_poses)),u32(len(profile.curve_drives)),u32(len(profile.curve_materials))}
     r.table=table
     o,l:=offset,limit
     grounding:=[1]anim.Foot_Grounding{profile.grounding}
@@ -57,7 +57,7 @@ character_modifiers :: proc(call:^api.Call,profile:anim.Pose_Profile,table:Profi
     case .IK: r.ik=authoring_pages(call,profile.ik,o,l,anim.IK_Constraint)
     case .Look: r.look=authoring_pages(call,profile.look,o,l,anim.Look_Constraint)
     case .Limit: r.limits=authoring_pages(call,profile.limits,o,l,anim.Rotation_Constraint)
-    case .Grounding: r.grounding=authoring_pages(call,grounding[:1 if profile.grounding.count>0 else 0],o,l,Profile_Grounding_Params)
+    case .Grounding: r.grounding=authoring_pages(call,grounding[:1 if len(profile.grounding.legs)>0 else 0],o,l,Profile_Grounding_Params)
     case .Chain_IK: r.chain_ik=authoring_pages(call,profile.chain_ik,o,l,Profile_Chain_Params)
     case .Twist: r.twist=authoring_pages(call,profile.twist,o,l,Profile_Twist_Params)
     case .Spring: r.springs=authoring_pages(call,profile.springs,o,l,Profile_Spring_Params)
@@ -98,11 +98,11 @@ authoring_profile_set :: proc(s:^editor.Session,call:^api.Call) {
     case .Limit: profile.limits,replaced=profile_row(profile.limits,p.limit,proc(a,b:anim.Rotation_Constraint) -> bool {return a.bone==b.bone},p.remove,capacity,call.allocator)
     case .Grounding:
         replaced=true
-        if p.remove {profile.grounding.count=0} else {profile.grounding=profile_grounding_value(call,p.grounding)}
+        if p.remove {profile.grounding={}} else {profile.grounding=profile_grounding_value(call,&p.grounding)}
     case .Chain_IK: profile.chain_ik,replaced=profile_row(profile.chain_ik,profile_chain_value(call,p.chain_ik),proc(a,b:anim.Chain_IK_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
     case .Twist: profile.twist,replaced=profile_row(profile.twist,profile_twist_value(call,p.twist),proc(a,b:anim.Twist_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
     case .Spring: profile.springs,replaced=profile_row(profile.springs,profile_spring_value(call,p.spring),proc(a,b:anim.Spring_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
-    case .Multi_IK: profile.multi_ik,replaced=profile_row(profile.multi_ik,profile_multi_value(call,p.multi_ik),proc(a,b:anim.Multi_IK_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
+    case .Multi_IK: profile.multi_ik,replaced=profile_row(profile.multi_ik,profile_multi_value(call,&p.multi_ik),proc(a,b:anim.Multi_IK_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
     case .Chain_Retarget: profile.retarget_chains,replaced=profile_row(profile.retarget_chains,p.retarget_chain,proc(a,b:anim.Chain_Retarget_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
     case .Spline_IK: profile.spline_ik,replaced=profile_row(profile.spline_ik,profile_spline_value(p.spline_ik),proc(a,b:anim.Spline_IK_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
     case .Corrective: profile.correctives,replaced=profile_row(profile.correctives,profile_corrective_value(call,p.corrective),proc(a,b:anim.Pose_Corrective) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)

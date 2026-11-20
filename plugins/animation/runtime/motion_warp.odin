@@ -148,11 +148,11 @@ motion_bind :: proc(instance:^Motion_Instance,state:^Playing,content:^Character_
         instance.pelvis=body[.Pelvis];if instance.pelvis<=0 {instance.error=.Unbound_Bone;return false}
         // The spine: the bones from the parent of the neck down to the pelvis, the top one first.
         if neck:=int(body[.Neck]);neck>0 {
-            for at:=int(state.parents[neck]);at>0 && i32(at)!=instance.pelvis && int(instance.spine_count)<len(instance.spine);at=int(state.parents[at]) {instance.spine[instance.spine_count]=i32(at);instance.spine_count+=1}
+            for at:=int(playing_topology(state).parents[neck]);at>0 && i32(at)!=instance.pelvis && int(instance.spine_count)<len(instance.spine);at=int(playing_topology(state).parents[at]) {instance.spine[instance.spine_count]=i32(at);instance.spine_count+=1}
         }
         for side in ([2][3]lib.Body_Part{{.Hip_L,.Knee_L,.Foot_L},{.Hip_R,.Knee_R,.Foot_R}}) {
             leg:=lib.Pose_Warp_Limb{hip=body[side[0]],knee=body[side[1]],foot=body[side[2]]}
-            if leg.hip<=0 || leg.knee<=0 || leg.foot<=0 || state.parents[leg.knee]!=leg.hip || state.parents[leg.foot]!=leg.knee {continue}
+            if leg.hip<=0 || leg.knee<=0 || leg.foot<=0 || playing_topology(state).parents[leg.knee]!=leg.hip || playing_topology(state).parents[leg.foot]!=leg.knee {continue}
             instance.legs[instance.leg_count]=leg;instance.leg_count+=1
         }
         if config.stride && instance.leg_count==0 {instance.error=.Unbound_Bone;return false}
@@ -288,7 +288,7 @@ motion_apply_root :: proc(runtime:^Motion_Runtime,characters:^Character_Assets,l
     if lib.clip_data(&content.lib,player.clip).loop==.Once {to=min(to,duration)}
     root:Root_Motion
     if clock.active {root=clock.root} else if state.program.ready && state.program.has_root {root=state.program.root} else if state.clip>=0 && state.clip<len(content.roots) {
-        metadata:=content.roots[state.clip];root={bone={metadata.bone},translation=metadata.translation,rotation=metadata.rotation}
+        root=clip_root(content,lib.Clip(state.clip+1))
     } else {return true}
     if !root.translation && !root.rotation {return true}
     root_target:=bone_target(state,root.bone)
@@ -370,7 +370,7 @@ motion_apply_pose :: proc(runtime:^Motion_Runtime,state:^Playing,profile:base.As
     // The legs follow the turn and the stride asked by a spring: a body that starts or turns at
     // once asks them at once.
     if finite(dt) && dt>0 {instance.warp,instance.warping=mm.spring_critical(instance.warp,instance.warping,[2]f32{angle,stride-1}*weight,mm.spring_omega(MOTION_WARP_HALF_LIFE),dt)}
-    ok:=lib.pose_warp(playing_skeleton(state),state.local[:],state.world[:],{pelvis=instance.pelvis,spine=instance.spine[:instance.spine_count],legs=instance.legs[:instance.leg_count],up=up,direction=goal.velocity,angle=instance.warp[0],stride=max(1+instance.warp[1],min(config.min_stride,1)),weight=1},root_transform)
+    ok:=lib.pose_warp(playing_skeleton(state),playing_pose(state,.Local),playing_pose(state,.World),{pelvis=instance.pelvis,spine=instance.spine[:instance.spine_count],legs=instance.legs[:instance.leg_count],up=up,direction=goal.velocity,angle=instance.warp[0],stride=max(1+instance.warp[1],min(config.min_stride,1)),weight=1},root_transform)
     if !ok {instance.error=.Invalid;motion_problem(problems,state.entity,.Invalid)}
     return ok
 }

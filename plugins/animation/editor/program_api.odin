@@ -176,7 +176,7 @@ program_modifier_count :: proc(profile:anim.Pose_Profile,kind:anim.Modifier_Kind
     switch kind {
     case .IK: return len(profile.ik)
     case .Look: return len(profile.look)
-    case .Grounding: return 1 if profile.grounding.count>0 else 0
+    case .Grounding: return 1 if len(profile.grounding.legs)>0 else 0
     case .Limit: return len(profile.limits)
     case .Chain_IK: return len(profile.chain_ik)
     case .Twist: return len(profile.twist)
@@ -243,11 +243,11 @@ program_modifier_profile :: proc(s:^editor.Session,call:^api.Call,world:core.Wor
 @(private)
 program_grounding_diagnostic :: proc(world:core.World_Ref,entity:core.Entity,slot:u16,config:anim.Foot_Grounding) -> (result:Modifier_Diagnostic_Result) {
     if slot!=0 {return}
-    grounding:=core.world_storage_of(world,anim.Grounding_Runtime)
+    modifiers:=core.world_storage_of(world,anim.Modifier_Runtime)
     playback:=core.world_storage_of(world,anim.Playback)
-    if grounding==nil || playback==nil {return}
+    if modifiers==nil || playback==nil {return}
     record:^anim.Grounding_Record
-    for &value in grounding.records {if value.rig==entity {record=&value;break}}
+    for &value in modifiers.grounded.records {if value.rig==entity {record=&value;break}}
     state:^anim.Playing
     for &value in playback.states {if value.entity==entity {state=&value;break}}
     if record==nil || !record.initialized || record.count<1 || record.count>anim.GROUNDING_LEGS || state==nil || !state.pose_ready {return}
@@ -257,11 +257,11 @@ program_grounding_diagnostic :: proc(world:core.World_Ref,entity:core.Entity,slo
     for i in 0..<int(record.count) {
         if record.targets[i].weight<=0 {continue}
         bones:=record.bones[i]
-        for bone in bones {if bone<0 || bone>=len(state.world) {return {}}}
+        for bone in bones {if bone<0 || bone>=len(anim.playing_pose(state,.World)) {return {}}}
         result.valid=true
-        result.residual=max(result.residual,linalg.length(state.world[bones[2]].position-record.targets[i].position))
-        result.angular_error=max(result.angular_error,mm.quat_angle(state.world[bones[2]].rotation,record.rotations[i]))
-        _,blocked:=anim.grounding_limb_hit(ground,state.world[bones[0]].position,state.world[bones[1]].position,state.world[bones[2]].position,ignore,config.collision_mask)
+        result.residual=max(result.residual,linalg.length(anim.playing_pose(state,.World)[bones[2]].position-record.targets[i].position))
+        result.angular_error=max(result.angular_error,mm.quat_angle(anim.playing_pose(state,.World)[bones[2]].rotation,record.rotations[i]))
+        _,blocked:=anim.grounding_limb_hit(ground,anim.playing_pose(state,.World)[bones[0]].position,anim.playing_pose(state,.World)[bones[1]].position,anim.playing_pose(state,.World)[bones[2]].position,ignore,config.collision_mask)
         if blocked {result.blocked_legs|=u16(1)<<u16(i)}
     }
     result.reached=result.valid && result.residual<=.001 && result.angular_error<=.001 && result.blocked_legs==0
@@ -292,13 +292,13 @@ program_modifier_inspect :: proc(s:^editor.Session,call:^api.Call,world:core.Wor
             base.text_set(row.name[:],base.text_get(definition.name[:]))
             if p.diagnostics {
                 row.alpha,row.target_alpha,row.requested_enabled,row.fade_remaining=alpha,target,requested,remaining
-                diagnostic,_:=anim.animation_rig_diagnostic(runtime,entity,kind,u16(slot),core.world_storage_of(world,anim.Animation_Constraints))
+                diagnostic,_:=anim.animation_rig_diagnostic(runtime,entity,kind,u16(slot),&runtime.constraints if runtime!=nil else nil)
                 row.diagnostic={valid=diagnostic.valid,reached=diagnostic.reached,residual=diagnostic.residual,angular_error=diagnostic.angular_error,iterations=diagnostic.iterations}
                 if kind==.Grounding {row.diagnostic=program_grounding_diagnostic(world,entity,u16(slot),profile.grounding)}
             }
             if kind==.Multi_IK {
                 multi:=&profile.multi_ik[slot]
-                row.effectors=make([]Modifier_Effector_Result,multi.effector_count,call.allocator)
+                row.effectors=make([]Modifier_Effector_Result,len(multi.effectors),call.allocator)
                 for &item,e in row.effectors {item.name=multi.effectors[e].name}
             }
             if kind==.Spline_IK {
@@ -350,8 +350,8 @@ program_modifier_goal_value :: proc(s:^editor.Session,call:^api.Call,world:core.
     if supported && (!finite(p.contact) || p.contact<0 || p.contact>1) {authoring_failure(call,field_path(prefix,"contact"),"Range","a finite number in [0,1]",fmt.tprintf("%g",p.contact),"The contact strength is invalid");return {},false}
     goal:=anim.Modifier_Goal{rig=entity,kind=kind,slot=resolved,effector=effector,position=p.position}
     // By name: the operation is found again if the .character is read again.
-    goal.name=p.name
-    if kind==.Multi_IK {goal.effector_name=p.effector}
+    goal.name=base.name_hash(base.text_get(p.name[:]))
+    if kind==.Multi_IK {goal.effector_name=base.name_hash(wanted)}
     if targeted {
         target,found:=spatial_target_value(call,world,p.target,field_path(prefix,"target"));if !found {return {},false}
         goal.target=target

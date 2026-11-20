@@ -55,7 +55,7 @@ gallery_spider :: proc(o:^Out) {
     }
     if !asset.mesh_tangents(&vertices,indices[:],&skin) {asset.content_check(&o.content,"spider.mesh",.Out_Of_Memory);return}
     mesh_write_built(o,"spider.mesh",fmt.tprintf("%s/spider.mesh",folder),{id=mesh_id,joints=joints[:],skeleton=skeleton_id},{vertices=vertices[:],skin=skin[:]},indices[:])
-    grounding:=anim.FOOT_GROUNDING_DEFAULT;grounding.mode=.Procedural;grounding.count=8;grounding.body=anim.bone_ref("body")
+    grounding:=anim.FOOT_GROUNDING_DEFAULT;grounding.mode=.Procedural;grounding.legs=make([]anim.Grounded_Leg,8,context.temp_allocator);grounding.body=anim.bone_ref("body")
     grounding.cycle_duration=.6;grounding.prediction=.12;grounding.body_height=.57;grounding.trace_above=.6;grounding.trace_below=1.2;grounding.max_swinging=4;grounding.max_drop=.25;grounding.max_rise=.25
     for i in 0..<8 {
         leg:=anim.GROUNDED_LEG_DEFAULT;leg.hip=anim.bone_ref(fmt.tprintf("hip.%d",i));leg.knee=anim.bone_ref(fmt.tprintf("knee.%d",i));leg.foot=anim.bone_ref(fmt.tprintf("foot.%d",i))
