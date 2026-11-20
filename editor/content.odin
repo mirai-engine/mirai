@@ -988,7 +988,7 @@ content_tree_add :: proc(c:^Content,b:^Content_Build,entries:[]Content_Entry) {
         header:=i32(len(c.lines))
         append(&c.lines,Content_Line{kind=.Header,group=group,name=root.name,virtual=.Library,library=i32(root.peer+1),parent=-1})
         if content_folded(c,group) {continue}
-        content_package_tree_add(c,at,"",1,header)
+        content_package_tree_add(c,i32(root.peer+1),at,content_package_entries(c,at,""),"","",1,header)
     }
     content_branch_add(c,b,entries,"",0,-1)
 }
@@ -1061,7 +1061,7 @@ content_search_add :: proc(c:^Content,b:^Content_Build,entries:[]Content_Entry,p
     if c.at.virtual==.Library && !b.rows {
         // Inside a root of libraries, its packages.
         first:=len(c.cards)
-        content_package_cards_add(c,content_library_root_of(c,c.at.library),b.filter,c.at.package_id)
+        content_package_cards_add(c,content_library_root_of(c,c.at.library),b.filter,string(c.at.folder[:c.at.length]),c.at.package_id)
         content_rows_add(c,first,b.columns)
         return
     }
@@ -1083,7 +1083,7 @@ content_search_add :: proc(c:^Content,b:^Content_Build,entries:[]Content_Entry,p
     for root,at in c.libraries.roots {
         label:=len(c.lines)
         append(&c.lines,Content_Line{kind=.Label,name=root.name,parent=-1})
-        content_package_tree_add(c,at,b.filter,0,-1)
+        content_package_tree_add(c,i32(root.peer+1),at,content_package_entries(c,at,b.filter),b.filter,"",0,-1)
         if len(c.lines)==label+1 {pop(&c.lines)}
     }
 }
@@ -1155,7 +1155,7 @@ content_lines :: proc(c:^Content,registry:^asset.Registry,width:f32,opened:[]ass
     case b.rows:                 content_tree_add(c,b,entries[:])
     case c.at.virtual==.Library:
         first:=len(c.cards)
-        content_package_cards_add(c,content_library_root_of(c,c.at.library),"",c.at.package_id)
+        content_package_cards_add(c,content_library_root_of(c,c.at.library),"",folder,c.at.package_id)
         content_rows_add(c,first,b.columns,content_library_group(content_library_root_of(c,c.at.library)))
     case c.at.virtual!=.None:
         first:=len(c.cards)
@@ -1340,9 +1340,11 @@ content_navigation_restore :: proc(c:^Content,registry:^asset.Registry) {
     place:=string(c.place[:c.place_length])
     for place!="" && !content_folder_exists(registry,place) {place=content_folder_of(place)}
     c.place_length=len(place)
-    at:=string(c.at.folder[:c.at.length])
-    for at!="" && !content_folder_exists(registry,at) {at=content_folder_of(at)}
-    c.at.length=len(at)
+    if c.at.virtual==.None {
+        at:=string(c.at.folder[:c.at.length])
+        for at!="" && !content_folder_exists(registry,at) {at=content_folder_of(at)}
+        c.at.length=len(at)
+    }
     for i:=len(c.history)-1;i>=0;i-=1 {
         if c.history[i].virtual==.None && !content_folder_exists(registry,string(c.history[i].folder[:c.history[i].length])) {ordered_remove(&c.history,i)}
     }
@@ -2091,7 +2093,7 @@ content_folder_cell :: proc(s:^Session,card:Content_Card,id:ui.Id,cell:f32,names
     c:=s.content
     ctx:=s.gui.ctx
     it=ui.interact(ctx,id,{.Focusable})
-    icon:=content_folder_icon(card.virtual)
+    icon:=content_folder_icon(.None if card.virtual==.Library && card.folder!="" else card.virtual)
     keyboard:=content_keyboard(ctx,it)
     if c.view.mode==.List {
         if ui.box(ctx,asset_row_box(ctx,id,CONTENT_INSET,marked,it.hot,keyboard)) {
@@ -2131,7 +2133,7 @@ content_header :: proc(s:^Session,line:Content_Line,id:ui.Id,width:f32,marked:bo
     case .Recent:    icon,color=.History,ui.tone(ctx,"text_muted")
     case .Scene:     icon,color=ui.icon_user(u8(User_Icon.Scene)),ui.tone(ctx,"text_muted")
     case .Favorites: icon,color=ui.icon_user(u8(User_Icon.Star_Filled)),STAR_COLOR
-    case .Library:   icon,color=.Import,ui.tone(ctx,"text_muted")
+    case .Library:   if line.path=="" {icon,color=.Import,ui.tone(ctx,"text_muted")}
     }
     box:=asset_row_box(ctx,id,CONTENT_INSET+f32(line.depth)*CONTENT_TREE_INDENT,marked,it.hot,content_keyboard(ctx,it))
     box.width,box.gap=ui.fixed(width),CONTENT_TREE_GAP
@@ -2397,7 +2399,7 @@ content_crumb :: proc(ctx:^ui.Context,id:ui.Id,name:string,last,slash,marked:boo
 // where it is, and Folders enters none.
 @(private)
 content_back_shown :: proc(c:^Content) -> bool {
-    return len(c.trail)>0 || c.view.arrangement==.Cards || c.at.package_id!={}
+    return len(c.trail)>0 || c.view.arrangement==.Cards || c.at.virtual==.Library && (c.at.length>0 || c.at.package_id!={})
 }
 
 // The back arrow and the breadcrumb: Project and the folders on the way down,
@@ -2423,15 +2425,8 @@ content_crumbs_build :: proc(s:^Session,act:^Content_Actions) {
                 labels:=CONTENT_VIRTUAL_LABELS
                 label:=labels[c.at.virtual]
                 if root:=content_library_root_of(c,c.at.library);c.at.virtual==.Library && root>=0 {label=c.libraries.roots[root].name}
-                if c.at.virtual==.Library && c.at.package_id!={} {
-                    library:=ui.id(ctx,"content_crumb_library")
-                    it:=content_crumb(ctx,library,label,false,true,false)
-                    content_folder_take(s,act,library,it,.Library,"",library=c.at.library)
-                    for &p in c.libraries.packages {
-                        if p.id!=c.at.package_id || p.root!=content_library_root_of(c,c.at.library) {continue}
-                        content_crumb(ctx,ui.id(ctx,"content_crumb_package"),p.label,true,true,false)
-                        break
-                    }
+                if c.at.virtual==.Library && (folder!="" || c.at.package_id!={}) {
+                    content_library_crumbs(s,act,label,folder)
                 } else {
                     ui.label(ctx,"/",ui.metric(ctx,"font"),ui.tone(ctx,"text_faint"))
                     ui.label(ctx,label,ui.metric(ctx,"font"),ui.tone(ctx,"text"))
@@ -2740,7 +2735,6 @@ content_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_W
         if c.reveal!={} {content_reveal_open(c,&a.registry)}
         content_libraries_update(s,c)
         clear(&c.thumb_wants)
-        content_library_restore(c)
         lines:=content_lines(c,&a.registry,width,opened,scene_kinds[:],&ctx.font,ui.metric(ctx,"font_small"))
         searching:=strings.trim_space(string(c.filter[:c.filter_length]))!="" && len(c.trail)==0
         if take_first && searching && len(c.cards)>0 && c.cards[0].file>=0 {content_arm(s,&a.registry.files[c.cards[0].file],c.cards[0].name)}
@@ -2860,7 +2854,7 @@ content_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_W
                         if card.file<0 {
                             group:=content_virtual_group(card.virtual)
                             if card.virtual==.None {group=base.hash64(transmute([]u8)card.folder)}
-                            if card.virtual==.Library {group=content_library_group(content_library_root_of(c,card.library))}
+                            if card.virtual==.Library {group=content_library_folder_group(content_library_root_of(c,card.library),card.folder)}
                             id:=ui.id(ctx,"content_folder",int(group))
                             marked:=content_folder_marked(s,id,card.virtual,card.folder)
                             it:=content_folder_cell(s,card,id,cell,line.names,marked)

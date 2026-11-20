@@ -17,8 +17,8 @@ import "mirai:ui"
 
 // The libraries in the content browser: beside the project's own content, a
 // root for this machine's library and, in a session, one for the library of
-// each other editor, named as the session names it. A root holds the packages
-// the project does not pin; a peer's package this machine has is listed once,
+// each other editor, named as the session names it. A root holds packages with
+// assets still to add; a peer's package this machine has is listed once,
 // under this machine. Two packages of one name in a root are told apart by
 // where their source was. Adding one is the browser's gesture for bringing
 // content in: carried onto a folder of the project, or Add to project of its
@@ -35,6 +35,7 @@ Content_Package :: struct {
     root:int,       // of Content_Libraries.roots
     id:base.Asset_Id,
     name:string,
+    folder:string,  // the parent of its importer-supplied document folder
     label:string,   // its name, with where its source was when another of the root has that name
     kind:asset.Fourcc, // of its first asset
     assets:[]Library_Asset,
@@ -89,7 +90,7 @@ content_library_listing :: proc(local:[]Library_Package,peers:[]Content_Peer_Lis
     for &p in local {
         if !machine {continue}
         name:=content_package_folder(p.name,p.documents)
-        entry:=Content_Package{root=0,id=p.id,name=strings.clone(name,allocator),here=len(p.assets)>0,built=true}
+        entry:=Content_Package{root=0,id=p.id,name=strings.clone(name,allocator),folder=strings.clone(content_package_parent(p.documents),allocator),here=len(p.assets)>0,built=true}
         entry.assets=make([]Library_Asset,len(p.assets),allocator)
         remaining:=false
         for a,at in p.assets {
@@ -112,7 +113,7 @@ content_library_listing :: proc(local:[]Library_Package,peers:[]Content_Peer_Lis
         for &p in listing.list {
             if here[p.id] {continue}
             name:=content_package_folder(p.name,p.documents)
-            entry:=Content_Package{root=root,id=p.id,name=strings.clone(name,allocator),bytes=p.bytes,here=p.here,built=p.built}
+            entry:=Content_Package{root=root,id=p.id,name=strings.clone(name,allocator),folder=strings.clone(content_package_parent(p.documents),allocator),bytes=p.bytes,here=p.here,built=p.built}
             entry.assets=make([]Library_Asset,len(p.assets),allocator)
             for a,at in p.assets {entry.assets[at]={id=a.id,name=strings.clone(a.name,allocator),kind=a.kind}}
             if len(p.kinds)>0 {entry.kind=p.kinds[0]}
@@ -145,6 +146,12 @@ content_library_listing :: proc(local:[]Library_Package,peers:[]Content_Peer_Lis
 @(private)
 content_package_folder :: proc(name,documents:string) -> string {
     return name if documents=="" else documents[strings.last_index_byte(documents,'/')+1:]
+}
+
+@(private)
+content_package_parent :: proc(documents:string) -> string {
+    folder:=content_folder_of(documents)
+    return content_folder_of(folder[:API_PATH_BYTES]) if len(folder)>API_PATH_BYTES else folder
 }
 
 // The name of the folder a source was in; "" when it has none.
@@ -196,6 +203,7 @@ content_libraries_update :: proc(s:^Session,c:^Content) {
     }
     roots,packages:=content_library_listing(local,listings[:],s.store.root!="",allocator)
     l.roots,l.packages=roots,packages
+    content_library_restore(c)
     library_mount_update(s,local)
     c.revision+=1
 }
@@ -221,9 +229,15 @@ content_package_asset_matches :: proc(c:^Content,entry:Library_Asset,filter:stri
 }
 
 @(private)
+content_package_title_matches :: proc(p:^Content_Package,filter:string) -> bool {
+    if filter=="" {return true}
+    return content_package_text_matches(fmt.tprintf("%s/%s",p.folder,p.label),filter)
+}
+
+@(private)
 content_package_matches :: proc(c:^Content,p:^Content_Package,filter:string) -> bool {
     if c.unused || c.selection_only {return false}
-    title:=content_package_text_matches(p.label,filter)
+    title:=content_package_title_matches(p,filter)
     if title {
         category,_:=content_category(p.kind)
         if c.category==.None || c.category==category {return true}
@@ -237,38 +251,78 @@ content_package_matches :: proc(c:^Content,p:^Content_Package,filter:string) -> 
 @(private)
 content_package_asset_cards :: proc(c:^Content,pack:int,filter:string) {
     p:=&c.libraries.packages[pack]
-    asset_filter:="" if content_package_text_matches(p.label,filter) else filter
+    asset_filter:="" if content_package_title_matches(p,filter) else filter
     for &entry,at in p.assets {
         if !content_package_asset_matches(c,entry,asset_filter) {continue}
         append(&c.cards,Content_Card{file=-1,pack=i32(pack+1),pack_asset=i32(at+1),name=entry.name})
     }
 }
 
+// Paths of a library's packages under the same folder tree used for project files.
 @(private)
-content_package_cards_add :: proc(c:^Content,root:int,filter:string,chosen:=base.Asset_Id{}) {
+content_package_entries :: proc(c:^Content,root:int,filter:string) -> []Content_Entry {
+    entries:=make([dynamic]Content_Entry,context.temp_allocator)
     for &p,k in c.libraries.packages {
         if p.root!=root || !content_package_matches(c,&p,filter) {continue}
-        if chosen=={} {
-            append(&c.cards,Content_Card{file=-1,pack=i32(k+1),name=p.label})
-        } else if p.id==chosen {
+        name:=asset.safe_name(p.label)
+        path:=name if p.folder=="" else fmt.tprintf("%s/%s",p.folder,name)
+        append(&entries,Content_Entry{path,i32(k)})
+    }
+    slice.sort_by(entries[:],proc(a,b:Content_Entry) -> bool {return a.path<b.path || a.path==b.path && a.index<b.index})
+    return entries[:]
+}
+
+@(private)
+content_package_card :: proc(c:^Content,pack:i32) {
+    append(&c.cards,Content_Card{file=-1,pack=pack+1,name=c.libraries.packages[pack].label})
+}
+
+@(private)
+content_package_cards_add :: proc(c:^Content,root:int,filter:string,folder:string,chosen:=base.Asset_Id{}) {
+    if chosen!={} {
+        for &p,k in c.libraries.packages {
+            if p.root!=root || p.id!=chosen || !content_package_matches(c,&p,filter) {continue}
             content_package_asset_cards(c,k,filter)
             break
         }
+        return
     }
+    if root<0 {return}
+    library:=i32(c.libraries.roots[root].peer+1)
+    prefix:=fmt.tprintf("%s/",folder) if folder!="" else ""
+    entries:=content_under(content_package_entries(c,root,filter),prefix)
+    for child in content_children(entries,prefix) {
+        append(&c.cards,Content_Card{file=-1,name=child.name,folder=child.path,virtual=.Library,library=library})
+    }
+    for pack in content_direct_files(entries,prefix) {content_package_card(c,pack)}
 }
 
-// The package rows and the assets of those that are open, in the folder layout.
 @(private)
-content_package_tree_add :: proc(c:^Content,root:int,filter:string,depth:int,parent:i32) {
+content_library_folder_group :: proc(root:int,folder:string) -> u64 {
     group:=content_library_group(root)
-    for &p,k in c.libraries.packages {
-        if p.root!=root || !content_package_matches(c,&p,filter) {continue}
+    return group if folder=="" else base.hash_combine(group,base.hash64(transmute([]u8)folder))
+}
+
+// Package folders under an importer's path, and the assets of those that are open.
+@(private)
+content_package_tree_add :: proc(c:^Content,library:i32,root:int,entries:[]Content_Entry,filter,prefix:string,depth:int,parent:i32) {
+    for child in content_children(entries,prefix) {
+        group:=content_library_folder_group(root,child.path)
+        header:=i32(len(c.lines))
+        append(&c.lines,Content_Line{kind=.Header,group=group,name=child.name,path=child.path,
+            virtual=.Library,library=library,parent=parent,depth=u8(min(depth,255))})
+        if !content_folded(c,group) {
+            content_package_tree_add(c,library,root,child.entries,filter,fmt.tprintf("%s/",child.path),depth+1,header)
+        }
+    }
+    group:=content_library_group(root)
+    for pack in content_direct_files(entries,prefix) {
         first:=len(c.cards)
-        append(&c.cards,Content_Card{file=-1,pack=i32(k+1),name=p.label})
+        content_package_card(c,pack)
         content_tree_rows_add(c,first,depth,group,parent)
-        if slice.contains(c.unfolded[:],p.id) {
+        if slice.contains(c.unfolded[:],c.libraries.packages[pack].id) {
             first=len(c.cards)
-            content_package_asset_cards(c,k,filter)
+            content_package_asset_cards(c,int(pack),filter)
             content_tree_rows_add(c,first,depth+1,group,parent)
         }
     }
@@ -289,19 +343,54 @@ content_library_restore :: proc(c:^Content) {
     if c.at.virtual!=.Library {return}
     root:=content_library_root_of(c,c.at.library)
     if c.at.package_id!={} {
-        elsewhere:=-1
-        for &p in c.libraries.packages {
+        chosen:=-1
+        for &p,k in c.libraries.packages {
             if p.id!=c.at.package_id {continue}
-            if p.root==root {return}
-            elsewhere=p.root
+            chosen=k
+            if p.root==root {break}
         }
-        if elsewhere>=0 {
-            c.at.library=i32(c.libraries.roots[elsewhere].peer+1)
+        if chosen>=0 {
+            p:=&c.libraries.packages[chosen]
+            c.at.library=i32(c.libraries.roots[p.root].peer+1)
+            c.at.length=copy(c.at.folder[:],p.folder)
             return
         }
         c.at.package_id={}
     }
-    if root<0 {c.at={}}
+    if root<0 {c.at={};return}
+    folder:=string(c.at.folder[:c.at.length])
+    for folder!="" {
+        for p in c.libraries.packages {
+            if p.root==root && (p.folder==folder || asset_path_inside(p.folder,folder)) {return}
+        }
+        folder=content_folder_of(folder)
+        c.at.length=len(folder)
+    }
+}
+
+@(private)
+content_library_crumbs :: proc(s:^Session,act:^Content_Actions,name,folder:string) {
+    c:=s.content
+    ctx:=s.gui.ctx
+    library:=ui.id(ctx,"content_crumb_library")
+    it:=content_crumb(ctx,library,name,false,true,false)
+    content_folder_take(s,act,library,it,.Library,"",library=c.at.library)
+    start:=0
+    for i in 0..=len(folder) {
+        if folder=="" || i<len(folder) && folder[i]!='/' {continue}
+        id:=ui.id(ctx,"content_crumb_library_folder",i+1)
+        last:=i==len(folder) && c.at.package_id=={}
+        it:=content_crumb(ctx,id,folder[start:i],last,true,false)
+        if !last {content_folder_take(s,act,id,it,.Library,folder[:i],library=c.at.library)}
+        start=i+1
+    }
+    if c.at.package_id=={} {return}
+    root:=content_library_root_of(c,c.at.library)
+    for &p in c.libraries.packages {
+        if p.id!=c.at.package_id || p.root!=root {continue}
+        content_crumb(ctx,ui.id(ctx,"content_crumb_package"),p.label,true,true,false)
+        break
+    }
 }
 
 // The state of fetching a package of a peer, as its card says it.
@@ -401,7 +490,7 @@ content_package_button :: proc(s:^Session,p:^Content_Package,key:u64,item:base.A
         ui.icon(ctx,.Check,ui.tone(ctx,"text_muted"),12)
         return
     }
-    disabled:=s.mode!=.Edit || s.importer==nil || content_package_busy(s)
+    disabled:=s.mode!=.Edit || content_package_busy(s)
     tip:="Add folder to project" if item=={} else "Add asset to project"
     if ui.button(ctx,ui.id(ctx,"content_package_add",int(key)),{icon=.Plus,tip=tip,variant="ghost",width=20,height=20,icon_size=12,disabled=disabled}).clicked {
         content_package_add(s,i32(s.content.libraries.roots[p.root].peer+1),p.id,content_create_place(s.content),item)
@@ -427,7 +516,7 @@ content_package_action :: proc(s:^Session,act:^Content_Actions,card:Content_Card
         if c.view.arrangement==.Folders {
             content_unfold(c,p.id)
         } else {
-            act.enter,act.reset,act.virtual,act.folder,act.library,act.package_id=true,false,.Library,"",library,p.id
+            act.enter,act.reset,act.virtual,act.folder,act.library,act.package_id=true,false,.Library,p.folder,library,p.id
         }
     }
     if it.clicked || it.right {c.package_selected,c.package_root=p.id,p.root}
@@ -461,7 +550,7 @@ content_package_menu :: proc(s:^Session) {
 // A package being taken from a peer or an import running: nothing else is added meanwhile.
 @(private)
 content_package_busy :: proc(s:^Session) -> bool {
-    if s.importer.running!=nil {return true}
+    if s.importer==nil || s.importer.running!=nil {return true}
     st:=collab_state(s)
     return st!=nil && st.take!=nil && (st.take.thread!=nil || !sync.atomic_load(&st.take.done))
 }
