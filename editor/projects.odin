@@ -14,6 +14,7 @@ import "mirai:asset"
 import "mirai:cook/build"
 import "mirai:cook/install"
 import "mirai:cook/textures"
+import wire "mirai:net"
 import "mirai:platform"
 import "mirai:project"
 import "mirai:std/base"
@@ -121,7 +122,7 @@ Projects :: struct {
     starts:bool,
     starting:bool,  // the build starts once the dialog of the opening was drawn
     start_frame:u64,
-    join:[64]u8,    // the invitation of a session the editor started on it joins (collab_project.odin)
+    join:[wire.INVITE_TEXT_BYTES+1]u8, // the session the editor started on this project joins
     join_name:[COLLAB_NAME_BYTES]u8, // and the name it joins with
 }
 

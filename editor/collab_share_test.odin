@@ -83,15 +83,15 @@ share_step :: proc(n:^Share_Net) {
     mem.set(raw_data(n.frame_bytes),0xaa,64<<10)
 }
 
-// Steps until the guest is in the scene or its session ended, at most 600
-// virtual seconds. The clock moves only while its join waits for it, as a
-// join of cook/share runs in its tests.
+// Steps until the guest is in the scene, opening the project or its session ended.
+// The clock moves only while its join waits for it, as a join of cook/share runs in its tests.
 @(private="file")
-share_until_joined :: proc(t:^testing.T,n:^Share_Net,updates:=0) -> bool {
+share_until_ready :: proc(t:^testing.T,n:^Share_Net,updates:=0) -> bool {
     for steps:=0;steps<600_000; {
         st:=collab_state(&n.guest.s)
         if !testing.expect(t,st!=nil) {return false}
         if st.phase==.Joined && st.updates>=updates && (updates==0 || st.join.finished) {return true}
+        if st.join!=nil && st.join.opening {return true}
         if st.phase==.Ended {return testing.expectf(t,false,"the session ended: %s",st.reason)}
         if j:=st.join;j!=nil && !j.finished && !sync.atomic_load(&j.done) && !share.node_waiting(st.node) {
             thread.yield()
@@ -106,13 +106,15 @@ share_until_joined :: proc(t:^testing.T,n:^Share_Net,updates:=0) -> bool {
 // The host shares, the guest joins with the code of its invitation at the host's place on the
 // network; each session on endpoints of its own, which nothing of an earlier one reaches.
 @(private="file")
-share_join :: proc(t:^testing.T,n:^Share_Net,first:=0) -> bool {
+share_join :: proc(t:^testing.T,n:^Share_Net,first:=0,folder:="") -> bool {
     // Called between frames, as the API is.
     context.temp_allocator=mem.arena_allocator(&n.frame)
     if error:=collab_host(&n.host.s,0,"Ana",wire.sim_endpoint_transport(&n.sim,first));!testing.expectf(t,error==.None,"%s",collab_error_say(&n.host.s,error)) {return false}
     code:=wire.invite_encode(wire.invite_make(collab_state(&n.host.s).invite,COLLAB_PORT),context.temp_allocator)
-    if !testing.expect_value(t,collab_join(&n.guest.s,code,"Ben",at=wire.address_memory(first),transport=wire.sim_endpoint_transport(&n.sim,first+1)),Collab_Error.None) {return false}
-    return share_until_joined(t,n)
+    error:=collab_join(&n.guest.s,code,"Ben",folder,at=wire.address_memory(first),
+        transport=wire.sim_endpoint_transport(&n.sim,first+1))
+    if !testing.expect_value(t,error,Collab_Error.None) {return false}
+    return share_until_ready(t,n)
 }
 
 @(private="file")
@@ -205,6 +207,29 @@ a_guest_with_an_empty_folder_joins_with_the_hosts_files_and_packages_then_its_sc
     testing.expect_value(t,state.phase,share.Join_Phase.Done)
 }
 
+@(test)
+a_guest_opening_a_joined_project_keeps_the_invitation :: proc(t:^testing.T) {
+    n:=new(Share_Net);defer free(n)
+    host,guest:=new(Share_End),new(Share_End)
+    defer {free(host);free(guest)}
+    ok:=share_net_init(t,n,host,guest,"collab-share-open")
+    defer {share_end_destroy(guest);share_end_destroy(host);wire.sim_network_destroy(&n.sim);delete(n.frame_bytes)}
+    if !ok {return}
+    if _,made:=share_host_project(t,n);!made {return}
+
+    projects:=new(Projects)
+    defer {guest.s.projects=nil;free(projects)}
+    guest.s.projects=projects
+    folder:=base.test_folder(t,"collab-share-opening")
+    if !share_join(t,n,folder=folder) {return}
+
+    st:=collab_state(&guest.s)
+    testing.expect(t,st.join.opening)
+    invitation,error:=wire.invite_decode(base.text_get(projects.join[:]))
+    testing.expect_value(t,error,wire.Invite_Error.None)
+    testing.expect_value(t,invitation,st.invitation)
+}
+
 // A file the guest changed and the host changed too stays the guest's, and
 // the guest is told; the rest comes from the host.
 @(test)
@@ -276,7 +301,7 @@ what_the_host_changes_in_the_session_reaches_the_guest_by_three_ways :: proc(t:^
     core.world_settle(hw)
     lamp:=api_entity_id(hw,made)
     collab_project_touched(&host.s)
-    if !share_until_joined(t,n,updates=1) {return}
+    if !share_until_ready(t,n,updates=1) {return}
 
     for c in cases {testing.expectf(t,share_text(guest.root,c.path)==c.then,"%s: %q",c.path,share_text(guest.root,c.path))}
     kept:=strings.join(gst.join.report.kept[:],"\n",context.temp_allocator)
