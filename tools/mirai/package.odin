@@ -19,8 +19,8 @@ PACKAGE_USAGE :: "package engine --out <folder> [--store <folder>]"
 // generator of a world reads and a shipped game compiles, the shaders the
 // projects compile with, the templates, the recipes of Create, the skills of
 // the agents, the game documentation mirai docs serves, the license of the
-// engine and the notices of what it carries of others. cook/ and tools/ are
-// in its binaries; their sources stay behind, as do the tests.
+// engine and the notices of what it carries of others. The declarations bring
+// the files they load. The sources of cook/ and tools/ stay behind, as do the tests.
 @(private="file")
 PACKAGE_TRACKED :: [?]string{
     "asset","audio","core","editor","engine","exchange","host","net","platform","plugins","project","render","rhi","std","store","ui",
@@ -95,9 +95,9 @@ cmd_package :: proc(root:string,args:[]string) -> int {
     if code:=engine_report(build.engine_build({engine_root=root,mode=.Release}),root);code!=0 {return code}
 
     fmt.printfln("mirai package: writing %s",out)
-    if !package_sources(root,out) {return 1}
     from:=build.engine_paths(root,.Release,context.temp_allocator)
     to:=build.engine_paths(out,.Release,context.temp_allocator)
+    if !package_sources(root,out,from.decl) {return 1}
     if !package_binaries(from.folder,to.folder) {fmt.eprintfln("mirai package: could not copy %s",from.folder);return 1}
     odin_version:=package_odin(compiler,join(out,".deps",PACKAGE_ODIN))
     if odin_version=="" {fmt.eprintfln("mirai package: could not copy the compiler of %s",compiler);return 1}
@@ -152,11 +152,9 @@ cmd_package :: proc(root:string,args:[]string) -> int {
     return 0
 }
 
-// The files of PACKAGE_TRACKED as git keeps them, without tests, those of
-// PACKAGE_GENERATED, and the binding, the notices and the built library of
-// each C library.
+// Tracked and generated sources, resources the declarations load, and the C libraries.
 @(private="file")
-package_sources :: proc(root,out:string) -> bool {
+package_sources :: proc(root,out,decl:string) -> bool {
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,"git","-C",root,"ls-files","-z","--")
     tracked:=PACKAGE_TRACKED
@@ -183,6 +181,21 @@ package_sources :: proc(root,out:string) -> bool {
         } else if !package_copy(from,join(out,generated)) {
             return false
         }
+    }
+    resources,failed,resource_error:=build.declared_resources(decl)
+    if resource_error!=nil {
+        fmt.eprintfln("mirai package: could not read declarations in %s: %v",failed,resource_error)
+        return false
+    }
+    for from in resources {
+        relative,relative_error:=filepath.rel(root,from,context.temp_allocator)
+        relative,_=strings.replace_all(relative,"\\","/",context.temp_allocator)
+        if relative_error!=nil || relative==".." || strings.has_prefix(relative,"../") {
+            fmt.eprintfln("mirai package: a declaration loads %s outside the engine",from)
+            return false
+        }
+        to:=join(out,relative)
+        if !os.is_file(to) && !package_copy(from,to) {return false}
     }
     for library in c_libraries() {
         files:=c_library_files(root,library)
