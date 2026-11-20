@@ -37,6 +37,8 @@ Nav_Detail_Poly :: struct {
 
 @(private)
 nav_build_detail :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid) -> Nav_Build_Status {
+    heights:=&s.work
+    triangles:=&s.simple
     clear(&s.details)
     clear(&s.detail_verts)
     clear(&s.detail_out)
@@ -46,7 +48,7 @@ nav_build_detail :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid) -> Nav_Build_Status {
         low,high:=nav_poly_bounds(s,p,tile,border)
         largest=max(largest,(high.x-low.x)*(high.y-low.y))
     }
-    if !nav_resize(&s.patch,largest) {return .Out_Of_Memory}
+    if !nav_resize(heights,largest) {return .Out_Of_Memory}
     radius:=int(nav_ceil(f64(g.max_error),1,NAV_DETAIL_SEARCH))
     origin:=[2]f64{f64(g.origin.x)+(f64(g.corner.x)+f64(border))*f64(g.cs),f64(g.origin.y)+(f64(g.corner.y)+f64(border))*f64(g.cs)}
     dp:Nav_Detail_Poly
@@ -58,11 +60,14 @@ nav_build_detail :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid) -> Nav_Build_Status {
             polygon[k]={f32(v.x)*g.cs,f32(v.y)*g.ch,f32(v.z)*g.cs}
         }
         low,high:=nav_poly_bounds(s,p,tile,border)
-        patch:=Nav_Patch{s.patch[:(high.x-low.x)*(high.y-low.y)],low.x,low.y,high.x-low.x,high.y-low.y}
+        width,depth:=high.x-low.x,high.y-low.y
+        patch:=Nav_Patch{heights[:width*depth],low.x,low.y,width,depth}
         if !nav_patch_heights(s,g,p,&patch) {return .Out_Of_Memory}
         if !nav_poly_detail(s,g,polygon[:n],&patch,radius,&dp) {return .Out_Of_Memory}
-        if len(s.detail_out)+len(s.detail_tris)>int(max(u32)) {return .Too_Large}
-        detail:=Nav_Detail{u32(len(s.detail_verts)),u32(len(s.detail_out)),u16(dp.count-n),u16(len(s.detail_tris))}
+        if len(s.detail_out)+len(triangles)>int(max(u32)) {return .Too_Large}
+        detail:=Nav_Detail{
+            u32(len(s.detail_verts)),u32(len(s.detail_out)),u16(dp.count-n),u16(len(triangles)),
+        }
         if _,error:=append(&s.details,detail);error!=nil {return .Out_Of_Memory}
         for k in n..<dp.count {
             v:=dp.verts[k]
@@ -70,7 +75,7 @@ nav_build_detail :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid) -> Nav_Build_Status {
             world:=math.Vec3{f32(origin.x+f64(v.x)),f32((g.base+f64(height))*f64(g.ch)),f32(origin.y+f64(v.z))}
             if _,error:=append(&s.detail_verts,world);error!=nil {return .Out_Of_Memory}
         }
-        for t in s.detail_tris {
+        for t in triangles {
             if _,error:=append(&s.detail_out,Nav_Detail_Triangle{u8(t[0]),u8(t[1]),u8(t[2]),u8(t[3])});error!=nil {return .Out_Of_Memory}
         }
     }
@@ -352,7 +357,8 @@ nav_overlaps_edges :: proc "contextless" (pts:[]math.Vec3,edges:[][4]i32,a,b:i32
 // other point, and adds its edges.
 @(private="file")
 nav_complete_facet :: proc(s:^Nav_Build_Scratch,pts:[]math.Vec3,faces:^i32,e:int,max_edges:int) -> bool {
-    edge:=s.detail_edges[e]
+    edges:=&s.raw
+    edge:=edges[e]
     a,b:i32
     if edge[2]==NAV_EDGE_UNDEFINED {
         a,b=edge[0],edge[1]
@@ -377,22 +383,24 @@ nav_complete_facet :: proc(s:^Nav_Build_Scratch,pts:[]math.Vec3,faces:^i32,e:int
         if d>radius*(1+TOLERANCE) {continue}
         if d>=radius*(1-TOLERANCE) {
             // On the circle: the new edges must not cross the existing ones.
-            if nav_overlaps_edges(pts,s.detail_edges[:],a,u) || nav_overlaps_edges(pts,s.detail_edges[:],b,u) {continue}
+            if nav_overlaps_edges(pts,edges[:],a,u) ||
+                nav_overlaps_edges(pts,edges[:],b,u) {continue}
         }
         best=u
         center,radius=nav_circumcircle(pts[a],pts[b],pts[u])
     }
     if best>=i32(len(pts)) {
-        nav_update_left_face(&s.detail_edges[e],a,b,NAV_EDGE_HULL)
+        nav_update_left_face(&edges[e],a,b,NAV_EDGE_HULL)
         return true
     }
     face:=faces^
-    nav_update_left_face(&s.detail_edges[e],a,b,face)
+    nav_update_left_face(&edges[e],a,b,face)
     for pair in ([2][2]i32{{best,a},{b,best}}) {
-        if found:=nav_find_edge(s.detail_edges[:],pair[0],pair[1]);found!=NAV_EDGE_UNDEFINED {
-            nav_update_left_face(&s.detail_edges[found],pair[0],pair[1],face)
-        } else if len(s.detail_edges)<max_edges {
-            if _,error:=append(&s.detail_edges,[4]i32{pair[0],pair[1],face,NAV_EDGE_UNDEFINED});error!=nil {return false}
+        if found:=nav_find_edge(edges[:],pair[0],pair[1]);found!=NAV_EDGE_UNDEFINED {
+            nav_update_left_face(&edges[found],pair[0],pair[1],face)
+        } else if len(edges)<max_edges {
+            edge:=[4]i32{pair[0],pair[1],face,NAV_EDGE_UNDEFINED}
+            if _,error:=append(edges,edge);error!=nil {return false}
         }
     }
     faces^+=1
@@ -401,25 +409,30 @@ nav_complete_facet :: proc(s:^Nav_Build_Scratch,pts:[]math.Vec3,faces:^i32,e:int
 
 @(private="file")
 nav_delaunay_hull :: proc(s:^Nav_Build_Scratch,dp:^Nav_Detail_Poly) -> bool {
+    edges:=&s.raw
+    triangles:=&s.simple
     pts:=dp.verts[:dp.count]
-    clear(&s.detail_edges)
-    clear(&s.detail_tris)
+    clear(edges)
+    clear(triangles)
     max_edges:=dp.count*10
     for i,j:=0,dp.hull_count-1;i<dp.hull_count;j,i=i,i+1 {
         a,b:=dp.hull[j],dp.hull[i]
-        if nav_find_edge(s.detail_edges[:],a,b)!=NAV_EDGE_UNDEFINED {continue}
-        if _,error:=append(&s.detail_edges,[4]i32{a,b,NAV_EDGE_HULL,NAV_EDGE_UNDEFINED});error!=nil {return false}
+        if nav_find_edge(edges[:],a,b)!=NAV_EDGE_UNDEFINED {continue}
+        edge:=[4]i32{a,b,NAV_EDGE_HULL,NAV_EDGE_UNDEFINED}
+        if _,error:=append(edges,edge);error!=nil {return false}
     }
     faces:i32
-    for e:=0;e<len(s.detail_edges);e+=1 {
-        if s.detail_edges[e][2]==NAV_EDGE_UNDEFINED && !nav_complete_facet(s,pts,&faces,e,max_edges) {return false}
-        if s.detail_edges[e][3]==NAV_EDGE_UNDEFINED && !nav_complete_facet(s,pts,&faces,e,max_edges) {return false}
+    for e:=0;e<len(edges);e+=1 {
+        for side in 2..=3 {
+            if edges[e][side]==NAV_EDGE_UNDEFINED &&
+                !nav_complete_facet(s,pts,&faces,e,max_edges) {return false}
+        }
     }
-    if !nav_resize(&s.detail_tris,int(faces)) {return false}
-    for &t in s.detail_tris {t={-1,-1,-1,0}}
-    for e in s.detail_edges {
+    if !nav_resize(triangles,int(faces)) {return false}
+    for &t in triangles {t={-1,-1,-1,0}}
+    for e in edges {
         if e[3]>=0 {
-            t:=&s.detail_tris[e[3]]
+            t:=&triangles[e[3]]
             if t[0]==-1 {
                 t[0],t[1]=e[0],e[1]
             } else if t[0]==e[1] {
@@ -429,7 +442,7 @@ nav_delaunay_hull :: proc(s:^Nav_Build_Scratch,dp:^Nav_Detail_Poly) -> bool {
             }
         }
         if e[2]>=0 {
-            t:=&s.detail_tris[e[2]]
+            t:=&triangles[e[2]]
             if t[0]==-1 {
                 t[0],t[1]=e[1],e[0]
             } else if t[0]==e[0] {
@@ -439,9 +452,9 @@ nav_delaunay_hull :: proc(s:^Nav_Build_Scratch,dp:^Nav_Detail_Poly) -> bool {
             }
         }
     }
-    for i:=0;i<len(s.detail_tris); {
-        t:=s.detail_tris[i]
-        if t[0]<0 || t[1]<0 || t[2]<0 {unordered_remove(&s.detail_tris,i)} else {i+=1}
+    for i:=0;i<len(triangles); {
+        t:=triangles[i]
+        if t[0]<0 || t[1]<0 || t[2]<0 {unordered_remove(triangles,i)} else {i+=1}
     }
     return true
 }
@@ -450,7 +463,8 @@ nav_delaunay_hull :: proc(s:^Nav_Build_Scratch,dp:^Nav_Detail_Poly) -> bool {
 // side whose next triangle is shorter.
 @(private="file")
 nav_triangulate_hull :: proc(s:^Nav_Build_Scratch,dp:^Nav_Detail_Poly,polygon_count:int) -> bool {
-    clear(&s.detail_tris)
+    triangles:=&s.simple
+    clear(triangles)
     n:=dp.hull_count
     if n<3 {return true}
     pts:=dp.verts[:dp.count]
@@ -466,16 +480,19 @@ nav_triangulate_hull :: proc(s:^Nav_Build_Scratch,dp:^Nav_Detail_Poly,polygon_co
             start,left,right,shortest=i,next,previous,d
         }
     }
-    if _,error:=append(&s.detail_tris,[4]i32{hull[start],hull[left],hull[right],0});error!=nil {return false}
+    initial:=[4]i32{hull[start],hull[left],hull[right],0}
+    if _,error:=append(triangles,initial);error!=nil {return false}
     for (left+1)%n!=right {
         next_left,next_right:=(left+1)%n,(right+n-1)%n
         left_cost:=distance(pts[hull[left]],pts[hull[next_left]])+distance(pts[hull[next_left]],pts[hull[right]])
         right_cost:=distance(pts[hull[right]],pts[hull[next_right]])+distance(pts[hull[left]],pts[hull[next_right]])
         if left_cost<right_cost {
-            if _,error:=append(&s.detail_tris,[4]i32{hull[left],hull[next_left],hull[right],0});error!=nil {return false}
+            tri:=[4]i32{hull[left],hull[next_left],hull[right],0}
+            if _,error:=append(triangles,tri);error!=nil {return false}
             left=next_left
         } else {
-            if _,error:=append(&s.detail_tris,[4]i32{hull[left],hull[next_right],hull[right],0});error!=nil {return false}
+            tri:=[4]i32{hull[left],hull[next_right],hull[right],0}
+            if _,error:=append(triangles,tri);error!=nil {return false}
             right=next_right
         }
     }
@@ -489,11 +506,13 @@ nav_jitter :: #force_inline proc "contextless" (i:int,k:u32) -> f32 {
 
 @(private="file")
 nav_poly_detail :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid,polygon:[]math.Vec3,patch:^Nav_Patch,radius:int,dp:^Nav_Detail_Poly) -> bool {
+    triangles:=&s.simple
+    samples:=&s.edges
     n:=len(polygon)
     for k in 0..<n {dp.verts[k]=polygon[k]}
     dp.count=n
     dp.hull_count=0
-    clear(&s.detail_tris)
+    clear(triangles)
     spacing:=g.sample_distance
     error2:=g.sample_error*g.sample_error
     if spacing>0 {
@@ -551,7 +570,7 @@ nav_poly_detail :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid,polygon:[]math.Vec3,pat
         dp.hull_count=n
     }
     if !nav_triangulate_hull(s,dp,n) {return false}
-    if spacing>0 && len(s.detail_tris)>0 && nav_poly_min_extent(polygon)>=spacing*2 {
+    if spacing>0 && len(triangles)>0 && nav_poly_min_extent(polygon)>=spacing*2 {
         low,high:=polygon[0],polygon[0]
         for p in polygon[1:] {low=math.vec3_min(low,p);high=math.vec3_max(high,p)}
         step:=spacing
@@ -561,47 +580,48 @@ nav_poly_detail :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid,polygon:[]math.Vec3,pat
         x1:=int(nav_ceil(f64(high.x/step),-1<<30,1<<30))
         z0:=int(nav_floor(f64(low.z/step),-1<<30,1<<30))
         z1:=int(nav_ceil(f64(high.z/step),-1<<30,1<<30))
-        clear(&s.samples)
+        clear(samples)
         for z in z0..<z1 {
             for x in x0..<x1 {
                 p:=math.Vec3{f32(x)*step,(low.y+high.y)*0.5,f32(z)*step}
                 if nav_distance_to_poly(polygon,p)> -step/2 {continue}
-                if _,error:=append(&s.samples,[4]i32{i32(x),i32(nav_patch_height(patch,p,g,radius)),i32(z),0});error!=nil {return false}
+                sample:=[4]i32{i32(x),i32(nav_patch_height(patch,p,g,radius)),i32(z),0}
+                if _,error:=append(samples,sample);error!=nil {return false}
             }
         }
-        for _ in 0..<len(s.samples) {
+        for _ in 0..<len(samples) {
             if dp.count>=NAV_DETAIL_MAX_VERTS {break}
             best:=-1
             best_d:f32
             best_p:math.Vec3
-            for sample,i in s.samples {
+            for sample,i in samples {
                 if sample[3]!=0 {continue}
                 // Jittered off the grid: symmetric samples triangulate badly.
                 p:=math.Vec3{f32(sample.x)*step+nav_jitter(i,0x8da6b343)*g.cs*0.1,f32(sample.y)*g.ch,f32(sample.z)*step+nav_jitter(i,0xd8163841)*g.cs*0.1}
-                d:=nav_distance_to_mesh(p,dp.verts[:dp.count],s.detail_tris[:])
+                d:=nav_distance_to_mesh(p,dp.verts[:dp.count],triangles[:])
                 if d<0 {continue}
                 if d>best_d {best,best_d,best_p=i,d,p}
             }
             if best<0 || best_d<=g.sample_error {break}
-            s.samples[best][3]=1
+            samples[best][3]=1
             dp.verts[dp.count]=best_p
             dp.count+=1
             if !nav_delaunay_hull(s,dp) {return false}
         }
     }
-    if len(s.detail_tris)==0 {
+    if len(triangles)==0 {
         for k in 2..<dp.count {
-            if _,error:=append(&s.detail_tris,[4]i32{0,i32(k-1),i32(k),0});error!=nil {return false}
+            if _,error:=append(triangles,[4]i32{0,i32(k-1),i32(k),0});error!=nil {return false}
         }
     }
-    base.truncate(&s.detail_tris,NAV_DETAIL_MAX_TRIS)
+    base.truncate(triangles,NAV_DETAIL_MAX_TRIS)
     on_hull :: proc "contextless" (dp:^Nav_Detail_Poly,a,b:i32) -> bool {
         for i,j:=0,dp.hull_count-1;i<dp.hull_count;j,i=i,i+1 {
             if dp.hull[j]==a && dp.hull[i]==b || dp.hull[j]==b && dp.hull[i]==a {return true}
         }
         return false
     }
-    for &t in s.detail_tris {
+    for &t in triangles {
         // Counter-clockwise seen from above, like the polygons.
         if cross_xz(dp.verts[t[0]],dp.verts[t[1]],dp.verts[t[2]])>0 {t[1],t[2]=t[2],t[1]}
         flags:i32

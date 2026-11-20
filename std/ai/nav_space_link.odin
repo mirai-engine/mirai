@@ -42,7 +42,7 @@ nav_medium_query_destroy :: proc(q:^Nav_Medium_Query) {
 @(private)
 nav_medium_valid :: proc "contextless" (q:^Nav_Medium_Query,ref:Nav_Ref) -> bool {
     if nav_ref_is_volume(ref) {return nav_volume_ref_valid(q.volume,ref)}
-    return nav_ref_valid(q.mesh,ref)
+    return nav_path_ref_walkable(q.mesh,ref)
 }
 
 @(private)

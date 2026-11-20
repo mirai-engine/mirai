@@ -1,6 +1,7 @@
 package ai
 
 import "core:math/linalg"
+import "core:mem"
 import "core:testing"
 import math "mirai:std/math"
 
@@ -171,6 +172,38 @@ a_link_joins_two_platforms_only_for_agents_that_can_cross_it :: proc(t:^testing.
 }
 
 @(test)
+a_path_result_reports_complete_partial_and_insufficient_output :: proc(t:^testing.T) {
+    mesh:Nav_Mesh
+    gap_mesh(t,&mesh)
+    defer nav_mesh_destroy(&mesh)
+    q,small:Nav_Query
+    testing.expect(t,nav_query_init(&q,256))
+    defer nav_query_destroy(&q)
+    testing.expect(t,nav_query_init(&small,1))
+    defer nav_query_destroy(&small)
+    a,b:=math.Vec3{0.5,0,1},math.Vec3{7.5,1.5,1}
+    from,to:=nearest(t,&mesh,a),nearest(t,&mesh,b)
+    filter:=test_filter()
+    path:[64]Nav_Ref
+    count,status,partial:=nav_find_path(&small,&mesh,from,to,a,b,&filter,path[:])
+    testing.expect(t,status==.Open_Full && partial && count==1 && path[0]==from)
+    count,status,partial=nav_find_path(&q,&mesh,from,to,a,b,&filter,path[:])
+    testing.expect(t,status==.No_Path && partial && count>0 && path[count-1]!=to)
+    count,status,partial=nav_path_finish(&q,path[:0])
+    testing.expect(t,status==.Output_Full && !partial && count==0)
+    link:=nav_mesh_add_link(&mesh,{start={2.9,0,1},end={5.1,1.5,1},radius=0.3,
+        area=NAV_AREA_WALKABLE},enabled=false)
+    testing.expect(t,link!=0)
+    count,status,partial=nav_find_path(&q,&mesh,from,to,a,b,&filter,path[:])
+    testing.expect(t,status==.No_Path && partial && count>0)
+    testing.expect(t,nav_mesh_link_set_enabled(&mesh,link,true))
+    count,status,partial=nav_find_path(&q,&mesh,from,to,a,b,&filter,path[:])
+    testing.expect(t,status==.Found && !partial && count>0 && path[count-1]==to)
+    count,status,partial=nav_path_finish(&q,path[:1])
+    testing.expect(t,status==.Output_Full && !partial && count==0)
+}
+
+@(test)
 a_two_way_link_is_crossed_back :: proc(t:^testing.T) {
     mesh:Nav_Mesh
     gap_mesh(t,&mesh)
@@ -208,6 +241,57 @@ a_link_rests_when_its_tiles_arrive_and_lifts_when_they_leave :: proc(t:^testing.
     testing.expect(t,link.start_poly==0 && link.end_poly==0)
     testing.expect_value(t,nav_mesh_remove_links_of(&mesh,7),1)
     testing.expect(t,nav_link_of(&mesh,ref)==nil)
+}
+
+@(test)
+tiles_and_owners_find_their_links_in_a_full_mesh :: proc(t:^testing.T) {
+    CAPACITY :: 4096
+    tracking:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracking,context.allocator)
+    defer mem.tracking_allocator_destroy(&tracking)
+    mesh:Nav_Mesh
+    ok:=nav_mesh_init(&mesh,{tile_width=4,climb=0.3,max_tiles=4,max_links=CAPACITY,
+        allocator=mem.tracking_allocator(&tracking)})
+    if !testing.expect(t,ok) {return}
+    defer nav_mesh_destroy(&mesh)
+    allocations:=tracking.total_allocation_count
+    distant:Nav_Ref
+    for i in 0..<CAPACITY-3 {
+        p:=math.Vec3{f32(i*4+400),0,1}
+        distant=nav_mesh_add_link(&mesh,{start=p,end=p,owner=u64(i+1),area=NAV_AREA_WALKABLE})
+        if !testing.expect(t,distant!=0) {return}
+    }
+    desc:=Nav_Link_Desc{start={4.1,0,2},end={10,0,2},radius=0.5,area=NAV_AREA_WALKABLE}
+    first:=nav_mesh_add_link(&mesh,desc)
+    removed:=nav_mesh_add_link(&mesh,desc)
+    last:=nav_mesh_add_link(&mesh,desc)
+    if !testing.expect(t,first!=0 && removed!=0 && last!=0) {return}
+    testing.expect(t,nav_mesh_add_link(&mesh,desc)==0)
+    testing.expect(t,nav_mesh_remove_link(&mesh,removed))
+    same_tile:=nav_mesh_add_link(&mesh,{start={1,0,1},end={2,0,1},owner=9,
+        two_way=true,area=NAV_AREA_WALKABLE})
+    if !testing.expect(t,same_tile!=0 && same_tile!=removed) {return}
+
+    testing.expect(t,nav_mesh_add_tile(&mesh,cell_tile(t,{0,0},4,4)))
+    link:=nav_link_of(&mesh,first)
+    if !testing.expect(t,link!=nil && link.start_poly!=0 && link.end_poly==0) {return}
+    testing.expect(t,nav_mesh_add_tile(&mesh,cell_tile(t,{2,0},4,4)))
+    occupied:=free_connections(&mesh)
+    testing.expect(t,link.start_poly!=0 && link.end_poly!=0)
+    for _ in 0..<3 {
+        testing.expect(t,nav_mesh_remove_tile(&mesh,{0,0}))
+        testing.expect(t,link.start_poly==0 && link.end_poly==0)
+        testing.expect(t,nav_mesh_add_tile(&mesh,cell_tile(t,{0,0},4,4)))
+        testing.expect(t,link.start_poly!=0 && link.end_poly!=0)
+        testing.expect_value(t,free_connections(&mesh),occupied)
+    }
+    testing.expect_value(t,nav_mesh_remove_links_of(&mesh,0),2)
+    testing.expect(t,nav_link_of(&mesh,first)==nil && nav_link_of(&mesh,last)==nil)
+    testing.expect(t,nav_link_of(&mesh,same_tile)!=nil && nav_link_of(&mesh,distant)!=nil)
+    testing.expect_value(t,nav_mesh_remove_links_of(&mesh,9),2)
+    testing.expect(t,nav_link_of(&mesh,same_tile)==nil)
+    testing.expect_value(t,free_connections(&mesh),len(mesh.connections))
+    testing.expect_value(t,tracking.total_allocation_count,allocations)
 }
 
 @(test)
@@ -440,6 +524,8 @@ a_copied_mesh_answers_with_the_same_references :: proc(t:^testing.T) {
     // The copy owns its tiles: removing one from the source leaves it whole.
     nav_mesh_remove_tile(&mesh,{0,0})
     testing.expect(t,nav_link_of(&other,link)!=nil && nav_ref_valid(&other,second[0]))
+    testing.expect_value(t,nav_mesh_remove_links_of(&other,0),1)
+    testing.expect(t,nav_link_of(&other,link)==nil && nav_link_of(&mesh,link)!=nil)
 }
 
 // What walking a path costs once it is straightened and pulled, as an agent follows it.

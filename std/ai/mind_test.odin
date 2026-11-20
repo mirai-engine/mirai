@@ -524,6 +524,45 @@ a_reservation_outlives_its_holder_by_its_lease :: proc(t:^testing.T) {
     }
 }
 
+@(test)
+reservation_lookup_survives_collisions_release_and_reuse :: proc(t:^testing.T) {
+    r:Reservations
+    keys:[RESERVATION_TARGETS]Reservation_Key
+    colliding:=min(4,len(keys))
+    target:=u64(1)
+    for &key,i in keys {
+        for {
+            key={target,2}
+            target+=1
+            if i>=colliding || reserve_home(key)==RESERVATION_BUCKETS-1 {break}
+        }
+        lease:=u64(1) if i==0 else 100
+        if !testing.expect(t,reserve_take(&r,key,u64(i+1),1,1,lease)) {return}
+    }
+    extra:=Reservation_Key{keys[0].target,3}
+    testing.expect(t,!reserve_take(&r,extra,99,1,2))
+    testing.expect_value(t,r.failed,1)
+    testing.expect(t,reserve_take(&r,extra,99,1,3))
+    testing.expect(t,!reserve_holds(&r,keys[0],1,3))
+    for i in 1..<len(keys) {
+        testing.expect(t,reserve_holds(&r,keys[i],u64(i+1),3))
+    }
+
+    copy:=r
+    reserve_release(&r,extra,99)
+    testing.expect(t,reserve_take(&r,keys[0],1,1,3))
+    testing.expect(t,reserve_holds(&copy,extra,99,3) && !reserve_holds(&r,extra,99,3))
+    for key,i in keys {
+        holder:=u64(i+1)
+        reserve_renew(&r,key,holder,4,100)
+        testing.expect(t,reserve_holds(&r,key,holder,104))
+        testing.expect(t,!reserve_open(&r,key,holder+1,1,104))
+        reserve_release(&r,key,holder)
+        testing.expect(t,reserve_open(&r,key,holder+1,1,104))
+    }
+    testing.expect(t,reserve_take(&r,extra,99,1,105))
+}
+
 // A taker of a higher priority displaces the lowest holder not in use; never
 // one in use, nor one of its own priority or above; a lease that ran out
 // leaves room for any.

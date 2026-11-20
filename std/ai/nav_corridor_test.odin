@@ -113,7 +113,8 @@ a_corridor_stops_at_a_link_and_goes_on_from_its_end :: proc(t:^testing.T) {
     mesh:Nav_Mesh
     gap_mesh(t,&mesh)
     defer nav_mesh_destroy(&mesh)
-    link:=nav_mesh_add_link(&mesh,{start={2.9,0,1},end={5.1,1.5,1},radius=0.3,area=NAV_AREA_WALKABLE})
+    link:=nav_mesh_add_link(&mesh,{start={2.9,0,1},end={5.1,1.5,1},radius=0.3,
+        area=NAV_AREA_WALKABLE,owner=87})
     q:Nav_Query
     testing.expect(t,nav_query_init(&q,256))
     defer nav_query_destroy(&q)
@@ -124,6 +125,40 @@ a_corridor_stops_at_a_link_and_goes_on_from_its_end :: proc(t:^testing.T) {
     corners:[4]Nav_Corner
     n:=nav_corridor_corners(&c,&mesh,corners[:])
     testing.expect(t,n==1 && .Link in corners[0].flags && corners[0].ref==link)
+    testing.expect_value(t,corners[0].link_owner,87)
+    owner,owned:=nav_mesh_link_owner(&mesh,nav_ref_flip(link))
+    testing.expect(t,owned && owner==87)
+    testing.expect(t,!nav_mesh_link_set_enabled(nil,link,false))
+    _,owned=nav_mesh_link_owner(nil,link)
+    testing.expect(t,!owned)
+
+    // Cached routes and an already planned corridor must reject a disabled link.
+    from_ref,to_ref:=nearest(t,&mesh,a),nearest(t,&mesh,b)
+    before:=free_connections(&mesh)
+    revision:=mesh.revision
+    path:[64]Nav_Ref
+    testing.expect(t,nav_toward_begin(&q,&mesh,to_ref,b,&filter))
+    testing.expect_value(t,nav_toward_reach(&q,from_ref,256),.Found)
+    _,toward:=nav_toward_path(&q,from_ref,path[:])
+    testing.expect(t,toward)
+    testing.expect(t,nav_mesh_link_set_enabled(&mesh,nav_ref_flip(link),false))
+    testing.expect(t,mesh.revision!=revision && nav_ref_valid(&mesh,link))
+    _,toward=nav_toward_path(&q,from_ref,path[:])
+    testing.expect(t,!toward)
+    testing.expect(t,nav_toward_begin(&q,&mesh,to_ref,b,&filter))
+    testing.expect_value(t,nav_toward_reach(&q,from_ref,256),.No_Path)
+    testing.expect(t,!nav_corridor_valid(&c,&mesh,&filter,int(c.count)))
+    n=nav_corridor_corners(&c,&mesh,corners[:])
+    for corner in corners[:n] {testing.expect(t,corner.flags&{.Link,.End}=={})}
+    _,_,_,crossed_disabled:=nav_corridor_cross(&c,&mesh)
+    testing.expect(t,!crossed_disabled)
+    testing.expect(t,!nav_link_crossable(nav_link_of(&mesh,link),filter.can))
+
+    testing.expect(t,nav_mesh_link_set_enabled(&mesh,link,true))
+    testing.expect(t,nav_ref_valid(&mesh,from_ref) && nav_ref_valid(&mesh,to_ref))
+    testing.expect_value(t,free_connections(&mesh),before)
+    _,status,partial:=nav_find_path(&q,&mesh,from_ref,to_ref,a,b,&filter,path[:])
+    testing.expect(t,status==.Found && !partial)
     testing.expect(t,nav_corridor_move(&c,&mesh,&filter,{2.9,0,1}))
     from,to,crossed,ok:=nav_corridor_cross(&c,&mesh)
     testing.expect(t,ok && crossed==link && linalg.distance(from,math.Vec3{2.9,0,1})<1e-3 && linalg.distance(to,math.Vec3{5.1,1.5,1})<1e-3)
