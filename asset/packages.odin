@@ -184,7 +184,7 @@ word_put :: proc(out:[]u8,value:u64,size:int) -> int {
 
 // The text of a manifest; .Invalid for one that would not read back as it is.
 package_text :: proc(p:^Package,allocator:=context.allocator) -> (text:string,error:Error) {
-    if !package_valid(p) {return "",.Invalid}
+    package_validate(p,.Invalid) or_return
     w:serial.Writer
     serial.writer_init(&w,1024,allocator)
     serial.text_write_raw(&w,"{\n  \"version\": ")
@@ -307,13 +307,13 @@ package_parse :: proc(text:string,allocator:=context.allocator) -> (p:Package,er
     if !serial.text_end(&r) {return {},.Corrupt}
     if version!=PACKAGE_MANIFEST_VERSION {return {},.Version}
     if seen-{.Catalog_Path,.Documents,.Settings}!={.Version,.Id,.Name,.Origin,.Identity,.Inputs,.Assets} {return {},.Corrupt}
-    if !package_valid(&p) {return {},.Corrupt}
+    if invalid:=package_validate(&p,.Corrupt);invalid!=.None {return {},invalid}
     return p,.None
 }
 
 // The text of a build manifest; .Invalid for one that would not read back as it is.
 build_text :: proc(b:^Build,allocator:=context.allocator) -> (text:string,error:Error) {
-    if !build_valid(b) {return "",.Invalid}
+    build_validate(b,.Invalid) or_return
     w:serial.Writer
     serial.writer_init(&w,512,allocator)
     serial.text_write_raw(&w,"{\n  \"version\": ")
@@ -398,7 +398,7 @@ build_parse :: proc(text:string,allocator:=context.allocator) -> (b:Build,error:
     if !serial.text_end(&r) {return {},.Corrupt}
     if version!=BUILD_MANIFEST_VERSION {return {},.Version}
     if seen!={.Version,.Package,.Key,.Final,.Outputs,.Programs} {return {},.Corrupt}
-    if !build_valid(&b) {return {},.Corrupt}
+    if invalid:=build_validate(&b,.Corrupt);invalid!=.None {return {},invalid}
     return b,.None
 }
 
@@ -813,12 +813,18 @@ packages_resolve :: proc(s:^store.Store,root:string,list:^Packages,allocator:=co
         case .Corrupt,.Invalid_Argument,.Io,.No_Space,.Unsupported_Layout:
             problem_add(&resolved,{entry.id,{},.Build_Unreadable}) or_return
         }
+        first:=make(map[Package_Asset_Name]int,context.temp_allocator)
+        if reserve(&first,len(p.assets))!=nil {return {},.Out_Of_Memory}
+        for &a in p.assets {
+            key:=Package_Asset_Name{a.kind,a.name}
+            index,known:=first[key]
+            if !known || a.index<index {first[key]=a.index}
+        }
         folder:=entry.folder!=""?fmt.tprintf("%s/",entry.folder):""
         for &a,at in p.assets {
             info,known:=kind_info(a.kind)
             if !used[at] || !known || !import_cached(a.kind) {continue}
-            repeated:=false
-            for &other in p.assets {repeated||=other.kind==a.kind && other.name==a.name && other.index<a.index}
+            repeated:=first[Package_Asset_Name{a.kind,a.name}]<a.index
             listed:=Package_Listed{id=a.id,kind=a.kind,package_id=p.id,state=.Not_Built}
             listed.path=clone(listed_path(folder,a.name,a.index,repeated,info.extension),allocator) or_return
             if o,found:=outputs[a.id];found && o.kind==a.kind && o.kind_version==info.version {
@@ -869,34 +875,46 @@ folder_valid :: proc(folder:string) -> bool {
 }
 
 @(private="file")
-package_valid :: proc(p:^Package) -> bool {
+Package_Asset_Name :: struct {kind:Fourcc,name:string}
+
+@(private="file")
+package_validate :: proc(p:^Package,invalid:Error) -> Error {
     if p.id=={} || !folder_valid(p.documents) || !folder_valid(p.catalog_path) ||
-        p.settings!="" && !object_valid(p.settings) {return false}
-    for &a,at in p.assets {
-        if a.id=={} || a.id==p.id || !kind_valid(a.kind) || a.index<0 || a.index>int(max(i32)) || a.part && !import_cached(a.kind) {return false}
-        for &other in p.assets[:at] {
-            if other.id==a.id || other.kind==a.kind && other.index==a.index && other.name==a.name {return false}
-        }
+        p.settings!="" && !object_valid(p.settings) {return invalid}
+    Name_Index :: struct {asset:Package_Asset_Name,index:int}
+    ids:=make(map[base.Asset_Id]struct{},context.temp_allocator)
+    names:=make(map[Name_Index]struct{},context.temp_allocator)
+    defer {delete(ids);delete(names)}
+    if reserve(&ids,len(p.assets))!=nil || reserve(&names,len(p.assets))!=nil {
+        return .Out_Of_Memory
+    }
+    for &a in p.assets {
+        if a.id=={} || a.id==p.id || !kind_valid(a.kind) || a.index<0 || a.index>int(max(i32)) ||
+            a.part && !import_cached(a.kind) {return invalid}
+        key:=Name_Index{{a.kind,a.name},a.index}
+        if a.id in ids || key in names {return invalid}
+        ids[a.id],names[key]={},{}
         for d in a.dependencies {
-            if d=={} {return false}
+            if d=={} {return invalid}
         }
     }
-    return true
+    return .None
 }
 
 @(private="file")
-build_valid :: proc(b:^Build) -> bool {
-    if b.package_id=={} {return false}
-    for o,at in b.outputs {
-        if o.id=={} || !kind_valid(o.kind) {return false}
-        for other in b.outputs[:at] {
-            if other.id==o.id {return false}
-        }
+build_validate :: proc(b:^Build,invalid:Error) -> Error {
+    if b.package_id=={} {return invalid}
+    ids:=make(map[base.Asset_Id]struct{},context.temp_allocator)
+    defer delete(ids)
+    if reserve(&ids,len(b.outputs))!=nil {return .Out_Of_Memory}
+    for o in b.outputs {
+        if o.id=={} || !kind_valid(o.kind) || o.id in ids {return invalid}
+        ids[o.id]={}
     }
     for program,at in b.programs {
-        if program=={} || at>0 && !program_address_less(b.programs[at-1],program) {return false}
+        if program=={} || at>0 && !program_address_less(b.programs[at-1],program) {return invalid}
     }
-    return true
+    return .None
 }
 
 @(private="file")

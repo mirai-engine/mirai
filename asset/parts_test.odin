@@ -265,6 +265,7 @@ the_small_levels_of_a_texture_load_before_the_large_ones_arrive :: proc(t:^testi
     }
     store.commit(&partial)
     testing.expectf(t,lacking>0 && held>0,"the large levels are leaves of their own (%d held, %d lacking)",held,lacking)
+    testing.expect(t,!object_whole(&partial,object))
     a:Asset
     if !testing.expect_value(t,asset_open_object(&a,&partial,object,context.temp_allocator),Error.None) {return}
     view,error:=texture_open(&a,&types)
@@ -278,6 +279,7 @@ the_small_levels_of_a_texture_load_before_the_large_ones_arrive :: proc(t:^testi
         if leaf.offset>=small_end {chunk_copy(&full,&partial,leaf.address)}
     }
     store.commit(&partial)
+    testing.expect(t,object_whole(&partial,object))
     testing.expect_value(t,asset_open_object(&a,&partial,object,context.temp_allocator),Error.None)
     view,error=texture_open(&a,&types)
     testing.expect(t,error==.None && texture_decode(&a,&types,&view,0)==.None && mem.compare(texture_mip(view,0),texture_mip(reference,0))==0,"the large levels load once they arrive")

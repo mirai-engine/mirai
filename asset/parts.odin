@@ -405,46 +405,43 @@ object_peek :: proc(s:^store.Store,address:store.Hash,types:^Types,dependencies:
     return header,row^,true,.None
 }
 
-// The header of the asset of the store at address, and into dependencies what
-// its directory names: what a registry lists of it, from its meta and front.
-object_header :: proc(s:^store.Store,address:store.Hash,dependencies:^[dynamic]base.Asset_Id) -> (header:Header,error:Error) {
+// The header of the stored asset, optionally copying its dependencies.
+object_header :: proc(s:^store.Store,address:store.Hash,
+    dependencies:^[dynamic]base.Asset_Id=nil) -> (header:Header,error:Error) {
     a:Asset
-    asset_open_object(&a,s,address,context.temp_allocator) or_return
+    asset_open_object(&a,s,address) or_return
     defer asset_close(&a)
-    if _,no_room:=append(dependencies,..a.dependencies);no_room!=nil {return {},.Out_Of_Memory}
+    if dependencies!=nil {
+        if _,no_room:=append(dependencies,..a.dependencies);no_room!=nil {return {},.Out_Of_Memory}
+    }
     return a.blob.header,.None
 }
 
-// Whether the store holds every chunk of the object at address.
-object_whole :: proc(s:^store.Store,address:store.Hash) -> bool {
-    if s==nil || !store.chunk_has(s,address) {return false}
+// Whether the store holds every chunk. A batch that refreshed the index can reuse it.
+object_whole :: proc(s:^store.Store,address:store.Hash,refresh:=true) -> bool {
+    if !(store.chunk_has(s,address) if refresh else store.chunk_here(s,address)) {return false}
     o,error:=store.object_open(s,address)
     if error!=.None {return false}
     defer store.object_close(&o)
-    walk :: proc(s:^store.Store,n:store.Node_View,buffer:[]u8,depth:int) -> bool {
+    walk :: proc(s:^store.Store,n:store.Node_View,buffer:[]u8) -> bool {
         if n.level==0 {
             for e in n.entries {
                 if !store.chunk_here(s,e.address) {return false}
             }
             return true
         }
-        if depth>store.NODE_LEVEL_MAX {return false}
-        entries:=slice.clone(n.entries,context.temp_allocator)
-        defer delete(entries,context.temp_allocator)
-        for e in entries {
-            bytes,read_error:=store.chunk_read(s,e.address,buffer)
+        for e in n.entries {
+            bytes,read_error:=store.chunk_read(s,e.address,buffer[:store.CHUNK_MAX])
             if read_error!=.None {return false}
             child,parse_error:=store.node_parse(bytes)
             if parse_error!=.None || child.level!=n.level-1 {return false}
-            child_buffer,no_room:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
-            if no_room!=nil {return false}
-            defer delete(child_buffer,context.temp_allocator)
-            if !walk(s,child,child_buffer,depth+1) {return false}
+            if !walk(s,child,buffer[store.CHUNK_MAX:]) {return false}
         }
         return true
     }
-    buffer,no_room:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
+    if o.root.level==0 {return walk(s,o.root,nil)}
+    buffer,no_room:=mem.alloc_bytes_non_zeroed(o.root.level*store.CHUNK_MAX)
     if no_room!=nil {return false}
-    defer delete(buffer,context.temp_allocator)
-    return walk(s,o.root,buffer,0)
+    defer delete(buffer)
+    return walk(s,o.root,buffer)
 }
