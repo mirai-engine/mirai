@@ -327,7 +327,7 @@ patrol_walk :: proc(patrol:^Patrol,e:core.Entity,start:bool,p:nav.Nav_Path,splin
         case .Moving,.Waiting,.Crossing:
             if p.state==.Moving && p.goal!=goal {nav.nav_move_to(requests,e,goal)}
             return .Running
-        case .Arrived,.Failed:
+        case .Arrived,.Arrived_Partial,.Failed:
             // There, as near as it gets, or where it cannot get: the next point.
             next+=-1 if patrol.back else 1
             if next<0 || next>=count {
