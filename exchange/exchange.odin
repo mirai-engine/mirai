@@ -14,7 +14,7 @@ import "mirai:store"
 // first and spread over peers, and checks every chunk against the address its
 // parent or its ask named before the store keeps it.
 //
-// The owner adds the CHANNELS of channels() to every host, gives each
+// The owner adds CHANNEL_DESCS to every host, gives each
 // connection with peer_add, hands every Message command to receive and calls
 // update once per frame, before host_update. Every procedure takes the lock
 // of the Exchange, so fetch may wait on a job thread while the owner pumps.
@@ -306,9 +306,9 @@ Exchange :: struct {
     waiting:int,  // fetch calls waiting
 }
 
-channels :: proc() -> [CHANNELS]wire.Channel_Desc {
-    return {{kind=.Reliable,queue_bytes=CONTROL_BYTES},{kind=.Reliable,queue_bytes=DATA_QUEUE_BYTES}}
-}
+CONTROL_CHANNEL_DESC :: wire.Channel_Desc{kind=.Reliable,queue_bytes=CONTROL_BYTES}
+DATA_CHANNEL_DESC :: wire.Channel_Desc{kind=.Reliable,queue_bytes=DATA_QUEUE_BYTES}
+CHANNEL_DESCS :: []wire.Channel_Desc{CONTROL_CHANNEL_DESC,DATA_CHANNEL_DESC}
 
 init :: proc(x:^Exchange,desc:Desc) -> Error {
     x^={desc=desc}

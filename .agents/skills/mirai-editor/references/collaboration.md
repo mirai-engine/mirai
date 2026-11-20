@@ -37,12 +37,12 @@ Code: `collab.odin`, `collab_api.odin`, `collab_project.odin` (the project that 
 
 ## The project
 
-- The session carries the project as `mirai share` and `mirai join` do
+- The session and `mirai share` use the same project transport
   ([sharing a project](../../mirai-projects/references/projects.md#sharing-a-project)), with the
-  same node of `cook/share`: the session's net host also carries the channels of the
-  [exchange](../../mirai-store/references/exchange.md), at `COLLAB_EXCHANGE_CHANNEL`, so its
-  connections move the project and its builds; what a peer sends enters only through the checks
-  of `cook/share` and `exchange`.
+  same node of `cook/share`. A session invitation works with `mirai join` to fetch the project.
+  Live edits go to the editors admitted to the scene. An editor presented with an invitation
+  from `mirai share` reads the offer before writing any files and tells the user to run
+  `mirai join`.
 - **Hosting** takes the snapshot of the project into the editor's store and offers it under the
   session's key, with the builds its packages pin; the whole library of that store is exposed to
   whoever holds the invitation, as in `mirai share`. A lease of the session holds what it serves

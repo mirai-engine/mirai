@@ -20,16 +20,31 @@ import wire "mirai:net"
 // node_command for each command of a host and node_step; a join runs on
 // another thread and reads the clock and waits through the node.
 
-NAMESPACE :: "shares"      // <hash of the secret of an invitation>: the snapshot a share offers under it
+NAMESPACE :: "shares"      // <hash of the secret of an invitation>: the offer under it
 PROTOCOL_ID :: 0x4d495348  // of the hosts of sharing: datagrams of any other application are ignored
-VERSION :: 4               // of what two peers say to each other: the snapshot and the exchange over it
+VERSION :: 5               // the project offer, snapshot and exchange
 PEERS :: 8                 // connections of a node at once
+CONTROL_CHANNEL :: 0
+PRESENCE_CHANNEL :: 1
+EXCHANGE_CHANNEL :: 2
 LEASE_SECONDS :: 60.0      // between two refreshes of the lease
 @(private) WANTS :: 512
 @(private) EVENTS :: 64
 
-// What the hosts of a node carry: the channels of the exchange, from the first.
-channels :: proc() -> [exchange.CHANNELS]wire.Channel_Desc {return exchange.channels()}
+@(private) CHANNEL_DESCS :: []wire.Channel_Desc{
+    {kind=.Reliable,queue_bytes=256<<10},
+    {kind=.Unreliable},
+    exchange.CONTROL_CHANNEL_DESC,
+    exchange.DATA_CHANNEL_DESC,
+}
+
+// The same profile serves a project with or without a live editor.
+host_init :: proc(h:^wire.Host,mode:wire.Mode,transport:wire.Transport,key:wire.Invite_Key,seed:=u64(0)) -> wire.Error {
+    return wire.host_init(h,{
+        mode=mode,transport=transport,invite=key,seed=seed,max_connections=PEERS-1,
+        protocol_id=PROTOCOL_ID,version=VERSION,channels=CHANNEL_DESCS,
+    })
+}
 
 Event_Kind :: enum u8 {Joined,Left}
 
@@ -86,11 +101,13 @@ Join_Hooks :: struct {
 
 // worker: the job system and worker of the thread that pumps, which reads,
 // hashes, stores and commits for the exchange; none: all of it runs on the pump.
-// channel: where the channels of channels() start in the channels of every host.
-node_init :: proc(n:^Node,s:^store.Store,allocator:=context.allocator,worker:=jobs.Worker_Ref{},channel:=0) -> exchange.Error {
+node_init :: proc(n:^Node,s:^store.Store,allocator:=context.allocator,worker:=jobs.Worker_Ref{}) -> exchange.Error {
     n^={s=s,allocator=allocator}
     n.served=make([dynamic]store.Hash,allocator)
-    return exchange.init(&n.x,{store=s,channel=channel,peers=PEERS,wants=WANTS,expose=node_expose,expose_user=n,allocator=allocator,worker=worker})
+    return exchange.init(&n.x,{
+        store=s,channel=EXCHANGE_CHANNEL,peers=PEERS,wants=WANTS,
+        expose=node_expose,expose_user=n,allocator=allocator,worker=worker,
+    })
 }
 
 node_destroy :: proc(n:^Node) {
@@ -119,7 +136,7 @@ node_close :: proc(n:^Node) {
     }
 }
 
-// Adds a host whose channels start with those of channels(); the node polls it.
+// Adds a host of the project profile for the node to poll.
 node_host :: proc(n:^Node,h:^wire.Host) -> bool {
     if n.host_count==len(n.hosts) {return false}
     n.hosts[n.host_count]=h

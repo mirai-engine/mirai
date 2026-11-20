@@ -6,6 +6,7 @@ import "core:mem"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import "mirai:cook/share"
 import "mirai:core"
 import "mirai:editor/api"
 import "mirai:editor/history"
@@ -294,10 +295,10 @@ a_file_as_large_as_a_session_carries_crosses_as_one_message :: proc(t:^testing.T
     host,guest:=new(Collab_State),new(Collab_State)
     defer free(host);defer free(guest)
     host.role,guest.role=.Host,.Guest
-    channels:=collab_channels()
     for st,i in ([2]^Collab_State{host,guest}) {
-        desc:=wire.Host_Desc{mode=i==0?.Server:.Client,transport=wire.sim_endpoint_transport(&network,i),protocol_id=0x4d495241,seed=u64(7+i),channels=channels[:]}
-        testing.expect_value(t,wire.host_init(&st.host,desc),wire.Error.None)
+        mode:=wire.Mode.Server if i==0 else .Client
+        transport:=wire.sim_endpoint_transport(&network,i)
+        testing.expect_value(t,share.host_init(&st.host,mode,transport,{},seed=u64(7+i)),.None)
     }
     defer {wire.host_destroy(&host.host);wire.host_destroy(&guest.host)}
     defer {collab_peer_free(&host.peers[1]);collab_peer_free(&guest.peers[0])}

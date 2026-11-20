@@ -292,11 +292,13 @@ host_make_bytes :: proc(h:^Host,count:int) -> []u8 {
 }
 
 host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
-    h^={desc=desc}
+    stored:=desc
+    stored.channels=nil
+    h^={desc=stored}
     d:=&h.desc
     h.allocator=d.allocator.procedure==nil?context.allocator:d.allocator
     if d.transport.send==nil || d.transport.receive==nil {return refuse(h,"transport","a send and a receive procedure")}
-    if len(d.channels)>USER_CHANNELS {return refuse(h,"channels","at most 6")}
+    if len(desc.channels)>USER_CHANNELS {return refuse(h,"channels","at most 6")}
     if d.mode==.Client {d.max_connections=1} else if d.max_connections<=0 {d.max_connections=32}
     if d.max_connections>MAX_CONNECTIONS {return refuse(h,"max_connections","at most 1024; 0 takes 32")}
     if d.tick_rate<=0 {d.tick_rate=60}
@@ -308,7 +310,7 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
     if d.keepalive<=0 {d.keepalive=0.5}
     if d.frame_ops<=0 {d.frame_ops=4096}
     if d.frame_bytes<=0 {d.frame_bytes=256<<10}
-    for channel,i in d.channels {
+    for channel,i in desc.channels {
         c:=channel
         if c.queue_bytes<=0 {c.queue_bytes=32<<10}
         if c.kind==.Reliable {
@@ -318,8 +320,7 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
         }
         h.channels[i]=c
     }
-    h.channel_count=len(d.channels)
-    d.channels=nil
+    h.channel_count=len(desc.channels)
     if d.protocol!=nil {
         if !d.protocol.sealed {return refuse(h,"protocol","sealed by protocol_seal")}
         h.channels[CHANNEL_SYSTEM]={kind=.Reliable,queue_bytes=64<<10,max_message_bytes=RELIABLE_EVENT_MAX_BYTES+16}

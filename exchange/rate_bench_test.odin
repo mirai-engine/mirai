@@ -86,12 +86,11 @@ bench_case :: proc(t:^testing.T,stores:[]store.Store,wants:[]store.Hash,bytes:in
         if !testing.expect(t,wire.udp_open(&socket,wire.address_loopback(0)),"cannot bind a UDP socket on 127.0.0.1") {return}
     }
     defer for &socket in sockets {wire.udp_close(&socket)}
-    ours:=channels()
     hosts:[2]^wire.Host
     exchanges:[2]Exchange
     for &h,i in hosts {
         h=new(wire.Host)
-        desc:=wire.Host_Desc{mode=i==0?.Server:.Client,transport=wire.udp_transport(&sockets[i]),channels=ours[:],protocol_id=7,seed=u64(i+1),frame_bytes=8<<20,command_bytes=8<<20,command_count=1<<16}
+        desc:=wire.Host_Desc{mode=i==0?.Server:.Client,transport=wire.udp_transport(&sockets[i]),channels=CHANNEL_DESCS,protocol_id=7,seed=u64(i+1),frame_bytes=8<<20,command_bytes=8<<20,command_count=1<<16}
         if !testing.expect_value(t,wire.host_init(h,desc),wire.Error.None) {return}
         testing.expect_value(t,init(&exchanges[i],{store=&stores[i],channel=0,wants=len(wants)+16}),Error.None)
     }
