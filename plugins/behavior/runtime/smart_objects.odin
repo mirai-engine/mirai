@@ -212,15 +212,16 @@ offer_ready :: proc(v:Smart_View,i:int,offer:Smart_Offer,state:Smart_State,user:
 // waits while others hold it (stage 0), takes `seconds` (1), lands at the
 // other end and waits for navigation to take it from there (2). Success once
 // across; Failure when it is not at such a link.
-cross_act :: proc(a:^ai.Act($A),links:^core.Table(nav.Nav_Link,$B),placer:core.Placer,use:Smart_Use,user:Smart_User,seconds:f64) -> ai.Status {
+cross_act :: proc(a:^ai.Act($A),routes:core.Ref(nav.Navigation_Agents),placer:core.Placer,use:Smart_Use,user:Smart_User,seconds:f64) -> ai.Status {
     if a.phase==.Exit {return .Success}
     w,e,v:=world_of(a),agent(a),smart_view(a)
     p,ok:=agent_path(a)
     crossing:=ok && p.state==.Crossing && p.manual
     if ai.stage(a)==2 {return .Running if crossing else .Success}
-    if !crossing {return .Failure}
+    route:=nav.agent_route(routes.ptr,e)
+    if !crossing || route==nil {return .Failure}
     if ai.stage(a)==0 {
-        found,open:=smart_at_link(v,links,p.from,use,user)
+        found,open:=offer_open(v,p.link_entity,use,user)
         if !open || !smart_claim(a,found,user) {return .Running}
         ai.claim_use(a)
         ai.next_stage(a)
@@ -228,25 +229,9 @@ cross_act :: proc(a:^ai.Act($A),links:^core.Table(nav.Nav_Link,$B),placer:core.P
     if ai.stage_elapsed(a)<seconds {return .Running}
     rotation:=mm.Quat(1)
     if pose,placed:=core.get(v.worlds,e);placed {rotation=pose.rotation}
-    core.place(placer,e,p.to,rotation)
+    core.place(placer,e,route.to,rotation)
     nav.nav_crossing_done(w.requests,e)
     return ai.next_stage(a)
-}
-
-// The offer of `use` on the link with an end at `from`.
-@(private)
-smart_at_link :: proc(v:Smart_View,links:^core.Table(nav.Nav_Link,$A),from:[3]f32,use:Smart_Use,user:Smart_User) -> (found:Smart_Found,ok:bool) {
-    for row in 0..<core.count(v.objects) {
-        object:=core.entity_at(v.objects,row)
-        link,linked:=core.get(links,object)
-        pose,placed:=core.get(v.worlds,object)
-        if !linked || !placed {continue}
-        end:=mm.transform_point(pose.transform,link.end)
-        if link.target!=core.NONE {if other,there:=core.get(v.worlds,link.target);there {end=other.position}}
-        if min(linalg.length(pose.position-mm.Vec3(from)),linalg.length(end-mm.Vec3(from)))>1.5 {continue}
-        if found,ok=offer_open(v,object,use,user);ok {return}
-    }
-    return
 }
 
 // Goes for an offer of `use` and uses it: on Enter it takes the nearest one

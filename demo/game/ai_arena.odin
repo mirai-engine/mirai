@@ -531,9 +531,9 @@ guard_patrol :: proc(a:^ai.Act(Guard_Act)) -> ai.Status {return behavior.patrol_
 
 // Once begun it lasts until navigation takes the guard on from the other side.
 @(act="Vault")
-guard_vault :: proc(a:^ai.Act(Guard_Act),w:Arena,links:^core.Table(nav.Nav_Link,.Read),placer:core.Placer) -> ai.Status {
+guard_vault :: proc(a:^ai.Act(Guard_Act),w:Arena,routes:core.Ref(nav.Navigation_Agents),placer:core.Placer) -> ai.Status {
     if ai.entering(a) {ai.commit(a,1)}
-    return behavior.cross_act(a,links,placer,USE_VAULT,arena_user(w,behavior.agent(a)),0.6)
+    return behavior.cross_act(a,routes,placer,USE_VAULT,arena_user(w,behavior.agent(a)),0.6)
 }
 
 // Builds the arenas that have not been built, once the world runs: their
@@ -684,7 +684,7 @@ arena_piece_add :: proc(c:core.Commands,piece:Arena_Piece) {
         core.commands_add(c,slab,render.Material_Values{color=piece.color})
     case .Link:
         core.commands_add(c,e,core.Transform{piece.position,1,{1,1,1}})
-        core.commands_add(c,e,nav.Nav_Link{end=piece.end,kind=piece.link,two_way=true,area=nav.AREA_WALKABLE,abilities=arena_link_abilities(piece.link)})
+        core.commands_add(c,e,nav.Nav_Link{enabled=true,end=piece.end,kind=piece.link,two_way=true,area=nav.AREA_WALKABLE,abilities=arena_link_abilities(piece.link)})
         if piece.offers[0].use!=behavior.USE_NONE {core.commands_add(c,e,behavior.Smart_Object{offers={0=piece.offers[0],1=piece.offers[1]}})}
     case .Offer:
         core.commands_add(c,e,core.Transform{piece.position,1,{1,1,1}})
