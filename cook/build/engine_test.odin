@@ -956,6 +956,10 @@ a_loaded_file_is_part_of_what_loads_it :: proc(t:^testing.T) {
     staged,_:=os.read_entire_file(project.path(paths.stage,"editor/kit","kit.odin"),context.temp_allocator)
     loaded:=slashes(project.path(root,"editor/kit","theme.ui"),context.temp_allocator)
     testing.expectf(t,strings.contains(string(staged),fmt.tprintf("#load(%q)",loaded)),"the stage loads the file itself: %s",staged)
+    resources,_,error:=declared_resources(paths.decl)
+    testing.expect(t,error==nil && slice.contains(resources,loaded))
+    font:=slashes(project.path(root,"editor/kit/fonts","a.txt"),context.temp_allocator)
+    testing.expect(t,slice.contains(resources,font),"the declarations name the loaded folder too")
     for c in ([]struct{what,theme,font:string}{{"the loaded file","two","first"},{"a file of the loaded folder","two","second"}}) {
         now:=key(t,root,paths,library,c.theme,c.font)
         testing.expectf(t,!now.stage,"%s leaves the stage as it was",c.what)

@@ -966,6 +966,23 @@ rewrite_paths :: proc(scope:^File_Scope,src:string,decls:[]^ast.Stmt) -> string 
     return strings.to_string(b)
 }
 
+// Files needed to compile against the published declarations.
+declared_resources :: proc(decl:string) -> (files:[]string,failed:string,error:os.Error) {
+    paths:=make([dynamic]string,context.temp_allocator)
+    walker:=os.walker_create(decl)
+    defer os.walker_destroy(&walker)
+    for info in os.walker_walk(&walker) {
+        if info.type!=.Regular || !strings.has_suffix(info.name,".odin") {continue}
+        text,read_error:=os.read_entire_file(info.fullpath,context.temp_allocator)
+        if read_error!=nil {return nil,strings.clone(info.fullpath,context.temp_allocator),read_error}
+        append(&paths,..loaded_files(string(text),filepath.dir(info.fullpath)))
+    }
+    if path,walk_error:=os.walker_error(&walker);walk_error!=nil {
+        return nil,strings.clone(path,context.temp_allocator),walk_error
+    }
+    return paths[:],"",nil
+}
+
 // The files a text loads with #load and its kin, the paths relative to folder:
 // those of a #load_directory, the files of its folder.
 @(private)

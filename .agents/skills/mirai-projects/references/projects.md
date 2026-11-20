@@ -449,8 +449,8 @@ release of the tag; run by hand, it leaves the packages as artifacts.
   shaders/ templates/ assets/fonts/ editor/assets/ .agents/skills/ THIRD_PARTY_NOTICES.md
   ```
 
-  It carries no `cook/` or `tools/`, which are in the binaries, nor the rest of `docs/`, `demo/` or
-  `scripts/`.
+  It also carries the resources the declarations load at their original engine-relative paths.
+  The code of `cook/` and `tools/` lives in the binaries.
 - **Sources.** They go because the generator reads the attributes of `core`, `engine`, `editor` and
   the plugins in their sources (`decl/` does not keep `@(step)`) and `mirai build game` compiles
   the game from them in a single module ([shipped game](build.md#shipped-game)). The editor's agent
