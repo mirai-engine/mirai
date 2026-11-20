@@ -11,7 +11,7 @@ struct Params_Block {
     uint occlusion;          // 1: depth pyramid test enabled for this phase
     uint hiz_levels;
     uint programs;           // the Surface programs whose resolve draws a cluster turns on: the largest program id, plus one (0: none)
-    uint4 glass_groups;      // dispatch size of the glass passes: xy at render resolution, zw at half
+    uint4 glass_groups;      // dispatch size of the glass shading passes
     uint chunk_capacity;
     uint visible_capacity;   // of the visible list, both phases together
     uint candidate_capacity; // of the clusters phase 0 found hidden

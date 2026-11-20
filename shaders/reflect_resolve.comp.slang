@@ -20,7 +20,7 @@
 #define MIRAI_GROUP_Y 8
 #define MIRAI_GROUP_Z 1
 
-struct Params_Block { float shared_from; float pad0; float pad1; float pad2; };
+struct Params_Block { float shared_from; uint pad; uint2 origin; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] Texture2D<float4> traced : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);      // rgb radiance, a hit distance
 #define GBUFFER_NORMAL SLOT_PASS1
@@ -53,13 +53,17 @@ float4 traced_at(int2 q, bool by_block, int2 size, out int2 source) {
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 dispatch_id : SV_DispatchThreadID) {
-    int2 p = int2(dispatch_id.xy);
+    int2 p = int2(dispatch_id.xy + params.origin);
     int2 size = int2(frame.resolution);
     if (any(((p) >= (size)))) return;
-    float4 normal = gbuffer_normal_roughness(p);
     float depth = g_depth.Load(int3(p, 0)).r;
+    if (depth_empty(depth)) {
+        out_filtered[p] = float4(0.0);
+        return;
+    }
+    float4 normal = gbuffer_normal_roughness(p);
     float roughness = decided_roughness(p, normal);
-    if (depth_empty(depth) || reflection_weight(roughness) <= 0.0) {
+    if (reflection_weight(roughness) <= 0.0) {
         out_filtered[p] = float4(0.0);
         return;
     }
@@ -94,11 +98,14 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
                 w = max(1.0 - d.x, 0.0) * max(1.0 - d.y, 0.0);
             }
             if (any(source != p)) {
-                float4 tap_normal = gbuffer_normal_roughness(source);
                 float tap_depth = g_depth.Load(int3(source, 0)).r;
+                if (MIRAI_GLASS_RESOLVE && depth_empty(tap_depth)) continue;
+                float4 tap_normal = gbuffer_normal_roughness(source);
+                float tap_roughness = decided_roughness(source, tap_normal);
+                if (MIRAI_GLASS_RESOLVE && reflection_weight(tap_roughness) <= 0.0) continue;
                 w *= pow(max(dot(tap_normal.xyz, normal.xyz), 0.0), TILE_FACING)
                     * exp(-abs(depth_distance(tap_depth) - depth_distance(depth)) / (0.05 * depth_distance(depth) + 1e-4))
-                    * exp(-abs(decided_roughness(source, tap_normal) - roughness) * 8.0);
+                    * exp(-abs(tap_roughness - roughness) * 8.0);
                 if (!depth_same_side(tap_depth, depth)) w = 0.0;
             }
             sum += tap.rgb * w;
@@ -106,5 +113,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         }
     }
     float3 result = weight_sum > 1e-3 ? sum / weight_sum : float3(0.0);
-    out_filtered[p] = float4(finite_or_zero(result), depth_distance(depth));
+    out_filtered[p] = float4(finite_or_zero(result),
+        !MIRAI_GLASS_RESOLVE || weight_sum > 1e-3 ? depth_distance(depth) : 0.0);
 }

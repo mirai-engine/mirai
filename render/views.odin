@@ -222,7 +222,7 @@ destroy_view_targets :: proc(r:^Renderer) {
 
 @(private)
 view_glass_buffers :: proc(r:^Renderer,view:^View_State) -> bool {
-    if view.glass_dispatch==0 {view.glass_dispatch=rhi.buffer_create(r.device,{size=size_of(Gpu_Glass_Dispatch),usage={.Storage,.Indirect},name="glass dispatch"})}
+    if view.glass_dispatch==0 {view.glass_dispatch=rhi.buffer_create(r.device,{size=16,usage={.Storage,.Indirect},name="glass dispatch"})}
     return view.glass_dispatch!=0
 }
 

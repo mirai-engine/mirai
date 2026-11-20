@@ -119,21 +119,13 @@ bool fragment_mask_covers(Raster_Input input, float mip_bias) {
 // Whether a surface at this linear depth is behind a glass layer (0: there is none).
 bool behind_layer(float depth, float layer) { return layer > 0.0 && depth > layer * 1.0001 + 1e-4; }
 
-// Whether the fragment is a blended surface. The back faces of a solid are
-// not: a ray leaves the solid there, and tracing finds where.
-bool fragment_blended(Raster_Input input) {
-    Material m = fragment_material(input);
-    if (m.alpha_mode != ALPHA_BLEND) return false;
-    return !material_solid(m) || !raster_back(input);
+bool fragment_blended(Raster_Input input, Material m) {
+    return m.alpha_mode == ALPHA_BLEND && (!material_solid(m) || !raster_back(input));
 }
 
-// Whether the forward pass draws the fragment: a blended surface behind the
-// last layer the glass pass draws per pixel, and before the opaque scene.
-// The depth test of that pass, against the depth of the layer, has already
-// turned away nearly everything else.
-bool fragment_forward(Raster_Input input, float last_layer, float opaque) {
-    float depth = fragment_depth(input);
-    return behind_layer(depth, last_layer) && !(!depth_empty(opaque) && depth >= depth_distance(opaque)) && fragment_blended(input);
+bool fragment_forward(Raster_Input input, Material m, float opaque, bool overflow) {
+    return fragment_blended(input, m) && (m.transmission > 0.0) == overflow
+        && (depth_empty(opaque) || fragment_depth(input) < depth_distance(opaque));
 }
 
 struct Fragment {

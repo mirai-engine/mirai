@@ -117,9 +117,15 @@ programs_ask :: proc(r: ^Renderer) {
 	if !r.pipelines_async {return}
 	for row in s.materials {
 		if row.program_id == 0 || row.program_id == GPU_NONE {continue}
-		glass := row.alpha_mode == u32(asset.Alpha_Mode.Blend)
-		for id in ([]Pipeline_Id{.Glass_Layer, .Glass_Filter} if glass else []Pipeline_Id{.Resolve, .Resolve_Plain, .Resolve_Layers}) {
-			program_graphics(r, &r.pipelines[id], row.program_id, early = true)
+		ids := []Pipeline_Id{.Resolve, .Resolve_Plain, .Resolve_Layers}
+		if row.alpha_mode == u32(asset.Alpha_Mode.Blend) {
+			ids = []Pipeline_Id{.Translucent} if row.transmission <= 0 else
+			      []Pipeline_Id{.Glass_Layer, .Glass_Filter, .Glass_Overflow}
+		}
+		for id in ids {
+			if target := pipeline_of(r, id); target^ != 0 {
+				program_graphics(r, target, row.program_id, early = true)
+			}
 		}
 		for program in renderer_programs(r) {
 			if program.id == row.program_id && program.domain == .Surface {points_pipeline(r, program, early = true)}

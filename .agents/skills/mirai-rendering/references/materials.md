@@ -145,7 +145,7 @@ mode.
   `reflect` its own while none of the scene has them, because its rays shade what they find. Those
   paths evaluate the materials with `MIRAI_MATERIAL_NO_LAYERS`: the layers do not raise the
   registers of a frame that has none. The glass layers have their own layers target and their
-  `layers` variant of `glass_layer` while a blend instance of the scene has them.
+  `layers` variant of `glass_layer` while transmissive glass in the view has them.
 
 ## Derived graph
 
@@ -331,7 +331,8 @@ A texture of an asset resides with the levels the GPU samples of it
   `alpha`, previews and an instance's fade included, and the rest of what is behind goes on whole.
 - It casts no shadow and colors no light that crosses it, in the maps or in the rays. It does not
   enter the G-buffer nor appear as a surface in reflections or bounces; the sharp reflections see
-  it as a color filter ([glass in rays](#glass-in-rays)).
+  it as a color filter ([glass in rays](#glass-in-rays)). Blends without transmission are shaded
+  forward with premultiplied alpha and take their indirect light from probes and sky.
 
 ## Ray hits
 
@@ -513,8 +514,8 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
 ## Traced reflections
 
 - **Roughness that decides.** Which pixels trace, which share a ray, which see the detail and how
-  much they yield to the probe volume is decided by the material's roughness, not the one widened
-  by specular antialiasing, which only enlarges the ray footprint and the lobe energy.
+  much they yield to the probe volume is decided by the opaque material's roughness. Specular
+  antialiasing widens its ray footprint and lobe. Glass uses its widened roughness.
 - **Sampling.** Each cell takes the direction of its GGX lobe (the VNDF, the tail trimmed) of the
   stratum of its place in a fixed pattern of the screen, the same every frame; below
   `MIRROR_ROUGHNESS` it traces the mirror direction. At the hit, one ray to each light up to
@@ -554,9 +555,9 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
   as a filter; `mask` ignores the transmission.
 - **Sheet or solid.** With `thickness` 0 it is a sheet: seen from both sides and it does not bend
   the view.
-- With thickness, the mesh is the border of a solid: only its front faces are surfaces; the view
-  refracts on entering and leaving. The exit is looked for with a ray inside the mesh, with up to
-  three segments with total internal reflection.
+- With thickness, the mesh is the border of a solid and the view refracts on entering and leaving.
+  A ray finds the exit of a closed mesh other than a pane. At an exit that would reflect the ray
+  inside again, the view continues in the direction it had inside.
 - Panel shortcut: if the mesh box (with the instance scale) has one side of no more than 20 % of
   the smaller of the other two and the view enters through a large face, it exits through the
   parallel face at `thickness / cosine of the refracted angle`, in the direction of arrival.
@@ -585,27 +586,22 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
   - The solid absorbs and scatters from the camera to the first layer, or without a layer to the
     opaque scene. For that, a thread per group traces from the camera upward in the candidate:
     inside if the first thing of it that it finds is a back face.
-  - All that is a pass of its own (`glass_inside.comp`) after that of the nearest layer, which
-    reads the same copy of the scene; it runs only while there is a candidate, and the glass pass
-    leaves the exit faces untouched. The exit face does not trace the reflections pass. The layers
-    that are not the nearest and what is drawn behind them do not change.
-- **Scene behind.** From the exit point the on-screen scene is looked for over the opaque depth; if
-  the ray leaves the screen or comes back toward the camera, it is traced in the world and the hit
-  is lit like that of a reflection. A rough glass spreads that read over a disc.
-- **Layers.** `glass_layers` are the nearest blend surfaces of each pixel that are lit this way,
-  once per pixel; each layer reads the scene from a copy. Those behind are drawn forward, back to
-  front: they filter, absorb and do not refract, and layers are discarded by depth equality between
-  two pipelines with the same vertex shader. Sun and local lights trace their shadow only if they
-  would contribute more than a threshold.
-- **Reflection.** The first layer uses the reflections pass with its own target, one ray per 2×2
-  block at any roughness; where it reflects little of what it sees, the hit and the surfaces
-  behind take their light from the probe volume. Inside the solid the camera is in, a reflection
-  ends where the solid lets little of its light through.
+  - `glass_inside.comp` reads the nearest layer's copy of the scene and shades exit faces using
+    that layer's reflection. It runs while there is a candidate.
+- **Scene behind.** From the exit point the on-screen scene is looked for over the opaque depth,
+  with the original pixel as fallback. A rough glass spreads that read over a disc.
+- **Layers.** The closest transmissive surfaces occupy the glass layers, each lit once per pixel
+  and reading the scene from a copy. Those beyond the layers filter and absorb in the forward
+  pass. Ordinary blends are drawn back to front in the depth intervals between glass layers.
+- **Reflection.** With reflections enabled, the closest layer traces below the view's roughness
+  limit within the projected bounds of glass that can qualify. `Traced` shares a ray per block.
+  Weak reflections with probes available use cached lighting at their hits. Rough glass and
+  glass with tracing off reflect probes and sky. Inside the camera's solid, traced reflections
+  end where the medium absorbs them.
 - **Rays.** A blend-only instance is the class `RAY_GLASS`: the rays that do not see the glass do
   not visit it.
-- **No glass in view.** If no blend instance touches the frustum, these passes are not recorded. If
-  all are hidden, the layer raster draws nothing and the indirect dispatches have size zero (the
-  cull's two-phase occlusion decides).
+- **No glass in view.** The glass passes are omitted when the frustum contains no transmissive
+  instance. The cull can skip glass shading when it rejects every blended instance.
 - **Limits.** Glass appears in sharp reflections only as a color filter; behind the layers it does
   not refract; TAA reprojects it with the motion of what is behind it; no caustics or dispersion.
   From inside: a single solid per view (no relative IOR for a glass inside water), what lies
