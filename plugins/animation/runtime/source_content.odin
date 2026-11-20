@@ -16,6 +16,7 @@ import "base:runtime"
 ANIMATION_SOURCES :: 64
 SOURCE_CACHE_CAPACITY :: 256
 SOURCE_DEPENDENCIES :: ANIMATION_SOURCES+1
+Source_Key :: [5]base.Asset_Id
 // Joined libraries count their generations from here, apart from those of host content.
 SOURCE_GENERATION :: u32(1)<<31
 
@@ -24,7 +25,7 @@ Source_Dependency :: struct {id:base.Asset_Id,size,time:i64,present:bool}
 // The sources of one Animation asset and library, found again when one of the files they were read
 // from changes.
 Source_Plan :: struct {
-    key:[2]base.Asset_Id,
+    key:Source_Key,
     primary:base.Asset_Id,
     dependencies:[]Source_Dependency,
     set:u32,                // in sets + 1; 0 plays the primary source alone
@@ -93,12 +94,25 @@ animation_playing_content :: proc(cache:^Source_Assets,app:^host.App,state:^Play
 
 // The library an Animation plays, joining the sources of its .character when there are several. A
 // tick whose assets did not change reuses the plan without reading them.
-animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,description:Animation,characters:^Character_Assets=nil) -> (content:^host.Content_Animation,error:Program_Error) {
+animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,description:Animation,characters:^Character_Assets=nil,extras:[3]base.Asset_Id={}) -> (content:^host.Content_Animation,error:Program_Error) {
     if app.assets==nil || state==nil {return nil,.Invalid_Asset}
+    description:=description
+    extras:=extras
+    if description.asset=={} {
+        description.asset=extras[0] if extras[0]!={} else extras[1]
+    }
     if description.asset=={} {state.source_plan=0;return nil,.None}
     // A set without clips plays none: it only adapts the pose.
-    if character:=animation_character(app.assets,description);character!={} && description.library=={} {
-        if set:=character_content(characters,app.assets,app.allocator,character);set!=nil && set.set.info.animation=={} {state.source_plan=0;return nil,.None}
+    if character:=animation_character(app.assets,description);character!={} {
+        set:=character_content(characters,app.assets,app.allocator,character)
+        if set==nil {
+            error:=content_error(characters.contents[:],character) if characters!=nil else asset.Error.Not_Found
+            return nil,.Pending if error==.Not_Here else .Invalid_Asset
+        }
+        if description.library=={} && set.set.info.animation=={} && extras=={} {
+            state.source_plan=0
+            return nil,.None
+        }
     }
     if cache==nil {
         primary:=description.asset
@@ -111,7 +125,7 @@ animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,desc
     }
     if cache.allocator.procedure==nil {cache.allocator=app.allocator}
     context.allocator=cache.allocator
-    key:=[2]base.Asset_Id{description.asset,description.library}
+    key:=Source_Key{description.asset,description.library,extras[0],extras[1],extras[2]}
     at:=int(state.source_plan)-1
     if at<0 || at>=len(cache.plans) || cache.plans[at].key!=key {at=-1;for plan,i in cache.plans {if plan.key==key {at=i;break}}}
     if at<0 {
@@ -132,7 +146,7 @@ animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,desc
     primary:=plan.primary
     if changed {
         ok:bool
-        primary,ok=source_collect(app.assets,app.allocator,description,characters,&ids,&count,&dependencies,&dependency_count)
+        primary,ok=source_collect(app.assets,app.allocator,description,characters,extras,&ids,&count,&dependencies,&dependency_count)
         if !ok {return nil,.Invalid_Asset}
     } else if plan.set>0 {set:=cache.sets[plan.set-1];count=len(set.ids);copy(ids[:],set.ids)} else {ids[0]=primary;count=1}
     copied:[]Source_Dependency
@@ -156,10 +170,27 @@ animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,desc
 source_previous :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,description:Animation) -> (content:^host.Content_Animation,played,library:base.Asset_Id,kept:bool) {
     if cache==nil || app==nil || state==nil || state.source_plan==0 || int(state.source_plan)>len(cache.plans) {return}
     plan:=&cache.plans[state.source_plan-1]
-    if !plan.valid || plan.key[0]!=description.asset || plan.key==([2]base.Asset_Id{description.asset,description.library}) {return}
+    if !plan.valid || plan.key[0]!=description.asset || plan.key[1]==description.library {return}
     found,error:=source_plan_content(cache,app,plan)
     if error!=.None || found==nil {return}
     return found,plan.key[0],plan.key[1],true
+}
+
+// An unqualified clip first resolves in the primary source, then in a unique joined source.
+@(private)
+source_find_clip :: proc "contextless" (cache:^Source_Assets,plan:u32,
+    content:^host.Content_Animation,name:u64) -> (source:base.Asset_Id) {
+    if cache==nil || plan==0 || int(plan)>len(cache.plans) || content==nil {return}
+    index:=cache.plans[plan-1].set
+    if index==0 || int(index)>len(cache.sets) {return}
+    for id in cache.sets[index-1].ids {
+        if id==content.id || lib.clip_find(&content.lib,source_clip_name(content.id,id,name))==0 {
+            continue
+        }
+        if source!={} {return {}}
+        source=id
+    }
+    return
 }
 
 // Gives the markers of a joined library the clip names and .anim of their sources.
@@ -168,12 +199,11 @@ source_markers_resolve :: proc "contextless" (cache:^Source_Assets,state:^Playin
     if set==nil {return}
     content:=&set.content
     for &marker in markers {
-        if marker.kind!=.Marker {continue}
-        for clip,i in content.lib.clips[:content.clip_count] {
-            if clip.name!=marker.clip {continue}
+        if marker.animation!=content.id {continue}
+        i:=int(lib.clip_find(&content.lib,marker.clip))-1
+        if i>=0 && i<content.clip_count {
             marker.clip=base.name_hash(base.text_get(content.names[i][:]))
             marker.animation=set.clip_sources[i]
-            break
         }
     }
 }
@@ -239,6 +269,8 @@ source_join :: proc(cache:^Source_Assets,set:^Source_Set,primary:base.Asset_Id,s
     }
     joined.lib.key_count,joined.lib.track_count,joined.lib.marker_count=key_at,track_at,marker_at
     joined.lib.stream_bytes=stream_at
+    joined.lib.clip_count=count
+    lib.library_index_clips(&joined.lib)
     host.content_animation_loops(&joined.lib,count);joined.lib.prepared=true;joined.clip_count=count
     cache.generations+=1
     joined.id,joined.generation=primary,SOURCE_GENERATION|cache.generations
@@ -298,7 +330,7 @@ source_id_add :: proc(ids:^[ANIMATION_SOURCES]base.Asset_Id,count:^int,id:base.A
     ids[count^]=id;count^+=1;return true
 }
 @(private)
-source_collect :: proc(assets:^host.Assets,allocator:runtime.Allocator,description:Animation,characters:^Character_Assets,ids:^[ANIMATION_SOURCES]base.Asset_Id,count:^int,dependencies:^[SOURCE_DEPENDENCIES]Source_Dependency,dependency_count:^int) -> (primary:base.Asset_Id,ok:bool) {
+source_collect :: proc(assets:^host.Assets,allocator:runtime.Allocator,description:Animation,characters:^Character_Assets,extras:[3]base.Asset_Id,ids:^[ANIMATION_SOURCES]base.Asset_Id,count:^int,dependencies:^[SOURCE_DEPENDENCIES]Source_Dependency,dependency_count:^int) -> (primary:base.Asset_Id,ok:bool) {
     if !source_dependency_add(assets,dependencies,dependency_count,description.asset) {return}
     record,present:=asset.registry_find(&assets.registry,description.asset)
     kind:=record.kind if present else asset.KIND_ANIMATION
@@ -308,6 +340,7 @@ source_collect :: proc(assets:^host.Assets,allocator:runtime.Allocator,descripti
         content:=character_content(characters,assets,allocator,description.asset);if content==nil {return}
         set:=content.set;animation:=set.info.animation;library:=description.library
         primary=source_effective({},animation,library)
+        if primary=={} {primary=extras[0] if extras[0]!={} else extras[1]}
         if !source_id_add(ids,count,primary) {return}
         for clip in set.match.clips {if !source_id_add(ids,count,source_effective(clip.animation,animation,library)) {return}}
         for action in set.actions.actions {if !source_id_add(ids,count,source_effective(action.animation,animation,library)) {return}}
@@ -317,6 +350,7 @@ source_collect :: proc(assets:^host.Assets,allocator:runtime.Allocator,descripti
         if description.library!={} || !source_id_add(ids,count,primary) {return}
     case: return
     }
+    for id in extras {if id!={} && !source_id_add(ids,count,id) {return}}
     for id in ids[:count^] {if !source_dependency_add(assets,dependencies,dependency_count,id) {return}}
     // The primary source stays first and the rest are sorted, so equal sets share one library.
     for i in 2..<count^ {

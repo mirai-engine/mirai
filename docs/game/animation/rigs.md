@@ -47,7 +47,7 @@ there, by stretching the stride and the root delta:
 
 ```odin
 anim.motion_target(requests,e,"Reach",anim.spatial_point(spot))  // a warp window of the set
-anim.animation_clip(a,"stride",.2,loop=false)
+anim.play_clip(requests,e,"stride",.2,loop=false)
 ```
 
 - The body moves by the warped delta (`body_move` on a `Character`, or the root-motion recipe in
@@ -57,8 +57,8 @@ anim.animation_clip(a,"stride",.2,loop=false)
 ## Bones, sockets and held objects
 
 - A held object has the `Bone_Attachment` component: `rig` (the character), `socket` (a name in
-  the skeleton, `base.text_set(att.socket[:],"hand_r")`) and `offset`. Sockets are authored with
-  `skeleton.socket.set`.
+  the skeleton, `base.text_set(att.socket[:],"hand_r")`) or `bone`
+  (`att.bone=anim.bone_ref("hand_r")`), and `offset`. Author sockets with `skeleton.socket.set`.
 - `Pose_Source{rig}` on another mesh is the one way another rig drives a pose: at stage
   `Finished` (armor, a head) it shares or follows that rig's finished pose; at stage `Sampled` a
   character of other proportions plays its sampled animation by bone names, or by the

@@ -21,7 +21,7 @@ Components (`@(component)` of `plugins/animation/runtime`):
   mesh shares the evaluated pose of a rig of its skeleton or, with a skeleton of its own,
   [follows it](#following-a-rig-of-another-skeleton); at stage `Sampled` a character of other
   proportions [plays its sampled pose](#offline-and-live-retarget).
-- **`Bone_Attachment`**: on each equipped object, references a socket of the skeleton.
+- **`Bone_Attachment`**: on each equipped object, references a bone or socket of the skeleton.
 - **`Animation_Budget`** ([budget](animation-budget.md)) and **`Morph_Weights`**
   ([morphs](animation-morphs.md)).
 - **`Animation_Target`**: internal identity of an imported rigid destination, hidden in the
@@ -315,7 +315,7 @@ owner and keeps no clip choice in game code.
 - **Upper-body moments.** A reload, a swing while walking or a hit reaction over the legs is an
   action in a layer of the set.
 - **Props.** A board, a door or a lever that only plays its clips is not a character:
-  `animation_clip` of the clip is enough, and its markers arrive in `Animation_Events` all the same.
+  `play_clip` plays it, and its markers and lifecycle arrive in `Animation_Events`.
 
 ## Playback, outputs and order
 
@@ -333,8 +333,8 @@ owner and keeps no clip choice in game code.
   tick that plays, as in the copy Play starts from, `animation_requests_serve` starts every clip
   again from its component, drops every action and the plays, seeks and distances left queued.
 - What plays over the base is the stack of the set
-  ([the layer stack](animation-actions.md#the-layer-stack)); `animation_clip` changes the clip of
-  the component.
+  ([the layer stack](animation-actions.md#the-layer-stack)).
+  [Clip commands](animation-timeline.md#commands) control playback in Play.
 
 ### Multiple sources
 
@@ -363,8 +363,7 @@ empty takes that of the set or `library`.
   blend by bone ([by bone](../../mirai-std/references/anim.md#blending-poseodin)), never by the
   name of a target, for rigs and for the entities an `Animation` moves by name alike.
 - `Animation_Progress` is written only by `animation_sample` while the game runs: a stored save
-  keeps the time of the clip and, when loaded, an entity without state in `Playback` asks for
-  `animation_seek` there.
+  restores the selected base clip and its clock before applying new requests.
 - The runtimes of modifiers, constraints, grounding, field tracks, actions, motion and budget are
   copied for Play and rollback.
 - Definitions of skeletons and sets, and programs, live in application caches, like `Skin_Runtime`;
@@ -373,18 +372,16 @@ empty takes that of the set or `library`.
 
 Order in `fixed`:
 
-- `animation_sample` (`apply`): prepares sets and requests, samples programs, clips, actions,
-  layers and overrides, and extracts and adapts root motion, before physics (`simulate`). It
-  advances the clocks of every entity in order, then blends their poses
-  ([in jobs](animation-budget.md#parallel-execution)), then takes what follows each pose in order.
-- Between the two, `animation_physics` turns root motion into layered moves of the `Character`: the
-  root delta of a climb and the body motion of the actions with
-  [`body_move`](animation-actions.md#root-and-movement); another controller reads
-  `animation_root_delta`.
+- `animation_prepare` (`apply`) discovers rigs and prepares their sets and modifiers.
+- Physics runs in `simulate`. The bridge applies character body motion sampled on the previous
+  tick, then reads the current physical velocity for matching after the physics step.
+- `animation_sample` (`simulate`) takes requests, advances clocks, samples the current pose
+  ([in jobs](animation-budget.md#parallel-execution)) and extracts and adapts root motion.
+  `animation_fields` applies the sampled field tracks.
 - `animation_advance` (`react`): takes updated targets and applies retarget, root removal, pose
   adaptation, grounding, IK/look-at, rigs and limits; then consumes the final physical
   poses and updates attachments. It uses the current physical placement of the actor and keeps the
-  external root: physics remains the only writer of body transforms.
+  external root. A rig attached to another rig finishes after its host writes the attachment.
 
 Root motion:
 
@@ -411,13 +408,13 @@ Queries and events:
   the advance of the tick it was crossed). Dominant emits the greatest contribution, Weighted
   filters by `event_threshold` and Always leaves all the positive ones; zero weight does not emit.
   Synchronized sources emit through the leader.
-- `animation_progress`, `animation_seek`, `animation_pose` (local override) and
+- `animation_progress`, `animation_command`, `animation_pose` (local override) and
   `animation_bone_transform` (finished global pose). Actions: [actions](animation-actions.md).
 
 World poses:
 
-- `animation_sample_pose` copies into a caller buffer the world sample of the tick, before physics
-  and constraints; it returns count and revision even if capacity is missing.
+- `animation_sample_pose` copies the sampled world pose before modifiers into a caller buffer.
+  It returns the count and revision even when the buffer is too small.
 - `animation_pose_final` enqueues a world pose for the end of the tick: after adaptation, grounding,
   IK, rigs and limits, before sockets. The weight blends the original pose with the requested one
   only once and the result passes to local under the already-updated parent, in hierarchy order

@@ -105,10 +105,20 @@ api_inspect :: proc(s:^editor.Session,call:^api.Call) {
     if time<0 {time=previewed?head:at}
     status:=value.status
     if s.mode==.Edit {status=clipped?cine.cinematic_status(false,ended,at):.Stopped}
+    source,clip_name:=animation.asset,animation.clip
+    loop,playing_now:=animation.loop,animation.playing
+    if s.mode!=.Edit && clipped {
+        _,loop=anim.animation_clip_clock(playback,timeline)
+        playing_now=anim.animation_playing(playback,timeline)
+        if id,name,ok:=anim.animation_clip_identity(playback,
+            core.world_storage_of(w,anim.Source_Assets),s.app,timeline);ok {
+            source,clip_name=id,name
+        }
+    }
     r:=api.call_result(call,Inspect_Result)
     r^={
-        id=editor.api_entity_id(w,timeline),name=editor.entity_name(w,timeline),clip=animation.asset,clip_name=strings.clone(base.text_get(animation.clip[:]),call.allocator),
-        duration=clipped?duration:0,loop=animation.loop,playing=animation.playing,status=status,time=time,
+        id=editor.api_entity_id(w,timeline),name=editor.entity_name(w,timeline),clip=source,clip_name=strings.clone(base.text_get(clip_name[:]),call.allocator),
+        duration=clipped?duration:0,loop=loop,playing=playing_now,status=status,time=time,
         preview={previewed,previewed && playing,previewed && c!=nil && c.shot_view && editor.tool_on(s,TOOL),previewed?head:0},
     }
     markers,content:=anim.animation_markers(playback,core.world_storage_of(w,anim.Source_Assets),s.app,timeline)

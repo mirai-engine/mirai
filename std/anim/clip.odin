@@ -59,6 +59,8 @@ Library :: struct {
     streams:[]u8, // the streams of the clips, with STREAM_PADDING bytes after the last
     tracks:[]Track,
     clips:[]Clip_Data,
+    clip_names:[]Clip, // first handle for each name, ordered by hash
+    named_clips:int,
     markers:[]Marker,
     key_count,track_count,clip_count,marker_count,stream_bytes:int,
     prepared:bool,
@@ -74,19 +76,20 @@ library_init :: proc(lib:^Library,desc:Library_Desc) -> bool {
     allocator:=desc.allocator if desc.allocator.procedure!=nil else context.allocator
     lib^={allocator=allocator}
     if desc.max_keys<=0 || desc.max_tracks<=0 || desc.max_clips<=0 || desc.max_markers<0 || desc.max_stream_bytes<0 {return false}
-    e1,e2,e3,e4,e5:runtime.Allocator_Error
+    e1,e2,e3,e4,e5,e6:runtime.Allocator_Error
     lib.keys,e1=make([]Keyframe,desc.max_keys,allocator)
     lib.tracks,e2=make([]Track,desc.max_tracks,allocator)
     lib.clips,e3=make([]Clip_Data,desc.max_clips,allocator)
+    lib.clip_names,e6=make([]Clip,desc.max_clips,allocator)
     lib.markers,e4=make([]Marker,desc.max_markers,allocator)
     if desc.max_stream_bytes>0 {lib.streams,e5=make([]u8,desc.max_stream_bytes+STREAM_PADDING,allocator)}
-    if e1!=nil || e2!=nil || e3!=nil || e4!=nil || e5!=nil {library_destroy(lib);return false}
+    if e1!=nil || e2!=nil || e3!=nil || e4!=nil || e5!=nil || e6!=nil {library_destroy(lib);return false}
     return true
 }
 library_destroy :: proc(lib:^Library) {
     if lib.allocator.procedure==nil {lib^={};return}
     delete(lib.keys,lib.allocator);delete(lib.tracks,lib.allocator);delete(lib.clips,lib.allocator);delete(lib.markers,lib.allocator)
-    delete(lib.streams,lib.allocator)
+    delete(lib.streams,lib.allocator);delete(lib.clip_names,lib.allocator)
     lib^={}
 }
 
@@ -103,6 +106,7 @@ Clip_Error :: enum u8 {
 // time. Its duration is the time of its last key or marker. Returns 0 and
 // why when it is refused.
 clip_add :: proc(lib:^Library,desc:Clip_Desc) -> (Clip,Clip_Error) {
+    if lib==nil {return 0,.Invalid}
     if lib.prepared {return 0,.Prepared}
     keys,sampled:=0,0
     for track in desc.tracks {
@@ -153,14 +157,46 @@ clip_add :: proc(lib:^Library,desc:Clip_Desc) -> (Clip,Clip_Error) {
     lib.marker_count+=len(desc.markers)
     lib.clips[lib.clip_count]=data
     lib.clip_count+=1
-    return Clip(lib.clip_count),.None
+    handle:=Clip(lib.clip_count)
+    clip_index_add(lib,handle)
+    return handle,.None
 }
 
 clip_valid :: #force_inline proc "contextless" (lib:^Library,clip:Clip) -> bool {return clip!=0 && int(clip)<=lib.clip_count}
-// The clip added with this name hash, or 0.
+@(private)
+clip_name_lower :: proc "contextless" (lib:^Library,name:u64) -> int {
+    first,end:=0,lib.named_clips
+    for first<end {
+        middle:=first+(end-first)/2
+        if lib.clips[lib.clip_names[middle]-1].name<name {first=middle+1} else {end=middle}
+    }
+    return first
+}
+
+@(private)
+clip_index_add :: proc "contextless" (lib:^Library,handle:Clip) {
+    name:=lib.clips[handle-1].name
+    at:=clip_name_lower(lib,name)
+    if at<lib.named_clips && lib.clips[lib.clip_names[at]-1].name==name {return}
+    copy(lib.clip_names[at+1:lib.named_clips+1],lib.clip_names[at:lib.named_clips])
+    lib.clip_names[at]=handle
+    lib.named_clips+=1
+}
+
+// Rebuilds name lookup after bulk construction of the clip table by a content loader.
+library_index_clips :: proc "contextless" (lib:^Library) {
+    if lib==nil {return}
+    lib.named_clips=0
+    for i in 0..<min(lib.clip_count,len(lib.clips),len(lib.clip_names)) {clip_index_add(lib,Clip(i+1))}
+}
+
+// The first clip added with this name hash, or 0.
 clip_find :: proc "contextless" (lib:^Library,name:u64) -> Clip {
-    for i in 0..<lib.clip_count {if lib.clips[i].name==name {return Clip(i+1)}}
-    return 0
+    if lib==nil {return 0}
+    at:=clip_name_lower(lib,name)
+    if at==lib.named_clips {return 0}
+    handle:=lib.clip_names[at]
+    return handle if lib.clips[handle-1].name==name else 0
 }
 // Zero data for a handle that is not valid.
 clip_data :: proc "contextless" (lib:^Library,clip:Clip) -> Clip_Data {

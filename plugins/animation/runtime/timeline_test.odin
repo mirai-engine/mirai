@@ -43,7 +43,7 @@ Timeline_Track :: struct {target:string,property:lib.Property,keys:[]lib.Keyfram
 
 // A clip "open" of an .anim the application holds, with its "@field" curves as the load finds them.
 @(private="file")
-timeline_content :: proc(t:^testing.T,app:^host.App,id:base.Asset_Id,tracks:[]Timeline_Track,markers:[]asset.Animation_Marker_Desc={}) -> bool {
+timeline_content :: proc(t:^testing.T,app:^host.App,id:base.Asset_Id,tracks:[]Timeline_Track,markers:[]asset.Animation_Marker_Desc={},name:string="open") -> bool {
     source:=host.Content_Animation{id=id,generation=1,clip_count=1}
     keys:=0
     for track in tracks {keys+=len(track.keys)}
@@ -62,11 +62,11 @@ timeline_content :: proc(t:^testing.T,app:^host.App,id:base.Asset_Id,tracks:[]Ti
         source.markers[i].name=base.name_hash(marker.name)
         if marker.target!="" {source.markers[i].target=base.name_hash(marker.target);base.text_set(source.markers[i].text[:],marker.name)}
     }
-    clip,error:=lib.clip_add(&source.lib,{name=base.name_hash("open"),tracks=descs,markers=marks})
+    clip,error:=lib.clip_add(&source.lib,{name=base.name_hash(name),tracks=descs,markers=marks})
     if !testing.expect(t,clip==1 && error==.None) {return false}
     host.content_animation_loops(&source.lib,1)
     source.names=make([][asset.ANIMATION_NAME_CAPACITY]u8,1,app.allocator)
-    base.text_set(source.names[0][:],"open")
+    base.text_set(source.names[0][:],name)
     source.roots=make([]asset.Animation_Root,1,app.allocator)
     fielded:bool
     source.fields,fielded=host.content_animation_fields({tracks=rows},app.allocator)
@@ -175,7 +175,10 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     testing.expect_value(t,at(&w,leaf),[3]f32{4,0,0})
     timeline_tick(&w,&app,&problems)
     testing.expect_value(t,at(&w,leaf),[3]f32{6,0,0})
-    testing.expect(t,len(w.events.items)==1 && w.events.items[0].entity==door && w.events.items[0].kind==.Marker && w.events.items[0].name==base.name_hash("half"))
+    testing.expect(t,len(w.events.items)==2 && w.events.items[0].kind==.Started &&
+        w.events.items[0].clip==base.name_hash("open") && w.events.items[0].action==0 &&
+        w.events.items[1].entity==door && w.events.items[1].kind==.Marker &&
+        w.events.items[1].name==base.name_hash("half"))
     lamp,_=core.get(&w.lamps,actor)
     testing.expect(t,lamp.on && lamp.flags=={.Lit,.Flickers} && lamp.intensity==5,"a Float track sets a flag and a member of a bit set from a half up")
 
@@ -183,7 +186,7 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     index:=core.entity_index(leaf)
     resize(&w.transforms.owners,index+1)
     w.transforms.owners[index]={core.entity_generation(leaf),1}
-    animation_seek(&w.requests,door,.25)
+    animation_command(&w.requests,door,.Seek,.25)
     timeline_tick(&w,&app,&problems)
     testing.expect_value(t,at(&w,leaf),[3]f32{6,0,0})
     if testing.expect_value(t,len(w.places.queue.items),1) {
@@ -197,16 +200,30 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     animation_command(&w.requests,door,.Stop)
     timeline_tick(&w,&app,&problems)
     testing.expect(t,!animation_playing(&w.playback,door))
+    testing.expect(t,w.events.items[len(w.events.items)-1].kind==.Interrupted &&
+        w.events.items[len(w.events.items)-1].clip==base.name_hash("open"))
     testing.expect_value(t,at(&w,leaf),[3]f32{0,0,0})
     // Animation.playing only starts it: once it plays, the game writing it changes nothing.
     core.edit(&w.animations,door).playing=true
     timeline_tick(&w,&app,&problems)
     testing.expect(t,!animation_playing(&w.playback,door))
-    animation_command(&w.requests,door,.Play)
+    play_clip(&w.requests,door,"open",fade=0,loop=false,speed=2)
+    timeline_tick(&w,&app,&problems)
+    play_clip(&w.requests,door,"open",speed=1)
+    timeline_tick(&w,&app,&problems)
+    at_time,_,_,_:=animation_progress(&w.playback,door)
+    testing.expect_value(t,at_time,f32(.75))
+    play_clip(&w.requests,door,"open",restart=true)
+    timeline_tick(&w,&app,&problems)
+    at_time,_,_,_=animation_progress(&w.playback,door)
+    testing.expect_value(t,at_time,f32(.25))
     for _ in 0..<7 {timeline_tick(&w,&app,&problems)}
     testing.expect_value(t,at(&w,leaf),[3]f32{8,0,0})
     _,_,ended,_:=animation_progress(&w.playback,door)
     testing.expect(t,ended)
+    last:=w.events.items[len(w.events.items)-1]
+    testing.expect(t,last.kind==.Ended && last.clip==base.name_hash("open") &&
+        last.animation==id)
 
     // What a track cannot write is a problem of the entity that plays it, each with its cause.
     for code in ([]string{"animation.field_type","animation.field_path","animation.field_component","animation.field_target"}) {
@@ -256,4 +273,48 @@ a_field_target_names_its_entity_component_and_field :: proc(t:^testing.T) {
     copy(long,"@field/C.")
     _,_,_,ok=asset.animation_field_target(string(long))
     testing.expect(t,!ok,"a field path too long for its row is no field target")
+}
+
+@(test)
+a_character_plays_an_explicit_additive_clip_over_its_base :: proc(t:^testing.T) {
+    assets:host.Assets
+    app:=host.App{assets=&assets,allocator=context.allocator}
+    defer {host.app_content_destroy(&app);test_registry_free(&assets)}
+    w:Timeline_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    extra:Test_Storages
+    defer test_storages_free(&extra)
+    primary,gesture,character:=base.Asset_Id{8,1},base.Asset_Id{8,2},base.Asset_Id{8,3}
+    if !timeline_content(t,&app,primary,{{"",.Position,{{time=1,value={2,0,0,0}}}}},
+        name="idle") {return}
+    if !timeline_content(t,&app,gesture,{{"",.Position,{{time=0},{time=1,value={0,4,0,0}}}}},
+        name="rise") {return}
+    test_character_register(&assets,character)
+    layers:=[1]Stack_Layer{STACK_LAYER_DEFAULT}
+    base.text_set(layers[0].name[:],"gesture")
+    test_character_seed(&extra.characters,character,{info={animation=primary},
+        actions={layers=layers[:]}})
+    e:=timeline_named(&w,"actor")
+    animation:=ANIMATION_DEFAULT
+    animation.asset=character
+    core.add(&w.animations,e,animation)
+    test_world_settle(&w)
+    core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
+    play_clip(&w.requests,e,"rise",asset=gesture,layer="gesture",additive=true,
+        weight=.5,fade=0,speed=2)
+    problems:core.Problems
+    test_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),
+        core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),&w.playback,&app,
+        {dt=.25,playing=true},{},nil,&problems,&extra)
+    if !testing.expect(t,len(w.playback.states)==1 && len(w.playback.states[0].local)>0) {return}
+    testing.expect_value(t,w.playback.states[0].local[0].position,[3]f32{2,1,0})
+    for event in w.events.items {
+        if event.kind==.Started && event.clip==base.name_hash("rise") {
+            testing.expect(t,event.animation==gesture && event.action==0)
+            testing.expect_value(t,problems.count,0)
+            return
+        }
+    }
+    testing.expect(t,false,"the additive clip did not report its source and name")
 }

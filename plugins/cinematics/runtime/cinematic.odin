@@ -115,16 +115,17 @@ cinematic_follow :: proc(cinematics:^core.Table(Cinematic,.Read),animations:^cor
         e:=core.entity_at(cinematics,row)
         if core.owned(remotes,e) {continue}
         c:=core.at(cinematics,row)
-        animation,animated:=core.get(animations,e)
+        animated:=core.has(animations,e)
         at,duration,_,clipped:=anim.animation_progress(playback.ptr,e)
         if !animated || !clipped {continue}
+        _,loop:=anim.animation_clip_clock(playback.ptr,e)
         playing:=c.status==.Playing
-        if anim.animation_playing(playback.ptr,e)!=playing {anim.animation_command(requests,e,.Resume if playing else .Pause,speed=animation.speed)}
-        want:=cinematic_anchored(c,time.tick,time.dt,duration,animation.loop)
-        step:=time.dt*animation.speed if playing else 0
+        if anim.animation_playing(playback.ptr,e)!=playing {anim.animation_command(requests,e,.Resume if playing else .Pause,speed=c.anchor_rate)}
+        want:=cinematic_anchored(c,time.tick,time.dt,duration,loop)
+        step:=time.dt*c.anchor_rate if playing else 0
         ahead:=Cinematic{anchor_time=at,anchor_rate=1}
-        if clip_apart(want,cinematic_anchored(ahead,1,step,duration,animation.loop),duration,animation.loop)>time.dt*max(abs(c.anchor_rate),1)*.5 {
-            anim.animation_seek(requests,e,max(want-step,0))
+        if clip_apart(want,cinematic_anchored(ahead,1,step,duration,loop),duration,loop)>time.dt*max(abs(c.anchor_rate),1)*.5 {
+            anim.animation_command(requests,e,.Seek,max(want-step,0))
         }
     }
 }
@@ -142,20 +143,21 @@ cinematic_advance :: proc(
     for row in 0..<core.count(cinematics) {
         e:=cinematics.entities[row]
         was:=core.at(cinematics,row)
-        animation,animated:=core.get(animations,e)
+        animated:=core.has(animations,e)
         if !animated {
             core.report(problems,e,"cinematics.animation","this Cinematic plays nothing: its entity has no Animation; add one whose asset is the .anim of its clip, with playing set for a timeline that starts by itself")
             continue
         }
         at,duration,ended,clipped:=anim.animation_progress(playback.ptr,e)
         if !clipped {continue}
+        speed,loop:=anim.animation_clip_clock(playback.ptr,e)
         next:=was
         if time.playing {
             next.time,next.duration=at,duration
             if core.owned(remotes,e) {
                 next.status=cinematic_status(anim.animation_playing(playback.ptr,e),ended,at)
-                rate:=animation.speed if next.status==.Playing else 0
-                if next.status!=was.status || rate!=was.anchor_rate || time.tick<was.anchor_tick || clip_apart(cinematic_anchored(was,time.tick,time.dt,duration,animation.loop),at,duration,animation.loop)>time.dt*max(abs(rate),1)*.5 {
+                rate:=speed if next.status==.Playing else 0
+                if next.status!=was.status || rate!=was.anchor_rate || time.tick<was.anchor_tick || clip_apart(cinematic_anchored(was,time.tick,time.dt,duration,loop),at,duration,loop)>time.dt*max(abs(rate),1)*.5 {
                     next.anchor_tick,next.anchor_time,next.anchor_rate=time.tick,at,rate
                 }
             }
@@ -164,8 +166,8 @@ cinematic_advance :: proc(
         showing:=!time.playing || next.status==.Playing || next.status==.Paused
         showed:=was.status==.Playing || was.status==.Paused
         // A clip that did not play on from where it was, or the head of the editor, was sought.
-        step:=time.dt*animation.speed if next.status==.Playing else 0
-        sought:=!time.playing || clip_apart(at,was.time+step,duration,animation.loop)>time.dt*max(abs(animation.speed),1)*.5
+        step:=time.dt*speed if next.status==.Playing else 0
+        sought:=!time.playing || clip_apart(at,was.time+step,duration,loop)>time.dt*max(abs(speed),1)*.5
         markers,content:=anim.animation_markers(playback.ptr,content_sources.ptr,app,e)
         for marker in markers {
             if int(marker.id)>=len(content.markers) || content.markers[marker.id].target==0 {continue}

@@ -306,8 +306,8 @@ body_name :: proc "contextless" (name:string) -> Body_Name {
         word:=string(text[starts[i]:ends[i]])
         for excluded in BODY_EXCLUDED {if word==excluded {return {}}}
         switch word {
-        case "l","left": result.side=.Left;continue
-        case "r","right": result.side=.Right;continue
+        case "l","le","lf","left": result.side=.Left;continue
+        case "r","ri","rt","right": result.side=.Right;continue
         }
         known:=false
         for keyword in BODY_KEYWORDS {if word==keyword {known=true;break}}

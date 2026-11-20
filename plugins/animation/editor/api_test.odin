@@ -40,11 +40,19 @@ animation_stop_and_seek_operate_on_the_play_world_and_refuse_edit_seeks :: proc(
     answer:Request_Result
     call:=api.Call{method=&method,params=p,result=&answer,raw=`{"entity":"0000000000000011","stop":true}`,out=&out,allocator=context.temp_allocator}
     request(&s,&call)
-    testing.expect(t,!call.failed && !play_world.animations.values[0].playing && document.animations.values[0].playing)
+    testing.expect(t,!call.failed && play_world.animations.values[0].playing &&
+        document.animations.values[0].playing)
+    if testing.expect_value(t,len(play_world.requests.timeline.items),1) {
+        testing.expect_value(t,play_world.requests.timeline.items[0].command,anim.Timeline_Command.Pause)
+    }
     p=request_defaults();copy(p.entity[:],"0000000000000011");p.seek=1.25
     call=api.Call{method=&method,params=p,result=&answer,raw=`{"entity":"0000000000000011","seek":1.25}`,out=&out,allocator=context.temp_allocator}
     request(&s,&call)
-    testing.expect(t,!call.failed && len(play_world.requests.timeline.items)==1 && len(document.requests.timeline.items)==0)
+    testing.expect(t,!call.failed && len(document.requests.timeline.items)==0)
+    if testing.expect_value(t,len(play_world.requests.timeline.items),2) {
+        seek:=play_world.requests.timeline.items[1]
+        testing.expect(t,seek.command==.Seek && seek.time==1.25)
+    }
     s.mode=.Edit
     s.runs[0]={}
     call.failed=false
