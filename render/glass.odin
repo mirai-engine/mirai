@@ -206,6 +206,7 @@ glass_layers :: proc(p: ^Pass) {
 translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overflow := false) {
 	if !p.draw_forward && !overflow {return}
 	r, cmd, t := p.r, p.cmd, p.t
+	rhi.cmd_timestamp(cmd, "translucent")
 	s := &r.scene
 	#assert((3 * asset.MESH_MAX_SLOTS + 1) * 3 <= rhi.MAX_RENDER_PASS_COMMANDS)
 	plain := rhi.frame_alloc(r.device, 4 * size_of(u32))
