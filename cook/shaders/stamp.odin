@@ -57,7 +57,7 @@ file_state :: proc(path:string) -> (state:Stamp_File) {
 @(private)
 request_digest :: proc(
     g:^Generation,sources:[]Source,odin:bool,uses:[]Program_Uses_Of,every:abi.Program_Uses,
-    allocator:=context.allocator,generated:[]Generated_Surface=nil,
+    allocator:=context.allocator,generated:[]Generated_Program=nil,
 ) -> string {
     hash:Sha256
     sha_begin(&hash)

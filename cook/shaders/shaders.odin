@@ -104,9 +104,9 @@ Source :: struct {
     folder:string,
 }
 
-// Immutable Surface text with a catalog identifier independent of its Slang namespace.
+// Immutable Surface or Vfx text with a catalog identifier independent of its Slang namespace.
 // Include paths resolve in the active shader folders. The catalog has no editable source path.
-Generated_Surface :: struct {
+Generated_Program :: struct {
     id,text:string,
 }
 
@@ -117,7 +117,7 @@ Options :: struct {
     root:    string, // the engine: shaders/, render/, rhi/ and the tools under .deps/
     project: string, // its shaders/ programs join the catalog; "" generates for the engine alone
     sources: []Source, // more folders of programs, after those of the project
-    generated:[]Generated_Surface, // input text, whose includes use the active shader folders
+    generated:[]Generated_Program, // input text, whose includes use the active shader folders
     output:  string, // "": <project>/.mirai/shaders, or <root>/shaders/build without a project
     cache:   string, // the stamp of the last generation into output; "": .mirai/shader-cache of the project, or of the engine without one
     odin:    bool,   // also compile the shaders of the RHI tests and write the Odin tables of render and rhi; never for a project
@@ -241,7 +241,7 @@ Job :: struct {
     active:   bool, // a stage of the engine or of an extension that is not idle: Options.active_output waits for it
     defines:  []string, // of its variant, then each of its constants as the constant of native.slang it reads
     constants:[]string, // the names of its constants, by id
-    generated: bool, // fingerprint the complete sources of an inline Surface stage
+    generated: bool, // fingerprint the complete sources of an inline program stage
     includes: []string, // those of the generation, or before them a folder with the extensions.slang of the stage
     bases:    []Base,
     out,staging:string,
@@ -816,7 +816,7 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
             append(&defines,..variant.defines)
             append(&defines,..constant_defines)
             job:=Job{source=source,name=name,stage=itself,defines=defines[:],constants=constant_names,includes=includes,bases=g.bases,out=out,staging=staging,reduced=shader_reduced(name),backends=g.backends}
-            job.generated=program.folder==SURFACE_FOLDER && g.generated[program.name]
+            job.generated=g.generated[program.name]
             if software_rays(text,variant) {job.backends-={.Metal}}
             if problem!="" {job.error=fmt.aprintf("%s: %s",name,problem,allocator=allocator)}
             if surface_problem!="" {job.error=fmt.aprintf("%s: %s",name,surface_problem,allocator=allocator)}
@@ -1170,7 +1170,7 @@ generation_setup :: proc(g:^Generation,options:Options,scratch:runtime.Allocator
     if engine_build:=path_join(g.root,"shaders/build",allocator=scratch);g.output!=engine_build {g.engine_build=engine_build}
     odin=options.odin && g.project=="" && len(options.sources)==0
     if len(options.generated)>0 {
-        if g.project=="" {return odin,"","generated Surface programs require a project"}
+        if g.project=="" {return odin,"","generated programs require a project"}
         g.generated=make(map[string]bool,scratch)
         for source in options.generated {g.generated[source.id]=true}
     }

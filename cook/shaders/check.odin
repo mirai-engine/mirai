@@ -658,7 +658,9 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
         own,failure:string
         program_include:=strings.concatenate({label,"/",relative},context.temp_allocator)
         if c.domain==.Vfx {
-            own,failure=vfx_program_include(name,prelude,program_include,layout,attributes,stages_declared,directives)
+            path:=strings.concatenate({"programs/",program_include},context.temp_allocator)
+            own,failure=vfx_program_include(name,prelude,Program_Content{path=path},
+                layout,attributes,stages_declared,directives)
         } else {
             dispatchers_add(&dispatchers,c.domain,1,name,program_include,layout)
         }

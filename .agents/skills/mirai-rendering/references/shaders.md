@@ -508,10 +508,11 @@ it. The domain is the one the source declares.
   `templates/empty/shaders/pulse.slang`, `plugins/terrain/shaders/terrain_slope.slang`. The engine
   has no Surface program of its own: every one is of a project, a plugin or the tests
   (`render/testdata/`, [verification](verification.md)).
-- A caller can give generation immutable Surface source text with an identifier independent of
-  its Slang namespace. The identifier names its catalog entry and stages. Separate wrappers
-  reflect, probe and compile it with the active shader include roots. The catalog has no editable
-  source path for this program. Its text and the sources it includes invalidate their users.
+- A caller can give generation immutable Surface or Vfx source text with an identifier
+  independent of its Slang namespace. The identifier names its catalog entry and stages. Separate
+  wrappers reflect and compile it with the active shader include roots. Surface programs also run
+  their probes. The catalog has no editable source path. Its text and the sources it includes
+  invalidate their users.
 - The same folders extend the renderer with their own stages (`name.comp.slang`, `.vert`, `.frag`,
   of unique name) and sources with [hooks and constants](views.md#extension-hooks-and-constants).
   With hooks, constants or nested views only the stages that read them are recompiled

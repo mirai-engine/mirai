@@ -661,13 +661,16 @@ vfx_prelude :: proc(name:string,resources:[]abi.Program_Resource) -> string {
 
 // The include of a Vfx program alone (VFX_FOLDER/<name>/VFX_INCLUDE), with
 // which the stages marked `//! per vfx program` are compiled for it; its
-// copy is at include/programs/<relative>. A message for Attributes a
-// particle does not hold.
+// program source is inline or an include. A message for Attributes a particle does not hold.
 @(private)
-vfx_program_include :: proc(name,prelude,relative:string,parameters,attributes:Layout,stages:[]abi.Program_Stage,said:Program_Directives) -> (text,problem:string) {
+vfx_program_include :: proc(
+    name,prelude:string,content:Program_Content,parameters,attributes:Layout,
+    stages:[]abi.Program_Stage,said:Program_Directives,
+) -> (text,problem:string) {
     own:=strings.builder_make(context.temp_allocator)
     strings.write_string(&own,VFX_HEADER)
-    fmt.sbprintf(&own,"%s#include \"programs/%s\"\n",prelude,relative)
+    strings.write_string(&own,prelude)
+    program_content_write(&own,content)
     program_loader(&own,name,parameters)
     if failure:=vfx_attributes(&own,name,attributes);failure!="" {return "",failure}
     fmt.sbprintf(&own,"#ifdef PARTICLES_WRITABLE\nbool mirai_vfx_initialize(uint id,float4 packed[16],uint attributes,Mirai_Vfx_Context ctx,inout Mirai_Vfx_Particle value) {{%s::Attributes a=(%s::Attributes)0;%s::initialize(ctx,mirai_load_%s(packed),value,a);mirai_attributes_store_%s(attributes,a);return true;}}\n",name,name,name,name,name)
@@ -1165,7 +1168,7 @@ active_include_dirs :: proc(
 programs_generate :: proc(
     runner:^Runner,root,project,output,slangc,version,cache:string,sources:[]Source={},
     allocator:=context.allocator,files:^Sources=nil,workers:=1,memory:=Memory{},
-    uses:[]Program_Uses_Of=nil,every:=abi.Program_Uses{},generated:[]Generated_Surface=nil,
+    uses:[]Program_Uses_Of=nil,every:=abi.Program_Uses{},generated:[]Generated_Program=nil,
 ) -> (catalog:Catalog,error:string) {
     local:Sources
     files:=files
@@ -1197,7 +1200,7 @@ programs_generate :: proc(
     if owned_problem!="" {return {},owned_problem}
     if os.exists(copied) {base.remove_all(copied)}
     if failed:=copy_sources(files,materials,path_join(copied,"builtin",allocator=context.temp_allocator));failed!="" {return {},fmt.aprintf("could not copy the programs of the engine: %s",failed,allocator=allocator)}
-    Input :: struct {path:string,generated:Generated_Surface}
+    Input :: struct {path:string,generated:Generated_Program}
     inputs:=make([dynamic]Input,context.temp_allocator)
     for path in sources_in(files,materials,".slang",context.temp_allocator) {
         append(&inputs,Input{path=path})
@@ -1220,12 +1223,12 @@ programs_generate :: proc(
     generated_ids:=make(map[string]bool,context.temp_allocator)
     for source in generated {
         if !identifier_valid(source.id) || source.text=="" {
-            return {},fmt.aprintf("%s: generated Surface requires an identifier and text",
+            return {},fmt.aprintf("%s: generated program requires an identifier and text",
                 source.id,allocator=allocator)
         }
         key:=strings.to_lower(source.id,context.temp_allocator)
         if key=="pbr" || generated_ids[key] {
-            return {},fmt.aprintf("duplicate or reserved generated Surface identifier %s",
+            return {},fmt.aprintf("duplicate or reserved generated program identifier %s",
                 source.id,allocator=allocator)
         }
         generated_ids[key]=true
@@ -1271,8 +1274,8 @@ programs_generate :: proc(
         name:=said.name
         if is_generated {
             name=input.generated.id
-            if said.domain!="surface" {
-                return {},fmt.aprintf("%s: generated source must declare a Surface program",
+            if said.domain!="surface" && said.domain!="vfx" {
+                return {},fmt.aprintf("%s: generated source must declare a Surface or Vfx program",
                     name,allocator=allocator)
             }
         } else {
@@ -1281,7 +1284,7 @@ programs_generate :: proc(
             authored_key:=""
             if len(generated_ids)>0 {authored_key=strings.to_lower(name,context.temp_allocator)}
             if generated_ids[authored_key] {
-                return {},fmt.aprintf("generated Surface identifier %s conflicts with %s",
+                return {},fmt.aprintf("generated program identifier %s conflicts with %s",
                     name,path,allocator=allocator)
             }
         }
@@ -1302,7 +1305,7 @@ programs_generate :: proc(
         if entry.vfx {
             if entry.resources,entry.problem=program_resources(name,said.resources[:],allocator);entry.problem!="" {continue}
             if entry.stages,entry.problem=program_stages(name,said.stages[:],entry.resources,allocator);entry.problem!="" {continue}
-            entry.prelude=vfx_prelude(name,entry.resources)
+            entry.prelude=vfx_prelude(said.name,entry.resources)
         }
         roots,labels,inline_text:=active,generated_bases[:],text
         if !is_generated {
@@ -1432,6 +1435,9 @@ programs_generate :: proc(
             append(&refused,fmt.aprintf("%s: only a Surface program says what it is drawn as (`//! use`)",name,allocator=allocator))
             continue
         }
+        authored_path:=strings.concatenate({"programs/",relative},context.temp_allocator)
+        content:=Program_Content{path=authored_path}
+        if e.generated {content={text=e.text}}
         if of==.Vfx {
             attributes=e.layouts[1].size
             attribute_fields=make([]abi.Program_Attribute,len(e.layouts[1].fields),allocator)
@@ -1445,7 +1451,8 @@ programs_generate :: proc(
                 attribute_fields[i]={strings.clone(field.name,allocator),kind,u8(clamp(field.count,1,4)),u16(field.offset)}
             }
             // The include of the program alone: the stages of each program are compiled with it.
-            own,failure:=vfx_program_include(name,prelude,relative,layout,e.layouts[1],stages,e.said)
+            own,failure:=vfx_program_include(e.said.name,prelude,content,layout,e.layouts[1],
+                stages,e.said)
             if failure!="" {append(&refused,strings.clone(failure,allocator));continue}
             folder:=path_join(include,VFX_FOLDER,name,allocator=context.temp_allocator)
             os.make_directory_all(folder)
@@ -1459,9 +1466,6 @@ programs_generate :: proc(
             if of==.Surface {
                 folder:=path_join(include,SURFACE_FOLDER,name,allocator=context.temp_allocator)
                 os.make_directory_all(folder)
-                authored_path:=strings.concatenate({"programs/",relative},context.temp_allocator)
-                content:=Program_Content{path=authored_path}
-                if e.generated {content={text=e.text}}
                 wrapper:=surface_program_include(name,e.said.name,content,layout,
                     vertex.declared,e.derivatives)
                 filename:=path_join(folder,SURFACE_INCLUDE,allocator=context.temp_allocator)
