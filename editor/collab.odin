@@ -438,7 +438,7 @@ collab_join :: proc(s:^Session,code,name:string,folder:="",at:=wire.Address{},tr
     st,error:=collab_start(s,.Guest,0,name,invitation,assets=!reopen,transport=transport)
     if error!=.None {return error}
     connected:=at.kind!=.None?wire.host_connect(&st.host,at):wire.host_connect(&st.host,invitation.lan,invitation.public)
-    if connected!=.None || !collab_join_start(s,st,code,target,reopen) {
+    if connected!=.None || !collab_join_start(s,st,target,reopen) {
         collab_destroy(s)
         return .Transport
     }

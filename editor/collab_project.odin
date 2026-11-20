@@ -56,7 +56,6 @@ Collab_Join :: struct {
     arena:mem.Dynamic_Arena,
     allocator:runtime.Allocator,
     digits:[64]u8,
-    code:[64]u8,    // of the invitation, which the editor opened on folder joins with
     folder:string,  // where the join writes
     reopen:bool,    // folder is not the open project: it is opened once the join is done
     update:bool,    // of a guest in the session, after the host offered a new snapshot
@@ -153,10 +152,9 @@ collab_update_request :: proc(st:^Collab_State) {
 
 // A guest's join of the snapshot the host offers under the token of its invitation, into folder.
 @(private)
-collab_join_start :: proc(s:^Session,st:^Collab_State,code,folder:string,reopen:bool,update:=false) -> bool {
+collab_join_start :: proc(s:^Session,st:^Collab_State,folder:string,reopen:bool,update:=false) -> bool {
     j:=new(Collab_Join)
     j.update=update
-    base.text_set(j.code[:],code)
     mem.dynamic_arena_init(&j.arena,runtime.heap_allocator(),runtime.heap_allocator())
     j.allocator=base.dynamic_arena_allocator(&j.arena)
     j.folder=fmt.aprint(folder,allocator=j.allocator)
@@ -195,10 +193,11 @@ collab_project_update :: proc(s:^Session,st:^Collab_State,now:f64) {
     j:=st.join
     if st.update_due && (j==nil || j.finished) {
         st.update_due=false
-        code:=j!=nil?j.code:{}
         if j!=nil {collab_join_free(j)}
         st.join=nil
-        if !collab_join_start(s,st,base.text_get(code[:]),s.project_root,false,update=true) {log.warn("the project of the host could not be updated: no thread to do it on")}
+        if !collab_join_start(s,st,s.project_root,false,update=true) {
+            log.warn("the project of the host could not be updated: no thread to do it on")
+        }
         return
     }
     if j==nil {return}
@@ -231,7 +230,7 @@ collab_project_update :: proc(s:^Session,st:^Collab_State,now:f64) {
             collab_end(st,fmt.tprintf("the project of the host is in %s, which could not be opened: %s",j.folder,problem))
             return
         }
-        s.projects.join=j.code
+        base.text_set(s.projects.join[:],wire.invite_encode(st.invitation,context.temp_allocator))
         c:=collab_of(s)
         base.text_set(s.projects.join_name[:],string(c.name[:c.name_length]))
         j.opening=true
