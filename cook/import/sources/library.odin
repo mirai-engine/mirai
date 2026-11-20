@@ -168,10 +168,11 @@ project_add :: proc(root:string,manifest:store.Hash,folder:string,assets:[]base.
         }
         break
     }
-    if pin_error:=project_pin(top,options.store,entry);pin_error!=.None {
-        report_line(&report.failures,"%s: %s could not be written (%v): a folder is relative to the assets, with forward slashes, and never leaves them",top,asset.PACKAGES_FILE,pin_error)
+    if !asset.folder_valid(entry.folder) {
+        report_line(&report.failures,"%s: a folder is relative to the assets, with forward slashes, and never leaves them",top)
         return
     }
+    l.adding=true
     report.packages=1
     project_follow_begin(&l,top)
     package_refresh(&l,top,entry,&report,true)
@@ -319,6 +320,7 @@ Library_State :: struct {
     assets:string,                 // of the project followed
     registry:^asset.Registry,      // its assets, scanned once
     asked:map[string]bool,         // "<namespace>/<name>" asked of the source, and whether it gave it
+    adding:bool,
 }
 
 @(private="file")
@@ -622,9 +624,12 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     entry:=entry
     digits,id_text:[64]u8
     id_name:=base.asset_id_format(entry.id,id_text[:32])
-    p,error:=asset.package_load(s,top,&entry,l.temp)
+    manifest_root:=top if !l.adding else ""
+    p,error:=asset.package_load(s,manifest_root,&entry,l.temp)
     // The manifest the pin names, by the hash of its text: the ref that names its object.
-    if error==.Not_Found && fetch(l,asset.REF_MANIFESTS,store.hex(entry.manifest,&digits)) {p,error=asset.package_load(s,top,&entry,l.temp)}
+    if error==.Not_Found && fetch(l,asset.REF_MANIFESTS,store.hex(entry.manifest,&digits)) {
+        p,error=asset.package_load(s,manifest_root,&entry,l.temp)
+    }
     #partial switch error {
     case .None:
     case .Not_Found:
@@ -802,7 +807,7 @@ written_pin :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,wri
         if !same {break}
         same=entry.written[at]==w
     }
-    if same {return}
+    if same && !l.adding {return}
     entry.written=written
     if pin_error:=project_pin(top,l.options.store,entry^);pin_error!=.None {
         report_line(&report.failures,"package %s: %s/%s could not be written: %v",p.name,top,asset.PACKAGES_FILE,pin_error)
@@ -843,9 +848,11 @@ reingest :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,p:^ass
     if l.options.progress.procedure!=nil {fmt.wprintfln(l.options.progress,"  %s: %d assets, %.1f s",p.name,len(written.assets),time.duration_seconds(time.tick_since(started)))}
     if written.manifest!=entry.manifest {
         entry.manifest=written.manifest
-        if pin_error:=project_pin(top,l.options.store,entry^);pin_error!=.None {
-            report_line(&report.failures,"package %s: %s/%s could not be written: %v",p.name,top,asset.PACKAGES_FILE,pin_error)
-            return
+        if !l.adding {
+            if pin_error:=project_pin(top,l.options.store,entry^);pin_error!=.None {
+                report_line(&report.failures,"package %s: %s/%s could not be written: %v",p.name,top,asset.PACKAGES_FILE,pin_error)
+                return
+            }
         }
     }
     if model {
