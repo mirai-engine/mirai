@@ -34,9 +34,10 @@ quad_viewer :: proc(w:^Terrain_Test_World,position:[3]f32) {
 @(private="file")
 quad_settle :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,settings:Terrain_Settings,view:=core.View{},ticks:=64) {
     for _ in 0..<ticks {
+        work_wait(&w.data,nil)
         quad_tick(w,resident,app,settings,view)
         idle:=!work_busy(&w.data,nil)
-        for &source in resident.sources {if len(source.pending)>0 {idle=false}}
+        for &source in resident.sources {if len(source.pending)>0 || len(source.staged)>0 {idle=false}}
         if idle {break}
     }
     quad_tick(w,resident,app,settings,view)

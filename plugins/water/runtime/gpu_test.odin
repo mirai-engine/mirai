@@ -50,7 +50,7 @@ Gpu_Fixture :: struct {
 }
 
 @(private = "file")
-gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> bool {
+gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture, indirect := true) -> bool {
 	root, _ := filepath.clean(ROOT, context.temp_allocator)
 	// mirai test generates them: cook is not shipped, and the game compiles its test files.
 	loaded, problem := gpu.shader_assets_load(fmt.tprintf("%s/.mirai/tmp/water-test-shaders", root))
@@ -63,6 +63,7 @@ gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> bool {
 	f.device = device
 	settings := gpu.DEFAULT_SETTINGS
 	settings.taa = false
+	settings.gi_enabled = indirect
 	if !testing.expect(t, gpu.renderer_init(&f.renderer, {device = device, width = WIDTH, height = HEIGHT, settings = settings, shaders = &loaded}), f.renderer.error) {return false}
 	folder := base.test_folder(t, "water-gpu")
 	if folder == "" || !testing.expect(t, host.assets_init(&f.assets, {root = folder, renderer = &f.renderer})) {return false}
@@ -144,12 +145,13 @@ differs :: proc(a, b: [3]i32) -> bool {return abs(a.r - b.r) + abs(a.g - b.g) + 
 
 // A lake is a box drawn within its walls, and water along a path a ribbon
 // along it: each changes the floor where its fluid is and leaves it as it was
-// away from it, without validation errors.
+// away from it. Probe lighting is off because the added surfaces also change
+// the indirect light reaching dry pixels.
 @(test)
 a_lake_and_a_river_draw_where_their_fluids_are :: proc(t: ^testing.T) {
 	f := new(Gpu_Fixture)
 	defer free(f)
-	if !gpu_fixture_init(t, f) {return}
+	if !gpu_fixture_init(t, f, indirect = false) {return}
 	defer gpu_fixture_destroy(f)
 	dry, dry_ok := water_frame(t, f)
 	if !dry_ok {return}

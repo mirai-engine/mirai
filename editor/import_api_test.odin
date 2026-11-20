@@ -58,9 +58,11 @@ asset_import_takes_the_settings_of_a_source_and_says_what_each_takes :: proc(t:^
 
 @(test)
 asset_import_reads_a_relative_source_from_the_project :: proc(t:^testing.T) {
-    s:=Session{project_root="C:/game"}
-    testing.expect_value(t,asset_import_source(&s,"assets/hero/walk.glb"),"C:/game/assets/hero/walk.glb")
-    testing.expect_value(t,asset_import_source(&s,"C:/elsewhere/walk.glb"),"C:/elsewhere/walk.glb")
+    ROOT :: "C:/game" when ODIN_OS==.Windows else "/game"
+    SOURCE :: "C:/elsewhere/walk.glb" when ODIN_OS==.Windows else "/elsewhere/walk.glb"
+    s:=Session{project_root=ROOT}
+    testing.expect_value(t,asset_import_source(&s,"assets/hero/walk.glb"),ROOT+"/assets/hero/walk.glb")
+    testing.expect_value(t,asset_import_source(&s,SOURCE),SOURCE)
 }
 
 // A project of the editor over a store of its own, as a session has them.
