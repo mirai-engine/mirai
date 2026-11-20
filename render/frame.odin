@@ -535,6 +535,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     pipelines_install(r)
     if r.variants_wanted {pipeline_variants_ask(r)}
     if r.scene.programs_arrived {programs_ask(r)}
+    ready:=pipelines_before_frame(r,frame)
     base.profile_end(zone)
     // What the extensions asked of this frame lasts for it alone.
     defer {
@@ -542,6 +543,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         r.antialiasing_offered,r.antialiasing_offered_count=r.antialiasing,r.antialiasing_count
         r.antialiasing_count=0
     }
+    if !ready {return false}
     r.previous_time,r.time=r.time,frame.time
     // After another world the time may jump by what loading it took: the
     // frame keeps the pace of the one before.
@@ -787,6 +789,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
 	texture_views_count(r)
 	update_stats(r)
 	if !ok {set_error(r, "the frame was not submitted: %s", rhi.device_error(d))}
+	if ok && recorded_ok && renderer_pipelines_pending(r) > 0 {r.pipeline_thread.late_frames += 1}
 	return ok && recorded_ok
 }
 

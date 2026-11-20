@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:strings"
 import "mirai:editor/api"
 import "mirai:host"
+import "mirai:rhi"
 import "mirai:std/base"
 
 // profile.load: where the seconds of the last loads went (host.Load_Profile),
@@ -46,6 +47,14 @@ Api_Profile_Load_Wait :: struct {
     until_ms:f32 `mirai:"label=Since it began: the end of the last frame it was busy"`,
     frames:int `mirai:"label=Frames it was busy"`,
 }
+Api_Profile_Load_Pipelines :: struct {
+    made:int `mirai:"label=Pipelines the device created while it loaded; the first scene of a start counts the start of the renderer"`,
+    compiled:int `mirai:"label=Pipelines without a confirmed application cache hit"`,
+    driver_ms:f32 `mirai:"label=What the driver took for them, summed over the threads"`,
+    late_frames:int `mirai:"label=Frames that drew materials without their pipelines (as their rows) while they compiled"`,
+    waited_ms:f32 `mirai:"label=Time frames spent waiting for pipelines"`,
+    store:rhi.Pipeline_Store_State `mirai:"label=What the device found of the kept pipelines: Missing on a first start, Other_Device after an update of the driver"`,
+}
 Api_Profile_Load :: struct {
     kind:host.Load_Kind,
     state:host.Load_State `mirai:"label=Loading: not resident yet, ask again; Interrupted: another load began first"`,
@@ -62,6 +71,7 @@ Api_Profile_Load :: struct {
     slowest:[]Api_Profile_Load_Asset `mirai:"label=The slowest assets, the slowest first"`,
     functions:[]Api_Profile_Load_Function `mirai:"label=The loop functions that cost the most while it loaded; none for a section"`,
     waits:[]Api_Profile_Load_Wait `mirai:"label=What it waited for before it was resident, the one that ended last first"`,
+    pipelines:Api_Profile_Load_Pipelines,
     notes:[]string `mirai:"label=How to read it and what to look at first"`,
 }
 Api_Profile_Loads :: struct {
@@ -77,7 +87,7 @@ api_profile_load :: proc(s:^Session,call:^api.Call) {
         kind:=(^Asked)(user).kind
         for one in host.Load_Kind {
             if kind!=.All && int(kind)-1!=int(one) {continue}
-            if summary,found:=host.load_summary(s.app,one,1);found && summary.state==.Loading {return true}
+            if s.app.load_profile.records[one].state==.Loading {return true}
         }
         return false
     }
@@ -117,6 +127,11 @@ profile_load_out :: proc(s:^Session,l:host.Load_Summary,manual:bool) -> (out:Api
     for f,i in l.functions {out.functions[i]={strings.clone(f.name),f32(f.ms)}}
     out.waits=make([]Api_Profile_Load_Wait,len(l.waits))
     for w,i in l.waits {out.waits[i]={w.busy,f32(w.until_ms),w.frames}}
+    out.pipelines={
+        made=l.pipelines.made,compiled=l.pipelines.made-l.pipelines.kept,
+        driver_ms=f32(host.load_ms(l.pipelines.ns)),late_frames=int(l.pipelines.late),
+        waited_ms=f32(host.load_ms(l.pipelines.waited_ns)),store=l.store,
+    }
     out.notes=profile_load_notes(l,manual)
     return
 }
@@ -173,5 +188,6 @@ profile_load_notes :: proc(l:host.Load_Summary,manual:bool) -> []string {
     }
     if len(l.functions)>0 {append(&notes,"functions are the loop functions of the frames while it loaded: the physics, collision and navigation phases are part of physics_step and navigation_build")}
     if l.kind==.Section {append(&notes,"A section counts what its own load did until it joined the world; it also counts in the scene or Play that was loading then")}
+    if note:=host.load_pipelines_note(l);note!="" {append(&notes,note)}
     return notes[:]
 }

@@ -11,6 +11,7 @@ rhi_metal_shader_functions_share_ownership_and_release_after_failed_pipeline :: 
     device,error:=rhi.device_create({on_message = rhi.message_print, app_name="shader cache test",validation=true})
     testing.expect(t,device!=nil,error);if device==nil {return}
     defer rhi.device_destroy(device)
+    before:=rhi.device_stats(device)
     desc:=rhi.Graphics_Pipeline_Desc{vertex=rhi.test_shader("triangle.vert"),fragment=rhi.test_shader("triangle.frag"),color_formats={0=.RGBA8_Unorm},color_count=1}
     first:=rhi.pipeline_create_graphics(device,desc)
     testing.expect(t,first!=0,rhi.device_error(device));if first==0 {return}
@@ -47,5 +48,9 @@ rhi_metal_shader_functions_share_ownership_and_release_after_failed_pipeline :: 
     testing.expect_value(t,device.shaders.count,2)
     rhi.pipeline_destroy(device,changed)
     testing.expect_value(t,device.shaders.count,0)
+    after:=rhi.device_stats(device)
+    testing.expect_value(t,after.pipelines_made-before.pipelines_made,4)
+    testing.expect(t,after.pipeline_ns>before.pipeline_ns && after.pipeline_longest_ns>0)
+    testing.expect_value(t,after.pipeline_store,rhi.Pipeline_Store_State.None)
     testing.expect_value(t,rhi.device_validation_errors(device),0)
 }

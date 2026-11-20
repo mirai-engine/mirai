@@ -208,6 +208,8 @@ the `Project` owns everything it points to.
 - `shader_generation(root)` is where a build publishes the shader generation;
   `shader_generation_find(root)` gives the one a run loads (that one, or `<root>/shaders` of a
   shipped game).
+- `user_folder(root)` resolves the project's per-user saves, player options and pipeline cache
+  by its manifest name, under the Mirai folder in the system's user data directory.
 
 ## Which packages go in
 
@@ -531,6 +533,7 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Validate demo image and cost | `mirai render check [project] [--views a,b] [--quality] [--release]` |
 | Measure the cost against main | `mirai bench compare [project] --base main` |
 | Fly a scene and find its hitches | `mirai bench flight [project] <flight> [--limit MS]` |
+| Measure compiling pipelines | `mirai bench pipelines [project] [--scene S] [--frames N]` |
 | Compare and crop images | `mirai image diff\|mottle\|stats\|montage\|crop\|zoom\|pick ...` |
 | Measure only between measurements | `mirai measure -- <command> [arguments...]` |
 | See who is building or measuring | `mirai locks` |

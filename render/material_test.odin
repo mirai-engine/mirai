@@ -940,6 +940,8 @@ material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^test
 	// What a capture waits for until it is 0: the pipelines the frame drew without.
 	asked := renderer_pipelines_pending(r)
 	testing.expectf(t, asked >= 1, "the frame asked the thread for the pipelines of the program: %d pending", asked)
+	late, _ := renderer_pipelines_report(r)
+	testing.expect(t, late > 0)
 	seen, mirrored := look(t, &f, camera)
 	testing.expectf(t, seen.b > seen.r + 40 && mirrored.b > mirrored.r + 40, "until they are made the wall is its row: %v, in the mirror %v", seen, mirrored)
 	for renderer_pipelines_pending(r) > 0 {
@@ -959,7 +961,9 @@ material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^test
 @(test)
 material_program_pipelines_are_made_before_a_frame_draws_with_them :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 64, 48, material_settings(), desc = {pipeline_thread = true}, programs = true) {return}
+	settings := material_settings()
+	settings.pipelines_first = true
+	if !fixture_init(t, &f, 64, 48, settings, desc = {pipeline_thread = true}, programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	programs := [2]^Program{program_find(r, "Grid", .Surface), program_find(r, "Pieces", .Surface)}
@@ -972,7 +976,6 @@ material_program_pipelines_are_made_before_a_frame_draws_with_them :: proc(t: ^t
 	materials_set(r, rows[:])
 	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)
-	renderer_pipelines_wait(r, all = true)
 	for program in programs {
 		for id in ([]Pipeline_Id{.Resolve, .Resolve_Plain, .Resolve_Layers}) {
 			testing.expectf(t, program_graphics(r, &r.pipelines[id], program.id) != r.pipelines[id], "the pipeline of %s for %v is made before a frame draws with it", program.name, id)

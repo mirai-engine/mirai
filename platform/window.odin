@@ -429,6 +429,14 @@ window_set_size :: proc(p:^Platform,size:[2]i32) {
 }
 
 window_title :: proc(p:^Platform) -> string {return string(p.title[:p.title_length])}
+// While the application draws no frame (it waits for something long): keeps
+// the window answering the window system, gathering its events, and says
+// whether it was asked to close since the last frame. False without a window.
+window_wait :: proc(p:^Platform) -> (close_requested:bool) {
+    if p.headless || p.window.handle==nil {return false}
+    window_pump(p,clock_ns(),allow_live=false)
+    return p.input.frame.window.close_requested
+}
 // Cut to TITLE_CAPACITY-1 bytes. The window system is told only when it changes.
 window_set_title :: proc(p:^Platform,title:string) {
     if title==window_title(p) {return}

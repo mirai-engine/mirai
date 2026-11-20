@@ -37,8 +37,8 @@ without pacing (deterministic runs).
 - `audio`: `None`, `Device` or `Memory`.
 - `root`: project folder (manifest and bindings); `engine_root`: engine root, or empty (project
   settings only); `options`: folder of the player options, which the player provides
-  (`app_user_folder`) and the editor does not; `assets_root`, `shaders_root`. `root`, `engine_root`
-  and `options` are copied into the application.
+  (`project.user_folder`) and the editor does not; `assets_root`, `shaders_root`. The application
+  copies `root`, `engine_root` and `options`.
 - `store_root`: the machine store the packages of `root` and of its plugins list from
   (`project_assets`); empty is the machine's. The application mounts the assets of the active
   plugins of `root` under `plugins/<name>` with the outputs of their packages, logs and keeps
@@ -95,9 +95,8 @@ its `exit_code` and `script_hold`.
     pointer, and the storages written, are copied and swapped, and their readers read them whole.
     That separate world is then left with parts of several, and is cleared before it is released.
 - `app_world_ref(app, data)` gives the `core.World_Ref`.
-- `app_user_folder(root)`: `<user data>/Mirai/<project name>`, created if missing; empty without a
-  project. It stores the saves (`save`) and `pipelines.bin`, the pipeline cache that `app_create`
-  passes to the device so as not to recompile them on every start.
+- The [project user folder](../../mirai-projects/references/projects.md#the-project-package)
+  holds the saves and the pipeline cache that `app_create` passes to the device.
 - `app_input_add(app, input)` adds input for the next tick (scripts and agents).
 - `app_capture(app, path)` writes the last frame as PNG; `app_capture_pixels` gives the pixels.
   `app_png_write_start` compresses and writes RGBA8 in a job of `app.jobs` (`Png_Write`);

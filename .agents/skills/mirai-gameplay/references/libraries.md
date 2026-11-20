@@ -770,7 +770,7 @@ one per local player that has screens or sees a `World_Widget`.
 ## `save`
 
 Saves: the `World` written in a slot, a file `saves/<slot>.save` in the project's user folder
-(`host.app_user_folder`).
+(`project.user_folder`).
 
 - Requests: `request_save` and `request_checkpoint` (with an optional label),
   `request_autosave`, `request_load`, `request_load_checkpoint`, `request_delete`,

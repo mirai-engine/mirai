@@ -462,11 +462,13 @@ pipeline_create_compute :: proc(d: ^Device, desc: Compute_Pipeline_Desc) -> Pipe
 	group := desc.shader.threadgroup
 	p.threadgroup = {NS.UInteger(max(group.x, 1)), NS.UInteger(max(group.y, 1)), NS.UInteger(max(group.z, 1))}
 	function:^MTL.Function
+	started := present_now_ns()
 	function,p.shaders[0] = mtl_function(d, desc.shader, desc.constants, desc.name)
 	if function == nil {return 0}
 	defer mtl_release(function)
 	state, err := MTL.Device_newComputePipelineStateWithFunction(d.device, function)
 	if state == nil {mtl_set_ns_error(d, err, "compute pipeline %s", desc.name); return 0}
+	pipeline_counted(d, present_now_ns() - started, false)
 	p.compute = state
 	threads := p.threadgroup.width * p.threadgroup.height * p.threadgroup.depth
 	if limit := MTL.ComputePipelineState_maxTotalThreadsPerThreadgroup(state); NS.UInteger(threads) > limit {
@@ -493,6 +495,7 @@ mtl_compare :: proc "contextless" (c: Compare) -> MTL.CompareFunction {
 }
 
 pipeline_create_graphics :: proc(d: ^Device, desc: Graphics_Pipeline_Desc) -> Pipeline {
+	started := present_now_ns()
 	NS.scoped_autoreleasepool()
 	if !mtl_pipeline_room(d) {return 0}
 	p := Mtl_Pipeline{name = desc.name}
@@ -547,6 +550,7 @@ pipeline_create_graphics :: proc(d: ^Device, desc: Graphics_Pipeline_Desc) -> Pi
 	}
 	state, err := MTL.Device_newRenderPipelineStateWithDescriptor(d.device, rpd)
 	if state == nil {mtl_set_ns_error(d, err, "graphics pipeline %s", desc.name); return 0}
+	pipeline_counted(d, present_now_ns() - started, false)
 	p.render = state
 
 	// Vulkan never writes depth when the depth test is disabled; match it.

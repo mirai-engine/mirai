@@ -336,6 +336,10 @@ Reading a load:
   `Prepare` and `Nav_Tiles` are summed over the job workers and can exceed the wall time.
 - **A section** counts what its own load did until it joined, and also adds it to the scene or Play
   that was loading then.
+- **Pipelines.** `pipelines.compiled` with `store` `Read` means pipelines the kept ones did not
+  have: a material program seen for the first time, or keys a change of shaders, fixed state or
+  constants made new. A second start of the same build that still compiles them points at the
+  keys; `late_frames` counts the frames that drew materials as their rows meanwhile.
 
 Reading a capture:
 
@@ -394,6 +398,10 @@ Reading a capture:
   4. A frame of a segment that does not settle past `--limit` stops it with exit 1, naming its
      costliest GPU pass and CPU part; the watchdog ending the editor exits with
      `rhi.WATCHDOG_EXIT_CODE` and the pass the GPU stopped in. What flew is printed either way.
+- **Compiling pipelines.** `mirai bench pipelines [project]` runs the player twice with a window
+  and reports startup, pipeline creation and frames affected. Both starts use a temporary
+  application cache and, where supported, a temporary driver cache. The table flags drivers
+  whose cold cache could not be verified.
 
 ## History
 

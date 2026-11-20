@@ -8,11 +8,11 @@ POLL_HELD_NS :: u64(30_000_000)
 LIVE_FRAME_NS :: u64(4_000_000)
 
 @(private)
-window_pump :: proc(p:^Platform,now:u64) {
+window_pump :: proc(p:^Platform,now:u64,allow_live:=true) {
     w:=&p.window
     window_refresh(p,&p.input.frame.window)
     w.resize_input=w.resize.hit!=.NORMAL
-    p.live.poll_start=now
+    p.live.poll_start=now if allow_live else 0
     event:sdl.Event
     for sdl.PollEvent(&event) {
         if w.resize_input && (event.type==.MOUSE_MOTION || event.type==.MOUSE_BUTTON_DOWN || event.type==.MOUSE_BUTTON_UP) {continue}

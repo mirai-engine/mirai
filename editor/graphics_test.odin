@@ -13,7 +13,7 @@ graphics_rows_are_the_tagged_fields_of_the_settings_of_the_machine :: proc(t:^te
     s:=Session{info=&info}
     defer free_all(context.temp_allocator)
     rows:=graphics_rows_of(&s)
-    if !testing.expect_value(t,len(rows),14) {return}
+    if !testing.expect_value(t,len(rows),15) {return}
     Case :: struct {label:string, change:proc(g:^erender.Graphics_Settings), choice:string, rate:bool}
     cases:=[?]Case{
         {"Resolution",proc(g:^erender.Graphics_Settings) {g.resolution=0},"Native",false},
@@ -30,6 +30,7 @@ graphics_rows_are_the_tagged_fields_of_the_settings_of_the_machine :: proc(t:^te
         {"Frame limit",proc(g:^erender.Graphics_Settings) {g.frame_limit=0},"Off",true},
         {"Frame generation",proc(g:^erender.Graphics_Settings) {g.frame_generation=false},"Off",true},
         {"Show FPS",proc(g:^erender.Graphics_Settings) {g.show_fps=true},"On",true},
+        {"Shaders",proc(g:^erender.Graphics_Settings) {g.shaders=.Before_Playing},"Before playing",true},
     }
     for c in cases {
         g:=erender.GRAPHICS_SETTINGS_DEFAULT

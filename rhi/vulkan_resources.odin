@@ -685,7 +685,9 @@ pipeline_create_compute :: proc(d: ^Device, desc: Compute_Pipeline_Desc) -> Pipe
 	cache := vk_pipeline_cache_open(d, key)
 	started := time.tick_now()
 	created := vk_check(d, d.dvk.CreateComputePipelines(d.handle, cache, 1, &info, nil, &p.handle), desc.name, queued = false)
-	vk_pipeline_cache_close(d, key, cache, feedback, created, time.tick_since(started))
+	took := time.tick_since(started)
+	if created {pipeline_counted(d, time.duration_nanoseconds(took), feedback.flags >= {.VALID, .APPLICATION_PIPELINE_CACHE_HIT})}
+	vk_pipeline_cache_close(d, key, cache, feedback, created, took)
 	if !created {vk_release_pipeline(d, &p); return 0}
 	vk_set_name(d, .PIPELINE, u64(p.handle), desc.name)
 	return vk_pipeline_add(d, &p)
@@ -788,7 +790,9 @@ pipeline_create_graphics :: proc(d: ^Device, desc: Graphics_Pipeline_Desc) -> Pi
 	cache := vk_pipeline_cache_open(d, key)
 	started := time.tick_now()
 	created := vk_check(d, d.dvk.CreateGraphicsPipelines(d.handle, cache, 1, &info, nil, &p.handle), desc.name, queued = false)
-	vk_pipeline_cache_close(d, key, cache, feedback, created, time.tick_since(started))
+	took := time.tick_since(started)
+	if created {pipeline_counted(d, time.duration_nanoseconds(took), feedback.flags >= {.VALID, .APPLICATION_PIPELINE_CACHE_HIT})}
+	vk_pipeline_cache_close(d, key, cache, feedback, created, took)
 	if !created {vk_release_pipeline(d, &p); return 0}
 	vk_set_name(d, .PIPELINE, u64(p.handle), desc.name)
 	return vk_pipeline_add(d, &p)

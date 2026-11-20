@@ -44,6 +44,7 @@ COMMANDS :: [?]Command{
     {"render",RENDER_USAGE,"Measures the fixed views of a project as the user sees them (cost per pass, stability, luminance, captures) against the base build",cmd_render},
     {"bench",BENCH_USAGE,"Measures the frame cost of a project against the base build in alternating pairs, alone among the checkouts, and writes the table for a report",cmd_bench},
     {"bench",BENCH_FLIGHT_USAGE,"Flies the camera through a scene of a copy of a project as a flight of its tests/flights says, alone among the checkouts, and writes where its frames hitch",cmd_bench},
+    {"bench",BENCH_PIPELINES_USAGE,"Measures a cold start of a project against a warm one with a window: the GPU pipelines the driver compiles and what the frames lose to them, with both caches emptied and the cold start checked",cmd_bench},
     {"rpc",RPC_USAGE,"Calls a method of the editor of the project or of the given port, shows fields of the response or waits for a state; describe shows the params of the methods",cmd_rpc},
     {"docs",DOCS_USAGE,"Prints the game documentation of this engine: the index, a topic or one section of it",cmd_docs},
     {"mcp",MCP_USAGE,"MCP server over stdio that forwards to the editor of the project or of the given port; gives the editor tools and those of the plugins in --plugins",cmd_mcp},

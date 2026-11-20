@@ -753,6 +753,26 @@ Device_Stats :: struct {
 	deletion_overflows: int, // times a frame slot held more destroyed objects than its capacity
 	oversized:          int, // transients past the frame ring, each given a buffer for its frame
 	host_memory:        int, // Vulkan: resources of GPU memory placed in system memory because device memory was full
+	pipelines_made:     int, // pipelines created since the device was, on any thread
+	pipelines_kept:     int, // of those, confirmed hits in the application pipeline cache
+	pipeline_ns:        i64, // what creating them took, summed over the threads
+	pipeline_longest_ns: i64,
+	pipeline_store:     Pipeline_Store_State,
+}
+
+// What the device found of the pipelines kept across runs when it was created.
+// Other_Device: they were of another GPU or driver (an update of the driver),
+// so every pipeline compiles again.
+Pipeline_Store_State :: enum u8 {None, Read, Missing, Other_Device, Unreadable}
+
+// Counts a pipeline and the nanoseconds its creation took.
+@(private)
+pipeline_counted :: proc(d: ^Device, took: i64, kept: bool) {
+	sync.guard(&d.pipeline_lock)
+	d.stats.pipelines_made += 1
+	d.stats.pipelines_kept += int(kept)
+	d.stats.pipeline_ns += took
+	d.stats.pipeline_longest_ns = max(d.stats.pipeline_longest_ns, took)
 }
 
 @(private)
@@ -778,8 +798,18 @@ device_room :: proc(d: ^Device, pool: ^Pool($T), what: string) -> bool {
 }
 
 device_stats :: proc(d: ^Device) -> Device_Stats {
-	s := d.stats
-	s.buffers, s.textures, s.samplers, s.pipelines, s.accels = d.buffers.count, d.textures.count, d.samplers.count, d.pipelines.count, d.accels.count
+	sync.mutex_lock(&d.pipeline_lock)
+	s := Device_Stats{
+		buffers = d.buffers.count, textures = d.textures.count,
+		samplers = d.samplers.count, pipelines = d.pipelines.count, accels = d.accels.count,
+		exhausted = sync.atomic_load(&d.stats.exhausted),
+		deletion_overflows = d.stats.deletion_overflows, oversized = d.stats.oversized,
+		host_memory = sync.atomic_load(&d.stats.host_memory),
+		pipelines_kept = d.stats.pipelines_kept, pipelines_made = d.stats.pipelines_made,
+		pipeline_ns = d.stats.pipeline_ns, pipeline_longest_ns = d.stats.pipeline_longest_ns,
+		pipeline_store = d.stats.pipeline_store,
+	}
+	sync.mutex_unlock(&d.pipeline_lock)
 	buffers, textures, pipelines := device_own(d)
 	s.buffers, s.textures, s.pipelines = s.buffers - buffers, s.textures - textures, s.pipelines - pipelines
 	return s
@@ -847,7 +877,7 @@ frame_alloc :: proc(d: ^Device, size: u64, alignment: u64 = 256) -> Transient {
 		return {ptr = &f.upload_ptr[offset], buffer = f.upload, offset = offset, size = size}
 	}
 	if size > d.info.max_storage_range || f.oversized_count == MAX_FRAME_OVERSIZED {
-		d.stats.exhausted += 1
+		sync.atomic_add(&d.stats.exhausted, 1)
 		set_error(d, "transient of %d bytes refused: past the frame ring of %d bytes one takes a buffer of at most %d bytes, %d per frame", size, f.upload_size, d.info.max_storage_range, MAX_FRAME_OVERSIZED)
 		return {}
 	}
