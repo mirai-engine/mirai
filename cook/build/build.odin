@@ -116,6 +116,8 @@ Job :: struct {
     engine:Engine_Mode,
     imports:[]string,           // Build: the roots whose sources it imports once the target stands (imports_roots)
     import_program:string,      // Build: that of the engine of the project's defines, which imports them
+    refresh:Import_Refresh,
+    compiled_status:Status,
     store_root:string,          // Desc.store_root, or the machine's
     compiler:string,
     flags:[]string,             // what identifies the build besides its sources
@@ -560,12 +562,8 @@ job_project_start :: proc(job:^Job) -> ^Job {
                     return job
                 }
                 if present {
-                    job.result.status=.Up_To_Date
-                    if !job_imports(job) {return job}
-                    if job.target==.Game {
-                        if failure:=job_ship(job);failure!=.None {return job_fail(job,failure)}
-                    }
-                    return job_done(job)
+                    job.project_stands=false
+                    return job_imports(job,.Up_To_Date)
                 }
                 // What the library compiles to is what its last compile
                 // left but for the names of the plugin libraries: it links that again.
@@ -756,6 +754,18 @@ job_plugin_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
 @(private)
 job_advance :: proc(job:^Job,wait:bool) -> bool {
     if job.result.status!=.Running {return true}
+    if job_importing(job) {
+        if done,ok,message:=imports_poll(&job.refresh,wait);done {
+            subprocess.release(&job.refresh.process)
+            if ok {
+                job_target_done(job,job.compiled_status)
+            } else {
+                job.result.text=strings.clone(message,virtual.arena_allocator(&job.arena))
+                job_fail(job,.Import_Failed)
+            }
+        }
+        return job.result.status!=.Running
+    }
     if job.testing {
         job_test_advance(job,wait)
         return job.result.status!=.Running
@@ -876,7 +886,7 @@ job_wait :: proc(job:^Job) -> ^Result {
     return &job.result
 }
 
-// Stops the compilers of a running job. What the target had built stands.
+// Stops the children of a running job. What the target had built stands.
 job_cancel :: proc(job:^Job) {
     if job.result.status!=.Running {return}
     job_fail(job,.Cancelled)
@@ -896,20 +906,31 @@ job_run :: proc(desc:Desc) -> ^Job {
     return job
 }
 
-// The packages of the project and its plugins brought to builds this engine
-// reads, once the target stands: the library of its editor, built, has the
-// formats its plugins add. A build that cooks requires Final textures. False,
-// with the job failed, when a package has no build and could not get one.
+job_importing :: proc(job:^Job) -> bool {
+    return job!=nil && job.refresh.process.pid!=0
+}
+
+// The import program reads the formats of the project's published editor library.
 @(private)
-job_imports :: proc(job:^Job) -> bool {
-    if len(job.imports)==0 {return true}
-    ok,message:=imports_refresh(job.import_program,job.imports,job.cook.assets!="",job.store_root)
-    if !ok {
-        job.result.text=strings.clone(message,virtual.arena_allocator(&job.arena))
-        job_fail(job,.Import_Failed)
-        return false
+job_imports :: proc(job:^Job,compiled:Status) -> ^Job {
+    job.compiled_status=compiled
+    if len(job.imports)==0 {return job_target_done(job,compiled)}
+    args:=imports_command(job.import_program,job.imports,job.cook.assets!="",job.store_root)
+    allocator:=virtual.arena_allocator(&job.arena)
+    if error:=imports_start(&job.refresh,args,allocator);error!=nil {
+        job.result.text=fmt.aprintf("the import program could not run: %v",error,allocator=allocator)
+        return job_fail(job,.Import_Failed)
     }
-    return true
+    return job
+}
+
+@(private)
+job_target_done :: proc(job:^Job,compiled:Status) -> ^Job {
+    if job.target==.Game {
+        if failure:=job_ship(job);failure!=.None {return job_fail(job,failure)}
+    }
+    job.result.status=compiled
+    return job_done(job)
 }
 
 @(private)
@@ -930,6 +951,7 @@ job_fail :: proc(job:^Job,failure:Failure) -> ^Job {
         subprocess.release(&compile.process)
     }
     clear(&job.compiles)
+    subprocess.release(&job.refresh.process)
     test_build_cancel(&job.test_build)
     test_run_cancel(&job.test_run)
     job_files_remove(job)
@@ -948,7 +970,7 @@ job_files_remove :: proc(job:^Job) {
     if error!=nil {return}
     names:=TARGET_NAMES
     target:=strings.concatenate({names[job.target],"-"},context.temp_allocator)
-    built:=job.result.status==.Built
+    built:=job.result.status==.Built || job.compiled_status==.Built
     for entry in entries {
         if !strings.has_prefix(entry.name,target) {continue}
         remove:bool
@@ -1027,14 +1049,10 @@ job_finish :: proc(job:^Job,compile:^Compile,exit_code:int) {
             link_record_remove(job.link_file)
         }
     }
-    job.result.status=.Built
+    job.compiled_status=.Built
     job_files_remove(job)
     objects_sweep(job.root,link_records(job.root))
-    if !job_imports(job) {return}
-    if job.target==.Game {
-        if failure:=job_ship(job);failure!=.None {job.result.status,job.result.failure=.Failed,failure}
-    }
-    job_done(job)
+    job_imports(job,.Built)
 }
 
 // What the stamp of the last build of a target says: what a program that
