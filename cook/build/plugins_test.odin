@@ -11,6 +11,21 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/subprocess"
 
+@(test)
+an_empty_project_prepares_its_declaration_collections :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"empty-declarations")
+    if root=="" {return}
+    p:=project.Project{root=root,engine_root=root}
+    job:Job
+    _=virtual.arena_init_growing(&job.arena)
+    defer virtual.arena_destroy(&job.arena)
+    if !testing.expect_value(t,job_plugins_plan(&job,&p,{target=.Editor,dev=true}),Failure.None) {
+        return
+    }
+    testing.expect(t,os.is_dir(project_decl(root,"minimal",context.temp_allocator)))
+    testing.expect(t,os.is_dir(plugins_decl(root,"minimal",context.temp_allocator)))
+}
+
 // The demo's engine plugins build one library per part: the runtime parts in
 // the order of the plugins, dependencies first, then the editor parts for the
 // editor; each compiles against the parts of its plugin and of those it
