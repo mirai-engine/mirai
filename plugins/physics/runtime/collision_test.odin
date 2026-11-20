@@ -54,7 +54,7 @@ presets_and_custom_colliders_meet_when_each_collides_with_the_other_without_allo
     collision_custom(&projectile,collision_layers(TEST_PROJECTILE),COLLISION_LAYERS_ALL&~collision_layers(TEST_PROJECTILE))
     shot:=collision_filter(&settings,projectile)
     seen:=query_hits(collision_layers(TEST_WORLD))
-    everything,sensed:=query_hits(COLLISION_LAYERS_ALL),query_hits(COLLISION_LAYERS_ALL,overlaps=true)
+    everything,sensed:=query_hits(COLLISION_LAYERS_ALL),query_hits(COLLISION_LAYERS_ALL,include_sensors=true)
     off:=collision_filter(&settings,collision_off(&settings,{preset=TEST_WALL}))
     context=saved
     // A new collider belongs to the Default category and blocks everything.
@@ -223,7 +223,7 @@ a_wall_blocks_the_player_reports_a_sensor_and_a_new_collision_keeps_the_shape ::
     testing.expect(t,physics_test_pose(&f,movers[0]).position.x<-0.4)
     testing.expect(t,physics_test_pose(&f,movers[1]).position.x>1)
     created:=f.state.stats.shapes_created
-    teleport(&f.requests,movers[1],{-2,1,0})
+    physics_test_place(&f,movers[1],{-2,1,0})
     core.edit(&f.colliders,movers[1]).sensor=false
     physics_test_step(&f)
     set_velocity(&f.requests,movers[1],{3,0,0})
@@ -232,7 +232,7 @@ a_wall_blocks_the_player_reports_a_sensor_and_a_new_collision_keeps_the_shape ::
     testing.expect(t,physics_test_pose(&f,movers[1]).position.x<-0.4)
     // The wall stops colliding with players: both cross it.
     collision_preset_setting_set(&f.collision,{preset=TEST_WALL,belongs=collision_layers(TEST_WORLD),collides=COLLISION_LAYERS_ALL&~collision_layers(TEST_PLAYER,TEST_PROJECTILE)})
-    for i in 0..<2 {teleport(&f.requests,movers[i],{-2,f32(i)*2-1,0})}
+    for i in 0..<2 {physics_test_place(&f,movers[i],{-2,f32(i)*2-1,0})}
     physics_test_step(&f)
     for mover in movers {set_velocity(&f.requests,mover,{3,0,0})}
     for _ in 0..<80 {physics_test_step(&f)}
@@ -361,4 +361,81 @@ a_volume_reports_the_bodies_that_go_in_and_out :: proc(t:^testing.T) {
     testing.expect(t,began==1 && ended==1 && plane==0)
     testing.expectf(t,in_l=={{0,0},{1,1}},"the L reports the body across its foot and not the one across its notch: %v",in_l)
     testing.expect(t,physics_test_pose(&f,mover).position.x>1.5,"the volume blocks nothing")
+}
+
+@(test)
+default_character_contacts_yield_and_the_cap_is_configurable :: proc(t:^testing.T) {
+    for soft in ([2]bool{true,false}) {
+        f:Physics_Test
+        if !physics_test_init(t,&f) {return}
+        defer physics_test_destroy(&f)
+        f.collision=COLLISION_SETTINGS_DEFAULT
+        if !soft {f.collision.character_push_force=0}
+        pair:[2]core.Entity
+        for &e,i in pair {
+            e=core.create(&f.entities)
+            core.add(&f.transforms,e,core.Transform{{f32(2*i-1)*.45,0,0},1,{1,1,1}})
+            core.add(&f.colliders,e,collider_character())
+            core.add(&f.characters,e,character_default())
+        }
+        physics_test_step(&f)
+        set_velocity(&f.requests,pair[0],{8,0,0})
+        set_velocity(&f.requests,pair[1],{-8,0,0})
+        for _ in 0..<12 {physics_test_step(&f)}
+        crossed:=physics_test_pose(&f,pair[0]).position.x>physics_test_pose(&f,pair[1]).position.x
+        testing.expect_value(t,crossed,soft)
+    }
+}
+
+@(test)
+query_channels_report_sensors_separately_and_ignore_the_same_body_in_every_query :: proc(t:^testing.T) {
+    f:Physics_Test
+    if !physics_test_init(t,&f) {return}
+    defer physics_test_destroy(&f)
+    f.collision=COLLISION_SETTINGS_DEFAULT
+    sensor:=physics_test_box(&f,{2,0,0},{.4,.4,.4})
+    solid:=physics_test_box(&f,{4,0,0},{.4,.4,.4})
+    physics_test_settle(&f)
+    collision_custom(core.edit(&f.colliders,sensor),collision_layers(TEST_PLAYER),COLLISION_LAYERS_ALL,sensor=true)
+    physics_test_step(&f,0)
+    physics:=core.ref(&f.state)
+    cases:=[?]struct{filter:Query_Filter,count:int,first:core.Entity}{
+        {QUERY_FILTER_DEFAULT,1,solid},
+        {query_hits(collision_layers(TEST_PLAYER),include_sensors=true),1,sensor},
+        {query_hits(COLLISION_LAYERS_ALL,include_sensors=true),2,sensor},
+    }
+    for c in cases {
+        hits:[2]Hit
+        testing.expect_value(t,raycast_all(physics,{},{1,0,0},hits[:],6,filter=c.filter),c.count)
+        testing.expect(t,hits[0].entity==c.first && hits[0].overlap==(c.first==sensor))
+        testing.expect_value(t,sweep_all(physics,Sphere{.1},{},1,{1,0,0},hits[:],6,filter=c.filter),c.count)
+        testing.expect(t,hits[0].entity==c.first && hits[0].overlap==(c.first==sensor))
+        found:[2]core.Entity
+        count,complete:=overlap_sphere(physics,{3,0,0},2,found[:],filter=c.filter)
+        testing.expect(t,complete && count==c.count)
+        testing.expect_value(t,raycast_all(physics,{},{1,0,0},hits[:],6,ignore=c.first,filter=c.filter),c.count-1)
+        testing.expect_value(t,sweep_all(physics,Sphere{.1},{},1,{1,0,0},hits[:],6,ignore=c.first,filter=c.filter),c.count-1)
+        count,complete=overlap_sphere(physics,{3,0,0},2,found[:],filter=c.filter,ignore=c.first)
+        testing.expect(t,complete && count==c.count-1)
+    }
+    one:[1]core.Entity
+    count,complete:=overlap_sphere(physics,{3,0,0},2,one[:],filter=cases[2].filter)
+    testing.expect(t,count==1 && !complete)
+}
+
+@(test)
+overlap_capacity_counts_entities_once_even_with_many_shapes :: proc(t:^testing.T) {
+    state:Physics_State
+    if !testing.expect(t,test_state_make(&state,{bodies=4,shapes=300,contacts=16})) {return}
+    defer state_destroy(&state)
+    w:=&state.world
+    entity:=core.Entity(1)
+    body:=sim.body_create(w,{type=.Static,user_data=u64(entity)})
+    desc:=sim.SHAPE_DESC_DEFAULT
+    desc.geometry=sim.Sphere{.5}
+    for _ in 0..<270 {sim.shape_create(w,body,desc)}
+    testing.expect_value(t,sim.body_shapes(w,body,nil),270)
+    found:[1]core.Entity
+    count,complete:=overlap_sphere(core.ref(&state),{},1,found[:])
+    testing.expect(t,count==1 && complete && found[0]==entity)
 }

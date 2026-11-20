@@ -136,7 +136,7 @@ a_strain_over_a_region_reaches_each_body_of_the_breakables_its_filter_meets :: p
     world_step(&w,1.0/60)
     region:=Break_Region{point={0,4,0},radius=8}
     seen:=QUERY_FILTER_DEFAULT
-    seen.objects=1
+    seen.filter.block=1
     testing.expect_value(t,breakables_strain(&w,region,5,weaken=true,filter=seen),2)
     events:=world_events(&w).breaks
     if !testing.expect_value(t,len(events),2) {return}

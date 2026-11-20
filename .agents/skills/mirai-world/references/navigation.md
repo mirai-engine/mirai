@@ -162,17 +162,16 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   corner, steps aside from the others with ORCA (characters that do not navigate, obstacles and
   agents idle, crossing a link or farther than `Navigation_Settings.avoidance_reach` from every
   simulation source (`scene.sources_distance`) enter as neighbors that do not step aside: it
-  takes the whole change, at their real velocity) and writes the `Move_Input`, unless a seat
-  drives the body: its velocity as a velocity (`Move_Input.velocity`), which the locomotion takes
-  up to the top speed of its mode (crouched, backing off). It turns at the `turn_speed` of its
+  takes the whole change, at their real velocity) and writes the `Locomotion_Drive` unless a seat
+  drives the body. Locomotion limits the requested velocity to the top speed of its mode. It
+  turns at the `turn_speed` of its
   `Character` and adds the turn of the ground.
 - **Neighbors as far as the horizon.** An agent gathers those it may meet within
   `NAV_AGENT_HORIZON` at its speed and theirs, from the cells around its own in blocks that grow
   until they hold that reach, or as many neighbors nearer than the block as ORCA counts.
 - **Seated** (`Nav_Agent.seated`, click to move): a body a seat drives walks while its path is
-  `Moving` or `Crossing`, after the seat wrote its `Move_Input` in the tick: navigation replaces
-  the move and the look, and keeps the seat's buttons and the turn of the ground it added. Idle,
-  arrived or failed, the seat moves it again.
+  active. Its `Locomotion_Drive` supplies movement and facing while locomotion uses the seat's
+  buttons. When the path ends, navigation releases its drive and the seat resumes steering.
 - **Stepping aside without leaving the navmesh.** The edges of its navmesh that one that walks
   could reach within `NAV_AGENT_WALL_HORIZON` are walls of its ORCA program, ahead of its
   neighbors: no velocity it chooses crosses them, and toward an edge it slides along it. Without

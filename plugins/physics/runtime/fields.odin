@@ -21,7 +21,7 @@ Force_Field :: struct {
     filter:Query_Filter,
 }
 
-FORCE_FIELD_DEFAULT :: Force_Field{falloff=.Linear,filter={objects=COLLISION_LAYERS_ALL}}
+FORCE_FIELD_DEFAULT :: Force_Field{falloff=.Linear,filter=QUERY_FILTER_DEFAULT}
 
 @(step="fixed",stage="simulate",before="physics_prepare")
 force_fields_step :: proc(fields:^core.Table(Force_Field,.Read),volumes:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),bodies:^Body_Requests,time:core.Time) {

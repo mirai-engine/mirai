@@ -59,7 +59,7 @@ Physics_State :: struct {
     sealed:[dynamic]Sealed_Body, // scratch of sealed_sync, as long as the rows of the bodies
     visited:[dynamic]u32, // scratch of a sync, by link: the pass that synced it
     proxies:[dynamic]core.Entity, // the entities of the Proxy links
-    held:[dynamic]Held, // what a manipulation or a pose target steers
+    held:core.Entity_Map(Held), // what a manipulation or a pose target steers
     owned:[dynamic]Owned, // by slot of the bodies of the world: those another library owns (owned.odin)
     owned_stamps:[dynamic]u64, // of the chunks of owned, as link_stamps
     // The links, by where they are, whose rows the next step brings back besides those of the bodies it moves
@@ -127,7 +127,6 @@ Hold_Source :: enum u8 {Manipulation,Target,Section}
 // What steers a body or a character: the sources that hold it, and the pose target it took.
 @(private)
 Held :: struct {
-    entity:core.Entity,
     by:bit_set[Hold_Source;u8],
     type_before:Body_Type, // what the body was before it was held as kinematic
     release:bool,          // the following manipulation lets go once its pose is reached
@@ -166,7 +165,6 @@ Joint_Frames :: struct {
 }
 
 Body_Request_Kind :: enum u8 {
-    Teleport,  // position and rotation in the world: what core.place asks of a body
     Velocity,  // linear and angular
     Impulse,   // linear at the center of mass or at point; angular
     Force,
@@ -205,12 +203,9 @@ Body_Request :: struct {
 @(storage,queue)
 Body_Requests :: struct {
     queue:core.Queue(Body_Request),
+    pending_places:core.Queue(core.Place_Request), // routed by physics_places
 }
 
-@(private)
-teleport :: proc(requests:^Body_Requests,e:core.Entity,position:[3]f32,rotation:mm.Quat=1) {
-    core.push(&requests.queue,Body_Request{entity=e,kind=.Teleport,position=position,rotation=rotation})
-}
 set_velocity :: proc(requests:^Body_Requests,e:core.Entity,linear:[3]f32,angular:[3]f32={}) {
     core.push(&requests.queue,Body_Request{entity=e,kind=.Velocity,linear=linear,angular=angular})
 }
@@ -449,7 +444,7 @@ query_prepare :: proc(physics:core.Ref(Physics_State),direction:[3]f32,max_dista
     length:=linalg.length(direction)
     if !(length>1e-12 && length<=max(f32)) {return}
     prepared=filter
-    if ignore!=core.NONE {prepared.ignore_body=body_of(physics,ignore)}
+    if ignore!=core.NONE {prepared.ignore_body,prepared.ignore_user_data=body_of(physics,ignore),u64(ignore)}
     return direction*(max_distance/length),prepared,true
 }
 
@@ -468,8 +463,7 @@ raycast_at :: proc(physics:core.Ref(Physics_State),e:core.Entity,position:[3]f32
     return hit_of(&physics.world,found,max_distance),true
 }
 
-// The shapes along the ray, nearest first: by channel the ones it only overlaps (when filter.overlaps)
-// up to the first that blocks, by object type all of them. Writes up to QUERY_HIT_CAPACITY, keeping the
+// The shapes along the ray, nearest first, up to the first blocker. Writes up to QUERY_HIT_CAPACITY, keeping the
 // nearest, and returns how many it wrote.
 raycast_all :: proc(physics:core.Ref(Physics_State),origin,direction:[3]f32,hits:[]Hit,max_distance:f32=1000,ignore:=core.NONE,filter:=QUERY_FILTER_DEFAULT) -> int {
     translation,prepared,ok:=query_prepare(physics,direction,max_distance,ignore,filter)
@@ -526,7 +520,7 @@ Closest :: struct {
 closest_point :: proc(physics:core.Ref(Physics_State),point:[3]f32,max_distance:f32,ignore:=core.NONE,filter:=QUERY_FILTER_DEFAULT) -> (closest:Closest,ok:bool) {
     if physics.ptr==nil || !physics.ready || !(max_distance>=0 && max_distance<=max(f32)) {return}
     prepared:=filter
-    if ignore!=core.NONE {prepared.ignore_body=body_of(physics,ignore)}
+    if ignore!=core.NONE {prepared.ignore_body,prepared.ignore_user_data=body_of(physics,ignore),u64(ignore)}
     found:=sim.closest_point(&physics.world,point,max_distance,prepared) or_return
     return {
         entity=core.Entity(sim.body_user_data(&physics.world,found.body)),collider=core.Entity(sim.shape_user_data(&physics.world,found.shape)),
@@ -534,42 +528,49 @@ closest_point :: proc(physics:core.Ref(Physics_State),point:[3]f32,max_distance:
     },true
 }
 
-// Entities whose shapes touch the volume, each once. complete is false when more shapes than
-// OVERLAP_CAPACITY touch it or more entities than results holds.
-overlap_sphere :: proc(physics:core.Ref(Physics_State),center:[3]f32,radius:f32,results:[]core.Entity,filter:=QUERY_FILTER_DEFAULT) -> (count:int,complete:bool) {
-    return overlap(physics,sim.Sphere{radius},{center,1},results,filter)
+// Entities whose shapes touch the volume, each once. complete is false when more distinct entities touch it than the result buffer or OVERLAP_CAPACITY can hold.
+overlap_sphere :: proc(physics:core.Ref(Physics_State),center:[3]f32,radius:f32,results:[]core.Entity,filter:=QUERY_FILTER_DEFAULT,ignore:=core.NONE) -> (count:int,complete:bool) {
+    return overlap(physics,sim.Sphere{radius},{center,1},results,filter,ignore)
 }
-overlap_box :: proc(physics:core.Ref(Physics_State),center,half_extents:[3]f32,rotation:mm.Quat,results:[]core.Entity,filter:=QUERY_FILTER_DEFAULT) -> (count:int,complete:bool) {
-    return overlap(physics,sim.Box{half_extents},{center,rotation},results,filter)
+overlap_box :: proc(physics:core.Ref(Physics_State),center,half_extents:[3]f32,rotation:mm.Quat,results:[]core.Entity,filter:=QUERY_FILTER_DEFAULT,ignore:=core.NONE) -> (count:int,complete:bool) {
+    return overlap(physics,sim.Box{half_extents},{center,rotation},results,filter,ignore)
 }
-overlap_capsule :: proc(physics:core.Ref(Physics_State),center:[3]f32,radius,half_height:f32,rotation:mm.Quat,results:[]core.Entity,filter:=QUERY_FILTER_DEFAULT) -> (count:int,complete:bool) {
-    return overlap(physics,sim.Capsule{radius,half_height},{center,rotation},results,filter)
+overlap_capsule :: proc(physics:core.Ref(Physics_State),center:[3]f32,radius,half_height:f32,rotation:mm.Quat,results:[]core.Entity,filter:=QUERY_FILTER_DEFAULT,ignore:=core.NONE) -> (count:int,complete:bool) {
+    return overlap(physics,sim.Capsule{radius,half_height},{center,rotation},results,filter,ignore)
 }
-overlap_cylinder :: proc(physics:core.Ref(Physics_State),center:[3]f32,radius,half_height:f32,rotation:mm.Quat,results:[]core.Entity,filter:=QUERY_FILTER_DEFAULT) -> (count:int,complete:bool) {
-    return overlap(physics,sim.Cylinder{radius,half_height},{center,rotation},results,filter)
+overlap_cylinder :: proc(physics:core.Ref(Physics_State),center:[3]f32,radius,half_height:f32,rotation:mm.Quat,results:[]core.Entity,filter:=QUERY_FILTER_DEFAULT,ignore:=core.NONE) -> (count:int,complete:bool) {
+    return overlap(physics,sim.Cylinder{radius,half_height},{center,rotation},results,filter,ignore)
 }
 
 @(private)
-overlap :: proc(physics:core.Ref(Physics_State),geometry:sim.Geometry,transform:sim.Transform,results:[]core.Entity,filter:Query_Filter) -> (count:int,complete:bool) {
+Overlap_Results :: struct {
+    world:^sim.World,
+    entities:[]core.Entity,
+    seen:base.Hash_Map(bool),
+}
+
+@(private)
+overlap :: proc(physics:core.Ref(Physics_State),geometry:sim.Geometry,transform:sim.Transform,results:[]core.Entity,filter:Query_Filter,ignore:core.Entity) -> (count:int,complete:bool) {
     if physics.ptr==nil || !physics.ready {return}
-    world:=&physics.world
-    shapes:[OVERLAP_CAPACITY]sim.Shape_Handle
-    found:=sim.overlap_shape(world,geometry,transform,shapes[:],filter)
-    complete=found<=len(shapes)
-    each: for shape in shapes[:min(found,len(shapes))] {
-        e:=core.Entity(sim.body_user_data(world,sim.shape_body(world,shape)))
-        if e==core.NONE {continue}
-        for seen in results[:count] {
-            if seen==e {continue each}
-        }
-        if count>=len(results) {
-            complete=false
-            break
-        }
-        results[count]=e
-        count+=1
+    prepared:=filter
+    if ignore!=core.NONE {prepared.ignore_body,prepared.ignore_user_data=body_of(physics,ignore),u64(ignore)}
+    keys:[2*OVERLAP_CAPACITY+1]u64
+    entries:[len(keys)]bool=---
+    found:=Overlap_Results{world=&physics.world,entities=results}
+    found.seen.keys,found.seen.values=keys[:],entries[:]
+    found.seen.shift=64
+    for slots:=len(keys)-1;slots>1;slots>>=1 {found.seen.shift-=1}
+    found.seen.capacity=min(len(results),OVERLAP_CAPACITY)
+    visit :: proc(user:rawptr,_:sim.Shape_Handle,body:sim.Body_Handle) -> bool {
+        r:=cast(^Overlap_Results)user
+        e:=core.Entity(sim.body_user_data(r.world,body))
+        if e==core.NONE {return true}
+        slot,added:=base.hash_map_insert(&r.seen,u64(e))
+        if added {r.entities[r.seen.count-1]=e}
+        return slot!=nil
     }
-    return
+    complete=sim.overlap_shape_each(found.world,geometry,transform,prepared,&found,visit)
+    return found.seen.count,complete
 }
 
 // Makes dst the world of src: the same bodies, geometry and links.
@@ -585,7 +586,7 @@ state_copy_kept :: proc(dst,src:^Physics_State) -> bool {_,ok:=state_copy_as(dst
 state_copy_as :: proc(dst,src:^Physics_State,kept:bool) -> (written:int,ok:bool) {
     if dst==src {return 0,true}
     if !core.entity_map_copy(&dst.joints,&src.joints) || !core.entity_map_copy(&dst.fluids,&src.fluids) {return}
-    if !array_copy(&dst.pieces,src.pieces[:]) || !array_copy(&dst.proxies,src.proxies[:]) || !array_copy(&dst.held,src.held[:]) {return}
+    if !array_copy(&dst.pieces,src.pieces[:]) || !array_copy(&dst.proxies,src.proxies[:]) || !core.entity_map_copy(&dst.held,&src.held) {return}
     clear(&dst.visited)
     dst.touched_all=true
     dst.world_body,dst.pass,dst.stats,dst.collision,dst.targets_seen,dst.rows_seen=src.world_body,src.pass,src.stats,src.collision,src.targets_seen,src.rows_seen
@@ -693,7 +694,7 @@ state_diff :: proc(a,b:^Physics_State,buf:[]byte) -> string {
 state_destroy :: proc(state:^Physics_State) {
     if state.ready {sim.world_destroy(&state.world)}
     core.entity_map_destroy(&state.links);core.entity_map_destroy(&state.joints);core.entity_map_destroy(&state.fluids);delete(state.geometry);delete(state.sources);delete(state.pieces)
-    delete(state.sealed);delete(state.proxies);delete(state.touched);delete(state.owned);delete(state.held);delete(state.visited)
+    delete(state.sealed);delete(state.proxies);delete(state.touched);delete(state.owned);core.entity_map_destroy(&state.held);delete(state.visited)
     delete(state.link_stamps);delete(state.source_stamps);delete(state.owned_stamps)
     volume.index_destroy(&state.gravity.index)
     state^={}
@@ -707,7 +708,7 @@ state_reset :: proc(state:^Physics_State) {
     clear(&state.sources);clear(&state.source_stamps)
     clear(&state.pieces)
     clear(&state.proxies)
-    clear(&state.held)
+    core.entity_map_clear(&state.held)
     clear(&state.touched)
     clear(&state.owned);clear(&state.owned_stamps)
     core.entity_map_clear(&state.links);core.entity_map_clear(&state.joints);core.entity_map_clear(&state.fluids)

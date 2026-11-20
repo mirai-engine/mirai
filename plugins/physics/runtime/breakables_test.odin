@@ -83,7 +83,7 @@ a_strain_asked_of_a_volume_in_a_tick_breaks_what_its_filter_meets_after_the_step
     if !testing.expect_value(t,error,Breakable_Error.None) {return}
     view:=core.ref(&state)
     unseen:=QUERY_FILTER_DEFAULT
-    unseen.objects=8
+    unseen.filter.block=8
     nan:=transmute(f32)u32(0x7fc00000)
     // What strains nothing: a filter that does not see the wall, values that are not numbers, a volume
     // that is neither a box nor a sphere, one that does not reach the wall.

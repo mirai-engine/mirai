@@ -25,15 +25,6 @@ GALLERY_REACH_DISTANCE :: 3.4
 
 GALLERY_FOCUS_BLEND :: cam.Camera_Blend{seconds=.6,ease=.Cubic_In_Out}
 
-// A body of the gallery walks along wish, in the world, and faces where it walks.
-gallery_move :: proc(input:^inp.Move_Input,wish:mm.Vec3) {
-    input.move={}
-    if amount:=linalg.length(wish);amount>.001 {
-        input.look_yaw=mm.yaw_of_direction(wish)
-        input.move=wish/max(amount,1)
-    }
-}
-
 // A body of the gallery player that fell goes back to where the gallery starts.
 @(step="fixed")
 gallery_player_fall :: proc(players:^core.Table(Gallery_Player,.Read),worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer) {

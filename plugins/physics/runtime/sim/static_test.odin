@@ -239,15 +239,15 @@ static_triangles_skip_dynamic_bodies_sensors_and_shapes_that_do_not_block_the_fi
     test_triangles(&w,everything,out,character)
     testing.expect_value(t,out.index_count,36)
     for shape in out.shapes[:12] {testing.expect_value(t,shape,wall_shape)}
-    character.overlaps=true
+    character.include_sensors=true
     test_triangles(&w,everything,out,character)
     testing.expect_value(t,out.index_count,36)
     character.ignore_body=wall
     test_triangles(&w,everything,out,character)
     testing.expect_value(t,out.index_count,0)
 
-    // By object type every static shape of those layers but the sensor.
-    test_triangles(&w,everything,out,{objects=~Collision_Layers(0)})
+    // A query of every category meets every solid.
+    test_triangles(&w,everything,out,{filter={layers=0xffffffff,block=0xffffffff}})
     testing.expect_value(t,out.index_count,3*36)
     testing.expect_value(t,out.vertex_count,24)
 }

@@ -452,15 +452,11 @@ geometry.
 
 Without allocation, on caller buffers, with a `Query_Filter`.
 
-- By channel (`objects` at zero) the query is one more shape of `filter`: each shape meets it with
-  the weaker response of the two. By object type (`objects` non-null) it sees the shapes of those
-  categories without looking at their responses, and all of them block it. Those of the same `group`
-  are ignored.
-- What only overlaps is reported if `overlaps` asks for it; debris, if `debris` asks for it.
-  `QUERY_FILTER_DEFAULT` is the channel of category 0 blocking all.
-- `ray_cast_closest` and `ray_cast_any` see only what blocks. `ray_cast_all` sorts by distance: by
-  channel it ends at the first impact that blocks, with what only overlaps before it; by object type
-  it returns all. With more impacts than capacity it keeps the nearest ones.
+- The query acts as a shape of its filter. Each target meets it with the weaker response of
+  the two. `include_sensors` also reports overlaps, and the debris option includes debris.
+- `ray_cast_closest` and `ray_cast_any` see blockers. `ray_cast_all` sorts by distance and
+  ends at the first blocker, keeping the preceding overlaps. With more hits than capacity
+  it keeps the nearest ones.
 - `shape_cast_*` follow the same rules for a convex shape that translates without rotating; a hull
   keeps its convex radius. A ray against a rounded shape is the cast of a point against its inflated
   core, exact on the edges.

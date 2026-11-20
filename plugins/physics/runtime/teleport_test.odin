@@ -20,11 +20,12 @@ a_teleport_is_a_jump_by_what_takes_the_body_from_where_it_was :: proc(t:^testing
     box:=physics_test_box(&f,{1,2,3},{0.5,0.5,0.5},RIGID_BODY_DYNAMIC)
     physics_test_step(&f,0)
 
-    teleport(&f.requests,box,{10,2,-4},mm.quat_axis_angle({0,1,0},math.PI/2))
+    physics_test_place(&f,box,{10,2,-4},mm.quat_axis_angle({0,1,0},math.PI/2))
     physics_test_settle(&f)
+    physics_places(&f.body_places,&f.requests,core.ref(&f.state),core.read(&f.rigids),core.read(&f.characters))
     physics_step(
         &f.state,core.ref(&f.settings),&f.requests,&f.events,&f.meshes,&f.app,{},
-        core.read(&f.rigids),core.read(&f.colliders),core.read(&f.characters),core.read(&f.moves),
+        core.read(&f.rigids),core.read(&f.colliders),core.read(&f.characters),&f.moves,
         &f.joints,core.read(&f.statics),core.read(&f.parents),core.read(&f.names),
         &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,{},nil,{},{},nil,&jumps,&f.problems,{},{},{},{},{},core.ref(&f.hierarchy),{},{},{},{},
     )
@@ -39,7 +40,7 @@ a_teleport_is_a_jump_by_what_takes_the_body_from_where_it_was :: proc(t:^testing
     testing.expect(t,linalg.length(physics_test_pose(&f,box).position-[3]f32{10,2,-4})<1e-4)
 
     // Who steps the simulation by hand, without jumps, is asked for none.
-    teleport(&f.requests,box,{0,2,0})
+    physics_test_place(&f,box,{0,2,0})
     physics_test_step(&f,0)
     testing.expect_value(t,len(jumps.queue.items),1)
     testing.expect_value(t,f.state.stats.teleports,u64(2))
@@ -51,8 +52,6 @@ a_place_at_rest_stops_the_body :: proc(t:^testing.T) {
     f:Physics_Test
     if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
-    places:core.Places
-    defer delete(places.queue.items)
     box:=physics_test_box(&f,{1,2,3},{0.5,0.5,0.5},RIGID_BODY_DYNAMIC)
     physics_test_step(&f,0)
     body:=link_find(&f.state,box).body
@@ -60,8 +59,7 @@ a_place_at_rest_stops_the_body :: proc(t:^testing.T) {
     for c,i in cases {
         set_velocity(&f.requests,box,{5,0,0})
         physics_test_step(&f,0)
-        core.push(&places.queue,core.Place_Request{box,{f32(i),2,0},1,c.at_rest})
-        physics_places(&places,&f.requests,core.ref(&f.state),core.read(&f.rigids),core.read(&f.characters))
+        physics_test_place(&f,box,{f32(i),2,0},at_rest=c.at_rest)
         physics_test_step(&f,0)
         testing.expect_value(t,sim.body_linear_velocity(&f.state.world,body),c.velocity)
         testing.expect(t,linalg.length(physics_test_pose(&f,box).position-[3]f32{f32(i),2,0})<1e-4)
@@ -131,10 +129,15 @@ values_that_are_not_finite_leave_a_body_where_it_was_with_a_problem :: proc(t:^t
     physics_test_step(&f)
     testing.expect(t,core.problem_find(&f.problems,e,"physics.transform")!=nil)
     testing.expect_value(t,sim.body_position(&f.state.world,l.body),was)
-    teleport(&f.requests,e,{0,math.inf_f32(1),0})
+    physics_test_place(&f,e,{0,math.inf_f32(1),0})
     apply_impulse(&f.requests,e,{math.nan_f32(),0,0})
     physics_test_step(&f)
     testing.expect(t,core.problem_find(&f.problems,e,"physics.request_value")!=nil)
     testing.expect(t,sim.finite(sim.body_position(&f.state.world,l.body),sim.body_linear_velocity(&f.state.world,l.body)))
     for &tree in f.state.world.trees {testing.expect(t,spatial.dynamic_tree_validate(&tree))}
+}
+
+@(private)
+physics_test_place :: proc(f:^Physics_Test,e:core.Entity,position:[3]f32,rotation:mm.Quat=1,at_rest:=false) {
+    core.place({&f.transforms,core.read(&f.parents),&f.body_places,nil},e,position,rotation,at_rest=at_rest)
 }

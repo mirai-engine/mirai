@@ -208,7 +208,12 @@ contact_block_prepare :: proc(w:^World,c:^Contact_Block($N),refs:[]Constraint_Re
             when N==1 {c.turn,c.turn_side=turn,side}
         }
         push:f32
-        if ma>0 && mb>0 && w.push_rule_count>0 {push=push_force_of(w,shape_a.filter.layers,shape_b.filter.layers)}
+        if ma>0 && mb>0 {
+            if w.push_rule_count>0 {push=push_force_of(w,shape_a.filter.layers,shape_b.filter.layers)}
+            if push==0 && .Character in (w.bodies[contact.body_a].flags&w.bodies[contact.body_b].flags) {
+                push=w.character_push_force
+            }
+        }
         // Between two dynamic bodies the shape of more dominance is not moved by the contact.
         if ma>0 && mb>0 && shape_a.dominance!=shape_b.dominance {
             if shape_a.dominance>shape_b.dominance {ma,ia=0,{}} else {mb,ib=0,{}}

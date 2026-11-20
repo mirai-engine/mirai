@@ -24,10 +24,11 @@ physics_pose_targets :: proc(
     c:=core.changes(targets,&state.targets_seen)
     // What left the table was not kept: every follow of what no longer has a target ends.
     if c.all || len(c.gone)>0 {
-        for &h in state.held {
-            if core.has(targets,h.entity) {continue}
-            if l:=link_find(state,h.entity);l!=nil {
-                hold_end(state,&h,l,.Target,rigids)
+        for &h,at in state.held.values {
+            e:=state.held.entities[at]
+            if core.has(targets,e) {continue}
+            if l:=link_find(state,e);l!=nil {
+                hold_end(state,&h,l,e,.Target,rigids)
                 link_touch(state,l)
             }
             h.placed=0
@@ -53,7 +54,7 @@ physics_pose_targets :: proc(
             h.placed=target.placed
             target_place(state,l,e,local,target.position,rotation,target.linear,target.angular,target.rest)
         }
-        target_follow(state,h,l,target,rigids)
+        target_follow(state,h,l,e,target,rigids)
     }
 }
 
@@ -65,10 +66,11 @@ physics_pose_targets :: proc(
 @(step="fixed",loops="game",stage="begin")
 physics_section_holds :: proc(state:^Physics_State,marks:^core.Table(scene.Section_Held,.Read),rigids:^core.Table(Rigid_Body,.Read)) {
     if !state.ready {return}
-    for &h in state.held {
-        if .Section not_in h.by || core.has(marks,h.entity) {continue}
-        if l:=link_find(state,h.entity);l!=nil {
-            hold_end(state,&h,l,.Section,rigids)
+    for &h,at in state.held.values {
+        e:=state.held.entities[at]
+        if .Section not_in h.by || core.has(marks,e) {continue}
+        if l:=link_find(state,e);l!=nil {
+            hold_end(state,&h,l,e,.Section,rigids)
             link_touch(state,l)
         } else {h.by-={.Section}}
     }
@@ -80,7 +82,7 @@ physics_section_holds :: proc(state:^Physics_State,marks:^core.Table(scene.Secti
         if h==nil || .Section in h.by {continue}
         was:=held_kinematic(h^)
         h.by+={.Section}
-        hold_type(state,h,l,was,rigids)
+        hold_type(state,h,l,e,was,rigids)
         link_touch(state,l)
     }
 }
@@ -94,20 +96,20 @@ target_made :: proc(s:^Sync,l:^Link,e:core.Entity) {
     h:=held_take(s.state,e)
     if h==nil {return}
     h.placed=target.placed
-    target_follow(s.state,h,l,target,s.rigids)
+    target_follow(s.state,h,l,e,target,s.rigids)
 }
 
 // A following target holds the body, or leads the character, toward its pose.
 @(private)
-target_follow :: proc(state:^Physics_State,h:^Held,l:^Link,target:core.Pose_Target,rigids:^core.Table(Rigid_Body,.Read)) {
+target_follow :: proc(state:^Physics_State,h:^Held,l:^Link,e:core.Entity,target:core.Pose_Target,rigids:^core.Table(Rigid_Body,.Read)) {
     if !target.follow {
-        hold_end(state,h,l,.Target,rigids)
+        hold_end(state,h,l,e,.Target,rigids)
         return
     }
     was:=held_kinematic(h^)
     h.by+={.Target}
     h.pose[.Target]={target.position,target.rotation==0?mm.QUAT_IDENTITY:linalg.normalize(target.rotation)}
-    hold_type(state,h,l,was,rigids)
+    hold_type(state,h,l,e,was,rigids)
     h.linear=target.linear
 }
 
@@ -157,9 +159,10 @@ target_place :: proc(state:^Physics_State,l:^Link,e:core.Entity,local:^core.Tran
 @(private)
 step_followed :: proc(state:^Physics_State) {
     world:=&state.world
-    for h in state.held {
+    for h,at in state.held.values {
+        e:=state.held.entities[at]
         if .Target not_in h.by {continue}
-        l:=link_find(state,h.entity)
+        l:=link_find(state,e)
         if l==nil || l.kind!=.Character || !sim.character_valid(world,l.character) {continue}
         sim.character_set_position(world,l.character,h.pose[.Target].p)
         sim.character_set_rotation(world,l.character,h.pose[.Target].q)

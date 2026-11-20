@@ -87,7 +87,7 @@ physics_prepare :: proc(state:^Physics_State,settings:core.Ref(Physics_Settings)
 physics_step :: proc(
     state:^Physics_State,settings:core.Ref(Physics_Settings),requests:^Body_Requests,events:^Physics_Events,meshes:^Collider_Meshes,
     app:^host.App,time:core.Time,
-    rigids:^core.Table(Rigid_Body,.Read),colliders:^core.Table(Collider,.Read),characters:^core.Table(Character,.Read),moves:^core.Table(Character_Move,.Read),
+    rigids:^core.Table(Rigid_Body,.Read),colliders:^core.Table(Collider,.Read),characters:^core.Table(Character,.Read),moves:^core.Table(Character_Move),
     joints:^core.Table(Joint),statics:^core.Table(render.Mesh_Renderer,.Read),parents:^core.Table(core.Parent,.Read),names:^core.Table(core.Name,.Read),
     transforms:^core.Table(core.Transform),motions:^core.Table(core.Motion),targets:^core.Table(core.Pose_Target,.Read),
     character_states:^core.Table(Character_State),joint_states:^core.Table(Joint_State),fluids:^core.Table(Fluid,.Read),
@@ -101,6 +101,7 @@ physics_step :: proc(
 ) {
     if !state_make(state,settings.ptr,&app.jobs,problems) {
         core.queue_clear(&requests.queue)
+        core.queue_clear(&requests.pending_places)
         return
     }
     w:=&state.world
@@ -110,6 +111,7 @@ physics_step :: proc(
     if !events_reserve(events,w.desc.event_capacity) {
         memory_problem(problems,core.NONE,"the events of the physics, so nothing is simulated in this tick")
         core.queue_clear(&requests.queue)
+        core.queue_clear(&requests.pending_places)
         return
     }
     state.pass+=1
@@ -129,7 +131,12 @@ physics_step :: proc(
     if s.collision_changed || !state.pushes_set {
         rules:[COLLISION_PUSH_CAPACITY]sim.Push_Rule
         count:=collision_push_rules(s.collision,&rules)
-        sim.world_set_push_rules(w,rules[:count])
+        cap:=s.collision.character_push_force
+        if !(cap>=0 && cap<=max(f32)) {
+            core.report(problems,core.NONE,"physics.collision_push","Character push force must be finite and nonnegative; fix Collision_Settings.character_push_force")
+            cap=COLLISION_SETTINGS_DEFAULT.character_push_force
+        }
+        sim.world_set_push_rules(w,rules[:count],cap)
         collision_surfaces_apply(w,s.collision,problems)
         state.pushes_set=true
         for push,i in s.collision.pushes {
@@ -209,8 +216,20 @@ physics_step :: proc(
         _=core.changes(s.transforms,&state.transforms_seen)
     }
 
+    if ran {
+        for row in 0..<core.count(moves) {
+            e:=core.entity_at(moves,row)
+            if !character_owner(characters,colliders,e) {core.remove(moves,e)}
+        }
+        for row in 0..<core.count(character_states) {
+            e:=core.entity_at(character_states,row)
+            if !character_owner(characters,colliders,e) {core.remove(character_states,e)}
+        }
+    }
+
     asked:=core.take(&requests.queue)
     requests_apply(&s,asked)
+    places_apply(&s,core.take(&requests.pending_places))
     if s.playing {joints_sync(&s,joints,joint_states)}
     joint_requests_apply(&s,joints,joint_states,joint_requests)
     if !sim.world_rebuild_static(w) {memory_problem(problems,core.NONE,"the rebuild of the tree of the static shapes")}
@@ -219,14 +238,14 @@ physics_step :: proc(
             e:=core.entity_at(characters,row)
             l:=link_find(state,e)
             if l==nil || l.kind!=.Character {continue}
-            // One a following target leads does not walk: it is put at the pose.
-            if h:=held_of(state,e);h!=nil && .Target in h.by {
-                sim.character_set_move(w,l.character,{})
-                continue
-            }
             move,has:=core.get(moves,e)
-            if has {sim.character_set_move(w,l.character,move.value)}
-            character_height_set(&s,l,e,core.at(characters,row),move.height)
+            if !has {move.value=sim.character_rest_move(w,l.character)}
+            h:=held_of(state,e)
+            ghosted:=.Ghosted in move.value.flags
+            sim.character_set_held(w,l.character,h!=nil && .Section in h.by)
+            if h!=nil && .Target in h.by {move.value={flags=move.value.flags&{.Ghosted}}}
+            sim.character_set_move(w,l.character,move.value)
+            if !ghosted {character_height_set(&s,l,e,core.at(characters,row),move.height)}
         }
     }
 
@@ -234,10 +253,10 @@ physics_step :: proc(
     if !s.playing {return}
 
     // A held body heads for its pose in every step; what nothing steers any more leaves the list.
-    #reverse for h,at in state.held {
-        l:=link_find(state,h.entity)
+    #reverse for h,at in state.held.values {
+        l:=link_find(state,state.held.entities[at])
         if l==nil || h.by=={} && h.placed==0 {
-            unordered_remove(&state.held,at)
+            core.entity_map_remove_at(&state.held,at)
             continue
         }
         if (l.kind==.Body || l.kind==.Proxy) && (.Target in h.by || .Manipulation in h.by && h.follow) && sim.body_valid(w,l.body) {
@@ -253,12 +272,13 @@ physics_step :: proc(
     strains_apply(w,asked)
     step_followed(state)
     // A manipulation that asked to let go does once its body reaches the pose.
-    for &h in state.held {
+    for &h,at in state.held.values {
         if !h.release || h.by!={.Manipulation} {continue}
-        l:=link_find(state,h.entity)
+        e:=state.held.entities[at]
+        l:=link_find(state,e)
         if l==nil || !sim.body_valid(w,l.body) || pose_differs(sim.body_transform(w,l.body),h.pose[.Manipulation]) {continue}
-        pose_write(&s,l,h.entity,sim.body_transform(w,l.body))
-        hold_end(state,&h,l,.Manipulation,rigids)
+        pose_write(&s,l,e,sim.body_transform(w,l.body))
+        hold_end(state,&h,l,e,.Manipulation,rigids)
         link_touch(state,l)
     }
 
@@ -927,7 +947,7 @@ character_sync :: proc(s:^Sync,e:core.Entity,l:^Link,config:Character,capsule:Co
             character_rows(s,e)
             // A write that turns it where it is cannot be taken: its turn is that of its move and its vertical.
             if !moved && row_changed(s.transforms,s.written,e) && pose_differs({world.position,held},{world.position,world.rotation}) {
-                core.report(s.problems,e,"physics.character_turn","Character %q was turned by another function while it plays, and a Character turns with its move and its vertical: turn it with the look of its Move_Input, or put it turned with core.place(placer,entity,position,rotation)",core.name_get(s.names,e))
+                core.report(s.problems,e,"physics.character_turn","Character %q was turned by another function while it plays, and a Character turns with its move and its vertical: turn it with its move's look, or put it turned with core.place(placer,entity,position,rotation)",core.name_get(s.names,e))
             }
             if foreign_write(s,e,"Character",sim.body_transform(w,body),moved) {
                 sim.character_set_position(w,l.character,world.position)
@@ -1157,6 +1177,41 @@ area_apply :: proc(s:^Sync,request:Body_Request) -> bool {
 }
 
 @(private)
+places_apply :: proc(s:^Sync,places:[]core.Place_Request) {
+    w:=&s.state.world
+    for request in places {
+        e:=request.entity
+        if !sim.finite(request.position) || !sim.finite(request.rotation) {
+            core.report(s.problems,e,"physics.place","its requested place is not finite; send a finite position and rotation to core.place")
+            continue
+        }
+        l:=link_find(s.state,e)
+        if l==nil || !link_made(s.state,l) {
+            core.report(s.problems,e,"physics.place","its body was not made; read the problems of the entity about its body and fix them")
+            continue
+        }
+        rotation:=request.rotation==0?mm.QUAT_IDENTITY:request.rotation
+        if l.kind==.Character {
+            body:=sim.character_body(w,l.character)
+            was:=sim.body_transform(w,body)
+            sim.character_set_position(w,l.character,request.position)
+            sim.character_set_rotation(w,l.character,rotation)
+            rotation=sim.body_rotation(w,body)
+            if request.at_rest {sim.character_launch(w,l.character,{},true)}
+            jumped(s,e,was.p,rotation*conj(was.q),request.position)
+        } else {
+            was:=sim.body_transform(w,l.body)
+            sim.body_set_transform(w,l.body,request.position,rotation)
+            if request.at_rest {sim.body_set_velocity(w,l.body,{},{})}
+            jumped(s,e,was.p,rotation*conj(was.q),request.position)
+        }
+        link_touch(s.state,l)
+        pose_write(s,l,e,{request.position,rotation})
+        s.state.stats.teleports+=1
+    }
+}
+
+@(private)
 requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
     state:=s.state
     w:=&state.world
@@ -1176,15 +1231,6 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
         rotation:=request.rotation==0?mm.QUAT_IDENTITY:request.rotation
         if l.kind==.Character {
             switch request.kind {
-            case .Teleport:
-                body:=sim.character_body(w,l.character)
-                from,was:=sim.character_position(w,l.character),sim.body_rotation(w,body)
-                sim.character_set_position(w,l.character,request.position)
-                sim.character_set_rotation(w,l.character,rotation)
-                turned:=sim.body_rotation(w,body)
-                jumped(s,e,from,turned*conj(was),request.position)
-                pose_write(s,l,e,{request.position,turned})
-                state.stats.teleports+=1
             case .Velocity:         sim.character_launch(w,l.character,request.linear,true)
             case .Impulse:          sim.character_launch(w,l.character,request.linear/sim.character_desc(w,l.character).mass)
             case .Force:            sim.body_apply_force(w,sim.character_body(w,l.character),request.linear)
@@ -1199,12 +1245,6 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
         }
         link_touch(state,l)
         switch request.kind {
-        case .Teleport:
-            was:=sim.body_transform(w,l.body)
-            jumped(s,e,was.p,rotation*conj(was.q),request.position)
-            sim.body_set_transform(w,l.body,request.position,rotation)
-            pose_write(s,l,e,{request.position,rotation})
-            state.stats.teleports+=1
         case .Velocity:
             sim.body_set_velocity(w,l.body,request.linear,request.angular)
         case .Impulse:
@@ -1229,9 +1269,9 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
             h:=held_take(state,e)
             if h==nil {memory_problem(s.problems,e,"what physics holds, so the manipulation does not take the body");continue}
             // Another link of the same body hands over its manipulation, the type the body had and its spring.
-            for &other in state.held {
+            for &other,at in state.held.values {
                 if &other==h || .Manipulation not_in other.by {continue}
-                if by:=link_find(state,other.entity);by==nil || by.body!=l.body {continue}
+                if by:=link_find(state,state.held.entities[at]);by==nil || by.body!=l.body {continue}
                 if h.by=={} {
                     h.type_before,h.follow,h.pull=other.type_before,other.follow,other.pull
                     h.by+={.Manipulation}
@@ -1244,9 +1284,9 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
             h.by+={.Manipulation}
             h.pose[.Manipulation]={request.position,rotation}
             h.release=false
-            if !hold_type(state,h,l,was,s.rigids) {
+            if !hold_type(state,h,l,e,was,s.rigids) {
                 core.report(s.problems,e,"physics.joints","a manipulation does not pull it: the %d joints of Physics_Settings.joints are in use; raise joints, or remove joints",w.desc.joint_capacity)
-                hold_end(state,h,l,.Manipulation,s.rigids)
+                hold_end(state,h,l,e,.Manipulation,s.rigids)
                 continue
             }
             // A body its pose target holds heads for the manipulation once the target lets it go.
@@ -1261,7 +1301,7 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
         case .Release_Manipulation:
             if h:=held_of(state,e);h!=nil && .Manipulation in h.by {
                 h.release=true
-                if !s.playing || !h.follow || .Target in h.by || !pose_differs(sim.body_transform(w,l.body),h.pose[.Manipulation]) {hold_end(state,h,l,.Manipulation,s.rigids)}
+                if !s.playing || !h.follow || .Target in h.by || !pose_differs(sim.body_transform(w,l.body),h.pose[.Manipulation]) {hold_end(state,h,l,e,.Manipulation,s.rigids)}
             }
         }
     }
@@ -1376,39 +1416,34 @@ character_rows :: proc(s:^Sync,e:core.Entity) {
 // What steers an entity; nil when nothing does.
 @(private)
 held_of :: proc "contextless" (state:^Physics_State,e:core.Entity) -> ^Held {
-    for &h in state.held {
-        if h.entity==e {return &h}
-    }
-    return nil
+    return core.entity_map_get(&state.held,e)
 }
 
-// What steers an entity, listed now if nothing did. nil without memory.
 @(private)
 held_take :: proc(state:^Physics_State,e:core.Entity) -> ^Held {
     if h:=held_of(state,e);h!=nil {return h}
-    if _,err:=append(&state.held,Held{entity=e});err!=nil {return nil}
-    return &state.held[len(state.held)-1]
+    h,_:=core.entity_map_put(&state.held,e,Held{})
+    return h
 }
 
-// Whether what holds the body makes it kinematic: a following pose target or manipulation, or a section.
 @(private)
 held_kinematic :: proc "contextless" (h:Held) -> bool {return .Target in h.by || .Section in h.by || .Manipulation in h.by && h.follow}
 
 // A source lets go.
 @(private)
-hold_end :: proc(state:^Physics_State,h:^Held,l:^Link,source:Hold_Source,rigids:^core.Table(Rigid_Body,.Read)) {
+hold_end :: proc(state:^Physics_State,h:^Held,l:^Link,e:core.Entity,source:Hold_Source,rigids:^core.Table(Rigid_Body,.Read)) {
     if source not_in h.by {return}
     was:=held_kinematic(h^)
     h.by-={source}
     if source==.Manipulation {h.release=false}
-    hold_type(state,h,l,was,rigids)
+    hold_type(state,h,l,e,was,rigids)
 }
 
 // Gives the body the type its holds ask (was: whether they held it as kinematic before) and the spring of a
 // manipulation that pulls. Held as kinematic, it keeps the type it had; let go, it has its own again: moving
 // as it was when it is dynamic, else at rest. false when no joint is left for the spring.
 @(private)
-hold_type :: proc(state:^Physics_State,h:^Held,l:^Link,was:bool,rigids:^core.Table(Rigid_Body,.Read)) -> bool {
+hold_type :: proc(state:^Physics_State,h:^Held,l:^Link,e:core.Entity,was:bool,rigids:^core.Table(Rigid_Body,.Read)) -> bool {
     w:=&state.world
     if l.kind==.Character {
         sim.character_set_held(w,l.character,.Section in h.by)
@@ -1420,7 +1455,7 @@ hold_type :: proc(state:^Physics_State,h:^Held,l:^Link,was:bool,rigids:^core.Tab
         h.type_before=sim.body_type(w,l.body)
         sim.body_set_type(w,l.body,.Kinematic)
     } else if was && !now {
-        rigid,has_rigid:=core.get(rigids,h.entity)
+        rigid,has_rigid:=core.get(rigids,e)
         type:=l.kind==.Proxy?h.type_before:(has_rigid?rigid.type:Body_Type.Static)
         if type!=.Dynamic {sim.body_set_velocity(w,l.body,{},{})}
         sim.body_set_type(w,l.body,type)
