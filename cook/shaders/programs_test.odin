@@ -118,7 +118,7 @@ float4 main() : SV_Target {
 `)
     fixture_write(t,f.project,"provider/active_fields.slang","float signal;\n")
     provider:=path_join(f.project,"provider",allocator=context.temp_allocator)
-    inputs:=[]Generated_Surface{{"generated_a",a},{"generated_b",b}}
+    inputs:=[]Generated_Program{{"generated_a",a},{"generated_b",b}}
     sources:=[]Source{{"provider",provider}}
     root:=path_clean(ENGINE_ROOT,context.temp_allocator)
     include:=path_join(f.output,"include",allocator=context.temp_allocator)
@@ -551,6 +551,113 @@ the_probe_of_a_surface_program_says_its_derivatives_and_what_it_reads :: proc(t:
             testing.expectf(t,found && program.reads==c.reads && program.vertex.reads==c.vertex_reads,"%s reads %v and its vertex %v, not %v and %v",c.name,c.reads,c.vertex_reads,program.reads,program.vertex.reads)
         }
     }
+}
+
+@(test)
+generated_vfx_programs_compile_independent_attributes_and_stages :: proc(t:^testing.T) {
+    f:Programs_Fixture
+    if !programs_fixture(t,&f) {return}
+    defer runner_close(&f.runner)
+    a:=`//! mirai vfx Shared
+//! resource effect surface
+//! stage alter over particles
+namespace Shared {
+struct Parameters {float amount;};
+struct Attributes {float value;};
+void initialize(Mirai_Vfx_Context c,Parameters p,inout Mirai_Vfx_Particle v,inout Attributes a) {
+    a.value=p.amount+float(effect);
+}
+void update(Mirai_Vfx_Context c,Parameters p,inout Mirai_Vfx_Particle v,inout Attributes a) {
+    a.value+=p.amount;
+}
+void alter(Mirai_Vfx_Context c,Parameters p,inout Mirai_Vfx_Particle v,inout Attributes a) {
+    a.value+=2.0;
+}
+void render(Mirai_Vfx_Context c,Parameters p,Mirai_Vfx_Particle v,Attributes a,
+            inout Mirai_Vfx_Visual out_v) {out_v.size=a.value;}
+}
+`
+    b:=`//! mirai vfx Shared
+//! resource births_channel channel
+//! resource effect surface
+//! stage change over particles
+namespace Shared {
+struct Parameters {uint units;};
+struct Attributes {uint ticks;float gain;};
+void initialize(Mirai_Vfx_Context c,Parameters p,inout Mirai_Vfx_Particle v,inout Attributes a) {
+    a.ticks=p.units+effect;
+    a.gain=4.0;
+}
+void update(Mirai_Vfx_Context c,Parameters p,inout Mirai_Vfx_Particle v,inout Attributes a) {
+    a.ticks+=1u;
+}
+void change(Mirai_Vfx_Context c,Parameters p,inout Mirai_Vfx_Particle v,inout Attributes a) {
+    a.gain*=2.0;
+}
+void render(Mirai_Vfx_Context c,Parameters p,Mirai_Vfx_Particle v,Attributes a,
+            inout Mirai_Vfx_Visual out_v) {out_v.size=a.gain*float(a.ticks);}
+}
+`
+    fixture_write(t,f.project,"shaders/particle_step.comp.slang",`//! per vfx program
+#define PARTICLES_WRITABLE
+[[vk::binding(0,0)]] RWByteAddressBuffer particle_data;
+[[vk::binding(1,0)]] RWStructuredBuffer<float> sizes;
+#include "vfx_programs.slang"
+[shader("compute")][numthreads(1,1,1)] void main(uint3 thread:SV_DispatchThreadID) {
+    float4 packed[16];
+    packed[0]=float4(1.0);
+    Mirai_Vfx_Context ctx=(Mirai_Vfx_Context)0;
+    Mirai_Vfx_Particle value=(Mirai_Vfx_Particle)0;
+    Mirai_Vfx_Visual visual=(Mirai_Vfx_Visual)0;
+    uint attr=thread.x*16;
+    mirai_vfx_initialize(0,packed,attr,ctx,value);
+    mirai_vfx_particle_stage(0,0,packed,attr,ctx,value);
+    mirai_vfx_update(0,packed,attr,ctx,value);
+    mirai_vfx_render(0,packed,attr,ctx,value,visual);
+    sizes[thread.x]=visual.size;
+}
+`)
+    root:=path_clean(ENGINE_ROOT,context.temp_allocator)
+    val,found:=tool_find(root,.Spirv_Val,context.temp_allocator)
+    if !found {log.warn("spirv-val is not installed");return}
+    inputs:=[]Generated_Program{{"particle_a",a},{"particle_b",b}}
+    catalog,problem:=programs_generate(&f.runner,root,f.project,f.output,f.slangc,f.version,
+        f.cache,allocator=context.temp_allocator,generated=inputs)
+    testing.expect(t,problem=="" && len(catalog.refused)==0,
+        strings.join(catalog.refused," | ",context.temp_allocator) if problem=="" else problem)
+    if problem!="" || len(catalog.refused)>0 {return}
+    stage_folder:=path_join(f.project,"shaders",allocator=context.temp_allocator)
+    stage_cache:=path_join(f.project,"cache",allocator=context.temp_allocator)
+    g:=Generation{root=root,project=f.project,runner=&f.runner,backends={.Vulkan},
+        tests_folder=stage_folder,shared=stage_cache,vfx=catalog.vfx}
+    g.tools[.Slangc],g.tools[.Spirv_Val]=f.slangc,val
+    g.generated=make(map[string]bool,context.temp_allocator)
+    for input in inputs {g.generated[input.id]=true}
+    sources_init(&g.sources,context.temp_allocator)
+    include:=path_join(f.output,"include",allocator=context.temp_allocator)
+    g.includes=active_include_dirs(&g.sources,root,f.project,include,nil,context.temp_allocator)
+    strings.builder_init(&g.warnings,context.temp_allocator)
+    stages:=make([dynamic]Job,context.temp_allocator)
+    jobs_collect(&g,&stages,stage_folder,f.output,f.output,nil,context.temp_allocator,
+        collected=.Programs)
+    testing.expect_value(t,len(stages),len(inputs))
+    if len(stages)!=len(inputs) {return}
+    for input,i in inputs {
+        program,exists:=program_named(catalog,input.id)
+        testing.expect(t,exists && program.domain==.Vfx && program.source=="",input.id)
+        testing.expect_value(t,len(program.attribute_fields),i+1)
+        testing.expect_value(t,len(program.resources),i+1)
+        testing.expect_value(t,len(program.stages),1)
+        if len(program.stages)==1 {
+            testing.expect_value(t,program.stages[0].name,"alter" if i==0 else "change")
+        }
+        job:=&stages[i]
+        testing.expect(t,job.generated,job.name)
+        testing.expect_value(t,job.name,fmt.tprintf("particle_step__%s.comp",input.id))
+        job_run(&g,job,context.temp_allocator)
+        testing.expect(t,job.error=="" && job.result.staged,job.error)
+    }
+    testing.expect(t,stages[0].result.spv_hash!=stages[1].result.spv_hash)
 }
 
 @(test)
