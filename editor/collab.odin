@@ -133,6 +133,11 @@ Collab_Peer :: struct {
     connected_at:f64,
 }
 
+@(private)
+collab_editor_peer :: proc(peer:^Collab_Peer) -> bool {
+    return peer.used && (peer.joined || peer.client!=0)
+}
+
 // What a component needs to travel: its size, the fields a scene saves of it, the transient bytes that stay local and its Entity fields.
 @(private)
 Collab_Table :: struct {
@@ -451,7 +456,7 @@ collab_leave :: proc(s:^Session) {
         bye:=[1]u8{u8(Collab_Message.Reject)}
         if st.role==.Host {
             for &peer,i in st.peers {
-                if i!=0 && peer.joined {
+                if i!=0 && collab_editor_peer(&peer) {
                     wire.message_send(&st.host,peer.connection,share.CONTROL_CHANNEL,bye[:])
                 }
             }
@@ -571,7 +576,7 @@ collab_broadcast :: proc(st:^Collab_State,bytes:[]u8,except:int=-1) {
         return
     }
     for &peer,i in st.peers {
-        if i==0 || !peer.used || !peer.joined || i==except {continue}
+        if i==0 || i==except || !collab_editor_peer(&peer) {continue}
         collab_queue(&peer,bytes)
     }
 }
@@ -737,7 +742,7 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         layout:=serial.read_u32(&r)
         name:=serial.read_string(&r)
         client:=serial.read_u64(&r)
-        if r.failed {return}
+        if r.failed || client==0 {return}
         if layout!=st.layout {
             wire.host_disconnect(&st.host,st.peers[from].connection,.Denied_Version)
             return
@@ -746,7 +751,7 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         // the connection it left behind goes, and with it what it selected.
         from:=from
         for &other,i in st.peers {
-            if i==0 || i==from || !other.used || other.client!=client || client==0 {continue}
+            if i==0 || i==from || !other.used || other.client!=client {continue}
             wire.host_disconnect(&st.host,other.connection,.Replaced)
             collab_peer_free(&other)
             other=st.peers[from]
@@ -776,7 +781,7 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         ready:=[1]u8{u8(Collab_Message.Ready)}
         collab_queue(&st.peers[0],ready[:])
     case .Ready:
-        if st.role!=.Host || from<0 {return}
+        if st.role!=.Host || from<0 || st.peers[from].client==0 {return}
         st.peers[from].joined=true
         collab_roster_send(st)
     case .Edit:
@@ -906,7 +911,7 @@ collab_roster_send :: proc(st:^Collab_State) {
         serial.write_string(&w,string(peer.name[:peer.name_length]))
     }
     for &peer,i in st.peers {
-        if i!=0 && peer.used && peer.joined {collab_queue(&peer,serial.writer_bytes(&w))}
+        if i!=0 && collab_editor_peer(&peer) {collab_queue(&peer,serial.writer_bytes(&w))}
     }
 }
 
