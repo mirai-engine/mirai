@@ -34,6 +34,7 @@ Content_Library_Root :: struct {
 Content_Package :: struct {
     root:int,       // of Content_Libraries.roots
     id:base.Asset_Id,
+    manifest:store.Hash,
     name:string,
     folder,path:string,  // catalog folder and path in the browser
     label:string,   // its name, with where its source was when another of the root has that name
@@ -89,7 +90,7 @@ content_library_listing :: proc(local:[]Library_Package,peers:[]Content_Peer_Lis
     if machine {append(&roots,Content_Library_Root{peer=-1,name="This machine"})}
     for &p in local {
         if !machine {continue}
-        entry:=Content_Package{root=0,id=p.id,name=strings.clone(p.name,allocator),
+        entry:=Content_Package{root=0,id=p.id,manifest=p.manifest,name=strings.clone(p.name,allocator),
             folder=strings.clone(content_package_parent(p.catalog_path),allocator),
             here=len(p.assets)>0,built=true}
         entry.assets=make([]Library_Asset,len(p.assets),allocator)
@@ -113,7 +114,7 @@ content_library_listing :: proc(local:[]Library_Package,peers:[]Content_Peer_Lis
         append(&roots,Content_Library_Root{peer=listing.peer,name=strings.clone(listing.name,allocator)})
         for &p in listing.list {
             if here[p.id] {continue}
-            entry:=Content_Package{root=root,id=p.id,name=strings.clone(p.name,allocator),
+            entry:=Content_Package{root=root,id=p.id,manifest=p.manifest,name=strings.clone(p.name,allocator),
                 folder=strings.clone(content_package_parent(p.catalog_path),allocator),
                 bytes=p.bytes,here=p.here,built=p.built}
             entry.assets=make([]Library_Asset,len(p.assets),allocator)
@@ -336,6 +337,19 @@ content_library_root_of :: proc(c:^Content,library:i32) -> int {
     return -1
 }
 
+@(private)
+content_library_folder_packages :: proc(c:^Content,library:i32,folder:string) -> []base.Asset_Id {
+    root:=content_library_root_of(c,library)
+    if root<0 || folder=="" {return nil}
+    ids:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    for &p in c.libraries.packages {
+        if p.root==root && (p.folder==folder || asset_path_inside(p.folder,folder)) {
+            append(&ids,p.id)
+        }
+    }
+    return ids[:]
+}
+
 // A package taken from a peer moves into This machine; keep its folder open.
 @(private)
 content_library_restore :: proc(c:^Content) {
@@ -469,7 +483,7 @@ content_package_item :: proc(s:^Session,card:Content_Card,group:u64,cell:f32,dep
             stroke,stroke_width:=asset_frame_edge(ctx,it.hot,selected)
             asset_frame(s,cell,CONTENT_FRAME,stroke,stroke_width,quad,icon,color,kind)
             if content_shows_names(c.view) {content_name(ctx,card.name,selected,cell,names)}
-            if ui.box(ctx,{width=ui.FIT,height=ui.FIT,radius=2,fill=ui.tone(ctx,"panel"),float={to=.Parent,anchor=.Top_Right,pivot=.Top_Right,offset={-3,3}}}) {
+            if ui.box(ctx,content_library_badge(ctx)) {
                 content_package_button(s,p,key,item,added)
             }
         }
@@ -489,11 +503,34 @@ content_package_button :: proc(s:^Session,p:^Content_Package,key:u64,item:base.A
         ui.icon(ctx,.Check,ui.tone(ctx,"text_muted"),12)
         return
     }
-    disabled:=s.mode!=.Edit || content_package_busy(s)
     tip:="Add folder to project" if item=={} else "Add asset to project"
-    if ui.button(ctx,ui.id(ctx,"content_package_add",int(key)),{icon=.Plus,tip=tip,variant="ghost",width=20,height=20,icon_size=12,disabled=disabled}).clicked {
+    if content_add_button(s,ui.id(ctx,"content_package_add",int(key)),tip) {
         content_package_add(s,i32(s.content.libraries.roots[p.root].peer+1),p.id,content_create_place(s.content),item)
     }
+}
+
+@(private)
+content_library_folder_button :: proc(s:^Session,folder_id:ui.Id,library:i32,folder:string) {
+    ctx:=s.gui.ctx
+    key:=content_library_folder_group(int(library),folder)
+    id:=ui.id_derive(ctx,folder_id,"content_library_folder_add",int(key))
+    if !content_add_button(s,id,"Add folder to project") {return}
+    c:=s.content
+    ids:=content_library_folder_packages(c,library,folder)
+    if len(ids)>0 {content_packages_add(s,library,ids,content_create_place(c),folder)}
+}
+
+@(private)
+content_library_badge :: proc(ctx:^ui.Context) -> ui.Box {
+    return {width=ui.FIT,height=ui.FIT,radius=2,fill=ui.tone(ctx,"panel"),
+        float={to=.Parent,anchor=.Top_Right,pivot=.Top_Right,offset={-3,3}}}
+}
+
+@(private)
+content_add_button :: proc(s:^Session,id:ui.Id,tip:string) -> bool {
+    disabled:=s.mode!=.Edit || content_package_busy(s)
+    return ui.button(s.gui.ctx,id,{icon=.Plus,tip=tip,variant="ghost",
+        width=20,height=20,icon_size=12,disabled=disabled}).clicked
 }
 
 // What a click, a press and the right button do on a package: select it,

@@ -135,6 +135,85 @@ adding_another_asset_keeps_the_existing_pin_and_its_dependencies :: proc(t:^test
     testing.expect(t,!os.exists(fmt.tprintf("%s/assets/elsewhere",game)))
 }
 
+@(test)
+adding_packages_together_publishes_only_after_all_are_ready :: proc(t:^testing.T) {
+    top:=base.test_folder(t,"library-add-many")
+    if top=="" {return}
+    context.user_ptr=prefab.import_world(t)
+    downloads:=fmt.tprintf("%s/downloads",top)
+    game:=fmt.tprintf("%s/game",top)
+    assets:=fmt.tprintf("%s/assets",game)
+    os.make_directory_all(downloads)
+    os.make_directory_all(assets)
+    s:=test_store(t,fmt.tprintf("%s/store",top))
+    if s==nil {return}
+    options:=Library_Options{store=s,root=game,plugins=test_library}
+    first,first_ok:=ingested(t,box_source(downloads,"first.gltf","Wood","Paint"),options)
+    second,second_ok:=ingested(t,box_source(downloads,"second.gltf","Iron","Brass"),options)
+    if !first_ok || !second_ok {return}
+    unavailable:=asset.Package{id={1,7},name="Unavailable"}
+    missing_manifest,put_error:=asset.package_put(s,&unavailable)
+    if !testing.expect_value(t,put_error,asset.Error.None) {return}
+    missing:=project_add_many(game,{{first.manifest,"Theme/First"},{missing_manifest,"Theme"}},options,context.temp_allocator)
+    testing.expect(t,len(missing.missing)==1 && missing.packages==0,"the unavailable build is reported")
+    testing.expect(t,!os.exists(asset.package_file(game,first.package_id)),"no manifest was published")
+    testing.expect(t,!os.exists(fmt.tprintf("%s/%s",game,asset.PACKAGES_FILE)))
+    testing.expect(t,len(files_of(assets))==0,"no document was written before all builds were available")
+
+    first_package,read_error:=asset.package_get(s,first.manifest,context.temp_allocator)
+    if !testing.expect_value(t,read_error,asset.Error.None) {return}
+    selected:base.Asset_Id
+    for part in first_package.assets {
+        if part.kind==asset.KIND_MATERIAL && part.name=="Wood" {selected=part.id}
+    }
+    if !testing.expect(t,selected!={}) {return}
+    if !report_clean(t,project_add(game,first.manifest,"Previously",{selected},options,context.temp_allocator)) {return}
+    before:=files_of(assets)
+    registry:asset.Registry
+    asset.registry_init(&registry,assets,"",context.temp_allocator)
+    asset.registry_scan(&registry)
+    selected_file,found:=asset.registry_find(&registry,selected)
+    if !testing.expect(t,found) {return}
+    selected_path:=asset.registry_file_path(&registry,selected_file.path,context.temp_allocator)
+    before_material,file_error:=os.read_entire_file(selected_path,context.temp_allocator)
+    if !testing.expect_value(t,file_error,nil) {return}
+    revised,revised_ok:=ingested(t,box_source(downloads,"first.gltf","Wood","Paint","0.75"),options)
+    if !revised_ok || !testing.expect(t,revised.manifest!=first.manifest && revised.package_id==first.package_id) {return}
+    requests:=[]Package_Add{{revised.manifest,"Theme/First"},{second.manifest,"Theme/Second"}}
+    unwritable:=asset.package_file(game,second.package_id)
+    if !testing.expect_value(t,os.make_directory(unwritable),nil) {return}
+    refused:=project_add_many(game,requests,options,context.temp_allocator)
+    testing.expect(t,len(refused.failures)>0 && refused.packages==0,"a manifest write failed")
+    testing.expect(t,os.is_dir(unwritable),"the failed addition kept the preexisting directory")
+    after:=files_of(assets)
+    testing.expect(t,len(before)==len(after),"the failed addition left no new documents")
+    for path in before {testing.expect(t,after[path],path)}
+    after_material:[]u8
+    after_material,file_error=os.read_entire_file(selected_path,context.temp_allocator)
+    testing.expect(t,file_error==nil && slice.equal(before_material,after_material),"the existing material was restored")
+    list,_,load_error:=asset.packages_load(game,context.temp_allocator)
+    if !testing.expect(t,load_error==.None && len(list.packages)==1) {return}
+    testing.expect(t,list.packages[0].manifest==first.manifest && len(list.packages[0].assets)==1)
+    _,restored_error:=asset.package_load(s,game,&list.packages[0],context.temp_allocator)
+    testing.expect_value(t,restored_error,asset.Error.None)
+    if !testing.expect_value(t,os.remove(unwritable),nil) {return}
+
+    added:=project_add_many(game,requests,options,context.temp_allocator)
+    if !report_clean(t,added) {return}
+    after_material,file_error=os.read_entire_file(selected_path,context.temp_allocator)
+    testing.expect(t,file_error==nil && !slice.equal(before_material,after_material),"the revised material was published")
+    list,_,load_error=asset.packages_load(game,context.temp_allocator)
+    if !testing.expect(t,load_error==.None && added.packages==2 && len(list.packages)==2) {return}
+    for entry in list.packages {
+        testing.expect(t,len(entry.assets)==0,"the folder adds the whole package")
+        if entry.id==first.package_id {
+            testing.expect(t,entry.folder=="Previously","expanding the existing pin keeps its destination")
+        } else {
+            testing.expect(t,entry.id==second.package_id && entry.folder=="Theme/Second")
+        }
+    }
+}
+
 // A project pins its packages by manifest: a peer with the project and none
 // of its sources fetches their builds from a store that has them, lists and
 // loads them, and imports nothing. Without such a store it says, for each
