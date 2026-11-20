@@ -59,7 +59,7 @@ COLLAB_JOINED :: u8(4)  // presence: a guest that plays the game the host serves
 COLLAB_OFFER_BYTES :: 64 // what the presence of the host carries of the game it serves (Play_Provider.offer)
 
 Collab_Role :: enum u8 {None,Host,Guest}
-// Updating: a guest brings its folder to the host's snapshot before it enters the scene.
+// Updating: the host prepares its first offer, or the guest brings its folder to that offer.
 Collab_Phase :: enum u8 {Idle,Connecting,Updating,Syncing,Joined,Ended}
 
 Collab_Error :: enum u8 {
@@ -72,7 +72,6 @@ Collab_Error :: enum u8 {
     No_Random,   // the system gives no secure random bytes, which the session is sealed with
     No_Store,    // the editor has no store, where the project travels through
     No_Project,  // the editor has no project to share or to join into
-    Project,     // the project could not be offered: Collab.problem says why
 }
 
 collab_error_text :: proc(error:Collab_Error) -> string {
@@ -86,7 +85,6 @@ collab_error_text :: proc(error:Collab_Error) -> string {
     case .No_Random: return "this system gives no secure random bytes to seal the session with"
     case .No_Store:  return "the editor has no store, which the project travels through: start it with --store <folder>"
     case .No_Project: return "the editor has no project: open one, or join into a folder"
-    case .Project:   return "the project could not be offered"
     }
     return ""
 }
@@ -214,6 +212,8 @@ Collab_State :: struct {
     node:^share.Node,  // the project and the library over the connections of the session (collab_project.odin)
     join:^Collab_Join, // a guest: what brings its folder to the host's snapshot
     // The host: its project offered, and what changed since (collab_host_changes).
+    offer:^Collab_Offer,
+    offer_store:store.Store,
     offered:store.Hash,
     offers:int,        // new snapshots offered during the session
     watch:platform.Watch,
@@ -239,7 +239,6 @@ Collab :: struct {
     join_length:int,
     joining:bool,
     error:Collab_Error,
-    problem:[256]u8, // of the error Project
     client:u64,   // who this editor is in every session: one that joins again takes its place back
     pings:[COLLAB_PEERS]Collab_Ping, // the last of each editor, by its place in the session; this one alone is 0
 }
@@ -291,7 +290,7 @@ collab_summary :: proc(s:^Session) -> string {
     if st==nil || st.role==.None {return "none"}
     switch st.role {
     case .None: return "none"
-    case .Host: return "host"
+    case .Host: return "host preparing" if st.phase==.Updating else "host"
     case .Guest:
         switch st.phase {
         case .Idle:       return "guest"
@@ -405,13 +404,14 @@ collab_host :: proc(s:^Session,port:int,name:string,transport:=wire.Transport{})
     if !made {return .No_Random}
     st,error:=collab_start(s,.Host,port>0?port:COLLAB_PORT,name,{key=invite},transport=transport)
     if error!=.None {return error}
-    if problem:=collab_project_offer(s,st);problem!="" {
-        collab_destroy(s)
-        c:=collab_of(s)
-        base.text_set(c.problem[:],problem)
-        return .Project
-    }
+    st.phase=.Updating
     collab_watch_start(s,st)
+    st.mapping_on=!st.virtual && wire.mapping_start(&st.mapping,u16(st.port))
+    return .None
+}
+
+@(private)
+collab_host_ready :: proc(s:^Session,st:^Collab_State) {
     st.phase=.Joined
     st.self=0
     c:=collab_of(s)
@@ -419,9 +419,7 @@ collab_host :: proc(s:^Session,port:int,name:string,transport:=wire.Transport{})
     st.peers[0].name_length=copy(st.peers[0].name[:],string(c.name[:c.name_length]))
     st.peers[0].orbit=s.viewport.orbit
     collab_journal_reset(s,st)
-    st.mapping_on=!st.virtual && wire.mapping_start(&st.mapping,u16(st.port))
     collab_codes_update(st)
-    return .None
 }
 
 // Enters the session of another editor with the code of its invitation:
@@ -610,14 +608,16 @@ collab_update :: proc(s:^Session) {
     st:=collab_state(s)
     if st==nil || st.role==.None || st.phase==.Ended {return}
     now:=collab_now(st)
-    if st.role==.Host && st.mapping_on && int(now)%2==0 {collab_codes_update(st)}
+    if st.role==.Host && st.phase==.Joined && st.mapping_on && int(now)%2==0 {
+        collab_codes_update(st)
+    }
     for command in wire.host_poll(&st.host) {
         if share.node_command(st.node,&st.host,command) {continue}
         collab_command(s,st,command,now)
         if st.phase==.Ended {return}
     }
     collab_project_update(s,st,now)
-    if st.phase==.Ended {return}
+    if st.phase==.Ended || st.role==.Host && st.phase==.Updating {return}
     // The scene of the document was replaced: the host shares the new one.
     if st.epoch!=s.edits.epoch {
         st.epoch=s.edits.epoch

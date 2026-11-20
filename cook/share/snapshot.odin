@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "core:sync"
 import "core:time"
 import importer "mirai:cook/import"
 import "mirai:project"
@@ -85,11 +86,13 @@ Item :: struct {
 
 // Puts the folders of snap in s, the files' objects being there already:
 // the address of its root. Each folder put is added to folders.
-snapshot_put :: proc(s:^store.Store,snap:^Snapshot,folders:^[dynamic]store.Hash=nil) -> (root:store.Hash,error:Snapshot_Error,store_error:store.Error) {
+snapshot_put :: proc(
+    s:^store.Store,snap:^Snapshot,folders:^[dynamic]store.Hash=nil,cancel:^bool=nil,
+) -> (root:store.Hash,error:Snapshot_Error,store_error:store.Error) {
     if !name_valid(snap.name) {return {},.Name,.None}
     if len(snap.entries)>FILES_MAX {return {},.Too_Large,.None}
     built:Item
-    built,error,store_error=folder_put(s,snap.entries,0,snap.name,folders,0)
+    built,error,store_error=folder_put(s,snap.entries,0,snap.name,folders,0,cancel)
     if error==.None && store_error==.None {store_error=store.commit(s)}
     return built.address,error,store_error
 }
@@ -97,7 +100,11 @@ snapshot_put :: proc(s:^store.Store,snap:^Snapshot,folders:^[dynamic]store.Hash=
 // The folder of entries, all under the same path of prefix bytes (and a
 // slash), with its subfolders put first.
 @(private)
-folder_put :: proc(s:^store.Store,entries:[]Entry,prefix:int,name:string,folders:^[dynamic]store.Hash,depth:int) -> (folder:Item,error:Snapshot_Error,store_error:store.Error) {
+folder_put :: proc(
+    s:^store.Store,entries:[]Entry,prefix:int,name:string,folders:^[dynamic]store.Hash,
+    depth:int,cancel:^bool,
+) -> (folder:Item,error:Snapshot_Error,store_error:store.Error) {
+    if offer_cancelled(cancel) {return {},.None,.Io}
     if depth>DEPTH_MAX {return {},.Depth,.None}
     items:=make([dynamic]Item,context.temp_allocator)
     for i:=0;i<len(entries); {
@@ -113,7 +120,7 @@ folder_put :: proc(s:^store.Store,entries:[]Entry,prefix:int,name:string,folders
         j:=i+1
         for j<len(entries) && strings.has_prefix(entries[j].path,under) {j+=1}
         child:Item
-        child,error,store_error=folder_put(s,entries[i:j],prefix+slash+1,"",folders,depth+1)
+        child,error,store_error=folder_put(s,entries[i:j],prefix+slash+1,"",folders,depth+1,cancel)
         if error!=.None || store_error!=.None {return}
         child.name=rest[:slash]
         append(&items,child)
@@ -545,7 +552,9 @@ file_address :: proc(path:string) -> (address:store.Hash,size:i64,ok:bool) {
 // Puts the file at path in s as an object, read once, its chunks hashed and
 // appended by jobs of worker when given: its address and the bytes put, which
 // are those the file had when the read reached its end.
-file_put_object :: proc(s:^store.Store,path:string,worker:=jobs.Worker_Ref{}) -> (address:store.Hash,size:i64,error:store.Error) {
+file_put_object :: proc(
+    s:^store.Store,path:string,worker:=jobs.Worker_Ref{},cancel:^bool=nil,
+) -> (address:store.Hash,size:i64,error:store.Error) {
     p:=store.put_begin(s,nil,worker) or_return
     Put_Read :: struct {p:^store.Put,error:store.Error}
     put_read:=Put_Read{p=&p}
@@ -554,7 +563,7 @@ file_put_object :: proc(s:^store.Store,path:string,worker:=jobs.Worker_Ref{}) ->
         r:=(^Put_Read)(data)
         r.error=store.put_write(r.p,bytes)
         return r.error==.None
-    },&put_read)
+    },&put_read,cancel)
     if !ok {
         store.put_abandon(&p)
         return {},0,put_read.error!=.None?put_read.error:.Io
@@ -567,7 +576,9 @@ file_put_object :: proc(s:^store.Store,path:string,worker:=jobs.Worker_Ref{}) ->
 // READ_BYTES, up to its end: the bytes given. False when it does not read or
 // each refuses a piece.
 @(private)
-file_stream :: proc(path:string,each:proc(data:rawptr,bytes:[]u8) -> bool,data:rawptr) -> (size:i64,ok:bool) {
+file_stream :: proc(
+    path:string,each:proc(data:rawptr,bytes:[]u8) -> bool,data:rawptr,cancel:^bool=nil,
+) -> (size:i64,ok:bool) {
     file,open_error:=os.open(path)
     if open_error!=nil {return}
     defer os.close(file)
@@ -575,6 +586,7 @@ file_stream :: proc(path:string,each:proc(data:rawptr,bytes:[]u8) -> bool,data:r
     if make_error!=nil {return}
     defer delete(buffer,context.temp_allocator)
     for {
+        if offer_cancelled(cancel) {return}
         n,read_error:=os.read(file,buffer)
         if n>0 {
             if !each(data,buffer[:n]) {return}
@@ -584,6 +596,12 @@ file_stream :: proc(path:string,each:proc(data:rawptr,bytes:[]u8) -> bool,data:r
         if read_error!=nil {return}
     }
 }
+
+@(private)
+OFFER_CANCELLED :: "the project offer was stopped"
+
+@(private)
+offer_cancelled :: proc(cancel:^bool) -> bool {return cancel!=nil && sync.atomic_load(cancel)}
 
 Take_Report :: struct {
     files:int,
@@ -596,7 +614,10 @@ Take_Report :: struct {
 // the index knows unchanged and the store has is not read again), then its
 // folders; address is its root. Each folder put is added to folders. Jobs of
 // worker, when given, hash and append the chunks of a file. In allocator.
-snapshot_take :: proc(s:^store.Store,root,name:string,folders:^[dynamic]store.Hash=nil,worker:=jobs.Worker_Ref{},allocator:=context.allocator) -> (snap:Snapshot,address:store.Hash,report:Take_Report,error:string) {
+snapshot_take :: proc(
+    s:^store.Store,root,name:string,folders:^[dynamic]store.Hash=nil,
+    worker:=jobs.Worker_Ref{},allocator:=context.allocator,cancel:^bool=nil,
+) -> (snap:Snapshot,address:store.Hash,report:Take_Report,error:string) {
     index:=index_load(root,allocator)
     // The root read once: each file then asks only what this value knows.
     store.chunk_has(s,{})
@@ -605,6 +626,7 @@ snapshot_take :: proc(s:^store.Store,root,name:string,folders:^[dynamic]store.Ha
     todo:=make([dynamic]string,context.temp_allocator)
     append(&todo,"")
     for next:=0;next<len(todo);next+=1 {
+        if offer_cancelled(cancel) {return {},{},{},OFFER_CANCELLED}
         folder:=todo[next]
         listed,list_error:=os.read_all_directory_by_path(folder==""?root:project.path(root,folder,allocator=context.temp_allocator),context.temp_allocator)
         if list_error!=nil {
@@ -612,6 +634,7 @@ snapshot_take :: proc(s:^store.Store,root,name:string,folders:^[dynamic]store.Ha
             continue
         }
         for info in listed {
+            if offer_cancelled(cancel) {return {},{},{},OFFER_CANCELLED}
             relative:=folder==""?strings.clone(info.name,context.temp_allocator):fmt.tprintf("%s/%s",folder,info.name)
             if !project.own_path(relative) {continue}
             #partial switch info.type {
@@ -627,7 +650,7 @@ snapshot_take :: proc(s:^store.Store,root,name:string,folders:^[dynamic]store.Ha
                 append(&skipped,fmt.aprintf("%s: some system cannot write this name (a device of Windows, a colon, a name that ends in a dot or a space): rename it",relative,allocator=allocator))
                 continue
             }
-            e,put,put_error:=entry_take(s,&index,root,relative,info,worker,allocator)
+            e,put,put_error:=entry_take(s,&index,root,relative,info,worker,allocator,cancel)
             if put_error!=.None {
                 if put_error==.Missing {continue}
                 append(&skipped,fmt.aprintf("%s: it could not be put in the store at %s (%v): free space there, or close what holds the file",relative,s.root,put_error,allocator=allocator))
@@ -638,6 +661,7 @@ snapshot_take :: proc(s:^store.Store,root,name:string,folders:^[dynamic]store.Ha
             report.bytes+=e.size
         }
     }
+    if offer_cancelled(cancel) {return {},{},{},OFFER_CANCELLED}
     slice.sort_by(entries[:],proc(a,b:Entry) -> bool {return a.path<b.path})
     snap={name=name,entries=entries[:]}
     report.files,report.skipped=len(entries),skipped[:]
@@ -646,7 +670,8 @@ snapshot_take :: proc(s:^store.Store,root,name:string,folders:^[dynamic]store.Ha
     }
     tree_error:Snapshot_Error
     put_error:store.Error
-    address,tree_error,put_error=snapshot_put(s,&snap,folders)
+    address,tree_error,put_error=snapshot_put(s,&snap,folders,cancel)
+    if offer_cancelled(cancel) {return {},{},{},OFFER_CANCELLED}
     switch {
     case tree_error==.Too_Large:
         return snap,{},report,fmt.aprintf("%s has more files than a snapshot holds: at most %d, at most %d in one folder, folders at most %d deep",root,FILES_MAX,FOLDER_ENTRIES_MAX,DEPTH_MAX,allocator=allocator)
@@ -667,7 +692,10 @@ snapshot_take :: proc(s:^store.Store,root,name:string,folders:^[dynamic]store.Ha
 // the object, also when the file changed after it was listed; the index learns
 // it only when the file still has the size and time it was listed with.
 @(private)
-entry_take :: proc(s:^store.Store,index:^Index,root,relative:string,info:os.File_Info,worker:=jobs.Worker_Ref{},allocator:=context.allocator) -> (e:Entry,put:bool,error:store.Error) {
+entry_take :: proc(
+    s:^store.Store,index:^Index,root,relative:string,info:os.File_Info,
+    worker:=jobs.Worker_Ref{},allocator:=context.allocator,cancel:^bool=nil,
+) -> (e:Entry,put:bool,error:store.Error) {
     path:=project.path(root,relative,allocator=context.temp_allocator)
     modified:=time.to_unix_nanoseconds(info.modification_time)
     e=Entry{path=strings.clone(relative,allocator),size=info.size,executable=info.mode&os.Permissions_Execute_All!={}}
@@ -675,7 +703,7 @@ entry_take :: proc(s:^store.Store,index:^Index,root,relative:string,info:os.File
         e.address=k.address
         return
     }
-    e.address,e.size=file_put_object(s,path,worker) or_return
+    e.address,e.size=file_put_object(s,path,worker,cancel) or_return
     if after,stat_error:=os.stat(path,context.temp_allocator);stat_error==nil && after.size==e.size && after.size==info.size && time.to_unix_nanoseconds(after.modification_time)==modified {
         index_learn(index,relative,after,e.address)
     }

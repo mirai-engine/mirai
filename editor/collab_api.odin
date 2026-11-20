@@ -94,7 +94,12 @@ Api_Collab_Status :: struct {
 
 @(private)
 collab_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="collab.host",summary="Shares the scene: other editors connect to this one with the code of the invitation it gives.",params=type_info_of(Api_Collab_Host_Params),result=type_info_of(Api_Collab_Status),run=api_collab_host})
+    api_register(s,st,{
+        name="collab.host",
+        summary="Prepares a share. Poll collab.status for the invitation or the Ended phase.",
+        params=type_info_of(Api_Collab_Host_Params),result=type_info_of(Api_Collab_Status),
+        run=api_collab_host,
+    })
     api_register(s,st,{name="collab.join",summary="Enters the session of another editor: first a folder is brought to the host's project (its files, then the builds of its packages from the peers), then the scene is replaced by its scene. Returns at once: poll collab.status until phase is Joined; its join says how far the folder is.",params=type_info_of(Api_Collab_Join_Params),result=type_info_of(Api_Collab_Status),flags={.Destructive},run=api_collab_join})
     api_register(s,st,{name="collab.leave",summary="Ends the session; the scene stays as it is.",result=type_info_of(Api_Collab_Status),flags={.Idempotent},run=api_collab_leave})
     api_register(s,st,{name="collab.status",summary="The session this editor shares or joined: who is in it and how others join it.",result=type_info_of(Api_Collab_Status),flags={.Read_Only},run=api_collab_status})
@@ -162,21 +167,11 @@ api_collab_join_result :: proc(j:^Collab_Join,r:^Api_Collab_Join) {
     base.text_set(r.error[:],j.error)
 }
 
-// The text of an error of collab.host or collab.join, with the problem of the project.
-@(private)
-collab_error_say :: proc(s:^Session,error:Collab_Error) -> string {
-    if error==.Project {
-        c:=collab_of(s)
-        return fmt.tprintf("%s: %s",collab_error_text(error),base.text_get(c.problem[:]))
-    }
-    return collab_error_text(error)
-}
-
 @(private)
 api_collab_host :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Collab_Host_Params)
     if error:=collab_host(s,params.port,base.text_get(params.name[:]));error!=.None {
-        api.call_fail(call,api.SERVER_ERROR,collab_error_say(s,error))
+        api.call_fail(call,api.SERVER_ERROR,collab_error_text(error))
         return
     }
     api_collab_result(s,call)
@@ -186,7 +181,8 @@ api_collab_host :: proc(s:^Session,call:^api.Call) {
 api_collab_join :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Collab_Join_Params)
     if error:=collab_join(s,base.text_get(params.invite[:]),base.text_get(params.name[:]),base.text_get(params.folder[:]));error!=.None {
-        api.call_fail(call,error==.Invite?api.INVALID_PARAMS:api.SERVER_ERROR,collab_error_say(s,error))
+        code:=api.INVALID_PARAMS if error==.Invite else api.SERVER_ERROR
+        api.call_fail(call,code,collab_error_text(error))
         return
     }
     api_collab_result(s,call)
@@ -295,7 +291,10 @@ share_build :: proc(s:^Session) {
                 }
             }
             if c.error!=.None {
-                if share_row(ctx,"Error") {ui.text(ctx,collab_error_say(s,c.error),ui.prose(ctx,ui.metric(ctx,"font_label"),ui.tone(ctx,"danger_soft")))}
+                if share_row(ctx,"Error") {
+                    ui.text(ctx,collab_error_text(c.error),
+                        ui.prose(ctx,ui.metric(ctx,"font_label"),ui.tone(ctx,"danger_soft")))
+                }
             }
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(26),gap=8,align_y=.Center}) {
                 busy:=s.mode!=.Edit
@@ -310,7 +309,9 @@ share_build :: proc(s:^Session) {
             c.error=.None
             #partial switch st.phase {
             case .Connecting: ui.label(ctx,"Connecting...",10.5,ui.tone(ctx,"text_muted"),0)
-            case .Updating:   ui.label(ctx,collab_join_text(st.join),10.5,ui.tone(ctx,"text_muted"),0)
+            case .Updating:
+                message:="Preparing the project..." if st.role==.Host else collab_join_text(st.join)
+                ui.label(ctx,message,10.5,ui.tone(ctx,"text_muted"),0)
             case .Syncing:    ui.label(ctx,"Receiving the scene...",10.5,ui.tone(ctx,"text_muted"),0)
             case .Ended:
                 if share_row(ctx,"Reason") {ui.text(ctx,st.reason,ui.prose(ctx,10.5,ui.tone(ctx,"text")))}
@@ -318,7 +319,7 @@ share_build :: proc(s:^Session) {
             // A guest updating its folder to a new snapshot of the host.
             if st.phase==.Joined && st.join!=nil && st.join.update && !st.join.finished {ui.label(ctx,collab_join_text(st.join),10.5,ui.tone(ctx,"text_muted"),0)}
             share_join_lines(s,st)
-            if st.role==.Host {
+            if st.role==.Host && st.phase==.Joined {
                 // One code joins from anywhere: a guest asks at both of its addresses.
                 share_code(s,"share_copy","Code",string(st.code[:st.code_length]),"Opening the port on the router...")
             }
