@@ -80,7 +80,7 @@ collab_error_text :: proc(error:Collab_Error) -> string {
     case .None:      return ""
     case .Busy:      return "a session is open; leave it first"
     case .Playing:   return "a game is playing; stop it first"
-    case .Invite:    return "not the code of an invitation of this Mirai: 87 characters by groups of four; copy it again"
+    case .Invite:    return "the invitation is invalid. Copy the complete code from the host"
     case .Transport: return "the port could not be opened"
     case .No_Assets: return "the project has no assets folder"
     case .No_Random: return "this system gives no secure random bytes to seal the session with"
@@ -235,7 +235,7 @@ Collab :: struct {
     // The fields of the Share popup.
     name:[COLLAB_NAME_BYTES]u8,
     name_length:int,
-    join:[2*wire.INVITE_TEXT_BYTES]u8,
+    join:[wire.INVITE_TEXT_BYTES+1]u8,
     join_length:int,
     joining:bool,
     error:Collab_Error,
