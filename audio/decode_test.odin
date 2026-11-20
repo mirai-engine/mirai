@@ -345,20 +345,21 @@ a_damaged_ogg_stream_is_cut_at_its_last_whole_page_for_every_decoder :: proc(t:^
             testing.expect_value(t,error,Error.Invalid_Data)
             refused+=1
         }
-        // The same bytes as a stream, read to their end.
-        if d,open_error:=decoder_open(damaged,context.allocator);open_error==.None {
-            block:[4096]f32
-            total:=0
-            for {
-                got:=decoder_read(&d,block[:])
-                total+=got
-                if got<len(block) {break}
+        sound,stream_error:=sound_stream(m,damaged)
+        testing.expect_value(t,stream_error,error)
+        if stream_error==.None {
+            voice:=voice_play(m,sound)
+            testing.expect(t,voice!=0)
+            block:[480*2]f32
+            for frame:=0;frame<=RATE/2 && voice_valid(m,voice);frame+=480 {
+                mixer_render(m,block[:])
+                mixer_update(m)
             }
-            testing.expect(t,total<=22050)
-            decoder_close(&d,context.allocator)
+            testing.expect(t,!voice_valid(m,voice))
+            sound_destroy(m,sound)
+            mixer_render(m,block[:])
+            mixer_update(m)
         }
-        if sound,stream_error:=sound_stream(m,damaged);stream_error==.None {sound_destroy(m,sound)}
-        mixer_update(m)
     }
     testing.expect(t,refused>0 && shorter>0)
     testing.expectf(t,intact<300,"%d damaged files decoded whole",intact)

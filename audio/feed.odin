@@ -5,9 +5,8 @@ import "core:thread"
 import "core:time"
 
 // Feeds: rings of decoded frames that a voice plays from while a decoder
-// fills them ahead. Every voice of a sound kept encoded takes a feed of the
-// pool; a streamed sound has a feed of its own, so one voice at a time plays
-// it. The decoder thread of the mixer fills them, or, without one,
+// fills them ahead. Each voice takes a feed from the pool for encoded sounds
+// or the pool for streams. The decoder thread of the mixer fills them, or, without one,
 // voice_play and mixer_update on the calling thread. The audio thread only
 // reads what was decoded: a voice whose ring is empty goes quiet until there
 // is more, and one whose first frames are not decoded yet waits for them.
@@ -34,8 +33,7 @@ Feed :: struct {
     loop_start:int, // the frame a loop goes back to
     sound:u32,    // slot of the sound it decodes
     owner:Voice,  // the voice it was handed to last; game thread
-    stream:bool,  // the feed of a stream: its decoder stays open from one play to the next
-    used:bool,    // a stream feed that belongs to a sound
+    workspace:[]u8, // stream decoder storage, grown only when the game thread loads a sound
     ring16:[]i16, // a feed of the pool: 16 bit frames, interleaved; a mono sound uses the first half
     ring32:[]f32, // a stream feed
     capacity:u64, // frames of the ring, a power of two
@@ -60,8 +58,7 @@ feed_phase_set :: #force_inline proc "contextless" (f:^Feed,phase:Feed_Phase) {
 // Readies a Free feed for a play that begins at offset. The audio thread may
 // see the voice before the decoder sees the feed: it then finds nothing to play.
 @(private)
-feed_prepare :: proc(m:^Mixer,f:^Feed,source:Decoder,sound:u32,offset,loop_start:int,loop:bool) {
-    if !f.stream {f.decoder=source}
+feed_prepare :: proc(f:^Feed,sound:u32,offset,loop_start:int,loop:bool) {
     f.offset,f.loop_start=offset,loop_start
     f.sound=sound
     sync.atomic_store_explicit(&f.loop,u32(loop),.Relaxed)
@@ -271,6 +268,8 @@ feed_voice_mix :: proc "contextless" (m:^Mixer,v:^Mix_Voice,out:[^]f32,from,to:i
     sync.atomic_store_explicit(&f.read,read+v.cursor>>32,.Release)
     v.cursor&=ONE-1
     // Waiting for the first frames of a play is not running dry.
-    if holds && mixed<to-from && !ended && write>0 {sync.atomic_add_explicit(&m.underruns,1,.Relaxed)}
+    if alive && holds && mixed<to-from && !ended && write>0 {
+        sync.atomic_add_explicit(&m.underruns,1,.Relaxed)
+    }
     return alive
 }

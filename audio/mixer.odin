@@ -35,7 +35,7 @@ Mixer_Desc :: struct {
     voice_capacity:int,   // 64 when zero
     bus_capacity:int,     // the master included; 8 when zero
     sound_capacity:int,   // 256 when zero
-    stream_capacity:int,  // sounds that are streamed; 4 when zero
+    stream_capacity:int,  // simultaneous stream feeds; up to 16 when zero
     stream_frames:int,    // frames buffered ahead for every stream, rounded up to a power of two; half a second when zero
     feed_capacity:int,    // voices that can play sounds kept encoded at once, those stolen and not yet let go included; a quarter more than voice_capacity when zero
     feed_frames:int,      // frames buffered ahead for each of them, rounded up to a power of two; two lossless blocks when zero. A lossless file of blocks longer than half of it is decoded whole when it loads
@@ -63,7 +63,7 @@ Mixer_Stats :: struct {
     voices_rejected:u64,  // voices not started: no room, and nothing of lower or equal priority to steal
     commands_dropped:u64, // requests lost because the command queue was full
     underruns:u64,        // chunks in which a voice that decodes as it plays had nothing decoded to play
-    streams_busy:u64,     // plays of a stream that was already playing
+    streams_busy:u64,     // plays refused because every stream feed was taken
     feeds_busy:u64,       // plays of a sound kept encoded refused because every feed was taken
     sounds:int,
     sound_bytes:int,      // memory the sounds hold: samples, encoded bytes and the decoders of streams
@@ -116,15 +116,16 @@ Mixer :: struct {
     bus_count:int,
     bus_shadows:[]Bus_Shadow,
     reverb_shadow:Reverb_Shadow,
-    free_feeds:[]u32,free_feed_count:int, // feeds of the pool
+    free_feeds:[]u32,free_feed_count,free_stream_count:int, // encoded first, then streams
     counters:Mixer_Stats,
     output:Output_Kind,
 
-    // Feeds: the pool first, then one per stream.
+    // Feeds: the pool for encoded sounds first, then the pool for stream voices.
     feeds:[]Feed,
     pool_feeds:int,
     feed_frames:int,
     feed_rings:[]i16,  // the rings of the pool
+    stream_rings:[]f32,
     feed_planes:[]i32, // a lossless block of a feed of the pool, being decoded
     feeder:^thread.Thread,
     feeder_wake:sync.Futex,
@@ -207,12 +208,13 @@ mixer_init :: proc(m:^Mixer,desc:Mixer_Desc) -> Error {
     voices:=desc.voice_capacity if desc.voice_capacity>0 else 64
     buses:=desc.bus_capacity if desc.bus_capacity>0 else 8
     sounds:=desc.sound_capacity if desc.sound_capacity>0 else 256
-    streams:=desc.stream_capacity if desc.stream_capacity>0 else 4
+    voice_feeds:=voices+voices/4+1
+    streams:=desc.stream_capacity if desc.stream_capacity>0 else min(voice_feeds,16)
     commands:=4
     for commands<(desc.command_capacity if desc.command_capacity>0 else 1024) {commands*=2}
     stream_frames:=CHUNK_FRAMES*4
     for stream_frames<(desc.stream_frames if desc.stream_frames>0 else m.sample_rate/2) {stream_frames*=2}
-    pool:=desc.feed_capacity if desc.feed_capacity>0 else voices+voices/4+1
+    pool:=desc.feed_capacity if desc.feed_capacity>0 else voice_feeds
     feed_frames:=CHUNK_FRAMES*4
     for feed_frames<(desc.feed_frames if desc.feed_frames>0 else LOSSLESS_BLOCK_FRAMES*2) {feed_frames*=2}
     m.feed_frames=feed_frames
@@ -236,8 +238,11 @@ mixer_init :: proc(m:^Mixer,desc:Mixer_Desc) -> Error {
     // The source frames of a chunk of a feed at its fastest, and the frame after them.
     if m.scratch,failed=make([]f32,(CHUNK_FRAMES*int(FEED_STEP_MAX>>32)+4)*2,allocator);failed!=nil {return .Out_Of_Memory}
     if m.feeds,failed=make([]Feed,pool+streams,allocator);failed!=nil {return .Out_Of_Memory}
-    if m.free_feeds,failed=make([]u32,pool,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.free_feeds,failed=make([]u32,pool+streams,allocator);failed!=nil {return .Out_Of_Memory}
     if m.feed_rings,failed=make([]i16,pool*feed_frames*2,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.stream_rings,failed=make([]f32,streams*stream_frames*2,allocator);failed!=nil {
+        return .Out_Of_Memory
+    }
     if m.feed_planes,failed=make([]i32,feed_frames,allocator);failed!=nil {return .Out_Of_Memory}
     for &f,i in m.feeds[:pool] {
         f.ring16=m.feed_rings[i*feed_frames*2:][:feed_frames*2]
@@ -246,12 +251,13 @@ mixer_init :: proc(m:^Mixer,desc:Mixer_Desc) -> Error {
         m.free_feeds[i]=u32(pool-1-i)
     }
     m.free_feed_count=pool
-    for &f in m.feeds[pool:] {
-        if f.ring32,failed=make([]f32,stream_frames*2,allocator);failed!=nil {return .Out_Of_Memory}
+    for &f,i in m.feeds[pool:] {
+        f.ring32=m.stream_rings[i*stream_frames*2:][:stream_frames*2]
         f.capacity=u64(stream_frames)
-        f.stream=true
+        m.free_feeds[pool+i]=u32(pool+streams-1-i)
     }
-    for &slot in m.sounds {slot.generation=1;slot.feed=-1}
+    m.free_stream_count=streams
+    for &slot in m.sounds {slot.generation=1}
     // Slot 0 is handed out first.
     for &shadow,i in m.shadows {
         shadow.generation=1
@@ -305,11 +311,16 @@ mixer_destroy :: proc(m:^Mixer) {
     if m==nil {return}
     feeder_stop(m)
     allocator:=m.allocator
+    for &f in m.feeds {
+        if f.ring32==nil {continue}
+        stream_decoder_close(m,&f)
+        delete(f.workspace,allocator)
+    }
     for &slot in m.sounds {
         if slot.state!=.Free {sound_slot_free(m,&slot)}
     }
-    for f in m.feeds {delete(f.ring32,allocator)}
     delete(m.feeds,allocator);delete(m.free_feeds,allocator);delete(m.feed_rings,allocator);delete(m.feed_planes,allocator)
+    delete(m.stream_rings,allocator)
     delete(m.commands.items,allocator)
     delete(m.sounds,allocator);delete(m.sound_released,allocator)
     delete(m.shadows,allocator);delete(m.free_voices,allocator)
@@ -360,8 +371,13 @@ mixer_update :: proc(m:^Mixer) {
     if m.feeder==nil {mixer_decode(m)}
     for &f,i in m.feeds {
         if feed_phase(&f)!=.Done {continue}
+        if i>=m.pool_feeds {
+            stream_decoder_close(m,&f)
+            m.free_feeds[m.pool_feeds+m.free_stream_count]=u32(i);m.free_stream_count+=1
+        } else {
+            m.free_feeds[m.free_feed_count]=u32(i);m.free_feed_count+=1
+        }
         feed_phase_set(&f,.Free)
-        if !f.stream {m.free_feeds[m.free_feed_count]=u32(i);m.free_feed_count+=1}
     }
     for &slot,i in m.sounds {
         if slot.state!=.Releasing {continue}

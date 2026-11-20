@@ -62,17 +62,18 @@ WAV, an Ogg Vorbis or a lossless file, told apart by their first bytes:
 ### Feeds
 
 A voice of a sound kept encoded, or of a stream, plays from a feed: a ring of decoded frames that a
-decoder fills ahead and the audio thread reads without waits (`feed.odin`). Every voice of a sound
-kept encoded takes a feed of a preallocated pool, with a decoder state of its own; a stream has one
-feed, with its own decoder and a larger ring.
+decoder fills ahead and the audio thread reads without waits (`feed.odin`). There are separate
+pools for encoded sounds and streams. Each voice takes a feed with its own decoder and playback
+position, including when several voices play the same stream. The mixer allocates the rings at
+creation and reserves decoder workspace when a streamed sound loads.
 
 - **Who decodes.** The mixer's decoder thread wakes when a voice starts and every few milliseconds
   while a feed plays. Without one, `voice_play` fills the new feed and `mixer_update` the rest: it
   must then be called more often than a ring lasts. Whoever renders faster than real time (a
   recording) calls `mixer_decode` before each render. One decoder at a time fills the feeds.
 - **Phases.** The game thread readies a free feed and hands it over; the decoder seeks and fills
-  it until the audio thread lets go of it; `mixer_update` takes it back. Neither the game thread
-  nor the audio thread touches a feed the decoder holds.
+  it until the audio thread lets go of it. `mixer_update` returns the feed to the pool once the
+  decoder is done.
 - A voice whose first frames are not decoded yet waits silent; one whose ring empties goes silent
   (`underruns`) and resumes where it was. With a decoder thread a voice may start a chunk late: a
   `start_frame` far enough ahead is kept exactly.
@@ -82,11 +83,8 @@ feed, with its own decoder and a larger ring.
   for interpolating. `voice_set_loop(false)` ends at the next end of the sound, whatever was
   decoded ahead; turning a loop on applies at an end not decoded yet.
 - The pitch of a voice that plays from a feed has a cap of source frames per output frame.
-- No free feed: `voice_play` returns 0 (`feeds_busy`). A stolen voice holds its feed until the
-  audio thread lets go of it, which is why the pool is larger than the voices.
-- A stream plays in one voice at a time: another playback returns 0 (`streams_busy`) until a
-  `mixer_update` sees its feed come back, and then it starts from the beginning. Its voice is not
-  stolen.
+- No free feed: `voice_play` returns 0 and counts `feeds_busy` for an encoded sound or
+  `streams_busy` for a stream. A fading voice keeps its feed until it ends.
 
 ## Voices
 
@@ -115,7 +113,8 @@ invalid one return false.
   to its bus, at no extra cost.
 - **Stealing.** Without free voices, `voice_play` takes the one with the lowest priority and,
   among equals, the oldest, if its priority does not exceed the new one's; if not, it returns 0.
-  The stolen handle stops being valid at once and its sound drops to silence within a chunk.
+  Stream voices are protected from stealing. The stolen handle stops being valid at once and its
+  sound drops to silence within a chunk.
   Stealing is the last resort: `engine/audio` hands the voices to the sources heard most and only
   starts one on a voice that is free (`voices_free`).
 

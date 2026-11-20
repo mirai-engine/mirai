@@ -1,6 +1,7 @@
 package mirai_audio
 
 import "base:runtime"
+import "core:mem"
 import "vendor:stb/vorbis"
 
 // Decoders of WAV, Ogg Vorbis and lossless files that read a little at a
@@ -15,45 +16,52 @@ Decoder :: struct {
     frames:int, // total; 0 when the file does not say
     cursor:int,
     wav:Wav,
+    ogg:[]u8,   // complete, checked pages
     vorbis:^vorbis.vorbis,
     lossless:Lossless,
     held:int,    // the lossless block decoded in memory; -1 when none
-    memory:[]u8, // everything the Vorbis decoder allocates
+    memory:[]u8, // workspace borrowed from the stream feed
     planes:[]i32, // a decoded lossless block, channel after channel
 }
 @(private)
-decoder_open :: proc(file:[]u8,allocator:runtime.Allocator) -> (d:Decoder,error:Error) {
+stream_source :: proc(file:[]u8,allocator:runtime.Allocator) -> (d:Decoder,bytes:int,error:Error) {
     if len(file)>=12 && string(file[:4])=="RIFF" && string(file[8:12])=="WAVE" {
         d.wav=wav_parse(file) or_return
         d.kind=.Wav
         d.channels=d.wav.channels;d.sample_rate=d.wav.sample_rate;d.frames=d.wav.frames
-        return d,.None
+        return d,0,.None
     }
     if len(file)>=4 && string(file[:4])=="OggS" {
-        d.vorbis,d.memory=vorbis_open(file,allocator) or_return
-        info:=vorbis.get_info(d.vorbis)
+        d.ogg=file[:ogg_whole_pages(file)]
+        vorbis_decoder,memory:=vorbis_open(d.ogg,allocator) or_return
+        defer {vorbis.close(vorbis_decoder);delete(memory,allocator)}
+        info:=vorbis.get_info(vorbis_decoder)
         d.kind=.Vorbis
         d.channels=int(info.channels);d.sample_rate=int(info.sample_rate)
-        d.frames=int(vorbis.stream_length_in_samples(d.vorbis))
-        return d,.None
+        d.frames=int(vorbis.stream_length_in_samples(vorbis_decoder))
+        return d,len(memory),.None
     }
     if len(file)>=4 && string(file[:4])==LOSSLESS_MAGIC {
         d.lossless=lossless_parse(file) or_return
-        failed:runtime.Allocator_Error
-        if d.planes,failed=make([]i32,d.lossless.block_frames*d.lossless.channels,allocator);failed!=nil {return {},.Out_Of_Memory}
         d.kind=.Lossless
         d.channels=d.lossless.channels;d.sample_rate=d.lossless.sample_rate;d.frames=d.lossless.frames
         d.held=-1
-        return d,.None
+        return d,d.lossless.block_frames*d.channels*size_of(i32),.None
     }
-    return {},.Invalid_Data
+    return {},0,.Invalid_Data
 }
 @(private)
-decoder_close :: proc(d:^Decoder,allocator:runtime.Allocator) {
-    if d.vorbis!=nil {vorbis.close(d.vorbis)}
-    delete(d.memory,allocator)
-    delete(d.planes,allocator)
-    d^={}
+stream_decoder_start :: proc(d:^Decoder,workspace:[]u8) -> bool {
+    #partial switch d.kind {
+    case .Vorbis:
+        d.vorbis,_=vorbis_open_into(d.ogg,workspace)
+        if d.vorbis==nil {return false}
+        d.memory=workspace
+    case .Lossless:
+        d.planes=(cast([^]i32)raw_data(workspace))[:d.lossless.block_frames*d.channels]
+        d.memory=workspace
+    }
+    return true
 }
 // Decodes up to len(out)/channels frames and returns how many; fewer means the end.
 @(private)
@@ -107,24 +115,31 @@ decoder_seek :: proc(d:^Decoder,frame:int) {
 }
 
 // A sound that is decoded while it plays, for music and long ambiences. The
-// file is not copied: it must stay in memory until the sound is destroyed
-// and a later mixer_update has freed it. One voice at a time can play it.
+// file is borrowed and immutable until the sound is destroyed
+// and a later mixer_update has freed it. Each voice takes its own decoder.
 sound_stream :: proc(m:^Mixer,file:[]u8) -> (sound:Sound,error:Error) {
     index:=sound_slot_take(m) or_return
-    feed:=-1
-    for &candidate,i in m.feeds[m.pool_feeds:] {
-        if !candidate.used {feed=m.pool_feeds+i;break}
+    source,bytes:=stream_source(file,m.allocator) or_return
+    for &f in m.feeds[m.pool_feeds:] {
+        if len(f.workspace)>=bytes {continue}
+        workspace,failed:=mem.alloc_bytes_non_zeroed(bytes,align_of(u64),m.allocator)
+        if failed!=nil {return 0,.Out_Of_Memory}
+        // An active decoder keeps its old workspace until it is done.
+        if raw_data(f.workspace)!=raw_data(f.decoder.memory) {delete(f.workspace,m.allocator)}
+        f.workspace=workspace
     }
-    if feed<0 {return 0,.Capacity_Exhausted}
-    f:=&m.feeds[feed]
-    f.decoder=decoder_open(file,m.allocator) or_return
-    f.used=true;f.sound=u32(index)
-    d:=&f.decoder
-    return sound_slot_fill(m,index,{frames=u32(min(d.frames,int(max(u32)))),channels=u32(d.channels),rate=u32(d.sample_rate),feed=i32(feed)}),.None
+    frames:=u32(min(source.frames,int(max(u32))))
+    return sound_slot_fill(m,index,{
+        source=source,frames=frames,channels=u32(source.channels),rate=u32(source.sample_rate),
+        stream=true,
+    }),.None
 }
-// No voice plays it and the decoder no longer looks at it.
+
 @(private)
-stream_close :: proc(m:^Mixer,f:^Feed) {
-    decoder_close(&f.decoder,m.allocator)
-    f.used=false
+stream_decoder_close :: proc(m:^Mixer,f:^Feed) {
+    d:=&f.decoder
+    if d.vorbis!=nil {vorbis.close(d.vorbis)}
+    m.counters.sound_bytes-=len(d.memory)
+    if raw_data(d.memory)!=raw_data(f.workspace) {delete(d.memory,m.allocator)}
+    d^={}
 }

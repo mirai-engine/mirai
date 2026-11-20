@@ -30,11 +30,11 @@ Sound_Slot :: struct {
     release_sent:bool,
     samples:[]f32,  // owned: a sound decoded whole
     encoded:[]u8,   // owned: a sound kept encoded
-    source:Decoder, // how a voice decodes a sound kept encoded; it points into encoded
+    source:Decoder, // how a voice decodes the encoded bytes or the caller's file
     frames:u32,     // 0 for a stream of unknown length
     loop_start:u32, // the frame a loop goes back to
     channels,rate:u32,
-    feed:i32,       // the feed of a streamed sound; -1 for any other
+    stream:bool,
 }
 
 @(private)
@@ -52,23 +52,16 @@ sound_slot_take :: proc(m:^Mixer) -> (index:int,error:Error) {
     }
     return -1,.Capacity_Exhausted
 }
-// What the mixer holds for the sound: its samples, its encoded bytes, the decoder of a stream.
 @(private)
-sound_slot_bytes :: proc(m:^Mixer,slot:^Sound_Slot) -> int {
-    bytes:=len(slot.samples)*size_of(f32)+len(slot.encoded)
-    if slot.feed>=0 {
-        d:=&m.feeds[slot.feed].decoder
-        bytes+=len(d.memory)+len(d.planes)*size_of(i32)
-    }
-    return bytes
+sound_slot_bytes :: proc(slot:^Sound_Slot) -> int {
+    return len(slot.samples)*size_of(f32)+len(slot.encoded)
 }
 @(private)
 sound_slot_free :: proc(m:^Mixer,slot:^Sound_Slot) {
-    m.counters.sound_bytes-=sound_slot_bytes(m,slot)
-    if slot.feed>=0 {stream_close(m,&m.feeds[slot.feed])}
+    m.counters.sound_bytes-=sound_slot_bytes(slot)
     delete(slot.samples,m.allocator)
     delete(slot.encoded,m.allocator)
-    slot^={generation=slot.generation+1,feed=-1}
+    slot^={generation=slot.generation+1}
     m.counters.sounds-=1
 }
 // Some feed still decodes the sound, or may: its memory stays.
@@ -130,11 +123,16 @@ sound_load :: proc(m:^Mixer,file:[]u8) -> (sound:Sound,error:Error) {
     copy(encoded,kept)
     // The decoder reads the copy.
     if source.kind==.Lossless {source.lossless,_=lossless_parse(encoded)} else {source.wav.data=encoded}
-    return sound_slot_fill(m,index,{encoded=encoded,source=source,frames=u32(source.frames),channels=u32(source.channels),rate=u32(source.sample_rate),feed=-1}),.None
+    return sound_slot_fill(m,index,{
+        encoded=encoded,source=source,frames=u32(source.frames),
+        channels=u32(source.channels),rate=u32(source.sample_rate),
+    }),.None
 }
 @(private)
 sound_slot_pcm :: proc(m:^Mixer,index:int,samples:[]f32,channels,sample_rate:int) -> Sound {
-    return sound_slot_fill(m,index,{samples=samples,frames=u32(len(samples)/channels),channels=u32(channels),rate=u32(sample_rate),feed=-1})
+    return sound_slot_fill(m,index,{
+        samples=samples,frames=u32(len(samples)/channels),channels=u32(channels),rate=u32(sample_rate),
+    })
 }
 @(private)
 sound_slot_fill :: proc(m:^Mixer,index:int,fill:Sound_Slot) -> Sound {
@@ -145,7 +143,7 @@ sound_slot_fill :: proc(m:^Mixer,index:int,fill:Sound_Slot) -> Sound {
     slot.state=.Ready
     m.sound_released[index]=0
     m.counters.sounds+=1
-    m.counters.sound_bytes+=sound_slot_bytes(m,slot)
+    m.counters.sound_bytes+=sound_slot_bytes(slot)
     return Sound(base.handle_make(u32(index),generation))
 }
 
