@@ -439,11 +439,10 @@ which does not change size so that few projects do not leave a large empty windo
   at the right of the search, Enter or a double click open it. A row without a folder is neither
   chosen nor opened. The choice is lost if the search hides it, on removing a row or on showing the
   screen again.
-- **Opening** compiles the project's editor library in this process, like Build, and starts the
-  editor on it with the same arguments. While compiling what it does is seen, with the beating dot
-  and Cancel: in the launcher, on the project's row; if it is not in the list (Open folder, a new
-  one) or over a project, in a dialog with the steps (the world, then the editor and the shaders at
-  once). It appears in the frame it is requested and compilation starts in the next. The launcher
+- **Opening** builds the project's editor library and refreshes its packages, then starts the
+  editor on it with the same arguments. The beating dot and Cancel appear on the project's row
+  in the launcher, or in a dialog for a project opened with Open folder, a new project, or a switch
+  from another project. The build starts in the frame after this progress appears. The launcher
   ends; the editor of a project ends as on exit, asking only if agents work, and cancelling
   leaves the project unopened. Closed, the process waits for the editor it started, which writes in
   its same terminal: `mirai edit` ends with the last editor.

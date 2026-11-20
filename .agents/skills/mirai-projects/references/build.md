@@ -195,8 +195,9 @@ build.job_destroy(job)
 
 - `Desc`, `Result`, `Status` and `Failure` are in `cook/build/build.odin`, with what each value
   means. The job owns everything `Result` points to; `job_destroy` cancels if needed.
-- `job_cancel` kills the compilers, not the linker they may have launched. A job that fails leaves
-  no compilers running.
+- When the build publishes its target or finds it current, the job refreshes its packages with
+  the import program. Polling keeps the job running until the import program exits.
+- `job_cancel` stops the compiler and import process trees. The published target stands.
 - `target_state` says, without writing, whether the output is missing, stale or up to date.
 - `Result.diagnostics` are the messages of `-json-errors` and the warnings of the generator; `text`,
   everything else the compiler printed (the linker is not structured).
