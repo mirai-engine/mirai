@@ -19,17 +19,19 @@ import "mirai:ui"
 content_libraries_are_roots_of_what_the_project_does_not_hold :: proc(t:^testing.T) {
     sound:=[]Library_Asset{{kind=asset.KIND_SOUND,bytes=100,built=true}}
     model:=[]Library_Asset{{kind=asset.KIND_MESH,bytes=300,built=true}}
+    pinned_model:=[]Library_Asset{{kind=asset.KIND_MESH,bytes=300,built=true,pinned=true}}
     local:=[]Library_Package{
         {id={1,1},name="robot",origin="/work/chars/robot.glb",assets=model},
         {id={1,2},name="robot",origin="/work/props/robot.glb",assets=model},
-        {id={1,3},name="crate",origin="/work/props/crate.glb",pinned=true,assets=model},
+        {id={1,3},name="crate",origin="/work/props/crate.glb",pinned=true,assets=pinned_model},
         {id={1,4},name="bell",origin="/work/sounds/bell.wav",assets=sound},
     }
     kinds:=[]asset.Fourcc{asset.KIND_MESH}
+    lamp_assets:=[]share.Peer_Package_Asset{{{3,1},"shade",asset.KIND_MATERIAL},{{3,2},"glass",asset.KIND_TEXTURE}}
     ana:=[]share.Peer_Package{
         {id={1,1},name="robot",origin="/home/ana/robot.glb",kinds=kinds,bytes=300,built=true,here=true},
         {id={1,3},name="crate",kinds=kinds,bytes=300,built=true},
-        {id={2,1},name="lamp",origin="/home/ana/lamp.glb",kinds=kinds,bytes=2048,built=true},
+        {id={2,1},name="spotlight",documents="rooms/lamp",origin="/home/ana/lamp.glb",kinds=kinds,assets=lamp_assets,bytes=2048,built=true},
         {id={2,2},name="tree",origin="/home/ana/trees/oak/tree.glb",kinds=kinds,bytes=4096,built=true},
         {id={2,3},name="tree",origin="/home/ana/trees/pine/tree.glb",kinds=kinds,bytes=4096,built=true},
     }
@@ -61,6 +63,26 @@ content_libraries_are_roots_of_what_the_project_does_not_hold :: proc(t:^testing
     c.filter_length=copy(c.filter[:],"pine")
     testing.expect_value(t,content_test_show(&c,&registry),"#tree (pine)")
     c.filter_length=0
+    content_enter(&c,.Library,library=2,package_id={2,1})
+    content_test_show(&c,&registry)
+    testing.expect(t,len(c.cards)==2 && c.cards[0].name=="shade" && c.cards[0].pack_asset>0)
+    c.filter_length=copy(c.filter[:],"glass")
+    content_test_show(&c,&registry)
+    testing.expect(t,len(c.cards)==1 && c.cards[0].name=="glass")
+    c.filter_length=0
+    // A selected peer asset can move the package into This machine without closing its folder.
+    taken:=[]Library_Asset{{id={3,1},name="shade",kind=asset.KIND_MATERIAL,pinned=true},{id={3,2},name="glass",kind=asset.KIND_TEXTURE}}
+    following:=[]Library_Package{{id={2,1},name="spotlight",documents="rooms/lamp",assets=taken,pinned=true}}
+    c.libraries.roots,c.libraries.packages=content_library_listing(following,peers,allocator=context.temp_allocator)
+    content_library_restore(&c)
+    c.revision+=1
+    content_test_show(&c,&registry)
+    testing.expect(t,c.at.library==0 && c.at.package_id==base.Asset_Id{2,1} && len(c.cards)==2)
+    for p in c.libraries.packages {
+        if p.id==c.at.package_id {testing.expect(t,p.assets[0].pinned && !p.assets[1].pinned)}
+    }
+    c.libraries.roots,c.libraries.packages=content_library_listing(local,peers,allocator=context.temp_allocator)
+    c.revision+=1
     // The filter of a kind keeps those of the kind.
     c.category=.Sound
     content_enter(&c,.Library,library=0)

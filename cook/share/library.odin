@@ -48,13 +48,20 @@ Peer_Package :: struct {
     manifest:store.Hash,
     name:string,
     origin:string, // where its source was on the machine that ingested it, which tells apart two of one name
+    documents:string,
     kinds:[]asset.Fourcc,
-    assets:int,
+    assets:[]Peer_Package_Asset,
     root:store.Hash,      // the object its card shows (asset.build_shown) in the build it has; zero: none
     objects:[]store.Hash, // of every asset of that build, sorted
 
     bytes:i64,
     built,here:bool,
+}
+
+Peer_Package_Asset :: struct {
+    id:base.Asset_Id,
+    name:string,
+    kind:asset.Fourcc,
 }
 
 @(private) LIBRARY_NAMES_MAX :: 1<<14 // names of one namespace a listing reads of a peer
@@ -94,12 +101,15 @@ peer_library :: proc(n:^Node,peer:Peer,allocator:=context.allocator) -> (list:[]
         p,package_error:=asset.package_get(s,named.address,context.temp_allocator)
         if package_error!=.None {continue}
         kinds:=make([dynamic]asset.Fourcc,allocator)
-        for a in p.assets {
+        assets:=make([]Peer_Package_Asset,len(p.assets),allocator)
+        for a,at in p.assets {
+            assets[at]={a.id,strings.clone(a.name,allocator),a.kind}
             known:=false
             for k in kinds {known||=k==a.kind}
             if !known {append(&kinds,a.kind)}
         }
-        entry:=Peer_Package{id=p.id,manifest=named.address,name=strings.clone(p.name,allocator),origin=strings.clone(p.origin.path,allocator),kinds=kinds[:],assets=len(p.assets),bytes=-1}
+        entry:=Peer_Package{id=p.id,manifest=named.address,name=strings.clone(p.name,allocator),origin=strings.clone(p.origin.path,allocator),kinds=kinds[:],assets=assets,bytes=-1}
+        entry.documents=strings.clone(p.documents,allocator)
         // Whether it is here is read before the sizes are asked, which may bring a small object whole.
         if b,built:=chosen[p.id];built {
             entry.built,entry.here=true,asset.build_whole(s,&b)

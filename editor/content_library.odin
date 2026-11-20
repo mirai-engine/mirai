@@ -37,7 +37,7 @@ Content_Package :: struct {
     name:string,
     label:string,   // its name, with where its source was when another of the root has that name
     kind:asset.Fourcc, // of its first asset
-    assets:int,
+    assets:[]Library_Asset,
     bytes:i64,      // of its build; -1: unknown
     here:bool,      // this machine has its build: nothing has to be fetched
     built:bool,     // a build of it this engine reads is here or at its peer
@@ -79,23 +79,28 @@ Content_Libraries :: struct {
 content_library_listing :: proc(local:[]Library_Package,peers:[]Content_Peer_Listing,machine:=true,allocator:=context.allocator) -> (roots:[dynamic]Content_Library_Root,packages:[dynamic]Content_Package) {
     roots=make([dynamic]Content_Library_Root,allocator)
     packages=make([dynamic]Content_Package,allocator)
-    pinned:=make(map[base.Asset_Id]bool,context.temp_allocator)
     here:=make(map[base.Asset_Id]bool,context.temp_allocator)
     for &p in local {
         here[p.id]=true
-        if p.pinned {pinned[p.id]=true}
     }
     Origin :: struct {at:int,origin:string}
     origins:=make([dynamic]Origin,context.temp_allocator)
     if machine {append(&roots,Content_Library_Root{peer=-1,name="This machine"})}
     for &p in local {
-        if p.pinned || !machine {continue}
-        entry:=Content_Package{root=0,id=p.id,name=strings.clone(p.name,allocator),assets=len(p.assets),here=len(p.assets)>0,built=true}
-        for a in p.assets {
+        if !machine {continue}
+        name:=content_package_folder(p.name,p.documents)
+        entry:=Content_Package{root=0,id=p.id,name=strings.clone(name,allocator),here=len(p.assets)>0,built=true}
+        entry.assets=make([]Library_Asset,len(p.assets),allocator)
+        remaining:=false
+        for a,at in p.assets {
+            entry.assets[at]=a
+            entry.assets[at].name=strings.clone(a.name,allocator)
             if entry.kind==0 {entry.kind=a.kind}
             entry.bytes+=a.bytes
             entry.here&&=a.built
+            remaining||=!a.pinned
         }
+        if p.pinned && !remaining {continue}
         entry.built=entry.here
         entry.shown,entry.shown_id,entry.objects=p.root,p.shown,slice.clone(p.objects,allocator)
         append(&origins,Origin{len(packages),p.origin})
@@ -105,8 +110,11 @@ content_library_listing :: proc(local:[]Library_Package,peers:[]Content_Peer_Lis
         root:=len(roots)
         append(&roots,Content_Library_Root{peer=listing.peer,name=strings.clone(listing.name,allocator)})
         for &p in listing.list {
-            if pinned[p.id] || here[p.id] {continue}
-            entry:=Content_Package{root=root,id=p.id,name=strings.clone(p.name,allocator),assets=p.assets,bytes=p.bytes,here=p.here,built=p.built}
+            if here[p.id] {continue}
+            name:=content_package_folder(p.name,p.documents)
+            entry:=Content_Package{root=root,id=p.id,name=strings.clone(name,allocator),bytes=p.bytes,here=p.here,built=p.built}
+            entry.assets=make([]Library_Asset,len(p.assets),allocator)
+            for a,at in p.assets {entry.assets[at]={id=a.id,name=strings.clone(a.name,allocator),kind=a.kind}}
             if len(p.kinds)>0 {entry.kind=p.kinds[0]}
             entry.shown,entry.objects=p.root,slice.clone(p.objects,allocator)
             append(&origins,Origin{len(packages),p.origin})
@@ -132,6 +140,11 @@ content_library_listing :: proc(local:[]Library_Package,peers:[]Content_Peer_Lis
     // In each root by label, as the browser lists files by name.
     slice.sort_by(packages[:],proc(a,b:Content_Package) -> bool {return a.root<b.root || a.root==b.root && a.label<b.label})
     return
+}
+
+@(private)
+content_package_folder :: proc(name,documents:string) -> string {
+    return name if documents=="" else documents[strings.last_index_byte(documents,'/')+1:]
 }
 
 // The name of the folder a source was in; "" when it has none.
@@ -191,32 +204,74 @@ content_libraries_update :: proc(s:^Session,c:^Content) {
 @(private)
 content_library_group :: proc "contextless" (root:int) -> u64 {return base.hash_combine(0x6c6962,u64(root+2))}
 
-// Whether a package shows with the filters of the browser: a search of its
-// label and the kind chosen; the filters of the project's use show none.
 @(private)
-content_package_matches :: proc(c:^Content,p:^Content_Package,filter:string) -> bool {
-    if c.unused || c.selection_only {return false}
-    if c.category!=.None {
-        category,_:=content_category(p.kind)
-        if category!=c.category {return false}
-    }
-    if filter=="" {return true}
+content_package_text_matches :: proc(name,filter:string) -> bool {
+    folded:=strings.to_lower(name,context.temp_allocator)
     for token in strings.fields(filter,context.temp_allocator) {
-        if !strings.contains(strings.to_lower(p.label,context.temp_allocator),strings.to_lower(token,context.temp_allocator)) {return false}
+        if !strings.contains(folded,strings.to_lower(token,context.temp_allocator)) {return false}
     }
     return true
 }
 
-// The cards of the packages of root the filters take.
+// Whether a package or one of its assets matches the current search and kind.
 @(private)
-content_package_cards_add :: proc(c:^Content,root:int,filter:string) -> int {
-    count:=0
+content_package_asset_matches :: proc(c:^Content,entry:Library_Asset,filter:string) -> bool {
+    category,_:=content_category(entry.kind)
+    return (c.category==.None || c.category==category) && content_package_text_matches(entry.name,filter)
+}
+
+@(private)
+content_package_matches :: proc(c:^Content,p:^Content_Package,filter:string) -> bool {
+    if c.unused || c.selection_only {return false}
+    title:=content_package_text_matches(p.label,filter)
+    if title {
+        category,_:=content_category(p.kind)
+        if c.category==.None || c.category==category {return true}
+    }
+    for entry in p.assets {
+        if content_package_asset_matches(c,entry,"" if title else filter) {return true}
+    }
+    return false
+}
+
+@(private)
+content_package_asset_cards :: proc(c:^Content,pack:int,filter:string) {
+    p:=&c.libraries.packages[pack]
+    asset_filter:="" if content_package_text_matches(p.label,filter) else filter
+    for &entry,at in p.assets {
+        if !content_package_asset_matches(c,entry,asset_filter) {continue}
+        append(&c.cards,Content_Card{file=-1,pack=i32(pack+1),pack_asset=i32(at+1),name=entry.name})
+    }
+}
+
+@(private)
+content_package_cards_add :: proc(c:^Content,root:int,filter:string,chosen:=base.Asset_Id{}) {
     for &p,k in c.libraries.packages {
         if p.root!=root || !content_package_matches(c,&p,filter) {continue}
-        append(&c.cards,Content_Card{file=-1,pack=i32(k+1),name=p.label})
-        count+=1
+        if chosen=={} {
+            append(&c.cards,Content_Card{file=-1,pack=i32(k+1),name=p.label})
+        } else if p.id==chosen {
+            content_package_asset_cards(c,k,filter)
+            break
+        }
     }
-    return count
+}
+
+// The package rows and the assets of those that are open, in the folder layout.
+@(private)
+content_package_tree_add :: proc(c:^Content,root:int,filter:string,depth:int,parent:i32) {
+    group:=content_library_group(root)
+    for &p,k in c.libraries.packages {
+        if p.root!=root || !content_package_matches(c,&p,filter) {continue}
+        first:=len(c.cards)
+        append(&c.cards,Content_Card{file=-1,pack=i32(k+1),name=p.label})
+        content_tree_rows_add(c,first,depth,group,parent)
+        if slice.contains(c.unfolded[:],p.id) {
+            first=len(c.cards)
+            content_package_asset_cards(c,k,filter)
+            content_tree_rows_add(c,first,depth+1,group,parent)
+        }
+    }
 }
 
 // The root a virtual Library folder shows: Content_At.library is its peer, +1.
@@ -226,6 +281,27 @@ content_library_root_of :: proc(c:^Content,library:i32) -> int {
         if i32(root.peer+1)==library {return at}
     }
     return -1
+}
+
+// A package taken from a peer moves into This machine; keep its folder open.
+@(private)
+content_library_restore :: proc(c:^Content) {
+    if c.at.virtual!=.Library {return}
+    root:=content_library_root_of(c,c.at.library)
+    if c.at.package_id!={} {
+        elsewhere:=-1
+        for &p in c.libraries.packages {
+            if p.id!=c.at.package_id {continue}
+            if p.root==root {return}
+            elsewhere=p.root
+        }
+        if elsewhere>=0 {
+            c.at.library=i32(c.libraries.roots[elsewhere].peer+1)
+            return
+        }
+        c.at.package_id={}
+    }
+    if root<0 {c.at={}}
 }
 
 // The state of fetching a package of a peer, as its card says it.
@@ -263,62 +339,101 @@ content_package_item :: proc(s:^Session,card:Content_Card,group:u64,cell:f32,dep
     c:=s.content
     ctx:=s.gui.ctx
     p:=&c.libraries.packages[card.pack-1]
-    id=ui.id(ctx,"content_package",int(base.hash_combine(group,p.id[0]~p.id[1])))
+    kind,item,added:=p.kind,base.Asset_Id{},false
+    if card.pack_asset>0 {
+        entry:=p.assets[card.pack_asset-1]
+        kind,item,added=entry.kind,entry.id,entry.pinned
+    }
+    key:=base.hash_combine(group,base.hash_combine(p.id[0],p.id[1]))
+    if item!={} {key=base.hash_combine(key,base.hash_combine(item[0],item[1]))}
+    id=ui.id(ctx,"content_package",int(key))
     it=ui.interact(ctx,id,{.Focusable})
-    selected:=c.package_selected==p.id && c.package_root==p.root
-    icon,color:=asset_icon(s,p.kind)
-    state,failed,why:=content_package_state(s,p)
-    quad:=content_package_thumbnail(s,p,20 if depth>=0 || c.view.mode==.List else cell)
+    selected:=item=={} && c.package_selected==p.id && c.package_root==p.root
+    icon,color:=asset_icon(s,kind)
+    if item=={} {icon=content_folder_icon(.None)}
+    state,why:string
+    failed:bool
+    if item=={} {state,failed,why=content_package_state(s,p)}
+    quad:=content_package_thumbnail(s,p,20 if depth>=0 || c.view.mode==.List else cell) if item=={} else ui.Quad{}
     ink:=ui.tone(ctx,"danger_soft") if failed else ui.tone(ctx,"text_muted")
     if depth>=0 || c.view.mode==.List {
         box:=asset_row_box(ctx,id,CONTENT_INSET+f32(max(depth,0))*CONTENT_TREE_INDENT,selected,it.hot,content_keyboard(ctx,it))
         if depth>=0 {box.width,box.gap=ui.fixed(cell),CONTENT_TREE_GAP}
         if ui.box(ctx,box) {
-            if depth>=0 {ui.spacer(ctx,CONTENT_TREE_ARROW,1)}
+            if depth>=0 {
+                if item=={} {
+                    arrow:=.Chevron_Down if slice.contains(c.unfolded[:],p.id) else ui.Icon.Chevron_Right
+                    ui.icon(ctx,arrow,ui.tone(ctx,"text_muted"),CONTENT_TREE_ARROW)
+                } else {ui.spacer(ctx,CONTENT_TREE_ARROW,1)}
+            }
             if ui.box(ctx,{width=ui.fixed(20),height=ui.fixed(20),align_x=.Center,align_y=.Center,radius=2,clip_x=true,clip_y=true}) {
                 if quad.kind!=.Solid {ui.image(ctx,{quad=quad,width=ui.GROW,height=ui.GROW})} else {ui.icon(ctx,icon,color,14)}
             }
             ui.label(ctx,card.name,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=ui.FONT_MEDIUM if selected else 0)
             ui.spacer(ctx,-1,1)
-            if state!="" {ui.label(ctx,state,ui.metric(ctx,"font_small"),ink)}
+            if item=={} && state!="" {ui.label(ctx,state,ui.metric(ctx,"font_small"),ink)}
+            content_package_button(s,p,key,item,added)
             ui.spacer(ctx,4,1)
         }
     } else {
         names:=u8(2)
         if ui.box(ctx,asset_card_box(ctx,id,c.view,cell,selected,content_keyboard(ctx,it),names)) {
             stroke,stroke_width:=asset_frame_edge(ctx,it.hot,selected)
-            asset_frame(s,cell,CONTENT_FRAME,stroke,stroke_width,quad,icon,color,p.kind)
+            asset_frame(s,cell,CONTENT_FRAME,stroke,stroke_width,quad,icon,color,kind)
             if content_shows_names(c.view) {content_name(ctx,card.name,selected,cell,names)}
-            if content_package_peer(s,p)>=0 || failed {
-                if ui.box(ctx,{width=ui.FIT,height=ui.FIT,padding={4,1,4,1},radius=2,fill=ui.tone(ctx,"panel"),float={to=.Parent,anchor=.Top_Right,pivot=.Top_Right,offset={-3,3}}}) {
-                    ui.icon(ctx,.Import if !failed else .Cross,ink,10)
-                }
+            if ui.box(ctx,{width=ui.FIT,height=ui.FIT,radius=2,fill=ui.tone(ctx,"panel"),float={to=.Parent,anchor=.Top_Right,pivot=.Top_Right,offset={-3,3}}}) {
+                content_package_button(s,p,key,item,added)
             }
         }
     }
     if it.hot {
-        tip:=fmt.tprintf("%s, %s",card.name,state) if state!="" else card.name
+        tip:=fmt.tprintf("%s, %s",card.name,state) if item=={} && state!="" else card.name
         if why!="" {tip=fmt.tprintf("%s: %s",tip,why)}
         ui.tooltip(ctx,tip)
     }
     return
 }
 
+@(private)
+content_package_button :: proc(s:^Session,p:^Content_Package,key:u64,item:base.Asset_Id,added:bool) {
+    ctx:=s.gui.ctx
+    if added {
+        ui.icon(ctx,.Check,ui.tone(ctx,"text_muted"),12)
+        return
+    }
+    disabled:=s.mode!=.Edit || s.importer==nil || content_package_busy(s)
+    tip:="Add folder to project" if item=={} else "Add asset to project"
+    if ui.button(ctx,ui.id(ctx,"content_package_add",int(key)),{icon=.Plus,tip=tip,variant="ghost",width=20,height=20,icon_size=12,disabled=disabled}).clicked {
+        content_package_add(s,i32(s.content.libraries.roots[p.root].peer+1),p.id,content_create_place(s.content),item)
+    }
+}
+
 // What a click, a press and the right button do on a package: select it,
 // carry it to a folder of the project, open its menu.
 @(private)
-content_package_action :: proc(s:^Session,card:Content_Card,it:ui.Interaction) {
+content_package_action :: proc(s:^Session,act:^Content_Actions,card:Content_Card,it:ui.Interaction) {
     c:=s.content
     g:=s.gui
     p:=&c.libraries.packages[card.pack-1]
-    if it.pressed {
-        d:=Drag{kind=.Package,asset_id=p.id,asset_kind=p.kind,library=i32(c.libraries.roots[p.root].peer+1)}
+    library:=i32(c.libraries.roots[p.root].peer+1)
+    item:=base.Asset_Id{}
+    if card.pack_asset>0 {item=p.assets[card.pack_asset-1].id}
+    if item=={} && it.pressed {
+        d:=Drag{kind=.Package,asset_id=p.id,asset_kind=p.kind,library=library}
         d.icon,d.color=asset_icon(s,p.kind)
         drag_begin(g,d,card.name)
     }
+    if item=={} && it.clicked {
+        if c.view.arrangement==.Folders {
+            content_unfold(c,p.id)
+        } else {
+            act.enter,act.reset,act.virtual,act.folder,act.library,act.package_id=true,false,.Library,"",library,p.id
+        }
+    }
     if it.clicked || it.right {c.package_selected,c.package_root=p.id,p.root}
     if it.right {
-        c.package_menu,c.package_menu_library=p.id,i32(c.libraries.roots[p.root].peer+1)
+        if card.pack_asset>0 && p.assets[card.pack_asset-1].pinned {return}
+        c.package_menu,c.package_menu_library,c.package_menu_asset=p.id,library,item
         ui.popup_open(g.ctx,content_package_menu_id(g),{g.ctx.pointer.x,g.ctx.pointer.y,0,0})
     }
 }
@@ -338,7 +453,7 @@ content_package_menu :: proc(s:^Session) {
         ui.id_push(ctx,popup)
         defer ui.id_pop(ctx)
         if ui.menu_item(ctx,ui.id(ctx,"add"),"Add to project",{icon=.Import,disabled=s.mode!=.Edit || content_package_busy(s)}) {
-            content_package_add(s,c.package_menu_library,c.package_menu,content_create_place(c))
+            content_package_add(s,c.package_menu_library,c.package_menu,content_create_place(c),c.package_menu_asset)
         }
     }
 }
@@ -353,10 +468,13 @@ content_package_busy :: proc(s:^Session) -> bool {
 
 // Adds the package id of the library (its peer +1, 0: this machine) to folder of the project.
 @(private)
-content_package_add :: proc(s:^Session,library:i32,id:base.Asset_Id,folder:string) {
-    buffer:[base.ASSET_ID_TEXT]u8
+content_package_add :: proc(s:^Session,library:i32,id:base.Asset_Id,folder:string,item:=base.Asset_Id{}) {
+    buffer,asset_buffer:[base.ASSET_ID_TEXT]u8
     text:=base.asset_id_format(id,buffer[:])
-    problem:=library==0 ? library_add(s,text,nil,folder) : collab_library_add(s,int(library-1),text,folder)
+    wanted:[1]string
+    ids:=wanted[:0]
+    if item!={} {wanted[0]=base.asset_id_format(item,asset_buffer[:]);ids=wanted[:]}
+    problem:=library==0 ? library_add(s,text,ids,folder) : collab_library_add(s,int(library-1),text,folder,ids)
     if problem!="" {notify(s,problem)}
 }
 

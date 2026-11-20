@@ -44,7 +44,7 @@ Library_Pin :: struct {
 Library_Package :: struct {
     id:base.Asset_Id,
     manifest:store.Hash,
-    name,origin:string,
+    name,origin,documents:string,
     pinned:bool,   // the project pins it
     folder:string, // where the project lists it, when pinned
     assets:[]Library_Asset,
@@ -60,6 +60,7 @@ Library_Asset :: struct {
     kind:asset.Fourcc,
     bytes:i64, // of its file in the build of this machine; 0 when not built
     built:bool,
+    pinned:bool,
 }
 
 // Lists again what the packages of root list, from the store of the session,
@@ -145,9 +146,13 @@ library_list :: proc(s:^Session,root:string,allocator:=context.allocator) -> (li
     for ref in refs {
         p,read_error:=asset.package_get(&s.store,ref.hash,allocator)
         if read_error!=.None {continue}
-        entry:=Library_Package{id=p.id,manifest=ref.hash,name=p.name,origin=p.origin.path}
+        entry:=Library_Package{id=p.id,manifest=ref.hash,name=p.name,origin=p.origin.path,documents=p.documents}
+        selected:[]bool
         for &pinned in pins.packages {
-            if pinned.id==p.id {entry.pinned,entry.folder=true,strings.clone(pinned.folder,allocator)}
+            if pinned.id!=p.id {continue}
+            entry.pinned,entry.folder=true,strings.clone(pinned.folder,allocator)
+            selected,_,_=asset.package_selection(&p,pinned.assets[:],context.temp_allocator)
+            break
         }
         outputs:=make(map[base.Asset_Id]asset.Build_Output,context.temp_allocator)
         digits:[64]u8
@@ -158,7 +163,7 @@ library_list :: proc(s:^Session,root:string,allocator:=context.allocator) -> (li
         }
         assets:=make([]Library_Asset,len(p.assets),allocator)
         for &a,at in p.assets {
-            assets[at]={id=a.id,name=a.name,kind=a.kind}
+            assets[at]={id=a.id,name=a.name,kind=a.kind,pinned=at<len(selected) && selected[at]}
             if o,found:=outputs[a.id];found && o.kind==a.kind && asset.object_whole(&s.store,o.object) {
                 assets[at].built=true
                 dependencies:=make([dynamic]base.Asset_Id,context.temp_allocator)

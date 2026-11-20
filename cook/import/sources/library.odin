@@ -149,7 +149,24 @@ project_add :: proc(root:string,manifest:store.Hash,folder:string,assets:[]base.
             report_line(&report.failures,"%s: package %s has no asset %v: use one its manifest lists",top,p.name,id)
             return
         }
-        append(&entry.assets,id)
+        if !slice.contains(entry.assets[:],id) {append(&entry.assets,id)}
+    }
+    previous,_,pin_read_error:=asset.packages_load(top,context.temp_allocator)
+    if pin_read_error!=.None {
+        report_line(&report.failures,"%s: %s could not be read (%v): restore it, then add the package again",top,asset.PACKAGES_FILE,pin_read_error)
+        return
+    }
+    for &pin in previous.packages {
+        if pin.id!=p.id {continue}
+        entry.folder,entry.written=pin.folder,pin.written
+        if len(assets)==0 || len(pin.assets)==0 {
+            clear(&entry.assets)
+        } else {
+            for id in pin.assets {
+                if !slice.contains(entry.assets[:],id) {append(&entry.assets,id)}
+            }
+        }
+        break
     }
     if pin_error:=project_pin(top,options.store,entry);pin_error!=.None {
         report_line(&report.failures,"%s: %s could not be written (%v): a folder is relative to the assets, with forward slashes, and never leaves them",top,asset.PACKAGES_FILE,pin_error)
@@ -624,6 +641,20 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     origin_here:=source!="" && !importer.unsafe_path(source) && os.exists(source)
     documents:=l.assets if entry.folder=="" else fmt.tprintf("%s/%s",l.assets,entry.folder)
     prefab:=model_prefab_of(l,&p)
+    if prefab && len(entry.assets)>0 {
+        selected,_,selection_error:=asset.package_selection(&p,entry.assets[:],l.temp)
+        if selection_error!=.None {
+            report_line(&report.failures,"package %s: the selected assets could not be read (%v)",p.name,selection_error)
+            return
+        }
+        prefab=false
+        id:=prefab_id(&p)
+        for a,at in p.assets {
+            if a.id!=id {continue}
+            prefab=selected[at]
+            break
+        }
+    }
     // A source here that changed is ingested again, keeping its ids, and the project follows it.
     if origin_here && source_changed(l,&p,source) {
         reingest(l,top,&entry,&p,source,documents,prefab,"its source changed",report)
@@ -701,7 +732,21 @@ plugins_world :: proc(l:^Library_State) -> ^core.World_Info {
 @(private="file")
 documents_write :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,p:^asset.Package,b:^asset.Build,documents:string,report:^Library_Report) {
     changed:=importer.Changed.Discard if l.options.changed==.Discard else .Keep
-    written,error:=importer.documents_follow(l.options.store,p,b,documents,l.registry,entry.written[:],changed,plugin_kinds(l),l.temp)
+    build:=b^
+    if len(entry.assets)>0 {
+        selected,_,selection_error:=asset.package_selection(p,entry.assets[:],l.temp)
+        if selection_error!=.None {
+            report_line(&report.failures,"package %s: the selected documents could not be read (%v)",p.name,selection_error)
+            return
+        }
+        used:=make(map[base.Asset_Id]bool,l.temp)
+        for a,at in p.assets {used[a.id]=selected[at]}
+        build.outputs=make([dynamic]asset.Build_Output,l.temp)
+        for o in b.outputs {
+            if used[o.id] {append(&build.outputs,o)}
+        }
+    }
+    written,error:=importer.documents_follow(l.options.store,p,&build,documents,l.registry,entry.written[:],changed,plugin_kinds(l),l.temp)
     if error.code!=.None {
         report_line(&report.failures,"package %s: %s",p.name,error.message)
         return

@@ -718,6 +718,43 @@ Resolved_Package :: struct {
     inputs:[]string, // the files the import read besides the source, from its folder
 }
 
+// Selects the requested assets and their dependencies in this package, by manifest index.
+// An empty selection takes all assets. Unknown requested ids are returned separately.
+package_selection :: proc(p:^Package,ids:[]base.Asset_Id,allocator:=context.allocator) -> (used:[]bool,unknown:[]base.Asset_Id,error:Error) {
+    mask,no_used:=make([]bool,len(p.assets),allocator)
+    if no_used!=nil {return nil,nil,.Out_Of_Memory}
+    if len(ids)==0 {
+        for &take in mask {take=true}
+        return mask,nil,.None
+    }
+    defer if error!=.None {delete(mask,allocator)}
+    by_id:=make(map[base.Asset_Id]int,context.temp_allocator)
+    if reserve(&by_id,len(p.assets))!=nil {return nil,nil,.Out_Of_Memory}
+    for &a,at in p.assets {by_id[a.id]=at}
+    pending:=make([dynamic]int,context.temp_allocator)
+    missing:=make([dynamic]base.Asset_Id,allocator)
+    defer if error!=.None {delete(missing)}
+    for id in ids {
+        at,known:=by_id[id]
+        if !known {
+            if _,no_room:=append(&missing,id);no_room!=nil {return nil,nil,.Out_Of_Memory}
+            continue
+        }
+        if _,no_room:=append(&pending,at);no_room!=nil {return nil,nil,.Out_Of_Memory}
+    }
+    for len(pending)>0 {
+        at:=pop(&pending)
+        if mask[at] {continue}
+        mask[at]=true
+        for dependency in p.assets[at].dependencies {
+            if next,known:=by_id[dependency];known && !mask[next] {
+                if _,no_room:=append(&pending,next);no_room!=nil {return nil,nil,.Out_Of_Memory}
+            }
+        }
+    }
+    return mask,missing[:],.None
+}
+
 // What a project lists from the packages it uses: each asset of the cache it
 // uses, with what they depend on, at its path, and the object of the build
 // REF_BUILDS names for its manifest, or Not_Built. Documents are files of the
@@ -751,33 +788,9 @@ packages_resolve :: proc(s:^store.Store,root:string,list:^Packages,allocator:=co
         for input,at in p.inputs {inputs[at]=clone(input,allocator) or_return}
         named.inputs=inputs
         if _,no_room:=append(&resolved.packages,named);no_room!=nil {return {},.Out_Of_Memory}
-        used,no_used:=make([]bool,len(p.assets),context.temp_allocator)
-        by_id:=make(map[base.Asset_Id]int,context.temp_allocator)
-        if no_used!=nil || reserve(&by_id,len(p.assets))!=nil {return {},.Out_Of_Memory}
-        for &a,at in p.assets {by_id[a.id]=at}
-        if len(entry.assets)==0 {
-            for &u in used {u=true}
-        } else {
-            pending:=make([dynamic]int,context.temp_allocator)
-            for id in entry.assets {
-                at,known:=by_id[id]
-                if !known {
-                    problem_add(&resolved,{entry.id,id,.Asset_Unknown}) or_return
-                    continue
-                }
-                if _,no_room:=append(&pending,at);no_room!=nil {return {},.Out_Of_Memory}
-            }
-            for len(pending)>0 {
-                at:=pop(&pending)
-                if used[at] {continue}
-                used[at]=true
-                for d in p.assets[at].dependencies {
-                    if next,known:=by_id[d];known && !used[next] {
-                        if _,no_room:=append(&pending,next);no_room!=nil {return {},.Out_Of_Memory}
-                    }
-                }
-            }
-        }
+        used,unknown,selection_error:=package_selection(&p,entry.assets[:],context.temp_allocator)
+        if selection_error!=.None {return {},selection_error}
+        for id in unknown {problem_add(&resolved,{entry.id,id,.Asset_Unknown}) or_return}
         outputs:=make(map[base.Asset_Id]Build_Output,context.temp_allocator)
         digits:[64]u8
         built,ref_error:=store.ref_get(s,REF_BUILDS,store.hex(build_select(entry.manifest,&p),&digits))

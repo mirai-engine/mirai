@@ -2,6 +2,7 @@ package sources
 
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:path/filepath"
 import "core:strings"
 import "core:sync"
@@ -73,6 +74,57 @@ ingested :: proc(t:^testing.T,source:string,options:Library_Options,loc:=#caller
     report,error=ingest(source,options,allocator=context.temp_allocator)
     ok=testing.expectf(t,error.code==.None,"%s: %s",source,error.message,loc=loc)
     return
+}
+
+@(test)
+adding_another_asset_keeps_the_existing_pin_and_its_dependencies :: proc(t:^testing.T) {
+    top:=base.test_folder(t,"library-select")
+    if top=="" {return}
+    context.user_ptr=prefab.import_world(t)
+    downloads,game:=fmt.tprintf("%s/downloads",top),fmt.tprintf("%s/game",top)
+    os.make_directory_all(downloads)
+    os.make_directory_all(fmt.tprintf("%s/assets",game))
+    box:=box_source(downloads,"box.gltf","Wood","Paint")
+    s:=test_store(t,fmt.tprintf("%s/store",top))
+    if s==nil {return}
+    options:=Library_Options{store=s,root=game,plugins=test_library}
+    report,ok:=ingested(t,box,options)
+    if !ok {return}
+    pkg,read_error:=asset.package_get(s,report.manifest,context.temp_allocator)
+    if !testing.expect_value(t,read_error,asset.Error.None) {return}
+    wood,paint,texture:base.Asset_Id
+    for a in pkg.assets {
+        switch a.kind {
+        case asset.KIND_MATERIAL:
+            if a.name=="Wood" {wood=a.id} else if a.name=="Paint" {paint=a.id}
+        case asset.KIND_TEXTURE: texture=a.id
+        }
+    }
+    if !testing.expect(t,wood!={} && paint!={} && texture!={}) {return}
+    // This project can follow the cached build even after the original source has gone.
+    if !testing.expect(t,os.rename(downloads,fmt.tprintf("%s/moved",top))==nil) {return}
+    if !report_clean(t,project_add(game,report.manifest,"parts",[]base.Asset_Id{wood},options,context.temp_allocator)) {return}
+    r:asset.Registry
+    asset.registry_init(&r,fmt.tprintf("%s/assets",game),"",context.temp_allocator)
+    asset.registry_scan(&r)
+    _,wood_found:=asset.registry_find(&r,wood)
+    _,paint_found:=asset.registry_find(&r,paint)
+    testing.expect(t,wood_found && !paint_found,"only the chosen material became a document")
+    texture_found:=false
+    for _,entry in listed_of(t,s,game) {texture_found||=entry.id==texture}
+    testing.expect(t,texture_found,"the selected material's texture dependency is listed")
+
+    if !report_clean(t,project_add(game,report.manifest,"elsewhere",[]base.Asset_Id{paint},options,context.temp_allocator)) {return}
+    list,_,error:=asset.packages_load(game,context.temp_allocator)
+    if !testing.expect(t,error==.None && len(list.packages)==1) {return}
+    entry:=list.packages[0]
+    testing.expect(t,entry.folder=="parts" && len(entry.assets)==2)
+    testing.expect(t,slice.contains(entry.assets[:],wood) && slice.contains(entry.assets[:],paint))
+    asset.registry_scan(&r)
+    _,wood_found=asset.registry_find(&r,wood)
+    _,paint_found=asset.registry_find(&r,paint)
+    testing.expect(t,wood_found && paint_found,"both additions keep their documents")
+    testing.expect(t,!os.exists(fmt.tprintf("%s/assets/elsewhere",game)))
 }
 
 // A project pins its packages by manifest: a peer with the project and none

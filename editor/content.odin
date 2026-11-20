@@ -232,6 +232,7 @@ CONTENT_VIRTUAL_LABELS :: [Content_Virtual]string{.None="",.Recent="Recent",.Sce
 Content_At :: struct {
     virtual:Content_Virtual,
     library:i32, // Library: the peer of its root +1; 0: this machine
+    package_id:base.Asset_Id, // package folder open under that library
     length:int,
     folder:[API_PATH_BYTES]u8,
 }
@@ -275,6 +276,7 @@ Content_Card :: struct {
     virtual:Content_Virtual, // a folder that is a virtual one
     cover:i32,    // a folder: its cover in Registry.files +1; 0: none
     pack:i32,     // a package of a library: of Content_Libraries.packages +1; 0: none
+    pack_asset:i32, // one asset of pack +1; 0: the package folder
     library:i32,  // a folder that is a root of libraries: Content_At.library
 }
 
@@ -383,6 +385,7 @@ Content :: struct {
     package_root:int,
     package_menu:base.Asset_Id,    // the package whose card opened its menu, of the library package_menu_library
     package_menu_library:i32,
+    package_menu_asset:base.Asset_Id,
     thumbs:[CONTENT_THUMBS]Content_Thumb,  // the thumbnails of the cards of packages (content_library.odin)
     thumb_wants:[dynamic]Content_Thumb_Want, // what the visible cards of peers' roots lack, asked between frames
 }
@@ -985,9 +988,7 @@ content_tree_add :: proc(c:^Content,b:^Content_Build,entries:[]Content_Entry) {
         header:=i32(len(c.lines))
         append(&c.lines,Content_Line{kind=.Header,group=group,name=root.name,virtual=.Library,library=i32(root.peer+1),parent=-1})
         if content_folded(c,group) {continue}
-        first:=len(c.cards)
-        content_package_cards_add(c,at,"")
-        content_tree_rows_add(c,first,1,group,header)
+        content_package_tree_add(c,at,"",1,header)
     }
     content_branch_add(c,b,entries,"",0,-1)
 }
@@ -1060,7 +1061,7 @@ content_search_add :: proc(c:^Content,b:^Content_Build,entries:[]Content_Entry,p
     if c.at.virtual==.Library && !b.rows {
         // Inside a root of libraries, its packages.
         first:=len(c.cards)
-        content_package_cards_add(c,content_library_root_of(c,c.at.library),b.filter)
+        content_package_cards_add(c,content_library_root_of(c,c.at.library),b.filter,c.at.package_id)
         content_rows_add(c,first,b.columns)
         return
     }
@@ -1080,15 +1081,10 @@ content_search_add :: proc(c:^Content,b:^Content_Build,entries:[]Content_Entry,p
     // Folders searches the libraries too, each under the name of its root.
     if !b.rows {return}
     for root,at in c.libraries.roots {
-        first:=len(c.cards)
-        if content_package_cards_add(c,at,b.filter)==0 {continue}
-        cards:=c.cards[first:]
-        moved:=make([]Content_Card,len(cards),context.temp_allocator)
-        copy(moved,cards)
-        resize(&c.cards,first)
+        label:=len(c.lines)
         append(&c.lines,Content_Line{kind=.Label,name=root.name,parent=-1})
-        append(&c.cards,..moved)
-        content_tree_rows_add(c,first,0,content_library_group(at))
+        content_package_tree_add(c,at,b.filter,0,-1)
+        if len(c.lines)==label+1 {pop(&c.lines)}
     }
 }
 
@@ -1159,7 +1155,7 @@ content_lines :: proc(c:^Content,registry:^asset.Registry,width:f32,opened:[]ass
     case b.rows:                 content_tree_add(c,b,entries[:])
     case c.at.virtual==.Library:
         first:=len(c.cards)
-        content_package_cards_add(c,content_library_root_of(c,c.at.library),"")
+        content_package_cards_add(c,content_library_root_of(c,c.at.library),"",c.at.package_id)
         content_rows_add(c,first,b.columns,content_library_group(content_library_root_of(c,c.at.library)))
     case c.at.virtual!=.None:
         first:=len(c.cards)
@@ -1247,14 +1243,14 @@ content_place_set :: proc(c:^Content,folder:string) {c.place_length=copy(c.place
 
 @(private)
 content_at_is :: proc(a,b:^Content_At) -> bool {
-    return a.virtual==b.virtual && a.library==b.library && string(a.folder[:a.length])==string(b.folder[:b.length])
+    return a.virtual==b.virtual && a.library==b.library && a.package_id==b.package_id && string(a.folder[:a.length])==string(b.folder[:b.length])
 }
 
 // Enters a folder or a virtual one. reset: it forgets where the browser was,
 // as the root of the breadcrumb and a chip do.
-content_enter :: proc(c:^Content,virtual:Content_Virtual,folder:="",reset:=false,library:i32=0) {
+content_enter :: proc(c:^Content,virtual:Content_Virtual,folder:="",reset:=false,library:i32=0,package_id:=base.Asset_Id{}) {
     next:Content_At
-    next.virtual,next.library=virtual,library
+    next.virtual,next.library,next.package_id=virtual,library,package_id
     next.length=copy(next.folder[:],folder)
     if reset {
         clear(&c.history)
@@ -1340,7 +1336,7 @@ content_folder_exists :: proc(registry:^asset.Registry,folder:string) -> bool {
 content_navigation_restore :: proc(c:^Content,registry:^asset.Registry) {
     c.restore=false
     // A root of libraries is there while its peer is.
-    if c.at.virtual==.Library && content_library_root_of(c,c.at.library)<0 {c.at={}}
+    content_library_restore(c)
     place:=string(c.place[:c.place_length])
     for place!="" && !content_folder_exists(registry,place) {place=content_folder_of(place)}
     c.place_length=len(place)
@@ -2188,6 +2184,7 @@ Content_Actions :: struct {
     enter,reset:bool,        // go to folder or virtual; reset: forgetting where it was
     virtual:Content_Virtual,
     library:i32,             // of a virtual Library
+    package_id:base.Asset_Id,
     folder:string,
     back:bool,
     cut:int,                 // the trail keeps this many assets; 0: as it is
@@ -2216,7 +2213,7 @@ content_folder_marked :: proc(s:^Session,id:ui.Id,virtual:Content_Virtual,folder
 content_folder_take :: proc(s:^Session,act:^Content_Actions,id:ui.Id,it:ui.Interaction,virtual:Content_Virtual,folder:string,reset:=false,library:i32=0) {
     g:=s.gui
     ctx:=g.ctx
-    if it.clicked {act.enter,act.reset,act.virtual,act.folder,act.library=true,reset,virtual,folder,library}
+    if it.clicked {act.enter,act.reset,act.virtual,act.folder,act.library,act.package_id=true,reset,virtual,folder,library,{}}
     if virtual!=.None {return}
     if g.drag.kind==.Asset || g.drag.kind==.Package {
         if rect,built:=ui.widget_rect(ctx,id);built && drag_dropped(g,rect) {act.dropped,act.drop=true,strings.clone(folder,context.temp_allocator)}
@@ -2400,7 +2397,7 @@ content_crumb :: proc(ctx:^ui.Context,id:ui.Id,name:string,last,slash,marked:boo
 // where it is, and Folders enters none.
 @(private)
 content_back_shown :: proc(c:^Content) -> bool {
-    return len(c.trail)>0 || c.view.arrangement==.Cards
+    return len(c.trail)>0 || c.view.arrangement==.Cards || c.at.package_id!={}
 }
 
 // The back arrow and the breadcrumb: Project and the folders on the way down,
@@ -2426,8 +2423,19 @@ content_crumbs_build :: proc(s:^Session,act:^Content_Actions) {
                 labels:=CONTENT_VIRTUAL_LABELS
                 label:=labels[c.at.virtual]
                 if root:=content_library_root_of(c,c.at.library);c.at.virtual==.Library && root>=0 {label=c.libraries.roots[root].name}
-                ui.label(ctx,"/",ui.metric(ctx,"font"),ui.tone(ctx,"text_faint"))
-                ui.label(ctx,label,ui.metric(ctx,"font"),ui.tone(ctx,"text"))
+                if c.at.virtual==.Library && c.at.package_id!={} {
+                    library:=ui.id(ctx,"content_crumb_library")
+                    it:=content_crumb(ctx,library,label,false,true,false)
+                    content_folder_take(s,act,library,it,.Library,"",library=c.at.library)
+                    for &p in c.libraries.packages {
+                        if p.id!=c.at.package_id || p.root!=content_library_root_of(c,c.at.library) {continue}
+                        content_crumb(ctx,ui.id(ctx,"content_crumb_package"),p.label,true,true,false)
+                        break
+                    }
+                } else {
+                    ui.label(ctx,"/",ui.metric(ctx,"font"),ui.tone(ctx,"text_faint"))
+                    ui.label(ctx,label,ui.metric(ctx,"font"),ui.tone(ctx,"text"))
+                }
             } else if folder!="" {
                 start,index:=0,1
                 for i in 0..=len(folder) {
@@ -2732,8 +2740,7 @@ content_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_W
         if c.reveal!={} {content_reveal_open(c,&a.registry)}
         content_libraries_update(s,c)
         clear(&c.thumb_wants)
-        // A root whose peer left goes, and the browser with it.
-        if c.at.virtual==.Library && content_library_root_of(c,c.at.library)<0 {content_enter(c,.None,reset=true)}
+        content_library_restore(c)
         lines:=content_lines(c,&a.registry,width,opened,scene_kinds[:],&ctx.font,ui.metric(ctx,"font_small"))
         searching:=strings.trim_space(string(c.filter[:c.filter_length]))!="" && len(c.trail)==0
         if take_first && searching && len(c.cards)>0 && c.cards[0].file>=0 {content_arm(s,&a.registry.files[c.cards[0].file],c.cards[0].name)}
@@ -2828,7 +2835,7 @@ content_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_W
                 card:=c.cards[line.first]
                 if card.pack>0 {
                     it,_:=content_package_item(s,card,line.group,width,int(line.depth))
-                    content_package_action(s,card,it)
+                    content_package_action(s,&act,card,it)
                     continue
                 }
                 it,id:=content_item(s,card,line.group,width,whole_line,first_card && line.first==0,depth=int(line.depth))
@@ -2847,7 +2854,7 @@ content_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_W
                     for card,at in c.cards[line.first:][:line.count] {
                         if card.pack>0 {
                             it,_:=content_package_item(s,card,line.group,cell)
-                            content_package_action(s,card,it)
+                            content_package_action(s,&act,card,it)
                             continue
                         }
                         if card.file<0 {
@@ -2911,7 +2918,7 @@ content_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_W
             c.revision+=1
         }
         if act.back {content_back(c)}
-        if act.enter {content_enter(c,act.virtual,act.folder,act.reset,act.library)}
+        if act.enter {content_enter(c,act.virtual,act.folder,act.reset,act.library,act.package_id)}
         if act.finish {content_create_finish(s)}
         if act.dropped {content_drop(s,act.drop)}
         if path:=content_menu(s,w);path!="" {act.open=path}
