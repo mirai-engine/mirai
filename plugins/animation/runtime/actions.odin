@@ -176,11 +176,11 @@ set :: proc(requests:^Animation_Requests,entity:core.Entity,name:string,value:f3
     if entity==core.NONE || name=="" || len(name)>=64 || !finite(value) {core.refuse(&requests.values);return}
     core.offer(&requests.values,Value_Request{entity,base.name_hash(name),value})
 }
-// Turns the first Look row of the .character of entity toward target, by weight, over LOOK_FADE;
+// Turns the head Look operation toward target, by weight, over LOOK_FADE;
 // 0 lets go, from where it looks.
-look :: proc(requests:^Animation_Requests,entity:core.Entity,target:Spatial_Target,weight:f32=1) {
+look :: proc(requests:^Animation_Requests,entity:core.Entity,target:Spatial_Target,weight:f32=1,name:string="@head") {
     if requests==nil {return}
-    modifier_goal(requests,Modifier_Goal{rig=entity,kind=.Look,target=target,weight=weight,fade=LOOK_FADE,enabled=weight>0})
+    modifier(requests,{rig=entity,kind=.Look,target=target,weight=weight,fade=LOOK_FADE,enabled=weight>0,goal=true},name)
 }
 LOOK_FADE :: .25 // seconds
 

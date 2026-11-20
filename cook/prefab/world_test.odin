@@ -17,7 +17,8 @@ Game_Animation :: struct {
     weight,fade:f32,
     event_threshold:f32,
 }
-Game_Animation_Target :: struct {path:[asset.NODE_PATH_CAPACITY]u8 `mirai:"text"`,animation:core.Entity}
+Game_Animation_Path :: struct {text:[asset.NODE_PATH_CAPACITY]u8 `mirai:"text"`}
+Game_Animation_Target :: struct {path:[asset.ANIMATION_INLINE_PATH]u8 `mirai:"text"`,path_id:u64,animation:core.Entity}
 Game_Pose_Source :: struct {rig:core.Entity,stage:u8}
 Game_Bone_Attachment :: struct {rig:core.Entity,socket:[64]u8 `mirai:"text"`,offset:mm.Transform,enabled:bool}
 GAME_BONE_ATTACHMENT_DEFAULT :: Game_Bone_Attachment{offset=mm.TRANSFORM_IDENTITY,enabled=true}
@@ -54,6 +55,7 @@ Import_World :: struct {
     spots:core.Table(render.Spot_Light),
     rects:core.Table(render.Rect_Light),
     animations:core.Table(Game_Animation) `mirai:"name=Animation"`,
+    paths:core.Table(Game_Animation_Path) `mirai:"name=Animation_Path"`,
     targets:core.Table(Game_Animation_Target) `mirai:"name=Animation_Target"`,
     poses:core.Table(Game_Pose_Source) `mirai:"name=Pose_Source"`,
     attachments:core.Table(Game_Bone_Attachment) `mirai:"name=Bone_Attachment"`,

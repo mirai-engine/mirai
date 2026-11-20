@@ -171,46 +171,14 @@ program_parameter_check :: proc(s:^editor.Session,call:^api.Call,animation:anim.
     return false
 }
 
-@(private)
-program_modifier_count :: proc(profile:anim.Pose_Profile,kind:anim.Modifier_Kind) -> int {
-    switch kind {
-    case .IK: return len(profile.ik)
-    case .Look: return len(profile.look)
-    case .Grounding: return 1 if len(profile.grounding.legs)>0 else 0
-    case .Limit: return len(profile.limits)
-    case .Chain_IK: return len(profile.chain_ik)
-    case .Twist: return len(profile.twist)
-    case .Spring: return len(profile.springs)
-    case .Multi_IK: return len(profile.multi_ik)
-    case .Chain_Retarget: return len(profile.retarget_chains)
-    case .Spline_IK: return len(profile.spline_ik)
-    case .Corrective: return len(profile.correctives)
-    case .Follow: return len(profile.follow)
-    }
-    return 0
-}
-
 @(private) Program_Modifier_Definition :: struct {name:[256]u8,weight:f32,enabled:bool}
 @(private)
 program_modifier_definition :: proc(profile:anim.Pose_Profile,kind:anim.Modifier_Kind,slot:u16) -> (result:Program_Modifier_Definition,ok:bool) {
-    if int(slot)>=program_modifier_count(profile,kind) {return}
-    name:string
-    switch kind {
-    case .IK:name=anim.modifier_operation_name(&profile.ik[slot]);result.weight,result.enabled=profile.ik[slot].weight,profile.ik[slot].enabled
-    case .Look:name=anim.modifier_operation_name(&profile.look[slot]);result.weight,result.enabled=profile.look[slot].weight,profile.look[slot].enabled
-    case .Grounding:grounding:=profile.grounding;name=anim.modifier_operation_name(&grounding);result.weight,result.enabled=grounding.weight,grounding.enabled
-    case .Limit:name=anim.modifier_operation_name(&profile.limits[slot]);result.weight,result.enabled=profile.limits[slot].weight,profile.limits[slot].enabled
-    case .Chain_IK:name=anim.modifier_operation_name(&profile.chain_ik[slot]);result.weight,result.enabled=profile.chain_ik[slot].weight,profile.chain_ik[slot].enabled
-    case .Twist:name=anim.modifier_operation_name(&profile.twist[slot]);result.weight,result.enabled=profile.twist[slot].weight,profile.twist[slot].enabled
-    case .Spring:name=anim.modifier_operation_name(&profile.springs[slot]);result.weight,result.enabled=profile.springs[slot].weight,profile.springs[slot].enabled
-    case .Multi_IK:name=anim.modifier_operation_name(&profile.multi_ik[slot]);result.weight,result.enabled=profile.multi_ik[slot].weight,profile.multi_ik[slot].enabled
-    case .Chain_Retarget:name=anim.modifier_operation_name(&profile.retarget_chains[slot]);result.weight,result.enabled=profile.retarget_chains[slot].weight,profile.retarget_chains[slot].enabled
-    case .Spline_IK:name=anim.modifier_operation_name(&profile.spline_ik[slot]);result.weight,result.enabled=profile.spline_ik[slot].weight,profile.spline_ik[slot].enabled
-    case .Corrective:name=anim.modifier_operation_name(&profile.correctives[slot]);result.weight,result.enabled=profile.correctives[slot].weight,profile.correctives[slot].enabled
-    case .Follow:name=anim.modifier_operation_name(&profile.follow[slot]);result.weight,result.enabled=profile.follow[slot].weight,profile.follow[slot].enabled
-    }
+    if int(slot)>=anim.modifier_count(profile,kind) {return}
+    profile:=profile
+    name,weight,enabled:=anim.modifier_definition(&profile,kind,int(slot))
     base.text_set(result.name[:],name)
-
+    result.weight,result.enabled=weight,enabled
     return result,true
 }
 @(private)
@@ -218,7 +186,7 @@ program_modifier_slot :: proc(call:^api.Call,profile:anim.Pose_Profile,kind:anim
     wanted:=base.text_get(name)
     if wanted=="" {authoring_failure(call,"name","Required","an operation name from animation.inspect parts Modifiers","empty","The operation name is required");return 0,false}
     found:=-1
-    for index in 0..<program_modifier_count(profile,kind) {
+    for index in 0..<anim.modifier_count(profile,kind) {
         definition,_:=program_modifier_definition(profile,kind,u16(index))
         if base.text_get(definition.name[:])!=wanted {continue}
         if found>=0 {authoring_failure(call,"name","Ambiguous_Reference","a unique operation name of this kind",wanted,"The operation name matches multiple definitions");return 0,false}
@@ -246,8 +214,8 @@ program_grounding_diagnostic :: proc(world:core.World_Ref,entity:core.Entity,slo
     modifiers:=core.world_storage_of(world,anim.Modifier_Runtime)
     playback:=core.world_storage_of(world,anim.Playback)
     if modifiers==nil || playback==nil {return}
-    record:^anim.Grounding_Record
-    for &value in modifiers.grounded.records {if value.rig==entity {record=&value;break}}
+    rig:=anim.modifier_rig(modifiers,entity)
+    record:=&rig.grounding[0].record if rig!=nil && len(rig.grounding)>0 else nil
     state:^anim.Playing
     for &value in playback.states {if value.entity==entity {state=&value;break}}
     if record==nil || !record.initialized || record.count<1 || record.count>anim.GROUNDING_LEGS || state==nil || !state.pose_ready {return}
@@ -273,26 +241,26 @@ program_modifier_inspect :: proc(s:^editor.Session,call:^api.Call,world:core.Wor
     file:Authoring_File;defer asset.asset_close(&file.file)
     profile,id,loaded:=program_modifier_profile(s,call,world,entity,&file);if !loaded {return}
     runtime:=core.world_storage_of(world,anim.Modifier_Runtime)
-    total:=0;for kind in anim.Modifier_Kind {total+=program_modifier_count(profile,kind)}
+    total:=0;for kind in anim.Modifier_Kind {total+=anim.modifier_count(profile,kind)}
     r.id,r.character,r.total=editor.api_entity_id(world,entity),id,u32(total)
     r.last_request_error=anim.modifier_request_error(runtime,entity)
     rows:=make([dynamic]Instance_Modifier,call.allocator)
     offset:=0
     for kind in anim.Modifier_Kind {
-        for slot in 0..<program_modifier_count(profile,kind) {
+        for slot in 0..<anim.modifier_count(profile,kind) {
             index:=offset;offset+=1
             if index<int(p.offset) || len(rows)>=int(p.limit) {continue}
             definition,_:=program_modifier_definition(profile,kind,u16(slot));weight,enabled:=definition.weight,definition.enabled
             alpha,target:f32=1,1;requested:=true;remaining:f32
-            if state:=anim.modifier_control_state(runtime,entity,kind,u16(slot));state!=nil {
-                weight,enabled=state.base_weight*state.weight,state.base_enabled && (state.enabled || state.weight>0)
-                alpha,target,requested,remaining=state.weight,state.target,state.enabled,max(0,state.duration-state.elapsed)
+            name:=base.name_hash(base.text_get(definition.name[:]))
+            if w,on,a,t,left,wanted,found:=anim.modifier_influence(runtime,entity,kind,name);found {
+                weight,enabled,alpha,target,remaining,requested=w,on,a,t,left,wanted
             }
             row:=Instance_Modifier{kind=kind,weight=weight,enabled=enabled}
             base.text_set(row.name[:],base.text_get(definition.name[:]))
             if p.diagnostics {
                 row.alpha,row.target_alpha,row.requested_enabled,row.fade_remaining=alpha,target,requested,remaining
-                diagnostic,_:=anim.animation_rig_diagnostic(runtime,entity,kind,u16(slot),&runtime.constraints if runtime!=nil else nil)
+                diagnostic,_:=anim.animation_rig_diagnostic(runtime,entity,kind,name)
                 row.diagnostic={valid=diagnostic.valid,reached=diagnostic.reached,residual=diagnostic.residual,angular_error=diagnostic.angular_error,iterations=diagnostic.iterations}
                 if kind==.Grounding {row.diagnostic=program_grounding_diagnostic(world,entity,u16(slot),profile.grounding)}
             }
@@ -315,7 +283,7 @@ program_modifier_inspect :: proc(s:^editor.Session,call:^api.Call,world:core.Wor
 
 
 @(private)
-program_modifier_goal_value :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity,profile:anim.Pose_Profile,p:^$T,raw:string,prefix:string="") -> (anim.Modifier_Goal,bool) {
+program_modifier_goal_value :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity,profile:anim.Pose_Profile,p:^$T,raw:string,prefix:string="") -> (anim.Modifier_Request,bool) {
     kind:=program_modifier_goal_kind(p.kind)
     resolved,valid:=program_modifier_slot(call,profile,kind,p.name[:]);if !valid {return {},false}
     field_path :: proc(prefix,field:string) -> string {return fmt.tprintf("%s.%s",prefix,field) if prefix!="" else field}
@@ -333,25 +301,24 @@ program_modifier_goal_value :: proc(s:^editor.Session,call:^api.Call,world:core.
         if present && !allowed {authoring_failure(call,field_path(prefix,field),"Kind","a field used by this operation",fmt.tprintf("%v",kind),"This field does not apply to the operation");return {},false}
         if !present && allowed && (field=="target" || field=="effector") {authoring_failure(call,field_path(prefix,field),"Required",fmt.tprintf("the %s of this operation",field),"missing","Supply it: animation.inspect parts Modifiers lists effectors");return {},false}
     }
-    effector:u8
     wanted:=base.text_get(p.effector[:])
     #partial switch kind {
     case .Multi_IK:
         config:=profile.multi_ik[resolved]
         found:bool
-        effector,found=anim.multi_ik_effector_named(&config,wanted)
+        _,found=anim.multi_ik_effector_named(&config,wanted)
         if !found {authoring_failure(call,field_path(prefix,"effector"),"Missing_Reference","an effector name of this Multi IK operation",wanted,"The named Multi IK effector does not exist");return {},false}
     case .Spline_IK:
         found:=false
-        for name,i in anim.SPLINE_CONTROLS {if name==wanted {effector,found=u8(i),true;break}}
+        for name in anim.SPLINE_CONTROLS {if name==wanted {found=true;break}}
         if !found {authoring_failure(call,field_path(prefix,"effector"),"Missing_Reference","start, tangent_start, tangent_end or end",wanted,"Name a control of the spline");return {},false}
     }
     for number,i in p.position {if !finite(number) {authoring_failure(call,field_path(prefix,fmt.tprintf("position[%d]",i)),"Non_Finite","a finite number",fmt.tprintf("%g",number),"The modifier goal position is invalid");return {},false}}
     if supported && (!finite(p.contact) || p.contact<0 || p.contact>1) {authoring_failure(call,field_path(prefix,"contact"),"Range","a finite number in [0,1]",fmt.tprintf("%g",p.contact),"The contact strength is invalid");return {},false}
-    goal:=anim.Modifier_Goal{rig=entity,kind=kind,slot=resolved,effector=effector,position=p.position}
+    goal:=anim.Modifier_Request{rig=entity,kind=kind,position=p.position,goal=true}
     // By name: the operation is found again if the .character is read again.
     goal.name=base.name_hash(base.text_get(p.name[:]))
-    if kind==.Multi_IK {goal.effector_name=base.name_hash(wanted)}
+    if wanted!="" {goal.effector=base.name_hash(wanted)}
     if targeted {
         target,found:=spatial_target_value(call,world,p.target,field_path(prefix,"target"));if !found {return {},false}
         goal.target=target

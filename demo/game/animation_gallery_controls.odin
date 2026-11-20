@@ -49,7 +49,7 @@ gallery_playback_commands :: proc(commands:[]Gallery_Command,requests:^anim.Anim
     for &command in commands {
         e:=command.entity
         #partial switch command.kind {
-        case .Modifier: anim.modifier_control(requests,{rig=e,kind=command.modifier,slot=command.slot,weight=command.value,enabled=command.enabled,fade=.2})
+        case .Modifier: anim.modifier(requests,{rig=e,kind=command.modifier,weight=command.value,enabled=command.enabled,fade=.2},base.text_get(command.name[:]))
         case .Action: anim.play(requests,e,base.text_get(command.name[:]))
         case .Automatic: if command.enabled {anim.animation_command(requests,e,.Resume)}
         case .Playing: anim.animation_command(requests,e,.Resume if command.enabled else .Pause)
@@ -83,7 +83,7 @@ Gallery_Panel :: struct {
 }
 
 // A slider of a panel: the command it asks with the value between min and max.
-Gallery_Control :: struct {label:string,command:Gallery_Command_Kind,min,max:f32,slot:u16,modifier:anim.Modifier_Kind}
+Gallery_Control :: struct {label:string,command:Gallery_Command_Kind,min,max:f32,slot:u16,modifier:anim.Modifier_Kind,name:string}
 Gallery_Button :: struct {label:string,command:Gallery_Command_Kind,name:string,slot:u16}
 
 gallery_controls :: proc(kind:Gallery_Kind) -> (rows:[GALLERY_PANEL_ROWS]Gallery_Control,row_count:int,buttons:[GALLERY_PANEL_BUTTONS]Gallery_Button,button_count:int) {
@@ -109,7 +109,7 @@ gallery_controls :: proc(kind:Gallery_Kind) -> (rows:[GALLERY_PANEL_ROWS]Gallery
         return rows,1,buttons,2
     case .IK:
         rows[0],rows[1]={label="Target height",command=.Value,min=.9,max=1.8},{label="Target reach",command=.Value,min=.1,max=.8,slot=1}
-        rows[2],rows[3]={label="Hand IK",command=.Modifier,max=1,modifier=.IK},{label="Look at",command=.Modifier,max=1,modifier=.Look}
+        rows[2],rows[3]={label="Hand IK",command=.Modifier,max=1,modifier=.IK,name="RightHand"},{label="Look at",command=.Modifier,max=1,modifier=.Look,name="Head"}
         buttons[0]=automatic
         return rows,4,buttons,1
     case .Sequence:
@@ -137,7 +137,7 @@ gallery_panel_input :: proc(panels:^core.Table(Gallery_Panel,.Read),gallery:^cor
             high:=row.max
             if row.command==.Seek {_,duration,_,valid:=anim.animation_progress(playback.ptr,value.station);if !valid {continue};high=duration}
             amount:=row.min+f32(clamp(event.value,0,1))*(high-row.min)
-            gallery_request(panel,row.command,value.station,value=amount,slot=row.slot,modifier=row.modifier,enabled=amount>0 || row.command!=.Modifier)
+            gallery_request(panel,row.command,value.station,value=amount,slot=row.slot,name=row.name,modifier=row.modifier,enabled=amount>0 || row.command!=.Modifier)
         } else if event.kind==.Clicked && event.name==base.name_hash("button") && int(event.item)<button_count {
             button:=buttons[event.item]
             gallery_request(panel,button.command,value.station,name=button.name,enabled=button.command!=.Playing || !anim.animation_playing(playback.ptr,value.station))
@@ -165,7 +165,7 @@ gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:^core.Table(Ani
             case .Value: value=item.values[control.slot]
             case .Modifier:
                 value=1
-                for state in modifiers.controls {if state.rig==current.station && state.kind==control.modifier {value=state.target if state.enabled else 0}}
+                if _,_,_,target,_,enabled,found:=anim.modifier_influence(modifiers.ptr,current.station,control.modifier,base.name_hash(control.name));found {value=target if enabled else 0}
             }
             line:=&next.rows[i]
             base.text_set(line.label[:],control.label)

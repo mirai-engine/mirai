@@ -189,15 +189,15 @@ gallery_direct_clips :: proc(gallery:^core.Table(Animation_Gallery,.Read),animat
 // It reads the gallery as gallery_observe left it in the last tick.
 @(step="fixed",stage="react",before="gallery_observe")
 gallery_control :: proc(gallery:^core.Table(Animation_Gallery,.Read),players:^core.Table(Gallery_Player,.Read),characters:^core.Table(phys.Character_State,.Read),requests:^anim.Animation_Requests) {
-    ground :: proc(characters:^core.Table(phys.Character_State,.Read),requests:^anim.Animation_Requests,entity:core.Entity) {
+    ground :: proc(characters:^core.Table(phys.Character_State,.Read),requests:^anim.Animation_Requests,entity:core.Entity,name:string) {
         character,exists:=core.get(characters,entity)
-        if exists {anim.modifier_goal(requests,{rig=entity,kind=.Grounding,weight=1 if character.standing else 0,enabled=true})}
+        if exists {anim.modifier(requests,{rig=entity,kind=.Grounding,weight=1 if character.standing else 0,enabled=true,goal=true},name)}
     }
     for row in 0..<core.count(gallery) {
         kind:=core.at(gallery,row).kind
-        if kind==.Walker || kind==.Jumper || kind==.Spider {ground(characters,requests,core.entity_at(gallery,row))}
+        if kind==.Walker || kind==.Jumper || kind==.Spider {ground(characters,requests,core.entity_at(gallery,row),"body" if kind==.Spider else "grounding")}
     }
-    for row in 0..<core.count(players) {ground(characters,requests,core.at(players,row).mirai)}
+    for row in 0..<core.count(players) {ground(characters,requests,core.at(players,row).mirai,"grounding")}
 }
 
 // The matching station is told the speed it walks at and now and then plays a wave over its whole
@@ -218,8 +218,8 @@ gallery_animate :: proc(gallery:^core.Table(Animation_Gallery,.Read),animations:
         entity:=core.entity_at(gallery,row)
         item:=core.at(gallery,row)
         if item.target!=core.NONE {
-            anim.modifier_goal(requests,{rig=entity,kind=.IK,target=anim.spatial_entity(item.target),weight=1,enabled=true})
-            anim.look(requests,entity,anim.spatial_entity(item.target))
+            anim.modifier(requests,{rig=entity,kind=.IK,target=anim.spatial_entity(item.target),weight=1,enabled=true,goal=true},"RightHand")
+            anim.look(requests,entity,anim.spatial_entity(item.target),name="Head")
         }
         manual:=gallery_manual(item.manual,entity,commands)
         speed,value:=gallery_automatic(item.kind,item.age)
@@ -284,9 +284,8 @@ gallery_ik_target :: proc(item:Animation_Gallery) -> mm.Vec3 {
 }
 
 @(step="fixed",stage="react")
-gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.Table(core.Transform),characters:^core.Table(phys.Character_State,.Read),moving:^core.Table(core.Motion,.Read),events:core.Ref(anim.Animation_Events),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime),time:core.Time,panel:^Gallery_UI) {
+gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.Table(core.Transform),characters:^core.Table(phys.Character_State,.Read),moving:^core.Table(core.Motion,.Read),events:core.Ref(anim.Animation_Events),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime),time:core.Time,panel:^Gallery_UI,sets:core.Ref(anim.Character_Assets)) {
     if !time.playing {return}
-    feet:=&modifiers.grounding
     commands:=panel.commands[:panel.count]
     for &item,row in core.writable(gallery) {
         entity:=gallery.entities[row]
@@ -329,6 +328,9 @@ gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.
             if exists {item.diagnostics.root_distance+=linalg.length(motion.translation)}
         }
         going,_:=core.get(moving,entity)
+        rig:=anim.modifier_rig(modifiers.ptr,entity)
+        feet:=anim.modifier_profile(modifiers.ptr,sets.ptr,entity).grounding
+        if len(feet.legs)>0 {feet=anim.modifier_grounding(modifiers.ptr,rig,feet)}
         if character,exists:=core.get(characters,entity);exists {
             if item.grounded && !character.standing && going.linear.y>.1 {item.diagnostics.jumps+=1}
             if !item.grounded && character.standing && item.age>.2 {item.diagnostics.landings+=1}
@@ -336,22 +338,23 @@ gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.
             item.diagnostics.states_seen|=1 if character.standing else 2 if going.linear.y>0 else 4
             if !character.standing {
                 item.diagnostics.airborne_samples+=1
-                if config,present:=core.get(feet,entity);present && config.global_contact!=0 {item.diagnostics.airborne_contact_violations+=1}
+                if len(feet.legs)>0 && feet.global_contact!=0 {item.diagnostics.airborne_contact_violations+=1}
             }
         }
-        for &record in modifiers.grounded.records {
-            if record.rig!=entity || record.count<=0 {continue}
+        if rig!=nil && len(rig.grounding)>0 {
+            record:=&rig.grounding[0].record
+            if record.count<=0 {continue}
             for target,i in record.targets[:record.count] {
                 for &pose in playback.states {
                     if pose.entity!=entity || !pose.pose_ready {continue}
                     bone:=record.bones[i][2]
                     if bone<0 || bone>=len(anim.playing_pose(&pose,.World)) {continue}
                     if record.mode==.Animated && !record.placements[i].anchor.active {
-                        if config,present:=core.get(feet,entity);present {
-                            leg:=config.legs[i]
+                        if i<len(feet.legs) {
+                            leg:=feet.legs[i]
                             offset:=leg.contact_offset if leg.contact_bone!={} else leg.sole_height
-                            clearance:=linalg.dot(record.previous[i].position-anim.playing_pose(&pose,.World)[0].position,linalg.normalize0(config.up))-offset
-                            if config.global_contact>=.8 && leg.contact>=.8 && clearance>.06 {item.diagnostics.swing_samples+=1;item.diagnostics.leg_swing_samples[i]+=1}
+                            clearance:=linalg.dot(record.previous[i].position-anim.playing_pose(&pose,.World)[0].position,linalg.normalize0(feet.up))-offset
+                            if feet.global_contact>=.8 && leg.contact>=.8 && clearance>.06 {item.diagnostics.swing_samples+=1;item.diagnostics.leg_swing_samples[i]+=1}
                         }
                     }
                     if target.weight<.8 {continue}

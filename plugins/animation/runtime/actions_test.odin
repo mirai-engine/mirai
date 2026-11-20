@@ -482,7 +482,7 @@ action_root_projection_preserves_each_base_and_action_contribution_and_validates
     w:Actions_World
     if !test_world_init(t,&w) {return}
     defer test_world_destroy(&w)
-    cache:Animation_Constraints;defer constraints_free(&cache)
+    cache:Modifier_Runtime;defer modifier_runtime_free(&cache)
     // An action kept in place blends the reference of the root bone by its weight, one that extracts
     // its clip: over a base kept in place, the base is at the reference.
     for policy in ([?]Root_Motion_Policy{.In_Place,.Extract}) {
@@ -782,12 +782,12 @@ an_action_and_a_look_over_an_idle_body_fade_in_and_back_to_rest :: proc(t:^testi
     for _ in 0..<60 {alone=max(alone,tick(&w,&problems,&app,&characters,&skeletons,&sources,body))}
     rested,_:=core.get(core.read(&w.transforms),body)
     // With a look, which turns to another target while it plays and lets go after the action ends.
-    look(&w.requests,rig,spatial_point({.6,-.2,-1}))
+    look(&w.requests,rig,spatial_point({.6,-.2,-1}),name="Body")
     play(&w.requests,rig,"Lean")
     both:f32
     for i in 0..<110 {
-        if i==20 {look(&w.requests,rig,spatial_point({-.6,-.2,-1}))}
-        if i==70 {look(&w.requests,rig,spatial_point({}),0)}
+        if i==20 {look(&w.requests,rig,spatial_point({-.6,-.2,-1}),name="Body")}
+        if i==70 {look(&w.requests,rig,spatial_point({}),0,"Body")}
         both=max(both,tick(&w,&problems,&app,&characters,&skeletons,&sources,body))
     }
     last,_:=core.get(core.read(&w.transforms),body)

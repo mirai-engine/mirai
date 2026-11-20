@@ -7,7 +7,7 @@ import lib "mirai:std/anim"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
 
-Profile_Chain_Params :: struct {name:[64]u8 `mirai:"text"`,root,end:anim.Bone_Ref,target:anim.Spatial_Target `mirai:"optional"`,pole:mm.Vec3 `mirai:"optional"`,iterations:u16 `mirai:"optional"`,tolerance,weight:f32 `mirai:"optional"`,reach:lib.Chain_Reach `mirai:"optional"`,limits:[anim.RIG_CHAIN_BONES-2]lib.Chain_Limit `mirai:"optional,trim"`,use_pole,enabled:bool `mirai:"optional"`}
+Profile_Chain_Params :: struct {name:[64]u8 `mirai:"text"`,root,end:anim.Bone_Ref,target:anim.Spatial_Definition `mirai:"optional"`,pole:mm.Vec3 `mirai:"optional"`,iterations:u16 `mirai:"optional"`,tolerance,weight:f32 `mirai:"optional"`,reach:lib.Chain_Reach `mirai:"optional"`,limits:[anim.RIG_CHAIN_BONES-2]lib.Chain_Limit `mirai:"optional,trim"`,use_pole,enabled:bool `mirai:"optional"`}
 Profile_Twist_Amount :: struct {value:f32}
 Profile_Twist_Params :: struct {name:[64]u8 `mirai:"text"`,source,root,end:anim.Bone_Ref,axis:mm.Vec3 `mirai:"optional"`,reference:mm.Quat `mirai:"optional"`,amounts:[anim.RIG_CHAIN_BONES]Profile_Twist_Amount `mirai:"optional,trim"`,weight:f32 `mirai:"optional"`,enabled:bool `mirai:"optional"`}
 Profile_Spring_Params :: struct {name:[64]u8 `mirai:"text"`,root,end:anim.Bone_Ref,settings:lib.Spring_Chain `mirai:"optional"`,limits:[anim.RIG_CHAIN_BONES-2]lib.Chain_Limit `mirai:"optional,trim"`,collisions:[anim.RIG_COLLISIONS]lib.Spring_Collision `mirai:"optional,trim"`,weight:f32 `mirai:"optional"`,enabled:bool `mirai:"optional"`}
@@ -20,6 +20,7 @@ Profile_Grounded_Leg :: struct {
     reach:lib.Chain_Reach `mirai:"optional"`,
 }
 Profile_Grounding_Params :: struct {
+    name:[64]u8 `mirai:"optional,text"`,
     mode:anim.Grounding_Mode `mirai:"optional"`,legs:[anim.GROUNDING_LEGS]Profile_Grounded_Leg `mirai:"trim"`,body:anim.Bone_Ref `mirai:"optional"`,up:mm.Vec3 `mirai:"optional"`,
     trace_above,trace_below,minimum_ground_dot:f32 `mirai:"optional"`,collision_mask:u32 `mirai:"optional"`,global_contact,weight:f32 `mirai:"optional,min=0,max=1"`,
     blend_time,release_distance,replant_distance,cycle_duration,swing_fraction:f32 `mirai:"optional"`,max_swinging:i32 `mirai:"optional"`,

@@ -37,7 +37,7 @@ gallery_place :: proc(index:int) -> (origin:mm.Vec3,facing:mm.Quat) {
 mirai_constraints :: proc(o:^Out,model:^importer.Imported_Model,animation:base.Asset_Id) {
     origin,facing:=gallery_place(GALLERY_CONSTRAINTS)
     reach,pole:=origin+mm.quat_rotate(facing,{.42,1.3,-.42}),origin+mm.quat_rotate(facing,{.9,.9,.6})
-    ik:=anim.IK_CONSTRAINT_DEFAULT;ik.target,ik.hold,ik.pole=anim.spatial_point(reach),.Joint,pole
+    ik:=anim.IK_CONSTRAINT_DEFAULT;ik.target,ik.hold,ik.pole=anim.spatial_definition_point(reach),.Joint,pole
     ik.root,ik.joint,ik.end=anim.bone_ref("RightArm"),anim.bone_ref("RightForeArm"),anim.bone_ref("RightHand")
     rig,_:=mirai_rig(model)
     head:=mirai_bone(model,"Head")

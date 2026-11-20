@@ -167,5 +167,5 @@ unused_grounding_and_multi_ik_have_empty_child_tables :: proc(t:^testing.T) {
     }
     log.infof("grounding %d, multi IK %d, pose request %d, goal %d, empty character %d bytes",
         size_of(Foot_Grounding),size_of(Multi_IK_Constraint),size_of(Pose_Request),
-        size_of(Modifier_Goal),len(bytes))
+        size_of(Modifier_Request),len(bytes))
 }

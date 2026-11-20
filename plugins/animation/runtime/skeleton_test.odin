@@ -68,17 +68,18 @@ rig_test_destroy :: proc(f:^Rig_Test) {
 @(private="file")
 rig_test_settle :: proc(f:^Rig_Test) {
     test_world_settle(&f.w)
-    core.table_settle(&f.modifiers.ik,&f.entities)
 }
 
 @(private="file")
 rig_test_advance :: proc(f:^Rig_Test,app:^host.App,time:core.Time,frame:core.Frame_Time={}) {
     if app.assets!=nil {rigs_update(&f.playback,core.read(&f.meshes),core.read(&f.skins),app.assets,core.read(&f.attachments))}
     animation_tick(core.read(&f.animations),&f.transforms,core.read(&f.parents),{},core.read(&f.labels),&f.requests,&f.events,core.read(&f.targets),&f.playback,app,time,frame,&f.cache,&f.problems,&f.characters,&f.actions,&f.motion,&f.sources,core.read(&f.remotes),&f.played,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
-    m:=&f.modifiers
-    inputs:=Constraint_Inputs{core.read(&m.ik),core.read(&m.look),core.read(&m.limits),core.read(&m.sockets),core.read(&f.worlds),0,&f.cache,&f.problems}
-    ground_inputs:=Grounding_Inputs{core.read(&m.grounding),{},core.read(&f.transforms),core.read(&f.parents),0,&f.problems,{}}
-    animation_finish(&f.playback,inputs,&m.constraints,&f.transforms,&f.parents,time.dt,&m.grounded,ground_inputs,final_poses=core.take(&f.requests.final_poses))
+    if core.count(&f.attachments)>0 {
+        modifier_attachments_prepare(&f.modifiers,&f.attachments,&f.cache,&f.playback,app.assets,
+            app.allocator,&f.problems,core.read(&f.meshes))
+    }
+    inputs:=Constraint_Inputs{core.read(&f.worlds),&f.cache,&f.problems}
+    animation_finish(&f.playback,inputs,&f.modifiers,&f.transforms,&f.parents,time.dt,characters=&f.characters,final_poses=core.take(&f.requests.final_poses))
 }
 
 // A skeleton of three bones in a column, a mesh bound to it and a clip that turns the upper bone a quarter.
@@ -194,12 +195,13 @@ skeleton_without_clips_evaluates_named_ik_and_pose_requests_without_bone_entitie
     content:host.Content
     app:=host.App{assets=&assets,allocator=context.allocator,content=&content}
     w:Rig_Test;if !rig_test_init(t,&w) {return};defer rig_test_destroy(&w)
-    rig,helper:=core.create(&w.entities),core.create(&w.entities)
+    rig:=core.create(&w.entities)
+    _=core.create(&w.entities)
     placed:=core.TRANSFORM_IDENTITY;placed.position.x=7
     core.add(&w.transforms,rig,placed);core.add(&w.meshes,rig,{mesh=mesh_id})
-    leg:=IK_CONSTRAINT_DEFAULT;leg.rig=rig;leg.root=bone_ref("upper");leg.joint=bone_ref("lower");leg.end=bone_ref("foot")
-    leg.target=spatial_point({7,0.2,0.2});leg.pole={7,1,2}
-    core.add(&w.modifiers.ik,helper,leg)
+    leg:=IK_CONSTRAINT_DEFAULT;leg.root=bone_ref("upper");leg.joint=bone_ref("lower");leg.end=bone_ref("foot")
+    leg.target=spatial_definition_point({7,0.2,0.2});leg.pole={7,1,2}
+    prepared:=test_modifier_profile(&w.modifiers,&w.characters,rig,{ik={leg}})
     rig_test_settle(&w)
     for iteration in 0..<3 {
         failure:=Runtime_Allocation_Failure{owner=context.allocator,remaining=0}
@@ -222,14 +224,14 @@ skeleton_without_clips_evaluates_named_ik_and_pose_requests_without_bone_entitie
     testing.expect_value(t,bone_resolve(state,bone_ref("upper/lower/foot")),3)
     testing.expect_value(t,bone_resolve(state,bone_ref("foot")),3)
     testing.expect_value(t,bone_resolve(state,bone_ref("missing")),-1)
-    core.edit(&w.modifiers.ik,helper).enabled=false
+    modifier_states(prepared,.IK)[0].base_enabled=false
     authored:=mm.Transform{position={0,2,0},rotation=mm.quat_axis_angle({0,1,0},0.4),scale={1,1,1}}
     animation_pose(&w.requests,rig,bone_ref("upper"),authored)
     rig_test_advance(&w,&app,{dt=1.0/60,playing=true})
     testing.expect_value(t,playing_pose(state,.Local)[1],authored)
     testing.expect_value(t,w.problems.count,0)
     bound:=state.bound
-    core.edit(&w.modifiers.ik,helper).enabled=true
+    modifier_states(prepared,.IK)[0].base_enabled=true
     // A skin follows the pose of another rig: its entity is no rig of its own.
     follower:=core.create(&w.entities)
     core.add(&w.transforms,follower,placed);core.add(&w.meshes,follower,{mesh=mesh_id});core.add(&w.skins,follower,{rig=rig})
@@ -366,10 +368,11 @@ shared_profiles_accept_multiple_goals_at_the_origin_and_evaluate_without_stable_
     directory:=base.test_folder(t,"profiles")
     skeleton,mesh,_,ok:=rig_assets(t,directory);if !ok {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    ik:=IK_CONSTRAINT_DEFAULT;ik.root,ik.joint,ik.end=bone_ref("upper"),bone_ref("lower"),bone_ref("foot");ik.target=spatial_point({.5,0,0})
-    look:=LOOK_CONSTRAINT_DEFAULT;look.bone=bone_ref("foot");look.target=spatial_point({0,0,1})
+    ik:=IK_CONSTRAINT_DEFAULT;ik.root,ik.joint,ik.end=bone_ref("upper"),bone_ref("lower"),bone_ref("foot");ik.target=spatial_definition_point({.5,0,0})
+    look:=LOOK_CONSTRAINT_DEFAULT;look.bone=bone_ref("foot");look.target=spatial_definition_point({0,0,1})
     id:=base.Asset_Id{0x533,0x999}
-    if !test_character_save(t,directory,"rig",&types,id,{pose={ik={ik,ik},look={look}}}) {return}
+    other:=ik;base.text_set(other.name[:],"reach")
+    if !test_character_save(t,directory,"rig",&types,id,{pose={ik={ik,other},look={look}}}) {return}
     app:host.App;app.allocator=context.allocator
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=directory})) {return};defer host.assets_destroy(&assets);app.assets=&assets
@@ -385,46 +388,43 @@ shared_profiles_accept_multiple_goals_at_the_origin_and_evaluate_without_stable_
         animation_sample(core.read(&w.animations),core.read(&w.progress),&w.played,&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,cache,&w.cache,app,{dt=1.0/60,playing=true},{},&w.problems,&w.actions,&w.motion,&w.sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
         animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifiers,&w.playback,{},{},{dt=1.0/60,playing=true},{},&w.problems,&w.motion,cache,{},{},core.CLOCK_DEFAULT,nil)
     }
-    modifier_goal(&w.requests,{rig=rig,kind=.Look,target=spatial_point({}),weight=1,enabled=true})
-    modifier_goal(&w.requests,{rig=rig,kind=.IK,slot=1,target=spatial_point({.75,.2,0}),weight=1,enabled=true})
+    modifier(&w.requests,{rig=rig,kind=.Look,target=spatial_point({}),weight=1,enabled=true,goal=true},"foot")
+    modifier(&w.requests,{rig=rig,kind=.IK,target=spatial_point({.75,.2,0}),weight=1,enabled=true,goal=true},"reach")
     step(&w,&app,cache)
-    testing.expect_value(t,len(w.modifiers.ik.values),2)
+    prepared:=modifier_rig(&w.modifiers,rig)
+    testing.expect_value(t,len(prepared.ik_states),2)
     testing.expect_value(t,len(playing_pose(&w.playback.states[0],.Local)),4)
-    testing.expect_value(t,w.modifiers.look.values[0].target.position,mm.Vec3{})
-    testing.expect_value(t,w.modifiers.ik.values[1].target.position,mm.Vec3{.75,.2,0})
+    testing.expect_value(t,modifier_override(prepared,.Look,0).target.position,mm.Vec3{})
+    testing.expect_value(t,modifier_override(prepared,.IK,1).target.position,mm.Vec3{.75,.2,0})
     testing.expect_value(t,w.problems.count,0)
     copy:Modifier_Runtime;core.value_copy(&copy,&w.modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copy)
-    testing.expect(t,raw_data(copy.ik.values)!=raw_data(w.modifiers.ik.values) && raw_data(copy.goals)!=raw_data(w.modifiers.goals))
+    testing.expect(t,raw_data(modifier_rig(&copy,rig).ik_states)!=raw_data(prepared.ik_states) && raw_data(modifier_rig(&copy,rig).overrides)!=raw_data(prepared.overrides))
     before:=w.playback.binding_revision
-    geometry:=w.modifiers.constraints.revision
-    version:=w.modifiers.ik.version
-    modifier_goal(&w.requests,{rig=rig,kind=.IK,slot=1,target=spatial_point({.6,.2,0}),weight=1,enabled=true})
+    binding:=raw_data(prepared.ik_states)
+    modifier(&w.requests,{rig=rig,kind=.IK,target=spatial_point({.6,.2,0}),weight=1,enabled=true,goal=true},"reach")
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     step(&w,&app,cache)
     context=saved
     testing.expect_value(t,w.playback.binding_revision,before)
-    testing.expect_value(t,w.modifiers.ik.values[1].target.position,mm.Vec3{.6,.2,0})
-    testing.expect(t,w.modifiers.ik.version>version)
-    testing.expect_value(t,w.modifiers.constraints.revision,geometry)
-    modifier_control(&w.requests,{rig=rig,kind=.Look,weight=.25,enabled=true,fade=.1})
-    modifier_control(&w.requests,{rig=rig,kind=.IK,slot=1,weight=1,enabled=false,fade=.1})
+    testing.expect_value(t,modifier_override(prepared,.IK,1).target.position,mm.Vec3{.6,.2,0})
+    testing.expect_value(t,raw_data(prepared.ik_states),binding)
+    modifier(&w.requests,{rig=rig,kind=.Look,weight=.25,enabled=true,fade=.1},"foot")
+    modifier(&w.requests,{rig=rig,kind=.IK,weight=1,enabled=false,fade=.1},"reach")
     saved=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     for _ in 0..<8 {step(&w,&app,cache)}
     context=saved
-    testing.expect_value(t,w.modifiers.ik.values[0].weight,f32(1))
-    testing.expect_value(t,w.modifiers.ik.values[1].weight,f32(0))
-    testing.expect(t,!w.modifiers.ik.values[1].enabled)
-    testing.expect_value(t,w.modifiers.look.values[0].weight,f32(.25))
-    testing.expect_value(t,w.modifiers.look.values[0].target.position,mm.Vec3{})
+    testing.expect_value(t,test_modifier_weight(&w.modifiers,rig,.IK,"foot"),f32(1))
+    testing.expect_value(t,test_modifier_weight(&w.modifiers,rig,.IK,"reach"),f32(0))
+    testing.expect(t,!modifier_states(prepared,.IK)[1].enabled)
+    testing.expect_value(t,test_modifier_weight(&w.modifiers,rig,.Look,"foot"),f32(.25))
+    testing.expect_value(t,modifier_override(prepared,.Look,0).target.position,mm.Vec3{})
     testing.expect_value(t,w.playback.binding_revision,before)
-    testing.expect_value(t,w.modifiers.constraints.revision,geometry)
+    testing.expect_value(t,raw_data(prepared.ik_states),binding)
     testing.expect_value(t,w.problems.count,0)
     testing.expect_value(t,w.playback.states[0].skeleton,skeleton)
     core.remove(&w.animations,rig);rig_test_settle(&w)
     step(&w,&app,cache)
-    testing.expect_value(t,len(w.modifiers.goals),0)
-    testing.expect_value(t,len(w.modifiers.controls),0)
-    testing.expect_value(t,len(w.modifiers.ik.values),0)
+    testing.expect(t,modifier_rig(&w.modifiers,rig)==nil)
 }
 
 @(test)
@@ -441,8 +441,8 @@ final_world_poses_update_skin_and_sockets_in_the_same_tick_without_stable_alloca
     core.add(&w.transforms,rig,core.from_math(mm.TRANSFORM_IDENTITY))
     core.add(&w.transforms,socket,core.from_math(mm.TRANSFORM_IDENTITY))
     core.add(&w.meshes,rig,{mesh=mesh_id})
-    binding:=BONE_BINDING_DEFAULT;binding.rig=rig;binding.bone=bone_ref("foot");binding.offset.position={0,0,.25}
-    core.add(&w.modifiers.sockets,socket,binding);core.table_settle(&w.modifiers.sockets,&w.entities)
+    binding:=BONE_ATTACHMENT_DEFAULT;binding.rig=rig;binding.bone=bone_ref("foot");binding.offset.position={0,0,.25}
+    core.add(&w.attachments,socket,binding)
     rig_test_settle(&w);rig_test_advance(&w,&app,{dt=1.0/60,playing=true})
     upper,upper_ok:=animation_bone_bind(&w.playback,rig,bone_ref("upper"))
     foot,foot_ok:=animation_bone_bind(&w.playback,rig,bone_ref("foot"))

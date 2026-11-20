@@ -28,14 +28,15 @@ rotation_limits_blend_from_the_input_pose_and_leave_zero_weight_unchanged :: pro
     rig:=core.create(&w.entities)
     pose:=[2]mm.Transform{mm.TRANSFORM_IDENTITY,{{0,1,0},mm.quat_axis_angle({1,0,0},1),{1,1,1}}}
     state:=constraint_fixture_state(rig,pose[:]);defer playing_free(&state)
-    limit:=ROTATION_CONSTRAINT_DEFAULT;limit.rig,limit.bone,limit.max_swing,limit.weight=rig,bone_ref("11"),.2,.5
-    core.add(&w.modifiers.limits,rig,limit);core.table_settle(&w.modifiers.limits,&w.entities)
-    playback:Playback;cache:Animation_Constraints;defer constraints_free(&cache)
+    limit:=ROTATION_CONSTRAINT_DEFAULT;limit.bone,limit.max_swing,limit.weight=bone_ref("11"),.2,.5
+    characters:Character_Assets;defer character_assets_free(&characters)
+    prepared:=test_modifier_profile(&w.modifiers,&characters,rig,{limits={limit}})
+    playback:Playback
     problems:core.Problems
-    constraints_apply(&state,&playback,{limits=core.read(&w.modifiers.limits),problems=&problems},&cache,&w.transforms,core.read(&w.parents),0)
+    constraints_apply(&state,&playback,{problems=&problems},&w.modifiers,&w.transforms,core.read(&w.parents),0,characters=&characters)
     testing.expect(t,abs(mm.quat_angle(playing_pose(&state,.Local)[1].rotation,mm.QUAT_IDENTITY)-.6)<.001)
-    playing_pose(&state,.Local)[1]=pose[1];core.edit(&w.modifiers.limits,rig).weight=0
-    constraints_apply(&state,&playback,{limits=core.read(&w.modifiers.limits),problems=&problems},&cache,&w.transforms,core.read(&w.parents),0)
+    playing_pose(&state,.Local)[1]=pose[1];modifier_states(prepared,.Limit)[0].base_weight=0
+    constraints_apply(&state,&playback,{problems=&problems},&w.modifiers,&w.transforms,core.read(&w.parents),0,characters=&characters)
     testing.expect_value(t,playing_pose(&state,.Local)[1],pose[1])
     testing.expect_value(t,problems.count,0)
 }
@@ -63,7 +64,7 @@ in_place_root_motion_preserves_gameplay_actor_placement_and_restores_internal_bo
     roots:=[1]asset.Animation_Root{{translation=true,rotation=true}}
     bound:=host.Content_Animation{lib=library,clip_count=1,roots=roots[:]}
     testing.expect(t,tracks_bind(&playback,&state,&bound))
-    cache:Animation_Constraints;defer constraints_free(&cache)
+    cache:Modifier_Runtime;defer modifier_runtime_free(&cache)
     problems:core.Problems
     animation:=ANIMATION_DEFAULT;animation.root_motion=.In_Place
     state.root={translation=true,rotation=true,in_place=true}
@@ -107,7 +108,7 @@ taking_a_sampled_pose_ignores_actor_wrapper_placement_and_keeps_the_destination_
     playing_pose(target,.Local)[0].position={12,0,0};playing_pose(target,.Local)[0].rotation=mm.quat_axis_angle({0,1,0},-0.7)
     actor:=playing_pose(target,.Local)[0]
     constraint_take_sampled(target,source)
-    cache:Animation_Constraints;defer constraints_free(&cache)
+    cache:Modifier_Runtime;defer modifier_runtime_free(&cache)
     problems:core.Problems
     constraints_apply(target,&playback,{problems=&problems},&cache,&w.transforms,core.read(&w.parents),0.1)
     testing.expect_value(t,playing_pose(target,.Local)[0],actor)
@@ -168,7 +169,7 @@ taking_a_sampled_pose_pairs_dense_skeletons_by_name_then_path_and_preserves_acto
     playing_pose(target,.Local)[0].position={12,0,0};playing_pose(target,.Local)[0].rotation=mm.quat_axis_angle({0,1,0},-.7)
     actor:=playing_pose(target,.Local)[0]
     constraint_take_sampled(target,source)
-    cache:Animation_Constraints;defer constraints_free(&cache)
+    cache:Modifier_Runtime;defer modifier_runtime_free(&cache)
     problems:core.Problems
     inputs:=Constraint_Inputs{problems=&problems}
     constraints_apply(target,&playback,inputs,&cache,&w.transforms,core.read(&w.parents),0.1)
@@ -211,7 +212,7 @@ bone_constraints_solve_world_targets_under_rotated_uneven_parents_and_respect_so
     w:Constraints_World
     if !test_world_init(t,&w) {return}
     defer test_world_destroy(&w)
-    parent,rig,helper,socket:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    parent,rig,socket:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     external:=mm.Transform{{3,0,0},mm.quat_axis_angle({0,1,0},0.4),{2,1,1}}
     locals:=[3]mm.Transform{{{1,0,0},mm.quat_axis_angle({0,0,1},0.3),{1,1,1}},{{1,0,0},1,{1,1,1}},{{1,0,0},1,{1,1,1}}}
     state:=constraint_fixture_state(rig,locals[:]);defer playing_free(&state)
@@ -221,31 +222,32 @@ bone_constraints_solve_world_targets_under_rotated_uneven_parents_and_respect_so
     test_world_settle(&w)
     lib.skeleton_world(playing_skeleton(&state),playing_pose(&state,.Local),playing_pose(&state,.World),external)
     target:=playing_pose(&state,.World)[0].position+mm.Vec3{1,1,0}
-    config:=IK_CONSTRAINT_DEFAULT;config.rig=rig;config.root,config.joint,config.end=bone_ref("10"),bone_ref("11"),bone_ref("12");config.target=spatial_point(target);config.pole=target+mm.Vec3{0,0,2}
-    core.add(&w.modifiers.ik,helper,config)
-    socket_config:=BONE_BINDING_DEFAULT;socket_config.rig=rig;socket_config.bone=bone_ref("12");socket_config.offset.position={0,0,0.2}
-    core.add(&w.modifiers.sockets,socket,socket_config)
-    core.table_settle(&w.modifiers.ik,&w.entities);core.table_settle(&w.modifiers.sockets,&w.entities)
-    cache:Animation_Constraints;defer constraints_free(&cache)
+    config:=IK_CONSTRAINT_DEFAULT;config.root,config.joint,config.end=bone_ref("10"),bone_ref("11"),bone_ref("12");config.target=spatial_definition_point(target);config.pole=target+mm.Vec3{0,0,2}
+    values:=[1]IK_Constraint{config}
+    characters:Character_Assets;defer character_assets_free(&characters)
+    prepared:=test_modifier_profile(&w.modifiers,&characters,rig,{ik=values[:]})
+    socket_config:=Attachment_Binding{entity=socket,bone=base.name_hash("12"),index=-1,offset=mm.TRANSFORM_IDENTITY}
+    socket_config.offset.position={0,0,.2}
+    append(&prepared.attachments,socket_config)
     playback:Playback;defer playback_free(&playback)
     problems:core.Problems
-    inputs:=Constraint_Inputs{ik=core.read(&w.modifiers.ik),sockets=core.read(&w.modifiers.sockets),problems=&problems}
-    constraints_apply(&state,&playback,inputs,&cache,&w.transforms,core.read(&w.parents),0.1)
+    inputs:=Constraint_Inputs{problems=&problems}
+    constraints_apply(&state,&playback,inputs,&w.modifiers,&w.transforms,core.read(&w.parents),0.1,characters=&characters)
     testing.expect_value(t,problems.count,0)
     testing.expect(t,linalg.length(playing_pose(&state,.World)[2].position-target)<0.001)
     attached,_:=core.get(&w.transforms,socket)
     expected,_:=lib.skeleton_socket(playing_pose(&state,.World),2,socket_config.offset)
     testing.expect(t,linalg.length(attached.position-expected.position)<0.001)
     resize(&w.transforms.owners,core.entity_index(socket)+1);w.transforms.owners[core.entity_index(socket)]={core.entity_generation(socket),1}
-    core.edit(&w.modifiers.ik,helper).target.position+=mm.Vec3{0.2,0,0}
-    constraints_apply(&state,&playback,inputs,&cache,&w.transforms,core.read(&w.parents),0.1)
+    values[0].target.position+=mm.Vec3{0.2,0,0}
+    constraints_apply(&state,&playback,inputs,&w.modifiers,&w.transforms,core.read(&w.parents),0.1,characters=&characters)
     locked,_:=core.get(&w.transforms,socket)
     testing.expect_value(t,locked,attached)
     testing.expect(t,problems.count==1 && core.problem_find(&problems,socket,"animation.socket_owner")!=nil)
     w.transforms.owners[core.entity_index(socket)]={}
     stable_context:=context
     context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    constraints_apply(&state,&playback,inputs,&cache,&w.transforms,core.read(&w.parents),0.1)
+    constraints_apply(&state,&playback,inputs,&w.modifiers,&w.transforms,core.read(&w.parents),0.1,characters=&characters)
     context=stable_context
     testing.expect_value(t,problems.count,1)
 }
@@ -266,7 +268,7 @@ taking_a_sampled_pose_reads_the_pose_the_source_sampled_and_preserves_target_len
     playing_pose(source,.Sampled)[0].rotation=mm.quat_axis_angle({0,0,1},0.5)
     playing_pose(source,.Local)[0].rotation=mm.quat_axis_angle({0,0,1},1.5)
     constraint_take_sampled(target,source)
-    cache:Animation_Constraints;defer constraints_free(&cache)
+    cache:Modifier_Runtime;defer modifier_runtime_free(&cache)
     problems:core.Problems
     constraints_apply(target,&playback,{problems=&problems},&cache,&w.transforms,core.read(&w.parents),0.1)
     testing.expect(t,mm.quat_angle(playing_pose(target,.Local)[0].rotation,playing_pose(source,.Sampled)[0].rotation)<0.001)

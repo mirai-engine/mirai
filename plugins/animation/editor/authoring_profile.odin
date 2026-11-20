@@ -93,9 +93,9 @@ authoring_profile_set :: proc(s:^editor.Session,call:^api.Call) {
     replaced:=false
     capacity:=anim.POSE_CONSTRAINTS
     switch p.table {
-    case .IK: profile.ik,replaced=profile_row(profile.ik,p.ik,proc(a,b:anim.IK_Constraint) -> bool {return a.end==b.end},p.remove,capacity,call.allocator)
-    case .Look: profile.look,replaced=profile_row(profile.look,p.look,proc(a,b:anim.Look_Constraint) -> bool {return a.bone==b.bone},p.remove,capacity,call.allocator)
-    case .Limit: profile.limits,replaced=profile_row(profile.limits,p.limit,proc(a,b:anim.Rotation_Constraint) -> bool {return a.bone==b.bone},p.remove,capacity,call.allocator)
+    case .IK: profile.ik,replaced=profile_row(profile.ik,p.ik,proc(a,b:anim.IK_Constraint) -> bool {a,b:=a,b;return anim.modifier_operation_name(&a)==anim.modifier_operation_name(&b)},p.remove,capacity,call.allocator)
+    case .Look: profile.look,replaced=profile_row(profile.look,p.look,proc(a,b:anim.Look_Constraint) -> bool {a,b:=a,b;return anim.modifier_operation_name(&a)==anim.modifier_operation_name(&b)},p.remove,capacity,call.allocator)
+    case .Limit: profile.limits,replaced=profile_row(profile.limits,p.limit,proc(a,b:anim.Rotation_Constraint) -> bool {a,b:=a,b;return anim.modifier_operation_name(&a)==anim.modifier_operation_name(&b)},p.remove,capacity,call.allocator)
     case .Grounding:
         replaced=true
         if p.remove {profile.grounding={}} else {profile.grounding=profile_grounding_value(call,&p.grounding)}

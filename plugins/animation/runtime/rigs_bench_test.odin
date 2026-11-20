@@ -19,44 +19,57 @@ bench_rig_dispatch_and_multi_ik_scaling :: proc(t:^testing.T) {
     for count in COUNTS {
         for label,variant in labels {
             modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
+            characters:Character_Assets;defer character_assets_free(&characters)
             states:[dynamic]Playing
             defer {for &state in states {playing_free(&state)};delete(states)}
             for i in 0..<count {
                 entity:=core.entity_make(i+1,1)
                 append(&states,rig_test_state(entity,63,.25))
                 if variant==0 {continue}
-                for operation in 0..<(2 if variant==1 else 1) {
+                operations:=2 if variant==1 else 1
+                multis:=make([]Multi_IK_Constraint,operations,context.temp_allocator)
+                chains:=make([]Chain_IK_Constraint,operations if variant==1 else 0,context.temp_allocator)
+                twists:=make([]Twist_Constraint,len(chains),context.temp_allocator)
+                springs:=make([]Spring_Constraint,len(chains),context.temp_allocator)
+                retargets:=make([]Chain_Retarget_Constraint,len(chains),context.temp_allocator)
+                for operation in 0..<operations {
                     multi:=MULTI_IK_CONSTRAINT_DEFAULT
-                    multi.rig,multi.root=entity,bone_ref("joint1")
+                    multi.root=bone_ref("joint1")
                     multi.joints=make([]Multi_IK_Joint,3,context.temp_allocator);multi.effectors=make([]Multi_IK_Effector,1,context.temp_allocator);multi.settings.iterations=4
                     multi.enabled=variant==2
                     for &joint,j in multi.joints {joint=MULTI_IK_JOINT_DEFAULT;joint.bone=bone_ref(fmt.tprintf("joint%d",j+1))}
                     multi.effectors[0]=MULTI_IK_EFFECTOR_DEFAULT
-                    multi.effectors[0].bone,multi.effectors[0].target=bone_ref("joint4"),spatial_point({.3,.5,0})
+                    multi.effectors[0].bone,multi.effectors[0].target=bone_ref("joint4"),spatial_definition_point({.3,.5,0})
                     base.text_set(multi.name[:],fmt.tprintf("body%d",operation))
-                    if !testing.expect(t,modifier_append(&modifiers.multi_ik,entity,multi)) {return}
+                    multis[operation]=multi
                     if variant==2 {continue}
                     chain:=CHAIN_IK_CONSTRAINT_DEFAULT
-                    chain.rig,chain.root,chain.end,chain.enabled=entity,bone_ref("joint1"),bone_ref("joint4"),false
+                    chain.root,chain.end,chain.enabled=bone_ref("joint1"),bone_ref("joint4"),false
                     base.text_set(chain.name[:],fmt.tprintf("arm%d",operation))
                     twist:=TWIST_CONSTRAINT_DEFAULT
-                    twist.rig,twist.source,twist.root,twist.end,twist.enabled=entity,bone_ref("joint5"),chain.root,chain.end,false
+                    twist.source,twist.root,twist.end,twist.enabled=bone_ref("joint5"),chain.root,chain.end,false
                     base.text_set(twist.name[:],fmt.tprintf("roll%d",operation))
                     spring:=SPRING_CONSTRAINT_DEFAULT
-                    spring.rig,spring.root,spring.end,spring.enabled=entity,chain.root,chain.end,false
+                    spring.root,spring.end,spring.enabled=chain.root,chain.end,false
                     base.text_set(spring.name[:],fmt.tprintf("tail%d",operation))
-                    retarget:=CHAIN_RETARGET_CONSTRAINT_DEFAULT;retarget.rig,retarget.enabled=entity,false
+                    retarget:=CHAIN_RETARGET_CONSTRAINT_DEFAULT;retarget.enabled=false
                     base.text_set(retarget.name[:],fmt.tprintf("transfer%d",operation))
-                    if !testing.expect(t,modifier_append(&modifiers.chain_ik,entity,chain) && modifier_append(&modifiers.twist,entity,twist) && modifier_append(&modifiers.springs,entity,spring) && modifier_append(&modifiers.retarget_chains,entity,retarget)) {return}
+                    chains[operation]=chain;twists[operation]=twist
+                    springs[operation]=spring;retargets[operation]=retarget
                 }
+                test_modifier_profile(&modifiers,&characters,entity,{chain_ik=chains,twist=twists,
+                    springs=springs,multi_ik=multis,retarget_chains=retargets})
             }
             playback:Playback
             for &state in states {
-                if !testing.expect(t,rigs_retarget(&state,&playback,&modifiers,&problems) && rigs_apply(&state,&modifiers,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)) {return}
+                if !testing.expect(t,(variant!=1 || test_rigs_retarget(&state,&playback,&modifiers,&characters,&problems)) && test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)) {return}
             }
-            state_bytes:=cap(modifiers.chain_states)*size_of(Chain_IK_Binding)+cap(modifiers.twist_states)*size_of(Twist_Binding)+cap(modifiers.spring_states)*size_of(Spring_Binding)+cap(modifiers.multi_states)*size_of(Multi_IK_Binding)+cap(modifiers.retarget_chain_states)*size_of(Chain_Retarget_Binding)
-            for binding in modifiers.multi_states {state_bytes+=cap(binding.backup)*size_of(mm.Transform)}
-            for binding in modifiers.retarget_chain_states {state_bytes+=(cap(binding.source_rest)+cap(binding.source_pose)+cap(binding.target_rest)+cap(binding.source_world)+cap(binding.target_world))*size_of(mm.Transform)}
+            state_bytes:=0
+            for &rig in modifiers.rigs {
+                state_bytes+=cap(rig.chain_states)*size_of(Chain_IK_Binding)+cap(rig.twist_states)*size_of(Twist_Binding)+cap(rig.spring_states)*size_of(Spring_Binding)+cap(rig.multi_states)*size_of(Multi_IK_Binding)+cap(rig.retarget_chain_states)*size_of(Chain_Retarget_Binding)
+                for &binding in rig.multi_states {state_bytes+=cap(binding.backup)*size_of(mm.Transform)}
+                for &binding in rig.retarget_chain_states {state_bytes+=(cap(binding.source_rest)+cap(binding.source_pose)+cap(binding.target_rest)+cap(binding.source_world)+cap(binding.target_world))*size_of(mm.Transform)}
+            }
             log.infof("rig dispatch, %d rigs, %s: %d capacity bytes for solver state and pose scratch",count,label,state_bytes)
             stable:=true;sink:f32
             repeats:=max(8,2048/count)
@@ -66,10 +79,10 @@ bench_rig_dispatch_and_multi_ik_scaling :: proc(t:^testing.T) {
                 start:=time.tick_now()
                 for _ in 0..<repeats {
                     for &state in states {
-                        if variant==2 {copy(playing_pose(state,.Local),state.rest[:])}
-                        stable &&=rigs_retarget(&state,&playback,&modifiers,&problems)
-                        stable &&=rigs_apply(&state,&modifiers,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)
-                        sink+=playing_pose(state,.Local)[4].rotation.z
+                        if variant==2 {copy(playing_pose(&state,.Local),state.rest[:])}
+                        if variant==1 {stable &&=test_rigs_retarget(&state,&playback,&modifiers,&characters,&problems)}
+                        stable &&=test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)
+                        sink+=playing_pose(&state,.Local)[4].rotation.z
                     }
                 }
                 best=min(best,time.tick_since(start))

@@ -91,8 +91,6 @@ mirai_starting_to_its_side_turns_no_bone_faster_than_its_walk :: proc(t:^testing
     f:Animation_Input_Fixture;defer animation_input_fixture_destroy(&f)
     graphs:anim.Character_Assets;defer anim.character_assets_free(&graphs)
     progress:core.Table(anim.Animation_Progress);defer core.table_destroy(&progress)
-    constraints:anim.Animation_Constraints;defer anim.constraints_free(&constraints)
-    grounding:anim.Grounding_Runtime;defer anim.grounding_free(&grounding)
     core.entities_init(&f.entities)
     if !demo_assets_init(t,&f.assets) {return}
     f.app={assets=&f.assets,allocator=context.allocator}
@@ -111,7 +109,7 @@ mirai_starting_to_its_side_turns_no_bone_faster_than_its_walk :: proc(t:^testing
     // wish at 20 m/s2 and its facing turns toward it at the turn speed of a Character. The fastest
     // turn of a bone of the pose in the tick, rad/s.
     velocity:mm.Vec3
-    tick :: proc(f:^Animation_Input_Fixture,graphs:^anim.Character_Assets,progress:^core.Table(anim.Animation_Progress),constraints:^anim.Animation_Constraints,grounding:^anim.Grounding_Runtime,problems:^core.Problems,time:core.Time,actor:core.Entity,velocity:^mm.Vec3,wish:mm.Vec3,previous:^[dynamic]mm.Transform) -> (fastest:f32) {
+    tick :: proc(f:^Animation_Input_Fixture,graphs:^anim.Character_Assets,progress:^core.Table(anim.Animation_Progress),problems:^core.Problems,time:core.Time,actor:core.Entity,velocity:^mm.Vec3,wish:mm.Vec3,previous:^[dynamic]mm.Transform) -> (fastest:f32) {
         step:=wish-velocity^
         if length:=linalg.length(step);length>20*time.dt {step*=20*time.dt/length}
         velocity^+=step
@@ -135,11 +133,11 @@ mirai_starting_to_its_side_turns_no_bone_faster_than_its_walk :: proc(t:^testing
         resize(previous,len(pose));copy(previous[:],pose)
         return
     }
-    for _ in 0..<90 {tick(&f,&graphs,&progress,&constraints,&grounding,&problems,time,actor,&velocity,{},&previous)}
+    for _ in 0..<90 {tick(&f,&graphs,&progress,&problems,time,actor,&velocity,{},&previous)}
     wish:=mm.Vec3{-MIRAI_WALK_SPEED,0,0}
     start,walk:f32
     for i in 0..<120 {
-        fastest:=tick(&f,&graphs,&progress,&constraints,&grounding,&problems,time,actor,&velocity,wish,&previous)
+        fastest:=tick(&f,&graphs,&progress,&problems,time,actor,&velocity,wish,&previous)
         if i<40 {start=max(start,fastest)} else if i>=60 {walk=max(walk,fastest)}
     }
     playing,_:=anim.animation_match(&f.playback,actor)

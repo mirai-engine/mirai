@@ -96,8 +96,8 @@ selected_clip_root_metadata_drives_extraction_and_in_place_without_a_rebuilt_tab
         case 3: testing.expect(t,state.root.in_place && playing_pose(state,.Local)[1].position==state.rest[1].position,"an in-place clip blends its root at rest")
         case 4: testing.expect(t,!rooted && lib.fader_fading(state.fader) && playing_pose(state,.Local)[1].position==state.rest[1].position,"a clip fading out under one without root motion keeps its root in place")
         }
-        constraints:Animation_Constraints;defer constraints_free(&constraints)
-        animation_finish(&w.playback,{problems=&problems},&constraints,&w.transforms,core.read(&w.parents),.25,nil,{})
+        constraints:Modifier_Runtime;defer modifier_runtime_free(&constraints)
+        animation_finish(&w.playback,{problems=&problems},&constraints,&w.transforms,core.read(&w.parents),.25)
         if stage>=3 {testing.expect(t,playing_pose(state,.Local)[1].position==state.rest[1].position)}
     }
     testing.expect(t,problems.count==0)

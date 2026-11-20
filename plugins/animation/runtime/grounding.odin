@@ -29,6 +29,7 @@ Foot_Grounding :: struct {
 }
 
 Grounding_Definition :: struct {
+    name:[64]u8 `mirai:"text,optional"`,
     mode:Grounding_Mode,
     body:Bone_Ref, // empty: the pelvis of the body of the skeleton
     up:mm.Vec3, // in the frame of the rig as it is placed, not as its bones move; the rig of a character plants its feet along the up of its vertical (core.Vertical)
@@ -50,11 +51,10 @@ FOOT_GROUNDING_DEFAULT :: Foot_Grounding{definition={
 }}
 
 Grounding_Alignment :: struct {offset:mm.Vec3,turn:mm.Quat,weight:f32}
-Grounding_Hierarchy :: struct {bound:u64,first,count:int}
 
 Grounding_Record :: struct {
-    rig:core.Entity `mirai:"transient"`,
-    bound,version:u64,
+    bound:u64,
+    generation:u32,
     count,body:i32,
     mode:Grounding_Mode,
     bones:[GROUNDING_LEGS][3]int,
@@ -73,12 +73,9 @@ Grounding_Record :: struct {
     initialized:bool,
 }
 
-Grounding_Runtime :: struct {
-    records:[dynamic]Grounding_Record,
-    rows:[dynamic]i32,
-    hierarchies:[dynamic]Grounding_Hierarchy,
+Grounding_Binding :: struct {
+    record:Grounding_Record,
     links:[dynamic]lib.Pose_Link,
-    stamp,layout:u64,
 }
 
 // What the rays of a rig skip: the nearest of it and its parents with a body.
@@ -95,66 +92,13 @@ ground_ignore :: proc(ground:core.World_Query,parents:^core.Table(core.Parent,$A
 }
 
 Grounding_Inputs :: struct {
-    configs:^core.Table(Foot_Grounding,.Read),
     ground:core.World_Query, // the feet stand on what it hits; without a library that gives it no foot is grounded
     transforms:^core.Table(core.Transform,.Read),
     parents:^core.Table(core.Parent,.Read),
-    geometry:u64,
     problems:^core.Problems,
     verticals:^core.Table(core.Vertical,.Read),
 }
 
-grounding_free :: proc(cache:^Grounding_Runtime) {
-    delete(cache.records);delete(cache.rows);delete(cache.hierarchies);delete(cache.links);cache^={}
-}
-
-grounding_prepare :: proc(cache:^Grounding_Runtime,configs:^core.Table(Foot_Grounding,$A),problems:^core.Problems) -> bool {
-    if cache==nil {return false}
-    count:=constraint_count(configs)
-    stamp:=constraint_stamp(configs)
-    if cache.stamp==stamp {return true}
-    layout:=core.layout(configs) if configs!=nil else 0
-    rebuild:=cache.layout!=layout || len(cache.records)!=count || len(cache.hierarchies)!=count
-    if !rebuild {
-        for i in 0..<count {if cache.records[i].rig!=core.entity_at(configs,i) {rebuild=true;break}}
-    }
-    if !rebuild {cache.stamp=stamp;return true}
-    records:[dynamic]Grounding_Record;rows:[dynamic]i32
-    hierarchies:[dynamic]Grounding_Hierarchy;links:[dynamic]lib.Pose_Link
-    defer {delete(records);delete(rows);delete(hierarchies);delete(links)}
-    if resize(&records,count)!=nil || resize(&hierarchies,count)!=nil {memory_problem(problems,core.NONE,"the grounding of the rigs, so no foot is grounded");return false}
-    for i in 0..<count {
-        rig:=core.entity_at(configs,i)
-        index:=core.entity_index(rig)
-        if index>=len(rows) && resize(&rows,index+1)!=nil {memory_problem(problems,core.NONE,"the grounding of the rigs, so no foot is grounded");return false}
-        rows[index]=i32(i+1)
-        records[i]={rig=rig}
-        for previous,j in cache.records {
-            if previous.rig!=rig {continue}
-            records[i]=previous
-            if j<len(cache.hierarchies) {hierarchies[i]=cache.hierarchies[j]}
-            break
-        }
-    }
-    total:=0
-    for hierarchy in hierarchies {
-        if hierarchy.first<0 || hierarchy.count<0 || hierarchy.first>len(cache.links) || hierarchy.count>len(cache.links)-hierarchy.first || hierarchy.count>max(int)-total {grounding_inconsistent(problems,core.NONE);return false}
-        total+=hierarchy.count
-    }
-    if resize(&links,total)!=nil {memory_problem(problems,core.NONE,"the grounding of the rigs, so no foot is grounded");return false}
-    offset:=0
-    for &hierarchy in hierarchies {
-        copy(links[offset:offset+hierarchy.count],cache.links[hierarchy.first:hierarchy.first+hierarchy.count])
-        hierarchy.first=offset;offset+=hierarchy.count
-    }
-    delete(cache.records);delete(cache.rows);delete(cache.hierarchies);delete(cache.links)
-    cache.records,cache.rows=records,rows;records,rows=nil,nil
-    cache.hierarchies,cache.links=hierarchies,links;hierarchies,links=nil,nil
-    cache.stamp,cache.layout=stamp,layout
-    return true
-}
-
-// The bone links grounding keeps for its rigs contradict themselves: a bug of the engine.
 @(private)
 grounding_inconsistent :: proc(problems:^core.Problems,e:core.Entity) {
     core.report(problems,e,"animation.grounding_state","the grounding state lost its bone links, a bug of the engine: no foot is grounded until Foot_Grounding changes; change it to rebuild it, and report the scene")
@@ -190,33 +134,9 @@ grounding_config_valid :: proc(config:Foot_Grounding) -> bool {
 }
 
 @(private)
-grounding_hierarchy_prepare :: proc(cache:^Grounding_Runtime,row:int,state:^Playing) -> bool {
-    old:=cache.hierarchies[row]
-    count:=len(playing_topology(state).parents)
-    if old.bound==state.bound && old.count==count {return true}
-    if !lib.skeleton_validate(playing_skeleton(state)) || old.first<0 || old.count<0 || old.first>len(cache.links) || old.count>len(cache.links)-old.first {return false}
-    remaining:=len(cache.links)-old.count
-    if count>max(int)-remaining {return false}
-    first:=old.first if old.count>0 else len(cache.links)
-    links:[dynamic]lib.Pose_Link
-    defer delete(links)
-    if resize(&links,remaining+count)!=nil {return false}
-    copy(links[:first],cache.links[:first])
-    copy(links[first+count:],cache.links[first+old.count:])
-    if _,ok:=lib.pose_hierarchy_prepare(playing_topology(state).parents[:],links[first:first+count]);!ok {return false}
-    for &hierarchy,i in cache.hierarchies {
-        if i!=row && hierarchy.count>0 && hierarchy.first>=first+old.count {hierarchy.first+=count-old.count}
-    }
-    cache.hierarchies[row]={state.bound,first,count}
-    delete(cache.links);cache.links=links;links=nil
-    return true
-}
-
-@(private)
-grounding_bind :: proc(cache:^Grounding_Runtime,row:int,state:^Playing,config:Foot_Grounding,version:u64,problems:^core.Problems) -> bool {
-    record:=&cache.records[row]
-    hierarchy:=cache.hierarchies[row]
-    if record.version==version && record.bound==state.bound && hierarchy.bound==state.bound && hierarchy.count==len(playing_topology(state).parents) {return true}
+grounding_bind :: proc(binding:^Grounding_Binding,state:^Playing,config:Foot_Grounding,problems:^core.Problems) -> bool {
+    record:=&binding.record
+    if record.bound==state.bound && record.generation==state.generation && len(binding.links)>0 {return true}
     if !grounding_config_valid(config) {
         core.report(problems,state.entity,"animation.grounding_config","Foot_Grounding of this rig has a value out of range: count 1 to 16, a nonzero up, distances, times and weights finite and not negative, replant_distance not above release_distance, swing_fraction 0 to 1, and in each leg phase below 1 and max_distance not below step_distance; fix it")
         return false
@@ -251,18 +171,26 @@ grounding_bind :: proc(cache:^Grounding_Runtime,row:int,state:^Playing,config:Fo
         }
     }
     body:=part(state,config.body,.Pelvis)
-    if !grounding_hierarchy_prepare(cache,row,state) {
-        core.report(problems,state.entity,"animation.grounding_bones","the skeleton of this rig cannot be grounded: its bones are not ordered parents first, or memory ran out; import the skeleton again, or free memory")
+    parents:=playing_topology(state).parents[:]
+    if !lib.skeleton_validate(playing_skeleton(state)) {grounding_inconsistent(problems,state.entity);return false}
+    links:=binding.links
+    replace_links:=len(parents)>cap(links)
+    if replace_links {links=nil}
+    if !program_array_resize(&links,len(parents)) {
+        memory_problem(problems,state.entity,"its grounding hierarchy");return false
+    }
+    if _,ok:=lib.pose_hierarchy_prepare(parents,links[:]);!ok {
+        if replace_links {delete(links)}
         return false
     }
-    if record.count!=i32(len(config.legs)) || record.mode!=config.mode || record.bound!=state.bound || record.bones!=bones || record.contact_bones!=contacts || record.body!=i32(body) {
-        record^=Grounding_Record{rig=record.rig}
-    }
+    if replace_links {delete(binding.links)}
+    binding.links=links
+    record^={}
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
     record.bones=bones
     record.count,record.body=i32(len(config.legs)),i32(body)
     record.contact_bones=contacts
-    record.mode,record.version,record.bound=config.mode,version,state.bound
+    record.mode,record.bound,record.generation=config.mode,state.bound,state.generation
     return true
 }
 
@@ -323,26 +251,19 @@ grounding_up :: proc(inputs:Grounding_Inputs,rig:core.Entity,basis:mm.Transform,
 // The most parents above a rig that grounding_up looks through for a character.
 GROUNDING_DEPTH :: 16
 
-grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding_Inputs,dt:f32) -> bool {
-    if state==nil || cache==nil || !finite(dt) || dt<0 {return false}
+grounding_apply :: proc(state:^Playing,binding:^Grounding_Binding,definition:^Foot_Grounding,inputs:Grounding_Inputs,dt:f32) -> bool {
+    if state==nil || binding==nil || !finite(dt) || dt<0 {return false}
     problems:=inputs.problems
-    if !grounding_prepare(cache,inputs.configs,problems) {return false}
-    index:=core.entity_index(state.entity)
-    if index>=len(cache.rows) || cache.rows[index]<=0 {return true}
-    row:=int(cache.rows[index])-1
-    record:=&cache.records[row]
-    if record.rig!=state.entity {return true}
-    config:=core.at(inputs.configs,row)
-    record.blocked=0
-    if !config.enabled {record.initialized=false;record.legs={};record.placements={};record.alignment={};record.previous={};record.targets={};record.rotations={};return true}
+    record:=&binding.record
+    config:=definition^
+    if !config.enabled {record.blocked=0;record.initialized=false;record.legs={};record.placements={};record.alignment={};record.previous={};record.targets={};record.rotations={};return true}
     ground:=inputs.ground
-    if ground.probe==nil {return true}
-    if !grounding_bind(cache,row,state,config,inputs.geometry if inputs.geometry!=0 else core.stamp(inputs.configs,row),problems) {return false}
+    if ground.probe==nil {record.blocked=0;return true}
+    if !grounding_bind(binding,state,config,problems) {return false}
+    record.blocked=0
     count:=len(config.legs)
     if len(playing_pose(state,.World))!=len(playing_pose(state,.Local)) || len(playing_pose(state,.World))==0 {grounding_inconsistent(problems,state.entity);return false}
-    prepared:=cache.hierarchies[row]
-    if prepared.first<0 || prepared.count!=len(playing_topology(state).parents) || prepared.first>len(cache.links) || prepared.count>len(cache.links)-prepared.first {grounding_inconsistent(problems,state.entity);return false}
-    hierarchy:=lib.Pose_Hierarchy{playing_topology(state).parents[:],cache.links[prepared.first:prepared.first+prepared.count]}
+    hierarchy:=lib.Pose_Hierarchy{playing_topology(state).parents[:],binding.links[:]}
     basis:=mm.TRANSFORM_IDENTITY
     if inputs.parents!=nil {
         if parent,ok:=core.get(inputs.parents,state.entity);ok && parent.entity!=core.NONE {

@@ -123,7 +123,7 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
     }
     tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,w:^Skin_World,problems:^core.Problems,posed:^erender.Posed_Meshes,time:core.Time={},frame:=core.FRAME_TIME_DEFAULT) {
         clear(&app.extras.instances)
-        animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),cache,state,app.assets,app.renderer,posed,&app.jobs,app.allocator,time,frame,core.Ref(Playback){ptr=&w.playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},{},{})
+        animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),cache,state,app.assets,app.renderer,posed,&app.jobs,app.allocator,time,frame,core.Ref(Playback){ptr=&w.playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},{},{},{})
         skin_shown(app,posed,core.read(&w.meshes),core.read(&w.worlds),core.read(&w.offsets),core.read(&w.parents),frame)
     }
     tick(&app,&cache,&state,&w,&problems,&posed)
@@ -265,7 +265,7 @@ a_skin_part_collapses_the_vertices_of_its_bone_into_it :: proc(t:^testing.T) {
     if !testing.expect(t,pose!=nil && skeleton_bind(&w.playback,pose,definition,nil,&w.transforms)) {return}
     playing_pose(pose,.Local)[2].position={0.5,2,0}
     copy(playing_pose(pose,.Previous),playing_pose(pose,.Local));pose.pose_ready=true
-    animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),&cache,&state,app.assets,app.renderer,&posed,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=&w.playback},{},&problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,core.read(&w.parts),{},{})
+    animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),&cache,&state,app.assets,app.renderer,&posed,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=&w.playback},{},&problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,core.read(&w.parts),{},{},{})
     skin_shown(&app,&posed,core.read(&w.meshes),core.read(&w.worlds),core.read(&w.offsets),core.read(&w.parents),core.FRAME_TIME_DEFAULT)
     testing.expect_value(t,problems.count,0)
     if !testing.expect_value(t,len(state.instances.values),1) {return}
@@ -382,7 +382,7 @@ the_automatic_period_leaves_the_simulation_as_it_is :: proc(t:^testing.T) {
             animation_prepare(core.read(&w.animations),core.read(&w.attachments),core.read(&w.meshes),core.read(&w.skins),&w.modifiers,&w.playback,characters,skeletons,app,problems)
             animation_sample(core.read(&w.animations),core.read(&w.progress),&w.played,&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,characters,skeletons,app,time,{},problems,&w.actions,&w.motion,sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
             animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifiers,&w.playback,{},{},time,{ptr=skeletons},problems,&w.motion,characters,{},{},core.CLOCK_DEFAULT,nil)
-            animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),cache,state,app.assets,app.renderer,posed,&app.jobs,app.allocator,time,{dt=1.0/60,alpha=1},{ptr=&w.playback},{},problems,{},&w.budget,ANIMATION_BUDGET_CONFIG_DEFAULT,core.read(&w.parts),{},{ptr=view})
+            animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),cache,state,app.assets,app.renderer,posed,&app.jobs,app.allocator,time,{dt=1.0/60,alpha=1},{ptr=&w.playback},{},problems,{},&w.budget,ANIMATION_BUDGET_CONFIG_DEFAULT,core.read(&w.parts),{},{ptr=view},{})
         }
     }
     play(w,&app,&cache,&state,&posed,&skeletons,&characters,&sources,&view,&problems,3)

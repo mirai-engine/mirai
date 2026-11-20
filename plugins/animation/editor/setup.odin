@@ -338,6 +338,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
             head:=world[body.bones[.Head]]
             look:=anim.LOOK_CONSTRAINT_DEFAULT
             look.bone=bone(skeleton,body,.Head)
+            base.text_set(look.name[:],"@head")
             look.forward=mm.quat_rotate(conj(head.rotation),forward)
             look.up=mm.quat_rotate(conj(head.rotation),up)
             look.world_up,look.use_up=up,true

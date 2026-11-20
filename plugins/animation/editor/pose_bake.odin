@@ -93,7 +93,7 @@ pose_bake_morph_tracks :: proc(call:^api.Call,world:core.World_Ref,app:^host.App
         if state.error!=.None && state.error!=.Unknown_Target || int(state.rig)>=len(skin.rigs) || len(state.current)!=len(skin.rigs[state.rig].morphs) {authoring_failure(call,"morphs","Evaluation_Failed","resolved morph targets and finite final weights",fmt.tprintf("%v",state.error),"A morph instance could not be baked");return false}
         path:=""
         if config,found:=core.get(configs,state.entity);found {path=base.text_get(config.path[:])}
-        if path=="" {if target,found:=core.get(targets,state.entity);found {path=base.text_get(target.path[:])}}
+        if path=="" {if target,found:=core.get(targets,state.entity);found {path=anim.animation_target_path(world,state.entity,target)}}
         for &target,i in skin.rigs[state.rig].morphs {
             name:=fmt.tprintf("%s/@morph/%s",path,base.text_get(target.name[:]))
             if len(name)>=asset.NODE_PATH_CAPACITY {authoring_failure(call,"morphs","Capacity",fmt.tprintf("morph curve targets shorter than %d bytes",asset.NODE_PATH_CAPACITY),name,"Shorten this mesh's animation path");return false}
@@ -124,7 +124,7 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
     for binding,b in state.bindings {
         path:=""
         if skeleton!=nil {if b==0 {if binding.driven=={} {continue}} else {if b>len(skeleton.bones) {return false};path=base.text_get(skeleton.bones[b-1].path[:])}} else if binding.entity!=entity {
-            if target,found:=editor.entity_get(world,binding.entity,anim.Animation_Target);found {path=base.text_get(target.path[:])} else {path=core.name_get(core.world_table_of(world,core.Name),binding.entity)}
+            if target,found:=editor.entity_get(world,binding.entity,anim.Animation_Target);found {path=anim.animation_target_path(world,binding.entity,target)} else {path=core.name_get(core.world_table_of(world,core.Name),binding.entity)}
             if path=="" || base.name_hash(path)!=binding.target {authoring_failure(call,"bones","Missing_Path","Animation_Target paths for all rigid nodes",path,"Assign a path before baking this node");return false}
         }
         for property in 0..<3 {if !pose_bake_track(call,&tracks,path,lib.Property(property),0,frames,bone=b) {return false}}
@@ -148,7 +148,14 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
             if !pose_bake_track(call,&tracks,base.text_get(name[:]),curve.property,curve.slot,frames) {return false}
         }
         modifiers:=core.world_storage_of(world,anim.Modifier_Runtime)
-        if modifiers!=nil {for &value in modifiers.correctives.values {if value.rig!=entity || value.curve[0]==0 {continue};if !pose_bake_track(call,&tracks,base.text_get(value.curve[:]),.Float,0,frames) {return false}}}
+        characters:=core.world_storage_of(core.world_ref(s.app.shared,world.info,.Shared),anim.Character_Assets)
+        if content:=anim.character_content(characters,s.app.assets,s.app.allocator,
+            anim.animation_character(s.app.assets,animation));content!=nil {
+            for &value in content.set.pose.correctives {
+                if value.curve[0]==0 {continue}
+                if !pose_bake_track(call,&tracks,base.text_get(value.curve[:]),.Float,0,frames) {return false}
+            }
+        }
         if !pose_bake_morph_tracks(call,world,s.app,entity,&tracks,frames) {return false}
         baked_root,valid:=pose_bake_root(call,world,state,&root,origin,p.root_motion);if !valid {return false}
         for &track in tracks {
