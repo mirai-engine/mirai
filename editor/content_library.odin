@@ -89,8 +89,9 @@ content_library_listing :: proc(local:[]Library_Package,peers:[]Content_Peer_Lis
     if machine {append(&roots,Content_Library_Root{peer=-1,name="This machine"})}
     for &p in local {
         if !machine {continue}
-        name:=content_package_folder(p.name,p.documents)
-        entry:=Content_Package{root=0,id=p.id,name=strings.clone(name,allocator),folder=strings.clone(content_package_parent(p.documents),allocator),here=len(p.assets)>0,built=true}
+        entry:=Content_Package{root=0,id=p.id,name=strings.clone(p.name,allocator),
+            folder=strings.clone(content_package_parent(p.catalog_path),allocator),
+            here=len(p.assets)>0,built=true}
         entry.assets=make([]Library_Asset,len(p.assets),allocator)
         remaining:=false
         for a,at in p.assets {
@@ -112,8 +113,9 @@ content_library_listing :: proc(local:[]Library_Package,peers:[]Content_Peer_Lis
         append(&roots,Content_Library_Root{peer=listing.peer,name=strings.clone(listing.name,allocator)})
         for &p in listing.list {
             if here[p.id] {continue}
-            name:=content_package_folder(p.name,p.documents)
-            entry:=Content_Package{root=root,id=p.id,name=strings.clone(name,allocator),folder=strings.clone(content_package_parent(p.documents),allocator),bytes=p.bytes,here=p.here,built=p.built}
+            entry:=Content_Package{root=root,id=p.id,name=strings.clone(p.name,allocator),
+                folder=strings.clone(content_package_parent(p.catalog_path),allocator),
+                bytes=p.bytes,here=p.here,built=p.built}
             entry.assets=make([]Library_Asset,len(p.assets),allocator)
             for a,at in p.assets {entry.assets[at]={id=a.id,name=strings.clone(a.name,allocator),kind=a.kind}}
             if len(p.kinds)>0 {entry.kind=p.kinds[0]}
@@ -129,7 +131,7 @@ content_library_listing :: proc(local:[]Library_Package,peers:[]Content_Peer_Lis
         shared,folder_shared:=false,false
         for j in 0..<len(origins) {
             b:=&packages[origins[j].at]
-            if i==j || a.root!=b.root || a.name!=b.name {continue}
+            if i==j || a.root!=b.root || a.folder!=b.folder || a.name!=b.name {continue}
             shared=true
             folder_shared||=origin_folder(origins[i].origin)==origin_folder(origins[j].origin)
         }
@@ -144,13 +146,7 @@ content_library_listing :: proc(local:[]Library_Package,peers:[]Content_Peer_Lis
 }
 
 @(private)
-content_package_folder :: proc(name,documents:string) -> string {
-    return name if documents=="" else documents[strings.last_index_byte(documents,'/')+1:]
-}
-
-@(private)
-content_package_parent :: proc(documents:string) -> string {
-    folder:=content_folder_of(documents)
+content_package_parent :: proc(folder:string) -> string {
     return content_folder_of(folder[:API_PATH_BYTES]) if len(folder)>API_PATH_BYTES else folder
 }
 

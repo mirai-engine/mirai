@@ -48,7 +48,7 @@ Peer_Package :: struct {
     manifest:store.Hash,
     name:string,
     origin:string, // where its source was on the machine that ingested it, which tells apart two of one name
-    documents:string,
+    catalog_path:string,
     kinds:[]asset.Fourcc,
     assets:[]Peer_Package_Asset,
     root:store.Hash,      // the object its card shows (asset.build_shown) in the build it has; zero: none
@@ -109,7 +109,7 @@ peer_library :: proc(n:^Node,peer:Peer,allocator:=context.allocator) -> (list:[]
             if !known {append(&kinds,a.kind)}
         }
         entry:=Peer_Package{id=p.id,manifest=named.address,name=strings.clone(p.name,allocator),origin=strings.clone(p.origin.path,allocator),kinds=kinds[:],assets=assets,bytes=-1}
-        entry.documents=strings.clone(p.documents,allocator)
+        entry.catalog_path=strings.clone(p.catalog_path,allocator)
         // Whether it is here is read before the sizes are asked, which may bring a small object whole.
         if b,built:=chosen[p.id];built {
             entry.built,entry.here=true,asset.build_whole(s,&b)

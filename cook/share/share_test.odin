@@ -1310,7 +1310,7 @@ a_peers_library_is_listed_and_a_package_of_it_taken_and_pinned :: proc(t:^testin
             delete(p.assets)
             delete(p.name)
             delete(p.origin)
-            delete(p.documents)
+            delete(p.catalog_path)
             delete(p.kinds)
             delete(p.objects)
         }
