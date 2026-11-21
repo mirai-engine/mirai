@@ -400,7 +400,96 @@ the_automatic_period_leaves_the_simulation_as_it_is :: proc(t:^testing.T) {
     testing.expect(t,same(w.transforms.values[:],near.transforms.values[:]) && same(w.progress.values[:],near.progress.values[:]) && same(w.played.values[:],near.played.values[:]) && same(w.events.items[:],near.events.items[:]),"the tables of the simulation")
     if !testing.expect(t,len(w.playback.states)==1 && len(near.playback.states)==1) {return}
     a,b:=&w.playback.states[0],&near.playback.states[0]
-    testing.expect(t,!same(playing_pose(a,.Local)[1:],a.rest[1:]),"the clip moves the rig")
+    testing.expect(t,!same(playing_pose(a,.Local)[1:],playing_topology(a).rest[1:]),"the clip moves the rig")
     testing.expect(t,same(playing_pose(a,.Local),playing_pose(b,.Local)) && same(playing_pose(a,.Sampled),playing_pose(b,.Sampled)) && same(playing_pose(a,.Previous),playing_pose(b,.Previous)) && a.time==b.time && a.changed==b.changed && w.playback.frame==near.playback.frame,"the poses")
+    testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
+}
+
+// Skinned parts following one root rig (including a chained follower rig such as a head with eyes)
+// share one budget entry using the rig's largest screen footprint, so tiny parts never lag behind
+// the body when the rig moves.
+@(test)
+multi_mesh_rig_parts_share_one_budget_decision :: proc(t:^testing.T) {
+    problems:core.Problems
+    directory:=base.test_folder(t,"animation-skin-rig-budget")
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    bones:=[2]asset.Skeleton_Bone{{parent=-1,rotation=1,scale={1,1,1}},{parent=0,translation={0,1,0},rotation=1,scale={1,1,1}}}
+    for &bone,i in bones {
+        name:="root" if i==0 else "head"
+        path:="root" if i==0 else "root/head"
+        base.text_set(bone.name[:],name);base.text_set(bone.path[:],path);bone.target=base.name_hash(path)
+    }
+    skeleton,body_id,eye_id:=base.Asset_Id{0x5c1,1},base.Asset_Id{0x5c1,2},base.Asset_Id{0x5c1,3}
+    body_verts:=[3]asset.Vertex{{position={-1,0,0},normal=mm.normal_pack({0,0,1}),color=0xffffffff},{position={1,0,0},normal=mm.normal_pack({0,0,1}),color=0xffffffff},{position={0,2,0},normal=mm.normal_pack({0,0,1}),color=0xffffffff}}
+    eye_verts:=[3]asset.Vertex{{position={-0.02,1,0},normal=mm.normal_pack({0,0,1}),color=0xffffffff},{position={0.02,1,0},normal=mm.normal_pack({0,0,1}),color=0xffffffff},{position={0,1.02,0},normal=mm.normal_pack({0,0,1}),color=0xffffffff}}
+    influences:[3]asset.Skin_Vertex
+    for &influence in influences {influence.weights[0]=255}
+    joints:=[1]asset.Rig_Joint{{node=1,inverse_bind=1}}
+    if !testing.expect_value(t,asset.skeleton_save(fmt.tprintf("%s/rig.skeleton",directory),&types,{id=skeleton,bones=bones[:]}),asset.Error.None) ||
+       !testing.expect_value(t,rig_mesh_save(fmt.tprintf("%s/body.mesh",directory),&types,{id=body_id,skeleton=skeleton,joints=joints[:]},body_verts[:],{0,1,2},influences[:]),asset.Error.None) ||
+       !testing.expect_value(t,rig_mesh_save(fmt.tprintf("%s/eye.mesh",directory),&types,{id=eye_id,skeleton=skeleton,joints=joints[:]},eye_verts[:],{0,1,2},influences[:]),asset.Error.None) {return}
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
+    renderer:=new(gpu.Renderer);defer free(renderer)
+    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.taa=false,false
+    if !testing.expect(t,gpu.renderer_init(renderer,{device=device,width=96,height=64,settings=settings}),renderer.error) {return}
+    defer gpu.renderer_destroy(renderer)
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=directory,renderer=renderer})) {return}
+    defer host.assets_destroy(&assets)
+    app:=host.App{allocator=context.allocator,renderer=renderer,assets=&assets}
+    defer host.extras_free(&app.extras)
+    cache:Skin_Runtime;defer skin_runtime_free(&cache)
+    state:Skin_Instances;defer skin_instances_free(&state)
+    posed:erender.Posed_Meshes;defer core.value_free(&posed,type_info_of(erender.Posed_Meshes))
+    skeleton_assets:Skeleton_Assets;defer skeleton_assets_free(&skeleton_assets)
+    budget:Budget_Runtime;defer budget_runtime_free(&budget)
+    w:Skin_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    root,body,head_rig,eyes:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.parents,body,{entity=root})
+    core.add(&w.parents,head_rig,{entity=root})
+    core.add(&w.parents,eyes,{entity=head_rig})
+    core.add(&w.skins,body,{rig=root})
+    core.add(&w.skins,head_rig,{rig=root})
+    core.add(&w.skins,eyes,{rig=head_rig})
+    core.add(&w.meshes,body,{mesh=body_id})
+    core.add(&w.meshes,eyes,{mesh=eye_id})
+    for e in ([4]core.Entity{root,body,head_rig,eyes}) {
+        core.add(&w.transforms,e,core.TRANSFORM_IDENTITY)
+        core.add(&w.worlds,e,{transform=mm.TRANSFORM_IDENTITY,previous=mm.TRANSFORM_IDENTITY})
+    }
+    test_world_settle(&w)
+    definition:=skeleton_content(&skeleton_assets,app.assets,app.allocator,skeleton)
+    if !testing.expect(t,definition!=nil) {return}
+    root_pose:=state_get(&w.playback,root)
+    head_pose:=state_get(&w.playback,head_rig)
+    if !testing.expect(t,root_pose!=nil && head_pose!=nil && skeleton_bind(&w.playback,root_pose,definition,nil,&w.transforms) && skeleton_bind(&w.playback,head_pose,definition,nil,&w.transforms)) {return}
+    head_pose.leader=root
+    for p in ([2]^Playing{root_pose,head_pose}) {
+        playing_pose(p,.Local)[2].position.y=0.5
+        copy(playing_pose(p,.Previous),playing_pose(p,.Local))
+        p.pose_ready=true
+    }
+    // At 15m, the 2m body spans ~140px (updates every frame at 60fps), while 2cm eyes span ~2px
+    // and would wait 15 frames if budgeted independently. Both must stay in lockstep.
+    view:=core.VIEW_DEFAULT;view.position={0,1,15};view.size={1920,1080}
+    for tick in 1..=12 {
+        w.playback.frame=u64(tick)
+        for p in ([2]^Playing{root_pose,head_pose}) {
+            copy(playing_pose(p,.Previous),playing_pose(p,.Local))
+            playing_pose(p,.Local)[2].position.x=f32(tick)*0.1
+            p.changed=w.playback.frame
+        }
+        animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),&cache,&state,app.assets,app.renderer,&posed,&app.jobs,app.allocator,{tick=u64(tick),dt=1.0/60,playing=true},{dt=1.0/60,alpha=1},{ptr=&w.playback},{},&problems,{},&budget,ANIMATION_BUDGET_CONFIG_DEFAULT,{},{},{ptr=&view},{})
+        testing.expect_value(t,len(state.candidates),1)
+        body_inst:=core.entity_map_get(&state.instances,body)
+        eyes_inst:=core.entity_map_get(&state.instances,eyes)
+        if !testing.expect(t,body_inst!=nil && eyes_inst!=nil) {return}
+        testing.expectf(t,body_inst.exact==eyes_inst.exact,"tick %d: body exact %d != eyes exact %d",tick,body_inst.exact,eyes_inst.exact)
+    }
+    testing.expect_value(t,budget.throttled,u64(0))
+    testing.expect_value(t,problems.count,0)
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
 }
