@@ -278,7 +278,7 @@ project_add_many :: proc(root:string,requests:[]Package_Add,options:Library_Opti
 // project at root under folder, with what the project used of it before: one
 // import, which for a model writes its documents and its prefab there. The
 // report of the import and that of the project, in allocator.
-project_ingest :: proc(root,origin,folder:string,options:Library_Options,settings:^importer.Import_Settings=nil,allocator:=context.allocator) -> (report:importer.Import_Report,added:Library_Report,error:importer.Error) {
+project_ingest :: proc(root,origin:string,folder:Maybe(string),options:Library_Options,settings:^importer.Import_Settings=nil,allocator:=context.allocator) -> (report:importer.Import_Report,added:Library_Report,error:importer.Error) {
     report_begin(&added,allocator)
     l:Library_State
     library_begin(&l,options,allocator)
@@ -292,12 +292,19 @@ project_ingest :: proc(root,origin,folder:string,options:Library_Options,setting
     }
     defer workspace.lock_release(&lock)
     project_follow_begin(&l,top)
-    entry:=asset.Project_Package{folder=folder}
-    documents:=l.assets if folder=="" else fmt.tprintf("%s/%s",l.assets,folder)
-    r,_:=reader_of(&l,importer.path_key(origin))
+    origin:=importer.path_key(origin)
+    parent,explicit:=folder.?
+    if !explicit {
+        if relative,inside:=asset.registry_relative(l.registry,origin);inside {
+            parent=relative[:max(strings.last_index_byte(relative,'/'),0)]
+        }
+    }
+    entry:=asset.Project_Package{folder=parent}
+    documents:=documents_folder(l.assets,parent)
+    r,_:=reader_of(&l,origin)
     model:=r.kind==.Model && plugins_world(&l)!=nil
     // What the project pins of the package its source was ingested as before.
-    if p,_,found,_:=importer.package_previous(options.store,{},importer.path_key(origin),context.temp_allocator);found {
+    if p,_,found,_:=importer.package_previous(options.store,{},origin,context.temp_allocator);found {
         list,_,_:=asset.packages_load(top,context.temp_allocator)
         for &other in list.packages {
             if other.id==p.id {entry.assets,entry.written=other.assets,other.written}
@@ -586,10 +593,7 @@ build_here :: proc(l:^Library_State,p:^asset.Package,key:store.Hash) -> (f:Found
         b,error:=asset.build_get(s,hash,l.temp)
         if error!=.None || b.package_id!=p.id || b.key!=key || b.final!=(at==0) {continue}
         if !asset.build_whole(s,&b) {continue}
-        if at==1 && !l.options.fast_textures {
-            f.fast_here=true
-            continue
-        }
+        if at==1 && !l.options.fast_textures {return {build=b,hash=hash,fast_here=true},false}
         return {build=b,hash=hash,final=at==0},true
     }
     return
@@ -841,6 +845,12 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
         chosen_given=found && l.asked[fmt.tprintf("%s/%s",asset.REF_BUILDS,select)]
         if chosen_given {report.fetched+=1}
     }
+    finalized:=false
+    if !found && keyed && f.fast_here {
+        if hash,upgrade_error:=importer.finalize_build(s,&f.build,l.options.worker);upgrade_error==.None {
+            f.hash,f.final,found,finalized=hash,true,true,true
+        }
+    }
     if !found {
         if origin_here {
             reingest(l,top,&entry,&p,source,documents,prefab,"this engine reads no build of it here",report)
@@ -873,8 +883,11 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     if !follow && previous==f.hash && !chosen_given {return}
     // A model's prefab is written from its source in the game's types: the import does it, with the documents.
     if prefab && origin_here && plugins_world(l)!=nil {
-        reingest(l,top,&entry,&p,source,documents,prefab,"it is followed into the project",report)
-        return
+        _,prefab_here:=asset.registry_find(l.registry,prefab_id(&p))
+        if !finalized || !prefab_here {
+            reingest(l,top,&entry,&p,source,documents,prefab,"it is followed into the project",report)
+            return
+        }
     }
     documents_write(l,top,&entry,&p,&f.build,documents,report)
     if prefab && follow {warn_missing_prefab(l,&p,report)}

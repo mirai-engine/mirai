@@ -63,7 +63,7 @@ builds_forget :: proc(s:^store.Store) {
     }
 }
 
-@(private="file")
+@(private)
 report_clean :: proc(t:^testing.T,report:Library_Report,loc:=#caller_location) -> bool {
     return testing.expectf(t,len(report.failures)==0 && len(report.missing)==0,"failures %v, missing %v",report.failures[:],report.missing[:],loc=loc)
 }
@@ -364,8 +364,7 @@ a_source_outside_any_project_ingests_and_two_projects_use_the_same_blobs :: proc
 
 // When the versions of the engine change, no build of a package is current:
 // a machine with its source ingests it again, and one without it says which
-// package needs it, by name. A build with Fast textures is not one a cook
-// takes: where Final is required and only Fast is here, that is said too.
+// package needs it, by name.
 @(test)
 an_engine_change_builds_again_where_the_source_is_and_is_reported_by_name_elsewhere :: proc(t:^testing.T) {
     top:=base.test_folder(t,"library-engine")
@@ -397,18 +396,7 @@ an_engine_change_builds_again_where_the_source_is_and_is_reported_by_name_elsewh
     _,listed:=listed_of(t,here,game)["billboard.tex"]
     testing.expect(t,listed,"what is not built is still listed, and nothing is removed")
 
-    // Fast only, where Final is required: an image no Final of which was ever built.
-    poster:=fmt.tprintf("%s/poster.png",top)
-    _=os.write_entire_file(poster,png_bytes(8,8,{30,60,220}))
-    fast:=options
-    fast.fast_textures=true
-    quick,quick_ok:=ingested(t,poster,fast)
-    if !quick_ok || !report_clean(t,project_add(game,quick.manifest,"",nil,fast,context.temp_allocator)) {return}
-    testing.expect(t,!quick.final,"a refresh that takes Fast builds Fast")
-    testing.expect(t,os.remove(poster)==nil)
-    final:=project_refresh(game,options,context.temp_allocator)
-    testing.expectf(t,len(final.missing)==2 && strings.contains(strings.join(final.missing[:],"\n",context.temp_allocator),"package poster: only a build with Fast textures is here, and Final is required"),"%v",final.missing[:])
-    testing.expectf(t,len(project_refresh(game,fast,context.temp_allocator).missing)==1,"with Fast taken only the billboard, whose source is gone, is missing")
+
 }
 
 // A root carries the manifests it pins: a copy of it elsewhere with its
