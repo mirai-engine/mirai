@@ -138,14 +138,11 @@ library_test_source :: proc(t:^testing.T,folder:string) -> string {
 }
 
 @(test)
-a_whole_source_reports_its_root_scene_after_writing_other_scenes :: proc(t:^testing.T) {
+asset_import_uses_the_whole_sources_documents_folder_and_reports_its_root_scene :: proc(t:^testing.T) {
     top:=base.test_folder(t,"editor-map")
     l:=new(Library_Test,context.temp_allocator)
     if top=="" || !library_test_open(t,l,"editor-map-game",fmt.tprintf("%s/store",top)) {return}
     defer library_test_close(l)
-    source:=fmt.tprintf("%s/Cave.map",top)
-    if !testing.expect_value(t,os.write_entire_file(source,"a cave map"),nil) {return}
-
     Provider :: struct {provider:Import_Source_Provider}
     claims :: proc(path:string,head:[]u8) -> bool {return string(head)=="a cave map"}
     run :: proc(state:rawptr,source:string,options:importer.Import_Options,allocator:mem.Allocator) -> (
@@ -179,8 +176,27 @@ a_whole_source_reports_its_root_scene_after_writing_other_scenes :: proc(t:^test
     }}
     info:=core.World_Info{storages={storage}}
     l.s.info=&info
-    if !testing.expect(t,import_file(&l.s,source,"maps")) || !library_test_end(t,l) {return}
-    testing.expect_value(t,base.text_get(l.importer.status.scene[:]),"maps/Cave/Cave.scene")
+    Case :: struct {source,folder,scene:string}
+    for c in ([]Case{
+        {"assets/maps/inside/Cave.map","","maps/inside/Cave/Cave.scene"},
+        {"assets/maps/relative/Cave.map","maps/selected","maps/selected/Cave/Cave.scene"},
+        {"assets/maps/root/Cave.map","/","Cave/Cave.scene"},
+    }) {
+        source:=project.path(l.root,c.source,allocator=context.temp_allocator)
+        if !testing.expect_value(t,base.make_directory_all(filepath.dir(source)),nil) ||
+           !testing.expect_value(t,os.write_entire_file(source,"a cave map"),nil) {return}
+        params:Import_Params
+        base.text_set(params.path[:],c.source)
+        base.text_set(params.folder[:],c.folder)
+        method:=api.Method{params_id=Import_Params,result_id=Import_Status_Result}
+        result:Import_Status_Result
+        call:=api.Call{method=&method,params=&params,result=&result,allocator=context.temp_allocator}
+        api_asset_import(&l.s,&call)
+        if !testing.expectf(t,!call.failed,"%s",call.error.message) || !library_test_end(t,l) {return}
+        api_asset_import_status(&l.s,&call)
+        testing.expect_value(t,result.scene,c.scene)
+        testing.expect(t,os.is_file(project.path(l.root,"assets",c.scene,allocator=context.temp_allocator)))
+    }
 }
 
 // Importing a source from outside the project ingests it where it is and

@@ -278,7 +278,7 @@ project_add_many :: proc(root:string,requests:[]Package_Add,options:Library_Opti
 // project at root under folder, with what the project used of it before: one
 // import, which for a model writes its documents and its prefab there. The
 // report of the import and that of the project, in allocator.
-project_ingest :: proc(root,origin,folder:string,options:Library_Options,settings:^importer.Import_Settings=nil,allocator:=context.allocator) -> (report:importer.Import_Report,added:Library_Report,error:importer.Error) {
+project_ingest :: proc(root,origin:string,folder:Maybe(string),options:Library_Options,settings:^importer.Import_Settings=nil,allocator:=context.allocator) -> (report:importer.Import_Report,added:Library_Report,error:importer.Error) {
     report_begin(&added,allocator)
     l:Library_State
     library_begin(&l,options,allocator)
@@ -292,12 +292,19 @@ project_ingest :: proc(root,origin,folder:string,options:Library_Options,setting
     }
     defer workspace.lock_release(&lock)
     project_follow_begin(&l,top)
-    entry:=asset.Project_Package{folder=folder}
-    documents:=l.assets if folder=="" else fmt.tprintf("%s/%s",l.assets,folder)
-    r,_:=reader_of(&l,importer.path_key(origin))
+    origin:=importer.path_key(origin)
+    parent,explicit:=folder.?
+    if !explicit {
+        if relative,inside:=asset.registry_relative(l.registry,origin);inside {
+            parent=relative[:max(strings.last_index_byte(relative,'/'),0)]
+        }
+    }
+    entry:=asset.Project_Package{folder=parent}
+    documents:=documents_folder(l.assets,parent)
+    r,_:=reader_of(&l,origin)
     model:=r.kind==.Model && plugins_world(&l)!=nil
     // What the project pins of the package its source was ingested as before.
-    if p,_,found,_:=importer.package_previous(options.store,{},importer.path_key(origin),context.temp_allocator);found {
+    if p,_,found,_:=importer.package_previous(options.store,{},origin,context.temp_allocator);found {
         list,_,_:=asset.packages_load(top,context.temp_allocator)
         for &other in list.packages {
             if other.id==p.id {entry.assets,entry.written=other.assets,other.written}
