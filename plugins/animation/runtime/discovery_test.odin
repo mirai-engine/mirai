@@ -43,7 +43,7 @@ modifier_preparation_ignores_unrelated_writes_reloads_only_changed_definitions_a
         return modifier_prepare(modifiers,&w.animations,&w.attachments,characters,skeletons,playback,app.assets,app.allocator,nil)
     }
     if !testing.expect(t,prepare(&modifiers,&w,&characters,&skeletons,&playback,&app)) {return}
-    rig:=modifier_rig(&modifiers,looker)
+    rig:=modifier_rig(core.ref(&modifiers),looker)
     revision:=rig.revision
     buffer:=raw_data(rig.look_states)
     testing.expect(t,len(rig.look_states)==1 && len(modifiers.rigs)==1)
@@ -71,8 +71,8 @@ modifier_preparation_ignores_unrelated_writes_reloads_only_changed_definitions_a
     born:=core.create(&w.entities)
     core.add(&w.animations,born,description);test_world_settle(&w)
     if !testing.expect(t,prepare(&modifiers,&w,&characters,&skeletons,&playback,&app)) {return}
-    rig=modifier_rig(&modifiers,looker)
-    testing.expect(t,modifier_rig(&modifiers,born)!=nil && raw_data(modifiers.rigs)==rigs &&
+    rig=modifier_rig(core.ref(&modifiers),looker)
+    testing.expect(t,modifier_rig(core.ref(&modifiers),born)!=nil && raw_data(modifiers.rigs)==rigs &&
         raw_data(modifiers.rows)==rows && raw_data(rig.spring_states)==spring_state &&
         raw_data(rig.follow_states)==follow_state)
     testing.expect(t,spring_state[0].springs[1]==joint && follow_state[0].offset==offset)
@@ -93,15 +93,15 @@ modifier_preparation_ignores_unrelated_writes_reloads_only_changed_definitions_a
     context=saved;app.allocator=tracked;characters.allocator=tracked
     testing.expect_value(t,tracker.total_allocation_count,allocations)
     testing.expect(t,prepared && stable && preserved && failure.calls==0 &&
-        modifier_rig(&modifiers,born)==nil && raw_data(modifier_rig(&modifiers,looker).spring_states)==spring_state)
+        modifier_rig(core.ref(&modifiers),born)==nil && raw_data(modifier_rig(core.ref(&modifiers),looker).spring_states)==spring_state)
 
     look[0].weight=.3;characters.contents[0].revision+=1;host_assets.revision+=1
     if !testing.expect(t,prepare(&modifiers,&w,&characters,&skeletons,&playback,&app)) {return}
-    rig=modifier_rig(&modifiers,looker)
+    rig=modifier_rig(core.ref(&modifiers),looker)
     testing.expect(t,rig.revision==revision+1 && test_modifier_weight(&modifiers,looker,.Look,"head")==.3)
     copied:Modifier_Runtime;core.value_copy(&copied,&modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copied)
-    modifier_rig(&copied,looker).revision+=100
-    testing.expect(t,modifier_rig(&copied,looker).revision!=rig.revision)
+    modifier_rig(core.ref(&copied),looker).revision+=100
+    testing.expect(t,modifier_rig(core.ref(&copied),looker).revision!=rig.revision)
     inputs:=modifiers.inputs;revision=rig.revision
     look[0].weight=.6;characters.contents[0].revision+=1;host_assets.revision+=1
     context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
@@ -116,8 +116,8 @@ modifier_preparation_ignores_unrelated_writes_reloads_only_changed_definitions_a
     core.destroy(&w.entities,looker);test_world_settle(&w)
     looker=core.create(&w.entities);core.add(&w.animations,looker,description);test_world_settle(&w)
     testing.expect(t,prepare(&modifiers,&w,&characters,&skeletons,&playback,&app) && looker!=old &&
-        core.entity_index(looker)==index && modifier_rig(&modifiers,old)==nil &&
-        modifier_rig(&modifiers,looker)!=nil)
+        core.entity_index(looker)==index && modifier_rig(core.ref(&modifiers),old)==nil &&
+        modifier_rig(core.ref(&modifiers),looker)!=nil)
 }
 
 

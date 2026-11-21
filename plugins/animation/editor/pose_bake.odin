@@ -140,7 +140,7 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
             if !pose_bake_evaluate(call,world,s.app,time-previous) {return false}
             state=pose_bake_state(world,entity);if state==nil {authoring_failure(call,"bake","Unbound_Pose","a ready pose at every sample",fmt.tprintf("frame %d",frame),"The rig became unbound while baking");return false}
         }
-        content:=anim.animation_playing_content(sources,s.app,state)
+        content:=anim.animation_playing_content(core.ref(sources),s.app,state)
         if !preview_trace_sources_prepare(call,&trace,sources,state,content,s.app.assets) {return false}
         for curve in state.curves {
             name:=preview_curve_name(&trace,curve.target)
@@ -164,12 +164,12 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
                 local:=baked_root if root.ready && track.bone==root.bone else anim.playing_pose(state,.Local)[track.bone]
                 #partial switch track.desc.property {case .Position:value={local.position.x,local.position.y,local.position.z,0};case .Rotation:value=lib.quat_vec4(local.rotation);case .Scale:value={local.scale.x,local.scale.y,local.scale.z,0}}
             } else if track.morph!=core.NONE {
-                morph,ready:=anim.animation_morph_state(core.world_storage_of(world,anim.Morph_Playback),track.morph)
+                morph,ready:=anim.animation_morph_state(core.ref(core.world_storage_of(world,anim.Morph_Playback)),track.morph)
                 if !ready || track.morph_index>=len(morph.weights) {authoring_failure(call,"morphs","Evaluation_Failed","weights for every baked target","missing weights","A morph instance stopped being evaluated while baking");return false}
                 value.x=morph.weights[track.morph_index]
             } else {
                 for curve in state.curves {if curve.target==track.hash && curve.property==track.desc.property && curve.slot==track.desc.slot {value=curve.value;break}}
-                if track.desc.property==.Float && track.desc.slot==0 {value.x+=anim.animation_corrective_curve(modifiers,entity,track.hash)}
+                if track.desc.property==.Float && track.desc.slot==0 {value.x+=anim.animation_corrective_curve(core.ref(modifiers),entity,track.hash)}
             }
             track.desc.keys[frame]={time=time,value=value}
         }

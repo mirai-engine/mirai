@@ -30,8 +30,10 @@ House_Lamp :: struct {
     globe:core.Entity `mirai:"local"`,
     glow:[3]f32 `mirai:"color"`,      // nits of the globe while lit
     flicker:f32 `mirai:"min=0"`,      // chances a second to blink; 0: steady
-    lit:bool `mirai:"transient"`,
 }
+
+@(component,derived)
+House_Lamp_State :: struct {lit:bool}
 
 HOUSE_LAMP_DEFAULT :: House_Lamp{intensity=800}
 
@@ -74,9 +76,9 @@ horror_switches :: proc(
 // the flashlights follow the eyes of the first player.
 @(step="fixed",stage="react")
 horror_lights :: proc(
-    lamps:^core.Table(House_Lamp),switches:^core.Table(Light_Switch,.Read),points:^core.Table(render.Point_Light),
+    lamps:^core.Table(House_Lamp,.Read),states:^core.Table(House_Lamp_State),switches:^core.Table(Light_Switch,.Read),points:^core.Table(render.Point_Light),
     flashlights:^core.Table(Flashlight,.Read),spots:^core.Table(render.Spot_Light),transforms:^core.Table(core.Transform),
-    players:^core.Table(Player,.Read),moves:^core.Table(inp.Move_Input,.Read),sight:cam.Sight,time:core.Time,
+    players:^core.Table(Player,.Read),moves:^core.Table(inp.Move_Input,.Read),sight:cam.Sight,time:core.Time,problems:^core.Problems,
 ) {
     seconds:=f32(time.seconds)
     for row in 0..<core.count(lamps) {
@@ -88,9 +90,13 @@ horror_lights :: proc(
             slice:=u32(seconds*lamp.flicker*4)+u32(row)*7919
             on=flicker_hash(slice)>0.3
         }
-        if lamp.lit!=on {core.edit_at(lamps,row).lit=on}
+        e:=core.entity_at(lamps,row)
+        old,_:=core.get(states,e)
+        if old.lit!=on {
+            if state:=demo_state(states,e,House_Lamp_State{},problems);state!=nil {state.lit=on}
+        }
         intensity:=lamp.intensity if on else 0
-        if at:=core.row_of(points,core.entity_at(lamps,row));at>=0 && core.at(points,at).intensity!=intensity {
+        if at:=core.row_of(points,e);at>=0 && core.at(points,at).intensity!=intensity {
             core.edit_at(points,at).intensity=intensity
         }
     }
@@ -125,9 +131,10 @@ flicker_hash :: proc "contextless" (v:u32) -> f32 {
 
 // The globe of each lamp glows while it is lit.
 @(step="fixed")
-horror_glow :: proc(tints:^core.Table(render.Material_Values),lamps:^core.Table(House_Lamp,.Read)) {
+horror_glow :: proc(tints:^core.Table(render.Material_Values),lamps:^core.Table(House_Lamp,.Read),states:^core.Table(House_Lamp_State,.Read)) {
     for row in 0..<core.count(lamps) {
         lamp:=core.at(lamps,row)
-        glow_set(tints,lamp.globe,lamp.lit?lamp.glow:[3]f32{})
+        state,_:=core.get(states,core.entity_at(lamps,row))
+        glow_set(tints,lamp.globe,state.lit?lamp.glow:[3]f32{})
     }
 }

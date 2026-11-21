@@ -12,7 +12,7 @@ import mm "mirai:std/math"
 @(private)
 leader_follow :: proc(state:^Playing,playback:^Playback,inputs:Constraint_Inputs,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,$A),parent_world:mm.Transform) -> bool {
     problems:=inputs.problems
-    leader:=constraint_playing(playback,state.leader)
+    leader:=constraint_playing(core.ref(playback),state.leader)
     posed:=leader!=nil && (leader.seen==playback.frame if state.stage==.Sampled else leader.finished==playback.frame)
     if leader==nil || leader==state || !posed || len(playing_pose(leader,.Local))==0 || leader.skeleton=={} {
         core.report(problems,state.entity,"animation.follow_rig","this rig takes the pose of entity 0x%016x through Pose_Source, which is not a rig posed before it in this tick (or takes it back), so it keeps its own pose; name a rig whose Mesh_Renderer shows a skinned mesh",u64(state.leader))

@@ -66,22 +66,22 @@ Gallery_Warp :: struct {share,direction:f32,turn,start:bool}
 
 // values of the warp station: [0] the share of its stride, [1] the age at which the panel asked
 // for one (0: none), [2] the direction of the last one.
-gallery_warp :: proc(item:Animation_Gallery,dt:f32) -> (warp:Gallery_Warp) {
-    last:=item.values[2] if item.values[2]!=0 else -1
-    if item.manual {
-        warp={share=item.values[0],direction=last}
-        if asked:=item.values[1];asked>0 {
+gallery_warp :: proc(state:core.Ref(Animation_Gallery_State),dt:f32) -> (warp:Gallery_Warp) {
+    last:=state.values[2] if state.values[2]!=0 else -1
+    if state.manual {
+        warp={share=state.values[0],direction=last}
+        if asked:=state.values[1];asked>0 {
             warp.direction=-last
-            warp.turn=item.age>=asked && item.age<asked+GALLERY_WARP_TURN
-            warp.start=item.age>=asked+GALLERY_WARP_TURN && item.age-dt<asked+GALLERY_WARP_TURN
+            warp.turn=state.age>=asked && state.age<asked+GALLERY_WARP_TURN
+            warp.start=state.age>=asked+GALLERY_WARP_TURN && state.age-dt<asked+GALLERY_WARP_TURN
         }
         return
     }
-    cycle:=int(math.floor((item.age-.5)/GALLERY_WARP_PERIOD))
+    cycle:=int(math.floor((state.age-.5)/GALLERY_WARP_PERIOD))
     if cycle<0 {return {share=.8,direction=1}}
     warp={share=.8+.2*f32(cycle%%3),direction=1 if cycle%%2==0 else -1}
-    warp.turn=item.age-.5-f32(cycle)*GALLERY_WARP_PERIOD<GALLERY_WARP_TURN
-    warp.start=gallery_period(item.age,dt,GALLERY_WARP_PERIOD,.5+GALLERY_WARP_TURN)
+    warp.turn=state.age-.5-f32(cycle)*GALLERY_WARP_PERIOD<GALLERY_WARP_TURN
+    warp.start=gallery_period(state.age,dt,GALLERY_WARP_PERIOD,.5+GALLERY_WARP_TURN)
     return
 }
 
@@ -92,7 +92,7 @@ gallery_warp_goal :: proc "contextless" (item:Animation_Gallery,warp:Gallery_War
 @(component)
 Gallery_Label :: struct {title:[64]u8 `mirai:"text"`,detail:[96]u8 `mirai:"text"`}
 
-@(component,description="Configures this animation gallery station and records its playback and foot contact measurements.")
+@(component,description="Configures a station of the animation gallery.")
 Animation_Gallery :: struct {
     kind:Gallery_Kind,
     title:[64]u8 `mirai:"text"`,
@@ -100,12 +100,16 @@ Animation_Gallery :: struct {
     origin:mm.Vec3,
     stride:f32 `mirai:"unit=m"`, // what the clip of the warp station covers unwarped
     indicator,target:core.Entity,
-    diagnostics:Animation_Gallery_Diagnostics `mirai:"hidden,readonly,transient"`,
-    age:f32 `mirai:"hidden,readonly,transient"`,
-    speed:f32 `mirai:"hidden,readonly,transient"`, // m/s the matching station is asked
-    values:[4]f32 `mirai:"hidden,readonly,transient"`, // what its panel adjusts that is not on its Animation: the target of the IK, the distance of the warp
-    grounded:bool `mirai:"hidden,readonly,transient"`,
-    manual:bool `mirai:"hidden,readonly,transient"`,
+}
+
+@(component,derived)
+Animation_Gallery_State :: struct {
+    diagnostics:Animation_Gallery_Diagnostics `mirai:"hidden,readonly"`,
+    age:f32 `mirai:"hidden,readonly"`,
+    speed:f32 `mirai:"hidden,readonly"`, // m/s the matching station is asked
+    values:[4]f32 `mirai:"hidden,readonly"`, // what its panel adjusts that is not on its Animation: the target of the IK, the distance of the warp
+    grounded:bool `mirai:"hidden,readonly"`,
+    manual:bool `mirai:"hidden,readonly"`,
 }
 
 Animation_Gallery_Diagnostics :: struct {
@@ -125,10 +129,13 @@ Animation_Gallery_Diagnostics :: struct {
 // The bodies of the gallery that walk on their own go back and forth along the walkway; the jumper
 // jumps its obstacle. One that fell or wandered off goes back to its station.
 @(step="fixed",stage="apply",after="animation_motor_drive")
-gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),drives:^core.Table(locomotion.Locomotion_Drive),walks:^core.Table(locomotion.Walk,.Read),worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer,seat_state:core.Ref(inp.Seats),walk_actions:inp.Input_Of(locomotion.Walk_Action),time:core.Time) {
+gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),states:^core.Table(Animation_Gallery_State,.Read),drives:^core.Table(locomotion.Locomotion_Drive),walks:^core.Table(locomotion.Walk,.Read),worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer,seat_state:core.Ref(inp.Seats),walk_actions:inp.Input_Of(locomotion.Walk_Action),time:core.Time) {
+    empty:Animation_Gallery_State
     for row in 0..<core.count(gallery) {
         entity:=core.entity_at(gallery,row)
         item:=core.at(gallery,row)
+        state,ready:=core.view(states,entity)
+        if !ready {state=core.ref(&empty)}
         placed,exists:=core.get(worlds,entity)
         if !exists {continue}
         home:=gallery_warp_start(item) if item.kind==.Warp else item.origin+(mm.Vec3{} if item.kind==.Actions else mm.Vec3{0,.05,1.2})
@@ -139,7 +146,7 @@ gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),drives:
             if placed.position.y< -2 || linalg.length((placed.position-item.origin).xz)>limit {core.place(placer,entity,home,at_rest=true)}
             // While it turns toward its next goal its motor is off: it stands and faces that way.
             if item.kind==.Warp {
-                if warp:=gallery_warp(item,time.dt);warp.turn {
+                if warp:=gallery_warp(state,time.dt);warp.turn {
                     // Half a turn in a bit less than the time it has, so that it faces its goal before it strides.
                     desired:=f32(math.PI) if warp.direction>0 else 0
                     look:=mm.angle_wrap(mm.angle_approach(mm.yaw_of_direction(mm.quat_forward(placed.rotation)),desired,1.25*math.PI/GALLERY_WARP_TURN*time.dt))
@@ -155,7 +162,7 @@ gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),drives:
         if !configured {continue}
         input:=locomotion.Locomotion_Drive{look_yaw=mm.yaw_of_direction(mm.quat_forward(placed.rotation))}
         target:=item.origin
-        target.z+=1.25 if int(item.age/3)%2==0 else -1.25
+        target.z+=1.25 if int(state.age/3)%2==0 else -1.25
         delta:=target.z-placed.position.z
         wish:mm.Vec3
         // The jumper walks faster, so that its jump carries it over its obstacle.
@@ -170,13 +177,14 @@ gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),drives:
     }
 }
 
-gallery_direct_clips :: proc(gallery:^core.Table(Animation_Gallery,.Read),animations:^core.Table(anim.Animation,.Read),progresses:^core.Table(anim.Animation_Progress,.Read),requests:^anim.Animation_Requests,commands:[]Gallery_Command) {
+gallery_direct_clips :: proc(gallery:^core.Table(Animation_Gallery,.Read),states:^core.Table(Animation_Gallery_State,.Read),animations:^core.Table(anim.Animation,.Read),progresses:^core.Table(anim.Animation_Progress,.Read),requests:^anim.Animation_Requests,commands:[]Gallery_Command) {
     for row in 0..<core.count(gallery) {
         item:=core.at(gallery,row)
         entity:=core.entity_at(gallery,row)
-        if item.kind!=.Direct || gallery_manual(item.manual,entity,commands) {continue}
+        state,_:=core.get(states,entity)
+        if item.kind!=.Direct || gallery_manual(state.manual,entity,commands) {continue}
         if !core.has(animations,entity) {continue}
-        phase:=int(item.age/3)%3
+        phase:=int(state.age/3)%3
         wanted:="wave" if phase==1 else "walk"
         speed:=f32(-1) if phase==2 else f32(1)
         progress,_:=core.get(progresses,entity)
@@ -204,53 +212,62 @@ gallery_control :: proc(gallery:^core.Table(Animation_Gallery,.Read),players:^co
 // body, faded in and out over it; the additive, greeting and synchronized stations set
 // their parameter; the actions station greets and steps; the warp station strides to its goal.
 @(step="fixed")
-gallery_animate :: proc(gallery:^core.Table(Animation_Gallery,.Read),animations:^core.Table(anim.Animation,.Read),worlds:^core.Table(core.World_Transform,.Read),time:core.Time,requests:^anim.Animation_Requests,progresses:^core.Table(anim.Animation_Progress,.Read),playback:core.Ref(anim.Playback),motors:^core.Table(Animation_Motor),ui_events:core.Ref(gui.UI_Events),names:^core.Table(core.Name,.Read),panel:core.Ref(Gallery_UI),morphs:^core.Table(Morph_Playground,.Read),morph_weights:^core.Table(anim.Morph_Weights)) {
+gallery_animate :: proc(gallery:^core.Table(Animation_Gallery,.Read),states:^core.Table(Animation_Gallery_State,.Read),animations:^core.Table(anim.Animation,.Read),worlds:^core.Table(core.World_Transform,.Read),time:core.Time,requests:^anim.Animation_Requests,progresses:^core.Table(anim.Animation_Progress,.Read),playback:core.Ref(anim.Playback),motors:^core.Table(Animation_Motor,.Read),motor_states:^core.Table(Animation_Motor_State),ui_events:core.Ref(gui.UI_Events),names:^core.Table(core.Name,.Read),panel:core.Ref(Gallery_UI),morphs:^core.Table(Morph_Playground,.Read),morph_weights:^core.Table(anim.Morph_Weights),problems:^core.Problems) {
     if morphs!=nil && morph_weights!=nil {morph_playground_animate(morphs,requests,morph_weights,time)}
     for event in ui_events.items {
         if event.kind!=.Clicked || event.name!=base.name_hash("toggle") {continue}
         lift:=core.entity_named(names,SHOWCASE_LIFT)
-        anim.animation_command(requests,lift,.Pause if anim.animation_playing(playback.ptr,lift) else .Resume)
+        anim.animation_command(requests,lift,.Pause if anim.animation_playing(playback,lift) else .Resume)
     }
     commands:=panel.commands[:panel.count]
-    gallery_playback_commands(commands,requests,playback.ptr)
-    gallery_direct_clips(gallery,animations,progresses,requests,commands)
+    gallery_playback_commands(commands,requests,playback)
+    gallery_direct_clips(gallery,states,animations,progresses,requests,commands)
     for row in 0..<core.count(gallery) {
         entity:=core.entity_at(gallery,row)
-        item:=core.at(gallery,row)
+        item:=core.view_at(gallery,row)
+        state,ready:=core.view(states,entity)
+        empty:Animation_Gallery_State
+        if !ready {state=core.ref(&empty)}
         if item.target!=core.NONE {
             anim.modifier(requests,{rig=entity,kind=.IK,target=anim.spatial_entity(item.target),weight=1,enabled=true,goal=true},"RightHand")
             anim.look(requests,entity,anim.spatial_entity(item.target),name="Head")
         }
-        manual:=gallery_manual(item.manual,entity,commands)
-        speed,value:=gallery_automatic(item.kind,item.age)
+        manual:=gallery_manual(state.manual,entity,commands)
+        speed,value:=gallery_automatic(item.kind,state.age)
         #partial switch item.kind {
         case .Matching:
             placed,_:=core.get(worlds,entity)
             forward:=mm.quat_forward(placed.rotation)
-            velocity:=forward*(item.speed if manual else speed)
+            velocity:=forward*(state.speed if manual else speed)
             anim.match_goal(requests,{rig=entity,mode=u16(locomotion.MODE_WALKING),velocity=velocity,desired=velocity,facing=forward})
-            if !manual && gallery_period(item.age,time.dt,9,4.5) {anim.play(requests,entity,"Wave")}
+            if !manual && gallery_period(state.age,time.dt,9,4.5) {anim.play(requests,entity,"Wave")}
         case .Additive,.Sync,.Layered:
-            anim.set(requests,entity,gallery_parameter(item.kind),item.values[0] if manual else value)
+            anim.set(requests,entity,gallery_parameter(item.kind),state.values[0] if manual else value)
         case .Actions:
             if manual {continue}
-            if gallery_period(item.age,time.dt,GALLERY_ACTIONS_PERIOD,1) {anim.play(requests,entity,"Greet")}
-            if gallery_period(item.age,time.dt,GALLERY_ACTIONS_PERIOD,1+GALLERY_ACTIONS_PERIOD*.5) {anim.play(requests,entity,"Step")}
+            if gallery_period(state.age,time.dt,GALLERY_ACTIONS_PERIOD,1) {anim.play(requests,entity,"Greet")}
+            if gallery_period(state.age,time.dt,GALLERY_ACTIONS_PERIOD,1+GALLERY_ACTIONS_PERIOD*.5) {anim.play(requests,entity,"Step")}
         case .Warp:
             // It turns in idle with its motor off, strides by its root motion to the goal and waits
             // there in idle.
             if !core.has(animations,entity) {continue}
             progress,_:=core.get(progresses,entity)
-            warp:=gallery_warp(item,time.dt)
+            warp:=gallery_warp(state,time.dt)
+            if warp.turn || warp.start {
+                if motor,found:=core.get(motors,entity);found {
+                    state,_:=core.get(motor_states,entity)
+                    if (state.enabled.? or_else motor.enabled)!=warp.start {
+                        if next:=demo_state(motor_states,entity,Animation_Motor_State{},problems);next!=nil {next.enabled=warp.start}
+                    }
+                }
+            }
             if warp.turn {
-                if motor,found:=core.get(motors,entity);found && motor.enabled {core.edit(motors,entity).enabled=false}
                 if progress.selection.clip!=base.name_hash("idle") {anim.play_clip(requests,entity,"idle",.2,loop=true)}
             }
             if warp.start {
-                if motor,found:=core.get(motors,entity);found && !motor.enabled {core.edit(motors,entity).enabled=true}
-                anim.motion_target(requests,entity,GALLERY_REACH,anim.spatial_point(gallery_warp_goal(item,warp)))
+                anim.motion_target(requests,entity,GALLERY_REACH,anim.spatial_point(gallery_warp_goal(core.at(gallery,row),warp)))
                 anim.play_clip(requests,entity,"stride",.2,loop=false,restart=true)
-            } else if _,_,ended,ok:=anim.animation_progress(playback.ptr,entity);ok && ended && progress.selection.clip==base.name_hash("stride") {
+            } else if _,_,ended,ok:=anim.animation_progress(playback,entity);ok && ended && progress.selection.clip==base.name_hash("stride") {
                 anim.play_clip(requests,entity,"idle",.3,loop=true)
             }
         }
@@ -263,7 +280,7 @@ gallery_root_motion :: proc(gallery:^core.Table(Animation_Gallery,.Read),transfo
         item:=core.at(gallery,row)
         if item.kind!=.Root_Motion {continue}
         entity:=core.entity_at(gallery,row)
-        motion,exists:=anim.animation_root_delta(playback.ptr,entity)
+        motion,exists:=anim.animation_root_delta(playback,entity)
         if !exists {continue}
         if root:=core.free(transforms,entity);root!=nil {
             root.position+=mm.quat_rotate(root.rotation,motion.translation*root.scale)
@@ -278,68 +295,71 @@ gallery_root_motion :: proc(gallery:^core.Table(Animation_Gallery,.Read),transfo
 
 // Where the IK station puts its target, in the frame of its actor: the panel's height and reach
 // when adjusted, a slow circle in front of the hand otherwise.
-gallery_ik_target :: proc(item:Animation_Gallery) -> mm.Vec3 {
-    if item.manual {return {.42,item.values[0],-item.values[1]}}
-    return {.42-.15*math.sin(item.age),1.3+.12*math.cos(item.age),-.42}
+gallery_ik_target :: proc(state:core.Ref(Animation_Gallery_State)) -> mm.Vec3 {
+    if state.manual {return {.42,state.values[0],-state.values[1]}}
+    return {.42-.15*math.sin(state.age),1.3+.12*math.cos(state.age),-.42}
 }
 
 @(step="fixed",stage="react")
-gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.Table(core.Transform),characters:^core.Table(phys.Character_State,.Read),moving:^core.Table(core.Motion,.Read),events:core.Ref(anim.Animation_Events),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime),time:core.Time,panel:^Gallery_UI,sets:core.Ref(anim.Character_Assets)) {
+gallery_observe :: proc(gallery:^core.Table(Animation_Gallery,.Read),states:^core.Table(Animation_Gallery_State),transforms:^core.Table(core.Transform),characters:^core.Table(phys.Character_State,.Read),moving:^core.Table(core.Motion,.Read),events:core.Ref(anim.Animation_Events),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime),time:core.Time,panel:^Gallery_UI,sets:core.Ref(anim.Character_Assets),problems:^core.Problems) {
     if !time.playing {return}
     commands:=panel.commands[:panel.count]
-    for &item,row in core.writable(gallery) {
-        entity:=gallery.entities[row]
+    for row in 0..<core.count(gallery) {
+        entity:=core.entity_at(gallery,row)
+        item:=core.at(gallery,row)
+        state:=demo_state(states,entity,Animation_Gallery_State{},problems)
+        if state==nil {continue}
         // The warp asks with the age gallery_animate saw, before it advances.
         if item.kind==.Warp {
-            if warp:=gallery_warp(item,time.dt);warp.start {item.values[0],item.values[1],item.values[2]=warp.share,0,warp.direction}
-            for command in commands {if command.entity==entity && command.kind==.Warp {item.values[1]=max(item.age,1e-3)}}
+            if warp:=gallery_warp(core.ref(state),time.dt);warp.start {state.values[0],state.values[1],state.values[2]=warp.share,0,warp.direction}
+            for command in commands {if command.entity==entity && command.kind==.Warp {state.values[1]=max(state.age,1e-3)}}
         }
-        item.manual=gallery_manual(item.manual,entity,commands)
-        item.age+=time.dt
-        if !item.manual {
+        state.manual=gallery_manual(state.manual,entity,commands)
+        state.age+=time.dt
+        if !state.manual {
             // The panel shows what the automatic demo asks.
-            speed,value:=gallery_automatic(item.kind,item.age)
-            if item.kind==.Matching {item.speed=speed}
-            if gallery_parameter(item.kind)!="" {item.values[0]=value}
+            speed,value:=gallery_automatic(item.kind,state.age)
+            if item.kind==.Matching {state.speed=speed}
+            if gallery_parameter(item.kind)!="" {state.values[0]=value}
         }
         for command in commands {
             if command.entity!=entity {continue}
-            if command.kind==.Speed {item.speed=command.value}
-            if command.kind==.Value && int(command.slot)<len(item.values) {item.values[command.slot]=command.value}
+            if command.kind==.Speed {state.speed=command.value}
+            if command.kind==.Value && int(command.slot)<len(state.values) {state.values[command.slot]=command.value}
         }
         if item.kind==.Warp {
-            if item.values[0]==0 {item.values[0]=1}
+            if state.values[0]==0 {state.values[0]=1}
             // The goal shows where its next stride ends.
-            if goal:=core.free(transforms,item.indicator);goal!=nil {goal.position=gallery_warp_goal(item,gallery_warp(item,time.dt))+mm.Vec3{0,.1,0}}
+            if goal:=core.free(transforms,item.indicator);goal!=nil {goal.position=gallery_warp_goal(item,gallery_warp(core.ref(state),time.dt))+mm.Vec3{0,.1,0}}
         }
-        for marker in events.items {if marker.entity==entity {item.diagnostics.events+=1}}
+        for marker in events.items {if marker.entity==entity {state.diagnostics.events+=1}}
         if item.kind==.Events && item.indicator!=core.NONE {
-            value:=anim.animation_curve(playback.ptr,entity,"pulse")
+            value:=anim.animation_curve(playback,entity,"pulse")
             {if visual:=core.free(transforms,item.indicator);visual!=nil {visual.scale={.12+.22*value,.12+.22*value,.12+.22*value}}}
         }
         if item.kind==.IK && item.target!=core.NONE {
-            local:=gallery_ik_target(item)
-            if !item.manual {item.values[0],item.values[1]=local.y,-local.z}
+            local:=gallery_ik_target(core.ref(state))
+            if !state.manual {state.values[0],state.values[1]=local.y,-local.z}
             actor,_:=core.get(transforms,entity)
             if target:=core.free(transforms,item.target);target!=nil {target.position=item.origin+mm.quat_rotate(actor.rotation,local)}
         }
         if item.kind==.Root_Motion {
-            motion,exists:=anim.animation_root_delta(playback.ptr,entity)
-            if exists {item.diagnostics.root_distance+=linalg.length(motion.translation)}
+            motion,exists:=anim.animation_root_delta(playback,entity)
+            if exists {state.diagnostics.root_distance+=linalg.length(motion.translation)}
         }
         going,_:=core.get(moving,entity)
-        rig:=anim.modifier_rig(modifiers.ptr,entity)
-        profile:=anim.modifier_profile(modifiers.ptr,sets.ptr,entity)
+        rig:=anim.modifier_rig(modifiers,entity)
+        profile:=anim.modifier_profile(modifiers,sets,entity)
         feet:anim.Foot_Grounding
-        if profile!=nil && len(profile.grounding.legs)>0 {feet=anim.modifier_grounding(modifiers.ptr,rig,profile.grounding)}
+        if profile!=nil && len(profile.grounding.legs)>0 {feet=anim.modifier_grounding(modifiers,rig,profile.grounding)}
         if character,exists:=core.get(characters,entity);exists {
-            if item.grounded && !character.standing && going.linear.y>.1 {item.diagnostics.jumps+=1}
-            if !item.grounded && character.standing && item.age>.2 {item.diagnostics.landings+=1}
-            item.grounded=character.standing
-            item.diagnostics.states_seen|=1 if character.standing else 2 if going.linear.y>0 else 4
+            if state.grounded && !character.standing && going.linear.y>.1 {state.diagnostics.jumps+=1}
+            if !state.grounded && character.standing && state.age>.2 {state.diagnostics.landings+=1}
+            state.grounded=character.standing
+            state.diagnostics.states_seen|=1 if character.standing else 2 if going.linear.y>0 else 4
             if !character.standing {
-                item.diagnostics.airborne_samples+=1
-                if len(feet.legs)>0 && feet.global_contact!=0 {item.diagnostics.airborne_contact_violations+=1}
+                state.diagnostics.airborne_samples+=1
+                if len(feet.legs)>0 && feet.global_contact!=0 {state.diagnostics.airborne_contact_violations+=1}
             }
         }
         if rig!=nil && len(rig.grounding)>0 {
@@ -355,20 +375,20 @@ gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.
                             leg:=feet.legs[i]
                             offset:=leg.contact_offset if leg.contact_bone!={} else leg.sole_height
                             clearance:=linalg.dot(record.previous[i].position-anim.playing_pose(&pose,.World)[0].position,linalg.normalize0(feet.up))-offset
-                            if feet.global_contact>=.8 && leg.contact>=.8 && clearance>.06 {item.diagnostics.swing_samples+=1;item.diagnostics.leg_swing_samples[i]+=1}
+                            if feet.global_contact>=.8 && leg.contact>=.8 && clearance>.06 {state.diagnostics.swing_samples+=1;state.diagnostics.leg_swing_samples[i]+=1}
                         }
                     }
                     if target.weight<.8 {continue}
-                    item.diagnostics.foot_samples+=1
-                    item.diagnostics.foot_error_max=max(item.diagnostics.foot_error_max,linalg.length(anim.playing_pose(&pose,.World)[bone].position-target.position))
+                    state.diagnostics.foot_samples+=1
+                    state.diagnostics.foot_error_max=max(state.diagnostics.foot_error_max,linalg.length(anim.playing_pose(&pose,.World)[bone].position-target.position))
                     locked:=!record.legs[i].swinging && record.legs[i].anchor.active && record.legs[i].weight>=.99 if record.mode==.Procedural else record.placements[i].anchor.active && record.placements[i].weight>=.99
                     if locked && target.weight>=.99 {
                         error:=linalg.length(anim.playing_pose(&pose,.World)[bone].position-target.position)
-                        item.diagnostics.stable_foot_samples+=1;item.diagnostics.stable_foot_error_max=max(item.diagnostics.stable_foot_error_max,error)
-                        item.diagnostics.leg_stable_samples[i]+=1;item.diagnostics.leg_stable_error_max[i]=max(item.diagnostics.leg_stable_error_max[i],error)
+                        state.diagnostics.stable_foot_samples+=1;state.diagnostics.stable_foot_error_max=max(state.diagnostics.stable_foot_error_max,error)
+                        state.diagnostics.leg_stable_samples[i]+=1;state.diagnostics.leg_stable_error_max[i]=max(state.diagnostics.leg_stable_error_max[i],error)
                         rotation_error:=mm.quat_angle(anim.playing_pose(&pose,.World)[bone].rotation,record.rotations[i])
-                        item.diagnostics.stable_foot_rotation_error_max=max(item.diagnostics.stable_foot_rotation_error_max,rotation_error)
-                        item.diagnostics.leg_stable_rotation_error_max[i]=max(item.diagnostics.leg_stable_rotation_error_max[i],rotation_error)
+                        state.diagnostics.stable_foot_rotation_error_max=max(state.diagnostics.stable_foot_rotation_error_max,rotation_error)
+                        state.diagnostics.leg_stable_rotation_error_max[i]=max(state.diagnostics.leg_stable_rotation_error_max[i],rotation_error)
                     }
                 }
             }

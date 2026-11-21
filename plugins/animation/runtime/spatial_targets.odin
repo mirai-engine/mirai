@@ -135,7 +135,7 @@ spatial_target_sample :: proc(target:Spatial_Target,binding:^Spatial_Target_Bind
     case .Bone,.Socket:
     }
     if playback==nil {return mm.TRANSFORM_IDENTITY,false}
-    source:=constraint_playing(playback,target.entity)
+    source:=constraint_playing(core.ref(playback),target.entity)
     if source==nil || source.seen!=(frame if frame!=0 else playback.frame) || len(playing_pose(source,.Sampled))!=len(playing_topology(source).parents) {return mm.TRANSFORM_IDENTITY,false}
     if !binding.ready || !spatial_same_reference(binding.target,target) || binding.revision!=source.bound || binding.skeleton_revision!=source.skeleton_revision {
         binding.ready=false

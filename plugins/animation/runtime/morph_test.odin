@@ -62,7 +62,7 @@ morph_weights_compose_the_mesh_the_default_the_curve_and_the_overrides_without_a
     named:=Morph_Playing{curve_count=-1};defer morph_playing_free(&named)
     imported:=Playing{seen=4,curves_ready=true};defer delete(imported.curves)
     append(&imported.curves,Curve_Output{target=base.name_hash("Armature/Body/@morph/Smile"),property=.Float,value={.6,0,0,0},weight=1})
-    testing.expect(t,morph_bind(&named,&rig,{},base.HASH_SEED,1) && named.by_name && morph_compose(&named,&rig,{},&imported,nil,&content) && abs(named.current[0]-.6)<1e-6)
+    testing.expect(t,morph_bind(&named,&rig,{},base.HASH_SEED,1) && named.by_name && morph_compose(&named,&rig,{},&imported,{},&content) && abs(named.current[0]-.6)<1e-6)
     // A curve named as the target, as face captures and curve drives name them, and the
     // final curves of a rig with drives, which replace those of its animation.
     face:=Playing{seen=4,curves_ready=true,driven_ready=true,curve_layout=9};defer delete(face.curves);defer delete(face.driven)
@@ -125,7 +125,7 @@ Morph_World :: struct {
 
 @(private="file")
 morph_test_step :: proc(w:^Morph_World,playback:^Playback,cache:^Skin_Runtime,state:^Morph_Playback,app:^host.App) {
-    animation_morph(core.read(&w.meshes),core.read(&w.configs),core.read(&w.animations),core.read(&w.targets),core.read(&w.sources),core.read(&w.parents),{playback},{},cache,state,nil,app,{playing=true},nil)
+    animation_morph(core.read(&w.meshes),core.read(&w.configs),core.read(&w.animations),core.read(&w.targets),core.read(&w.sources),core.read(&w.parents),{playback},{},cache,state,{},app,{playing=true},nil)
 }
 
 @(test)
@@ -175,7 +175,7 @@ animation_morph_follows_its_mesh_and_its_weights_and_reads_the_curves_of_its_rig
     context=saved;app.allocator=context.allocator
     testing.expect(t,cache.rigs[0].checked==0 && state.states[0].current[0]==-.5 && problems.count==0)
     cache.rigs[0].checked=1
-    composed,found:=animation_morph_state(&state,entity)
+    composed,found:=animation_morph_state(core.ref(&state),entity)
     testing.expect(t,found && composed.error==.None && composed.weights[0]==-.5 && composed.mesh==cache.rigs[0].id)
     // A mesh that changes keeps the weights of its entity on the targets it still has.
     next:=[2]asset.Morph_Target{target,{weight=.1}}

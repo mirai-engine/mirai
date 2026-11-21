@@ -29,7 +29,7 @@ grounding_inspection_derives_final_pose_errors_and_reports_blocked_legs_without_
     record.bones[0]={0,1,2};record.targets[0]={position={0,0,0},weight=1};record.rotations[0]=mm.QUAT_IDENTITY
     append(&world.modifiers.rows,i32(0),i32(1))
     append(&world.modifiers.rigs,anim.Modifier_Rig{entity=entity})
-    rig:=anim.modifier_rig(&world.modifiers,entity)
+    rig:=anim.modifier_rig(core.ref(&world.modifiers),entity)
     append(&rig.grounding,anim.Grounding_Binding{record=record})
     config:=anim.FOOT_GROUNDING_DEFAULT
     result:=program_grounding_diagnostic(ref,entity,0,config)

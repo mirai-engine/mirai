@@ -52,7 +52,7 @@ multiple_animation_sources_keep_duplicate_clip_names_curves_markers_root_and_act
     built:=program_test_output(program_test_leaf("Walk",0,.5),Program_Leaf{clip=alias,key=256,weight=.5,speed=1});output:=&built
     fixture:host.Content_Animation;state:=layer_fixture(t,&fixture);defer {lib.library_destroy(&fixture.lib);playing_free(&state)}
     state.asset,state.generation,state.source_plan=combined.id,combined.generation,1
-    testing.expect(t,source_clip_source(&cache,&state,4)==sources[1].id && source_clip_source(&cache,&state,1)==sources[0].id)
+    testing.expect(t,source_clip_source(core.ref(&cache),&state,4)==sources[1].id && source_clip_source(core.ref(&cache),&state,1)==sources[0].id)
     playback:Playback;events:Animation_Events;defer {playback_free(&playback);delete(events.items)}
     testing.expect(t,tracks_bind(&playback,&state,combined))
     animation:=ANIMATION_DEFAULT;animation.loop=false;animation.root_motion=.Extract
@@ -131,7 +131,7 @@ source_plans_share_exact_sets_rebuild_for_source_generations_and_survive_world_c
     two,error2:=animation_content(&cache,&app,&second,description,characters=&graphs);testing.expect_value(t,error2,Program_Error.None)
     if !testing.expect(t,one!=nil && two==one && len(cache.plans)==1 && len(cache.sets)==1 && first.source_plan==second.source_plan) {return}
     first.asset,first.generation=one.id,one.generation
-    testing.expect(t,len(source_ids(&cache,&first))==2 && source_ids(&cache,&first)[1]==native.animations[1].id)
+    testing.expect(t,len(source_ids(core.ref(&cache),&first))==2 && source_ids(core.ref(&cache),&first)[1]==native.animations[1].id)
     changed:=description;changed.library=native.animations[1].id
     other,other_error:=animation_content(&cache,&app,&second,changed,characters=&graphs)
     testing.expect(t,other_error==.None && other!=one && len(cache.plans)==2 && second.source_plan==2)
@@ -140,7 +140,7 @@ source_plans_share_exact_sets_rebuild_for_source_generations_and_survive_world_c
     refreshed,refresh_error:=animation_content(&cache,&app,&first,description,characters=&graphs)
     testing.expect(t,refresh_error==.None && refreshed==one && refreshed.generation==generation && len(cache.sets)==1)
     copied:=first;copied.entity=core.entity_make(3,1)
-    testing.expect(t,animation_playing_content(&cache,&app,&copied)==one)
+    testing.expect(t,animation_playing_content(core.ref(&cache),&app,&copied)==one)
     native.animations[1].generation=4;native.generations=4
     reloaded,reload_error:=animation_content(&cache,&app,&first,description,characters=&graphs)
     testing.expect(t,reload_error==.None && reloaded.generation!=generation && len(cache.sets)==1)
@@ -285,12 +285,12 @@ a_library_that_compresses_in_a_job_keeps_what_plays_until_it_is_ready :: proc(t:
     testing.expect(t,only_unmatched(&problems,actor))
     testing.expect(t,playing_pose(&w.playback.states[0],.Local)[1].position.x>before+.05,"it plays on what it played")
     testing.expect(t,w.actions.states[0].slots[1].active && !w.actions.states[0].slots[1].finishing,"the action it plays goes on")
-    testing.expect(t,len(source_ids(&sources,&w.playback.states[0]))==0)
+    testing.expect(t,len(source_ids(core.ref(&sources),&w.playback.states[0]))==0)
     if !testing.expect(t,host.content_animation_wait(&app,SET)!=nil) {return}
     tick(s)
     testing.expect(t,only_unmatched(&problems,actor))
     testing.expect_value(t,len(w.requests.plays.items),0)
-    joined:=source_ids(&sources,&w.playback.states[0])
+    joined:=source_ids(core.ref(&sources),&w.playback.states[0])
     testing.expect(t,len(joined)==2 && joined[0]==SET,"the set plays once it is ready")
     testing.expect(t,w.actions.states[0].slots[1].active,"with the action")
     for _ in 0..<12 {tick(s)}

@@ -352,8 +352,8 @@ match_open :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:
     playback:=core.world_storage_of(world,anim.Playback)
     for &playing in playback.states {if playing.entity==entity {m.state=&playing;break}}
     shared:=core.world_ref(s.app.shared,world.info,.Shared)
-    m.library=anim.animation_playing_content(core.world_storage_of(shared,anim.Source_Assets),s.app,m.state)
-    m.db=anim.animation_match_database(core.world_storage_of(shared,anim.Character_Assets),m.library,m.state)
+    m.library=anim.animation_playing_content(core.ref(core.world_storage_of(shared,anim.Source_Assets)),s.app,m.state)
+    m.db=anim.animation_match_database(core.ref(core.world_storage_of(shared,anim.Character_Assets)),m.library,m.state)
     return m,true
 }
 

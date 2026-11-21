@@ -121,14 +121,14 @@ spline_ik_and_correctives_replay_goals_and_curves_without_stable_allocations :: 
     prepared:=test_modifier_profile(&modifiers,&characters,rig,{spline_ik=splines[:],correctives={corrective}})
     testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
     expected:=playing_pose(&state,.World)[4]
-    testing.expect(t,abs(playing_pose(&state,.Local)[3].scale.x-1.5)<1e-5 && abs(animation_corrective_curve(&modifiers,rig,base.name_hash("bulge"))-1)<1e-5)
+    testing.expect(t,abs(playing_pose(&state,.Local)[3].scale.x-1.5)<1e-5 && abs(animation_corrective_curve(core.ref(&modifiers),rig,base.name_hash("bulge"))-1)<1e-5)
     copied:Modifier_Runtime;core.value_copy(&copied,&modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copied)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
     for _ in 0..<32 {
         copy(playing_pose(&state,.Local),state.rest[:])
         stable &&=test_rigs_apply(&state,&copied,&characters,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)
-        stable &&=linalg.length(playing_pose(&state,.World)[4].position-expected.position)<1e-5 && animation_corrective_curve(&copied,rig,base.name_hash("bulge"))==1
+        stable &&=linalg.length(playing_pose(&state,.World)[4].position-expected.position)<1e-5 && animation_corrective_curve(core.ref(&copied),rig,base.name_hash("bulge"))==1
     }
     context=saved
     testing.expect(t,stable)
@@ -138,20 +138,20 @@ spline_ik_and_correctives_replay_goals_and_curves_without_stable_allocations :: 
     testing.expect_value(t,modifier_override(prepared,.Spline_IK,0,3).target.position,mm.Vec3{1,2,0})
     modifier_states(prepared,.Corrective)[0].base_enabled=false
     copy(playing_pose(&state,.Local),state.rest[:])
-    testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60) && animation_corrective_curve(&modifiers,rig,base.name_hash("bulge"))==0)
+    testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60) && animation_corrective_curve(core.ref(&modifiers),rig,base.name_hash("bulge"))==0)
     controls:=SPLINE_CONTROLS
     // Out of reach the chain lies along the curve, and says so.
     for point,i in ([4]mm.Vec3{{0,0,0},{0,1,0},{0,2,0},{0,20,0}}) {modifier(&requests,{rig=rig,kind=.Spline_IK,target=spatial_point(point),weight=1,enabled=true,goal=true},"tail",controls[i])}
     modifier_take(&modifiers,&characters,&requests,nil,0)
     copy(playing_pose(&state,.Local),state.rest[:])
     testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
-    diagnostic,available:=animation_rig_diagnostic(&modifiers,rig,.Spline_IK,base.name_hash("tail"))
+    diagnostic,available:=animation_rig_diagnostic(core.ref(&modifiers),rig,.Spline_IK,base.name_hash("tail"))
     testing.expect(t,available && diagnostic.valid && !diagnostic.reached && diagnostic.residual>1)
     for point,i in ([4]mm.Vec3{{0,0,0},{0,.5,0},{0,1,0},{0,1.5,0}}) {modifier(&requests,{rig=rig,kind=.Spline_IK,target=spatial_point(point),weight=1,enabled=true,goal=true},"tail",controls[i])}
     modifier_take(&modifiers,&characters,&requests,nil,0)
     copy(playing_pose(&state,.Local),state.rest[:])
     testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
-    diagnostic,available=animation_rig_diagnostic(&modifiers,rig,.Spline_IK,base.name_hash("tail"))
+    diagnostic,available=animation_rig_diagnostic(core.ref(&modifiers),rig,.Spline_IK,base.name_hash("tail"))
     testing.expect(t,available && diagnostic.valid && diagnostic.reached && diagnostic.residual<=.001)
 }
 
@@ -169,7 +169,7 @@ corrective_curves_drive_the_morph_target_of_their_name :: proc(t:^testing.T) {
     base.text_set(targets[0].name[:],"bulge");base.text_set(targets[1].name[:],"blink")
     mesh:=Skin_Rig{id={5,7},revision=1,morphs=targets[:]}
     playing:=Morph_Playing{entity=core.entity_make(2,1),source=rig,curve_count=-1};defer morph_playing_free(&playing)
-    testing.expect(t,morph_bind(&playing,&mesh,{},base.name_hash("Face"),1) && morph_compose(&playing,&mesh,{},nil,&modifiers))
+    testing.expect(t,morph_bind(&playing,&mesh,{},base.name_hash("Face"),1) && morph_compose(&playing,&mesh,{},nil,core.ref(&modifiers)))
     testing.expect(t,abs(playing.current[0]-1.25)<1e-5 && playing.current[1]==.5,"the corrective adds to the target it names only")
 }
 
@@ -196,11 +196,11 @@ spatial_bone_and_socket_targets_read_the_sampled_pose_and_keep_their_binding :: 
     playing_pose(state,.World)[3]=mm.Transform{{6,7,8},mm.quat_axis_angle({0,0,1},mm.PI/2),{1,1,1}}
     cue:=Animation_Cue{anchor=.Bone}
     base.text_set(cue.name[:],"joint3")
-    at,found:=cue_pose(&cue,source,&playback,&skeletons,nil,nil,core.read(&worlds))
+    at,found:=cue_pose(&cue,source,core.ref(&playback),core.ref(&skeletons),nil,nil,core.read(&worlds))
     testing.expect(t,found && at.position=={6,7,8})
     cue.anchor=.Socket
     base.text_set(cue.name[:],"grip")
-    at,found=cue_pose(&cue,source,&playback,&skeletons,nil,nil,core.read(&worlds))
+    at,found=cue_pose(&cue,source,core.ref(&playback),core.ref(&skeletons),nil,nil,core.read(&worlds))
     testing.expect(t,found && linalg.length(at.position-mm.Vec3{5.8,7,8})<1e-5)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
@@ -328,7 +328,7 @@ named_modifier_goals_follow_their_operation_through_a_reordered_profile :: proc(
     modifier(&w.requests,{rig=rig,kind=.Look,weight=.25,enabled=true},"head")
     modifier(&w.requests,{rig=rig,kind=.Multi_IK,target=spatial_point({7,8,9}),weight=1,enabled=true,goal=true},"hands","Left")
     modifier_take(&w.modifiers,&profiles,&w.requests,&problems,0)
-    prepared:=modifier_rig(&w.modifiers,rig)
+    prepared:=modifier_rig(core.ref(&w.modifiers),rig)
     testing.expect(t,modifier_override(prepared,.Multi_IK,0,0)!=nil && test_modifier_weight(&w.modifiers,rig,.Look,"head")==.25)
     modifier(&w.requests,{rig=rig,kind=.Look,target=spatial_point({3,4,5}),weight=1,enabled=true,goal=true},"head")
     modifier(&w.requests,{rig=rig,kind=.Look,weight=.6,enabled=true},"head")

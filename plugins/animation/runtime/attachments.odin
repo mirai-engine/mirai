@@ -32,7 +32,7 @@ modifier_attachments_prepare :: proc(runtime:^Modifier_Runtime,attachments:^core
         entity:=core.entity_at(attachments,row)
         config:=core.at(attachments,row)
         if !config.enabled {continue}
-        rig:=modifier_rig(runtime,config.rig)
+        rig:=modifier_rig(core.ref(runtime),config.rig)
         current:=-1
         if rig!=nil {
             for &binding,i in rig.attachments {if binding.entity==entity {current=i;break}}

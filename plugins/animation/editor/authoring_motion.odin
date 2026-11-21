@@ -86,7 +86,7 @@ authoring_motion_distance :: proc(s:^editor.Session,call:^api.Call) {
 
 @(private)
 authoring_motion_inspect :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity) -> (r:Instance_Motion) {
-    instance,ready:=anim.motion_inspect(core.world_storage_of(world,anim.Motion_Runtime),entity)
+    instance,ready:=anim.motion_inspect(core.ref(core.world_storage_of(world,anim.Motion_Runtime)),entity)
     r.id,r.character,r.ready,r.window,r.error=editor.api_entity_id(world,entity),instance.profile,ready,i32(instance.window),instance.error
     r.remaining_error,r.source_velocity=instance.remaining_error,instance.source_velocity
     goal:=instance.locomotion

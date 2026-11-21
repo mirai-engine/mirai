@@ -56,7 +56,7 @@ pose_bake_test_advance :: proc(data,shared,editor,app_data:rawptr) {
 @(private)
 pose_bake_test_morph :: proc(data,shared,editor,app_data:rawptr) {
     w,s,app:=(^Pose_Bake_Test_World)(data),(^Pose_Bake_Test_Shared)(shared),(^host.App)(app_data)
-    anim.animation_morph(core.read(&w.meshes),core.read(&w.morph_weights),core.read(&w.animations),core.read(&w.targets),core.read(&w.sources),core.read(&w.parents),core.ref(&w.playback),core.ref(&w.modifier_runtime),&s.skin,&w.morphs,nil,app,w.time,host.app_world_storage(app,data,core.Problems))
+    anim.animation_morph(core.read(&w.meshes),core.read(&w.morph_weights),core.read(&w.animations),core.read(&w.targets),core.read(&w.sources),core.read(&w.parents),core.ref(&w.playback),core.ref(&w.modifier_runtime),&s.skin,&w.morphs,{},app,w.time,host.app_world_storage(app,data,core.Problems))
 }
 @(private)
 pose_bake_test_propagate :: proc(data,shared,editor,app_data:rawptr) {

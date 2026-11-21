@@ -134,8 +134,8 @@ request :: proc(s:^editor.Session,call:^api.Call) {
     r:=api.call_result(call,Request_Result)
     r.id,r.applied=editor.api_entity_id(w,e),applied[:]
     playback:=core.world_storage_of(w,anim.Playback)
-    r.playing=anim.animation_playing(playback,e)
-    if time,_,_,has:=anim.animation_progress(playback,e);has {r.time=time}
+    r.playing=anim.animation_playing(core.ref(playback),e)
+    if time,_,_,has:=anim.animation_progress(core.ref(playback),e);has {r.time=time}
 }
 
 @(private)
@@ -280,7 +280,7 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
                 state:^anim.Playing
                 if playback:=core.world_storage_of(world,anim.Playback);playback!=nil {for &value in playback.states {if value.entity==entity {state=&value;break}}}
                 if state!=nil {
-                    content:=anim.animation_playing_content(core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Source_Assets),s.app,state)
+                    content:=anim.animation_playing_content(core.ref(core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Source_Assets)),s.app,state)
                     query:=anim.Animation_Distance_Request{entity=entity,clip=base.name_hash(base.text_get(clip[:])),time=time,seek=p.distance.seek,animation=anim.motion_distance_source(profile,name)}
                     if error:=anim.distance_request_check(state,content,query,core.world_storage_of(world,anim.Action_Runtime));error!=.None {authoring_failure(call,"distance",fmt.tprintf("%v",error),"the active source clip and a forward interval; seek allows a discontinuity",base.text_get(clip[:]),"The active animation clock cannot accept this distance",fix="Pass seek true to jump, or a distance ahead of the clock");return false}
                 }

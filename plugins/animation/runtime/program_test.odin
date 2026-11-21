@@ -77,8 +77,8 @@ a_program_blends_its_clips_with_curves_and_root_motion_under_the_layers_without_
     testing.expect(t,abs(playing_pose(state,.Local)[1].position.x-.875)<1e-5)
     testing.expect(t,abs(playing_pose(state,.Local)[3].position.z-.375)<1e-5 && playing_pose(state,.Local)[3].position.y==0)
     testing.expect_value(t,playing_pose(state,.Local)[2].position,mm.Vec3{0,.5,0})
-    testing.expect(t,abs(animation_curve(&playback,state.entity,"pulse",default_value=5)-5.25)<1e-5)
-    delta,present:=animation_root_delta(&playback,state.entity)
+    testing.expect(t,abs(animation_curve(core.ref(&playback),state.entity,"pulse",default_value=5)-5.25)<1e-5)
+    delta,present:=animation_root_delta(core.ref(&playback),state.entity)
     testing.expect(t,present && abs(delta.translation.x-.875)<1e-5)
     testing.expect_value(t,len(events.items),2)
     for event in events.items {testing.expect(t,event.entity==state.entity && event.kind==.Marker && event.name==base.name_hash("step") && event.action==0)}
@@ -266,7 +266,7 @@ a_layer_over_a_program_keeps_its_scalar_curves :: proc(t:^testing.T) {
     layers_advance(&playback,state,&content,animation,&events,0,nil)
     pose_layers(&playback,state,&content,animation,playing_pose(state,.Local))
     sample_layer_curves(state,&content,animation)
-    got:=animation_curve(&playback,state.entity,"pulse",default_value=2)
+    got:=animation_curve(core.ref(&playback),state.entity,"pulse",default_value=2)
     testing.expect_value(t,playing_pose(state,.Local)[2].position.y,f32(1))
     testing.expect_value(t,got,f32(6))
 }

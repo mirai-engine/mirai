@@ -30,7 +30,7 @@ bench_modifier_controls_idle_and_sparse_fades :: proc(t:^testing.T) {
                 start:=time.tick_now()
                 for _ in 0..<4096 {
                     modifier_take(&modifiers,&characters,&requests,&problems,1.0/60)
-                    weight,_,_,_,_,_,_:=modifier_influence(&modifiers,core.entity_make(count,1),.IK,base.name_hash("hand"))
+                    weight,_,_,_,_,_,_:=modifier_influence(core.ref(&modifiers),core.entity_make(count,1),.IK,base.name_hash("hand"))
                     sink+=weight
                 }
                 best=min(best,time.tick_since(start))

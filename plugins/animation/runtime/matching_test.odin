@@ -410,14 +410,14 @@ a_whole_body_action_enters_at_its_start_time_or_phase_and_ends_at_its_exit_or_ma
         f:Match_Fixture;defer match_fixture_free(&f)
         if !testing.expect(t,match_fixture(t,&f)) {continue}
         for _ in 0..<5 {testing.expect(t,match_step(&f,dt,GROUND))}
-        before,_:=animation_match(&f.playback,f.rig);duration:=f.state.duration
+        before,_:=animation_match(core.ref(&f.playback),f.rig);duration:=f.state.duration
         long:="an action whose name is longer than the sixty four bytes that a request can hold"
         play(&f.requests,f.rig,"");play(&f.requests,core.NONE,"Vault");play(&f.requests,f.rig,long);stop(&f.requests,f.rig,"")
         testing.expect_value(t,f.requests.plays.refused,4)
         f.requests.plays.refused=0
         play(&f.requests,f.rig,c.action)
         if !testing.expect(t,match_step(&f,dt,GROUND)) {continue}
-        playing,_:=animation_match(&f.playback,f.rig)
+        playing,_:=animation_match(core.ref(&f.playback),f.rig)
         time,_,on:=action_playing(core.ref(&f.actions),f.rig,c.action)
         // The base clip has moved on in the tick: an entry takes it where it is now.
         at:=before.time+dt
@@ -429,7 +429,7 @@ a_whole_body_action_enters_at_its_start_time_or_phase_and_ends_at_its_exit_or_ma
             testing.expect(t,match_step(&f,dt,GROUND))
             ended+=match_test_events(&f,.Ended,c.action)
             testing.expect(t,match_test_events(&f,.Started,c.action)==0 && match_test_events(&f,.Interrupted,c.action)==0)
-            value,_:=animation_match(&f.playback,f.rig)
+            value,_:=animation_match(core.ref(&f.playback),f.rig)
             if !value.forced {break}
             if slot:=f.actions.states[0].slots[0];slot.active {held=slot.time}
         }
@@ -455,7 +455,7 @@ a_play_gives_way_by_priority_and_cancel_policy_and_tells_each_change_once :: pro
     // A lower priority is refused, and so is a stop of one whose policy denies it.
     play(&f.requests,f.rig,"Vault");stop(&f.requests,f.rig,"Guard")
     testing.expect(t,match_step(&f,dt,GROUND))
-    playing,_:=animation_match(&f.playback,f.rig)
+    playing,_:=animation_match(core.ref(&f.playback),f.rig)
     testing.expect(t,playing.forced && core.problem_find(&f.problems,f.rig,"animation.action_busy")!=nil && core.problem_find(&f.problems,f.rig,"animation.action_cancel")!=nil && match_action_events(&f)==0,"a play of lower priority and a stop the policy denies are refused")
     time,_,on:=action_playing(core.ref(&f.actions),f.rig,"Guard")
     testing.expect(t,on && time>0)
@@ -494,21 +494,21 @@ a_whole_body_action_goes_on_when_the_body_changes_mode_and_stop_ends_it :: proc(
     if !testing.expect(t,match_fixture(t,&f)) {return}
     // A clip that walks tells the direction it travels in, which the warping corrects from.
     for _ in 0..<10 {testing.expect(t,match_step(&f,.1,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5}))}
-    walking,_:=animation_match(&f.playback,f.rig)
+    walking,_:=animation_match(core.ref(&f.playback),f.rig)
     testing.expectf(t,walking.speed>0 && linalg.length(walking.travel-mm.Vec3{0,0,-1})<1e-3,"the walk travels along -Z: %v",walking.travel)
     // On the second tick: the blend starts from the pose of the first, with no history before it.
     testing.expect(t,match_step(&f,.1,GROUND))
     play(&f.requests,f.rig,"Vault")
     testing.expect(t,match_step(&f,.1,GROUND))
-    forced,_:=animation_match(&f.playback,f.rig)
+    forced,_:=animation_match(core.ref(&f.playback),f.rig)
     testing.expect(t,forced.forced,"an action over the whole body covers the search")
     // The body leaves the ground: the action is not of a mode, and goes on.
     testing.expect(t,match_step(&f,.1,AIR))
-    value,_:=animation_match(&f.playback,f.rig)
+    value,_:=animation_match(core.ref(&f.playback),f.rig)
     testing.expect(t,value.forced && match_action_events(&f)==0,"the mode of the body does not end an action")
     stop(&f.requests,f.rig,"Vault")
     testing.expect(t,match_step(&f,.1,AIR) && match_test_events(&f,.Interrupted,"Vault")==1 && match_test_events(&f,.Ended,"Vault")==0)
-    for _ in 0..<5 {testing.expect(t,match_step(&f,.1,AIR));value,_=animation_match(&f.playback,f.rig);if !value.forced {break}}
+    for _ in 0..<5 {testing.expect(t,match_step(&f,.1,AIR));value,_=animation_match(core.ref(&f.playback),f.rig);if !value.forced {break}}
     testing.expectf(t,!value.forced && value.mode==AIR,"stop fades the action out over the search of the mode the body is in, not %v",value)
     // One that plays to its end tells it once, and the search goes on.
     testing.expect(t,match_step(&f,.1,GROUND))
@@ -518,7 +518,7 @@ a_whole_body_action_goes_on_when_the_body_changes_mode_and_stop_ends_it :: proc(
         testing.expect(t,match_step(&f,.25,GROUND))
         started+=match_test_events(&f,.Started,"Vault");ended+=match_test_events(&f,.Ended,"Vault")
     }
-    value,_=animation_match(&f.playback,f.rig)
+    value,_=animation_match(core.ref(&f.playback),f.rig)
     testing.expect(t,started==1 && ended==1 && !value.forced)
     testing.expect_value(t,f.problems.count,0)
 }
@@ -544,7 +544,7 @@ a_whole_body_action_blends_in_from_the_pose_and_stable_ticks_do_not_allocate :: 
             stable &&=match_step(&f,dt,GROUND)
         }
         context=saved;f.app.allocator,f.graphs.allocator,f.actions.allocator=saved.allocator,saved.allocator,saved.allocator
-        value,_:=animation_match(&f.playback,f.rig)
+        value,_:=animation_match(core.ref(&f.playback),f.rig)
         testing.expect(t,stable && !value.forced && f.problems.count==0,"actions, their blends and the matching after them do not allocate")
     }
     testing.expectf(t,jumps[0]>.3 && jumps[1]<jumps[0]*.25,"an action without fade cuts (%.3f m) and one with fade goes on from the last pose (%.3f m)",jumps[0],jumps[1])
@@ -669,7 +669,7 @@ an_aim_offset_adds_over_the_matched_pose_and_an_action_plays_over_both :: proc(t
     // The aim turns the head over the walk the search plays; the feet stay matched.
     set(&f.requests,f.rig,"aim_yaw",1)
     testing.expect(t,step(&f,&plain,dt,walking))
-    matched,_:=animation_match(&f.playback,f.rig)
+    matched,_:=animation_match(core.ref(&f.playback),f.rig)
     testing.expect(t,!matched.forced && matched.clip==base.name_hash("walk"))
     testing.expectf(t,near(playing_pose(f.state,.Local)[head].position,playing_pose(plain.state,.Local)[head].position+{.2,0,0}) && near(playing_pose(f.state,.Local)[left].position,playing_pose(plain.state,.Local)[left].position) && near(playing_pose(f.state,.Local)[right].position,playing_pose(plain.state,.Local)[right].position),"the aim adds .2 m to the head of the matched pose: %v over %v",playing_pose(f.state,.Local)[head].position,playing_pose(plain.state,.Local)[head].position)
     // It stays where it was set, and halfway there is half the offset; past its range it is the end of it.
@@ -697,7 +697,7 @@ an_aim_offset_adds_over_the_matched_pose_and_an_action_plays_over_both :: proc(t
     // A whole-body action takes the search away under the layers: the aim still adds over it.
     play(&f.requests,f.rig,"Vault");play(&plain.requests,plain.rig,"Vault")
     for _ in 0..<4 {testing.expect(t,step(&f,&plain,dt,walking))}
-    vaulting,_:=animation_match(&f.playback,f.rig)
+    vaulting,_:=animation_match(core.ref(&f.playback),f.rig)
     testing.expect(t,vaulting.forced && near(playing_pose(f.state,.Local)[head].position,playing_pose(plain.state,.Local)[head].position+{.2,0,0}) && near(playing_pose(f.state,.Local)[left].position,playing_pose(plain.state,.Local)[left].position))
     testing.expect_value(t,f.problems.count,0)
     // A name that is no layer and no axis is a problem of the entity, and is dropped.
@@ -715,15 +715,15 @@ the_root_motion_of_a_whole_body_action_moves_the_body :: proc(t:^testing.T) {
     if !testing.expect(t,match_fixture(t,&f)) {return}
     dt:=f32(.1)
     for _ in 0..<3 {testing.expect(t,match_step(&f,dt,GROUND))}
-    _,moving:=animation_body_motion(&f.playback,f.rig)
+    _,moving:=animation_body_motion(core.ref(&f.playback),f.rig)
     testing.expect(t,!moving,"the search moves no body")
     play(&f.requests,f.rig,"Lunge")
     travelled:mm.Vec3
     for tick in 0..<12 {
         testing.expect(t,match_step(&f,dt,GROUND))
-        body,moves:=animation_body_motion(&f.playback,f.rig)
-        delta,rooted:=animation_root_delta(&f.playback,f.rig)
-        playing,_:=animation_match(&f.playback,f.rig)
+        body,moves:=animation_body_motion(core.ref(&f.playback),f.rig)
+        delta,rooted:=animation_root_delta(core.ref(&f.playback),f.rig)
+        playing,_:=animation_match(core.ref(&f.playback),f.rig)
         if !playing.forced {testing.expect(t,!moves,"once it ends the body is left to its locomotion");continue}
         testing.expectf(t,moves && rooted && body.move==.Override && !body.vertical && linalg.length(body.translation-delta.translation)<1e-5,"tick %d: the body takes the root delta of the lunge: %v of %v",tick,body,delta)
         travelled+=body.translation
@@ -740,12 +740,12 @@ a_new_mode_of_the_match_goal_enters_by_its_entry_clip :: proc(t:^testing.T) {
     // The first search, with no clip playing, notes the best row of each clip of the ground: the
     // one it jumped to first, the costs in order and each the sum of its kinds of feature.
     testing.expect(t,match_step(&f,dt,GROUND))
-    first,_:=animation_match(&f.playback,f.rig)
+    first,_:=animation_match(core.ref(&f.playback),f.rig)
     searched:=f.state.program.match.searched
     for _ in 1..<10 {testing.expect(t,match_step(&f,dt,GROUND))}
-    value,_:=animation_match(&f.playback,f.rig)
+    value,_:=animation_match(core.ref(&f.playback),f.rig)
     testing.expect(t,value.mode==GROUND && (value.clip==base.name_hash("idle") || value.clip==base.name_hash("walk")))
-    db:=animation_match_database(&f.graphs,&f.content,f.state)
+    db:=animation_match_database(core.ref(&f.graphs),&f.content,f.state)
     if testing.expect(t,db!=nil) {
         noted:=match_searched_candidates(db,searched)
         candidates:=noted.items[:noted.count]
@@ -768,14 +768,14 @@ a_new_mode_of_the_match_goal_enters_by_its_entry_clip :: proc(t:^testing.T) {
         testing.expect(t,best==same && cost==same_cost && noted.count>=2 && int(noted.items[0].row)==best)
     }
     testing.expect(t,match_step(&f,dt,AIR))
-    value,_=animation_match(&f.playback,f.rig)
+    value,_=animation_match(core.ref(&f.playback),f.rig)
     testing.expectf(t,value.mode==AIR && value.clip==base.name_hash("jump") && value.time<=lib.MATCH_ENTRY_SPAN+dt+1e-4 && !value.forced,"entering the air starts its entry clip near its start, not %v",value)
     searched=f.state.program.match.searched
     reasons:=match_test_reasons(db,match_searched_candidates(db,searched))
     testing.expectf(t,searched.request.entry && searched.request.modes==1<<AIR && reasons=={.Mode,.Mode,.Entry,.None,max(lib.Match_Reject)} && searched.search==value.searches,"entering the air notes its entry search, not %v",searched)
     testing.expectf(t,value.rate==1,"an entry clip plays at its own rate whatever the body moves, not %.2f",value.rate)
     for _ in 0..<120 {testing.expect(t,match_step(&f,dt,AIR))}
-    value,_=animation_match(&f.playback,f.rig)
+    value,_=animation_match(core.ref(&f.playback),f.rig)
     testing.expectf(t,value.mode==AIR && value.clip==base.name_hash("fall"),"the entry clip hands the air over to its loop when it ends, not %v",value)
 }
 
@@ -800,7 +800,7 @@ match_test_fall :: proc(t:^testing.T,f:^Match_Fixture,dt,time_to_land:f32,later:
         if tick==10 {left+=later}
         going:=velocity if tick<10 else turn
         testing.expect(t,match_step(f,dt,AIR,velocity=going,desired=going,time_to_land=left))
-        value,_:=animation_match(&f.playback,f.rig)
+        value,_:=animation_match(core.ref(&f.playback),f.rig)
         if len(clips)==0 || clips[len(clips)-1]!=value.clip {append(&clips,value.clip)}
         left-=dt
     }
@@ -818,19 +818,19 @@ a_body_in_the_air_lands_on_the_landing_marker_of_its_clip_when_physics_says :: p
         if !testing.expect(t,match_fixture(t,&f)) {return}
         for _ in 0..<10 {testing.expect(t,match_step(&f,dt,GROUND))}
         testing.expect(t,match_step(&f,dt,AIR,time_to_land=.6))
-        value,_:=animation_match(&f.playback,f.rig)
+        value,_:=animation_match(core.ref(&f.playback),f.rig)
         start:=value.time-dt*value.rate
         testing.expectf(t,value.clip==base.name_hash("jump") && start<=lib.MATCH_ENTRY_SPAN+1e-4 && abs(value.rate*.6-(.8-start))<1e-3,"the jump enters at %.3f s at the rate that lands its marker in .6 s, not %.3f",start,value.rate)
         clips:=match_test_fall(t,&f,dt,.6-dt,later=.2)
-        value,_=animation_match(&f.playback,f.rig)
+        value,_=animation_match(core.ref(&f.playback),f.rig)
         testing.expectf(t,len(clips)==1 && clips[0]==base.name_hash("jump") && abs(value.time-.8)<.01,"the jump reaches its marker when the body lands later, at %.3f s",value.time)
         testing.expect(t,match_step(&f,dt,GROUND))
-        value,_=animation_match(&f.playback,f.rig)
+        value,_=animation_match(core.ref(&f.playback),f.rig)
         testing.expectf(t,value.clip==base.name_hash("jump") && value.mode==GROUND && !value.forced && value.rate==1,"landed, the jump plays on on the ground: %v",value)
         ticks:=1
         for ;ticks<30 && value.clip==base.name_hash("jump");ticks+=1 {
             testing.expect(t,match_step(&f,dt,GROUND))
-            value,_=animation_match(&f.playback,f.rig)
+            value,_=animation_match(core.ref(&f.playback),f.rig)
         }
         testing.expectf(t,value.clip!=base.name_hash("jump") && f32(ticks)*dt<=.2+3*dt,"the ground takes over by the end of the jump, not after %d ticks",ticks)
     }
@@ -840,14 +840,14 @@ a_body_in_the_air_lands_on_the_landing_marker_of_its_clip_when_physics_says :: p
         if !testing.expect(t,match_fixture(t,&f)) {return}
         for _ in 0..<10 {testing.expect(t,match_step(&f,dt,GROUND))}
         testing.expect(t,match_step(&f,dt,AIR,time_to_land=.25))
-        value,_:=animation_match(&f.playback,f.rig)
-        db:=animation_match_database(&f.graphs,&f.content,f.state)
+        value,_:=animation_match(core.ref(&f.playback),f.rig)
+        db:=animation_match_database(core.ref(&f.graphs),&f.content,f.state)
         searched:=f.state.program.match.searched
         if !testing.expect(t,db!=nil) {return}
         reasons:=match_test_reasons(db,match_searched_candidates(db,searched))
         testing.expectf(t,value.clip==base.name_hash("jump") && value.time>=.3 && searched.request.event==.25 && reasons[2]==.Event && reasons[3]==.None,"off a ledge the jump plays from %.3f s; the fall has no marker: %v",value.time,reasons)
         clips:=match_test_fall(t,&f,dt,.25-dt)
-        value,_=animation_match(&f.playback,f.rig)
+        value,_=animation_match(core.ref(&f.playback),f.rig)
         testing.expectf(t,len(clips)==1 && abs(value.time-.8)<.01,"and reaches its marker as it lands, at %.3f s",value.time)
     }
     {
@@ -856,10 +856,10 @@ a_body_in_the_air_lands_on_the_landing_marker_of_its_clip_when_physics_says :: p
         if !testing.expect(t,match_fixture(t,&f,leap=true)) {return}
         for _ in 0..<10 {testing.expect(t,match_step(&f,dt,GROUND))}
         testing.expect(t,match_step(&f,dt,AIR,time_to_land=.8))
-        value,_:=animation_match(&f.playback,f.rig)
+        value,_:=animation_match(core.ref(&f.playback),f.rig)
         testing.expectf(t,value.clip==base.name_hash("jump"),"standing, the jump in place, not %v",value)
         clips:=match_test_fall(t,&f,dt,.8-dt,turn={0,0,-3})
-        value,_=animation_match(&f.playback,f.rig)
+        value,_=animation_match(core.ref(&f.playback),f.rig)
         // Within half a row of its marker and a tick at the fastest landing rate.
         testing.expectf(t,len(clips)==2 && clips[1]==base.name_hash("leap") && abs(value.time-.8)<=.5/30+2*dt+.01,"moving, the leap takes over and lands at %.3f s",value.time)
     }
@@ -976,7 +976,7 @@ a_mirrored_source_plays_its_clip_with_left_and_right_swapped :: proc(t:^testing.
     content.set.match.clips[1].mirror=.Only
     if !testing.expect(t,match_check(content.set.match)) {return}
     for _ in 0..<30 {testing.expect(t,match_step(&f,1.0/60,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5}))}
-    value,_:=animation_match(&f.playback,f.rig)
+    value,_:=animation_match(core.ref(&f.playback),f.rig)
     player:=f.state.program.players[f.state.program.output.leaves[0].player].player
     right:=lib.clip_evaluate(&f.content.lib,lib.clip_tracks(&f.content.lib,lib.clip_find(&f.content.lib,base.name_hash("walk")))[1],lib.player_time(&f.content.lib,player))
     foot:=playing_pose(f.state,.Local)[bone_resolve(f.state,bone_ref("foot_l"))].position
@@ -995,7 +995,7 @@ a_source_with_rates_of_its_own_follows_the_body_between_them :: proc(t:^testing.
     if !testing.expect(t,match_check(content.set.match)) {return}
     dt:=f32(1.0/60)
     for _ in 0..<60 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-2.25},desired={0,0,-2.25}))}
-    value,_:=animation_match(&f.playback,f.rig)
+    value,_:=animation_match(core.ref(&f.playback),f.rig)
     testing.expectf(t,value.clip==base.name_hash("walk") && abs(value.rate-1.5)<.01,"the walk plays at 1.5: %v",value)
     for refused in ([3][2]f32{{1.5,.5},{0,1},{-1,1}}) {
         content.set.match.clips[1].min_rate,content.set.match.clips[1].max_rate=refused[0],refused[1]
@@ -1014,7 +1014,7 @@ a_jump_nothing_forces_waits_the_hold_after_the_one_before :: proc(t:^testing.T) 
     for tick in 0..<120 {
         speed:=f32(1.5) if tick%2==0 else 0
         testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-speed},desired={0,0,-speed}))
-        value,_:=animation_match(&f.playback,f.rig)
+        value,_:=animation_match(core.ref(&f.playback),f.rig)
         if value.jumps>jumps && tick>=10 {if last>=0 {gap=min(gap,tick-last)};last=tick}
         jumps=value.jumps
     }
@@ -1037,12 +1037,12 @@ a_body_that_turns_around_does_not_stand_midway_and_one_against_a_wall_stands :: 
         speed=max(speed-20*dt,-1.4)
         rested||=abs(speed)<.15
         testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-speed},desired={0,0,1.4}))
-        value,_:=animation_match(&f.playback,f.rig)
+        value,_:=animation_match(core.ref(&f.playback),f.rig)
         testing.expectf(t,value.clip!=idle,"tick %d at %.2f m/s: a body that turns around walks on, not %v",tick,speed,value)
     }
     testing.expect(t,rested,"the turn passes through rest")
     for _ in 0..<30 {testing.expect(t,match_step(&f,dt,GROUND,desired={0,0,-1.4},wall={0,0,1}))}
-    value,_:=animation_match(&f.playback,f.rig)
+    value,_:=animation_match(core.ref(&f.playback),f.rig)
     testing.expectf(t,value.clip==idle,"a body that pushes into a wall stands: %v",value)
 }
 
@@ -1056,13 +1056,13 @@ the_root_of_the_pose_follows_a_body_that_stops_within_its_lag_out_of_a_wall_and_
         hips:=bone_resolve(f.state,bone_ref("hips"))
         dt:=f32(1.0/60)
         for _ in 0..<60 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5}))}
-        value,_:=animation_match(&f.playback,f.rig)
+        value,_:=animation_match(core.ref(&f.playback),f.rig)
         testing.expectf(t,linalg.length(value.lag)<.01 && abs(value.velocity.z+1.5)<.01,"a steady walk keeps the root on the body: %v",value)
         wall:=mm.Vec3{0,0,1} if blocked else {}
         ahead,change:=f32(0),f32(0);velocity:=value.velocity
         for _ in 0..<60 {
             testing.expect(t,match_step(&f,dt,GROUND,wall=wall))
-            value,_=animation_match(&f.playback,f.rig)
+            value,_=animation_match(core.ref(&f.playback),f.rig)
             testing.expectf(t,linalg.length(value.lag)<=info.lag+1e-5,"the root strays %.3f m, past its lag",linalg.length(value.lag))
             ahead=max(ahead,-value.lag.z);change=max(change,linalg.length(value.velocity-velocity));velocity=value.velocity
             rest:=playing_pose(f.state,.Local)[hips].position
@@ -1078,7 +1078,7 @@ the_root_of_the_pose_follows_a_body_that_stops_within_its_lag_out_of_a_wall_and_
         }
         // Walking again, it closes on the body within the stride.
         for _ in 0..<90 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5}))}
-        value,_=animation_match(&f.playback,f.rig)
+        value,_=animation_match(core.ref(&f.playback),f.rig)
         testing.expectf(t,linalg.length(value.lag)<.01,"the root settles on the body as it walks: %v",value)
     }
 }
@@ -1096,7 +1096,7 @@ a_jump_past_its_landing_marker_in_the_air_plays_on_unless_a_row_fits_better :: p
     for tick:=0;left>dt*.5;tick+=1 {
         if tick==10 {left+=1}
         testing.expect(t,match_step(&f,dt,AIR,time_to_land=left))
-        value,_:=animation_match(&f.playback,f.rig)
+        value,_:=animation_match(core.ref(&f.playback),f.rig)
         testing.expectf(t,value.clip==base.name_hash("jump") && value.time>=before,"tick %d: the jump goes on, not %v from %.3f",tick,value,before)
         before=value.time
         left-=dt
@@ -1148,13 +1148,13 @@ match_library_swap_enters_the_new_clips_through_an_inertial_transition :: proc(t
     before:=[2]mm.Vec3{playing_pose(f.state,.Local)[1].position,playing_pose(f.state,.Local)[2].position}
     foot_l:=bone_resolve(f.state,bone_ref("foot_l"))
     planted:=playing_pose(f.state,.Local)[foot_l].position
-    walked,_:=animation_match(&f.playback,f.rig)
+    walked,_:=animation_match(core.ref(&f.playback),f.rig)
     testing.expect(t,walked.clip==base.name_hash("walk"),"it walks before the swap")
 
     f.animation.library=MATCH_TEST_LIBRARY
     if !testing.expect(t,match_step_with(&f,&weapon,dt,GROUND,walking)) {return}
     after:=[2]mm.Vec3{playing_pose(f.state,.Local)[1].position,playing_pose(f.state,.Local)[2].position}
-    swapped,_:=animation_match(&f.playback,f.rig)
+    swapped,_:=animation_match(core.ref(&f.playback),f.rig)
     jump:=max(linalg.length(after[0]-before[0]),linalg.length(after[1]-before[1]))
     testing.expect(t,f.state.program.library==MATCH_TEST_LIBRARY && swapped.clip==base.name_hash("walk"),"the rig plays the walk of the new library")
     testing.expect(t,f.state.inertia.state.active,"the swap enters the new clip through an inertial transition")
@@ -1182,7 +1182,7 @@ match_test_walk_span :: proc(t:^testing.T,f:^Match_Fixture,ticks:int,dt,from,to:
     run,jumps:=0,u32(0)
     for _ in 0..<ticks {
         if !testing.expect(t,match_step(f,dt,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5})) {return}
-        value,_:=animation_match(&f.playback,f.rig)
+        value,_:=animation_match(core.ref(&f.playback),f.rig)
         within:=value.clip==walk && value.time>=from && value.time<=to
         if within {inside+=1;run+=1;runs=max(runs,run)} else {run=0}
         if within && value.jumps>jumps {landed+=1}
@@ -1214,7 +1214,7 @@ spans_of_a_set_keep_rows_out_of_the_search_and_leave_or_play_into_them :: proc(t
         } else {
             testing.expectf(t,runs>=8 && landed==0,"a blocked stumble plays through: %d ticks in a row, %d jumps into it",runs,landed)
         }
-        db:=animation_match_database(&f.graphs,&f.content,f.state)
+        db:=animation_match_database(core.ref(&f.graphs),&f.content,f.state)
         testing.expect(t,db!=nil && len(db.flags)==db.rows && core.problem_find(&f.problems,f.rig,"animation.match_span")==nil,"the spans of the walk rule its rows")
         match_fixture_free(&f)
     }
@@ -1235,7 +1235,7 @@ spans_of_a_set_keep_rows_out_of_the_search_and_leave_or_play_into_them :: proc(t
         if testing.expect(t,match_fixture(t,&f,walk_spans=whole[:],spans=spans[:])) {
             for _ in 0..<4 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5}))}
             testing.expect(t,core.problem_find(&f.problems,f.rig,"animation.match_span")!=nil,"a walk excluded whole is reported")
-            db:=animation_match_database(&f.graphs,&f.content,f.state)
+            db:=animation_match_database(core.ref(&f.graphs),&f.content,f.state)
             if testing.expect(t,db!=nil) {
                 noted:=match_searched_candidates(db,f.state.program.match.searched)
                 reason:=lib.Match_Reject.None

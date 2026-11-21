@@ -123,7 +123,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     testing.expect_value(t,len(host.extras_instances(&app.extras)),0)
 
     // A pose that leaves the bind makes the copy of that rig alone.
-    pose:=constraint_playing(&w.playback,roots[0])
+    pose:=constraint_playing(core.ref(&w.playback),roots[0])
     playing_pose(pose,.Local)[1].position.y=0.5
     copy(playing_pose(pose,.Previous),playing_pose(pose,.Local))
     pose.changed+=1
@@ -140,7 +140,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     testing.expect_value(t,problems.count,0)
 
     // A rig at the bind whose curves move a material value stays the mesh of the world: the value is the Material_Live of its mesh.
-    still:=constraint_playing(&w.playback,roots[1])
+    still:=constraint_playing(core.ref(&w.playback),roots[1])
     append(&still.curves,Curve_Output{target=base.name_hash("blush"),property=.Float,value={1,0,0,0},weight=1})
     blush:=CURVE_MATERIAL_DEFAULT;blush.every,blush.scale=true,{1,0,0,0}
     base.text_set(blush.curve[:],"blush");base.text_set(blush.parameter[:],"base_color")

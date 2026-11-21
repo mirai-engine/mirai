@@ -52,7 +52,7 @@ morph_entity_id :: proc(w:core.World_Ref,e:core.Entity) -> base.Entity_Id {value
 morph_instance_source :: proc(w:core.World_Ref,e:core.Entity,config:anim.Morph_Weights) -> (core.Entity,Morph_Source_Kind) {
     animations,sources,parents:=core.world_table_of(w,anim.Animation),core.world_table_of(w,anim.Pose_Source),core.world_table_of(w,core.Parent)
     if animations==nil || sources==nil || parents==nil {return core.NONE,.None}
-    source:=anim.morph_source(e,config,animations,sources,parents,core.world_storage_of(w,anim.Playback))
+    source:=anim.morph_source(e,config,animations,sources,parents,core.ref(core.world_storage_of(w,anim.Playback)))
     if source==core.NONE {return source,.None}
     if config.source!=core.NONE {return source,.Explicit}
     if source==e {return source,.Own}
@@ -68,7 +68,7 @@ morph_inspect :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.E
     if configs:=core.world_table_of(w,anim.Morph_Weights);configs!=nil {if row:=core.row_of(configs,e);row>=0 {stamp=core.stamp(configs,row)+1}}
     source,kind:=morph_instance_source(w,e,config)
     path:=base.text_get(config.path[:]);if path=="" {if target,present:=editor.entity_get(w,e,anim.Animation_Target);present {path=anim.animation_target_path(w,e,target)}}
-    state,available:=anim.animation_morph_state(core.world_storage_of(w,anim.Morph_Playback),e)
+    state,available:=anim.animation_morph_state(core.ref(core.world_storage_of(w,anim.Morph_Playback)),e)
     error,unknown:=anim.morph_weights_check(config,view.morphs)
     evaluated:=available && state.mesh==id && state.stamp==stamp && len(state.weights)==len(view.morphs) && error!=.Invalid_Weights
     r.id,r.mesh,r.source,r.source_kind,r.total=editor.api_entity_id(w,e),id,morph_entity_id(w,source),kind,u32(len(view.morphs))

@@ -23,15 +23,15 @@ curve_queries_mix_missing_tracks_with_the_callers_default_and_retire_stale_outpu
     state:=state_get(&playback,core.Entity(1));state.seen=1;playback.frame=1
     lib.fader_play(&state.fader,clip,1,0);state.fader.current.time=.5
     sample_curves(state,&content,.5)
-    testing.expect_value(t,animation_curve(&playback,state.entity,"pulse",default_value=5),f32(4))
+    testing.expect_value(t,animation_curve(core.ref(&playback),state.entity,"pulse",default_value=5),f32(4))
     lib.fader_play(&state.fader,empty,1,1)
     state.fader.current.time=.5
     state.fader.outgoing[0].elapsed=.5;state.fader.elapsed=.5
     sample_curves(state,&content,1)
-    testing.expect_value(t,animation_curve(&playback,state.entity,"pulse",default_value=5),f32(4))
+    testing.expect_value(t,animation_curve(core.ref(&playback),state.entity,"pulse",default_value=5),f32(4))
     playback.frame+=1
-    testing.expect_value(t,animation_curve(&playback,state.entity,"pulse",default_value=5),f32(5))
-    _,present:=animation_root_delta(&playback,state.entity);testing.expect(t,!present)
+    testing.expect_value(t,animation_curve(core.ref(&playback),state.entity,"pulse",default_value=5),f32(5))
+    _,present:=animation_root_delta(core.ref(&playback),state.entity);testing.expect(t,!present)
 }
 
 // The curves of an additive layer change by what its clip differs from its reference clip, as its
@@ -56,7 +56,7 @@ additive_layer_curves_subtract_their_reference_clip :: proc(t:^testing.T) {
         animation:=ANIMATION_DEFAULT
         testing.expect(t,test_layer(state,1,"happy",mode=.Additive,reference_clip=c.reference))
         sample_curves(state,&content,1,animation)
-        got:=animation_curve(&playback,state.entity,"smile")
+        got:=animation_curve(core.ref(&playback),state.entity,"smile")
         testing.expectf(t,abs(got-c.want)<1e-5,"over reference %q the smile is %v, not %v",c.reference,got,c.want)
     }
 }

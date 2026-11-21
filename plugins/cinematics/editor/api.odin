@@ -97,7 +97,7 @@ api_inspect :: proc(s:^editor.Session,call:^api.Call) {
     value,_:=editor.entity_get(w,timeline,cine.Cinematic_State)
     animation,_:=editor.entity_get(w,timeline,anim.Animation)
     playback:=core.world_storage_of(w,anim.Playback)
-    at,duration,ended,clipped:=anim.animation_progress(playback,timeline)
+    at,duration,ended,clipped:=anim.animation_progress(core.ref(playback),timeline)
     c:=tool_state(s)
     head,playing,previewed:=aed.tracks_head(s,timeline)
     previewed&&=s.mode==.Edit
@@ -108,10 +108,10 @@ api_inspect :: proc(s:^editor.Session,call:^api.Call) {
     source,clip_name:=animation.asset,animation.clip
     loop,playing_now:=animation.loop,animation.playing
     if s.mode!=.Edit && clipped {
-        _,loop=anim.animation_clip_clock(playback,timeline)
-        playing_now=anim.animation_playing(playback,timeline)
-        if id,name,ok:=anim.animation_clip_identity(playback,
-            core.world_storage_of(w,anim.Source_Assets),s.app,timeline);ok {
+        _,loop=anim.animation_clip_clock(core.ref(playback),timeline)
+        playing_now=anim.animation_playing(core.ref(playback),timeline)
+        if id,name,ok:=anim.animation_clip_identity(core.ref(playback),
+            core.ref(core.world_storage_of(w,anim.Source_Assets)),s.app,timeline);ok {
             source,clip_name=id,name
         }
     }
@@ -121,12 +121,12 @@ api_inspect :: proc(s:^editor.Session,call:^api.Call) {
         duration=clipped?duration:0,loop=loop,playing=playing_now,status=status,time=time,
         preview={previewed,previewed && playing,previewed && c!=nil && c.shot_view && editor.tool_on(s,TOOL),previewed?head:0},
     }
-    markers,content:=anim.animation_markers(playback,core.world_storage_of(w,anim.Source_Assets),s.app,timeline)
+    markers,content:=anim.animation_markers(core.ref(playback),core.ref(core.world_storage_of(w,anim.Source_Assets)),s.app,timeline)
     cameras:=core.world_table_of(w,erender.Camera)
     shots,actions:=make([dynamic]Inspect_Marker,call.allocator),make([dynamic]Inspect_Marker,call.allocator)
     for marker in markers {
         if int(marker.id)>=len(content.markers) || content.markers[marker.id].target==0 {continue}
-        on:=anim.animation_bound(playback,timeline,content.markers[marker.id].target)
+        on:=anim.animation_bound(core.ref(playback),timeline,content.markers[marker.id].target)
         if !editor.entity_alive(w,on) {on=core.NONE}
         row:=Inspect_Marker{editor.api_entity_id(w,on),strings.clone(actor_target(w,on),call.allocator) if on!=core.NONE else "",strings.clone(base.text_get(content.markers[marker.id].text[:]),call.allocator),marker.time,marker.duration}
         append(&shots if on!=core.NONE && cameras!=nil && core.has(cameras,on) else &actions,row)
@@ -150,7 +150,7 @@ api_control :: proc(s:^editor.Session,call:^api.Call) {
     if !editor.entity_has(w,timeline,anim.Animation) {api.call_fail(call,api.INVALID_PARAMS,"the timeline has no Animation, so it has no clip to control: add one to its entity whose asset is the .anim of its clip (scene.write with components Animation asset)");return}
     value,_:=editor.entity_get(w,timeline,cine.Cinematic_State)
     out:=api.call_result(call,Control_Result)
-    _,out.duration,_,_=anim.animation_progress(core.world_storage_of(w,anim.Playback),timeline)
+    _,out.duration,_,_=anim.animation_progress(core.ref(core.world_storage_of(w,anim.Playback)),timeline)
     if s.mode!=.Edit {
         requests:=core.world_storage_of(w,anim.Animation_Requests)
         if requests==nil {api.call_fail(call,api.SERVER_ERROR,"the running world has no animation requests: the project does not use the animation plugin");return}
