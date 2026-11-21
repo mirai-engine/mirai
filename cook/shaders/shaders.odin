@@ -22,6 +22,7 @@ import "core:slice"
 import "core:strings"
 import "core:sync"
 import "core:time"
+import "mirai:cook/textures"
 import "mirai:cook/workspace"
 import "mirai:rhi"
 import "mirai:std/base"
@@ -32,7 +33,7 @@ import "mirai:std/serial"
 // Names what the generator produces from a given source and compiler. It is
 // part of every fingerprint: raise it when the outputs change for a reason the
 // fingerprints do not see (another flag is already seen, as are the tools).
-GENERATOR_CONTRACT :: "mirai-shaders/8"
+GENERATOR_CONTRACT :: "mirai-shaders/9"
 
 // The folders of the engine every stage includes, under its root: the shaders
 // of the renderer and those engine/render gives the plugins that extend it.
@@ -1320,6 +1321,8 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     tests_out:=path_join(g.output,"tests",allocator=scratch)
     staging_shaders:=path_join(staging,"shaders",allocator=scratch)
     staging_tests:=path_join(staging_shaders,"tests",allocator=scratch)
+    cook_out:=path_join(g.output,textures.GPU_SHADER_FOLDER,allocator=scratch)
+    staging_cook:=path_join(staging_shaders,textures.GPU_SHADER_FOLDER,allocator=scratch)
     os.make_directory_all(staging_shaders)
     engine_manifest:abi.Shader_Manifest
     if g.engine_build!="" {engine_manifest=manifest_read(g.engine_build,scratch)}
@@ -1333,8 +1336,13 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
         jobs_collect(g,&jobs,entry.folder,g.output,staging_shaders,previous.extensions,scratch)
     }
     extension_count:=len(jobs)-extension_first
-    test_first,test_count:=0,0
+    cook_first,cook_count,test_first,test_count:=0,0,0,0
     if odin {
+        os.make_directory_all(staging_cook)
+        previous_cook:=manifest_read(cook_out,scratch)
+        cook_first,cook_count=jobs_collect(g,&jobs,
+            path_join(engine_shaders,textures.GPU_SHADER_FOLDER,allocator=scratch),
+            cook_out,staging_cook,previous_cook.shaders,scratch)
         os.make_directory_all(staging_tests)
         test_first,test_count=jobs_collect(g,&jobs,g.tests_folder,tests_out,staging_tests,previous.tests,scratch)
     }
@@ -1434,6 +1442,14 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     if g.engine_build=="" {g.identity=engine_interface(g,compiled[0],scratch)}
     identity:=g.identity
     if odin {
+        cook_stages:=make([]Shader,cook_count,scratch)
+        for &stage,i in cook_stages {stage=g.jobs[cook_first+i].result}
+        name:=path_join(staging_cook,abi.SHADER_MANIFEST,allocator=scratch)
+        if !write_file(name,manifest_text(g,cook_stages,nil,nil,nil)) {
+            fail(&result,allocator,"could not write %s",name)
+            return
+        }
+        append(&outputs,path_join(cook_out,abi.SHADER_MANIFEST,allocator=scratch))
         assertions:=strings.builder_make(scratch)
         if problem:=layouts_assertions(&assertions,g.layouts);problem!="" {fail(&result,allocator,"%s",problem);return}
         shipped=true
@@ -1476,12 +1492,13 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
         else {fail(&result,allocator,"could not restore the generation: the previous copies are in %s and %s",staging,tables_folder)}
         return
     }
-    result.shaders,result.tests,result.programs=shader_count+program_count+extension_count,test_count,len(catalog.programs)
+    stage_count:=shader_count+program_count+extension_count+cook_count
+    result.shaders,result.tests,result.programs=stage_count,test_count,len(catalog.programs)
     result.engine=strings.clone(identity,allocator)
     append(&outputs,manifest_path,path_join(g.output,abi.SHADER_CATALOG,allocator=scratch))
     for name in ([]string{SURFACE_INCLUDE,POSTPROCESS_INCLUDE,VFX_INCLUDE,UI_INCLUDE,EXTENSIONS_INCLUDE,HOOKS_INCLUDE,SCHEMA_INCLUDE,CONSTANTS_INCLUDE}) {append(&outputs,path_join(out_include,name,allocator=scratch))}
-    for job,at in g.jobs {
-        folder:=tests_out if at>=test_first && at<test_first+test_count else g.output
+    for job in g.jobs {
+        folder:=job.out
         for name in ([]string{job.result.spv,job.result.msl}) {
             if name!="" {append(&outputs,path_join(folder,name,allocator=scratch))}
         }
@@ -1491,7 +1508,9 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
         for backend in g.backends {append(&outputs,path_join(g.output,names[backend],allocator=scratch))}
     }
     // Without a stamp the next generation looks at every stage again.
-    stamp_write(g,request,staging,outputs[:],{slang=g.version,metal_tools=g.metal_tools,shaders=shader_count+program_count+extension_count,tests=test_count,programs=len(catalog.programs),engine=identity,shipped=shipped})
+    stamp_write(g,request,staging,outputs[:],{slang=g.version,metal_tools=g.metal_tools,
+        shaders=stage_count,tests=test_count,programs=len(catalog.programs),
+        engine=identity,shipped=shipped})
     if result.compiled>0 {cache_prune(g.shared,time.now())}
     return
 }

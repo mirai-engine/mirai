@@ -6,6 +6,7 @@ import "core:reflect"
 import "core:strconv"
 import "core:strings"
 import "mirai:asset"
+import "mirai:cook/textures"
 import "mirai:render/abi"
 import "mirai:rhi"
 
@@ -69,6 +70,41 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     i(&b,"BC_FIELD_MODES",asset.TEXTURE_FIELD_MODES)
     i(&b,"BC_FIELD_PLANES",asset.TEXTURE_FIELD_PLANES)
     i(&b,"BC_FIELD_SPANS",asset.TEXTURE_FIELD_SPANS)
+    i(&b,"BC_COOK_GROUP",textures.GPU_GROUP)
+    i(&b,"BC_COOK_TILE",textures.GPU_TILE)
+    i(&b,"BC_COOK_SOURCE_RGBA8",int(textures.Source_Format.RGBA8))
+    i(&b,"BC_COOK_SOURCE_RGBA16F",int(textures.Source_Format.RGBA16F))
+    i(&b,"BC_COOK_SOURCE_RGBA32F",int(textures.Source_Format.RGBA32F))
+    strings.write_string(&b,"#define BC_COOK_PARTITIONS {")
+    for subset,p in asset.BC7_PARTITIONS_2 {
+        word:=u32(asset.BC7_ANCHORS_2[p])<<16
+        for bit,t in subset {word|=u32(bit)<<uint(t)}
+        if p>0 {strings.write_byte(&b,',')}
+        fmt.sbprintf(&b,"%du",word)
+    }
+    strings.write_string(&b,"}\n")
+    for bits in 2..=4 {
+        fmt.sbprintf(&b,"#define BC_COOK_WEIGHTS_%d ",bits)
+        strings.write_byte(&b,'{')
+        for w,j in asset.BC7_WEIGHTS[bits][:(1<<uint(bits))] {
+            if j>0 {strings.write_byte(&b,',')}
+            fmt.sbprintf(&b,"%du",u32(w))
+        }
+        strings.write_string(&b,"}\n")
+    }
+    layouts:=asset.BC6H_ENDPOINT_SPANS
+    for mode in ([3]int{0,1,9}) {
+        spans:=layouts[mode]
+        fmt.sbprintf(&b,"#define BC_COOK_SPANS_%d ",mode+1)
+        strings.write_byte(&b,'{')
+        for s,j in spans {
+            packed:=u32(s[0])|u32(s[1])<<2|u32(s[2])<<4|u32(s[3])<<8|u32(s[4])<<16
+            if j>0 {strings.write_byte(&b,',')}
+            fmt.sbprintf(&b,"%du",packed)
+        }
+        strings.write_string(&b,"}\n")
+        i(&b,fmt.tprintf("BC_COOK_SPAN_COUNT_%d",mode+1),len(spans))
+    }
     i(&b,"SLOT_FRAME",abi.SLOT_FRAME)
     i(&b,"SLOT_PARAMS",abi.SLOT_PARAMS)
     i(&b,"SLOT_LINEAR_SAMPLER",abi.SLOT_LINEAR_SAMPLER)

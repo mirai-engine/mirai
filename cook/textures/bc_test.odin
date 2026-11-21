@@ -23,12 +23,12 @@ blocks_cover_any_size :: proc(t:^testing.T) {
     for &b,i in pixels {b=u8(i*7)}
     transfer:=transfer_make(false)
     for format in ([]asset.Texture_Format{.BC1,.BC5,.BC7}) {
-        blocks,error:=level_store(rgba8(pixels[:],5,3),format,&transfer,{lambda=RDO_LAMBDA_DEFAULT},context.allocator,{})
+        blocks,error:=level_store(rgba8(pixels[:],5,3),format,&transfer,{},context.allocator,{})
         defer delete(blocks)
         testing.expect(t,error==.None && len(blocks)==asset.texture_level_size(format,5,3))
     }
     // One texel repeated over its block: both channels exact.
-    one,_:=level_store(rgba8(pixels[:4],1,1),.BC5,&transfer,{lambda=RDO_LAMBDA_DEFAULT},context.allocator,{})
+    one,_:=level_store(rgba8(pixels[:4],1,1),.BC5,&transfer,{},context.allocator,{})
     defer delete(one)
     decoded:[4]u8
     testing.expect(t,asset.texture_level_rgba8(.BC5,one,1,1,decoded[:]) && decoded[0]==pixels[0] && decoded[1]==pixels[1])
@@ -222,8 +222,8 @@ blocks_in_parallel_are_the_same_bytes :: proc(t:^testing.T) {
         {.BC6H,{texels=floats,width=SIZE,height=SIZE,format=.RGBA32F}},
     }
     for entry in cases {
-        serial,serial_error:=level_store(entry.level,entry.format,&linear,{lambda=RDO_LAMBDA_DEFAULT},context.temp_allocator,{})
-        parallel,parallel_error:=level_store(entry.level,entry.format,&linear,{lambda=RDO_LAMBDA_DEFAULT},context.temp_allocator,{&js,jobs.OWNER,nil})
+        serial,serial_error:=level_store(entry.level,entry.format,&linear,{},context.temp_allocator,{})
+        parallel,parallel_error:=level_store(entry.level,entry.format,&linear,{},context.temp_allocator,{&js,jobs.OWNER,nil})
         testing.expect(t,serial_error==.None && parallel_error==.None && len(serial)==asset.texture_level_size(entry.format,SIZE,SIZE)*max(entry.level.layers,1))
         testing.expectf(t,string(serial)==string(parallel),"%v: blocks in other threads give the same bytes",entry.format)
     }
@@ -269,7 +269,7 @@ an_odd_sized_level_decodes_every_texel_of_its_last_blocks :: proc(t:^testing.T) 
     for i in 0..<5*3 {pixels[i*4],pixels[i*4+1],pixels[i*4+2],pixels[i*4+3]=90,140,200,255}
     transfer:=transfer_make(false)
     for format in ([]asset.Texture_Format{.BC1,.BC5,.BC7}) {
-        blocks,_:=level_store(rgba8(pixels[:],5,3),format,&transfer,{lambda=RDO_LAMBDA_DEFAULT},context.allocator,{});defer delete(blocks)
+        blocks,_:=level_store(rgba8(pixels[:],5,3),format,&transfer,{},context.allocator,{});defer delete(blocks)
         decoded:[5*3*4]u8
         testing.expect(t,asset.texture_level_rgba8(format,blocks,5,3,decoded[:]))
         for i in 0..<5*3 {

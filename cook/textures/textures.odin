@@ -36,6 +36,7 @@ Error :: enum u8 {
     Too_Large,   // a side above asset.TEXTURE_MAX_SIZE
     Out_Of_Memory,
     Invalid,     // texels that do not fill the size and layers they claim
+    Gpu,         // the cook shaders, device resources or dispatch failed
 }
 
 // An image as RGBA8 rows from the top, whatever the file holds: what the
@@ -372,10 +373,12 @@ stored_format :: proc(source:Source,options:Build_Options) -> asset.Texture_Form
 // kind: color is averaged in linear light, normal maps as vectors that are
 // renormalized, and a masked texture keeps the share of texels above its
 // cutoff. A level is reduced from the one above in the format of the source
-// and stored (stored_format) from it. The blocks of a level are compressed on
-// the job system of worker, when it has one; else long ones on a system of
-// their own.
-build :: proc(source:Source,options:Build_Options,allocator:=context.allocator,worker:=jobs.Worker_Ref{}) -> (built:Built,error:Error) {
+// and stored (stored_format) from it. GPU blocks use the provided context.
+// CPU blocks use the worker's job system, or one of their own for long levels.
+build :: proc(
+    source:Source,options:Build_Options,allocator:=context.allocator,
+    worker:=jobs.Worker_Ref{},gpu:^Gpu_Context=nil,
+) -> (built:Built,error:Error) {
     layers:=max(source.layers,1)
     if source.width<=0 || source.height<=0 || source.layers<0 || source.format>max(Source_Format) || !(options.alpha_coverage>=0 && options.alpha_coverage<=1) || !(options.alpha_fill>=0 && options.alpha_fill<=1) || options.rdo_lambda>RDO_LAMBDA_MAX || options.speed>max(Encode_Speed) {return {},.Invalid}
     flags:=asset.Texture_Flags{}
@@ -443,14 +446,14 @@ build :: proc(source:Source,options:Build_Options,allocator:=context.allocator,w
     built.width,built.height,built.layers=level.width,level.height,layers
     built.format=stored_format(source,options)
     js:jobs.Job_System
-    parallel:=worker.system==nil && encode_jobs_begin(&js,built.format,level.width,level.height*layers)
+    parallel:=(gpu==nil || gpu.device==nil) && worker.system==nil &&
+        encode_jobs_begin(&js,built.format,level.width,level.height*layers)
     defer if parallel {jobs.system_destroy(&js)}
     on:=worker
     if parallel {on={&js,jobs.OWNER,nil}}
-    encode:=block_encode(options)
     for {
         encode_zone:=jobs.worker_zone_begin(worker,"texture.encode")
-        stored,store_error:=level_store(level,built.format,&transfer,encode,allocator,on)
+        stored,store_error:=level_store(level,built.format,&transfer,options,allocator,on,gpu)
         base.profile_end(encode_zone)
         if store_error!=.None {
             fail(&mips,&owned)
@@ -477,20 +480,26 @@ build :: proc(source:Source,options:Build_Options,allocator:=context.allocator,w
 }
 
 // Decodes the bytes of an image file (source_decode) and builds its levels.
-from_bytes :: proc(bytes:[]u8,options:Build_Options,allocator:=context.allocator,worker:=jobs.Worker_Ref{}) -> (built:Built,error:Error) {
+from_bytes :: proc(
+    bytes:[]u8,options:Build_Options,allocator:=context.allocator,
+    worker:=jobs.Worker_Ref{},gpu:^Gpu_Context=nil,
+) -> (built:Built,error:Error) {
     decode_zone:=jobs.worker_zone_begin(worker,"image.decode")
     source,decode_error:=source_decode(bytes,allocator)
     base.profile_end(decode_zone)
     if decode_error!=.None {return {},decode_error}
     defer source_destroy(&source)
-    return build(source,options,allocator,worker)
+    return build(source,options,allocator,worker,gpu)
 }
 
 // A level of a source, every layer, in the format it is stored in: the
 // formats of 8 bits take it as sRGB under transfer, RGBA16, RGBA16F and BC6H
 // linear. In allocator.
 @(private)
-level_store :: proc(level:Source,format:asset.Texture_Format,transfer:^Transfer,encode:blocks.Options,allocator:mem.Allocator,worker:jobs.Worker_Ref) -> (out:[]u8,error:Error) {
+level_store :: proc(
+    level:Source,format:asset.Texture_Format,transfer:^Transfer,options:Build_Options,
+    allocator:mem.Allocator,worker:jobs.Worker_Ref,gpu:^Gpu_Context=nil,
+) -> (out:[]u8,error:Error) {
     alloc_error:mem.Allocator_Error
     switch format {
     case .RGBA8: out,alloc_error=level_convert(level,.RGBA8,transfer,transfer,allocator)
@@ -498,7 +507,9 @@ level_store :: proc(level:Source,format:asset.Texture_Format,transfer:^Transfer,
         linear:=transfer_make(false)
         out,alloc_error=level_convert(level,.RGBA16,transfer,&linear,allocator)
     case .RGBA16F: out,alloc_error=level_convert(level,.RGBA16F,transfer,transfer,allocator)
-    case .BC1,.BC5,.BC6H,.BC7: return level_encode(level,format,transfer,encode,allocator,worker)
+    case .BC1,.BC5,.BC6H,.BC7:
+        if gpu!=nil && gpu.device!=nil {return gpu_level(gpu,level,format,options,allocator)}
+        return level_encode(level,format,transfer,block_encode(options),allocator,worker)
     }
     if alloc_error!=nil {return nil,.Out_Of_Memory}
     return out,.None
@@ -725,9 +736,12 @@ alpha_coverage_keep :: proc(level:Source,cutoff,wanted:f32) {
 // (stored_format): each of its levels and layers compressed as it is, so the
 // chain is the one the asset has. False, with nothing, for a texture in
 // another format, which keeps it: blocks already, or more than 8 bits. The
-// blocks are encoded on the job system of worker, else on one of their own;
+// CPU blocks are encoded on the job system of worker, else on one of their own;
 // without rdo, with the least error, for a game that compresses nothing.
-blocks_of :: proc(view:asset.Texture_View,allocator:=context.allocator,worker:=jobs.Worker_Ref{},rdo:=true) -> (built:Built,ok:bool) {
+blocks_of :: proc(
+    view:asset.Texture_View,allocator:=context.allocator,worker:=jobs.Worker_Ref{},
+    rdo:=true,gpu:^Gpu_Context=nil,
+) -> (built:Built,ok:bool) {
     info:=view.info
     if info==nil || info.format!=.RGBA8 || len(view.mips)==0 {return}
     layers:=int(info.layers)
@@ -735,18 +749,20 @@ blocks_of :: proc(view:asset.Texture_View,allocator:=context.allocator,worker:=j
         mip:=view.mips[level]
         return {texels=asset.texture_mip(view,level),width=int(mip.width),height=int(mip.height),layers=int(view.info.layers),format=.RGBA8,cube=.Cube in view.info.flags}
     }
-    options:=Build_Options{srgb=.Srgb in info.flags,normal_map=.Normal_Map in info.flags,rdo_lambda=0 if rdo else -1}
+    options:=Build_Options{srgb=.Srgb in info.flags,normal_map=.Normal_Map in info.flags,
+        alpha_coverage=info.alpha_coverage,rdo_lambda=0 if rdo else -1}
     format:=stored_format(plane(view,0),options)
     built={width=int(info.width),height=int(info.height),layers=layers,format=format,flags=info.flags,alpha_coverage=info.alpha_coverage,allocator=allocator}
     built.mips=make([][]u8,len(view.mips),allocator)
     js:jobs.Job_System
-    parallel:=worker.system==nil && encode_jobs_begin(&js,format,built.width,built.height*layers)
+    parallel:=(gpu==nil || gpu.device==nil) && worker.system==nil &&
+        encode_jobs_begin(&js,format,built.width,built.height*layers)
     defer if parallel {jobs.system_destroy(&js)}
     on:=worker
     if parallel {on={&js,jobs.OWNER,nil}}
     transfer:=transfer_make(options.srgb)
     for _,level in view.mips {
-        blocks,error:=level_store(plane(view,level),format,&transfer,block_encode(options),allocator,on)
+        blocks,error:=level_store(plane(view,level),format,&transfer,options,allocator,on,gpu)
         if error!=.None {
             built_destroy(&built)
             return {},false

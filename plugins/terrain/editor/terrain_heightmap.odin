@@ -75,6 +75,8 @@ heightmap_read :: proc(s:^editor.Session,path:string,allocator:=context.temp_all
     case .Invalid: editor.notify(s,fmt.tprintf("The heightmap %s is not a square of 16-bit or 32-bit values, or holds one that is not a number",filepath.base(path)))
     case .Out_Of_Memory: editor.notify(s,"There is not enough memory for the heightmap")
     case .Unsupported: editor.notify(s,fmt.tprintf("The heightmap %s is not an image it reads: %s",filepath.base(path),HEIGHTMAP_FORMATS))
+    case .Gpu:
+        editor.notify(s,fmt.tprintf("The heightmap %s could not be decoded",filepath.base(path)))
     }
     return
 }

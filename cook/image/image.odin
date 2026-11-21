@@ -60,7 +60,7 @@ image_load :: proc(path:string,allocator:=context.allocator) -> (image:Image,err
     switch decode_error {
     case .None: return decoded,.None
     case .Out_Of_Memory: return {},.Out_Of_Memory
-    case .Unsupported,.Too_Large,.Invalid: return {},.Undecodable
+    case .Unsupported,.Too_Large,.Invalid,.Gpu: return {},.Undecodable
     }
     return {},.Undecodable
 }

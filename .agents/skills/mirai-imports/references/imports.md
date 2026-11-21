@@ -760,8 +760,8 @@ libraries](../../mirai-physics/references/engine.md#collider-fields).
     store (`RGBA16F`); color and data maps with non-opaque alpha use BC7; opaque data maps use BC1.
     A 16-bit source without `keep_precision` is compressed by use like an 8-bit one.
   - It is stored linear except in 8-bit formats with `srgb` (`level_store`).
-- **Encoder**: every block format goes through `cook/textures` (`level_encode`), which runs
-  the block encoders of the collection compressor (`compressor:blocks`), with the
+- **CPU encoder**: `cook/textures` (`level_encode`) runs the block encoders of the
+  compressor collection (`compressor:blocks`), with the
   perceptual metric and the lambda of `rdo_lambda`: the rate-distortion optimization picks blocks a
   little worse that repeat endpoints and indices, so the file compresses smaller. Each layer of a
   level is one surface. Alpha keeps exact 0 and 255; a BC7 layer with every texel opaque is encoded

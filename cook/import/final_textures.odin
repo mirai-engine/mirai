@@ -78,6 +78,7 @@ texture_input_build :: proc(c:cache.Cache,final:Texture_Final,types:^asset.Types
     case .Out_Of_Memory: return {},.Out_Of_Memory
     case .Too_Large: return {},.Too_Large
     case .Invalid,.Unsupported: return {},.Corrupt
+    case .Gpu: return {},.IO
     }
     _=textures.cache_write(c,final.key,types,&built)
     return built,.None
