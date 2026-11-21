@@ -422,7 +422,8 @@ writer_ready_locked :: proc(s:^Store) -> Error {
         // Lookups of the batch made against an older generation wait on it.
         seen:=s.state.generation.number
         if len(w.deduped)>0 {seen=min(seen,w.generation)}
-        w.holder,w.lease_generation=holder_self(),seen
+        w.holder=holder_self()
+        w.lease_generation=seen
         lease_buffer:[PATH_BYTES]u8
         path:=writer_lease_path(s,&lease_buffer) or_return
         if error:=lease_write(s,path,w.holder,seen,nil,time.now());error!=.None {
