@@ -23,6 +23,12 @@ rows_written_take_a_stamp_above_the_version_a_reader_saw :: proc(t:^testing.T) {
     value,found:=get(&names,a)
     _,missing:=get(&names,NONE)
     testing.expect(t,found && !missing && value==at(&names,0) && has(&names,b) && row_of(&names,c)==2 && name_get(&names,a)=="a")
+    item,found_view:=view(read(&names),a)
+    testing.expect(t,found_view && item.ptr==view_at(&names,row_of(&names,a)).ptr)
+    testing.expect(t,view_at(&names,-1).ptr==nil && view_at(&names,count(&names)).ptr==nil)
+    j:=join(&names,read(&names))
+    joined,a_view,b_view,matched:=each_joined_ref(&j)
+    testing.expect(t,matched && joined==a && a_view.ptr==item.ptr && b_view.ptr==item.ptr)
     testing.expect_value(t,names.version,seen)
     testing.expect(t,!touched(&names,&looked) && !reshaped(&names,&shape))
 
@@ -711,4 +717,31 @@ a_join_gives_the_entities_that_have_every_table_on :: proc(t:^testing.T) {
     defer table_destroy(&empty)
     none:=join(&empty,&b,&c)
     for _ in each_joined(&none) {testing.fail(t)}
+}
+
+
+@(test)
+dirty_edits_preserve_changes_among_unchanged_precise_edits :: proc(t:^testing.T) {
+    allocation:=Copy_Allocation{remaining=100,owner=context.allocator}
+    es:Entities;entities_init(&es);defer entities_destroy(&es)
+    table:Table(Name);table_init(&table,"Name",{copy_allocator,&allocation})
+    defer table_destroy(&table)
+    a,b:=create(&es),create(&es)
+    add(&table,a,name_make("a"));add(&table,b,name_make("b"))
+    table_settle(&table,&es)
+    _=edit_dirty(&table,a)
+    _=edit_dirty(&table,b)
+    testing.expect(t,table.edits==nil)
+    _=edit(&table,a)
+    table_settle(&table,&es)
+    unchanged:=stamp(&table,row_of(&table,a))
+    allocation.remaining=0
+    requests,before:=allocation.requests,version(&table)
+    _=edit(&table,a)
+    _=edit_dirty(&table,b)
+    _=edit(&table,a)
+    table_settle(&table,&es)
+    testing.expect_value(t,allocation.requests,requests)
+    testing.expect_value(t,stamp(&table,row_of(&table,a)),unchanged)
+    testing.expect(t,stamp(&table,row_of(&table,b))>before && version(&table)>before)
 }

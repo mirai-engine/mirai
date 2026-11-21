@@ -6,14 +6,15 @@ import "core:testing"
 @(test)
 an_entity_map_finds_each_generation_and_fills_a_hole_with_the_last_value :: proc(t:^testing.T) {
     m:Entity_Map(int);defer entity_map_destroy(&m)
-    a,b,c:=entity_make(3,1),entity_make(7,1),entity_make(1,1)
+    a,b,c:=entity_make(3,1),entity_make(17*ROWS_PAGE+7,1),entity_make(1,1)
     for e,i in ([3]Entity{a,b,c}) {
         _,ok:=entity_map_put(&m,e,10*(i+1))
         testing.expect(t,ok)
     }
     testing.expect(t,entity_map_get(&m,a)^==10 && entity_map_get(&m,b)^==20 && entity_map_get(&m,c)^==30)
     testing.expect_value(t,entity_map_index(&m,c),2)
-    testing.expect(t,entity_map_get(&m,entity_make(3,2))==nil && entity_map_get(&m,entity_make(9,1))==nil)
+    testing.expect(t,len(m.rows)<3*ROWS_PAGE)
+    testing.expect(t,entity_map_get(&m,entity_make(3,2))==nil && entity_map_get(&m,entity_make(ROWS_PAGE+9,1))==nil)
 
     // A copy finds the same values of its own, and with room for them allocates nothing.
     copied:Entity_Map(int);defer entity_map_destroy(&copied)
@@ -47,7 +48,7 @@ an_entity_map_without_memory_stays_as_it_was_and_a_steady_frame_does_not_allocat
     allocation:=Copy_Allocation{owner=context.allocator}
     context.allocator={copy_allocator,&allocation}
     m:Entity_Map(int);defer entity_map_destroy(&m)
-    a,b:=entity_make(1,1),entity_make(40,1)
+    a,b:=entity_make(1,1),entity_make(ROWS_PAGE+40,1)
     _,ok:=entity_map_put(&m,a,1)
     testing.expect(t,!ok && len(m.values)==0 && entity_map_get(&m,a)==nil)
 

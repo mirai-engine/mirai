@@ -34,7 +34,7 @@ import "mirai:std/serial"
 // and the game/ of the project go into World and Shared; the editor and the
 // editor/ of plugins and of the project into Editor_World.
 
-CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,diff,free,replicated,setting,description,queue,keep,persist,save_prepare,single,far,derived,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw,mind,act,was,test_world,editor"
+CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,require,server,shared,locks,host,by_world,copy,copy_kept,swap,diff,free,replicated,setting,description,queue,keep,persist,save_prepare,single,far,derived,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw,mind,act,was,test_world,editor"
 
 PHASES :: [7]string{"input","fixed","frame","late","ui","render","release"}
 UI_PHASE :: 4 // where the interfaces are built: the engine and the editor draw in it, a game shows .ui documents
@@ -73,6 +73,8 @@ Type :: struct {
     fields:[dynamic]core.Field_Description, // a component: the comments on the lines of its fields
     locks:[dynamic]string, // keys, resolved later
     logs:[dynamic]string,  // a storage: its fields that are a core.Events
+    queues:[dynamic]string,
+    queue_only:bool,
     field:string,
     lock_id:int,
     default,for_device,procs:string, // the procedures the world being written calls for it: type_procs_write
@@ -102,7 +104,7 @@ Message :: struct {
 }
 
 @(private="file")
-Param_Kind :: enum u8 {Table_Write,Table_Read,Storage_Write,Storage_Ref,Storage_Value,Storage_Stamp,Entities_Read,Commands,World_Ref,App,App_Part,Records,Inbox}
+Param_Kind :: enum u8 {Table_Write,Table_Read,Storage_Write,Storage_Ref,Storage_Value,Storage_Stamp,Entities_Read,Commands,World_Ref,World_Read,App,App_Part,Records,Inbox}
 
 // What host.App holds that a step receives by itself, bound by the type that
 // names it: the call hands out what the application owns.
@@ -128,7 +130,7 @@ APP_PARTS :: [?]App_Part{
 }
 
 @(private="file")
-PARAM_FORMS :: "^core.Table(T), ^core.Table(T,.Read), ^S, core.Ref(S), S, core.Stamp(S), core.Inbox(M) of a @(net_message), core.Ref(core.Entities), core.Commands, core.World_Ref, a part of the application (^host.Assets, ^host.Frame_Extras, ^render.Renderer, ^audio.Mixer, ^jobs.Job_System, runtime.Allocator, ^core.Texts) or ^host.App"
+PARAM_FORMS :: "^core.Table(T), ^core.Table(T,.Read), ^S, core.Ref(S), S, core.Stamp(S), core.Inbox(M) of a @(net_message), core.Ref(core.Entities), core.Commands, core.World_Ref, core.World_Read, a part of the application (^host.Assets, ^host.Frame_Extras, ^render.Renderer, ^audio.Mixer, ^jobs.Job_System, runtime.Allocator, ^core.Texts) or ^host.App"
 
 @(private="file")
 Param :: struct {
@@ -139,9 +141,14 @@ Param :: struct {
     part:int,            // App_Part: its index in APP_PARTS
     actions:^Action_Enum, // the enum of the generic @(params) it is a field of
     bundle:^Bundle, // the @(params) the step receives it in; nil when it receives it by itself
+    path:[]Bundle_Field,
+    root:string, // the parameter in the source procedure
     name:string,    // of the field in the bundle, or of the parameter
     arg:int,        // the parameter of the step it binds, by position
 }
+
+@(private="file")
+Bundle_Field :: struct {name:string,bundle:^Bundle,actions:^Action_Enum}
 
 // A struct whose fields are parameters of a step, @(params): a step receives
 // it by value and each field is bound as that parameter alone would be.
@@ -154,6 +161,7 @@ Bundle :: struct {
     where_:string,
     fields:[dynamic]Param,
     valid:bool,
+    visiting,settled:bool,
     generic:bool,      // struct($E:typeid): received for an @(actions) enum, B(E)
     base_field:string, // of a generic one: the field of the @(names,actions) type, which takes the base of E
 }
@@ -210,11 +218,14 @@ Step :: struct {
     loops:[2]bool,
     stage:int,
     after,before:[dynamic]string,
+    required:[dynamic]^Type,
     server:bool, // runs only where the rules are decided: core.Network.role is not .Client
     params:[dynamic]Param,
     rank:int, // libraries, then declarations
     where_:string,
     file:string,
+    source:^ast.File,
+    literal:^ast.Proc_Lit,
     line:int,
     mind:^Mind_Step, // the step of a mind: it ticks the agents of the mind instead of calling a procedure
 }
@@ -621,11 +632,19 @@ type_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,decl:^ast.Value_Decl,
         return nil
     }
     if record,is_struct:=decl.values[0].derived.(^ast.Struct_Type);is_struct && is_storage {
+        t.queue_only=t.queue
         for field in record.fields.list {
             call,is_call:=field.type.derived.(^ast.Call_Expr)
-            if !is_call || type_key(g,file,pkg,call.expr)!="mirai:core.Events" {continue}
-            for n in field.names {append(&t.logs,ident_name(n))}
+            wrapper:=is_call?type_key(g,file,pkg,call.expr):""
+            if wrapper!="mirai:core.Queue" {t.queue_only=false}
+            switch wrapper {
+            case "mirai:core.Events":
+                for n in field.names {append(&t.logs,ident_name(n))}
+            case "mirai:core.Queue":
+                for n in field.names {append(&t.queues,ident_name(n))}
+            }
         }
+        t.queue_only&&=len(t.queues)>0
     }
     if t.queue && (t.kind!=.Storage || len(t.logs)>0) {
         append(&g.errors,fmt.aprintf("%s: %s says queue: a storage of requests is @(storage,queue), and it holds no core.Events, which are what a library reports",t.where_,name))
@@ -692,36 +711,59 @@ record_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,decl:^ast.Value_Dec
 @(private="file")
 Record_Code_Type :: struct {name,folder:string,pkg:^Package}
 
-// The types the packages that hold record types declare for others to name:
-// structs, enums, bit sets, distinct types and arrays, neither private nor
-// a component, a storage, a message, a bundle or a record. The editor offers
-// those that are plain data.
+// The named types reachable through the field types of a record.
 @(private="file")
-record_codes :: proc(g:^Generator) -> []Record_Code_Type {
+record_codes :: proc(g:^Generator,editor:bool) -> []Record_Code_Type {
     out:=make([dynamic]Record_Code_Type,context.temp_allocator)
+    packages:=make(map[string]^Package,context.temp_allocator)
     for pkg in g.packages {
-        holds:=false
-        for r in g.records {holds||=r.pkg==pkg}
-        if !holds {continue}
-        folder:=""
-        if plugin:=project.import_plugin(pkg.path);plugin!="" {folder=fmt.tprintf("plugins/%s",plugin)}
-        for file in pkg.files {
-            if strings.has_suffix(file.fullpath,RECORDS_FILE) {continue}
-            for stmt in file.decls {
-                decl,is_value:=stmt.derived.(^ast.Value_Decl)
-                if !is_value || decl.is_mutable || len(decl.names)!=1 || len(decl.values)!=1 {continue}
-                #partial switch v in decl.values[0].derived {
-                case ^ast.Struct_Type: if v.poly_params!=nil {continue}
-                case ^ast.Enum_Type,^ast.Bit_Set_Type,^ast.Distinct_Type,^ast.Array_Type:
-                case: continue
-                }
-                options:=attributes_read(decl.attributes[:])
-                skip:=false
-                for option in ([]string{"private","component","storage","net_message","params","record","actions"}) {skip||=option in options}
-                if skip {continue}
-                append(&out,Record_Code_Type{ident_name(decl.names[0]),folder,pkg})
+        if editor || !pkg.editor {packages[pkg.path]=pkg}
+    }
+    seen:=make(map[string]bool,context.temp_allocator)
+    visit :: proc(g:^Generator,packages:map[string]^Package,seen:^map[string]bool,
+                  out:^[dynamic]Record_Code_Type,file:^ast.File,pkg:^Package,expr:^ast.Expr) {
+        if expr==nil {return}
+        key:=type_key(g,file,pkg,expr)
+        if key!="" {
+            if key in seen^ {return}
+            seen^[key]=true
+            dot:=strings.last_index_byte(key,'.')
+            owner:=packages[key[:dot]]
+            if owner==nil {return}
+            name:=key[dot+1:]
+            declared,decl,found:=decl_find(owner,name)
+            if !found || decl.is_mutable || len(decl.values)!=1 {return}
+            options:=attributes_read(decl.attributes[:])
+            for option in ([]string{"private","component","storage","net_message","params","record","actions"}) {
+                if option in options {return}
             }
+            value:=decl.values[0]
+            #partial switch v in value.derived {
+            case ^ast.Struct_Type: if v.poly_params!=nil {return}
+            case ^ast.Enum_Type,^ast.Bit_Set_Type,^ast.Distinct_Type,^ast.Array_Type:
+            case: return
+            }
+            folder:=""
+            if plugin:=project.import_plugin(owner.path);plugin!="" {
+                folder=fmt.tprintf("plugins/%s",plugin)
+            }
+            owner.used=true
+            append(out,Record_Code_Type{name,folder,owner})
+            visit(g,packages,seen,out,declared,owner,value)
+            return
         }
+        #partial switch v in expr.derived {
+        case ^ast.Struct_Type:
+            if v.fields!=nil {
+                for f in v.fields.list {visit(g,packages,seen,out,file,pkg,f.type)}
+            }
+        case ^ast.Array_Type: visit(g,packages,seen,out,file,pkg,v.elem)
+        case ^ast.Distinct_Type: visit(g,packages,seen,out,file,pkg,v.type)
+        case ^ast.Bit_Set_Type: visit(g,packages,seen,out,file,pkg,v.elem)
+        }
+    }
+    for r in g.records {
+        if editor || !r.pkg.editor {visit(g,packages,&seen,&out,r.file,r.pkg,r.value)}
     }
     return out[:]
 }
@@ -971,42 +1013,78 @@ bundle_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,decl:^ast.Value_Dec
 // The fields of every @(params), once the tables and storages are known.
 @(private="file")
 bundles_settle :: proc(g:^Generator) {
-    for b in g.bundle_list {
-        b.valid=true
-        if b.record.fields==nil || len(b.record.fields.list)==0 {
-            append(&g.errors,fmt.aprintf("%s: %s is @(params) and has no fields: give it a field for each parameter it groups, or take it out",b.where_,b.name))
-            b.valid=false
+    for b in g.bundle_list {bundle_settle(g,b)}
+}
+
+@(private="file")
+bundle_settle :: proc(g:^Generator,b:^Bundle) {
+    if b.settled {return}
+    if b.visiting {
+        append(&g.errors,fmt.aprintf("%s: %s nests itself through @(params); remove the cycle",b.where_,b.name))
+        b.valid=false
+        return
+    }
+    b.visiting=true
+    defer b.visiting,b.settled=false,true
+    b.valid=true
+    if b.record.fields==nil || len(b.record.fields.list)==0 {
+        append(&g.errors,fmt.aprintf("%s: %s is @(params) and has no fields: give it a field for each parameter it groups, or take it out",b.where_,b.name))
+        b.valid=false
+        return
+    }
+    for field in b.record.fields.list {
+        if b.generic && g.actions_type!=nil && type_key(g,b.file,b.pkg,field.type)==g.actions_type.key && len(field.names)==1 && b.base_field=="" {
+            b.base_field=ident_name(field.names[0])
             continue
         }
-        for field in b.record.fields.list {
-            if b.generic && g.actions_type!=nil && type_key(g,b.file,b.pkg,field.type)==g.actions_type.key && len(field.names)==1 && b.base_field=="" {
-                b.base_field=ident_name(field.names[0])
-                continue
+        if inner:=bundle_of(g,b.file,b.pkg,field.type);inner!=nil {
+            _,pointer:=field.type.derived.(^ast.Pointer_Type)
+            call,applied:=field.type.derived.(^ast.Call_Expr)
+            actions:^Action_Enum
+            if inner.generic && applied && len(call.args)==1 {
+                actions=g.action_by_key[type_key(g,b.file,b.pkg,call.args[0])]
             }
-            if inner:=bundle_of(g,b.file,b.pkg,field.type);inner!=nil {
-                append(&g.errors,fmt.aprintf("%s: %s has a field of %s, another @(params): they do not nest; put the fields of %s in %s, or have the step receive %s by itself",b.where_,b.name,inner.name,inner.name,b.name,inner.name))
+            if pointer || inner.pkg.editor && !b.pkg.editor || inner.generic!=(actions!=nil) ||
+               applied && !inner.generic {
+                append(&g.errors,fmt.aprintf("%s: %s cannot receive %s as a nested @(params): receive it by value from a library in the same loop and supply its @(actions) enum if it is generic",b.where_,b.name,expr_text(b.file,field.type)))
                 b.valid=false
                 continue
             }
-            param,ok:=param_read(g,b.file,b.pkg,field.type)
-            for n in field.names {
-                if !ok {
-                    if param.kind==.App_Part {
-                        append(&g.errors,part_error(b.where_,fmt.tprintf("the field %s of %s",ident_name(n),b.name),expr_text(b.file,field.type),param))
-                    } else {
-                        append(&g.errors,fmt.aprintf("%s: the field %s of %s is %s: no table, storage or service of the engine has that type. A @(params) struct holds parameters of steps: %s",b.where_,ident_name(n),b.name,expr_text(b.file,field.type),PARAM_FORMS))
-                    }
-                    b.valid=false
-                    continue
-                }
-                param.bundle,param.name=b,ident_name(n)
-                append(&b.fields,param)
+            bundle_settle(g,inner)
+            if !inner.valid {
+                b.valid=false
+                continue
             }
+            for n in field.names {
+                for leaf in inner.fields {
+                    bound:=leaf
+                    path:=make([]Bundle_Field,1+len(leaf.path),context.temp_allocator)
+                    path[0]={ident_name(n),inner,actions}
+                    copy(path[1:],leaf.path)
+                    bound.bundle,bound.path=b,path
+                    append(&b.fields,bound)
+                }
+            }
+            continue
         }
-        if b.generic && b.base_field=="" {
-            append(&g.errors,fmt.aprintf("%s: %s is a @(params) with a type parameter, which is received for an @(actions) enum: give it one field of the type of the actions (base:Action), which takes the base of that enum",b.where_,b.name))
-            b.valid=false
+        param,ok:=param_read(g,b.file,b.pkg,field.type)
+        for n in field.names {
+            if !ok {
+                if param.kind==.App_Part {
+                    append(&g.errors,part_error(b.where_,fmt.tprintf("the field %s of %s",ident_name(n),b.name),expr_text(b.file,field.type),param))
+                } else {
+                    append(&g.errors,fmt.aprintf("%s: the field %s of %s is %s: no table, storage or service of the engine has that type. A @(params) struct holds parameters of steps: %s",b.where_,ident_name(n),b.name,expr_text(b.file,field.type),PARAM_FORMS))
+                }
+                b.valid=false
+                continue
+            }
+            param.bundle,param.name=b,ident_name(n)
+            append(&b.fields,param)
         }
+    }
+    if b.generic && b.base_field=="" {
+        append(&g.errors,fmt.aprintf("%s: %s is a @(params) with a type parameter, which is received for an @(actions) enum: give it one field of the type of the actions (base:Action), which takes the base of that enum",b.where_,b.name))
+        b.valid=false
     }
 }
 
@@ -1168,6 +1246,7 @@ steps_read :: proc(g:^Generator,pkg:^Package) {
             s:=new(Step)
             s.name,s.pkg,s.where_=name,pkg,where_
             s.file,s.line=slashes(file.fullpath,context.allocator),decl.pos.line
+            s.source,s.literal=file,literal
             pkg.used=true
             s.rank=len(g.steps)
             for part in strings.fields(phase_text) {
@@ -1207,6 +1286,29 @@ steps_read :: proc(g:^Generator,pkg:^Package) {
                 append(&g.errors,fmt.aprintf("%s: %s has order=%s, and steps are not ordered by number: give it a stage (begin input intent apply simulate react end; intent when it names none) and order it inside the stage with after=\"step\" or before=\"step\"",where_,name,order))
             }
             if literal.type.params!=nil {params_read(g,file,pkg,where_,name,literal.type.params.list[:],&s.params)}
+            if required,found:=options["require"];found {
+                for part in strings.fields(required) {
+                    component:=g.by_key[qualified(g,file,pkg,part)]
+                    if component==nil {
+                        for param in s.params {
+                            if param.type!=nil && param.type.kind==.Component &&
+                               param.type.name==part {component=param.type;break}
+                        }
+                    }
+                    has_table:=false
+                    for param in s.params {
+                        if component!=nil && component.kind==.Component && param.type==component {
+                            has_table=true
+                            break
+                        }
+                    }
+                    if !has_table {
+                        append(&g.errors,fmt.aprintf("%s: %s requires %s; receive its component table in the step",where_,name,part))
+                    } else if !slice.contains(s.required[:],component) {
+                        append(&s.required,component)
+                    }
+                }
+            }
             if literal.type.results!=nil && len(literal.type.results.list)>0 {
                 append(&g.errors,fmt.aprintf("%s: %s returns something; a step returns nothing",where_,name))
             }
@@ -1253,10 +1355,12 @@ params_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,where_,name:string,
                 continue
             }
             b.pkg.used=true
-            for _ in field.names {
+            for name in field.names {
                 for param in b.fields {
                     bound:=param
                     bound.arg,bound.actions=arg,actions
+                    bound.root=ident_name(name)
+                    for nested in bound.path {nested.bundle.pkg.used=true}
                     append(params,bound)
                 }
                 arg+=1
@@ -1275,6 +1379,7 @@ params_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,where_,name:string,
                 continue
             }
             param.name,param.arg=ident_name(n),arg
+            param.root=param.name
             append(params,param)
             arg+=1
         }
@@ -1330,7 +1435,10 @@ minds_read :: proc(g:^Generator,pkg:^Package,minds,acts:[]Mind_Decl) {
         m:=new(Mind_Step)
         m.name,m.enum_name,m.runner=d.text,enum_name,runner
         s.mind=m
-        for param in runner.fields {append(&s.params,param)}
+        for param in runner.fields {
+            append(&s.params,param)
+            for nested in param.path {nested.bundle.pkg.used=true}
+        }
         runner.pkg.used=true
         pkg.used=true
         m.think=mind_proc_bind(g,pkg,s,d)
@@ -1499,6 +1607,7 @@ param_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,expr:^ast.Expr) -> (
     switch key {
     case "mirai:core.Commands": return {kind=.Commands,type=nil},!pointer
     case "mirai:core.World_Ref": return {kind=.World_Ref,type=nil},!pointer
+    case "mirai:core.World_Read": return {kind=.World_Read},!pointer
     case "mirai:host.App": return {kind=.App,type=nil},pointer
     }
     for part,index in APP_PARTS {
@@ -1530,7 +1639,168 @@ type_key :: proc(g:^Generator,file:^ast.File,pkg:^Package,expr:^ast.Expr) -> str
 }
 
 @(private="file")
+Queue_Use :: enum {Push,Drain}
+
+@(private="file")
+Queue_Proc :: struct {file:^ast.File,pkg:^Package,literal:^ast.Proc_Lit}
+
+@(private="file")
+queue_path :: proc(expr:^ast.Expr) -> string {
+    if expr==nil {return ""}
+    #partial switch v in expr.derived {
+    case ^ast.Ident: return v.name
+    case ^ast.Paren_Expr: return queue_path(v.expr)
+    case ^ast.Unary_Expr: if v.op.kind==.And {return queue_path(v.expr)}
+    case ^ast.Selector_Expr:
+        if root:=queue_path(v.expr);root!="" {return fmt.tprintf("%s.%s",root,v.field.name)}
+    }
+    return ""
+}
+
+// Follows a named queue through calls that forward it or its containing storage.
+@(private="file")
+queue_uses :: proc(g:^Generator,procs:map[string]Queue_Proc,seen:^map[[2]string]bool,
+                   fn:Queue_Proc,path:string) -> bit_set[Queue_Use] {
+    if fn.literal==nil || fn.literal.body==nil {return {}}
+    Walk :: struct {
+        g:^Generator,
+        procs:map[string]Queue_Proc,
+        seen:^map[[2]string]bool,
+        fn:Queue_Proc,
+        path:string,
+        uses:bit_set[Queue_Use],
+    }
+    visit :: proc(v:^ast.Visitor,node:^ast.Node) -> ^ast.Visitor {
+        if node==nil {return nil}
+        w:=cast(^Walk)v.data
+        call,is_call:=node.derived.(^ast.Call_Expr)
+        if !is_call {return v}
+        key:=type_key(w.g,w.fn.file,w.fn.pkg,call.expr)
+        next:=w.procs[key]
+        for expr,i in call.args {
+            arg:=expr
+            named:=""
+            if field,ok:=arg.derived.(^ast.Field_Value);ok {
+                named=ident_name(field.field)
+                arg=field.value
+            }
+            path:=queue_path(arg)
+            if path=="" {continue}
+            if path==w.path {
+                switch key {
+                case "mirai:core.take","mirai:core.take_due","mirai:core.queue_clear":
+                    w.uses+={.Drain}
+                    continue
+                case "mirai:core.push","mirai:core.queue_push","mirai:core.later","mirai:core.offer",
+                     "mirai:core.events_push":
+                    w.uses+={.Push}
+                    continue
+                }
+            }
+            if path==fmt.tprintf("%s.items",w.path) {
+                switch ident_name(call.expr) {
+                case "clear","pop","ordered_remove","unordered_remove","remove_range":
+                    w.uses+={.Drain}
+                case "append","append_elem","append_elems": w.uses+={.Push}
+                }
+            }
+            if next.literal==nil || next.literal.type.params==nil ||
+               path!=w.path && !strings.has_prefix(w.path,fmt.tprintf("%s.",path)) {
+                continue
+            }
+            at:=0
+            for field in next.literal.type.params.list {
+                for n in field.names {
+                    name:=ident_name(n)
+                    if named!=""?named==name:at==i {
+                        inner:=fmt.tprintf("%s%s",name,w.path[len(path):])
+                        visit_key:=[2]string{key,inner}
+                        if visit_key not_in w.seen^ {
+                            w.seen^[visit_key]=true
+                            w.uses+=queue_uses(w.g,w.procs,w.seen,next,inner)
+                        }
+                    }
+                    at+=1
+                }
+            }
+        }
+        return v
+    }
+    walk:=Walk{g=g,procs=procs,seen=seen,fn=fn,path=path}
+    visitor:=ast.Visitor{visit=visit,data=&walk}
+    ast.walk(&visitor,fn.literal.body)
+    return walk.uses
+}
+
+@(private="file")
+queues_check :: proc(g:^Generator) {
+    procs:=make(map[string]Queue_Proc,context.temp_allocator)
+    for pkg in g.packages {
+        for file in pkg.files {
+            for stmt in file.decls {
+                decl,ok:=stmt.derived.(^ast.Value_Decl)
+                if !ok || len(decl.names)!=1 || len(decl.values)!=1 {continue}
+                if literal,is_proc:=decl.values[0].derived.(^ast.Proc_Lit);is_proc {
+                    key:=fmt.tprintf("%s.%s",pkg.path,ident_name(decl.names[0]))
+                    procs[key]={file,pkg,literal}
+                }
+            }
+        }
+    }
+    Access :: struct {type:^Type,step:^Step,uses:bit_set[Queue_Use]}
+    accesses:=make([dynamic]Access,context.temp_allocator)
+    seen:=make(map[[2]string]bool,context.temp_allocator)
+    for s in g.steps {
+        if s.literal==nil {continue}
+        for p in s.params {
+            if p.kind!=.Storage_Write || !p.type.queue || len(p.type.queues)==0 {continue}
+            path:=strings.builder_make(context.temp_allocator)
+            strings.write_string(&path,p.root)
+            for nested in p.path {fmt.sbprintf(&path,".%s",nested.name)}
+            if p.bundle!=nil {fmt.sbprintf(&path,".%s",p.name)}
+            uses:bit_set[Queue_Use]
+            for field in p.type.queues {
+                clear(&seen)
+                uses+=queue_uses(g,procs,&seen,{s.source,s.pkg,s.literal},
+                                 fmt.tprintf("%s.%s",strings.to_string(path),field))
+            }
+            if uses!={} {append(&accesses,Access{p.type,s,uses})}
+        }
+    }
+    loops:=LOOPS
+    for producer in accesses {
+        if .Push not_in producer.uses {continue}
+        project_queue:=strings.has_prefix(producer.type.pkg.path,"project:")
+        for active,loop in producer.step.loops {
+            if !active {continue}
+            covered,paused:=false,false
+            for consumer in accesses {
+                covers_loop:=consumer.step.loops[loop] ||
+                    loop==1 && !project_queue && consumer.step.loops[0]
+                if consumer.type!=producer.type || !covers_loop || .Drain not_in consumer.uses ||
+                   consumer.step.server && !producer.step.server {
+                    continue
+                }
+                if producer.step.phases[RELEASE_PHASE] && !consumer.step.phases[RELEASE_PHASE] ||
+                   !producer.step.phases[RELEASE_PHASE] &&
+                       !step_outside_fixed(consumer.step) && !consumer.step.phases[FIXED_PHASE] {
+                    continue
+                }
+                covered=true
+                paused||=step_outside_fixed(consumer.step)
+            }
+            if !covered {
+                append(&g.errors,fmt.aprintf("%s: %s pushes to %s in the %s loop without a draining step; receive the queue in a step in that loop and take its requests",producer.step.where_,producer.step.name,producer.type.name,loops[loop]))
+            } else if !paused && project_queue && step_outside_fixed(producer.step) {
+                append(&g.errors,fmt.aprintf("%s: %s can push to %s while paused but only fixed steps drain it; push in fixed or drain the queue in a phase that runs while paused",producer.step.where_,producer.step.name,producer.type.name))
+            }
+        }
+    }
+}
+
+@(private="file")
 rules_check :: proc(g:^Generator) {
+    queues_check(g)
     for t in g.types {
         if t.by_world && "mirai:core.World_Id" not_in g.by_key {
             append(&g.errors,fmt.aprintf("%s: %s is by_world, and the world has no core.World_Id to know whose value a function gets",t.where_,t.name))
@@ -1592,9 +1862,11 @@ rules_check :: proc(g:^Generator) {
             }
             // The editor loop refills core.Input every frame; only the game loop leaves it, and the actions made of it, at the last tick.
             if s.loops[0] && step_outside_fixed(s) && (param.kind==.Storage_Value || param.kind==.Storage_Ref) {
+                bundle:=param.bundle
+                if len(param.path)>0 {bundle=param.path[len(param.path)-1].bundle}
                 if param.type==tick_input {
                     append(&g.errors,fmt.aprintf("%s: %s runs outside fixed and receives core.Input as %s, which there holds the values of the last tick: a frame without a tick repeats its edges and misses what is new; receive core.Frame_Input, or read it in a fixed step",s.where_,s.name,param.name))
-                } else if param.type==seats_state && param.bundle!=nil && param.bundle.key=="mirai:engine/input.Input_Of" {
+                } else if param.type==seats_state && bundle!=nil && bundle.key=="mirai:engine/input.Input_Of" {
                     append(&g.errors,fmt.aprintf("%s: %s runs outside fixed and receives the actions of the tick as %s: a frame without a tick repeats its edges and misses what is new; receive input.Frame_Input_Of(E), or read them in a fixed step",s.where_,s.name,param_text(param)))
                 }
             }
@@ -1603,7 +1875,9 @@ rules_check :: proc(g:^Generator) {
         // in two, it would be written through one and read stale through the other.
         for a,i in s.params {
             for b in s.params[i+1:] {
-                if a.bundle==nil && b.bundle==nil || !same_datum(a,b) || !writes(a) && !writes(b) {continue}
+                if a.bundle==nil && b.bundle==nil || !same_datum(a,b) || !writes(a) && !writes(b) &&
+                   !(a.kind==.Storage_Write && b.kind==.Storage_Write &&
+                     (len(a.path)>0 || len(b.path)>0)) {continue}
                 what:=a.type.name
                 fix:="receive the two @(params) in different steps, or declare one without that field"
                 if a.bundle==b.bundle && a.arg==b.arg {fix=fmt.tprintf("take %s or %s out of %s",a.name,b.name,a.bundle.name)}
@@ -1752,7 +2026,12 @@ writes :: proc(p:Param) -> bool {
 
 @(private="file")
 param_text :: proc(p:Param) -> string {
-    if p.bundle!=nil {return fmt.tprintf("the field %s of the @(params) %s",p.name,p.bundle.name)}
+    if p.bundle!=nil {
+        field:=strings.builder_make(context.temp_allocator)
+        for nested in p.path {fmt.sbprintf(&field,"%s.",nested.name)}
+        strings.write_string(&field,p.name)
+        return fmt.tprintf("the field %s of the @(params) %s",strings.to_string(field),p.bundle.name)
+    }
     return fmt.tprintf("its parameter %s",p.name)
 }
 
@@ -1963,7 +2242,34 @@ step_whole :: proc(g:^Generator,s:^Step) -> bool {
 }
 
 @(private="file")
+param_read_only :: proc(param:Param) -> bool {
+    #partial switch param.kind {
+    case .Table_Read,.Storage_Ref,.Storage_Value,.Storage_Stamp,.World_Read,.Entities_Read,.Inbox,.Records:
+        return true
+    }
+    return false
+}
+
+@(private="file")
+bundle_open :: proc(args:^strings.Builder,bundle:^Bundle,actions:^Action_Enum) {
+    fmt.sbprintf(args,"%s.%s",bundle.pkg.alias,bundle.name)
+    if actions!=nil {fmt.sbprintf(args,"(%s.%s)",actions.pkg.alias,actions.name)}
+    strings.write_string(args,"{")
+}
+
+@(private="file")
+bundle_close :: proc(g:^Generator,args:^strings.Builder,bundle:^Bundle,actions:^Action_Enum) {
+    if bundle==nil {return}
+    if actions!=nil {
+        fmt.sbprintf(args,",%s=%s.%s(%d)",bundle.base_field,
+            g.actions_type.pkg.alias,g.actions_type.name,actions.base)
+    }
+    strings.write_string(args,"}")
+}
+
+@(private="file")
 world_write :: proc(g:^Generator,editor:bool) -> string {
+    codes:=record_codes(g,editor)
     b:=strings.builder_make()
     w:=&b
     included :: proc(t:^Type,editor:bool) -> bool {return editor || t.place!=.Editor}
@@ -2074,25 +2380,51 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         // The value of each arg of the step: a parameter, or a @(params) it builds.
         values:=make([dynamic]string,context.temp_allocator)
         args:=strings.builder_make(context.temp_allocator)
-        // A generic @(params) ends with the base of its enum.
-        bundle_close :: proc(g:^Generator,args:^strings.Builder,param:Param) {
-            if param.bundle==nil {return}
-            if param.actions!=nil {fmt.sbprintf(args,",%s=%s.%s(%d)",param.bundle.base_field,g.actions_type.pkg.alias,g.actions_type.name,param.actions.base)}
-            strings.write_string(args,"}")
+        binding_decls:=strings.builder_make(context.temp_allocator)
+        binding:=make(map[int]int,context.temp_allocator)
+        for param,pi in step.params {
+            if !param_read_only(param) {continue}
+            for other,i in step.params[:pi] {
+                if param.kind!=other.kind || param.type!=other.type || param.record!=other.record ||
+                   param.message!=other.message {continue}
+                binding[i],binding[pi]=i,i
+                break
+            }
         }
         for param,pi in step.params {
             first:=pi==0 || step.params[pi-1].arg!=param.arg
-            if first && pi>0 {
-                bundle_close(g,&args,step.params[pi-1])
-                append(&values,strings.clone(strings.to_string(args),context.temp_allocator))
-                strings.builder_reset(&args)
+            common:=0
+            if pi>0 {
+                previous:=step.params[pi-1]
+                if !first {
+                    for common<min(len(previous.path),len(param.path)) &&
+                         previous.path[common]==param.path[common] {common+=1}
+                }
+                for i:=len(previous.path)-1;i>=common;i-=1 {
+                    nested:=previous.path[i]
+                    bundle_close(g,&args,nested.bundle,nested.actions)
+                }
+                if first {
+                    bundle_close(g,&args,previous.bundle,previous.actions)
+                    append(&values,strings.clone(strings.to_string(args),context.temp_allocator))
+                    strings.builder_reset(&args)
+                }
             }
             if param.bundle!=nil {
-                if first && param.actions!=nil {
-                    fmt.sbprintf(&args,"%s.%s(%s.%s){{",param.bundle.pkg.alias,param.bundle.name,param.actions.pkg.alias,param.actions.name)
-                } else if first {fmt.sbprintf(&args,"%s.%s{{",param.bundle.pkg.alias,param.bundle.name)} else {strings.write_string(&args,",")}
+                if first {bundle_open(&args,param.bundle,param.actions)} else {strings.write_string(&args,",")}
+                for nested in param.path[common:] {
+                    fmt.sbprintf(&args,"%s=",nested.name)
+                    bundle_open(&args,nested.bundle,nested.actions)
+                }
                 fmt.sbprintf(&args,"%s=",param.name)
             }
+            repeated,shared:=binding[pi]
+            if shared {
+                fmt.sbprintf(&args,"read_%d",repeated)
+                if repeated!=pi {continue}
+                fmt.sbprintf(&binding_decls,"    read_%d:=",repeated)
+            }
+            value:=shared?&binding_decls:&args
             holder:="w"
             if param.type!=nil {
                 switch param.type.place {
@@ -2102,33 +2434,37 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
                 }
             }
             switch param.kind {
-            case .Table_Write: fmt.sbprintf(&args,"&%s.%s",holder,param.type.field)
-            case .Table_Read: fmt.sbprintf(&args,"%s.read(&%s.%s)",core_alias,holder,param.type.field)
+            case .Table_Write: fmt.sbprintf(value,"&%s.%s",holder,param.type.field)
+            case .Table_Read: fmt.sbprintf(value,"%s.read(&%s.%s)",core_alias,holder,param.type.field)
             case .Storage_Write:
-                if param.type.by_world {fmt.sbprintf(&args,"%s.by_world_get(&%s.%s,w.%s)",core_alias,holder,param.type.field,world_id.field)} else {fmt.sbprintf(&args,"&%s.%s",holder,param.type.field)}
+                if param.type.by_world {fmt.sbprintf(value,"%s.by_world_get(&%s.%s,w.%s)",core_alias,holder,param.type.field,world_id.field)} else {fmt.sbprintf(value,"&%s.%s",holder,param.type.field)}
             case .Storage_Ref:
-                if reads_log(param) {fmt.sbprintf(&args,"%s.ref(&view_%s)",core_alias,param.type.field)} else if param.type.by_world {fmt.sbprintf(&args,"%s.ref(%s.by_world_get(&%s.%s,w.%s))",core_alias,core_alias,holder,param.type.field,world_id.field)} else {fmt.sbprintf(&args,"%s.ref(&%s.%s)",core_alias,holder,param.type.field)}
+                if reads_log(param) {fmt.sbprintf(value,"%s.ref(&view_%s)",core_alias,param.type.field)} else if param.type.by_world {fmt.sbprintf(value,"%s.ref(%s.by_world_get(&%s.%s,w.%s))",core_alias,core_alias,holder,param.type.field,world_id.field)} else {fmt.sbprintf(value,"%s.ref(&%s.%s)",core_alias,holder,param.type.field)}
             case .Storage_Value:
-                if reads_log(param) {fmt.sbprintf(&args,"view_%s",param.type.field)} else {fmt.sbprintf(&args,"%s.%s",holder,param.type.field)}
-            case .Storage_Stamp: fmt.sbprintf(&args,"%s.Stamp(%s.%s){{&w.storage_revisions[%d]}}",core_alias,param.type.pkg.alias,param.type.name,storage_index[param.type])
-            case .Entities_Read: fmt.sbprintf(&args,"%s.ref(&w.entities)",core_alias)
-            case .Commands: fmt.sbprintf(&args,"%s.commands(w,app.info)",core_alias)
-            case .World_Ref: fmt.sbprintf(&args,"%s.world_ref(w,app.info)",core_alias)
-            case .App: fmt.sbprint(&args,"app")
+                if reads_log(param) {fmt.sbprintf(value,"view_%s",param.type.field)} else {fmt.sbprintf(value,"%s.%s",holder,param.type.field)}
+            case .Storage_Stamp: fmt.sbprintf(value,"%s.Stamp(%s.%s){{&w.storage_revisions[%d]}}",core_alias,param.type.pkg.alias,param.type.name,storage_index[param.type])
+            case .Entities_Read: fmt.sbprintf(value,"%s.ref(&w.entities)",core_alias)
+            case .Commands: fmt.sbprintf(value,"%s.commands(w,app.info)",core_alias)
+            case .World_Ref: fmt.sbprintf(value,"%s.world_ref(w,app.info)",core_alias)
+            case .World_Read: fmt.sbprintf(value,"%s.world_read(%s.world_ref(w,app.info))",core_alias,core_alias)
+            case .App: fmt.sbprint(value,"app")
             case .App_Part:
                 parts:=APP_PARTS
-                value:=parts[param.part].value
-                if strings.has_prefix(value,"host.") {fmt.sbprintf(&args,"%s.%s",host_alias,value[5:])} else {fmt.sbprint(&args,value)}
+                part_value:=parts[param.part].value
+                if strings.has_prefix(part_value,"host.") {fmt.sbprintf(value,"%s.%s",host_alias,part_value[5:])} else {fmt.sbprint(value,part_value)}
             case .Inbox:
                 m:=g.messages[param.message]
-                fmt.sbprintf(&args,"%s.inbox(&%s.%s,%d,%s.%s)",core_alias,holder,param.type.field,param.message,m.pkg.alias,m.name)
+                fmt.sbprintf(value,"%s.inbox(&%s.%s,%d,%s.%s)",core_alias,holder,param.type.field,param.message,m.pkg.alias,m.name)
             case .Records:
                 index,_:=slice.linear_search(g.records[:],param.record)
-                fmt.sbprintf(&args,"%s.Records(%s.%s){{%s.app_record_set(app,%d)}}",core_alias,param.record.pkg.alias,param.record.name,host_alias,index)
+                fmt.sbprintf(value,"%s.Records(%s.%s){{%s.app_record_set(app,%d)}}",core_alias,param.record.pkg.alias,param.record.name,host_alias,index)
             }
+            if shared {strings.write_string(value,"\n")}
         }
         if len(step.params)>0 {
-            bundle_close(g,&args,step.params[len(step.params)-1])
+            last:=step.params[len(step.params)-1]
+            #reverse for nested in last.path {bundle_close(g,&args,nested.bundle,nested.actions)}
+            bundle_close(g,&args,last.bundle,last.actions)
             append(&values,strings.to_string(args))
         }
         call:=fmt.tprintf("%s.%s(%s)",step.pkg.alias,step.name,strings.join(values[:],",",context.temp_allocator))
@@ -2180,35 +2516,63 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         fmt.sbprintf(w,"    w:=cast(^World)world\n    s:=cast(^Shared)shared\n    e:=cast(^Editor)editor\n    app:=cast(^%s.App)app_data\n    _,_,_=s,e,app\n",host_alias)
         // A client neither runs nor resimulates what the server or a game alone decides.
         if step.server {fmt.sbprintf(w,"    if w.%s.role==.Client {{return}}\n",g.by_key["mirai:core.Network"].field)}
-        // A storage of the World handed out to write is another from here on:
-        // the copy of what changed takes it again (core.world_copy_changed).
-        for param,pi in step.params {
-            if param.kind!=.Storage_Write || param.type.place!=.World || param.type.by_world || param.type.copy=="false" {continue}
-            again:=false
-            for other in step.params[:pi] {again||=other.kind==.Storage_Write && other.type==param.type}
-            if !again {fmt.sbprintf(w,"    w.storage_revisions[%d]+=1\n",storage_index[param.type])}
+        for t in step.required {
+            fmt.sbprintf(w,"    if %s.count(&%s.%s)==0 {{return}}\n",core_alias,
+                t.place==.Editor?"e":"w",t.field)
+        }
+        queue_checks:=strings.builder_make(context.temp_allocator)
+        storage_written:=make(map[^Type]bool,context.temp_allocator)
+        for param in step.params {
+            t:=param.type
+            if param.kind!=.Storage_Write || t.place!=.World || t.copy=="false" || t in storage_written {
+                continue
+            }
+            storage_written[t]=true
+            index:=storage_index[t]
+            if !t.queue_only {
+                fmt.sbprintf(w,"    w.storage_revisions[%d]+=1\n",index)
+                continue
+            }
+            for field,i in t.queues {
+                fmt.sbprintf(w,"    queued_%d_%d:=%s.queue_state(&w.%s.%s)\n",
+                    index,i,core_alias,t.field,field)
+                fmt.sbprintf(&queue_checks,"%squeued_%d_%d!=%s.queue_state(&w.%s.%s)",
+                    i==0?"    if ":" || ",index,i,core_alias,t.field,field)
+            }
+            fmt.sbprintf(&queue_checks," {{w.storage_revisions[%d]+=1}}\n",index)
         }
         // Of a log it reads, the step is handed what came since it last ran.
         ticks:=step.phases[FIXED_PHASE]
-        for param,pi in step.params {
-            at,reads:=cursor_of[[2]rawptr{step,param.type}]
-            if !reads || !reads_log(param) {continue}
-            again:=false
-            for other in step.params[:pi] {again||=other.type==param.type && reads_log(other)}
-            if again {continue}
-            fmt.sbprintf(w,"    view_%s:=w.%s\n",param.type.field,param.type.field)
-            for log,li in param.type.logs {
-                fmt.sbprintf(w,"    %s.events_read(&view_%s.%s,&w.%s[%d])\n",core_alias,param.type.field,log,ticks?"event_cursors.seen":"frame_cursors",at+li)
+        event_views:=make(map[^Type]bool,context.temp_allocator)
+        for param in step.params {
+            t:=param.type
+            at,reads:=cursor_of[[2]rawptr{step,t}]
+            if !reads || !reads_log(param) || t in event_views {continue}
+            if ticks && len(event_views)==0 {fmt.sbprint(w,"    cursor_changed:=false\n")}
+            event_views[t]=true
+            fmt.sbprintf(w,"    view_%s:=w.%s\n",t.field,t.field)
+            for log,li in t.logs {
+                fmt.sbprintf(w,"    %s%s.events_read(&view_%s.%s,&w.%s[%d])%s\n",
+                    ticks?"cursor_changed=":"",core_alias,t.field,log,
+                    ticks?"event_cursors.seen":"frame_cursors",at+li,ticks?" || cursor_changed":"")
             }
-            if ticks {fmt.sbprintf(w,"    w.storage_revisions[%d]+=1\n",len(storage_index))}
         }
+        if ticks && len(event_views)>0 {
+            fmt.sbprintf(w,"    if cursor_changed {{w.storage_revisions[%d]+=1}}\n",len(storage_index))
+        }
+        strings.write_string(w,strings.to_string(binding_decls))
         fmt.sbprint(w,mind_decls)
         fmt.sbprintf(w,"    started:=gen_time.tick_now()\n    zone:=%s.profile_step_begin(app,%d)\n",host_alias,si)
         if strings.builder_len(checks)>0 {
-            fmt.sbprintf(w,"    when %s.CHECK_WRITES {{\n        checks:=[?]%s.Write_Check{{%s}}\n        %s\n        %s.write_check_end(checks[:],\"%s\")\n    }} else {{%s}}\n",core_alias,core_alias,strings.to_string(checks),call,core_alias,step.name,call)
-        } else {
-            fmt.sbprintf(w,"    %s\n",call)
+            fmt.sbprintf(w,"    when %s.CHECK_WRITES {{checks:=[?]%s.Write_Check{{%s}}}}\n",
+                core_alias,core_alias,strings.to_string(checks))
         }
+        fmt.sbprintf(w,"    %s\n",call)
+        if strings.builder_len(checks)>0 {
+            fmt.sbprintf(w,"    when %s.CHECK_WRITES {{%s.write_check_end(checks[:],%q)}}\n",
+                core_alias,core_alias,step.name)
+        }
+        strings.write_string(w,strings.to_string(queue_checks))
         // What it adds and removes applies to the tables it could write;
         // to all of them when it can create or destroy entities, or
         // change what is disabled.
@@ -2383,7 +2747,6 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         game:=strings.has_prefix(r.pkg.path,"project:") && !strings.has_prefix(r.pkg.path,"project:plugins/")
         fmt.sbprintf(w,"    records[%d]={{\"%s\",\"%s\",typeid_of(%s.%s),type_info_of(%s.%s),typeid_of(%s.Record(%s.%s)),%s,%v}}\n",ri,r.name,r.pkg.name,r.pkg.alias,r.name,r.pkg.alias,r.name,core_alias,r.pkg.alias,r.name,has_default?fmt.tprintf("record_default_%s",tag):"nil",game)
     }
-    codes:=record_codes(g)
     fmt.sbprintf(w,"    record_codes:=make([]%s.Record_Code,%d)\n",core_alias,len(codes))
     for c,ci in codes {fmt.sbprintf(w,"    record_codes[%d]={{%q,%q,type_info_of(%s.%s)}}\n",ci,c.name,c.folder,c.pkg.alias,c.name)}
     fmt.sbprintf(w,"    steps:=make([]%s.Step_Info,%d)\n",core_alias,len(kept))
@@ -3004,6 +3367,7 @@ param_type :: proc(g:^Generator,param:Param,core_alias:string) -> string {
     case .Entities_Read: return fmt.tprintf("%s.Ref(%s.Entities)",core_alias,core_alias)
     case .Commands: return fmt.tprintf("%s.Commands",core_alias)
     case .World_Ref: return fmt.tprintf("%s.World_Ref",core_alias)
+    case .World_Read: return fmt.tprintf("%s.World_Read",core_alias)
     case .Records: return fmt.tprintf("%s.Records(%s.%s)",core_alias,param.record.pkg.alias,param.record.name)
     case .Inbox: return fmt.tprintf("%s.Inbox(%s.%s)",core_alias,g.messages[param.message].pkg.alias,g.messages[param.message].name)
     }

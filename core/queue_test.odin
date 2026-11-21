@@ -33,6 +33,14 @@ a_request_queue_takes_what_comes_before_its_owner_reserves_room :: proc(t:^testi
     offer(&q,7)
     testing.expect_value(t,len(q.items),1)
     testing.expect_value(t,q.dropped,0)
+    before:=queue_state(&q)
+    _=take(&q)
+    offer(&q,8)
+    testing.expect(t,queue_state(&q)!=before && len(q.items)==1)
+    _=take(&q)
+    before=queue_state(&q)
+    _=take(&q)
+    testing.expect_value(t,queue_state(&q),before)
 }
 
 @(private) @(test_world) Later_World :: struct {using world:Test_World,time:Time,requests:Clock_Requests}

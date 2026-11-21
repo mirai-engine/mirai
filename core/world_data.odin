@@ -24,7 +24,7 @@ ids_of :: #force_inline proc "contextless" (info:^World_Info,world:rawptr,id:int
 
 @(private="file")
 revisions_of :: #force_inline proc "contextless" (info:^World_Info,world:rawptr) -> []u64 {
-    return world_revisions({world,info,.World})
+    return world_revisions(world_ref(world,info))
 }
 
 @(private="file")
@@ -339,10 +339,13 @@ world_memory :: proc(info:^World_Info,data:rawptr) -> (bytes:int) {
 
 @(private="file")
 table_bytes :: proc(t:^Raw_Table,size:int) -> (bytes:int) {
-    bytes=(t.values.cap+t.added.cap+t.edited.cap)*size
+    bytes=(t.values.cap+t.added.cap)*size
     bytes+=cap(t.entities)*size_of(Entity)+cap(t.stamps)*size_of(u64)+cap(t.page_stamps)*size_of(u64)
-    bytes+=cap(t.off)*size_of(bool)+cap(t.turns)*size_of(u64)+cap(t.pending)*size_of(Pending)
-    bytes+=cap(t.edits)*size_of(Edit)+cap(t.gone.items)*size_of(Entity)+cap(t.owners)*size_of(Row_Owner)
+    bytes+=t.off_room*size_of(bool)+t.turn_room*size_of(u64)+cap(t.pending)*size_of(Pending)
+    bytes+=cap(t.gone.items)*size_of(Entity)+cap(t.owners)*size_of(Row_Owner)
+    if b:=t.edits;b!=nil {
+        bytes+=size_of(Edit_Buffer)+cap(b.items)*size_of(Edit)+cap(b.index)*size_of(i32)+b.values.cap*size
+    }
     bytes+=len(t.locks)*size_of(Lock)+cap(t.rows)*size_of([]i32)
     for page in t.rows {bytes+=len(page)*size_of(i32)}
     when CHECK_WRITES {bytes+=cap(t.settled.values)}

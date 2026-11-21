@@ -65,15 +65,16 @@ another into its place, with its stamp, without mixing the two sections.
   `^Table(T,.Read)`, the same table cast by the generated call: the access is part of the type, so
   a write through a read is a compile error, and every read procedure takes `^Table(T,$A)`.
 - **Reading stamps nothing.** `get` (value and whether it was found) and `at` (the value of a row)
-  answer on either access, as `row_of` and `has` do. None of them sees a disabled row. `join` of
-  two or three tables and `each_joined` walk the rows of the first whose entity has the others on
-  and give the entity and the values; the join's `row` is the row of the first, for `edit_at`.
+  answer on either access, as `row_of` and `has` do. `view` and `view_at` borrow enabled rows
+  as read-only references until the table settles. `join` with `each_joined_ref` borrows from
+  two or three tables, following the first table's order. `each_joined` gives copies.
 - **Writing is requesting the row.** `edit` and `edit_at`, and `free` on a `shared` table, give
   `^T`, stamp the row with a new `version` at once and keep a copy of the bytes it had at the first
   ask of the function. The settle after the function gives back its stamp to a row whose bytes did
   not change, and the version too when no row changed and nothing else wrote: what a function
-  computes every tick and seldom changes is asked for and written as it is. `writable` stamps every
-  row for good.
+  computes every tick and seldom changes is asked for and written as it is. `edit_dirty` and
+  `edit_dirty_at` stamp immediately without copying or comparing the previous value, and
+  `writable` stamps all enabled rows.
 - **Stamps come in pages.** `page_stamps` keeps, for each `STAMP_PAGE` rows, the newest stamp
   written in them: a reader of what changed skips the pages written before it looked.
 - **Structural changes wait.** `add` (adds or replaces), `remove`, `disable` and `enable` wait in
@@ -149,7 +150,8 @@ the entities of a table (a voice, what the renderer received, a body).
 - `entity_map_left` takes out, in a `for`, the value of each entity that left the table according
   to its `changes`, so the caller releases what it stores (`entity_map_prune`, if it stores
   nothing): a mirror releases what left without being walked.
-- `value_copy` copies the map, so a `World` storage that contains it is copied with the world.
+- The sparse index packs its directory and allocated pages into one flat array, so a copied
+  map owns its index. Physics also copies that array when it copies stamped links.
 
 ## Creating with components of other libraries
 
@@ -330,7 +332,7 @@ the feet of a rig) asks through a single contract, instead of a probe storage pe
 library that simulates sets `World_Queries.open` once (physics); `world_query` gives the
 `World_Query` of a world or, if nobody provides one, one that touches nothing. `support` says where
 the touched support is now, to follow what moves underneath. A query of another world is opened
-with its `World_Ref`.
+with its `World_Read` or `World_Ref`.
 
 ## Ground
 
@@ -407,9 +409,10 @@ Downward, over the `Hierarchy` and without allocating (`first_child`, `next_sibl
   `for at:=root; at!=core.NONE; at=core.subtree_next(h, root, at) {...}`.
 - What goes up through `Parent` passes through `HIERARCHY_DEPTH` parents at most: a chain that loops
   back ends there.
-- `world_of` composes the chain without waiting for the propagation, for a function that moved
-  something and needs it now. A world pose is written with `world_set` (without touching the scale)
-  or converted with `local_under`.
+- `world_of` composes the current local transforms. `world_transform_or_compute` uses the
+  propagated pose when it exists and composes the chain for an entity that has yet to be propagated.
+  A world pose is written with `world_set` without touching the scale, or converted with
+  `local_under`.
 
 ### Propagation
 
@@ -422,6 +425,8 @@ hierarchy is not a spatial structure: culling, physics and queries use their own
   `gone` of a table) and the children of one that lost its `Transform`. It composes
   everything only when it had not seen the rows or the tree there are (a World copied over, more
   links moved than the log holds), and only stamps a `World_Transform` whose value changed.
+  Each world keeps its propagation scratch through copy and swap, and rebuilds it from its rows
+  as needed after a replacement.
 - A jump (`Jumps`) carries by `by` also the `previous` of the entity and of what hangs from it: who
   interpolates does so on the arrival side and never shows the path. The owner of the transform
   requests it on the tick where it applies it; physics, on every teleport.
@@ -434,6 +439,8 @@ saving, network, the binding of an interface by name, editor) works with
 requests changes does not receive it: it uses `core.Commands` and the requests of the owning
 library.
 
+- A step that only reads a world receives `World_Read`. Its reflected storage reads leave copy
+  revisions alone, and the generated call does not settle the world for that parameter.
 - `world_settle` applies what is pending outside the loop, only on a `World`: it is `core.settle`,
   [the settle the loop runs](generator.md#generated-functions), without the tables of the editor.
 - `world_run` runs outside the loop the functions of some libraries in a phase, with their order,

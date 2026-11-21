@@ -1,5 +1,7 @@
 package core
 
+import "base:runtime"
+
 import "core:log"
 import "core:slice"
 import mm "mirai:std/math"
@@ -121,13 +123,18 @@ hierarchy_settle :: proc(h:^Hierarchy,parents:^Table(Parent,$A),es:^Entities) ->
     // A link that went may let one left out for a cycle in.
     for moved && len(h.cut)>0 {
         tried:=len(h.cut)
-        for _ in 0..<tried {
-            e:=h.cut[0]
-            ordered_remove(&h.cut,0)
+        kept:=0
+        for e in h.cut {
             if !alive(es,e) || !has(parents,e) {continue}
-            if hierarchy_link(h,parents,es,e) {log_push(&h.moved,e,HIERARCHY_MOVED)} else if _,error:=append(&h.cut,e);error!=nil {h.seen={}}
+            if hierarchy_link(h,parents,es,e) {
+                log_push(&h.moved,e,HIERARCHY_MOVED)
+                continue
+            }
+            h.cut[kept]=e
+            kept+=1
         }
-        if len(h.cut)==tried {break}
+        (cast(^runtime.Raw_Dynamic_Array)&h.cut).len=kept
+        if kept==tried {break}
     }
     if moved {h.version+=1}
     return true

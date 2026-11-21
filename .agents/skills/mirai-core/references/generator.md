@@ -256,7 +256,8 @@ Each parameter is bound by its type; the order in the signature is free.
   `core.destroy`), and gives them or takes from them rows of any component, also of tables that
   the function does not write ([commands](core.md#creating-with-components-of-other-libraries)).
 - `core.World_Ref`: the whole world by reflection, for code that does not know the types (scenes,
-  saving, network, the binding of an interface by name, the editor).
+  saving, network, the binding of an interface by name, the editor). `core.World_Read` gives
+  read-only reflection and collision queries without settling the whole world.
 - A part of the application, by the type that names it: `^host.Assets` (nil without assets),
   `^render.Renderer` (nil without a GPU; a plugin names it through `engine/render`),
   `^host.Frame_Extras` (what a function adds to the frame), `^audio.Mixer` (nil without audio; a
@@ -286,13 +287,14 @@ Placer :: struct {
 doors_open :: proc(doors:^core.Table(Door,.Read),placer:core.Placer,time:core.Time) {...}
 ```
 
-- The generator expands it field by field: each field is bound as that loose parameter, and the call
-  builds the struct. For the order, the writer rules, the settle and `CHECK_WRITES`, the function
-  receives each field.
+- The generator expands nested groups to their fields for ordering, writer checks and settling.
+  The call reconstructs the nested values and binds identical read-only fields once.
+- A step can name component tables it receives with `require="Door Lock"`. If any is empty,
+  the call returns before profiling, advancing event cursors or marking storage revisions.
 - A write field gives the right to write that data under the same rules as a loose parameter: a
   table that is not `shared` is still written by one library.
 - What a function writes reaches it once: also receiving it loose, in another field or in another
-  `@(params)` is an error; what it only reads, or a `queue` it pushes to, may arrive twice.
+  `@(params)` is an error. Identical read-only bindings may arrive more than once.
 - It is declared in any package that the generator reads and is used by the functions that import
   it, also those of a plugin compiled as a library.
 - One with a type parameter, `struct($E:typeid)`, is received for an enum `@(actions)`,
@@ -472,15 +474,16 @@ it, which [orders it inside its stage](#order), and each form has its reader:
   `Parent` settles the whole World.
 - `^core.Table(C,.Read)`, `core.Ref(S)` and `S`: read-only access, which settles nothing and moves
   no revision.
-- `^S`: the function's library owns the storage (or pushes to a `queue`, or it is `shared`), and
-  the revision of a `World` storage moves before it runs, so the copy a rollback keeps takes it
-  again ([reflection](core.md#world-reflection)).
+- `^S`: the function's library owns the storage, pushes to a `queue`, or shares it. Write access
+  moves the storage revision so rollback takes the change. A storage made only of queues moves
+  its revision when a queue changes length or updates its dropped or refused counts.
 - `core.Commands` and `core.World_Ref`: the World settles after the function;
   `core.Ref(core.Entities)` asks for no settle.
 - A storage with `core.Events` fields received to read: the call hands the function a copy whose
   logs hold what came since it last ran, by a cursor per function and log that the World keeps
   (copied with it for a function of `fixed`, which a rollback runs again; with the frame for the
-  others). `World_Info.events_age` drops what every reader had a frame and a tick to read.
+  others). The cursor storage moves its revision on actual cursor movement.
+  `World_Info.events_age` drops what every reader had a frame and a tick to read.
 - `^host.App` and its parts, `core.Records(T)` and the storages of the application or of the
   editor: what the rules of the loops and phases check ([rules](#rules-the-generator-checks)).
 
