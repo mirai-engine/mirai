@@ -5,6 +5,7 @@ import "core:hash"
 import "core:log"
 import "core:os"
 import "core:path/filepath"
+import "core:slice"
 import "core:strings"
 import "core:time"
 import "core:time/datetime"
@@ -55,6 +56,7 @@ PROJECTS_TILES :: [?][2]ui.Color{
 PROJECTS_PLUGINS :: 64
 PROJECTS_LINKS :: 8
 PROJECTS_PLUGINS_WIDTH :: 268
+PROJECTS_ALL_CAPACITY :: 128
 
 // A plugin of the engine or of the template a new project can get: none of
 // the automatic ones, which come with their dependencies.
@@ -67,11 +69,13 @@ Projects_Plugin :: struct {
 }
 
 Projects_Row :: struct {
+    path:[project.RECENT_PATH]u8,
     name:[64]u8,
     branch:[64]u8,  // checked out in its repository; empty without one or detached
     repository:bool,
     missing:bool,   // the folder or its project.mirai is gone
     opened:[32]u8,  // when an editor last opened it, as the list says it
+    recent_index:int, // index in p.recent.projects, or -1 when discovered on disk
     thumbnail:u64,  // the key of the image its tile shows in the atlas of previews; 0: its letter
     thumbnail_slot:int,
 }
@@ -80,8 +84,10 @@ Projects_Row :: struct {
 Projects :: struct {
     shown:bool,     // the screen covers the editor: always in a launcher
     launcher:bool,  // this editor only chooses a project
+    show_all:bool,  // false: recent projects; true: all projects discovered on this machine
     recent:project.Recent_Projects,
-    rows:[project.RECENT_CAPACITY]Projects_Row, // of recent, read when the screen opens
+    rows:[PROJECTS_ALL_CAPACITY]Projects_Row, // shown list, read when the screen opens or switches view
+    row_count:int,
     selected:int,   // the row chosen to open, from 1; 0: none
     engine_branch:[64]u8,           // checked out in the repository of the engine
     home:[project.RECENT_PATH]u8,   // of the user: the paths under it are shown from ~
@@ -148,36 +154,97 @@ projects_hide :: proc(s:^Session) {
 }
 
 // What the screen says of each project and the image of its tile: read
-// once, when it opens. No row stays selected.
+// once, when it opens or switches between Recent and All projects. No row stays selected.
 @(private)
 projects_rows_read :: proc(s:^Session) {
     p:=s.projects
     p.selected=0
+    p.row_count=0
     region,has_region:=timezone.region_load("local",context.temp_allocator)
     now:=time.now()
     images:=s.app!=nil && s.thumbnails!=nil && s.app.assets!=nil && s.app.assets.renderer!=nil
     level:=Thumbnail_Level.Large if images && f32(PROJECTS_TILE)*max(s.app.density,1)>THUMBNAIL_SIZE else .Small
     sides:=THUMBNAIL_SIDES
-    for &row,i in p.rows {
-        row={}
-        if i>=project.recent_count(&p.recent) {continue}
+    tz:=region if has_region else nil
+    recent_total:=project.recent_count(&p.recent)
+    for i in 0..<recent_total {
+        if p.row_count>=PROJECTS_ALL_CAPACITY {break}
         entry:=&p.recent.projects[i]
         folder:=base.text_get(entry.path[:])
-        name:=folder[strings.last_index_byte(folder,'/')+1:]
-        manifest,error:=project.manifest_read(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator))
-        row.missing=error.code!=.None && !os.is_file(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator))
-        if error.code==.None {
-            if declared:=base.text_get(manifest.name[:]);declared!="" {name=declared}
-            if images && projects_thumbnail_read(folder,&manifest,sides[level],&s.thumbnails.file,&s.thumbnails.image) {
-                row.thumbnail=thumbnail_key(transmute([]u8)fmt.tprintf("project %s",folder))
-                row.thumbnail_slot=thumbnail_image_put(s,row.thumbnail,level,s.thumbnails.image[:])
-                if row.thumbnail_slot<0 {row.thumbnail=0}
-            }
-        }
-        base.text_set(row.name[:],name)
-        row.repository,row.branch=projects_branch(folder)
-        base.text_set(row.opened[:],projects_when(entry.opened,now,region if has_region else nil))
+        row:=projects_row_fill(s,folder,entry.opened,i,now,tz,images,level,sides)
+        if p.show_all && row.missing {continue}
+        p.rows[p.row_count]=row
+        p.row_count+=1
     }
+    if !p.show_all {return}
+    recent_kept:=p.row_count
+    roots:=make([dynamic]string,context.temp_allocator)
+    add_root :: proc(roots:^[dynamic]string,dir:string) {
+        if dir=="" || strings.contains(dir,"/.mirai/") || !os.is_dir(dir) {return}
+        for existing in roots^ {if project.path_same(existing,dir) {return}}
+        append(roots,dir)
+    }
+    for i in 0..<recent_total {
+        folder:=base.text_get(p.recent.projects[i].path[:])
+        if slash:=strings.last_index_byte(folder,'/');slash>0 {add_root(&roots,folder[:slash])}
+    }
+    if home:=base.text_get(p.home[:]);home!="" {
+        add_root(&roots,project.path(home,"Mirai",allocator=context.temp_allocator))
+    }
+    if s.engine_root!="" {
+        add_root(&roots,s.engine_root)
+        if slash:=strings.last_index_byte(s.engine_root,'/');slash>0 {
+            add_root(&roots,project.path(s.engine_root[:slash],"mirai-projects",allocator=context.temp_allocator))
+        }
+    }
+    for dir in roots {
+        entries,err:=os.read_all_directory_by_path(dir,context.temp_allocator)
+        if err!=nil {continue}
+        for e in entries {
+            if p.row_count>=PROJECTS_ALL_CAPACITY {break}
+            if e.type!=.Directory || len(e.name)==0 || e.name[0]=='.' {continue}
+            folder:=project.path_absolute(project.path(dir,e.name,allocator=context.temp_allocator),context.temp_allocator)
+            if !os.is_file(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator)) {continue}
+            if projects_rows_has(p,folder) {continue}
+            p.rows[p.row_count]=projects_row_fill(s,folder,0,-1,now,tz,images,level,sides)
+            p.row_count+=1
+        }
+    }
+    if p.row_count>recent_kept+1 {
+        slice.sort_by(p.rows[recent_kept:p.row_count],proc(a,b:Projects_Row) -> bool {
+            a,b:=a,b
+            return strings.to_lower(base.text_get(a.name[:]),context.temp_allocator)<strings.to_lower(base.text_get(b.name[:]),context.temp_allocator)
+        })
+    }
+}
+
+@(private="file")
+projects_rows_has :: proc(p:^Projects,folder:string) -> bool {
+    for i in 0..<p.row_count {
+        if project.path_same(base.text_get(p.rows[i].path[:]),folder) {return true}
+    }
+    return false
+}
+
+@(private="file")
+projects_row_fill :: proc(s:^Session,folder:string,opened:i64,recent_index:int,now:time.Time,region:^datetime.TZ_Region,images:bool,level:Thumbnail_Level,sides:[Thumbnail_Level]int) -> (row:Projects_Row) {
+    base.text_set(row.path[:],folder)
+    row.recent_index=recent_index
+    name:=folder[strings.last_index_byte(folder,'/')+1:]
+    manifest,error:=project.manifest_read(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator))
+    row.missing=error.code!=.None && !os.is_file(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator))
+    if error.code==.None {
+        if declared:=base.text_get(manifest.name[:]);declared!="" {name=declared}
+        if images && projects_thumbnail_read(folder,&manifest,sides[level],&s.thumbnails.file,&s.thumbnails.image) {
+            row.thumbnail=thumbnail_key(transmute([]u8)fmt.tprintf("project %s",folder))
+            row.thumbnail_slot=thumbnail_image_put(s,row.thumbnail,level,s.thumbnails.image[:])
+            if row.thumbnail_slot<0 {row.thumbnail=0}
+        }
+    }
+    base.text_set(row.name[:],name)
+    row.repository,row.branch=projects_branch(folder)
+    base.text_set(row.opened[:],projects_when(opened,now,region))
+    return
 }
 
 // The image of side pixels the tile of the project at folder shows, into
@@ -287,11 +354,18 @@ projects_when :: proc(opened:i64,now:time.Time,region:^datetime.TZ_Region) -> st
 }
 
 // A project the editor opened goes first in the list of the machine.
+// Temporary session copies under .mirai/tmp/ are skipped.
 projects_remember :: proc(s:^Session) {
+    if projects_is_temporary(s.project_root) {return}
     recent:project.Recent_Projects
     if project.recent_read(s.engine_root,&recent).code!=.None {return}
     project.recent_add(&recent,s.project_root,time.to_unix_nanoseconds(time.now()))
     if error:=project.recent_write(s.engine_root,&recent);error.code!=.None {log.warnf("%s could not be written",project.recent_file(s.engine_root,context.temp_allocator))}
+}
+
+@(private)
+projects_is_temporary :: proc(folder:string) -> bool {
+    return strings.contains(folder,"/.mirai/tmp/") || strings.contains(folder,"\\.mirai\\tmp\\")
 }
 
 @(private)
@@ -655,8 +729,8 @@ projects_body :: proc(s:^Session,popup:bool) {
 projects_opening_row :: proc(p:^Projects) -> int {
     if !projects_opening(p) {return -1}
     opening:=base.text_get(p.opening[:])
-    for i in 0..<project.recent_count(&p.recent) {
-        if project.path_same(base.text_get(p.recent.projects[i].path[:]),opening) {return i}
+    for i in 0..<p.row_count {
+        if project.path_same(base.text_get(p.rows[i].path[:]),opening) {return i}
     }
     return -1
 }
@@ -715,11 +789,20 @@ projects_content :: proc(s:^Session,popup:bool) {
     g:=s.gui
     ctx:=g.ctx
     busy:=projects_opening(p) || p.next
-    count:=project.recent_count(&p.recent)
+    count:=p.row_count
     typing:=ctx.edit.id!=0
     open:=false
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(32),gap=10,align_y=.Center}) {
-        ui.label(ctx,"Recent projects",ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(32),gap=8,align_y=.Center}) {
+        if ui.button(ctx,ui.id(ctx,"projects_tab_recent"),{label="Recent",variant="toggle",active=!p.show_all,height=30,disabled=busy}).clicked && p.show_all {
+            p.show_all=false
+            p.scroll=0
+            projects_rows_read(s)
+        }
+        if ui.button(ctx,ui.id(ctx,"projects_tab_all"),{label="All projects",variant="toggle",active=p.show_all,height=30,disabled=busy}).clicked && !p.show_all {
+            p.show_all=true
+            p.scroll=0
+            projects_rows_read(s)
+        }
         if count>0 {
             if ui.box(ctx,{width=ui.FIT,height=ui.fixed(20),padding={7,0,7,0},align_y=.Center,fill=ui.tone(ctx,"card"),radius=10}) {
                 ui.label(ctx,fmt.tprintf("%d",count),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
@@ -728,7 +811,7 @@ projects_content :: proc(s:^Session,popup:bool) {
         ui.spacer(ctx)
         search:=ui.id(ctx,"projects_search")
         named_add(g,search)
-        if ui.box(ctx,{width=ui.fixed(220),height=ui.fixed(30)}) {
+        if ui.box(ctx,{width=ui.fixed(200),height=ui.fixed(30)}) {
             ui.text_field(ctx,search,p.search[:],&p.search_length,{placeholder="Search",icon=ui.icon_user(u8(User_Icon.Search)),live=true,height=30,size=ui.metric(ctx,"font")})
         }
         if ui.button(ctx,ui.id(ctx,"projects_open"),{label="Open",variant="accent",width=72,height=30,center=true,disabled=busy || projects_chosen(p)<0}).clicked {open=true}
@@ -741,10 +824,10 @@ projects_content :: proc(s:^Session,popup:bool) {
         shown:=false // the row selected is in the list the search leaves
         for i in 0..<count {
             row:=&p.rows[i]
-            folder:=base.text_get(p.recent.projects[i].path[:])
+            folder:=base.text_get(row.path[:])
             if needle!="" && !strings.contains(strings.to_lower(base.text_get(row.name[:]),context.temp_allocator),needle) && !strings.contains(strings.to_lower(folder,context.temp_allocator),needle) {continue}
             remove,double:=projects_row(s,i,row,folder,busy,opening==i)
-            if remove {removed=i}
+            if remove && row.recent_index>=0 {removed=row.recent_index}
             if double {open=true}
             shown|=p.selected==i+1
         }
@@ -755,14 +838,15 @@ projects_content :: proc(s:^Session,popup:bool) {
             projects_rows_read(s)
         }
         if count==0 {
+            empty:="No projects found on this machine" if p.show_all else "No project was opened on this machine yet"
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(PROJECTS_ROW),align_x=.Center,align_y=.Center}) {
-                ui.label(ctx,"No project was opened on this machine yet",ui.metric(ctx,"font"),ui.tone(ctx,"text_muted"))
+                ui.label(ctx,empty,ui.metric(ctx,"font"),ui.tone(ctx,"text_muted"))
             }
         }
     }
     if !typing && ctx.popup.count==0 && .Enter in ctx.input.keys_pressed {open=true}
     if chosen:=projects_chosen(p);open && !busy && chosen>=0 {
-        if message:=projects_open(s,base.text_get(p.recent.projects[chosen].path[:]));message!="" {notify(s,message)}
+        if message:=projects_open(s,base.text_get(p.rows[chosen].path[:]));message!="" {notify(s,message)}
     }
     if p.error_length>0 {ui.label(ctx,string(p.error[:p.error_length]),ui.metric(ctx,"font_small"),ui.tone(ctx,"danger_soft"),0,fade=true)}
     if p.template_count==0 {return}
@@ -780,7 +864,7 @@ projects_content :: proc(s:^Session,popup:bool) {
 @(private)
 projects_chosen :: proc(p:^Projects) -> int {
     i:=p.selected-1
-    if i<0 || i>=project.recent_count(&p.recent) || p.rows[i].missing {return -1}
+    if i<0 || i>=p.row_count || p.rows[i].missing {return -1}
     return i
 }
 
