@@ -325,11 +325,13 @@ record_holds :: proc(s:^Session,w:core.World_Ref,out:^[dynamic]Record_Manifest_I
     if seats==nil {return}
     tick:u64
     if t:=core.world_storage_of(w,core.Time);t!=nil {tick=t.tick}
-    requests:=core.world_storage_of(w,input.Hold_Requests)
+    requests:=core.ref(core.world_storage_of(w,input.Hold_Requests))
+    states:=core.ref(core.world_storage_of(w,input.Seat_States))
     for row in 0..<core.count(seats) {
         seat:=core.at(seats,row)
         if !input.seat_local(seat) {continue}
-        holds,count:=input.holds_at(seat,core.entity_at(seats,row),requests,tick)
+        entity:=core.entity_at(seats,row)
+        holds,count:=input.holds_at(input.seat_runtime(states,entity),entity,requests,tick)
         for h in holds[:count] {
             name,_:=core.name_of(s.info,input.Action,i64(h.action))
             append(out,Record_Manifest_Input{slot=int(seat.slot),action=name,value=h.value,until=h.until})

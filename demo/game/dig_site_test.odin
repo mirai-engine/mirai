@@ -27,7 +27,7 @@ Dig_World :: struct {
 
 @(private="file")
 dig_sight :: proc(w:^Dig_World) -> cam.Sight {
-    return {core.ref(&w.shown),core.read(&w.seats),core.read(&w.cameras),core.ref(&w.hierarchy),core.read(&w.worlds)}
+    return {core.ref(&w.shown),core.read(&w.seats),{},core.read(&w.cameras),core.ref(&w.hierarchy),core.read(&w.worlds)}
 }
 
 // What the players take is run state: a component on a core.Keep root, which

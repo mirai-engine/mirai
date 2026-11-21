@@ -49,16 +49,17 @@ correction_fixed :: proc(world,shared,editor,application:rawptr) {
     if sh.session!=nil {
         net_tick_head(ref,app,sh.session,&w.remote,nil,nil,sh.session.problems)
         core.settle(sh.info,w,nil)
-        net_input_take(sh.session,&w.seats,w.time)
+        inp.input_seat_index(core.ref(&w.entities),core.read(&w.seats),&w.seat_state,nil)
+        net_input_take(sh.session,core.read(&w.seats),&w.seat_runtime,w.time)
     }
     net_test_feed(w)
-    if sh.session!=nil {net_input_delay(sh.session,&w.seats,core.ref(&w.bindings),w.time,sh.session.problems)}
+    if sh.session!=nil {net_input_delay(sh.session,core.read(&w.seats),&w.seat_runtime,core.ref(&w.bindings),w.time,sh.session.problems)}
     push:f32
     if sh.server {
         sent,_:=remote_input(core.ref(&w.remote),sh.connection)
         push=net_test_axis(sent,NET_TEST_PUSH)
     } else {
-        push=inp.seat_action(core.read(&w.seats),inp.local_seat(&w.seats,0),NET_TEST_PUSH).value
+        push=inp.seat_action(core.ref(&w.seat_runtime),inp.local_seat(&w.seats,0),NET_TEST_PUSH).value
     }
     if push!=0 {phys.apply_force(&w.requests,sh.player,{push*CORRECTION_PUSH,0,0})}
     net_test_physics(w,sh,app)

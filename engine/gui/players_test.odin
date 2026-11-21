@@ -63,7 +63,7 @@ players_frame :: proc(f:^Players_Fixture) {
     w:=&f.w
     world:=test_world_ref(w)
     frame_begin(world,core.read(&w.screens),core.read(&w.widgets),core.read(&w.worlds),core.read(&w.hidden),core.read(&w.parents),core.read(&w.meshes),
-        UI_SETTINGS_DEFAULT,UI_PREFERENCES_DEFAULT,{},core.ref(&f.state),core.read(&w.seats),core.read(&w.moves),core.ref(&f.bindings),core.ref(&f.actions),
+        UI_SETTINGS_DEFAULT,UI_PREFERENCES_DEFAULT,{},core.ref(&f.state),{},core.read(&w.seats),core.read(&w.moves),core.ref(&f.bindings),core.ref(&f.actions),
         {},core.read(&w.cameras),core.read(&w.exposures),core.read(&w.view_volumes),core.read(&w.volumes),{},{},&f.requests,&f.effects,&f.sounds,&f.gui,&f.app,{},&f.problems,false)
     widgets_build(world,&f.gui,&f.app,&f.problems)
 }
@@ -149,13 +149,15 @@ a_screen_on_the_body_of_a_player_shows_in_the_part_of_that_player :: proc(t:^tes
     core.add(&w.huds,scene,Player_Test_Hud{coins=90})
     test_world_settle(w)
 
-    owner :: proc(w:^Players_Test_World,e:core.Entity) -> (slot:int,owned,local:bool) {
-        return screen_owner(core.read(&w.seats),core.read(&w.moves),core.read(&w.parents),e)
+    inp.input_seat_index(core.ref(&w.entities),core.read(&w.seats),&f.state,&f.problems)
+    defer core.value_free(&f.state,type_info_of(inp.Seats))
+    owner :: proc(w:^Players_Test_World,state:core.Ref(inp.Seats),e:core.Entity) -> (slot:int,owned,local:bool) {
+        return screen_owner(core.read(&w.seats),state,core.read(&w.moves),core.read(&w.parents),e)
     }
     Case :: struct {e:core.Entity,slot:int,owned,local:bool}
     cases:=[]Case{{bodies[0],0,true,true},{bodies[1],1,true,true},{seats[1],1,true,true},{empty,0,true,false},{remote,1,true,false},{scene,0,false,false},{core.NONE,0,false,false},{core.entity_make(900,3),0,false,false}}
     for c in cases {
-        slot,owned,local:=owner(w,c.e)
+        slot,owned,local:=owner(w,core.ref(&f.state),c.e)
         testing.expectf(t,slot==c.slot && owned==c.owned && local==c.local,"entity %v: slot %d owned %v local %v",c.e,slot,owned,local)
     }
 

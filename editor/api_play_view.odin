@@ -129,8 +129,8 @@ play_view :: proc(w:core.World_Ref,targets:[]Play_View_Target,allocator:=context
             }
             player:=core.NONE
             state,seats:=core.world_storage_of(w,input.Seats),core.world_table_of(w,input.Seat)
-            if state!=nil && seats!=nil {player=input.focused(state,seats)}
-            target:=ecamera.follow_target(camera,follow.target,core.world_table_of(w,core.Parent),seats,player)
+            if state!=nil && seats!=nil {player=input.focused(core.ref(state),seats)}
+            target:=ecamera.follow_target(camera,follow.target,core.world_table_of(w,core.Parent),seats,core.ref(core.world_storage_of(w,input.Seats)),player)
             if core.alive(entities,target) {
                 v.follow.entity,v.follow.name=handle_text(target,allocator),entity_name(w,target)
                 v.follow.distance=linalg.length(entity_world(w,target).position-seen.position)

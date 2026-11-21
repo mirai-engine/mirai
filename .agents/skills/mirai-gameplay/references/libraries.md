@@ -478,16 +478,16 @@ their defaults, `Input_Settings` and the seats: [actions](control.md#actions).
 - A rebinding is a change of `Input_Settings`, which the map follows. On a map a tool builds
   (`input_map_make`): `input_map_action(&m, jump, .Button)`,
   `input_map_bind(&m, jump, inp.binding_key(.Space))`, `input_map_unbind`, with the action of the
-  world (`jump:=inp.action_of(walk, .Jump)`); `input_map_has` says whether it has an action of a
-  type.
+  world (`jump:=inp.action_of(walk, .Jump)`). Call `input_map_compile` after editing a map by
+  hand and before evaluating it. `input_map_has` says whether it has an action of a type.
 - Binding constructors: `binding_key`, `binding_key_axis`, `binding_keys`,
   `binding_mouse_button`, `binding_mouse_axis`, `binding_mouse_delta`, `binding_gamepad_button`,
   `binding_gamepad_axis`, `binding_gamepad_stick`.
 - Reading: `down|pressed|released|tapped|holding|value|vector(input, .Jump)` over
   `Input_Of(E)` ([actions](control.md#actions)); `action(actions, a)` gives the full state of an
   action of the world.
-- `input_actions_update` (`fixed`, stage `input`) recomputes `Actions` every tick from `core.Input`
-  and its previous state, without allocating: a repeated tick gives the same.
+- `input_seats` (`fixed`, stage `input`) feeds the local devices into the compiled map and advances
+  each seat's own action history without allocating. A repeated tick gives the same result.
 - `Frame_Actions.actions` uses the same bindings and evaluator over `core.Frame_Input`.
   - It is updated in `input`, after building the map; it serves cameras and presentation in `late`.
   - Deltas, edges and tap/hold counters last one frame.

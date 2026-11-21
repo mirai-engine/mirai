@@ -172,6 +172,7 @@ camera_override_remove :: proc(r:^Camera_Requests,owner:core.Entity) {
 Sight :: struct {
     shown:core.Ref(Cameras),
     seats:^core.Table(input.Seat,.Read),
+    seat_state:core.Ref(input.Seats),
     cameras:^core.Table(render.Camera,.Read),
     hierarchy:core.Ref(core.Hierarchy),
     worlds:^core.Table(core.World_Transform,.Read),
@@ -181,7 +182,7 @@ Sight :: struct {
 // sees through, where it looks, whatever the mode of that camera. False
 // without a camera.
 aim :: proc(sight:Sight,body:core.Entity) -> (origin,direction:[3]f32,ok:bool) {
-    camera,_:=camera_selected(sight.shown.ptr,sight.seats,sight.cameras,sight.hierarchy,input.seat_of(sight.seats,body))
+    camera,_:=camera_selected(sight.shown.ptr,sight.seats,sight.cameras,sight.hierarchy,input.seat_of(sight.seat_state,body))
     placed:=core.get(sight.worlds,camera) or_return
     return placed.position,mm.quat_forward(placed.rotation),true
 }
@@ -233,7 +234,7 @@ camera_valid :: proc(cameras:^core.Table(render.Camera,$A),e:core.Entity) -> boo
 camera_select :: proc(
     es:core.Ref(core.Entities),cameras:^core.Table(render.Camera,.Read),cameras_state:^Cameras,requests:^Camera_Requests,
     activations:^core.Table(Camera_Activation,.Read),follows:^core.Table(Camera_Follow,.Read),parents:^core.Table(core.Parent,.Read),
-    seats:^core.Table(input.Seat,.Read),seat_state:core.Ref(input.Seats),problems:^core.Problems,
+    seats:^core.Table(input.Seat,.Read),seat_state:core.Ref(input.Seats),runtime:core.Ref(input.Seat_States),problems:^core.Problems,
 ) {
     for request in core.take(&requests.queue) {
         r:=request.override
@@ -258,7 +259,7 @@ camera_select :: proc(
         if !item.active {continue}
         if !core.alive(es.ptr,item.seat) || !camera_valid(cameras,item.camera) || item.owner!=core.NONE && !core.alive(es.ptr,item.owner) {item.active=false}
     }
-    player:=input.focused(seat_state.ptr,seats)
+    player:=input.focused(seat_state,seats)
     for row in 0..<core.count(activations) {
         camera:=core.entity_at(activations,row)
         activation:=core.at(activations,row)
@@ -267,8 +268,8 @@ camera_select :: proc(
             continue
         }
         follow,_:=core.get(follows,camera)
-        seat:=input.seat_of(seats,follow_target(camera,follow.target,parents,seats,player))
-        if seat!=core.NONE && camera_valid(cameras,camera) && input.seat_action(seats,seat,activation.action).down {
+        seat:=input.seat_of(seat_state,follow_target(camera,follow.target,parents,seats,seat_state,player))
+        if seat!=core.NONE && camera_valid(cameras,camera) && input.seat_action(runtime,seat,activation.action).down {
             if !override_set(cameras_state,{owner=camera,seat=seat,camera=camera,blend=activation.blend}) {
                 core.report(problems,camera,"camera.overrides_full","the Camera_Activation of entity 0x%016x was not seen: %d camera overrides are active, as many as fit",u64(camera),OVERRIDE_CAPACITY)
             }
@@ -333,13 +334,13 @@ camera_follow :: proc(
         follow.looking={mm.angle_wrap(follow.looking.x+look.yaw),clamp(follow.looking.y+look.pitch,low,high)}
         follow.state.idle=0
     }
-    player:=input.focused(seat_state.ptr,seats)
+    player:=input.focused(seat_state,seats)
     for row in 0..<core.count(follows) {
         e:=core.entity_at(follows,row)
         follow:=core.edit_at(follows,row)
-        target:=follow_target(e,follow.target,parents,seats,player)
+        target:=follow_target(e,follow.target,parents,seats,seat_state,player)
         // The look of the local seat that drives its target turns it, from the devices of its slot.
-        if seat,local:=core.get(seats,input.seat_of(seats,target));local && input.seat_local(seat) && follow.turn && follow.state.ready && follow.mode==.Orbit && !follow.aim {
+        if seat,local:=core.get(seats,input.seat_of(seat_state,target));local && input.seat_local(seat) && follow.turn && follow.state.ready && follow.mode==.Orbit && !follow.aim {
             if turn:=input.slot_frame_state(look_actions,int(seat.slot),.Look).vector*input.LOOK_SPEED;turn!={} {
                 low,high:=pitch_limits(follow^)
                 follow.looking={mm.angle_wrap(follow.looking.x-turn.x),clamp(follow.looking.y-turn.y,low,high)}
@@ -443,7 +444,7 @@ arm_query :: proc(user:rawptr,from,to:mm.Vec3,radius:f32) -> (fraction:f32,hit:b
 // Its target, or without one the body it hangs from: the nearest entity above
 // it that a seat drives, or else the root of its hierarchy. A camera that
 // hangs from nothing follows the body of the focused local player.
-follow_target :: proc(e,target:core.Entity,parents:^core.Table(core.Parent,$A),seats:^core.Table(input.Seat,$B),player:core.Entity) -> core.Entity {
+follow_target :: proc(e,target:core.Entity,parents:^core.Table(core.Parent,$A),seats:^core.Table(input.Seat,$B),state:core.Ref(input.Seats),player:core.Entity) -> core.Entity {
     if target!=core.NONE {return target}
     root:=core.NONE
     at:=e
@@ -451,7 +452,7 @@ follow_target :: proc(e,target:core.Entity,parents:^core.Table(core.Parent,$A),s
         parent,ok:=core.get(parents,at)
         if !ok || parent.entity==core.NONE {break}
         at=parent.entity
-        if input.seat_of(seats,at)!=core.NONE {return at}
+        if input.seat_of(state,at)!=core.NONE {return at}
         root=at
     }
     return root!=core.NONE?root:input.body_of(seats,player)

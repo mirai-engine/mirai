@@ -37,6 +37,7 @@ Probe_World :: struct {
     parents:core.Table(core.Parent),
     health:core.Table(Probe_Health) `mirai:"game"`,
     seats:core.Table(input.Seat),
+    seat_runtime:input.Seat_States,
     moves:core.Table(input.Move_Input),
     players:input.Seats,
     bindings:input.Input_Map,
@@ -77,9 +78,9 @@ probe_standing :: proc(w:core.World_Ref,body:core.Entity) -> (standing,known:boo
 @(private="file")
 probe_tick :: proc(data,shared,editor,app:rawptr) {
     w:=cast(^Probe_World)data
-    input.input_holds(&w.seats,&w.holds,w.time,nil)
+    input.input_holds(core.read(&w.seats),&w.seat_runtime,&w.holds,w.time,nil)
     for row in 0..<core.count(&w.seats) {
-        input.seat_feed(core.edit_at(&w.seats,row),&w.input,&w.bindings,false,1.0/60)
+        input.seat_feed(input.seat_runtime_edit(&w.seat_runtime,core.entity_at(&w.seats,row)),&w.input,&w.bindings,false,1.0/60)
     }
     w.score.points+=1
     for ping in core.take(&w.pings.queue) {w.score.points+=ping.amount}
@@ -92,11 +93,11 @@ probe_tick :: proc(data,shared,editor,app:rawptr) {
         if value.body!=core.NONE {seat,hero=w.seats.entities[row],value.body}
     }
     if hero==core.NONE {return}
-    move:=input.seat_action(core.read(&w.seats),seat,PROBE_MOVE)
+    move:=input.seat_action(core.ref(&w.seat_runtime),seat,PROBE_MOVE)
     core.edit(&w.moves,hero).move={move.vector.x,0,-move.vector.y}
     place:=core.edit(&w.transforms,hero)
     place.position.x=clamp(place.position.x+move.vector.x,-100,6)
-    if input.seat_action(core.read(&w.seats),seat,PROBE_JUMP).pressed {place.position.y-=5}
+    if input.seat_action(core.ref(&w.seat_runtime),seat,PROBE_JUMP).pressed {place.position.y-=5}
 }
 
 @(private="file")
@@ -144,6 +145,7 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
     input.input_map_action(&world.bindings,PROBE_MOVE,.Axis2)
     input.input_map_action(&world.bindings,PROBE_JUMP,.Button)
     input.input_map_bind(&world.bindings,PROBE_JUMP,input.binding_key(.Space))
+    input.input_map_compile(&world.bindings)
     core.settle(&f.info,f.data,nil)
     f.viewport={orbit=editor.ORBIT_DEFAULT}
     f.gui={layout={left_open=true,right_open=true,library_tab=.Content,bottom_open=true}}

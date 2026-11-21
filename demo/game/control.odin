@@ -124,7 +124,7 @@ companion_of :: proc(follows:^core.Table(Follow,$A),leader:core.Entity) -> core.
 // until it is near, where this end decides what it does.
 @(step="fixed")
 game_follow :: proc(
-    follows:^core.Table(Follow,.Read),seats:^core.Table(inp.Seat,.Read),drives:^core.Table(locomotion.Locomotion_Drive),walks:^core.Table(locomotion.Walk,.Read),
+    follows:^core.Table(Follow,.Read),seat_state:core.Ref(inp.Seats),drives:^core.Table(locomotion.Locomotion_Drive),walks:^core.Table(locomotion.Walk,.Read),
     worlds:^core.Table(core.World_Transform,.Read),remotes:^core.Table(core.Remote,.Read),
 ) {
     for row in 0..<core.count(follows) {
@@ -134,7 +134,7 @@ game_follow :: proc(
         goal,there:=core.get(worlds,follow.leader)
         if !core.owned(remotes,e) {continue}
         walk,walks_here:=core.get(walks,e)
-        if !here || !there || !walks_here || inp.seat_of(seats,e)!=core.NONE {core.remove(drives,e);continue}
+        if !here || !there || !walks_here || inp.seat_of(seat_state,e)!=core.NONE {core.remove(drives,e);continue}
         delta:=goal.position-placed.position
         delta.y=0
         distance:=linalg.length(delta)

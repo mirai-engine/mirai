@@ -300,18 +300,20 @@ a_camera_with_an_activation_is_seen_while_its_player_holds_the_action :: proc(t:
     core.add(&f.activations,aim,Camera_Activation{action=AIM,blend={0.25,.Cubic_Out}})
     core.add(&f.activations,stray,CAMERA_ACTIVATION_DEFAULT)
     core.add(&f.parents,base,core.Parent{entity=body})
-    core.add(&f.seats,seat,input.Seat{body=body,actions={count=input.ACTION_CAPACITY}})
+    core.add(&f.seats,seat,input.Seat{body=body})
+    input.seat_runtime_edit(&f.seat_runtime,seat).actions.count=input.ACTION_CAPACITY
     test_world_settle(&f.w)
     core.hierarchy_settle(&f.hierarchy,core.read(&f.parents),&f.entities)
     select:=proc(f:^Camera_Test) {
-        camera_select(core.ref(&f.entities),core.read(&f.cameras),&f.selected,&f.requests,core.read(&f.activations),core.read(&f.follows),core.read(&f.parents),core.read(&f.seats),core.ref(&f.seat_state),&f.problems)
+        input.input_seat_index(core.ref(&f.entities),core.read(&f.seats),&f.seat_state,&f.problems)
+        camera_select(core.ref(&f.entities),core.read(&f.cameras),&f.selected,&f.requests,core.read(&f.activations),core.read(&f.follows),core.read(&f.parents),core.read(&f.seats),core.ref(&f.seat_state),core.ref(&f.seat_runtime),&f.problems)
     }
 
     select(f)
     testing.expect(t,first_of(camera_selected(&f.selected,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat))==base,"without the action, the camera of the body")
     testing.expect(t,has_problem(&f.problems,"camera.activation"),"an activation without an action says so")
 
-    held:=core.edit(&f.seats,seat)
+    held:=input.seat_runtime_edit(&f.seat_runtime,seat)
     held.actions.states[AIM].down=true
     select(f)
     chosen,blend:=camera_selected(&f.selected,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat)

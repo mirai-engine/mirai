@@ -50,11 +50,11 @@ Binding_Kind :: enum u8 {
 
 CHORD_CAPACITY :: 2
 
-@(private)
 Binding :: struct {
     action:u16, // index
     kind:Binding_Kind,
     chord_count:u8,
+    rate:bool, // scale is per second
     codes:[4]u16,
     chord:[CHORD_CAPACITY]u16, // codes that must be held too
     scale,dead_zone:f32,
@@ -262,14 +262,15 @@ input_feed_action :: proc "contextless" (in_:^Input,action:Action,down:bool,axis
 // Computes the state of every action from the codes and axes as they are
 // now and from what input_feed_action gave: call it once per tick of dt
 // seconds, after the host reported them.
-input_update :: proc "contextless" (in_:^Input,dt:f32) {
+input_update :: proc "contextless" (in_:^Input,dt:f32,enabled:[]u64=nil) {
     bindings:=in_.bindings[:in_.binding_count]
     if in_.chorded {
         for &taken in in_.taken {taken=0}
         for &taken in in_.taken_axes {taken=0}
-        for &binding in bindings {
+        for &binding,i in bindings {
+            if enabled!=nil && !base.bits_test(enabled,i) {continue}
             if binding.chord_count==0 || !chord_held(in_,&binding) {continue}
-            if read:=binding_read(in_,&binding);!read.down && !read.quick && read.axis==0 && read.vector=={} {continue}
+            if read:=binding_read(in_,&binding,dt);!read.down && !read.quick && read.axis==0 && read.vector=={} {continue}
             level:=binding.chord_count
             for code in binding.chord[:binding.chord_count] {in_.taken[code]=max(in_.taken[code],level)}
             used,on_axes:=binding_span(binding.kind)
@@ -277,10 +278,11 @@ input_update :: proc "contextless" (in_:^Input,dt:f32) {
             for code in binding.codes[:used] {taken[code]=max(taken[code],level)}
         }
     }
-    for &binding in bindings {
+    for &binding,i in bindings {
+        if enabled!=nil && !base.bits_test(enabled,i) {continue}
         if binding.chord_count>0 && !chord_held(in_,&binding) {continue}
         if in_.chorded && chord_overruled(in_,&binding) {continue}
-        read:=binding_read(in_,&binding)
+        read:=binding_read(in_,&binding,dt)
         total:=&in_.accum[binding.action]
         total.down||=read.down
         total.quick||=read.quick
@@ -300,30 +302,31 @@ code_axis :: #force_inline proc "contextless" (in_:^Input,code:u16) -> f32 {retu
 
 // What one binding gives its action now.
 @(private)
-binding_read :: proc "contextless" (in_:^Input,binding:^Binding) -> (r:Accum) {
+binding_read :: proc "contextless" (in_:^Input,binding:^Binding,dt:f32) -> (r:Accum) {
+    scale:=binding.rate?binding.scale*dt:binding.scale
     switch binding.kind {
     case .Code:
         code:=int(binding.codes[0])
         if base.bits_test(in_.down,code) {r.down=true}
         else if base.bits_test(in_.latched_down,code) {r.quick=true}
     case .Axis_Above:
-        r.down=in_.axes[binding.codes[0]]*binding.scale>=binding.dead_zone
+        r.down=in_.axes[binding.codes[0]]*scale>=binding.dead_zone
     case .Code_Axis:
-        r.axis=binding.scale*(code_axis(in_,binding.codes[1])-code_axis(in_,binding.codes[0]))
+        r.axis=scale*(code_axis(in_,binding.codes[1])-code_axis(in_,binding.codes[0]))
     case .Analog:
-        r.axis=dead_zone_scalar(in_.axes[binding.codes[0]],binding.dead_zone)*binding.scale
+        r.axis=dead_zone_scalar(in_.axes[binding.codes[0]],binding.dead_zone)*scale
     case .Codes_2D:
         v:=math.Vec2{code_axis(in_,binding.codes[1])-code_axis(in_,binding.codes[0]),code_axis(in_,binding.codes[3])-code_axis(in_,binding.codes[2])}
         if v.x!=0 && v.y!=0 {v*=0.70710678}
-        r.vector=v*binding.scale
+        r.vector=v*scale
     case .Analog_2D:
         raw:=math.Vec2{in_.axes[binding.codes[0]],in_.axes[binding.codes[1]]}
         length:=linalg.length(raw)
-        if length>binding.dead_zone {r.vector=raw/length*min((length-binding.dead_zone)/max(1-binding.dead_zone,1e-6),1)*binding.scale}
+        if length>binding.dead_zone {r.vector=raw/length*min((length-binding.dead_zone)/max(1-binding.dead_zone,1e-6),1)*scale}
     case .Delta:
-        r.axis=in_.axes[binding.codes[0]]*binding.scale
+        r.axis=in_.axes[binding.codes[0]]*scale
     case .Delta_2D:
-        r.vector=math.Vec2{in_.axes[binding.codes[0]],in_.axes[binding.codes[1]]}*binding.scale
+        r.vector=math.Vec2{in_.axes[binding.codes[0]],in_.axes[binding.codes[1]]}*scale
     }
     return
 }
@@ -397,7 +400,6 @@ action_holding :: #force_inline proc "contextless" (in_:^Input,action:Action) ->
 action_value :: #force_inline proc "contextless" (in_:^Input,action:Action) -> f32 {return action_state(in_,action).value}
 action_vector :: #force_inline proc "contextless" (in_:^Input,action:Action) -> math.Vec2 {return action_state(in_,action).vector}
 
-@(private)
 Accum :: struct {
     down,quick:bool, // held now; pressed and released since the last update
     axis:f32,
