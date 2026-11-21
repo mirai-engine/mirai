@@ -1295,7 +1295,7 @@ assets_texture_first :: proc(view:asset.Texture_View,limits:render.Texture_Limit
 }
 
 // The levels of a texture the renderer takes: from `from`, or the first one
-// its side allows, to the last; for a device that does not sample blocks,
+// its side allows, through the levels decoded in view; for a device that does not sample blocks,
 // decoded to RGBA8, and BC6H to RGBA16F.
 // The levels of one layer name the file as their source, whose other levels
 // the renderer can ask for; an array or a cube takes every level its side
@@ -1323,22 +1323,23 @@ assets_texture_levels :: proc(view:asset.Texture_View,limits:render.Texture_Limi
     }
     first,fits:=assets_texture_first(view,limits,from)
     if !fits {return .Unsupported,.None,false}
-    if first<view.first {return .Corrupt,.Invalid,false}
+    if first<view.first || first>=view.last {return .Corrupt,.Invalid,false}
     data.width,data.height=int(view.mips[first].width),int(view.mips[first].height)
     data.layers,data.cube=layers,.Cube in info.flags
     data.level=first
     if !layered {data.source={int(info.width),int(info.height)}}
     alloc_error:mem.Allocator_Error
-    if data.levels,alloc_error=make([dynamic][]u8,0,len(view.mips)-first,allocator);alloc_error!=nil {return .Rejected,.Out_Of_Memory,false}
+    data.levels,alloc_error=make([dynamic][]u8,0,view.last-first,allocator)
+    if alloc_error!=nil {return .Rejected,.Out_Of_Memory,false}
     texel:=8 if format==.RGBA16F else 4
     if decode {
         total:=0
-        for mip in view.mips[first:] {total+=int(mip.width)*int(mip.height)*texel*layers}
+        for mip in view.mips[first:view.last] {total+=int(mip.width)*int(mip.height)*texel*layers}
         levels.decoded,alloc_error=make([]u8,total,allocator)
         if alloc_error!=nil {return .Rejected,.Out_Of_Memory,false}
     }
     at:=0
-    for level in first..<len(view.mips) {
+    for level in first..<view.last {
         texels:=asset.texture_mip(view,level)
         if decode {
             mip:=view.mips[level]
@@ -1766,9 +1767,10 @@ Assets_Prepared :: struct {
 }
 
 // Reads the file of prepared.source and does what loading it does before the
-// renderer takes it. Any thread; types and decoder are of the thread and
-// outlive nothing of prepared.
-assets_prepare :: proc(prepared:^Assets_Prepared,limits:Assets_Limits,types:^asset.Types,decoder:^asset.Decoder=nil) {
+// renderer takes it. If held is positive, the texture already holds that
+// level and smaller ones. Any thread; types and decoder are of the thread.
+assets_prepare :: proc(prepared:^Assets_Prepared,limits:Assets_Limits,types:^asset.Types,
+    decoder:^asset.Decoder=nil,held:=-1) {
     started:=time.tick_now()
     defer prepared.ns=time.duration_nanoseconds(time.tick_since(started))
     // What reads the file after it, on another thread, decodes with a decoder of its own.
@@ -1805,16 +1807,24 @@ assets_prepare :: proc(prepared:^Assets_Prepared,limits:Assets_Limits,types:^ass
         prepared.ahead=ahead
     case .Texture:
         view,view_error:=asset.texture_open(&prepared.file,types)
-        from,first:=0,0
+        from,first,last:=0,0,len(view.mips)
         if view_error==.None && limits.renderer {
             from=prepared.level
             if limits.tail {
                 for from+1<len(view.mips) && max(view.mips[from].width,view.mips[from].height)>render.TEXTURE_TAIL {from+=1}
             }
-            // Only the levels it gives decode: the smallest lie at the start of the stream.
             first,_=assets_texture_first(view,limits.texture,from)
+            if held>=0 {
+                if held<=first || held>last || view.info.layers!=1 || .Cube in view.info.flags {
+                    prepared.problem,prepared.detail=.Rejected,.Invalid
+                    return
+                }
+                last=held
+            }
         }
-        if view_error==.None {view_error=asset.texture_decode(&prepared.file,types,&view,first)}
+        if view_error==.None {
+            view_error=asset.texture_decode(&prepared.file,types,&view,first,last)
+        }
         if view_error!=.None {
             prepared.problem,prepared.detail=assets_view_problem(view_error),view_error
             return

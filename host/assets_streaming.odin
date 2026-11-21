@@ -226,7 +226,8 @@ texture_read :: proc(read:^Texture_Read,worker:int) {
     types:asset.Types
     asset.types_init(&types)
     defer asset.types_destroy(&types)
-    assets_prepare(&read.prepared,read.limits,&types)
+    held:=read.request.held if read.request.handle!=0 else -1
+    assets_prepare(&read.prepared,read.limits,&types,held=held)
     intrinsics.atomic_store(&read.ready,true)
 }
 

@@ -328,39 +328,93 @@ inside :: proc "contextless" (bytes,buffer:[]u8) -> bool {
     return at>=start && at<start+uintptr(len(buffer))
 }
 
-// The stored bytes of a chunk of which only the first size are read: all of
-// them for a file, or for a chunk already read; from the store, the bytes up to
-// size in memory of the asset, the rest left as it is. Nothing is kept.
+// The Store reads only the leaves covering the requested bytes.
 @(private)
-asset_stored_prefix :: proc(a:^Asset,index:int,size:int) -> (stored:[]u8,error:Error) {
+asset_stored_range :: proc(a:^Asset,index,start,end:int,alignment:=1,temporary:^[]u8=nil) ->
+    (bytes:[]u8,error:Error) {
     entry:=blob_chunk(&a.blob,index)
-    if a.object==nil || a.object.here[index] || size>=int(entry.size) {return asset_stored(a,index)}
-    stored=asset_alloc(a,int(entry.size),max(1<<entry.alignment_log2,TEXTURE_BULK_ALIGNMENT)) or_return
-    if e:=store.group_read(&a.object.object,index,0,stored[:size]);e!=.None {return nil,object_error(e)}
-    return stored,.None
+    if start<0 || end<start || u64(end)>entry.size {return nil,.Corrupt}
+    size:=end-start
+    if size==0 {return nil,.None}
+    stored:[]u8
+    if a.object==nil {
+        if entry.offset+u64(end)>u64(len(a.blob.data)) {return nil,.Truncated}
+        stored=a.blob.data[entry.offset+u64(start):][:size]
+    } else if a.object.here[index] {
+        stored=a.object.stored[index][start:end]
+    }
+    if stored!=nil && uintptr(raw_data(stored))&uintptr(alignment-1)==0 {
+        return stored,.None
+    }
+    bytes=asset_range_alloc(a,size,alignment,temporary) or_return
+    if stored!=nil {
+        copy(bytes,stored)
+    } else if e:=store.group_read(&a.object.object,index,u64(start),bytes);e!=.None {
+        return nil,object_error(e)
+    }
+    return bytes,.None
 }
 
-// The stored bytes of a stream chunk that hold its raw bytes up to raw: the
-// head and the pieces that cover them, the rest of the chunk left as it is.
+@(private="file")
+asset_range_alloc :: proc(a:^Asset,size,alignment:int,temporary:^[]u8) ->
+    (bytes:[]u8,error:Error) {
+    if temporary==nil {return asset_alloc(a,size,alignment)}
+    allocation:mem.Allocator_Error
+    bytes,allocation=mem.alloc_bytes_non_zeroed(size,alignment,a.allocator)
+    if allocation!=nil {return nil,.Out_Of_Memory}
+    temporary^=bytes
+    return bytes,.None
+}
+
+// The decoded range of a stream, reading only its directory and covering pieces.
 @(private)
-asset_stream_prefix :: proc(a:^Asset,index:int,raw:int) -> (stored:[]u8,error:Error) {
+asset_stream_range :: proc(a:^Asset,index,start,end:int,alignment:int,temporary:^[]u8) ->
+    (bytes:[]u8,error:Error) {
     entry:=blob_chunk(&a.blob,index)
-    if a.object==nil || a.object.here[index] {return asset_stored(a,index)}
-    head:[STREAM_HEAD]u8
-    if entry.size<STREAM_HEAD {return nil,.Corrupt}
-    if e:=store.group_read(&a.object.object,index,0,head[:]);e!=.None {return nil,object_error(e)}
-    count:=int(u32_read(&head[5]))
-    first:=STREAM_HEAD+count*4
-    if count<1 || u64(first)>entry.size {return nil,.Corrupt}
-    table:=asset_stored_prefix(a,index,first) or_return
-    need:=u64(first)
-    for piece in 0..<count {
-        if piece*PACK_PIECE>=raw {break}
-        need+=u64(u32_read(&table[STREAM_HEAD+piece*4]))
+    total:=int(entry.uncompressed_size)
+    if start<0 || end<=start || end>total || entry.size<STREAM_HEAD {return nil,.Corrupt}
+    head:[STREAM_HEAD+PACK_MAX_PIECES*4]u8
+    if a.object!=nil && !a.object.here[index] {
+        if e:=store.group_read(&a.object.object,index,0,head[:STREAM_HEAD]);e!=.None {
+            return nil,object_error(e)
+        }
+    } else {
+        prefix:=asset_stored_range(a,index,0,STREAM_HEAD) or_return
+        copy(head[:STREAM_HEAD],prefix)
     }
-    if need>entry.size {return nil,.Corrupt}
-    if e:=store.group_read(&a.object.object,index,u64(first),table[first:need]);e!=.None {return nil,object_error(e)}
-    return table,.None
+    count:=int(u32_read(&head[5]))
+    if count<1 || count>PACK_MAX_PIECES {return nil,.Corrupt}
+    first_byte:=STREAM_HEAD+count*4
+    if u64(first_byte)>entry.size {return nil,.Corrupt}
+    if a.object!=nil && !a.object.here[index] {
+        if e:=store.group_read(&a.object.object,index,STREAM_HEAD,head[STREAM_HEAD:first_byte]);
+            e!=.None {return nil,object_error(e)}
+    } else {
+        table:=asset_stored_range(a,index,STREAM_HEAD,first_byte) or_return
+        copy(head[STREAM_HEAD:first_byte],table)
+    }
+    stream:=stream_read(head[:first_byte],total,int(entry.size)) or_return
+    if stream.format==STORED {
+        return asset_stored_range(a,index,stream.first+start,stream.first+end,alignment,temporary)
+    }
+
+    first,last:=start/PACK_PIECE,(end-1)/PACK_PIECE+1
+    offset:=stream.first
+    for piece in 0..<first {offset+=int(u32_read(stream.table[piece*4:]))}
+    limit:=offset
+    for piece in first..<last {limit+=int(u32_read(stream.table[piece*4:]))}
+    payload_buffer:[]u8
+    defer mem.free_bytes(payload_buffer,a.allocator)
+    payload:=asset_stored_range(a,index,offset,limit,temporary=&payload_buffer) or_return
+    raw_start,raw_end:=first*PACK_PIECE,min(total,last*PACK_PIECE)
+    decoded:=asset_range_alloc(a,raw_end-raw_start,alignment,temporary) or_return
+    decoder:=asset_decoder(a) or_return
+    if first==0 && last==stream.count {
+        stream_chunk_pieces(decoder,stream,payload,decoded) or_return
+    } else {
+        stream_decode_pieces(&decoder.stream,stream,payload,decoded,total,first,last) or_return
+    }
+    return decoded[start-raw_start:end-raw_start],.None
 }
 
 // The file of the asset of the store at address, as loading it and saving it

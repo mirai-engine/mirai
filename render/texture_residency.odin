@@ -60,10 +60,11 @@ Texture_Stream :: struct {
 	stamp:  u32,  // grows with each texture that takes its entry and each range of levels it gets
 }
 
-// Levels a loader should give a texture: those of its source from `level`.
+// A promotion needs the levels of the source in [level,held).
 Texture_Request :: struct {
 	handle: Texture_Handle,
 	level:  int,
+	held:   int, // first level already resident when the request was made
 	stamp:  u32, // texture_levels_queue refuses a request whose texture changed since
 }
 
@@ -102,8 +103,7 @@ TEXTURE_UPLOADS :: 8 // streamed textures that take their levels over frames at 
 Texture_Upload :: struct {
 	request: Texture_Request,
 	texture: rhi.Texture,
-	data:    Texture_Data,
-	fresh:   int, // its first levels, which data brings; the others come from the texture it replaces
+	levels:  [][]u8, // new levels; the others come from the texture it replaces
 	mip:     int,
 	row:     u32, // of rows of blocks, or of texels, of its mip
 	active:  bool,
@@ -360,7 +360,8 @@ texture_requests :: proc(r: ^Renderer, out: []Texture_Request, busy: []Texture_H
 		if at >= len(out) {continue}
 		if count < len(out) {count += 1}
 		copy(out[at + 1:count], out[at:count - 1])
-		out[at] = {handle = handle, level = int(stream.target), stamp = stream.stamp}
+		out[at] = {handle = handle, level = int(stream.target),
+			held = int(stream.top), stamp = stream.stamp}
 	}
 	return count
 }
@@ -374,7 +375,8 @@ textures_shrink :: proc(r: ^Renderer) {
 	t := &r.textures.residency
 	for &stream, index in t.streams[:r.textures.count] {
 		if stream.levels == 0 || stream.target <= stream.top {continue}
-		request := Texture_Request{handle = Texture_Handle(index + 1), level = int(stream.target), stamp = stream.stamp}
+		request := Texture_Request{handle = Texture_Handle(index + 1), level = int(stream.target),
+			held = int(stream.top), stamp = stream.stamp}
 		if texture_levels_queue(r, request, {}) == .Busy && !texture_upload_room(r) {return}
 	}
 }
@@ -431,17 +433,26 @@ texture_levels_queue :: proc(r: ^Renderer, request: Texture_Request, data: Textu
 	index := int(request.handle) - 1
 	if index < 0 || index >= state.count || state.textures[index] == 0 {return .Stale}
 	stream := &t.streams[index]
-	if stream.levels == 0 || stream.stamp != request.stamp {return .Stale}
+	if stream.levels == 0 || stream.stamp != request.stamp || int(stream.top) != request.held {
+		return .Stale
+	}
 	if request.level < 0 || request.level >= int(stream.levels) {return .Mismatch}
-	fresh := max(int(stream.top) - request.level, 0)
-	if fresh > 0 && (data.level != request.level || data.source != {int(stream.size.x), int(stream.size.y)} || len(data.levels) < fresh || data.format != stream.format) {return .Mismatch}
+	fresh := max(request.held - request.level, 0)
 	width, height := max(stream.size.x >> uint(request.level), 1), max(stream.size.y >> uint(request.level), 1)
+	if fresh > 0 {
+		if data.level != request.level || data.source != {int(stream.size.x), int(stream.size.y)} ||
+			data.format != stream.format || len(data.levels) < fresh {return .Mismatch}
+		for level, mip in data.levels[:fresh] {
+			row, rows := rhi.format_rows(stream.format, max(width >> uint(mip), 1), max(height >> uint(mip), 1))
+			if u64(len(level)) != row * rows {return .Mismatch}
+		}
+	}
 	texture := rhi.texture_create(r.device, {width = width, height = height, mip_levels = u32(int(stream.levels) - request.level), format = stream.format, usage = {.Sampled}, name = "streamed texture"})
 	if texture == 0 {
 		set_error(r, "texture levels: %s", rhi.device_error(r.device))
 		return .Failed
 	}
-	t.uploads[slot] = {request = request, texture = texture, data = data, fresh = fresh, active = true}
+	t.uploads[slot] = {request = request, texture = texture, levels = data.levels[:fresh], active = true}
 	return .Set
 }
 
@@ -491,7 +502,8 @@ texture_add_over_frames :: proc(r: ^Renderer, data: ^Texture_Data, name: string)
 	if handle, added = texture_add_data(r, small, name); !added {return 0, {}, .Failed}
 	index := int(handle) - 1
 	if index >= len(r.textures.residency.streams) {return handle, {}, .Stale}
-	request = {handle = handle, level = data.level, stamp = r.textures.residency.streams[index].stamp}
+	stream := &r.textures.residency.streams[index]
+	request = {handle = handle, level = data.level, held = int(stream.top), stamp = stream.stamp}
 	return handle, request, texture_levels_queue(r, request, data^)
 }
 
@@ -529,15 +541,18 @@ texture_uploads_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
 			upload = {}
 			continue
 		}
-		for upload.mip < upload.fresh && budget > 0 {
-			width, height := u32(max(upload.data.width >> uint(upload.mip), 1)), u32(max(upload.data.height >> uint(upload.mip), 1))
-			row, rows := rhi.format_rows(upload.data.format, width, height)
-			block := u32(4) if rhi.format_block_size(upload.data.format) > 0 else 1
+		stream := &state.residency.streams[index]
+		fresh := len(upload.levels)
+		for upload.mip < fresh && budget > 0 {
+			mip := upload.request.level + upload.mip
+			width, height := max(stream.size.x >> uint(mip), 1), max(stream.size.y >> uint(mip), 1)
+			row, rows := rhi.format_rows(stream.format, width, height)
+			block := u32(4) if rhi.format_block_size(stream.format) > 0 else 1
 			count := u32(min(u64(rows) - u64(upload.row), max(budget / row, 1)))
 			bytes := u64(count) * row
 			ring := rhi.frame_alloc(r.device, bytes, 16)
 			if ring.ptr == nil {budget = 0;break}
-			level := upload.data.levels[upload.mip]
+			level := upload.levels[upload.mip]
 			copy(([^]u8)(ring.ptr)[:bytes], level[u64(upload.row) * row:][:bytes])
 			y := upload.row * block
 			rhi.cmd_copy_buffer_to_texture(cmd, ring.buffer, ring.offset, upload.texture, u32(upload.mip), {0, y, width, min(count * block, height - y)})
@@ -545,11 +560,10 @@ texture_uploads_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
 			upload.row += count
 			if u64(upload.row) >= u64(rows) {upload.mip, upload.row = upload.mip + 1, 0}
 		}
-		if upload.mip < upload.fresh {continue}
-		stream := &state.residency.streams[index]
-		first := upload.request.level + upload.fresh
+		if upload.mip < fresh {continue}
+		first := upload.request.level + fresh
 		held := state.textures[index]
-		rhi.cmd_copy_texture(cmd, held, upload.texture, u32(first - int(stream.top)), u32(upload.fresh), u32(int(stream.levels) - first))
+		rhi.cmd_copy_texture(cmd, held, upload.texture, u32(first - int(stream.top)), u32(fresh), u32(int(stream.levels) - first))
 		rhi.cmd_barrier_texture(cmd, held, .Shader_Read)
 		rhi.cmd_barrier_texture(cmd, upload.texture, .Shader_Read)
 		upload.done = true

@@ -265,22 +265,22 @@ A texture of an asset resides with the levels the GPU samples of it
   pool or the textures changed. It counts one texture more while the feedback of a frame that saw
   other views or a new texture has not come back, so a capture that waits for its textures waits
   for it. `host` (`app_textures_stream`, in `app_frame_begin`) reads up to `TEXTURE_READS` at a
-  time in jobs, each decoding only the levels it gives (the smallest lie at the start of the `.tex`
-  stream), first those that need more levels (those that free memory if the pool is exceeded) and
-  those farthest from their levels, and gives them to the renderer with the
-  [load budget](../../mirai-core/references/host.md#loaded-assets).
+  time in jobs, asking for the range from the target mip up to the first resident mip
+  ([texture ranges](../../mirai-assets/references/kinds.md#texture)). It gives the new levels to
+  the renderer within the [load budget](../../mirai-core/references/host.md#loaded-assets).
 - **Transaction.** A texture with the new levels takes the table entry and the previous one is
-  destroyed: the handle and the material rows do not change. A request whose texture changed since
-  then (`stamp`) does nothing; a texture whose file is no longer read stops streaming
-  (`texture_stream_stop`).
+  destroyed: the handle and the material rows do not change. A promotion belongs to the residency
+  it observed when the request was made. A request whose texture changed since then (`stamp`) does
+  nothing; a texture whose file is no longer read stops streaming (`texture_stream_stop`).
 - `host` reads only for more levels and gives them with `texture_levels_queue`: the rows of the
   levels the texture lacks are uploaded in the list of the following frames, among all of them
   their share of `UPLOAD_FRAME_BYTES` per frame, which they share with the
   [geometry over several frames](scene.md#geometry-over-several-frames), and up to
   `TEXTURE_UPLOADS` textures at a time; then the levels it holds are copied on the GPU and it takes
   its entry between frames (`texture_uploads_install`). Fewer levels need no read: the renderer
-  copies them from those it holds through the same queue (`textures_shrink`). What the job read
-  stays while `texture_upload_pending`; a large level does not stall a frame.
+  copies them from those it holds through the same queue (`textures_shrink`). The renderer copies
+  each new row directly from the job's bytes into the frame upload ring. The job's data stays
+  while `texture_upload_pending`; the ring belongs to the frame that records the GPU copy.
 - What a section load brings, and a texture a material asks for that is not loaded
   ([arrivals](../../mirai-core/references/host.md#loaded-assets)), arrives with the levels of
   side `TEXTURE_TAIL` and the frames that sample it ask for the others; the main scene and direct

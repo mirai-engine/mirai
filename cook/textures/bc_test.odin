@@ -315,6 +315,11 @@ a_bc7_texture_restores_its_tail_without_its_larger_levels :: proc(t:^testing.T) 
         testing.expectf(t,view.first==min(from,1),"a read from level %d restores from level %d",from,view.first)
         testing.expect(t,view.first==0 || asset.texture_mip(view,0)==nil)
         for level in view.first..<len(built.mips) {testing.expectf(t,string(asset.texture_mip(view,level))==string(built.mips[level]),"level %d read from %d",level,from)}
+        if from+1<len(built.mips) {
+            testing.expect_value(t,asset.texture_decode(&a,&types,&view,from,from+1),asset.Error.None)
+            testing.expect(t,asset.texture_check(view) && asset.texture_mip(view,from+1)==nil)
+            testing.expect(t,string(asset.texture_mip(view,from))==string(built.mips[from]))
+        }
         asset.asset_close(&a)
     }
     free_all(context.temp_allocator)

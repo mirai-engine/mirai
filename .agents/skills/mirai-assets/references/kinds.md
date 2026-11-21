@@ -116,14 +116,12 @@ per bone.
 - 8-bit formats `RGBA8`, `BC1`, `BC5` and `BC7`; `RGBA16` (16 linear bits, data that keeps
   its precision), `RGBA16F` and `BC6H` (linear half floats: HDR, light above 1; BC6H unsigned and
   without alpha). `cook/textures` encodes them ([compression](formats.md#compression)).
-- **Levels, smallest first.** `texels` holds the levels from the smallest to level 0, compressed:
-  `texture_open` reads a texture without its texels and `texture_decode` from a level decodes only
-  the pieces of the stream that hold that level and the smaller ones (`texture_view` decodes all);
-  `texture_mip` gives the bytes of a level, empty for one before `first`. Written by a cook with
-  `Best` codecs, a texture of 16-byte blocks stores the layouts the compressor has for it
-  (`compressor:blocks`), which restore only whole: one of its tail (the levels of side
-  `TEXTURE_TAIL` or less, which every read takes) and one of its larger levels; one per level
-  compresses larger.
+- **Levels, smallest first.** The Store cuts canonical `texels` at mip boundaries.
+  `texture_open` reads metadata and `texture_decode` reads a range of levels. A Store read takes
+  only the leaves covering that range. A cooked stream decodes only the pieces it intersects.
+  Block layouts restore in whole runs, each covering one large level or the small levels of
+  the tail. A range that intersects a run starts at that run's largest level.
+  `texture_view` decodes the whole chain, and `texture_mip` exposes levels in the decoded range.
 - **Planes of fields.** A BC1 or BC5 texture whose blocks are not `Fast` stores each level as
   planes of the fields of its blocks (`Fields`: endpoints and indices apart,
   `asset/texture_fields.odin`): written without a compressor (`Codecs.None`) always, since they

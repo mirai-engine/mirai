@@ -211,30 +211,39 @@ a_texture_is_read_from_the_level_asked_for :: proc(t:^testing.T) {
     SIZE :: 512
     mips:=make([dynamic][]u8,context.temp_allocator)
     for side:=SIZE;;side/=2 {
-        append(&mips,make([]u8,side*side*4,context.temp_allocator))
+        append(&mips,make([]u8,asset.texture_level_size(.BC5,side,side),context.temp_allocator))
         if side==1 {break}
     }
     ID :: base.Asset_Id{0x6c6576,1}
-    testing.expect_value(t,asset.texture_save(fmt.tprintf("%s/stone.tex",root),&types,{id=ID,width=SIZE,height=SIZE,format=.RGBA8,mips=mips[:]}),asset.Error.None)
+    testing.expect_value(t,asset.texture_save(fmt.tprintf("%s/stone.tex",root),&types,
+        {id=ID,width=SIZE,height=SIZE,format=.BC5,mips=mips[:]}),asset.Error.None)
     a:Assets
     if !testing.expect(t,assets_init(&a,{root=root,capacity=8})) {return}
     defer assets_destroy(&a)
-    read :: proc(t:^testing.T,a:^Assets,types:^asset.Types,level:int,tail:bool) -> (first,levels:int,source:[2]int) {
+    read :: proc(t:^testing.T,a:^Assets,types:^asset.Types,level:int,tail:bool,
+        held:=-1) -> (first,levels:int,source:[2]int) {
         prepared:=Assets_Prepared{level=level}
         found:bool
         prepared.source,found=assets_source(a,ID,runtime.heap_allocator())
         if !testing.expect(t,found) {return}
         // As a renderer that takes every size, without blocks.
-        assets_prepare(&prepared,{renderer=true,texture={max_size=4096},tail=tail},types)
+        assets_prepare(&prepared,{renderer=true,texture={max_size=4096},tail=tail},types,held=held)
         defer assets_prepared_free(&prepared)
         testing.expect(t,prepared.ok)
         data:=prepared.levels.data
+        if len(data.levels)>0 {
+            testing.expect(t,data.format==.RGBA8_Unorm &&
+                len(data.levels[0])==data.width*data.height*4)
+        }
+        testing.expect_value(t,prepared.cost,len(prepared.levels.decoded))
         return data.level,len(data.levels),data.source
     }
     first,levels,source:=read(t,&a,&types,0,false)
     testing.expect(t,first==0 && levels==len(mips) && source=={SIZE,SIZE},"every level")
     first,levels,_=read(t,&a,&types,3,false)
     testing.expect(t,first==3 && levels==len(mips)-3,"from the one asked for")
+    first,levels,_=read(t,&a,&types,1,false,held=3)
+    testing.expect(t,first==1 && levels==2,"only the levels missing from the resident texture")
     first,_,source=read(t,&a,&types,0,true)
     testing.expect(t,SIZE>>uint(first)==render.TEXTURE_TAIL && source=={SIZE,SIZE},"far away, from the side of the tail")
 }

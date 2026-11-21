@@ -149,7 +149,8 @@ texture_feedback_keeps_every_level_the_image_reads :: proc(t: ^testing.T) {
 		textures := make([]Texture_Data, int(texture), context.temp_allocator)
 		for handle, i in handles[:at + 1] {textures[handle - 1] = wholes[i]}
 		for c in cases {
-			every := Texture_Request{handle = texture, level = 0, stamp = stream.stamp}
+			every := Texture_Request{handle = texture, level = 0,
+				held = int(stream.top), stamp = stream.stamp}
 			levels := texture_levels_from(whole, 0, &kept, int(stream.top))
 			if stream.top > 0 {
 				testing.expect_value(t, texture_levels_queue(r, every, levels), Texture_Levels_Result.Set)
