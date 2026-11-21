@@ -31,12 +31,11 @@ Remote_Axis :: struct {
 
 // The actions of a seat for another end; ok false when more axis actions are
 // away from zero than REMOTE_AXES, and the rest do not go.
-seat_remote :: proc(seats:^core.Table(Seat,$A),seat:core.Entity,bindings:^Input_Map) -> (sent:Remote_Actions,ok:bool) {
+seat_remote :: proc(states:core.Ref(Seat_States),seat:core.Entity,bindings:core.Ref(Input_Map)) -> (sent:Remote_Actions,ok:bool) {
     ok=true
-    row:=core.row_of(seats,seat)
-    if row<0 || bindings==nil {return}
-    source:=&seats.values[row]
-    moved:=motion_actions(bindings)
+    source:=seat_runtime(states,seat)
+    if source==nil || bindings.ptr==nil {return}
+    moved:=bindings.compiled.motion
     off:=source.blocked|source.rearm
     for state,i in source.actions.states[:min(int(source.actions.count),ACTION_CAPACITY)] {
         bit:=action_bit(Action(i))
@@ -62,9 +61,10 @@ seat_remote :: proc(seats:^core.Table(Seat,$A),seat:core.Entity,bindings:^Input_
 // The actions of a seat for the tick, from what another end sent of them: the
 // edges, taps and holds from the tick before, as if its devices were here.
 // The contexts were applied by that end, and the ones of the seat here are not.
-seat_receive :: proc(seat:^Seat,bindings:^Input_Map,sent:Remote_Actions,dt:f32) {
+seat_receive :: proc(seat:^Seat_State,bindings:^Input_Map,sent:Remote_Actions,dt:f32) {
+    if seat==nil {return}
     actions_receive(&seat.actions,bindings,sent,dt)
-    seat.held=held_buttons(&seat.actions,bindings)
+    seat.held=bindings==nil?0:held_buttons(&seat.actions,bindings)
     seat.rearm&=seat.held
     seat.fed=seat.contexts
 }
@@ -116,13 +116,4 @@ actions_receive :: proc(actions:^Actions,m:^Input_Map,sent:Remote_Actions,dt:f32
     }
     for i in count..<int(actions.count) {actions.states[i]={}}
     actions.count=u32(count)
-}
-
-// The actions a mouse axis drives: what moves by the movement of the tick.
-@(private)
-motion_actions :: proc "contextless" (m:^Input_Map) -> (mask:Action_Mask) {
-    for i in 0..<action_end(m) {
-        if action_reads_mouse(m,Action(i)) {mask|=action_bit(Action(i))}
-    }
-    return
 }

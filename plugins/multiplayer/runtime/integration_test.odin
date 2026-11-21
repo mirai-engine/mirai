@@ -44,6 +44,8 @@ Net_Test_Tables :: struct {
     instances:core.Table(scene.Prefab_Instance),
     pendings:core.Table(scene.Prefab_Pending),
     seats:core.Table(inp.Seat),
+    seat_state:inp.Seats,
+    seat_runtime:inp.Seat_States,
     absents:core.Table(Seat_Absent),
     visibility:core.Table(Visibility),
     spawns:core.Table(Predicted_Spawn),
@@ -129,6 +131,7 @@ net_test_init :: proc(w:^$W,info:^core.World_Info) -> bool {
     inp.input_map_bind(&w.bindings,NET_TEST_FIRE,inp.binding_gamepad_button(.South))
     inp.input_map_action(&w.bindings,NET_TEST_STEER,.Axis)
     inp.input_map_bind(&w.bindings,NET_TEST_STEER,inp.binding_gamepad_axis(.Left_X))
+    inp.input_map_compile(&w.bindings)
     return true
 }
 
@@ -147,7 +150,7 @@ net_test_feed :: proc(w:^Net_Test_World) {
     for row in 0..<core.count(&w.seats) {
         if !inp.seat_local(w.seats.values[row]) {continue}
         device:=w.input
-        inp.seat_feed(core.edit_at(&w.seats,row),&device,&w.bindings,false,1.0/60)
+        inp.seat_feed(inp.seat_runtime_edit(&w.seat_runtime,core.entity_at(&w.seats,row)),&device,&w.bindings,false,1.0/60)
     }
 }
 
@@ -195,10 +198,11 @@ net_test_fixed :: proc(world,shared,editor,application:rawptr) {
         net_tick_head(ref,app,sh.session,&w.remote,nil,nil,sh.session.problems)
         core.settle(sh.info,w,nil)
     }
+    inp.input_seat_index(core.ref(&w.entities),core.read(&w.seats),&w.seat_state,nil)
     // The seat of a client acts on its input as late as its input delay, as the loop does around input_seats.
-    if sh.session!=nil {net_input_take(sh.session,&w.seats,w.time)}
+    if sh.session!=nil {net_input_take(sh.session,core.read(&w.seats),&w.seat_runtime,w.time)}
     net_test_feed(w)
-    if sh.session!=nil {net_input_delay(sh.session,&w.seats,core.ref(&w.bindings),w.time,sh.session.problems)}
+    if sh.session!=nil {net_input_delay(sh.session,core.read(&w.seats),&w.seat_runtime,core.ref(&w.bindings),w.time,sh.session.problems)}
     if sh.spawn_at!=0 && w.time.tick==sh.spawn_at {
         for k in 0..<max(sh.spawns,1) {
             e:=core.create(&w.entities)
@@ -660,7 +664,7 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
     remote,status:=remote_input(core.ref(&worlds[0].remote),connected)
     testing.expect(t,status!=.None && remote.down&inp.action_bit(NET_TEST_FIRE)!=0)
     // The axis as the client's seat took it, past its dead zone.
-    steer:=inp.seat_action(core.read(&worlds[1].seats),inp.local_seat(&worlds[1].seats,0),NET_TEST_STEER).value
+    steer:=inp.seat_action(core.ref(&worlds[1].seat_runtime),inp.local_seat(&worlds[1].seats,0),NET_TEST_STEER).value
     testing.expectf(t,steer>0.5 && abs(net_test_axis(remote,NET_TEST_STEER)-steer)<0.001,"steer %v at the client, %v at the server",steer,net_test_axis(remote,NET_TEST_STEER))
     // The input says what tick of the server the client showed, near the one
     // simulated. This fixture moves the client's tick by hand, not with its

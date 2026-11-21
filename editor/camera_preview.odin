@@ -51,7 +51,7 @@ camera_preview_frame :: proc(s:^Session) {
     w:=shown_world(s)
     seats,state,requests:=core.world_table_of(w,input.Seat),core.world_storage_of(w,input.Seats),core.world_storage_of(w,ecamera.Camera_Requests)
     if seats==nil || state==nil || requests==nil {return}
-    seat:=input.focused(state,core.read(seats))
+    seat:=input.focused(core.ref(state),core.read(seats))
     if seat==core.NONE {return}
     ecamera.camera_override(requests,seat,seat,s.camera_run.camera,blend=s.camera_run.blend)
     s.camera_run.asked=s.camera_run.camera

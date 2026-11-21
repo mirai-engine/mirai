@@ -133,7 +133,7 @@ fixture_destroy :: proc(f:^Cinematic_Fixture) {
 fixture_tick :: proc(f:^Cinematic_Fixture,tick:u64,dt:f32,playing:=true,acting:proc(f:^Cinematic_Fixture)=nil) {
     time:=core.Time{dt=dt,tick=tick,playing=playing}
     anim.animation_requests_serve(&f.requests,anim.ANIMATION_SETTINGS_DEFAULT,&f.problems,&f.playback,&f.actions,time)
-    cam.camera_select(core.ref(&f.entities),core.read(&f.cameras),&f.shown,&f.camera_requests,core.read(&f.activations),core.read(&f.follows),core.read(&f.parents),core.read(&f.seats),core.ref(&f.seat_state),&f.problems)
+    cam.camera_select(core.ref(&f.entities),core.read(&f.cameras),&f.shown,&f.camera_requests,core.read(&f.activations),core.read(&f.follows),core.read(&f.parents),core.read(&f.seats),core.ref(&f.seat_state),{},&f.problems)
     anim.animation_prepare(core.read(&f.animations),core.read(&f.attachments),core.read(&f.meshes),core.read(&f.sources),&f.modifier_runtime,&f.playback,&f.characters,&f.skeletons,&f.app,&f.problems)
     anim.animation_sample(core.read(&f.animations),core.read(&f.progress),&f.played,&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.remotes),&f.requests,&f.events,&f.modifier_runtime,&f.playback,&f.characters,&f.skeletons,&f.app,time,{},&f.problems,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
     test_world_settle(&f.w)

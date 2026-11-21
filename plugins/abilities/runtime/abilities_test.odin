@@ -53,6 +53,8 @@ Abilities_World :: struct {
     using world:Test_World,
     users:core.Table(Ability_User),
     seats:core.Table(inp.Seat),
+    seat_state:inp.Seats,
+    seat_runtime:inp.Seat_States,
     characters:core.Table(phys.Character),
     locomotions:core.Table(locomotion.Locomotion_State),
     worlds:core.Table(core.World_Transform),
@@ -139,6 +141,8 @@ fixture_make :: proc(t:^testing.T,f:^Fixture) -> bool {
     core.add(&f.worlds,f.player,core.World_Transform{transform={rotation=turn,scale=1}})
     core.add(&f.worlds,f.dummy,core.World_Transform{transform={position={1.5,0,0},rotation=1,scale=1}})
     test_world_settle(&f.w)
+    inp.input_seat_index(core.ref(&f.entities),core.read(&f.seats),&f.seat_state,&f.problems)
+    inp.seat_runtime_edit(&f.seat_runtime,f.seat)
     f.time={tick=1,dt=1.0/RATE,playing=true}
     return true
 }
@@ -171,13 +175,13 @@ test_overlap :: proc(w:^Ability_World,hitbox:Ability_Hitbox,pose:mm.Transform,re
 
 @(private="file")
 world_of :: proc(f:^Fixture) -> Ability_World {
-    return {time=f.time,seats=core.read(&f.seats),characters=core.read(&f.characters),locomotions=core.read(&f.locomotions),worlds=core.read(&f.worlds),remotes=core.read(&f.remotes),paces=core.read(&f.paces),clock=core.CLOCK_DEFAULT,moves=&f.moves,animations=&f.animations,problems=&f.problems}
+    return {time=f.time,seats=core.ref(&f.seat_state),seat_states=core.ref(&f.seat_runtime),characters=core.read(&f.characters),locomotions=core.read(&f.locomotions),worlds=core.read(&f.worlds),remotes=core.read(&f.remotes),paces=core.read(&f.paces),clock=core.CLOCK_DEFAULT,moves=&f.moves,animations=&f.animations,problems=&f.problems}
 }
 
 @(private="file")
 step :: proc(f:^Fixture,ticks:=1) {
     for _ in 0..<ticks {
-        seat:=core.edit(&f.seats,f.seat)
+        seat:=inp.seat_runtime_edit(&f.seat_runtime,f.seat)
         seat.actions.count=2
         for a in 0..<2 {
             st:=&seat.actions.states[a]

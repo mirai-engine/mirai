@@ -51,7 +51,7 @@ camera_blend :: proc(
     parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),cameras:^core.Table(render.Camera,.Read),follows:^core.Table(Camera_Follow,.Read),worlds:^core.Table(core.World_Transform,.Read),chosen:^render.View_Camera,
     bodies:^render.View_Bodies,frame:core.Frame_Time,
 ) {
-    player:=input.focused(seat_state.ptr,seats)
+    player:=input.focused(seat_state,seats)
     n:=clamp(seat_state.local_count,1,input.LOCAL_CAPACITY)
     focus_slot:=clamp(seat_state.focus,0,n-1)
     for slot in 0..<input.LOCAL_CAPACITY {
@@ -69,7 +69,7 @@ camera_blend :: proc(
         // camera follows. Nearer to it than twice what it allows, the view fades it out.
         v.fade=0
         if follow,ok:=core.get(follows,v.camera);ok && follow.state.ready {
-            target:=follow_target(v.camera,follow.target,parents,seats,player)
+            target:=follow_target(v.camera,follow.target,parents,seats,seat_state,player)
             if body==core.NONE {body=target}
             if follow.hide_within>0 && target==body {
                 v.fade=clamp(2-linalg.length(v.pose.position-follow.state.pivot.position)/follow.hide_within,0,1)
