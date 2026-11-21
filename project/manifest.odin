@@ -45,7 +45,7 @@ Build_Options :: struct {
     optimization:Optimization,                  // of the module libraries; the shipped game is always built for speed
     debug:bool,                                 // debug information in the libraries editor and play: a crash names their procedures and lines
     defines:[MAX_DEFINES]Define `mirai:"text,trim"`, // NAME or NAME=value, given to every build of the project
-    compression:Name `mirai:"text"`,            // what its assets and its game are compressed with: none, open, or empty for the best its engine has (asset.Codecs)
+    compression:Name `mirai:"text"`,            // what its assets and its game are compressed with: none, or empty for MDC2
 }
 
 // How the game opens: maximized, on the whole display, or as a window of
@@ -181,7 +181,7 @@ Error_Code :: enum u8 {
     Asset_Kind_Invalid, // of the asset kind of the extension subject: the extension is not a dot and lowercase letters, digits and '_', its kind is not four printable letters, it has no version, its folder is not a relative path, or its extension or kind is there twice
     Schema_Failed,      // std/serial cannot describe the type subject: a defect of the engine, not of the file
     Out_Of_Memory,      // nothing of the files is wrong
-    Compression_Invalid, // subject, the compression of the project, is not none nor open
+    Compression_Invalid,
 }
 
 Error :: struct {
@@ -459,7 +459,7 @@ error_text :: proc(folder:string,error:Error,allocator:=context.allocator) -> st
     case .Dependency_Missing: text=fmt.tprintf("%s: depends on '%s', which exists neither in the project nor in the engine",file,subject)
     case .Dependency_Cycle:   text=fmt.tprintf("%s: depends on '%s', which depends on it",file,subject)
     case .Automatic_Named:    text=fmt.tprintf("%s: enables the plugin '%s', which is automatic: it is enabled by itself when its dependencies are; remove it from plugins",file,subject)
-    case .Compression_Invalid: text=fmt.tprintf("%s: build.compression '%s' is not one Mirai has: write none, open, or leave it out for the best the engine has",file,subject)
+    case .Compression_Invalid: text=fmt.tprintf("%s: build.compression '%s' is invalid: use 'none' or leave it empty for MDC2",file,subject)
     case .Automatic_Alone:    text=fmt.tprintf("%s: '%s' is automatic and depends on nothing; name in dependencies the plugins it joins or remove automatic",file,subject)
     case .Source_Invalid:     text=fmt.tprintf("%s: the source '%s' has no url or its commit is not a full hash",file,subject)
     case .Import_Source_Invalid: text=fmt.tprintf("%s: the import source '%s' needs an extension of a dot and lowercase letters, digits and '_', once",file,subject)

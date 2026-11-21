@@ -2,7 +2,7 @@ package asset
 
 import "core:math"
 import "core:mem"
-import "compressor:data"
+import "mirai:std/compressor/data"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"

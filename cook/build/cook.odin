@@ -10,7 +10,7 @@ import "core:slice"
 import "core:strings"
 import "core:sync"
 import "core:time"
-import "compressor:data"
+import "mirai:std/compressor/data"
 import "mirai:asset"
 import "mirai:cook/cache"
 import "mirai:cook/far"
@@ -671,7 +671,7 @@ Cook_Key :: struct {key:u64,bytes,time:i64,compressed,resolved:bool}
 cook_key :: proc(work:^Cook_Work,at:int,closure:^[dynamic]u32,far:=false) -> u64 {
     file:=&work.files[at]
     key:=base.hash_combine(COOK_KEYS_VERSION,u64(work.desc.quick)|u64(work.textures)<<1|u64(work.drawn[at])<<8|u64(work.shown[at])<<9|u64(far)<<10|u64(work.pieces[at])<<11)
-    key=base.hash_combine(key,base.hash_combine(u64(work.desc.codecs),base.hash_combine(base.name_hash(data.NAME),textures.encoders_id())))
+    key=base.hash_combine(key,u64(asset.stream_format(cook_profile(work.desc),work.desc.codecs)))
     if file.state!=.Asset {return base.hash_combine(base.hash_combine(key,u64(file.size)),u64(file.time))}
     key=base.hash_combine(key,file.content_hash)
     if file.kind==asset.KIND_TEXTURE && work.textures==.Blocks {
@@ -846,7 +846,7 @@ texture_cook :: proc(work:^Cook_Work,source,target:string,types:^asset.Types,wor
         }
     }
     defer textures.built_destroy(&built)
-    desc:=textures.built_desc(&built,file.blob.header.id,view.source,work.desc.codecs==.Best)
+    desc:=textures.built_desc(&built,file.blob.header.id,view.source)
     error=asset.texture_save(target,types,desc,profile=cook_profile(work.desc))
     if error!=.None {return false,fmt.tprintf("write texture: %v",error)}
     return true,""
@@ -864,7 +864,7 @@ texture_lay :: proc(work:^Cook_Work,source,target:string,types:^asset.Types) -> 
     mips:=make([][]u8,len(view.mips),context.temp_allocator)
     for _,level in view.mips {mips[level]=asset.texture_mip(view,level)}
     built:=textures.Built{width=int(info.width),height=int(info.height),layers=int(info.layers),format=info.format,flags=info.flags,alpha_coverage=info.alpha_coverage,mips=mips}
-    desc:=textures.built_desc(&built,file.blob.header.id,view.source,work.desc.codecs==.Best)
+    desc:=textures.built_desc(&built,file.blob.header.id,view.source)
     desc.owner=file.blob.header.owner
     doc:asset.Document
     if asset.texture_document(&doc,types,desc,context.temp_allocator,

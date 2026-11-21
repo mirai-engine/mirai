@@ -345,7 +345,7 @@ mark :: proc(w:^Sweep,address:Hash) -> Marked {
 // walk parses as a node, which every build stores as it is.
 @(private)
 chunk_bytes_locked :: proc(s:^Store,address:Hash,buffer:[]u8) -> ([]u8,Error) {
-    pack,location,found:=lookup_locked(s,address,readable=false)
+    pack,location,found:=lookup_locked(s,address)
     if !found {return nil,.Missing}
     return location_bytes_locked(s,pack,location,buffer)
 }
@@ -442,8 +442,7 @@ sweep_compact :: proc(w:^Sweep) -> Error {
         if !pack_foldable(&p) {continue}
         w.compacted[i]=p.dead || live[i]*2<total[i] || total[i]==0 || (small>=2 && total[i]<PACK_SMALL)
     }
-    // Of the copies of a live chunk in the packs compacted, the one copied is one every build
-    // reads when there is one: the generation then indexes it, whichever copy a table favored.
+    // Copy each live chunk once, preserving its latest timestamp.
     chosen:=make(map[Hash]int,16,context.temp_allocator)
     defer delete(chosen)
     order:=make([dynamic]Moved,0,0,context.temp_allocator)
@@ -455,9 +454,7 @@ sweep_compact :: proc(w:^Sweep) -> Error {
         kept.time=location_time(w.s,address,l)
         if at,found:=chosen[address];found {
             old:=&order[at]
-            time:=max(old.location.time,kept.time)
-            if int(old.location.codec) not_in CODECS_OPEN && int(l.codec) in CODECS_OPEN {old^=Moved{pack,kept}}
-            old.location.time=time
+            old.location.time=max(old.location.time,kept.time)
             return .None
         }
         if _,e:=map_insert(chosen,address,len(order));e!=nil {return .Out_Of_Memory}
@@ -638,14 +635,11 @@ generation_publish :: proc(w:^Sweep) -> Error {
         if _,e:=append(&chunks,c);e!=nil {return .Out_Of_Memory}
     }
     slice.sort_by(chunks[:],proc(a,b:Chunk) -> bool {return hash_less(a.address,b.address)})
-    // Of several copies, one every build reads.
     unique:=0
     for c in chunks {
         if unique>0 && chunks[unique-1].address==c.address {
             kept:=&chunks[unique-1].location
-            time:=max(kept.time,c.location.time)
-            if int(kept.codec) not_in CODECS_OPEN && int(c.location.codec) in CODECS_OPEN {kept^=c.location}
-            kept.time=time
+            kept.time=max(kept.time,c.location.time)
             continue
         }
         chunks[unique]=c
@@ -795,7 +789,7 @@ recheck_walk :: proc(w:^Sweep,address:Hash,level:int,depth:int,visited:^map[Hash
         w.buffers[depth]=b
     }
     bytes:[]u8
-    if _,_,found:=lookup_locked(s,address,readable=false);found {
+    if _,_,found:=lookup_locked(s,address);found {
         if level==DATA {return 0,.None}
         bytes=chunk_bytes_locked(s,address,w.buffers[depth]) or_return
     } else {
@@ -1092,7 +1086,7 @@ scrub :: proc(s:^Store,budget:i64,now:Maybe(time.Time)=nil) -> (result:Scrub_Res
                 break
             }
             // A frame of a codec this build lacks is for a build that has it to check.
-            if location_dead(s,spot.pack,spot.location) || !codec_readable(s,spot.location.codec) {continue}
+            if location_dead(s,spot.pack,spot.location) {continue}
             _,holds,read_error:=location_holds_locked(s,spot.pack,spot.location,spot.address,buffer)
             if read_error==.Out_Of_Memory {return result,read_error}
             result.chunks+=1
@@ -1157,7 +1151,7 @@ restore_locked :: proc(s:^Store,st:^^Stage,address:Hash,level,depth:int,visited:
     if e!=nil {return 0,.Out_Of_Memory}
     defer delete(buffer,context.temp_allocator)
     bytes:[]u8
-    if pack,location,found:=lookup_locked(s,address,readable=false);found {
+    if pack,location,found:=lookup_locked(s,address);found {
         if level==DATA {return 0,.None}
         read,read_error:=location_bytes_locked(s,pack,location,buffer)
         if read_error!=.None {return 0,read_error if read_error==.Out_Of_Memory else .None}
@@ -1200,7 +1194,7 @@ root_packs_locked :: proc(s:^Store,target:Hash,packs:^map[int]struct{},visited:^
 tree_packs_locked :: proc(s:^Store,address:Hash,level,depth:int,packs:^map[int]struct{},visited:^map[Hash]struct{}) {
     if depth>NODE_LEVEL_MAX+1 || address in visited^ {return}
     map_insert(visited,address,struct{}{})
-    pack,location,found:=find_locked(s,address,readable=false)
+    pack,location,found:=find_locked(s,address)
     if !found {return}
     map_insert(packs,pack,struct{}{})
     if level==DATA {return}

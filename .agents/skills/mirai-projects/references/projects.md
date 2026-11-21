@@ -79,11 +79,9 @@ keeps its default; one the struct does not have is an error.
 - `import_sources`: the extensions of the files the importers of a plugin read (`.umap`): a
   repository with LFS keeps them in it as it keeps the sources of the engine's formats
   ([git and assets](../../mirai-assets/references/cli.md#git)).
-- `build.compression`: what the files of its shipped game are compressed with: `none`, `open`, or
-  empty for the best its engine has ([compressor](build.md#compressor)). Only the cook compresses
-  with it: the documents of the project and what the store and the exchange hold never depend on
-  a compressor. The projects of the repository of the engine (the demo, the templates) declare
-  `open`; a project made from a template does not keep it.
+- `build.compression`: the compression of shipped assets. Leave it empty for MDC2 or use
+  `none` to store the assets without a data codec
+  ([asset cooking](build.md#asset-cooking)).
 - `development`: a tool for making the game (`profiler`, `tracy`). It goes into the `editor` and
   `play` libraries; the shipped game is generated with `shipped_world`, the world without them, and
   if its code reaches them the build fails with `Engine_Time_Code`.
@@ -576,10 +574,8 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
   of the running `mirai`, with or without an editor; a project keeps no copy of it.
 - `mirai worktree new` creates `<main>/.worktrees/<name>` on a new branch and prints the `cd` and
   the first build. `.deps` and the caches (engine binaries, C libraries, shader stages) are those
-  of the main checkout ([dependencies](build.md#dependencies-and-worktrees)), and so is the private
-  compressor in its `ext/` ([compressor](build.md#compressor)). Its engine shaders are generated
-  by its own tool, which its launcher builds from its sources, and its test worlds by that tool
-  when it checks or tests: the tool of another checkout generates as its own sources say. A
+  of the main checkout ([dependencies](build.md#dependencies-and-worktrees)). Its own tool generates
+  its shaders and test worlds. The launcher builds the tool from the worktree sources. A
   worktree from `git worktree add` needs nothing more: its first `mirai` command builds the tool,
   which needs no generated file.
 - `mirai doctor [project]` checks the machine and the project, says how to fix each finding and

@@ -77,7 +77,7 @@ Engine_Package :: struct {
 ENGINE_PACKAGES :: [?]Engine_Package{
     {.Base,"std/base","std"},{.Base,"std/subprocess","std"},{.Base,"std/math","std"},{.Base,"std/geom","std"},{.Base,"std/serial","std"},
     {.Base,"std/spatial","std"},{.Base,"std/jobs","std"},{.Base,"std/anim","std"},{.Base,"std/ai","std"},{.Base,"std/input","std"},
-    {.Base,"std/ui_format","std"},{.Base,"std/blake3","std"},
+    {.Base,"std/ui_format","std"},{.Base,"std/blake3","std"},{.Base,"std/compressor/data","std"},
     {.Base,"audio","system"},{.Base,"platform","system"},{.Base,"rhi","system"},
     {.Base,"project","system"},{.Base,"store","system"},{.Base,"core",""},
 
@@ -400,7 +400,6 @@ engine_plan :: proc(root,compiler:string,mode:Engine_Mode,paths:Engine_Paths,lib
     catalog:=project.path(root,"shaders/build/catalog.json",allocator=context.temp_allocator)
     embedded:=[3]string{catalog,project.path(root,"shaders/build/manifest.json",allocator=context.temp_allocator),project.path(root,"shaders/build",names[shaders.HOST_BACKEND],allocator=context.temp_allocator)}
     plan.programs,_=fingerprint(root,compiler,plan.flags[:],nil)
-    compressor:=compressor_sources(root)
     plan.libraries=make([]Library_Stamp,len(libraries),context.temp_allocator)
     plan.library_flags=make([][]string,len(libraries),context.temp_allocator)
     for &library,which in plan.libraries {
@@ -416,7 +415,6 @@ engine_plan :: proc(root,compiler:string,mode:Engine_Mode,paths:Engine_Paths,lib
             if strings.has_suffix(source,".odin") || (mode==.Dev && project.path_same(source,embedded[2])) {continue}
             append(&embeds,source)
         }
-        append(&sources,..compressor)
         library.sources,_=fingerprint(root,compiler,flags[:],sources[:])
         library.tools,_=fingerprint(root,compiler,flags[:],embeds[:])
     }
@@ -1202,32 +1200,7 @@ engine_flags :: proc(root:string,dev:bool) -> [dynamic]string {
     if !dev {append(&flags,"-debug")}
     platform_flags(root,&flags,false,context.temp_allocator)
     environment_flags(&flags,context.temp_allocator)
-    compressor,_:=project.compressor_flags(root,context.temp_allocator)
-    append(&flags,..compressor[:])
     return flags
-}
-
-// A source of each package of the collections of the compressor, which every library compiles
-// from where they are (they are not packages of the engine): what names them in a fingerprint.
-@(private)
-compressor_sources :: proc(root:string) -> []string {
-    list:=make([dynamic]string,context.temp_allocator)
-    walk :: proc(folder:string,list:^[dynamic]string) {
-        entries,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
-        found:=false
-        for entry in entries {
-            if entry.type==.Directory {
-                if !strings.has_prefix(entry.name,".") && entry.name!="testdata" {walk(entry.fullpath,list)}
-            } else if !found && strings.has_suffix(entry.name,".odin") {
-                append(list,slashes(entry.fullpath,context.temp_allocator))
-                found=true
-            }
-        }
-    }
-    folder,private:=project.compressor_folder(root,context.temp_allocator)
-    walk(folder,&list)
-    if private {walk(project.path(root,project.COMPRESSOR_OPEN,allocator=context.temp_allocator),&list)}
-    return list[:]
 }
 
 // The sources of some packages under root, sorted, with the files they load

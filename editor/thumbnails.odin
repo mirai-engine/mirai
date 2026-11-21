@@ -489,7 +489,9 @@ thumbnail_decode :: proc(head:[]u8,side:int,key:u64,file:^Thumbnail_File,image:^
     if serial.read_u32(&r)!=THUMBNAIL_FILE_MAGIC || serial.read_u32(&r)!=THUMBNAIL_FILE_VERSION || serial.read_u64(&r)!=key || serial.read_u32(&r)!=u32(side) {return false}
     packed:=int(serial.read_u32(&r))
     if r.failed || packed!=len(head)-THUMBNAIL_FILE_HEADER {return false}
-    if file.decoder.data==nil && asset.stream_decoder_init(&file.decoder)!=.None {return false}
+    if file.decoder.allocator.procedure==nil {
+        if asset.stream_decoder_init(&file.decoder)!=.None {return false}
+    }
     resize(image,pixels)
     return asset.unpack(&file.decoder,head[THUMBNAIL_FILE_HEADER:],image[:])==.None
 }
@@ -507,9 +509,11 @@ thumbnail_save :: proc(folder:string,id:base.Asset_Id,side:int,key:u64,image:[]u
 @(private)
 thumbnail_encode :: proc(side:int,key:u64,image:[]u8,file:^Thumbnail_File) -> []u8 {
     if len(image)!=side*side*4 {return nil}
-    if file.encoder.data==nil && asset.stream_encoder_init(&file.encoder)!=.None {return nil}
+    if file.encoder.allocator.procedure==nil {
+        if asset.stream_encoder_init(&file.encoder)!=.None {return nil}
+    }
     resize(&file.bytes,THUMBNAIL_FILE_HEADER+asset.pack_bound(len(image)))
-    packed,error:=asset.pack(&file.encoder,.Fast,.Open,image,file.bytes[THUMBNAIL_FILE_HEADER:])
+    packed,error:=asset.pack(&file.encoder,.Fast,.Compressed,image,file.bytes[THUMBNAIL_FILE_HEADER:])
     if error!=.None {return nil}
     w:serial.Writer
     serial.writer_init(&w,allocator=context.temp_allocator)

@@ -32,7 +32,7 @@ a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc
     manifest:=fmt.tprintf("%s/project/%s",folder,COOK_FILE)
 
     // Without cook.mirai the scenes and the prefabs are the roots.
-    report:=cook_assets({gpu=&gpu,assets=assets,output=output,manifest=manifest,codecs=.Open,allocator=context.temp_allocator})
+    report:=cook_assets({gpu=&gpu,assets=assets,output=output,manifest=manifest,codecs=.Compressed,allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)
     kept,dropped:=names(&report)
     testing.expect_value(t,kept,"materials/wood.mat models/crate.mesh prefabs/prop.scene scenes/main.scene textures/wood_color.tex textures/wood_normal.tex ")
@@ -53,7 +53,7 @@ a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc
     // Any other asset is the same document, compressed for shipping.
     source,_:=os.read_entire_file(fmt.tprintf("%s/models/crate.mesh",assets),context.temp_allocator)
     shipped,_:=os.read_entire_file(fmt.tprintf("%s/models/crate.mesh",output),context.temp_allocator)
-    repacked,repack_error:=asset.document_repack(source,.Ultra,.Open,context.temp_allocator)
+    repacked,repack_error:=asset.document_repack(source,.Ultra,.Compressed,context.temp_allocator)
     testing.expect(t,len(source)>0 && repack_error==.None && string(repacked)==string(shipped))
 
     // The index is what a scan of the output finds.
@@ -219,9 +219,7 @@ a_cook_writes_again_only_what_is_made_of_what_changed :: proc(t:^testing.T) {
 }
 
 // What a cook writes is compressed as its project allows and reads back as what the project
-// holds: nothing, or streams of the formats of the codecs it allows, with the layouts of blocks
-// only of the best. The cook is where the container's own compression is made: the project keeps
-// its assets written without a compressor.
+// holds, with optional MDC2 streams.
 @(test)
 a_cook_compresses_as_its_project_says_and_what_it_writes_decodes :: proc(t:^testing.T) {
     gpu:textures.Gpu_Context
@@ -254,8 +252,6 @@ a_cook_compresses_as_its_project_says_and_what_it_writes_decodes :: proc(t:^test
             if file.kind==asset.KIND_TEXTURE {
                 _,error:=asset.texture_view(&a,&types)
                 testing.expect_value(t,error,asset.Error.None)
-                _,laid:=asset.asset_table(&a,asset.TEXTURE_TABLE_LAYOUTS)
-                testing.expect(t,!laid || codecs==.Best,"layouts only of the best codecs")
             }
             if file.compressed || file.resolved {continue}
             // Written again without a compressor, the file shipped is the one the project holds.

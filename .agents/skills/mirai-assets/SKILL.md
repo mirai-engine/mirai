@@ -3,7 +3,7 @@ name: mirai-assets
 description: Mirai binary assets (.scene, prefabs, .mat, .mesh, .tex, .anim, .sound, .sound_set,
   .ui, .font, .strings, .prompts, .records and those of plugins, such as .terrain and .foliage),
   their container, the `asset` package, the registry, prefab resolution (`cook/prefab`), the
-  compression of assets (the collection `compressor`, `std/compressor`, `ext/mirai-compression`),
+  compression of assets (MDC2 in `std/compressor/data`),
   `std/serial` and the `mirai asset` tool. Use when reading, creating or editing an asset, adding
   an asset type or a serialized component, compressing or decoding asset data, or when an asset
   does not load.
@@ -11,9 +11,9 @@ description: Mirai binary assets (.scene, prefabs, .mat, .mesh, .tex, .anim, .so
 
 # Mirai assets
 
-The packages are `std/serial` (streams, schemas, migration, paths, JSON), the collection
-`compressor` (codecs and block encoders) and `asset` (container, compression, typed tables, asset
-types, scenes and their prefab instances, registry).
+The packages are `std/serial` (streams, schemas, migration, paths, JSON), `std/compressor/data`
+(MDC2) and `asset` (container, compression, typed tables, asset types, scenes and their prefab
+instances, registry).
 
 ## Map
 
@@ -30,7 +30,7 @@ types, scenes and their prefab instances, registry).
 - The records of imports in the machine store (package and build manifests, `packages.mirai`
   and the manifest files a root carries), their refs and `packages_resolve`:
   [packages](references/formats.md#packages).
-- The collection `compressor`, profiles, codecs, streams and decoders:
+- MDC2, profiles, streams and decoders:
   [compression](references/formats.md#compression).
 - Streams, schemas, migration, paths, text: [serial](references/serial.md#stdserial).
 - Mesh, skeleton, texture, material, fracture, animation, sound, sound set, `.ui`, font, texts,
@@ -107,22 +107,13 @@ types, scenes and their prefab instances, registry).
   `asset_open` validate header, directory, schema and tables; each `*_view` validates ranges of its
   type. Code that indexes with file data validates first or uses checked accesses. The decoders
   (`unpack`, `schema_read`, `text_read`) allocate no more than the input backs.
-- **Every import of compression goes through the collection `compressor`**, never a codec
-  package: `compressor:data`, `compressor:texture` and, engine-time, `compressor:blocks`. The open
-  one (`std/compressor`) is a real implementation; the private one has the same packages and
-  declarations. Its sources are never versioned in the engine nor packaged.
-- **What is hashed and shared never depends on a compressor.** The documents of a project, the
-  assets of the engine and its plugins, imports and objects of the store are written with
-  `Codecs.None`: no stage of a compressor, each kind keeping the modeling of its data, chosen
-  without one. The store compresses where bytes rest and the exchange where they travel; only the
-  files a cook ships are compressed as the project's `build.compression` says.
-- **A stream says what decodes it**: a read needs no profile nor codecs.
-- **Decoders are preallocated.** A `Stream_Decoder` holds all the scratch, allocated once by
-  whoever reads; a decode never allocates, and for any input never reads outside `src` nor writes
-  outside `dst`.
-- **Types that hold a compressor keep it behind a pointer** (`Stream_Decoder`,
-  `Stream_Encoder`, `Decoder`): binaries of an installed engine built with the private compressor
-  share them with code built against the open one.
+- **Store objects have a canonical asset representation.** They are written with `Codecs.None`.
+  The store compresses the chunks of that representation where bytes rest and the exchange sends
+  those frames. The tracked engine, demo and template assets use MDC2. A cook follows its
+  project's `build.compression`.
+- **A stream says what decodes it**: a read needs no profile.
+- **Decoders are preallocated.** A `Stream_Decoder` holds the scratch allocated once by whoever
+  reads. A decode never allocates or reads or writes outside its buffers.
 - **The encoders are deterministic**: the same input, profile and codecs give the same bytes.
 - **A block format is described once.** `asset/texture_bc7.odin` and `asset/texture_bc6h.odin`
   hold the modes, partitions, anchors, weights and decode of BC7 and BC6H.
@@ -193,7 +184,6 @@ types, scenes and their prefab instances, registry).
 - Compression: `asset/compress_test.odin` (every profile and codecs, hostile streams, block
   tables), `asset/container_test.odin` (chunks with alignment and pieces) and the pages in
   `asset/mesh_page_code_test.odin`. Codecs: `mirai test std/compressor/data`. The
-  [imports skill](../mirai-imports/SKILL.md#verification) covers open block encoding. With and
-  without `ext/mirai-compression`, whose tests run from its folder.
+  [imports skill](../mirai-imports/SKILL.md#verification) covers GPU block encoding.
 - Benchmark (not routine):
   `mirai test asset scene_file_against_a_file_per_entity --release -define:ASSET_BENCH=true`.

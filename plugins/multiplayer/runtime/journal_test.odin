@@ -345,7 +345,7 @@ what_a_client_receives_without_memory_is_left_out_and_reported :: proc(t:^testin
         raw:=make([]u8,int(c.total),context.temp_allocator)
         for &b,i in raw {b=u8(i*13)}
         packed:=make([]u8,asset.pack_bound(int(c.total)),context.temp_allocator)
-        size,_:=asset.pack(&encoder,.Fast,.Open,raw,packed)
+        size,_:=asset.pack(&encoder,.Fast,.Compressed,raw,packed)
         stood,refused:=false,false
         for served in 0..<8 {
             number+=1

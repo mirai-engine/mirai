@@ -177,12 +177,11 @@ serve_job :: proc(data:rawptr,worker:int) {
     }
 }
 
-// The chunk at address read into out after its Chunk head, in a codec the
-// peer decodes: the size of the message, or why not.
+// Reads a chunk's stored frame into the message.
 @(private)
-serve_read :: proc(x:^Exchange,p:^Peer,out:[]u8,address:store.Hash) -> (size:int,error:store.Error) {
+serve_read :: proc(x:^Exchange,out:[]u8,address:store.Hash) -> (size:int,error:store.Error) {
     room:=out[MSG_CHUNK_HEAD:]
-    bytes,codec,raw:=store.chunk_read_in(x.desc.store,address,p.decodes,room,p.scratch) or_return
+    bytes,codec,raw:=store.chunk_read_frame(x.desc.store,address,room) or_return
     if raw_data(bytes)!=raw_data(room) {copy(room,bytes)}
     encode_chunk_head(out,address,codec,raw)
     return MSG_CHUNK_HEAD+len(bytes),.None
@@ -221,7 +220,7 @@ serve_build :: proc(x:^Exchange,p:^Peer,out:[]u8) -> int {
             return 1
         }
         if !p.started {
-            size,error:=serve_read(x,p,out,e.address)
+            size,error:=serve_read(x,out,e.address)
             p.started=true
             if error!=.None {
                 n:=encode_address(out,MSG_LACK,e.address)
@@ -246,7 +245,7 @@ serve_build :: proc(x:^Exchange,p:^Peer,out:[]u8) -> int {
             }
             child:=n.entries[f.index]
             f.index+=1
-            size,read_error:=serve_read(x,p,out,child.address)
+            size,read_error:=serve_read(x,out,child.address)
             if read_error!=.None || p.sent_under+i64(size-MSG_CHUNK_HEAD)>i64(e.budget) {
                 p.depth=0
                 break

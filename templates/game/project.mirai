@@ -2,5 +2,5 @@
   "name": "Game",
   "start_scene": "arena/main.scene",
   "plugins": ["spawn", "physics", "locomotion", "destruct", "multiplayer", "playtest", "ui_inspector"],
-  "build": {"compression": "open"}
+  "build": {"compression": ""}
 }

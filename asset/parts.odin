@@ -78,7 +78,7 @@ object_put :: proc(s:^store.Store,original:[]u8) -> (address:store.Hash,error:Er
 }
 
 // Whether a file is as a write with Codecs.None makes it: no chunk is a
-// stream, every page of a mesh is stored as it is, and a texture has no layouts and the planes the kind chooses.
+// stream, every page of a mesh is stored as it is, and a texture has the planes the kind chooses.
 @(private="file")
 object_raw :: proc(data:[]u8) -> (raw:bool,error:Error) {
     a:Asset
@@ -92,7 +92,6 @@ object_raw :: proc(data:[]u8) -> (raw:bool,error:Error) {
     defer types_destroy(&types)
     switch a.blob.header.kind {
     case KIND_TEXTURE:
-        if _,laid:=asset_table(&a,TEXTURE_TABLE_LAYOUTS);laid {return false,.None}
         info:=asset_row(&a,&types,"texture",Texture_Info) or_return
         planes:=texture_fields_format(info.format) && .Fast not_in info.flags
         return planes==(.Fields in info.flags),.None

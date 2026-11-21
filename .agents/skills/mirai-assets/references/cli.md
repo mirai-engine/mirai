@@ -23,9 +23,8 @@ subcommands with their usage.
   of the engine), the one whose assets have its id. A file outside the assets (another version of
   one, as git gives it) reads as the asset with its id. `unpack`, `pack` and `dump --schema`
   refuse them.
-- **`repack`** writes each file again as a project keeps it, without a stage of a compressor
-  (`Codecs.None`); a texture with its blocks as they are. A file that already is so stays
-  untouched: what a project runs over the files of its assets a compressor wrote.
+- **`repack`** writes each file in the store's canonical form (`Codecs.None`). It leaves a file
+  that already has that representation untouched.
 - **`verify`** checks container, hash, decompression, schema and tables, that the stored
   dependencies are the derived ones and that each value meets its schema. For the engine's types it
   checks their version (for one the build does not read, the reason is `version_message`, with the

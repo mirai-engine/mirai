@@ -38,7 +38,7 @@ a_cook_takes_the_blocks_of_a_texture_from_the_cache_of_its_content :: proc(t:^te
     }
 
     // The first cook compresses the texture and keeps its blocks.
-    report:=cook_assets({gpu=&gpu,assets=assets,output=fmt.tprintf("%s/first",folder),manifest=manifest,store=&kept_store,codecs=.Open,allocator=context.temp_allocator})
+    report:=cook_assets({gpu=&gpu,assets=assets,output=fmt.tprintf("%s/first",folder),manifest=manifest,store=&kept_store,codecs=.Compressed,allocator=context.temp_allocator})
     testing.expect(t,report.error==.None && report.textures_compressed==1)
     testing.expect(t,report.seconds>0,"the report says how long the cook took")
     format,blocks:=level(t,&types,fmt.tprintf("%s/first/textures/wood.tex",folder))
@@ -52,13 +52,13 @@ a_cook_takes_the_blocks_of_a_texture_from_the_cache_of_its_content :: proc(t:^te
     // The next cook reads them: blocks the cache was given are the ones it ships.
     kept.mips[0][0]~=0xff
     testing.expect(t,textures.cache_write(texture_cache,key,&types,&kept))
-    report=cook_assets({gpu=&gpu,assets=assets,output=fmt.tprintf("%s/second",folder),manifest=manifest,store=&kept_store,codecs=.Open,allocator=context.temp_allocator})
+    report=cook_assets({gpu=&gpu,assets=assets,output=fmt.tprintf("%s/second",folder),manifest=manifest,store=&kept_store,codecs=.Compressed,allocator=context.temp_allocator})
     testing.expect(t,report.error==.None && report.textures_compressed==1)
     _,cached:=level(t,&types,fmt.tprintf("%s/second/textures/wood.tex",folder))
     testing.expect(t,len(cached)==32 && cached[0]==blocks[0]~0xff && slice.equal(cached[1:],blocks[1:]))
 
     // A cook without a cache compresses, and another content is another key.
-    report=cook_assets({gpu=&gpu,assets=assets,output=fmt.tprintf("%s/third",folder),manifest=manifest,codecs=.Open,allocator=context.temp_allocator})
+    report=cook_assets({gpu=&gpu,assets=assets,output=fmt.tprintf("%s/third",folder),manifest=manifest,codecs=.Compressed,allocator=context.temp_allocator})
     _,fresh:=level(t,&types,fmt.tprintf("%s/third/textures/wood.tex",folder))
     testing.expect(t,report.error==.None && slice.equal(fresh,blocks))
     pixels[0]+=1

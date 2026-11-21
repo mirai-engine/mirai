@@ -7,7 +7,6 @@ import "core:sync"
 import "core:testing"
 import "core:thread"
 import "core:time"
-import "compressor:data"
 import "mirai:platform"
 import "mirai:store"
 import wire "mirai:net"
@@ -832,23 +831,6 @@ a_ten_gigabyte_object_moves_within_bounded_memory :: proc(t:^testing.T) {
     }
 }
 
-// Simulate frames written by a peer with another compressor.
-@(private="file")
-other_codec :: proc() -> store.Codec_Hook {
-    return {codec=15,encode=proc(src,dst:[]u8) -> int {
-        e:data.Encoder
-        data.encoder_init(&e)
-        defer data.encoder_destroy(&e)
-        size,error:=data.encode(&e,.Fast,src,dst,open=true)
-        return size if error==.None else 0
-    },decode=proc(src,dst:[]u8) -> bool {
-        d:data.Decoder
-        if data.decoder_init(&d)!=.None {return false}
-        defer data.decoder_destroy(&d)
-        return data.decode(&d,data.format(.Fast,open=true),src,dst)==.None
-    }}
-}
-
 // Bytes that compress: runs of a few values.
 @(private="file")
 compressible :: proc(size:int,seed:u64) -> []u8 {
@@ -863,16 +845,13 @@ compressible :: proc(size:int,seed:u64) -> []u8 {
     return bytes
 }
 
-// Peers whose stores hold frames of different codecs exchange objects both ways: each chunk
-// travels encoded in a codec its receiver decodes (as stored, or decoded and encoded again),
-// is checked against its address once decoded, and both end with every object readable.
+// Peers exchange compressed chunks both ways and recover the original objects.
 @(test)
-peers_of_different_codecs_exchange_objects_both_read :: proc(t:^testing.T) {
+peers_exchange_compressed_objects_both_ways :: proc(t:^testing.T) {
     w:Test_World
     defer test_world_destroy(&w)
     if !test_pair(t,&w,"exchange-codecs") {return}
     other:=&w.nodes[1]
-    testing.expect_value(t,store.codec_hook(&other.s,other_codec()),store.Error.None)
     size:=3*store.CHUNK_MAX+11
     mine,theirs:=compressible(size,1),compressible(size,2)
     a:=test_object(t,&w.nodes[0].s,mine)

@@ -12,8 +12,8 @@ description: Mirai machine-wide content-addressed store (the `store` package) - 
 
 # Mirai store
 
-`store` (layer 1) imports only `base`, `core`, `std` and `compressor:data`: a plain library a game
-binary may link.
+`store` (layer 1) imports only `base`, `core` and `std`, including `std/compressor/data`. A game
+binary may link it.
 It knows chunks, objects and refs and interprets none of them: the transport, the library and the
 derived data cache that use it decide what a ref means and what is live.
 
@@ -28,8 +28,7 @@ derived data cache that use it decide what a ref means and what is live.
 - What a `Store` value knows (generation, table of chunks, folded refs) and reading the root again:
   `store/index.odin`.
 - Putting and reading objects and chunks: `store/object.odin`; refs: `store/refs.odin`.
-- The codecs of frames, what a value decodes and writes with, and the hook a test gives it to act
-  as a build of another compressor: `store/codec.odin`. The open codec is defined in
+- Frame encoding and scratch: `store/codec.odin`. The data codec is defined in
   [assets](../mirai-assets/references/formats.md#compression).
 - Sweep, compaction, generations, scrub and the sweep's claims: `store/sweep.odin`; leases:
   `store/leases.odin`. The sweep a long-running owner calls, with what is live on the machine:
@@ -55,19 +54,13 @@ derived data cache that use it decide what a ref means and what is live.
 
 - A chunk is 1 to `CHUNK_MAX` bytes named by the standard BLAKE3 of its bytes; an object is a tree
   of nodes over its chunks and its address is its root node's. What is hashed never depends on a
-  compressor: a put encodes a chunk's frame with this build's data codec when that shrinks it and
-  records the codec in the frame (nodes stay as they are, so a sweep of any build walks them), and
+  compressor: a put encodes a chunk's frame with MDC2 when that shrinks it and
+  records the codec in the frame (nodes stay as they are, so a sweep walks them directly), and
   a read decodes into the caller's buffer; a frame stored as it is is a slice of the mapped pack.
   The root's `LAYOUT` carries the layout of packs, frames, generations, nodes and the cut: a root
   of another layout, or one of the store before packs, is refused, never read or migrated.
-- A frame of a codec this value does not decode is, to it, a chunk that is not here to read or
-  serve: a lookup misses it, a put of its address appends a frame it reads, and its table keeps
-  the copy it reads over it. For what is kept it is here: a ref, a lease and a commit find an
-  object whole whatever the codecs of its frames, and a sweep keeps such frames as they are and,
-  of several copies, copies and indexes one every build reads, so builds with the open and the
-  private compressor share a root. A frame a caller offers (`chunk_put_frame`) is decoded and
-  checked against its address before it is kept. A frame whose codec id, sizes
-  or bytes lie is damage: refused when read, tombstoned by a scrub.
+- A frame a caller offers (`chunk_put_frame`) is decoded and checked against its address before
+  it is kept. Invalid frames are refused, and a scrub tombstones damaged chunks it finds.
 - Every chunk lives in a pack, appended only by the writer that made it, whose lease (`w-` and its
   id) says it runs. A put reserves its range of the pack under the lock and writes outside it, so
   threads write at once; a small object is one write, and nothing is created, renamed or flushed
@@ -180,10 +173,7 @@ derived data cache that use it decide what a ref means and what is live.
   `hostile_packs_and_generations_are_refused`, `hostile_inputs_return_errors` and
   `fresh_leases_keep_their_current_addresses`, `a_chunk_check_tombstones_a_damaged_copy`,
   `frames_compress_and_addresses_are_of_the_bytes`,
-  `a_codec_this_build_lacks_reads_as_missing_and_a_put_repairs_it`,
-  `a_damaged_encoded_frame_is_a_damaged_chunk`, `hostile_chunk_frames_are_refused`,
-  `a_sweep_of_copies_of_two_codecs_keeps_one_every_build_reads`,
-  `a_ref_on_an_object_of_a_codec_this_build_lacks_is_kept`; for
+  `a_damaged_encoded_frame_is_a_damaged_chunk`, `hostile_chunk_frames_are_refused`; for
   chunks and nodes
   `chunks_are_the_same_streamed_in_any_split_and_whole`,
   `an_edit_changes_two_data_chunks_and_one_node_per_level`, `hostile_nodes_return_errors` and

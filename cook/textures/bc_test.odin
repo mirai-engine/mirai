@@ -79,7 +79,7 @@ smooth_image :: proc(size:int,alpha:bool) -> []u8 {
     return pixels
 }
 
-// What the file keeps of the blocks, saved with the best codecs and the layouts they have, and
+// What the file keeps of the blocks, saved with MDC2, and
 // what the blocks keep of the image without RDO: the error RDO trades is the encoder's own.
 @(test)
 a_compressed_texture_survives_the_file_within_what_a_block_keeps :: proc(t:^testing.T) {
@@ -88,7 +88,7 @@ a_compressed_texture_survives_the_file_within_what_a_block_keeps :: proc(t:^test
     defer gpu_context_destroy(&gpu)
     SIZE :: 64
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    types.codecs=.Best
+    types.codecs=.Compressed
     folder:=base.test_folder(t,"bc")
     if folder=="" {return}
     cases:=[?]struct{name:string,options:Build_Options,alpha:bool,format:asset.Texture_Format,channels:int,tolerance:int}{
@@ -110,7 +110,7 @@ a_compressed_texture_survives_the_file_within_what_a_block_keeps :: proc(t:^test
         for level,i in built.mips {testing.expectf(t,string(level)==string(again.mips[i]),"%s: level %d is not the same in a second build",entry.name,i)}
 
         path:=fmt.tprintf("%s/%d.tex",folder,index)
-        desc:=built_desc(&built,base.Asset_Id{9,u64(index)+1},nil,layouts=true)
+        desc:=built_desc(&built,base.Asset_Id{9,u64(index)+1},nil)
         testing.expect_value(t,asset.texture_save(path,&types,desc),asset.Error.None)
         a:asset.Asset
         if !testing.expect_value(t,asset.asset_load(&a,path),asset.Error.None) {continue}
@@ -119,21 +119,16 @@ a_compressed_texture_survives_the_file_within_what_a_block_keeps :: proc(t:^test
         testing.expect_value(t,view_error,asset.Error.None)
         testing.expect(t,view.info.format==entry.format && int(view.info.mip_count)==asset.texture_mip_count(SIZE,SIZE) && view.info.width==SIZE)
         for level in 0..<int(view.info.mip_count) {
-            side:=max(SIZE>>uint(level),1)
-            testing.expectf(t,same_level(entry.format,asset.texture_mip(view,level),built.mips[level],side,side),"%s: the file holds the built level %d",entry.name,level)
+            testing.expectf(t,string(asset.texture_mip(view,level))==string(built.mips[level]),"%s: the file holds the built level %d",entry.name,level)
         }
-        _,laid:=asset.asset_table(&a,asset.TEXTURE_TABLE_LAYOUTS)
-        testing.expectf(t,laid==(len(desc.layouts)>0),"%s: the file keeps the layouts of its blocks",entry.name)
-        // The levels from the third, as a far texture reads them: all of the tail for a layout,
-        // which restores whole.
+        // The levels from the third, as a far texture reads them.
         far:asset.Asset
         if testing.expect_value(t,asset.asset_load(&far,path),asset.Error.None) {
             defer asset.asset_close(&far)
             tail,tail_error:=asset.texture_open(&far,&types)
-            testing.expect(t,tail_error==.None && asset.texture_decode(&far,&types,&tail,2)==.None && tail.first==(0 if laid else 2))
+            testing.expect(t,tail_error==.None && asset.texture_decode(&far,&types,&tail,2)==.None && tail.first==2)
             for level in 2..<int(view.info.mip_count) {
-                side:=max(SIZE>>uint(level),1)
-                testing.expectf(t,same_level(entry.format,asset.texture_mip(tail,level),built.mips[level],side,side),"%s: a read from level 2 holds level %d",entry.name,level)
+                testing.expectf(t,string(asset.texture_mip(tail,level))==string(built.mips[level]),"%s: a read from level 2 holds level %d",entry.name,level)
             }
         }
 
@@ -185,7 +180,7 @@ the_rdo_lambda_trades_error_for_files_that_compress_smaller :: proc(t:^testing.T
     defer gpu_context_destroy(&gpu)
     SIZE :: 128
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    types.codecs=.Open // the files a cook ships, which RDO makes smaller
+    types.codecs=.Compressed // the files a cook ships, which RDO makes smaller
     folder:=base.test_folder(t,"rdo")
     if folder=="" {return}
     pixels:=smooth_image(SIZE,true);defer delete(pixels)
@@ -284,18 +279,6 @@ an_odd_sized_level_decodes_every_texel_of_its_last_blocks :: proc(t:^testing.T) 
     }
 }
 
-// A level as a file gives it back: the same bytes, and for BC7 the same
-// texels, as a layout may restore a solid block as another block of its texels.
-@(private)
-same_level :: proc(format:asset.Texture_Format,a,b:[]u8,width,height:int) -> bool {
-    if format!=.BC7 {return string(a)==string(b)}
-    if len(a)!=len(b) {return false}
-    pa:=make([]u8,width*height*4,context.temp_allocator)
-    pb:=make([]u8,width*height*4,context.temp_allocator)
-    return asset.texture_level_rgba8(format,a,width,height,pa) && asset.texture_level_rgba8(format,b,width,height,pb) && string(pa)==string(pb)
-}
-
-// Of a compressor with layouts of BC7 blocks: the tail restores without the larger levels.
 @(test)
 a_bc7_texture_restores_its_tail_without_its_larger_levels :: proc(t:^testing.T) {
     gpu:Gpu_Context
@@ -303,14 +286,12 @@ a_bc7_texture_restores_its_tail_without_its_larger_levels :: proc(t:^testing.T) 
     defer gpu_context_destroy(&gpu)
     SIZE :: 2*asset.TEXTURE_TAIL
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    types.codecs=.Best
+    types.codecs=.Compressed
     pixels:=smooth_image(SIZE,false);defer delete(pixels)
     built,error:=build(rgba8(pixels,SIZE,SIZE),{srgb=true,speed=.Fast},gpu=&gpu)
     defer built_destroy(&built)
     testing.expect(t,error==.None && built.format==.BC7)
-    desc:=built_desc(&built,{9,99},nil,layouts=true)
-    if len(desc.layouts)==0 {return}
-    testing.expect(t,len(desc.layouts)==2 && desc.layouts[0].level==0 && desc.layouts[1].level==1,"the level above the tail and the tail, apart")
+    desc:=built_desc(&built,{9,99},nil)
     doc:asset.Document
     testing.expect_value(t,asset.texture_document(&doc,&types,desc),asset.Error.None)
     bytes,bytes_error:=asset.document_bytes(&doc,context.temp_allocator)
@@ -321,7 +302,7 @@ a_bc7_texture_restores_its_tail_without_its_larger_levels :: proc(t:^testing.T) 
         testing.expect_value(t,asset.asset_open(&a,bytes),asset.Error.None)
         view,view_error:=asset.texture_open(&a,&types)
         testing.expect(t,view_error==.None && asset.texture_decode(&a,&types,&view,from)==.None)
-        testing.expectf(t,view.first==min(from,1),"a read from level %d restores from level %d",from,view.first)
+        testing.expectf(t,view.first==from,"a read from level %d restores from level %d",from,view.first)
         testing.expect(t,view.first==0 || asset.texture_mip(view,0)==nil)
         for level in view.first..<len(built.mips) {testing.expectf(t,string(asset.texture_mip(view,level))==string(built.mips[level]),"level %d read from %d",level,from)}
         if from+1<len(built.mips) {

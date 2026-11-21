@@ -22,7 +22,7 @@ import wire "mirai:net"
 
 NAMESPACE :: "shares"      // <hash of the secret of an invitation>: the offer under it
 PROTOCOL_ID :: 0x4d495348  // of the hosts of sharing: datagrams of any other application are ignored
-VERSION :: 5               // the project offer, snapshot and exchange
+VERSION :: 6               // the project offer, snapshot and exchange
 PEERS :: 8                 // connections of a node at once
 CONTROL_CHANNEL :: 0
 PRESENCE_CHANNEL :: 1

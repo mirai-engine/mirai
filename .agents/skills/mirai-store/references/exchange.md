@@ -52,13 +52,9 @@ in `exchange/wire.odin`.
   `Missing`, asked again when a peer joins. What a peer was asked stays reserved to it only while
   it makes progress on that want; otherwise it goes to others, that peer is not asked for the
   want for a while, and its late answers release nothing a second time.
-- A chunk travels in a codec its receiver decodes: before its first ask a receiver says which
-  frame codecs its store decodes (`store.codecs_read`), and a server sends a frame as stored when
-  the receiver decodes its codec, else decoded and encoded again in an open codec the receiver
-  decodes, or as it is (`store.chunk_read_in`); until a receiver says, chunks go as they are. The
-  receiver's store decodes what it gets, checks it against its address and keeps the frame as it
-  came (`store.chunk_put_frame`), one decode per chunk asked. Peers of builds
-  with different compressors exchange every object, and each ends reading all of them.
+- A chunk travels as stored in its frame (`store.chunk_read_frame`), either plain or MDC2.
+  The receiver verifies the decoded bytes against the address and keeps the received frame
+  (`store.chunk_put_frame`). A compressed chunk asked for decodes once.
 - Nothing is checked on serve. Nothing unverified reaches the store: a chunk is taken only as the
   answer to an entry asked of that peer or as a descendant of the entry it is answering within its
   budget, and only once it hashes to the address the ask or its parent named. A node is parsed and
@@ -128,5 +124,5 @@ in `exchange/wire.odin`.
   `a_peer_in_a_freed_slot_is_not_blamed_for_its_predecessor`,
   `late_ref_answers_return_their_credits`,
   `a_late_done_does_not_release_what_another_peer_was_asked`,
-  `peers_of_different_codecs_exchange_objects_both_read` and
+  `peers_exchange_compressed_objects_both_ways` and
   `destroy_wakes_a_waiting_fetch`.

@@ -3,7 +3,7 @@ package asset
 import "base:intrinsics"
 import "core:mem"
 import "core:slice"
-import "compressor:data"
+import "mirai:std/compressor/data"
 import "mirai:std/base"
 
 // How page_data stores the block of a page (mesh_page_layout): a stream over

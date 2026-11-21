@@ -382,23 +382,9 @@ reads and fills; a failure is `Cook_Failed` with `Result.cook.error` and `detail
   with an `Auto` `Collider` (its `Rigid_Body`, or that of its nearest ancestor with one, not
   `Static`) ships with its convex pieces (`asset.mesh_pieces_put`), decomposed once and kept in the
   collision cache (`Cook_Desc.collision_cache`): a shipped game reads them and decomposes nothing.
-- **Compression.** The cook is the only place the container's own compression remains: a game
-  has no store, so each file is written in the container format and compressed then, with the
-  codecs of its project (`Cook_Desc.codecs`, from `project.compression`) that this build has;
-  every texture is written again with the layouts and planes of fields those codecs take, and
-  with `None` its blocks are made without RDO. What a cook compresses with, and the name of the
-  compressor, are part of the key of each file it keeps.
-
-#### Compressor
-
-The collection `compressor` every compile names (`project.compressor_flags`): the private clone
-in `ext/mirai-compression` of the checkout or of its main checkout (git ignores `ext/`), else the
-open `std/compressor`; `compressor_open` is always the open one. The script `mirai` finds it the
-same way to build the tool. A project's `build.compression` empty is `Best` only where its engine
-has the private one: a game built from an installed engine, which carries no sources of it,
-reads only the open formats. The fingerprints of the libraries of the engine take the folder and
-the sources of the collection. A release is packaged with the open one: its binaries carry no
-private compressor, and `PACKAGE_TRACKED` never takes `ext/`.
+- **Compression.** Shipped assets use the setting in `build.compression`. A cook writes eligible
+  texture mips using whichever representation compresses smaller. When compression is disabled,
+  the cook encodes BCn blocks without RDO. Cook keys include the compression setting and format.
 - Every other asset is written again compressed for shipping (`asset.document_repack` with
   `SHIP`, [compression](../../mirai-assets/references/formats.md#compression)), and so are the
   textures it writes in blocks; a file that is not an asset is copied byte by byte.

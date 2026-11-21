@@ -39,8 +39,7 @@ built_textures_are_kept_by_image_and_settings_and_read_back_whole :: proc(t:^tes
     read,found:=cache_read(c,key,&types,context.temp_allocator)
     testing.expect(t,found && read.width==built.width && read.height==built.height && read.format==built.format && read.flags==built.flags && len(read.mips)==len(built.mips))
     for level,at in built.mips {
-        side:=max(16>>uint(at),1)
-        testing.expect(t,same_level(built.format,read.mips[at],level,side,side))
+        testing.expect(t,string(read.mips[at])==string(level))
     }
     _,other_key:=cache_read(c,key+2,&types,context.temp_allocator)
     testing.expect(t,!other_key)

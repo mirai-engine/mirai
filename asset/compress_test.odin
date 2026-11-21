@@ -1,8 +1,7 @@
 package asset
 
-import "core:os"
 import "core:testing"
-import "compressor:data"
+import "mirai:std/compressor/data"
 import "mirai:project"
 import "mirai:std/base"
 
@@ -44,7 +43,7 @@ a_stream_that_lies_about_its_pieces_is_refused :: proc(t:^testing.T) {
     testing.expect_value(t,stream_encoder_init(&encoder),Error.None)
     defer stream_encoder_destroy(&encoder)
     packed:=make([]u8,pack_bound(len(raw)),context.temp_allocator)
-    size,error:=pack(&encoder,.Fast,.Open,raw,packed)
+    size,error:=pack(&encoder,.Fast,.Compressed,raw,packed)
     testing.expect_value(t,error,Error.None)
     stream:=packed[:size]
     decoder:Stream_Decoder
@@ -107,27 +106,20 @@ a_document_writes_with_what_the_types_it_was_made_with_say :: proc(t:^testing.T)
     free_all(context.temp_allocator)
 }
 
-// A project is compressed with nothing, the open compressor, or by default the best its engine
-// has: the private one only where the engine has it in ext/. A folder without a project is open.
 @(test)
-a_project_is_compressed_as_its_manifest_says_with_what_its_engine_has :: proc(t:^testing.T) {
+a_project_is_compressed_as_its_manifest_says :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"project")
     if folder=="" {return}
     root:=project.path(folder,"game",allocator=context.temp_allocator)
-    engine:=project.path(folder,"engine",allocator=context.temp_allocator)
-    testing.expect(t,base.make_directory_all(root)==nil && base.make_directory_all(engine)==nil)
-    testing.expect_value(t,project_codecs(root,engine),Codecs.Open)
-    Case :: struct {compression:string,private:bool,error:project.Error_Code,result:Codecs}
+    testing.expect(t,base.make_directory_all(root)==nil)
+    testing.expect_value(t,project_codecs(root),Codecs.Compressed)
+    Case :: struct {compression:string,error:project.Error_Code,result:Codecs}
     cases:=[?]Case{
-        {"",false,.None,.Open},
-        {"",true,.None,.Best},
-        {project.COMPRESSION_OPEN,true,.None,.Open},
-        {project.COMPRESSION_NONE,false,.None,.None},
-        {"compression_mirai",false,.Compression_Invalid,.Open},
+        {"",.None,.Compressed},
+        {project.COMPRESSION_NONE,.None,.None},
+        {"open",.Compression_Invalid,.Compressed},
     }
     for c in cases {
-        private:=project.path(engine,project.COMPRESSOR_PRIVATE,allocator=context.temp_allocator)
-        if c.private {testing.expect(t,base.make_directory_all(private)==nil)} else {_=os.remove_all(private)}
         m:=project.manifest_default("Test")
         base.text_set(m.build.compression[:],c.compression)
         testing.expect_value(t,project.manifest_write(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator),&m).code,project.Error_Code.None)
@@ -135,7 +127,7 @@ a_project_is_compressed_as_its_manifest_says_with_what_its_engine_has :: proc(t:
         testing.expect_value(t,error.code,c.error)
         if c.error==.None {
             project.close(&p)
-            testing.expectf(t,project_codecs(root,engine)==c.result,"%v",c)
+            testing.expectf(t,project_codecs(root)==c.result,"%v",c)
         }
     }
 }

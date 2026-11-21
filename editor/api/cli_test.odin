@@ -27,8 +27,7 @@ tool_build :: proc(t:^testing.T) -> (tool:Tool,ok:bool) {
     if !found || odin=="" {odin="odin"}
     collection:=strings.concatenate({"-collection:mirai=",root},context.temp_allocator)
     output:=strings.concatenate({"-out:",tool.exe},context.temp_allocator)
-    compressor,_:=project.compressor_flags(root,context.temp_allocator)
-    state,stdout,stderr,err:=subprocess.exec({working_dir=root,command={odin,"build","tools/mirai",collection,compressor[0],compressor[1],"-ignore-unknown-attributes","-o:minimal",output}},context.temp_allocator)
+    state,stdout,stderr,err:=subprocess.exec({working_dir=root,command={odin,"build","tools/mirai",collection,"-ignore-unknown-attributes","-o:minimal",output}},context.temp_allocator)
     testing.expectf(t,err==nil && state.exit_code==0,"building tools/mirai failed (%v): %s%s",err,string(stdout),string(stderr))
     return tool,err==nil && state.exit_code==0
 }

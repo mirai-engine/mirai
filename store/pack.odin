@@ -217,8 +217,9 @@ head_valid :: proc "contextless" (head:^Frame_Head) -> bool {
 // encoded smaller than the chunk.
 @(private)
 sizes_valid :: proc "contextless" (codec:u8,stored,raw:u32) -> bool {
-    if int(codec)>=CODECS_MAX || stored<1 || stored>CHUNK_MAX {return false}
-    return raw==stored if codec==CODEC_NONE else raw>stored && raw<=CHUNK_MAX
+    if stored<1 || stored>CHUNK_MAX {return false}
+    if codec==CODEC_NONE {return raw==stored}
+    return codec==CODEC_MDC2 && raw>stored && raw<=CHUNK_MAX
 }
 
 // What a commit sums of a frame: its head, the payload of one that is not a

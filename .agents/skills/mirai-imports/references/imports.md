@@ -190,7 +190,7 @@ the asset: the [package](#identity-and-reimport) is.
 - `settings_hash` is the identity of the settings that make that asset, and of no other, with
   what builds them: for a mesh, its levels, front and rig with `MESH_CACHE_VERSION`
   (`mesh_build_hash`); for a texture, its `Build_Options` with `BUILD_VERSION` and the block
-  encoders (`textures.encoders_id`); for a sound, whether it is `Stream`. Materials, skeletons and
+  texture builder version; for a sound, whether it is `Stream`. Materials, skeletons and
   clips store 0. Changing a texture setting keeps the meshes, and one of the meshes, the textures.
 - What is current is a ref lookup: `import_write` takes the object a build of the package has for a
   mesh or a texture (`Written.kept`), from the build of the key of what the import is made from
@@ -226,9 +226,8 @@ machine: the source an asset names is relative to the package, a changed owner i
 `Written.path` is the file of a document, and an output of the cache has only its object
 (`written_open` opens either; `mirai import` prints `object <address>`). An import writes with
 `Codecs.None` ([compression](../../mirai-assets/references/formats.md#compression)), so its
-objects never depend on a compressor and every engine of the same formats reads every build. The
-build lists the object of each output and whether it is Final: the import key leaves the encoders
-out, so engines with either compressor share builds, from their store or a source. It is named under
+objects use the canonical asset representation. The build lists the object of each output and
+whether it is Final. It is named under
 `imports/<key>` when Final, else under `imports-fast/<key>`, and as the build
 this machine chose (`builds/<build_select>`), which a program without importers finds. Of two sorts
 (`asset.import_cached`):
@@ -443,8 +442,6 @@ machine that shares the store's objects with another finds what that one built.
   Only textures with Fast blocks require finalization.
 - [Cooking](../../mirai-projects/references/build.md#asset-cooking) stores there the blocks of
   an RGBA8 texture by `textures.cache_key_blocks`.
-- A key names what made the blocks (`textures.encoders_id`), so machines with other encoders
-  share the store without sharing results.
 - A read checks the id (key and version) of the asset and reads its chunks: a ref whose object is
   not whole here, does not read or is of another version is a miss and is built again. The store
   checks its chunks (its scrub), not the cache.
@@ -759,12 +756,11 @@ libraries](../../mirai-physics/references/engine.md#collider-fields).
     store (`RGBA16F`); color and data maps with non-opaque alpha use BC7; opaque data maps use BC1.
     A 16-bit source without `keep_precision` is compressed by use like an 8-bit one.
   - It is stored linear except in 8-bit formats with `srgb` (`level_store`).
-- **Block encoding.** Open builds use the Slang compute encoder. A cook or import shares one
+- **Block encoding.** Mirai uses the Slang compute encoder. A cook or import shares one
   context for pipelines and buffers, and the editor reuses one across its background imports.
   The context opens a headless GPU device at the first block encode. Decoding sources and
   building uncompressed textures need no device. Final encoding can trade distortion for
   repeated block data that compresses smaller. Fast skips rate-distortion optimization.
-  The private compressor can supply its own block encoder and layouts.
 - **Devices without BC.** The file carries no alternative formats: `host` decodes the blocks when
   loading, to RGBA8 and BC6H to RGBA16F, when the device does not sample them; the renderer's
   limits discard large levels without re-encoding

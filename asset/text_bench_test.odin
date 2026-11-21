@@ -100,7 +100,7 @@ text_bench :: proc(t:^testing.T,doc:^Document,rounds:int) -> (b:Text_Bench,ok:bo
     }
     encoder:Stream_Encoder;stream_encoder_init(&encoder);defer stream_encoder_destroy(&encoder)
     packed:=make([]u8,pack_bound(len(source)));defer delete(packed)
-    b.packed,_=pack(&encoder,.Fast,.Open,source,packed)
+    b.packed,_=pack(&encoder,.Fast,.Compressed,source,packed)
     return b,true
 }
 

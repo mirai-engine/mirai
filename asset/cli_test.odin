@@ -126,8 +126,7 @@ cli_reads_and_edits_assets_of_every_kind :: proc(t:^testing.T) {
     cli.exe=fmt.tprintf("%s/bin/tests/mirai-asset-cli%s",root,EXE)
     os.make_directory_all(fmt.tprintf("%s/bin/tests",root))
     {
-        compressor,_:=project.compressor_flags(root,context.temp_allocator)
-        state,stdout,stderr,error:=subprocess.exec({command={compiler,"build",fmt.tprintf("%s/tools/mirai",root),fmt.tprintf("-collection:mirai=%s",root),compressor[0],compressor[1],"-ignore-unknown-attributes","-o:minimal",fmt.tprintf("-out:%s",cli.exe)}},context.temp_allocator)
+        state,stdout,stderr,error:=subprocess.exec({command={compiler,"build",fmt.tprintf("%s/tools/mirai",root),fmt.tprintf("-collection:mirai=%s",root),"-ignore-unknown-attributes","-o:minimal",fmt.tprintf("-out:%s",cli.exe)}},context.temp_allocator)
         if !testing.expectf(t,error==nil && state.exit_code==0,"the tool does not build: %v\n%s%s",error,string(stdout),string(stderr)) {return}
     }
     types:Types;types_init(&types);defer types_destroy(&types)
@@ -363,8 +362,7 @@ cli_commands_answer_for_damaged_files :: proc(t:^testing.T) {
     cli.exe=fmt.tprintf("%s/bin/tests/mirai-asset-damaged%s",root,EXE)
     os.make_directory_all(fmt.tprintf("%s/bin/tests",root))
     {
-        compressor,_:=project.compressor_flags(root,context.temp_allocator)
-        state,stdout,stderr,error:=subprocess.exec({command={compiler,"build",fmt.tprintf("%s/tools/mirai",root),fmt.tprintf("-collection:mirai=%s",root),compressor[0],compressor[1],"-ignore-unknown-attributes","-o:minimal",fmt.tprintf("-out:%s",cli.exe)}},context.temp_allocator)
+        state,stdout,stderr,error:=subprocess.exec({command={compiler,"build",fmt.tprintf("%s/tools/mirai",root),fmt.tprintf("-collection:mirai=%s",root),"-ignore-unknown-attributes","-o:minimal",fmt.tprintf("-out:%s",cli.exe)}},context.temp_allocator)
         if !testing.expectf(t,error==nil && state.exit_code==0,"the tool does not build: %v\n%s%s",error,string(stdout),string(stderr)) {return}
     }
     answered :: proc(cli:^Cli,args:..string) -> int {

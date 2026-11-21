@@ -16,6 +16,6 @@
     "optimization": "Speed",
     "debug": false,
     "defines": [],
-    "compression": "open"
+    "compression": ""
   }
 }
