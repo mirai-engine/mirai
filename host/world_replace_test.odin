@@ -136,3 +136,67 @@ a_replacement_with_marks_brings_back_only_what_changed :: proc(t:^testing.T) {
     }
     testing.expect(t,succeeded && failed)
 }
+
+@(test_world) @(private)
+Migrated_World :: struct {
+    using world:Test_World,
+    values:core.Table(u32),
+    state:[dynamic]u32,
+    local:Replace_Local,
+    extra:u64,
+}
+
+@(test)
+world_migration_out_of_memory_preserves_all_live_worlds :: proc(t:^testing.T) {
+    from,from_ok:=test_info(t,Replace_World)
+    if !from_ok {return}
+    defer test_info_destroy(&from)
+    to,to_ok:=test_info(t,Migrated_World)
+    if !to_ok {return}
+    defer test_info_destroy(&to)
+    migration:core.World_Migration
+    defer core.world_migration_destroy(&migration)
+    if !testing.expect(t,core.world_migration_make(&migration,&from,&to)) {return}
+    if !testing.expect(t,.World in migration.places) {return}
+
+    tracking:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracking,context.allocator)
+    defer mem.tracking_allocator_destroy(&tracking)
+    allocation:=World_Create_Allocation{owner=mem.tracking_allocator(&tracking),remaining=-1}
+    app:=App{info=&from,allocator={world_create_allocator,&allocation}}
+    defer delete(app.worlds)
+    worlds:[2]rawptr
+    defer for world in worlds {
+        if world!=nil {app_world_free(&app,world)}
+    }
+    for &world,i in worlds {
+        world=app_world_create(&app)
+        if !testing.expect(t,world!=nil) {return}
+        live:=cast(^Replace_World)world
+        append(&live.state,u32(i+1))
+    }
+    live_allocations:=len(tracking.allocation_map)
+    for budget in 0..<32 {
+        allocation.remaining=budget
+        error:mem.Allocator_Error
+        ok:=app_worlds_migrate(&app,&migration,nil,&error)
+        allocation.remaining=-1
+        if ok {
+            testing.expect_value(t,error,mem.Allocator_Error.None)
+            testing.expect(t,budget>0 && app.info==&to)
+            for world,i in worlds {
+                live:=cast(^Migrated_World)world
+                testing.expect(t,len(live.state)==1 && live.state[0]==u32(i+1))
+            }
+            return
+        }
+        testing.expect_value(t,error,mem.Allocator_Error.Out_Of_Memory)
+        if !testing.expect(t,app.info==&from) {return}
+        for world,i in worlds {
+            live:=cast(^Replace_World)world
+            testing.expect(t,len(live.state)==1 && live.state[0]==u32(i+1))
+        }
+        testing.expect_value(t,len(tracking.allocation_map),live_allocations)
+    }
+    testing.expect(t,false,"migration never succeeded")
+}

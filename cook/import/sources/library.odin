@@ -120,7 +120,11 @@ ingest :: proc(origin:string,options:Library_Options,settings:^importer.Import_S
     l:Library_State
     library_begin(&l,options,allocator)
     defer library_end(&l)
-    return library_ingest(&l,origin,{},settings,"",nil,.Keep,allocator)
+    caller:=context.temp_allocator
+    context.temp_allocator=l.temp
+    report,error=library_ingest(&l,origin,{},settings,"",nil,.Keep,allocator)
+    if error.code!=.None {error.message=strings.clone(error.message,caller)}
+    return
 }
 
 // Pins the package whose manifest the store keeps under manifest in the
@@ -361,6 +365,10 @@ project_refresh :: proc(root:string,options:Library_Options,allocator:=context.a
     project_follow_begin(&l,top)
     refresh_prefetch(&l,top,list.packages[:])
     for &entry,at in list.packages {
+        scratch:mem.Dynamic_Arena
+        mem.dynamic_arena_init(&scratch,block_size=1<<20,out_band_size=1<<20)
+        defer mem.dynamic_arena_destroy(&scratch)
+        context.temp_allocator=base.dynamic_arena_allocator(&scratch)
         if options.progress.procedure!=nil {fmt.wprintfln(options.progress,"package %d of %d",at+1,len(list.packages))}
         package_refresh(&l,top,entry,&report,false)
     }
@@ -503,7 +511,9 @@ plugins_read :: proc(l:^Library_State) {
         l.plugins=l.options.imports^
         l.plugins.release=nil
     case l.options.plugins==nil || l.options.root=="": return
-    case: l.plugins=l.options.plugins(l.options.root,l.options.store,l.temp)
+    case:
+        l.plugins=l.options.plugins(l.options.root,l.options.store,l.temp)
+        l.plugins.problem=strings.clone(l.plugins.problem,l.temp)
     }
     all:=make([dynamic]importer.Format,0,len(FORMATS)+len(l.plugins.formats),l.temp)
     append(&all,..FORMATS[:])
@@ -590,7 +600,7 @@ build_here :: proc(l:^Library_State,p:^asset.Package,key:store.Hash) -> (f:Found
     for namespace,at in ([2]string{asset.REF_IMPORTS,asset.REF_IMPORTS_FAST}) {
         hash,ref_error:=store.ref_get(s,namespace,name)
         if ref_error!=.None {continue}
-        b,error:=asset.build_get(s,hash,l.temp)
+        b,error:=asset.build_get(s,hash,context.temp_allocator)
         if error!=.None || b.package_id!=p.id || b.key!=key || b.final!=(at==0) {continue}
         if !asset.build_whole(s,&b) {continue}
         if at==1 && !l.options.fast_textures {return {build=b,hash=hash,fast_here=true},false}
@@ -610,7 +620,7 @@ build_found :: proc(l:^Library_State,p:^asset.Package,manifest,key:store.Hash,ke
     digits:[64]u8
     hash,ref_error:=store.ref_get(s,asset.REF_BUILDS,store.hex(asset.build_select(manifest,p),&digits))
     if ref_error!=.None {return}
-    b,error:=asset.build_get(s,hash,l.temp)
+    b,error:=asset.build_get(s,hash,context.temp_allocator)
     if error!=.None || b.package_id!=p.id {return}
     if !asset.build_whole(s,&b) {return}
     if !b.final && !l.options.fast_textures {return {fast_here=true},false}
@@ -621,10 +631,11 @@ build_found :: proc(l:^Library_State,p:^asset.Package,manifest,key:store.Hash,ke
 // of the library.
 @(private="file")
 fetch :: proc(l:^Library_State,namespace,name:string) -> bool {
-    if given,asked:=l.asked[fmt.aprintf("%s/%s",namespace,name,allocator=l.temp)];asked {return given}
+    key:=fmt.tprintf("%s/%s",namespace,name)
+    if given,asked:=l.asked[key];asked {return given}
     names:=[1]string{name}
     fetch_many(l,namespace,names[:])
-    return l.asked[fmt.aprintf("%s/%s",namespace,name,allocator=l.temp)]
+    return l.asked[key]
 }
 
 // Asks the source for the refs of namespace with names together, but those
@@ -633,16 +644,17 @@ fetch :: proc(l:^Library_State,namespace,name:string) -> bool {
 fetch_many :: proc(l:^Library_State,namespace:string,names:[]string) {
     source:=l.options.source
     if source.fetch==nil || len(names)==0 {return}
-    asking:=make([dynamic]string,l.temp)
-    keys:=make([dynamic]string,l.temp)
+    asking:=make([dynamic]string,context.temp_allocator)
+    keys:=make([dynamic]string,context.temp_allocator)
     for name in names {
-        key:=fmt.aprintf("%s/%s",namespace,name,allocator=l.temp)
+        key:=fmt.tprintf("%s/%s",namespace,name)
         if key in l.asked {continue}
+        key=strings.clone(key,l.temp)
         l.asked[key]=false
         append(&asking,name)
         append(&keys,key)
     }
-    given:=make([]bool,len(asking),l.temp)
+    given:=make([]bool,len(asking),context.temp_allocator)
     source.fetch(source.user,l.options.store,namespace,asking[:],given)
     for key,k in keys {l.asked[key]=given[k]}
 }
@@ -653,7 +665,7 @@ fetch_many :: proc(l:^Library_State,namespace:string,names:[]string) {
 fetch_builds :: proc(l:^Library_State,keys:[]string) {
     fetch_many(l,asset.REF_IMPORTS,keys)
     if !l.options.fast_textures {return}
-    lacking:=make([dynamic]string,l.temp)
+    lacking:=make([dynamic]string,context.temp_allocator)
     for key in keys {
         if !build_given(l,key) {append(&lacking,key)}
     }
@@ -663,7 +675,8 @@ fetch_builds :: proc(l:^Library_State,keys:[]string) {
 // Whether the source gave a build of the key (hex of an import key).
 @(private="file")
 build_given :: proc(l:^Library_State,key:string) -> bool {
-    return l.asked[fmt.aprintf("%s/%s",asset.REF_IMPORTS,key,allocator=l.temp)] || l.asked[fmt.aprintf("%s/%s",asset.REF_IMPORTS_FAST,key,allocator=l.temp)]
+    return l.asked[fmt.tprintf("%s/%s",asset.REF_IMPORTS,key)] ||
+        l.asked[fmt.tprintf("%s/%s",asset.REF_IMPORTS_FAST,key)]
 }
 
 // What a refresh will ask the source for, asked together before the packages
@@ -677,8 +690,12 @@ refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Pac
     s:=library_index(l)
     lacking:=make([dynamic]string,l.temp)
     for entry in entries {
+        scratch:mem.Dynamic_Arena
+        mem.dynamic_arena_init(&scratch,block_size=1<<20,out_band_size=1<<20)
+        defer mem.dynamic_arena_destroy(&scratch)
+        context.temp_allocator=base.dynamic_arena_allocator(&scratch)
         entry:=entry
-        if _,error:=asset.package_load(s,top,&entry,l.temp);error==.Not_Found {
+        if _,error:=asset.package_load(s,top,&entry,context.temp_allocator);error==.Not_Found {
             digits:[64]u8
             append(&lacking,strings.clone(store.hex(entry.manifest,&digits),l.temp))
         }
@@ -687,8 +704,12 @@ refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Pac
     keys:=make([dynamic]string,l.temp)
     choices:=make([dynamic]string,l.temp) // of the packages whose importer this library lacks: the build a peer chose
     for entry in entries {
+        scratch:mem.Dynamic_Arena
+        mem.dynamic_arena_init(&scratch,block_size=1<<20,out_band_size=1<<20)
+        defer mem.dynamic_arena_destroy(&scratch)
+        context.temp_allocator=base.dynamic_arena_allocator(&scratch)
         entry:=entry
-        p,error:=asset.package_load(s,top,&entry,l.temp)
+        p,error:=asset.package_load(s,top,&entry,context.temp_allocator)
         if error!=.None {continue}
         source:=importer.origin_path(p.origin.path,top)
         if source!="" && !importer.unsafe_path(source) && os.exists(source) && source_changed(l,&p,source) {continue}
@@ -714,26 +735,34 @@ refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Pac
 // and what becomes of one that changed since (Import_Options.changed).
 @(private="file")
 library_ingest :: proc(l:^Library_State,path:string,manifest:store.Hash,settings:^importer.Import_Settings,documents:string,written:[]asset.Package_Written,changed:importer.Changed,allocator:mem.Allocator) -> (report:importer.Import_Report,error:importer.Error) {
-    caller:=context.temp_allocator
-    context.temp_allocator=l.temp
     s:=l.options.store
-    if s==nil {return {},importer.error_make(.Write,"%s: the library keeps packages in a store: give it one",path,allocator=caller)}
-    if importer.unsafe_path(path) || !os.exists(path) {return {},importer.error_make(.Not_Found,"%s does not exist",path,allocator=caller)}
+    if s==nil {
+        return {},importer.error_make(.Write,
+            "%s: the library keeps packages in a store: give it one",path)
+    }
+    if importer.unsafe_path(path) || !os.exists(path) {
+        return {},importer.error_make(.Not_Found,"%s does not exist",path)
+    }
     origin:=importer.path_key(path)
     r,known:=reader_of(l,origin)
     if !known {
-        return {},importer.error_make(.Unsupported,"%s is not a source Mirai imports: a model (%s), an image, a sound (WAV, Ogg Vorbis), a font (TrueType, OpenType) or a manifest of prompts (%s); a format a plugin adds imports with the plugin in the project%s",
-            origin,importer.format_names(l.formats),importer.PROMPTS_MANIFEST,l.plugins.problem!=""?fmt.tprintf(" (%s)",l.plugins.problem):"",allocator=caller)
+        problem:=fmt.tprintf(" (%s)",l.plugins.problem) if l.plugins.problem!="" else ""
+        return {},importer.error_make(.Unsupported,
+            "%s is not a source Mirai imports: a model (%s), an image, a sound (WAV, Ogg Vorbis), "+
+            "a font (TrueType, OpenType) or a manifest of prompts (%s); "+
+            "a format a plugin adds imports with the plugin in the project%s",
+            origin,importer.format_names(l.formats),importer.PROMPTS_MANIFEST,problem)
     }
     name:[64]u8
     lock,locked:=workspace.lock_acquire(fmt.tprintf("%s/locks/%s",s.root,asset.origin_name(origin,&name)),fmt.tprintf("mirai ingest %s",origin))
     defer if locked {workspace.lock_release(&lock)}
-    hashes:=importer.source_hashes_load(s,origin,l.temp)
+    hashes:=importer.source_hashes_load(s,origin,context.temp_allocator)
     defer importer.source_hashes_save(s,origin,&hashes)
     code:=r.whole.code if r.claimed else 0
     // Current: the work is done, here or by another process that held the lock.
     if !l.options.rebuild && settings==nil && documents=="" {
-        if p,hash,found,_:=importer.package_previous(s,manifest,origin,l.temp);found {
+        p,hash,found,_:=importer.package_previous(s,manifest,origin,context.temp_allocator)
+        if found {
             kept,valid:=importer.settings_parse(p.settings)
             if valid && importer.identity_of(p.id,origin,p.inputs[:],kept,code,&hashes)==p.identity {
                 key,keyed:=package_key(l,&p)
@@ -753,7 +782,7 @@ library_ingest :: proc(l:^Library_State,path:string,manifest:store.Hash,settings
         rebuild=l.options.rebuild,fast_textures=l.options.fast_textures,worker=l.options.worker,hashes=&hashes,
     }
     if documents!="" {options.registry,options.world,options.written,options.changed=l.registry,l.plugins.world,written,changed}
-    if options.root=="" {options.root,_=importer.source_root(origin,l.temp)}
+    if options.root=="" {options.root,_=importer.source_root(origin,context.temp_allocator)}
     if settings!=nil {options.settings,options.ignore_stored=settings^,true}
     progress:importer.Progress
     if l.options.progress.procedure!=nil {
@@ -763,7 +792,6 @@ library_ingest :: proc(l:^Library_State,path:string,manifest:store.Hash,settings
     wholes:[]Whole_Source
     if r.claimed {wholes=l.plugins.wholes}
     report,error=import_source(origin,options,l.formats,wholes,allocator)
-    if error.code!=.None {error.message=strings.clone(error.message,caller)}
     return
 }
 
@@ -782,9 +810,9 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
         p=known^
     } else {
         manifest_root:=top if !l.adding else ""
-        p,error=asset.package_load(index,manifest_root,&entry,l.temp)
+        p,error=asset.package_load(index,manifest_root,&entry,context.temp_allocator)
         if error==.Not_Found && fetch(l,asset.REF_MANIFESTS,store.hex(entry.manifest,&digits)) {
-            p,error=asset.package_load(index,manifest_root,&entry,l.temp)
+            p,error=asset.package_load(index,manifest_root,&entry,context.temp_allocator)
         }
     }
     #partial switch error {
@@ -804,7 +832,8 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     documents:=documents_folder(l.assets,entry.folder)
     prefab:=model_prefab_of(l,&p)
     if prefab && len(entry.assets)>0 {
-        selected,_,selection_error:=asset.package_selection(&p,entry.assets[:],l.temp)
+        selected,_,selection_error:=asset.package_selection(
+            &p,entry.assets[:],context.temp_allocator)
         if selection_error!=.None {
             report_line(&report.failures,"package %s: the selected assets could not be read (%v)",p.name,selection_error)
             return
@@ -826,8 +855,9 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     f:Found
     found:bool
     f,found=build_found(l,&p,entry.manifest,key,keyed)
-    key_name:=strings.clone(store.hex(key,&digits),l.temp)
-    select:=strings.clone(store.hex(asset.build_select(entry.manifest,&p),&digits),l.temp)
+    key_digits,select_digits:[64]u8
+    key_name:=store.hex(key,&key_digits)
+    select:=store.hex(asset.build_select(entry.manifest,&p),&select_digits)
     chosen_given:=false // the ref of this machine's choice is the one the source gave, not yet followed
     switch {
     case keyed && found && build_given(l,key_name):
@@ -919,25 +949,28 @@ documents_write :: proc(l:^Library_State,top:string,entry:^asset.Project_Package
     changed:=importer.Changed.Discard if l.options.changed==.Discard else .Keep
     build:=b^
     if len(entry.assets)>0 {
-        selected,_,selection_error:=asset.package_selection(p,entry.assets[:],l.temp)
+        selected,_,selection_error:=asset.package_selection(
+            p,entry.assets[:],context.temp_allocator)
         if selection_error!=.None {
             report_line(&report.failures,"package %s: the selected documents could not be read (%v)",p.name,selection_error)
             return
         }
-        used:=make(map[base.Asset_Id]bool,l.temp)
+        used:=make(map[base.Asset_Id]bool,context.temp_allocator)
         for a,at in p.assets {used[a.id]=selected[at]}
-        build.outputs=make([dynamic]asset.Build_Output,l.temp)
+        build.outputs=make([dynamic]asset.Build_Output,context.temp_allocator)
         for o in b.outputs {
             if used[o.id] {append(&build.outputs,o)}
         }
     }
     backups:=&l.backups if l.preparing else nil
-    written,error:=importer.documents_follow(l.options.store,p,&build,documents,l.registry,entry.written[:],changed,plugin_kinds(l),l.temp,backups=backups)
+    written,error:=importer.documents_follow(
+        l.options.store,p,&build,documents,l.registry,entry.written[:],changed,
+        plugin_kinds(l),context.temp_allocator,backups=backups)
     if error.code!=.None {
         report_line(&report.failures,"package %s: %s",p.name,error.message)
         return
     }
-    recorded:=make([dynamic]asset.Package_Written,l.temp)
+    recorded:=make([dynamic]asset.Package_Written,context.temp_allocator)
     for w in written {
         if w.warning!="" {report_line(&report.warnings,"package %s: %s",p.name,w.warning)}
         if w.hash!=0 {append(&recorded,asset.Package_Written{w.id,w.hash})}
@@ -952,11 +985,15 @@ plugin_kinds :: proc(l:^Library_State) -> []importer.Kind_Extension {
     if l.options.root=="" {return nil}
     p,error:=project.open(l.options.root,project.engine_root_find("",context.temp_allocator),context.temp_allocator)
     if error.code!=.None {return nil}
-    out:=make([dynamic]importer.Kind_Extension,l.temp)
+    out:=make([dynamic]importer.Kind_Extension,context.temp_allocator)
     for index in p.active {
         for &k in p.plugins[index].manifest.asset_kinds {
             extension,code:=base.text_get(k.extension[:]),base.text_get(k.kind[:])
-            if extension!="" && code!="" {append(&out,importer.Kind_Extension{asset.fourcc(code),strings.clone(extension,l.temp)})}
+            if extension!="" && code!="" {
+                append(&out,importer.Kind_Extension{
+                    asset.fourcc(code),strings.clone(extension,context.temp_allocator),
+                })
+            }
         }
     }
     return out[:]
@@ -1010,7 +1047,7 @@ source_changed :: proc(l:^Library_State,p:^asset.Package,source:string) -> bool 
     if !valid {return false}
     code:u64
     if r,known:=reader_of(l,source);known && r.claimed {code=r.whole.code}
-    hashes:=importer.source_hashes_load(library_index(l),source,l.temp)
+    hashes:=importer.source_hashes_load(library_index(l),source,context.temp_allocator)
     defer importer.source_hashes_save(l.options.store,source,&hashes)
     return importer.identity_of(p.id,source,p.inputs[:],settings,code,&hashes)!=p.identity
 }
@@ -1024,7 +1061,9 @@ reingest :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,p:^ass
     started:=time.tick_now()
     model:=prefab && plugins_world(l)!=nil
     changed:=importer.Changed.Discard if l.options.changed==.Discard else .Keep
-    written,error:=library_ingest(l,source,entry.manifest,nil,documents if model else "",entry.written[:],changed,l.temp)
+    written,error:=library_ingest(
+        l,source,entry.manifest,nil,documents if model else "",entry.written[:],changed,
+        context.temp_allocator)
     if error.code!=.None {
         report_line(&report.failures,"package %s: %s",p.name,error.message)
         return
@@ -1046,8 +1085,8 @@ reingest :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,p:^ass
         written_pin(l,top,entry,written.written[:],p,report)
         return
     }
-    again,read_error:=asset.package_get(l.options.store,written.manifest,l.temp)
-    b,build_error:=asset.build_get(l.options.store,written.build,l.temp)
+    again,read_error:=asset.package_get(l.options.store,written.manifest,context.temp_allocator)
+    b,build_error:=asset.build_get(l.options.store,written.build,context.temp_allocator)
     if read_error!=.None || build_error!=.None {
         report_line(&report.failures,"package %s: the store at %s does not read what its import put (%v, %v)",p.name,l.options.store.root,read_error,build_error)
         return

@@ -1,6 +1,7 @@
 package host
 
 import "base:runtime"
+import "core:log"
 import "core:mem"
 import "core:mem/virtual"
 import "core:strings"
@@ -552,64 +553,92 @@ world_free :: proc(app:^App,data:rawptr,place:core.Place) {
 @(private)
 page_round :: proc "contextless" (size:int) -> int {return (size+PAGE-1)&~(PAGE-1)}
 
-// Moves every struct the application made into the layout of m.to, each
-// where it is, and makes m.to its World_Info: the Worlds, the Shared and the
-// Editor_World of editor (nil without one). The caller settles every World
-// first. False, with nothing changed, when one would not fit the room it has.
-// Nothing else may run meanwhile: what moves is not where it was until each
-// struct is back.
-app_worlds_migrate :: proc(app:^App,m:^core.World_Migration,editor:rawptr) -> bool {
+// Moves the Worlds, Shared and Editor_World to the new layout at their
+// existing addresses. The caller settles every World first. A failed
+// preparation leaves their contents and layout unchanged.
+app_worlds_migrate :: proc(
+    app:^App,m:^core.World_Migration,editor:rawptr,memory_error:^mem.Allocator_Error=nil,
+) -> (ok:bool) {
     context.allocator=app.allocator
+    if memory_error!=nil {memory_error^=.None}
     to:=m.to
-    worlds:=make([dynamic]rawptr,context.temp_allocator)
-    for slot in app.worlds {if slot.data!=nil {append(&worlds,slot.data)}}
-    fits :: proc(app:^App,data:rawptr,size:int) -> bool {return data==nil || page_round(size)<=(app.reserved[data] or_else 0)}
     for place in m.places {
         if to.aligns[place]>PAGE {return false}
     }
+    fits :: proc(app:^App,data:rawptr,size:int) -> bool {
+        return data==nil || page_round(size)<=(app.reserved[data] or_else 0)
+    }
     if .World in m.places {
-        for data in worlds {if !fits(app,data,to.sizes[.World]) {return false}}
+        for slot in app.worlds {if !fits(app,slot.data,to.sizes[.World]) {return false}}
     }
     if .Shared in m.places && !fits(app,app.shared,to.sizes[.Shared]) {return false}
     if .Editor in m.places && !fits(app,editor,to.sizes[.Editor]) {return false}
+
+    defer if !ok {
+        if memory_error!=nil {memory_error^=.Out_Of_Memory}
+        else {log.warn("out of memory preparing world migration; the loaded worlds were kept")}
+    }
+    prepared,error:=make([]Place_Replacement,len(app.worlds)+2,app.allocator)
+    if error!=nil {return false}
+    defer delete(prepared,app.allocator)
+    next:=0
+    if .Shared in m.places && app.shared!=nil {
+        prepared[next]={place=.Shared,data=app.shared}
+        next+=1
+    }
+    if .Editor in m.places && editor!=nil {
+        prepared[next]={place=.Editor,data=editor}
+        next+=1
+    }
+    if .World in m.places {
+        for slot in app.worlds {
+            if slot.data==nil {continue}
+            prepared[next]={place=.World,data=slot.data}
+            next+=1
+        }
+    }
+    prepared=prepared[:next]
+    defer for &p in prepared {
+        if p.fresh==nil {continue}
+        core.world_destroy(to,p.place,p.fresh)
+        mem.free(p.fresh,app.allocator)
+    }
+    for &p in prepared {
+        size:=max(to.sizes[p.place],1)
+        p.fresh,error=mem.alloc(size,max(to.aligns[p.place],1),app.allocator)
+        if error!=nil || !core.world_init(to,p.place,p.fresh,app.allocator) {return false}
+        if page_round(size)>page_round(max(m.from.sizes[p.place],1)) {
+            if virtual.commit(p.data,uint(page_round(size)))!=nil {return false}
+        }
+    }
+    if .Shared in m.places && app.shared!=nil {
+        for slot in app.worlds {
+            if slot.data==nil {continue}
+            id:=core.world_storage_of(app_world_ref(app,slot.data),core.World_Id)
+            if id!=nil && !core.by_world_new(m,prepared[0].fresh,id^,app.allocator) {return false}
+        }
+    }
     app.info=to
     if app.assets!=nil {app.assets.types.defaults=&to.schema.schema if to.schema!=nil else nil}
-    if .Shared in m.places && app.shared!=nil {place_replace(app,m,.Shared,app.shared)}
-    if .Editor in m.places && editor!=nil {place_replace(app,m,.Editor,editor)}
-    if .World in m.places {
-        for data in worlds {place_replace(app,m,.World,data)}
-    }
-    // What the by_world storages hold for each World, of those that did not move.
-    if .Shared in m.places && app.shared!=nil {
-        for data in worlds {
-            if id:=core.world_storage_of(app_world_ref(app,data),core.World_Id);id!=nil {_=core.by_world_new(m,app.shared,id^,app.allocator)}
-        }
+    for &p in prepared {
+        place_replace(app,m,p.place,p.data,p.fresh)
+        mem.free(p.fresh,app.allocator)
+        p.fresh=nil
     }
     return true
 }
 
-// A struct of a place migrated into one the new library made, which then
-// takes its place.
-@(private)
-place_replace :: proc(app:^App,m:^core.World_Migration,place:core.Place,data:rawptr) {
-    size:=max(m.to.sizes[place],1)
-    fresh,error:=mem.alloc(size,max(m.to.aligns[place],1),app.allocator)
-    if error!=nil || !core.world_init(m.to,place,fresh,app.allocator) {
-        // Without memory for it, the struct starts as the new library makes it.
-        if fresh!=nil {core.world_destroy(m.to,place,fresh);mem.free(fresh,app.allocator)}
-        core.world_destroy(m.from,place,data)
-        mem.zero(data,size)
-        _=core.world_init(m.to,place,data,app.allocator)
-        return
-    }
+@(private="file")
+Place_Replacement :: struct {place:core.Place,data,fresh:rawptr}
+
+@(private="file")
+place_replace :: proc(app:^App,m:^core.World_Migration,place:core.Place,data,fresh:rawptr) {
     if place!=.Editor {app_settings_load(app,fresh,place)}
     core.place_migrate(m,place,data,fresh,app.allocator)
     core.world_destroy(m.from,place,data)
-    old:=max(m.from.sizes[place],1)
-    if page_round(size)>page_round(old) {_=virtual.commit(data,uint(page_round(size)))}
+    size,old:=max(m.to.sizes[place],1),max(m.from.sizes[place],1)
     mem.copy(data,fresh,size)
     if old>size {mem.zero(rawptr(uintptr(data)+uintptr(size)),old-size)}
-    mem.free(fresh,app.allocator)
 }
 
 app_world_ref :: proc(app:^App,data:rawptr) -> core.World_Ref {return core.world_ref(data,app.info)}
