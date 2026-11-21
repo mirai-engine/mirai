@@ -1,6 +1,7 @@
 package vfx
 
 import "core:math/linalg"
+import "core:mem"
 import "mirai:core"
 import erender "mirai:engine/render"
 import volume "mirai:engine/volume"
@@ -69,4 +70,26 @@ fields_relative :: proc "contextless" (f:Gpu_Fields,origin:[3]f32) -> Gpu_Fields
     }
     f.wind=volume.gpu_wind_relative(f.wind,origin)
     return f
+}
+
+
+@(private)
+fields_sync :: proc(sync:^Particle_Sync,gravities:^core.Table(volume.Gravity,.Read),
+    winds:^core.Table(volume.Wind,.Read),zones:volume.Where,
+) {
+    touched :: proc(table:^core.Table($T,$A),seen:^core.Seen) -> bool {
+        return table!=nil && core.touched(table,seen)
+    }
+    seen:=&sync.fields_seen
+    changed:=touched(gravities,&seen[0]) | touched(winds,&seen[1]) |
+        touched(zones.volumes,&seen[2]) | touched(zones.worlds,&seen[3]) |
+        touched(zones.parents,&seen[4]) | touched(zones.sections,&seen[5]) |
+        touched(zones.splines,&seen[6])
+    if !changed && sync.fields_ready {return}
+    fields:=fields_of(gravities,winds,zones)
+    if !sync.fields_ready || mem.compare(mem.ptr_to_bytes(&fields),mem.ptr_to_bytes(&sync.fields))!=0 {
+        sync.fields=fields
+        sync.fields_ready=true
+        sync.fields_dirty=true
+    }
 }

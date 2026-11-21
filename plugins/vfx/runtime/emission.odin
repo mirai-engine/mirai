@@ -45,6 +45,7 @@ Emitter_Clock :: struct {
     last:f64,             // time of its last birth; -max for none
     births:[PARTICLE_BIRTHS]Particle_Birth, // the latest, in the order of their indices
     birth_count:u32,
+    layers:u8, // additional clocks of the primary emitter
     resolved:u64,         // what emission was resolved from
     emission:Emission,
 }
@@ -71,9 +72,14 @@ emission_of :: proc(a:^host.Assets,info:^effect.Particle_Info) -> (e:Emission) {
 // keys. As particle_curve and particle_gradient of particles.slang, edges
 // included: keys closer than 1e-5 ramp over 1e-5.
 keys_at :: proc "contextless" (times:[]f32,values:[]$T,x:f32) -> T {
+    count:=min(len(times),len(values))
+    if count==0 {
+        zero:T
+        return zero
+    }
     previous_time,previous:=times[0],values[0]
     if x<=previous_time {return previous}
-    for i in 1..<len(times) {
+    for i in 1..<effect.particle_key_count(times[:count]) {
         if x<=times[i] {return previous+(values[i]-previous)*math.saturate((x-previous_time)/max(times[i]-previous_time,1e-5))}
         previous_time,previous=times[i],values[i]
     }
@@ -203,11 +209,11 @@ emitter_capacity :: proc(info:^effect.Particle_Info) -> u32 {
     return u32(clamp(total*1.25+16,16,f32(1<<20)))
 }
 
-// What the emission of a clock was resolved from: the effect and the stamp of
-// the values of the entity. What the effect reads of the assets is followed by
-// effect, in Particle_Clocks.effects.
-emission_key :: proc(particle:base.Asset_Id,stamp:u64) -> u64 {
-    return base.hash_combine(base.hash_combine(particle[0],particle[1]),stamp)|1
+// The effect inputs and the stamp of the entity's values as last resolved.
+emission_key :: proc(particle:base.Asset_Id,stamp:u64,revision:u64=0,preset:=effect.Particle_Preset.Default) -> u64 {
+    key:=base.hash_combine(base.hash_combine(particle[0],particle[1]),stamp)
+    if preset!=.Default {key=base.hash_combine(key,u64(preset))}
+    return (key if revision==0 else base.hash_combine(key,revision))|1
 }
 
 // The stamp of the row of an entity, 0 without one: it moves when the row is
@@ -215,5 +221,6 @@ emission_key :: proc(particle:base.Asset_Id,stamp:u64) -> u64 {
 @(private)
 row_stamp :: proc "contextless" (rows:^core.Table($T,$A),e:core.Entity) -> u64 {
     at:=core.row_of(rows,e)
-    return at>=0?core.stamp(rows,at):0
+    // The low bit marks a new row until settle clears it.
+    return at>=0?core.stamp(rows,at)&~u64(1):0
 }

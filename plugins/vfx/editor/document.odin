@@ -1,6 +1,7 @@
 package vfx_editor
 
 import "base:runtime"
+import "core:fmt"
 import "core:hash"
 import "core:reflect"
 import "core:mem"
@@ -49,6 +50,7 @@ Effect_Document :: struct {
     file:Particle_File,
     held:Particle_File,   // file with the edits of the rows, until they are written
     base:Particle_File,   // what the file held when the document read it: the arrows of the rows give it back
+    layer:int,
     open:[Particle_Group]bool,
     scroll:[2]f32,
     preview:Effect_Preview,
@@ -85,6 +87,10 @@ effect_merge :: proc(held,before,now:^Particle_File) {
     }
     effect.particle_values_visit(visit,&merge)
     if held.info.program==before.info.program {held.info.program=now.info.program}
+    if held.layer_count==before.layer_count && held.layers==before.layers {
+        held.layers=now.layers
+        held.layer_count=now.layer_count
+    }
     if held.parameter_count==before.parameter_count && held.parameters==before.parameters {
         held.parameters=now.parameters
         held.parameter_count=now.parameter_count
@@ -96,14 +102,14 @@ effect_merge :: proc(held,before,now:^Particle_File) {
 }
 
 // The value stored for a parameter of the program; nil without one.
-effect_parameter :: proc(file:^Particle_File,name:string) -> ^effect.Particle_Parameter {
-    return effect.particle_parameter_find(file.parameters[:file.parameter_count],name)
+effect_parameter :: proc(file:^Particle_File,name:string,layer:u8=0) -> ^effect.Particle_Parameter {
+    return effect.particle_parameter_find(file.parameters[:file.parameter_count],name,layer)
 }
 
 // Stores a parameter in place of the one of its name; false without room.
 effect_parameter_store :: proc(file:^Particle_File,parameter:effect.Particle_Parameter) -> bool {
     parameter:=parameter
-    stored:=effect_parameter(file,base.text_get(parameter.name[:]))
+    stored:=effect_parameter(file,base.text_get(parameter.name[:]),parameter.layer)
     if stored==nil {
         if file.parameter_count>=len(file.parameters) {return false}
         stored=&file.parameters[file.parameter_count]
@@ -114,8 +120,8 @@ effect_parameter_store :: proc(file:^Particle_File,parameter:effect.Particle_Par
 }
 
 // Stores a value for a parameter the program declares; false without room.
-effect_parameter_put :: proc(file:^Particle_File,declared:^erender.Program_Parameter,value:[4]f64,texture:base.Asset_Id) -> bool {
-    stored:=effect.Particle_Parameter{kind=asset.Parameter_Kind(declared.kind),components=declared.components}
+effect_parameter_put :: proc(file:^Particle_File,declared:^erender.Program_Parameter,value:[4]f64,texture:base.Asset_Id,layer:u8=0) -> bool {
+    stored:=effect.Particle_Parameter{kind=asset.Parameter_Kind(declared.kind),components=declared.components,layer=layer}
     base.text_set(stored.name[:],declared.name)
     if declared.kind==.Texture {
         stored.texture=texture
@@ -125,9 +131,9 @@ effect_parameter_put :: proc(file:^Particle_File,declared:^erender.Program_Param
     return effect_parameter_store(file,stored)
 }
 
-effect_parameter_remove :: proc(file:^Particle_File,name:string) {
+effect_parameter_remove :: proc(file:^Particle_File,name:string,layer:u8=0) {
     for i in 0..<file.parameter_count {
-        if base.text_get(file.parameters[i].name[:])!=name {continue}
+        if file.parameters[i].layer!=layer || base.text_get(file.parameters[i].name[:])!=name {continue}
         copy(file.parameters[i:file.parameter_count-1],file.parameters[i+1:file.parameter_count])
         file.parameter_count-=1
         file.parameters[file.parameter_count]={}
@@ -136,8 +142,8 @@ effect_parameter_remove :: proc(file:^Particle_File,name:string) {
 }
 
 // Gives a parameter back what the file stores for it, or nothing.
-effect_parameter_revert :: proc(held,file:^Particle_File,name:string) {
-    if stored:=effect_parameter(file,name);stored!=nil {effect_parameter_store(held,stored^)} else {effect_parameter_remove(held,name)}
+effect_parameter_revert :: proc(held,file:^Particle_File,name:string,layer:u8=0) {
+    if stored:=effect_parameter(file,name,layer);stored!=nil {effect_parameter_store(held,stored^)} else {effect_parameter_remove(held,name,layer)}
 }
 
 // Hides a field from the instances, or shows it again.
@@ -164,6 +170,7 @@ effect_subject_set :: proc(p:^Effect_Document,id:base.Asset_Id) {
     p.held={}
     p.base={}
     p.scroll=0
+    p.layer=0
 }
 
 // Reads the file of the subject again when the assets change.
@@ -223,6 +230,10 @@ effect_document :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets
     effect_sync(a,p)
     // A cycle until its last particle dies, and again with Loop: what an emitter previews in the editor.
     _,shown:=particle_span(&p.held.info)
+    for &layer in p.held.layers[:p.held.layer_count] {
+        _,span:=particle_span(&layer)
+        shown=max(span,shown)
+    }
     editor.asset_playback_advance(&p.playback,shown,frame.dt)
     id:=ui.id_derive(ctx,DOCUMENT_SCOPE,"particle")
     if ui.panel(ctx,id,editor.asset_workspace(g)) {
@@ -237,6 +248,7 @@ effect_document :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets
             editor.asset_column_divider(ctx)
             if editor.asset_column_begin(ctx,ui.fixed(EFFECT_WIDTH),"Effect") {
                 if p.read {
+                    effect_layer_controls(s,p)
                     if ui.scroll_area(ctx,ui.id(ctx,"rows"),&p.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=3,padding={8,8,10,8}}) {effect_rows(s,p,assets)}
                 }
                 editor.asset_column_end(ctx)
@@ -248,13 +260,52 @@ effect_document :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets
     effect_document_image(s,assets,p)
 }
 
+@(private)
+effect_layer_controls :: proc(s:^editor.Session,p:^Effect_Document) {
+    ctx:=s.gui.ctx
+    p.layer=clamp(p.layer,0,p.held.layer_count)
+    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4,align_y=.Center}) {
+        height:=ui.metric(ctx,"row")
+        if ui.button(ctx,ui.id(ctx,"layer_previous"),{label="Prev",variant="ghost",
+            width=height,height=height,disabled=p.layer==0}).clicked {p.layer-=1}
+        ui.label(ctx,fmt.tprintf("Layer %d of %d",p.layer+1,p.held.layer_count+1),
+            ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"))
+        if ui.button(ctx,ui.id(ctx,"layer_next"),{icon=.Chevron_Right,variant="ghost",
+            width=height,height=height,disabled=p.layer==p.held.layer_count}).clicked {p.layer+=1}
+        if ui.button(ctx,ui.id(ctx,"layer_add"),{label="Add",variant="ghost",height=height,
+            disabled=p.held.layer_count==len(p.held.layers)}).clicked {
+            p.layer=p.held.layer_count+1
+            p.held.layers[p.held.layer_count]=effect.PARTICLE_DEFAULTS
+            p.held.layer_count+=1
+        }
+        if ui.button(ctx,ui.id(ctx,"layer_remove"),{label="Remove",variant="ghost",
+            height=height,disabled=p.layer==0}).clicked {
+            at:=p.layer-1
+            copy(p.held.layers[at:],p.held.layers[at+1:p.held.layer_count])
+            particle_layer_parameters_remove(&p.held,u8(p.layer))
+            p.held.layer_count-=1
+            p.held.layers[p.held.layer_count]={}
+            p.layer=min(p.layer,p.held.layer_count)
+        }
+    }
+}
+
 // The fields of the effect in their groups, each with its eye, and the
 // parameters of its program after the program.
 @(private)
 effect_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets) {
     ctx:=s.gui.ctx
     titles:=PARTICLE_GROUP_TITLES
-    values:=editor.Held_Values{key=KEY_EFFECT,info=type_info_of(effect.Particle_Info),value=&p.held.info,defaults=&p.base.info}
+    value,defaults:=&p.held.info,&p.base.info
+    new_layer:=effect.PARTICLE_DEFAULTS
+    if p.layer>0 {
+        value=&p.held.layers[p.layer-1]
+        defaults=&p.base.layers[p.layer-1] if p.layer<=p.base.layer_count else &new_layer
+    }
+    values:=editor.Held_Values{
+        key=KEY_EFFECT+u64(p.layer),info=type_info_of(effect.Particle_Info),
+        value=value,defaults=defaults,
+    }
     fields:=runtime.type_info_base(type_info_of(effect.Particle_Info)).variant.(runtime.Type_Info_Struct)
     for group in Particle_Group {
         if !kit.collapsible(ctx,ui.id(ctx,"group",int(group)+1),titles[group],&p.open[group]).open {continue}
@@ -265,12 +316,12 @@ effect_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets) {
             field:=fields.names[index]
             hidden:=effect.particle_hidden(p.held.hidden[:p.held.hidden_count],field)
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=2,align_y=.Start}) {
-                if ui.button(ctx,ui.id(ctx,"hidden",index+1),{icon=hidden?.Eye_Off:.Eye,icon_size=13,icon_color=hidden?ui.tone(ctx,"text_faint"):ui.tone(ctx,"text_muted"),variant="ghost",width=EYE_WIDTH-2,height=ui.metric(ctx,"row")}).clicked {
+                if p.layer==0 && ui.button(ctx,ui.id(ctx,"hidden",index+1),{icon=hidden?.Eye_Off:.Eye,icon_size=13,icon_color=hidden?ui.tone(ctx,"text_faint"):ui.tone(ctx,"text_muted"),variant="ghost",width=EYE_WIDTH-2,height=ui.metric(ctx,"row")}).clicked {
                     effect_hidden_toggle(&p.held,field)
                 }
                 if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3}) {editor.held_field_row(s,values,field)}
             }
-            if field=="program" {parameter_rows(s,p,assets)}
+            if field=="program" {parameter_rows(s,p,assets,value)}
         }
     }
 }
@@ -286,10 +337,11 @@ particle_group :: proc(tag:string,before:Particle_Group) -> Particle_Group {
 // effect stores or their defaults, and those it stores that the program
 // does not declare, which the x takes away.
 @(private)
-parameter_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets) {
+parameter_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets,info:^effect.Particle_Info) {
     ctx:=s.gui.ctx
+    layer:=u8(p.layer)
     program:^erender.Program
-    if name:=base.text_get(p.held.info.program[:]);name!="" {program=erender.program_find(assets,name,.Vfx)}
+    if name:=base.text_get(info.program[:]);name!="" {program=erender.program_find(assets,name,.Vfx)}
     if program!=nil {
         for &declared,index in program.parameters {
             ui.id_push(ctx,ui.id(ctx,"parameter",index+1))
@@ -299,6 +351,7 @@ parameter_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets)
     }
     removed:=-1
     for i in 0..<p.held.parameter_count {
+        if p.held.parameters[i].layer!=layer {continue}
         name:=base.text_get(p.held.parameters[i].name[:])
         if program!=nil && erender.program_parameter(program,name)!=nil {continue}
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
@@ -308,7 +361,7 @@ parameter_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets)
             if ui.button(ctx,ui.id(ctx,"stale",i+1),{icon=.Cross,variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {removed=i}
         }
     }
-    if removed>=0 {effect_parameter_remove(&p.held,base.text_get(p.held.parameters[removed].name[:]))}
+    if removed>=0 {effect_parameter_remove(&p.held,base.text_get(p.held.parameters[removed].name[:]),layer)}
 }
 
 // A parameter as its kind and components take it, inside its range, with the
@@ -316,8 +369,9 @@ parameter_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets)
 @(private)
 parameter_row :: proc(s:^editor.Session,p:^Effect_Document,declared:^erender.Program_Parameter) {
     ctx:=s.gui.ctx
+    layer:=u8(p.layer)
     label:=editor.readable(declared.name)
-    stored,reference:=effect_parameter(&p.held,declared.name),effect_parameter(&p.base,declared.name)
+    stored,reference:=effect_parameter(&p.held,declared.name,layer),effect_parameter(&p.base,declared.name,layer)
     value:=declared.defaults
     texture:base.Asset_Id
     if stored!=nil {value,texture=stored.value,stored.texture}
@@ -330,7 +384,7 @@ parameter_row :: proc(s:^editor.Session,p:^Effect_Document,declared:^erender.Pro
             ui.spacer(ctx,EYE_WIDTH-2,1)
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {
                 if editor.held_field_row(s,held,"texture",label) {
-                    if now.texture=={} && reference==nil {effect_parameter_remove(&p.held,declared.name)} else {effect_parameter_put(&p.held,declared,{},now.texture)}
+                    if now.texture=={} && reference==nil {effect_parameter_remove(&p.held,declared.name,layer)} else {effect_parameter_put(&p.held,declared,{},now.texture,layer)}
                 }
             }
         }
@@ -389,9 +443,9 @@ parameter_row :: proc(s:^editor.Session,p:^Effect_Document,declared:^erender.Pro
         }
     }
     if reverted {
-        effect_parameter_revert(&p.held,&p.base,declared.name)
+        effect_parameter_revert(&p.held,&p.base,declared.name,layer)
     } else if changed {
-        effect_parameter_put(&p.held,declared,value,{})
+        effect_parameter_put(&p.held,declared,value,{},layer)
     }
 }
 

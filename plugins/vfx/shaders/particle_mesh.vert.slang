@@ -18,7 +18,8 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
     }
     uint material = particle_emitters[params.emitter].mesh.w;
     if (material == 0u) material = cluster_material(mesh, c) & 0xffffffu;
-    if (params.program != INVALID && material_row(material).program_id != params.program) {
+    Material row = material_row(material);
+    if (row.alpha_mode == ALPHA_BLEND || (params.program != INVALID && row.program_id != params.program)) {
         output.position = float4(2.0, 2.0, 2.0, 1.0);
         return output;
     }
@@ -31,7 +32,7 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
     float3 prev_world = world - particle_world_vector(params.emitter, p.velocity) * particle_frame_step().x;
     output.out_normal = particle_unit(particle_mesh_vector(params.emitter, rotation, v.normal), v.normal);
     output.out_tangent = float4(particle_unit(particle_mesh_vector(params.emitter, rotation, v.tangent.xyz), v.tangent.xyz), v.tangent.w);
-    output.out_color = material_vertex_tint(material_row(material), v.color.rgb) * look.color.rgb;
+    output.out_color = material_vertex_tint(row, v.color.rgb) * look.color.rgb;
     output.out_vertex_color = v.color;
     output.out_emission = float3(0.0);
     output.out_flags = 0u;

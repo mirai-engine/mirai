@@ -218,7 +218,7 @@ Generation :: struct {
     program_jobs: []Job, // the stages of the engine compiled for one program each, by name outside Shader_Id
     identity:     string, // of what its engine stages share with the engine (engine_interface), as the manifest names it
     catalog:      string, // its fingerprint
-    vfx:          []string, // the Vfx programs: a stage marked `//! per vfx program` is compiled once for each
+    vfx:          []Vfx_Program_Uses, // the Vfx programs and their passes
     surface:      []string, // the Surface programs: a stage marked `//! per surface program <uses>` is compiled for each built for one of those uses
     surface_uses: []abi.Program_Uses, // by surface: what each is built for
     vertex:       []string, // those of them with a function vertex: a stage marked `//! per vertex program` is compiled once for each
@@ -781,16 +781,16 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
         // says it has none (`//! per surface program only`). One per vertex program is compiled
         // only for the Surface programs with a function vertex, with their include.
         // A stage of a Surface program is compiled for those built for one of the uses its variant serves.
-        Of :: struct {name,folder:string,uses:abi.Program_Uses}
+        Of :: struct {name,folder:string,uses:abi.Program_Uses,vfx:Vfx_Uses}
         per_surface,surface_only,surface_problem:=surface_stage_marked(text)
         per_vertex:=strings.contains(text,"//! per vertex program")
         only:=per_vertex || surface_only
         programs:=make([dynamic]Of,context.temp_allocator)
-        if collected!=.Programs && !only {append(&programs,Of{"","",{}})}
+        if collected!=.Programs && !only {append(&programs,Of{})}
         if collected!=.Plain {
-            if strings.contains(text,"//! per vfx program") {for name in g.vfx {append(&programs,Of{name,VFX_FOLDER,{}})}}
-            if per_surface {for name,i in g.surface {append(&programs,Of{name,SURFACE_FOLDER,g.surface_uses[i]})}}
-            if per_vertex {for name in g.vertex {append(&programs,Of{name,SURFACE_FOLDER,{}})}}
+            if strings.contains(text,"//! per vfx program") {for program in g.vfx {append(&programs,Of{name=program.name,folder=VFX_FOLDER,vfx=program.uses})}}
+            if per_surface {for name,i in g.surface {append(&programs,Of{name=name,folder=SURFACE_FOLDER,uses=g.surface_uses[i]})}}
+            if per_vertex {for name in g.vertex {append(&programs,Of{name=name,folder=SURFACE_FOLDER})}}
         }
         declared:=constants(text,allocator)
         problem:=constants_problem(declared,allocator)
@@ -802,6 +802,12 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
         }
         for program in programs do for variant in variants(text,allocator) {
             if per_surface && program.folder==SURFACE_FOLDER && surface_problem=="" && surface_variant_uses(text,variant.name)&program.uses=={} {continue}
+            rays:=software_rays(text,variant)
+            if program.folder==VFX_FOLDER {
+                used,needs_rays:=vfx_stage_uses(stem,variant.name,program.vfx)
+                if !used {continue}
+                rays&&=needs_rays
+            }
             named:=stem if program.name=="" else fmt.tprintf("%s__%s",stem,program.name)
             name:=fmt.aprintf("%s%s%s%s",named,"_" if variant.name!="" else "",variant.name,suffixes[stage],allocator=allocator)
             itself:=name if program.name=="" else fmt.aprintf("%s%s%s%s",stem,"_" if variant.name!="" else "",variant.name,suffixes[stage],allocator=allocator)
@@ -817,7 +823,7 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
             append(&defines,..constant_defines)
             job:=Job{source=source,name=name,stage=itself,defines=defines[:],constants=constant_names,includes=includes,bases=g.bases,out=out,staging=staging,reduced=shader_reduced(name),backends=g.backends}
             job.generated=g.generated[program.name]
-            if software_rays(text,variant) {job.backends-={.Metal}}
+            if rays {job.backends-={.Metal}}
             if problem!="" {job.error=fmt.aprintf("%s: %s",name,problem,allocator=allocator)}
             if surface_problem!="" {job.error=fmt.aprintf("%s: %s",name,surface_problem,allocator=allocator)}
             for &built in engine {

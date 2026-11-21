@@ -73,13 +73,13 @@ fixture_emitter :: proc(f:^Emitters_Fixture,emitter:Particle_Emitter,position:[3
 
 @(private="file")
 fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
-    particles_tick(&f.emitters,&f.overrides,core.read(&f.worlds),core.ref(&f.hierarchy),{entities=&f.entities},&f.clocks,&f.requests,&f.births,core.read(&f.listeners),time,frame,f.app.assets,&f.problems)
+    particles_tick(&f.emitters,&f.overrides,core.read(&f.worlds),core.ref(&f.hierarchy),{entities=&f.entities},&f.clocks,&f.sync,&f.requests,&f.births,core.read(&f.listeners),time,frame,f.app.assets,&f.problems)
     fixture_settle(f)
 }
 
 @(private="file")
 fixture_sync :: proc(f:^Emitters_Fixture,id:core.World_Id,time:core.Time,frame:=FRAME) {
-    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{},{})
+    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.bindings),nil,core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{},{})
 }
 
 @(private="file")
@@ -302,6 +302,70 @@ a_frame_tells_only_the_emitters_that_changed :: proc(t:^testing.T) {
     testing.expect_value(t,tracker.total_allocation_count,i64(0))
 }
 
+@(test)
+an_effects_layers_keep_independent_clocks_and_share_resolved_values :: proc(t:^testing.T) {
+    f:=new(Emitters_Fixture)
+    defer free(f)
+    if !fixture_init(t,f) {return}
+    defer fixture_destroy(f)
+    folder:=base.test_folder(t,"vfx-layers")
+    path:=strings.concatenate({folder,"/torch.particle"},context.temp_allocator)
+    types:asset.Types
+    asset.types_init(&types)
+    defer asset.types_destroy(&types)
+    id:=base.Asset_Id{3,7}
+    flame:=effect.particle_preset(.Fire)
+    layers:=[1]effect.Particle_Info{effect.particle_preset(.Smoke)}
+    if !testing.expect_value(t,effect.particle_save(path,&types,{id=id,info=flame,layers=layers[:]}),asset.Error.None) {
+        return
+    }
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=folder})) {return}
+    defer host.assets_destroy(&assets)
+    f.app.assets=&assets
+    emitter:=PARTICLE_EMITTER_DEFAULT
+    emitter.particle=id
+    first:=fixture_emitter(f,emitter)
+    second:=fixture_emitter(f,emitter)
+    fixture_tick(f,TICK)
+    fixture_sync(f,{0,1},TICK)
+    flame_clock,smoke_clock:=clock_find(&f.clocks,first),clock_find(&f.clocks,first,1)
+    if !testing.expect(t,flame_clock!=nil && smoke_clock!=nil) {return}
+    testing.expect_value(t,flame_clock.emission.rate,flame.rate)
+    testing.expect_value(t,smoke_clock.emission.rate,layers[0].rate)
+    flame_a,flame_b:=sync_shown(&f.sync,first),sync_shown(&f.sync,second)
+    if testing.expect(t,flame_a!=nil && flame_b!=nil) {
+        testing.expect(t,flame_a.desc.spec!=nil && flame_a.desc.spec==flame_b.desc.spec)
+    }
+    pause(&f.requests,first)
+    fixture_tick(f,TICK)
+    testing.expect(t,clock_find(&f.clocks,first).paused && clock_find(&f.clocks,first,1).paused)
+    testing.expect(t,!clock_find(&f.clocks,second).paused && !clock_find(&f.clocks,second,1).paused)
+    core.remove(&f.emitters,first)
+    fixture_settle(f)
+    fixture_tick(f,TICK)
+    fixture_sync(f,{0,1},TICK)
+    testing.expect(t,clock_find(&f.clocks,first,1)==nil)
+    testing.expect(t,core.entity_map_get(&f.sync.layers[0],first)==nil)
+}
+
+@(test)
+the_edit_controls_use_the_preview_flag_and_respect_single_cycles :: proc(t:^testing.T) {
+    f:Emitters_Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
+    emitter:=fixture_emitter(&f,Particle_Emitter{active=true,preset=.Muzzle_Flash})
+    start(&f.requests,emitter)
+    fixture_tick(&f,{}, {dt=0.1})
+    if !testing.expect(t,core.at(&f.emitters,0).preview) {return}
+    for _ in 0..<6 {fixture_tick(&f,{}, {dt=0.1})}
+    clock:=clock_find(&f.clocks,emitter)
+    testing.expect(t,clock.done && clock.emitted==7)
+    stop(&f.requests,emitter)
+    fixture_tick(&f,{}, {dt=0.1})
+    testing.expect(t,core.at(&f.emitters,0).active && !core.at(&f.emitters,0).preview)
+}
+
 // Frames of 1/8 s add up exactly.
 @(private="file")
 steps :: proc(e:^Emission,looping:bool,clock:^Emitter_Clock,frames:int,moved:f32=0) -> (total:u64) {
@@ -393,7 +457,6 @@ the_values_particles_slang_copies_are_those_of_the_plugin :: proc(t:^testing.T) 
         {"PARTICLE_RESOURCES",RESOURCE_ROWS},{"PARTICLE_RESOURCE_BYTES",size_of(Gpu_Resource)},
         {"PARTICLE_DATA_ENTRIES",DATA_ENTRIES},{"PARTICLE_SEGMENT_BYTES",size_of(Gpu_Segment)},
         {"PARTICLE_STAGES",erender.PROGRAM_STAGES},{"PARTICLE_STAGE_BYTES",size_of(Gpu_Stage)},{"PARTICLE_BIRTH_BYTES",size_of(Gpu_Birth)},
-        {"PARTICLE_SORT_MAX",SORT_MAX},
     }) {expect(t,defines,each.name,each.value)}
     kinds :: proc(t:^testing.T,defines:map[string]u64,kind:typeid,prefix:string,none:bool,loc:=#caller_location) {
         for field in reflect.enum_fields_zipped(kind) {
@@ -593,27 +656,15 @@ requests_control_an_emitter_from_the_next_step :: proc(t:^testing.T) {
 }
 
 @(test)
-a_sorted_effect_past_its_room_is_a_problem :: proc(t:^testing.T) {
-    f:Emitters_Fixture
-    if !fixture_init(t,&f) {return}
-    defer fixture_destroy(&f)
-    cases:=[?]struct{render:effect.Particle_Render,sort:bool,max_particles:u32,problem:bool}{
-        {.Ribbon,false,SORT_MAX+1,true},
-        {.Billboard,true,SORT_MAX+1,true},
-        {.Billboard,true,SORT_MAX,false},
-        {.Billboard,false,SORT_MAX+1,false},
-    }
-    for c in cases {
-        e:=fixture_emitter(&f,PARTICLE_EMITTER_DEFAULT)
-        override:Particle_Override
-        testing.expect_value(t,value_set(&override,"render",c.render),Error.None)
-        testing.expect_value(t,value_set(&override,"sort",c.sort),Error.None)
-        testing.expect_value(t,value_set(&override,"max_particles",c.max_particles),Error.None)
-        core.add(&f.overrides,e,override)
-        fixture_settle(&f)
-        fixture_sync(&f,{0,1},TICK)
-        testing.expectf(t,(core.problem_find(&f.problems,e,"vfx.capacity")!=nil)==c.problem,"%v",c)
-    }
+large_sorted_effects_keep_their_requested_capacity :: proc(t:^testing.T) {
+    pool:Pool
+    if !testing.expect(t,pool_make(&pool,8192)) {return}
+    defer pool_free(&pool)
+    info:Emitter_Info
+    desc:=Emitter_Desc{id=1,capacity=4096,spec=&info}
+    desc.info.render,desc.info.sort=.Ribbon,true
+    if !testing.expect(t,pool_put(&pool,&desc)) {return}
+    testing.expect_value(t,pool.slots[pool_slot_find(&pool,desc.id)].capacity,desc.capacity)
 }
 
 @(test)
@@ -701,6 +752,7 @@ channel_births_start_once_through_a_rollback :: proc(t:^testing.T) {
     testing.expect(t,core.value_copy(&saved,&f.clocks,type_info_of(Particle_Clocks)))
     for at in 4..<8 {tick(&f,at,IMPACTS,NOBODY)}
     testing.expect_value(t,len(f.clocks.channels),1)
+    testing.expect(t,size_of(f.clocks.channels[0])<size_of(Channel_Record))
     fixture_sync(&f,id,TICK)
     testing.expect_value(t,len(f.sync.births),4)
     testing.expect(t,f.sync.births[3].position=={6,0,0} && f.sync.births[3].count==3 && f.sync.births[3].number==3)
@@ -805,7 +857,8 @@ particle_ranges_join_again_when_they_return_to_the_pool :: proc(t: ^testing.T) {
 	p.slots = make([]Pool_Slot, 8)
 	p.order = make([]u16, 8)
 	base.ranges_reset(&p.free, 1000, 8)
-	defer {delete(p.slots); delete(p.order); base.ranges_free(&p.free)}
+	if !testing.expect(t,base.hash_map_init(&p.by_id,8)) {return}
+	defer {delete(p.slots); delete(p.order); base.ranges_free(&p.free); base.hash_map_destroy(&p.by_id)}
 	a, b, c := pool_slot_take(&p, 30, 100), pool_slot_take(&p, 10, 200), pool_slot_take(&p, 20, 300)
 	testing.expect_value(t, p.slots[a].offset, u32(0))
 	testing.expect_value(t, p.slots[b].offset, u32(100))

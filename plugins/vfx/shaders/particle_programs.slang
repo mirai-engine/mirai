@@ -268,13 +268,11 @@ uint particle_attributes(uint slot, uint index) {
     return data.x + (index - particle_emitters[slot].range.x) * data.y;
 }
 
-// The seed of the particle an emitter starts as its birth-th; the table of
-// the lists after the drawn ones keeps the slot of each birth, by birth
-// modulo the range.
+// Optional birth lookup slots, addressed by birth modulo the emitter's capacity.
 uint particle_birth_seed(uint slot, uint birth) { return hash_u32(hash_u32(particle_emitters[slot].random.x * 9781u + birth * 26699u) ^ 0x9E3779B9u); }
 uint particle_birth_entry(uint slot, uint birth) {
     uint2 range = particle_emitters[slot].range.xy;
-    return 2u * particle_emitters[slot].program.y + range.x + birth % max(range.y, 1u);
+    return particle_emitters[slot].birth_entries + 4u * (birth % max(range.y, 1u));
 }
 
 // What the program of an emitter keeps of it between its prepare and the rest of the frame.
@@ -333,9 +331,9 @@ int mirai_vfx_emitter_birth(Mirai_Vfx_Context ctx, uint resource, uint birth, ou
     seed = 0u;
     if (!particle_emitter_resource(ctx, resource, other)) return -1;
     uint2 range = particle_emitters[other].range.xy;
-    if (range.y == 0u) return -1;
+    if (range.y == 0u || particle_emitters[other].birth_entries == INVALID) return -1;
     seed = particle_birth_seed(other, birth);
-    uint slot = particle_lists[particle_birth_entry(other, birth)];
+    uint slot = particle_data.Load(particle_birth_entry(other, birth));
     if (slot >= range.y) return -1;
     Particle p = particles[range.x + slot];
     return p.lifetime > 0.0 && p.seed == seed ? int(slot) : -1;

@@ -43,3 +43,21 @@ vfx_attributes :: proc(out:^strings.Builder,name:string,layout:Layout) -> string
     strings.write_string(out,"}\n#endif\n")
     return ""
 }
+
+
+Vfx_Use :: enum {Emit,Simulate,Stage,Trace,Rebase}
+Vfx_Uses :: bit_set[Vfx_Use]
+Vfx_Program_Uses :: struct {name:string,uses:Vfx_Uses}
+
+// Simulation can trace for built-in collision and lighting independently of the Vfx program.
+@(private)
+vfx_stage_uses :: proc(source,variant:string,uses:Vfx_Uses) -> (used,rays:bool) {
+    switch source {
+    case "particle_shift": return .Rebase in uses,false
+    case "particle_emit": return .Emit in uses && (variant!="hw" || .Trace in uses),.Trace in uses
+    case "particle_simulate": return .Simulate in uses,true
+    case "particle_stage": return .Stage in uses && (variant!="hw" || .Trace in uses),.Trace in uses
+    case "particle_mesh","particle_mesh_blend": return false,false
+    case: return true,true
+    }
+}

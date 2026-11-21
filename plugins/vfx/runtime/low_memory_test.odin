@@ -52,23 +52,27 @@ a_channel_without_memory_waits_with_its_births :: proc(t:^testing.T) {
     clocks:Particle_Clocks
     defer delete(clocks.channels)
     if !testing.expect(t,resize(&clocks.channels,1)==nil) {return}
-    ring:=&clocks.channels[0]
-    ring.name,ring.count,ring.emitted=core.birth_channel("impacts"),1,1
+    clock:=&clocks.channels[0]
+    clock.name=core.birth_channel("impacts")
+    sync:Particle_Sync
+    defer particle_sync_free(&sync)
+    channel_record(&sync,clock,{},0)
+    ring:=sync.channels[clock.name]
     problems:core.Problems
     given,waited:=false,false
     for served:=0;!given && served<8;served+=1 {
-        sync:Particle_Sync
         limit.remaining=served
         context.allocator={memory_limit_proc,&limit}
         channels_sync(&sync,&clocks,0,&problems)
         context.allocator=owner
         limit.remaining=max(int)
         given=len(sync.births)==1 && len(sync.regions)==1
-        if len(sync.started)==0 {
+        if ring.started==0 {
             waited=true
             testing.expectf(t,len(sync.births)==0 && core.problem_find(&problems,core.NONE,"vfx.memory")!=nil,"with %d requests served: %d births of a channel that was not counted, or no problem",served,len(sync.births))
         }
-        delete(sync.births);delete(sync.regions);delete(sync.started)
+        delete(sync.births);delete(sync.regions)
+        sync.births,sync.regions=nil,nil
     }
     testing.expect(t,given && waited,"it waits without memory, and with it its births go")
 }

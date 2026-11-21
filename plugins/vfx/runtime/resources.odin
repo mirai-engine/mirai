@@ -19,17 +19,42 @@ import "plugins:vfx/runtime/effect"
 RESOURCES :: erender.PROGRAM_RESOURCES
 RESOURCE_ROWS :: 1+RESOURCES
 
-// The entities whose surfaces an emitter reads.
-@(component)
+@(component,description="The entity whose mesh a Surface or Bones emitter samples.")
 Particle_Bindings :: struct {
-    surface:core.Entity,                // what its Surface or Bones shape starts particles on: the mesh it draws; NONE: what its own entity draws
-    sources:[RESOURCES]Particle_Source, // what each resource of its program reads, by name, or the one of its index without a name
+    surface:core.Entity,
 }
 
-Particle_Source :: struct {
-    resource:[32]u8 `mirai:"text"`,           // as the program declares it
-    entity:core.Entity,                       // a surface or bones: what it draws; a grid: the one of the entity
-    grid:[GRID_NAME_BYTES]u8 `mirai:"text"`,  // a grid without entity: the one of the world of this name
+@(component,description="Binds one named Vfx resource to an entity or a grid.")
+Particle_Binding :: struct {
+    emitter:core.Entity, // NONE uses the entity that holds this binding
+    resource:[32]u8 `mirai:"text"`,
+    entity:core.Entity,
+    grid:[GRID_NAME_BYTES]u8 `mirai:"text"`,
+}
+
+@(private)
+bindings_sync :: proc(sync:^Particle_Sync,bindings:^core.Table(Particle_Binding,.Read),
+    problems:^core.Problems,
+) {
+    if bindings==nil || !core.touched(bindings,&sync.bindings_seen) {return}
+    clear(&sync.resource_bindings)
+    for row in 0..<core.count(bindings) {
+        binding:=core.at(bindings,row)
+        name:=base.text_get(binding.resource[:])
+        if name=="" {continue}
+        owner:=core.entity_at(bindings,row)
+        emitter:=binding.emitter if binding.emitter!=core.NONE else owner
+        key:=[2]u64{u64(emitter),base.name_hash(name)}
+        if _,exists:=sync.resource_bindings[key];exists {
+            core.report(problems,owner,"vfx.binding","give emitter %v one binding for %s",emitter,name)
+            continue
+        }
+        if _,err:=map_insert(&sync.resource_bindings,key,owner);err!=nil {
+            sync.bindings_seen={}
+            core.report(problems,owner,"vfx.memory","out of memory for particle bindings: free memory")
+            return
+        }
+    }
 }
 
 Resource_Kind :: enum u32 {None,Surface,Channel,Bones,Grid,Emitter,Data}
@@ -65,23 +90,22 @@ Gpu_Resource :: struct {
 @(private)
 emitter_resources :: proc(
     sync:^Particle_Sync,shown:^Emitter_Shown,bindings:^Particle_Bindings,
+    sources:^core.Table(Particle_Binding,.Read),
     e:core.Entity,extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync,meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,
 ) -> (resources:[RESOURCE_ROWS]Resource_Desc) {
     source:=bindings.surface if bindings.surface!=core.NONE else e
-    #partial switch shown.desc.info.shape {
-    case .Surface: resources[0]=entity_surface(extras,drawn,meshes,worlds,id,assets,renderer,source)
+    shape:=shown.desc.info.shape if shown.desc.spec!=nil else effect.Particle_Shape.Point
+    #partial switch shape {
+    case .Surface: resources[0]=entity_surface(sync,extras,drawn,meshes,worlds,id,assets,renderer,source)
     case .Bones: resources[0]=entity_bones(sync,drawn,meshes,worlds,id,assets,renderer,source)
     }
     for need,at in shown.needs.resources {
-        // The source the emitter binds it to: by its name, or the one of its index without a name.
-        bound:^Particle_Source
-        binds :: proc(given:^Particle_Source) -> bool {return given.entity!=core.NONE || base.text_get(given.grid[:])!=""}
-        for &given in bindings.sources {
-            if binds(&given) && base.name_hash(base.text_get(given.resource[:]))==need.name {bound=&given}
-        }
-        if unnamed:=&bindings.sources[at];bound==nil && base.text_get(unnamed.resource[:])=="" && binds(unnamed) {bound=unnamed}
         source,named:=core.NONE,""
-        if bound!=nil {source,named=bound.entity,base.text_get(bound.grid[:])}
+        bound:Particle_Binding
+        if owner,found:=sync.resource_bindings[[2]u64{u64(e),need.name}];found && sources!=nil {
+            bound,_=core.get(sources,owner)
+            source,named=bound.entity,base.text_get(bound.grid[:])
+        }
         // A grid: that of the entity the emitter binds, or of the name it binds; else, the
         // first its stages go over, that of its own entity, and that of the world of its name.
         if need.kind==.Grid {
@@ -115,7 +139,7 @@ emitter_resources :: proc(
             continue
         }
         if need.kind==.Surface && source!=core.NONE {
-            resources[1+at]=entity_surface(extras,drawn,meshes,worlds,id,assets,renderer,source)
+            resources[1+at]=entity_surface(sync,extras,drawn,meshes,worlds,id,assets,renderer,source)
         }
     }
     // Where each was the frame before: the first frame, where it is.
@@ -142,10 +166,22 @@ first_over :: proc "contextless" (needs:^Program_Needs) -> int {
 // it), where the renderer draws it. Without the scene of its world in the
 // renderer, its Mesh_Renderer where it is.
 @(private)
-entity_surface :: proc(extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync,meshes:^core.Table(erender.Mesh_Renderer,$A),worlds:^core.Table(core.World_Transform,$B),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,e:core.Entity) -> (result:Resource_Desc) {
+entity_surface :: proc(sync:^Particle_Sync,extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync,meshes:^core.Table(erender.Mesh_Renderer,$A),worlds:^core.Table(core.World_Transform,$B),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,e:core.Entity) -> (result:Resource_Desc) {
     if drawn!=nil && drawn.world==id {
-        for &extra in extras {
-            if extra.replace_source && extra.object_id==u64(e) {return surface_of(renderer,extra.mesh,extra.transform)}
+        if sync.surface_frame!=sync.frame {
+            clear(&sync.surface_extras)
+            for &extra,i in extras {
+                if extra.replace_source && extra.object_id!=0 {
+                    if _,err:=map_insert(&sync.surface_extras,extra.object_id,i);err!=nil {
+                        break
+                    }
+                }
+            }
+            sync.surface_frame=sync.frame
+        }
+        if i,found:=sync.surface_extras[u64(e)];found {
+            extra:=&extras[i]
+            return surface_of(renderer,extra.mesh,extra.transform)
         }
         if at:=core.entity_map_index(&drawn.drawn,e);at>=0 {
             if mesh,transform,held:=erender.instance_placed(renderer,at);held {return surface_of(renderer,mesh,transform)}
