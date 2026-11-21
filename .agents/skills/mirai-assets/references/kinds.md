@@ -121,8 +121,6 @@ per bone.
 - **Levels, smallest first.** The Store cuts canonical `texels` at mip boundaries.
   `texture_open` reads metadata and `texture_decode` reads a range of levels. A Store read takes
   only the leaves covering that range. A cooked stream decodes only the pieces it intersects.
-  Block layouts restore in whole runs, each covering one large level or the small levels of
-  the tail. A range that intersects a run starts at that run's largest level.
   `texture_view` decodes the whole chain, and `texture_mip` exposes levels in the decoded range.
 - **Planes of fields.** A block texture whose blocks are not `Fast` can store each mip as
   separate planes of endpoints, indices and the other fields. BC6H and BC7 group the planes by

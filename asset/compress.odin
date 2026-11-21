@@ -4,34 +4,18 @@ import "base:intrinsics"
 import "base:runtime"
 import "core:mem"
 import "core:strings"
-import "compressor:data"
+import "mirai:std/compressor/data"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
 
-// What a write may compress with. Types.codecs says it for the documents made with them. Only
-// the files a cook ships are compressed, as their project says (project_codecs); what the store
-// holds and the documents of a project are written with None, so what is hashed and shared never
-// depends on a compressor.
-Codecs :: enum u8 {
-    None, // no stage of a compressor: each kind keeps the modeling of its data, chosen without one
-    Open, // the formats of the open compressor, which every build reads
-    Best, // the best the compressor of this build has
-}
+// The compression a document may use.
+Codecs :: enum u8 {None, Compressed}
 
-// What the files a cook ships of the project at root, built with the engine at engine_root, are
-// compressed with (build.compression): Best only where the games of that engine have the private
-// compressor, since what a game does not decode it cannot ship. A folder without a project, as
-// the assets of the engine and of its plugins: Open.
-project_codecs :: proc(root,engine_root:string) -> Codecs {
+// The compression a cook uses for the project's shipped files.
+project_codecs :: proc(root:string) -> Codecs {
     m,error:=project.manifest_read(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator))
-    if error.code!=.None {return .Open}
-    switch base.text_get(m.build.compression[:]) {
-    case project.COMPRESSION_NONE: return .None
-    case project.COMPRESSION_OPEN: return .Open
-    }
-    _,private:=project.compressor_folder(engine_root,context.temp_allocator)
-    return .Best if private else .Open
+    return .None if error.code==.None && base.text_get(m.build.compression[:])==project.COMPRESSION_NONE else .Compressed
 }
 
 // What a write of what streams while playing compresses with in place of profile.
@@ -54,56 +38,26 @@ STORED :: data.Format(u32('N')|u32('O')<<8|u32('N')<<16|u32('E')<<24)
 PACK_PIECE :: 4<<20
 @(private) PACK_MAX_PIECES :: PACK_MAX/PACK_PIECE
 
-// The scratch of the reads of streams of one thread. The decoder of the compressor is behind a
-// pointer: its size is that of the compressor a binary was built with, which programs that share
-// this type may not share.
-Stream_Decoder :: struct {
-    data:^data.Decoder,
-    allocator:runtime.Allocator,
-}
+// The scratch of the reads of streams of one thread.
+Stream_Decoder :: data.Decoder
 
 stream_decoder_init :: proc(d:^Stream_Decoder,allocator:=context.allocator) -> Error {
-    d^={allocator=allocator}
-    made,allocation:=new(data.Decoder,allocator)
-    if allocation!=nil {return .Out_Of_Memory}
-    if data.decoder_init(made,allocator)!=.None {
-        free(made,allocator)
-        return .Out_Of_Memory
-    }
-    d.data=made
-    return .None
+    return error_of(data.decoder_init(d,allocator))
 }
 
 stream_decoder_destroy :: proc(d:^Stream_Decoder) {
-    if d==nil || d.data==nil {return}
-    data.decoder_destroy(d.data)
-    free(d.data,d.allocator)
-    d^={}
+    if d!=nil {data.decoder_destroy(d)}
 }
 
-// The scratch of the writes of streams of one thread, as Stream_Decoder.
-Stream_Encoder :: struct {
-    data:^data.Encoder,
-    allocator:runtime.Allocator,
-}
+// The scratch of the writes of streams of one thread.
+Stream_Encoder :: data.Encoder
 
 stream_encoder_init :: proc(e:^Stream_Encoder,allocator:=context.allocator) -> Error {
-    e^={allocator=allocator}
-    made,allocation:=new(data.Encoder,allocator)
-    if allocation!=nil {return .Out_Of_Memory}
-    if data.encoder_init(made,allocator)!=.None {
-        free(made,allocator)
-        return .Out_Of_Memory
-    }
-    e.data=made
-    return .None
+    return error_of(data.encoder_init(e,allocator))
 }
 
 stream_encoder_destroy :: proc(e:^Stream_Encoder) {
-    if e==nil || e.data==nil {return}
-    data.encoder_destroy(e.data)
-    free(e.data,e.allocator)
-    e^={}
+    if e!=nil {data.encoder_destroy(e)}
 }
 
 @(private)
@@ -141,7 +95,7 @@ error_of :: proc "contextless" (error:data.Error) -> Error {
 
 // The format of the pieces a write with profile and codecs makes.
 stream_format :: proc "contextless" (profile:data.Profile,codecs:Codecs) -> data.Format {
-    return STORED if codecs==.None else data.format(profile,codecs==.Open)
+    return STORED if codecs==.None else data.format(profile)
 }
 
 // The largest stream pack writes for size bytes.
@@ -168,14 +122,14 @@ pack :: proc(e:^Stream_Encoder,profile:data.Profile,codecs:Codecs,src,dst:[]u8,w
         copy(dst[STREAM_HEAD+4:],src)
         return STREAM_HEAD+4+len(src),.None
     }
-    if e==nil || e.data==nil {return 0,.Invalid}
+    if e==nil || e.allocator.procedure==nil {return 0,.Invalid}
     count:=stream_pieces(len(src))
     stream_head_write(dst,format,count)
     at:=STREAM_HEAD+count*4
     if worker.system==nil || count==1 {
         for piece in 0..<count {
             from:=src[piece*PACK_PIECE:min(len(src),(piece+1)*PACK_PIECE)]
-            written,encode_error:=data.encode(e.data,profile,from,dst[at:],codecs==.Open)
+            written,encode_error:=data.encode(e,profile,from,dst[at:])
             if encode_error!=.None {return 0,error_of(encode_error)}
             u32_write(&dst[STREAM_HEAD+piece*4],u32(written))
             at+=written
@@ -183,7 +137,7 @@ pack :: proc(e:^Stream_Encoder,profile:data.Profile,codecs:Codecs,src,dst:[]u8,w
         return at,.None
     }
     heap:=runtime.heap_allocator()
-    work:=Pack_Work{profile=profile,open=codecs==.Open,src=src}
+    work:=Pack_Work{profile=profile,src=src}
     a,b,c:mem.Allocator_Error
     work.out,a=make([][]u8,count,heap)
     work.sizes,b=make([]int,count,heap)
@@ -206,7 +160,6 @@ pack :: proc(e:^Stream_Encoder,profile:data.Profile,codecs:Codecs,src,dst:[]u8,w
 @(private="file")
 Pack_Work :: struct {
     profile:data.Profile,
-    open:bool,
     src:[]u8,
     out:[][]u8,
     sizes:[]int,
@@ -229,7 +182,7 @@ piece_pack :: proc(work:^Pack_Work,first,last:int,worker:int) {
         out,failed:=make([]u8,data.bound(len(from)),heap)
         if failed!=nil {work.errors[piece]=.Out_Of_Memory;continue}
         work.out[piece]=out
-        work.sizes[piece],work.errors[piece]=data.encode(&e,work.profile,from,out,work.open)
+        work.sizes[piece],work.errors[piece]=data.encode(&e,work.profile,from,out)
     }
 }
 
@@ -295,7 +248,7 @@ stream_unpack :: proc(d:^Stream_Decoder,s:Stream,src,dst:[]u8) -> Error {
 // src and dst begin at the first selected piece.
 @(private)
 stream_decode_pieces :: proc(d:^Stream_Decoder,s:Stream,src,dst:[]u8,total,first,last:int) -> Error {
-    if d.data==nil {return .Invalid}
+    if d.allocator.procedure==nil {return .Invalid}
     at,written:=0,0
     for piece in first..<last {
         raw:=min(total-piece*PACK_PIECE,PACK_PIECE)
@@ -303,7 +256,7 @@ stream_decode_pieces :: proc(d:^Stream_Decoder,s:Stream,src,dst:[]u8,total,first
         size:=int(u32_read(s.table[piece*4:]))
         if size>len(src)-at {return .Truncated}
         if raw>0 {
-            if result:=data.decode(d.data,s.format,src[at:][:size],dst[written:][:raw]);result!=.None {
+            if result:=data.decode(d,s.format,src[at:][:size],dst[written:][:raw]);result!=.None {
                 return error_of(result)
             }
         }
@@ -373,13 +326,13 @@ Stream_Work :: struct {
 @(private="file")
 stream_piece_decode :: proc(work:^Stream_Work,first,last:int,worker:int) {
     d:=&work.decoders.decoders[worker]
-    if d.data==nil && stream_decoder_init(d,work.decoders.allocator)!=.None {
+    if d.allocator.procedure==nil && stream_decoder_init(d,work.decoders.allocator)!=.None {
         intrinsics.atomic_store(&work.error,Error.Out_Of_Memory)
         return
     }
     for piece in first..<last {
         raw:=min(len(work.dst)-piece*PACK_PIECE,PACK_PIECE)
-        error:=data.decode(d.data,work.stream.format,work.src[work.starts[piece]:work.starts[piece+1]],work.dst[piece*PACK_PIECE:][:raw])
+        error:=data.decode(d,work.stream.format,work.src[work.starts[piece]:work.starts[piece+1]],work.dst[piece*PACK_PIECE:][:raw])
         if error!=.None {intrinsics.atomic_store(&work.error,error_of(error))}
     }
 }

@@ -4,8 +4,7 @@ import "base:intrinsics"
 import "base:runtime"
 import "core:hash/xxhash"
 import "core:mem"
-import "compressor:data"
-import "compressor:texture"
+import "mirai:std/compressor/data"
 import "mirai:std/base"
 import "mirai:std/jobs"
 import "mirai:std/serial"
@@ -49,12 +48,11 @@ fourcc_text :: proc "contextless" (value:Fourcc,buffer:^[4]u8) -> string {
 // How a chunk is stored: as it is, or as a stream.
 Compression :: enum u8 {None,Stream=2}
 
-// The scratch of the decoders a read uses, of streams and of the layouts of blocks of textures.
+// The scratch of the stream decoders a read uses.
 // Whoever reads keeps one per thread and lends it to the assets it opens; an asset opened without
 // one makes its own the first time it needs it.
 Decoder :: struct {
     using stream:Stream_Decoder,
-    layout:^texture.Layout_Decoder, // behind a pointer, as Stream_Decoder.data
     // With them, the pieces of a chunk decode at once on the workers of their job system: worker
     // is the one that reads with this decoder.
     pieces:^Piece_Decoders,
@@ -63,23 +61,11 @@ Decoder :: struct {
 
 decoder_init :: proc(d:^Decoder,allocator:=context.allocator) -> Error {
     d^={}
-    stream_decoder_init(&d.stream,allocator) or_return
-    allocation:mem.Allocator_Error
-    if d.layout,allocation=new(texture.Layout_Decoder,allocator);allocation!=nil || texture.layout_decoder_init(d.layout,allocator)!=.None {
-        free(d.layout,allocator)
-        d.layout=nil
-        decoder_destroy(d)
-        return .Out_Of_Memory
-    }
-    return .None
+    return stream_decoder_init(&d.stream,allocator)
 }
 
 decoder_destroy :: proc(d:^Decoder) {
-    if d==nil || d.allocator.procedure==nil {return}
-    if d.layout!=nil {
-        texture.layout_decoder_destroy(d.layout)
-        free(d.layout,d.allocator)
-    }
+    if d==nil {return}
     stream_decoder_destroy(&d.stream)
     d^={}
 }

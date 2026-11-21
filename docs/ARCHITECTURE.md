@@ -323,10 +323,7 @@ project's world through
 Numbered layers; a package only imports lower layers.
 
 - **0** `std/*`: standard library (base, blake3, math, serial, jobs, spatial, geom, anim, ai, input,
-  subprocess, ui_format). It does not depend on the engine. `std/compressor` is not imported as
-  `mirai:`: it is the open implementation of the collection `compressor` (`data`, `texture`,
-  `blocks`, the last engine-time), which every compile names and which the private
-  `ext/mirai-compression` replaces with the same declarations where a checkout holds it.
+  subprocess, ui_format, compressor/data). It does not depend on the engine.
   `std/ui_format` is what the structure of a `.ui` is judged by (node kinds, override fields,
   limits), which `ui` builds and `asset` checks without importing each other.
 - **1** `project`: `project.mirai` and `plugin.mirai` manifests, the layout of a project.
@@ -353,7 +350,7 @@ Numbered layers; a package only imports lower layers.
   actions, seats, driving and `Move_Input`), `camera` (each seat's camera and the game view),
   `save`.
 - **7** `cook/*`: engine-time; world generator and project build, `cook/cache` (what is built,
-  stored by what makes it), textures (with GPU block encoding and private compressor layouts),
+  stored by what makes it), textures (with GPU block encoding),
   importers, shaders,
   `cook/workspace` (a worktree's main checkout, the dependencies folder, shared cache and locks
   between processes), `cook/image` (PNG to RGBA8, difference, statistics, montage, crop, enlargement

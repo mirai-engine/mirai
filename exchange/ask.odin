@@ -467,13 +467,6 @@ batch_send :: proc(x:^Exchange,i:int) {
         }
     }
     if n==0 {return}
-    if !p.told {
-        // Before its first ask: what this end decodes.
-        codecs:=[3]u8{MSG_CODECS,0,0}
-        put_u16(codecs[1:],transmute(u16)store.codecs_read(x.desc.store))
-        if !control_append(p,codecs[:]) {return}
-        p.told=true
-    }
     buffer:[MSG_ASK_MAX]u8
     out:=Writer{data=buffer[:]}
     write_u8(&out,MSG_ASK)
@@ -507,9 +500,8 @@ on_chunk :: proc(x:^Exchange,i:int,data:[]u8) {
     codec:=read_u8(&r)
     raw:=int(read_u32(&r))
     bytes:=data[min(MSG_CHUNK_HEAD,len(data)):]
-    // As they are, or encoded smaller in a codec this end said it decodes.
     plain:=codec==store.CODEC_NONE && raw==len(bytes)
-    encoded:=codec!=store.CODEC_NONE && int(codec)<store.CODECS_MAX && int(codec) in store.codecs_read(x.desc.store) && len(bytes)<raw
+    encoded:=codec==store.CODEC_MDC2 && len(bytes)<raw
     if !r.ok || !plain && !encoded || len(bytes)==0 || raw>store.CHUNK_MAX {peer_bad(x,i);return}
     // What jobs finished is applied first: a parent parsed names its descendants.
     work_collect(x)
@@ -574,14 +566,6 @@ receive_fill :: proc(x:^Exchange,slot:^Receive_Slot,i:int,address:store.Hash,cod
     slot.result,slot.error,slot.parsed=.Stored,.None,false
     slot.limit=0
     p.received+=u64(len(bytes))
-}
-
-@(private)
-on_codecs :: proc(x:^Exchange,i:int,data:[]u8) {
-    r:=Reader{data=data[1:],ok=true}
-    codecs:=transmute(store.Codecs)read_u16(&r)
-    if !read_end(&r) {peer_bad(x,i);return}
-    x.peers[i].decodes=codecs+{store.CODEC_NONE}
 }
 
 @(private)

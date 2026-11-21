@@ -84,9 +84,6 @@ State :: struct {
     scrub_pack:int,
     scrub_at:int,
     hooks:^Hooks,
-    decodes:Codecs, // the codecs this value reads: this build's and a test's hook
-    write:u8,       // the codec its puts encode frames with
-    hook:Codec_Hook,
     coders:[dynamic]^Coder,
 }
 

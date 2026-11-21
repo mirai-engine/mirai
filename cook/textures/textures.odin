@@ -7,8 +7,6 @@ import "core:fmt"
 import "core:math"
 import "core:mem"
 import stbi "vendor:stb/image"
-import "compressor:blocks"
-import "compressor:texture"
 import "mirai:asset"
 import "mirai:std/base"
 import "mirai:std/geom"
@@ -24,8 +22,6 @@ MAX_SOURCE_PIXELS :: 1<<28
 // Changes when build would give other bytes for the same image and options.
 BUILD_VERSION :: 12
 
-@(private)
-OPEN_BLOCK_ENCODER :: blocks.NAME=="open"
 RDO_LAMBDA_DEFAULT :: 30
 RDO_LAMBDA_MAX :: 100
 
@@ -245,10 +241,6 @@ Build_Options :: struct {
     channels:Channels,   // what each channel is made of, before anything else; the zero value keeps them
 }
 
-// What names the blocks the encoders of this build make in the caches and in the key of an
-// import: checkouts with and without the private compressor share the caches.
-encoders_id :: proc "contextless" () -> u64 {return base.name_hash("gpu-bcn" if OPEN_BLOCK_ENCODER else blocks.NAME)}
-
 // The lambda of the RDO of options, 0 for none.
 rdo_lambda :: proc "contextless" (options:Build_Options) -> int {
     if options.rdo_lambda<0 || options.speed==.Fast {return 0}
@@ -272,60 +264,20 @@ built_destroy :: proc(built:^Built) {
 }
 
 // The description asset.texture_save takes; the levels stay owned by built.
-// With layouts, for a document that compresses with the best codecs, a
-// texture of blocks of 16 bytes stores the layouts of the compressor that do
-// better than its blocks, in the temporary allocator: one of its tail
-// (asset.TEXTURE_TAIL), which a read of the small levels restores alone, and
-// one of the larger levels; one per level would compress larger. Without
-// memory for them the blocks are stored as they are.
-built_desc :: proc(built:^Built,id:base.Asset_Id,source:^asset.Import_Info,layouts:=false) -> asset.Texture_Desc {
-    desc:=asset.Texture_Desc{id=id,width=built.width,height=built.height,layers=built.layers,format=built.format,flags=built.flags,alpha_coverage=built.alpha_coverage,mips=built.mips,source=source}
-    if !layouts || asset.texture_block_bytes(built.format)!=16 || len(built.mips)==0 {return desc}
-    formats:=#partial [asset.Texture_Format]blocks.Block_Format{.BC5=.BC5,.BC6H=.BC6H,.BC7=.BC7}
-    tail:=0
-    for tail+1<len(built.mips) && max(built.width>>uint(tail),built.height>>uint(tail))>asset.TEXTURE_TAIL {tail+=1}
-    runs:=[2][2]int{{0,tail},{tail,len(built.mips)}}
-    total:=0
-    for level in built.mips {total+=len(level)}
-    // A compressor without layouts writes none.
-    bound:=blocks.layout_bound(total/16)
-    if bound==0 {return desc}
-    laid:=make([]asset.Texture_Layout,2,context.temp_allocator)
-    run_blocks:=make([]u8,total,context.temp_allocator)
-    payload:=make([]u8,bound,context.temp_allocator)
-    if laid==nil || run_blocks==nil || payload==nil {return desc}
-    count,at:=0,0
-    for run in runs {
-        if run[0]==run[1] {continue}
-        // Its levels the smallest first, as the texels hold them.
-        size:=0
-        #reverse for level in built.mips[run[0]:run[1]] {size+=copy(run_blocks[size:],level)}
-        layout,header,written,error:=blocks.layout_encode(formats[built.format],run_blocks[:size],payload[at:],context.temp_allocator)
-        if error!=.None || layout==texture.NO_LAYOUT {return desc}
-        laid[count]={layout=layout,header=header,level=run[0],payload=payload[at:][:written]}
-        count+=1
-        at+=written
-    }
-    desc.layouts=laid[:count]
-    return desc
+built_desc :: proc(built:^Built,id:base.Asset_Id,source:^asset.Import_Info) -> asset.Texture_Desc {
+    return {id=id,width=built.width,height=built.height,layers=built.layers,format=built.format,
+        flags=built.flags,alpha_coverage=built.alpha_coverage,mips=built.mips,source=source}
 }
 
-// What decides the bytes build gives for an image: the settings hash an
-// import records, so a texture is built again when one of them changes. Fast
-// is another hash; Final is the hash of the settings alone.
-settings_hash :: proc(options:Build_Options) -> u64 {return settings_hash_of(options,encoders_id())}
-
-// settings_hash with the encoders named encoders, which count only where they make the bytes:
-// texels stored uncompressed are the same whatever block encoder the build has.
-@(private)
-settings_hash_of :: proc(options:Build_Options,encoders:u64) -> u64 {
+// The settings hash an import records. Fast has a different hash from Final.
+settings_hash :: proc(options:Build_Options) -> u64 {
     kind:=u64(options.srgb)|u64(options.normal_map)<<1|u64(options.encoding)<<2|u64(options.green_down)<<4|u64(options.keep_precision)<<5|u64(BUILD_VERSION)<<8
     hash:=base.hash_combine(kind,u64(transmute(u32)options.alpha_coverage))
     if options.alpha_fill>0 {hash=base.hash_combine(hash,u64(transmute(u32)options.alpha_fill)|1<<32)}
     final:=options
     final.speed=.Final
     hash=base.hash_combine(hash,u64(rdo_lambda(final)))
-    if options.encoding==.Blocks {hash=base.hash_combine(hash,encoders)}
+    if options.encoding==.Blocks {hash=base.hash_combine(hash,base.name_hash("gpu-bcn"))}
     if options.channels!={} {
         c:=options.channels
         packed:=u64(c.from[0])|u64(c.from[1])<<8|u64(c.from[2])<<16|u64(c.from[3])<<24|u64(transmute(u8)c.invert)<<32
@@ -434,16 +386,7 @@ build :: proc(
     }
     built.width,built.height,built.layers=level.width,level.height,layers
     built.format=stored_format(source,options)
-    use_gpu:=OPEN_BLOCK_ENCODER && asset.texture_block_bytes(built.format)>0
-    js:jobs.Job_System
-    on:=worker
-    when !OPEN_BLOCK_ENCODER {
-        if !use_gpu && worker.system==nil && encode_jobs_begin(&js,built.format,
-            level.width,level.height*layers) {
-            on={&js,jobs.OWNER,nil}
-        }
-    }
-    defer if on.system==&js {jobs.system_destroy(&js)}
+    use_gpu:=asset.texture_block_bytes(built.format)>0
     count:=asset.texture_mip_count(level.width,level.height)
     mips,alloc_error:=make([][]u8,count,allocator)
     if alloc_error!=nil {return {},.Out_Of_Memory}
@@ -462,7 +405,7 @@ build :: proc(
         } else {
             encode_zone:=jobs.worker_zone_begin(worker,"texture.encode")
             store_error:Error
-            mips[i],store_error=level_store(level,built.format,&transfer,options,allocator,on)
+            mips[i],store_error=level_store(level,built.format,&transfer,allocator)
             base.profile_end(encode_zone)
             if store_error!=.None {return {},store_error}
         }
@@ -507,12 +450,10 @@ from_bytes :: proc(
 }
 
 // A level of a source, every layer, in the format it is stored in: the
-// formats of 8 bits take it as sRGB under transfer, RGBA16, RGBA16F and BC6H
-// linear. In allocator.
+// 8-bit format uses transfer, and the wide formats are linear.
 @(private)
 level_store :: proc(
-    level:Source,format:asset.Texture_Format,transfer:^Transfer,options:Build_Options,
-    allocator:mem.Allocator,worker:jobs.Worker_Ref,
+    level:Source,format:asset.Texture_Format,transfer:^Transfer,allocator:mem.Allocator,
 ) -> (out:[]u8,error:Error) {
     alloc_error:mem.Allocator_Error
     switch format {
@@ -522,9 +463,7 @@ level_store :: proc(
         out,alloc_error=level_convert(level,.RGBA16,transfer,&linear,allocator)
     case .RGBA16F: out,alloc_error=level_convert(level,.RGBA16F,transfer,transfer,allocator)
     case .BC1,.BC5,.BC6H,.BC7:
-        when !OPEN_BLOCK_ENCODER {
-            return level_encode(level,format,transfer,block_encode(options),allocator,worker)
-        } else {return nil,.Invalid}
+        return nil,.Invalid
     }
     if alloc_error!=nil {return nil,.Out_Of_Memory}
     return out,.None
@@ -719,30 +658,12 @@ blocks_of :: proc(
     if built.mips,alloc_error=make([][]u8,len(view.mips),allocator);alloc_error!=nil {
         return {},.Out_Of_Memory
     }
-    when OPEN_BLOCK_ENCODER {
-        encode_zone:=jobs.worker_zone_begin(worker,"texture.encode")
-        error=gpu_chain(gpu,levels[:len(view.mips)],built.mips,format,options,allocator)
-        base.profile_end(encode_zone)
-        if error!=.None {
-            built_destroy(&built)
-            return {},error
-        }
-    } else {
-        js:jobs.Job_System
-        on:=worker
-        if worker.system==nil && encode_jobs_begin(&js,format,built.width,built.height*layers) {
-            on={&js,jobs.OWNER,nil}
-        }
-        defer if on.system==&js {jobs.system_destroy(&js)}
-        transfer:=transfer_make(options.srgb)
-        for level,i in levels[:len(view.mips)] {
-            blocks,error:=level_store(level,format,&transfer,options,allocator,on)
-            if error!=.None {
-                built_destroy(&built)
-                return {},error
-            }
-            built.mips[i]=blocks
-        }
+    encode_zone:=jobs.worker_zone_begin(worker,"texture.encode")
+    error=gpu_chain(gpu,levels[:len(view.mips)],built.mips,format,options,allocator)
+    base.profile_end(encode_zone)
+    if error!=.None {
+        built_destroy(&built)
+        return {},error
     }
     return built,.None
 }

@@ -27,8 +27,8 @@ each at a multiple of its alignment.
   [store](../../mirai-store/SKILL.md): one group per container chunk in directory order, and the
   header and directory as the meta of its root. It holds its file as `Codecs.None` writes it:
   `object_put` writes again a file a compressor touched (a stream chunk, a mesh page not
-  `STORED`, texture layouts, planes chosen otherwise), so the same asset is the same object for
-  every compressor, and the store compresses each chunk in its frame. It cuts each chunk where the
+  `STORED`, texture planes chosen otherwise), so compressing an asset leaves its object identity
+  unchanged. The store compresses each chunk in its frame. It cuts each chunk where the
   format reads alone: between the levels of `texels` (smallest first, so the first chunks are the
   small levels), between the blocks of a mesh's `page_data` and of a block table. The file is the
   meta, each group at its chunk's offset and zeros between: `object_file` gives the bytes
@@ -48,44 +48,34 @@ piece; a reader knows what decodes it from the stream. `pack`, `Stream_Encoder` 
 the entry points of what compresses outside a chunk (mesh pages, the parts a
 journal sends over the network, editor thumbnails, the shaders the executables embed).
 
-- **The collection `compressor`** is what compresses: `data` (bytes by profile), `texture`
-  (restoring layouts of blocks of textures) and `blocks` (block encoders and layouts, engine-time).
-  Nothing else in the engine imports a codec. The CLI names it
-  ([build](../../mirai-projects/references/build.md#compressor)): the open one,
-  `std/compressor` (MDC2, no block layout), or the private `mirai-compression` with the same
-  packages and declarations, which also decodes MDC2 through `compressor_open`. Open builds encode
-  blocks on the GPU in
+- **MDC2** in `std/compressor/data` compresses bytes. The GPU encodes texture blocks during
   [texture cooking](../../mirai-imports/references/imports.md#textures-cooktextures).
 - **Profiles.** A write says what it favors (`data.Profile`): `Fast` for what the editor,
   imports and a running game save; a cook writes with `Ultra` (a shipped game) or `Balanced` (a
   dev game), and what streams while playing with `profile_streamed` of it (`Speed` in place of
-  `Ultra`). All open profiles write MDC2. A read needs no profile: the stream names its format.
+  `Ultra`). All profiles write MDC2. A read needs no profile: the stream names its format.
 - **MDC2 blocks.** Entropy tags carry short lengths directly and take longer lengths from a byte
   stream. Aligned distances use fewer extra bits. A block can store literal differences against
   the bytes at its previous match distance. Each block can match into earlier blocks in its
   piece. The decoder uses preallocated scratch to reconstruct it.
-- **Codecs.** What a write may use (`Codecs`): `None`, the zero value, no stage of a compressor;
-  `Open`, the formats every build reads; `Best`, what the compressor of the build has. Every
-  document is written `None` but the files a cook ships, which take `project_codecs`
-  (`build.compression`). Under `None` the modeling a kind chooses by what compresses smaller is
-  chosen without a compressor, as what compresses smaller where the bytes rest: a mesh page keeps
-  its coding and BC1 and BC5 their planes of fields. A stream of a format the build does not
-  decode is `Codec_Missing`.
+- **Codecs.** A document's writer selects `None` (the zero value) or `Compressed` (MDC2).
+  A cook uses the project's `build.compression`. Under `None`, mesh pages keep their page
+  coding and eligible texture mips keep their planes of fields. An unsupported stream format
+  returns `Codec_Missing`.
 - **Block tables.** A kind whose asset stores blocks it reads alone keeps them in `<name>_blocks`,
   with the `Block_Record`s of its pages in `<name>_pages`; the kind codes each block itself, and
   neither a write, a cook nor the store's object compresses them.
 - **Pieces.** A chunk over `PACK_PIECE` is a run of pieces of that many raw bytes, each decoding
   without the others: a scene load decodes them at once on its workers (`Piece_Decoders`), and a
   write with a worker compresses them at once into the same bytes.
-- **Decoders.** `Decoder` holds the scratch of the decoders of streams and layouts, made once by
+- **Decoders.** `Decoder` holds stream scratch, made once by
   whoever reads (a job keeps one per thread) and lent to `asset_open`/`asset_load`; an asset opened
   without one makes its own the first time it decodes. A mesh page or a terrain block decodes with
   a `Stream_Decoder` of its reader (the renderer keeps one per worker).
 - **Texture levels.** The `texels` column holds the smallest level first: a read of the small
-  levels decodes only the first pieces. A texture a cook writes with `Best` codecs may store
-  layouts of runs of levels (the `layouts` table, `blocks.layout_encode`), and BC1 and BC5
-  may store planes of fields ([texture](kinds.md#texture)); `texture_decode` restores them into
-  memory of the asset before the renderer takes them.
+  levels decodes only the first pieces. Mips may store planes of fields
+  ([texture](kinds.md#texture)); `texture_decode` can restore the original block bytes or expose
+  the planes to the renderer.
 
 ## Typed tables
 

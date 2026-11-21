@@ -202,10 +202,9 @@ first when it is not current, as `mirai import` does. What a game-writing agent 
 - **`check`** lists what would fail in the game and exits with 1: for interfaces what `ui.check`
   lists, for scenes each file whose document does not write it back unchanged, with the first
   thing that differs.
-- **The tracked assets** of the game template and the demo are files their own documents write
-  back byte by byte
-  (`the_documents_of_the_tracked_assets_write_back_the_files_they_were_read_from`): an asset
-  saved by an earlier layout is written again with `mirai ui write` before it is committed.
+- **The tracked assets** of the game template and the demo round trip through their documents
+  with identical decoded bytes. Authoring preserves the file when its content is unchanged
+  (`the_documents_of_the_tracked_assets_write_back_the_files_they_were_read_from`).
 
 ## `mirai rpc`
 

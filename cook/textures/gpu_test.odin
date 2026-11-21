@@ -8,7 +8,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "core:time"
-import data "compressor_open:data"
+import "mirai:std/compressor/data"
 import "mirai:asset"
 import "mirai:project"
 import "mirai:std/base"
@@ -22,7 +22,6 @@ test_gpu_context :: proc(t:^testing.T,gpu:^Gpu_Context) -> bool {
 
 @(test)
 gpu_blocks_decode_and_keep_alpha_coverage :: proc(t:^testing.T) {
-    if !OPEN_BLOCK_ENCODER {return}
     gpu:Gpu_Context
     if !test_gpu_context(t,&gpu) {return}
     defer gpu_context_destroy(&gpu)
@@ -137,7 +136,6 @@ gpu_blocks_decode_and_keep_alpha_coverage :: proc(t:^testing.T) {
 
 @(test)
 gpu_tile_reuses_blocks_in_final_cooks :: proc(t:^testing.T) {
-    if !OPEN_BLOCK_ENCODER {return}
     gpu:Gpu_Context
     if !test_gpu_context(t,&gpu) {return}
     defer gpu_context_destroy(&gpu)
@@ -219,7 +217,7 @@ GPU_BENCH :: #config(COOK_GPU_BENCH,false)
 
 @(test)
 bench_gpu_blocks_on_demo_textures :: proc(t:^testing.T) {
-    if !GPU_BENCH || !OPEN_BLOCK_ENCODER {return}
+    if !GPU_BENCH {return}
     device:=shared_device.take_or_skip(t)
     if device==nil {return}
     root,_:=os.lookup_env("MIRAI_ROOT",context.temp_allocator)
@@ -230,7 +228,7 @@ bench_gpu_blocks_on_demo_textures :: proc(t:^testing.T) {
     types:asset.Types
     asset.types_init(&types)
     defer asset.types_destroy(&types)
-    types.codecs=.Open
+    types.codecs=.Compressed
     Case :: struct {path:string,options:Build_Options}
     cases:=[5]Case{
         {"surfaces/bricks/bricks_color.png",{srgb=true}},

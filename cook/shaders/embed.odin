@@ -3,7 +3,7 @@ package shaders
 import "core:encoding/endian"
 import "core:os"
 import "core:strings"
-import "compressor:data"
+import "mirai:std/compressor/data"
 import "mirai:asset"
 import "mirai:std/jobs"
 
@@ -13,7 +13,7 @@ import "mirai:std/jobs"
 // holds and the size of the code of each (u32, little endian), then their
 // code as one stream (asset.unpack). The table of render says nothing of the code, so a
 // change of code alone leaves it, and whatever was built from it, as they are.
-// The stream is of the open compressor, which every build reads. A generation
+// The stream uses MDC2. A generation
 // packs it with the profile Fast; one asked to ship (Options.ship, the release
 // builds of the engine) with Ultra, which takes far longer and leaves a smaller
 // executable. Each stream stays in the shared cache under the hashes of the
@@ -97,7 +97,7 @@ embedded_pack :: proc(g:^Generation,groups:[2][]Job,backend:Backend,ship:bool,al
     on:jobs.Worker_Ref
     if len(raw)>asset.PACK_PIECE && jobs.system_init(&js,{threads=jobs.THREADS_AUTO}) {on={&js,jobs.OWNER,nil}}
     defer if on.system!=nil {jobs.system_destroy(&js)}
-    written,pack_error:=asset.pack(&encoder,profile,.Open,raw[:],packed,on)
+    written,pack_error:=asset.pack(&encoder,profile,.Compressed,raw[:],packed,on)
     if pack_error!=.None {return nil,false,strings.clone("could not compress the shaders to embed",allocator)}
     // A failure to store only costs packing it again.
     write_file_atomic(entries[int(ship)],packed[:written])

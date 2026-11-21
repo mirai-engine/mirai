@@ -43,7 +43,7 @@ inside :: proc(a:^Asset,p:rawptr) -> bool {
 @(test)
 mesh_round_trips_its_clusters_compressed :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    types.codecs=.Open // what a cook ships: the streams under test
+    types.codecs=.Compressed // what a cook ships: the streams under test
     vertices,indices:=test_grid(8);defer delete(vertices);defer delete(indices)
     for &vertex,i in vertices {vertex.material=u32(i/16)}
     skin:=make([]Skin_Vertex,len(vertices));defer delete(skin)
@@ -282,7 +282,7 @@ mesh_refuses_descriptions_and_files_with_ranges_outside_their_tables :: proc(t:^
 @(test)
 texture_round_trips_every_format_and_checks_level_sizes :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    types.codecs=.Open // what a cook ships: the streams under test
+    types.codecs=.Compressed // what a cook ships: the streams under test
     testing.expect_value(t,texture_level_size(.RGBA8,5,3),60)
     testing.expect_value(t,texture_level_size(.BC1,5,3),16)
     testing.expect_value(t,texture_level_size(.BC5,1,1),16)
@@ -345,7 +345,7 @@ texture_round_trips_every_format_and_checks_level_sizes :: proc(t:^testing.T) {
 @(test)
 a_read_of_the_small_levels_decodes_only_the_start_of_the_texels :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    types.codecs=.Open // what a cook ships: the streams under test
+    types.codecs=.Compressed // what a cook ships: the streams under test
     // BC1 whose endpoints change slowly and whose indices are noise: as planes
     // of fields it compresses smaller. Its levels take several pieces of a stream.
     SIDE :: 4096

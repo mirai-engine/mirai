@@ -554,8 +554,7 @@ ui_round_trip :: proc(p:^Project,path:string,id:base.Asset_Id) -> (bytes:[]u8,te
 }
 
 // Every interface, scene and prefab the engine tracks, in the game template
-// and in the demo: its document written back is the file it was read from,
-// byte by byte, so text kept under source/ and the assets say the same.
+// and in the demo: writing its document preserves the decoded file byte for byte.
 @(test)
 the_documents_of_the_tracked_assets_write_back_the_files_they_were_read_from :: proc(t:^testing.T) {
     engine,found:=os.lookup_env("MIRAI_ROOT",context.temp_allocator)
@@ -580,8 +579,12 @@ the_documents_of_the_tracked_assets_write_back_the_files_they_were_read_from :: 
                 files+=1
                 written,texts,why:=ui_round_trip(&p,path,file.id)
                 if !testing.expectf(t,why=="","%s/%s: %s",folder,path,why) {continue}
-                testing.expectf(t,slice.equal(written,file_bytes(&p,path)),"%s/%s: its document writes other bytes: mirai ui write saves it again",folder,path)
-                for touched in texts {testing.expectf(t,slice.equal(touched.bytes,file_bytes(&p,touched.path)),"%s/%s: its document writes other texts in %s",folder,path,touched.path)}
+                testing.expectf(t,file_unchanged(file_bytes(&p,path),written),
+                    "%s/%s: its document writes other bytes",folder,path)
+                for touched in texts {
+                    testing.expectf(t,file_unchanged(file_bytes(&p,touched.path),touched.bytes),
+                        "%s/%s: its document writes other texts in %s",folder,path,touched.path)
+                }
             case asset.KIND_SCENE:
                 files+=1
                 problem:=scene_verify(&p,path)

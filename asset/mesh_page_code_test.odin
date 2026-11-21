@@ -67,10 +67,10 @@ page_coding_gives_back_any_words_bit_for_bit :: proc(t:^testing.T) {
         if c.untiled {g.clusters[len(g.clusters)-1].vertex_first=0}
         mesh_page_gather(g,g.pages[0],want)
         words:=int(g.pages[0].words)
-        pages,data,error:=pages_compress(g,.Fast,.Open,context.temp_allocator)
+        pages,data,error:=pages_compress(g,.Fast,.Compressed,context.temp_allocator)
         if !testing.expectf(t,error==.None,"case %d packs",at) {continue}
         testing.expectf(t,mesh_page_decode(g.flags,pages[0],data[:],scratch,block,&decoder.stream) && same(block[:words],want[:words]),"case %d decodes to its words",at)
-        raw,_:=pack(&encoder,.Fast,.Open,mem.slice_to_bytes(want[:words]),packed)
+        raw,_:=pack(&encoder,.Fast,.Compressed,mem.slice_to_bytes(want[:words]),packed)
         testing.expectf(t,int(pages[0].data_bytes)<=raw,"case %d takes %d bytes, no more than its words in LZ, %d",at,pages[0].data_bytes,raw)
         size,ok:=page_code(&coder,g,g.pages[0],want,coded)
         testing.expectf(t,ok && page_decode_coded(g,g.pages[0],coded[:size],packed,scratch,block,&encoder,&decoder.stream) && same(block[:words],want[:words]),"case %d codes back bit for bit",at)
@@ -81,7 +81,7 @@ page_coding_gives_back_any_words_bit_for_bit :: proc(t:^testing.T) {
 @(private="file")
 page_decode_coded :: proc(g:Mesh_Geometry,page:Mesh_Page,coded,packed,scratch:[]u8,out:[]u32,encoder:^Stream_Encoder,decoder:^Stream_Decoder) -> bool {
     page:=page
-    bytes,_:=pack(encoder,.Fast,.Open,coded,packed)
+    bytes,_:=pack(encoder,.Fast,.Compressed,coded,packed)
     page.data_offset,page.data_bytes,page.coded_bytes=0,u32(bytes),u32(len(coded))
     return mesh_page_decode(g.flags,page,packed[:bytes],scratch,out,decoder)
 }

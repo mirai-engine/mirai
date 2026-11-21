@@ -2,12 +2,6 @@ package data
 
 import "base:runtime"
 
-// Compression of bytes, the contract every implementation of the collection compressor keeps: a
-// write chooses a profile, a read decodes by the format the profile wrote.
-
-// Names this implementation in caches and reports.
-NAME :: "open"
-
 Profile :: enum u8 {
     Fast,     // the least time to write: what the editor and a running game save
     Speed,    // the least time to read: what streams while playing
@@ -19,9 +13,6 @@ Profile :: enum u8 {
 Format :: distinct u32
 
 MDC2 :: Format(u32('M')|u32('D')<<8|u32('C')<<16|u32('2')<<24)
-// The LZ of the private implementation, also the streams Unreal packages hold. This one does not
-// decode it: Unknown_Format.
-MLZ1 :: Format(u32('M')|u32('L')<<8|u32('Z')<<16|u32('1')<<24)
 
 Error :: enum u8 {
     None,
@@ -73,9 +64,8 @@ decoder_destroy :: proc(d:^Decoder) {
     d^={}
 }
 
-// The format a profile writes. open: only the formats of this implementation, which every build
-// reads; this one has no others.
-format :: proc "contextless" (profile:Profile,open:=false) -> Format {
+// The format a profile writes.
+format :: proc "contextless" (profile:Profile) -> Format {
     return MDC2
 }
 
@@ -84,8 +74,6 @@ bound :: proc "contextless" (size:int) -> int {
     if size<=0 || size>MAX_BYTES {return 0}
     return size+1+4*((size-1)/BLOCK_BYTES)
 }
-
-// Direct writer for callers comparing codecs.
 
 // What format wrote into src, into all of dst, which is its decoded size. Never reads or writes
 // outside them, whatever src holds.

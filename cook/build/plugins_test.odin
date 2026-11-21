@@ -155,8 +155,7 @@ split_plugin_write :: proc(t:^testing.T,folder:string) -> (engine,game:string) {
     return fixture_write(t,folder,files)
 }
 
-// Writes the files of the engine and the project of a test under folder, with
-// what every engine has and the build names: the collection of the compressor.
+// Writes the files of the engine and the project of a test under folder.
 @(private)
 fixture_write :: proc(t:^testing.T,folder:string,files:[][2]string) -> (engine,game:string) {
     write :: proc(t:^testing.T,folder:string,file:[2]string) {
@@ -165,7 +164,6 @@ fixture_write :: proc(t:^testing.T,folder:string,files:[][2]string) -> (engine,g
         testing.expect(t,os.make_directory_all(directory)==nil || os.is_dir(directory))
         testing.expect(t,os.write_entire_file(path,file[1])==nil,path)
     }
-    write(t,folder,{"engine/std/compressor/compressor.odin","package compressor\n"})
     for file in files {write(t,folder,file)}
     return project.path(folder,"engine",allocator=context.temp_allocator),project.path(folder,"game",allocator=context.temp_allocator)
 }

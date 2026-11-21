@@ -53,7 +53,7 @@ test_animation :: proc(s:^Test_Animation) -> Animation_Desc {
 animation_round_trips_and_fills_a_library :: proc(t:^testing.T) {
     defer free_all(context.temp_allocator)
     types:Types;types_init(&types);defer types_destroy(&types)
-    types.codecs=.Open // what a cook ships: the streams under test
+    types.codecs=.Compressed // what a cook ships: the streams under test
     storage:Test_Animation
     desc:=test_animation(&storage)
     path:=fmt.tprintf("%s/lift.anim",base.test_folder(t,"asset"))

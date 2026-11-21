@@ -14,7 +14,7 @@ import "base:intrinsics"
 Block_Mode :: enum u8 {Raw,LZ,Entropy,Delta}
 
 // src in the format of the profile into dst, of at least bound bytes. Deterministic.
-encode :: proc(e:^Encoder,profile:Profile,src,dst:[]u8,open:=false) -> (size:int,error:Error) {
+encode :: proc(e:^Encoder,profile:Profile,src,dst:[]u8) -> (size:int,error:Error) {
     if profile>.Ultra {return 0,.Unknown_Format}
     if len(src)>MAX_BYTES {return 0,.Too_Large}
     if len(dst)<bound(len(src)) {return 0,.Output_Too_Small}

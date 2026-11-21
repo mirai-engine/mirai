@@ -5,7 +5,6 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:testing"
-import "compressor:data"
 import "mirai:asset"
 import "mirai:cook/cache"
 import importer "mirai:cook/import"
@@ -193,11 +192,8 @@ a_refresh_takes_the_builds_of_a_second_store_without_their_sources :: proc(t:^te
     testing.expect(t,!os.exists(brush),"nothing is written where the source was")
 }
 
-// The same source ingested where the store writes frames of this build's codec and where it
-// writes those of a codec this build lacks (as a build with another compressor does) gives the
-// same build, of the same objects: a peer of this build takes it from the other and reads it.
 @(test)
-a_build_is_the_same_objects_whatever_codec_its_store_writes :: proc(t:^testing.T) {
+reingesting_a_source_keeps_its_package_objects :: proc(t:^testing.T) {
     top:=base.test_folder(t,"refresh-codecs")
     if top=="" {return}
     defer free_all(context.temp_allocator)
@@ -208,25 +204,12 @@ a_build_is_the_same_objects_whatever_codec_its_store_writes :: proc(t:^testing.T
     host:=test_store(t,fmt.tprintf("%s/host",top))
     other:=test_store(t,fmt.tprintf("%s/other",top))
     if host==nil || other==nil {return}
-    // Use a separate codec id to simulate frames the host cannot decode.
-    testing.expect_value(t,store.codec_hook(other,{codec=15,encode=proc(src,dst:[]u8) -> int {
-        e:data.Encoder
-        data.encoder_init(&e)
-        defer data.encoder_destroy(&e)
-        size,error:=data.encode(&e,.Fast,src,dst,open=true)
-        return size if error==.None else 0
-    },decode=proc(src,dst:[]u8) -> bool {
-        d:data.Decoder
-        if data.decoder_init(&d)!=.None {return false}
-        defer data.decoder_destroy(&d)
-        return data.decode(&d,data.format(.Fast,open=true),src,dst)==.None
-    }}),store.Error.None)
     options:=Library_Options{store=host,root=plugin}
     report,error:=ingest(brush,options,allocator=context.temp_allocator)
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
     added:=project_add(plugin,report.manifest,"",nil,options,context.temp_allocator)
     testing.expectf(t,len(added.failures)==0 && len(added.missing)==0,"%v",added)
-    // The other ingests it again from its source, as a machine of another compressor does.
+    // Rebuild from source in a separate store.
     again:=project_refresh(plugin,{store=other,root=plugin},context.temp_allocator)
     testing.expectf(t,len(again.missing)==0 && len(again.failures)==0,"%v",again)
     digits:[64]u8

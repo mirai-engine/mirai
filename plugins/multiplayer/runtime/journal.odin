@@ -487,7 +487,8 @@ part_bytes :: proc(j:^Journal,arrived:Journal_Arrived,problems:^core.Problems) {
             if part.bytes,error=make([]u8,int(part.raw));error!=nil {
                 part.broken=true
                 journal_memory(problems)
-            } else if j.decoder.data==nil && asset.stream_decoder_init(&j.decoder,context.allocator)!=.None || asset.unpack(&j.decoder,arrived.bytes,part.bytes)!=.None {
+            } else if (j.decoder.allocator.procedure==nil && asset.stream_decoder_init(&j.decoder)!=.None) ||
+                asset.unpack(&j.decoder,arrived.bytes,part.bytes)!=.None {
                 delete(part.bytes)
                 part.bytes,part.broken=nil,true
             }
@@ -892,8 +893,10 @@ journal_part :: proc(j:^Journal,sv:^Journal_Serve,raw:[]u8,last:bool) -> bool {
     total:=0
     if len(raw)>0 {
         error:asset.Error
-        if j.encoder.data==nil && asset.stream_encoder_init(&j.encoder,context.allocator)!=.None {return false}
-        if total,error=asset.pack(&j.encoder,.Fast,.Open,raw,j.packed[HEAD:]);error!=.None {return false}
+        if j.encoder.allocator.procedure==nil {
+            if asset.stream_encoder_init(&j.encoder)!=.None {return false}
+        }
+        if total,error=asset.pack(&j.encoder,.Fast,.Compressed,raw,j.packed[HEAD:]);error!=.None {return false}
     }
     message,error:=make([]u8,HEAD+total)
     if error!=nil {return false}

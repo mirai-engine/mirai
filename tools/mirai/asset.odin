@@ -39,7 +39,7 @@ ASSET_COMMANDS :: [?]Asset_Command{
     {"merge","merge <base> <ours> <theirs> [--out <file>]","Three-way merge by row and field; writes into <ours> as a git merge driver",asset_merge},
     {"unpack","unpack <file> <folder>","asset.json and one file per bulk column",asset_unpack},
     {"pack","pack <folder> <file>","The binary file of an unpack folder",asset_pack},
-    {"repack","repack <file>...","Writes each file again as a project keeps it, without a stage of a compressor (a cook compresses what it ships)",asset_repack},
+    {"repack","repack <file>...","Rewrites files in the store's canonical asset representation",asset_repack},
 }
 
 cmd_asset :: proc(root:string,args:[]string) -> int {
@@ -105,7 +105,7 @@ error_text :: proc(error:asset.Error) -> string {
     case .Hash: return "the content does not match its hash"
     case .Too_Large: return "needs more memory than the limit"
     case .Schema: return "the schema table is not valid"
-    case .Codec_Missing: return "it is compressed with a format the compressor of this build does not decode: build with the private compressor, or have a build that has it write it again with `mirai asset repack`"
+    case .Codec_Missing: return "it uses an unsupported compression format: regenerate it with this version of Mirai"
     case .Out_Of_Memory: return "out of memory"
     case .Not_Found: return "does not exist"
     case .IO: return "could not be read or written"
@@ -757,8 +757,7 @@ packages_beside :: proc(folder,store_root:string) -> asset.Root_Packages {
     return packages
 }
 
-// Writes each asset again as a project keeps it: without a stage of a compressor (Codecs.None),
-// which only the files a cook ships take. A file that already is so stays as it is.
+// Writes each asset in the store's canonical representation (Codecs.None).
 asset_repack :: proc(root:string,args:[]string) -> int {
     if code:=positionals("repack",args);code!=0 {return code}
     if len(args)==0 {return misuse("repack")}

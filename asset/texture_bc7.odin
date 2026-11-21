@@ -10,7 +10,7 @@ import "core:simd"
 // shares its partitions of two subsets, their anchors and its weights.
 
 // A mode, with the field names of the specification. This file is the description of the block
-// format: what encodes blocks (cook/compressor/texture) reads these tables.
+// format: what encodes blocks (cook/textures) reads these tables.
 Bc7_Mode :: struct {
     ns:u8,  // subsets: 1 to 3, by a partition of the block
     pb:u8,  // partition bits

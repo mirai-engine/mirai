@@ -1,8 +1,7 @@
 package asset
 
 import "core:mem"
-import "compressor:data"
-import "compressor:texture"
+import "mirai:std/compressor/data"
 import "mirai:std/base"
 
 // .tex: an image ready for the GPU.
@@ -12,10 +11,6 @@ import "mirai:std/base"
 //   texels   bulk   bytes of every level, the smallest first, each one starting at
 //                   a multiple of 16, a stream: the small levels decode from its
 //                   first pieces without the others (texture_decode)
-//   layouts         Texture_Layout_Run, of a texture whose texels are payloads of
-//                   layouts of the compressor (texture.Layout), each of a run of
-//                   levels: by their largest level, level 0 first; in texels the
-//                   smallest first, one after another
 //
 // A level is half the one above, rounded down, and never smaller than 1. It
 // holds its layers one after another: the images of an array, or the faces
@@ -79,24 +74,6 @@ Texture_Desc :: struct {
     alpha_coverage:f32,
     mips:[][]u8,         // level 0 first, each with its layers one after another
     source:^Import_Info,
-    layouts:[]Texture_Layout, // its runs of levels by their largest level, from blocks.layout_encode of the compressor: only for a document that compresses with the best codecs
-}
-
-// The blocks of a run of levels as a layout of the compressor rearranges them so that they
-// compress smaller, stored in place of the blocks: from level down to the one above the level of
-// the next run, the smallest first. A layout restores only whole, so the levels a read takes
-// together share one.
-Texture_Layout :: struct {
-    layout:texture.Layout,
-    header:texture.Layout_Header,
-    level:int,
-    payload:[]u8,
-}
-
-Texture_Layout_Run :: struct {
-    layout:texture.Layout,
-    level:u32,
-    header:texture.Layout_Header,
 }
 
 Texture_View :: struct {
@@ -162,19 +139,6 @@ texture_document :: proc(doc:^Document,types:^Types,desc:Texture_Desc,
         mips[i]={u32(width),u32(height),u32(total),u32(len(level))}
         total+=len(level)
     }
-    if len(desc.layouts)>0 {
-        if texture_block_bytes(desc.format)!=16 || len(desc.layouts)>len(desc.mips) || desc.layouts[0].level!=0 {return .Invalid}
-        total=0
-        for run,i in desc.layouts {
-            last:=desc.layouts[i+1].level-1 if i+1<len(desc.layouts) else len(desc.mips)-1
-            if run.level<0 || run.level>last || last>=len(desc.mips) {return .Invalid}
-            blocks,size,read_error:=texture.layout_read(run.layout,run.header)
-            span:=0
-            for level in desc.mips[run.level:last+1] {span+=len(level)}
-            if read_error!=.None || blocks*16!=span || size!=len(run.payload) {return .Invalid}
-            total+=size
-        }
-    }
     document_init(doc,KIND_TEXTURE,desc.id,allocator)
     doc.owner=desc.owner
     doc.kind_version=TEXTURE_VERSION
@@ -188,11 +152,9 @@ texture_tables :: proc(doc:^Document,types:^Types,info:^Texture_Info,mips:[]Text
     total_raw:int,desc:Texture_Desc,profile:data.Profile) -> Error {
     total:=total_raw
     byte,_:=document_type(doc,types,u8)
-    laid:=len(desc.layouts)>0
-    if laid && doc.codecs!=.Best {return .Invalid}
     split:[]u8
     defer delete(split,doc.allocator)
-    if !laid && texture_fields_format(desc.format) && .Fast not_in desc.flags {
+    if texture_fields_format(desc.format) && .Fast not_in desc.flags {
         candidate:[TEXTURE_MAX_MIPS]Texture_Mip
         size:=0
         #reverse for level,i in desc.mips {
@@ -221,10 +183,7 @@ texture_tables :: proc(doc:^Document,types:^Types,info:^Texture_Info,mips:[]Text
     document_resize(doc,texels,total) or_return
     column:=document_column_add(doc,texels,"",byte,{},.Stream,TEXTURE_BULK_ALIGNMENT) or_return
     bytes:=doc.tables[texels].columns[column].data[:]
-    if laid {
-        at:=0
-        #reverse for run in desc.layouts {at+=copy(bytes[at:],run.payload)}
-    } else if .Fields in info.flags {
+    if .Fields in info.flags {
         if split!=nil {copy(bytes,split)}
         else {texture_split_levels(desc,mips,bytes) or_return}
     } else {
@@ -233,13 +192,6 @@ texture_tables :: proc(doc:^Document,types:^Types,info:^Texture_Info,mips:[]Text
     document_put_row(doc,types,"texture",info) or_return
     document_put(doc,types,"mips",mips) or_return
     import_put(doc,types,desc.source) or_return
-    if laid {
-        runs,alloc_error:=make([]Texture_Layout_Run,len(desc.layouts),doc.allocator)
-        if alloc_error!=nil {return .Out_Of_Memory}
-        defer delete(runs,doc.allocator)
-        for run,i in desc.layouts {runs[i]={run.layout,u32(run.level),run.header}}
-        document_put(doc,types,TEXTURE_TABLE_LAYOUTS,runs) or_return
-    }
     return .None
 }
 
@@ -286,9 +238,7 @@ texture_save :: proc(path:string,types:^Types,desc:Texture_Desc,allocator:=conte
     return document_save(&doc,path,profile=profile)
 }
 
-// The file of a texture with its blocks as they are, without layouts of the compressor, the planes
-// of their fields where those compress smaller, compressed with profile as the codecs of types
-// allow. bytes is the file it is now.
+// Rewrites a texture with the compression of types, preserving its mip bytes.
 texture_repack :: proc(bytes:[]u8,types:^Types,profile:data.Profile,allocator:=context.allocator) -> (repacked:[]u8,error:Error) {
     file:Asset
     asset_open(&file,bytes,context.temp_allocator) or_return
@@ -307,8 +257,6 @@ texture_repack :: proc(bytes:[]u8,types:^Types,profile:data.Profile,allocator:=c
     doc.flags=file.blob.header.flags
     return document_bytes(&doc,allocator,profile)
 }
-
-TEXTURE_TABLE_LAYOUTS :: "layouts"
 
 // The texture of an open asset with every level, in memory of the asset.
 texture_view :: proc(a:^Asset,types:^Types) -> (view:Texture_View,error:Error) {
@@ -329,8 +277,7 @@ texture_open :: proc(a:^Asset,types:^Types) -> (view:Texture_View,error:Error) {
     return view,.None
 }
 
-// Decodes [from,before) into memory of the asset. If from lies inside a block
-// layout run, the view starts at the beginning of that run. keep_fields exposes
+// Decodes [from,before) into memory of the asset. keep_fields exposes
 // validated field planes through texture_mip.
 texture_decode :: proc(a:^Asset,types:^Types,view:^Texture_View,from:int,
     before:=max(int),keep_fields:=false) -> Error {
@@ -349,64 +296,14 @@ texture_decode :: proc(a:^Asset,types:^Types,view:^Texture_View,from:int,
     chunk:=table.columns[column].chunk
     entry:=blob_chunk(&a.blob,chunk)
     if entry.uncompressed_size!=u64(table.rows) {return .Corrupt}
-    _,laid:=asset_table(a,TEXTURE_TABLE_LAYOUTS)
-    if !laid && u64(mips[0].offset)+u64(mips[0].size)!=u64(table.rows) {return .Corrupt}
+    if u64(mips[0].offset)+u64(mips[0].size)!=u64(table.rows) {return .Corrupt}
     texels:[]u8
     offsets:[TEXTURE_MAX_MIPS]int
     fields,joined:=false,false
 
     start:=int(mips[before-1].offset)
     end:=int(mips[from].offset)+int(mips[from].size)
-    if laid {
-        runs:=asset_rows(a,types,TEXTURE_TABLE_LAYOUTS,"",Texture_Layout_Run) or_return
-        if texture_block_bytes(info.format)!=16 || .Fields in info.flags ||
-            len(runs)==0 || len(runs)>len(mips) || runs[0].level!=0 {return .Corrupt}
-        offsets:[TEXTURE_MAX_MIPS+1]int
-        first,last:=len(runs),0
-        restored_start:=start
-        #reverse for run,i in runs {
-            next:=int(runs[i+1].level) if i+1<len(runs) else len(mips)
-            if int(run.level)>=next {return .Corrupt}
-            largest,smallest:=mips[run.level],mips[next-1]
-            blocks,size,read_error:=texture.layout_read(run.layout,run.header)
-            if read_error==.Unknown_Format {return .Codec_Missing}
-            if read_error!=.None ||
-                u64(smallest.offset)+u64(blocks)*16!=u64(largest.offset)+u64(largest.size) {
-                return .Corrupt
-            }
-            offsets[i]=offsets[i+1]+size
-            if int(run.level)<before && next>from {
-                if last==0 {
-                    last=i+1
-                    restored_start=int(smallest.offset)
-                }
-                first=i
-            }
-        }
-        if offsets[0]!=table.rows {return .Corrupt}
-        from=int(runs[first].level)
-        end=int(mips[from].offset)+int(mips[from].size)
-        payload_buffer:[]u8
-        defer mem.free_bytes(payload_buffer,a.allocator)
-        payload:=texels_read(a,table,column,offsets[last],offsets[first],1,&payload_buffer) or_return
-        restored:=asset_alloc(a,end-restored_start,TEXTURE_BULK_ALIGNMENT) or_return
-        decoder:=asset_decoder(a) or_return
-        for i in first..<last {
-            run:=runs[i]
-            next:=int(runs[i+1].level) if i+1<len(runs) else len(mips)
-            mip:=mips[run.level]
-            low:=int(mips[next-1].offset)-restored_start
-            high:=int(mip.offset)+int(mip.size)-restored_start
-            switch texture.layout_decode(decoder.layout,run.layout,run.header,
-                payload[offsets[i+1]-offsets[last]:offsets[i]-offsets[last]],restored[low:high]) {
-            case .None:
-            case .Unknown_Format: return .Codec_Missing
-            case .Out_Of_Memory: return .Out_Of_Memory
-            case .Corrupt: return .Corrupt
-            }
-        }
-        texels=restored[start-restored_start:]
-    } else if .Fields in info.flags {
+    if .Fields in info.flags {
         plane_buffer:[]u8
         defer mem.free_bytes(plane_buffer,a.allocator)
         temporary:=&plane_buffer if !keep_fields else nil
@@ -441,7 +338,8 @@ texture_decode :: proc(a:^Asset,types:^Types,view:^Texture_View,from:int,
     } else {
         texels=texels_read(a,table,column,start,end,TEXTURE_BULK_ALIGNMENT) or_return
     }
-    view.texels,view.planes,view.joined,view.offsets=texels,fields,joined,offsets
+    view.texels,view.planes,view.joined=texels,fields,joined
+    copy(view.offsets[:],offsets[:])
     view.first,view.last=from,before
     return .None
 }

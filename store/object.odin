@@ -4,7 +4,6 @@ import "base:runtime"
 import "core:os"
 import "core:sync"
 import "core:time"
-import "compressor:data"
 import "mirai:std/jobs"
 
 // Puts cut bytes into chunks, look each one up and append only the missing
@@ -272,7 +271,7 @@ put_chunk :: proc(p:^Put,address:Hash,bytes:[]u8) -> Error {
         if touch {return stage_frame(p.stage,.Touch,address,nil)}
         return .None
     }
-    if p.codec!=CODEC_NONE && codec_readable(s,p.codec) {
+    if p.codec!=CODEC_NONE {
         // What a peer sent encoded is kept so; it is a node only if it decoded to one.
         if _,e:=node_parse(bytes);e!=.None {
             stage_frame(p.stage,.Chunk,address,p.stored,0,p.codec,len(bytes)) or_return
@@ -281,7 +280,7 @@ put_chunk :: proc(p:^Put,address:Hash,bytes:[]u8) -> Error {
         }
     } else {
         if p.stage.coder==nil {p.stage.coder=coder_new(s) or_return}
-        codec,stored:=frame_encode(s,p.stage.coder,bytes)
+        codec,stored:=frame_encode(p.stage.coder,bytes)
         stage_frame(p.stage,.Chunk,address,stored,0,codec,len(bytes)) or_return
     }
     if len(p.stage.bytes)>=STAGE_BYTES {
@@ -339,7 +338,7 @@ chunk_put :: proc(s:^Store,address:Hash,bytes:[]u8,now:Maybe(time.Time)=nil) -> 
 // Appends a chunk that came as a frame of codec (a peer's), kept as it came:
 // stored is decoded into all of raw, the chunk's size, and checked against
 // address first, so a frame of other bytes is Corrupt and nothing is kept.
-// Missing for a codec this value does not decode. raw holds the chunk after.
+// raw holds the decoded chunk.
 chunk_put_frame :: proc(s:^Store,address:Hash,codec:u8,stored,raw:[]u8,now:Maybe(time.Time)=nil) -> Error {
     if s==nil || s.state==nil || codec==CODEC_NONE || !sizes_valid(codec,u32(len(stored)),u32(len(raw))) {return .Invalid_Argument}
     chunk_decode(s,codec,stored,raw) or_return
@@ -398,37 +397,16 @@ chunk_read :: proc(s:^Store,address:Hash,buffer:[]u8) -> (bytes:[]u8,error:Error
     c:=coder_take(s) or_return
     defer coder_give(s,c)
     stored:=chunk_stored(file,view,location,c.scratch) or_return
-    frame_decode(s,c,location.codec,stored,buffer[:location.raw]) or_return
+    frame_decode(c,location.codec,stored,buffer[:location.raw]) or_return
     return buffer[:location.raw],.None
 }
 
-// The bytes of the chunk at address in a codec of codecs, for a peer that
-// decodes those: as its frame stores them when that is one, else decoded and
-// encoded again in a codec every build reads that is one, else as they are.
-// In buffer or a mapped pack; scratch, of CHUNK_MAX bytes, holds what is
-// decoded on the way. raw is the chunk's size.
-chunk_read_in :: proc(s:^Store,address:Hash,codecs:Codecs,buffer,scratch:[]u8) -> (bytes:[]u8,codec:u8,raw:int,error:Error) {
-    if s==nil || s.state==nil || len(buffer)<CHUNK_MAX || len(scratch)<CHUNK_MAX {return nil,0,0,.Invalid_Argument}
+// Returns a chunk as stored in its frame and its decoded size.
+chunk_read_frame :: proc(s:^Store,address:Hash,buffer:[]u8) -> (bytes:[]u8,codec:u8,raw:int,error:Error) {
+    if s==nil || s.state==nil {return nil,0,0,.Invalid_Argument}
     file,view,location:=chunk_locate(s,address) or_return
-    raw=int(location.raw)
-    if location.codec==CODEC_NONE || int(location.codec) in codecs {
-        if view!=nil {return view[location.offset:][:location.stored],location.codec,raw,.None}
-        stored:=chunk_stored(file,nil,location,buffer) or_return
-        return stored,location.codec,raw,.None
-    }
-    c:=coder_take(s) or_return
-    defer coder_give(s,c)
-    stored:=chunk_stored(file,view,location,c.scratch) or_return
-    frame_decode(s,c,location.codec,stored,scratch[:raw]) or_return
-    plain:=scratch[:raw]
-    if open:=codec_of(data.format(.Fast,open=true));open!=CODEC_NONE && int(open) in codecs {
-        if size,e:=data.encode(c.encoder,.Fast,plain,c.scratch,open=true);e==.None && size>0 && size<raw {
-            copy(buffer,c.scratch[:size])
-            return buffer[:size],open,raw,.None
-        }
-    }
-    copy(buffer,plain)
-    return buffer[:raw],CODEC_NONE,raw,.None
+    bytes=chunk_stored(file,view,location,buffer) or_return
+    return bytes,location.codec,int(location.raw),.None
 }
 
 // The stored bytes of a frame: of the mapping, or read into buffer.

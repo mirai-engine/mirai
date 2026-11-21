@@ -2,12 +2,10 @@ package exchange
 
 import "mirai:store"
 
-// Messages of exchange protocol 5, little endian, a kind byte first. Names are
+// Messages of exchange protocol 6, little endian, a kind byte first. Names are
 // a length byte and their bytes.
 //
 // Control channel:
-//   Codecs    u16 set of the frame codecs this end decodes (store.Codecs): the
-//             first message of each end, so chunks come in a codec it reads
 //   Ask       count u16, entries of address and budget u32: send each chunk,
 //             then its descendants in tree order while their bytes fit budget
 //   Bad       address: the chunk this end received does not hash to it
@@ -16,10 +14,8 @@ import "mirai:store"
 //   Names_Get namespace, after
 //   Names     namespace, after, more u8, count u16, entries of name and address
 // Data channel, the answers to asks in the order asked:
-//   Chunk     address, codec u8, raw u32, the bytes in that codec: as the
-//             sender's frame stores them when the receiver decodes it, else
-//             in an open codec it decodes or as they are; raw is their size
-//             decoded, which the receiver hashes
+//   Chunk     address, codec u8, raw u32, bytes as stored in the sender's frame.
+//             The receiver hashes all raw bytes after decoding.
 //   Lack      address: a chunk asked that this end does not have
 //   Done      the end of the answer to an ask
 
@@ -29,7 +25,6 @@ import "mirai:store"
 @(private) MSG_NAMES_GET :: 4
 @(private) MSG_NAMES :: 5
 @(private) MSG_BAD :: 6
-@(private) MSG_CODECS :: 7
 
 @(private) MSG_CHUNK :: 1
 @(private) MSG_LACK :: 2
@@ -158,7 +153,6 @@ message :: proc(x:^Exchange,i:int,lane:int,data:[]u8) {
     switch data[0] {
     case MSG_ASK: on_ask(x,i,data)
     case MSG_BAD: on_bad(x,i,data)
-    case MSG_CODECS: on_codecs(x,i,data)
     case MSG_REF_GET: on_ref_get(x,i,data)
     case MSG_NAMES_GET: on_names_get(x,i,data)
     case MSG_REF: on_ref(x,i,data)

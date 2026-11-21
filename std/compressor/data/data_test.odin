@@ -47,7 +47,6 @@ mdc2_profiles_round_trip_block_extents :: proc(t:^testing.T) {
 
     for profile in Profile {
         testing.expect_value(t,format(profile),MDC2)
-        testing.expect_value(t,format(profile,open=true),MDC2)
     }
     source:=make([]u8,2*BLOCK_BYTES+1)
     dest:=make([]u8,len(source))
@@ -72,7 +71,7 @@ mdc2_profiles_round_trip_block_extents :: proc(t:^testing.T) {
                 decoded:=decode(&d,MDC2,wire,dest[:n])
                 if !testing.expectf(t,decoded==.None && string(dest[:n])==string(raw),
                     "%d %v %v: %v",n,pattern,profile,decoded) {return}
-                written,rewrite:=encode(&e,profile,raw,again[:bound(n)],open=true)
+                written,rewrite:=encode(&e,profile,raw,again[:bound(n)])
                 if !testing.expectf(t,rewrite==.None && string(wire)==string(again[:written]),
                     "%d %v %v must be deterministic",n,pattern,profile) {return}
             }
@@ -169,7 +168,7 @@ invalid_commands_and_unavailable_scratch_report_errors :: proc(t:^testing.T) {
     raw,dst:[32]u8
     wire:[33]u8
     unsupported_formats:=[?]Format{
-        Format(0x3143444d),Format(0x4454535a),Format(0x48345a4c),MLZ1,Format(1),
+        Format(0x3143444d),Format(0x4454535a),Format(0x48345a4c),Format(1),
     }
     for unsupported in unsupported_formats {
         testing.expect_value(t,decode(&d,unsupported,nil,nil),Error.Unknown_Format)
