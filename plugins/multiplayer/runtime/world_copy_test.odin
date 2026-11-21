@@ -188,7 +188,7 @@ a_tick_a_library_asks_to_go_back_to_runs_again_from_the_copy_it_started_from :: 
 net_test_same :: proc(info:^core.World_Info,a,b:^Net_Test_World) -> bool {
     for &table in info.tables {
         x,y:=cast(^core.Raw_Table)(uintptr(a)+table.offset),cast(^core.Raw_Table)(uintptr(b)+table.offset)
-        if x.on!=y.on || x.values.len!=y.values.len || !slice.equal(x.entities[:],y.entities[:]) || !slice.equal(x.off[:],y.off[:]) {return false}
+        if x.on!=y.on || x.values.len!=y.values.len || !slice.equal(x.entities[:],y.entities[:]) || !core.raw_off_equal(x,y) {return false}
         for stamp,row in x.stamps {if (stamp~y.stamps[row])&1==1 {return false}}
         size:=table.info.size*x.values.len
         if size>0 && mem.compare_ptrs(x.values.data,y.values.data,size)!=0 {return false}

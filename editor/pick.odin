@@ -83,7 +83,7 @@ scene_item_next :: proc(it:^Scene_Iter) -> (item:Scene_Item,ok:bool) {
     if row:=it.worlds!=nil && !it.locals?core.row_of(it.worlds,e):-1;row>=0 {item.world=it.worlds.values[row].transform} else {item.world=entity_world(it.w,e)}
     // A mesh off with its entity is still its own; one turned off by itself is not there.
     has_mesh:=false
-    if row:=it.meshes!=nil?core.raw_row(core.raw(it.meshes),e):-1;row>=0 && !it.meshes.off[row] {item.mesh,has_mesh=it.meshes.values[row],true}
+    if row:=it.meshes!=nil?core.raw_row(core.raw(it.meshes),e):-1;row>=0 && !core.row_off(it.meshes,row) {item.mesh,has_mesh=it.meshes.values[row],true}
     if it.any_hidden {item.hidden=entity_hidden(it.w,e)}
     item.hidden||=core.entity_off(core.world_entities(it.w),e)
     shown:=!item.hidden || it.ghosts

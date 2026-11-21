@@ -122,7 +122,7 @@ spawn_test_same :: proc(t:^testing.T,p:^Spawn_Test,loc:=#caller_location) {
         if info.place!=.World {continue}
         from,to:=core.world_table_at(a,&info),core.world_table_at(b,&info)
         bytes:=len(from.entities)*info.info.size
-        same:=slice.equal(from.entities[:],to.entities[:]) && slice.equal(from.off[:],to.off[:]) && from.on==to.on
+        same:=slice.equal(from.entities[:],to.entities[:]) && core.raw_off_equal(from,to) && from.on==to.on
         same=same && (bytes==0 || mem.compare_ptrs(from.values.data,to.values.data,bytes)==0)
         testing.expectf(t,same,"the rows of %s differ",info.name,loc=loc)
     }

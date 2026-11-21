@@ -18,8 +18,7 @@ a_place_writes_a_free_transform_and_asks_the_owner_of_a_locked_one :: proc(t:^te
     add(&transforms,free_one,TRANSFORM_IDENTITY)
     add(&transforms,held,TRANSFORM_IDENTITY)
     table_settle(&transforms,&es)
-    resize(&transforms.owners,entity_index(held)+1)
-    transforms.owners[entity_index(held)]=Row_Owner{generation=entity_generation(held),id=1}
+    testing.expect(t,owner_set(&transforms,held,1))
     places:Places
     defer delete(places.queue.items)
     jumps:Jumps

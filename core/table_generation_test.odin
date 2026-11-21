@@ -9,7 +9,8 @@ table_replacement_by_a_new_generation_keeps_one_row_per_index_in_every_pending_o
         table:Table(i32);table_init(&table,"generation");defer table_destroy(&table)
         owner:Table(u16);table_init(&owner,"owner");defer table_destroy(&owner)
         locks:=[1]Lock{{offset=lock_offset(&table,&owner),id=1}}
-        table.locks=locks[:]
+        plan:=locks[:]
+        table.lock_plan=&plan
         old,neighbor:=create(&es),create(&es)
         add(&table,old,11);add(&table,neighbor,22);table_settle(&table,&es)
         seen_version,seen_layout:=version(&table),layout(&table)
@@ -31,7 +32,7 @@ table_replacement_by_a_new_generation_keeps_one_row_per_index_in_every_pending_o
         testing.expect_value(t,table.values[row_of(&table,neighbor)],i32(22))
         testing.expect(t,version(&table)>seen_version && layout(&table)>seen_layout)
         testing.expect_value(t,stamp(&table,row_of(&table,replacement)),version(&table))
-        testing.expect_value(t,owner.owners[entity_index(replacement)],Row_Owner{entity_generation(replacement),1})
+        testing.expect_value(t,owner_at(raw(&owner),entity_index(replacement)),Row_Owner{entity_generation(replacement),1})
         for e,row in table.entities {
             testing.expect_value(t,row_of(&table,e),row)
             for other in table.entities[row+1:] {testing.expect(t,entity_index(e)!=entity_index(other))}
@@ -48,7 +49,8 @@ locks_allow_a_new_generation_to_change_owner_before_the_old_owner_is_removed :: 
     names:=[3]string{"","old writer","new writer"}
     locks_a:=[1]Lock{{offset=lock_offset(&a,&target),id=1,names=names[:],target="target"}}
     locks_b:=[1]Lock{{offset=lock_offset(&b,&target),id=2,names=names[:],target="target"}}
-    a.locks,b.locks=locks_a[:],locks_b[:]
+    plan_a,plan_b:=locks_a[:],locks_b[:]
+    a.lock_plan,b.lock_plan=&plan_a,&plan_b
     old:=create(&es)
     add(&a,old,11);table_settle(&a,&es)
     es.generation[entity_index(old)]+=1
@@ -58,7 +60,7 @@ locks_allow_a_new_generation_to_change_owner_before_the_old_owner_is_removed :: 
     testing.expect(t,table_settle(&a,&es))
     testing.expect_value(t,count(&a),0)
     testing.expect_value(t,count(&b),1)
-    testing.expect_value(t,target.owners[entity_index(replacement)],Row_Owner{entity_generation(replacement),2})
+    testing.expect_value(t,owner_at(raw(&target),entity_index(replacement)),Row_Owner{entity_generation(replacement),2})
 }
 
 @(test)
@@ -69,11 +71,11 @@ copied_and_published_locks_keep_their_generation_and_old_releases_cannot_clear_t
     es:Entities;entities_init(&es);defer entities_destroy(&es)
     old:=create(&es)
     replacement:=entity_make(entity_index(old),entity_generation(old)+1)
-    resize(&source.owners,entity_index(old)+1)
-    source.owners[entity_index(old)]={entity_generation(old),1}
+    testing.expect(t,owner_set(&source,old,1))
     source_lock:=[1]Lock{{offset=0,id=1}}
     candidate_lock:=[1]Lock{{offset=0,id=1}}
-    source.locks,candidate.locks=source_lock[:],candidate_lock[:]
+    plan_a,plan_b:=source_lock[:],candidate_lock[:]
+    source.lock_plan,candidate.lock_plan=&plan_a,&plan_b
     testing.expect(t,table_copy(&candidate,&source))
     testing.expect_value(t,owner(&candidate,old),u16(1))
     testing.expect_value(t,owner(&candidate,replacement),u16(0))
@@ -83,7 +85,7 @@ copied_and_published_locks_keep_their_generation_and_old_releases_cannot_clear_t
     testing.expect_value(t,owner(&candidate,old),u16(0))
     seen:=version(&source)
     table_swap(&source,&candidate)
-    testing.expect(t,lock_owners(raw(&source),source.locks[0])==&source.owners && lock_owners(raw(&candidate),candidate.locks[0])==&candidate.owners)
+    testing.expect(t,lock_table(raw(&source),raw_locks(raw(&source))[0])==raw(&source) && lock_table(raw(&candidate),raw_locks(raw(&candidate))[0])==raw(&candidate))
     testing.expect_value(t,owner(&source,replacement),u16(1))
     testing.expect_value(t,owner(&candidate,old),u16(1))
     testing.expect(t,version(&source)>seen)

@@ -108,7 +108,8 @@ table_swap_keeps_lock_addresses_and_invalidates_readers_without_allocating :: pr
     add(&b,entity,20);table_settle(&b,&es)
     locks_a:=[1]Lock{{offset=0,id=1}}
     locks_b:=[1]Lock{{offset=0,id=2}}
-    a.locks,b.locks=locks_a[:],locks_b[:]
+    plan_a,plan_b:=locks_a[:],locks_b[:]
+    a.lock_plan,b.lock_plan=&plan_a,&plan_b
     a.version,a.layout=900,800
     saved:=context
     context.allocator=runtime.nil_allocator()
@@ -116,7 +117,7 @@ table_swap_keeps_lock_addresses_and_invalidates_readers_without_allocating :: pr
     context=saved
     testing.expect_value(t,a.values[0],i32(20))
     testing.expect_value(t,b.values[0],i32(10))
-    testing.expect(t,lock_owners(raw(&a),a.locks[0])==&a.owners && lock_owners(raw(&b),b.locks[0])==&b.owners)
+    testing.expect(t,lock_table(raw(&a),raw_locks(raw(&a))[0])==raw(&a) && lock_table(raw(&b),raw_locks(raw(&b))[0])==raw(&b))
     testing.expect(t,a.version>900 && a.layout>800 && b.version==a.version && b.layout==a.layout)
     testing.expect_value(t,a.name,"a")
     testing.expect_value(t,b.name,"b")
@@ -129,21 +130,24 @@ entity_initialization_and_each_table_copy_reservation_fail_without_invalid_owner
     entities_destroy(&empty)
     source:Table(i32);table_init(&source,"source");defer table_destroy(&source)
     entities:Entities;testing.expect(t,entities_init(&entities));defer entities_destroy(&entities)
-    e:=create(&entities);add(&source,e,44);table_settle(&source,&entities)
-    resize(&source.owners,2);source.owners[1]={entity_generation(e),3}
+    source.single=true
+    e:=create(&entities);add(&source,e,44);disable(&source,e);table_settle(&source,&entities)
+    testing.expect(t,owner_set(&source,e,3))
+    info:=type_info_of(Table(i32))
     succeeded:=false
     for budget in 0..<16 {
         tracking:mem.Tracking_Allocator
         mem.tracking_allocator_init(&tracking,context.allocator)
         allocation:=Copy_Allocation{owner=mem.tracking_allocator(&tracking),remaining=budget}
         target:Table(i32);table_init(&target,"target",{copy_allocator,&allocation})
-        ok:=table_copy(&target,&source)
+        ok:=value_copy(&target,&source,info)
         if ok {
             succeeded=true
             testing.expect_value(t,target.values[0],i32(44))
-            testing.expect_value(t,target.owners[1],Row_Owner{entity_generation(e),3})
+            testing.expect(t,target.single && row_off(&target,0) && target.aux!=source.aux)
+            testing.expect_value(t,owner_at(raw(&target),entity_index(e)),Row_Owner{entity_generation(e),3})
         }
-        table_destroy(&target)
+        value_free(&target,info)
         testing.expect_value(t,len(tracking.allocation_map),0)
         mem.tracking_allocator_destroy(&tracking)
         testing.expect_value(t,source.values[0],i32(44))
@@ -176,7 +180,7 @@ value_copy_preserves_zero_sized_owned_container_lengths_without_allocating :: pr
 copy_rows_equal :: proc(a,b:^Table(Copy_Row)) -> bool {
     if a.on!=b.on || len(a.entities)!=len(b.entities) {return false}
     for e,row in a.entities {
-        if b.entities[row]!=e || b.stamps[row]!=a.stamps[row] || b.off[row]!=a.off[row] || b.values[row].value!=a.values[row].value {return false}
+        if b.entities[row]!=e || b.stamps[row]!=a.stamps[row] || row_off(b,row)!=row_off(a,row) || b.values[row].value!=a.values[row].value {return false}
         if len(a.values[row].items)!=len(b.values[row].items) {return false}
         if len(a.values[row].items)>0 && raw_data(a.values[row].items)==raw_data(b.values[row].items) {return false}
         for item,i in a.values[row].items {if b.values[row].items[i]!=item {return false}}
@@ -368,7 +372,7 @@ Roll_World :: struct {
 // values and whether each row is added.
 @(private="file")
 roll_rows_equal :: proc(a,b:^Raw_Table,size:int) -> bool {
-    if a.on!=b.on || len(a.stamps)!=len(b.stamps) || !slice.equal(a.entities[:],b.entities[:]) || !slice.equal(a.off[:],b.off[:]) {return false}
+    if a.on!=b.on || len(a.stamps)!=len(b.stamps) || !slice.equal(a.entities[:],b.entities[:]) || !raw_off_equal(a,b) {return false}
     for row in 0..<len(a.stamps) {
         if (a.stamps[row]~b.stamps[row])&1==1 {return false}
         if size>0 && mem.compare_ptrs(raw_at(a,size,row),raw_at(b,size,row),size)!=0 {return false}
@@ -435,7 +439,7 @@ a_rollback_gives_the_readers_of_each_table_the_rows_it_brought_back :: proc(t:^t
                 expected[k]=0
                 mark:=marks[from][k]
                 if mark.valid && mark.version==live.version && mark.layout==live.layout && len(live.pending)==0 {continue}
-                if !table.flat || live.on!=kept.on || !slice.equal(live.entities[:],kept.entities[:]) || !slice.equal(live.off[:],kept.off[:]) || !slice.equal(live.owners[:],kept.owners[:]) {
+                if !table.flat || live.on!=kept.on || !slice.equal(live.entities[:],kept.entities[:]) || !raw_off_equal(live,kept) || !aux_ownership_equal(live,kept) {
                     expected[k]=-1
                     continue
                 }

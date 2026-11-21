@@ -414,7 +414,7 @@ api_history_cursors_clear :: proc(info:^runtime.Type_Info,data:rawptr) {
 @(private)
 api_history_table_same :: proc(x,y:^core.Raw_Table,info:^core.Table_Info) -> bool {
     count:=core.raw_count(x)
-    if count!=core.raw_count(y) || !slice.equal(x.entities[:count],y.entities[:count]) || !slice.equal(x.off[:],y.off[:]) {return false}
+    if count!=core.raw_count(y) || !slice.equal(x.entities[:count],y.entities[:count]) || !core.raw_off_equal(x,y) {return false}
     if !core.value_flat(info.info) {return false}
     size:=count*info.info.size
     return size==0 || mem.compare_byte_ptrs((^u8)(x.values.data),(^u8)(y.values.data),size)==0

@@ -49,6 +49,7 @@ a_world_migrates_to_another_layout_by_names :: proc(t:^testing.T) {
     a,b:=create(&old.entities),create(&old.entities)
     add(&old.spin,a,Before_Spin{speed=2.5,axis={0,1,0}})
     add(&old.spin,b,Before_Spin{speed=-1,axis={1,0,0}})
+    disable(&old.spin,b)
     add(&old.kept,b,Kept_Tag{42})
     testing.expect(t,table_settle(&old.spin,&old.entities))
     testing.expect(t,table_settle(&old.kept,&old.entities))
@@ -69,8 +70,11 @@ a_world_migrates_to_another_layout_by_names :: proc(t:^testing.T) {
     testing.expect(t,fresh.entities.alive==2,"The entities move")
     spin:=get(&fresh.spin,a) or_else After_Spin{}
     testing.expect(t,spin.speed==2.5 && spin.axis=={0,1,0} && spin.turns==7,"A field takes its value by name; a new one its default")
-    other:=get(&fresh.spin,b) or_else After_Spin{}
-    testing.expect(t,other.speed==-1)
+    on,off,found:=raw_state(raw(&fresh.spin),b)
+    testing.expect(t,found && off && !on)
+    if row:=raw_row(raw(&fresh.spin),b);row>=0 {
+        testing.expect_value(t,fresh.spin.values[row].speed,f64(-1))
+    }
     kept:=get(&fresh.kept,b) or_else Kept_Tag{}
     testing.expect(t,kept.value==42 && !has(&fresh.kept,a),"A table of the same layout moves")
     testing.expect(t,count(&fresh.added)==0)

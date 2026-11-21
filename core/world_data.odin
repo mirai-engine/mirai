@@ -61,7 +61,8 @@ world_init :: proc(info:^World_Info,place:Place,data:rawptr,allocator:runtime.Al
     es:^Entities
     if place==.World {
         es=entities_of(info,data)
-        if !entities_init(es,allocator) || !entities_tables(es,len(info.tables)) {return false}
+        if uint(len(info.tables))>uint(max(u32)) || !entities_init(es,allocator) ||
+           !entities_tables(es,len(info.tables)) {return false}
     }
     for &t,at in info.tables {
         if t.place!=place {continue}
@@ -69,7 +70,8 @@ world_init :: proc(info:^World_Info,place:Place,data:rawptr,allocator:runtime.Al
         raw_init(table,t.name,allocator)
         // Its place in info.tables is where settle finds what it has pending.
         if es!=nil {raw_follow(table,es,at)}
-        table.base,table.single,table.locks=t.base,t.single,t.locks
+        table.base,table.single=t.base,t.single
+        if len(t.locks)>0 {table.lock_plan=&t.locks}
     }
     for &s in info.storages {
         if s.place==place && !s.by_world && s.default!=nil {s.default(storage_of(data,&s))}
@@ -341,12 +343,11 @@ world_memory :: proc(info:^World_Info,data:rawptr) -> (bytes:int) {
 table_bytes :: proc(t:^Raw_Table,size:int) -> (bytes:int) {
     bytes=(t.values.cap+t.added.cap)*size
     bytes+=cap(t.entities)*size_of(Entity)+cap(t.stamps)*size_of(u64)+cap(t.page_stamps)*size_of(u64)
-    bytes+=t.off_room*size_of(bool)+t.turn_room*size_of(u64)+cap(t.pending)*size_of(Pending)
-    bytes+=cap(t.gone.items)*size_of(Entity)+cap(t.owners)*size_of(Row_Owner)
+    bytes+=table_aux_bytes(t)+cap(t.pending)*size_of(Pending)+cap(t.gone.items)*size_of(Entity)
     if b:=t.edits;b!=nil {
         bytes+=size_of(Edit_Buffer)+cap(b.items)*size_of(Edit)+cap(b.index)*size_of(i32)+b.values.cap*size
     }
-    bytes+=len(t.locks)*size_of(Lock)+cap(t.rows)*size_of([]i32)
+    bytes+=cap(t.rows)*size_of([]i32)
     for page in t.rows {bytes+=len(page)*size_of(i32)}
     when CHECK_WRITES {bytes+=cap(t.settled.values)}
     return
