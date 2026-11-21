@@ -514,10 +514,30 @@ type_has_entity :: proc(info:^runtime.Type_Info) -> bool {
     return false
 }
 
+@(private)
+table_value_info :: proc(info:^runtime.Type_Info) -> (elem:^runtime.Type_Info,ok:bool) {
+    base:=runtime.type_info_base(info)
+    s,is_struct:=base.variant.(runtime.Type_Info_Struct)
+    if !is_struct || s.field_count<10 || s.names[0]!="values" || s.names[9]!="edits" {return nil,false}
+    ptr,is_ptr:=runtime.type_info_base(s.types[9]).variant.(runtime.Type_Info_Pointer)
+    if !is_ptr {return nil,false}
+    named,is_named:=ptr.elem.variant.(runtime.Type_Info_Named)
+    if !is_named || named.name!="Edit_Buffer" {return nil,false}
+    arr,is_arr:=runtime.type_info_base(s.types[0]).variant.(runtime.Type_Info_Dynamic_Array)
+    if !is_arr {return nil,false}
+    return arr.elem,true
+}
+
 // Copies a value with what its dynamic arrays and slices hold. Pointers,
 // maps and procedures are copied as they are.
 value_copy :: proc(dst,src:rawptr,info:^runtime.Type_Info) -> bool {
     if dst==src {return true}
+    if elem,is_table:=table_value_info(info);is_table {
+        d,s:=cast(^Raw_Table)dst,cast(^Raw_Table)src
+        if !raw_copy(d,s,elem,value_flat(elem)) {return false}
+        d.base,d.single,d.name,d.locks=s.base,s.single,s.name,s.locks
+        return true
+    }
     if value_flat(info) {
         mem.copy(dst,src,info.size)
         return true
@@ -673,6 +693,16 @@ bytes_hash :: proc(bytes:[]u8,seed:u64) -> u64 {return len(bytes)==0?seed:xxhash
 // Frees what the dynamic arrays and slices of a value hold.
 value_free :: proc(data:rawptr,info:^runtime.Type_Info) {
     if value_flat(info) {return}
+    if elem,is_table:=table_value_info(info);is_table {
+        t:=cast(^Raw_Table)data
+        if !value_flat(elem) {
+            for values in ([2]runtime.Raw_Dynamic_Array{t.values,t.added}) {
+                for i in 0..<values.len {value_free(rawptr(uintptr(values.data)+uintptr(i*elem.size)),elem)}
+            }
+        }
+        raw_destroy(t,elem.size)
+        return
+    }
     base:=runtime.type_info_base(info)
     #partial switch v in base.variant {
     case runtime.Type_Info_Struct:

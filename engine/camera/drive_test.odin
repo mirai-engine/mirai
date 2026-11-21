@@ -172,7 +172,7 @@ each_orbit_turns_with_the_look_of_its_own_seat :: proc(t:^testing.T) {
         core.ref(&w.seat_state),{actions=core.ref(&w.frame),state=core.ref(&w.seat_state),runtime=core.ref(&w.seat_runtime),seats=core.read(&w.seats),base=DRIVE_LOOK},core.ref(&w.queries),&w.look_input,&w.changes,
         core.read(&w.verticals),{dt=1.0/60,alpha=1},{dt=1.0/60},&problems,&w.shakes,
     )
-    testing.expect(t,w.follows.version==authored && len(w.follows.edits)==0,"following and turning leave the authored table untouched")
+    testing.expect(t,w.follows.version==authored && !core.table_has_edits(&w.follows),"following and turning leave the authored table untouched")
     first,_:=core.get(&w.states,eyes[0])
     second,_:=core.get(&w.states,eyes[1])
     testing.expectf(t,first.looking.x==0,"the first orbit stays: %v",first.looking)

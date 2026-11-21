@@ -100,8 +100,7 @@ prune_rows :: proc(rows:^core.Table($T),users:^core.Table(Ability_User)) {
 
 @(private)
 edit_room :: proc(rows:^core.Table($T),room:int) -> bool {
-    return (cap(rows.edits)>=room || reserve(&rows.edits,room)==nil) &&
-           (cap(rows.edited)>=room || reserve(&rows.edited,room)==nil)
+    return core.table_edit_reserve(rows,room)
 }
 
 physics_overlap :: proc(w:^Ability_World,hitbox:^Ability_Hitbox,pose:mm.Transform,results:[]core.Entity) -> int {
@@ -170,7 +169,7 @@ actor_at :: proc(t:^Tick,e:core.Entity,row:int) -> (u:Actor,ok:bool) {
 @(private)
 user_edit :: proc(t:^Tick,u:^Actor) -> ^Ability_User {
     stamp:=core.stamp(t.users,u.user_row)
-    if len(t.users.edits)==0 || stamp<=t.users.edit_from {u.setup_check.stamp=stamp}
+    if !core.table_has_edits(t.users) || stamp<=t.users.edit_from {u.setup_check.stamp=stamp}
     value:=core.edit_at(t.users,u.user_row)
     u.setup_check.write=core.stamp(t.users,u.user_row)
     return value

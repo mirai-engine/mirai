@@ -263,6 +263,16 @@ Edit_Buffer :: struct {
     values:runtime.Raw_Dynamic_Array,
 }
 
+// Preallocates the lazy edit buffer for rows edits without allocating during a tick.
+table_edit_reserve :: proc(t:^Table($T),rows:int) -> bool {
+    return edits_reserve(raw(t),size_of(T),align_of(T),max(rows,cap(t.stamps)))
+}
+
+// Whether any row edits are staged on this table waiting for settle.
+table_has_edits :: #force_inline proc "contextless" (t:^Table($T,$A)) -> bool {
+    return t.edits!=nil && len(t.edits.items)>0
+}
+
 @(private)
 edits_reserve :: proc(t:^Raw_Table,size,align,rows:int) -> bool {
     if t.edits==nil {

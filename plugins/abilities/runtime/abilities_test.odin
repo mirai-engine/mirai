@@ -765,11 +765,11 @@ kit_dispatch_respects_held_release_and_blocked_actions :: proc(t:^testing.T) {
     f.kit[0].abilities={}
     f.kit[0].abilities[0]=ref(SLASH_1)
     f.sheets[SLASH_1].input={action=SECONDARY,on=.Held,hold=0.1}
-    core.edit(&f.seats,f.seat).blocked=inp.action_bit(SECONDARY)
+    inp.seat_runtime_edit(&f.seat_runtime,f.seat).blocked=inp.action_bit(SECONDARY)
     f.down[1]=true
     step(f,seconds(0.2))
     testing.expect(t,user(f,f.player).ability=={})
-    core.edit(&f.seats,f.seat).blocked=0
+    inp.seat_runtime_edit(&f.seat_runtime,f.seat).blocked=0
     f.down[1]=false
     step(f)
     f.down[1]=true
@@ -788,7 +788,7 @@ kit_dispatch_respects_held_release_and_blocked_actions :: proc(t:^testing.T) {
 
     // The top action bit must survive mask construction and rearming.
     bit:=inp.action_bit(63)
-    seat:inp.Seat
+    seat:inp.Seat_State
     seat.actions.count=64
     seat.actions.states[63].pressed=true
     cache:Kit_Cache
