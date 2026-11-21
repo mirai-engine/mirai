@@ -116,10 +116,8 @@ per bone.
 - 8-bit formats `RGBA8`, `BC1`, `BC5` and `BC7`; `RGBA16` (16 linear bits, data that keeps
   its precision), `RGBA16F` and `BC6H` (linear half floats: HDR, light above 1; BC6H unsigned and
   without alpha). `cook/textures` encodes them ([compression](formats.md#compression)).
-- To encode blocks on a GPU, initialize a `cook/textures.Gpu_Context` with a device and the engine
-  root, pass it to the texture cook, then destroy it before the device. A cook without a device
-  uses the CPU encoder. Both use the same mip and layer rules
-  ([cook shaders](../../mirai-rendering/references/shaders.md#texture-cook-shaders)).
+- [Texture cooking](../../mirai-imports/references/imports.md#textures-cooktextures) defines
+  how the GPU encodes blocks and how an import reuses its device.
 - **Levels, smallest first.** The Store cuts canonical `texels` at mip boundaries.
   `texture_open` reads metadata and `texture_decode` reads a range of levels. A Store read takes
   only the leaves covering that range. A cooked stream decodes only the pieces it intersects.

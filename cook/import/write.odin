@@ -121,6 +121,7 @@ read_whole :: proc(path:string) -> ([]u8,serial.File_Error) {
 @(private)
 Writer :: struct {
     options:Import_Options,
+    gpu:textures.Gpu_Context,
     folder:string,               // where new documents go: under the folder of the documents; "": none are written there
     documents:string,            // under the folder of the documents, where new ones go (asset.Package.documents)
     catalog_path:string,
@@ -435,6 +436,8 @@ texture_written :: proc(w:^Writer,job:Texture_Job,out:Texture_Write,output:int) 
     case out.built==.Too_Large:
         writer_warn(w,"image %s is not used: a side is above the %d texels a texture holds; scale it down in the source",job.name,asset.TEXTURE_MAX_SIZE)
         return false
+    case out.built==.Gpu:
+        return writer_fail(w,.Write,"image %s: %s",job.name,textures.GPU_ERROR)
     case out.built!=.None:
         writer_warn(w,"image %s is not used: %v",job.name,out.built)
         return false
@@ -484,6 +487,7 @@ texture_detail :: proc(format:asset.Texture_Format,width,height,mips:int) -> str
 @(private)
 writer_init :: proc(w:^Writer,path,folder:string,options:Import_Options,report:^Import_Report,allocator:mem.Allocator) -> bool {
     w^={options=options,report=report,allocator=allocator,version=import_version(0)}
+    if w.options.gpu==nil {w.options.gpu=&w.gpu}
     w.created.allocator=context.temp_allocator
     w.names.allocator=context.temp_allocator
     w.followed.allocator=context.temp_allocator

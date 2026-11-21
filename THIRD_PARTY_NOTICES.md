@@ -141,12 +141,6 @@ are kept here and, where the license asks for it, in the header of the file.
 - **LZ4 1.10.0** (BSD-2-Clause; © 2011-2020 Yann Collet), <https://github.com/lz4/lz4>.
   `std/compressor/lz4`, a translation of its block decoder and of its HC encoder, as its
   `UPSTREAM.md` says. Game.
-- **bc7enc_rdo** (MIT or public domain; © 2020-2021 Richard Geldreich, Jr.),
-  <https://github.com/richgel999/bc7enc_rdo>. `std/compressor/blocks/rgbcx`, `bc7enc`
-  and `rdo`, translated; a block keeps the alpha 0 and 255 of its texels. Editor.
-- **ISPC Texture Compressor** (MIT; © 2017 Intel Corporation),
-  <https://github.com/GameTechDev/ISPCTextureCompressor>. The BC6H encoder of
-  `std/compressor/blocks/bc6h`, translated. Editor.
 
 The files derived from Apache-2.0 work state their changes in their header.
 - **Frogfood** (MIT; © 2023 Jake Ryan), <https://github.com/JuanDiegoMontoya/Frogfood>. The

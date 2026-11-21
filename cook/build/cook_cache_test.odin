@@ -12,6 +12,9 @@ import "mirai:store"
 
 @(test)
 a_cook_takes_the_blocks_of_a_texture_from_the_cache_of_its_content :: proc(t:^testing.T) {
+    gpu:textures.Gpu_Context
+    if !cook_test_gpu(t,&gpu) {return}
+    defer textures.gpu_context_destroy(&gpu)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     folder:=base.test_folder(t,"cook-texture-cache")
     if folder=="" {return}
@@ -35,7 +38,7 @@ a_cook_takes_the_blocks_of_a_texture_from_the_cache_of_its_content :: proc(t:^te
     }
 
     // The first cook compresses the texture and keeps its blocks.
-    report:=cook_assets({assets=assets,output=fmt.tprintf("%s/first",folder),manifest=manifest,store=&kept_store,codecs=.Open,allocator=context.temp_allocator})
+    report:=cook_assets({gpu=&gpu,assets=assets,output=fmt.tprintf("%s/first",folder),manifest=manifest,store=&kept_store,codecs=.Open,allocator=context.temp_allocator})
     testing.expect(t,report.error==.None && report.textures_compressed==1)
     testing.expect(t,report.seconds>0,"the report says how long the cook took")
     format,blocks:=level(t,&types,fmt.tprintf("%s/first/textures/wood.tex",folder))
@@ -49,13 +52,13 @@ a_cook_takes_the_blocks_of_a_texture_from_the_cache_of_its_content :: proc(t:^te
     // The next cook reads them: blocks the cache was given are the ones it ships.
     kept.mips[0][0]~=0xff
     testing.expect(t,textures.cache_write(texture_cache,key,&types,&kept))
-    report=cook_assets({assets=assets,output=fmt.tprintf("%s/second",folder),manifest=manifest,store=&kept_store,codecs=.Open,allocator=context.temp_allocator})
+    report=cook_assets({gpu=&gpu,assets=assets,output=fmt.tprintf("%s/second",folder),manifest=manifest,store=&kept_store,codecs=.Open,allocator=context.temp_allocator})
     testing.expect(t,report.error==.None && report.textures_compressed==1)
     _,cached:=level(t,&types,fmt.tprintf("%s/second/textures/wood.tex",folder))
     testing.expect(t,len(cached)==32 && cached[0]==blocks[0]~0xff && slice.equal(cached[1:],blocks[1:]))
 
     // A cook without a cache compresses, and another content is another key.
-    report=cook_assets({assets=assets,output=fmt.tprintf("%s/third",folder),manifest=manifest,codecs=.Open,allocator=context.temp_allocator})
+    report=cook_assets({gpu=&gpu,assets=assets,output=fmt.tprintf("%s/third",folder),manifest=manifest,codecs=.Open,allocator=context.temp_allocator})
     _,fresh:=level(t,&types,fmt.tprintf("%s/third/textures/wood.tex",folder))
     testing.expect(t,report.error==.None && slice.equal(fresh,blocks))
     pixels[0]+=1
@@ -87,6 +90,9 @@ same_tables :: proc(a,b:^asset.Asset) -> bool {
 // texture cache up once for the textures of its pass, in one fetch.
 @(test)
 a_cook_ships_package_assets_from_their_objects_and_looks_the_cache_up_once :: proc(t:^testing.T) {
+    gpu:textures.Gpu_Context
+    if !cook_test_gpu(t,&gpu) {return}
+    defer textures.gpu_context_destroy(&gpu)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     folder:=base.test_folder(t,"cook-package-objects")
     if folder=="" {return}
@@ -136,7 +142,7 @@ a_cook_ships_package_assets_from_their_objects_and_looks_the_cache_up_once :: pr
         manifest_file:=fmt.tprintf("%s/%s-%s",folder,pass,COOK_FILE)
         testing.expect(t,os.write_entire_file(manifest_file,fmt.tprintf(`{{"roots":["kit/"],"textures":"%s"}}`,pass))==nil)
         output:=fmt.tprintf("%s/%s",folder,pass)
-        report:=cook_assets({assets=assets,root=root,output=output,manifest=manifest_file,store=&s,cache_source={fetch=fetch,user=&counted},allocator=context.temp_allocator})
+        report:=cook_assets({gpu=&gpu,assets=assets,root=root,output=output,manifest=manifest_file,store=&s,cache_source={fetch=fetch,user=&counted},allocator=context.temp_allocator})
         if !testing.expectf(t,report.error==.None,"%s: %v %s",pass,report.error,report.detail) {continue}
         testing.expect_value(t,len(report.files),2)
         if pass=="blocks" {

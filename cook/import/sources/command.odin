@@ -201,7 +201,9 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
         }
         options.store=&kept
     }
-    library_options:=Library_Options{store=options.store,fast_textures=options.fast_textures,rebuild=options.rebuild,changed=options.changed,plugins=library,worker=options.worker}
+    gpu:textures.Gpu_Context
+    defer textures.gpu_context_destroy(&gpu)
+    library_options:=Library_Options{gpu=&gpu,store=options.store,fast_textures=options.fast_textures,rebuild=options.rebuild,changed=options.changed,plugins=library,worker=options.worker}
     if options.store==nil {fmt.wprintln(errors,"mirai import: this machine has no folder of user data for its store: pass one with --store");return 1}
     if len(roots)>0 {
         if file!="" || root!="" || folder!=nil || changed!={} || options.changed!=.Refuse {fmt.wprintln(errors,IMPORT_USAGE);return 2}

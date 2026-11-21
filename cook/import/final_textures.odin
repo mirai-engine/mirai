@@ -52,7 +52,8 @@ texture_input_keep :: proc(c:cache.Cache,key:u64,types:^asset.Types,source:textu
 
 @(private="file")
 texture_input_build :: proc(c:cache.Cache,final:Texture_Final,types:^asset.Types,
-                            worker:jobs.Worker_Ref) -> (built:textures.Built,error:asset.Error) {
+                            worker:jobs.Worker_Ref,gpu:^textures.Gpu_Context) ->
+    (built:textures.Built,error:asset.Error) {
     cached:bool
     if built,cached=textures.cache_read(c,final.key,types,context.temp_allocator);cached {return}
     file:asset.Asset
@@ -72,7 +73,7 @@ texture_input_build :: proc(c:cache.Cache,final:Texture_Final,types:^asset.Types
         format=recipe.format,cube=recipe.cube,
     }
     build_error:textures.Error
-    built,build_error=textures.build(source,recipe.options,context.temp_allocator,worker)
+    built,build_error=textures.build(source,recipe.options,context.temp_allocator,worker,gpu)
     switch build_error {
     case .None:
     case .Out_Of_Memory: return {},.Out_Of_Memory
@@ -92,9 +93,14 @@ Finalize_Item :: struct {
 
 // Updates build after publishing Final. A missing cache input leaves the
 // build untouched so the caller can import from the source.
-finalize_build :: proc(s:^store.Store,build:^asset.Build,worker:jobs.Worker_Ref) ->
+finalize_build :: proc(
+    s:^store.Store,build:^asset.Build,worker:jobs.Worker_Ref,gpu:^textures.Gpu_Context=nil,
+) ->
     (object:store.Hash,error:asset.Error) {
     if s==nil || build==nil {return {},.Invalid}
+    own:textures.Gpu_Context
+    defer textures.gpu_context_destroy(&own)
+    gpu:=gpu if gpu!=nil else &own
     final:=build^
     final.final=true
     allocation:mem.Allocator_Error
@@ -111,18 +117,17 @@ finalize_build :: proc(s:^store.Store,build:^asset.Build,worker:jobs.Worker_Ref)
     width:=1 if worker.system==nil else jobs.worker_count(worker.system)
     items,items_error:=make([]Finalize_Item,min(width,len(final.outputs)),context.temp_allocator)
     if items_error!=nil {return {},.Out_Of_Memory}
-    Work :: struct {s:^store.Store,worker:jobs.Worker_Ref,items:[]Finalize_Item}
-    work:=Work{s,worker,items}
+    Work :: struct {s:^store.Store,worker:jobs.Worker_Ref,items:[]Finalize_Item,gpu:^textures.Gpu_Context}
+    work:=Work{s,worker,items,gpu}
     run :: proc(work:^Work,first,last,worker:int) {
         on:=jobs.worker_ref_at(work.worker,worker)
         if on.system!=nil {context.allocator=on.system.allocator}
         for &item in work.items[first:last] {
-            object,error:=texture_finalize(work.s,item.output,on)
+            object,error:=texture_finalize(work.s,item.output,on,work.gpu)
             item.output.object=object
             item.error=error
         }
     }
-    // An encoder can help run other textures while it waits on its own block jobs.
     for next:=0;next<len(final.outputs); {
         count:=0
         for next<len(final.outputs) && count<len(items) {
@@ -155,7 +160,9 @@ finalize_build :: proc(s:^store.Store,build:^asset.Build,worker:jobs.Worker_Ref)
 }
 
 @(private="file")
-texture_finalize :: proc(s:^store.Store,output:^asset.Build_Output,worker:jobs.Worker_Ref) ->
+texture_finalize :: proc(
+    s:^store.Store,output:^asset.Build_Output,worker:jobs.Worker_Ref,gpu:^textures.Gpu_Context,
+) ->
     (object:store.Hash,error:asset.Error) {
     scratch:mem.Dynamic_Arena
     mem.dynamic_arena_init(&scratch,context.allocator,context.allocator,
@@ -174,7 +181,7 @@ texture_finalize :: proc(s:^store.Store,output:^asset.Build_Output,worker:jobs.W
 
     final:=asset.asset_row(&file,&types,TEXTURE_FINAL,Texture_Final,whole=true) or_return
     if view.source==nil || final.key==0 {return {},.Not_Found}
-    built:=texture_input_build({store=s},final^,&types,worker) or_return
+    built:=texture_input_build({store=s},final^,&types,worker,gpu) or_return
     if .Fast in built.flags || built.format!=view.info.format ||
        built.width!=int(view.info.width) || built.height!=int(view.info.height) ||
        built.layers!=int(view.info.layers) {return {},.Corrupt}

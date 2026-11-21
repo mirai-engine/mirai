@@ -11,6 +11,7 @@ import "core:time"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:cook/cache"
+import "mirai:cook/textures"
 import importer "mirai:cook/import"
 import "mirai:cook/workspace"
 import "mirai:project"
@@ -88,6 +89,7 @@ Library_Options :: struct {
     // it (the editor, from its session): taken in place of plugins.
     imports:^Library_Imports,
     worker:jobs.Worker_Ref,
+    gpu:^textures.Gpu_Context,
     progress:io.Writer, // where each source imported is said as it goes; nil: nowhere
 }
 
@@ -456,6 +458,7 @@ project_unpin :: proc(root:string,id:base.Asset_Id) -> (removed:bool,error:asset
 @(private="file")
 Library_State :: struct {
     options:Library_Options,
+    gpu:textures.Gpu_Context,
     index:^store.Store,            // the Store index for all reads in a project refresh
     scratch:mem.Dynamic_Arena,
     temp:mem.Allocator,
@@ -483,6 +486,7 @@ Prepared_Add :: struct {
 @(private="file")
 library_begin :: proc(l:^Library_State,options:Library_Options,allocator:mem.Allocator) {
     l.options=options
+    if l.options.gpu==nil {l.options.gpu=&l.gpu}
     mem.dynamic_arena_init(&l.scratch,allocator,allocator,block_size=1<<20,out_band_size=1<<20)
     l.temp=base.dynamic_arena_allocator(&l.scratch)
     l.formats=FORMATS[:]
@@ -491,6 +495,7 @@ library_begin :: proc(l:^Library_State,options:Library_Options,allocator:mem.All
 
 @(private="file")
 library_end :: proc(l:^Library_State) {
+    textures.gpu_context_destroy(&l.gpu)
     if l.plugins.release!=nil {l.plugins.release(l.plugins.state)}
     mem.dynamic_arena_destroy(&l.scratch)
 }
@@ -779,7 +784,7 @@ library_ingest :: proc(l:^Library_State,path:string,manifest:store.Hash,settings
     }
     options:=importer.Import_Options{
         store=s,cache_source=l.options.source,manifest=manifest,documents=documents,root=l.options.root,
-        rebuild=l.options.rebuild,fast_textures=l.options.fast_textures,worker=l.options.worker,hashes=&hashes,
+        rebuild=l.options.rebuild,fast_textures=l.options.fast_textures,worker=l.options.worker,gpu=l.options.gpu,hashes=&hashes,
     }
     if documents!="" {options.registry,options.world,options.written,options.changed=l.registry,l.plugins.world,written,changed}
     if options.root=="" {options.root,_=importer.source_root(origin,context.temp_allocator)}
@@ -877,7 +882,7 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     }
     finalized:=false
     if !found && keyed && f.fast_here {
-        if hash,upgrade_error:=importer.finalize_build(s,&f.build,l.options.worker);upgrade_error==.None {
+        if hash,upgrade_error:=importer.finalize_build(s,&f.build,l.options.worker,l.options.gpu);upgrade_error==.None {
             f.hash,f.final,found,finalized=hash,true,true,true
         }
     }

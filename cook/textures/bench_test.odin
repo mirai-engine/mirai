@@ -10,6 +10,9 @@ BENCH_ROUNDS :: 5
 @(test)
 bench_mip_chains :: proc(t:^testing.T) {
     if !BENCH {return}
+    gpu:Gpu_Context
+    if !test_gpu_context(t,&gpu) {return}
+    defer gpu_context_destroy(&gpu)
     SIZE :: 2048
     pixels:=make([]u8,SIZE*SIZE*4);defer delete(pixels)
     for i in 0..<SIZE*SIZE {
@@ -23,7 +26,7 @@ bench_mip_chains :: proc(t:^testing.T) {
         best:=time.Duration(max(i64))
         for _ in 0..<BENCH_ROUNDS {
             start:=time.tick_now()
-            built,error:=build(rgba8(pixels,SIZE,SIZE),entry.options)
+            built,error:=build(rgba8(pixels,SIZE,SIZE),entry.options,gpu=&gpu)
             assert(error==.None)
             built_destroy(&built)
             best=min(best,time.tick_since(start))
