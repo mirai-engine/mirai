@@ -28,6 +28,7 @@ KEY_INSTANCE :: u64(0x696e7374616e6365) // of the values of the instance among t
 Effect :: struct {
     entity:core.Entity,
     particle:base.Asset_Id,
+    preset:effect.Particle_Preset,
     shown:effect.Particle_Info, // of the effect, with the values of the entity over it
     hidden:[]effect.Particle_Field,
     override:vfx.Particle_Override,
@@ -36,9 +37,9 @@ Effect :: struct {
 @(private)
 effect_read :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) -> (f:Effect,ok:bool) {
     emitter:=editor.entity_get(w,e,vfx.Particle_Emitter) or_return
-    f.entity,f.particle=e,emitter.particle
+    f.entity,f.particle,f.preset=e,emitter.particle,emitter.preset
     f.override,_=editor.entity_get(w,e,vfx.Particle_Override)
-    f.shown=vfx.particle_resolve(s.app.assets,emitter.particle,&f.override)
+    f.shown=vfx.particle_resolve(s.app.assets,emitter.particle,&f.override,emitter.preset)
     if a:=s.app.assets;a!=nil && emitter.particle!={} {
         if view,found:=vfx.effect_view(a,emitter.particle);found {f.hidden=view.hidden}
     }
@@ -57,37 +58,7 @@ emitter_field :: proc(c:editor.Inspector_Context,type:typeid,offset:uintptr,labe
 
 // The sections of the vfx plugin in Details.
 @(private)
-vfx_sections :: proc(c:editor.Inspector_Context) -> bool {return bindings_section(c) || emitter_section(c)}
-
-// The rows of Particle_Bindings: the surface it starts particles on and, for
-// each resource of the program of the effect that reads an entity, the entity
-// it reads under the name the program gives it, in the source of that name,
-// else in the one of its index (vfx.emitter_resources); a grid, also the name
-// of the grid it reads.
-@(private)
-bindings_section :: proc(c:editor.Inspector_Context) -> bool {
-    if c.table==nil || c.table.type!=vfx.Particle_Bindings || len(c.entities)==0 {return false}
-    s:=c.session
-    active:=c.entities[len(c.entities)-1]
-    editor.inspector_entity_row(c,"Surface",int(offset_of(vfx.Particle_Bindings,surface)))
-    f,read:=effect_read(s,c.world,active)
-    if !read || s.app.assets==nil {return true}
-    found:=erender.program_find(s.app.assets,base.text_get(f.shown.program[:]),.Vfx)
-    if found==nil {return true}
-    bindings,_:=editor.entity_get(c.world,active,vfx.Particle_Bindings)
-    for resource,at in found.resources[:min(len(found.resources),vfx.RESOURCES)] {
-        if resource.kind!=.Surface && resource.kind!=.Grid && resource.kind!=.Emitter {continue}
-        slot:=at
-        for &source,i in bindings.sources {
-            if base.text_get(source.resource[:])==resource.name {slot=i;break}
-        }
-        if slot==at && base.text_get(bindings.sources[at].resource[:])!="" {continue}
-        source:=int(offset_of(vfx.Particle_Bindings,sources))+slot*size_of(vfx.Particle_Source)
-        editor.inspector_entity_row(c,editor.readable(resource.name),source+int(offset_of(vfx.Particle_Source,entity)))
-        if resource.kind==.Grid {editor.inspector_text_row(c,fmt.tprintf("%s grid",editor.readable(resource.name)),source+int(offset_of(vfx.Particle_Source,grid)),vfx.GRID_NAME_BYTES)}
-    }
-    return true
-}
+vfx_sections :: proc(c:editor.Inspector_Context) -> bool {return emitter_section(c)}
 
 // The rows of Particle_Emitter: its own fields, its effect and, for one
 // entity, the values of its instance that the effect does not hide.
@@ -130,7 +101,7 @@ emitter_section :: proc(c:editor.Inspector_Context) -> bool {
     inherited:vfx.Particle_Override
     reference:=editor.inspect_component(s,c.world,vfx.Particle_Override,{active})
     if reference.t!=nil {inherited=(cast(^vfx.Particle_Override)raw_data(editor.inspect_default(s,c.world,reference.t,active)))^}
-    defaults:=vfx.particle_resolve(s.app.assets,f.particle,&inherited)
+    defaults:=vfx.particle_resolve(s.app.assets,f.particle,&inherited,f.preset)
     held:=editor.Held_Values{key=KEY_INSTANCE,info=type_info_of(effect.Particle_Info),value=&f.shown,defaults=&defaults,write=instance_write,user=&f,name="Particle"}
     v:=runtime.type_info_base(type_info_of(effect.Particle_Info)).variant.(runtime.Type_Info_Struct)
     for i in 0..<int(v.field_count) {

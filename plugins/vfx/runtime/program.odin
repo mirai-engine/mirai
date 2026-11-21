@@ -12,7 +12,7 @@ import "plugins:vfx/runtime/effect"
 // them: the values of override that are not fields of the effect; needs: the
 // resources and stages it declares; a channel resource reads the channel of
 // its name (`//! resource displacers channel` reads "displacers").
-particle_program_check :: proc(a:^host.Assets,info:^effect.Particle_Info,stored:[]effect.Particle_Parameter,override:^Particle_Override,program:^Program,needs:^Program_Needs=nil) -> (problem:string) {
+particle_program_check :: proc(a:^host.Assets,info:^effect.Particle_Info,stored:[]effect.Particle_Parameter,override:^Particle_Override,program:^Program,needs:^Program_Needs=nil,layer:u8=0) -> (problem:string) {
     program^={}
     if needs!=nil {needs^={}}
     given:[dynamic]int
@@ -23,8 +23,10 @@ particle_program_check :: proc(a:^host.Assets,info:^effect.Particle_Info,stored:
         }
     }
     name:=base.text_get(info.program[:])
+    stored_count:=0
+    for &value in stored {stored_count+=1 if value.layer==layer else 0}
     if name=="" {
-        if len(stored)>0 || len(given)>0 {return "The effect has no Vfx program: name one in program before giving it parameters"}
+        if stored_count>0 || len(given)>0 {return "The effect has no Vfx program: name one in program before giving it parameters"}
         return ""
     }
     if a==nil || a.renderer==nil {return ""}
@@ -46,8 +48,8 @@ particle_program_check :: proc(a:^host.Assets,info:^effect.Particle_Info,stored:
             }
         }
     }
-    list:=make([dynamic]effect.Particle_Parameter,0,len(stored)+len(given),context.temp_allocator)
-    append(&list,..stored)
+    list:=make([dynamic]effect.Particle_Parameter,0,stored_count+len(given),context.temp_allocator)
+    for &value in stored {if value.layer==layer {append(&list,value)}}
     for at in given {
         parameter,declared:=value_parameter(found,override.names[at],override.values[at])
         if !declared {

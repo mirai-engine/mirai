@@ -22,7 +22,7 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
 
 ## Map
 
-- `vfx` (particles: `.particle` format, emitters and clocks, GPU pools and passes, surfaces and
+- `vfx` (particles: layered `.particle` effects, presets, GPU pools and passes, surfaces and
   bones of a shape, Vfx programs with surfaces, channels and grids, stages, volumes, events to the
   game):
   [format](references/vfx.md#format), [game](references/vfx.md#game),

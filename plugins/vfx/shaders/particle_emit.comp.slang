@@ -111,7 +111,9 @@ bool particle_start(uint slot, uint seed, uint birth, float3 world_position, flo
         v.velocity += acceleration * lived;
         v.rotation += v.spin * lived;
     }
-    if (birth != INVALID) particle_lists[particle_birth_entry(slot, birth)] = index - particle_emitters[slot].range.x;
+    if (birth != INVALID && particle_emitters[slot].birth_entries != INVALID) {
+        particle_data.Store(particle_birth_entry(slot, birth), index - particle_emitters[slot].range.x);
+    }
     particle_program_initialize(slot, index, birth, time, values, v);
     Particle p;
     p.light = 0u;
@@ -233,8 +235,18 @@ void main(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local 
             shape_sample(slot, seed, local, direction);
             float speed = lerp(particle_emitters[slot].lifetime_speed.z, particle_emitters[slot].lifetime_speed.w, random01(seed));
             float3 local_velocity = lerp(particle_emitters[slot].velocity_a.xyz, particle_emitters[slot].velocity_b.xyz, float3(random01(seed), random01(seed), random01(seed)));
-            float3 velocity = particle_unit(transform_vector(particle_emitters[slot].world, direction), direction) * speed + transform_vector(particle_emitters[slot].world, local_velocity) + b.velocity;
-            if (!particle_start(slot, seed, INVALID, b.position + transform_vector(particle_emitters[slot].world, local), velocity, born >= 0.0 ? start - born : 0.0, max(-born, 0.0), frame_step.w - b.age, b.color, b.size, b.values)) break;
+            float3 offset = transform_vector(particle_emitters[slot].world, local);
+            float3 along = transform_vector(particle_emitters[slot].world, direction);
+            float normal_scale = max(abs(b.normal.x), max(abs(b.normal.y), abs(b.normal.z)));
+            if (particle_emitters[slot].kinds.x == PARTICLE_SHAPE_CONE && normal_scale > 0.0 && all(isfinite(b.normal))) {
+                float3 up = normalize(b.normal / normal_scale);
+                float3 side = normalize(cross(up, abs(up.z) < 0.99 ? float3(0, 0, 1) : float3(1, 0, 0)));
+                float3 front = cross(side, up);
+                along = direction.x * side + direction.y * up + direction.z * front;
+                offset = local.x * side + local.y * up + local.z * front;
+            }
+            float3 velocity = particle_unit(along, direction) * speed + transform_vector(particle_emitters[slot].world, local_velocity) + b.velocity;
+            if (!particle_start(slot, seed, INVALID, b.position + offset, velocity, born >= 0.0 ? start - born : 0.0, max(-born, 0.0), frame_step.w - b.age, b.color, b.size, b.values)) break;
         }
         return;
     }

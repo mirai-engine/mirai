@@ -86,8 +86,7 @@ STAGE_SWAP_PARTICLES :: 5
 stages_step :: proc(sync:^Particle_Sync,pass:^erender.Pass,params:^Simulate_Params) {
     pool:=&sync.pool
     all:=Program_Span{count=u32(pool.order_count)}
-    groups_of:[PROGRAMS_IN_USE+1]Program_Group
-    programs:=program_groups(&sync.pipelines,&groups_of)
+    programs:=sync.pipelines.groups
     stage:=sync.pipelines.stage
     for k in 0..<pool.stage_count {
         plan:=pool.plan[k]
@@ -97,7 +96,7 @@ stages_step :: proc(sync:^Particle_Sync,pass:^erender.Pass,params:^Simulate_Para
                 params.iteration=iteration
                 if plan.writes {particle_work(sync,pass,params,all,.Grid_Copy,stage,STAGE_PREPARE)}
                 for group in programs {
-                    if group.program==0 {continue}
+                    if group.program==0 || group.stage==0 {continue}
                     particle_work(sync,pass,params,group.span,.Particles,group.stage,STAGE_PARTICLES)
                 }
                 if plan.writes {particle_work(sync,pass,params,all,.Swap_Particles,stage,STAGE_SWAP_PARTICLES)}
@@ -108,7 +107,7 @@ stages_step :: proc(sync:^Particle_Sync,pass:^erender.Pass,params:^Simulate_Para
                 params.iteration=iteration
                 if plan.writes {particle_work(sync,pass,params,all,.Grid_Copy,stage,STAGE_PREPARE)}
                 for group in programs {
-                    if group.program==0 {continue}
+                    if group.program==0 || group.stage==0 {continue}
                     particle_work(sync,pass,params,group.span,.Cells,group.stage,STAGE_CELLS)
                 }
                 particle_work(sync,pass,params,all,.Swap_Cells,stage,STAGE_SWAP)
@@ -132,10 +131,16 @@ world_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,params:^Simulate_Pa
         for &entry in s.entries {entry.built=false}
         sync.grids.made=false
     }
+    if made || sync.fields_dirty || sync.fields_origin!=pass.origin {
+        fields:=fields_relative(sync.fields,pass.origin)
+        if !erender.pass_buffer_write(pass,world,0,&fields,size_of(fields)) {return false}
+        sync.fields_dirty=false
+        sync.fields_origin=pass.origin
+    }
     Surface_Params :: struct {mesh,first,count,pad:u32}
     for &entry in s.entries {
         if entry.built {continue}
-        surface:=Surface_Params{u32(entry.mesh),entry.first,entry.count,0}
+        surface:=Surface_Params{u32(entry.mesh),entry.first+size_of(Gpu_Fields)/4,entry.count,0}
         erender.pass_pipeline(pass,sync.pipelines.surface)
         erender.pass_params(pass,&surface,size_of(surface))
         erender.pass_dispatch(pass,1)
@@ -171,4 +176,4 @@ world_buffer :: proc "contextless" (sync:^Particle_Sync) -> erender.Buffer_Desc 
 }
 
 @(private)
-grids_base :: proc "contextless" (sync:^Particle_Sync) -> u32 {return max(sync.surfaces.capacity,64)*4}
+grids_base :: proc "contextless" (sync:^Particle_Sync) -> u32 {return size_of(Gpu_Fields)+max(sync.surfaces.capacity,64)*4}

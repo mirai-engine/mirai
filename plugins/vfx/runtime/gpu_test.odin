@@ -157,14 +157,13 @@ expect_clean :: proc(t: ^testing.T, d: ^rhi.Device) {
 
 @(private = "file")
 test_emitter :: proc(id: u64, position: [3]f32) -> Emitter_Desc {
-	return {
-		id = id, capacity = 64, transform = trs(position, {1, 1, 1}), previous = trs(position, {1, 1, 1}),
-		info = {
-			shape = .Point, lifetime = {0.5, 0.5}, speed = {0, 0}, size = {0.6, 0.6}, colors = {{1, 1, 1, 1}, {1, 1, 1, 1}},
-			render = .Billboard, blend = .Additive, intensity = 4, flipbook = {1, 1},
-			size_over_life = effect.PARTICLE_CURVE_ONE, color_over_life = GRADIENT_WHITE,
-		},
-	}
+    spec:=new(Emitter_Info,context.temp_allocator)
+    spec.info={
+        shape=.Point,lifetime={0.5,0.5},size={0.6,0.6},colors={{1,1,1,1},{1,1,1,1}},
+        render=.Billboard,blend=.Additive,intensity=4,flipbook={1,1},
+        size_over_life=effect.PARTICLE_CURVE_ONE,color_over_life=GRADIENT_WHITE,
+    }
+    return {id=id,capacity=64,transform=trs(position,{1,1,1}),previous=trs(position,{1,1,1}),spec=spec}
 }
 
 @(test)
@@ -332,7 +331,7 @@ particle_rows_go_to_the_gpu_only_when_their_emitter_changes :: proc(t: ^testing.
 	problems: core.Problems
 	tell :: proc(f: ^Gpu_Fixture, w: ^Emitters_World, reports: ^Particle_Reports, problems: ^core.Problems) {
 		drawn: erender.Render_Sync
-		particles_sync(core.read(&w.emitters), core.read(&w.overrides), core.read(&w.worlds), core.read(&w.hidden), core.read(&w.parents), core.ref(&w.hierarchy), core.read(&w.bindings), core.read(&w.meshes), core.ref(&drawn), core.read(&w.listeners), core.read(&w.grids), core.read(&w.volumes), core.read(&w.textures), core.ref(&w.clocks), core.ref(&w.settings), &f.sync, reports, nil, nil, nil, {}, {index = 1}, {}, {dt = 1.0 / 60, alpha = 1}, {}, problems, &f.app, {}, {}, {}, {}, {})
+		particles_sync(core.read(&w.emitters), core.read(&w.overrides), core.read(&w.worlds), core.read(&w.hidden), core.read(&w.parents), core.ref(&w.hierarchy), core.read(&w.bindings), nil, core.read(&w.meshes), core.ref(&drawn), core.read(&w.listeners), core.read(&w.grids), core.read(&w.volumes), core.read(&w.textures), core.ref(&w.clocks), core.ref(&w.settings), &f.sync, reports, nil, nil, nil, {}, {index = 1}, {}, {dt = 1.0 / 60, alpha = 1}, {}, problems, &f.app, {}, {}, {}, {}, {})
 	}
 	for _ in 0 ..< 3 {
 		tell(f, w, &reports, &problems)
@@ -579,7 +578,7 @@ ribbon_lists_sort_by_ribbon_then_age :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f, 64, 64, test_settings()) {return}
 	defer gpu_fixture_destroy(f)
 	camera := gpu.Camera{position = {0, 0, 6}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	PER :: 600
+	PER :: 900
 	ribbons := test_emitter(1, {0, 0, 0})
 	ribbons.capacity = 3 * PER
 	ribbons.info.render, ribbons.info.lifetime = .Ribbon, {30, 30}
@@ -609,6 +608,34 @@ ribbon_lists_sort_by_ribbon_then_age :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, boundaries, 1)
 	expect_clean(t, f.device)
+}
+
+@(test)
+a_builtin_beam_arcs_between_its_endpoints :: proc(t:^testing.T) {
+    f:=new(Gpu_Fixture)
+    defer free(f)
+    settings:=test_settings()
+    settings.taa=false
+    if !gpu_fixture_init(t,f,96,96,settings) {return}
+    defer gpu_fixture_destroy(f)
+    camera:=gpu.Camera{position={0,0,4},forward={0,0,-1},up={0,1,0},fov_y=55,
+        near=0.05,far=100,exposure=gpu.UNIT_EXPOSURE}
+    beam:=test_emitter(1,{-1,0,0})
+    beam.info.render,beam.info.beam_end,beam.info.beam_arc=.Beam,{2,0,0},0.8
+    beam.info.size,beam.info.lifetime={0.2,0.2},{5,5}
+    beam.spawns=test_burst(1)
+    for i in 0..<4 {
+        testing.expect(t,frame_emitters(f,&f.sync,{beam},1.0/60))
+        testing.expect(t,gpu.renderer_frame(&f.renderer,{camera=camera,time=f32(i)/60}),f.renderer.error)
+        beam.spawns={}
+    }
+    pixels,w,_,ok:=gpu.renderer_capture(&f.renderer)
+    if !testing.expect(t,ok) {return}
+    defer delete(pixels)
+    arc:=pixel(pixels,w,project(&f.renderer,camera,{0,0.8,0}))
+    chord:=pixel(pixels,w,project(&f.renderer,camera,{}))
+    testing.expectf(t,arc.r>chord.r+60,"arc %v and chord %v",arc,chord)
+    expect_clean(t,f.device)
 }
 
 // Mesh particles pick among the meshes of their effect by weight, once, and
@@ -731,6 +758,8 @@ mesh_particles_of_a_blending_material_cover_by_their_alpha :: proc(t: ^testing.T
 	mesh_choices(&shown, f.app.renderer, {f.cube}, {1})
 	shown.info.lifetime, shown.info.size, shown.info.soft, shown.info.emission_mode, shown.info.intensity = {10, 10}, {1, 1}, 0, .Relative, 1
 	faded := shown
+	faded.spec=new(Emitter_Info,context.temp_allocator)
+	faded.spec^=shown.spec^
 	faded.id, faded.transform, faded.previous = 2, trs({1.2, 0, 0}, {1, 1, 1}), trs({1.2, 0, 0}, {1, 1, 1})
 	faded.info.colors = {{1, 1, 1, 0}, {1, 1, 1, 0}}
 	DT :: f32(1.0 / 60)
@@ -2058,6 +2087,84 @@ range_frames :: proc(t: ^testing.T, f: ^Gpu_Fixture, emitters: []Emitter_Desc, i
 	if data, _, ok := gpu.readback(&f.renderer, f.sync.world, names[1]); ok {words = ([^]u32)(raw_data(data))[:len(data) / 4]}
 	if data, _, ok := gpu.readback(&f.renderer, f.sync.world, names[2]); ok && len(data) == size_of(Gpu_State) {state = (^Gpu_State)(raw_data(data))^}
 	return
+}
+
+@(test)
+custom_attributes_rebase_once_even_while_paused_and_the_arena_grows :: proc(t:^testing.T) {
+    f:=new(Gpu_Fixture)
+    defer free(f)
+    if !gpu_fixture_init(t,f,64,48,test_settings()) {return}
+    defer gpu_fixture_destroy(f)
+    camera:=gpu.Camera{position={0,0,4},forward={0,0,-1},up={0,1,0},fov_y=60,
+        near=0.05,far=14000,exposure=gpu.UNIT_EXPOSURE}
+    emitter:=test_emitter(1,{0.25,0.5,0})
+    emitter.info.lifetime={5,5}
+    program:=erender.program_find(&f.assets,"Rebase_Test",.Vfx)
+    if !testing.expect(t,program!=nil) {return}
+    emitter.program.id,emitter.program.attributes=program.id,u32(program.attributes)
+    base.text_set(emitter.info.program[:],program.name)
+    emitter.spawns=test_burst(1)
+    if !testing.expect(t,frame_emitters(f,&f.sync,{emitter},1.0/60)) {return}
+    if !testing.expect(t,gpu.renderer_frame(&f.renderer,{camera=camera}),f.renderer.error) {return}
+    old_size:=f.sync.pool.data_bytes
+    emitter.spawns={}
+    emitter.paused=true
+    large:=test_emitter(2,{})
+    large.spec=emitter.spec
+    large.capacity=4096
+    read:=Range_Read{sync=&f.sync,id=1,count=emitter.capacity}
+    camera.position.x=8192
+    for i in 0..<rhi.MAX_FRAMES_IN_FLIGHT+2 {
+        testing.expect(t,frame_emitters(f,&f.sync,{emitter,large},1.0/60))
+        erender.frame_pass(f.app.renderer,.Simulate,range_read_pass,&read)
+        testing.expect(t,gpu.renderer_frame(&f.renderer,{camera=camera,time=f32(i+1)/60}),f.renderer.error)
+    }
+    p,_,have_p:=gpu.readback(&f.renderer,f.sync.world,RANGE_NAMES[0])
+    a,_,have_a:=gpu.readback(&f.renderer,f.sync.world,RANGE_NAMES[1])
+    testing.expect(t,f.sync.pool.data_bytes>old_size && f.sync.pool.origin.x!=0)
+    if !testing.expect(t,have_p && have_a) {return}
+    seen:=false
+    for item,i in mem.slice_data_cast([]Gpu_Particle,p) {
+        if item.lifetime==0 {continue}
+        seen=true
+        point:=(^[3]f32)(raw_data(a[i*16:]))^
+        testing.expect_value(t,point,item.position)
+        testing.expect_value(t,point+f.sync.pool.origin,[3]f32{0.25,0.5,0})
+    }
+    testing.expect(t,seen)
+    expect_clean(t,f.device)
+}
+
+@(test)
+a_channel_birth_aligns_the_cone_with_its_surface_normal :: proc(t:^testing.T) {
+    f:=new(Gpu_Fixture)
+    defer free(f)
+    if !gpu_fixture_init(t,f,64,48,test_settings()) {return}
+    defer gpu_fixture_destroy(f)
+    camera:=gpu.Camera{position={0,0,4},forward={0,0,-1},up={0,1,0},fov_y=60,
+        near=0.05,far=100,exposure=gpu.UNIT_EXPOSURE}
+    emitter:=test_emitter(1,{})
+    emitter.info.shape,emitter.info.speed,emitter.info.lifetime=.Cone,{2,2},{5,5}
+    append(&f.sync.births,Gpu_Birth{size=1,color={1,1,1,1},normal={0,0,1},count=1})
+    emitter.births={0,1}
+    read:=Range_Read{sync=&f.sync,id=1,count=emitter.capacity}
+    for i in 0..<rhi.MAX_FRAMES_IN_FLIGHT+2 {
+        testing.expect(t,frame_emitters(f,&f.sync,{emitter},1.0/60))
+        erender.frame_pass(f.app.renderer,.Simulate,range_read_pass,&read)
+        testing.expect(t,gpu.renderer_frame(&f.renderer,{camera=camera,time=f32(i)/60}),f.renderer.error)
+        clear(&f.sync.births)
+        emitter.births={}
+    }
+    data,_,ok:=gpu.readback(&f.renderer,f.sync.world,RANGE_NAMES[0])
+    if !testing.expect(t,ok) {return}
+    alive:=0
+    for p in mem.slice_data_cast([]Gpu_Particle,data) {
+        if p.lifetime<=0 {continue}
+        alive+=1
+        testing.expect_value(t,p.velocity,[3]f32{0,0,2})
+    }
+    testing.expect_value(t,alive,1)
+    expect_clean(t,f.device)
 }
 
 // Each pass of the particles marks the interval the profiler lists by its name.

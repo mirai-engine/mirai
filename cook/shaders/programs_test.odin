@@ -874,3 +874,26 @@ programs_that_move_vertices_declare_their_function_and_reach :: proc(t:^testing.
     _,said:=programs_of(&f)
     testing.expect(t,strings.contains(said,"only a Surface program moves vertices"),said)
 }
+
+
+@(test)
+vfx_variants_are_selected_for_the_programs_that_use_them :: proc(t:^testing.T) {
+    plain:Vfx_Uses={.Emit,.Simulate}
+    staged:=plain+{.Stage,.Trace,.Rebase}
+    cases:=[?]struct{stage,variant:string,uses:Vfx_Uses,present,rays:bool}{
+        {"particle_emit","",plain,true,false},
+        {"particle_emit","hw",plain,false,false},
+        {"particle_simulate","hw",plain,true,true},
+        {"particle_stage","",plain,false,false},
+        {"particle_stage","",plain+{.Stage},true,false},
+        {"particle_stage","hw",staged,true,true},
+        {"particle_shift","",staged,true,false},
+        {"particle_shift","",plain,false,false},
+        {"particle_mesh","",staged,false,false},
+        {"particle_mesh_blend","",staged,false,false},
+    }
+    for c in cases {
+        used,rays:=vfx_stage_uses(c.stage,c.variant,c.uses)
+        testing.expectf(t,used==c.present && rays==c.rays,"%s %s",c.stage,c.variant)
+    }
+}

@@ -24,7 +24,7 @@ import "plugins:vfx/runtime/effect"
 PREVIEW_PITCH :: f32(0.35)          // radians the camera looks down at the effect
 PREVIEW_FOV :: f32(30)              // degrees, vertical
 PREVIEW_FRAMES :: 40                // that take the emitter to a time at most: past them each one takes more
-PREVIEW_CAPACITY :: u32(65536)      // particles of a preview world at least
+PREVIEW_CAPACITY :: u32(256)      // particles of a preview world at least
 PREVIEW_REACH :: f32(100)           // metres from the emitter the camera frames at most
 PREVIEW_IDLE :: u64(600)            // frames a preview of thumbnails waits for another before it goes
 PREVIEW_THUMBNAIL :: 512            // pixels of a side of what a thumbnail is reduced from: a multiple of the side of every cell
@@ -80,8 +80,12 @@ preview_draw :: proc(s:^editor.Session,p:^Effect_Preview,id:base.Asset_Id,info:^
         emitter.particle,emitter.active=id,true
         core.add(emitters,p.emitter,emitter)
         if override!=nil && override.count>0 {core.add(overrides,p.emitter,override^)} else if core.has(overrides,p.emitter) {core.remove(overrides,p.emitter)}
-        settings.capacity=max(PREVIEW_CAPACITY,2*info.max_particles)
-        view^=preview_view(app.assets,info,side)
+        capacity:=u64(vfx.emitter_capacity(info))
+        extra:[]effect.Particle_Info
+        if asset,opened:=vfx.effect_view(app.assets,id);opened {extra=asset.layers}
+        for &layer in extra {capacity+=u64(vfx.emitter_capacity(&layer))}
+        settings.capacity=u32(clamp(capacity,u64(PREVIEW_CAPACITY),u64(max(u32))))
+        view^=preview_view(app.assets,info,side,extra)
         core.world_settle(w)
         vfx.restart(requests,p.emitter)
         p.shows,p.time=shows,0
@@ -122,8 +126,14 @@ preview_make :: proc(s:^editor.Session,p:^Effect_Preview) -> bool {
 // The view that frames what the particles of an effect reach, a little from
 // above, side pixels square.
 @(private="file")
-preview_view :: proc(a:^host.Assets,info:^effect.Particle_Info,side:u32) -> core.View {
+preview_view :: proc(a:^host.Assets,info:^effect.Particle_Info,side:u32,
+    layers:[]effect.Particle_Info=nil,
+) -> core.View {
     low,high:=effect_reach(a,info)
+    for &layer in layers {
+        l,h:=effect_reach(a,&layer)
+        for i in 0..<3 {low[i]=min(low[i],l[i]);high[i]=max(high[i],h[i])}
+    }
     center:=(low+high)*0.5
     radius:=max(linalg.length(high-low)*0.5,0.1)
     fov:=PREVIEW_FOV*mm.RAD_PER_DEG
@@ -150,6 +160,7 @@ effect_reach :: proc(a:^host.Assets,info:^effect.Particle_Info) -> (low,high:[3]
     size:f32=0
     for value in info.size_over_life.values {size=max(size,value)}
     size*=max(info.size[0],info.size[1],0)*0.5
+    if info.render==.Beam {size+=linalg.length(info.beam_end)+abs(info.beam_arc)}
     start_low,start_high:=low,high
     for axis in 0..<3 {
         fastest:=[2]f32{min(info.velocity[0][axis],info.velocity[1][axis])-speed,max(info.velocity[0][axis],info.velocity[1][axis])+speed}

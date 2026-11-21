@@ -10,6 +10,7 @@ import mm "mirai:std/math"
 Grids_World :: struct {
     using world:Test_World,
     grids:core.Table(Particle_Grid),
+    sources:core.Table(Particle_Binding),
     volumes:core.Table(Particle_Volume),
     textures:core.Table(Particle_World_Texture),
     worlds:core.Table(core.World_Transform),
@@ -107,8 +108,9 @@ emitters_read_the_grids_they_bind_or_their_own :: proc(t:^testing.T) {
     shown.needs.resources[1]={name=base.name_hash("volume"),kind=.Grid}
     shown.needs.stages[0]={kind=.Cells,over=0}
     shown.needs.stages[1]={kind=.Cells,over=1}
-    read :: proc(sync:^Particle_Sync,shown:^Emitter_Shown,bindings:^Particle_Bindings,e:core.Entity) -> (grids:[2]int) {
-        resources:=emitter_resources(sync,shown,bindings,e,nil,nil,nil,nil,{},nil,nil)
+    read :: proc(sync:^Particle_Sync,shown:^Emitter_Shown,bindings:^Particle_Bindings,e:core.Entity,
+        sources:^core.Table(Particle_Binding,.Read)=nil) -> (grids:[2]int) {
+        resources:=emitter_resources(sync,shown,bindings,sources,e,nil,nil,nil,nil,{},nil,nil)
         for &g,at in grids {g=resources[1+at].kind==.Grid?int(resources[1+at].first):-1}
         return
     }
@@ -119,13 +121,22 @@ emitters_read_the_grids_they_bind_or_their_own :: proc(t:^testing.T) {
     // On an entity without a grid: the grids of the world of their names.
     testing.expect_value(t,read(&sync,&shown,&unbound,core.NONE),[2]int{entry(&sync,fluid),entry(&sync,volume)})
     // Bound by name and by entity.
-    bound:Particle_Bindings
-    base.text_set(bound.sources[0].resource[:],"fluid")
-    base.text_set(bound.sources[0].grid[:],"river")
-    base.text_set(bound.sources[1].resource[:],"volume")
-    bound.sources[1].entity=smoke
-    testing.expect_value(t,read(&sync,&shown,&bound,core.NONE),[2]int{entry(&sync,river),entry(&sync,smoke)})
-    // A name no grid has reads nothing: what it binds is not looked for elsewhere.
-    base.text_set(bound.sources[0].grid[:],"lake")
-    testing.expect_value(t,read(&sync,&shown,&bound,river)[0],-1)
+    sources:=&f.sources
+    defer delete(sync.resource_bindings)
+    fluid_bind:=Particle_Binding{emitter=river}
+    base.text_set(fluid_bind.resource[:],"fluid")
+    base.text_set(fluid_bind.grid[:],"river")
+    volume_bind:=Particle_Binding{emitter=river,entity=smoke}
+    base.text_set(volume_bind.resource[:],"volume")
+    core.add(sources,river,fluid_bind)
+    core.add(sources,volume,volume_bind)
+    grids_fixture_settle(&f)
+    bindings_sync(&sync,core.read(sources),nil)
+    testing.expect_value(t,read(&sync,&shown,&unbound,river,core.read(sources)),
+        [2]int{entry(&sync,river),entry(&sync,smoke)})
+    base.text_set(fluid_bind.grid[:],"lake")
+    core.add(sources,river,fluid_bind)
+    grids_fixture_settle(&f)
+    bindings_sync(&sync,core.read(sources),nil)
+    testing.expect_value(t,read(&sync,&shown,&unbound,river,core.read(sources)),[2]int{-1,entry(&sync,smoke)})
 }

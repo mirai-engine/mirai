@@ -38,7 +38,8 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     }
     uint override_material = particle_emitters[params.emitter].mesh.w;
     output.material = override_material != 0u ? override_material : (cluster_material(mesh, c) & 0xffffffu);
-    if (params.pad1 != INVALID && material_row(output.material).program_id != params.pad1) {
+    Material row = material_row(output.material);
+    if (row.alpha_mode != ALPHA_BLEND || (params.pad1 != INVALID && row.program_id != params.pad1)) {
         output.position = float4(2.0, 2.0, 2.0, 1.0);
         return output;
     }
@@ -50,7 +51,7 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     float3 world = particle_world(params.emitter, p.position) + particle_mesh_vector(params.emitter, rotation, v.position * look.size);
     output.position = view_clip(world);
     // The color of the mesh tints it as it tints the mesh in the G-buffer.
-    output.out_color = float4(material_vertex_tint(material_row(output.material), v.color.rgb), 1.0) * look.color;
+    output.out_color = float4(material_vertex_tint(row, v.color.rgb), 1.0) * look.color;
     output.out_light = (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_LIT) != 0u ? particle_light(p) : emission_render_units(float3(1.0), (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_RELATIVE) != 0u);
     output.out_uv = float4(v.uv, v.uv1);
     output.out_blend_depth = float2(0.0, dot(world - frame.camera_position.xyz, frame.camera_forward.xyz));

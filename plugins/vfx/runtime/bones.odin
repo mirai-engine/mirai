@@ -20,6 +20,7 @@ import mm "mirai:std/math"
 // A rig a world read, by its mesh.
 Bone_Rig :: struct {
     mesh:base.Asset_Id,
+    used:u64,
     joints:[]Bone_Joint, // by joint of the palette; none: the mesh has no bones, or they did not load
 }
 
@@ -154,6 +155,7 @@ entity_bones :: proc(sync:^Particle_Sync,drawn:^erender.Render_Sync,meshes:^core
     if !has_mesh {return}
     rig:=bone_rig(&sync.rigs,assets,shown.mesh)
     if rig==nil {return}
+    rig.used=sync.frame
     if drawn!=nil && drawn.world==id {
         // The mesh its instance shows is its skin, when a library poses it.
         if at:=core.entity_map_index(&drawn.drawn,e);at>=0 {
