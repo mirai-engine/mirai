@@ -96,10 +96,9 @@ the assets.
   place after the read: from the `front` its settings state, or else, for a file that is a rig,
   from where its body is found facing ([front](references/imports.md#front)).
 - **The source is not modified.** The same bytes and options give the same assets.
-- **The library never removes and never builds without the source.** A refresh takes a build
-  from the store, the caller's source or an ingest of an origin on this machine; else it names
-  the package and what gives it. Nothing is deleted because a source is missing. Decided by the
-  owner.
+- **A refresh preserves the package when its source is missing.** It takes a build from the
+  store or the caller's source, finalizes a current local build, or ingests an origin on this
+  machine. If it cannot build the package, it names what is missing.
 - **A source imports from anywhere.** In a project, in a plugin or in no project: what it makes
   goes to the store, and its documents to the folder of the project given. In a project, it lives
   beside what it makes, in folders by theme, never a folder per asset type.
@@ -129,8 +128,8 @@ the assets.
 - **A share serves what the host has; a refresh takes what its build accepts.** A refresh that
   does not cook (the editor's, a play build's, a join's) takes a Final or a Fast build, from the
   store first and then from the source, before importing anything; one that cooks asks only
-  `imports` and takes a build only under the namespace its manifest's `final` matches, so a Fast
-  build never reaches a cook, and a package with no Final reachable fails by name.
+  `imports` and can finalize a current local build. Only a Final build reaches a cook, and a
+  package with no Final reachable fails by name.
 - **What imports and cooks build is kept as refs into the machine store** (`cook/cache`): an
   object named by `(cache-<name>, <key>-<version>)`, found by any program or machine that shares
   the store's objects; a miss asks the caller's `cache.Source` before building, what a pass needs
@@ -228,11 +227,11 @@ the assets.
   encoders or another builder is built again);
   `cook/build/cook_cache_test.odin` (a cook takes the blocks of a texture from the cache of its
   content, ships package assets from their objects and looks the cache up once per pass) and
-  `cook/import/sources/cook_test.odin` (the refresh of a cook builds a fast texture
-  final from its source; that of a build that does not cook keeps either; a peer with only
-  fetched builds cooks what the sources cook, sources inside a root stay behind and a missing
-  build fails by package; a refresh takes builds from a second store; a cook never takes a Fast
-  build a source holds, and ships once that source holds the Final one).
+  `cook/import/sources/cook_test.odin` (Final refresh reuses a current whole-source build
+  and encodes only its Fast textures from the cache, with the same outputs as a clean import;
+  a refresh that does not cook accepts either quality; a peer with only fetched builds cooks
+  what the sources cook, sources inside a root stay behind and a missing build fails by package;
+  a refresh takes builds from a second store and asks that store for Final when cooking).
 - Parallel: import a map with `mirai import --rebuild` over a copy of an import made without the
   job system (or before the change) and compare the trees with `diff -r`: the same bytes.
 - Also test `cook/prefab` if the imported hierarchy changes, and `asset` if an asset format or its
@@ -257,8 +256,8 @@ the assets.
 - Library: `cook/import/sources/library_test.odin` (a peer without sources fetches, lists and
   loads what a project pins, and without a source of builds reports by package and neither
   removes nor builds; a source outside any project ingests once and two projects list the same
-  objects; an engine change ingests again where the source is and is reported by name elsewhere,
-  also when only Fast is here and Final is required; hostile `packages.mirai` and manifests are
+  objects; an engine change ingests again where the source is and is reported by name elsewhere;
+  hostile `packages.mirai` and manifests are
   reported; two ingests of one source at once import it once; a copy of a root with its sources
   and an empty store builds the same ids, manifests and objects, and without them reports each
   package; refreshing from two empty stores writes nothing the second time) and

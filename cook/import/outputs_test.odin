@@ -380,7 +380,7 @@ a_fast_build_is_named_apart_from_the_final_builds :: proc(t:^testing.T) {
     s:=test_store(t,fmt.tprintf("%s/store",folder))
     if s==nil {return}
     model:=model_source(t,folder,"crate",import_version(0))
-    report,error:=import_write(&model,{store=s,textures=.Uncompressed,fast_textures=true},context.temp_allocator)
+    report,error:=import_write(&model,{store=s,fast_textures=true},context.temp_allocator)
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
     testing.expect(t,!report.final,"its texture is Fast")
     digits:[64]u8

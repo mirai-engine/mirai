@@ -16,7 +16,7 @@ import "mirai:std/base"
 import "mirai:store"
 
 // A texture the editor imported Fast ships Final: the refresh of a build that
-// cooks builds it again from its source with the id it has, a cook without it
+// cooks encodes it from its cached input with the id it has, a cook without it
 // says so, and the refresh of a build that does not cook takes either as it is.
 @(test)
 a_cook_ships_a_fast_texture_final_from_its_source :: proc(t:^testing.T) {
@@ -71,7 +71,7 @@ a_cook_ships_a_fast_texture_final_from_its_source :: proc(t:^testing.T) {
     report:=build.cook_assets({assets=assets,output=fmt.tprintf("%s/program",folder),manifest=cook_manifest,root=folder,store=s,allocator=context.temp_allocator})
     testing.expectf(t,report.error==.Source_Failed && strings.contains(report.detail,"noise") && strings.contains(report.detail,"mirai build game"),"%v %s",report.error,report.detail)
     refreshed:=project_refresh(folder,final_options,context.temp_allocator)
-    testing.expectf(t,refreshed.ingested==1 && len(refreshed.failures)==0 && len(refreshed.missing)==0,"%v",refreshed)
+    testing.expectf(t,refreshed.ingested==0 && len(refreshed.failures)==0 && len(refreshed.missing)==0,"%v",refreshed)
     kept=project_refresh(folder,fast,context.temp_allocator)
     testing.expectf(t,kept.ingested==0 && len(kept.failures)==0,"Final is current for a build that does not cook: %v",kept)
     report=build.cook_assets({assets=assets,output=fmt.tprintf("%s/game",folder),manifest=cook_manifest,root=folder,store=s,allocator=context.temp_allocator})
@@ -322,4 +322,62 @@ a_cook_never_takes_a_fast_build_a_source_holds :: proc(t:^testing.T) {
         }
     }
     testing.expect(t,textures_shipped>0,"the texture ships")
+}
+
+@(test)
+a_final_refresh_keeps_the_outputs_of_a_current_whole_source :: proc(t:^testing.T) {
+    for settings in ([2]importer.Import_Settings{{textures=.Uncompressed},{rdo_lambda=12}}) {
+        settings:=settings
+        root,assets:=test_project(t,"cook-whole")
+        if root=="" {return}
+        box_source(assets,"crate.gltf","Wood","Paint")
+        level:=write_text(assets,"hall.level","LEVEL crate.gltf")
+        state:=Level_Importer{kit=2}
+        s:=test_store(t,fmt.tprintf("%s/store",root))
+        if s==nil {return}
+        wholes:=[1]Whole_Source{{name=LEVEL_IMPORTER,claims=level_claims,run=level_run,state=&state}}
+        imports:=Library_Imports{wholes=wholes[:]}
+        options:=Library_Options{store=s,root=root,imports=&imports,fast_textures=true}
+        quick,import_error:=ingest(level,options,&settings,context.temp_allocator)
+        if !testing.expectf(t,import_error.code==.None,"%s",import_error.message) {return}
+        fast,read_error:=asset.build_get(s,quick.build,context.temp_allocator)
+        if !testing.expect_value(t,read_error,asset.Error.None) {return}
+        testing.expect_value(t,fast.final,settings.textures==.Uncompressed)
+        digits:[64]u8
+        key:=store.hex(quick.key,&digits)
+        if fast.final {
+            // A build classified as Fast even though all its textures are ready to ship.
+            fast.final=false
+            object,put_error:=asset.build_put(s,&fast)
+            if !testing.expect_value(t,put_error,asset.Error.None) {return}
+            testing.expect_value(t,store.ref_set(s,asset.REF_IMPORTS_FAST,key,object),store.Error.None)
+            testing.expect_value(t,store.ref_remove(s,asset.REF_IMPORTS,key),store.Error.None)
+        }
+        if !report_clean(t,project_add(root,quick.manifest,"",nil,options,context.temp_allocator)) {return}
+
+        options.fast_textures=false
+        refresh:=project_refresh(root,options,context.temp_allocator)
+        if !report_clean(t,refresh) {return}
+        testing.expect_value(t,refresh.ingested,0)
+        testing.expect_value(t,state.runs,1)
+        address,ref_error:=store.ref_get(s,asset.REF_IMPORTS,key)
+        if !testing.expect_value(t,ref_error,store.Error.None) {return}
+        final,error:=asset.build_get(s,address,context.temp_allocator)
+        if !testing.expect_value(t,error,asset.Error.None) {return}
+        testing.expect(t,final.final)
+        if !testing.expect_value(t,len(final.outputs),len(fast.outputs)) {return}
+        for output,at in fast.outputs {
+            if output.kind==asset.KIND_TEXTURE && settings.textures!=.Uncompressed {
+                testing.expect(t,final.outputs[at].object!=output.object)
+            } else {
+                testing.expect_value(t,final.outputs[at],output)
+            }
+        }
+
+        options.rebuild=true
+        clean,clean_error:=ingest(level,options,nil,context.temp_allocator)
+        if !testing.expectf(t,clean_error.code==.None,"%s",clean_error.message) {return}
+        testing.expect_value(t,clean.manifest,quick.manifest)
+        testing.expect_value(t,clean.build,address)
+    }
 }

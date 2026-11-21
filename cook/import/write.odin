@@ -225,9 +225,9 @@ import_info :: proc(source:string,name:string,index:int,size:u64,hash:u64,settin
 }
 
 // Reads the builds outputs may be taken from: that of what the import is made
-// from now (which fixes it), Final or, with fast textures, Fast; and the one
-// this machine chose for the previous manifest. Before any writer_reuse, on
-// the writer's thread.
+// from now (which fixes it), Final and Fast; and the one this machine chose
+// for the previous manifest. A Final import can reuse the meshes of a Fast build.
+// Read before any writer_reuse, on the writer's thread.
 @(private)
 writer_candidates :: proc(w:^Writer) {
     if w.candidates_read {return}
@@ -243,7 +243,7 @@ writer_candidates :: proc(w:^Writer) {
         if read_error==.None && b.package_id==w.package_id {append(&w.candidates,Candidate{b,current})}
     }
     take(w,s,asset.REF_IMPORTS,store.hex(w.key,&digits),true)
-    if w.options.fast_textures {take(w,s,asset.REF_IMPORTS_FAST,store.hex(w.key,&digits),true)}
+    take(w,s,asset.REF_IMPORTS_FAST,store.hex(w.key,&digits),w.options.fast_textures)
     if w.stored {take(w,s,asset.REF_BUILDS,store.hex(asset.build_select(w.previous_manifest,&w.previous),&digits),false)}
 }
 
@@ -270,16 +270,15 @@ writer_reuse :: proc(w:^Writer,types:^asset.Types,id:base.Asset_Id,kind:asset.Fo
 
 // The object a texture had, built from the same image with the same settings and
 // encoders (Import_Info.settings_hash): Final, or Fast for an import of fast
-// textures while the texture cache holds no Final of it. fast: it is Fast.
+// textures while the texture cache holds no Final of it.
 @(private="file")
-texture_reuse :: proc(w:^Writer,types:^asset.Types,job:Texture_Job,id,owner:base.Asset_Id,source:string) -> (hash:store.Hash,fast,found:bool) {
+texture_reuse :: proc(w:^Writer,types:^asset.Types,job:Texture_Job,id,owner:base.Asset_Id,source:string) -> (hash:store.Hash,found:bool) {
     options:=texture_options(w,job)
     final:=import_info(source,job.name,job.index,job.size,job.hash,textures.settings_hash(options),job.version)
     quick:=final
     if w.options.fast_textures && !textures.cache_has(import_cache(w.options),textures.cache_key_build(job.bytes,job.made,options)) {quick.settings_hash=fast_settings(options)}
-    info:asset.Import_Info
-    hash,info,found=writer_reuse(w,types,id,asset.KIND_TEXTURE,owner,final,quick)
-    return hash,found && info.settings_hash!=final.settings_hash,found
+    hash,_,found=writer_reuse(w,types,id,asset.KIND_TEXTURE,owner,final,quick)
+    return
 }
 
 // The slots of a mesh as its file stores them, naming the materials by row; in
@@ -390,12 +389,12 @@ texture_write :: proc(w:^Writer,job:Texture_Job,id,owner:base.Asset_Id,path,sour
     defer asset.types_destroy(&types)
     options:=texture_options(w,job)
     info:=import_info(source,job.name,job.index,job.size,job.hash,textures.settings_hash(options),job.version)
-    if hash,fast,found:=texture_reuse(w,&types,job,id,owner,source);found {
+    if hash,found:=texture_reuse(w,&types,job,id,owner,source);found {
         file:asset.Asset
         if asset.asset_open_object(&file,w.options.store,hash,context.temp_allocator)==.None {
             defer asset.asset_close(&file)
             if view,error:=asset.texture_view(&file,&types);error==.None {
-                return {kept=true,hash=hash,fast=fast,format=view.info.format,width=int(view.info.width),height=int(view.info.height),mips=len(view.mips)}
+                return {kept=true,hash=hash,fast=.Fast in view.info.flags,format=view.info.format,width=int(view.info.width),height=int(view.info.height),mips=len(view.mips)}
             }
         }
     }
@@ -409,13 +408,21 @@ texture_write :: proc(w:^Writer,job:Texture_Job,id,owner:base.Asset_Id,path,sour
     out.built=cooked.error
     if cooked.error!=.None {return}
     built:=&cooked.built
-    out.fast=cooked.settings!=info.settings_hash
+    out.fast=.Fast in built.flags
     info.settings_hash=cooked.settings
     desc:=textures.built_desc(built,id,&info)
     desc.owner=owner
     out.format,out.width,out.height,out.mips=built.format,built.width,built.height,len(built.mips)
     zone(import_options,"texture.save")
-    out.saved=asset.texture_save(path,&types,desc)
+    doc:asset.Document
+    out.saved=asset.texture_document(&doc,&types,desc)
+    if out.saved!=.None {return}
+    defer asset.document_destroy(&doc)
+    if out.fast {
+        _,out.saved=asset.document_put_row(&doc,&types,TEXTURE_FINAL,&cooked.final)
+        if out.saved!=.None {return}
+    }
+    out.saved=asset.document_save(&doc,path)
     return
 }
 
@@ -693,7 +700,7 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
         defer base.profile_end(reuse_zone)
         for job,i in jobs {
             part:=parts[i]
-            _,_,found:=texture_reuse(w,&w.types,job,part.id,part.owner,source)
+            _,found:=texture_reuse(w,&w.types,job,part.id,part.owner,source)
             kept_images[job.index]=part.given || found
         }
         material_part_ids:=make([]base.Asset_Id,len(model.materials),context.temp_allocator)

@@ -255,15 +255,25 @@ profile_keeps_the_newest_zones_and_stops_when_disabled :: proc(t:^testing.T) {
 @(test)
 profile_zones_measure_real_time :: proc(t:^testing.T) {
     p:Profile
-    testing.expect(t,profile_init(&p,{threads=1,zones_per_thread=8}));defer profile_destroy(&p)
-    scope:=profile_begin(&p,0,"sleep")
-    time.sleep(20*time.Millisecond)
-    profile_end(scope)
-    when PROFILE_COMPILED {
-        zones:[1]Profile_Zone
-        testing.expect_value(t,profile_read(&p,0,zones[:]),1)
-        milliseconds:=f64(zones[0].duration)/1e6
-        testing.expectf(t,milliseconds>15 && milliseconds<2000,"a sleep of 20 ms was measured as %v ms",milliseconds)
-        testing.expect(t,zones[0].start>=0 && zones[0].start<i64(time.Second))
+    if !testing.expect(t,profile_init(&p,{threads=1,zones_per_thread=8})) {return}
+    defer profile_destroy(&p)
+    when !PROFILE_COMPILED {
+        testing.expect(t,profile_begin(&p,0,"sleep").profile==nil)
+        return
     }
+    outside:=time.tick_now()
+    scope:=profile_begin(&p,0,"sleep")
+    inside:=time.tick_now()
+    time.sleep(20*time.Millisecond)
+    lower:=time.tick_since(inside)
+    profile_end(scope)
+    upper:=time.tick_since(outside)
+    zones:[1]Profile_Zone
+    testing.expect_value(t,profile_read(&p,0,zones[:]),1)
+    measured:=time.Duration(zones[0].duration)
+    // The cycle-counter scale is estimated against the monotonic clock.
+    tolerance:=upper/20 if p.cycles else 0
+    testing.expectf(t,measured>=lower-tolerance && measured<=upper+tolerance,
+        "measured %v with the elapsed time between %v and %v",measured,lower,upper)
+    testing.expect(t,zones[0].start>=0 && zones[0].start<i64(time.tick_since(p.epoch_tick)))
 }

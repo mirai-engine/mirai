@@ -162,10 +162,9 @@ part ([extension](../../mirai-editor/references/extensions.md#importers-of-a-plu
   [refresh](#library) of every build) loads the editor library of the project and takes the same
   providers from it with its store (`editor.import_library`, `sources.Library`), only when a
   source is read by no format of the engine or a model imports, whose prefab is written in the
-  types of the game the library has. `mirai import` first builds, as `mirai build editor` does,
-  the editor library of the project of what it imports while it is missing or not built from
-  the sources there are now (`build.target_state`, of the engine's sources too): a library built
-  against other engine types is never loaded.
+  types of the game the library has. `mirai import` builds a missing or stale editor library
+  before importing. This preparation leaves package refresh and library loading to the import
+  program.
 - `Import_Source_Provider{source}` is a source that the plugin imports whole with `Outputs`: it
   is the single source of every asset it makes (a scene, the models it reads with
   `output_model`), and the files it reads besides it are its `inputs`, like the `.bin` of a glTF.
@@ -329,6 +328,9 @@ checkout, worktree and project of the machine, keeps manifests and builds.
   `<store>/locks/`), and the second finds the work done.
 - **`project_add(root, manifest, folder, assets, options)`** pins a package in the project and
   follows it there; `project_ingest` ingests a source and pins its package in one import.
+  With no destination given, it uses the source's parent within the destination's assets, or
+  the root of the assets for a source from outside. A whole-source importer's document folder
+  goes under that destination.
   **Following** writes
   or follows its documents under `folder` of the assets: from the baselines of its build
   (`documents_follow`), and for a model whose source is here and whose game types the library
@@ -349,16 +351,17 @@ checkout, worktree and project of the machine, keeps manifests and builds.
   given `(imports, <keys>)` or `(imports-fast, <keys>)` it makes each build and every object it
   lists whole, given `(packages, <ids>)` the manifests; it takes many names at once, and a refresh
   asks every key and id it will need in one call before it goes package by package, `imports-fast`
-  only with `fast_textures` and for the keys the source gave no Final of), then built by ingesting
-  the origin when it exists on this machine. Otherwise the report says, by package name, that a
-  machine with its source must ingest it with this engine; when only a Fast build is here and Final
-  is required, it says that. It then names the build under `builds/<build_select>` and, when that
+  only with `fast_textures` and for the keys the source gave no Final of). When Final is required,
+  a current local Fast build can supply it. The refresh keeps its outputs and encodes any Fast
+  textures from the [texture cache](#texture-cache). If it lacks an input, it ingests the origin
+  when available, or reports the missing build by package name. It names the chosen build under
+  `builds/<build_select>` and, when that
   changed, follows the documents. A source here whose identity changed (its bytes, an input, the
   code of the plugin that imports it whole) is ingested again with the ids its manifest gives, and
   the project pins the new manifest. A document changed since it was last written is left as it is,
   with a warning that names it ([changed documents](#changed-documents)): the rest is written.
-- **It never removes** an object, a ref or a file of a project because a source is missing, and
-  never builds without the source. What the store does not have stays listed as not built.
+- **It never removes** an object, a ref or a file of a project because a source is missing. What
+  it cannot build or fetch stays listed as not built.
 - A source a plugin imports whole has a key only its importer knows: the refresh takes the build
   this machine chose for its manifest, and a machine without its source reports it.
 - **Source hashes.** The address of each file an identity reads is kept per origin by size and
@@ -430,8 +433,10 @@ machine that shares the store's objects with another finds what that one built.
   texture of the cache takes the Final
   the texture cache keeps for its key; without one it is built Fast under the key of Fast settings,
   and a texture kept Fast is written again as soon as the cache holds its Final, or by the
-  [refresh](#library) of a build that cooks. `Import_Info.settings_hash` says which of the two
-  the file holds.
+  [refresh](#library) of a build that cooks. When it writes a Fast texture, the importer caches
+  its lossless texels and settings under the Final texture's key. The texture records that key
+  so Final refresh can reuse a cached encode or build it without running the source importer.
+  Only textures with Fast blocks require finalization.
 - [Cooking](../../mirai-projects/references/build.md#asset-cooking) stores there the blocks of
   an RGBA8 texture by `textures.cache_key_blocks`.
 - A key names what made the blocks (`textures.encoders_id`), so machines with other encoders
