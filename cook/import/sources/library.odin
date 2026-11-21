@@ -73,7 +73,7 @@ Library_Options :: struct {
     source:cache.Source,
     // Fast textures allowed: imports build them Fast unless the texture cache
     // has them Final, and a Fast build is taken, here or from the source; false:
-    // Final required, what a cook ships, and a Fast build is never asked for.
+    // Final required for release cooking, and a Fast build is never asked for.
     fast_textures:bool,
     rebuild:bool,    // ingest: imports the source again, also when it is current
     // What an import into a project (project_ingest) does with its documents

@@ -373,8 +373,9 @@ checkout, worktree and project of the machine, keeps manifests and builds.
 - **Commands.** `mirai import <file>` ingests and adds to the project of `--project`, else the
   one whose assets hold the file, under `--folder` (else the folder of the file); `mirai import
   --refresh <root>` refreshes a project or a plugin. Both build textures Fast and take a Fast
-  build, as the editor does; `--final` requires Final. `--from <folder>`
-  naming a second store as its source (`cache.store_source`, which copies a ref with its objects,
+  build, as the editor does. `--final` requires Final. Add `--release` to use the optimized
+  importer for that encode. Use `--from <folder>` to name a second store as its source
+  (`cache.store_source`, which copies a ref with its objects,
   as a peer gives them); an installed engine takes its `builds/` store as that source. Every
   build of a project refreshes it and its plugins with a `packages.mirai` once its target stands
   (`build.job_imports`, `imports_refresh`) with the engine's import program, which reads the
@@ -389,6 +390,10 @@ levels, clusters and colliders of each mesh (`mesh_cook`) and the levels of each
 when it gets to it, with the same functions. Ids, files and parts are decided on a
 single thread and in the usual order: with or without a job system the same bytes are written.
 
+- Finalizing a cached Fast build uses the same pool for textures and their block encoders.
+  The number of textures in flight is bounded by the worker count, and each frees its scratch
+  after writing its object. The Final build is published in the original output order after all
+  textures succeed.
 - An import builds beforehand only the meshes and textures whose files it does not keep or take
   under another key, except with `rebuild`; a whole source that reads its models ahead asks
   `outputs_current` (every output of the cache has its file, under the key of now or another)
@@ -433,7 +438,7 @@ machine that shares the store's objects with another finds what that one built.
   texture of the cache takes the Final
   the texture cache keeps for its key; without one it is built Fast under the key of Fast settings,
   and a texture kept Fast is written again as soon as the cache holds its Final, or by the
-  [refresh](#library) of a build that cooks. When it writes a Fast texture, the importer caches
+  [refresh](#library) of a release game build. When it writes a Fast texture, the importer caches
   its lossless texels and settings under the Final texture's key. The texture records that key
   so Final refresh can reuse a cached encode or build it without running the source importer.
   Only textures with Fast blocks require finalization.

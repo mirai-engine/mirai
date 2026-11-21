@@ -1,5 +1,6 @@
 package textures
 
+import "base:runtime"
 import "core:log"
 import "core:slice"
 import "core:testing"
@@ -33,6 +34,8 @@ built_textures_are_kept_by_image_and_settings_and_read_back_whole :: proc(t:^tes
     built,error:=build(rgba8(pixels,16,16),options,context.temp_allocator)
     testing.expect_value(t,error,Error.None)
     testing.expect(t,cache_write(c,key,&types,&built))
+    _,no_room:=cache_read(c,key,&types,runtime.nil_allocator())
+    testing.expect(t,!no_room,"a cached texture without room for its mips is a miss")
     read,found:=cache_read(c,key,&types,context.temp_allocator)
     testing.expect(t,found && read.width==built.width && read.height==built.height && read.format==built.format && read.flags==built.flags && len(read.mips)==len(built.mips))
     for level,at in built.mips {

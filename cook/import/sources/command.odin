@@ -42,7 +42,7 @@ import "mirai:store"
 // missing and can finalize a current local build. A missing build names
 // it. Textures are built Fast, as the editor imports them, unless the texture
 // cache keeps them Final, and a Fast build is taken; --final builds them Final
-// and takes only a Final build: what a build that cooks and the package of the
+// and takes only a Final build: what a release game build and the package of the
 // engine take. --from <folder> names a second store a build this store lacks
 // is copied from before it is built (cache.store_source), as a peer gives it;
 // an installed engine takes the store of the builds of its plugins

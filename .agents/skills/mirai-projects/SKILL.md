@@ -63,8 +63,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 2. Arrange code and manifests according to the layout; to activate a plugin, follow
    [plugins](../mirai-plugins/SKILL.md).
 3. `mirai generate` to diagnose attributes; `mirai edit` or `mirai play` to build and run.
-4. To ship, `mirai build game` and review the cooking report, above all the roots that only code
-   refers to (`cook.mirai`).
+4. To ship, `mirai build game --release` and review the cooking report, above all the roots that
+   only code refers to (`cook.mirai`).
 
 ### Measure
 

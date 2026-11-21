@@ -912,12 +912,16 @@ job_importing :: proc(job:^Job) -> bool {
 
 // The import program reads the formats of the project's published editor library.
 @(private)
+job_imports_command :: proc(job:^Job) -> []string {
+    return imports_command(job.import_program,job.imports,job.cook.assets!="" && !job.cook.quick,job.store_root)
+}
+
+@(private)
 job_imports :: proc(job:^Job,compiled:Status) -> ^Job {
     job.compiled_status=compiled
     if len(job.imports)==0 {return job_target_done(job,compiled)}
-    args:=imports_command(job.import_program,job.imports,job.cook.assets!="",job.store_root)
     allocator:=virtual.arena_allocator(&job.arena)
-    if error:=imports_start(&job.refresh,args,allocator);error!=nil {
+    if error:=imports_start(&job.refresh,job_imports_command(job),allocator);error!=nil {
         job.result.text=fmt.aprintf("the import program could not run: %v",error,allocator=allocator)
         return job_fail(job,.Import_Failed)
     }

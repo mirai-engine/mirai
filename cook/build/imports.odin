@@ -18,9 +18,9 @@ import "mirai:std/subprocess"
 // is taken from the store, then from the store at from ("": none; an
 // installed engine adds the store of the builds of its plugins), then built
 // from its source when the source is on this machine; a package none of them
-// gives fails by name. Textures are required Final for a build that cooks
-// them (final) and taken Fast, as the editor imports them, for one that does
-// not. What the program says of each source it imports goes to the output
+// gives fails by name. A release game or engine package requires Final
+// textures (final). Dev builds also accept Fast. What the program says of each
+// source it imports goes to the output
 // of this process as it says it: a large source imports for minutes.
 // message, in the temp allocator: why it failed, with the source and the
 // reason the program gave, or, when it ended without saying (a crash, a
