@@ -35,7 +35,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
     } else {
         particle_states[slot].index_count = 6u;
-        particle_states[slot].instance_count = ribbon ? 0u : alive;
+        particle_states[slot].instance_count = ribbon ? 0u : (kind == PARTICLE_RENDER_BEAM ? alive * BEAM_PIECES : alive);
         particle_states[slot].first_index = 0u;
         particle_states[slot].vertex_offset = 0;
         particle_states[slot].first_instance = 0u;
@@ -43,7 +43,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     if (alive == 0u) return;
     InterlockedAdd(counted[0], alive);
     InterlockedAdd(counted[1], 1u);
-    if (alive >= 2u && ((range.w & PARTICLE_FLAG_SORT) != 0u || ribbon || count > 1u)) {
+    if (alive >= 2u && (ribbon || count > 1u)) {
         uint at;
         InterlockedAdd(particle_queue[SORT_AT / 4u], 1u, at);
         particle_queue[SORT_AT / 4u + 4u + at] = slot;

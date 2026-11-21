@@ -1,11 +1,13 @@
 //! mirai constant EMITTER_CAPACITY uint ../runtime/gpu.odin
+//! mirai constant WORK_AT uint ../runtime/gpu.odin
+//! mirai constant SORT_AT uint ../runtime/gpu.odin
 //! mirai constant REPORT_WORDS uint ../runtime/reports.odin
 //! mirai constant FLAG_DRAIN uint ../runtime/gpu.odin
 //! mirai constant PARTICLE_CURVE_KEYS uint ../runtime/effect/effect.odin
 //! mirai constant RIBBON_SHIFT uint ../runtime/gpu.odin
+//! mirai constant BEAM_PIECES uint ../runtime/gpu.odin
 //! mirai constant RIBBON_PIECES_SHIFT uint ../runtime/gpu.odin
 //! mirai constant DRAW_LOOK_BYTES uint ../runtime/gpu.odin
-//! mirai constant SORT_SLOT_BITS uint ../runtime/gpu.odin
 //! mirai constant RIBBON_PIECES uint ../runtime/gpu.odin
 //! mirai constant TRAILS_PER_SECOND uint ../runtime/gpu.odin
 //! mirai constant MESH_CHOICE_SHIFT uint ../runtime/gpu.odin
@@ -64,7 +66,8 @@ struct Particle_Emitter {
     float4 from_world[3];
     uint2 emitter_uid;
     float birth_limit;
-    uint uid_pad;
+    uint birth_entries;
+    float4 beam;
     uint4 mesh_handles;   // and the meshes, whose indices the frame lists (render.frame_mesh_whole)
 };
 
@@ -118,6 +121,7 @@ struct Particle_Event {
 #define PARTICLE_RENDER_HORIZONTAL 2u
 #define PARTICLE_RENDER_RIBBON 3u
 #define PARTICLE_RENDER_MESH 4u
+#define PARTICLE_RENDER_BEAM 5u
 
 #define PARTICLE_COLLISION_WORLD 1u
 #define PARTICLE_FACING_TUMBLE 0u
@@ -133,8 +137,6 @@ struct Particle_Event {
 // (vfx.MESH_DRAWS_AT), PARTICLE_MESH_DRAW_WORDS each.
 #define PARTICLE_MESH_DRAWS_AT (PARTICLE_EVENTS_AT + 2u * PARTICLE_EVENT_CAPACITY * PARTICLE_EVENT_WORDS)
 #define PARTICLE_MESH_DRAW_WORDS 4u
-#define WORK_AT ((PARTICLE_MESH_DRAWS_AT + EMITTER_CAPACITY * PARTICLE_MESHES * PARTICLE_MESH_DRAW_WORDS) * 4u)
-#define SORT_AT (WORK_AT + 16u + EMITTER_CAPACITY * 8u)
 
 // The resources of an emitter in particle_frame: the surface of its shape,
 // then those of its program, in the order it declares them.
@@ -155,8 +157,7 @@ struct Particle_Event {
 #define PARTICLE_STAGE_NONE 0u
 #define PARTICLE_STAGE_PARTICLES 1u
 #define PARTICLE_STAGE_CELLS 2u
-#define PARTICLE_BIRTH_BYTES 80u
-#define PARTICLE_SORT_MAX 2048u
+#define PARTICLE_BIRTH_BYTES 96u
 
 // render.Glass_Side: the side of glass a Blend pass draws (Stage_Pass.glass).
 #define PARTICLE_PASS_BEHIND_GLASS 1u
@@ -218,20 +219,22 @@ uint particle_frame_slot(uint index) { return particle_frame.Load(particle_frame
 #define PARTICLE_OUTLINES_BYTES (16u + VOLUME_OUTLINE_POINTS * 8u)
 #define PARTICLE_FIELDS_WIND (PARTICLE_FIELDS_GRAVITY + 16u + PARTICLE_GRAVITY_VOLUMES * 112u + PARTICLE_OUTLINES_BYTES)
 
-Gpu_Volume particle_frame_volume(uint at) {
+float4 particle_field_row(uint at) { return asfloat(particle_world_bytes.Load4(at)); }
+
+Gpu_Volume particle_field_volume(uint at) {
     Gpu_Volume v;
-    v.to_local[0] = particle_frame_row(at);
-    v.to_local[1] = particle_frame_row(at + 16u);
-    v.to_local[2] = particle_frame_row(at + 32u);
-    v.shape = particle_frame_row(at + 48u);
-    v.kind = particle_frame.Load4(at + 64u);
+    v.to_local[0] = particle_field_row(at);
+    v.to_local[1] = particle_field_row(at + 16u);
+    v.to_local[2] = particle_field_row(at + 32u);
+    v.shape = particle_field_row(at + 48u);
+    v.kind = particle_world_bytes.Load4(at + 64u);
     return v;
 }
 
-// The points of a Gpu_Outlines at bytes at of particle_frame.
+// The points of a Gpu_Outlines at bytes at of particle_world_bytes.
 struct Particle_Outlines : IVolume_Outlines {
     uint at;
-    float2 outline_point(uint i) { float4 r = particle_frame_row(at + 16u + (i >> 1) * 16u); return (i & 1u) != 0u ? r.zw : r.xy; }
+    float2 outline_point(uint i) { float4 r = particle_field_row(at + 16u + (i >> 1) * 16u); return (i & 1u) != 0u ? r.zw : r.xy; }
 };
 
 // What a Gravity pulls with at p, as volume gravity_of: along xyz of pull, or toward
@@ -248,28 +251,28 @@ float3 particle_gravity_of(float4 pull, float4 center, float3 p) {
 
 // What the gravity and the wind of where a particle of the world is add to its
 // acceleration: the share of the gravity its effect takes, and the wind its drag takes
-// it to. The fields are at bytes at of particle_frame; an effect view has none.
+// it to. The fields are at bytes at of particle_world_bytes; an effect view has none.
 float3 particle_fields(uint slot, uint at, float3 p) {
     float gravity_scale = particle_emitters[slot].noise.w;
     float drag = particle_emitters[slot].acceleration.w;
     if (gravity_scale == 0.0 && drag == 0.0) return float3(0.0);
     if ((particle_emitters[slot].range.w & PARTICLE_FLAG_VIEW) != 0u) return float3(0.0);
-    float4 gravity = float4(particle_frame_row(at).xyz, 0.0);
+    float4 gravity = float4(particle_field_row(at).xyz, 0.0);
     uint g = at + PARTICLE_FIELDS_GRAVITY;
     uint pulls = g + 16u + PARTICLE_GRAVITY_VOLUMES * 80u;
     Particle_Outlines pulled = {g + 16u + PARTICLE_GRAVITY_VOLUMES * 112u};
-    for (uint i = 0u; i < (gravity_scale != 0.0 ? min(particle_frame.Load(g), PARTICLE_GRAVITY_VOLUMES) : 0u); i++) {
-        Gpu_Volume v = particle_frame_volume(g + 16u + i * 80u);
+    for (uint i = 0u; i < (gravity_scale != 0.0 ? min(particle_world_bytes.Load(g), PARTICLE_GRAVITY_VOLUMES) : 0u); i++) {
+        Gpu_Volume v = particle_field_volume(g + 16u + i * 80u);
         float w = volume_weight(v, p, pulled);
-        if (w > 0.0) gravity = volume_mix(gravity, float4(particle_gravity_of(particle_frame_row(pulls + i * 16u), particle_frame_row(pulls + PARTICLE_GRAVITY_VOLUMES * 16u + i * 16u), p), 0.0), w, v);
+        if (w > 0.0) gravity = volume_mix(gravity, float4(particle_gravity_of(particle_field_row(pulls + i * 16u), particle_field_row(pulls + PARTICLE_GRAVITY_VOLUMES * 16u + i * 16u), p), 0.0), w, v);
     }
     float4 wind = float4(0.0);
     uint winds = at + PARTICLE_FIELDS_WIND;
     Particle_Outlines blown = {winds + 16u + WIND_VOLUMES * 96u};
-    for (uint i = 0u; i < (drag != 0.0 ? min(particle_frame.Load(winds), WIND_VOLUMES) : 0u); i++) {
-        Gpu_Volume v = particle_frame_volume(winds + 16u + i * 80u);
+    for (uint i = 0u; i < (drag != 0.0 ? min(particle_world_bytes.Load(winds), WIND_VOLUMES) : 0u); i++) {
+        Gpu_Volume v = particle_field_volume(winds + 16u + i * 80u);
         float w = volume_weight(v, p, blown);
-        if (w > 0.0) wind = volume_mix(wind, particle_frame_row(winds + 16u + WIND_VOLUMES * 80u + i * 16u), w, v);
+        if (w > 0.0) wind = volume_mix(wind, particle_field_row(winds + 16u + WIND_VOLUMES * 80u + i * 16u), w, v);
     }
     return gravity.xyz * gravity_scale + wind.xyz * drag;
 }
@@ -282,6 +285,7 @@ struct Particle_Birth {
     float4 values;
     uint count;
     uint number;                // among those of its channel
+    float3 normal;
 };
 
 Particle_Birth particle_birth_at(uint at) {
@@ -293,6 +297,7 @@ Particle_Birth particle_birth_at(uint at) {
     b.values = particle_frame_row(at + 48u);
     uint2 n = particle_frame.Load2(at + 64u);
     b.count = n.x; b.number = n.y;
+    b.normal = asfloat(particle_frame.Load3(at + 72u));
     return b;
 }
 
@@ -377,7 +382,7 @@ struct Particle_Stage {
 Particle_Stage particle_stage_of(uint slot, uint k) {
     Particle_Stage s = (Particle_Stage)0;
     uint frame_at = particle_emitters[slot].frame.w;
-    if (frame_at == INVALID || k >= PARTICLE_STAGES) return s;
+    if (frame_at == INVALID || k >= particle_emitters[slot].flipbook.w) return s;
     uint at = frame_at + k * PARTICLE_STAGE_BYTES;
     uint4 w = particle_frame.Load4(at);
     s.kind = w.x; s.row = w.y; s.iterations = w.z; s.writes = w.w;
@@ -389,7 +394,7 @@ Particle_Stage particle_stage_of(uint slot, uint k) {
 Particle_Resource particle_resource(uint slot, uint row) {
     Particle_Resource r = (Particle_Resource)0;
     uint frame_at = particle_emitters[slot].frame.x;
-    if (frame_at == INVALID || row >= PARTICLE_RESOURCES) return r;
+    if (frame_at == INVALID || row >= particle_emitters[slot].flipbook.z) return r;
     uint at = frame_at + row * PARTICLE_RESOURCE_BYTES;
     uint4 head = particle_frame.Load4(at);
     r.kind = head.x; r.mesh = head.y; r.first = head.z; r.count = head.w;
@@ -453,7 +458,7 @@ float3 ribbon_tangent(float3 before, float3 here, float3 after) {
 
 // The pool index of the i-th particle an emitter draws.
 uint particle_alive_at(uint slot, uint parity) {
-    return (4u + parity) * particle_emitters[slot].program.y + particle_emitters[slot].range.x;
+    return (3u + parity) * particle_emitters[slot].program.y + particle_emitters[slot].range.x;
 }
 
 #ifdef PARTICLES_WRITABLE

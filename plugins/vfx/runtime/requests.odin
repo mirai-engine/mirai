@@ -57,29 +57,44 @@ request_values_clear :: proc(requests:^Particle_Requests,e:core.Entity) {core.pu
 @(private)
 requests_apply :: proc(
     requests:^Particle_Requests,emitters:^core.Table(Particle_Emitter),overrides:^core.Table(Particle_Override),
-    clocks:^Particle_Clocks,problems:^core.Problems,assets:^host.Assets=nil,
+    clocks:^Particle_Clocks,sync:^Particle_Sync,problems:^core.Problems,assets:^host.Assets=nil,playing:=true,
 ) {
     for &request in core.take(&requests.queue) {
         error:=Error.None
         if !core.has(emitters,request.entity) {error=.Invalid_Entity}
         clock:^Emitter_Clock
         if error==.None {
-            if clock=clock_of(clocks,request.entity);clock==nil {error=.Invalid_Entity}
+            emitter,_:=core.get(emitters,request.entity)
+            if clock=clocks_resolve(clocks,sync,overrides,assets,request.entity,emitter);clock==nil {error=.Invalid_Entity}
         }
         if error==.None {
             switch request.command {
             case .Start,.Stop:
                 emitter:=core.edit(emitters,request.entity)
-                emitter.active=request.command==.Start
-                // A single cycle that ended starts again.
-                if emitter.active && (clock.done || !emitter.loop && clock.time>=f64(clock.emission.duration)) {clock.time,clock.pending,clock.done,clock.program_until=0,0,false,0}
-            case .Restart: clock_restart(clock)
-            case .Pause: clock.paused=true
-            case .Resume: clock.paused=false
-            case .Burst:
-                if !clock.paused {
-                    births_add(clock,clock.time,request.count,request.count,0)
-                    clock.done=false
+                active:=request.command==.Start
+                if playing {emitter.active=active} else {emitter.preview=active}
+                if active {
+                    for layer in 0..=int(clock.layers) {
+                        c:=clock_find(clocks,request.entity,layer)
+                        if c!=nil && (c.done || !emitter.loop && c.time>=f64(c.emission.duration)) {
+                            c.time,c.pending,c.done,c.program_until=0,0,false,0
+                        }
+                    }
+                }
+            case .Restart,.Pause,.Resume,.Burst:
+                for layer in 0..=int(clock.layers) {
+                    c:=clock_find(clocks,request.entity,layer)
+                    if c==nil {continue}
+                    #partial switch request.command {
+                    case .Restart: clock_restart(c)
+                    case .Pause: c.paused=true
+                    case .Resume: c.paused=false
+                    case .Burst:
+                        if !c.paused {
+                            births_add(c,c.time,request.count,request.count,0)
+                            c.done=false
+                        }
+                    }
                 }
             case .Value,.Value_Remove,.Values_Clear:
                 // The row an earlier request of this step adds, too.
@@ -88,7 +103,7 @@ requests_apply :: proc(
                 #partial switch request.command {
                 case .Value:
                     emitter,_:=core.get(emitters,request.entity)
-                    info:=particle_resolve(assets,emitter.particle,&override)
+                    info:=particle_resolve(assets,emitter.particle,&override,emitter.preset)
                     error=value_put(&override,request.name,request.value[:],&info)
                 case .Value_Remove: value_drop(&override,request.name)
                 case .Values_Clear: override={}

@@ -19,13 +19,18 @@ particle_effects_keep_their_values_parameters_hidden_fields_and_assets :: proc(t
     hidden:[2]Particle_Field
     base.text_set(hidden[0].name[:],"noise")
     base.text_set(hidden[1].name[:],"bursts")
-    parameters:[2]Particle_Parameter
+    parameters:[3]Particle_Parameter
     base.text_set(parameters[0].name[:],"radius")
     parameters[0].kind,parameters[0].components,parameters[0].value=.Float,1,{2.5,0,0,0}
     base.text_set(parameters[1].name[:],"pattern")
     parameters[1].kind,parameters[1].components,parameters[1].texture=.Texture,1,{9,10}
     path:=fmt.tprintf("%s/spark.particle",base.test_folder(t,"effect"))
-    testing.expect_value(t,particle_save(path,&types,{id={7,8},info=info,parameters=parameters[:],hidden=hidden[:]}),asset.Error.None)
+    parameters[2]=parameters[0]
+    parameters[2].layer=1
+    layers:=[2]Particle_Info{particle_preset(.Fire),particle_preset(.Smoke)}
+    testing.expect_value(t,particle_save(path,&types,{
+        id={7,8},info=info,layers=layers[:],parameters=parameters[:],hidden=hidden[:],
+    }),asset.Error.None)
 
     a:asset.Asset
     testing.expect_value(t,asset.asset_load(&a,path),asset.Error.None)
@@ -33,9 +38,11 @@ particle_effects_keep_their_values_parameters_hidden_fields_and_assets :: proc(t
     view,error:=particle_view(&a,&types)
     testing.expect_value(t,error,asset.Error.None)
     testing.expect(t,view.info==info)
+    testing.expect(t,len(view.layers)==2 && view.layers[0]==layers[0] && view.layers[1]==layers[1])
     testing.expect(t,len(view.hidden)==2 && serial.text_field(view.hidden[1].name[:])=="bursts")
     testing.expect(t,particle_hidden(view.hidden,"noise") && !particle_hidden(view.hidden,"rate"))
-    testing.expect(t,len(view.parameters)==2 && view.parameters[0]==parameters[0])
+    testing.expect(t,len(view.parameters)==3 && view.parameters[0]==parameters[0])
+    testing.expect(t,particle_parameter_find(view.parameters,"radius",1)==&view.parameters[2])
     found:=particle_parameter_find(view.parameters,"pattern")
     testing.expect(t,found!=nil && found.texture==base.Asset_Id{9,10})
     testing.expect_value(t,len(a.dependencies),3) // its material, its sub particle and the texture of a parameter
@@ -130,4 +137,28 @@ particle_values_are_named_by_their_paths :: proc(t:^testing.T) {
     _,unknown:=particle_value_at("bursts.9.count")
     testing.expect(t,!unknown)
     for value in particle_fields() {testing.expect(t,value.size<=PARTICLE_VALUE_BYTES)}
+}
+
+@(test)
+curves_and_gradients_accept_short_key_lists :: proc(t:^testing.T) {
+    info:=PARTICLE_DEFAULTS
+    info.size_over_life={times={1=0.4},values={0=1,1=2}}
+    info.color_over_life={times={1=0.2,2=0.8},colors={0={1,0,0,1},1={1,1,0,1}}}
+    testing.expect(t,particle_check({info=info}))
+    testing.expect_value(t,particle_key_count(info.size_over_life.times[:]),2)
+    testing.expect_value(t,particle_key_count(info.color_over_life.times[:]),3)
+    info.color_over_life.times[1]=0.9
+    testing.expect(t,!particle_check({info=info}))
+}
+
+
+@(test)
+starter_presets_have_valid_motion_and_look :: proc(t:^testing.T) {
+    for preset in Particle_Preset {
+        info:=particle_preset(preset)
+        testing.expect(t,particle_check({info=info}))
+        testing.expect(t,info.rate>0 || info.bursts[0].count>0 || info.rate_over_distance>0)
+    }
+    beam:=particle_preset(.Beam)
+    testing.expect(t,beam.render==.Beam && beam.beam_end!={} && beam.beam_arc!=0)
 }

@@ -77,9 +77,23 @@ Pool_Emitter :: struct {
 Particle_Inspect_Params :: struct {
     particle:string `mirai:"optional,label=An effect: its path under the assets folder, or its id"`,
     path:string `mirai:"optional,label=particle.create: where the new effect goes, under the assets folder"`,
+    preset:effect.Particle_Preset `mirai:"optional,label=Starter values of the primary layer"`,
+    layers:[]Particle_Layer_Params `mirai:"optional,label=Additional emitter layers; replaces the sequence"`,
     values:serial.Json `mirai:"optional,label=Fields of the effect to change, as particle.inspect shows them"`,
     parameters:serial.Json `mirai:"optional,label=Parameters of its Vfx program by name: a number, a list, true or false, or a texture by path or id; null takes one away"`,
     hidden:[]string `mirai:"optional,label=The fields its instances do not show; replaces the list"`,
+}
+
+Particle_Layer_Params :: struct {
+    preset:effect.Particle_Preset `mirai:"optional"`,
+    values:serial.Json `mirai:"optional"`,
+    parameters:serial.Json `mirai:"optional"`,
+}
+
+Particle_Layer_Result :: struct {
+    values:effect.Particle_Info,
+    parameters:serial.Json,
+    problem:string `mirai:"optional"`,
 }
 
 Particle_Instance_Set_Params :: struct {
@@ -92,6 +106,7 @@ Particle_Result :: struct {
     particle:base.Asset_Id,
     path:string `mirai:"optional,label=Under the assets folder"`,
     values:effect.Particle_Info,
+    layers:[]Particle_Layer_Result,
     parameters:serial.Json `mirai:"label=Of its Vfx program by name, as particle.set takes them"`,
     hidden:[]string `mirai:"label=The fields its instances do not show"`,
     problem:string `mirai:"optional,label=Why its program would not run"`,
@@ -152,8 +167,8 @@ Gpu_Particle :: struct {
 
 @(private)
 api_register :: proc(s:^editor.Session) {
-    editor.api_method_register(s,{name="particle.inspect",params=type_info_of(Particle_Inspect_Params),summary="The values of a particle effect (.particle), the parameters of its Vfx program and the fields its instances do not show; problem says why its program would not run.",flags={.Read_Only},result=type_info_of(Particle_Result),run=api_particle_inspect})
-    editor.api_method_register(s,{name="particle.set",params=type_info_of(Particle_Inspect_Params),summary="Changes the values, Vfx parameters or hidden fields of a particle effect for every entity that shows it, or makes a new one at path over the defaults.",flags={.Idempotent},result=type_info_of(Particle_Result),run=api_particle_set})
+    editor.api_method_register(s,{name="particle.inspect",params=type_info_of(Particle_Inspect_Params),summary="The primary and additional layers of a particle effect (.particle), and the primary layer’s Vfx parameters and hidden fields.",flags={.Read_Only},result=type_info_of(Particle_Result),run=api_particle_inspect})
+    editor.api_method_register(s,{name="particle.set",params=type_info_of(Particle_Inspect_Params),summary="Changes a particle effect for every entity that shows it, or makes one at path. Set preset to start from a starter effect and layers to give additional emitters.",flags={.Idempotent},result=type_info_of(Particle_Result),run=api_particle_set})
     editor.api_method_register(s,{name="particle.programs",summary="The Vfx programs of the shaders: their parameters with kind, components, default and range, the bytes each keeps per particle, the resources it reads by name (surfaces, bones, channels, grids) and its stages: what each goes over and its iterations.",flags={.Read_Only},result=type_info_of(Programs_Result),run=api_particle_programs})
     inspect:=Api_Particle_Instance_Params{world=.Edit}
     control:=Api_Particle_Control_Params{world=.Play}
@@ -161,7 +176,7 @@ api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="particle.instance.set",params=type_info_of(Particle_Instance_Set_Params),summary="In Edit, one undo step: the values given that differ from the effect, and the parameters given, become the entity's own (at most 16 together, not its assets or program). The result is as particle.instance.inspect's.",result=type_info_of(Instance_Result),run=api_particle_instance_set})
     editor.api_method_register(s,{name="particle.instance.revert",params=type_info_of(Api_Particle_Id_Params),summary="In Edit, one undo step: the entity takes back every value and parameter of its effect.",result=type_info_of(Instance_Result),run=api_particle_instance_revert})
     editor.api_method_register(s,{name="particle.instance.apply",params=type_info_of(Api_Particle_Id_Params),summary="Writes the values and parameters the entity shows into its effect, for every entity that shows it, and reverts the entity, in one undo step.",result=type_info_of(Instance_Result),run=api_particle_instance_apply})
-    editor.api_method_register(s,{name="particle.instance.control",params=type_info_of(Api_Particle_Control_Params),result=type_info_of(Api_Particle_Control_Result),defaults=&control,summary="Asks an emitter in the Play of the caller to start or stop (its active), restart, pause, resume or burst count particles, or one in the preview of the document all of them but start and stop. It takes it in its next fixed step.",run=api_particle_instance_control})
+    editor.api_method_register(s,{name="particle.instance.control",params=type_info_of(Api_Particle_Control_Params),result=type_info_of(Api_Particle_Control_Result),defaults=&control,summary="Starts, stops, restarts, pauses, resumes or bursts an emitter in Edit or the caller's Play. The emitter takes the request in its next fixed step.",run=api_particle_instance_control})
     pool:=Api_Particle_Pool_Params{world=.Edit}
     editor.api_method_register(s,{name="particle.pool.inspect",params=type_info_of(Api_Particle_Pool_Params),defaults=&pool,summary="Every emitter of a world with its particles alive, free slots, capacity, Vfx program and the bytes it takes of the pool, as the GPU had them some frames ago; the editor reads them from the first call on.",flags={.Read_Only},result=type_info_of(Pool_Result),run=api_particle_pool_inspect})
 }
@@ -172,6 +187,9 @@ api_register :: proc(s:^editor.Session) {
 Particle_Params :: struct {
     named,path,values:string,
     parameters:string,
+    preset:effect.Particle_Preset,
+    layers:[]Particle_Layer_Params,
+    has_layers:bool,
     hidden:[dynamic]effect.Particle_Field,
     has_hidden:bool,
 }
@@ -181,6 +199,8 @@ particle_params :: proc(call:^api.Call) -> (p:Particle_Params) {
     given:=api.call_params(call,Particle_Inspect_Params)
     p.named,p.path,p.values=given.particle,given.path,string(given.values)
     p.parameters=string(given.parameters)
+    p.preset,p.layers=given.preset,given.layers
+    p.has_layers=api.call_given(call,"layers")
     p.has_hidden=api.call_given(call,"hidden")
     p.hidden=make([dynamic]effect.Particle_Field,context.temp_allocator)
     for name in given.hidden {
@@ -208,7 +228,7 @@ particle_program_of :: proc(s:^editor.Session,info:^effect.Particle_Info) -> (pr
 // Puts the parameters of the params ({name: value|null}) over those of
 // file, as the program of info declares them.
 @(private)
-particle_parameters_read :: proc(s:^editor.Session,call:^api.Call,text:string,info:^effect.Particle_Info,file:^Particle_File) -> bool {
+particle_parameters_read :: proc(s:^editor.Session,call:^api.Call,text:string,info:^effect.Particle_Info,file:^Particle_File,layer:u8=0) -> bool {
     if text=="" {return true}
     program,problem:=particle_program_of(s,info)
     r:serial.Text_Reader
@@ -226,12 +246,12 @@ particle_parameters_read :: proc(s:^editor.Session,call:^api.Call,text:string,in
         name=strings.clone(name,context.temp_allocator)
         serial.text_space(&r)
         if serial.text_keyword(&r,"null") {
-            effect_parameter_remove(file,name)
+            effect_parameter_remove(file,name,layer)
         } else {
             if program==nil {return fail(call,"parameters: %s",problem!="" ? problem : "the effect has no Vfx program: name one in program first")}
             declared:=erender.program_parameter(program,name)
             if declared==nil {return fail(call,"parameters: %s has no parameter %q; particle.programs lists them",program.name,name)}
-            parameter:=effect.Particle_Parameter{kind=asset.Parameter_Kind(declared.kind),components=declared.components}
+            parameter:=effect.Particle_Parameter{kind=asset.Parameter_Kind(declared.kind),components=declared.components,layer=layer}
             base.text_set(parameter.name[:],name)
             switch {
             case declared.kind==.Texture:
@@ -276,13 +296,16 @@ parameter_number :: proc(r:^serial.Text_Reader) -> (value:f64,ok:bool) {
 
 // The parameters of a list as the object particle.set takes, by name.
 @(private)
-particle_parameters_json :: proc(call:^api.Call,list:[]effect.Particle_Parameter) -> serial.Json {
+particle_parameters_json :: proc(call:^api.Call,list:[]effect.Particle_Parameter,layer:u8=0) -> serial.Json {
     w:serial.Writer
     serial.writer_init(&w,256,call.allocator)
     out:=&w
     serial.write_u8(out,'{')
-    for &parameter,i in list {
-        if i>0 {serial.write_u8(out,',')}
+    first:=true
+    for &parameter in list {
+        if parameter.layer!=layer {continue}
+        if !first {serial.write_u8(out,',')}
+        first=false
         serial.text_write_string(out,base.text_get(parameter.name[:]))
         serial.write_u8(out,':')
         if parameter.kind==.Texture {
@@ -320,6 +343,18 @@ api_particle_write :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id) {
     r:=api.call_result(call,Particle_Result)
     r.particle=id
     r.values=view.info
+    items,err:=make([]Particle_Layer_Result,len(view.layers),call.allocator)
+    if err!=nil {
+        api.call_fail(call,api.SERVER_ERROR,"Out of memory for particle layers")
+        return
+    }
+    r.layers=items
+    for &item,i in items {
+        item.values=view.layers[i]
+        item.parameters=particle_parameters_json(call,view.parameters,u8(i+1))
+        program:vfx.Program
+        item.problem=vfx.particle_program_check(a,&item.values,view.parameters,nil,&program,layer=u8(i+1))
+    }
     r.path=editor.asset_path(s,id)
     r.parameters=particle_parameters_json(call,view.parameters)
     hidden:=make([]string,len(view.hidden),call.allocator)
@@ -340,7 +375,25 @@ api_particle_inspect :: proc(s:^editor.Session,call:^api.Call) {
 // The file of the params over file: its values, its parameters and its hidden fields.
 @(private)
 particle_params_apply :: proc(s:^editor.Session,call:^api.Call,p:^Particle_Params,file:^Particle_File) -> bool {
+    if p.preset!=.Default {file.info=effect.particle_preset(p.preset)}
     if !editor.asset_values_read(call,p.values,&file.info) {return false}
+    if p.has_layers {
+        if len(p.layers)>len(file.layers) {
+            api.call_failf(call,api.INVALID_PARAMS,"layers: give at most %d additional layers",len(file.layers))
+            return false
+        }
+        file.layers={}
+        particle_layer_parameters_remove(file,1,all_after=true)
+        for &layer,i in p.layers {
+            info:=&file.layers[i]
+            info^=effect.particle_preset(layer.preset)
+            if !editor.asset_values_read(call,string(layer.values),info) ||
+                !particle_parameters_read(s,call,string(layer.parameters),info,file,u8(i+1)) {
+                return false
+            }
+        }
+        file.layer_count=len(p.layers)
+    }
     if !particle_parameters_read(s,call,p.parameters,&file.info,file) {return false}
     if p.has_hidden {
         if len(p.hidden)>len(file.hidden) {
@@ -468,7 +521,7 @@ particle_instance_write :: proc(s:^editor.Session,call:^api.Call,w:core.World_Re
     emitter,_:=editor.entity_get(w,e,vfx.Particle_Emitter)
     override,_:=editor.entity_get(w,e,vfx.Particle_Override)
     info:effect.Particle_Info
-    error:=vfx.particle_resolve_checked(a,emitter.particle,&override,&info)
+    error:=vfx.particle_resolve_checked(a,emitter.particle,&override,&info,emitter.preset)
     given:Particle_File
     given.info=info
     instance_parameters(s,&override,&given)
@@ -552,7 +605,7 @@ api_particle_instance_set :: proc(s:^editor.Session,call:^api.Call) {
     override,_:=editor.entity_get(w,e,vfx.Particle_Override)
     file:=particle_file(s,emitter.particle)
     // The values it shows, with those given over them; what differs from the effect is its own.
-    shown:=vfx.particle_resolve(s.app.assets,emitter.particle,&override)
+    shown:=vfx.particle_resolve(s.app.assets,emitter.particle,&override,emitter.preset)
     if !editor.asset_values_read(call,values,&shown) {return}
     if problem:=effect.particle_validate({info=shown});problem.message!="" {
         api.call_failf(call,api.INVALID_PARAMS,"values: %s: %s",problem.field,problem.message)
@@ -642,7 +695,7 @@ api_particle_instance_apply :: proc(s:^editor.Session,call:^api.Call) {
     }
     override,_:=editor.entity_get(w,e,vfx.Particle_Override)
     file:=particle_file(s,emitter.particle)
-    file.info=vfx.particle_resolve(s.app.assets,emitter.particle,&override)
+    file.info=vfx.particle_resolve(s.app.assets,emitter.particle,&override,emitter.preset)
     instance_parameters(s,&override,&file)
     a:=s.app.assets
     record,_:=asset.registry_find(&a.registry,emitter.particle)
@@ -663,10 +716,6 @@ api_particle_instance_control :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Api_Particle_Control_Params)
     if p.action==.Burst && p.count==0 {
         api.call_fail(call,api.INVALID_PARAMS,"Burst takes count: the particles it starts")
-        return
-    }
-    if p.world==.Edit && (p.action==.Start || p.action==.Stop) {
-        api.call_fail(call,api.INVALID_PARAMS,"Start and Stop set active, which the document's emitter does not emit by: set its preview with scene.write, or start a Play")
         return
     }
     w,ok:=particle_world(s,call,p.world)

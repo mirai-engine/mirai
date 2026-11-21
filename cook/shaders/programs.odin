@@ -62,7 +62,7 @@ Catalog :: struct {
     programs:   []abi.Program,
     extensions: Extensions, // what the sources ask of the stages besides programs
     refused:    []string,   // the programs left out and why, one each: the others are published
-    vfx:        []string,   // the Vfx programs, each with an include of its own (VFX_FOLDER/<name>/VFX_INCLUDE)
+    vfx:        []Vfx_Program_Uses, // programs with an include of their own
     surface:    []string,   // the Surface programs, each with an include of its own (SURFACE_FOLDER/<name>/SURFACE_INCLUDE)
     vertex:     []string,   // of them, those with a function vertex: a stage marked `//! per vertex program` is compiled for each
     surface_uses:[]abi.Program_Uses, // by surface: what each is drawn as
@@ -100,7 +100,7 @@ Program_Directives :: struct {
     line:int, // from 1
     metadata:[dynamic][2]string, // field, json
     resources,stages:[dynamic][]string,
-    moves,births,prepare:bool,
+    moves,births,prepare,rebase:bool,
     vertex:[]string,
     uses:[dynamic]string, // the words of its `//! use` lines
 }
@@ -120,6 +120,7 @@ program_directives :: proc(text:string,allocator:=context.temp_allocator) -> (d:
         case "//! moves": d.moves=true;continue
         case "//! births": d.births=true;continue
         case "//! prepare": d.prepare=true;continue
+        case "//! rebase": d.rebase=true;continue
         }
         if !strings.has_prefix(line,"//!") {continue}
         if field,value,found:=parameter_metadata(line);found {
@@ -675,6 +676,12 @@ vfx_program_include :: proc(
     if failure:=vfx_attributes(&own,name,attributes);failure!="" {return "",failure}
     fmt.sbprintf(&own,"#ifdef PARTICLES_WRITABLE\nbool mirai_vfx_initialize(uint id,float4 packed[16],uint attributes,Mirai_Vfx_Context ctx,inout Mirai_Vfx_Particle value) {{%s::Attributes a=(%s::Attributes)0;%s::initialize(ctx,mirai_load_%s(packed),value,a);mirai_attributes_store_%s(attributes,a);return true;}}\n",name,name,name,name,name)
     fmt.sbprintf(&own,"bool mirai_vfx_update(uint id,float4 packed[16],uint attributes,Mirai_Vfx_Context ctx,inout Mirai_Vfx_Particle value) {{%s::Attributes a=mirai_attributes_load_%s(attributes);%s::update(ctx,mirai_load_%s(packed),value,a);mirai_attributes_store_%s(attributes,a);return true;}}\n",name,name,name,name,name)
+    if said.rebase {
+        fmt.sbprintf(&own,"void mirai_vfx_rebase(uint at,float3 origin_shift) {{%s::Attributes a=mirai_attributes_load_%s(at);%s::rebase(origin_shift,a);mirai_attributes_store_%s(at,a);}}\n",
+            name,name,name,name)
+    } else {
+        strings.write_string(&own,"void mirai_vfx_rebase(uint at,float3 origin_shift) {}\n")
+    }
     particles,cells:=strings.builder_make(context.temp_allocator),strings.builder_make(context.temp_allocator)
     for stage,index in stages {
         if stage.over==abi.PROGRAM_STAGE_PARTICLES {
@@ -1017,6 +1024,7 @@ dispatchers_write :: proc(d:^Dispatchers,include:string) -> (failed:string) {
     vfx:=strings.builder_make(context.temp_allocator)
     strings.write_string(&vfx,VFX_HEADER)
     strings.write_string(&vfx,"#ifdef PARTICLES_WRITABLE\nbool mirai_vfx_initialize(uint id,float4 packed[16],uint attributes,Mirai_Vfx_Context ctx,inout Mirai_Vfx_Particle value) {return false;}\n")
+    strings.write_string(&vfx,"void mirai_vfx_rebase(uint at,float3 origin_shift) {}\n")
     strings.write_string(&vfx,"bool mirai_vfx_update(uint id,float4 packed[16],uint attributes,Mirai_Vfx_Context ctx,inout Mirai_Vfx_Particle value) {return false;}\n")
     strings.write_string(&vfx,"uint mirai_vfx_births(uint id,float4 packed[16],Mirai_Vfx_Context ctx) {return 0u;}\n")
     strings.write_string(&vfx,"void mirai_vfx_prepare(uint id,float4 packed[16],Mirai_Vfx_Context ctx) {}\n")
@@ -1250,7 +1258,7 @@ programs_generate :: proc(
     }
     programs:=make([dynamic]abi.Program,allocator)
     dispatchers:=dispatchers_make()
-    vfx_names:=make([dynamic]string,allocator)
+    vfx_names:=make([dynamic]Vfx_Program_Uses,allocator)
     surface_names:=make([dynamic]string,allocator)
     vertex_names:=make([dynamic]string,allocator)
     surface_uses:=make([dynamic]abi.Program_Uses,allocator)
@@ -1431,7 +1439,7 @@ programs_generate :: proc(
         } else if e.said.vertex!=nil {
             append(&refused,fmt.aprintf("%s: only a Surface program moves vertices (`//! vertex`)",name,allocator=allocator))
             continue
-        } else if len(e.said.uses)>0 {
+        } else if len(e.said.uses)>0 && of!=.Vfx {
             append(&refused,fmt.aprintf("%s: only a Surface program says what it is drawn as (`//! use`)",name,allocator=allocator))
             continue
         }
@@ -1460,7 +1468,19 @@ programs_generate :: proc(
                 append(&refused,fmt.aprintf("%s: could not write its %s",name,VFX_INCLUDE,allocator=allocator))
                 continue
             }
-            append(&vfx_names,strings.clone(name,allocator))
+            vfx_uses:Vfx_Uses={.Emit,.Simulate}
+            if len(stages)>0 {vfx_uses+={.Stage}}
+            if e.said.rebase {vfx_uses+={.Rebase}}
+            if word_in(e.text,"mirai_vfx_trace") {vfx_uses+={.Trace}}
+            valid:=true
+            for use in e.said.uses {
+                if use=="trace" {vfx_uses+={.Trace};continue}
+                append(&refused,fmt.aprintf("%s: `//! use %s` names no Vfx use; use trace for ray queries",name,use,allocator=allocator))
+                valid=false
+                break
+            }
+            if !valid {continue}
+            append(&vfx_names,Vfx_Program_Uses{strings.clone(name,allocator),vfx_uses})
         } else {
             // The include of a Surface program alone: the stages of each program are compiled with it.
             if of==.Surface {

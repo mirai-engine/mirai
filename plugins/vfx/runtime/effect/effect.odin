@@ -4,7 +4,6 @@ import "base:runtime"
 import "core:fmt"
 import "core:math"
 import "core:mem"
-import "core:strconv"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
@@ -15,7 +14,7 @@ import "mirai:std/serial"
 // material is a look. The entities that show it name it and give it values
 // of their own.
 //
-//   particle    Particle_Info, one row
+//   particle    Particle_Info, one row per layer, in emission order
 //   parameters  Particle_Parameter: values for its Vfx program, by name
 //   hidden      Particle_Field: fields an instance does not show
 //
@@ -25,6 +24,7 @@ import "mirai:std/serial"
 // paths an instance can change, each a value of at most PARTICLE_VALUE_BYTES;
 // text fields (the program) are of the effect alone.
 
+PARTICLE_LAYERS :: 8
 PARTICLE_BURSTS :: 4
 PARTICLE_CURVE_KEYS :: 8
 PARTICLE_VALUE_BYTES :: 16
@@ -33,7 +33,7 @@ PARTICLE_MAX_PARAMETERS :: 32
 PARTICLE_MESHES :: 4
 
 Particle_Shape :: enum u32 {Point,Sphere,Hemisphere,Cone,Box,Circle,Line,Surface,Bones}
-Particle_Render :: enum u32 {Billboard,Velocity,Horizontal,Ribbon,Mesh}
+Particle_Render :: enum u32 {Billboard,Velocity,Horizontal,Ribbon,Mesh,Beam}
 Particle_Blend :: enum u32 {Additive,Alpha}
 Particle_Collision :: enum u32 {None,World}
 // How a Mesh particle turns: Tumble, about an axis of its own by its rotation
@@ -55,8 +55,7 @@ Particle_Burst :: struct {
 }
 
 // A value over the life of a particle:
-// piecewise linear between keys at ascending times from 0 to 1. Keys past the
-// last one used repeat it at time 1.
+// Piecewise linear between ascending times. A zero suffix leaves keys unused.
 Particle_Curve :: struct {
     values:[PARTICLE_CURVE_KEYS]f32,
     times:[PARTICLE_CURVE_KEYS]f32 `mirai:"min=0,max=1"`,
@@ -112,7 +111,7 @@ Particle_Info :: struct {
     render:Particle_Render `mirai:"section=Look"`,
     blend:Particle_Blend,
     lit:bool,                                 // the sun, the lights and the light probes light it
-    sort:bool,                                // blended particles drawn back to front (2048 at most)
+    sort:bool,                                // blended particles drawn back to front
     material:base.Asset_Id,                   // its base color texture is the flipbook; none: a soft puff
     meshes:[PARTICLE_MESHES]base.Asset_Id,    // of Mesh particles, each picked by its weight; none: a cube
     mesh_weights:[PARTICLE_MESHES]f32 `mirai:"min=0"`, // how often each of meshes is picked; all 0: each as often
@@ -127,6 +126,8 @@ Particle_Info :: struct {
     sub_particle:base.Asset_Id,               // a .particle
     sub_count:u32,                            // its particles per event
     report:Particle_Event,                    // what of its particles the game hears of (vfx.Particle_Reports), frames later: presentation alone
+    beam_end:[3]f32 `mirai:"section=Look,unit=m"`, // endpoint offset in the emitter's axes
+    beam_arc:f32 `mirai:"unit=m"`, // midpoint offset along the emitter's +Y
     program:[PARTICLE_NAME_BYTES]u8 `mirai:"section=Program,text"`, // a Vfx program of the shaders; "" for none
 }
 
@@ -151,6 +152,7 @@ Particle_Parameter :: struct {
     name:[PARTICLE_NAME_BYTES]u8 `mirai:"text"`,
     kind:asset.Parameter_Kind,
     components:u8, // 1 to 4; a texture has one
+    layer:u8,
     value:[4]f64,  // every 32-bit integer and float exactly
     texture:base.Asset_Id,
 }
@@ -161,6 +163,7 @@ Particle_Parameter :: struct {
 Particle_Desc :: struct {
     id:base.Asset_Id,
     info:Particle_Info,
+    layers:[]Particle_Info, // after the primary layer
     parameters:[]Particle_Parameter,
     hidden:[]Particle_Field,
     source:^asset.Import_Info, // of an effect an import wrote; nil for one made here
@@ -177,8 +180,10 @@ particle_document :: proc(doc:^asset.Document,types:^asset.Types,desc:Particle_D
 
 @(private="file")
 particle_tables :: proc(doc:^asset.Document,types:^asset.Types,desc:Particle_Desc) -> asset.Error {
-    info:=desc.info
-    asset.document_put_row(doc,types,"particle",&info) or_return
+    layers:[PARTICLE_LAYERS]Particle_Info
+    layers[0]=desc.info
+    copy(layers[1:],desc.layers)
+    asset.document_put(doc,types,"particle",layers[:1+len(desc.layers)]) or_return
     asset.document_put(doc,types,"parameters",desc.parameters) or_return
     asset.document_put(doc,types,"hidden",desc.hidden) or_return
     if desc.source!=nil {asset.import_put(doc,types,desc.source) or_return}
@@ -202,7 +207,10 @@ particle_bytes :: proc(types:^asset.Types,desc:Particle_Desc,allocator:=context.
 
 particle_view :: proc(a:^asset.Asset,types:^asset.Types) -> (desc:Particle_Desc,error:asset.Error) {
     asset.kind_check(a,PARTICLE_KIND,PARTICLE_VERSION) or_return
-    desc.info=(asset.asset_row(a,types,"particle",Particle_Info,whole=true) or_return)^
+    layers:=asset.asset_rows(a,types,"particle","",Particle_Info,whole=true) or_return
+    if len(layers)<1 || len(layers)>PARTICLE_LAYERS {return {},.Corrupt}
+    desc.info=layers[0]
+    desc.layers=layers[1:]
     desc.parameters=table_rows(a,types,"parameters",Particle_Parameter) or_return
     desc.hidden=table_rows(a,types,"hidden",Particle_Field) or_return
     if !particle_check(desc) {return {},.Corrupt}
@@ -221,7 +229,15 @@ Particle_Problem :: struct {
 particle_validate :: proc(desc:Particle_Desc) -> Particle_Problem {
     info:=desc.info
     if problem:=particle_info_problem(&info,true);problem.message!="" {return problem}
-    if problem:=particle_parameters_validate(desc.parameters);problem.message!="" {return problem}
+    if len(desc.layers)>=PARTICLE_LAYERS {
+        return {"layers",fmt.tprintf("Give at most %d layers including the primary layer",PARTICLE_LAYERS)}
+    }
+    for &layer,i in desc.layers {
+        if problem:=particle_info_problem(&layer,true);problem.message!="" {
+            return {fmt.tprintf("layers.%d.%s",i,problem.field),problem.message}
+        }
+    }
+    if problem:=particle_parameters_validate(desc.parameters,len(desc.layers)+1);problem.message!="" {return problem}
     for &hidden in desc.hidden {
         if name:=serial.text_field(hidden.name[:]);name=="" || len(name)==len(hidden.name) {return {"hidden","Name each hidden field in fewer than 64 bytes"}}
     }
@@ -232,7 +248,7 @@ particle_validate :: proc(desc:Particle_Desc) -> Particle_Problem {
 particle_info_problem :: proc(p:^Particle_Info,coupled:bool) -> Particle_Problem {
     if field,ok:=particle_finite(p);!ok {return {field,"Use finite numbers"}}
     if p.shape>max(Particle_Shape) {return {"shape","Use Point, Sphere, Hemisphere, Cone, Box, Circle, Line, Surface or Bones"}}
-    if p.render>max(Particle_Render) {return {"render","Use Billboard, Velocity, Horizontal, Ribbon or Mesh"}}
+    if p.render>max(Particle_Render) {return {"render","Use Billboard, Velocity, Horizontal, Ribbon, Mesh or Beam"}}
     if p.blend>max(Particle_Blend) {return {"blend","Use Additive or Alpha"}}
     if p.collision>max(Particle_Collision) {return {"collision","Use None or World"}}
     if p.facing>max(Particle_Facing) {return {"facing","Use Tumble or Velocity"}}
@@ -260,8 +276,8 @@ particle_info_problem :: proc(p:^Particle_Info,coupled:bool) -> Particle_Problem
     for burst in p.bursts {
         if burst.time<0 || burst.interval<0 {return {"bursts","Use burst times and intervals of zero or more seconds"}}
     }
-    if !particle_times_valid(p.size_over_life.times,coupled) {return {"size_over_life","Use key times that go up from 0 to 1"}}
-    if !particle_times_valid(p.color_over_life.times,coupled) {return {"color_over_life","Use key times that go up from 0 to 1"}}
+    if !particle_times_valid(p.size_over_life.times[:],coupled) {return {"size_over_life","Use key times that go up from 0 to 1"}}
+    if !particle_times_valid(p.color_over_life.times[:],coupled) {return {"color_over_life","Use key times that go up from 0 to 1"}}
     for value in p.size_over_life.values {if value<0 {return {"size_over_life","Use sizes of zero or more"}}}
     return {}
 }
@@ -278,11 +294,17 @@ particle_field_valid :: proc(field:Particle_Value,bytes:[]u8) -> bool {
 particle_check :: proc(desc:Particle_Desc) -> bool {return particle_validate(desc).message==""}
 
 @(private="file")
-particle_times_valid :: proc(times:[PARTICLE_CURVE_KEYS]f32,ordered:bool) -> bool {
-    for time,at in times {
+particle_times_valid :: proc(times:[]f32,ordered:bool) -> bool {
+    for time,at in times[:particle_key_count(times[:])] {
         if time<0 || time>1 || ordered && at>0 && time<times[at-1] {return false}
     }
     return true
+}
+
+particle_key_count :: proc "contextless" (times:[]f32) -> int {
+    count:=len(times)
+    for count>1 && times[count-1]==0 {count-=1}
+    return count
 }
 
 // The first field of the effect with a number that is not finite.
@@ -304,12 +326,19 @@ particle_finite :: proc(p:^Particle_Info) -> (field:string,ok:bool) {
 }
 
 // Each name once, a type the programs take and numbers they hold exactly.
-particle_parameters_validate :: proc(parameters:[]Particle_Parameter) -> Particle_Problem {
-    if len(parameters)>PARTICLE_MAX_PARAMETERS {return {"parameters",fmt.tprintf("Give at most %d program parameters",PARTICLE_MAX_PARAMETERS)}}
+particle_parameters_validate :: proc(parameters:[]Particle_Parameter,layers:=1) -> Particle_Problem {
+    counts:[PARTICLE_LAYERS]int
     for &parameter,at in parameters {
+        if int(parameter.layer)>=min(layers,len(counts)) {return {"parameters","Give parameters only for layers of the effect"}}
+        counts[parameter.layer]+=1
+        if counts[parameter.layer]>PARTICLE_MAX_PARAMETERS {
+            return {"parameters",fmt.tprintf("Give at most %d program parameters per layer",PARTICLE_MAX_PARAMETERS)}
+        }
         if problem:=particle_parameter_validate(&parameter);problem.message!="" {return problem}
         for &other in parameters[:at] {
-            if other.name==parameter.name {return {"parameters",fmt.tprintf("Give parameter %q once",serial.text_field(parameter.name[:]))}}
+            if other.layer==parameter.layer && other.name==parameter.name {
+                return {"parameters",fmt.tprintf("Give parameter %q once per layer",serial.text_field(parameter.name[:]))}
+            }
         }
     }
     return {}
@@ -348,9 +377,9 @@ table_rows :: proc(a:^asset.Asset,types:^asset.Types,name:string,$T:typeid) -> (
 }
 
 // The stored value of a program parameter of the effect; nil without one.
-particle_parameter_find :: proc(parameters:[]Particle_Parameter,name:string) -> ^Particle_Parameter {
+particle_parameter_find :: proc(parameters:[]Particle_Parameter,name:string,layer:u8=0) -> ^Particle_Parameter {
     for &parameter in parameters {
-        if serial.text_field(parameter.name[:])==name {return &parameter}
+        if parameter.layer==layer && serial.text_field(parameter.name[:])==name {return &parameter}
     }
     return nil
 }
@@ -370,96 +399,52 @@ Particle_Value :: struct {
 
 Particle_Value_Visitor :: #type proc(value:Particle_Value,user:rawptr) -> bool
 
-// Visits every value an instance can change, without allocating; the path
-// is valid until the visitor returns. A visitor that returns false stops it,
-// and so does the call, with false.
+@(private="file")
+particle_value :: proc(entry:Value_Entry) -> Particle_Value {
+    top:=entry.path
+    if dot:=strings.index_byte(top,'.');dot>=0 {top=top[:dot]}
+    info:=type_info_of(entry.type)
+    return {entry.path,top,entry.offset,info.size,entry.kind,info}
+}
+
 particle_values_visit :: proc(visit:Particle_Value_Visitor,user:rawptr) -> bool {
-    path:[PARTICLE_NAME_BYTES]u8
-    walk :: proc(info:^runtime.Type_Info,offset:uintptr,top:string,path:[]u8,used:int,visit:Particle_Value_Visitor,user:rawptr) -> bool {
-        value:=Particle_Value{path=string(path[:used]),top=top,offset=offset,size=info.size,info=info}
-        if info.id==base.Asset_Id {value.kind=.Asset;return visit(value,user)}
-        #partial switch v in runtime.type_info_base(info).variant {
-        case runtime.Type_Info_Struct:
-            for i in 0..<int(v.field_count) {
-                if tagged,_:=serial.field_tag(v.tags[i]);.Text in tagged.flags {continue}
-                at:=used
-                if at>0 {path[at]='.';at+=1}
-                if at+len(v.names[i])>len(path) {return false}
-                copy(path[at:],v.names[i])
-                if !walk(v.types[i],offset+v.offsets[i],top==""?v.names[i]:top,path,at+len(v.names[i]),visit,user) {return false}
-            }
-            return true
-        case runtime.Type_Info_Array:
-            elem:=runtime.type_info_base(v.elem)
-            _,float:=elem.variant.(runtime.Type_Info_Float)
-            _,integer:=elem.variant.(runtime.Type_Info_Integer)
-            if (float || integer) && info.size<=PARTICLE_VALUE_BYTES {
-                value.kind=float?.Float:.Integer
-                return visit(value,user)
-            }
-            for index in 0..<v.count {
-                digits:[20]u8
-                name:=strconv.write_int(digits[:],i64(index),10)
-                if used+1+len(name)>len(path) {return false}
-                path[used]='.'
-                copy(path[used+1:],name)
-                if !walk(v.elem,offset+uintptr(index*v.elem_size),top,path,used+1+len(name),visit,user) {return false}
-            }
-            return true
-        case runtime.Type_Info_Float:   value.kind=.Float
-        case runtime.Type_Info_Integer: value.kind=.Integer
-        case runtime.Type_Info_Boolean: value.kind=.Bool
-        case runtime.Type_Info_Enum:    value.kind=.Enum
-        case: return true
-        }
-        return visit(value,user)
+    for i in 0..<len(VALUE_FIELDS) {
+        if !visit(particle_value(VALUE_FIELDS[i]),user) {return false}
     }
-    return walk(type_info_of(Particle_Info),0,"",path[:],0,visit,user)
+    return true
 }
 
-// In the temporary allocator.
 particle_fields :: proc() -> []Particle_Value {
-    list:=make([dynamic]Particle_Value,context.temp_allocator)
-    add :: proc(value:Particle_Value,user:rawptr) -> bool {
-        kept:=value
-        kept.path=strings.clone(value.path,context.temp_allocator)
-        append(cast(^[dynamic]Particle_Value)user,kept)
-        return true
-    }
-    particle_values_visit(add,&list)
-    return list[:]
+    values,err:=make([]Particle_Value,len(VALUE_FIELDS),context.temp_allocator)
+    if err!=nil {return nil}
+    for i in 0..<len(VALUE_FIELDS) {values[i]=particle_value(VALUE_FIELDS[i])}
+    return values
 }
 
-// The value of Particle_Info at a path; ok is false for a path it does not
-// have. The path of the result is the one given.
 particle_value_at :: proc(path:string) -> (value:Particle_Value,ok:bool) {
-    Search :: struct {path:string,value:Particle_Value,found:bool}
-    search:=Search{path=path}
-    find :: proc(value:Particle_Value,user:rawptr) -> bool {
-        s:=cast(^Search)user
-        if value.path!=s.path {return true}
-        s.value,s.found=value,true
-        return false
-    }
-    particle_values_visit(find,&search)
-    search.value.path=path
-    return search.value,search.found
+    entry,found:=particle_entry_find(base.name_hash(path))
+    if !found || entry.path!=path {return {},false}
+    return particle_value(entry),true
 }
 
-// The value of Particle_Info whose path has this base.name_hash; ok is false
-// for a path it does not have. The path of the result is empty.
 particle_value_find :: proc(path_hash:u64) -> (value:Particle_Value,ok:bool) {
-    Search :: struct {hash:u64,value:Particle_Value,found:bool}
-    search:=Search{hash=path_hash}
-    find :: proc(value:Particle_Value,user:rawptr) -> bool {
-        s:=cast(^Search)user
-        if base.name_hash(value.path)!=s.hash {return true}
-        s.value,s.found=value,true
-        return false
+    entry,found:=particle_entry_find(path_hash)
+    if !found {return {},false}
+    value=particle_value(entry)
+    value.path=""
+    return value,true
+}
+
+@(private="file")
+particle_entry_find :: proc(path_hash:u64) -> (Value_Entry,bool) {
+    lo,hi:=0,len(VALUE_FIELDS)
+    for lo<hi {
+        mid:=(lo+hi)/2
+        field:=VALUE_FIELDS[mid]
+        if field.hash==path_hash {return field,true}
+        if field.hash<path_hash {lo=mid+1} else {hi=mid}
     }
-    particle_values_visit(find,&search)
-    search.value.path=""
-    return search.value,search.found
+    return {},false
 }
 
 // Whether a field of Particle_Info is hidden from the instances.
