@@ -663,11 +663,11 @@ cmd_copy_texture_to_buffer :: proc(c: ^Command_List, src: Texture, dst: Buffer, 
 	t := pool_get(&d.textures, base.Handle(src))
 	b := pool_get(&d.buffers, base.Handle(dst))
 	if b == nil || t == nil || t.handle == nil {return}
-	row := NS.UInteger(t.desc.width) * NS.UInteger(format_size(t.desc.format))
+	row, rows := format_rows(t.desc.format, t.desc.width, t.desc.height)
 	encoder := mtl_blit_encoder(c)
 	MTL.BlitCommandEncoder_copyFromTexture(
 		encoder, t.handle, 0, 0, MTL.Origin{0, 0, 0}, MTL.Size{NS.UInteger(t.desc.width), NS.UInteger(t.desc.height), NS.UInteger(max(t.desc.depth, 1))},
-		b.handle, NS.UInteger(dst_offset), row, row * NS.UInteger(t.desc.height),
+		b.handle, NS.UInteger(dst_offset), NS.UInteger(row), NS.UInteger(row * rows),
 	)
 }
 

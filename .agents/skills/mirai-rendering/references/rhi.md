@@ -232,6 +232,8 @@ For a renderer that generates frames (`rhi/present.odin`):
   target, and sampling the mip it draws into, or two mips of it in one pass, is an error.
   `cmd_barrier_*` declares what nothing binds: a buffer the host reads, a texture sampled through
   the texture table or by another process. Metal tracks hazards by itself.
+- With `immediate_end(wait = false)`, a load submits ahead of the frames that follow and
+  returns before the GPU finishes. A CPU readback waits for its command list.
 - **Clip space.** Y up and depth in [0,1] on both backends; the renderer uses reversed Z.
 - `cmd_fill_buffer` repeats a byte; a word of another value is written with `buffer_upload`
   before the frame, from a shader or by copying a buffer that has it (the GPU-counted indirect

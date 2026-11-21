@@ -1258,10 +1258,17 @@ assets_texture_load :: proc(a:^Assets,id:base.Asset_Id,entry:^Assets_Texture,rep
     levels:Assets_Levels
     defer assets_levels_free(&levels)
     first:=0
-    if a.renderer!=nil {first,_=assets_texture_first(view,render.texture_limits(a.renderer),0)}
-    if view_error=asset.texture_decode(&file,&a.types,&view,first);view_error!=.None {return assets_view_problem(view_error),view_error,false}
+    limits:render.Texture_Limits
     if a.renderer!=nil {
-        if problem,detail,ok=assets_texture_levels(view,render.texture_limits(a.renderer),0,&levels,a.allocator);!ok {return}
+        limits=render.texture_limits(a.renderer)
+        first,_=assets_texture_first(view,limits,0)
+    }
+    if view_error=asset.texture_decode(&file,&a.types,&view,first,
+        keep_fields=assets_texture_fields(view,limits));view_error!=.None {
+        return assets_view_problem(view_error),view_error,false
+    }
+    if a.renderer!=nil {
+        if problem,detail,ok=assets_texture_levels(view,limits,0,&levels,a.allocator);!ok {return}
     }
     return assets_texture_install(a,id,view.info^,&levels,entry,replace,removed)
 }
@@ -1292,6 +1299,11 @@ assets_texture_first :: proc(view:asset.Texture_View,limits:render.Texture_Limit
     if max(view.mips[first].width,view.mips[first].height)>limit {return first,false}
     if view.info.layers<=1 && .Cube not_in view.info.flags {first=max(first,min(from,len(view.mips)-1))}
     return first,true
+}
+
+@(private="file")
+assets_texture_fields :: proc(view:asset.Texture_View,limits:render.Texture_Limits) -> bool {
+    return limits.blocks && view.info.layers==1 && .Cube not_in view.info.flags
 }
 
 // The levels of a texture the renderer takes: from `from`, or the first one
@@ -1327,6 +1339,7 @@ assets_texture_levels :: proc(view:asset.Texture_View,limits:render.Texture_Limi
     data.width,data.height=int(view.mips[first].width),int(view.mips[first].height)
     data.layers,data.cube=layers,.Cube in info.flags
     data.level=first
+    data.fields=view.planes
     if !layered {data.source={int(info.width),int(info.height)}}
     alloc_error:mem.Allocator_Error
     data.levels,alloc_error=make([dynamic][]u8,0,view.last-first,allocator)
@@ -1823,7 +1836,8 @@ assets_prepare :: proc(prepared:^Assets_Prepared,limits:Assets_Limits,types:^ass
             }
         }
         if view_error==.None {
-            view_error=asset.texture_decode(&prepared.file,types,&view,first,last)
+            view_error=asset.texture_decode(&prepared.file,types,&view,first,last,
+                keep_fields=limits.renderer && assets_texture_fields(view,limits.texture))
         }
         if view_error!=.None {
             prepared.problem,prepared.detail=assets_view_problem(view_error),view_error

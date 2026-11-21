@@ -23,7 +23,7 @@ import mm "mirai:std/math"
 MAX_SOURCE_SIDE :: 1<<15
 MAX_SOURCE_PIXELS :: 1<<28
 // Changes when build would give other bytes for the same image and options.
-BUILD_VERSION :: 8
+BUILD_VERSION :: 9
 RDO_LAMBDA_DEFAULT :: 30
 RDO_LAMBDA_MAX :: 100
 // Texels of a level from which build encodes its blocks on a job system of

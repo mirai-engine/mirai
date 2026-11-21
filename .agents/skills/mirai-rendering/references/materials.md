@@ -290,6 +290,10 @@ A texture of an asset resides with the levels the GPU samples of it
   were uploaded the small ones are shown, never a half level. Those that the pool has no room for
   stay out beforehand, as in `texture_add_data`.
 
+Single-layer BC textures can be uploaded in their field planes. The renderer stages ranges of the
+planes in the upload budget, and a compute pass ranks and reassembles the blocks in reusable
+scratch before the copy to the texture. CPU readers and layered textures join the planes on load.
+
 ## Normal maps and specular antialiasing
 
 - **MikkTSpace tangent frame.** The pixel uses the interpolated, unnormalized normal and tangent

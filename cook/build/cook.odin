@@ -856,7 +856,8 @@ texture_lay :: proc(work:^Cook_Work,source,target:string,types:^asset.Types) -> 
     desc:=textures.built_desc(&built,file.blob.header.id,view.source,work.desc.codecs==.Best)
     desc.owner=file.blob.header.owner
     doc:asset.Document
-    if asset.texture_document(&doc,types,desc,context.temp_allocator)!=.None {return false}
+    if asset.texture_document(&doc,types,desc,context.temp_allocator,
+        cook_profile(work.desc))!=.None {return false}
     defer asset.document_destroy(&doc)
     doc.flags=file.blob.header.flags
     return asset.document_save(&doc,target,profile=cook_profile(work.desc))==.None

@@ -75,6 +75,7 @@ Texture_Residency :: struct {
 	reduced:   int,  // shown streamed textures held coarser than the frames sample by the pool
 	frames:    int,  // feedback taken in the window under way
 	uploads:   [TEXTURE_UPLOADS]Texture_Upload,
+	bc_scratch: rhi.Buffer,
 	// The buffer the passes write (TEXTURE_FEEDBACK_FIRST words, then one per
 	// texture of room) and where each frame in flight copies it.
 	feedback:  rhi.Buffer,
@@ -104,6 +105,7 @@ Texture_Upload :: struct {
 	request: Texture_Request,
 	texture: rhi.Texture,
 	levels:  [][]u8, // new levels; the others come from the texture it replaces
+	planes:  []Texture_Plane_Mip,
 	mip:     int,
 	row:     u32, // of rows of blocks, or of texels, of its mip
 	active:  bool,
@@ -442,9 +444,12 @@ texture_levels_queue :: proc(r: ^Renderer, request: Texture_Request, data: Textu
 	if fresh > 0 {
 		if data.level != request.level || data.source != {int(stream.size.x), int(stream.size.y)} ||
 			data.format != stream.format || len(data.levels) < fresh {return .Mismatch}
-		for level, mip in data.levels[:fresh] {
-			row, rows := rhi.format_rows(stream.format, max(width >> uint(mip), 1), max(height >> uint(mip), 1))
-			if u64(len(level)) != row * rows {return .Mismatch}
+		if !data.fields {
+			for level, mip in data.levels[:fresh] {
+				row, rows := rhi.format_rows(stream.format, max(width >> uint(mip), 1),
+					max(height >> uint(mip), 1))
+				if u64(len(level)) != row * rows {return .Mismatch}
+			}
 		}
 	}
 	texture := rhi.texture_create(r.device, {width = width, height = height, mip_levels = u32(int(stream.levels) - request.level), format = stream.format, usage = {.Sampled}, name = "streamed texture"})
@@ -452,7 +457,20 @@ texture_levels_queue :: proc(r: ^Renderer, request: Texture_Request, data: Textu
 		set_error(r, "texture levels: %s", rhi.device_error(r.device))
 		return .Failed
 	}
-	t.uploads[slot] = {request = request, texture = texture, levels = data.levels[:fresh], active = true}
+	planes: []Texture_Plane_Mip
+	if fresh > 0 && data.fields {
+		ok: bool
+		planes, ok = texture_plane_mips(r, texture_field_format(stream.format), width,
+			height, data.levels[:fresh])
+		if !ok || !texture_bc_scratch(r) {
+			set_error(r, "texture fields: invalid mip planes or no upload memory")
+			texture_plane_mips_free(r, planes)
+			rhi.texture_destroy(r.device, texture)
+			return .Failed
+		}
+	}
+	t.uploads[slot] = {request = request, texture = texture, levels = data.levels[:fresh],
+		planes = planes, active = true}
 	return .Set
 }
 
@@ -495,7 +513,9 @@ texture_add_over_frames :: proc(r: ^Renderer, data: ^Texture_Data, name: string)
 	}
 	now := texture_tail_first(data^)
 	if now == 0 {return 0, {}, .Mismatch}
-	small := Texture_Data{format = data.format, width = max(data.width >> uint(now), 1), height = max(data.height >> uint(now), 1), level = data.level + now, source = data.source}
+	w, h := max(data.width >> uint(now), 1), max(data.height >> uint(now), 1)
+	small := Texture_Data{format = data.format, width = w, height = h,
+		level = data.level + now, source = data.source, fields = data.fields}
 	small.levels = make([dynamic][]u8, 0, len(data.levels) - now, context.temp_allocator)
 	append(&small.levels, ..data.levels[now:])
 	added: bool
@@ -517,9 +537,15 @@ texture_upload_pending :: proc(r: ^Renderer, request: Texture_Request) -> bool {
 // Drops the levels that still go: before what they are read from goes.
 texture_uploads_cancel :: proc(r: ^Renderer) {
 	for &upload in r.textures.residency.uploads {
-		if upload.active {rhi.texture_destroy(r.device, upload.texture)}
-		upload = {}
+		if upload.active {texture_upload_drop(r, &upload)}
 	}
+}
+
+@(private="file")
+texture_upload_drop :: proc(r: ^Renderer, upload: ^Texture_Upload) {
+	rhi.texture_destroy(r.device, upload.texture)
+	texture_plane_mips_free(r, upload.planes)
+	upload^ = {}
 }
 
 // Rows of the levels that go, their part of UPLOAD_FRAME_BYTES
@@ -537,8 +563,7 @@ texture_uploads_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
 		if !upload.active || upload.done {continue}
 		index := int(upload.request.handle) - 1
 		if index < 0 || index >= state.count || state.textures[index] == 0 || state.residency.streams[index].stamp != upload.request.stamp {
-			rhi.texture_destroy(r.device, upload.texture)
-			upload = {}
+			texture_upload_drop(r, &upload)
 			continue
 		}
 		stream := &state.residency.streams[index]
@@ -550,12 +575,31 @@ texture_uploads_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
 			block := u32(4) if rhi.format_block_size(stream.format) > 0 else 1
 			count := u32(min(u64(rows) - u64(upload.row), max(budget / row, 1)))
 			bytes := u64(count) * row
-			ring := rhi.frame_alloc(r.device, bytes, 16)
-			if ring.ptr == nil {budget = 0;break}
 			level := upload.levels[upload.mip]
-			copy(([^]u8)(ring.ptr)[:bytes], level[u64(upload.row) * row:][:bytes])
-			y := upload.row * block
-			rhi.cmd_copy_buffer_to_texture(cmd, ring.buffer, ring.offset, upload.texture, u32(upload.mip), {0, y, width, min(count * block, height - y)})
+			if len(upload.planes) > 0 {
+				format := texture_field_format(stream.format)
+				layout := asset.texture_field_layout(format)
+				stride := asset.texture_block_bytes(format)
+				columns := int(row) / stride
+				planes := &upload.planes[upload.mip]
+				fit, size := texture_bc_fit(&layout, planes, level, columns, int(upload.row),
+					int(count), stride, budget)
+				count = u32(fit)
+				bytes = max(u64(count) * row, u64(size))
+				ring := rhi.frame_alloc(r.device, u64(size), 16)
+				if ring.ptr == nil {budget = 0;break}
+				texture_bc_batch(&layout, planes, level, columns, int(upload.row),
+					int(count), stride, ([^]u8)(ring.ptr)[:size])
+				texture_bc_copy(r, cmd, ring, upload.texture, u32(upload.mip), width, height,
+					upload.row, count, layout.modes > 0)
+			} else {
+				ring := rhi.frame_alloc(r.device, bytes, 16)
+				if ring.ptr == nil {budget = 0;break}
+				copy(([^]u8)(ring.ptr)[:bytes], level[u64(upload.row) * row:][:bytes])
+				y := upload.row * block
+				rhi.cmd_copy_buffer_to_texture(cmd, ring.buffer, ring.offset, upload.texture,
+					u32(upload.mip), {0, y, width, min(count * block, height - y)})
+			}
 			budget -= min(bytes, budget)
 			upload.row += count
 			if u64(upload.row) >= u64(rows) {upload.mip, upload.row = upload.mip + 1, 0}
@@ -577,6 +621,7 @@ texture_uploads_install :: proc(r: ^Renderer) {
 	for &upload in r.textures.residency.uploads {
 		if !upload.active || !upload.done {continue}
 		texture_levels_install(r, upload.request, upload.texture)
+		texture_plane_mips_free(r, upload.planes)
 		upload = {}
 	}
 }

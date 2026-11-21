@@ -66,6 +66,9 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     f :: proc(b:^strings.Builder,name:string,value:f32) {fmt.sbprintf(b,"#define %s %s\n",name,number(value))}
     size :: proc(b:^strings.Builder,name:string,value:[2]u32) {fmt.sbprintf(b,"#define %s float2(%s, %s)\n",name,number(f32(value.x)),number(f32(value.y)))}
 
+    i(&b,"BC_FIELD_MODES",asset.TEXTURE_FIELD_MODES)
+    i(&b,"BC_FIELD_PLANES",asset.TEXTURE_FIELD_PLANES)
+    i(&b,"BC_FIELD_SPANS",asset.TEXTURE_FIELD_SPANS)
     i(&b,"SLOT_FRAME",abi.SLOT_FRAME)
     i(&b,"SLOT_PARAMS",abi.SLOT_PARAMS)
     i(&b,"SLOT_LINEAR_SAMPLER",abi.SLOT_LINEAR_SAMPLER)

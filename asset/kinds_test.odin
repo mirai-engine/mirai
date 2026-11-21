@@ -420,7 +420,8 @@ texture_layers_keep_each_image_of_every_level :: proc(t:^testing.T) {
     testing.expect_value(t,asset_open(&a,serial.writer_bytes(&w)),Error.None)
     view,error:=texture_view(&a,&types)
     testing.expect_value(t,error,Error.None)
-    testing.expect(t,view.info.layers==6 && .Cube in view.info.flags && view.mips[0].size==6*16 && view.mips[2].size==6*16)
+    testing.expect(t,view.info.layers==6 && .Cube in view.info.flags &&
+        len(texture_mip(view,0))==6*16 && len(texture_mip(view,2))==6*16)
     testing.expect(t,mem.compare(texture_layer(view,1,4),levels[1][4*16:5*16])==0,"the fifth face of the second level")
     asset_close(&a)
 
@@ -593,4 +594,56 @@ kinds_are_found_by_extension :: proc(t:^testing.T) {
     testing.expect_value(t,serial.text_field(field[:]),"añi")
     text_set(field[:],"aññ")
     testing.expect_value(t,serial.text_field(field[:]),"añ")
+}
+
+@(test)
+mode_plane_mips_restore_independently :: proc(t:^testing.T) {
+    types:Types
+    types_init(&types)
+    defer types_destroy(&types)
+    defer free_all(context.temp_allocator)
+    WIDTH :: 43
+    HEIGHT :: 35
+    for format in ([]Texture_Format{.BC6H,.BC7}) {
+        mips:=make([][]u8,texture_mip_count(WIDTH,HEIGHT),context.temp_allocator)
+        state:=u64(63)
+        for &blocks,i in mips {
+            w,h:=max(WIDTH>>uint(i),1),max(HEIGHT>>uint(i),1)
+            blocks=make([]u8,texture_level_size(format,w,h),context.temp_allocator)
+            for &b in blocks {b=u8(test_random(&state))}
+        }
+        doc:Document
+        if !testing.expect_value(t,texture_document(&doc,&types,
+            {width=WIDTH,height=HEIGHT,format=format,mips=mips}),Error.None) {return}
+        bytes,error:=document_bytes(&doc,context.temp_allocator)
+        document_destroy(&doc)
+        if !testing.expect_value(t,error,Error.None) {return}
+        file:Asset
+        if !testing.expect_value(t,asset_open(&file,bytes),Error.None) {return}
+        defer asset_close(&file)
+        view,open_error:=texture_open(&file,&types)
+        if !testing.expect_value(t,open_error,Error.None) {return}
+        testing.expect(t,.Fields in view.info.flags && int(view.mips[0].size)!=len(mips[0]))
+        for expected,i in mips {
+            if !testing.expect_value(t,texture_decode(&file,&types,&view,i,i+1,keep_fields=true),
+                Error.None) {return}
+            testing.expect(t,view.planes && texture_check(view))
+            planes:=texture_mip(view,i)
+            testing.expect(t,len(planes)==int(view.mips[i].size) && texture_layer(view,i,0)==nil)
+            joined:=make([]u8,len(expected),context.temp_allocator)
+            testing.expect(t,texture_fields_join(format,planes,joined))
+            testing.expect(t,mem.compare(joined,expected)==0)
+            if !testing.expect_value(t,texture_decode(&file,&types,&view,i,i+1),Error.None) {
+                return
+            }
+            testing.expect(t,!view.planes && texture_check(view))
+            testing.expect(t,mem.compare(texture_mip(view,i),expected)==0)
+            testing.expect(t,texture_mip(view,i-1)==nil && texture_mip(view,i+1)==nil)
+        }
+        table,_:=asset_table(&file,"texels")
+        chunk:=blob_chunk(&file.blob,table.columns[0].chunk)
+        bytes[chunk.offset+u64(view.mips[0].offset)]~=0x80
+        testing.expect_value(t,texture_decode(&file,&types,&view,1),Error.None)
+        testing.expect_value(t,texture_decode(&file,&types,&view,0),Error.Corrupt)
+    }
 }

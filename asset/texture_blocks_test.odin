@@ -112,7 +112,7 @@ fields_split_and_join_give_back_the_same_blocks :: proc(t:^testing.T) {
         // 5x3 blocks in each of three layers.
         blocks:=make([]u8,texture_level_size(format,20,12)*3,context.temp_allocator)
         for &b in blocks {b=u8(test_random(&state))}
-        planes:=make([]u8,len(blocks),context.temp_allocator)
+        planes:=make([]u8,texture_fields_size(format,blocks),context.temp_allocator)
         joined:=make([]u8,len(blocks),context.temp_allocator)
         if !texture_fields_format(format) {
             testing.expectf(t,!texture_fields_split(format,blocks,planes) && !texture_fields_join(format,blocks,joined),"%v has no planes of fields",format)
@@ -131,5 +131,50 @@ fields_split_and_join_give_back_the_same_blocks :: proc(t:^testing.T) {
     texture_fields_split(.BC5,blocks,planes)
     testing.expect_value(t,[6]u8{planes[0],planes[1],planes[2],planes[3],planes[4],planes[5]},[6]u8{0,1,16,17,8,9})
     testing.expect_value(t,[3]u8{planes[8],planes[13],planes[20]},[3]u8{2,7,10})
+    free_all(context.temp_allocator)
+}
+
+@(test)
+mode_planes_preserve_all_modes_and_refuse_hostile_headers :: proc(t:^testing.T) {
+    for format in ([]Texture_Format{.BC6H,.BC7}) {
+        // Exercise every possible first byte, including every reserved prefix.
+        blocks:[256*16]u8
+        state:=u64(27)
+        for &byte,i in blocks {
+            byte=u8(i/16) if i%16==0 else u8(test_random(&state))
+        }
+        size:=texture_fields_size(format,blocks[:])
+        planes:=make([]u8,size,context.temp_allocator)
+        testing.expect(t,texture_fields_split(format,blocks[:],planes))
+        joined:[len(blocks)]u8
+        testing.expect(t,texture_fields_join(format,planes,joined[:]))
+        testing.expect(t,joined==blocks)
+        for n in 0..<size {
+            testing.expect(t,!texture_fields_join(format,planes[:n],joined[:]))
+        }
+        testing.expect(t,joined==blocks)
+        layout:=texture_field_layout(format)
+        head:=(1+layout.modes)*4
+        index,ok:=texture_fields_index(&layout,planes,len(blocks)/16)
+        testing.expect(t,ok)
+        for count in index.counts[:layout.modes] {testing.expect(t,count>0)}
+        testing.expect_value(t,index.counts[layout.modes-1],u32(1 if format==.BC7 else 32))
+        // Corrupt counts, a valid mode with the wrong population, and an out-of-range mode.
+        for change in ([][2]int{{0,255},{4,255},{head,1},{head,255}}) {
+            byte:=planes[change[0]]
+            replacement:=u8(change[1])
+            if replacement==byte {replacement=0}
+            planes[change[0]]=replacement
+            testing.expect(t,!texture_fields_join(format,planes,joined[:]))
+            planes[change[0]]=byte
+        }
+        for _ in 0..<256 {
+            at:=int(test_random(&state)%u64(size))
+            byte:=planes[at]
+            planes[at]=u8(test_random(&state))
+            _=texture_fields_join(format,planes,joined[:])
+            planes[at]=byte
+        }
+    }
     free_all(context.temp_allocator)
 }

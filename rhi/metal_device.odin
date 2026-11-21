@@ -1058,7 +1058,9 @@ immediate_begin :: proc(d: ^Device) -> ^Command_List {
 	return &d.immediate
 }
 
-immediate_end :: proc(d: ^Device, cmd: ^Command_List) -> bool {return mtl_immediate_end(d, cmd, true)}
+immediate_end :: proc(d: ^Device, cmd: ^Command_List, wait := true) -> bool {
+	return mtl_immediate_end(d, cmd, wait)
+}
 
 // Submits an immediate list; wait: until the GPU ran it. An upload does not
 // wait: the queue runs it before the frames that follow, the hazards it

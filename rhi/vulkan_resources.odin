@@ -898,12 +898,12 @@ buffer_read :: proc(d: ^Device, buffer: Buffer, offset: u64, out: []u8) -> bool 
 	return true
 }
 
-// Blocking readback of mip 0 as tightly packed rows (width * format size).
+// Blocking readback of mip 0 as tightly packed rows of texels or blocks.
 texture_read :: proc(d: ^Device, texture: Texture, out: []u8) -> bool {
 	t := pool_get(&d.textures, base.Handle(texture))
 	if t == nil {return false}
-	row := u64(t.desc.width) * u64(format_size(t.desc.format))
-	size := row * u64(t.desc.height) * u64(max(t.desc.depth, 1))
+	row, rows := format_rows(t.desc.format, t.desc.width, t.desc.height)
+	size := row * rows * u64(max(t.desc.depth, 1))
 	if u64(len(out)) < size {set_error(d, "texture_read output too small"); return false}
 	staging := vk_create_buffer(d, {size = size, memory = .Readback, name = "texture readback"}, zero = false)
 	if staging == 0 {return false}
