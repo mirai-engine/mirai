@@ -23,7 +23,7 @@ import mm "mirai:std/math"
 MAX_SOURCE_SIDE :: 1<<15
 MAX_SOURCE_PIXELS :: 1<<28
 // Changes when build would give other bytes for the same image and options.
-BUILD_VERSION :: 7
+BUILD_VERSION :: 8
 RDO_LAMBDA_DEFAULT :: 30
 RDO_LAMBDA_MAX :: 100
 // Texels of a level from which build encodes its blocks on a job system of
@@ -205,7 +205,7 @@ texel_write :: proc "contextless" (texels:[]u8,format:Source_Format,at:int,value
 }
 
 Encoding :: enum u8 {
-    Blocks,       // BC1, BC3, BC5, BC6H or BC7 by use (stored_format)
+    Blocks,       // BC1, BC5, BC6H or BC7 by use (stored_format)
     Uncompressed, // RGBA8, RGBA16 or RGBA16F, by what the source holds
 }
 
@@ -288,7 +288,7 @@ built_destroy :: proc(built:^Built) {
 built_desc :: proc(built:^Built,id:base.Asset_Id,source:^asset.Import_Info,layouts:=false) -> asset.Texture_Desc {
     desc:=asset.Texture_Desc{id=id,width=built.width,height=built.height,layers=built.layers,format=built.format,flags=built.flags,alpha_coverage=built.alpha_coverage,mips=built.mips,source=source}
     if !layouts || asset.texture_block_bytes(built.format)!=16 || len(built.mips)==0 {return desc}
-    formats:=#partial [asset.Texture_Format]blocks.Block_Format{.BC3=.BC3,.BC5=.BC5,.BC6H=.BC6H,.BC7=.BC7}
+    formats:=#partial [asset.Texture_Format]blocks.Block_Format{.BC5=.BC5,.BC6H=.BC6H,.BC7=.BC7}
     tail:=0
     for tail+1<len(built.mips) && max(built.width>>uint(tail),built.height>>uint(tail))>asset.TEXTURE_TAIL {tail+=1}
     runs:=[2][2]int{{0,tail},{tail,len(built.mips)}}
@@ -346,9 +346,8 @@ settings_hash_of :: proc(options:Build_Options,encoders:u64) -> u64 {
 // precision) stores what the source holds: RGBA8, RGBA16, or RGBA16F for
 // floats. In blocks: a normal map keeps its two first channels (BC5, the
 // shader rebuilds the third); floats are HDR, BC6H unless some texel is not
-// opaque or has a negative channel, which BC6H cannot keep (RGBA16F); other
-// color is BC7 with or without alpha, and a data map (occlusion, roughness,
-// metallic) is BC1, or BC3 when some texel is not opaque.
+// opaque or has a negative channel, which BC6H cannot keep (RGBA16F).
+// LDR color and data maps with non-opaque alpha use BC7; opaque data maps use BC1.
 stored_format :: proc(source:Source,options:Build_Options) -> asset.Texture_Format {
     if options.encoding==.Uncompressed || options.keep_precision && source.format!=.RGBA8 {
         switch source.format {
@@ -364,7 +363,7 @@ stored_format :: proc(source:Source,options:Build_Options) -> asset.Texture_Form
     count:=source.width*source.height*max(source.layers,1)
     for at in 0..<count {
         value:=texel_read(source.texels,source.format,at,&transfer)
-        if value.a<1 || hdr && (value.r<0 || value.g<0 || value.b<0) {return .RGBA16F if hdr else .BC3}
+        if value.a<1 || hdr && (value.r<0 || value.g<0 || value.b<0) {return .RGBA16F if hdr else .BC7}
     }
     return .BC6H if hdr else .BC1
 }
@@ -472,7 +471,7 @@ build :: proc(source:Source,options:Build_Options,allocator:=context.allocator,w
     if options.srgb {built.flags+={.Srgb}}
     if options.normal_map {built.flags+={.Normal_Map}}
     #partial switch built.format {
-    case .BC1,.BC3,.BC5,.BC6H,.BC7: if options.speed==.Fast {built.flags+={.Fast}}
+    case .BC1,.BC5,.BC6H,.BC7: if options.speed==.Fast {built.flags+={.Fast}}
     }
     return built,.None
 }
@@ -499,7 +498,7 @@ level_store :: proc(level:Source,format:asset.Texture_Format,transfer:^Transfer,
         linear:=transfer_make(false)
         out,alloc_error=level_convert(level,.RGBA16,transfer,&linear,allocator)
     case .RGBA16F: out,alloc_error=level_convert(level,.RGBA16F,transfer,transfer,allocator)
-    case .BC1,.BC3,.BC5,.BC6H,.BC7: return level_encode(level,format,transfer,encode,allocator,worker)
+    case .BC1,.BC5,.BC6H,.BC7: return level_encode(level,format,transfer,encode,allocator,worker)
     }
     if alloc_error!=nil {return nil,.Out_Of_Memory}
     return out,.None
@@ -530,7 +529,7 @@ level_encode :: proc(level:Source,format:asset.Texture_Format,transfer:^Transfer
     }
     size:=asset.texture_level_size(format,level.width,level.height)
     if out,alloc_error=make([]u8,size*layers,allocator);alloc_error!=nil {return nil,.Out_Of_Memory}
-    formats:=#partial [asset.Texture_Format]blocks.Block_Format{.BC1=.BC1,.BC3=.BC3,.BC5=.BC5,.BC6H=.BC6H,.BC7=.BC7}
+    formats:=#partial [asset.Texture_Format]blocks.Block_Format{.BC1=.BC1,.BC5=.BC5,.BC6H=.BC6H,.BC7=.BC7}
     scratch:=allocator if worker.system==nil else runtime.heap_allocator()
     image:=source_bytes(texels)/layers
     for layer in 0..<layers {
@@ -559,7 +558,7 @@ opaque :: proc(pixels:[]u8) -> bool {
 @(private)
 encode_jobs_begin :: proc(js:^jobs.Job_System,format:asset.Texture_Format,width,height:int) -> bool {
     #partial switch format {
-    case .BC1,.BC3,.BC5,.BC6H,.BC7: if width*height<PARALLEL_TEXELS {return false}
+    case .BC1,.BC5,.BC6H,.BC7: if width*height<PARALLEL_TEXELS {return false}
     case: return false
     }
     return jobs.system_init(js,{threads=jobs.THREADS_AUTO})

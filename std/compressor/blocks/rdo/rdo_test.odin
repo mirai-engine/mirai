@@ -9,8 +9,6 @@ import "mirai:std/jobs"
 import "../rgbcx"
 import "../bc7enc"
 
-@(private="file") ALL_FORMATS :: [?]Format{.BC1,.BC3,.BC4,.BC5,.BC7}
-
 @(private="file")
 bytes_per_block :: proc(format:Format) -> int {return format==.BC1 || format==.BC4?8:16}
 
@@ -53,7 +51,6 @@ decode_block :: proc(format:Format,block:[^]u8,out:^[16]Color_Rgba,p:Params) {
     for &c in out {c={0,0,0,255}}
     switch format {
     case .BC1:_=rgbcx.unpack_bc1(block,texels,true,p.bc1_mode)
-    case .BC3:_=rgbcx.unpack_bc3(block,texels,p.bc1_mode)
     case .BC4:rgbcx.unpack_bc4(block,texels,4)
     case .BC5:rgbcx.unpack_bc5(block,texels,0,1,4)
     case .BC7:_=bc7enc.unpack_bc7(block,texels)
@@ -66,7 +63,7 @@ psnr :: proc(format:Format,encoded:[]u8,pixels:[]u8,width,height:int,p:Params,ch
     channels:[]int
     switch format {
     case .BC1:channels={0,1,2}
-    case .BC3,.BC7:channels={0,1,2,3}
+    case .BC7:channels={0,1,2,3}
     case .BC4:channels={channel}
     case .BC5:channels={0,1}
     }
@@ -107,7 +104,7 @@ order0_bits :: proc(data:[]u8) -> f64 {
 }
 
 @(private="file",rodata)
-PSNR_BOUND:=[Format]f64{.BC1=26,.BC3=26,.BC4=28,.BC5=28,.BC7=30}
+PSNR_BOUND:=[Format]f64{.BC1=26,.BC4=28,.BC5=28,.BC7=30}
 
 @(private="file")
 check_lambda :: proc(t:^testing.T,format:Format,width,height:int) {
@@ -135,13 +132,13 @@ check_lambda :: proc(t:^testing.T,format:Format,width,height:int) {
 @(test)
 lambda_keeps_quality_and_lowers_entropy_on_64x64 :: proc(t:^testing.T) {
     testing.set_fail_timeout(t,120*time.Second)
-    for format in ALL_FORMATS {check_lambda(t,format,64,64)}
+    for format in Format {check_lambda(t,format,64,64)}
 }
 
 @(test)
 lambda_keeps_quality_and_lowers_entropy_on_5x3 :: proc(t:^testing.T) {
     testing.set_fail_timeout(t,120*time.Second)
-    for format in ALL_FORMATS {check_lambda(t,format,5,3)}
+    for format in Format {check_lambda(t,format,5,3)}
 }
 
 @(test)
@@ -164,7 +161,7 @@ invalid_input_returns_false :: proc(t:^testing.T) {
     pixels:=make_image(8,8)
     defer delete(pixels)
     p:=test_params()
-    for format in ALL_FORMATS {
+    for format in Format {
         out:=make([]u8,out_size(format,8,8))
         defer delete(out)
         testing.expect(t,encode(format,pixels,8,8,p,out))
@@ -181,7 +178,7 @@ invalid_input_returns_false :: proc(t:^testing.T) {
             proc(q:^Params){q.bc1_quality_level=rgbcx.MAX_LEVEL+1},
             proc(q:^Params){q.bc45_channel0=4},
             proc(q:^Params){q.bc45_channel1=4},
-            proc(q:^Params){q.bc345_search_rad=-1},
+            proc(q:^Params){q.bc45_search_rad=-1},
         }) {
             q:=p
             broken(&q)
@@ -217,7 +214,7 @@ out_of_memory_returns_false :: proc(t:^testing.T) {
     defer delete(pixels)
     p:=test_params()
     p.rdo_lambda=1
-    for format in ALL_FORMATS {
+    for format in Format {
         out:=make([]u8,out_size(format,16,16))
         defer delete(out)
         succeeded:=false
@@ -235,12 +232,12 @@ unusual_parameters_do_not_fail :: proc(t:^testing.T) {
     testing.set_fail_timeout(t,120*time.Second)
     pixels:=make_image(16,16)
     defer delete(pixels)
-    for format in ALL_FORMATS {
+    for format in Format {
         out:=make([]u8,out_size(format,16,16))
         defer delete(out)
         p:=test_params()
         p.rdo_lambda=2
-        p.bc345_mode_mask=0
+        p.bc45_mode_mask=0
         p.bc7enc_reduce_entropy=true
         p.lookback_window_size=max(u32)
         p.rdo_allow_relative_movement=true
@@ -297,7 +294,7 @@ output_does_not_depend_on_the_thread_count :: proc(t:^testing.T) {
     js:jobs.Job_System
     testing.expect(t,jobs.system_init(&js,{threads=3}))
     defer jobs.system_destroy(&js)
-    for format in ALL_FORMATS {
+    for format in Format {
         check_threads(t,&js,format,64,64)
         check_threads(t,&js,format,5,3)
     }
@@ -305,8 +302,7 @@ output_does_not_depend_on_the_thread_count :: proc(t:^testing.T) {
     check_threads(t,&js,.BC4,256,256)
 }
 
-// A block RDO rewrites decodes alpha 0 and 255 where the image has them, in each format with
-// alpha, at the strongest lambda.
+// A block RDO rewrites decodes alpha 0 and 255 where the image has them.
 @(test)
 rdo_keeps_alpha_0_and_255 :: proc(t:^testing.T) {
     WIDTH,HEIGHT :: 64,64
@@ -314,22 +310,20 @@ rdo_keeps_alpha_0_and_255 :: proc(t:^testing.T) {
     for y in 0..<HEIGHT {
         for x in 0..<WIDTH {pixels[(x+y*WIDTH)*4+3]=0 if x<16 else 255 if x<48 else u8(100+y)}
     }
-    for format in ([?]Format{.BC3,.BC7}) {
-        p:=test_params()
-        p.rdo_lambda=10
-        out:=make([]u8,out_size(format,WIDTH,HEIGHT));defer delete(out)
-        if !testing.expect(t,encode(format,pixels,WIDTH,HEIGHT,p,out)) {continue}
-        wrong:=0
-        for by in 0..<HEIGHT/4 {
-            for bx in 0..<WIDTH/4 {
-                decoded:[16]Color_Rgba
-                decode_block(format,raw_data(out[(bx+by*WIDTH/4)*bytes_per_block(format):]),&decoded,p)
-                for i in 0..<16 {
-                    source:=pixels[((bx*4+i%4)+(by*4+i/4)*WIDTH)*4+3]
-                    if (source==0 || source==255) && decoded[i][3]!=source {wrong+=1}
-                }
+    p:=test_params()
+    p.rdo_lambda=10
+    out:=make([]u8,out_size(.BC7,WIDTH,HEIGHT));defer delete(out)
+    if !testing.expect(t,encode(.BC7,pixels,WIDTH,HEIGHT,p,out)) {return}
+    wrong:=0
+    for by in 0..<HEIGHT/4 {
+        for bx in 0..<WIDTH/4 {
+            decoded:[16]Color_Rgba
+            decode_block(.BC7,raw_data(out[(bx+by*WIDTH/4)*bytes_per_block(.BC7):]),&decoded,p)
+            for i in 0..<16 {
+                source:=pixels[((bx*4+i%4)+(by*4+i/4)*WIDTH)*4+3]
+                if (source==0 || source==255) && decoded[i][3]!=source {wrong+=1}
             }
         }
-        testing.expectf(t,wrong==0,"%v: %d texels of alpha 0 or 255 decode otherwise",format,wrong)
     }
+    testing.expectf(t,wrong==0,"%d texels of alpha 0 or 255 decode otherwise",wrong)
 }

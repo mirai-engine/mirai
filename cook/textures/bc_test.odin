@@ -22,7 +22,7 @@ blocks_cover_any_size :: proc(t:^testing.T) {
     pixels:[5*3*4]u8
     for &b,i in pixels {b=u8(i*7)}
     transfer:=transfer_make(false)
-    for format in ([]asset.Texture_Format{.BC1,.BC3,.BC5,.BC7}) {
+    for format in ([]asset.Texture_Format{.BC1,.BC5,.BC7}) {
         blocks,error:=level_store(rgba8(pixels[:],5,3),format,&transfer,{lambda=RDO_LAMBDA_DEFAULT},context.allocator,{})
         defer delete(blocks)
         testing.expect(t,error==.None && len(blocks)==asset.texture_level_size(format,5,3))
@@ -46,7 +46,7 @@ blocks_cover_any_size :: proc(t:^testing.T) {
     image[3]=0
     holed,_:=build(rgba8(image[:],8,4),{})
     defer built_destroy(&holed)
-    testing.expect_value(t,holed.format,asset.Texture_Format.BC3)
+    testing.expect(t,holed.format==.BC7 && .Srgb not_in holed.flags)
     normals,_:=build(rgba8(image[:],8,4),{normal_map=true})
     defer built_destroy(&normals)
     plain_built,_:=build(rgba8(image[:],8,4),{encoding=.Uncompressed})
@@ -83,7 +83,7 @@ a_compressed_texture_survives_the_file_within_what_a_block_keeps :: proc(t:^test
         {"color",{srgb=true,rdo_lambda=-1},false,.BC7,4,12},
         {"color with alpha",{srgb=true,rdo_lambda=-1},true,.BC7,4,12},
         {"data",{rdo_lambda=-1},false,.BC1,4,12},
-        {"data with alpha",{rdo_lambda=-1},true,.BC3,4,12},
+        {"data with alpha",{rdo_lambda=-1},true,.BC7,4,12},
         {"normal map",{normal_map=true,rdo_lambda=-1},false,.BC5,2,6},
         {"plain",{srgb=true,encoding=.Uncompressed},true,.RGBA8,4,0},
     }
@@ -230,7 +230,7 @@ blocks_in_parallel_are_the_same_bytes :: proc(t:^testing.T) {
 }
 
 @(test)
-color_is_bc7_data_maps_bc1_or_bc3_and_hdr_bc6h :: proc(t:^testing.T) {
+color_and_data_with_alpha_are_bc7_opaque_data_is_bc1_and_hdr_is_bc6h :: proc(t:^testing.T) {
     opaque:=[]u8{10,20,30,255,40,50,60,255}
     cutout:=[]u8{10,20,30,255,40,50,60,0}
     stored :: proc(texels:[]u8,format:Source_Format,options:Build_Options) -> asset.Texture_Format {
@@ -239,7 +239,7 @@ color_is_bc7_data_maps_bc1_or_bc3_and_hdr_bc6h :: proc(t:^testing.T) {
     testing.expect_value(t,stored(opaque,.RGBA8,{srgb=true}),asset.Texture_Format.BC7)
     testing.expect_value(t,stored(cutout,.RGBA8,{srgb=true}),asset.Texture_Format.BC7)
     testing.expect_value(t,stored(opaque,.RGBA8,{}),asset.Texture_Format.BC1)
-    testing.expect_value(t,stored(cutout,.RGBA8,{}),asset.Texture_Format.BC3)
+    testing.expect_value(t,stored(cutout,.RGBA8,{}),asset.Texture_Format.BC7)
     testing.expect_value(t,stored(cutout,.RGBA8,{srgb=true,normal_map=true}),asset.Texture_Format.BC5)
     testing.expect_value(t,stored(opaque,.RGBA8,{srgb=true,keep_precision=true}),asset.Texture_Format.BC7)
     testing.expect_value(t,stored(opaque,.RGBA8,{encoding=.Uncompressed}),asset.Texture_Format.RGBA8)
@@ -268,7 +268,7 @@ an_odd_sized_level_decodes_every_texel_of_its_last_blocks :: proc(t:^testing.T) 
     pixels:[5*3*4]u8
     for i in 0..<5*3 {pixels[i*4],pixels[i*4+1],pixels[i*4+2],pixels[i*4+3]=90,140,200,255}
     transfer:=transfer_make(false)
-    for format in ([]asset.Texture_Format{.BC1,.BC3,.BC5,.BC7}) {
+    for format in ([]asset.Texture_Format{.BC1,.BC5,.BC7}) {
         blocks,_:=level_store(rgba8(pixels[:],5,3),format,&transfer,{lambda=RDO_LAMBDA_DEFAULT},context.allocator,{});defer delete(blocks)
         decoded:[5*3*4]u8
         testing.expect(t,asset.texture_level_rgba8(format,blocks,5,3,decoded[:]))

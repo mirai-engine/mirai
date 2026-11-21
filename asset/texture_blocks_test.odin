@@ -17,9 +17,6 @@ block_formats_decode_to_the_texels_a_gpu_shows :: proc(t:^testing.T) {
     colors,alpha=texture_bc1_block_decode(block)
     testing.expect(t,colors[2]==[3]f32{0.5,0,0.5} && colors[3]==[3]f32{0,0,0})
     testing.expect(t,alpha[0]==1 && alpha[1]==1 && alpha[2]==1 && alpha[3]==0 && alpha[4]==1)
-    // The color block of BC3 reads the same endpoints in four color mode, all opaque.
-    colors,alpha=texture_bc1_block_decode(block,four_color=true)
-    testing.expect(t,abs(colors[2].b-2.0/3)<1e-6 && abs(colors[3].b-1.0/3)<1e-6 && alpha[3]==1)
 
     // Eight values between a high and a low endpoint, and the six value mode with its 0 and 1.
     values:=texture_bc4_block_decode({200,60,0b10_001_000,0b1_100_011_0,0b111_110_10,0,0,0})
@@ -42,11 +39,8 @@ a_level_of_any_format_becomes_rgba8 :: proc(t:^testing.T) {
             testing.expect_value(t,[4]u8{pixels[at],pixels[at+1],pixels[at+2],pixels[at+3]},x<4?[4]u8{255,0,0,255}:[4]u8{0,0,255,255})
         }
     }
-    // BC3: alpha first, then color. BC5: two channels and the third of their unit vector.
-    bc3:=[16]u8{128,128,0,0,0,0,0,0, 0xe0,0x07,0xe0,0x07,0,0,0,0}
+    // BC5: two channels and the third of their unit vector.
     texel:[4]u8
-    testing.expect(t,texture_level_rgba8(.BC3,bc3[:],1,1,texel[:]))
-    testing.expect_value(t,texel,[4]u8{0,255,0,128})
     bc5:=[16]u8{128,128,0,0,0,0,0,0, 255,255,0,0,0,0,0,0}
     testing.expect(t,texture_level_rgba8(.BC5,bc5[:],1,1,texel[:]))
     testing.expect(t,texel.r==128 && texel.g==255 && abs(int(texel.b)-128)<=2 && texel.a==255,"a normal along +Y has no Z left")

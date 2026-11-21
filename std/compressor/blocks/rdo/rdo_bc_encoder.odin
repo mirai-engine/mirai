@@ -6,7 +6,7 @@ import "mirai:std/jobs"
 import "../bc7enc"
 import "../rgbcx"
 
-Format :: enum u8 {BC1,BC3,BC4,BC5,BC7}
+Format :: enum u8 {BC1,BC4,BC5,BC7}
 
 Params :: struct {
     bc7_uber_level:int,
@@ -30,9 +30,9 @@ Params :: struct {
     rdo_allow_relative_movement:bool,
     rdo_try_2_matches:bool,
     rdo_ultrasmooth_block_handling:bool,
-    use_hq_bc345:bool,
-    bc345_search_rad:int,
-    bc345_mode_mask:u32,
+    use_hq_bc45:bool,
+    bc45_search_rad:int,
+    bc45_mode_mask:u32,
     bc7enc_mode6_only:bool,
     bc7enc_reduce_entropy:bool,
 }
@@ -55,9 +55,9 @@ params_default :: proc() -> Params {
         rdo_max_smooth_block_std_dev=18,
         rdo_try_2_matches=true,
         rdo_ultrasmooth_block_handling=true,
-        use_hq_bc345=true,
-        bc345_search_rad=5,
-        bc345_mode_mask=rgbcx.BC4_USE_ALL_MODES,
+        use_hq_bc45=true,
+        bc45_search_rad=5,
+        bc45_mode_mask=rgbcx.BC4_USE_ALL_MODES,
     }
     return params
 }
@@ -98,7 +98,7 @@ encode_rows :: proc(data:rawptr,first,last,worker:int) {
     w:=cast(^Encode_Work)data
     p:=w.params
     level:=u32(p.bc1_quality_level)
-    search_rad:=u32(p.bc345_search_rad)
+    search_rad:=u32(p.bc45_search_rad)
     for by in first..<last {
         for bx in 0..<w.source.blocks_x {
             block:[16]Color_Rgba=---
@@ -108,22 +108,16 @@ encode_rows :: proc(data:rawptr,first,last,worker:int) {
             switch w.format {
             case .BC1:
                 rgbcx.encode_bc1(w.bc1_tables,level,dst,texels,p.use_bc1_3color_mode,p.use_bc1_3color_mode_for_black)
-            case .BC3:
-                if p.use_hq_bc345 {
-                    rgbcx.encode_bc3_hq(w.bc1_tables,level,dst,texels,search_rad,p.bc345_mode_mask)
-                } else {
-                    rgbcx.encode_bc3(w.bc1_tables,level,dst,texels)
-                }
             case .BC4:
                 channel:=texels[p.bc45_channel0:]
-                if p.use_hq_bc345 {
-                    rgbcx.encode_bc4_hq(dst,channel,4,search_rad,p.bc345_mode_mask)
+                if p.use_hq_bc45 {
+                    rgbcx.encode_bc4_hq(dst,channel,4,search_rad,p.bc45_mode_mask)
                 } else {
                     rgbcx.encode_bc4(dst,channel,4)
                 }
             case .BC5:
-                if p.use_hq_bc345 {
-                    rgbcx.encode_bc5_hq(dst,texels,p.bc45_channel0,p.bc45_channel1,4,search_rad,p.bc345_mode_mask)
+                if p.use_hq_bc45 {
+                    rgbcx.encode_bc5_hq(dst,texels,p.bc45_channel0,p.bc45_channel1,4,search_rad,p.bc45_mode_mask)
                 } else {
                     rgbcx.encode_bc5(dst,texels,p.bc45_channel0,p.bc45_channel1,4)
                 }
@@ -377,7 +371,7 @@ postprocess_rdo :: proc(format:Format,source:^Source,params:^Params,out:[]u8,str
 
     lambda:=params.rdo_lambda
     custom_scale:=params.custom_rdo_smooth_block_error_scale
-    if format==.BC3 || format==.BC5 || format==.BC7 {ert.lookback_window_size=max(16,params.lookback_window_size)}
+    if format==.BC5 || format==.BC7 {ert.lookback_window_size=max(16,params.lookback_window_size)}
 
     // Upstream measures BC4 and BC5 against red and green whatever bc45_channel selects; here, the selected channels.
     first_channel,second_channel:[]Color_Rgba
@@ -387,7 +381,7 @@ postprocess_rdo :: proc(format:Format,source:^Source,params:^Params,out:[]u8,str
     defer delete(mse_scales,allocator)
     ok:bool
 
-    if params.rdo_ultrasmooth_block_handling && (format==.BC1 || format==.BC3 || format==.BC7) {
+    if params.rdo_ultrasmooth_block_handling && (format==.BC1 || format==.BC7) {
         if mse_scales,ok=compute_block_mse_scales(block_pixels,source.blocks_x,source.blocks_y,allocator);!ok {return false}
     }
 
@@ -416,21 +410,6 @@ postprocess_rdo :: proc(format:Format,source:^Source,params:^Params,out:[]u8,str
         if !custom_scale {ert.smooth_block_max_mse_scale=lerpf(15,50,min(1,lambda/8))}
         work.passes[0]={0,8,3,block_pixels,ert,unpack_bc1_block,mse_scales}
         work.pass_count=1
-    case .BC3:
-        ert.color_weights[3]=0
-        alpha:=ert
-        alpha.color_weights={1,0,0,0}
-        alpha.keep_extremes={0}
-        if !custom_scale {
-            ert.smooth_block_max_mse_scale=lerpf(15,50,min(1,lambda/8))
-            alpha.smooth_block_max_mse_scale=lerpf(10,30,min(1,lambda/4))
-        }
-        if first_channel,ok=channel_pixels(block_pixels,3,allocator);!ok {return false}
-        work.unpackers.allow_3color_mode=false
-        work.unpackers.use_bc1_3color_mode_for_black=false
-        work.passes[0]={0,8,1,first_channel,alpha,unpack_bc4_block,nil}
-        work.passes[1]={8,8,3,block_pixels,ert,unpack_bc1_block,mse_scales}
-        work.pass_count=2
     }
 
     for &s in mse_scales {
@@ -451,7 +430,7 @@ encode :: proc(format:Format,pixels:[]u8,width,height:int,params:Params,out:[]u8
     switch format {
     case .BC1,.BC4:
         bytes_per_block=8
-    case .BC3,.BC5,.BC7:
+    case .BC5,.BC7:
         bytes_per_block=16
     case:
         return false
@@ -466,7 +445,7 @@ encode :: proc(format:Format,pixels:[]u8,width,height:int,params:Params,out:[]u8
     if params.bc7_uber_level<0 || params.bc1_quality_level<0 || params.bc1_quality_level>int(rgbcx.MAX_LEVEL) {return false}
     if params.bc7enc_max_partitions_to_scan<0 || params.bc7enc_max_partitions_to_scan>int(bc7enc.MAX_PARTITIONS) {return false}
     if params.bc45_channel0>3 || params.bc45_channel1>3 {return false}
-    if params.bc345_search_rad<0 || params.bc345_search_rad>int(max(u32)) {return false}
+    if params.bc45_search_rad<0 || params.bc45_search_rad>int(max(u32)) {return false}
     if params.bc1_mode<min(rgbcx.Bc1_Approx_Mode) || params.bc1_mode>max(rgbcx.Bc1_Approx_Mode) {return false}
     if worker.system!=nil && (worker.worker<0 || worker.worker>=jobs.worker_count(worker.system)) {return false}
 
@@ -489,7 +468,7 @@ encode :: proc(format:Format,pixels:[]u8,width,height:int,params:Params,out:[]u8
     if format==.BC7 {
         if work.bc7_tables,err=new(bc7enc.Tables,allocator);err!=nil {return false}
         bc7enc.tables_init(work.bc7_tables)
-    } else if format==.BC1 || format==.BC3 {
+    } else if format==.BC1 {
         if work.bc1_tables,err=new(rgbcx.Tables,allocator);err!=nil {return false}
         rgbcx.tables_init(work.bc1_tables,params.bc1_mode)
     }

@@ -17,7 +17,7 @@ bench_mip_chains :: proc(t:^testing.T) {
     }
     cases:=[?]struct{name:string,options:Build_Options}{
         {"linear RGBA8",{encoding=.Uncompressed}},{"srgb RGBA8",{srgb=true,encoding=.Uncompressed}},{"normal map RGBA8",{normal_map=true,encoding=.Uncompressed}},{"masked srgb RGBA8",{srgb=true,alpha_coverage=0.5,encoding=.Uncompressed}},
-        {"data BC3",{}},{"normal map BC5",{normal_map=true}},
+        {"linear data BC7",{}},{"normal map BC5",{normal_map=true}},
     }
     for entry in cases {
         best:=time.Duration(max(i64))

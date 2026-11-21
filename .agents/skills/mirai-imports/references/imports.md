@@ -757,9 +757,8 @@ libraries](../../mirai-physics/references/engine.md#collider-fields).
     `RGBA8`, `RGBA16` or `RGBA16F`.
   - In blocks, by use: normal map, BC5 (the shader reconstructs the third channel); a float source
     is HDR, BC6H unless some texel is not opaque or has a negative channel, which BC6H does not
-    store (`RGBA16F`); color, BC7 with or without alpha; another map with no transparent texel,
-    BC1, and with alpha, BC3. A 16-bit source without `keep_precision` is compressed by use like an
-    8-bit one.
+    store (`RGBA16F`); color and data maps with non-opaque alpha use BC7; opaque data maps use BC1.
+    A 16-bit source without `keep_precision` is compressed by use like an 8-bit one.
   - It is stored linear except in 8-bit formats with `srgb` (`level_store`).
 - **Encoder**: every block format goes through `cook/textures` (`level_encode`), which runs
   the block encoders of the collection compressor (`compressor:blocks`), with the

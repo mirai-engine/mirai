@@ -64,7 +64,7 @@ journal sends over the network, editor thumbnails, the shaders the executables e
   document is written `None` but the files a cook ships, which take `project_codecs`
   (`build.compression`). Under `None` the modeling a kind chooses by what compresses smaller is
   chosen without a compressor, as what compresses smaller where the bytes rest: a mesh page keeps
-  its coding and BC1, BC3 and BC5 their planes of fields. A stream of a format the build does not
+  its coding and BC1 and BC5 their planes of fields. A stream of a format the build does not
   decode is `Codec_Missing`.
 - **Block tables.** A kind whose asset stores blocks it reads alone keeps them in `<name>_blocks`,
   with the `Block_Record`s of its pages in `<name>_pages`; the kind codes each block itself, and
@@ -78,7 +78,7 @@ journal sends over the network, editor thumbnails, the shaders the executables e
   a `Stream_Decoder` of its reader (the renderer keeps one per worker).
 - **Texture levels.** The `texels` column holds the smallest level first: a read of the small
   levels decodes only the first pieces. A texture a cook writes with `Best` codecs may store
-  layouts of runs of levels (the `layouts` table, `blocks.layout_encode`), and BC1, BC3 and BC5
+  layouts of runs of levels (the `layouts` table, `blocks.layout_encode`), and BC1 and BC5
   may store planes of fields ([texture](kinds.md#texture)); `texture_decode` restores them into
   memory of the asset before the renderer takes them.
 
