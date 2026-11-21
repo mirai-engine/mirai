@@ -213,8 +213,8 @@ value_parameter :: proc(program:^erender.Program,name:u64,value:[effect.PARTICLE
 // The values an entity shows: those of its effect (the defaults without one)
 // with the fields the entity gives over them. Its parameters, and values for
 // assets, are left out.
-particle_resolve :: proc(a:^host.Assets,particle:base.Asset_Id,override:^Particle_Override) -> (info:effect.Particle_Info) {
-    info=effect.PARTICLE_DEFAULTS
+particle_resolve :: proc(a:^host.Assets,particle:base.Asset_Id,override:^Particle_Override,preset:=effect.Particle_Preset.Default) -> (info:effect.Particle_Info) {
+    info=effect.particle_preset(preset)
     if a!=nil && particle!={} {
         if view,ok:=effect_view(a,particle);ok {info=view.info}
     }
@@ -229,8 +229,8 @@ particle_resolve :: proc(a:^host.Assets,particle:base.Asset_Id,override:^Particl
 
 // particle_resolve, saying what is wrong with the effect or the fields of
 // the entity instead of leaving them out.
-particle_resolve_checked :: proc(a:^host.Assets,particle:base.Asset_Id,override:^Particle_Override,info:^effect.Particle_Info) -> Error {
-    info^=effect.PARTICLE_DEFAULTS
+particle_resolve_checked :: proc(a:^host.Assets,particle:base.Asset_Id,override:^Particle_Override,info:^effect.Particle_Info,preset:=effect.Particle_Preset.Default) -> Error {
+    info^=effect.particle_preset(preset)
     if particle!={} {
         if a==nil {return .Asset_Not_Found}
         if _,found:=effect_view(a,particle);!found {return .Asset_Not_Found}
@@ -240,7 +240,7 @@ particle_resolve_checked :: proc(a:^host.Assets,particle:base.Asset_Id,override:
             if value,found:=effect.particle_value_find(name);found && value.kind==.Asset {return .Effect_Field}
         }
     }
-    info^=particle_resolve(a,particle,override)
+    info^=particle_resolve(a,particle,override,preset)
     if !effect.particle_check({info=info^}) {return .Invalid_Value}
     return .None
 }
@@ -262,10 +262,10 @@ effect_view :: proc(a:^host.Assets,id:base.Asset_Id) -> (view:effect.Particle_De
 // The Vfx program of an effect, with the parameters the effect stores and
 // those an instance gives over them. A problem says what is missing, in
 // temporary memory; the emitter then shows its effect without a program.
-particle_program :: proc(a:^host.Assets,particle:base.Asset_Id,info:^effect.Particle_Info,override:^Particle_Override,program:^Program,needs:^Program_Needs=nil) -> (problem:string) {
+particle_program :: proc(a:^host.Assets,particle:base.Asset_Id,info:^effect.Particle_Info,override:^Particle_Override,program:^Program,needs:^Program_Needs=nil,layer:u8=0) -> (problem:string) {
     stored:[]effect.Particle_Parameter
     if a!=nil && particle!={} {
         if view,ok:=effect_view(a,particle);ok {stored=view.parameters}
     }
-    return particle_program_check(a,info,stored,override,program,needs)
+    return particle_program_check(a,info,stored,override,program,needs,layer)
 }

@@ -25,7 +25,7 @@ emitter_ranges :: proc(pool:^Pool,id:u64,count:u32) -> (r:Emitter_Ranges,ok:bool
     s:=&pool.slots[at]
     n:=u64(min(s.capacity,max(count,1)))
     r.particles={pool_buffer(pool,.Particles),u64(s.offset)*size_of(Gpu_Particle),n*size_of(Gpu_Particle)}
-    r.attributes={pool_buffer(pool,.Data),u64(ATTRIBUTES_AT+s.attributes),n*u64(s.stride)}
+    r.attributes={pool_buffer(pool,.Data),pool_data_bytes(pool.capacity)+u64(s.attributes),n*u64(s.stride)}
     r.state={pool_buffer(pool,.State),u64(at)*size_of(Gpu_State),size_of(Gpu_State)}
     r.stride=s.stride
     r.local=s.desc.info.local_space || s.desc.view!=0
@@ -37,5 +37,5 @@ emitter_ranges :: proc(pool:^Pool,id:u64,count:u32) -> (r:Emitter_Ranges,ok:bool
 emitter_bytes :: proc(pool:^Pool,at:int) -> u64 {
     s:=&pool.slots[at]
     shared:=pool_buffer(pool,.Particles).size+pool_buffer(pool,.Lists).size
-    return u64(s.capacity)*(shared/u64(max(pool.capacity,1))+u64(s.stride))+pool_buffer(pool,.State).size/EMITTER_CAPACITY+size_of(Gpu_Emitter)
+    return u64(s.capacity)*(shared/u64(max(pool.capacity,1))+u64(s.stride)+4*u64(s.birth_entries!=max(u32)))+pool_buffer(pool,.State).size/EMITTER_CAPACITY+size_of(Gpu_Emitter)
 }

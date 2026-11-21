@@ -6,6 +6,7 @@
 #define MIRAI_GROUP_Z 1
 
 struct Params_Block { uint mode; uint emitters; uint count; uint parity; uint step; uint last; uint pad0; uint pad1; };
+[[vk::binding(SLOT_PASS7, 0)]] StructuredBuffer<uint> particle_sort_slots : register(MIRAI_REGISTER(t, SLOT_PASS7), space0);
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 
 // The error a ribbon may leave between the curve through its particles and
@@ -15,20 +16,98 @@ struct Params_Block { uint mode; uint emitters; uint count; uint parity; uint st
 #define RIBBON_ERROR_MIN 0.002
 #define RIBBON_ERROR_SLOPE 0.001
 
-// What a particle is ordered by, in two words: its age (a ribbon) or its
-// depth; and its slot in the range, below SORT_SLOT_BITS, under its ribbon,
-// which comes first (RIBBON_SHIFT: as wide as the rest of the word).
-groupshared float keys[PARTICLE_SORT_MAX];
-groupshared uint values[PARTICLE_SORT_MAX];
+#define SORT_TILE 1024u
+groupshared float keys[SORT_TILE];
+groupshared uint ribbons[SORT_TILE];
+groupshared uint values[SORT_TILE];
 groupshared uint partial[MIRAI_GROUP_X];
 groupshared uint mesh_counts[PARTICLE_MESHES];
 groupshared uint mesh_cursors[PARTICLE_MESHES];
 
-bool sorted_before(uint a, uint b) {
-    uint ra = values[a] >> SORT_SLOT_BITS, rb = values[b] >> SORT_SLOT_BITS;
-    if (ra != rb) return ra < rb;
-    if (keys[a] != keys[b]) return keys[a] < keys[b];
-    return values[a] < values[b];
+struct Sort_Key { uint ribbon; float depth; uint index; };
+
+Sort_Key sort_key(uint slot, uint index, bool ribbon) {
+    Sort_Key key;
+    key.index = index;
+    if (index == INVALID) {
+        key.ribbon = INVALID;
+        key.depth = FLT_MAX;
+        return key;
+    }
+    Particle p = particles[index];
+    key.ribbon = ribbon ? particle_ribbon(p) : 0u;
+    key.depth = ribbon ? p.age : -dot(particle_world(slot, p.position), frame.camera_forward.xyz);
+    if (!isfinite(key.depth)) key.depth = FLT_MAX;
+    return key;
+}
+
+bool sorted_before(Sort_Key a, Sort_Key b) {
+    if (a.ribbon != b.ribbon) return a.ribbon < b.ribbon;
+    if (a.depth != b.depth) return a.depth < b.depth;
+    return a.index < b.index;
+}
+
+Sort_Key shared_key(uint i) {
+    Sort_Key key = {ribbons[i], keys[i], values[i]};
+    return key;
+}
+
+void shared_key_store(uint i, Sort_Key key) {
+    ribbons[i] = key.ribbon;
+    keys[i] = key.depth;
+    values[i] = key.index;
+}
+
+void sort_particles(uint slot, uint t, uint alive, uint drawn, uint scratch, bool ribbon) {
+    uint size = 2u;
+    while (size < min(alive, SORT_TILE)) size <<= 1u;
+    for (uint start = 0u; start < alive; start += size) {
+        uint count = min(size, alive - start);
+        for (uint i = t; i < size; i += MIRAI_GROUP_X) {
+            shared_key_store(i, sort_key(slot, i < count ? particle_lists[drawn + start + i] : INVALID, ribbon));
+        }
+        GroupMemoryBarrierWithGroupSync();
+        for (uint k = 2u; k <= size; k <<= 1u) {
+            for (uint j = k >> 1u; j > 0u; j >>= 1u) {
+                for (uint i = t; i < size; i += MIRAI_GROUP_X) {
+                    uint other = i ^ j;
+                    if (other <= i) continue;
+                    Sort_Key a = shared_key(i), b = shared_key(other);
+                    if (sorted_before(b, a) == ((i & k) == 0u)) {
+                        shared_key_store(i, b);
+                        shared_key_store(other, a);
+                    }
+                }
+                GroupMemoryBarrierWithGroupSync();
+            }
+        }
+        for (uint i = t; i < count; i += MIRAI_GROUP_X) particle_lists[drawn + start + i] = values[i];
+        GroupMemoryBarrierWithGroupSync();
+    }
+    DeviceMemoryBarrierWithGroupSync();
+    uint read_at = drawn, write_at = scratch;
+    for (uint span = size; span < alive; span <<= 1u) {
+        for (uint i = t; i < alive; i += MIRAI_GROUP_X) {
+            uint pair = (i / (2u * span)) * (2u * span);
+            uint middle = min(pair + span, alive), end = min(middle + span, alive);
+            bool left = i < middle;
+            uint begin = left ? middle : pair;
+            uint lo = begin, hi = left ? end : middle;
+            Sort_Key key = sort_key(slot, particle_lists[read_at + i], ribbon);
+            while (lo < hi) {
+                uint m = (lo + hi) / 2u;
+                if (sorted_before(sort_key(slot, particle_lists[read_at + m], ribbon), key)) lo = m + 1u;
+                else hi = m;
+            }
+            uint rank = i - (left ? pair : middle) + lo - begin;
+            particle_lists[write_at + pair + rank] = key.index;
+        }
+        DeviceMemoryBarrierWithGroupSync();
+        uint next = read_at; read_at = write_at; write_at = next;
+    }
+    if (read_at == drawn) return;
+    for (uint i = t; i < alive; i += MIRAI_GROUP_X) particle_lists[drawn + i] = particle_lists[read_at + i];
+    DeviceMemoryBarrierWithGroupSync();
 }
 
 float3 unit(float3 v) { return length(v) > 1e-6 ? normalize(v) : float3(0.0); }
@@ -50,113 +129,75 @@ uint segment_pieces(float3 a, float3 b, float3 ta, float3 tb, float error) {
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID) {
-    uint slot = particle_queue[SORT_AT / 4u + 4u + group.x];
+    bool view = params.mode != 0u;
+    uint slot = view ? particle_sort_slots[group.x] : particle_queue[SORT_AT / 4u + 4u + group.x];
     uint t = local.x;
-
     uint alive = particle_states[slot].alive;
+    if (alive < 2u) return;
     bool ribbon = particle_emitters[slot].kinds.y == PARTICLE_RENDER_RIBBON;
-    uint drawn = particle_emitters[slot].program.y + particle_emitters[slot].range.x;
-    if ((particle_emitters[slot].range.w & PARTICLE_FLAG_SORT) != 0u && alive >= 2u) {
-        uint n = min(alive, PARTICLE_SORT_MAX);
-        uint size = 2u;
-        while (size < n) size <<= 1u;
-        for (uint i = t; i < size; i += MIRAI_GROUP_X) {
-            if (i < n) {
-                uint index = particle_lists[drawn + i];
-                Particle p = particles[index];
-                float3 world = particle_world(slot, p.position);
-                keys[i] = ribbon ? p.age : -dot(world - frame.camera_position.xyz, frame.camera_forward.xyz);
-                values[i] = ((ribbon ? particle_ribbon(p) : 0u) << SORT_SLOT_BITS) | (index - particle_emitters[slot].range.x);
-            } else {
-                keys[i] = FLT_MAX;
-                values[i] = 0xFFFFFFFFu;
-            }
-        }
-        GroupMemoryBarrierWithGroupSync();
-        for (uint k = 2u; k <= size; k <<= 1u) {
-            for (uint j = k >> 1u; j > 0u; j >>= 1u) {
-                for (uint i = t; i < size; i += MIRAI_GROUP_X) {
-                    uint other = i ^ j;
-                    if (other > i && sorted_before(other, i) == ((i & k) == 0u)) {
-                        float key = keys[i]; keys[i] = keys[other]; keys[other] = key;
-                        uint value = values[i]; values[i] = values[other]; values[other] = value;
-                    }
-                }
-                GroupMemoryBarrierWithGroupSync();
-            }
-        }
-        for (uint i = t; i < n; i += MIRAI_GROUP_X) particle_lists[drawn + i] = particle_emitters[slot].range.x + (values[i] & ((1u << SORT_SLOT_BITS) - 1u));
-        DeviceMemoryBarrierWithGroupSync();
-    }
-    // A ribbon: the pieces of each segment, none where the ribbon changes,
-    // and where the quads of each start (the quarter of the lists after the
-    // births): its draw has their sum.
+    uint base = particle_emitters[slot].range.x;
+    uint capacity = particle_emitters[slot].program.y;
+    uint drawn = capacity + base;
+    uint scratch = 2u * capacity + base;
+    if (ribbon || view) sort_particles(slot, t, alive, drawn, scratch, ribbon);
+    if (view) return;
+    // The scratch list holds the first quad of each segment. Segments between ribbons have no quads.
     uint total = alive;
     if (ribbon) {
-        uint segments = alive >= 2u ? min(alive, PARTICLE_SORT_MAX) - 1u : 0u;
-        uint starts = 3u * particle_emitters[slot].program.y + particle_emitters[slot].range.x;
-        for (uint i = t; i < segments; i += MIRAI_GROUP_X) {
-            uint index_a = particle_lists[drawn + i];
-            Particle a = particles[index_a];
-            Particle b = particles[particle_lists[drawn + i + 1u]];
-            uint id_a = particle_ribbon(a);
+        uint segments = alive - 1u;
+        uint starts = scratch;
+        uint prefix = 0u;
+        for (uint block = 0u; block < segments; block += MIRAI_GROUP_X) {
+            uint i = block + t;
             uint pieces = 0u;
-            if (id_a == particle_ribbon(b)) {
-                float3 pa = particle_world(slot, a.position), pb = particle_world(slot, b.position);
-                float3 ta = pb - pa, tb = pb - pa;
-                if (i > 0u) {
-                    Particle before = particles[particle_lists[drawn + i - 1u]];
-                    if (particle_ribbon(before) == id_a) ta = ribbon_tangent(particle_world(slot, before.position), pa, pb);
+            if (i < segments) {
+                uint index_a = particle_lists[drawn + i];
+                Particle a = particles[index_a];
+                Particle b = particles[particle_lists[drawn + i + 1u]];
+                uint id_a = particle_ribbon(a);
+                if (id_a == particle_ribbon(b)) {
+                    float3 pa = particle_world(slot, a.position), pb = particle_world(slot, b.position);
+                    float3 ta = pb - pa, tb = pb - pa;
+                    if (i > 0u) {
+                        Particle before = particles[particle_lists[drawn + i - 1u]];
+                        if (particle_ribbon(before) == id_a) ta = ribbon_tangent(particle_world(slot, before.position), pa, pb);
+                    }
+                    if (i + 2u < alive) {
+                        Particle after = particles[particle_lists[drawn + i + 2u]];
+                        if (particle_ribbon(after) == id_a) tb = ribbon_tangent(pa, pb, particle_world(slot, after.position));
+                    }
+                    float error = max(RIBBON_ERROR_MIN, RIBBON_ERROR_SLOPE * length(pa - frame.camera_position.xyz));
+                    // It rises at once and comes down a piece a frame, so that it does not flicker.
+                    pieces = max(segment_pieces(pa, pb, unit(ta), unit(tb), error), max(particle_pieces(a), 2u) - 1u);
                 }
-                if (i + 2u < alive) {
-                    Particle after = particles[particle_lists[drawn + i + 2u]];
-                    if (particle_ribbon(after) == id_a) tb = ribbon_tangent(pa, pb, particle_world(slot, after.position));
-                }
-                float error = max(RIBBON_ERROR_MIN, RIBBON_ERROR_SLOPE * length(pa - frame.camera_position.xyz));
-                // It rises at once and comes down a piece a frame, so that it does not flicker.
-                pieces = max(segment_pieces(pa, pb, unit(ta), unit(tb), error), max(particle_pieces(a), 2u) - 1u);
+                particles[index_a].flags = (a.flags & ~(PARTICLE_PIECES_MASK << RIBBON_PIECES_SHIFT)) | (pieces << RIBBON_PIECES_SHIFT);
             }
-            particles[index_a].flags = (a.flags & ~(PARTICLE_PIECES_MASK << RIBBON_PIECES_SHIFT)) | (pieces << RIBBON_PIECES_SHIFT);
-            values[i] = pieces;
-        }
-        GroupMemoryBarrierWithGroupSync();
-        // An exclusive scan: each thread adds up a run of four, the runs scan by doubling.
-        uint run = t * 4u, sum = 0u;
-        uint own[4];
-        for (uint k = 0u; k < 4u; k++) {
-            own[k] = run + k < segments ? values[run + k] : 0u;
-            sum += own[k];
-        }
-        GroupMemoryBarrierWithGroupSync();
-        partial[t] = sum;
-        GroupMemoryBarrierWithGroupSync();
-        for (uint stride = 1u; stride < MIRAI_GROUP_X; stride <<= 1u) {
-            uint add = t >= stride ? partial[t - stride] : 0u;
+            partial[t] = pieces;
             GroupMemoryBarrierWithGroupSync();
-            partial[t] += add;
+            for (uint stride = 1u; stride < MIRAI_GROUP_X; stride <<= 1u) {
+                uint add = t >= stride ? partial[t - stride] : 0u;
+                GroupMemoryBarrierWithGroupSync();
+                partial[t] += add;
+                GroupMemoryBarrierWithGroupSync();
+            }
+            if (i < segments) particle_lists[starts + i] = prefix + partial[t] - pieces;
+            prefix += partial[MIRAI_GROUP_X - 1u];
             GroupMemoryBarrierWithGroupSync();
         }
-        uint start = partial[t] - sum;
-        for (uint k = 0u; k < 4u; k++) {
-            if (run + k < segments) particle_lists[starts + run + k] = start;
-            start += own[k];
-        }
-        total = partial[MIRAI_GROUP_X - 1u];
+        total = prefix;
     }
-    // Mesh particles: its list in a run per mesh, through the scratch quarter of
-    // the lists (in no order within a run: a sorted effect has one mesh), and a
-    // draw of each run, its first instance where it starts.
+    // The scratch list groups particles by mesh and gives each draw its first instance.
     if (particle_emitters[slot].mesh.x > 1u) {
         if (t < PARTICLE_MESHES) mesh_counts[t] = 0u;
         GroupMemoryBarrierWithGroupSync();
-        {            for (uint i = t; i < alive; i += MIRAI_GROUP_X) InterlockedAdd(mesh_counts[particle_mesh_choice(slot, particles[particle_lists[drawn + i]])], 1u);
+        {
+            for (uint i = t; i < alive; i += MIRAI_GROUP_X) InterlockedAdd(mesh_counts[particle_mesh_choice(slot, particles[particle_lists[drawn + i]])], 1u);
             GroupMemoryBarrierWithGroupSync();
             if (t == 0u) {
                 uint at = 0u;
                 for (uint c = 0u; c < PARTICLE_MESHES; c++) { mesh_cursors[c] = at; at += mesh_counts[c]; }
             }
             GroupMemoryBarrierWithGroupSync();
-            uint scratch = 3u * particle_emitters[slot].program.y + particle_emitters[slot].range.x;
             for (uint i = t; i < alive; i += MIRAI_GROUP_X) {
                 uint index = particle_lists[drawn + i];
                 uint at;

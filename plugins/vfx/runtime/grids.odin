@@ -135,6 +135,9 @@ Grid_Entry :: struct {
 }
 
 Grids :: struct {
+    seen:[4]core.Seen,
+    view:core.View,
+    follows_view:bool,
     entries:[dynamic]Grid_Entry,
     bytes:u32,   // of all of them: their parities, their copies, their splats, the light of the cells of the volumes, then the layers of the textures
     splats:u32,  // bytes to the splats of all of them
@@ -177,6 +180,23 @@ grid_cells :: proc "contextless" (cells:[3]u32) -> u32 {return cells.x*cells.y*c
 // changes its cells or layers. A grid it does not take is a problem.
 @(private)
 grids_sync :: proc(g:^Grids,grids:^core.Table(Particle_Grid,$A),volumes:^core.Table(Particle_Volume,$B),textures:^core.Table(Particle_World_Texture,$C),worlds:^core.Table(core.World_Transform,$D),view:core.View,problems:^core.Problems) {
+    changed:=core.touched(grids,&g.seen[0]) | core.touched(volumes,&g.seen[1]) |
+        core.touched(textures,&g.seen[2])
+    places:=core.changes(worlds,&g.seen[3])
+    for &entry in g.entries {entry.writer=0}
+    if !changed && !(g.follows_view && g.view!=view) {
+        for row in core.each_changed(worlds,&places) {
+            if core.has(grids,core.entity_at(worlds,row)) {changed=true;break}
+        }
+        if !changed {
+            for e in places.gone {
+                if core.has(grids,e) {changed=true;break}
+            }
+        }
+        if !changed {return}
+    }
+    g.view=view
+    g.follows_view=false
     kept,textured:=0,0
     count:=core.count(grids)
     layout:=u64(count)+1
@@ -219,7 +239,14 @@ grids_sync :: proc(g:^Grids,grids:^core.Table(Particle_Grid,$A),volumes:^core.Ta
         for i in kept..<len(g.entries) {
             if g.entries[i].entity==e {at=i;break}
         }
-        if at==len(g.entries) {append(&g.entries,Grid_Entry{entity=e})}
+        if at==len(g.entries) {
+            if resize(&g.entries,at+1)!=nil {
+                g.seen={}
+                core.report(problems,e,"vfx.grid","out of memory for a particle grid: free memory")
+                break
+            }
+            g.entries[at].entity=e
+        }
         previous:=g.entries[kept]
         g.entries[kept]=g.entries[at]
         g.entries[at]=previous
@@ -251,7 +278,10 @@ grids_sync :: proc(g:^Grids,grids:^core.Table(Particle_Grid,$A),volumes:^core.Ta
             textured+=1
         }
         position:=world.transform.position
-        if grid.follow_view {position.xz=view_ahead(view,position.y,f32(cells.x)*grid.cell_size,f32(cells.z)*grid.cell_size)}
+        if grid.follow_view {
+            g.follows_view=true
+            position.xz=view_ahead(view,position.y,f32(cells.x)*grid.cell_size,f32(cells.z)*grid.cell_size)
+        }
         first:[3]i32
         for axis in 0..<3 {
             first[axis]=i32(math.floor(position[axis]/grid.cell_size))-i32(cells[axis]/2)

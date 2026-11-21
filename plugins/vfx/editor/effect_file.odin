@@ -18,19 +18,22 @@ PARTICLE_FIELDS :: 64 // of Particle_Info that its hidden fields can name
 // is written.
 Particle_File :: struct {
     info:effect.Particle_Info,
-    parameters:[effect.PARTICLE_MAX_PARAMETERS]effect.Particle_Parameter,
+    layers:[effect.PARTICLE_LAYERS-1]effect.Particle_Info,
+    layer_count:int,
+    parameters:[effect.PARTICLE_MAX_PARAMETERS*effect.PARTICLE_LAYERS]effect.Particle_Parameter,
     parameter_count:int,
     hidden:[PARTICLE_FIELDS]effect.Particle_Field,
     hidden_count:int,
 }
 
 particle_desc :: proc(file:^Particle_File,id:base.Asset_Id={}) -> effect.Particle_Desc {
-    return {id=id,info=file.info,parameters=file.parameters[:file.parameter_count],hidden=file.hidden[:file.hidden_count]}
+    return {id=id,info=file.info,layers=file.layers[:file.layer_count],parameters=file.parameters[:file.parameter_count],hidden=file.hidden[:file.hidden_count]}
 }
 
 // What a file holds; hidden fields past PARTICLE_FIELDS are cut.
 particle_file_of :: proc(desc:effect.Particle_Desc) -> (file:Particle_File) {
     file.info=desc.info
+    file.layer_count=copy(file.layers[:],desc.layers)
     file.parameter_count=copy(file.parameters[:],desc.parameters)
     file.hidden_count=copy(file.hidden[:],desc.hidden)
     return
@@ -81,4 +84,18 @@ particle_file :: proc(s:^editor.Session,id:base.Asset_Id) -> (file:Particle_File
 particle_change :: proc(s:^editor.Session,e:core.Entity,file:^Particle_File) -> bool {
     emitter,ok:=editor.entity_get(editor.shown_world(s),e,vfx.Particle_Emitter)
     return ok && emitter.particle!={} && particle_write(s,emitter.particle,file)
+}
+
+
+@(private)
+particle_layer_parameters_remove :: proc(file:^Particle_File,layer:u8,all_after:=false) {
+    kept:=0
+    for &parameter in file.parameters[:file.parameter_count] {
+        if parameter.layer==layer || all_after && parameter.layer>layer {continue}
+        file.parameters[kept]=parameter
+        if parameter.layer>layer {file.parameters[kept].layer-=1}
+        kept+=1
+    }
+    for &parameter in file.parameters[kept:file.parameter_count] {parameter={}}
+    file.parameter_count=kept
 }

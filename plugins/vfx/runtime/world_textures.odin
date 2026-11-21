@@ -36,7 +36,10 @@ world_textures_keep :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,id:co
         sync.world_textures[kept]=entry.name
         kept+=1
     }
-    sync.world_texture_count=kept
+    if kept!=sync.world_texture_count {
+        sync.world_texture_count=kept
+        sync.world_texture_layout_dirty=true
+    }
 }
 
 // The textures of the grids that have one, made between frames.
@@ -54,7 +57,16 @@ world_textures_make :: proc(sync:^Particle_Sync,renderer:^erender.Renderer) {
 // Copies each grid with a texture of the world into its texture, after the steps.
 @(private)
 world_textures_write :: proc(sync:^Particle_Sync,pass:^erender.Pass) {
-    sync.world_shown=sync.world_frame
+    if sync.world_textures_changed {
+        sync.world_shown=sync.world_frame
+        sync.world_textures_changed=false
+    }
+    dirty:=sync.world_texture_layout_dirty
+    for &entry in sync.grids.entries {
+        if entry.has_texture && entry.texture_dirty {dirty=true;break}
+    }
+    if !dirty {return}
+    sync.world_texture_layout_dirty=false
     frame:World_Textures_Frame
     count:=0
     Params :: struct {grid,layer,packed,pad:u32}
@@ -74,7 +86,10 @@ world_textures_write :: proc(sync:^Particle_Sync,pass:^erender.Pass) {
         frame.cell_size[count]=entry.cell_size
         count+=1
     }
-    sync.world_frame=frame
+    if sync.world_frame!=frame {
+        sync.world_frame=frame
+        sync.world_textures_changed=true
+    }
 }
 
 // The textures of the world in the constants of each view of the world.

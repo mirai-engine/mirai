@@ -5,18 +5,27 @@
 // the pool in use: a living particle, unless it is local to its emitter or of
 // an effect view. y 1 and 2, a thread per event of each half: those that wait
 // for a step, unless their emitter is of an effect view.
+//! per vfx program
 #define PARTICLES_WRITABLE
-#include "particles.slang"
+#include "particle_programs.slang"
 #define MIRAI_GROUP_X 64
 #define MIRAI_GROUP_Y 1
 #define MIRAI_GROUP_Z 1
 
-struct Params_Block { float4 shift; uint count; uint emitters; uint pad0; uint pad1; };
+struct Params_Block { float4 shift; uint count; uint emitters; uint first; uint slot_plus_one; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 id : SV_DispatchThreadID) {
+    if (params.slot_plus_one != 0u) {
+        uint slot = params.slot_plus_one - 1u;
+        uint index = params.first + id.x;
+        if (id.x < params.count && particles[index].lifetime > 0.0) {
+            mirai_vfx_rebase(particle_attributes(slot, index), params.shift.xyz);
+        }
+        return;
+    }
     if (id.y == 0u) {
         uint index = id.x;
         if (index >= params.count) return;

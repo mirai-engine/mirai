@@ -52,8 +52,8 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     float3 light;
     if (ribbon) {
         // The segment of the instance: the last whose quads start at or before it.
-        uint alive = min(particle_states[params.emitter].alive, min(particle_emitters[params.emitter].range.y, PARTICLE_SORT_MAX));
-        uint starts = 3u * particle_emitters[params.emitter].program.y + particle_emitters[params.emitter].range.x;
+        uint alive = particle_states[params.emitter].alive;
+        uint starts = 2u * particle_emitters[params.emitter].program.y + particle_emitters[params.emitter].range.x;
         uint low = 0u, high = max(alive, 1u) - 1u;
         while (high - low > 1u) {
             uint middle = (low + high) >> 1u;
@@ -105,6 +105,22 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         world = center + side * c.x * half_size;
         uv = float2(corner.x, saturate(lerp(p.age / max(p.lifetime, 1e-5), q.age / max(q.lifetime, 1e-5), along_t)));
         light = (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_LIT) != 0u ? lerp(particle_light(p), particle_light(q), along_t) : emission_render_units(float3(1.0), (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_RELATIVE) != 0u);
+    } else if (particle_emitters[params.emitter].kinds.y == PARTICLE_RENDER_BEAM) {
+        uint slot = params.emitter;
+        index = particle_drawn(slot, instance_id / BEAM_PIECES);
+        p = particles[index];
+        look = particle_draw_look(slot, index);
+        float t = float(instance_id % BEAM_PIECES + (vertex_id >> 1u)) / float(BEAM_PIECES);
+        float4 beam = particle_emitters[slot].beam;
+        float3 end = transform_vector(particle_emitters[slot].world, beam.xyz);
+        float3 arc = transform_vector(particle_emitters[slot].world, float3(0, beam.w, 0));
+        float3 center = particle_world(slot, p.position) + t * end + 4.0 * t * (1.0 - t) * arc;
+        float3 side = cross(end + 4.0 * (1.0 - 2.0 * t) * arc, to_eye(center));
+        side = dot(side, side) > 1e-12 ? normalize(side) : frame.view[0].xyz;
+        half_size = look.size * 0.5;
+        world = center + side * c.x * half_size;
+        uv = float2(corner.x, t);
+        light = (particle_emitters[slot].range.w & PARTICLE_FLAG_LIT) != 0u ? particle_light(p) : emission_render_units(float3(1.0), (particle_emitters[slot].range.w & PARTICLE_FLAG_RELATIVE) != 0u);
     } else {
         index = particle_drawn(params.emitter, instance_id);
         p = particles[index];

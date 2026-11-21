@@ -11,8 +11,9 @@ editor (inspector, document, thumbnails and `particle.*`) is in [its reference](
 `plugins/vfx/runtime/effect` (`effect.PARTICLE_KIND` `PART`, `.particle`,
 `effect.PARTICLE_VERSION` as the manifest declares it; another version asks to write it again).
 An effect is like a material: entities name it (`vfx.Particle_Emitter`) and give it values of
-their own (`vfx.Particle_Override`, fields and program parameters alike). Tables: `particle`
-(`Particle_Info`), `parameters` (`Particle_Parameter`) and `hidden` (`Particle_Field`).
+their own (`vfx.Particle_Override`, fields and program parameters alike). The `particle` table
+stores the primary layer followed by additional layers, each with its own `Particle_Info` and
+program parameters. The `hidden` table is for the primary layer's instance fields.
 
 - `Particle_Info` is the destination of what is imported from other engines; its fields and
   their units are in `effect.odin`. Besides them:
@@ -29,10 +30,12 @@ their own (`vfx.Particle_Override`, fields and program parameters alike). Tables
     (-Z) along where it last went faster than `PARTICLE_MESH_FACING_SPEED` (kept in the bits of
     `flags` a ribbon has, so what rests does not turn), its +Y up, rolled by its rotation and
     scaled along each axis by its emitter; a sorted effect has one mesh (validation);
-  - the editor shows each field in the group its `group` tag names, or in that of the field
-    before it ([document](vfx-editor.md#particle-document)).
-- Curves have `PARTICLE_CURVE_KEYS` keys with non-decreasing times from 0 to 1; the surplus ones
-  repeat the last at 1.
+  - `Beam` draws a camera-facing strip from each particle to an endpoint offset in the emitter's
+    axes. Its optional arc offsets the midpoint along the emitter's +Y axis.
+  - the editor groups fields by their tags. Its layer controls select, add and remove additional
+    layers. `particle.set` replaces the additional layer sequence when given `layers`.
+- Curves and gradients use non-decreasing active times in [0, 1]. Zero times after the last
+  active key are unused. Sampling past the last key holds its value.
 - `parameters` stores values for the program by name (`Particle_Parameter`: type, from one to four
   components, values or texture).
 - `hidden` lists the fields that an instance does not show.
@@ -48,18 +51,21 @@ their own (`vfx.Particle_Override`, fields and program parameters alike). Tables
 
 ## Game
 
-A `Particle_Emitter` on an entity shows an effect. An effect of several emitters is a prefab,
-placed with `scene.spawn`.
+A `Particle_Emitter` on an entity starts each layer of its effect, with a clock per layer. Start,
+stop, restart, pause, resume and burst apply to the entity's layers. Start and stop set `active`
+during Play and `preview` during Edit. In either world, `loop` controls repetition. Turning
+emission off lets live particles finish. `destroy_when_done` removes the entity in Play after the
+last layer and sub effect in its subtree finish. Events that name a sub effect target its primary
+layer.
 
-`Particle_Emitter` names the effect (none: `effect.PARTICLE_DEFAULTS`). It emits by its fields
-alone: `active` while playing (start and stop set it), `preview` in the editor while the world does
-not play; turning either off lets the live particles finish. `destroy_when_done` destroys, while
-playing, the entity and what hangs from it once every emitter of the tree finished its cycle and
-its last particles (and those of its sub effect) died.
+Without an asset, `Particle_Emitter.preset` selects starter values. Use
+`effect.particle_preset` to read or adapt those values in code, or set `preset` in `particle.set`
+to start an asset from them.
 
 Values of an instance:
 
-- `Particle_Override`: the entity's own values, shaped like `erender.Material_Override`: one
+- `Particle_Override`: the entity's own values for the primary layer, shaped like
+  `erender.Material_Override`: one
   table of `base.name_hash` names and 16-byte values, where a name is a field path of the effect
   (`effect.particle_fields`, its bytes) or `parameters.` and a parameter of its Vfx program (its
   numbers as `[4]f32` or its texture's `Asset_Id`, `parameter_value`, `parameter_hash`): the
@@ -95,20 +101,15 @@ emitter binds or one of the world by its name ([grids](#grids-and-stages)).
   when the assets change; each frame they are posed with the palette that the renderer gives the
   skin in that frame and in the previous one (`erender.skin_palette`) and go to the frame's rows.
   A mesh that nobody poses, in its bind pose.
-- Who gives each one, in order: what the entity binds (`Particle_Bindings`: `surface` for the
-  shape, `sources` for those of the program: the source of its name or, with none, the unnamed one
-  of its index) and, for the shape, what the emitter draws. An effect names no mesh: one that must
-  emit from a given mesh is a prefab whose emitter binds that mesh's entity. A resource without a
-  source has no surface: the program reads it with `valid` false.
+- `Particle_Bindings` chooses the surface or bones for the shape. Without a chosen entity, the
+  shape samples what its own entity draws. A `Particle_Binding` binds one named program resource
+  to an entity or grid. Put it on the emitter or name the emitter from a separate binding
+  entity. The world indexes these bindings by emitter and resource name.
 - A grid: that of the entity that binds its source or that of the world's grid it names (`grid`);
   without a binding, the first grid that its stages walk is that of the emitter's entity, if it has
   one, and any other that of the world with the resource's name. A binding to what does not exist
   reads nothing: it is not looked up elsewhere. So each fluid runs on its own and several emitters
   read different grids with the same program.
-- Details shows of `Particle_Bindings` the surface and one row per resource of the program that an
-  entity reads (surface, grid or emitter), with the name that the program gives it, and for
-  a grid another with the name of the grid it reads; it writes the source of its index, unnamed
-  (`bindings_section`).
 - A surface is sampled by area and bones by length, on the GPU: the summed length of the bones goes
   with them in the frame's rows, and the sum of the areas of the triangles of each surface is built
   in the world's buffer (with the grids afterward) on the GPU (`particle_surface.comp`) the first
@@ -229,10 +230,10 @@ resource.
   itself at the start of each cycle of its effect (`channel_preview`): nothing else gives it births
   there, and where it is can be seen.
 - `particles_tick` numbers the births of each channel in the world, as the clocks number theirs,
-  and `particles_sync` starts on the GPU only those it did not start: a rollback that gives them
-  again does not draw them twice. A channel that starts being listened to starts those it stores.
-- A channel stores those of its last ticks (`CHANNEL_BIRTHS`); the older ones are lost and counted.
-  One that no emitter listens to is released.
+  and `particles_sync` hands the GPU the births it has yet to start. Rollback copies the
+  sequence and latest birth time. The host keeps a bounded history and GPU cursor for each
+  channel with births, discards the replaced future on replay, and releases unlistened channels.
+- A cone at a channel birth uses its nonzero normal as the cone axis.
 
 ## Data channels
 
@@ -254,10 +255,10 @@ A `Particles` node of a `.ui` asks on each frame it is shown for its effect in a
 [game UI](../../mirai-gameplay/references/libraries.md)).
 
 - `particles_sync` gives each one its clock (`UI_Particles`, of the world), which advances with the
-  frames and starts again, and adds it to the world's list as one more emitter, with its sub
-  effect, without light, collision or fade, with relative color and `view`: it is drawn only in the
+  frames and starts again. It adds the layers and their sub effects with relative color and
+  without light, collision or fade. They are drawn only in the
   `Effect` stage of that texture's effect view. One that was not asked for in a frame goes away
-  with its particles.
+  with its particles. The host allocates records as interfaces request effects.
 - While the world's time is stopped and the UI shows effects, the world's emitters stay paused and
   the pool advances with the frames.
 
@@ -346,13 +347,12 @@ To the GPU:
   The clocks are written every tick, as their time goes, so it is the one thing compared for all.
   Those whose frames give something every time are told every frame: a program (its age), the
   resources or stages it reads, the births of its channel, or a place drawn between two ticks.
-- The desc of an emitter is resolved again only when its effect, its `Particle_Override`, the
-  shaders or what the effect reads of the assets (`effect_inputs`: its file and its sub effect's,
-  their materials' rows and blending, and the meshes they draw) changed. The assets are read again
-  once per effect, not per emitter, when their revision or the shaders move; `particles_tick`
-  resolves the emission of a clock the same way.
-- The pool keeps every emitter it was given until `pool_remove`: an emitter that goes, is hidden or
-  loses its place leaves with its particles.
+- Resolved effect and program values are shared by emitters with the same values. A host-side
+  cache tracks an asset's inputs, including its layers and sub effects. Rollback snapshots hold
+  compact emission data and clocks. Moving emitters update their live pose and birth data
+  through the pool's indexed slots.
+- An emitter that is hidden leaves the pool. On removal its world-space particles can finish
+  in an orphaned slot.
   - `pool_frame` starts each frame; the pool's tables are built when the world first has
     emitters, and again, without its particles, for another capacity. `particles_sync` then puts
     every emitter again (`Pool.made_count`);
@@ -371,12 +371,12 @@ To the GPU:
   channels, where the reports go) is in `Gpu_Frame`, first in the rows of the frame.
 - Nothing allocates in a stable frame: the pool's tables are built when it is created, and a
   program's parameters go up only when they change.
-- An effect field exists once: in `Particle_Info`, which `Emitter_Desc` carries as it is, and in
-  the one place that packs it into the `Gpu_Emitter` row (`emitter_row`).
-- `Gpu_Particle` and `Gpu_Emitter` are equal to `particles.slang`; the values that that file copies
-  from the plugin (flags, types, sizes and capacities) are compared with those of Odin by a test.
-  A pool's free and draw lists go in one buffer, and the programs' `Attributes` (those that their
-  per-particle program declares) and their parameters in another.
+- The GPU row packs static effect values when they change and frame values as needed. The
+  resource and stage uploads stop at the last active row. Gravity and wind live in a persistent
+  buffer and are uploaded when their values or origin change.
+- The free, live and draw lists have a buffer of their own. The arena after the draw records
+  grows on demand for program attributes and birth lookup slots. Growth preserves existing
+  GPU state. A birth lookup is kept for a source emitter once a program requests it.
 - The functions of `particles.slang` and `particle_programs.slang` receive the emitter's slot and
   read from `particle_emitters[slot]` only the fields they use, like simulate: copying the whole
   row in each thread of a per-particle pass costs the registers and the reads of the whole row.
@@ -390,9 +390,10 @@ To the GPU:
   a cell from the first one's corner (`Gpu_Grid.corner`). The reports and the particles that
   `particle.instance.inspect` copies return to the world adding the origin.
 - A program also sees relative to the origin its emitter's transformation (`ctx.world`) and the
-  view (`mirai_vfx_view`). Its `Attributes`, the words of its state and the entries of the data
-  channels pass as they are: a place that they store is theirs to keep relative to the emitter or
-  to another particle, because the shift does not touch them.
+  view (`mirai_vfx_view`). For attributes that store world-space points, declare `//! rebase`
+  and write `void rebase(float3 origin_shift, inout Attributes a)`. The shift adds its delta
+  once per surviving particle, including paused particles. State and data-channel words can use
+  coordinates relative to their emitter or another particle.
 - The emitters of an effect view (`FLAG_VIEW`) have places of that view: the origin does not move
   them.
 - The `finish` pass counts in the `particles` counters (`erender.counters`): those alive and the
@@ -427,16 +428,15 @@ To the GPU:
   ([Vfx domain](../../mirai-rendering/references/shaders.md#programs)). `Orbit`
   (`plugins/vfx/shaders/orbit.slang`) is the plugin's.
 - `initialize` runs in emit, after the effect's values; `update`, on each step, before the effect's
-  forces; `render`, in the sprite and mesh vertices. What `render` gives the material of a sprite
+  forces. `render` fills draw records after the final step. What it gives the material of a sprite
   (`visual.data`, with its bit in `visual.given`, and `visual.random`) reaches its Surface program;
   no data is given if it does not write it, and the random value comes from the particle's seed.
   `births`, of a program that declares `//! births`, runs once per frame in emit (mode 3, before the
   births), and its count replaces the effect's births, spread over the frame.
-- Emit, simulate, stage, sprite and mesh have one pipeline per program in use, and one for the
-  emitters without a program. Each dispatch goes from the first to the last slot that the emitters
-  of its program have (in the pool or in the emitter table) and filters those of others; events are
-  dispatched only for the programs of some destination emitter. The spans and pipelines are looked
-  up again when a range, a program or a destination, or the shaders change.
+- Each program in use supplies emit and simulate pipelines. Programs with stages supply their
+  stage pipeline. Emit and stage get hardware tracing variants when they use tracing. Declare
+  `//! use trace` when an included helper calls the trace function. Mesh and sprite vertices
+  consume the cached draw record and share their vertex pipeline across Vfx programs.
 - [Debugging](vfx-editor.md#debugging) reads through `emitter_ranges`, in editor passes only.
 - The resource functions of `mirai_vfx.slang` are defined by `particle_programs.slang` over the
   emitter's resource rows (`ctx.emitter`), the areas buffer and the frame's channel births.
@@ -476,17 +476,17 @@ Once per frame, in `Simulate`:
 - **stage** (clear mode): before the steps, the cells that entered the region of each grid that
   moved since the last time the GPU cleared them.
 - **volume light**: after the steps, the light of the cells of each volume; `_hw` variant.
-- **finish**: one group per emitter.
-  - Sorted list in shared memory (bitonic, up to `SORT_MAX`): back to front, or a ribbon as
-    [ribbons](#ribbons) says.
-  - Indirect draw of what is alive and the counters.
+- **finish** writes counters and indirect draws. The sort pass orders ribbon points and groups
+  mesh choices. Groups sort tiles in shared memory and merge them through the pool's scratch
+  list, covering the whole live range.
 
 In each view:
 
 - **volumes** (`Blend`): the volumes' media, before the sprites.
 - **sprites** (`Blend`): over the lit image, before TAA; the emitters from farthest to nearest.
   - `Billboard` (faces the camera, with rotation), `Velocity` (stretched according to `stretch`),
-    `Horizontal` (plane in XZ) and `Ribbon` ([ribbons](#ribbons)).
+    `Horizontal` (plane in XZ), `Beam` and `Ribbon` ([ribbons](#ribbons)). The blended pass sorts
+    flagged emitters back to front using the current view's direction.
   - `Mesh` particles whose material blends (alpha mode `blend`, `Emitter_Desc.blended`): their
     mesh with `particle_mesh_blend.vert` and the sprites' fragment, placed as in the G-buffer, so
     their color, opacity and curves fade them as a sprite's, additive or covering by alpha as the
@@ -501,8 +501,8 @@ In each view:
     color. Without a program, its base color texture is the flipbook, with a blend between two
     frames, tinted by the particle's color; without a texture, a soft disc.
   - `soft` fades against the scene's depth and near the camera.
-  - A particle without light shows its color in nits or, with `relative`, the value that the
-    exposed image shows (`emission_render_units`).
+  - An unlit particle's color uses its effect's emission units. A material's emission uses the
+    material's own units regardless of particle lighting.
   - `Additive` adds radiance; `Alpha` covers with premultiplied alpha.
   - With glass in view, each fragment is drawn in the pass of its side of the nearest layer
     (`.Glass_Depth`).
@@ -520,12 +520,10 @@ In each view:
   from it) passes a multiple of `1/TRAILS_PER_SECOND`, and at the end of each frame a leader:
   the events of the last step start their points after it, drawn in the frame, and the point of a
   leader lives until the next step, so a trail reaches its head.
-- **finish** sorts a ribbon's list by its ribbon (as wide as the word leaves above the slot,
-  `SORT_SLOT_BITS`), its age and its slot, so a burst keeps one order. Each segment within a ribbon
-  takes the pieces its turn needs for straight pieces to stay within about a pixel of its curve at
-  its distance (up to `RIBBON_PIECES`; none between ribbons), rising at once and coming down one a
-  frame (kept in its first particle's `flags`); where the quads of each segment start goes in the
-  lists quarter after the births, and the draw has their sum.
+- The sort pass orders ribbon points by ribbon, age and slot, so a burst keeps one order.
+  A segment takes enough pieces to approximate its curve within about a pixel at its distance.
+  The piece count rises immediately and falls gradually. The scratch list stores each segment's
+  first quad, and the draw takes their sum.
 - The vertices of a segment find it by binary search and lie on the cubic that leaves each point
   along the mean of the directions to its neighbours (toward its one neighbour at an end), with
   width, color and light lerped; what each particle shows is kept by the last step and by its

@@ -1,5 +1,7 @@
 package vfx
 
+import "mirai:core"
+import "plugins:vfx/runtime/effect"
 import erender "mirai:engine/render"
 import gui "mirai:engine/gui"
 import "mirai:host"
@@ -14,79 +16,111 @@ import mm "mirai:std/math"
 // frame it shows it; one it did not ask for in a frame goes with its
 // particles.
 
-UI_EFFECT_CAPACITY :: 32
-
 // The effects the interfaces show, with their clocks.
-@(storage,host,by_world)
+@(storage,host,by_world,free="ui_particles_free")
 UI_Particles :: struct {
-    effects:[UI_EFFECT_CAPACITY]UI_Effect,
-    count:int,
+    effects:[dynamic]UI_Effect,
+}
+
+ui_particles_free :: proc(p:^UI_Particles) {
+    for &entry in p.effects {shown_drop(&entry.shown)}
+    delete(p.effects)
+    p.effects=nil
 }
 
 UI_Effect :: struct {
     using request:gui.UI_Effect,
+    layer:int,
     asked:bool,             // in this frame
     clock:Emitter_Clock,
     shown:Emitter_Shown,
 }
 
 // The emitters of the effects the UI showed in this frame, put in the pool of
-// the world; those it did not show go with their particles. Past
-// UI_EFFECT_CAPACITY, the last asked for are left out.
+// the world; those it did not show go with their particles.
 @(private)
-ui_effects_sync :: proc(p:^UI_Particles,requests:[]gui.UI_Effect,assets:^host.Assets,renderer:^erender.Renderer,dt:f32,shaders:u64,pool:^Pool) {
-    each: for request in requests {
-        for &effect in p.effects[:p.count] {
-            if effect.key!=request.key {continue}
-            if effect.request!=request {effect={request=request,clock={last=-max(f64)}}}
-            effect.asked=true
-            continue each
-        }
-        if p.count>=len(p.effects) {continue}
-        p.effects[p.count]={request=request,asked=true,clock={last=-max(f64)}}
-        p.count+=1
-    }
-    for i:=p.count-1;i>=0;i-=1 {
-        if p.effects[i].asked {continue}
-        pool_remove(pool,p.effects[i].shown.desc.id)
-        pool_remove(pool,p.effects[i].shown.sub_desc.id)
-        p.effects[i]=p.effects[p.count-1]
-        p.count-=1
-    }
-    a:=assets
-    if a==nil {return}
-    for &effect in p.effects[:p.count] {
-        effect.asked=false
-        shown,clock:=&effect.shown,&effect.clock
-        key:=base.hash_combine(base.hash_combine(base.hash_combine(effect.effect[0],effect.effect[1]),a.revision),shaders)|1
-        if shown.resolved!=key {
-            ready:=shown_resolve(shown,a,renderer,effect.effect,nil,{base.hash_combine(effect.key,0x75695f7061727469),base.hash_combine(effect.key,0x75695f7375625f70)},nil)
-            shown.resolved=ready?key:0
-            // Alone in its texture: nothing to collide with, fade into or be lit by.
-            for d in ([2]^Emitter_Desc{&shown.desc,&shown.sub_desc}) {
-                d.view=effect.view
-                d.info.lit,d.info.emission_mode,d.info.collision,d.info.soft=false,.Relative,.None,0
+ui_effects_sync :: proc(p:^UI_Particles,requests:[]gui.UI_Effect,assets:^host.Assets,
+    renderer:^erender.Renderer,dt:f32,shaders:u64,sync:^Particle_Sync,
+) {
+    pool:=&sync.pool
+    if assets!=nil {
+        for request in requests {
+            view,_:=effect_view(assets,request.effect)
+            for layer in 0..=len(view.layers) {
+                entry:=ui_effect_of(p,request,layer,pool)
+                if entry==nil {continue}
+                info:=&view.layers[layer-1] if layer>0 else nil
+                ui_effect_tell(entry,assets,renderer,dt,shaders,sync,info)
             }
         }
-        if clock.resolved!=key {
-            clock.emission=emission_of(a,&shown.desc.info)
-            clock.resolved=key
-        }
-        emission_step(clock,&clock.emission,true,true,{},dt)
-        if clock.generation!=shown.generation {
-            shown.generation=clock.generation
-            shown.started=max(shown.started,clock.first)
-        }
-        if shown.sub_desc.id!=0 {
-            sub:=shown.sub_desc
-            sub.transform,sub.previous=mm.Mat4(1),mm.Mat4(1)
-            sub.generation=shown.generation
-            pool_put(pool,&sub)
-        }
-        desc:=shown.desc
-        desc.transform,desc.previous=mm.Mat4(1),mm.Mat4(1)
-        desc.spawns=births_since(clock,&shown.started)
-        desc.generation=shown.generation
-        pool_put(pool,&desc)
     }
+    for i:=len(p.effects)-1;i>=0;i-=1 {
+        entry:=&p.effects[i]
+        if entry.asked {entry.asked=false;continue}
+        pool_remove(pool,entry.shown.desc.id)
+        pool_remove(pool,entry.shown.sub_desc.id)
+        shown_drop(&entry.shown)
+        unordered_remove(&p.effects,i)
+    }
+}
+
+@(private)
+ui_effect_of :: proc(p:^UI_Particles,request:gui.UI_Effect,layer:int,pool:^Pool) -> ^UI_Effect {
+    for &entry in p.effects {
+        if entry.key!=request.key || entry.layer!=layer {continue}
+        if entry.request!=request {
+            pool_remove(pool,entry.shown.desc.id)
+            pool_remove(pool,entry.shown.sub_desc.id)
+            shown_drop(&entry.shown)
+            entry.shown={}
+            entry.request=request
+            entry.clock={last=-max(f64)}
+        }
+        entry.asked=true
+        return &entry
+    }
+    if resize(&p.effects,len(p.effects)+1)!=nil {return nil}
+    entry:=&p.effects[len(p.effects)-1]
+    entry.request=request
+    entry.layer=layer
+    entry.asked=true
+    entry.clock.last=-max(f64)
+    return entry
+}
+
+@(private)
+ui_effect_tell :: proc(entry:^UI_Effect,assets:^host.Assets,renderer:^erender.Renderer,
+    dt:f32,shaders:u64,sync:^Particle_Sync,info:^effect.Particle_Info,
+) {
+    shown,clock:=&entry.shown,&entry.clock
+    key:=base.hash_combine(emission_key(entry.effect,0,assets.revision),shaders)|1
+    if shown.resolved!=key {
+        id:=base.hash_combine(entry.key,u64(entry.layer)+0x75695f7061727469)
+        sub:=shown.sub_desc.id
+        ready:=shown_resolve(shown,&sync.emitter_infos,assets,renderer,entry.effect,nil,
+            {id,sub_id(core.Entity(id))},nil,info,view=entry.view,layer=u8(entry.layer))
+        shown.resolved=key if ready else 0
+        if sub!=0 && sub!=shown.sub_desc.id {pool_remove(&sync.pool,sub)}
+    }
+    if shown.desc.spec==nil {return}
+    if clock.resolved!=key {
+        clock.emission=emission_of(assets,&shown.desc.info)
+        clock.resolved=key
+    }
+    emission_step(clock,&clock.emission,true,true,{},dt)
+    if clock.generation!=shown.generation {
+        shown.generation=clock.generation
+        shown.started=max(shown.started,clock.first)
+    }
+    if shown.sub_desc.id!=0 {
+        sub:=&shown.sub_desc
+        sub.transform,sub.previous=mm.Mat4(1),mm.Mat4(1)
+        sub.generation=shown.generation
+        pool_put(&sync.pool,sub)
+    }
+    desc:=&shown.desc
+    desc.transform,desc.previous=mm.Mat4(1),mm.Mat4(1)
+    desc.spawns=births_since(clock,&shown.started)
+    desc.generation=shown.generation
+    pool_put(&sync.pool,desc)
 }
