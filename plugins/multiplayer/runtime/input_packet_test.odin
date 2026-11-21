@@ -23,13 +23,13 @@ an_input_delay_acts_on_what_the_devices_gave_that_many_ticks_ago :: proc(t:^test
     s:Net_Session
     s.host_ready,s.mode,s.host.front.clock.input_delay=true,.Client,3
     s.client.taken=make([]Taken,16);defer delete(s.client.taken)
-    fire :: proc(w:^Net_Test_World,seat:core.Entity) -> inp.Action_State {return inp.seat_action(core.read(&w.seats),seat,NET_TEST_FIRE)}
+    fire :: proc(w:^Net_Test_World,seat:core.Entity) -> inp.Action_State {return inp.seat_action(core.ref(&w.seat_runtime),seat,NET_TEST_FIRE)}
     tick :: proc(s:^Net_Session,w:^Net_Test_World,at:u64,down:bool,again:=false) {
         w.time.tick,w.time.resimulating=at,again
         w.input.gamepads[0]={connected=true,down=down?{.South}:{}}
-        net_input_take(s,&w.seats,w.time)
+        net_input_take(s,core.read(&w.seats),&w.seat_runtime,w.time)
         net_test_feed(w)
-        net_input_delay(s,&w.seats,core.ref(&w.bindings),w.time,nil)
+        net_input_delay(s,core.read(&w.seats),&w.seat_runtime,core.ref(&w.bindings),w.time,nil)
     }
     for at in u64(1)..=12 {
         tick(&s,&w,at,at==5 || at==6)

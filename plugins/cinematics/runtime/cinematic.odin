@@ -186,17 +186,17 @@ cinematic_advance :: proc(
         }
         if !time.playing {continue}
         shot,_:=cinematic_shot(playback.ptr,content_sources.ptr,app,entities.ptr,cameras,e,at)
-        seat:=next.seat if next.seat!=core.NONE else input.focused(seat_state.ptr,seats)
+        seat:=next.seat if next.seat!=core.NONE else input.focused(seat_state,seats)
         asked:cam.Camera_Override
         for item in shown.ptr.overrides {if item.active && item.owner==e {asked=item}}
         if !showing || shot.camera==core.NONE || !core.alive(entities.ptr,seat) {
             if asked.active {cam.camera_override_remove(camera_requests,e)}
-            if input.blocking(seat_state.ptr,e) {input.input_unblock(seat_requests,e)}
+            if input.blocking(seat_state,e) {input.input_unblock(seat_requests,e)}
             continue
         }
         if !asked.active || asked.camera!=shot.camera || asked.seat!=seat {
             cam.camera_override(camera_requests,e,seat,shot.camera,blend=shot.blend)
             if next.block_mask!=0 {input.input_block(seat_requests,e,seat,next.block_mask)}
-        } else if next.block_mask!=0 && !input.blocking(seat_state.ptr,e) {input.input_block(seat_requests,e,seat,next.block_mask)}
+        } else if next.block_mask!=0 && !input.blocking(seat_state,e) {input.input_block(seat_requests,e,seat,next.block_mask)}
     }
 }

@@ -4,12 +4,9 @@ import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
 import "core:log"
-import "core:mem"
-import "core:os"
 import "core:strings"
 import "mirai:core"
 import "mirai:host"
-import "mirai:project"
 import "mirai:std/base"
 import si "mirai:std/input"
 import "mirai:std/math"
@@ -214,6 +211,7 @@ action_bindings :: proc "contextless" (a:^Action_Bindings) -> []Input_Binding {
 Input_Map :: struct {
     actions:[ACTION_CAPACITY]Action_Bindings,
     declared:Action_Mask,
+    compiled:Compiled_Map,
     tap_seconds,hold_seconds:f32, // 0: TAP_SECONDS and HOLD_SECONDS
     built:bool,
     seen:core.Seen, // the revision of Input_Settings it was built from
@@ -237,6 +235,7 @@ Frame_Actions :: struct {slots:[LOCAL_CAPACITY]Actions}
 @(params)
 Input_Of :: struct($E:typeid) where intrinsics.type_is_enum(E) {
     state:core.Ref(Seats),
+    runtime:core.Ref(Seat_States),
     seats:^core.Table(Seat,.Read),
     base:Action,
 }
@@ -248,6 +247,7 @@ Input_Of :: struct($E:typeid) where intrinsics.type_is_enum(E) {
 Frame_Input_Of :: struct($E:typeid) where intrinsics.type_is_enum(E) {
     actions:core.Ref(Frame_Actions),
     state:core.Ref(Seats),
+    runtime:core.Ref(Seat_States),
     seats:^core.Table(Seat,.Read),
     base:Action,
 }
@@ -267,13 +267,13 @@ holding :: proc{input_holding,frame_holding,body_holding}
 value :: proc{input_value,frame_value,body_value}
 vector :: proc{input_vector,frame_vector,body_vector}
 
-input_state :: proc(input:Input_Of($E),a:E) -> Action_State {return seat_action(input.seats,focused(input.state.ptr,input.seats),action_of(input,a))}
+input_state :: proc(input:Input_Of($E),a:E) -> Action_State {return seat_action(input.runtime,focused(input.state,input.seats),action_of(input,a))}
 frame_state :: proc(input:Frame_Input_Of($E),a:E) -> Action_State {return slot_frame_state(input,input.state.focus,a)}
-body_state :: proc(input:Input_Of($E),body:core.Entity,a:E) -> Action_State {return body_action(input.seats,body,action_of(input,a))}
+body_state :: proc(input:Input_Of($E),body:core.Entity,a:E) -> Action_State {return body_action(input.state,input.runtime,body,action_of(input,a))}
 // The state of an action of a local slot this frame.
 slot_frame_state :: proc(input:Frame_Input_Of($E),slot:int,a:E) -> Action_State {
     if slot<0 || slot>=LOCAL_CAPACITY {return {}}
-    if seat,ok:=core.get(input.seats,local_seat(input.seats,slot));ok && seat.blocked&action_bit(action_of(input,a))!=0 {return {}}
+    if seat:=seat_runtime(input.runtime,local_seat(input.seats,slot));seat!=nil && seat.blocked&action_bit(action_of(input,a))!=0 {return {}}
     return action(&input.actions.ptr.slots[slot],action_of(input,a))
 }
 input_down :: proc(input:Input_Of($E),a:E) -> bool {return input_state(input,a).down}
@@ -299,7 +299,10 @@ body_value :: proc(input:Input_Of($E),body:core.Entity,a:E) -> f32 {return body_
 body_vector :: proc(input:Input_Of($E),body:core.Entity,a:E) -> math.Vec2 {return body_state(input,body,a).vector}
 
 // The state of an action of a seat this tick, as seat_action sees it.
-seat_state :: proc(input:Input_Of($E),seat:core.Entity,a:E) -> Action_State {return seat_action(input.seats,seat,action_of(input,a))}
+seat_state :: proc(input:Input_Of($E),seat:core.Entity,a:E) -> Action_State {
+    if !core.has(input.seats,seat) {return {}}
+    return seat_action(input.runtime,seat,action_of(input,a))
+}
 seat_down :: proc(input:Input_Of($E),seat:core.Entity,a:E) -> bool {return seat_state(input,seat,a).down}
 seat_pressed :: proc(input:Input_Of($E),seat:core.Entity,a:E) -> bool {return seat_state(input,seat,a).pressed}
 seat_released :: proc(input:Input_Of($E),seat:core.Entity,a:E) -> bool {return seat_state(input,seat,a).released}
@@ -307,10 +310,6 @@ seat_tapped :: proc(input:Input_Of($E),seat:core.Entity,a:E) -> bool {return sea
 seat_holding :: proc(input:Input_Of($E),seat:core.Entity,a:E) -> bool {return seat_state(input,seat,a).holding}
 seat_value :: proc(input:Input_Of($E),seat:core.Entity,a:E) -> f32 {return seat_state(input,seat,a).value}
 seat_vector :: proc(input:Input_Of($E),seat:core.Entity,a:E) -> math.Vec2 {return seat_state(input,seat,a).vector}
-
-// The file that held the bindings of a project before Input_Settings: one
-// found is not read, and the map says where they go.
-@(private) OLD_BINDINGS_FILE :: "input.mirai"
 
 // Builds the map from the defaults of the code and Input_Settings, the first
 // time and whenever the setting was handed out to write (its revision moved):
@@ -321,15 +320,11 @@ input_map_build :: proc(bindings:^Input_Map,settings:core.Ref(Input_Settings),wr
     if !core.touched(written,&seen) && bindings.built {return}
     input_map_make(bindings,app.info,settings.ptr,problems)
     bindings.seen=seen
-    if app.root=="" {return}
-    if old:=project.path(app.root,OLD_BINDINGS_FILE,allocator=context.temp_allocator);os.is_file(old) {
-        input_report(problems,"input.old_file","%s is no longer read: its bindings go in the section Input_Settings of %s (Project Settings > Input, or settings.set, writes them); bind the actions there again and delete %s",old,project.path(app.root,project.SETTINGS_FILE,allocator=context.temp_allocator),old)
-    }
 }
 
 // The actions of each local slot for the frame, in the contexts of its seat.
 @(step="input",stage="end")
-input_frame_actions_update :: proc(bindings:core.Ref(Input_Map),actions:^Frame_Actions,input:core.Frame_Input,state:core.Ref(Seats),seats:^core.Table(Seat,.Read),frame:core.Frame_Time) {
+input_frame_actions_update :: proc(bindings:core.Ref(Input_Map),actions:^Frame_Actions,input:core.Frame_Input,state:core.Ref(Seats),seats:^core.Table(Seat,.Read),states:core.Ref(Seat_States),frame:core.Frame_Time) {
     count:=state.local_count
     for slot in 0..<LOCAL_CAPACITY {
         if slot>=count {
@@ -338,7 +333,7 @@ input_frame_actions_update :: proc(bindings:core.Ref(Input_Map),actions:^Frame_A
         }
         own:=slot_input(input.input,slot,count,state.focus)
         contexts:^Context_Stack
-        if row:=core.row_of(seats,local_seat(seats,slot));row>=0 {contexts=&seats.values[row].contexts}
+        if source:=seat_runtime(states,local_seat(seats,slot));source!=nil {contexts=&source.contexts}
         actions_update(&actions.slots[slot],bindings.ptr,&own,frame.dt,contexts)
     }
 }
@@ -510,6 +505,7 @@ input_map_make :: proc(m:^Input_Map,info:^core.World_Info,settings:^Input_Settin
     if strings.builder_len(unbound)>0 {
         input_report(problems,"input.action_unbound","%s: no binding, neither a default in code nor in Input_Settings; give each its kind and default bindings beside its enum (<enum>_defaults :: proc() -> [E]Action_Bindings), or bind it in Project Settings > Input",strings.to_string(unbound))
     }
+    input_map_compile(&result)
     m^=result
 }
 
@@ -609,12 +605,12 @@ action_code :: proc "contextless" (code:Input_Code,pad:u8) -> u16 {
 // The highest layer whose bindings read each code and axis, as si.Input numbers them.
 @(private)
 Taken :: struct {
-    codes:[ACTION_CODES]u8,
-    axes:[ACTION_AXES]u8,
+    codes:[ACTION_CODES]u16,
+    axes:[ACTION_AXES]u16,
 }
 
 @(private)
-taken_at :: proc "contextless" (taken:^Taken,code:Input_Code,pad:u8) -> ^u8 {
+taken_at :: proc "contextless" (taken:^Taken,code:Input_Code,pad:u8) -> ^u16 {
     n:=int(action_code(code,pad))
     if device,_:=code_device(code);device==.Mouse_Axis || device==.Gamepad_Axis {return &taken.axes[n]}
     return &taken.codes[n]
@@ -623,119 +619,110 @@ taken_at :: proc "contextless" (taken:^Taken,code:Input_Code,pad:u8) -> ^u8 {
 // What a binding reads goes to its layer. A gamepad code stands for that of
 // every gamepad too, and one of every gamepad for that of each.
 @(private)
-inputs_take :: proc "contextless" (taken:^Taken,binding:^Input_Binding,level:u8) {
-    take :: proc "contextless" (taken:^Taken,code:Input_Code,gamepad,level:u8) {
+inputs_take :: proc "contextless" (taken:^Taken,binding:^Input_Binding,mask:u16) {
+    take :: proc "contextless" (taken:^Taken,code:Input_Code,gamepad:u8,mask:u16) {
         if device,_:=code_device(code);device!=.Gamepad_Button && device!=.Gamepad_Axis {
             at:=taken_at(taken,code,gamepad)
-            at^=max(at^,level)
+            at^|=mask
             return
         }
         for pad in 0..=GAMEPAD_ANY {
             if gamepad!=GAMEPAD_ANY && pad!=gamepad && pad!=GAMEPAD_ANY {continue}
             at:=taken_at(taken,code,pad)
-            at^=max(at^,level)
+            at^|=mask
         }
     }
     pad:=binding_pad(binding)
-    for code in binding_inputs(binding) {take(taken,code,pad,level)}
-    for code in chord_inputs(binding) {take(taken,code,pad,level)}
+    for code in binding_inputs(binding) {take(taken,code,pad,mask)}
+    for code in chord_inputs(binding) {take(taken,code,pad,mask)}
 }
 
-// Whether a higher layer reads something a binding reads.
 @(private)
-inputs_taken :: proc "contextless" (taken:^Taken,binding:^Input_Binding,level:u8) -> bool {
-    pad:=binding_pad(binding)
-    for code in binding_inputs(binding) {if taken_at(taken,code,pad)^>level {return true}}
-    for code in chord_inputs(binding) {if taken_at(taken,code,pad)^>level {return true}}
-    return false
+COMPILED_CAPACITY :: ACTION_CAPACITY*ACTION_BINDINGS
+
+@(private)
+Compiled_Map :: struct {
+    bindings:[COMPILED_CAPACITY]si.Binding,
+    clashes:[COMPILED_CAPACITY]u16, // contexts using one of this binding's inputs
+    base_enabled:[COMPILED_CAPACITY/64]u64,
+    kinds:[ACTION_CAPACITY]Action_Kind,
+    count:int,
+    chorded:bool,
+    motion:Action_Mask,
 }
 
-// The states of the actions of a map for one tick: from the input of the
-// tick and from the states the previous tick left in actions. Only the
-// actions of the contexts of the seat read input (without contexts, those of
-// the base one), and a binding does not when a higher layer reads one of its
-// inputs, or a modal one is above it. A hold drives its action as one more
-// binding, in the same contexts. It allocates nothing.
-actions_update :: proc(actions:^Actions,m:^Input_Map,input:^core.Input,dt:f32,contexts:^Context_Stack=nil,holds:[]Action_Hold=nil) {
-    // The layer of each context the seat is in, plus one; 0: not in it.
-    layers:[CONTEXT_CAPACITY]u8
-    layers[CONTEXT_BASE]=1
-    floor:=u8(1) // the lowest layer that gets input: the highest modal one
-    stacked:=contexts!=nil && contexts.count>0
-    if stacked {
-        for c,i in contexts.layers[:min(int(contexts.count),CONTEXT_LAYERS)] {
-            if int(c)>=CONTEXT_CAPACITY {continue}
-            layers[c]=u8(i+2)
-            if contexts.modal&(1<<u8(i))!=0 {floor=u8(i+2)}
-        }
-    }
-    layer :: proc "contextless" (c:Input_Context,layers:^[CONTEXT_CAPACITY]u8,floor:u8) -> u8 {
-        if c==CONTEXT_ALWAYS {return 1}
-        if int(c)>=CONTEXT_CAPACITY || layers[c]<floor {return 0}
-        return layers[c]
-    }
-    scratch:[20<<10]u8
-    arena:mem.Arena
-    mem.arena_init(&arena,scratch[:])
-    state:si.Input
-    count:=action_end(m)
-    bindings:=0
-    for &a in m.actions[:count] {bindings+=len(action_bindings(&a))}
-    if count==0 || !si.input_init(&state,{
-        max_actions=count,max_bindings=max(bindings,1),code_count=ACTION_CODES,axis_count=ACTION_AXES,
-        tap=m.tap_seconds,hold=m.hold_seconds,allocator=mem.arena_allocator(&arena),
-    }) {
-        actions^={}
-        return
-    }
-    for i in 0..<count {
-        si.input_add_action(&state,m.actions[i].kind)
-        if i<int(actions.count) {state.states[i]=actions.states[i]}
-    }
+// Finalizes a map assembled with input_map_action and input_map_bind.
+input_map_compile :: proc "contextless" (m:^Input_Map) {
+    compiled:=&m.compiled
+    compiled^={}
     taken:Taken
-    if stacked {
-        for &a in m.actions[:count] {
-            level:=layer(a.input_context,&layers,floor)
-            if level==0 {continue}
-            for &binding in action_bindings(&a) {
-                if binding_suits(a.kind,binding) {inputs_take(&taken,&binding,level)}
-            }
+    for &a in m.actions[:action_end(m)] {
+        if int(a.input_context)>=CONTEXT_CAPACITY {continue}
+        for &b in action_bindings(&a) {
+            if binding_suits(a.kind,b) {inputs_take(&taken,&b,u16(1)<<u8(a.input_context))}
         }
     }
-    for &a,index in m.actions[:count] {
-        level:=layer(a.input_context,&layers,floor)
-        if level==0 {continue}
-        // Beside the displacement of the mouse, a stick or keys turn at a rate: as far in any dt.
-        rate:=action_reads_mouse(m,Action(index))
-        for &binding in action_bindings(&a) {
-            kind,valid:=binding_kind(a.kind,binding)
-            if !valid || stacked && inputs_taken(&taken,&binding,level) {continue}
-            pad:=binding_pad(&binding)
-            codes:[4]u16
-            for code,i in binding_inputs(&binding) {codes[i]=action_code(code,pad)}
-            action:=si.Action(index)+1
-            scale:=binding.scale!=0?binding.scale:1
-            if rate && kind!=.Delta && kind!=.Delta_2D {scale*=dt}
-            zone:=binding.dead_zone
-            bound:bool
-            switch kind {
-            case .Code:       bound=si.input_bind_code(&state,action,si.Input_Code(codes[0]))
-            case .Axis_Above: bound=si.input_bind_axis_button(&state,action,si.Axis_Code(codes[0]),zone>0?zone:DEAD_ZONE_BUTTON,scale)
-            case .Code_Axis:  bound=si.input_bind_codes_axis(&state,action,si.Input_Code(codes[0]),si.Input_Code(codes[1]),scale)
-            case .Analog:     bound=si.input_bind_axis(&state,action,si.Axis_Code(codes[0]),zone>0?zone:DEAD_ZONE_AXIS,scale)
-            case .Codes_2D:   bound=si.input_bind_codes_2d(&state,action,si.Input_Code(codes[0]),si.Input_Code(codes[1]),si.Input_Code(codes[2]),si.Input_Code(codes[3]),scale)
-            case .Analog_2D:  bound=si.input_bind_axes_2d(&state,action,si.Axis_Code(codes[0]),si.Axis_Code(codes[1]),zone>0?zone:DEAD_ZONE_STICK,scale)
-            case .Delta:      bound=si.input_bind_delta(&state,action,si.Axis_Code(codes[0]),scale)
-            case .Delta_2D:   bound=si.input_bind_delta_2d(&state,action,si.Axis_Code(codes[0]),si.Axis_Code(codes[1]),scale)
+    for &a,i in m.actions[:action_end(m)] {
+        compiled.kinds[i]=a.kind
+        rate:=action_reads_mouse(m,Action(i))
+        if rate {compiled.motion|=action_bit(Action(i))}
+        for &b in action_bindings(&a) {
+            kind,valid:=binding_kind(a.kind,b)
+            if !valid {continue}
+            pad:=binding_pad(&b)
+            n:=compiled.count
+            dst:=&compiled.bindings[n]
+            dst.action,dst.kind=u16(i),kind
+            dst.rate=rate && kind!=.Code && kind!=.Delta && kind!=.Delta_2D
+            dst.scale=b.scale!=0?b.scale:1
+            _,_,_,dst.dead_zone=binding_uses(a.kind,b)
+            for code,c in binding_inputs(&b) {
+                dst.codes[c]=action_code(code,pad)
+                compiled.clashes[n]|=taken_at(&taken,code,pad)^
             }
-            if held:=chord_inputs(&binding);bound && len(held)>0 {
-                chord:[CHORD_CAPACITY]si.Input_Code
-                for code,i in held {chord[i]=si.Input_Code(action_code(code,pad))}
-                si.input_chord(&state,..chord[:len(held)])
+            for code,c in chord_inputs(&b) {
+                dst.chord[c]=action_code(code,pad)
+                dst.chord_count+=1
+                compiled.clashes[n]|=taken_at(&taken,code,pad)^
             }
+            if a.input_context==CONTEXT_BASE || a.input_context==CONTEXT_ALWAYS {
+                base.bits_set(compiled.base_enabled[:],n)
+            }
+            compiled.chorded||=dst.chord_count>0
+            compiled.count+=1
         }
     }
+}
 
+// The states of a map in one tick or frame, using the transitions stored by its caller.
+actions_update :: proc(actions:^Actions,m:^Input_Map,input:^core.Input,dt:f32,contexts:^Context_Stack=nil,holds:[]Action_Hold=nil) {
+    count:=action_end(m)
+    layers,higher:=context_levels(contexts)
+    compiled:=&m.compiled
+    enabled:=compiled.base_enabled[:]
+    stacked:[COMPILED_CAPACITY/64]u64
+    if contexts!=nil && contexts.count>0 {
+        enabled=stacked[:]
+        for &binding,i in compiled.bindings[:compiled.count] {
+            c:=m.actions[binding.action].input_context
+            if int(c)<CONTEXT_CAPACITY && layers[c]!=0 && compiled.clashes[i]&higher[c]==0 {
+                base.bits_set(enabled,i)
+            }
+        }
+    }
+    down,latched:[ACTION_CODES/64]u64
+    axes:[ACTION_AXES]f32
+    accum:[ACTION_CAPACITY]si.Accum
+    taken:[ACTION_CODES]u8
+    taken_axes:[ACTION_AXES]u8
+    state:=si.Input{
+        down=down[:],latched_down=latched[:],axes=axes[:],accum=accum[:],
+        taken=taken[:],taken_axes=taken_axes[:],states=actions.states[:count],
+        bindings=compiled.bindings[:compiled.count],binding_count=compiled.count,
+        kinds=compiled.kinds[:count],action_count=count,chorded=compiled.chorded,
+        tap=m.tap_seconds>0?m.tap_seconds:TAP_SECONDS,
+        hold=m.hold_seconds>0?m.hold_seconds:HOLD_SECONDS,
+    }
     // A code pressed and released inside the tick is not down, and still counts as a press.
     feed :: proc "contextless" (state:^si.Input,code:u16,down,pressed:bool) {
         if down {base.bits_set(state.down,int(code))} else if pressed {base.bits_set(state.latched_down,int(code))}
@@ -763,12 +750,11 @@ actions_update :: proc(actions:^Actions,m:^Input_Map,input:^core.Input,dt:f32,co
     for hold in holds {
         a:=int(hold.action)
         if a>=count || m.declared&action_bit(hold.action)==0 {continue}
-        if c:=m.actions[a].input_context;c!=CONTEXT_ALWAYS && (int(c)>=CONTEXT_CAPACITY || layers[c]<floor) {continue}
+        if c:=m.actions[a].input_context;int(c)>=CONTEXT_CAPACITY || layers[c]==0 {continue}
         si.input_feed_action(&state,si.Action(a+1),hold.value.x!=0,hold.value.x,hold.value)
     }
 
-    si.input_update(&state,dt)
-    copy(actions.states[:count],state.states[:count])
+    si.input_update(&state,dt,enabled)
     for i in count..<int(actions.count) {actions.states[i]={}}
     actions.count=u32(count)
 }

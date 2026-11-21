@@ -169,7 +169,7 @@ Client :: struct {
     authoritative_words:[]u32,
     record_ticks:[]u32, // by tick modulo history: the tick of its row plus one
     taken:[]Taken,      // by tick modulo its length: the actions the devices gave in each of the last ticks
-    fed_seat,delayed:input.Seat, // the seat it drives with as its devices left it, and as the game had it at the start of the tick
+    fed_seat,delayed:input.Seat_Sample, // the seat it drives with as its devices left it, and as the game had it at the start of the tick
     record_free:[]i32,
     record_free_count:int,
     islands:[]u32,      // of what this client drives, by records_capture

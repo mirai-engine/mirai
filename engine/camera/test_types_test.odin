@@ -20,6 +20,7 @@ Test_Cameras :: struct {
     hierarchy:core.Hierarchy,
     seats:core.Table(input.Seat),
     seat_state:input.Seats,
+    seat_runtime:input.Seat_States,
     selected:Cameras,
     requests:Camera_Requests,
     shakes:Camera_Shakes,

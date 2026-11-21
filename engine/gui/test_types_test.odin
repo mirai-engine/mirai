@@ -12,5 +12,6 @@ import volume "mirai:engine/volume"
 Seats_Test_World :: struct {
     using world:Test_World,
     seats:core.Table(inp.Seat),
+    seat_runtime:inp.Seat_States,
     moves:core.Table(inp.Move_Input),
 }

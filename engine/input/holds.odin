@@ -34,15 +34,19 @@ Hold_Requests :: struct {
 
 // Holds an action of a seat at a value for some ticks (0: until let_go),
 // replacing what it held of that action.
-hold :: proc(r:^Hold_Requests,seat:core.Entity,action:Action,value:[2]f32,ticks:=u32(0)) {
-    core.push(&r.queue,Hold_Request{seat=seat,action=action,value=value,ticks=ticks})
+hold :: proc(r:^Hold_Requests,seat:core.Entity,action:Action,value:[2]f32,ticks:=u32(0)) -> bool {
+    dropped:=r.dropped
+    core.offer(&r.queue,Hold_Request{seat=seat,action=action,value=value,ticks=ticks})
+    return dropped==r.dropped
 }
-let_go :: proc(r:^Hold_Requests,seat:core.Entity,action:Action) {hold(r,seat,action,{})}
+let_go :: proc(r:^Hold_Requests,seat:core.Entity,action:Action) -> bool {return hold(r,seat,action,{})}
 
 // Applies the requests at the start of the tick, before any seat reads its
 // devices, and drops what was held for ticks that already ran.
 @(step="fixed",stage="begin")
-input_holds :: proc(seats:^core.Table(Seat),requests:^Hold_Requests,time:core.Time,problems:^core.Problems) {
+input_holds :: proc(seats:^core.Table(Seat,.Read),states:^Seat_States,requests:^Hold_Requests,time:core.Time,problems:^core.Problems) {
+    core.queue_serve(&requests.queue,LOCAL_CAPACITY*HOLD_CAPACITY*2,problems,"input.holds_requests",
+        "hold requests","the input request capacity")
     for r in core.take(&requests.queue) {
         if !core.has(seats,r.seat) {
             core.report(problems,core.NONE,"input.hold_seat","holding action %d was refused: entity 0x%016x is not a live Seat; ask with the seat of a player",r.action,u64(r.seat))
@@ -56,16 +60,16 @@ input_holds :: proc(seats:^core.Table(Seat),requests:^Hold_Requests,time:core.Ti
             core.report(problems,r.seat,"input.hold_action","holding action %d was refused: actions are below %d",r.action,ACTION_CAPACITY)
             continue
         }
-        if !hold_set(core.edit(seats,r.seat),r,time.tick) {
+        source:=seat_runtime_edit(states,r.seat)
+        if source==nil {
+            core.report(problems,r.seat,"input.seat_state","out of memory for this seat's input state; free memory")
+            continue
+        }
+        if !hold_set(&source.holds,&source.hold_count,r,time.tick) {
             core.report(problems,r.seat,"input.holds_full","holding action %d was refused: the seat holds %d actions, as many as fit; let go of one first",r.action,HOLD_CAPACITY)
         }
     }
-    for row in 0..<core.count(seats) {
-        source:=&seats.values[row]
-        expired:=false
-        for hold in source.holds[:source.hold_count] {expired||=hold.until!=0 && hold.until<=time.tick}
-        if !expired {continue}
-        seat:=core.edit_at(seats,row)
+    for &seat in states.entries.values {
         kept:u8
         for hold in seat.holds[:seat.hold_count] {
             if hold.until!=0 && hold.until<=time.tick {continue}
@@ -78,14 +82,16 @@ input_holds :: proc(seats:^core.Table(Seat),requests:^Hold_Requests,time:core.Ti
 
 // What a seat holds in the tick that runs at tick: its holds with the
 // requests waiting for that tick applied, as input_holds applies them.
-holds_at :: proc(seat:Seat,e:core.Entity,requests:^Hold_Requests,tick:u64) -> (holds:[HOLD_CAPACITY]Action_Hold,count:int) {
-    ahead:=seat
-    if requests!=nil {
+holds_at :: proc(seat:^Seat_State,e:core.Entity,requests:core.Ref(Hold_Requests),tick:u64) -> (holds:[HOLD_CAPACITY]Action_Hold,count:int) {
+    ahead:[HOLD_CAPACITY]Action_Hold
+    used:u8
+    if seat!=nil {ahead,used=seat.holds,seat.hold_count}
+    if requests.ptr!=nil {
         for r in requests.items {
-            if r.seat==e && int(r.action)<ACTION_CAPACITY {_=hold_set(&ahead,r,tick)}
+            if r.seat==e && int(r.action)<ACTION_CAPACITY {_=hold_set(&ahead,&used,r,tick)}
         }
     }
-    for hold in ahead.holds[:min(int(ahead.hold_count),HOLD_CAPACITY)] {
+    for hold in ahead[:used] {
         if hold.until!=0 && hold.until<=tick {continue}
         holds[count]=hold
         count+=1
@@ -94,23 +100,23 @@ holds_at :: proc(seat:Seat,e:core.Entity,requests:^Hold_Requests,tick:u64) -> (h
 }
 
 @(private)
-hold_set :: proc(seat:^Seat,r:Hold_Request,tick:u64) -> bool {
+hold_set :: proc(holds:^[HOLD_CAPACITY]Action_Hold,count:^u8,r:Hold_Request,tick:u64) -> bool {
     at:=-1
-    for hold,i in seat.holds[:seat.hold_count] {
+    for hold,i in holds[:count^] {
         if hold.action==r.action {at=i;break}
     }
     if r.value=={} {
         if at>=0 {
-            seat.hold_count-=1
-            seat.holds[at]=seat.holds[seat.hold_count]
+            count^-=1
+            holds[at]=holds[count^]
         }
         return true
     }
     if at<0 {
-        if int(seat.hold_count)>=HOLD_CAPACITY {return false}
-        at=int(seat.hold_count)
-        seat.hold_count+=1
+        if int(count^)>=HOLD_CAPACITY {return false}
+        at=int(count^)
+        count^+=1
     }
-    seat.holds[at]=Action_Hold{action=r.action,value=r.value,until=r.ticks>0?tick+u64(r.ticks):0}
+    holds[at]=Action_Hold{action=r.action,value=r.value,until=r.ticks>0?tick+u64(r.ticks):0}
     return true
 }

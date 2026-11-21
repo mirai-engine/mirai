@@ -492,11 +492,12 @@ the_buttons_of_a_modal_get_the_actions_it_takes_from_the_game :: proc(t:^testing
     bindings:inp.Input_Map
     inp.input_map_action(&bindings,DROP,.Button)
     inp.input_map_bind(&bindings,DROP,inp.binding_key(.X))
+    inp.input_map_compile(&bindings)
     device:=core.Input{keys_down={.X},keys_pressed={.X}}
-    inp.seat_feed(core.edit(&w.seats,seat),&device,&bindings,false,1.0/60)
+    inp.seat_feed(inp.seat_runtime_edit(&w.seat_runtime,seat),&device,&bindings,false,1.0/60)
     state:inp.Seats
     state.blocks[0]={owner=inventory,mask=inp.ALL_ACTIONS,active=true}
-    core.edit(&w.seats,seat).blocked=inp.ALL_ACTIONS
+    inp.seat_runtime_edit(&w.seat_runtime,seat).blocked=inp.ALL_ACTIONS
     names:=[1]core.Name_Info{{type=inp.Action,value=i64(DROP),name="drop_item"}}
     info:=test_world_info(&w)
     info.names=names[:]
@@ -507,10 +508,10 @@ the_buttons_of_a_modal_get_the_actions_it_takes_from_the_game :: proc(t:^testing
     gui:Gui
     defer delete(gui.actions)
     instance:=Instance{entity=inventory}
-    src:=Source{gui=&gui,app=app,player=1,seat=seat,seat_state=&state,seats=core.read(&w.seats),building=&instance}
+    src:=Source{gui=&gui,app=app,player=1,seat=seat,seat_state=core.ref(&state),seat_runtime=core.ref(&w.seat_runtime),seats=core.read(&w.seats),building=&instance}
     down,pressed:=source_action(&src,base.name_hash("drop_item"))
     testing.expect(t,down && pressed)
-    testing.expect(t,!inp.seat_action(&w.seats,seat,DROP).down,"the game does not get it")
+    testing.expect(t,!inp.seat_action(core.ref(&w.seat_runtime),seat,DROP).down,"the game does not get it")
     instance.entity=cinematic
     down,pressed=source_action(&src,base.name_hash("drop_item"))
     testing.expect(t,!down && !pressed,"another interface does not read past the block of the Modal")

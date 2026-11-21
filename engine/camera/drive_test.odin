@@ -24,6 +24,7 @@ Drive_World :: struct {
     remotes:core.Table(core.Remote),
     hierarchy:core.Hierarchy,
     seat_state:input.Seats,
+    seat_runtime:input.Seat_States,
     shown:Cameras,
     views:Camera_Views,
     frame:input.Frame_Actions,
@@ -58,7 +59,8 @@ drive_body :: proc(w:^Drive_World,camera_rotation:mm.Quat,follow:Maybe(Camera_Fo
     actions.count=2
     actions.states[DRIVE_LOOK].vector={10,0}
     actions.states[DRIVE_MOVE].vector={0,1}
-    core.add(&w.seats,seat,input.Seat{slot=1,peer=7,actions=actions,body=body})
+    core.add(&w.seats,seat,input.Seat{slot=1,peer=7,body=body})
+    input.seat_runtime_edit(&w.seat_runtime,seat).actions=actions
     core.add(&w.worlds,body,core.World_Transform{transform={rotation=1,scale=1}})
     core.add(&w.moves,body,input.Move_Input{look_yaw=0.5})
     if !camera {return}
@@ -80,7 +82,7 @@ drive_settle :: proc(w:^Drive_World) {
 drive_run :: proc(w:^Drive_World,problems:^core.Problems) {
     drive_settle(w)
     camera_drive(
-        core.read(&w.seats),&w.moves,{state=core.ref(&w.seat_state),seats=core.read(&w.seats),base=DRIVE_MOVE},{state=core.ref(&w.seat_state),seats=core.read(&w.seats),base=DRIVE_LOOK},
+        core.read(&w.seats),&w.moves,{state=core.ref(&w.seat_state),runtime=core.ref(&w.seat_runtime),seats=core.read(&w.seats),base=DRIVE_MOVE},{state=core.ref(&w.seat_state),runtime=core.ref(&w.seat_runtime),seats=core.read(&w.seats),base=DRIVE_LOOK},
         core.ref(&w.bindings),core.read(&w.follows),core.ref(&w.shown),core.read(&w.cameras),core.ref(&w.views),core.ref(&w.hierarchy),core.read(&w.parents),
         core.read(&w.transforms),core.read(&w.worlds),core.read(&w.verticals),core.read(&w.remotes),problems,
     )
@@ -162,9 +164,10 @@ each_orbit_turns_with_the_look_of_its_own_seat :: proc(t:^testing.T) {
     w.frame.slots[1].states[DRIVE_LOOK].vector={10,0}
     drive_settle(w)
     problems:core.Problems
+    input.input_seat_index(core.ref(&w.entities),core.read(&w.seats),&w.seat_state,&problems)
     camera_follow(
         test_world_ref(w),&w.follows,&w.cameras,&w.transforms,core.read(&w.worlds),core.read(&w.parents),core.read(&w.seats),core.read(&w.moves),core.ref(&w.shown),
-        core.ref(&w.seat_state),{actions=core.ref(&w.frame),state=core.ref(&w.seat_state),seats=core.read(&w.seats),base=DRIVE_LOOK},core.ref(&w.queries),&w.look_input,&w.changes,
+        core.ref(&w.seat_state),{actions=core.ref(&w.frame),state=core.ref(&w.seat_state),runtime=core.ref(&w.seat_runtime),seats=core.read(&w.seats),base=DRIVE_LOOK},core.ref(&w.queries),&w.look_input,&w.changes,
         core.read(&w.verticals),{dt=1.0/60,alpha=1},{dt=1.0/60},&problems,&w.shakes,
     )
     first,_:=core.get(&w.follows,eyes[0])
@@ -189,7 +192,8 @@ aim_is_the_ray_of_the_camera_the_player_sees :: proc(t:^testing.T) {
     core.add(&w.cameras,scope,render.CAMERA_DEFAULT)
     core.add(&w.worlds,scope,core.World_Transform{transform={position={4,5,6},rotation=1,scale=1}})
     drive_settle(w)
-    sight:=Sight{core.ref(&w.shown),core.read(&w.seats),core.read(&w.cameras),core.ref(&w.hierarchy),core.read(&w.worlds)}
+    input.input_seat_index(core.ref(&w.entities),core.read(&w.seats),&w.seat_state,nil)
+    sight:=Sight{core.ref(&w.shown),core.read(&w.seats),core.ref(&w.seat_state),core.read(&w.cameras),core.ref(&w.hierarchy),core.read(&w.worlds)}
     origin,direction,ok:=aim(sight,body)
     testing.expect(t,ok && origin==[3]f32{1,2,3})
     testing.expectf(t,abs(direction.x+1)<1e-5 && abs(direction.z)<1e-5,"a quarter turn to the left looks along -X: %v",direction)

@@ -151,21 +151,21 @@ typed_reads_take_the_actions_of_their_enum :: proc(t:^testing.T) {
     m:Input_Map
     input_map_make(&m,&info,nil,nil)
     device:=core.Input{keys_down={.D,.Space},keys_pressed={.D,.Space}}
-    actions_update(&core.edit(&w.seats,seat).actions,&m,&device,1.0/60)
+    actions_update(&seat_runtime_edit(&w.runtime,seat).actions,&m,&device,1.0/60)
     state:=Seats{local_count=1}
     frame:Frame_Actions
     device={keys_down={.D}}
     actions_update(&frame.slots[0],&m,&device,1.0/60)
 
-    input:=Input_Of(Test_Action){state=core.ref(&state),seats=core.read(&w.seats),base=3}
+    input:=Input_Of(Test_Action){state=core.ref(&state),runtime=core.ref(&w.runtime),seats=core.read(&w.seats),base=3}
     testing.expect_value(t,action_of(input,.Jump),JUMP)
     testing.expect(t,pressed(input,.Jump) && down(input,.Jump) && !released(input,.Jump))
     testing.expect_value(t,vector(input,.Move),[2]f32{1,0})
-    shown:=Frame_Input_Of(Test_Action){actions=core.ref(&frame),state=core.ref(&state),seats=core.read(&w.seats),base=3}
+    shown:=Frame_Input_Of(Test_Action){actions=core.ref(&frame),state=core.ref(&state),runtime=core.ref(&w.runtime),seats=core.read(&w.seats),base=3}
     testing.expect(t,!down(shown,.Jump) && vector(shown,.Move)=={1,0},"the frame has its own")
     testing.expect_value(t,action_of(shown,.Move),MOVE)
 
-    core.edit(&w.seats,seat).blocked=ALL_ACTIONS
+    seat_runtime_edit(&w.runtime,seat).blocked=ALL_ACTIONS
     testing.expect(t,!pressed(input,.Jump) && vector(shown,.Move)=={},"a menu that blocks the seat blocks what the machine reads")
 }
 
@@ -189,20 +189,20 @@ a_frame_without_a_tick_leaves_input_of_at_the_last_tick :: proc(t:^testing.T) {
     input_map_make(&m,&info,nil,nil)
     state:=Seats{local_count=1}
     frame:Frame_Actions
-    ticked:=Input_Of(Test_Action){state=core.ref(&state),seats=core.read(&w.seats),base=3}
-    shown:=Frame_Input_Of(Test_Action){actions=core.ref(&frame),state=core.ref(&state),seats=core.read(&w.seats),base=3}
+    ticked:=Input_Of(Test_Action){state=core.ref(&state),runtime=core.ref(&w.runtime),seats=core.read(&w.seats),base=3}
+    shown:=Frame_Input_Of(Test_Action){actions=core.ref(&frame),state=core.ref(&state),runtime=core.ref(&w.runtime),seats=core.read(&w.seats),base=3}
 
     pressed_space:=core.Input{keys_down={.Space},keys_pressed={.Space}}
-    seat_feed(core.edit(&w.seats,seat),&pressed_space,&m,false,1.0/60)
-    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{input=pressed_space},core.ref(&state),core.read(&w.seats),{dt=1.0/60})
+    seat_feed(seat_runtime_edit(&w.runtime,seat),&pressed_space,&m,false,1.0/60)
+    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{input=pressed_space},core.ref(&state),core.read(&w.seats),core.ref(&w.runtime),{dt=1.0/60})
     testing.expect(t,pressed(ticked,.Jump) && pressed(shown,.Jump))
 
-    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{},core.ref(&state),core.read(&w.seats),{dt=1.0/60})
+    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{},core.ref(&state),core.read(&w.seats),core.ref(&w.runtime),{dt=1.0/60})
     testing.expect(t,pressed(ticked,.Jump) && down(ticked,.Jump),"the edge of the last tick is still there")
     testing.expect(t,released(shown,.Jump) && !down(shown,.Jump),"the frame saw the key go up")
 
     held_d:=core.Input{keys_down={.D},keys_pressed={.D}}
-    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{input=held_d},core.ref(&state),core.read(&w.seats),{dt=1.0/60})
+    input_frame_actions_update(core.ref(&m),&frame,core.Frame_Input{input=held_d},core.ref(&state),core.read(&w.seats),core.ref(&w.runtime),{dt=1.0/60})
     testing.expect_value(t,vector(ticked,.Move),[2]f32{0,0})
     testing.expect_value(t,vector(shown,.Move),[2]f32{1,0})
 }
@@ -340,29 +340,6 @@ the_bindings_the_player_changed_come_back_over_those_of_the_project :: proc(t:^t
     testing.expect(t,m.actions[JUMP].bindings[0].inputs[0]==.J,"the rest of what the player chose holds")
 }
 
-// A project with the file of bindings of before is told where they go.
-@(test)
-an_old_input_mirai_is_refused_with_where_its_bindings_go :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"input-old")
-    if folder=="" {return}
-    defer base.remove_all(folder)
-    names:=TEST_NAMES
-    info,made:=named_info(t,Defaults_World,names[:])
-    if !made {return}
-    defer test_info_destroy(&info)
-    testing.expect(t,os.write_entire_file(project.path(folder,"input.mirai",allocator=context.temp_allocator),`{"actions":[]}`)==nil)
-    app:host.App
-    app.info,app.root=&info,folder
-    settings:Input_Settings
-    m:Input_Map
-    problems:core.Problems
-    input_map_build(&m,core.ref(&settings),{},&app,&problems)
-    old:=core.problem_find(&problems,core.NONE,"input.old_file")
-    testing.expect(t,old!=nil && strings.contains(core.problem_text(old),"Input_Settings of") && strings.contains(core.problem_text(old),project.SETTINGS_FILE))
-}
-
-// Bound with the mouse to look, a stick turns at a rate: held for a second it turns LOOK_STICK points
-// at 30 frames a second as at 144, and keys the same; the mouse moves it by what it moved.
 @(test)
 a_look_stick_turns_as_far_in_a_second_at_any_frame_rate :: proc(t:^testing.T) {
     m:Input_Map
@@ -370,6 +347,7 @@ a_look_stick_turns_as_far_in_a_second_at_any_frame_rate :: proc(t:^testing.T) {
     input_map_action(&m,look,.Axis2)
     m.actions[look]=look_action_defaults()[.Look]
     testing.expect(t,input_map_bind(&m,look,binding_keys(.Left,.Right,.Down,.Up,LOOK_STICK)))
+    input_map_compile(&m)
     actions:Actions
     for fps in ([2]int{30,144}) {
         stick:core.Input

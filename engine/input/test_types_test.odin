@@ -8,6 +8,9 @@ import "mirai:core"
 Test_Seats :: struct {
     using world:Test_World,
     seats:core.Table(Seat),
+    runtime:Seat_States,
+    seat_state:Seats,
+    seat_requests:Seat_Requests,
     moves:core.Table(Move_Input),
     worlds:core.Table(core.World_Transform),
     remotes:core.Table(core.Remote),

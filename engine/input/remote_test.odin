@@ -21,6 +21,7 @@ remote_bindings :: proc() -> (m:Input_Map) {
     input_map_action(&m,TEST_CONFIRM,.Button)
     input_map_bind(&m,TEST_CONFIRM,binding_key(.Space))
     m.actions[TEST_CONFIRM].input_context=TEST_MENU
+    input_map_compile(&m)
     return
 }
 
@@ -42,7 +43,7 @@ a_seat_takes_the_actions_another_end_sent_as_they_were_there :: proc(t:^testing.
     local:=core.create(&w.entities)
     core.add(&w.seats,local,Seat{})
     test_world_settle(&w)
-    there:Seat
+    there:Seat_State
     menu:=Context_Stack{layers={0=TEST_MENU},count=1,modal=1}
     Tick :: struct {device:core.Input,menu:bool}
     ticks:=[]Tick{
@@ -56,15 +57,15 @@ a_seat_takes_the_actions_another_end_sent_as_they_were_there :: proc(t:^testing.
         {},
     }
     for tick,index in ticks {
-        seat:=core.edit(&w.seats,local)
+        seat:=seat_runtime_edit(&w.runtime,local)
         seat.contexts=tick.menu?menu:{}
         device:=tick.device
         seat_feed(seat,&device,&m,false,1.0/60)
-        sent,ok:=seat_remote(core.read(&w.seats),local,&m)
+        sent,ok:=seat_remote(core.ref(&w.runtime),local,core.ref(&m))
         testing.expect(t,ok)
         seat_receive(&there,&m,sent,1.0/60)
         for a in ([]Action{TEST_MOVE,TEST_LOOK,TEST_JUMP,TEST_CONFIRM}) {
-            here:=seat_action(core.read(&w.seats),local,a)
+            here:=seat_action(core.ref(&w.runtime),local,a)
             testing.expectf(t,same_state(here,action(&there.actions,a)),"tick %d, action %d: %v here, %v there",index,a,here,action(&there.actions,a))
         }
     }
@@ -83,7 +84,7 @@ a_repeated_tick_holds_what_was_held_and_not_the_mouse :: proc(t:^testing.T) {
     sent.axis_count=2
     sent.axes[0]={TEST_MOVE,{0,1}}
     sent.axes[1]={TEST_LOOK,{4,1}}
-    there:Seat
+    there:Seat_State
     seat_receive(&there,&m,sent,1.0/60)
     testing.expect(t,action(&there.actions,TEST_JUMP).pressed && action(&there.actions,TEST_CONFIRM).pressed && action(&there.actions,TEST_CONFIRM).released)
     seat_receive(&there,&m,remote_repeated(sent),1.0/60)
@@ -104,12 +105,12 @@ hostile_remote_actions_stay_in_the_map :: proc(t:^testing.T) {
         {down=ALL_ACTIONS,axis_count=REMOTE_AXES,axes={0={Action(200),{1,1}},1={Action(63),{math.F32_MAX,-math.F32_MAX}},2={TEST_MOVE,{math.nan_f32(),0}}}},
     }
     for sent in cases {
-        there:Seat
+        there:Seat_State
         seat_receive(&there,&m,sent,1.0/60)
         seat_receive(&there,&m,remote_repeated(sent),1.0/60)
         testing.expect_value(t,int(there.actions.count),action_end(&m))
     }
-    without:Seat
+    without:Seat_State
     seat_receive(&without,nil,cases[0],1.0/60)
     testing.expect_value(t,without.actions.count,0)
 }
