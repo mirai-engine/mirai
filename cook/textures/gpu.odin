@@ -21,6 +21,9 @@ GPU_TILE :: 16
 GPU_BATCH_TEXELS :: 1<<20
 
 @(private="file")
+GPU_BUFFER_ALIGNMENT :: 256
+
+@(private="file")
 Gpu_Params :: struct {
     width,height,source_format,fast:u32,
     cutoff,lambda:f32,
@@ -53,7 +56,7 @@ Gpu_Context :: struct {
     allocator:mem.Allocator,
     lock:sync.Mutex,
     pipelines:[asset.Texture_Format][Gpu_Pass]rhi.Pipeline,
-    params,input,fits,output,readback:rhi.Buffer,
+    params,input,fits,output:rhi.Buffer,
 }
 
 // A nil device selects the CPU path. With a device, engine_root supplies the
@@ -75,7 +78,7 @@ gpu_context_destroy :: proc(gpu:^Gpu_Context) {
     for by_pass in gpu.pipelines do for pipeline in by_pass {
         if pipeline!=0 {rhi.pipeline_destroy(gpu.device,pipeline)}
     }
-    for buffer in ([5]rhi.Buffer{gpu.params,gpu.input,gpu.fits,gpu.output,gpu.readback}) {
+    for buffer in ([4]rhi.Buffer{gpu.params,gpu.input,gpu.fits,gpu.output}) {
         if buffer!=0 {rhi.buffer_destroy(gpu.device,buffer)}
     }
     delete(gpu.folder,gpu.allocator)
@@ -138,79 +141,99 @@ gpu_buffer :: proc(
     return true
 }
 
+@(private="file")
+Gpu_Batch :: struct {
+    input_at, output_at: int,
+    texels, destination: []u8,
+    width, height: int,
+}
+
 @(private)
-gpu_level :: proc(
-    gpu:^Gpu_Context,level:Source,format:asset.Texture_Format,options:Build_Options,
-    allocator:mem.Allocator,
-) -> (out:[]u8,error:Error) {
+gpu_chain :: proc(
+    gpu:^Gpu_Context,levels:[]Source,mips:[][]u8,format:asset.Texture_Format,
+    options:Build_Options,allocator:mem.Allocator,
+) -> Error {
     sync.guard(&gpu.lock)
     encode:=gpu_pipeline(gpu,format,.Encode)
-    if encode==0 {return nil,.Gpu}
+    if encode==0 {return .Gpu}
     lambda:=rdo_lambda(options)
     rdo:rhi.Pipeline
     if lambda>0 {
         rdo=gpu_pipeline(gpu,format,.Rdo)
-        if rdo==0 {return nil,.Gpu}
+        if rdo==0 {return .Gpu}
     }
-    d:=gpu.device
-    w,h:=level.width,level.height
-    block_width:=(w+3)/4
+    batches:=make([dynamic]Gpu_Batch,0,0,runtime.heap_allocator())
+    defer delete(batches)
     pixel_bytes:=SOURCE_TEXEL_BYTES
-    row_bytes:=w*pixel_bytes[level.format]
-    block_row_bytes:=asset.texture_level_size(format,w,1)
-    rows:=min(h,max(GPU_BATCH_TEXELS/(w*4*GPU_TILE),1)*4*GPU_TILE)
-    block_rows:=(rows+3)/4
-    fits_size:=size_of(Gpu_Fit)*(block_rows*block_width if rdo!=0 else 1)
-    output_bytes:=block_row_bytes*block_rows
-    if !gpu_buffer(gpu,&gpu.params,size_of(Gpu_Params),.Upload,{.Uniform},"BCn parameters") ||
-        !gpu_buffer(gpu,&gpu.input,row_bytes*rows,.Upload,{.Storage},"BCn source") ||
-        !gpu_buffer(gpu,&gpu.fits,fits_size,.GPU,{.Storage},"BCn block fits") ||
-        !gpu_buffer(gpu,&gpu.output,output_bytes,.GPU,{.Storage,.Transfer_Src},"BCn output") ||
-        !gpu_buffer(gpu,&gpu.readback,output_bytes,.Readback,{.Transfer_Dst},"BCn readback") {
-        return nil,.Gpu
-    }
-    size:=asset.texture_level_size(format,w,h)
-    alloc_error:mem.Allocator_Error
-    if out,alloc_error=make([]u8,size*level.layers,allocator);alloc_error!=nil {
-        return nil,.Out_Of_Memory
-    }
-    allocated:=out
-    committed:=false
-    defer if !committed {delete(allocated,allocator)}
-    for layer in 0..<level.layers {
-        for y:=0;y<h;y+=rows {
-            height:=min(rows,h-y)
-            input_at:=(layer*h+y)*row_bytes
-            input:=level.texels[input_at:][:height*row_bytes]
-            if !rhi.buffer_upload(d,gpu.input,0,input) {return nil,.Gpu}
-            params:=Gpu_Params{u32(w),u32(height),u32(level.format),u32(options.speed==.Fast),
-                options.alpha_coverage,f32(lambda),u32(options.srgb),0}
-            if !rhi.buffer_upload(d,gpu.params,0,mem.ptr_to_bytes(&params)) {return nil,.Gpu}
-            cmd:=rhi.immediate_begin(d)
-            if cmd==nil {return nil,.Gpu}
-            groups_x:=u32((block_width+GPU_GROUP-1)/GPU_GROUP)
-            groups_y:=u32(((height+3)/4+GPU_GROUP-1)/GPU_GROUP)
-            gpu_dispatch(cmd,gpu,encode,groups_x,groups_y)
-            if rdo!=0 {gpu_dispatch(cmd,gpu,rdo,groups_x,groups_y)}
-            written:=((height+3)/4)*block_row_bytes
-            rhi.cmd_copy_buffer(cmd,gpu.output,0,gpu.readback,0,u64(written))
-            if !rhi.immediate_end(d,cmd) {return nil,.Gpu}
-            at:=layer*size+y/4*block_row_bytes
-            if !rhi.buffer_read(d,gpu.readback,0,out[at:][:written]) {return nil,.Gpu}
+    input_size,output_size,fit_size:=0,0,size_of(Gpu_Fit)
+    for level,i in levels {
+        w,h:=level.width,level.height
+        row_bytes:=w*pixel_bytes[level.format]
+        block_row_bytes:=asset.texture_level_size(format,w,1)
+        layer_size:=asset.texture_level_size(format,w,h)
+        rows:=min(h,max(GPU_BATCH_TEXELS/(w*4*GPU_TILE),1)*4*GPU_TILE)
+        alloc_error:mem.Allocator_Error
+        if mips[i],alloc_error=make([]u8,layer_size*level.layers,allocator);alloc_error!=nil {
+            return .Out_Of_Memory
+        }
+        for layer in 0..<level.layers {
+            for y:=0;y<h;y+=rows {
+                height:=min(rows,h-y)
+                input_start:=(layer*h+y)*row_bytes
+                output_start:=layer*layer_size+y/4*block_row_bytes
+                bytes:=((height+3)/4)*block_row_bytes
+                batch:=Gpu_Batch{
+                    input_size,output_size,
+                    level.texels[input_start:][:height*row_bytes],
+                    mips[i][output_start:][:bytes],w,height,
+                }
+                if _,err:=append(&batches,batch);err!=nil {return .Out_Of_Memory}
+                input_size=mem.align_forward_int(input_size+len(batch.texels),GPU_BUFFER_ALIGNMENT)
+                output_size=mem.align_forward_int(output_size+bytes,GPU_BUFFER_ALIGNMENT)
+                if rdo!=0 {
+                    fit_size=max(fit_size,size_of(Gpu_Fit)*((w+3)/4)*((height+3)/4))
+                }
+            }
         }
     }
-    committed=true
-    return out,.None
-}
-
-@(private="file")
-gpu_dispatch :: proc(
-    cmd:^rhi.Command_List,gpu:^Gpu_Context,pipeline:rhi.Pipeline,x,y:u32,
-) {
-    rhi.cmd_bind_pipeline(cmd,pipeline)
-    rhi.cmd_bind_buffer(cmd,0,gpu.params)
-    rhi.cmd_bind_buffer(cmd,1,gpu.input)
-    rhi.cmd_bind_buffer(cmd,2,gpu.fits)
-    rhi.cmd_bind_buffer(cmd,3,gpu.output)
-    rhi.cmd_dispatch(cmd,x,y)
+    d:=gpu.device
+    if !gpu_buffer(gpu,&gpu.params,len(batches)*GPU_BUFFER_ALIGNMENT,.Upload,
+        {.Uniform},"BCn parameters") ||
+        !gpu_buffer(gpu,&gpu.input,input_size,.Upload,{.Storage},"BCn source") ||
+        !gpu_buffer(gpu,&gpu.fits,fit_size,.GPU,{.Storage},"BCn block fits") ||
+        !gpu_buffer(gpu,&gpu.output,output_size,.Readback,{.Storage},"BCn output") {
+        return .Gpu
+    }
+    mapped:=cast([^]u8)rhi.buffer_mapped(d,gpu.output)
+    if mapped==nil {return .Gpu}
+    for batch,i in batches {
+        params:=Gpu_Params{u32(batch.width),u32(batch.height),u32(levels[0].format),
+            u32(options.speed==.Fast),options.alpha_coverage,f32(lambda),u32(options.srgb),0}
+        if !rhi.buffer_upload(d,gpu.input,u64(batch.input_at),batch.texels) ||
+            !rhi.buffer_upload(d,gpu.params,u64(i*GPU_BUFFER_ALIGNMENT),mem.ptr_to_bytes(&params)) {
+            return .Gpu
+        }
+    }
+    cmd:=rhi.immediate_begin(d)
+    if cmd==nil {return .Gpu}
+    for batch,i in batches {
+        x:=u32((batch.width+4*GPU_GROUP-1)/(4*GPU_GROUP))
+        y:=u32((batch.height+4*GPU_GROUP-1)/(4*GPU_GROUP))
+        rhi.cmd_bind_buffer(cmd,0,gpu.params,u64(i*GPU_BUFFER_ALIGNMENT),size_of(Gpu_Params))
+        rhi.cmd_bind_buffer(cmd,1,gpu.input,u64(batch.input_at),u64(len(batch.texels)))
+        rhi.cmd_bind_buffer(cmd,2,gpu.fits)
+        rhi.cmd_bind_buffer(cmd,3,gpu.output,u64(batch.output_at),u64(len(batch.destination)))
+        rhi.cmd_bind_pipeline(cmd,encode)
+        rhi.cmd_dispatch(cmd,x,y)
+        if rdo!=0 {
+            rhi.cmd_bind_pipeline(cmd,rdo)
+            rhi.cmd_dispatch(cmd,x,y)
+        }
+    }
+    rhi.cmd_barrier_buffer(cmd,gpu.output,.Host_Read)
+    if !rhi.immediate_end(d,cmd) {return .Gpu}
+    for batch in batches {
+        copy(batch.destination,mapped[batch.output_at:][:len(batch.destination)])
+    }
+    return .None
 }

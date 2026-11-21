@@ -1,5 +1,6 @@
 package textures
 
+import "base:intrinsics"
 import "base:runtime"
 import "core:c"
 import "core:fmt"
@@ -23,7 +24,7 @@ import mm "mirai:std/math"
 MAX_SOURCE_SIDE :: 1<<15
 MAX_SOURCE_PIXELS :: 1<<28
 // Changes when build would give other bytes for the same image and options.
-BUILD_VERSION :: 9
+BUILD_VERSION :: 10
 RDO_LAMBDA_DEFAULT :: 30
 RDO_LAMBDA_MAX :: 100
 // Texels of a level from which build encodes its blocks on a job system of
@@ -173,7 +174,8 @@ texel_read :: proc "contextless" (texels:[]u8,format:Source_Format,at:int,transf
     case .RGBA16F:
         for c in 0..<4 {value[c]=f32(transmute(f16)(u16(texels[at*8+c*2])|u16(texels[at*8+c*2+1])<<8))}
     case .RGBA32F:
-        for c in 0..<4 {value[c]=transmute(f32)(u32(texels[at*16+c*4])|u32(texels[at*16+c*4+1])<<8|u32(texels[at*16+c*4+2])<<16|u32(texels[at*16+c*4+3])<<24)}
+        #assert(ODIN_ENDIAN==.Little)
+        intrinsics.mem_copy_non_overlapping(&value,&texels[at*16],size_of(value))
     }
     return
 }
@@ -198,10 +200,8 @@ texel_write :: proc "contextless" (texels:[]u8,format:Source_Format,at:int,value
             texels[at*8+c*2],texels[at*8+c*2+1]=u8(bits),u8(bits>>8)
         }
     case .RGBA32F:
-        for c in 0..<4 {
-            bits:=transmute(u32)value[c]
-            for b in 0..<4 {texels[at*16+c*4+b]=u8(bits>>(u32(b)*8))}
-        }
+        #assert(ODIN_ENDIAN==.Little)
+        intrinsics.mem_copy_non_overlapping(&texels[at*16],&value,size_of(value))
     }
 }
 
@@ -391,21 +391,16 @@ build :: proc(
     level.texels=source.texels[:source_bytes(level)]
     coverage:=f32(0)
     if options.alpha_coverage>0 {coverage=alpha_coverage_of(level,options.alpha_coverage,1)}
-    mips:[dynamic][]u8
-    mips.allocator=allocator
-    fail :: proc(mips:^[dynamic][]u8,owned:^Source) -> Error {
-        for level in mips {delete(level,mips.allocator)}
-        delete(mips^)
-        source_destroy(owned)
-        return .Out_Of_Memory
-    }
     owned:Source
+    defer source_destroy(&owned)
     if options.channels!={} {
         if options.channels.from[0]>max(Channel) || options.channels.from[1]>max(Channel) || options.channels.from[2]>max(Channel) || options.channels.from[3]>max(Channel) {return {},.Invalid}
         alloc_error:mem.Allocator_Error
         owned=level
         owned.allocator=allocator
-        if owned.texels,alloc_error=make([]u8,len(level.texels),allocator);alloc_error!=nil {return {},fail(&mips,&owned)}
+        if owned.texels,alloc_error=make([]u8,len(level.texels),allocator);alloc_error!=nil {
+            return {},.Out_Of_Memory
+        }
         linear:=transfer_make(false)
         for at in 0..<owned.width*owned.height*layers {
             value:=channels_apply(options.channels,texel_read(level.texels,level.format,at,&linear))
@@ -416,7 +411,7 @@ build :: proc(
     if options.alpha_fill>0 {
         previous:=owned
         defer source_destroy(&previous)
-        if !alpha_fill(&owned,level,options.alpha_fill,allocator) {return {},fail(&mips,&owned)}
+        if !alpha_fill(&owned,level,options.alpha_fill,allocator) {return {},.Out_Of_Memory}
         level=owned
     }
     if options.green_down {
@@ -425,7 +420,9 @@ build :: proc(
         defer source_destroy(&previous)
         owned=level
         owned.allocator=allocator
-        if owned.texels,alloc_error=make([]u8,len(level.texels),allocator);alloc_error!=nil {return {},fail(&mips,&owned)}
+        if owned.texels,alloc_error=make([]u8,len(level.texels),allocator);alloc_error!=nil {
+            return {},.Out_Of_Memory
+        }
         copy(owned.texels,level.texels)
         linear:=transfer_make(false)
         for at in 0..<owned.width*owned.height*layers {
@@ -445,30 +442,52 @@ build :: proc(
     }
     built.width,built.height,built.layers=level.width,level.height,layers
     built.format=stored_format(source,options)
+    use_gpu:=gpu!=nil && gpu.device!=nil && asset.texture_block_bytes(built.format)>0
     js:jobs.Job_System
-    parallel:=(gpu==nil || gpu.device==nil) && worker.system==nil &&
+    parallel:=!use_gpu && worker.system==nil &&
         encode_jobs_begin(&js,built.format,level.width,level.height*layers)
     defer if parallel {jobs.system_destroy(&js)}
     on:=worker
     if parallel {on={&js,jobs.OWNER,nil}}
-    for {
-        encode_zone:=jobs.worker_zone_begin(worker,"texture.encode")
-        stored,store_error:=level_store(level,built.format,&transfer,options,allocator,on,gpu)
-        base.profile_end(encode_zone)
-        if store_error!=.None {
-            fail(&mips,&owned)
-            return {},store_error
-        }
-        append(&mips,stored)
-        if level.width==1 && level.height==1 {break}
-        reduced,ok:=next(level,&transfer,options,coverage,allocator)
-        if !ok {return {},fail(&mips,&owned)}
-        source_destroy(&owned)
-        owned,level=reduced,reduced
+    count:=asset.texture_mip_count(level.width,level.height)
+    mips,alloc_error:=make([][]u8,count,allocator)
+    if alloc_error!=nil {return {},.Out_Of_Memory}
+    committed:=false
+    defer if !committed {
+        for mip in mips {delete(mip,allocator)}
+        delete(mips,allocator)
     }
-    source_destroy(&owned)
-    built.mips=mips[:]
-    built.allocator=allocator
+    levels:[asset.TEXTURE_MAX_MIPS]Source
+    defer if use_gpu {
+        for &image in levels[1:count] {source_destroy(&image)}
+    }
+    for i in 0..<count {
+        if use_gpu {
+            levels[i]=level
+        } else {
+            encode_zone:=jobs.worker_zone_begin(worker,"texture.encode")
+            store_error:Error
+            mips[i],store_error=level_store(level,built.format,&transfer,options,allocator,on)
+            base.profile_end(encode_zone)
+            if store_error!=.None {return {},store_error}
+        }
+        if i+1==count {break}
+        reduced,ok:=next(level,&transfer,options,coverage,allocator)
+        if !ok {return {},.Out_Of_Memory}
+        if !use_gpu {
+            source_destroy(&owned)
+            owned=reduced
+        }
+        level=reduced
+    }
+    if use_gpu {
+        encode_zone:=jobs.worker_zone_begin(worker,"texture.encode")
+        store_error:=gpu_chain(gpu,levels[:count],mips,built.format,options,allocator)
+        base.profile_end(encode_zone)
+        if store_error!=.None {return {},store_error}
+    }
+    built.mips,built.allocator=mips,allocator
+    committed=true
     built.alpha_coverage=options.alpha_coverage
     built.flags=flags
     if options.srgb {built.flags+={.Srgb}}
@@ -498,7 +517,7 @@ from_bytes :: proc(
 @(private)
 level_store :: proc(
     level:Source,format:asset.Texture_Format,transfer:^Transfer,options:Build_Options,
-    allocator:mem.Allocator,worker:jobs.Worker_Ref,gpu:^Gpu_Context=nil,
+    allocator:mem.Allocator,worker:jobs.Worker_Ref,
 ) -> (out:[]u8,error:Error) {
     alloc_error:mem.Allocator_Error
     switch format {
@@ -508,7 +527,6 @@ level_store :: proc(
         out,alloc_error=level_convert(level,.RGBA16,transfer,&linear,allocator)
     case .RGBA16F: out,alloc_error=level_convert(level,.RGBA16F,transfer,transfer,allocator)
     case .BC1,.BC5,.BC6H,.BC7:
-        if gpu!=nil && gpu.device!=nil {return gpu_level(gpu,level,format,options,allocator)}
         return level_encode(level,format,transfer,block_encode(options),allocator,worker)
     }
     if alloc_error!=nil {return nil,.Out_Of_Memory}
@@ -615,7 +633,8 @@ Taps :: struct {
 }
 
 @(private="file")
-reduce_taps :: proc(source,target,index:int) -> (taps:Taps) {
+reduce_taps :: #force_inline proc(source,target,index:int) -> (taps:Taps) {
+    if source==2*target {return {2*index,2,{0.5,0.5,0}}}
     scale:=f32(source)/f32(target)
     start:=f32(index)*scale
     end:=start+scale
@@ -743,26 +762,44 @@ blocks_of :: proc(
     rdo:=true,gpu:^Gpu_Context=nil,
 ) -> (built:Built,ok:bool) {
     info:=view.info
-    if info==nil || info.format!=.RGBA8 || len(view.mips)==0 {return}
+    if info==nil || info.format!=.RGBA8 || len(view.mips)==0 ||
+        len(view.mips)>asset.TEXTURE_MAX_MIPS {return}
     layers:=int(info.layers)
-    plane :: proc(view:asset.Texture_View,level:int) -> Source {
-        mip:=view.mips[level]
-        return {texels=asset.texture_mip(view,level),width=int(mip.width),height=int(mip.height),layers=int(view.info.layers),format=.RGBA8,cube=.Cube in view.info.flags}
+    levels:[asset.TEXTURE_MAX_MIPS]Source
+    for mip,i in view.mips {
+        w,h:=int(mip.width),int(mip.height)
+        texels:=asset.texture_mip(view,i)
+        if w<=0 || h<=0 || w>asset.TEXTURE_MAX_SIZE || h>asset.TEXTURE_MAX_SIZE ||
+            layers<1 || layers>asset.TEXTURE_MAX_LAYERS || len(texels)!=w*h*layers*4 {
+            return {},false
+        }
+        levels[i]={texels=texels,width=w,height=h,layers=layers,format=.RGBA8,
+            cube=.Cube in info.flags}
     }
     options:=Build_Options{srgb=.Srgb in info.flags,normal_map=.Normal_Map in info.flags,
         alpha_coverage=info.alpha_coverage,rdo_lambda=0 if rdo else -1}
-    format:=stored_format(plane(view,0),options)
+    format:=stored_format(levels[0],options)
     built={width=int(info.width),height=int(info.height),layers=layers,format=format,flags=info.flags,alpha_coverage=info.alpha_coverage,allocator=allocator}
-    built.mips=make([][]u8,len(view.mips),allocator)
+    alloc_error:mem.Allocator_Error
+    if built.mips,alloc_error=make([][]u8,len(view.mips),allocator);alloc_error!=nil {
+        return {},false
+    }
+    if gpu!=nil && gpu.device!=nil {
+        if gpu_chain(gpu,levels[:len(view.mips)],built.mips,format,options,allocator)!=.None {
+            built_destroy(&built)
+            return {},false
+        }
+        return built,true
+    }
     js:jobs.Job_System
-    parallel:=(gpu==nil || gpu.device==nil) && worker.system==nil &&
+    parallel:=worker.system==nil &&
         encode_jobs_begin(&js,format,built.width,built.height*layers)
     defer if parallel {jobs.system_destroy(&js)}
     on:=worker
     if parallel {on={&js,jobs.OWNER,nil}}
     transfer:=transfer_make(options.srgb)
     for _,level in view.mips {
-        blocks,error:=level_store(plane(view,level),format,&transfer,options,allocator,on,gpu)
+        blocks,error:=level_store(levels[level],format,&transfer,options,allocator,on)
         if error!=.None {
             built_destroy(&built)
             return {},false
