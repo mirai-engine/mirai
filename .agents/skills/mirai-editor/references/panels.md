@@ -876,7 +876,8 @@ output folders in [importers](../../mirai-imports/SKILL.md).
 
 - A plugin adds model formats and whole sources to import
   ([importers](extensions.md#importers-of-a-plugin)); a whole source that claims the file is
-  imported before the formats and takes no folder.
+  imported before the formats and places its documents as described in the
+  [library](../../mirai-imports/references/imports.md#library).
 - An image is sRGB unless its settings or its name say it is data or a normal (`sources.image_use`,
   which `mirai import` applies too); `asset.import {image}` chooses it.
 - The package of a source keeps its settings and the id of each asset; reimporting writes the

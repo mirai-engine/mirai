@@ -69,7 +69,8 @@ Importer :: struct {
 Import_Job :: struct {
     thread:^thread.Thread,
     source:string,        // the source, or the name of the package added
-    root,folder:string,   // the project or plugin it is pinned in, and the folder of its assets it is listed in
+    root:string,          // the project or plugin it is pinned in
+    folder:Maybe(string), // nil: the library chooses the folder of its assets
     prefix:string,        // of that root in the registry: "" for the project
     additions:[]sources.Package_Add, // empty for a source
     group_add:bool,
@@ -128,8 +129,9 @@ import_busy :: proc(s:^Session) -> string {
 
 // Where what the user imports goes: the folder the browser is in.
 @(private)
-import_place :: proc(s:^Session) -> string {
-    return s.content!=nil?string(s.content.place[:s.content.place_length]):""
+import_place :: proc(s:^Session) -> Maybe(string) {
+    if s.content==nil || s.content.place_length==0 {return nil}
+    return string(s.content.place[:s.content.place_length])
 }
 
 // The root of the registry folder is of, the project or a plugin, and
@@ -149,10 +151,9 @@ import_root_of :: proc(s:^Session,r:^asset.Registry,folder:string) -> (root:Libr
 
 // Starts importing a source file or folder from anywhere on disk; false,
 // with the reason shown, when it cannot. It is ingested into the library
-// where it is and its package is pinned in the project, or the plugin whose
-// folder folder is, listed in folder, a folder of the assets
-// (asset_folder_clean; none is the root, or for a source in the assets, its
-// own folder). profiled records the zones of the import
+// where it is and its package is pinned in the project or plugin whose
+// assets contain folder. Without a folder, the library chooses it.
+// profiled records the zones of the import
 // (importer.profile_totals) for asset.import_status.
 // rig, when given, has the rig, rig_crotch and rig_neck that replace the
 // settings its package keeps for its next import.
@@ -165,7 +166,7 @@ import_root_of :: proc(s:^Session,r:^asset.Registry,folder:string) -> (root:Libr
 // added to the scene of a map) is not imported unless discard writes over
 // them: ask opens the question (Modal.Import_Changes), else it fails naming
 // them.
-import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Maybe(importer.Import_Settings)=nil,image:Maybe(importer.Image_Use)=nil,skeleton:base.Asset_Id={},front:Maybe(importer.Front)=nil,discard:=false,ask:=false) -> bool {
+import_file :: proc(s:^Session,source:string,folder:Maybe(string)=nil,profiled:=false,rig:Maybe(importer.Import_Settings)=nil,image:Maybe(importer.Image_Use)=nil,skeleton:base.Asset_Id={},front:Maybe(importer.Front)=nil,discard:=false,ask:=false) -> bool {
     a:=s.app.assets
     if a==nil || a.registry.root=="" {
         import_say(s,"There is no asset folder to import into")
@@ -185,8 +186,8 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
     }
     origin:=importer.path_key(source)
     name:=filepath.base(origin)
-    place:=folder
-    if place=="" {
+    place,explicit:=folder.?
+    if !explicit {
         if relative,inside:=asset.registry_relative(&a.registry,origin);inside {place=content_folder_of(relative)}
     }
     root,rest,rooted:=import_root_of(s,&a.registry,place)
@@ -237,7 +238,8 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
     job^={allocator=allocator,started=time.tick_now(),profiled=profiled,claimed=claimed}
     job.store=s.store
     job.source=strings.clone(origin,allocator)
-    job.root,job.prefix,job.folder=strings.clone(root.root,allocator),strings.clone(root.prefix,allocator),strings.clone(rest,allocator)
+    job.root,job.prefix=strings.clone(root.root,allocator),strings.clone(root.prefix,allocator)
+    if explicit {job.folder=strings.clone(rest,allocator)}
     // The settings its package keeps, changed by what was asked: given only when they change it.
     if kind==.Model || kind==.Image {
         stored,found,settings_error:=importer.settings_load({store=&job.store},origin)
@@ -390,7 +392,8 @@ import_job_free :: proc(job:^Import_Job) {
     if job.thread!=nil {thread.destroy(job.thread)}
     importer.report_destroy(&job.report)
     delete(job.source,allocator)
-    delete(job.root,allocator);delete(job.prefix,allocator);delete(job.folder,allocator)
+    delete(job.root,allocator);delete(job.prefix,allocator)
+    if folder,given:=job.folder.?;given {delete(folder,allocator)}
     for entry in job.additions {delete(entry.folder,allocator)}
     delete(job.additions,allocator)
     delete(job.assets,allocator)
