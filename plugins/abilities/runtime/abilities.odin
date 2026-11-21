@@ -13,11 +13,6 @@ import locomotion "plugins:locomotion/runtime"
 // only while an open cancel window accepts one of its tags (or its kit lets those tags interrupt
 // anything), and among the valid candidates the one of highest priority wins.
 //
-// The state of an Ability_User is which ability runs and the tick it started; the phase, the
-// open windows and the statuses they grant are derived each tick from the tick against the
-// immutable sheet, so an interruption or a rollback leaves nothing behind. Attributes are bases
-// that effects change through Ability_Requests, plus modifiers recomputed every tick.
-
 ABILITY_WINDOWS :: 16
 ABILITY_CONDITIONS :: 4
 ABILITY_COSTS :: 4
@@ -131,13 +126,6 @@ Ability_Effect :: struct {
 
 Hitbox_Shape :: enum u8 {None,Box,Sphere,Capsule}
 
-Ability_Hitbox :: struct {
-    shape:Hitbox_Shape,
-    center:[3]f32 `mirai:"unit=m"`, // in the axes of the user
-    size:[3]f32 `mirai:"min=0,unit=m"`, // box: half extents; sphere: x is the radius; capsule: x radius, y half height along its y
-    effect:Ability_Effect, // on each entity it touches, once per window
-}
-
 Ability_Move :: struct {
     velocity:[3]f32 `mirai:"unit=m/s"`, // in the axes of the user when the window opens; zero: no move
     mix:locomotion.Move_Mix,
@@ -153,13 +141,14 @@ Ability_Clock :: enum u8 {
 // from <= time < to. A window with to at 0 is not used.
 Ability_Window :: struct {
     from,to:f32 `mirai:"min=0,unit=s"`,
-    clock:Ability_Clock, // Own: from and to are seconds of the user's own time, and the window may close after the duration (the ability's end closes it)
-    cancel_into:Ability_Tags,   // abilities with one of these tags may start over this one
-    statuses:Ability_Statuses,  // the user is in them
-    modify:Ability_Modifier,    // of the user
-    hitbox:Ability_Hitbox,
-    move:Ability_Move, // a layered move of the user's Character for the whole window
-    cue:Ability_Cue,   // carried by the events of its opening and closing
+    cancel_into:Ability_Tags,
+    statuses:Ability_Statuses,
+    hitbox:core.Record(Ability_Hitbox),
+    on_begin:core.Record(Ability_Feedback),
+    modify:Ability_Modifier,
+    move:Ability_Move,
+    cue:Ability_Cue,
+    clock:Ability_Clock,
 }
 
 Ability_Attribute_Entry :: struct {
@@ -169,37 +158,46 @@ Ability_Attribute_Entry :: struct {
     regen:f32 `mirai:"unit=1/s"`, // added to base every second
 }
 
-Ability_Hit :: struct {target:core.Entity,window:u8}
-// An input that waits; running: also while the ability that started at tick run goes on.
-Ability_Buffered :: struct {ability:core.Record(Ability),tick:u64,run:u64,running:bool}
+// An input waits while the ability that started at run is still running, if requested.
+Ability_Buffered :: struct {ability:core.Record(Ability),tick,run:u64,running:bool}
 Ability_Cooldown :: struct {ability:core.Record(Ability),until:u64}
-// An effect that lasts; its modifier and its amount count once per stack.
+
 Ability_Timer :: struct {
     tags:Ability_Tags,
     statuses:Ability_Statuses,
+    start,until:u64,
     modify:Ability_Modifier,
-    attribute:Ability_Attribute,
-    amount:f32,  // added every period ticks from start
+    amount:f32,
     period:u32,
-    stacks:u8,
     cue:Ability_Cue,
-    start,until:u64, // ticks; it ends at until
+    attribute:Ability_Attribute,
+    stacks:u8,
 }
 
-@(component,replicated,description="Uses abilities: those of its kit by the input of the seat that drives it, and those asked through Ability_Requests. Holds its attributes, which costs and effects change.")
+@(component,replicated,description="Uses the abilities of its kit and holds the attributes that costs and effects change.")
 Ability_User :: struct {
     kit:core.Record(Ability_Kit),
     attributes:[ATTRIBUTE_ENTRIES]Ability_Attribute_Entry,
-    ability:core.Record(Ability) `mirai:"readonly"`, // the one running; none: idle
-    start:u64 `mirai:"readonly,hidden"`,             // tick it started at
-    own:f32 `mirai:"readonly,hidden"`,               // ticks of the user's own time (core.Own_Pace) since it started
-    hits:[USER_HITS]Ability_Hit `mirai:"readonly,hidden"`, // of the one running
+}
+
+// Saved with the tracking row so a save can resume an ability in progress.
+@(component,replicated,description="The running ability and its current attribute values.")
+Ability_State :: struct {
+    ability:core.Record(Ability) `mirai:"readonly"`,
+    start:u64 `mirai:"readonly,hidden"`,
+    statuses:Ability_Statuses `mirai:"transient,readonly,local"`,
+    values:[ATTRIBUTE_ENTRIES]f32 `mirai:"transient,readonly,local"`,
+    own:f32 `mirai:"readonly,hidden"`, // ticks on the user's own clock
+}
+
+@(component,replicated,description="The pending inputs, cooldowns, and effects of an ability user.")
+Ability_Tracking :: struct {
+    targets:[USER_HITS]core.Entity `mirai:"readonly,hidden"`,
+    windows:[USER_HITS]u8 `mirai:"readonly,hidden"`,
     hit_count:u8 `mirai:"readonly,hidden"`,
     buffer:[USER_BUFFER]Ability_Buffered `mirai:"readonly,hidden"`,
     cooldowns:[USER_COOLDOWNS]Ability_Cooldown `mirai:"readonly,hidden"`,
     timers:[USER_TIMERS]Ability_Timer `mirai:"readonly,hidden"`,
-    statuses:Ability_Statuses `mirai:"transient,readonly"`, // of its timers and of the open windows
-    values:[ATTRIBUTE_ENTRIES]f32 `mirai:"transient,readonly"`, // of its attributes, with the modifiers
 }
 
 Ability_Request_Kind :: enum u8 {Use,Cancel,Effect,Kit}
@@ -240,13 +238,14 @@ Ability_Event :: struct {
     attribute:Ability_Attribute,
 }
 
-// What the abilities did this tick; abilities_step clears and fills it.
+// What the abilities did, appended by abilities_step and aged by the world.
 @(storage)
 Ability_Events :: struct {queue:core.Events(Ability_Event)}
 
 // Asks entity to start ability as if its input fired: it waits for a moment it is valid as its
 // input.wait says (the kit's buffer, or also while the running ability goes on).
 ability_use :: proc(requests:^Ability_Requests,entity:core.Entity,ability:core.Record(Ability)) {
+    if requests==nil {return}
     if ability=={} {core.refuse(&requests.queue);return}
     request_offer(requests,{kind=.Use,entity=entity,ability=ability})
 }
@@ -286,10 +285,10 @@ ability_requests_serve :: proc(requests:^Ability_Requests,settings:Ability_Setti
 }
 
 // The current value of an attribute of a user and whether it has it.
-ability_value :: proc "contextless" (user:Ability_User,attribute:Ability_Attribute) -> (value:f32,found:bool) {
-    if attribute==ATTRIBUTE_NONE {return}
+ability_value :: proc "contextless" (user:^Ability_User,state:^Ability_State,attribute:Ability_Attribute) -> (value:f32,found:bool) {
+    if user==nil || state==nil || attribute==ATTRIBUTE_NONE {return}
     for entry,i in user.attributes {
-        if entry.attribute==attribute {return user.values[i],true}
+        if entry.attribute==attribute {return state.values[i],true}
     }
     return
 }
@@ -298,8 +297,8 @@ ability_value :: proc "contextless" (user:Ability_User,attribute:Ability_Attribu
 // it started.
 Ability_Time :: struct {local:i64,own:f32}
 
-ability_has :: #force_inline proc "contextless" (user:Ability_User,status:Ability_Status) -> bool {
-    return u64(status)<64 && user.statuses&Ability_Statuses(u64(1)<<u64(status))!=0
+ability_has :: #force_inline proc "contextless" (state:Ability_State,status:Ability_Status) -> bool {
+    return u64(status)<64 && state.statuses&Ability_Statuses(u64(1)<<u64(status))!=0
 }
 
 status_bit :: #force_inline proc "contextless" (status:Ability_Status) -> Ability_Statuses {
@@ -310,19 +309,17 @@ tag_bit :: #force_inline proc "contextless" (tag:Ability_Tag) -> Ability_Tags {
     return u64(tag)<64?Ability_Tags(u64(1)<<u64(tag)):0
 }
 
-// The sheet a reference names, read in place; nil without it.
-ability_sheet :: proc "contextless" (rows:core.Records(Ability),ref:core.Record(Ability)) -> ^Ability {
-    if ref=={} {return nil}
-    at:=core.record_index(rows.set,ref.table,ref.row,size_of(Ability))
-    if at<0 {return nil}
-    return cast(^Ability)&rows.set.values[at*size_of(Ability)]
+record_row :: proc "contextless" (rows:core.Records($T),ref:core.Record(T)) -> int {
+    return -1 if ref=={} else core.record_index(rows.set,ref.table,ref.row,size_of(T))
 }
 
-kit_sheet :: proc "contextless" (rows:core.Records(Ability_Kit),ref:core.Record(Ability_Kit)) -> ^Ability_Kit {
-    if ref=={} {return nil}
-    at:=core.record_index(rows.set,ref.table,ref.row,size_of(Ability_Kit))
-    if at<0 {return nil}
-    return cast(^Ability_Kit)&rows.set.values[at*size_of(Ability_Kit)]
+record_at :: proc "contextless" (rows:core.Records($T),row:int) -> ^T {
+    if row<0 || row>=core.records_count(rows) || row>=len(rows.set.values)/size_of(T) {return nil}
+    return cast(^T)&rows.set.values[row*size_of(T)]
+}
+
+record_sheet :: proc "contextless" (rows:core.Records($T),ref:core.Record(T)) -> ^T {
+    return record_at(rows,record_row(rows,ref))
 }
 
 ability_name_text :: proc "contextless" (name:^[ABILITY_NAME]u8) -> string {return base.text_get(name[:])}
