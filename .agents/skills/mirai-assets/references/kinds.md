@@ -122,12 +122,14 @@ per bone.
   Block layouts restore in whole runs, each covering one large level or the small levels of
   the tail. A range that intersects a run starts at that run's largest level.
   `texture_view` decodes the whole chain, and `texture_mip` exposes levels in the decoded range.
-- **Planes of fields.** A BC1 or BC5 texture whose blocks are not `Fast` stores each level as
-  planes of the fields of its blocks (`Fields`: endpoints and indices apart,
-  `asset/texture_fields.odin`): written without a compressor (`Codecs.None`) always, since they
-  compress smaller where the bytes rest; written compressed when that stream is smaller, which the
-  writer decides per texture compressing both with the profile `Fast` of its codecs. The read joins
-  them back.
+- **Planes of fields.** A block texture whose blocks are not `Fast` can store each mip as
+  separate planes of endpoints, indices and the other fields. BC6H and BC7 group the planes by
+  mode and keep the original order in a mode stream. BC6H separates the bits of the base
+  endpoint and delta planes by significance. Reserved prefixes go in a raw bucket.
+  `Texture_Mip.size` is the stored size, including the mode table when present. Without a
+  compressor (`Codecs.None`), eligible mips are stored as planes. A compressed write chooses
+  the smaller stream. CPU readers join the planes. A renderer that can take them asks
+  `texture_decode` to keep them and uploads them directly.
 - `Srgb` says it is color: stored with the sRGB curve in `RGBA8`, `BC1` and `BC7`, linear in
   the others.
 - **Layers.** `layers` is the number of images of each level (one if the file does not store it):

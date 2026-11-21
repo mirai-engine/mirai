@@ -144,6 +144,7 @@ Texture_Data :: struct {
 	layers:        int,  // 0 or 1: one; those of an array, or six per cube
 	cube:          bool, // its layers are faces of cubes (asset.Texture_Flag.Cube)
 	levels:        [dynamic][]u8,
+	fields:        bool, // levels hold asset field planes for a single layer
 	level:         int,    // the level of the source its first level is
 	source:        [2]int, // the size of the level 0 of its source; zero: it keeps these levels
 }
@@ -255,6 +256,7 @@ textures_destroy :: proc(r: ^Renderer) {
 	delete(state.partial)
 	delete(state.residency.streams)
 	textures_feedback_release(r)
+	if state.residency.bc_scratch != 0 {rhi.buffer_destroy(r.device, state.residency.bc_scratch)}
 }
 
 // Makes room for the texture of handle index + 1 in what the renderer keeps
@@ -311,7 +313,14 @@ texture_add_data :: proc(r: ^Renderer, data: Texture_Data, name: string, key:u64
 	layered := data.layers > 1 || data.cube
 	texture := rhi.texture_create(d, {width = u32(width), height = u32(height), layers = u32(max(data.layers, 1)), cube = data.cube, mip_levels = u32(len(levels)), format = data.format, usage = {.Sampled}, name = name})
 	if texture == 0 {set_error(r, "texture %s: %s", name, rhi.device_error(d)); return 0, false}
-	if !rhi.texture_upload_levels(d, texture, levels) {
+	uploaded := false
+	if data.fields {
+		uploaded = !layered && texture_bc_upload(r, texture, texture_field_format(data.format),
+			u32(width), u32(height), levels)
+	} else {
+		uploaded = rhi.texture_upload_levels(d, texture, levels)
+	}
+	if !uploaded {
 		set_error(r, "texture %s: %s", name, rhi.device_error(d))
 		rhi.texture_destroy(d, texture)
 		return 0, false
@@ -348,10 +357,16 @@ texture_pool_room :: proc(r: ^Renderer) -> (bytes: u64, limited: bool) {
 // largest, and the bytes of the others.
 texture_pool_first :: proc(r: ^Renderer, data: Texture_Data) -> (first: int, bytes: u64) {
 	pool, limited := texture_pool_room(r)
-	for level in data.levels {bytes += u64(len(level))}
+	level_bytes :: proc(data: Texture_Data, level: int) -> u64 {
+		if !data.fields {return u64(len(data.levels[level]))}
+		w, h := max(data.width >> uint(level), 1), max(data.height >> uint(level), 1)
+		row, rows := rhi.format_rows(data.format, u32(w), u32(h))
+		return row * rows
+	}
+	for _, i in data.levels {bytes += level_bytes(data, i)}
 	// Never below 64 texels: a pool that small is a setting to fix, not a texture to erase.
 	for limited && r.textures.bytes + bytes > pool && first + 1 < len(data.levels) && max(data.width >> uint(first + 1), data.height >> uint(first + 1)) >= 64 {
-		bytes -= u64(len(data.levels[first]))
+		bytes -= level_bytes(data, first)
 		first += 1
 	}
 	return

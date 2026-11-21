@@ -1409,7 +1409,9 @@ immediate_begin :: proc(d: ^Device) -> ^Command_List {
 	return &d.immediate
 }
 
-immediate_end :: proc(d: ^Device, cmd: ^Command_List) -> bool {return vk_immediate_end(d, cmd, true)}
+immediate_end :: proc(d: ^Device, cmd: ^Command_List, wait := true) -> bool {
+	return vk_immediate_end(d, cmd, wait)
+}
 
 // Uploads between frames do not wait for the GPU: the queue runs them before
 // the frames that follow, whose barriers cover them. VK_IMMEDIATE_SLOTS of

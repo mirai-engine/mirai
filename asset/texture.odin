@@ -20,11 +20,9 @@ import "mirai:std/base"
 // A level is half the one above, rounded down, and never smaller than 1. It
 // holds its layers one after another: the images of an array, or the faces
 // of its cubes. Block formats store 4x4 blocks: BC1 in 8 bytes, BC5, BC6H
-// and BC7 in 16. With the flag Fields, each level of BC1 or BC5
-// stores the fields of its blocks one plane after another
-// (texture_fields_split).
+// and BC7 in 16. With Fields, each mip stores the fields of its blocks in planes.
 
-TEXTURE_VERSION :: 4
+TEXTURE_VERSION :: 5
 TEXTURE_MAX_SIZE :: 16384
 TEXTURE_MAX_MIPS :: 15
 // Of an array or of cube faces: the least every GPU Mirai runs on takes.
@@ -68,7 +66,7 @@ Texture_Mip :: struct {
     width:u32,
     height:u32,
     offset:u32, // into texels
-    size:u32,   // of every layer
+    size:u32,   // stored bytes of all layers
 }
 
 Texture_Desc :: struct {
@@ -106,7 +104,10 @@ Texture_View :: struct {
     mips:[]Texture_Mip,
     texels:[]u8,
     source:^Import_Info,
-    first,last:int, // [first,last) of mips; texels starts at the offset of mip last-1
+    first,last:int, // [first,last) of decoded mips
+    planes:bool,
+    joined:bool,
+    offsets:[TEXTURE_MAX_MIPS]int, // of the decoded mips, when joined
 }
 
 // Bytes of one image of a level of a size, in a format.
@@ -143,8 +144,10 @@ texture_layers_valid :: proc "contextless" (layers,width,height:int,flags:Textur
     return .Cube not_in flags || layers%TEXTURE_CUBE_FACES==0 && width==height
 }
 
-texture_document :: proc(doc:^Document,types:^Types,desc:Texture_Desc,allocator:=context.allocator) -> Error {
+texture_document :: proc(doc:^Document,types:^Types,desc:Texture_Desc,
+    allocator:=context.allocator,profile:=data.Profile.Fast) -> Error {
     if desc.width<=0 || desc.height<=0 || desc.width>TEXTURE_MAX_SIZE || desc.height>TEXTURE_MAX_SIZE {return .Invalid}
+    if desc.format>max(Texture_Format) {return .Invalid}
     layers:=max(desc.layers,1)
     if desc.layers<0 || !texture_layers_valid(layers,desc.width,desc.height,desc.flags) {return .Invalid}
     if len(desc.mips)==0 || len(desc.mips)>texture_mip_count(desc.width,desc.height) || !finite(desc.alpha_coverage) {return .Invalid}
@@ -154,7 +157,7 @@ texture_document :: proc(doc:^Document,types:^Types,desc:Texture_Desc,allocator:
     #reverse for level,i in desc.mips {
         width,height:=max(desc.width>>uint(i),1),max(desc.height>>uint(i),1)
         if len(level)!=texture_level_size(desc.format,width,height)*layers {return .Invalid}
-        total=(total+TEXTURE_BULK_ALIGNMENT-1)&~int(TEXTURE_BULK_ALIGNMENT-1)
+        total=texture_mip_align(total)
         if total+len(level)>int(max(u32)) {return .Invalid}
         mips[i]={u32(width),u32(height),u32(total),u32(len(level))}
         total+=len(level)
@@ -175,31 +178,57 @@ texture_document :: proc(doc:^Document,types:^Types,desc:Texture_Desc,allocator:
     document_init(doc,KIND_TEXTURE,desc.id,allocator)
     doc.owner=desc.owner
     doc.kind_version=TEXTURE_VERSION
-    error:=texture_tables(doc,types,&info,mips[:len(desc.mips)],total,desc)
+    error:=texture_tables(doc,types,&info,mips[:len(desc.mips)],total,desc,profile)
     if error!=.None {document_destroy(doc)}
     return error
 }
 
 @(private="file")
-texture_tables :: proc(doc:^Document,types:^Types,info:^Texture_Info,mips:[]Texture_Mip,total:int,desc:Texture_Desc) -> Error {
-    texels:=document_table_add(doc,"texels",{.Bulk}) or_return
-    document_resize(doc,texels,total) or_return
+texture_tables :: proc(doc:^Document,types:^Types,info:^Texture_Info,mips:[]Texture_Mip,
+    total_raw:int,desc:Texture_Desc,profile:data.Profile) -> Error {
+    total:=total_raw
     byte,_:=document_type(doc,types,u8)
-    // Layouts restore only with the compressor that wrote them.
     laid:=len(desc.layouts)>0
     if laid && doc.codecs!=.Best {return .Invalid}
+    split:[]u8
+    defer delete(split,doc.allocator)
+    if !laid && texture_fields_format(desc.format) && .Fast not_in desc.flags {
+        candidate:[TEXTURE_MAX_MIPS]Texture_Mip
+        size:=0
+        #reverse for level,i in desc.mips {
+            size=texture_mip_align(size)
+            bytes:=texture_fields_size(desc.format,level)
+            if size+bytes>int(max(u32)) {return .Too_Large}
+            candidate[i]={mips[i].width,mips[i].height,u32(size),u32(bytes)}
+            size+=bytes
+        }
+        smaller:=true
+        if doc.codecs!=.None {
+            no_room:mem.Allocator_Error
+            split,no_room=make([]u8,size,doc.allocator)
+            if no_room!=nil {return .Out_Of_Memory}
+            texture_split_levels(desc,candidate[:len(mips)],split) or_return
+            smaller=texture_fields_smaller(desc.mips,mips,total,split,doc.codecs,profile,
+                doc.allocator) or_return
+        }
+        if smaller {
+            info.flags+={.Fields}
+            copy(mips,candidate[:len(mips)])
+            total=size
+        }
+    }
+    texels:=document_table_add(doc,"texels",{.Bulk}) or_return
+    document_resize(doc,texels,total) or_return
     column:=document_column_add(doc,texels,"",byte,{},.Stream,TEXTURE_BULK_ALIGNMENT) or_return
     bytes:=doc.tables[texels].columns[column].data[:]
     if laid {
         at:=0
         #reverse for run in desc.layouts {at+=copy(bytes[at:],run.payload)}
+    } else if .Fields in info.flags {
+        if split!=nil {copy(bytes,split)}
+        else {texture_split_levels(desc,mips,bytes) or_return}
     } else {
         for level,i in desc.mips {copy(bytes[mips[i].offset:],level)}
-        // Without a compressor to ask, planes are what compresses smaller where the bytes rest.
-        if texture_fields_format(desc.format) && .Fast not_in desc.flags && (doc.codecs==.None || (texture_fields_smaller(desc.format,mips,bytes,doc.codecs,doc.allocator) or_return)) {
-            info.flags+={.Fields}
-            for level,i in desc.mips {texture_fields_split(desc.format,level,bytes[mips[i].offset:][:mips[i].size])}
-        }
     }
     document_put_row(doc,types,"texture",info) or_return
     document_put(doc,types,"mips",mips) or_return
@@ -214,31 +243,45 @@ texture_tables :: proc(doc:^Document,types:^Types,info:^Texture_Info,mips:[]Text
     return .None
 }
 
-// Whether the levels of texels, laid out as mips say, compress smaller as planes of their fields
-// in what an edit with codecs writes, which picks what a cook writes too in all but a few. A tie
-// keeps the blocks.
 @(private="file")
-texture_fields_smaller :: proc(format:Texture_Format,mips:[]Texture_Mip,texels:[]u8,codecs:Codecs,allocator:mem.Allocator) -> (smaller:bool,error:Error) {
-    if len(texels)==0 {return false,.None}
-    split,split_error:=make([]u8,len(texels),allocator)
-    if split_error!=nil {return false,.Out_Of_Memory}
-    defer delete(split,allocator)
-    copy(split,texels)
-    for mip in mips {texture_fields_split(format,texels[mip.offset:][:mip.size],split[mip.offset:][:mip.size])}
-    out,out_error:=make([]u8,pack_bound(len(texels)),allocator)
+texture_split_levels :: proc "contextless" (desc:Texture_Desc,mips:[]Texture_Mip,
+    bytes:[]u8) -> Error {
+    for level,i in desc.mips {
+        mip:=mips[i]
+        if !texture_fields_split(desc.format,level,bytes[mip.offset:][:mip.size]) {
+            return .Invalid
+        }
+    }
+    return .None
+}
+
+// Whether the field planes give a smaller stream at the profile of the write.
+@(private="file")
+texture_fields_smaller :: proc(levels:[][]u8,mips:[]Texture_Mip,total:int,split:[]u8,
+    codecs:Codecs,profile:data.Profile,allocator:mem.Allocator) -> (smaller:bool,error:Error) {
+    raw,raw_error:=make([]u8,total,allocator)
+    if raw_error!=nil {return false,.Out_Of_Memory}
+    defer delete(raw,allocator)
+    for level,i in levels {copy(raw[mips[i].offset:],level)}
+    out,out_error:=make([]u8,pack_bound(max(total,len(split))),allocator)
     if out_error!=nil {return false,.Out_Of_Memory}
     defer delete(out,allocator)
     encoder:Stream_Encoder
     stream_encoder_init(&encoder,allocator) or_return
     defer stream_encoder_destroy(&encoder)
     sizes:[2]int
-    for bytes,i in ([2][]u8{texels,split}) {sizes[i]=pack(&encoder,.Fast,codecs,bytes,out) or_return}
+    for bytes,i in ([2][]u8{raw,split}) {sizes[i]=pack(&encoder,profile,codecs,bytes,out) or_return}
     return sizes[1]<sizes[0],.None
+}
+
+@(private="file")
+texture_mip_align :: proc "contextless" (offset:int) -> int {
+    return (offset+TEXTURE_BULK_ALIGNMENT-1)&~int(TEXTURE_BULK_ALIGNMENT-1)
 }
 
 texture_save :: proc(path:string,types:^Types,desc:Texture_Desc,allocator:=context.allocator,profile:=data.Profile.Fast) -> Error {
     doc:Document
-    texture_document(&doc,types,desc,allocator) or_return
+    texture_document(&doc,types,desc,allocator,profile) or_return
     defer document_destroy(&doc)
     return document_save(&doc,path,profile=profile)
 }
@@ -256,7 +299,10 @@ texture_repack :: proc(bytes:[]u8,types:^Types,profile:data.Profile,allocator:=c
     for _,level in view.mips {mips[level]=texture_mip(view,level)}
     info:=view.info
     doc:Document
-    texture_document(&doc,types,{id=file.blob.header.id,owner=file.blob.header.owner,width=int(info.width),height=int(info.height),layers=int(info.layers),format=info.format,flags=info.flags,alpha_coverage=info.alpha_coverage,mips=mips,source=view.source},context.temp_allocator) or_return
+    desc:=Texture_Desc{id=file.blob.header.id,owner=file.blob.header.owner,width=int(info.width),
+        height=int(info.height),layers=int(info.layers),format=info.format,flags=info.flags,
+        alpha_coverage=info.alpha_coverage,mips=mips,source=view.source}
+    texture_document(&doc,types,desc,context.temp_allocator,profile) or_return
     defer document_destroy(&doc)
     doc.flags=file.blob.header.flags
     return document_bytes(&doc,allocator,profile)
@@ -284,9 +330,10 @@ texture_open :: proc(a:^Asset,types:^Types) -> (view:Texture_View,error:Error) {
 }
 
 // Decodes [from,before) into memory of the asset. If from lies inside a block
-// layout run, the view starts at the beginning of that run.
+// layout run, the view starts at the beginning of that run. keep_fields exposes
+// validated field planes through texture_mip.
 texture_decode :: proc(a:^Asset,types:^Types,view:^Texture_View,from:int,
-    before:=max(int)) -> Error {
+    before:=max(int),keep_fields:=false) -> Error {
     if !texture_levels_check(view.info,view.mips) {return .Invalid}
     mips,info:=view.mips,view.info
     from:=clamp(from,0,len(mips)-1)
@@ -302,10 +349,15 @@ texture_decode :: proc(a:^Asset,types:^Types,view:^Texture_View,from:int,
     chunk:=table.columns[column].chunk
     entry:=blob_chunk(&a.blob,chunk)
     if entry.uncompressed_size!=u64(table.rows) {return .Corrupt}
+    _,laid:=asset_table(a,TEXTURE_TABLE_LAYOUTS)
+    if !laid && u64(mips[0].offset)+u64(mips[0].size)!=u64(table.rows) {return .Corrupt}
+    texels:[]u8
+    offsets:[TEXTURE_MAX_MIPS]int
+    fields,joined:=false,false
 
     start:=int(mips[before-1].offset)
     end:=int(mips[from].offset)+int(mips[from].size)
-    if _,laid:=asset_table(a,TEXTURE_TABLE_LAYOUTS);laid {
+    if laid {
         runs:=asset_rows(a,types,TEXTURE_TABLE_LAYOUTS,"",Texture_Layout_Run) or_return
         if texture_block_bytes(info.format)!=16 || .Fields in info.flags ||
             len(runs)==0 || len(runs)>len(mips) || runs[0].level!=0 {return .Corrupt}
@@ -353,25 +405,43 @@ texture_decode :: proc(a:^Asset,types:^Types,view:^Texture_View,from:int,
             case .Corrupt: return .Corrupt
             }
         }
-        view.texels=restored[start-restored_start:]
+        texels=restored[start-restored_start:]
     } else if .Fields in info.flags {
-        if !texture_fields_format(info.format) {return .Corrupt}
         plane_buffer:[]u8
         defer mem.free_bytes(plane_buffer,a.allocator)
-        planes:=texels_read(a,table,column,start,end,1,&plane_buffer) or_return
-        joined:=asset_alloc(a,end-start,TEXTURE_BULK_ALIGNMENT) or_return
-        at:=0
-        #reverse for mip in mips[from:before] {
-            low:=int(mip.offset)-start
-            high:=low+int(mip.size)
-            copy(joined[at:low],planes[at:low])
-            texture_fields_join(info.format,planes[low:high],joined[low:high])
-            at=high
+        temporary:=&plane_buffer if !keep_fields else nil
+        planes:=texels_read(a,table,column,start,end,TEXTURE_BULK_ALIGNMENT,temporary) or_return
+        layout:=texture_field_layout(info.format)
+        if keep_fields {
+            if layout.modes>0 {
+                for mip in mips[from:before] {
+                    low:=int(mip.offset)-start
+                    raw:=texture_mip_bytes(info,mip)
+                    if _,ok:=texture_fields_index(&layout,planes[low:][:mip.size],raw/16);!ok {
+                        return .Corrupt
+                    }
+                }
+            }
+            texels,fields=planes,true
+        } else {
+            total:=0
+            #reverse for mip,relative in mips[from:before] {
+                total=texture_mip_align(total)
+                offsets[from+relative]=total
+                total+=texture_mip_bytes(info,mip)
+            }
+            texels=asset_alloc(a,total,TEXTURE_BULK_ALIGNMENT) or_return
+            for mip,relative in mips[from:before] {
+                low:=int(mip.offset)-start
+                dst:=texels[offsets[from+relative]:][:texture_mip_bytes(info,mip)]
+                if !texture_fields_join(info.format,planes[low:][:mip.size],dst) {return .Corrupt}
+            }
+            joined=true
         }
-        view.texels=joined
     } else {
-        view.texels=texels_read(a,table,column,start,end,TEXTURE_BULK_ALIGNMENT) or_return
+        texels=texels_read(a,table,column,start,end,TEXTURE_BULK_ALIGNMENT) or_return
     }
+    view.texels,view.planes,view.joined,view.offsets=texels,fields,joined,offsets
     view.first,view.last=from,before
     return .None
 }
@@ -393,19 +463,30 @@ texels_read :: proc(a:^Asset,table:^Asset_Table,column,start,end,alignment:int,
     return asset_stream_range(a,chunk,start,end,alignment,temporary)
 }
 
-// The bytes of a level, with every layer; empty outside the decoded range.
+// The bytes of a mip, in the representation requested by texture_decode.
 texture_mip :: proc(view:Texture_View,level:int) -> []u8 {
-    if level<view.first || level>=view.last {return nil}
+    if level<0 || level<view.first || level>=view.last || view.last>len(view.mips) ||
+        level>=TEXTURE_MAX_MIPS || view.info==nil {return nil}
     mip:=view.mips[level]
-    return view.texels[mip.offset-view.mips[view.last-1].offset:][:mip.size]
+    start,size:=int(mip.offset)-int(view.mips[view.last-1].offset),int(mip.size)
+    if view.joined {
+        start,size=view.offsets[level],texture_mip_bytes(view.info,mip)
+    }
+    if start<0 || start>len(view.texels) || size<0 || size>len(view.texels)-start {return nil}
+    return view.texels[start:][:size]
 }
 
 // The bytes of one layer; empty outside the decoded range or the image count.
 texture_layer :: proc(view:Texture_View,level,layer:int) -> []u8 {
     bytes:=texture_mip(view,level)
-    if len(bytes)==0 || layer<0 || layer>=int(view.info.layers) {return nil}
+    if view.planes || len(bytes)==0 || layer<0 || layer>=int(view.info.layers) {return nil}
     size:=len(bytes)/int(view.info.layers)
     return bytes[layer*size:][:size]
+}
+
+@(private="file")
+texture_mip_bytes :: proc "contextless" (info:^Texture_Info,mip:Texture_Mip) -> int {
+    return texture_level_size(info.format,int(mip.width),int(mip.height))*int(info.layers)
 }
 
 // Whether the info and the levels of a texture agree: sizes, format, layers
@@ -415,23 +496,34 @@ texture_levels_check :: proc(info:^Texture_Info,mips:[]Texture_Mip) -> bool {
     if info.format>max(Texture_Format) || !finite(info.alpha_coverage) {return false}
     if !texture_layers_valid(int(info.layers),int(info.width),int(info.height),info.flags) {return false}
     if int(info.mip_count)!=len(mips) || len(mips)==0 || len(mips)>texture_mip_count(int(info.width),int(info.height)) {return false}
+    header,floor,ceiling,pad,block:=0,0,0,0,texture_block_bytes(info.format)
+    if .Fields in info.flags {
+        if block==0 {return false}
+        header,floor,ceiling,pad=texture_fields_bounds(info.format)
+    }
     end:=u64(0)
     #reverse for mip,i in mips {
         width,height:=max(int(info.width)>>uint(i),1),max(int(info.height)>>uint(i),1)
-        if int(mip.width)!=width || int(mip.height)!=height ||
-            int(mip.size)!=texture_level_size(info.format,width,height)*int(info.layers) {
-            return false
+        if int(mip.width)!=width || int(mip.height)!=height {return false}
+        raw:=texture_mip_bytes(info,mip)
+        low,high:=raw,raw
+        if .Fields in info.flags {
+            n:=raw/block
+            low,high=header+floor*n,header+ceiling*n+pad
         }
+        if int(mip.size)<low || int(mip.size)>high {return false}
         offset:=(end+TEXTURE_BULK_ALIGNMENT-1)&~u64(TEXTURE_BULK_ALIGNMENT-1)
         if u64(mip.offset)!=offset {return false}
         end=offset+u64(mip.size)
     }
-    return true
+    return end<=u64(max(u32))
 }
 
 texture_check :: proc(view:Texture_View) -> bool {
     if !texture_levels_check(view.info,view.mips) || view.first<0 ||
         view.last>len(view.mips) || view.first>=view.last {return false}
-    mip:=view.mips[view.first]
-    return u64(mip.offset-view.mips[view.last-1].offset)+u64(mip.size)<=u64(len(view.texels))
+    for level in view.first..<view.last {
+        if len(texture_mip(view,level))==0 {return false}
+    }
+    return true
 }

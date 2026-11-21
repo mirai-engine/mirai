@@ -8,21 +8,30 @@ package asset
 
 // Whether a format can store its levels as planes of fields.
 texture_fields_format :: proc "contextless" (format:Texture_Format) -> bool {
-    return format==.BC1 || format==.BC5
+    return texture_block_bytes(format)>0
 }
 
-// The planes of the fields of the blocks of a level into planes, of the same
-// size. False, with nothing written, for another format or sizes that are
-// not the same whole blocks.
+// Splits a mip into a buffer of texture_fields_size bytes.
 texture_fields_split :: proc "contextless" (format:Texture_Format,blocks,planes:[]u8) -> bool {
+    if format==.BC6H || format==.BC7 {return fields_modes_move(format,blocks,planes,false)}
     return fields_move(format,blocks,planes,false)
 }
 
 // The blocks of a level from the planes texture_fields_split wrote: a gather
 // of bytes at the speed of memory.
 texture_fields_join :: proc "contextless" (format:Texture_Format,planes,blocks:[]u8) -> bool {
+    if format==.BC6H || format==.BC7 {return fields_modes_move(format,blocks,planes,true)}
     return fields_move(format,blocks,planes,true)
 }
+
+@(private)
+BC1_FIELD_AT :: [4]int{0,4,0,0}
+@(private)
+BC1_FIELD_SIZE :: [4]int{4,4,0,0}
+@(private)
+BC5_FIELD_AT :: [4]int{0,8,2,10}
+@(private)
+BC5_FIELD_SIZE :: [4]int{2,2,6,6}
 
 @(private="file")
 fields_move :: proc "contextless" (format:Texture_Format,blocks,planes:[]u8,join:bool) -> bool {
@@ -32,9 +41,11 @@ fields_move :: proc "contextless" (format:Texture_Format,blocks,planes:[]u8,join
     b,p:=raw_data(blocks),raw_data(planes)
     switch format {
     case .BC1:
-        if join {fields_copy(b,p,count,true,8,{0,4,0,0},{4,4,0,0})} else {fields_copy(b,p,count,false,8,{0,4,0,0},{4,4,0,0})}
+        if join {fields_copy(b,p,count,true,8,BC1_FIELD_AT,BC1_FIELD_SIZE)}
+        else {fields_copy(b,p,count,false,8,BC1_FIELD_AT,BC1_FIELD_SIZE)}
     case .BC5:
-        if join {fields_copy(b,p,count,true,16,{0,8,2,10},{2,2,6,6})} else {fields_copy(b,p,count,false,16,{0,8,2,10},{2,2,6,6})}
+        if join {fields_copy(b,p,count,true,16,BC5_FIELD_AT,BC5_FIELD_SIZE)}
+        else {fields_copy(b,p,count,false,16,BC5_FIELD_AT,BC5_FIELD_SIZE)}
     case .RGBA8,.BC7,.RGBA16,.RGBA16F,.BC6H:
     }
     return true

@@ -91,15 +91,16 @@ a_texture_holds_the_levels_the_frames_sample :: proc(t:^testing.T) {
     SIZE :: 512
     mips:=make([dynamic][]u8,context.temp_allocator)
     for side:=SIZE;;side/=2 {
-        level:=make([]u8,side*side*4,context.temp_allocator)
-        for &value in level {value=200}
+        level:=make([]u8,asset.texture_level_size(.BC7,side,side),context.temp_allocator)
+        block:=[16]u8{192,255,31,0,0,0,254,255,1,0,0,0,0,0,0,0}
+        for at:=0;at<len(level);at+=len(block) {copy(level[at:],block[:])}
         append(&mips,level)
         if side==1 {break}
     }
     id:=base.Asset_Id{9,9}
     doc:asset.Document
     if !testing.expect_value(t,asset.texture_document(&doc,&types,
-        {id=id,width=SIZE,height=SIZE,format=.RGBA8,flags={.Srgb},mips=mips[:]}),
+        {id=id,width=SIZE,height=SIZE,format=.BC7,flags={.Srgb},mips=mips[:]}),
         asset.Error.None) {return}
     defer asset.document_destroy(&doc)
     bytes,encoded:=asset.document_bytes(&doc,context.temp_allocator)
@@ -194,6 +195,7 @@ a_texture_holds_the_levels_the_frames_sample :: proc(t:^testing.T) {
     assets_prepare(&prepared,assets_limits(&a),&types,held=requests[0].held)
     defer assets_prepared_free(&prepared)
     testing.expect_value(t,len(prepared.levels.data.levels),requests[0].held-requests[0].level)
+    testing.expect_value(t,prepared.levels.data.fields,render.texture_limits(r).blocks)
     testing.expect_value(t,render.texture_levels_queue(r,requests[0],prepared.levels.data),render.Texture_Levels_Result.Set)
     testing.expect_value(t,render.texture_levels_queue(r,requests[0],prepared.levels.data),render.Texture_Levels_Result.Busy)
     testing.expect(t,render.texture_upload_pending(r,requests[0]) && width(r,texture)==u32(render.TEXTURE_TAIL),"the levels have not gone yet")

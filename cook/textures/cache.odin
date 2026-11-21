@@ -45,7 +45,9 @@ cache_read :: proc(c:cache.Cache,key:u64,types:^asset.Types,allocator:=context.a
     view,error:=asset.texture_view(&file,types)
     if error!=.None {return}
     info:=view.info
-    built={width=int(info.width),height=int(info.height),layers=int(info.layers),format=info.format,flags=info.flags,alpha_coverage=info.alpha_coverage,allocator=allocator}
+    built={width=int(info.width),height=int(info.height),layers=int(info.layers),
+        format=info.format,flags=info.flags-{.Fields},alpha_coverage=info.alpha_coverage,
+        allocator=allocator}
     allocation:mem.Allocator_Error
     if built.mips,allocation=make([][]u8,len(view.mips),allocator);allocation!=nil {return {},false}
     for _,level in view.mips {
