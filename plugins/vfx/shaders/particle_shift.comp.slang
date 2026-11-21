@@ -6,7 +6,6 @@
 // an effect view. y 1 and 2, a thread per event of each half: those that wait
 // for a step, unless their emitter is of an effect view.
 #define PARTICLES_WRITABLE
-#define PARTICLES_COUNTED
 #include "particles.slang"
 #define MIRAI_GROUP_X 64
 #define MIRAI_GROUP_Y 1
@@ -24,8 +23,8 @@ void main(uint3 id : SV_DispatchThreadID) {
         Particle p = particles[index];
         uint slot = particle_emitter_of(p);
         if (p.lifetime <= 0.0 || slot >= params.emitters) return;
-        Particle_Emitter e = particle_emitters[slot];
-        if ((e.range.w & PARTICLE_FLAG_ACTIVE) == 0u || (e.range.w & (PARTICLE_FLAG_LOCAL | PARTICLE_FLAG_VIEW)) != 0u) return;
+
+        if ((particle_emitters[slot].range.w & PARTICLE_FLAG_ACTIVE) == 0u || (particle_emitters[slot].range.w & (PARTICLE_FLAG_LOCAL | PARTICLE_FLAG_VIEW)) != 0u) return;
         particles[index].position = p.position + params.shift.xyz;
         return;
     }

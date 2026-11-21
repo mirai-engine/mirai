@@ -42,8 +42,7 @@ Gpu_Stage :: struct {
 Stage_Plan :: struct {
     particles,cells:bool,
     iterations:u32, // the most among its stages
-    cells_max:u32,  // the most cells among their grids
-    written_max:u32,// the most cells among the grids its stages write besides their own; 0: none
+    writes:bool,    // a stage writes grids besides the one it goes over
 }
 
 // The stage rows of an emitter, which take the grids its stages go over:
@@ -86,62 +85,33 @@ STAGE_SWAP_PARTICLES :: 5
 @(private)
 stages_step :: proc(sync:^Particle_Sync,pass:^erender.Pass,params:^Simulate_Params) {
     pool:=&sync.pool
-    erender.pass_pipeline(pass,sync.pipelines.stage)
+    all:=Program_Span{count=u32(pool.order_count)}
+    groups_of:[PROGRAMS_IN_USE+1]Program_Group
+    programs:=program_groups(&sync.pipelines,&groups_of)
+    stage:=sync.pipelines.stage
     for k in 0..<pool.stage_count {
         plan:=pool.plan[k]
         params.stage=k
-        prepare :: proc(pass:^erender.Pass,pool:^Pool,params:^Simulate_Params,cells:u32) {
-            if cells==0 {return}
-            params.mode,params.count=STAGE_PREPARE,cells
-            erender.pass_params(pass,params,size_of(params^))
-            erender.pass_dispatch(pass,groups(cells,64),u32(pool.slot_end))
-        }
-        swap :: proc(pass:^erender.Pass,pool:^Pool,params:^Simulate_Params,mode:u32) {
-            params.mode=mode
-            erender.pass_params(pass,params,size_of(params^))
-            erender.pass_dispatch(pass,groups(u32(pool.slot_end),64))
-        }
-        // The modes that run programs, once for each program over the slots of
-        // its emitters (or, cells>0, over that many cells of each); the others
-        // on the stage of none.
-        all:[PROGRAMS_IN_USE+1]Program_Group
-        run :: proc(pass:^erender.Pass,params:^Simulate_Params,groups_of:[]Program_Group,base:erender.Pipeline,cells:u32) {
-            for group in groups_of {
-                if group.program==0 {continue}
-                params.program=group.program
-                erender.pass_pipeline(pass,group.stage)
-                if cells==0 {
-                    params.first,params.count=group.first,group.end
-                    erender.pass_params(pass,params,size_of(params^))
-                    erender.pass_dispatch(pass,groups(group.end-group.first,64))
-                } else {
-                    params.emitter_first,params.count=group.emitter_first,cells
-                    erender.pass_params(pass,params,size_of(params^))
-                    erender.pass_dispatch(pass,groups(cells,64),group.emitter_end-group.emitter_first)
-                }
-            }
-            params.program,params.first,params.emitter_first=0,0,0
-            erender.pass_pipeline(pass,base)
-        }
-        program_groups_of:=program_groups(&sync.pipelines,&all)
-        params.iteration=0
         if plan.particles {
             for iteration in 0..<max(plan.iterations,1) {
                 params.iteration=iteration
-                prepare(pass,pool,params,plan.written_max)
-                params.mode=STAGE_PARTICLES
-                run(pass,params,program_groups_of,sync.pipelines.stage,0)
-                params.count=pool.pool_end
-                if plan.written_max>0 {swap(pass,pool,params,STAGE_SWAP_PARTICLES)}
+                if plan.writes {particle_work(sync,pass,params,all,.Grid_Copy,stage,STAGE_PREPARE)}
+                for group in programs {
+                    if group.program==0 {continue}
+                    particle_work(sync,pass,params,group.span,.Particles,group.stage,STAGE_PARTICLES)
+                }
+                if plan.writes {particle_work(sync,pass,params,all,.Swap_Particles,stage,STAGE_SWAP_PARTICLES)}
             }
         }
-        if plan.cells && plan.cells_max>0 {
+        if plan.cells {
             for iteration in 0..<plan.iterations {
                 params.iteration=iteration
-                prepare(pass,pool,params,plan.written_max)
-                params.mode=STAGE_CELLS
-                run(pass,params,program_groups_of,sync.pipelines.stage,plan.cells_max)
-                swap(pass,pool,params,STAGE_SWAP)
+                if plan.writes {particle_work(sync,pass,params,all,.Grid_Copy,stage,STAGE_PREPARE)}
+                for group in programs {
+                    if group.program==0 {continue}
+                    particle_work(sync,pass,params,group.span,.Cells,group.stage,STAGE_CELLS)
+                }
+                particle_work(sync,pass,params,all,.Swap_Cells,stage,STAGE_SWAP)
             }
         }
     }
@@ -176,24 +146,21 @@ world_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,params:^Simulate_Pa
     if !g.made {
         erender.pass_buffer_fill(pass,world,u64(grids_base(sync)),u64(g.bytes))
         g.made=true
-        for &entry in g.entries {entry.cleared,entry.loaded=entry.first,{}}
+        for &entry in g.entries {entry.cleared,entry.loaded,entry.texture_dirty=entry.first,{},true}
         return true
     }
     grids_load(sync,pass)
-    moved:=false
-    cells:u32
-    for &entry in g.entries {
-        if entry.cleared==entry.first {continue}
-        moved=true
-        cells=max(cells,grid_cells(entry.cells))
-    }
-    if !moved {return true}
-    params.mode,params.count,params.stage=STAGE_CLEAR,cells,sync.pool.grids_at
+    params.mode=STAGE_CLEAR
     erender.pass_pipeline(pass,sync.pipelines.stage)
-    erender.pass_params(pass,params,size_of(params^))
-    erender.pass_dispatch(pass,groups(cells,64),u32(len(g.entries)))
+    for &entry,at in g.entries {
+        if entry.cleared==entry.first {continue}
+        params.stage=sync.pool.grids_at+u32(at)*size_of(Gpu_Grid)
+        if !erender.pass_params(pass,params,size_of(params^)) {return false}
+        erender.pass_dispatch(pass,groups(grid_cells(entry.cells),64))
+        entry.cleared=entry.first
+        entry.texture_dirty=true
+    }
     params.stage=0
-    for &entry in g.entries {entry.cleared=entry.first}
     return true
 }
 

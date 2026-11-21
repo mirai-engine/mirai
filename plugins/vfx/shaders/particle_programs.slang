@@ -108,15 +108,6 @@ Particle_Bone particle_bone_sample(Particle_Resource r, inout uint seed, float d
     return particle_bone_at(r, low, random01(seed), dt);
 }
 
-// The grid of a resource of an emitter; false without one.
-bool particle_grid_of(uint slot, uint resource, out Particle_Grid_Row g) {
-    Particle_Resource r = particle_resource(slot, 1u + resource);
-    g = (Particle_Grid_Row)0;
-    if (r.kind != PARTICLE_RESOURCE_GRID) return false;
-    g = particle_grid_row_at(r.mesh);
-    return true;
-}
-
 // Where a cell of the world is among those of a grid, which wrap in place; false outside
 // its region. An axis of one cell takes every index.
 bool particle_grid_cell(Particle_Grid_Row g, int3 index, out uint at) {
@@ -555,7 +546,7 @@ Mirai_Vfx_Context particle_program_context(uint slot, float time, float dt) {
     ctx.delta_time = dt;
     ctx.world = particle_emitters[slot].world;
     ctx.origin = float3(ctx.world[0].w, ctx.world[1].w, ctx.world[2].w);
-    ctx.axis = normalize(transform_vector(ctx.world, float3(0.0, 1.0, 0.0)));
+    ctx.axis = particle_unit(transform_vector(ctx.world, float3(0.0, 1.0, 0.0)), float3(0.0, 1.0, 0.0));
     ctx.emitter_age = asfloat(particle_emitters[slot].data.z);
     ctx.born = particle_emitters[slot].data.w;
 #ifdef PARTICLES_WRITABLE
@@ -587,9 +578,8 @@ Mirai_Vfx_Particle particle_program_value(uint slot, Particle p) {
 // color says it may have changed.
 void particle_program_store(uint slot, Mirai_Vfx_Particle v, bool color, inout Particle p) {
     if ((particle_emitters[slot].range.w & PARTICLE_FLAG_LOCAL) != 0u) {
-        float4 world[3] = particle_emitters[slot].world;
-        p.position = inverse_transform_point(world, v.position);
-        p.velocity = inverse_transform_vector(world, v.velocity);
+        p.position = transform_point(particle_emitters[slot].from_world, v.position);
+        p.velocity = transform_vector(particle_emitters[slot].from_world, v.velocity);
     } else {
         p.position = v.position;
         p.velocity = v.velocity;
@@ -632,26 +622,24 @@ void particle_program_update(uint slot, uint index, float time, float dt, inout 
 }
 #endif
 
-// What a particle of a ribbon shows, kept after the Attributes of its program
-// (RIBBON_LOOK_BYTES): its vertices read it for both ends of their segment.
-uint particle_ribbon_look_at(uint slot, uint index) {
-    return particle_attributes(slot, index) + particle_emitters[slot].data.y - RIBBON_LOOK_BYTES;
+uint particle_draw_look_at(uint slot, uint index) {
+    return particle_emitters[slot].program.w + index * DRAW_LOOK_BYTES;
 }
-Particle_Look particle_ribbon_look(uint slot, uint index) {
-    uint at = particle_ribbon_look_at(slot, index);
+Particle_Look particle_draw_look(uint slot, uint index) {
+    uint at = particle_draw_look_at(slot, index);
     Particle_Look look;
     look.color = asfloat(particle_data.Load4(at));
     float4 w = asfloat(particle_data.Load4(at + 16u));
     look.size = w.x; look.frame = w.y; look.random = w.z; look.given = asuint(w.w);
-    for (uint i = 0u; i < 4u; i++) look.data[i] = asfloat(particle_data.Load4(at + 32u + i * 16u));
+    for (uint i = 0u; i < 4u; i++) look.data[i] = (look.given & (1u << i)) != 0u ? asfloat(particle_data.Load4(at + 32u + i * 16u)) : float4(0.0);
     return look;
 }
 #ifdef PARTICLES_WRITABLE
-void particle_ribbon_look_store(uint slot, uint index, Particle_Look look) {
-    uint at = particle_ribbon_look_at(slot, index);
+void particle_draw_look_store(uint slot, uint index, Particle_Look look) {
+    uint at = particle_draw_look_at(slot, index);
     particle_data.Store4(at, asuint(look.color));
     particle_data.Store4(at + 16u, uint4(asuint(look.size), asuint(look.frame), asuint(look.random), look.given));
-    for (uint i = 0u; i < 4u; i++) particle_data.Store4(at + 32u + i * 16u, asuint(look.data[i]));
+    for (uint i = 0u; i < 4u; i++) if ((look.given & (1u << i)) != 0u) particle_data.Store4(at + 32u + i * 16u, asuint(look.data[i]));
 }
 #endif
 

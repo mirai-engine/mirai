@@ -13,41 +13,9 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import "plugins:vfx/runtime/effect"
 
-// The particles of a world live on the GPU, in buffers the renderer keeps for
-// the world (erender.pass_buffer): those of a world that is not drawn wait,
-// still, and go when the world goes (particles_release). Each emitter holds a
-// range of the pool and a row of its table of emitters, by the id of its
-// emitter, from when it is put until it is removed; a range that is new,
-// changes size or comes with another generation starts empty. The pool is
-// told only of the emitters that changed, and the GPU keeps the rows of the
-// others as it has them. The births of an emitter come in groups: how many, how many at once,
-// how old the first ones are at the end of the frame and how far apart the
-// next ones were born, so a burst starts at one instant and a rate spreads
-// over the frame. A frame longer than STEP is simulated in several steps,
-// each one starting the births that fall in it. In the Simulate stage, every
-// step:
-//
-//   begin      a thread per emitter: its counters, and the dispatch that
-//              takes the events of the step before
-//   emit       the births of the step, and those the events start in the
-//              emitters they name
-//   simulate   a thread per slot the emitters of each program hold: its Vfx program, forces,
-//              noise, collision against the depth of the frame or the traced
-//              scene, deaths into the free list and events; in the last step
-//              the light of the particle (sun with its shadow, local lights,
-//              probes) and the list that is drawn
-//
-// and once a frame, finish: a group per emitter, its indirect draw and the
-// list sorted back to front (or by ribbon and age for a ribbon) where it asks. Before
-// the steps, the areas of the surfaces the world reads for the first time
-// (resources.odin).
-//
-// Sprites and ribbons are drawn in the Blend stage, over the lit scene before
-// TAA, behind and in front of glass. Mesh particles are drawn in the Gbuffer
-// stage and lit like the scene, but for those whose material blends: they
-// are drawn with the sprites, with their fragment. Nothing a frame does allocates: the tables of
-// a pool are made when its world gives its first emitters, and again when it
-// asks another capacity.
+// The pool belongs to a renderer world. Emitters own ranges of particles and
+// free slots, with a dense live list for each step parity. Only the final draw
+// lists are reordered for transparency, ribbons or mesh variants.
 
 CAPACITY :: 262144
 EMITTER_CAPACITY :: 1024 // of a world
@@ -60,7 +28,7 @@ SPAWNS :: 8 // groups of births an emitter gives in a frame
 STEP :: f32(1.0/30) // the longest step a simulation takes
 TRAILS_PER_SECOND :: 30 // Trail events of a particle in each second of its life
 RIBBON_PIECES :: 8 // most pieces a ribbon cuts the curve between two of its particles into
-RIBBON_LOOK_BYTES :: 96 // of each particle of a ribbon after the Attributes of its program: what it shows this frame (particle_ribbon_look of particles.slang)
+DRAW_LOOK_BYTES :: 96
 STEPS :: 8
 FRAME_MAX :: f32(0.25) // seconds a frame simulates at most
 
@@ -88,21 +56,16 @@ Program :: struct {
     prepare:bool, // it prepares each frame what its emitter keeps (STATE_BYTES of it)
 }
 
-// The slots the live emitters of a program hold: [first, end) of the pool and
-// [emitter_first, emitter_end) of the table of emitters, which its passes go
-// over. events: some emitter starts particles in one of them.
+// A program’s range in the frame’s emitter slot list.
 Program_Span :: struct {
-    first,end,emitter_first,emitter_end:u32,
-    events:bool,
+    first,count:u32,
+    events,births,prepare:bool,
 }
 
 // The stages of a program that runs in the frame: a pipeline of its own each.
 Program_Pipelines :: struct {
     id:u32,
     emit,simulate,stage:erender.Pipeline,
-    sprite:[effect.PARTICLE_NAME_BYTES+32]u8, // the vertex stage of its sprites
-    mesh:[effect.PARTICLE_NAME_BYTES+32]u8, // the vertex stage of its mesh particles, for the G-buffer pipeline of the view
-    mesh_blend:[effect.PARTICLE_NAME_BYTES+32]u8, // that of its mesh particles whose material blends, drawn with the sprites
     using span:Program_Span,
 }
 
@@ -126,6 +89,8 @@ Emitter_Desc :: struct {
     material:erender.Material_Handle, // of info.material
     meshes:[effect.PARTICLE_MESHES]Mesh_Choice, // of Mesh particles: what each mesh draws, mesh_count of them
     mesh_count:u32,
+    mesh_extent:f32,
+    external_positions:bool,
     blended:bool,             // of Mesh particles: its material blends (alpha mode Blend), so they are drawn over the lit scene with the sprites
     view:erender.Texture_Handle, // drawn only into the effect view of this texture (gui.UI_Effects); 0: in the views of the world
     event_target:u64,         // id of the emitter info.trigger starts info.sub_count particles in; 0: none
@@ -133,6 +98,7 @@ Emitter_Desc :: struct {
     resources:u32,                          // its RESOURCE_ROWS rows in Particle_Sync.resources from this one, + 1: the surface or bones of its shape, then the resources of its program; 0: it reads none
     stages:u32,                             // its PROGRAM_STAGES rows in Particle_Sync.stage_rows from this one, + 1; 0: none
     births:[2]u32,                          // of its channel: the first among those of the frame, and how many
+    birth_limit:f32,                        // end of the active GPU birth interval, as age
     age:f32,                                // seconds since it started, at the end of the frame
     born:u32,                               // particles it started before this frame
     owner:core.Entity,                      // its entity, whose reports and problems they are; NONE for an effect of the UI
@@ -149,6 +115,7 @@ FLAG_RELATIVE :: 128
 FLAG_MOVED :: 256 // its program moves and ages its particles
 FLAG_BIRTHS :: 512 // its program gives its births
 FLAG_PREPARE :: 1024 // its program prepares what it keeps each frame
+FLAG_DRAIN :: 4096
 FLAG_VIEW :: 2048 // drawn into an effect view: its places are of that view, not of the world, and the origin does not move them
 STATE_BYTES :: 512 // what a program keeps of each emitter between its prepare and the rest of the frame
 // The data buffer: the parameters of each emitter, what their programs keep, then the Attributes.
@@ -198,16 +165,21 @@ Gpu_Emitter :: struct {
     frame:[4]u32,       // in the rows of the frame: bytes to its resources (max(u32): none), from Gpu_Frame.births to its births, how many, 0
     data:[4]u32,        // bytes of the data buffer to the Attributes of its range, bytes of those of a particle, its age (f32 bits), particles it started
     mesh_weights:[effect.PARTICLE_MESHES]f32,  // of Mesh particles: the weights of its meshes added up, the last 1
+    from_world:[3][4]f32,
+    emitter_uid:[2]u32,
+    birth_limit:f32,
+    uid_pad:u32,
     mesh_handles:[effect.PARTICLE_MESHES]u32, // and the meshes, whose indices the frame lists (erender.frame_mesh_whole)
 }
-#assert(size_of(Gpu_Emitter)==848)
+#assert(size_of(Gpu_Emitter)==912)
 
 // What the emitters of a frame share, first in its rows (particle_frame of particles.slang).
 Gpu_Frame :: struct {
     step:[4]f32, // seconds of the frame, of each step, steps, and the time at the end of the frame
     births:u32,  // bytes of the rows of the frame to the births of the channels
     reports:u32, // bytes of the world buffer to the copy of the reports channel the frame writes; max(u32): none
-    pad:[2]u32,
+    slots:u32,
+    pad:u32,
 }
 #assert(size_of(Gpu_Frame)==32)
 
@@ -222,8 +194,10 @@ Mesh_Choice :: struct {
 Gpu_State :: struct {
     dead,alive:u32, // free slots on its list, and particles on the one drawn
     births,born:u32, // of an emitter whose program gives its births: those of the frame, and all it started
-    draw:[5]u32,    // index count, instance count, first index, vertex offset, first instance; of a mesh: vertex count, instance count, first vertex, first instance
-    pad1:[3]u32,
+    draw:[5]u32,    // indexed sprite draw
+    live_count:[2]u32,
+    pad:u32,
+    drained:[2]u32,
 }
 
 Gpu_Event :: struct {
@@ -233,34 +207,32 @@ Gpu_Event :: struct {
 }
 #assert(size_of(Gpu_Event)==36)
 
-// The buffers of the pool of a world. Events: the event counts of the two
-// halves and the dispatches that consume them, then from EVENTS_AT the
-// events of each half, then from MESH_DRAWS_AT an indexed draw (index count,
-// instance count, first index, vertex offset, first instance) of each mesh of each emitter.
-// Emitters: the Gpu_Emitter row of each slot.
+// Events contains the event queues, mesh draws and indirect work lists.
 Pool_Buffer :: enum u8 {Particles,Lists,State,Events,Data,Emitters}
 
 EVENTS_AT :: 256 // bytes of the events buffer before the events
 MESH_DRAWS_AT :: EVENTS_AT+2*EVENT_CAPACITY*size_of(Gpu_Event)
+WORK_AT :: MESH_DRAWS_AT+EMITTER_CAPACITY*effect.PARTICLE_MESHES*size_of(Mesh_Draw)
+SORT_AT :: WORK_AT+16+EMITTER_CAPACITY*8
+DRAIN_READBACK :: "vfx drained emitters"
 
 pool_buffer :: proc "contextless" (pool:^Pool,b:Pool_Buffer) -> erender.Buffer_Desc {
     count:=u64(max(pool.capacity,1))
     switch b {
     case .Particles: return {"vfx particles",count*size_of(Gpu_Particle)}
-    case .Lists:     return {"vfx particle lists",4*count*size_of(u32)}
+    case .Lists:     return {"vfx particle lists",6*count*size_of(u32)}
     case .State:     return {"vfx particle state",EMITTER_CAPACITY*size_of(Gpu_State)}
-    case .Events:    return {"vfx particle events",MESH_DRAWS_AT+EMITTER_CAPACITY*effect.PARTICLE_MESHES*size_of(Mesh_Draw)}
+    case .Events:    return {"vfx particle events",SORT_AT+16+EMITTER_CAPACITY*4}
     case .Data:      return {"vfx particle data",pool_data_bytes(pool.capacity)}
     case .Emitters:  return {"vfx particle emitters",EMITTER_CAPACITY*size_of(Gpu_Emitter)}
     }
     return {}
 }
 
-// Bytes of the data buffer of a pool: the parameters of the program of every
-// emitter, then the Attributes of the particles.
+// The parameters and state of each emitter, then particle attributes and draw records.
 @(private)
 pool_data_bytes :: proc "contextless" (capacity:u32) -> u64 {
-    return ATTRIBUTES_AT+pool_attribute_bytes(capacity)
+    return ATTRIBUTES_AT+pool_attribute_bytes(capacity)+u64(max(capacity,1))*DRAW_LOOK_BYTES
 }
 
 @(private)
@@ -272,7 +244,11 @@ Pool_Slot :: struct {
     offset,capacity:u32,
     attributes,stride:u32, // bytes of the Attributes of the pool to those of its range, and of each particle
     generation:u32,
-    live,fresh:bool,
+    live,fresh,draining:bool,
+    uid:u64,
+    bounds_min,bounds_max:[3]f32,
+    unbounded:bool,
+    bound_scale:[3]f32,
     program_dirty:bool,    // its program has parameters the GPU does not
     desc:Emitter_Desc,
 }
@@ -323,6 +299,9 @@ Pool :: struct {
     free:base.Ranges,           // the slots of the pool the emitters' ranges take
     attribute_free:base.Ranges, // the bytes of the Attributes of the pool their ranges take
     slot_end:int,            // slots ever used, live or not
+    next_uid:u64,
+    drains:int,
+    frame_slots:[]u32,
     pool_end:u32,            // end of the pool in use
     regroup:bool,            // a range, a program, an event target or how an emitter is drawn changed since the spans of the programs were found
     dt:f32,                  // simulated by the next frame: every frame given since the last one that simulated adds its seconds
@@ -349,11 +328,7 @@ Pool :: struct {
     rows_frame:u64,          // the frame whose rows they are; 0: none
     rows_origin:[3]f32,      // the origin of the renderer the rows are relative to
     steps:u32,
-    spawn_max:u32,           // most particles an emitter starts this frame
-    births_max:u32,          // largest range of an emitter whose program gives its births
-    prepares:bool,           // some program prepares what it keeps this frame
-    birth_max:u32,           // most births of a channel an emitter takes this frame
-    reset_max:u32,           // largest range that starts this frame
+    needs_reset,needs_clock:bool,
     grids_at:u32,            // bytes of the rows of the frame to those of the grids
     volumes_at:u32,          // and to those of the volumes
     fields_at:u32,           // and to the gravity and the wind of the world (Gpu_Fields)
@@ -366,15 +341,17 @@ Pool :: struct {
 // Makes the tables of a pool for a capacity: none of its particles stays.
 // False without memory, and the pool has none.
 pool_make :: proc(pool:^Pool,capacity:u32,allocator:=context.allocator) -> bool {
-    previous,refused,made:=pool.capacity,pool.refused,pool.made_count
+    previous,refused,made,uid:=pool.capacity,pool.refused,pool.made_count,pool.next_uid
     pool_free(pool,allocator)
-    pool^={capacity=capacity,previous=previous,refused=refused,made_count=made+1}
-    errors:[5]runtime.Allocator_Error
+    pool^={capacity=capacity,previous=previous,refused=refused,made_count=made+1,next_uid=uid}
+    pool.frame_bytes.allocator=allocator
+    errors:[6]runtime.Allocator_Error
     pool.slots,errors[0]=make([]Pool_Slot,EMITTER_CAPACITY,allocator)
     pool.order,errors[1]=make([]u16,EMITTER_CAPACITY,allocator)
     pool.gpu,errors[2]=make([]Gpu_Emitter,EMITTER_CAPACITY,allocator)
     pool.draws,errors[3]=make([]Pool_Draw,EMITTER_CAPACITY,allocator)
     pool.meshed,errors[4]=make([]u16,EMITTER_CAPACITY,allocator)
+    pool.frame_slots,errors[5]=make([]u32,EMITTER_CAPACITY,allocator)
     starved:=!base.ranges_reset(&pool.free,u64(capacity),EMITTER_CAPACITY,allocator) || !base.ranges_reset(&pool.attribute_free,pool_attribute_bytes(capacity),EMITTER_CAPACITY,allocator)
     for error in errors {starved||=error!=nil}
     if starved {
@@ -386,9 +363,10 @@ pool_make :: proc(pool:^Pool,capacity:u32,allocator:=context.allocator) -> bool 
 
 pool_free :: proc(pool:^Pool,allocator:=context.allocator) {
     delete(pool.slots,allocator);delete(pool.order,allocator);delete(pool.gpu,allocator);delete(pool.draws,allocator);delete(pool.meshed,allocator)
+    delete(pool.frame_slots,allocator)
     base.ranges_free(&pool.free);base.ranges_free(&pool.attribute_free)
     delete(pool.frame_bytes)
-    pool^={capacity=pool.capacity,previous=pool.previous,refused=pool.refused,made_count=pool.made_count}
+    pool^={capacity=pool.capacity,previous=pool.previous,refused=pool.refused,made_count=pool.made_count,next_uid=pool.next_uid}
 }
 
 // The next frame of the pool of a world, and the seconds it adds to what the
@@ -401,7 +379,7 @@ pool_free :: proc(pool:^Pool,allocator:=context.allocator) {
 pool_frame :: proc(pool:^Pool,dt:f32,capacity:u32,max_bytes:u64,still,wanted:bool,allocator:=context.allocator) -> bool {
     if pool.slots==nil && !wanted {return true}
     if pool.slots==nil || pool.capacity!=capacity && capacity!=pool.refused {
-        if u64(max(capacity,1))*size_of(Gpu_Particle)>max_bytes {
+        if pool_data_bytes(capacity)>min(max_bytes,u64(max(u32))) {
             pool.refused=capacity
             if pool.slots==nil {return false}
         } else if !pool_make(pool,capacity,allocator) {return false}
@@ -436,8 +414,7 @@ pool_put :: proc(pool:^Pool,desc:^Emitter_Desc) -> bool {
     capacity:=desc.capacity
     if desc.info.sort || desc.info.render==.Ribbon {capacity=min(capacity,SORT_MAX)}
     stride:=(desc.program.attributes+15)&~u32(15)
-    if desc.info.render==.Ribbon {stride+=RIBBON_LOOK_BYTES}
-    if slot_at>=0 && (pool.slots[slot_at].capacity!=capacity || pool.slots[slot_at].stride!=stride || pool.slots[slot_at].generation!=desc.generation) {
+    if slot_at>=0 && (pool.slots[slot_at].draining || pool.slots[slot_at].capacity!=capacity || pool.slots[slot_at].stride!=stride || pool.slots[slot_at].generation!=desc.generation) {
         pool_slot_release(pool,slot_at)
         slot_at=-1
     }
@@ -448,7 +425,7 @@ pool_put :: proc(pool:^Pool,desc:^Emitter_Desc) -> bool {
     slot:=&pool.slots[slot_at]
     before:=&slot.desc
     if before.program!=desc.program || slot.fresh {slot.program_dirty=desc.program.id!=0}
-    if before.program.id!=desc.program.id || before.info.trigger!=desc.info.trigger || before.event_target!=desc.event_target || before.info.render!=desc.info.render || before.blended!=desc.blended || before.view!=desc.view || before.info.report!=desc.info.report {pool.regroup=true}
+    if before.program.id!=desc.program.id || before.program.births!=desc.program.births || before.program.prepare!=desc.program.prepare || before.mesh_count!=desc.mesh_count || before.info.trigger!=desc.info.trigger || before.event_target!=desc.event_target || before.info.render!=desc.info.render || before.blended!=desc.blended || before.view!=desc.view || before.info.report!=desc.info.report {pool.regroup=true}
     if bits_has(&pool.pending,slot_at) {
         spawns:=slot.desc.spawns
         previous:=slot.desc.previous
@@ -456,6 +433,7 @@ pool_put :: proc(pool:^Pool,desc:^Emitter_Desc) -> bool {
         slot.desc.previous=previous
         spawns_join(&slot.desc.spawns,spawns,desc.spawns,0)
     } else {slot.desc=desc^}
+    emitter_bounds(slot)
     bits_add(&pool.pending,slot_at)
     bits_add(&pool.dirty,slot_at)
     return true
@@ -467,6 +445,37 @@ pool_remove :: proc(pool:^Pool,id:u64) {
 }
 
 // Every row of the table is built and written again.
+@(private)
+pool_orphan :: proc(pool:^Pool,id:u64) {
+    at:=pool_slot_find(pool,id)
+    if at<0 {return}
+    slot:=&pool.slots[at]
+    if slot.fresh || slot.desc.info.local_space {pool_slot_release(pool,at);return}
+    if slot.draining {return}
+    slot.draining=true
+    pool.drains+=1
+    slot.desc.spawns,slot.desc.births,slot.desc.event_target={}, {}, 0
+    slot.desc.resources,slot.desc.stages=0,0
+    slot.desc.program.births,slot.desc.program.prepare,slot.desc.paused=false,false,false
+    bits_add(&pool.dirty,at)
+    pool.regroup=true
+}
+
+@(private)
+pool_drain :: proc(pool:^Pool,renderer:^erender.Renderer,world:core.World_Id) {
+    if pool.drains==0 {return}
+    data,_,ok:=erender.readback(renderer,world,DRAIN_READBACK)
+    if !ok || len(data)!=EMITTER_CAPACITY*size_of(Gpu_State) {return}
+    rows:=([^]Gpu_State)(raw_data(data))
+    for at in 0..<pool.slot_end {
+        slot:=&pool.slots[at]
+        if !slot.live || !slot.draining {continue}
+        stamp:=rows[at].drained
+        if slot.uid==u64(stamp[0]) | u64(stamp[1])<<32 {pool_slot_release(pool,at)}
+    }
+    if pool.drains==0 {erender.readback_release(renderer,world,DRAIN_READBACK)}
+}
+
 @(private)
 pool_dirty_all :: proc(pool:^Pool) {
     for at in 0..<pool.slot_end {bits_add(&pool.dirty,at)}
@@ -558,7 +567,8 @@ pool_slot_take :: proc(p:^Pool,id:u64,capacity:u32,stride:u32=0) -> int {
         if !slot.live {at=i;break}
     }
     if at<0 {at=p.slot_end;p.slot_end+=1}
-    p.slots[at]={id=id,offset=u32(offset),capacity=capacity,attributes=u32(attributes),stride=stride,live=true,fresh=true}
+    p.next_uid+=1
+    p.slots[at]={id=id,uid=p.next_uid,offset=u32(offset),capacity=capacity,attributes=u32(attributes),stride=stride,live=true,fresh=true}
     p.pool_end=max(p.pool_end,u32(offset)+capacity)
     p.regroup=true
     low,high:=0,p.order_count
@@ -582,6 +592,7 @@ pool_slot_release :: proc(p:^Pool,at:int) {
     }
     base.ranges_give(&p.free,u64(slot.offset),u64(slot.capacity))
     base.ranges_give(&p.attribute_free,u64(slot.attributes),u64(slot.capacity)*u64(slot.stride))
+    if slot.draining {p.drains-=1}
     slot.live=false
     p.pending[at/64]&~=u64(1)<<(uint(at)%64)
     bits_add(&p.dirty,at)
@@ -608,13 +619,15 @@ rows_of :: proc "contextless" (m:matrix[4,4]f32,origin:[3]f32) -> [3][4]f32 {
 pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool {
     pool:=&sync.pool
     if pool.rows_frame==pass.frame && !reset {return true}
-    pool.spawn_max,pool.birth_max,pool.reset_max,pool.steps=0,0,0,0
-    pool.births_max,pool.prepares=0,false
+    pool.steps=0
+    pool.needs_reset,pool.needs_clock=false,false
     pool.stage_count,pool.plan=0,{}
     if pool.slot_end==0 {return false}
     if reset {
-        for &s in pool.slots[:pool.slot_end] {
-            if s.live {s.fresh,s.program_dirty=true,s.desc.program.id!=0}
+        for &s,at in pool.slots[:pool.slot_end] {
+            if !s.live {continue}
+            s.fresh,s.program_dirty=true,s.desc.program.id!=0
+            bits_add(&pool.pending,at)
         }
     }
     // The rows are relative to the origin of the renderer: where it moved, all of them are built again.
@@ -624,6 +637,14 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
     // Where the reports of the frame go: the copy of their channel it writes.
     header.reports=max(u32)
     if at:=data_find(&sync.data,REPORTS_CHANNEL);at>=0 {header.reports=data_base(sync)+sync.data.entries[at].offset+u32(pool.frame&1)*data_copy_bytes(REPORT_WORDS)}
+    bytes:=size_of(Gpu_Frame)+len(sync.segments)*size_of(Gpu_Segment)
+    bytes+=len(sync.grids.entries)*(size_of(Gpu_Grid)+size_of(Gpu_Volume))+size_of(Gpu_Fields)
+    if len(sync.resources)>=RESOURCE_ROWS {bytes+=pool.order_count*RESOURCE_ROWS*size_of(Gpu_Resource)}
+    if len(sync.stage_rows)>=erender.PROGRAM_STAGES {
+        bytes+=pool.order_count*erender.PROGRAM_STAGES*size_of(Gpu_Stage)
+    }
+    bytes+=len(sync.births)*size_of(Gpu_Birth)+pool.order_count*size_of(u32)
+    if reserve(&pool.frame_bytes,bytes)!=nil {return false}
     clear(&pool.frame_bytes)
     append(&pool.frame_bytes,..([^]u8)(&header)[:size_of(header)])
     // The bones of the frame, then the grids: the resources that read them name their bytes.
@@ -665,7 +686,7 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
         if !s.live {g^={};continue}
         d:=&s.desc
         flags:=u32(FLAG_ACTIVE)
-        if s.fresh {flags|=FLAG_RESET;pool.reset_max=max(pool.reset_max,s.capacity)}
+        if s.fresh {flags|=FLAG_RESET;pool.needs_reset=true}
         if d.info.local_space {flags|=FLAG_LOCAL}
         if d.info.lit {flags|=FLAG_LIT}
         if d.info.sort || d.info.render==.Ribbon {flags|=FLAG_SORT}
@@ -677,8 +698,9 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
         origin:=pass.origin
         if d.view!=0 {flags|=FLAG_VIEW;origin={}}
         if d.program.moves {flags|=FLAG_MOVED}
-        if d.program.births {flags|=FLAG_BIRTHS;pool.births_max=max(pool.births_max,s.capacity)}
-        if d.program.prepare {flags|=FLAG_PREPARE;pool.prepares=true}
+        if d.program.births {flags|=FLAG_BIRTHS}
+        if d.program.prepare {flags|=FLAG_PREPARE}
+        if s.draining {flags|=FLAG_DRAIN}
         emitter_row(g,s,pool.capacity)
         spawn,groups:=u32(0),u32(0)
         for group in d.spawns {
@@ -691,18 +713,27 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
         for i in groups..<SPAWNS {g.spawns[i]={};g.spacing[i/4][i%4]=0}
         // More than a few times its capacity cannot start: the rest would find no slot.
         spawn=min(spawn,s.capacity*4)
-        pool.spawn_max=max(pool.spawn_max,spawn)
+        pool.needs_clock||=spawn>0
         target:=u32(0)
         if d.event_target!=0 {
             if t:=pool_slot_find(pool,d.event_target);t>=0 {target=u32(t)+1}
         }
         g.world=rows_of(d.transform,origin)
         g.previous=rows_of(d.previous,origin)
+        if d.info.local_space {
+            pose:=d.transform
+            pose[0,3],pose[1,3],pose[2,3]=g.world[0].w,g.world[1].w,g.world[2].w
+            if math.abs(linalg.determinant(pose))>=1e-12 {
+                g.from_world=rows_of(linalg.inverse(pose),{})
+            } else {
+                g.from_world={{1,0,0,-g.world[0].w},{0,1,0,-g.world[1].w},{0,0,1,-g.world[2].w}}
+            }
+        }
         g.range={s.offset,s.capacity,spawn,flags}
         g.random.y,g.random.w=target,groups
-        g.frame={max(u32),d.births.x*size_of(Gpu_Birth),d.births.y,0}
-        pool.birth_max=max(pool.birth_max,d.births.y)
+        g.frame={max(u32),d.births.x*size_of(Gpu_Birth),d.births.y,max(u32)}
         g.data.z,g.data.w=transmute(u32)d.age,d.born
+        g.birth_limit=d.birth_limit if d.owner!=core.NONE else max(f32)
         if d.resources>0 && int(d.resources-1)+RESOURCE_ROWS<=len(sync.resources) {
             g.frame.x=u32(len(pool.frame_bytes))
             for resource in sync.resources[d.resources-1:][:RESOURCE_ROWS] {
@@ -735,6 +766,7 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
             }
             // Its stages after its resources, and what each stage index runs.
             if d.stages>0 && int(d.stages-1)+erender.PROGRAM_STAGES<=len(sync.stage_rows) {
+                g.frame.w=u32(len(pool.frame_bytes))
                 stages:=sync.stage_rows[d.stages-1:][:erender.PROGRAM_STAGES]
                 append(&pool.frame_bytes,..([^]u8)(raw_data(stages))[:len(stages)*size_of(Gpu_Stage)])
                 for stage,k in stages {
@@ -742,7 +774,10 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
                     for resource in 0..<u32(RESOURCES) {
                         if stage.writes&(1<<resource)==0 {continue}
                         grid:=sync.resources[d.resources-1+1+resource]
-                        if grid.kind==.Grid {plan.written_max=max(plan.written_max,grid_cells(sync.grids.entries[grid.first].cells))}
+                        if grid.kind==.Grid {
+                            plan.writes=true
+                            sync.grids.entries[grid.first].texture_dirty=true
+                        }
                     }
                     switch Stage_Kind(stage.kind) {
                     case .None: continue
@@ -754,7 +789,7 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
                         if grid.kind!=.Grid {continue}
                         plan.cells=true
                         plan.iterations=max(plan.iterations,stage.iterations)
-                        plan.cells_max=max(plan.cells_max,grid_cells(sync.grids.entries[grid.first].cells))
+                        sync.grids.entries[grid.first].texture_dirty=true
                     }
                     pool.stage_count=max(pool.stage_count,u32(k)+1)
                 }
@@ -768,6 +803,8 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
         row.position=erender.origin_point(birth.position,pass.origin)
         append(&pool.frame_bytes,..([^]u8)(&row)[:size_of(row)])
     }
+    header.slots=u32(len(pool.frame_bytes))
+    append(&pool.frame_bytes,..([^]u8)(raw_data(pool.frame_slots[:]))[:pool.order_count*size_of(u32)])
     (^Gpu_Frame)(raw_data(pool.frame_bytes))^=header
     resources,ok:=erender.pass_rows_upload(pass,raw_data(pool.frame_bytes),len(pool.frame_bytes))
     if !ok {return false}
@@ -779,7 +816,7 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
 // the parameters of the programs that changed, outside a render pass. A row
 // that could not be written stays dirty.
 @(private)
-pool_rows_write :: proc(sync:^Particle_Sync,pass:^erender.Pass) {
+pool_rows_write :: proc(sync:^Particle_Sync,pass:^erender.Pass) -> bool {
     pool:=&sync.pool
     emitters,data:=pool_buffer(pool,.Emitters),pool_buffer(pool,.Data)
     at:=0
@@ -787,16 +824,17 @@ pool_rows_write :: proc(sync:^Particle_Sync,pass:^erender.Pass) {
         end:=first+1
         for end<pool.slot_end && bits_has(&pool.dirty,end) {end+=1}
         at=end
-        if !erender.pass_buffer_write(pass,emitters,u64(first)*size_of(Gpu_Emitter),&pool.gpu[first],(end-first)*size_of(Gpu_Emitter)) {continue}
+        if !erender.pass_buffer_write(pass,emitters,u64(first)*size_of(Gpu_Emitter),&pool.gpu[first],(end-first)*size_of(Gpu_Emitter)) {return false}
         for slot in first..<end {
             s:=&pool.slots[slot]
             if s.live && s.program_dirty {
-                if !erender.pass_buffer_write(pass,data,u64(slot)*erender.PROGRAM_PARAMETER_BYTES,&s.desc.program.parameters,erender.PROGRAM_PARAMETER_BYTES) {continue}
+                if !erender.pass_buffer_write(pass,data,u64(slot)*erender.PROGRAM_PARAMETER_BYTES,&s.desc.program.parameters,erender.PROGRAM_PARAMETER_BYTES) {return false}
                 s.program_dirty=false
             }
             pool.dirty[slot/64]&~=u64(1)<<(uint(slot)%64)
         }
     }
+    return true
 }
 
 // The row of an emitter but for what its frame gives.
@@ -805,7 +843,8 @@ emitter_row :: proc(g:^Gpu_Emitter,s:^Pool_Slot,capacity:u32) {
     d,m:=&s.desc,&s.desc.info
     event:=m.trigger if d.event_target!=0 else .None
     g.random.x,g.random.z=u32(base.hash_combine(d.id,0x7061727469636c65)),min(m.sub_count,EVENT_SPAWN_MAX)
-    g.program={d.program.id,capacity,u32(m.report),0}
+    g.program={d.program.id,capacity,u32(m.report),u32(ATTRIBUTES_AT+pool_attribute_bytes(capacity))}
+    g.emitter_uid={u32(s.uid),u32(s.uid>>32)}
     g.shape={m.shape_size.x,m.shape_size.y,m.shape_size.z,m.shape_angle}
     g.kinds={u32(m.shape),u32(m.render),u32(m.collision),u32(event)}
     g.lifetime_speed={max(m.lifetime[0],0.001),max(m.lifetime[1],0.001),m.speed[0],m.speed[1]}
@@ -837,7 +876,7 @@ emitter_row :: proc(g:^Gpu_Emitter,s:^Pool_Slot,capacity:u32) {
 // asked again when the shaders are, or when the renderer takes another
 // variant of a stage (the one particle_simulate gives changes).
 Particle_Pipelines :: struct {
-    shift,begin,emit,simulate,finish,surface,stage,volume_light,world_texture,additive,alpha,volume:erender.Pipeline,
+    shift,begin,emit,simulate,finish,sort,mesh_draws,surface,stage,volume_light,world_texture,additive,alpha,volume:erender.Pipeline,
     // The emitters without a program run on the stages above; each program on those of its own.
     programs:[PROGRAMS_IN_USE]Program_Pipelines,
     program_count:int,
@@ -857,12 +896,12 @@ Program_Group :: struct {
 @(private)
 program_groups :: proc(p:^Particle_Pipelines,out:^[PROGRAMS_IN_USE+1]Program_Group) -> []Program_Group {
     count:=0
-    if p.none.emitter_end>p.none.emitter_first {
+    if p.none.count>0 {
         out[0]={0,p.emit,p.simulate,p.stage,p.none}
         count=1
     }
     for &each in p.programs[:p.program_count] {
-        if each.emit==0 || each.simulate==0 || each.stage==0 || each.emitter_end<=each.emitter_first {continue}
+        if each.emit==0 || each.simulate==0 || each.stage==0 || each.count==0 {continue}
         out[count]={each.id,each.emit,each.simulate,each.stage,each.span}
         count+=1
     }
@@ -909,7 +948,7 @@ programs_find :: proc(sync:^Particle_Sync,renderer:^erender.Renderer) {
         // Those no live emitter runs give their room.
         kept:=0
         for each in p.programs[:p.program_count] {
-            if each.emitter_end>each.emitter_first {p.programs[kept]=each;kept+=1}
+            if each.count>0 {p.programs[kept]=each;kept+=1}
         }
         freed:=kept<p.program_count
         p.program_count=kept
@@ -919,6 +958,7 @@ programs_find :: proc(sync:^Particle_Sync,renderer:^erender.Renderer) {
         if !s.live || s.desc.event_target==0 {continue}
         target:=pool_slot_find(pool,s.desc.event_target)
         if target<0 {continue}
+        pool.slots[target].unbounded=true
         if id:=pool.slots[target].desc.program.id;id==0 {p.none.events=true} else if each:=program_pipelines(p,id);each!=nil {each.events=true}
     }
 }
@@ -929,7 +969,7 @@ programs_span :: proc(sync:^Particle_Sync,renderer:^erender.Renderer) -> (left_o
     p:=&sync.pipelines
     p.none={}
     for &each in p.programs[:p.program_count] {each.span={}}
-    for &s,at in pool.slots[:pool.slot_end] {
+    for &s in pool.slots[:pool.slot_end] {
         if !s.live {continue}
         span:=&p.none
         if id:=s.desc.program.id;id!=0 {
@@ -943,18 +983,32 @@ programs_span :: proc(sync:^Particle_Sync,renderer:^erender.Renderer) -> (left_o
                 each.emit=erender.stage_pipeline(renderer,{stage=.Simulate,shader=fmt.tprintf("particle_emit__%s",name),name="particle emit"})
                 each.simulate=erender.stage_pipeline(renderer,{stage=.Simulate,shader=fmt.tprintf("particle_simulate__%s",name),name="particle simulate"})
                 each.stage=erender.stage_pipeline(renderer,{stage=.Simulate,shader=fmt.tprintf("particle_stage__%s",name),name="particle stage"})
-                base.text_set(each.sprite[:],fmt.tprintf("particle_sprite__%s",name))
-                base.text_set(each.mesh[:],fmt.tprintf("particle_mesh__%s",name))
-                base.text_set(each.mesh_blend[:],fmt.tprintf("particle_mesh_blend__%s",name))
             }
             span=&each.span
         }
-        if span.emitter_end<=span.emitter_first {
-            span^={first=s.offset,end=s.offset+s.capacity,emitter_first=u32(at),emitter_end=u32(at)+1}
-        } else {
-            span.first,span.end=min(span.first,s.offset),max(span.end,s.offset+s.capacity)
-            span.emitter_end=u32(at)+1
+        span.count+=1
+        span.births||=s.desc.program.births
+        span.prepare||=s.desc.program.prepare
+    }
+    next:=p.none.count
+    for &each in p.programs[:p.program_count] {
+        each.first=next
+        next+=each.count
+    }
+    cursors:[PROGRAMS_IN_USE+1]u32
+    for &slot,at in pool.slots[:pool.slot_end] {
+        if !slot.live {continue}
+        index:=0
+        first:=p.none.first
+        if slot.desc.program.id!=0 {
+            index=-1
+            for &each,k in p.programs[:p.program_count] {
+                if each.id==slot.desc.program.id {index=k+1;first=each.first;break}
+            }
+            if index<0 {pool.frame_slots[next]=u32(at);next+=1;continue}
         }
+        pool.frame_slots[first+cursors[index]]=u32(at)
+        cursors[index]+=1
     }
     return
 }
@@ -977,6 +1031,8 @@ particles_frame :: proc(sync:^Particle_Sync,app:^host.App) -> bool {
         p.begin=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_begin",name="particle begin"})
         p.emit=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_emit",name="particle emit"})
         p.finish=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_finish",name="particle finish"})
+        p.mesh_draws=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_mesh_draws",name="particle mesh LOD"})
+        p.sort=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_sort",name="particle sort"})
         p.surface=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_surface",name="particle surface"})
         p.stage=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_stage",name="particle stage"})
         p.volume_light=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_volume_light",name="particle volume light"})
@@ -984,7 +1040,7 @@ particles_frame :: proc(sync:^Particle_Sync,app:^host.App) -> bool {
         p.volume=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_volume",blend=.Premultiplied,name="particle volumes"})
         p.additive=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_sprite",blend=.Additive,name="particles additive"})
         p.alpha=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_sprite",blend=.Premultiplied,name="particles blended"})
-        if p.shift==0 || p.begin==0 || p.emit==0 || p.finish==0 || p.surface==0 || p.stage==0 || p.volume_light==0 || p.world_texture==0 || p.additive==0 || p.alpha==0 || p.volume==0 {return false}
+        if p.shift==0 || p.begin==0 || p.emit==0 || p.finish==0 || p.sort==0 || p.mesh_draws==0 || p.surface==0 || p.stage==0 || p.volume_light==0 || p.world_texture==0 || p.additive==0 || p.alpha==0 || p.volume==0 {return false}
         p.simulate=simulate
         pool.regroup=true
     }
@@ -1003,13 +1059,12 @@ particles_frame :: proc(sync:^Particle_Sync,app:^host.App) -> bool {
     erender.frame_pass(app.renderer,.Simulate,particles_simulate,sync)
     if sync.world_texture_count>0 || sync.world_shown.names!={} {erender.frame_pass(app.renderer,.Mask,world_textures_frame,sync)}
     erender.frame_pass(app.renderer,.Gbuffer,particles_meshes,sync)
-    // What Mesh particles reflect and their layers reach the G-buffer of every
-    // view, and their meshes stay whole: they draw every cluster of level 0.
+    // The G-buffer of each view needs the targets those meshes write.
     for at in pool.meshed[:pool.mesh_count] {
         s:=&pool.slots[at]
+        if s.desc.blended {continue}
         for choice in s.desc.meshes[:min(s.desc.mesh_count,effect.PARTICLE_MESHES)] {
-            if !s.desc.blended {erender.frame_gbuffer_mesh(app.renderer,choice.handle,s.desc.material)}
-            erender.frame_mesh_whole(app.renderer,choice.handle)
+            erender.frame_gbuffer_mesh(app.renderer,choice.handle,s.desc.material)
         }
     }
     erender.frame_pass(app.renderer,.Blend,particles_volumes,sync)
@@ -1050,98 +1105,89 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
         pool.origin=pass.origin
     }
     if !pool_prepare(sync,pass,made) || pool.steps==0 {return}
-    pool_rows_write(sync,pass)
     params:=Simulate_Params{emitters=u32(pool.slot_end),fields=pool.fields_at}
     erender.pass_rows(pass,4,pool.resources)
     if !world_prepare(sync,pass,&params) {return}
+    if !pool_rows_write(sync,pass) {
+        pool_dirty_all(pool)
+        return
+    }
     erender.pass_surface_read(pass,7,.Linear_Depth)
     erender.pass_surface_read(pass,8,.Normal)
     data_frame(sync,pass,u32(pool.frame&1))
     // An interval of the profiler per kind of pass, each to the next mark: those of the first
     // step, then the steps after it together.
     erender.pass_timestamp(pass,"particle begin")
-    if pool.reset_max>0 {
-        params.mode=0
-        erender.pass_pipeline(pass,p.begin)
-        erender.pass_params(pass,&params,size_of(params))
-        erender.pass_dispatch(pass,groups(pool.reset_max,64),u32(pool.slot_end))
-    }
     events:=pool_buffer(pool,.Events)
-    world:=world_buffer(sync)
-    all_late:[PROGRAMS_IN_USE+1]Program_Group
+    all:=Program_Span{count=u32(pool.order_count)}
+    active:[PROGRAMS_IN_USE+1]Program_Group
+    programs:=program_groups(p,&active)
     for step in 0..<pool.steps {
         if step==1 {erender.pass_timestamp(pass,"particle steps")}
         params.parity,params.step,params.last=u32(pool.step&1),step,u32(step+1==pool.steps)
-        // What the particles of the step splat starts at zero.
-        if g:=&sync.grids;len(g.entries)>0 {erender.pass_buffer_fill(pass,world,u64(grids_base(sync)+g.splats),u64(g.bytes-g.splats))}
-        params.mode=1
+        if g:=&sync.grids;len(g.entries)>0 {erender.pass_buffer_fill(pass,world_buffer(sync),u64(grids_base(sync)+g.splats),u64(g.bytes-g.splats))}
+        params.mode,params.count=1,all.count
         erender.pass_pipeline(pass,p.begin)
         erender.pass_params(pass,&params,size_of(params))
-        erender.pass_dispatch(pass,groups(u32(pool.slot_end),64))
-        if step==0 {erender.pass_timestamp(pass,"particle emit")}
-        // Each pass once for the emitters without a program and once for each program.
-        all:[PROGRAMS_IN_USE+1]Program_Group
-        for group in program_groups(p,&all) {
-            params.program,params.emitter_first=group.program,group.emitter_first
-            emitters:=group.emitter_end-group.emitter_first
-            erender.pass_pipeline(pass,group.emit)
-            // The programs that give their births say them first, once a frame.
-            if (pool.births_max>0 || pool.prepares) && group.program!=0 && step==0 {
-                params.mode,params.count=3,u32(pool.slot_end)
-                erender.pass_params(pass,&params,size_of(params))
-                erender.pass_dispatch(pass,groups(emitters,64))
+        erender.pass_dispatch(pass,groups(all.count,64))
+        if step==0 {
+            if pool.needs_reset {particle_work(sync,pass,&params,all,.Reset,p.begin,0)}
+            erender.pass_timestamp(pass,"particle emit")
+            for group in programs {
+                if !group.births && !group.prepare {continue}
+                params.program=group.program
+                particle_work(sync,pass,&params,group.span,.Prepare,group.emit,3)
             }
-            if starts:=max(pool.spawn_max,group.program!=0?pool.births_max:0);starts>0 {
-                params.mode,params.count=0,starts
-                erender.pass_params(pass,&params,size_of(params))
-                erender.pass_dispatch(pass,groups(starts,64),emitters)
-            }
-            if pool.birth_max>0 {
-                params.mode,params.count=2,pool.birth_max
-                erender.pass_params(pass,&params,size_of(params))
-                erender.pass_dispatch(pass,groups(pool.birth_max,64),emitters)
-            }
+        }
+        for group in programs {
+            params.program=group.program
+            if pool.needs_clock || group.births {particle_work(sync,pass,&params,group.span,.Emit,group.emit,0)}
+            if len(sync.births)>0 {particle_work(sync,pass,&params,group.span,.Channel,group.emit,2)}
             if group.events {
-                params.mode=1
+                params.mode,params.program=1,group.program
+                erender.pass_pipeline(pass,group.emit)
                 erender.pass_params(pass,&params,size_of(params))
                 erender.pass_dispatch_indirect(pass,events,u64(16+16*(1-params.parity)))
             }
         }
-        params.program,params.emitter_first=0,0
         if pool.stage_count>0 {
             if step==0 {erender.pass_timestamp(pass,"particle stage")}
             stages_step(sync,pass,&params)
         }
         if step==0 {erender.pass_timestamp(pass,"particle simulate")}
-        for group in program_groups(p,&all) {
-            params.program,params.first,params.count=group.program,group.first,group.end
-            erender.pass_pipeline(pass,group.simulate)
-            erender.pass_params(pass,&params,size_of(params))
-            erender.pass_dispatch(pass,groups(group.end-group.first,64))
+        for group in programs {
+            particle_work(sync,pass,&params,group.span,.Alive,group.simulate,0)
         }
-        params.program,params.first,params.count=0,0,pool.pool_end
         pool.step+=1
     }
-    // The events of the last step start their particles now, drawn in this frame:
-    // a trail reaches its head.
-    params.parity,params.step=u32((pool.step-1)&1),pool.steps
+    // Late events join the surviving particles before the draw list is built.
+    params.step=pool.steps
     params.mode=2
     erender.pass_pipeline(pass,p.begin)
     erender.pass_params(pass,&params,size_of(params))
     erender.pass_dispatch(pass,1)
-    for group in program_groups(p,&all_late) {
+    for group in programs {
         if !group.events {continue}
-        params.program,params.emitter_first,params.mode=group.program,group.emitter_first,4
+        params.program,params.mode=group.program,4
         erender.pass_pipeline(pass,group.emit)
         erender.pass_params(pass,&params,size_of(params))
         erender.pass_dispatch_indirect(pass,events,u64(16+16*params.parity))
     }
-    params.program,params.emitter_first=0,0
+    params.parity~=1
+    for group in programs {
+        particle_work(sync,pass,&params,group.span,.Alive,group.simulate,1)
+    }
     erender.pass_timestamp(pass,"particle finish")
     erender.pass_pipeline(pass,p.finish)
+    params.count=all.count
     erender.pass_params(pass,&params,size_of(params))
     erender.pass_counters(pass,9,"particles")
-    erender.pass_dispatch(pass,u32(pool.slot_end))
+    erender.pass_dispatch(pass,groups(all.count,64))
+    erender.pass_pipeline(pass,p.sort)
+    erender.pass_dispatch_indirect(pass,events,SORT_AT)
+    if pool.drains>0 {
+        erender.pass_readback(pass,pool_buffer(pool,.State),0,{DRAIN_READBACK,u64(EMITTER_CAPACITY)*size_of(Gpu_State)})
+    }
     volumes_light(sync,pass,&params)
     world_textures_write(sync,pass)
     data_readback(sync,pass,u32(pool.frame&1))
@@ -1161,6 +1207,20 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
     pool.made=true
 }
 
+Work_Kind :: enum u32 {Reset, Prepare, Emit, Channel, Alive, Particles, Cells, Grid_Copy, Swap_Cells, Swap_Particles}
+
+@(private)
+particle_work :: proc(sync:^Particle_Sync,pass:^erender.Pass,params:^Simulate_Params,span:Program_Span,kind:Work_Kind,pipeline:erender.Pipeline,mode:u32) {
+    params.mode,params.count,params.first,params.emitter_first=3,u32(kind),span.first,span.count
+    erender.pass_pipeline(pass,sync.pipelines.begin)
+    erender.pass_params(pass,params,size_of(params^))
+    erender.pass_dispatch(pass,1)
+    params.mode=mode
+    erender.pass_pipeline(pass,pipeline)
+    erender.pass_params(pass,params,size_of(params^))
+    erender.pass_dispatch_indirect(pass,pool_buffer(&sync.pool,.Events),WORK_AT)
+}
+
 // What the pool keeps of places moves once the origin of the renderer moved
 // since it last did, before a view of the frame draws it, so that it stays
 // where it is in the world without looking like motion: the living particles
@@ -1176,7 +1236,7 @@ particles_shift :: proc(pass:^erender.Pass,user:rawptr) {
         if !erender.pass_buffer_held(pass,pool_buffer(pool,b)) {return}
     }
     if !pool_prepare(sync,pass,false) {return}
-    pool_rows_write(sync,pass)
+    if !pool_rows_write(sync,pass) {return}
     erender.pass_buffer(pass,0,pool_buffer(pool,.Particles))
     erender.pass_buffer(pass,1,pool_buffer(pool,.Emitters))
     erender.pass_buffer(pass,2,pool_buffer(pool,.State))
@@ -1194,23 +1254,90 @@ particles_shift :: proc(pass:^erender.Pass,user:rawptr) {
 @(private)
 groups :: proc "contextless" (size,group:u32) -> u32 {return (size+group-1)/group}
 
-// The emitters a view draws, back to front: blended sprites read what is
-// behind them, so the farther ones go first. eye: where the view looks from,
-// or with w 0 the direction an orthographic one looks along. view: the
-// texture of the effect view drawn, or 0 for a view of the world. origin:
-// what eye is relative to.
 @(private)
-draw_list :: proc(pool:^Pool,eye:[4]f32,origin:[3]f32,meshes:bool,view:erender.Texture_Handle=0) -> []Pool_Draw {
+emitter_bounds :: proc(s:^Pool_Slot) {
+    d,m:=&s.desc,&s.desc.info
+    if s.unbounded {return}
+    s.unbounded=d.external_positions || d.births.y>0 || d.program.id!=0 ||
+        m.shape==.Surface || m.shape==.Bones || m.gravity!=0 || m.drag!=0 ||
+        m.inherit_velocity!=0 || m.collision!=.None || m.render==.Mesh && d.mesh_extent<=0
+    if s.unbounded {return}
+    life:=max(m.lifetime[0],m.lifetime[1],0)
+    speed:=max(math.abs(m.speed[0]),math.abs(m.speed[1]))
+    velocity:=[3]f32{}
+    for i in 0..<3 {velocity[i]=max(math.abs(m.velocity[0][i]),math.abs(m.velocity[1][i]))}
+    // A bound on the linear map, including nonuniform scale.
+    axes:[3]f32
+    for i in 0..<3 {
+        axes[i]=linalg.length([3]f32{d.transform[0,i],d.transform[1,i],d.transform[2,i]})
+    }
+    if m.local_space && !s.fresh && linalg.length(axes-s.bound_scale)>1e-4 {
+        s.unbounded=true
+        return
+    }
+    s.bound_scale=axes
+    rows:=rows_of(d.transform,{})
+    scale:=max(linalg.length(rows[0].xyz),linalg.length(rows[1].xyz),
+        linalg.length(rows[2].xyz),1)*1.733
+    speed+=linalg.length(velocity)*scale
+    acceleration:=linalg.length(m.acceleration)+96*math.abs(m.noise)+math.abs(m.attractor_strength)
+    curve:=f32(1)
+    for value in m.size_over_life.values {curve=max(curve,value)}
+    size:=max(m.size[0],m.size[1])*curve
+    radius:=linalg.length(m.shape_size)*scale+(speed+acceleration*life)*life
+    radius+=size*max(d.mesh_extent*scale,1)+(speed+acceleration*life)*m.stretch
+    // A bounce can turn any velocity component into any other one.
+    radius*=2
+    now:=[3]f32{d.transform[0,3],d.transform[1,3],d.transform[2,3]}
+    prev:=[3]f32{d.previous[0,3],d.previous[1,3],d.previous[2,3]}
+    for axis in 0..<3 {
+        low,high:=min(now[axis],prev[axis])-radius,max(now[axis],prev[axis])+radius
+        if !s.fresh && !m.local_space {
+            low,high=min(low,s.bounds_min[axis]),max(high,s.bounds_max[axis])
+        }
+        s.bounds_min[axis],s.bounds_max[axis]=low,high
+    }
+}
+
+// The emitters this view draws, back to front where they blend.
+@(private)
+draw_list :: proc(pool:^Pool,pass:^erender.Pass,meshes:bool,view:erender.Texture_Handle=0) -> []Pool_Draw {
     count:=0
+    frustum:=mm.frustum_from_matrix(pass.view_projection)
     for &s,at in pool.slots[:pool.slot_end] {
         if !s.live || (s.desc.info.render==.Mesh && !s.desc.blended)!=meshes || s.desc.view!=view {continue}
+        origin:=pass.origin if view==0 else [3]f32{}
+        if !s.unbounded {
+            low:=erender.origin_point(s.bounds_min,origin)-pass.camera.position
+            high:=erender.origin_point(s.bounds_max,origin)-pass.camera.position
+            if !mm.frustum_overlaps_aabb(frustum,{low,high}) {continue}
+        }
         place:=erender.origin_point({s.desc.transform[0,3],s.desc.transform[1,3],s.desc.transform[2,3]},origin)
-        pool.draws[count]={u32(at),linalg.length(place-eye.xyz) if eye.w>0.5 else linalg.dot(place,eye.xyz)}
+        pool.draws[count]={u32(at),linalg.dot(place-pass.camera.position,pass.camera.forward)}
         count+=1
     }
     draws:=pool.draws[:count]
     if !meshes {slice.sort_by(draws,proc(a,b:Pool_Draw) -> bool {return a.distance>b.distance})}
     return draws
+}
+
+@(private)
+mesh_draws_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,draws:[]Pool_Draw) -> bool {
+    count:=u32(0)
+    slots:[EMITTER_CAPACITY]u32
+    for draw in draws {
+        if sync.pool.slots[draw.slot].desc.info.render!=.Mesh {continue}
+        slots[count]=draw.slot
+        count+=1
+    }
+    if count==0 {return true}
+    erender.pass_buffer(pass,1,pool_buffer(&sync.pool,.Emitters))
+    erender.pass_buffer(pass,5,pool_buffer(&sync.pool,.Events))
+    erender.pass_pipeline(pass,sync.pipelines.mesh_draws)
+    if !erender.pass_upload(pass,7,&slots,int(count)*size_of(u32)) ||
+        !erender.pass_params(pass,&count,size_of(u32)) {return false}
+    erender.pass_dispatch(pass,groups(count,64))
+    return true
 }
 
 // Whether the pool of a world has buffers to draw from in this frame: the
@@ -1237,8 +1364,7 @@ pool_bind_frame :: proc(pass:^erender.Pass,sync:^Particle_Sync) {
 // What the passes of the Simulate stage are told: their mode, the emitters
 // and threads, the half of the events and the step, and of a stage, which
 // and its iteration.
-// program: the passes that run programs run the emitters of that one (0: those without), from
-// slot first of the pool and emitter_first of the table of emitters. fields: Pool.fields_at.
+// first and emitter_first are the start and length of a range of frame slots.
 Simulate_Params :: struct {mode,emitters,count,parity,step,last,stage,iteration,program,first,emitter_first,fields:u32}
 
 // The slot of the media of the view (render.pass_media) in the blended passes.
@@ -1253,8 +1379,8 @@ particles_sprites :: proc(pass:^erender.Pass,user:rawptr) {
     pool:=&sync.pool
     if pass.world!=sync.world || !pool_drawable(pass,sync) || !pool.sprites {return}
     view:=pass.texture if pass.stage==.Effect else 0
-    draws:=draw_list(pool,pass.eye,pass.origin,false,view)
-    if len(draws)==0 {return}
+    draws:=draw_list(pool,pass,false,view)
+    if len(draws)==0 || !mesh_draws_prepare(sync,pass,draws) {return}
     media:=erender.pass_media(pass,MEDIA_SLOT)
     erender.pass_blend_begin(pass,"particle sprites")
     erender.pass_indices(pass,.Quad)
@@ -1274,25 +1400,29 @@ particles_sprites :: proc(pass:^erender.Pass,user:rawptr) {
         mesh:=desc.info.render==.Mesh
         stage:=erender.Stage_Pipeline_Desc{stage=.Blend,shader="particle_sprite",blend=.Additive if additive else .Premultiplied,name="particles additive" if additive else "particles blended"}
         if mesh {stage.shader,stage.fragment="particle_mesh_blend","particle_sprite"}
-        if own:=program_pipelines(&sync.pipelines,desc.program.id);own!=nil {stage.shader,stage.fragment=base.text_get(own.mesh_blend[:] if mesh else own.sprite[:]),"particle_sprite"}
-        stage.program=erender.pass_material_program(pass,desc.material)
-        pipeline:=erender.pass_stage_pipeline(pass,stage)
-        if pipeline==0 {continue}
-        erender.pass_pipeline(pass,pipeline)
         params:=Params{emitter=draw.slot,pass=u32(pass.glass),media=media}
         if !mesh {
+            stage.program=erender.pass_material_program(pass,desc.material)
+            pipeline:=erender.pass_stage_pipeline(pass,stage)
+            if pipeline==0 {continue}
+            erender.pass_pipeline(pass,pipeline)
             erender.pass_params(pass,&params,size_of(params))
             erender.pass_draw_indexed_indirect(pass,state,u64(draw.slot)*size_of(Gpu_State)+u64(offset_of(Gpu_State,draw)))
             continue
         }
-        // A mesh draws its clusters by the indices the frame lists of it, as in the G-buffer, a draw for each of its meshes.
-        erender.pass_indices(pass,.Meshes)
-        for c in 0..<min(desc.mesh_count,effect.PARTICLE_MESHES) {
-            params.mesh=u32(desc.meshes[c].handle)
-            erender.pass_params(pass,&params,size_of(params))
-            erender.pass_draw_indexed_indirect(pass,pool_buffer(pool,.Events),mesh_draw(draw.slot,c))
+        for choice,c in desc.meshes[:min(desc.mesh_count,effect.PARTICLE_MESHES)] {
+            programs:[MESH_PROGRAMS]u32
+            count:=erender.pass_mesh_programs(pass,choice.handle,desc.material,programs[:])
+            for program in programs[:min(count,len(programs))] {
+                stage.program=program
+                pipeline:=erender.pass_stage_pipeline(pass,stage)
+                if pipeline==0 {continue}
+                erender.pass_pipeline(pass,pipeline)
+                params.mesh,params.pad1=u32(choice.handle),program if count>1 else max(u32)
+                erender.pass_params(pass,&params,size_of(params))
+                erender.pass_draw_indirect(pass,pool_buffer(pool,.Events),mesh_draw(draw.slot,u32(c)))
+            }
         }
-        erender.pass_indices(pass,.Quad)
     }
     erender.pass_end(pass)
 }
@@ -1306,6 +1436,8 @@ particles_meshes :: proc(pass:^erender.Pass,user:rawptr) {
     if pass.world!=sync.world || !pool_drawable(pass,sync) || !pool.meshes {return}
     pipeline:=erender.pass_gbuffer_pipeline(pass,"particle_mesh","particle meshes")
     if pipeline==0 {return}
+    shown:=draw_list(pool,pass,true)
+    if len(shown)==0 || !mesh_draws_prepare(sync,pass,shown) {return}
     erender.pass_gbuffer_begin(pass,"particle meshes")
     erender.pass_pipeline(pass,pipeline)
     erender.pass_buffer(pass,0,pool_buffer(pool,.Particles))
@@ -1315,12 +1447,10 @@ particles_meshes :: proc(pass:^erender.Pass,user:rawptr) {
     state:=pool_buffer(pool,.State)
     Params :: struct {emitter,program,mesh,pad1:u32}
     draws:=pool_buffer(pool,.Events)
-    erender.pass_indices(pass,.Meshes)
     bound:=pipeline
-    for draw in draw_list(pool,pass.eye,pass.origin,true) {
+    for draw in shown {
         desc:=&pool.slots[draw.slot].desc
         shader:="particle_mesh"
-        if own:=program_pipelines(&sync.pipelines,desc.program.id);own!=nil {shader=base.text_get(own.mesh[:])}
         for choice,c in desc.meshes[:min(desc.mesh_count,effect.PARTICLE_MESHES)] {
             // A draw for each Surface program of what the mesh shows, with the fragment of that program.
             programs:[MESH_PROGRAMS]u32
@@ -1331,7 +1461,7 @@ particles_meshes :: proc(pass:^erender.Pass,user:rawptr) {
                 if want!=bound {erender.pass_pipeline(pass,want);bound=want}
                 params:=Params{emitter=draw.slot,program=program if count>1 else max(u32),mesh=u32(choice.handle)}
                 erender.pass_params(pass,&params,size_of(params))
-                erender.pass_draw_indexed_indirect(pass,draws,mesh_draw(draw.slot,u32(c)))
+                erender.pass_draw_indirect(pass,draws,mesh_draw(draw.slot,u32(c)))
             }
         }
     }
@@ -1339,7 +1469,7 @@ particles_meshes :: proc(pass:^erender.Pass,user:rawptr) {
 }
 
 // The draw of a mesh of an emitter (particle_finish.comp).
-Mesh_Draw :: [5]u32
+Mesh_Draw :: [4]u32
 
 // Bytes of the events buffer to the draw of a mesh of an emitter.
 @(private)
@@ -1350,5 +1480,6 @@ mesh_draw :: proc "contextless" (slot,choice:u32) -> u64 {
 // Lets go of the buffers of the pool of a world.
 pool_release :: proc(renderer:^erender.Renderer,world:core.World_Id,pool:^Pool) {
     for b in Pool_Buffer {erender.buffer_release(renderer,world,pool_buffer(pool,b).name)}
+    erender.readback_release(renderer,world,DRAIN_READBACK)
     pool.made=false
 }
