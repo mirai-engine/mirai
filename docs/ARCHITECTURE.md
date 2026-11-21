@@ -353,8 +353,8 @@ Numbered layers; a package only imports lower layers.
   actions, seats, driving and `Move_Input`), `camera` (each seat's camera and the game view),
   `save`.
 - **7** `cook/*`: engine-time; world generator and project build, `cook/cache` (what is built,
-  stored by what makes it), textures (with the block encoders of `compressor:blocks`), importers,
-  shaders,
+  stored by what makes it), textures (with GPU block encoding and private compressor layouts),
+  importers, shaders,
   `cook/workspace` (a worktree's main checkout, the dependencies folder, shared cache and locks
   between processes), `cook/image` (PNG to RGBA8, difference, statistics, montage, crop, enlargement
   and pixels of captures), `cook/movie` (the files of a recording: half EXR, 16-bit PNG and WAV) and

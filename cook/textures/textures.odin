@@ -17,19 +17,17 @@ import mm "mirai:std/math"
 
 // Source texels to .tex records: decoding, the mip chain of every layer and
 // what the renderer expects of each level, stored by what the texture is used
-// for and by what its source holds (stored_format), block compressed by the
-// collection compressor (compressor:blocks) unless the import asks for it
-// uncompressed.
+// for and by what its source holds (stored_format).
 
 MAX_SOURCE_SIDE :: 1<<15
 MAX_SOURCE_PIXELS :: 1<<28
 // Changes when build would give other bytes for the same image and options.
-BUILD_VERSION :: 10
+BUILD_VERSION :: 11
+
+@(private)
+OPEN_BLOCK_ENCODER :: blocks.NAME=="open"
 RDO_LAMBDA_DEFAULT :: 30
 RDO_LAMBDA_MAX :: 100
-// Texels of a level from which build encodes its blocks on a job system of
-// its own, when the caller gives none.
-PARALLEL_TEXELS :: 128*128
 
 Error :: enum u8 {
     None,
@@ -249,18 +247,12 @@ Build_Options :: struct {
 
 // What names the blocks the encoders of this build make in the caches and in the key of an
 // import: checkouts with and without the private compressor share the caches.
-encoders_id :: proc "contextless" () -> u64 {return base.name_hash(blocks.NAME)}
+encoders_id :: proc "contextless" () -> u64 {return base.name_hash("gpu-bcn" if OPEN_BLOCK_ENCODER else blocks.NAME)}
 
 // The lambda of the RDO of options, 0 for none.
 rdo_lambda :: proc "contextless" (options:Build_Options) -> int {
     if options.rdo_lambda<0 || options.speed==.Fast {return 0}
     return options.rdo_lambda if options.rdo_lambda>0 else RDO_LAMBDA_DEFAULT
-}
-
-// How the blocks of a level are encoded.
-@(private)
-block_encode :: proc "contextless" (options:Build_Options) -> blocks.Options {
-    return {lambda=rdo_lambda(options),fast=options.speed==.Fast,srgb=options.srgb}
 }
 
 Built :: struct {
@@ -373,8 +365,8 @@ stored_format :: proc(source:Source,options:Build_Options) -> asset.Texture_Form
 // kind: color is averaged in linear light, normal maps as vectors that are
 // renormalized, and a masked texture keeps the share of texels above its
 // cutoff. A level is reduced from the one above in the format of the source
-// and stored (stored_format) from it. GPU blocks use the provided context.
-// CPU blocks use the worker's job system, or one of their own for long levels.
+// and stored (stored_format) from it. Open block cooks use the supplied GPU
+// context or create one for this call.
 build :: proc(
     source:Source,options:Build_Options,allocator:=context.allocator,
     worker:=jobs.Worker_Ref{},gpu:^Gpu_Context=nil,
@@ -442,13 +434,16 @@ build :: proc(
     }
     built.width,built.height,built.layers=level.width,level.height,layers
     built.format=stored_format(source,options)
-    use_gpu:=gpu!=nil && gpu.device!=nil && asset.texture_block_bytes(built.format)>0
+    use_gpu:=OPEN_BLOCK_ENCODER && asset.texture_block_bytes(built.format)>0
     js:jobs.Job_System
-    parallel:=!use_gpu && worker.system==nil &&
-        encode_jobs_begin(&js,built.format,level.width,level.height*layers)
-    defer if parallel {jobs.system_destroy(&js)}
     on:=worker
-    if parallel {on={&js,jobs.OWNER,nil}}
+    when !OPEN_BLOCK_ENCODER {
+        if !use_gpu && worker.system==nil && encode_jobs_begin(&js,built.format,
+            level.width,level.height*layers) {
+            on={&js,jobs.OWNER,nil}
+        }
+    }
+    defer if on.system==&js {jobs.system_destroy(&js)}
     count:=asset.texture_mip_count(level.width,level.height)
     mips,alloc_error:=make([][]u8,count,allocator)
     if alloc_error!=nil {return {},.Out_Of_Memory}
@@ -527,70 +522,12 @@ level_store :: proc(
         out,alloc_error=level_convert(level,.RGBA16,transfer,&linear,allocator)
     case .RGBA16F: out,alloc_error=level_convert(level,.RGBA16F,transfer,transfer,allocator)
     case .BC1,.BC5,.BC6H,.BC7:
-        return level_encode(level,format,transfer,block_encode(options),allocator,worker)
+        when !OPEN_BLOCK_ENCODER {
+            return level_encode(level,format,transfer,block_encode(options),allocator,worker)
+        } else {return nil,.Invalid}
     }
     if alloc_error!=nil {return nil,.Out_Of_Memory}
     return out,.None
-}
-
-// The blocks of a level, each layer apart, by compressor:blocks with the
-// lambda, effort and metric of encode: BC6H from half floats, the others from
-// RGBA8. Alpha keeps its exact 0 and 255, and a BC7 layer whose texels are all
-// opaque is encoded without alpha, which then decodes 255. On a worker the
-// blocks go in parallel, with scratch from the heap.
-@(private)
-level_encode :: proc(level:Source,format:asset.Texture_Format,transfer:^Transfer,encode:blocks.Options,allocator:mem.Allocator,worker:jobs.Worker_Ref) -> (out:[]u8,error:Error) {
-    layers:=max(level.layers,1)
-    texels:=level
-    texels.layers=layers
-    pixel:=blocks.Pixel_Format.RGBA8
-    owned:=false
-    defer if owned {delete(texels.texels,allocator)}
-    alloc_error:mem.Allocator_Error
-    if format==.BC6H {
-        // Through texel_write, which clamps light to what half floats hold and makes a NaN 0.
-        texels.format,pixel,owned=.RGBA16F,.RGBA16F,true
-        if texels.texels,alloc_error=make([]u8,source_bytes(texels),allocator);alloc_error!=nil {return nil,.Out_Of_Memory}
-        for at in 0..<level.width*level.height*layers {texel_write(texels.texels,.RGBA16F,at,texel_read(level.texels,level.format,at,transfer),transfer)}
-    } else if level.format!=.RGBA8 {
-        texels.format,owned=.RGBA8,true
-        if texels.texels,alloc_error=level_convert(level,.RGBA8,transfer,transfer,allocator);alloc_error!=nil {return nil,.Out_Of_Memory}
-    }
-    size:=asset.texture_level_size(format,level.width,level.height)
-    if out,alloc_error=make([]u8,size*layers,allocator);alloc_error!=nil {return nil,.Out_Of_Memory}
-    formats:=#partial [asset.Texture_Format]blocks.Block_Format{.BC1=.BC1,.BC5=.BC5,.BC6H=.BC6H,.BC7=.BC7}
-    scratch:=allocator if worker.system==nil else runtime.heap_allocator()
-    image:=source_bytes(texels)/layers
-    for layer in 0..<layers {
-        pixels:=texels.texels[layer*image:][:image]
-        options:=encode
-        options.ignore_alpha=format==.BC7 && opaque(pixels)
-        result:=blocks.encode(formats[format],{pixels=pixels,width=level.width,height=level.height,format=pixel},options,out[layer*size:][:size],scratch,worker)
-        if result!=.None {
-            delete(out,allocator)
-            return nil,.Out_Of_Memory if result==.Out_Of_Memory else .Invalid
-        }
-    }
-    return out,.None
-}
-
-// Whether every texel of RGBA8 pixels is opaque.
-@(private="file")
-opaque :: proc(pixels:[]u8) -> bool {
-    for i:=3;i<len(pixels);i+=4 {if pixels[i]!=255 {return false}}
-    return true
-}
-
-// A job system of its own for the levels of a texture in blocks whose first
-// level is large, so a build in any thread uses every core; false for one
-// that goes in the calling thread.
-@(private)
-encode_jobs_begin :: proc(js:^jobs.Job_System,format:asset.Texture_Format,width,height:int) -> bool {
-    #partial switch format {
-    case .BC1,.BC5,.BC6H,.BC7: if width*height<PARALLEL_TEXELS {return false}
-    case: return false
-    }
-    return jobs.system_init(js,{threads=jobs.THREADS_AUTO})
 }
 
 // One image of a source as RGBA8 rows from the top, to look at: with the
@@ -753,17 +690,15 @@ alpha_coverage_keep :: proc(level:Source,cutoff,wanted:f32) {
 
 // The texture of an asset that stores RGBA8, in the blocks of its use
 // (stored_format): each of its levels and layers compressed as it is, so the
-// chain is the one the asset has. False, with nothing, for a texture in
-// another format, which keeps it: blocks already, or more than 8 bits. The
-// CPU blocks are encoded on the job system of worker, else on one of their own;
-// without rdo, with the least error, for a game that compresses nothing.
+// chain is the one the asset has. Only RGBA8 textures can be encoded here. Without
+// RDO it encodes with the least error, for a game that compresses nothing.
 blocks_of :: proc(
     view:asset.Texture_View,allocator:=context.allocator,worker:=jobs.Worker_Ref{},
     rdo:=true,gpu:^Gpu_Context=nil,
-) -> (built:Built,ok:bool) {
+) -> (built:Built,error:Error) {
     info:=view.info
     if info==nil || info.format!=.RGBA8 || len(view.mips)==0 ||
-        len(view.mips)>asset.TEXTURE_MAX_MIPS {return}
+        len(view.mips)>asset.TEXTURE_MAX_MIPS {return {},.Invalid}
     layers:=int(info.layers)
     levels:[asset.TEXTURE_MAX_MIPS]Source
     for mip,i in view.mips {
@@ -771,7 +706,7 @@ blocks_of :: proc(
         texels:=asset.texture_mip(view,i)
         if w<=0 || h<=0 || w>asset.TEXTURE_MAX_SIZE || h>asset.TEXTURE_MAX_SIZE ||
             layers<1 || layers>asset.TEXTURE_MAX_LAYERS || len(texels)!=w*h*layers*4 {
-            return {},false
+            return {},.Invalid
         }
         levels[i]={texels=texels,width=w,height=h,layers=layers,format=.RGBA8,
             cube=.Cube in info.flags}
@@ -782,31 +717,34 @@ blocks_of :: proc(
     built={width=int(info.width),height=int(info.height),layers=layers,format=format,flags=info.flags,alpha_coverage=info.alpha_coverage,allocator=allocator}
     alloc_error:mem.Allocator_Error
     if built.mips,alloc_error=make([][]u8,len(view.mips),allocator);alloc_error!=nil {
-        return {},false
+        return {},.Out_Of_Memory
     }
-    if gpu!=nil && gpu.device!=nil {
-        if gpu_chain(gpu,levels[:len(view.mips)],built.mips,format,options,allocator)!=.None {
-            built_destroy(&built)
-            return {},false
-        }
-        return built,true
-    }
-    js:jobs.Job_System
-    parallel:=worker.system==nil &&
-        encode_jobs_begin(&js,format,built.width,built.height*layers)
-    defer if parallel {jobs.system_destroy(&js)}
-    on:=worker
-    if parallel {on={&js,jobs.OWNER,nil}}
-    transfer:=transfer_make(options.srgb)
-    for _,level in view.mips {
-        blocks,error:=level_store(levels[level],format,&transfer,options,allocator,on)
+    when OPEN_BLOCK_ENCODER {
+        encode_zone:=jobs.worker_zone_begin(worker,"texture.encode")
+        error=gpu_chain(gpu,levels[:len(view.mips)],built.mips,format,options,allocator)
+        base.profile_end(encode_zone)
         if error!=.None {
             built_destroy(&built)
-            return {},false
+            return {},error
         }
-        built.mips[level]=blocks
+    } else {
+        js:jobs.Job_System
+        on:=worker
+        if worker.system==nil && encode_jobs_begin(&js,format,built.width,built.height*layers) {
+            on={&js,jobs.OWNER,nil}
+        }
+        defer if on.system==&js {jobs.system_destroy(&js)}
+        transfer:=transfer_make(options.srgb)
+        for level,i in levels[:len(view.mips)] {
+            blocks,error:=level_store(level,format,&transfer,options,allocator,on)
+            if error!=.None {
+                built_destroy(&built)
+                return {},error
+            }
+            built.mips[i]=blocks
+        }
     }
-    return built,true
+    return built,.None
 }
 
 // A texel of an image as Channels make it.

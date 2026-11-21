@@ -255,6 +255,7 @@ collab_join_start :: proc(s:^Session,st:^Collab_State,folder:string,reopen:bool,
     j.desc={
         node=st.node,offer=share.offer_name(st.invite.secret,&j.digits),
         folder=j.folder,progress=&j.progress,connect_seconds=COLLAB_HELLO_TIMEOUT,require_live=true,
+        gpu=&s.import_gpu,
     }
     // The importers of the project's plugins, built from the files that arrived, to find its builds by key.
     j.desc.library=import_library_built

@@ -61,13 +61,10 @@ jobs:
           done
           exit $failed
 
-      # The suites of the packages that run on the CPU alone, each a folder with
-      # sources and tests of its own: a name with no folder behind it is taken
-      # for a test of the package before it, which stops the step before it
-      # compiles.
-      - name: Tests without a GPU
+      # GPU cases skip on runners without a device.
+      - name: Tests on the headless runner
         run: |
           ./mirai test \
             std/base std/jobs std/math std/anim std/ai std/input std/geom std/spatial std/serial std/subprocess \
-            core net project rhi cook/image cook/textures cook/shaders \
+            core net project rhi cook/image cook/textures cook/import cook/shaders \
             plugins/physics/runtime/sim

@@ -192,8 +192,8 @@ types, scenes and their prefab instances, registry).
 - `.character` is verified in its [plugin](../mirai-animation/SKILL.md).
 - Compression: `asset/compress_test.odin` (every profile and codecs, hostile streams, block
   tables), `asset/container_test.odin` (chunks with alignment and pieces) and the pages in
-  `asset/mesh_page_code_test.odin`. Codecs: `mirai test` of `std/compressor/zstd`, `lz4` and each
-  package of `std/compressor/blocks`. With and without `ext/mirai-compression`, whose own tests
-  run from its folder (`mirai test ext/mirai-compression/lz`).
+  `asset/mesh_page_code_test.odin`. Codecs: `mirai test` of `std/compressor/zstd` and `lz4`.
+  The [imports skill](../mirai-imports/SKILL.md#verification) covers open block encoding.
+  With and without `ext/mirai-compression`, whose tests run from its folder.
 - Benchmark (not routine):
   `mirai test asset scene_file_against_a_file_per_entity --release -define:ASSET_BENCH=true`.

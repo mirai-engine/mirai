@@ -345,7 +345,7 @@ across threadgroups. It prices reuse of endpoints and selectors against decoded 
 BC7 candidate keeps exact alpha extrema and the side of an enabled cutoff for each texel.
 
 Run `mirai test cook/textures bench_gpu_blocks_on_demo_textures -define:COOK_GPU_BENCH=true`
-for comparisons of the encoders and codecs in `bin/bench/gpu-bcn-polish.csv`. The codec comparisons
+to measure GPU encodes on demo textures. The codec comparisons in `bin/bench/gpu-bcn-polish.csv`
 use the same texture layout and piece boundaries at each profile.
 
 ## Cache and fingerprints

@@ -7,6 +7,7 @@ import "core:strings"
 import "core:sync"
 import "mirai:asset"
 import "mirai:cook/import/sources"
+import "mirai:cook/textures"
 import "mirai:exchange"
 import "mirai:project"
 import "mirai:std/base"
@@ -237,7 +238,10 @@ objects_sizes :: proc(n:^Node,addresses:[]store.Hash) -> map[store.Hash]i64 {
 // the project it is for, whose plugins read a source should one be here.
 // Nothing is pinned: on failure no project changed. For a thread other than
 // the pump's.
-package_take :: proc(n:^Node,manifest:store.Hash,root:string,library:sources.Library=nil,worker:=jobs.Worker_Ref{}) -> (error:string) {
+package_take :: proc(
+    n:^Node,manifest:store.Hash,root:string,library:sources.Library=nil,
+    worker:=jobs.Worker_Ref{},gpu:^textures.Gpu_Context=nil,
+) -> (error:string) {
     s:=n.s
     named:=[1]exchange.Name{{address=manifest}}
     manifests_fetch(n,named[:])
@@ -254,7 +258,7 @@ package_take :: proc(n:^Node,manifest:store.Hash,root:string,library:sources.Lib
     base.remove_all(scratch)
     if os.make_directory_all(scratch)!=nil {return fmt.tprintf("%s could not be made: give this user access to %s",scratch,root)}
     defer base.remove_all(scratch)
-    options:=sources.Library_Options{store=s,source=node_source(n),fast_textures=true,root=root,plugins=library,worker=worker}
+    options:=sources.Library_Options{store=s,source=node_source(n),fast_textures=true,root=root,plugins=library,worker=worker,gpu=gpu}
     report:=sources.project_add(scratch,manifest,"",nil,options,context.temp_allocator)
     if len(report.failures)>0 {return report.failures[0]}
     if len(report.missing)>0 || report.fetched+report.ingested==0 && !package_built(s,manifest,&p) {

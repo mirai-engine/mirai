@@ -390,10 +390,9 @@ levels, clusters and colliders of each mesh (`mesh_cook`) and the levels of each
 when it gets to it, with the same functions. Ids, files and parts are decided on a
 single thread and in the usual order: with or without a job system the same bytes are written.
 
-- Finalizing a cached Fast build uses the same pool for textures and their block encoders.
-  The number of textures in flight is bounded by the worker count, and each frees its scratch
-  after writing its object. The Final build is published in the original output order after all
-  textures succeed.
+- Finalizing a cached Fast build bounds the number of textures in flight by the worker count.
+  Each frees its scratch after writing its object. The Final build is published in the original
+  output order after all textures succeed.
 - An import builds beforehand only the meshes and textures whose files it does not keep or take
   under another key, except with `rebuild`; a whole source that reads its models ahead asks
   `outputs_current` (every output of the cache has its file, under the key of now or another)
@@ -760,16 +759,12 @@ libraries](../../mirai-physics/references/engine.md#collider-fields).
     store (`RGBA16F`); color and data maps with non-opaque alpha use BC7; opaque data maps use BC1.
     A 16-bit source without `keep_precision` is compressed by use like an 8-bit one.
   - It is stored linear except in 8-bit formats with `srgb` (`level_store`).
-- **CPU encoder**: `cook/textures` (`level_encode`) runs the block encoders of the
-  compressor collection (`compressor:blocks`), with the
-  perceptual metric and the lambda of `rdo_lambda`: the rate-distortion optimization picks blocks a
-  little worse that repeat endpoints and indices, so the file compresses smaller. Each layer of a
-  level is one surface. Alpha keeps exact 0 and 255; a BC7 layer with every texel opaque is encoded
-  without alpha and decodes 255. BC1 may use the three-color mode, whose fourth color decodes black
-  with alpha 0: a BC1 map is read for its RGB. BC6H is encoded from half floats (light beyond them
-  clamped, a NaN 0) in any of its modes. On a worker of the job system the blocks of a level go in
-  parallel with scratch from the heap; a large level without one runs on a job system of the build's
-  own. `asset` decodes ([texture](../../mirai-assets/references/kinds.md#texture)).
+- **Block encoding.** Open builds use the Slang compute encoder. A cook or import shares one
+  context for pipelines and buffers, and the editor reuses one across its background imports.
+  The context opens a headless GPU device at the first block encode. Decoding sources and
+  building uncompressed textures need no device. Final encoding can trade distortion for
+  repeated block data that compresses smaller. Fast skips rate-distortion optimization.
+  The private compressor can supply its own block encoder and layouts.
 - **Devices without BC.** The file carries no alternative formats: `host` decodes the blocks when
   loading, to RGBA8 and BC6H to RGBA16F, when the device does not sample them; the renderer's
   limits discard large levels without re-encoding
