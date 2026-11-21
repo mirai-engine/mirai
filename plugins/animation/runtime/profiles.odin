@@ -1,23 +1,22 @@
 package anim
 
 import "core:mem"
-import "mirai:asset"
 import "mirai:core"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
 import lib "mirai:std/anim"
 import mm "mirai:std/math"
-import "base:runtime"
 
 POSE_CONSTRAINTS :: 256
 
-@(component,description="Attaches this entity to a named socket in another entity's skeleton, with an additional local offset.")
+@(component,description="Attaches this entity to a named bone or socket in another entity's skeleton, with an additional local offset.")
 Bone_Attachment :: struct {
     rig:core.Entity,
     socket:[64]u8 `mirai:"text"`,
     offset:mm.Transform,
     enabled:bool,
+    bone:Bone_Ref `mirai:"optional"`,
 }
 BONE_ATTACHMENT_DEFAULT :: Bone_Attachment{offset=mm.TRANSFORM_IDENTITY,enabled=true}
 
@@ -44,21 +43,21 @@ Pose_Profile :: struct {
 
 pose_profile_check :: proc(profile:Pose_Profile) -> bool {
     if len(profile.ik)>POSE_CONSTRAINTS || len(profile.look)>POSE_CONSTRAINTS || len(profile.limits)>POSE_CONSTRAINTS {return false}
-    for value in profile.ik {
-        if !profile_bone(value.root) || !profile_bone(value.joint) || !profile_bone(value.end) || !spatial_target_valid(value.target,false) || !profile_vector(value.pole) || !profile_weight(value.weight) {return false}
+    for &value in profile.ik {
+        if !profile_bone(value.root) || !profile_bone(value.joint) || !profile_bone(value.end) || !spatial_target_valid(spatial_compile(&value.target),false) || !profile_vector(value.pole) || !profile_weight(value.weight) {return false}
         if !finite(value.reach.soft_distance) || value.reach.soft_distance<0 || !finite(value.reach.max_stretch) || value.reach.max_stretch<0 {return false}
     }
-    for value in profile.look {
-        if !profile_bone(value.bone) || !spatial_target_valid(value.target,false) || !profile_vector(value.forward) || !profile_vector(value.offset) || !finite(value.max_angle) || value.max_angle<0 || !profile_weight(value.weight) {return false}
+    for &value in profile.look {
+        if !profile_bone(value.bone) || !spatial_target_valid(spatial_compile(&value.target),false) || !profile_vector(value.forward) || !profile_vector(value.offset) || !finite(value.max_angle) || value.max_angle<0 || !profile_weight(value.weight) {return false}
         if value.use_up {_,ok:=lib.aim_at(1,value.forward,{0,0,-1},value.up,value.world_up,value.max_angle);if !ok {return false}}
     }
     for value in profile.limits {
         if !profile_bone(value.bone) || !profile_vector(value.axis) || !finite(value.max_swing) || !finite(value.min_twist) || !finite(value.max_twist) || value.min_twist>value.max_twist || !profile_weight(value.weight) {return false}
         if !profile_rotation(value.reference) {return false}
     }
-    if value:=profile.grounding;value.count>0 {
+    if value:=profile.grounding;len(value.legs)>0 {
         if !grounding_config_valid(value) || !profile_bone(value.body) {return false}
-        for leg in value.legs[:value.count] {if !profile_bone(leg.hip) || !profile_bone(leg.knee) || !profile_bone(leg.foot) || !profile_bone(leg.contact_bone) {return false}}
+        for leg in value.legs {if !profile_bone(leg.hip) || !profile_bone(leg.knee) || !profile_bone(leg.foot) || !profile_bone(leg.contact_bone) {return false}}
     }
     return rig_profiles_check(profile) && curve_poses_check(profile)
 }
@@ -70,295 +69,260 @@ pose_profile_check :: proc(profile:Pose_Profile) -> bool {
 Modifier_Kind :: enum u8 {IK,Look,Grounding,Limit,Chain_IK,Twist,Spring,Multi_IK,Chain_Retarget,Spline_IK,Corrective,Follow}
 MODIFIER_TARGETED :: bit_set[Modifier_Kind]{.IK,.Look,.Chain_IK,.Multi_IK,.Spline_IK,.Follow}
 
-// What gameplay gives an operation of a rig's profile, by slot or by name
-// (name, and effector_name for Multi IK, are found again when the .character is
-// read again). target: where IK, Look, Chain IK, a Multi IK effector, a Spline
-// IK control (effector) or Follow aim. position: the external force of Spring. fade: seconds the
-// operation takes to reach its weight from the one it has (none while it is off); one that lets go
-// keeps its target while it fades out.
-Modifier_Goal :: struct {
-    rig:core.Entity,
-    kind:Modifier_Kind,
-    slot:u16,
-    effector:u8,
-    name:[256]u8,
-    effector_name:[64]u8,
-    target:Spatial_Target,
-    position:mm.Vec3,
-    weight,fade:f32,
-    enabled:bool,
-}
-modifier_goal :: proc(requests:^Animation_Requests,goal:Modifier_Goal) {
-    if requests==nil {return}
-    goal:=goal
-    if !blend_text_valid(goal.name[:],true) || !blend_text_valid(goal.effector_name[:],true) || goal.kind in MODIFIER_TARGETED && !spatial_target_valid(goal.target) ||
-        goal.rig==core.NONE || goal.slot>=POSE_CONSTRAINTS || goal.kind==.Grounding && goal.slot!=0 || goal.kind==.Multi_IK && int(goal.effector)>=RIG_EFFECTORS || goal.kind==.Spline_IK && int(goal.effector)>=len(SPLINE_CONTROLS) || goal.kind>max(Modifier_Kind) || !profile_vector(goal.position) || !profile_weight(goal.weight) || !finite(goal.fade) || goal.fade<0 {
-        core.refuse(&requests.goals)
-        return
-    }
-    core.offer(&requests.goals,goal)
-}
-
 @(storage,free="modifier_runtime_free")
 Modifier_Runtime :: struct {
-    ik:core.Table(IK_Constraint),
-    look:core.Table(Look_Constraint),
-    limits:core.Table(Rotation_Constraint),
-    grounding:core.Table(Foot_Grounding),
-    sockets:core.Table(Bone_Binding),
-    chain_ik:core.Table(Chain_IK_Constraint),
-    twist:core.Table(Twist_Constraint),
-    springs:core.Table(Spring_Constraint),
-    multi_ik:core.Table(Multi_IK_Constraint),
-    retarget_chains:core.Table(Chain_Retarget_Constraint),
-    spline_ik:core.Table(Spline_IK_Constraint),
-    correctives:core.Table(Pose_Corrective),
-    follow:core.Table(Follow_Constraint),
-    curve_poses:core.Table(Curve_Pose),
-    curve_drives:core.Table(Curve_Drive),
-    curve_materials:core.Table(Curve_Material),
-    spline_states:[dynamic]Spline_IK_Binding,
-    corrective_states:[dynamic]Pose_Corrective_Binding,
-    follow_states:[dynamic]Follow_Binding,
-    curve_pose_states,curve_drive_states,curve_material_states:[dynamic]Curve_Binding,
-    curve_full:[dynamic]lib.Pose_Accumulator, // by bone of the rig being evaluated: the full poses of its curves
+    rigs:[dynamic]Modifier_Rig,
+    rows:[dynamic]i32,
+    curve_full:[dynamic]lib.Pose_Accumulator,
+    inputs:[7]u64,
+    time:f64,
+    request_error:Modifier_Request_Error,
+    request_error_rig:core.Entity,
+}
+
+Modifier_Rig :: struct {
+    entity:core.Entity,
+    asset:base.Asset_Id,
+    revision:u64,
+    character:i32,
+    controls:[dynamic]Modifier_Control_State,
+    first:[len(Modifier_Kind)+1]u16,
+    overrides:[dynamic]Modifier_Request,
+    ik_states:[dynamic]IK_Binding,
+    look_states:[dynamic]Look_Binding,
+    limit_states:[dynamic]Limit_Binding,
+    attachments:[dynamic]Attachment_Binding,
+    grounding:[dynamic]Grounding_Binding,
     chain_states:[dynamic]Chain_IK_Binding,
     twist_states:[dynamic]Twist_Binding,
     spring_states:[dynamic]Spring_Binding,
     multi_states:[dynamic]Multi_IK_Binding,
     retarget_chain_states:[dynamic]Chain_Retarget_Binding,
-    geometry:u64,
-    inputs:[6]u64,
-    revisions:[dynamic]u64,
-    goals:[dynamic]Modifier_Goal,
-    controls:[dynamic]Modifier_Control_State,
-    fades:[dynamic]u32,
-    request_error:Modifier_Request_Error, // of the last refused goal or control, and its rig
-    request_error_rig:core.Entity,
+    spline_states:[dynamic]Spline_IK_Binding,
+    corrective_states:[dynamic]Pose_Corrective_Binding,
+    follow_states:[dynamic]Follow_Binding,
+    curve_pose_states,curve_drive_states,curve_material_states:[dynamic]Curve_Binding,
 }
+
 modifier_runtime_free :: proc(runtime:^Modifier_Runtime) {
-    core.table_destroy(&runtime.spline_ik);core.table_destroy(&runtime.correctives);core.table_destroy(&runtime.follow)
-    core.table_destroy(&runtime.curve_poses);core.table_destroy(&runtime.curve_drives);core.table_destroy(&runtime.curve_materials);delete(runtime.curve_pose_states);delete(runtime.curve_drive_states);delete(runtime.curve_material_states);delete(runtime.curve_full)
-    for &binding in runtime.spline_states {rig_binding_free(&binding)};delete(runtime.spline_states)
-    for &binding in runtime.follow_states {rig_binding_free(&binding)};delete(runtime.follow_states)
-    delete(runtime.corrective_states)
-    core.table_destroy(&runtime.chain_ik);core.table_destroy(&runtime.twist);core.table_destroy(&runtime.springs);core.table_destroy(&runtime.multi_ik);core.table_destroy(&runtime.retarget_chains)
-    for &binding in runtime.chain_states {rig_binding_free(&binding)};delete(runtime.chain_states)
-    for &binding in runtime.twist_states {rig_binding_free(&binding)};delete(runtime.twist_states)
-    for &binding in runtime.spring_states {rig_binding_free(&binding)};delete(runtime.spring_states)
-    for &binding in runtime.multi_states {rig_binding_free(&binding)};delete(runtime.multi_states)
-    for &binding in runtime.retarget_chain_states {rig_binding_free(&binding)};delete(runtime.retarget_chain_states)
-    core.table_destroy(&runtime.ik);core.table_destroy(&runtime.look);core.table_destroy(&runtime.limits)
-    core.table_destroy(&runtime.grounding);core.table_destroy(&runtime.sockets)
-    delete(runtime.goals);delete(runtime.revisions);delete(runtime.controls);delete(runtime.fades);runtime^={}
+    for &rig in runtime.rigs {modifier_rig_free(&rig)}
+    delete(runtime.rigs);delete(runtime.rows);delete(runtime.curve_full)
+    runtime^={}
 }
 
 @(private)
-modifier_append :: proc(table:^core.Table($T),entity:core.Entity,value:T) -> bool {
-    count:=len(table.values)
-    if existing:=core.row_of(table,entity);existing>=0 && existing!=count-1 {return false}
-    return core.table_append(table,entity,value)
+modifier_rig_free :: proc(rig:^Modifier_Rig) {
+    free_states :: proc(states:[dynamic]$T) {
+        for &state in states {rig_binding_free(&state)}
+        delete(states)
+    }
+    delete(rig.controls);delete(rig.overrides);delete(rig.attachments)
+    free_states(rig.ik_states);free_states(rig.look_states);delete(rig.limit_states)
+    for &record in rig.grounding {delete(record.links)}
+    delete(rig.grounding)
+    free_states(rig.chain_states);free_states(rig.twist_states);free_states(rig.spring_states)
+    free_states(rig.multi_states);free_states(rig.retarget_chain_states)
+    free_states(rig.spline_states);delete(rig.corrective_states);free_states(rig.follow_states)
+    delete(rig.curve_pose_states);delete(rig.curve_drive_states);delete(rig.curve_material_states)
+    rig^={}
 }
 
-// The modifiers of the .character of each animated entity, laid out again when an Animation, an
-// attachment, a rig or an asset changes.
-modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:^core.Table(Animation,$A),attachments:^core.Table(Bone_Attachment,$B),characters:^Character_Assets,skeletons:^Skeleton_Assets,playback:^Playback,loaded:^host.Assets,allocator:mem.Allocator,problems:^core.Problems) -> bool {
-    allocation_failed :: proc(cache:^$T,id:base.Asset_Id) -> bool {
-        if cache==nil || id=={} {return false}
-        for content in cache.contents {if content.id==id {return content.checked==0}}
-        return true
+modifier_rig :: proc(runtime:^Modifier_Runtime,entity:core.Entity) -> ^Modifier_Rig {
+    if runtime==nil {return nil}
+    index:=core.entity_index(entity)
+    if index>=len(runtime.rows) || runtime.rows[index]<=0 {return nil}
+    row:=int(runtime.rows[index])-1
+    if row>=len(runtime.rigs) {return nil}
+    rig:=&runtime.rigs[row]
+    return rig if rig.entity==entity else nil
+}
+
+@(private)
+modifier_rig_add :: proc(runtime:^Modifier_Runtime,entity:core.Entity) -> ^Modifier_Rig {
+    if rig:=modifier_rig(runtime,entity);rig!=nil {return rig}
+    index:=core.entity_index(entity)
+    if index>=len(runtime.rows) && !program_array_resize(&runtime.rows,index+1) {return nil}
+    if append(&runtime.rigs,Modifier_Rig{entity=entity})!=1 {return nil}
+    runtime.rows[index]=i32(len(runtime.rigs))
+    return &runtime.rigs[len(runtime.rigs)-1]
+}
+
+@(private)
+modifier_rig_remove :: proc(runtime:^Modifier_Runtime,row:int) {
+    rig:=&runtime.rigs[row]
+    index:=core.entity_index(rig.entity)
+    if runtime.rows[index]==i32(row+1) {runtime.rows[index]=0}
+    modifier_rig_free(rig)
+    unordered_remove(&runtime.rigs,row)
+    if row<len(runtime.rigs) {runtime.rows[core.entity_index(rig.entity)]=i32(row+1)}
+}
+
+@(private)
+modifier_pose :: proc(rig:^Modifier_Rig,characters:^Character_Assets) -> ^Pose_Profile {
+    if rig==nil || characters==nil || rig.character<=0 ||
+        int(rig.character)>len(characters.contents) {return nil}
+    content:=&characters.contents[rig.character-1]
+    if content.valid && content.id==rig.asset && content.revision==rig.revision {
+        return &content.set.pose
     }
-    // The sets the animations name are found by their ids, entities and revisions, so a change of
-    // another field of an Animation lays nothing out again.
-    headers:=[6]u64{core.layout(animations),core.version(attachments),core.layout(attachments),playback.rigs_stamp,assets_stamp(loaded),core.version(animations)}
-    if runtime.inputs==headers {return true}
-    revisions_changed:=false;revision_row:=0
-    compare_revision :: proc(runtime:^Modifier_Runtime,row:^int,revision:u64,changed:^bool) {
-        if row^>=len(runtime.revisions) || runtime.revisions[row^]!=revision {changed^=true}
-        row^+=1
-    }
-    for row in 0..<core.count(animations) {
-        id:=animation_character(loaded,animations.values[row]);revision:u64
-        if id=={} {continue}
-        if content:=character_content(characters,loaded,allocator,id);content!=nil {revision=character_key(core.entity_at(animations,row),id,content.revision)} else if allocation_failed(characters,id) {memory_problem(problems,core.entity_at(animations,row),"its .character");return false}
-        compare_revision(runtime,&revision_row,revision,&revisions_changed)
-    }
-    for &rig in playback.rigs {
-        revision:u64
-        if content:=skeleton_content(skeletons,loaded,allocator,rig.skeleton);content!=nil {revision=content.revision} else if allocation_failed(skeletons,rig.skeleton) {memory_problem(problems,rig.entity,"its skeleton");return false}
-        compare_revision(runtime,&revision_row,revision,&revisions_changed)
-    }
-    revisions_changed ||= revision_row!=len(runtime.revisions)
-    if !revisions_changed && runtime.inputs.xyzw==headers.xyzw {runtime.inputs=headers;return true}
-    next:=Modifier_Runtime{geometry=runtime.geometry+1,inputs=headers};defer modifier_runtime_free(&next)
-    if reserve(&next.revisions,revision_row)!=nil {memory_problem(problems,core.NONE,"the modifiers of the rigs, so none applies");return false}
-    next.ik.version,next.look.version,next.limits.version=runtime.ik.version+1,runtime.look.version+1,runtime.limits.version+1
-    next.grounding.version,next.sockets.version=runtime.grounding.version+1,runtime.sockets.version+1
-    next.ik.layout,next.look.layout,next.limits.layout=runtime.ik.layout+1,runtime.look.layout+1,runtime.limits.layout+1
-    next.grounding.layout,next.sockets.layout=runtime.grounding.layout+1,runtime.sockets.layout+1
-    for row in 0..<core.count(animations) {
-        id:=animation_character(loaded,animations.values[row])
-        if id=={} {continue}
-        entity:=core.entity_at(animations,row)
-        content:=character_content(characters,loaded,allocator,id);append(&next.revisions,character_key(entity,id,content.revision) if content!=nil else 0)
-        if content==nil {
-            if allocation_failed(characters,id) {memory_problem(problems,entity,"its .character");return false}
-            asset_problem(problems,entity,loaded,"animation.character","Animation.asset",id,content_error(characters.contents[:],id))
-            continue
-        }
-        pose:=content.set.pose
-        add :: proc(table:^core.Table($T),entity:core.Entity,rows:[]T) -> bool {
-            for value in rows {value:=value;value.rig=entity;if !modifier_append(table,entity,value) {return false}}
-            return true
-        }
-        appended:=add(&next.ik,entity,pose.ik) && add(&next.look,entity,pose.look) && add(&next.limits,entity,pose.limits) && (pose.grounding.count==0 || modifier_append(&next.grounding,entity,pose.grounding)) &&
-            add(&next.chain_ik,entity,pose.chain_ik) && add(&next.twist,entity,pose.twist) && add(&next.springs,entity,pose.springs) && add(&next.multi_ik,entity,pose.multi_ik) &&
-            add(&next.retarget_chains,entity,pose.retarget_chains) && add(&next.spline_ik,entity,pose.spline_ik) && add(&next.correctives,entity,pose.correctives) && add(&next.follow,entity,pose.follow) &&
-            add(&next.curve_poses,entity,pose.curve_poses) && add(&next.curve_drives,entity,pose.curve_drives) && add(&next.curve_materials,entity,pose.curve_materials)
-        if !appended {memory_problem(problems,entity,"its .character");return false}
-    }
-    for &rig in playback.rigs {
-        content:=skeleton_content(skeletons,loaded,allocator,rig.skeleton);append(&next.revisions,content.revision if content!=nil else 0)
-        if content==nil && allocation_failed(skeletons,rig.skeleton) {memory_problem(problems,rig.entity,"its skeleton");return false}
-    }
-    for row in 0..<core.count(attachments) {
-        entity:=core.entity_at(attachments,row);config:=core.at(attachments,row)
-        if !config.enabled {continue}
-        definition:^Skeleton_Content
-        rigged:=false
-        for rig in playback.rigs {if rig.entity==config.rig {rigged=true;definition=skeleton_content(skeletons,loaded,allocator,rig.skeleton);if definition==nil && allocation_failed(skeletons,rig.skeleton) {memory_problem(problems,rig.entity,"its skeleton");return false};break}}
-        if !rigged {
-            core.report(problems,entity,"animation.attachment_rig","this Bone_Attachment hangs from entity 0x%016x, which shows no mesh with a skeleton; name an entity whose Mesh_Renderer shows a skinned mesh",u64(config.rig))
-            continue
-        }
-        if definition==nil {continue}
-        attached:=false
-        for socket in definition.sockets {
-            if socket.name!=config.socket {continue}
-            value:=Bone_Binding{rig=config.rig,bone={socket.bone},offset=mm.transform_compose(socket.offset,config.offset),enabled=true}
-            if !modifier_append(&next.sockets,entity,value) {memory_problem(problems,entity,"its attachment");return false}
-            attached=true
-            break
-        }
-        if !attached {
-            name:[base.ASSET_ID_TEXT]u8
-            core.report(problems,entity,"animation.attachment_socket","this Bone_Attachment names socket '%s', which skeleton %s of its rig does not have; name one of its sockets (animation.asset.inspect lists them)",base.text_get(config.socket[:]),host.assets_name(loaded,definition.id,&name))
-        }
-    }
-    if !modifier_controls_prepare(&next,runtime) || reserve(&runtime.goals,len(next.controls))!=nil {memory_problem(problems,core.NONE,"the controls of the modifiers, so none applies");return false}
-    // A goal stays with its operation; one whose slot now names another goes.
-    #reverse for goal,i in runtime.goals {if !modifier_same_goal(runtime,&next,goal) {unordered_remove(&runtime.goals,i)}}
-    next.goals=runtime.goals;runtime.goals=nil
-    request_error,request_error_rig:=runtime.request_error,runtime.request_error_rig
-    modifier_runtime_free(runtime);runtime^=next;next={}
-    runtime.request_error,runtime.request_error_rig=request_error,request_error_rig
-    #reverse for goal,i in runtime.goals {
-        if modifier_control_state(runtime,goal.rig,goal.kind,goal.slot)==nil {unordered_remove(&runtime.goals,i);continue}
-        // Laid out again, a look aims where it aimed: it does not turn there from the row's target.
-        if goal.kind==.Look {if row:=rig_slot_row(&runtime.look,goal.rig,goal.slot);row>=0 {runtime.look.values[row].target=goal.target}}
-        modifier_apply_goal(runtime,goal,problems)
-    }
-    for &control in runtime.controls {modifier_control_apply(runtime,&control)}
+    return nil
+}
+
+@(private)
+modifier_rig_prepare :: proc(rig:^Modifier_Rig,pose:Pose_Profile,id:base.Asset_Id,revision:u64,character:i32) -> bool {
+    next:=Modifier_Rig{entity=rig.entity,asset=id,revision=revision,character=character}
+    defer modifier_rig_free(&next)
+    ground:=1 if len(pose.grounding.legs)>0 else 0
+    if resize(&next.ik_states,len(pose.ik))!=nil || resize(&next.look_states,len(pose.look))!=nil ||
+        resize(&next.limit_states,len(pose.limits))!=nil || resize(&next.grounding,ground)!=nil ||
+        resize(&next.chain_states,len(pose.chain_ik))!=nil ||
+        resize(&next.twist_states,len(pose.twist))!=nil ||
+        resize(&next.spring_states,len(pose.springs))!=nil ||
+        resize(&next.multi_states,len(pose.multi_ik))!=nil ||
+        resize(&next.retarget_chain_states,len(pose.retarget_chains))!=nil ||
+        resize(&next.spline_states,len(pose.spline_ik))!=nil ||
+        resize(&next.corrective_states,len(pose.correctives))!=nil ||
+        resize(&next.follow_states,len(pose.follow))!=nil ||
+        resize(&next.curve_pose_states,len(pose.curve_poses))!=nil ||
+        resize(&next.curve_drive_states,len(pose.curve_drives))!=nil ||
+        resize(&next.curve_material_states,len(pose.curve_materials))!=nil {return false}
+    if !modifier_controls_prepare(&next,rig,pose) {return false}
+    next.attachments=rig.attachments;rig.attachments=nil
+    modifier_rig_free(rig)
+    rig^=next;next={}
     return true
 }
 
-@(private)
-character_key :: proc "contextless" (entity:core.Entity,id:base.Asset_Id,revision:u64) -> u64 {return base.hash_combine(u64(entity),base.hash_combine(id[0]~id[1],revision))}
-
-modifier_apply_goal :: proc(runtime:^Modifier_Runtime,goal:Modifier_Goal,problems:^core.Problems) {
-    scaled:=goal.weight
-    control:=modifier_control_state(runtime,goal.rig,goal.kind,goal.slot)
-    active:=goal.enabled
-    if control!=nil && goal.fade>0 && goal.kind!=.Grounding {
-        // The weight that applies now fades to the one asked: the goal hands it to its control.
-        now:=control.base_weight*control.weight if control.base_enabled && (control.enabled || control.weight>0) else 0
-        control.base_weight,control.base_enabled,control.weight=1,true,now
-        // A look that applies and is given another target turns to it over the same fade.
-        turn:=false
-        if goal.kind==.Look && goal.enabled && now>0 {if row:=rig_slot_row(&runtime.look,goal.rig,goal.slot);row>=0 && runtime.look.values[row].target!=goal.target {turn=true;core.edit_at(&runtime.look,row).from=runtime.look.values[row].target}}
-        if !modifier_fade_to(runtime,control,goal.weight if goal.enabled else 0,goal.enabled,goal.fade,turn) {memory_problem(problems,goal.rig,"the fade of a goal of its .character")}
-        scaled,active=control.weight,control.enabled || control.weight>0
-    } else if control!=nil {
-        control.base_enabled=active
-        if goal.kind!=.Grounding {control.base_weight=scaled}
-        scaled*=control.weight
-        active &&=control.enabled || control.weight>0
-    }
-    #partial switch goal.kind {
-    case .IK:
-        if row:=rig_slot_row(&runtime.ik,goal.rig,goal.slot);row>=0 {
-            value:=&runtime.ik.values[row]
-            if value.target!=goal.target || value.weight!=scaled || value.enabled!=active {
-                out:=core.edit_at(&runtime.ik,row)
-                out.target=goal.target
-                out.weight,out.enabled=scaled,active
+modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:^core.Table(Animation,$A),
+    attachments:^core.Table(Bone_Attachment,$B),characters:^Character_Assets,
+    skeletons:^Skeleton_Assets,playback:^Playback,loaded:^host.Assets,allocator:mem.Allocator,
+    problems:^core.Problems,meshes:^core.Table(erender.Mesh_Renderer,.Read)=nil) -> bool {
+    if loaded==nil {return false}
+    context.allocator=allocator
+    revision:=assets_stamp(loaded)
+    headers:=[7]u64{core.layout(animations),core.version(animations),revision,
+        core.layout(attachments),core.version(attachments),playback.rigs_stamp,loaded.structure}
+    if runtime.inputs==headers {return true}
+    pending:=false
+    if runtime.inputs[0]!=headers[0] || runtime.inputs[1]!=headers[1] || runtime.inputs[2]!=headers[2] {
+        if characters==nil {return false}
+        for row in 0..<core.count(animations) {
+            entity:=core.entity_at(animations,row)
+            id:=animation_character(loaded,core.at(animations,row))
+            if id=={} {continue}
+            rig:=modifier_rig(runtime,entity)
+            hint:=rig.character if rig!=nil else 0
+            content:=character_content(characters,loaded,allocator,id,&hint)
+            if content==nil {
+                error:=content_error(characters.contents[:],id)
+                if hint==0 || error==.Out_Of_Memory {
+                    memory_problem(problems,entity,"its .character modifiers");return false
+                }
+                if error==.Not_Here {pending=true;continue}
+                asset_problem(problems,entity,loaded,"animation.character","Animation.asset",id,error)
+                if rig!=nil && rig.asset!={} && !modifier_rig_prepare(rig,{},{},0,0) {return false}
+                continue
+            }
+            if rig!=nil && rig.asset==id && rig.revision==content.revision {continue}
+            pose:=content.set.pose
+            if !has_modifiers(pose) {
+                if rig!=nil && rig.asset!={} && !modifier_rig_prepare(rig,{},{},0,0) {return false}
+                continue
+            }
+            if rig==nil {
+                rig=modifier_rig_add(runtime,entity)
+                if rig==nil {memory_problem(problems,entity,"its .character modifiers");return false}
+            }
+            if rig!=nil && !modifier_rig_prepare(rig,pose,id,content.revision,hint) {
+                memory_problem(problems,entity,"its .character modifiers");return false
             }
         }
-    case .Look:
-        if row:=rig_slot_row(&runtime.look,goal.rig,goal.slot);row>=0 {
-            value:=&runtime.look.values[row]
-            if value.target!=goal.target || value.weight!=scaled || value.enabled!=active {
-                out:=core.edit_at(&runtime.look,row)
-                out.target=goal.target
-                out.weight,out.enabled=scaled,active
+        for &rig in runtime.rigs {
+            value,found:=core.get(animations,rig.entity)
+            if rig.asset!={} && (!found || animation_character(loaded,value)=={}) {
+                if !modifier_rig_prepare(&rig,{},{},0,0) {return false}
             }
         }
-    case .Grounding:
-        if row:=rig_slot_row(&runtime.grounding,goal.rig,goal.slot);row>=0 {value:=&runtime.grounding.values[row];if value.global_contact!=goal.weight || value.enabled!=active {out:=core.edit_at(&runtime.grounding,row);out.global_contact,out.enabled=goal.weight,active}}
-    case .Limit:
-        if row:=rig_slot_row(&runtime.limits,goal.rig,goal.slot);row>=0 {value:=&runtime.limits.values[row];if value.enabled!=active || value.weight!=scaled {out:=core.edit_at(&runtime.limits,row);out.enabled,out.weight=active,scaled}}
-    case .Chain_IK,.Twist,.Spring,.Multi_IK,.Chain_Retarget,.Spline_IK,.Corrective,.Follow:
-        rigs_apply_goal(runtime,goal,scaled,active,problems)
     }
+    if runtime.inputs[2]!=headers[2] || runtime.inputs[3]!=headers[3] ||
+        runtime.inputs[4]!=headers[4] || runtime.inputs[5]!=headers[5] ||
+        runtime.inputs[6]!=headers[6] {
+        if !modifier_attachments_prepare(runtime,attachments,skeletons,playback,loaded,allocator,problems,meshes) {
+            memory_problem(problems,core.NONE,"the bone attachments")
+            return false
+        }
+    }
+    #reverse for &rig,row in runtime.rigs {
+        if rig.asset=={} && len(rig.attachments)==0 {modifier_rig_remove(runtime,row)}
+    }
+    runtime.inputs=headers
+    if pending {runtime.inputs[2]=0}
+    return true
 }
-modifier_take :: proc(runtime:^Modifier_Runtime,requests:^Animation_Requests,problems:^core.Problems,dt:f32) {
-    for goal in core.take(&requests.goals) {
-        goal:=goal
-        if error:=modifier_goal_resolve(runtime,&goal);error!=.None {
-            modifier_request_rejected(runtime,goal.rig,error)
-            modifier_name_problem(problems,goal.rig,goal.kind,goal.name[:],goal.effector_name[:],error)
-            continue
-        }
-        if modifier_control_state(runtime,goal.rig,goal.kind,goal.slot)==nil {
-            core.report(problems,goal.rig,"animation.modifier_slot","a goal for %v %d was refused: this entity plays no .character with such an operation; name one its set has (animation.inspect lists them), or give the goal to the rig that has it",goal.kind,goal.slot)
-            continue
-        }
-        index:=-1
-        for known,i in runtime.goals {if known.rig==goal.rig && known.kind==goal.kind && known.slot==goal.slot && known.effector==goal.effector {index=i;break}}
-        if index>=0 && !goal.enabled && goal.fade>0 {goal.target=runtime.goals[index].target}
-        if index>=0 {runtime.goals[index]=goal} else if append(&runtime.goals,goal)!=1 {memory_problem(problems,goal.rig,"a goal of its .character");continue}
-        modifier_apply_goal(runtime,goal,problems)
+
+modifier_grounding :: proc(runtime:^Modifier_Runtime,rig:^Modifier_Rig,profile:Foot_Grounding) -> Foot_Grounding {
+    config:=profile
+    if runtime==nil || rig==nil || len(modifier_states(rig,.Grounding))==0 {return config}
+    config.weight,config.enabled=modifier_weight(&modifier_states(rig,.Grounding)[0],runtime.time)
+    if override:=modifier_override(rig,.Grounding,0);override!=nil {
+        config.global_contact=override.weight
     }
-    modifier_controls_take(runtime,requests,problems,dt)
+    return config
+}
+
+modifier_profile :: proc(runtime:^Modifier_Runtime,characters:^Character_Assets,entity:core.Entity) -> ^Pose_Profile {
+    return modifier_pose(modifier_rig(runtime,entity),characters)
+}
+
+@(private)
+has_modifiers :: proc(pose:Pose_Profile) -> bool {
+    return len(pose.ik)+len(pose.look)+len(pose.limits)+len(pose.grounding.legs)+
+        len(pose.chain_ik)+len(pose.twist)+len(pose.springs)+len(pose.multi_ik)+
+        len(pose.retarget_chains)+len(pose.spline_ik)+len(pose.correctives)+len(pose.follow)+
+        len(pose.curve_poses)+len(pose.curve_drives)+len(pose.curve_materials)>0
 }
 
 @(step="fixed",loops="game editor",stage="apply")
-animation_sample :: proc(animations:^core.Table(Animation,.Read),progress:^core.Table(Animation_Progress),played:^core.Table(Animation_Played),attachments:^core.Table(Bone_Attachment,.Read),transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),names:^core.Table(core.Name,.Read),targets:^core.Table(Animation_Target,.Read),meshes:^core.Table(erender.Mesh_Renderer,.Read),sources:^core.Table(Pose_Source,.Read),remotes:^core.Table(core.Remote,.Read),requests:^Animation_Requests,events:^Animation_Events,runtime:^Modifier_Runtime,playback:^Playback,characters:^Character_Assets,skeletons:^Skeleton_Assets,app:^host.App,time:core.Time,frame:core.Frame_Time,problems:^core.Problems,actions:^Action_Runtime,motion:^Motion_Runtime,content_sources:^Source_Assets,paces:^core.Table(core.Own_Pace,.Read),clock:core.Clock,budget:Animation_Budget_Config) {
-    if app.assets==nil {playback.frame+=1;return}
-    if !rigs_update(playback,meshes,sources,app.assets) {memory_problem(problems,core.NONE,"the list of rigs, so nothing is animated in this tick");playback.frame+=1;return}
-    if !modifier_prepare(runtime,animations,attachments,characters,skeletons,playback,app.assets,app.allocator,problems) {playback.frame+=1;return}
-    modifier_take(runtime,requests,problems,0)
-    if time.playing {progress_resume(progress,playback,requests)}
-    animation_tick(animations,transforms,parents,hierarchy,names,requests,events,targets,playback,app,time,frame,skeletons,problems,characters,actions,motion,content_sources,remotes,played,paces,clock,budget)
-    if time.playing {progress_write(progress,animations,playback)}
+animation_prepare :: proc(animations:^core.Table(Animation,.Read),
+    attachments:^core.Table(Bone_Attachment,.Read),meshes:^core.Table(erender.Mesh_Renderer,.Read),
+    sources:^core.Table(Pose_Source,.Read),runtime:^Modifier_Runtime,playback:^Playback,
+    characters:^Character_Assets,skeletons:^Skeleton_Assets,app:^host.App,problems:^core.Problems) {
+    playback.prepared=false
+    if app.assets==nil {return}
+    if !rigs_update(playback,meshes,sources,app.assets,attachments) {
+        memory_problem(problems,core.NONE,"the list of rigs, so nothing is animated in this tick")
+        return
+    }
+    playback.prepared=modifier_prepare(runtime,animations,attachments,characters,skeletons,playback,
+        app.assets,app.allocator,problems,meshes)
 }
 
-// A clip that a loaded game left somewhere starts there: Playback starts
-// again with the World, and an entity it has no state for seeks its progress.
-@(private)
-progress_resume :: proc(progress:^core.Table(Animation_Progress),playback:^Playback,requests:^Animation_Requests) {
-    for row in 0..<core.count(progress) {
-        e:=core.entity_at(progress,row)
-        if constraint_playing(playback,e)!=nil {continue}
-        kept:=core.at(progress,row)
-        if kept.playing {animation_command(requests,e,.Resume,speed=kept.speed)} else {animation_command(requests,e,.Pause)}
-        animation_seek(requests,e,kept.time)
-    }
+@(step="fixed",loops="game editor",stage="simulate")
+animation_sample :: proc(animations:^core.Table(Animation,.Read),progress:^core.Table(Animation_Progress,.Read),
+    played:^core.Table(Animation_Played),transforms:^core.Table(core.Transform),
+    parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),
+    names:^core.Table(core.Name,.Read),targets:^core.Table(Animation_Target,.Read),
+    remotes:^core.Table(core.Remote,.Read),requests:^Animation_Requests,events:^Animation_Events,
+    runtime:^Modifier_Runtime,playback:^Playback,characters:^Character_Assets,
+    skeletons:^Skeleton_Assets,app:^host.App,time:core.Time,frame:core.Frame_Time,
+    problems:^core.Problems,actions:^Action_Runtime,motion:^Motion_Runtime,
+    content_sources:^Source_Assets,paces:^core.Table(core.Own_Pace,.Read),clock:core.Clock,
+    budget:Animation_Budget_Config) {
+    if !playback.prepared {playback.frame+=1;return}
+    modifier_take(runtime,characters,requests,problems,0)
+    animation_tick(animations,transforms,parents,hierarchy,names,requests,events,targets,playback,app,time,frame,skeletons,problems,characters,actions,motion,content_sources,remotes,played,paces,clock,budget,progress)
+}
+
+playback_save_prepare :: proc(playback:^Playback,world:core.World_Ref) -> bool {
+    if playback.previewed {return true}
+    progress:=core.world_table_of(world,Animation_Progress)
+    animations:=core.world_table_of(world,Animation)
+    return progress==nil || animations==nil || progress_write(progress,animations,playback)
 }
 
 // Where each clip is, for a saved game; an entity that lost its Animation loses it.
 @(private)
-progress_write :: proc(progress:^core.Table(Animation_Progress),animations:^core.Table(Animation,$A),playback:^Playback) {
+progress_write :: proc(progress:^core.Table(Animation_Progress),animations:^core.Table(Animation,$A),playback:^Playback) -> bool {
     for row in 0..<core.count(progress) {
         if e:=core.entity_at(progress,row);!core.has(animations,e) {core.remove(progress,e)}
     }
@@ -367,19 +331,21 @@ progress_write :: proc(progress:^core.Table(Animation_Progress),animations:^core
         clip_time,_,_,ok:=animation_progress(playback,e)
         if !ok {continue}
         state:=constraint_playing(playback,e)
-        now:=Animation_Progress{time=clip_time,speed=state.speed,playing=state.playing}
+        now:=Animation_Progress{time=clip_time,selection=state.selection,speed=state.speed,playing=state.playing}
         if at:=core.row_of(progress,e);at<0 {
-            core.add(progress,e,now)
+            if !core.add(progress,e,now) {return false}
         } else if core.at(progress,at)!=now {
             core.edit_at(progress,at)^=now
         }
     }
+    return true
 }
 
-@(step="fixed",loops="game editor",stage="react")
-animation_advance :: proc(transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read),worlds:^core.Table(core.World_Transform,.Read),requests:^Animation_Requests,runtime:^Modifier_Runtime,playback:^Playback,constraints:^Animation_Constraints,grounding:^Grounding_Runtime,world:core.World_Ref,queries:core.Ref(core.World_Queries),time:core.Time,skeletons:core.Ref(Skeleton_Assets),problems:^core.Problems,motion:^Motion_Runtime,characters:^Character_Assets,verticals:^core.Table(core.Vertical,.Read),paces:^core.Table(core.Own_Pace,.Read),clock:core.Clock,places:^core.Places) {
-    modifier_take(runtime,requests,problems,time.dt)
-    inputs:=Constraint_Inputs{core.read(&runtime.ik),core.read(&runtime.look),core.read(&runtime.limits),core.read(&runtime.sockets),worlds,runtime.geometry,skeletons.ptr,problems}
-    ground_inputs:=Grounding_Inputs{core.read(&runtime.grounding),core.world_query(world,queries),core.read(transforms),parents,runtime.geometry,problems,verticals}
-    animation_finish(playback,inputs,constraints,transforms,parents,time.dt,grounding,ground_inputs,runtime,motion,characters,core.take(&requests.final_poses),paces,clock,places)
+@(step="fixed",loops="game editor",stage="react",after="animation_sample animation_fields")
+animation_advance :: proc(transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read),worlds:^core.Table(core.World_Transform,.Read),requests:^Animation_Requests,runtime:^Modifier_Runtime,playback:^Playback,world:core.World_Ref,queries:core.Ref(core.World_Queries),time:core.Time,skeletons:core.Ref(Skeleton_Assets),problems:^core.Problems,motion:^Motion_Runtime,characters:^Character_Assets,verticals:^core.Table(core.Vertical,.Read),paces:^core.Table(core.Own_Pace,.Read),clock:core.Clock,places:^core.Places) {
+    if !playback.prepared {return}
+    modifier_take(runtime,characters,requests,problems,time.dt)
+    inputs:=Constraint_Inputs{worlds,skeletons.ptr,problems}
+    ground_inputs:=Grounding_Inputs{core.world_query(world,queries),core.read(transforms),parents,problems,verticals}
+    animation_finish(playback,inputs,runtime,transforms,parents,time.dt,ground_inputs,motion,characters,core.take(&requests.final_poses),paces,clock,places)
 }

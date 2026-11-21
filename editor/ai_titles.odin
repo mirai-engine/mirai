@@ -31,6 +31,10 @@ ai_session_title_update :: proc(s:^Session,worker:^Ai_Worker,value:json.Value) {
     task.dirty=true
     ai_task_persist(s,task)
     for &row in m.history[:m.history_count] {
-        if row.id==c.id {row.title,row.title_len,row.updated_at=c.title,c.title_len,c.updated_at;break}
+        if row.id==c.id {
+            row.title=c.title
+            row.title_len,row.updated_at=c.title_len,c.updated_at
+            break
+        }
     }
 }

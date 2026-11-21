@@ -30,7 +30,7 @@ bone_references_reject_overflow_embedded_zero_and_unterminated_storage_without_t
     testing.expect_value(t,len(requests.poses.items),0)
     testing.expect_value(t,requests.poses.refused,1)
     library:lib.Library
-    testing.expect_value(t,root_motion_sample(&library,{},Root_Motion{bone=invalid,translation=true},1),ROOT_DELTA_DEFAULT)
+    testing.expect_value(t,root_motion_sample(&library,{},Root_Motion{translation=true},1),ROOT_DELTA_DEFAULT)
 }
 
 @(private)
@@ -64,20 +64,16 @@ recreated_skeletons_get_distinct_bindings_and_replace_constraint_and_grounding_b
     state:=state_get(&playback,rig)
     testing.expect(t,skeleton_bind(&playback,state,&definition,nil,&w.transforms))
     first:=state.bound
-    config:=FOOT_GROUNDING_DEFAULT;config.count=1;config.adjust_body=false
+    config:=FOOT_GROUNDING_DEFAULT;config.legs=make([]Grounded_Leg,1,context.temp_allocator);config.adjust_body=false
     config.legs[0]=GROUNDED_LEG_DEFAULT;config.legs[0].hip=bone_ref("hip");config.legs[0].knee=bone_ref("knee");config.legs[0].foot=bone_ref("foot")
-    grounding:Grounding_Runtime;defer grounding_free(&grounding)
-    append(&grounding.records,Grounding_Record{});append(&grounding.hierarchies,Grounding_Hierarchy{})
-    record:=&grounding.records[0]
-    testing.expect(t,grounding_bind(&grounding,0,state,config,1,nil))
-    testing.expect_value(t,record.bones[0],[3]int{1,2,3})
+    grounding:Grounding_Binding;defer delete(grounding.links)
+    testing.expect(t,grounding_bind(&grounding,state,config,nil))
+    testing.expect_value(t,grounding.record.bones[0],[3]int{1,2,3})
     leg:=IK_CONSTRAINT_DEFAULT;leg.root=bone_ref("hip");leg.joint=bone_ref("knee");leg.end=bone_ref("foot")
-    core.add(&w.modifiers.ik,rig,leg);core.table_settle(&w.modifiers.ik,&w.entities)
-    constraints:=Constraint_Rig{entity=rig};defer constraint_rig_free(&constraints)
-    append(&constraints.rows[0],0)
-    inputs:=Constraint_Inputs{ik=core.read(&w.modifiers.ik)}
-    testing.expect(t,constraints_bind(state,inputs,&constraints))
-    testing.expect_value(t,constraints.bones[0][0],[3]int{1,2,3})
+    characters:Character_Assets;defer character_assets_free(&characters)
+    prepared:=test_modifier_profile(&w.modifiers,&characters,rig,{ik={leg}})
+    constraints_apply(state,&playback,{},&w.modifiers,&w.transforms,{},0,characters=&characters)
+    testing.expect_value(t,prepared.ik_states[0].bones,[3]int{1,2,3})
     playing_free(state)
     state.entity=rig
     expanded:[4]asset.Skeleton_Bone
@@ -87,11 +83,11 @@ recreated_skeletons_get_distinct_bindings_and_replace_constraint_and_grounding_b
     definition.bones=expanded[:]
     testing.expect(t,skeleton_bind(&playback,state,&definition,nil,&w.transforms))
     testing.expect(t,state.bound>first)
-    testing.expect(t,grounding_bind(&grounding,0,state,config,1,nil))
-    testing.expect_value(t,record.bones[0],[3]int{2,3,4})
-    testing.expect(t,constraints_bind(state,inputs,&constraints))
-    testing.expect_value(t,constraints.bones[0][0],[3]int{2,3,4})
-    testing.expect_value(t,len(state.previous),len(state.local))
+    testing.expect(t,grounding_bind(&grounding,state,config,nil))
+    testing.expect_value(t,grounding.record.bones[0],[3]int{2,3,4})
+    constraints_apply(state,&playback,{},&w.modifiers,&w.transforms,{},0,characters=&characters)
+    testing.expect_value(t,prepared.ik_states[0].bones,[3]int{2,3,4})
+    testing.expect_value(t,len(playing_pose(state,.Previous)),len(playing_pose(state,.Local)))
 }
 
 @(test)

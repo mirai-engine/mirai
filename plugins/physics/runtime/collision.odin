@@ -60,10 +60,12 @@ Collision_Push :: struct {
 Collision_Settings :: struct {
     presets:[COLLISION_PRESET_CAPACITY]Collision_Preset_Setting `mirai:"trim"`,
     pushes:[COLLISION_PUSH_CAPACITY]Collision_Push `mirai:"trim"`,
+    character_push_force:f32 `mirai:"min=0,unit=N"`,
     surfaces:[COLLISION_SURFACE_CAPACITY]Collision_Surface `mirai:"trim"`,
 }
 
 COLLISION_SETTINGS_DEFAULT :: Collision_Settings{
+    character_push_force=400,
     presets={0={preset=PRESET_TRIGGER,sensor=true,belongs=1,collides=COLLISION_LAYERS_ALL}},
 }
 
@@ -105,6 +107,7 @@ collision_preset_setting_set :: proc "contextless" (settings:^Collision_Settings
 // and once per pair.
 collision_settings_valid :: proc "contextless" (settings:^Collision_Settings) -> bool {
     s:=settings_or_default(settings)
+    if !(s.character_push_force>=0 && s.character_push_force<=max(f32)) {return false}
     for entry,i in s.presets {
         if entry=={} {continue}
         if entry.preset==PRESET_CUSTOM {return false}
@@ -230,15 +233,9 @@ collision_layers :: proc "contextless" (categories:..Collision_Category) -> (lay
 }
 
 // A query that hits the colliders of these categories that collide with something, as a collider of every
-// category colliding with them would; sensors only with overlaps.
-query_hits :: proc "contextless" (layers:Collision_Layers,overlaps:=false) -> Query_Filter {
-    return {filter={layers=COLLISION_LAYERS_ALL,block=layers},overlaps=overlaps}
-}
-
-// What a query hits: the categories it blocks on, and whether it also reports the sensors and the shapes
-// that only overlap it.
-query_layers :: proc "contextless" (filter:Query_Filter) -> (layers:Collision_Layers,overlaps:bool) {
-    return filter.filter.block|filter.objects,filter.overlaps
+// category colliding with them would. Nonblocking hits require include_sensors.
+query_hits :: proc "contextless" (layers:Collision_Layers,include_sensors:=false) -> Query_Filter {
+    return {filter={layers=COLLISION_LAYERS_ALL,block=layers},include_sensors=include_sensors}
 }
 
 // How a query meets a collider of this filter, before its body is looked at: whether a field or a system

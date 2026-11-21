@@ -36,9 +36,7 @@ NAV_CHANGES_PER_READ :: 256
 NAV_TRIANGLES_MAX :: 1<<20     // of the input of one tile
 NAV_COARSE_EXPANDED :: 256     // nodes the searches of the ways of a region of the coarse graph expand in a tick
 NAV_FIELDS :: 64               // tiles whose heightfield is kept to build them again when an area or an obstacle changes on them
-// Ticks from the start of a tile's build to its publishing: its job runs in the background
-// meanwhile, and one not done by then is waited for, so a tile arrives at the same tick whatever
-// the threads do. A dev build of the AI arena takes about 9 ms a tile, under one tick at 60 Hz.
+// Minimum age of a background tile build when it can be published.
 NAV_BUILD_TICKS :: 4
 
 // What the application keeps to build the meshes of a world: the jobs and
@@ -46,6 +44,7 @@ NAV_BUILD_TICKS :: 4
 @(storage,host,by_world,free="builds_free")
 Navigation_Builds :: struct {
     builds:[dynamic]^Build,
+    carve:Build,
     jobs:^jobs.Job_System, // the one the builds ran on
     uid:u64,          // of the Navigation the builds and the tracking below are for
     next_uid:u64,
@@ -74,6 +73,7 @@ Navigation_Builds :: struct {
     // What each look last saw of its tables: a tick that changed none of them skips it.
     bounds_seen,areas_seen,obstacles_seen,links_seen:[5]core.Seen,
     bounds_unloaded:u64,  // Unloaded.revision the bounds were last made with
+    obstacle_colliders:core.Seen,
     settling:int,         // obstacles that are not blocking yet
     unloaded:u64,         // advances with each tick the unloaded ground changed in (core.Ground_Queries.unloaded)
     unloaded_seen:u64,    // Unloaded.revision the marks waiting for it were last looked at with
@@ -158,6 +158,21 @@ volume_prism :: proc(volumes:^core.Table(volume.Volume,$A),splines:^core.Table(v
 }
 
 @(private)
+obstacle_prism :: proc(
+    volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),
+    physics:core.Ref(phys.Physics_State),e:core.Entity,pose:mm.Transform,
+) -> (box:mm.Aabb,prism:ai.Nav_Area_Volume,ok:bool) {
+    if core.has(volumes,e) {return volume_prism(volumes,splines,e,pose,ai.NAV_AREA_BLOCKED)}
+    box,ok=phys.collider_bounds(physics,e)
+    if !ok {return}
+    lo,hi:=box.min,box.max
+    prism={count=4,area=ai.NAV_AREA_BLOCKED,min_y=lo.y,max_y=hi.y}
+    prism.points[0],prism.points[1],prism.points[2],prism.points[3]=
+        {lo.x,lo.z},{hi.x,lo.z},{hi.x,hi.z},{lo.x,hi.z}
+    return
+}
+
+@(private)
 prism_missing :: proc(problems:^core.Problems,e:core.Entity,what:string) {
     core.report(problems,e,"navigation.volume","its %s has no Volume with an end, so the navigation does not see it: give its entity a Volume of shape Box, Sphere or Outline (volume.box, volume.sphere, volume.outline with a Spline)",what)
 }
@@ -187,6 +202,7 @@ Area_Seen :: struct {
     volume:ai.Nav_Area_Volume,
     still:f32,   // s an obstacle has not moved
     blocks:bool, // an obstacle that settled: its volume is in the builds
+    instant:bool,
 }
 
 Build_Stats :: struct {
@@ -203,7 +219,7 @@ Build_Stats :: struct {
 Build :: struct {
     counter:jobs.Counter,
     busy:bool,
-    due:u64, // the tick of Navigation_Builds.ticks it is published at
+    due:u64, // earliest tick that can publish it
     class:int,
     coord:[2]i32,
     stamp:u32,
@@ -242,6 +258,7 @@ builds_free :: proc(b:^Navigation_Builds) {
         free(build)
     }
     delete(b.builds)
+    build_release(&b.carve)
     core.entity_map_destroy(&b.areas)
     core.entity_map_destroy(&b.links)
     core.entity_map_destroy(&b.obstacles)
@@ -372,9 +389,10 @@ navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,collision:^
                 continue
             }
             c:=&n.classes[n.count]
-            c.class,c.filter=class,filter
+            c.class=class
+            c.filter=filter
             c.volume_config=volume_config(class)
-            if !ai.nav_volume_init(&c.volume,{voxel=c.volume_config.voxel,layers=c.volume_config.layers,max_zones=min(tiles,ai.NAV_VOLUME_SLOT_MAX)}) || !base.hash_map_init(&c.marks,tiles) {
+            if !ai.nav_volume_init(&c.volume,{voxel=c.volume_config.voxel,layers=c.volume_config.layers,max_zones=min(tiles,ai.NAV_VOLUME_SLOT_MAX)}) || !class_marks_init(c,tiles) {
                 navigation_free(n)
                 n.uid,n.revision,n.made=uid,revision+1,made
                 return false
@@ -387,10 +405,11 @@ navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,collision:^
             continue
         }
         c:=&n.classes[n.count]
-        c.class,c.filter=class,filter
+        c.class=class
+        c.filter=filter
         c.config=class_config(settings,class)
         width:=f32(c.config.tile_size)*c.config.cell_size
-        if !ai.nav_mesh_init(&c.mesh,{tile_width=width,climb=class.climb,max_tiles=tiles,max_links=links}) || !base.hash_map_init(&c.marks,tiles) {
+        if !ai.nav_mesh_init(&c.mesh,{tile_width=width,climb=class.climb,max_tiles=tiles,max_links=links}) || !class_marks_init(c,tiles) {
             navigation_free(n)
             n.uid,n.revision,n.made=uid,revision+1,made
             return false
@@ -407,7 +426,7 @@ navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,collision:^
 // obstacle changed there, which no zone reads and which leaves the collision
 // under the tiles as their last build read it.
 @(private)
-mark_box :: proc(n:^Navigation,box:mm.Aabb,limits:Limits,force:=false,volumes:=false) {
+mark_box :: proc(n:^Navigation,box:mm.Aabb,limits:Limits,force:=false,volumes:=false,instant:=false) {
     for i in 0..<n.count {
         c:=&n.classes[i]
         if class_in_volume(n,i) {
@@ -424,7 +443,9 @@ mark_box :: proc(n:^Navigation,box:mm.Aabb,limits:Limits,force:=false,volumes:=f
                 if !tile_inside(c,coord,limits.surface) && ai.nav_mesh_tile_at(&c.mesh,coord)==nil {continue}
                 mark,_:=base.hash_map_insert(&c.marks,coord_key(coord))
                 if mark==nil {continue}
-                mark_set(c,mark,marked(mark^,force,!volumes))
+                next:=marked(mark^,force,!volumes)
+                next.instant|=instant
+                mark_set(c,coord_key(coord),mark,next)
             }
         }
     }
@@ -442,7 +463,7 @@ mark_zones :: proc(c:^Class_Mesh,box:mm.Aabb,air:[]mm.Aabb,force:bool) {
                 if !zone_inside(c,coord,air) && ai.nav_volume_zone_at(&c.volume,coord)==nil {continue}
                 mark,_:=base.hash_map_insert(&c.marks,zone_key(coord))
                 if mark==nil {continue}
-                mark_set(c,mark,marked(mark^,force))
+                mark_set(c,zone_key(coord),mark,marked(mark^,force))
             }
         }
     }
@@ -481,7 +502,7 @@ tile_inside :: proc "contextless" (c:^Class_Mesh,coord:[2]i32,limits:[]mm.Aabb) 
 @(step="fixed",loops="game editor",stage="react",server)
 navigation_build :: proc(
     n:^Navigation,b:^Navigation_Builds,settings:core.Ref(Navigation_Settings),bakes:^core.Table(Navigation_Bake,.Read),physics:core.Ref(phys.Physics_State),requests:^Nav_Build_Requests,
-    bounds:^core.Table(Nav_Bounds,.Read),areas:^core.Table(Nav_Area,.Read),links:^core.Table(Nav_Link,.Read),obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),time:core.Time,transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),
+    bounds:^core.Table(Nav_Bounds,.Read),areas:^core.Table(Nav_Area,.Read),links:^core.Table(Nav_Link,.Read),obstacles:^core.Table(Nav_Obstacle,.Read),colliders:^core.Table(phys.Collider,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),time:core.Time,transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),
     ground:core.Ref(core.Ground_Queries),sources:core.Ref(scene.Simulation_Sources),paths:^core.Table(Nav_Path,.Read),world:core.World_Ref,references:^core.Table(scene.Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),ids:^core.Table(core.Id,.Read),app:^host.App,problems:^core.Problems,
 ) {
     if ground.ptr!=nil && len(ground.unloaded.items)>0 {b.unloaded+=1}
@@ -532,7 +553,7 @@ navigation_build :: proc(
         for limit in limits.air {mark_box(n,limit,limits)}
     }
     areas_update(n,b,areas,volumes,splines,transforms,parents,limits,fresh,problems)
-    obstacles_update(n,b,obstacles,volumes,splines,transforms,parents,limits,time,fresh,problems)
+    obstacles_update(n,b,obstacles,colliders,volumes,splines,transforms,parents,physics,limits,time,fresh,problems)
     for asked in core.take(&requests.queue) {
         if asked.box=={} {
             for limit in limits.surface {mark_box(n,limit,limits,true)}
@@ -558,9 +579,11 @@ navigation_build :: proc(
     sections_update(n,b,limits,fresh)
     paging_update(n,b,q.unloaded,time.playing,fresh,reset,app,problems)
     b.ticks+=1
-    published,spent:=builds_publish(n,b,problems)
+    published,spent:=builds_publish(n,b,problems,wait=!time.playing)
     if published>0 {host.load_phase_add(app,.Nav_Tiles,spent,published)}
-    builds_start(n,b,physics,limits,gone,time.playing,sources.ptr,paths,worlds,&app.jobs,problems)
+    instant,carve_ns:=builds_start(n,b,physics,limits,gone,time.playing,sources.ptr,
+                                       paths,worlds,&app.jobs,problems)
+    if instant>0 {host.load_phase_add(app,.Nav_Tiles,carve_ns,instant)}
     // Tiles building keep a load from being resident.
     building:=false
     for build in b.builds {building||=build.busy}
@@ -735,7 +758,7 @@ areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:^core.Table(Nav_Ar
 // what each keeps around it (scene.sources_distance); without sources, in the
 // order of the marks. With no build free it looks at no mark.
 @(private)
-builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),limits:Limits,unloaded:Unloaded,playing:bool,sources:^scene.Simulation_Sources,paths:^core.Table(Nav_Path,.Read),worlds:^core.Table(core.World_Transform,.Read),job_system:^jobs.Job_System,problems:^core.Problems) {
+builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),limits:Limits,unloaded:Unloaded,playing:bool,sources:^scene.Simulation_Sources,paths:^core.Table(Nav_Path,.Read),worlds:^core.Table(core.World_Transform,.Read),job_system:^jobs.Job_System,problems:^core.Problems) -> (carved:int,ns:i64) {
     b.jobs=job_system
     per_tick:=int(n.settings.builds) if n.settings.builds>0 else 4
     for len(b.builds)<per_tick*NAV_BUILD_TICKS {
@@ -744,7 +767,15 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
         append(&b.builds,build)
     }
     start:=Build_Start{n=n,b=b,physics=physics,limits=limits,jobs=job_system,problems=problems,per_tick=per_tick,due=b.ticks+NAV_BUILD_TICKS}
-    if build_free(&start)==nil {return}
+    if build_free(&start)==nil {
+        instant:=false
+        for &c in n.classes[:n.count] {instant|=c.instant_ready>0}
+        if !instant {return}
+    }
+    defer {
+        carved=start.carved
+        ns=start.carve_ns
+    }
     marks_wanted(n,paths,worlds)
     // The marks nearest the sources, nearest first: no tick gathers more than NAV_CHECKS_PER_TICK.
     nearest:[NAV_CHECKS_PER_TICK]Build_Near
@@ -755,32 +786,19 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
     paging:=unloaded.ground if playing else nil
     for i in 0..<n.count {
         c:=&n.classes[i]
-        if c.ready==0 && (c.loading==0 || !loaded) {continue}
         volume:=class_in_volume(n,i)
-        it:=base.hash_map_iterator(&c.marks)
-        for key,mark in base.hash_map_iterate(&it) {
+        if loaded {
+            #reverse for key in c.loading_keys[:c.loading] {
+                b.looked+=1
+                build_mark_load(n,b,i,key,volume,unloaded,paging)
+            }
+        }
+        #reverse for key in c.ready_keys[:c.ready] {
             b.looked+=1
-            if !mark.dirty || mark.building {continue}
-            // What it reads is not all loaded: it keeps what it has and waits. With nothing to
-            // keep where only away sections are, it waits for nothing: a change there marks it
-            // again; nor in a run where only the terrain not loaded is, kept to mark when it loads.
-            box:=mark_box_of(c,key,volume)
-            if waits:=unloaded_overlaps(unloaded,box,!volume);waits!=mark.unloaded {
-                next:=mark^
-                next.unloaded=waits
-                mark_set(c,mark,next)
-            }
-            if mark.unloaded {
-                kept:=ai.nav_volume_zone_at(&c.volume,zone_of_key(key))!=nil if volume else ai.nav_mesh_tile_at(&c.mesh,coord_of_key(key))!=nil
-                if !kept && (sections_covered(&b.sections,box,!volume) || boxes_cover(paging,box,!volume) && paged_put(&b.paged[i],key,0)) {
-                    next:=mark^
-                    next.dirty,next.unloaded,next.wanted=false,false,false
-                    mark_set(c,mark,next)
-                }
-                continue
-            }
+            if !build_mark_load(n,b,i,key,volume,unloaded,paging) {continue}
+            mark:=base.hash_map_ptr(&c.marks,key)
             // Kept in order, the last of a full list giving its place.
-            at:=Build_Near{mark_distance(c,key,volume,sources),mark.wanted,i,key}
+            at:=Build_Near{mark_distance(c,key,volume,sources),mark.instant,mark.wanted,i,key}
             slot:=count
             for slot>0 && near_before(at,nearest[slot-1]) {slot-=1}
             if slot>=len(nearest) {continue}
@@ -790,19 +808,46 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
             count=last+1
         }
     }
+    b.unloaded_seen=revision
     for entry in nearest[:count] {
         mark:=base.hash_map_ptr(&n.classes[entry.class].marks,entry.key)
         if mark!=nil && !build_start(&start,entry.class,entry.key,mark) {return}
     }
-    b.unloaded_seen=revision
+    return
 }
 
 @(private)
-Build_Near :: struct {distance:f32,wanted:bool,class:int,key:u64}
+build_mark_load :: proc(
+    n:^Navigation,b:^Navigation_Builds,class:int,key:u64,volume:bool,
+    unloaded:Unloaded,paging:[]mm.Aabb,
+) -> bool {
+    c:=&n.classes[class]
+    mark:=base.hash_map_ptr(&c.marks,key)
+    box:=mark_box_of(c,key,volume)
+    waits:=unloaded_overlaps(unloaded,box,!volume)
+    next:=mark^
+    next.unloaded=waits
+    if waits {
+        kept:=ai.nav_volume_zone_at(&c.volume,zone_of_key(key))!=nil if volume else
+              ai.nav_mesh_tile_at(&c.mesh,coord_of_key(key))!=nil
+        if !kept && (sections_covered(&b.sections,box,!volume) ||
+                     boxes_cover(paging,box,!volume) && paged_put(&b.paged[class],key,0)) {
+            next.dirty,next.unloaded,next.wanted=false,false,false
+        }
+    }
+    if next!=mark^ {mark_set(c,key,mark,next)}
+    return !waits
+}
+
+@(private)
+Build_Near :: struct {distance:f32,instant,wanted:bool,class:int,key:u64}
 
 @(private)
 near_before :: #force_inline proc "contextless" (a,b:Build_Near) -> bool {
-    return a.wanted && !b.wanted || a.wanted==b.wanted && a.distance<b.distance
+    if a.instant!=b.instant {return a.instant}
+    if a.wanted!=b.wanted {return a.wanted}
+    if a.distance!=b.distance {return a.distance<b.distance}
+    return a.class<b.class || a.class==b.class && a.key<b.key
 }
 
 // Marks wanted the dirty tiles or zones on the way of each agent that waits
@@ -834,7 +879,7 @@ marks_wanted :: proc(n:^Navigation,paths:^core.Table(Nav_Path,.Read),worlds:^cor
             if mark==nil || !mark.dirty || mark.building || mark.wanted {continue}
             next:=mark^
             next.wanted=true
-            mark_set(c,mark,next)
+            mark_set(c,key,mark,next)
         }
     }
 }
@@ -872,7 +917,8 @@ Build_Start :: struct {
     problems:^core.Problems,
     per_tick:int,
     due:u64,
-    checks:int,
+    checks,carved:int,
+    carve_ns:i64,
 }
 
 // Gathers and hashes a marked tile or zone that waits for a build, and starts
@@ -884,12 +930,13 @@ build_start :: proc(s:^Build_Start,i:int,key:u64,mark:^Tile_Mark) -> bool {
     c:=&n.classes[i]
     if s.checks>=NAV_CHECKS_PER_TICK {return false}
     free:=build_free(s)
-    if free==nil {return false}
+    collision:=mark.collision
+    instant:=mark.instant && !collision && !class_in_volume(n,i)
+    if free==nil && !instant {return false}
     s.checks+=1
     next:=mark^
-    collision:=mark.collision
-    next.dirty,next.collision,next.wanted=false,false,false
-    mark_set(c,mark,next)
+    next.dirty,next.collision,next.wanted,next.instant=false,false,false,false
+    mark_set(c,key,mark,next)
     if class_in_volume(n,i) {
         zone:=zone_of_key(key)
         if !zone_inside(c,zone,limits_of(c,limits)) {
@@ -900,7 +947,7 @@ build_start :: proc(s:^Build_Start,i:int,key:u64,mark:^Tile_Mark) -> bool {
         complete,enough:=gather_zone(free,c,b,s.physics,zone)
         if !enough {
             next.dirty=true
-            mark_set(c,mark,next)
+            mark_set(c,key,mark,next)
             core.report(problems,core.NONE,"navigation.memory","No memory for the collision under a zone of class %q: it is built in a later tick; free memory",base.text_get(c.class.name[:]))
             return false
         }
@@ -912,7 +959,7 @@ build_start :: proc(s:^Build_Start,i:int,key:u64,mark:^Tile_Mark) -> bool {
         free.busy,free.class,free.air,free.zone,free.stamp,free.uid=true,i,true,zone,mark.stamp,n.uid
         free.volume_config=c.volume_config
         next.building=true
-        mark_set(c,mark,next)
+        mark_set(c,key,mark,next)
         build_launch(free,s.jobs,s.due)
         return true
     }
@@ -922,10 +969,20 @@ build_start :: proc(s:^Build_Start,i:int,key:u64,mark:^Tile_Mark) -> bool {
         mark.hash=0
         return true
     }
-    complete,enough:=gather(free,i,c,b,s.physics,coord,collision)
+    complete,enough:=false,false
+    if instant {
+        complete,enough=gather(&b.carve,i,c,b,s.physics,coord,false,only_field=true)
+        if b.carve.from_field {free=&b.carve}
+    }
+    if free==nil {
+        next.dirty,next.instant=true,true
+        mark_set(c,key,mark,next)
+        return true
+    }
+    if free!=&b.carve {complete,enough=gather(free,i,c,b,s.physics,coord,collision)}
     if !enough {
-        next.dirty,next.collision=true,collision
-        mark_set(c,mark,next)
+        next.dirty,next.collision,next.instant=true,collision,instant
+        mark_set(c,key,mark,next)
         core.report(problems,core.NONE,"navigation.memory","No memory for the collision under a tile of class %q: it is built in a later tick; free memory, or lower tile_cells in Navigation_Settings",base.text_get(c.class.name[:]))
         return false
     }
@@ -933,7 +990,11 @@ build_start :: proc(s:^Build_Start,i:int,key:u64,mark:^Tile_Mark) -> bool {
         n.stats.overflowed+=1
         core.report(problems,core.NONE,"navigation.tile_input","A tile of class %q at %v has more than %d triangles of static collision: it is built from part of them; lower tile_cells in Navigation_Settings",base.text_get(c.class.name[:]),coord,NAV_TRIANGLES_MAX)
     }
-    if free.hash==mark.hash {n.stats.unchanged+=1;return true}
+    if free.hash==mark.hash {
+        if free==&b.carve {ai.nav_tile_field_free(&free.field)}
+        n.stats.unchanged+=1
+        return true
+    }
     // No collision here: nothing to build, and a bake keeps no tile of it, so every load asks.
     if !free.from_field && len(free.indices)==0 && len(free.volumes)==0 {
         field_drop(b,i,coord)
@@ -945,8 +1006,13 @@ build_start :: proc(s:^Build_Start,i:int,key:u64,mark:^Tile_Mark) -> bool {
     free.busy,free.class,free.air,free.coord,free.stamp,free.uid=true,i,false,coord,mark.stamp,n.uid
     free.config=c.config
     next.building=true
-    mark_set(c,mark,next)
-    build_launch(free,s.jobs,s.due)
+    mark_set(c,key,mark,next)
+    if free==&b.carve {
+        build_job(free,jobs.OWNER)
+        publish_build(n,b,free,problems)
+        s.carved+=1
+        s.carve_ns+=free.ns
+    } else {build_launch(free,s.jobs,s.due)}
     return true
 }
 
@@ -966,7 +1032,7 @@ mark_box_of :: proc "contextless" (c:^Class_Mesh,key:u64,air:bool) -> mm.Aabb {
 @(private)
 build_launch :: proc(build:^Build,job_system:^jobs.Job_System,due:u64) {
     build.due=due
-    if jobs.worker_count(job_system)==0 {
+    if jobs.worker_count(job_system)<=1 {
         build_job(build,0)
         return
     }
@@ -1025,7 +1091,7 @@ gather_zone :: proc(build:^Build,c:^Class_Mesh,b:^Navigation_Builds,physics:core
 // copy of that instead of the collision, which is not read: the hash is the
 // same either way.
 @(private)
-gather :: proc(build:^Build,class:int,c:^Class_Mesh,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),coord:[2]i32,collision:bool) -> (complete,enough:bool) {
+gather :: proc(build:^Build,class:int,c:^Class_Mesh,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),coord:[2]i32,collision:bool,only_field:=false) -> (complete,enough:bool) {
     rect:=ai.nav_tile_rect(c.config,coord)
     margin:=ai.nav_build_margin(c.config)
     box:=mm.Aabb{{rect.min.x-margin,-1e9,rect.min.z-margin},{rect.max.x+margin,1e9,rect.max.z+margin}}
@@ -1039,13 +1105,15 @@ gather :: proc(build:^Build,class:int,c:^Class_Mesh,b:^Navigation_Builds,physics
         if field,ok:=ai.nav_tile_field_clone(&kept.field);ok {
             b.fields_clock+=1
             kept.used=b.fields_clock
-            build.field,build.from_field,build.geometry=field,true,kept.geometry
+            build.field=field
+            build.from_field,build.geometry=true,kept.geometry
             clear(&build.vertices)
             clear(&build.indices)
             complete,enough=true,true
         }
     }
     if !build.from_field {
+        if only_field {return false,true}
         complete,enough=gather_triangles(build,physics,box,c.filter)
         if !enough {return}
         config:=c.config
@@ -1113,67 +1181,77 @@ build_job :: proc(build:^Build,worker:int) {
 // are still what the tile needs: how many builds ended and what their jobs
 // took.
 @(private)
-builds_publish :: proc(n:^Navigation,b:^Navigation_Builds,problems:^core.Problems) -> (ended:int,ns:i64) {
+builds_publish :: proc(n:^Navigation,b:^Navigation_Builds,problems:^core.Problems,wait:=false) -> (ended:int,ns:i64) {
     for build in b.builds {
         if !build.busy || build.due>b.ticks {continue}
-        if jobs.pending(&build.counter) {jobs.wait(b.jobs,jobs.OWNER,&build.counter)}
-        build.busy=false
+        if jobs.pending(&build.counter) {
+            if !wait {continue}
+            jobs.wait(b.jobs,jobs.OWNER,&build.counter)
+        }
         ended+=1
-        b.looked+=1
         ns+=build.ns
-        defer ai.nav_tile_data_free(&build.result)
-        defer ai.nav_volume_data_free(&build.zone_result)
-        defer ai.nav_tile_field_free(&build.field)
-        if build.uid!=n.uid || build.class>=n.count {n.stats.discarded+=1;continue}
-        c:=&n.classes[build.class]
-        if build.air {
-            zone_publish(n,c,build,problems)
-            continue
-        }
-        // The heightfield of a build from the collision is that of what it read, whoever marked the
-        // tile meanwhile: a mark of the collision since has the next build read it again.
-        if !build.from_field {
-            if (build.status==.Built || build.status==.Empty) && build.field.block!=nil {field_keep(b,build)} else {field_drop(b,build.class,build.coord)}
-        }
-        mark:=base.hash_map_ptr(&c.marks,coord_key(build.coord))
-        if mark==nil {n.stats.discarded+=1;continue}
-        built:=mark^
-        built.building=false
-        mark_set(c,mark,built)
-        if mark.stamp!=build.stamp {n.stats.discarded+=1;continue}
-        switch build.status {
-        case .Built:
-            build.result.hash=build.hash
-            if ai.nav_mesh_add_tile(&c.mesh,build.result) {
-                build.result={}
-                mark.hash=build.hash
-                n.stats.built+=1
-                if build.from_field {n.stats.carved+=1}
-                n.revision+=1
-                links_mark(n,build.class,build.coord)
-            } else {
-                n.stats.failed+=1
-                core.report(problems,core.NONE,"navigation.tiles","The mesh of class %q has no room for another tile: raise max_tiles in Navigation_Settings",base.text_get(n.classes[build.class].class.name[:]))
-            }
-        case .Empty:
-            if ai.nav_mesh_remove_tile(&c.mesh,build.coord) {n.revision+=1;links_mark(n,build.class,build.coord)}
-            mark.hash=build.hash
-            n.stats.emptied+=1
-        case .Invalid,.Out_Of_Memory,.Too_Large:
-            n.stats.failed+=1
-            core.report(problems,core.NONE,"navigation.build","A tile of class %q at %v failed to build (%v): check its class in Navigation_Settings and the collision there",base.text_get(n.classes[build.class].class.name[:]),build.coord,build.status)
-        }
+        publish_build(n,b,build,problems)
     }
     return
 }
 
 @(private)
-zone_publish :: proc(n:^Navigation,c:^Class_Mesh,build:^Build,problems:^core.Problems) {
-    mark:=base.hash_map_ptr(&c.marks,zone_key(build.zone))
+publish_build :: proc(n:^Navigation,b:^Navigation_Builds,build:^Build,problems:^core.Problems) {
+    build.busy=false
+    b.looked+=1
+    defer ai.nav_tile_data_free(&build.result)
+    defer ai.nav_volume_data_free(&build.zone_result)
+    defer ai.nav_tile_field_free(&build.field)
+    if build.uid!=n.uid || build.class>=n.count {n.stats.discarded+=1;return}
+    c:=&n.classes[build.class]
+    if build.air {
+        zone_publish(n,c,build,problems)
+        return
+    }
+    // The heightfield of a build from the collision is that of what it read, whoever marked the
+    // tile meanwhile: a mark of the collision since has the next build read it again.
+    if !build.from_field {
+        if (build.status==.Built || build.status==.Empty) && build.field.block!=nil {field_keep(b,build)} else {field_drop(b,build.class,build.coord)}
+    }
+    key:=coord_key(build.coord)
+    mark:=base.hash_map_ptr(&c.marks,key)
     if mark==nil {n.stats.discarded+=1;return}
     built:=mark^
     built.building=false
-    mark_set(c,mark,built)
+    mark_set(c,key,mark,built)
+    if mark.stamp!=build.stamp {n.stats.discarded+=1;return}
+    switch build.status {
+    case .Built:
+        build.result.hash=build.hash
+        if ai.nav_mesh_add_tile(&c.mesh,build.result) {
+            build.result={}
+            mark.hash=build.hash
+            n.stats.built+=1
+            if build.from_field {n.stats.carved+=1}
+            n.revision+=1
+            links_mark(n,build.class,build.coord)
+        } else {
+            n.stats.failed+=1
+            core.report(problems,core.NONE,"navigation.tiles","The mesh of class %q has no room for another tile: raise max_tiles in Navigation_Settings",base.text_get(n.classes[build.class].class.name[:]))
+        }
+    case .Empty:
+        if ai.nav_mesh_remove_tile(&c.mesh,build.coord) {n.revision+=1;links_mark(n,build.class,build.coord)}
+        mark.hash=build.hash
+        n.stats.emptied+=1
+    case .Invalid,.Out_Of_Memory,.Too_Large:
+        n.stats.failed+=1
+        core.report(problems,core.NONE,"navigation.build","A tile of class %q at %v failed to build (%v): check its class in Navigation_Settings and the collision there",base.text_get(n.classes[build.class].class.name[:]),build.coord,build.status)
+    }
+}
+
+@(private)
+zone_publish :: proc(n:^Navigation,c:^Class_Mesh,build:^Build,problems:^core.Problems) {
+    key:=zone_key(build.zone)
+    mark:=base.hash_map_ptr(&c.marks,key)
+    if mark==nil {n.stats.discarded+=1;return}
+    built:=mark^
+    built.building=false
+    mark_set(c,key,mark,built)
     if mark.stamp!=build.stamp {n.stats.discarded+=1;return}
     switch build.status {
     case .Built:
@@ -1200,8 +1278,9 @@ zone_publish :: proc(n:^Navigation,c:^Class_Mesh,build:^Build,problems:^core.Pro
 // Obstacles block the surface under them once they have been still long
 // enough, and stop when they move; outside a run (the editor) they are still.
 @(private)
-obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),limits:Limits,time:core.Time,fresh:bool,problems:^core.Problems) {
-    moved:=boxes_touched(obstacles,volumes,splines,transforms,parents,&b.obstacles_seen) || fresh
+obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:^core.Table(Nav_Obstacle,.Read),colliders:^core.Table(phys.Collider,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),physics:core.Ref(phys.Physics_State),limits:Limits,time:core.Time,fresh:bool,problems:^core.Problems) {
+    moved:=boxes_touched(obstacles,volumes,splines,transforms,parents,&b.obstacles_seen) |
+           core.touched(colliders,&b.obstacle_colliders) || fresh
     // Unmoved, only those that settle need the tick.
     if !moved && b.settling==0 {return}
     seen,enough:=seen_reset(b,len(b.obstacles.values) if moved else 0,problems)
@@ -1216,19 +1295,19 @@ obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:^core.Tabl
         if moved {
             pose,ok:=core.world_of(transforms,parents,e)
             if !ok {continue}
-            box,volume,bounded:=volume_prism(volumes,splines,e,pose,ai.NAV_AREA_BLOCKED)
+            box,volume,bounded:=obstacle_prism(volumes,splines,physics,e,pose)
             if !bounded {
-                prism_missing(problems,e,"Nav_Obstacle")
+                core.report(problems,e,"navigation.volume","A Nav_Obstacle needs a bounded Volume or a Collider: give its entity one")
                 continue
             }
             if at<0 {
-                core.entity_map_put(&b.obstacles,e,Area_Seen{box=box,volume=volume})
+                core.entity_map_put(&b.obstacles,e,Area_Seen{box=box,volume=volume,instant=obstacle.settle<=0})
                 at=core.entity_map_index(&b.obstacles,e)
                 if at<0 {continue}
             } else if at<len(seen) {seen[at]=true}
             o:=&b.obstacles.values[at]
             if o.box!=box {
-                if o.blocks {mark_box(n,o.box,limits,volumes=true)}
+                if o.blocks {mark_box(n,o.box,limits,volumes=true,instant=o.instant || obstacle.settle<=0)}
                 // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
                 o.box=box
                 o.volume=volume
@@ -1237,16 +1316,18 @@ obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:^core.Tabl
             }
         } else if at<0 {continue}
         o:=&b.obstacles.values[at]
+        o.instant=obstacle.settle<=0
         o.still+=time.dt if running else obstacle.settle
         if !o.blocks && o.still>=obstacle.settle {
             o.blocks=true
-            mark_box(n,o.box,limits,volumes=true)
+            mark_box(n,o.box,limits,volumes=true,instant=o.instant)
         }
         if !o.blocks {b.settling+=1}
     }
     for at:=len(seen)-1;at>=0;at-=1 {
         if seen[at] {continue}
-        if b.obstacles.values[at].blocks {mark_box(n,b.obstacles.values[at].box,limits,volumes=true)}
+        o:=&b.obstacles.values[at]
+        if o.blocks {mark_box(n,o.box,limits,volumes=true,instant=o.instant)}
         core.entity_map_remove_at(&b.obstacles,at)
     }
 }
@@ -1264,7 +1345,8 @@ sections_update :: proc(n:^Navigation,b:^Navigation_Builds,limits:Limits,fresh:b
         for box in s.away[:s.away_count] {if box==old {still=true;break}}
         if !still {mark_box(n,old,limits)}
     }
-    b.away,b.away_count=s.away,s.away_count
+    b.away=s.away
+    b.away_count=s.away_count
     if s.away_count==0 {return}
     gone:=make([dynamic]u64,context.temp_allocator)
     for i in 0..<n.count {
@@ -1385,7 +1467,7 @@ paging_restore :: proc(n:^Navigation,b:^Navigation_Builds,boxes:[]mm.Aabb,app:^h
         volume:=class_in_volume(n,i)
         it:=base.hash_map_iterator(&back[i])
         for key in base.hash_map_iterate(&it) {
-            if mark,_:=base.hash_map_insert(&c.marks,key);mark!=nil {mark_set(c,mark,marked(mark^,false))}
+            if mark,_:=base.hash_map_insert(&c.marks,key);mark!=nil {mark_set(c,key,mark,marked(mark^,false))}
             // The links of the neighbours that reach into one that came back are made again.
             if !volume && ai.nav_mesh_tile_at(&c.mesh,coord_of_key(key))!=nil {links_mark(n,i,coord_of_key(key))}
         }

@@ -466,4 +466,61 @@ bench_nav_volume :: proc(t:^testing.T) {
     log.infof("nav_coarse_step_region_volume, 256 cells: %d steps, the longest %v",steps,longest)
 }
 
+@(test)
+bench_nav_tile_links :: proc(t:^testing.T) {
+    CAPACITY :: 4096
+    REPEATS :: 2_000
+    for distant in ([2]int{0,CAPACITY-1}) {
+        mesh:Nav_Mesh
+        test_mesh(t,&mesh,links=CAPACITY)
+        defer nav_mesh_destroy(&mesh)
+        for i in 0..<distant {
+            p:=math.Vec3{f32(i*4+400),0,1}
+            nav_mesh_add_link(&mesh,{start=p,end=p,owner=u64(i+1),area=NAV_AREA_WALKABLE})
+        }
+        link:=nav_mesh_add_link(&mesh,{start={0.25,0,0.25},end={0.5,0,0.25},
+            area=NAV_AREA_WALKABLE})
+        testing.expect(t,link!=0)
+        vertices:=[3]math.Vec3{{},{0,0,1},{1,0,0}}
+        polys:=[1]Nav_Poly{{vertices={0,1,2,0,0,0},count=3,area=NAV_AREA_WALKABLE}}
+        heads:[1]u32
+        data:=Nav_Tile_Data{vertices=vertices[:],polys=polys[:],poly_links=heads[:],
+            bounds={{},{1,0,1}}}
+        b:Bench
+        sink:=0
+        for bench_round(&b) {
+            for _ in 0..<REPEATS {
+                if nav_mesh_add_tile(&mesh,data) {sink+=1}
+                if nav_mesh_remove_tile(&mesh,{}) {sink+=1}
+            }
+        }
+        label:="tile add/remove with one link" if distant==0 else
+            "tile add/remove with 4095 distant links"
+        bench_report(label,&b,REPEATS,f32(sink))
+        testing.expect_value(t,sink,2*REPEATS*BENCH_ROUNDS)
+    }
+}
+
+@(test)
+bench_reservation_lookup :: proc(t:^testing.T) {
+    REPEATS :: 1000
+    r:Reservations
+    for i in 1..=RESERVATION_TARGETS {
+        testing.expect(t,reserve_take(&r,{u64(i),1},u64(i),1,1))
+    }
+    b:Bench
+    hits:=0
+    for bench_round(&b) {
+        for _ in 0..<REPEATS {
+            for i in 1..=RESERVATION_TARGETS {
+                if reserve_holds(&r,{u64(i),1},u64(i),1) {hits+=1}
+                if reserve_holds(&r,{u64(i),2},u64(i),1) {hits+=1}
+            }
+        }
+    }
+    bench_report("reservation lookups with equally many misses",&b,2*RESERVATION_TARGETS*REPEATS,
+        f32(hits))
+    testing.expect_value(t,hits,RESERVATION_TARGETS*REPEATS*BENCH_ROUNDS)
+}
+
 }

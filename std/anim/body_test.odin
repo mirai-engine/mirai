@@ -272,3 +272,25 @@ body_detect_keeps_hip_and_knee_of_a_leg_without_foot :: proc(t:^testing.T) {
     body_test_expect(t,rig,map_,.Hand_R,"right wrist")
     testing.expect_value(t,facing,math.Vec3{0,0,-1})
 }
+
+@(test)
+body_detect_classifies_side_tokens_on_hips_and_ankles :: proc(t:^testing.T) {
+    rig:=body_test_rig({
+        {"j_pelvis","",{0,1,0}},{"j_spine","j_pelvis",{0,1.2,0}},
+        {"j_neck","j_spine",{0,1.5,0}},{"j_head","j_neck",{0,1.6,0}},
+        {"j_hip_le","j_pelvis",{-.1,.95,0}},{"j_knee_lf","j_hip_le",{-.1,.5,0}},
+        {"j_ankle_le","j_knee_lf",{-.1,.08,0}},
+        {"j_hip_ri","j_pelvis",{.1,.95,0}},{"j_knee_rt","j_hip_ri",{.1,.5,0}},
+        {"j_ankle_ri","j_knee_rt",{.1,.08,0}},
+        {"j_eyeball_le","j_head",{-.05,1.6,-.1}},
+    })
+    map_:=body_map_empty()
+    if !testing.expect(t,body_detect(rig.parents,rig.names,rig.rest,rig.world,&map_)) {return}
+    body_test_expect(t,rig,map_,.Pelvis,"j_pelvis")
+    body_test_expect(t,rig,map_,.Hip_L,"j_hip_le")
+    body_test_expect(t,rig,map_,.Hip_R,"j_hip_ri")
+    body_test_expect(t,rig,map_,.Knee_L,"j_knee_lf")
+    body_test_expect(t,rig,map_,.Knee_R,"j_knee_rt")
+    body_test_expect(t,rig,map_,.Foot_L,"j_ankle_le")
+    body_test_expect(t,rig,map_,.Foot_R,"j_ankle_ri")
+}

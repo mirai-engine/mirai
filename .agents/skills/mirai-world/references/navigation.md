@@ -26,12 +26,9 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   copies the marks of the tiles, the settings and the counts every time.
 - It builds by itself, in `navigation_build` (`fixed`, `react`, game and editor, `server`):
   - **Where.** Inside the `Nav_Bounds`; with none, in the box of the static collision that blocks,
-    without sensors (`phys.static_bounds`). A `Nav_Bounds`, a `Nav_Area` or a `Nav_Obstacle`
-    covers the upright prism of the
-    [`Volume`](../../mirai-gameplay/references/libraries.md#volume) of its entity
-    (`volume_prism`): a box by its corners turned by the yaw, a sphere by the octagon around it.
-    Without one, or with a plane or an unbounded one, which no navmesh bounds, the
-    `navigation.volume` problem, and the navigation does not see it.
+    without sensors. A `Nav_Bounds` or `Nav_Area` uses the upright prism of the bounded
+    [Volume](../../mirai-gameplay/references/libraries.md#volume) on its entity.
+    `navigation.volume` reports a missing or unbounded shape.
   - **What.** The physics static collision (`phys.static_triangles`) that blocks the agents of the
     class (above), without dynamic or kinematic bodies, characters or sensors; the arcs of the
     generated links are checked against the same collision. Terrain and foliage enter
@@ -56,16 +53,13 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   - **How.** The input of each marked tile is collected on the loop thread and hashed, whatever
     the order of its triangles, so a bake holds in a world that added its shapes in another order;
     if the hash is that of the tile it has, it is not built. A tile with no input at all is empty
-    without a job. If not, a background job builds it and the tile is published `NAV_BUILD_TICKS`
-    ticks after its build started, only if nobody marked it again; a job not done by then is waited
-    for, so the tick of a tile never depends on how fast the threads ran. `builds` of
-    `Navigation_Settings` is the builds a tick starts: first the marked tiles and zones on the line
-    from each agent waiting for a path to its goal (`Tile_Mark.wanted`), as it finds no way or one
-    cut short until they are; then, with
-    [simulation sources](../../mirai-gameplay/references/libraries.md#sources-and-residency),
-    those nearest them, in metres (`scene.sources_distance`); without, in the order of the marks.
-    A tick with no build free looks at no mark. Publishing does not allocate; a replaced tile
-    expires its references.
+    without a job. A finished background job publishes once it is due and its mark still
+    matches. Gameplay defers pending jobs, and editor builds may wait for them. Queues hold
+    only dirty tiles and zones, with a separate queue for those waiting for collision to
+    load. Cached gate carves take priority, followed by the marks on the way of agents
+    waiting for a path and then those nearest the
+    [simulation sources](../../mirai-gameplay/references/libraries.md#sources-and-residency).
+    A replaced tile expires its references.
   - **Carving.** A build from the collision leaves the heightfield of its tile with
     `Navigation_Builds`, which keeps those of the last `NAV_FIELDS` tiles. A tile marked only by a
     `Nav_Area` or an obstacle since its build began is built again from that heightfield
@@ -77,9 +71,11 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
 - **Areas.** `Nav_Area_Kind` is a named id (`AREA_BLOCKED`, `AREA_WALKABLE` and the game's).
   `Nav_Area` marks its area on the surface inside its box; the cost per meter of each area is in
   the settings and an agent excludes areas with `Nav_Agent.avoid`.
-- **Obstacles.** `Nav_Obstacle` is a box that agents avoid while it moves; still for `settle`
-  seconds, it blocks the surface under it until it moves. In the editor, not running, it is
-  still.
+- **Obstacles.** `Nav_Obstacle` carves the prism of its bounded `Volume` or the world-space
+  bounds of its `Collider`. Agents avoid it as it moves. With a positive settle time it
+  carves once it has been still that long. With zero settle time, moving or removing it
+  updates ready tiles from their cached fields in the same build step. Tiles that need
+  fresh collision or still have a build in flight follow the build queue.
 
 ## Air and water volumes
 
@@ -105,18 +101,21 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   (`LINK_JUMP`, `LINK_DROP`, `LINK_CLIMB`, `LINK_LADDER`, `LINK_DOOR` or one of the game's) says
   what it requires: jump and drop by their geometry, abilities (`Nav_Ability`) by type and by
   their own.
-- The arc of a jump or drop `Nav_Link` is checked with physics like that of a generated one, with
-  the capsule of each class: the class it does not fit does not have it, or has it in the
-  direction that fits, and the `navigation.link_arc` problem says so. It is checked again when the
-  static collision changes over it.
+- Authored surface links start enabled. Toggling a link preserves its attachments and
+  tile references. A disabled link is excluded from planning and accepts no new crossings.
+  Capacity applies across classes and both directions. Navigation releases reservations
+  when a crossing ends or the agent stops, teleports or leaves navigation.
+- A jump or drop driven by navigation checks its arc against the static collision of each
+  class. `navigation.link_arc` reports a blocked arc. Static changes through that arc
+  trigger another check.
 - **Between the mesh and a volume.** A `LINK_FLY` `Nav_Link` is a takeoff: it goes from the
   ground, at its entity, to the air, at its end; in both directions it also lands. It is not a
   mesh link: those that walk and those that fly take it. `LINK_SWIM` is not placed: it is the type
   of the shores that an amphibian's search joins by itself ([agents](#agents)).
-- Generated ones come out of the walls of each tile of a class that jumps or drops
-  (`ai.nav_jump_links`), with an arc that a capsule of the class travels free according to
-  physics; that of a drop first leaves the edge and then falls, and lands at least two diameters
-  from the wall. They are rebuilt when a tile within reach of a jump changes, also those of a tile
+- Each class opts into generated links by setting its jump and drop limits. The default
+  Human generates none. They come out of tile walls, with arcs that a capsule travels free
+  according to physics. A drop first leaves the edge and lands at least two diameters from
+  the wall. They are rebuilt when a tile within reach of a jump changes, also those of a tile
   waiting for its collision, from what it keeps. Their owner is `LINK_OWNER_GENERATED` with the
   tile coordinate.
 - A link requires what it measures; A* discards it for an agent that cannot cross it, which goes
@@ -124,14 +123,14 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
 
 ## Agents
 
-- `Nav_Agent` goes on an entity with `Character` and a capsule collider. Its class is the
-  smallest that contains its capsule and that does not climb more or walk steeper than its
-  `Character`; with a `Fly`, the smallest air class that contains it while it flies, and with a
-  `Swim`, that of the water while it swims (both always, without `Walk`).
-  With none, the `navigation.agent_class` problem says what radius and height are missing.
+- `Nav_Agent` goes on an entity with `Character` and a capsule collider. In each space,
+  navigation looks for the smallest class of the collider's preset that fits the capsule
+  and respects the character's step and slope limits. It considers Default when that space
+  has no class of the collider's preset. An optional class name selects a specific class in
+  its space, subject to the same geometric limits.
 - **Two spaces.** With a `Walk`, one that swims or flies has the surface class while physics has
-  it walking and that of the water or air while it swims or flies; `Nav_Path.partner` is the class
-  of the other space. Its path is a search over the mesh of one and the volume of the other,
+  it walking and that of the water or air while it swims or flies. Its path is a search
+  over the mesh of one and the volume of the other,
   joined by shores (where a polygon borders the ground under deep water, near the path, round
   trip) or by takeoffs; under water the ground is not walked, it swims through the volume. Its
   corridor reaches the crossing: there it goes to `Crossing` with the crossing's type, asks to fly
@@ -147,7 +146,10 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   `Character.gravity_scale`), drop from `Nav_Agent.drop` (or its class's) and its abilities.
 - It is asked through `Nav_Requests`: `nav_move_to`, `nav_follow`, `nav_stop`, `nav_look_at`,
   `nav_look_along`, `nav_crossing_done`. `Nav_Path`, which navigation adds and only navigation
-  writes, says what it is doing; `Nav_Events` reports arrivals, failures and crossings.
+  writes, reports its current state. `Nav_Events` reports arrivals, failures and crossings.
+  Navigation keeps the corridor and avoidance boundary in its per-world route pool and
+  removes the route, path status and drive when the agent component is removed.
+  Search memory for volumes and the coarse graph is allocated when those searches need it.
 - **Followers of one target.** Several walkers of a class that walk and cross the same and follow
   the same entity read their paths from one search toward it
   ([std/ai](../../mirai-std/references/ai.md#queries-nav_queryodin)): the first plans its own way,
@@ -155,24 +157,22 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   than a follower plans again, or a way read from it crossed a polygon that expired: a tile built
   elsewhere does not touch it. One it does not reach (cut off, or beyond what the search holds)
   searches its own way. While the target moves, the end of each follower's corridor slides after it
-  over the surface; a follower plans again only once a wall stops that end short of the target.
+  over the surface; a follower plans again when a wall stops that end short of the target.
+  A follower resumes just beyond its arrival radius and excludes its target from ORCA.
   Those that fly, swim or cross between spaces, and a way into a far section, search alone.
 - `navigation_agents` (`fixed`, `apply`, `server`): searches paths in portions in arrival order
   within `path_iterations` per tick, moves the corridor to where the body is, goes to the next
   corner, steps aside from the others with ORCA (characters that do not navigate, obstacles and
   agents idle, crossing a link or farther than `Navigation_Settings.avoidance_reach` from every
   simulation source (`scene.sources_distance`) enter as neighbors that do not step aside: it
-  takes the whole change, at their real velocity) and writes the `Move_Input`, unless a seat
-  drives the body: its velocity as a velocity (`Move_Input.velocity`), which the locomotion takes
-  up to the top speed of its mode (crouched, backing off). It turns at the `turn_speed` of its
-  `Character` and adds the turn of the ground.
+  takes the whole change, at their real velocity). Workers solve avoidance from the same
+  snapshot. Navigation writes a `Locomotion_Drive` for movement and facing. Locomotion
+  limits the velocity to the top speed of its mode and preserves any seat buttons.
+  A seated agent opts into navigation's drive while a path is active with `Nav_Agent.seated`.
+  The seat takes over when the drive is released.
 - **Neighbors as far as the horizon.** An agent gathers those it may meet within
   `NAV_AGENT_HORIZON` at its speed and theirs, from the cells around its own in blocks that grow
   until they hold that reach, or as many neighbors nearer than the block as ORCA counts.
-- **Seated** (`Nav_Agent.seated`, click to move): a body a seat drives walks while its path is
-  `Moving` or `Crossing`, after the seat wrote its `Move_Input` in the tick: navigation replaces
-  the move and the look, and keeps the seat's buttons and the turn of the ground it added. Idle,
-  arrived or failed, the seat moves it again.
 - **Stepping aside without leaving the navmesh.** The edges of its navmesh that one that walks
   could reach within `NAV_AGENT_WALL_HORIZON` are walls of its ORCA program, ahead of its
   neighbors: no velocity it chooses crosses them, and toward an edge it slides along it. Without
@@ -184,12 +184,13 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
 - **Planning on the way.** While its path is searched (`Waiting`), one that walks goes on along
   the corridor it has, from whose first polygon the search starts. It plans again when a step
   ahead stops being valid or the end of a cut corridor is near: `Arrived` only at the goal.
-  A `partial` path plans again each time a tile is built (`Navigation.revision` grows); at its
-  end it waits, `Moving` toward its goal, while its class still has tiles to build, and is
-  `Arrived` and `partial` only once it has none: tiles not built yet are never an arrival.
-- **Blocked.** One that walks in place within its radius (asking for a quarter of its speed or
-  more, so not one that ORCA holds back) plans once more after `NAV_BLOCKED` and fails after
-  twice that, with `navigation.blocked`.
+  At the end of a partial path the agent waits while its class still has tiles to build,
+  then reports `Arrived_Partial`. It plans again when the mesh changes. A place requested
+  via `core.place` cancels its corridor and active search. The next search starts at the
+  new pose.
+- **Blocked.** An agent that asks to walk and stays in place tries a new path before it
+  fails with `navigation.blocked`. Agents queued behind moving or crossing agents keep
+  waiting.
 - **Searching in the air.** A request cuts the crossing in progress and searches in the same tick.
   If the body is not standing on the ground (it falls, or jumps between roofs) and there is no
   navmesh within its reach, the search waits for it to be standing instead of failing with
@@ -208,8 +209,11 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   the same arc that generation checked; `Climb` and `Ladder`, along the link without gravity
   (`navigation_crossing`, before `locomotion_step`, which looks at the paths only while
   `Nav_Crossings` counts an agent crossing). `Door`, the game's types and those of
-  `Nav_Agent.manual` wait for `nav_crossing_done`. A crossing that does not land in time plans
-  again.
+  `Nav_Agent.manual` wait for `nav_crossing_done`. Authored surface crossings expose the
+  link entity in `Nav_Path` and `Nav_Events`. A passthrough link is driven by the game,
+  with collision suspended while an animation or pose target moves the character.
+  Finishing or canceling restores collision. An automatic crossing that overruns its
+  time plans again.
 
 ## Sections
 
@@ -331,7 +335,10 @@ It needs no component or configuration.
   their heightfields and equal to those the collision gives; the crossing of links that looks at no
   path while none crosses; the tiles waiting for unloaded collision, with and without `Nav_Bounds`,
   and those of the unloaded terrain, which are dropped in a running world, kept in the edited one
-  and come back from their bake without being built. Sections: the bakes of two that stitch at their
+  and come back from their bake without being built. Runtime regressions cover stable link
+  toggles, shared capacity, ghosted traversal, collider-only gates, close following, partial
+  arrival, teleport and route cleanup, crowd queuing, lazy scratch, deterministic parallel
+  avoidance and nonblocking publication. Sections: the bakes of two that stitch at their
   border, the tiles of one that leaves and comes back with its bake, nothing to do without changes,
   an agent that crosses an unloaded section far away and appears in the next, one that arrives far
   away and appears when its section loads, one that receives requests far away, one that flies far

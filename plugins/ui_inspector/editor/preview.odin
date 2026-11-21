@@ -589,7 +589,8 @@ preview_column :: proc(s:^editor.Session,u:^Ui_Inspector,app:^host.App) {
             ui.tree_build(ctx,&p.tree,&p.instance,desc)
         }
         ui.animated_end(ctx)
-        ctx.game,ctx.nav_group,ctx.safe=saved_game,saved_group,saved_safe
+        ctx.game=saved_game
+        ctx.nav_group,ctx.safe=saved_group,saved_safe
         if r,found:=ui.widget_rect(ctx,game_box);found {p.center,p.game={r.x+r.w*0.5,r.y+r.h*0.5},r}
         p.scale=scale
         if u.stage.trying {

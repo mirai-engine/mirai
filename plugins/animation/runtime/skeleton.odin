@@ -3,6 +3,7 @@ package anim
 import "core:mem"
 import "core:slice"
 import "core:strings"
+import "core:sync"
 import "core:math/linalg"
 import "mirai:asset"
 import "mirai:core"
@@ -39,7 +40,7 @@ bone_ref :: proc(name:string) -> (Bone_Ref,bool) #optional_ok {
     return result,true
 }
 
-bone_ref_hash :: proc(reference:Bone_Ref) -> (u64,bool) #optional_ok {
+bone_ref_hash :: proc "contextless" (reference:Bone_Ref) -> (u64,bool) #optional_ok {
     reference:=reference
     terminated:=false
     for byte in reference.path {if byte==0 {terminated=true;break}}
@@ -73,6 +74,20 @@ body_label :: proc "contextless" (hash:u64) -> (part:lib.Body_Part,regions:lib.B
     return
 }
 
+@(private)
+pose_bone_problem :: proc(problems:^core.Problems,entity:core.Entity,code,operation:string,hash:u64) {
+    if part,_,found,_:=body_label(hash);found {
+        names:=lib.BODY_PART_NAMES
+        core.report(problems,entity,code,
+            "a %s was asked for '@%s', which this rig does not have; skeleton.body.detect finds its parts and skeleton.body.set fixes them",
+            operation,names[part])
+    } else {
+        core.report(problems,entity,code,
+            "a %s was asked for bone 0x%016x, which this rig does not have; name one of its bones (animation.asset.inspect lists them)",
+            operation,hash)
+    }
+}
+
 // How to fix a reference a rig could not resolve.
 bone_fix :: proc(reference:Bone_Ref) -> string {
     reference:=reference
@@ -102,6 +117,7 @@ Skeleton_Content :: struct {
     id:base.Asset_Id,
     stamp:[2]i64,
     checked,revision:u64,
+    topology:^Skeleton_Topology,
     bones:[]asset.Skeleton_Bone,
     sockets:[]asset.Skeleton_Socket,
     mirror:[]i32, // by bone: the one whose name names the other side, itself when none or several do
@@ -118,7 +134,7 @@ Skeleton_Assets :: struct {
 
 skeleton_assets_free :: proc(cache:^Skeleton_Assets) {
     if cache.allocator.procedure!=nil {context.allocator=cache.allocator}
-    for content in cache.contents {delete(content.bones);delete(content.sockets);delete(content.mirror)}
+    for content in cache.contents {skeleton_topology_release(content.topology);delete(content.bones);delete(content.sockets);delete(content.mirror)}
     delete(cache.contents);delete(cache.rows)
     cache^={}
 }
@@ -158,6 +174,7 @@ skeleton_content :: proc(cache:^Skeleton_Assets,assets:^host.Assets,allocator:ru
     if error==.None && len(bones)==0 {error=.Invalid}
     content.error=error
     if error==.Out_Of_Memory {content.checked=0;return nil}
+    skeleton_topology_release(content.topology);content.topology=nil
     delete(content.bones);delete(content.sockets);delete(content.mirror);content.bones,content.sockets,content.mirror=bones,sockets,mirror
     content.body=body if error==.None else lib.body_map_empty()
     content.stamp,content.checked=stamp,assets_stamp(assets);content.revision+=1
@@ -205,52 +222,122 @@ skeleton_mirror_pairs :: proc(bones:[]asset.Skeleton_Bone,allocator:=context.all
     return pairs,true
 }
 
-skeleton_bind :: proc(playback:^Playback,state:^Playing,content:^Skeleton_Content,clip:^host.Content_Animation,transforms:^core.Table(core.Transform)) -> bool {
-    root,exists:=core.get(transforms,state.entity)
-    if !exists {return false}
+Pose_Topology :: struct {
+    parents:[dynamic]i32,
+    targets,aliases:[dynamic]u64,
+    rest:[dynamic]mm.Transform,
+    mirror_pairs:[dynamic]i32,
+    mirror_corrections:[dynamic]mm.Quat,
+    regions:[dynamic]i8,
+}
+
+Skeleton_Topology :: struct {
+    allocator:mem.Allocator,
+    refs:int,
+    using data:Pose_Topology,
+    plane:lib.Mirror_Plane,
+    body:[lib.Body_Part]i32,
+}
+
+playing_topology :: #force_inline proc "contextless" (state:^Playing) -> ^Pose_Topology {
+    return &state.shared_topology.data if state.shared_topology!=nil else &state.owned_topology
+}
+
+@(private)
+pose_topology_free :: proc(data:^Pose_Topology) {
+    delete(data.parents);delete(data.targets);delete(data.aliases);delete(data.rest)
+    delete(data.mirror_pairs);delete(data.mirror_corrections);delete(data.regions)
+    data^={}
+}
+
+@(private)
+skeleton_topology_retain :: proc(topology:^Skeleton_Topology) {
+    if topology!=nil {sync.atomic_add(&topology.refs,1)}
+}
+
+@(private)
+skeleton_topology_release :: proc(topology:^Skeleton_Topology) {
+    if topology==nil || sync.atomic_sub(&topology.refs,1)!=1 {return}
+    pose_topology_free(&topology.data)
+    free(topology,topology.allocator)
+}
+
+@(private)
+playing_topology_free :: proc(state:^Playing) {
+    skeleton_topology_release(state.shared_topology)
+    state.shared_topology=nil
+    pose_topology_free(&state.owned_topology)
+}
+
+@(private)
+skeleton_topology_make :: proc(content:^Skeleton_Content) -> (topology:^Skeleton_Topology,ok:bool) {
+    if cached:=content.topology;cached!=nil {skeleton_topology_retain(cached);return cached,true}
+    next,error:=new(Skeleton_Topology)
+    if error!=nil {return nil,false}
+    next.allocator,next.refs=context.allocator,1
+    defer if !ok {skeleton_topology_release(next)}
     count:=len(content.bones)+1
-    next:Playing
-    defer playing_free(&next)
-    if resize(&next.bindings,count)!=nil || resize(&next.parents,count)!=nil || resize(&next.targets,count)!=nil || resize(&next.aliases,count)!=nil ||
-       resize(&next.rest,count)!=nil || resize(&next.local,count)!=nil || resize(&next.world,count)!=nil || resize(&next.sampled,count)!=nil || resize(&next.previous,count)!=nil {return false}
-    next.bindings[0]={entity=state.entity,parent=-1,rest=core.to_math(root)}
-    next.parents[0]=-1;next.rest[0]=core.to_math(root)
+    if resize(&next.parents,count)!=nil || resize(&next.targets,count)!=nil ||
+        resize(&next.aliases,count)!=nil || resize(&next.rest,count)!=nil {return}
+    next.parents[0],next.rest[0]=-1,mm.TRANSFORM_IDENTITY
     for &bone,i in content.bones {
         index:=i+1
-        reference:=mm.Transform{position=bone.translation,rotation=bone.rotation,scale=bone.scale}
-        driven:Property_Set
-        if clip!=nil {driven=targeted(&clip.lib,bone.target)}
-        next.bindings[index]={target=bone.target,entity=core.NONE,parent=bone.parent+1,rest=reference,driven=driven}
-        next.parents[index],next.targets[index],next.rest[index]=bone.parent+1,bone.target,reference
+        next.parents[index]=bone.parent+1
+        next.targets[index]=bone.target
+        next.rest[index]={bone.translation,bone.rotation,bone.scale}
         next.aliases[index]=base.name_hash(base.text_get(bone.name[:]))
     }
-    copy(next.local[:],next.rest[:]);copy(next.previous[:],next.rest[:])
-    plane:=lib.MIRROR_PLANE_DEFAULT
+    next.plane=lib.MIRROR_PLANE_DEFAULT
     if len(content.mirror)==len(content.bones) {
-        if resize(&next.mirror_pairs,count)!=nil || resize(&next.mirror_corrections,count)!=nil || resize(&next.mirror_scratch,count*2)!=nil {return false}
-        next.mirror_pairs[0]=0
+        scratch,no_scratch:=make([]mm.Transform,count*2,context.temp_allocator)
+        if no_scratch!=nil {return}
+        defer delete(scratch,context.temp_allocator)
+        if resize(&next.mirror_pairs,count)!=nil || resize(&next.mirror_corrections,count)!=nil {return}
         for pair,i in content.mirror {next.mirror_pairs[i+1]=pair+1}
         mirrored:bool
-        if plane,mirrored=lib.mirror_prepare(next.parents[:],next.mirror_pairs[:],next.rest[:],next.mirror_corrections[:],next.mirror_scratch[:]);!mirrored {clear(&next.mirror_pairs);clear(&next.mirror_corrections);clear(&next.mirror_scratch)}
+        next.plane,mirrored=lib.mirror_prepare(next.parents[:],next.mirror_pairs[:],next.rest[:],next.mirror_corrections[:],scratch)
+        if !mirrored {clear(&next.mirror_pairs);clear(&next.mirror_corrections)}
     }
     body:=content.body
     for &bone,part in body.bones {if bone>=0 {bone+=1;next.body[part]=bone}}
     if next.body!={} {
-        if resize(&next.regions,count)!=nil {return false}
+        if resize(&next.regions,count)!=nil {return}
         if !lib.body_regions(next.parents[:],body,next.regions[:]) {clear(&next.regions);next.body={}}
     }
+    if content.checked!=0 {
+        skeleton_topology_retain(next)
+        content.topology=next
+    }
+    return next,true
+}
+
+skeleton_bind :: proc(playback:^Playback,state:^Playing,content:^Skeleton_Content,clip:^host.Content_Animation,transforms:^core.Table(core.Transform)) -> bool {
+    root,exists:=core.get(transforms,state.entity)
+    if !exists {return false}
+    topology,ok:=skeleton_topology_make(content)
+    if !ok {return false}
+    count:=len(topology.rest)
+    next:=Playing{shared_topology=topology}
+    defer playing_free(&next)
+    if resize(&next.bindings,count)!=nil || !playing_pose_resize(&next,count) {return false}
+    next.bindings[0]={entity=state.entity,parent=-1}
+    for i in 1..<count {
+        target:=topology.targets[i]
+        driven:=targeted(&clip.lib,target) if clip!=nil else Property_Set{}
+        next.bindings[i]={target=target,parent=topology.parents[i],driven=driven}
+    }
+    copy(playing_pose(&next,.Local),topology.rest[:]);copy(playing_pose(&next,.Previous),topology.rest[:])
+    playing_pose(&next,.Local)[0],playing_pose(&next,.Previous)[0]=core.to_math(root),core.to_math(root)
     if !tracks_bind(playback,&next,clip) {return false}
     tracks_release(playback,state);state.tracks,next.tracks=next.tracks,0
-    delete(state.bindings);delete(state.parents);delete(state.targets);delete(state.aliases)
-    delete(state.rest);delete(state.local);delete(state.world);delete(state.sampled);delete(state.previous)
-    delete(state.mirror_pairs);delete(state.mirror_corrections);delete(state.mirror_scratch);delete(state.regions)
-    state.bindings,state.parents,state.targets,state.aliases=next.bindings,next.parents,next.targets,next.aliases
-    state.rest,state.local,state.world,state.sampled,state.previous=next.rest,next.local,next.world,next.sampled,next.previous
-    state.mirror_pairs,state.mirror_corrections,state.mirror_scratch,state.mirror_plane=next.mirror_pairs,next.mirror_corrections,next.mirror_scratch,plane
-    state.body,state.regions=next.body,next.regions
-    next.bindings,next.parents,next.targets,next.aliases=nil,nil,nil,nil
-    next.rest,next.local,next.world,next.sampled,next.previous=nil,nil,nil,nil,nil
-    next.mirror_pairs,next.mirror_corrections,next.mirror_scratch,next.regions=nil,nil,nil,nil
+    playing_topology_free(state)
+    delete(state.bindings);delete(state.pose_slab)
+    state.shared_topology,next.shared_topology=next.shared_topology,nil
+    state.bindings,next.bindings=next.bindings,nil
+    state.pose_slab,next.pose_slab=next.pose_slab,nil
+    state.pose_count=next.pose_count
+    state.mirror_plane=topology.plane
+    state.body=topology.body
     state.skeleton=content.id;state.skeleton_revision=content.revision
     playback.binding_revision+=1;state.bound=playback.binding_revision
     state.pose_ready=false
@@ -274,9 +361,9 @@ bone_find :: proc(state:^Playing,hash:u64) -> int {
 
 @(private)
 bone_named :: proc(state:^Playing,hash:u64) -> int {
-    for target,i in state.targets {if target==hash {return i}}
+    for target,i in playing_topology(state).targets {if target==hash {return i}}
     found:=-1
-    for alias,i in state.aliases {
+    for alias,i in playing_topology(state).aliases {
         if hash==0 || alias!=hash {continue}
         if found>=0 {return -1}
         found=i
@@ -304,17 +391,17 @@ layer_mask :: proc(state:^Playing,over:Layer_Over,weights:[]f32) -> bool {
         if root<0 {
             if state.body=={} {return false}
             part,named,is_part,is_region:=body_label(branch.bone)
-            if is_region && len(state.regions)==n {regions=named} else if is_part && state.body[part]>0 {root=int(state.body[part])} else {return false}
+            if is_region && len(playing_topology(state).regions)==n {regions=named} else if is_part && state.body[part]>0 {root=int(state.body[part])} else {return false}
         }
         step:=1/f32(max(branch.depth,1))
         for b in 0..<n {
             // Bones of the branch from b up to where it starts; parents come before their bones.
             steps:=0
             if root<0 {
-                for at:=b;at>=0 && lib.body_region_inside(state.regions[at],regions);at=int(state.parents[at]) {steps+=1}
+                for at:=b;at>=0 && lib.body_region_inside(playing_topology(state).regions[at],regions);at=int(playing_topology(state).parents[at]) {steps+=1}
             } else {
                 at:=b
-                for at>root {at=int(state.parents[at]);steps+=1}
+                for at>root {at=int(playing_topology(state).parents[at]);steps+=1}
                 steps=steps+1 if at==root else 0
             }
             weights[b]=max(weights[b],min(f32(steps)*step,1))
@@ -323,9 +410,9 @@ layer_mask :: proc(state:^Playing,over:Layer_Over,weights:[]f32) -> bool {
     return true
 }
 
-bone_target :: proc(state:^Playing,reference:Bone_Ref) -> u64 {
-    index:=bone_resolve(state,reference)
-    return state.targets[index] if index>=0 else bone_ref_hash(reference)
+bone_target :: proc(state:^Playing,hash:u64) -> u64 {
+    index:=bone_find(state,hash)
+    return playing_topology(state).targets[index] if index>=0 else hash
 }
 
 // A clip moves its root bone in the space of the bone's parent; the root motion of the rig is in
@@ -333,15 +420,15 @@ bone_target :: proc(state:^Playing,reference:Bone_Ref) -> u64 {
 // centimeters to meters and turns Z up into Y up, carry it there with their rest.
 root_motion_to_rig :: proc "contextless" (state:^Playing,root:u64,moved:mm.Vec3,turned:mm.Quat) -> (mm.Vec3,mm.Quat) {
     bone:=-1
-    for target,i in state.targets {if target==root {bone=i;break}}
-    if bone<0 || bone>=len(state.parents) || len(state.rest)!=len(state.parents) || state.parents[bone]<0 {return moved,turned}
+    for target,i in playing_topology(state).targets {if target==root {bone=i;break}}
+    if bone<0 || bone>=len(playing_topology(state).parents) || len(playing_topology(state).rest)!=len(playing_topology(state).parents) || playing_topology(state).parents[bone]<0 {return moved,turned}
     above:=mm.TRANSFORM_IDENTITY
     steps:=0
     // Only the bones above the root: a bound rig's first slot is its entity (no target), whose
     // Transform when it was bound is not part of the rig's space.
-    for parent:=state.parents[bone];parent>=0 && int(parent)<len(state.rest) && steps<len(state.rest);parent=state.parents[parent] {
-        if int(parent)<len(state.targets) && state.targets[parent]==0 {break}
-        above=mm.transform_compose(state.rest[parent],above);steps+=1
+    for parent:=playing_topology(state).parents[bone];parent>=0 && int(parent)<len(playing_topology(state).rest) && steps<len(playing_topology(state).rest);parent=playing_topology(state).parents[parent] {
+        if int(parent)<len(playing_topology(state).targets) && playing_topology(state).targets[parent]==0 {break}
+        above=mm.transform_compose(playing_topology(state).rest[parent],above);steps+=1
     }
     return mm.transform_vector(above,moved),linalg.normalize(above.rotation*turned*conj(above.rotation))
 }
@@ -350,17 +437,18 @@ animation_bone_transform :: proc(playback:^Playback,rig:core.Entity,bone:Bone_Re
     if playback==nil {return mm.TRANSFORM_IDENTITY,false}
     state:=constraint_playing(playback,rig)
     index:=bone_resolve(state,bone)
-    if state==nil || !state.pose_ready || index<0 || index>=len(state.world) {return mm.TRANSFORM_IDENTITY,false}
-    return state.world[index],true
+    if state==nil || !state.pose_ready || index<0 || index>=len(playing_pose(state,.World)) {return mm.TRANSFORM_IDENTITY,false}
+    return playing_pose(state,.World)[index],true
 }
 
 Bone_Handle :: struct {rig:core.Entity,index:i32,revision:u64}
-Pose_Request :: struct {rig:core.Entity,bone:Bone_Ref,transform:mm.Transform,weight:f32,binding:Bone_Handle}
+Pose_Request :: struct {rig:core.Entity,bone:u64,transform:mm.Transform,weight:f32,binding:Bone_Handle}
 
 animation_pose :: proc(requests:^Animation_Requests,rig:core.Entity,bone:Bone_Ref,transform:mm.Transform,weight:f32=1) {
     if requests==nil {return}
-    if _,valid:=bone_ref_hash(bone);rig==core.NONE || !valid {core.refuse(&requests.poses);return}
-    pose_request_offer(&requests.poses,{rig=rig,bone=bone,transform=transform,weight=weight})
+    hash,valid:=bone_ref_hash(bone)
+    if rig==core.NONE || !valid {core.refuse(&requests.poses);return}
+    pose_request_offer(&requests.poses,{rig=rig,bone=hash,transform=transform,weight=weight})
 }
 
 @(private)
@@ -386,9 +474,9 @@ animation_sample_pose :: proc(playback:^Playback,rig:core.Entity,out:[]mm.Transf
     if playback==nil {return}
     state:=constraint_playing(playback,rig)
     if state==nil || state.seen!=playback.frame {return}
-    count,revision=len(state.sampled),state.bound
+    count,revision=len(playing_pose(state,.Sampled)),state.bound
     if len(out)<count {return}
-    ok=lib.skeleton_world(playing_skeleton(state),state.sampled[:],out[:count],parent_world)
+    ok=lib.skeleton_world(playing_skeleton(state),playing_pose(state,.Sampled),out[:count],parent_world)
     return
 }
 
@@ -402,8 +490,9 @@ animation_pose_final :: proc{animation_pose_final_ref,animation_pose_final_bindi
 
 animation_pose_final_ref :: proc(requests:^Animation_Requests,rig:core.Entity,bone:Bone_Ref,world:mm.Transform,weight:f32=1) {
     if requests==nil {return}
-    if _,valid:=bone_ref_hash(bone);rig==core.NONE || !valid {core.refuse(&requests.final_poses);return}
-    pose_request_offer(&requests.final_poses,{rig=rig,bone=bone,transform=world,weight=weight})
+    hash,valid:=bone_ref_hash(bone)
+    if rig==core.NONE || !valid {core.refuse(&requests.final_poses);return}
+    pose_request_offer(&requests.final_poses,{rig=rig,bone=hash,transform=world,weight=weight})
 }
 
 animation_pose_final_binding :: proc(requests:^Animation_Requests,binding:Bone_Handle,world:mm.Transform,weight:f32=1) {
@@ -415,18 +504,18 @@ animation_pose_final_binding :: proc(requests:^Animation_Requests,binding:Bone_H
 @(private)
 final_pose_apply :: proc(state:^Playing,playback:^Playback,parent_world:mm.Transform,requests:[]Pose_Request,problems:^core.Problems) {
     if len(requests)==0 {return}
-    count:=len(state.local)
+    count:=len(playing_pose(state,.Local))
     if len(playback.final_rows)<count && resize(&playback.final_rows,count)!=nil {memory_problem(problems,state.entity,"the final poses asked for this rig");return}
     for &row in playback.final_rows[:count] {row=-1}
     for request,i in requests {
         if request.rig!=state.entity {continue}
         bone:=int(request.binding.index)
-        if request.binding.revision==0 {bone=bone_resolve(state,request.bone)}
+        if request.binding.revision==0 {bone=bone_find(state,request.bone)}
         else if request.binding.revision!=state.bound {bone=-1}
         if bone<0 || bone>=count {
             request:=request
             if request.binding.revision==0 {
-                core.report(problems,state.entity,"animation.final_pose_bone","a final pose was asked for '%s', which the skeleton of this rig does not have; %s",base.text_get(request.bone.path[:]),bone_fix(request.bone))
+                pose_bone_problem(problems,state.entity,"animation.final_pose_bone","final pose",request.bone)
             } else {
                 core.report(problems,state.entity,"animation.final_pose_binding","a final pose was asked through a bone handle bound before the skeleton of this rig changed; bind the bone again with animation_bone_bind")
             }
@@ -434,17 +523,17 @@ final_pose_apply :: proc(state:^Playing,playback:^Playback,parent_world:mm.Trans
         }
         playback.final_rows[bone]=i32(i)
     }
-    for &local,bone in state.local {
-        parent:=state.parents[bone]
-        world_parent:=state.world[parent] if parent>=0 else parent_world
+    for &local,bone in playing_pose(state,.Local) {
+        parent:=playing_topology(state).parents[bone]
+        world_parent:=playing_pose(state,.World)[parent] if parent>=0 else parent_world
         if row:=playback.final_rows[bone];row>=0 {
             request:=requests[row]
             if request.weight>0 {
-                world:=mm.transform_interpolate(state.world[bone],request.transform,request.weight)
+                world:=mm.transform_interpolate(playing_pose(state,.World)[bone],request.transform,request.weight)
                 target,ok:=mm.transform_relative(world,world_parent)
                 if ok {local=target} else {core.report(problems,state.entity,"animation.final_pose_parent","a final pose of bone %d could not be applied: the rig or a bone above it has a scale of zero; give them a scale",bone)}
             }
         }
-        state.world[bone]=mm.transform_compose(world_parent,local)
+        playing_pose(state,.World)[bone]=mm.transform_compose(world_parent,local)
     }
 }

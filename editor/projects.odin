@@ -442,7 +442,8 @@ projects_start :: proc(s:^Session) -> bool {
         notify(s,"The editor could not be started on the project")
         return false
     }
-    p.started,p.starts=started,true
+    p.started=started
+    p.starts=true
     log.infof("opening %s",base.text_get(p.opening[:]))
     return true
 }

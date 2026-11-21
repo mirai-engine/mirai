@@ -138,7 +138,7 @@ action_profile_clone :: proc(source:Action_Profile,allocator:mem.Allocator) -> (
 // What play, play_at, stop and set ask of the animation of an entity; animation_sample serves them.
 // driven: at is the seconds since the action started that play_at gives, gone to without telling
 // what it passes with seek.
-Play_Request :: struct {entity:core.Entity,stop,driven,seek:bool,at:f32,action,section:[64]u8 `mirai:"text"`}
+Play_Request :: struct {entity:core.Entity,stop,driven,seek:bool,at:f32,action,section:[64]u8 `mirai:"text"`,next_clip:u64}
 Value_Request :: struct {entity:core.Entity,name:u64,value:f32}
 
 // Plays the action named name of the .character of entity, from section when
@@ -146,10 +146,10 @@ Value_Request :: struct {entity:core.Entity,name:u64,value:f32}
 // priority and its cancel policy allows it; otherwise the request is refused with a problem of
 // the entity. Naming a section of the action while it plays moves it there instead. What happens
 // to it arrives in Animation_Events.
-play :: proc(requests:^Animation_Requests,entity:core.Entity,name:string,section:string="") {
+play :: proc(requests:^Animation_Requests,entity:core.Entity,name:string,section:string="",next_clip:string="") {
     if requests==nil {return}
-    if entity==core.NONE || name=="" || len(name)>=64 || len(section)>=64 {core.refuse(&requests.plays);return}
-    value:=Play_Request{entity=entity};base.text_set(value.action[:],name);base.text_set(value.section[:],section);core.offer(&requests.plays,value)
+    if entity==core.NONE || name=="" || len(name)>=64 || len(section)>=64 || len(next_clip)>=CLIP_CAPACITY {core.refuse(&requests.plays);return}
+    value:=Play_Request{entity=entity,next_clip=base.name_hash(next_clip) if next_clip!="" else 0};base.text_set(value.action[:],name);base.text_set(value.section[:],section);core.offer(&requests.plays,value)
 }
 // Plays the action named name of the .character of entity where a timeline drives it: seconds after
 // it started, at its speed. Asked on every tick it follows that time instead of its own clock, so a
@@ -176,11 +176,11 @@ set :: proc(requests:^Animation_Requests,entity:core.Entity,name:string,value:f3
     if entity==core.NONE || name=="" || len(name)>=64 || !finite(value) {core.refuse(&requests.values);return}
     core.offer(&requests.values,Value_Request{entity,base.name_hash(name),value})
 }
-// Turns the first Look row of the .character of entity toward target, by weight, over LOOK_FADE;
+// Turns the head Look operation toward target, by weight, over LOOK_FADE;
 // 0 lets go, from where it looks.
-look :: proc(requests:^Animation_Requests,entity:core.Entity,target:Spatial_Target,weight:f32=1) {
+look :: proc(requests:^Animation_Requests,entity:core.Entity,target:Spatial_Target,weight:f32=1,name:string="@head") {
     if requests==nil {return}
-    modifier_goal(requests,Modifier_Goal{rig=entity,kind=.Look,target=target,weight=weight,fade=LOOK_FADE,enabled=weight>0})
+    modifier(requests,{rig=entity,kind=.Look,target=target,weight=weight,fade=LOOK_FADE,enabled=weight>0,goal=true},name)
 }
 LOOK_FADE :: .25 // seconds
 
@@ -192,6 +192,8 @@ Action_Plan :: struct {
     layer_names:[STACK_LAYERS]u64,     // base.name_hash of the name of each layer: the parameter that is its weight
 }
 Action_Playing :: struct {
+    next_clip:u64,
+    source:base.Asset_Id,
     action,section:i16,
     time:f32,
     active,starting,seeking,finishing,cancel_pending:bool,
@@ -216,7 +218,7 @@ actions_runtime_free :: proc(runtime:^Action_Runtime) {allocator:=runtime.alloca
 
 // An action started, stopped or moved to a section by the end that decides its entity: base.name_hash
 // of its name and section, and the tick it was asked at.
-Action_Started :: struct {action,section,tick:u64,stop:bool}
+Action_Started :: struct {action,section,tick,next_clip:u64,stop:bool}
 // What the end that decides an entity asked of its actions, by slot of its stack: the other ends
 // play each from the tick it was asked, so what a mind or a server plays reaches every player.
 @(component,replicated,description="The actions the end that decides this entity started on it, by layer: the others play each from the tick it started.")
@@ -323,7 +325,8 @@ action_emit :: proc(runtime:^Action_Runtime,state:^Action_State,slot:^Action_Pla
     if slot.action<0 || int(slot.action)>=len(profile.actions) {return}
     value:=profile.actions[slot.action];name:=span
     if span==0 && slot.section>=0 && int(slot.section)<len(profile.sections) {name=base.name_hash(base.text_get(profile.sections[slot.section].name[:]))}
-    if !event_push(playback,events,Animation_Event{entity=state.entity,kind=kind,action=base.name_hash(base.text_get(value.name[:])),name=name,time=time,weight=value.weight}) {
+    if !event_push(playback,events,Animation_Event{entity=state.entity,kind=kind,action=base.name_hash(base.text_get(value.name[:])),name=name,
+        clip=base.name_hash(base.text_get(value.clip[:])),animation=slot.source,time=time,weight=value.weight}) {
         core.report(problems,state.entity,"animation.events_lost","a %v event of action '%s' was lost: memory ran out, or the animations of the world gave more events in this tick than fit in Animation_Events; free memory, or play fewer actions in one tick, with fewer windows and sections",kind,base.text_get(value.name[:]))
     }
 }
@@ -433,9 +436,27 @@ action_ask :: proc(runtime:^Action_Runtime,state:^Action_State,index,section:int
     return true
 }
 
+@(private)
+actions_sources_pending :: proc(state:^Action_State,description:Animation,playback:^Playback,
+    sources:^Source_Assets,app:^host.App,characters:^Character_Assets,
+    problems:^core.Problems) -> bool {
+    if state.retry || sources==nil {return state.retry}
+    playing:=state_get(playback,state.entity)
+    if playing==nil {
+        memory_problem(problems,state.entity,"its actions")
+        state.retry=true
+        return true
+    }
+    prior:=playing.source_plan
+    _,error:=animation_content(sources,app,playing,description,characters)
+    playing.source_plan=prior
+    state.retry=error==.Pending
+    return state.retry
+}
+
 // Loads the set of each entity and serves the plays and stops asked for: which action takes
 // which slot, by priority and cancel policy.
-actions_prepare :: proc(runtime:^Action_Runtime,requests:^Animation_Requests,characters:^Character_Assets,animations:^core.Table(Animation,.Read),playback:^Playback,events:^Animation_Events,app:^host.App,remotes:^core.Table(core.Remote,.Read),played:^core.Table(Animation_Played),time:core.Time,problems:^core.Problems) -> bool {
+actions_prepare :: proc(runtime:^Action_Runtime,requests:^Animation_Requests,characters:^Character_Assets,animations:^core.Table(Animation,.Read),playback:^Playback,events:^Animation_Events,app:^host.App,remotes:^core.Table(core.Remote,.Read),played:^core.Table(Animation_Played),time:core.Time,problems:^core.Problems,sources:^Source_Assets=nil) -> bool {
     allocator:=app.allocator
     context.allocator=allocator;runtime.allocator=allocator;runtime.frame+=1
     if !actions_discover(runtime,animations,playback,events,app.assets,problems) {return false}
@@ -482,6 +503,8 @@ actions_prepare :: proc(runtime:^Action_Runtime,requests:^Animation_Requests,cha
             core.report(problems,request.entity,"animation.action_unloaded","a %s of action '%s' was refused: the .character of this entity is not loaded; another problem of this entity says why",verb,name)
             continue
         }
+        if actions_sources_pending(state,animations.values[row],playback,sources,app,characters,
+            problems) {requests.plays.items[pending]=request;pending+=1;continue}
         plan:=&runtime.plans[state.plan];profile:=plan.profile;index:=-1
         for value,i in profile.actions {if value.name==request.action {index=i;break}}
         if index<0 {
@@ -503,25 +526,34 @@ actions_prepare :: proc(runtime:^Action_Runtime,requests:^Animation_Requests,cha
                 continue
             }
         }
-        if !action_ask(runtime,state,index,section,request.stop,0,false,playback,events,problems) || !time.playing || !core.owned(remotes,request.entity) {continue}
+        if !action_ask(runtime,state,index,section,request.stop,0,false,playback,events,problems) {continue}
+        if !request.stop {state.slots[plan.slots[index]].next_clip=request.next_clip}
+        if !time.playing || !core.owned(remotes,request.entity) {continue}
         // What the end that decides the entity asks, the others play from the same tick.
         record,_:=core.get(played,request.entity)
-        record.slots[plan.slots[index]]={action=base.name_hash(name),section=base.name_hash(base.text_get(request.section[:])) if section>=0 else 0,tick=time.tick,stop=request.stop}
+        record.slots[plan.slots[index]]={action=base.name_hash(name),section=base.name_hash(base.text_get(request.section[:])) if section>=0 else 0,tick=time.tick,stop=request.stop,next_clip=request.next_clip}
         if at:=core.row_of(played,request.entity);at>=0 {core.edit_at(played,at)^=record} else {core.add(played,request.entity,record)}
     }
     // An entity another end decides plays what that end asked, as far into it as that end is.
     for &state in runtime.states {
-        if !time.playing || state.seen!=runtime.frame || state.plan<0 || int(state.plan)>=len(runtime.plans) || core.owned(remotes,state.entity) {continue}
+        if !time.playing || state.retry || state.seen!=runtime.frame || state.plan<0 || int(state.plan)>=len(runtime.plans) || core.owned(remotes,state.entity) {continue}
         record,found:=core.get(played,state.entity);if !found {continue}
         profile:=runtime.plans[state.plan].profile
         for started,slot in record.slots {
             if started.tick==state.heard[slot] {continue}
+            description,exists:=core.get(animations,state.entity)
+            if !exists || actions_sources_pending(&state,description,playback,sources,app,characters,
+                problems) {break}
             state.heard[slot]=started.tick
             index,section:=-1,-1
             for &value,i in profile.actions {if base.name_hash(base.text_get(value.name[:]))==started.action {index=i;break}}
             for &value,i in profile.sections {if started.section!=0 && int(value.action)==index && base.name_hash(base.text_get(value.name[:]))==started.section {section=i;break}}
             if index<0 {continue}
-            action_ask(runtime,&state,index,section,started.stop,f32(time.tick-started.tick)*time.dt if time.tick>started.tick else 0,true,playback,events,problems)
+            if action_ask(runtime,&state,index,section,started.stop,
+                f32(time.tick-started.tick)*time.dt if time.tick>started.tick else 0,
+                true,playback,events,problems) && !started.stop {
+                state.slots[slot].next_clip=started.next_clip
+            }
         }
     }
     kept:=0
@@ -541,6 +573,9 @@ actions_prepare :: proc(runtime:^Action_Runtime,requests:^Animation_Requests,cha
 stack_asks :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animation,content:^host.Content_Animation) {
     plan:=action_plan(runtime,state.entity)
     count:=len(plan.profile.layers)+1 if plan!=nil && content!=nil else 0
+    if state.overlay.slot>0 || state.inertia.state.active {
+        count=max(count,int(state.overlay.slot),int(state.stack))
+    }
     if count<int(state.stack) {for &layer in state.layers[count:state.stack] {layer={}}}
     state.blend={}
     if count==0 && state.stack==0 {return}
@@ -599,6 +634,7 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
         cause:string
         slot.continuous=true
         source:=source_effective(definition.animation,runtime.plans[active.plan].animation,animation.library)
+        slot.source=source
         // The layer keeps its branch, its mode and its reference; the action gives the clip.
         standing:=state.asked[i]
         asked:=standing
@@ -609,15 +645,13 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
         entered:=slot.entering
         if entered {
             if start,_,spanned:=section_span(profile,content,handle,int(slot.section));spanned {slot.time=start}
-            if slot.starting {action_emit(runtime,active,&slot,.Started,slot.time,playback,events,problems)}
-            slot.entering=false
         }
         valid:=true
         if handle==0 {valid,cause=false,"its clip is not in the animation it plays"} else if asked.mode==.Additive && asked.reference_clip==0 && asked.reference>duration {valid,cause=false,"the reference of its layer is past the end of its clip"}
         if definition.root_motion!=.None && valid {
             // The stack has one root: an action moves the root bone of its base.
             root:=clip_root(content,handle)
-            if !(root.translation || root.rotation) || root.bone=={} || bone_resolve(state,root.bone)<0 {valid,cause=false,"it has root motion and its clip has none, or its root bone is not in this rig"} else if (state.root.translation || state.root.rotation) && state.root.bone!=root.bone {valid,cause=false,"its root bone is not the one the base of the Animation moves"}
+            if !(root.translation || root.rotation) || root.bone==0 || bone_find(state,root.bone)<0 {valid,cause=false,"it has root motion and its clip has none, or its root bone is not in this rig"} else if (state.root.translation || state.root.rotation) && state.root.bone!=root.bone {valid,cause=false,"its root bone is not the one the base of the Animation moves"}
         }
         for &section,k in profile.sections {
             if section.action!=u16(slot.action) {continue}
@@ -639,6 +673,8 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
             }
         }
         if entered {
+            if slot.starting {action_emit(runtime,active,&slot,.Started,slot.time,playback,events,problems)}
+            slot.entering=false
             if slot.starting {slot.origin,slot.origin_section,slot.elapsed=slot.time,slot.section,slot.late}
             slot.time=min(slot.time+slot.late*speed,duration);slot.late=0
             if slot.section>=0 {action_emit(runtime,active,&slot,.Section,slot.time,playback,events,problems)}
@@ -717,7 +753,23 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
             slot.elapsed+=step
             if slot.time<end || remaining<=0 && slot.time<end {break}
             next:=profile.sections[slot.section].next if slot.section>=0 else -1
-            if slot.cancel_pending || next<0 {action_end(runtime,active,&slot,slot.cancel_pending,playback,events,problems);break}
+            if slot.cancel_pending || next<0 {
+                if !slot.cancel_pending && slot.next_clip!=0 && silent<0 {
+                    selection:=Clip_Selection{clip=slot.next_clip,asset=source,fade=definition.fade_out}
+                    if state.overlay_next.slot!=0 {
+                        core.report(problems,state.entity,"animation.clip_layer_busy",
+                            "another action already chained to a clip this tick; use separate end times")
+                    } else if clip_handle(content,selection)!=0 {
+                        state.overlay_next={selection=selection,slot=u8(i+1),speed=definition.speed,
+                            weight=definition.weight,playing=true}
+                    } else {
+                        core.report(problems,state.entity,"animation.action_clip",
+                            "the action's next clip is missing from its animation; name a clip in the same source")
+                    }
+                }
+                action_end(runtime,active,&slot,slot.cancel_pending,playback,events,problems)
+                break
+            }
             action_windows(runtime,active,&slot,nil,0,slot.time,slot.time,playback,events,problems,leave=true)
             next_start,_,_:=section_span(profile,content,handle,int(next))
             // The root motion before a jump is kept, and what follows counts from where it lands.

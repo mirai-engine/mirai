@@ -2,6 +2,7 @@ package anim
 
 import "base:intrinsics"
 import "core:math"
+import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
 import lib "mirai:std/anim"
@@ -9,43 +10,84 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 
-// A timeline is the clip of an Animation: the keys of std/anim on tracks that
-// move the transforms of entities and the fields of their components. A door,
-// a lift, the cameras and actors of a cinematic and a light that dims are all
-// that. Animation.playing only starts it by itself; one queue of commands
-// plays, pauses, resumes, stops, reverses and seeks it from then on.
+Timeline_Command :: enum u8 {Seek,Play,Pause,Resume,Stop}
 
-Timeline_Command :: enum u8 {
-    Seek,   // jumps to time, without firing the markers it skips
-    Play,   // from its start, at speed
-    Pause,  // stays where it is
-    Resume, // goes on from where it is, at speed
-    Stop,   // goes back to its start and waits there
+Clip_Selection :: struct {
+    clip,next_clip:u64,
+    asset:base.Asset_Id `mirai:"kind=.anim"`,
+    fade:f32,
+    weight:f32,
+    loop:bool,
 }
 
 Animation_Command :: struct {
     entity:core.Entity,
-    time:f32,  // Seek: seconds into the clip
-    speed:f32, // Play and Resume: negative plays backwards
     command:Timeline_Command,
+    time,speed:Maybe(f32),
+    clip,layer,next_clip:u64,
+    asset:base.Asset_Id,
+    fade:f32,
+    weight:f32,
+    loop:Maybe(bool),
+    restart,additive,pending,handled:bool,
 }
 
-// Asks the clip of an entity for a command in the next tick: a door opens with Play and closes
-// with Resume at speed -1 from wherever it is. The editor, which does not play, takes only Seek.
-animation_command :: proc(requests:^Animation_Requests,entity:core.Entity,command:Timeline_Command,time:f32=0,speed:f32=1) {
+// Controls the current clip. Play can select a clip and restart it; Resume preserves its time.
+// Seek skips markers before the destination. Stop rewinds the base or releases an overlay.
+animation_command :: proc(requests:^Animation_Requests,entity:core.Entity,command:Timeline_Command,
+    time:Maybe(f32)=nil,speed:Maybe(f32)=nil,restart:bool=true,clip:string="",fade:f32=-1,
+    loop:Maybe(bool)=nil,layer:string="",additive:bool=false,weight:f32=1,asset:base.Asset_Id={},
+    next_clip:string="") {
     if requests==nil {return}
-    if entity==core.NONE || command>max(Timeline_Command) || !finite(time) || !finite(speed) {core.refuse(&requests.timeline);return}
-    core.offer(&requests.timeline,Animation_Command{entity,time,speed,command})
+    if entity==core.NONE || command>max(Timeline_Command) ||
+        len(clip)>=CLIP_CAPACITY || len(layer)>=CLIP_CAPACITY || len(next_clip)>=CLIP_CAPACITY ||
+        time!=nil && (!finite(time.?) || time.?<0) || speed!=nil && !finite(speed.?) ||
+        !finite(fade) || fade< -1 || !profile_weight(weight) ||
+        clip=="" && (asset!={} || next_clip!="" || additive) ||
+        clip!="" && command!=.Play || next_clip!="" && (loop.? or_else false) {
+        core.refuse(&requests.timeline)
+        return
+    }
+    hash :: proc "contextless" (name:string) -> u64 {return base.name_hash(name) if name!="" else 0}
+    core.offer(&requests.timeline,{entity=entity,command=command,time=time,speed=speed,
+        clip=hash(clip),layer=hash(layer),next_clip=hash(next_clip),asset=asset,fade=fade,
+        weight=weight,loop=loop,restart=restart,additive=additive})
 }
 
-// Asks for the entity to be at a time of its clip in the next tick, without firing the markers it skips.
-animation_seek :: proc(requests:^Animation_Requests,entity:core.Entity,time:f32) {animation_command(requests,entity,.Seek,time)}
+// Plays a clip of the entity's library or an explicit .anim. On a .character, its clip plays
+// over the base. A named layer keeps its mask. The next clip starts after a natural end.
+play_clip :: proc(requests:^Animation_Requests,entity:core.Entity,clip:string,
+    fade:f32=-1,loop:Maybe(bool)=nil,speed:f32=1,restart:bool=false,layer:string="",
+    additive:bool=false,weight:f32=1,asset:base.Asset_Id={},next_clip:string="",at:Maybe(f32)=nil) {
+    animation_command(requests,entity,.Play,at,speed,restart,clip,fade,loop,layer,additive,
+        weight,asset,next_clip)
+}
 
 // Whether the clip of an entity plays in this tick. False for an entity that plays nothing.
 animation_playing :: proc(playback:^Playback,entity:core.Entity) -> bool {
     if playback==nil {return false}
     state:=constraint_playing(playback,entity)
     return state!=nil && state.seen==playback.frame && state.playing
+}
+
+// The rate and loop policy of the base clip, including changes requested in Play.
+animation_clip_clock :: proc(playback:^Playback,entity:core.Entity) -> (speed:f32,loop:bool) {
+    if playback==nil {return}
+    state:=constraint_playing(playback,entity)
+    if state!=nil {return state.speed,state.selection.loop}
+    return
+}
+
+// The source and name of the clip sampled by the base clock.
+animation_clip_identity :: proc(playback:^Playback,sources:^Source_Assets,app:^host.App,
+    entity:core.Entity) -> (id:base.Asset_Id,name:[asset.ANIMATION_NAME_CAPACITY]u8,ok:bool) {
+    if playback==nil {return}
+    state:=constraint_playing(playback,entity)
+    if state==nil || state.clip<0 {return}
+    content:=animation_playing_content(sources,app,state)
+    clip:=lib.Clip(state.clip+1)
+    if content==nil || !lib.clip_valid(&content.lib,clip) {return}
+    return source_clip_source(sources,state,clip),source_clip_label(content,clip),true
 }
 
 // The markers of the clip an entity plays, in time order, which content.markers names by their
@@ -66,32 +108,267 @@ animation_bound :: proc(playback:^Playback,entity:core.Entity,target:u64) -> cor
     return field_entity(state,target) if state!=nil else core.NONE
 }
 
-// Takes the commands of the tick for a state into animation: whether its clip plays and at what
-// speed, which Animation gives when it starts to play, and the seeks Play and Stop leave in the
-// queue for the tick to read. In the editor its Animation says it.
-@(private)
-timeline_take :: proc(state:^Playing,animation:^Animation,commands:[]Animation_Command,running:bool) {
-    if !running || !state.started {state.playing,state.speed=animation.playing,animation.speed}
-    state.started=running
-    for &asked in commands {
-        if asked.entity!=state.entity || asked.command==.Seek {continue}
-        command:=asked.command
-        asked.entity=core.NONE
-        if !running {continue}
-        state.playing=command==.Play || command==.Resume
-        if state.playing {state.speed=asked.speed}
-        if command==.Play || command==.Stop {asked={entity=state.entity,command=.Seek}}
-    }
-    animation.playing,animation.speed=state.playing,state.speed
+Clip_Overlay :: struct {
+    selection:Clip_Selection,
+    slot:u8, // 1 + slot in the stack
+    speed,weight:f32,
+    playing,additive,finished:bool,
+    event:Animation_Event,
 }
 
-// The commands no state took were asked of entities that play nothing.
+Clip_Edit :: struct {seek:f32,overlay_seek:f32,restart,overlay_restart,stop:bool}
+
 @(private)
-timeline_unclaimed :: proc(commands:[]Animation_Command,running:bool,problems:^core.Problems) {
-    if !running {return}
-    for asked in commands {
-        if asked.command==.Seek || asked.entity==core.NONE {continue}
-        core.report(problems,asked.entity,"animation.command","a %v was asked of this entity, and it plays no clip: it has no Animation, or no Transform, or its Animation is not valid; give it an Animation whose asset is the .anim of the clip, or ask the entity that has it",asked.command)
+clip_handle :: proc "contextless" (content:^host.Content_Animation,selection:Clip_Selection) -> lib.Clip {
+    if content==nil {return 0}
+    if selection.clip==0 {return 1 if content.clip_count>0 else 0}
+    return lib.clip_find(&content.lib,source_clip_name(content.id,selection.asset,selection.clip))
+}
+
+@(private)
+clip_control :: proc(state:^Playing,animation:^Animation,commands:[]Animation_Command,
+    running:bool,app:^host.App,sources:^Source_Assets,characters:^Character_Assets,
+    actions:^Action_Runtime,problems:^core.Problems,kept:Maybe(Animation_Progress)=nil) -> (edit:Clip_Edit) {
+    edit.seek,edit.overlay_seek=-1,-1
+    if !running || !state.started {
+        state.playing,state.speed=animation.playing,animation.speed
+        name:=base.text_get(animation.clip[:])
+        state.selection={clip=base.name_hash(name) if name!="" else 0,
+            fade=animation.fade,loop=animation.loop,weight=1}
+        if saved,ok:=kept.?;ok {
+            state.playing,state.speed=saved.playing,saved.speed
+            state.selection=saved.selection
+            state.restore_time=saved.time
+        }
+    }
+    if at,restoring:=state.restore_time.?;restoring {edit.seek=at}
+    state.started=running
+    if running && state.ended && state.selection.next_clip!=0 {
+        state.selection.clip,state.selection.next_clip=state.selection.next_clip,0
+        edit.restart=true
+    }
+    if state.overlay_next.slot>0 {
+        previous:=state.overlay.event
+        state.overlay=state.overlay_next
+        state.overlay.event=previous
+        state.overlay_next={}
+        edit.overlay_restart=true
+    }
+    if state.overlay.finished && state.overlay.selection.next_clip!=0 {
+        state.overlay.selection.clip,state.overlay.selection.next_clip=state.overlay.selection.next_clip,0
+        state.overlay.finished,state.overlay.playing=false,true
+        edit.overlay_restart=true
+    }
+    pending:=false
+    sampled_asset:=state.selection.asset
+    for &asked in commands {
+        if asked.entity!=state.entity {continue}
+        if pending {asked.pending=true;continue}
+        if !running && asked.command!=.Seek {asked.handled=true;continue}
+        matching:=false
+        if asked.clip!=0 {
+            id:=animation_character(app.assets,animation^)
+            if character:=character_content(characters,app.assets,app.allocator,id);character!=nil {
+                matching=len(character.set.match.clips)>0
+            }
+        }
+        overlay:=asked.layer!=0 || asked.clip!=0 && (asked.additive || matching) ||
+            asked.clip==0 && state.overlay.slot>0 && running
+        slot:=0
+        if asked.layer!=0 {
+            slot=-1
+            if plan:=action_plan(actions,state.entity);plan!=nil {
+                for name,i in plan.layer_names {if name==asked.layer {slot=i+1;break}}
+            }
+        }
+        selection:=state.overlay.selection if overlay else state.selection
+        playing,speed:=state.playing,state.speed
+        if overlay {playing,speed=state.overlay.playing,state.overlay.speed}
+        if asked.command==.Play && asked.clip!=0 {
+            selection.clip,selection.asset,selection.next_clip=asked.clip,asked.asset,asked.next_clip
+            if !overlay {selection.weight=asked.weight}
+            if overlay && int(state.overlay.slot)!=slot+1 {selection.fade,selection.loop=animation.fade,false}
+        }
+        if fade:=asked.fade;fade>=0 {selection.fade=fade}
+        if loop,given:=asked.loop.?;given {
+            selection.loop=loop
+        } else if asked.next_clip!=0 {
+            selection.loop=false
+        }
+        fading:=state.fading_asset
+        if !overlay && selection.asset!=sampled_asset {fading=sampled_asset if selection.fade>0 else {}}
+        extras:=[3]base.Asset_Id{state.selection.asset,state.overlay.selection.asset,fading}
+        extras[1 if overlay else 0]=selection.asset
+        prior:=state.source_plan
+        content,error:=animation_content(sources,app,state,animation^,characters,extras)
+        if error==.Pending {asked.pending=true;pending=true;continue}
+        if slot<0 {
+            core.report(problems,state.entity,"animation.clip_layer",
+                "this clip request names a layer the character does not have; name a layer of its set")
+            asked.handled=true
+            continue
+        }
+        if asked.clip!=0 && selection.asset=={} && clip_handle(content,selection)==0 &&
+            animation_character(app.assets,animation^)!={} {
+            selection.asset=source_find_clip(sources,state.source_plan,content,asked.clip)
+        }
+        if error!=.None || asked.clip!=0 && (clip_handle(content,selection)==0 ||
+            selection.next_clip!=0 && clip_handle(content,{clip=selection.next_clip,asset=selection.asset})==0) {
+            state.source_plan=prior
+            core.report(problems,state.entity,"animation.clip_command",
+                "the clip request cannot find its source or clip; name an .anim when several sources share the name")
+            asked.handled=true
+            continue
+        }
+        if overlay && asked.clip!=0 {
+            active:=action_state(actions,state.entity)
+            if active!=nil && active.slots[slot].active && !active.slots[slot].finishing {
+                state.source_plan=prior
+                core.report(problems,state.entity,"animation.clip_layer_busy",
+                    "the clip cannot take a layer with an active action; wait for the action to end")
+                asked.handled=true
+                continue
+            }
+        }
+        if overlay && asked.clip==0 && state.overlay.slot==0 {asked.handled=true;continue}
+        if overlay && asked.layer!=0 && asked.clip==0 && int(state.overlay.slot)!=slot+1 {
+            asked.handled=true
+            continue
+        }
+        asked.handled=true
+        seek:=f32(-1)
+        restart:=false
+        if value,given:=asked.speed.?;given {speed=value}
+        switch asked.command {
+        case .Play:
+            playing=true
+            restart=asked.restart
+            if at,given:=asked.time.?;given {seek=at}
+        case .Resume: playing=true
+        case .Pause: playing=false
+        case .Stop: playing=false;seek=0
+        case .Seek: seek=asked.time.? or_else 0
+        }
+        if overlay {
+            o:=&state.overlay
+            if asked.clip!=0 {
+                restart ||= o.slot!=u8(slot+1) || o.selection.clip!=selection.clip ||
+                    o.selection.asset!=selection.asset
+                o.slot,o.additive,o.weight=u8(slot+1),asked.additive,asked.weight
+                o.finished=false
+            }
+            o.selection=selection
+            o.playing,o.speed=playing,speed
+            o.finished ||= asked.command==.Stop
+            if asked.command==.Stop {o.selection.next_clip=0}
+            if seek>=0 || restart {edit.overlay_seek=seek}
+            edit.overlay_restart ||= restart
+        } else {
+            state.selection=selection
+            state.fading_asset=fading
+            state.playing,state.speed=playing,speed
+            if asked.command==.Stop {state.selection.next_clip=0;edit.stop=true}
+            if seek>=0 || restart {edit.seek=seek}
+            edit.restart ||= restart
+        }
+    }
+    animation.playing,animation.speed=state.playing,state.speed
+    animation.fade,animation.loop=state.selection.fade,state.selection.loop
+    animation.weight*=state.selection.weight
+    return
+}
+
+@(private)
+clip_commands_finish :: proc(commands:^core.Queue(Animation_Command),running:bool,
+    problems:^core.Problems) {
+    kept:=0
+    for asked in commands.items {
+        if asked.handled {continue}
+        if asked.pending {
+            commands.items[kept]=asked;commands.items[kept].pending=false;kept+=1
+        } else if running && asked.command!=.Seek {
+            core.report(problems,asked.entity,"animation.command",
+                "this clip request needs an entity with Animation and Transform")
+        }
+    }
+    base.truncate(&commands.items,kept)
+}
+
+@(private)
+clip_lifecycle :: proc(playback:^Playback,events:^Animation_Events,event:^Animation_Event,
+    kind:Animation_Event_Kind,time:f32,problems:^core.Problems) {
+    event.kind,event.time=kind,time
+    if !event_push(playback,events,event^) {
+        core.report(problems,event.entity,"animation.events_lost",
+            "a clip's %v event did not fit in Animation_Events",kind)
+    }
+    if kind==.Ended || kind==.Interrupted {event^={}}
+}
+
+@(private)
+clip_overlay_sample :: proc(state:^Playing,content:^host.Content_Animation,animation:Animation,
+    edit:Clip_Edit,actions:^Action_Runtime,playback:^Playback,events:^Animation_Events,
+    dt:f32,problems:^core.Problems) {
+    overlay:=&state.overlay
+    if overlay.slot==0 {return}
+    i:=int(overlay.slot)-1
+    layer:=&state.layers[i]
+    selection:=overlay.selection
+    active:=action_state(actions,state.entity)
+    occupied:=active!=nil && active.slots[i].active && !active.slots[i].finishing
+    clip:=clip_handle(content,selection)
+    if overlay.finished || occupied || clip==0 {
+        if overlay.event.clip!=0 {clip_lifecycle(playback,events,&overlay.event,.Interrupted,
+            overlay.event.time,problems)}
+        if !occupied {stack_blend(state,i,selection.fade);layer^={}}
+        overlay.slot,overlay.playing,overlay.finished=0,false,false
+        return
+    }
+    library:=&content.lib
+    handle:=clip+lib.Clip(content.clip_count if selection.loop else 0)
+    name:=lib.clip_data(library,clip).name
+    if layer.clip!=name || edit.overlay_restart || layer.player.clip==0 {
+        if selection.fade<=0 || layer.clip!=0 {stack_blend(state,i,selection.fade)}
+        if overlay.event.clip!=0 {clip_lifecycle(playback,events,&overlay.event,.Interrupted,
+            overlay.event.time,problems)}
+        layer.player=lib.player_make(handle,overlay.speed)
+        lib.player_restart(library,&layer.player)
+    }
+    layer.clip,layer.space,layer.leaf_count=name,0,0
+    weight_step:=dt/selection.fade if selection.fade>0 else 1
+    layer.weight+=clamp(overlay.weight-layer.weight,-weight_step,weight_step)
+    if state.blend.slots&(u16(1)<<u16(i))!=0 {layer.weight=overlay.weight}
+    layer.player.clip,layer.player.speed=handle,overlay.speed
+    layer.root_motion,layer.body,layer.body_vertical=.None,.None,false
+    if edit.overlay_seek>=0 {
+        layer.player.time=clamp(edit.overlay_seek,0,lib.clip_duration(library,handle))
+        layer.player.done,layer.player.fresh=false,false
+    }
+    layer.from=layer.player.time
+    asked:=&state.asked[i]
+    asked.clip,asked.space,asked.weight,asked.sync=name,0,overlay.weight,false
+    if overlay.additive {asked.mode=.Additive}
+    if !overlay.playing {return}
+    if layer.player.done {
+        duration:=lib.clip_duration(library,handle)
+        reverses:=overlay.speed>0 && layer.player.time<=0 ||
+            overlay.speed<0 && layer.player.time>=duration
+        if !reverses && !selection.loop {overlay.finished=true;return}
+        layer.player.done=false
+    }
+    if overlay.event.clip==0 {
+        overlay.event={entity=state.entity,clip=selection.clip,weight=layer.weight,
+            animation=selection.asset if selection.asset!={} else content.id}
+        clip_lifecycle(playback,events,&overlay.event,.Started,layer.from,problems)
+    }
+    batch:[EVENT_BATCH]lib.Event
+    written,dropped:=lib.player_advance(library,&layer.player,dt,batch[:])
+    emit_events(playback,events,state.entity,content,batch[:written],dropped,problems,
+        layer.weight*animation.weight,u32(handle),u16(i+1),animation)
+    overlay.event.time=layer.player.time
+    if layer.player.done {
+        clip_lifecycle(playback,events,&overlay.event,.Ended,layer.player.time,problems)
+        overlay.finished=true
     }
 }
 
@@ -270,7 +547,7 @@ field_write :: proc "contextless" (bound:Field_Bound,data:[^]u8,value:mm.Vec4) -
 }
 
 // Writes the fields the "@field" curves of the playing clips drive, on the ticks their clip moves.
-@(step="fixed",loops="game editor",stage="apply")
+@(step="fixed",loops="game editor",stage="simulate",after="animation_sample")
 animation_fields :: proc(world:core.World_Ref,playing:core.Ref(Playback),fields:^Field_Playback,content_sources:core.Ref(Source_Assets),app:^host.App,problems:^core.Problems) {
     if app==nil || app.assets==nil {return}
     playback,sources:=playing.ptr,content_sources.ptr

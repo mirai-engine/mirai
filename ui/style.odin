@@ -250,8 +250,8 @@ metric_set :: proc "contextless" (ctx:^Context,name:string,value:f32) -> (previo
 }
 
 // A style of the sheet resolved for a variant and the states it is in.
-sheet_look :: proc "contextless" (ctx:^Context,style:string,variant:string="",states:Style_States={}) -> Node_Style {
+sheet_look :: proc "contextless" (ctx:^Context,style:string,variant:string="",states:Style_States={}) -> (result:Node_Style) {
     row,found:=sheet_find(ctx,style,false)
-    if !found || row>=ctx.sheet.style_count {return {}}
+    if !found || row>=ctx.sheet.style_count {return}
     return style_resolve(ctx.sheet.styles[row],tree_style_rules(&ctx.sheet,u16(row)),u16(row),style_variant(variant),states)
 }

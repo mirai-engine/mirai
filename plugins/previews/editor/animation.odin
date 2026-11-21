@@ -326,7 +326,7 @@ part_add :: proc(a:^host.Assets,scene:Scene,sub:^Subject,e:core.Entity,parent:i3
         if t,ok:=core.get(scene.transforms,e);ok {part.local=core.to_math(t)}
     }
     if scene.targets!=nil {
-        if target,ok:=core.get(scene.targets,e);ok {part.target=base.name_hash(base.text_get(target.path[:]))}
+        if target,ok:=core.get(scene.targets,e);ok {part.target=eanim.animation_target_hash(target)}
     }
     if part.target==0 && scene.names!=nil {
         if text:=core.name_get(scene.names,e);text!="" {part.target=base.name_hash(text)}

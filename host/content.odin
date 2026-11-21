@@ -434,7 +434,8 @@ content_sound_set_load :: proc(app:^App,id:base.Asset_Id,entry:^Content_Sound_Se
     defer asset.asset_close(&file)
     view,error:=asset.sound_set_view(&file,&a.types)
     if error!=.None {return false}
-    entry.info,entry.last=view.info^,-1
+    entry.info=view.info^
+    entry.last=-1
     return true
 }
 

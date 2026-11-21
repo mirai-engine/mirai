@@ -517,6 +517,7 @@ events_apply :: proc(c:^Ctx,waiting,requests:[]Destruct_Request,retry:^core.Queu
 event_applied :: proc(c:^Ctx,e:core.Entity,entry:^Entry,event:physics.Break_Event,noted:bool) {
     if noted {event_note(c,e,event)}
     if entry.event_tick!=c.time.tick || linalg.length2(event.vector)>linalg.length2(entry.event.vector) || event.kind==.Slice {
-        entry.event,entry.event_tick=event,c.time.tick
+        entry.event=event
+        entry.event_tick=c.time.tick
     }
 }

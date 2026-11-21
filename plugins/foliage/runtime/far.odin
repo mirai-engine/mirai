@@ -187,7 +187,9 @@ kind_make :: proc(kind:^Resident_Kind,assets:^host.Assets,renderer:^render.Rende
     geom.mesh_buffer_init(&bake.crown,heap)
     host.assets_render_geometry_init(&bake.made,heap)
     if assets!=nil {bake.limits=host.assets_limits(assets)}
-    bake.images,bake.captured=render.impostor_capture(renderer,pieces[:],IMPOSTOR_GRID,kind.key.frame,heap)
+    images,captured:=render.impostor_capture(renderer,pieces[:],IMPOSTOR_GRID,kind.key.frame,heap)
+    bake.images=images
+    bake.captured=captured
     if bake.captured {
         kind.sphere={bake.images.center.x,bake.images.center.y,bake.images.center.z,bake.images.radius}
         kind.transmission=bake.images.transmission
@@ -219,7 +221,10 @@ kind_bake :: proc(bake:^Kind_Bake,worker:int) {
         color,color_built:=render.texture_build({pixels=bake.images.color,width=side,height=side,srgb=true,alpha_coverage=0.5},bake.max_size)
         normal,normal_built:=render.texture_build({pixels=bake.images.normal,width=side,height=side,normal_map=true},bake.max_size)
         surface,surface_built:=render.texture_build({pixels=bake.images.surface,width=side,height=side},bake.max_size)
-        bake.color,bake.normal,bake.surface,bake.built=color,normal,surface,color_built && normal_built && surface_built
+        bake.color=color
+        bake.normal=normal
+        bake.surface=surface
+        bake.built=color_built && normal_built && surface_built
     }
     bake.crowned=len(bake.indices)>0 && crown_build(bake.positions[:],bake.indices[:],&bake.crown)
     bake.meshed=bake.crowned && host.assets_render_geometry_make(geom.mesh_buffer_view(&bake.crown),nil,0,&bake.made,bake.limits)

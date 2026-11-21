@@ -569,7 +569,8 @@ app_input_add :: proc(app:^App,input:core.Input,devices:=false) {
 
 @(private)
 input_devices_take :: proc "contextless" (target:^core.Input,from:core.Input) {
-    target.mouse_position,target.gamepads,target.device=from.mouse_position,from.gamepads,from.device
+    target.gamepads=from.gamepads
+    target.mouse_position,target.device=from.mouse_position,from.device
 }
 
 // The drawable follows the window; a new density is told to the UI contexts by whoever owns them.

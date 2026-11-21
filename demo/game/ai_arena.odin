@@ -134,10 +134,7 @@ arena_state_default :: proc() -> Arena_State {return {rng=mm.rng_make(17)}}
 // The best subject an agent remembers and how sure it is.
 @(private)
 arena_seen :: proc(w:Arena,e:core.Entity) -> (subject:core.Entity,position:mm.Vec3,confidence:f32) {
-    mine,ok:=core.get(w.perceptions,e)
-    if !ok {return}
-    pose,_:=core.get(w.worlds,e)
-    best,found:=ai.memory_best(&mine.memory,pose.position)
+    best,found:=behavior.perception_best(w.perceptions,e,arena_position(w,e))
     if !found {return}
     return core.Entity(best.subject),best.position,best.confidence
 }
@@ -213,12 +210,12 @@ zombie_chase :: proc(a:^ai.Act(Zombie_Act),w:Arena) -> ai.Status {
 @(act="Bite")
 zombie_bite :: proc(a:^ai.Act(Zombie_Act),w:Arena,state:^Arena_State,requests:^anim.Animation_Requests) -> ai.Status {
     e:=behavior.agent(a)
-    if a.phase==.Exit {anim.look(requests,e,anim.spatial_point({}),0);return .Success}
+    if a.phase==.Exit {anim.look(requests,e,anim.spatial_point({}),0,"Body");return .Success}
     if a.phase==.Enter {
         subject,_,_:=arena_seen(w,e)
         if subject==core.NONE || !ai.token_take(a,u64(subject),ZOMBIE_BITERS) {return .Failure}
         state.bites+=1
-        anim.look(requests,e,anim.spatial_entity(subject))
+        anim.look(requests,e,anim.spatial_entity(subject),name="Body")
         anim.play(requests,e,"Bite")
     }
     return ai.after(a,0.8)
@@ -247,18 +244,19 @@ soldier_think :: proc(t:^ai.Think(Soldier_Act),w:Arena,soldiers:^core.Table(Sold
     if !ok {return}
     user:=arena_user(w,e)
     here:=arena_position(w,e)
+    smart:=behavior.mind_smart_view(t)
     subject,_,confidence:=arena_seen(w,e)
     sees:=confidence>=SOLDIER_SURE && subject!=core.NONE
     if s.health<SOLDIER_WOUNDED {
-        if _,open:=behavior.smart_nearest(t,USE_HEALTH,here,60,user);open {ai.propose(t,.Heal,0.9)}
+        if _,open:=behavior.smart_nearest(smart,USE_HEALTH,here,60,user);open {ai.propose(t,.Heal,0.9)}
     }
     if s.ammo==0 && s.reserve>0 {ai.propose(t,.Reload,0.8)}
     if s.ammo==0 && s.reserve==0 {
-        if _,open:=behavior.smart_nearest(t,USE_AMMO,here,60,user);open {ai.propose(t,.Get_Ammo,0.85)}
+        if _,open:=behavior.smart_nearest(smart,USE_AMMO,here,60,user);open {ai.propose(t,.Get_Ammo,0.85)}
     }
     if sees {
-        if _,open:=behavior.smart_nearest(t,USE_ALARM,here,25,user);open {ai.propose(t,.Alarm,0.75)}
-        if _,open:=behavior.smart_nearest(t,USE_TURRET,here,15,user);open {ai.propose(t,.Man_Turret,0.72)}
+        if _,open:=behavior.smart_nearest(smart,USE_ALARM,here,25,user);open {ai.propose(t,.Alarm,0.75)}
+        if _,open:=behavior.smart_nearest(smart,USE_TURRET,here,15,user);open {ai.propose(t,.Man_Turret,0.72)}
         if s.ammo>0 && ai.reserve_free(t,subject,SOLDIER_SHOOTERS) {ai.propose(t,.Fire,0.7)}
         ai.propose(t,.Take_Cover,0.55)
     } else if confidence>0 {
@@ -285,7 +283,7 @@ soldier_advance :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Sold
 // for the answer and claims the place, 1 walks there while it holds it, 2
 // holds it in use. A wounded soldier claims first.
 @(act="Take_Cover")
-soldier_cover :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier,.Read),smart_objects:^core.Table(behavior.Smart_Object,.Read),places:^behavior.Place_Requests,results:^core.Table(behavior.Place_Result,.Read),requests:^nav.Nav_Requests) -> ai.Status {
+soldier_cover :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier,.Read),places:^behavior.Place_Requests,results:^core.Table(behavior.Place_Result,.Read),requests:^nav.Nav_Requests) -> ai.Status {
     e:=behavior.agent(a)
     user:=arena_user(w,e)
     if s,ok:=core.get(soldiers,e);ok && s.health<SOLDIER_WOUNDED {user.priority=SOLDIER_FIRST}
@@ -299,18 +297,19 @@ soldier_cover :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldie
         q.tests[1]={measure=.Path,from=.Querier,min=0,max=30,response=falling}
         q.tests[2]={measure=.Influence,teams=behavior.Teams(1<<u32(TEAM_RED+TEAM_BLUE-mine)),min=0,max=2,response={kind=.Linear,slope=-0.5,shift_y=1}}
         q.test_count=3
-        a.memory[0]=u64(behavior.place_query(places,q))
+        request:=behavior.place_query(places,q)
+        if request==0 {return .Failure}
+        a.memory[0]=u64(request)
         return .Running
     case .Update:
         switch ai.stage(a) {
         case 0:
-            result,ok:=core.get(results,e)
-            if !ok || result.request!=u32(a.memory[0]) || result.status==.Waiting {return .Running}
+            result,ready:=behavior.place_result(results,e,u32(a.memory[0]))
+            if !ready {return .Running}
             if result.status!=.Found || result.offers[0]<0 {return .Failure}
-            object,_:=core.get(smart_objects,result.entities[0])
-            found:=behavior.Smart_Found{object=result.entities[0],offer=int(result.offers[0]),at=result.points[0],users=max(int(object.offers[result.offers[0]].users),1)}
-            if !behavior.smart_claim(a,found,user) {return .Failure}
-            nav.nav_move_to(requests,e,found.at)
+            found,open:=behavior.smart_offer_at(behavior.mind_smart_view(a),result.entities[0],int(result.offers[0]),user,USE_COVER)
+            if !open || !behavior.smart_claim(a,found,user) {return .Failure}
+            nav.nav_move_to(requests,e,result.points[0])
             return ai.next_stage(a)
         case 1:
             if !ai.claim_held(a) {return .Failure}
@@ -531,9 +530,9 @@ guard_patrol :: proc(a:^ai.Act(Guard_Act)) -> ai.Status {return behavior.patrol_
 
 // Once begun it lasts until navigation takes the guard on from the other side.
 @(act="Vault")
-guard_vault :: proc(a:^ai.Act(Guard_Act),w:Arena,links:^core.Table(nav.Nav_Link,.Read),placer:core.Placer) -> ai.Status {
+guard_vault :: proc(a:^ai.Act(Guard_Act),w:Arena,routes:core.Ref(nav.Navigation_Agents),placer:core.Placer) -> ai.Status {
     if ai.entering(a) {ai.commit(a,1)}
-    return behavior.cross_act(a,links,placer,USE_VAULT,arena_user(w,behavior.agent(a)),0.6)
+    return behavior.cross_act(a,routes,placer,USE_VAULT,arena_user(w,behavior.agent(a)),0.6)
 }
 
 // Builds the arenas that have not been built, once the world runs: their
@@ -684,7 +683,7 @@ arena_piece_add :: proc(c:core.Commands,piece:Arena_Piece) {
         core.commands_add(c,slab,render.Material_Values{color=piece.color})
     case .Link:
         core.commands_add(c,e,core.Transform{piece.position,1,{1,1,1}})
-        core.commands_add(c,e,nav.Nav_Link{end=piece.end,kind=piece.link,two_way=true,area=nav.AREA_WALKABLE,abilities=arena_link_abilities(piece.link)})
+        core.commands_add(c,e,nav.Nav_Link{enabled=true,end=piece.end,kind=piece.link,two_way=true,area=nav.AREA_WALKABLE,abilities=arena_link_abilities(piece.link)})
         if piece.offers[0].use!=behavior.USE_NONE {core.commands_add(c,e,behavior.Smart_Object{offers={0=piece.offers[0],1=piece.offers[1]}})}
     case .Offer:
         core.commands_add(c,e,core.Transform{piece.position,1,{1,1,1}})
@@ -756,7 +755,7 @@ arena_animated :: proc(c:core.Commands,e:core.Entity) {
 @(private)
 arena_target :: proc(c:core.Commands,position:mm.Vec3,route:core.Entity) -> core.Entity {
     e:=arena_body(c,position,{0.2,0.6,1,1},5)
-    if route!=core.NONE {core.commands_add(c,e,behavior.Patrol{path=route})} else {core.commands_add(c,e,Arena_Target{center=position})}
+    if route!=core.NONE {core.commands_add(c,e,behavior.Patrol{path=route,automatic=true})} else {core.commands_add(c,e,Arena_Target{center=position})}
     core.commands_add(c,e,behavior.Perceivable{team=TEAM_RUNNER,point=1})
     return e
 }

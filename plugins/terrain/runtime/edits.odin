@@ -209,7 +209,10 @@ edit_layer_drop :: proc(s:^Source,index:int) -> (change:Change) {
     if layer.splines && !under_restore(s,&change) {return Change{error=.Out_Of_Memory}}
     grid_destroy(&s.edit_heights[index],s.allocator)
     count:=int(s.edit_count)
-    for i in index..<count-1 {s.edit_heights[i],s.edit_layers[i]=s.edit_heights[i+1],s.edit_layers[i+1]}
+    for i in index..<count-1 {
+        s.edit_heights[i]=s.edit_heights[i+1]
+        s.edit_layers[i]=s.edit_layers[i+1]
+    }
     s.edit_heights[count-1],s.edit_layers[count-1]={},{}
     s.edit_count-=1
     change.changed=true

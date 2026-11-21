@@ -196,14 +196,14 @@ Adapt the source's data to these features instead of rebuilding its runtime:
   set; a moment of the body is one `play` request with one priority rule, in a layer or
   over the whole body; what happens arrives in one `Animation_Events` queue. A game walks, aims,
   acts and reacts with `play`, `stop`, `set`, `look` and that queue. Everything a game asks of the
-  animation (goals, controls and warp targets too) goes in the one storage `Animation_Requests`.
+  animation, including named modifiers and warp targets, goes in `Animation_Requests`.
 - **Root motion is a channel of the stack:** each layer gives the root delta of its clips by the
   weight of its pose, over that of the base, and the layers of actions with `body_move` are the
   share that moves the body. Every layer that moves the root moves the root bone of the base.
 - **What `play` starts replicates by itself:** the end that decides an entity records each action
   it asks in `Animation_Played`, and the others play it from the tick it started.
-- `Animation.playing` and `speed` only start a clip by itself; once the world plays, commands play,
-  pause, stop, seek and reverse it.
+- The `Animation` clip and playback fields give the initial clip and clock. The clip request
+  queue owns those settings in Play and retains requests while their sources load.
 - The runtime does not allocate in a stable frame; the buffers of the program are reserved at load
   and released when it is retired. The database of a set is built at load, per library and
   skeleton, within its memory cap.
@@ -217,7 +217,7 @@ Adapt the source's data to these features instead of rebuilding its runtime:
   on its own.
 - The API expresses intent with names and defaults: it resolves handles and indices inside the
   plugin, separates targets from influence and activation, and publishes solver details only through
-  optional inspection.
+  optional inspection. Character definitions are shared; each rig owns its modifier state.
 - The Tracks tool is the one editor of the keys of every clip and keeps only its view; each of its
   gestures is a call of an `animation.*` method.
 - Asset edits go through the editor's file history: one step per call, attributed to the AI turn,

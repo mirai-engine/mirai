@@ -169,8 +169,10 @@ nav_corridor_cross :: proc "contextless" (c:^Nav_Corridor,mesh:^Nav_Mesh) -> (fr
     for ref,i in path {if nav_ref_is_link(ref) {at=i;break}}
     if at<0 || at+1>=len(path) {return}
     l:=nav_link_of(mesh,path[at])
-    if l==nil {return}
-    from,to,_,_=nav_link_ends(l,path[at])
+    if !nav_link_active(l) {return}
+    start,end,near,far:=nav_link_ends(l,path[at])
+    if at==0 || path[at-1]!=near || path[at+1]!=far {return}
+    from,to=start,end
     link=path[at]
     rest:=len(path)-at-1
     copy(c.path[:rest],path[at+1:])
@@ -187,7 +189,8 @@ nav_corridor_valid :: proc "contextless" (c:^Nav_Corridor,mesh:^Nav_Mesh,filter:
     for ref in path[:clamp(ahead,0,len(path))] {
         if nav_ref_is_link(ref) {
             link:=nav_link_of(mesh,ref)
-            if link==nil || link.start_poly==0 || link.end_poly==0 || !nav_link_crossable(link,filter.can) {return false}
+            if !nav_link_crossable(link,filter.can) ||
+                !nav_filter_passes(filter,link.desc.area) {return false}
             continue
         }
         _,poly:=nav_poly_of(mesh,ref)

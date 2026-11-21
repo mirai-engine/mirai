@@ -422,7 +422,8 @@ object_retype :: proc(h:^Host,object:Object,type:Type_Id,sources:[MAX_FRAGMENTS]
     }
     if !op_push(h,{kind=.Object_Retype,handle=u64(object)},mem.ptr_to_bytes(&staged)[:size]) {return .Full}
     f.state_words+=after.words-before.words
-    o.type,o.dirty,o.sources=type,0,sources
+    o.sources=sources
+    o.type,o.dirty=type,0
     f.binding_revision+=1
     return .None
 }

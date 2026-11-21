@@ -70,7 +70,7 @@ character_document :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_
 }
 @(private)
 character_tables :: proc(doc:^asset.Document,types:^asset.Types,set:Character_Set) -> asset.Error {
-    info,locomotion,warp,grounding:=set.info,set.match.info,set.motion.warp,set.pose.grounding
+    info,locomotion,warp,grounding:=set.info,set.match.info,set.motion.warp,set.pose.grounding.definition
     pose:=set.pose
     asset.document_put_row(doc,types,"info",&info) or_return
     asset.document_put_row(doc,types,"match",&locomotion) or_return
@@ -90,10 +90,11 @@ character_tables :: proc(doc:^asset.Document,types:^asset.Types,set:Character_Se
     asset.document_put(doc,types,"look",pose.look) or_return
     asset.document_put(doc,types,"limits",pose.limits) or_return
     asset.document_put_row(doc,types,"grounding",&grounding) or_return
+    asset.document_put(doc,types,"grounding_legs",pose.grounding.legs) or_return
     asset.document_put(doc,types,"chain_ik",pose.chain_ik) or_return
     asset.document_put(doc,types,"twist",pose.twist) or_return
     asset.document_put(doc,types,"springs",pose.springs) or_return
-    asset.document_put(doc,types,"multi_ik",pose.multi_ik) or_return
+    character_multi_write(doc,types,pose.multi_ik) or_return
     asset.document_put(doc,types,"retarget_chains",pose.retarget_chains) or_return
     asset.document_put(doc,types,"spline_ik",pose.spline_ik) or_return
     asset.document_put(doc,types,"correctives",pose.correctives) or_return
@@ -103,6 +104,45 @@ character_tables :: proc(doc:^asset.Document,types:^asset.Types,set:Character_Se
     asset.document_put(doc,types,"curve_materials",pose.curve_materials) or_return
     return .None
 }
+@(private)
+Multi_IK_Row :: struct {definition:Multi_IK_Definition,joints,effectors:u8}
+
+@(private)
+character_multi_write :: proc(doc:^asset.Document,types:^asset.Types,configs:[]Multi_IK_Constraint) -> asset.Error {
+    rows,error:=make([]Multi_IK_Row,len(configs),doc.allocator)
+    if error!=nil {return .Out_Of_Memory}
+    defer delete(rows,doc.allocator)
+    joints:=make([dynamic]Multi_IK_Joint,doc.allocator)
+    effectors:=make([dynamic]Multi_IK_Effector,doc.allocator)
+    defer {delete(joints);delete(effectors)}
+    for config,i in configs {
+        rows[i]={definition=config.definition,joints=u8(len(config.joints)),effectors=u8(len(config.effectors))}
+        if append(&joints,..config.joints)!=len(config.joints) || append(&effectors,..config.effectors)!=len(config.effectors) {return .Out_Of_Memory}
+    }
+    asset.document_put(doc,types,"multi_ik",rows) or_return
+    asset.document_put(doc,types,"multi_ik_joints",joints[:]) or_return
+    asset.document_put(doc,types,"multi_ik_effectors",effectors[:]) or_return
+    return .None
+}
+
+@(private)
+character_multi_read :: proc(file:^asset.Asset,types:^asset.Types) -> (configs:[]Multi_IK_Constraint,error:asset.Error) {
+    rows:=asset.asset_rows(file,types,"multi_ik","",Multi_IK_Row) or_return
+    joints:=asset.asset_rows(file,types,"multi_ik_joints","",Multi_IK_Joint) or_return
+    effectors:=asset.asset_rows(file,types,"multi_ik_effectors","",Multi_IK_Effector) or_return
+    if len(rows)>POSE_CONSTRAINTS {return nil,.Corrupt}
+    block:=asset.asset_alloc(file,len(rows)*size_of(Multi_IK_Constraint),align_of(Multi_IK_Constraint)) or_return
+    configs=mem.slice_data_cast([]Multi_IK_Constraint,block)
+    for row,i in rows {
+        n,m:=int(row.joints),int(row.effectors)
+        if n>len(joints) || m>len(effectors) {return nil,.Corrupt}
+        configs[i]={definition=row.definition,joints=joints[:n],effectors=effectors[:m]}
+        joints,effectors=joints[n:],effectors[m:]
+    }
+    if len(joints)!=0 || len(effectors)!=0 {return nil,.Corrupt}
+    return configs,.None
+}
+
 character_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,set:Character_Set,allocator:=context.allocator) -> asset.Error {
     doc:asset.Document
     character_document(&doc,types,id,set,allocator) or_return
@@ -130,11 +170,12 @@ character_view :: proc(file:^asset.Asset,types:^asset.Types) -> (set:Character_S
     pose.ik=asset.asset_rows(file,types,"ik","",IK_Constraint) or_return
     pose.look=asset.asset_rows(file,types,"look","",Look_Constraint) or_return
     pose.limits=asset.asset_rows(file,types,"limits","",Rotation_Constraint) or_return
-    pose.grounding=(asset.asset_row(file,types,"grounding",Foot_Grounding) or_return)^
+    pose.grounding.definition=(asset.asset_row(file,types,"grounding",Grounding_Definition) or_return)^
+    pose.grounding.legs=asset.asset_rows(file,types,"grounding_legs","",Grounded_Leg) or_return
     pose.chain_ik=asset.asset_rows(file,types,"chain_ik","",Chain_IK_Constraint) or_return
     pose.twist=asset.asset_rows(file,types,"twist","",Twist_Constraint) or_return
     pose.springs=asset.asset_rows(file,types,"springs","",Spring_Constraint) or_return
-    pose.multi_ik=asset.asset_rows(file,types,"multi_ik","",Multi_IK_Constraint) or_return
+    pose.multi_ik=character_multi_read(file,types) or_return
     pose.retarget_chains=asset.asset_rows(file,types,"retarget_chains","",Chain_Retarget_Constraint) or_return
     pose.spline_ik=asset.asset_rows(file,types,"spline_ik","",Spline_IK_Constraint) or_return
     pose.correctives=asset.asset_rows(file,types,"correctives","",Pose_Corrective) or_return
@@ -198,7 +239,7 @@ character_content :: proc(cache:^Character_Assets,assets:^host.Assets,allocator:
     error:=asset.Error.Not_Found
     if found {error=character_read(&next,assets,allocator,id)}
     if error!=.None {character_content_release(&next)}
-    if error==.Out_Of_Memory {content.error,content.checked=error,0;return nil}
+    if error==.Out_Of_Memory || error==.Not_Here {content.error,content.checked=error,0;return nil}
     revision:=content.revision
     character_content_release(content)
     content^=next

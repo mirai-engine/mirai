@@ -104,6 +104,13 @@ the_names_of_plugin_libraries_are_masked_in_declarations_and_renamed_in_commands
     names["plugin-mid-runtime-minimal"]="plugin-mid-runtime-minimal-22222222"
     command:=`radlink "c:/p/lib/plugin-base-runtime-minimal-8ed57662.lib" /DEF:plugin-mid-runtime-minimal-0a1b2c3d.def "C:/P/LIB/PLUGIN-BASE-RUNTIME-MINIMAL-abcdef01.LIB" "plugin-other-runtime-minimal-8ed57662.lib" -OUT:"o/l.dll"`
     testing.expect_value(t,link_command_rename(command,names,context.temp_allocator),`radlink "c:/p/lib/plugin-base-runtime-minimal-11111111.lib" /DEF:plugin-mid-runtime-minimal-22222222.def "C:/P/LIB/plugin-base-runtime-minimal-11111111.LIB" "plugin-other-runtime-minimal-8ed57662.lib" -OUT:"o/l.dll"`)
+    when ODIN_OS!=.Windows {
+        args:=link_command_args(`clang "some dir/runtime$2.o" -Wl,-rpath,$ORIGIN -L"some dir"`,context.temp_allocator)
+        want:=[]string{"clang","some dir/runtime$2.o","-Wl,-rpath,$ORIGIN","-Lsome dir"}
+        if testing.expect_value(t,len(args),len(want)) {
+            for arg,i in args {testing.expect_value(t,arg,want[i])}
+        }
+    }
     OUTPUT :: "[SYSTEM CALL] msvc-rad-link\n\"radlink\" \"a.obj\"\n\n[SYSTEM CALL] dsymutil\ndsymutil l\n"
     found,ok:=link_command_find(OUTPUT)
     testing.expect(t,ok)

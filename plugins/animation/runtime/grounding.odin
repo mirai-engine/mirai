@@ -22,11 +22,15 @@ GROUNDED_LEG_DEFAULT :: Grounded_Leg{
     step_distance=0.2,step_height=0.15,step_duration=0.2,max_distance=0.7,contact=1,
 }
 
-// The grounding of the feet of the rig that plays the .character: none while count is 0.
+// The grounding of the feet of the rig that plays the .character: none without legs.
 Foot_Grounding :: struct {
+    using definition:Grounding_Definition,
+    legs:[]Grounded_Leg,
+}
+
+Grounding_Definition :: struct {
+    name:[64]u8 `mirai:"text,optional"`,
     mode:Grounding_Mode,
-    legs:[GROUNDING_LEGS]Grounded_Leg `mirai:"hidden"`,
-    count:i32 `mirai:"min=0,max=16"`,
     body:Bone_Ref, // empty: the pelvis of the body of the skeleton
     up:mm.Vec3, // in the frame of the rig as it is placed, not as its bones move; the rig of a character plants its feet along the up of its vertical (core.Vertical)
     trace_above,trace_below,minimum_ground_dot:f32,
@@ -39,19 +43,18 @@ Foot_Grounding :: struct {
     prediction:f32,
     adjust_body,enabled:bool,
 }
-FOOT_GROUNDING_DEFAULT :: Foot_Grounding{
+FOOT_GROUNDING_DEFAULT :: Foot_Grounding{definition={
     up={0,1,0},trace_above=0.5,trace_below=1,minimum_ground_dot=0.3,collision_mask=0xffffffff,
     global_contact=1,weight=1,blend_time=0.1,release_distance=0.6,replant_distance=0.3,
     cycle_duration=0.8,swing_fraction=0.4,max_swinging=4,body_height=0.7,
     max_drop=0.5,max_rise=0.3,max_tilt=0.5,prediction=0.15,adjust_body=true,enabled=true,
-}
+}}
 
 Grounding_Alignment :: struct {offset:mm.Vec3,turn:mm.Quat,weight:f32}
-Grounding_Hierarchy :: struct {bound:u64,first,count:int}
 
 Grounding_Record :: struct {
-    rig:core.Entity `mirai:"transient"`,
-    bound,version:u64,
+    bound:u64,
+    generation:u32,
     count,body:i32,
     mode:Grounding_Mode,
     bones:[GROUNDING_LEGS][3]int,
@@ -70,13 +73,9 @@ Grounding_Record :: struct {
     initialized:bool,
 }
 
-@(storage,free="grounding_free")
-Grounding_Runtime :: struct {
-    records:[dynamic]Grounding_Record,
-    rows:[dynamic]i32,
-    hierarchies:[dynamic]Grounding_Hierarchy,
+Grounding_Binding :: struct {
+    record:Grounding_Record,
     links:[dynamic]lib.Pose_Link,
-    stamp,layout:u64,
 }
 
 // What the rays of a rig skip: the nearest of it and its parents with a body.
@@ -93,66 +92,13 @@ ground_ignore :: proc(ground:core.World_Query,parents:^core.Table(core.Parent,$A
 }
 
 Grounding_Inputs :: struct {
-    configs:^core.Table(Foot_Grounding,.Read),
     ground:core.World_Query, // the feet stand on what it hits; without a library that gives it no foot is grounded
     transforms:^core.Table(core.Transform,.Read),
     parents:^core.Table(core.Parent,.Read),
-    geometry:u64,
     problems:^core.Problems,
     verticals:^core.Table(core.Vertical,.Read),
 }
 
-grounding_free :: proc(cache:^Grounding_Runtime) {
-    delete(cache.records);delete(cache.rows);delete(cache.hierarchies);delete(cache.links);cache^={}
-}
-
-grounding_prepare :: proc(cache:^Grounding_Runtime,configs:^core.Table(Foot_Grounding,$A),problems:^core.Problems) -> bool {
-    if cache==nil {return false}
-    count:=constraint_count(configs)
-    stamp:=constraint_stamp(configs)
-    if cache.stamp==stamp {return true}
-    layout:=core.layout(configs) if configs!=nil else 0
-    rebuild:=cache.layout!=layout || len(cache.records)!=count || len(cache.hierarchies)!=count
-    if !rebuild {
-        for i in 0..<count {if cache.records[i].rig!=core.entity_at(configs,i) {rebuild=true;break}}
-    }
-    if !rebuild {cache.stamp=stamp;return true}
-    records:[dynamic]Grounding_Record;rows:[dynamic]i32
-    hierarchies:[dynamic]Grounding_Hierarchy;links:[dynamic]lib.Pose_Link
-    defer {delete(records);delete(rows);delete(hierarchies);delete(links)}
-    if resize(&records,count)!=nil || resize(&hierarchies,count)!=nil {memory_problem(problems,core.NONE,"the grounding of the rigs, so no foot is grounded");return false}
-    for i in 0..<count {
-        rig:=core.entity_at(configs,i)
-        index:=core.entity_index(rig)
-        if index>=len(rows) && resize(&rows,index+1)!=nil {memory_problem(problems,core.NONE,"the grounding of the rigs, so no foot is grounded");return false}
-        rows[index]=i32(i+1)
-        records[i]={rig=rig}
-        for previous,j in cache.records {
-            if previous.rig!=rig {continue}
-            records[i]=previous
-            if j<len(cache.hierarchies) {hierarchies[i]=cache.hierarchies[j]}
-            break
-        }
-    }
-    total:=0
-    for hierarchy in hierarchies {
-        if hierarchy.first<0 || hierarchy.count<0 || hierarchy.first>len(cache.links) || hierarchy.count>len(cache.links)-hierarchy.first || hierarchy.count>max(int)-total {grounding_inconsistent(problems,core.NONE);return false}
-        total+=hierarchy.count
-    }
-    if resize(&links,total)!=nil {memory_problem(problems,core.NONE,"the grounding of the rigs, so no foot is grounded");return false}
-    offset:=0
-    for &hierarchy in hierarchies {
-        copy(links[offset:offset+hierarchy.count],cache.links[hierarchy.first:hierarchy.first+hierarchy.count])
-        hierarchy.first=offset;offset+=hierarchy.count
-    }
-    delete(cache.records);delete(cache.rows);delete(cache.hierarchies);delete(cache.links)
-    cache.records,cache.rows=records,rows;records,rows=nil,nil
-    cache.hierarchies,cache.links=hierarchies,links;hierarchies,links=nil,nil
-    cache.stamp,cache.layout=stamp,layout
-    return true
-}
-
-// The bone links grounding keeps for its rigs contradict themselves: a bug of the engine.
 @(private)
 grounding_inconsistent :: proc(problems:^core.Problems,e:core.Entity) {
     core.report(problems,e,"animation.grounding_state","the grounding state lost its bone links, a bug of the engine: no foot is grounded until Foot_Grounding changes; change it to rebuild it, and report the scene")
@@ -171,12 +117,12 @@ grounding_unsolved :: proc(problems:^core.Problems,e:core.Entity,step:string,leg
 
 @(private)
 grounding_config_valid :: proc(config:Foot_Grounding) -> bool {
-    if config.count<1 || config.count>GROUNDING_LEGS || config.mode>.Procedural {return false}
+    if i32(len(config.legs))<1 || i32(len(config.legs))>GROUNDING_LEGS || config.mode>.Procedural {return false}
     if !finite(linalg.length(config.up)) || linalg.length(config.up)<1e-6 {return false}
     numbers:=[?]f32{config.trace_above,config.trace_below,config.minimum_ground_dot,config.global_contact,config.weight,config.blend_time,config.release_distance,config.replant_distance,config.cycle_duration,config.swing_fraction,config.body_height,config.max_drop,config.max_rise,config.max_tilt,config.prediction}
     for number in numbers {if !finite(number) || number<0 {return false}}
     if config.trace_above+config.trace_below<=0 || !finite(config.trace_above+config.trace_below) || config.minimum_ground_dot>1 || config.global_contact>1 || config.weight>1 || config.replant_distance>config.release_distance || config.cycle_duration<=0 || config.swing_fraction<=0 || config.swing_fraction>1 || config.max_swinging<=0 {return false}
-    for i in 0..<int(config.count) {
+    for i in 0..<len(config.legs) {
         leg:=config.legs[i]
         values:=[?]f32{leg.sole_height,leg.contact_offset,leg.contact_height,leg.plant_speed,leg.max_tilt,leg.phase,leg.step_distance,leg.step_height,leg.step_duration,leg.max_distance,leg.contact,leg.reach.soft_distance,leg.reach.max_stretch}
         for value in values {if !finite(value) || value<0 {return false}}
@@ -188,33 +134,9 @@ grounding_config_valid :: proc(config:Foot_Grounding) -> bool {
 }
 
 @(private)
-grounding_hierarchy_prepare :: proc(cache:^Grounding_Runtime,row:int,state:^Playing) -> bool {
-    old:=cache.hierarchies[row]
-    count:=len(state.parents)
-    if old.bound==state.bound && old.count==count {return true}
-    if !lib.skeleton_validate(playing_skeleton(state)) || old.first<0 || old.count<0 || old.first>len(cache.links) || old.count>len(cache.links)-old.first {return false}
-    remaining:=len(cache.links)-old.count
-    if count>max(int)-remaining {return false}
-    first:=old.first if old.count>0 else len(cache.links)
-    links:[dynamic]lib.Pose_Link
-    defer delete(links)
-    if resize(&links,remaining+count)!=nil {return false}
-    copy(links[:first],cache.links[:first])
-    copy(links[first+count:],cache.links[first+old.count:])
-    if _,ok:=lib.pose_hierarchy_prepare(state.parents[:],links[first:first+count]);!ok {return false}
-    for &hierarchy,i in cache.hierarchies {
-        if i!=row && hierarchy.count>0 && hierarchy.first>=first+old.count {hierarchy.first+=count-old.count}
-    }
-    cache.hierarchies[row]={state.bound,first,count}
-    delete(cache.links);cache.links=links;links=nil
-    return true
-}
-
-@(private)
-grounding_bind :: proc(cache:^Grounding_Runtime,row:int,state:^Playing,config:Foot_Grounding,version:u64,problems:^core.Problems) -> bool {
-    record:=&cache.records[row]
-    hierarchy:=cache.hierarchies[row]
-    if record.version==version && record.bound==state.bound && hierarchy.bound==state.bound && hierarchy.count==len(state.parents) {return true}
+grounding_bind :: proc(binding:^Grounding_Binding,state:^Playing,config:Foot_Grounding,problems:^core.Problems) -> bool {
+    record:=&binding.record
+    if record.bound==state.bound && record.generation==state.generation && len(binding.links)>0 {return true}
     if !grounding_config_valid(config) {
         core.report(problems,state.entity,"animation.grounding_config","Foot_Grounding of this rig has a value out of range: count 1 to 16, a nonzero up, distances, times and weights finite and not negative, replant_distance not above release_distance, swing_fraction 0 to 1, and in each leg phase below 1 and max_distance not below step_distance; fix it")
         return false
@@ -227,21 +149,21 @@ grounding_bind :: proc(cache:^Grounding_Runtime,row:int,state:^Playing,config:Fo
         return int(state.body[default]) if state.body[default]>0 else -1
     }
     LEGS :: [2][4]lib.Body_Part{{.Hip_L,.Knee_L,.Foot_L,.Toe_L},{.Hip_R,.Knee_R,.Foot_R,.Toe_R}}
-    for i in 0..<int(config.count) {
+    for i in 0..<len(config.legs) {
         leg:=config.legs[i]
         sides:=LEGS;side:=sides[min(i,1)]
         if i<2 {bones[i]={part(state,leg.hip,side[0]),part(state,leg.knee,side[1]),part(state,leg.foot,side[2])}} else {bones[i]={bone_resolve(state,leg.hip),bone_resolve(state,leg.knee),bone_resolve(state,leg.foot)}}
         hip,knee,foot:=bones[i][0],bones[i][1],bones[i][2]
-        if hip<=0 || knee<=0 || foot<=0 || state.parents[knee]!=i32(hip) || state.parents[foot]!=i32(knee) {
+        if hip<=0 || knee<=0 || foot<=0 || playing_topology(state).parents[knee]!=i32(hip) || playing_topology(state).parents[foot]!=i32(knee) {
             core.report(problems,state.entity,"animation.grounding_bones","leg %d of Foot_Grounding: its hip, knee and foot are not a chain of bones of this skeleton, each the parent of the next; name such a chain (animation.asset.inspect lists the bones)",i)
             return false
         }
         contacts[i]=foot
-        if toe:=int(state.body[side[3]]);leg.contact_bone=={} && i<2 && toe>0 && state.parents[toe]==i32(foot) {contacts[i]=toe}
+        if toe:=int(state.body[side[3]]);leg.contact_bone=={} && i<2 && toe>0 && playing_topology(state).parents[toe]==i32(foot) {contacts[i]=toe}
         if leg.contact_bone!={} {
             contacts[i]=bone_resolve(state,leg.contact_bone)
             ancestor:=contacts[i]
-            for ancestor>foot {ancestor=int(state.parents[ancestor])}
+            for ancestor>foot {ancestor=int(playing_topology(state).parents[ancestor])}
             if contacts[i]<0 || ancestor!=foot {
                 core.report(problems,state.entity,"animation.grounding_bones","leg %d of Foot_Grounding: its contact_bone is not a bone below its foot; name one, or leave it empty",i)
                 return false
@@ -249,18 +171,26 @@ grounding_bind :: proc(cache:^Grounding_Runtime,row:int,state:^Playing,config:Fo
         }
     }
     body:=part(state,config.body,.Pelvis)
-    if !grounding_hierarchy_prepare(cache,row,state) {
-        core.report(problems,state.entity,"animation.grounding_bones","the skeleton of this rig cannot be grounded: its bones are not ordered parents first, or memory ran out; import the skeleton again, or free memory")
+    parents:=playing_topology(state).parents[:]
+    if !lib.skeleton_validate(playing_skeleton(state)) {grounding_inconsistent(problems,state.entity);return false}
+    links:=binding.links
+    replace_links:=len(parents)>cap(links)
+    if replace_links {links=nil}
+    if !program_array_resize(&links,len(parents)) {
+        memory_problem(problems,state.entity,"its grounding hierarchy");return false
+    }
+    if _,ok:=lib.pose_hierarchy_prepare(parents,links[:]);!ok {
+        if replace_links {delete(links)}
         return false
     }
-    if record.count!=config.count || record.mode!=config.mode || record.bound!=state.bound || record.bones!=bones || record.contact_bones!=contacts || record.body!=i32(body) {
-        record^=Grounding_Record{rig=record.rig}
-    }
+    if replace_links {delete(binding.links)}
+    binding.links=links
+    record^={}
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
     record.bones=bones
-    record.count,record.body=config.count,i32(body)
+    record.count,record.body=i32(len(config.legs)),i32(body)
     record.contact_bones=contacts
-    record.mode,record.version,record.bound=config.mode,version,state.bound
+    record.mode,record.bound,record.generation=config.mode,state.bound,state.generation
     return true
 }
 
@@ -321,26 +251,19 @@ grounding_up :: proc(inputs:Grounding_Inputs,rig:core.Entity,basis:mm.Transform,
 // The most parents above a rig that grounding_up looks through for a character.
 GROUNDING_DEPTH :: 16
 
-grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding_Inputs,dt:f32) -> bool {
-    if state==nil || cache==nil || !finite(dt) || dt<0 {return false}
+grounding_apply :: proc(state:^Playing,binding:^Grounding_Binding,definition:^Foot_Grounding,inputs:Grounding_Inputs,dt:f32) -> bool {
+    if state==nil || binding==nil || !finite(dt) || dt<0 {return false}
     problems:=inputs.problems
-    if !grounding_prepare(cache,inputs.configs,problems) {return false}
-    index:=core.entity_index(state.entity)
-    if index>=len(cache.rows) || cache.rows[index]<=0 {return true}
-    row:=int(cache.rows[index])-1
-    record:=&cache.records[row]
-    if record.rig!=state.entity {return true}
-    config:=core.at(inputs.configs,row)
-    record.blocked=0
-    if !config.enabled {record.initialized=false;record.legs={};record.placements={};record.alignment={};record.previous={};record.targets={};record.rotations={};return true}
+    record:=&binding.record
+    config:=definition^
+    if !config.enabled {record.blocked=0;record.initialized=false;record.legs={};record.placements={};record.alignment={};record.previous={};record.targets={};record.rotations={};return true}
     ground:=inputs.ground
-    if ground.probe==nil {return true}
-    if !grounding_bind(cache,row,state,config,inputs.geometry if inputs.geometry!=0 else core.stamp(inputs.configs,row),problems) {return false}
-    count:=int(config.count)
-    if len(state.world)!=len(state.local) || len(state.world)==0 {grounding_inconsistent(problems,state.entity);return false}
-    prepared:=cache.hierarchies[row]
-    if prepared.first<0 || prepared.count!=len(state.parents) || prepared.first>len(cache.links) || prepared.count>len(cache.links)-prepared.first {grounding_inconsistent(problems,state.entity);return false}
-    hierarchy:=lib.Pose_Hierarchy{state.parents[:],cache.links[prepared.first:prepared.first+prepared.count]}
+    if ground.probe==nil {record.blocked=0;return true}
+    if !grounding_bind(binding,state,config,problems) {return false}
+    record.blocked=0
+    count:=len(config.legs)
+    if len(playing_pose(state,.World))!=len(playing_pose(state,.Local)) || len(playing_pose(state,.World))==0 {grounding_inconsistent(problems,state.entity);return false}
+    hierarchy:=lib.Pose_Hierarchy{playing_topology(state).parents[:],binding.links[:]}
     basis:=mm.TRANSFORM_IDENTITY
     if inputs.parents!=nil {
         if parent,ok:=core.get(inputs.parents,state.entity);ok && parent.entity!=core.NONE {
@@ -352,7 +275,7 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
         }
     }
     ignore:=ground_ignore(ground,inputs.parents,state.entity)
-    root:=state.world[0]
+    root:=playing_pose(state,.World)[0]
     up:=grounding_up(inputs,state.entity,basis,config.up)
 
     velocity:mm.Vec3
@@ -370,13 +293,13 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
     for leg,i in config.legs[:count] {
         hip,knee,foot:=record.bones[i][0],record.bones[i][1],record.bones[i][2]
         _=hip
-        animated[i]=state.world[foot].position
-        rotations[i]=state.world[foot].rotation
+        animated[i]=playing_pose(state,.World)[foot].position
+        rotations[i]=playing_pose(state,.World)[foot].rotation
         desired[i]=animated[i]
-        poles[i]=state.world[knee].position+mm.quat_rotate(root.rotation,leg.pole_offset)
+        poles[i]=playing_pose(state,.World)[knee].position+mm.quat_rotate(root.rotation,leg.pole_offset)
         probe:=animated[i]
         clearance:=leg.sole_height
-        if config.mode==.Animated && leg.contact_bone!={} {probe=state.world[record.contact_bones[i]].position;clearance=leg.contact_offset}
+        if config.mode==.Animated && leg.contact_bone!={} {probe=playing_pose(state,.World)[record.contact_bones[i]].position;clearance=leg.contact_offset}
         origin:=probe+up*config.trace_above
         if config.mode==.Procedural {origin+=prediction}
         hit,ok:=ground.probe(ground.user,origin,-up,config.trace_above+config.trace_below,0,ignore,mask)
@@ -458,7 +381,7 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
             } else {
                 if record.contact_bones[i]!=record.bones[i][2] {
                     turn:=record.rotations[i]*conj(rotations[i])
-                    probe:=target.position+mm.quat_rotate(turn,state.world[record.contact_bones[i]].position-animated[i])
+                    probe:=target.position+mm.quat_rotate(turn,playing_pose(state,.World)[record.contact_bones[i]].position-animated[i])
                     target.position+=up*grounding_clearance(probe,target.normal*leg.contact_offset,up,config,inputs,ignore)
                 }
                 sole:=mm.quat_rotate(record.rotations[i],linalg.normalize0(leg.foot_up))*leg.sole_height
@@ -472,7 +395,7 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
     body_weights:[GROUNDING_LEGS]f32
     if config.adjust_body && record.body>0 {
         body:=int(record.body)
-        target:=state.world[body]
+        target:=playing_pose(state,.World)[body]
         ok:=true
         if config.mode==.Animated {
             offset:mm.Vec3
@@ -493,20 +416,20 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
             target,ok=lib.gait_body_target(target,resting[:count],up,config.body_height,config.max_drop,config.max_rise,config.max_tilt,config.weight)
         }
         if !ok {return grounding_unsolved(problems,state.entity,"the place of the body")}
-        offset:=target.position-state.world[body].position
-        turn:=target.rotation*conj(state.world[body].rotation)
+        offset:=target.position-playing_pose(state,.World)[body].position
+        turn:=target.rotation*conj(playing_pose(state,.World)[body].rotation)
         alpha:=dt/(config.blend_time+dt) if config.blend_time>0 && dt>0 else f32(1)
         if !record.initialized || linalg.dot(record.body_turn,record.body_turn)<0.5 {record.body_offset=offset;record.body_turn=turn}
         record.body_offset+=(offset-record.body_offset)*alpha
         record.body_turn=mm.quat_slerp(record.body_turn,turn,alpha)
-        target.position=state.world[body].position+record.body_offset
-        target.rotation=record.body_turn*state.world[body].rotation
-        parent:=state.parents[body]
-        local,valid:=mm.transform_relative(target,state.world[parent] if parent>=0 else basis)
+        target.position=playing_pose(state,.World)[body].position+record.body_offset
+        target.rotation=record.body_turn*playing_pose(state,.World)[body].rotation
+        parent:=playing_topology(state).parents[body]
+        local,valid:=mm.transform_relative(target,playing_pose(state,.World)[parent] if parent>=0 else basis)
         if !valid {return grounding_unsolved(problems,state.entity,"the place of the body")}
-        state.local[body]=local
+        playing_pose(state,.Local)[body]=local
     }
-    if !lib.pose_world(skeleton.parents,state.local[:],state.world[:],basis) {pose_problem(problems,state.entity);return false}
+    if !lib.pose_world(skeleton.parents,playing_pose(state,.Local),playing_pose(state,.World),basis) {pose_problem(problems,state.entity);return false}
     if config.adjust_body && record.body>0 {
         body:=int(record.body)
         offset:=linalg.dot(record.body_offset,up)
@@ -516,21 +439,21 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
             if weight<=0 {continue}
             hip,knee,foot:=record.bones[i][0],record.bones[i][1],record.bones[i][2]
             ancestor:=hip
-            for ancestor>body {ancestor=int(state.parents[ancestor])}
+            for ancestor>body {ancestor=int(playing_topology(state).parents[ancestor])}
             if ancestor!=body {continue}
-            length:=(linalg.length(state.world[knee].position-state.world[hip].position)+linalg.length(state.world[foot].position-state.world[knee].position))*.9999
-            minimum,maximum,reachable:=lib.limb_height_range(state.world[hip].position,target.position,up,length)
+            length:=(linalg.length(playing_pose(state,.World)[knee].position-playing_pose(state,.World)[hip].position)+linalg.length(playing_pose(state,.World)[foot].position-playing_pose(state,.World)[knee].position))*.9999
+            minimum,maximum,reachable:=lib.limb_height_range(playing_pose(state,.World)[hip].position,target.position,up,length)
             if !reachable {continue}
             lower=max(lower,minimum*weight);upper=min(upper,maximum*weight)
         }
         correction:=clamp(0,lower,upper) if lower<=upper else clamp(upper,-config.max_drop-offset,config.max_rise-offset)
         if abs(correction)>1e-6 {
-            target:=state.world[body];target.position+=up*correction
-            parent:=state.parents[body]
-            local,valid:=mm.transform_relative(target,state.world[parent] if parent>=0 else basis)
+            target:=playing_pose(state,.World)[body];target.position+=up*correction
+            parent:=playing_topology(state).parents[body]
+            local,valid:=mm.transform_relative(target,playing_pose(state,.World)[parent] if parent>=0 else basis)
             if !valid {return grounding_unsolved(problems,state.entity,"the height of the body")}
-            state.local[body]=local;record.body_offset+=up*correction
-            if !lib.pose_world_branch(hierarchy,state.local[:],state.world[:],body,basis) {pose_problem(problems,state.entity);return false}
+            playing_pose(state,.Local)[body]=local;record.body_offset+=up*correction
+            if !lib.pose_world_branch(hierarchy,playing_pose(state,.Local),playing_pose(state,.World),body,basis) {pose_problem(problems,state.entity);return false}
         }
     }
     for leg,i in config.legs[:count] {
@@ -538,18 +461,18 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
         if target.weight<=0 {continue}
         hip,knee,foot:=record.bones[i][0],record.bones[i][1],record.bones[i][2]
         contact_delta:=mm.Vec3{}
-        if config.mode==.Animated {contact_delta=mm.quat_rotate(conj(state.world[foot].rotation),state.world[record.contact_bones[i]].position-state.world[foot].position)}
+        if config.mode==.Animated {contact_delta=mm.quat_rotate(conj(playing_pose(state,.World)[foot].rotation),playing_pose(state,.World)[record.contact_bones[i]].position-playing_pose(state,.World)[foot].position)}
         if config.mode==.Animated {
-            pole,valid:=lib.two_bone_pole_from_pose(state.world[hip],state.world[knee],state.world[foot],target.position)
+            pole,valid:=lib.two_bone_pole_from_pose(playing_pose(state,.World)[hip],playing_pose(state,.World)[knee],playing_pose(state,.World)[foot],target.position)
             if !valid {return grounding_unsolved(problems,state.entity,"the pole of the knee",i)}
             poles[i]=pole+mm.quat_rotate(root.rotation,leg.pole_offset)
         }
-        original,ok:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],target.position,poles[i],target.weight,leg.reach)
+        original,ok:=lib.two_bone_ik(playing_pose(state,.World)[hip],playing_pose(state,.World)[knee],playing_pose(state,.World)[foot],target.position,poles[i],target.weight,leg.reach)
         if !ok {return grounding_unsolved(problems,state.entity,"the IK",i)}
         if config.mode==.Procedural {
             replacement:lib.Surface_Contact
             if !original.reached && target.weight==1 && !record.legs[i].swinging && record.legs[i].anchor.active && contacts[i].valid {
-                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],contacts[i].position,poles[i],target.weight,leg.reach)
+                solved,valid:=lib.two_bone_ik(playing_pose(state,.World)[hip],playing_pose(state,.World)[knee],playing_pose(state,.World)[foot],contacts[i].position,poles[i],target.weight,leg.reach)
                 if valid && solved.reached {
                     _,blocked:=grounding_limb_hit(ground,solved.root.position,solved.joint.position,solved.end.position,ignore,mask)
                     if !blocked {replacement=contacts[i];original=solved}
@@ -560,7 +483,7 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
                         hit,found:=ground.probe(ground.user,probe+up*config.trace_above,-up,config.trace_above+config.trace_below,0,ignore,mask)
                         if found && linalg.dot(hit.normal,up)>=config.minimum_ground_dot {
                             position:=hit.point+hit.normal*leg.sole_height
-                            candidate,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],position,poles[i],target.weight,leg.reach)
+                            candidate,valid:=lib.two_bone_ik(playing_pose(state,.World)[hip],playing_pose(state,.World)[knee],playing_pose(state,.World)[foot],position,poles[i],target.weight,leg.reach)
                             if valid && candidate.reached {
                                 _,blocked:=grounding_limb_hit(ground,candidate.root.position,candidate.joint.position,candidate.end.position,ignore,mask)
                                 if !blocked {
@@ -575,9 +498,9 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
             }
             hit,blocked:=grounding_limb_hit(ground,original.root.position,original.joint.position,original.end.position,ignore,mask)
             if blocked && linalg.dot(hit.normal,up)<config.minimum_ground_dot {
-                length:=linalg.length(state.world[knee].position-state.world[hip].position)+linalg.length(state.world[foot].position-state.world[knee].position)
-                pole:=state.world[hip].position+hit.normal*length
-                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],target.position,pole,target.weight,leg.reach)
+                length:=linalg.length(playing_pose(state,.World)[knee].position-playing_pose(state,.World)[hip].position)+linalg.length(playing_pose(state,.World)[foot].position-playing_pose(state,.World)[knee].position)
+                pole:=playing_pose(state,.World)[hip].position+hit.normal*length
+                solved,valid:=lib.two_bone_ik(playing_pose(state,.World)[hip],playing_pose(state,.World)[knee],playing_pose(state,.World)[foot],target.position,pole,target.weight,leg.reach)
                 if valid && solved.reached {
                     _,intersects:=grounding_limb_hit(ground,solved.root.position,solved.joint.position,solved.end.position,ignore,mask)
                     if !intersects {poles[i]=pole;original=solved;blocked=false}
@@ -585,7 +508,7 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
             }
             if blocked && linalg.dot(hit.normal,up)>=config.minimum_ground_dot {
                 position:=hit.point+hit.normal*leg.sole_height
-                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],position,poles[i],target.weight,leg.reach)
+                solved,valid:=lib.two_bone_ik(playing_pose(state,.World)[hip],playing_pose(state,.World)[knee],playing_pose(state,.World)[foot],position,poles[i],target.weight,leg.reach)
                 if valid && solved.reached {
                     _,intersects:=grounding_limb_hit(ground,solved.root.position,solved.joint.position,solved.end.position,ignore,mask)
                     if !intersects {
@@ -607,7 +530,7 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
             }
             if blocked {record.blocked|=u16(1)<<u16(i)}
         }
-        if !lib.pose_ik_apply(hierarchy,state.local[:],state.world[:],hip,knee,foot,original,basis) {return grounding_unsolved(problems,state.entity,"the IK",i)}
+        if !lib.pose_ik_apply(hierarchy,playing_pose(state,.Local),playing_pose(state,.World),hip,knee,foot,original,basis) {return grounding_unsolved(problems,state.entity,"the IK",i)}
         if config.mode==.Procedural {
             rotation,ok:=lib.look_at(rotations[i],leg.foot_up,target.normal,leg.max_tilt,record.legs[i].weight)
             if !ok {return grounding_unsolved(problems,state.entity,"the tilt of the foot",i)}
@@ -618,23 +541,23 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
             sole:=mm.quat_rotate(rotation,linalg.normalize0(leg.foot_up))*leg.sole_height
             contact:=mm.quat_rotate(rotation,contact_delta)
             for attempt in 0..<3 {
-                position:=state.world[foot].position
+                position:=playing_pose(state,.World)[foot].position
                 correction:=grounding_clearance(position-sole,{},up,config,inputs,ignore)
                 if record.contact_bones[i]!=foot {correction=max(correction,grounding_clearance(position+contact,up*leg.contact_offset,up,config,inputs,ignore))}
                 if correction<=1e-5 {break}
                 goal:=position+up*correction
-                pole,pole_valid:=lib.two_bone_pole_from_pose(state.world[hip],state.world[knee],state.world[foot],goal)
+                pole,pole_valid:=lib.two_bone_pole_from_pose(playing_pose(state,.World)[hip],playing_pose(state,.World)[knee],playing_pose(state,.World)[foot],goal)
                 if !pole_valid {return grounding_unsolved(problems,state.entity,"the pole of the knee",i)}
                 pole+=mm.quat_rotate(root.rotation,leg.pole_offset)
-                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],goal,pole,1,leg.reach)
+                solved,valid:=lib.two_bone_ik(playing_pose(state,.World)[hip],playing_pose(state,.World)[knee],playing_pose(state,.World)[foot],goal,pole,1,leg.reach)
                 if !valid {return grounding_unsolved(problems,state.entity,"the IK",i)}
                 if !solved.reached {break}
-                if !lib.pose_ik_apply(hierarchy,state.local[:],state.world[:],hip,knee,foot,solved,basis) {return grounding_unsolved(problems,state.entity,"the IK",i)}
+                if !lib.pose_ik_apply(hierarchy,playing_pose(state,.Local),playing_pose(state,.World),hip,knee,foot,solved,basis) {return grounding_unsolved(problems,state.entity,"the IK",i)}
                 record.targets[i].position=goal
             }
         }
-        state.local[foot].rotation=linalg.normalize0(conj(state.world[knee].rotation)*rotation)
-        if !lib.pose_world_branch(hierarchy,state.local[:],state.world[:],foot,basis) {pose_problem(problems,state.entity);return false}
+        playing_pose(state,.Local)[foot].rotation=linalg.normalize0(conj(playing_pose(state,.World)[knee].rotation)*rotation)
+        if !lib.pose_world_branch(hierarchy,playing_pose(state,.Local),playing_pose(state,.World),foot,basis) {pose_problem(problems,state.entity);return false}
     }
     record.root_position=root.position
     record.initialized=true

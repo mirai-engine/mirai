@@ -118,7 +118,7 @@ Navigation_Settings :: struct {
 
 NAVIGATION_SETTINGS_DEFAULT :: Navigation_Settings{
     classes={
-        0={name={0='H',1='u',2='m',3='a',4='n'},radius=0.3,height=1.8,climb=0.3,max_slope=0.25*mm.PI,jump_up=1.2,jump_across=4,drop=4},
+        0={name={0='H',1='u',2='m',3='a',4='n'},radius=0.3,height=1.8,climb=0.3,max_slope=0.25*mm.PI},
         1={name={0='F',1='l',2='i',3='e',4='r'},space=.Air,radius=0.3,height=1.8},
         2={name={0='S',1='w',2='i',3='m',4='m',5='e',6='r'},space=.Water,radius=0.3,height=1.8},
     },
@@ -151,7 +151,7 @@ NAV_AREA_DEFAULT :: Nav_Area{area=AREA_BLOCKED}
 // agents step aside from it; once it has been still `settle` seconds, the
 // surface inside the box of the Volume of its entity is blocked until it
 // moves again.
-@(component,description="A thing agents step aside from while it moves; once still for a while, the surface under the box of the Volume of its entity is blocked until it moves again.")
+@(component,description="A thing agents step aside from while it moves; once still for a while, its Volume or Collider bounds block the surface. Zero settle carves as it moves.")
 Nav_Obstacle :: struct {
     settle:f32 `mirai:"min=0,unit=s"`,
 }
@@ -165,11 +165,14 @@ Nav_Link :: struct {
     target:core.Entity,           // the end is this entity
     kind:Nav_Link_Kind,
     two_way:bool,
+    enabled:bool,
+    capacity:u8, // simultaneous crossings; 0: unlimited
+    passthrough:bool, // a game-driven crossing with collision suspended
     cost:f32 `mirai:"min=0"`,     // added to its length
     area:Nav_Area_Kind,           // whose cost per metre the crossing pays
     abilities:Nav_Abilities,      // an agent needs them all
 }
-NAV_LINK_DEFAULT :: Nav_Link{end={0,0,2},kind=LINK_JUMP,area=AREA_WALKABLE}
+NAV_LINK_DEFAULT :: Nav_Link{enabled=true,end={0,0,2},kind=LINK_JUMP,area=AREA_WALKABLE}
 
 // The owner of a link the build generated: the bit, and the tile coordinate below it.
 LINK_OWNER_GENERATED :: u64(1)<<63
@@ -195,8 +198,10 @@ Class_Mesh :: struct {
     config:ai.Nav_Build_Config,
     volume:ai.Nav_Volume,                // of a class of the air or the water, instead of the mesh
     volume_config:ai.Nav_Volume_Config,
+    ready_keys,loading_keys:[]u64,
     marks:base.Hash_Map(Tile_Mark),      // by tile or zone coordinate; changed through mark_set
     pending:int,                         // tiles that wait for a build or build: searches that find no surface wait for them
+    instant_ready:int,                  // queued gates that can use a cached field
     ready:int,                           // marked tiles that can start a build
     loading:int,                         // marked tiles that wait for their collision to load
     linking:int,                         // tiles whose generated links wait to be made again
@@ -206,6 +211,8 @@ Class_Mesh :: struct {
 // What a tile of a class was built from and whether it waits for a build.
 Tile_Mark :: struct {
     hash:u64,   // of the input of the tile it has; 0: none built
+    queue_slot:u32,
+    instant:bool,
     stamp:u32,  // counts the times it was marked; a build started before the last one is thrown away
     dirty:bool,
     building:bool,
@@ -248,17 +255,57 @@ unloaded_overlaps :: proc "contextless" (u:Unloaded,box:mm.Aabb,flat:=false) -> 
 mark_tally :: proc "contextless" (c:^Class_Mesh,mark:Tile_Mark,sign:int) {
     if mark.dirty || mark.building {c.pending+=sign}
     if mark.dirty && !mark.building {
-        if mark.unloaded {c.loading+=sign} else {c.ready+=sign}
+        if mark.unloaded {c.loading+=sign} else {
+            c.ready+=sign
+            if mark.instant && !mark.collision {c.instant_ready+=sign}
+        }
     }
     if mark.links {c.linking+=sign}
 }
-mark_set :: proc "contextless" (c:^Class_Mesh,mark:^Tile_Mark,next:Tile_Mark) {
+mark_set :: proc "contextless" (c:^Class_Mesh,key:u64,mark:^Tile_Mark,next:Tile_Mark) {
+    was_queued:=mark.dirty && !mark.building
+    queued:=next.dirty && !next.building
+    changed:=was_queued!=queued || mark.unloaded!=next.unloaded
+    slot:=mark.queue_slot
+    if changed {
+        if was_queued {
+            keys,count:=c.ready_keys,c.ready
+            if mark.unloaded {keys,count=c.loading_keys,c.loading}
+            last:=keys[count-1]
+            if last!=key {
+                keys[slot]=last
+                base.hash_map_ptr(&c.marks,last).queue_slot=slot
+            }
+        }
+        if queued {
+            keys,count:=c.ready_keys,c.ready
+            if next.unloaded {keys,count=c.loading_keys,c.loading}
+            keys[count]=key
+            slot=u32(count)
+        } else {slot=0}
+    }
     mark_tally(c,mark^,-1)
     mark^=next
+    mark.queue_slot=slot
     mark_tally(c,next,1)
 }
 mark_remove :: proc(c:^Class_Mesh,key:u64) {
-    if old,found:=base.hash_map_remove(&c.marks,key);found {mark_tally(c,old,-1)}
+    if mark:=base.hash_map_ptr(&c.marks,key);mark!=nil {
+        mark_set(c,key,mark,{})
+        base.hash_map_remove(&c.marks,key)
+    }
+}
+
+@(private)
+class_marks_init :: proc(c:^Class_Mesh,tiles:int) -> bool {
+    if !base.hash_map_init(&c.marks,tiles) {return false}
+    ready,error:=make([]u64,tiles)
+    if error!=nil {return false}
+    c.ready_keys=ready
+    loading,other_error:=make([]u64,tiles)
+    if other_error!=nil {return false}
+    c.loading_keys=loading
+    return true
 }
 
 navigation_copy :: proc(dst,src:^Navigation) -> bool {
@@ -298,7 +345,9 @@ navigation_copy_kept :: proc(dst,src:^Navigation) -> bool {
     if dst==src {return true}
     of:=meshes_of(src)
     if of[0]==0 || meshes_of(dst)!=of || dst.count!=src.count {return navigation_copy(dst,src)}
-    dst.settings,dst.stats,dst.ready,dst.revision=src.settings,src.stats,src.ready,src.revision
+    dst.settings=src.settings
+    dst.stats=src.stats
+    dst.ready,dst.revision=src.ready,src.revision
     dst.kept[2]=src.revision
     for i in 0..<src.count {
         if !class_copy(&dst.classes[i],&src.classes[i]) {
@@ -313,22 +362,28 @@ navigation_copy_kept :: proc(dst,src:^Navigation) -> bool {
 // no build of the copy is on its way, so what was building waits to build.
 @(private)
 class_copy :: proc(to,from:^Class_Mesh) -> bool {
-    to.class,to.filter,to.config,to.volume_config=from.class,from.filter,from.config,from.volume_config
-    to.pending,to.ready,to.loading,to.linking=0,0,0,0
+    to.class=from.class
+    to.filter,to.config,to.volume_config=from.filter,from.config,from.volume_config
+    to.pending,to.ready,to.loading,to.linking,to.instant_ready=0,0,0,0,0
     if len(to.marks.keys)!=len(from.marks.keys) {
         base.hash_map_destroy(&to.marks)
+        delete(to.ready_keys)
+        delete(to.loading_keys)
+        to.ready_keys,to.loading_keys=nil,nil
         if len(from.marks.keys)==0 {return true}
-        if !base.hash_map_init(&to.marks,from.marks.capacity) {return false}
+        if !class_marks_init(to,from.marks.capacity) {return false}
     }
     if len(from.marks.keys)==0 {return true}
     copy(to.marks.keys,from.marks.keys)
     copy(to.marks.values,from.marks.values)
     to.marks.has_zero,to.marks.usage=from.marks.has_zero,from.marks.usage
     it:=base.hash_map_iterator(&to.marks)
-    for _,mark in base.hash_map_iterate(&it) {
-        mark.dirty|=mark.building
-        mark.building=false
-        mark_tally(to,mark^,1)
+    for key,mark in base.hash_map_iterate(&it) {
+        next:=mark^
+        next.dirty|=next.building
+        next.building=false
+        mark^={}
+        mark_set(to,key,mark,next)
     }
     return true
 }
@@ -338,6 +393,8 @@ navigation_free :: proc(n:^Navigation) {
         ai.nav_volume_destroy(&c.volume)
         ai.nav_coarse_destroy(&c.coarse)
         base.hash_map_destroy(&c.marks)
+        delete(c.ready_keys)
+        delete(c.loading_keys)
         c={}
     }
     n^={}

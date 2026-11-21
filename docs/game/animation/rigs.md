@@ -8,26 +8,21 @@ Legs and pelvis come from the skeleton body; a row names a bone only to override
 
 ## Aim an operation
 
-To look at something, `anim.look` is enough ([four calls](../animation.md#four-calls)). The
-other operations take a goal:
+Use `anim.look` for the head ([four calls](../animation.md#four-calls)). Use `anim.modifier`
+to target a named operation or change its influence.
 
 ```odin
-// requests:^anim.Animation_Requests
-anim.modifier_goal(requests,{rig=e,kind=.IK,target=anim.spatial_bone(other,"hand_r"),weight=1,
-    enabled=true})
-anim.modifier_control(requests,{rig=e,kind=.IK,weight=0,enabled=false,fade=.2})  // fade out
+anim.modifier(requests,{rig=e,kind=.IK,target=anim.spatial_bone(other,"hand_r"),
+    weight=1,enabled=true,goal=true},"left_hand")
+anim.modifier(requests,{rig=e,kind=.IK,fade=.2},"left_hand")
 ```
 
-- `target` builders: `spatial_point(p)`, `spatial_entity(entity)`, `spatial_bone(rig,"bone")`,
-  `spatial_socket(rig,"socket")`; each takes an optional offset transform. An `Entity` target
-  follows its entity; a point must be sent again when it moves.
-- `kind` is one of `Modifier_Kind` (`IK`, `Look`, `Grounding`, `Chain_IK`, `Spline_IK`, `Spring`,
-  `Follow`, ...). `slot` indexes the operations of that kind (0 is the first); `name` picks
-  one instead (`base.text_set(goal.name[:],"left_hand")`); `effector` picks one of a `Multi_IK`.
-- `modifier_goal` sets where and the weight, reached over its `fade` from the weight that applies
-  (a goal that lets go keeps its target while it fades out); `modifier_control` sets an
-  independent weight and fade. Both persist per operation until replaced.
-- `animation.inspect` part `Modifiers` lists the operations and the last request that failed.
+- Build the target with `spatial_point`, `spatial_entity`, `spatial_bone` or `spatial_socket`.
+  Entity, bone and socket targets follow what they name.
+- A goal supplies a spatial target, spring force or grounding contact. An influence request
+  adjusts weight and activation independently of the goal. A fade uses the current influence.
+- For Multi IK or Spline IK goals, pass the effector or control name after the operation name.
+- `animation.inspect` part `Modifiers` lists the names and reports the last request that failed.
 
 ## Feet on the ground
 
@@ -35,7 +30,8 @@ Grounding adapts the pose to the ground that physics queries; it needs the `phys
 set with a grounding row. Turn it off in the air:
 
 ```odin
-anim.modifier_goal(requests,{rig=e,kind=.Grounding,weight=1 if state.standing else 0,enabled=true})
+anim.modifier(requests,{rig=e,kind=.Grounding,weight=1 if state.standing else 0,
+    enabled=true,goal=true},"grounding")
 // state:phys.Character_State of the entity
 ```
 
@@ -47,7 +43,7 @@ there, by stretching the stride and the root delta:
 
 ```odin
 anim.motion_target(requests,e,"Reach",anim.spatial_point(spot))  // a warp window of the set
-anim.animation_clip(a,"stride",.2,loop=false)
+anim.play_clip(requests,e,"stride",.2,loop=false)
 ```
 
 - The body moves by the warped delta (`body_move` on a `Character`, or the root-motion recipe in
@@ -57,8 +53,8 @@ anim.animation_clip(a,"stride",.2,loop=false)
 ## Bones, sockets and held objects
 
 - A held object has the `Bone_Attachment` component: `rig` (the character), `socket` (a name in
-  the skeleton, `base.text_set(att.socket[:],"hand_r")`) and `offset`. Sockets are authored with
-  `skeleton.socket.set`.
+  the skeleton, `base.text_set(att.socket[:],"hand_r")`) or `bone`
+  (`att.bone=anim.bone_ref("hand_r")`), and `offset`. Author sockets with `skeleton.socket.set`.
 - `Pose_Source{rig}` on another mesh is the one way another rig drives a pose: at stage
   `Finished` (armor, a head) it shares or follows that rig's finished pose; at stage `Sampled` a
   character of other proportions plays its sampled animation by bone names, or by the

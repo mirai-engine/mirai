@@ -13,7 +13,7 @@ mirror_separator :: #force_inline proc "contextless" (c:u8) -> bool {return c=='
 @(private="file")
 mirror_lower :: #force_inline proc "contextless" (c:u8) -> u8 {return c+32 if c>='A' && c<='Z' else c}
 
-// The name of the bone on the other side: the last whole "l"/"r" token (as in
+// The name of the bone on the other side: the last whole side token (as in
 // thigh_l, hand.L, Bip01 L Thigh, l_arm) or else the first "left"/"right" (as
 // in LeftArm) is swapped, keeping its case. False, with nothing written, for a
 // name without side or that does not fit in out.
@@ -31,8 +31,21 @@ mirror_name :: proc "contextless" (name:string,out:[]u8) -> (string,bool) {
     #reverse for c,i in transmute([]u8)name {
         lower:=mirror_lower(c)
         if lower!='l' && lower!='r' {continue}
-        if i>0 && !mirror_separator(name[i-1]) || i+1<len(name) && !mirror_separator(name[i+1]) || len(name)==1 {continue}
-        return swap(name,i,1,"r" if lower=='l' else "l",out)
+        if i>0 && !mirror_separator(name[i-1]) {continue}
+        end:=i+1
+        if end<len(name) && !mirror_separator(name[end]) {
+            end+=1
+            if end<len(name) && !mirror_separator(name[end]) {continue}
+            next:=mirror_lower(name[i+1])
+            switch {
+            case lower=='l' && next=='e': return swap(name,i,2,"ri",out)
+            case lower=='r' && next=='i': return swap(name,i,2,"le",out)
+            case lower=='l' && next=='f': return swap(name,i,2,"rt",out)
+            case lower=='r' && next=='t': return swap(name,i,2,"lf",out)
+            }
+            continue
+        }
+        if len(name)>1 {return swap(name,i,1,"r" if lower=='l' else "l",out)}
     }
     for i in 0..<len(name) {
         for word in ([2]string{"left","right"}) {

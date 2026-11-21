@@ -187,7 +187,8 @@ drop_frame :: proc(s:^editor.Session,tool:^Drop_Tool,world:core.World_Ref,frame:
         geom.mesh_buffer_init(&buffer,context.temp_allocator)
         tool.measured=host.assets_geometry(s.app.assets,tool.mesh.mesh,tool.mesh.shape,&buffer) && len(buffer.positions)>0
         if tool.measured {tool.bounds.min,tool.bounds.max=geom.mesh_bounds(buffer.positions[:])}
-        tool.measured_mesh,tool.measured_revision=tool.mesh,revision
+        tool.measured_mesh=tool.mesh
+        tool.measured_revision=revision
     }
     if !tool.measured {return}
     for _ in 0..<drop_due(tool,frame.dt,s.app.tick_dt) {

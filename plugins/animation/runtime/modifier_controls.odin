@@ -2,175 +2,267 @@ package anim
 
 import "mirai:core"
 import "mirai:std/base"
+import mm "mirai:std/math"
 
-Modifier_Control :: struct {
+Modifier_Request :: struct {
     rig:core.Entity,
+    name,effector:u64,
+    target:Spatial_Target,
+    position:mm.Vec3,
+    weight,fade:f32,
     kind:Modifier_Kind,
-    slot:u16,
-    name:[256]u8, // the operation by name instead of slot: found again when the .character is read again
-    weight:f32,
     enabled:bool,
-    fade:f32,
+    goal:bool, // changes the target, spring force or ground contact along with influence
+}
+
+modifier :: proc(requests:^Animation_Requests,request:Modifier_Request,name:string="",effector:string="") {
+    if requests==nil {return}
+    request:=request
+    if name!="" {request.name=base.name_hash(name)}
+    if effector!="" {request.effector=base.name_hash(effector)}
+    if request.rig==core.NONE || request.name==0 || request.kind>max(Modifier_Kind) ||
+        !profile_weight(request.weight) || !finite(request.fade) || request.fade<0 ||
+        request.goal && (!profile_vector(request.position) ||
+        request.kind in MODIFIER_TARGETED && !spatial_target_valid(request.target)) {
+        core.refuse(&requests.modifiers)
+        return
+    }
+    core.offer(&requests.modifiers,request)
 }
 
 Modifier_Control_State :: struct {
-    rig:core.Entity,
-    kind:Modifier_Kind,
-    slot:u16,
-    row:int,
-    fade_row:u32,
-    base_weight,weight,start,target,elapsed,duration:f32,
-    base_enabled,enabled:bool,
-    turning:bool, // a Look turns from its former target over the fade
+    name:u64,
+    began:f64,
+    base_weight,start,target,duration:f32,
+    first_override:u16,
+    base_enabled,enabled,turning:bool,
 }
 
-modifier_control :: proc(requests:^Animation_Requests,control:Modifier_Control) {
-    if requests==nil {return}
-    control:=control
-    if !blend_text_valid(control.name[:],true) || control.rig==core.NONE || control.kind>max(Modifier_Kind) || control.slot>=POSE_CONSTRAINTS || control.kind==.Grounding && control.slot!=0 || !profile_weight(control.weight) || !finite(control.fade) || control.fade<0 {
-        core.refuse(&requests.controls)
-        return
+modifier_count :: proc(pose:Pose_Profile,kind:Modifier_Kind) -> int {
+    switch kind {
+    case .IK: return len(pose.ik)
+    case .Look: return len(pose.look)
+    case .Grounding: return 1 if len(pose.grounding.legs)>0 else 0
+    case .Limit: return len(pose.limits)
+    case .Chain_IK: return len(pose.chain_ik)
+    case .Twist: return len(pose.twist)
+    case .Spring: return len(pose.springs)
+    case .Multi_IK: return len(pose.multi_ik)
+    case .Chain_Retarget: return len(pose.retarget_chains)
+    case .Spline_IK: return len(pose.spline_ik)
+    case .Corrective: return len(pose.correctives)
+    case .Follow: return len(pose.follow)
     }
-    core.offer(&requests.controls,control)
+    return 0
 }
 
-modifier_control_state :: proc(runtime:^Modifier_Runtime,rig:core.Entity,kind:Modifier_Kind,slot:u16) -> ^Modifier_Control_State {
-    if runtime==nil {return nil}
-    row:=-1
+modifier_definition :: proc(pose:^Pose_Profile,kind:Modifier_Kind,slot:int) -> (name:string,weight:f32,enabled:bool) {
+    if slot<0 || slot>=modifier_count(pose^,kind) {return}
+    info :: proc(value:^$T) -> (string,f32,bool) {
+        return modifier_operation_name(value),value.weight,value.enabled
+    }
+    switch kind {
+    case .IK: return info(&pose.ik[slot])
+    case .Look: return info(&pose.look[slot])
+    case .Grounding: return info(&pose.grounding)
+    case .Limit: return info(&pose.limits[slot])
+    case .Chain_IK: return info(&pose.chain_ik[slot])
+    case .Twist: return info(&pose.twist[slot])
+    case .Spring: return info(&pose.springs[slot])
+    case .Multi_IK: return info(&pose.multi_ik[slot])
+    case .Chain_Retarget: return info(&pose.retarget_chains[slot])
+    case .Spline_IK: return info(&pose.spline_ik[slot])
+    case .Corrective: return info(&pose.correctives[slot])
+    case .Follow: return info(&pose.follow[slot])
+    }
+    return
+}
+
+@(private)
+modifier_states :: proc(rig:^Modifier_Rig,kind:Modifier_Kind) -> []Modifier_Control_State {
+    return rig.controls[rig.first[int(kind)]:rig.first[int(kind)+1]]
+}
+
+@(private)
+modifier_control_slot :: proc(rig:^Modifier_Rig,kind:Modifier_Kind,name:u64) -> int {
+    if rig==nil || kind>max(Modifier_Kind) {return -1}
+    found:=-1
+    for &state,slot in modifier_states(rig,kind) {
+        if state.name!=name {continue}
+        if found>=0 {return -1}
+        found=slot
+    }
+    return found
+}
+
+modifier_influence :: proc(runtime:^Modifier_Runtime,entity:core.Entity,kind:Modifier_Kind,name:u64) -> (weight:f32,enabled:bool,alpha,target,remaining:f32,requested:bool,found:bool) {
+    rig:=modifier_rig(runtime,entity)
+    slot:=modifier_control_slot(rig,kind,name)
+    if slot<0 {return}
+    control:=&modifier_states(rig,kind)[slot]
+    weight,enabled=modifier_weight(control,runtime.time)
+    return weight,enabled,modifier_alpha(control,runtime.time),control.target,
+        max(0,control.duration-f32(runtime.time-control.began)),control.enabled,true
+}
+
+@(private)
+modifier_effector_slot :: proc(pose:Pose_Profile,kind:Modifier_Kind,slot:int,name:u64) -> int {
     #partial switch kind {
-    case .IK: row=rig_slot_row(&runtime.ik,rig,slot)
-    case .Look: row=rig_slot_row(&runtime.look,rig,slot)
-    case .Grounding: row=rig_slot_row(&runtime.grounding,rig,slot)
-    case .Limit: row=rig_slot_row(&runtime.limits,rig,slot)
-    case .Chain_IK: row=rig_slot_row(&runtime.chain_ik,rig,slot)
-    case .Twist: row=rig_slot_row(&runtime.twist,rig,slot)
-    case .Spring: row=rig_slot_row(&runtime.springs,rig,slot)
-    case .Multi_IK: row=rig_slot_row(&runtime.multi_ik,rig,slot)
-    case .Chain_Retarget: row=rig_slot_row(&runtime.retarget_chains,rig,slot)
-    case .Spline_IK: row=rig_slot_row(&runtime.spline_ik,rig,slot)
-    case .Corrective: row=rig_slot_row(&runtime.correctives,rig,slot)
-    case .Follow: row=rig_slot_row(&runtime.follow,rig,slot)
+    case .Multi_IK:
+        for &effector,i in pose.multi_ik[slot].effectors {
+            if base.name_hash(base.text_get(effector.name[:]))==name {return i}
+        }
+    case .Spline_IK:
+        for label,i in SPLINE_CONTROLS {if base.name_hash(label)==name {return i}}
+    case: return 0
     }
-    if row<0 {return nil}
-    counts:=[Modifier_Kind]int{.IK=len(runtime.ik.values),.Look=len(runtime.look.values),.Grounding=len(runtime.grounding.values),.Limit=len(runtime.limits.values),.Chain_IK=len(runtime.chain_ik.values),.Twist=len(runtime.twist.values),.Spring=len(runtime.springs.values),.Multi_IK=len(runtime.multi_ik.values),.Chain_Retarget=len(runtime.retarget_chains.values),.Spline_IK=len(runtime.spline_ik.values),.Corrective=len(runtime.correctives.values),.Follow=len(runtime.follow.values)}
-    for previous in Modifier_Kind {if previous>=kind {break};row+=counts[previous]}
-    if row>=len(runtime.controls) {return nil}
-    state:=&runtime.controls[row]
-    return state if state.rig==rig && state.kind==kind && state.slot==slot else nil
+    return -1
 }
 
 @(private)
-modifier_controls_prepare :: proc(next,previous:^Modifier_Runtime) -> bool {
-    prepare :: proc(next,previous:^Modifier_Runtime,table:^core.Table($T),kind:Modifier_Kind) -> bool {
-        slot:u16
-        rig:=core.NONE
-        for &value,row in table.values {
-            if rig!=table.entities[row] {rig=table.entities[row];slot=0}
-            state:=Modifier_Control_State{rig=rig,kind=kind,slot=slot,row=row,base_weight=value.weight,base_enabled=value.enabled,weight=1,start=1,target=1,enabled=true}
-            if found:=modifier_control_state(previous,rig,kind,slot);found!=nil && modifier_same_operation(previous,next,rig,kind,slot) {
-                state.weight,state.start,state.target,state.elapsed,state.duration,state.enabled=found.weight,found.start,found.target,found.elapsed,found.duration,found.enabled
-            }
-            if append(&next.controls,state)!=1 {return false}
-            modifier_control_apply(next,&state)
-            slot+=1
-        }
-        return true
+modifier_controls_prepare :: proc(next,old:^Modifier_Rig,pose:Pose_Profile) -> bool {
+    pose:=pose
+    count:=0
+    for kind in Modifier_Kind {
+        next.first[int(kind)]=u16(count)
+        count+=modifier_count(pose,kind)
     }
-    if !prepare(next,previous,&next.ik,.IK) || !prepare(next,previous,&next.look,.Look) || !prepare(next,previous,&next.grounding,.Grounding) || !prepare(next,previous,&next.limits,.Limit) || !prepare(next,previous,&next.chain_ik,.Chain_IK) || !prepare(next,previous,&next.twist,.Twist) || !prepare(next,previous,&next.springs,.Spring) || !prepare(next,previous,&next.multi_ik,.Multi_IK) || !prepare(next,previous,&next.retarget_chains,.Chain_Retarget) || !prepare(next,previous,&next.spline_ik,.Spline_IK) || !prepare(next,previous,&next.correctives,.Corrective) || !prepare(next,previous,&next.follow,.Follow) || reserve(&next.fades,len(next.controls))!=nil {return false}
-    for &state,row in next.controls {
-        if state.elapsed<state.duration {append(&next.fades,u32(row));state.fade_row=u32(len(next.fades))}
+    next.first[len(Modifier_Kind)]=u16(count)
+    if resize(&next.controls,count)!=nil {return false}
+    capacity:=0
+    for kind in Modifier_Kind {
+        for &control,slot in modifier_states(next,kind) {
+            name,weight,enabled:=modifier_definition(&pose,kind,slot)
+            control={name=base.name_hash(name),base_weight=weight,base_enabled=enabled,
+                first_override=u16(capacity),start=1,target=1,enabled=true}
+            #partial switch kind {
+            case .Multi_IK: capacity+=len(pose.multi_ik[slot].effectors)
+            case .Spline_IK: capacity+=len(SPLINE_CONTROLS)
+            case: capacity+=1
+            }
+            if previous:=modifier_control_slot(old,kind,control.name);previous>=0 {
+                prior:=modifier_states(old,kind)[previous]
+                control.start,control.target,control.enabled=prior.start,prior.target,prior.enabled
+                control.began,control.duration,control.turning=prior.began,prior.duration,prior.turning
+                if kind==.Look {next.look_states[slot].from=old.look_states[previous].from}
+            }
+        }
+    }
+    if resize(&next.overrides,capacity)!=nil {return false}
+    for &request in old.overrides {
+        if request.name==0 {continue}
+        slot:=modifier_control_slot(next,request.kind,request.name)
+        if slot<0 {continue}
+        effector:=modifier_effector_slot(pose,request.kind,slot,request.effector)
+        if effector<0 {continue}
+        control:=&modifier_states(next,request.kind)[slot]
+        next.overrides[int(control.first_override)+effector]=request
+        prior:=modifier_states(old,request.kind)[modifier_control_slot(old,request.kind,request.name)]
+        control.base_weight,control.base_enabled=prior.base_weight,prior.base_enabled
     }
     return true
 }
 
 @(private)
-modifier_control_apply :: proc(runtime:^Modifier_Runtime,state:^Modifier_Control_State) {
-    weight:=state.base_weight*state.weight
-    enabled:=state.base_enabled && (state.enabled || state.weight>0)
-    apply :: proc(table:^core.Table($T),row:int,weight:f32,enabled:bool) {
-        if row<0 || row>=len(table.values) {return}
-        value:=&table.values[row]
-        if value.weight==weight && value.enabled==enabled {return}
-        out:=core.edit_at(table,row)
-        out.weight,out.enabled=weight,enabled
-    }
-    switch state.kind {
-    case .IK: apply(&runtime.ik,state.row,weight,enabled)
-    case .Look:
-        apply(&runtime.look,state.row,weight,enabled)
-        turning:=f32(0)
-        if state.turning && state.elapsed<state.duration {alpha:=state.elapsed/state.duration;turning=1-alpha*alpha*(3-2*alpha)}
-        if state.row>=0 && state.row<len(runtime.look.values) && runtime.look.values[state.row].turning!=turning {core.edit_at(&runtime.look,state.row).turning=turning}
-    case .Grounding: apply(&runtime.grounding,state.row,weight,enabled)
-    case .Limit: apply(&runtime.limits,state.row,weight,enabled)
-    case .Chain_IK: apply(&runtime.chain_ik,state.row,weight,enabled)
-    case .Twist: apply(&runtime.twist,state.row,weight,enabled)
-    case .Spring: apply(&runtime.springs,state.row,weight,enabled)
-    case .Multi_IK: apply(&runtime.multi_ik,state.row,weight,enabled)
-    case .Chain_Retarget: apply(&runtime.retarget_chains,state.row,weight,enabled)
-    case .Spline_IK: apply(&runtime.spline_ik,state.row,weight,enabled)
-    case .Corrective: apply(&runtime.correctives,state.row,weight,enabled)
-    case .Follow: apply(&runtime.follow,state.row,weight,enabled)
-    }
+modifier_override :: proc(rig:^Modifier_Rig,kind:Modifier_Kind,slot:int,effector:int=0) -> ^Modifier_Request {
+    control:=&modifier_states(rig,kind)[slot]
+    request:=&rig.overrides[int(control.first_override)+effector]
+    return request if request.name!=0 else nil
 }
 
 @(private)
-modifier_fade_remove :: proc(runtime:^Modifier_Runtime,state:^Modifier_Control_State) {
-    if state.fade_row==0 {return}
-    row:=int(state.fade_row)-1
-    moved:=runtime.fades[len(runtime.fades)-1]
-    unordered_remove(&runtime.fades,row)
-    if row<len(runtime.fades) {runtime.controls[moved].fade_row=u32(row+1)}
-    state.fade_row=0
-}
-
-// Moves the weight of a control from the one it has to target over fade seconds; turning, a Look
-// turns from its former target over them too.
-@(private)
-modifier_fade_to :: proc(runtime:^Modifier_Runtime,state:^Modifier_Control_State,target:f32,enabled:bool,fade:f32,turning:=false) -> bool {
-    state.turning=turning && fade>0
-    if fade>0 && (state.weight!=target || state.turning) && state.fade_row==0 {
-        row:=int((uintptr(state)-uintptr(raw_data(runtime.controls)))/size_of(Modifier_Control_State))
-        if append(&runtime.fades,u32(row))!=1 {return false}
-        state.fade_row=u32(len(runtime.fades))
-    }
-    state.start,state.target,state.enabled,state.duration,state.elapsed=state.weight,target,enabled,fade,0
-    if fade==0 || state.start==target && !state.turning {state.weight=target;state.elapsed=state.duration;modifier_fade_remove(runtime,state)}
-    return true
+modifier_target :: proc(rig:^Modifier_Rig,kind:Modifier_Kind,slot:int,definition:^Spatial_Definition,effector:int=0) -> Spatial_Target {
+    if entry:=modifier_override(rig,kind,slot,effector);entry!=nil {return entry.target}
+    return spatial_compile(definition)
 }
 
 @(private)
-modifier_controls_take :: proc(runtime:^Modifier_Runtime,requests:^Animation_Requests,problems:^core.Problems,dt:f32) {
-    if requests==nil {return}
-    for control in core.take(&requests.controls) {
-        control:=control
-        if control.name[0]!=0 {
-            slot,found:=modifier_named_slot(runtime,control.rig,control.kind,base.text_get(control.name[:]))
-            if !found {
-                modifier_request_rejected(runtime,control.rig,.Missing_Operation)
-                modifier_name_problem(problems,control.rig,control.kind,control.name[:],nil,.Missing_Operation)
-                continue
-            }
-            control.slot=slot
+modifier_fade :: proc(control:^Modifier_Control_State,now:f64) -> f32 {
+    if control.duration<=0 {return 1}
+    alpha:=min(f32(now-control.began)/control.duration,1)
+    return alpha*alpha*(3-2*alpha)
+}
+
+@(private)
+modifier_alpha :: proc(control:^Modifier_Control_State,now:f64) -> f32 {
+    return mm.lerp(control.start,control.target,modifier_fade(control,now))
+}
+
+@(private)
+modifier_weight :: proc(control:^Modifier_Control_State,now:f64) -> (weight:f32,enabled:bool) {
+    alpha:=modifier_alpha(control,now)
+    return control.base_weight*alpha,control.base_enabled && (control.enabled || alpha>0)
+}
+
+modifier_take :: proc(runtime:^Modifier_Runtime,characters:^Character_Assets,requests:^Animation_Requests,problems:^core.Problems,dt:f32) {
+    if runtime==nil || requests==nil {return}
+    defer if finite(dt) && dt>0 {runtime.time+=f64(dt)}
+    for request in core.take(&requests.modifiers) {
+        request:=request
+        rig:=modifier_rig(runtime,request.rig)
+        slot:=modifier_control_slot(rig,request.kind,request.name)
+        error:=Modifier_Request_Error.None
+        effector:=0
+        if slot<0 {error=.Missing_Operation}
+        else if request.goal {
+            pose:=modifier_pose(rig,characters)
+            effector=modifier_effector_slot(pose^,request.kind,slot,request.effector) if pose!=nil else -1
+            if effector<0 {error=.Missing_Effector}
         }
-        state:=modifier_control_state(runtime,control.rig,control.kind,control.slot)
-        if state==nil {
-            core.report(problems,control.rig,"animation.modifier_slot","a control of %v %d was refused: the .character of this rig has no such operation; name one it has (animation.inspect lists them)",control.kind,control.slot)
+        if error!=.None {
+            modifier_request_rejected(runtime,request.rig,error)
+            modifier_name_problem(problems,request.rig,request.kind,request.name,request.effector,error)
             continue
         }
-        target:=control.weight if control.enabled else f32(0)
-        if state.target==target && state.enabled==control.enabled {continue}
-        if !modifier_fade_to(runtime,state,target,control.enabled,control.fade) {memory_problem(problems,control.rig,"the fade of a control of its .character");continue}
-        modifier_control_apply(runtime,state)
+        control:=&modifier_states(rig,request.kind)[slot]
+        start:=modifier_alpha(control,runtime.time)
+        target:=request.weight if request.enabled else 0
+        turning:=false
+        if request.goal {
+            entry:=modifier_override(rig,request.kind,slot,effector)
+            if entry!=nil {
+                if !request.enabled && request.fade>0 {request.target=entry.target}
+                if entry^==request {continue}
+            }
+            if request.kind==.Look && request.fade>0 && request.enabled && start>0 && control.base_enabled {
+                pose:=modifier_pose(rig,characters)
+                if pose!=nil {
+                    previous:=modifier_target(rig,.Look,slot,&pose.look[slot].target)
+                    if previous!=request.target {rig.look_states[slot].from=previous;turning=true}
+                }
+            }
+            rig.overrides[int(control.first_override)+effector]=request
+            if request.fade==0 || request.kind==.Grounding {
+                control.base_enabled=request.enabled
+                if request.kind!=.Grounding {control.base_weight=request.weight}
+                continue
+            }
+            start*=control.base_weight if control.base_enabled else 0
+            control.base_weight,control.base_enabled=1,true
+        } else if control.target==target && control.enabled==request.enabled {continue}
+        control.start,control.target,control.enabled=start,target,request.enabled
+        control.began,control.duration,control.turning=runtime.time,request.fade,turning
     }
-    if !finite(dt) || dt<=0 {return}
-    #reverse for row in runtime.fades {
-        state:=&runtime.controls[row]
-        state.elapsed=min(state.duration,state.elapsed+dt)
-        alpha:=state.elapsed/state.duration
-        alpha=alpha*alpha*(3-2*alpha)
-        state.weight=state.target if state.elapsed>=state.duration else state.start+(state.target-state.start)*alpha
-        modifier_control_apply(runtime,state)
-        if state.elapsed>=state.duration {modifier_fade_remove(runtime,state)}
+}
+
+animation_rig_diagnostic :: proc(runtime:^Modifier_Runtime,entity:core.Entity,kind:Modifier_Kind,name:u64) -> (Rig_Diagnostic,bool) {
+    rig:=modifier_rig(runtime,entity)
+    index:=modifier_control_slot(rig,kind,name)
+    if index<0 {return {},false}
+    read :: proc(binding:^$T) -> (Rig_Diagnostic,bool) {
+        return binding.diagnostic,binding.diagnostic.rig!=core.NONE
     }
+    #partial switch kind {
+    case .IK: return read(&rig.ik_states[index])
+    case .Look: return read(&rig.look_states[index])
+    case .Chain_IK: return read(&rig.chain_states[index])
+    case .Twist: return read(&rig.twist_states[index])
+    case .Spring: return read(&rig.spring_states[index])
+    case .Multi_IK: return read(&rig.multi_states[index])
+    case .Chain_Retarget: return read(&rig.retarget_chain_states[index])
+    case .Spline_IK: return read(&rig.spline_states[index])
+    case .Corrective: return read(&rig.corrective_states[index])
+    case .Follow: return read(&rig.follow_states[index])
+    }
+    return {},false
 }

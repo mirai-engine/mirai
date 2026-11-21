@@ -17,7 +17,8 @@ data_source_copy :: proc(dst,src:^Source) -> bool {
     if !grid_copy(&dst.weights,&src.weights,dst.allocator) || !coarse_copy(&dst.coarse,&src.coarse,dst.allocator) {return false}
     for i in 0..<EDITS_MAX {if !grid_copy(&dst.edit_heights[i],&src.edit_heights[i],dst.allocator) {return false}}
     if !grid_copy(&dst.edit_under,&src.edit_under,dst.allocator) {return false}
-    dst.info,dst.origin=src.info,src.origin
+    dst.info=src.info
+    dst.origin=src.origin
     return true
 }
 

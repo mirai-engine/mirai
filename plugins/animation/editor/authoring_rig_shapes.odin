@@ -11,7 +11,7 @@ import anim "plugins:animation/runtime"
 Profile_Spline_Params :: struct {
     name:[64]u8 `mirai:"text"`,
     root,end:anim.Bone_Ref,
-    controls:[4]anim.Spatial_Target `mirai:"optional,label=start; tangent_start; tangent_end and end"`,
+    controls:[4]anim.Spatial_Definition `mirai:"optional,label=start; tangent_start; tangent_end and end"`,
     up:mm.Vec3 `mirai:"optional"`,
     twist:f32 `mirai:"optional,angle"`,
     weight:f32 `mirai:"optional,min=0,max=1"`,
@@ -29,7 +29,7 @@ Profile_Corrective_Params :: struct {
 Profile_Follow_Params :: struct {
     name:[64]u8 `mirai:"text"`,
     bone:anim.Bone_Ref,
-    target:anim.Spatial_Target `mirai:"optional"`,
+    target:anim.Spatial_Definition `mirai:"optional"`,
     position,rotation,scale,keep_world:bool `mirai:"optional"`,
     weight:f32 `mirai:"optional,min=0,max=1"`,
     enabled:bool `mirai:"optional"`,
@@ -62,9 +62,9 @@ profile_corrective_value :: proc(call:^api.Call,p:Profile_Corrective_Params) -> 
 @(private)
 spatial_target_value :: proc(call:^api.Call,world:core.World_Ref,p:Spatial_Target_Params,path:string) -> (target:anim.Spatial_Target,ok:bool) {
     p:=p
-    target=anim.SPATIAL_TARGET_DEFAULT
-    target.kind,target.bone,target.socket=p.kind,p.bone,p.socket
-    target.position,target.rotation,target.scale=p.position,p.rotation,p.scale
+    definition:=anim.Spatial_Definition{kind=p.kind,bone=p.bone,socket=p.socket,
+        position=p.position,rotation=p.rotation,scale=p.scale}
+    target=anim.spatial_compile(&definition)
     if p.kind!=.World {
         if p.entity[0]==0 {authoring_failure(call,fmt.tprintf("%s.entity",path),"Required","the entity, or of the rig of a bone or socket","zero","An Entity, Bone or Socket target names an entity");return}
         problem:string

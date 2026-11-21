@@ -54,6 +54,7 @@ Place_Test :: struct {
     target:core.Entity,
     point:[3]f32,
     teams:Teams,          // of the measure Influence
+    sight_layers:phys.Collision_Layers, // of Visible; zero uses SIGHT_LAYERS_DEFAULT
     min,max:f32,          // of the measure, mapped to 0..1 for the response
     response:ai.Response,
 }
@@ -87,11 +88,12 @@ Place_Requests :: struct {
 
 // Asks for places for the querier: the number its Place_Result answers with.
 place_query :: proc(r:^Place_Requests,query:Place_Query) -> u32 {
+    if r==nil || query.querier==core.NONE {return 0}
     r.last+=1
     if r.last==0 {r.last=1}
     query:=query
     query.request=r.last
-    core.push(&r.queue,query)
+    if _,err:=append(&r.items,query);err!=nil {return 0}
     return r.last
 }
 
@@ -107,6 +109,18 @@ Place_Result :: struct {
     scores:[PLACE_KEPT]f32 `mirai:"readonly,transient"`,
     entities:[PLACE_KEPT]core.Entity `mirai:"readonly,transient"`, // of each place laid out from an entity; none for a point
     offers:[PLACE_KEPT]i8 `mirai:"readonly,transient"`, // of each place laid out from an offer of a smart object; -1 for others
+}
+
+// The completed answer to a request. False while waiting or if superseded.
+place_result :: proc "contextless" (
+    results:^core.Table(Place_Result,$A),querier:core.Entity,request:u32,
+) -> (Place_Result,bool) {
+    if results==nil || request==0 {return {},false}
+    result,ok:=core.get(results,querier)
+    if !ok || result.request!=request || result.status!=.Found && result.status!=.Empty {
+        return {},false
+    }
+    return result,true
 }
 
 // What the queries keep between ticks: those that wait, and a search for the
@@ -133,11 +147,15 @@ places_run :: proc(
     worlds:^core.Table(core.World_Transform,.Read),perceivers:^core.Table(Perceiver,.Read),perceptions:^core.Table(Perception,.Read),perceivables:^core.Table(Perceivable,.Read),paths:^core.Table(nav.Nav_Path,.Read),
     agents:^core.Table(nav.Nav_Agent,.Read),characters:^core.Table(phys.Character,.Read),walks:^core.Table(locomotion.Walk,.Read),swims:^core.Table(locomotion.Swim,.Read),
     navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),
-    smart:Smart_View,influence:core.Ref(Influence),problems:^core.Problems,
+    offers:Smart_Offers,claims:core.Ref(Claims),influence:core.Ref(Influence),problems:^core.Problems,
 ) {
     if len(requests.queue.items)==0 && len(places.waiting)==0 {return}
+    smart:=Smart_View{offers=offers,claims=claims}
     for query in core.take(&requests.queue) {
-        append(&places.waiting,query)
+        if _,err:=append(&places.waiting,query);err!=nil {
+            core.report(problems,query.querier,"behavior.memory","No memory to queue a place query; free memory")
+            continue
+        }
         result:=core.staged(results,query.querier)
         if result==nil {
             core.add(results,query.querier,Place_Result{request=query.request,status=.Waiting})
@@ -171,8 +189,8 @@ places_run :: proc(
 }
 
 // What the querier walks and crosses, for the Path measure: as navigation moves it.
-place_filter :: proc(navigation:core.Ref(nav.Navigation),querier:core.Entity,paths:^core.Table(nav.Nav_Path,$A),agents:^core.Table(nav.Nav_Agent,$B),characters:^core.Table(phys.Character,$E),walks:^core.Table(locomotion.Walk,$C),swims:^core.Table(locomotion.Swim,$D),physics:core.Ref(phys.Physics_State)) -> ai.Nav_Filter {
-    if navigation.ptr==nil || !navigation.ready || navigation.count==0 {return {}}
+place_filter :: proc(navigation:core.Ref(nav.Navigation),querier:core.Entity,paths:^core.Table(nav.Nav_Path,$A),agents:^core.Table(nav.Nav_Agent,$B),characters:^core.Table(phys.Character,$E),walks:^core.Table(locomotion.Walk,$C),swims:^core.Table(locomotion.Swim,$D),physics:core.Ref(phys.Physics_State)) -> (result:ai.Nav_Filter) {
+    if navigation.ptr==nil || !navigation.ready || navigation.count==0 {return}
     class:=0
     if p,found:=core.get(paths,querier);found && p.class>=0 && int(p.class)<navigation.count {class=int(p.class)}
     agent,_:=core.get(agents,querier)
@@ -280,9 +298,7 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^
             add(&c,pose.position,e)
         }
     case .Remembered:
-        perception,found:=core.get(perceptions,query.querier)
-        if !found {break}
-        for o in perception.memory.items[:clamp(perception.memory.count,0,ai.PERCEPTION_CAPACITY)] {
+        for o in perceived(perceptions,query.querier) {
             e:=core.Entity(o.subject)
             if e==query.querier {continue}
             if p,perceivable:=core.get(perceivables,e);perceivable && u32(query.teams)&(1<<u32(p.team))==0 {continue}
@@ -293,18 +309,11 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^
         user:=Smart_User{entity=query.querier,priority=query.priority}
         if p,found:=core.get(perceivables,query.querier);found {user.team=p.team}
         if a,found:=core.get(agents,query.querier);found {user.abilities=a.abilities}
-        for row in 0..<core.count(smart.objects) {
-            e:=core.entity_at(smart.objects,row)
-            object:=smart.objects.values[row]
-            for offer,i in object.offers {
-                if offer.use!=query.use {continue}
-                state,_:=core.get(smart.states,e)
-                pose,found:=core.get(worlds,e)
-                if !found || !smart_open(smart,e,i,offer,state,user) {continue}
-                at:=mm.transform_point(pose.transform,offer.at)
-                if linalg.length(at-center.position)>query.outer {continue}
-                add(&c,at,e,i8(i))
-            }
+        for entry in smart_entries(smart.index.ptr,query.use) {
+            offer,open:=smart_offer_at(smart,entry.object,int(entry.offer),user,query.use)
+            if !open || linalg.length(mm.Vec3(offer.at)-center.position)>query.outer {continue}
+            add(&c,offer.at,offer.object,i8(offer.offer))
+            if c.count==PLACE_CANDIDATES {break}
         }
     }
     // Onto the mesh of the querier's class, or into its volume when it flies; those off it go.
@@ -478,14 +487,18 @@ place_measure :: proc(test:Place_Test,from:mm.Transform,candidate:mm.Vec3,querie
         return linalg.dot(linalg.normalize(to),linalg.normalize(forward))
     case .Visible:
         eyes:=f32(1.6)
-        who:=querier if source==.Querier else target
-        if p,found:=core.get(perceivers,who);found {eyes=p.eyes}
+        who:=querier if source==.Querier else target if source==.Target else core.NONE
+        if perceivers!=nil && who!=core.NONE {
+            if p,found:=core.get(perceivers,who);found {eyes=p.eyes}
+        }
         eye:=from.position+{0,eyes,0}
         point:=candidate+{0,1.2,0}
         to:=point-eye
         distance:=linalg.length(to)
         if distance<1e-4 {return 1}
-        if _,blocked:=phys.raycast(physics,eye,to/distance,distance,who);blocked {return 0}
+        if _,blocked:=phys.raycast(physics,eye,to/distance,distance,who,sight_filter(test.sight_layers));blocked {
+            return 0
+        }
         return 1
     case .Influence:
         return influence_at(influence,candidate,test.teams)

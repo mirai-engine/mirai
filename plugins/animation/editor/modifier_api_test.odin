@@ -12,7 +12,7 @@ import mm "mirai:std/math"
 import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
-@(private) @(test_world) Grounding_Inspect_World :: struct {using world:Test_World,grounding:anim.Grounding_Runtime,playback:anim.Playback}
+@(private) @(test_world) Grounding_Inspect_World :: struct {using world:Test_World,modifiers:anim.Modifier_Runtime,playback:anim.Playback}
 
 @(test)
 grounding_inspection_derives_final_pose_errors_and_reports_blocked_legs_without_cached_residuals :: proc(t:^testing.T) {
@@ -21,24 +21,29 @@ grounding_inspection_derives_final_pose_errors_and_reports_blocked_legs_without_
     defer test_world_destroy(&world)
     ref:=test_world_ref(&world)
     entity:=core.Entity(1)
-    local:=make([dynamic]mm.Transform,3);for &value in local {value=mm.TRANSFORM_IDENTITY}
-    append(&world.playback.states,anim.Playing{entity=entity,world=local,pose_ready=true})
-    record:=anim.Grounding_Record{rig=entity,count=1,mode=.Procedural,initialized=true}
+    state:=anim.Playing{entity=entity,pose_ready=true}
+    if !testing.expect(t,anim.playing_pose_resize(&state,3)) {return}
+    for &value in anim.playing_pose(&state,.World) {value=mm.TRANSFORM_IDENTITY}
+    append(&world.playback.states,state)
+    record:=anim.Grounding_Record{count=1,mode=.Procedural,initialized=true}
     record.bones[0]={0,1,2};record.targets[0]={position={0,0,0},weight=1};record.rotations[0]=mm.QUAT_IDENTITY
-    append(&world.grounding.records,record)
+    append(&world.modifiers.rows,i32(0),i32(1))
+    append(&world.modifiers.rigs,anim.Modifier_Rig{entity=entity})
+    rig:=anim.modifier_rig(&world.modifiers,entity)
+    append(&rig.grounding,anim.Grounding_Binding{record=record})
     config:=anim.FOOT_GROUNDING_DEFAULT
     result:=program_grounding_diagnostic(ref,entity,0,config)
     testing.expect(t,result.valid && result.reached && result.residual==0 && result.blocked_legs==0)
-    world.playback.states[0].world[2].position={0,.02,0}
-    world.playback.states[0].world[2].rotation=mm.quat_axis_angle({0,1,0},.2)
+    anim.playing_pose(&world.playback.states[0],.World)[2].position={0,.02,0}
+    anim.playing_pose(&world.playback.states[0],.World)[2].rotation=mm.quat_axis_angle({0,1,0},.2)
     result=program_grounding_diagnostic(ref,entity,0,config)
     testing.expect(t,result.valid && !result.reached && abs(result.residual-.02)<1e-6 && abs(result.angular_error-.2)<1e-5)
-    world.playback.states[0].world[2]=mm.TRANSFORM_IDENTITY;world.grounding.records[0].blocked=1
+    anim.playing_pose(&world.playback.states[0],.World)[2]=mm.TRANSFORM_IDENTITY;rig.grounding[0].record.blocked=1
     result=program_grounding_diagnostic(ref,entity,0,config)
     testing.expect(t,result.valid && !result.reached && result.residual==0 && result.blocked_legs==1)
-    world.grounding.records[0].blocked=0;world.grounding.records[0].bones[0][2]=3
+    rig.grounding[0].record.blocked=0;rig.grounding[0].record.bones[0][2]=3
     testing.expect(t,!program_grounding_diagnostic(ref,entity,0,config).valid)
-    world.grounding.records[0].bones[0][2]=2;world.grounding.records[0].targets[0].weight=0
+    rig.grounding[0].record.bones[0][2]=2;rig.grounding[0].record.targets[0].weight=0
     testing.expect(t,!program_grounding_diagnostic(ref,entity,0,config).valid)
     testing.expect(t,!program_grounding_diagnostic(ref,entity,1,config).valid)
 }
@@ -50,7 +55,7 @@ rig_modifier_api_discovers_named_operations_effectors_and_retarget_chains_of_the
     chain:=anim.CHAIN_IK_CONSTRAINT_DEFAULT;base.text_set(chain.name[:],"arm");chain.root,chain.end=anim.bone_ref("a"),anim.bone_ref("c")
     spring:=anim.SPRING_CONSTRAINT_DEFAULT;base.text_set(spring.name[:],"tail");spring.root,spring.end=chain.root,chain.end
     twist:=anim.TWIST_CONSTRAINT_DEFAULT;base.text_set(twist.name[:],"roll");twist.source,twist.root,twist.end=anim.bone_ref("d"),chain.root,chain.end
-    multi:=anim.MULTI_IK_CONSTRAINT_DEFAULT;base.text_set(multi.name[:],"body");multi.root=chain.root;multi.joint_count,multi.effector_count=1,2
+    multi:=anim.MULTI_IK_CONSTRAINT_DEFAULT;base.text_set(multi.name[:],"body");multi.root=chain.root;multi.joints=make([]anim.Multi_IK_Joint,1,context.temp_allocator);multi.effectors=make([]anim.Multi_IK_Effector,2,context.temp_allocator)
     multi.joints[0]=anim.MULTI_IK_JOINT_DEFAULT;multi.joints[0].bone=chain.root
     for &effector in multi.effectors[:2] {effector=anim.MULTI_IK_EFFECTOR_DEFAULT;effector.bone=chain.end}
     base.text_set(multi.effectors[0].name[:],"left");base.text_set(multi.effectors[1].name[:],"right")
@@ -77,20 +82,20 @@ rig_modifier_api_discovers_named_operations_effectors_and_retarget_chains_of_the
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000011","diagnostics":true}`).code,0)
     testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"target_alpha"`))
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000012","controls":[{"kind":"Chain_Retarget","name":"transfer","weight":0.4}]}`).code,0)
-    testing.expect(t,len(play.animation_requests.controls.items)==1 && play.animation_requests.controls.items[0].rig==second && play.animation_requests.controls.items[0].slot==0)
+    testing.expect(t,len(play.animation_requests.modifiers.items)==1 && play.animation_requests.modifiers.items[0].rig==second && play.animation_requests.modifiers.items[0].name==base.name_hash("transfer"))
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector":"right","target":{"position":[1,2,3]}}]}`).code,0)
-    testing.expect_value(t,play.animation_requests.goals.items[0].effector,u8(1))
+    testing.expect_value(t,play.animation_requests.modifiers.items[1].effector,base.name_hash("right"))
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector":"left","target":{"position":[4,5,6]}}]}`).code,0)
-    testing.expect_value(t,play.animation_requests.goals.items[1].effector,u8(0))
+    testing.expect_value(t,play.animation_requests.modifiers.items[2].effector,base.name_hash("left"))
     for request in ([8]string{`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector":"absent"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector_index":0}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Spring","name":"tail","target":"0000000000000012"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Chain_Retarget","name":"transfer"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Twist","name":"roll"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector":"left","weight":0.5}]}`,`{"entity":"0000000000000012","goals":[{"kind":"Multi_IK","name":"body","effector":"left"}]}`}) {result:=authoring_test_execute(f,"request",request);testing.expectf(t,result.code==api.INVALID_PARAMS,"%s: %d %s",request,result.code,result.data)}
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000012","controls":[{"kind":"Chain_Retarget","name":"transfer","slot":0}]}`).code,api.INVALID_PARAMS)
-    testing.expect_value(t,len(play.animation_requests.goals.items),2)
+    testing.expect_value(t,len(play.animation_requests.modifiers.items),3)
     preview:Preview_Params;copy(preview.entity[:],"0000000000000011");preview.controls[0]={kind=.Chain_Retarget,weight=.3,enabled=true};base.text_set(preview.controls[0].name[:],"transfer")
     preview.goals[0]={kind=.Multi_IK,target={position={0,1,0},rotation=1,scale={1,1,1}}};base.text_set(preview.goals[0].name[:],"body");base.text_set(preview.goals[0].effector[:],"right")
     call:=api.Call{raw=`{"controls":[{"kind":"Chain_Retarget","name":"transfer"}],"goals":[{"kind":"Multi_IK","name":"body","effector":"right","target":{"position":[0,1,0]}}]}`,allocator=context.temp_allocator}
     testing.expect(t,request_apply(&f.session,&call,test_world_ref(&play),first,&preview,0,nil))
-    testing.expect_value(t,len(play.animation_requests.controls.items),2);testing.expect_value(t,len(play.animation_requests.goals.items),3)
+    testing.expect_value(t,len(play.animation_requests.modifiers.items),5)
     call.raw=`{"goals":[{"kind":"Multi_IK","name":"body","effector":"right","target":{"position":[0,1,0]},"contact":0.5}]}`
     testing.expect(t,!request_apply(&f.session,&call,test_world_ref(&play),first,&preview,0,nil))
-    testing.expect(t,strings.contains(call.error.data,`"path":"goals[0].contact"`));testing.expect_value(t,len(play.animation_requests.goals.items),3)
+    testing.expect(t,strings.contains(call.error.data,`"path":"goals[0].contact"`));testing.expect_value(t,len(play.animation_requests.modifiers.items),5)
 }

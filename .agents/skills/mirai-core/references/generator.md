@@ -36,7 +36,7 @@ receives the place of its origin: a type or a function of an editor package neve
 @(component,single) @(component,far) @(component,derived) @(storage) @(storage,host)
 @(storage,setting) @(storage,setting="machine")
 @(storage,queue) @(storage,shared) @(storage,keep) @(storage,persist)
-@(storage,reset="state_reset")
+@(storage,reset="state_reset") @(storage,save_prepare="prepare_save")
 @(storage,copy="state_copy",swap="state_swap") @(storage,copy=false) @(storage,free="state_free")
 @(step="fixed late",loops="game editor",stage="end",after="a b",before="c",server)
 @(params)
@@ -71,6 +71,9 @@ receives the place of its origin: a type or a function of an editor package neve
   only where the name and the unit are not enough.
 - `storage`: one value per world: state of a library, requests, events, loop parameters. It is
   written by a single library (any of its functions).
+- `save_prepare="f"` on a world state storage names `f :: proc(state:^S,world:core.World_Ref)`
+  returning `bool`. A game slot capture runs it against the settled world to materialize its saved
+  components. It settles those writes before serializing. A false result refuses the capture.
 - `queue` (of a storage): a queue of requests; any function receives it with `^` to push and the
   owning library takes it.
 - A storage with `core.Events(T)` fields holds what its library reports: the owner pushes and

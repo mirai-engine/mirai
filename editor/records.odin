@@ -34,11 +34,11 @@ records_tables :: proc(s:^Session,type:string,allocator:=context.temp_allocator)
 }
 
 // The table that declares a type; {} when none does.
-records_declaring :: proc(s:^Session,type:string) -> host.Record_File {
+records_declaring :: proc(s:^Session,type:string) -> (result:host.Record_File) {
     for &file in host.app_record_files(s.app) {
         if file.declares && base.text_get(file.type[:])==type {return file}
     }
-    return {}
+    return
 }
 
 // The record types the assets declare, by name, in the order of their files.

@@ -106,13 +106,18 @@ navigation_view_lines :: proc(s:^editor.Session,view:^Nav_View,extras:^host.Fram
     if lines.count>0 {host.extras_debug_lines_add(extras,lines)}
     if s.selection==nil || len(s.selection.entities)==0 {return}
     paths:=core.world_table_of(w,nav.Nav_Path)
-    if paths==nil {return}
+    run:=host.app_world_storage(s.app,w.data,nav.Navigation_Agents)
+    if paths==nil || run==nil {return}
     if len(view.agents)==0 {resize(&view.agents,2*NAV_VIEW_AGENT_LINES)}
     agent_lines:=erender.debug_lines_make(view.agents[:],depth_test=false)
     for e in s.selection.entities {
         p,found:=core.get(paths,e)
         if !found || p.class<0 || int(p.class)>=n.count {continue}
-        if nav.class_in_volume(n,int(p.class)) {draw_flier(&agent_lines,&n.classes[p.class].volume,p)} else {draw_agent(&agent_lines,&n.classes[p.class].mesh,p)}
+        route:=nav.agent_route(run,e)
+        if route==nil {continue}
+        if nav.class_in_volume(n,int(p.class)) {
+            draw_flier(&agent_lines,&n.classes[p.class].volume,p,&route.corridor)
+        } else {draw_agent(&agent_lines,&n.classes[p.class].mesh,p,route)}
     }
     if agent_lines.count>0 {host.extras_debug_lines_add(extras,agent_lines)}
 }
@@ -122,9 +127,9 @@ AGENT_COLOR :: mm.Vec4{1,1,1,0.95}
 CORRIDOR_COLOR :: mm.Vec4{0.35,0.6,1,0.6}
 
 // The path of an agent: the outlines of its corridor and its next corners to the goal.
-draw_agent :: proc(lines:^erender.Debug_Lines,mesh:^ai.Nav_Mesh,p:nav.Nav_Path) {
+draw_agent :: proc(lines:^erender.Debug_Lines,mesh:^ai.Nav_Mesh,p:nav.Nav_Path,route:^nav.Nav_Route) {
     up:=mm.Vec3{0,NAV_VIEW_LIFT*2,0}
-    corridor:=p.corridor
+    corridor:=&route.corridor
     for ref in corridor.path[:clamp(corridor.count,0,ai.NAV_CORRIDOR_CAPACITY)] {
         tile,poly:=ai.nav_poly_of(mesh,ref)
         if poly==nil {continue}
@@ -136,12 +141,11 @@ draw_agent :: proc(lines:^erender.Debug_Lines,mesh:^ai.Nav_Mesh,p:nav.Nav_Path) 
     corners:[16]ai.Nav_Corner
     count,_:=ai.nav_straight_path(mesh,corridor.position,corridor.target,corridor.path[:clamp(corridor.count,0,ai.NAV_CORRIDOR_CAPACITY)],corners[:])
     for i in 1..<count {erender.debug_line(lines,corners[i-1].position+up,corners[i].position+up,AGENT_COLOR)}
-    if p.state==.Crossing {erender.debug_line(lines,p.from+up,p.to+up,LINK_COLOR)}
+    if p.state==.Crossing {erender.debug_line(lines,route.from+up,route.to+up,LINK_COLOR)}
 }
 
 // The path of an agent that flies: the cells of its corridor and its path pulled tight to the goal.
-draw_flier :: proc(lines:^erender.Debug_Lines,volume:^ai.Nav_Volume,p:nav.Nav_Path) {
-    corridor:=p.corridor
+draw_flier :: proc(lines:^erender.Debug_Lines,volume:^ai.Nav_Volume,p:nav.Nav_Path,corridor:^ai.Nav_Corridor) {
     path:=corridor.path[:clamp(corridor.count,0,ai.NAV_CORRIDOR_CAPACITY)]
     for ref in path {
         if box,ok:=ai.nav_volume_ref_box(volume,ref);ok {draw_box(lines,box,CORRIDOR_COLOR)}
@@ -212,7 +216,6 @@ draw_collision :: proc(lines:^erender.Debug_Lines,view:^Nav_View,physics:^phys.P
     in_mesh:=make(map[core.Entity]struct{},context.temp_allocator)
     for e in view.owners[:in_count/3] {in_mesh[e]={}}
     everything:=phys.QUERY_FILTER_DEFAULT
-    everything.objects=phys.COLLISION_LAYERS_ALL
     _,index_count,complete:=phys.static_triangles(core.ref(physics),box,view.triangles[:],view.indices[:],everything,view.owners[:])
     for i in 0..<index_count/3 {
         color:=COLLISION_IN_COLOR if view.owners[i] in in_mesh else COLLISION_OUT_COLOR

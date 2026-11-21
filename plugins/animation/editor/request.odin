@@ -133,8 +133,9 @@ request :: proc(s:^editor.Session,call:^api.Call) {
     if s.mode==.Edit && !edit_end(s,call,w,true) {return}
     r:=api.call_result(call,Request_Result)
     r.id,r.applied=editor.api_entity_id(w,e),applied[:]
-    if value,has:=editor.entity_get(w,e,anim.Animation);has {r.playing=value.playing}
-    if time,_,_,has:=anim.animation_progress(core.world_storage_of(w,anim.Playback),e);has {r.time=time}
+    playback:=core.world_storage_of(w,anim.Playback)
+    r.playing=anim.animation_playing(playback,e)
+    if time,_,_,has:=anim.animation_progress(playback,e);has {r.time=time}
 }
 
 @(private)
@@ -159,11 +160,12 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
     animation,present:=editor.entity_get(world,entity,anim.Animation)
     needs:=count>0 || actions>0 || authoring_field_present(call,"locomote") || authoring_field_present(call,"gesture") || authoring_field_present(call,"distance") || authoring_field_present(call,"stop") || authoring_field_present(call,"seek")
     if needs && !present {authoring_failure(call,"entity","Missing_Component","an Animation component","missing component","The entity plays nothing",fix="Assign playback with animation.play or animation.character.setup");return false}
-    changed:=false
     when intrinsics.type_has_field(T,"stop") {
-        if authoring_field_present(call,"stop") && p.stop {animation.playing=false;changed=true;request_note(applied,"Stop","")}
+        if authoring_field_present(call,"stop") && p.stop {
+            anim.animation_command(core.world_storage_of(world,anim.Animation_Requests),entity,.Pause)
+            request_note(applied,"Stop","")
+        }
     }
-    if changed {core.add(core.world_table_of(world,anim.Animation),entity,animation);core.world_settle(world)}
     for &parameter in p.parameters[:count] {
         name:=base.text_get(parameter.name[:])
         if !program_parameter_check(s,call,animation,name,parameter.value) {return false}
@@ -177,7 +179,7 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
         if authoring_field_present(call,"seek") {
             requested:=core.world_storage_of(world,anim.Animation_Requests)
             waiting:=len(requested.timeline.items)
-            anim.animation_seek(requested,entity,p.seek)
+            anim.animation_command(requested,entity,.Seek,p.seek)
             if len(requested.timeline.items)==waiting {authoring_failure(call,"seek","Request_Failed","a finite nonnegative time and available seek queue",fmt.tprintf("%v",p.seek),"The seek could not be queued",api.SERVER_ERROR);return false}
             request_note(applied,"Seek","",p.seek)
         }
@@ -213,12 +215,12 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
     for &control,i in p.controls[:controls] {
         file:Authoring_File;defer asset.asset_close(&file.file)
         profile,_,ok:=program_modifier_profile(s,call,world,entity,&file);if !ok {return false}
-        slot,valid:=program_modifier_slot(call,profile,control.kind,control.name[:]);if !valid {return false}
+        _,valid:=program_modifier_slot(call,profile,control.kind,control.name[:]);if !valid {return false}
         if !finite(control.weight) || control.weight<0 || control.weight>1 {authoring_failure(call,fmt.tprintf("controls[%d].weight",i),"Range","a finite number in [0,1]",fmt.tprintf("%g",control.weight),"The control weight is invalid");return false}
         if !finite(control.fade) || control.fade<0 {authoring_failure(call,fmt.tprintf("controls[%d].fade",i),"Range","finite nonnegative seconds",fmt.tprintf("%g",control.fade),"The control fade is invalid");return false}
-        waiting:=len(modifiers.controls.items)
-        anim.modifier_control(modifiers,{rig=entity,kind=control.kind,slot=slot,name=control.name,weight=control.weight,enabled=control.enabled,fade=control.fade})
-        if len(modifiers.controls.items)==waiting {authoring_failure(call,"controls","Capacity","space in Animation_Requests.controls","full or unavailable","The control could not be queued",api.SERVER_ERROR);return false}
+        waiting:=len(modifiers.modifiers.items)
+        anim.modifier(modifiers,{rig=entity,kind=control.kind,weight=control.weight,enabled=control.enabled,fade=control.fade},base.text_get(control.name[:]))
+        if len(modifiers.modifiers.items)==waiting {authoring_failure(call,"controls","Capacity","space in Animation_Requests.modifiers","full or unavailable","The control could not be queued",api.SERVER_ERROR);return false}
         request_note(applied,"Control",base.text_get(control.name[:]),control.weight)
     }
     if goals>0 {
@@ -228,10 +230,10 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
             profile,_,ok:=program_modifier_profile(s,call,world,entity,&file);if !ok {return false}
             raw,_:=authoring_json_element(text,i,call.allocator)
             value,valid:=program_modifier_goal_value(s,call,world,entity,profile,&goal,raw,fmt.tprintf("goals[%d]",i));if !valid {return false}
-            waiting:=len(modifiers.goals.items)
-            anim.modifier_goal(modifiers,value)
-            if len(modifiers.goals.items)==waiting {authoring_failure(call,"goals","Capacity","space in Animation_Requests.goals","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
-            request_note(applied,"Goal",base.text_get(goal.name[:]))
+            waiting:=len(modifiers.modifiers.items)
+            anim.modifier(modifiers,value)
+            if len(modifiers.modifiers.items)==waiting {authoring_failure(call,"goals","Capacity","space in Animation_Requests.modifiers","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
+            request_note(applied,"Goal",base.text_get(p.goals[i].name[:]))
         }
     }
     if authoring_field_present(call,"look") {
@@ -361,16 +363,16 @@ request_aim :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity
     requests:=core.world_storage_of(world,anim.Animation_Requests)
     // Asking for it turns on an operation the .character keeps off until asked; off, it lets go
     // from where it aims.
-    value:=anim.Modifier_Goal{rig=entity,kind=kind,slot=slot,target=anim.spatial_point({}),fade=fade}
+    value:=anim.Modifier_Request{rig=entity,kind=kind,name=base.name_hash(base.text_get(definition.name[:])),target=anim.spatial_point({}),fade=fade,goal=true}
     if !off {
         goal:=Preview_Goal{kind=.Look if kind==.Look else .IK,name=definition.name,target=target}
         valid:bool
         if value,valid=program_modifier_goal_value(s,call,world,entity,profile,&goal,raw,path);!valid {return false}
         value.weight,value.enabled,value.fade=weight,true,fade
     }
-    waiting:=len(requests.goals.items)
-    anim.modifier_goal(requests,value)
-    if len(requests.goals.items)==waiting {authoring_failure(call,path,"Capacity","space in Animation_Requests.goals","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
+    waiting:=len(requests.modifiers.items)
+    anim.modifier(requests,value)
+    if len(requests.modifiers.items)==waiting {authoring_failure(call,path,"Capacity","space in Animation_Requests.modifiers","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
     request_note(applied,"Look" if kind==.Look else "Reach",base.text_get(definition.name[:]),0 if off else weight)
     return true
 }
@@ -379,7 +381,7 @@ request_aim :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity
 // the only one of the kind.
 @(private)
 request_operation :: proc(s:^editor.Session,world:core.World_Ref,entity:core.Entity,profile:anim.Pose_Profile,kind:anim.Modifier_Kind,part:lib.Body_Part) -> (slot:u16,found:bool) {
-    count:=program_modifier_count(profile,kind)
+    count:=anim.modifier_count(profile,kind)
     if count==0 {return}
     bone:=request_body_bone(s,world,entity,part)
     label:=anim.bone_ref_part(part)
@@ -440,7 +442,7 @@ preview_run :: proc(s:^editor.Session,call:^api.Call,named:[]u8,p:^$T,time:f32,t
     world:=core.world_ref(clone,s.info)
     if !request_source_check(s,call,world,e) || !request_apply(s,call,world,e,p,ticks,nil) {return false}
     requests:=core.world_storage_of(world,anim.Animation_Requests)
-    if requests!=nil {anim.animation_seek(requests,e,time)}
+    if requests!=nil {anim.animation_command(requests,e,.Seek,time)}
     if requests==nil || !anim.animation_evaluate(world,s.app,0) {authoring_failure(call,"preview","Evaluation_Failed","an evaluable copy of the world","initial evaluation failed","The copy could not be evaluated",api.SERVER_ERROR);return false}
     if !each(s,call,world,e,0,data) {return false}
     for tick in 1..=ticks {

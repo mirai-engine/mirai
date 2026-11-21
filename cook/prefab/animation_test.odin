@@ -36,17 +36,20 @@ imported_animation_prefab_preserves_targets_and_clip_asset :: proc(t:^testing.T)
     if !testing.expect_value(t,asset.scene_load(&scene,&types,path),asset.Error.None) {return}
     defer asset.scene_destroy(&scene)
     Playback :: struct {asset:base.Asset_Id,speed,weight:f32,playing,loop:bool}
-    Target :: struct {path:[asset.NODE_PATH_CAPACITY]u8}
     a,found:=asset.scene_get(&scene,root_of(&scene),"Animation",Playback)
     testing.expect(t,found && a.asset==animation_id && a.playing && a.loop && a.speed==1 && a.weight==1)
-    first,found_first:=asset.scene_get(&scene,1,"Animation_Target",Target)
-    second,found_second:=asset.scene_get(&scene,2,"Animation_Target",Target)
+    first,found_first:=asset.scene_get(&scene,1,"Animation_Target",Game_Animation_Target)
+    second,found_second:=asset.scene_get(&scene,2,"Animation_Target",Game_Animation_Target)
     testing.expect(t,found_first && found_second && base.text_get(first.path[:])==model.nodes[0].path && base.text_get(second.path[:])==model.nodes[1].path && first.path!=second.path)
 }
 
 @(test)
 an_animated_source_root_keeps_a_separate_prefab_placement :: proc(t:^testing.T) {
-    nodes:=[1]importer.Imported_Node{{name="animated root",path="animated root",parent=-1,mesh=-1,transform=math.TRANSFORM_IDENTITY,target=123,visible=true}}
+    path_text:[asset.ANIMATION_INLINE_PATH+40]u8
+    for &byte in path_text {byte='a'}
+    long_path:=string(path_text[:])
+    nodes:=[1]importer.Imported_Node{{name="animated root",path=long_path,parent=-1,
+        mesh=-1,transform=math.TRANSFORM_IDENTITY,target=base.name_hash(long_path),visible=true}}
     nodes[0].transform.position={2,3,4}
     model:=importer.Imported_Model{nodes=nodes[:]}
     folder:=base.test_folder(t,"animation-placement")
@@ -62,11 +65,13 @@ an_animated_source_root_keeps_a_separate_prefab_placement :: proc(t:^testing.T) 
     defer asset.scene_destroy(&scene)
     testing.expect_value(t,root_of(&scene),base.Entity_Id(2))
     Playback :: struct {asset:base.Asset_Id}
-    Target :: struct {path:[asset.NODE_PATH_CAPACITY]u8}
     _,animated:=asset.scene_get(&scene,root_of(&scene),"Animation",Playback)
-    _,targeted:=asset.scene_get(&scene,root_of(&scene),"Animation_Target",Target)
-    target,child_target:=asset.scene_get(&scene,1,"Animation_Target",Target)
-    testing.expect(t,animated && !targeted && child_target && base.text_get(target.path[:])=="animated root")
+    _,targeted:=asset.scene_get(&scene,root_of(&scene),"Animation_Target",Game_Animation_Target)
+    target,child_target:=asset.scene_get(&scene,1,"Animation_Target",Game_Animation_Target)
+    path_row,has_path:=asset.scene_get(&scene,1,"Animation_Path",Game_Animation_Path)
+    testing.expect(t,animated && !targeted && child_target && has_path)
+    testing.expect_value(t,target.path_id,base.name_hash(long_path))
+    testing.expect_value(t,base.text_get(path_row.text[:]),long_path)
     root,_:=asset.scene_get(&scene,root_of(&scene),"Transform",core.Transform)
     child,_:=asset.scene_get(&scene,1,"Transform",core.Transform)
     testing.expect_value(t,root.position,math.Vec3{})
@@ -93,8 +98,7 @@ a_skinned_source_without_clips_keeps_an_untargeted_placement_root :: proc(t:^tes
     defer asset.scene_destroy(&scene)
     testing.expect_value(t,root_of(&scene),base.Entity_Id(5))
     // The placement root is the rig: it shows the skinned mesh, whose node needs no entity of its own.
-    Target :: struct {path:[asset.NODE_PATH_CAPACITY]u8}
-    _,root_targeted:=asset.scene_get(&scene,root_of(&scene),"Animation_Target",Target)
+    _,root_targeted:=asset.scene_get(&scene,root_of(&scene),"Animation_Target",Game_Animation_Target)
     shown,has_mesh:=asset.scene_get(&scene,root_of(&scene),"Mesh_Renderer",struct {mesh:base.Asset_Id})
     _,child_found:=asset.scene_entity_find(&scene,2)
     testing.expect(t,!root_targeted && has_mesh && shown.mesh==mesh_ids[0] && !child_found)

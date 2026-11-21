@@ -141,7 +141,7 @@ a_place_moves_a_character_locked_along_z_to_another_plane_where_it_stays :: proc
     for _ in 0..<30 {physics_test_step(&f)}
     at:=physics_test_pose(&f,e).position
     testing.expectf(t,abs(at.z)<1e-3 && at.x>0.5,"walked to %v",at)
-    teleport(&f.requests,e,{at.x,0,3})
+    physics_test_place(&f,e,{at.x,0,3})
     for _ in 0..<60 {physics_test_step(&f)}
     after:=physics_test_pose(&f,e).position
     testing.expectf(t,abs(after.z-3)<1e-3 && after.x>at.x+1.5,"placed at z 3, it is at %v",after)
@@ -176,7 +176,7 @@ a_character_its_section_holds_stays_where_it_is_and_a_place_moves_it :: proc(t:^
     for _ in 0..<30 {step(&f)}
     testing.expect_value(t,physics_test_pose(&f,e).position,held)
     testing.expect(t,!core.entity_off(&f.entities,e),"it stays on, drawn")
-    teleport(&f.requests,e,{10,8,0})
+    physics_test_place(&f,e,{10,8,0})
     for _ in 0..<30 {step(&f)}
     testing.expect_value(t,physics_test_pose(&f,e).position,[3]f32{10,8,0})
     core.remove(&f.section_held,e)

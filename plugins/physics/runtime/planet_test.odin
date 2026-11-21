@@ -43,7 +43,7 @@ a_character_of_the_world_stands_on_a_planet_with_the_up_of_its_place :: proc(t:^
     testing.expectf(t,linalg.length(mm.quat_rotate(pose.rotation,{0,1,0})-[3]f32{1,0,0})<1e-4,"its Transform turned %v",pose.rotation)
     up:=vertical(&f,&f.verticals,walker)
     testing.expectf(t,linalg.length(up-[3]f32{1,0,0})<1e-4,"its vertical %v",up)
-    teleport(&f.requests,walker,{0,-PLANET_RADIUS,0},mm.quat_axis_angle({1,0,0},cmath.PI))
+    physics_test_place(&f,walker,{0,-PLANET_RADIUS,0},mm.quat_axis_angle({1,0,0},cmath.PI))
     physics_test_step(&f)
     up=vertical(&f,&f.verticals,walker)
     testing.expectf(t,linalg.length(up-[3]f32{0,-1,0})<1e-4,"the teleport turned it to %v",up)

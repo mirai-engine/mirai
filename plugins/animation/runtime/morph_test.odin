@@ -19,7 +19,7 @@ morph_weights_compose_the_mesh_the_default_the_curve_and_the_overrides_without_a
     testing.expect(t,morph_weight_set(&config,"Smile",.2,.Default))
     state:=Morph_Playing{entity=core.Entity(1),source=core.Entity(2),curve_count=-1}
     defer morph_playing_free(&state)
-    testing.expect(t,morph_bind(&state,&rig,config,"Face",1) && state.error==.None)
+    testing.expect(t,morph_bind(&state,&rig,config,base.name_hash("Face"),1) && state.error==.None)
     testing.expect_value(t,state.current[0],f32(.4))
     curves:=[2]Curve_Output{
         {target=base.name_hash("Other/@morph/Smile"),property=.Float,value={100,0,0,0},weight=1},
@@ -39,17 +39,17 @@ morph_weights_compose_the_mesh_the_default_the_curve_and_the_overrides_without_a
     rows:=state.curve_rows[0]
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     for tick in 0..<16 {
-        testing.expect(t,morph_bind(&state,&rig,config,"Face",u64(tick+2)))
+        testing.expect(t,morph_bind(&state,&rig,config,base.name_hash("Face"),u64(tick+2)))
         testing.expect(t,morph_compose(&state,&rig,config,&source))
     }
     context=saved
     testing.expect(t,state.current[0]==-1.5 && state.curve_rows[0]==rows && abs(copied.current[0]-.85)<1e-6)
-    testing.expect(t,morph_weight_set(&config,"Smile",.4,.Additive) && morph_bind(&state,&rig,config,"Face",20))
+    testing.expect(t,morph_weight_set(&config,"Smile",.4,.Additive) && morph_bind(&state,&rig,config,base.name_hash("Face"),20))
     testing.expect(t,morph_compose(&state,&rig,config,&source) && abs(state.current[0]-1.35)<1e-6)
     // Without its source the animated part goes: the mesh's weight and the entity's.
     testing.expect(t,morph_compose(&state,&rig,config,nil) && abs(state.current[0]-.8)<1e-6)
     morph_weight_clear(&config,"Smile")
-    testing.expect(t,config.names[0]==0 && morph_bind(&state,&rig,config,"Face",21) && morph_compose(&state,&rig,config,nil) && state.current[0]==.4)
+    testing.expect(t,config.names[0]==0 && morph_bind(&state,&rig,config,base.name_hash("Face"),21) && morph_compose(&state,&rig,config,nil) && state.current[0]==.4)
     testing.expect(t,!morph_weight_set(&config,"",1) && !morph_weight_set(&config,"Smile",transmute(f32)u32(0x7fc00000)))
     // Without a path (a rig that shows its own mesh) each target takes the curve that ends in its
     // name, whatever node path the importer gave it.
@@ -62,7 +62,7 @@ morph_weights_compose_the_mesh_the_default_the_curve_and_the_overrides_without_a
     named:=Morph_Playing{curve_count=-1};defer morph_playing_free(&named)
     imported:=Playing{seen=4,curves_ready=true};defer delete(imported.curves)
     append(&imported.curves,Curve_Output{target=base.name_hash("Armature/Body/@morph/Smile"),property=.Float,value={.6,0,0,0},weight=1})
-    testing.expect(t,morph_bind(&named,&rig,{},"",1) && named.by_name && morph_compose(&named,&rig,{},&imported,nil,&content) && abs(named.current[0]-.6)<1e-6)
+    testing.expect(t,morph_bind(&named,&rig,{},base.HASH_SEED,1) && named.by_name && morph_compose(&named,&rig,{},&imported,nil,&content) && abs(named.current[0]-.6)<1e-6)
     // A curve named as the target, as face captures and curve drives name them, and the
     // final curves of a rig with drives, which replace those of its animation.
     face:=Playing{seen=4,curves_ready=true,driven_ready=true,curve_layout=9};defer delete(face.curves);defer delete(face.driven)
@@ -72,7 +72,7 @@ morph_weights_compose_the_mesh_the_default_the_curve_and_the_overrides_without_a
     face.driven[0].value.x=.7
     testing.expect(t,morph_compose(&named,&rig,{},&face) && abs(named.current[0]-.7)<1e-6)
     pathed:=Morph_Playing{curve_count=-1};defer morph_playing_free(&pathed)
-    testing.expect(t,morph_bind(&pathed,&rig,{},"Face",1) && !pathed.by_name && morph_compose(&pathed,&rig,{},&face) && abs(pathed.current[0]-.7)<1e-6,"a mesh bound by path takes the curve of the target's name too")
+    testing.expect(t,morph_bind(&pathed,&rig,{},base.name_hash("Face"),1) && !pathed.by_name && morph_compose(&pathed,&rig,{},&face) && abs(pathed.current[0]-.7)<1e-6,"a mesh bound by path takes the curve of the target's name too")
     full:Morph_Weights
     for i in 0..<asset.MORPH_WEIGHTS {testing.expect(t,morph_weight_set(&full,fmt.tprintf("Shape %d",i),1))}
     testing.expect(t,!morph_weight_set(&full,"One more",1) && morph_weight_set(&full,"Shape 3",2))
@@ -87,27 +87,27 @@ morph_weights_report_unknown_targets_and_refuse_invalid_entries_keeping_their_we
     defer morph_playing_free(&state)
     config:Morph_Weights
     testing.expect(t,morph_weight_set(&config,"Smile",.5) && morph_weight_set(&config,"Future",2))
-    testing.expect(t,morph_bind(&state,&rig,config,"Face",1) && state.error==.Unknown_Target && state.unknown==1)
+    testing.expect(t,morph_bind(&state,&rig,config,base.name_hash("Face"),1) && state.error==.Unknown_Target && state.unknown==1)
     testing.expect(t,morph_compose(&state,&rig,config,nil) && state.current[0]==.5,"the entries that name a target apply")
     config.names[1]=config.names[0]
-    testing.expect(t,morph_bind(&state,&rig,config,"Face",2) && state.error==.Invalid_Weights)
+    testing.expect(t,morph_bind(&state,&rig,config,base.name_hash("Face"),2) && state.error==.Invalid_Weights)
     testing.expect(t,morph_compose(&state,&rig,config,nil) && state.current[0]==.25,"invalid entries apply to no target")
     config={}
     config.names[0]=base.name_hash("Smile");config.values[0]=transmute(f32)u32(0x7fc00000)
-    testing.expect(t,morph_bind(&state,&rig,config,"Face",3) && state.error==.Invalid_Weights)
+    testing.expect(t,morph_bind(&state,&rig,config,base.name_hash("Face"),3) && state.error==.Invalid_Weights)
     next:=Skin_Rig{id={5,7},revision=2,morphs={target,target}}
     base.text_set(next.morphs[1].name[:],"Blink")
     failure:=Runtime_Allocation_Failure{owner=context.allocator,remaining=100}
     saved:=context
     context.allocator=runtime.Allocator{runtime_failure_allocator,&failure}
     kept:=Morph_Playing{curve_count=-1}
-    testing.expect(t,morph_bind(&kept,&rig,{},"Face",1))
+    testing.expect(t,morph_bind(&kept,&rig,{},base.name_hash("Face"),1))
     failure.remaining=0
-    bound:=morph_bind(&kept,&next,{},"Face",2)
+    bound:=morph_bind(&kept,&next,{},base.name_hash("Face"),2)
     context=saved
     testing.expect(t,!bound && kept.error==.Out_Of_Memory && kept.revision==1 && len(kept.current)==1 && len(kept.previous)==1 && kept.current[0]==.25,"a rebind without memory keeps the last weights")
     failure.remaining=100
-    testing.expect(t,morph_bind(&kept,&next,{},"Face",2) && len(kept.current)==2 && kept.current[1]==.25)
+    testing.expect(t,morph_bind(&kept,&next,{},base.name_hash("Face"),2) && len(kept.current)==2 && kept.current[1]==.25)
     morph_playing_free(&kept)
 }
 
@@ -278,7 +278,7 @@ morph_bind_without_memory_is_refused_whole :: proc(t:^testing.T) {
         for budget in 0..<16 {
             failure.remaining=budget
             context.allocator={runtime_failure_allocator,&failure}
-            bound=morph_bind(&state,&rig,{},"Face",1)
+            bound=morph_bind(&state,&rig,{},base.name_hash("Face"),1)
             context.allocator=saved
             failure.remaining=1000
             if bound {break}

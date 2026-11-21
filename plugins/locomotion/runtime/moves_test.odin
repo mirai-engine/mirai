@@ -68,7 +68,7 @@ a_slide_keeps_the_run_for_its_time_and_ends_standing_or_crouched :: proc(t:^test
     testing.expectf(t,turned>0.1 && turned<=SLIDE_DEFAULT.steer_angle+0.01,"steered by %v rad",turned)
     loco_test_tick(&f,{0,0,-1},20,CROUCH)
     testing.expect_value(t,loco_state(&f).mode,MODE_WALKING)
-    testing.expect(t,loco_state(&f).crouch_lock,"crouch held after a slide that ends moving does not crouch")
+    testing.expect(t,parkour_state(&f).crouch_lock,"crouch held after a slide that ends moving does not crouch")
     loco_test_tick(&f,{},30,CROUCH)
     testing.expect_value(t,loco_state(&f).mode,MODE_WALKING)
     loco_test_tick(&f,{},1)
@@ -133,7 +133,7 @@ jump_facing_a_ledge_mantles_onto_it_where_it_fits :: proc(t:^testing.T) {
         loco_test_tick(&f,{},1,JUMP,yaw=c.yaw)
         testing.expectf(t,(loco_state(&f).mode==MODE_MANTLING)==c.mantles,"%v: mode %v",c,loco_state(&f).mode)
         if !c.mantles {continue}
-        testing.expectf(t,abs(loco_state(&f).mantle_height-c.top)<0.01,"%v: ledge %v",c,loco_state(&f).mantle_height)
+        testing.expectf(t,abs(parkour_state(&f).mantle_height-c.top)<0.01,"%v: ledge %v",c,parkour_state(&f).mantle_height)
         ticks:=0
         for loco_state(&f).mode==MODE_MANTLING && ticks<120 {
             loco_test_tick(&f,{},1,yaw=c.yaw)
@@ -232,39 +232,39 @@ a_tactical_sprint_ramps_up_spends_its_energy_and_recharges_after_its_delay :: pr
     sprint_speed:=f32(5.5)
     top:=sprint_speed*tactical.speed_multiplier
     // Exponential over its ramp: halfway through, the square root of the multiplier.
-    halfway:=Locomotion_State{sprint_active=true,sprint_time=tactical.speed_ramp/2}
+    halfway:=Parkour_State{sprint_active=true,sprint_time=tactical.speed_ramp/2}
     boost,_:=tactical_boost(halfway,tactical)
     testing.expectf(t,abs(boost-cmath.sqrt(tactical.speed_multiplier))<1e-4,"halfway through its ramp: %v",boost)
     loco_test_tick(&f,{},20)
     core.edit(&f.walks,f.e).sprint_speed=sprint_speed
     loco_test_tick(&f,{0,0,-1},6,SPRINT)
-    testing.expect(t,loco_state(&f).sprint_active,"sprint held forward with energy starts it")
+    testing.expect(t,parkour_state(&f).sprint_active,"sprint held forward with energy starts it")
     testing.expectf(t,flat_speed(&f)<0.85*top,"it ramps up: %v after 0.1 s",flat_speed(&f))
     loco_test_tick(&f,{0,0,-1},54,SPRINT)
     testing.expectf(t,abs(flat_speed(&f)-top)<0.1,"at speed_multiplier after its ramp: %v",flat_speed(&f))
-    testing.expectf(t,abs(loco_state(&f).sprint_spent-tactical.cost_per_second)<0.5,"a second spends cost_per_second: %v",loco_state(&f).sprint_spent)
+    testing.expectf(t,abs(parkour_state(&f).sprint_spent-tactical.cost_per_second)<0.5,"a second spends cost_per_second: %v",parkour_state(&f).sprint_spent)
     loco_test_tick(&f,{1,0,0},15,SPRINT)
-    testing.expect(t,loco_state(&f).sprint_active,"off forward for less than grace it goes on")
-    ramp:=loco_state(&f).sprint_time
+    testing.expect(t,parkour_state(&f).sprint_active,"off forward for less than grace it goes on")
+    ramp:=parkour_state(&f).sprint_time
     loco_test_tick(&f,{0,0,-1},40,SPRINT)
-    testing.expectf(t,loco_state(&f).sprint_time>ramp && abs(flat_speed(&f)-top)<0.1,"its ramp kept, back at top speed: %v",flat_speed(&f))
+    testing.expectf(t,parkour_state(&f).sprint_time>ramp && abs(flat_speed(&f)-top)<0.1,"its ramp kept, back at top speed: %v",flat_speed(&f))
     loco_test_tick(&f,{1,0,0},31,SPRINT)
-    testing.expect(t,!loco_state(&f).sprint_active,"off forward past grace it ends")
+    testing.expect(t,!parkour_state(&f).sprint_active,"off forward past grace it ends")
     loco_test_tick(&f,{0,0,-1},10,SPRINT)
-    testing.expect(t,loco_state(&f).sprint_active)
+    testing.expect(t,parkour_state(&f).sprint_active)
     loco_test_tick(&f,{0,0,-1},1)
-    testing.expect(t,!loco_state(&f).sprint_active,"letting go of sprint ends it at once")
+    testing.expect(t,!parkour_state(&f).sprint_active,"letting go of sprint ends it at once")
     // Out of energy it sprints as its Walk says, and energy waits recharge_delay.
     loco_test_tick(&f,{0,0,-1},1,SPRINT)
-    testing.expect(t,loco_state(&f).sprint_active)
-    core.edit(&f.loco_states,f.e).sprint_spent=tactical.energy-1
+    testing.expect(t,parkour_state(&f).sprint_active)
+    core.edit(&f.parkours,f.e).sprint_spent=tactical.energy-1
     loco_test_tick(&f,{0,0,-1},60,SPRINT)
-    testing.expect(t,!loco_state(&f).sprint_active,"without energy it ends")
+    testing.expect(t,!parkour_state(&f).sprint_active,"without energy it ends")
     testing.expectf(t,abs(flat_speed(&f)-sprint_speed)<0.1,"and sprints plainly: %v",flat_speed(&f))
-    loco_test_tick(&f,{},int((tactical.recharge_delay-loco_state(&f).sprint_rest)*60)-2)
-    testing.expectf(t,loco_state(&f).sprint_spent==tactical.energy,"no recharge before its delay: %v",loco_state(&f).sprint_spent)
+    loco_test_tick(&f,{},int((tactical.recharge_delay-parkour_state(&f).sprint_rest)*60)-2)
+    testing.expectf(t,parkour_state(&f).sprint_spent==tactical.energy,"no recharge before its delay: %v",parkour_state(&f).sprint_spent)
     loco_test_tick(&f,{},62)
-    testing.expectf(t,abs(tactical_energy(loco_state(&f),tactical)-tactical.recharge)<1.5,"a second after its delay it recharged recharge: %v",tactical_energy(loco_state(&f),tactical))
+    testing.expectf(t,abs(tactical_energy(parkour_state(&f),tactical)-tactical.recharge)<1.5,"a second after its delay it recharged recharge: %v",tactical_energy(parkour_state(&f),tactical))
 }
 
 // A jump in a tactical sprint at the end of its ramp rises jump_multiplier times faster and costs
@@ -279,22 +279,22 @@ a_jump_in_a_tactical_sprint_goes_higher_costs_energy_and_a_long_fall_ends_it :: 
     loco_test_tick(&f,{},20)
     core.edit(&f.walks,f.e).sprint_speed=5.5
     loco_test_tick(&f,{0,0,-1},60,SPRINT)
-    spent:=loco_state(&f).sprint_spent
+    spent:=parkour_state(&f).sprint_spent
     loco_test_tick(&f,{0,0,-1},1,SPRINT|JUMP)
-    testing.expectf(t,abs(loco_state(&f).sprint_spent-spent-tactical.cost_jump)<0.5,"the jump costs cost_jump: %v",loco_state(&f).sprint_spent-spent)
-    spent=loco_state(&f).sprint_spent
+    testing.expectf(t,abs(parkour_state(&f).sprint_spent-spent-tactical.cost_jump)<0.5,"the jump costs cost_jump: %v",parkour_state(&f).sprint_spent-spent)
+    spent=parkour_state(&f).sprint_spent
     rise:=f32(0)
     // It rises for 0.59 s and comes down for as long: past fall_grace of that, still in the air, it ends.
     for i in 0..<69 {
         loco_test_tick(&f,{0,0,-1},1,SPRINT)
         rise=max(rise,loco_position(&f).y)
-        if i==50 {testing.expect(t,loco_state(&f).sprint_active,"going up and then down within fall_grace it goes on")}
+        if i==50 {testing.expect(t,parkour_state(&f).sprint_active,"going up and then down within fall_grace it goes on")}
     }
     testing.expect(t,loco_state(&f).mode==MODE_FALLING,"still in the air")
     want:=WALK_DEFAULT.jump_height*tactical.jump_multiplier*tactical.jump_multiplier
     testing.expectf(t,abs(rise-want)<0.05,"it rises %v, jump_multiplier times faster than to %v",rise,WALK_DEFAULT.jump_height)
-    testing.expect(t,!loco_state(&f).sprint_active,"past fall_grace in the air it ends")
-    testing.expectf(t,loco_state(&f).sprint_spent==spent,"nothing spent in the air: %v",loco_state(&f).sprint_spent-spent)
+    testing.expect(t,!parkour_state(&f).sprint_active,"past fall_grace in the air it ends")
+    testing.expectf(t,parkour_state(&f).sprint_spent==spent,"nothing spent in the air: %v",parkour_state(&f).sprint_spent-spent)
 }
 
 // Standing at min_speed for min_time with the ground falling away more than min_drop within reach
@@ -319,19 +319,19 @@ a_ledge_jump_launches_off_an_edge_at_speed_and_ends_when_it_lands :: proc(t:^tes
         for _ in 0..<300 {
             loco_test_tick(&f,{0,0,-1},1,buttons)
             z:=loco_position(&f).z
-            if z>-10 {testing.expectf(t,!loco_state(&f).ledge_ready,"%v: not ready far from the edge, at z %v",c,z)}
-            if loco_state(&f).ledge_ready || z<-14.8 {
+            if z>-10 {testing.expectf(t,!parkour_state(&f).ledge_ready,"%v: not ready far from the edge, at z %v",c,z)}
+            if parkour_state(&f).ledge_ready || z<-14.8 {
                 ready_at=z
                 break
             }
         }
-        testing.expectf(t,loco_state(&f).ledge_ready==c.ready,"%v: ready %v at z %v",c,loco_state(&f).ledge_ready,ready_at)
+        testing.expectf(t,parkour_state(&f).ledge_ready==c.ready,"%v: ready %v at z %v",c,parkour_state(&f).ledge_ready,ready_at)
         if c.ready {testing.expectf(t,ready_at< -15+ledge.reach+0.05 && ready_at> -15+ledge.reach-0.25,"%v: ready reach before the edge, at z %v",c,ready_at)}
         before:=flat_speed(&f)
         loco_test_tick(&f,{0,0,-1},1,buttons|JUMP)
         loco_test_tick(&f,{0,0,-1},1,buttons)
         v:=loco_velocity(&f)
-        testing.expect_value(t,loco_state(&f).ledge_jumping,c.ready)
+        testing.expect_value(t,parkour_state(&f).ledge_jumping,c.ready)
         rise:=f32(4.852)+(ledge.up_speed if c.ready else 0) // sqrt(2 g jump_height) of WALK_DEFAULT
         testing.expectf(t,abs(v.y-rise)<0.4,"%v: it goes up at %v",c,v.y)
         if c.ready {
@@ -348,7 +348,7 @@ a_ledge_jump_launches_off_an_edge_at_speed_and_ends_when_it_lands :: proc(t:^tes
         }
         testing.expectf(t,landed,"%v: it lands",c)
         loco_test_tick(&f,{},1)
-        testing.expectf(t,!loco_state(&f).ledge_jumping,"%v: the landing ends it",c)
+        testing.expectf(t,!parkour_state(&f).ledge_jumping,"%v: the landing ends it",c)
     }
 }
 
@@ -396,11 +396,11 @@ sprint_by_default_runs_at_sprint_speed_and_a_crouch_slides :: proc(t:^testing.T)
     loco_test_tick(&f,{0,0,-1},60)
     v:=loco_velocity(&f)
     testing.expectf(t,abs(-v.z-5.5)<0.1,"it runs at sprint_speed without the action: %v",v)
-    testing.expect(t,!loco_state(&f).sprint_active,"no tactical sprint without the action")
+    testing.expect(t,!parkour_state(&f).sprint_active,"no tactical sprint without the action")
     loco_test_tick(&f,{0,0,-1},1,CROUCH)
     loco_test_tick(&f,{0,0,-1},2)
     testing.expectf(t,loco_state(&f).mode==MODE_SLIDING,"a crouch while running slides: mode %v",loco_state(&f).mode)
     loco_test_tick(&f,{0,0,-1},120)
     loco_test_tick(&f,{0,0,-1},30,SPRINT)
-    testing.expect(t,loco_state(&f).sprint_active,"the sprint action asks for the tactical sprint")
+    testing.expect(t,parkour_state(&f).sprint_active,"the sprint action asks for the tactical sprint")
 }

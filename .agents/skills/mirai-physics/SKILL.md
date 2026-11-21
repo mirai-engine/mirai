@@ -158,8 +158,8 @@ tables and is the only package that imports it. The game and the other plugins, 
   the step of that mode writes it first, to which locomotion only adds the layered movements.
 - Locomotion is a plugin on top of physics: it drives characters only through the facade, and
   `physics` imports nothing of it. A walker is `Character` + `Walk`; the mode it starts in follows
-  from its mode components; whoever drives it writes its `input.Move_Input` (a seat through
-  `engine/camera`), and locomotion is the one that turns it.
+  from its mode components. Seats write `input.Move_Input` and scripted drivers write
+  `Locomotion_Drive`. Locomotion turns the body.
 - `Character` and the mode components are authored and never written while playing; what changes
   is in `Locomotion_State`, all `transient`, so a scene saved after play holds no run-time field.
 - A joint is an entity of its own: `a` (by default its parent) and `b`, its frame its Transform, and
@@ -168,7 +168,7 @@ tables and is the only package that imports it. The game and the other plugins, 
   of a step walks every slot of a pool.
 - A link holds only the handles of what was made; the sync learns what changed from row stamps and
   calls a setter only where the simulation differs, so taking a restored row again changes nothing.
-  Holds live in `Physics_State.held`, which the step walks instead of the links.
+  Holds live in an entity-indexed map, which the step walks instead of the links.
 - A manipulation keeps a dynamic body dynamic and pulls it with a spring of bounded force; only a
   pose by design (a following pose target, `follow` of the animated ragdoll) holds a body as
   kinematic.

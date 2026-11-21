@@ -66,7 +66,7 @@ Events fire on entry and exit, not every tick. Keep a list or count of occupants
 ```odin
 found:[16]core.Entity
 filter:=phys.QUERY_FILTER_DEFAULT
-filter.overlaps=true                      // a query only sees sensors with this
+filter.include_sensors=true               // include nonblocking hits
 // physics:core.Ref(phys.Physics_State), a parameter of the step
 count,complete:=phys.overlap_sphere(physics,center,2,found[:],filter)
 ```

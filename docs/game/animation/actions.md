@@ -23,7 +23,8 @@ of any set (its `layers` and `actions` rows say every field), and `animation.ins
 
 ```odin
 anim.play(requests,e,"Combo")              // from its first section
-anim.play(requests,e,"Combo","Second")     // while it plays: moves it to that section
+anim.play(requests,e,"Combo","Second")     // moves a running action to that section
+anim.play(requests,e,"Grab",next_clip="pull")  // plays pull in the same slot after Grab ends
 t,section,ok:=anim.action_playing(runtime,e,"Combo")  // runtime:core.Ref(anim.Action_Runtime)
 ```
 
@@ -31,6 +32,14 @@ Sections chain parts of the clip (`next`), each the span of its name on the clip
 a duration, written once on the clip, so retiming the clip moves them. The other spans of the
 clip of an action are its windows, which arrive as `Span_Begin` and `Span_End` events, `name`
 the span ([events](../animation.md#one-event-loop)).
+
+Use `play_clip` to layer an ad-hoc clip without an action definition. A named layer supplies
+its mask. For an additive clip, its first frame supplies the reference unless the layer defines
+one. Add `asset` to play a clip from a specific .anim and `next_clip` to follow it on natural end.
+
+```odin
+anim.play_clip(requests,e,"lean",layer="Torso",additive=true,weight=.5,fade=.15,loop=true)
+```
 
 ## Pitfalls
 

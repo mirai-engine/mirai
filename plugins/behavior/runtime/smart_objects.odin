@@ -22,7 +22,7 @@ import nav "plugins:navigation/runtime"
 // and starts its cooldown. An offer on a Nav_Link (a door, a fence) is what an
 // agent claims to cross it, one at a time (cross_act).
 
-SMART_OFFERS :: 4
+SMART_OFFERS :: 8
 SMART_MOVED :: f32(0.5) // m the place of an offer moves before its user, walking to it, heads for the new one
 
 // The use of an offer: the game declares its ids as constants (USE_AMMO :: behavior.Smart_Use(1)).
@@ -55,13 +55,6 @@ Smart_State :: struct {
     ready:[SMART_OFFERS]u64 `mirai:"readonly,transient"`, // the tick it is offered again at
 }
 
-// Who holds what: the attack tokens and the claims of the offers of the
-// agents of a world. Written by the steps of the minds (ctx.reservations).
-@(storage,shared)
-Claims :: struct {
-    using reservations:ai.Reservations,
-}
-
 Smart_Used :: struct {object:core.Entity,offer:u8}
 
 @(storage,queue)
@@ -72,7 +65,7 @@ Smart_Uses :: struct {
 
 // The offer was used: it counts once and starts its cooldown at the next step.
 smart_used :: proc(uses:^Smart_Uses,found:Smart_Found) {
-    if found.object!=core.NONE {core.push(&uses.queue,Smart_Used{found.object,u8(found.offer)})}
+    if uses!=nil && smart_key(found).target!=0 {core.push(&uses.queue,Smart_Used{found.object,u8(found.offer)})}
 }
 
 @(step="fixed",stage="react",server)
@@ -92,15 +85,18 @@ smart_update :: proc(objects:^core.Table(Smart_Object,.Read),states:^core.Table(
     }
 }
 
-// What the queries of offers read: a step receives it, and a mind reads it
-// from its Mind_World.
 @(params)
-Smart_View :: struct {
+Smart_Offers :: struct {
     objects:^core.Table(Smart_Object,.Read),
+    index:core.Ref(Smart_Index),
     states:^core.Table(Smart_State,.Read),
     worlds:^core.Table(core.World_Transform,.Read),
-    claims:core.Ref(Claims),
     time:core.Time,
+}
+
+Smart_View :: struct {
+    using offers:Smart_Offers,
+    claims:core.Ref(Claims),
 }
 
 // An offer an agent can take: the object, which offer, where to stand, how
@@ -123,31 +119,41 @@ Smart_User :: struct {
     priority:u8,
 }
 
-// The first offer of `use` on `object` that `user` can take now, for the
-// think procedure or the action `a` of a mind: not spent, not cooling down,
-// of its team and abilities, and with room for it, or already its own.
-smart_offer :: proc(a:^$T,object:core.Entity,use:Smart_Use,user:Smart_User) -> (found:Smart_Found,ok:bool) {
-    return offer_open(smart_view(a),object,use,user)
-}
-
-@(private)
-smart_view :: proc(a:^$T) -> Smart_View {
-    w:=world_of(a)
-    return {objects=w.objects,states=w.states,worlds=w.worlds,claims=core.ref(w.claims),time=w.time}
-}
-
-@(private)
-offer_open :: proc(v:Smart_View,object:core.Entity,use:Smart_Use,user:Smart_User) -> (found:Smart_Found,ok:bool) {
-    o,has:=core.get(v.objects,object)
-    if !has || use==USE_NONE {return}
-    state,_:=core.get(v.states,object)
-    pose,placed:=core.get(v.worlds,object)
-    if !placed {return}
-    for offer,i in o.offers {
-        if offer.use!=use || !smart_open(v,object,i,offer,state,user) {continue}
-        return offer_found(object,i,offer,pose.transform),true
+// The first open offer of this use on the object.
+smart_offer :: proc(v:Smart_View,object:core.Entity,use:Smart_Use,user:Smart_User) -> (Smart_Found,bool) {
+    if v.objects==nil || use==USE_NONE {return {},false}
+    row:=core.row_of(v.objects,object)
+    if row<0 {return {},false}
+    for offer,i in v.objects.values[row].offers {
+        if offer.use==use {
+            if found,ok:=smart_offer_at(v,object,i,user);ok {return found,true}
+        }
     }
-    return
+    return {},false
+}
+
+// The same view for a mind, using its existing world bindings.
+mind_smart_view :: proc(a:^$T) -> Smart_View {
+    w:=world_of(a)
+    return {
+        offers={objects=w.objects,index=w.smart_index,states=w.states,worlds=w.worlds,time=w.time},
+        claims=core.ref(w.claims),
+    }
+}
+
+// An exact offer that is open to this user.
+smart_offer_at :: proc(
+    v:Smart_View,object:core.Entity,i:int,user:Smart_User,expected:=USE_NONE,
+) -> (Smart_Found,bool) {
+    offer,ok:=smart_offer_read(v,object,i,user)
+    if !ok || v.worlds==nil || expected!=USE_NONE && offer.use!=expected {return {},false}
+    if v.claims.ptr!=nil && user.entity!=core.NONE &&
+        !claim_open(v.claims.ptr,{u64(object),u16(i+1)},user.entity,max(int(offer.users),1),v.time,user.priority) {
+        return {},false
+    }
+    pose,placed:=core.get(v.worlds,object)
+    if !placed {return {},false}
+    return offer_found(object,i,offer,pose.transform),true
 }
 
 // Where the user of an offer of an object posed so stands, faces and comes from.
@@ -163,15 +169,11 @@ offer_found :: proc(object:core.Entity,i:int,offer:Smart_Offer,pose:mm.Transform
     }
 }
 
-// The offer of `use` nearest to `from` within `radius` that `user` can take
-// now: every Smart_Object is looked at, so for many of them a game uses the
-// place queries.
-smart_nearest :: proc(a:^$T,use:Smart_Use,from:[3]f32,radius:f32,user:Smart_User) -> (found:Smart_Found,ok:bool) {
-    v:=smart_view(a)
+// The nearest open offer of use within radius.
+smart_nearest :: proc(v:Smart_View,use:Smart_Use,from:[3]f32,radius:f32,user:Smart_User) -> (found:Smart_Found,ok:bool) {
     best:=radius
-    for row in 0..<core.count(v.objects) {
-        object:=core.entity_at(v.objects,row)
-        candidate,open:=offer_open(v,object,use,user)
+    for entry in smart_entries(v.index.ptr,use) {
+        candidate,open:=smart_offer_at(v,entry.object,int(entry.offer),user,use)
         if !open {continue}
         d:=linalg.length(mm.Vec3(candidate.at)-mm.Vec3(from))
         if !(d<=best) {continue}
@@ -180,31 +182,28 @@ smart_nearest :: proc(a:^$T,use:Smart_Use,from:[3]f32,radius:f32,user:Smart_User
     return
 }
 
-// Claims the offer for the action (or step) that asks, until it exits, at the
-// priority of its user: false when as many others as it takes hold it and
-// none of a lower priority has started to use it (ai.claim_use).
 smart_claim :: proc(a:^ai.Act($A),found:Smart_Found,user:Smart_User) -> bool {
-    if found.object==core.NONE || found.offer<0 || found.offer>=SMART_OFFERS {return false}
-    return ai.claim(a,u64(found.object),u16(found.offer+1),found.users,user.priority)
+    key:=smart_key(found)
+    return ai.claim(a,key.target,key.what,found.users,user.priority)
 }
 
-// Whether the offer is open to the user: ready for it, and held by it or with
-// room for it at its priority.
 @(private)
-smart_open :: proc(v:Smart_View,object:core.Entity,i:int,offer:Smart_Offer,state:Smart_State,user:Smart_User) -> bool {
-    if !offer_ready(v,i,offer,state,user) {return false}
-    if v.claims.ptr==nil || user.entity==core.NONE {return true}
-    return ai.reserve_open(&v.claims.ptr.reservations,{u64(object),u16(i+1)},u64(user.entity),max(int(offer.users),1),v.time.tick,user.priority)
-}
-
-// Not spent, not cooling down, and of the team and the abilities of the user.
-@(private)
-offer_ready :: proc(v:Smart_View,i:int,offer:Smart_Offer,state:Smart_State,user:Smart_User) -> bool {
-    if offer.use==USE_NONE {return false}
-    if offer.uses>0 && state.used[i]>=offer.uses {return false}
-    if !core.due(v.time,state.ready[i]) {return false}
-    if offer.teams!=0 && u32(offer.teams)&(1<<u32(user.team))==0 {return false}
-    return u32(offer.abilities)&~u32(user.abilities)==0
+smart_offer_read :: proc(v:Smart_View,object:core.Entity,i:int,user:Smart_User) -> (Smart_Offer,bool) {
+    if v.objects==nil || i<0 || i>=SMART_OFFERS {return {},false}
+    row:=core.row_of(v.objects,object)
+    if row<0 {return {},false}
+    offer:=v.objects.values[row].offers[i]
+    if offer.use==USE_NONE || offer.teams!=0 && u32(offer.teams)&(1<<u32(user.team))==0 ||
+        u32(offer.abilities)&~u32(user.abilities)!=0 {return {},false}
+    if v.states!=nil {
+        if state_row:=core.row_of(v.states,object);state_row>=0 {
+            state:=&v.states.values[state_row]
+            if offer.uses>0 && state.used[i]>=offer.uses || !core.due(v.time,state.ready[i]) {
+                return {},false
+            }
+        }
+    }
+    return offer,true
 }
 
 // Crosses the link the agent waits at (Nav_Path.state Crossing, of a kind the
@@ -212,15 +211,16 @@ offer_ready :: proc(v:Smart_View,i:int,offer:Smart_Offer,state:Smart_State,user:
 // waits while others hold it (stage 0), takes `seconds` (1), lands at the
 // other end and waits for navigation to take it from there (2). Success once
 // across; Failure when it is not at such a link.
-cross_act :: proc(a:^ai.Act($A),links:^core.Table(nav.Nav_Link,$B),placer:core.Placer,use:Smart_Use,user:Smart_User,seconds:f64) -> ai.Status {
+cross_act :: proc(a:^ai.Act($A),routes:core.Ref(nav.Navigation_Agents),placer:core.Placer,use:Smart_Use,user:Smart_User,seconds:f64) -> ai.Status {
     if a.phase==.Exit {return .Success}
-    w,e,v:=world_of(a),agent(a),smart_view(a)
+    w,e,v:=world_of(a),agent(a),mind_smart_view(a)
     p,ok:=agent_path(a)
     crossing:=ok && p.state==.Crossing && p.manual
     if ai.stage(a)==2 {return .Running if crossing else .Success}
-    if !crossing {return .Failure}
+    route:=nav.agent_route(routes.ptr,e)
+    if !crossing || route==nil {return .Failure}
     if ai.stage(a)==0 {
-        found,open:=smart_at_link(v,links,p.from,use,user)
+        found,open:=smart_offer(v,p.link_entity,use,user)
         if !open || !smart_claim(a,found,user) {return .Running}
         ai.claim_use(a)
         ai.next_stage(a)
@@ -228,25 +228,9 @@ cross_act :: proc(a:^ai.Act($A),links:^core.Table(nav.Nav_Link,$B),placer:core.P
     if ai.stage_elapsed(a)<seconds {return .Running}
     rotation:=mm.Quat(1)
     if pose,placed:=core.get(v.worlds,e);placed {rotation=pose.rotation}
-    core.place(placer,e,p.to,rotation)
+    core.place(placer,e,route.to,rotation)
     nav.nav_crossing_done(w.requests,e)
     return ai.next_stage(a)
-}
-
-// The offer of `use` on the link with an end at `from`.
-@(private)
-smart_at_link :: proc(v:Smart_View,links:^core.Table(nav.Nav_Link,$A),from:[3]f32,use:Smart_Use,user:Smart_User) -> (found:Smart_Found,ok:bool) {
-    for row in 0..<core.count(v.objects) {
-        object:=core.entity_at(v.objects,row)
-        link,linked:=core.get(links,object)
-        pose,placed:=core.get(v.worlds,object)
-        if !linked || !placed {continue}
-        end:=mm.transform_point(pose.transform,link.end)
-        if link.target!=core.NONE {if other,there:=core.get(v.worlds,link.target);there {end=other.position}}
-        if min(linalg.length(pose.position-mm.Vec3(from)),linalg.length(end-mm.Vec3(from)))>1.5 {continue}
-        if found,ok=offer_open(v,object,use,user);ok {return}
-    }
-    return
 }
 
 // Goes for an offer of `use` and uses it: on Enter it takes the nearest one
@@ -259,12 +243,12 @@ smart_at_link :: proc(v:Smart_View,links:^core.Table(nav.Nav_Link,$A),from:[3]f3
 // took it before it started to use it. It keeps the offer in the first three
 // words of its memory.
 offer_act :: proc(a:^ai.Act($A),use:Smart_Use,user:Smart_User,radius:f32,seconds:f64) -> (status:ai.Status,found:Smart_Found) {
-    w,e,v:=world_of(a),agent(a),smart_view(a)
+    w,e,v:=world_of(a),agent(a),mind_smart_view(a)
     switch a.phase {
     case .Enter:
         pose,placed:=core.get(v.worlds,e)
         ok:bool
-        if placed {found,ok=smart_nearest(a,use,pose.position,radius,user)}
+        if placed {found,ok=smart_nearest(v,use,pose.position,radius,user)}
         if !ok || !smart_claim(a,found,user) {return .Failure,{}}
         a.memory[0],a.memory[1],a.memory[2]=u64(found.object),u64(found.offer),0
         nav.nav_move_to(w.requests,e,found.enter)
@@ -307,11 +291,9 @@ offer_act :: proc(a:^ai.Act($A),use:Smart_Use,user:Smart_User,radius:f32,seconds
 offer_held :: proc(v:Smart_View,a:^ai.Act($A),user:Smart_User) -> (found:Smart_Found) {
     object:=core.Entity(a.memory[0])
     offer:=int(a.memory[1])
-    o,has:=core.get(v.objects,object)
-    pose,placed:=core.get(v.worlds,object)
-    if !has || !placed || offer<0 || offer>=SMART_OFFERS {return {offer=-1}}
-    state,_:=core.get(v.states,object)
-    if !offer_ready(v,offer,o.offers[offer],state,user) {return {offer=-1}}
     if !ai.claim_held(a) {return {offer=-1}}
-    return offer_found(object,offer,o.offers[offer],pose.transform)
+    data,ok:=smart_offer_read(v,object,offer,user)
+    pose,placed:=core.get(v.worlds,object)
+    if !ok || !placed {return {offer=-1}}
+    return offer_found(object,offer,data,pose.transform)
 }

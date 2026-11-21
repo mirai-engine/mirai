@@ -187,7 +187,8 @@ sway_update :: proc(resident:^Foliage_Resident,t:Sway_Tables,commands:core.Comma
         core.report(problems,e,"foliage.sway","the mesh of this Foliage_Sway is not drawn: %s",error)
         return
     }
-    held.handle,held.key=next,key
+    held.handle=next
+    held.key=key
 }
 
 // An entity that no longer sways: its batch goes, and its own mesh draws it again.

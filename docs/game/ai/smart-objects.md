@@ -1,10 +1,9 @@
 # Smart objects, fences and place queries
 
-Every mind reads the smart objects already: the helpers below take only the `think` or the action
-of [a mind](mind.md). What else an action uses it receives as a parameter:
-`uses:^behavior.Smart_Uses`, `places:^behavior.Place_Requests`,
-`results:^core.Table(behavior.Place_Result,.Read)`, `links:^core.Table(nav.Nav_Link,.Read)`,
-`placer:core.Placer` to move the agent.
+A fixed step binds `behavior.Smart_Offers` and combines it with a reference to `Claims` in
+`Smart_View{offers=offers, claims=core.ref(claims)}`. Minds use `behavior.mind_smart_view`.
+Bind `^behavior.Smart_Uses` to spend an offer, and `core.Ref(nav.Navigation_Agents)` and
+`core.Placer` for a custom link crossing.
 
 ## An object that offers a use
 
@@ -19,7 +18,7 @@ core.commands_add(c, crate, behavior.Smart_Object{offers = {
 `at` is where the user stands, in the object's frame; `yaw` is which way it faces there, from the
 object's front; `enter` is where it comes to `at` from, relative to `at` (zero: straight to it);
 `uses` 0 is unlimited; `teams` none is open to anyone. `Smart_Object` is also a component to add
-to an entity in a scene. A bar with many stools is many entities with one offer each.
+to an entity in a scene. Give each independently reservable position its own offer.
 
 ## Going to use it
 
@@ -33,7 +32,7 @@ nobody takes it:
 
 ```odin
 user := behavior.Smart_User{entity=behavior.agent(t), team=TEAM_ENEMY}
-if _, ok := behavior.smart_nearest(t, USE_AMMO, here, 60, user); ok {
+if _, open := behavior.smart_nearest(behavior.mind_smart_view(t), USE_AMMO, here, 60, user); open {
     ai.propose(t, .Get_Ammo, 0.85)
 }
 
@@ -53,29 +52,36 @@ get_ammo :: proc(a:^ai.Act(Act), uses:^behavior.Smart_Uses) -> ai.Status {
 
 A `nav.Nav_Link` whose kind the game declares (`LINK_VAULT :: nav.Nav_Link_Kind(7)`; the agent
 lists it in `Nav_Agent.manual`) plus a `Smart_Object` offer on the same entity. When the agent
-reaches it, its `Nav_Path` is `Crossing` with `manual`: propose the crossing above everything else.
+reaches it, its `Nav_Path` is `Crossing` with `manual` and names the link entity. Set the
+link's capacity to one for an exclusive crossing. For a custom animated crossing, enable
+passthrough, move the character with the animation or a pose target, and call
+`nav.nav_crossing_done` when it reaches the other end.
 
 ```odin
 if p, ok := behavior.agent_path(t); ok && p.state == .Crossing && p.manual && p.kind == LINK_VAULT {
     ai.propose(t, .Vault, 1)
 }
 @(act="Vault")
-vault :: proc(a:^ai.Act(Act),links:^core.Table(nav.Nav_Link,.Read),placer:core.Placer)
+vault :: proc(a:^ai.Act(Act),routes:core.Ref(nav.Navigation_Agents),placer:core.Placer)
               -> ai.Status {
-    if ai.entering(a) {ai.commit(a, 1)} // one agent at a time
+    if ai.entering(a) {ai.commit(a, 1)}
     user := behavior.Smart_User{entity=behavior.agent(a), team=TEAM_ENEMY}
-    return behavior.cross_act(a, links, placer, USE_VAULT, user, 0.6)
+    return behavior.cross_act(a, routes, placer, USE_VAULT, user, 0.6)
 }
 ```
 
 ## Choosing a place (cover, flank)
 
-A query is asked on `Enter`; the answer arrives in the agent's `Place_Result` a tick or more
-later. Candidate layouts, tests and responses: the params of `behavior.query`. Layout
+Submit a query with `place_query` from an action or a fixed step. The answer arrives in the
+querier's `Place_Result`. Bind `^behavior.Place_Requests` to submit and
+`^core.Table(behavior.Place_Result,.Read)` to read it. Layouts and tests are also available via
+`behavior.query`. Layout
 `Remembered` takes what the agent remembers (the enemies of the teams asked and the noises with no
 maker), where it last perceived it, so it does not flank someone it never saw; `arc` (radians)
 keeps `Rings` to a span around where the center faces.
-Order the tests freely: rays and path searches are spent only where they can change the answer.
+Order the tests freely. Rays and path searches run only where they can change the answer.
+Set `Place_Test.sight_layers` to choose the blockers for a visibility test. For influence or
+cover scores, set `Behavior_Settings.influence_enabled` in project settings.
 
 ```odin
 case .Enter:
@@ -85,17 +91,30 @@ case .Enter:
     q.tests[0] = {measure=.Visible, from=.Target, target=enemy, min=0, max=1, response=falling}
     q.tests[1] = {measure=.Path, from=.Querier, min=0, max=30, response=falling}
     q.test_count = 2
-    a.memory[0] = u64(behavior.place_query(places, q)) // the number the result answers with
+    request := behavior.place_query(places, q)
+    if request == 0 {return .Failure}
+    a.memory[0] = u64(request)
     return .Running
 case .Update:
-    r, ok := core.get(results, behavior.agent(a))
-    if !ok || r.request != u32(a.memory[0]) || r.status == .Waiting {return .Running}
+    r, ready := behavior.place_result(results, behavior.agent(a), u32(a.memory[0]))
+    if !ready {return .Running}
     if r.status != .Found {return .Failure}
     // r.points[0] is the best place; r.entities[0] and r.offers[0] name the object and its offer
 ```
 
-The layout `Offers` lays out the offers open to the querier at the query's `priority`: give it
-its `Smart_User.priority`. To use an offer that a query found, build a `behavior.Smart_Found`
-(`object`, `offer`, `at`, `users`) and claim it with `behavior.smart_claim(a, found, user)` before
-walking to `at`; while it walks, `ai.claim_held(a)` false means a higher priority took it; call
-`ai.claim_use(a)` when the agent starts using it.
+Set the query's `priority` to the querier's `Smart_User.priority`. When it completes, use
+`smart_offer_at` with the returned entity and offer index to check whether it can still be taken.
+Claim it with `smart_claim` and walk to the result point. Check `ai.claim_held(a)` while walking
+and call `ai.claim_use(a)` when the agent starts using it.
+
+## Perception and reservations from a step
+
+Add `behavior.Perceiver` to an observer and `behavior.Perceivable` to subjects it can see.
+Set `Perceiver.sight_layers` for the collision layers that should block sight. Read observations
+through `behavior.perceived` or `behavior.perception_best`. Observations carry the senses that
+detected the subject and a confidence that decays as the observation ages.
+
+A fixed server step can bind `^behavior.Claims` and take a slot with `claim_take`.
+Use `attack_token(target)` for an attack slot or `smart_key(found)` for an offer. Check with
+`claim_open` or `claim_held`. Renew each tick while the holder needs its slot and release it with
+`claim_release` when it is done. Call `claim_use` to protect a holder once it starts using a slot.
