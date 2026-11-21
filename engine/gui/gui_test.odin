@@ -62,13 +62,12 @@ a_name_asked_is_kept_once_for_the_screen_it_was_asked_of :: proc(t:^testing.T) {
     gui_:Gui
     a,b:=core.entity_make(1,1),core.entity_make(2,1)
     events:UI_Events
-    clicked(&events,a,"play")
+    clicked(core.ref(&events),a,"play")
     testing.expect_value(t,gui_.names_asked.count,0)
-    events_follow(&events,&gui_)
-    clicked(&events,a,"play")
-    clicked(&events,a,"play")
-    clicked(&events,b,"play")
-    clicked(&events,a,"")
+    clicked(core.ref(&events),a,"play",&gui_)
+    clicked(core.ref(&events),a,"play",&gui_)
+    clicked(core.ref(&events),b,"play",&gui_)
+    clicked(core.ref(&events),a,"",&gui_)
     testing.expect_value(t,gui_.names_asked.count,2)
     testing.expect(t,gui_.names_asked.names[0].name==base.name_hash("play") && gui_.names_asked.names[0].entity==a,"what was asked, each once")
 }
@@ -84,12 +83,12 @@ the_helpers_read_the_events :: proc(t:^testing.T) {
         UI_Event{entity=entity,kind=.Back},
         UI_Event{kind=.Menu},
     )
-    testing.expect(t,menu_pressed(&events))
-    testing.expect(t,clicked(&events,entity,"play") && !clicked(&events,entity,"quit"))
-    value,ok:=changed_value(&events,entity,"volume")
+    testing.expect(t,menu_pressed(core.ref(&events)))
+    testing.expect(t,clicked(core.ref(&events),entity,"play") && !clicked(core.ref(&events),entity,"quit"))
+    value,ok:=changed_value(core.ref(&events),entity,"volume")
     testing.expect(t,ok && value==0.5)
-    testing.expect(t,back(&events,entity))
-    testing.expect(t,!clicked(nil,entity,"play") && !menu_pressed(nil),"without a Gui there are no events")
+    testing.expect(t,back(core.ref(&events),entity))
+    testing.expect(t,!clicked({},entity,"play") && !menu_pressed({}),"without a Gui there are no events")
 }
 
 // An event reaches a step of the tick and one of the frame once each, in
@@ -319,14 +318,14 @@ tree_events_become_ui_events_with_the_entity_a_drop_came_from :: proc(t:^testing
     append(&events.items,event_of(screen,{name=base.name_hash("buy"),kind=.Clicked,item=3}))
     append(&events.items,event_of(screen,{name=base.name_hash("fade"),kind=.Finished,from=base.name_hash("out")}))
     append(&events.items,UI_Event{entity=screen,kind=.Back})
-    found,dropped_ok:=dropped(&events,screen,"slot")
+    found,dropped_ok:=dropped(core.ref(&events),screen,"slot")
     testing.expect(t,dropped_ok && found.from_entity==inventory)
-    item,clicked_ok:=clicked_item(&events,screen,"buy")
-    testing.expect(t,clicked_ok && item==3 && clicked(&events,screen,"buy") && !clicked(&events,inventory,"buy"))
-    text,submitted_ok:=submitted(&events,screen,"name")
+    item,clicked_ok:=clicked_item(core.ref(&events),screen,"buy")
+    testing.expect(t,clicked_ok && item==3 && clicked(core.ref(&events),screen,"buy") && !clicked(core.ref(&events),inventory,"buy"))
+    text,submitted_ok:=submitted(core.ref(&events),screen,"name")
     testing.expect(t,submitted_ok && text=="Ada")
-    testing.expect(t,finished(&events,screen,"fade","out") && !finished(&events,screen,"fade","in"))
-    testing.expect(t,back(&events,screen) && !back(&events,inventory))
+    testing.expect(t,finished(core.ref(&events),screen,"fade","out") && !finished(core.ref(&events),screen,"fade","in"))
+    testing.expect(t,back(core.ref(&events),screen) && !back(core.ref(&events),inventory))
 }
 
 @(test)
@@ -578,11 +577,11 @@ the_last_event_of_a_kind_is_what_a_widget_asks_for :: proc(t:^testing.T) {
     }
     append(&events.items,event_of(screen,typed(.Changed,"A")),event_of(screen,typed(.Submitted,"Ad")))
     append(&events.items,event_of(screen,typed(.Changed,"Ada")),event_of(screen,typed(.Submitted,"Ada")))
-    text,ok:=changed_text(&events,screen,"name")
+    text,ok:=changed_text(core.ref(&events),screen,"name")
     testing.expect(t,ok && text=="Ada")
-    text,ok=submitted(&events,screen,"name")
+    text,ok=submitted(core.ref(&events),screen,"name")
     testing.expect(t,ok && text=="Ada")
-    _,ok=changed_text(&events,screen,"other")
+    _,ok=changed_text(core.ref(&events),screen,"other")
     testing.expect(t,!ok)
 }
 

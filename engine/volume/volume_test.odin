@@ -428,3 +428,26 @@ a_spline_finds_where_its_curve_passes_nearest_a_point :: proc(t:^testing.T) {
         testing.expectf(t,found==c.found && (!found || abs(key-c.key)<0.02),"%s: %v %v",c.name,key,found)
     }
 }
+
+@(test)
+a_pose_change_only_invalidates_the_mix_for_a_value_or_section :: proc(t:^testing.T) {
+    f:Fixture
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
+    region:=place(&f,1,box({1,1,1}))
+    section,other:=core.create(&f.entities),core.create(&f.entities)
+    core.add(&f.sections,section,scene.Scene_Reference{})
+    core.add(&f.worlds,section,core.World_Transform{})
+    core.add(&f.worlds,other,core.World_Transform{})
+    test_world_settle(&f)
+
+    seen:core.Seen
+    _=poses_changed(&f.worlds,&f.levels,&f.sections,&seen)
+    testing.expect(t,!poses_changed(&f.worlds,&f.levels,&f.sections,&seen))
+    core.edit(&f.worlds,other).position.x=1
+    testing.expect(t,!poses_changed(&f.worlds,&f.levels,&f.sections,&seen))
+    for e in ([2]core.Entity{region,section}) {
+        core.edit(&f.worlds,e).position.x=1
+        testing.expect(t,poses_changed(&f.worlds,&f.levels,&f.sections,&seen))
+    }
+}

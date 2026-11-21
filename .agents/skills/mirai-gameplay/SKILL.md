@@ -105,9 +105,9 @@ the same attributes and no private paths. Declaration and parameter binding:
    `multiplayer.send`; the game does not ask.
 7. Runtime prefab: `scene.spawn(spawner, path_or_id, ...)` with `core.Commands`; its rows wait
    until the end of the function and are finished with
-   `core.commands_added`; a prefab not loaded yet gives its root alone, filled frames later
-   ([scene](references/libraries.md#scene)). With `transient=true` the entities do not get an
-   `Id` and a save does not include them as scene entities.
+   `core.commands_added`; a prefab not loaded yet reports that its root is pending
+   ([scene](references/libraries.md#scene)). A `transient=true` spawn has no persistent
+   `Id`. A [save](references/libraries.md#save) gives it a temporary identity in the document.
 8. Game code names an asset by its path in the assets wherever a call takes one (`scene.spawn`,
    `scene.request`, `audio.play`), and a field it fills by
    `host.assets_id`; data fields hold its `base.Asset_Id`. A path literal of the project's code
@@ -120,8 +120,8 @@ the same attributes and no private paths. Declaration and parameter binding:
   not maps or pointers).
 - **A library is the only writer of its own data.**
   - `engine/input`: `Seat.body`. `engine/camera`: `render.View_Camera`, `Camera_Follow`, the lens
-    of its cameras, the `Transform` rows of the ones that follow and the `Move_Input` of the bodies
-    the seats of this end drive; a mode is requested with `cam.camera_mode`.
+    derived follow state, the lens and `Transform` of each following camera and the
+    `Move_Input` of the bodies the local seats drive; a mode is requested with `cam.camera_mode`.
   - `physics`: `Transform` of the bodies; locomotion, the `Character_Move` of the characters (in a
     game mode, after the step of that mode).
   - `animation_sample`/`animation_advance`: buffers and results of `Playback`.

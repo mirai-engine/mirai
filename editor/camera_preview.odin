@@ -137,7 +137,7 @@ camera_preview_end :: proc(s:^Session,keep:bool) {
         activation,activated:=entity_get(w,e,ecamera.Camera_Activation)
         k:=Kept{id=api_entity_id(w,e),follows=follows,activated=activated}
         k.lens=lens
-        k.follow=ecamera.camera_follow_config(follow)
+        k.follow=follow
         k.activation=activation
         append(&kept,k)
     }
@@ -151,7 +151,7 @@ camera_preview_end :: proc(s:^Session,keep:bool) {
     for &k in kept {
         e:=api_entity(edited,k.id)
         if lens,ok:=entity_get(edited,e,erender.Camera);ok && lens!=k.lens {field_write(s,lens_info,{e},0,mem.ptr_to_bytes(&k.lens))}
-        if follow,ok:=entity_get(edited,e,ecamera.Camera_Follow);ok && k.follows && ecamera.camera_follow_config(follow)!=k.follow {
+        if follow,ok:=entity_get(edited,e,ecamera.Camera_Follow);ok && k.follows && follow!=k.follow {
             field_write(s,follow_info,{e},0,mem.ptr_to_bytes(&k.follow))
         }
         if activation,ok:=entity_get(edited,e,ecamera.Camera_Activation);ok && k.activated && activation!=k.activation {

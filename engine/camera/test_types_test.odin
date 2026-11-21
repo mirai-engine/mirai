@@ -12,6 +12,7 @@ Test_Cameras :: struct {
     using world:Test_World,
     cameras:core.Table(render.Camera),
     follows:core.Table(Camera_Follow),
+    states:core.Table(Camera_Follow_State),
     activations:core.Table(Camera_Activation),
     transforms:core.Table(core.Transform),
     worlds:core.Table(core.World_Transform),

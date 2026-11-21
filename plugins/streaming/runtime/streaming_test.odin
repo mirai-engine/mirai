@@ -18,6 +18,7 @@ Streaming_World :: struct {
     references:core.Table(scene.Scene_Reference),
     worlds:core.Table(core.World_Transform),
     motions:core.Table(core.Motion),
+    owners:core.Table(Crossing_Test_Body),
     parents:core.Table(core.Parent),
     transforms:core.Table(core.Transform),
     members:core.Table(scene.Section_Member),
@@ -26,7 +27,11 @@ Streaming_World :: struct {
     hierarchy:core.Hierarchy,
     requests:scene.Section_Requests,
     crossings:Streaming_Crossings,
+    places:core.Places,
 }
+
+@(component,locks="core.Transform")
+Crossing_Test_Body :: struct {}
 
 // A source that comes near turns a section on, one at mid distance loads it
 // off, and one that goes away turns it off or drops it only once it is
@@ -215,7 +220,7 @@ what_moves_out_of_its_section_hangs_from_the_one_that_holds_it :: proc(t:^testin
     core.add(&w.worlds,crate,core.World_Transform{transform={position={25,0,0},rotation=1,scale=1}})
     run :: proc(w:^Streaming_World) {
         test_world_settle(w)
-        streaming_crossings(core.read(&w.motions),core.read(&w.references),core.read(&w.worlds),core.read(&w.roaming),core.ref(&w.hierarchy),&w.parents,&w.transforms,&w.members,&w.crossings,nil)
+        streaming_crossings(core.read(&w.motions),core.read(&w.references),core.read(&w.worlds),core.read(&w.roaming),core.ref(&w.hierarchy),&w.parents,&w.transforms,&w.places,&w.members,&w.crossings,nil)
         test_world_settle(w)
     }
     run(&w)
@@ -224,11 +229,16 @@ what_moves_out_of_its_section_hangs_from_the_one_that_holds_it :: proc(t:^testin
     pose,_:=core.get(&w.transforms,crate)
     testing.expect_value(t,pose.position,[3]f32{-5,0,0})
     testing.expect(t,!core.has(&w.members,crate),"it is no longer of the scene of a")
+    core.add(&w.owners,crate,Crossing_Test_Body{})
     core.edit(&w.worlds,crate).position={100,0,0}
     run(&w)
     testing.expect(t,!core.has(&w.parents,crate),"out of every box, a root")
     pose,_=core.get(&w.transforms,crate)
-    testing.expect_value(t,pose.position,[3]f32{100,0,0})
+    testing.expect_value(t,pose.position,[3]f32{-5,0,0})
+    pending:=w.places.queue.items
+    if !testing.expect_value(t,len(pending),1) {return}
+    testing.expect(t,pending[0].entity==crate && pending[0].position==[3]f32{100,0,0} &&
+        !pending[0].at_rest,"the owner gets the world pose and keeps the body's velocity")
     // An agent that roams, off at the root, hangs again from the section on whose box holds it.
     agent:=core.create(&w.entities)
     core.add(&w.roaming,agent,scene.Roaming{})

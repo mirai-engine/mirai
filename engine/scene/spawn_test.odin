@@ -128,6 +128,31 @@ spawn_test_same :: proc(t:^testing.T,p:^Spawn_Test,loc:=#caller_location) {
     }
 }
 
+@(test)
+a_cold_spawn_reports_that_its_prefab_is_pending :: proc(t:^testing.T) {
+    p:Spawn_Test
+    if !spawn_test_open(t,&p,"pending") {return}
+    defer spawn_test_close(&p)
+    bulb:asset.Scene
+    spawn_test_bulb(&bulb,&p.types,2)
+    defer asset.scene_destroy(&bulb)
+    saved:=asset.scene_save(&bulb,fmt.tprintf("%s/bulb.scene",p.folder))
+    if !testing.expect(t,saved==.None && host.assets_scan(&p.assets)) {return}
+    w:=host.app_world_ref(&p.app,p.kept)
+    problems:core.Problems
+    spawner:=Spawner{core.commands_of(w),&p.assets,&problems}
+    cold:=spawn(spawner,SPAWN_BULB)
+    core.world_settle(w)
+    testing.expect(t,cold!=core.NONE && core.has(&p.kept.pendings,cold) && !core.has(&p.kept.lights,cold))
+    testing.expect(t,core.problem_find(&problems,cold,"scene.spawn_pending")!=nil)
+
+    if !testing.expect(t,host.assets_scene(&p.assets,SPAWN_BULB)!=nil) {return}
+    warm:=spawn(spawner,"bulb.scene")
+    core.world_settle(w)
+    testing.expect(t,warm!=core.NONE && !core.has(&p.kept.pendings,warm) && core.has(&p.kept.lights,warm))
+    testing.expect(t,core.problem_find(&problems,warm,"scene.spawn_pending")==nil)
+}
+
 @(private="file")
 Spawn_Test_Count :: struct {
     backing:runtime.Allocator,

@@ -210,7 +210,7 @@ scene_sections :: proc(
             section_drop(world,documents,e)
         case reference.loaded=={} && loads!=nil && reference.failed!=reference.scene && reference.scene!={}:
             pose,_:=core.get(worlds,e)
-            near,holds:=section_near(sources.ptr,reference,pose.transform)
+            near,holds:=section_near(sources,reference,pose.transform)
             if slot<0 {
                 id,_:=core.get(ids,e)
                 append(&candidates,Section_Candidate{near,holds,id.value,e})
@@ -282,9 +282,9 @@ scene_sections :: proc(
 // How near the sources, and where their motion takes them, come to the box
 // of a section at pose, in meters, and whether one stands in it; max(f32)
 // without sources.
-section_near :: proc "contextless" (sources:^Streaming_Sources,reference:Scene_Reference,pose:mm.Transform) -> (near:f32,holds:bool) {
+section_near :: proc "contextless" (sources:core.Ref(Streaming_Sources),reference:Scene_Reference,pose:mm.Transform) -> (near:f32,holds:bool) {
     near=max(f32)
-    if sources==nil {return}
+    if sources.ptr==nil {return}
     half:=reference.extents*linalg.abs(pose.scale)
     inverse:=mm.quat_inverse(pose.rotation)
     for source in sources.items[:sources.count] {

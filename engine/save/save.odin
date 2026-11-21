@@ -108,11 +108,9 @@ Result :: struct {
 @(storage,queue,keep)
 Save_Requests :: struct {queue:core.Queue(Request)}
 
-// Events: this library clears them at each frame and pushes one per request
-// served, and one per autosave it made by itself. A slot written later (its
-// thumbnail, a job) brings its own in the frame it is written.
+// A result for each request served and each autosave, emitted when it is finished.
 @(storage,keep)
-Save_Results :: struct {queue:core.Events(Result)}
+Save_Results :: struct {using queue:core.Events(Result)}
 
 // Where the slots are kept: the folder set, or <user data>/Mirai/<project>/saves.
 @(storage,host)
@@ -217,7 +215,7 @@ request :: proc(requests:^Save_Requests,op:Op,slot:string,kind:=Slot_Kind.Manual
     r:=Request{op=op,kind=kind,invalid=request_error(op,slot,kind,label)}
     base.text_set(r.slot[:],slot)
     base.text_set(r.label[:],label)
-    core.push(&requests.queue,r)
+    core.offer(&requests.queue,r)
 }
 
 // What is wrong with a request, for who answers at once (an API).
@@ -360,6 +358,7 @@ saves_serve :: proc(
         work.frame+=1
         writes_step(work,app.renderer,&app.jobs,results,problems)
     }
+    core.queue_serve(&requests.queue,core.QUEUE_FIRST_ROOM,problems,"save.requests","save requests","the save request capacity")
     // A load replaces the world, and with it the buffer the requests were taken from.
     asked,_:=slice.clone(core.take(&requests.queue),context.temp_allocator)
     for &r in asked {
@@ -447,39 +446,83 @@ write :: proc(w:core.World_Ref,app:^host.App,state:^Save_State,slot:string,kind:
     return slot_file_write(path,serial.writer_bytes(&out),nil)
 }
 
-// The world as the bytes of a slot, without a thumbnail. Entities without an
-// Id lend one for the trip.
-capture :: proc(w:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,out:^serial.Writer,kind:=Slot_Kind.Manual,label:="",played:=0.0) -> Error {
-    if w.place!=.World {return .Failed}
+// A save hook materializes components in a private world. Pending rows also
+// need a settle there, since world_copy takes only the settled rows.
+@(private)
+snapshot_for_save :: proc(w:core.World_Ref,allocator:runtime.Allocator) -> (rawptr,bool) {
+    es:=core.world_entities(w)
+    pending:=len(es.doomed)>0
+    for waiting in es.pending {pending||=waiting}
+    prepare:=false
+    for &storage in w.info.storages {prepare||=storage.procs.save_prepare!=nil}
+    if !pending && !prepare {return nil,true}
+
+    data,err:=mem.alloc(w.info.sizes[.World],max(w.info.aligns[.World],1),allocator)
+    if err!=nil {return nil,false}
+    copied:=false
+    defer if !copied {
+        core.world_destroy(w.info,.World,data)
+        mem.free(data,allocator)
+    }
+    if !core.world_init(w.info,.World,data,allocator) || !core.world_copy(w.info,data,w.data) {return nil,false}
+    snapshot:=core.world_ref(data,w.info)
+    if pending {
+        for &info in w.info.tables {
+            if info.place!=.World {continue}
+            src,dst:=core.world_table_at(w,&info),core.world_table_at(snapshot,&info)
+            for change in src.pending {
+                count:=len(dst.pending)
+                switch change.value {
+                case core.PENDING_REMOVE: core.raw_remove(dst,change.entity)
+                case core.PENDING_OFF: core.raw_disable(dst,change.entity)
+                case core.PENDING_ON: core.raw_enable(dst,change.entity)
+                case:
+                    value:=rawptr(uintptr(src.added.data)+uintptr(int(change.value)*info.info.size))
+                    if !core.raw_add(dst,info.info,change.entity,value) {return nil,false}
+                }
+                if len(dst.pending)==count {return nil,false}
+            }
+        }
+        core.world_settle(snapshot)
+    }
+    if prepare {
+        if !core.world_prepare_save(snapshot) {return nil,false}
+        core.world_settle(snapshot)
+    }
+    copied=true
+    return data,true
+}
+
+// The world as the bytes of a slot, without a thumbnail.
+capture :: proc(world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,out:^serial.Writer,kind:=Slot_Kind.Manual,label:="",played:=0.0) -> Error {
+    w:=world
+    if w.place!=.World || w.info==nil || w.data==nil {return .Failed}
+    snapshot,ok:=snapshot_for_save(w,allocator)
+    if !ok {return .Failed}
+    defer if snapshot!=nil {
+        core.world_destroy(w.info,.World,snapshot)
+        mem.free(snapshot,allocator)
+    }
+    if snapshot!=nil {w=core.world_ref(snapshot,w.info)}
     ids:=core.world_table_of(w,core.Id)
     if ids==nil {return .Failed}
     es:=core.world_entities(w)
-    core.world_settle(w)
-    if !core.world_prepare_save(w) {return .Failed}
-    core.world_settle(w)
-
-    present:=make([]bool,core.entities_capacity(es),context.temp_allocator)
+    present,room:=make([]bool,core.entities_capacity(es),context.temp_allocator)
+    if room!=nil {return .Failed}
     for &t in w.info.tables {
         if t.place!=w.place {continue}
         for e in core.world_table_at(w,&t).entities {present[core.entity_index(e)]=true}
     }
     state:=u64(0)
-    lent:=make([dynamic]core.Entity,context.temp_allocator)
+    temporary:=make(map[core.Entity]base.Entity_Id,context.temp_allocator)
     lent_ids:=make([dynamic]base.Entity_Id,context.temp_allocator)
     for yes,index in present {
         if !yes {continue}
         e:=core.entity_make(index,es.generation[index])
-        if !core.alive(es,e) {continue}
-        if value,_:=core.get(ids,e);value.value!=0 {continue}
+        if !core.alive(es,e) || core.id_of(ids,e)!=0 {continue}
         id:=core.id_new(es,&state)
-        core.add(ids,e,core.Id{id})
-        append(&lent,e)
-        append(&lent_ids,id)
-    }
-    core.world_settle(w)
-    defer if len(lent)>0 {
-        for e in lent {core.remove(ids,e)}
-        core.world_settle(w)
+        if _,err:=map_insert(&temporary,e,id);err!=nil {return .Failed}
+        if _,err:=append(&lent_ids,id);err!=nil {return .Failed}
     }
 
     local:asset.Types
@@ -489,7 +532,7 @@ capture :: proc(w:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator
     // What a network session keeps on entities is of the session, not of the game.
     // A saved game holds no instances: nothing brings it up to date with a prefab.
     excluded:=[]typeid{core.Remote,core.Pose_Target,scene.Prefab_Instance,scene.Prefab_Member}
-    report,error:=scene.capture(w,&document,types,{id=DOCUMENT,sections=true,excluded=excluded},allocator)
+    report,error:=scene.capture(w,&document,types,{id=DOCUMENT,sections=true,excluded=excluded,temporary_ids=temporary},allocator)
     if error!=.None {return .Failed}
     defer asset.scene_destroy(&document)
     body:serial.Writer
@@ -500,8 +543,8 @@ capture :: proc(w:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator
     header:=Header{magic=MAGIC,version=VERSION,entities=u32(report.entities),bytes=u64(body.count),kind=kind,played=played}
     header.written=time.to_unix_nanoseconds(time.now())
     base.text_set(header.label[:],label)
-    if clock:=core.world_storage_of(w,core.Time);clock!=nil {header.tick,header.seconds=clock.tick,clock.seconds}
-    if root:=core.world_storage_of(w,scene.Scene_Root);root!=nil {header.scene=root.scene}
+    if clock:=scene.capture_storage(w,core.Time);clock.ptr!=nil {header.tick,header.seconds=clock.tick,clock.seconds}
+    if root:=scene.capture_storage(w,scene.Scene_Root);root.ptr!=nil {header.scene=root.scene}
     header.lent=u32(len(lent_ids))
     serial.write_align(out,serial.WRITER_ALIGNMENT)
     serial.write_bytes(out,mem.ptr_to_bytes(&header))

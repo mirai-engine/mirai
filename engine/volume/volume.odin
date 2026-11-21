@@ -432,6 +432,24 @@ place_of :: proc(at:Where,table:^core.Table($T,$A),row:int) -> (p:Place) {
     return
 }
 
+// Whether a volume or a section that bounds one gained, lost or moved its pose.
+poses_changed :: proc(
+    worlds:^core.Table(core.World_Transform,$A),values:^core.Table($T,$B),
+    sections:^core.Table(scene.Scene_Reference,$C),seen:^core.Seen,
+) -> bool {
+    if worlds==nil || values==nil || core.count(values)==0 {return false}
+    moved:=core.changes(worlds,seen)
+    if moved.all {return true}
+    for e in moved.gone {
+        if core.has(values,e) || core.has(sections,e) {return true}
+    }
+    for row in core.each_changed(worlds,&moved) {
+        e:=core.entity_at(worlds,row)
+        if core.has(values,e) || core.has(sections,e) {return true}
+    }
+    return false
+}
+
 // Makes the index of the value of table again when its volumes, its values
 // or where they are changed. changed: it was made again, and what a library
 // combined from it is to be combined again. ok is false without memory: then

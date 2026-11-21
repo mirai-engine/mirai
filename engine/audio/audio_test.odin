@@ -258,7 +258,7 @@ buses_take_their_gain_filter_and_ducking_from_the_settings :: proc(t:^testing.T)
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_EFFECTS,send=BUS_UI}))
     volumes:=AUDIO_VOLUMES_DEFAULT
     problems:core.Problems
-    audio_buses(core.ref(&settings),core.ref(&volumes),{},f.app.mixer,&problems)
+    buses_apply(f.app.mixer,&settings,&volumes,nil,&problems)
     testing.expect(t,mixer.bus_send(m,mixer.Bus(AMBIENCE))==mixer.Bus(BUS_EFFECTS),"ambience plays into effects")
     testing.expect(t,mixer.bus_send(m,mixer.Bus(BUS_EFFECTS))==mixer.BUS_MASTER && core.problem_find(&problems,core.NONE,"audio.send")!=nil,"a bus sends only to one before it, and says so")
     testing.expect(t,audio_bus_setting_set(&settings,{bus=AMBIENCE}))
@@ -271,22 +271,22 @@ buses_take_their_gain_filter_and_ducking_from_the_settings :: proc(t:^testing.T)
 
     // The volume the player chose goes over the gain of the game.
     volumes.music=0.5
-    audio_buses(core.ref(&settings),core.ref(&volumes),{},f.app.mixer,nil)
+    buses_apply(f.app.mixer,&settings,&volumes,nil,nil)
     testing.expect(t,abs(mixer.bus_volume(m,mixer.Bus(BUS_MUSIC))-0.2506)<0.001)
-    testing.expect_value(t,audio_volume(&volumes,BUS_MUSIC),f32(0.5))
+    testing.expect_value(t,audio_volume(core.ref(&volumes),BUS_MUSIC),f32(0.5))
     volumes.more[0]=0.25
-    testing.expect_value(t,audio_volume(&volumes,Audio_Bus(5)),f32(0.25))
+    testing.expect_value(t,audio_volume(core.ref(&volumes),Audio_Bus(5)),f32(0.25))
     volumes.music=max(f32)
-    testing.expect_value(t,audio_volume(&volumes,BUS_MUSIC),f32(1))
+    testing.expect_value(t,audio_volume(core.ref(&volumes),BUS_MUSIC),f32(1))
     volumes.music=math.nan_f32()
-    testing.expect_value(t,audio_volume(&volumes,BUS_MUSIC),f32(0))
+    testing.expect_value(t,audio_volume(core.ref(&volumes),BUS_MUSIC),f32(0))
     volumes=AUDIO_VOLUMES_DEFAULT
 
     // A bus whose entry goes back to playing as it comes loses its entry, and the mixer follows.
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MUSIC}))
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MASTER}))
     testing.expect(t,settings==Audio_Settings{},"settings that say nothing are zeros")
-    audio_buses(core.ref(&settings),core.ref(&volumes),{},f.app.mixer,nil)
+    buses_apply(f.app.mixer,&settings,&volumes,nil,nil)
     testing.expect(t,mixer.bus_volume(m,mixer.Bus(BUS_MUSIC))==1 && mixer.bus_lowpass(m,mixer.Bus(BUS_MUSIC))==0 && mixer.bus_duck(m,mixer.Bus(BUS_MUSIC))=={} && mixer.bus_reverb(m,mixer.Bus(BUS_MUSIC))=={})
     testing.expect_value(t,mixer.bus_volume(m,mixer.BUS_MASTER),f32(1))
     testing.expect(t,db_volume(AUDIO_SILENCE_DB)==0 && abs(db_volume(-6)-0.5012)<0.001)
@@ -456,7 +456,7 @@ the_reverb_is_that_of_the_volumes_the_listener_is_in :: proc(t:^testing.T) {
     w.view=core.View{position={0,15,0},rotation=1}
     mixer_reverb:Mixer_Reverb
     run :: proc(p:^Audio_World,settings:^Audio_Settings,dt:f32,r:^Mixer_Reverb,app:^host.App) {
-        audio_reverb(core.read(&p.reverbs),core.read(&p.volumes),core.read(&p.worlds),nil,nil,nil,core.read(&p.listeners),core.ref(&p.view),core.ref(settings),{},{dt=dt},r,app.mixer)
+        audio_reverb(core.read(&p.reverbs),core.read(&p.volumes),core.read(&p.worlds),nil,nil,nil,core.read(&p.listeners),core.ref(&p.view),core.ref(settings),{},{dt=dt},r,app.mixer,{})
     }
     run(&w,&settings,0.1,&mixer_reverb,&f.app)
     got,_:=mixer.reverb_get(f.app.mixer)
@@ -468,6 +468,27 @@ the_reverb_is_that_of_the_volumes_the_listener_is_in :: proc(t:^testing.T) {
     for _ in 0..<40 {run(&w,&settings,0.1,&mixer_reverb,&f.app)}
     got,_=mixer.reverb_get(f.app.mixer)
     testing.expect(t,got==(^Reverb)(&hall)^,"and gets there")
+}
+
+@(test)
+unchanged_bus_stamps_skip_applying_settings_until_a_revision_changes :: proc(t:^testing.T) {
+    f:Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
+    settings:Audio_Settings
+    volumes:=AUDIO_VOLUMES_DEFAULT
+    revision:=u64(1)
+    stamp:=core.Stamp(Audio_Volumes){&revision}
+    settings_stamp:=core.Stamp(Audio_Settings){&revision}
+    applied:Mixer_Buses
+    m:=f.app.mixer
+    audio_buses(core.ref(&settings),core.ref(&volumes),{},settings_stamp,stamp,&applied,m,{},nil)
+    mixer.bus_set_volume(m,mixer.Bus(BUS_MASTER),0.25)
+    audio_buses(core.ref(&settings),core.ref(&volumes),{},settings_stamp,stamp,&applied,m,{},nil)
+    testing.expect_value(t,mixer.bus_volume(m,mixer.Bus(BUS_MASTER)),f32(0.25))
+    revision+=1
+    audio_buses(core.ref(&settings),core.ref(&volumes),{},settings_stamp,stamp,&applied,m,{},nil)
+    testing.expect_value(t,mixer.bus_volume(m,mixer.Bus(BUS_MASTER)),f32(1))
 }
 
 // Under the water the master loses its highs, by the lower of its own cutoff
@@ -482,16 +503,16 @@ the_medium_around_the_listener_dulls_the_master_and_mixes_its_reverb :: proc(t:^
     settings:Audio_Settings
     volumes:=AUDIO_VOLUMES_DEFAULT
     water:=Audio_Medium{lowpass=700,reverb={room_size=0.3,damping=0.9,wet=0.6,width=0.5},weight=1}
-    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&water),f.app.mixer,nil)
+    buses_apply(f.app.mixer,&settings,&volumes,&water,nil)
     testing.expect_value(t,mixer.bus_lowpass(m,mixer.BUS_MASTER),f32(700))
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MASTER,lowpass=500}))
-    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&water),f.app.mixer,nil)
+    buses_apply(f.app.mixer,&settings,&volumes,&water,nil)
     testing.expect_value(t,mixer.bus_lowpass(m,mixer.BUS_MASTER),f32(500))
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MASTER,lowpass=4000}))
-    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&water),f.app.mixer,nil)
+    buses_apply(f.app.mixer,&settings,&volumes,&water,nil)
     testing.expect_value(t,mixer.bus_lowpass(m,mixer.BUS_MASTER),f32(700))
     air:Audio_Medium
-    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&air),f.app.mixer,nil)
+    buses_apply(f.app.mixer,&settings,&volumes,&air,nil)
     testing.expect_value(t,mixer.bus_lowpass(m,mixer.BUS_MASTER),f32(4000))
 
     room:Audio_World
@@ -505,7 +526,7 @@ the_medium_around_the_listener_dulls_the_master_and_mixes_its_reverb :: proc(t:^
     room.view=core.View{position={0,-2,0},rotation=1}
     mixed:Mixer_Reverb
     hear :: proc(r:^core.Table(Audio_Reverb,$A),v:^core.Table(volume.Volume,$B),w:^core.Table(core.World_Transform,$C),l:^core.Table(Audio_Listener,$D),view:^core.View,settings:^Audio_Settings,medium:^Audio_Medium,mixed:^Mixer_Reverb,app:^host.App) -> Reverb {
-        for _ in 0..<60 {audio_reverb(r,v,w,nil,nil,nil,l,core.ref(view),core.ref(settings),core.ref(medium),{dt=0.1},mixed,app.mixer)}
+        for _ in 0..<60 {audio_reverb(r,v,w,nil,nil,nil,l,core.ref(view),core.ref(settings),core.ref(medium),{dt=0.1},mixed,app.mixer,{})}
         got,_:=mixer.reverb_get(app.mixer)
         return got
     }

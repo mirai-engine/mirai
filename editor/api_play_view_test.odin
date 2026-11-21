@@ -19,6 +19,7 @@ View_World :: struct {
     seats:core.Table(input.Seat),
     lenses:core.Table(erender.Camera),
     follows:core.Table(ecamera.Camera_Follow),
+    following:core.Table(ecamera.Camera_Follow_State),
     players:input.Seats,
     view:core.View,
     views:ecamera.Camera_Views,
@@ -58,10 +59,10 @@ play_view_says_what_the_player_sees_and_where_things_show_on_the_screen :: proc(
     core.add(&w.transforms,camera,core.Transform{position={0,2,6},rotation=1,scale={1,1,1}})
     core.add(&w.seats,seat,input.Seat{body=body})
     core.add(&w.lenses,camera,erender.Camera{fov=60*math.RAD_PER_DEG})
-    follow:=ecamera.CAMERA_FOLLOW_DEFAULT
-    follow.state.ready,follow.state.pivot.position=true,{0,2,-1}
-    follow.looking={0.5,-0.25}
-    core.add(&w.follows,camera,follow)
+    core.add(&w.follows,camera,ecamera.CAMERA_FOLLOW_DEFAULT)
+    state:=ecamera.Camera_Follow_State{ready=true,looking={0.5,-0.25}}
+    state.pivot.position={0,2,-1}
+    core.add(&w.following,camera,state)
     test_world_settle(&w)
     w.players.local_count=1
     w.view={position={0,2,6},rotation=1,fov=60*math.RAD_PER_DEG,near=0.1,size={1600,900},camera=camera}

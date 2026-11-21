@@ -148,7 +148,10 @@ UI_PREFERENCES_DEFAULT :: UI_Preferences{scale=1}
 
 // What the localized texts of the interfaces show: the code of the language
 // the player chose, as base.text finds it.
-ui_language :: proc(preferences:^UI_Preferences) -> string {return base.text_get(preferences.language[:])}
+ui_language :: proc(preferences:core.Ref(UI_Preferences)) -> string {
+    if preferences.ptr==nil {return ""}
+    return base.text_get(preferences.ptr.language[:])
+}
 
 // The first kinds are those of ui.Tree_Event_Kind.
 UI_Event_Kind :: enum u8 {
@@ -207,7 +210,6 @@ UI_Events :: struct {
     using queue:core.Events(UI_Event),
     pointer_consumed:bool,  // the pointer was over the UI or held by a widget
     keyboard_consumed:bool, // a field, a popup or the navigation focus had the keyboard
-    asked:^Asked_Names,     // of the Gui of its world, where the names steps ask of it go
 }
 
 // What the game asked an interface by name: gui_frame_begin says once what a
@@ -267,14 +269,14 @@ UI_Requests :: struct {
 play_animation :: proc(r:^UI_Requests,entity:core.Entity,node,anim:string,item:=i32(-1)) {
     request:=UI_Request{kind=.Play,entity=entity,item=item}
     _=base.text_set(request.node[:],node);_=base.text_set(request.anim[:],anim)
-    core.push(&r.queue,request)
+    core.offer(&r.queue,request)
 }
 
 // Moves the focus to the node called node of the interface of an entity.
 focus :: proc(r:^UI_Requests,entity:core.Entity,node:string,item:=i32(-1)) {
     request:=UI_Request{kind=.Focus,entity=entity,item=item}
     _=base.text_set(request.node[:],node)
-    core.push(&r.queue,request)
+    core.offer(&r.queue,request)
 }
 
 Delivered_Event :: struct {
@@ -354,15 +356,16 @@ gui_context :: proc(gui:^Gui) -> ^ui.Context {
 }
 
 // Whether the UI had the pointer or the keyboard when the last frame was built.
-gui_consumed :: proc "contextless" (events:^UI_Events) -> (pointer,keyboard:bool) {
+gui_consumed :: proc "contextless" (events:core.Ref(UI_Events)) -> (pointer,keyboard:bool) {
+    if events.ptr==nil {return false,false}
     return events.pointer_consumed,events.keyboard_consumed
 }
 
 // The last event of a kind of the node called name of an interface of the
 // entity: of several in one frame, the one that came last says what the
 // widget asks for now. Every helper below reads that one.
-ui_event :: proc(events:^UI_Events,entity:core.Entity,name:string,kind:UI_Event_Kind) -> (found:UI_Event,ok:bool) {
-    event:=event_asked(events,entity,name,kind)
+ui_event :: proc(events:core.Ref(UI_Events),entity:core.Entity,name:string,kind:UI_Event_Kind,gui:^Gui=nil) -> (found:UI_Event,ok:bool) {
+    event:=event_asked(events,entity,name,kind,gui)
     if event==nil {return}
     return event^,true
 }
@@ -379,9 +382,9 @@ event_find :: proc(events:[]UI_Event,entity:core.Entity,name:string,kind:UI_Even
 // The event a step asks for, whose name the frame then checks against the
 // screen. Without a Gui there are no events.
 @(private)
-event_asked :: proc(events:^UI_Events,entity:core.Entity,name:string,kind:UI_Event_Kind) -> ^UI_Event {
-    if events==nil {return nil}
-    if events.asked!=nil {asked_add(events.asked,entity,name)}
+event_asked :: proc(events:core.Ref(UI_Events),entity:core.Entity,name:string,kind:UI_Event_Kind,gui:^Gui=nil) -> ^UI_Event {
+    if events.ptr==nil {return nil}
+    if gui!=nil {asked_add(&gui.names_asked,entity,name)}
     return event_find(events.items[:],entity,name,kind)
 }
 
@@ -400,54 +403,54 @@ asked_add :: proc "contextless" (asked:^Asked_Names,entity:core.Entity,name:stri
 }
 
 // Whether the node called name of an interface of the entity was clicked.
-clicked :: proc(events:^UI_Events,entity:core.Entity,name:string) -> bool {
-    return event_asked(events,entity,name,.Clicked)!=nil
+clicked :: proc(events:core.Ref(UI_Events),entity:core.Entity,name:string,gui:^Gui=nil) -> bool {
+    return event_asked(events,entity,name,.Clicked,gui)!=nil
 }
 
 // Which element of its list a button that was clicked is in.
-clicked_item :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (item:i32,ok:bool) {
-    event:=ui_event(events,entity,name,.Clicked) or_return
+clicked_item :: proc(events:core.Ref(UI_Events),entity:core.Entity,name:string,gui:^Gui=nil) -> (item:i32,ok:bool) {
+    event:=ui_event(events,entity,name,.Clicked,gui) or_return
     return event.item,true
 }
 
 // Whether the checkbox called name of an interface of the entity changed, and
 // what it asks for: the game writes it to the field the checkbox binds.
-changed :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (on,ok:bool) {
-    event:=ui_event(events,entity,name,.Changed) or_return
+changed :: proc(events:core.Ref(UI_Events),entity:core.Entity,name:string,gui:^Gui=nil) -> (on,ok:bool) {
+    event:=ui_event(events,entity,name,.Changed,gui) or_return
     return event.on,true
 }
 
 // The number a slider, selector, dropdown or radio called name asks for.
-changed_value :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (value:f64,ok:bool) {
-    event:=ui_event(events,entity,name,.Changed) or_return
+changed_value :: proc(events:core.Ref(UI_Events),entity:core.Entity,name:string,gui:^Gui=nil) -> (value:f64,ok:bool) {
+    event:=ui_event(events,entity,name,.Changed,gui) or_return
     return event.value,true
 }
 
 // The text a field called name asks for as it is typed in: the game writes
 // it to the field the node binds. Valid while the events are.
-changed_text :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (text:string,ok:bool) {
-    event:=event_asked(events,entity,name,.Changed)
+changed_text :: proc(events:core.Ref(UI_Events),entity:core.Entity,name:string,gui:^Gui=nil) -> (text:string,ok:bool) {
+    event:=event_asked(events,entity,name,.Changed,gui)
     if event==nil {return}
     return base.text_get(event.text[:]),true
 }
 
 // The text a field called name holds when Enter was pressed in it. Valid
 // while the events are.
-submitted :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (text:string,ok:bool) {
-    event:=event_asked(events,entity,name,.Submitted)
+submitted :: proc(events:core.Ref(UI_Events),entity:core.Entity,name:string,gui:^Gui=nil) -> (text:string,ok:bool) {
+    event:=event_asked(events,entity,name,.Submitted,gui)
     if event==nil {return}
     return base.text_get(event.text[:]),true
 }
 
 // What was let go over the node called name: the node dragged (from, its
 // from_item) and the entity of its interface (from_entity).
-dropped :: proc(events:^UI_Events,entity:core.Entity,name:string) -> (event:UI_Event,ok:bool) {
-    return ui_event(events,entity,name,.Dropped)
+dropped :: proc(events:core.Ref(UI_Events),entity:core.Entity,name:string,gui:^Gui=nil) -> (event:UI_Event,ok:bool) {
+    return ui_event(events,entity,name,.Dropped,gui)
 }
 
 // Whether the animation anim that play_animation started on node ended.
-finished :: proc(events:^UI_Events,entity:core.Entity,node,anim:string) -> bool {
-    if events==nil {return false}
+finished :: proc(events:core.Ref(UI_Events),entity:core.Entity,node,anim:string) -> bool {
+    if events.ptr==nil {return false}
     for event in events.items {
         if event.entity==entity && event.kind==.Finished && event.name==base.name_hash(node) && event.from==base.name_hash(anim) {return true}
     }
@@ -455,14 +458,14 @@ finished :: proc(events:^UI_Events,entity:core.Entity,node,anim:string) -> bool 
 }
 
 // Whether the screen of the entity reported Back.
-back :: proc(events:^UI_Events,entity:core.Entity) -> bool {
+back :: proc(events:core.Ref(UI_Events),entity:core.Entity) -> bool {
     return event_asked(events,entity,"",.Back)!=nil
 }
 
 // Whether the player pressed the Menu action (Menu_Action: Escape, Start of a
 // gamepad, rebound like any action) and no interface used that Escape. What a
 // game does with it is its own: open or close a menu.
-menu_pressed :: proc(events:^UI_Events) -> bool {return event_asked(events,core.NONE,"",.Menu)!=nil}
+menu_pressed :: proc(events:core.Ref(UI_Events)) -> bool {return event_asked(events,core.NONE,"",.Menu)!=nil}
 
 // The events of the last frame go to the game once, in the first tick that
 // follows it; a tick that runs again gets those it got.
@@ -493,11 +496,9 @@ gui_events_frame :: proc(events:^UI_Events,gui:^Gui) {
 // What the last frame knew of the UI, for the steps that read the events.
 @(private)
 events_follow :: proc(events:^UI_Events,gui:^Gui) -> bool {
-    if gui==nil {
-        events.asked=nil
-        return false
-    }
-    events.pointer_consumed,events.keyboard_consumed,events.asked=gui.pointer_consumed,gui.keyboard_consumed,&gui.names_asked
+    events.pointer_consumed=gui!=nil && gui.pointer_consumed
+    events.keyboard_consumed=gui!=nil && gui.keyboard_consumed
+    if gui==nil {return false}
     return true
 }
 
@@ -513,73 +514,92 @@ events_pending :: proc(events:^UI_Events,gui:^Gui) {
 // each player that is not passive taking input, the World_Widgets each
 // player sees, the copies of what they bind when it changed; a context with
 // nothing new shows its last frame again.
-@(step="ui",stage="begin")
-gui_frame_begin :: proc(
-    world:core.World_Ref,screens:^core.Table(UI_Screen,.Read),widgets:^core.Table(World_Widget,.Read),worlds:^core.Table(core.World_Transform,.Read),
-    hidden:^core.Table(render.Hidden,.Read),parents:^core.Table(core.Parent,.Read),meshes:^core.Table(render.Mesh_Renderer,.Read),settings:UI_Settings,preferences:UI_Preferences,time:core.Time,
-    seat_state:core.Ref(inp.Seats),seat_runtime:core.Ref(inp.Seat_States),seats:^core.Table(inp.Seat,.Read),moves:^core.Table(inp.Move_Input,.Read),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
-    device:core.Frame_Input,cameras:^core.Table(render.Camera,.Read),exposures:^core.Table(render.Exposure,.Read),view_volumes:^core.Table(render.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
-    requests:^UI_Requests,effects:^UI_Effects,sounds:^audio.Sound_Requests,gui:^Gui,app:^host.App,drawn:core.Ref(render.Render_Sync),problems:^core.Problems,
-) {
-    frame_begin(world,screens,widgets,worlds,hidden,parents,meshes,settings,preferences,time,seat_state,seat_runtime,seats,moves,bindings,actions,device,cameras,exposures,view_volumes,volumes,sections,splines,requests,effects,sounds,gui,app,drawn,problems,false)
+@(params)
+Frame_Begin :: struct {
+    world:core.World_Ref,
+    screens:^core.Table(UI_Screen,.Read),
+    widgets:^core.Table(World_Widget,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),
+    hidden:^core.Table(render.Hidden,.Read),
+    parents:^core.Table(core.Parent,.Read),
+    meshes:^core.Table(render.Mesh_Renderer,.Read),
+    settings:UI_Settings,
+    preferences:UI_Preferences,
+    time:core.Time,
+    seat_state:core.Ref(inp.Seats),
+    seat_runtime:core.Ref(inp.Seat_States),
+    seats:^core.Table(inp.Seat,.Read),
+    moves:^core.Table(inp.Move_Input,.Read),
+    bindings:core.Ref(inp.Input_Map),
+    actions:core.Ref(inp.Frame_Actions),
+    device:core.Frame_Input,
+    cameras:^core.Table(render.Camera,.Read),
+    exposures:^core.Table(render.Exposure,.Read),
+    view_volumes:^core.Table(render.View_Volume,.Read),
+    volumes:^core.Table(volume.Volume,.Read),
+    sections:^core.Table(scene.Scene_Reference,.Read),
+    splines:^core.Table(volume.Spline,.Read),
+    requests:^UI_Requests,
+    effects:^UI_Effects,
+    sounds:^audio.Sound_Requests,
+    gui:^Gui,
+    app:^host.App,
+    drawn:core.Ref(render.Render_Sync),
+    problems:^core.Problems,
 }
 
-// The preview of the editor's world, while it does not play: the
-// World_Widgets with preview alone, as they will show, without input or
-// screens. A world that plays has the game's.
+@(step="ui",stage="begin")
+gui_frame_begin :: proc(args:Frame_Begin) {
+    frame_begin(args,false)
+}
+
+// The editor's stopped world previews world widgets without screens or input.
 @(step="ui",stage="begin",loops="editor")
-gui_preview_begin :: proc(
-    world:core.World_Ref,screens:^core.Table(UI_Screen,.Read),widgets:^core.Table(World_Widget,.Read),worlds:^core.Table(core.World_Transform,.Read),
-    hidden:^core.Table(render.Hidden,.Read),parents:^core.Table(core.Parent,.Read),meshes:^core.Table(render.Mesh_Renderer,.Read),settings:UI_Settings,preferences:UI_Preferences,time:core.Time,
-    seat_state:core.Ref(inp.Seats),seat_runtime:core.Ref(inp.Seat_States),seats:^core.Table(inp.Seat,.Read),moves:^core.Table(inp.Move_Input,.Read),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
-    device:core.Frame_Input,cameras:^core.Table(render.Camera,.Read),exposures:^core.Table(render.Exposure,.Read),view_volumes:^core.Table(render.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
-    requests:^UI_Requests,effects:^UI_Effects,sounds:^audio.Sound_Requests,gui:^Gui,app:^host.App,drawn:core.Ref(render.Render_Sync),problems:^core.Problems,
-) {
-    if time.playing {return}
-    frame_begin(world,screens,widgets,worlds,hidden,parents,meshes,settings,preferences,time,seat_state,seat_runtime,seats,moves,bindings,actions,device,cameras,exposures,view_volumes,volumes,sections,splines,requests,effects,sounds,gui,app,drawn,problems,true)
+gui_preview_begin :: proc(args:Frame_Begin) {
+    if !args.time.playing {frame_begin(args,true)}
 }
 
 @(private)
-frame_begin :: proc(
-    world:core.World_Ref,screens:^core.Table(UI_Screen,.Read),widgets:^core.Table(World_Widget,.Read),worlds:^core.Table(core.World_Transform,.Read),
-    hidden:^core.Table(render.Hidden,.Read),parents:^core.Table(core.Parent,.Read),meshes:^core.Table(render.Mesh_Renderer,.Read),settings:UI_Settings,preferences:UI_Preferences,time:core.Time,
-    seat_state:core.Ref(inp.Seats),seat_runtime:core.Ref(inp.Seat_States),seats:^core.Table(inp.Seat,.Read),moves:^core.Table(inp.Move_Input,.Read),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
-    device:core.Frame_Input,cameras:^core.Table(render.Camera,.Read),exposures:^core.Table(render.Exposure,.Read),view_volumes:^core.Table(render.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
-    requests:^UI_Requests,effects:^UI_Effects,sounds:^audio.Sound_Requests,gui:^Gui,app:^host.App,drawn:core.Ref(render.Render_Sync),problems:^core.Problems,preview:bool,
-) {
-    if gui==nil {return}
-    if effects!=nil {clear(&effects.items)}
-    asked_check(gui,app,problems)
-    gui.frame+=1
-    gui.pausing=false
-    gui.settings=settings
-    gui.preferences=preferences
-    gui.prompts=base.hash64(mem.slice_to_bytes(gui.settings.prompt_images[:]),base.hash64(mem.ptr_to_bytes(&gui.settings.prompts)))
-    for &s in gui.surfaces {s.open,s.skipped=false,false}
-    clear(&gui.plan)
-    append(&gui.requests,..core.take(&requests.queue))
-    if app.assets==nil && !gui.wanted || (preview || core.count(screens)==0) && core.count(widgets)==0 && len(gui.instances)==0 && !gui.wanted {
-        clear(&gui.requests)
-        for &s in gui.surfaces {s.shown=false}
+frame_begin :: proc(args:Frame_Begin,preview:bool) {
+    if args.gui==nil {return}
+    if args.effects!=nil {clear(&args.effects.items)}
+    asked_check(args.gui,args.app,args.problems)
+    args.gui.frame+=1
+    args.gui.pausing=false
+    args.gui.settings=args.settings
+    args.gui.preferences=args.preferences
+    args.gui.prompts=base.hash64(mem.slice_to_bytes(args.gui.settings.prompt_images[:]),base.hash64(mem.ptr_to_bytes(&args.gui.settings.prompts)))
+    for &s in args.gui.surfaces {s.open,s.skipped=false,false}
+    clear(&args.gui.plan)
+    core.queue_serve(&args.requests.queue,core.QUEUE_FIRST_ROOM,args.problems,"gui.requests","UI requests","the UI request capacity")
+    if reserve(&args.gui.requests,core.QUEUE_FIRST_ROOM)==nil {
+        append(&args.gui.requests,..core.take(&args.requests.queue))
+    } else {
+        _=core.take(&args.requests.queue)
+        core.report(args.problems,core.NONE,"gui.requests","out of memory to apply UI requests; free memory")
+    }
+    if args.app.assets==nil && !args.gui.wanted || (preview || core.count(args.screens)==0) && core.count(args.widgets)==0 && len(args.gui.instances)==0 && !args.gui.wanted {
+        clear(&args.gui.requests)
+        for &s in args.gui.surfaces {s.shown=false}
         return
     }
-    if gui.surfaces[0].ctx==nil && !surface_create(gui,app,0) {return}
-    count:=max(seat_state.local_count,1)
-    views_update(gui,app,count,seat_state.focus)
-    if !preview {plan_screens(gui,app,world,screens,hidden,parents,seats,seat_state,moves,time,seat_state.local_count,problems)}
-    plan_widgets(gui,app,drawn.ptr,world,widgets,worlds,meshes,hidden,parents,time,count,problems,preview)
-    for &entry in gui.plan {
-        for request in gui.requests {
-            if request.entity==entry.entity {gui.instances[entry.instance].changed=true}
+    if args.gui.surfaces[0].ctx==nil && !surface_create(args.gui,args.app,0) {return}
+    count:=max(args.seat_state.local_count,1)
+    views_update(args.gui,args.app,count,args.seat_state.focus)
+    if !preview {plan_screens(args.gui,args.app,args.world,args.screens,args.hidden,args.parents,args.seats,args.seat_state,args.moves,args.time,args.seat_state.local_count,args.problems)}
+    plan_widgets(args.gui,args.app,args.drawn.ptr,args.world,args.widgets,args.worlds,args.meshes,args.hidden,args.parents,args.time,count,args.problems,preview)
+    for &entry in args.gui.plan {
+        for request in args.gui.requests {
+            if request.entity==entry.entity {args.gui.instances[entry.instance].changed=true}
         }
     }
-    pads:=device.gamepads
+    pads:=args.device.gamepads
     gamepads:=pads[:]
     if preview {gamepads=nil}
-    for &s,p in gui.surfaces {
-        has:=p==0 && gui.wanted
+    for &s,p in args.gui.surfaces {
+        has:=p==0 && args.gui.wanted
         world_panels:=false
-        for entry in gui.plan {
+        for entry in args.gui.plan {
             has||=entry.player==p
             world_panels||=entry.player==p && entry.world
         }
@@ -587,25 +607,25 @@ frame_begin :: proc(
             s.shown=false
             continue
         }
-        if s.ctx==nil && !surface_create(gui,app,p) {continue}
-        if s.density!=app.density && ui.context_set_density(s.ctx,app.density) {s.density=app.density}
-        keyboard:=!preview && (p==0 || count==1 || seat_state.focus==p-1)
+        if s.ctx==nil && !surface_create(args.gui,args.app,p) {continue}
+        if s.density!=args.app.density && ui.context_set_density(s.ctx,args.app.density) {s.density=args.app.density}
+        keyboard:=!preview && (p==0 || count==1 || args.seat_state.focus==p-1)
         gamepad:=p==0 || count==1?-1:p-1
-        family_update(&s.family,device.device,gamepads,keyboard,gamepad)
-        s.rect=surface_rect(app,p,count)
-        input:=surface_input(&s.repeat,app,settings,preferences.scale,gamepads,s.rect,keyboard,gamepad,p==0)
-        if world_panels && !preview {surface_aim(gui,app,&s,p,&input,keyboard)}
-        key:=surface_key(gui,app,p,input,s.family)
-        if surface_skips(&s,p==0 && gui.wanted,input,key,device.input,surface_changed(gui,p)) {
+        family_update(&s.family,args.device.device,gamepads,keyboard,gamepad)
+        s.rect=surface_rect(args.app,p,count)
+        input:=surface_input(&s.repeat,args.app,args.settings,args.preferences.scale,gamepads,s.rect,keyboard,gamepad,p==0)
+        if world_panels && !preview {surface_aim(args.gui,args.app,&s,p,&input,keyboard)}
+        key:=surface_key(args.gui,args.app,p,input,s.family)
+        if surface_skips(&s,p==0 && args.gui.wanted,input,key,args.device.input,surface_changed(args.gui,p)) {
             s.skipped=true
-            gui.skipped+=1
+            args.gui.skipped+=1
             continue
         }
         s.key=key
         s.input=input
         s.viewed,s.animating=false,false
-        source_bind(&s,gui,app,p,seat_state,seat_runtime,seats,bindings,actions,cameras,exposures,view_volumes,{volumes,worlds,parents,sections,splines},settings,gamepad,effects,sounds)
-        if world_panels && !preview {meshes_aim(gui,app.renderer,drawn.ptr,&s,p,input.ray)}
+        source_bind(&s,args.gui,args.app,p,args.seat_state,args.seat_runtime,args.seats,args.bindings,args.actions,args.cameras,args.exposures,args.view_volumes,{args.volumes,args.worlds,args.parents,args.sections,args.splines},args.settings,gamepad,args.effects,args.sounds)
+        if world_panels && !preview {meshes_aim(args.gui,args.app.renderer,args.drawn.ptr,&s,p,input.ray)}
         ui.frame_begin(s.ctx,input)
         s.open=true
     }

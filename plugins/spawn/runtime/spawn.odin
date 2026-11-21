@@ -86,12 +86,12 @@ Spawn_Requests :: struct {
 spawn :: proc(r:^Spawn_Requests,seat:core.Entity,path:="",point:=core.NONE) {
     request:=Spawn_Request{kind=.Spawn,seat=seat,point=point}
     base.text_set(request.path[:],path)
-    core.push(&r.queue,request)
+    core.offer(&r.queue,request)
 }
 // Places body at point (none: the next one in turn) at rest: it stops there, and what moves it
 // (its locomotion) starts over.
 respawn :: proc(r:^Spawn_Requests,body:core.Entity,point:=core.NONE) {
-    core.push(&r.queue,Spawn_Request{kind=.Respawn,entity=body,point=point})
+    core.offer(&r.queue,Spawn_Request{kind=.Respawn,entity=body,point=point})
 }
 
 @(private)
@@ -133,6 +133,7 @@ spawn_step :: proc(
     if settings.ptr!=nil {a.settings=settings.ptr^}
     if origin.ptr!=nil {a.origin=origin.ptr^}
     client:=network.role==.Client
+    core.queue_serve(&requests.queue,core.QUEUE_FIRST_ROOM,problems,"spawn.requests","spawn requests","the spawn request capacity")
     for request in core.take(&requests.queue) {
         switch request.kind {
         case .Spawn:
