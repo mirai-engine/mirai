@@ -277,7 +277,7 @@ a_guest_opening_a_joined_project_keeps_the_invitation :: proc(t:^testing.T) {
     if _,made:=share_host_project(t,n);!made {return}
 
     projects:=new(Projects)
-    defer {guest.s.projects=nil;free(projects)}
+    defer {projects_cancel(&guest.s);guest.s.projects=nil;free(projects)}
     guest.s.projects=projects
     folder:=base.test_folder(t,"collab-share-opening")
     if !share_join(t,n,folder=folder) {return}

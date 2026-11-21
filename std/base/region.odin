@@ -1,6 +1,7 @@
 package base
 
 import "base:runtime"
+import "core:mem"
 import "core:mem/virtual"
 
 // Address space for a table that may grow to the size reserved, of which only
@@ -32,8 +33,8 @@ region_reserve :: proc(r:^Region,bytes:int) -> bool {
 region_commit :: proc(r:^Region,bytes:int) -> bool {
     if bytes<=r.committed {return true}
     if bytes>len(r.data) {return false}
-    target:=min(max(bytes,r.committed+REGION_STEP),len(r.data))
-    if virtual.commit(&r.data[r.committed],uint(target-r.committed))!=nil {return false}
+    target:=max(bytes,r.committed+min(REGION_STEP,len(r.data)-r.committed))
+    if !region_commit_range(r,r.committed,target) {return false}
     r.committed=target
     return true
 }
@@ -42,10 +43,18 @@ region_commit :: proc(r:^Region,bytes:int) -> bool {
 region_commit_tail :: proc(r:^Region,bytes:int) -> bool {
     if bytes<=r.tail {return true}
     if bytes>len(r.data) {return false}
-    target:=min(max(bytes,r.tail+REGION_STEP),len(r.data))
-    if virtual.commit(&r.data[len(r.data)-target],uint(target-r.tail))!=nil {return false}
+    target:=max(bytes,r.tail+min(REGION_STEP,len(r.data)-r.tail))
+    if !region_commit_range(r,len(r.data)-target,len(r.data)-r.tail) {return false}
     r.tail=target
     return true
+}
+
+@(private="file")
+region_commit_range :: proc(r:^Region,first,end:int) -> bool {
+    page:=uint(mem.PAGE_SIZE)
+    start:=mem.align_backward_uint(uint(first),page)
+    finish:=mem.align_forward_uint(uint(end),page)
+    return virtual.commit(&r.data[start],finish-start)==nil
 }
 
 region_release :: proc(r:^Region) {
