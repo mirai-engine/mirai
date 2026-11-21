@@ -55,7 +55,7 @@ Zombie_Act :: enum u8 {Wander,Chase,Circle}
         expected:=[?]string{
             `import gen_ai "mirai:std/ai"`,
             "Mind_zombie_think :: struct {world:p_core.Mind_World,a1:p_game.Senses,a2:^p_core.Table(p_game.Hunger),a3:^p_core.Asks}",
-            "ctx:=Mind_zombie_think{world=p_core.Mind_World{minds=&s.minds,agents=&w.mind_agent,time=w.time},a1=p_game.Senses{spots=p_core.read(&w.spot),time=w.time},a2=&w.hunger,a3=&w.asks}",
+            "ctx:=Mind_zombie_think{world=p_core.Mind_World{minds=&s.minds,agents=&w.mind_agent,time=read_2},a1=p_game.Senses{spots=p_core.read(&w.spot),time=read_2},a2=&w.hunger,a3=&w.asks}",
             "think:=proc(t:^gen_ai.Think(p_game.Zombie_Act)) {c:=cast(^Mind_zombie_think)t.user;p_game.zombie_think(t,c.a1)}",
             ".Wander=proc(a:^gen_ai.Act(p_game.Zombie_Act)) -> gen_ai.Status {return p_game.zombie_wander(a)}",
             ".Circle=proc(a:^gen_ai.Act(p_game.Zombie_Act)) -> gen_ai.Status {c:=cast(^Mind_zombie_think)a.user;return p_game.zombie_chase(a,c.a1,c.a2,c.a3)}",

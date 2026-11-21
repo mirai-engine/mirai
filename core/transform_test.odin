@@ -100,6 +100,8 @@ propagating_writes_only_the_world_transforms_that_change :: proc(t:^testing.T) {
     add(&f.locals,body,TRANSFORM_IDENTITY);add(&f.locals,hand,TRANSFORM_IDENTITY);add(&f.locals,bystander,TRANSFORM_IDENTITY)
     add(&f.parents,hand,Parent{entity=body})
     test_world_settle(&f)
+    before,found:=world_transform_or_compute(&f.worlds,&f.locals,&f.parents,hand)
+    testing.expect(t,found && before==mm.TRANSFORM_IDENTITY)
     fixture_propagate(&f,.Fixed)
     fixture_propagate(&f,.Fixed)
     seen:=version(&f.worlds)
@@ -114,6 +116,15 @@ propagating_writes_only_the_world_transforms_that_change :: proc(t:^testing.T) {
     fixture_propagate(&f,.Late)
     for e in ([]Entity{body,hand}) {testing.expect(t,stamp(&f.worlds,row_of(&f.worlds,e))>seen)}
     testing.expect(t,stamp(&f.worlds,row_of(&f.worlds,bystander))<=seen)
+
+    copied:Hierarchy_Fixture
+    if !test_world_init(t,&copied) {return}
+    defer test_world_destroy(&copied)
+    if !testing.expect(t,test_world_copy(&copied,&f)) {return}
+    testing.expect(t,len(f.propagation.worlds)>0 && len(copied.propagation.worlds)==0)
+    fixture_propagate(&copied,.Late)
+    world,ok:=world_transform_or_compute(&copied.worlds,&copied.locals,&copied.parents,hand)
+    testing.expect(t,ok && world.position==[3]f32{1,0,0})
 }
 
 @(test)

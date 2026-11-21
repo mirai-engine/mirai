@@ -63,7 +63,7 @@ action_defaults :: proc() -> [Action]core.Action_Bindings {return {.Layer_Back={
             `actions[2]={typeid_of(p_game.Action),type_info_of(p_game.Action),3,"game",action_defaults_2}`,
             `action_defaults_2 :: proc(dst:rawptr) {(cast(^[p_game.Action]p_core.Action_Bindings)dst)^=p_game.action_defaults()}`,
             `i64(8*size_of(p_core.Action_Mask))),true}`,
-            `p_game.game_stamp(p_core.Input_Of(p_game.Action){actions=p_core.ref(&w.actions),base=p_core.Action(3)},p_core.Input_Of(p_core.Walk_Action){actions=p_core.ref(&w.actions),base=p_core.Action(1)})`,
+            `p_game.game_stamp(p_core.Input_Of(p_game.Action){actions=read_0,base=p_core.Action(3)},p_core.Input_Of(p_core.Walk_Action){actions=read_0,base=p_core.Action(1)})`,
             "info.named_types,info.names,info.name_bits,info.actions=named_types,names,name_bits,actions",
         }) {testing.expectf(t,strings.contains(text,line),"%s is not in\n%s",line,text)}
         testing.expect(t,!strings.contains(text,"#assert"),"the generator gives each its value")

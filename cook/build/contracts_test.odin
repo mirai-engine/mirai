@@ -1,5 +1,6 @@
 package build
 
+import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -58,8 +59,8 @@ import "mirai:core"
         testing.expect(t,strings.contains(text,"p_game.game_watch(p_core.Stamp(p_core.State){&w.storage_revisions[0]})"),text)
         // A reader of occurrences is handed what came since it last ran, by a cursor of its own
         // in each log, which the World copies with it for a step a rollback runs again.
-        testing.expect(t,strings.contains(text,"    view_reports:=w.reports\n    p_core.events_read(&view_reports.log,&w.event_cursors.seen[0])\n    p_core.events_read(&view_reports.lost,&w.event_cursors.seen[1])\n"),text)
-        testing.expect(t,strings.contains(text,"p_core.ref(&view_reports))") && strings.contains(text,"if ticked && p_core.events_age(&w.reports.log) {w.storage_revisions[") && strings.contains(text,"info.events_age=events_age"),text)
+        testing.expect(t,strings.contains(text,"    view_reports:=w.reports\n    cursor_changed=p_core.events_read(&view_reports.log,&w.event_cursors.seen[0]) || cursor_changed\n    cursor_changed=p_core.events_read(&view_reports.lost,&w.event_cursors.seen[1]) || cursor_changed\n"),text)
+        testing.expect(t,strings.contains(text,"if cursor_changed {w.storage_revisions[") && strings.contains(text,"p_core.ref(&view_reports))") && strings.contains(text,"if ticked && p_core.events_age(&w.reports.log) {w.storage_revisions[") && strings.contains(text,"info.events_age=events_age"),text)
         // One of the frame keeps its cursor in the World, which a World replaced under it rewinds.
         testing.expect(t,strings.contains(text,"p_core.events_read(&view_reports.log,&w.frame_cursors[0])") && strings.contains(text,"w.frame_cursors[1]=min(w.frame_cursors[1],p_core.log_end(w.reports.lost.log))") && strings.contains(text,"info.events_rewind=events_rewind"),text)
         // The settle is one loop of core over the tables of the World: none is written for it.
@@ -215,7 +216,7 @@ functions_are_called_from_the_loops_and_from_their_order :: proc(t:^testing.T) {
     if !testing.expectf(t,len(output.errors)==0,"%v",output.errors) {return}
     for text in ([]string{output.game_world,output.editor_world}) {
         testing.expect_value(t,strings.count(text,"call_things_move :: proc(world,shared,editor:rawptr,app_data:rawptr) {"),1)
-        testing.expect_value(t,strings.count(text,"p_core.things_move(&w.thing,w.clock)"),2) // with and without CHECK_WRITES
+        testing.expect_value(t,strings.count(text,"p_core.things_move(&w.thing,w.clock)"),1)
         testing.expect(t,strings.contains(text,"game_fixed :: proc(world,shared,editor:rawptr,app_data:rawptr) {\n    call_clock_read(world,shared,editor,app_data)\n    call_things_move(world,shared,editor,app_data)\n}"),text)
         testing.expect(t,strings.contains(text,"@(rodata) order_game_fixed:=[2]i32{1,0}"),text)
         testing.expect(t,strings.contains(text,"info.loops[.Game][.Late],info.order[.Game][.Late]=game_late,order_game_late[:]"),text)
@@ -230,4 +231,39 @@ functions_are_called_from_the_loops_and_from_their_order :: proc(t:^testing.T) {
     found:=false
     for message in output.errors {found||=strings.contains(message,"clock_read gives a default to clock, other")}
     testing.expectf(t,found,"%v",output.errors)
+}
+
+@(test)
+a_queue_producer_needs_a_drainer_in_its_loop_and_while_paused :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"queue-phases")
+    if folder=="" {return}
+    p,ok:=contracts_project(t,folder,"package core\n",`package game
+import "mirai:core"
+@(storage,queue) Inbox :: struct {queue:core.Queue(int)}
+@(params) Post :: struct {inbox:^Inbox}
+post :: proc(inbox:^Inbox) {core.push(&inbox.queue,1)}
+drain :: proc(inbox:^Inbox) {core.take(&inbox.queue)}
+@(step="frame") send :: proc(p:Post) {post(p.inbox)}
+`)
+    if !ok {return}
+    source:=project.path(p.root,"game","game.odin",allocator=context.temp_allocator)
+    original,error:=os.read_entire_file(source,context.temp_allocator)
+    if !testing.expect(t,error==nil) {return}
+    output:=world_generate(&p,context.temp_allocator)
+    testing.expect(t,len(output.errors)==1 && strings.contains(output.errors[0],"without a draining step"))
+    for phase in ([]string{"fixed","late"}) {
+        game:=fmt.tprintf("%s\n@(step=%q) receive_inbox :: proc(inbox:^Inbox) {{drain(inbox)}}\n",
+            string(original),phase)
+        if !testing.expect(t,os.write_entire_file(source,game)==nil) {return}
+        output=world_generate(&p,context.temp_allocator)
+        if phase=="fixed" {
+            testing.expect(t,len(output.errors)==1 && strings.contains(output.errors[0],"while paused"))
+        } else {
+            testing.expectf(t,len(output.errors)==0,"%v",output.errors)
+            _,_,call:=strings.partition(output.editor_world,"call_receive_inbox :: proc")
+            call,_,_=strings.partition(call,"\n}\n")
+            testing.expect(t,strings.contains(call,"queue_state(&w.inbox.queue)") &&
+                strings.index(call,"p_game.receive_inbox(")<strings.index(call,"w.storage_revisions["))
+        }
+    }
 }

@@ -351,27 +351,44 @@ World_Ref :: struct {
     place:Place,
 }
 
-world_ref :: #force_inline proc "contextless" (data:rawptr,info:^World_Info,place:=Place.World) -> World_Ref {return {data,info,place}}
+World_Read :: distinct World_Ref
+
+world_ref :: #force_inline proc "contextless" (data:rawptr,info:^World_Info,place:=Place.World) -> World_Ref {return {data=data,info=info,place=place}}
+
+world_read :: #force_inline proc "contextless" (w:World_Ref) -> World_Read {
+    return World_Read(w)
+}
+
+world_entities_read :: proc "contextless" (w:World_Read) -> Ref(Entities) {
+    if w.data==nil || w.info==nil || w.place!=.World {return {}}
+    return ref(world_entities(World_Ref(w)))
+}
+
+world_table_read :: proc(w:World_Read,$T:typeid) -> ^Table(T,.Read) {
+    if w.data==nil || w.info==nil {return nil}
+    return read(world_table_of(World_Ref(w),T))
+}
 
 world_entities :: proc "contextless" (w:World_Ref) -> ^Entities {
     return cast(^Entities)(uintptr(w.data)+w.info.entities)
 }
 
 world_table :: proc(w:World_Ref,type:typeid) -> (table:^Raw_Table,info:^Table_Info) {
+    place:=Place(u8(w.place)&~QUERY_READ_ONLY)
     if w.info.tables_by_type!=nil {
         at,found:=w.info.tables_by_type[type]
-        if !found || w.info.tables[at].place!=w.place {return nil,nil}
+        if !found || w.info.tables[at].place!=place {return nil,nil}
         return world_table_at(w,&w.info.tables[at]),&w.info.tables[at]
     }
     for &t in w.info.tables {
-        if t.type==type && t.place==w.place {return world_table_at(w,&t),&t}
+        if t.type==type && t.place==place {return world_table_at(w,&t),&t}
     }
     return nil,nil
 }
 
 world_table_named :: proc(w:World_Ref,name:string) -> (table:^Raw_Table,info:^Table_Info) {
     for &t in w.info.tables {
-        if t.place==w.place && strings.equal_fold(t.name,name) {return cast(^Raw_Table)(uintptr(w.data)+t.offset),&t}
+        if t.place==Place(u8(w.place)&~QUERY_READ_ONLY) && strings.equal_fold(t.name,name) {return cast(^Raw_Table)(uintptr(w.data)+t.offset),&t}
     }
     return nil,nil
 }
@@ -383,15 +400,32 @@ world_table_at :: proc "contextless" (w:World_Ref,t:^Table_Info) -> ^Raw_Table {
 // A storage of a World, to read or to write: its revision moves, so the next
 // copy of what changed takes it again.
 world_storage :: proc(w:World_Ref,type:typeid) -> rawptr {
+    at:=world_storage_index(w,type)
+    return at<0?nil:world_storage_at(w,at)
+}
+
+world_storage_read :: proc(w:World_Read,type:typeid) -> rawptr {
+    at:=world_storage_index(World_Ref(w),type)
+    return at<0?nil:rawptr(uintptr(w.data)+w.info.storages[at].offset)
+}
+
+world_storage_read_of :: proc(w:World_Read,$T:typeid) -> Ref(T) {
+    return ref(cast(^T)world_storage_read(w,T))
+}
+
+@(private)
+world_storage_index :: proc(w:World_Ref,type:typeid) -> int {
+    if w.info==nil || w.data==nil {return -1}
+    place:=Place(u8(w.place)&~QUERY_READ_ONLY)
     if w.info.storages_by_type!=nil {
         at,found:=w.info.storages_by_type[type]
-        if !found || w.info.storages[at].place!=w.place {return nil}
-        return world_storage_at(w,at)
+        if !found || w.info.storages[at].place!=place {return -1}
+        return at
     }
     for s,at in w.info.storages {
-        if s.type==type && s.place==w.place && !s.by_world {return world_storage_at(w,at)}
+        if s.type==type && s.place==place && !s.by_world {return at}
     }
-    return nil
+    return -1
 }
 
 // The storage at an index of info.storages, of the place of w, as

@@ -108,7 +108,7 @@ places_drop :: proc(places:^Places,problems:^Problems) {
 }
 
 // What transforms_propagate keeps between passes.
-@(storage)
+@(storage,copy=false)
 Propagation :: struct {
     worlds:[dynamic]mm.Transform, // by entity index: the world of its last pass
     computed:[dynamic]u32,        // by entity index: the pass that computed it last
@@ -150,8 +150,9 @@ transforms_propagate :: proc(locals:^Table(Transform,.Read),hierarchy:Ref(Hierar
                 continue
             }
             if row:=row_of(worlds,e);row>=0 {
-                world:=edit_at(worlds,row)
-                world.previous=mm.transform_compose(jumped.by,world.previous)
+                old:=view_at(worlds,row)
+                previous:=mm.transform_compose(jumped.by,old.previous)
+                if previous!=old.previous {edit_dirty_at(worlds,row).previous=previous}
             }
             e=subtree_next(hierarchy,jumped.entity,e)
         }
@@ -210,7 +211,7 @@ transforms_compute :: proc(locals:^Table(Transform,$A),h:Ref(Hierarchy),worlds:^
         if i:=entity_index(e);i<len(p.computed) && p.computed[i]==p.pass {continue}
         row:=row_of(worlds,e)
         if row>=0 && worlds.values[row].previous!=worlds.values[row].transform {
-            world:=edit_at(worlds,row)
+            world:=edit_dirty_at(worlds,row)
             world.previous=world.transform
         }
     }
@@ -230,7 +231,7 @@ transform_compute :: proc(locals:^Table(Transform,$A),h:Ref(Hierarchy),worlds:^T
         current:=worlds.values[row]
         next:=World_Transform{world,tick?current.transform:current.previous}
         // A row is written only when it changes: its readers see what moved.
-        if next!=current {edit_at(worlds,row)^=next}
+        if next!=current {edit_dirty_at(worlds,row)^=next}
         if next.previous!=next.transform && p.listed[i]!=p.ticks+1 {
             p.listed[i]=p.ticks+1
             append(&p.moving,e)
@@ -273,6 +274,15 @@ world_of :: proc(locals:^Table(Transform,$A),parents:^Table(Parent,$B),e:Entity)
         world=mm.transform_compose(world,to_math(local))
     }
     return world,true
+}
+
+// Uses the propagated transform when it exists, or composes the settled locals.
+world_transform_or_compute :: proc(worlds:^Table(World_Transform,$W),
+    locals:^Table(Transform,$L),parents:^Table(Parent,$P),e:Entity) -> (mm.Transform,bool) {
+    if worlds!=nil {
+        if value,ok:=view(worlds,e);ok {return value.transform,true}
+    }
+    return world_of(locals,parents,e)
 }
 
 name_get :: proc(names:^Table(Name,$A),e:Entity) -> string {
