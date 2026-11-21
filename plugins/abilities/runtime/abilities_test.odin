@@ -1,12 +1,12 @@
 package abilities
 
-import "base:runtime"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:testing"
 import "mirai:core"
 import inp "mirai:engine/input"
+import audio "mirai:engine/audio"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
@@ -43,6 +43,8 @@ import phys "plugins:physics/runtime"
 
 @(private="file") ABILITY_TABLE :: base.Asset_Id{1,1}
 @(private="file") KIT_TABLE :: base.Asset_Id{2,2}
+@(private="file") HITBOX_TABLE :: base.Asset_Id{3,3}
+@(private="file") FEEDBACK_TABLE :: base.Asset_Id{4,4}
 
 @(private="file")
 ref :: proc(i:int) -> core.Record(Ability) {return {ABILITY_TABLE,core.Record_Id(i+1)}}
@@ -52,6 +54,10 @@ ref :: proc(i:int) -> core.Record(Ability) {return {ABILITY_TABLE,core.Record_Id
 Abilities_World :: struct {
     using world:Test_World,
     users:core.Table(Ability_User),
+    states:core.Table(Ability_State),
+    tracking:core.Table(Ability_Tracking),
+    sounds:audio.Sound_Requests,
+    births:core.Births,
     seats:core.Table(inp.Seat),
     characters:core.Table(phys.Character),
     locomotions:core.Table(locomotion.Locomotion_State),
@@ -69,6 +75,13 @@ Abilities_World :: struct {
 Fixture :: struct {
     using w:Abilities_World,
     problems:core.Problems,
+    cache:Ability_Sheets,
+    checks:Ability_Attributes,
+    hitboxes:[3]Ability_Hitbox,
+    feedback:[3]Ability_Feedback,
+    hitbox_rows,feedback_rows:[3]core.Record_Row,
+    hitbox_set,feedback_set:core.Record_Set,
+    aux_index:[3]u32,
     sheets:[SHEETS]Ability,
     sheet_rows:[SHEETS]core.Record_Row,
     sheet_index:[SHEETS]u32,
@@ -89,12 +102,14 @@ blade :: proc(f:^Fixture) {
     s[SLASH_1]={input={action=PRIMARY,on=.Pressed},tags=Ability_Tags(tag_bit(OPENER)),blocked_by=status_bit(STUNNED),duration=0.7}
     base.text_set(s[SLASH_1].action[:],"slash_1")
     s[SLASH_1].costs[0]={DURABILITY,2}
-    s[SLASH_1].windows[0]={from=0.25,to=0.35,cue=SLASH,hitbox={shape=.Box,center={0,1,-1.5},size={1,1,1},effect={attribute=HEALTH,amount=-35,knockback={0,4,-8},knockback_seconds=0.1}}}
+    s[SLASH_1].windows[0]={from=0.25,to=0.35,cue=SLASH,hitbox={HITBOX_TABLE,1}}
+    f.hitboxes[0]={shape=.Box,center={0,1,-1.5},size={1,1,1},effect={attribute=HEALTH,amount=-35,knockback={0,4,-8},knockback_seconds=0.1}}
     s[SLASH_1].windows[1]={from=0.6,to=0.7,cancel_into=tag_bit(FOLLOW)|tag_bit(DASH)}
     s[SLASH_2]={input={action=PRIMARY,on=.Released},tags=tag_bit(FOLLOW),blocked_by=status_bit(STUNNED),duration=1}
     base.text_set(s[SLASH_2].action[:],"slash_2")
     s[SLASH_2].costs[0]={DURABILITY,2}
-    s[SLASH_2].windows[0]={from=0.1,to=0.16,hitbox={shape=.Sphere,center={0,1,-1.2},size={1.5,0,0},effect={attribute=HEALTH,amount=-35,statuses=status_bit(STUNNED),seconds=1,use=ref(REACT)}}}
+    s[SLASH_2].windows[0]={from=0.1,to=0.16,hitbox={HITBOX_TABLE,2}}
+    f.hitboxes[1]={shape=.Sphere,center={0,1,-1.2},size={1.5,0,0},effect={attribute=HEALTH,amount=-35,statuses=status_bit(STUNNED),seconds=1,use=ref(REACT)}}
     s[SLASH_2].windows[1]={from=0.9,to=1,cancel_into=tag_bit(OPENER)|tag_bit(DASH)}
     s[CHARGE]={input={action=SECONDARY,on=.Pressed},tags=tag_bit(DASH),blocked_by=status_bit(STUNNED),duration=1,hold=true,next=ref(DASH_STRIKE)}
     s[CHARGE].conditions[0]={attribute=CHARGES,at_least=1}
@@ -103,7 +118,8 @@ blade :: proc(f:^Fixture) {
     base.text_set(s[DASH_STRIKE].action[:],"dash")
     s[DASH_STRIKE].costs[0]={CHARGES,1}
     s[DASH_STRIKE].costs[1]={DURABILITY,10}
-    s[DASH_STRIKE].windows[0]={from=0,to=0.24,move={velocity={0,0,-40},mix=.Override},hitbox={shape=.Box,center={0,1,-1},size={0.5,1,1},effect={attribute=HEALTH,amount=-60}}}
+    s[DASH_STRIKE].windows[0]={from=0,to=0.24,move={velocity={0,0,-40},mix=.Override},hitbox={HITBOX_TABLE,3}}
+    f.hitboxes[2]={shape=.Box,center={0,1,-1},size={0.5,1,1},effect={attribute=HEALTH,amount=-60}}
     s[DASH_STRIKE].windows[1]={from=0.24,to=0.4,cancel_into=tag_bit(OPENER)|tag_bit(DASH)}
     s[REACT]={tags=tag_bit(REACTION),priority=10,duration=0.5}
     f.kit[0]={buffer=0.2,interrupts=tag_bit(REACTION)}
@@ -121,6 +137,13 @@ fixture_make :: proc(t:^testing.T,f:^Fixture) -> bool {
     f.sheet_set={size=size_of(Ability),rows=f.sheet_rows[:],index=f.sheet_index[:],values=mem.slice_to_bytes(f.sheets[:])}
     f.kit_rows[0]={table=KIT_TABLE,row=1}
     f.kit_set={size=size_of(Ability_Kit),rows=f.kit_rows[:],index=f.kit_index[:],values=mem.slice_to_bytes(f.kit[:])}
+    for i in 0..<3 {
+        f.aux_index[i]=u32(i)
+        f.hitbox_rows[i]={table=HITBOX_TABLE,row=core.Record_Id(i+1)}
+        f.feedback_rows[i]={table=FEEDBACK_TABLE,row=core.Record_Id(i+1)}
+    }
+    f.hitbox_set={size=size_of(Ability_Hitbox),rows=f.hitbox_rows[:],index=f.aux_index[:],values=mem.slice_to_bytes(f.hitboxes[:])}
+    f.feedback_set={size=size_of(Ability_Feedback),rows=f.feedback_rows[:],index=f.aux_index[:],values=mem.slice_to_bytes(f.feedback[:])}
     f.player,f.seat,f.dummy=core.create(&f.entities),core.create(&f.entities),core.create(&f.entities)
     player:=Ability_User{kit={KIT_TABLE,1}}
     player.attributes[0]={attribute=HEALTH,base=100,max=100}
@@ -140,19 +163,24 @@ fixture_make :: proc(t:^testing.T,f:^Fixture) -> bool {
     core.add(&f.worlds,f.dummy,core.World_Transform{transform={position={1.5,0,0},rotation=1,scale=1}})
     test_world_settle(&f.w)
     f.time={tick=1,dt=1.0/RATE,playing=true}
+    ability_rows(tables_of(f),&f.checks,&f.problems)
+    test_world_settle(&f.w)
+    ability_room(&f.events,&f.sounds,&f.births,16*EVENT_CAPACITY,&f.problems)
     return true
 }
 
 @(private="file")
 fixture_destroy :: proc(f:^Fixture) {
     test_world_destroy(&f.w)
+    core.value_free(&f.cache,type_info_of(Ability_Sheets))
+    core.entity_map_destroy(&f.checks.entries)
     delete(f.log)
 }
 
 // Touches what has a World_Transform inside the hitbox: a box in the axes of the user, or a
 // sphere or capsule by its radius.
 @(private="file")
-test_overlap :: proc(w:^Ability_World,hitbox:Ability_Hitbox,pose:mm.Transform,results:[]core.Entity) -> int {
+test_overlap :: proc(w:^Ability_World,hitbox:^Ability_Hitbox,pose:mm.Transform,results:[]core.Entity) -> int {
     center:=pose.position+mm.quat_rotate(pose.rotation,hitbox.center)
     count:=0
     for row in 0..<core.count(w.worlds) {
@@ -171,7 +199,15 @@ test_overlap :: proc(w:^Ability_World,hitbox:Ability_Hitbox,pose:mm.Transform,re
 
 @(private="file")
 world_of :: proc(f:^Fixture) -> Ability_World {
-    return {time=f.time,seats=core.read(&f.seats),characters=core.read(&f.characters),locomotions=core.read(&f.locomotions),worlds=core.read(&f.worlds),remotes=core.read(&f.remotes),paces=core.read(&f.paces),clock=core.CLOCK_DEFAULT,moves=&f.moves,animations=&f.animations,problems=&f.problems}
+    return {time=f.time,seats=core.read(&f.seats),characters=core.read(&f.characters),locomotions=core.read(&f.locomotions),worlds=core.read(&f.worlds),remotes=core.read(&f.remotes),paces=core.read(&f.paces),clock=core.CLOCK_DEFAULT,moves=&f.moves,animations=&f.animations,problems=&f.problems,sounds=&f.sounds,births=&f.births}
+}
+
+@(private="file")
+tables_of :: proc(f:^Fixture) -> Ability_Tables {return {&f.users,&f.states,&f.tracking}}
+
+@(private="file")
+data_of :: proc(f:^Fixture) -> Ability_Data {
+    return {{&f.sheet_set},{&f.kit_set},{&f.hitbox_set},{&f.feedback_set}}
 }
 
 @(private="file")
@@ -186,17 +222,24 @@ step :: proc(f:^Fixture,ticks:=1) {
             f.was[a]=f.down[a]
         }
         w:=world_of(f)
-        clear(&f.events.queue.items) // the log of a tick, as its readers are handed it
-        abilities_tick(&f.users,{&f.sheet_set},{&f.kit_set},&f.requests,&f.events,&w,test_overlap)
-        for e in f.events.queue.items {append(&f.log,e)}
+        from:=len(f.events.queue.items)
+        abilities_tick(tables_of(f),data_of(f),&f.cache,&f.checks,&f.requests,&f.events,&w,test_overlap)
+        for e in f.events.queue.items[from:] {append(&f.log,e)}
+        core.events_age(&f.events.queue)
+        test_world_settle(&f.w)
         core.time_advance(&f.time)
     }
 }
 
 @(private="file")
-user :: proc(f:^Fixture,e:core.Entity) -> Ability_User {
-    u,_:=core.get(&f.users,e)
-    return u
+Test_User :: struct {using setup:Ability_User,using state:Ability_State,using track:Ability_Tracking}
+
+@(private="file")
+user :: proc(f:^Fixture,e:core.Entity) -> (u:Test_User) {
+    u.setup,_=core.get(&f.users,e)
+    u.state,_=core.get(&f.states,e)
+    u.track,_=core.get(&f.tracking,e)
+    return
 }
 
 @(private="file")
@@ -280,7 +323,8 @@ a_charged_dash_spends_charges_and_is_blocked_without_them :: proc(t:^testing.T) 
     for m in f.moves.queue.items {if m.entity==f.player && m.kind==.Add_Move && m.move.id==MOVE_ID && m.move.velocity.x>39 && m.move.ticks==u32(seconds(0.24)) {dash=true}}
     testing.expect(t,dash)
     testing.expect(t,len(f.animations.plays.items)==1 && base.text_get(f.animations.plays.items[0].action[:])=="dash")
-    charges,_:=ability_value(user(f,f.player),CHARGES)
+    charge_user:=user(f,f.player)
+    charges,_:=ability_value(&charge_user.setup,&charge_user.state,CHARGES)
     testing.expect(t,charges>1.9 && charges<2.1)
     // Holding through the whole charge dashes when it ends.
     step(f,seconds(0.5))
@@ -299,9 +343,9 @@ a_charged_dash_spends_charges_and_is_blocked_without_them :: proc(t:^testing.T) 
     step(f,2)
     testing.expect_value(t,user(f,f.player).ability,core.Record(Ability){})
     u:=user(f,f.player)
-    kit:=kit_sheet({&f.kit_set},u.kit)
+    kit:=record_sheet(data_of(f).kits,u.kit)
     w:=world_of(f)
-    testing.expect_value(t,start_block(&w,f.time.tick,f.time.dt,f.player,&u,kit,nil,{},&f.sheets[CHARGE],ref(CHARGE)),Ability_Block.Condition)
+    testing.expect_value(t,start_block(&w,f.time.tick,f.time.dt,f.player,&u.setup,&u.state,&u.track,u.statuses,kit,nil,{},&f.sheets[CHARGE],ref(CHARGE)),Ability_Block.Condition)
     f.down[1]=false
     step(f,seconds(10))
     f.down[1]=true
@@ -335,7 +379,7 @@ a_copy_of_the_state_halfway_runs_the_same_future_and_a_cancel_leaves_nothing :: 
     testing.expect_value(t,len(a.log),len(b.log))
     for e,i in a.log {if i<len(b.log) {testing.expect_value(t,b.log[i],e)}}
     ua,ub:=user(a,a.player),user(b,b.player)
-    testing.expect(t,mem.compare_ptrs(&ua,&ub,size_of(Ability_User))==0)
+    testing.expect_value(t,ua,ub)
     // A cancel inside the dash's move window closes it and removes its move.
     a.down={false,false}
     step(a,seconds(1))
@@ -364,29 +408,29 @@ a_copy_of_the_state_halfway_runs_the_same_future_and_a_cancel_leaves_nothing :: 
 invalid_sheets_and_requests_are_problems_and_never_run :: proc(t:^testing.T) {
     nan:=math.nan_f32()
     out:[512]u8
-    Case :: struct {edit:proc(a:^Ability,nan:f32),wanted:string}
+    Case :: struct {edit:proc(f:^Fixture,nan:f32),wanted:string}
     cases:=[]Case{
-        {proc(a:^Ability,nan:f32) {a.duration=nan},"duration"},
-        {proc(a:^Ability,nan:f32) {a.duration=0},"duration"},
-        {proc(a:^Ability,nan:f32) {a.input.hold=-1},"input.hold"},
-        {proc(a:^Ability,nan:f32) {a.input.on=Ability_Trigger(200)},"input.on"},
-        {proc(a:^Ability,nan:f32) {a.windows[0].to=a.duration+1},"after the duration"},
-        {proc(a:^Ability,nan:f32) {a.windows[0].from=a.windows[0].to},"below to"},
-        {proc(a:^Ability,nan:f32) {a.windows[0].hitbox.size.y=nan},"hitbox.size"},
-        {proc(a:^Ability,nan:f32) {a.windows[0].hitbox.shape=Hitbox_Shape(9)},"hitbox.shape"},
-        {proc(a:^Ability,nan:f32) {a.windows[0].hitbox.effect.knockback.x=nan},"knockback"},
-        {proc(a:^Ability,nan:f32) {a.windows[0].hitbox.effect.knockback_seconds=0},"knockback for 0 seconds"},
-        {proc(a:^Ability,nan:f32) {a.windows[1].modify={attribute=HEALTH,more=-2}},"more"},
-        {proc(a:^Ability,nan:f32) {a.windows[1].move.velocity.z=nan},"move.velocity"},
-        {proc(a:^Ability,nan:f32) {a.windows[5].cue=SLASH},"to is 0"},
-        {proc(a:^Ability,nan:f32) {a.costs[1]={ATTRIBUTE_NONE,4}},"costs[1]"},
-        {proc(a:^Ability,nan:f32) {a.conditions[0]={HEALTH,10,5}},"conditions[0]"},
-        {proc(a:^Ability,nan:f32) {a.windows[0].hitbox.effect.period=nan},"period"},
-        {proc(a:^Ability,nan:f32) {a.windows[0].hitbox.effect.max_stacks=3},"stacks but has no tags"},
-        {proc(a:^Ability,nan:f32) {a.windows[0].hitbox.effect.cue=SLASH},"lasts 0 seconds"},
-        {proc(a:^Ability,nan:f32) {a.input.after=-0.1},"input.after"},
-        {proc(a:^Ability,nan:f32) {a.input.wait=Ability_Wait(7)},"input.wait"},
-        {proc(a:^Ability,nan:f32) {a.windows[1].clock=Ability_Clock(5)},"clock"},
+        {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].duration=nan},"duration"},
+        {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].duration=0},"duration"},
+        {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].input.hold=-1},"input.hold"},
+        {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].input.on=Ability_Trigger(200)},"input.on"},
+        {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].windows[0].to=f.sheets[SLASH_1].duration+1},"after the duration"},
+        {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].windows[0].from=f.sheets[SLASH_1].windows[0].to},"below to"},
+        {proc(f:^Fixture,nan:f32) {f.hitboxes[0].size.y=nan},"size[1]"},
+        {proc(f:^Fixture,nan:f32) {f.hitboxes[0].shape=Hitbox_Shape(9)},"shape must be"},
+        {proc(f:^Fixture,nan:f32) {f.hitboxes[0].effect.knockback.x=nan},"knockback"},
+        {proc(f:^Fixture,nan:f32) {f.hitboxes[0].effect.knockback_seconds=0},"knockback for 0 seconds"},
+        {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].windows[1].modify={attribute=HEALTH,more=-2}},"more"},
+        {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].windows[1].move.velocity.z=nan},"move.velocity"},
+        {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].windows[5].cue=SLASH},"to is 0"},
+        {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].costs[1]={ATTRIBUTE_NONE,4}},"costs[1]"},
+        {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].conditions[0]={HEALTH,10,5}},"conditions[0]"},
+        {proc(f:^Fixture,nan:f32) {f.hitboxes[0].effect.period=nan},"period"},
+        {proc(f:^Fixture,nan:f32) {f.hitboxes[0].effect.max_stacks=3},"stacks but has no tags"},
+        {proc(f:^Fixture,nan:f32) {f.hitboxes[0].effect.cue=SLASH},"lasts 0 seconds"},
+        {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].input.after=-0.1},"input.after"},
+        {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].input.wait=Ability_Wait(7)},"input.wait"},
+        {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].windows[1].clock=Ability_Clock(5)},"clock"},
     }
     for c in cases {
         f:=new(Fixture)
@@ -394,8 +438,9 @@ invalid_sheets_and_requests_are_problems_and_never_run :: proc(t:^testing.T) {
             free(f)
             return
         }
-        c.edit(&f.sheets[SLASH_1],nan)
-        text:=ability_check(&f.sheets[SLASH_1],out[:])
+        c.edit(f,nan)
+        testing.expect(t,sheets_refresh(&f.cache,data_of(f)))
+        text:=base.text_get(f.cache.abilities[SLASH_1][:])
         testing.expectf(t,text!="" && contains(text,c.wanted),"%q does not say %q",text,c.wanted)
         f.down[0]=true
         step(f,2)
@@ -418,6 +463,7 @@ invalid_sheets_and_requests_are_problems_and_never_run :: proc(t:^testing.T) {
     step(f)
     testing.expect(t,core.problem_find(&f.problems,f.player,"abilities.kit")!=nil)
     f.kit[0].buffer=0.2
+    f.kit_set.generation+=1
     p:=core.edit(&f.users,f.player)
     p.kit={KIT_TABLE,99}
     step(f)
@@ -427,6 +473,7 @@ invalid_sheets_and_requests_are_problems_and_never_run :: proc(t:^testing.T) {
     step(f)
     testing.expect(t,core.problem_find(&f.problems,f.player,"abilities.attributes")!=nil)
     // Requests that name nothing, stale entities, rows of no table and a full queue.
+    core.later(&f.requests.queue,f.time,5,Ability_Request{kind=.Use,entity=f.dummy,ability=ref(REACT)})
     ability_use(&f.requests,core.NONE,ref(SLASH_1))
     ability_use(&f.requests,f.dummy,{})
     testing.expect_value(t,f.requests.queue.refused,2)
@@ -438,6 +485,8 @@ invalid_sheets_and_requests_are_problems_and_never_run :: proc(t:^testing.T) {
     testing.expect(t,core.problem_find(&f.problems,f.dummy,"abilities.effect")!=nil)
     testing.expect(t,core.problem_find(&f.problems,f.dummy,"records.missing")!=nil)
     testing.expect_value(t,user(f,f.dummy).attributes[0].base,100)
+    testing.expect_value(t,f.requests.queue.refused,3)
+    testing.expect_value(t,len(f.requests.queue.waiting),0)
     for _ in 0..=cap(f.requests.queue.items) {ability_cancel(&f.requests,f.dummy)}
     testing.expect_value(t,f.requests.queue.dropped,1)
     ability_requests_serve(&f.requests,ABILITY_SETTINGS_DEFAULT,&f.problems)
@@ -454,31 +503,31 @@ invalid_sheets_and_requests_are_problems_and_never_run :: proc(t:^testing.T) {
 // After the first ticks reserve the queues, a tick of a running combo allocates nothing.
 @(test)
 a_stable_tick_allocates_nothing :: proc(t:^testing.T) {
+    tracker:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracker,context.allocator)
+    defer mem.tracking_allocator_destroy(&tracker)
+    context.allocator=mem.tracking_allocator(&tracker)
     f:=new(Fixture);defer free(f)
     if !fixture_make(t,f) {return}
     defer fixture_destroy(f)
     reserve(&f.log,4096)
-    reserve(&f.moves.queue.items,64);reserve(&f.animations.plays.items,64)
+    reserve(&f.moves.queue.items,64)
+    reserve(&f.animations.plays.items,64)
     reserve(&f.requests.queue.items,int(ABILITY_SETTINGS_DEFAULT.requests))
     f.down[0]=true
     step(f,2)
-    calls:=0
-    {
-    context.allocator=runtime.Allocator{procedure=proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
-        if mode==.Query_Features || mode==.Query_Info {return nil,.Mode_Not_Implemented}
-        (^int)(data)^+=1
-        return nil,.Out_Of_Memory
-    },data=&calls}
+    resize(&f.events.queue.items,8*EVENT_CAPACITY)
+    f.events.queue.kept=len(f.events.queue.items)
+    before:=tracker.total_allocation_count
     f.down[0]=false
     step(f,seconds(0.3))
-    }
-    testing.expect_value(t,calls,0)
+    testing.expect_value(t,tracker.total_allocation_count,before)
     testing.expect_value(t,logged(f,.Hit,f.player,SLASH_1),1)
 }
 
 // Has u an entry of the ability i in its buffer?
 @(private="file")
-buffered :: proc(u:Ability_User,i:int) -> bool {
+buffered :: proc(u:Test_User,i:int) -> bool {
     for b in u.buffer {if b.ability==ref(i) {return true}}
     return false
 }
@@ -656,4 +705,130 @@ lasting_effects_stack_by_tags_end_by_cleanse_and_skip_blocked_targets :: proc(t:
     ability_effect(&f.requests,f.dummy,{attribute=HEALTH,amount=-5,scale_by=STRENGTH})
     step(f)
     testing.expect(t,core.problem_find(&f.problems,f.dummy,"abilities.effect")!=nil)
+}
+
+@(test)
+authored_rows_and_frequently_written_state_stay_compact :: proc(t:^testing.T) {
+    testing.expectf(t,size_of(Ability_User)<=160,"user setup is %d B",size_of(Ability_User))
+    testing.expectf(t,size_of(Ability_State)<=80,"hot state is %d B",size_of(Ability_State))
+    testing.expectf(t,size_of(Ability_Window)<=104,"window is %d B",size_of(Ability_Window))
+    testing.expectf(t,size_of(Ability)<=2000,"ability is %d B",size_of(Ability))
+    size:=size_of(Ability_User)+size_of(Ability_State)+size_of(Ability_Tracking)
+    testing.expectf(t,size<=1352,"total user state is %d B",size)
+}
+
+@(test)
+record_generation_and_setup_edits_invalidate_validation :: proc(t:^testing.T) {
+    f:=new(Fixture);defer free(f)
+    if !fixture_make(t,f) {return}
+    defer fixture_destroy(f)
+    f.hitboxes[0].size.x=0
+    f.down[0]=true
+    step(f)
+    testing.expect(t,user(f,f.player).ability=={})
+    testing.expect(t,f.cache.abilities[SLASH_1][0]!=0)
+
+    // Until the loader publishes another generation the cached result stays in force.
+    f.hitboxes[0].size.x=1
+    ability_use(&f.requests,f.player,ref(SLASH_1))
+    step(f)
+    testing.expect(t,user(f,f.player).ability=={})
+    f.hitbox_set.generation+=1
+    ability_use(&f.requests,f.player,ref(SLASH_1))
+    step(f)
+    testing.expect_value(t,user(f,f.player).ability,ref(SLASH_1))
+    testing.expect_value(t,f.cache.abilities[SLASH_1][0],u8(0))
+
+    ability_cancel(&f.requests,f.player)
+    step(f)
+    core.edit(&f.users,f.player).attributes[0].regen=math.nan_f32()
+    test_world_settle(&f.w)
+    ability_use(&f.requests,f.player,ref(SLASH_1))
+    step(f)
+    testing.expect(t,user(f,f.player).ability=={})
+    core.edit(&f.users,f.player).attributes[0].regen=0
+    test_world_settle(&f.w)
+    ability_use(&f.requests,f.player,ref(SLASH_1))
+    step(f)
+    testing.expect_value(t,user(f,f.player).ability,ref(SLASH_1))
+}
+
+@(test)
+kit_dispatch_respects_held_release_and_blocked_actions :: proc(t:^testing.T) {
+    f:=new(Fixture);defer free(f)
+    if !fixture_make(t,f) {return}
+    defer fixture_destroy(f)
+    f.kit[0].abilities={}
+    f.kit[0].abilities[0]=ref(SLASH_1)
+    f.sheets[SLASH_1].input={action=SECONDARY,on=.Held,hold=0.1}
+    core.edit(&f.seats,f.seat).blocked=inp.action_bit(SECONDARY)
+    f.down[1]=true
+    step(f,seconds(0.2))
+    testing.expect(t,user(f,f.player).ability=={})
+    core.edit(&f.seats,f.seat).blocked=0
+    f.down[1]=false
+    step(f)
+    f.down[1]=true
+    step(f,seconds(0.05))
+    testing.expect(t,user(f,f.player).ability=={})
+    step(f,seconds(0.1))
+    testing.expect_value(t,user(f,f.player).ability,ref(SLASH_1))
+    ability_cancel(&f.requests,f.player)
+    step(f)
+    testing.expect(t,user(f,f.player).ability=={})
+    f.sheets[SLASH_1].input.on=.Released
+    f.sheet_set.generation+=1
+    f.down[1]=false
+    step(f)
+    testing.expect_value(t,user(f,f.player).ability,ref(SLASH_1))
+
+    // The top action bit must survive mask construction and rearming.
+    bit:=inp.action_bit(63)
+    seat:inp.Seat
+    seat.actions.count=64
+    seat.actions.states[63].pressed=true
+    cache:Kit_Cache
+    cache.actions[.Pressed]=bit
+    testing.expect_value(t,kit_inputs(&cache,&seat),bit)
+    seat.rearm=bit
+    testing.expect_value(t,kit_inputs(&cache,&seat),inp.Action_Mask(0))
+}
+
+@(test)
+feedback_rows_emit_once_at_start_window_and_hit :: proc(t:^testing.T) {
+    f:=new(Fixture);defer free(f)
+    if !fixture_make(t,f) {return}
+    defer fixture_destroy(f)
+    names:=[]string{"start","swing","impact"}
+    for name,i in names {
+        f.feedback[i].sound={u64(i+1),0}
+        base.text_set(f.feedback[i].channel[:],name)
+    }
+    f.sheets[SLASH_1].on_start={FEEDBACK_TABLE,1}
+    f.sheets[SLASH_1].windows[0].on_begin={FEEDBACK_TABLE,2}
+    f.hitboxes[0].on_hit={FEEDBACK_TABLE,3}
+    f.down[0]=true
+    step(f)
+    testing.expect_value(t,len(f.sounds.queue.items),1)
+    testing.expect_value(t,len(f.births.queue.items),1)
+    step(f,seconds(0.4))
+    sounds,births:=f.sounds.queue.items[:],f.births.queue.items[:]
+    if !testing.expect(t,len(sounds)==len(names) && len(births)==len(names)) {return}
+    for name,i in names {
+        e:=f.player if i<2 else f.dummy
+        pose,_:=core.get(&f.worlds,e)
+        testing.expect_value(t,sounds[i].sound,f.feedback[i].sound)
+        testing.expect(t,sounds[i].placed)
+        testing.expect_value(t,sounds[i].at,pose.position)
+        testing.expect_value(t,births[i].channel,core.birth_channel(name))
+        testing.expect_value(t,births[i].position,pose.position)
+    }
+    core.take(&f.sounds.queue)
+    core.take(&f.births.queue)
+    ability_cancel(&f.requests,f.player)
+    ability_use(&f.requests,f.player,ref(SLASH_1))
+    f.time.resimulating=true
+    step(f)
+    testing.expect_value(t,len(f.sounds.queue.items),0)
+    testing.expect_value(t,len(f.births.queue.items),1)
 }
