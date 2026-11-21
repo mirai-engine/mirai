@@ -1,4 +1,5 @@
-package zstd
+#+private
+package data
 
 // A bit stream read backwards from its last byte, whose highest set bit marks the end.
 
@@ -13,7 +14,8 @@ Bit_DStream_Status :: enum u32 {Unfinished,End_Of_Buffer,Completed,Overflow}
 @(rodata,private="file") Bit_Zero_Filled:u64
 
 // The size of the stream must be exact.
-bit_init_dstream :: proc "contextless" (bit_d:^Bit_DStream,src:[^]u8,src_size:int) -> Error #no_bounds_check {
+bit_init_dstream :: proc "contextless" (bit_d:^Bit_DStream,src:[^]u8,
+    src_size:int) -> Huff_Error #no_bounds_check {
     if src_size<1 {bit_d^={};return .Src_Size_Wrong}
     bit_d.start=src
     bit_d.limit_ptr=padd(bit_d.start,8)
@@ -80,7 +82,8 @@ bit_read_bits_fast :: #force_inline proc "contextless" (bit_d:^Bit_DStream,nb_bi
     return value
 }
 
-bit_reload_dstream_internal :: #force_inline proc "contextless" (bit_d:^Bit_DStream) -> Bit_DStream_Status {
+bit_reload_dstream_internal :: #force_inline proc "contextless" (
+    bit_d:^Bit_DStream) -> Bit_DStream_Status {
     bit_d.ptr=padd(bit_d.ptr,-int(bit_d.bits_consumed>>3))
     bit_d.bits_consumed&=7
     bit_d.bit_container=read64(bit_d.ptr)
@@ -88,7 +91,8 @@ bit_reload_dstream_internal :: #force_inline proc "contextless" (bit_d:^Bit_DStr
 }
 
 // bits_consumed is at most 64. Overflow means the slow reload has to go on.
-bit_reload_dstream_fast :: #force_inline proc "contextless" (bit_d:^Bit_DStream) -> Bit_DStream_Status {
+bit_reload_dstream_fast :: #force_inline proc "contextless" (
+    bit_d:^Bit_DStream) -> Bit_DStream_Status {
     if uintptr(bit_d.ptr)<uintptr(bit_d.limit_ptr) {return .Overflow}
     return bit_reload_dstream_internal(bit_d)
 }

@@ -656,7 +656,7 @@ textures_lookup :: proc(work:^Cook_Work) {
 
 // Raise it when the cook writes a file otherwise from the same inputs: every key changes.
 @(private="file")
-COOK_KEYS_VERSION :: 3
+COOK_KEYS_VERSION :: 4
 
 // What an earlier cook wrote of a file: the key of what it was made of, and the output as it left it.
 @(private="file")

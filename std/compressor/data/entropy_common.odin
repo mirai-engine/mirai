@@ -1,12 +1,13 @@
-package zstd
+#+private
+package data
 
 import "base:intrinsics"
 
-HUF_READ_STATS_WORKSPACE_SIZE_U32 :: FSE_DTABLE_HEADER_U32+(1<<6)+1+((HUF_TABLELOG_MAX*2+(1<<6)+8+3)/4)+(FSE_MAX_SYMBOL_VALUE+1)/2+1
-HUF_READ_STATS_WORKSPACE_SIZE :: HUF_READ_STATS_WORKSPACE_SIZE_U32*size_of(u32)
-
+HUF_READ_STATS_WORKSPACE_SIZE_U32 :: FSE_DTABLE_HEADER_U32+(1<<6)+1+((HUF_TABLELOG_MAX*2+(1<<6)+8+
+    3)/4)+(FSE_MAX_SYMBOL_VALUE+1)/2+1
 @(private="file")
-fse_read_ncount_body :: proc "contextless" (normalized_counter:[^]i16,max_sv_ptr,table_log_ptr:^u32,header_buffer:[^]u8,hb_size:int) -> (size:int,err:Error) #no_bounds_check {
+fse_read_ncount_body :: proc "contextless" (normalized_counter:[^]i16,max_sv_ptr,table_log_ptr:^u32,
+    header_buffer:[^]u8,hb_size:int) -> (size:int,err:Huff_Error) #no_bounds_check {
     istart:=header_buffer
     iend:=padd(istart,hb_size)
     ip:=istart
@@ -19,7 +20,8 @@ fse_read_ncount_body :: proc "contextless" (normalized_counter:[^]i16,max_sv_ptr
     if hb_size<8 {
         buffer:[8]u8
         intrinsics.mem_copy_non_overlapping(&buffer[0],header_buffer,hb_size)
-        count_size:=fse_read_ncount_body(normalized_counter,max_sv_ptr,table_log_ptr,([^]u8)(&buffer[0]),8) or_return
+        count_size:=fse_read_ncount_body(normalized_counter,max_sv_ptr,table_log_ptr,
+            ([^]u8)(&buffer[0]),8) or_return
         if count_size>hb_size {return 0,.Corruption_Detected}
         return count_size,.None
     }
@@ -59,7 +61,8 @@ fse_read_ncount_body :: proc "contextless" (normalized_counter:[^]i16,max_sv_ptr
 
             if charnum>=max_sv1 {break}
 
-            if uintptr(ip)<=uintptr(padd(iend,-7)) || uintptr(padd(ip,int(bit_count>>3)))<=uintptr(padd(iend,-4)) {
+            if uintptr(ip)<=uintptr(padd(iend,-7)) || uintptr(padd(ip,int(bit_count>>3)))<=uintptr(
+                padd(iend,-4)) {
                 ip=padd(ip,int(bit_count>>3))
                 bit_count&=7
             } else {
@@ -99,7 +102,8 @@ fse_read_ncount_body :: proc "contextless" (normalized_counter:[^]i16,max_sv_ptr
             }
             if charnum>=max_sv1 {break}
 
-            if uintptr(ip)<=uintptr(padd(iend,-7)) || uintptr(padd(ip,int(bit_count>>3)))<=uintptr(padd(iend,-4)) {
+            if uintptr(ip)<=uintptr(padd(iend,-7)) || uintptr(padd(ip,int(bit_count>>3)))<=uintptr(
+                padd(iend,-4)) {
                 ip=padd(ip,int(bit_count>>3))
                 bit_count&=7
             } else {
@@ -119,11 +123,14 @@ fse_read_ncount_body :: proc "contextless" (normalized_counter:[^]i16,max_sv_ptr
     return pdiff(ip,istart),.None
 }
 
-fse_read_ncount :: proc "contextless" (normalized_counter:[^]i16,max_sv_ptr,table_log_ptr:^u32,header_buffer:[^]u8,hb_size:int) -> (size:int,err:Error) {
+fse_read_ncount :: proc "contextless" (normalized_counter:[^]i16,max_sv_ptr,table_log_ptr:^u32,
+    header_buffer:[^]u8,hb_size:int) -> (size:int,err:Huff_Error) {
     return fse_read_ncount_body(normalized_counter,max_sv_ptr,table_log_ptr,header_buffer,hb_size)
 }
 
-huf_read_stats :: proc "contextless" (huff_weight:[^]u8,hw_size:int,rank_stats:[^]u32,nb_symbols_ptr,table_log_ptr:^u32,src:[^]u8,src_size:int,workspace:[^]u32,wksp_size:int) -> (size:int,err:Error) #no_bounds_check {
+huf_read_stats :: proc "contextless" (huff_weight:[^]u8,hw_size:int,rank_stats:[^]u32,
+    nb_symbols_ptr,table_log_ptr:^u32,src:[^]u8,src_size:int,workspace:[^]u32,
+    wksp_size:int) -> (size:int,err:Huff_Error) #no_bounds_check {
     ip:=src
     if src_size==0 {return 0,.Src_Size_Wrong}
     i_size:=int(ip[0])
@@ -141,7 +148,8 @@ huf_read_stats :: proc "contextless" (huff_weight:[^]u8,hw_size:int,rank_stats:[
         }
     } else {
         if i_size+1>src_size {return 0,.Src_Size_Wrong}
-        o_size=fse_decompress_wksp(huff_weight,hw_size-1,padd(ip,1),i_size,6,workspace,wksp_size) or_return
+        o_size=fse_decompress_wksp(huff_weight,hw_size-1,padd(ip,1),i_size,6,workspace,
+            wksp_size) or_return
     }
 
     intrinsics.mem_zero(rank_stats,(HUF_TABLELOG_MAX+1)*size_of(u32))

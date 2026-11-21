@@ -116,13 +116,13 @@ frames_store :: proc(t:^testing.T,name:string,frames:Frames) -> (s:store.Store,o
             e:data.Encoder
             data.encoder_init(&e)
             defer data.encoder_destroy(&e)
-            size,error:=data.encode(&e,.Fast,src,dst)
+            size,error:=data.encode(&e,.Fast,src,dst,open=true)
             return size if error==.None else 0
         },decode=proc(src,dst:[]u8) -> bool {
             d:data.Decoder
             if data.decoder_init(&d)!=.None {return false}
             defer data.decoder_destroy(&d)
-            return data.decode(&d,data.ZSTD,src,dst)==.None
+            return data.decode(&d,data.format(.Fast,open=true),src,dst)==.None
         }})
     }
     return

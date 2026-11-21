@@ -62,6 +62,11 @@ hostile_messages_are_refused_without_a_crash :: proc(t:^testing.T) {
     want(x,other)
     zero:store.Hash
     big:=make([]u8,store.CHUNK_MAX+1,context.temp_allocator)
+    codec:u8
+    for id in store.codecs_read(&w.nodes[0].s) {
+        if id!=store.CODEC_NONE {codec=u8(id);break}
+    }
+    if !testing.expect(t,codec!=store.CODEC_NONE,"the store reads a compressed frame") {return}
     Case :: struct {lane:int,data:[]u8,bad:bool}
     cases:=[]Case{
         {LANE_CONTROL,nil,true},
@@ -81,7 +86,7 @@ hostile_messages_are_refused_without_a_crash :: proc(t:^testing.T) {
         {LANE_CONTROL,test_message({MSG_NAMES},test_name("lib"),{0},{0},test_le(3,2)),true},
         {LANE_CONTROL,test_message({MSG_NAMES},test_name("lib"),{0},{0},test_le(1,2),test_name("a")),true},
         {LANE_DATA,test_message({MSG_CHUNK},root[:]),true},
-        {LANE_DATA,test_chunk(root,1,10,big[:10]),true},
+        {LANE_DATA,test_chunk(root,codec,10,big[:10]),true},
         {LANE_DATA,test_chunk(root,0,11,big[:10]),true},
         {LANE_DATA,test_chunk(root,0,0,nil),true},
         {LANE_DATA,test_chunk(root,0,len(big),big),true},
@@ -90,9 +95,9 @@ hostile_messages_are_refused_without_a_crash :: proc(t:^testing.T) {
         {LANE_DATA,test_chunk(root,15,20,big[:10]),true},
         {LANE_DATA,test_chunk(root,store.CODECS_MAX,20,big[:10]),true},
         {LANE_DATA,test_chunk(root,255,20,big[:10]),true},
-        {LANE_DATA,test_chunk(root,1,9,big[:10]),true},
-        {LANE_DATA,test_chunk(root,1,store.CHUNK_MAX+1,big[:10]),true},
-        {LANE_DATA,test_chunk(root,1,int(max(u32)),big[:10]),true},
+        {LANE_DATA,test_chunk(root,codec,9,big[:10]),true},
+        {LANE_DATA,test_chunk(root,codec,store.CHUNK_MAX+1,big[:10]),true},
+        {LANE_DATA,test_chunk(root,codec,int(max(u32)),big[:10]),true},
         {LANE_CONTROL,{MSG_CODECS,1},true},
         {LANE_CONTROL,{MSG_CODECS,1,0,0},true},
         {LANE_DATA,test_message({MSG_LACK},root[:4]),true},
@@ -102,7 +107,7 @@ hostile_messages_are_refused_without_a_crash :: proc(t:^testing.T) {
         {LANE_DATA,{MSG_DONE,0},true},
         // Nobody asked: ignored, counted against the peer.
         {LANE_DATA,test_chunk(root,0,10,big[:10]),false},
-        {LANE_DATA,test_chunk(root,1,20,big[:10]),false},
+        {LANE_DATA,test_chunk(root,codec,20,big[:10]),false},
         {LANE_CONTROL,{MSG_CODECS,0xff,0xff},false},
         {LANE_DATA,test_chunk(other,0,5,test_bytes(5,2)),false},
         {LANE_DATA,test_message({MSG_LACK},other[:]),false},

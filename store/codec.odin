@@ -17,10 +17,13 @@ CODECS_MAX :: 16 // ids at or above it are damage
 // A set of codec ids: what a value or a peer decodes.
 Codecs :: bit_set[0..<CODECS_MAX;u16]
 
+// Codec ids are persistent. Retired ids stay unassigned.
+@(private) CODEC_MDC1 :: 4
+
 // The formats of the ids; an id without one is the codec of no build.
-@(private) CODEC_FORMATS :: [CODECS_MAX]data.Format{1=data.ZSTD,2=data.LZ4,3=data.MLZ1}
+@(private) CODEC_FORMATS :: [CODECS_MAX]data.Format{3=data.MLZ1,CODEC_MDC1=data.MDC1}
 // What every build decodes: of several copies of a chunk, a sweep keeps one of these.
-@(private) CODECS_OPEN :: Codecs{CODEC_NONE,1,2}
+@(private) CODECS_OPEN :: Codecs{CODEC_NONE,CODEC_MDC1}
 
 // A codec a test gives a value to act as a build with another compressor: the value writes its
 // frames with it and decodes it besides the codecs of this build.
