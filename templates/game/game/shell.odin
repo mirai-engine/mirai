@@ -41,10 +41,10 @@ Shell :: struct {
 
 // What the buttons of shell.ui do besides changing the page.
 @(private="file")
-shell_events :: proc(events:^gui.UI_Events,screen:core.Entity,shell:^Shell,solo:bool,scenes:^scene.Scene_Requests,graphics:^render.Graphics_Settings,app:^host.App) {
-    if gui.clicked(events,screen,"menu_exit") {host.app_exit(app,0)}
-    if preset,changed:=gui.changed_value(events,screen,"settings_quality");changed {render.graphics_preset_apply(graphics,render.Graphics_Quality(int(preset)))}
-    if gui.clicked(events,screen,"pause_quit") {
+shell_events :: proc(events:core.Ref(gui.UI_Events),interface:^gui.Gui,screen:core.Entity,shell:^Shell,solo:bool,scenes:^scene.Scene_Requests,graphics:^render.Graphics_Settings,app:^host.App) {
+    if gui.clicked(events,screen,"menu_exit",interface) {host.app_exit(app,0)}
+    if preset,changed:=gui.changed_value(events,screen,"settings_quality",interface);changed {render.graphics_preset_apply(graphics,render.Graphics_Quality(int(preset)))}
+    if gui.clicked(events,screen,"pause_quit",interface) {
         // A network session has no menu to go back to: it leaves.
         if !solo {host.app_exit(app,0);return}
         scene.request_restart(scenes)
@@ -57,17 +57,16 @@ shell_events :: proc(events:^gui.UI_Events,screen:core.Entity,shell:^Shell,solo:
 @(step="frame")
 shell_frame :: proc(
     shell:^Shell,ui_events:core.Ref(gui.UI_Events),shell_screens:^core.Table(Shell_Screen,.Read),ui_screens:^core.Table(gui.UI_Screen),huds:^core.Table(Shell_Hud,.Read),
-    network:core.Ref(core.Network),scenes:^scene.Scene_Requests,hidden:^core.Table(render.Hidden),graphics:^render.Graphics_Settings,app:^host.App,
+    network:core.Ref(core.Network),scenes:^scene.Scene_Requests,hidden:^core.Table(render.Hidden),graphics:^render.Graphics_Settings,app:^host.App,interface:^gui.Gui,
 ) {
     solo:=network.role==.Standalone
     if !solo && shell.page==.Menu {shell.page=.Playing}
 
     screen,_:=core.sole(shell_screens)
-    events:=ui_events.ptr
-    shell_events(events,screen,shell,solo,scenes,graphics,app)
+    shell_events(ui_events,interface,screen,shell,solo,scenes,graphics,app)
     shell.quality=render.graphics_quality_of(graphics^)
 
-    if gui.menu_pressed(events) {
+    if gui.menu_pressed(ui_events) {
         #partial switch shell.page {
         case .Playing:  shell.page=.Pause
         case .Pause:    shell.page=.Playing

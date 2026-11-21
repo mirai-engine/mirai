@@ -8,6 +8,7 @@ import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "core:slice"
 import "core:time"
 import "mirai:asset"
 import "mirai:core"
@@ -87,6 +88,9 @@ a_transient_entity_comes_back_from_a_save_without_the_id_it_was_lent :: proc(t:^
     f:Save_Test
     if !save_test_init(t,&f) {return}
     defer save_test_destroy(&f)
+    for &storage in f.info.storages {
+        if storage.type==Capture_Source {storage.procs.save_prepare=nil}
+    }
     w:=f.w
     authored,copy:=core.create(&w.entities),core.create(&w.entities)
     core.add(&w.ids,authored,core.Id{5})
@@ -98,7 +102,11 @@ a_transient_entity_comes_back_from_a_save_without_the_id_it_was_lent :: proc(t:^
     out:serial.Writer
     serial.writer_init(&out,0,context.allocator)
     defer serial.writer_destroy(&out)
+    version,layout,gone:=w.ids.version,w.ids.layout,core.log_end(w.ids.gone)
+    revisions,_:=slice.clone(core.world_revisions(ref),context.temp_allocator)
     if !testing.expect_value(t,capture(ref,f.app.assets,f.app.allocator,&out),Error.None) {return}
+    testing.expect(t,w.ids.version==version && w.ids.layout==layout && core.log_end(w.ids.gone)==gone)
+    testing.expect(t,slice.equal(core.world_revisions(ref),revisions))
     header:=(cast(^Header)raw_data(serial.writer_bytes(&out)))^
     testing.expect_value(t,header.lent,1)
     testing.expect_value(t,len(w.ids.values),1)
@@ -262,6 +270,7 @@ a_slot_capture_prepares_its_saved_components_and_can_be_refused :: proc(t:^testi
     testing.expect(t,out.count==0 && !core.has(&w.capture_values,e))
     w.capture_source.reject=false
     if !testing.expect_value(t,capture(ref,nil,context.allocator,&out),Error.None) {return}
+    testing.expect(t,!core.has(&w.capture_values,e) && len(w.ids.pending)==1,"only the snapshot is materialized and settled")
     testing.expect_value(t,restore(ref,&f.app,serial.writer_bytes(&out)),Error.None)
     saved,found:=core.get(&w.capture_values,core.entity_of(&w.entities,1))
     testing.expect(t,found && saved.value==21 && w.capture_source=={})

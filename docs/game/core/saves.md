@@ -13,7 +13,7 @@ game_saves :: proc(actions:inp.Frame_Input_Of(Action),saves:^save.Save_Requests,
     if network.role!=.Standalone {return}          // a network session does not save
     if inp.pressed(actions,.Save) {save.request_save(saves,"quick")}
     if inp.pressed(actions,.Load) {save.request_load(saves,"quick")}
-    for result in results.queue.items {            // one per request served, for one frame
+    for result in results.items {                  // results emitted since this step last ran
         if result.error!=.None {continue}          // a save.Error: .Not_Found, .Corrupt...
         // result.op is .Save or .Load; result.kind .Manual, .Autosave or .Checkpoint
     }

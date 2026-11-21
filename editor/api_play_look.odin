@@ -97,7 +97,10 @@ api_look_steer :: proc(s:^Session,r:^Run,look:^Api_Look) -> string {
             up=core.vertical_of(verticals,target)
         }
         // Not started yet: it has no pivot to look from until its first frame.
-        ecamera.camera_look_toward(core.world_storage_of(w,ecamera.Camera_Input),seen.camera,follow,point,up)
+        state,_:=core.get(core.world_table_of(w,ecamera.Camera_Follow_State),seen.camera)
+        ecamera.camera_look_toward(
+            core.world_storage_of(w,ecamera.Camera_Input),seen.camera,follow,state,point,up,
+        )
         return ""
     }
     if body==core.NONE {return ""}

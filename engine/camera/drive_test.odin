@@ -16,6 +16,7 @@ Drive_World :: struct {
     seats:core.Table(input.Seat),
     moves:core.Table(input.Move_Input),
     follows:core.Table(Camera_Follow),
+    states:core.Table(Camera_Follow_State),
     cameras:core.Table(render.Camera),
     transforms:core.Table(core.Transform),
     worlds:core.Table(core.World_Transform),
@@ -154,7 +155,7 @@ each_orbit_turns_with_the_look_of_its_own_seat :: proc(t:^testing.T) {
         core.add(&w.cameras,eyes[slot],render.CAMERA_DEFAULT)
         core.add(&w.transforms,eyes[slot],core.Transform{rotation=1,scale=1})
         follow:=Camera_Follow{mode=.Orbit,turn=true,distance=4}
-        follow.state.ready=true
+        core.add(&w.states,eyes[slot],Camera_Follow_State{ready=true})
         core.add(&w.follows,eyes[slot],follow)
     }
     // The pad of the second player looks right; the first one does nothing.
@@ -162,13 +163,15 @@ each_orbit_turns_with_the_look_of_its_own_seat :: proc(t:^testing.T) {
     w.frame.slots[1].states[DRIVE_LOOK].vector={10,0}
     drive_settle(w)
     problems:core.Problems
+    authored:=w.follows.version
     camera_follow(
-        test_world_ref(w),&w.follows,&w.cameras,&w.transforms,core.read(&w.worlds),core.read(&w.parents),core.read(&w.seats),core.read(&w.moves),core.ref(&w.shown),
+        test_world_ref(w),&w.follows,&w.states,&w.cameras,&w.transforms,core.read(&w.worlds),core.read(&w.parents),core.read(&w.seats),core.read(&w.moves),core.ref(&w.shown),
         core.ref(&w.seat_state),{actions=core.ref(&w.frame),state=core.ref(&w.seat_state),seats=core.read(&w.seats),base=DRIVE_LOOK},core.ref(&w.queries),&w.look_input,&w.changes,
         core.read(&w.verticals),{dt=1.0/60,alpha=1},{dt=1.0/60},&problems,&w.shakes,
     )
-    first,_:=core.get(&w.follows,eyes[0])
-    second,_:=core.get(&w.follows,eyes[1])
+    testing.expect(t,w.follows.version==authored && len(w.follows.edits)==0,"following and turning leave the authored table untouched")
+    first,_:=core.get(&w.states,eyes[0])
+    second,_:=core.get(&w.states,eyes[1])
     testing.expectf(t,first.looking.x==0,"the first orbit stays: %v",first.looking)
     testing.expectf(t,abs(second.looking.x+10*input.LOOK_SPEED)<1e-5,"the second turns with its own pad: %v",second.looking)
 }

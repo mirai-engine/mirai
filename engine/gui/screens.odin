@@ -405,7 +405,7 @@ instance_get :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,e:core.Entity,s
         instance.asset,instance.generation,instance.bound,instance.info,instance.changed=asset,content.generation,target,world.info,true
         bind:=Bind{gui=gui,app=app,world=world}
         host_of:=bind_host(&bind)
-        instance.failed=!ui.tree_instance_init(&instance.instance,&content.tree,&host_of,host.app_texts(app),ui_language(&gui.preferences),gui.allocator)
+        instance.failed=!ui.tree_instance_init(&instance.instance,&content.tree,&host_of,host.app_texts(app),ui_language(core.ref(&gui.preferences)),gui.allocator)
         if instance.failed {
             failure:=instance.instance.failure
             file:[base.ASSET_ID_TEXT]u8

@@ -135,9 +135,10 @@ play_view :: proc(w:core.World_Ref,targets:[]Play_View_Target,allocator:=context
                 v.follow.entity,v.follow.name=handle_text(target,allocator),entity_name(w,target)
                 v.follow.distance=linalg.length(entity_world(w,target).position-seen.position)
             }
-            if follow.state.ready {
-                v.follow.pivot_distance=linalg.length(follow.state.pivot.position-seen.position)
-                v.follow.yaw_deg,v.follow.pitch_deg=follow.looking.x*mm.DEG_PER_RAD,follow.looking.y*mm.DEG_PER_RAD
+            following:=core.world_table_of(w,ecamera.Camera_Follow_State)
+            if live,ready:=core.get(following,camera);ready && live.ready {
+                v.follow.pivot_distance=linalg.length(live.pivot.position-seen.position)
+                v.follow.yaw_deg,v.follow.pitch_deg=live.looking.x*mm.DEG_PER_RAD,live.looking.y*mm.DEG_PER_RAD
             }
         }
     }
