@@ -55,6 +55,17 @@ a_stream_that_lies_about_its_pieces_is_refused :: proc(t:^testing.T) {
     for cut in ([?]int{0,1,4,STREAM_HEAD,STREAM_HEAD+3,size-1}) {
         testing.expectf(t,unpack(&decoder,stream[:cut],out)!=.None,"cut at %d",cut)
     }
+    envelope,envelope_error:=stream_read(stream,len(raw))
+    if !testing.expect_value(t,envelope_error,Error.None) {return}
+    first_piece:=envelope.first+int(u32_read(envelope.table))
+    prefix,prefix_error:=stream_read(stream[:first_piece],len(raw),size)
+    if !testing.expect_value(t,prefix_error,Error.None) {return}
+    testing.expect_value(t,stream_decode_pieces(&decoder,prefix,
+        stream[prefix.first:first_piece],out[:PACK_PIECE],len(raw),0,1),Error.None)
+    testing.expect_value(t,stream_decode_pieces(&decoder,prefix,
+        stream[prefix.first:first_piece-1],out[:PACK_PIECE],len(raw),0,1),Error.Truncated)
+    _,wrong_size:=stream_read(stream[:first_piece],len(raw),size+1)
+    testing.expect_value(t,wrong_size,Error.Corrupt)
     unknown:=make([]u8,size,context.temp_allocator)
     copy(unknown,stream)
     u32_write(&unknown[1],u32('?'))

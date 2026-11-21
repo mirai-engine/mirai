@@ -193,7 +193,10 @@ a_far_material_reads_its_maps_where_the_vertex_points :: proc(t:^testing.T) {
     }
     testing.expect(t,left>0 && right>0)
     // A texture level decodes as the far mesh reads it.
-    view:=Texture_View{info=&Texture_Info{width=2,height=1,mip_count=1,format=.RGBA8,flags={.Srgb},layers=1},mips=[]Texture_Mip{{2,1,0,8}},texels=pixels[:]}
+    view:=Texture_View{
+        info=&Texture_Info{width=2,height=1,mip_count=1,format=.RGBA8,flags={.Srgb},layers=1},
+        mips=[]Texture_Mip{{2,1,0,8}},texels=pixels[:],last=1,
+    }
     decoded,ok:=far_texture(view,context.temp_allocator)
     testing.expect(t,ok && decoded.width==2 && decoded.height==1 && decoded.texels[0]==[4]f32{1,0,0,1} && decoded.texels[1]==[4]f32{0,1,0,1})
 }

@@ -235,24 +235,28 @@ the_small_levels_of_a_texture_load_before_the_large_ones_arrive :: proc(t:^testi
     defer store.close(&full)
     partial,partial_ok:=parts_store(t,"asset-parts-levels-partial");if !partial_ok {return}
     defer store.close(&partial)
-    _,files:=kind_files(t,&types)
-    bytes:=files[3] // the texture stored as it is
-    object,_:=object_put(&full,bytes)
-    store.commit(&full)
+    names,files:=kind_files(t,&types)
+    bytes:[]u8
+    for name,i in names {if name=="texture Open" {bytes=files[i];break}}
+    if !testing.expect(t,len(bytes)>0) {return}
+    object,put_error:=object_put(&full,bytes)
+    if !testing.expect_value(t,put_error,Error.None) {return}
+    if !testing.expect_value(t,store.commit(&full),store.Error.None) {return}
     file:Asset
     if !testing.expect_value(t,asset_open(&file,bytes,context.temp_allocator),Error.None) {return}
     defer asset_close(&file)
-    table,_:=asset_table(&file,"texels")
-    chunk:=table.columns[0].chunk
-    entry:=blob_chunk(&file.blob,chunk)
-    if !testing.expect(t,entry.compression==.None) {return}
     mips,_:=asset_rows(&file,&types,"mips","",Texture_Mip)
     // The object begins with the groups before texels; its levels from 2 end where level 1 begins.
     groups_before:=u64(0)
     {
-        o,_:=store.object_open(&full,object)
-        groups_before=store.object_groups(&o)[chunk].offset
-        store.object_close(&o)
+        stored:Asset
+        if !testing.expect_value(t,asset_open_object(&stored,&full,object),Error.None) {return}
+        defer asset_close(&stored)
+        table,present:=asset_table(&stored,"texels")
+        if !testing.expect(t,present) {return}
+        chunk:=table.columns[0].chunk
+        if !testing.expect(t,blob_chunk(&stored.blob,chunk).compression==.None) {return}
+        groups_before=store.object_groups(&stored.object.object)[chunk].offset
     }
     small_end:=groups_before+u64(mips[1].offset)
     nodes,leaves:=leaves_of(&full,object)
@@ -287,6 +291,182 @@ the_small_levels_of_a_texture_load_before_the_large_ones_arrive :: proc(t:^testi
     _,absent:=store.object_open(&partial,store.address_of_bytes(transmute([]u8)string("absent")))
     testing.expect_value(t,absent,store.Error.Missing)
     testing.expect_value(t,asset_open_object(&a,&partial,store.address_of_bytes(transmute([]u8)string("absent")),context.temp_allocator),Error.Not_Here)
+}
+
+@(test)
+texture_promotions_read_without_the_resident_mip_leaves :: proc(t:^testing.T) {
+    types:Types;types_init(&types);defer types_destroy(&types)
+    full,ok:=parts_store(t,"asset-mip-range");if !ok {return}
+    defer store.close(&full)
+    partial,partial_ok:=parts_store(t,"asset-mip-range-partial");if !partial_ok {return}
+    defer store.close(&partial)
+    SIDE :: 1024
+    levels:=[2][]u8{}
+    for &level,i in levels {
+        side:=SIDE>>uint(i)
+        level=make([]u8,texture_level_size(.BC5,side,side),context.temp_allocator)
+        for &value,k in level {value=u8((k%251+i*7)%256)}
+    }
+    for fast in ([2]bool{false,true}) {
+        doc:Document
+        flags:=Texture_Flags{.Fast} if fast else {}
+        if !testing.expect_value(t,texture_document(&doc,&types,
+            {id={4,u64(int(fast)+1)},width=SIDE,height=SIDE,format=.BC5,mips=levels[:],
+                flags=flags}),
+            Error.None) {return}
+        defer document_destroy(&doc)
+        bytes,write_error:=document_bytes(&doc,context.temp_allocator)
+        if !testing.expect_value(t,write_error,Error.None) {return}
+        if fast {
+            buffer,allocation:=mem.alloc_bytes_non_zeroed(len(bytes)+1,
+                TEXTURE_BULK_ALIGNMENT,context.temp_allocator)
+            if !testing.expect(t,allocation==nil) {return}
+            unaligned:=buffer[1:]
+            copy(unaligned,bytes)
+            file:Asset
+            if !testing.expect_value(t,asset_open(&file,unaligned),Error.None) {return}
+            defer asset_close(&file)
+            view,open_error:=texture_open(&file,&types)
+            if !testing.expect_value(t,open_error,Error.None) ||
+                !testing.expect_value(t,texture_decode(&file,&types,&view,0,1),Error.None) {return}
+            got:=texture_mip(view,0)
+            testing.expect(t,mem.compare(got,levels[0])==0)
+            testing.expect(t,uintptr(raw_data(got))%TEXTURE_BULK_ALIGNMENT==0)
+        }
+        object,put_error:=object_put(&full,bytes)
+        if !testing.expect_value(t,put_error,Error.None) {return}
+        store.commit(&full)
+        a:Asset
+        if !testing.expect_value(t,asset_open_object(&a,&full,object),Error.None) {return}
+        view,open_error:=texture_open(&a,&types)
+        if !testing.expect_value(t,open_error,Error.None) {asset_close(&a);return}
+        table,_:=asset_table(&a,"texels")
+        texels:=store.object_groups(&a.object.object)[table.columns[0].chunk].offset
+        fresh:=texels+u64(view.mips[0].offset)
+        asset_close(&a)
+
+        nodes,leaves:=leaves_of(&full,object)
+        for node in nodes {chunk_copy(&full,&partial,node)}
+        for leaf in leaves {
+            if leaf.offset<texels || leaf.offset>=fresh {chunk_copy(&full,&partial,leaf.address)}
+        }
+        store.commit(&partial)
+        if !testing.expect_value(t,asset_open_object(&a,&partial,object),Error.None) {return}
+        defer asset_close(&a)
+        view,open_error=texture_open(&a,&types)
+        if !testing.expect_value(t,open_error,Error.None) {return}
+        testing.expect_value(t,.Fields in view.info.flags,!fast)
+        testing.expect_value(t,texture_decode(&a,&types,&view,0),Error.Not_Here)
+        if !testing.expect_value(t,texture_decode(&a,&types,&view,0,1),Error.None) {return}
+        testing.expect(t,texture_check(view) && mem.compare(texture_mip(view,0),levels[0])==0)
+        testing.expect(t,texture_mip(view,1)==nil && len(view.texels)==len(levels[0]))
+    }
+}
+
+@(test)
+texture_stream_promotions_read_only_the_covering_pieces :: proc(t:^testing.T) {
+    types:Types
+    types_init(&types)
+    defer types_destroy(&types)
+    full,ok:=parts_store(t,"asset-stream-mip-range")
+    if !ok {return}
+    defer store.close(&full)
+    partial,partial_ok:=parts_store(t,"asset-stream-mip-range-partial")
+    if !partial_ok {return}
+    defer store.close(&partial)
+
+    SIDE :: 4096
+    levels:[3][]u8
+    for &level,mip in levels {
+        side:=SIDE>>uint(mip)
+        level=make([]u8,texture_level_size(.BC5,side,side),context.temp_allocator)
+        entropy:=u32(mip)+1
+        for &value,i in level {
+            if i&16!=0 {continue}
+            entropy~=entropy<<13
+            entropy~=entropy>>17
+            entropy~=entropy<<5
+            value=u8(entropy)
+        }
+    }
+    doc:Document
+    if !testing.expect_value(t,texture_document(&doc,&types,{
+        id={4,3},width=SIDE,height=SIDE,format=.BC5,mips=levels[:],
+    },context.temp_allocator),Error.None) {return}
+    defer document_destroy(&doc)
+    doc.codecs=.Open
+    bytes,write_error:=document_bytes(&doc,context.temp_allocator,.Balanced)
+    if !testing.expect_value(t,write_error,Error.None) {return}
+    file:Asset
+    if !testing.expect_value(t,asset_open(&file,bytes),Error.None) {return}
+    defer asset_close(&file)
+    expected,read_error:=texture_open(&file,&types)
+    if !testing.expect_value(t,read_error,Error.None) {return}
+    table,found:=asset_table(&file,"texels")
+    if !testing.expect(t,found) {return}
+    main:=table.columns[0].chunk
+    entry:=blob_chunk(&file.blob,main)
+    if !testing.expect_value(t,entry.compression,.Stream) {return}
+    testing.expect(t,.Fields in expected.info.flags)
+    stored:=blob_stored(&file.blob,entry)
+    stream,stream_error:=stream_read(stored,int(entry.uncompressed_size))
+    if !testing.expect_value(t,stream_error,Error.None) {return}
+    start:=int(expected.mips[0].offset)
+    if !testing.expect(t,stream.count>1 && start>PACK_PIECE && start<2*PACK_PIECE &&
+        int(u32_read(stream.table))>store.CHUNK_MAX) {return}
+
+    // A Store can supply a Stream container through its native groups.
+    writer,begin_error:=store.put_begin(&full)
+    if !testing.expect_value(t,begin_error,store.Error.None) {return}
+    defer store.put_abandon(&writer)
+    cuts: [dynamic]int
+    defer delete(cuts)
+    append(&cuts,stream.first)
+    for piece in 0..<stream.count {
+        append(&cuts,cuts[len(cuts)-1]+int(u32_read(stream.table[piece*4:])))
+    }
+    count:=int(file.blob.header.chunk_count)
+    for i in 0..<count {
+        e:=blob_chunk(&file.blob,i)
+        boundaries:=cuts[:len(cuts)-1] if i==main else nil
+        result:=store.put_native(&writer,u32(e.tag),u32(e.index),e.alignment_log2,
+            blob_stored(&file.blob,e),boundaries)
+        if !testing.expect_value(t,result,store.Error.None) {return}
+    }
+    object,_,put_error:=store.put_finish(&writer,bytes[:HEADER_SIZE+count*CHUNK_ENTRY_SIZE])
+    if !testing.expect_value(t,put_error,store.Error.None) ||
+        !testing.expect_value(t,store.commit(&full),store.Error.None) {return}
+    original,open_error:=store.object_open(&full,object)
+    if !testing.expect_value(t,open_error,store.Error.None) {return}
+    defer store.object_close(&original)
+    main_offset:=store.object_groups(&original)[main].offset
+    skip_start,skip_end:=main_offset+u64(cuts[0]),main_offset+u64(cuts[1])
+    nodes,leaves:=leaves_of(&full,object)
+    for node in nodes {chunk_copy(&full,&partial,node)}
+    omitted:=0
+    for leaf in leaves {
+        if leaf.offset>=skip_start && leaf.offset<skip_end {omitted+=1;continue}
+        chunk_copy(&full,&partial,leaf.address)
+    }
+    if !testing.expect(t,omitted>0) ||
+        !testing.expect_value(t,store.commit(&partial),store.Error.None) {return}
+    promoted:Asset
+    if !testing.expect_value(t,asset_open_object(&promoted,&partial,object),Error.None) {return}
+    defer asset_close(&promoted)
+    view,view_error:=texture_open(&promoted,&types)
+    if !testing.expect_value(t,view_error,Error.None) {return}
+    testing.expect_value(t,texture_decode(&promoted,&types,&view,0),Error.Not_Here)
+    if !testing.expect_value(t,texture_decode(&promoted,&types,&view,0,1),Error.None) {return}
+    testing.expect(t,texture_check(view) && mem.compare(texture_mip(view,0),levels[0])==0)
+    testing.expect(t,texture_mip(view,1)==nil && len(view.texels)==len(levels[0]))
+
+    // The first piece is smaller than the promotion. Corruption there is immaterial to it.
+    for &byte in stored[cuts[0]:cuts[1]] {byte=0}
+    testing.expect_value(t,texture_decode(&file,&types,&expected,0,1),Error.None)
+    for &byte in stored[cuts[1]:cuts[2]] {byte=0}
+    testing.expect_value(t,texture_decode(&file,&types,&expected,0,1),Error.Corrupt)
+    u32_write(raw_data(stored[STREAM_HEAD:]),u32_read(raw_data(stored[STREAM_HEAD:]))+1)
+    testing.expect_value(t,texture_decode(&file,&types,&expected,0,1),Error.Corrupt)
 }
 
 // Meta and groups that lie about the asset fail it with an error: a directory

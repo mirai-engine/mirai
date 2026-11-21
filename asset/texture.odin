@@ -106,7 +106,7 @@ Texture_View :: struct {
     mips:[]Texture_Mip,
     texels:[]u8,
     source:^Import_Info,
-    first:int, // the first level texels holds: those before it were not decoded
+    first,last:int, // [first,last) of mips; texels starts at the offset of mip last-1
 }
 
 // Bytes of one image of a level of a size, in a format.
@@ -279,19 +279,19 @@ texture_open :: proc(a:^Asset,types:^Types) -> (view:Texture_View,error:Error) {
     view.mips=asset_rows(a,types,"mips","",Texture_Mip) or_return
     view.source=import_info(a,types) or_return
     if !texture_levels_check(view.info,view.mips) {return {},.Corrupt}
-    view.first=len(view.mips)
+    view.first,view.last=len(view.mips),len(view.mips)
     return view,.None
 }
 
-// Decodes into memory of the asset the levels of an open texture from the
-// level from to the last, its smallest: those lie at the start of the stream,
-// and only the pieces that hold them decode. Restores the blocks of their
-// fields and of their layouts, which restore whole: one that holds from
-// restores from its largest level, which becomes view.first.
-texture_decode :: proc(a:^Asset,types:^Types,view:^Texture_View,from:int) -> Error {
+// Decodes [from,before) into memory of the asset. If from lies inside a block
+// layout run, the view starts at the beginning of that run.
+texture_decode :: proc(a:^Asset,types:^Types,view:^Texture_View,from:int,
+    before:=max(int)) -> Error {
     if !texture_levels_check(view.info,view.mips) {return .Invalid}
-    from:=clamp(from,0,len(view.mips)-1)
     mips,info:=view.mips,view.info
+    from:=clamp(from,0,len(mips)-1)
+    before:=min(before,len(mips))
+    if before<=from {return .Invalid}
     table,found:=asset_table(a,"texels")
     if !found {return .Not_Found}
     column,column_found:=table_column(table,"")
@@ -299,118 +299,113 @@ texture_decode :: proc(a:^Asset,types:^Types,view:^Texture_View,from:int) -> Err
     byte,known:=types_index(types,u8)
     if !known {return types.error}
     if !asset_column_matches(a,table,column,types.hashes[byte]) {return .Corrupt}
-    // The bytes the levels from `from` take once restored, and those of the stream that hold them.
-    end:=0
-    for mip in mips[from:] {end=max(end,int(mip.offset)+int(mip.size))}
-    stored:=end
-    runs:[]Texture_Layout_Run
-    // Of each run: where its payload starts in texels, its size, and where its blocks start and
-    // how many bytes they take once restored.
-    payloads,sizes,restores,spans:[TEXTURE_MAX_MIPS]int
+    chunk:=table.columns[column].chunk
+    entry:=blob_chunk(&a.blob,chunk)
+    if entry.uncompressed_size!=u64(table.rows) {return .Corrupt}
+
+    start:=int(mips[before-1].offset)
+    end:=int(mips[from].offset)+int(mips[from].size)
     if _,laid:=asset_table(a,TEXTURE_TABLE_LAYOUTS);laid {
-        runs=asset_rows(a,types,TEXTURE_TABLE_LAYOUTS,"",Texture_Layout_Run) or_return
-        if texture_block_bytes(info.format)!=16 || .Fields in info.flags || len(runs)==0 || len(runs)>len(mips) || runs[0].level!=0 {return .Corrupt}
-        at:=0
+        runs:=asset_rows(a,types,TEXTURE_TABLE_LAYOUTS,"",Texture_Layout_Run) or_return
+        if texture_block_bytes(info.format)!=16 || .Fields in info.flags ||
+            len(runs)==0 || len(runs)>len(mips) || runs[0].level!=0 {return .Corrupt}
+        offsets:[TEXTURE_MAX_MIPS+1]int
+        first,last:=len(runs),0
+        restored_start:=start
         #reverse for run,i in runs {
-            last:=int(runs[i+1].level)-1 if i+1<len(runs) else len(mips)-1
-            if int(run.level)>last {return .Corrupt}
-            // Levels of blocks of 16 bytes are whole multiples of 16: a run of them lies with no gap between.
-            largest,smallest:=mips[run.level],mips[last]
+            next:=int(runs[i+1].level) if i+1<len(runs) else len(mips)
+            if int(run.level)>=next {return .Corrupt}
+            largest,smallest:=mips[run.level],mips[next-1]
             blocks,size,read_error:=texture.layout_read(run.layout,run.header)
             if read_error==.Unknown_Format {return .Codec_Missing}
-            if read_error!=.None || u64(smallest.offset)+u64(blocks)*16!=u64(largest.offset)+u64(largest.size) {return .Corrupt}
-            payloads[i],sizes[i],restores[i],spans[i]=at,size,int(smallest.offset),blocks*16
-            at+=size
-            if int(run.level)<=from && from<=last {
-                from=int(run.level)
-                stored,end=at,int(largest.offset)+int(largest.size)
+            if read_error!=.None ||
+                u64(smallest.offset)+u64(blocks)*16!=u64(largest.offset)+u64(largest.size) {
+                return .Corrupt
+            }
+            offsets[i]=offsets[i+1]+size
+            if int(run.level)<before && next>from {
+                if last==0 {
+                    last=i+1
+                    restored_start=int(smallest.offset)
+                }
+                first=i
             }
         }
-        if at!=table.rows {return .Corrupt}
-    } else if end>table.rows {return .Corrupt}
-    if .Fields in info.flags && !texture_fields_format(info.format) {return .Corrupt}
-    data,owned:=texels_read(a,table,column,stored) or_return
-    switch {
-    case runs!=nil:
-        restored:=asset_alloc(a,end,TEXTURE_BULK_ALIGNMENT) or_return
+        if offsets[0]!=table.rows {return .Corrupt}
+        from=int(runs[first].level)
+        end=int(mips[from].offset)+int(mips[from].size)
+        payload_buffer:[]u8
+        defer mem.free_bytes(payload_buffer,a.allocator)
+        payload:=texels_read(a,table,column,offsets[last],offsets[first],1,&payload_buffer) or_return
+        restored:=asset_alloc(a,end-restored_start,TEXTURE_BULK_ALIGNMENT) or_return
         decoder:=asset_decoder(a) or_return
-        for run,i in runs {
-            if int(run.level)<from {continue}
-            switch texture.layout_decode(decoder.layout,run.layout,run.header,data[payloads[i]:][:sizes[i]],restored[restores[i]:][:spans[i]]) {
+        for i in first..<last {
+            run:=runs[i]
+            next:=int(runs[i+1].level) if i+1<len(runs) else len(mips)
+            mip:=mips[run.level]
+            low:=int(mips[next-1].offset)-restored_start
+            high:=int(mip.offset)+int(mip.size)-restored_start
+            switch texture.layout_decode(decoder.layout,run.layout,run.header,
+                payload[offsets[i+1]-offsets[last]:offsets[i]-offsets[last]],restored[low:high]) {
             case .None:
             case .Unknown_Format: return .Codec_Missing
             case .Out_Of_Memory: return .Out_Of_Memory
             case .Corrupt: return .Corrupt
             }
         }
-        data=restored
-    case .Fields in info.flags && owned:
-        largest:=0
-        for mip in mips[from:] {largest=max(largest,int(mip.size))}
-        planes,alloc_error:=make([]u8,largest,a.allocator)
-        if alloc_error!=nil {return .Out_Of_Memory}
-        defer delete(planes,a.allocator)
-        for mip in mips[from:] {
-            level:=data[mip.offset:][:mip.size]
-            copy(planes,level)
-            texture_fields_join(info.format,planes[:mip.size],level)
+        view.texels=restored[start-restored_start:]
+    } else if .Fields in info.flags {
+        if !texture_fields_format(info.format) {return .Corrupt}
+        plane_buffer:[]u8
+        defer mem.free_bytes(plane_buffer,a.allocator)
+        planes:=texels_read(a,table,column,start,end,1,&plane_buffer) or_return
+        joined:=asset_alloc(a,end-start,TEXTURE_BULK_ALIGNMENT) or_return
+        at:=0
+        #reverse for mip in mips[from:before] {
+            low:=int(mip.offset)-start
+            high:=low+int(mip.size)
+            copy(joined[at:low],planes[at:low])
+            texture_fields_join(info.format,planes[low:high],joined[low:high])
+            at=high
         }
-    case .Fields in info.flags:
-        joined:=asset_alloc(a,end,TEXTURE_BULK_ALIGNMENT) or_return
-        for mip in mips[from:] {texture_fields_join(info.format,data[mip.offset:][:mip.size],joined[mip.offset:][:mip.size])}
-        data=joined
+        view.texels=joined
+    } else {
+        view.texels=texels_read(a,table,column,start,end,TEXTURE_BULK_ALIGNMENT) or_return
     }
-    view.texels,view.first=data[:end],from
+    view.first,view.last=from,before
     return .None
 }
 
-// The first size bytes of the texels column: when the chunk is a stream and
-// they are fewer than all, only the pieces that hold them decode. owned: the
-// bytes are memory of the asset that nothing else reads.
 @(private="file")
-texels_read :: proc(a:^Asset,table:^Asset_Table,column:int,size:int) -> (data:[]u8,owned:bool,error:Error) {
-    if size==0 {return nil,false,.None}
-    chunk:=table.columns[column].chunk
-    entry:=blob_chunk(&a.blob,chunk)
-    total:=int(entry.uncompressed_size)
-    if total!=table.rows || size>total {return nil,false,.Corrupt}
-    // Of the store, only the chunks that hold the first size bytes are read.
-    if entry.compression==.None && a.object!=nil && !table.columns[column].ready && size<total {
-        stored:=asset_stored_prefix(a,chunk,size) or_return
-        return stored[:size],false,.None
+texels_read :: proc(a:^Asset,table:^Asset_Table,column,start,end,alignment:int,
+    temporary:^[]u8=nil) -> (data:[]u8,error:Error) {
+    if start<0 || end<start || end>table.rows {return nil,.Corrupt}
+    if start==end {return nil,.None}
+    target:=&table.columns[column]
+    if target.ready {return target.data[start:end],.None}
+    chunk:=target.chunk
+    if blob_chunk(&a.blob,chunk).compression==.None {
+        if start==0 && end==table.rows && temporary==nil {
+            return asset_column_data(a,table,column)
+        }
+        return asset_stored_range(a,chunk,start,end,alignment,temporary)
     }
-    if entry.compression==.None || table.columns[column].ready {
-        data=asset_column_data(a,table,column) or_return
-        return data[:size],false,.None
-    }
-    decoded:=total
-    // A stream restores whole pieces.
-    if size<total {decoded=min(total,(size+PACK_PIECE-1)/PACK_PIECE*PACK_PIECE)}
-    data=asset_alloc(a,decoded,TEXTURE_BULK_ALIGNMENT) or_return
-    decoder:=asset_decoder(a) or_return
-    if decoded==total {
-        stored:=asset_stored(a,chunk) or_return
-        chunk_decode(entry,stored,data,decoder) or_return
-    } else {
-        stored:=asset_stream_prefix(a,chunk,decoded) or_return
-        stream_unpack(&decoder.stream,stored,data,total) or_return
-    }
-    return data[:size],true,.None
+    return asset_stream_range(a,chunk,start,end,alignment,temporary)
 }
 
-// The bytes of a level, with every layer; empty for one before view.first.
+// The bytes of a level, with every layer; empty outside the decoded range.
 texture_mip :: proc(view:Texture_View,level:int) -> []u8 {
-    if level<view.first {return nil}
+    if level<view.first || level>=view.last {return nil}
     mip:=view.mips[level]
-    return view.texels[mip.offset:][:mip.size]
+    return view.texels[mip.offset-view.mips[view.last-1].offset:][:mip.size]
 }
 
-// The bytes of one layer of a level; empty for one before view.first.
+// The bytes of one layer; empty outside the decoded range or the image count.
 texture_layer :: proc(view:Texture_View,level,layer:int) -> []u8 {
-    if level<view.first {return nil}
-    mip:=view.mips[level]
-    size:=int(mip.size)/int(view.info.layers)
-    return view.texels[int(mip.offset)+layer*size:][:size]
+    bytes:=texture_mip(view,level)
+    if len(bytes)==0 || layer<0 || layer>=int(view.info.layers) {return nil}
+    size:=len(bytes)/int(view.info.layers)
+    return bytes[layer*size:][:size]
 }
 
 // Whether the info and the levels of a texture agree: sizes, format, layers
@@ -420,18 +415,23 @@ texture_levels_check :: proc(info:^Texture_Info,mips:[]Texture_Mip) -> bool {
     if info.format>max(Texture_Format) || !finite(info.alpha_coverage) {return false}
     if !texture_layers_valid(int(info.layers),int(info.width),int(info.height),info.flags) {return false}
     if int(info.mip_count)!=len(mips) || len(mips)==0 || len(mips)>texture_mip_count(int(info.width),int(info.height)) {return false}
-    for mip,i in mips {
+    end:=u64(0)
+    #reverse for mip,i in mips {
         width,height:=max(int(info.width)>>uint(i),1),max(int(info.height)>>uint(i),1)
-        if int(mip.width)!=width || int(mip.height)!=height || int(mip.size)!=texture_level_size(info.format,width,height)*int(info.layers) {return false}
+        if int(mip.width)!=width || int(mip.height)!=height ||
+            int(mip.size)!=texture_level_size(info.format,width,height)*int(info.layers) {
+            return false
+        }
+        offset:=(end+TEXTURE_BULK_ALIGNMENT-1)&~u64(TEXTURE_BULK_ALIGNMENT-1)
+        if u64(mip.offset)!=offset {return false}
+        end=offset+u64(mip.size)
     }
     return true
 }
 
-// texture_levels_check, and the levels from view.first inside the texels.
 texture_check :: proc(view:Texture_View) -> bool {
-    if !texture_levels_check(view.info,view.mips) || view.first<0 || view.first>=len(view.mips) {return false}
-    for mip in view.mips[view.first:] {
-        if u64(mip.offset)+u64(mip.size)>u64(len(view.texels)) {return false}
-    }
-    return true
+    if !texture_levels_check(view.info,view.mips) || view.first<0 ||
+        view.last>len(view.mips) || view.first>=view.last {return false}
+    mip:=view.mips[view.first]
+    return u64(mip.offset-view.mips[view.last-1].offset)+u64(mip.size)<=u64(len(view.texels))
 }

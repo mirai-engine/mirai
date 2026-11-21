@@ -9,6 +9,7 @@ import "mirai:rhi"
 import "mirai:rhi/shared_device"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "mirai:store"
 
 @(test)
 loaded_textures_take_the_limits_the_renderer_changes_to :: proc(t:^testing.T) {
@@ -73,8 +74,8 @@ loaded_textures_take_the_limits_the_renderer_changes_to :: proc(t:^testing.T) {
 }
 
 // A texture an instance shows holds the levels the frames sample: far away,
-// those of side render.TEXTURE_TAIL; near, all of them, read again from its
-// file. Its handle stays, and the materials that name it with it.
+// those of side render.TEXTURE_TAIL; near, fresh ones read from the Store.
+// Its handle stays, and the materials that name it with it.
 @(test)
 a_texture_holds_the_levels_the_frames_sample :: proc(t:^testing.T) {
     device:=shared_device.take_or_skip(t,hardware_rt=false)
@@ -96,9 +97,27 @@ a_texture_holds_the_levels_the_frames_sample :: proc(t:^testing.T) {
         if side==1 {break}
     }
     id:=base.Asset_Id{9,9}
-    testing.expect_value(t,asset.texture_save(fmt.tprintf("%s/stone.tex",root),&types,{id=id,width=SIZE,height=SIZE,format=.RGBA8,flags={.Srgb},mips=mips[:]}),asset.Error.None)
+    doc:asset.Document
+    if !testing.expect_value(t,asset.texture_document(&doc,&types,
+        {id=id,width=SIZE,height=SIZE,format=.RGBA8,flags={.Srgb},mips=mips[:]}),
+        asset.Error.None) {return}
+    defer asset.document_destroy(&doc)
+    bytes,encoded:=asset.document_bytes(&doc,context.temp_allocator)
+    if !testing.expect_value(t,encoded,asset.Error.None) {return}
+    shelf,opened:=store.open(fmt.tprintf("%s/store",root),context.temp_allocator)
+    if !testing.expect_value(t,opened,store.Error.None) {return}
+    defer store.close(&shelf)
+    object,stored:=asset.object_put(&shelf,bytes)
+    if !testing.expect_value(t,stored,asset.Error.None) {return}
+    if !testing.expect_value(t,store.commit(&shelf),store.Error.None) {return}
+    dependencies:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    header,found_header:=asset.object_header(&shelf,object,&dependencies)
+    if !testing.expect_value(t,found_header,asset.Error.None) {return}
+    listing:=[]asset.Package_Listed{{path="stone.tex",id=id,kind=asset.KIND_TEXTURE,
+        state=.Built,object=object,header=header,dependencies=dependencies[:]}}
     a:Assets
-    if !testing.expect(t,assets_init(&a,{root=root,capacity=8,renderer=r})) {return}
+    if !testing.expect(t,assets_init(&a,{root=root,capacity=8,renderer=r,listed=listing,
+        store_root=shelf.root})) {return}
     defer assets_destroy(&a)
     width :: proc(r:^render.Renderer,texture:^Assets_Texture) -> u32 {
         return rhi.texture_desc(r.device,r.textures.textures[texture.handle-1]).width
@@ -132,7 +151,7 @@ a_texture_holds_the_levels_the_frames_sample :: proc(t:^testing.T) {
             found:bool
             prepared.source,found=assets_source(a,id,context.allocator)
             if !testing.expect(t,found,loc=loc) {return}
-            assets_prepare(&prepared,assets_limits(a),types)
+            assets_prepare(&prepared,assets_limits(a),types,held=requests[0].held)
             defer assets_prepared_free(&prepared)
             testing.expect_value(t,render.texture_levels_queue(r,requests[0],prepared.levels.data),render.Texture_Levels_Result.Set,loc=loc)
             for render.texture_upload_pending(r,requests[0]) {testing.expect(t,render.renderer_frame(r,{camera=camera}),r.error,loc=loc)}
@@ -172,13 +191,16 @@ a_texture_holds_the_levels_the_frames_sample :: proc(t:^testing.T) {
     found:bool
     prepared.source,found=assets_source(&a,id,context.allocator)
     if !testing.expect(t,found) {return}
-    assets_prepare(&prepared,assets_limits(&a),&types)
+    assets_prepare(&prepared,assets_limits(&a),&types,held=requests[0].held)
     defer assets_prepared_free(&prepared)
+    testing.expect_value(t,len(prepared.levels.data.levels),requests[0].held-requests[0].level)
     testing.expect_value(t,render.texture_levels_queue(r,requests[0],prepared.levels.data),render.Texture_Levels_Result.Set)
     testing.expect_value(t,render.texture_levels_queue(r,requests[0],prepared.levels.data),render.Texture_Levels_Result.Busy)
     testing.expect(t,render.texture_upload_pending(r,requests[0]) && width(r,texture)==u32(render.TEXTURE_TAIL),"the levels have not gone yet")
     for frames:=0;frames<8 && render.texture_upload_pending(r,requests[0]);frames+=1 {testing.expect(t,render.renderer_frame(r,{camera=look(0.06)}),r.error)}
     testing.expect(t,!render.texture_upload_pending(r,requests[0]),"they went")
+    testing.expect_value(t,render.texture_levels_queue(r,requests[0],prepared.levels.data),
+        render.Texture_Levels_Result.Stale)
     testing.expect_value(t,width(r,texture),u32(SIZE))
     testing.expect(t,render.renderer_frame(r,{camera=look(0.06)}),r.error)
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))

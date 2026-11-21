@@ -253,7 +253,8 @@ Block_Record :: struct {
 // A stream into all of dst, which is its decoded size.
 unpack :: proc(d:^Stream_Decoder,src,dst:[]u8) -> Error {
     if d==nil {return .Invalid}
-    return stream_unpack(d,src,dst,len(dst))
+    s:=stream_read(src,len(dst)) or_return
+    return stream_unpack(d,s,src,dst)
 }
 
 @(private)
@@ -265,7 +266,7 @@ Stream :: struct {
 }
 
 @(private)
-stream_read :: proc "contextless" (src:[]u8,total:int) -> (s:Stream,error:Error) {
+stream_read :: proc "contextless" (src:[]u8,total:int,stored_size:=-1) -> (s:Stream,error:Error) {
     if len(src)<STREAM_HEAD || src[0]!=STREAM_VERSION || total<0 || total>=PACK_MAX {return {},.Corrupt}
     s.format=data.Format(u32_read(&src[1]))
     s.count=int(u32_read(&src[5]))
@@ -275,30 +276,39 @@ stream_read :: proc "contextless" (src:[]u8,total:int) -> (s:Stream,error:Error)
     s.table=([^]u8)(&src[STREAM_HEAD])
     sum:=u64(s.first)
     for piece in 0..<s.count {sum+=u64(u32_read(s.table[piece*4:]))}
-    if sum!=u64(len(src)) {return {},.Corrupt}
+    size:=len(src) if stored_size<0 else stored_size
+    if sum!=u64(size) || s.format==STORED && sum!=u64(s.first+total) {
+        return {},.Corrupt
+    }
     return s,.None
 }
 
-// The pieces of a stream of total raw bytes that dst holds whole, from the first.
-@(private)
-stream_unpack :: proc(d:^Stream_Decoder,src,dst:[]u8,total:int) -> Error {
-    s:=stream_read(src,total) or_return
-    if len(dst)>total {return .Invalid}
+@(private="file")
+stream_unpack :: proc(d:^Stream_Decoder,s:Stream,src,dst:[]u8) -> Error {
     if s.format==STORED {
-        if len(src)-s.first!=total {return .Corrupt}
         copy(dst,src[s.first:])
         return .None
     }
+    return stream_decode_pieces(d,s,src[s.first:],dst,len(dst),0,s.count)
+}
+
+// src and dst begin at the first selected piece.
+@(private)
+stream_decode_pieces :: proc(d:^Stream_Decoder,s:Stream,src,dst:[]u8,total,first,last:int) -> Error {
     if d.data==nil {return .Invalid}
-    at:=s.first
-    for piece in 0..<s.count {
+    at,written:=0,0
+    for piece in first..<last {
         raw:=min(total-piece*PACK_PIECE,PACK_PIECE)
-        if piece*PACK_PIECE+raw>len(dst) {break}
+        if raw>len(dst)-written {return .Invalid}
         size:=int(u32_read(s.table[piece*4:]))
+        if size>len(src)-at {return .Truncated}
         if raw>0 {
-            if error:=data.decode(d.data,s.format,src[at:][:size],dst[piece*PACK_PIECE:][:raw]);error!=.None {return error_of(error)}
+            if result:=data.decode(d.data,s.format,src[at:][:size],dst[written:][:raw]);result!=.None {
+                return error_of(result)
+            }
         }
         at+=size
+        written+=raw
     }
     return .None
 }
@@ -330,9 +340,17 @@ piece_decoders_destroy :: proc(p:^Piece_Decoders) {
 @(private)
 stream_chunk :: proc(d:^Decoder,src,dst:[]u8) -> Error {
     s:=stream_read(src,len(dst)) or_return
-    if d.pieces==nil || s.count<=1 || d.worker<0 || d.worker>=len(d.pieces.decoders) {return stream_unpack(&d.stream,src,dst,len(dst))}
+    if s.format==STORED {return stream_unpack(&d.stream,s,src,dst)}
+    return stream_chunk_pieces(d,s,src[s.first:],dst)
+}
+
+@(private)
+stream_chunk_pieces :: proc(d:^Decoder,s:Stream,src,dst:[]u8) -> Error {
+    if d.pieces==nil || s.count<=1 || d.worker<0 || d.worker>=len(d.pieces.decoders) {
+        return stream_decode_pieces(&d.stream,s,src,dst,len(dst),0,s.count)
+    }
     work:=Stream_Work{src=src,dst=dst,decoders=d.pieces}
-    at:=s.first
+    at:=0
     for piece in 0..<s.count {
         work.starts[piece]=at
         at+=int(u32_read(s.table[piece*4:]))
