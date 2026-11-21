@@ -499,7 +499,7 @@ read_default :: proc(info:^core.Table_Info,allocator:=context.temp_allocator) ->
 capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,desc:Capture_Desc={},allocator:=context.allocator) -> (report:Report,error:Error) {
     id_table:=core.world_table_of(w,core.Id)
     parent_table:=core.world_table_of(w,core.Parent)
-    hierarchy:=capture_storage(w,core.Hierarchy)
+    hierarchy:=core.world_storage_read_of(core.world_read(w),core.Hierarchy)
     if id_table==nil || parent_table==nil || hierarchy.ptr==nil {return {},.Invalid}
     ids,parents:=id_table,parent_table
     names:=core.world_table_of(w,core.Name)
@@ -590,7 +590,7 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
 
     table_rows:=make([dynamic]u32,context.temp_allocator)
     images:=make([dynamic]u8,context.temp_allocator)
-    pending:=unresolved_map(capture_storage(w,Unresolved_References))
+    pending:=unresolved_map(core.world_storage_read_of(core.world_read(w),Unresolved_References))
     for &info,at in w.info.tables {
         value_type:=&types.tables[at]
         if info.place!=w.place || is_structural(info.type) || info.derived || value_type.type==serial.TYPE_NONE {continue}
@@ -644,16 +644,6 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
         if carry(w,scene,previous,&report)!=.None {return report,.Out_Of_Memory}
     }
     return report,.None
-}
-
-// Read a storage during serialization without advancing its write revision.
-capture_storage :: proc(w:core.World_Ref,$T:typeid) -> core.Ref(T) {
-    for &s in w.info.storages {
-        if s.place==w.place && s.type==T && !s.by_world {
-            return core.ref(cast(^T)(uintptr(w.data)+s.offset))
-        }
-    }
-    return {}
 }
 
 @(private)

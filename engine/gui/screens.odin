@@ -73,7 +73,7 @@ instance_slot :: proc "contextless" (is_world:bool,player:int) -> int {return is
 // The screens in order, the lowest left out past SCREEN_CAPACITY; a hidden
 // one only while it still shows something of its last build.
 @(private)
-plan_screens :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,screens:^core.Table(UI_Screen,.Read),hidden:^core.Table(render.Hidden,.Read),parents:^core.Table(core.Parent,.Read),seats:^core.Table(inp.Seat,.Read),seat_state:core.Ref(inp.Seats),moves:^core.Table(inp.Move_Input,.Read),time:core.Time,local_count:int,problems:^core.Problems) {
+plan_screens :: proc(gui:^Gui,app:^host.App,world:core.World_Read,screens:^core.Table(UI_Screen,.Read),hidden:^core.Table(render.Hidden,.Read),parents:^core.Table(core.Parent,.Read),seats:^core.Table(inp.Seat,.Read),seat_state:core.Ref(inp.Seats),moves:^core.Table(inp.Move_Input,.Read),time:core.Time,local_count:int,problems:^core.Problems) {
     Candidate :: struct {entity:core.Entity,screen:UI_Screen,hiding:bool}
     ordered:[SCREEN_CAPACITY]Candidate
     count:=0
@@ -169,7 +169,7 @@ Widget_Candidate :: struct {
 // out of sight keeps its instance, and one on a mesh its texture, without
 // being built.
 @(private)
-plan_widgets :: proc(gui:^Gui,app:^host.App,drawn:^render.Render_Sync,world:core.World_Ref,widgets:^core.Table(World_Widget,$A),worlds:^core.Table(core.World_Transform,$B),meshes_of:^core.Table(render.Mesh_Renderer,$C),hidden:^core.Table(render.Hidden,$D),parents:^core.Table(core.Parent,$E),time:core.Time,players:int,problems:^core.Problems,preview:=false) {
+plan_widgets :: proc(gui:^Gui,app:^host.App,drawn:^render.Render_Sync,world:core.World_Read,widgets:^core.Table(World_Widget,$A),worlds:^core.Table(core.World_Transform,$B),meshes_of:^core.Table(render.Mesh_Renderer,$C),hidden:^core.Table(render.Hidden,$D),parents:^core.Table(core.Parent,$E),time:core.Time,players:int,problems:^core.Problems,preview:=false) {
     clear(&gui.candidates)
     split:=players>1 && gui.views[1].known
     for row in 0..<core.count(widgets) {
@@ -373,7 +373,7 @@ asked_report :: proc(gui:^Gui,assets:^host.Assets,asked:^Asked_Name,slots:^Insta
 // types of the world change, or when a text of another language names a path
 // it does not read. -1 when there is nothing to build.
 @(private)
-instance_get :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,e:core.Entity,slot:int,asset:base.Asset_Id,bound:core.Entity,problems:^core.Problems) -> (index:int,content:^host.Content_Ui) {
+instance_get :: proc(gui:^Gui,app:^host.App,world:core.World_Read,e:core.Entity,slot:int,asset:base.Asset_Id,bound:core.Entity,problems:^core.Problems) -> (index:int,content:^host.Content_Ui) {
     content=host.content_ui(app,asset)
     is_world:=slot>0
     found:=instance_find(gui,e,slot)
@@ -458,7 +458,7 @@ instance_free :: proc(gui:^Gui,instance:^Instance) {
 // What the paths of the interfaces of a world read: its components and
 // storages, by their names.
 @(private)
-Bind :: struct {gui:^Gui,app:^host.App,world:core.World_Ref}
+Bind :: struct {gui:^Gui,app:^host.App,world:core.World_Read}
 
 @(private)
 bind_host :: proc(b:^Bind) -> ui.Bind_Host {
@@ -520,12 +520,20 @@ bind_fetch :: proc(user:rawptr,name:u64,entity:base.Entity) -> (data:rawptr,stam
     b:=(^Bind)(user)
     source:=bind_named(b,name)
     if source==nil {return}
-    if source.storage {return core.world_storage(b.world,source.type),0}
-    table,_:=core.world_table(b.world,source.type)
+    if source.storage {return core.world_storage_read(b.world,source.type),0}
+    table,_:=core.world_table(core.World_Ref(b.world),source.type)
     if table==nil {return}
     row:=core.raw_row(table,core.Entity(entity))
     if row<0 {return}
     return core.raw_value(table,source.info,row),table.stamps[row]
+}
+
+@(private)
+bind_fetch_write :: proc(user:rawptr,name:u64,_:base.Entity) -> (data:rawptr,stamp:u64) {
+    b:=(^Bind)(user)
+    source:=bind_named(b,name)
+    if source==nil || !source.storage {return}
+    return core.world_storage(core.World_Ref(b.world),source.type),0
 }
 
 // The rows on of the table of a component: a List that names it shows them.
@@ -534,7 +542,7 @@ bind_rows :: proc(user:rawptr,name:u64) -> (data:rawptr,count,stride:int,stamp:u
     b:=(^Bind)(user)
     source:=bind_named(b,name)
     if source==nil || source.storage {return}
-    table,_:=core.world_table(b.world,source.type)
+    table,_:=core.world_table(core.World_Ref(b.world),source.type)
     if table==nil || table.on<=0 {return}
     // The version only grows, with every write and every row that comes, goes or moves.
     return core.raw_value(table,source.info,0),table.on,source.info.size,table.version
@@ -544,7 +552,7 @@ bind_rows :: proc(user:rawptr,name:u64) -> (data:rawptr,count,stride:int,stamp:u
 // read of the game. False when the entity it reads does not have a
 // component its paths name.
 @(private)
-values_refresh :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,instance:^Instance,problems:^core.Problems) -> bool {
+values_refresh :: proc(gui:^Gui,app:^host.App,world:core.World_Read,instance:^Instance,problems:^core.Problems) -> bool {
     // What a widget wrote stays shown until its events went to the game, which writes it or not.
     all:=!instance.copied
     if instance.edited {
@@ -574,7 +582,7 @@ values_refresh :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,instance:^Ins
 // storage writes it itself, and one bound to a component asks the game, which
 // writes it. The event is queued all the same.
 @(private)
-screen_build :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,ctx:^ui.Context,s:^Surface,instance:^Instance,entry:^Planned,problems:^core.Problems,area:ui.Id=0,area_rect:ui.Rect={}) {
+screen_build :: proc(world:core.World_Read,gui:^Gui,app:^host.App,ctx:^ui.Context,s:^Surface,instance:^Instance,entry:^Planned,problems:^core.Problems,area:ui.Id=0,area_rect:ui.Rect={}) {
     content:=entry.content
     focus_restore(ctx,instance,entry.top)
     requests_apply(gui,ctx,instance,content,problems)
@@ -596,6 +604,7 @@ screen_build :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,ctx:^ui.Context
     }
     bind:=Bind{gui=gui,app=app,world=world}
     host_of:=bind_host(&bind)
+    host_of.fetch=bind_fetch_write
     for event in events[:built.count] {
         append(&gui.pending,event_of(entry.entity,event,1 if entry.world else ctx.scale))
         if event.kind==.Changed {

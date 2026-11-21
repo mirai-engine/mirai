@@ -342,10 +342,10 @@ progress_write :: proc(progress:^core.Table(Animation_Progress),animations:^core
 }
 
 @(step="fixed",loops="game editor",stage="react",after="animation_sample animation_fields")
-animation_advance :: proc(transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read),worlds:^core.Table(core.World_Transform,.Read),requests:^Animation_Requests,runtime:^Modifier_Runtime,playback:^Playback,world:core.World_Ref,queries:core.Ref(core.World_Queries),time:core.Time,skeletons:core.Ref(Skeleton_Assets),problems:^core.Problems,motion:^Motion_Runtime,characters:^Character_Assets,verticals:^core.Table(core.Vertical,.Read),paces:^core.Table(core.Own_Pace,.Read),clock:core.Clock,places:^core.Places) {
+animation_advance :: proc(transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read),worlds:^core.Table(core.World_Transform,.Read),requests:^Animation_Requests,runtime:^Modifier_Runtime,playback:^Playback,world:core.World_Read,queries:core.Ref(core.World_Queries),time:core.Time,skeletons:core.Ref(Skeleton_Assets),problems:^core.Problems,motion:^Motion_Runtime,characters:^Character_Assets,verticals:^core.Table(core.Vertical,.Read),paces:^core.Table(core.Own_Pace,.Read),clock:core.Clock,places:^core.Places) {
     if !playback.prepared {return}
     modifier_take(runtime,characters,requests,problems,time.dt)
     inputs:=Constraint_Inputs{worlds,skeletons.ptr,problems}
-    ground_inputs:=Grounding_Inputs{core.world_query(world,queries),core.read(transforms),parents,problems,verticals}
+    ground_inputs:=Grounding_Inputs{core.world_query_read(world,queries),core.read(transforms),parents,problems,verticals}
     animation_finish(playback,inputs,runtime,transforms,parents,time.dt,ground_inputs,motion,characters,core.take(&requests.final_poses),paces,clock,places)
 }

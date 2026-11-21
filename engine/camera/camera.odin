@@ -184,7 +184,9 @@ Sight :: struct {
 // sees through, where it looks, whatever the mode of that camera. False
 // without a camera.
 aim :: proc(sight:Sight,body:core.Entity) -> (origin,direction:[3]f32,ok:bool) {
-    camera,_:=camera_selected(sight.shown,sight.seats,sight.cameras,sight.hierarchy,input.seat_of(sight.seat_state,body))
+    seat:=input.seat_of(sight.seat_state,body)
+    if seat==core.NONE {return}
+    camera,_:=camera_selected(sight.shown,sight.seats,sight.cameras,sight.hierarchy,seat)
     placed:=core.get(sight.worlds,camera) or_return
     return placed.position,mm.quat_forward(placed.rotation),true
 }
@@ -313,15 +315,26 @@ override_set :: proc(cameras_state:^Cameras,r:Camera_Override) -> bool {
 
 // The modes asked for, the lens of the overrides, the turns asked for and
 // every camera that follows: the only writer of Camera_Follow and of the lens.
+@(params)
+Follow_View :: struct {
+    world:core.World_Read,
+    worlds:^core.Table(core.World_Transform,.Read),
+    parents:^core.Table(core.Parent,.Read),
+    moves:^core.Table(input.Move_Input,.Read),
+    shown:core.Ref(Cameras),
+    look_actions:input.Frame_Input_Of(input.Look_Action),
+    queries:core.Ref(core.World_Queries),
+    verticals:^core.Table(core.Vertical,.Read),
+}
+
 @(step="late")
 camera_follow :: proc(
-    world:core.World_Ref,follows:^core.Table(Camera_Follow),states:^core.Table(Camera_Follow_State),cameras:^core.Table(render.Camera),transforms:^core.Table(core.Transform),
-    worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),
-    seats:^core.Table(input.Seat,.Read),moves:^core.Table(input.Move_Input,.Read),shown:core.Ref(Cameras),
-    seat_state:core.Ref(input.Seats),look_actions:input.Frame_Input_Of(input.Look_Action),queries:core.Ref(core.World_Queries),look_input:^Camera_Input,changes:^Camera_Changes,
-    verticals:^core.Table(core.Vertical,.Read),frame:core.Frame_Time,time:core.Time,problems:^core.Problems,
-    shakes:^Camera_Shakes,
+    follows:^core.Table(Camera_Follow),states:^core.Table(Camera_Follow_State),
+    cameras:^core.Table(render.Camera),transforms:^core.Table(core.Transform),
+    view:Follow_View,look_input:^Camera_Input,changes:^Camera_Changes,
+    frame:core.Frame_Time,time:core.Time,problems:^core.Problems,shakes:^Camera_Shakes,
 ) {
+    seats,seat_state:=view.look_actions.seats,view.look_actions.state
     // Restore the lens before changing its mode or adding a shake.
     for e,row in states.entities {
         if states.values[row].fov_shaken {
@@ -331,9 +344,9 @@ camera_follow :: proc(
         }
         if core.raw_row(core.raw(follows),e)<0 {core.remove(states,e)}
     }
-    for change in core.take(&changes.queue) {mode_take(follows,states,cameras,worlds,change,problems)}
+    for change in core.take(&changes.queue) {mode_take(follows,states,cameras,view.worlds,change,problems)}
     shakes_take(follows,states,shakes,problems)
-    for item in shown.overrides {
+    for item in view.shown.overrides {
         if !item.active || item.fov<=0 {continue}
         if camera:=core.edit(cameras,item.camera);camera!=nil && (camera.fov!=item.fov || camera.near!=item.near) {camera.fov,camera.near=item.fov,item.near}
     }
@@ -347,23 +360,24 @@ camera_follow :: proc(
         state.idle=0
     }
     player:=input.focused(seat_state,seats)
+    query:=core.world_query_read(view.world,view.queries)
     for row in 0..<core.count(follows) {
         e:=core.entity_at(follows,row)
         follow:=&follows.values[row]
-        target:=follow_target(e,follow.target,parents,seats,seat_state,player)
+        target:=follow_target(e,follow.target,view.parents,seats,seat_state,player)
         state:=follow_state(states,e,problems)
         if state==nil {continue}
         // The look of the local seat that drives its target turns it, from the devices of its slot.
         if seat,local:=core.get(seats,input.seat_of(seat_state,target));local && input.seat_local(seat) && follow.turn && state.ready && follow.mode==.Orbit && !follow.aim {
-            if turn:=input.slot_frame_state(look_actions,int(seat.slot),.Look).vector*input.LOOK_SPEED;turn!={} {
+            if turn:=input.slot_frame_state(view.look_actions,int(seat.slot),.Look).vector*input.LOOK_SPEED;turn!={} {
                 low,high:=pitch_limits(follow^)
                 state.looking={mm.angle_wrap(state.looking.x-turn.x),clamp(state.looking.y-turn.y,low,high)}
                 state.idle=0
             }
         }
-        vertical:=core.vertical_of(verticals,target)
-        if placed,ok:=core.get(worlds,target);ok && core.has(verticals,target) {vertical=vertical_between(vertical,placed,frame.alpha)}
-        follow_one(e,follow,state,target,transforms,worlds,parents,moves,vertical,core.world_query(world,queries),frame,time.dt,core.edit(cameras,e))
+        vertical:=core.vertical_of(view.verticals,target)
+        if placed,ok:=core.get(view.worlds,target);ok && core.has(view.verticals,target) {vertical=vertical_between(vertical,placed,frame.alpha)}
+        follow_one(e,follow,state,target,transforms,view.worlds,view.parents,view.moves,vertical,query,frame,time.dt,core.edit(cameras,e))
     }
 }
 

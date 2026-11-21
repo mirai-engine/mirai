@@ -39,7 +39,7 @@ Kept_File :: enum u8 {Profile,Options}
 // The hash of the bytes a file of the player holds. A field that is not saved
 // does not count.
 @(private)
-kept_hashes :: proc(w:core.World_Ref,app:^host.App) -> (hashes:[Kept_File]u64) {
+kept_hashes :: proc(w:core.World_Read,app:^host.App) -> (hashes:[Kept_File]u64) {
     ws:=w.info.schema if w.info.schema!=nil else core.world_schema_make(w.info,context.temp_allocator)
     for storage,i in w.info.storages {
         if storage.persist && storage.place==w.place && ws!=nil {
@@ -54,11 +54,11 @@ kept_hashes :: proc(w:core.World_Ref,app:^host.App) -> (hashes:[Kept_File]u64) {
 }
 
 @(private)
-kept_write :: proc(file:Kept_File,w:core.World_Ref,app:^host.App,state:^Save_State,problems:^core.Problems) {
+kept_write :: proc(file:Kept_File,w:core.World_Read,app:^host.App,state:^Save_State,problems:^core.Problems) {
     error:Error
     switch file {
-    case .Profile: error=profile_write(w,app,state,problems)
-    case .Options: error=options_write(w,app)
+    case .Profile: error=profile_write(core.World_Ref(w),app,state,problems)
+    case .Options: error=options_write(core.World_Ref(w),app)
     }
     if error==.None || error==.Unavailable {return}
     core.report(problems,core.NONE,"save.kept","the %v of the player was not written: %s; it is written again when it changes, or check the permissions of its folder",file,error_text(error))
@@ -66,7 +66,7 @@ kept_write :: proc(file:Kept_File,w:core.World_Ref,app:^host.App,state:^Save_Sta
 
 // Looks at the files of the player and writes the ones that rest after changing.
 @(private)
-kept_watch :: proc(work:^Save_Work,w:core.World_Ref,app:^host.App,state:^Save_State,dt:f32,problems:^core.Problems) {
+kept_watch :: proc(work:^Save_Work,w:core.World_Read,app:^host.App,state:^Save_State,dt:f32,problems:^core.Problems) {
     if !work.watching {
         work.watching=true
         hashes:=kept_hashes(w,app)
@@ -84,7 +84,7 @@ kept_watch :: proc(work:^Save_Work,w:core.World_Ref,app:^host.App,state:^Save_St
 
 // What has not been written yet, when the world goes.
 @(private)
-kept_flush :: proc(work:^Save_Work,w:core.World_Ref,app:^host.App,state:^Save_State,problems:^core.Problems) {
+kept_flush :: proc(work:^Save_Work,w:core.World_Read,app:^host.App,state:^Save_State,problems:^core.Problems) {
     if !work.watching {return}
     hashes:=kept_hashes(w,app)
     for &kept,file in work.kept {

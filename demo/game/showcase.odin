@@ -36,10 +36,15 @@ game_showcase :: proc(
     lift:=core.entity_named(names,SHOWCASE_LIFT)
     animated:=core.has(animations,lift)
     lift_time,_,_,has_progress:=anim.animation_progress(playback.ptr,lift)
-    for &showcase in core.writable(shown) {
-        showcase.trips+=arrivals
-        if !animated {continue}
-        showcase.running=anim.animation_playing(playback.ptr,lift)
-        if has_progress {showcase.charge=1-abs(lift_time/SHOWCASE_RIDE_SECONDS*2-1)}
+    running:=animated && anim.animation_playing(playback.ptr,lift)
+    for row in 0..<core.count(shown) {
+        was:=core.at(shown,row)
+        next:=was
+        next.trips+=arrivals
+        if animated {
+            next.running=running
+            if has_progress {next.charge=1-abs(lift_time/SHOWCASE_RIDE_SECONDS*2-1)}
+        }
+        if next!=was {core.edit_at(shown,row)^=next}
     }
 }
