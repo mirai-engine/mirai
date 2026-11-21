@@ -578,10 +578,7 @@ build_here :: proc(l:^Library_State,p:^asset.Package,key:store.Hash) -> (f:Found
         b,error:=asset.build_get(s,hash,l.temp)
         if error!=.None || b.package_id!=p.id || b.key!=key || b.final!=(at==0) {continue}
         if !asset.build_whole(s,&b) {continue}
-        if at==1 && !l.options.fast_textures {
-            f.fast_here=true
-            continue
-        }
+        if at==1 && !l.options.fast_textures {return {build=b,hash=hash,fast_here=true},false}
         return {build=b,hash=hash,final=at==0},true
     }
     return
@@ -832,6 +829,12 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
         chosen_given=found && l.asked[fmt.tprintf("%s/%s",asset.REF_BUILDS,select)]
         if chosen_given {report.fetched+=1}
     }
+    finalized:=false
+    if !found && keyed && f.fast_here {
+        if hash,upgrade_error:=importer.finalize_build(s,&f.build,l.options.worker);upgrade_error==.None {
+            f.hash,f.final,found,finalized=hash,true,true,true
+        }
+    }
     if !found {
         if origin_here {
             reingest(l,top,&entry,&p,source,documents,prefab,"this engine reads no build of it here",report)
@@ -864,8 +867,11 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     if !follow && previous==f.hash && !chosen_given {return}
     // A model's prefab is written from its source in the game's types: the import does it, with the documents.
     if prefab && origin_here && plugins_world(l)!=nil {
-        reingest(l,top,&entry,&p,source,documents,prefab,"it is followed into the project",report)
-        return
+        _,prefab_here:=asset.registry_find(l.registry,prefab_id(&p))
+        if !finalized || !prefab_here {
+            reingest(l,top,&entry,&p,source,documents,prefab,"it is followed into the project",report)
+            return
+        }
     }
     documents_write(l,top,&entry,&p,&f.build,documents,report)
     if prefab && follow {warn_missing_prefab(l,&p,report)}

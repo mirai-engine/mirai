@@ -488,12 +488,12 @@ a_refresh_reads_a_source_again_with_the_formats_of_the_plugins :: proc(t:^testin
 // that file beside it, which it reads and writes as a model of its import,
 // and with kit a document of the kind KIT of that version. code: the
 // identity of the code of its plugin; version: that of its format.
-@(private="file") Level_Importer :: struct {runs:int,code:u64,kit:u16,version:u16}
-@(private="file") LEVEL_IMPORTER :: "Levels"
+@(private) Level_Importer :: struct {runs:int,code:u64,kit:u16,version:u16}
+@(private) LEVEL_IMPORTER :: "Levels"
 @(private="file") KIT :: asset.Fourcc(u32('K')|u32('I')<<8|u32('T')<<16|u32('S')<<24)
-@(private="file")
+@(private)
 level_claims :: proc(path:string,head:[]u8) -> bool {return strings.has_prefix(string(head),"LEVEL ")}
-@(private="file")
+@(private)
 level_run :: proc(state:rawptr,source:string,options:importer.Import_Options,allocator:mem.Allocator) -> (report:importer.Import_Report,scene:string,error:importer.Error) {
     (^Level_Importer)(state).runs+=1
     bytes,_:=os.read_entire_file(source,context.temp_allocator)
