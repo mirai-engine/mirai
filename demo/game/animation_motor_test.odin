@@ -51,6 +51,7 @@ Animation_Input_Fixture :: struct {
     assets:host.Assets,app:host.App,
     transforms:core.Table(core.Transform),worlds:core.Table(core.World_Transform),parents:core.Table(core.Parent),names:core.Table(core.Name),hierarchy:core.Hierarchy,propagation:core.Propagation,jumps:core.Jumps,
     inputs:core.Table(inp.Move_Input),drives:core.Table(locomotion.Locomotion_Drive),parkours:core.Table(locomotion.Parkour_State),motors:core.Table(Animation_Motor),
+    motor_states:core.Table(Animation_Motor_State),
     walks:core.Table(locomotion.Walk),flights:core.Table(locomotion.Fly),swims:core.Table(locomotion.Swim),remotes:core.Table(core.Remote),character_moves:core.Table(phys.Character_Move),locomotion_requests:locomotion.Locomotion_Requests,
     characters:core.Table(phys.Character),locomotion_states:core.Table(locomotion.Locomotion_State),rigids:core.Table(phys.Rigid_Body),colliders:core.Table(phys.Collider),joints:core.Table(phys.Joint),meshes:core.Table(render.Mesh_Renderer),
     body_states:core.Table(core.Motion),replicas:core.Table(core.Pose_Target),character_states:core.Table(phys.Character_State),joint_states:core.Table(phys.Joint_State),
@@ -111,10 +112,10 @@ animation_motor_drives_the_sampled_root_motion_and_leaves_other_bodies_as_they_w
     characters:anim.Character_Assets;defer anim.character_assets_free(&characters)
     anim.animation_prepare(core.read(&f.animations),core.read(&f.attachments),core.read(&f.meshes),core.read(&f.sources),&f.modifiers,&f.playback,&characters,&f.skeletons,&f.app,nil)
     anim.animation_sample(core.read(&f.animations),core.read(&progress),&f.played,&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.remotes),&f.requests,&f.events,&f.modifiers,&f.playback,&characters,&f.skeletons,&f.app,time,{},nil,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
-    delta,present:=anim.animation_root_delta(&f.playback,motor)
+    delta,present:=anim.animation_root_delta(core.ref(&f.playback),motor)
     testing.expect(t,present && abs(delta.translation.x-time.dt)<1e-5 && abs(anim.playing_pose(&f.playback.states[0],.Local)[1].position.x-time.dt)<1e-5)
     before_control,_:=core.get(&f.transforms,controlled);before_motor,_:=core.get(&f.transforms,motor)
-    animation_motor_drive(&f.motors,&f.drives,core.read(&f.worlds),{&f.playback},time)
+    animation_motor_drive(core.read(&f.motors),&f.motor_states,&f.drives,core.read(&f.worlds),core.ref(&f.playback),time,nil)
     core.table_settle(&f.drives,&f.entities)
     published_control,_:=core.get(&f.inputs,controlled);published_motor,_:=core.get(&f.drives,motor)
     // The clip advances 1 m/s: the motor asks for that velocity.

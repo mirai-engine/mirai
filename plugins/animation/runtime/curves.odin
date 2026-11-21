@@ -105,8 +105,7 @@ curves_accumulate :: proc(results:[]Curve_Output,library:^lib.Library,player:lib
     }
 }
 
-animation_curve :: proc(playback:^Playback,entity:core.Entity,name:string,slot:u8=0,default_value:f32=0) -> f32 {
-    if playback==nil {return default_value}
+animation_curve :: proc(playback:core.Ref(Playback),entity:core.Entity,name:string,slot:u8=0,default_value:f32=0) -> f32 {
     state:=constraint_playing(playback,entity)
     if state==nil || state.seen!=playback.frame {return default_value}
     curves:=playing_curves(state)
@@ -114,8 +113,7 @@ animation_curve :: proc(playback:^Playback,entity:core.Entity,name:string,slot:u
     return default_value
 }
 
-animation_vector :: proc(playback:^Playback,entity:core.Entity,name:string,slot:u8=0,default_value:mm.Vec4={}) -> mm.Vec4 {
-    if playback==nil {return default_value}
+animation_vector :: proc(playback:core.Ref(Playback),entity:core.Entity,name:string,slot:u8=0,default_value:mm.Vec4={}) -> mm.Vec4 {
     state:=constraint_playing(playback,entity)
     if state==nil || state.seen!=playback.frame {return default_value}
     curves:=playing_curves(state)
@@ -123,8 +121,7 @@ animation_vector :: proc(playback:^Playback,entity:core.Entity,name:string,slot:
     return default_value
 }
 
-animation_root_delta :: proc(playback:^Playback,entity:core.Entity) -> (Root_Delta,bool) {
-    if playback==nil {return ROOT_DELTA_DEFAULT,false}
+animation_root_delta :: proc(playback:core.Ref(Playback),entity:core.Entity) -> (Root_Delta,bool) {
     state:=constraint_playing(playback,entity)
     if state==nil || state.seen!=playback.frame || !state.root_enabled {return ROOT_DELTA_DEFAULT,false}
     return state.motion,true
@@ -132,8 +129,7 @@ animation_root_delta :: proc(playback:^Playback,entity:core.Entity) -> (Root_Del
 
 // The root motion of the tick that the actions of entity give its body: ok while one whose
 // body_move is not None plays.
-animation_body_motion :: proc(playback:^Playback,entity:core.Entity) -> (Body_Motion,bool) {
-    if playback==nil {return {},false}
+animation_body_motion :: proc(playback:core.Ref(Playback),entity:core.Entity) -> (Body_Motion,bool) {
     state:=constraint_playing(playback,entity)
     if state==nil || state.seen!=playback.frame || state.body_motion.move==.None {return {},false}
     return state.body_motion,true

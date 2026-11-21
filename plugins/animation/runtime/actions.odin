@@ -264,11 +264,11 @@ stack_slot_name :: proc(runtime:^Action_Runtime,entity:core.Entity,slot:int) -> 
 // A parameter the .character of an entity declares, for a tool: the weight of a layer, or an axis
 // of the space of one with its range, at the value set gave it or the one it has by itself.
 Stack_Parameter_Info :: struct {name:[64]u8 `mirai:"text"`,value,min,max:f32,axis:bool}
-stack_parameters :: proc(runtime:^Action_Runtime,characters:^Character_Assets,playback:^Playback,entity:core.Entity,out:[]Stack_Parameter_Info) -> (count:int) {
-    plan:=action_plan(runtime,entity);if plan==nil {return}
+stack_parameters :: proc(runtime:core.Ref(Action_Runtime),characters:core.Ref(Character_Assets),playback:core.Ref(Playback),entity:core.Entity,out:[]Stack_Parameter_Info) -> (count:int) {
+    plan:=action_plan(runtime.ptr,entity);if plan==nil {return}
     content:^Character_Content
-    if characters!=nil {for &value in characters.contents {if value.id==plan.asset && value.valid {content=&value}}}
-    state:=constraint_playing(playback,entity) if playback!=nil else nil
+    if characters.ptr!=nil {for &value in characters.contents {if value.id==plan.asset && value.valid {content=&value}}}
+    state:=constraint_playing(playback,entity)
     value_of :: proc(state:^Playing,name:u64,fallback:f32) -> f32 {
         if state!=nil {for parameter in state.parameters {if parameter.name==name && name!=0 {return parameter.value}}}
         return fallback
@@ -842,7 +842,7 @@ action_clock :: proc(runtime:^Action_Runtime,state:^Playing,content:^host.Conten
 actions_finish :: proc(runtime:^Action_Runtime,playback:^Playback,dt:f32) {
     if !finite(dt) || dt<0 {return}
     for &active in runtime.states {
-        state:=constraint_playing(playback,active.entity)
+        state:=constraint_playing(core.ref(playback),active.entity)
         if state==nil {continue}
         actions_layer_finish(runtime,state)
         for &slot,i in active.slots {

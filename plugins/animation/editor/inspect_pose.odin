@@ -37,7 +37,7 @@ pose_query :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.Enti
         authoring_failure(call,"names","Missing_Names",fmt.tprintf("one to %d bones or sockets",POSE_NAMES),"none","The Pose part needs the names of what to place",fix=POSE_NAMES_FIX)
         return
     }
-    query.skeleton=anim.pose_skeleton(core.world_storage_of(w,anim.Playback),e)
+    query.skeleton=anim.pose_skeleton(core.ref(core.world_storage_of(w,anim.Playback)),e)
     skeleton:=query.skeleton if query.skeleton!={} else rig_skeleton(s,w,e)
     if skeleton=={} || s.app==nil || s.app.shared==nil {return}
     cache:=core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Skeleton_Assets)
@@ -84,7 +84,7 @@ instance_pose :: proc(call:^api.Call,w:core.World_Ref,e:core.Entity,query:^Pose_
     }
     actor,placed:=core.world_of(core.world_table_of(w,core.Transform),core.world_table_of(w,core.Parent),e)
     if !placed {authoring_failure(call,"entity","Not_Placed","an entity with a transform","none","The entity has no transform",api.SERVER_ERROR);return}
-    pose,posed:=anim.pose_space(core.world_storage_of(w,anim.Playback),e,call.allocator,stage)
+    pose,posed:=anim.pose_space(core.ref(core.world_storage_of(w,anim.Playback)),e,call.allocator,stage)
     r.skeleton=query.skeleton
     r.transforms=make([]Instance_Pose_Transform,len(query.rows),call.allocator)
     for &row,i in query.rows {

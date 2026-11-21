@@ -107,8 +107,8 @@ control_result :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.
     playback:=core.world_storage_of(w,anim.Playback)
     if s.mode==.Edit {
         if value,ok:=editor.entity_get(w,e,anim.Animation);ok {out.playing=value.playing}
-    } else {out.playing=anim.animation_playing(playback,e)}
-    if time,_,_,ok:=anim.animation_progress(playback,e);ok {out.time=time}
+    } else {out.playing=anim.animation_playing(core.ref(playback),e)}
+    if time,_,_,ok:=anim.animation_progress(core.ref(playback),e);ok {out.time=time}
 }
 
 @(private)
@@ -310,7 +310,7 @@ preview :: proc(s:^editor.Session,call:^api.Call) {
     names:=core.world_table_of(world,core.Name)
     r:=api.call_result(call,Preview_Result)
     r.id=editor.api_entity_id(source,e)
-    r.time,_,r.ended,_=anim.animation_progress(core.world_storage_of(world,anim.Playback),e)
+    r.time,_,r.ended,_=anim.animation_progress(core.ref(core.world_storage_of(world,anim.Playback)),e)
     selected:^anim.Playing;for &state in playback.states {if state.entity==e {selected=&state;break}}
     r.program=preview_program(call,world,s.app,selected,animation)
     defer preview_trace_result(r,&trace,p)

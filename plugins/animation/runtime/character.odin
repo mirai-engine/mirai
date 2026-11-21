@@ -2,6 +2,7 @@ package anim
 
 import "core:mem"
 import "mirai:asset"
+import "mirai:core"
 import "mirai:host"
 import "mirai:std/base"
 import lib "mirai:std/anim"
@@ -278,8 +279,8 @@ animation_character :: proc(assets:^host.Assets,animation:Animation) -> base.Ass
     return animation.asset if found && record.kind==CHARACTER_KIND else {}
 }
 // The content of a set already read, without reading it again: nil when it is not valid.
-character_cached :: proc(cache:^Character_Assets,id:base.Asset_Id,hint:^i32=nil) -> ^Character_Content {
-    if cache==nil || id=={} {return nil}
+character_cached :: proc(cache:core.Ref(Character_Assets),id:base.Asset_Id,hint:^i32=nil) -> ^Character_Content {
+    if cache.ptr==nil || id=={} {return nil}
     row:=int(hint^)-1 if hint!=nil else -1
     if row<0 || row>=len(cache.contents) || cache.contents[row].id!=id {row=-1;for &content,i in cache.contents {if content.id==id {row=i;break}}}
     if row<0 || !cache.contents[row].valid {return nil}

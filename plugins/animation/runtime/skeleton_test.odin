@@ -122,14 +122,14 @@ skeleton_content_follows_a_skeleton_held_in_the_memory_of_the_registry :: proc(t
     test_world_settle(&w)
     state_get(&w.playback,one)
     state_get(&w.playback,two)
-    first,second:=constraint_playing(&w.playback,one),constraint_playing(&w.playback,two)
+    first,second:=constraint_playing(core.ref(&w.playback),one),constraint_playing(core.ref(&w.playback),two)
     if !testing.expect(t,skeleton_bind(&w.playback,first,content,nil,&w.transforms) &&
         skeleton_bind(&w.playback,second,content,nil,&w.transforms)) {return}
     testing.expect(t,raw_data(playing_topology(first).parents)==raw_data(playing_topology(second).parents) &&
         raw_data(playing_topology(first).rest)==raw_data(playing_topology(second).rest))
     clone:Playback;defer playback_free(&clone)
     if !testing.expect(t,playback_copy(&clone,&w.playback)) {return}
-    copied:=constraint_playing(&clone,one)
+    copied:=constraint_playing(core.ref(&clone),one)
     testing.expect(t,playing_topology(copied)==playing_topology(first))
     for slot in Pose_Buffer {
         testing.expect(t,raw_data(playing_pose(first,slot))!=raw_data(playing_pose(second,slot)) &&
@@ -211,7 +211,7 @@ skeleton_without_clips_evaluates_named_ik_and_pose_requests_without_bone_entitie
         rig_test_advance(&w,&app,{dt=1.0/60,playing=true})
         context=previous_context;app.allocator=previous_allocator;w.cache.allocator=previous_allocator
         if iteration>0 {testing.expect_value(t,failure.calls,0)}
-        pose,found:=animation_bone_transform(&w.playback,rig,bone_ref("foot"))
+        pose,found:=animation_bone_transform(core.ref(&w.playback),rig,bone_ref("foot"))
         testing.expect(t,found && linalg.length(pose.position-leg.target.position)<0.001)
     }
     testing.expect_value(t,len(w.playback.rigs),1)
@@ -252,7 +252,7 @@ skeleton_without_clips_evaluates_named_ik_and_pose_requests_without_bone_entitie
         }
         rig_test_settle(&w)
         rig_test_advance(&w,&app,{dt=1.0/60,playing=true})
-        pose,found:=animation_bone_transform(&w.playback,rig,bone_ref("foot"))
+        pose,found:=animation_bone_transform(core.ref(&w.playback),rig,bone_ref("foot"))
         if stage==3 || stage==5 {
             testing.expect(t,!found && len(w.playback.states)==0)
         } else {
@@ -281,7 +281,7 @@ preview_plays_the_clip_in_the_editor_and_returns_to_its_start_when_it_stops :: p
     rig_test_settle(&w)
     editor,preview:=core.Time{},core.Frame_Time{dt=0.25,alpha=1}
     upper:=mm.Quat(1)
-    time :: proc(w:^Rig_Test,rig:core.Entity) -> f32 {clip_time,_,_,_:=animation_progress(&w.playback,rig);return clip_time}
+    time :: proc(w:^Rig_Test,rig:core.Entity) -> f32 {clip_time,_,_,_:=animation_progress(core.ref(&w.playback),rig);return clip_time}
     for _ in 0..<2 {rig_test_advance(&w,&app,editor,preview)}
     testing.expect(t,time(&w,rig)==0 && playing_pose(&w.playback.states[0],.Local)[1].rotation==upper)
     core.edit(&w.animations,rig).preview=true
@@ -341,7 +341,7 @@ frames_played_again_while_a_clip_compressed_progress_as_they_did :: proc(t:^test
     _,remade:=make_world(t,&replayed,mesh_id,clips_id);defer rig_test_destroy(&replayed)
     if !made || !remade {return}
     time :: proc(w:^Rig_Test,rig:core.Entity) -> f32 {
-        clip_time,_,_,_:=animation_progress(&w.playback,rig)
+        clip_time,_,_,_:=animation_progress(core.ref(&w.playback),rig)
         return clip_time
     }
 
@@ -391,14 +391,14 @@ shared_profiles_accept_multiple_goals_at_the_origin_and_evaluate_without_stable_
     modifier(&w.requests,{rig=rig,kind=.Look,target=spatial_point({}),weight=1,enabled=true,goal=true},"foot")
     modifier(&w.requests,{rig=rig,kind=.IK,target=spatial_point({.75,.2,0}),weight=1,enabled=true,goal=true},"reach")
     step(&w,&app,cache)
-    prepared:=modifier_rig(&w.modifiers,rig)
+    prepared:=modifier_rig(core.ref(&w.modifiers),rig)
     testing.expect_value(t,len(prepared.ik_states),2)
     testing.expect_value(t,len(playing_pose(&w.playback.states[0],.Local)),4)
     testing.expect_value(t,modifier_override(prepared,.Look,0).target.position,mm.Vec3{})
     testing.expect_value(t,modifier_override(prepared,.IK,1).target.position,mm.Vec3{.75,.2,0})
     testing.expect_value(t,w.problems.count,0)
     copy:Modifier_Runtime;core.value_copy(&copy,&w.modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copy)
-    testing.expect(t,raw_data(modifier_rig(&copy,rig).ik_states)!=raw_data(prepared.ik_states) && raw_data(modifier_rig(&copy,rig).overrides)!=raw_data(prepared.overrides))
+    testing.expect(t,raw_data(modifier_rig(core.ref(&copy),rig).ik_states)!=raw_data(prepared.ik_states) && raw_data(modifier_rig(core.ref(&copy),rig).overrides)!=raw_data(prepared.overrides))
     before:=w.playback.binding_revision
     binding:=raw_data(prepared.ik_states)
     modifier(&w.requests,{rig=rig,kind=.IK,target=spatial_point({.6,.2,0}),weight=1,enabled=true,goal=true},"reach")
@@ -424,7 +424,7 @@ shared_profiles_accept_multiple_goals_at_the_origin_and_evaluate_without_stable_
     testing.expect_value(t,w.playback.states[0].skeleton,skeleton)
     core.remove(&w.animations,rig);rig_test_settle(&w)
     step(&w,&app,cache)
-    testing.expect(t,modifier_rig(&w.modifiers,rig)==nil)
+    testing.expect(t,modifier_rig(core.ref(&w.modifiers),rig)==nil)
 }
 
 @(test)
@@ -444,8 +444,8 @@ final_world_poses_update_skin_and_sockets_in_the_same_tick_without_stable_alloca
     binding:=BONE_ATTACHMENT_DEFAULT;binding.rig=rig;binding.bone=bone_ref("foot");binding.offset.position={0,0,.25}
     core.add(&w.attachments,socket,binding)
     rig_test_settle(&w);rig_test_advance(&w,&app,{dt=1.0/60,playing=true})
-    upper,upper_ok:=animation_bone_bind(&w.playback,rig,bone_ref("upper"))
-    foot,foot_ok:=animation_bone_bind(&w.playback,rig,bone_ref("foot"))
+    upper,upper_ok:=animation_bone_bind(core.ref(&w.playback),rig,bone_ref("upper"))
+    foot,foot_ok:=animation_bone_bind(core.ref(&w.playback),rig,bone_ref("foot"))
     testing.expect(t,upper_ok && foot_ok)
     for iteration in 0..<4 {
         a:=mm.Transform{{2+f32(iteration),3,0},mm.quat_axis_angle({0,0,1},.5),{1,1,1}}
@@ -457,14 +457,14 @@ final_world_poses_update_skin_and_sockets_in_the_same_tick_without_stable_alloca
         rig_test_advance(&w,&app,{dt=1.0/60,playing=true})
         context=previous_context;app.allocator=previous_allocator;w.cache.allocator=previous_allocator
         if iteration>0 {testing.expect_value(t,failure.calls,0)}
-        actual_a,ok_a:=animation_bone_transform(&w.playback,rig,bone_ref("upper"))
-        actual_b,ok_b:=animation_bone_transform(&w.playback,rig,bone_ref("foot"))
+        actual_a,ok_a:=animation_bone_transform(core.ref(&w.playback),rig,bone_ref("upper"))
+        actual_b,ok_b:=animation_bone_transform(core.ref(&w.playback),rig,bone_ref("foot"))
         testing.expect(t,ok_a && ok_b && linalg.length(actual_a.position-a.position)<.001 && linalg.length(actual_b.position-b.position)<.001)
         placed,_:=core.get(&w.transforms,socket)
         expected:=mm.transform_compose(b,binding.offset)
         testing.expect(t,linalg.length(placed.position-expected.position)<.001)
         sampled:[4]mm.Transform
-        count,revision,ok:=animation_sample_pose(&w.playback,rig,sampled[:])
+        count,revision,ok:=animation_sample_pose(core.ref(&w.playback),rig,sampled[:])
         testing.expect(t,ok && count==4 && revision==upper.revision && linalg.length(sampled[foot.index].position-b.position)>1)
     }
     stale:=upper;stale.revision+=1
@@ -490,11 +490,11 @@ partial_final_world_poses_blend_once_and_do_not_stretch_a_translated_chain :: pr
     core.add(&w.transforms,rig,core.from_math(mm.TRANSFORM_IDENTITY))
     core.add(&w.meshes,rig,{mesh=mesh_id})
     rig_test_settle(&w);rig_test_advance(&w,&app,{dt=1.0/60,playing=true})
-    parent,parent_ok:=animation_bone_bind(&w.playback,rig,bone_ref("upper"))
-    child,child_ok:=animation_bone_bind(&w.playback,rig,bone_ref("lower"))
+    parent,parent_ok:=animation_bone_bind(core.ref(&w.playback),rig,bone_ref("upper"))
+    child,child_ok:=animation_bone_bind(core.ref(&w.playback),rig,bone_ref("lower"))
     if !testing.expect(t,parent_ok && child_ok) {return}
-    original_parent,_:=animation_bone_transform(&w.playback,rig,bone_ref("upper"))
-    original_child,_:=animation_bone_transform(&w.playback,rig,bone_ref("lower"))
+    original_parent,_:=animation_bone_transform(core.ref(&w.playback),rig,bone_ref("upper"))
+    original_child,_:=animation_bone_transform(core.ref(&w.playback),rig,bone_ref("lower"))
     target_parent,target_child:=original_parent,original_child
     target_parent.position+={10,0,0};target_child.position+={10,0,0}
     for reversed in ([2]bool{false,true}) {
@@ -506,8 +506,8 @@ partial_final_world_poses_blend_once_and_do_not_stretch_a_translated_chain :: pr
             animation_pose_final(&w.requests,child,target_child,.5)
         }
         rig_test_advance(&w,&app,{dt=1.0/60,playing=true})
-        a,_:=animation_bone_transform(&w.playback,rig,bone_ref("upper"))
-        b,_:=animation_bone_transform(&w.playback,rig,bone_ref("lower"))
+        a,_:=animation_bone_transform(core.ref(&w.playback),rig,bone_ref("upper"))
+        b,_:=animation_bone_transform(core.ref(&w.playback),rig,bone_ref("lower"))
         testing.expect(t,linalg.length(a.position-original_parent.position-{5,0,0})<.001)
         testing.expect(t,linalg.length(b.position-original_child.position-{5,0,0})<.001)
         testing.expect(t,abs(linalg.length(b.position-a.position)-linalg.length(original_child.position-original_parent.position))<.001)
@@ -516,7 +516,7 @@ partial_final_world_poses_blend_once_and_do_not_stretch_a_translated_chain :: pr
     animation_pose_final(&w.requests,parent,target_parent)
     animation_pose_final(&w.requests,child,target_child,0)
     rig_test_advance(&w,&app,{dt=1.0/60,playing=true})
-    zero,_:=animation_bone_transform(&w.playback,rig,bone_ref("lower"))
+    zero,_:=animation_bone_transform(core.ref(&w.playback),rig,bone_ref("lower"))
     testing.expect(t,linalg.length(zero.position-original_child.position-{10,0,0})<.001)
     target_parent=original_parent;target_child=original_child
     turn:=mm.quat_axis_angle({0,0,1},.8)
@@ -526,7 +526,7 @@ partial_final_world_poses_blend_once_and_do_not_stretch_a_translated_chain :: pr
     animation_pose_final(&w.requests,child,target_child,.5)
     animation_pose_final(&w.requests,parent,target_parent,.5)
     rig_test_advance(&w,&app,{dt=1.0/60,playing=true})
-    rotated,_:=animation_bone_transform(&w.playback,rig,bone_ref("lower"))
+    rotated,_:=animation_bone_transform(core.ref(&w.playback),rig,bone_ref("lower"))
     expected:=mm.transform_interpolate(original_child,target_child,.5)
     testing.expect(t,linalg.length(rotated.position-expected.position)<.001 && mm.quat_angle(rotated.rotation,expected.rotation)<.001)
 }
@@ -631,7 +631,7 @@ body_labels_name_the_parts_and_regions_the_skeleton_keeps :: proc(t:^testing.T) 
     // A final pose asked for a part moves its bone.
     animation_pose_final(&w.requests,rig,bone_ref("@hand_l"),{position={2,3,4},rotation=1,scale={1,1,1}})
     rig_test_advance(&w,&app,{dt=1.0/60,playing=true})
-    moved,posed:=animation_bone_transform(&w.playback,rig,bone_ref("@hand_l"))
+    moved,posed:=animation_bone_transform(core.ref(&w.playback),rig,bone_ref("@hand_l"))
     testing.expect(t,posed && linalg.length(moved.position-mm.Vec3{2,3,4})<0.001)
     testing.expect_value(t,w.problems.count,0)
 }
@@ -774,11 +774,11 @@ rig_poses_do_not_depend_on_how_their_jobs_are_split :: proc(t:^testing.T) {
         for &w,k in worlds {step(&w,&app,budgets[k])}
         context=saved
         for rig in rigs {
-            owner:=constraint_playing(&worlds[0].playback,rig)
+            owner:=constraint_playing(core.ref(&worlds[0].playback),rig)
             if !testing.expect(t,owner!=nil && len(playing_pose(owner,.Sampled))==4) {return}
             moved||=playing_pose(owner,.Sampled)[2]!=playing_topology(owner).rest[2]
             for &w in worlds[1:] {
-                other:=constraint_playing(&w.playback,rig)
+                other:=constraint_playing(core.ref(&w.playback),rig)
                 same&&=other!=nil && slice.equal(playing_pose(other,.Sampled),playing_pose(owner,.Sampled)) && slice.equal(playing_pose(other,.Local),playing_pose(owner,.Local)) && other.motion==owner.motion
             }
         }

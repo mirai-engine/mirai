@@ -21,7 +21,7 @@ animation_mantle :: proc(states:^core.Table(locomotion.Locomotion_State,.Read),w
     for row in 0..<core.count(states) {
         if core.at(states,row).mode!=locomotion.MODE_MANTLING {continue}
         entity:=core.entity_at(states,row)
-        delta,rooted:=anim.animation_root_delta(playback.ptr,entity)
+        delta,rooted:=anim.animation_root_delta(playback,entity)
         placed,ok:=core.get(worlds,entity)
         if !rooted || !ok {continue}
         velocity:=root_velocity(delta.translation,placed,time.dt*core.pace_of(clock,paces,entity))

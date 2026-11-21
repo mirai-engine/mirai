@@ -365,7 +365,7 @@ rigs_retarget :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Runtim
         binding:=&rig.retarget_chain_states[slot]
         binding.diagnostic.valid=false
         if !enabled || weight<=0 {continue}
-        source:=constraint_playing(playback,state.leader) if state.stage==.Sampled else nil
+        source:=constraint_playing(core.ref(playback),state.leader) if state.stage==.Sampled else nil
         if source==nil || source==state || len(playing_pose(source,.Sampled))!=len(playing_topology(source).rest) {rig_problem(problems,state.entity,.Chain_Retarget,&config,.Source,state.leader);continue}
         if !rig_binding_current(binding,state) || binding.source!=source.entity || binding.source_bound!=source.bound || binding.source_generation!=source.generation {
             binding.ready=false

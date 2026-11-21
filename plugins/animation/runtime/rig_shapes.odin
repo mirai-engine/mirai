@@ -171,7 +171,7 @@ rig_shapes_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,rig:^Modifier_
 }
 
 // What the correctives of a rig add to the curve of this name hash in this tick.
-animation_corrective_curve :: proc(runtime:^Modifier_Runtime,entity:core.Entity,target:u64) -> f32 {
+animation_corrective_curve :: proc(runtime:core.Ref(Modifier_Runtime),entity:core.Entity,target:u64) -> f32 {
     rig:=modifier_rig(runtime,entity)
     if rig==nil {return 0}
     result:f32

@@ -57,7 +57,7 @@ preview_trace_sources_close :: proc(trace:^Preview_Trace) {
 }
 @(private)
 preview_trace_sources_prepare :: proc(call:^api.Call,trace:^Preview_Trace,cache:^anim.Source_Assets,state:^anim.Playing,content:^host.Content_Animation,assets:^host.Assets) -> bool {
-    ids:=anim.source_ids(cache,state)
+    ids:=anim.source_ids(core.ref(cache),state)
     if content==nil || len(ids)==0 || trace.source_generation==content.generation {return true}
     preview_trace_sources_close(trace)
     if trace.primary=={} {trace.primary=content.id}
@@ -109,11 +109,11 @@ preview_curve_name :: proc(trace:^Preview_Trace,hash:u64) -> string {
 @(private)
 preview_match :: proc(world:core.World_Ref,app:^host.App,entity:core.Entity) -> (result:Preview_Match_Result,ok:bool) {
     playback:=core.world_storage_of(world,anim.Playback)
-    value,matching:=anim.animation_match(playback,entity);if !matching {return}
+    value,matching:=anim.animation_match(core.ref(playback),entity);if !matching {return}
     result={available=true,forced=value.forced,time=value.time,rate=value.rate,speed=value.speed,cost=value.cost,searches=value.searches,jumps=value.jumps}
     for &state in playback.states {
         if state.entity!=entity {continue}
-        content:=anim.animation_playing_content(core.world_storage_of(core.world_ref(app.shared,world.info,.Shared),anim.Source_Assets),app,&state)
+        content:=anim.animation_playing_content(core.ref(core.world_storage_of(core.world_ref(app.shared,world.info,.Shared),anim.Source_Assets)),app,&state)
         if content!=nil {if clip:=lib.clip_find(&content.lib,value.clip);clip!=0 {result.clip=anim.source_clip_label(content,clip)}}
         break
     }
@@ -128,14 +128,14 @@ preview_program :: proc(call:^api.Call,world:core.World_Ref,app:^host.App,state:
     runtime:=&state.program;r.ready,r.error,r.fade_remaining=runtime.ready,runtime.error,max(0,state.inertia.state.duration-state.inertia.state.elapsed)
     parameters:=make([]anim.Stack_Parameter_Info,anim.STACK_PARAMETERS*2,call.allocator)
     characters:=core.world_storage_of(core.world_ref(app.shared,world.info,.Shared),anim.Character_Assets)
-    r.parameters=parameters[:anim.stack_parameters(core.world_storage_of(world,anim.Action_Runtime),characters,core.world_storage_of(world,anim.Playback),state.entity,parameters)]
+    r.parameters=parameters[:anim.stack_parameters(core.ref(core.world_storage_of(world,anim.Action_Runtime)),core.ref(characters),core.ref(core.world_storage_of(world,anim.Playback)),state.entity,parameters)]
     if match,ok:=preview_match(world,app,state.entity);ok {r.match=match}
     return
 }
 @(private)
 preview_leaf :: proc(cache:^anim.Source_Assets,state:^anim.Playing,content:^host.Content_Animation,player:lib.Player,source:Preview_Leaf_Source,key:u32,group:u16,layer:u8,outgoing:bool,weight:f32,mode:Preview_Sync) -> Preview_Leaf_Result {
     value:=Preview_Leaf_Result{source=source,key=key,group=group,layer=layer,outgoing=outgoing,weight=weight,sync_mode=mode}
-    if content!=nil && lib.clip_valid(&content.lib,player.clip) {value.clip=anim.source_clip_label(content,player.clip);value.animation=anim.source_clip_source(cache,state,player.clip);value.time=lib.player_time(&content.lib,player);value.phase=lib.player_normalized(&content.lib,player);value.duration=lib.clip_duration(&content.lib,player.clip)}
+    if content!=nil && lib.clip_valid(&content.lib,player.clip) {value.clip=anim.source_clip_label(content,player.clip);value.animation=anim.source_clip_source(core.ref(cache),state,player.clip);value.time=lib.player_time(&content.lib,player);value.phase=lib.player_normalized(&content.lib,player);value.duration=lib.clip_duration(&content.lib,player.clip)}
     return value
 }
 @(private)
@@ -144,7 +144,7 @@ preview_trace_frame :: proc(call:^api.Call,trace:^Preview_Trace,world:core.World
     playback:=core.world_storage_of(world,anim.Playback);if playback==nil {return true}
     state:^anim.Playing;for &value in playback.states {if value.entity==entity {state=&value;break}}
     if state==nil {return true}
-    description,_:=editor.entity_get(world,entity,anim.Animation);sources:=core.world_storage_of(core.world_ref(app.shared,world.info,.Shared),anim.Source_Assets);content:=anim.animation_playing_content(sources,app,state)
+    description,_:=editor.entity_get(world,entity,anim.Animation);sources:=core.world_storage_of(core.world_ref(app.shared,world.info,.Shared),anim.Source_Assets);content:=anim.animation_playing_content(core.ref(sources),app,state)
     if !preview_trace_sources_prepare(call,trace,sources,state,content,app.assets) {return false}
     r:=Preview_Trace_Result{tick=tick,dt=p.dt if tick>0 else 0,time=state.time,duration=state.duration,ended=state.ended,program=preview_program(call,world,app,state,description)}
     leaves:=make([dynamic]Preview_Leaf_Result,call.allocator)
@@ -196,7 +196,7 @@ preview_trace_frame :: proc(call:^api.Call,trace:^Preview_Trace,world:core.World
     diagnostics:=Preview_Diagnostics{program=state.program.error,skipped=playback.stats.skipped}
     if modifiers:=core.world_storage_of(world,anim.Modifier_Runtime);modifiers!=nil {diagnostics.modifiers_last_request_error=anim.modifier_request_error(modifiers,entity)}
     _,problems_total:=entity_problems(app,world,entity,"",diagnostics.problems[:]);diagnostics.problems_total=u32(problems_total)
-    if motion,ok:=anim.motion_inspect(core.world_storage_of(world,anim.Motion_Runtime),entity);ok {diagnostics.motion=motion.error}
+    if motion,ok:=anim.motion_inspect(core.ref(core.world_storage_of(world,anim.Motion_Runtime)),entity);ok {diagnostics.motion=motion.error}
     r.diagnostics=diagnostics
     rows:=len(r.leaves)+len(r.events)+len(r.curves)
     if trace.rows+rows>PREVIEW_TRACE_TOTAL {trace.truncated=true;return true}

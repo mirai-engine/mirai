@@ -26,13 +26,34 @@ INTERFACE_STYLES :: [3]string{"","minimal","neon"}
 INTERFACE_CHOICES :: 4
 INTERFACE_FLAGS :: 16
 
+Interface_Item_Setup :: struct {
+    item:core.Record(Item), // none: an empty slot
+    count:i32,
+}
+
+@(component)
+Interface_Demo_Setup :: struct {
+    player:[24]u8 `mirai:"text"`,
+    health,most:f32,
+    life:f32 `mirai:"min=0,max=1"`,
+    coins:i32,
+    seconds:f32,
+    cooldown:f32 `mirai:"min=0,max=1"`,
+    style,quality:i32,
+    subtitles:bool,
+    items:[INTERFACE_ITEMS]Interface_Item_Setup,
+    item_count:i32,
+    equipped:Interface_Item_Setup,
+    talk:core.Record(Dialogue_Line),
+}
+
 Interface_Item :: struct {
     item:core.Record(Item), // none: an empty slot
     count:i32,
     // What the interface shows of its row, in the language chosen.
-    name:[24]u8 `mirai:"text,transient,readonly"`,
-    icon:base.Asset_Id `mirai:"transient,hidden"`,
-    rarity:[16]u8 `mirai:"text,transient,hidden"`, // the variant of its slot
+    name:[24]u8 `mirai:"text,readonly"`,
+    icon:base.Asset_Id `mirai:"hidden"`,
+    rarity:[16]u8 `mirai:"text,hidden"`, // the variant of its slot
 }
 
 // An answer the dialogue offers: its row and its text.
@@ -42,7 +63,7 @@ Interface_Choice :: struct {
 }
 
 // What the interfaces of the scene show and edit.
-@(component)
+@(component,derived)
 Interface_Demo :: struct {
     player:[24]u8 `mirai:"text"`,
     health,most:f32,
@@ -56,34 +77,56 @@ Interface_Demo :: struct {
     items:[INTERFACE_ITEMS]Interface_Item,
     item_count:i32,
     equipped:Interface_Item,
-    talk:core.Record(Dialogue_Line), // the line the conversation T starts begins with
     // The conversation: the line it is at (none: over), the flags its answers
     // set, and what the dialogue shows of it.
-    line:core.Record(Dialogue_Line) `mirai:"transient"`,
-    flags:[INTERFACE_FLAGS]u64 `mirai:"transient,hidden"`, // name_hash of each
-    speaker:[32]u8 `mirai:"text,transient,readonly"`,
-    said:[256]u8 `mirai:"text,transient,readonly"`,
-    choices:[INTERFACE_CHOICES]Interface_Choice `mirai:"transient,readonly"`,
-    choice_count:i32 `mirai:"transient,readonly"`,
-    goes_on:bool `mirai:"transient,hidden"`, // a line without answers: the dialogue shows Continue
+    line:core.Record(Dialogue_Line),
+    flags:[INTERFACE_FLAGS]u64 `mirai:"hidden"`, // name_hash of each
+    speaker:[32]u8 `mirai:"text,readonly"`,
+    said:[256]u8 `mirai:"text,readonly"`,
+    choices:[INTERFACE_CHOICES]Interface_Choice `mirai:"readonly"`,
+    choice_count:i32 `mirai:"readonly"`,
+    goes_on:bool `mirai:"hidden"`, // a line without answers: the dialogue shows Continue
     // The generations of the tables and of the texts and the language the
     // texts shown are of: they are made again when one changes.
-    shown:[5]u64 `mirai:"transient,hidden"`,
+    shown:[5]u64 `mirai:"hidden"`,
+}
+
+@(step="fixed",loops="game editor")
+interface_demo_start :: proc(
+    setups:^core.Table(Interface_Demo_Setup,.Read),demos:^core.Table(Interface_Demo),problems:^core.Problems,
+) {
+    for e in demos.entities {
+        if !core.has(setups,e) {core.remove(demos,e)}
+    }
+    holder,found:=core.sole(setups)
+    if !found || core.has(demos,holder) {return}
+    demo:=demo_state(demos,holder,Interface_Demo{},problems)
+    if demo==nil {return}
+    config:=core.view_at(setups,0)
+    demo.player=config.player
+    demo.health,demo.most,demo.life=config.health,config.most,config.life
+    demo.coins,demo.seconds,demo.cooldown=config.coins,config.seconds,config.cooldown
+    demo.style,demo.quality,demo.subtitles=config.style,config.quality,config.subtitles
+    demo.item_count=config.item_count
+    for slot,i in config.items {demo.items[i].item,demo.items[i].count=slot.item,slot.count}
+    demo.equipped.item,demo.equipped.count=config.equipped.item,config.equipped.count
 }
 
 // What the interfaces asked for, the actions that open them and the time
 // that goes by.
 @(step="fixed",stage="react")
 interface_demo :: proc(
-    demos:^core.Table(Interface_Demo),screens:^core.Table(gui.UI_Screen),hidden:^core.Table(render.Hidden),
+    setups:^core.Table(Interface_Demo_Setup,.Read),demos:^core.Table(Interface_Demo),screens:^core.Table(gui.UI_Screen),hidden:^core.Table(render.Hidden),
     names:^core.Table(core.Name,.Read),ui_events:core.Ref(gui.UI_Events),actions:inp.Input_Of(Action),time:core.Time,
     preferences:core.Ref(gui.UI_Preferences),interface:^gui.Gui,
     items:core.Records(Item),lines:core.Records(Dialogue_Line),answers:core.Records(Dialogue_Choice),texts:^core.Texts,problems:^core.Problems,
 ) {
-    holder,found:=core.sole(demos)
+    holder,found:=core.sole(setups)
     if !found {return}
-    events:=ui_events
     demo:=core.edit(demos,holder)
+    if demo==nil {return}
+    config:=core.view_at(setups,0)
+    events:=ui_events
     hud,menu,inventory:=core.entity_named(names,INTERFACE_HUD),core.entity_named(names,INTERFACE_MENU),core.entity_named(names,INTERFACE_INVENTORY)
     dialogue:=core.entity_named(names,INTERFACE_DIALOGUE)
     dt:=f32(time.dt)
@@ -124,26 +167,25 @@ interface_demo :: proc(
                 moved:=clamp(max(row.stack,1)-to.count,0,from.count)
                 to.count+=moved
                 from.count-=moved
-                if from.count==0 {from^={}}
+                if from.count==0 {from.item={}}
             } else {
-                previous:=to^
-                to^=from^
-                from^=previous
+                interface_item_swap(to,from)
             }
+            demo.shown={}
         }
     }
     if drop,ok:=gui.dropped(events,inventory,"hand");ok && drop.from==base.name_hash("slot") {
         if b:=int(drop.from_item);b>=0 && b<INTERFACE_ITEMS {
-            previous:=demo.equipped
-            demo.equipped=demo.items[b]
-            demo.items[b]=previous
+            interface_item_swap(&demo.equipped,&demo.items[b])
+            demo.shown={}
         }
     }
 
     // The conversation: T starts it, an answer clicked goes where it leads,
     // and Continue goes on from a line without answers.
-    if inp.pressed(actions,.Talk) && demo.talk!={} && demo.line=={} {
-        demo.line,demo.flags=demo.talk,{}
+    if inp.pressed(actions,.Talk) && config.talk!={} && demo.line=={} {
+        demo.line=config.talk
+        demo.flags={}
         demo.shown={}
         render.set_hidden(hidden,dialogue,false)
     }
@@ -177,6 +219,13 @@ interface_demo :: proc(
     interface_dialogue_show(demo,lines,answers,texts,language,problems,holder)
 }
 
+@(private)
+interface_item_swap :: proc(a,b:^Interface_Item) {
+    item,count:=a.item,a.count
+    a.item,a.count=b.item,b.count
+    b.item,b.count=item,count
+}
+
 // What a slot shows of its row.
 @(private)
 interface_item_show :: proc(slot:^Interface_Item,items:core.Records(Item),texts:^core.Texts,language:string,problems:^core.Problems,holder:core.Entity) {
@@ -194,7 +243,9 @@ interface_item_show :: proc(slot:^Interface_Item,items:core.Records(Item),texts:
 // what, and the answers the flags allow, in the order of their rows.
 @(private)
 interface_dialogue_show :: proc(demo:^Interface_Demo,lines:core.Records(Dialogue_Line),answers:core.Records(Dialogue_Choice),texts:^core.Texts,language:string,problems:^core.Problems,holder:core.Entity) {
-    demo.speaker,demo.said,demo.choice_count,demo.goes_on={},{},0,false
+    demo.speaker={}
+    demo.said={}
+    demo.choice_count,demo.goes_on=0,false
     if demo.line=={} {return}
     line,found:=core.record(lines,demo.line,problems,holder)
     if !found {return}

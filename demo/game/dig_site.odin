@@ -26,6 +26,10 @@ Dig_Site :: struct {
     radius:f32 `mirai:"min=0.1,unit=m"`, // of each ball it digs
     digs:u32,                            // balls it digs by itself
     interval:f32 `mirai:"min=0,unit=s"`, // between those
+}
+
+@(component,derived)
+Dig_Site_State :: struct {
     dug:u32 `mirai:"readonly"`,          // of those, the ones it dug
     next:u64 `mirai:"readonly,hidden"`,  // the tick it digs the next one at
 }
@@ -49,9 +53,9 @@ Dig_Inventory :: struct {
 
 @(step="fixed",stage="react")
 dig_site :: proc(
-    commands:core.Commands,sites:^core.Table(Dig_Site),pickups:^core.Table(Dig_Pickup,.Read),players:^core.Table(Player,.Read),
+    commands:core.Commands,sites:^core.Table(Dig_Site,.Read),states:^core.Table(Dig_Site_State),pickups:^core.Table(Dig_Pickup,.Read),players:^core.Table(Player,.Read),
     controls:Demo_Controls,
-    requests:^terrain.Terrain_Requests,digs:core.Ref(terrain.Terrain_Digs),inventories:^core.Table(Dig_Inventory),network:core.Network,time:core.Time,
+    requests:^terrain.Terrain_Requests,digs:core.Ref(terrain.Terrain_Digs),inventories:^core.Table(Dig_Inventory),network:core.Network,time:core.Time,problems:^core.Problems,
 ) {
     site_entity,found:=core.sole(sites)
     if !found || network.role==.Client {return}
@@ -62,13 +66,15 @@ dig_site :: proc(
         return
     }
     site:=core.at(sites,0)
-    if site.interval>0 && site.dug<site.digs && core.due(time,site.next) {
+    state,_:=core.get(states,site_entity)
+    if site.interval>0 && state.dug<site.digs && core.due(time,state.next) {
+        dug:=demo_state(states,site_entity,Dig_Site_State{},problems)
+        if dug==nil {return}
         // Down a spiral, a little deeper each time: a pit with walls through every stratum.
-        i:=f32(site.dug)
+        i:=f32(state.dug)
         center:=[3]f32{math.cos(i*1.9)*1.5,0.3-i*0.42,math.sin(i*1.9)*1.5}
         site_world,_:=core.get(controls.sight.worlds,site_entity)
         terrain.dig(requests,{kind=.Carve,center=mm.transform_point(site_world.transform,center),radius=site.radius,amount=1,blend=0.3},site_entity)
-        dug:=core.edit_at(sites,0)
         dug.dug+=1
         dug.next=core.deadline(time,site.interval)
     }

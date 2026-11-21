@@ -372,7 +372,7 @@ animation_tick :: proc(
     stamp:=playback.hierarchy_stamp+playback.rigs_stamp+1
     if !actions_prepare(actions,requests,characters,animations,playback,events,app,remotes,played,time,problems,sources) {return}
     for value in core.take(&requests.values) {
-        state:=constraint_playing(playback,value.entity)
+        state:=constraint_playing(core.ref(playback),value.entity)
         if state==nil && (core.has(animations,value.entity) || rig_find(playback,value.entity)>=0) {state=state_get(playback,value.entity)}
         if state==nil || !stack_parameter_set(state,value.name,value.value) {
             core.report(problems,value.entity,"animation.parameter","a parameter was set on this entity, which has no Animation, or on which more than %d names are set; set the weights of layers and the axes of spaces on the entity whose Animation plays the .character",STACK_PARAMETERS)
@@ -891,8 +891,7 @@ advance :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animatio
 // Where the clip of the Animation of an entity is: its time and duration in
 // seconds, and whether a clip that does not loop reached its end. False for
 // an entity that plays no clip.
-animation_progress :: proc(playback:^Playback,entity:core.Entity) -> (time,duration:f32,ended,ok:bool) {
-    if playback==nil {return}
+animation_progress :: proc(playback:core.Ref(Playback),entity:core.Entity) -> (time,duration:f32,ended,ok:bool) {
     state:=constraint_playing(playback,entity)
     if state==nil || state.clip<0 {return}
     return state.time,state.duration,state.ended,true
@@ -1518,8 +1517,8 @@ playing_skeleton :: proc(state:^Playing) -> lib.Skeleton {
 }
 
 // The skeleton a rig posed in its last tick; empty without a pose.
-pose_skeleton :: proc(playback:^Playback,entity:core.Entity) -> base.Asset_Id {
-    state:=constraint_playing(playback,entity) if playback!=nil else nil
+pose_skeleton :: proc(playback:core.Ref(Playback),entity:core.Entity) -> base.Asset_Id {
+    state:=constraint_playing(playback,entity)
     return state.skeleton if state!=nil && state.pose_ready else {}
 }
 
@@ -1529,8 +1528,8 @@ Tick_Pose :: enum u8 {Finished,Sampled}
 
 // A pose of a rig in its last tick in the space of its entity, without the interpolation between
 // ticks. A bone of its skeleton is at its index plus one.
-pose_space :: proc(playback:^Playback,entity:core.Entity,allocator:=context.allocator,which:=Tick_Pose.Finished) -> (pose:[]mm.Transform,ok:bool) {
-    state:=constraint_playing(playback,entity) if playback!=nil else nil
+pose_space :: proc(playback:core.Ref(Playback),entity:core.Entity,allocator:=context.allocator,which:=Tick_Pose.Finished) -> (pose:[]mm.Transform,ok:bool) {
+    state:=constraint_playing(playback,entity)
     if state==nil || !state.pose_ready || len(playing_pose(state,.Local))==0 {return nil,false}
     local:=playing_pose(state,.Sampled) if which==.Sampled else playing_pose(state,.Local)
     if len(local)!=len(playing_pose(state,.Local)) {return nil,false}
@@ -1566,7 +1565,7 @@ animation_finish :: proc(playback:^Playback,inputs:Constraint_Inputs,runtime:^Mo
     // Each follower after the rig it follows, in the order rigs_update found;
     // then those it does not list (a leader set by hand), and those of a loop.
     for follow in playback.follow_order {
-        state:=constraint_playing(playback,follow.entity)
+        state:=constraint_playing(core.ref(playback),follow.entity)
         if state==nil || state.seen!=playback.frame || state.finished==playback.frame {continue}
         finish(state,playback,inputs,runtime,transforms,parents,dt,ground_inputs,motion,characters,final_poses,paces,clock,places)
     }

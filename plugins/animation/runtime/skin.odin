@@ -248,7 +248,7 @@ animation_skin :: proc(
         if !has_mesh {continue}
         pose:^Playing
         if !rigid {
-            pose=constraint_playing(playback.ptr,owner)
+            pose=constraint_playing(playback,owner)
             if pose==nil || !pose.pose_ready {continue}
         }
         if static.mesh=={} || core.has(elsewhere,entity) || erender.is_hidden(hidden,parents,entity) {continue}

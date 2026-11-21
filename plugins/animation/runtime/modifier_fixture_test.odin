@@ -23,7 +23,7 @@ test_modifier_profile :: proc(runtime:^Modifier_Runtime,cache:^Character_Assets,
 
 @(private)
 test_modifier_weight :: proc(runtime:^Modifier_Runtime,entity:core.Entity,kind:Modifier_Kind,name:string) -> f32 {
-    weight,_,_,_,_,_,_:=modifier_influence(runtime,entity,kind,base.name_hash(name))
+    weight,_,_,_,_,_,_:=modifier_influence(core.ref(runtime),entity,kind,base.name_hash(name))
     return weight
 }
 
@@ -31,7 +31,7 @@ test_modifier_weight :: proc(runtime:^Modifier_Runtime,entity:core.Entity,kind:M
 test_rigs_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,characters:^Character_Assets,
     inputs:Constraint_Inputs,transforms:^core.Table(core.Transform),
     parents:^core.Table(core.Parent,.Read),root:mm.Transform,dt:f32,playback:^Playback=nil) -> bool {
-    rig:=modifier_rig(runtime,state.entity)
+    rig:=modifier_rig(core.ref(runtime),state.entity)
     empty:Pose_Profile
     pose:=modifier_pose(rig,characters)
     if pose==nil {pose=&empty}
@@ -41,7 +41,7 @@ test_rigs_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,characters:^Cha
 @(private)
 test_rigs_retarget :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Runtime,
     characters:^Character_Assets,problems:^core.Problems) -> bool {
-    rig:=modifier_rig(runtime,state.entity)
+    rig:=modifier_rig(core.ref(runtime),state.entity)
     empty:Pose_Profile
     pose:=modifier_pose(rig,characters)
     if pose==nil {pose=&empty}
