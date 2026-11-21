@@ -49,9 +49,9 @@ SHADOW_POOL :: abi.SHADOW_POOL
 // than abi.SHADOW_POOL_PAGES.
 SHADOW_POOL_LEVEL_PAGES :: u64(40)
 SHADOW_POOL_PIXELS :: u64(2048)
-// The pages a pool grows or shrinks by: four rows, so that a view resized a
+// The pages a pool grows or shrinks by: two rows, so that a view resized a
 // little keeps its pool.
-SHADOW_POOL_STEP :: 4 * abi.SHADOW_POOL_ROW
+SHADOW_POOL_STEP :: 2 * abi.SHADOW_POOL_ROW
 
 // The pages of the pool of a view that renders width x height pixels.
 @(private)
