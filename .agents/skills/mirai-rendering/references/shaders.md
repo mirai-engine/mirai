@@ -338,10 +338,15 @@ Engine generation compiles `shaders/cook` into a separate manifest under `shader
 The installed engine carries it for the cooker, the sole consumer. BC6H and BC7 use the tables
 the asset decoders share with the generator.
 
-With a `cook/textures.Gpu_Context`, an immediate transaction fits each block and, for a Final cook
-with a positive lambda, a second dispatch reads the immutable fits of its tile. It prices reuse
-of modes, endpoints and indices against decoded error. Low-variance blocks tolerate less error.
-Every BC7 candidate keeps exact alpha extrema and the side of an enabled cutoff for each texel.
+With a `cook/textures.Gpu_Context`, one immediate transaction encodes every mip and layer into
+shared staging and readback buffers. For a Final cook with a positive lambda, a second dispatch
+per band stages candidate fits in threadgroup memory and searches causal neighbors, including
+across threadgroups. It prices reuse of endpoints and selectors against decoded error. Every
+BC7 candidate keeps exact alpha extrema and the side of an enabled cutoff for each texel.
+
+Run `mirai test cook/textures bench_gpu_blocks_on_demo_textures -define:COOK_GPU_BENCH=true`
+for comparisons of the encoders and codecs in `bin/bench/gpu-bcn-polish.csv`. The codec comparisons
+use the same texture layout and piece boundaries at each profile.
 
 ## Cache and fingerprints
 

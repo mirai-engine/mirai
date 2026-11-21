@@ -1,6 +1,6 @@
 uint index_width(Fit fit) {
 #ifdef BC_ENCODE_6H
-    return fit.mode == 11 ? 4 : 3;
+    return fit.mode >= 11 ? 4 : 3;
 #else
     return fit.mode == 6 ? 4 : (fit.mode == 1 ? 3 : 2);
 #endif
@@ -8,7 +8,7 @@ uint index_width(Fit fit) {
 
 uint partition_of(Fit fit) {
 #ifdef BC_ENCODE_6H
-    return fit.mode == 11 ? 0 : partitions[fit.partition];
+    return fit.mode >= 11 ? 0 : partitions[fit.partition];
 #else
     return fit.mode == 1 ? partitions[fit.partition] : 0;
 #endif
@@ -33,7 +33,19 @@ uint endpoint_bits(Fit fit) {
 uint hdr_precision(uint mode) {
     if (mode == 2) return 7;
     if (mode == 10) return 6;
+    if (mode == 12) return 11;
+    if (mode == 13) return 12;
+    if (mode == 14) return 16;
     return 10;
+}
+
+uint hdr_delta_width(uint mode) {
+    if (mode == 1) return 5;
+    if (mode == 2) return 6;
+    if (mode == 12) return 9;
+    if (mode == 13) return 8;
+    if (mode == 14) return 4;
+    return 0;
 }
 
 uint3 unpack_hdr(uint ep) {
@@ -44,8 +56,13 @@ uint pack_hdr(uint3 ep) {
     return ep.x | (ep.y << 10) | (ep.z << 20);
 }
 
-uint3 unquant_hdr(uint ep, uint precision) {
-    uint3 q = unpack_hdr(ep);
+uint3 hdr_endpoint(Fit fit, uint at) {
+    if (fit.mode >= 11) return (fit.endpoints.xyz >> (16 * at)) & 65535;
+    return unpack_hdr(fit.endpoints[at]);
+}
+
+uint3 unquant_hdr(uint3 q, uint precision) {
+    if (precision == 16) return q;
     uint3 value = ((q << 16) + 32768) >> precision;
     uint top = (1u << precision) - 1;
     return uint3(q.x == 0 ? 0 : (q.x == top ? 65535 : value.x),
@@ -53,45 +70,48 @@ uint3 unquant_hdr(uint ep, uint precision) {
                  q.z == 0 ? 0 : (q.z == top ? 65535 : value.z));
 }
 
-uint quant_hdr(float3 v, uint precision) {
+uint3 quant_hdr(float3 v, uint precision) {
     uint top = (1u << precision) - 1;
+    if (precision == 16) return uint3(floor(v * (65535.0 / 255.0) + 0.5));
     float3 levels = clamp(v * (float(top + 1) / 255) - 0.5, 0, float(top));
-    return pack_hdr(uint3(floor(levels + 0.5)));
+    return uint3(floor(levels + 0.5));
 }
 
 float4 decoded_endpoints(Fit fit, uint at) {
-    uint3 unquantized = unquant_hdr(fit.endpoints[at], hdr_precision(fit.mode));
+    uint3 unquantized = unquant_hdr(hdr_endpoint(fit, at), hdr_precision(fit.mode));
     return float4(float3((unquantized * 31) >> 6) * (255.0 / 31743.0), 255);
 }
 
 float4 interpolate_endpoints(Fit fit, uint at, uint w) {
     uint precision = hdr_precision(fit.mode);
-    uint3 a = unquant_hdr(fit.endpoints[at], precision);
-    uint3 b = unquant_hdr(fit.endpoints[at + 1], precision);
+    uint3 a = unquant_hdr(hdr_endpoint(fit, at), precision);
+    uint3 b = unquant_hdr(hdr_endpoint(fit, at + 1), precision);
     uint3 half_bits = ((((64 - w) * a + w * b + 32) >> 6) * 31) >> 6;
     return float4(float3(half_bits) * (255.0 / 31743.0), 255);
 }
 
-uint3 hdr_delta(uint mode, uint ep, uint origin) {
-    return (unpack_hdr(ep) - unpack_hdr(origin)) & ((1u << hdr_precision(mode)) - 1);
-}
-
 bool legal_endpoints(Fit fit) {
-    if (fit.mode >= 10) return true;
-    uint precision = hdr_precision(fit.mode);
-    uint half_range = fit.mode == 1 ? 16 : 32;
-    uint limit = (1u << precision) - half_range;
-    for (uint e = 1; e < 4; ++e) {
-        uint3 delta = hdr_delta(fit.mode, fit.endpoints[e], fit.endpoints.x);
-        if (any((delta >= half_range) & (delta < limit))) return false;
+    uint delta_width = hdr_delta_width(fit.mode);
+    if (delta_width == 0) return true;
+    uint range = 1u << hdr_precision(fit.mode);
+    uint half_range = 1u << (delta_width - 1);
+    uint3 origin = hdr_endpoint(fit, 0);
+    for (uint e = 1; e < (fit.mode >= 11 ? 2u : 4u); ++e) {
+        uint3 delta = (hdr_endpoint(fit, e) - origin) & (range - 1);
+        if (any((delta >= half_range) & (delta < range - half_range))) return false;
     }
     return true;
 }
 
 void set_endpoints(inout Fit fit, uint at, Line line, uint parity) {
     uint precision = hdr_precision(fit.mode);
-    fit.endpoints[at] = quant_hdr(line.a.xyz, precision);
-    fit.endpoints[at + 1] = quant_hdr(line.b.xyz, precision);
+    uint3 a = quant_hdr(line.a.xyz, precision);
+    uint3 b = quant_hdr(line.b.xyz, precision);
+    if (fit.mode >= 11) fit.endpoints.xyz = a | (b << 16);
+    else {
+        fit.endpoints[at] = pack_hdr(a);
+        fit.endpoints[at + 1] = pack_hdr(b);
+    }
 }
 
 #else
@@ -164,11 +184,20 @@ void prepare_palette(Fit fit, uint partition, uint width) {
 }
 
 void reverse_subset(inout Fit fit, uint partition, uint subset, uint width, bool alpha) {
-    uint a = fit.endpoints[subset * 2];
-    uint b = fit.endpoints[subset * 2 + 1];
-    uint mask = !separate_alpha(fit) ? 0xffffffffu : (alpha ? 0xff000000u : 0x00ffffffu);
-    fit.endpoints[subset * 2] = (a & ~mask) | (b & mask);
-    fit.endpoints[subset * 2 + 1] = (b & ~mask) | (a & mask);
+#ifdef BC_ENCODE_6H
+    if (fit.mode >= 11) {
+        uint3 pair = fit.endpoints.xyz;
+        fit.endpoints.xyz = (pair >> 16) | (pair << 16);
+    } else
+#endif
+    {
+        uint a = fit.endpoints[subset * 2];
+        uint b = fit.endpoints[subset * 2 + 1];
+        uint mask = !separate_alpha(fit) ? 0xffffffffu :
+            (alpha ? 0xff000000u : 0x00ffffffu);
+        fit.endpoints[subset * 2] = (a & ~mask) | (b & mask);
+        fit.endpoints[subset * 2 + 1] = (b & ~mask) | (a & mask);
+    }
     for (uint i = 0; i < 16; ++i) {
         if (subset_of(partition, i) == subset) {
             set_index(fit, i, (1u << width) - 1 - index_at(fit, i, uint(alpha)), uint(alpha));
@@ -189,7 +218,16 @@ void assign_indices(inout Fit fit, bool fixed_endpoints) {
         float error = INVALID_FIT, alpha_error = INVALID_FIT;
         uint index = 0, alpha_index = 0;
         float4 v = pixels[i];
-        for (uint j = 0; j < limit; ++j) {
+        uint first = 0;
+#ifdef BC_ENCODE_6H
+        float3 start = palette[subset][0].xyz;
+        float3 direction = palette[subset][count - 1].xyz - start;
+        float t = saturate(dot(v.xyz - start, direction) / max(dot(direction, direction), 1e-8));
+        int near = int(t * (count - 1));
+        first = min(uint(max(near - 1, 0)), limit - 1);
+        limit = min(limit, first + 4);
+#endif
+        for (uint j = first; j < limit; ++j) {
             float4 p = palette[subset][j];
 #ifdef BC_ENCODE_7
             bool within = alpha_kept(v.w, p.w);
@@ -253,6 +291,27 @@ Line refine_line(Fit fit, uint partition, uint subset) {
     }
     return line;
 }
+
+#ifdef BC_ENCODE_7
+void refit_indices(inout Fit fit) {
+    uint partition = partition_of(fit);
+    Line first = refine_line(fit, partition, 0);
+    Line second = first;
+    if (partition != 0) second = refine_line(fit, partition, 1);
+    uint parity = (fit.endpoints.x & 1) | ((fit.endpoints.y & 1) << 1);
+    set_endpoints(fit, 0, first, parity);
+    if (partition != 0) set_endpoints(fit, 2, second, 0);
+    fit.distortion = measure(fit);
+}
+void snap_endpoints(inout Fit fit, uint step) {
+    for (uint e = 0; e < 2; ++e) {
+        uint4 ep = unpack_bytes(fit.endpoints[e]);
+        uint3 rgb = min((ep.xyz + step / 2) / step * step, 127);
+        fit.endpoints[e] = pack_bytes(uint4(rgb, ep.w));
+    }
+}
+
+#endif
 
 Fit fit_mode(uint mode, uint partition_id, uint rounds) {
     Fit best = {};
@@ -336,10 +395,19 @@ static const uint spans2[BC_COOK_SPAN_COUNT_2] = BC_COOK_SPANS_2;
 static const uint spans10[BC_COOK_SPAN_COUNT_10] = BC_COOK_SPANS_10;
 
 Fit encode_block() {
-    uint rounds = params.fast != 0 ? 2 : 3;
-    Fit best = fit_mode(11, 0, rounds);
-    if (best.distortion == 0) return best;
-    uint trials = params.fast != 0 ? 1 : 4;
+    uint rounds = params.fast != 0 ? 1 : 2;
+    float3 lo = 255, hi = 0;
+    for (uint i = 0; i < 16; ++i) {
+        lo = min(lo, pixels[i].xyz);
+        hi = max(hi, pixels[i].xyz);
+    }
+    float span = max(max(hi.x - lo.x, hi.y - lo.y), hi.z - lo.z);
+    uint mode = span < 0.025 ? 14 : (span < 7 ? 13 : (span < 30 ? 12 : 11));
+    Fit best = fit_mode(mode, 0, rounds);
+    if (best.distortion < 0.08) return best;
+    if (mode != 11) choose(best, fit_mode(11, 0, rounds));
+
+    uint trials = params.fast != 0 ? 1 : 3;
     uint4 pick = select_partitions(32, trials);
     for (uint i = 0; i < trials; ++i) {
         choose(best, fit_mode(10, pick[i], rounds));
@@ -354,18 +422,27 @@ Fit encode_block() {
 void store_block(uint block, Fit fit) {
     uint4 bits = 0;
     uint at = 0;
-    if (fit.mode == 11) {
-        put_bits(bits, at, 3, 5);
-        for (uint e = 0; e < 2; ++e) put_bits(bits, at, fit.endpoints[e], 30);
+    if (fit.mode >= 11) {
+        put_bits(bits, at, 3 + 4 * (fit.mode - 11), 5);
+        uint3 root = hdr_endpoint(fit, 0), end = hdr_endpoint(fit, 1);
+        for (uint c = 0; c < 3; ++c) put_bits(bits, at, root[c] & 1023, 10);
+        uint delta = hdr_delta_width(fit.mode);
+        for (uint c = 0; c < 3; ++c) {
+            if (delta == 0) put_bits(bits, at, end[c], 10);
+            else {
+                put_bits(bits, at, (end[c] - root[c]) & ((1u << delta) - 1), delta);
+                put_bits(bits, at, reversebits(root[c] >> 10) >> (22 + delta), 10 - delta);
+            }
+        }
     } else {
         uint prefix = fit.mode == 10 ? 30 : fit.mode - 1;
         bits.x = prefix;
         uint delta = fit.mode == 1 ? 5 : 6;
         uint4 endpoints = fit.endpoints;
         if (fit.mode != 10) {
+            uint3 root = hdr_endpoint(fit, 0);
             for (uint e = 1; e < 4; ++e) {
-                endpoints[e] = pack_hdr(hdr_delta(fit.mode, endpoints[e], endpoints[0]) &
-                                        ((1u << delta) - 1));
+                endpoints[e] = pack_hdr((hdr_endpoint(fit, e) - root) & ((1u << delta) - 1));
             }
         }
         uint size = fit.mode == 1 ? BC_COOK_SPAN_COUNT_1 :

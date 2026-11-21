@@ -2,6 +2,7 @@
 //! variant bc6h BC_ENCODE_6H
 //! variant bc7 BC_ENCODE_7
 #include "bcn_blocks.slang"
+#include "bcn_rdo.slang"
 
 [shader("compute")]
 [numthreads(BC_COOK_GROUP, BC_COOK_GROUP, 1)]
@@ -13,6 +14,9 @@ void main(uint3 id : SV_DispatchThreadID) {
     Fit fit = encode_block();
     if (params.lambda > 0) {
         fit.activity = activity_of_block();
+#ifndef BC_ENCODE_6H
+        fit = seed_fit(fit, rate_price(fit));
+#endif
         fits[index] = fit;
     } else {
         store_block(index, fit);

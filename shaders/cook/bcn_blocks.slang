@@ -55,11 +55,15 @@ uint2 bc4_endpoints(uint channel) {
             interior_high = max(interior_high, x);
         }
     }
-    ScalarFit best = {uint2(uint(high), uint(low)), INVALID_FIT};
+    uint2 eight = uint2(uint(high), uint(low));
+    uint2 six = uint2(uint(min(interior_low, interior_high)), uint(interior_high));
+    if (params.fast != 0) {
+        return scalar_fit(channel, eight).error <= scalar_fit(channel, six).error ? eight : six;
+    }
+    ScalarFit best = {eight, INVALID_FIT};
     for (uint mode = 0; mode < 2; ++mode) {
-        uint2 ep = mode == 0 ? uint2(uint(high), uint(low)) :
-            uint2(uint(min(interior_low, interior_high)), uint(interior_high));
-        for (uint pass = 0; pass < (params.fast != 0 ? 2 : 3); ++pass) {
+        uint2 ep = mode == 0 ? eight : six;
+        for (uint pass = 0; pass < 3; ++pass) {
             LeastSquares ls = {};
             float error = 0;
             for (uint i = 0; i < 16; ++i) {
@@ -84,7 +88,7 @@ uint2 bc4_endpoints(uint channel) {
     }
 
     uint2 center = best.ep;
-    int radius = params.fast != 0 ? 1 : 3;
+    const int radius = 3;
     for (int y = -radius; y <= radius; ++y) {
         for (int x = -radius; x <= radius; ++x) {
             if ((x == 0 && y == 0) || abs(x) + abs(y) > radius) continue;
@@ -164,10 +168,49 @@ float measure(Fit fit) {
     return error;
 }
 
+void refit_indices(inout Fit fit) {
+    for (uint c = 0; c < 2; ++c) {
+        uint shift = 8 * c;
+        uint2 ep = (fit.endpoints.xy >> shift) & 255;
+        bool extended = ep.x <= ep.y;
+        LeastSquares ls = {};
+        for (uint i = 0; i < 16; ++i) {
+            uint index = index_at(fit, i, c);
+            if (extended && index >= 6) continue;
+            float t = index < 2 ? index : float(index - 1) / (extended ? 5 : 7);
+            add_sample(ls, t, pixels[i][c]);
+        }
+        Line fallback = {float(ep.x), float(ep.y)};
+        Line line = solve_line(ls, fallback);
+        uint2 pair = uint2(floor(float2(line.a.x, line.b.x) + 0.5));
+        if (extended == (pair.x <= pair.y)) {
+            fit.endpoints.xy = (fit.endpoints.xy & ~(255u << shift)) | (pair << shift);
+        }
+    }
+    fit.distortion = measure(fit);
+}
+
+void snap_endpoints(inout Fit fit, uint step) {
+    uint2 x = fit.endpoints.xy & 255;
+    uint2 y = fit.endpoints.xy >> 8;
+    x = min((x + step / 2) / step * step, 255);
+    y = min((y + step / 2) / step * step, 255);
+    fit.endpoints.xy = x | (y << 8);
+    assign_indices(fit, false);
+}
+
 Fit encode_block() {
     uint2 x = bc4_endpoints(0), y = bc4_endpoints(1);
     Fit fit = {};
     fit.endpoints.xy = x | (y << 8);
+    if (params.fast != 0) {
+        for (uint i = 0; i < 16; ++i) {
+            float error;
+            set_index(fit, i, nearest_bc4(pixels[i].x, x, error));
+            set_index(fit, i, nearest_bc4(pixels[i].y, y, error), 1);
+        }
+        return fit;
+    }
     assign_indices(fit, false);
     return fit;
 }
@@ -197,48 +240,74 @@ float3 expand_565(uint q) {
     return float3((x << 3) | (x >> 2), (y << 2) | (y >> 4), (z << 3) | (z >> 2));
 }
 
-float3 bc1_value(float3 a, float3 b, uint index) {
+float3 bc1_value(float3 a, float3 b, uint index, bool three) {
     if (index == 0) return a;
     if (index == 1) return b;
+    if (three) return index == 2 ? (a + b) * 0.5 : float3(0);
     return index == 2 ? (2 * a + b) / 3 : (a + 2 * b) / 3;
 }
 
-void assign_indices(inout Fit fit, bool fixed_endpoints) {
+void assign_indices(inout Fit fit, bool fixed_endpoints, uint pair = 0) {
     float3 a = expand_565(fit.endpoints.x), b = expand_565(fit.endpoints.y);
+    bool three = fit.endpoints.x <= fit.endpoints.y;
     fit.distortion = 0;
     for (uint i = 0; i < 16; ++i) {
+        float3 target = (pixels[i].xyz + pixels[i ^ pair].xyz) * 0.5;
         float min_error = INVALID_FIT;
         uint best = 0;
-        for (uint j = 0; j < 4; ++j) {
-            float3 d = pixels[i].xyz - bc1_value(a, b, j);
+        for (uint j = 0; j < (three ? 3 : 4); ++j) {
+            float3 d = target - bc1_value(a, b, j, three);
             float error = dot(d, d);
             if (error < min_error) { min_error = error; best = j; }
         }
-        fit.distortion += min_error;
+        float3 residual = pixels[i].xyz - bc1_value(a, b, best, three);
+        fit.distortion += dot(residual, residual);
         set_index(fit, i, best);
     }
 }
 
 float measure(Fit fit) {
     float3 a = expand_565(fit.endpoints.x), b = expand_565(fit.endpoints.y);
+    bool three = fit.endpoints.x <= fit.endpoints.y;
     float error = 0;
     for (uint i = 0; i < 16; ++i) {
-        float3 d = pixels[i].xyz - bc1_value(a, b, index_at(fit, i));
+        float3 d = pixels[i].xyz - bc1_value(a, b, index_at(fit, i), three);
         error += dot(d, d);
     }
     return error;
 }
 
-Fit fit_565(Line line) {
+Fit fit_565(Line line, bool three = false) {
     uint a = quant_565(line.a.xyz), b = quant_565(line.b.xyz);
     Fit fit = {};
     fit.endpoints.xy = uint2(max(a, b), min(a, b));
-    if (a == b) {
+    if (three) fit.endpoints.xy = fit.endpoints.yx;
+    if (!three && a == b) {
         if (a == 0) fit.endpoints.x = 1;
         else fit.endpoints.y = b - 1;
     }
     assign_indices(fit, false);
     return fit;
+}
+
+Line refine_565(Fit fit) {
+    bool three = fit.endpoints.x <= fit.endpoints.y;
+    LeastSquares ls = {};
+    for (uint i = 0; i < 16; ++i) {
+        uint j = index_at(fit, i);
+        float t = j < 2 ? j : (three ? 0.5 : float(j - 1) / 3);
+        add_sample(ls, t, pixels[i]);
+    }
+    Line fallback = {float4(expand_565(fit.endpoints.x), 0),
+                     float4(expand_565(fit.endpoints.y), 0)};
+    return solve_line(ls, fallback);
+}
+
+void refit_indices(inout Fit fit) {
+    Line line = refine_565(fit);
+    uint a = quant_565(line.a.xyz), b = quant_565(line.b.xyz);
+    if ((a > b) == (fit.endpoints.x > fit.endpoints.y)) fit.endpoints.xy = uint2(a, b);
+    fit.distortion = measure(fit);
 }
 
 Fit encode_block() {
@@ -249,19 +318,52 @@ Fit encode_block() {
     }
     Line box = {lo, hi};
     Fit best = fit_565(box);
-    choose(best, fit_565(initial_line(0, 0, float4(1, 1, 1, 0))));
+    Line axis = initial_line(0, 0, float4(1, 1, 1, 0));
+    choose(best, fit_565(axis));
+    if (params.fast == 0) choose(best, fit_565(axis, true));
     for (uint attempt = 0; attempt < (params.fast != 0 ? 1 : 3); ++attempt) {
-        LeastSquares ls = {};
-        for (uint i = 0; i < 16; ++i) {
-            uint j = index_at(best, i);
-            float t = j < 2 ? j : float(j - 1) / 3;
-            add_sample(ls, t, pixels[i]);
-        }
-        Line fallback = {float4(expand_565(best.endpoints.x), 0),
-                         float4(expand_565(best.endpoints.y), 0)};
-        Fit refined = fit_565(solve_line(ls, fallback));
+        Fit refined = fit_565(refine_565(best), best.endpoints.x <= best.endpoints.y);
         if (refined.distortion >= best.distortion) break;
         best = refined;
+    }
+    if (params.fast == 0) {
+        for (uint pass = 0; pass < 4; ++pass) {
+            uint side = pass & 1;
+            bool three = best.endpoints.x <= best.endpoints.y;
+            for (uint c = 0; c < 3; ++c) {
+                uint shift = c == 0 ? 11 : (c == 1 ? 5 : 0);
+                uint mask = c == 1 ? 63 : 31;
+                int v = int((best.endpoints[side] >> shift) & mask);
+                for (int d = -1; d <= 1; d += 2) {
+                    if (v + d < 0 || v + d > int(mask)) continue;
+                    Fit trial = best;
+                    trial.endpoints[side] = (trial.endpoints[side] & ~(mask << shift)) |
+                        (uint(v + d) << shift);
+                    if (three != (trial.endpoints.x <= trial.endpoints.y)) continue;
+                    assign_indices(trial, true);
+                    choose(best, trial);
+                }
+            }
+        }
+        for (uint c = 0; c < 3; ++c) {
+            uint shift = c == 0 ? 11 : (c == 1 ? 5 : 0);
+            uint mask = c == 1 ? 63 : 31;
+            Fit center = best;
+            int2 v = int2((center.endpoints.xy >> shift) & mask);
+            for (int d = -1; d <= 1; d += 2) {
+                for (int sign = -1; sign <= 1; sign += 2) {
+                    int2 q = v + int2(d, d * sign);
+                    if (any(q < 0) || any(q > int(mask))) continue;
+                    Fit trial = center;
+                    trial.endpoints.xy = (trial.endpoints.xy & ~(mask << shift)) |
+                                         (uint2(q) << shift);
+                    if ((center.endpoints.x > center.endpoints.y) !=
+                        (trial.endpoints.x > trial.endpoints.y)) continue;
+                    assign_indices(trial, true);
+                    choose(best, trial);
+                }
+            }
+        }
     }
     return best;
 }
