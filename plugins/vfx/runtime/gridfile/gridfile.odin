@@ -10,6 +10,8 @@ import "mirai:std/base"
 //   cells  f32: of each cell from the first of the region, x fastest, then
 //          y, then z, its layers of four floats in order
 
+GRID_LAYERS :: 16
+
 Grid_Info :: struct {
     cells:[3]u32,
     layers:u32,
@@ -29,7 +31,7 @@ grid_floats :: proc "contextless" (info:Grid_Info) -> int {
 }
 
 grid_valid :: proc "contextless" (info:Grid_Info,cells:int) -> bool {
-    return info.cells.x>0 && info.cells.y>0 && info.cells.z>0 && info.layers>=1 && info.layers<=4 && info.cell_size>0 && cells==grid_floats(info)
+    return info.cells.x>0 && info.cells.y>0 && info.cells.z>0 && info.layers>=1 && info.layers<=GRID_LAYERS && info.cell_size>0 && cells==grid_floats(info)
 }
 
 // The file of a state, as bytes from allocator.

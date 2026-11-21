@@ -1478,6 +1478,36 @@ particle_splats_go_into_a_grid_that_particles_sample :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+@(test)
+despawned_world_particles_drain_before_releasing_their_slot :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
+	defer gpu_fixture_destroy(f)
+	pool := &f.sync.pool
+	emitter := test_emitter(1, {0, 0, 0})
+	emitter.info.lifetime = {0.4, 0.4}
+	emitter.spawns = test_burst(1)
+	camera := gpu.Camera{position = {0, 0, 4}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60}
+	DT :: f32(0.05)
+	testing.expect(t, frame_emitters(f, &f.sync, {emitter}, DT))
+	testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera}), f.renderer.error)
+	pool_orphan(pool, emitter.id)
+	for i in 1 ..< 16 {
+		testing.expect(t, pool_frame(pool, DT, CAPACITY, erender.max_storage_range(&f.app), false, false))
+		testing.expect(t, particles_frame(&f.sync, &f.app))
+		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = f32(i) * DT}), f.renderer.error)
+		rhi.device_wait_idle(f.device)
+		pool_drain(pool, f.app.renderer, {index = 1})
+		if i == 5 {
+			testing.expect(t, pool_slot_find(pool, emitter.id) >= 0)
+			testing.expect_value(t, particles_alive(f), u32(1))
+		}
+	}
+	testing.expect_value(t, pool_slot_find(pool, emitter.id), -1)
+	expect_clean(t, f.device)
+}
+
 // A grid drawn as a volume: a ball of density that glows, over the scene.
 @(test)
 particle_volumes_draw_the_medium_of_a_grid :: proc(t: ^testing.T) {

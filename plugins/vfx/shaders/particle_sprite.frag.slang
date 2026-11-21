@@ -40,6 +40,7 @@ struct Stage_Input {
     [[vk::location(8)]] nointerpolation float4 in_data2 : TEXCOORD8;
     [[vk::location(9)]] nointerpolation float4 in_data3 : TEXCOORD9;
     [[vk::location(10)]] nointerpolation uint in_given : TEXCOORD10;
+    [[vk::location(12)]] nointerpolation uint material : TEXCOORD12;
     [[vk::location(11)]] nointerpolation float2 in_random_radius : TEXCOORD11;
 };
 struct Stage_Output {
@@ -62,7 +63,7 @@ Mirai_Surface_Context sprite_context(Stage_Input input, float3 facing, float sce
 [shader("fragment")]
 Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
     Stage_Output output;
-    Particle_Emitter e = particle_emitters[params.emitter];
+
     int2 pixel = int2(pixel_position.xy);
     float depth = input.in_blend_depth.y;
     if (params.pass != 0u) {
@@ -70,9 +71,9 @@ Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
         bool in_front = layer > 0.0 && depth <= layer * 1.0001 + 1e-4;
         if (in_front != (params.pass == PARTICLE_PASS_FRONT_OF_GLASS)) discard;
     }
-    Material m = material_row(e.mesh.w);
-    bool additive = (e.range.w & PARTICLE_FLAG_ADDITIVE) != 0u;
-    bool lit = (e.range.w & PARTICLE_FLAG_LIT) != 0u;
+    Material m = material_row(input.material);
+    bool additive = (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_ADDITIVE) != 0u;
+    bool lit = (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_LIT) != 0u;
     float scene = g_depth.Load(int3(pixel, 0)).r;
     float3 base_color, emission;
     float alpha;
@@ -86,9 +87,9 @@ Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
         tint = float4(1.0);
     } else {
         // Without a texture a sprite is a puff, a ribbon fades to its edges and a mesh is whole.
-        float2 tile = frac(input.in_uv.xy * float2(e.flipbook.xy)) * 2.0 - 1.0;
-        float4 texel = float4(1.0, 1.0, 1.0, e.kinds.y == PARTICLE_RENDER_RIBBON ? 1.0 - abs(tile.x) : e.kinds.y == PARTICLE_RENDER_MESH ? 1.0 : particle_puff(tile, input.in_seed));
-        if (material_has(m.textures[MATERIAL_MAP_BASE_COLOR]) && e.kinds.y == PARTICLE_RENDER_MESH) {
+        float2 tile = frac(input.in_uv.xy * float2(particle_emitters[params.emitter].flipbook.xy)) * 2.0 - 1.0;
+        float4 texel = float4(1.0, 1.0, 1.0, particle_emitters[params.emitter].kinds.y == PARTICLE_RENDER_RIBBON ? 1.0 - abs(tile.x) : particle_emitters[params.emitter].kinds.y == PARTICLE_RENDER_MESH ? 1.0 : particle_puff(tile, input.in_seed));
+        if (material_has(m.textures[MATERIAL_MAP_BASE_COLOR]) && particle_emitters[params.emitter].kinds.y == PARTICLE_RENDER_MESH) {
             // A mesh reads its texture through the map of its material, at the uv of its vertices.
             texel = material_texel(m.textures[MATERIAL_MAP_BASE_COLOR], material_map_uv(m, MATERIAL_MAP_BASE_COLOR, input.in_uv.xy, input.in_uv.zw), frame.texturing.x);
         } else if (material_has(m.textures[MATERIAL_MAP_BASE_COLOR])) {
@@ -100,13 +101,13 @@ Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
     }
     float3 surface = base_color * tint.rgb;
     alpha = saturate(alpha * tint.a);
-    float soft = e.look.y;
+    float soft = particle_emitters[params.emitter].look.y;
     if (soft > 0.0) {
         if (!depth_empty(scene)) alpha *= saturate((depth_distance(scene) - depth) / soft);
         alpha *= saturate((depth - frame.camera_position.w) / soft);
     }
     if (alpha <= 1e-4) discard;
-    bool relative = lit ? m.emission_mode == EMISSION_RELATIVE : (e.range.w & PARTICLE_FLAG_RELATIVE) != 0u;
+    bool relative = lit ? m.emission_mode == EMISSION_RELATIVE : (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_RELATIVE) != 0u;
     float3 radiance = finite_or_zero(surface * input.in_light + emission_render_units(emission * tint.rgb, relative));
     float4 medium = media_over(media, params.media, input.in_world);
     radiance = radiance * medium.a + (additive ? float3(0.0) : medium.rgb);

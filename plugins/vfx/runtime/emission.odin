@@ -3,6 +3,7 @@ package vfx
 import "core:math"
 import "core:math/linalg"
 import "mirai:core"
+import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
 import "plugins:vfx/runtime/effect"
@@ -23,7 +24,7 @@ Particle_Birth :: struct {
 Emission :: struct {
     duration,rate,rate_over_distance:f32,
     bursts:[effect.PARTICLE_BURSTS]effect.Particle_Burst,
-    prewarm:bool,
+    prewarm,program_births:bool,
     longest:f32, // lifetime of its particles at most
     tail:f32,    // seconds its last particles last, with those they start
 }
@@ -35,6 +36,7 @@ Emitter_Clock :: struct {
     paused:bool,          // nothing moves: neither the clock nor its particles
     done:bool,            // its cycle ended and its last particles died
     placed:bool,
+    program_until:f64,   // end of the latest active interval for GPU births
     pending:f64,          // fraction of a particle of the rate
     travelled:f64,        // of the distance
     position:[3]f32,      // where it was the step before
@@ -53,6 +55,11 @@ emission_of :: proc(a:^host.Assets,info:^effect.Particle_Info) -> (e:Emission) {
     e={duration=max(info.duration,0.001),rate=info.rate,rate_over_distance=info.rate_over_distance,bursts=info.bursts,prewarm=info.prewarm}
     e.longest=max(info.lifetime[0],info.lifetime[1],0)
     e.tail=e.longest
+    if a!=nil && a.renderer!=nil {
+        if program:=erender.program_find(a,base.text_get(info.program[:]),.Vfx);program!=nil {
+            e.program_births=program.births
+        }
+    }
     if info.trigger!=.None && info.sub_particle!={} {
         sub:=particle_resolve(a,info.sub_particle,nil)
         e.tail+=max(sub.lifetime[0],sub.lifetime[1],0)
@@ -76,7 +83,7 @@ keys_at :: proc "contextless" (times:[]f32,values:[]$T,x:f32) -> T {
 // Starts the clock again: another generation, which the renderer starts empty.
 clock_restart :: proc(clock:^Emitter_Clock) {
     clock.generation+=1
-    clock.time,clock.pending,clock.travelled,clock.done=0,0,0,false
+    clock.time,clock.pending,clock.travelled,clock.done,clock.program_until=0,0,0,false,0
     clock.first,clock.last=clock.emitted,-max(f64)
     clock.births={}
     clock.birth_count=0
@@ -123,6 +130,10 @@ emission_step :: proc(clock:^Emitter_Clock,e:^Emission,emitting,looping:bool,pos
             if count>0 {births_add(clock,-f64(e.longest),count,1,e.longest/f32(count))}
         }
         end:=looping?after:min(after,duration)
+        if e.program_births && end>before {
+            clock.program_until=end
+            clock.last=max(clock.last,end)
+        }
         if active:=end-before;active>0 && e.rate>0 {
             rate:=f64(e.rate)
             total:=clock.pending+rate*active
@@ -131,7 +142,7 @@ emission_step :: proc(clock:^Emitter_Clock,e:^Emission,emitting,looping:bool,pos
             clock.pending=total-whole
         }
         for burst in e.bursts {
-            if burst.count==0 || f64(burst.time)>=duration {continue}
+            if burst.count==0 || f64(burst.time)>duration {continue}
             burst_births(clock,burst,duration,looping,before,after)
         }
         if e.rate_over_distance>0 {
@@ -146,8 +157,13 @@ emission_step :: proc(clock:^Emitter_Clock,e:^Emission,emitting,looping:bool,pos
         }
     }
     clock.position=position
-    finished:=!looping && after>=duration || !emitting && clock.last>-max(f64)
-    clock.done=finished && after-clock.last>=f64(e.tail)
+    emission_done(clock,e,emitting,looping)
+}
+
+@(private)
+emission_done :: proc(clock:^Emitter_Clock,e:^Emission,emitting,looping:bool) {
+    finished:=!looping && clock.time>=f64(e.duration) || !emitting && clock.last>-max(f64)
+    clock.done=finished && clock.time-clock.last>=f64(e.tail)
 }
 
 // The occurrences of a burst in (before, after] of the clock, and at 0 when
@@ -166,7 +182,7 @@ burst_births :: proc(clock:^Emitter_Clock,burst:effect.Particle_Burst,duration:f
         group_count:u32
         for k in 0..<cycles {
             local:=f64(burst.time)+f64(k)*interval
-            if local>=duration || k>0 && interval<=0 {break}
+            if local>duration || k>0 && interval<=0 {break}
             at:=start+local
             reached:=at>before && at<=after || before==0 && at==0
             if !reached {continue}

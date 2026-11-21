@@ -13,7 +13,14 @@ import "plugins:vfx/runtime/effect"
 // are lost and counted.
 
 REPORTS_CHANNEL :: u64(0) // the name of the data channel of the reports, which no name hashes to
-REPORT_WORDS :: 11        // of an entry: its emitter's slot, Particle_Event, position, velocity, normal
+REPORT_WORDS :: 13
+
+Gpu_Report :: struct {
+    slot,kind:u32,
+    position,velocity,normal:[3]f32,
+    emitter_uid:[2]u32,
+}
+#assert(size_of(Gpu_Report)==REPORT_WORDS*4)
 
 Particle_Report :: struct {
     entity:core.Entity,         // the emitter, or the one whose sub effect it is
@@ -46,14 +53,16 @@ reports_take :: proc(reports:^Particle_Reports,pool:^Pool,data:[]u8,frame:u64) {
     count:=min(head[0],DATA_ENTRIES,u32((len(data)-16)/(REPORT_WORDS*4)))
     reports.lost=head[0]-count
     origin:=transmute([3]f32)[3]u32{head[1],head[2],head[3]}
-    for row in ([^][REPORT_WORDS]u32)(raw_data(data[16:]))[:count] {
-        if int(row[0])>=pool.slot_end || !pool.slots[row[0]].live {continue}
-        desc:=&pool.slots[row[0]].desc
-        position:=transmute([3]f32)[3]u32{row[2],row[3],row[4]}
+    for row in ([^]Gpu_Report)(raw_data(data[16:]))[:count] {
+        if int(row.slot)>=pool.slot_end || !pool.slots[row.slot].live {continue}
+        slot:=&pool.slots[row.slot]
+        uid:=u64(row.emitter_uid[0]) | u64(row.emitter_uid[1])<<32
+        if uid!=slot.uid {continue}
+        desc:=&slot.desc
         append(&reports.reports,Particle_Report{
-            entity=desc.owner,kind=effect.Particle_Event(row[1]),
-            position=position+(desc.view==0?origin:[3]f32{}),
-            velocity=transmute([3]f32)[3]u32{row[5],row[6],row[7]},normal=transmute([3]f32)[3]u32{row[8],row[9],row[10]},
+            entity=desc.owner,kind=effect.Particle_Event(row.kind),
+            position=row.position+(desc.view==0?origin:[3]f32{}),
+            velocity=row.velocity,normal=row.normal,
         })
     }
 }

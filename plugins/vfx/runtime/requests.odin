@@ -1,6 +1,7 @@
 package vfx
 
 import "mirai:core"
+import "mirai:host"
 import "mirai:std/base"
 import "plugins:vfx/runtime/effect"
 
@@ -43,9 +44,9 @@ burst :: proc(requests:^Particle_Requests,e:core.Entity,count:u32) {core.push(&r
 // Asks for a value of this entity for its effect, as value_set gives it. A
 // name or value it does not take is refused here, with the error.
 request_value :: proc(requests:^Particle_Requests,e:core.Entity,name:string,value:$T) -> Error {
-    check:Particle_Override
-    if error:=value_set(&check,name,value);error!=.None {return error}
-    core.push(&requests.queue,Particle_Request{entity=e,command=.Value,name=check.names[0],value=check.values[0]})
+    request:=Particle_Request{entity=e,command=.Value,name=base.name_hash(name)}
+    if error:=value_encode(name,value,&request.value);error!=.None {return error}
+    core.push(&requests.queue,request)
     return .None
 }
 
@@ -56,7 +57,7 @@ request_values_clear :: proc(requests:^Particle_Requests,e:core.Entity) {core.pu
 @(private)
 requests_apply :: proc(
     requests:^Particle_Requests,emitters:^core.Table(Particle_Emitter),overrides:^core.Table(Particle_Override),
-    clocks:^Particle_Clocks,problems:^core.Problems,
+    clocks:^Particle_Clocks,problems:^core.Problems,assets:^host.Assets=nil,
 ) {
     for &request in core.take(&requests.queue) {
         error:=Error.None
@@ -71,7 +72,7 @@ requests_apply :: proc(
                 emitter:=core.edit(emitters,request.entity)
                 emitter.active=request.command==.Start
                 // A single cycle that ended starts again.
-                if emitter.active && (clock.done || !emitter.loop && clock.time>=f64(clock.emission.duration)) {clock.time,clock.pending,clock.done=0,0,false}
+                if emitter.active && (clock.done || !emitter.loop && clock.time>=f64(clock.emission.duration)) {clock.time,clock.pending,clock.done,clock.program_until=0,0,false,0}
             case .Restart: clock_restart(clock)
             case .Pause: clock.paused=true
             case .Resume: clock.paused=false
@@ -85,7 +86,10 @@ requests_apply :: proc(
                 override:Particle_Override
                 if staged:=core.staged(overrides,request.entity);staged!=nil {override=staged^}
                 #partial switch request.command {
-                case .Value: error=value_put(&override,request.name,request.value[:])
+                case .Value:
+                    emitter,_:=core.get(emitters,request.entity)
+                    info:=particle_resolve(assets,emitter.particle,&override)
+                    error=value_put(&override,request.name,request.value[:],&info)
                 case .Value_Remove: value_drop(&override,request.name)
                 case .Values_Clear: override={}
                 }

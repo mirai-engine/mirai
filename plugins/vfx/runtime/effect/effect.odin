@@ -3,6 +3,7 @@ package effect
 import "base:runtime"
 import "core:fmt"
 import "core:math"
+import "core:mem"
 import "core:strconv"
 import "core:strings"
 import "mirai:asset"
@@ -219,7 +220,16 @@ Particle_Problem :: struct {
 // with enums it knows, curves that go forward and names that end.
 particle_validate :: proc(desc:Particle_Desc) -> Particle_Problem {
     info:=desc.info
-    p:=&info
+    if problem:=particle_info_problem(&info,true);problem.message!="" {return problem}
+    if problem:=particle_parameters_validate(desc.parameters);problem.message!="" {return problem}
+    for &hidden in desc.hidden {
+        if name:=serial.text_field(hidden.name[:]);name=="" || len(name)==len(hidden.name) {return {"hidden","Name each hidden field in fewer than 64 bytes"}}
+    }
+    return {}
+}
+
+@(private="file")
+particle_info_problem :: proc(p:^Particle_Info,coupled:bool) -> Particle_Problem {
     if field,ok:=particle_finite(p);!ok {return {field,"Use finite numbers"}}
     if p.shape>max(Particle_Shape) {return {"shape","Use Point, Sphere, Hemisphere, Cone, Box, Circle, Line, Surface or Bones"}}
     if p.render>max(Particle_Render) {return {"render","Use Billboard, Velocity, Horizontal, Ribbon or Mesh"}}
@@ -227,7 +237,7 @@ particle_validate :: proc(desc:Particle_Desc) -> Particle_Problem {
     if p.collision>max(Particle_Collision) {return {"collision","Use None or World"}}
     if p.facing>max(Particle_Facing) {return {"facing","Use Tumble or Velocity"}}
     for weight in p.mesh_weights {if weight<0 {return {"mesh_weights","Use weights of zero or more"}}}
-    if p.render==.Mesh && p.sort {
+    if coupled && p.render==.Mesh && p.sort {
         meshes:=0
         for id in p.meshes {meshes+=1 if id!={} else 0}
         if meshes>1 {return {"sort","A sorted effect draws one mesh back to front: keep one of meshes, or turn sort off"}}
@@ -242,7 +252,7 @@ particle_validate :: proc(desc:Particle_Desc) -> Particle_Problem {
     if p.shape_angle<0 {return {"shape_angle","Use an angle of zero or more"}}
     if p.shell<0 || p.shell>1 {return {"shell","Use a value from 0 to 1"}}
     if p.lifetime[0]<0 || p.lifetime[1]<0 {return {"lifetime","Use lifetimes of zero or more seconds"}}
-    if max(p.lifetime[0],p.lifetime[1])<=0 {return {"lifetime","Give the particles a lifetime above 0 seconds: with none they die as they are born"}}
+    if coupled && max(p.lifetime[0],p.lifetime[1])<=0 {return {"lifetime","Give the particles a lifetime above 0 seconds: with none they die as they are born"}}
     if p.size[0]<0 || p.size[1]<0 {return {"size","Use sizes of zero or more"}}
     if p.intensity<0 {return {"intensity","Use an intensity of zero or more"}}
     if p.drag<0 || p.noise_frequency<0 || p.stretch<0 || p.soft<0 || p.flipbook_speed<0 {return {"drag","Use zero or more for drag, noise_frequency, stretch, soft and flipbook_speed"}}
@@ -250,22 +260,27 @@ particle_validate :: proc(desc:Particle_Desc) -> Particle_Problem {
     for burst in p.bursts {
         if burst.time<0 || burst.interval<0 {return {"bursts","Use burst times and intervals of zero or more seconds"}}
     }
-    if !particle_times_valid(p.size_over_life.times) {return {"size_over_life","Use key times that go up from 0 to 1"}}
-    if !particle_times_valid(p.color_over_life.times) {return {"color_over_life","Use key times that go up from 0 to 1"}}
+    if !particle_times_valid(p.size_over_life.times,coupled) {return {"size_over_life","Use key times that go up from 0 to 1"}}
+    if !particle_times_valid(p.color_over_life.times,coupled) {return {"color_over_life","Use key times that go up from 0 to 1"}}
     for value in p.size_over_life.values {if value<0 {return {"size_over_life","Use sizes of zero or more"}}}
-    if problem:=particle_parameters_validate(desc.parameters);problem.message!="" {return problem}
-    for &hidden in desc.hidden {
-        if name:=serial.text_field(hidden.name[:]);name=="" || len(name)==len(hidden.name) {return {"hidden","Name each hidden field in fewer than 64 bytes"}}
-    }
     return {}
+}
+
+// Checks a field before its effect is known. Cross-field rules are checked on the resolved effect.
+particle_field_valid :: proc(field:Particle_Value,bytes:[]u8) -> bool {
+    if field.size<=0 || field.size>size_of(Particle_Info) || len(bytes)<field.size {return false}
+    if field.offset>uintptr(size_of(Particle_Info)-field.size) {return false}
+    info:=PARTICLE_DEFAULTS
+    mem.copy(rawptr(uintptr(&info)+field.offset),raw_data(bytes),field.size)
+    return particle_info_problem(&info,false).message==""
 }
 
 particle_check :: proc(desc:Particle_Desc) -> bool {return particle_validate(desc).message==""}
 
 @(private="file")
-particle_times_valid :: proc(times:[PARTICLE_CURVE_KEYS]f32) -> bool {
+particle_times_valid :: proc(times:[PARTICLE_CURVE_KEYS]f32,ordered:bool) -> bool {
     for time,at in times {
-        if time<0 || time>1 || at>0 && time<times[at-1] {return false}
+        if time<0 || time>1 || ordered && at>0 && time<times[at-1] {return false}
     }
     return true
 }

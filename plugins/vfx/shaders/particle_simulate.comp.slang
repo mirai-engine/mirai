@@ -1,22 +1,13 @@
 #include "native.slang"
-// A thread per slot of the pool the emitters of the program of the pass hold
-// (from params.first), each step. A living particle ages,
-// its program updates it and the forces of its effect move it (a program
-// that moves its particles ages and moves them alone): acceleration, the
-// gravity and the wind of where it is, curl noise, an attractor and drag,
-// then collision against the traced scene: a hit, or a contact that keeps it
-// on the surface without one. It
-// dies into the free list of its emitter, with an event for the emitter that
-// follows it, as a hit does and, for a trail, every period of its life. In the last step of the frame it goes on the list that is
-// drawn, and a lit one keeps the light it receives: the sun with its shadow
-// ray, the local lights and the probe volume, renewed for half of the
-// particles each frame. A paused emitter keeps its particles as they are.
+// Advances the step's living particles and keeps survivors for the next step.
+// After late births, mode 1 writes the frame’s draw records.
 //! variant hw MIRAI_HW_RT=1
 //! per vfx program
 #define PARTICLES_WRITABLE
 #define PARTICLE_SCENE_READ
 #include "lighting.slang"
 #include "particle_programs.slang"
+#include "particle_work.slang"
 #include <extension_hooks.slang>
 #define MIRAI_GROUP_X 64
 #define MIRAI_GROUP_Y 1
@@ -77,11 +68,12 @@ void particle_report(uint slot, uint kind, float3 position, float3 velocity, flo
     uint entry;
     particle_world_bytes.InterlockedAdd(reports.y, 1u, entry);
     if (entry >= PARTICLE_DATA_ENTRIES) return;
-    uint at = reports.y + 16u + entry * PARTICLE_REPORT_WORDS * 4u;
+    uint at = reports.y + 16u + entry * REPORT_WORDS * 4u;
     particle_world_bytes.Store2(at, uint2(slot, kind));
     particle_world_bytes.Store3(at + 8u, asuint(position));
     particle_world_bytes.Store3(at + 20u, asuint(velocity));
     particle_world_bytes.Store3(at + 32u, asuint(normal));
+    particle_world_bytes.Store2(at + 44u, particle_emitters[slot].emitter_uid);
 }
 
 void release(uint index, uint slot, uint2 range) {
@@ -112,31 +104,34 @@ bool respond(inout float3 velocity, float3 n, float3 a, float h, float2 collide)
 
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
-void main(uint3 id : SV_DispatchThreadID) {
+void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID) {
     particle_step_last = params.last != 0u;
-    uint index = params.first + id.x;
-    if (index >= params.count) return;
+    Particle_Work work = particle_work(group, local.x, params.emitter_first);
+    if (work.slot == INVALID) return;
+    uint slot = work.slot;
+    if (work.item >= particle_states[slot].live_count[params.parity]) return;
+    uint index = particle_lists[particle_alive_at(slot, params.parity) + work.item];
     Particle p = particles[index];
-    if (p.lifetime <= 0.0) return;
-    uint slot = particle_emitter_of(p);
-    if (slot >= params.emitters) { particles[index].lifetime = 0.0; return; }
-    // Only the fields of its emitter it reads, from the row: a copy of the whole row costs each thread.
-    uint2 program = particle_emitters[slot].program.xy;
-    // The emitters of another program run on its pipeline.
-    if (program.x != params.program) return;
     uint4 range = particle_emitters[slot].range;
-    // A slot of a range that went, or that another emitter took since.
-    if ((range.w & PARTICLE_FLAG_ACTIVE) == 0u || index < range.x || index >= range.x + range.y) { particles[index].lifetime = 0.0; return; }
+    uint2 program = particle_emitters[slot].program.xy;
+    if (params.mode == 1u) {
+        particle_draw_look_store(slot, index, particle_program_look(slot, index, p));
+        particle_lists[program.y + range.x + work.item] = index;
+        return;
+    }
+    if (!(p.lifetime > 0.0)) { release(index, slot, range.xy); return; }
     float4 clock = particle_frame_step();
     bool paused = (range.w & PARTICLE_FLAG_PAUSED) != 0u;
     float step = paused ? 0.0 : clock.y;
     // The seconds of the step it lived: one born in it, less.
     float h = max(step + min(p.age, 0.0), 0.0);
     float time = clock.w - clock.x + float(params.step + 1u) * clock.y;
+    float drain_age = p.age + step;
     bool moved = (range.w & PARTICLE_FLAG_MOVED) != 0u;
     if (!moved) p.age += step;
     Mirai_Vfx_Particle v = particle_program_value(slot, p);
     if (h > 0.0) particle_program_update(slot, index, time, h, v);
+    if ((range.w & FLAG_DRAIN) != 0u) v.age = max(v.age, drain_age);
     if (v.age >= v.lifetime) {
         event_push(slot, PARTICLE_EVENT_DEATH, v.position, v.velocity, p.color, v.seed);
         particle_report(slot, PARTICLE_EVENT_DEATH, v.position, v.velocity, float3(0.0));
@@ -203,25 +198,23 @@ void main(uint3 id : SV_DispatchThreadID) {
     if (h > 0.0 && floor(lived * float(TRAILS_PER_SECOND)) != floor((lived - h) * float(TRAILS_PER_SECOND))) event_push(slot, PARTICLE_EVENT_TRAIL, v.position, v.velocity, p.color, v.seed);
     else if (params.last != 0u) event_push(slot, PARTICLE_EVENT_TRAIL, v.position, v.velocity, p.color, v.seed, PARTICLE_EVENT_LEADER);
     if (params.last != 0u && (range.w & PARTICLE_FLAG_LIT) != 0u && ((p.flags & 1u) == 0u || ((index + frame.frame_index) & 1u) == 0u)) {
-        float3 view = to_eye(v.position);
+        float3 ambient_axis = float3(0.0, 1.0, 0.0);
+        float4 clip = view_clip(v.position);
+        bool near_view = clip.w > 0.0 && all(abs(clip.xy) <= 1.2 * clip.w)
+            && view_depth(v.position) < min(frame.camera_forward.w, 100.0);
         float radius = v.size * 0.5;
         float3 light = float3(0.0);
         if (frame.sun_direction.w > 0.5) {
-            float wrap = 0.5 + 0.5 * dot(view, frame.sun_direction.xyz);
             float3 from = v.position + frame.sun_direction.xyz * (radius + 0.02);
-            light += sun_light(v.position) * lerp(0.6, 1.0, wrap) * float(trace_visible(from, frame.sun_direction.xyz, sun_reach(from, frame.sun_direction.xyz), false));
+            light += sun_light(v.position) * 0.8 * float(!near_view || trace_visible(from, frame.sun_direction.xyz, sun_reach(from, frame.sun_direction.xyz), false));
         }
         Shading around = shading_diffuse(v.position, float3(0.0), float3(1.0));
         light += local_lighting(around, 0.0) + shadowless_lighting(around, 0.0);
-        light += indirect_irradiance(v.position, view, view, false);
+        light += indirect_irradiance(v.position, ambient_axis, ambient_axis, false);
         light = finite_or_zero(light);
         p.light = pack_rgbe(light);
         p.flags |= 1u;
     }
     particles[index] = p;
-    if (params.last == 0u) return;
-    if (particle_emitters[slot].kinds.y == PARTICLE_RENDER_RIBBON) particle_ribbon_look_store(slot, index, particle_program_look(slot, index, p));
-    uint at;
-    InterlockedAdd(particle_states[slot].alive, 1u, at);
-    if (at < range.y) particle_lists[program.y + range.x + at] = index;
+    particle_alive_append(slot, params.parity ^ 1u, index);
 }

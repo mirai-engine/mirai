@@ -6,6 +6,7 @@ import "mirai:core"
 import erender "mirai:engine/render"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "plugins:vfx/runtime/gridfile"
 
 // The grids of a world: a region of cells around an entity, each with layers
 // of four floats, that the stages of Vfx programs leave and read and that
@@ -17,7 +18,7 @@ import mm "mirai:std/math"
 // another size, is a load transaction: their cells start at zero.
 
 GRID_CAPACITY :: 128        // grids of a world
-GRID_LAYERS :: 16
+GRID_LAYERS :: gridfile.GRID_LAYERS
 GRID_CELLS_MAX :: 65535*64  // of a grid: what one dispatch reaches
 GRID_NAME_BYTES :: 32
 
@@ -125,6 +126,7 @@ Grid_Entry :: struct {
     texture:Particle_World_Texture, // with has_texture: materials read a layer of it
     has_texture:bool,
     texture_name:u32,        // world_texture_name of its name
+    texture_dirty:bool,
     texture_index:u32,       // the place of its texture in the table, from particles_frame
     cached:base.Asset_Id,    // the .grid its cells start from
     loaded:base.Asset_Id,    // the .grid its cells took last; zero since they were made
@@ -229,7 +231,9 @@ grids_sync :: proc(g:^Grids,grids:^core.Table(Particle_Grid,$A),volumes:^core.Ta
             core.report(problems,e,"vfx.volume","a volume draws a grid with more than one cell along each axis: give its grid cells along x, y and z")
             entry.has_volume=false
         }
+        before_texture,had_texture:=entry.texture,entry.has_texture
         entry.texture,entry.has_texture=core.get(textures,e)
+        entry.texture_dirty||=entry.has_texture && (!had_texture || before_texture!=entry.texture)
         entry.cached=grid.cached
         entry.texture_name=world_texture_name(base.text_get(grid.name[:]))
         switch {

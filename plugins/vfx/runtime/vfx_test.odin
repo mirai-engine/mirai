@@ -373,6 +373,7 @@ curves_read_on_the_cpu_as_the_shader_reads_them :: proc(t:^testing.T) {
 the_values_particles_slang_copies_are_those_of_the_plugin :: proc(t:^testing.T) {
     defines:=make(map[string]u64,context.temp_allocator)
     rest:=string(#load("../shaders/particles.slang"))
+    testing.expect(t,strings.contains(rest,"//! mirai constant REPORT_WORDS uint ../runtime/reports.odin"))
     for line in strings.split_lines_iterator(&rest) {
         words:=strings.fields(line,context.temp_allocator)
         if len(words)<3 || words[0]!="#define" || !strings.has_suffix(words[2],"u") {continue}
@@ -389,7 +390,6 @@ the_values_particles_slang_copies_are_those_of_the_plugin :: proc(t:^testing.T) 
         {"PARTICLE_FLAG_MOVED",FLAG_MOVED},{"PARTICLE_FLAG_BIRTHS",FLAG_BIRTHS},{"PARTICLE_FLAG_PREPARE",FLAG_PREPARE},
         {"PARTICLE_STATE_BYTES",STATE_BYTES},{"PARTICLE_SPAWNS",SPAWNS},
         {"PARTICLE_EVENT_CAPACITY",EVENT_CAPACITY},{"PARTICLE_EVENTS_AT",EVENTS_AT/4},{"PARTICLE_EVENT_WORDS",size_of(Gpu_Event)/4},
-        {"PARTICLE_REPORT_WORDS",REPORT_WORDS},
         {"PARTICLE_RESOURCES",RESOURCE_ROWS},{"PARTICLE_RESOURCE_BYTES",size_of(Gpu_Resource)},
         {"PARTICLE_DATA_ENTRIES",DATA_ENTRIES},{"PARTICLE_SEGMENT_BYTES",size_of(Gpu_Segment)},
         {"PARTICLE_STAGES",erender.PROGRAM_STAGES},{"PARTICLE_STAGE_BYTES",size_of(Gpu_Stage)},{"PARTICLE_BIRTH_BYTES",size_of(Gpu_Birth)},
@@ -413,8 +413,9 @@ the_values_particles_slang_copies_are_those_of_the_plugin :: proc(t:^testing.T) 
 @(test)
 a_single_cycle_ends_when_its_last_particles_die :: proc(t:^testing.T) {
     e:=emission({duration=1,rate=10,lifetime={0.25,0.5}})
+    e.bursts[0]={time=1,count=3}
     clock:Emitter_Clock
-    testing.expect_value(t,steps(&e,false,&clock,8),u64(10))
+    testing.expect_value(t,steps(&e,false,&clock,8),u64(13))
     testing.expect(t,!clock.done)
     testing.expect_value(t,steps(&e,false,&clock,3),u64(0))
     testing.expect(t,!clock.done)
@@ -484,6 +485,11 @@ an_instance_shows_its_values_over_those_of_its_effect :: proc(t:^testing.T) {
 
 @(test)
 invalid_instance_values_say_what_to_correct :: proc(t:^testing.T) {
+    resolved:=effect.PARTICLE_DEFAULTS
+    resolved.size_over_life.times[1]=0.1
+    joint:Particle_Override
+    testing.expect_value(t,value_set(&joint,"size_over_life.times.2",f32(0.2),&resolved),Error.None)
+    testing.expect_value(t,value_set(&joint,"size_over_life.times.2",f32(0.05),&resolved),Error.Invalid_Value)
     override:Particle_Override
     long:[effect.PARTICLE_NAME_BYTES]u8
     for &c in long {c='a'}
@@ -721,20 +727,28 @@ reports_come_back_to_the_world_from_the_origin_of_their_frame :: proc(t:^testing
     view_at:=pool_slot_take(&pool,2,8)
     pool.slots[world_at].desc.owner=core.Entity(7)
     pool.slots[view_at].desc.owner,pool.slots[view_at].desc.view=core.Entity(9),1
-    row :: proc(slot:int,kind:effect.Particle_Event,position:[3]f32) -> (r:[REPORT_WORDS]u32) {
-        p:=transmute([3]u32)position
-        r[0],r[1],r[2],r[3],r[4]=u32(slot),u32(kind),p.x,p.y,p.z
-        return
+    row :: proc(slot:int,uid:u64,kind:effect.Particle_Event,position:[3]f32) -> Gpu_Report {
+        return {slot=u32(slot),kind=u32(kind),position=position,emitter_uid={u32(uid),u32(uid>>32)}}
     }
     origin:=transmute([3]u32)[3]f32{-20480,1024,15360}
-    Bytes :: struct {head:[4]u32,rows:[3][REPORT_WORDS]u32}
+    Bytes :: struct {head:[4]u32,rows:[3]Gpu_Report}
     bytes:=Bytes{head={DATA_ENTRIES+5,origin.x,origin.y,origin.z}}
-    bytes.rows={row(world_at,.Death,{1.5,-2,0.25}),row(view_at,.Collision,{0.5,0.5,0}),row(world_at,.None,{3,3,3})}
+    world_uid,view_uid:=pool.slots[world_at].uid,pool.slots[view_at].uid
+    old_uid:=view_uid
+    pool_slot_release(&pool,view_at)
+    if !testing.expect_value(t,pool_slot_take(&pool,3,8),view_at) {return}
+    pool.slots[view_at].desc.owner,pool.slots[view_at].desc.view=core.Entity(9),1
+    view_uid=pool.slots[view_at].uid
+    bytes.rows={
+        row(world_at,world_uid,.Death,{1.5,-2,0.25}),
+        row(view_at,view_uid,.Collision,{0.5,0.5,0}),
+        row(view_at,old_uid,.Death,{3,3,3}),
+    }
     reports:Particle_Reports
     defer particle_reports_free(&reports)
     reports_take(&reports,&pool,([^]u8)(&bytes)[:size_of(bytes)],1)
     reports_take(&reports,&pool,([^]u8)(&bytes)[:size_of(bytes)],1)
-    if !testing.expect_value(t,len(reports.reports),3) {return}
+    if !testing.expect_value(t,len(reports.reports),2) {return}
     testing.expect_value(t,reports.reports[0].position,[3]f32{-20478.5,1022,15360.25})
     testing.expect_value(t,reports.reports[0].entity,core.Entity(7))
     testing.expect_value(t,reports.reports[1].position,[3]f32{0.5,0.5,0})
