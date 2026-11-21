@@ -92,7 +92,7 @@ world_union :: proc(dst,src:World_Ref,parent:Entity=NONE,entities:^[dynamic]Enti
             if info.type==Parent && union_remap(made,ses,(^Parent)(raw_value(from,info.info,row)).entity)==NONE {continue}
             if !rows_room(to,entity_index(e),capacity) {return false}
             adds+=1
-            if from.off[row] || info.single {offs+=1}
+            if raw_off(from,row) || info.single {offs+=1}
         }
         if under!=nil && to==raw(under) {
             adds+=rooted
@@ -102,11 +102,15 @@ world_union :: proc(dst,src:World_Ref,parent:Entity=NONE,entities:^[dynamic]Enti
         }
         if adds==0 {continue}
         waiting:=0
-        for p in to.pending {if p.value>=0 {waiting+=1}}
+        with_off:=offs>0
+        for p in to.pending {
+            if p.value>=0 {waiting+=1}
+            if p.value==PENDING_OFF {with_off=true}
+        }
         size,align:=info.info.size,info.info.align
         if reserve(&to.pending,len(to.pending)+adds+offs)!=nil {return false}
         if size>0 && !runtime.__dynamic_array_reserve(&to.added,size,align,to.added.len+adds) {return false}
-        if !raw_reserve(to,size,align,to.values.len+waiting+adds,capacity-1) {return false}
+        if !raw_reserve(to,size,align,to.values.len+waiting+adds,capacity-1,with_off) {return false}
     }
 
     for &e in made {if e!=NONE {e=create(des)}}
@@ -129,7 +133,7 @@ world_union :: proc(dst,src:World_Ref,parent:Entity=NONE,entities:^[dynamic]Enti
                     intrinsics.unaligned_store(field,u64(union_remap(made,ses,Entity(intrinsics.unaligned_load(field)))))
                 }
             }
-            if from.off[row] || info.single {raw_disable(to,e)}
+            if raw_off(from,row) || info.single {raw_disable(to,e)}
         }
     }
     if under!=nil {

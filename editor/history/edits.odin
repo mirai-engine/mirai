@@ -473,7 +473,7 @@ step_exact :: proc(edits:^Edits,w:core.World_Ref,step:^Edit_Step) -> bool {
         for e,k in rows.entities {
             row:=core.raw_row(table,e)
             if (row>=0)!=rows.held.present[k] {return false}
-            if row>=0 && (table.off[row]!=rows.held.off[k] || !saved_equal(table_value(table,size,row),raw_data(rows.held.values[k*size:]),size,ranges)) {return false}
+            if row>=0 && (core.raw_off(table,row)!=rows.held.off[k] || !saved_equal(table_value(table,size,row),raw_data(rows.held.values[k*size:]),size,ranges)) {return false}
             if row>=0 && going(es,marks,e) {rows_going+=1}
             if !rows.present[k] {continue}
             for at in offsets {

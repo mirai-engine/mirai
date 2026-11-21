@@ -1119,7 +1119,7 @@ collab_edits_send :: proc(s:^Session,st:^Collab_State) {
         if id==0 {continue}
         is_ids:=info.type==core.Id
         row:=core.raw_row(table,key.entity)
-        now:=Collab_Told{id=id,present=row>=0,off=row>=0 && table.off[row]}
+        now:=Collab_Told{id=id,present=row>=0,off=row>=0 && core.raw_off(table,row)}
         if row>=0 {
             value:=core.raw_value(table,info.info,row)
             current:=make([]u8,max(t.size,1),context.temp_allocator)
@@ -1335,7 +1335,7 @@ collab_told_take :: proc(st:^Collab_State,w:core.World_Ref,touch:Collab_Touch) {
     size:=info.info.size
     row:=core.raw_row(table,touch.entity)
     had:=told.present
-    told.id,told.present,told.off=touch.id,row>=0,row>=0 && table.off[row]
+    told.id,told.present,told.off=touch.id,row>=0,row>=0 && core.raw_off(table,row)
     if row<0 {return}
     value:=([^]u8)(core.raw_value(table,info.info,row))
     switch {

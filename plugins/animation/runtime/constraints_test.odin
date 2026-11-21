@@ -238,13 +238,13 @@ bone_constraints_solve_world_targets_under_rotated_uneven_parents_and_respect_so
     attached,_:=core.get(&w.transforms,socket)
     expected,_:=lib.skeleton_socket(playing_pose(&state,.World),2,socket_config.offset)
     testing.expect(t,linalg.length(attached.position-expected.position)<0.001)
-    resize(&w.transforms.owners,core.entity_index(socket)+1);w.transforms.owners[core.entity_index(socket)]={core.entity_generation(socket),1}
+    testing.expect(t,core.owner_set(&w.transforms,socket,1))
     values[0].target.position+=mm.Vec3{0.2,0,0}
     constraints_apply(&state,&playback,inputs,&w.modifiers,&w.transforms,core.read(&w.parents),0.1,characters=&characters)
     locked,_:=core.get(&w.transforms,socket)
     testing.expect_value(t,locked,attached)
     testing.expect(t,problems.count==1 && core.problem_find(&problems,socket,"animation.socket_owner")!=nil)
-    w.transforms.owners[core.entity_index(socket)]={}
+    testing.expect(t,core.owner_set(&w.transforms,socket,0))
     stable_context:=context
     context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     constraints_apply(&state,&playback,inputs,&w.modifiers,&w.transforms,core.read(&w.parents),0.1,characters=&characters)

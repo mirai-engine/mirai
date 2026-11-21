@@ -183,9 +183,7 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     testing.expect(t,lamp.on && lamp.flags=={.Lit,.Flickers} && lamp.intensity==5,"a Float track sets a flag and a member of a bit set from a half up")
 
     // An entity whose Transform another component owns is asked of its owner, at the place of the track.
-    index:=core.entity_index(leaf)
-    resize(&w.transforms.owners,index+1)
-    w.transforms.owners[index]={core.entity_generation(leaf),1}
+    testing.expect(t,core.owner_set(&w.transforms,leaf,1))
     animation_command(&w.requests,door,.Seek,.25)
     timeline_tick(&w,&app,&problems)
     testing.expect_value(t,at(&w,leaf),[3]f32{6,0,0})
@@ -194,7 +192,7 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
         testing.expect(t,asked.entity==leaf && asked.position==[3]f32{4,2,0},"the place is in the world: under the door the clip moved")
     }
     clear(&w.places.queue.items)
-    w.transforms.owners[index]={}
+    testing.expect(t,core.owner_set(&w.transforms,leaf,0))
 
     // Stop takes it back to its start and it waits there; the end of a clip that does not loop holds.
     animation_command(&w.requests,door,.Stop)

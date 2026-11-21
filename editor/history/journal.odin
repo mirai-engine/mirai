@@ -172,15 +172,17 @@ journal_table_take :: proc(image:^Journal_Table,t:^core.Raw_Table,size:int,autho
     if kept==n {
         if n*size>0 {mem.copy(raw_data(image.values),t.values.data,n*size)}
         copy(image.entities[:],t.entities[:])
-        copy(image.off[:],t.off[:])
-        for e,row in t.entities {image.rows[core.entity_index(e)]=i32(row+1)}
+        for e,row in t.entities {
+            image.off[row]=core.raw_off(t,row)
+            image.rows[core.entity_index(e)]=i32(row+1)
+        }
         return true
     }
     at:=0
     for e,row in t.entities {
         if !history_is_author(authors,e) {continue}
         if size>0 {mem.copy(journal_value(image,size,at),table_value(t,size,row),size)}
-        image.entities[at],image.off[at]=e,t.off[row]
+        image.entities[at],image.off[at]=e,core.raw_off(t,row)
         image.rows[core.entity_index(e)]=i32(at+1)
         at+=1
     }
@@ -230,7 +232,7 @@ journal_diff_once :: proc(d:^Journal_Diff) -> bool {
 @(private)
 journal_differ :: proc(d:^Journal_Diff,image_row,row:int) -> bool {
     if image_row<0 || row<0 {return image_row!=row}
-    return d.image.off[image_row]!=d.table.off[row] || !saved_equal(table_value(d.table,d.size,row),journal_value(d.image,d.size,image_row),d.size,d.ranges)
+    return d.image.off[image_row]!=core.raw_off(d.table,row) || !saved_equal(table_value(d.table,d.size,row),journal_value(d.image,d.size,image_row),d.size,d.ranges)
 }
 
 // The next row the World and the image disagree on: of the entities whose
@@ -350,7 +352,7 @@ journal_sync :: proc(edits:^Edits,w:core.World_Ref) -> bool {
                 _,error:=append(&edits.changes,change)
                 ok&&=error==nil
             }
-            if r.row<0 {journal_drop(image,r.image_row,size)} else {ok&&=journal_put(image,r.entity,r.image_row,table_value(table,size,r.row),size,table.off[r.row])}
+            if r.row<0 {journal_drop(image,r.image_row,size)} else {ok&&=journal_put(image,r.entity,r.image_row,table_value(table,size,r.row),size,core.raw_off(table,r.row))}
         }
         _=core.raw_changes(table,&image.seen)
     }
@@ -386,7 +388,7 @@ journal_take :: proc(edits:^Edits,w:core.World_Ref,table:int,e:core.Entity) -> b
         if image_row>=0 {journal_drop(image,image_row,size)}
         return true
     }
-    return journal_put(image,e,image_row,table_value(current,size,row),size,current.off[row])
+    return journal_put(image,e,image_row,table_value(current,size,row),size,core.raw_off(current,row))
 }
 
 // The image takes size bytes at offset of the row of e as the World has
@@ -410,7 +412,7 @@ journal_take_off :: proc(edits:^Edits,w:core.World_Ref,table:int,e:core.Entity) 
     current:=core.world_table_at(w,&w.info.tables[table])
     image:=&edits.image[table]
     row,image_row:=core.raw_row(current,e),journal_row(image,e)
-    if row>=0 && image_row>=0 {image.off[image_row]=current.off[row]}
+    if row>=0 && image_row>=0 {image.off[image_row]=core.raw_off(current,row)}
 }
 
 // The image of the index of an entity takes what the World has there.

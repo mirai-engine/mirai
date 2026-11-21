@@ -141,13 +141,15 @@ place_migrate :: proc(m:^World_Migration,place:Place,data,fresh:rawptr,allocator
         // What says which tables wait is by table of each World_Info: it stays with its World.
         from.pending,to.pending=to.pending,from.pending
     }
-    locks_from,locks_to:=lock_names(m.from,place,data),lock_names(m.to,place,fresh)
+    locks_from,locks_to:=lock_names(m.from,place),lock_names(m.to,place)
     for &t,i in m.to.tables {
         if t.place!=place || m.tables[i]==.New {continue}
         old:=&m.from.tables[m.table_sources[i]]
         src,dst:=cast(^Raw_Table)(uintptr(data)+old.offset),cast(^Raw_Table)(uintptr(fresh)+t.offset)
         table_take(dst,src)
-        for &owner in dst.owners {owner.id=lock_id_map(locks_from,locks_to,owner.id)}
+        if aux:=dst.aux;aux!=nil {
+            for &owner in aux.owners {owner.id=lock_id_map(locks_from,locks_to,owner.id)}
+        }
         if m.tables[i]==.Convert {table_convert(m,old,&t,dst,src)}
     }
     for &s,i in m.to.storages {
@@ -212,12 +214,12 @@ Raw_By_World_Entry :: struct {
 // empty rows dst had.
 @(private="file")
 table_take :: proc(dst,src:^Raw_Table) {
-    name,locks,is_base,single,waits:=dst.name,dst.locks,dst.base,dst.single,dst.waits
-    old_name,old_locks,old_base,old_single,old_waits:=src.name,src.locks,src.base,src.single,src.waits
+    name,locks,waits:=dst.name,dst.lock_plan,dst.waits
+    old_name,old_locks,old_waits:=src.name,src.lock_plan,src.waits
     // Through memory: a multiple assignment of values over 64 bytes (odin-lang/Odin#7937, ODIN_WORKAROUNDS).
     slice.ptr_swap_non_overlapping(dst,src,size_of(Raw_Table))
-    dst.name,dst.locks,dst.base,dst.single,dst.waits=name,locks,is_base,single,waits
-    src.name,src.locks,src.base,src.single,src.waits=old_name,old_locks,old_base,old_single,old_waits
+    dst.name,dst.lock_plan,dst.waits=name,locks,waits
+    src.name,src.lock_plan,src.waits=old_name,old_locks,old_waits
     table_waits(dst,len(dst.pending)>0)
     table_waits(src,len(src.pending)>0)
 }
@@ -230,6 +232,7 @@ table_convert :: proc(m:^World_Migration,from,to:^Table_Info,t,old_table:^Raw_Ta
     // edits kept: the rows asked for stay written.
     edits_drop(t)
     when CHECK_WRITES {clear(&t.settled.values)}
+    if top:=version_top(t);top>t.version {t.version=top+1}
     t.added,old_table.added=old_table.added,t.added
     t.edits,old_table.edits=old_table.edits,t.edits
     count:=t.values.len
@@ -243,7 +246,9 @@ table_convert :: proc(m:^World_Migration,from,to:^Table_Info,t,old_table:^Raw_Ta
     if values.data!=nil {values_convert(m,from.info,to.info,to.default,(cast([^]u8)values.data)[:size*count],(cast([^]u8)old.data)[:from.info.size*count],count)}
     if values.data==nil && count>0 {
         // The rows cannot stay without values: they go, as with a table that is gone.
-        clear(&t.entities);clear(&t.stamps);clear(&t.page_stamps);t.off=t.off[:0];t.turns=t.turns[:0];clear(&t.owners)
+        clear(&t.entities);clear(&t.stamps);clear(&t.page_stamps)
+        aux_clear_rows(t)
+        if t.aux!=nil {clear(&t.aux.owners)}
         rows_zero(t)
         t.on=0
         t.version=version_top(t)+1
@@ -308,10 +313,10 @@ storage_convert :: proc(m:^World_Migration,from,to:^Storage_Info,src,dst:rawptr)
 // The names of the locks of a place, by id: the components that hold them.
 // Every table with locks names them all.
 @(private="file")
-lock_names :: proc(info:^World_Info,place:Place,data:rawptr) -> []string {
+lock_names :: proc(info:^World_Info,place:Place) -> []string {
     for &t in info.tables {
         if t.place!=place {continue}
-        if table:=cast(^Raw_Table)(uintptr(data)+t.offset);len(table.locks)>0 {return table.locks[0].names}
+        if len(t.locks)>0 {return t.locks[0].names}
     }
     return nil
 }

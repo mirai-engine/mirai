@@ -446,7 +446,7 @@ section_hold :: proc(world:core.World_Ref,e:core.Entity,held:bool) -> Error {
         if info.place!=world.place || no_fresh!=nil {continue}
         t:=core.world_table_at(world,&info)
         for x in on {
-            if row:=core.raw_row(t,x);row>=0 && !t.off[row] {record.fresh[at]=true;break}
+            if row:=core.raw_row(t,x);row>=0 && !core.raw_off(t,row) {record.fresh[at]=true;break}
         }
     }
     if !record.look {

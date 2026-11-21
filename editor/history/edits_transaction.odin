@@ -2,6 +2,7 @@ package history
 
 import "base:runtime"
 import "core:mem"
+import "core:slice"
 import "mirai:core"
 import "mirai:std/base"
 
@@ -88,7 +89,7 @@ edits_prepare :: proc(edits:^Edits,w:core.World_Ref,selection:^Selection,externa
             if r.image_row<0 {adds+=1}
             value:=r.image_row>=0?journal_value(image,size,r.image_row):nil
             held:=r.row>=0?table_value(current,size,r.row):nil
-            if !rows_put(&rows,r.entity,r.image_row>=0,r.image_row>=0 && image.off[r.image_row],value,r.row>=0,r.row>=0 && current.off[r.row],held,size) {rows_free(&rows);return edits_prepare_failed(&prepared,.Memory)}
+            if !rows_put(&rows,r.entity,r.image_row>=0,r.image_row>=0 && image.off[r.image_row],value,r.row>=0,r.row>=0 && core.raw_off(current,r.row),held,size) {rows_free(&rows);return edits_prepare_failed(&prepared,.Memory)}
         }
         notes+=len(rows.entities)
         if len(rows.entities)>0 {
@@ -242,11 +243,9 @@ edits_cancel_prepare :: proc(edits:^Edits,w:core.World_Ref,additional_entities:i
         rows:=max(len(image.entities),len(current.entities)+missing)+additional_entities
         size:=table.info.size
         if size>0 && rows>max(int)/size {return .Memory}
-        if !core.raw_rows_reserve(current,size,table.info.align,rows) || reserve(&current.pending,len(current.entities)+additional_entities)!=nil {return .Memory}
+        if !core.raw_rows_reserve(current,size,table.info.align,rows,slice.contains(image.off[:],true)) || reserve(&current.pending,len(current.entities)+additional_entities)!=nil {return .Memory}
         if !core.raw_room(current,len(image.entities)>0?limit:0) {return .Memory}
-        if len(image.entities)>0 {
-            for lock in current.locks {if reserve(core.lock_owners(current,lock),limit)!=nil {return .Memory}}
-        }
+        if len(image.entities)>0 && !core.raw_locks_reserve(current,limit) {return .Memory}
         if resize(&edits.cancel_scratch,max(len(edits.cancel_scratch),size))!=nil {return .Memory}
     }
     edits.cancel_limit,edits.cancel_ready=limit,true
@@ -276,8 +275,8 @@ edits_step_prepare :: proc(edits:^Edits,w:core.World_Ref,step:^Edit_Step,selecti
         table:=&w.info.tables[rows.table]
         current:=core.world_table_at(w,table)
         count:=len(current.entities)+len(rows.entities)
-        if !core.raw_rows_reserve(current,table.info.size,table.info.align,count) || !runtime.__dynamic_array_reserve(&current.added,table.info.size,table.info.align,len(rows.entities)) || reserve(&current.pending,len(current.pending)+2*len(rows.entities))!=nil || !core.raw_room(current,edits.cancel_limit) {return .Memory}
-        for lock in current.locks {if reserve(core.lock_owners(current,lock),edits.cancel_limit)!=nil {return .Memory}}
+        if !core.raw_rows_reserve(current,table.info.size,table.info.align,count,slice.contains(rows.off[:],true)) || !runtime.__dynamic_array_reserve(&current.added,table.info.size,table.info.align,len(rows.entities)) || reserve(&current.pending,len(current.pending)+2*len(rows.entities))!=nil || !core.raw_room(current,edits.cancel_limit) {return .Memory}
+        if !core.raw_locks_reserve(current,edits.cancel_limit) {return .Memory}
     }
     return .None
 }
@@ -322,7 +321,7 @@ edits_cancel_reserved :: proc(edits:^Edits,w:core.World_Ref) -> bool {
                 if r.image_row<0 {core.raw_remove(current,r.entity);continue}
                 value:=journal_value(image,size,r.image_row)
                 if !saved_equal(table_value(current,size,r.row),value,size,ranges) {saved_copy(core.raw_author(current,info.info,r.entity),value,size,ranges)}
-                if image.off[r.image_row]!=current.off[r.row] {
+                if image.off[r.image_row]!=core.raw_off(current,r.row) {
                     if image.off[r.image_row] {core.raw_disable(current,r.entity)} else {core.raw_enable(current,r.entity)}
                 }
             }

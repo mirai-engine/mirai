@@ -518,11 +518,12 @@ type_has_entity :: proc(info:^runtime.Type_Info) -> bool {
 table_value_info :: proc(info:^runtime.Type_Info) -> (elem:^runtime.Type_Info,ok:bool) {
     base:=runtime.type_info_base(info)
     s,is_struct:=base.variant.(runtime.Type_Info_Struct)
-    if !is_struct || s.field_count<10 || s.names[0]!="values" || s.names[9]!="edits" {return nil,false}
-    ptr,is_ptr:=runtime.type_info_base(s.types[9]).variant.(runtime.Type_Info_Pointer)
+    if !is_struct || base.size!=size_of(Raw_Table) || s.field_count<2 || s.names[0]!="values" ||
+       s.names[1]!="aux" || s.offsets[1]!=offset_of(Raw_Table,aux) {return nil,false}
+    ptr,is_ptr:=runtime.type_info_base(s.types[1]).variant.(runtime.Type_Info_Pointer)
     if !is_ptr {return nil,false}
     named,is_named:=ptr.elem.variant.(runtime.Type_Info_Named)
-    if !is_named || named.name!="Edit_Buffer" {return nil,false}
+    if !is_named || named.name!="Table_Aux" {return nil,false}
     arr,is_arr:=runtime.type_info_base(s.types[0]).variant.(runtime.Type_Info_Dynamic_Array)
     if !is_arr {return nil,false}
     return arr.elem,true
@@ -535,7 +536,7 @@ value_copy :: proc(dst,src:rawptr,info:^runtime.Type_Info) -> bool {
     if elem,is_table:=table_value_info(info);is_table {
         d,s:=cast(^Raw_Table)dst,cast(^Raw_Table)src
         if !raw_copy(d,s,elem,value_flat(elem)) {return false}
-        d.base,d.single,d.name,d.locks=s.base,s.single,s.name,s.locks
+        d.base,d.single,d.name,d.lock_plan=s.base,s.single,s.name,s.lock_plan
         return true
     }
     if value_flat(info) {

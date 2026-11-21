@@ -152,8 +152,7 @@ a_respawned_body_is_placed_at_rest_at_its_point :: proc(t:^testing.T) {
     core.add(&w.transforms,point,core.Transform{position={1,2,3},rotation=1,scale=1})
     core.add(&w.transforms,body,core.Transform{position={0,-40,0},rotation=1,scale=1})
     test_world_settle(&w)
-    resize(&w.transforms.owners,core.entity_index(body)+1)
-    w.transforms.owners[core.entity_index(body)]=core.Row_Owner{generation=core.entity_generation(body),id=1}
+    if !testing.expect(t,core.owner_set(&w.transforms,body,1)) {return}
     spawning:Spawning
     problems:core.Problems
     a:=Apply{seats=core.read(&w.seats),points=core.read(&w.points),placer={&w.transforms,core.read(&w.parents),&w.places,&w.jumps},spawning=&spawning,problems=&problems}

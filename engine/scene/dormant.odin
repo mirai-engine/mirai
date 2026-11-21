@@ -189,7 +189,7 @@ shape_of :: proc(w:core.World_Ref,types:^core.World_Schema,held:^core.Table(Sect
         t:=core.world_table_at(w,&info)
         row:=core.raw_row(t,e)
         if row<0 || info.type==core.Disabled && row_has(held,e) {continue}
-        shape=base.hash_mix(shape,u64(at)<<1|u64(t.off[row]))
+        shape=base.hash_mix(shape,u64(at)<<1|u64(core.raw_off(t,row)))
     }
     return shape
 }

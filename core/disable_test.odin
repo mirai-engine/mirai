@@ -203,18 +203,24 @@ a_disabled_entity_turns_off_what_hangs_from_it_and_keeps_what_was_off :: proc(t:
     testing.expect(t,has(&w.names,root) && has(&w.names,grandchild) && has(&w.parents,child))
 
     // Turning off a row already off with its entity is a change its stamp tells.
+    copied:Table(Probe)
+    defer table_destroy(&copied)
+    mark:Copy_Mark
+    testing.expect(t,table_copy_changed(&copied,&w.probes,&mark))
     seen:Seen
     _=changes(&w.probes,&seen)
     disable(&w.probes,child)
     test_world_settle(&w)
     c:=changes(&w.probes,&seen)
     turned:=raw_row(raw(&w.probes),child)
-    testing.expect(t,version(&w.probes)>c.since && turned>=0 && w.probes.stamps[turned]>c.since && w.probes.off[turned])
+    testing.expect(t,version(&w.probes)>c.since && turned>=0 && w.probes.stamps[turned]>c.since && row_off(&w.probes,turned))
+    testing.expect(t,table_copy_changed(&copied,&w.probes,&mark) && row_off(&copied,turned))
     enable(&w.probes,child)
     test_world_settle(&w)
     c=changes(&w.probes,&seen)
     turned=raw_row(raw(&w.probes),child)
-    testing.expect(t,turned>=0 && w.probes.stamps[turned]>c.since && !w.probes.off[turned])
+    testing.expect(t,turned>=0 && w.probes.stamps[turned]>c.since && !row_off(&w.probes,turned))
+    testing.expect(t,table_copy_changed(&copied,&w.probes,&mark) && !row_off(&copied,turned))
 
     // What comes into a disabled tree comes off.
     late:=create(&w.entities)
@@ -291,7 +297,7 @@ a_lock_passes_from_a_component_removed_to_one_added_in_one_function :: proc(t:^t
     remove(&w.rivals,e);add(&w.bodies,e,Lock_Body{3})
     test_world_settle(&w)
     testing.expect(t,!has(&w.rivals,e) && row_of(&w.bodies,e)>=0 && row_of(&w.bodies,e)<count(&w.bodies))
-    testing.expect(t,w.owner.owners[entity_index(e)].generation==entity_generation(e) && w.owner.owners[entity_index(e)].id!=0)
+    testing.expect(t,owner_at(raw(&w.owner),entity_index(e)).generation==entity_generation(e) && owner_at(raw(&w.owner),entity_index(e)).id!=0)
 }
 
 @(test)
@@ -303,13 +309,13 @@ a_component_on_owns_what_its_locks_take_and_one_off_lets_it_go :: proc(t:^testin
     e:=create(es)
     add(bodies,e,Lock_Body{1})
     table_settle(bodies,es)
-    testing.expect_value(t,owner.owners[entity_index(e)].id,u16(1))
+    testing.expect_value(t,owner_at(raw(owner),entity_index(e)).id,u16(1))
     disable(bodies,e)
     table_settle(bodies,es)
-    testing.expect_value(t,owner.owners[entity_index(e)],Row_Owner{})
+    testing.expect_value(t,owner_at(raw(owner),entity_index(e)),Row_Owner{})
     enable(bodies,e)
     table_settle(bodies,es)
-    testing.expect_value(t,owner.owners[entity_index(e)].id,u16(1))
+    testing.expect_value(t,owner_at(raw(owner),entity_index(e)).id,u16(1))
 }
 
 @(test)

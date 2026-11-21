@@ -305,10 +305,11 @@ reflected_immediate_removal_moves_the_last_row_releases_locks_and_never_allocate
     names:Table(Name);table_init(&names,"Name");defer table_destroy(&names)
     a,b,c:=create(&es),create(&es),create(&es)
     owner:Table(u8);table_init(&owner,"Transform");defer table_destroy(&owner)
-    resize(&owner.owners,len(es.generation))
-    owners:=&owner.owners
+    testing.expect(t,owners_reserve(raw(&owner),len(es.generation)))
+    owners:=&owner.aux.owners
     locks:=[1]Lock{{offset=lock_offset(&names,&owner),id=1,target="Transform",names={"","Test owner"}}}
-    names.locks=locks[:]
+    plan:=locks[:]
+    names.lock_plan=&plan
     add(&names,a,name_make("a"));add(&names,b,name_make("b"));add(&names,c,name_make("c"))
     unowned:=owner.version
     table_settle(&names,&es)
@@ -346,9 +347,9 @@ a_row_put_back_at_once_takes_its_place_its_lock_and_no_memory :: proc(t:^testing
     names:Table(Name);table_init(&names,"Name");defer table_destroy(&names)
     owner:Table(u8);table_init(&owner,"Transform");defer table_destroy(&owner)
     a,b,c:=create(&es),create(&es),create(&es)
-    resize(&owner.owners,len(es.generation))
     locks:=[1]Lock{{offset=lock_offset(&names,&owner),id=1,target="Transform",names={"","Test owner"}}}
-    names.locks=locks[:]
+    plan:=locks[:]
+    names.lock_plan=&plan
     add(&names,a,name_make("a"));add(&names,b,name_make("b"));add(&names,c,name_make("c"))
     table_settle(&names,&es)
     disable(&names,c)
@@ -368,7 +369,7 @@ a_row_put_back_at_once_takes_its_place_its_lock_and_no_memory :: proc(t:^testing
     testing.expect(t,put && !again)
     testing.expect_value(t,tracker.total_allocation_count,i64(0))
     testing.expect(t,has(&names,b) && name_get(&names,b)=="b" && count(&names)==2)
-    testing.expect_value(t,owner.owners[entity_index(b)].id,u16(1))
+    testing.expect_value(t,owner_at(raw(&owner),entity_index(b)).id,u16(1))
     c1:=changes(&names,&seen)
     testing.expect(t,changed(&names,c1,row_of(&names,b)) && !changed(&names,c1,row_of(&names,a)))
     // Off by itself it waits among the rows off, without the lock; a row that
@@ -379,7 +380,7 @@ a_row_put_back_at_once_takes_its_place_its_lock_and_no_memory :: proc(t:^testing
     testing.expect(t,raw_put(raw(&names),type_info_of(Name),&es,c,&value,true))
     on,turned_off,found:=raw_state(raw(&names),c)
     testing.expect(t,found && !on && turned_off && count(&names)==2)
-    testing.expect_value(t,owner.owners[entity_index(c)],Row_Owner{})
+    testing.expect_value(t,owner_at(raw(&owner),entity_index(c)),Row_Owner{})
     // Not for an entity gone, nor past the room of the table.
     destroy(&es,a)
     testing.expect(t,!raw_put(raw(&names),type_info_of(Name),&es,a,&value,false))
@@ -460,7 +461,7 @@ a_settle_without_changes_leaves_a_single_table_as_it_was :: proc(t:^testing.T) {
     add(&skies,a,1);add(&skies,b,2);add(&plain,a,1);add(&plain,b,2)
     table_settle(&skies,&es);table_settle(&plain,&es)
     testing.expect_value(t,count(&plain),2)
-    testing.expect_value(t,len(plain.turns),0)
+    testing.expect(t,plain.aux==nil)
     version,shape:=skies.version,skies.layout
     testing.expect(t,!table_settle(&skies,&es))
     testing.expect(t,skies.version==version && skies.layout==shape)
@@ -748,4 +749,31 @@ dirty_edits_preserve_changes_among_unchanged_precise_edits :: proc(t:^testing.T)
     testing.expect_value(t,allocation.requests,requests)
     testing.expect_value(t,stamp(&table,row_of(&table,a)),unchanged)
     testing.expect(t,stamp(&table,row_of(&table,b))>before && version(&table)>before)
+}
+
+
+@(test)
+a_table_reserves_explicit_turns_only_when_used_and_retries_without_memory :: proc(t:^testing.T) {
+    allocation:=Copy_Allocation{remaining=100,owner=context.allocator}
+    es:Entities;entities_init(&es);defer entities_destroy(&es)
+    table:Table(i32);table_init(&table,"number",{copy_allocator,&allocation})
+    defer table_destroy(&table)
+    e:=create(&es)
+    add(&table,e,1)
+    table_settle(&table,&es)
+    testing.expect(t,table.aux==nil && has(&table,e))
+
+    disable(&table,e)
+    allocation.remaining=1
+    testing.expect(t,!table_settle(&table,&es) && has(&table,e) && !row_off(&table,0))
+    allocation.remaining=100
+    testing.expect(t,table_settle(&table,&es) && !has(&table,e) && row_off(&table,0))
+
+    allocation.remaining=0
+    requests:=allocation.requests
+    enable(&table,e)
+    testing.expect(t,table_settle(&table,&es) && has(&table,e) && !row_off(&table,0))
+    disable(&table,e)
+    testing.expect(t,table_settle(&table,&es) && !has(&table,e) && row_off(&table,0))
+    testing.expect_value(t,allocation.requests,requests)
 }
