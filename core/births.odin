@@ -24,6 +24,7 @@ birth_channel :: proc "contextless" (name:string) -> Birth_Channel {
 Birth :: struct {
     channel:Birth_Channel,
     position:[3]f32 `mirai:"unit=m"`,
+    normal:[3]f32, // zero: no surface alignment
     velocity:[3]f32 `mirai:"unit=m/s"`,
     color:[4]f32 `mirai:"color"`, // zero: white
     size:f32,                     // 0: 1

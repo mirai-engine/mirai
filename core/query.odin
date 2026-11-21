@@ -28,9 +28,20 @@ World_Queries :: struct {
     open:proc(w:World_Ref) -> (World_Query,bool),
 }
 
+// Providers still receive World_Ref. The tag gives their storage lookup read semantics.
+@(private)
+QUERY_READ_ONLY :: 0x80
+
 // The query of the world w; one that hits nothing without a library that gives it.
-world_query :: proc(w:World_Ref,queries:Ref(World_Queries)) -> World_Query {
+world_query_read :: proc(w:World_Read,queries:Ref(World_Queries)) -> World_Query {
     if queries.ptr==nil || queries.open==nil || w.data==nil {return {}}
-    query,_:=queries.open(w)
+    handle:=world_ref(w.data,w.info,Place(u8(w.place)|QUERY_READ_ONLY))
+    query,_:=queries.open(handle)
     return query
 }
+
+world_query_ref :: proc(w:World_Ref,queries:Ref(World_Queries)) -> World_Query {
+    return world_query_read(world_read(w),queries)
+}
+
+world_query :: proc{world_query_read,world_query_ref}

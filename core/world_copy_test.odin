@@ -276,6 +276,15 @@ a_copy_of_what_changed_takes_the_storages_written_and_equals_a_whole_copy :: pro
     cases:=[]Case{
         {"nothing was written",proc(w:^Rev_World,ref:World_Ref,root,child:Entity) {},{}},
         {"a storage was read where it is",proc(w:^Rev_World,ref:World_Ref,root,child:Entity) {_=w.count.value+i32(len(w.list.items))},{}},
+        {"reflection and collision providers read without revisions",proc(w:^Rev_World,ref:World_Ref,root,child:Entity) {
+            read:=world_read(ref)
+            assert(world_storage_read_of(read,Rev_Count).ptr==&w.count)
+            queries:=World_Queries{open=proc(w:World_Ref) -> (World_Query,bool) {
+                return {user=world_storage_of(w,Rev_List)},true
+            }}
+            assert(world_query(read,{&queries}).user==&w.list)
+            assert(world_query(ref,{&queries}).user==&w.list)
+        },{}},
         {"a function received a storage to write",proc(w:^Rev_World,ref:World_Ref,root,child:Entity) {
             w.storage_revisions[1]+=1 // as its call_ does before it runs
             append(&w.list.items,4)
@@ -300,7 +309,7 @@ a_copy_of_what_changed_takes_the_storages_written_and_equals_a_whole_copy :: pro
     testing.expect_value(t,reads(&w,&read),[3]bool{true,true,true})
     for c,at in cases {
         // Half way, another copy is kept as the World is: a correction goes back to it below.
-        if at==4 {testing.expect(t,world_copy_changed(&info,&older,&w,older_marks[:]))}
+        if at==5 {testing.expect(t,world_copy_changed(&info,&older,&w,older_marks[:]))}
         c.act(&w,ref,root,child)
         testing.expectf(t,reads(&w,&read)==c.copied,"%s: who reads the storages by change was told otherwise",c.what)
         before:=kept.storage_revisions

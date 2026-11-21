@@ -133,10 +133,7 @@ world_union :: proc(dst,src:World_Ref,parent:Entity=NONE,entities:^[dynamic]Enti
         }
     }
     if under!=nil {
-        order:i32=0
-        for row in 0..<count(under) {
-            if up:=at(under,row);up.entity==parent {order=max(order,up.order+1)}
-        }
+        order:=union_child_order(dst,under,parent)
         for e,i in made {
             if e==NONE || !union_root(made,ses,parents,entity_make(i,ses.generation[i])) {continue}
             add(under,e,Parent{parent,order})
@@ -159,4 +156,18 @@ union_root :: proc(made:[]Entity,ses:^Entities,parents:^Table(Parent),e:Entity) 
     if parents==nil {return true}
     up,has:=get(parents,e)
     return !has || union_remap(made,ses,up.entity)==NONE
+}
+
+@(private="file")
+union_child_order :: proc(dst:World_Ref,parents:^Table(Parent),parent:Entity) -> i32 {
+    h:=world_storage_read_of(world_read(dst),Hierarchy)
+    if h.ptr!=nil && h.seen.version==version(parents) && len(h.cut)==0 {
+        if last,ok:=get(parents,last_child(h,parent));ok {return max(0,last.order+1)}
+        return 0
+    }
+    order:i32
+    for row in 0..<count(parents) {
+        if up:=at(parents,row);up.entity==parent {order=max(order,up.order+1)}
+    }
+    return order
 }

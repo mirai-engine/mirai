@@ -9,9 +9,16 @@ Queue :: struct($T:typeid) {
     waiting:[dynamic]Waiting(T), // pushed with later: each one is taken at its tick
     dropped:int, // offered with no room, since the owner last served it
     refused:int, // asked with values it cannot take, since the owner last served it
+    changes:u64, // length changes, including a take followed by a push
 }
 
-queue_push :: proc(q:^Queue($T),item:T) {append(&q.items,item)}
+queue_state :: #force_inline proc "contextless" (q:^Queue($T)) -> [5]u64 {
+    return {u64(len(q.items)),u64(len(q.waiting)),u64(q.dropped),u64(q.refused),q.changes}
+}
+
+queue_push :: proc(q:^Queue($T),item:T) {
+    if _,error:=append(&q.items,item);error==nil {q.changes+=1}
+}
 push :: proc{queue_push,events_push}
 
 // An append-only log read by cursor: a reader keeps how far it read and
@@ -64,7 +71,11 @@ Waiting :: struct($T:typeid) {due:u64,item:T}
 // Pushes what the owner takes `seconds` from now, with take_due: a request
 // that waits as plain data, copied and rolled back with its queue. A queue is
 // not saved: a wait a save must keep is a deadline in a component.
-later :: proc(q:^Queue($T),time:Time,seconds:f32,item:T) {append(&q.waiting,Waiting(T){deadline(time,seconds),item})}
+later :: proc(q:^Queue($T),time:Time,seconds:f32,item:T) {
+    if _,error:=append(&q.waiting,Waiting(T){deadline(time,seconds),item});error==nil {
+        q.changes+=1
+    }
+}
 
 // Occurrences: the library that owns the log pushes what happened and never
 // clears it. A function that receives its storage to read (S or core.Ref(S))
@@ -79,9 +90,11 @@ Events :: struct($T:typeid) {
 events_push :: proc(e:^Events($T),item:T) {log_push(&e.log,item)}
 
 // Leaves in view, the copy of a log a reader is handed, what came since cursor.
-events_read :: proc "contextless" (view:^Events($T),cursor:^u64) {
+events_read :: proc "contextless" (view:^Events($T),cursor:^u64) -> bool {
+    before:=cursor^
     since,_:=log_since(view.log,cursor)
     view.items=transmute([dynamic]T)runtime.Raw_Dynamic_Array{raw_data(since),len(since),len(since),{}}
+    return cursor^!=before
 }
 
 // What came before the call before this one goes. Whoever runs a World calls
@@ -101,7 +114,7 @@ QUEUE_FIRST_ROOM :: 64 // of a queue asked for before its owner served it
 // in a stable frame. What does not fit is counted for queue_serve.
 offer :: proc(q:^Queue($T),item:T) {
     if cap(q.items)==0 && reserve(&q.items,QUEUE_FIRST_ROOM)!=nil || len(q.items)>=cap(q.items) {q.dropped+=1;return}
-    append(&q.items,item)
+    queue_push(q,item)
 }
 
 // What a request proc calls for values no request can take.
@@ -129,9 +142,8 @@ queue_serve :: proc(q:^Queue($T),capacity:int,problems:^Problems,code,what,setti
 // pushed for later is refused: the owner of a queue that takes it uses take_due.
 take :: proc(q:^Queue($T)) -> []T {
     q.refused+=len(q.waiting)
-    clear(&q.waiting)
     items:=q.items[:]
-    clear(&q.items)
+    queue_clear(q)
     return items
 }
 
@@ -147,6 +159,7 @@ take_due :: proc(q:^Queue($T),time:Time) -> []T {
             kept+=1
         }
     }
+    if kept!=len(q.waiting) || len(q.items)>0 {q.changes+=1}
     base.truncate(&q.waiting,kept)
     items:=q.items[:]
     clear(&q.items)
@@ -154,6 +167,7 @@ take_due :: proc(q:^Queue($T),time:Time) -> []T {
 }
 
 queue_clear :: proc(q:^Queue($T)) {
+    if len(q.items)>0 || len(q.waiting)>0 {q.changes+=1}
     clear(&q.items)
     clear(&q.waiting)
 }

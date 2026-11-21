@@ -127,12 +127,15 @@ settle_table :: proc(info:^World_Info,world:rawptr,at:int,es:^Entities,marks:[]b
 // marked. The base of an entity stays on when it is turned.
 @(private="file")
 settle_mark :: proc "contextless" (info:^World_Info,world:rawptr,marks:[]bool,entities:[]Entity,turned:bool) {
-    for e in entities {
-        i:=entity_index(e)
-        for &t,at in info.tables {
-            if marks[at] || t.place!=.World {continue}
-            table:=cast(^Raw_Table)(uintptr(world)+t.offset)
-            if rows_at(table,i)!=0 && !(turned && table.base) {marks[at]=true}
+    if len(entities)==0 {return}
+    for &t,at in info.tables {
+        if marks[at] || t.place!=.World {continue}
+        table:=cast(^Raw_Table)(uintptr(world)+t.offset)
+        if raw_count(table)==0 || turned && table.base {continue}
+        for e in entities {
+            if rows_at(table,entity_index(e))==0 {continue}
+            marks[at]=true
+            break
         }
     }
 }
