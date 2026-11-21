@@ -52,13 +52,13 @@ journal sends over the network, editor thumbnails, the shaders the executables e
   (restoring layouts of blocks of textures) and `blocks` (block encoders and layouts, engine-time).
   Nothing else in the engine imports a codec. The CLI names it
   ([build](../../mirai-projects/references/build.md#compressor)): the open one,
-  `std/compressor` (Zstandard, LZ4 HC, bc7enc_rdo and BC6H, no layout), or the private
-  `mirai-compression` with the same packages and declarations, which also decodes the open
-  formats through `compressor_open`.
+  `std/compressor` (MDC1, bc7enc_rdo and BC6H, no layout), or the private
+  `mirai-compression` with the same packages and declarations, which also decodes MDC1 through
+  `compressor_open`.
 - **Profiles.** A write says what it favors (`data.Profile`): `Fast` for what the editor,
   imports and a running game save; a cook writes with `Ultra` (a shipped game) or `Balanced` (a
   dev game), and what streams while playing with `profile_streamed` of it (`Speed` in place of
-  `Ultra`). A read needs no profile: the stream names its format.
+  `Ultra`). All open profiles write MDC1. A read needs no profile: the stream names its format.
 - **Codecs.** What a write may use (`Codecs`): `None`, the zero value, no stage of a compressor;
   `Open`, the formats every build reads; `Best`, what the compressor of the build has. Every
   document is written `None` but the files a cook ships, which take `project_codecs`

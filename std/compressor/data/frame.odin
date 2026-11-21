@@ -12,17 +12,11 @@ import "base:intrinsics"
 @(private)
 Block_Mode :: enum u8 {Raw,LZ,Entropy}
 
-@(private)
-mdc_bound :: proc "contextless" (size:int) -> int {
-    if size<=0 {return 0}
-    return size+1+4*((size-1)/BLOCK_BYTES)
-}
-
-// The extent of each nonfinal block precedes its mode byte and payload.
-encode_mdc1 :: proc(e:^Encoder,profile:Profile,src,dst:[]u8) -> (size:int,error:Error) {
+// src in the format of the profile into dst, of at least bound bytes. Deterministic.
+encode :: proc(e:^Encoder,profile:Profile,src,dst:[]u8,open:=false) -> (size:int,error:Error) {
     if profile>.Ultra {return 0,.Unknown_Format}
     if len(src)>MAX_BYTES {return 0,.Too_Large}
-    if len(dst)<mdc_bound(len(src)) {return 0,.Output_Too_Small}
+    if len(dst)<bound(len(src)) {return 0,.Output_Too_Small}
     if len(src)==0 {return 0,.None}
     if buffers_overlap(src,dst) {return 0,.Corrupt}
     if e==nil {return 0,.Out_Of_Memory}
@@ -46,7 +40,7 @@ encode_mdc1 :: proc(e:^Encoder,profile:Profile,src,dst:[]u8) -> (size:int,error:
 
 @(private)
 decode_mdc1 :: proc "contextless" (d:^Decoder,src,dst:[]u8) -> Error {
-    if len(src)>mdc_bound(len(dst)) {return .Corrupt}
+    if len(src)>bound(len(dst)) {return .Corrupt}
     if len(dst)==0 {return .None}
     if len(src)==0 || buffers_overlap(src,dst) {return .Corrupt}
     at:=0

@@ -136,11 +136,9 @@ are kept here and, where the license asks for it, in the header of the file.
   `plugins/fsr/runtime/framegen.odin`, translated from `ffx_opticalflow.cpp`,
   `ffx_frameinterpolation.cpp` and `ffx_fsr3.cpp`. Game, with the `fsr` plugin.
 - **Zstandard 1.5.7** (BSD-3-Clause; © Meta Platforms, Inc. and affiliates),
-  <https://github.com/facebook/zstd>. `std/compressor/zstd`, a translation of its decoder and of
-  three levels of its encoder, as its `UPSTREAM.md` says. Game.
-- **LZ4 1.10.0** (BSD-2-Clause; © 2011-2020 Yann Collet), <https://github.com/lz4/lz4>.
-  `std/compressor/lz4`, a translation of its block decoder and of its HC encoder, as its
-  `UPSTREAM.md` says. Game.
+  <https://github.com/facebook/zstd>. MDC1's Huffman entropy coder and its supporting bitstreams,
+  histogram and FSE weight coding in `std/compressor/data` derive from the upstream Huffman and
+  entropy libraries. See `std/compressor/data/LICENSE-zstd.txt`. Game.
 - **bc7enc_rdo** (MIT or public domain; © 2020-2021 Richard Geldreich, Jr.),
   <https://github.com/richgel999/bc7enc_rdo>. `std/compressor/blocks/rgbcx`, `bc7enc`
   and `rdo`, translated; a block keeps the alpha 0 and 255 of its texels. Editor.

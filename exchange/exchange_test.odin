@@ -832,21 +832,20 @@ a_ten_gigabyte_object_moves_within_bounded_memory :: proc(t:^testing.T) {
     }
 }
 
-// A codec no build has, as a peer built with another compressor writes its frames: Zstandard
-// under an id of its own.
+// Simulate frames written by a peer with another compressor.
 @(private="file")
 other_codec :: proc() -> store.Codec_Hook {
     return {codec=15,encode=proc(src,dst:[]u8) -> int {
         e:data.Encoder
         data.encoder_init(&e)
         defer data.encoder_destroy(&e)
-        size,error:=data.encode(&e,.Fast,src,dst)
+        size,error:=data.encode(&e,.Fast,src,dst,open=true)
         return size if error==.None else 0
     },decode=proc(src,dst:[]u8) -> bool {
         d:data.Decoder
         if data.decoder_init(&d)!=.None {return false}
         defer data.decoder_destroy(&d)
-        return data.decode(&d,data.ZSTD,src,dst)==.None
+        return data.decode(&d,data.format(.Fast,open=true),src,dst)==.None
     }}
 }
 

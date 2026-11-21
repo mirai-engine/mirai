@@ -42,9 +42,13 @@ mdc1_profiles_round_trip_block_extents :: proc(t:^testing.T) {
     d:Decoder
     if !testing.expect_value(t,encoder_init(&e),Error.None) {return}
     defer encoder_destroy(&e)
-    if !testing.expect_value(t,decoder_init(&d,mdc1=true),Error.None) {return}
+    if !testing.expect_value(t,decoder_init(&d),Error.None) {return}
     defer decoder_destroy(&d)
 
+    for profile in Profile {
+        testing.expect_value(t,format(profile),MDC1)
+        testing.expect_value(t,format(profile,open=true),MDC1)
+    }
     source:=make([]u8,2*BLOCK_BYTES+1)
     dest:=make([]u8,len(source))
     packed:=make([]u8,bound(len(source)))
@@ -62,13 +66,13 @@ mdc1_profiles_round_trip_block_extents :: proc(t:^testing.T) {
         for pattern in Pattern {
             fill(raw,pattern,1)
             for profile in Profile {
-                encoded,err:=encode_mdc1(&e,profile,raw,packed[:bound(n)])
+                encoded,err:=encode(&e,profile,raw,packed[:bound(n)])
                 if !testing.expectf(t,err==.None,"%d %v %v: %v",n,pattern,profile,err) {return}
                 wire:=packed[:encoded]
                 decoded:=decode(&d,MDC1,wire,dest[:n])
                 if !testing.expectf(t,decoded==.None && string(dest[:n])==string(raw),
                     "%d %v %v: %v",n,pattern,profile,decoded) {return}
-                written,rewrite:=encode_mdc1(&e,profile,raw,again[:bound(n)])
+                written,rewrite:=encode(&e,profile,raw,again[:bound(n)],open=true)
                 if !testing.expectf(t,rewrite==.None && string(wire)==string(again[:written]),
                     "%d %v %v must be deterministic",n,pattern,profile) {return}
             }
@@ -97,7 +101,7 @@ speed_uses_lz_and_entropy_pays_for_its_header :: proc(t:^testing.T) {
     }
     for c in cases {
         fill(raw,c.pattern,3)
-        n,error:=encode_mdc1(&e,c.profile,raw,wire)
+        n,error:=encode(&e,c.profile,raw,wire)
         if !testing.expect_value(t,error,Error.None) {return}
         testing.expect_value(t,Block_Mode(wire[0]),c.mode)
         if c.mode==.Entropy {testing.expect(t,n*100<=len(raw)*98)}
@@ -111,7 +115,7 @@ malformed_data_stays_inside_both_buffers_with_reused_scratch :: proc(t:^testing.
     d:Decoder
     encoder_init(&e)
     defer encoder_destroy(&e)
-    if !testing.expect_value(t,decoder_init(&d,mdc1=true),Error.None) {return}
+    if !testing.expect_value(t,decoder_init(&d),Error.None) {return}
     defer decoder_destroy(&d)
 
     raw:=make([]u8,4096)
@@ -126,7 +130,7 @@ malformed_data_stays_inside_both_buffers_with_reused_scratch :: proc(t:^testing.
     patterns:=[?]Pattern{.Repeated,.Palette,.Records,.Random}
     for pattern in patterns {
         fill(raw,pattern,19)
-        n,err:=encode_mdc1(&e,.Balanced,raw,packed)
+        n,err:=encode(&e,.Balanced,raw,packed)
         if !testing.expect_value(t,err,Error.None) {return}
         for cut in 0..<n {
             prefix:=make([]u8,cut)
@@ -159,23 +163,25 @@ invalid_commands_and_unavailable_scratch_report_errors :: proc(t:^testing.T) {
     e:Encoder
     d:Decoder
     allocator:=runtime.nil_allocator()
-    testing.expect_value(t,decoder_init(&d,allocator,mdc1=true),Error.Out_Of_Memory)
+    testing.expect_value(t,decoder_init(&d,allocator),Error.Out_Of_Memory)
     encoder_init(&e,allocator)
     defer encoder_destroy(&e)
     raw,dst:[32]u8
     wire:[33]u8
-    testing.expect_value(t,decode(&d,Format(1),nil,nil),Error.Unknown_Format)
+    for unsupported in ([?]Format{Format(0x4454535a),Format(0x48345a4c),MLZ1,Format(1)}) {
+        testing.expect_value(t,decode(&d,unsupported,nil,nil),Error.Unknown_Format)
+    }
     testing.expect_value(t,decode(&d,MDC1,wire[:1],nil),Error.Corrupt)
     testing.expect_value(t,decode(&d,MDC1,nil,nil),Error.None)
-    _,small:=encode_mdc1(&e,.Fast,raw[:],wire[:32])
+    _,small:=encode(&e,.Fast,raw[:],wire[:32])
     testing.expect_value(t,small,Error.Output_Too_Small)
-    _,memory:=encode_mdc1(&e,.Fast,raw[:],wire[:])
+    _,memory:=encode(&e,.Fast,raw[:],wire[:])
     testing.expect_value(t,memory,Error.Out_Of_Memory)
-    _,overlap:=encode_mdc1(&e,.Fast,wire[:32],wire[:])
+    _,overlap:=encode(&e,.Fast,wire[:32],wire[:])
     testing.expect_value(t,overlap,Error.Corrupt)
     testing.expect_value(t,decode(&d,MDC1,wire[:],wire[1:]),Error.Corrupt)
 
-    testing.expect_value(t,decoder_init(&d,mdc1=true),Error.None)
+    testing.expect_value(t,decoder_init(&d),Error.None)
     defer decoder_destroy(&d)
     cases:=[?][]u8{
         {1,0},
@@ -228,7 +234,7 @@ a_multiblock_frame_requires_exact_extents :: proc(t:^testing.T) {
     wire:=make([]u8,bound(len(input)))
     out:=make([]u8,len(input))
     defer {delete(input);delete(wire);delete(out)}
-    n,err:=encode_mdc1(&e,.Speed,input,wire)
+    n,err:=encode(&e,.Speed,input,wire)
     if !testing.expect_value(t,err,Error.None) {return}
     testing.expect_value(t,decode(nil,MDC1,wire[:n],out),Error.None)
     testing.expect_value(t,decode(nil,MDC1,wire[:n-1],out),Error.Corrupt)
@@ -245,13 +251,13 @@ entropy_uses_three_repeat_slots_and_decodes_without_an_allocator :: proc(t:^test
     d:Decoder
     encoder_init(&e)
     defer encoder_destroy(&e)
-    if !testing.expect_value(t,decoder_init(&d,mdc1=true),Error.None) {return}
+    if !testing.expect_value(t,decoder_init(&d),Error.None) {return}
     defer decoder_destroy(&d)
 
     raw,out:[320]u8
     for &byte in raw {byte=41}
     wire:[len(raw)+1]u8
-    if _,err:=encode_mdc1(&e,.Balanced,raw[:],wire[:]);err!=.None {
+    if _,err:=encode(&e,.Balanced,raw[:],wire[:]);err!=.None {
         testing.expect_value(t,err,Error.None)
         return
     }
@@ -282,19 +288,19 @@ entropy_can_match_beyond_two_previous_blocks :: proc(t:^testing.T) {
     d:Decoder
     encoder_init(&e)
     defer encoder_destroy(&e)
-    if !testing.expect_value(t,decoder_init(&d,mdc1=true),Error.None) {return}
+    if !testing.expect_value(t,decoder_init(&d),Error.None) {return}
     defer decoder_destroy(&d)
 
     first:=3*BLOCK_BYTES
     raw:=make([]u8,first+4096)
     out:=make([]u8,len(raw))
-    wire:=make([]u8,mdc_bound(len(raw)))
+    wire:=make([]u8,bound(len(raw)))
     defer {delete(raw);delete(out);delete(wire)}
     fill(raw[:first],.Random,19)
     copy(raw[first:],raw[64:][:4096])
 
     for profile in ([]Profile{.Balanced,.Ultra}) {
-        size,err:=encode_mdc1(&e,profile,raw,wire)
+        size,err:=encode(&e,profile,raw,wire)
         if !testing.expect_value(t,err,Error.None) {return}
         at:=0
         for _ in 0..<3 {

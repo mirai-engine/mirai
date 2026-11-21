@@ -208,18 +208,18 @@ a_build_is_the_same_objects_whatever_codec_its_store_writes :: proc(t:^testing.T
     host:=test_store(t,fmt.tprintf("%s/host",top))
     other:=test_store(t,fmt.tprintf("%s/other",top))
     if host==nil || other==nil {return}
-    // Zstandard under an id of its own: frames no build here decodes.
+    // Use a separate codec id to simulate frames the host cannot decode.
     testing.expect_value(t,store.codec_hook(other,{codec=15,encode=proc(src,dst:[]u8) -> int {
         e:data.Encoder
         data.encoder_init(&e)
         defer data.encoder_destroy(&e)
-        size,error:=data.encode(&e,.Fast,src,dst)
+        size,error:=data.encode(&e,.Fast,src,dst,open=true)
         return size if error==.None else 0
     },decode=proc(src,dst:[]u8) -> bool {
         d:data.Decoder
         if data.decoder_init(&d)!=.None {return false}
         defer data.decoder_destroy(&d)
-        return data.decode(&d,data.ZSTD,src,dst)==.None
+        return data.decode(&d,data.format(.Fast,open=true),src,dst)==.None
     }}),store.Error.None)
     options:=Library_Options{store=host,root=plugin}
     report,error:=ingest(brush,options,allocator=context.temp_allocator)

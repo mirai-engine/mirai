@@ -29,7 +29,8 @@ derived data cache that use it decide what a ref means and what is live.
   `store/index.odin`.
 - Putting and reading objects and chunks: `store/object.odin`; refs: `store/refs.odin`.
 - The codecs of frames, what a value decodes and writes with, and the hook a test gives it to act
-  as a build of another compressor: `store/codec.odin`.
+  as a build of another compressor: `store/codec.odin`. The open codec is defined in
+  [assets](../mirai-assets/references/formats.md#compression).
 - Sweep, compaction, generations, scrub and the sweep's claims: `store/sweep.odin`; leases:
   `store/leases.odin`. The sweep a long-running owner calls, with what is live on the machine:
   `asset.store_sweep` (`asset/collect.odin`).

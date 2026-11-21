@@ -1,4 +1,5 @@
-package zstd
+#+private
+package data
 
 // The cells of an FSE table are u32: a header, then the decoding table.
 
@@ -12,16 +13,26 @@ Fse_DState :: struct {
     table:[^]Fse_Decode_T,
 }
 
-fse_dtable_size_u32 :: #force_inline proc "contextless" (max_table_log:u32) -> int {return 1+(1<<max_table_log)}
-fse_build_dtable_wksp_size :: #force_inline proc "contextless" (max_table_log,max_symbol_value:u32) -> int {return size_of(i16)*int(max_symbol_value+1)+(1<<max_table_log)+8}
-fse_decompress_wksp_size_u32 :: #force_inline proc "contextless" (max_table_log,max_symbol_value:u32) -> int {
-    return fse_dtable_size_u32(max_table_log)+1+(fse_build_dtable_wksp_size(max_table_log,max_symbol_value)+size_of(u32)-1)/size_of(u32)+(FSE_MAX_SYMBOL_VALUE+1)/2+1
+fse_dtable_size_u32 :: #force_inline proc "contextless" (max_table_log:u32) -> int {
+    return 1+(1<<max_table_log)
+}
+fse_build_dtable_wksp_size :: #force_inline proc "contextless" (max_table_log,
+    max_symbol_value:u32) -> int {
+    return size_of(i16)*int(max_symbol_value+1)+(1<<max_table_log)+8
+}
+fse_decompress_wksp_size_u32 :: #force_inline proc "contextless" (max_table_log,
+    max_symbol_value:u32) -> int {
+    return fse_dtable_size_u32(max_table_log)+1+(fse_build_dtable_wksp_size(max_table_log,
+        max_symbol_value)+size_of(u32)-1)/size_of(u32)+(FSE_MAX_SYMBOL_VALUE+1)/2+1
 }
 
-fse_table_step :: #force_inline proc "contextless" (table_size:u32) -> u32 {return (table_size>>1)+(table_size>>3)+3}
+fse_table_step :: #force_inline proc "contextless" (table_size:u32) -> u32 {
+    return (table_size>>1)+(table_size>>3)+3
+}
 
 @(private="file")
-fse_build_dtable_internal :: proc "contextless" (dt:[^]u32,normalized_counter:[^]i16,max_symbol_value,table_log:u32,workspace:[^]u8,wksp_size:int) -> Error #no_bounds_check {
+fse_build_dtable_internal :: proc "contextless" (dt:[^]u32,normalized_counter:[^]i16,
+    max_symbol_value,table_log:u32,workspace:[^]u8,wksp_size:int) -> Huff_Error #no_bounds_check {
     table_decode:=([^]Fse_Decode_T)(&dt[1])
     symbol_next:=([^]u16)(workspace)
     spread:=padd(workspace,int(max_symbol_value+1)*size_of(u16))
@@ -30,7 +41,9 @@ fse_build_dtable_internal :: proc "contextless" (dt:[^]u32,normalized_counter:[^
     table_size:=u32(1)<<table_log
     high_threshold:=table_size-1
 
-    if fse_build_dtable_wksp_size(table_log,max_symbol_value)>wksp_size {return .Max_Symbol_Value_Too_Large}
+    if fse_build_dtable_wksp_size(table_log,max_symbol_value)>wksp_size {
+        return .Max_Symbol_Value_Too_Large
+    }
     if max_symbol_value>FSE_MAX_SYMBOL_VALUE {return .Max_Symbol_Value_Too_Large}
     if table_log>FSE_MAX_TABLELOG {return .Table_Log_Too_Large}
 
@@ -102,14 +115,16 @@ fse_build_dtable_internal :: proc "contextless" (dt:[^]u32,normalized_counter:[^
 }
 
 @(private="file")
-fse_init_dstate :: #force_inline proc "contextless" (d_state:^Fse_DState,bit_d:^Bit_DStream,dt:[^]u32) {
+fse_init_dstate :: #force_inline proc "contextless" (d_state:^Fse_DState,bit_d:^Bit_DStream,
+    dt:[^]u32) {
     d_state.state=uint(bit_read_bits(bit_d,u32((transmute(Fse_DTable_Header)dt[0]).table_log)))
     bit_reload_dstream(bit_d)
     d_state.table=([^]Fse_Decode_T)(&dt[1])
 }
 
 @(private="file")
-fse_decode_symbol :: #force_inline proc "contextless" (d_state:^Fse_DState,bit_d:^Bit_DStream) -> u8 {
+fse_decode_symbol :: #force_inline proc "contextless" (d_state:^Fse_DState,
+    bit_d:^Bit_DStream) -> u8 {
     d_info:=d_state.table[d_state.state]
     low_bits:=bit_read_bits(bit_d,u32(d_info.nb_bits))
     d_state.state=uint(d_info.new_state)+uint(low_bits)
@@ -118,7 +133,8 @@ fse_decode_symbol :: #force_inline proc "contextless" (d_state:^Fse_DState,bit_d
 
 // No symbol may have a probability above 50%.
 @(private="file")
-fse_decode_symbol_fast :: #force_inline proc "contextless" (d_state:^Fse_DState,bit_d:^Bit_DStream) -> u8 {
+fse_decode_symbol_fast :: #force_inline proc "contextless" (d_state:^Fse_DState,
+    bit_d:^Bit_DStream) -> u8 {
     d_info:=d_state.table[d_state.state]
     low_bits:=bit_read_bits_fast(bit_d,u32(d_info.nb_bits))
     d_state.state=uint(d_info.new_state)+uint(low_bits)
@@ -126,12 +142,14 @@ fse_decode_symbol_fast :: #force_inline proc "contextless" (d_state:^Fse_DState,
 }
 
 @(private="file")
-fse_get_symbol :: #force_inline proc "contextless" (d_state:^Fse_DState,bit_d:^Bit_DStream,fast:bool) -> u8 {
+fse_get_symbol :: #force_inline proc "contextless" (d_state:^Fse_DState,bit_d:^Bit_DStream,
+    fast:bool) -> u8 {
     return fast ? fse_decode_symbol_fast(d_state,bit_d) : fse_decode_symbol(d_state,bit_d)
 }
 
 @(private="file")
-fse_decompress_using_dtable_generic :: #force_inline proc "contextless" (dst:[^]u8,max_dst_size:int,c_src:[^]u8,c_src_size:int,dt:[^]u32,fast:bool) -> (size:int,err:Error) #no_bounds_check {
+fse_decompress_using_dtable_generic :: #force_inline proc "contextless" (dst:[^]u8,max_dst_size:int,
+    c_src:[^]u8,c_src_size:int,dt:[^]u32,fast:bool) -> (size:int,err:Huff_Error) #no_bounds_check {
     ostart:=dst
     op:=ostart
     omax:=padd(op,max_dst_size)
@@ -180,7 +198,8 @@ fse_decompress_using_dtable_generic :: #force_inline proc "contextless" (dst:[^]
 
 FSE_DECOMPRESS_NCOUNT_U32 :: (FSE_MAX_SYMBOL_VALUE+1)/2
 
-fse_decompress_wksp :: proc "contextless" (dst:[^]u8,dst_capacity:int,c_src:[^]u8,c_src_size_in:int,max_log:u32,workspace:[^]u32,wksp_size_in:int) -> (size:int,err:Error) #no_bounds_check {
+fse_decompress_wksp :: proc "contextless" (dst:[^]u8,dst_capacity:int,c_src:[^]u8,c_src_size_in:int,
+    max_log:u32,workspace:[^]u32,wksp_size_in:int) -> (size:int,err:Huff_Error) #no_bounds_check {
     istart:=c_src
     ip:=istart
     c_src_size:=c_src_size_in
@@ -193,20 +212,24 @@ fse_decompress_wksp :: proc "contextless" (dst:[^]u8,dst_capacity:int,c_src:[^]u
     if wksp_size<FSE_DECOMPRESS_NCOUNT_U32*size_of(u32) {return 0,.Generic}
 
     {
-        n_count_length:=fse_read_ncount(ncount,&max_symbol_value,&table_log,istart,c_src_size) or_return
+        n_count_length:=fse_read_ncount(ncount,&max_symbol_value,&table_log,istart,
+            c_src_size) or_return
         if table_log>max_log {return 0,.Table_Log_Too_Large}
         ip=padd(ip,n_count_length)
         c_src_size-=n_count_length
     }
 
-    if fse_decompress_wksp_size_u32(table_log,max_symbol_value)*size_of(u32)>wksp_size {return 0,.Table_Log_Too_Large}
+    if fse_decompress_wksp_size_u32(table_log,max_symbol_value)*size_of(u32)>wksp_size {return 0,
+        .Table_Log_Too_Large}
     rest:=FSE_DECOMPRESS_NCOUNT_U32*size_of(u32)+fse_dtable_size_u32(table_log)*size_of(u32)
     wksp_rest:=padd(([^]u8)(workspace),rest)
     wksp_size-=rest
 
-    if e:=fse_build_dtable_internal(dtable,ncount,max_symbol_value,table_log,wksp_rest,wksp_size);e!=.None {return 0,e}
+    if e:=fse_build_dtable_internal(dtable,ncount,max_symbol_value,table_log,wksp_rest,
+        wksp_size);e!=.None {return 0,e}
 
     fast_mode:=(transmute(Fse_DTable_Header)dtable[0]).fast_mode
-    if fast_mode!=0 {return fse_decompress_using_dtable_generic(dst,dst_capacity,ip,c_src_size,dtable,true)}
+    if fast_mode!=0 {return fse_decompress_using_dtable_generic(dst,dst_capacity,ip,c_src_size,
+        dtable,true)}
     return fse_decompress_using_dtable_generic(dst,dst_capacity,ip,c_src_size,dtable,false)
 }

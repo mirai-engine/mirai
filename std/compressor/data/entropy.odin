@@ -1,10 +1,9 @@
 package data
 
 import "base:intrinsics"
-import "../zstd"
 
 @(private) MIN_HUFF :: 32
-@(private) Huff_Work :: [zstd.HUF_WORKSPACE_SIZE/8]u64
+@(private) Huff_Work :: [HUF_WORKSPACE_SIZE/8]u64
 @(private) Offsets :: [3]u32
 @(private) INITIAL_OFFSETS :: Offsets{1,4,8}
 @(private) ALIGN_BITS :: 2
@@ -19,8 +18,8 @@ import "../zstd"
 Decode_Work :: struct {
     tags,offsets:[SEQUENCES_MAX]u8,
     literals:[BLOCK_BYTES]u8,
-    huff:[zstd.HUF_DECOMPRESS_WORKSPACE_SIZE_U32]u32,
-    table:[1+(1<<zstd.HUFFDTABLE_CAPACITY_LOG)]u32,
+    huff:[HUF_DECOMPRESS_WORKSPACE_SIZE_U32]u32,
+    table:[1+(1<<HUFFDTABLE_CAPACITY_LOG)]u32,
 }
 
 @(private)
@@ -96,8 +95,7 @@ offset_push :: #force_inline proc "contextless" (reps:Offsets,slot:int,distance:
 pack_symbols :: proc "contextless" (w:^Huff_Work,src,dst:[]u8,saving:int) -> []u8 {
     if len(src)<MIN_HUFF {return src}
     log:=u32(9 if len(src)<4096 else 11)
-    n,err:=zstd.huf_compress4x_repeat(raw_data(dst),len(dst),raw_data(src),len(src),255,log,
-        ([^]u8)(w),size_of(w^),nil,nil,{})
+    n,err:=huf_compress4x(w,src,dst,log)
     return dst[:n] if err==.None && n>0 && n<=len(src)-saving else src
 }
 
@@ -111,16 +109,16 @@ unpack_symbols :: proc "contextless" (w:^Decode_Work,src,dst:[]u8) -> ([]u8,bool
         return dst,true
     }
     if len(dst)<1024 {
-        w.table[0]=zstd.HUF_DECODER_FAST_TABLELOG-1
-        head,err:=zstd.huf_read_dtable_x1_wksp(&w.table[0],raw_data(src),len(src),
+        w.table[0]=HUF_DECODER_FAST_TABLELOG-1
+        head,err:=huf_read_dtable_x1_wksp(&w.table[0],raw_data(src),len(src),
             &w.huff[0],size_of(w.huff))
         if err!=.None || head>=len(src) {return nil,false}
-        size,decode_error:=zstd.huf_decompress4x_using_dtable(raw_data(dst),len(dst),
+        size,decode_error:=huf_decompress4x1_using_dtable_internal(raw_data(dst),len(dst),
             raw_data(src[head:]),len(src)-head,&w.table[0])
         return dst,decode_error==.None && size==len(dst)
     }
-    w.table[0]=zstd.HUFFDTABLE_CAPACITY_LOG*0x1000001
-    size,err:=zstd.huf_decompress4x_huf_only_wksp(&w.table[0],raw_data(dst),len(dst),
+    w.table[0]=HUFFDTABLE_CAPACITY_LOG*0x1000001
+    size,err:=huf_decompress4x_huf_only_wksp(&w.table[0],raw_data(dst),len(dst),
         raw_data(src),len(src),&w.huff[0],size_of(w.huff))
     return dst,err==.None && size==len(dst)
 }

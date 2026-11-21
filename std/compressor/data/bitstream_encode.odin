@@ -1,4 +1,5 @@
-package zstd
+#+private
+package data
 
 // Writes forward; the reader goes backward. The register is 64 bits on every supported platform.
 
@@ -17,7 +18,8 @@ Bit_CStream :: struct {
     0x3FFFFFFF,0x7FFFFFFF,
 }
 
-bit_init_cstream :: proc "contextless" (bit_c:^Bit_CStream,start_ptr:[^]u8,dst_capacity:int) -> (size:int,err:Error) {
+bit_init_cstream :: proc "contextless" (bit_c:^Bit_CStream,start_ptr:[^]u8,
+    dst_capacity:int) -> (size:int,err:Huff_Error) {
     bit_c.bit_container=0
     bit_c.bit_pos=0
     bit_c.start_ptr=start_ptr
@@ -28,7 +30,8 @@ bit_init_cstream :: proc "contextless" (bit_c:^Bit_CStream,start_ptr:[^]u8,dst_c
 }
 
 // At most 31 bits, and the register must have room for them.
-bit_add_bits :: #force_inline proc "contextless" (bit_c:^Bit_CStream,value:u64,nb_bits:u32) #no_bounds_check {
+bit_add_bits :: #force_inline proc "contextless" (bit_c:^Bit_CStream,value:u64,
+    nb_bits:u32) #no_bounds_check {
     bit_c.bit_container|=(value&u64(BIT_Encode_Mask[nb_bits]))<<bit_c.bit_pos
     bit_c.bit_pos+=nb_bits
 }

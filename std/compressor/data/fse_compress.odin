@@ -1,19 +1,21 @@
-package zstd
+#+private
+package data
 
 FSE_NCOUNTBOUND :: 512
 FSE_DEFAULT_TABLELOG :: 11
 
-fse_block_bound :: #force_inline proc "contextless" (size:int) -> int {return size+size>>7+4+size_of(u64)}
+fse_block_bound :: #force_inline proc "contextless" (size:int) -> int {
+    return size+size>>7+4+size_of(u64)
+}
 
-fse_build_ctable_workspace_size_u32 :: #force_inline proc "contextless" (max_symbol_value,table_log:u32) -> int {
+fse_build_ctable_workspace_size_u32 :: #force_inline proc "contextless" (max_symbol_value,
+    table_log:u32) -> int {
     return int((u64(max_symbol_value+2)+u64(1)<<table_log)/2)+size_of(u64)/size_of(u32)
 }
-fse_build_ctable_workspace_size :: #force_inline proc "contextless" (max_symbol_value,table_log:u32) -> int {
+fse_build_ctable_workspace_size :: #force_inline proc "contextless" (max_symbol_value,
+    table_log:u32) -> int {
     return size_of(u32)*fse_build_ctable_workspace_size_u32(max_symbol_value,table_log)
 }
-
-@(private="file")
-fse_table_step :: #force_inline proc "contextless" (table_size:u32) -> u32 {return table_size>>1+table_size>>3+3}
 
 Fse_Symbol_Compression_Transform :: struct {
     delta_find_state:i32,
@@ -31,7 +33,8 @@ fse_init_cstate :: #force_inline proc "contextless" (state_ptr:^Fse_CState,ct:[^
     table_log:=u32(read16(([^]u8)(ct)))
     state_ptr.value=i64(1)<<table_log
     state_ptr.state_table=([^]u16)(ct)[2:]
-    state_ptr.symbol_tt=([^]Fse_Symbol_Compression_Transform)(ct[1+(table_log!=0 ? u32(1)<<(table_log-1) : 1):])
+    state_ptr.symbol_tt=([^]Fse_Symbol_Compression_Transform)(ct[1+(table_log!=0 ? u32(1)<<(
+        table_log-1) : 1):])
     state_ptr.state_log=table_log
 }
 
@@ -41,14 +44,17 @@ fse_init_cstate2 :: #force_inline proc "contextless" (state_ptr:^Fse_CState,ct:[
     symbol_tt:=state_ptr.symbol_tt[symbol]
     nb_bits_out:=(symbol_tt.delta_nb_bits+(1<<15))>>16
     state_ptr.value=i64((nb_bits_out<<16)-symbol_tt.delta_nb_bits)
-    state_ptr.value=i64(state_ptr.state_table[(state_ptr.value>>nb_bits_out)+i64(symbol_tt.delta_find_state)])
+    state_ptr.value=i64(state_ptr.state_table[(state_ptr.value>>nb_bits_out)+i64(
+        symbol_tt.delta_find_state)])
 }
 
-fse_encode_symbol :: #force_inline proc "contextless" (bit_c:^Bit_CStream,state_ptr:^Fse_CState,symbol:u32) {
+fse_encode_symbol :: #force_inline proc "contextless" (bit_c:^Bit_CStream,state_ptr:^Fse_CState,
+    symbol:u32) {
     symbol_tt:=state_ptr.symbol_tt[symbol]
     nb_bits_out:=u32((state_ptr.value+i64(symbol_tt.delta_nb_bits))>>16)
     bit_add_bits(bit_c,u64(state_ptr.value),nb_bits_out)
-    state_ptr.value=i64(state_ptr.state_table[(state_ptr.value>>nb_bits_out)+i64(symbol_tt.delta_find_state)])
+    state_ptr.value=i64(state_ptr.state_table[(state_ptr.value>>nb_bits_out)+i64(
+        symbol_tt.delta_find_state)])
 }
 
 fse_flush_cstate :: #force_inline proc "contextless" (bit_c:^Bit_CStream,state_ptr:^Fse_CState) {
@@ -56,25 +62,8 @@ fse_flush_cstate :: #force_inline proc "contextless" (bit_c:^Bit_CStream,state_p
     bit_flush_bits(bit_c)
 }
 
-// Rounded up; a symbol of frequency 0 costs table_log+1.
-fse_get_max_nb_bits :: #force_inline proc "contextless" (symbol_tt_ptr:rawptr,symbol_value:u32) -> u32 {
-    symbol_tt:=([^]Fse_Symbol_Compression_Transform)(symbol_tt_ptr)
-    return (symbol_tt[symbol_value].delta_nb_bits+((1<<16)-1))>>16
-}
-
-// In fixed point with accuracy_log fractional bits; a symbol of frequency 0 costs table_log+1.
-fse_bit_cost :: #force_inline proc "contextless" (symbol_tt_ptr:rawptr,table_log,symbol_value,accuracy_log:u32) -> u32 {
-    symbol_tt:=([^]Fse_Symbol_Compression_Transform)(symbol_tt_ptr)
-    min_nb_bits:=symbol_tt[symbol_value].delta_nb_bits>>16
-    threshold:=(min_nb_bits+1)<<16
-    table_size:=u32(1)<<table_log
-    delta_from_threshold:=threshold-(symbol_tt[symbol_value].delta_nb_bits+table_size)
-    normalized_delta_from_threshold:=(delta_from_threshold<<accuracy_log)>>table_log
-    bit_multiplier:=u32(1)<<accuracy_log
-    return (min_nb_bits+1)*bit_multiplier-normalized_delta_from_threshold
-}
-
-fse_build_ctable_wksp :: proc "contextless" (ct:[^]u32,normalized_counter:[^]i16,max_symbol_value,table_log:u32,workspace:[^]u8,wksp_size:int) -> (size:int,err:Error) {
+fse_build_ctable_wksp :: proc "contextless" (ct:[^]u32,normalized_counter:[^]i16,max_symbol_value,
+    table_log:u32,workspace:[^]u8,wksp_size:int) -> (size:int,err:Huff_Error) {
     table_size:=u32(1)<<table_log
     table_mask:=table_size-1
     header:=([^]u16)(ct)
@@ -88,7 +77,8 @@ fse_build_ctable_wksp :: proc "contextless" (ct:[^]u32,normalized_counter:[^]i16
 
     high_threshold:=table_size-1
 
-    if fse_build_ctable_workspace_size(max_symbol_value,table_log)>wksp_size {return 0,.Table_Log_Too_Large}
+    if fse_build_ctable_workspace_size(max_symbol_value,table_log)>wksp_size {return 0,
+        .Table_Log_Too_Large}
     header[0]=u16(table_log)
     header[1]=u16(max_symbol_value)
 
@@ -169,7 +159,9 @@ fse_ncount_write_bound :: proc "contextless" (max_symbol_value,table_log:u32) ->
 }
 
 @(private="file")
-fse_write_ncount_generic :: proc "contextless" (header:[^]u8,header_buffer_size:int,normalized_counter:[^]i16,max_symbol_value,table_log:u32,write_is_safe:bool) -> (size:int,err:Error) {
+fse_write_ncount_generic :: proc "contextless" (header:[^]u8,header_buffer_size:int,
+    normalized_counter:[^]i16,max_symbol_value,table_log:u32,write_is_safe:bool) -> (size:int,
+    err:Huff_Error) {
     ostart:=header
     out:=ostart
     oend:=padd(ostart,header_buffer_size)
@@ -195,7 +187,8 @@ fse_write_ncount_generic :: proc "contextless" (header:[^]u8,header_buffer_size:
             for symbol>=start+24 {
                 start+=24
                 bit_stream+=u32(0xFFFF)<<u32(bit_count)
-                if !write_is_safe && uintptr(out)>uintptr(padd(oend,-2)) {return 0,.Dst_Size_Too_Small}
+                if !write_is_safe && uintptr(out)>uintptr(padd(oend,-2)) {return 0,
+                    .Dst_Size_Too_Small}
                 out[0]=u8(bit_stream)
                 out[1]=u8(bit_stream>>8)
                 out=padd(out,2)
@@ -209,7 +202,8 @@ fse_write_ncount_generic :: proc "contextless" (header:[^]u8,header_buffer_size:
             bit_stream+=(symbol-start)<<u32(bit_count)
             bit_count+=2
             if bit_count>16 {
-                if !write_is_safe && uintptr(out)>uintptr(padd(oend,-2)) {return 0,.Dst_Size_Too_Small}
+                if !write_is_safe && uintptr(out)>uintptr(padd(oend,-2)) {return 0,
+                    .Dst_Size_Too_Small}
                 out[0]=u8(bit_stream)
                 out[1]=u8(bit_stream>>8)
                 out=padd(out,2)
@@ -250,13 +244,16 @@ fse_write_ncount_generic :: proc "contextless" (header:[^]u8,header_buffer_size:
     return pdiff(out,ostart),.None
 }
 
-fse_write_ncount :: proc "contextless" (buffer:[^]u8,buffer_size:int,normalized_counter:[^]i16,max_symbol_value,table_log:u32) -> (size:int,err:Error) {
+fse_write_ncount :: proc "contextless" (buffer:[^]u8,buffer_size:int,normalized_counter:[^]i16,
+    max_symbol_value,table_log:u32) -> (size:int,err:Huff_Error) {
     if table_log>FSE_MAX_TABLELOG {return 0,.Table_Log_Too_Large}
     if table_log<FSE_MIN_TABLELOG {return 0,.Generic}
     if buffer_size<fse_ncount_write_bound(max_symbol_value,table_log) {
-        return fse_write_ncount_generic(buffer,buffer_size,normalized_counter,max_symbol_value,table_log,false)
+        return fse_write_ncount_generic(buffer,buffer_size,normalized_counter,max_symbol_value,
+            table_log,false)
     }
-    return fse_write_ncount_generic(buffer,buffer_size,normalized_counter,max_symbol_value,table_log,true)
+    return fse_write_ncount_generic(buffer,buffer_size,normalized_counter,max_symbol_value,
+        table_log,true)
 }
 
 // src_size is above 1.
@@ -266,7 +263,8 @@ fse_min_table_log :: proc "contextless" (src_size:int,max_symbol_value:u32) -> u
     return min_bits_src<min_bits_symbols ? min_bits_src : min_bits_symbols
 }
 
-fse_optimal_table_log_internal :: proc "contextless" (max_table_log:u32,src_size:int,max_symbol_value,minus:u32) -> u32 {
+fse_optimal_table_log_internal :: proc "contextless" (max_table_log:u32,src_size:int,
+    max_symbol_value,minus:u32) -> u32 {
     max_bits_src:=highbit32(u32(src_size-1))-minus
     table_log:=max_table_log
     min_bits:=fse_min_table_log(src_size,max_symbol_value)
@@ -278,12 +276,14 @@ fse_optimal_table_log_internal :: proc "contextless" (max_table_log:u32,src_size
     return table_log
 }
 
-fse_optimal_table_log :: proc "contextless" (max_table_log:u32,src_size:int,max_symbol_value:u32) -> u32 {
+fse_optimal_table_log :: proc "contextless" (max_table_log:u32,src_size:int,
+    max_symbol_value:u32) -> u32 {
     return fse_optimal_table_log_internal(max_table_log,src_size,max_symbol_value,2)
 }
 
 @(private="file")
-fse_normalize_m2 :: proc "contextless" (norm:[^]i16,table_log:u32,count:[^]u32,total_in:int,max_symbol_value:u32,low_prob_count:i16) -> Error {
+fse_normalize_m2 :: proc "contextless" (norm:[^]i16,table_log:u32,count:[^]u32,total_in:int,
+    max_symbol_value:u32,low_prob_count:i16) -> Huff_Error {
     NOT_YET_ASSIGNED :: -2
     total:=u64(total_in)
     distributed:=u32(0)
@@ -363,10 +363,13 @@ fse_normalize_m2 :: proc "contextless" (norm:[^]i16,table_log:u32,count:[^]u32,t
     return .None
 }
 
-@(rodata,private="file") FSE_Rest_To_Beat:=[8]u32{0,473195,504333,520860,550000,700000,750000,830000}
+@(rodata,private="file") FSE_Rest_To_Beat:=[8]u32{0,473195,504333,520860,550000,700000,750000,
+    830000}
 
 // Returns the table log, 0 if there is a single symbol.
-fse_normalize_count :: proc "contextless" (normalized_counter:[^]i16,table_log_in:u32,count:[^]u32,total_in:int,max_symbol_value:u32,use_low_prob_count:bool) -> (size:int,err:Error) #no_bounds_check {
+fse_normalize_count :: proc "contextless" (normalized_counter:[^]i16,table_log_in:u32,count:[^]u32,
+    total_in:int,max_symbol_value:u32,use_low_prob_count:bool) -> (size:int,
+    err:Huff_Error) #no_bounds_check {
     table_log:=table_log_in
     total:=u64(total_in)
     if table_log==0 {table_log=FSE_DEFAULT_TABLELOG}
@@ -402,28 +405,13 @@ fse_normalize_count :: proc "contextless" (normalized_counter:[^]i16,table_log_i
         }
     }
     if -still_to_distribute>=int(normalized_counter[largest]>>1) {
-        m2_err:=fse_normalize_m2(normalized_counter,table_log,count,total_in,max_symbol_value,low_prob_count)
+        m2_err:=fse_normalize_m2(normalized_counter,table_log,count,total_in,max_symbol_value,
+            low_prob_count)
         if m2_err!=.None {return 0,m2_err}
     } else {
         normalized_counter[largest]+=i16(still_to_distribute)
     }
     return int(table_log),.None
-}
-
-fse_build_ctable_rle :: proc "contextless" (ct:[^]u32,symbol_value:u8) -> (size:int,err:Error) {
-    header:=([^]u16)(ct)
-    table_u16:=header[2:]
-    symbol_tt:=([^]Fse_Symbol_Compression_Transform)(ct[2:])
-
-    header[0]=0
-    header[1]=u16(symbol_value)
-
-    table_u16[0]=0
-    table_u16[1]=0
-
-    symbol_tt[symbol_value].delta_nb_bits=0
-    symbol_tt[symbol_value].delta_find_state=0
-    return 0,.None
 }
 
 @(private="file")
@@ -438,7 +426,8 @@ fse_flush_bits :: #force_inline proc "contextless" (bit_c:^Bit_CStream,fast:bool
 }
 
 @(private="file")
-fse_compress_using_ctable_generic :: #force_inline proc "contextless" (dst:[^]u8,dst_size:int,src:[^]u8,src_size:int,ct:[^]u32,fast:bool) -> int {
+fse_compress_using_ctable_generic :: #force_inline proc "contextless" (dst:[^]u8,dst_size:int,
+    src:[^]u8,src_size:int,ct:[^]u32,fast:bool) -> int {
     istart:=src
     iend:=padd(istart,src_size)
     ip:=iend
@@ -480,7 +469,8 @@ fse_compress_using_ctable_generic :: #force_inline proc "contextless" (dst:[^]u8
     return bit_close_cstream(&bit_c)
 }
 
-fse_compress_using_ctable :: proc "contextless" (dst:[^]u8,dst_size:int,src:[^]u8,src_size:int,ct:[^]u32) -> (size:int,err:Error) {
+fse_compress_using_ctable :: proc "contextless" (dst:[^]u8,dst_size:int,src:[^]u8,src_size:int,
+    ct:[^]u32) -> (size:int,err:Huff_Error) {
     if dst_size>=fse_block_bound(src_size) {
         return fse_compress_using_ctable_generic(dst,dst_size,src,src_size,ct,true),.None
     }
