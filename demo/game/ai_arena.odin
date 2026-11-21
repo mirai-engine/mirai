@@ -537,15 +537,15 @@ guard_vault :: proc(a:^ai.Act(Guard_Act),w:Arena,routes:core.Ref(nav.Navigation_
 
 // Builds the arenas that have not been built, once the world runs: their
 // place, unless the scene holds it, and their agents. An arena is built when
-// its row is no longer new (core.added): the build writes it.
+// its row is no longer new (core.added): the build sees the row when it arrives.
 @(step="fixed",stage="apply",server)
 arena_build :: proc(
-    commands:core.Commands,arenas:^core.Table(AI_Arena),worlds:^core.Table(core.World_Transform,.Read),time:core.Time,
+    commands:core.Commands,arenas:^core.Table(AI_Arena,.Read),worlds:^core.Table(core.World_Transform,.Read),time:core.Time,
 ) {
     if !time.playing {return}
     for row in 0..<core.count(arenas) {
         if !core.added(arenas,row) {continue}
-        a:=core.edit_at(arenas,row)
+        a:=core.at(arenas,row)
         e:=core.entity_at(arenas,row)
         origin:mm.Vec3
         if pose,ok:=core.get(worlds,e);ok {origin=pose.position}
@@ -937,17 +937,24 @@ arena_targets :: proc(
 ) {
     if !time.playing || time.dt<=0 {return}
     for row in 0..<core.count(bosses) {
-        b:=core.edit_at(bosses,row)
+        b:=core.at(bosses,row)
         if b.health<=0 {
-            if b.rises==0 {b.rises=core.deadline(time,3);b.deaths+=1}
-            if core.due(time,b.rises) {b.health,b.rises=BOSS_HEALTH,0}
+            if b.rises==0 {
+                edit:=core.edit_at(bosses,row)
+                edit.rises=core.deadline(time,3)
+                edit.deaths+=1
+            } else if core.due(time,b.rises) {
+                edit:=core.edit_at(bosses,row)
+                edit.health,edit.rises=BOSS_HEALTH,0
+            }
             continue
         }
         boss,_:=core.get(worlds,core.entity_at(bosses,row))
         hero,_:=core.get(worlds,b.hero)
         if linalg.length(boss.position-hero.position)<12 {
-            b.health-=6*time.dt
-            if every:=core.ticks_of(time,3);every>0 && time.tick%every==0 {b.staggered=true}
+            edit:=core.edit_at(bosses,row)
+            edit.health-=6*time.dt
+            if every:=core.ticks_of(time,3);every>0 && time.tick%every==0 {edit.staggered=true}
         }
     }
     for row in 0..<core.count(targets) {

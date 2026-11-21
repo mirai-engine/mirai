@@ -50,7 +50,7 @@ Dig_Inventory :: struct {
 @(step="fixed",stage="react")
 dig_site :: proc(
     commands:core.Commands,sites:^core.Table(Dig_Site),pickups:^core.Table(Dig_Pickup,.Read),players:^core.Table(Player,.Read),
-    sight:cam.Sight,actions:inp.Input_Of(Action),worlds:^core.Table(core.World_Transform,.Read),
+    controls:Demo_Controls,
     requests:^terrain.Terrain_Requests,digs:core.Ref(terrain.Terrain_Digs),inventories:^core.Table(Dig_Inventory),network:core.Network,time:core.Time,
 ) {
     site_entity,found:=core.sole(sites)
@@ -61,33 +61,38 @@ dig_site :: proc(
         core.commands_add(commands,run,Dig_Inventory{})
         return
     }
-    inventory:=core.edit_at(inventories,0)
-    site:=core.edit_at(sites,0)
+    site:=core.at(sites,0)
     if site.interval>0 && site.dug<site.digs && core.due(time,site.next) {
         // Down a spiral, a little deeper each time: a pit with walls through every stratum.
         i:=f32(site.dug)
         center:=[3]f32{math.cos(i*1.9)*1.5,0.3-i*0.42,math.sin(i*1.9)*1.5}
-        site_world,_:=core.get(worlds,site_entity)
+        site_world,_:=core.get(controls.sight.worlds,site_entity)
         terrain.dig(requests,{kind=.Carve,center=mm.transform_point(site_world.transform,center),radius=site.radius,amount=1,blend=0.3},site_entity)
-        site.dug+=1
-        site.next=core.deadline(time,site.interval)
+        dug:=core.edit_at(sites,0)
+        dug.dug+=1
+        dug.next=core.deadline(time,site.interval)
     }
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
-        origin,ahead,aimed:=cam.aim(sight,e)
-        if !aimed || !inp.pressed(actions,e,.Use) {continue}
+        origin,ahead,aimed:=cam.aim(controls.sight,e)
+        if !aimed || !inp.pressed(controls.actions,e,.Use) {continue}
         terrain.dig(requests,{kind=.Carve,center=origin+ahead*DIG_REACH,radius=site.radius*0.8,amount=1,blend=0.2})
     }
     for dig in digs.digs.items {
-        for taken,i in dig.layers {if taken>0 {inventory.cubic_metres[inventory_slot(inventory,dig.materials[i])]+=taken}}
+        for taken,i in dig.layers {
+            if taken<=0 {continue}
+            inventory:=core.edit_at(inventories,0)
+            inventory.cubic_metres[inventory_slot(inventory,dig.materials[i])]+=taken
+        }
     }
     for row in 0..<core.count(pickups) {
         drop:=core.entity_at(pickups,row)
-        at,placed:=core.get(worlds,drop)
+        at,placed:=core.get(controls.sight.worlds,drop)
         if !placed {continue}
         for player in 0..<core.count(players) {
-            body,found:=core.get(worlds,core.entity_at(players,player))
+            body,found:=core.get(controls.sight.worlds,core.entity_at(players,player))
             if !found || linalg.length(body.position-at.position)>PICKUP_REACH {continue}
+            inventory:=core.edit_at(inventories,0)
             inventory.drops[inventory_slot(inventory,core.at(pickups,row).material)]+=1
             core.commands_destroy(commands,drop)
             break
@@ -136,6 +141,6 @@ dig_hud :: proc(huds:^core.Table(Dig_Hud),inventories:^core.Table(Dig_Inventory,
         row.drops,row.picked=i32(inventory.drops[i]),inventory.drops[i]>0
     }
     for row in 0..<core.count(huds) {
-        core.edit_at(huds,row)^=next
+        if core.at(huds,row)!=next {core.edit_at(huds,row)^=next}
     }
 }

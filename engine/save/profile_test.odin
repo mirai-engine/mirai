@@ -170,25 +170,25 @@ the_profile_is_written_by_itself_when_it_rests_and_when_the_world_goes :: proc(t
         return w.progress.level
     }
 
-    kept_watch(&work,ref,&app,&state,0,&problems)
-    kept_watch(&work,ref,&app,&state,project.REST_LOOK,&problems)
+    kept_watch(&work,core.world_read(ref),&app,&state,0,&problems)
+    kept_watch(&work,core.world_read(ref),&app,&state,project.REST_LOOK,&problems)
     testing.expect(t,!os.is_file(path),"nothing changed: nothing is written")
 
     w.progress.level=1
-    kept_watch(&work,ref,&app,&state,project.REST_LOOK/2,&problems)
+    kept_watch(&work,core.world_read(ref),&app,&state,project.REST_LOOK/2,&problems)
     testing.expect(t,!os.is_file(path),"before the next look")
-    kept_watch(&work,ref,&app,&state,project.REST_LOOK/2,&problems)
+    kept_watch(&work,core.world_read(ref),&app,&state,project.REST_LOOK/2,&problems)
     testing.expect(t,!os.is_file(path),"the look that sees the change waits for it to rest")
-    kept_watch(&work,ref,&app,&state,project.REST_LOOK,&problems)
+    kept_watch(&work,core.world_read(ref),&app,&state,project.REST_LOOK,&problems)
     testing.expect_value(t,written(ref,&app,&state),i32(1))
 
     w.progress.level=77
-    kept_flush(&work,ref,&app,&state,&problems)
+    kept_flush(&work,core.world_read(ref),&app,&state,&problems)
     testing.expect_value(t,written(ref,&app,&state),i32(77))
     testing.expect_value(t,problems.count,0)
 
     other:Save_Work
     w.progress.level=88
-    kept_flush(&other,ref,&app,&state,&problems)
+    kept_flush(&other,core.world_read(ref),&app,&state,&problems)
     testing.expect_value(t,written(ref,&app,&state),i32(77))
 }

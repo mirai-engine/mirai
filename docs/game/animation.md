@@ -15,7 +15,7 @@ plus requests queued from a `fixed` step; what is invalid or full shows in `engi
 
 - Walk, jump, swim, fall: [Locomotion](#locomotion).
 - Vault, hit, death, reload, wave, aim, look, and reacting to them: [Four calls](#four-calls)
-  and [One event loop](#one-event-loop).
+  and [One event loop](#one-event-loop). Audio and VFX: [marker cues](animation/cues.md).
 - The layers and actions of the set, sections and windows: [actions.md](animation/actions.md).
 - A door, a lift or a light moved by a clip, a cutscene with cameras and shots, curves, root
   motion of a body that is not a `Character`: [props.md](animation/props.md).

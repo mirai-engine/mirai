@@ -42,19 +42,23 @@ raft_breath :: proc(
         e:=core.entity_at(divers,row)
         state,has:=core.get(states,e)
         if !has {continue}
-        diver:=core.edit_at(divers,row)
+        was:=core.at(divers,row)
+        diver:=was
         if core.added(divers,row) {diver.oxygen=diver.capacity} // its first breath
         if state.head_depth>0 {
             diver.oxygen=max(diver.oxygen-time.dt,0)
         } else {diver.oxygen=min(diver.oxygen+diver.refill*time.dt,diver.capacity)}
         drowned:=diver.oxygen<=0
         if drowned {diver.oxygen,diver.drowned=diver.capacity,diver.drowned+1}
+        if diver!=was {core.edit_at(divers,row)^=diver}
         if !drowned {continue}
-        for &game in core.writable(games) {
+        for at in 0..<core.count(games) {
+            game:=core.at(games,at)
             raft,found:=core.get(worlds,game.raft)
             if !found {continue}
             core.place(placer,e,raft.position+mm.Vec3{0,game.deck,0},at_rest=true)
-            game.message_until=core.deadline(time,RAFT_DROWNED_SECONDS)
+            deadline:=core.deadline(time,RAFT_DROWNED_SECONDS)
+            if game.message_until!=deadline {core.edit_at(games,at).message_until=deadline}
             break
         }
     }
@@ -100,6 +104,6 @@ raft_hud :: proc(
             next.drowned,next.drowned_once=i32(diver.drowned),diver.drowned>0
             for at in 0..<core.count(games) {next.message||=!core.due(time,core.at(games,at).message_until)}
         }
-        core.edit_at(huds,row)^=next
+        if core.at(huds,row)!=next {core.edit_at(huds,row)^=next}
     }
 }

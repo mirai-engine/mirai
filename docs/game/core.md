@@ -14,7 +14,7 @@ reads `game/` and the active plugins; `mirai generate` lists its errors.
 - Folders and files: [Layout](#layout). New component or storage: [Data](#data). A function and
   its phase: [Functions](#functions), [Phases](#phases). Waits: [waiting.md](core/waiting.md).
 - Order, asking a library, telling the rest what happened: [wiring.md](core/wiring.md).
-- Children, runtime prefabs, destroying a subtree: [prefabs.md](core/prefabs.md).
+- [Prefabs](core/prefabs.md) and [gameplay helpers](core/gameplay.md).
 - Catalogs as rows: [records.md](core/records.md). Saves, state of a run: [saves.md](core/saves.md).
 - Characters: [character](character.md); scenes, light: [world](world.md); ids: [assets](assets.md).
 

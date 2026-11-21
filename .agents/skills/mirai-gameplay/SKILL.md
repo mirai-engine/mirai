@@ -5,7 +5,8 @@ description: Write games with the game libraries of `engine/scene`, `engine/volu
   with the plugins `spawn`, `spawn_physics`, `cinematics` and `streaming`. Covers per-zone values
   (gravity, wind, reverb, view and fog volumes), runtime prefabs, action-based input, player seats,
   driving bodies and cameras, spawn points, saves (slots, autosave, checkpoints), cinematics,
-  section streaming, the `demo` project and the game templates. Use when writing game code against
+  section streaming, tags, fixed-tick timers, interaction, debug draw, the `demo` project,
+  and the game templates. Use when writing game code against
   those libraries, building a game from a template, or looking for where a game feature lives
   (enemies, NPCs and mining games are in `mirai-world`, attacks and skills in `mirai-abilities`).
 ---
@@ -26,6 +27,8 @@ the same attributes and no private paths. Declaration and parameter binding:
   [render](references/libraries.md#render), [input](references/libraries.md#input),
   [audio](references/libraries.md#audio), [gui](references/libraries.md#gui) and
   [save](references/libraries.md#save).
+- Tags, timers, interaction focus and holds, and game-step debug draw:
+  [gameplay helpers](../../../docs/game/core/gameplay.md).
 - A region of the world (`Volume`: the one shape, containment and overlap test), the per-zone
   values in it (`Wind`, `View_Volume`, `Audio_Reverb`, `Gravity`, `Fog_Volume`) and their single
   algorithm, and the one path on the ground (`Spline`: roads, rivers, routes):
@@ -191,6 +194,8 @@ the same attributes and no private paths. Declaration and parameter binding:
   buses according to `Audio_Settings`, the listener in the `View` with its velocity, occlusion with
   a fake query and the reverb of the volumes. The per-voice filter and the reverb tail:
   `mirai test audio`.
+- Interaction and game-step debug lines: `mirai test engine/camera engine/render --no-gpu`
+  (focus order and hold transitions, bounded requests, stable allocation and draw expiry).
 - Extraction and visual meshes of `engine/render`: [GPU
   validation](../mirai-rendering/SKILL.md#verification).
 - Integration: [demo verification](references/demo.md#verification) and the `templates/game`

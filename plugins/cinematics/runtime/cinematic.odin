@@ -132,39 +132,57 @@ cinematic_follow :: proc(cinematics:^core.Table(Cinematic,.Read),states:^core.Ta
     }
 }
 
+@(params)
+Cinematic_Actors :: struct {
+    animations:^core.Table(anim.Animation,.Read),
+    playback:core.Ref(anim.Playback),
+    content_sources:core.Ref(anim.Source_Assets),
+    actions:core.Ref(anim.Action_Runtime),
+    requests:^anim.Animation_Requests,
+}
+
+@(params)
+Cinematic_Seats :: struct {
+    cameras:^core.Table(render.Camera,.Read),
+    shown:core.Ref(cam.Cameras),
+    seat_state:core.Ref(input.Seats),
+    camera_requests:^cam.Camera_Requests,
+    seat_requests:^input.Seat_Requests,
+    seats:^core.Table(input.Seat,.Read),
+}
+
 // Runs after animation_advance, whose Playback it reads: the seats see the cameras where the clip put
 // them in this tick, and the actions of the actors are where the clip is. In the editor, where the
 // game does not play, only the actors follow the head of the clip.
 @(step="fixed",loops="game editor",stage="react",after="animation_advance")
 cinematic_advance :: proc(
-    entities:core.Ref(core.Entities),cinematics:^core.Table(Cinematic,.Read),states:^core.Table(Cinematic_State),cameras:^core.Table(render.Camera,.Read),animations:^core.Table(anim.Animation,.Read),
-    playback:core.Ref(anim.Playback),content_sources:core.Ref(anim.Source_Assets),app:^host.App,actions:core.Ref(anim.Action_Runtime),
-    requests:^anim.Animation_Requests,shown:core.Ref(cam.Cameras),seat_state:core.Ref(input.Seats),camera_requests:^cam.Camera_Requests,
-    seat_requests:^input.Seat_Requests,seats:^core.Table(input.Seat,.Read),time:core.Time,remotes:^core.Table(core.Remote,.Read),problems:^core.Problems,
+    entities:core.Ref(core.Entities),cinematics:^core.Table(Cinematic,.Read),
+    states:^core.Table(Cinematic_State),actors:Cinematic_Actors,audience:Cinematic_Seats,
+    app:^host.App,time:core.Time,remotes:^core.Table(core.Remote,.Read),problems:^core.Problems,
 ) {
     for e in states.entities {
         if core.raw_row(core.raw(cinematics),e)>=0 {continue}
         core.remove(states,e)
-        if cam.camera_overriding(shown,e) {cam.camera_override_remove(camera_requests,e)}
-        if input.blocking(seat_state,e) {input.input_unblock(seat_requests,e)}
+        if cam.camera_overriding(audience.shown,e) {cam.camera_override_remove(audience.camera_requests,e)}
+        if input.blocking(audience.seat_state,e) {input.input_unblock(audience.seat_requests,e)}
     }
     for row in 0..<core.count(cinematics) {
         e:=core.entity_at(cinematics,row)
         config:=core.at(cinematics,row)
         was,has_state:=core.get(states,e)
-        animated:=core.has(animations,e)
+        animated:=core.has(actors.animations,e)
         if !animated {
             core.report(problems,e,"cinematics.animation","this Cinematic plays nothing: its entity has no Animation; add one whose asset is the .anim of its clip, with playing set for a timeline that starts by itself")
             continue
         }
-        at,duration,ended,clipped:=anim.animation_progress(playback.ptr,e)
+        at,duration,ended,clipped:=anim.animation_progress(actors.playback.ptr,e)
         if !clipped {continue}
-        speed,loop:=anim.animation_clip_clock(playback.ptr,e)
+        speed,loop:=anim.animation_clip_clock(actors.playback.ptr,e)
         next:=was
         if time.playing {
             next.time,next.duration=at,duration
             if core.owned(remotes,e) {
-                next.status=cinematic_status(anim.animation_playing(playback.ptr,e),ended,at)
+                next.status=cinematic_status(anim.animation_playing(actors.playback.ptr,e),ended,at)
                 rate:=speed if next.status==.Playing else 0
                 if next.status!=was.status || rate!=was.anchor_rate || time.tick<was.anchor_tick || clip_apart(cinematic_anchored(was,time.tick,time.dt,duration,loop),at,duration,loop)>time.dt*max(abs(rate),1)*.5 {
                     next.anchor_tick,next.anchor_time,next.anchor_rate=time.tick,at,rate
@@ -183,35 +201,35 @@ cinematic_advance :: proc(
         // A clip that did not play on from where it was, or the head of the editor, was sought.
         step:=time.dt*speed if next.status==.Playing else 0
         sought:=!time.playing || clip_apart(at,was.time+step,duration,loop)>time.dt*max(abs(speed),1)*.5
-        markers,content:=anim.animation_markers(playback.ptr,content_sources.ptr,app,e)
+        markers,content:=anim.animation_markers(actors.playback.ptr,actors.content_sources.ptr,app,e)
         for marker in markers {
             if int(marker.id)>=len(content.markers) || content.markers[marker.id].target==0 {continue}
             named:=content.markers[marker.id]
-            on:=anim.animation_bound(playback.ptr,e,named.target)
+            on:=anim.animation_bound(actors.playback.ptr,e,named.target)
             action:=base.text_get(named.text[:])
             if !core.alive(entities.ptr,on) {
                 core.report(problems,e,"cinematics.marker_target","marker '%s' of its clip is on an entity it does not animate: none below it has the name of its target, and none names it in Animation_Target.animation; name the entity as the marker does, or give it an Animation_Target with this entity and that name",action)
                 continue
             }
-            if core.has(cameras,on) {continue}
+            if core.has(audience.cameras,on) {continue}
             // Every end drives the actions of its actors by its own clip, which follows the anchor.
             acting,acted:=cinematic_acting(showing,marker.time,marker.duration,at),cinematic_acting(showed,marker.time,marker.duration,was.time)
-            _,_,playing:=anim.action_playing(actions,on,action)
-            if acting && (playing || sought || !acted) {anim.play_at(requests,on,action,at-marker.time,sought)} else if !acting && playing && (acted || sought) {anim.stop(requests,on,action)}
+            _,_,playing:=anim.action_playing(actors.actions,on,action)
+            if acting && (playing || sought || !acted) {anim.play_at(actors.requests,on,action,at-marker.time,sought)} else if !acting && playing && (acted || sought) {anim.stop(actors.requests,on,action)}
         }
         if !time.playing {continue}
-        shot,_:=cinematic_shot(playback.ptr,content_sources.ptr,app,entities.ptr,cameras,e,at)
-        seat:=config.seat if config.seat!=core.NONE else input.focused(seat_state,seats)
+        shot,_:=cinematic_shot(actors.playback.ptr,actors.content_sources.ptr,app,entities.ptr,audience.cameras,e,at)
+        seat:=config.seat if config.seat!=core.NONE else input.focused(audience.seat_state,audience.seats)
         asked:cam.Camera_Override
-        for item in shown.ptr.overrides {if item.active && item.owner==e {asked=item}}
+        for item in audience.shown.ptr.overrides {if item.active && item.owner==e {asked=item}}
         if !showing || shot.camera==core.NONE || !core.alive(entities.ptr,seat) {
-            if asked.active {cam.camera_override_remove(camera_requests,e)}
-            if input.blocking(seat_state,e) {input.input_unblock(seat_requests,e)}
+            if asked.active {cam.camera_override_remove(audience.camera_requests,e)}
+            if input.blocking(audience.seat_state,e) {input.input_unblock(audience.seat_requests,e)}
             continue
         }
         if !asked.active || asked.camera!=shot.camera || asked.seat!=seat {
-            cam.camera_override(camera_requests,e,seat,shot.camera,blend=shot.blend)
-            if config.block_mask!=0 {input.input_block(seat_requests,e,seat,config.block_mask)}
-        } else if config.block_mask!=0 && !input.blocking(seat_state,e) {input.input_block(seat_requests,e,seat,config.block_mask)}
+            cam.camera_override(audience.camera_requests,e,seat,shot.camera,blend=shot.blend)
+            if config.block_mask!=0 {input.input_block(audience.seat_requests,e,seat,config.block_mask)}
+        } else if config.block_mask!=0 && !input.blocking(audience.seat_state,e) {input.input_block(audience.seat_requests,e,seat,config.block_mask)}
     }
 }
