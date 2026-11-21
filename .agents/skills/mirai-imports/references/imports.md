@@ -162,10 +162,9 @@ part ([extension](../../mirai-editor/references/extensions.md#importers-of-a-plu
   [refresh](#library) of every build) loads the editor library of the project and takes the same
   providers from it with its store (`editor.import_library`, `sources.Library`), only when a
   source is read by no format of the engine or a model imports, whose prefab is written in the
-  types of the game the library has. `mirai import` first builds, as `mirai build editor` does,
-  the editor library of the project of what it imports while it is missing or not built from
-  the sources there are now (`build.target_state`, of the engine's sources too): a library built
-  against other engine types is never loaded.
+  types of the game the library has. `mirai import` builds a missing or stale editor library
+  before importing. This preparation leaves package refresh and library loading to the import
+  program.
 - `Import_Source_Provider{source}` is a source that the plugin imports whole with `Outputs`: it
   is the single source of every asset it makes (a scene, the models it reads with
   `output_model`), and the files it reads besides it are its `inputs`, like the `.bin` of a glTF.
@@ -329,6 +328,9 @@ checkout, worktree and project of the machine, keeps manifests and builds.
   `<store>/locks/`), and the second finds the work done.
 - **`project_add(root, manifest, folder, assets, options)`** pins a package in the project and
   follows it there; `project_ingest` ingests a source and pins its package in one import.
+  With no destination given, it uses the source's parent within the destination's assets, or
+  the root of the assets for a source from outside. A whole-source importer's document folder
+  goes under that destination.
   **Following** writes
   or follows its documents under `folder` of the assets: from the baselines of its build
   (`documents_follow`), and for a model whose source is here and whose game types the library

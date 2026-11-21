@@ -598,38 +598,50 @@ a_refresh_ingests_again_a_whole_source_when_what_it_is_built_from_changes :: pro
 the_documents_of_a_whole_source_go_to_its_own_folder :: proc(t:^testing.T) {
     root,assets:=test_project(t,"whole-documents")
     if root=="" {return}
-    state:=Level_Importer{kit=2}
+    Fixture :: struct {level:Level_Importer,loads,releases:int}
+    state:=Fixture{level={kit=2}}
     context.user_ptr=&state
     leveling :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> Library_Imports {
+        fixture:=(^Fixture)(context.user_ptr)
+        fixture.loads+=1
         wholes:=make([]Whole_Source,1,allocator)
-        level:=(^Level_Importer)(context.user_ptr)
+        level:=&fixture.level
         wholes[0]={name=LEVEL_IMPORTER,version=level.version,claims=level_claims,run=level_run,state=level,code=level.code}
-        return {wholes=wholes}
+        return {wholes=wholes,state=fixture,release=proc(raw:rawptr) {(^Fixture)(raw).releases+=1}}
     }
-    s:=test_store(t,fmt.tprintf("%s/store",root))
-    if s==nil {return}
-    options:=Library_Options{store=s,root=root,plugins=leveling,fast_textures=true}
-    Case :: struct {sources,folder:string}
-    for c in ([]Case{{fmt.tprintf("%s-outside",root),"levels"},{fmt.tprintf("%s/maps",assets),"maps"}}) {
+    kept:=fmt.tprintf("%s/store",root)
+    errors:=strings.builder_make(context.temp_allocator)
+    Case :: struct {sources,name,folder:string,explicit_folder:bool}
+    for c in ([]Case{
+        {fmt.tprintf("%s/outside",root),"yard","levels",true},
+        {fmt.tprintf("%s/maps",assets),"hall","maps",false},
+        {fmt.tprintf("%s/maps",assets),"roof","",true},
+    }) {
         os.make_directory_all(c.sources)
         box_source(c.sources,"crate.gltf","Wood","Paint")
-        for name in ([]string{"hall","yard"}) {
-            source:=write_text(c.sources,fmt.tprintf("%s.level",name),"LEVEL crate.gltf")
-            report,added,error:=project_ingest(root,source,c.folder,options,allocator=context.temp_allocator)
-            if !testing.expectf(t,error.code==.None && len(added.failures)==0,"%s: %s %v",source,error.message,added) {return}
-            r:asset.Registry
-            asset.registry_init(&r,assets,"",context.temp_allocator)
-            testing.expect_value(t,asset.registry_scan(&r),asset.Error.None)
-            documents:=0
-            for w in report.assets {
-                file,found:=asset.registry_find(&r,w.id)
-                if !found {continue}
-                documents+=1
-                testing.expectf(t,strings.has_prefix(file.path,fmt.tprintf("%s/%s/",c.folder,name)),"%s: %s",source,file.path)
-            }
-            testing.expectf(t,documents>=2,"%s wrote its kit and its materials: %v",source,report.assets)
-        }
+        source:=write_text(c.sources,fmt.tprintf("%s.level",c.name),"LEVEL crate.gltf")
+        args:=make([dynamic]string,context.temp_allocator)
+        append(&args,source,"--store",kept,"--project",root)
+        if c.explicit_folder {append(&args,"--folder",c.folder)}
+        state.loads,state.releases=0,0
+        code:=command(args[:],{},strings.to_writer(&errors),leveling)
+        if !testing.expectf(t,code==0,"%s: %s",source,strings.to_string(errors)) {return}
+        testing.expect_value(t,state.loads,1)
+        testing.expect_value(t,state.releases,1)
+        r:asset.Registry
+        asset.registry_init(&r,assets,"",context.temp_allocator)
+        testing.expect_value(t,asset.registry_scan(&r),asset.Error.None)
+        prefix:=fmt.tprintf("%s/",project.path(c.folder,c.name,allocator=context.temp_allocator))
+        documents:=0
+        for &file in r.files {documents+=int(strings.has_prefix(file.path,prefix))}
+        testing.expectf(t,documents>=2,"%s wrote its kit and materials under %s",source,prefix)
     }
+    state.loads,state.releases=0,0
+    args:=[]string{"--store",kept,"--refresh",root,"--refresh",fmt.tprintf("%s/.",root)}
+    code:=command(args,{},strings.to_writer(&errors),leveling)
+    testing.expectf(t,code==0,"%s",strings.to_string(errors))
+    testing.expect_value(t,state.loads,1)
+    testing.expect_value(t,state.releases,1)
 }
 
 // A store that holds the build of a source a plugin imports whole, and not
