@@ -63,7 +63,7 @@ float rate_price(Fit fit) {
     return params.lambda * lerp(0.065, 0.34, fit.activity);
 #elif defined(BC_ENCODE_7)
     if (params.cutoff > 0) return params.lambda * lerp(0.42, 1.30, fit.activity);
-    return params.lambda * lerp(2.15, 4.35, fit.activity);
+    return params.lambda * lerp(0.18, 0.36, fit.activity);
 #else
     return params.lambda * lerp(0.132, 0.365, fit.activity);
 #endif

@@ -198,7 +198,7 @@ the_rdo_lambda_trades_error_for_files_that_compress_smaller :: proc(t:^testing.T
     }
     for options in ([]Build_Options{{srgb=true},{}}) {
         exact,rdo,off:=options,options,options
-        exact.rdo_lambda,rdo.rdo_lambda,off.rdo_lambda=-1,15,RDO_LAMBDA_MAX+1
+        exact.rdo_lambda,rdo.rdo_lambda,off.rdo_lambda=-1,RDO_LAMBDA_DEFAULT,RDO_LAMBDA_MAX+1
         least,_:=build(rgba8(pixels,SIZE,SIZE),exact,gpu=&gpu);defer built_destroy(&least)
         traded,_:=build(rgba8(pixels,SIZE,SIZE),rdo,gpu=&gpu);defer built_destroy(&traded)
         path:=fmt.tprintf("%s/rdo.tex",folder)

@@ -22,7 +22,7 @@ import mm "mirai:std/math"
 MAX_SOURCE_SIDE :: 1<<15
 MAX_SOURCE_PIXELS :: 1<<28
 // Changes when build would give other bytes for the same image and options.
-BUILD_VERSION :: 11
+BUILD_VERSION :: 12
 
 @(private)
 OPEN_BLOCK_ENCODER :: blocks.NAME=="open"
