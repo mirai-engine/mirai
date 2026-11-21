@@ -37,7 +37,7 @@ fill :: proc "contextless" (bytes:[]u8,pattern:Pattern,seed:u32) {
 }
 
 @(test)
-mdc1_profiles_round_trip_block_extents :: proc(t:^testing.T) {
+mdc2_profiles_round_trip_block_extents :: proc(t:^testing.T) {
     e:Encoder
     d:Decoder
     if !testing.expect_value(t,encoder_init(&e),Error.None) {return}
@@ -46,8 +46,8 @@ mdc1_profiles_round_trip_block_extents :: proc(t:^testing.T) {
     defer decoder_destroy(&d)
 
     for profile in Profile {
-        testing.expect_value(t,format(profile),MDC1)
-        testing.expect_value(t,format(profile,open=true),MDC1)
+        testing.expect_value(t,format(profile),MDC2)
+        testing.expect_value(t,format(profile,open=true),MDC2)
     }
     source:=make([]u8,2*BLOCK_BYTES+1)
     dest:=make([]u8,len(source))
@@ -69,7 +69,7 @@ mdc1_profiles_round_trip_block_extents :: proc(t:^testing.T) {
                 encoded,err:=encode(&e,profile,raw,packed[:bound(n)])
                 if !testing.expectf(t,err==.None,"%d %v %v: %v",n,pattern,profile,err) {return}
                 wire:=packed[:encoded]
-                decoded:=decode(&d,MDC1,wire,dest[:n])
+                decoded:=decode(&d,MDC2,wire,dest[:n])
                 if !testing.expectf(t,decoded==.None && string(dest[:n])==string(raw),
                     "%d %v %v: %v",n,pattern,profile,decoded) {return}
                 written,rewrite:=encode(&e,profile,raw,again[:bound(n)],open=true)
@@ -135,7 +135,7 @@ malformed_data_stays_inside_both_buffers_with_reused_scratch :: proc(t:^testing.
         for cut in 0..<n {
             prefix:=make([]u8,cut)
             copy(prefix,packed[:cut])
-            rejected:=decode(&d,MDC1,prefix,out)==.Corrupt
+            rejected:=decode(&d,MDC2,prefix,out)==.Corrupt
             delete(prefix)
             if !testing.expectf(t,rejected,"%v: cut at %d of %d",pattern,cut,n) {return}
         }
@@ -148,12 +148,12 @@ malformed_data_stays_inside_both_buffers_with_reused_scratch :: proc(t:^testing.
             if sample%4==0 {
                 for &byte in mutated[:n] {byte=next_byte(&state)}
             }
-            decode(&d,MDC1,mutated[:n],out)
+            decode(&d,MDC2,mutated[:n],out)
         }
         testing.expect_value(t,guarded[0],u8(0xa5))
         testing.expect_value(t,guarded[len(guarded)-1],u8(0x5a))
-        testing.expect_value(t,decode(&d,MDC1,packed[:n],out[:len(out)-1]),Error.Corrupt)
-        testing.expect_value(t,decode(&d,MDC1,packed[:n],out),Error.None)
+        testing.expect_value(t,decode(&d,MDC2,packed[:n],out[:len(out)-1]),Error.Corrupt)
+        testing.expect_value(t,decode(&d,MDC2,packed[:n],out),Error.None)
         testing.expect_value(t,string(out),string(raw))
     }
 }
@@ -168,18 +168,21 @@ invalid_commands_and_unavailable_scratch_report_errors :: proc(t:^testing.T) {
     defer encoder_destroy(&e)
     raw,dst:[32]u8
     wire:[33]u8
-    for unsupported in ([?]Format{Format(0x4454535a),Format(0x48345a4c),MLZ1,Format(1)}) {
+    unsupported_formats:=[?]Format{
+        Format(0x3143444d),Format(0x4454535a),Format(0x48345a4c),MLZ1,Format(1),
+    }
+    for unsupported in unsupported_formats {
         testing.expect_value(t,decode(&d,unsupported,nil,nil),Error.Unknown_Format)
     }
-    testing.expect_value(t,decode(&d,MDC1,wire[:1],nil),Error.Corrupt)
-    testing.expect_value(t,decode(&d,MDC1,nil,nil),Error.None)
+    testing.expect_value(t,decode(&d,MDC2,wire[:1],nil),Error.Corrupt)
+    testing.expect_value(t,decode(&d,MDC2,nil,nil),Error.None)
     _,small:=encode(&e,.Fast,raw[:],wire[:32])
     testing.expect_value(t,small,Error.Output_Too_Small)
     _,memory:=encode(&e,.Fast,raw[:],wire[:])
     testing.expect_value(t,memory,Error.Out_Of_Memory)
     _,overlap:=encode(&e,.Fast,wire[:32],wire[:])
     testing.expect_value(t,overlap,Error.Corrupt)
-    testing.expect_value(t,decode(&d,MDC1,wire[:],wire[1:]),Error.Corrupt)
+    testing.expect_value(t,decode(&d,MDC2,wire[:],wire[1:]),Error.Corrupt)
 
     testing.expect_value(t,decoder_init(&d),Error.None)
     defer decoder_destroy(&d)
@@ -193,7 +196,7 @@ invalid_commands_and_unavailable_scratch_report_errors :: proc(t:^testing.T) {
         {2,1,0,1,1,0,0,0,0,255},
     }
     for src in cases {
-        testing.expect_value(t,decode(&d,MDC1,src,dst[:]),Error.Corrupt)
+        testing.expect_value(t,decode(&d,MDC2,src,dst[:]),Error.Corrupt)
     }
 }
 
@@ -216,7 +219,7 @@ speed_matches_copy_exactly_across_overlap_and_end :: proc(t:^testing.T) {
 
             for tail in ([3]int{0,19,51}) {
                 actual:=out[:30+length+tail]
-                result:=decode(nil,MDC1,wire[:32+tail],actual)
+                result:=decode(nil,MDC2,wire[:32+tail],actual)
                 if !testing.expectf(t,result==.None &&
                     string(actual)==string(expected[:len(actual)]),
                     "distance %d length %d tail %d: %v",distance,length,tail,result) {return}
@@ -236,13 +239,13 @@ a_multiblock_frame_requires_exact_extents :: proc(t:^testing.T) {
     defer {delete(input);delete(wire);delete(out)}
     n,err:=encode(&e,.Speed,input,wire)
     if !testing.expect_value(t,err,Error.None) {return}
-    testing.expect_value(t,decode(nil,MDC1,wire[:n],out),Error.None)
-    testing.expect_value(t,decode(nil,MDC1,wire[:n-1],out),Error.Corrupt)
-    testing.expect_value(t,decode(nil,MDC1,wire[:n+1],out),Error.Corrupt)
+    testing.expect_value(t,decode(nil,MDC2,wire[:n],out),Error.None)
+    testing.expect_value(t,decode(nil,MDC2,wire[:n-1],out),Error.Corrupt)
+    testing.expect_value(t,decode(nil,MDC2,wire[:n+1],out),Error.Corrupt)
     wire[0],wire[1],wire[2]=0,0,0
-    testing.expect_value(t,decode(nil,MDC1,wire[:n],out),Error.Corrupt)
+    testing.expect_value(t,decode(nil,MDC2,wire[:n],out),Error.Corrupt)
     wire[0],wire[1],wire[2]=0xff,0xff,0xff
-    testing.expect_value(t,decode(nil,MDC1,wire[:n],out),Error.Corrupt)
+    testing.expect_value(t,decode(nil,MDC2,wire[:n],out),Error.Corrupt)
 }
 
 @(test)
@@ -267,7 +270,7 @@ entropy_uses_three_repeat_slots_and_decodes_without_an_allocator :: proc(t:^test
     streams:=build_symbols(e.mdc,raw[:],0)
     slots:=[?]u8{6,1,2,0,2}
     testing.expect_value(t,string(e.mdc.offsets[:len(choices)]),string(slots[:]))
-    size:=write_entropy(e.mdc,&streams,wire[:])
+    size:=write_entropy(e.mdc,&streams,wire[:],raw[:],0,.Fast)
     if !testing.expect(t,size>0) {return}
 
     allocator:=context.allocator
@@ -275,7 +278,7 @@ entropy_uses_three_repeat_slots_and_decodes_without_an_allocator :: proc(t:^test
     mem.tracking_allocator_init(&tracking,allocator)
     defer mem.tracking_allocator_destroy(&tracking)
     context.allocator=mem.tracking_allocator(&tracking)
-    result:=decode(&d,MDC1,wire[:size],out[:])
+    result:=decode(&d,MDC2,wire[:size],out[:])
     context.allocator=allocator
     testing.expect_value(t,tracking.total_allocation_count,i64(0))
     testing.expect_value(t,result,Error.None)
@@ -283,7 +286,7 @@ entropy_uses_three_repeat_slots_and_decodes_without_an_allocator :: proc(t:^test
 }
 
 @(test)
-entropy_can_match_beyond_two_previous_blocks :: proc(t:^testing.T) {
+delta_literals_use_the_previous_distance :: proc(t:^testing.T) {
     e:Encoder
     d:Decoder
     encoder_init(&e)
@@ -291,7 +294,51 @@ entropy_can_match_beyond_two_previous_blocks :: proc(t:^testing.T) {
     if !testing.expect_value(t,decoder_init(&d),Error.None) {return}
     defer decoder_destroy(&d)
 
-    first:=3*BLOCK_BYTES
+    raw,out:[1024]u8
+    wire:[len(raw)+1]u8
+    if _,err:=encode(&e,.Balanced,raw[:],wire[:]);err!=.None {
+        testing.expect_value(t,err,Error.None)
+        return
+    }
+    sequences:=[?]Sequence{{151,41,16},{61,16,8},{61,24,16},{61,40,16}}
+    pos,rep:=0,int(INITIAL_OFFSETS[0])
+    for sequence in sequences {
+        for _ in 0..<sequence.literals {
+            raw[pos]=1
+            if pos>=rep {raw[pos]+=raw[pos-rep]}
+            pos+=1
+        }
+        rep=int(sequence.distance)
+        for _ in 0..<sequence.length {
+            raw[pos]=raw[pos-rep]
+            pos+=1
+        }
+    }
+    for i in pos..<len(raw) {raw[i]=1+raw[i-rep]}
+    copy(e.mdc.sequences[:],sequences[:])
+    e.mdc.sequence_count=len(sequences)
+    streams:=build_symbols(e.mdc,raw[:],0)
+    size:=write_entropy(e.mdc,&streams,wire[:],raw[:],0,.Balanced)
+    if !testing.expect(t,size>0) {return}
+    testing.expect_value(t,Block_Mode(wire[0]),Block_Mode.Delta)
+    testing.expect_value(t,decode(&d,MDC2,wire[:size],out[:]),Error.None)
+    testing.expect_value(t,string(out[:]),string(raw[:]))
+    for cut in 0..<size {
+        testing.expect_value(t,decode(&d,MDC2,wire[:cut],out[:]),Error.Corrupt)
+    }
+}
+
+@(test)
+entropy_can_match_beyond_two_mebibytes :: proc(t:^testing.T) {
+    e:Encoder
+    d:Decoder
+    encoder_init(&e)
+    defer encoder_destroy(&e)
+    if !testing.expect_value(t,decoder_init(&d),Error.None) {return}
+    defer decoder_destroy(&d)
+
+    blocks:=9
+    first:=blocks*BLOCK_BYTES
     raw:=make([]u8,first+4096)
     out:=make([]u8,len(raw))
     wire:=make([]u8,bound(len(raw)))
@@ -303,14 +350,15 @@ entropy_can_match_beyond_two_previous_blocks :: proc(t:^testing.T) {
         size,err:=encode(&e,profile,raw,wire)
         if !testing.expect_value(t,err,Error.None) {return}
         at:=0
-        for _ in 0..<3 {
+        for _ in 0..<blocks {
             extent:=int(wire[at])|int(wire[at+1])<<8|int(wire[at+2])<<16
             at+=3+extent
         }
-        testing.expect_value(t,Block_Mode(wire[at]),Block_Mode.Entropy)
+        mode:=Block_Mode(wire[at])
+        testing.expect(t,mode==.Entropy || mode==.Delta)
         testing.expect(t,size-at<len(raw)-first)
-        testing.expect_value(t,decode(&d,MDC1,wire[:size],out),Error.None)
+        testing.expect_value(t,decode(&d,MDC2,wire[:size],out),Error.None)
         testing.expect_value(t,string(out),string(raw))
-        testing.expect_value(t,decode(&d,MDC1,wire[at:size],out[first:]),Error.Corrupt)
+        testing.expect_value(t,decode(&d,MDC2,wire[at:size],out[first:]),Error.Corrupt)
     }
 }
