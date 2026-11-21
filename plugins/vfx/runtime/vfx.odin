@@ -1,6 +1,7 @@
 package vfx
 
 import "core:math"
+import "core:math/linalg"
 import "mirai:core"
 import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
@@ -164,7 +165,7 @@ particles_tick :: proc(
     core.entity_map_prune(&clocks.clocks,emitters,core.changes(emitters,&clocks.seen_emitters))
     core.entity_map_prune(&clocks.clocks,worlds,core.changes(worlds,&clocks.seen_worlds))
     dt:=time.playing?time.dt:max(frame.dt,0)
-    requests_apply(requests,emitters,overrides,clocks,problems)
+    requests_apply(requests,emitters,overrides,clocks,problems,assets)
     a:=assets
     // An emission is resolved again when its effect, or what the effect reads of the assets, changed.
     refreshed:=false
@@ -188,8 +189,17 @@ particles_tick :: proc(
         emitting:=time.playing?emitter.active:emitter.preview
         before:=clock.time
         emission_step(clock,&clock.emission,emitting,emitter.loop,world.transform.position,dt)
-        if !time.playing && emitting && !clock.paused {
-            if listener,listens:=core.get(listeners,e);listens {channel_preview(clocks,listener,world.transform.position,before,clock.time,f64(clock.emission.duration))}
+        if listener,listens:=core.get(listeners,e);listens && !listener.silent && !clock.paused {
+            if time.playing {
+                if ring:=channel_ring(clocks,channel_key(listener));ring!=nil && ring.count>0 {
+                    latest:=ring.records[(ring.start+ring.count-1)%CHANNEL_BIRTHS]
+                    now:=time.seconds+f64(time.dt)
+                    clock.last=max(clock.last,clock.time-max(now-latest.time,0))
+                    emission_done(clock,&clock.emission,emitting,emitter.loop)
+                }
+            } else if emitting {
+                channel_preview(clocks,listener,world.transform.position,before,clock.time,f64(clock.emission.duration))
+            }
         }
         if !time.playing && clock.done && emitter.preview {clock_restart(clock)}
         if time.playing && clock.done && emitter.destroy_when_done {append(&done,e)}
@@ -213,6 +223,7 @@ particles_sync :: proc(
     if sync==nil {return}
     data_read(read,reports,sync,app.renderer,id,problems)
     r,a:=app.renderer,app.assets
+    pool_drain(&sync.pool,r,id)
     sync.world,sync.world_id=erender.world_key(id),id
     clear(&sync.resources)
     clear(&sync.stage_rows)
@@ -304,8 +315,8 @@ sync_gather :: proc(f:^Sync_Frame,hierarchy:core.Ref(core.Hierarchy)) {
     sync.frame+=1
     clear(&sync.told)
     gone :: proc(sync:^Particle_Sync,left:^Emitter_Shown) {
-        pool_remove(&sync.pool,left.desc.id)
-        pool_remove(&sync.pool,left.sub_desc.id)
+        pool_orphan(&sync.pool,left.desc.id)
+        pool_orphan(&sync.pool,left.sub_desc.id)
     }
     c_emitters:=core.changes(f.emitters,&sync.seen_emitters)
     c_worlds:=core.changes(f.worlds,&sync.seen_worlds)
@@ -478,6 +489,7 @@ emitter_tell :: proc(f:^Sync_Frame,e:core.Entity) -> (again:bool) {
     spawns:[SPAWNS]Particle_Spawn
     age:f32
     born:u64
+    birth_limit:=max(f32)
     if clock:=clock_find(f.clocks,e);clock!=nil {
         if clock.generation!=shown.generation {
             shown.generation=clock.generation
@@ -489,6 +501,7 @@ emitter_tell :: proc(f:^Sync_Frame,e:core.Entity) -> (again:bool) {
         spawns=births_since(clock,&shown.started)
         shown.paused=clock.paused
         age=f32(clock.time)
+        if clock.emission.program_births {birth_limit=f32(clock.program_until)}
     }
     previous:=shown.placed?shown.transform:transform
     shown.transform,shown.placed=transform,true
@@ -503,7 +516,7 @@ emitter_tell :: proc(f:^Sync_Frame,e:core.Entity) -> (again:bool) {
     }
     desc:=shown.desc
     desc.transform,desc.previous,desc.spawns=transform,previous,spawns
-    desc.age,desc.born=age,u32(born)
+    desc.age,desc.born,desc.birth_limit=age,u32(born),birth_limit
     if shape:=shown.desc.info.shape;shape==.Surface || shape==.Bones || shown.needs.resources[0].kind!=.None || shown.needs.stages[0].kind!=.None {
         bound,_:=core.get(f.bindings,e)
         rows:=emitter_resources(sync,shown,&bound,e,host.extras_instances(&f.app.extras),f.drawn,f.meshes,f.worlds,f.id,a,r)
@@ -515,11 +528,13 @@ emitter_tell :: proc(f:^Sync_Frame,e:core.Entity) -> (again:bool) {
         if need.kind==.Data {data_need(&sync.data,need.name,need.words,f.problems,e)}
     }
     if listens {desc.births.x,desc.births.y=channel_region(sync,channel_key(listener))}
+    desc.external_positions=listens
     desc.paused,desc.generation=shown.paused,shown.generation
     fits:=true
     if shown.sub_desc.id!=0 {
         sub:=shown.sub_desc
         sub.transform,sub.previous=transform,previous
+        sub.external_positions=true
         sub.paused,sub.generation=shown.paused,shown.generation
         fits=pool_put(&sync.pool,&sub)
     }
@@ -650,6 +665,11 @@ mesh_choices :: proc(d:^Emitter_Desc,renderer:^erender.Renderer,handles:[]erende
         share:=max(weights[c],0)/total if total>0 else 1/f32(len(handles))
         choice^={handle=handle,weight=share+(d.meshes[c-1].weight if c>0 else 0)}
         d.mesh_count+=1
+        if lo,hi,ok:=erender.mesh_bounds(renderer,handle);ok {
+            extent:[3]f32
+            for axis in 0..<3 {extent[axis]=max(abs(lo[axis]),abs(hi[axis]))}
+            d.mesh_extent=max(d.mesh_extent,linalg.length(extent))
+        }
     }
     if d.mesh_count>0 {d.meshes[d.mesh_count-1].weight=1}
     return ready

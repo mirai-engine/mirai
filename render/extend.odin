@@ -287,7 +287,8 @@ Stage_Pipeline_Desc :: struct {
 	program: u32, // of a graphics stage: the Surface program of the materials its draws show
 }
 
-STAGE_PIPELINE_CAPACITY :: 1024 // a stage of each Vfx program is a pipeline of its own
+STAGE_PIPELINE_BUCKETS :: 2048
+STAGE_PIPELINE_CAPACITY :: STAGE_PIPELINE_BUCKETS + STAGE_PIPELINE_BUCKETS / 64
 
 @(private)
 Stage_Pipeline :: struct {
@@ -296,6 +297,29 @@ Stage_Pipeline :: struct {
 	asked:    bool,
 	program:  u32, // the Surface program whose fragment stage it draws with (pipeline_thread.odin)
 	code:     ^rhi.Shader_Code, // and that stage
+}
+
+// The trailing rows track probes through slots cleared by a program reload.
+@(private)
+stage_pipeline_entry :: proc(r: ^Renderer, key: u64) -> (entry: ^Stage_Pipeline, found: bool) {
+	home := int(base.hash_u64(key) & (STAGE_PIPELINE_BUCKETS - 1))
+	free := -1
+	for probe in 0..<STAGE_PIPELINE_BUCKETS {
+		at := (home + probe) & (STAGE_PIPELINE_BUCKETS - 1)
+		row := &r.stage_pipelines[at]
+		if row.asked {
+			if row.key == key {return row, true}
+			continue
+		}
+		if free < 0 {free = at}
+		marked := &r.stage_pipelines[STAGE_PIPELINE_BUCKETS + at / 64].key
+		if marked^ & (u64(1) << u32(at % 64)) == 0 {break}
+	}
+	if free < 0 {return nil, false}
+	r.stage_pipelines[STAGE_PIPELINE_BUCKETS + free / 64].key |= u64(1) << u32(free % 64)
+	row := &r.stage_pipelines[free]
+	row.key, row.asked = key, true
+	return row, false
 }
 
 // The pipeline of a description. The renderer makes it the first time it is
@@ -316,13 +340,9 @@ stage_pipeline :: proc(r: ^Renderer, desc: Stage_Pipeline_Desc) -> rhi.Pipeline 
 		if plain = stage_pipeline(r, without); plain == 0 {return 0}
 	}
 	key := base.name_hash(desc.shader) ~ base.name_hash(desc.fragment) * 31 ~ (u64(desc.stage) + 1) << 56 ~ u64(transmute(u8)desc.targets) << 48 ~ u64(desc.blend) << 40 ~ u64(hardware) << 39 ~ u64(compute) << 37 ~ u64(program) * 0x9E3779B97F4A7C15
-	free: ^Stage_Pipeline
-	for &entry in r.stage_pipelines {
-		if entry.asked && entry.key == key {return entry.pipeline if entry.pipeline != 0 else plain}
-		if !entry.asked && free == nil {free = &entry}
-	}
+	free, found := stage_pipeline_entry(r, key)
+	if found {return free.pipeline if free.pipeline != 0 else plain}
 	if free == nil {set_error(r, "no room for the pipeline of the stage %s", desc.shader); return plain}
-	free.key, free.asked = key, true
 	names: [2][192]u8
 	switch {
 	case compute:
@@ -538,13 +558,9 @@ pass_gbuffer_pipeline :: proc(s: ^Stage_Pass, shader: string, name := "", fragme
 		if plain = pass_gbuffer_pipeline(s, shader, name, fragment); plain == 0 {return 0}
 	}
 	key := base.name_hash(shader) ~ base.name_hash(fragment) * 31 ~ (u64(Frame_Stage.Gbuffer) + 1) << 56 ~ u64(variant) << 48 ~ u64(ids) << 47 ~ u64(program) * 0x9E3779B97F4A7C15
-	free: ^Stage_Pipeline
-	for &entry in r.stage_pipelines {
-		if entry.asked && entry.key == key {return entry.pipeline if entry.pipeline != 0 else plain}
-		if !entry.asked && free == nil {free = &entry}
-	}
+	free, found := stage_pipeline_entry(r, key)
+	if found {return free.pipeline if free.pipeline != 0 else plain}
 	if free == nil {set_error(r, "no room for the pipeline of the stage %s", shader); return plain}
-	free.key, free.asked = key, true
 	names: [2][192]u8
 	vertex := extension_shader(r, fmt.bprintf(names[0][:], "%s.vert", shader))
 	if vertex == nil {return 0}

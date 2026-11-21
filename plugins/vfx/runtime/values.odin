@@ -62,22 +62,29 @@ error_message :: proc(error:Error) -> string {
 // by "parameters." and its name: one to four numbers or bools, or the
 // base.Asset_Id of a texture. Whether the program has that parameter is told
 // when the emitter resolves it (particle_program).
-value_set :: proc(override:^Particle_Override,name:string,value:$T) -> Error {
+value_set :: proc(override:^Particle_Override,name:string,value:$T,resolved:^effect.Particle_Info=nil) -> Error {
     bytes:[effect.PARTICLE_VALUE_BYTES]u8
+    if error:=value_encode(name,value,&bytes);error!=.None {return error}
+    return value_put(override,base.name_hash(name),bytes[:],resolved)
+}
+
+@(private)
+value_encode :: proc(name:string,value:$T,bytes:^[effect.PARTICLE_VALUE_BYTES]u8) -> Error {
     if strings.has_prefix(name,PARTICLE_PARAMETER_PATH) {
         parameter:effect.Particle_Parameter
         if error:=parameter_of(name[len(PARTICLE_PARAMETER_PATH):],value,&parameter);error!=.None {return error}
         if effect.particle_parameter_validate(&parameter).message!="" {return .Invalid_Value}
-        bytes=parameter_value(&parameter)
+        bytes^=parameter_value(&parameter)
     } else {
         field,found:=effect.particle_value_at(name)
         if !found {return .Unknown_Field}
         if field.kind==.Asset {return .Effect_Field}
         if size_of(T)!=field.size || !types_match(type_info_of(T),field.info) {return .Type_Mismatch}
         stored:=value
-        mem.copy(&bytes,&stored,size_of(T))
+        mem.copy(bytes,&stored,size_of(T))
+        if !effect.particle_field_valid(field,bytes[:]) {return .Invalid_Value}
     }
-    return value_put(override,base.name_hash(name),bytes[:])
+    return .None
 }
 
 // The name of a parameter of the program of an effect in a Particle_Override.
@@ -118,14 +125,16 @@ value_drop :: proc(override:^Particle_Override,name:u64) {
 // Puts the bytes of a value by the hash of its name, as value_set does by the
 // name: those of a field of the effect inside its range, those of a parameter
 // as parameter_value gives them.
-value_put :: proc(override:^Particle_Override,name:u64,bytes:[]u8) -> Error {
+value_put :: proc(override:^Particle_Override,name:u64,bytes:[]u8,resolved:^effect.Particle_Info=nil) -> Error {
     if override==nil || override.count>PARTICLE_OVERRIDE_CAPACITY || len(bytes)>effect.PARTICLE_VALUE_BYTES {return .Invalid_Value}
     if field,found:=effect.particle_value_find(name);found {
         if field.kind==.Asset {return .Effect_Field}
         if len(bytes)<field.size {return .Type_Mismatch}
-        candidate:=effect.PARTICLE_DEFAULTS
-        mem.copy(rawptr(uintptr(&candidate)+field.offset),raw_data(bytes),field.size)
-        if !effect.particle_check({info=candidate}) {return .Invalid_Value}
+        if resolved!=nil {
+            candidate:=resolved^
+            mem.copy(rawptr(uintptr(&candidate)+field.offset),raw_data(bytes),field.size)
+            if !effect.particle_check({info=candidate}) {return .Invalid_Value}
+        } else if !effect.particle_field_valid(field,bytes) {return .Invalid_Value}
     }
     at:=-1
     for stored,i in override.names[:override.count] {

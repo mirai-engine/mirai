@@ -44,7 +44,8 @@ world_textures_keep :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,id:co
 world_textures_make :: proc(sync:^Particle_Sync,renderer:^erender.Renderer) {
     for &entry in sync.grids.entries {
         if !entry.has_texture {continue}
-        index,_,ok:=erender.table_texture(renderer,sync.world,{name=world_texture_key(entry.name),width=entry.cells.x,height=entry.cells.z})
+        index,made,ok:=erender.table_texture(renderer,sync.world,{name=world_texture_key(entry.name),width=entry.cells.x,height=entry.cells.z})
+        entry.texture_dirty||=made || entry.texture_index!=index
         entry.texture_index=index
         if !ok {entry.has_texture=false}
     }
@@ -59,12 +60,15 @@ world_textures_write :: proc(sync:^Particle_Sync,pass:^erender.Pass) {
     Params :: struct {grid,layer,packed,pad:u32}
     for &entry,at in sync.grids.entries {
         if !entry.has_texture || count==WORLD_TEXTURES {continue}
-        packed:=grids_base(sync)+entry.packed
-        params:=Params{sync.pool.grids_at+u32(at)*size_of(Gpu_Grid),entry.texture.layer,packed,0}
-        erender.pass_pipeline(pass,sync.pipelines.world_texture)
-        erender.pass_params(pass,&params,size_of(params))
-        erender.pass_dispatch(pass,groups(entry.cells.x,8),groups(entry.cells.z,8))
-        if !erender.pass_table_texture_copy(pass,world_buffer(sync),u64(packed+15)&~u64(15),{name=world_texture_key(entry.name),width=entry.cells.x,height=entry.cells.z}) {continue}
+        if entry.texture_dirty {
+            packed:=grids_base(sync)+entry.packed
+            params:=Params{sync.pool.grids_at+u32(at)*size_of(Gpu_Grid),entry.texture.layer,packed,0}
+            erender.pass_pipeline(pass,sync.pipelines.world_texture)
+            erender.pass_params(pass,&params,size_of(params))
+            erender.pass_dispatch(pass,groups(entry.cells.x,8),groups(entry.cells.z,8))
+            if !erender.pass_table_texture_copy(pass,world_buffer(sync),u64(packed+15)&~u64(15),{name=world_texture_key(entry.name),width=entry.cells.x,height=entry.cells.z}) {continue}
+            entry.texture_dirty=false
+        }
         frame.names[count],frame.textures[count]=entry.texture_name,entry.texture_index
         frame.first[count],frame.cells[count]={entry.first.x,entry.first.z},{i32(entry.cells.x),i32(entry.cells.z)}
         frame.cell_size[count]=entry.cell_size

@@ -1,4 +1,3 @@
-//! per vfx program
 #include "native.slang"
 // A quad per particle of the list an emitter draws, facing the camera, along
 // its velocity or flat on the ground. A ribbon joins each particle to the next
@@ -25,24 +24,25 @@ struct Stage_Output {
     [[vk::location(8)]] nointerpolation float4 out_data2 : TEXCOORD8;
     [[vk::location(9)]] nointerpolation float4 out_data3 : TEXCOORD9;
     [[vk::location(10)]] nointerpolation uint out_given : TEXCOORD10;
+    [[vk::location(12)]] nointerpolation uint material : TEXCOORD12;
     [[vk::location(11)]] nointerpolation float2 out_random_radius : TEXCOORD11;
 };
 
-float2 flipbook_uv(Particle_Emitter e, float2 corner, float frame_index) {
-    float frames = float(e.flipbook.x * e.flipbook.y);
+float2 flipbook_uv(uint2 tiles, float2 corner, float frame_index) {
+    float frames = float(tiles.x * tiles.y);
     float f = mod(frame_index, max(frames, 1.0));
-    float column = mod(f, float(e.flipbook.x));
-    float row = floor(f / float(e.flipbook.x));
-    return (corner + float2(column, row)) / float2(e.flipbook.xy);
+    float column = mod(f, float(tiles.x));
+    float row = floor(f / float(tiles.x));
+    return (corner + float2(column, row)) / float2(tiles);
 }
 
 [shader("vertex")]
 Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_VulkanInstanceID) {
     Stage_Output output;
-    Particle_Emitter e = particle_emitters[params.emitter];
+
     float2 corner = float2(float(vertex_id & 1u), float(vertex_id >> 1u));
     float2 c = corner * 2.0 - 1.0;
-    bool ribbon = e.kinds.y == PARTICLE_RENDER_RIBBON;
+    bool ribbon = particle_emitters[params.emitter].kinds.y == PARTICLE_RENDER_RIBBON;
     float3 world;
     float2 uv = float2(corner.x, 1.0 - corner.y);
     Particle p;
@@ -52,8 +52,8 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     float3 light;
     if (ribbon) {
         // The segment of the instance: the last whose quads start at or before it.
-        uint alive = min(particle_states[params.emitter].alive, min(e.range.y, PARTICLE_SORT_MAX));
-        uint starts = 3u * e.program.y + e.range.x;
+        uint alive = min(particle_states[params.emitter].alive, min(particle_emitters[params.emitter].range.y, PARTICLE_SORT_MAX));
+        uint starts = 3u * particle_emitters[params.emitter].program.y + particle_emitters[params.emitter].range.x;
         uint low = 0u, high = max(alive, 1u) - 1u;
         while (high - low > 1u) {
             uint middle = (low + high) >> 1u;
@@ -94,8 +94,8 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         float3 along = (6.0 * u2 - 6.0 * u) * a + (3.0 * u2 - 4.0 * u + 1.0) * m0 + (6.0 * u - 6.0 * u2) * b + (3.0 * u2 - 2.0 * u) * m1;
         if (length(along) <= 1e-6) along = b - a;
         // What both ends show, as the frame kept it: no program runs per vertex.
-        Particle_Look la = particle_ribbon_look(params.emitter, index);
-        Particle_Look lb = particle_ribbon_look(params.emitter, next);
+        Particle_Look la = particle_draw_look(params.emitter, index);
+        Particle_Look lb = particle_draw_look(params.emitter, next);
         look = along_t < 0.5 ? la : lb;
         look.color = lerp(la.color, lb.color, along_t);
         look.size = lerp(la.size, lb.size, along_t);
@@ -104,11 +104,11 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         side = length(side) > 1e-6 ? normalize(side) : frame.view[0].xyz;
         world = center + side * c.x * half_size;
         uv = float2(corner.x, saturate(lerp(p.age / max(p.lifetime, 1e-5), q.age / max(q.lifetime, 1e-5), along_t)));
-        light = (e.range.w & PARTICLE_FLAG_LIT) != 0u ? lerp(particle_light(p), particle_light(q), along_t) : emission_render_units(float3(1.0), (e.range.w & PARTICLE_FLAG_RELATIVE) != 0u);
+        light = (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_LIT) != 0u ? lerp(particle_light(p), particle_light(q), along_t) : emission_render_units(float3(1.0), (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_RELATIVE) != 0u);
     } else {
         index = particle_drawn(params.emitter, instance_id);
         p = particles[index];
-        look = particle_program_look(params.emitter, index, p);
+        look = particle_draw_look(params.emitter, index);
         float3 center = particle_world(params.emitter, p.position);
         float3 to_camera = to_eye(center);
         half_size = look.size * 0.5;
@@ -116,16 +116,16 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         float3 up = frame.view[1].xyz;
         float s = sin(p.rotation), co = cos(p.rotation);
         float2 extent = float2(half_size, half_size);
-        if (e.kinds.y == PARTICLE_RENDER_VELOCITY) {
+        if (particle_emitters[params.emitter].kinds.y == PARTICLE_RENDER_VELOCITY) {
             float3 velocity = particle_world_vector(params.emitter, p.velocity);
             float3 axis = velocity - to_camera * dot(velocity, to_camera);
             if (length(axis) > 1e-5) {
                 up = normalize(axis);
                 right = normalize(cross(up, to_camera));
-                extent.y = half_size + length(velocity) * e.look.x * 0.5;
+                extent.y = half_size + length(velocity) * particle_emitters[params.emitter].look.x * 0.5;
                 s = 0.0; co = 1.0;
             }
-        } else if (e.kinds.y == PARTICLE_RENDER_HORIZONTAL) {
+        } else if (particle_emitters[params.emitter].kinds.y == PARTICLE_RENDER_HORIZONTAL) {
             right = float3(1.0, 0.0, 0.0);
             up = float3(0.0, 0.0, -1.0);
         }
@@ -133,13 +133,14 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         float3 u = up * co - right * s;
         world = center + r * c.x * extent.x + u * c.y * extent.y;
         // Unlit, its color is a luminance in nits, or what the exposed image shows.
-        light = (e.range.w & PARTICLE_FLAG_LIT) != 0u ? particle_light(p) : emission_render_units(float3(1.0), (e.range.w & PARTICLE_FLAG_RELATIVE) != 0u);
+        light = (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_LIT) != 0u ? particle_light(p) : emission_render_units(float3(1.0), (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_RELATIVE) != 0u);
     }
     output.position = view_clip(world);
+    output.material = particle_emitters[params.emitter].mesh.w;
     output.out_color = look.color;
     output.out_light = light;
     float frame_index = floor(look.frame);
-    output.out_uv = float4(flipbook_uv(e, uv, frame_index), flipbook_uv(e, uv, frame_index + 1.0));
+    output.out_uv = float4(flipbook_uv(particle_emitters[params.emitter].flipbook.xy, uv, frame_index), flipbook_uv(particle_emitters[params.emitter].flipbook.xy, uv, frame_index + 1.0));
     output.out_blend_depth = float2(look.frame - frame_index, dot(world - frame.camera_position.xyz, frame.camera_forward.xyz));
     output.out_seed = float(p.seed & 1023u) * 0.37;
     output.out_world = world;

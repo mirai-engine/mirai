@@ -1,15 +1,22 @@
 #include "native.slang"
-// One triangle over the view at the near plane: the depth test of the Blend
-// stage lets every pixel through, and the march stops at the scene behind.
+#include "particles.slang"
+#include "media_grid.slang"
 
-struct Stage_Output {
-    float4 position : SV_Position;
-};
+struct Params_Block { uint volume; uint pass; uint2 pad; Media_Grid media; };
+[[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 
 [shader("vertex")]
-Stage_Output main(uint vertex_id : SV_VulkanVertexID) {
-    Stage_Output output;
-    float2 uv = float2((vertex_id << 1) & 2, vertex_id & 2);
-    output.position = float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 1.0, 1.0);
-    return output;
+float4 main(uint vertex_id : SV_VulkanVertexID) : SV_Position {
+    Particle_Grid_Row grid = particle_grid_row_at(particle_volume_at(params.volume).grid);
+    uint face = vertex_id / 6u, corner = vertex_id % 6u;
+    uint axis = face / 2u, u = (axis + 1u) % 3u, v = (axis + 2u) % 3u;
+    float3 cube = float3(0.0);
+    cube[axis] = float(face & 1u);
+    cube[u] = float(corner == 1u || corner == 3u || corner == 4u);
+    cube[v] = float(corner >= 2u && corner != 3u);
+    if ((face & 1u) == 0u) cube[u] = 1.0 - cube[u];
+    float4 clip = view_clip(grid.corner + cube * float3(grid.cells) * grid.cell_size);
+    // The fragment clips the march at the scene and glass depths.
+    clip.z = clip.w;
+    return clip;
 }
