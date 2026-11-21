@@ -1,12 +1,13 @@
 package data
 
 import "base:intrinsics"
+import "base:runtime"
 import "core:math"
 
 @(private="file") HASH_BITS :: 17
 @(private="file") CHAIN_SIZE :: 2*(WINDOW+1)
 @(private="file") SEARCH_LENGTH :: 96
-@(private="file") SEARCH_DEPTH :: 256
+@(private="file") SEARCH_DEPTH :: 96
 @(private="file") COST_UNIT :: 16
 @(private="file") MATCH_CACHE_BITS :: 7
 
@@ -28,23 +29,49 @@ Path :: struct {
 Encode_Work :: struct {
     head:[1<<HASH_BITS]u32,
     hash_shift:uint,
-    previous,long_previous:[CHAIN_SIZE]u32,
+    previous,long_previous:[]u32,
     long_head:[1<<HASH_BITS]u32,
-    paths:[BLOCK_BYTES+1]Path,
+    paths:[]Path,
     sequences:[SEQUENCES_MAX]Sequence,
     sequence_count:int,
     tags,offsets:[SEQUENCES_MAX]u8,
     literals:[BLOCK_BYTES+8]u8,
-    length_bits:[BLOCK_BYTES/8+4]u8,
+    delta,packed_delta:[BLOCK_BYTES]u8,
+    length_extra:[SEQUENCES_MAX]u8,
     offset_bits:[3*SEQUENCES_MAX+4]u8,
     packed:[BLOCK_BYTES+2*SEQUENCES_MAX]u8,
     candidate:[BLOCK_BYTES+1]u8,
     huff:Huff_Work,
-    offset_counts:[WINDOW+1]u16,
+    offset_counts:[]u16,
 }
 
 @(private="file")
 Match :: struct {length,distance:int}
+
+@(private)
+encode_memory :: proc(w:^Encode_Work,size:int,profile:Profile,a:runtime.Allocator) -> Error {
+    if profile==.Fast {return .None}
+    capacity:=CHAIN_SIZE if profile!=.Speed else 2*(int(max(u16))+1)
+    entries:=1<<uint(high_bit(min(size,capacity)-1)+1)
+    grow_scratch(&w.previous,entries,a) or_return
+    if profile==.Speed {return .None}
+    grow_scratch(&w.offset_counts,min(size,WINDOW+1),a) or_return
+    if profile==.Ultra {
+        grow_scratch(&w.long_previous,entries,a) or_return
+        grow_scratch(&w.paths,min(size,BLOCK_BYTES)+1,a) or_return
+    }
+    return .None
+}
+
+@(private="file")
+grow_scratch :: proc(buf:^[]$T,count:int,a:runtime.Allocator) -> Error {
+    if len(buf^)>=count {return .None}
+    next,error:=make([]T,count,a)
+    if error!=nil {return .Out_Of_Memory}
+    delete(buf^,a)
+    buf^=next
+    return .None
+}
 
 @(private)
 index_begin :: proc "contextless" (w:^Encode_Work,size:int,profile:Profile) {
@@ -68,24 +95,23 @@ encode_block :: proc "contextless" (w:^Encode_Work,profile:Profile,src:[]u8,firs
             if profile==.Fast {
                 streams=parse_fast(w,src,first)
             } else {
-                for at in first..=len(src)-MIN_MATCH {index_at(w,src,at,true)}
+                for at in first..=len(src)-MIN_MATCH {
+                    index_at(w,src,at,short=profile==.Ultra)
+                }
                 if profile==.Ultra {
                     for at in first..=len(src)-8 {index_long(w,src,at)}
                 }
-                parse_greedy(w,src,first,21 if profile==.Balanced else 18)
+                parse_greedy(w,src,first,profile==.Balanced)
                 streams=build_symbols(w,src,first)
             }
-            size:=write_entropy(w,&streams,dst)
+            size:=write_entropy(w,&streams,dst,src,first,profile)
             if profile==.Ultra {
-                for _ in 0..<2 {
-                    prices:=symbol_prices(w,streams.literals)
-                    parse_optimal(w,src,first,&prices,&streams.dictionary)
-                    streams=build_symbols(w,src,first)
-                    limit:=size if size>0 else len(dst)
-                    n:=write_entropy(w,&streams,w.candidate[:limit])
-                    if n==0 {break}
-                    size=copy(dst,w.candidate[:n])
-                }
+                prices:=symbol_prices(w,streams.literals)
+                parse_optimal(w,src,first,&prices,&streams.dictionary)
+                streams=build_symbols(w,src,first)
+                limit:=size if size>0 else len(dst)
+                n:=write_entropy(w,&streams,w.candidate[:limit],src,first,profile)
+                if n>0 {size=copy(dst,w.candidate[:n])}
             }
             if size>0 {return size}
         }
@@ -109,7 +135,7 @@ hash_at :: #force_inline proc "contextless" (src:[]u8,at:int,shift:uint,short:bo
 @(private="file")
 index_at :: #force_inline proc "contextless" (w:^Encode_Work,src:[]u8,at:int,short:bool) {
     h:=hash_at(src,at,w.hash_shift,short)
-    w.previous[at&(CHAIN_SIZE-1)]=w.head[h]
+    w.previous[at&(len(w.previous)-1)]=w.head[h]
     w.head[h]=u32(at+1)
 }
 
@@ -117,7 +143,7 @@ index_at :: #force_inline proc "contextless" (w:^Encode_Work,src:[]u8,at:int,sho
 index_long :: #force_inline proc "contextless" (w:^Encode_Work,src:[]u8,at:int) {
     word:=u64(intrinsics.unaligned_load((^u64le)(&src[at])))
     h:=hash64(word,w.hash_shift)
-    w.long_previous[at&(CHAIN_SIZE-1)]=w.long_head[h]
+    w.long_previous[at&(len(w.long_previous)-1)]=w.long_head[h]
     w.long_head[h]=u32(at+1)
 }
 
@@ -137,13 +163,14 @@ match_end :: #force_inline proc "contextless" (src:[]u8,
 
 @(private="file")
 Chain :: struct {
-    links:^([CHAIN_SIZE]u32),
-    next,remaining:int,
+    links:[]u32,
+    mask,next,remaining:int,
 }
 
 @(private="file")
-chain_begin :: #force_inline proc "contextless" (links:^([CHAIN_SIZE]u32),at,depth:int) -> Chain {
-    return {links,int(links[at&(CHAIN_SIZE-1)])-1,depth}
+chain_begin :: #force_inline proc "contextless" (links:[]u32,at,depth:int) -> Chain {
+    mask:=len(links)-1
+    return {links,mask,int(links[at&mask])-1,depth}
 }
 
 @(private="file")
@@ -153,7 +180,7 @@ chain_match :: #force_inline proc "contextless" (chain:^Chain,src:[]u8,at,best,l
         from:=chain.next
         distance:=at-from
         if from<0 || distance>window {break}
-        chain.next=int(chain.links[from&(CHAIN_SIZE-1)])-1
+        chain.next=int(chain.links[from&chain.mask])-1
         chain.remaining-=1
         if src[from+best]!=src[at+best] {continue}
         n:=match_end(src,from,at,0,limit)
@@ -167,7 +194,7 @@ find_match :: proc "contextless" (w:^Encode_Work,src:[]u8,at,depth,window,min_ma
     speed:=false) -> (best:Match) {
     limit:=min(len(src)-at,SEARCH_LENGTH)
     length:=min_match-1
-    chain:=chain_begin(&w.previous,at,depth)
+    chain:=chain_begin(w.previous,at,depth)
     for length<limit {
         match:=chain_match(&chain,src,at,length,limit,window,speed)
         if match.length==0 {break}
@@ -266,9 +293,10 @@ parse_fast :: proc "contextless" (w:^Encode_Work,src:[]u8,
 }
 
 @(private="file")
-greedy_match :: proc "contextless" (w:^Encode_Work,src:[]u8,at,penalty:int,reps:Offsets) -> Match {
+greedy_match :: proc "contextless" (w:^Encode_Work,src:[]u8,at,penalty,minimum:int,
+    reps:Offsets) -> Match {
     limit:=min(SEARCH_LENGTH,len(src)-at)
-    m:=find_match(w,src,at,48,WINDOW,MIN_MATCH)
+    m:=find_match(w,src,at,24,WINDOW,minimum)
     score:=match_score(m,reps,penalty)
     if score<=0 {m={};score=0}
     for distance in reps {
@@ -293,16 +321,18 @@ match_score :: #force_inline proc "contextless" (m:Match,reps:Offsets,penalty:in
 }
 
 @(private="file")
-parse_greedy :: proc "contextless" (w:^Encode_Work,src:[]u8,first,penalty:int) {
+parse_greedy :: proc "contextless" (w:^Encode_Work,src:[]u8,first:int,balanced:bool) {
+    penalty:=21 if balanced else 18
+    minimum:=4 if balanced else MIN_MATCH
     w.sequence_count=0
     start,at:=first,first
     reps:=INITIAL_OFFSETS
     last:=len(src)-MIN_MATCH
     for at<=last {
-        m:=greedy_match(w,src,at,penalty,reps)
+        m:=greedy_match(w,src,at,penalty,minimum,reps)
         if m.length==0 {at+=1;continue}
         if at<last && m.length<SEARCH_LENGTH {
-            next:=greedy_match(w,src,at+1,penalty,reps)
+            next:=greedy_match(w,src,at+1,penalty,minimum,reps)
             if match_score(next,reps,penalty)>match_score(m,reps,penalty)+7 {at+=1;continue}
         }
         if m.length==SEARCH_LENGTH {m.length=match_end(src,at-m.distance,at,m.length,len(src)-at)}
@@ -373,8 +403,8 @@ parse_optimal :: proc "contextless" (w:^Encode_Work,src:[]u8,first:int,
             if n>=MIN_MATCH {offer(w,src,first,at,Match{n,dist},limit,&cache,prices,dict)}
         }
         best:=MIN_MATCH-1
-        for links in ([2]^([CHAIN_SIZE]u32){&w.previous,&w.long_previous}) {
-            if best==limit || (links==&w.long_previous && at>len(src)-8) {break}
+        for links,i in ([2][]u32{w.previous,w.long_previous}) {
+            if best==limit || (i==1 && at>len(src)-8) {break}
             chain:=chain_begin(links,at,SEARCH_DEPTH)
             for best<limit {
                 match:=chain_match(&chain,src,at,best,limit,WINDOW,false)
@@ -407,22 +437,19 @@ offer :: proc "contextless" (w:^Encode_Work,src:[]u8,first,at:int,
     i:=at-first
     path:=w.paths[i]
     l:=literal_code(int(path.literals))
-    literal_codes:=LITERAL_CODES
-    extra:=literal_codes[l].bits
-    if l==7 {extra=8*length_size(int(path.literals)-32)}
+    extra:=0
+    if l==LITERAL_ESCAPE {extra=8*length_size(int(path.literals)-LITERAL_ESCAPE)}
     distance:=u32(match.distance)
     slot:=offset_code(path.reps,distance,dict)
     width:=offset_width(slot)
     price:=path.cost+u32(prices[.Offset][slot])+u32(COST_UNIT*(extra+width))
     reps:=offset_push(path.reps,slot,distance)
-    match_codes:=MATCH_CODES
-    for n:=MIN_MATCH;n<=match.length; {
+    for n:=MIN_MATCH;n<=match.length;n+=1 {
         m:=match_code(n)
-        code:=match_codes[m]
-        cost:=price+u32(prices[.Tag][l<<5|m])+u32(COST_UNIT*code.bits)
-        after:=min(match.length+1,code.base+(1<<uint(code.bits)))
-        for length in n..<after {relax(w,i,length,cost,distance,reps)}
-        n=after
+        extra:=0
+        if n>=MATCH_ESCAPE {extra=8*length_size(n-MATCH_ESCAPE)}
+        cost:=price+u32(prices[.Tag][l<<5|m])+u32(COST_UNIT*extra)
+        relax(w,i,n,cost,distance,reps)
     }
 
     if match.length==limit && limit<len(src)-at {
@@ -432,7 +459,7 @@ offer :: proc "contextless" (w:^Encode_Work,src:[]u8,first,at:int,
         entry.distance,entry.end=match.distance,at+n
         for extent in max(limit+1,n-4)..=n {
             m:=match_code(extent)
-            cost:=price+u32(prices[.Tag][l<<5|m])+u32(COST_UNIT*match_codes[m].bits)
+            cost:=price+u32(prices[.Tag][l<<5|m])+u32(COST_UNIT*8*length_size(extent-MATCH_ESCAPE))
             relax(w,i,extent,cost,distance,reps)
         }
     }
