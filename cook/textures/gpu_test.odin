@@ -15,14 +15,18 @@ import "mirai:std/base"
 import "mirai:rhi"
 import "mirai:rhi/shared_device"
 
+test_gpu_context :: proc(t:^testing.T,gpu:^Gpu_Context) -> bool {
+    device:=shared_device.take_or_skip(t)
+    return device!=nil && testing.expect_value(t,gpu_context_init(gpu,device,""),Error.None)
+}
+
 @(test)
 gpu_blocks_decode_and_keep_alpha_coverage :: proc(t:^testing.T) {
-    device:=shared_device.take_or_skip(t)
-    if device==nil {return}
+    if !OPEN_BLOCK_ENCODER {return}
     gpu:Gpu_Context
-    root,_:=os.lookup_env("MIRAI_ROOT",context.temp_allocator)
-    if !testing.expect_value(t,gpu_context_init(&gpu,device,root),Error.None) {return}
+    if !test_gpu_context(t,&gpu) {return}
     defer gpu_context_destroy(&gpu)
+    device:=gpu.device
 
     W :: 69
     H :: 11
@@ -133,11 +137,9 @@ gpu_blocks_decode_and_keep_alpha_coverage :: proc(t:^testing.T) {
 
 @(test)
 gpu_tile_reuses_blocks_in_final_cooks :: proc(t:^testing.T) {
-    device:=shared_device.take_or_skip(t)
-    if device==nil {return}
+    if !OPEN_BLOCK_ENCODER {return}
     gpu:Gpu_Context
-    root,_:=os.lookup_env("MIRAI_ROOT",context.temp_allocator)
-    if !testing.expect_value(t,gpu_context_init(&gpu,device,root),Error.None) {return}
+    if !test_gpu_context(t,&gpu) {return}
     defer gpu_context_destroy(&gpu)
     W :: 128
     H :: 4
@@ -204,8 +206,8 @@ gpu_tile_reuses_blocks_in_final_cooks :: proc(t:^testing.T) {
     defer asset.asset_close(&opened)
     view,view_error:=asset.texture_view(&opened,&types)
     if !testing.expect_value(t,view_error,asset.Error.None) {return}
-    reencoded,ok:=blocks_of(view,rdo=false,gpu=&gpu)
-    if !testing.expect(t,ok) {return}
+    reencoded,error:=blocks_of(view,rdo=false,gpu=&gpu)
+    if !testing.expect_value(t,error,Error.None) {return}
     defer built_destroy(&reencoded)
     for mip,i in baseline.mips {
         testing.expect(t,bytes.equal(mip,reencoded.mips[i]))
@@ -217,7 +219,7 @@ GPU_BENCH :: #config(COOK_GPU_BENCH,false)
 
 @(test)
 bench_gpu_blocks_on_demo_textures :: proc(t:^testing.T) {
-    if !GPU_BENCH {return}
+    if !GPU_BENCH || !OPEN_BLOCK_ENCODER {return}
     device:=shared_device.take_or_skip(t)
     if device==nil {return}
     root,_:=os.lookup_env("MIRAI_ROOT",context.temp_allocator)
@@ -239,7 +241,7 @@ bench_gpu_blocks_on_demo_textures :: proc(t:^testing.T) {
     }
     csv:=strings.builder_make()
     defer strings.builder_destroy(&csv)
-    strings.write_string(&csv,"image,format,width,height,speed,encoder,mip_ms,"+
+    strings.write_string(&csv,"image,format,width,height,speed,mip_ms,"+
         "quality_metric,quality,codec_profile,zstd_tex_bytes,mdc1_tex_bytes\n")
     for entry in cases {
         image:=project.path(root,"demo/assets",entry.path,allocator=context.temp_allocator)
@@ -259,30 +261,25 @@ bench_gpu_blocks_on_demo_textures :: proc(t:^testing.T) {
                 if !testing.expect(t,gpu_pipeline(&gpu,format,.Rdo)!=0,
                     rhi.device_error(device)) {continue}
             }
-            for encoder in ([2]string{"cpu","gpu"}) {
-                use:=&gpu if encoder=="gpu" else nil
-                if use!=nil {
-                    warm,warm_error:=build(source,options,gpu=use)
-                    if !testing.expectf(t,warm_error==.None,"%s: %v %s",
-                        entry.path,warm_error,rhi.device_error(device)) {continue}
-                    built_destroy(&warm)
-                }
-                started:=time.tick_now()
-                built,build_error:=build(source,options,gpu=use)
-                elapsed:=time.duration_milliseconds(time.tick_since(started))
-                if !testing.expectf(t,build_error==.None,"%s %s: %v %s",
-                    entry.path,encoder,build_error,rhi.device_error(device)) {continue}
-                defer built_destroy(&built)
-                quality:=demo_quality(t,source,&built)
-                metric:="PSNR_dB"
-                if format==.BC5 {metric="angular_RMSE_deg"}
-                if format==.BC6H {metric="log_PSNR_dB"}
-                for profile in ([2]data.Profile{.Balanced,.Ultra}) {
-                    zstd,mdc:=demo_tex_sizes(t,&types,&built,profile)
-                    fmt.sbprintf(&csv,"%s,%v,%d,%d,%v,%s,%.3f,%s,%.4f,%v,%d,%d\n",
-                        entry.path,format,source.width,source.height,speed,encoder,
-                        elapsed,metric,quality,profile,zstd,mdc)
-                }
+            warm,warm_error:=build(source,options,gpu=&gpu)
+            if !testing.expectf(t,warm_error==.None,"%s: %v %s",
+                entry.path,warm_error,rhi.device_error(device)) {continue}
+            built_destroy(&warm)
+            started:=time.tick_now()
+            built,build_error:=build(source,options,gpu=&gpu)
+            elapsed:=time.duration_milliseconds(time.tick_since(started))
+            if !testing.expectf(t,build_error==.None,"%s: %v %s",
+                entry.path,build_error,rhi.device_error(device)) {continue}
+            defer built_destroy(&built)
+            quality:=demo_quality(t,source,&built)
+            metric:="PSNR_dB"
+            if format==.BC5 {metric="angular_RMSE_deg"}
+            if format==.BC6H {metric="log_PSNR_dB"}
+            for profile in ([2]data.Profile{.Balanced,.Ultra}) {
+                zstd,mdc:=demo_tex_sizes(t,&types,&built,profile)
+                fmt.sbprintf(&csv,"%s,%v,%d,%d,%v,%.3f,%s,%.4f,%v,%d,%d\n",
+                    entry.path,format,source.width,source.height,speed,elapsed,
+                    metric,quality,profile,zstd,mdc)
             }
         }
     }
@@ -383,7 +380,7 @@ demo_tex_sizes :: proc(
     pieces:=max(1,(len(raw)+asset.PACK_PIECE-1)/asset.PACK_PIECE)
     size:=size_of(u8)+size_of(u32)*(2+pieces)
     for at:=0;at<len(raw);at+=asset.PACK_PIECE {
-        written,encode_error:=data.encode_mdc1(&encoder,profile,
+        written,encode_error:=data.encode(&encoder,profile,
             raw[at:min(at+asset.PACK_PIECE,len(raw))],scratch)
         if !testing.expect_value(t,encode_error,data.Error.None) {return}
         size+=written

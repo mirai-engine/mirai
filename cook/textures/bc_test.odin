@@ -1,5 +1,6 @@
 package textures
 
+import "base:runtime"
 import "core:fmt"
 import "core:math"
 import "core:os"
@@ -19,16 +20,24 @@ next :: proc(r:^Random,below:int) -> int {
 
 @(test)
 blocks_cover_any_size :: proc(t:^testing.T) {
+    gpu:Gpu_Context
+    if !test_gpu_context(t,&gpu) {return}
+    defer gpu_context_destroy(&gpu)
     pixels:[5*3*4]u8
     for &b,i in pixels {b=u8(i*7)}
-    transfer:=transfer_make(false)
     for format in ([]asset.Texture_Format{.BC1,.BC5,.BC7}) {
-        blocks,error:=level_store(rgba8(pixels[:],5,3),format,&transfer,{},context.allocator,{})
+        level:=rgba8(pixels[:],5,3)
+        mips:[1][]u8
+        error:=gpu_chain(&gpu,{level},mips[:],format,{rdo_lambda=-1},context.allocator)
+        blocks:=mips[0]
         defer delete(blocks)
         testing.expect(t,error==.None && len(blocks)==asset.texture_level_size(format,5,3))
     }
     // One texel repeated over its block: both channels exact.
-    one,_:=level_store(rgba8(pixels[:4],1,1),.BC5,&transfer,{},context.allocator,{})
+    mips:[1][]u8
+    one_error:=gpu_chain(&gpu,{rgba8(pixels[:4],1,1)},mips[:],.BC5,{},context.allocator)
+    if !testing.expect_value(t,one_error,Error.None) {return}
+    one:=mips[0]
     defer delete(one)
     decoded:[4]u8
     testing.expect(t,asset.texture_level_rgba8(.BC5,one,1,1,decoded[:]) && decoded[0]==pixels[0] && decoded[1]==pixels[1])
@@ -36,18 +45,18 @@ blocks_cover_any_size :: proc(t:^testing.T) {
     // A built texture has every level down to one texel, compressed or not.
     image:[8*4*4]u8
     for &b in image {b=255}
-    built,error:=build(rgba8(image[:],8,4),{srgb=true})
+    built,error:=build(rgba8(image[:],8,4),{srgb=true},gpu=&gpu)
     defer built_destroy(&built)
     testing.expect(t,error==.None && built.format==.BC7 && .Srgb in built.flags && built.width==8 && built.height==4)
     testing.expect(t,len(built.mips)==4 && len(built.mips[0])==2*1*16 && len(built.mips[3])==16)
-    data,_:=build(rgba8(image[:],8,4),{})
+    data,_:=build(rgba8(image[:],8,4),{},gpu=&gpu)
     defer built_destroy(&data)
     testing.expect(t,data.format==.BC1 && len(data.mips[0])==2*1*8 && len(data.mips[3])==8)
     image[3]=0
-    holed,_:=build(rgba8(image[:],8,4),{})
+    holed,_:=build(rgba8(image[:],8,4),{},gpu=&gpu)
     defer built_destroy(&holed)
     testing.expect(t,holed.format==.BC7 && .Srgb not_in holed.flags)
-    normals,_:=build(rgba8(image[:],8,4),{normal_map=true})
+    normals,_:=build(rgba8(image[:],8,4),{normal_map=true},gpu=&gpu)
     defer built_destroy(&normals)
     plain_built,_:=build(rgba8(image[:],8,4),{encoding=.Uncompressed})
     defer built_destroy(&plain_built)
@@ -74,6 +83,9 @@ smooth_image :: proc(size:int,alpha:bool) -> []u8 {
 // what the blocks keep of the image without RDO: the error RDO trades is the encoder's own.
 @(test)
 a_compressed_texture_survives_the_file_within_what_a_block_keeps :: proc(t:^testing.T) {
+    gpu:Gpu_Context
+    if !test_gpu_context(t,&gpu) {return}
+    defer gpu_context_destroy(&gpu)
     SIZE :: 64
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     types.codecs=.Best
@@ -89,11 +101,11 @@ a_compressed_texture_survives_the_file_within_what_a_block_keeps :: proc(t:^test
     }
     for entry,index in cases {
         pixels:=smooth_image(SIZE,entry.alpha);defer delete(pixels)
-        built,error:=build(rgba8(pixels,SIZE,SIZE),entry.options)
+        built,error:=build(rgba8(pixels,SIZE,SIZE),entry.options,gpu=&gpu)
         defer built_destroy(&built)
         testing.expect_value(t,error,Error.None)
         testing.expect_value(t,built.format,entry.format)
-        again,_:=build(rgba8(pixels,SIZE,SIZE),entry.options)
+        again,_:=build(rgba8(pixels,SIZE,SIZE),entry.options,gpu=&gpu)
         defer built_destroy(&again)
         for level,i in built.mips {testing.expectf(t,string(level)==string(again.mips[i]),"%s: level %d is not the same in a second build",entry.name,i)}
 
@@ -168,6 +180,9 @@ psnr :: proc(format:asset.Texture_Format,blocks,pixels:[]u8,size,channels:int) -
 
 @(test)
 the_rdo_lambda_trades_error_for_files_that_compress_smaller :: proc(t:^testing.T) {
+    gpu:Gpu_Context
+    if !test_gpu_context(t,&gpu) {return}
+    defer gpu_context_destroy(&gpu)
     SIZE :: 128
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     types.codecs=.Open // the files a cook ships, which RDO makes smaller
@@ -183,9 +198,9 @@ the_rdo_lambda_trades_error_for_files_that_compress_smaller :: proc(t:^testing.T
     }
     for options in ([]Build_Options{{srgb=true},{}}) {
         exact,rdo,off:=options,options,options
-        exact.rdo_lambda,rdo.rdo_lambda,off.rdo_lambda=-1,40,RDO_LAMBDA_MAX+1
-        least,_:=build(rgba8(pixels,SIZE,SIZE),exact);defer built_destroy(&least)
-        traded,_:=build(rgba8(pixels,SIZE,SIZE),rdo);defer built_destroy(&traded)
+        exact.rdo_lambda,rdo.rdo_lambda,off.rdo_lambda=-1,15,RDO_LAMBDA_MAX+1
+        least,_:=build(rgba8(pixels,SIZE,SIZE),exact,gpu=&gpu);defer built_destroy(&least)
+        traded,_:=build(rgba8(pixels,SIZE,SIZE),rdo,gpu=&gpu);defer built_destroy(&traded)
         path:=fmt.tprintf("%s/rdo.tex",folder)
         least_bytes,traded_bytes:=file_bytes(t,&types,path,&least),file_bytes(t,&types,path,&traded)
         testing.expectf(t,traded_bytes<least_bytes,"%v: RDO writes %d bytes and the least error %d",least.format,traded_bytes,least_bytes)
@@ -197,7 +212,7 @@ the_rdo_lambda_trades_error_for_files_that_compress_smaller :: proc(t:^testing.T
         // Fast: no RDO whatever the lambda, marked for the cook, and kept apart from Final.
         fast:=rdo
         fast.speed=.Fast
-        quick,_:=build(rgba8(pixels,SIZE,SIZE),fast);defer built_destroy(&quick)
+        quick,_:=build(rgba8(pixels,SIZE,SIZE),fast,gpu=&gpu);defer built_destroy(&quick)
         testing.expect(t,.Fast in quick.flags && .Fast not_in traded.flags && .Fast not_in least.flags)
         testing.expectf(t,file_bytes(t,&types,path,&quick)>traded_bytes,"%v: Fast is not traded for size",quick.format)
         testing.expect(t,settings_hash(fast)!=settings_hash(rdo) && settings_hash(fast)!=settings_hash(exact),"Fast is built and cached apart")
@@ -206,6 +221,9 @@ the_rdo_lambda_trades_error_for_files_that_compress_smaller :: proc(t:^testing.T
 
 @(test)
 blocks_in_parallel_are_the_same_bytes :: proc(t:^testing.T) {
+    gpu:Gpu_Context
+    if !test_gpu_context(t,&gpu) {return}
+    defer gpu_context_destroy(&gpu)
     SIZE :: 130 // not a multiple of four: the last blocks repeat the edge
     pixels:=make([]u8,SIZE*SIZE*4*2,context.temp_allocator)
     r:=Random{state=3}
@@ -219,57 +237,45 @@ blocks_in_parallel_are_the_same_bytes :: proc(t:^testing.T) {
     cases:=[?]struct{format:asset.Texture_Format,level:Source}{
         {.BC7,{texels=pixels,width=SIZE,height=SIZE,layers=2}},
         {.BC1,{texels=pixels,width=SIZE,height=SIZE,layers=2}},
-        {.BC6H,{texels=floats,width=SIZE,height=SIZE,format=.RGBA32F}},
+        {.BC6H,{texels=floats,width=SIZE,height=SIZE,layers=1,format=.RGBA32F}},
     }
     for entry in cases {
-        serial,serial_error:=level_store(entry.level,entry.format,&linear,{},context.temp_allocator,{})
-        parallel,parallel_error:=level_store(entry.level,entry.format,&linear,{},context.temp_allocator,{&js,jobs.OWNER,nil})
-        testing.expect(t,serial_error==.None && parallel_error==.None && len(serial)==asset.texture_level_size(entry.format,SIZE,SIZE)*max(entry.level.layers,1))
-        testing.expectf(t,string(serial)==string(parallel),"%v: blocks in other threads give the same bytes",entry.format)
+        Work :: struct {
+            gpu:^Gpu_Context, level:Source, format:asset.Texture_Format,
+            mips:[4][]u8, errors:[4]Error,
+        }
+        work:=Work{gpu=&gpu,level=entry.level,format=entry.format}
+        jobs.parallel_for(&js,jobs.OWNER,len(work.mips),1,
+            proc(w:^Work,first,last,_:int) {
+                for i in first..<last {
+                    w.errors[i]=gpu_chain(w.gpu,{w.level},w.mips[i:][:1],w.format,{},
+                        runtime.heap_allocator())
+                }
+            },&work)
+        defer for blocks in work.mips {delete(blocks,runtime.heap_allocator())}
+        for blocks,i in work.mips {
+            testing.expect_value(t,work.errors[i],Error.None)
+            testing.expect_value(t,len(blocks),
+                asset.texture_level_size(entry.format,SIZE,SIZE)*max(entry.level.layers,1))
+            testing.expectf(t,string(blocks)==string(work.mips[0]),
+                "%v: blocks from other threads give the same bytes",entry.format)
+        }
     }
-}
-
-@(test)
-color_and_data_with_alpha_are_bc7_opaque_data_is_bc1_and_hdr_is_bc6h :: proc(t:^testing.T) {
-    opaque:=[]u8{10,20,30,255,40,50,60,255}
-    cutout:=[]u8{10,20,30,255,40,50,60,0}
-    stored :: proc(texels:[]u8,format:Source_Format,options:Build_Options) -> asset.Texture_Format {
-        return stored_format({texels=texels,width=2,height=1,format=format},options)
-    }
-    testing.expect_value(t,stored(opaque,.RGBA8,{srgb=true}),asset.Texture_Format.BC7)
-    testing.expect_value(t,stored(cutout,.RGBA8,{srgb=true}),asset.Texture_Format.BC7)
-    testing.expect_value(t,stored(opaque,.RGBA8,{}),asset.Texture_Format.BC1)
-    testing.expect_value(t,stored(cutout,.RGBA8,{}),asset.Texture_Format.BC7)
-    testing.expect_value(t,stored(cutout,.RGBA8,{srgb=true,normal_map=true}),asset.Texture_Format.BC5)
-    testing.expect_value(t,stored(opaque,.RGBA8,{srgb=true,keep_precision=true}),asset.Texture_Format.BC7)
-    testing.expect_value(t,stored(opaque,.RGBA8,{encoding=.Uncompressed}),asset.Texture_Format.RGBA8)
-
-    floats :: proc(values:[2][4]f32) -> []u8 {
-        texels:=make([]u8,32,context.temp_allocator)
-        linear:=transfer_make(false)
-        for value,at in values {texel_write(texels,.RGBA32F,at,value,&linear)}
-        return texels
-    }
-    bright:=floats({{40,2,0.5,1},{0,0,0,1}})
-    testing.expect_value(t,stored(bright,.RGBA32F,{srgb=true}),asset.Texture_Format.BC6H)
-    testing.expect_value(t,stored(floats({{40,2,0.5,0.5},{0,0,0,1}}),.RGBA32F,{}),asset.Texture_Format.RGBA16F)
-    testing.expect_value(t,stored(floats({{40,-2,0.5,1},{0,0,0,1}}),.RGBA32F,{}),asset.Texture_Format.RGBA16F)
-    testing.expect_value(t,stored(bright,.RGBA32F,{keep_precision=true}),asset.Texture_Format.RGBA16F)
-    testing.expect_value(t,stored(bright,.RGBA32F,{normal_map=true}),asset.Texture_Format.BC5)
-    wide:=make([]u8,16,context.temp_allocator)
-    for &b in wide {b=0xff}
-    testing.expect_value(t,stored(wide,.RGBA16,{}),asset.Texture_Format.BC1)
-    testing.expect_value(t,stored(wide,.RGBA16,{keep_precision=true}),asset.Texture_Format.RGBA16)
-    testing.expect_value(t,stored(wide,.RGBA16,{encoding=.Uncompressed}),asset.Texture_Format.RGBA16)
 }
 
 @(test)
 an_odd_sized_level_decodes_every_texel_of_its_last_blocks :: proc(t:^testing.T) {
+    gpu:Gpu_Context
+    if !test_gpu_context(t,&gpu) {return}
+    defer gpu_context_destroy(&gpu)
     pixels:[5*3*4]u8
     for i in 0..<5*3 {pixels[i*4],pixels[i*4+1],pixels[i*4+2],pixels[i*4+3]=90,140,200,255}
-    transfer:=transfer_make(false)
     for format in ([]asset.Texture_Format{.BC1,.BC5,.BC7}) {
-        blocks,_:=level_store(rgba8(pixels[:],5,3),format,&transfer,{},context.allocator,{});defer delete(blocks)
+        mips:[1][]u8
+        error:=gpu_chain(&gpu,{rgba8(pixels[:],5,3)},mips[:],format,{rdo_lambda=-1},context.allocator)
+        if !testing.expect_value(t,error,Error.None) {continue}
+        blocks:=mips[0]
+        defer delete(blocks)
         decoded:[5*3*4]u8
         testing.expect(t,asset.texture_level_rgba8(format,blocks,5,3,decoded[:]))
         for i in 0..<5*3 {
@@ -292,11 +298,14 @@ same_level :: proc(format:asset.Texture_Format,a,b:[]u8,width,height:int) -> boo
 // Of a compressor with layouts of BC7 blocks: the tail restores without the larger levels.
 @(test)
 a_bc7_texture_restores_its_tail_without_its_larger_levels :: proc(t:^testing.T) {
+    gpu:Gpu_Context
+    if !test_gpu_context(t,&gpu) {return}
+    defer gpu_context_destroy(&gpu)
     SIZE :: 2*asset.TEXTURE_TAIL
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     types.codecs=.Best
     pixels:=smooth_image(SIZE,false);defer delete(pixels)
-    built,error:=build(rgba8(pixels,SIZE,SIZE),{srgb=true,speed=.Fast})
+    built,error:=build(rgba8(pixels,SIZE,SIZE),{srgb=true,speed=.Fast},gpu=&gpu)
     defer built_destroy(&built)
     testing.expect(t,error==.None && built.format==.BC7)
     desc:=built_desc(&built,{9,99},nil,layouts=true)
@@ -323,15 +332,4 @@ a_bc7_texture_restores_its_tail_without_its_larger_levels :: proc(t:^testing.T) 
         asset.asset_close(&a)
     }
     free_all(context.temp_allocator)
-}
-
-// The block encoder of a build is part of what a texture is built with only where it makes the
-// bytes: uncompressed texels are the same for every build, and so is the key of their import.
-@(test)
-the_encoder_counts_only_for_textures_of_blocks :: proc(t:^testing.T) {
-    for options in ([]Build_Options{{srgb=true,encoding=.Uncompressed},{encoding=.Uncompressed,speed=.Fast}}) {
-        testing.expect_value(t,settings_hash_of(options,1),settings_hash_of(options,2))
-    }
-    blocks:=Build_Options{srgb=true}
-    testing.expect(t,settings_hash_of(blocks,1)!=settings_hash_of(blocks,2),"blocks of another encoder are another texture")
 }

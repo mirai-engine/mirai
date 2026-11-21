@@ -16,6 +16,7 @@ import "mirai:core"
 import "mirai:cook/build"
 import importer "mirai:cook/import"
 import "mirai:cook/import/sources"
+import "mirai:cook/textures"
 import "mirai:host"
 import "mirai:platform"
 import "mirai:project"
@@ -296,6 +297,7 @@ import_plugins_prepare :: proc(s:^Session,job:^Import_Job,models:bool,whole:Sour
 // is freed when it cannot start, with the reason shown.
 @(private)
 import_job_start :: proc(s:^Session,job:^Import_Job,format:string,args:..any) -> bool {
+    if job.options.gpu==nil {job.options.gpu=&s.import_gpu}
     job.thread=thread.create_and_start_with_poly_data(job,import_run)
     if job.thread==nil {
         import_say(s,"%s: no thread could be started to import it",filepath.base(job.source))
@@ -545,6 +547,7 @@ import_end :: proc(s:^Session) {
         s.importer.running=nil
         import_job_free(job)
     }
+    textures.gpu_context_destroy(&s.import_gpu)
     import_written_clear(s)
     delete(s.importer.written)
     delete(s.importer.warnings)

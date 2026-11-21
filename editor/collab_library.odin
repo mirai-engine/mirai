@@ -10,6 +10,7 @@ import "core:sync"
 import "core:thread"
 import "mirai:asset"
 import "mirai:cook/import/sources"
+import "mirai:cook/textures"
 import "mirai:cook/share"
 import "mirai:editor/api"
 import "mirai:std/base"
@@ -48,6 +49,7 @@ Collab_Libraries :: struct {
 
 @(private)
 Collab_Take :: struct {
+    gpu:^textures.Gpu_Context,
     thread:^thread.Thread,
     done:bool,
     node:^share.Node,
@@ -197,7 +199,7 @@ collab_take_start :: proc(s:^Session,name,folder:string,requests:[]sources.Packa
     t:=new(Collab_Take)
     mem.dynamic_arena_init(&t.arena,runtime.heap_allocator(),runtime.heap_allocator())
     t.allocator=base.dynamic_arena_allocator(&t.arena)
-    t.node,t.id=st.node,id
+    t.node,t.id,t.gpu=st.node,id,&s.import_gpu
     t.additions=library_add_clone(requests,t.allocator)
     base.text_set(t.name[:],name)
     t.root=strings.clone(s.project_root,t.allocator)
@@ -212,7 +214,7 @@ collab_take_start :: proc(s:^Session,name,folder:string,requests:[]sources.Packa
         worker:=jobs.Worker_Ref{}
         if threaded {worker={system=&js,worker=jobs.OWNER}}
         for entry in t.additions {
-            if problem:=share.package_take(t.node,entry.manifest,t.root,import_library,worker);problem!="" {
+            if problem:=share.package_take(t.node,entry.manifest,t.root,import_library,worker,t.gpu);problem!="" {
                 t.error=strings.clone(problem,t.allocator)
                 break
             }

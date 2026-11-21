@@ -203,7 +203,7 @@ texture_cook :: proc(bytes:[]u8,made:textures.Source,decoded:textures.Image,buil
     source,error:=texture_source(bytes,made,decoded,make,options.worker)
     if error!=.None {cooked.error=error;return}
     defer textures.source_destroy(&source)
-    cooked_set(cooked,textures.build(source,encode,allocator,options.worker))
+    cooked_set(cooked,textures.build(source,encode,allocator,options.worker,options.gpu))
     if cooked.error!=.None {return}
     if .Fast in cooked.built.flags {
         cooked.final={final_key,cooked.settings}

@@ -9,6 +9,7 @@ import "core:strings"
 import "core:time"
 import "mirai:asset"
 import "mirai:cook/author"
+import "mirai:cook/textures"
 import "mirai:core"
 import "mirai:editor/history"
 import eaudio "mirai:engine/audio"
@@ -246,6 +247,7 @@ Session :: struct {
     graphics:^Graphics,
     preferences:^Preferences,
     importer:^Importer,
+    import_gpu:textures.Gpu_Context,
     finder:^Finder,
     ai:^Ai,
     play_players:^Play_Players,
@@ -456,6 +458,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     }
     s.project_root=strings.clone(root)
     s.engine_root=strings.clone(engine)
+    s.import_gpu.engine_root=s.engine_root
     program,_:=os.get_executable_path(context.temp_allocator)
     // replace_all gives back its input when nothing changes: the clone owns it either way.
     forward,_:=strings.replace_all(program,"\\","/",context.temp_allocator)
