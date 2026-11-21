@@ -192,6 +192,16 @@ spatial_bone_and_socket_targets_read_the_sampled_pose_and_keep_their_binding :: 
     target=spatial_socket(source,"grip",{{0,0,.5},1,{1,1,1}})
     result,ok=spatial_target_sample(target,&binding,&playback,&skeletons,(^core.Table(core.Transform))(nil),nil,core.read(&worlds))
     testing.expect(t,ok && linalg.length(result.position-mm.Vec3{20,1.2,.5})<1e-5)
+    state.pose_ready=true
+    playing_pose(state,.World)[3]=mm.Transform{{6,7,8},mm.quat_axis_angle({0,0,1},mm.PI/2),{1,1,1}}
+    cue:=Animation_Cue{anchor=.Bone}
+    base.text_set(cue.name[:],"joint3")
+    at,found:=cue_pose(&cue,source,&playback,&skeletons,nil,nil,core.read(&worlds))
+    testing.expect(t,found && at.position=={6,7,8})
+    cue.anchor=.Socket
+    base.text_set(cue.name[:],"grip")
+    at,found=cue_pose(&cue,source,&playback,&skeletons,nil,nil,core.read(&worlds))
+    testing.expect(t,found && linalg.length(at.position-mm.Vec3{5.8,7,8})<1e-5)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
     for _ in 0..<32 {value,valid:=spatial_target_sample(target,&binding,&playback,&skeletons,(^core.Table(core.Transform))(nil),nil,&worlds);stable &&=valid && value==result}

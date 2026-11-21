@@ -243,11 +243,11 @@ gallery_animate :: proc(gallery:^core.Table(Animation_Gallery,.Read),animations:
             progress,_:=core.get(progresses,entity)
             warp:=gallery_warp(item,time.dt)
             if warp.turn {
-                if motor:=core.edit(motors,entity);motor!=nil && motor.enabled {motor.enabled=false}
+                if motor,found:=core.get(motors,entity);found && motor.enabled {core.edit(motors,entity).enabled=false}
                 if progress.selection.clip!=base.name_hash("idle") {anim.play_clip(requests,entity,"idle",.2,loop=true)}
             }
             if warp.start {
-                if motor:=core.edit(motors,entity);motor!=nil {motor.enabled=true}
+                if motor,found:=core.get(motors,entity);found && !motor.enabled {core.edit(motors,entity).enabled=true}
                 anim.motion_target(requests,entity,GALLERY_REACH,anim.spatial_point(gallery_warp_goal(item,warp)))
                 anim.play_clip(requests,entity,"stride",.2,loop=false,restart=true)
             } else if _,_,ended,ok:=anim.animation_progress(playback.ptr,entity);ok && ended && progress.selection.clip==base.name_hash("stride") {

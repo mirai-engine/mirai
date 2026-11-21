@@ -142,13 +142,8 @@ spatial_target_sample :: proc(target:Spatial_Target,binding:^Spatial_Target_Bind
         clear(&binding.path)
         binding.socket=mm.TRANSFORM_IDENTITY
         bone:=-1
-        if target.kind==.Bone {bone=bone_find(source,target.name)} else if skeletons!=nil {
-            for &content in skeletons.contents {
-                if content.id!=source.skeleton {continue}
-                for &socket in content.sockets {if base.name_hash(base.text_get(socket.name[:]))==target.name {bone=bone_resolve(source,{socket.bone});binding.socket=socket.offset;break}}
-                break
-            }
-        }
+        if target.kind==.Bone {bone=bone_find(source,target.name)}
+        else {bone,binding.socket=spatial_socket_find(source,skeletons,target.name)}
         if bone<0 || reserve(&binding.path,len(playing_topology(source).parents))!=nil {return mm.TRANSFORM_IDENTITY,false}
         for index:=bone;index>=0;index=int(playing_topology(source).parents[index]) {
             if index>=len(playing_topology(source).parents) || playing_topology(source).parents[index]>=i32(index) {return mm.TRANSFORM_IDENTITY,false}
@@ -167,6 +162,22 @@ spatial_target_sample :: proc(target:Spatial_Target,binding:^Spatial_Target_Bind
     }
     result=mm.transform_compose(mm.transform_compose(result,binding.socket),spatial_offset(target))
     return result,spatial_transform_valid(result)
+}
+
+@(private)
+spatial_socket_find :: proc(source:^Playing,skeletons:^Skeleton_Assets,name:u64) -> (int,mm.Transform) {
+    if skeletons!=nil {
+        for &content in skeletons.contents {
+            if content.id!=source.skeleton {continue}
+            for &socket in content.sockets {
+                if base.name_hash(base.text_get(socket.name[:]))==name {
+                    return bone_resolve(source,{socket.bone}),socket.offset
+                }
+            }
+            break
+        }
+    }
+    return -1,mm.TRANSFORM_IDENTITY
 }
 
 // Keeps a bone on a target: its position, rotation or scale. keep_world

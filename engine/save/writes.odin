@@ -255,7 +255,7 @@ saves_thumbnail :: proc(renderer:^erender.Renderer,extras:^host.Frame_Extras,wor
 // A world that goes writes the slots it holds and what the files of the player
 // have not got yet, and lets go of the thumbnails it showed.
 @(step="release")
-saves_release :: proc(world:core.World_Ref,work:^Save_Work,thumbnails:^Save_Thumbnails,app:^host.App,state:^Save_State,problems:^core.Problems) {
+saves_release :: proc(world:core.World_Read,work:^Save_Work,thumbnails:^Save_Thumbnails,app:^host.App,state:^Save_State,problems:^core.Problems) {
     thumbnails_release(thumbnails,app.assets)
     if work==nil {return}
     writes_flush(work,&app.jobs,nil)

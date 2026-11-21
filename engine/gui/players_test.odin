@@ -61,10 +61,18 @@ Players_Fixture :: struct {
 @(private="file")
 players_frame :: proc(f:^Players_Fixture) {
     w:=&f.w
-    world:=test_world_ref(w)
-    frame_begin({world,core.read(&w.screens),core.read(&w.widgets),core.read(&w.worlds),core.read(&w.hidden),core.read(&w.parents),core.read(&w.meshes),
-        UI_SETTINGS_DEFAULT,UI_PREFERENCES_DEFAULT,{},core.ref(&f.state),{},core.read(&w.seats),core.read(&w.moves),core.ref(&f.bindings),core.ref(&f.actions),
-        {},core.read(&w.cameras),core.read(&w.exposures),core.read(&w.view_volumes),core.read(&w.volumes),{},{},&f.requests,&f.effects,&f.sounds,&f.gui,&f.app,{},&f.problems},false)
+    world:=core.world_read(test_world_ref(w))
+    frame_begin({
+        world=world,screens=core.read(&w.screens),widgets=core.read(&w.widgets),
+        regions={volumes=core.read(&w.volumes),worlds=core.read(&w.worlds),parents=core.read(&w.parents)},
+        hidden=core.read(&w.hidden),meshes=core.read(&w.meshes),
+        settings=UI_SETTINGS_DEFAULT,preferences=UI_PREFERENCES_DEFAULT,
+        seat_state=core.ref(&f.state),seats=core.read(&w.seats),moves=core.read(&w.moves),
+        bindings=core.ref(&f.bindings),actions=core.ref(&f.actions),cameras=core.read(&w.cameras),
+        exposures=core.read(&w.exposures),view_volumes=core.read(&w.view_volumes),
+        requests=&f.requests,effects=&f.effects,sounds=&f.sounds,gui=&f.gui,app=&f.app,
+        problems=&f.problems,
+    },false)
     widgets_build(world,&f.gui,&f.app,&f.problems)
 }
 

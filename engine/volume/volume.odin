@@ -78,6 +78,7 @@ outline :: proc "contextless" (height:f32) -> Volume {return {shape=.Outline,ext
 
 // The tables where a volume is: its shape, its pose, the points of its Spline
 // and, unbounded under a section, the box of that section.
+@(params)
 Where :: struct {
     volumes:^core.Table(Volume,.Read),
     worlds:^core.Table(core.World_Transform,.Read),
