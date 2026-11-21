@@ -70,8 +70,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     options:=importer.Import_Options{fast_textures=true}
     roots:=make([dynamic]string,context.temp_allocator) // of --refresh
     root:string   // of --project
-    folder:string // of --folder
-    foldered:bool
+    folder:Maybe(string) // of --folder
     profiled:bool
     store_root:string // of the store whose caches keep what imports build; "": that of the machine
     from_root:string  // of --from
@@ -92,7 +91,10 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
             refreshed:string
             if refreshed,ok=value(args,&at);ok {append(&roots,refreshed)}
         case "--project": root,ok=value(args,&at)
-        case "--folder": folder,ok=value(args,&at);foldered=true
+        case "--folder":
+            path:string
+            path,ok=value(args,&at)
+            folder=path
         case "--skeleton":
             text:string
             if text,ok=value(args,&at);ok {
@@ -202,7 +204,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     library_options:=Library_Options{store=options.store,fast_textures=options.fast_textures,rebuild=options.rebuild,changed=options.changed,plugins=library,worker=options.worker}
     if options.store==nil {fmt.wprintln(errors,"mirai import: this machine has no folder of user data for its store: pass one with --store");return 1}
     if len(roots)>0 {
-        if file!="" || root!="" || foldered || changed!={} || options.changed!=.Refuse {fmt.wprintln(errors,IMPORT_USAGE);return 2}
+        if file!="" || root!="" || folder!=nil || changed!={} || options.changed!=.Refuse {fmt.wprintln(errors,IMPORT_USAGE);return 2}
         if from_root=="" {
             if engine:=project.engine_root_find("",context.temp_allocator);project.engine_installed(engine) {
                 if bundled:=project.path(engine,project.ENGINE_STORE,allocator=context.temp_allocator);os.is_dir(bundled) {from_root=bundled}
@@ -223,20 +225,11 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     if file=="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
     origin:=importer.path_key(file)
     // The project it is added to, and where under its assets.
-    if root=="" {
-        if inside,in_assets:=importer.source_root(origin,context.temp_allocator);in_assets {
-            root=inside
-            if !foldered {
-                assets:=project.folder_path(root,.Assets,context.temp_allocator)
-                folder=strings.trim_prefix(filepath.dir(origin),assets)
-                folder=strings.trim_prefix(folder,"/")
-            }
-        }
-    }
+    if root=="" {root,_=importer.source_root(origin,context.temp_allocator)}
     if root!="" {
         root=project.path_absolute(root,context.temp_allocator)
         library_options.root=root
-    } else if foldered {
+    } else if folder!=nil {
         fmt.wprintln(errors,"mirai import: --folder is a folder of the assets of a project: give it with --project")
         return 2
     }
@@ -330,10 +323,14 @@ ingest_print :: proc(report:^importer.Import_Report,output:io.Writer) {
 @(private="file")
 refresh_command :: proc(roots:[]string,options:Library_Options,output,errors:io.Writer) -> int {
     code:=0
-    for root in roots {
+    seen:=make([dynamic]string,0,len(roots),context.temp_allocator)
+    each: for root in roots {
+        top:=project.path_absolute(root,context.temp_allocator)
+        for earlier in seen {if project.path_same(earlier,top) {continue each}}
+        append(&seen,top)
         started:=time.tick_now()
         options:=options
-        options.root=project.path_absolute(root,context.temp_allocator)
+        options.root=top
         options.progress=output
         report:=project_refresh(root,options)
         defer library_report_destroy(&report)
