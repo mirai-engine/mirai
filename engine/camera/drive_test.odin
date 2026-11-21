@@ -83,9 +83,15 @@ drive_settle :: proc(w:^Drive_World) {
 drive_run :: proc(w:^Drive_World,problems:^core.Problems) {
     drive_settle(w)
     camera_drive(
-        core.read(&w.seats),&w.moves,{state=core.ref(&w.seat_state),runtime=core.ref(&w.seat_runtime),seats=core.read(&w.seats),base=DRIVE_MOVE},{state=core.ref(&w.seat_state),runtime=core.ref(&w.seat_runtime),seats=core.read(&w.seats),base=DRIVE_LOOK},
-        core.ref(&w.bindings),core.read(&w.follows),core.ref(&w.shown),core.read(&w.cameras),core.ref(&w.views),core.ref(&w.hierarchy),core.read(&w.parents),
-        core.read(&w.transforms),core.read(&w.worlds),core.read(&w.verticals),core.read(&w.remotes),problems,
+        &w.moves,
+        {state=core.ref(&w.seat_state),runtime=core.ref(&w.seat_runtime),seats=core.read(&w.seats),base=DRIVE_MOVE},
+        {state=core.ref(&w.seat_state),runtime=core.ref(&w.seat_runtime),seats=core.read(&w.seats),base=DRIVE_LOOK},
+        core.ref(&w.bindings),
+        {sight={shown=core.ref(&w.shown),seats=core.read(&w.seats),cameras=core.read(&w.cameras),
+                hierarchy=core.ref(&w.hierarchy),worlds=core.read(&w.worlds)},
+         follows=core.read(&w.follows),views=core.ref(&w.views),parents=core.read(&w.parents),
+         locals=core.read(&w.transforms),verticals=core.read(&w.verticals)},
+        core.read(&w.remotes),problems,
     )
 }
 
@@ -168,9 +174,13 @@ each_orbit_turns_with_the_look_of_its_own_seat :: proc(t:^testing.T) {
     input.input_seat_index(core.ref(&w.entities),core.read(&w.seats),&w.seat_state,&problems)
     authored:=w.follows.version
     camera_follow(
-        test_world_ref(w),&w.follows,&w.states,&w.cameras,&w.transforms,core.read(&w.worlds),core.read(&w.parents),core.read(&w.seats),core.read(&w.moves),core.ref(&w.shown),
-        core.ref(&w.seat_state),{actions=core.ref(&w.frame),state=core.ref(&w.seat_state),runtime=core.ref(&w.seat_runtime),seats=core.read(&w.seats),base=DRIVE_LOOK},core.ref(&w.queries),&w.look_input,&w.changes,
-        core.read(&w.verticals),{dt=1.0/60,alpha=1},{dt=1.0/60},&problems,&w.shakes,
+        &w.follows,&w.states,&w.cameras,&w.transforms,
+        {world=core.world_read(test_world_ref(w)),worlds=core.read(&w.worlds),parents=core.read(&w.parents),
+         moves=core.read(&w.moves),shown=core.ref(&w.shown),
+         look_actions={actions=core.ref(&w.frame),state=core.ref(&w.seat_state),runtime=core.ref(&w.seat_runtime),
+                       seats=core.read(&w.seats),base=DRIVE_LOOK},
+         queries=core.ref(&w.queries),verticals=core.read(&w.verticals)},
+        &w.look_input,&w.changes,{dt=1.0/60,alpha=1},{dt=1.0/60},&problems,&w.shakes,
     )
     testing.expect(t,w.follows.version==authored && !core.table_has_edits(&w.follows),"following and turning leave the authored table untouched")
     first,_:=core.get(&w.states,eyes[0])

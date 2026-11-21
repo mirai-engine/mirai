@@ -29,14 +29,14 @@ animation_motor_drive :: proc(motors:^core.Table(Animation_Motor),drives:^core.T
     for row in 0..<core.count(motors) {
         entity:=core.entity_at(motors,row)
         actor,placed:=core.get(worlds,entity)
-        motor:=core.edit_at(motors,row)
+        motor:=core.at(motors,row)
         if !motor.enabled || !placed {
-            if motor.driving {core.remove(drives,entity);motor.driving=false}
+            if motor.driving {core.remove(drives,entity);core.edit_at(motors,row).driving=false}
             continue
         }
         delta,present:=anim.animation_root_delta(playback.ptr,entity)
         if !present {delta=anim.ROOT_DELTA_DEFAULT}
         locomotion.drive(drives,entity,animation_motor_input(delta,mm.Transform(actor),time.dt))
-        motor.driving=true
+        if !motor.driving {core.edit_at(motors,row).driving=true}
     }
 }

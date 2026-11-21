@@ -141,7 +141,12 @@ fixture_tick :: proc(f:^Cinematic_Fixture,tick:u64,dt:f32,playing:=true,acting:p
     anim.animation_fields(test_world_ref(&f.w),core.ref(&f.playback),&f.fields,core.ref(&f.content_sources),&f.app,&f.problems)
     anim.animation_advance(&f.transforms,core.read(&f.parents),{},&f.requests,&f.modifier_runtime,&f.playback,{},{},time,core.ref(&f.skeletons),&f.problems,&f.motion,&f.characters,{},{},core.CLOCK_DEFAULT,nil)
     if acting!=nil {acting(f)}
-    cinematic_advance(core.ref(&f.entities),core.read(&f.cinematics),&f.cinematic_states,core.read(&f.cameras),core.read(&f.animations),core.ref(&f.playback),core.ref(&f.content_sources),&f.app,core.ref(&f.actions),&f.requests,core.ref(&f.shown),core.ref(&f.seat_state),&f.camera_requests,&f.seat_requests,core.read(&f.seats),time,core.read(&f.remotes),&f.problems)
+    cinematic_advance(
+        core.ref(&f.entities),core.read(&f.cinematics),&f.cinematic_states,
+        {core.read(&f.animations),core.ref(&f.playback),core.ref(&f.content_sources),core.ref(&f.actions),&f.requests},
+        {core.read(&f.cameras),core.ref(&f.shown),core.ref(&f.seat_state),&f.camera_requests,&f.seat_requests,core.read(&f.seats)},
+        &f.app,time,core.read(&f.remotes),&f.problems,
+    )
     test_world_settle(&f.w)
 }
 

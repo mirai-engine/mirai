@@ -230,6 +230,6 @@ physics_gallery_hud :: proc(huds:^core.Table(Physics_Gallery_Hud),views:^core.Ta
             }
             break
         }
-        core.edit_at(huds,row)^=next
+        if core.at(huds,row)!=next {core.edit_at(huds,row)^=next}
     }
 }

@@ -7,7 +7,6 @@ import "mirai:core"
 import audio "mirai:engine/audio"
 import inp "mirai:engine/input"
 import render "mirai:engine/render"
-import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import "mirai:host"
 import "mirai:platform"
@@ -516,12 +515,11 @@ events_pending :: proc(events:^UI_Events,gui:^Gui) {
 // nothing new shows its last frame again.
 @(params)
 Frame_Begin :: struct {
-    world:core.World_Ref,
+    world:core.World_Read,
     screens:^core.Table(UI_Screen,.Read),
     widgets:^core.Table(World_Widget,.Read),
-    worlds:^core.Table(core.World_Transform,.Read),
+    regions:volume.Where,
     hidden:^core.Table(render.Hidden,.Read),
-    parents:^core.Table(core.Parent,.Read),
     meshes:^core.Table(render.Mesh_Renderer,.Read),
     settings:UI_Settings,
     preferences:UI_Preferences,
@@ -536,9 +534,6 @@ Frame_Begin :: struct {
     cameras:^core.Table(render.Camera,.Read),
     exposures:^core.Table(render.Exposure,.Read),
     view_volumes:^core.Table(render.View_Volume,.Read),
-    volumes:^core.Table(volume.Volume,.Read),
-    sections:^core.Table(scene.Scene_Reference,.Read),
-    splines:^core.Table(volume.Spline,.Read),
     requests:^UI_Requests,
     effects:^UI_Effects,
     sounds:^audio.Sound_Requests,
@@ -586,8 +581,8 @@ frame_begin :: proc(args:Frame_Begin,preview:bool) {
     if args.gui.surfaces[0].ctx==nil && !surface_create(args.gui,args.app,0) {return}
     count:=max(args.seat_state.local_count,1)
     views_update(args.gui,args.app,count,args.seat_state.focus)
-    if !preview {plan_screens(args.gui,args.app,args.world,args.screens,args.hidden,args.parents,args.seats,args.seat_state,args.moves,args.time,args.seat_state.local_count,args.problems)}
-    plan_widgets(args.gui,args.app,args.drawn.ptr,args.world,args.widgets,args.worlds,args.meshes,args.hidden,args.parents,args.time,count,args.problems,preview)
+    if !preview {plan_screens(args.gui,args.app,args.world,args.screens,args.hidden,args.regions.parents,args.seats,args.seat_state,args.moves,args.time,args.seat_state.local_count,args.problems)}
+    plan_widgets(args.gui,args.app,args.drawn.ptr,args.world,args.widgets,args.regions.worlds,args.meshes,args.hidden,args.regions.parents,args.time,count,args.problems,preview)
     for &entry in args.gui.plan {
         for request in args.gui.requests {
             if request.entity==entry.entity {args.gui.instances[entry.instance].changed=true}
@@ -624,7 +619,7 @@ frame_begin :: proc(args:Frame_Begin,preview:bool) {
         s.key=key
         s.input=input
         s.viewed,s.animating=false,false
-        source_bind(&s,args.gui,args.app,p,args.seat_state,args.seat_runtime,args.seats,args.bindings,args.actions,args.cameras,args.exposures,args.view_volumes,{args.volumes,args.worlds,args.parents,args.sections,args.splines},args.settings,gamepad,args.effects,args.sounds)
+        source_bind(&s,args.gui,args.app,p,args.seat_state,args.seat_runtime,args.seats,args.bindings,args.actions,args.cameras,args.exposures,args.view_volumes,args.regions,args.settings,gamepad,args.effects,args.sounds)
         if world_panels && !preview {meshes_aim(args.gui,args.app.renderer,args.drawn.ptr,&s,p,input.ray)}
         ui.frame_begin(s.ctx,input)
         s.open=true
@@ -633,18 +628,18 @@ frame_begin :: proc(args:Frame_Begin,preview:bool) {
 
 // Builds what gui_frame_begin planned in the contexts it opened.
 @(step="ui")
-gui_widgets :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,problems:^core.Problems) {
+gui_widgets :: proc(world:core.World_Read,gui:^Gui,app:^host.App,problems:^core.Problems) {
     widgets_build(world,gui,app,problems)
 }
 
 @(step="ui",loops="editor")
-gui_preview_widgets :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,time:core.Time,problems:^core.Problems) {
+gui_preview_widgets :: proc(world:core.World_Read,gui:^Gui,app:^host.App,time:core.Time,problems:^core.Problems) {
     if time.playing {return}
     widgets_build(world,gui,app,problems)
 }
 
 @(private)
-widgets_build :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,problems:^core.Problems) {
+widgets_build :: proc(world:core.World_Read,gui:^Gui,app:^host.App,problems:^core.Problems) {
     if gui==nil {return}
     for &s,p in gui.surfaces {
         if !s.open {continue}

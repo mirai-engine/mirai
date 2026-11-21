@@ -31,42 +31,51 @@ Free_Camera :: struct {
     bodied:bool, // player 1 drove a body of the game: no free camera after
 }
 
+@(params)
+Drive_View :: struct {
+    sight:Sight,
+    follows:^core.Table(Camera_Follow,.Read),
+    views:core.Ref(Camera_Views),
+    parents:^core.Table(core.Parent,.Read),
+    locals:^core.Table(core.Transform,.Read),
+    verticals:^core.Table(core.Vertical,.Read),
+}
+
 @(step="fixed",stage="input",after="camera_select input_drive")
 camera_drive :: proc(
-    seats:^core.Table(input.Seat,.Read),moves:^core.Table(input.Move_Input),move_actions:input.Input_Of(input.Move_Action),look_actions:input.Input_Of(input.Look_Action),
-    bindings:core.Ref(input.Input_Map),follows:^core.Table(Camera_Follow,.Read),shown:core.Ref(Cameras),cameras:^core.Table(render.Camera,.Read),views:core.Ref(Camera_Views),
-    hierarchy:core.Ref(core.Hierarchy),parents:^core.Table(core.Parent,.Read),locals:^core.Table(core.Transform,.Read),worlds:^core.Table(core.World_Transform,.Read),
-    verticals:^core.Table(core.Vertical,.Read),remotes:^core.Table(core.Remote,.Read),problems:^core.Problems,
+    moves:^core.Table(input.Move_Input),move_actions:input.Input_Of(input.Move_Action),
+    look_actions:input.Input_Of(input.Look_Action),bindings:core.Ref(input.Input_Map),
+    view:Drive_View,remotes:^core.Table(core.Remote,.Read),problems:^core.Problems,
 ) {
     axes:=input.input_map_has(bindings.ptr,input.action_of(move_actions,.Move),.Axis2) && input.input_map_has(bindings.ptr,input.action_of(look_actions,.Look),.Axis2)
-    for row in 0..<core.count(seats) {
-        seat:=core.entity_at(seats,row)
-        source:=core.at(seats,row)
+    for row in 0..<core.count(view.sight.seats) {
+        seat:=core.entity_at(view.sight.seats,row)
+        source:=core.at(view.sight.seats,row)
         body:=source.body
         if body==core.NONE || !core.owned(remotes,body) {continue}
         if !axes {
             core.report(problems,body,"camera.seat_actions","a seat drives this body, and its actions move and look have another kind than Axis2 in the input map; give them that kind in Project Settings > Input (Input_Settings)")
             continue
         }
-        vertical:=core.vertical_of(verticals,body)
+        vertical:=core.vertical_of(view.verticals,body)
         move:=core.edit(moves,body)
         if move==nil {
             // It starts looking where it faces: by its Transform, since a body spawned in this tick has no World_Transform yet.
             first:input.Move_Input
-            if placed,ok:=core.world_of(locals,parents,body);ok {first.look_yaw=yaw_in(vertical,placed.rotation)}
+            if placed,ok:=core.world_of(view.locals,view.parents,body);ok {first.look_yaw=yaw_in(vertical,placed.rotation)}
             core.add(moves,body,first)
             move=core.staged(moves,body)
             if move==nil {continue}
         }
-        if turned,ok:=core.get(verticals,body);ok {move.look_yaw=mm.angle_wrap(move.look_yaw+turned.turn)}
+        if turned,ok:=core.get(view.verticals,body);ok {move.look_yaw=mm.angle_wrap(move.look_yaw+turned.turn)}
         move.buttons=input.seat_buttons(move_actions.runtime,seat,bindings)
         wish:=input.seat_vector(move_actions,seat,.Move)
-        camera,_:=camera_selected(shown,seats,cameras,hierarchy,seat)
-        follow,follows_it:=core.get(follows,camera)
-        if camera!=core.NONE && (follows_it && (follow.mode==.Eyes || follow.mode==.Orbit && follow.aim) || !follows_it && core.is_under(parents,camera,body)) {
+        camera,_:=camera_selected(view.sight.shown,view.sight.seats,view.sight.cameras,view.sight.hierarchy,seat)
+        follow,follows_it:=core.get(view.follows,camera)
+        if camera!=core.NONE && (follows_it && (follow.mode==.Eyes || follow.mode==.Orbit && follow.aim) || !follows_it && core.is_under(view.parents,camera,body)) {
             // Changing to it, the body starts looking where the camera it left looked.
-            left:=int(source.slot)<len(views.slots) && input.seat_local(source)?views.slots[source.slot].camera:camera
-            if placed,ok:=core.get(worlds,left);ok && left!=camera {
+            left:=int(source.slot)<len(view.views.slots) && input.seat_local(source)?view.views.slots[source.slot].camera:camera
+            if placed,ok:=core.get(view.sight.worlds,left);ok && left!=camera {
                 forward:=mm.quat_rotate(conj(vertical),mm.quat_forward(placed.rotation))
                 move.look_yaw=mm.yaw_of_direction(forward)
                 move.look_pitch=math.asin(clamp(forward.y,-1,1))+(follows_it && follow.mode==.Orbit?follow.pitch:0)
@@ -85,7 +94,7 @@ camera_drive :: proc(
         }
         // Along where the camera looks, or -Z of the world without one; it faces where it goes.
         yaw:f32
-        if placed,ok:=core.get(worlds,camera);ok {yaw=yaw_in(vertical,placed.rotation)}
+        if placed,ok:=core.get(view.sight.worlds,camera);ok {yaw=yaw_in(vertical,placed.rotation)}
         toward:=mm.quat_rotate(mm.quat_axis_angle({0,1,0},yaw),[3]f32{wish.x,0,-wish.y})
         move.look_pitch,move.move=0,{}
         if amount:=linalg.length(toward);amount>0.001 {

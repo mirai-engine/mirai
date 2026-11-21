@@ -245,7 +245,7 @@ paths_read_the_components_and_storages_of_the_world_by_name :: proc(t:^testing.T
     gui:Gui
     gui.allocator=context.allocator
     defer gui_free(&gui)
-    b:=Bind{gui=&gui,world=test_world_ref(&w)}
+    b:=Bind{gui=&gui,world=core.world_read(test_world_ref(&w))}
     host:=bind_host(&b)
     // A component, by its name, is the row of the entity with its stamp.
     _,storage,found:=host.source(host.user,base.name_hash("Bind_Test_Health"))
@@ -263,8 +263,12 @@ paths_read_the_components_and_storages_of_the_world_by_name :: proc(t:^testing.T
     // A storage has no stamps: its bytes are compared.
     _,storage,found=host.source(host.user,base.name_hash("Bind_Test_Match"))
     testing.expect(t,found && storage)
+    revisions:=w.storage_revisions
     data,stamp=host.fetch(host.user,base.name_hash("Bind_Test_Match"),0)
     testing.expect(t,data==&w.match && stamp==0)
+    testing.expect_value(t,w.storage_revisions,revisions)
+    data,_=bind_fetch_write(host.user,base.name_hash("Bind_Test_Match"),0)
+    testing.expect(t,data==&w.match && w.storage_revisions!=revisions)
     // A control bound to a storage writes it; one bound to a component asks the game.
     testing.expect(t,host.commits(host.user,base.name_hash("Bind_Test_Match")) && !host.commits(host.user,base.name_hash("Bind_Test_Health")))
     _,_,found=host.source(host.user,base.name_hash("Missing"))
@@ -288,7 +292,7 @@ paths_read_the_components_and_storages_of_the_world_by_name :: proc(t:^testing.T
         low:Gui
         low.allocator=limited
         low.sources=make([dynamic]Bound_Source,limited)
-        binding:=Bind{gui=&low,world=test_world_ref(&w)}
+        binding:=Bind{gui=&low,world=core.world_read(test_world_ref(&w))}
         {
             context.allocator=limited
             low_host:=bind_host(&binding)

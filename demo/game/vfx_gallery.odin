@@ -75,13 +75,16 @@ vfx_gallery_impacts :: proc(impacts:^core.Table(Vfx_Impacts),views:^core.Table(V
         e:=core.entity_at(impacts,row)
         world,placed:=core.get(worlds,e)
         if !placed {continue}
+        before:=core.at(impacts,row)
+        timed:=before.interval>0 && core.due(time,before.next)
+        if view.volleys==before.volleys && !timed {continue}
         wall:=core.edit_at(impacts,row)
         due:=u32(0)
         if view.volleys!=wall.volleys {
             if i32(wall.station)==view.volley_station {due=wall.volley}
             wall.volleys=view.volleys
         }
-        if wall.interval>0 && core.due(time,wall.next) {wall.next,due=core.deadline(time,wall.interval),due+1}
+        if timed {wall.next,due=core.deadline(time,wall.interval),due+1}
         origin:=mm.transform_point(world.transform,{0,0,0})
         out:=linalg.normalize0(mm.transform_point(world.transform,{0,0,1})-origin)
         for _ in 0..<min(due,64) {
@@ -143,6 +146,6 @@ vfx_gallery_hud :: proc(huds:^core.Table(Vfx_Gallery_Hud),views:^core.Table(Vfx_
             next.title,next.detail=item.title,item.detail
             break
         }
-        core.edit_at(huds,row)^=next
+        if core.at(huds,row)!=next {core.edit_at(huds,row)^=next}
     }
 }

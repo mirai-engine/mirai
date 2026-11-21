@@ -80,7 +80,7 @@ horror_lights :: proc(
 ) {
     seconds:=f32(time.seconds)
     for row in 0..<core.count(lamps) {
-        lamp:=core.edit_at(lamps,row)
+        lamp:=core.at(lamps,row)
         on:=true
         if s,has:=core.get(switches,lamp.light_switch);has {on=s.on}
         if on && lamp.flicker>0 {
@@ -88,8 +88,11 @@ horror_lights :: proc(
             slice:=u32(seconds*lamp.flicker*4)+u32(row)*7919
             on=flicker_hash(slice)>0.3
         }
-        lamp.lit=on
-        if light:=core.edit(points,core.entity_at(lamps,row));light!=nil {light.intensity=on?lamp.intensity:0}
+        if lamp.lit!=on {core.edit_at(lamps,row).lit=on}
+        intensity:=lamp.intensity if on else 0
+        if at:=core.row_of(points,core.entity_at(lamps,row));at>=0 && core.at(points,at).intensity!=intensity {
+            core.edit_at(points,at).intensity=intensity
+        }
     }
     player,found:=core.first(players)
     if !found {return}
@@ -102,8 +105,13 @@ horror_lights :: proc(
         e:=core.entity_at(flashlights,row)
         flashlight:=core.at(flashlights,row)
         // A write marks the light as moved, and a moved light restarts the indirect light around it.
-        if local:=core.free(transforms,e);local!=nil {local.position,local.rotation=eye,turn}
-        if spot:=core.edit(spots,e);spot!=nil {spot.intensity=flashlight.on?flashlight.intensity:0}
+        if pose,placed:=core.get(transforms,e);placed && (pose.position!=eye || pose.rotation!=turn) {
+            if local:=core.free(transforms,e);local!=nil {local.position,local.rotation=eye,turn}
+        }
+        intensity:=flashlight.intensity if flashlight.on else 0
+        if at:=core.row_of(spots,e);at>=0 && core.at(spots,at).intensity!=intensity {
+            core.edit_at(spots,at).intensity=intensity
+        }
     }
 }
 
@@ -120,6 +128,6 @@ flicker_hash :: proc "contextless" (v:u32) -> f32 {
 horror_glow :: proc(tints:^core.Table(render.Material_Values),lamps:^core.Table(House_Lamp,.Read)) {
     for row in 0..<core.count(lamps) {
         lamp:=core.at(lamps,row)
-        if tint:=core.edit(tints,lamp.globe);tint!=nil {tint.emission=lamp.lit?lamp.glow:[3]f32{}}
+        glow_set(tints,lamp.globe,lamp.lit?lamp.glow:[3]f32{})
     }
 }

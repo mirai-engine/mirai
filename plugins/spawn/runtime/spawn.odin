@@ -121,24 +121,34 @@ spawn_seat_bodies :: proc(es:core.Commands,bodies:^core.Table(Seat_Body,.Read)) 
     }
 }
 
+@(params)
+Spawn_Placement :: struct {
+    spawner:scene.Spawner,
+    placer:core.Placer,
+    points:^core.Table(Spawn_Point,.Read),
+    origin:core.Ref(scene.Play_Origin),
+    at_origin:^Spawned_At_Origin,
+}
+
 // Before driving in the tick (input_drive), which gives the bodies that
 // appear to their seats in the same tick.
 @(step="fixed",stage="input",after="input_seats")
 spawn_step :: proc(
-    commands:core.Commands,assets:^host.Assets,free:core.Ref(cam.Free_Camera),bodies:^core.Table(Seat_Body),
-    seats:^core.Table(input.Seat,.Read),state:core.Ref(input.Seats),points:^core.Table(Spawn_Point,.Read),placer:core.Placer,driving:^input.Seat_Requests,requests:^Spawn_Requests,spawning:^Spawning,
-    settings:core.Ref(Spawn_Settings),network:core.Ref(core.Network),time:core.Time,origin:core.Ref(scene.Play_Origin),at_origin:^Spawned_At_Origin,problems:^core.Problems,
+    placement:Spawn_Placement,free:core.Ref(cam.Free_Camera),bodies:^core.Table(Seat_Body),
+    seats:^core.Table(input.Seat,.Read),state:core.Ref(input.Seats),driving:^input.Seat_Requests,
+    requests:^Spawn_Requests,spawning:^Spawning,settings:core.Ref(Spawn_Settings),
+    network:core.Ref(core.Network),time:core.Time,
 ) {
-    a:=Apply{commands=commands,assets=assets,bodies=bodies,seats=seats,state=state,points=points,placer=placer,driving=driving,spawning=spawning,at_origin=at_origin,problems=problems}
+    a:=Apply{commands=placement.spawner.commands,assets=placement.spawner.assets,bodies=bodies,seats=seats,state=state,points=placement.points,placer=placement.placer,driving=driving,spawning=spawning,at_origin=placement.at_origin,problems=placement.spawner.problems}
     if settings.ptr!=nil {a.settings=settings.ptr^}
-    if origin.ptr!=nil {a.origin=origin.ptr^}
+    if placement.origin.ptr!=nil {a.origin=placement.origin.ptr^}
     client:=network.role==.Client
-    core.queue_serve(&requests.queue,core.QUEUE_FIRST_ROOM,problems,"spawn.requests","spawn requests","the spawn request capacity")
+    core.queue_serve(&requests.queue,core.QUEUE_FIRST_ROOM,placement.spawner.problems,"spawn.requests","spawn requests","the spawn request capacity")
     for request in core.take(&requests.queue) {
         switch request.kind {
         case .Spawn:
             if client {
-                core.report(problems,request.seat,"spawn.client_spawn","a client asked to spawn a body for this seat: in a network game the server gives bodies; ask on the server, or give Spawn_Settings.prefab the body of the players")
+                core.report(placement.spawner.problems,request.seat,"spawn.client_spawn","a client asked to spawn a body for this seat: in a network game the server gives bodies; ask on the server, or give Spawn_Settings.prefab the body of the players")
             } else {spawn_body(&a,request)}
         case .Respawn:
             respawn_body(&a,request)

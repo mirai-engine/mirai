@@ -43,6 +43,6 @@ gallery_hud :: proc(huds:^core.Table(Gallery_Hud),players:^core.Table(Gallery_Pl
             for at in 0..<core.count(panels) {if core.at(panels,at).station==player.near {next.use=.Adjust}}
             if next.use==.Nothing && item.kind==.Spider {next.use=.Drive}
         }
-        core.edit_at(huds,row)^=next
+        if core.at(huds,row)!=next {core.edit_at(huds,row)^=next}
     }
 }

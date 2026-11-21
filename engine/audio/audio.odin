@@ -304,11 +304,22 @@ Mixer_Buses :: struct {
     set:bool,
 }
 
+@(params)
+Audio_Scene :: struct {
+    world:core.World_Read,
+    worlds:^core.Table(core.World_Transform,.Read),
+    occlusions:^core.Table(Audio_Occlusion,.Read),
+    materials:^core.Table(Audio_Material,.Read),
+    listeners:^core.Table(Audio_Listener,.Read),
+    view:core.Ref(core.View),
+    queries:core.Ref(core.World_Queries),
+}
+
 @(step="late",stage="end",after="camera_view")
 audio_sources :: proc(
-    world:core.World_Ref,sources:^core.Table(Audio_Source,.Read),states:^core.Table(Audio_Source_State),worlds:^core.Table(core.World_Transform,.Read),
-    occlusions:^core.Table(Audio_Occlusion,.Read),materials:^core.Table(Audio_Material,.Read),listeners:^core.Table(Audio_Listener,.Read),view:core.Ref(core.View),queries:core.Ref(core.World_Queries),
-    frame:core.Frame_Time,clock:core.Clock,voices:^Voices,listener:^Mixer_Listener,app:^host.App,problems:^core.Problems,
+    sources:^core.Table(Audio_Source,.Read),states:^core.Table(Audio_Source_State),
+    space:Audio_Scene,frame:core.Frame_Time,clock:core.Clock,voices:^Voices,
+    listener:^Mixer_Listener,app:^host.App,problems:^core.Problems,
 ) {
     if voices!=nil && app.mixer!=nil && clock.paused!=voices.paused {
         voices.paused=clock.paused
@@ -320,7 +331,7 @@ audio_sources :: proc(
         }
     }
     if voices!=nil && voices.paused {return}
-    sources_update(sources,states,{worlds,occlusions,materials,listeners,view,core.world_query(world,queries)},frame.dt,voices,listener,app,problems)
+    sources_update(sources,states,{space.worlds,space.occlusions,space.materials,space.listeners,space.view,core.world_query_read(space.world,space.queries)},frame.dt,voices,listener,app,problems)
 }
 
 // What the voices of a frame look at besides their sources.

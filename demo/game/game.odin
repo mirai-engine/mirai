@@ -193,33 +193,41 @@ in_reach :: proc(worlds:^core.Table(core.World_Transform,$A),from:[3]f32,e:core.
 
 swatch_index :: proc(swatch:Swatch) -> int {return int(swatch.index)%%len(SWATCH_MATERIALS)}
 
+@(params)
+Demo_Controls :: struct {
+    sight:cam.Sight,
+    actions:inp.Input_Of(Action),
+}
+
 // What the seat of a body pressed this tick: open a door, change a sample, throw a cube.
 @(step="fixed")
 game_use :: proc(
     players:^core.Table(Player),doors:^core.Table(Door),swatches:^core.Table(Swatch),inputs:^core.Table(inp.Move_Input,.Read),
-    sight:cam.Sight,actions:inp.Input_Of(Action),worlds:^core.Table(core.World_Transform,.Read),names:^core.Table(core.Name,.Read),spawner:scene.Spawner,
+    controls:Demo_Controls,names:^core.Table(core.Name,.Read),spawner:scene.Spawner,
 ) {
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
         input,has_input:=core.get(inputs,e)
-        placed,has_world:=core.get(worlds,e)
+        placed,has_world:=core.get(controls.sight.worlds,e)
         if !has_input || !has_world {continue}
         feet:=placed.position
-        if inp.pressed(actions,e,.Use) {
+        if inp.pressed(controls.actions,e,.Use) {
             for at in 0..<core.count(doors) {
                 other:=core.entity_at(doors,at)
                 // A door that has not taken its place yet (game_doors) does not open.
-                if core.added(doors,at) || !in_reach(worlds,feet,other,core.at(doors,at).reach) {continue}
+                if core.added(doors,at) || !in_reach(controls.sight.worlds,feet,other,core.at(doors,at).reach) {continue}
                 door:=core.edit_at(doors,at)
                 door.open=!door.open
                 log.infof("%s %s",core.name_get(names,other),door.open?"opened":"closed")
             }
             for at in 0..<core.count(swatches) {
-                swatch:=core.edit_at(swatches,at)
-                if in_reach(worlds,feet,core.entity_at(swatches,at),swatch.reach) {swatch.index=i32((swatch_index(swatch^)+1)%len(SWATCH_MATERIALS))}
+                swatch:=core.at(swatches,at)
+                if in_reach(controls.sight.worlds,feet,core.entity_at(swatches,at),swatch.reach) {
+                    core.edit_at(swatches,at).index=i32((swatch_index(swatch)+1)%len(SWATCH_MATERIALS))
+                }
             }
         }
-        if origin,aim,aimed:=cam.aim(sight,e);aimed && inp.pressed(actions,e,.Throw) {
+        if origin,aim,aimed:=cam.aim(controls.sight,e);aimed && inp.pressed(controls.actions,e,.Throw) {
             from:=origin+aim*0.8
             turn:=mm.quat_from_euler({input.look_pitch,input.look_yaw,0})
             scene.spawn(spawner,THROWN_CUBE,{from,turn,THROWN_CUBE_SIZE},transient=true)
@@ -235,7 +243,7 @@ game_doors :: proc(doors:^core.Table(Door),buttons:^core.Table(Floor_Button,.Rea
         e:=core.entity_at(doors,row)
         placed,has_place:=core.get(transforms,e)
         if !has_place {continue}
-        if core.added(doors,row) {core.edit_at(doors,row).closed_y=placed.position.y}
+        if core.added(doors,row) && core.at(doors,row).closed_y!=placed.position.y {core.edit_at(doors,row).closed_y=placed.position.y}
         door:=core.at(doors,row)
         target:=door.closed_y+(door_opened(doors,buttons,e)?door.travel:0)
         if placed.position.y==target {continue}
@@ -249,10 +257,14 @@ game_doors :: proc(doors:^core.Table(Door),buttons:^core.Table(Floor_Button,.Rea
 game_swatches :: proc(meshes:^core.Table(render.Mesh_Renderer),swatches:^core.Table(Swatch,.Read),assets:^host.Assets) {
     paths:=SWATCH_MATERIALS
     for row in 0..<core.count(swatches) {
-        mesh:=core.edit(meshes,core.entity_at(swatches,row))
+        at:=core.row_of(meshes,core.entity_at(swatches,row))
         wanted,found:=host.assets_id(assets,paths[swatch_index(core.at(swatches,row))])
-        if mesh==nil || !found {continue}
-        for &material in mesh.materials {material=wanted}
+        if at<0 || !found {continue}
+        for material in core.view_at(meshes,at).materials {
+            if material==wanted {continue}
+            for &value in core.edit_at(meshes,at).materials {value=wanted}
+            break
+        }
     }
 }
 
@@ -269,11 +281,13 @@ game_animate :: proc(
         local:=core.free(transforms,e)
         placed,body:=core.get(worlds,e)
         if local==nil && !body {continue}
-        spin:=core.edit_at(spins,row)
-        if core.added(spins,row) {spin.angles=mm.quat_to_euler(local!=nil?local.rotation:placed.rotation)*mm.DEG_PER_RAD}
-        spin.angles+=spin.degrees_per_second*time.dt
-        for &angle in spin.angles {angle=math.mod(angle,360)}
-        turned:=mm.quat_from_euler(spin.angles*mm.RAD_PER_DEG)
+        spin:=core.at(spins,row)
+        angles:=spin.angles
+        if core.added(spins,row) {angles=mm.quat_to_euler(local!=nil?local.rotation:placed.rotation)*mm.DEG_PER_RAD}
+        angles+=spin.degrees_per_second*time.dt
+        for &angle in angles {angle=math.mod(angle,360)}
+        if spin.angles!=angles {core.edit_at(spins,row).angles=angles}
+        turned:=mm.quat_from_euler(angles*mm.RAD_PER_DEG)
         if local!=nil {
             local.rotation=turned
             continue
@@ -294,7 +308,7 @@ game_animate :: proc(
 
 @(private="file")
 bob_height :: proc(bobs:^core.Table(Bob),row:int,y,seconds:f32) -> f32 {
-    if core.added(bobs,row) {core.edit_at(bobs,row).base_y=y}
+    if core.added(bobs,row) && core.at(bobs,row).base_y!=y {core.edit_at(bobs,row).base_y=y}
     bob:=core.at(bobs,row)
     return bob.base_y+math.sin(seconds*bob.speed)*bob.height
 }
@@ -307,28 +321,33 @@ game_glow :: proc(
 ) {
     seconds:=f32(time.seconds)
     for row in 0..<core.count(pulses) {
-        tint:=core.edit(tints,core.entity_at(pulses,row))
-        if tint==nil {continue}
-        if core.added(pulses,row) {core.edit_at(pulses,row).base=tint.emission}
+        entity:=core.entity_at(pulses,row)
+        at:=core.row_of(tints,entity)
+        if at<0 {continue}
+        tint:=core.view_at(tints,at)
         pulse:=core.at(pulses,row)
+        if core.added(pulses,row) && pulse.base!=tint.emission {
+            pulse.base=tint.emission
+            core.edit_at(pulses,row).base=pulse.base
+        }
         wave:=0.5+0.5*math.sin(seconds*pulse.speed)
-        tint.emission=pulse.base*(pulse.low+(pulse.high-pulse.low)*wave)
+        glow_set(tints,entity,pulse.base*(pulse.low+(pulse.high-pulse.low)*wave))
     }
     for row in 0..<core.count(doors) {
         door:=core.at(doors,row)
         glow:=door_opened(doors,buttons,core.entity_at(doors,row))?DOOR_OPEN_GLOW:DOOR_CLOSED_GLOW
-        if tint:=core.edit(tints,door.lamp);tint!=nil {tint.emission=glow}
+        glow_set(tints,door.lamp,glow)
     }
     for row in 0..<core.count(buttons) {
         button:=core.at(buttons,row)
         glow:=button.pressed?DOOR_OPEN_GLOW:DOOR_CLOSED_GLOW
-        if tint:=core.edit(tints,button.plate);tint!=nil {tint.emission=glow}
+        glow_set(tints,button.plate,glow)
     }
     for row in 0..<core.count(barkers) {
         flashing:=!core.due(time,core.at(barkers,row).flash_until)
         for child:=core.first_child(hierarchy,core.entity_at(barkers,row));child!=core.NONE;child=core.next_sibling(hierarchy,child) {
             if core.name_get(names,child)!="Nose" {continue}
-            if tint:=core.edit(tints,child);tint!=nil {tint.emission=flashing?BARK_GLOW:[3]f32{}}
+            glow_set(tints,child,flashing?BARK_GLOW:[3]f32{})
         }
     }
 }
@@ -366,7 +385,7 @@ game_projectiles :: proc(
         }
         if core.due(time,core.at(projectiles,row).until) {
             core.destroy(es,e)
-        } else if has {
+        } else if has && core.at(projectiles,row).velocity!=state.linear {
             core.edit_at(projectiles,row).velocity=state.linear
         }
     }
@@ -440,6 +459,13 @@ player_hud :: proc(
             }
             next.captioned=exhibit_caption(next.caption[:],exhibits,worlds,names,feet)
         }
-        core.edit_at(huds,row)^=next
+        if core.at(huds,row)!=next {core.edit_at(huds,row)^=next}
+    }
+}
+
+@(private)
+glow_set :: proc(tints:^core.Table(render.Material_Values),entity:core.Entity,emission:[3]f32) {
+    if at:=core.row_of(tints,entity);at>=0 && core.view_at(tints,at).emission!=emission {
+        core.edit_at(tints,at).emission=emission
     }
 }
