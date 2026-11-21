@@ -230,3 +230,48 @@ a_built_texture_is_saved_and_read_back_by_asset :: proc(t:^testing.T) {
     testing.expect_value(t,len(asset.texture_mip(view,0)),8*8*4)
     testing.expect_value(t,asset.texture_mip(view,0)[4],u8(255))
 }
+
+@(test)
+color_and_data_with_alpha_are_bc7_opaque_data_is_bc1_and_hdr_is_bc6h :: proc(t:^testing.T) {
+    opaque:=[]u8{10,20,30,255,40,50,60,255}
+    cutout:=[]u8{10,20,30,255,40,50,60,0}
+    stored :: proc(texels:[]u8,format:Source_Format,options:Build_Options) -> asset.Texture_Format {
+        return stored_format({texels=texels,width=2,height=1,format=format},options)
+    }
+    testing.expect_value(t,stored(opaque,.RGBA8,{srgb=true}),asset.Texture_Format.BC7)
+    testing.expect_value(t,stored(cutout,.RGBA8,{srgb=true}),asset.Texture_Format.BC7)
+    testing.expect_value(t,stored(opaque,.RGBA8,{}),asset.Texture_Format.BC1)
+    testing.expect_value(t,stored(cutout,.RGBA8,{}),asset.Texture_Format.BC7)
+    testing.expect_value(t,stored(cutout,.RGBA8,{srgb=true,normal_map=true}),asset.Texture_Format.BC5)
+    testing.expect_value(t,stored(opaque,.RGBA8,{srgb=true,keep_precision=true}),asset.Texture_Format.BC7)
+    testing.expect_value(t,stored(opaque,.RGBA8,{encoding=.Uncompressed}),asset.Texture_Format.RGBA8)
+
+    floats :: proc(values:[2][4]f32) -> []u8 {
+        texels:=make([]u8,32,context.temp_allocator)
+        linear:=transfer_make(false)
+        for value,at in values {texel_write(texels,.RGBA32F,at,value,&linear)}
+        return texels
+    }
+    bright:=floats({{40,2,0.5,1},{0,0,0,1}})
+    testing.expect_value(t,stored(bright,.RGBA32F,{srgb=true}),asset.Texture_Format.BC6H)
+    testing.expect_value(t,stored(floats({{40,2,0.5,0.5},{0,0,0,1}}),.RGBA32F,{}),asset.Texture_Format.RGBA16F)
+    testing.expect_value(t,stored(floats({{40,-2,0.5,1},{0,0,0,1}}),.RGBA32F,{}),asset.Texture_Format.RGBA16F)
+    testing.expect_value(t,stored(bright,.RGBA32F,{keep_precision=true}),asset.Texture_Format.RGBA16F)
+    testing.expect_value(t,stored(bright,.RGBA32F,{normal_map=true}),asset.Texture_Format.BC5)
+    wide:=make([]u8,16,context.temp_allocator)
+    for &b in wide {b=0xff}
+    testing.expect_value(t,stored(wide,.RGBA16,{}),asset.Texture_Format.BC1)
+    testing.expect_value(t,stored(wide,.RGBA16,{keep_precision=true}),asset.Texture_Format.RGBA16)
+    testing.expect_value(t,stored(wide,.RGBA16,{encoding=.Uncompressed}),asset.Texture_Format.RGBA16)
+}
+
+// The block encoder of a build is part of what a texture is built with only where it makes the
+// bytes: uncompressed texels are the same for every build, and so is the key of their import.
+@(test)
+the_encoder_counts_only_for_textures_of_blocks :: proc(t:^testing.T) {
+    for options in ([]Build_Options{{srgb=true,encoding=.Uncompressed},{encoding=.Uncompressed,speed=.Fast}}) {
+        testing.expect_value(t,settings_hash_of(options,1),settings_hash_of(options,2))
+    }
+    blocks:=Build_Options{srgb=true}
+    testing.expect(t,settings_hash_of(blocks,1)!=settings_hash_of(blocks,2),"blocks of another encoder are another texture")
+}

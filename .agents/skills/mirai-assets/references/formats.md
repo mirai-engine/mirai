@@ -52,9 +52,10 @@ journal sends over the network, editor thumbnails, the shaders the executables e
   (restoring layouts of blocks of textures) and `blocks` (block encoders and layouts, engine-time).
   Nothing else in the engine imports a codec. The CLI names it
   ([build](../../mirai-projects/references/build.md#compressor)): the open one,
-  `std/compressor` (MDC1, bc7enc_rdo and BC6H, no layout), or the private
-  `mirai-compression` with the same packages and declarations, which also decodes MDC1 through
-  `compressor_open`.
+  `std/compressor` (MDC1, no block layout), or the private `mirai-compression` with the same
+  packages and declarations, which also decodes MDC1 through `compressor_open`. Open builds encode
+  blocks on the GPU in
+  [texture cooking](../../mirai-imports/references/imports.md#textures-cooktextures).
 - **Profiles.** A write says what it favors (`data.Profile`): `Fast` for what the editor,
   imports and a running game save; a cook writes with `Ultra` (a shipped game) or `Balanced` (a
   dev game), and what streams while playing with `profile_streamed` of it (`Speed` in place of

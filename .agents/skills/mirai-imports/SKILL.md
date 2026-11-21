@@ -197,8 +197,9 @@ the assets.
   Final of the texture cache, else build Fast (no RDO, low effort, `Texture_Flag.Fast`).
   `mirai import` uses the same policy unless asked for `--final`. The editor builds a texture
   that is a document Final.
-- **One algorithm, once.** Mips, color rules and block compression in `cook/textures` (the
-  encoders are `compressor:blocks`); PBR conversions in `cook/import/pbr.odin`; triangulation,
+- **One algorithm, once.** Mips, color rules and block compression in
+  [texture cooking](references/imports.md#textures-cooktextures); PBR conversions in
+  `cook/import/pbr.odin`; triangulation,
   simplification, hulls and convex decomposition in `std/geom`; transforms with `std/math`.
 - USD is composed with the prebuilt `usdcat` when it exists; without it only USDA that needs no
   composition is read.
@@ -212,9 +213,11 @@ the assets.
   fits of `rig_test.odin` and the decoding of `meshopt_test.odin`), `cook/import/usd`,
   `cook/import/fbx` (each format with its fixtures) and `cook/import/sources` (sniffing, writing,
   cache, settings, fuzz, CLI); `cook/textures` (decoding, mips, BC blocks and their RDO lambda,
-  inverted green, round trip through `.tex`, cache by content; HDR, every BC6H mode, 16-bit and
-  layers in `layers_test.odin`). The fixtures of `assets/fixtures/` and the models of
+  inverted green, round trip through `.tex`, the cache, HDR, 16-bit images and layers).
+  The fixtures of `assets/fixtures/` and the models of
   `demo/assets` import (without warnings) and what is written reads back with `asset`.
+  Block encoding tests take the shared device under graphics validation. `--no-gpu` keeps the
+  CPU cases, including source decoding, heightmaps and the uncompressed cache round trip.
 - Caches: `cook/cache/cache_test.odin` (a result kept through one store is found through another
   of its root or through a source on a miss; an object not here is a miss; a lookup of many keys
   asks once; hostile names), `cook/textures/cache_test.odin` (and one texel changed changes few

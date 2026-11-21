@@ -10,6 +10,7 @@ import "core:sync"
 import "core:thread"
 import "mirai:asset"
 import "mirai:cook/import/sources"
+import "mirai:cook/textures"
 import "mirai:exchange"
 import "mirai:project"
 import "mirai:std/base"
@@ -45,6 +46,7 @@ Join_Desc :: struct {
     parent:string,     // "": the current folder
     library:sources.Library, // asked once the files are written, for the importers of the folder's plugins (editor.import_library_built)
     worker:jobs.Worker_Ref,
+    gpu:^textures.Gpu_Context,
     output:io.Writer,  // progress and what was kept; nil: nowhere
     pace:f64,          // seconds between two progress lines, default 1
     connect_seconds:f64, // waiting for the host, default 15
@@ -981,7 +983,7 @@ join_packages :: proc(d:^Join_Desc,folder:string,allocator:runtime.Allocator) ->
         done:bool,
     }
     work:=Work{folder=folder,allocator=allocator}
-    work.options={store=n.s,source=node_source(n),fast_textures=true,root=folder,plugins=d.library,worker=d.worker,progress=d.output}
+    work.options={store=n.s,source=node_source(n),fast_textures=true,root=folder,plugins=d.library,worker=d.worker,gpu=d.gpu,progress=d.output}
     t:=thread.create_and_start_with_data(&work,proc(data:rawptr) {
         w:=(^Work)(data)
         w.report=sources.project_refresh(w.folder,w.options,w.allocator)

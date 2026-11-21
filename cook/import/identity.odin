@@ -6,6 +6,7 @@ import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
+import "mirai:cook/textures"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -319,6 +320,7 @@ writer_rollback :: proc(w:^Writer) {
 // Lets the writer go: its types and its scratch folder.
 @(private)
 writer_close :: proc(w:^Writer) {
+    textures.gpu_context_destroy(&w.gpu)
     if w.scratch!="" {_=os.remove_all(w.scratch)}
     asset.types_destroy(&w.types)
 }

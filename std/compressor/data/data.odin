@@ -80,7 +80,6 @@ bound :: proc "contextless" (size:int) -> int {
 }
 
 // Direct writer for callers comparing codecs.
-encode_mdc1 :: encode
 
 // What format wrote into src, into all of dst, which is its decoded size. Never reads or writes
 // outside them, whatever src holds.

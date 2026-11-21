@@ -20,7 +20,7 @@ built_textures_are_kept_by_image_and_settings_and_read_back_whole :: proc(t:^tes
     c:=cache.Cache{store=&kept}
     pixels:=make([]u8,16*16*4,context.temp_allocator)
     for &value,at in pixels {value=at%4==3?255:u8(at*7)}
-    options:=Build_Options{srgb=true}
+    options:=Build_Options{srgb=true,encoding=.Uncompressed}
     key:=cache_key_build(pixels,rgba8(pixels,16,16),options)
     testing.expect(t,key!=cache_key_build(pixels,rgba8(pixels,16,16),{}),"other settings are another texture")
     testing.expect(t,key!=cache_key_build(pixels,rgba8(pixels,8,32),options),"another size of the same bytes too")
@@ -69,7 +69,7 @@ a_texel_changed_changes_few_chunks_of_the_object :: proc(t:^testing.T) {
         value=u8(state>>56)
     }
     object_of :: proc(t:^testing.T,s:^store.Store,types:^asset.Types,pixels:[]u8) -> store.Hash {
-        built,error:=build(rgba8(pixels,SIDE,SIDE),{srgb=true,speed=.Fast},context.temp_allocator)
+        built,error:=build(rgba8(pixels,SIDE,SIDE),{srgb=true,encoding=.Uncompressed},context.temp_allocator)
         if !testing.expect_value(t,error,Error.None) {return {}}
         doc:asset.Document
         if !testing.expect_value(t,asset.texture_document(&doc,types,built_desc(&built,{9,9},nil),context.temp_allocator),asset.Error.None) {return {}}

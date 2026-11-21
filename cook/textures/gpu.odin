@@ -1,6 +1,7 @@
 package textures
 
 import "base:runtime"
+import "core:log"
 import "core:mem"
 import "core:path/filepath"
 import "core:os"
@@ -48,9 +49,14 @@ GPU_NAMES :: #partial [asset.Texture_Format][Gpu_Pass]string{
     .BC7={.Encode="bcn_encode_bc7.comp",.Rdo="bcn_rdo_bc7.comp"},
 }
 
-// Owns the pipelines and reusable buffers of a synchronous cook. The caller keeps
-// the device alive and reserves it for this context while encoding.
+GPU_ERROR :: "block texture encoding failed: check the GPU and rebuild the cook shaders " +
+    "(mirai shaders)"
+
+// Owns the pipelines and reusable buffers of a synchronous cook. A zero context
+// opens a headless device on its first block encode.
 Gpu_Context :: struct {
+    engine_root:string,
+    borrowed:bool,
     device:^rhi.Device,
     folder:string,
     allocator:mem.Allocator,
@@ -59,16 +65,39 @@ Gpu_Context :: struct {
     params,input,fits,output:rhi.Buffer,
 }
 
-// A nil device selects the CPU path. With a device, engine_root supplies the
-// cook shaders published by mirai shaders. The context must start zeroed.
+// The caller keeps device alive and reserves it for this context while encoding.
 gpu_context_init :: proc(
     gpu:^Gpu_Context,device:^rhi.Device,engine_root:string,allocator:=context.allocator,
 ) -> Error {
-    if gpu==nil || gpu.device!=nil {return .Invalid}
-    if device==nil {return .None}
-    folder,err:=strings.clone(project.path(engine_root,"shaders/build",GPU_SHADER_FOLDER,
+    if gpu==nil || gpu.device!=nil || device==nil {return .Invalid}
+    gpu.folder=gpu_shader_folder(engine_root,allocator) or_return
+    gpu.device,gpu.allocator,gpu.borrowed=device,allocator,true
+    return .None
+}
+
+@(private="file")
+gpu_shader_folder :: proc(engine_root:string,allocator:mem.Allocator) -> (string,Error) {
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+    root:=project.engine_root_find(engine_root,context.temp_allocator)
+    if root=="" {return "",.Gpu}
+    folder,err:=strings.clone(project.path(root,"shaders/build",GPU_SHADER_FOLDER,
         allocator=context.temp_allocator),allocator)
-    if err!=nil {return .Out_Of_Memory}
+    return folder,.None if err==nil else .Out_Of_Memory
+}
+
+@(private="file")
+gpu_open :: proc(gpu:^Gpu_Context) -> Error {
+    if gpu.device!=nil {return .None}
+    allocator:=runtime.heap_allocator()
+    folder:=gpu_shader_folder(gpu.engine_root,allocator) or_return
+    device,problem:=rhi.device_create({
+        app_name="Mirai texture cook",allocator=allocator,on_message=rhi.message_print,
+    })
+    if device==nil {
+        delete(folder,allocator)
+        log.errorf("texture cook: %s",problem)
+        return .Gpu
+    }
     gpu.device,gpu.folder,gpu.allocator=device,folder,allocator
     return .None
 }
@@ -81,6 +110,7 @@ gpu_context_destroy :: proc(gpu:^Gpu_Context) {
     for buffer in ([4]rhi.Buffer{gpu.params,gpu.input,gpu.fits,gpu.output}) {
         if buffer!=0 {rhi.buffer_destroy(gpu.device,buffer)}
     }
+    if !gpu.borrowed {rhi.device_destroy(gpu.device)}
     delete(gpu.folder,gpu.allocator)
     gpu^={}
 }
@@ -153,7 +183,11 @@ gpu_chain :: proc(
     gpu:^Gpu_Context,levels:[]Source,mips:[][]u8,format:asset.Texture_Format,
     options:Build_Options,allocator:mem.Allocator,
 ) -> Error {
+    own:Gpu_Context
+    defer gpu_context_destroy(&own)
+    gpu:=gpu if gpu!=nil else &own
     sync.guard(&gpu.lock)
+    gpu_open(gpu) or_return
     encode:=gpu_pipeline(gpu,format,.Encode)
     if encode==0 {return .Gpu}
     lambda:=rdo_lambda(options)

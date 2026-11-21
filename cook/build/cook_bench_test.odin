@@ -3,6 +3,7 @@ package build
 import "core:fmt"
 import "core:os"
 import "core:testing"
+import "mirai:cook/textures"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:store"
@@ -16,13 +17,16 @@ import "mirai:store"
 @(test)
 bench_cook_of_a_project_filling_its_texture_cache_and_from_it :: proc(t:^testing.T) {
     if !COOK_BENCH {return}
+    gpu:textures.Gpu_Context
+    if !cook_test_gpu(t,&gpu) {return}
+    defer textures.gpu_context_destroy(&gpu)
     engine:=#directory+"/../.."
     root:=COOK_BENCH_PROJECT if COOK_BENCH_PROJECT!="" else project.path(engine,"demo",allocator=context.temp_allocator)
     p,error:=project.open(root,engine,context.temp_allocator)
     if !testing.expect_value(t,error.code,project.Error_Code.None) {return}
     folder:=base.test_folder(t,"cook-bench")
     if folder=="" {return}
-    desc:=Cook_Desc{
+    desc:=Cook_Desc{gpu=&gpu,
         assets=project.folder_path(p.root,.Assets,context.temp_allocator),
         output=fmt.tprintf("%s/out",folder),
         manifest=project.path(p.root,COOK_FILE,allocator=context.temp_allocator),

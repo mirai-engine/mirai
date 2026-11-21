@@ -5,7 +5,7 @@ import "core:mem"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:cook/cache"
-import "mirai:cook/textures"
+import tex "mirai:cook/textures"
 import "mirai:std/base"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
@@ -56,7 +56,7 @@ Import_Options :: struct {
     ignore_stored:bool,
     // The machine store: where the import puts the blobs of its build and the
     // records of its package (package.odin), and whose caches keep textures
-    // and meshes built before by what they are built from (textures.cache_read,
+    // and meshes built before by what they are built from (tex.cache_read,
     // mesh_cook).
     store:^mstore.Store,
     cache_source:cache.Source, // asked on a miss of those caches before building
@@ -77,7 +77,7 @@ Import_Options :: struct {
     changed:Changed,     // what becomes of a document it writes over in documents that was changed since it last wrote it
     written:[]asset.Package_Written, // what the files of its documents in documents held when it last wrote them (the project's pin)
     // A texture is built Fast unless the texture cache keeps it as Final
-    // (textures.Encode_Speed): the imports of the editor, which a cook
+    // (tex.Encode_Speed): the imports of the editor, which a cook
     // encodes again as Final, and mirai import. False: Final, what a build
     // that cooks and the package of the engine build.
     fast_textures:bool,
@@ -91,6 +91,7 @@ Import_Options :: struct {
     // job system, or the job that imports), which runs its builds in
     // parallel on that system, and records zones in its profile.
     worker:jobs.Worker_Ref,
+    gpu:^tex.Gpu_Context,
     progress:^Progress, // where it says how far it is as it writes; nil: nowhere
 }
 
@@ -131,20 +132,20 @@ Imported_Image :: struct {
     // texture cache keeps its texture by data, so a texture built before is
     // taken without making them. nil for an encoded image or file.
     make:Image_Make,
-    made:textures.Source, // the texels, when the format made the image itself (a conversion, a texture of an engine); width 0 when not
+    made:tex.Source, // the texels, when the format made the image itself (a conversion, a texture of an engine); width 0 when not
     srgb:bool,
     normal_map:bool,
     green_down:bool,     // a normal map whose green points down the image: it is turned to +Y up
     alpha_cutoff:f32,    // above 0: the base color of a masked material
     alpha_fill:f32,      // above 0: the base color of outlines cut from a mask with this cutoff (cutout.odin)
-    keep_precision:bool, // its source asks for the precision of its 16 bits or floats (textures.Build_Options)
-    channels:textures.Channels, // what each channel of its texture is made of (a gloss map turned into roughness); the zero value keeps them
+    keep_precision:bool, // its source asks for the precision of its 16 bits or floats (tex.Build_Options)
+    channels:tex.Channels, // what each channel of its texture is made of (a gloss map turned into roughness); the zero value keeps them
     cooked:^Cooked_Texture, // built ahead by model_cook; nil when not
 }
 
 // The texels a format makes of the data of one of its images, in allocator;
 // false when it cannot. Called from any thread, and more than once.
-Image_Make :: #type proc(data:[]u8,allocator:mem.Allocator) -> (made:textures.Source,ok:bool)
+Image_Make :: #type proc(data:[]u8,allocator:mem.Allocator) -> (made:tex.Source,ok:bool)
 
 Imported_Material :: struct {
     name:string,
