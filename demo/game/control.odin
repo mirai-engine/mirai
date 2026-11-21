@@ -74,7 +74,7 @@ game_seats :: proc(
             core.add(follows,body,follow)
         }
         if inp.seat_pressed(actions,seat,.Overhead_View) {
-            if cam.camera_overriding(shown.ptr,seat) {
+            if cam.camera_overriding(shown,seat) {
                 cam.camera_override_remove(camera_requests,seat)
             } else if camera:=core.entity_named(names,CONTROL_SHARED_CAMERA);camera!=core.NONE {
                 cam.camera_override(camera_requests,seat,seat,camera,blend=OVERHEAD_BLEND)

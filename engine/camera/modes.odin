@@ -19,7 +19,7 @@ Camera_Preset :: enum u8 {Isometric,Top_Down,Side,First_Person,Third_Person,Aim}
 HEAD_LAYER :: u32(1)<<15
 
 Camera_Setup :: struct {
-    follow:Camera_Follow, // its target and its transient fields are not used: the camera keeps its own
+    follow:Camera_Follow, // the target stays with the camera
     lens:render.Camera,   // its active and clip_plane are not used: the camera keeps its own
 }
 
@@ -112,21 +112,13 @@ camera_preset_of :: proc(follows:^core.Table(Camera_Follow,$A),cameras:^core.Tab
     follow,following:=core.get(follows,camera)
     lens,has_lens:=core.get(cameras,camera)
     if !following || !has_lens {return {},false}
-    config:=camera_follow_config(follow)
+    config:=follow
     config.target=core.NONE
     for preset in Camera_Preset {
         setup:=camera_preset(preset)
-        if camera_follow_config(setup.follow)==config && lens_on(lens,setup.lens)==lens {return preset,true}
+        if setup.follow==config && lens_on(lens,setup.lens)==lens {return preset,true}
     }
     return {},false
-}
-
-// What makes a setup: the fields a game authors, without what the camera derives.
-camera_follow_config :: proc "contextless" (follow:Camera_Follow) -> Camera_Follow {
-    config:=follow
-    config.looking={}
-    config.state={}
-    return config
 }
 
 // A lens on a camera: it keeps whether the camera is active and its clip plane.

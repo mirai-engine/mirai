@@ -77,12 +77,12 @@ Interface_Demo :: struct {
 interface_demo :: proc(
     demos:^core.Table(Interface_Demo),screens:^core.Table(gui.UI_Screen),hidden:^core.Table(render.Hidden),
     names:^core.Table(core.Name,.Read),ui_events:core.Ref(gui.UI_Events),actions:inp.Input_Of(Action),time:core.Time,
-    preferences:core.Ref(gui.UI_Preferences),
+    preferences:core.Ref(gui.UI_Preferences),interface:^gui.Gui,
     items:core.Records(Item),lines:core.Records(Dialogue_Line),answers:core.Records(Dialogue_Choice),texts:^core.Texts,problems:^core.Problems,
 ) {
     holder,found:=core.sole(demos)
     if !found {return}
-    events:=ui_events.ptr
+    events:=ui_events
     demo:=core.edit(demos,holder)
     hud,menu,inventory:=core.entity_named(names,INTERFACE_HUD),core.entity_named(names,INTERFACE_MENU),core.entity_named(names,INTERFACE_INVENTORY)
     dialogue:=core.entity_named(names,INTERFACE_DIALOGUE)
@@ -105,12 +105,12 @@ interface_demo :: proc(
     for style in ([]string{"classic","minimal","neon"}) {
         if value,ok:=gui.changed_value(events,menu,style);ok {demo.style=i32(value)}
     }
-    if on,ok:=gui.changed(events,menu,"subtitles");ok {demo.subtitles=on}
-    if text,ok:=gui.submitted(events,menu,"name");ok {base.text_set(demo.player[:],text)}
+    if on,ok:=gui.changed(events,menu,"subtitles",interface);ok {demo.subtitles=on}
+    if text,ok:=gui.submitted(events,menu,"name",interface);ok {base.text_set(demo.player[:],text)}
     // Its buttons are the button of another .ui: their names are under their instances.
-    if gui.clicked(events,menu,"resume/button") || gui.back(events,menu) {render.set_hidden(hidden,menu,true)}
-    if gui.clicked(events,menu,"inventory/button") {render.set_hidden(hidden,menu,true);render.set_hidden(hidden,inventory,false)}
-    if gui.back(events,inventory) || gui.clicked(events,inventory,"close") {render.set_hidden(hidden,inventory,true)}
+    if gui.clicked(events,menu,"resume/button",interface) || gui.back(events,menu) {render.set_hidden(hidden,menu,true)}
+    if gui.clicked(events,menu,"inventory/button",interface) {render.set_hidden(hidden,menu,true);render.set_hidden(hidden,inventory,false)}
+    if gui.back(events,inventory) || gui.clicked(events,inventory,"close",interface) {render.set_hidden(hidden,inventory,true)}
 
     // The inventory: an item let go over a slot of the same item tops up its
     // stack, up to what its row lets a slot hold; over another slot it swaps
@@ -154,7 +154,7 @@ interface_demo :: proc(
             if flag:=base.text_get(answer.sets[:]);flag!="" {interface_flag_set(demo,base.name_hash(flag))}
             demo.line=answer.to
         }
-        if gui.clicked(events,dialogue,"next") && demo.goes_on {
+        if gui.clicked(events,dialogue,"next",interface) && demo.goes_on {
             line,_:=core.record(lines,demo.line,problems,holder)
             demo.line=line.next
         }
@@ -168,7 +168,7 @@ interface_demo :: proc(
 
     // The texts of the rows, made again when a table or the texts load again,
     // the language changes or the conversation moves.
-    language:=gui.ui_language(preferences.ptr)
+    language:=gui.ui_language(preferences)
     loaded:=[5]u64{u64(core.records_generation(items)),u64(core.records_generation(lines)),u64(core.records_generation(answers)),u64(texts.generation),base.name_hash(language)}
     if demo.shown==loaded {return}
     demo.shown=loaded

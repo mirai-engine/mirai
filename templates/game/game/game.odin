@@ -94,7 +94,7 @@ game_saves :: proc(
     if network.role!=.Standalone {return}
     if inp.pressed(actions,.Save) {save.request_save(saves,SAVE_SLOT)}
     if inp.pressed(actions,.Load) {save.request_load(saves,SAVE_SLOT)}
-    for result in results.queue.items {
+    for result in results.items {
         if result.error!=.None {
             status_show(statuses,"The slot could not be used")
             continue

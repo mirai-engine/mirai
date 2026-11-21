@@ -62,12 +62,12 @@ Camera_Follow :: struct {
     return_time:f32 `mirai:"min=0,unit=s,mode=Orbit"`,  // half-life of going back out; 0: at once
     arm_margin:f32 `mirai:"min=0,unit=m,mode=Orbit"`,   // kept between the camera and what it hit
     hide_within:f32 `mirai:"min=0,unit=m"`,  // the body it follows is not drawn in its view while the camera is nearer than this to its pivot, and fades out from twice as far; 0: always drawn
-    looking:[2]f32 `mirai:"transient,readonly"`, // yaw and pitch it looks with now, radians
-    state:Camera_Follow_State `mirai:"transient,hidden"`,
 }
 
 // What a Camera_Follow derives as it runs.
+@(component,derived)
 Camera_Follow_State :: struct {
+    looking:[2]f32,       // yaw and pitch it looks with now, radians
     pivot:Follow,
     zone:[3]f32,          // the center of the dead zone
     arm:Spring_Arm,
@@ -102,18 +102,20 @@ Camera_Input :: struct {
 }
 
 camera_look :: proc(input:^Camera_Input,camera:core.Entity,yaw,pitch:f32) {
-    core.push(&input.looks,Camera_Look{camera,yaw,pitch})
+    core.offer(&input.looks,Camera_Look{camera,yaw,pitch})
 }
 
-// Asks an Orbit camera to turn so that it looks from its pivot at a point of
-// the world, whatever turned it so far; up is the frame of the vertical of its
-// target. false for one that does not orbit by itself or has not started.
-camera_look_toward :: proc(input:^Camera_Input,camera:core.Entity,follow:Camera_Follow,point:[3]f32,up:=mm.QUAT_IDENTITY) -> bool {
-    if follow.mode!=.Orbit || follow.aim || !follow.state.ready {return false}
-    toward:=point-follow.state.pivot.position
+// Turns a free Orbit toward a world point from its pivot, in the vertical
+// frame up. False until that camera has started following.
+camera_look_toward :: proc(
+    input:^Camera_Input,camera:core.Entity,follow:Camera_Follow,state:Camera_Follow_State,
+    point:[3]f32,up:=mm.QUAT_IDENTITY,
+) -> bool {
+    if follow.mode!=.Orbit || follow.aim || !state.ready {return false}
+    toward:=point-state.pivot.position
     if linalg.length(toward)<1e-4 {return true}
     want:=look_toward(mm.quat_rotate(conj(up),linalg.normalize(toward)))
-    camera_look(input,camera,mm.angle_wrap(want.x-follow.looking.x),want.y-follow.looking.y)
+    camera_look(input,camera,mm.angle_wrap(want.x-state.looking.x),want.y-state.looking.y)
     return true
 }
 
@@ -161,10 +163,10 @@ Camera_Requests :: struct {
 // with fov above zero, that one; the view blends into it and out of it as
 // blend says.
 camera_override :: proc(r:^Camera_Requests,owner,seat,camera:core.Entity,fov:f32=0,near:f32=0,blend:=Camera_Blend{}) {
-    core.push(&r.queue,Camera_Request{add=true,override={owner=owner,seat=seat,camera=camera,fov=fov,near=near,blend=blend}})
+    core.offer(&r.queue,Camera_Request{add=true,override={owner=owner,seat=seat,camera=camera,fov=fov,near=near,blend=blend}})
 }
 camera_override_remove :: proc(r:^Camera_Requests,owner:core.Entity) {
-    core.push(&r.queue,Camera_Request{override={owner=owner}})
+    core.offer(&r.queue,Camera_Request{override={owner=owner}})
 }
 
 // What the players see through, for a step to receive in one parameter.
@@ -182,14 +184,14 @@ Sight :: struct {
 // sees through, where it looks, whatever the mode of that camera. False
 // without a camera.
 aim :: proc(sight:Sight,body:core.Entity) -> (origin,direction:[3]f32,ok:bool) {
-    camera,_:=camera_selected(sight.shown.ptr,sight.seats,sight.cameras,sight.hierarchy,input.seat_of(sight.seat_state,body))
+    camera,_:=camera_selected(sight.shown,sight.seats,sight.cameras,sight.hierarchy,input.seat_of(sight.seat_state,body))
     placed:=core.get(sight.worlds,camera) or_return
     return placed.position,mm.quat_forward(placed.rotation),true
 }
 
 // The camera a seat sees through: its latest override, and otherwise the
 // camera of its body; none without a valid one. With the blend an override asked for.
-camera_selected :: proc(cameras_state:^Cameras,seats:^core.Table(input.Seat,.Read),cameras:^core.Table(render.Camera,.Read),hierarchy:core.Ref(core.Hierarchy),seat:core.Entity) -> (core.Entity,Camera_Blend) {
+camera_selected :: proc(cameras_state:core.Ref(Cameras),seats:^core.Table(input.Seat,.Read),cameras:^core.Table(render.Camera,.Read),hierarchy:core.Ref(core.Hierarchy),seat:core.Entity) -> (core.Entity,Camera_Blend) {
     if chosen:=override_chosen(cameras_state,cameras,seat);chosen!=nil {return chosen.camera,chosen.blend}
     return body_camera(hierarchy,cameras,input.body_of(seats,seat)),{}
 }
@@ -205,7 +207,8 @@ body_camera :: proc(hierarchy:core.Ref(core.Hierarchy),cameras:^core.Table(rende
 }
 
 // Whether an owner asks for a camera now.
-camera_overriding :: proc "contextless" (cameras_state:^Cameras,owner:core.Entity) -> bool {
+camera_overriding :: proc "contextless" (cameras_state:core.Ref(Cameras),owner:core.Entity) -> bool {
+    if cameras_state.ptr==nil {return false}
     for item in cameras_state.overrides {
         if item.active && item.owner==owner {return true}
     }
@@ -213,9 +216,10 @@ camera_overriding :: proc "contextless" (cameras_state:^Cameras,owner:core.Entit
 }
 
 @(private)
-override_chosen :: proc(cameras_state:^Cameras,cameras:^core.Table(render.Camera,$A),seat:core.Entity) -> (chosen:^Camera_Override) {
+override_chosen :: proc(cameras_state:core.Ref(Cameras),cameras:^core.Table(render.Camera,$A),seat:core.Entity) -> (chosen:^Camera_Override) {
     if seat==core.NONE {return}
-    for &item in cameras_state.overrides {
+    if cameras_state.ptr==nil {return nil}
+    for &item in cameras_state.ptr.overrides {
         if !item.active || item.seat!=seat || !camera_valid(cameras,item.camera) {continue}
         if chosen==nil || item.order>chosen.order {chosen=&item}
     }
@@ -236,6 +240,7 @@ camera_select :: proc(
     activations:^core.Table(Camera_Activation,.Read),follows:^core.Table(Camera_Follow,.Read),parents:^core.Table(core.Parent,.Read),
     seats:^core.Table(input.Seat,.Read),seat_state:core.Ref(input.Seats),runtime:core.Ref(input.Seat_States),problems:^core.Problems,
 ) {
+    core.queue_serve(&requests.queue,core.QUEUE_FIRST_ROOM,problems,"camera.requests","camera overrides","the override request capacity")
     for request in core.take(&requests.queue) {
         r:=request.override
         if !request.add {
@@ -263,17 +268,20 @@ camera_select :: proc(
     for row in 0..<core.count(activations) {
         camera:=core.entity_at(activations,row)
         activation:=core.at(activations,row)
-        if int(activation.action)>=input.ACTION_CAPACITY || activation.blend.seconds<0 {
-            core.report(problems,camera,"camera.activation","the Camera_Activation of entity 0x%016x has no action or a blend below 0 seconds; give it the action that brings this camera, as aim",u64(camera))
-            continue
+        configured:=activation.action!=max(input.Action)
+        valid:=int(activation.action)<input.ACTION_CAPACITY && activation.blend.seconds>=0
+        if configured && !valid {
+            core.report(problems,camera,"camera.activation","the Camera_Activation of entity 0x%016x has an invalid action or blend; choose an action and a nonnegative blend time",u64(camera))
         }
-        follow,_:=core.get(follows,camera)
-        seat:=input.seat_of(seat_state,follow_target(camera,follow.target,parents,seats,seat_state,player))
-        if seat!=core.NONE && camera_valid(cameras,camera) && input.seat_action(runtime,seat,activation.action).down {
-            if !override_set(cameras_state,{owner=camera,seat=seat,camera=camera,blend=activation.blend}) {
-                core.report(problems,camera,"camera.overrides_full","the Camera_Activation of entity 0x%016x was not seen: %d camera overrides are active, as many as fit",u64(camera),OVERRIDE_CAPACITY)
+        if configured && valid {
+            follow,_:=core.get(follows,camera)
+            seat:=input.seat_of(seat_state,follow_target(camera,follow.target,parents,seats,seat_state,player))
+            if seat!=core.NONE && camera_valid(cameras,camera) && input.seat_action(runtime,seat,activation.action).down {
+                if !override_set(cameras_state,{owner=camera,seat=seat,camera=camera,blend=activation.blend}) {
+                    core.report(problems,camera,"camera.overrides_full","the Camera_Activation of entity 0x%016x was not seen: %d camera overrides are active, as many as fit",u64(camera),OVERRIDE_CAPACITY)
+                }
+                continue
             }
-            continue
         }
         for &item in cameras_state.overrides {
             if item.active && item.owner==camera {item.active=false}
@@ -307,49 +315,55 @@ override_set :: proc(cameras_state:^Cameras,r:Camera_Override) -> bool {
 // every camera that follows: the only writer of Camera_Follow and of the lens.
 @(step="late")
 camera_follow :: proc(
-    world:core.World_Ref,follows:^core.Table(Camera_Follow),cameras:^core.Table(render.Camera),transforms:^core.Table(core.Transform),
+    world:core.World_Ref,follows:^core.Table(Camera_Follow),states:^core.Table(Camera_Follow_State),cameras:^core.Table(render.Camera),transforms:^core.Table(core.Transform),
     worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),
     seats:^core.Table(input.Seat,.Read),moves:^core.Table(input.Move_Input,.Read),shown:core.Ref(Cameras),
     seat_state:core.Ref(input.Seats),look_actions:input.Frame_Input_Of(input.Look_Action),queries:core.Ref(core.World_Queries),look_input:^Camera_Input,changes:^Camera_Changes,
     verticals:^core.Table(core.Vertical,.Read),frame:core.Frame_Time,time:core.Time,problems:^core.Problems,
     shakes:^Camera_Shakes,
 ) {
-    // The lens is the one of the mode or the override; the shakes go over it again below.
-    for row in 0..<core.count(follows) {
-        if s:=&core.edit_at(follows,row).state;s.fov_shaken {
-            if camera:=core.edit(cameras,core.entity_at(follows,row));camera!=nil {shakes_fov_restore(camera,s)}
-            s.fov_shaken=false
+    // Restore the lens before changing its mode or adding a shake.
+    for e,row in states.entities {
+        if states.values[row].fov_shaken {
+            if camera:=core.edit(cameras,e);camera!=nil {
+                shakes_fov_restore(camera,core.edit_at(states,row))
+            }
         }
+        if core.raw_row(core.raw(follows),e)<0 {core.remove(states,e)}
     }
-    for change in core.take(&changes.queue) {mode_take(follows,cameras,worlds,change,problems)}
-    shakes_take(follows,shakes,problems)
+    for change in core.take(&changes.queue) {mode_take(follows,states,cameras,worlds,change,problems)}
+    shakes_take(follows,states,shakes,problems)
     for item in shown.overrides {
         if !item.active || item.fov<=0 {continue}
         if camera:=core.edit(cameras,item.camera);camera!=nil && (camera.fov!=item.fov || camera.near!=item.near) {camera.fov,camera.near=item.fov,item.near}
     }
+    core.queue_serve(&look_input.looks,core.QUEUE_FIRST_ROOM,problems,"camera.looks","camera looks","the look request capacity")
     for look in core.take(&look_input.looks) {
-        follow:=core.edit(follows,look.camera)
-        if follow==nil || !follow.state.ready {continue}
-        low,high:=pitch_limits(follow^)
-        follow.looking={mm.angle_wrap(follow.looking.x+look.yaw),clamp(follow.looking.y+look.pitch,low,high)}
-        follow.state.idle=0
+        follow,ok:=core.get(follows,look.camera)
+        state:=core.staged(states,look.camera)
+        if !ok || state==nil || !state.ready {continue}
+        low,high:=pitch_limits(follow)
+        state.looking={mm.angle_wrap(state.looking.x+look.yaw),clamp(state.looking.y+look.pitch,low,high)}
+        state.idle=0
     }
     player:=input.focused(seat_state,seats)
     for row in 0..<core.count(follows) {
         e:=core.entity_at(follows,row)
-        follow:=core.edit_at(follows,row)
+        follow:=&follows.values[row]
         target:=follow_target(e,follow.target,parents,seats,seat_state,player)
+        state:=follow_state(states,e,problems)
+        if state==nil {continue}
         // The look of the local seat that drives its target turns it, from the devices of its slot.
-        if seat,local:=core.get(seats,input.seat_of(seat_state,target));local && input.seat_local(seat) && follow.turn && follow.state.ready && follow.mode==.Orbit && !follow.aim {
+        if seat,local:=core.get(seats,input.seat_of(seat_state,target));local && input.seat_local(seat) && follow.turn && state.ready && follow.mode==.Orbit && !follow.aim {
             if turn:=input.slot_frame_state(look_actions,int(seat.slot),.Look).vector*input.LOOK_SPEED;turn!={} {
                 low,high:=pitch_limits(follow^)
-                follow.looking={mm.angle_wrap(follow.looking.x-turn.x),clamp(follow.looking.y-turn.y,low,high)}
-                follow.state.idle=0
+                state.looking={mm.angle_wrap(state.looking.x-turn.x),clamp(state.looking.y-turn.y,low,high)}
+                state.idle=0
             }
         }
         vertical:=core.vertical_of(verticals,target)
         if placed,ok:=core.get(worlds,target);ok && core.has(verticals,target) {vertical=vertical_between(vertical,placed,frame.alpha)}
-        follow_one(e,follow,target,transforms,worlds,parents,moves,vertical,core.world_query(world,queries),frame,time.dt,core.edit(cameras,e))
+        follow_one(e,follow,state,target,transforms,worlds,parents,moves,vertical,core.world_query(world,queries),frame,time.dt,core.edit(cameras,e))
     }
 }
 
@@ -362,10 +376,18 @@ vertical_between :: proc "contextless" (vertical:mm.Quat,placed:core.World_Trans
     return mm.quat_slerp(back,mm.QUAT_IDENTITY,max(alpha,0))*vertical
 }
 
+@(private)
+follow_state :: proc(states:^core.Table(Camera_Follow_State),e:core.Entity,problems:^core.Problems) -> ^Camera_Follow_State {
+    if state:=core.staged(states,e);state!=nil {return state}
+    if core.add(states,e,Camera_Follow_State{}) {return core.staged(states,e)}
+    core.report(problems,e,"camera.state","out of memory for the camera follow state; free memory or use fewer cameras")
+    return nil
+}
+
 // A setup keeps the target and what its camera derived; a free Orbit goes on
 // looking where the camera looked, and one with an angle of its own takes it.
 @(private)
-mode_take :: proc(follows:^core.Table(Camera_Follow),cameras:^core.Table(render.Camera),worlds:^core.Table(core.World_Transform,$A),change:Camera_Change,problems:^core.Problems) {
+mode_take :: proc(follows:^core.Table(Camera_Follow),states:^core.Table(Camera_Follow_State),cameras:^core.Table(render.Camera),worlds:^core.Table(core.World_Transform,$A),change:Camera_Change,problems:^core.Problems) {
     camera:=core.edit(cameras,change.camera)
     if camera==nil {
         core.report(problems,change.camera,"camera.mode_camera","a camera mode for entity 0x%016x was refused: it has no render.Camera; give it one, or ask for the mode of a camera",u64(change.camera))
@@ -379,32 +401,27 @@ mode_take :: proc(follows:^core.Table(Camera_Follow),cameras:^core.Table(render.
         core.report(problems,change.camera,"camera.mode_blend","a camera mode for entity 0x%016x was refused: its blend lasts %v seconds; give it 0 or more",u64(change.camera),change.blend.seconds)
         return
     }
-    want:=camera_follow_config(change.setup.follow)
-    follow:=core.edit(follows,change.camera)
-    if follow==nil {
-        want.target=core.NONE
-        want.state.changes=1
-        want.state.blend=change.blend
-        core.add(follows,change.camera,want)
-        camera^=lens_on(camera^,change.setup.lens)
+    want:=change.setup.follow
+    follow,following:=core.get(follows,change.camera)
+    want.target=follow.target
+    lens:=lens_on(camera^,change.setup.lens)
+    if following && follow==want && lens==camera^ {return}
+    state:=follow_state(states,change.camera,problems)
+    if state==nil {return}
+    if following {
+        core.edit(follows,change.camera)^=want
+    } else if !core.add(follows,change.camera,want) {
+        core.report(problems,change.camera,"camera.mode_memory","out of memory for Camera_Follow; free memory or use fewer cameras")
         return
     }
-    want.target=follow.target
-    if camera_follow_config(follow^)==want && lens_on(camera^,change.setup.lens)==camera^ {return}
-    state:=follow.state
-    looked:=follow.looking
+    looked:=state.looking
     if own,ok:=core.get(worlds,change.camera);ok {looked=look_of(own.rotation)}
-    follow^=want
-    follow.state.changes=state.changes+1
-    follow.state.blend=change.blend
-    follow.state.written=state.written
-    follow.state.wrote=state.wrote
-    follow.state.shakes=state.shakes // a shake goes on through a change of mode
-    if follow.mode==.Orbit && !follow.aim && (follow.min_pitch!=follow.max_pitch || follow.min_pitch==0) {
-        follow.state.handoff=looked
-        follow.state.handing=true
-    }
-    camera^=lens_on(camera^,change.setup.lens)
+    state.changes+=1
+    state.blend=change.blend
+    state.ready=false
+    state.handing=following && want.mode==.Orbit && !want.aim && (want.min_pitch!=want.max_pitch || want.min_pitch==0)
+    if state.handing {state.handoff=looked}
+    camera^=lens
 }
 
 // The yaw and pitch of an Orbit that looks as rotation does.
@@ -501,7 +518,7 @@ arm_tune :: proc "contextless" (arm:^Spring_Arm,follow:Camera_Follow) {
 // which its shakes widen; nil without one.
 @(private)
 follow_one :: proc(
-    e:core.Entity,follow:^Camera_Follow,target:core.Entity,transforms:^core.Table(core.Transform),
+    e:core.Entity,follow:^Camera_Follow,s:^Camera_Follow_State,target:core.Entity,transforms:^core.Table(core.Transform),
     worlds:^core.Table(core.World_Transform,$A),parents:^core.Table(core.Parent,$B),
     moves:^core.Table(input.Move_Input,$C),vertical:mm.Quat,query:core.World_Query,frame:core.Frame_Time,tick:f32,
     camera:^render.Camera=nil,
@@ -509,7 +526,6 @@ follow_one :: proc(
     placed,has_target:=core.get(worlds,target)
     row:=core.edit(transforms,e)
     if !has_target || row==nil {return}
-    s:=&follow.state
     position:=placed.position
     if frame.alpha<1 {position=mm.lerp(placed.previous.position,placed.position,frame.alpha)}
     up:=mm.quat_rotate(vertical,{0,1,0})
@@ -525,10 +541,10 @@ follow_one :: proc(
         s.arm=spring_arm_make(max(follow.distance,0.01),follow.probe_radius)
         s.side=spring_arm_make(linalg.length(follow.shoulder),follow.probe_radius)
         s.side.min_length=0
-        follow.looking={follow.yaw,follow.pitch}
+        s.looking={follow.yaw,follow.pitch}
         if s.handing {
             low,high:=pitch_limits(follow^)
-            follow.looking={s.handoff.x,clamp(s.handoff.y,low,high)}
+            s.looking={s.handoff.x,clamp(s.handoff.y,low,high)}
         }
         s.handing,s.idle,s.ready=false,0,true
     }
@@ -551,7 +567,7 @@ follow_one :: proc(
         if follow.look_at && position!=pivot {world_rotation=mm.quat_look(position-pivot,up)}
     case .Orbit:
         if aiming && follow.aim {
-            follow.looking={mm.angle_wrap(look.look_yaw+follow.yaw),clamp(follow.pitch-look.look_pitch,low,high)}
+            s.looking={mm.angle_wrap(look.look_yaw+follow.yaw),clamp(follow.pitch-look.look_pitch,low,high)}
         } else if follow.recenter>0 {
             s.idle+=dt
             if s.idle>=follow.recenter && linalg.length(ground)>RECENTER_SPEED {
@@ -559,17 +575,17 @@ follow_one :: proc(
                 // walking toward it or across it keeps its yaw, since a walk relative to the
                 // camera turns with it and chasing it would spin the camera without end.
                 along:=mm.yaw_of_direction(mm.quat_rotate(conj(vertical),ground))
-                if away:=math.cos(mm.angle_delta(follow.looking.x,along));away>0 {
-                    turned:=mm.damp_angle(follow.looking.x,along,RECENTER_RATE*away,dt)
-                    follow.looking.x=mm.angle_wrap(turned)
+                if away:=math.cos(mm.angle_delta(s.looking.x,along));away>0 {
+                    turned:=mm.damp_angle(s.looking.x,along,RECENTER_RATE*away,dt)
+                    s.looking.x=mm.angle_wrap(turned)
                 }
             }
         }
-        orbit:=orbit_make(pivot,follow.distance,follow.looking.x,follow.looking.y)
+        orbit:=orbit_make(pivot,follow.distance,s.looking.x,s.looking.y)
         world_rotation=vertical*orbit_rotation(orbit)
         probe:=Arm_Probe{query,target}
         collide:=follow.probe_radius>0?arm_query:nil
-        origin:=pivot+mm.quat_rotate(world_rotation,look_offset(follow^,follow.looking.y))
+        origin:=pivot+mm.quat_rotate(world_rotation,look_offset(follow^,s.looking.y))
         if side:=mm.quat_rotate(world_rotation,[3]f32{follow.shoulder.x,follow.shoulder.y,0});follow.shoulder!={} {
             // What stands beside the target brings the shoulder in, as the arm.
             arm_tune(&s.side,follow^)
@@ -580,9 +596,9 @@ follow_one :: proc(
         s.arm.length=follow.distance
         world_position=spring_arm_update(&s.arm,origin,mm.quat_rotate(vertical,orbit_direction(orbit)),collide,&probe,dt)
     case .Eyes:
-        if aiming {follow.looking={look.look_yaw,clamp(look.look_pitch,low,high)}}
+        if aiming {s.looking={look.look_yaw,clamp(look.look_pitch,low,high)}}
         world_position=position+mm.quat_rotate(vertical,follow.offset)
-        world_rotation=vertical*mm.quat_from_euler({follow.looking.y,follow.looking.x,0})
+        world_rotation=vertical*mm.quat_from_euler({s.looking.y,s.looking.x,0})
 
     }
     turn,widen:=shakes_advance(s,dt)

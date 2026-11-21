@@ -80,11 +80,10 @@ shake_sequence_at :: proc "contextless" (s:^Shake_Sequence,time:f32) -> (turn:mm
 
 // Starts what was asked of a camera that follows: a single one that plays starts over.
 @(private)
-shakes_take :: proc(follows:^core.Table(Camera_Follow),shakes:^Camera_Shakes,problems:^core.Problems) {
+shakes_take :: proc(follows:^core.Table(Camera_Follow),states:^core.Table(Camera_Follow_State),shakes:^Camera_Shakes,problems:^core.Problems) {
     if shakes==nil {return}
     for asked in core.take(&shakes.queue) {
-        follow:=core.edit(follows,asked.camera)
-        if follow==nil {
+        if !core.staged_has(follows,asked.camera) {
             core.report(problems,asked.camera,"camera.shake","a camera shake was asked of an entity without a Camera_Follow; ask it of the camera that follows")
             continue
         }
@@ -92,7 +91,9 @@ shakes_take :: proc(follows:^core.Table(Camera_Follow),shakes:^Camera_Shakes,pro
             core.report(problems,asked.camera,"camera.shake","a camera shake was asked with length %v, rate %v and blends %v and %v: give it a length above 0 and a rate and blends of 0 or more",asked.sequence.length,asked.sequence.rate,asked.sequence.blend_in,asked.sequence.blend_out)
             continue
         }
-        slots:=&follow.state.shakes
+        state:=follow_state(states,asked.camera,problems)
+        if state==nil {continue}
+        slots:=&state.shakes
         slot:=-1
         if asked.sequence.single {
             for p,i in slots {if p.sequence.length>0 && p.sequence.single && p.sequence.id==asked.sequence.id {slot=i;break}}

@@ -94,7 +94,7 @@ api_inspect :: proc(s:^editor.Session,call:^api.Call) {
     w:=editor.shown_world(s)
     timeline:=timeline_find(call,w,p.entity[:],"entity")
     if timeline==core.NONE {return}
-    value,_:=editor.entity_get(w,timeline,cine.Cinematic)
+    value,_:=editor.entity_get(w,timeline,cine.Cinematic_State)
     animation,_:=editor.entity_get(w,timeline,anim.Animation)
     playback:=core.world_storage_of(w,anim.Playback)
     at,duration,ended,clipped:=anim.animation_progress(playback,timeline)
@@ -148,7 +148,7 @@ api_control :: proc(s:^editor.Session,call:^api.Call) {
     timeline:=timeline_find(call,w,p.entity[:],"entity")
     if timeline==core.NONE {return}
     if !editor.entity_has(w,timeline,anim.Animation) {api.call_fail(call,api.INVALID_PARAMS,"the timeline has no Animation, so it has no clip to control: add one to its entity whose asset is the .anim of its clip (scene.write with components Animation asset)");return}
-    value,_:=editor.entity_get(w,timeline,cine.Cinematic)
+    value,_:=editor.entity_get(w,timeline,cine.Cinematic_State)
     out:=api.call_result(call,Control_Result)
     _,out.duration,_,_=anim.animation_progress(core.world_storage_of(w,anim.Playback),timeline)
     if s.mode!=.Edit {

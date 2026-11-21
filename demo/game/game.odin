@@ -174,7 +174,7 @@ action_defaults :: proc "contextless" () -> [Action]inp.Action_Bindings {
 // the body back. The animation gallery lets go too while its player adjusts a panel.
 @(step="frame")
 game_menu :: proc(game:^Game,events:core.Ref(gui.UI_Events),state:core.Ref(inp.Seats),seats:^core.Table(inp.Seat,.Read),requests:^inp.Seat_Requests) {
-    if !gui.menu_pressed(events.ptr) {return}
+    if !gui.menu_pressed(events) {return}
     seat:=inp.focused(state,seats)
     if seat==core.NONE {return}
     if body:=inp.body_of(seats,seat);body!=core.NONE {

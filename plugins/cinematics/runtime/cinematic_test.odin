@@ -26,6 +26,7 @@ Cinematic_World :: struct {
     attachments:core.Table(anim.Bone_Attachment),
     sources:core.Table(anim.Pose_Source),
     cinematics:core.Table(Cinematic),
+    cinematic_states:core.Table(Cinematic_State),
     activations:core.Table(cam.Camera_Activation),
     follows:core.Table(cam.Camera_Follow),
     seats:core.Table(input.Seat),
@@ -140,7 +141,7 @@ fixture_tick :: proc(f:^Cinematic_Fixture,tick:u64,dt:f32,playing:=true,acting:p
     anim.animation_fields(test_world_ref(&f.w),core.ref(&f.playback),&f.fields,core.ref(&f.content_sources),&f.app,&f.problems)
     anim.animation_advance(&f.transforms,core.read(&f.parents),{},&f.requests,&f.modifier_runtime,&f.playback,{},{},time,core.ref(&f.skeletons),&f.problems,&f.motion,&f.characters,{},{},core.CLOCK_DEFAULT,nil)
     if acting!=nil {acting(f)}
-    cinematic_advance(core.ref(&f.entities),&f.cinematics,core.read(&f.cameras),core.read(&f.animations),core.ref(&f.playback),core.ref(&f.content_sources),&f.app,core.ref(&f.actions),&f.requests,core.ref(&f.shown),core.ref(&f.seat_state),&f.camera_requests,&f.seat_requests,core.read(&f.seats),time,core.read(&f.remotes),&f.problems)
+    cinematic_advance(core.ref(&f.entities),core.read(&f.cinematics),&f.cinematic_states,core.read(&f.cameras),core.read(&f.animations),core.ref(&f.playback),core.ref(&f.content_sources),&f.app,core.ref(&f.actions),&f.requests,core.ref(&f.shown),core.ref(&f.seat_state),&f.camera_requests,&f.seat_requests,core.read(&f.seats),time,core.read(&f.remotes),&f.problems)
     test_world_settle(&f.w)
 }
 
@@ -170,7 +171,7 @@ the_markers_of_a_clip_cut_between_cameras_and_play_actions_while_it_plays :: pro
     // The clip plays by itself: the first shot cuts to wide, the input of the seat is blocked, and
     // the actor starts to wave, driven from the start of its marker.
     fixture_tick(f,1,DT)
-    c,_:=core.get(core.read(&f.cinematics),f.timeline)
+    c,_:=core.get(core.read(&f.cinematic_states),f.timeline)
     testing.expect(t,c.status==.Playing && c.time==.25 && c.duration==1)
     testing.expect(t,len(f.camera_requests.items)==1 && f.camera_requests.items[0]==asked(f,f.wide,0))
     testing.expect(t,len(f.seat_requests.items)==1 && f.seat_requests.items[0].kind==.Block_Add && f.seat_requests.items[0].mask==3)
@@ -193,7 +194,7 @@ the_markers_of_a_clip_cut_between_cameras_and_play_actions_while_it_plays :: pro
     testing.expect(t,len(stops)==1 && stops[0].stop && stops[0].entity==f.hero)
     testing.expect(t,len(f.camera_requests.items)==1 && f.camera_requests.items[0]==asked(f,f.close,.5))
     fixture_tick(f,3,DT)
-    selected,_:=cam.camera_selected(&f.shown,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),f.seat)
+    selected,_:=cam.camera_selected(core.ref(&f.shown),core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),f.seat)
     testing.expect_value(t,selected,f.close)
     testing.expect(t,len(f.camera_requests.items)==0,"the shot in force is asked once")
     lens,_:=core.get(core.read(&f.cameras),f.close)
@@ -203,27 +204,27 @@ the_markers_of_a_clip_cut_between_cameras_and_play_actions_while_it_plays :: pro
     // Paused, the shot stays; at the end of the clip the seat gets its view and its input back.
     anim.animation_command(&f.requests,f.timeline,.Pause)
     fixture_tick(f,4,DT)
-    c,_=core.get(core.read(&f.cinematics),f.timeline)
+    c,_=core.get(core.read(&f.cinematic_states),f.timeline)
     testing.expect(t,c.status==.Paused && len(f.camera_requests.items)==0)
     anim.animation_command(&f.requests,f.timeline,.Resume)
     clear(&f.seat_requests.items)
     fixture_tick(f,5,DT)
-    c,_=core.get(core.read(&f.cinematics),f.timeline)
+    c,_=core.get(core.read(&f.cinematic_states),f.timeline)
     testing.expect(t,c.status==.Completed && c.time==1)
     testing.expect(t,len(f.camera_requests.items)==1 && !f.camera_requests.items[0].add && f.camera_requests.items[0].override.owner==f.timeline)
     testing.expect(t,len(f.seat_requests.items)==0,"no block is asked once it ends")
 
     // On an end that does not decide the timeline, the clip is asked to go where the anchor says.
     core.add(&f.remotes,f.timeline,core.Remote{});test_world_settle(&f.w)
-    remote:=core.edit(&f.cinematics,f.timeline)
+    remote:=core.edit(&f.cinematic_states,f.timeline)
     remote.status,remote.anchor_tick,remote.anchor_time,remote.anchor_rate=.Playing,10,.25,1
     clear(&f.requests.timeline.items)
-    cinematic_follow(core.read(&f.cinematics),core.read(&f.animations),core.ref(&f.playback),&f.requests,{dt=DT,tick=11,playing=true},core.read(&f.remotes))
+    cinematic_follow(core.read(&f.cinematics),core.read(&f.cinematic_states),core.read(&f.animations),core.ref(&f.playback),&f.requests,{dt=DT,tick=11,playing=true},core.read(&f.remotes))
     commands:=f.requests.timeline.items[:]
     testing.expect(t,len(commands)==1 && commands[0].entity==f.timeline && commands[0].command==.Seek && commands[0].time==.25,"a clip that plays is sought a tick before the half second the anchor gives the end of the tick")
     clear(&f.requests.timeline.items)
     remote.status,remote.anchor_time,remote.anchor_rate=.Paused,.75,0
-    cinematic_follow(core.read(&f.cinematics),core.read(&f.animations),core.ref(&f.playback),&f.requests,{dt=DT,tick=40,playing=true},core.read(&f.remotes))
+    cinematic_follow(core.read(&f.cinematics),core.read(&f.cinematic_states),core.read(&f.animations),core.ref(&f.playback),&f.requests,{dt=DT,tick=40,playing=true},core.read(&f.remotes))
     commands=f.requests.timeline.items[:]
     testing.expect(t,len(commands)==2 && commands[0].command==.Pause && commands[1].entity==f.timeline && commands[1].command==.Seek && commands[1].time==.75,"paused by the server, it pauses where the anchor is")
     clear(&f.requests.timeline.items)
@@ -275,7 +276,7 @@ a_head_of_a_scrubbed_clip_shows_one_shot :: proc(t:^testing.T) {
 an_anchor_gives_the_time_of_a_clip_at_a_tick :: proc(t:^testing.T) {
     DT :: f32(1.0/60)
     nan:=f32(0h7fc00000)
-    Case :: struct {name:string,c:Cinematic,tick:u64,duration:f32,loop:bool,want:f32}
+    Case :: struct {name:string,c:Cinematic_State,tick:u64,duration:f32,loop:bool,want:f32}
     cases:=[]Case{
         {"at its anchor",{anchor_tick=100,anchor_time=1,anchor_rate=1},100,4,false,1},
         {"a second later",{anchor_tick=100,anchor_time=1,anchor_rate=1},160,4,false,2},

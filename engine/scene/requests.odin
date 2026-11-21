@@ -30,7 +30,7 @@ Scene_Requests :: struct {queue:core.Queue(Scene_Request)}
 
 // Events: cleared at each frame, one per request served, after the load.
 @(storage,keep)
-Scene_Results :: struct {queue:core.Events(Scene_Result)}
+Scene_Results :: struct {using queue:core.Events(Scene_Result)}
 
 // Whether this world already asked for the scene the player was launched with.
 @(storage,keep)
@@ -61,7 +61,7 @@ request_restart :: proc(requests:^Scene_Requests) {
 
 // The result of a request for this scene in the frame, by id or by path.
 result_of :: proc(results:^Scene_Results,scene:base.Asset_Id,path:string="") -> (result:Scene_Result,found:bool) {
-    for &r in results.queue.items {
+    for &r in results.items {
         if scene!={} && r.scene==scene || scene=={} && path!="" && base.text_get(r.path[:])==path {return r,true}
     }
     return

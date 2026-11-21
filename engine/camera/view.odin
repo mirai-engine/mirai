@@ -48,7 +48,7 @@ Camera_Views :: struct {
 @(step="late",stage="end")
 camera_blend :: proc(
     views:^Camera_Views,shown:core.Ref(Cameras),seat_state:core.Ref(input.Seats),seats:^core.Table(input.Seat,.Read),
-    parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),cameras:^core.Table(render.Camera,.Read),follows:^core.Table(Camera_Follow,.Read),worlds:^core.Table(core.World_Transform,.Read),chosen:^render.View_Camera,
+    parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),cameras:^core.Table(render.Camera,.Read),follows:^core.Table(Camera_Follow,.Read),states:^core.Table(Camera_Follow_State,.Read),worlds:^core.Table(core.World_Transform,.Read),chosen:^render.View_Camera,
     bodies:^render.View_Bodies,frame:core.Frame_Time,
 ) {
     player:=input.focused(seat_state,seats)
@@ -62,17 +62,20 @@ camera_blend :: proc(
             continue
         }
         seat:=seat_state.local_count>0?input.local_seat(seats,slot):core.NONE
-        camera,through:=camera_selected(shown.ptr,seats,cameras,hierarchy,seat)
+        camera,through:=camera_selected(shown,seats,cameras,hierarchy,seat)
         body:=input.body_of(seats,seat)
-        view_update(v,camera,through,body,cameras,follows,worlds,frame)
+        view_update(v,camera,through,body,cameras,follows,states,worlds,frame)
         // The own body of the view is the body of its player, or else the one its
         // camera follows. Nearer to it than twice what it allows, the view fades it out.
         v.fade=0
-        if follow,ok:=core.get(follows,v.camera);ok && follow.state.ready {
+        follow,following:=core.get(follows,v.camera)
+        row:=core.row_of(states,v.camera)
+        if following && row>=0 && states.values[row].ready {
             target:=follow_target(v.camera,follow.target,parents,seats,seat_state,player)
             if body==core.NONE {body=target}
             if follow.hide_within>0 && target==body {
-                v.fade=clamp(2-linalg.length(v.pose.position-follow.state.pivot.position)/follow.hide_within,0,1)
+                pivot:=states.values[row].pivot.position
+                v.fade=clamp(2-linalg.length(v.pose.position-pivot)/follow.hide_within,0,1)
             }
         }
         if slot<len(bodies.bodies) && bodies.bodies[slot]!=body {bodies.bodies[slot]=body}
@@ -87,7 +90,7 @@ camera_blend :: proc(
 @(private)
 view_update :: proc(
     v:^Camera_View,camera:core.Entity,through:Camera_Blend,body:core.Entity,
-    cameras:^core.Table(render.Camera,$A),follows:^core.Table(Camera_Follow,$B),worlds:^core.Table(core.World_Transform,$C),frame:core.Frame_Time,
+    cameras:^core.Table(render.Camera,$A),follows:^core.Table(Camera_Follow,$B),states:^core.Table(Camera_Follow_State,$D),worlds:^core.Table(core.World_Transform,$C),frame:core.Frame_Time,
 ) {
     c,has_camera:=core.get(cameras,camera)
     world,placed:=core.get(worlds,camera)
@@ -98,14 +101,16 @@ view_update :: proc(
     v.cut=false
     live:=render.camera_pose(c,world.transform)
     follow,follows_it:=core.get(follows,camera)
+    state:=&Camera_Follow_State{}
+    if row:=core.row_of(states,camera);row>=0 {state=&states.values[row]}
     // An orbit looks at its pivot: the view focuses at its depth.
-    if follows_it && follow.mode==.Orbit && follow.state.ready {
-        live.focus=max(linalg.dot(follow.state.pivot.position-live.position,mm.quat_forward(live.rotation)),0)
+    if follows_it && follow.mode==.Orbit && state.ready {
+        live.focus=max(linalg.dot(state.pivot.position-live.position,mm.quat_forward(live.rotation)),0)
     }
-    changes:=follows_it?follow.state.changes:0
+    changes:=follows_it?state.changes:0
     if camera!=v.camera || changes!=v.changes {
         // The same camera blends as its mode asked; another, as the override it enters or the one it leaves.
-        blend:=follow.state.blend
+        blend:=state.blend
         if camera!=v.camera {blend=through.seconds>0?through:v.through}
         v.blending=v.camera!=core.NONE && blend.seconds>0
         v.cut=!v.blending
@@ -135,8 +140,8 @@ view_update :: proc(
             }
             pivot:=live.position+mm.quat_forward(live.rotation)*10
             if at,ok:=anchor_at(worlds,body,frame);ok {pivot=at}
-            around:=follows_it && follow.mode==.Orbit && follow.state.ready
-            if around {pivot=follow.state.pivot.position}
+            around:=follows_it && follow.mode==.Orbit && state.ready
+            if around {pivot=state.pivot.position}
             live=pose_mix(from,live,pivot,around,mm.ease_apply(v.blend.ease,v.elapsed/v.blend.seconds))
         } else {v.blending=false}
     }

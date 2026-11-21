@@ -61,7 +61,7 @@ camera_drive :: proc(
         if turned,ok:=core.get(verticals,body);ok {move.look_yaw=mm.angle_wrap(move.look_yaw+turned.turn)}
         move.buttons=input.seat_buttons(move_actions.runtime,seat,bindings)
         wish:=input.seat_vector(move_actions,seat,.Move)
-        camera,_:=camera_selected(shown.ptr,seats,cameras,hierarchy,seat)
+        camera,_:=camera_selected(shown,seats,cameras,hierarchy,seat)
         follow,follows_it:=core.get(follows,camera)
         if camera!=core.NONE && (follows_it && (follow.mode==.Eyes || follow.mode==.Orbit && follow.aim) || !follows_it && core.is_under(parents,camera,body)) {
             // Changing to it, the body starts looking where the camera it left looked.
