@@ -63,6 +63,7 @@ Capture_Desc :: struct {
     sections:bool,          // also what hangs from a Scene_Reference, which its own scene keeps otherwise: a saved game
     section:core.Entity,    // only what hangs from this Scene_Reference, as its own scene, with the Ids of that scene
     excluded:[]typeid,      // components left out: what a network session keeps on entities, which a saved game does not
+    temporary_ids:map[core.Entity]base.Entity_Id, // identities used only in this capture
     outside:bool,           // with root: its Entity fields keep the Id of an entity outside it, which are empty otherwise
 }
 
@@ -73,6 +74,7 @@ Report :: struct {
     dangling:int,     // entity references that named nothing inside: set to none
     sections:int,     // instantiate: referenced scenes loaded under their references
     missing:int,      // instantiate: references whose scene is not in the assets
+    pending:bool,     // spawn: the root waits for its prefab
     refused:Refusal,  // load_untrusted: what made it fail
 }
 
@@ -123,7 +125,13 @@ spawn_id :: proc(s:Spawner,prefab:base.Asset_Id,at:core.Transform={},parent:=cor
 spawn_report :: proc(s:Spawner,order:Spawn,name:string,found:Error) -> core.Entity {
     report,error:=Report{},found
     if error==.None {report,error=spawn_prefab(s.commands,s.assets,order)}
-    if error==.None {return report.root}
+    if error==.None {
+        if report.pending {
+            core.report(s.problems,report.root,"scene.spawn_pending",
+                "prefab %s is still loading; wait for Prefab_Pending to go before using its components, or reference the prefab in the scene to warm it before spawning",name)
+        }
+        return report.root
+    }
     fix:string
     #partial switch error {
     case .No_Assets:     fix="run the game from a project with an assets folder"
@@ -290,7 +298,7 @@ spawn_placed :: proc(c:core.Commands,assets:^host.Assets,s:Spawn,forms:^Prefab_F
     core.commands_add(c,root,Prefab_Instance{prefab=s.prefab}) // no stamp, no members: of its prefab, linked to no document
     if !loaded {
         core.commands_add(c,root,Prefab_Pending{prefab=s.prefab})
-        return {root=root,entities=1},.None
+        return {root=root,entities=1,pending=true},.None
     }
     report,error=form_place(w,form,&assets.types,{transient=s.transient,fresh=!s.transient,documents=assets_documents(assets),root=root},entities)
     if error!=.None {core.destroy(c,root)}
@@ -311,7 +319,7 @@ spawn_member :: proc(c:core.Commands,assets:^host.Assets,section_scene:base.Asse
     pending:=Prefab_Pending{prefab=section_scene,salt=salt,member=id}
     if !prefab_loaded(assets,section_scene,documents=true) {
         core.commands_add(c,root,pending)
-        return {root=root,entities=1},.None
+        return {root=root,entities=1,pending=true},.None
     }
     report,error=member_place(core.world_ref(c.data,c.info),assets,pending,root)
     if error!=.None {core.destroy(c,root)}
@@ -491,8 +499,8 @@ read_default :: proc(info:^core.Table_Info,allocator:=context.temp_allocator) ->
 capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,desc:Capture_Desc={},allocator:=context.allocator) -> (report:Report,error:Error) {
     id_table:=core.world_table_of(w,core.Id)
     parent_table:=core.world_table_of(w,core.Parent)
-    hierarchy_storage:=core.world_storage_of(w,core.Hierarchy)
-    if id_table==nil || parent_table==nil || hierarchy_storage==nil {return {},.Invalid}
+    hierarchy:=capture_storage(w,core.Hierarchy)
+    if id_table==nil || parent_table==nil || hierarchy.ptr==nil {return {},.Invalid}
     ids,parents:=id_table,parent_table
     names:=core.world_table_of(w,core.Name)
     previous:=desc.previous
@@ -503,24 +511,17 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
 
     Root :: struct {entity:core.Entity,known:bool,order,tie:u32}
     roots:=make([dynamic]Root,context.temp_allocator)
-    // The Id an entity has in the document: in a section, the one of its own scene.
     members:=core.world_table_of(w,Section_Member)
-    doc_id :: proc(ids:^core.Table(core.Id,$A),members:^core.Table(Section_Member),section:core.Entity,e:core.Entity) -> base.Entity_Id {
-        if section!=core.NONE && members!=nil {
-            if member,ok:=core.get(members,e);ok && member.local!=0 {return member.local}
-        }
-        return core.id_of(ids,e)
-    }
+    temporary:=desc.temporary_ids
     if desc.section!=core.NONE {
-        h:=core.ref(hierarchy_storage)
         order:=u32(0)
-        for child:=core.first_child(h,desc.section);child!=core.NONE;child=core.next_sibling(h,child) {
-            if core.id_of(ids,child)==0 {continue}
+        for child:=core.first_child(hierarchy,desc.section);child!=core.NONE;child=core.next_sibling(hierarchy,child) {
+            if capture_id(ids,temporary,child)==0 {continue}
             append(&roots,Root{entity=child,order=order})
             order+=1
         }
     } else if desc.root!=core.NONE {
-        if core.id_of(ids,desc.root)==0 {return {},.Invalid}
+        if capture_id(ids,temporary,desc.root)==0 {return {},.Invalid}
         append(&roots,Root{entity=desc.root})
     } else if desc.entities==nil {
         for row in 0..<core.count(ids) {
@@ -534,6 +535,9 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
             }
             append(&roots,root)
         }
+        for e in temporary {
+            if !core.has(parents,e) {append(&roots,Root{entity=e,tie=u32(core.entity_index(e))})}
+        }
         slice.sort_by(roots[:],proc(a,b:Root) -> bool {
             if a.known!=b.known {return a.known}
             return a.order<b.order || a.order==b.order && a.tie<b.tie
@@ -546,11 +550,10 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
     stack:=make([dynamic]Visit,context.temp_allocator)
     #reverse for root,at in roots {append(&stack,Visit{root.entity,NONE_ROW,u32(at)})}
     for e in desc.entities {
-        if core.id_of(ids,e)==0 || e in row_of {continue}
+        if capture_id(ids,temporary,e)==0 || e in row_of {continue}
         row_of[e]=u32(len(placed))
         append(&placed,Visit{e,NONE_ROW,u32(len(placed))})
     }
-    hierarchy:=core.ref(hierarchy_storage)
     references:=core.world_table_of(w,Scene_Reference)
     for len(stack)>0 {
         visit:=pop(&stack)
@@ -560,7 +563,7 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
         if !desc.sections && references!=nil && core.has(references,visit.entity) {continue}
         first,order:=len(stack),u32(0)
         for child:=core.first_child(hierarchy,visit.entity);child!=core.NONE;child=core.next_sibling(hierarchy,child) {
-            if core.id_of(ids,child)==0 {continue}
+            if capture_id(ids,temporary,child)==0 {continue}
             append(&stack,Visit{child,row,order})
             order+=1
         }
@@ -576,14 +579,18 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
     for visit in placed {
         label:=names!=nil?core.name_get(names,visit.entity):""
         parent:=visit.parent==NONE_ROW?0:asset.scene_ids(scene)[visit.parent]
-        _,add_error:=asset.scene_entity_add(scene,doc_id(ids,members,desc.section,visit.entity),parent,label,int(visit.order))
+        identity:=capture_id(ids,temporary,visit.entity)
+        if desc.section!=core.NONE && members!=nil {
+            if member,ok:=core.get(members,visit.entity);ok && member.local!=0 {identity=member.local}
+        }
+        _,add_error:=asset.scene_entity_add(scene,identity,parent,label,int(visit.order))
         if add_error!=.None {return report,add_error==.Invalid?.Duplicate_Id:.Out_Of_Memory}
     }
     report.entities=len(placed)
 
     table_rows:=make([dynamic]u32,context.temp_allocator)
     images:=make([dynamic]u8,context.temp_allocator)
-    pending:=unresolved_map(core.world_storage_of(w,Unresolved_References))
+    pending:=unresolved_map(capture_storage(w,Unresolved_References))
     for &info,at in w.info.tables {
         value_type:=&types.tables[at]
         if info.place!=w.place || is_structural(info.type) || info.derived || value_type.type==serial.TYPE_NONE {continue}
@@ -614,7 +621,7 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
                 if target!=core.NONE {
                     // Outside what is captured: an entity of a section keeps its Id in the world.
                     if target_row,inside:=row_of[target];inside {saved=asset.scene_ids(scene)[target_row]}
-                    else if desc.root==core.NONE || desc.entities!=nil || desc.outside {saved=core.id_of(ids,target)}
+                    else if desc.root==core.NONE || desc.entities!=nil || desc.outside {saved=capture_id(ids,temporary,target)}
                     if saved==0 {report.dangling+=1}
                 } else {
                     saved=pending[{visit.entity,hash,offset}]
@@ -637,6 +644,22 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
         if carry(w,scene,previous,&report)!=.None {return report,.Out_Of_Memory}
     }
     return report,.None
+}
+
+// Read a storage during serialization without advancing its write revision.
+capture_storage :: proc(w:core.World_Ref,$T:typeid) -> core.Ref(T) {
+    for &s in w.info.storages {
+        if s.place==w.place && s.type==T && !s.by_world {
+            return core.ref(cast(^T)(uintptr(w.data)+s.offset))
+        }
+    }
+    return {}
+}
+
+@(private)
+capture_id :: proc(ids:^core.Table(core.Id,$A),temporary:map[core.Entity]base.Entity_Id,e:core.Entity) -> base.Entity_Id {
+    if id,ok:=temporary[e];ok {return id}
+    return core.id_of(ids,e)
 }
 
 // Captures the world and writes it to a file of the assets.

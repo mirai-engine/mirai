@@ -33,6 +33,8 @@ sound_hear_source :: proc(s:^Session,source:eaudio.Audio_Source) -> bool {
     if s.app.mixer==nil {return false}
     content_used(s,source.sound)
     eaudio.buses_apply(s.app.mixer,core.world_storage_of(edited_world(s),eaudio.Audio_Settings),core.world_storage_of(edited_world(s),eaudio.Audio_Volumes))
+    shared:=core.world_ref(s.app.shared,s.app.info,.Shared)
+    if applied:=core.world_storage_of(shared,eaudio.Mixer_Buses);applied!=nil {applied.set=false}
     heard:=source
     heard.spatial=false
     s.heard=eaudio.voice_start(s.app.mixer,s.app,heard,core.NONE,nil)

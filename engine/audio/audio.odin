@@ -287,6 +287,21 @@ Mixer_Reverb :: struct {
     reverb:Reverb,
     bus:Audio_Bus,
     set:bool,
+    world:core.World_Id,
+    seen:[5]core.Seen,
+    worlds:core.Seen,
+    position:[3]f32,
+    listening,measured:bool,
+    room:Reverb,
+}
+
+@(storage,host)
+Mixer_Buses :: struct {
+    world:core.World_Id,
+    settings,volumes:core.Seen,
+    count:int,
+    lowpass:f32,
+    set:bool,
 }
 
 @(step="late",stage="end",after="camera_view")
@@ -436,21 +451,31 @@ state_put :: proc(states:^core.Table(Audio_Source_State),e:core.Entity,state:Aud
 @(step="late",stage="end",after="camera_view")
 audio_reverb :: proc(
     reverbs:^core.Table(Audio_Reverb,.Read),volumes:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),listeners:^core.Table(Audio_Listener,.Read),
-    view:core.Ref(core.View),settings:core.Ref(Audio_Settings),medium:core.Ref(Audio_Medium),frame:core.Frame_Time,reverb:^Mixer_Reverb,m:^Mixer,
+    view:core.Ref(core.View),settings:core.Ref(Audio_Settings),medium:core.Ref(Audio_Medium),frame:core.Frame_Time,reverb:^Mixer_Reverb,m:^Mixer,id:core.World_Id,
 ) {
     if m==nil || reverb==nil {return}
     bus:=BUS_MASTER
     if settings.ptr!=nil {bus=settings.reverb_bus}
     hearing:=Hearing{worlds=worlds,listeners=listeners,view=view}
-    room,silent:Audio_Reverb
-    if position,_,_,found:=listener_pose(&hearing);found {room=volume.at({volumes,worlds,parents,sections,splines},reverbs,position,silent,reverb_mix)}
-    target:=(^Reverb)(&room)^
+    position,_,_,found:=listener_pose(&hearing)
+    changed:=core.touched(reverbs,&reverb.seen[0]) | core.touched(volumes,&reverb.seen[1]) |
+        core.touched(parents,&reverb.seen[2]) | core.touched(sections,&reverb.seen[3]) |
+        core.touched(splines,&reverb.seen[4])
+    changed=volume.poses_changed(worlds,reverbs,sections,&reverb.worlds) || changed
+    if !reverb.measured || id!=reverb.world || changed || found!=reverb.listening || position!=reverb.position {
+        room,silent:Audio_Reverb
+        if found {room=volume.at({volumes,worlds,parents,sections,splines},reverbs,position,silent,reverb_mix)}
+        reverb.room=(^Reverb)(&room)^
+        reverb.world,reverb.position,reverb.listening,reverb.measured=id,position,found,true
+    }
+    target:=reverb.room
     if medium.ptr!=nil {
         if weight:=clamp(medium.weight,0,1);weight>0 {
             target=transmute(Reverb)((transmute([4]f32)target)*(1-weight)+(transmute([4]f32)reverb_clamp(medium.reverb))*weight)
         }
     }
     if !bus_ready(m,bus) {bus=BUS_MASTER}
+    if reverb.set && reverb.reverb==target && reverb.bus==bus {return}
     now:=target
     if reverb.set && reverb.bus==bus && frame.dt>0 {
         from:=transmute([4]f32)reverb.reverb
@@ -462,7 +487,7 @@ audio_reverb :: proc(
         now=transmute(Reverb)next
     }
     if reverb.set && reverb.reverb==now && reverb.bus==bus {return}
-    if mixer.reverb_set(m,now,mixer.Bus(bus)) {reverb^={now,bus,true}}
+    if mixer.reverb_set(m,now,mixer.Bus(bus)) {reverb.reverb,reverb.bus,reverb.set=now,bus,true}
 }
 
 reverb_mix :: proc(value:^Audio_Reverb,by:Audio_Reverb,weight:f32,add:bool) {
@@ -473,15 +498,25 @@ reverb_mix :: proc(value:^Audio_Reverb,by:Audio_Reverb,weight:f32,add:bool) {
 // The buses of the mixer as the settings and the medium of the listener say;
 // only what differs is sent.
 @(step="late",stage="end")
-audio_buses :: proc(settings:core.Ref(Audio_Settings),volumes:core.Ref(Audio_Volumes),medium:core.Ref(Audio_Medium),m:^Mixer,problems:^core.Problems) {
-    buses_apply(m,settings.ptr,volumes.ptr,medium.ptr,problems)
+audio_buses :: proc(
+    settings:core.Ref(Audio_Settings),volumes:core.Ref(Audio_Volumes),medium:core.Ref(Audio_Medium),
+    settings_stamp:core.Stamp(Audio_Settings),volume_stamp:core.Stamp(Audio_Volumes),
+    applied:^Mixer_Buses,m:^Mixer,id:core.World_Id,problems:^core.Problems,
+) {
+    if m==nil || applied==nil {return}
+    changed:=core.touched(settings_stamp,&applied.settings) | core.touched(volume_stamp,&applied.volumes)
+    lowpass:=medium.ptr.lowpass if medium.ptr!=nil else 0
+    if applied.set && applied.world==id && !changed && applied.count==mixer.bus_count(m) && applied.lowpass==lowpass {return}
+    applied.set=buses_apply(m,settings.ptr,volumes.ptr,medium.ptr,problems)
+    applied.world,applied.count,applied.lowpass=id,mixer.bus_count(m),lowpass
 }
 
 // Gives the buses of the mixer what the settings say, and the master the
-// lowpass of the medium: what audio_buses does each frame of a game, and the
+// lowpass of the medium: what audio_buses applies in a game and the
 // editor before it plays a sound to be heard.
-buses_apply :: proc(m:^Mixer,settings:^Audio_Settings,volumes:^Audio_Volumes=nil,medium:^Audio_Medium=nil,problems:^core.Problems=nil) {
-    if m==nil || settings==nil && medium==nil {return}
+buses_apply :: proc(m:^Mixer,settings:^Audio_Settings,volumes:^Audio_Volumes=nil,medium:^Audio_Medium=nil,problems:^core.Problems=nil) -> bool {
+    if m==nil {return false}
+    if settings==nil && medium==nil {return true}
     if settings!=nil {
         for setting in settings.buses {
             if setting=={} {continue}
@@ -489,27 +524,29 @@ buses_apply :: proc(m:^Mixer,settings:^Audio_Settings,volumes:^Audio_Volumes=nil
             if setting.duck_amount>0 {_=bus_ready(m,setting.duck_by)}
         }
     }
+    ok:=true
     for index in 0..<min(mixer.bus_count(m),AUDIO_BUS_CAPACITY) {
         bus:=Audio_Bus(index)
-        setting:=audio_bus_setting(settings,bus)
-        if volume:=db_volume(setting.gain)*audio_volume(volumes,bus);mixer.bus_volume(m,mixer.Bus(bus))!=volume {mixer.bus_set_volume(m,mixer.Bus(bus),volume)}
+        setting:=audio_bus_setting(core.ref(settings),bus)
+        if volume:=db_volume(setting.gain)*audio_volume(core.ref(volumes),bus);mixer.bus_volume(m,mixer.Bus(bus))!=volume {ok=mixer.bus_set_volume(m,mixer.Bus(bus),volume) && ok}
         lowpass:=max(setting.lowpass,0)
         if bus==BUS_MASTER && medium!=nil {lowpass=lowpass_lower(lowpass,medium.lowpass)}
-        if mixer.bus_lowpass(m,mixer.Bus(bus))!=lowpass {mixer.bus_set_lowpass(m,mixer.Bus(bus),lowpass)}
-        if reverb:=reverb_clamp(setting.reverb);mixer.bus_reverb(m,mixer.Bus(bus))!=reverb {mixer.bus_set_reverb(m,mixer.Bus(bus),reverb)}
+        if mixer.bus_lowpass(m,mixer.Bus(bus))!=lowpass {ok=mixer.bus_set_lowpass(m,mixer.Bus(bus),lowpass) && ok}
+        if reverb:=reverb_clamp(setting.reverb);mixer.bus_reverb(m,mixer.Bus(bus))!=reverb {ok=mixer.bus_set_reverb(m,mixer.Bus(bus),reverb) && ok}
         if bus==BUS_MASTER {continue}
         send:=setting.send
         if send>=bus {
             if send!=BUS_MASTER {core.report(problems,core.NONE,"audio.send","Audio_Settings: bus %d sends to bus %d, which does not come before it, so it plays into the master; send it to BUS_MASTER or a bus of a lower number",int(bus),int(send))}
             send=BUS_MASTER
         }
-        if mixer.bus_send(m,mixer.Bus(bus))!=mixer.Bus(send) {mixer.bus_set_send(m,mixer.Bus(bus),mixer.Bus(send))}
+        if mixer.bus_send(m,mixer.Bus(bus))!=mixer.Bus(send) {ok=mixer.bus_set_send(m,mixer.Bus(bus),mixer.Bus(send)) && ok}
         duck:mixer.Duck
         if amount:=clamp(setting.duck_amount,0,1);amount>0 && setting.duck_by!=bus && int(setting.duck_by)<mixer.bus_count(m) {
             duck={mixer.Bus(setting.duck_by),max(setting.duck_threshold,0),amount,max(setting.duck_attack,0),max(setting.duck_release,0)}
         }
-        if mixer.bus_duck(m,mixer.Bus(bus))!=duck {mixer.bus_set_duck(m,mixer.Bus(bus),duck)}
+        if mixer.bus_duck(m,mixer.Bus(bus))!=duck {ok=mixer.bus_set_duck(m,mixer.Bus(bus),duck) && ok}
     }
+    return ok
 }
 
 // Plays the mixer on the output of the settings when they change; while that
@@ -559,8 +596,8 @@ audio_release :: proc(voices:^Voices,m:^Mixer) {
 }
 
 // The setting of a bus: its entry, or one that plays it as it comes.
-audio_bus_setting :: proc "contextless" (settings:^Audio_Settings,bus:Audio_Bus) -> Audio_Bus_Setting {
-    if settings!=nil {
+audio_bus_setting :: proc "contextless" (settings:core.Ref(Audio_Settings),bus:Audio_Bus) -> Audio_Bus_Setting {
+    if settings.ptr!=nil {
         for entry in settings.buses {
             if entry!={} && entry.bus==bus {return entry}
         }
@@ -586,9 +623,9 @@ audio_bus_setting_set :: proc "contextless" (settings:^Audio_Settings,setting:Au
 }
 
 // The volume the player chose for a bus, 0 to 1; 1 without a choice.
-audio_volume :: proc "contextless" (volumes:^Audio_Volumes,bus:Audio_Bus) -> f32 {
-    if volumes==nil || int(bus)>=AUDIO_BUS_CAPACITY {return 1}
-    volume:=(^[AUDIO_BUS_CAPACITY]f32)(volumes)[int(bus)]
+audio_volume :: proc "contextless" (volumes:core.Ref(Audio_Volumes),bus:Audio_Bus) -> f32 {
+    if volumes.ptr==nil || int(bus)>=AUDIO_BUS_CAPACITY {return 1}
+    volume:=(^[AUDIO_BUS_CAPACITY]f32)(volumes.ptr)[int(bus)]
     return volume>=0?min(volume,1):0
 }
 

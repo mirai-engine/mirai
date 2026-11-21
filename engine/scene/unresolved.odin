@@ -51,9 +51,9 @@ Unresolved_Key :: struct {entity:core.Entity,table:u64,offset:u32}
 
 // The pending targets by field, for whoever asks for many.
 @(private)
-unresolved_map :: proc(u:^Unresolved_References) -> map[Unresolved_Key]base.Entity_Id {
+unresolved_map :: proc(u:core.Ref(Unresolved_References)) -> map[Unresolved_Key]base.Entity_Id {
     pending:=make(map[Unresolved_Key]base.Entity_Id,context.temp_allocator)
-    if u==nil {return pending}
+    if u.ptr==nil {return pending}
     reserve(&pending,len(u.items))
     for item in u.items {pending[{item.entity,item.table,item.offset}]=item.target}
     return pending

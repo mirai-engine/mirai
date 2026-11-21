@@ -46,7 +46,8 @@ the name of their type) and a world (handles and tables).
   rotation is none and a zero scale is 1; its rows wait for the end of the function that spawned
   it. It never reads a file: a prefab that is not loaded, or that takes something that is not,
   gives its root at once with only its `Transform`, `Parent`, `Id` and `Prefab_Pending{prefab}`;
-  jobs read the prefab and what it takes (`assets_warm_begin`, at most `PREFAB_WARMS` at once) and
+  `scene.spawn_pending` reports this on the root. Wait for `Prefab_Pending` to go before
+  reading its parts. Jobs read the prefab and its dependencies (`assets_warm_begin`) and
   `scene_spawns` (`frame`, both loops), once a read ended or the spawns that wait changed, and not
   in every frame meanwhile, places the rest on the root, which keeps what it was given
   meanwhile (a seat that drives it keeps driving it); a prefab that does not place takes its root
@@ -244,15 +245,15 @@ sources](#sources-and-residency). `streaming_sections` (`frame`) loads turned of
 box falls within its distance of a source (`Scene_Reference.distance`, or the setting `load`; or the
 source's `distance`) and turns it on within the same share of it that `active` is of `load`; it
 turns it off or unloads it past `RESIDENT_KEEP` times each. It only looks again when the sources
-moved, the references changed or the box of one moved. `streaming_crossings` (`game`) takes what
-moves (with `Motion` awake and that moved) and leaves the box of its section to the loaded and on
-section that contains it, found in the tree of the boxes of the sections (`scene.Section_Boxes`,
-made again when a reference or where one is changes, which the server of `multiplayer` also asks),
+moved, the references changed or the box of one moved. `streaming_crossings` (fixed `intent`) takes
+an awake body outside its section to the active section that contains it, found by
+`scene.Section_Boxes` from the current section bounds,
 or to the root, where it is, and removes its `Section_Member`: unloading a section
 does not take what left, and its scene leaves a tombstone. What has `Roaming` and hangs from the
 root, on or not, hangs again from the loaded and on section whose box contains it. It remembers
-which section each one is from until the hierarchy changes. Physics accepts that parent change
-because it leaves the body where the simulation has it. `navigation` keeps the tiles of a `Spatial`
+which section each one is from until the hierarchy changes. A locked transform gets a
+`core.Places` request in the same tick, keeping the body's world pose and velocity. Sections that
+exchange locked bodies need matching scales. `navigation` keeps the tiles of a `Spatial`
 section that is not on until it returns.
 
 **Far shape (HLOD).** `streaming_far` (`frame`, both loops, after `scene_sections`) shows, while a
@@ -553,8 +554,8 @@ the reverb of the room where the listener is and what covers each source.
 - **Reverb.** The mixer has [only one](../../mirai-platform/references/audio.md#reverb): that of
   the room where the listener is. `Audio_Reverb` is a value of [volume](#volume): without a
   `Volume`, the level's; without any, nothing reverberates. `audio_reverb` (`late`) takes the blend
-  at the listener and moves toward it over some `REVERB_FADE` seconds; it only sends while it
-  changes. It returns in `Audio_Settings.reverb_bus`.
+  at the listener when the listener or the volumes change and fades to it over time. The mixer
+  receives changed values on `Audio_Settings.reverb_bus`.
   - `Audio_Source.reverb` is the part of the source that it sends to the room; a one-shot sends
     none, as `AUDIO_SOURCE_DEFAULT`.
 - **Medium.** `Audio_Medium` is what surrounds the listener besides air, like the water they are
@@ -563,7 +564,7 @@ the reverb of the room where the listener is and what covers each source.
   `audio_buses`, from where the listener is (`listener_position`); at zeros it is air.
   `audio_reverb` mixes its reverb by its weight over that of the room, with the same fade, and
   `audio_buses` gives the master the lower cutoff between that of `Audio_Settings` and that of the
-  medium.
+  medium. A bus pass runs when the settings, bus count, volumes or cutoff change.
 - **Occlusion.** A spatial source with `Audio_Occlusion` is heard through what stands between it
   and the listener, as far as it is hidden: the mixer's direct effect blends each band toward what
   the bodies crossed let through (`Audio_Material.transmission`, `AUDIO_MATERIAL_DEFAULT` for a
@@ -727,6 +728,7 @@ one per local player that has screens or sees a `World_Widget`.
   with `ui_event`, `clicked`, `clicked_item`, `changed`, `changed_value`, `changed_text`,
   `submitted`, `dropped`, `finished` and `back`: of several of one kind in a frame, all read the
   last, which is what the widget asks for now. Texts are valid as long as the events.
+  Pass the world's `^Gui` to a named helper to check the name against its interface.
 - **Requests (`UI_Requests`).** `gui.play_animation(r, e, node, anim, item)` plays an animation of
   the `.ui` on a node (`ui.tree_play`; its end arrives as `Finished` with the animation in `from`)
   and `gui.focus(r, e, node, item)` moves the focus; they are applied when the interface of `e` is
@@ -779,8 +781,8 @@ Saves: the `World` written in a slot, a file `saves/<slot>.save` in the project'
   - `Invalid_Slot`: the name is not letters, digits, spaces, `-` or `_`, or is a Windows device
     name. `Invalid_Label`: the label does not fit in `LABEL_CAPACITY`.
   - `saves_serve` (`input`, game only) serves them at the start of the next frame with what the
-    tick left and leaves a `Result{op, kind, error, slot}` per request in `Save_Results`, which is
-    cleared every frame. Requests and results are `keep`: loading does not lose them.
+    tick left and emits a result per request. Readers receive new entries in `Save_Results.items`.
+    Requests and results survive loading.
 - A slot is a header, the thumbnail as PNG, a scene document (`scene.capture`) and the list of
   borrowed `Id`s. The header says what it is without reading the world: `slots(state, app, out)`
   lists the slots from it (with `all`, also those that do not load, with their `error`),
@@ -801,14 +803,16 @@ Saves: the `World` written in a slot, a file `saves/<slot>.save` in the project'
     `THUMBNAIL_SIDE_MAX` is `Corrupt`; without assets or in a world the application did not make,
     `Unavailable`.
   - **Components are stored** of the entities with `Id`. One without `Id` (a `transient` copy)
-    travels with one that `core.id_new` lends it and comes back without it.
+    travels with a temporary identity in the document and comes back without it. Capturing
+    leaves the live world's Id table and index as they were.
   - `transient` fields are not stored, and a component stored with another layout migrates by field
     name.
   - **Storages are not stored**: what a save must keep goes in a component. What is derived (bodies,
     replicas, caches) is redone by the owning library from the components; that is why the bodies'
     velocity is in `core.Motion` and a clip's time in `anim.Animation_Progress`, from which a
     cinematic asks for its shot again. A state storage can prepare its saved components at
-    capture with [save_prepare](../../mirai-core/references/generator.md#attributes).
+    capture on a private snapshot with
+    [save_prepare](../../mirai-core/references/generator.md#attributes).
 - **It is written after capturing.** The capture is immediate. With a renderer the slot waits for
   its thumbnail: the player's view (`core.View`) drawn in a texture view of the library, without
   the scene's UI and exposed at once, which returns without waiting for the GPU

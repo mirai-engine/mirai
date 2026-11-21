@@ -282,7 +282,7 @@ a transition.
 
 - `Camera_Activation{action, blend}`, on a camera: the player who drives the target of its
   `Camera_Follow` sees through it while holding `action`. `camera_select` requests it as an
-  override whose owner is the camera.
+  override whose owner is the camera. An unassigned action leaves the activation idle.
 - The `Aim` preset is such a camera (Create > Cameras > Aim): an `Orbit` that aims, so the body
   looks where it looks and walks sideways, starting from where the camera it left looked.
 
@@ -315,7 +315,7 @@ of the focused slot in `render.View_Camera`.
 body it hangs from (the nearest entity above it that a seat drives, or else its root) or, for a
 camera that hangs from nothing, that of the focused player. It is resolved every frame: it follows
 the body that is driven now. The inspector shows only the fields of its `mode` (`mode=` in their
-tags).
+tags). The runtime pivot, orbit angles, arms and shakes live in `Camera_Follow_State`.
 
 - `Follow`: keeps `offset` from the target with a smoothed pivot (`half_life` seconds to close half
   the distance; 0: rigid); `look_at` orients it toward the target.

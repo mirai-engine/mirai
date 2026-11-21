@@ -16,14 +16,13 @@ actors to the head of the clip.
 
 ## Components
 
-- **`Cinematic`** (`replicated`), on the entity with the `Animation`: the library writes its status
-  (`Stopped`, `Playing`, `Paused`, `Completed`, from the clip), where the clip is and its anchor.
-  `seat` (none: the focused local player) and `block_mask` are `local`: each end has its own.
+- **`Cinematic`** authors the seat and input block on the entity with the `Animation`.
+- **`Cinematic_State`** holds the playback status and anchor derived from the clip. It is
+  recreated from playback when a save is loaded.
 
 An entity out of the timeline that the clip moves or puts markers on (a camera, an actor) carries
 an `anim.Animation_Target` that names the timeline. References are `Entity` fields: scenes, prefabs
-and saves remap them. There is no other cinematics component: a shot is not an entity and there is
-no camera of the cinematic's own.
+and saves remap them. The clip markers identify the cameras the cinematic uses.
 
 ## Playback
 
@@ -71,11 +70,10 @@ sink, which does nothing while `time.resimulating`
 ## Networking
 
 - `Animation` is not replicated: each end plays its own clip. Where this end decides the timeline
-  (`core.owned`: the server, or no network) `Cinematic` takes its status from the clip and anchors
-  it: the tick, the time of the clip then and its rate. The plugin does not import networking.
-- The server sends `Cinematic` only when the anchor moves (a command, a clip that left it); `time`
-  and `duration` are `local`. A client gives its clip the commands that take it where the anchor
-  says for the tick, so what its own game asks of that clip is undone.
+  (`core.owned`: the server, or no network) `Cinematic_State` takes its status from the clip and
+  anchors it at a tick, time and rate. The plugin does not import networking.
+- The server sends `Cinematic_State` when the anchor changes. Time and duration stay local.
+  The client uses the anchor to seek its clip to the time for the current tick.
 - The timeline entity carries `Replicate` and a stable `Id`, and its actors and clip are in the
   scene or prefab that both ends loaded. Every end shows its own seat the shots of its clip.
 

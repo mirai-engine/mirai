@@ -51,7 +51,7 @@ The player chooses the language in `UI_Preferences.language`: a `Dropdown` writt
 receives `texts:^core.Texts` and asks with the language of the player:
 
 ```odin
-language:=gui.ui_language(preferences.ptr)
+language:=gui.ui_language(preferences)
 title,found:=core.text(texts,"menu.start",language)   // or a core.Text field of a row
 ```
 

@@ -84,10 +84,10 @@ Home :: struct {entity,section:core.Entity}
 // from a section that is loaded and on where it is. Only what moved, or what
 // a section that changed may hold, is looked at, and where each hangs is
 // looked up again only when the hierarchy changed.
-@(step="frame",loops="game",before="streaming_sections")
+@(step="fixed")
 streaming_crossings :: proc(
     motions:^core.Table(core.Motion,.Read),references:^core.Table(scene.Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),roaming:^core.Table(scene.Roaming,.Read),
-    hierarchy:core.Ref(core.Hierarchy),parents:^core.Table(core.Parent),transforms:^core.Table(core.Transform),members:^core.Table(scene.Section_Member),
+    hierarchy:core.Ref(core.Hierarchy),parents:^core.Table(core.Parent),transforms:^core.Table(core.Transform),places:^core.Places,members:^core.Table(scene.Section_Member),
     crossings:^Streaming_Crossings,problems:^core.Problems,
 ) {
     if hierarchy.ptr.version!=crossings.hierarchy {
@@ -131,7 +131,7 @@ streaming_crossings :: proc(
         reference,_:=core.get(references,section)
         home,placed:=core.get(worlds,section)
         if !placed || reference.extents=={} || scene.section_holds(reference,home.transform,core.at(worlds,at).position) {continue}
-        if !crossing_hang(crossings,worlds,hierarchy,parents,transforms,e,at,section) {continue}
+        if !crossing_hang(crossings,worlds,hierarchy,parents,transforms,places,e,at,section,problems) {continue}
         core.remove(members,e)
         crossings.homes[index]={}
     }
@@ -141,15 +141,14 @@ streaming_crossings :: proc(
         e:=t.entities[row]
         at:=core.row_of(worlds,e)
         if at<0 || core.raw_row(core.raw(parents),e)>=0 || !sections && !core.changed(worlds,moved,at) {continue}
-        crossing_hang(crossings,worlds,hierarchy,parents,transforms,e,at,core.NONE,false)
+        crossing_hang(crossings,worlds,hierarchy,parents,transforms,places,e,at,core.NONE,problems,false)
     }
 }
 
-// Hangs e, where it is (its row at of worlds), from the section but from that
-// is loaded and on and whose box holds it; when none does, from the root, or,
-// with root false, it stays where it hangs.
+// Hangs e where it is from an active section whose box holds it, or from the
+// root when root is true. The Transform owner applies a queued place this tick.
 @(private)
-crossing_hang :: proc(crossings:^Streaming_Crossings,worlds:^core.Table(core.World_Transform,.Read),hierarchy:core.Ref(core.Hierarchy),parents:^core.Table(core.Parent),transforms:^core.Table(core.Transform),e:core.Entity,at:int,from:core.Entity,root:=true) -> (hung:bool) {
+crossing_hang :: proc(crossings:^Streaming_Crossings,worlds:^core.Table(core.World_Transform,.Read),hierarchy:core.Ref(core.Hierarchy),parents:^core.Table(core.Parent),transforms:^core.Table(core.Transform),places:^core.Places,e:core.Entity,at:int,from:core.Entity,problems:^core.Problems,root:=true) -> (hung:bool) {
     target:=core.NONE
     target_pose:=mm.TRANSFORM_IDENTITY
     clear(&crossings.holding)
@@ -160,17 +159,28 @@ crossing_hang :: proc(crossings:^Streaming_Crossings,worlds:^core.Table(core.Wor
         break
     }
     if target==core.NONE && !root {return false}
-    local,ok:=mm.transform_relative(core.at(worlds,at).transform,target_pose)
-    if !ok {return false}
-    if transform:=(^core.Transform)(core.raw_edit(core.raw(transforms),type_info_of(core.Transform),e));transform!=nil {transform^=transmute(core.Transform)local}
+    pose:=core.at(worlds,at).transform
+    local:=mm.transform_relative(pose,target_pose) or_return
+    current:=core.get(transforms,e) or_return
+    owner:=core.owner(transforms,e)
+    if owner!=0 && current.scale!=local.scale {
+        core.report(problems,e,"streaming.scale",
+            "a section crossing would rescale a body whose Transform is owned; use matching section scales to let it change sections")
+        return false
+    }
     if target==core.NONE {
         core.remove(parents,e)
+    } else {
+        last:i32=-1
+        for child:=core.first_child(hierarchy,target);child!=core.NONE;child=core.next_sibling(hierarchy,child) {
+            if p,has:=core.get(parents,child);has {last=max(last,p.order)}
+        }
+        if !core.add(parents,e,core.Parent{target,last+1}) {return false}
+    }
+    if row:=core.free(transforms,e);row!=nil {
+        row^=core.from_math(local)
         return true
     }
-    last:i32=-1
-    for child:=core.first_child(hierarchy,target);child!=core.NONE;child=core.next_sibling(hierarchy,child) {
-        if p,has:=core.get(parents,child);has {last=max(last,p.order)}
-    }
-    core.add(parents,e,core.Parent{target,last+1})
-    return true
+    return core.place({transforms=transforms,parents=core.read(parents),places=places},e,pose.position,pose.rotation)
+
 }

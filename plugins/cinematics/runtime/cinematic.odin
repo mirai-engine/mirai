@@ -31,14 +31,16 @@ Cinematic_Status :: enum u8 {
     Completed, // a clip that does not loop reached its end
 }
 
-// In a network session its state travels from the server, which is the one
-// whose game plays, pauses or seeks the clip: a client seeks its own clip to
-// where the anchor says, so every end shows the same time of the same tick and
-// nothing is sent while it plays.
-@(component,replicated,description="Makes the clip of the Animation of this entity a cinematic: its markers on cameras are the shots a seat sees and those on actors play their actions, and a network session keeps it at the same time on every end.")
+@(component,description="Makes the clip of the Animation of this entity a cinematic: its markers on cameras are the shots a seat sees and those on actors play their actions.")
 Cinematic :: struct {
-    seat:core.Entity `mirai:"local"`,                // whose view the shots take; none: the focused local player
-    block_mask:input.Action_Mask `mirai:"local"`,     // actions of the seat blocked while a shot shows; 0 lets the input through
+    seat:core.Entity,              // whose view the shots take; none: the focused local player
+    block_mask:input.Action_Mask,  // actions blocked while a shot shows; 0 lets input through
+}
+
+// The server sends an anchor when playback changes. Each client derives its
+// playback position from that anchor and its own clip.
+@(component,derived,replicated)
+Cinematic_State :: struct {
     status:Cinematic_Status `mirai:"readonly"`,
     time:f32 `mirai:"readonly,unit=s,local"`,
     duration:f32 `mirai:"readonly,unit=s,local"`,
@@ -59,7 +61,7 @@ cinematic_status :: proc "contextless" (playing,ended:bool,time:f32) -> Cinemati
 
 // Where a clip is at a tick by its anchor: the time it had then plus what it played since, folded
 // into a clip that loops and held at the end of one that does not.
-cinematic_anchored :: proc "contextless" (c:Cinematic,tick:u64,dt,duration:f32,loop:bool) -> f32 {
+cinematic_anchored :: proc "contextless" (c:Cinematic_State,tick:u64,dt,duration:f32,loop:bool) -> f32 {
     elapsed:=f32(tick-c.anchor_tick) if tick>c.anchor_tick else 0
     at:=c.anchor_time+elapsed*dt*c.anchor_rate
     if !(abs(at)<=max(f32)) {return 0}
@@ -109,12 +111,12 @@ clip_apart :: proc "contextless" (a,b,duration:f32,loop:bool) -> f32 {
 // On an end that does not decide a timeline, its clip goes where the anchor says it is at the end
 // of this tick: asked before animation_sample, which seeks and then advances a clip that plays.
 @(step="fixed")
-cinematic_follow :: proc(cinematics:^core.Table(Cinematic,.Read),animations:^core.Table(anim.Animation,.Read),playback:core.Ref(anim.Playback),requests:^anim.Animation_Requests,time:core.Time,remotes:^core.Table(core.Remote,.Read)) {
+cinematic_follow :: proc(cinematics:^core.Table(Cinematic,.Read),states:^core.Table(Cinematic_State,.Read),animations:^core.Table(anim.Animation,.Read),playback:core.Ref(anim.Playback),requests:^anim.Animation_Requests,time:core.Time,remotes:^core.Table(core.Remote,.Read)) {
     if !time.playing {return}
     for row in 0..<core.count(cinematics) {
         e:=core.entity_at(cinematics,row)
         if core.owned(remotes,e) {continue}
-        c:=core.at(cinematics,row)
+        c:=core.get(states,e) or_continue
         animated:=core.has(animations,e)
         at,duration,_,clipped:=anim.animation_progress(playback.ptr,e)
         if !animated || !clipped {continue}
@@ -123,7 +125,7 @@ cinematic_follow :: proc(cinematics:^core.Table(Cinematic,.Read),animations:^cor
         if anim.animation_playing(playback.ptr,e)!=playing {anim.animation_command(requests,e,.Resume if playing else .Pause,speed=c.anchor_rate)}
         want:=cinematic_anchored(c,time.tick,time.dt,duration,loop)
         step:=time.dt*c.anchor_rate if playing else 0
-        ahead:=Cinematic{anchor_time=at,anchor_rate=1}
+        ahead:=Cinematic_State{anchor_time=at,anchor_rate=1}
         if clip_apart(want,cinematic_anchored(ahead,1,step,duration,loop),duration,loop)>time.dt*max(abs(c.anchor_rate),1)*.5 {
             anim.animation_command(requests,e,.Seek,max(want-step,0))
         }
@@ -135,14 +137,21 @@ cinematic_follow :: proc(cinematics:^core.Table(Cinematic,.Read),animations:^cor
 // game does not play, only the actors follow the head of the clip.
 @(step="fixed",loops="game editor",stage="react",after="animation_advance")
 cinematic_advance :: proc(
-    entities:core.Ref(core.Entities),cinematics:^core.Table(Cinematic),cameras:^core.Table(render.Camera,.Read),animations:^core.Table(anim.Animation,.Read),
+    entities:core.Ref(core.Entities),cinematics:^core.Table(Cinematic,.Read),states:^core.Table(Cinematic_State),cameras:^core.Table(render.Camera,.Read),animations:^core.Table(anim.Animation,.Read),
     playback:core.Ref(anim.Playback),content_sources:core.Ref(anim.Source_Assets),app:^host.App,actions:core.Ref(anim.Action_Runtime),
     requests:^anim.Animation_Requests,shown:core.Ref(cam.Cameras),seat_state:core.Ref(input.Seats),camera_requests:^cam.Camera_Requests,
     seat_requests:^input.Seat_Requests,seats:^core.Table(input.Seat,.Read),time:core.Time,remotes:^core.Table(core.Remote,.Read),problems:^core.Problems,
 ) {
+    for e in states.entities {
+        if core.raw_row(core.raw(cinematics),e)>=0 {continue}
+        core.remove(states,e)
+        if cam.camera_overriding(shown,e) {cam.camera_override_remove(camera_requests,e)}
+        if input.blocking(seat_state.ptr,e) {input.input_unblock(seat_requests,e)}
+    }
     for row in 0..<core.count(cinematics) {
-        e:=cinematics.entities[row]
-        was:=core.at(cinematics,row)
+        e:=core.entity_at(cinematics,row)
+        config:=core.at(cinematics,row)
+        was,has_state:=core.get(states,e)
         animated:=core.has(animations,e)
         if !animated {
             core.report(problems,e,"cinematics.animation","this Cinematic plays nothing: its entity has no Animation; add one whose asset is the .anim of its clip, with playing set for a timeline that starts by itself")
@@ -161,7 +170,13 @@ cinematic_advance :: proc(
                     next.anchor_tick,next.anchor_time,next.anchor_rate=time.tick,at,rate
                 }
             }
-            if next!=was {core.edit_at(cinematics,row)^=next}
+            if !has_state {
+                if !core.add(states,e,next) {
+                    core.report(problems,e,"cinematics.state","out of memory for cinematic playback state; free memory")
+                }
+            } else if next!=was {
+                core.edit(states,e)^=next
+            }
         }
         showing:=!time.playing || next.status==.Playing || next.status==.Paused
         showed:=was.status==.Playing || was.status==.Paused
@@ -186,7 +201,7 @@ cinematic_advance :: proc(
         }
         if !time.playing {continue}
         shot,_:=cinematic_shot(playback.ptr,content_sources.ptr,app,entities.ptr,cameras,e,at)
-        seat:=next.seat if next.seat!=core.NONE else input.focused(seat_state.ptr,seats)
+        seat:=config.seat if config.seat!=core.NONE else input.focused(seat_state.ptr,seats)
         asked:cam.Camera_Override
         for item in shown.ptr.overrides {if item.active && item.owner==e {asked=item}}
         if !showing || shot.camera==core.NONE || !core.alive(entities.ptr,seat) {
@@ -196,7 +211,7 @@ cinematic_advance :: proc(
         }
         if !asked.active || asked.camera!=shot.camera || asked.seat!=seat {
             cam.camera_override(camera_requests,e,seat,shot.camera,blend=shot.blend)
-            if next.block_mask!=0 {input.input_block(seat_requests,e,seat,next.block_mask)}
-        } else if next.block_mask!=0 && !input.blocking(seat_state.ptr,e) {input.input_block(seat_requests,e,seat,next.block_mask)}
+            if config.block_mask!=0 {input.input_block(seat_requests,e,seat,config.block_mask)}
+        } else if config.block_mask!=0 && !input.blocking(seat_state.ptr,e) {input.input_block(seat_requests,e,seat,config.block_mask)}
     }
 }

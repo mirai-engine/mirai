@@ -73,7 +73,7 @@ source_bind :: proc(
         pack=host.content_prompts(app,settings.prompts),
     }
     s.ctx.game={
-        user=&s.source,family=s.family,prompts=source_prompts,action=source_action,texts=host.app_texts(app),language=ui_language(&gui.preferences),
+        user=&s.source,family=s.family,prompts=source_prompts,action=source_action,texts=host.app_texts(app),language=ui_language(core.ref(&gui.preferences)),
         texture=source_texture,view=source_view,particles=source_particles,sound=source_sound,
     }
     s.ctx.draw_user,s.ctx.draw_user_data=source_draw,&s.source
