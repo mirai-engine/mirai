@@ -1,0 +1,34 @@
+{
+  "scene": "control/control.scene",
+  "steps": [
+    {"name": "place two targets with the same name", "method": "scene.write", "params": {
+      "world": "Game", "entities": [
+        {"name": "Assertion Group A", "children": [
+          {"name": "Assertion Target", "position": [0, 2, 0]}]},
+        {"name": "Assertion Group B", "children": [
+          {"name": "Assertion Target", "position": [0, 3, 0]}]}
+      ]}},
+    {"name": "both targets exist and one is higher", "method": "play.check", "params": {
+      "conditions": [
+        {"no_problems": true},
+        {"entity": "Assertion Target", "component": "Transform",
+         "count": true, "compare": "Equal", "value": 2},
+        {"entity": "Assertion Target", "match": "Any", "field": "Transform.position.y",
+         "compare": "Above", "value": 2.5},
+        {"entity": "Assertion Target", "match": "All", "field": "Door", "compare": "Gone"},
+        {"entity": "Assertion Group A/Assertion Target", "field": "Transform.position",
+         "compare": "Approx", "value": [0, 2, 0], "tolerance": 0.01}
+      ]}},
+    {"name": "the intro finishes", "method": "play.step", "params": {"for": 600, "until": [
+      {"entity": "Control intro", "field": "Cinematic_State.status",
+       "compare": "Equal", "value": "Completed"}
+    ]}},
+    {"name": "check the clock, event log, and runtime problems", "method": "play.check",
+     "params": {"conditions": [
+      {"storage": "Time", "field": "tick", "compare": "Above", "value": 0},
+      {"storage": "Grill_Passes", "field": "queue.log.items", "length": true,
+       "compare": "Equal", "value": 0},
+      {"problem": "physics.transform", "compare": "Gone"}
+    ]}}
+  ]
+}

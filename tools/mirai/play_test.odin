@@ -69,9 +69,12 @@ cmd_play_test :: proc(root:string,args:[]string) -> int {
         fmt.printfln("FAIL %s: %s",report.path,report.failure)
         if len(report.ran)>0 {
             last:=report.ran[len(report.ran)-1]
-            if answer,_:=json.marshal(last.result,allocator=context.temp_allocator);last.error=="" {
-                fmt.printfln("  at tick %d %s answered %s",last.tick,last.method,string(answer))
+            if last.error!="" {continue}
+            if fields,object:=last.result.(json.Object);object {
+                if failure,ok:=fields["failure"].(json.String);ok && failure!="" {continue}
             }
+            answer,_:=json.marshal(last.result,allocator=context.temp_allocator)
+            fmt.printfln("  %s answered %s",last.method,string(answer))
         }
     }
     fmt.printfln("%d of %d scenarios passed.",len(files)-failed,len(files))

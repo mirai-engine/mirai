@@ -219,15 +219,18 @@ api_scenario_call :: proc(server:^api.Server,name,params:string,buffer:[]u8) -> 
 // of its ticks before they hold, nor when a drive ended without arriving; why not.
 @(private)
 scenario_step_held :: proc(params,answer:string) -> (held:bool,why:string) {
-    values:[3]string
-    api.object_values(context.temp_allocator,answer,{"passed","met","drive"},values[:])
+    values:[4]string
+    api.object_values(context.temp_allocator,answer,{"passed","met","drive","failure"},values[:])
+    detail,_:=api.json_string(values[3])
     asked:[2]string
     api.object_values(context.temp_allocator,params,{"until","drive"},asked[:])
     switch {
-    case values[0]=="false":                 return false,"did not hold"
+    case values[0]=="false": return false,detail if detail!="" else "did not hold"
     case asked[1]!="":
         if !api_drive_held(values[2]) {return false,fmt.tprintf("the drive did not arrive: %s",values[2])}
-    case asked[0]!="" && values[1]=="false": return false,"until did not hold within its ticks"
+    case asked[0]!="" && values[1]=="false":
+        if detail!="" {return false,fmt.tprintf("timed out: %s",detail)}
+        return false,"until did not hold within its ticks"
     }
     return true,""
 }
@@ -272,20 +275,23 @@ api_scenario_steps :: proc(s:^Session,call:^api.Call,sc:^Scenario) -> (ran:[]Api
         mark:=base.arena_mark(&server.scratch)
         step_error,answered:=api.method_execute(server,method,string(step.params),&answer)
         server.image=""
-        why:=step_error.message
+        why:=strings.clone(step_error.message,context.temp_allocator)
         held:=answered
         if answered {held,why=scenario_step_held(string(step.params),string(serial.writer_bytes(&answer)))}
         if r,_:=api_play_run(s,call);r!=nil {
-            if t:=core.world_storage_of(run_ref(s,r),core.Time);t!=nil {tick=t.tick}
+            if t:=core.world_storage_read_of(core.world_read(run_ref(s,r)),core.Time);t.ptr!=nil {tick=t.tick}
         } else if held {
             held,why=false,"the game stopped"
         }
-        why=fmt.tprintf("steps[%d] %s: %s",i,step.method,why)
         base.arena_rewind(&server.scratch,mark)
+        if !held {
+            label:=step.name!=""?step.name:step.method
+            failure=fail(call,"steps[%d] %s (tick %d): %s",i,label,tick,why)
+        }
         report:=Api_Scenario_Step{name=step.name,method=step.method,result="null",passed=held,tick=tick}
-        if answered {report.result=serial.Json(strings.clone(string(serial.writer_bytes(&answer)),call.allocator))} else {report.error=strings.clone(step_error.message,call.allocator)}
+        if answered {report.result=serial.Json(strings.clone(string(serial.writer_bytes(&answer)),call.allocator))} else {report.error=strings.clone(why,call.allocator)}
         append(&steps,report)
-        if !held {failure=strings.clone(why,call.allocator);break}
+        if !held {break}
     }
     return steps[:],failure,tick
 }
