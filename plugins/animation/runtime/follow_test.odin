@@ -64,7 +64,7 @@ a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without
     // The head has neck right under root, and bones of its face the body lacks.
     jaw_rest:=mm.Transform{{0,-.05,.05},1,{1,1,1}}
     follow_rig(&playback,head,2,{"","root","neck","head","jaw","eye_l"},{-1,0,1,2,3,3},{head_place,step,{{0,.8,0},1,{1,1,1}},step,jaw_rest,step})
-    leader,follower:=constraint_playing(&playback,body),constraint_playing(&playback,head)
+    leader,follower:=constraint_playing(core.ref(&playback),body),constraint_playing(core.ref(&playback),head)
     follower.leader=body
     playing_pose(leader,.Local)[3].rotation=mm.quat_axis_angle({0,0,1},.3)
     playing_pose(leader,.Local)[4].rotation=mm.quat_axis_angle({1,0,0},.2)
@@ -91,11 +91,11 @@ a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without
     tick :: proc(playback:^Playback,characters:^Character_Assets,modifiers:^Modifier_Runtime,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent),problems:^core.Problems,sampled:[]mm.Transform,head:core.Entity) {
         playback.frame+=1
         for &state in playback.states {state.seen=playback.frame}
-        copy(playing_pose(constraint_playing(playback,head),.Local),sampled)
+        copy(playing_pose(constraint_playing(core.ref(playback),head),.Local),sampled)
         animation_finish(playback,{problems=problems},modifiers,transforms,parents,1.0/60,characters=characters)
     }
     check :: proc(t:^testing.T,playback:^Playback,body,head:core.Entity,body_place,holder_place:mm.Transform,jaw:mm.Quat) -> bool {
-        leader,follower:=constraint_playing(playback,body),constraint_playing(playback,head)
+        leader,follower:=constraint_playing(core.ref(playback),body),constraint_playing(core.ref(playback),head)
         body_world,head_world:[7]mm.Transform
         if !lib.pose_world(leader.parents[:],playing_pose(leader,.Local),body_world[:]) || !lib.pose_world(follower.parents[:],playing_pose(follower,.Local),head_world[:6],holder_place) {return false}
         same:=true
@@ -103,7 +103,7 @@ a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without
             same &&=linalg.length(head_world[pair[0]].position-body_world[pair[1]].position)<1e-4 && mm.quat_angle(head_world[pair[0]].rotation,body_world[pair[1]].rotation)<1e-3
         }
         same &&=mm.quat_angle(playing_pose(follower,.Local)[4].rotation,jaw)<1e-4 && playing_pose(follower,.Local)[4].position==mm.Vec3{0,-.05,.05}
-        same &&=animation_curve(playback,head,"jawOpen")==.5 && animation_curve(playback,head,"blink")==1 && animation_curve(playback,head,"jaw_open_pose")==1
+        same &&=animation_curve(core.ref(playback),head,"jawOpen")==.5 && animation_curve(core.ref(playback),head,"blink")==1 && animation_curve(core.ref(playback),head,"jaw_open_pose")==1
         return same
     }
     tick(&playback,&characters,&modifiers,&w.transforms,&w.parents,&problems,head_sampled[:],head)
@@ -165,7 +165,7 @@ curve_drives_combine_clamp_and_replace_and_full_poses_blend_before_additive_ones
     playback.frame=1
     step:=mm.Transform{{0,.1,0},1,{1,1,1}}
     follow_rig(&playback,face,3,{"","root","jaw","lid"},{-1,0,1,1},{mm.TRANSFORM_IDENTITY,step,step,step})
-    state:=constraint_playing(&playback,face)
+    state:=constraint_playing(core.ref(&playback),face)
     values:=[4]f32{.8,.5,.3,.9}
     for name,i in ([4]string{"jawOpen","mouthClose","smileL","smileR"}) {
         append(&state.curves,Curve_Output{target=base.name_hash(name),property=.Float,value={values[i],0,0,0},weight=1})
@@ -196,7 +196,7 @@ curve_drives_combine_clamp_and_replace_and_full_poses_blend_before_additive_ones
     prepared:=test_modifier_profile(&modifiers,&characters,face,profile)
     problems:core.Problems
     testing.expect(t,curve_poses_apply(state,&playback,&modifiers,prepared,profile,false,&problems) && problems.count==0)
-    value :: proc(playback:^Playback,e:core.Entity,name:string) -> f32 {return animation_curve(playback,e,name)}
+    value :: proc(playback:^Playback,e:core.Entity,name:string) -> f32 {return animation_curve(core.ref(playback),e,name)}
     state.seen=playback.frame
     testing.expect(t,abs(value(&playback,face,"jaw_close")-.4)<1e-5,"the product of both")
     testing.expect(t,abs(value(&playback,face,"smile")-.9)<1e-5,"their least, then the most of that and smileR")
@@ -254,7 +254,7 @@ curve_materials_are_live_over_what_the_entity_authors_and_no_scene_saves_them ::
     playback:Playback;defer playback_free(&playback)
     playback.frame=1
     follow_rig(&playback,face,3,{"","root"},{-1,0},{mm.TRANSFORM_IDENTITY,mm.TRANSFORM_IDENTITY})
-    state:=constraint_playing(&playback,face)
+    state:=constraint_playing(core.ref(&playback),face)
     append(&state.curves,Curve_Output{target=base.name_hash("mouth_frame"),property=.Float,value={2.6,0,0,0},weight=1})
     append(&state.curves,Curve_Output{target=base.name_hash("blush"),property=.Float,value={.5,0,0,0},weight=1})
     slice.sort_by(state.curves[:],curve_order)

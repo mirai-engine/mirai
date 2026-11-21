@@ -95,7 +95,8 @@ root_motion_sample :: proc(library:^lib.Library,fader:lib.Fader,config:Root_Moti
 }
 
 @(private)
-constraint_playing :: proc(playback:^Playback,entity:core.Entity) -> ^Playing {
+constraint_playing :: proc(playback:core.Ref(Playback),entity:core.Entity) -> ^Playing {
+    if playback.ptr==nil {return nil}
     index:=core.entity_index(entity)
     if index>=len(playback.rows) || playback.rows[index]<=0 {return nil}
     row:=int(playback.rows[index])-1
@@ -131,7 +132,7 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
     motion:^Motion_Runtime=nil,characters:^Character_Assets=nil,final_poses:[]Pose_Request=nil) {
     if len(playing_pose(state,.Local))==0 {return}
     skeleton:=playing_skeleton(state)
-    rig:=modifier_rig(runtime,state.entity)
+    rig:=modifier_rig(core.ref(runtime),state.entity)
     empty_pose:Pose_Profile
     pose:=modifier_pose(rig,characters)
     if pose==nil {pose=&empty_pose}
@@ -173,7 +174,7 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
     }
     if rig==nil {final_pose_apply(state,playback,parent_world,final_poses,problems);return}
     if len(pose.grounding.legs)>0 {
-        config:=modifier_grounding(runtime,rig,pose.grounding)
+        config:=modifier_grounding(core.ref(runtime),rig,pose.grounding)
         grounding_apply(state,&rig.grounding[0],&config,ground_inputs,dt)
     }
     for &config,at in pose.ik {

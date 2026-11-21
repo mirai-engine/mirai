@@ -45,7 +45,7 @@ gallery_manual :: proc(manual:bool,entity:core.Entity,commands:[]Gallery_Command
     return result
 }
 
-gallery_playback_commands :: proc(commands:[]Gallery_Command,requests:^anim.Animation_Requests,playback:^anim.Playback) {
+gallery_playback_commands :: proc(commands:[]Gallery_Command,requests:^anim.Animation_Requests,playback:core.Ref(anim.Playback)) {
     for &command in commands {
         e:=command.entity
         #partial switch command.kind {
@@ -73,13 +73,18 @@ Gallery_Panel_Button :: struct {label:[20]u8 `mirai:"text"`}
 // sliders and buttons ask the station for changes. The rows and buttons are those of the kind of
 // its station (gallery_controls).
 @(component,description="An adjustable panel of an animation gallery station: E at the station frames it and frees the pointer for its sliders and buttons.")
-Gallery_Panel :: struct {
+Gallery_Panel_Setup :: struct {
     station,camera:core.Entity,
     title:[64]u8 `mirai:"text"`,
-    hint:[48]u8 `mirai:"text,hidden,readonly,transient"`,
-    rows:[GALLERY_PANEL_ROWS]Gallery_Panel_Row `mirai:"hidden,readonly,transient"`,
-    buttons:[GALLERY_PANEL_BUTTONS]Gallery_Panel_Button `mirai:"hidden,readonly,transient"`,
-    row_count,button_count:i32 `mirai:"hidden,readonly,transient"`,
+}
+
+@(component,derived)
+Gallery_Panel :: struct {
+    title:[64]u8 `mirai:"text"`,
+    hint:[48]u8 `mirai:"text,hidden,readonly"`,
+    rows:[GALLERY_PANEL_ROWS]Gallery_Panel_Row `mirai:"hidden,readonly"`,
+    buttons:[GALLERY_PANEL_BUTTONS]Gallery_Panel_Button `mirai:"hidden,readonly"`,
+    row_count,button_count:i32 `mirai:"hidden,readonly"`,
 }
 
 // A slider of a panel: the command it asks with the value between min and max.
@@ -125,7 +130,7 @@ gallery_controls :: proc(kind:Gallery_Kind) -> (rows:[GALLERY_PANEL_ROWS]Gallery
 // What a slider or a button of a panel asked becomes a command of its station; Play / pause asks
 // for the other of what its clip does.
 @(step="fixed")
-gallery_panel_input :: proc(panels:^core.Table(Gallery_Panel,.Read),gallery:^core.Table(Animation_Gallery,.Read),ui_events:core.Ref(gui.UI_Events),playback:core.Ref(anim.Playback),panel:^Gallery_UI) {
+gallery_panel_input :: proc(panels:^core.Table(Gallery_Panel_Setup,.Read),gallery:^core.Table(Animation_Gallery,.Read),ui_events:core.Ref(gui.UI_Events),playback:core.Ref(anim.Playback),panel:^Gallery_UI) {
     for event in ui_events.items {
         value,found:=core.get(panels,event.entity)
         if !found || event.item<0 {continue}
@@ -135,37 +140,41 @@ gallery_panel_input :: proc(panels:^core.Table(Gallery_Panel,.Read),gallery:^cor
         if event.kind==.Changed && event.name==base.name_hash("value") && int(event.item)<row_count {
             row:=rows[event.item]
             high:=row.max
-            if row.command==.Seek {_,duration,_,valid:=anim.animation_progress(playback.ptr,value.station);if !valid {continue};high=duration}
+            if row.command==.Seek {_,duration,_,valid:=anim.animation_progress(playback,value.station);if !valid {continue};high=duration}
             amount:=row.min+f32(clamp(event.value,0,1))*(high-row.min)
             gallery_request(panel,row.command,value.station,value=amount,slot=row.slot,name=row.name,modifier=row.modifier,enabled=amount>0 || row.command!=.Modifier)
         } else if event.kind==.Clicked && event.name==base.name_hash("button") && int(event.item)<button_count {
             button:=buttons[event.item]
-            gallery_request(panel,button.command,value.station,name=button.name,enabled=button.command!=.Playing || !anim.animation_playing(playback.ptr,value.station))
+            gallery_request(panel,button.command,value.station,name=button.name,enabled=button.command!=.Playing || !anim.animation_playing(playback,value.station))
         }
     }
 }
 
 // Fills each panel with the rows and buttons of its station and what the station does now.
 @(step="fixed",stage="react")
-gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:^core.Table(Animation_Gallery,.Read),progresses:^core.Table(anim.Animation_Progress,.Read),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime)) {
+gallery_panels :: proc(panels:^core.Table(Gallery_Panel_Setup,.Read),outputs:^core.Table(Gallery_Panel),gallery:^core.Table(Animation_Gallery,.Read),states:^core.Table(Animation_Gallery_State,.Read),progresses:^core.Table(anim.Animation_Progress,.Read),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime),problems:^core.Problems) {
     for row in 0..<core.count(panels) {
         current:=core.at(panels,row)
         item,exists:=core.get(gallery,current.station)
         if !exists {continue}
         progress,_:=core.get(progresses,current.station)
         rows,row_count,buttons,button_count:=gallery_controls(item.kind)
-        next:=current
+        state,ready:=core.view(states,current.station)
+        empty:Animation_Gallery_State
+        if !ready {state=core.ref(&empty)}
+        next:Gallery_Panel
+        next.title=current.title
         next.row_count,next.button_count=i32(row_count),i32(button_count)
         for control,i in rows[:row_count] {
             value,high:f32=0,control.max
             #partial switch control.command {
             case .Rate: value=progress.speed
-            case .Seek: clock,duration,_,valid:=anim.animation_progress(playback.ptr,current.station);if valid {value,high=clock,duration}
-            case .Speed: value=item.speed
-            case .Value: value=item.values[control.slot]
+            case .Seek: clock,duration,_,valid:=anim.animation_progress(playback,current.station);if valid {value,high=clock,duration}
+            case .Speed: value=state.speed
+            case .Value: value=state.values[control.slot]
             case .Modifier:
                 value=1
-                if _,_,_,target,_,enabled,found:=anim.modifier_influence(modifiers.ptr,current.station,control.modifier,base.name_hash(control.name));found {value=target if enabled else 0}
+                if _,_,_,target,_,enabled,found:=anim.modifier_influence(modifiers,current.station,control.modifier,base.name_hash(control.name));found {value=target if enabled else 0}
             }
             line:=&next.rows[i]
             base.text_set(line.label[:],control.label)
@@ -173,9 +182,13 @@ gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:^core.Table(Ani
             line.value=clamp((value-control.min)/(high-control.min),0,1) if high>control.min else 0
         }
         for button,i in buttons[:button_count] {base.text_set(next.buttons[i].label[:],button.label)}
-        hint:="manual    E: back" if item.manual else "automatic    E: back"
+        hint:="manual    E: back" if state.manual else "automatic    E: back"
         if item.kind==.Sequence {hint="playing    E: back" if progress.playing else "paused    E: back"}
         base.text_set(next.hint[:],hint)
-        if next!=current {core.edit_at(panels,row)^=next}
+        e:=core.entity_at(panels,row)
+        old,shown:=core.get(outputs,e)
+        if !shown || old!=next {
+            if output:=demo_state(outputs,e,Gallery_Panel{},problems);output!=nil {output^=next}
+        }
     }
 }

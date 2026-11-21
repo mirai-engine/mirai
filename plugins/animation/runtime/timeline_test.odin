@@ -151,7 +151,7 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     // Play starts it from its start; every kind of target follows its track.
     animation_command(&w.requests,door,.Play)
     timeline_tick(&w,&app,&problems)
-    testing.expect(t,animation_playing(&w.playback,door),"a command plays a clip whose Animation does not")
+    testing.expect(t,animation_playing(core.ref(&w.playback),door),"a command plays a clip whose Animation does not")
     testing.expect_value(t,at(&w,door),[3]f32{0,1,0})
     testing.expect_value(t,at(&w,leaf),[3]f32{2,0,0})
     testing.expect_value(t,at(&w,actor),[3]f32{2,0,0})
@@ -199,27 +199,27 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     // Stop takes it back to its start and it waits there; the end of a clip that does not loop holds.
     animation_command(&w.requests,door,.Stop)
     timeline_tick(&w,&app,&problems)
-    testing.expect(t,!animation_playing(&w.playback,door))
+    testing.expect(t,!animation_playing(core.ref(&w.playback),door))
     testing.expect(t,w.events.items[len(w.events.items)-1].kind==.Interrupted &&
         w.events.items[len(w.events.items)-1].clip==base.name_hash("open"))
     testing.expect_value(t,at(&w,leaf),[3]f32{0,0,0})
     // Animation.playing only starts it: once it plays, the game writing it changes nothing.
     core.edit(&w.animations,door).playing=true
     timeline_tick(&w,&app,&problems)
-    testing.expect(t,!animation_playing(&w.playback,door))
+    testing.expect(t,!animation_playing(core.ref(&w.playback),door))
     play_clip(&w.requests,door,"open",fade=0,loop=false,speed=2)
     timeline_tick(&w,&app,&problems)
     play_clip(&w.requests,door,"open",speed=1)
     timeline_tick(&w,&app,&problems)
-    at_time,_,_,_:=animation_progress(&w.playback,door)
+    at_time,_,_,_:=animation_progress(core.ref(&w.playback),door)
     testing.expect_value(t,at_time,f32(.75))
     play_clip(&w.requests,door,"open",restart=true)
     timeline_tick(&w,&app,&problems)
-    at_time,_,_,_=animation_progress(&w.playback,door)
+    at_time,_,_,_=animation_progress(core.ref(&w.playback),door)
     testing.expect_value(t,at_time,f32(.25))
     for _ in 0..<7 {timeline_tick(&w,&app,&problems)}
     testing.expect_value(t,at(&w,leaf),[3]f32{8,0,0})
-    _,_,ended,_:=animation_progress(&w.playback,door)
+    _,_,ended,_:=animation_progress(core.ref(&w.playback),door)
     testing.expect(t,ended)
     last:=w.events.items[len(w.events.items)-1]
     testing.expect(t,last.kind==.Ended && last.clip==base.name_hash("open") &&
@@ -235,7 +235,7 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     // Resume at a negative speed takes it back from where it is.
     animation_command(&w.requests,door,.Resume,speed=-1)
     timeline_tick(&w,&app,&problems)
-    testing.expect(t,animation_playing(&w.playback,door) && at(&w,leaf)==[3]f32{6,0,0})
+    testing.expect(t,animation_playing(core.ref(&w.playback),door) && at(&w,leaf)==[3]f32{6,0,0})
     // A command needs an Animation, a real command and a finite time.
     animation_command(&w.requests,leaf,.Play)
     timeline_tick(&w,&app,&problems)

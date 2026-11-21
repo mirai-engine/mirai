@@ -61,9 +61,13 @@ HORDE_SENDS :: 64  // zombies the waves of a horde send in a tick at most
 @(component,description="Sends more zombies to a horde arena in waves, rows of Horde_Wave: first, then the one each names next. Each zombie is the prefab of the next Spawn_Point without players.")
 Horde_Waves :: struct {
     first:core.Record(Horde_Wave),
-    wave:core.Record(Horde_Wave) `mirai:"transient,readonly"`, // the one sending; none: over
-    sent:i32 `mirai:"transient,readonly"`,                     // of that wave
-    total:i32 `mirai:"transient,readonly"`,                    // of every wave
+}
+
+@(component,derived)
+Horde_Waves_State :: struct {
+    wave:core.Record(Horde_Wave) `mirai:"readonly"`, // the one sending; none: over
+    sent:i32 `mirai:"readonly"`,                     // of that wave
+    total:i32 `mirai:"readonly"`,                    // of every wave
 }
 
 // The hordes that wait for their next zombie, each pushed for the tick it is due at.
@@ -73,28 +77,28 @@ Horde_Sends :: struct {queue:core.Queue(core.Entity)}
 @(component,description="A zombie of an arena: it wanders, chases what it sees and bites what it reaches.")
 Zombie :: struct {}
 
-@(component,description="A soldier of an arena: it fires, takes cover, reloads, and fetches ammo and health from the crates of its side.")
-Soldier :: struct {
-    health:f32 `mirai:"transient,readonly"`,
-    ammo:i32 `mirai:"transient,readonly"`,    // in the magazine
-    reserve:i32 `mirai:"transient,readonly"`, // rounds to reload from
-    ahead:f32 `mirai:"transient,hidden"`,     // +1 or -1: along z toward the other squad
-    shots,hits,hit:u32 `mirai:"transient,readonly"`,
+@(component,derived)
+Soldier_State :: struct {
+    health:f32 `mirai:"readonly"`,
+    ammo:i32 `mirai:"readonly"`,    // in the magazine
+    reserve:i32 `mirai:"readonly"`, // rounds to reload from
+    ahead:f32 `mirai:"hidden"`,     // +1 or -1: along z toward the other squad
+    shots,hits,hit:u32 `mirai:"readonly"`,
 }
 
-@(component,description="The boss of an arena: its health, and the hero it fights.")
-Boss :: struct {
-    health:f32 `mirai:"transient,readonly"`,
-    hero:core.Entity `mirai:"transient,hidden"`,
-    slams,charges,summons,roars,deaths:u32 `mirai:"transient,readonly"`,
-    rises:u64 `mirai:"transient,hidden"`,     // the tick it rises again at; 0 while it stands
-    staggered:bool `mirai:"transient,hidden"`, // by the hero: it is stunned at its next decision
+@(component,derived)
+Boss_State :: struct {
+    health:f32 `mirai:"readonly"`,
+    hero:core.Entity `mirai:"hidden"`,
+    slams,charges,summons,roars,deaths:u32 `mirai:"readonly"`,
+    rises:u64 `mirai:"hidden"`,     // the tick it rises again at; 0 while it stands
+    staggered:bool `mirai:"hidden"`, // by the hero: it is stunned at its next decision
 }
 
-@(component,description="The hero of a boss arena: it walks around the boss and hurts it while near.")
-Arena_Target :: struct {
-    again:u64 `mirai:"transient,hidden"`, // the tick the hero picks another point at
-    center:[3]f32 `mirai:"transient,hidden"`,
+@(component,derived)
+Arena_Target_State :: struct {
+    again:u64 `mirai:"hidden"`, // the tick the hero picks another point at
+    center:[3]f32 `mirai:"hidden"`,
 }
 
 BOSS_HEALTH :: f32(200)
@@ -238,7 +242,7 @@ SOLDIER_FIRST :: u8(1) // claim priority of a wounded soldier: it takes the cove
 SOLDIER_ERRAND :: f32(0.8) // what going for a smart object counts once begun: only healing and fetching ammo interrupt it
 
 @(mind="soldier")
-soldier_think :: proc(t:^ai.Think(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier,.Read)) {
+soldier_think :: proc(t:^ai.Think(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier_State,.Read)) {
     e:=behavior.agent(t)
     s,ok:=core.get(soldiers,e)
     if !ok {return}
@@ -267,7 +271,7 @@ soldier_think :: proc(t:^ai.Think(Soldier_Act),w:Arena,soldiers:^core.Table(Sold
 
 // Walks to where it last perceived an enemy, or ahead toward the other squad.
 @(act="Advance")
-soldier_advance :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier,.Read)) -> ai.Status {
+soldier_advance :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier_State,.Read)) -> ai.Status {
     if a.phase!=.Enter {return behavior.move_act(a,{})}
     e:=behavior.agent(a)
     _,position,confidence:=arena_seen(w,e)
@@ -283,7 +287,7 @@ soldier_advance :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Sold
 // for the answer and claims the place, 1 walks there while it holds it, 2
 // holds it in use. A wounded soldier claims first.
 @(act="Take_Cover")
-soldier_cover :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier,.Read),places:^behavior.Place_Requests,results:^core.Table(behavior.Place_Result,.Read),requests:^nav.Nav_Requests) -> ai.Status {
+soldier_cover :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier_State,.Read),places:^behavior.Place_Requests,results:^core.Table(behavior.Place_Result,.Read),requests:^nav.Nav_Requests) -> ai.Status {
     e:=behavior.agent(a)
     user:=arena_user(w,e)
     if s,ok:=core.get(soldiers,e);ok && s.health<SOLDIER_WOUNDED {user.priority=SOLDIER_FIRST}
@@ -328,7 +332,7 @@ soldier_cover :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldie
 // Fires its magazine at the enemy it sees, a round every 0.4 s, holding one
 // of the tokens to fire at it.
 @(act="Fire")
-soldier_fire :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier),physics:core.Ref(phys.Physics_State),requests:^nav.Nav_Requests) -> ai.Status {
+soldier_fire :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier_State),physics:core.Ref(phys.Physics_State),requests:^nav.Nav_Requests) -> ai.Status {
     e:=behavior.agent(a)
     if a.phase==.Exit {nav.nav_look_along(requests,e);return .Success}
     s:=core.edit(soldiers,e)
@@ -349,7 +353,7 @@ soldier_fire :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier
 
 // A round from e at what it sees: a hit takes health from a soldier, down to 10.
 @(private)
-arena_shot :: proc(w:Arena,soldiers:^core.Table(Soldier),physics:core.Ref(phys.Physics_State),e,subject:core.Entity,position:mm.Vec3) {
+arena_shot :: proc(w:Arena,soldiers:^core.Table(Soldier_State),physics:core.Ref(phys.Physics_State),e,subject:core.Entity,position:mm.Vec3) {
     s:=core.edit(soldiers,e)
     if s!=nil {s.shots+=1}
     eye:=arena_position(w,e)+{0,1.5,0}
@@ -364,7 +368,7 @@ arena_shot :: proc(w:Arena,soldiers:^core.Table(Soldier),physics:core.Ref(phys.P
 }
 
 @(act="Reload")
-soldier_reload :: proc(a:^ai.Act(Soldier_Act),soldiers:^core.Table(Soldier)) -> ai.Status {
+soldier_reload :: proc(a:^ai.Act(Soldier_Act),soldiers:^core.Table(Soldier_State)) -> ai.Status {
     s:=core.edit(soldiers,behavior.agent(a))
     if a.phase==.Exit {return .Success}
     if s==nil {return .Failure}
@@ -377,7 +381,7 @@ soldier_reload :: proc(a:^ai.Act(Soldier_Act),soldiers:^core.Table(Soldier)) -> 
 
 // Fetches ammo from a crate of its side, or health from a kit.
 @(act="Get_Ammo Heal")
-soldier_supply :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier),uses:^behavior.Smart_Uses) -> ai.Status {
+soldier_supply :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier_State),uses:^behavior.Smart_Uses) -> ai.Status {
     e:=behavior.agent(a)
     use:=USE_AMMO if a.action==.Get_Ammo else USE_HEALTH
     status,found:=behavior.offer_act(a,use,arena_user(w,e),60,1 if use==USE_AMMO else 2)
@@ -393,7 +397,7 @@ soldier_supply :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldi
 // Mans the turret of its side near it and fires from it, fast and without
 // using its rounds, while it sees an enemy.
 @(act="Man_Turret")
-soldier_turret :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier),physics:core.Ref(phys.Physics_State),requests:^nav.Nav_Requests) -> ai.Status {
+soldier_turret :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier_State),physics:core.Ref(phys.Physics_State),requests:^nav.Nav_Requests) -> ai.Status {
     e:=behavior.agent(a)
     if ai.stage(a)<2 || a.phase==.Enter {
         status,_:=behavior.offer_act(a,USE_TURRET,arena_user(w,e),15,0.5)
@@ -439,7 +443,7 @@ BOSS_STUNNED :: 50
 BOSS_DEAD :: 100
 
 @(mind="boss")
-boss_think :: proc(t:^ai.Think(Boss_Act),w:Arena,bosses:^core.Table(Boss,.Read)) {
+boss_think :: proc(t:^ai.Think(Boss_Act),w:Arena,bosses:^core.Table(Boss_State,.Read)) {
     e:=behavior.agent(t)
     b,ok:=core.get(bosses,e)
     if !ok {return}
@@ -457,7 +461,7 @@ boss_think :: proc(t:^ai.Think(Boss_Act),w:Arena,bosses:^core.Table(Boss,.Read))
 }
 
 @(act="Slam Charge Summon Roar")
-boss_attack :: proc(a:^ai.Act(Boss_Act),w:Arena,bosses:^core.Table(Boss),requests:^anim.Animation_Requests) -> ai.Status {
+boss_attack :: proc(a:^ai.Act(Boss_Act),w:Arena,bosses:^core.Table(Boss_State),requests:^anim.Animation_Requests) -> ai.Status {
     e:=behavior.agent(a)
     b:=core.edit(bosses,e)
     if b==nil {return .Failure if a.phase!=.Exit else .Success}
@@ -486,7 +490,7 @@ boss_attack :: proc(a:^ai.Act(Boss_Act),w:Arena,bosses:^core.Table(Boss),request
 }
 
 @(act="Rage")
-boss_rage :: proc(a:^ai.Act(Boss_Act),w:Arena,bosses:^core.Table(Boss,.Read)) -> ai.Status {
+boss_rage :: proc(a:^ai.Act(Boss_Act),w:Arena,bosses:^core.Table(Boss_State,.Read)) -> ai.Status {
     if a.phase==.Exit {return .Success}
     if ai.entering(a) {
         e:=behavior.agent(a)
@@ -498,7 +502,7 @@ boss_rage :: proc(a:^ai.Act(Boss_Act),w:Arena,bosses:^core.Table(Boss,.Read)) ->
 
 // The stagger is a flag of the Boss that the fight raises; being stunned takes it down.
 @(act="Stunned")
-boss_stunned :: proc(a:^ai.Act(Boss_Act),bosses:^core.Table(Boss)) -> ai.Status {
+boss_stunned :: proc(a:^ai.Act(Boss_Act),bosses:^core.Table(Boss_State)) -> ai.Status {
     if ai.entering(a) {
         ai.commit(a,BOSS_STUNNED)
         if b:=core.edit(bosses,behavior.agent(a));b!=nil {b.staggered=false}
@@ -507,7 +511,7 @@ boss_stunned :: proc(a:^ai.Act(Boss_Act),bosses:^core.Table(Boss)) -> ai.Status 
 }
 
 @(act="Dead")
-boss_dead :: proc(a:^ai.Act(Boss_Act),bosses:^core.Table(Boss,.Read)) -> ai.Status {
+boss_dead :: proc(a:^ai.Act(Boss_Act),bosses:^core.Table(Boss_State,.Read)) -> ai.Status {
     if ai.entering(a) {ai.commit(a,BOSS_DEAD)}
     b,ok:=core.get(bosses,behavior.agent(a))
     return .Success if !ok || b.health>0 else .Running
@@ -755,7 +759,7 @@ arena_animated :: proc(c:core.Commands,e:core.Entity) {
 @(private)
 arena_target :: proc(c:core.Commands,position:mm.Vec3,route:core.Entity) -> core.Entity {
     e:=arena_body(c,position,{0.2,0.6,1,1},5)
-    if route!=core.NONE {core.commands_add(c,e,behavior.Patrol{path=route,automatic=true})} else {core.commands_add(c,e,Arena_Target{center=position})}
+    if route!=core.NONE {core.commands_add(c,e,behavior.Patrol{path=route,automatic=true})} else {core.commands_add(c,e,Arena_Target_State{center=position})}
     core.commands_add(c,e,behavior.Perceivable{team=TEAM_RUNNER,point=1})
     return e
 }
@@ -764,21 +768,22 @@ arena_target :: proc(c:core.Commands,position:mm.Vec3,route:core.Entity) -> core
 // built: a horde waits for its next zombie as a request due at its tick.
 @(step="fixed",stage="apply",server)
 horde_waves :: proc(
-    hordes:^core.Table(Horde_Waves),sends:^Horde_Sends,arenas:^core.Table(AI_Arena,.Read),requests:^spawn.Spawn_Requests,
+    hordes:^core.Table(Horde_Waves,.Read),states:^core.Table(Horde_Waves_State),sends:^Horde_Sends,arenas:^core.Table(AI_Arena,.Read),requests:^spawn.Spawn_Requests,
     waves:core.Records(Horde_Wave),time:core.Time,problems:^core.Problems,
 ) {
     if !time.playing || time.dt<=0 {return}
     for row in 0..<core.count(hordes) {
         e:=core.entity_at(hordes,row)
         at:=core.row_of(arenas,e)
-        if !core.added(hordes,row) || at<0 || core.added(arenas,at) || core.at(arenas,at).kind!=.Horde {continue}
-        h:=core.edit_at(hordes,row)
-        h.wave=h.first
-        first,_:=core.record(waves,h.wave,problems,e)
+        if core.has(states,e) || at<0 || core.added(arenas,at) || core.at(arenas,at).kind!=.Horde {continue}
+        wave:=core.at(hordes,row).first
+        if demo_state(states,e,Horde_Waves_State{wave=wave},problems)==nil {continue}
+        first,_:=core.record(waves,wave,problems,e)
         core.later(&sends.queue,time,first.delay,e)
     }
     for e in core.take_due(&sends.queue,time) {
-        h:=core.edit(hordes,e)
+        if !core.has(hordes,e) {core.remove(states,e);continue}
+        h:=core.staged(states,e)
         if h==nil {continue}
         // A chain of waves that send nothing and wait nothing goes on in the next tick.
         wait:f32 // s to the next zombie; below 0: the waves are over
@@ -841,7 +846,7 @@ arena_agents :: proc(c:core.Commands,arena:core.Entity,kind:Arena_Kind,origin:mm
             for i in 0..<count {
                 side:=f32(-1 if team==0 else 1)
                 e:=arena_body(c,origin+{f32(i)*2.5-f32(count)*1.25,0.05,side*18},{0.9,0.3,0.25,1} if team==0 else {0.3,0.45,0.9,1},4.5)
-                core.commands_add(c,e,Soldier{health=100,ammo=SOLDIER_MAG,reserve=SOLDIER_MAG,ahead=-side})
+                core.commands_add(c,e,Soldier_State{health=100,ammo=SOLDIER_MAG,reserve=SOLDIER_MAG,ahead=-side})
                 core.commands_add(c,e,behavior.Mind_Agent{mind=behavior.mind_name("soldier")})
                 mine,theirs:=TEAM_RED,TEAM_BLUE
                 if team==1 {mine,theirs=TEAM_BLUE,TEAM_RED}
@@ -856,7 +861,7 @@ arena_agents :: proc(c:core.Commands,arena:core.Entity,kind:Arena_Kind,origin:mm
     case .Boss:
         hero:=arena_target(c,origin+{0,0.05,8},core.NONE)
         boss:=arena_body(c,origin+{0,0.05,-6},{0.6,0.15,0.6,1},3)
-        core.commands_add(c,boss,Boss{health=BOSS_HEALTH,hero=hero})
+        core.commands_add(c,boss,Boss_State{health=BOSS_HEALTH,hero=hero})
         core.commands_add(c,boss,behavior.Mind_Agent{mind=behavior.mind_name("boss")})
         arena_animated(c,boss)
     case .Swarm:
@@ -932,7 +937,7 @@ arena_carts :: proc(carts:^core.Table(Arena_Cart,.Read),bodies:^phys.Body_Reques
 // and then; a fallen boss rises again after a while.
 @(step="fixed",server)
 arena_targets :: proc(
-    targets:^core.Table(Arena_Target),bosses:^core.Table(Boss),worlds:^core.Table(core.World_Transform,.Read),
+    targets:^core.Table(Arena_Target_State),bosses:^core.Table(Boss_State),worlds:^core.Table(core.World_Transform,.Read),
     requests:^nav.Nav_Requests,state:^Arena_State,time:core.Time,
 ) {
     if !time.playing || time.dt<=0 {return}

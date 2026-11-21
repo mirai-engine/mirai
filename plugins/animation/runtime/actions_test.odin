@@ -219,10 +219,10 @@ an_action_that_moves_its_body_gives_it_its_share_of_the_root_delta :: proc(t:^te
     play(&requests,entity,"attack")
     if !testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil)) {return}
     stack_step(&actions,state,description,&content,&playback,&events,.2,base={translation={.1,0,0},rotation=1});stack_root(state,&content,description)
-    body,moving:=animation_body_motion(&playback,entity)
+    body,moving:=animation_body_motion(core.ref(&playback),entity)
     testing.expectf(t,moving && body.move==.Additive && !body.vertical && abs(body.translation.x-.15)<1e-5 && abs(state.motion.translation.x-.175)<1e-5,"the action has .75 of .2 and the base the rest of .1: %v %v",body,state.motion)
     state.layers[0].body=.None;state.motion={translation={.1,0,0},rotation=1};stack_root(state,&content,description)
-    _,moving=animation_body_motion(&playback,entity)
+    _,moving=animation_body_motion(core.ref(&playback),entity)
     testing.expect(t,!moving && abs(state.motion.translation.x-.175)<1e-5)
 }
 

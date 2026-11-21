@@ -83,7 +83,7 @@ Shot :: struct {
 
 // The shot in force at a time of the clip a timeline plays and the one before it: its last two
 // markers on a camera at or before that time. What the seats see in play and the editor at its head.
-cinematic_shot :: proc(playback:^anim.Playback,sources:^anim.Source_Assets,app:^host.App,entities:^core.Entities,cameras:^core.Table(render.Camera,$A),timeline:core.Entity,time:f32) -> (shot,previous:Shot) {
+cinematic_shot :: proc(playback:core.Ref(anim.Playback),sources:core.Ref(anim.Source_Assets),app:^host.App,entities:^core.Entities,cameras:^core.Table(render.Camera,$A),timeline:core.Entity,time:f32) -> (shot,previous:Shot) {
     markers,content:=anim.animation_markers(playback,sources,app,timeline)
     for marker in markers {
         if !(marker.time<=time) {break}
@@ -118,11 +118,11 @@ cinematic_follow :: proc(cinematics:^core.Table(Cinematic,.Read),states:^core.Ta
         if core.owned(remotes,e) {continue}
         c:=core.get(states,e) or_continue
         animated:=core.has(animations,e)
-        at,duration,_,clipped:=anim.animation_progress(playback.ptr,e)
+        at,duration,_,clipped:=anim.animation_progress(playback,e)
         if !animated || !clipped {continue}
-        _,loop:=anim.animation_clip_clock(playback.ptr,e)
+        _,loop:=anim.animation_clip_clock(playback,e)
         playing:=c.status==.Playing
-        if anim.animation_playing(playback.ptr,e)!=playing {anim.animation_command(requests,e,.Resume if playing else .Pause,speed=c.anchor_rate)}
+        if anim.animation_playing(playback,e)!=playing {anim.animation_command(requests,e,.Resume if playing else .Pause,speed=c.anchor_rate)}
         want:=cinematic_anchored(c,time.tick,time.dt,duration,loop)
         step:=time.dt*c.anchor_rate if playing else 0
         ahead:=Cinematic_State{anchor_time=at,anchor_rate=1}
@@ -175,14 +175,14 @@ cinematic_advance :: proc(
             core.report(problems,e,"cinematics.animation","this Cinematic plays nothing: its entity has no Animation; add one whose asset is the .anim of its clip, with playing set for a timeline that starts by itself")
             continue
         }
-        at,duration,ended,clipped:=anim.animation_progress(actors.playback.ptr,e)
+        at,duration,ended,clipped:=anim.animation_progress(actors.playback,e)
         if !clipped {continue}
-        speed,loop:=anim.animation_clip_clock(actors.playback.ptr,e)
+        speed,loop:=anim.animation_clip_clock(actors.playback,e)
         next:=was
         if time.playing {
             next.time,next.duration=at,duration
             if core.owned(remotes,e) {
-                next.status=cinematic_status(anim.animation_playing(actors.playback.ptr,e),ended,at)
+                next.status=cinematic_status(anim.animation_playing(actors.playback,e),ended,at)
                 rate:=speed if next.status==.Playing else 0
                 if next.status!=was.status || rate!=was.anchor_rate || time.tick<was.anchor_tick || clip_apart(cinematic_anchored(was,time.tick,time.dt,duration,loop),at,duration,loop)>time.dt*max(abs(rate),1)*.5 {
                     next.anchor_tick,next.anchor_time,next.anchor_rate=time.tick,at,rate
@@ -201,11 +201,11 @@ cinematic_advance :: proc(
         // A clip that did not play on from where it was, or the head of the editor, was sought.
         step:=time.dt*speed if next.status==.Playing else 0
         sought:=!time.playing || clip_apart(at,was.time+step,duration,loop)>time.dt*max(abs(speed),1)*.5
-        markers,content:=anim.animation_markers(actors.playback.ptr,actors.content_sources.ptr,app,e)
+        markers,content:=anim.animation_markers(actors.playback,actors.content_sources,app,e)
         for marker in markers {
             if int(marker.id)>=len(content.markers) || content.markers[marker.id].target==0 {continue}
             named:=content.markers[marker.id]
-            on:=anim.animation_bound(actors.playback.ptr,e,named.target)
+            on:=anim.animation_bound(actors.playback,e,named.target)
             action:=base.text_get(named.text[:])
             if !core.alive(entities.ptr,on) {
                 core.report(problems,e,"cinematics.marker_target","marker '%s' of its clip is on an entity it does not animate: none below it has the name of its target, and none names it in Animation_Target.animation; name the entity as the marker does, or give it an Animation_Target with this entity and that name",action)
@@ -218,7 +218,7 @@ cinematic_advance :: proc(
             if acting && (playing || sought || !acted) {anim.play_at(actors.requests,on,action,at-marker.time,sought)} else if !acting && playing && (acted || sought) {anim.stop(actors.requests,on,action)}
         }
         if !time.playing {continue}
-        shot,_:=cinematic_shot(actors.playback.ptr,actors.content_sources.ptr,app,entities.ptr,audience.cameras,e,at)
+        shot,_:=cinematic_shot(actors.playback,actors.content_sources,app,entities.ptr,audience.cameras,e,at)
         seat:=config.seat if config.seat!=core.NONE else input.focused(audience.seat_state,audience.seats)
         asked:cam.Camera_Override
         for item in audience.shown.ptr.overrides {if item.active && item.owner==e {asked=item}}

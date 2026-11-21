@@ -112,8 +112,8 @@ motion_instance :: proc(runtime:^Motion_Runtime,entity:core.Entity) -> ^Motion_I
     if row<0 || row>=len(runtime.instances) || runtime.instances[row].entity!=entity {return nil}
     return &runtime.instances[row]
 }
-motion_inspect :: proc(runtime:^Motion_Runtime,entity:core.Entity) -> (Motion_Instance,bool) {
-    value:=motion_instance(runtime,entity);if value==nil {return {},false};return value^,true
+motion_inspect :: proc(runtime:core.Ref(Motion_Runtime),entity:core.Entity) -> (Motion_Instance,bool) {
+    value:=motion_instance(runtime.ptr,entity);if value==nil {return {},false};return value^,true
 }
 
 // Reports why the warping of the .character of a rig did not apply in a tick.
@@ -232,7 +232,7 @@ motion_prepare :: proc(runtime:^Motion_Runtime,requests:^Animation_Requests,anim
         id:=animation_character(loaded,animations.values[row]) if row>=0 else {}
         if id=={} {if index<len(runtime.rows) && runtime.rows[index]==i32(i+1) {runtime.rows[index]=0};motion_instance_free(&instance);continue}
         instance.seen=runtime.frame
-        state:=constraint_playing(playback,instance.entity)
+        state:=constraint_playing(core.ref(playback),instance.entity)
         content:=character_content(characters,loaded,allocator,id,&instance.content)
         if content==nil {
             instance.error=.Missing_Profile
@@ -346,7 +346,7 @@ motion_root_sample :: proc(content:^host.Content_Animation,state:^Playing,mirror
 motion_apply_pose :: proc(runtime:^Motion_Runtime,state:^Playing,profile:base.Asset_Id,actor,root_transform:mm.Transform,characters:^Character_Assets,problems:^core.Problems,dt:f32) -> bool {
     if state==nil || profile=={} {return true}
     instance:=motion_instance(runtime,state.entity);if instance==nil {return false}
-    content:=character_cached(characters,profile,&instance.content)
+    content:=character_cached(core.ref(characters),profile,&instance.content)
     if content==nil {instance.error=.Missing_Profile;return false}
     if !motion_bind(instance,state,content) {motion_problem(problems,state.entity,instance.error);return false}
     config:=content.set.motion.warp

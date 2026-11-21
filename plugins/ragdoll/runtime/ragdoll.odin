@@ -125,7 +125,7 @@ ragdoll_prepare :: proc(configs:^core.Table(Ragdoll,.Read),bones:^core.Table(Rag
         config:=core.at(configs,root_row)
         parent_world:=mm.TRANSFORM_IDENTITY
         if parent,ok:=core.get(parents,rig);ok && parent.entity!=core.NONE {parent_world,_=core.world_of(transforms,parents,parent.entity)}
-        count,revision,sampled:=anim.animation_sample_pose(playback.ptr,rig,runtime.pose[:capacity],parent_world)
+        count,revision,sampled:=anim.animation_sample_pose(playback,rig,runtime.pose[:capacity],parent_world)
         for row in 0..<core.count(bones) {
             entity:=core.entity_at(bones,row)
             bone:=core.at(bones,row)
@@ -143,7 +143,7 @@ ragdoll_prepare :: proc(configs:^core.Table(Ragdoll,.Read),bones:^core.Table(Rag
             if !sampled {state.error=.Pose_Capacity if count>0 else .Missing_Rig}
             reference,_:=anim.bone_ref_hash(bone.bone)
             if state.error==.None && (state.binding.rig!=rig || state.binding.revision!=revision || state.reference!=reference) {
-                binding,ok:=anim.animation_bone_bind(playback.ptr,rig,bone.bone)
+                binding,ok:=anim.animation_bone_bind(playback,rig,bone.bone)
                 if ok {state.binding=binding;state.reference=reference} else {state.error=.Missing_Bone}
             }
             if state.error==.None && (state.binding.index<0 || int(state.binding.index)>=count) {state.error=.Missing_Bone}
@@ -177,7 +177,7 @@ ragdoll_prepare :: proc(configs:^core.Table(Ragdoll,.Read),bones:^core.Table(Rag
                         parent_reference,_:=anim.bone_ref_hash(parent_bone.bone)
                         resolved:=present_parent && parent_binding.rig==rig && parent_binding.revision==revision && parent_state.reference==parent_reference
                         if !resolved {
-                            parent_binding,resolved=anim.animation_bone_bind(playback.ptr,rig,parent_bone.bone)
+                            parent_binding,resolved=anim.animation_bone_bind(playback,rig,parent_bone.bone)
                         }
                         if !resolved || parent_binding.index<0 || int(parent_binding.index)>=count {
                             state.error=.Missing_Bone

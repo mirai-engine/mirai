@@ -135,7 +135,7 @@ authoring_action_inspect :: proc(s:^editor.Session,call:^api.Call,w:core.World_R
     r.problems=problems[:shown]
     parameters:=make([]anim.Stack_Parameter_Info,anim.STACK_PARAMETERS*2,call.allocator)
     characters:=core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Character_Assets)
-    r.parameters=parameters[:anim.stack_parameters(runtime,characters,playback,e,parameters)]
+    r.parameters=parameters[:anim.stack_parameters(core.ref(runtime),core.ref(characters),core.ref(playback),e,parameters)]
     playing:=make([dynamic]Action_Playing_Result,call.allocator)
     if runtime!=nil {for &state in runtime.states {if state.entity!=e || state.plan<0 || int(state.plan)>=len(runtime.plans) {continue};profile:=runtime.plans[state.plan].profile
         for slot,i in state.slots {if !slot.active {continue};definition:=profile.actions[slot.action];value:=Action_Playing_Result{name=definition.name,layer=definition.layer,time=slot.time,finishing=slot.finishing,root_motion=definition.root_motion};if slot.section>=0 {value.section=profile.sections[slot.section].name}

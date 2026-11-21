@@ -72,23 +72,23 @@ source_clip_label :: proc "contextless" (content:^host.Content_Animation,clip:li
 }
 
 // The .anim of a clip of what `state` plays.
-source_clip_source :: proc "contextless" (cache:^Source_Assets,state:^Playing,clip:lib.Clip) -> base.Asset_Id {
-    set:=source_playing_set(cache,state)
+source_clip_source :: proc "contextless" (cache:core.Ref(Source_Assets),state:^Playing,clip:lib.Clip) -> base.Asset_Id {
+    set:=source_playing_set(cache.ptr,state)
     if set==nil {return state.asset if state!=nil else {}}
     if set.content.clip_count<=0 || !lib.clip_valid(&set.content.lib,clip) {return {}}
     return set.clip_sources[(int(clip)-1)%set.content.clip_count]
 }
 
 // The sources joined in what `state` plays; empty when it plays one.
-source_ids :: proc "contextless" (cache:^Source_Assets,state:^Playing) -> []base.Asset_Id {
-    set:=source_playing_set(cache,state)
+source_ids :: proc "contextless" (cache:core.Ref(Source_Assets),state:^Playing) -> []base.Asset_Id {
+    set:=source_playing_set(cache.ptr,state)
     return set.ids if set!=nil else nil
 }
 
 // The library `state` plays: the joined one of its plan, else the content of its asset.
-animation_playing_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing) -> ^host.Content_Animation {
+animation_playing_content :: proc(cache:core.Ref(Source_Assets),app:^host.App,state:^Playing) -> ^host.Content_Animation {
     if state==nil || app==nil {return nil}
-    if set:=source_playing_set(cache,state);set!=nil {return &set.content}
+    if set:=source_playing_set(cache.ptr,state);set!=nil {return &set.content}
     return host.content_animation(app,state.asset)
 }
 

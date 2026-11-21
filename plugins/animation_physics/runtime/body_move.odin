@@ -22,7 +22,7 @@ animation_body_move :: proc(characters:^core.Table(phys.Character,.Read),states:
     for row in 0..<core.count(characters) {
         entity:=core.entity_at(characters,row)
         if state,_:=core.get(states,entity);state.mode==locomotion.MODE_MANTLING {continue}
-        body,moving:=anim.animation_body_motion(playback.ptr,entity)
+        body,moving:=anim.animation_body_motion(playback,entity)
         placed,ok:=core.get(worlds,entity)
         if !moving || !ok {continue}
         locomotion.add_move(moves,entity,body_layered_move(body,placed,core.vertical_of(verticals,entity),time.dt*core.pace_of(clock,paces,entity)))
