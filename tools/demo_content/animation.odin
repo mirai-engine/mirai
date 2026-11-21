@@ -37,7 +37,7 @@ gallery_place :: proc(index:int) -> (origin:mm.Vec3,facing:mm.Quat) {
 mirai_constraints :: proc(o:^Out,model:^importer.Imported_Model,animation:base.Asset_Id) {
     origin,facing:=gallery_place(GALLERY_CONSTRAINTS)
     reach,pole:=origin+mm.quat_rotate(facing,{.42,1.3,-.42}),origin+mm.quat_rotate(facing,{.9,.9,.6})
-    ik:=anim.IK_CONSTRAINT_DEFAULT;ik.target,ik.hold,ik.pole=anim.spatial_point(reach),.Joint,pole
+    ik:=anim.IK_CONSTRAINT_DEFAULT;ik.target,ik.hold,ik.pole=anim.spatial_definition_point(reach),.Joint,pole
     ik.root,ik.joint,ik.end=anim.bone_ref("RightArm"),anim.bone_ref("RightForeArm"),anim.bone_ref("RightHand")
     rig,_:=mirai_rig(model)
     head:=mirai_bone(model,"Head")
@@ -112,7 +112,7 @@ mirai_animation :: proc(o:^Out,model:^importer.Imported_Model) -> (id:base.Asset
 @(private)
 mirai_feet :: proc(model:^importer.Imported_Model) -> anim.Foot_Grounding {
     // Its body and legs are those of the body of its skeleton.
-    feet:=anim.FOOT_GROUNDING_DEFAULT;feet.count=2
+    feet:=anim.FOOT_GROUNDING_DEFAULT;feet.legs=make([]anim.Grounded_Leg,2,context.temp_allocator)
     feet.global_contact=0;feet.max_rise=.15;feet.trace_above=.55;feet.trace_below=.9;feet.blend_time=.08
     bones:=model.skeletons[0].bones
     rest:=make([]mm.Transform,len(bones),context.temp_allocator)

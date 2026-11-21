@@ -103,7 +103,13 @@ model_prefab :: proc(model:^importer.Imported_Model,assets:^importer.Import_Repo
         if !entity_add(&scene,info,own,parent,node.name,core.Transform(transform),&report) {return report,.Write}
         if node.path!="" && bone_rig[i]<0 {
             target:Animation_Target
-            base.text_set(target.path[:],node.path)
+            if len(node.path)<len(target.path) {base.text_set(target.path[:],node.path)}
+            else {
+                path:Animation_Path
+                base.text_set(path.text[:],node.path)
+                target.path_id=base.name_hash(node.path)
+                if put(&scene,info,own,"Animation_Path",&path)!=.None {return report,.Write}
+            }
             if put(&scene,info,own,"Animation_Target",&target)!=.None {return report,.Write}
         }
         skinned:=node.mesh>=0 && len(model.meshes[node.mesh].skin)>0
@@ -184,7 +190,9 @@ Collider :: struct {kind:Collider_Kind}
 
 // The fields of the components of the animation plugin the import sets.
 @(private="file")
-Animation_Target :: struct {path:[asset.NODE_PATH_CAPACITY]u8 `mirai:"text"`}
+Animation_Target :: struct {path:[asset.ANIMATION_INLINE_PATH]u8 `mirai:"text"`,path_id:u64}
+@(private="file")
+Animation_Path :: struct {text:[asset.NODE_PATH_CAPACITY]u8 `mirai:"text"`}
 @(private="file")
 Pose_Source :: struct {rig:base.Entity}
 @(private="file")

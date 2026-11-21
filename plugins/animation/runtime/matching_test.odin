@@ -101,10 +101,10 @@ mirai_avatar_walk :: proc(t:^testing.T,app:^host.App,skeletons:^Skeleton_Assets,
     if content==nil || definition==nil || !skeleton_bind(&playback,&state,definition,content,&w.transforms) {return}
     toes:=[2]int{bone_resolve(&state,bone_ref("LeftToeBase")),bone_resolve(&state,bone_ref("RightToeBase"))}
     if toes[0]<0 || toes[1]<0 {return}
-    n:=len(state.local)
+    n:=len(playing_pose(&state,.Local))
     world,rig,last,before:=make([]mm.Transform,n),make([]mm.Transform,n),make([]mm.Vec3,n),make([]mm.Vec3,n)
     defer {delete(world);delete(rig);delete(last);delete(before)}
-    lib.pose_world(state.parents[:],state.rest[:],rig)
+    lib.pose_world(playing_topology(&state).parents[:],playing_topology(&state).rest[:],rig)
     floor:=max(rig[toes[0]].position.y,rig[toes[1]].position.y)+.02
     body:=Mirai_Body{mode=MODE_WALKING}
     dt:=f32(1.0/60)
@@ -118,22 +118,24 @@ mirai_avatar_walk :: proc(t:^testing.T,app:^host.App,skeletons:^Skeleton_Assets,
         facing:=mm.Vec3{-cmath.sin(body.yaw),0,-cmath.cos(body.yaw)}
         goals:=[1]Match_Goal{{rig=entity,mode=body.mode,velocity=body.velocity,desired=wish*MIRAI_AVATAR_WALK_SPEED,facing=wish,acceleration=MIRAI_AVATAR_ACCELERATION,braking=MIRAI_AVATAR_BRAKING,turn_rate=MIRAI_AVATAR_TURN}}
         start:=time.tick_now()
-        copy(state.local[:],state.rest[:])
+        copy(playing_pose(&state,.Local),playing_topology(&state).rest[:])
         clear(&events.items)
         output,programmed,resolved:=program_resolve(&state,animation,app,graphs,dt,&events,&playback,content,nil,goals[:],facing)
-        if !resolved || !programmed || !program_buffers(&state,content) || !program_players(&state,output,content,animation,&events,&playback,dt,-1,nil) || !program_pose(&playback,&state,content,animation,output) {
+        if !resolved || !programmed || !curves_prepare(&state,content) || !program_players(&state,output,content,animation,&events,&playback,dt,-1,nil) || !stack_inertia_prepare(&state) {
             log.errorf("tick %d: %v",tick,state.program.error);return
         }
+        playback.frame+=1
+        if pose_compose(&playback,&state,content,animation,true,dt,core.read(&w.transforms),0).program {return}
         if tick==0 {metrics.load=f64(time.duration_nanoseconds(time.tick_since(start)))} else {metrics.nanoseconds+=f64(time.duration_nanoseconds(time.tick_since(start)))}
         walked:=state.program.match.speed*state.program.match.rate
         mirai_avatar_body_step(&body,wish,jump,dt)
         // The root of the pose where the spring of matching leaves it from the body.
         match_lag_apply(&state,{position=body.position,rotation=mm.quat_axis_angle({0,1,0},body.yaw),scale={1,1,1}})
         // Where the pose puts the toes in the world, and how much the pose itself jumped.
-        state.local[0]={body.position,mm.quat_axis_angle({0,1,0},body.yaw),{1,1,1}}
-        lib.pose_world(state.parents[:],state.local[:],world)
-        state.local[0]=mm.TRANSFORM_IDENTITY
-        lib.pose_world(state.parents[:],state.local[:],rig)
+        playing_pose(&state,.Local)[0]={body.position,mm.quat_axis_angle({0,1,0},body.yaw),{1,1,1}}
+        lib.pose_world(playing_topology(&state).parents[:],playing_pose(&state,.Local),world)
+        playing_pose(&state,.Local)[0]=mm.TRANSFORM_IDENTITY
+        lib.pose_world(playing_topology(&state).parents[:],playing_pose(&state,.Local),rig)
         if tick>=2 {
             // Over the joints of the body: the helper bones of the rig (ik_*) are not skinned.
             worst:f32
@@ -363,14 +365,14 @@ match_step :: proc(f:^Match_Fixture,dt:f32,mode:u16,velocity:=mm.Vec3{},desired:
     clear(&f.events.items)
     f.playback.frame+=1
     goals:=[1]Match_Goal{{rig=f.rig,mode=mode,velocity=velocity,desired=desired,facing={0,0,-1},wall=wall,acceleration=20,braking=20,time_to_land=time_to_land}}
-    copy(f.state.local[:],f.state.rest[:])
+    copy(playing_pose(f.state,.Local),playing_topology(f.state).rest[:])
     core.edit(&f.animations,f.rig)^=f.animation
     if !actions_prepare(&f.actions,&f.requests,&f.graphs,core.read(&f.animations),&f.playback,&f.events,&f.app,core.read(&f.remotes),&f.played,{dt=dt,playing=true},&f.problems) {return false}
     for value in core.take(&f.requests.values) {stack_parameter_set(f.state,value.name,value.value)}
     f.state.root,f.state.body_motion={},{}
     stack_asks(&f.actions,f.state,f.animation,content)
     output,programmed,ok:=program_resolve(f.state,f.animation,&f.app,&f.graphs,dt,&f.events,&f.playback,content,&f.problems,goals[:])
-    if !ok || !programmed || !program_buffers(f.state,content) || !program_players(f.state,output,content,f.animation,&f.events,&f.playback,dt,-1,nil) {return false}
+    if !ok || !programmed || !curves_prepare(f.state,content) || !program_players(f.state,output,content,f.animation,&f.events,&f.playback,dt,-1,nil) {return false}
     if f.state.program.has_root {f.state.root=f.state.program.root}
     actions_sample(&f.actions,f.state,f.animation,dt,&f.problems,content,&f.playback,&f.events,nil,1)
     layers_advance(&f.playback,f.state,content,f.animation,&f.events,dt,&f.problems,&f.graphs,&f.app,&f.actions)
@@ -529,10 +531,10 @@ a_whole_body_action_blends_in_from_the_pose_and_stable_ticks_do_not_allocate :: 
         f:Match_Fixture;defer match_fixture_free(&f)
         if !testing.expect(t,match_fixture(t,&f)) {continue}
         for _ in 0..<10 {testing.expect(t,match_step(&f,dt,GROUND))}
-        foot:=bone_resolve(f.state,bone_ref("foot_l"));last:=f.state.local[foot].position
+        foot:=bone_resolve(f.state,bone_ref("foot_l"));last:=playing_pose(f.state,.Local)[foot].position
         play(&f.requests,f.rig,action)
         testing.expect(t,match_step(&f,dt,GROUND))
-        jumps[i]=linalg.length(f.state.local[foot].position-last)
+        jumps[i]=linalg.length(playing_pose(f.state,.Local)[foot].position-last)
         if i==0 {continue}
         testing.expect(t,f.state.layers[0].weight==1 && f.state.inertia.state.active && f.state.inertia.state.duration==.15,"it shows at its weight at once and blends over its fade_in")
         saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;f.app.allocator=context.allocator
@@ -552,7 +554,7 @@ a_whole_body_action_blends_in_from_the_pose_and_stable_ticks_do_not_allocate :: 
 // of its stack that shows.
 @(private="file")
 match_test_clips :: proc(state:^Playing) -> (count:int) {
-    for group in state.program.output.groups[:state.program.output.count] {count+=int(group.count)}
+    count=int(state.program.output.count)
     for &layer in state.layers[:state.stack] {
         if layer.weight<=0 {continue}
         players:[LAYER_PLAYERS]lib.Player
@@ -613,7 +615,7 @@ an_action_shows_its_pose_at_once_and_blends_from_the_pose_shown :: proc(t:^testi
             append(&moved,linalg.length(f.state.body_motion.translation-twin.state.body_motion.translation))
             testing.expectf(t,match_test_clips(f.state)==match_test_clips(twin.state) && f.state.layers[0].weight==twin.state.layers[0].weight,"%s: tick %d blends the clips of one source at its weight",c.name,tick)
             pose,offset:[5]mm.Vec3
-            for b in 0..<min(len(f.state.local),5) {pose[b]=f.state.local[b].position;offset[b]=pose[b]-twin.state.local[b].position}
+            for b in 0..<min(len(playing_pose(f.state,.Local)),5) {pose[b]=playing_pose(f.state,.Local)[b].position;offset[b]=pose[b]-playing_pose(twin.state,.Local)[b].position}
             append(&shown,pose);append(&offsets,offset)
             if c.next!="" && tick>=c.at && tick<c.at+18 {slide+=linalg.length(pose[foot]-shown[tick-1][foot])}
             if c.next!="" && tick==c.at {clips=match_test_clips(f.state)}
@@ -663,21 +665,21 @@ an_aim_offset_adds_over_the_matched_pose_and_an_action_plays_over_both :: proc(t
     step :: proc(f,plain:^Match_Fixture,dt:f32,velocity:mm.Vec3) -> bool {return match_step(f,dt,GROUND,velocity,velocity) && match_step(plain,dt,GROUND,velocity,velocity)}
     near :: proc(a,b:mm.Vec3) -> bool {return linalg.length(a-b)<1e-4}
     for _ in 0..<6 {testing.expect(t,step(&f,&plain,dt,walking))}
-    testing.expect(t,near(f.state.local[head].position,plain.state.local[head].position),"an axis nobody set leaves the pose as the search gives it")
+    testing.expect(t,near(playing_pose(f.state,.Local)[head].position,playing_pose(plain.state,.Local)[head].position),"an axis nobody set leaves the pose as the search gives it")
     // The aim turns the head over the walk the search plays; the feet stay matched.
     set(&f.requests,f.rig,"aim_yaw",1)
     testing.expect(t,step(&f,&plain,dt,walking))
     matched,_:=animation_match(&f.playback,f.rig)
     testing.expect(t,!matched.forced && matched.clip==base.name_hash("walk"))
-    testing.expectf(t,near(f.state.local[head].position,plain.state.local[head].position+{.2,0,0}) && near(f.state.local[left].position,plain.state.local[left].position) && near(f.state.local[right].position,plain.state.local[right].position),"the aim adds .2 m to the head of the matched pose: %v over %v",f.state.local[head].position,plain.state.local[head].position)
+    testing.expectf(t,near(playing_pose(f.state,.Local)[head].position,playing_pose(plain.state,.Local)[head].position+{.2,0,0}) && near(playing_pose(f.state,.Local)[left].position,playing_pose(plain.state,.Local)[left].position) && near(playing_pose(f.state,.Local)[right].position,playing_pose(plain.state,.Local)[right].position),"the aim adds .2 m to the head of the matched pose: %v over %v",playing_pose(f.state,.Local)[head].position,playing_pose(plain.state,.Local)[head].position)
     // It stays where it was set, and halfway there is half the offset; past its range it is the end of it.
     set(&f.requests,f.rig,"aim_yaw",.5)
-    testing.expect(t,step(&f,&plain,dt,walking) && near(f.state.local[head].position,plain.state.local[head].position+{.1,0,0}))
+    testing.expect(t,step(&f,&plain,dt,walking) && near(playing_pose(f.state,.Local)[head].position,playing_pose(plain.state,.Local)[head].position+{.1,0,0}))
     set(&f.requests,f.rig,"aim_yaw",-7)
-    testing.expect(t,step(&f,&plain,dt,walking) && step(&f,&plain,dt,walking) && near(f.state.local[head].position,plain.state.local[head].position-{.2,0,0}))
+    testing.expect(t,step(&f,&plain,dt,walking) && step(&f,&plain,dt,walking) && near(playing_pose(f.state,.Local)[head].position,playing_pose(plain.state,.Local)[head].position-{.2,0,0}))
     // The weight of the layer is the parameter of its name.
     set(&f.requests,f.rig,"Aim",.5)
-    testing.expect(t,step(&f,&plain,dt,walking) && near(f.state.local[head].position,plain.state.local[head].position-{.1,0,0}))
+    testing.expect(t,step(&f,&plain,dt,walking) && near(playing_pose(f.state,.Local)[head].position,playing_pose(plain.state,.Local)[head].position-{.1,0,0}))
     set(&f.requests,f.rig,"Aim",1);set(&f.requests,f.rig,"aim_yaw",1)
     // An action in the layer over the left foot plays over both: the foot is its clip's, the head
     // keeps the aim and the other foot the search.
@@ -687,16 +689,16 @@ an_aim_offset_adds_over_the_matched_pose_and_an_action_plays_over_both :: proc(t
         testing.expect(t,step(&f,&plain,dt,walking))
         for event in f.events.items {if event.action==base.name_hash("Kick") {counts[event.kind]+=1}}
         if tick==2 {
-            testing.expectf(t,near(f.state.local[left].position,{.1,-.6,-.5}) && near(f.state.local[right].position,plain.state.local[right].position) && near(f.state.local[head].position,plain.state.local[head].position+{.2,0,0}),"the kick takes the left foot over the walk and under nothing else: %v",f.state.local[left].position)
+            testing.expectf(t,near(playing_pose(f.state,.Local)[left].position,{.1,-.6,-.5}) && near(playing_pose(f.state,.Local)[right].position,playing_pose(plain.state,.Local)[right].position) && near(playing_pose(f.state,.Local)[head].position,playing_pose(plain.state,.Local)[head].position+{.2,0,0}),"the kick takes the left foot over the walk and under nothing else: %v",playing_pose(f.state,.Local)[left].position)
         }
     }
     testing.expectf(t,counts==([Animation_Event_Kind]int{.Marker=1,.Started=1,.Ended=1,.Interrupted=0,.Section=0,.Span_Begin=0,.Span_End=0}),"each event of the action arrives once: %v",counts)
-    testing.expect(t,near(f.state.local[left].position,plain.state.local[left].position),"its layer gives the foot back to the search when it ends")
+    testing.expect(t,near(playing_pose(f.state,.Local)[left].position,playing_pose(plain.state,.Local)[left].position),"its layer gives the foot back to the search when it ends")
     // A whole-body action takes the search away under the layers: the aim still adds over it.
     play(&f.requests,f.rig,"Vault");play(&plain.requests,plain.rig,"Vault")
     for _ in 0..<4 {testing.expect(t,step(&f,&plain,dt,walking))}
     vaulting,_:=animation_match(&f.playback,f.rig)
-    testing.expect(t,vaulting.forced && near(f.state.local[head].position,plain.state.local[head].position+{.2,0,0}) && near(f.state.local[left].position,plain.state.local[left].position))
+    testing.expect(t,vaulting.forced && near(playing_pose(f.state,.Local)[head].position,playing_pose(plain.state,.Local)[head].position+{.2,0,0}) && near(playing_pose(f.state,.Local)[left].position,playing_pose(plain.state,.Local)[left].position))
     testing.expect_value(t,f.problems.count,0)
     // A name that is no layer and no axis is a problem of the entity, and is dropped.
     set(&f.requests,f.rig,"aim_pitch",1)
@@ -934,8 +936,8 @@ a_blended_sample_plays_its_clips_together_at_its_weights_in_phase :: proc(t:^tes
     if !testing.expect(t,match_check(content.set.match)) {return}
     dt:=f32(1.0/60)
     for _ in 0..<30 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-.75},desired={0,0,-.75}))}
-    group:=f.state.program.output.groups[0]
-    if !testing.expectf(t,group.count==2 && group.mode==.Weighted,"the blend plays two clips together, not %d",group.count) {return}
+    group:=f.state.program.output
+    if !testing.expectf(t,group.count==2 && group.normalized,"the blend plays two clips together, not %d",group.count) {return}
     walk,idle:=group.leaves[0],group.leaves[1]
     testing.expect(t,walk.clip==base.name_hash("walk") && idle.clip==base.name_hash("idle") && walk.weight==.5 && idle.weight==.5 && walk.speed==idle.speed,"at the shares of its weights and one rate")
     a,b:=f.state.program.players[walk.player].player,f.state.program.players[idle.player].player
@@ -945,7 +947,7 @@ a_blended_sample_plays_its_clips_together_at_its_weights_in_phase :: proc(t:^tes
     // The left foot is halfway between the stride of the walk and where idle keeps it.
     time:=lib.player_time(&f.content.lib,a)
     stride:=lib.clip_evaluate(&f.content.lib,lib.clip_tracks(&f.content.lib,lib.clip_find(&f.content.lib,base.name_hash("walk")))[0],time)
-    foot:=f.state.local[bone_resolve(f.state,bone_ref("foot_l"))].position
+    foot:=playing_pose(f.state,.Local)[bone_resolve(f.state,bone_ref("foot_l"))].position
     testing.expectf(t,linalg.length(foot-mm.Vec3{.1,(stride.y-.95)/2,stride.z/2})<.01,"the foot is at %v, halfway to the stride %v",foot,stride)
 
     // Clips of different durations blend over the mean of their durations by weight: walk (1 s)
@@ -957,7 +959,7 @@ a_blended_sample_plays_its_clips_together_at_its_weights_in_phase :: proc(t:^tes
     g.graphs.contents[0].set.match.samples=long
     for _ in 0..<30 {testing.expect(t,match_step(&g,dt,GROUND,velocity={0,0,-.75},desired={0,0,-.75}))}
     testing.expect(t,core.problem_find(&g.problems,g.rig,"animation.match_blend")==nil && g.graphs.contents[0].databases[0].database.ranges[1].count==46,"the blend has the rows of 1.5 s")
-    mixed:=g.state.program.output.groups[0]
+    mixed:=g.state.program.output
     if !testing.expectf(t,mixed.count==2,"the blend of walk and vault plays, not %d clips",mixed.count) {return}
     walked,vaulted:=g.state.program.players[mixed.leaves[0].player].player,g.state.program.players[mixed.leaves[1].player].player
     shares:=[2]f32{lib.player_time(&g.content.lib,walked),lib.player_time(&g.content.lib,vaulted)/2}
@@ -975,9 +977,9 @@ a_mirrored_source_plays_its_clip_with_left_and_right_swapped :: proc(t:^testing.
     if !testing.expect(t,match_check(content.set.match)) {return}
     for _ in 0..<30 {testing.expect(t,match_step(&f,1.0/60,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5}))}
     value,_:=animation_match(&f.playback,f.rig)
-    player:=f.state.program.players[f.state.program.output.groups[0].leaves[0].player].player
+    player:=f.state.program.players[f.state.program.output.leaves[0].player].player
     right:=lib.clip_evaluate(&f.content.lib,lib.clip_tracks(&f.content.lib,lib.clip_find(&f.content.lib,base.name_hash("walk")))[1],lib.player_time(&f.content.lib,player))
-    foot:=f.state.local[bone_resolve(f.state,bone_ref("foot_l"))].position
+    foot:=playing_pose(f.state,.Local)[bone_resolve(f.state,bone_ref("foot_l"))].position
     testing.expectf(t,value.clip==base.name_hash("walk") && f.state.program.output.mirror && linalg.length(foot-mm.Vec3{-right.x,right.y,right.z})<.01,"the left foot is at %v, the right one of the clip at %v",foot,right.xyz)
 }
 
@@ -1063,9 +1065,9 @@ the_root_of_the_pose_follows_a_body_that_stops_within_its_lag_out_of_a_wall_and_
             value,_=animation_match(&f.playback,f.rig)
             testing.expectf(t,linalg.length(value.lag)<=info.lag+1e-5,"the root strays %.3f m, past its lag",linalg.length(value.lag))
             ahead=max(ahead,-value.lag.z);change=max(change,linalg.length(value.velocity-velocity));velocity=value.velocity
-            rest:=f.state.local[hips].position
+            rest:=playing_pose(f.state,.Local)[hips].position
             match_lag_apply(f.state,mm.TRANSFORM_IDENTITY)
-            testing.expect(t,linalg.length(f.state.local[hips].position-rest-value.lag)<1e-5,"the root of the pose moves by the lag")
+            testing.expect(t,linalg.length(playing_pose(f.state,.Local)[hips].position-rest-value.lag)<1e-5,"the root of the pose moves by the lag")
         }
         // Standing, the root holds where it stopped instead of sliding the feet to the body.
         testing.expectf(t,linalg.length(value.velocity)<.01,"the root of a pose that stands holds still: %v",value)
@@ -1143,28 +1145,28 @@ match_library_swap_enters_the_new_clips_through_an_inertial_transition :: proc(t
 
     dt:=f32(1)/30;walking:=mm.Vec3{0,0,-1.5}
     for _ in 0..<20 {testing.expect(t,match_step_with(&f,&f.content,dt,GROUND,walking))}
-    before:=[2]mm.Vec3{f.state.local[1].position,f.state.local[2].position}
+    before:=[2]mm.Vec3{playing_pose(f.state,.Local)[1].position,playing_pose(f.state,.Local)[2].position}
     foot_l:=bone_resolve(f.state,bone_ref("foot_l"))
-    planted:=f.state.local[foot_l].position
+    planted:=playing_pose(f.state,.Local)[foot_l].position
     walked,_:=animation_match(&f.playback,f.rig)
     testing.expect(t,walked.clip==base.name_hash("walk"),"it walks before the swap")
 
     f.animation.library=MATCH_TEST_LIBRARY
     if !testing.expect(t,match_step_with(&f,&weapon,dt,GROUND,walking)) {return}
-    after:=[2]mm.Vec3{f.state.local[1].position,f.state.local[2].position}
+    after:=[2]mm.Vec3{playing_pose(f.state,.Local)[1].position,playing_pose(f.state,.Local)[2].position}
     swapped,_:=animation_match(&f.playback,f.rig)
     jump:=max(linalg.length(after[0]-before[0]),linalg.length(after[1]-before[1]))
     testing.expect(t,f.state.program.library==MATCH_TEST_LIBRARY && swapped.clip==base.name_hash("walk"),"the rig plays the walk of the new library")
-    testing.expect(t,f.state.program.inertia.active,"the swap enters the new clip through an inertial transition")
+    testing.expect(t,f.state.inertia.state.active,"the swap enters the new clip through an inertial transition")
     testing.expectf(t,jump<.1,"a foot jumps %.3f m in the tick of the swap",jump)
     // Nothing of the new library plays yet: the search asks for the feet the rig has, not for the
     // mean of the database, and enters the new walk where its left foot is where the rig has it.
     walk_new:=lib.clip_find(&weapon.lib,base.name_hash("walk"))
-    entered:=lib.clip_evaluate(&weapon.lib,lib.clip_tracks(&weapon.lib,walk_new)[0],f.state.program.output.groups[0].leaves[0].start)
+    entered:=lib.clip_evaluate(&weapon.lib,lib.clip_tracks(&weapon.lib,walk_new)[0],f.state.program.output.leaves[0].start)
     testing.expectf(t,linalg.length(entered.xyz-planted)<.03,"the new walk starts with the left foot at %v, the rig had it at %v",entered.xyz,planted)
     // Past the blend, the feet are those of the new walk.
     for _ in 0..<15 {testing.expect(t,match_step_with(&f,&weapon,dt,GROUND,walking))}
-    testing.expect(t,!f.state.program.inertia.active,"the transition ends within its blend")
+    testing.expect(t,!f.state.inertia.state.active,"the transition ends within its blend")
 }
 
 @(private="file")

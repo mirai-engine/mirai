@@ -218,7 +218,9 @@ grids_sync :: proc(g:^Grids,grids:^core.Table(Particle_Grid,$A),volumes:^core.Ta
             if g.entries[i].entity==e {at=i;break}
         }
         if at==len(g.entries) {append(&g.entries,Grid_Entry{entity=e})}
-        g.entries[kept],g.entries[at]=g.entries[at],g.entries[kept]
+        previous:=g.entries[kept]
+        g.entries[kept]=g.entries[at]
+        g.entries[at]=previous
         entry:=&g.entries[kept]
         kept+=1
         entry.name,entry.cells,entry.layers,entry.cell_size,entry.writer=name,cells,grid.layers,grid.cell_size,0

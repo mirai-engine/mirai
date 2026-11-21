@@ -1,7 +1,9 @@
 package anim
 
+import "core:slice"
 import "core:fmt"
 import "core:mem"
+import "core:log"
 import "core:testing"
 import "mirai:asset"
 import "mirai:host"
@@ -22,7 +24,7 @@ character_test_set :: proc() -> Character_Set {
     actions:=make([]Action_Definition,1);actions[0]=ACTION_DEFINITION_DEFAULT;base.text_set(actions[0].name[:],"Wave");base.text_set(actions[0].clip[:],"wave")
     sections:=make([]Action_Section,1);sections[0]={action=0,next=-1};base.text_set(sections[0].name[:],"Hello")
     windows:=make([]Motion_Window,1);windows[0]=MOTION_WINDOW_DEFAULT;base.text_set(windows[0].name[:],"Reach")
-    grounding:=FOOT_GROUNDING_DEFAULT;grounding.count=2;grounding.legs[0],grounding.legs[1]=GROUNDED_LEG_DEFAULT,GROUNDED_LEG_DEFAULT
+    grounding:=FOOT_GROUNDING_DEFAULT;grounding.legs=make([]Grounded_Leg,2,context.temp_allocator);grounding.legs[0],grounding.legs[1]=GROUNDED_LEG_DEFAULT,GROUNDED_LEG_DEFAULT
     spaces:=make([]Blend_Info,1);spaces[0]=space
     return {info={animation={3,4}},match={info=MATCH_INFO_DEFAULT,clips=clips},actions={layers=layers,actions=actions,sections=sections},spaces=spaces,space_samples=samples,motion={warp=POSE_WARP_PROFILE_DEFAULT,windows=windows},pose={grounding=grounding}}
 }
@@ -51,7 +53,7 @@ character_roundtrips_every_part_and_rejects_invalid_references_and_ranges :: pro
     testing.expect(t,len(view.match.clips)==1 && view.match.clips[0]==set.match.clips[0])
     testing.expect(t,len(view.actions.layers)==1 && view.actions.layers[0]==set.actions.layers[0] && view.actions.sections[0]==set.actions.sections[0])
     testing.expect(t,len(view.spaces)==1 && view.spaces[0]==set.spaces[0] && len(view.space_samples)==4)
-    testing.expect(t,len(view.motion.windows)==1 && view.motion.windows[0]==set.motion.windows[0] && view.pose.grounding==set.pose.grounding)
+    testing.expect(t,len(view.motion.windows)==1 && view.motion.windows[0]==set.motion.windows[0] && view.pose.grounding.definition==set.pose.grounding.definition && slice.equal(view.pose.grounding.legs,set.pose.grounding.legs))
     Case :: struct {name:string,change:proc(set:^Character_Set)}
     cases:=[]Case{
         {"a layer that names a space the set lacks",proc(set:^Character_Set) {set.actions.layers[0].space={}; base.text_set(set.actions.layers[0].space[:],"missing")}},
@@ -141,4 +143,29 @@ character_content_keeps_the_previous_version_when_memory_runs_out :: proc(t:^tes
         if succeeded {break}
     }
     testing.expect(t,failed && succeeded)
+}
+
+
+@(test)
+unused_grounding_and_multi_ik_have_empty_child_tables :: proc(t:^testing.T) {
+    testing.expectf(t,size_of(Foot_Grounding)<1024 && size_of(Multi_IK_Constraint)<1024 &&
+        size_of(Pose_Request)<=96,"grounding %d, multi IK %d, pose request %d bytes",
+        size_of(Foot_Grounding),size_of(Multi_IK_Constraint),size_of(Pose_Request))
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    doc:asset.Document
+    if !testing.expect_value(t,character_document(&doc,&types,{1,2},character_set_make({})),asset.Error.None) {return}
+    defer asset.document_destroy(&doc)
+    bytes,error:=asset.document_bytes(&doc,context.temp_allocator)
+    if !testing.expect_value(t,error,asset.Error.None) {return}
+    testing.expect(t,len(bytes)<16*1024)
+    file:asset.Asset
+    if !testing.expect_value(t,asset.asset_open(&file,bytes),asset.Error.None) {return}
+    defer asset.asset_close(&file)
+    for name in ([]string{"grounding_legs","multi_ik_joints","multi_ik_effectors"}) {
+        table,found:=asset.asset_table(&file,name)
+        testing.expect(t,found && table.rows==0)
+    }
+    log.infof("grounding %d, multi IK %d, pose request %d, goal %d, empty character %d bytes",
+        size_of(Foot_Grounding),size_of(Multi_IK_Constraint),size_of(Pose_Request),
+        size_of(Modifier_Request),len(bytes))
 }

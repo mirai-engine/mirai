@@ -6,7 +6,7 @@ import anim "plugins:animation/runtime"
 import locomotion "plugins:locomotion/runtime"
 
 // A climb animated with root motion. While a Character mantles, the motion warping of its
-// .character takes the root of the clip that plays onto where the climb ends (Locomotion_State.mantle_to),
+// .character takes the root of the clip that plays onto where the climb ends (Parkour_State.mantle_to),
 // through its warp window named MANTLE_WINDOW over the span of that name on the clip of the climb
 // (animation_locomotion gives the target), and the root motion of every tick drives the climb (an
 // Override layered move),
@@ -30,6 +30,6 @@ animation_mantle :: proc(states:^core.Table(locomotion.Locomotion_State,.Read),w
 }
 
 // The target of the warping of a climb: the feet where it ends, facing as the body faces.
-mantle_target :: proc "contextless" (character:locomotion.Locomotion_State,facing:mm.Quat) -> anim.Spatial_Target {
+mantle_target :: proc "contextless" (character:locomotion.Parkour_State,facing:mm.Quat) -> anim.Spatial_Target {
     return {kind=.World,position=character.mantle_to,rotation=facing,scale=1}
 }

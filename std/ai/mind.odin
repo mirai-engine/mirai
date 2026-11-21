@@ -1,6 +1,7 @@
 package ai
 
 import "base:intrinsics"
+import "mirai:std/base"
 import math "mirai:std/math"
 
 // How an agent decides. Every tick a think procedure of the game proposes the
@@ -364,6 +365,9 @@ mind_exit :: proc(m:^Mind,acts:^[$A]$P,ctx:^Mind_Context,cause:Exit_Cause,by:u16
 
 RESERVATION_TARGETS :: #config(MIRAI_RESERVATION_TARGETS,128)
 RESERVATION_HOLDERS :: #config(MIRAI_RESERVATION_HOLDERS,4)
+@(private) RESERVATION_BUCKETS :: 2*RESERVATION_TARGETS
+
+#assert(RESERVATION_TARGETS>0 && RESERVATION_HOLDERS>0)
 
 Reservation_Slot :: struct {
     key:Reservation_Key,
@@ -374,6 +378,8 @@ Reservation_Slot :: struct {
 }
 Reservations :: struct {
     slots:[RESERVATION_TARGETS]Reservation_Slot,
+    buckets:[RESERVATION_BUCKETS]u32, // slot index plus one; 0 when empty
+    count:u32,
     failed:u32, // takes without a slot for the key or a place for the holder
 }
 
@@ -382,10 +388,59 @@ reserve_live :: #force_inline proc "contextless" (s:^Reservation_Slot,k:int,tick
     return s.holders[k]!=0 && s.until[k]>=tick
 }
 
+@(private)
+reserve_home :: #force_inline proc "contextless" (key:Reservation_Key) -> int {
+    return int(base.hash_u64(key.target~(u64(key.what)*0x9e3779b97f4a7c15))%RESERVATION_BUCKETS)
+}
+
+// The bucket of the key, or the empty bucket where it would go.
+@(private="file")
+reserve_bucket :: proc "contextless" (r:^Reservations,key:Reservation_Key) -> int {
+    if r.count>RESERVATION_TARGETS {return -1}
+    bucket:=reserve_home(key)
+    for _ in 0..<RESERVATION_BUCKETS {
+        index:=r.buckets[bucket]
+        if index>r.count {return -1}
+        if index==0 || r.slots[index-1].key==key {return bucket}
+        bucket=(bucket+1)%RESERVATION_BUCKETS
+    }
+    return -1
+}
+
 @(private="file")
 reserve_slot :: proc "contextless" (r:^Reservations,key:Reservation_Key) -> ^Reservation_Slot {
-    for &s in r.slots {if s.key==key {return &s}}
-    return nil
+    bucket:=reserve_bucket(r,key)
+    if bucket<0 || r.buckets[bucket]==0 {return nil}
+    return &r.slots[r.buckets[bucket]-1]
+}
+
+// Closes the hole in the probe chain, then fills the freed slot from the end.
+@(private="file")
+reserve_remove :: proc "contextless" (r:^Reservations,bucket:int) {
+    index:=r.buckets[bucket]
+    hole,next:=bucket,bucket
+    for _ in 1..<RESERVATION_BUCKETS {
+        next=(next+1)%RESERVATION_BUCKETS
+        entry:=r.buckets[next]
+        if entry==0 || entry>r.count {break}
+        home:=reserve_home(r.slots[entry-1].key)
+        if (next-home+RESERVATION_BUCKETS)%RESERVATION_BUCKETS >=
+            (next-hole+RESERVATION_BUCKETS)%RESERVATION_BUCKETS {
+            r.buckets[hole]=entry
+            hole=next
+        }
+    }
+    r.buckets[hole]=0
+    if index!=r.count {
+        moved:=&r.slots[r.count-1]
+        moved_bucket:=reserve_bucket(r,moved.key)
+        if moved_bucket>=0 && r.buckets[moved_bucket]==r.count {
+            r.slots[index-1]=moved^
+            r.buckets[moved_bucket]=index
+        }
+    }
+    r.slots[r.count-1]={}
+    r.count-=1
 }
 
 // The holder a taker at `priority` displaces: of the live ones below it and
@@ -450,17 +505,29 @@ reserve_holds :: proc "contextless" (r:^Reservations,key:Reservation_Key,holder:
 // holds it already.
 reserve_take :: proc "contextless" (r:^Reservations,key:Reservation_Key,holder:u64,limit:int,tick:u64,lease:u64=1,priority:u8=0) -> bool {
     if r==nil || key.target==0 || holder==0 || limit<=0 {return false}
-    s:=reserve_slot(r,key)
-    if s==nil {
-        for &free in r.slots {
-            if free.key.target==0 {s=&free;break}
-            live:=false
-            for k in 0..<RESERVATION_HOLDERS {if reserve_live(&free,k,tick) {live=true}}
-            if !live {free={};s=&free;break}
+    bucket:=reserve_bucket(r,key)
+    if bucket<0 {return false}
+    index:=r.buckets[bucket]
+    if index==0 {
+        if r.count==RESERVATION_TARGETS {
+            for &stale in r.slots {
+                live:=false
+                for k in 0..<RESERVATION_HOLDERS {if reserve_live(&stale,k,tick) {live=true;break}}
+                if live {continue}
+                expired:=reserve_bucket(r,stale.key)
+                if expired>=0 && r.buckets[expired]!=0 {reserve_remove(r,expired)}
+                break
+            }
+            if r.count==RESERVATION_TARGETS {r.failed+=1;return false}
+            bucket=reserve_bucket(r,key)
+            if bucket<0 {return false}
         }
-        if s==nil {r.failed+=1;return false}
-        s.key=key
+        r.count+=1
+        index=r.count
+        r.buckets[bucket]=index
+        r.slots[index-1]={key=key}
     }
+    s:=&r.slots[index-1]
     count:=0
     place:=-1
     for k in 0..<RESERVATION_HOLDERS {
@@ -496,12 +563,13 @@ reserve_renew :: proc "contextless" (r:^Reservations,key:Reservation_Key,holder:
 
 reserve_release :: proc "contextless" (r:^Reservations,key:Reservation_Key,holder:u64) {
     if r==nil || key.target==0 {return}
-    s:=reserve_slot(r,key)
-    if s==nil {return}
+    bucket:=reserve_bucket(r,key)
+    if bucket<0 || r.buckets[bucket]==0 {return}
+    s:=&r.slots[r.buckets[bucket]-1]
     empty:=true
     for k in 0..<RESERVATION_HOLDERS {
         if s.holders[k]==holder {s.holders[k],s.used[k]=0,false}
         if s.holders[k]!=0 {empty=false}
     }
-    if empty {s^={}}
+    if empty {reserve_remove(r,bucket)}
 }

@@ -12,7 +12,9 @@ mirror_test_same :: proc(a,b:math.Transform) -> bool {
 @(test)
 mirror_names_swap_the_side_token_and_keep_its_case :: proc(t:^testing.T) {
     buffer:[64]u8
-    cases:=[?][2]string{{"thigh_l","thigh_r"},{"hand.L","hand.R"},{"Bip01 L Thigh","Bip01 R Thigh"},{"l_arm","r_arm"},{"mixamorig:LeftHand","mixamorig:RightHand"},{"RIGHT_ARM","LEFT_ARM"},{"index_01_r","index_01_l"}}
+    cases:=[?][2]string{{"thigh_l","thigh_r"},{"hand.L","hand.R"},{"Bip01 L Thigh","Bip01 R Thigh"},{"l_arm","r_arm"},{"mixamorig:LeftHand","mixamorig:RightHand"},{"RIGHT_ARM","LEFT_ARM"},{"index_01_r","index_01_l"},
+        {"j_hip_le","j_hip_ri"},{"j_ankle_RI","j_ankle_LE"},{"j_eyeball_Le","j_eyeball_Ri"},
+        {"lf_arm","rt_arm"},{"arm_rt","arm_lf"}}
     for pair in cases {
         swapped,ok:=mirror_name(pair[0],buffer[:])
         testing.expectf(t,ok && swapped==pair[1],"%s gives %s",pair[0],swapped)

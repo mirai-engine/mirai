@@ -102,7 +102,8 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   [enemies with minds](references/behavior.md#enemies-with-minds),
   [smart objects](references/behavior.md#smart-objects),
   [influence maps](references/behavior.md#influence-maps),
-  [perception](references/behavior.md#perception), [places](references/behavior.md#places) and
+  [perception](references/behavior.md#perception), [places](references/behavior.md#places),
+  [game steps](references/behavior.md#game-steps) and
   [API](references/behavior.md#api)
 - The library under navigation and minds (A*, tiled navmesh, avoidance, the `Mind` loop and its
   actions): [minds](../mirai-std/references/ai.md#decisions-minds-mindodin) and
@@ -144,7 +145,8 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   the ground (`core.Ground_Queries`, which terrain gives) and births of effects (`core.Births`,
   which vfx takes).
 - AI over the network: the minds decide on the server.
-- Navigation: automatic navmesh by tiles from the collision.
+- Navigation builds tiles from collision. Authored surface links keep their owners when toggled,
+  and each agent has one navigation-owned corridor separate from its path status.
 - Far-away simulation: automatic coarse simulation through the portal graph.
 - Water: Gerstner waves.
 - Particles: a particle glows by its emission and is not a light; an effect that must light its

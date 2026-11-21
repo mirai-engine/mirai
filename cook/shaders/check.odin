@@ -768,7 +768,7 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
             if node:=surface_node_at(&graph,i32(d.line));node>=0 {d.node=graph.nodes[node].id}
         }
     }
-    slice.stable_sort_by(diagnostics[:],proc(a,b:Diagnostic) -> bool {
+    base.stable_sort_by(diagnostics[:],proc(a,b:Diagnostic) -> bool {
         if a.severity!=b.severity {return a.severity<b.severity}
         if a.file!=b.file {return a.file<b.file}
         return a.line<b.line

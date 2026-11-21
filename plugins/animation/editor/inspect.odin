@@ -244,9 +244,17 @@ Instance_Motion :: struct {
     targets_total:u32 `mirai:"optional"`,
     targets:[]Instance_Motion_Target `mirai:"optional"`,
 }
+Instance_Spatial_Target :: struct {
+    kind:anim.Spatial_Target_Kind,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
+    name:u64,
+    position:mm.Vec3,
+    rotation:mm.Quat,
+    scale:mm.Vec3,
+}
 Instance_Motion_Target :: struct {
     name:[32]u8 `mirai:"text"`,
-    target:Spatial_Target_Params,
+    target:Instance_Spatial_Target,
     world_position:mm.Vec3 `mirai:"unit=m,label=Where the target is in the world; only when resolved"`,
     world_rotation:mm.Quat,
     enabled,resolved:bool,

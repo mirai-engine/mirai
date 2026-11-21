@@ -286,9 +286,13 @@ view_keep :: proc(u:^Ui_Inspector) {
 // and the stage is as it starts.
 @(private)
 view_take :: proc(u:^Ui_Inspector) {
-    u.selected,u.nodes_scroll,u.properties_scroll,u.stage=-1,0,0,STAGE_DEFAULT
+    u.stage=STAGE_DEFAULT
+    u.selected,u.nodes_scroll,u.properties_scroll=-1,0,0
     for &v in u.views {
-        if v.id==u.id {u.selected,u.nodes_scroll,u.properties_scroll,u.stage=v.selected,v.nodes_scroll,v.properties_scroll,v.stage}
+        if v.id==u.id {
+            u.stage=v.stage
+            u.selected,u.nodes_scroll,u.properties_scroll=v.selected,v.nodes_scroll,v.properties_scroll
+        }
     }
     u.scrolled=u.selected
 }

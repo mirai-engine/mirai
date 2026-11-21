@@ -1762,7 +1762,10 @@ shared_targets_release :: proc(r: ^Renderer, textures: []rhi.Texture) {
 destroy_targets :: proc(r: ^Renderer, t: ^Targets, shadows := false) {
 	d := r.device
 	kept: Shadow_Raster
-	if shadows {kept, t.shadow_raster = t.shadow_raster, {}}
+	if shadows {
+		kept = t.shadow_raster
+		t.shadow_raster = {}
+	}
 	defer t.shadow_raster = kept
 	for tex in targets_textures(t) {if tex != 0 {rhi.texture_destroy(d, tex)}}
 	if t.shadow_raster.pages != 0 {rhi.buffer_destroy(d, t.shadow_raster.pages)}

@@ -31,35 +31,30 @@ Nav_Build_Scratch :: struct {
     cells:[dynamic]u32,   // first compact span of each column, and one past the last
     compact:[dynamic]Nav_Compact_Span,
     area:[dynamic]u8,
-    dist,work:[dynamic]u16,
-    region,region_dist:[dynamic]u16,
+    dist,work:[dynamic]u16, // work also holds the region distances and the detail height patch
+    region:[dynamic]u16,
     levels:[NAV_LEVEL_STACKS][dynamic]Nav_Level_Entry,
     stack:[dynamic]Nav_Level_Entry,
     dirty:[dynamic]Nav_Dirty_Entry,
     regions:[dynamic]Nav_Region,
-    ints,trace:[dynamic]i32,
+    ints,trace:[dynamic]i32, // ints also holds outline indices and polygon edge heads
     flags:[dynamic]u8,
-    raw,simple:[dynamic][4]i32,
+    raw,simple:[dynamic][4]i32, // contour vertices, later detail edges and triangles
     contours:[dynamic]Nav_Contour,
     contour_verts:[dynamic][4]i32,
-    outlines:[dynamic]i32,
     holes:[dynamic]Nav_Hole,
     diagonals:[dynamic][2]i32,
     mesh_verts:[dynamic][3]u16,
     vertex_flags:[dynamic]u8,
-    vertex_next:[dynamic]i32,
+    vertex_next:[dynamic]i32, // reused for polygon edge chains
     buckets:[dynamic]i32,
     polys:[dynamic]Nav_Mesh_Poly,
     indices:[dynamic]u32,
     tris:[dynamic]i32,
     merge:[dynamic]Nav_Mesh_Poly,
     hole:[dynamic][3]i32,
-    edges:[dynamic][4]i32,
-    tverts:[dynamic][4]i32,
+    edges:[dynamic][4]i32, // edges around a removed vertex, later detail samples
     mesh_edges:[dynamic]Nav_Mesh_Edge,
-    first_edge,next_edge:[dynamic]i32,
-    patch:[dynamic]u16,
-    detail_tris,detail_edges,samples:[dynamic][4]i32,
     details:[dynamic]Nav_Detail,
     detail_verts:[dynamic]math.Vec3,
     detail_out:[dynamic]Nav_Detail_Triangle,
@@ -73,22 +68,39 @@ nav_build_scratch_init :: proc(scratch:^Nav_Build_Scratch,allocator:=context.all
     scratch.allocator=allocator
 }
 
+// Clears build state while retaining the capacity of every buffer.
+nav_build_scratch_reset :: proc(scratch:^Nav_Build_Scratch) {
+    if scratch==nil {return}
+    nav_build_scratch_clear(scratch,false)
+}
+
 nav_build_scratch_destroy :: proc(scratch:^Nav_Build_Scratch) {
     if scratch==nil {return}
-    s:=scratch
-    for &r in s.regions {delete(r.connections);delete(r.floors)}
-    for &level in s.levels {delete(level)}
-    delete(s.columns);delete(s.spans);delete(s.cells);delete(s.compact);delete(s.area)
-    delete(s.dist);delete(s.work);delete(s.region);delete(s.region_dist)
-    delete(s.stack);delete(s.dirty);delete(s.regions);delete(s.ints);delete(s.trace)
-    delete(s.flags);delete(s.raw);delete(s.simple);delete(s.contours);delete(s.contour_verts)
-    delete(s.outlines);delete(s.holes);delete(s.diagonals)
-    delete(s.mesh_verts);delete(s.vertex_flags);delete(s.vertex_next);delete(s.buckets)
-    delete(s.polys);delete(s.indices);delete(s.tris);delete(s.merge);delete(s.hole)
-    delete(s.edges);delete(s.tverts);delete(s.mesh_edges);delete(s.first_edge);delete(s.next_edge)
-    delete(s.patch);delete(s.detail_tris);delete(s.detail_edges);delete(s.samples)
-    delete(s.details);delete(s.detail_verts);delete(s.detail_out);delete(s.bv_items)
-    s^={}
+    nav_build_scratch_clear(scratch,true)
+    scratch^={}
+}
+
+@(private="file")
+nav_build_scratch_clear :: proc(s:^Nav_Build_Scratch,$release:bool) {
+    buffer :: proc(a:^[dynamic]$T) {
+        when release {delete(a^)} else {clear(a)}
+    }
+    s.span_free=0
+    for &r in s.regions {buffer(&r.connections);buffer(&r.floors)}
+    when release {delete(s.regions)}
+    for &level in s.levels {buffer(&level)}
+    buffer(&s.columns);buffer(&s.spans);buffer(&s.cells)
+    buffer(&s.compact);buffer(&s.area);buffer(&s.dist)
+    buffer(&s.work);buffer(&s.region);buffer(&s.stack)
+    buffer(&s.dirty);buffer(&s.ints);buffer(&s.trace)
+    buffer(&s.flags);buffer(&s.raw);buffer(&s.simple)
+    buffer(&s.contours);buffer(&s.contour_verts);buffer(&s.holes)
+    buffer(&s.diagonals);buffer(&s.mesh_verts);buffer(&s.vertex_flags)
+    buffer(&s.vertex_next);buffer(&s.buckets);buffer(&s.polys)
+    buffer(&s.indices);buffer(&s.tris);buffer(&s.merge)
+    buffer(&s.hole);buffer(&s.edges);buffer(&s.mesh_edges)
+    buffer(&s.details);buffer(&s.detail_verts);buffer(&s.detail_out)
+    buffer(&s.bv_items)
 }
 
 // The square of the tile on XZ, with y open from -max(f32) to max(f32). Zero

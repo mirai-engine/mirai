@@ -97,7 +97,7 @@ nav_space_neighbors :: proc(q:^Nav_Query,key:u64,edges:^Edge_List) {
 nav_mesh_edges :: proc(mesh:^Nav_Mesh,filter:^Nav_Filter,from:Nav_Ref,p,end:math.Vec3,end_ref:Nav_Ref,candidates:[]math.Vec3,edges:^Edge_List,against:=false) {
     if nav_ref_is_link(from) {
         link:=nav_link_of(mesh,from)
-        if link==nil || edges.count>=len(candidates) {return}
+        if !nav_link_active(link) || edges.count>=len(candidates) {return}
         _,to_point,_,to_poly:=nav_link_ends(link,from)
         _,poly:=nav_poly_of(mesh,to_poly)
         if poly==nil || !nav_filter_passes(filter,poly.area) {return}
@@ -118,7 +118,8 @@ nav_mesh_edges :: proc(mesh:^Nav_Mesh,filter:^Nav_Filter,from:Nav_Ref,p,end:math
         to:=step.to
         if nav_ref_is_link(step.to) {
             link:=nav_link_of(mesh,step.to)
-            if link==nil || !nav_link_crossable(link,filter.can) || !nav_filter_passes(filter,link.desc.area) {continue}
+            if !nav_link_crossable(link,filter.can) ||
+                !nav_filter_passes(filter,link.desc.area) {continue}
             // A link that goes both ways is walked into this polygon as it is walked out of it.
             if step.edge==NAV_CONNECTION_ARRIVAL {to=nav_ref_flip(step.to)} else if against && !link.desc.two_way {continue}
             entry,_,_,_=nav_link_ends(link,to)
@@ -151,7 +152,8 @@ nav_path_begin :: proc(q:^Nav_Query,mesh:^Nav_Mesh,start_ref,end_ref:Nav_Ref,sta
     _,first:=nav_poly_of(mesh,start_ref)
     _,last:=nav_poly_of(mesh,end_ref)
     if first==nil || last==nil {return .Invalid}
-    q.mesh,q.filter,q.toward=mesh,filter^,false
+    q.filter=filter^
+    q.mesh,q.toward=mesh,false
     q.start,q.end,q.start_ref,q.end_ref=start,end,start_ref,end_ref
     q.accepted=start
     status:=search_begin(&q.search,u64(start_ref),u64(end_ref),q,nav_space_heuristic)
@@ -162,22 +164,20 @@ nav_path_step :: proc(q:^Nav_Query,budget:int) -> Search_Status {
     if q.mesh==nil {return .Invalid}
     return search_step(&q.search,q,nav_space_neighbors,nav_space_heuristic,nav_space_accept,budget)
 }
-// Writes the path of polygons and links of the finished search. Without a way
-// to the end, the path to the reached polygon nearest to it, with `partial`.
-// Invalid when a node of it stopped being valid while the search ran.
+// Found means the entire route to the goal was written. No_Path or Open_Full
+// with partial means a route to the nearest reached polygon was written.
+// Output_Full writes no route. Invalid includes links disabled during the search.
 nav_path_finish :: proc(q:^Nav_Query,out:[]Nav_Ref) -> (count:int,status:Search_Status,partial:bool) {
     if q.mesh==nil {return 0,.Invalid,false}
     count,status,partial=nav_search_finish(&q.search,q.points,q.end,out)
     for ref in out[:count] {
-        if !nav_ref_valid(q.mesh,ref) {return 0,.Invalid,false}
+        if !nav_path_ref_walkable(q.mesh,ref) {return 0,.Invalid,false}
     }
     return
 }
 
-// The path of a finished search of any space, over the points where it
-// entered each node: the one it found, or without a way to the end, the path
-// to the node it reached nearest to `end` that is not a link, with `partial`.
-// Whoever searched checks that its nodes still are.
+// Finalizes any navigation search. Partial is true only for a written route
+// whose search ended with No_Path or Open_Full.
 @(private)
 nav_search_finish :: proc(search:^Search,points:[]math.Vec3,end:math.Vec3,out:[]Nav_Ref) -> (count:int,status:Search_Status,partial:bool) {
     status=search.status
@@ -188,7 +188,8 @@ nav_search_finish :: proc(search:^Search,points:[]math.Vec3,end:math.Vec3,out:[]
     case .No_Path,.Open_Full:
         best:=f32(max(f32))
         nearest:u64
-        for slot in 0..<u32(len(points)) {
+        nodes:=search.used if search_keyed(search) else len(points)
+        for slot in 0..<u32(nodes) {
             if !search_reached(search,slot) {continue}
             key:=search_key(search,slot)
             if nav_ref_is_link(Nav_Ref(key)) {continue}
@@ -196,8 +197,9 @@ nav_search_finish :: proc(search:^Search,points:[]math.Vec3,end:math.Vec3,out:[]
             if d<best {best=d;nearest=key}
         }
         if nearest==0 {return 0,status,false}
-        count,_=search_path_to(search,nearest,keys)
-        partial=count>0
+        written,result:=search_path_to(search,nearest,keys)
+        if result!=.Found {return 0,result,false}
+        return written,status,true
     case:
         return 0,status,false
     }
@@ -231,7 +233,8 @@ nav_costs_begin :: proc(q:^Nav_Query,mesh:^Nav_Mesh,ref:Nav_Ref,point:math.Vec3,
     q.mesh=nil
     if len(q.points)==0 || mesh==nil || filter==nil || !nav_point_finite(point) {return false}
     if _,poly:=nav_poly_of(mesh,ref);poly==nil {return false}
-    q.mesh,q.filter,q.toward=mesh,filter^,toward
+    q.filter=filter^
+    q.mesh,q.toward=mesh,toward
     q.start,q.end,q.start_ref,q.end_ref=point,point,ref,0
     search_begin(&q.search,u64(ref),0,q,nav_around_heuristic)
     if slot,ok:=search_find(&q.search,u64(ref));ok {q.points[slot]=point}
@@ -287,7 +290,7 @@ nav_toward_path :: proc(q:^Nav_Query,ref:Nav_Ref,out:[]Nav_Ref) -> (count:int,ok
         at:=Nav_Ref(search_key(&q.search,slot))
         // The search walked each link from its end.
         out[count]=nav_ref_flip(at) if nav_ref_is_link(at) else at
-        if !nav_ref_valid(q.mesh,out[count]) {return 0,false}
+        if !nav_path_ref_walkable(q.mesh,out[count]) {return 0,false}
         count+=1
         if q.search.parent[slot]==slot {break}
         slot=q.search.parent[slot]
@@ -308,7 +311,7 @@ nav_cost_to :: proc(q:^Nav_Query,mesh:^Nav_Mesh,ref:Nav_Ref,end:math.Vec3) -> (c
         from,to:=Nav_Ref(keys[i]),Nav_Ref(keys[i+1])
         if nav_ref_is_link(from) {
             link:=nav_link_of(mesh,from)
-            if link==nil {return}
+            if !nav_link_active(link) {return}
             _,leave,_,_:=nav_link_ends(link,from)
             cost+=linalg.distance(p,leave)*nav_filter_cost(&q.filter,link.desc.area)+link.desc.cost
             p=leave
@@ -337,8 +340,9 @@ Nav_Corner_Flags :: bit_set[Nav_Corner_Flag;u8]
 // A point where a straight path turns, and the node it goes on through.
 Nav_Corner :: struct {
     position:math.Vec3,
-    ref:Nav_Ref,
     flags:Nav_Corner_Flags,
+    ref:Nav_Ref,
+    link_owner:u64, // owner of ref when Link is set
 }
 
 // The corners of the straight path from `start` to `end` through the nodes
@@ -350,7 +354,7 @@ nav_straight_path :: proc(mesh:^Nav_Mesh,start,end:math.Vec3,path:[]Nav_Ref,out:
     if len(path)==0 || len(out)==0 || !nav_point_finite(start) || !nav_point_finite(end) {return}
     path,end:=path,end
     valid:=0
-    for valid<len(path) && nav_ref_valid(mesh,path[valid]) {valid+=1}
+    for valid<len(path) && nav_path_ref_walkable(mesh,path[valid]) {valid+=1}
     for valid>0 && nav_ref_is_link(path[valid-1]) {valid-=1}
     if valid==0 {return}
     cut:=valid<len(path)
@@ -361,7 +365,11 @@ nav_straight_path :: proc(mesh:^Nav_Mesh,start,end:math.Vec3,path:[]Nav_Ref,out:
     push :: proc "contextless" (out:[]Nav_Corner,count:^int,corner:Nav_Corner) -> bool {
         if count^>0 {
             last:=&out[count^-1]
-            if last.position==corner.position {last.flags|=corner.flags;if corner.ref!=0 && .Link in corner.flags {last.ref=corner.ref};return true}
+            if last.position==corner.position {
+                last.flags|=corner.flags
+                if .Link in corner.flags {last.ref,last.link_owner=corner.ref,corner.link_owner}
+                return true
+            }
         }
         if count^>=len(out) {return false}
         out[count^]=corner
@@ -374,10 +382,11 @@ nav_straight_path :: proc(mesh:^Nav_Mesh,start,end:math.Vec3,path:[]Nav_Ref,out:
     for i in 0..<len(path) {
         if !nav_ref_is_link(path[i]) {continue}
         link:=nav_link_of(mesh,path[i])
-        if link==nil {return}
+        if !nav_link_active(link) {return}
         enter,leave,_,_:=nav_link_ends(link,path[i])
         if !nav_funnel_path(mesh,from,enter,path[first:i],out,&count) {return}
-        if !push(out,&count,{position=enter,ref=path[i],flags={.Link}}) {return}
+        corner:=Nav_Corner{position=enter,ref=path[i],flags={.Link},link_owner=link.desc.owner}
+        if !push(out,&count,corner) {return}
         from=leave
         first=i+1
     }
@@ -534,7 +543,7 @@ nav_pulled_cost :: proc(mesh:^Nav_Mesh,filter:^Nav_Filter,path:[]Nav_Ref,corners
         first:=at[k-1]
         if .Link in corners[k-1].flags {
             link:=nav_link_of(mesh,path[first])
-            if link==nil {return}
+            if !nav_link_active(link) {return}
             enter,leave,_,_:=nav_link_ends(link,path[first])
             cost+=linalg.distance(enter,leave)*nav_filter_cost(filter,link.desc.area)+link.desc.cost
             from=leave
@@ -959,7 +968,8 @@ nav_around :: proc(q:^Nav_Query,mesh:^Nav_Mesh,start_ref:Nav_Ref,center:math.Vec
     q.mesh=nil
     if len(q.points)==0 || filter==nil || !nav_point_finite(center) || !(radius>=0) || !(radius<=1e9) {return false}
     if _,poly:=nav_poly_of(mesh,start_ref);poly==nil {return false}
-    q.mesh,q.filter,q.toward=mesh,filter^,false
+    q.filter=filter^
+    q.mesh,q.toward=mesh,false
     q.end_ref=0
     status:=search_begin(&q.search,u64(start_ref),0,q,nav_around_heuristic)
     if slot,ok:=search_find(&q.search,u64(start_ref));ok {q.points[slot]=center}

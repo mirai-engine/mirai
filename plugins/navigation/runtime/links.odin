@@ -44,6 +44,7 @@ link_need :: proc "contextless" (link:Nav_Link,start,end:mm.Vec3) -> (need:ai.Na
 Link_Seen :: struct {
     link:Nav_Link,
     start,end:mm.Vec3,
+    refs:[NAV_CLASS_CAPACITY]ai.Nav_Ref,
 }
 
 // Puts in every class the links of the Nav_Link components that are new,
@@ -78,14 +79,36 @@ links_update :: proc(n:^Navigation,b:^Navigation_Builds,links:^core.Table(Nav_Li
         if link.target!=core.NONE {
             if to,found:=core.world_of(transforms,parents,link.target);found {end=to.position}
         }
-        now:=Link_Seen{link,start,end}
+        now:=Link_Seen{link=link,start=start,end=end}
         at:=core.entity_map_index(&b.links,e)
         if at>=0 {
             if at<len(seen) {seen[at]=true}
-            if b.links.values[at]==now && !(link_arced(link) && mm.aabb_overlaps(link_arc_box(start,end,n),changed)) {continue}
-            b.links.values[at]=now
+            previous:=&b.links.values[at]
+            geometry:=previous.link
+            geometry.enabled,geometry.capacity,geometry.passthrough=link.enabled,link.capacity,link.passthrough
+            // Passthrough changes the clearance check of a ballistic link.
+            if link_arced(link) {geometry.passthrough=previous.link.passthrough}
+            if geometry==link && previous.start==start && previous.end==end &&
+               !(link_arced(link) && !link.passthrough && mm.aabb_overlaps(link_arc_box(start,end,n),changed)) {
+                if previous.link.enabled!=link.enabled {
+                    for i in 0..<n.count {
+                        if previous.refs[i]!=0 {
+                            ai.nav_mesh_link_set_enabled(&n.classes[i].mesh,previous.refs[i],link.enabled)
+                        }
+                    }
+                    n.revision+=1
+                }
+                previous.link=link
+                continue
+            }
+            previous^=now
         } else {
-            core.entity_map_put(&b.links,e,now)
+            if _,ok:=core.entity_map_put(&b.links,e,now);!ok {
+                core.report(problems,e,"navigation.memory","No memory to track the navigation link")
+                b.links_seen={}
+                continue
+            }
+            at=core.entity_map_index(&b.links,e)
         }
         for i in 0..<n.count {
             if class_in_volume(n,i) {continue}
@@ -95,7 +118,7 @@ links_update :: proc(n:^Navigation,b:^Navigation_Builds,links:^core.Table(Nav_Li
             if link.kind==LINK_FLY {continue}
             class:=n.classes[i].class
             from,to,two_way:=start,end,link.two_way
-            if link_arced(link) {
+            if link_arced(link) && !link.passthrough {
                 check:=Arc_Check{physics,class.radius,class.height,n.classes[i].filter}
                 kind:=ai.Nav_Jump_Kind.Jump if link.kind==LINK_JUMP else .Drop
                 forward:=arc_clear(&check,{start=start,end=end,kind=kind})
@@ -111,7 +134,9 @@ links_update :: proc(n:^Navigation,b:^Navigation_Builds,links:^core.Table(Nav_Li
             shown:=link
             shown.two_way=two_way
             desc:=ai.Nav_Link_Desc{start=from,end=to,radius=max(class.radius*2,0.5),kind=u8(link.kind),two_way=two_way,area=u8(link.area),cost=link.cost,need=link_need(shown,from,to),owner=u64(e)}
-            if ai.nav_mesh_add_link(mesh,desc)==0 {
+            ref:=ai.nav_mesh_add_link(mesh,desc,link.enabled)
+            b.links.values[at].refs[i]=ref
+            if ref==0 {
                 core.report(problems,e,"navigation.links","The mesh of class %q has no room for this link: raise max_links in Navigation_Settings",base.text_get(class.name[:]))
             }
         }
@@ -150,10 +175,11 @@ links_mark :: proc(n:^Navigation,class:int,coord:[2]i32) {
     tiles:=i32(reach/c.mesh.tile_width)+1
     for z in coord.y-tiles..=coord.y+tiles {
         for x in coord.x-tiles..=coord.x+tiles {
-            if mark:=base.hash_map_ptr(&c.marks,coord_key({x,z}));mark!=nil && !mark.links {
+            key:=coord_key({x,z})
+            if mark:=base.hash_map_ptr(&c.marks,key);mark!=nil && !mark.links {
                 next:=mark^
                 next.links=true
-                mark_set(c,mark,next)
+                mark_set(c,key,mark,next)
             }
         }
     }
@@ -219,7 +245,7 @@ links_generate :: proc(n:^Navigation,physics:core.Ref(phys.Physics_State),proble
             done+=1
             next:=mark^
             next.links=false
-            mark_set(c,mark,next)
+            mark_set(c,key,mark,next)
             coord:=coord_of_key(key)
             owner:=generated_owner(coord)
             if ai.nav_mesh_remove_links_of(&c.mesh,owner)>0 {n.revision+=1}

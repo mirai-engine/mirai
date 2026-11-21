@@ -18,10 +18,9 @@ other way to name it.
 
 - `kind`: `World`, `Entity` (in the space of `entity`), `Bone` (a bone of the rig `entity`) or
   `Socket` (a socket of its skeleton), with position, rotation and scale in that space.
-- The set stores kind, bone or socket and transformation; the entity belongs to the instance and
-  arrives with the target. A set accepts `Entity`, `Bone` and `Socket` without an entity; an
-  instance needs one (`spatial_target_valid`). `spatial_point`, `spatial_entity`, `spatial_bone`,
-  etc. build them.
+- The set stores kind, bone or socket and transformation in `Spatial_Definition`. The entity
+  arrives with the instance target. Build targets with `spatial_point`, `spatial_entity`,
+  `spatial_bone` and `spatial_socket`.
 - Bone and socket read the pose that their rig sampled in this tick (`Playing.sampled`; the warping,
   that of the previous one), with the root in the world of its entity. The path to the bone is
   resolved once per bind and skeleton; sampling afterwards does not allocate.
@@ -107,43 +106,33 @@ chain, a topology that is too long or an incompatible target is a bind failure o
   root motion, the follow of a leader, curve drives and curve poses, grounding, IK/look-at, Chain
   IK, Multi IK, twist, springs, Spline IK, correctives, Follow and, at the end, limits and
   attachments.
-- `Modifier_Runtime` stores tables, bindings and spring state; `core.value_copy` copies it for Play
-  and rollback and the assets stay shared. The rows are not components nor another owner of
-  transforms.
-- Each solver has its own plain state struct with the common header `Rig_Binding` and only its
-  indices and scratch: Chain IK does not reserve Multi IK joints.
-- Preparation stamps configurations, attachments, `Animation`, rigs and the registry revision:
-  without changes it walks nothing. A write of `Animation` looks only at `source` and `retarget` of
-  the stamped rows; a registry revision compares the definitions used. It rebuilds only if something
-  relevant changed and, without memory, keeps what was published. A test that simulates a reload by
-  touching a cache also bumps `host.Assets.revision`.
-- The operations of a rig are a contiguous block in each table, pointed to by the generational index
-  of `core.Table`: evaluating, naming and diagnosing walks only that block. A rig without operations
-  prepares no scratch.
+- Each world owns its `Modifier_Runtime`, indexed by generational entity. A row keeps bindings,
+  influence, overrides and solver state for one rig. It reads definitions from the shared character
+  content by asset identity and revision. A rig without modifiers or attachments takes no row.
+- Creating or retiring a rig leaves the other rigs' bindings and history intact. A changed profile
+  prepares only its rig, carrying requests forward by name. Changing an attachment refreshes its
+  bone or socket binding.
+- Each solver keeps only the indices and scratch it uses. A stable tick reuses them.
 - Multi IK with weight one keeps the global pose of the solver; partial weights blend and recompose.
   Disabling springs resets their state only once.
 
 ## Requests and diagnostics
 
-- `Modifier_Kind` includes these kinds, and `modifier_control` gives them independent weights and
-  fades. `modifier_named_slot`, `modifier_control_named` and `modifier_goal_named` resolve names
-  from the prepared runtime and reject ambiguous ones without allocating; code that knows the
-  profile may use the prepared indices.
-- A named target or control (and `effector_name` in Multi IK) finds its operation again when the
-  profile is read again; one by slot follows it only if it keeps its name. A name that is no longer
-  there gives `Missing_Operation` or `Missing_Effector` in `modifier_request_error`.
-- `Modifier_Goal.target` replaces the target of Chain IK, Spline IK (per control) and Follow; in
-  Multi IK `effector` chooses the effector and keeps the others. In Spring, `position` is an
-  external force. Twist, Chain Retarget and Corrective have only weight and activation. None of this
-  changes the shared definition.
+- `modifier` queues a `Modifier_Request` addressed by rig, kind and name. The string arguments
+  hash operation and effector names at the call boundary. The queue stores compact identifiers
+  and resolves them against the rig's current character set.
+- With `goal` set, a request supplies the target, spring force or grounding contact. Otherwise
+  it adjusts the operation's influence independently of its goal. Multi IK and Spline IK name
+  the effector or control whose target changes. Replacing a target leaves the others in place.
+- A request follows its name when rows are reordered. A missing name, missing effector or
+  unresolved target is reflected in `modifier_request_error`.
 - `animation.inspect` part `Modifiers` lists the operations by name and kind, with influence,
   effectors and the last request error; `diagnostics` adds fade and solver. API contract:
   [control](animation-authoring.md#per-instance-control-and-preview).
 - `animation_rig_diagnostic` gives validity, residual (in springs, length error), angular error,
-  iterations and `reached`; twist and retarget give only validity. IK and Look store it in
-  `Animation_Constraints`, which resolves it: in Look, the angular error of the aim and as residual
-  how far it passes from the target at its distance. An unreachable effector does not make a
-  numerically good evaluation invalid.
+  iterations and `reached`; twist and retarget give only validity. Look reports the angular error
+  of the aim and how far it passes from the target at its distance. An unreachable effector can
+  still give a valid evaluation.
 
 ## Bake
 
@@ -180,8 +169,9 @@ topology differs.
 - `chain_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls`
 - `semantic_retarget_bindings_ignore_actor_placement_and_replay_without_allocations`
 - `multi_ik_modifiers_accept_named_goals_keep_effectors_independent_and_clone_solver_scratch`
-- `modifier_controls_preserve_targets_and_fade_independently_through_world_copies`
-- Also: `modifier_control_requests_*`, `rotation_limits_*`, `shared_profiles_*`,
+- `modifier_controls_preserve_targets_and_fade_independently_through_world_copies` and
+  `discovery_test.odin` for live rig state across unrelated despawns and spawns.
+- Also: `modifier_requests_*`, `rotation_limits_*`, `shared_profiles_*`,
   `rig_goal_persistence_*`, `profile_reload_allocation_failure_*`, `rigs_without_operations_*`,
   `rig_operations_preserve_*` and `multi_ik_full_and_partial_weights_*`.
 - Math: `std/anim/rigs_test.odin`.

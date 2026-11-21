@@ -15,30 +15,31 @@ curves_prepare :: proc(state:^Playing,content:^host.Content_Animation) -> bool {
     defer delete(next)
     for track in content.lib.tracks[:content.lib.track_count] {
         if track.property!=.Float && track.property!=.Vector {continue}
-        found:=false
-        for curve in next {if curve.target==track.target && curve.property==track.property && curve.slot==track.slot {found=true;break}}
-        if !found && append(&next,Curve_Output{target=track.target,property=track.property,slot=track.slot})!=1 {return false}
+        if append(&next,Curve_Output{target=track.target,property=track.property,slot=track.slot})!=1 {return false}
     }
-    // In curve_order, so the final curves of a rig are laid out by halves and lookups search by halves.
     slice.sort_by(next[:],curve_order)
+    count:=0
+    for curve in next {
+        if count==0 || !curve_same(next[count-1],curve) {next[count]=curve;count+=1}
+    }
+    base.truncate(&next,count)
+    if !program_array_resize(&state.curve_scratch,count*3) {return false}
     delete(state.curves);state.curves=next;next=nil;state.curves_ready=true
     return true
 }
 
 sample_curves :: proc(state:^Playing,content:^host.Content_Animation,weight:f32=1,animation:Animation=ANIMATION_DEFAULT) {
     if !curves_prepare(state,content) {return}
-    for &result in state.curves {
-        result.value,result.weight={},0
-        current:=lib.fader_current_weight(state.fader)
-        curve_accumulate(&result,&content.lib,state.fader.current,current)
-        total:=current
-        for outgoing in state.fader.outgoing[:state.fader.outgoing_count] {
-            share:=lib.fade_out_weight(outgoing)
-            curve_accumulate(&result,&content.lib,outgoing.player,share);total+=share
-        }
-        if total>0 {result.value/=total;result.weight/=total}
-        result.value*=mm.saturate(weight);result.weight*=mm.saturate(weight)
+    for &result in state.curves {result.value,result.weight={},0}
+    total:=lib.fader_current_weight(state.fader)
+    curves_accumulate(state.curves[:],&content.lib,state.fader.current,total)
+    for outgoing in state.fader.outgoing[:state.fader.outgoing_count] {
+        share:=lib.fade_out_weight(outgoing)
+        curves_accumulate(state.curves[:],&content.lib,outgoing.player,share)
+        total+=share
     }
+    scale:=mm.saturate(weight)/total if total>0 else 0
+    for &result in state.curves {result.value*=scale;result.weight*=scale}
     sample_layer_curves(state,content,animation)
 }
 
@@ -53,26 +54,37 @@ sample_layer_curves :: proc(state:^Playing,content:^host.Content_Animation,anima
         if count==0 {continue}
         additive:=asked.mode==.Additive || asked.curves==.Additive
         from:=lib.clip_find(&content.lib,asked.reference_clip) if additive && asked.reference_clip!=0 else 0
-        for &result in state.curves {
-            overlay:=Curve_Output{target=result.target,property=result.property,slot=result.slot}
-            sum:f32
-            for player in players[:count] {curve_accumulate(&overlay,&content.lib,player,player.weight);sum+=player.weight}
-            if overlay.weight<=0 || sum<=0 {continue}
-            alpha:=layer.weight*mm.saturate(animation.weight)*overlay.weight/sum
+        n:=len(state.curves)
+        overlay,rest,own:=state.curve_scratch[:n],state.curve_scratch[n:2*n],state.curve_scratch[2*n:3*n]
+        for curve,k in state.curves {
+            key:=Curve_Output{target=curve.target,property=curve.property,slot=curve.slot}
+            overlay[k],rest[k],own[k]=key,key,key
+        }
+        sum:f32
+        for player in players[:count] {
+            curves_accumulate(overlay,&content.lib,player,player.weight)
+            sum+=player.weight
             if additive {
-                // From the reference clip when it has the curve, as the bones; else from its own.
-                rest:=Curve_Output{target=result.target,property=result.property,slot=result.slot}
-                if from!=0 {
-                    reference:=lib.player_make(from);reference.time=asked.reference
-                    curve_accumulate(&rest,&content.lib,reference,1)
-                }
-                if rest.weight<=0 {
-                    for player in players[:count] {reference:=player;reference.time=asked.reference;curve_accumulate(&rest,&content.lib,reference,player.weight)}
-                }
-                if rest.weight>0 {rest.value/=rest.weight}
-                result.value+=(overlay.value/overlay.weight-rest.value)*alpha
+                reference:=player;reference.time=asked.reference
+                curves_accumulate(own,&content.lib,reference,player.weight)
+            }
+        }
+        if from!=0 {
+            reference:=lib.player_make(from);reference.time=asked.reference
+            curves_accumulate(rest,&content.lib,reference,1)
+        }
+        if sum<=0 {continue}
+        for &result,k in state.curves {
+            authored:=overlay[k]
+            if authored.weight<=0 {continue}
+            alpha:=layer.weight*mm.saturate(animation.weight)*authored.weight/sum
+            value:=authored.value/authored.weight
+            if additive {
+                reference:=rest[k] if rest[k].weight>0 else own[k]
+                if reference.weight>0 {value-=reference.value/reference.weight}
+                result.value+=value*alpha
             } else {
-                result.value=mm.lerp(result.value,overlay.value/overlay.weight,alpha)
+                result.value=mm.lerp(result.value,value,alpha)
                 result.weight=mm.lerp(result.weight,1,alpha)
             }
         }
@@ -80,11 +92,16 @@ sample_layer_curves :: proc(state:^Playing,content:^host.Content_Animation,anima
 }
 
 @(private)
-curve_accumulate :: proc(result:^Curve_Output,library:^lib.Library,player:lib.Player,weight:f32) {
+curves_accumulate :: proc(results:[]Curve_Output,library:^lib.Library,player:lib.Player,weight:f32) {
+    if weight==0 || len(results)==0 {return}
+    time:=lib.player_time(library,player)
     for track in lib.clip_tracks(library,player.clip) {
-        if track.property!=result.property || track.target!=result.target || track.slot!=result.slot {continue}
-        result.value+=lib.clip_evaluate(library,track,lib.player_time(library,player))*weight
-        result.weight+=weight;return
+        if track.property!=.Float && track.property!=.Vector {continue}
+        key:=Curve_Output{target=track.target,property=track.property,slot=track.slot}
+        if row,found:=slice.binary_search_by(results,key,curve_compare);found {
+            results[row].value+=lib.clip_evaluate(library,track,time)*weight
+            results[row].weight+=weight
+        }
     }
 }
 
@@ -92,8 +109,8 @@ animation_curve :: proc(playback:^Playback,entity:core.Entity,name:string,slot:u
     if playback==nil {return default_value}
     state:=constraint_playing(playback,entity)
     if state==nil || state.seen!=playback.frame {return default_value}
-    target:=base.name_hash(name)
-    for curve in playing_curves(state) {if curve.target==target && curve.property==.Float && curve.slot==slot {return curve.value.x+default_value*(1-curve.weight)}}
+    curves:=playing_curves(state)
+    if row,found:=slice.binary_search_by(curves,{target=base.name_hash(name),property=.Float,slot=slot},curve_compare);found {return curves[row].value.x+default_value*(1-curves[row].weight)}
     return default_value
 }
 
@@ -101,8 +118,8 @@ animation_vector :: proc(playback:^Playback,entity:core.Entity,name:string,slot:
     if playback==nil {return default_value}
     state:=constraint_playing(playback,entity)
     if state==nil || state.seen!=playback.frame {return default_value}
-    target:=base.name_hash(name)
-    for curve in playing_curves(state) {if curve.target==target && curve.property==.Vector && curve.slot==slot {return curve.value+default_value*(1-curve.weight)}}
+    curves:=playing_curves(state)
+    if row,found:=slice.binary_search_by(curves,{target=base.name_hash(name),property=.Vector,slot=slot},curve_compare);found {return curves[row].value+default_value*(1-curves[row].weight)}
     return default_value
 }
 

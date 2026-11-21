@@ -22,7 +22,7 @@ gallery_manual_controls_survive_the_automatic_demo_and_keep_other_stations_runni
     }
     core.table_settle(&gallery,&entities);core.table_settle(&animations,&entities);core.table_settle(&progresses,&entities)
     requests:anim.Animation_Requests
-    defer {delete(requests.timeline.items);delete(requests.plays.items);delete(requests.controls.items)}
+    defer {delete(requests.timeline.items);delete(requests.plays.items);delete(requests.modifiers.items)}
     asked :: proc(requests:^anim.Animation_Requests,entity:core.Entity,command:anim.Timeline_Command) -> bool {
         for value in requests.timeline.items {if value.entity==entity && value.command==command {return true}}
         return false
@@ -30,26 +30,25 @@ gallery_manual_controls_survive_the_automatic_demo_and_keep_other_stations_runni
     panel:Gallery_UI
     testing.expect(t,gallery_request(&panel,.Playing,first,enabled=false))
     testing.expect(t,gallery_request(&panel,.Action,first,name="Greet"))
-    testing.expect(t,gallery_request(&panel,.Modifier,first,value=.25,modifier=.Look))
+    testing.expect(t,gallery_request(&panel,.Modifier,first,value=.25,name="Head",modifier=.Look))
     commands:=panel.commands[:panel.count]
-    gallery_playback_commands(commands,&animations,&requests,nil)
-    gallery_direct_clips(core.read(&gallery),&animations,core.read(&progresses),&requests,commands)
+    gallery_playback_commands(commands,&requests,nil)
+    gallery_direct_clips(core.read(&gallery),core.read(&animations),core.read(&progresses),&requests,commands)
     first_value,_:=core.get(core.read(&animations),first)
-    second_value,_:=core.get(core.read(&animations),second)
     testing.expect(t,asked(&requests,first,.Pause) && base.text_get(first_value.clip[:])=="walk")
     testing.expect(t,len(requests.plays.items)==1 && requests.plays.items[0].entity==first && !requests.plays.items[0].stop && base.text_get(requests.plays.items[0].action[:])=="Greet")
-    testing.expect(t,asked(&requests,second,.Resume) && base.text_get(second_value.clip[:])=="wave")
-    testing.expect(t,len(requests.controls.items)==1 && requests.controls.items[0].kind==.Look && requests.controls.items[0].weight==.25)
+    testing.expect(t,asked(&requests,second,.Play) && requests.timeline.items[1].clip==base.name_hash("wave"))
+    testing.expect(t,len(requests.modifiers.items)==1 && requests.modifiers.items[0].kind==.Look && requests.modifiers.items[0].weight==.25)
     core.edit(&gallery,first).manual=gallery_manual(false,first,commands)
     panel.count=0;clear(&requests.timeline.items)
-    gallery_direct_clips(core.read(&gallery),&animations,core.read(&progresses),&requests,nil)
+    gallery_direct_clips(core.read(&gallery),core.read(&animations),core.read(&progresses),&requests,nil)
     first_value,_=core.get(&animations,first)
     testing.expect(t,!asked(&requests,first,.Resume) && base.text_get(first_value.clip[:])=="walk")
     testing.expect(t,gallery_request(&panel,.Automatic,first,enabled=true))
-    gallery_playback_commands(panel.commands[:panel.count],&animations,&requests,nil)
-    gallery_direct_clips(core.read(&gallery),&animations,core.read(&progresses),&requests,panel.commands[:panel.count])
+    gallery_playback_commands(panel.commands[:panel.count],&requests,nil)
+    gallery_direct_clips(core.read(&gallery),core.read(&animations),core.read(&progresses),&requests,panel.commands[:panel.count])
     first_value,_=core.get(&animations,first)
-    testing.expect(t,asked(&requests,first,.Resume) && base.text_get(first_value.clip[:])=="wave" && !gallery_manual(true,first,panel.commands[:panel.count]))
+    testing.expect(t,asked(&requests,first,.Resume) && asked(&requests,first,.Play) && base.text_get(first_value.clip[:])=="walk" && !gallery_manual(true,first,panel.commands[:panel.count]))
 }
 
 // A slider of a station's panel asks its row's command with the value between the row's limits,

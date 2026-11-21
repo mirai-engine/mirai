@@ -103,11 +103,11 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     for rig in roots {
         pose:=state_get(&w.playback,rig)
         if !testing.expect(t,pose!=nil && skeleton_bind(&w.playback,pose,definition,nil,&w.transforms)) {return}
-        copy(pose.previous[:],pose.local[:]);pose.pose_ready=true
+        copy(playing_pose(pose,.Previous),playing_pose(pose,.Local));pose.pose_ready=true
     }
-    tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,w:^Bind_Pose_World,problems:^core.Problems,posed:^erender.Posed_Meshes,modifiers:^Modifier_Runtime=nil) {
+    tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,w:^Bind_Pose_World,problems:^core.Problems,posed:^erender.Posed_Meshes,modifiers:^Modifier_Runtime=nil,characters:^Character_Assets=nil) {
         clear(&app.extras.instances)
-        animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),cache,state,app.assets,app.renderer,posed,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=&w.playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},core.Ref(Modifier_Runtime){ptr=modifiers},{})
+        animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),cache,state,app.assets,app.renderer,posed,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=&w.playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},core.Ref(Modifier_Runtime){ptr=modifiers},{},{ptr=characters})
         skin_shown(app,posed,core.read(&w.meshes),core.read(&w.worlds),core.read(&w.offsets),core.read(&w.parents),core.FRAME_TIME_DEFAULT)
     }
     measure :: proc(renderer:^gpu.Renderer,label:string) -> int {
@@ -124,8 +124,8 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
 
     // A pose that leaves the bind makes the copy of that rig alone.
     pose:=constraint_playing(&w.playback,roots[0])
-    pose.local[1].position.y=0.5
-    copy(pose.previous[:],pose.local[:])
+    playing_pose(pose,.Local)[1].position.y=0.5
+    copy(playing_pose(pose,.Previous),playing_pose(pose,.Local))
     pose.changed+=1
     tick(&app,&cache,&state,&w,&problems,&posed)
     testing.expect_value(t,measure(renderer,"one rig posed"),1)
@@ -142,10 +142,11 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     // A rig at the bind whose curves move a material value stays the mesh of the world: the value is the Material_Live of its mesh.
     still:=constraint_playing(&w.playback,roots[1])
     append(&still.curves,Curve_Output{target=base.name_hash("blush"),property=.Float,value={1,0,0,0},weight=1})
-    blush:=CURVE_MATERIAL_DEFAULT;blush.rig,blush.every,blush.scale=roots[1],true,{1,0,0,0}
+    blush:=CURVE_MATERIAL_DEFAULT;blush.every,blush.scale=true,{1,0,0,0}
     base.text_set(blush.curve[:],"blush");base.text_set(blush.parameter[:],"base_color")
-    testing.expect(t,modifier_append(&w.modifiers.curve_materials,roots[1],blush))
-    tick(&app,&cache,&state,&w,&problems,&posed,&w.modifiers)
+    characters:Character_Assets;defer character_assets_free(&characters)
+    test_modifier_profile(&w.modifiers,&characters,roots[1],{curve_materials={blush}})
+    tick(&app,&cache,&state,&w,&problems,&posed,&w.modifiers,&characters)
     test_world_settle(&w)
     testing.expect_value(t,measure(renderer,"one rig posed and one with curve materials"),1)
     live,_:=core.get(&w.lives,draws[1])
@@ -155,7 +156,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     testing.expect(t,instance!=nil && !instance.copied,"the still rig with curve materials makes no copy")
     // A curve that stops playing takes its value away.
     still.curves[0].weight=0
-    tick(&app,&cache,&state,&w,&problems,&posed,&w.modifiers)
+    tick(&app,&cache,&state,&w,&problems,&posed,&w.modifiers,&characters)
     test_world_settle(&w)
     testing.expect(t,!core.has(&w.lives,draws[1]))
     testing.expect_value(t,problems.count,0)

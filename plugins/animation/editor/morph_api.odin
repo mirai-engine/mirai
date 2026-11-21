@@ -67,7 +67,7 @@ morph_inspect :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.E
     stamp:u64
     if configs:=core.world_table_of(w,anim.Morph_Weights);configs!=nil {if row:=core.row_of(configs,e);row>=0 {stamp=core.stamp(configs,row)+1}}
     source,kind:=morph_instance_source(w,e,config)
-    path:=base.text_get(config.path[:]);if path=="" {if target,present:=editor.entity_get(w,e,anim.Animation_Target);present {path=base.text_get(target.path[:])}}
+    path:=base.text_get(config.path[:]);if path=="" {if target,present:=editor.entity_get(w,e,anim.Animation_Target);present {path=anim.animation_target_path(w,e,target)}}
     state,available:=anim.animation_morph_state(core.world_storage_of(w,anim.Morph_Playback),e)
     error,unknown:=anim.morph_weights_check(config,view.morphs)
     evaluated:=available && state.mesh==id && state.stamp==stamp && len(state.weights)==len(view.morphs) && error!=.Invalid_Weights

@@ -85,8 +85,14 @@ effect_merge :: proc(held,before,now:^Particle_File) {
     }
     effect.particle_values_visit(visit,&merge)
     if held.info.program==before.info.program {held.info.program=now.info.program}
-    if held.parameter_count==before.parameter_count && held.parameters==before.parameters {held.parameters,held.parameter_count=now.parameters,now.parameter_count}
-    if held.hidden_count==before.hidden_count && held.hidden==before.hidden {held.hidden,held.hidden_count=now.hidden,now.hidden_count}
+    if held.parameter_count==before.parameter_count && held.parameters==before.parameters {
+        held.parameters=now.parameters
+        held.parameter_count=now.parameter_count
+    }
+    if held.hidden_count==before.hidden_count && held.hidden==before.hidden {
+        held.hidden=now.hidden
+        held.hidden_count=now.hidden_count
+    }
 }
 
 // The value stored for a parameter of the program; nil without one.

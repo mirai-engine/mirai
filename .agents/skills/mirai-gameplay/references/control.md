@@ -16,19 +16,12 @@ are used by every game and the third only by one that makes bodies appear for it
   `player` zero, with its `slot`, `seat_local`) or at the other end of a connection (`peer`, which
   the network sets on a server, and `player`, the id its client presented). It exists even if it
   drives nothing: between one death and the next, in a menu, spectating.
-- Each seat carries the actions of the tick's `Input_Map`. Actions are all of the player's
-  (shoot, use, menus); `Move_Input` is the body's intent: a move in the world (a share of the top
-  speed of the body; with `velocity`, m/s that the mover takes up to its top speed, which a driver
-  that plans its own speed, such as navigation, asks), the look (the yaw to face and the pitch) and
-  the held buttons, as action ids. `camera_drive` passes from the
-  former to the latter for every body a seat drives, without game code ([driving](#driving)).
-  What does not move the body (shoot, use) the game reads from the seat.
-- `Move_Input` is what is asked of a body in the tick, and it is `shared`: `camera_drive` writes
-  it for what a seat drives, an AI or the game for the bodies no seat drives (like `Follow` in the
-  demo), the network for the replicas of others, and a replay. Each one writes the bodies it moves;
-  the mover reads it and turns the body toward `look_yaw` at its own rate:
-  [locomotion](../../mirai-physics/references/engine.md#locomotion) for a `Character`, at its
-  `turn_speed`, or the game's code for a car. Nobody else turns a body.
+- Each seat carries the player's actions for the tick. `camera_drive` turns the movement, look
+  and held buttons into the body's `Move_Input` ([driving](#driving)). Movement is a share of
+  the body's top speed, in world axes. Actions like shooting and using objects come from the seat.
+- `Move_Input` is shared by the camera, networking and replay. The mover turns the body toward
+  the look at its own rate. For AI or scripted character steering, use
+  [locomotion](../../mirai-physics/references/engine.md#what-drives-it).
 
 ## Seats
 
@@ -205,10 +198,7 @@ end of a networked session has its own seats.
   requested them requests them again.
 - Cleanup removes dead references. A block whose `owner` died is released with re-arming; if its
   seat died, it disappears.
-- An AI needs no seat: it writes the `Move_Input` of its body while no seat drives it, only where
-  this end decides (`core.owned`). A seated `Nav_Agent` also walks a body its seat drives while it
-  goes, keeping the seat's buttons
-  ([navigation](../../mirai-world/references/navigation.md#agents)).
+- An AI needs no seat. It writes `Locomotion_Drive` for the characters it controls.
 
 ## Spawn points
 

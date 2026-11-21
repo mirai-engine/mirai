@@ -706,7 +706,8 @@ Scene_View :: struct {
 scene_view :: proc(a:^Asset,types:^Types) -> (view:Scene_View,error:Error) {
     if a.view_types==types && types!=nil {return a.view,.None}
     view=scene_view_read(a,types) or_return
-    a.view,a.view_types=view,types
+    a.view=view
+    a.view_types=types
     return view,.None
 }
 

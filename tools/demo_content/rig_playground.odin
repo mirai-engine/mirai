@@ -34,10 +34,10 @@ gallery_rigs :: proc(o:^Out) {
         origin,_:=gallery_place(GALLERY_RIGS+int(kind))
         switch kind {
         case .Spline:
-            spline:=anim.SPLINE_IK_CONSTRAINT_DEFAULT;base.text_set(spline.name[:],"tail");spline.root,spline.end=anim.bone_ref("joint0"),anim.bone_ref("joint8");spline.controls={anim.spatial_point(origin),anim.spatial_point(origin+{0,.7,0}),anim.spatial_point(origin+{.5,1.5,0}),anim.spatial_point(origin+{.4,2.3,0})};spline.up={0,0,1}
+            spline:=anim.SPLINE_IK_CONSTRAINT_DEFAULT;base.text_set(spline.name[:],"tail");spline.root,spline.end=anim.bone_ref("joint0"),anim.bone_ref("joint8");spline.controls={anim.spatial_definition_point(origin),anim.spatial_definition_point(origin+{0,.7,0}),anim.spatial_definition_point(origin+{.5,1.5,0}),anim.spatial_definition_point(origin+{.4,2.3,0})};spline.up={0,0,1}
             gallery_set(o,"animation_gallery/rig_playground","playground_spline",{},{pose={spline_ik={spline}}})
         case .Stretch:
-            chain:=anim.CHAIN_IK_CONSTRAINT_DEFAULT;base.text_set(chain.name[:],"reach");chain.root,chain.end=anim.bone_ref("joint0"),anim.bone_ref("joint8");chain.target=anim.spatial_point(origin+{0,2.5,0});chain.pole=origin+{0,1,1};chain.use_pole=true;chain.reach={soft_distance=.3,max_stretch=.4}
+            chain:=anim.CHAIN_IK_CONSTRAINT_DEFAULT;base.text_set(chain.name[:],"reach");chain.root,chain.end=anim.bone_ref("joint0"),anim.bone_ref("joint8");chain.target=anim.spatial_definition_point(origin+{0,2.5,0});chain.pole=origin+{0,1,1};chain.use_pole=true;chain.reach={soft_distance=.3,max_stretch=.4}
             gallery_set(o,"animation_gallery/rig_playground","playground_stretch",{},{pose={chain_ik={chain}}})
         case .Corrective:
             corrective:=anim.POSE_CORRECTIVE_DEFAULT;base.text_set(corrective.name[:],"bend_bulge");base.text_set(corrective.curve[:],"bulge");corrective.driver,corrective.bone=anim.bone_ref("joint3"),anim.bone_ref("joint3");corrective.sample_count=2

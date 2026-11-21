@@ -124,8 +124,8 @@ Animation_Gallery_Diagnostics :: struct {
 
 // The bodies of the gallery that walk on their own go back and forth along the walkway; the jumper
 // jumps its obstacle. One that fell or wandered off goes back to its station.
-@(step="fixed")
-gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),inputs:^core.Table(inp.Move_Input),walks:^core.Table(locomotion.Walk,.Read),worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer,seats:^core.Table(inp.Seat,.Read),walk_actions:inp.Input_Of(locomotion.Walk_Action),time:core.Time) {
+@(step="fixed",stage="apply",after="animation_motor_drive")
+gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),drives:^core.Table(locomotion.Locomotion_Drive),walks:^core.Table(locomotion.Walk,.Read),worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer,seats:^core.Table(inp.Seat,.Read),walk_actions:inp.Input_Of(locomotion.Walk_Action),time:core.Time) {
     for row in 0..<core.count(gallery) {
         entity:=core.entity_at(gallery,row)
         item:=core.at(gallery,row)
@@ -140,51 +140,48 @@ gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),inputs:
             // While it turns toward its next goal its motor is off: it stands and faces that way.
             if item.kind==.Warp {
                 if warp:=gallery_warp(item,time.dt);warp.turn {
-                    if input:=core.edit(inputs,entity);input!=nil {
-                        // Half a turn in a bit less than the time it has, so that it faces its goal before it strides.
-                        desired:=f32(math.PI) if warp.direction>0 else 0
-                        input.move,input.buttons={},{}
-                        input.look_yaw=mm.angle_wrap(mm.angle_approach(mm.yaw_of_direction(mm.quat_forward(placed.rotation)),desired,1.25*math.PI/GALLERY_WARP_TURN*time.dt))
-                    }
+                    // Half a turn in a bit less than the time it has, so that it faces its goal before it strides.
+                    desired:=f32(math.PI) if warp.direction>0 else 0
+                    look:=mm.angle_wrap(mm.angle_approach(mm.yaw_of_direction(mm.quat_forward(placed.rotation)),desired,1.25*math.PI/GALLERY_WARP_TURN*time.dt))
+                    locomotion.drive(drives,entity,{look_yaw=look})
                 }
             }
             continue
         case .Walker,.Jumper,.Spider:
         case: continue
         }
-        if inp.seat_of(seats,entity)!=core.NONE {continue}
-        input:=core.edit(inputs,entity)
+        if inp.seat_of(seats,entity)!=core.NONE {core.remove(drives,entity);continue}
         config,configured:=core.get(walks,entity)
-        if input==nil || !configured {continue}
-        input.move,input.buttons={},{}
+        if !configured {continue}
+        input:=locomotion.Locomotion_Drive{look_yaw=mm.yaw_of_direction(mm.quat_forward(placed.rotation))}
         target:=item.origin
         target.z+=1.25 if int(item.age/3)%2==0 else -1.25
         delta:=target.z-placed.position.z
         wish:mm.Vec3
         // The jumper walks faster, so that its jump carries it over its obstacle.
-        if config.max_speed>0 && abs(delta)>.08 {wish.z=clamp(delta*2,-1,1)*(GALLERY_JUMPER_SPEED if item.kind==.Jumper else 1)/max(config.max_speed,1)}
-        gallery_move(input,wish)
+        if config.max_speed>0 && abs(delta)>.08 {wish.z=clamp(delta*2,-1,1)*(GALLERY_JUMPER_SPEED if item.kind==.Jumper else 1)}
+        input.velocity=wish
+        if linalg.length(wish)>.001 {input.look_yaw=mm.yaw_of_direction(wish)}
         // The jumper takes off just before the obstacle at its origin when it walks toward it.
         ahead:=(item.origin.z-placed.position.z)*math.sign(delta)
         if item.kind==.Jumper && ahead>.7 && ahead<1.05 {input.buttons|=inp.action_bit(inp.action_of(walk_actions,.Jump))}
+        locomotion.drive(drives,entity,input)
         if placed.position.y< -2 || linalg.length((placed.position-item.origin).xz)>4 {core.place(placer,entity,home,at_rest=true)}
     }
 }
 
-gallery_direct_clips :: proc(gallery:^core.Table(Animation_Gallery,.Read),animations:^core.Table(anim.Animation),progresses:^core.Table(anim.Animation_Progress,.Read),requests:^anim.Animation_Requests,commands:[]Gallery_Command) {
+gallery_direct_clips :: proc(gallery:^core.Table(Animation_Gallery,.Read),animations:^core.Table(anim.Animation,.Read),progresses:^core.Table(anim.Animation_Progress,.Read),requests:^anim.Animation_Requests,commands:[]Gallery_Command) {
     for row in 0..<core.count(gallery) {
         item:=core.at(gallery,row)
         entity:=core.entity_at(gallery,row)
         if item.kind!=.Direct || gallery_manual(item.manual,entity,commands) {continue}
-        value,found:=core.get(animations,entity)
-        if !found {continue}
+        if !core.has(animations,entity) {continue}
         phase:=int(item.age/3)%3
         wanted:="wave" if phase==1 else "walk"
         speed:=f32(-1) if phase==2 else f32(1)
-        if progress,_:=core.get(progresses,entity);base.text_get(value.clip[:])==wanted && progress.speed==speed {continue}
-        anim.animation_clip(core.edit(animations,entity),wanted)
-        anim.animation_command(requests,entity,.Resume,speed=speed)
-        anim.animation_seek(requests,entity,1.5 if phase==2 else 0)
+        progress,_:=core.get(progresses,entity)
+        if progress.selection.clip==base.name_hash(wanted) && progress.speed==speed {continue}
+        anim.play_clip(requests,entity,wanted,speed=speed,restart=true,at=1.5 if phase==2 else 0)
     }
 }
 
@@ -192,22 +189,22 @@ gallery_direct_clips :: proc(gallery:^core.Table(Animation_Gallery,.Read),animat
 // It reads the gallery as gallery_observe left it in the last tick.
 @(step="fixed",stage="react",before="gallery_observe")
 gallery_control :: proc(gallery:^core.Table(Animation_Gallery,.Read),players:^core.Table(Gallery_Player,.Read),characters:^core.Table(phys.Character_State,.Read),requests:^anim.Animation_Requests) {
-    ground :: proc(characters:^core.Table(phys.Character_State,.Read),requests:^anim.Animation_Requests,entity:core.Entity) {
+    ground :: proc(characters:^core.Table(phys.Character_State,.Read),requests:^anim.Animation_Requests,entity:core.Entity,name:string) {
         character,exists:=core.get(characters,entity)
-        if exists {anim.modifier_goal(requests,{rig=entity,kind=.Grounding,weight=1 if character.standing else 0,enabled=true})}
+        if exists {anim.modifier(requests,{rig=entity,kind=.Grounding,weight=1 if character.standing else 0,enabled=true,goal=true},name)}
     }
     for row in 0..<core.count(gallery) {
         kind:=core.at(gallery,row).kind
-        if kind==.Walker || kind==.Jumper || kind==.Spider {ground(characters,requests,core.entity_at(gallery,row))}
+        if kind==.Walker || kind==.Jumper || kind==.Spider {ground(characters,requests,core.entity_at(gallery,row),"body" if kind==.Spider else "grounding")}
     }
-    for row in 0..<core.count(players) {ground(characters,requests,core.at(players,row).mirai)}
+    for row in 0..<core.count(players) {ground(characters,requests,core.at(players,row).mirai,"grounding")}
 }
 
 // The matching station is told the speed it walks at and now and then plays a wave over its whole
 // body, faded in and out over it; the additive, greeting and synchronized stations set
 // their parameter; the actions station greets and steps; the warp station strides to its goal.
 @(step="fixed")
-gallery_animate :: proc(gallery:^core.Table(Animation_Gallery,.Read),animations:^core.Table(anim.Animation),worlds:^core.Table(core.World_Transform,.Read),time:core.Time,requests:^anim.Animation_Requests,progresses:^core.Table(anim.Animation_Progress,.Read),playback:core.Ref(anim.Playback),motors:^core.Table(Animation_Motor),ui_events:core.Ref(gui.UI_Events),names:^core.Table(core.Name,.Read),panel:core.Ref(Gallery_UI),morphs:^core.Table(Morph_Playground,.Read),morph_weights:^core.Table(anim.Morph_Weights)) {
+gallery_animate :: proc(gallery:^core.Table(Animation_Gallery,.Read),animations:^core.Table(anim.Animation,.Read),worlds:^core.Table(core.World_Transform,.Read),time:core.Time,requests:^anim.Animation_Requests,progresses:^core.Table(anim.Animation_Progress,.Read),playback:core.Ref(anim.Playback),motors:^core.Table(Animation_Motor),ui_events:core.Ref(gui.UI_Events),names:^core.Table(core.Name,.Read),panel:core.Ref(Gallery_UI),morphs:^core.Table(Morph_Playground,.Read),morph_weights:^core.Table(anim.Morph_Weights)) {
     if morphs!=nil && morph_weights!=nil {morph_playground_animate(morphs,requests,morph_weights,time)}
     for event in ui_events.items {
         if event.kind!=.Clicked || event.name!=base.name_hash("toggle") {continue}
@@ -215,14 +212,14 @@ gallery_animate :: proc(gallery:^core.Table(Animation_Gallery,.Read),animations:
         anim.animation_command(requests,lift,.Pause if anim.animation_playing(playback.ptr,lift) else .Resume)
     }
     commands:=panel.commands[:panel.count]
-    gallery_playback_commands(commands,animations,requests,playback.ptr)
+    gallery_playback_commands(commands,requests,playback.ptr)
     gallery_direct_clips(gallery,animations,progresses,requests,commands)
     for row in 0..<core.count(gallery) {
         entity:=core.entity_at(gallery,row)
         item:=core.at(gallery,row)
         if item.target!=core.NONE {
-            anim.modifier_goal(requests,{rig=entity,kind=.IK,target=anim.spatial_entity(item.target),weight=1,enabled=true})
-            anim.look(requests,entity,anim.spatial_entity(item.target))
+            anim.modifier(requests,{rig=entity,kind=.IK,target=anim.spatial_entity(item.target),weight=1,enabled=true,goal=true},"RightHand")
+            anim.look(requests,entity,anim.spatial_entity(item.target),name="Head")
         }
         manual:=gallery_manual(item.manual,entity,commands)
         speed,value:=gallery_automatic(item.kind,item.age)
@@ -242,26 +239,25 @@ gallery_animate :: proc(gallery:^core.Table(Animation_Gallery,.Read),animations:
         case .Warp:
             // It turns in idle with its motor off, strides by its root motion to the goal and waits
             // there in idle.
-            animation:=core.edit(animations,entity)
-            if animation==nil {continue}
+            if !core.has(animations,entity) {continue}
+            progress,_:=core.get(progresses,entity)
             warp:=gallery_warp(item,time.dt)
             if warp.turn {
                 if motor:=core.edit(motors,entity);motor!=nil && motor.enabled {motor.enabled=false}
-                if base.text_get(animation.clip[:])!="idle" {anim.animation_clip(animation,"idle",.2,loop=true)}
+                if progress.selection.clip!=base.name_hash("idle") {anim.play_clip(requests,entity,"idle",.2,loop=true)}
             }
             if warp.start {
                 if motor:=core.edit(motors,entity);motor!=nil {motor.enabled=true}
                 anim.motion_target(requests,entity,GALLERY_REACH,anim.spatial_point(gallery_warp_goal(item,warp)))
-                anim.animation_clip(animation,"stride",.2,loop=false)
-                anim.animation_command(requests,entity,.Resume)
-            } else if _,_,ended,ok:=anim.animation_progress(playback.ptr,entity);ok && ended && base.text_get(animation.clip[:])=="stride" {
-                anim.animation_clip(animation,"idle",.3,loop=true)
+                anim.play_clip(requests,entity,"stride",.2,loop=false,restart=true)
+            } else if _,_,ended,ok:=anim.animation_progress(playback.ptr,entity);ok && ended && progress.selection.clip==base.name_hash("stride") {
+                anim.play_clip(requests,entity,"idle",.3,loop=true)
             }
         }
     }
 }
 
-@(step="fixed",stage="apply")
+@(step="fixed",stage="simulate",after="animation_sample")
 gallery_root_motion :: proc(gallery:^core.Table(Animation_Gallery,.Read),transforms:^core.Table(core.Transform),playback:core.Ref(anim.Playback)) {
     for row in 0..<core.count(gallery) {
         item:=core.at(gallery,row)
@@ -288,9 +284,8 @@ gallery_ik_target :: proc(item:Animation_Gallery) -> mm.Vec3 {
 }
 
 @(step="fixed",stage="react")
-gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.Table(core.Transform),characters:^core.Table(phys.Character_State,.Read),moving:^core.Table(core.Motion,.Read),events:core.Ref(anim.Animation_Events),playback:core.Ref(anim.Playback),grounding:core.Ref(anim.Grounding_Runtime),modifiers:core.Ref(anim.Modifier_Runtime),time:core.Time,panel:^Gallery_UI) {
+gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.Table(core.Transform),characters:^core.Table(phys.Character_State,.Read),moving:^core.Table(core.Motion,.Read),events:core.Ref(anim.Animation_Events),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime),time:core.Time,panel:^Gallery_UI,sets:core.Ref(anim.Character_Assets)) {
     if !time.playing {return}
-    feet:=&modifiers.grounding
     commands:=panel.commands[:panel.count]
     for &item,row in core.writable(gallery) {
         entity:=gallery.entities[row]
@@ -333,6 +328,10 @@ gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.
             if exists {item.diagnostics.root_distance+=linalg.length(motion.translation)}
         }
         going,_:=core.get(moving,entity)
+        rig:=anim.modifier_rig(modifiers.ptr,entity)
+        profile:=anim.modifier_profile(modifiers.ptr,sets.ptr,entity)
+        feet:anim.Foot_Grounding
+        if profile!=nil && len(profile.grounding.legs)>0 {feet=anim.modifier_grounding(modifiers.ptr,rig,profile.grounding)}
         if character,exists:=core.get(characters,entity);exists {
             if item.grounded && !character.standing && going.linear.y>.1 {item.diagnostics.jumps+=1}
             if !item.grounded && character.standing && item.age>.2 {item.diagnostics.landings+=1}
@@ -340,33 +339,34 @@ gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.
             item.diagnostics.states_seen|=1 if character.standing else 2 if going.linear.y>0 else 4
             if !character.standing {
                 item.diagnostics.airborne_samples+=1
-                if config,present:=core.get(feet,entity);present && config.global_contact!=0 {item.diagnostics.airborne_contact_violations+=1}
+                if len(feet.legs)>0 && feet.global_contact!=0 {item.diagnostics.airborne_contact_violations+=1}
             }
         }
-        for &record in grounding.records {
-            if record.rig!=entity || record.count<=0 {continue}
+        if rig!=nil && len(rig.grounding)>0 {
+            record:=&rig.grounding[0].record
+            if record.count<=0 {continue}
             for target,i in record.targets[:record.count] {
                 for &pose in playback.states {
                     if pose.entity!=entity || !pose.pose_ready {continue}
                     bone:=record.bones[i][2]
-                    if bone<0 || bone>=len(pose.world) {continue}
+                    if bone<0 || bone>=len(anim.playing_pose(&pose,.World)) {continue}
                     if record.mode==.Animated && !record.placements[i].anchor.active {
-                        if config,present:=core.get(feet,entity);present {
-                            leg:=config.legs[i]
+                        if i<len(feet.legs) {
+                            leg:=feet.legs[i]
                             offset:=leg.contact_offset if leg.contact_bone!={} else leg.sole_height
-                            clearance:=linalg.dot(record.previous[i].position-pose.world[0].position,linalg.normalize0(config.up))-offset
-                            if config.global_contact>=.8 && leg.contact>=.8 && clearance>.06 {item.diagnostics.swing_samples+=1;item.diagnostics.leg_swing_samples[i]+=1}
+                            clearance:=linalg.dot(record.previous[i].position-anim.playing_pose(&pose,.World)[0].position,linalg.normalize0(feet.up))-offset
+                            if feet.global_contact>=.8 && leg.contact>=.8 && clearance>.06 {item.diagnostics.swing_samples+=1;item.diagnostics.leg_swing_samples[i]+=1}
                         }
                     }
                     if target.weight<.8 {continue}
                     item.diagnostics.foot_samples+=1
-                    item.diagnostics.foot_error_max=max(item.diagnostics.foot_error_max,linalg.length(pose.world[bone].position-target.position))
+                    item.diagnostics.foot_error_max=max(item.diagnostics.foot_error_max,linalg.length(anim.playing_pose(&pose,.World)[bone].position-target.position))
                     locked:=!record.legs[i].swinging && record.legs[i].anchor.active && record.legs[i].weight>=.99 if record.mode==.Procedural else record.placements[i].anchor.active && record.placements[i].weight>=.99
                     if locked && target.weight>=.99 {
-                        error:=linalg.length(pose.world[bone].position-target.position)
+                        error:=linalg.length(anim.playing_pose(&pose,.World)[bone].position-target.position)
                         item.diagnostics.stable_foot_samples+=1;item.diagnostics.stable_foot_error_max=max(item.diagnostics.stable_foot_error_max,error)
                         item.diagnostics.leg_stable_samples[i]+=1;item.diagnostics.leg_stable_error_max[i]=max(item.diagnostics.leg_stable_error_max[i],error)
-                        rotation_error:=mm.quat_angle(pose.world[bone].rotation,record.rotations[i])
+                        rotation_error:=mm.quat_angle(anim.playing_pose(&pose,.World)[bone].rotation,record.rotations[i])
                         item.diagnostics.stable_foot_rotation_error_max=max(item.diagnostics.stable_foot_rotation_error_max,rotation_error)
                         item.diagnostics.leg_stable_rotation_error_max[i]=max(item.diagnostics.leg_stable_rotation_error_max[i],rotation_error)
                     }

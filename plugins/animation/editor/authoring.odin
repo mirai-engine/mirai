@@ -152,10 +152,15 @@ authoring_pages :: proc(call:^api.Call,rows:[]$T,offset,limit:u32,$R:typeid) -> 
         row:=rows[first+i]
         page.index=u32(first+i)
         when T==R {page.value=row} else {
-            authoring_struct_fields(&page.value,row)
+            when T==anim.Multi_IK_Constraint || T==anim.Foot_Grounding {authoring_struct_fields(&page.value,row.definition)}
+            else {authoring_struct_fields(&page.value,row)}
             when T==anim.Twist_Constraint {for amount,j in row.amounts[:row.amount_count] {page.value.amounts[j].value=amount}}
-            else when T==anim.Multi_IK_Constraint {authoring_struct_fields(&page.value.settings,row.settings)}
-            else when T==anim.Foot_Grounding {for j in 0..<int(row.count) {authoring_struct_fields(&page.value.legs[j],row.legs[j])}}
+            else when T==anim.Multi_IK_Constraint {
+                authoring_struct_fields(&page.value.settings,row.settings)
+                copy(page.value.joints[:],row.joints)
+                copy(page.value.effectors[:],row.effectors)
+            }
+            else when T==anim.Foot_Grounding {for leg,j in row.legs {authoring_struct_fields(&page.value.legs[j],leg)}}
         }
     }
     return pages

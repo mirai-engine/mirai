@@ -1,6 +1,7 @@
 package anim
 
 import "mirai:core"
+import "mirai:std/base"
 import lib "mirai:std/anim"
 import mm "mirai:std/math"
 
@@ -11,7 +12,7 @@ import mm "mirai:std/math"
 Spatial_Target_Kind :: enum u8 {World,Entity,Bone,Socket}
 // position, rotation and scale: World: in the world; the others: in the
 // space of what they name.
-Spatial_Target :: struct {
+Spatial_Definition :: struct {
     kind:Spatial_Target_Kind `mirai:"optional"`,
     entity:core.Entity `mirai:"transient"`, // Entity: itself; Bone and Socket: the rig
     bone:Bone_Ref `mirai:"optional"`,
@@ -20,6 +21,34 @@ Spatial_Target :: struct {
     rotation:mm.Quat `mirai:"optional"`,
     scale:mm.Vec3 `mirai:"optional"`,
 }
+SPATIAL_DEFINITION_DEFAULT :: Spatial_Definition{rotation=1,scale={1,1,1}}
+
+Spatial_Target :: struct {
+    entity:core.Entity,
+    name:u64,
+    position:mm.Vec3,
+    rotation:mm.Quat,
+    scale:mm.Vec3,
+    kind:Spatial_Target_Kind,
+}
+
+spatial_definition_point :: proc(position:mm.Vec3) -> Spatial_Definition {
+    return {position=position,rotation=1,scale={1,1,1}}
+}
+
+spatial_compile :: proc(definition:^Spatial_Definition) -> (target:Spatial_Target) {
+    target={kind=definition.kind,entity=definition.entity,position=definition.position,
+        rotation=definition.rotation,scale=definition.scale}
+    #partial switch definition.kind {
+    case .Bone: target.name=bone_ref_hash(definition.bone)
+    case .Socket:
+        if blend_text_valid(definition.socket[:],false) {
+            target.name=base.name_hash(base.text_get(definition.socket[:]))
+        }
+    }
+    return
+}
+
 SPATIAL_TARGET_DEFAULT :: Spatial_Target{rotation=1,scale={1,1,1}}
 
 spatial_world :: proc(transform:mm.Transform) -> Spatial_Target {
@@ -36,13 +65,16 @@ spatial_entity :: proc(entity:core.Entity,offset:mm.Transform=mm.TRANSFORM_IDENT
 spatial_bone :: proc(rig:core.Entity,bone:string,offset:mm.Transform=mm.TRANSFORM_IDENTITY) -> Spatial_Target {
     target:=spatial_world(offset)
     target.kind,target.entity=.Bone,rig
-    target.bone=bone_ref(bone)
+    reference,valid:=bone_ref(bone)
+    if valid {target.name=bone_ref_hash(reference)}
     return target
 }
 spatial_socket :: proc(rig:core.Entity,socket:string,offset:mm.Transform=mm.TRANSFORM_IDENTITY) -> Spatial_Target {
     target:=spatial_world(offset)
     target.kind,target.entity=.Socket,rig
-    copy(target.socket[:len(target.socket)-1],socket)
+    if len(socket)==0 || len(socket)>=64 {return target}
+    for byte in socket {if byte==0 {return target}}
+    target.name=base.name_hash(socket)
     return target
 }
 // Its transform: in the world, or in the space of what it names.
@@ -67,7 +99,7 @@ spatial_target_valid :: proc(target:Spatial_Target,instance:bool=true) -> bool {
     if target.kind>max(Spatial_Target_Kind) || !spatial_transform_valid(spatial_offset(target)) {return false}
     if target.kind==.World {return true}
     if instance && target.entity==core.NONE {return false}
-    if target.kind==.Bone && !profile_bone(target.bone) || target.kind==.Socket && !blend_text_valid(target.socket[:],false) {return false}
+    if (target.kind==.Bone || target.kind==.Socket) && target.name==0 {return false}
     return true
 }
 
@@ -78,8 +110,7 @@ spatial_same_reference :: proc(a,b:Spatial_Target) -> bool {
     switch a.kind {
     case .World: return true
     case .Entity: return a.entity==b.entity
-    case .Bone: return a.entity==b.entity && a.bone==b.bone
-    case .Socket: return a.entity==b.entity && a.socket==b.socket
+    case .Bone,.Socket: return a.entity==b.entity && a.name==b.name
     }
     return false
 }
@@ -98,7 +129,6 @@ spatial_target_sample :: proc(target:Spatial_Target,binding:^Spatial_Target_Bind
             if !spatial_transform_valid(result) {return mm.TRANSFORM_IDENTITY,false}
         }
         // What it last named, for an operation that keeps its place when it changes.
-        // One store per value until odin-lang/Odin#7937.
         binding.target=target
         binding.ready=true
         return result,true
@@ -106,25 +136,24 @@ spatial_target_sample :: proc(target:Spatial_Target,binding:^Spatial_Target_Bind
     }
     if playback==nil {return mm.TRANSFORM_IDENTITY,false}
     source:=constraint_playing(playback,target.entity)
-    if source==nil || source.seen!=(frame if frame!=0 else playback.frame) || len(source.sampled)!=len(source.parents) {return mm.TRANSFORM_IDENTITY,false}
+    if source==nil || source.seen!=(frame if frame!=0 else playback.frame) || len(playing_pose(source,.Sampled))!=len(playing_topology(source).parents) {return mm.TRANSFORM_IDENTITY,false}
     if !binding.ready || !spatial_same_reference(binding.target,target) || binding.revision!=source.bound || binding.skeleton_revision!=source.skeleton_revision {
         binding.ready=false
         clear(&binding.path)
         binding.socket=mm.TRANSFORM_IDENTITY
         bone:=-1
-        if target.kind==.Bone {bone=bone_resolve(source,target.bone)} else if skeletons!=nil {
+        if target.kind==.Bone {bone=bone_find(source,target.name)} else if skeletons!=nil {
             for &content in skeletons.contents {
                 if content.id!=source.skeleton {continue}
-                for socket in content.sockets {if socket.name==target.socket {bone=bone_resolve(source,{socket.bone});binding.socket=socket.offset;break}}
+                for &socket in content.sockets {if base.name_hash(base.text_get(socket.name[:]))==target.name {bone=bone_resolve(source,{socket.bone});binding.socket=socket.offset;break}}
                 break
             }
         }
-        if bone<0 || reserve(&binding.path,len(source.parents))!=nil {return mm.TRANSFORM_IDENTITY,false}
-        for index:=bone;index>=0;index=int(source.parents[index]) {
-            if index>=len(source.parents) || source.parents[index]>=i32(index) {return mm.TRANSFORM_IDENTITY,false}
+        if bone<0 || reserve(&binding.path,len(playing_topology(source).parents))!=nil {return mm.TRANSFORM_IDENTITY,false}
+        for index:=bone;index>=0;index=int(playing_topology(source).parents[index]) {
+            if index>=len(playing_topology(source).parents) || playing_topology(source).parents[index]>=i32(index) {return mm.TRANSFORM_IDENTITY,false}
             append(&binding.path,i32(index))
         }
-        // One store per value until odin-lang/Odin#7937.
         binding.target=target
         binding.revision,binding.skeleton_revision,binding.ready=source.bound,source.skeleton_revision,true
     }
@@ -134,7 +163,7 @@ spatial_target_sample :: proc(target:Spatial_Target,binding:^Spatial_Target_Bind
             actor,found:=constraint_world(transforms,parents,core.read(worlds),source.entity)
             if !found {return mm.TRANSFORM_IDENTITY,false}
             result=actor
-        } else {result=mm.transform_compose(result,source.sampled[index])}
+        } else {result=mm.transform_compose(result,playing_pose(source,.Sampled)[index])}
     }
     result=mm.transform_compose(mm.transform_compose(result,binding.socket),spatial_offset(target))
     return result,spatial_transform_valid(result)
@@ -143,16 +172,15 @@ spatial_target_sample :: proc(target:Spatial_Target,binding:^Spatial_Target_Bind
 // Keeps a bone on a target: its position, rotation or scale. keep_world
 // keeps where the bone was when the target changes, as an offset from it.
 Follow_Constraint :: struct {
-    rig:core.Entity `mirai:"transient"`,
     name:[64]u8 `mirai:"text"`,
     bone:Bone_Ref,
-    target:Spatial_Target,
+    target:Spatial_Definition,
     position,rotation,scale:bool,
     keep_world:bool,
     weight:f32 `mirai:"min=0,max=1"`,
     enabled:bool,
 }
-FOLLOW_CONSTRAINT_DEFAULT :: Follow_Constraint{target=SPATIAL_TARGET_DEFAULT,position=true,rotation=true,weight=1,enabled=true}
+FOLLOW_CONSTRAINT_DEFAULT :: Follow_Constraint{target=SPATIAL_DEFINITION_DEFAULT,position=true,rotation=true,weight=1,enabled=true}
 Follow_Binding :: struct {
     using binding:Rig_Binding,
     bone:i32,
@@ -162,30 +190,30 @@ Follow_Binding :: struct {
 }
 
 @(private)
-follow_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constraint_Inputs,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,$A),root_transform:mm.Transform,playback:^Playback) -> bool {
-    first,end:=rig_rows(&runtime.follow,state.entity)
-    if first==end {return true}
-    if len(runtime.follow_states)!=len(runtime.follow.values) && resize(&runtime.follow_states,len(runtime.follow.values))!=nil {memory_problem(inputs.problems,state.entity,"the Follow operations of its .character");return false}
-    if !lib.pose_world(state.parents[:],state.local[:],state.world[:],root_transform) {pose_problem(inputs.problems,state.entity);return false}
+follow_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,rig:^Modifier_Rig,pose:Pose_Profile,inputs:Constraint_Inputs,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,$A),root_transform:mm.Transform,playback:^Playback) -> bool {
+    if len(pose.follow)==0 {return true}
+    if !lib.pose_world(playing_topology(state).parents[:],playing_pose(state,.Local),playing_pose(state,.World),root_transform) {pose_problem(inputs.problems,state.entity);return false}
     valid:=true
-    for &config,slot in runtime.follow.values[first:end] {
-        binding:=&runtime.follow_states[first+slot]
+    for &config,slot in pose.follow {
+        weight,enabled:=modifier_weight(&modifier_states(rig,.Follow)[slot],runtime.time)
+        binding:=&rig.follow_states[slot]
         binding.diagnostic.valid=false
-        if !rig_binding_current(binding,state,runtime.geometry) {
+        if !rig_binding_current(binding,state) {
             binding.ready=false;binding.space_ready=false
             binding.bone=i32(bone_resolve(state,config.bone))
             if binding.bone<0 {rig_problem(inputs.problems,state.entity,.Follow,&config,.Bind);valid=false;continue}
-            rig_binding_publish(binding,state,runtime.geometry,.Follow,u16(slot))
+            rig_binding_publish(binding,state,.Follow)
         }
-        if !config.enabled || config.weight<=0 {continue}
-        changed:=!binding.target.ready || !spatial_same_reference(binding.target.target,config.target)
-        kept:=state.world[binding.bone]
+        if !enabled || weight<=0 {continue}
+        definition:=modifier_target(rig,.Follow,slot,&config.target)
+        changed:=!binding.target.ready || !spatial_same_reference(binding.target.target,definition)
+        kept:=playing_pose(state,.World)[binding.bone]
         if changed && binding.space_ready && config.keep_world {
             previous,found:=spatial_target_sample(binding.target.target,&binding.target,playback,inputs.skeletons,transforms,parents,inputs.worlds)
             if !found {rig_problem(inputs.problems,state.entity,.Follow,&config,.Target);valid=false;continue}
             kept=mm.transform_compose(previous,binding.offset)
         }
-        target,ok:=spatial_target_sample(config.target,&binding.target,playback,inputs.skeletons,transforms,parents,inputs.worlds)
+        target,ok:=spatial_target_sample(definition,&binding.target,playback,inputs.skeletons,transforms,parents,inputs.worlds)
         if !ok {modifier_request_rejected(runtime,state.entity,.Missing_Target);rig_problem(inputs.problems,state.entity,.Follow,&config,.Target);valid=false;continue}
         if !binding.space_ready || changed {
             binding.offset=mm.TRANSFORM_IDENTITY
@@ -193,14 +221,14 @@ follow_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constraint_
             binding.space_ready=true
         }
         desired:=mm.transform_compose(target,binding.offset)
-        original:=state.world[binding.bone]
+        original:=playing_pose(state,.World)[binding.bone]
         if !config.position {desired.position=original.position}
         if !config.rotation {desired.rotation=original.rotation}
         if !config.scale {desired.scale=original.scale}
-        parent:=state.parents[binding.bone]
-        local,relative:=mm.transform_relative(mm.transform_interpolate(original,desired,config.weight),state.world[parent] if parent>=0 else root_transform)
+        parent:=playing_topology(state).parents[binding.bone]
+        local,relative:=mm.transform_relative(mm.transform_interpolate(original,desired,weight),playing_pose(state,.World)[parent] if parent>=0 else root_transform)
         solved:=relative
-        if solved {state.local[binding.bone]=local;solved=lib.pose_world(state.parents[:],state.local[:],state.world[:],root_transform)}
+        if solved {playing_pose(state,.Local)[binding.bone]=local;solved=lib.pose_world(playing_topology(state).parents[:],playing_pose(state,.Local),playing_pose(state,.World),root_transform)}
         binding.diagnostic.valid,binding.diagnostic.reached=solved,solved
         if !solved {rig_problem(inputs.problems,state.entity,.Follow,&config,.Solve)}
         valid &&=solved

@@ -35,6 +35,8 @@ Move_Flag :: enum u32 {
     Airborne,       // does not stand on ground even where it could: a jump that starts, a flight
     Drive_Vertical, // the drive also controls the vertical velocity
     No_Gravity,
+    Ghosted,
+    Reach_Drive,    // reach the target within the tick along unobstructed directions
     Float,          // in a fluid, holds the head float_height over the surface, softly and with the adhesion force at most
 }
 Move_Flags :: bit_set[Move_Flag;u32]
@@ -121,8 +123,9 @@ Character :: struct {
     shape:Shape_Handle,
     generation:u32, // odd while the slot is in use
     next_free:i32,
+    held:bool,
 }
-#assert(size_of(Character)==312)
+#assert(size_of(Character)==320)
 
 @(private)
 Ground :: struct {
@@ -238,11 +241,12 @@ character_create :: proc(w:^World,desc:Character_Desc,position:Vec3,rotation:=QU
     ch:=&w.characters[index]
     stamp(w,ch)
     ch^={desc=d,body=body,shape=shape,generation=ch.generation+1,next_free=-1}
-    ch.move={ground={force=d.traction_force},yaw=yaw}
     ch.state.ground={.Stale}
     ch.state.head_depth,ch.state.depth=-max(f32),-max(f32)
     ch.state.up_frame=up_frame
-    return Character_Handle(base.handle_make(u32(index),ch.generation))
+    handle:=Character_Handle(base.handle_make(u32(index),ch.generation))
+    ch.move=character_idle_move(d.traction_force,yaw)
+    return handle
 }
 
 character_destroy :: proc(w:^World,h:Character_Handle) {
@@ -261,7 +265,13 @@ character_set_move :: proc(w:^World,h:Character_Handle,move:Character_Move) -> b
     if ch==nil {return false}
     if ch.move==move {return true}
     stamp(w,.Characters,index)
+    toggled:=(.Ghosted in ch.move.flags)!=(.Ghosted in move.flags)
     ch.move=move
+    if toggled {
+        shape_set_filter(w,ch.shape,.Ghosted in move.flags?{}:ch.desc.filter)
+        ch.state=Character_State{up_frame=ch.state.up_frame,ground={.Stale}}
+        character_held_update(w,ch)
+    }
     character_wake(w,ch)
     return true
 }
@@ -274,6 +284,18 @@ character_move :: proc(w:^World,h:Character_Handle) -> Character_Move {
     ch,_:=character_read(w,h)
     return ch!=nil?ch.move:{}
 }
+character_rest_move :: proc(w:^World,h:Character_Handle) -> Character_Move {
+    ch,_:=character_read(w,h)
+    if ch==nil {return {}}
+    yaw:=ch.move.yaw
+    if .Ghosted in ch.move.flags {yaw=up_frame_yaw(ch.state.up_frame,body_rotation(w,ch.body))}
+    return character_idle_move(ch.desc.traction_force,yaw)
+}
+
+@(private)
+character_idle_move :: proc "contextless" (traction,yaw:f32) -> Character_Move {
+    return {ground={force=traction},yaw=yaw}
+}
 character_state :: proc(w:^World,h:Character_Handle) -> Character_State {
     ch,_:=character_read(w,h)
     return ch!=nil?ch.state:{}
@@ -285,13 +307,20 @@ character_desc :: proc(w:^World,h:Character_Handle) -> Character_Desc {
 // Holds the character where it is, kinematic and at rest: no step moves it, and it still collides. Let go,
 // it is dynamic again, at rest, with its mass.
 character_set_held :: proc(w:^World,h:Character_Handle,held:bool) {
-    ch,_:=character_get(w,h)
-    if ch==nil {return}
-    type:=Body_Type.Kinematic if held else .Dynamic
+    ch,_:=character_read(w,h)
+    if ch==nil || ch.held==held {return}
+    stamp(w,ch)
+    ch.held=held
+    character_held_update(w,ch)
+}
+
+@(private)
+character_held_update :: proc(w:^World,ch:^Character) {
+    type:=Body_Type.Kinematic if ch.held || .Ghosted in ch.move.flags else .Dynamic
     if body_type(w,ch.body)==type {return}
     body_set_velocity(w,ch.body,{},{})
     body_set_type(w,ch.body,type)
-    if !held {character_mass_set(w,ch.body,&ch.desc)}
+    if type==.Dynamic {character_mass_set(w,ch.body,&ch.desc)}
 }
 
 // Changes how the capsule meets the ground. Its size, mass and filter stay as created.
@@ -311,7 +340,7 @@ character_set_filter :: proc(w:^World,h:Character_Handle,filter:Filter) {
     ch,_:=character_get(w,h)
     if ch==nil {return}
     ch.desc.filter=filter
-    shape_set_filter(w,ch.shape,filter)
+    if .Ghosted not_in ch.move.flags {shape_set_filter(w,ch.shape,filter)}
 }
 // Changes the height of the capsule with the feet where they are: to crouch and to stand up again.
 // Growing first checks the taller capsule, CHARACTER_SKIN thinner so a wall it leans on is not in the
@@ -423,6 +452,7 @@ character_launch :: proc(w:^World,h:Character_Handle,velocity:Vec3,override:=fal
     if !finite(velocity) {return false}
     ch,_:=character_get(w,h)
     if ch==nil {return false}
+    if .Ghosted in ch.move.flags {return true}
     state:=&ch.state
     if override {
         state.effect_velocity,state.effect=velocity,.Set
@@ -459,9 +489,9 @@ Character_Solver :: struct {
     drive_limit,adhesion_limit:f32, // N s per substep
     normal_impulse:f32,
     drive_impulse:Vec3,
-    pushes:[CHARACTER_PUSHES]Vec3,  // into the dynamic bodies the capsule touches, in the plane of the drive
+    pushes:[CHARACTER_PUSHES]Vec3,  // into solid contacts, in the plane of the drive
+    push_limits:[CHARACTER_PUSHES]f32, // N s per substep along each direction
     push_count:i32,
-    push_limit:f32,                 // N s per substep of drive along each of them
     floating:bool,                  // Float holds the head over the surface of a fluid
     float_separation:f32,           // m of the feet above where Float holds them, at the start of the step
     float_limit:f32,                // N s per substep
@@ -550,9 +580,15 @@ characters_move_task :: proc(data:rawptr,first,last,worker:int) {
         launched:=state.effect!=.None && lift>dot(body.linear_velocity,up) && lift>LAND_SPEED
         was_standing:=.Standing in state.ground
         if state.effect!=.None || w.grounds_stale || .Stale in state.ground {
-            cs.found,cs.ground=character_probe(w,ch,body,up,max(-lift*dt,0))
+            found,ground:=character_probe(w,ch,body,up,max(-lift*dt,0))
+            cs.found=found
+            cs.ground=ground
             character_ground_keep(&state,cs.found)
-        } else {cs.found,cs.ground=character_ground_now(w,&state)}
+        } else {
+            found,ground:=character_ground_now(w,&state)
+            cs.found=found
+            cs.ground=ground
+        }
         state.effect,state.effect_velocity=.None,{}
         ground:=cs.found
         cs.standing=false
@@ -844,33 +880,38 @@ character_wall :: proc(w:^World,body:^Body,up,drive:Vec3) -> (normal:Vec3,push:f
     return
 }
 
-// The directions in which the capsule leans on dynamic bodies, in the plane of the drive (all of space when
-// `plane` is zero): the drive along each of them is capped by the push force.
+// The impulse limit is reduced along contacts while unblocked directions can still accelerate.
 @(private)
-character_pushes :: proc(w:^World,cs:^Character_Solver,body:^Body,plane:Vec3) #no_bounds_check {
+character_pushes :: proc(w:^World,cs:^Character_Solver,body:^Body,plane:Vec3,traction,push:f32) #no_bounds_check {
     for key:=body.contact_list;key>=0; {
         index:=key>>1
         contact:=&w.contacts[index]
         side:=key&1
         key=contact.edges[side].next
-        if contact.flags&{.Touching,.Overlap}!={.Touching} || w.bodies[side==0?contact.body_b:contact.body_a].type!=.Dynamic {continue}
+        if .Overlap in contact.flags || contact.manifold_count==0 {continue}
+        moving:=w.bodies[side==0?contact.body_b:contact.body_a].type==.Dynamic
+        limit:=push if moving else traction
+        if limit>=cs.drive_limit {continue}
         for i in 0..<contact.manifold_count {
             manifold:=i==0?&w.manifolds[index]:&w.extra_manifolds[contact.extra][i-1]
-            touching:=false
-            for point in manifold.points[:manifold.count] {touching=touching || point.separation<=LINEAR_SLOP}
-            if !touching {continue}
             into:=side==0?manifold.normal:-manifold.normal
+            reach:=max(LINEAR_SLOP,dot(cs.drive.velocity,into)*w.step.dt)
+            touching:=false
+            for point in manifold.points[:manifold.count] {touching=touching || point.separation<=reach}
+            if !touching {continue}
             into-=plane*dot(into,plane)
             if length2(into)<1e-6 {continue}
             into=normalize(into)
             if cs.push_count<CHARACTER_PUSHES {
                 cs.pushes[cs.push_count]=into
+                cs.push_limits[cs.push_count]=limit
                 cs.push_count+=1
                 continue
             }
             closest:=0
             for push,k in cs.pushes {if dot(push,into)>dot(cs.pushes[closest],into) {closest=k}}
             cs.pushes[closest]=normalize(cs.pushes[closest]+into)
+            cs.push_limits[closest]=min(limit,cs.push_limits[closest])
         }
     }
 }
@@ -879,10 +920,15 @@ character_pushes :: proc(w:^World,cs:^Character_Solver,body:^Body,plane:Vec3) #n
 @(private)
 character_push_cap :: #force_inline proc "contextless" (cs:^Character_Solver,impulse:Vec3) -> Vec3 #no_bounds_check {
     p:=impulse
-    for push in cs.pushes[:cs.push_count] {
-        if along:=dot(p,push);along>cs.push_limit {p-=(along-cs.push_limit)*push}
+    for push,i in cs.pushes[:cs.push_count] {
+        limit:=cs.push_limits[i]
+        if along:=dot(p,push);along>limit {p-=(along-limit)*push}
     }
-    return p
+    scale:f32=1
+    for push,i in cs.pushes[:cs.push_count] {
+        if along:=dot(p,push);along>cs.push_limits[i] {scale=min(scale,cs.push_limits[i]/along)}
+    }
+    return p*scale
 }
 
 // Constraints of the step, once the awake bodies have their solver slots.
@@ -894,22 +940,27 @@ characters_prepare :: proc(w:^World) #no_bounds_check {
         body:=&w.bodies[cs.body]
         cs.c,cs.g=body.solver_index,-1
         cs.inv_mass_c=body.inv_mass
-        cs.drive_limit=cs.drive.force*st.h
+        traction:=cs.drive.force*st.h
         cs.target=cs.drive.velocity
         cs.push_count=0
         felt:=move_pace(cs.move)*move_pace(cs.move)
         cs.float_limit=ch.desc.adhesion_force*felt*st.h
-        push:=(ch.desc.push_force>0?ch.desc.push_force:ch.desc.traction_force)*felt
-        cs.push_limit=push*st.h
-        pushes:=push<cs.drive.force
-        cs.wedge,cs.wedge_body=character_wedged(w,ch,body,cs.up)
-        if !cs.standing {
-            if pushes {character_pushes(w,&cs,body,.Drive_Vertical in cs.move.flags?Vec3{}:cs.up)}
-            continue
-        }
+        push:=(ch.desc.push_force>0?ch.desc.push_force:ch.desc.traction_force)*felt*st.h
         ground:=cs.found
-        character_flatten_contacts(w,body,cs.up,dot(ground.point,cs.up),ch.desc.step_height)
-        if pushes {character_pushes(w,&cs,body,ground.normal)}
+        plane:=cs.up
+        if cs.standing {plane=ground.normal} else if .Drive_Vertical in cs.move.flags {plane={}}
+        cs.drive_limit=traction
+        if traction>0 && .Reach_Drive in cs.move.flags {
+            miss:=cs.target-cs.velocity
+            if cs.standing {miss+=ground.velocity}
+            miss-=plane*dot(miss,plane)
+            reach:=ch.desc.mass*length(miss*cs.free)*(st.h/st.dt)
+            if finite(reach) {cs.drive_limit=max(traction,reach)}
+        }
+        cs.wedge,cs.wedge_body=character_wedged(w,ch,body,cs.up)
+        if cs.standing {character_flatten_contacts(w,body,cs.up,dot(ground.point,cs.up),ch.desc.step_height)}
+        if min(traction,push)<cs.drive_limit {character_pushes(w,&cs,body,plane,traction,push)}
+        if !cs.standing {continue}
         n:=ground.normal
         locked:=cs.free!={1,1,1}
         cs.normal=n

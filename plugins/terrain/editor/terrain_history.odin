@@ -96,7 +96,8 @@ grid_step :: proc(g:^Grid_Swap($T),head,edited:^terrain.Grid(T),low,high:[3]int,
     if !grids_paged_alike(head,edited) {
         copied:terrain.Grid(T)
         if !terrain.grid_clone(&copied,edited,allocator) {return false}
-        g.whole,g.grid=true,head^
+        g.grid=head^
+        g.whole=true
         head^=copied
         return true
     }
@@ -145,7 +146,8 @@ step_make :: proc(step:^Step,head,edited:^terrain.Source,low,high:[2]int,all:boo
     if !step_shaped(head,edited) {
         copied:terrain.Source
         if !terrain.source_clone(&copied,edited,allocator) {return false}
-        step.whole,step.other=true,head^
+        step.other=head^
+        step.whole=true
         head^=copied
         return true
     }
@@ -156,7 +158,8 @@ step_make :: proc(step:^Step,head,edited:^terrain.Source,low,high:[2]int,all:boo
     if !grid_step(&step.paint,&head.paint,&edited.paint,from,to,all,allocator) {step_revert(step,head);return false}
     for i in 0..<terrain.EDITS_MAX {if !grid_step(&step.edits[i],&head.edit_heights[i],&edited.edit_heights[i],from,to,all,allocator) {step_revert(step,head);return false}}
     if !grid_step(&step.under,&head.edit_under,&edited.edit_under,from,to,all,allocator) {step_revert(step,head);return false}
-    step.info,head.info=head.info,edited.info
+    step.info=head.info
+    head.info=edited.info
     return true
 }
 
@@ -169,7 +172,12 @@ step_revert :: proc(step:^Step,head:^terrain.Source) {
 
 @(private)
 grid_apply :: proc(g:^Grid_Swap($T),head:^terrain.Grid(T)) {
-    if g.whole {head^,g.grid=g.grid,head^;return}
+    if g.whole {
+        previous:=head^
+        head^=g.grid
+        g.grid=previous
+        return
+    }
     // The head holds each page since the step was made: the trade takes no memory.
     for &entry in g.pages {terrain.grid_page_trade(head,entry.index,&entry.page,runtime.nil_allocator())}
 }
@@ -177,14 +185,21 @@ grid_apply :: proc(g:^Grid_Swap($T),head:^terrain.Grid(T)) {
 // Trades a step with the head: the head goes to the other revision of the
 // step, and the step keeps the one the head was at.
 step_apply :: proc(step:^Step,head:^terrain.Source) {
-    if step.whole {head^,step.other=step.other,head^;return}
+    if step.whole {
+        previous:=head^
+        head^=step.other
+        step.other=previous
+        return
+    }
     grid_apply(&step.field,&head.field)
     grid_apply(&step.holes,&head.holes)
     grid_apply(&step.weights,&head.weights)
     grid_apply(&step.paint,&head.paint)
     for i in 0..<terrain.EDITS_MAX {grid_apply(&step.edits[i],&head.edit_heights[i])}
     grid_apply(&step.under,&head.edit_under)
-    step.info,head.info=head.info,step.info
+    previous:=step.info
+    step.info=head.info
+    head.info=previous
 }
 
 @(private)

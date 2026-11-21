@@ -35,9 +35,7 @@ Cinematic_World :: struct {
     fields:anim.Field_Playback,
     requests:anim.Animation_Requests,
     events:anim.Animation_Events,
-    constraints:anim.Animation_Constraints,
     modifier_runtime:anim.Modifier_Runtime,
-    grounding:anim.Grounding_Runtime,
     actions:anim.Action_Runtime,
     motion:anim.Motion_Runtime,
     played:core.Table(anim.Animation_Played),
@@ -136,10 +134,11 @@ fixture_tick :: proc(f:^Cinematic_Fixture,tick:u64,dt:f32,playing:=true,acting:p
     time:=core.Time{dt=dt,tick=tick,playing=playing}
     anim.animation_requests_serve(&f.requests,anim.ANIMATION_SETTINGS_DEFAULT,&f.problems,&f.playback,&f.actions,time)
     cam.camera_select(core.ref(&f.entities),core.read(&f.cameras),&f.shown,&f.camera_requests,core.read(&f.activations),core.read(&f.follows),core.read(&f.parents),core.read(&f.seats),core.ref(&f.seat_state),&f.problems)
-    anim.animation_sample(core.read(&f.animations),&f.progress,&f.played,core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),core.read(&f.remotes),&f.requests,&f.events,&f.modifier_runtime,&f.playback,&f.characters,&f.skeletons,&f.app,time,{},&f.problems,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+    anim.animation_prepare(core.read(&f.animations),core.read(&f.attachments),core.read(&f.meshes),core.read(&f.sources),&f.modifier_runtime,&f.playback,&f.characters,&f.skeletons,&f.app,&f.problems)
+    anim.animation_sample(core.read(&f.animations),core.read(&f.progress),&f.played,&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.remotes),&f.requests,&f.events,&f.modifier_runtime,&f.playback,&f.characters,&f.skeletons,&f.app,time,{},&f.problems,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
     test_world_settle(&f.w)
     anim.animation_fields(test_world_ref(&f.w),core.ref(&f.playback),&f.fields,core.ref(&f.content_sources),&f.app,&f.problems)
-    anim.animation_advance(&f.transforms,core.read(&f.parents),{},&f.requests,&f.modifier_runtime,&f.playback,&f.constraints,&f.grounding,{},{},time,core.ref(&f.skeletons),&f.problems,&f.motion,&f.characters,{},{},core.CLOCK_DEFAULT,nil)
+    anim.animation_advance(&f.transforms,core.read(&f.parents),{},&f.requests,&f.modifier_runtime,&f.playback,{},{},time,core.ref(&f.skeletons),&f.problems,&f.motion,&f.characters,{},{},core.CLOCK_DEFAULT,nil)
     if acting!=nil {acting(f)}
     cinematic_advance(core.ref(&f.entities),&f.cinematics,core.read(&f.cameras),core.read(&f.animations),core.ref(&f.playback),core.ref(&f.content_sources),&f.app,core.ref(&f.actions),&f.requests,core.ref(&f.shown),core.ref(&f.seat_state),&f.camera_requests,&f.seat_requests,core.read(&f.seats),time,core.read(&f.remotes),&f.problems)
     test_world_settle(&f.w)
@@ -221,12 +220,12 @@ the_markers_of_a_clip_cut_between_cameras_and_play_actions_while_it_plays :: pro
     clear(&f.requests.timeline.items)
     cinematic_follow(core.read(&f.cinematics),core.read(&f.animations),core.ref(&f.playback),&f.requests,{dt=DT,tick=11,playing=true},core.read(&f.remotes))
     commands:=f.requests.timeline.items[:]
-    testing.expect(t,len(commands)==1 && commands[0]==anim.Animation_Command{f.timeline,.25,1,.Seek},"a clip that plays is sought a tick before the half second the anchor gives the end of the tick")
+    testing.expect(t,len(commands)==1 && commands[0].entity==f.timeline && commands[0].command==.Seek && commands[0].time==.25,"a clip that plays is sought a tick before the half second the anchor gives the end of the tick")
     clear(&f.requests.timeline.items)
     remote.status,remote.anchor_time,remote.anchor_rate=.Paused,.75,0
     cinematic_follow(core.read(&f.cinematics),core.read(&f.animations),core.ref(&f.playback),&f.requests,{dt=DT,tick=40,playing=true},core.read(&f.remotes))
     commands=f.requests.timeline.items[:]
-    testing.expect(t,len(commands)==2 && commands[0].command==.Pause && commands[1]==anim.Animation_Command{f.timeline,.75,1,.Seek},"paused by the server, it pauses where the anchor is")
+    testing.expect(t,len(commands)==2 && commands[0].command==.Pause && commands[1].entity==f.timeline && commands[1].command==.Seek && commands[1].time==.75,"paused by the server, it pauses where the anchor is")
     clear(&f.requests.timeline.items)
     core.remove(&f.remotes,f.timeline);test_world_settle(&f.w)
 
@@ -247,7 +246,7 @@ a_head_of_a_scrubbed_clip_shows_one_shot :: proc(t:^testing.T) {
     defer fixture_destroy(f)
     Seen :: struct {shot,previous:Shot,wide:[3]f32,fov:f32}
     look :: proc(f:^Cinematic_Fixture,head:f32) -> (seen:Seen) {
-        anim.animation_seek(&f.requests,f.timeline,head)
+        anim.animation_command(&f.requests,f.timeline,.Seek,head)
         fixture_tick(f,1,0,playing=false)
         seen.shot,seen.previous=cinematic_shot(&f.playback,&f.content_sources,&f.app,&f.entities,core.read(&f.cameras),f.timeline,head)
         place,_:=core.get(core.read(&f.transforms),f.wide);seen.wide=place.position
@@ -309,7 +308,7 @@ a_scrubbed_timeline_plays_from_its_start_in_a_play :: proc(t:^testing.T) {
     f:=new(Cinematic_Fixture);defer free(f)
     if !fixture_init(t,f) {return}
     defer fixture_destroy(f)
-    anim.animation_seek(&f.requests,f.timeline,.3)
+    anim.animation_command(&f.requests,f.timeline,.Seek,.3)
     fixture_tick(f,1,0,playing=false);fixture_tick(f,2,0,playing=false)
     testing.expect(t,len(f.requests.plays.items)==1 && f.requests.plays.items[0].seek,"the head drives the wave")
     play:=new(Cinematic_Fixture);defer free(play)

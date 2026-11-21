@@ -50,7 +50,7 @@ doc_failed :: proc(reading:^Reading,format:string,args:..any) -> bool {
 }
 
 // A Node_Style of no value: what a value is compared to.
-doc_no_style :: proc() -> ui.Node_Style {return {}}
+doc_no_style :: proc() -> (style:ui.Node_Style) {return}
 
 // ---------------------------------------------------------------- values
 

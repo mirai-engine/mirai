@@ -33,7 +33,7 @@ a_strain_field_asks_for_its_strain_in_the_volume_of_its_entity :: proc(t:^testin
     pose:=mm.Transform{{3,4,5},mm.quat_axis_angle({0,1,0},mm.PI*.5),{2,1,.5}}
     field:=core.create(&w.entities)
     config:=STRAIN_FIELD_DEFAULT
-    config.strain,config.weakening,config.blend,config.filter.objects,config.filter.ignore_body=120,true,0.5,4,17
+    config.strain,config.weakening,config.blend,config.filter.filter.block,config.filter.ignore_body=120,true,0.5,4,17
     core.add(&w.fields,field,config)
     core.add(&w.worlds,field,core.World_Transform{transform=pose})
     for area in ([?]volume.Volume{volume.box({1,2,3}),volume.sphere(3)}) {

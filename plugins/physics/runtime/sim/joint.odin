@@ -281,7 +281,8 @@ joint_set_axes :: proc(w:^World,h:Joint_Handle,linear,angular:[3]Joint_Axis) -> 
     }
     for axis,i in linear {if kernel!=joint.kernel || changed(axes.linear_axes[i],axis) {axes.linear_axes_impulse[i]={}}}
     for axis,i in angular {if kernel!=joint.kernel || changed(axes.angular_axes[i],axis) {axes.angular_axes_impulse[i]={}}}
-    axes.linear_axes,axes.angular_axes=linear,angular
+    axes.linear_axes=linear
+    axes.angular_axes=angular
     joint.kernel=kernel
     joint.flags=joint_flags_of(kernel,axes,.Collide_Connected in joint.flags)
     body_wake(w,joint.body_a)

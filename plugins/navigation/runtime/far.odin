@@ -79,11 +79,9 @@ agent_reach :: proc "contextless" (agent:Nav_Agent,p:^Nav_Path) -> f32 {
 agent_via :: proc(n:^Navigation,a:^Navigation_Agents,s:^Nav_Sections,class:int,from,goal:mm.Vec3) -> (via:mm.Vec3,ok:bool) {
     if s.away_count==0 {return}
     c:=&n.classes[class]
-    if len(c.coarse.portals)==0 || !agents_coarse_ready(a) {return}
-    if !sections_away(s,goal) {
-        // Between two places here, the way may still cross one away: only if the coarse graph says so.
-        if sections_region(s,from)==sections_region(s,goal) {return}
-    }
+    if len(c.coarse.portals)==0 {return}
+    if !sections_away(s,goal) && sections_region(s,from)==sections_region(s,goal) {return}
+    if !agents_coarse_ready(a) {return}
     count,status:=ai.nav_coarse_route(&c.coarse,&a.coarse,from,sections_region(s,from),goal,sections_region(s,goal),a.route[:])
     if status!=.Found && status!=.Output_Full {return}
     previous:=from
@@ -100,7 +98,8 @@ agent_via :: proc(n:^Navigation,a:^Navigation_Agents,s:^Nav_Sections,class:int,f
 @(private)
 far_route :: proc(n:^Navigation,a:^Navigation_Agents,s:^Nav_Sections,far:^Nav_Far,class:int,from,goal:mm.Vec3) {
     far.next,far.complete,far.arrived=0,true,false
-    if class>=0 && class<n.count && agents_coarse_ready(a) {
+    if class>=0 && class<n.count && len(n.classes[class].coarse.portals)>0 &&
+       agents_coarse_ready(a) {
         c:=&n.classes[class]
         count,status:=ai.nav_coarse_route(&c.coarse,&a.coarse,from,sections_region(s,from),goal,sections_region(s,goal),far.route[:])
         if (status==.Found || status==.Output_Full) && count>0 {
@@ -153,8 +152,9 @@ far_lift :: proc "contextless" (n:^Navigation,colliders:^core.Table(phys.Collide
 @(private)
 far_request :: proc(paths:^core.Table(Nav_Path),fars:^core.Table(Nav_Far),asked:Nav_Request,worlds:^core.Table(core.World_Transform,$A)) -> bool {
     far:=cast(^Nav_Far)core.raw_edit(core.raw(fars),type_info_of(Nav_Far),asked.entity)
+    if far==nil {return false}
     p:=cast(^Nav_Path)core.raw_edit(core.raw(paths),type_info_of(Nav_Path),asked.entity)
-    if far==nil || p==nil {return false}
+    if p==nil {return false}
     #partial switch asked.kind {
     case .Move_To:
         p.goal,p.target,p.state=asked.point,core.NONE,.Moving
@@ -177,7 +177,7 @@ far_request :: proc(paths:^core.Table(Nav_Path),fars:^core.Table(Nav_Far),asked:
 // The part of navigation_agents for what is far, after the agents moved.
 @(private)
 agents_far :: proc(
-    n:core.Ref(Navigation),builds:core.Ref(Navigation_Builds),a:^Navigation_Agents,agents:^core.Table(Nav_Agent,$A),paths:^core.Table(Nav_Path),
+    n:core.Ref(Navigation),builds:core.Ref(Navigation_Builds),a:^Navigation_Agents,agents:^core.Table(Nav_Agent,$A),paths:^core.Table(Nav_Path),drives:^core.Table(locomotion.Locomotion_Drive),
     fars:^core.Table(Nav_Far),roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),
     walks:^core.Table(locomotion.Walk,$B),flights:^core.Table(locomotion.Fly,$C),swims:^core.Table(locomotion.Swim,$D),colliders:^core.Table(phys.Collider,$E),worlds:^core.Table(core.World_Transform,$F),
     placer:core.Placer,bodies:^phys.Body_Requests,events:^Nav_Events,time:core.Time,
@@ -198,11 +198,13 @@ agents_far :: proc(
         if !placed || !is_agent {continue}
         lift:=far_lift(n.ptr,colliders,e,p.class,pose.scale)
         center:=pose.position+lift
-        to:=p.corridor.target-center
+        r:=agent_route(a,e)
+        if r==nil || r.placed {continue}
+        to:=r.corridor.target-center
         reach:=max(agent_reach(agent,&p),0.5)
         // At the portal its corridor ends at: on the plane over the surface, in three axes in the air and the water.
         near:=linalg.length(to)<=reach if lift!={} else linalg.length(mm.Vec2{to.x,to.z})<=reach
-        at_portal:=p.through && p.state==.Moving && near
+        at_portal:=r.through && p.state==.Moving && near
         if !at_portal && !sections_away(s,center) {continue}
         far:Nav_Far
         far.speed=NAV_FAR_SPEED
@@ -212,12 +214,15 @@ agents_far :: proc(
         case .Air:     if fly,ok:=core.get(flights,e);ok && fly.speed>0 {far.speed=fly.speed}
         case .Water:   if swim,ok:=core.get(swims,e);ok && swim.speed>0 {far.speed=swim.speed}
         }
-        if !agents_coarse_ready(a) {continue}
         far_route(n.ptr,a,s,&far,int(p.class),center,p.goal)
         core.add(fars,e,far)
         core.add(disabled,e,core.Disabled{})
         written:=core.edit(paths,e)
-        written.through,written.velocity=false,{}
+        r.through,written.velocity=false,{}
+        if r.steering {
+            core.remove(drives,e)
+            r.steering=false
+        }
     }
     // What is far steps every NAV_FAR_PERIOD, and looks at once when a section comes or goes.
     ticks:=far_ticks(time)
@@ -231,12 +236,17 @@ agents_far :: proc(
         p:=cast(^Nav_Path)core.raw_edit(core.raw(paths),type_info_of(Nav_Path),e)
         pose,placed:=core.get(worlds,e)
         if far==nil || p==nil || !placed {continue}
+        r:=agent_route(a,e)
+        if r==nil {
+            r,_=core.entity_map_put(&a.routes,e,Nav_Route{partner=-1})
+            if r==nil {continue}
+        }
         // The route of one that flies or swims is of its middle.
         lift:=far_lift(n.ptr,colliders,e,p.class,pose.scale)
         position:=pose.position+lift
         // Turned on by something else: it is where the players are.
         if row<fars.on {
-            far_wake(n.ptr,p,far,e,position,lift,pose.rotation,placer,bodies,fars,disabled,events)
+            far_wake(n.ptr,p,r,far,e,position,lift,pose.rotation,placer,bodies,fars,disabled,events)
             continue
         }
         if step && p.state!=.Idle && !far.arrived {
@@ -260,7 +270,7 @@ agents_far :: proc(
         // Out where it is not away, and not heading back into a section away.
         if sections_away(s,position) {continue}
         if !far.arrived && far.next<far.count && sections_away(s,(position+far.route[far.next])*0.5) {continue}
-        far_wake(n.ptr,p,far,e,position,lift,pose.rotation,placer,bodies,fars,disabled,events)
+        far_wake(n.ptr,p,r,far,e,position,lift,pose.rotation,placer,bodies,fars,disabled,events)
     }
 }
 
@@ -269,7 +279,7 @@ agents_far :: proc(
 // velocity it had when it went far. It waits while the mesh or the volume
 // there is still building. position is of its middle, lift over its feet.
 @(private)
-far_wake :: proc(n:^Navigation,p:^Nav_Path,far:^Nav_Far,e:core.Entity,position,lift:mm.Vec3,rotation:mm.Quat,placer:core.Placer,bodies:^phys.Body_Requests,fars:^core.Table(Nav_Far),disabled:^core.Table(core.Disabled),events:^Nav_Events) {
+far_wake :: proc(n:^Navigation,p:^Nav_Path,r:^Nav_Route,far:^Nav_Far,e:core.Entity,position,lift:mm.Vec3,rotation:mm.Quat,placer:core.Placer,bodies:^phys.Body_Requests,fars:^core.Table(Nav_Far),disabled:^core.Table(core.Disabled),events:^Nav_Events) {
     at:=position
     if p.class>=0 && int(p.class)<n.count {
         c:=&n.classes[p.class]
@@ -288,7 +298,7 @@ far_wake :: proc(n:^Navigation,p:^Nav_Path,far:^Nav_Far,e:core.Entity,position,l
     phys.set_velocity(bodies,e,{})
     core.remove(fars,e)
     core.remove(disabled,e)
-    p.corridor,p.velocity,p.through,p.partial,p.manual={},{},false,false,false
+    r.corridor,p.velocity,r.through,p.partial,p.manual={},{},false,false,false
     switch {
     case p.state==.Idle:
     case far.arrived:
@@ -296,6 +306,6 @@ far_wake :: proc(n:^Navigation,p:^Nav_Path,far:^Nav_Far,e:core.Entity,position,l
         core.push(&events.queue,Nav_Event{kind=.Arrived,entity=e})
     case:
         p.state=.Waiting
-        p.replans+=1
+        r.replans+=1
     }
 }

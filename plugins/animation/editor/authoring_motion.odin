@@ -96,8 +96,8 @@ authoring_motion_inspect :: proc(s:^editor.Session,call:^api.Call,world:core.Wor
     ids:=core.world_table_of(world,core.Id)
     for &row,i in r.targets {
         target:=instance.targets[i]
-        named:=SPATIAL_TARGET_PARAMS_DEFAULT
-        named.kind=target.target.kind;named.bone=target.target.bone;named.socket=target.target.socket
+        named:=Instance_Spatial_Target{}
+        named.kind=target.target.kind;named.name=target.target.name
         named.position,named.rotation,named.scale=target.target.position,target.target.rotation,target.target.scale
         if id,found:=core.get(ids,target.target.entity);found {base.text_set(named.entity[:],fmt.tprintf("%016x",u64(id.value)))}
         row={name=target.name,target=named,world_position=target.world.position,world_rotation=target.world.rotation,enabled=target.enabled,resolved=target.resolved}

@@ -313,10 +313,17 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     world:=make([]mm.Transform,len(rest),call.allocator)
     lib.pose_world(parents,rest,world)
     // By its label when the skeleton keeps its body, which the rig then follows.
-    bone :: proc(skeleton:asset.Skeleton_View,map_:lib.Body_Map,part:lib.Body_Part) -> anim.Bone_Ref {
+    bone :: proc(out:^anim.Bone_Ref,skeleton:asset.Skeleton_View,map_:lib.Body_Map,part:lib.Body_Part) {
+        out^={}
         index:=map_.bones[part]
-        if index<0 {return {}}
-        return anim.bone_ref_part(part) if skeleton.body!=nil else anim.bone_ref(base.text_get(skeleton.bones[index].path[:]))
+        if index<0 {return}
+        if skeleton.body!=nil {
+            names:=lib.BODY_PART_NAMES
+            at:=copy(out.path[:],anim.BODY_LABEL)
+            copy(out.path[at:],names[part])
+            return
+        }
+        base.text_set(out.path[:],base.text_get(skeleton.bones[index].path[:]))
     }
     mapped :: proc(map_:lib.Body_Map,parts:..lib.Body_Part) -> bool {
         for part in parts {if map_.bones[part]<0 {return false}}
@@ -337,7 +344,8 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         if mapped(body,.Head) {
             head:=world[body.bones[.Head]]
             look:=anim.LOOK_CONSTRAINT_DEFAULT
-            look.bone=bone(skeleton,body,.Head)
+            bone(&look.bone,skeleton,body,.Head)
+            base.text_set(look.name[:],"@head")
             look.forward=mm.quat_rotate(conj(head.rotation),forward)
             look.up=mm.quat_rotate(conj(head.rotation),up)
             look.world_up,look.use_up=up,true
@@ -353,10 +361,9 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
             parts:=[3]lib.Body_Part{.Shoulder_L,.Elbow_L,.Hand_L} if side==0 else {.Shoulder_R,.Elbow_R,.Hand_R}
             if !mapped(body,..parts[:]) {continue}
             ik:=anim.IK_CONSTRAINT_DEFAULT
-            // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-            ik.root=bone(skeleton,body,parts[0])
-            ik.joint=bone(skeleton,body,parts[1])
-            ik.end=bone(skeleton,body,parts[2])
+            bone(&ik.root,skeleton,body,parts[0])
+            bone(&ik.joint,skeleton,body,parts[1])
+            bone(&ik.end,skeleton,body,parts[2])
             // Elbows bend back and down: a pole far behind and below the body.
             ik.pole=-forward*20-up*10
             ik.enabled=false
@@ -371,6 +378,8 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     if .Foot_Ik in want {
         // Its legs and body are those of the body of the skeleton: their bones stay empty.
         feet:=anim.FOOT_GROUNDING_DEFAULT
+        feet.legs=make([]anim.Grounded_Leg,2,call.allocator)
+        count:=0
         feet.up=up
         feet.max_rise=.15;feet.trace_above=.55;feet.trace_below=.9;feet.blend_time=.08
         for side in 0..<2 {
@@ -382,9 +391,9 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
             leg.sole_height=max(0,linalg.dot(foot.position,up))
             if body.bones[parts[3]]>=0 {leg.contact_offset=max(0,linalg.dot(world[body.bones[parts[3]]].position,up))}
             leg.pole_offset={};leg.max_distance=.55;leg.contact_height=.04
-            feet.legs[side]=leg;feet.count+=1
+            feet.legs[side]=leg;count+=1
         }
-        if feet.count==2 && body.bones[.Pelvis]>=0 {
+        if count==2 && body.bones[.Pelvis]>=0 {
             grounding=feet
             say(&capabilities[.Foot_Ik],.Ready,"the feet stand on the ground under them, with physics colliders","")
         } else {say(&capabilities[.Foot_Ik],.Missing,"the body has no pelvis or not both legs","Set pelvis, and hip, knee and foot of both legs with skeleton.body.set")}
@@ -566,8 +575,9 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
                 base.text_set(value.name[:],name);base.text_set(value.clip[:],clip);base.text_set(value.layer[:],layer)
                 append(definitions,value)
             }
-            arm_l:=bone(skeleton,body,.Clavicle_L) if body.bones[.Clavicle_L]>=0 else bone(skeleton,body,.Shoulder_L)
-            arm_r:=bone(skeleton,body,.Clavicle_R) if body.bones[.Clavicle_R]>=0 else bone(skeleton,body,.Shoulder_R)
+            arm_l,arm_r:anim.Bone_Ref
+            bone(&arm_l,skeleton,body,.Clavicle_L if body.bones[.Clavicle_L]>=0 else .Shoulder_L)
+            bone(&arm_r,skeleton,body,.Clavicle_R if body.bones[.Clavicle_R]>=0 else .Shoulder_R)
             if skeleton.body!=nil {
                 if arm_l.path[0]!=0 {arm_l=anim.bone_ref(anim.BODY_LABEL+"arm_l")}
                 if arm_r.path[0]!=0 {arm_r=anim.bone_ref(anim.BODY_LABEL+"arm_r")}

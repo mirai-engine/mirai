@@ -23,7 +23,7 @@ PATH_CAPACITY :: asset.NODE_PATH_CAPACITY // the field asset hides the package i
 Play_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     asset:base.Asset_Id `mirai:"optional,label=An .anim; or a .character, its locomotion; omitted keeps what it plays"`,
-    clip:[64]u8 `mirai:"text,optional,label=A clip of the .anim; only with an .anim asset"`,
+    clip:[64]u8 `mirai:"text,optional,label=A clip of the animation source"`,
     speed:f32 `mirai:"optional"`,
     fade:f32 `mirai:"optional,min=0"`,
     loop:bool `mirai:"optional"`,
@@ -104,8 +104,11 @@ subject :: proc(s:^editor.Session,call:^api.Call,named:[]u8,entity:=core.NONE) -
 control_result :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.Entity) {
     out:=api.call_result(call,Control_Result)
     out.id=editor.api_entity_id(w,e)
-    if value,ok:=editor.entity_get(w,e,anim.Animation);ok {out.playing=value.playing}
-    if time,_,_,ok:=anim.animation_progress(core.world_storage_of(w,anim.Playback),e);ok {out.time=time}
+    playback:=core.world_storage_of(w,anim.Playback)
+    if s.mode==.Edit {
+        if value,ok:=editor.entity_get(w,e,anim.Animation);ok {out.playing=value.playing}
+    } else {out.playing=anim.animation_playing(playback,e)}
+    if time,_,_,ok:=anim.animation_progress(playback,e);ok {out.time=time}
 }
 
 @(private)
@@ -142,15 +145,51 @@ play :: proc(s:^editor.Session,call:^api.Call) {
     if table==nil {authoring_failure(call,"Animation","Unavailable","the animation runtime table","missing table","Animation runtime is not present",api.SERVER_ERROR);return}
     value,present:=core.get(table,e)
     if !present {value=anim.ANIMATION_DEFAULT}
-    if p.asset!={} {value.asset=p.asset}
-    source,loaded:=program_source(s,call,value.asset,value.library);if !loaded {return}
+    original:=value.asset
+    explicit:=base.Asset_Id{}
+    if p.asset!={} && s.mode!=.Edit && present && p.asset!=original {
+        if record,found:=asset.registry_find(&s.app.assets.registry,p.asset);
+            found && record.kind==asset.KIND_ANIMATION {
+            explicit=p.asset
+        }
+    }
+    if p.asset!={} && explicit=={} {value.asset=p.asset}
+    source:=explicit
+    if source=={} {
+        loaded:bool
+        source,loaded=program_source(s,call,value.asset,value.library);if !loaded {return}
+    }
     content:=host.content_animation_wait(s.app,source)
     if content==nil {authoring_failure(call,"asset","Invalid_Asset","a loadable animation source","source load failed","The animation asset could not be loaded");return}
     name:=base.text_get(p.clip[:])
-    if source!=value.asset && name!="" {authoring_failure(call,"clip","Program_Source","no clip with a .character whose locomotion picks its clips","base clip supplied","The locomotion of a .character picks its clips",fix="Play a clip over it as an action of its .character: animation.action.set, then animation.request actions");return}
+    if s.mode==.Edit && source!=value.asset && name!="" {authoring_failure(call,"clip","Program_Source","no clip with a .character whose locomotion picks its clips","base clip supplied","The locomotion of a .character picks its clips",fix="Play a clip over it as an action of its .character: animation.action.set, then animation.request actions");return}
     if name!="" && lib.clip_find(&content.lib,base.name_hash(name))==0 {authoring_failure(call,"clip","Missing_Clip","a clip name in the source",name,"The clip does not exist in this animation asset");return}
-    if !anim.animation_clip(&value,name,p.fade,p.loop) {authoring_failure(call,"clip","Invalid_Value","a clip name under 64 bytes",name,"The clip could not be set");return}
-    value.speed,value.playing=p.speed,true
+    speed:=p.speed if authoring_field_present(call,"speed") else value.speed
+    fade:=p.fade if authoring_field_present(call,"fade") else value.fade
+    loop:=p.loop if authoring_field_present(call,"loop") else value.loop
+    if s.mode!=.Edit && present && (value.asset==original || explicit!={}) {
+        requests:=core.world_storage_of(w,anim.Animation_Requests)
+        if requests==nil {
+            authoring_failure(call,"clip","Request_Failed","animation requests in the world",
+                "unavailable","The clip request could not be queued",api.SERVER_ERROR)
+            return
+        }
+        if explicit!={} && name=="" && len(content.names)>0 {
+            name=base.text_get(content.names[0][:])
+        }
+        waiting:=len(requests.timeline.items)
+        anim.animation_command(requests,e,.Play,speed=speed,clip=name,fade=fade,loop=loop,
+            asset=explicit)
+        if len(requests.timeline.items)==waiting {
+            authoring_failure(call,"clip","Request_Failed","room in the clip queue",
+                "full or unavailable","The clip request could not be queued",api.SERVER_ERROR)
+            return
+        }
+        control_result(s,call,w,e)
+        return
+    }
+    base.text_set(value.clip[:],name)
+    value.speed,value.fade,value.loop,value.playing=speed,fade,loop,true
     if !edit_begin(s,call,"Play animation") {return}
     core.add(table,e,value)
     if !edit_end(s,call,w,true) {return}
@@ -251,7 +290,7 @@ preview :: proc(s:^editor.Session,call:^api.Call) {
     }
     if !request_source_check(s,call,world,e) || !request_apply(s,call,world,e,p,p.ticks,nil) {return}
     animation,_=editor.entity_get(world,e,anim.Animation)
-    if requests!=nil {anim.animation_seek(requests,e,p.time)}
+    if requests!=nil {anim.animation_command(requests,e,.Seek,p.time)}
     if requests==nil || !anim.animation_evaluate(world,s.app,0) {
         authoring_failure(call,"preview","Evaluation_Failed","a valid animation request and evaluable preview world","initial evaluation failed","The animation preview could not be evaluated",api.SERVER_ERROR);return
     }
@@ -287,8 +326,8 @@ preview :: proc(s:^editor.Session,call:^api.Call) {
             start:=min(int(p.offset),len(content.bones));end:=min(start+int(p.limit),len(content.bones))
             for &bone,i in content.bones[start:end] {
                 index:=start+i+1
-                if index>=len(state.local) {break}
-                value:=state.local[index]
+                if index>=len(anim.playing_pose(&state,.Local)) {break}
+                value:=anim.playing_pose(&state,.Local)[index]
                 append(&poses,Preview_Pose_Result{path=bone.path,name=bone.name,position=value.position,scale=value.scale,rotation={value.rotation.x,value.rotation.y,value.rotation.z,value.rotation.w}})
             }
             break
@@ -302,7 +341,8 @@ preview :: proc(s:^editor.Session,call:^api.Call) {
         if int(r.total)<=int(p.offset) || len(poses)>=int(p.limit) {continue}
         id,_:=core.get(ids,entity)
         target,_:=core.get(targets,entity)
-        row:=Preview_Pose_Result{id=id.value,path=target.path,position=value.position,scale=value.scale,rotation={value.rotation.x,value.rotation.y,value.rotation.z,value.rotation.w}}
+        row:=Preview_Pose_Result{id=id.value,position=value.position,scale=value.scale,rotation={value.rotation.x,value.rotation.y,value.rotation.z,value.rotation.w}}
+        base.text_set(row.path[:],anim.animation_target_path(world,entity,target))
         base.text_set(row.name[:],core.name_get(names,entity))
         append(&poses,row)
     }

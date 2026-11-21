@@ -173,7 +173,7 @@ back_tick :: proc(f:^Physics_Test,scene:Back_Scene,tick:int) -> (dt:f32) {
         core.edit(&f.transforms,scene.stack[0]).position.x=1
         dt=0
     case tick==350:             apply_impulse(&f.requests,scene.stack[0],{0,2,0})
-    case tick==400:             teleport(&f.requests,scene.kicked,{3,4,0})
+    case tick==400:             physics_test_place(f,scene.kicked,{3,4,0})
     }
     return
 }

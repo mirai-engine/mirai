@@ -38,7 +38,8 @@ mirai_matching_selects_a_walking_clip :: proc(t:^testing.T) {
         entity:=core.entity_at(gallery,0)
         speed:=core.at(gallery,0).speed
         anim.match_goal(&f.requests,{rig=entity,mode=u16(mode),velocity={0,0,-speed},desired={0,0,-speed},facing={0,0,-1},acceleration=20,braking=20})
-        anim.animation_sample(core.read(&f.animations),progress,&f.played,core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),core.read(&f.remotes),&f.requests,&f.events,&f.modifiers,&f.playback,graphs,&f.skeletons,&f.app,time,{},problems,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+        anim.animation_prepare(core.read(&f.animations),core.read(&f.attachments),core.read(&f.meshes),core.read(&f.sources),&f.modifiers,&f.playback,graphs,&f.skeletons,&f.app,problems)
+        anim.animation_sample(core.read(&f.animations),core.read(progress),&f.played,&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.remotes),&f.requests,&f.events,&f.modifiers,&f.playback,graphs,&f.skeletons,&f.app,time,{},problems,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
         return anim.animation_match(&f.playback,core.entity_at(gallery,0))
     }
     // The rig binds its skeleton in its first ticks; then its database says how fast each clip walks.
@@ -90,8 +91,6 @@ mirai_starting_to_its_side_turns_no_bone_faster_than_its_walk :: proc(t:^testing
     f:Animation_Input_Fixture;defer animation_input_fixture_destroy(&f)
     graphs:anim.Character_Assets;defer anim.character_assets_free(&graphs)
     progress:core.Table(anim.Animation_Progress);defer core.table_destroy(&progress)
-    constraints:anim.Animation_Constraints;defer anim.constraints_free(&constraints)
-    grounding:anim.Grounding_Runtime;defer anim.grounding_free(&grounding)
     core.entities_init(&f.entities)
     if !demo_assets_init(t,&f.assets) {return}
     f.app={assets=&f.assets,allocator=context.allocator}
@@ -110,7 +109,7 @@ mirai_starting_to_its_side_turns_no_bone_faster_than_its_walk :: proc(t:^testing
     // wish at 20 m/s2 and its facing turns toward it at the turn speed of a Character. The fastest
     // turn of a bone of the pose in the tick, rad/s.
     velocity:mm.Vec3
-    tick :: proc(f:^Animation_Input_Fixture,graphs:^anim.Character_Assets,progress:^core.Table(anim.Animation_Progress),constraints:^anim.Animation_Constraints,grounding:^anim.Grounding_Runtime,problems:^core.Problems,time:core.Time,actor:core.Entity,velocity:^mm.Vec3,wish:mm.Vec3,previous:^[dynamic]mm.Transform) -> (fastest:f32) {
+    tick :: proc(f:^Animation_Input_Fixture,graphs:^anim.Character_Assets,progress:^core.Table(anim.Animation_Progress),problems:^core.Problems,time:core.Time,actor:core.Entity,velocity:^mm.Vec3,wish:mm.Vec3,previous:^[dynamic]mm.Transform) -> (fastest:f32) {
         step:=wish-velocity^
         if length:=linalg.length(step);length>20*time.dt {step*=20*time.dt/length}
         velocity^+=step
@@ -125,19 +124,20 @@ mirai_starting_to_its_side_turns_no_bone_faster_than_its_walk :: proc(t:^testing
         anim.match_goal(&f.requests,{rig=actor,mode=u16(locomotion.MODE_WALKING),velocity=velocity^,desired=wish,facing=linalg.normalize0(wish) if wish!={} else mm.quat_forward(rotation),acceleration=20,braking=20,turn_rate=8.7})
         along:=playing.travel if playing.travel!={} else mm.FORWARD
         anim.motion_locomotion(&f.requests,{rig=actor,velocity={playing.velocity.x,0,playing.velocity.z},source_velocity=mm.quat_rotate(rotation,along*playing.speed),weight=1,enabled=matching && !playing.forced && playing.speed>0})
-        anim.animation_sample(core.read(&f.animations),progress,&f.played,core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),core.read(&f.remotes),&f.requests,&f.events,&f.modifiers,&f.playback,graphs,&f.skeletons,&f.app,time,{},problems,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
-        anim.animation_advance(&f.transforms,core.read(&f.parents),core.read(&f.worlds),&f.requests,&f.modifiers,&f.playback,constraints,grounding,{},{},time,core.ref(&f.skeletons),problems,&f.motion,graphs,{},{},core.CLOCK_DEFAULT,nil)
+        anim.animation_prepare(core.read(&f.animations),core.read(&f.attachments),core.read(&f.meshes),core.read(&f.sources),&f.modifiers,&f.playback,graphs,&f.skeletons,&f.app,problems)
+        anim.animation_sample(core.read(&f.animations),core.read(progress),&f.played,&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.remotes),&f.requests,&f.events,&f.modifiers,&f.playback,graphs,&f.skeletons,&f.app,time,{},problems,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+        anim.animation_advance(&f.transforms,core.read(&f.parents),core.read(&f.worlds),&f.requests,&f.modifiers,&f.playback,{},{},time,core.ref(&f.skeletons),problems,&f.motion,graphs,{},{},core.CLOCK_DEFAULT,nil)
         pose,posed:=anim.pose_space(&f.playback,actor,context.temp_allocator)
         if !posed {return}
         if len(previous)==len(pose) {for bone,i in pose {fastest=max(fastest,mm.quat_angle(previous[i].rotation,bone.rotation)/time.dt)}}
         resize(previous,len(pose));copy(previous[:],pose)
         return
     }
-    for _ in 0..<90 {tick(&f,&graphs,&progress,&constraints,&grounding,&problems,time,actor,&velocity,{},&previous)}
+    for _ in 0..<90 {tick(&f,&graphs,&progress,&problems,time,actor,&velocity,{},&previous)}
     wish:=mm.Vec3{-MIRAI_WALK_SPEED,0,0}
     start,walk:f32
     for i in 0..<120 {
-        fastest:=tick(&f,&graphs,&progress,&constraints,&grounding,&problems,time,actor,&velocity,wish,&previous)
+        fastest:=tick(&f,&graphs,&progress,&problems,time,actor,&velocity,wish,&previous)
         if i<40 {start=max(start,fastest)} else if i>=60 {walk=max(walk,fastest)}
     }
     playing,_:=anim.animation_match(&f.playback,actor)

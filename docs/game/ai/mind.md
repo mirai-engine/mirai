@@ -68,15 +68,17 @@ zombie_bite :: proc(a:^ai.Act(Zombie_Act), w:Senses) -> ai.Status {
 - Every value of the enum has one `@(act)`; one procedure may run several (`@(act="Chase
   Circle")`, then `a.action` says which). The build fails with what to write otherwise.
 - `behavior.agent(a)` is the agent; the helpers of `behavior` (`move_act`, `chase_act`,
-  `patrol_act`, `path_status`, `agent_path`, smart objects) take only `a` or `t`; an action shows
+  `patrol_act`, `path_status`, `agent_path`) read their mind through `a` or `t`. An action shows
   what it does with `anim.play` and `anim.look` ([animation](../animation.md)).
 
 ## Patrol
 
 A path is a `Spline` ([splines](../world/splines.md)), drawn in the editor; the agent's
 `behavior.Patrol{path=e}` names its entity, with `mode` `.Loop`, `.Back_And_Forth` or `.Once`.
-An NPC that only patrols needs no mind: with `nav.Nav_Agent` and `Patrol` it walks the path by
-itself. With a mind it walks it while an action returns `behavior.patrol_act(a)`, as above.
+Set `automatic=true` for a `nav.Nav_Agent` that walks the path by itself. A mind walks a
+game-controlled patrol while an action returns `behavior.patrol_act(a)`. A fixed step can drive
+that same patrol using `behavior.patrol_begin` to join the route, `behavior.patrol_waypoint` to
+read the goal and `behavior.patrol_advance` upon arrival or to skip a point.
 
 - It starts at the point after where it is nearest the path, so one pushed off or back from a
   chase rejoins it, and walks from point to point; the curve between two is the navmesh's way.

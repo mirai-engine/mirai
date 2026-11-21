@@ -228,7 +228,7 @@ a_history_copy_takes_only_the_links_written_since :: proc(t:^testing.T) {
     if !testing.expect(t,copied) {return}
     physics_test_step(&f)
     idle,_:=state_copy_as(&kept,&f.state,true)
-    testing.expectf(t,idle==0 && len(f.state.held)==0,"an idle tick walks %d held and its copy writes %d bytes",len(f.state.held),idle)
+    testing.expectf(t,idle==0 && len(f.state.held.values)==0,"an idle tick walks %d held and its copy writes %d bytes",len(f.state.held.values),idle)
     links:=make([]Link,len(kept.links.values));defer delete(links)
     copy(links,kept.links.values[:])
     core.remove(&f.characters,walker);core.remove(&f.colliders,walker)

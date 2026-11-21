@@ -2,6 +2,7 @@ package navigation_editor
 
 import "core:fmt"
 import "mirai:core"
+import "mirai:host"
 import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:std/ai"
@@ -135,6 +136,7 @@ Nav_Agent_Result :: struct {
     partial:bool,
     replans:int,
     looking:bool,
+    link_entity:base.Entity_Id `mirai:"optional"`,
     crossing:string `mirai:"optional,label=The kind of the link it crosses"`,
     by_game:bool `mirai:"optional"`,
     from,to:[3]f32 `mirai:"optional"`,
@@ -466,20 +468,31 @@ agent :: proc(s:^editor.Session,call:^api.Call) {
     known:=value.class>=0 && int(value.class)<n.count
     if known {r.class=base.text_get(n.classes[value.class].class.name[:])}
     if value.target!=core.NONE {r.target=entity_id(world,value.target)}
-    r.goal,r.partial,r.replans,r.looking=value.goal,value.partial,int(value.replans),value.looking
-    if value.state==.Crossing {r.crossing,r.by_game,r.from,r.to=link_kind_name(world,u8(value.kind)),value.manual,value.from,value.to}
+    if value.link_entity!=core.NONE {r.link_entity=entity_id(world,value.link_entity)}
+    r.goal,r.partial,r.looking=value.goal,value.partial,value.looking
+    run:^nav.Navigation_Agents
+    if s.app!=nil {run=host.app_world_storage(s.app,world.data,nav.Navigation_Agents)}
+    route:=nav.agent_route(run,e)
+    if route!=nil {
+        r.replans=int(route.replans)
+        if value.state==.Crossing {
+            r.crossing,r.by_game=link_kind_name(world,u8(value.kind)),value.manual
+            r.from,r.to=route.from,route.to
+        }
+    }
     corners:=make([dynamic]Nav_Corner_Result,call.allocator)
-    corridor:=value.corridor
     switch {
     case far!=nil:
         // What is left of its route: count 0 makes it again at its next step.
         for corner in far.route[clamp(far.next,0,far.count):clamp(far.count,0,nav.NAV_FAR_POINTS)] {append(&corners,Nav_Corner_Result{position=corner})}
-    case known && nav.class_in_volume(n,int(value.class)):
+    case known && route!=nil && nav.class_in_volume(n,int(value.class)):
+        corridor:=&route.corridor
         points:[16]mm.Vec3
         count,_:=ai.nav_volume_straight_path(&n.classes[value.class].volume,corridor.position,corridor.target,corridor.path[:clamp(corridor.count,0,ai.NAV_CORRIDOR_CAPACITY)],points[:])
         for corner in points[:count] {append(&corners,Nav_Corner_Result{position=corner})}
         r.corridor=int(max(corridor.count,0))
-    case known:
+    case known && route!=nil:
+        corridor:=&route.corridor
         mesh:=&n.classes[value.class].mesh
         points:[16]ai.Nav_Corner
         count,_:=ai.nav_straight_path(mesh,corridor.position,corridor.target,corridor.path[:clamp(corridor.count,0,ai.NAV_CORRIDOR_CAPACITY)],points[:])

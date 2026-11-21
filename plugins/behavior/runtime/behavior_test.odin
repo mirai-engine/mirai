@@ -3,6 +3,7 @@ package behavior
 import "base:runtime"
 import "core:math"
 import "core:math/linalg"
+import "core:mem"
 import "core:testing"
 import "mirai:core"
 import scene "mirai:engine/scene"
@@ -421,20 +422,18 @@ patrols_walk_the_points_of_their_spline :: proc(t:^testing.T) {
         patrol_act(&a)
         testing.expectf(t,(len(world.moves.queue.items)>asked)==(state==.Moving),"%v",state)
     }
-    // Without a mind it walks by itself; with one, only while the mind patrols.
+    // Only automatic patrols request movement in the behavior step.
     core.edit(&world.splines,route)^=line
     core.edit(&world.paths,e).state=.Idle
-    for minded in ([]bool{false,true}) {
-        if minded {
-            core.add(&world.mind_agents,e,Mind_Agent{})
-            test_world_settle(&world)
-        }
+    for automatic in ([]bool{false,true}) {
+        core.edit(&world.patrols,e).automatic=automatic
         asked:=len(world.moves.queue.items)
-        patrols_walk(&world.patrols,core.read(&world.mind_agents),core.read(&world.paths),core.read(&world.splines),core.read(&world.worlds),&world.moves,&problems,{playing=true,dt=1.0/60})
-        testing.expectf(t,(len(world.moves.queue.items)>asked)!=minded,"with a mind: %v",minded)
+        patrols_walk(&world.patrols,core.read(&world.paths),core.read(&world.splines),core.read(&world.worlds),&world.moves,&problems,{playing=true,dt=1.0/60})
+        testing.expectf(t,(len(world.moves.queue.items)>asked)==automatic,"automatic: %v",automatic)
     }
     // Without a path it fails, as one without its Patrol.
-    core.edit(&world.patrols,e).path=core.NONE
+    core.edit(&world.patrols,e)^={}
+
     a.phase=.Enter
     testing.expect_value(t,patrol_act(&a),ai.Status.Failure)
     core.remove(&world.patrols,e)
@@ -773,20 +772,20 @@ places_are_answered_in_order_within_the_budget :: proc(t:^testing.T) {
     q.querier=b
     place_query(&world.requests,q)
     problems:core.Problems
-    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),core.read(&world.perceptions),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.characters),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},&problems)
+    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),core.read(&world.perceptions),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.characters),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},{},&problems)
     test_world_settle(&world)
     first,_:=core.get(&world.results,a)
     second,_:=core.get(&world.results,b)
     testing.expect(t,first.status==.Found && first.request==1 && first.count==3 && first.points[0]=={3,0,0} && first.scores[0]>=first.scores[1])
     testing.expect(t,second.status==.Waiting && second.request==2)
-    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),core.read(&world.perceptions),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.characters),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},&problems)
+    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),core.read(&world.perceptions),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.characters),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},{},&problems)
     second,_=core.get(&world.results,b)
     testing.expect(t,second.status==.Found && linalg.distance(second.points[0],mm.Vec3{6,0,0})<1e-4)
     // Of two queries of one querier, the last one is answered and the first does not take its place.
     q.querier=a
     place_query(&world.requests,q)
     place_query(&world.requests,q)
-    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),core.read(&world.perceptions),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.characters),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},&problems)
+    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),core.read(&world.perceptions),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.characters),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},{},&problems)
     first,_=core.get(&world.results,a)
     testing.expect(t,first.status==.Found && first.request==4)
 }
@@ -822,7 +821,7 @@ places_of_a_target_that_is_destroyed_are_none :: proc(t:^testing.T) {
     orphan:=Place_Query{querier=gone,center=.Querier,layout=.Grid,outer=2,spacing=1,keep=1}
     run :: proc(f:^Places_Test) {
         places_run(&f.requests,&f.places,&f.results,core.ref(&f.settings),core.read(&f.worlds),core.read(&f.perceivers),core.read(&f.perceptions),{},core.read(&f.paths),
-            core.read(&f.agents),core.read(&f.characters),core.read(&f.walks),core.read(&f.swims),core.ref(&f.navigation),core.ref(&f.physics),Smart_View{objects=core.read(&f.objects),states=core.read(&f.states),worlds=core.read(&f.worlds),claims=core.ref(&f.claims)},{},&f.problems)
+            core.read(&f.agents),core.read(&f.characters),core.read(&f.walks),core.read(&f.swims),core.ref(&f.navigation),core.ref(&f.physics),Smart_Offers{objects=core.read(&f.objects),states=core.read(&f.states),worlds=core.read(&f.worlds)},core.ref(&f.claims),{},&f.problems)
         test_world_settle(&f.w)
     }
     place_query(&f.requests,around)
@@ -936,9 +935,12 @@ places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: 
     test_world_settle(&f.w)
     f.settings=Behavior_Settings{queries=4}
     run :: proc(f:^Places_Test,q:Place_Query) -> Place_Result {
+        index:Smart_Index
+        defer smart_index_free(&index)
+        if !smart_index_update(&index,core.read(&f.objects)) {return {}}
         place_query(&f.requests,q)
         places_run(&f.requests,&f.places,&f.results,core.ref(&f.settings),core.read(&f.worlds),core.read(&f.perceivers),core.read(&f.perceptions),core.read(&f.perceivables),core.read(&f.paths),
-            core.read(&f.agents),core.read(&f.characters),core.read(&f.walks),core.read(&f.swims),core.ref(&f.navigation),core.ref(&f.physics),Smart_View{objects=core.read(&f.objects),states=core.read(&f.states),worlds=core.read(&f.worlds),claims=core.ref(&f.claims)},{},&f.problems)
+            core.read(&f.agents),core.read(&f.characters),core.read(&f.walks),core.read(&f.swims),core.ref(&f.navigation),core.ref(&f.physics),Smart_Offers{objects=core.read(&f.objects),index=core.ref(&index),states=core.read(&f.states),worlds=core.read(&f.worlds)},core.ref(&f.claims),{},&f.problems)
         test_world_settle(&f.w)
         result,_:=core.get(&f.results,q.querier)
         return result
@@ -1164,21 +1166,24 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
     test_world_settle(&world)
     smart_update(core.read(&world.objects),&world.states,&world.uses,{seconds=0})
     test_world_settle(&world)
-    v:=Mind_World{objects=core.read(&world.objects),states=core.read(&world.states),worlds=core.read(&world.worlds),claims=&world.claims,time=clock_at(60,1.0/60)}
+    index:Smart_Index
+    defer smart_index_free(&index)
+    if !testing.expect(t,smart_index_update(&index,core.read(&world.objects))) {return}
+    v:=Mind_World{objects=core.read(&world.objects),smart_index=core.ref(&index),states=core.read(&world.states),worlds=core.read(&world.worlds),claims=&world.claims,time=clock_at(60,1.0/60)}
     looks:=ai.Mind_Context{user=&v}
     red:=Smart_User{entity=a,team=1}
     blue:=Smart_User{entity=b,team=2}
-    found,ok:=smart_offer(&looks,crate,USE_AMMO,red)
+    found,ok:=smart_offer(mind_smart_view(&looks),crate,USE_AMMO,red)
     testing.expect(t,ok && found.offer==0 && found.users==1 && found.at=={0,0,1})
-    _,ok=smart_offer(&looks,crate,USE_AMMO,blue)
+    _,ok=smart_offer(mind_smart_view(&looks),crate,USE_AMMO,blue)
     testing.expect(t,!ok,"of another team")
-    _,ok=smart_offer(&looks,turret,USE_TURRET,red)
+    _,ok=smart_offer(mind_smart_view(&looks),turret,USE_TURRET,red)
     testing.expect(t,!ok,"without the ability")
-    _,ok=smart_offer(&looks,turret,USE_TURRET,{entity=a,abilities=nav.Nav_Abilities(1<<u32(nav.ABILITY_CLIMB))})
+    _,ok=smart_offer(mind_smart_view(&looks),turret,USE_TURRET,{entity=a,abilities=nav.Nav_Abilities(1<<u32(nav.ABILITY_CLIMB))})
     testing.expect(t,ok)
-    nearest,near_ok:=smart_nearest(&looks,USE_AMMO,{12,0,0},20,red)
+    nearest,near_ok:=smart_nearest(mind_smart_view(&looks),USE_AMMO,{12,0,0},20,red)
     testing.expect(t,near_ok && nearest.object==far_crate)
-    _,near_ok=smart_nearest(&looks,USE_AMMO,{30,0,0},5,red)
+    _,near_ok=smart_nearest(mind_smart_view(&looks),USE_AMMO,{30,0,0},5,red)
     testing.expect(t,!near_ok,"none within the radius")
     // Claimed by one, closed to the other until the holder exits.
     m:ai.Mind
@@ -1186,12 +1191,12 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
     act:=ai.Act(Smart_Act){ctx=&ctx,mind=&m,frame=&m.main}
     testing.expect(t,smart_claim(&act,found,red))
     other:=Smart_User{entity=core.create(&world.entities),team=1}
-    _,ok=smart_offer(&looks,crate,USE_AMMO,other)
+    _,ok=smart_offer(mind_smart_view(&looks),crate,USE_AMMO,other)
     testing.expect(t,!ok,"claimed")
-    _,ok=smart_offer(&looks,crate,USE_AMMO,red)
+    _,ok=smart_offer(mind_smart_view(&looks),crate,USE_AMMO,red)
     testing.expect(t,ok,"its own")
     ai.reserve_release(&world.claims.reservations,m.main.reserved,u64(a))
-    _,ok=smart_offer(&looks,crate,USE_AMMO,other)
+    _,ok=smart_offer(mind_smart_view(&looks),crate,USE_AMMO,other)
     testing.expect(t,ok)
     // Used: closed until its cooldown passes, as long at 60 as at 120 Hz; spent after its uses.
     for hz in ([]f64{60,120}) {
@@ -1200,17 +1205,17 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
         smart_update(core.read(&world.objects),&world.states,&world.uses,clock_at(hz,1))
         test_world_settle(&world)
         v.time=clock_at(hz,5.95)
-        _,ok=smart_offer(&looks,crate,USE_AMMO,red)
+        _,ok=smart_offer(mind_smart_view(&looks),crate,USE_AMMO,red)
         testing.expectf(t,!ok,"cooling down at %v Hz",hz)
         v.time=clock_at(hz,6)
-        _,ok=smart_offer(&looks,crate,USE_AMMO,red)
+        _,ok=smart_offer(mind_smart_view(&looks),crate,USE_AMMO,red)
         testing.expectf(t,ok,"cooled down at %v Hz",hz)
     }
     smart_used(&world.uses,found)
     smart_update(core.read(&world.objects),&world.states,&world.uses,clock_at(60,6))
     test_world_settle(&world)
     v.time=clock_at(60,100)
-    _,ok=smart_offer(&looks,crate,USE_AMMO,red)
+    _,ok=smart_offer(mind_smart_view(&looks),crate,USE_AMMO,red)
     testing.expect(t,!ok,"spent")
     // One that walks to a kit walks after it as it moves, and fails once it is destroyed.
     USE_HEAL :: Smart_Use(3)
@@ -1222,6 +1227,7 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
     core.test_world_settle(&world)
     smart_update(core.read(&world.objects),&world.states,&world.uses,v.time)
     core.test_world_settle(&world)
+    if !testing.expect(t,smart_index_update(&index,core.read(&world.objects))) {return}
     v.requests,v.paths=&world.moves,core.read(&world.paths)
     walks:ai.Mind
     memory:[ai.MIND_WORDS]u64
@@ -1264,13 +1270,16 @@ offer_act_comes_in_by_its_way_faces_it_and_yields_only_before_using :: proc(t:^t
     test_world_settle(&world)
     smart_update(core.read(&world.objects),&world.states,&world.uses,{seconds=0})
     test_world_settle(&world)
-    v:=Mind_World{objects=core.read(&world.objects),states=core.read(&world.states),worlds=core.read(&world.worlds),claims=&world.claims,requests=&world.moves,paths=core.read(&world.paths),time=clock_at(60,1)}
+    index:Smart_Index
+    defer smart_index_free(&index)
+    if !testing.expect(t,smart_index_update(&index,core.read(&world.objects))) {return}
+    v:=Mind_World{objects=core.read(&world.objects),smart_index=core.ref(&index),states=core.read(&world.states),worlds=core.read(&world.worlds),claims=&world.claims,requests=&world.moves,paths=core.read(&world.paths),time=clock_at(60,1)}
     near :: proc(a,b:[3]f32) -> bool {return linalg.distance(mm.Vec3(a),mm.Vec3(b))<1e-4}
     asked :: proc(world:^Behavior_World) -> nav.Nav_Request {return world.moves.queue.items[len(world.moves.queue.items)-1]}
     sits:=Smart_User{entity=civilian}
     guards:=Smart_User{entity=guard,priority=1}
     looks:=ai.Mind_Context{user=&v}
-    found,ok:=smart_offer(&looks,seat,USE_SIT,sits)
+    found,ok:=smart_offer(mind_smart_view(&looks),seat,USE_SIT,sits)
     testing.expectf(t,ok && near(found.at,{1,0,0}) && near(found.enter,{3,0,0}) && abs(found.yaw-(math.PI/2+0.25))<1e-4,"turned with the seat: %v",found)
     m:ai.Mind
     memory:[ai.MIND_WORDS]u64
@@ -1286,9 +1295,9 @@ offer_act_comes_in_by_its_way_faces_it_and_yields_only_before_using :: proc(t:^t
     walk.phase=.Update
     status,_=offer_act(&walk,USE_SIT,sits,10,1)
     testing.expect_value(t,status,ai.Status.Running)
-    _,ok=smart_offer(&looks,seat,USE_SIT,{entity=guard})
+    _,ok=smart_offer(mind_smart_view(&looks),seat,USE_SIT,{entity=guard})
     testing.expect(t,!ok,"held by one of the same priority")
-    taken,open:=smart_offer(&looks,seat,USE_SIT,guards)
+    taken,open:=smart_offer(mind_smart_view(&looks),seat,USE_SIT,guards)
     testing.expect(t,open && smart_claim(&takes,taken,guards))
     status,_=offer_act(&walk,USE_SIT,sits,10,1)
     testing.expect_value(t,status,ai.Status.Failure)
@@ -1308,7 +1317,7 @@ offer_act_comes_in_by_its_way_faces_it_and_yields_only_before_using :: proc(t:^t
     status,_=offer_act(&walk,USE_SIT,sits,10,1)
     s,c:=math.sincos(found.yaw)
     testing.expect(t,status==.Running && ai.stage(&walk)==1 && asked(&world).kind==.Look_At && near(asked(&world).point,mm.Vec3(found.at)+{-s,0,-c}))
-    _,ok=smart_offer(&looks,seat,USE_SIT,guards)
+    _,ok=smart_offer(mind_smart_view(&looks),seat,USE_SIT,guards)
     testing.expect(t,!ok && !smart_claim(&takes,taken,guards),"in use")
     ctx.tick+=60
     status,_=offer_act(&walk,USE_SIT,sits,10,1)
@@ -1318,36 +1327,34 @@ offer_act_comes_in_by_its_way_faces_it_and_yields_only_before_using :: proc(t:^t
     testing.expect(t,asked(&world).kind==.Look_Along)
 }
 
-// The influence of each team is where its Perceivables are, less farther
-// away; without a cell, or with nobody to stamp or read them, there is no map.
 @(test)
 influence_maps_follow_the_teams :: proc(t:^testing.T) {
     world:Behavior_World
     if !test_world_init(t,&world) {return}
     defer test_world_destroy(&world)
+    if !testing.expect(t,phys.test_state_make(&world.physics)) {return}
     influence:Influence
     defer influence_free(&influence)
-    world.settings.influence_size,world.settings.influence_cells,world.settings.influence_rays=32,32*32*INFLUENCE_TEAMS,0
+    reader:=placed(&world,{})
+    core.add(&world.mind_agents,reader,Mind_Agent{mind=mind_name("reader")})
+    core.add(&world.perceivers,reader,PERCEIVER_DEFAULT)
+    core.add(&world.perceivables,reader,Perceivable{})
+    test_world_settle(&world)
     calls:=0
-    // A world with nobody to stamp the maps or to read them makes none: its ticks ask for no memory and leave no pass begun.
-    for tick in 0..<3 {
-        saved:=context.allocator
+    {
         context.allocator=refusing_allocator(&calls)
-        influence_update(&influence,core.ref(&world.settings),core.read(&world.perceivables),core.read(&world.perceivers),core.read(&world.mind_agents),core.read(&world.results),core.read(&world.worlds),core.ref(&world.physics),{tick=u64(tick),dt=1.0/60,playing=true})
-        context.allocator=saved
+        influence_update(&influence,core.ref(&world.settings),core.read(&world.perceivables),
+            core.read(&world.worlds),core.ref(&world.physics),{dt=1.0/60,playing=true})
     }
     testing.expect_value(t,calls,0)
-    testing.expect(t,!ai.influence_ready(&influence.grid) && influence.made=={} && influence.sweep==0)
-    // A reader alone has them made.
-    reader:=core.create(&world.entities)
-    core.add(&world.perceivers,reader,Perceiver{})
-    test_world_settle(&world)
-    influence_update(&influence,core.ref(&world.settings),core.read(&world.perceivables),core.read(&world.perceivers),core.read(&world.mind_agents),core.read(&world.results),core.read(&world.worlds),core.ref(&world.physics),{tick=3,dt=1.0/60,playing=true})
-    testing.expect(t,ai.influence_ready(&influence.grid))
-    core.remove(&world.perceivers,reader)
-    test_world_settle(&world)
-    influence_update(&influence,core.ref(&world.settings),core.read(&world.perceivables),core.read(&world.perceivers),core.read(&world.mind_agents),core.read(&world.results),core.read(&world.worlds),core.ref(&world.physics),{tick=4,dt=1.0/60,playing=true})
-    testing.expect(t,!ai.influence_ready(&influence.grid),"the maps nobody reads any more are freed")
+    testing.expect(t,!ai.influence_ready(&influence.grid) && influence.sweep==0)
+    world.settings.influence_enabled=true
+    world.settings.influence_size,world.settings.influence_cells=32,32*32*INFLUENCE_TEAMS
+    influence_update(&influence,core.ref(&world.settings),core.read(&world.perceivables),
+        core.read(&world.worlds),core.ref(&world.physics),{tick=1,dt=1.0/60,playing=true})
+    testing.expect(t,ai.influence_ready(&influence.grid) && influence.sweep>0)
+    testing.expect(t,influence.grid.known[0]==1,"the enabled cover pass measured the grid")
+    world.settings.influence_rays=0
     red,blue:=core.create(&world.entities),core.create(&world.entities)
     core.add(&world.perceivables,red,Perceivable{team=1})
     core.add(&world.perceivables,blue,Perceivable{team=2})
@@ -1358,7 +1365,7 @@ influence_maps_follow_the_teams :: proc(t:^testing.T) {
         // Made on the first tick; the others do not allocate.
         saved:=context.allocator
         if tick>0 {context.allocator=refusing_allocator(&calls)}
-        influence_update(&influence,core.ref(&world.settings),core.read(&world.perceivables),core.read(&world.perceivers),core.read(&world.mind_agents),core.read(&world.results),core.read(&world.worlds),core.ref(&world.physics),{tick=u64(tick),dt=1.0/60,playing=true})
+        influence_update(&influence,core.ref(&world.settings),core.read(&world.perceivables),core.read(&world.worlds),core.ref(&world.physics),{tick=u64(tick),dt=1.0/60,playing=true})
         context.allocator=saved
     }
     testing.expect_value(t,calls,0)
@@ -1368,8 +1375,8 @@ influence_maps_follow_the_teams :: proc(t:^testing.T) {
     testing.expect(t,influence_at(&influence,{10,0,0},reds)<0.05 && influence_at(&influence,{10,0,0},Teams(1<<2))>0.5)
     testing.expect(t,influence_at(&influence,{-10,0,0},reds|Teams(1<<2))>=influence_at(&influence,{-10,0,0},reds))
     testing.expect_value(t,cover_at(&influence,{-10,0,0},{10,0,0}),0)
-    world.settings.influence_cell=0
-    influence_update(&influence,core.ref(&world.settings),core.read(&world.perceivables),core.read(&world.perceivers),core.read(&world.mind_agents),core.read(&world.results),core.read(&world.worlds),core.ref(&world.physics),{tick=20,dt=1.0/60,playing=true})
+    world.settings.influence_enabled=false
+    influence_update(&influence,core.ref(&world.settings),core.read(&world.perceivables),core.read(&world.worlds),core.ref(&world.physics),{tick=20,dt=1.0/60,playing=true})
     testing.expect_value(t,influence_at(&influence,{-10,0,0},reds),0)
 }
 
@@ -1450,7 +1457,7 @@ a_tick_with_nothing_to_do_goes_through_no_row :: proc(t:^testing.T) {
     core.add(&f.perceivers,guard,watch)
     sight_tick(&f,0)
     sight_tick(&f,0.1)
-    testing.expect(t,len(f.sight.grid.items)==0 && cap(f.sight.rows)==0 && f.turns.remembering==0)
+    testing.expect(t,len(f.sight.grid.items)==0 && len(f.sight.rows)==0 && f.turns.remembering==0)
     // A memory forged behind its back would be forgotten by a tick that looked at the perceiver.
     ghost:=u64(1<<40)
     ai.memory_perceive(&core.edit(&f.perceptions,guard).memory,ghost,{},.Sight,1,0)
@@ -1474,7 +1481,7 @@ a_tick_with_nothing_to_do_goes_through_no_row :: proc(t:^testing.T) {
 
     // No request and none waiting: no table is looked at, the results least of all.
     places:Places
-    places_run(&f.requests,&places,nil,{},{},{},{},{},{},{},{},{},{},{},{},{},{},nil)
+    places_run(&f.requests,&places,nil,{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},nil)
 
     // The objects get their state when they come; a tick after, with the tables as they were, none is gone through.
     box:=placed(&f,{})
@@ -1500,4 +1507,197 @@ a_tick_with_nothing_to_do_goes_through_no_row :: proc(t:^testing.T) {
     smart_update(core.read(&f.objects),&f.states,&f.uses,{seconds=3})
     test_world_settle(&f.behavior)
     testing.expect(t,core.has(&f.states,other))
+}
+
+@(test)
+visibility_tests_use_their_own_collision_layers :: proc(t:^testing.T) {
+    f:Sight_World
+    if !test_world_init(t,&f.behavior) {return}
+    defer sight_world_destroy(&f)
+    if !testing.expect(t,phys.test_state_make(&f.physics)) {return}
+    clip_layer :: phys.Collision_Layers(1<<4)
+    sight_layer :: phys.Collision_Layers(1<<5)
+    observer:=placed(&f,{})
+    target:=placed(&f,{0,0,-6})
+    p:=PERCEIVER_DEFAULT
+    p.sight_layers=sight_layer
+    core.add(&f.perceivers,observer,p)
+    core.add(&f.perceivables,target,PERCEIVABLE_DEFAULT)
+    sight_tick(&f,0)
+    collision:=phys.COLLISION_SETTINGS_DEFAULT
+    for layer,i in ([2]phys.Collision_Layers{clip_layer,sight_layer}) {
+        wall:=core.create(&f.entities)
+        body,err:=phys.owned_body_create(&f.physics,{1,wall,0},{0,1.5,-2-f32(i)},1)
+        if !testing.expect(t,err==.None) {return}
+        collider:=phys.collider_box({1,2,0.1})
+        phys.collision_custom(&collider,layer,phys.COLLISION_LAYERS_ALL)
+        if !testing.expect(t,phys.owned_shape_create(&f.physics,&collision,body,{collider=collider,rotation=1})!=0) {
+            return
+        }
+        sight_tick(&f,f64(i+1)/60)
+        observations:=perceived(&f.perceptions,observer)
+        testing.expect(t,(len(observations)!=0 && observations[0].last==u64(i+1))==(i==0))
+        why:=sight_why(core.read(&f.perceivers),core.read(&f.perceptions),
+            core.read(&f.perceivables),core.read(&f.worlds),core.read(&f.fars),
+            core.ref(&f.settings),core.ref(&f.physics),observer,target)
+        testing.expect(t,why.reason==(.Seen if i==0 else .Blocked))
+        if i==1 {testing.expect_value(t,why.blocker,wall)}
+        test:=Place_Test{measure=.Visible,from=.Querier,sight_layers=sight_layer}
+        input:=place_measure(test,{rotation=1,scale=1},{0,0,-6},observer,
+            &f.perceivers,core.ref(&f.physics),nil)
+        testing.expect_value(t,input,f32(1-i))
+    }
+}
+
+@(test)
+steady_sight_reuses_its_grid_and_candidate_scratch :: proc(t:^testing.T) {
+    tracker:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracker,context.allocator)
+    defer mem.tracking_allocator_destroy(&tracker)
+    context.allocator=mem.tracking_allocator(&tracker)
+    f:Sight_World
+    if !test_world_init(t,&f.behavior) {return}
+    defer sight_world_destroy(&f)
+    observer:=placed(&f,{})
+    core.add(&f.perceivers,observer,PERCEIVER_DEFAULT)
+    for i in 0..<128 {
+        at:=mm.Vec3{f32(i%8)-4,0,-6-f32(i/8)*0.25}
+        if i>=8 {at.x+=80}
+        target:=placed(&f,at)
+        core.add(&f.perceivables,target,PERCEIVABLE_DEFAULT)
+    }
+    for tick in 1..=3 {sight_tick(&f,f64(tick)/60)}
+    if !testing.expect(t,len(perceived(&f.perceptions,observer))>0) {return}
+    if !testing.expect(t,reserve(&f.events.items,32)==nil) {return}
+    core.edit(&f.worlds,observer).position.x=80
+    test_world_settle(&f)
+    allocations:=tracker.total_allocation_count
+    for tick in 4..=24 {sight_tick(&f,f64(tick)/60)}
+    testing.expect_value(t,tracker.total_allocation_count,allocations)
+}
+
+@(test)
+a_crossing_claims_the_open_offer_on_its_link_entity :: proc(t:^testing.T) {
+    f:Behavior_World
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
+    routes:nav.Navigation_Agents
+    defer core.entity_map_destroy(&routes.routes)
+    use :: Smart_Use(1)
+    now:=clock_at(60,1)
+    walker:=placed(&f,{})
+    nearby:=placed(&f,{})
+    link:=placed(&f,{4,0,0})
+    core.add(&f.paths,walker,nav.Nav_Path{state=.Crossing,manual=true,link_entity=link})
+    offers:Smart_Object
+    for i in 0..<6 {
+        offers.offers[i]={use=use,at={f32(i),0,0}}
+        if i<5 {
+            by:=core.create(&f.entities)
+            key:=smart_key({object=link,offer=i})
+            if !testing.expect(t,claim_take(&f.claims,key,by,1,now)) {return}
+        }
+    }
+    core.add(&f.objects,link,offers)
+    core.add(&f.objects,nearby,Smart_Object{offers={0={use=use}}})
+    _,route:=core.entity_map_put(&routes.routes,walker,nav.Nav_Route{to={0,0,-4}})
+    if !testing.expect(t,route) {return}
+    test_world_settle(&f)
+
+    w:=Mind_World{
+        objects=core.read(&f.objects),states=core.read(&f.states),worlds=core.read(&f.worlds),
+        paths=core.read(&f.paths),claims=&f.claims,time=now,
+    }
+    m:ai.Mind
+    ctx:=ai.Mind_Context{user=&w,holder=u64(walker),tick=now.tick,dt=now.dt,reservations=&f.claims.reservations}
+    a:=ai.Act(Smart_Act){ctx=&ctx,mind=&m,frame=&m.main,phase=.Enter}
+    testing.expect_value(t,cross_act(&a,core.ref(&routes),{},use,{entity=walker},1),ai.Status.Running)
+    testing.expect(t,claim_held(&f.claims,smart_key({object=link,offer=5}),walker,now))
+    testing.expect(t,!claim_held(&f.claims,smart_key({object=nearby,offer=0}),walker,now))
+
+    index:Smart_Index
+    defer smart_index_free(&index)
+    view:=mind_smart_view(&a)
+    view.index=core.ref(&index)
+    if !testing.expect(t,smart_index_update(&index,view.objects)) {return}
+    nearest,ok:=smart_nearest(view,use,{},20,{entity=walker})
+    testing.expect(t,ok && nearest.object==nearby)
+    core.edit(&f.objects,nearby).offers[0].use=USE_NONE
+    test_world_settle(&f)
+    if !testing.expect(t,smart_index_update(&index,view.objects)) {return}
+    nearest,ok=smart_nearest(view,use,{},20,{entity=walker})
+    testing.expect(t,ok && nearest.object==link && nearest.offer==5)
+}
+
+@(private="file")
+@(step="fixed",server)
+standalone_tactics :: proc(
+    patrols:^core.Table(Patrol),splines:^core.Table(volume.Spline,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),perceptions:^core.Table(Perception,.Read),
+    claims:^Claims,requests:^Place_Requests,time:core.Time,
+) {
+    for row in 0..<core.count(patrols) {
+        actor:=core.entity_at(patrols,row)
+        pose,_:=core.get(worlds,actor)
+        subject,found:=perception_best(perceptions,actor,pose.position)
+        if !found {continue}
+        key:=attack_token(core.Entity(subject.subject))
+        if !claim_renew(claims,key,actor,time) && !claim_take(claims,key,actor,1,time) {continue}
+        p:=core.edit_at(patrols,row)
+        spline,has:=core.get(splines,p.path)
+        path,placed:=core.get(worlds,p.path)
+        if !has || !placed || !patrol_advance(p,&spline) {continue}
+        point,ok:=patrol_waypoint(p,&spline,path.transform)
+        if !ok {continue}
+        place_query(requests,{querier=actor,center=.Point,point=point,layout=.Grid,outer=1,spacing=1})
+    }
+}
+
+@(test)
+a_step_can_perceive_take_a_token_query_places_and_patrol_without_a_mind :: proc(t:^testing.T) {
+    f:Sight_World
+    if !test_world_init(t,&f.behavior) {return}
+    defer sight_world_destroy(&f)
+    places:Places
+    defer places_free(&places)
+    scout:=placed(&f,{})
+    target:=placed(&f,{0,0,-6})
+    rival:=placed(&f,{})
+    path:=placed(&f,{2,0,0})
+    core.add(&f.perceivers,scout,PERCEIVER_DEFAULT)
+    core.add(&f.perceivables,target,PERCEIVABLE_DEFAULT)
+    core.add(&f.patrols,scout,Patrol{path=path,mode=.Once})
+    core.add(&f.splines,path,volume.Spline{count=2,points={1={position={4,0,0}}}})
+    sight_tick(&f,0)
+    sight_tick(&f,1)
+    time:=clock_at(60,1)
+    standalone_tactics(&f.patrols,core.read(&f.splines),core.read(&f.worlds),
+        core.read(&f.perceptions),&f.claims,&f.requests,time)
+
+    key:=attack_token(target)
+    testing.expect(t,claim_held(&f.claims,key,scout,time))
+    testing.expect(t,claim_use(&f.claims,key,scout,time))
+    testing.expect(t,!claim_open(&f.claims,key,rival,1,time,1))
+    time.tick+=1
+    testing.expect(t,claim_renew(&f.claims,key,scout,time))
+    time.tick+=1
+    testing.expect(t,claim_held(&f.claims,key,scout,time))
+    testing.expect(t,!claim_renew(&f.claims,key,scout,{tick=time.tick+1}))
+    claim_release(&f.claims,key,scout)
+    testing.expect(t,claim_take(&f.claims,key,rival,1,time))
+
+    p,_:=core.get(&f.patrols,scout)
+    testing.expect_value(t,p.next,u16(1))
+    request:=f.requests.last
+    _,ready:=place_result(&f.results,scout,request)
+    testing.expect(t,!ready && request!=0)
+    places_run(&f.requests,&places,&f.results,core.ref(&f.settings),core.read(&f.worlds),
+        core.read(&f.perceivers),core.read(&f.perceptions),core.read(&f.perceivables),
+        core.read(&f.paths),core.read(&f.agents),core.read(&f.characters),core.read(&f.walks),
+        core.read(&f.swims),{},{},{},{},{},&f.problems)
+    test_world_settle(&f)
+    answer,found:=place_result(&f.results,scout,request)
+    testing.expect(t,found && answer.status==.Found && answer.count>0)
+    testing.expect(t,abs(answer.points[0].x-6)<=1)
+    testing.expect_value(t,core.count(&f.mind_agents),0)
 }

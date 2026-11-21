@@ -86,9 +86,11 @@ capture_frame :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
     playback:=core.world_storage_of(world,eanim.Playback)
     if playback!=nil {
         for &state in playback.states {
-            if state.entity!=entity || len(state.world)<2 {continue}
-            st.bones[st.taken]=make([]mm.Transform,len(state.world)-1,call.allocator)
-            for value,i in state.world[1:] {st.bones[st.taken][i],_=mm.transform_relative(value,parent)}
+            if state.entity!=entity {continue}
+            pose:=eanim.playing_pose(&state,.World)
+            if len(pose)<2 {continue}
+            st.bones[st.taken]=make([]mm.Transform,len(pose)-1,call.allocator)
+            for value,i in pose[1:] {st.bones[st.taken][i],_=mm.transform_relative(value,parent)}
             break
         }
     }

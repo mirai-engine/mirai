@@ -14,6 +14,8 @@ Loco_World :: struct {
     using physics:phys.Test_Physics,
     loco_states:core.Table(Locomotion_State),
     inputs:core.Table(input.Move_Input),
+    drives:core.Table(Locomotion_Drive),
+    parkours:core.Table(Parkour_State),
     walks:core.Table(Walk),
     flights:core.Table(Fly),
     swims:core.Table(Swim),
@@ -52,6 +54,7 @@ loco_test_init :: proc(t:^testing.T,f:^Loco_Test,position:[3]f32,ground:=true) -
     f.gravity={0,-9.81,0}
     if ground {loco_test_box(f,{50,1,50},{0,-1,0})}
     f.e=loco_test_walker(f,position)
+    core.add(&f.inputs,f.e,input.Move_Input{})
     return true
 }
 
@@ -99,11 +102,7 @@ loco_test_tick :: proc(f:^Loco_Test,move:[3]f32,ticks:=1,buttons:=input.Action_M
             if capsule,made:=phys.character_capsule(core.ref(&f.state),core.entity_at(&f.inputs,row));made {frame=capsule.up_frame}
             core.edit_at(&f.inputs,row)^=input.Move_Input{move=mm.quat_rotate(frame*mm.quat_axis_angle({0,1,0},yaw),move),look_yaw=yaw,look_pitch=pitch,buttons=buttons}
         }
-        locomotion_step(
-            core.read(&f.characters),&f.loco_states,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),
-            core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),
-            core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),core.ref(&f.places),core.read(&f.paces),{base=TEST_WALK_BASE},&f.loco_requests,{playing=true,dt=dt},clock,&f.problems,
-        )
+        loco_test_move(f,dt,clock)
         phys.physics_places(&f.places,&f.requests,core.ref(&f.state),core.read(&f.rigids),core.read(&f.characters))
         clear(&f.places.queue.items)
         test_world_settle(&f.w)
@@ -139,3 +138,22 @@ loco_velocity :: proc(f:^Loco_Test,e:=core.NONE) -> [3]f32 {return loco_found(f,
 
 @(private)
 near :: proc(a,b,tolerance:f32) -> bool {return abs(a-b)<=tolerance}
+
+@(private)
+parkour_state :: proc(f:^Loco_Test) -> Parkour_State {
+    state,_:=core.get(&f.parkours,f.e)
+    return state
+}
+
+@(private)
+loco_test_move :: proc(f:^Loco_Test,dt:f32,clock:core.Clock) {
+    time:=core.Time{playing=true,dt=dt}
+    locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.parkours,&f.moves,&f.inputs,&f.drives,
+        core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),&f.loco_requests,time,&f.problems)
+    test_world_settle(&f.w)
+    locomotion_step(
+        core.read(&f.characters),&f.loco_states,&f.parkours,&f.moves,&f.inputs,core.read(&f.drives),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),
+        core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),
+        core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),core.ref(&f.places),core.read(&f.paces),{base=TEST_WALK_BASE},time,clock,&f.problems,
+    )
+}

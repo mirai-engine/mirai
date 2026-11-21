@@ -493,13 +493,21 @@ a_second_build_of_a_tile_allocates_no_scratch :: proc(t:^testing.T) {
     scratch:Nav_Build_Scratch
     nav_build_scratch_init(&scratch,mem.tracking_allocator(&tracking))
     defer nav_build_scratch_destroy(&scratch)
-    allocated:i64
-    for round in 0..<3 {
+    first:Nav_Tile_Data
+    input:=test_input(&m)
+    status:=nav_build_tile(test_config(),{},input,&scratch,&first)
+    defer nav_tile_data_free(&first)
+    if !testing.expect_value(t,status,Nav_Build_Status.Built) {return}
+
+    allocations,bytes:=tracking.total_allocation_count,tracking.total_memory_allocated
+    for _ in 0..<2 {
+        nav_build_scratch_reset(&scratch)
         data:Nav_Tile_Data
-        testing.expect_value(t,nav_build_tile(test_config(),{},test_input(&m),&scratch,&data),Nav_Build_Status.Built)
+        testing.expect_value(t,nav_build_tile(test_config(),{},input,&scratch,&data),.Built)
+        testing.expect(t,slice.equal(first.block,data.block))
         nav_tile_data_free(&data)
-        if round==2 {testing.expect_value(t,tracking.total_memory_allocated,allocated)}
-        allocated=tracking.total_memory_allocated
+        testing.expect_value(t,tracking.total_allocation_count,allocations)
+        testing.expect_value(t,tracking.total_memory_allocated,bytes)
     }
 }
 

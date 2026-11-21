@@ -302,9 +302,9 @@ visual_find :: proc(entry:^Entry,piece:i32) -> ^Visual {
 }
 
 @(private)
-visual_mesh :: proc(entry:^Entry,visual:^Visual) -> geom.Mesh {
+visual_mesh :: proc(entry:^Entry,visual:^Visual) -> (result:geom.Mesh) {
     if visual.source>=0 && entry.prepared!=nil {
-        if int(visual.source)>=len(entry.prepared.fracture.pieces) {return {}}
+        if int(visual.source)>=len(entry.prepared.fracture.pieces) {return}
         return geom.fracture_piece_mesh(&entry.prepared.fracture,int(visual.source))
     }
     return geom.mesh_buffer_view(&visual.geometry)

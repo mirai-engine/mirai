@@ -340,7 +340,7 @@ portal_chamber :: proc(
         pressed:=false
         if has_place && has_zone {
             filter:=phys.QUERY_FILTER_DEFAULT
-            filter.overlaps=true
+            filter.include_sensors=true
             count,_:=phys.overlap_box(physics,mm.transform_point(placed.transform,zone.center),zone.size*placed.scale,placed.rotation,found[:],filter)
             for other in found[:min(count,len(found))] {pressed||=core.has(cubes,other) || core.has(guns,other)}
         }

@@ -126,12 +126,18 @@ interface_demo :: proc(
                 from.count-=moved
                 if from.count==0 {from^={}}
             } else {
-                to^,from^=from^,to^
+                previous:=to^
+                to^=from^
+                from^=previous
             }
         }
     }
     if drop,ok:=gui.dropped(events,inventory,"hand");ok && drop.from==base.name_hash("slot") {
-        if b:=int(drop.from_item);b>=0 && b<INTERFACE_ITEMS {demo.items[b],demo.equipped=demo.equipped,demo.items[b]}
+        if b:=int(drop.from_item);b>=0 && b<INTERFACE_ITEMS {
+            previous:=demo.equipped
+            demo.equipped=demo.items[b]
+            demo.items[b]=previous
+        }
     }
 
     // The conversation: T starts it, an answer clicked goes where it leads,

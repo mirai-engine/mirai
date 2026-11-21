@@ -17,14 +17,13 @@ the preview.
 
 - Start from `FOOT_GROUNDING_DEFAULT` and `GROUNDED_LEG_DEFAULT`; the zero value is safe but does
   not configure a valid gait.
-- Up to 16 legs; `count` sets how many entries of `legs` are evaluated.
+- The grounding leg table contains the legs the rig evaluates. An empty table disables grounding.
 - The definition is edited in the Grounding table of the set
   ([modifier authoring](animation-authoring.md#skeletons-sockets-and-profiles)).
 - The rig is the entity that plays the set. There is one grounding definition per set and an
   independent state per rig.
-- The global contact is modified with `Modifier_Goal{kind=.Grounding}` requests;
-  `Modifier_Control{kind=.Grounding}` changes influence or activation with an independent fade,
-  without touching that contact.
+- A named Grounding request through `modifier` sets global contact when `goal` is true.
+  An influence request fades weight or activation independently.
 - Each leg is a direct chain of three internal bones, hip, knee and foot, with its toe as the
   contact: the first two legs are those of the body of the skeleton (`@hip_l`, `@knee_l`,
   `@foot_l`, `@toe_l` and their right side); a `Bone_Ref` in `hip`, `knee`, `foot` or
@@ -182,10 +181,8 @@ Body:
 - A support stores the id that the ground gives to its support (with physics, the generational
   handle of the body) and point and normal in its space: it follows platforms, also when landing a
   step. A retired body stops being a support. Colliders are not deformed from the visual pose.
-- `Grounding_Runtime` belongs to the world and is copied with it; its records are plain and the
-  topology of each binding lives in its own buffer, without views or pointers. Changing the binding
-  or the set of configurations prepares again in a transaction; changing weights or strengths reuses
-  the memory. Removing a component compacts its links; a lack of memory keeps the previous state.
+- Grounding state belongs to the modifier runtime and is copied with the world. Changed bindings
+  prepare their bone links in a transaction. Changing weights or contact strengths reuses them.
 - Rig problems: `animation.grounding_config`, `grounding_bones`, `grounding_solve` (with the leg and
   the step) and `animation.memory`.
 
@@ -199,8 +196,8 @@ and lack of memory.
 - `grounding_queries_real_slopes_places_both_feet_and_releases_when_jumping`
 - `grounding_procedural_pose_follows_platform_replays_clones_and_allocates_nothing_when_stable`
 - `eight_legged_grounding_walks_without_animation_clips_or_per_leg_entities`
-- `grounding_prepared_hierarchies_rebind_atomically_repack_rigs_and_replay_copied_worlds`
-- `grounding_configuration_retires_removed_rigs_and_retries_out_of_memory`
+- `grounding_rebinds_its_hierarchy_without_touching_another_rig_and_replays_copied_state`
+- `grounding_configuration_retries_out_of_memory_and_rejects_invalid_bones`
 
 With their own flags:
 

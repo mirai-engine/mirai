@@ -46,6 +46,7 @@ part_add :: proc(s:^editor.Session,w:core.World_Ref,desc:Part_Desc) -> (e:core.E
     name:=editor.entity_name(w,desc.target)
     if name=="" || len(name)>=len(target.path) {return core.NONE,"an actor needs a name of its entity shorter than a track target"}
     base.text_set(target.path[:],name)
+    target.path_id=0
     target.animation=desc.timeline
     _,info:=core.world_table(w,anim.Animation_Target)
     editor.component_add(s,desc.target,info,&target)
@@ -55,7 +56,7 @@ part_add :: proc(s:^editor.Session,w:core.World_Ref,desc:Part_Desc) -> (e:core.E
 // What the clip of a timeline calls an actor: the target of its tracks and markers.
 actor_target :: proc(w:core.World_Ref,e:core.Entity) -> string {
     target,_:=editor.entity_get(w,e,anim.Animation_Target)
-    path:=base.text_get(target.path[:])
+    path:=anim.animation_target_path(w,e,target)
     return strings.clone(path,context.temp_allocator) if path!="" else editor.entity_name(w,e)
 }
 

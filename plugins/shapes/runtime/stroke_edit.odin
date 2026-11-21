@@ -58,7 +58,8 @@ shape_edit_begin :: proc(e:^Shape_Edit,plane:mm.Transform,cut:bool,kind:Stamp_Ki
     e.pieces=make([dynamic]Shape_Piece,allocator)
     geom.polygon_set_init(&e.set,allocator)
     e.local=make([dynamic]geom.Vec2,allocator)
-    e.cut,e.made,e.plane,e.target=cut,made,plane,-1
+    e.made=made
+    e.cut,e.plane,e.target=cut,plane,-1
     return .None
 }
 

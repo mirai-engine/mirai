@@ -1089,7 +1089,8 @@ shadow_plan_casters :: proc(r: ^Renderer, b: ^Shadow_Raster, eye: Vec3, forget: 
 		}
 	}
 	b.cull, b.culled = cell, true
-	stale^, moved^ = b.stale, b.moved
+	stale^ = b.stale
+	moved^ = b.moved
 	b.stale, b.moved = {}, {}
 	zone := render_zone_begin(r, "shadow reach")
 	reached := shadow_reach(r, b, wants, plans, reach)
@@ -1600,7 +1601,8 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 				}
 				base.truncate(&kept.casters, held)
 			}
-			kept.m, kept.tables, kept.cull, kept.threads = m, batch.tables, key, list.threads
+			kept.m = m
+			kept.tables, kept.cull, kept.threads = batch.tables, key, list.threads
 		}
 		// The batches that move and change the map: of the casters it holds,
 		// which reach it, those that move, where the map draws them as they sway.
@@ -1896,7 +1898,8 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	}
 	p.frame.sun_maps = {u32(count), plan.rows, b.rows * SHADOW_PAGE, transmute(u32)b.sway}
 	constants := (^Gpu_Frame)(p.constants.ptr)
-	constants.sun_maps, constants.sun_map_rows = p.frame.sun_maps, p.frame.sun_map_rows
+	constants.sun_maps = p.frame.sun_maps
+	constants.sun_map_rows = p.frame.sun_map_rows
 	rhi.cmd_copy_buffer(cmd, b.data.buffer, b.data.offset, d.table, 0, b.data.size)
 	// The pages the points read: marked, then each in the pool. Where the
 	// view, a light or a caster changed, the marks start anew and the points
@@ -1909,7 +1912,8 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	// the pages it read the frame before: those it left behind give their
 	// place to those it reads now.
 	keep := max(p.jitter_phases, 1) if seen.view == b.seen.view && seen.eye == b.seen.eye else min(max(p.jitter_phases, 1), 2)
-	b.seen, b.whole = seen, plan.whole
+	b.seen = seen
+	b.whole = plan.whole
 	if full {b.settle = max(p.jitter_phases, 1)}
 	marking := b.settle > 0
 	if marking {b.settle -= 1}
