@@ -349,16 +349,17 @@ checkout, worktree and project of the machine, keeps manifests and builds.
   given `(imports, <keys>)` or `(imports-fast, <keys>)` it makes each build and every object it
   lists whole, given `(packages, <ids>)` the manifests; it takes many names at once, and a refresh
   asks every key and id it will need in one call before it goes package by package, `imports-fast`
-  only with `fast_textures` and for the keys the source gave no Final of), then built by ingesting
-  the origin when it exists on this machine. Otherwise the report says, by package name, that a
-  machine with its source must ingest it with this engine; when only a Fast build is here and Final
-  is required, it says that. It then names the build under `builds/<build_select>` and, when that
+  only with `fast_textures` and for the keys the source gave no Final of). When Final is required,
+  a current local Fast build can supply it. The refresh keeps its outputs and encodes any Fast
+  textures from the [texture cache](#texture-cache). If it lacks an input, it ingests the origin
+  when available, or reports the missing build by package name. It names the chosen build under
+  `builds/<build_select>` and, when that
   changed, follows the documents. A source here whose identity changed (its bytes, an input, the
   code of the plugin that imports it whole) is ingested again with the ids its manifest gives, and
   the project pins the new manifest. A document changed since it was last written is left as it is,
   with a warning that names it ([changed documents](#changed-documents)): the rest is written.
-- **It never removes** an object, a ref or a file of a project because a source is missing, and
-  never builds without the source. What the store does not have stays listed as not built.
+- **It never removes** an object, a ref or a file of a project because a source is missing. What
+  it cannot build or fetch stays listed as not built.
 - A source a plugin imports whole has a key only its importer knows: the refresh takes the build
   this machine chose for its manifest, and a machine without its source reports it.
 - **Source hashes.** The address of each file an identity reads is kept per origin by size and
@@ -430,8 +431,10 @@ machine that shares the store's objects with another finds what that one built.
   texture of the cache takes the Final
   the texture cache keeps for its key; without one it is built Fast under the key of Fast settings,
   and a texture kept Fast is written again as soon as the cache holds its Final, or by the
-  [refresh](#library) of a build that cooks. `Import_Info.settings_hash` says which of the two
-  the file holds.
+  [refresh](#library) of a build that cooks. When it writes a Fast texture, the importer caches
+  its lossless texels and settings under the Final texture's key. The texture records that key
+  so Final refresh can reuse a cached encode or build it without running the source importer.
+  Only textures with Fast blocks require finalization.
 - [Cooking](../../mirai-projects/references/build.md#asset-cooking) stores there the blocks of
   an RGBA8 texture by `textures.cache_key_blocks`.
 - A key names what made the blocks (`textures.encoders_id`), so machines with other encoders

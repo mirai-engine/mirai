@@ -364,10 +364,9 @@ reads and fills; a failure is `Cook_Failed` with `Result.cook.error` and `detail
   `content_hash` of the `.tex`
   ([texture cache](../../mirai-imports/references/imports.md#texture-cache)).
 - **Fast textures.** A texture the editor imported Fast ships Final, whatever `"textures"` says:
-  the [refresh](#imported-sources) a game build that cooks starts with builds it again from its
-  source, with the id it has, and fills the texture cache, so the editor takes that Final from then
-  on; the refresh of an editor build keeps textures Fast, so a session never waits for RDO. A
-  cook that finds one still Fast fails with `Source_Failed` and says so.
+  the [refresh](../../mirai-imports/references/imports.md#library) before a cook selects or builds
+  Final textures, preserving their ids. The refresh of an editor build accepts Fast textures.
+  A cook that finds a Fast texture fails with `Source_Failed`.
 - **Animations.** An `.anim` is written cooked: its clips sampled as the runtime plays them
   (`asset.animation_compress`, [storage](../../mirai-std/references/anim-storage.md)).
 - **Prefab instances.** A scene with a stale instance is written with its instances up

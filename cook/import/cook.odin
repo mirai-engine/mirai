@@ -49,6 +49,7 @@ Cooked_Mesh :: struct {
 // image of size and hash. Its memory is its arena.
 Cooked_Texture :: struct {
     settings:u64,
+    final:Texture_Final,
     size,hash:u64,
     built:textures.Built,
     error:textures.Error,
@@ -162,7 +163,6 @@ import_cache :: proc(options:Import_Options) -> cache.Cache {
 // the RGBA8 pixels of encoded bytes that were decoded already, which an image
 // of more than 8 bits does not build from.
 texture_cook :: proc(bytes:[]u8,made:textures.Source,decoded:textures.Image,build:textures.Build_Options,options:Import_Options,cooked:^Cooked_Texture,parent:mem.Allocator,make:Image_Make=nil) {
-    build:=build
     mem.dynamic_arena_init(&cooked.arena,parent,parent,block_size=1<<20,out_band_size=1<<20)
     allocator:=base.dynamic_arena_allocator(&cooked.arena)
     cooked.settings=textures.settings_hash(build)
@@ -170,41 +170,68 @@ texture_cook :: proc(bytes:[]u8,made:textures.Source,decoded:textures.Image,buil
     types:asset.Types
     asset.types_init(&types,context.temp_allocator)
     defer asset.types_destroy(&types)
-    // The same image with the same settings, built before by any import, is read from the cache.
     c:=import_cache(options)
-    key:u64
-    if c.store!=nil {
-        key=textures.cache_key_build(bytes,made,build)
-        if !options.rebuild {
-            if built,cached:=textures.cache_read(c,key,&types,allocator);cached {cooked.built=built;return}
-        }
+    final_key:=textures.cache_key_build(bytes,made,build)
+    if !options.rebuild {
+        if built,cached:=textures.cache_read(c,final_key,&types,allocator);cached {cooked.built=built;return}
     }
-    if options.fast_textures {
-        build.speed=.Fast
-        cooked.settings=textures.settings_hash(build)
-        if c.store!=nil {
-            key=textures.cache_key_build(bytes,made,build)
-            if !options.rebuild {
-                if built,cached:=textures.cache_read(c,key,&types,allocator);cached {cooked.built=built;return}
+
+    encode:=build
+    key:=final_key
+    if options.fast_textures && build.encoding==.Blocks {
+        encode.speed=.Fast
+        key=textures.cache_key_build(bytes,made,encode)
+        if !options.rebuild {
+            if built,cached:=textures.cache_read(c,key,&types,allocator);cached {
+                cooked.built=built
+                if .Fast in built.flags {
+                    cooked.final={final_key,cooked.settings}
+                    cooked.settings=fast_settings(build)
+                    if !texture_input_has(c,final_key) {
+                        if source,error:=texture_source(bytes,made,decoded,make,options.worker);error==.None {
+                            defer textures.source_destroy(&source)
+                            texture_input_keep(c,final_key,&types,source,build)
+                        }
+                    }
+                }
+                return
             }
         }
     }
+
     jobs.worker_zone(options.worker,"texture.build")
-    switch {
-    case make!=nil && decoded.pixels!=nil:
-        cooked_set(cooked,textures.build(textures.rgba8(decoded.pixels,decoded.width,decoded.height),build,allocator,options.worker))
-    case make!=nil:
-        source,ok:=make(bytes,context.temp_allocator)
-        if !ok {cooked.error=.Unsupported;return}
-        cooked_set(cooked,textures.build(source,build,allocator,options.worker))
-    case made.width>0:
-        cooked_set(cooked,textures.build(made,build,allocator,options.worker))
-    case decoded.pixels!=nil && !textures.source_wide(bytes):
-        cooked_set(cooked,textures.build(textures.rgba8(decoded.pixels,decoded.width,decoded.height),build,allocator,options.worker))
-    case:
-        cooked_set(cooked,textures.from_bytes(bytes,build,allocator,options.worker))
+    source,error:=texture_source(bytes,made,decoded,make,options.worker)
+    if error!=.None {cooked.error=error;return}
+    defer textures.source_destroy(&source)
+    cooked_set(cooked,textures.build(source,encode,allocator,options.worker))
+    if cooked.error!=.None {return}
+    if .Fast in cooked.built.flags {
+        cooked.final={final_key,cooked.settings}
+        cooked.settings=fast_settings(build)
+        texture_input_keep(c,final_key,&types,source,build)
+    } else {
+        key=final_key
     }
-    if cooked.error==.None {textures.cache_write(c,key,&types,&cooked.built)}
+    _=textures.cache_write(c,key,&types,&cooked.built)
+}
+
+@(private="file")
+texture_source :: proc(bytes:[]u8,made:textures.Source,decoded:textures.Image,make:Image_Make,worker:jobs.Worker_Ref) -> (textures.Source,textures.Error) {
+    if decoded.pixels!=nil && (make!=nil || made.width==0 && !textures.source_wide(bytes)) {
+        return textures.rgba8(decoded.pixels,decoded.width,decoded.height),.None
+    }
+    if make!=nil {
+        source,ok:=make(bytes,context.temp_allocator)
+        return source,.None if ok else .Unsupported
+    }
+    if made.width>0 {
+        source:=made
+        source.allocator={}
+        return source,.None
+    }
+    zone:=jobs.worker_zone_begin(worker,"image.decode")
+    defer base.profile_end(zone)
+    return textures.source_decode(bytes,context.temp_allocator)
 }
 
 // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).

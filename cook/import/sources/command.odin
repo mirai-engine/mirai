@@ -38,8 +38,8 @@ import "mirai:store"
 // what its name says (image_use). Only models and images have settings.
 // --refresh <root>, once per project or plugin, instead brings every package
 // its packages.mirai pins to a build this engine reads (project_refresh): what
-// a checkout needs before it runs. It removes nothing and builds only from a
-// source on this machine; a package nothing here gives is a failure that names
+// a checkout needs before it runs. It keeps the package when its source is
+// missing and can finalize a current local build. A missing build names
 // it. Textures are built Fast, as the editor imports them, unless the texture
 // cache keeps them Final, and a Fast build is taken; --final builds them Final
 // and takes only a Final build: what a build that cooks and the package of the
